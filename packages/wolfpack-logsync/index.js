@@ -13510,6 +13510,7 @@ function _corpseNoteLine(line, character) {
       agent_version: AGENT_VERSION, character: p.character, died_at: p.died_at,
       zone_id: p.zone_id, zone: p.zone, loc: p.loc,
     });
+    try { _mapCorpseNoteDied(p, p.character, now); } catch { void 0; }   // the same death, on the Map's corpses (see "Guild corpses")
   }
 }
 // Deliberately forgets a death after DEAD_FORGET_MS. We do not see every rez —
@@ -48501,6 +48502,7 @@ function _mapSyncPull(zone, now) {
       if (j) _mapWatchApplyBot(zone, j, Date.now());   // first: a spot just watched takes its events from this same answer
       if (j && Array.isArray(j.events)) _mapApplyRemote(zone, j.events, Date.now());
       if (j) _mapApplyShared(zone, j, Date.now());
+      if (j) _mapCorpseApplyBot(zone, j, Date.now());   // the guild's corpses (see "Guild corpses"); an older bot sends none
     } catch { /* an unreadable answer is ignored; the next pull asks again */ }
   });
   return true;
@@ -48613,6 +48615,261 @@ function _mapWatchTimerRows(now) {
   return rows;
 }
 // ── end Watched spots ──
+// ── Guild corpses (the guild lead, 2026-10-17: "add the corpses on to the map and give a link to someone that is dragging
+// that corpse and if their machine says that they start dragging the corpse or stop dragging the corpse that's where it
+// ends up landing near that player's location; there's also a one-off summoning corpse that would have the player
+// targeting that corpse so we should be able to tell where that corpse landed if it changes") ──────────────────────────
+// Only PLAYER corpses, only the ones this machine can vouch for. Events go to the bot as POST <bot>/map-corpse (an older bot
+// answers 404: nothing is asked of it for 10 minutes, quietly, like the ★ watch POST) and the pull brings the guild's back as
+// `corpses`. Everything is also kept here, so the Map shows what THIS machine knows when the bot is old or local mode is on.
+//   died        this character died (the same confirmed death that drives the corpse DM), at its position then
+//   seen        a Mimic targeted "<Name>'s corpse" and Zeal gave target_loc (covers a summoned corpse and any later move)
+//   drag_start  "You begin to drag <corpse>."            drag_move  the dragger's own position, at most every 5 s while dragging
+//   drag_stop   "You stop dragging the corpse(s)."       summoned   "Summoning <Name>'s corpse." / "Summoning your corpse."
+//   gone        "You regain some experience from resurrection." (own corpse rezzed)
+// The log lines are the EQMacEmu server's own strings (zone/string_ids.h: CORPSEDRAG_BEGIN 4064, CORPSEDRAG_STOP 4066,
+// CORPSEDRAG_STOPALL 4065, SUMMONING_CORPSE 429 and _OTHER 430, REZ_REGAIN 289); a corpse is moved to the summoner's or
+// dragger's position (Corpse::Summon, GMMove to client->GetX/Y/Z), so those positions ARE the corpse's. x, y, z are the SERVER
+// frame (see FRAMES above); the bot's `corpse` field is the owner's name ("Aldenmar"), not "Aldenmar's corpse".
+const MAP_CORPSE_BATCH        = 20;                  // events per POST
+const MAP_CORPSE_SEEN_UNITS   = 5;                   // a corpse already reported is re-reported only when it moved further than this...
+const MAP_CORPSE_SEEN_MS      = 60 * 1000;           // ...or this long has passed
+const MAP_CORPSE_MOVE_MS      = 5000;                // drag_move: at most one per this
+const MAP_CORPSE_MOVE_UNITS   = 3;                   // ...and only when the dragger moved this far since the last
+const MAP_CORPSE_DRAG_STALE_MS = 2 * 60 * 1000;      // a "being dragged" nobody has refreshed for this long is shown as not dragged
+const MAP_CORPSE_KEEP_MS      = 12 * 60 * 60 * 1000; // a corpse nobody has refreshed for this long is dropped here (the bot ages its own)
+const MAP_CORPSE_MAX          = 60;                  // per zone
+const MAP_CORPSE_GONE_GRACE_MS = 15 * 1000;          // a pull that raced our own `gone` does not bring the corpse back
+const MAP_CORPSE_DRAG_BEGIN_RE = /\]\s+You begin to drag (.+?)\.\s*$/;
+const MAP_CORPSE_DRAG_STOP_RE  = /\]\s+You stop dragging the corpse(s)?\.\s*$/;
+const MAP_CORPSE_SUMMON_RE     = /\]\s+Summoning (?:your|([A-Za-z]{3,20})[`'’]s) corpse\.\s*$/;
+const MAP_CORPSE_REZ_RE        = /\]\s+You regain some experience from resurrection\./;
+// local[zone][owner lower] = { name, x, y, z, died, upd, dragger, dupd, by, inst } (this machine's own events, ms on its clock;
+// dupd = when `dragger` was last SAID, null if never: a plain look at the corpse moves it and leaves who drags it alone)
+// shared[zone] = { rows: [same shape, from the bot], pulledAt }   gone[zone][owner lower] = ms   seenLast: 'zone|owner' -> { x, y, at }
+// drags: 'character|owner' -> { character, owner, zone, startedAt, lastAt, last, sentStart }
+const _mapCorpse = { q: [], flushTimer: null, backoffUntil: 0, local: {}, shared: {}, gone: {}, seenLast: new Map(), drags: new Map() };
+const _mapCorpseKey = (owner) => String(owner).toLowerCase();
+// The owner of a PLAYER corpse named "<Owner>'s corpse" (underscore or space, optional trailing duplicate number), or null.
+// Zeal's target_type says it outright (3 player corpse, 2 NPC corpse); an older Zeal sends none, and then only a one-word
+// capitalised owner passes ("a gnoll's corpse" and "Lord Nagafen's corpse" do not). A named one-word NPC would still pass
+// without a type: the type is the real test, the name shape is the fallback.
+function _mapPlayerCorpseOwner(name, type) {
+  const m = /^#?([A-Za-z]{3,20})[`'’]s[ _]corpse\d*$/.exec(String(name == null ? '' : name).trim());
+  if (!m) return null;
+  if (type != null && Number(type) !== 3) return null;
+  if (type == null && !/^[A-Z][a-z]+$/.test(m[1])) return null;
+  return m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+}
+// The bot's `corpse` field: the bare owner name, or the full "<Owner>'s corpse".
+function _mapCorpseOwnerOf(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (/^[A-Za-z]{3,20}$/.test(s)) return s[0].toUpperCase() + s.slice(1).toLowerCase();
+  return _mapPlayerCorpseOwner(s, 3);
+}
+// A time from the bot: epoch ms, epoch seconds, or an ISO string. null when it is none of them.
+function _mapCorpseMs(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number' || /^\d+(\.\d+)?$/.test(String(v))) { const n = Number(v); return n > 0 ? (n < 1e11 ? n * 1000 : n) : null; }
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? t : null;
+}
+const _mapCorpseRound = (n) => Math.round(Number(n) * 10) / 10;
+// This character's own spot from the pipe, in the server frame, when it is fresh: { zone, loc } or null.
+function _mapCorpseSelf(character, now) {
+  const cl = String(character || '').toLowerCase();
+  let st = null;
+  for (const ch of Object.keys(_zealState || {})) if (ch.toLowerCase() === cl) { st = _zealState[ch]; break; }
+  if (!st || !(now - (st.updatedAt || 0) <= 30000)) return null;
+  const zone = _mapZoneShort(st.zone), loc = _mapServerXY(st.loc);
+  return zone && loc ? { zone, loc } : null;
+}
+function _mapCorpseMayPost(character) {
+  if (!_mapFetchAllowed()) return false;
+  if (_uploadOpts && _uploadOpts.dryRun) return false;
+  return typeof shouldUploadForCharacter !== 'function' || shouldUploadForCharacter(character);   // exclude_from_stats sends nothing
+}
+// One event: kept here at once (the Map shows it even with an older bot) and queued for the guild when this machine may talk to
+// the bot and the bot has not answered 404 lately. ev = { kind, corpse (the owner), x, y, z, at, dragger? }.
+function _mapCorpseEvent(zone, character, ev, now) {
+  if (!zone || !character || !ev || !ev.corpse || !Number.isFinite(Number(ev.x)) || !Number.isFinite(Number(ev.y))) return;
+  const e = { kind: ev.kind, corpse: String(ev.corpse), x: _mapCorpseRound(ev.x), y: _mapCorpseRound(ev.y),
+    z: Number.isFinite(Number(ev.z)) ? _mapCorpseRound(ev.z) : 0, at: Math.min(Number.isFinite(Number(ev.at)) ? Number(ev.at) : now, now) };
+  if (ev.dragger) e.dragger = String(ev.dragger).slice(0, 40);
+  const copy = _mapCurrentCopy(zone, now), inst = copy ? copy.token : null;
+  _mapCorpseApplyLocal(zone, character, e, inst, now);
+  if (!_mapCorpseMayPost(character) || now < _mapCorpse.backoffUntil) return;
+  if (_mapCorpse.q.length >= 200) _mapCorpse.q.shift();
+  _mapCorpse.q.push({ zone, character: String(character), inst, ev: e });
+  if (!_mapCorpse.flushTimer) {
+    _mapCorpse.flushTimer = setTimeout(() => { _mapCorpse.flushTimer = null; _mapCorpseFlush(Date.now()); }, MAP_SYNC_FLUSH_MS);
+    if (_mapCorpse.flushTimer.unref) _mapCorpse.flushTimer.unref();
+  }
+}
+function _mapCorpseApplyLocal(zone, character, e, inst, now) {
+  const key = _mapCorpseKey(e.corpse);
+  const zl = _mapCorpse.local[zone] || (_mapCorpse.local[zone] = {});
+  if (e.kind === 'gone') {
+    delete zl[key];
+    (_mapCorpse.gone[zone] || (_mapCorpse.gone[zone] = {}))[key] = now;
+    return;
+  }
+  if (_mapCorpse.gone[zone]) delete _mapCorpse.gone[zone][key];   // it is back (died again)
+  const old = zl[key];
+  const row = { name: e.corpse, x: e.x, y: e.y, z: e.z, died: old ? old.died : null, upd: e.at,
+    dragger: old ? old.dragger : null, dupd: old ? old.dupd : null, by: String(character), inst };
+  if (e.kind === 'died') { row.died = e.at; row.dragger = null; row.dupd = e.at; }
+  else if (e.kind === 'seen') { /* position only */ }
+  else if (e.kind === 'drag_start' || e.kind === 'drag_move') { row.dragger = e.dragger || String(character); row.dupd = e.at; }
+  else if (e.kind === 'drag_stop' || e.kind === 'summoned') { row.dragger = null; row.dupd = e.at; }
+  else return;
+  if (!old && Object.keys(zl).length >= MAP_CORPSE_MAX) delete zl[Object.keys(zl)[0]];
+  zl[key] = row;
+}
+// Send the oldest batch (one zone + character + copy, up to 20). Returns true when a POST went out.
+function _mapCorpseFlush(now) {
+  const q = _mapCorpse.q;
+  if (!q.length) return false;
+  if (!_mapFetchAllowed() || now < _mapCorpse.backoffUntil) { q.length = 0; return false; }
+  const first = q[0], batch = [];
+  for (let i = 0; i < q.length && batch.length < MAP_CORPSE_BATCH;) {
+    if (q[i].zone === first.zone && q[i].character === first.character && q[i].inst === first.inst) batch.push(q.splice(i, 1)[0].ev); else i++;
+  }
+  if (q.length && !_mapCorpse.flushTimer) {
+    _mapCorpse.flushTimer = setTimeout(() => { _mapCorpse.flushTimer = null; _mapCorpseFlush(Date.now()); }, MAP_SYNC_FLUSH_MS);
+    if (_mapCorpse.flushTimer.unref) _mapCorpse.flushTimer.unref();
+  }
+  _mapSyncRequest('POST', '', { zone: first.zone, inst: first.inst, character: first.character, events: batch }, (err, status) => {
+    if (!err && status === 404) _mapCorpse.backoffUntil = now + MAP_SYNC_BACKOFF_MS;   // an older bot: the corpses stay on this machine
+  }, '/map-corpse');
+  return true;
+}
+function _mapCorpseStop() {
+  if (_mapCorpse.flushTimer) { clearTimeout(_mapCorpse.flushTimer); _mapCorpse.flushTimer = null; }
+  _mapCorpse.q.length = 0;
+}
+// The bot's answer: `corpses: [{ corpse, inst, x, y, z, died_at, updated_at, dragger, by }]` for the zone. No such field (an
+// older bot) changes nothing. Ages are kept on this machine's clock (the bot's `now` against its own times), like targets.
+function _mapCorpseApplyBot(zone, j, now) {
+  if (!j || !Array.isArray(j.corpses)) return;
+  const botNow = _mapCorpseMs(j.now) || now;
+  const rows = [];
+  for (const c of j.corpses.slice(0, MAP_CORPSE_MAX)) {
+    const name = c ? _mapCorpseOwnerOf(c.corpse) : null, x = Number(c && c.x), y = Number(c && c.y);
+    if (!name || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const local = (ms) => (ms == null ? null : now - Math.max(0, botNow - ms));
+    const died = local(_mapCorpseMs(c.died_at)), upd = local(_mapCorpseMs(c.updated_at));
+    rows.push({ name, x, y, z: Number.isFinite(Number(c.z)) ? Number(c.z) : 0, died, upd: upd != null ? upd : (died != null ? died : now),
+      dragger: typeof c.dragger === 'string' && c.dragger.trim() ? c.dragger.trim().slice(0, 40) : null, dupd: upd != null ? upd : (died != null ? died : now),
+      by: c.by ? String(c.by).slice(0, 40) : null, inst: typeof c.inst === 'string' && c.inst ? c.inst : null });
+  }
+  _mapCorpse.shared[zone] = { rows, pulledAt: now };
+}
+// The corpses to draw in the copy of the zone you are in: this machine's own and the guild's, newest word per owner. A look
+// ("seen") moves a corpse but keeps who was dragging it; a dragger nobody has refreshed for two minutes is shown as not dragging.
+// Another copy of the zone (inst set on both sides and different) is ignored; null on either side is taken.
+function _mapCorpseList(zone, now) {
+  const mine = _mapCurrentCopy(zone, now), by = new Map();
+  const gone = _mapCorpse.gone[zone] || {};
+  const consider = (r, shared) => {
+    if (!r || (r.inst && mine && r.inst !== mine.token) || !(now - r.upd <= MAP_CORPSE_KEEP_MS)) return;
+    const k = _mapCorpseKey(r.name);
+    if (shared && gone[k] != null && r.upd <= gone[k] + MAP_CORPSE_GONE_GRACE_MS) return;
+    (by.get(k) || by.set(k, []).get(k)).push(r);
+  };
+  const zl = _mapCorpse.local[zone] || {};
+  for (const [k, r] of Object.entries(zl)) { if (now - r.upd > MAP_CORPSE_KEEP_MS) delete zl[k]; else consider(r, false); }
+  const sh = _mapCorpse.shared[zone];
+  if (sh) for (const r of sh.rows) consider(r, true);
+  const out = [];
+  for (const cs of by.values()) {
+    cs.sort((a, b) => b.upd - a.upd);
+    const w = cs[0], dead = cs.find(c => c.died != null);
+    const drag = cs.filter(c => c.dupd != null).sort((a, b) => b.dupd - a.dupd)[0];
+    out.push({ name: w.name, x: w.x, y: w.y, z: w.z, age: Math.max(0, Math.round(now - w.upd)),
+      died_age: dead ? Math.max(0, Math.round(now - dead.died)) : null,
+      dragger: drag && drag.dragger && now - drag.dupd <= MAP_CORPSE_DRAG_STALE_MS ? drag.dragger : null, by: w.by || null });
+  }
+  return out.sort((a, b) => a.age - b.age).slice(0, MAP_CORPSE_MAX);
+}
+// A target frame: a player corpse with a position. Reported when it is new here, moved more than 5 units, or 60 s have passed.
+function _mapCorpseNoteTarget(zone, character, next, now) {
+  const owner = _mapPlayerCorpseOwner(next && next.target_name, next && next.target_type);
+  const loc = owner ? _mapServerXY(next.target_loc) : null;
+  if (!loc) return;
+  const k = zone + '|' + _mapCorpseKey(owner), last = _mapCorpse.seenLast.get(k);
+  if (last && now - last.at < MAP_CORPSE_SEEN_MS && _mapDist2(last, loc) <= MAP_CORPSE_SEEN_UNITS) return;
+  if (_mapCorpse.seenLast.size > 200) _mapCorpse.seenLast.clear();
+  _mapCorpse.seenLast.set(k, { x: loc.x, y: loc.y, at: now });
+  _mapCorpseEvent(zone, character, { kind: 'seen', corpse: owner, x: loc.x, y: loc.y, z: loc.z, at: now }, now);
+}
+// This character died (the confirmed death behind the corpse DM: `p` is _corpsePending, its loc in Zeal's pipe order).
+function _mapCorpseNoteDied(p, character, now) {
+  if (!p || !character) return;
+  const zone = _mapZoneShort(p.zone_id), loc = _mapServerXY(p.loc);
+  if (!zone || !loc) return;
+  const at = Date.parse(p.died_at);
+  _mapCorpseEvent(zone, character, { kind: 'died', corpse: String(character), x: loc.x, y: loc.y, z: loc.z, at: Number.isFinite(at) ? at : now }, now);
+}
+// Every log line of the live tail. Cheap gate first: only four strings matter.
+function _mapCorpseNoteLine(line, character, lineMs, now) {
+  if (!character || typeof line !== 'string') return;
+  if (line.indexOf('drag') < 0 && line.indexOf('Summoning') < 0 && line.indexOf('resurrection') < 0) return;
+  if (Number.isFinite(lineMs) && now - lineMs > 60000) return;           // a backfill replays old log text
+  let m;
+  if ((m = MAP_CORPSE_DRAG_BEGIN_RE.exec(line))) {
+    const owner = _mapPlayerCorpseOwner(m[1], 3);                         // the server only lets you drag a player corpse
+    if (!owner) return;
+    const me = _mapCorpseSelf(character, now);
+    _mapCorpse.drags.set(_mapCorpseKey(character) + '|' + _mapCorpseKey(owner),
+      { character: String(character), owner, zone: me ? me.zone : null, startedAt: now, lastAt: 0, last: null, sentStart: false });
+    _mapCorpseTickDrag(character, now);                                   // the start goes out now when the pipe has a spot
+    return;
+  }
+  if ((m = MAP_CORPSE_DRAG_STOP_RE.exec(line))) {
+    // "the corpses" ends them all. "the corpse" does not say which one when you drag two (the server loops over them): the
+    // oldest drag is the one ended, which is right for the usual single corpse.
+    const mine = [..._mapCorpse.drags.values()].filter(d => _mapCorpseKey(d.character) === _mapCorpseKey(character)).sort((a, b) => a.startedAt - b.startedAt);
+    for (const d of m[1] ? mine : mine.slice(0, 1)) _mapCorpseEndDrag(d, now);
+    return;
+  }
+  if ((m = MAP_CORPSE_SUMMON_RE.exec(line))) {                            // the caster's spot is where the corpse lands
+    const me = _mapCorpseSelf(character, now);
+    if (!me) return;
+    const owner = m[1] ? _mapPlayerCorpseOwner(m[1] + "'s corpse", 3) : String(character);
+    if (owner) _mapCorpseEvent(me.zone, character, { kind: 'summoned', corpse: owner, x: me.loc.x, y: me.loc.y, z: me.loc.z, at: lineMs || now }, now);
+    return;
+  }
+  if (MAP_CORPSE_REZ_RE.test(line)) {                                     // own corpse rezzed
+    const me = _mapCorpseSelf(character, now);
+    if (me) _mapCorpseEvent(me.zone, character, { kind: 'gone', corpse: String(character), x: me.loc.x, y: me.loc.y, z: me.loc.z, at: lineMs || now }, now);
+  }
+}
+// drag_stop at the dragger's spot (the corpse stays where it was last moved to, within a few units of it), then forget the drag.
+function _mapCorpseEndDrag(d, now) {
+  _mapCorpse.drags.delete(_mapCorpseKey(d.character) + '|' + _mapCorpseKey(d.owner));
+  const me = _mapCorpseSelf(d.character, now);
+  const at = me && me.zone === d.zone ? me.loc : d.last;                  // zoned away: where it was left
+  if (d.zone && at) _mapCorpseEvent(d.zone, d.character, { kind: 'drag_stop', corpse: d.owner, x: at.x, y: at.y, z: at.z, at: now, dragger: d.character }, now);
+}
+// Each Zeal frame while this character drags: the first spot sends drag_start, then drag_move every 5 s the dragger has moved.
+// Zoning ends a drag on the server without a word (ClearDraggedCorpses), so a changed zone ends it here.
+function _mapCorpseTickDrag(character, now) {
+  if (!_mapCorpse.drags.size) return;
+  const cl = _mapCorpseKey(character);
+  const me = _mapCorpseSelf(character, now);
+  for (const d of [..._mapCorpse.drags.values()]) {
+    if (_mapCorpseKey(d.character) !== cl) continue;
+    if (!me) continue;
+    if (d.zone && me.zone !== d.zone) { _mapCorpseEndDrag(d, now); continue; }
+    if (!d.zone) d.zone = me.zone;
+    const kind = d.sentStart ? 'drag_move' : 'drag_start';
+    if (d.sentStart && (now - d.lastAt < MAP_CORPSE_MOVE_MS || _mapDist2(d.last, me.loc) <= MAP_CORPSE_MOVE_UNITS)) continue;
+    d.sentStart = true; d.lastAt = now; d.last = { x: me.loc.x, y: me.loc.y, z: me.loc.z };
+    _mapCorpseEvent(d.zone, d.character, { kind, corpse: d.owner, x: me.loc.x, y: me.loc.y, z: me.loc.z, at: now, dragger: d.character }, now);
+  }
+}
+// ── end Guild corpses ──
 // Whose map events you take (the guild lead, 2026-10-13, option C: "A now, B later"): your raid, or your group when
 // you are not in a raid, plus yourself. Zeal sends the zone id but no instance id, so the open world, our guild copy
 // and the PvP copy of a zone all looked like one; a raid or group is nearly always in one copy. B (the zone
@@ -49100,7 +49357,7 @@ function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
@@ -49182,6 +49439,8 @@ function _mapStatePayload(have, now, haveLocal) {
     const lLive = lOk && now - r.at <= MAP_PATH_LIVE_MS, sLive = sOk && h.live && now - h.pulledAt <= MAP_SYNC_PULL_MS + 2000;
     out.paths[k] = { name: lOk ? r.name : h.name, at: Math.max(lOk ? r.at : 0, sOk ? h.at : 0), live: lLive || sLive, pts };
   }
+  // Guild corpses (see "Guild corpses"): { name, x, y, z, age, died_age, dragger, by }, before the spawn data like the paths.
+  try { out.corpses = _mapCorpseList(zone, now); } catch { out.corpses = []; }
   try {   // before the spawn data: the walls draw even in a zone we hold no points for
     _mapBrewallEnsure(zone, now);   // first visit to a zone: fetch Brewall's map for it (see "Brewall maps")
     const lm = _mapLocalFor(zone, now);
@@ -49239,9 +49498,11 @@ function _mapStatePayload(have, now, haveLocal) {
 
 // Zeal state hooks. Called with every /api/zeal-state frame (prev = the last one for that character).
 function _mapNoteState(character, prev, next, now) {
+  try { _mapCorpseTickDrag(character, now); } catch { /* corpses are a nicety: never break the frame */ }   // before the zone check: zoning ends a drag
   const zone = _mapZoneShort(next && next.zone);
   if (!zone) return;
   _mapEnsureZone(zone, next.zone, now);
+  try { _mapCorpseNoteTarget(zone, character, next, now); } catch { /* same */ }
   const tl = _mapServerXY(next.target_loc);
   const isNpc = next.target_type == null || next.target_type === 1;
   if (isNpc && tl && next.target_id > 0 && next.target_name && !MAP_CORPSE_RE.test(String(next.target_name))) {
@@ -56964,6 +57225,8 @@ async function main() {
         // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
         // log never DMs anyone).
         try { _corpseNoteLine(line, b.character); } catch { void 0; }
+        // Map corpses: drag begin / stop, a Summon Corpse landing, your own corpse rezzed (live tail only).
+        try { _mapCorpseNoteLine(line, b.character, ts ? ts.getTime() : null, Date.now()); } catch { void 0; }
 
         // ── Normal combat filter (gates parse + upload only) ────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
