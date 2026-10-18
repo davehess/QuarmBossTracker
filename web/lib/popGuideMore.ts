@@ -198,6 +198,9 @@ const BRIEFS: Record<string, string> = {
   binden_powered: 'Optional. Fill Tabben’s container with four more parts and your first talisman, and trade the box for the Powered one.',
   binden_final: 'Optional. Trade the schematic for a case, fill it with four elemental fragments and the talisman, and trade it back.',
   time_muon: 'Needs your Zebuxoruk flag and the Quintessence in your bags. Muon takes you up; clicking the time machine is the flag.',
+  spells_turn_in: 'One at a time. Full bags hold the spell for you: make room, then speak to any planar spell turn-in vendor.',
+  time_timelockout: 'Your guild has one fixed 6 day 18 hour cycle from its first entry; kills no longer extend it.',
+  flag_quarm: 'Phase 1 loot is limited 12 hours, Phases 2 and 3 for 3.5 days, Phase 4 to 6 until the cycle ends. Raid cap 90.',
 };
 for (const [key, brief] of Object.entries(BRIEFS)) STEP_MORE[key] = { ...STEP_MORE[key], brief };
 

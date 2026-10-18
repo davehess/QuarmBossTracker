@@ -94,6 +94,16 @@ describe('the DM', () => {
     expect(_corpseDmText({ character: 'Aldenmar', zone: 'Plane of Sky', zoneId: 71, loc: null, diedAtMs: at }))
       .not.toContain('It moves');
   });
+  // Quarm patch notes, 2026-10-18: corpses in the second part of the Plane of Time move after 30 minutes.
+  it('in Plane of Time B (zone 223) the corpse moves after half an hour; the first part (219) still after an hour', async () => {
+    const { _corpseDmText } = loadWith({});
+    const at = Date.parse('2026-09-26T01:42:10.000Z');
+    const unix = at / 1000;
+    expect(_corpseDmText({ character: 'Aldenmar', zone: 'Plane of Time', zoneId: 223, loc: null, diedAtMs: at }))
+      .toContain(`It moves <t:${unix + 1800}:R>`);
+    expect(_corpseDmText({ character: 'Aldenmar', zone: 'Plane of Time', zoneId: 219, loc: null, diedAtMs: at }))
+      .toContain(`It moves <t:${unix + 3600}:R>`);
+  });
 });
 
 describe('who gets it', () => {
