@@ -339,8 +339,12 @@ chooses which to send. On the website, screenshots need a signed-in pack member.
   damage per fight, the loot, and the roll sessions with every roll. It never
   shows tells, chat, Discord names or ids, inventory, or a link into a member
   page. **Characters set to exclude from stats or exclude from inventory are
-  left out of all of it**, including the replay and any roll or loot line they
-  would appear on (the line stays, the name does not). A link works until it
+  shown only as their class and a number** ("Cleric 2", the same label in the
+  replay, attendance, parses, rolls and loot; the name is swapped on our server
+  and never sent). The one exception (2026-10-17) is a character who **won an
+  item** in that session: a closed auction's winner is public in OpenDKP, so
+  they appear by name, with what they won and the closed auctions they bid on
+  and lost that night. Bids on an auction still open are never shown. A link works until it
   **expires** (7, 30 or 90 days; 30 unless the officer picks otherwise) or an
   officer **revokes** it, which takes effect on the next page load. The secret
   is random and is stored only as a hash, so it cannot be recovered from our

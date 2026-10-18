@@ -11340,3 +11340,29 @@ briefing, not here** — they name ways in.
 - **Update-or-pause plan** drafted in `docs/PLAN-update-or-pause-2026-10.md` (fleet: 33 players on 2.9.1, 7 older, 4
   beta). ⏳ The guild lead: what "shut off" means (pause uploads vs blank guild overlays), 7 or 14 days, beta testers in
   or out.
+
+### 356. Opt-outs are a class on the raid session review and share links; bid winners keep their name (2026-10-18)
+The guild lead, 2026-10-17: *"if someone opts out, just put their class on that spot to anonymize them. do not
+anonymize bid winners, but link all of those with a unique handle that shows what they all bid on."* So on the raid
+session review (`/raid/session`) and the public share page, a character with `exclude_from_stats` or
+`exclude_inventory`:
+- is shown as its **class and a number** — "Cleric 2", the same label in the replay board, attendance, ticks,
+  parses, loot and rolls. The number is from a salted `opaqueKey` order, **never the name**, so "Cleric 1" is not
+  the alphabetically-first opted-out cleric. Names are swapped **on the server** (`scrubMinuteData`,
+  `raidShareLookup.loadAnon`) before any row leaves — the browser never sees the real name. This REVERSES the old
+  "drop the line, keep nobody" behaviour: an opted-out raider's damage now counts in the share, under their label.
+- **unless they won an item in the window** — the one exception. A winner (a closed `opendkp_auctions` row, or a
+  `loot_observations` award, inside the session's window) is shown by **name**, because a closed auction's winner is
+  already public in OpenDKP. Their name links to a new **Bids** section under an opaque `#bids-<handle>` (the handle
+  carries no name): what they won and paid, and the **closed** auctions they bid on and lost (top bid + who won),
+  from the `opendkp_auction_bids` mirror. **Open auctions are sealed**: no win, no bid, no name until they end.
+- Where: `web/lib/raidSession.ts` (`anonLabels`/`anonName`/`scrubMinuteData`/`exemptWinners`),
+  `web/lib/raidSessionBids.ts` (`winsOf`/`buildBidders`/the reads), `web/lib/raidShareLookup.ts` (`loadAnon`),
+  new sign-in-gated `/api/raid/session/replay` so the members' board is labelled too; tests
+  `test/raid-session-anon.test.js`. `/privacy` and `docs/PRIVACY.md` reworded.
+- **Known gap (TODO in raidSessionBids.ts):** a losing bid made under an OpenDKP login that differs from the
+  character name and carries no `character_id` is not attributed — a missing line in someone's "lost" list, **never a
+  wrong name**. Rare: the sync stores `character_id` for every list-endpoint bid.
+- Shipped to **beta only** (web, no `web/package.json` bump — a beta-only web change keeps the main → beta sync
+  clean). Review at `https://b.wolfpack.quest/raid/session`. Graduates to `main` on the guild lead's look, and the
+  STATUS entry gets the stable web version then (the both-gates rule).
