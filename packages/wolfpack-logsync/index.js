@@ -18777,6 +18777,7 @@ body.wp-overlay-mode { background:transparent !important; padding:0 !important; 
 body.wp-overlay-mode h1,
 body.wp-overlay-mode .nav,
 body.wp-overlay-mode .wp-quicklinks,
+body.wp-overlay-mode #wpActiveChar,
 body.wp-overlay-mode #header,
 body.wp-overlay-mode .wp-gear,
 body.wp-overlay-mode .wp-menu,
@@ -18833,6 +18834,7 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
        title="Notices from the Wolf Pack team">✉<span id="wpMailDot" style="display:none;position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--red,#f87171)"></span></button>
     <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
   </span></h1>
+<div id="wpActiveChar"></div>
 <div class="subtle" id="header"></div>
 <div class="wp-quicklinks" id="wpQuickLinks" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
   <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
@@ -19835,7 +19837,26 @@ function _bindOnce(el, ev, fn) {
   el.addEventListener(ev, fn);
 }
 
+// The character you are playing now, big at the top (the guild lead, 2026-10-18). Its own wp* placeholder, outside #header,
+// so a character switch repaints only this line and the header's byte-stable HTML never changes. Zeal's live character
+// first; with no Zeal, the watched log written to in the last 10 minutes; otherwise a quiet "nobody yet" line, not a gap.
+function renderActiveChar(s) {
+  const n = document.getElementById('wpActiveChar');
+  if (!n) return;
+  let name = s && s.activeCharacter ? String(s.activeCharacter) : '', via = name ? 'zeal' : '';
+  if (!name) {
+    let best = null;
+    for (const w of ((s && s.watchedLogs) || [])) if (w && w.character && w.lastSeen && (Date.now() - w.lastSeen) < 600000 && (!best || w.lastSeen > best.lastSeen)) best = w;
+    if (best) { name = String(best.character); via = 'log'; }
+  }
+  const cls = name && via === 'zeal' && s.activeCharacterClass ? String(s.activeCharacterClass) : '';
+  const html = name
+    ? '<span class="dim" style="font-size:11px;text-transform:uppercase;letter-spacing:0.6px">Playing</span> <span style="font-size:24px;font-weight:700;color:var(--text);line-height:1.2">' + esc(name) + '</span>' + (cls ? ' <span class="dim" style="font-size:13px">' + esc(cls) + '</span>' : '')
+    : '<span class="dim" style="font-size:12px">No character playing right now. Log in to EverQuest and it shows up here.</span>';
+  if (n.innerHTML !== html) n.innerHTML = html;
+}
 function renderHeader(s) {
+  try { renderActiveChar(s); } catch (eAc) { void eAc; }
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   const hasNewer = s.updateAvailable && s.latestAgentVersion
                 && s.latestAgentVersion !== s.version
@@ -31579,6 +31600,70 @@ function wpSoundOverrideHtml(t, ov) {
   }
   // acc: the accept panel that is open for a non-free voice ({ id, terms, research }), or null.
   var eng = { st: null, note: '', busy: false, acc: null }, curAudio = null;
+  // TEST PHRASE (the guild lead, 2026-10-18): every ▶ Test speaks the line chosen or typed at the top of the engine card.
+  // The picker and the box live in ONE element built once (phraseEl) and moved back in after each paint, so a repaint never
+  // resets what is typed, the caret or the choice; the choice is also kept in this browser (localStorage) across reloads.
+  // Mimic caps a spoken line at 300 characters (neuralVoice.js MAX_TEXT_CHARS), so the box does too.
+  var PHRASES = [
+    'Slow is OFF the boss.',
+    'Enrage soon. Back off.',
+    'Rampage is on YOU.',
+    'Clerics, chain heal now.',
+    'Adds incoming from behind.',
+    'Mez is broken. Pick it up before it wakes the camp. Healers, top off the tank, then everybody stack on the cleric for the next wave. Damage, hold until the slow lands.'
+  ];
+  var PHRASE_KEY = 'wpVoiceTestPhrase', LIVE_LIMIT_S = 2.5;   // 2.5 s: how long Mimic waits on a live callout before the Windows voice speaks it
+  var phrase = { preset: -1, text: '' }, phraseEl = null, pc = null;
+  try { var _ps = JSON.parse(localStorage.getItem(PHRASE_KEY) || 'null'); if (_ps) { phrase.preset = (_ps.preset >= 0 && _ps.preset < PHRASES.length) ? _ps.preset | 0 : -1; phrase.text = String(_ps.text || '').slice(0, 300); } } catch (e) { void e; }
+  function savePhrase(){ try { localStorage.setItem(PHRASE_KEY, JSON.stringify(phrase)); } catch (e) { void e; } }
+  // What ▶ Test says: the typed line if there is one, else the chosen preset, else the old heal-up line.
+  function testLine(){ var t = phrase.text.trim(); return t || (phrase.preset >= 0 ? PHRASES[phrase.preset] : sampleLine()); }
+  function buildPhraseEl(){
+    var d = document.createElement('div');
+    d.id = 'wpVoicePhrase';
+    d.style.cssText = 'margin-bottom:8px;font-size:12px;display:flex;flex-direction:column;gap:4px';
+    var o = '<option value=""' + (phrase.preset < 0 ? ' selected' : '') + '>Heal-up callout (the usual test line)</option>';
+    for (var i = 0; i < PHRASES.length; i++) o += '<option value="' + i + '"' + (phrase.preset === i ? ' selected' : '') + '>' + esc(PHRASES[i].length > 48 ? PHRASES[i].slice(0, 45) + '…' : PHRASES[i]) + '</option>';
+    d.innerHTML = '<label style="display:flex;flex-wrap:wrap;align-items:center;gap:6px"><b>Test line</b>'
+      + '<select id="wpVoicePreset" style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px;max-width:100%">' + o + '</select></label>'
+      + '<textarea id="wpVoicePhraseText" rows="2" maxlength="300" placeholder="…or type your own sentence or paragraph (up to 300 characters). It is used instead of the line above." style="width:100%;box-sizing:border-box;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-family:inherit;font-size:12px;resize:vertical"></textarea>'
+      + '<div class="dim" style="font-size:11px">Every &#9654; Test below says this line.</div>'
+      + '<div id="wpVoiceTiming" style="font-size:11px"></div>';
+    d.querySelector('#wpVoicePhraseText').value = phrase.text;
+    return d;
+  }
+  // The measured speed of the last downloaded-voice Test. It lives inside phraseEl, so a repaint never blanks it.
+  function setTiming(text, level){
+    var n = phraseEl && phraseEl.querySelector('#wpVoiceTiming');
+    if (!n) return;
+    n.textContent = text || '';
+    n.style.color = level === 'bad' ? 'var(--red)' : level === 'ok' ? 'var(--green)' : '';
+  }
+  // This PC's size, from the agent. Asked when the card opens and after a download or a Test — never on a timer.
+  async function loadPc(){
+    try { var r = await fetch('/api/pc-specs'); if (r.ok) pc = await r.json(); } catch (e) { void e; }
+  }
+  function gb(b){ return (Math.round(b / 107374182.4) / 10) + ' GB'; }
+  function pcLine(){
+    if (!pc) return '';
+    var bits = [];
+    if (pc.cores > 0) bits.push(pc.cores + ' processor core' + (pc.cores === 1 ? '' : 's'));
+    if (pc.ram_bytes > 0) bits.push(gb(pc.ram_bytes) + ' memory');
+    if (typeof pc.disk_free_bytes === 'number') bits.push(gb(pc.disk_free_bytes) + ' free disk space');
+    return bits.length ? 'This PC: ' + bits.join(' &middot; ') + '.' : '';
+  }
+  // Kokoro unpacks to about 177 MB and peaks near 525 MB of memory while it does. → { block: reason|'', hint: text|'' }
+  function kokoroFit(k){
+    var need = (k && k.totalBytes) || 177 * 1048576, out = { block: '', hint: '' };
+    if (!pc) return out;
+    if (typeof pc.disk_free_bytes === 'number') {
+      if (pc.disk_free_bytes < need * 2.5) out.block = 'Only ' + mb(pc.disk_free_bytes) + ' free on this PC\\'s disk. Kokoro needs about ' + mb(need) + ' plus room to unpack, so free some space first.';
+      else if (pc.disk_free_bytes < 1073741824) out.hint = 'Disk space is getting tight (' + mb(pc.disk_free_bytes) + ' free), but there is room for Kokoro.';
+    }
+    if (!out.block && ((pc.ram_bytes > 0 && pc.ram_bytes < 4 * 1073741824) || (pc.cores > 0 && pc.cores < 4)))
+      out.hint = (out.hint ? out.hint + ' ' : '') + 'Kokoro may be slow on this PC (' + (pc.cores || '?') + ' cores, ' + (pc.ram_bytes ? gb(pc.ram_bytes) : '?') + ' memory). Piper is lighter.';
+    return out;
+  }
   // A phrase from a downloaded voice, made by Mimic. Resolves true once it is playing, false on ANY trouble.
   // test true is a person pressing ▶ Test: Mimic and this wait longer, because Kokoro can take several seconds.
   function playNeural(ch, text, packId, test){
@@ -31645,8 +31730,8 @@ function wpSoundOverrideHtml(t, ov) {
   // Kokoro (the upgrade: sherpa-onnx + Kokoro-82M, one download). Mimic downloads and plays them; see
   // apps/mimic/neuralVoice.js. Non-free Piper voices sit behind an accept screen (acceptHtml).
   function mb(b){ var m = b / 1048576; return (m >= 10 ? Math.round(m) : Math.round(m * 10) / 10) + ' MB'; }
-  function btn(attrs, label, blue){
-    return '<button type="button" ' + attrs + ' style="background:' + (blue ? '#1f6feb;color:#fff;border:0' : 'var(--panel);color:var(--text);border:1px solid var(--border)') + ';border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (eng.busy ? ' disabled' : '') + '>' + label + '</button>';
+  function btn(attrs, label, blue, off){
+    return '<button type="button" ' + attrs + ' style="background:' + (blue ? '#1f6feb;color:#fff;border:0' : 'var(--panel);color:var(--text);border:1px solid var(--border)') + ';border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (eng.busy || off ? ' disabled' : '') + '>' + label + '</button>';
   }
   // The accept screen for a non-commercial or research-only voice: licence, the publisher's model card, the credit,
   // and the box(es) that must be ticked before Download turns on. Research voices add the warning and a second box.
@@ -31668,7 +31753,9 @@ function wpSoundOverrideHtml(t, ov) {
     var box = function(on){ return 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;padding:4px 6px;border:1px solid ' + (on ? 'var(--blue)' : 'var(--border)') + ';border-radius:5px'; };
     var h = '<h3 style="font-size:13px;margin:8px 0 4px">Voice engine</h3>'
       + '<div class="dim" style="font-size:11px;margin-bottom:6px">' + (mi ? 'Downloads are free and open source, kept on this PC, and never part of the installer. ' : 'Mimic downloads and plays these voices; open this dashboard from Mimic to change them. ')
-      + 'If a downloaded voice is slow or fails, that callout is spoken with the Windows voice instead, so none is lost.</div>'
+      + 'If a downloaded voice is slow or fails, that callout is spoken with the Windows voice instead, so none is lost.'
+      + (pcLine() ? '<br>' + pcLine() + ' The voices run on this PC, not on a server.' : '') + '</div>'
+      + '<div id="wpVoicePhraseSlot"></div>'
       + '<div style="display:flex;flex-direction:column;gap:4px">';
     h += '<div style="' + box(ch.engine === 'windows') + '"><label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer"><input type="radio" name="wpVoiceEngine" value="windows"' + (ch.engine === 'windows' ? ' checked' : '') + (mi ? '' : ' disabled') + '><b>Windows voices</b><span class="dim">Built in to Windows. Always works, and is the fallback.</span></label>'
       + '<button type="button" data-vn-engtest="windows" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654; Test</button></div>';
@@ -31706,8 +31793,11 @@ function wpSoundOverrideHtml(t, ov) {
     if (!st) h += '<div class="dim" style="font-size:11px">' + (mi ? 'Checking what is installed…' : 'Not available outside Mimic.') + '</div>';
     else if (!k.available) h += '<div class="dim" style="font-size:11px">' + esc(k.reason) + '</div>';
     else {
-      if (!k.ready) h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">' + (mi ? btn('data-vn-dl="kokoro:all"', 'Download &middot; ' + mb(k.downloadBytes || k.totalBytes), true) : '')
-        + '<span class="dim">About ' + mb((k.totalBytes || 0) + 60 * 1048576) + ' of disk once unpacked. Pick a voice after it installs.</span></div>';
+      var fit = kokoroFit(k);
+      if (!k.ready) h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">' + (mi ? btn('data-vn-dl="kokoro:all"' + (fit.block ? ' title="' + esc(fit.block) + '"' : ''), 'Download &middot; ' + mb(k.downloadBytes || k.totalBytes), true, !!fit.block) : '')
+        + '<span class="dim">About ' + mb((k.totalBytes || 0) + 60 * 1048576) + ' of disk once unpacked, and it needs roughly 525 MB of free memory while it does. Pick a voice after it installs.</span></div>'
+        + (fit.block ? '<div style="font-size:11px;padding-left:22px;color:var(--red)">' + esc(fit.block) + '</div>' : '');
+      if (fit.hint) h += '<div class="dim" style="font-size:11px;padding-left:22px">' + esc(fit.hint) + '</div>';
       else for (var q = 0; q < k.catalog.length; q++) {
         var kv = k.catalog[q], ksel = ch.engine === 'kokoro' && ch.voice === kv.id;
         h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">'
@@ -31737,7 +31827,9 @@ function wpSoundOverrideHtml(t, ov) {
       if (r && r.ok) { eng.st = r.status; eng.note = 'Installed. Callouts now use it' + ((cfgVoice.engine || 'auto') === 'auto' ? '.' : ' once you pick it above.') + (engine === 'kokoro' ? ' Mimic is warming it up in the background, so the first ▶ Test may still take a moment.' : ''); }
       else eng.note = (r && r.error) || 'The download did not finish. Nothing was changed.';
     } catch (e) { eng.note = 'Could not reach Mimic to download.'; }
-    clearInterval(poll); eng.busy = false; paint();
+    clearInterval(poll); eng.busy = false;
+    await loadPc();   // the disk just changed
+    paint();
   }
   async function removeEngine(engine, voice){
     if (eng.busy) return;
@@ -31748,12 +31840,20 @@ function wpSoundOverrideHtml(t, ov) {
     paint();
   }
   async function engineTest(spec){
-    var parts = spec.split(':'), line = sampleLine();
-    if (parts[0] === 'windows') { speakWin(line, null); return; }
+    var parts = spec.split(':'), line = testLine();
+    if (parts[0] === 'windows') { setTiming(''); speakWin(line, null); return; }
     setNote(parts[0] === 'kokoro' ? 'Making it… Kokoro can take several seconds.' : 'Making it…');
+    setTiming('');
+    // Mimic's voice bridge does not report how long it took, so this times the whole ask (making the audio and handing
+    // it over) until it starts playing — close to what a live callout waits for.
+    var t0 = performance.now();
     var ok = await playNeural({ engine: parts[0], voice: parts[1] }, line, null, true);
+    var secs = Math.round((performance.now() - t0) / 100) / 10, who = parts[0] === 'kokoro' ? 'Kokoro' : 'Piper';
     if (ok) setNote('');
     else { setNote('That voice did not answer in time, so the Windows voice spoke instead. Callouts do the same.'); speakWin(line, null); }
+    if (ok && secs <= LIVE_LIMIT_S) setTiming(who + ' spoke in ' + secs + ' s — fine for live callouts.', 'ok');
+    else setTiming('⚠ ' + (ok ? who + ' took ' + secs + ' s' : who + ' gave up after ' + secs + ' s') + ' — too slow for live callouts on this PC; the Windows voice would speak mid-raid instead.'
+      + (secs > LIVE_LIMIT_S ? ' Try ▶ Test once more: the first run after starting Mimic is slower.' : ''), 'bad');
   }
   function namesHtml(){
     var h = '<h3 style="font-size:13px;margin:14px 0 4px">Say your name</h3>';
@@ -31795,12 +31895,24 @@ function wpSoundOverrideHtml(t, ov) {
   }
   function paint(){
     if (!el) return;
-    el.innerHTML = '<h2>🗣 Voice &amp; names <span class="dim" style="font-size:11px;font-weight:normal">(how callouts sound, and how your characters are said)</span></h2>' + engineHtml() + voiceHtml() + namesHtml();
+    if (!phraseEl) phraseEl = buildPhraseEl();
+    // The test-line picker and box are not rebuilt: they are lifted out with the old HTML and put back, so what is typed
+    // survives. Taking an element out of the page drops its focus, so the caret is handed back too.
+    var ae = document.activeElement, had = ae && phraseEl.contains(ae) ? { id: ae.id, s: ae.selectionStart, e: ae.selectionEnd, top: ae.scrollTop } : null;
+    el.innerHTML = '<h2>🗣 Voice &amp; names <span class="dim" style="font-size:11px;font-weight:normal">(how callouts sound, and how your characters are said)</span></h2>'
+      + '<div class="dim" style="font-size:11px;margin-bottom:4px"><a href="https://wolfpack.quest/me/voice" target="_blank" rel="noreferrer" title="Open wolfpack.quest in a new tab">Say your name and pronunciations on wolfpack.quest &#8599;</a></div>'
+      + engineHtml() + voiceHtml() + namesHtml();
+    var slot = el.querySelector('#wpVoicePhraseSlot');
+    if (slot) slot.appendChild(phraseEl);
+    if (had) {
+      var f = phraseEl.querySelector('#' + had.id);
+      if (f) { try { f.focus(); if (had.s != null && f.setSelectionRange) f.setSelectionRange(had.s, had.e); f.scrollTop = had.top; } catch (e) { void e; } }
+    }
   }
   async function loadAll(){
     await WPSounds.loadPacks();
     if (inMimic()) { try { var c = await window.mimic.getConfig(); if (c && c.voice) cfgVoice = Object.assign({ pack: 'default', voiceName: '', rate: null, pitch: null }, c.voice); } catch (e) { void e; } }
-    await refreshEngines();
+    await Promise.all([refreshEngines(), loadPc()]);
     paint();
     try { var r = await fetch('/api/pronunciations'); pron = r.ok ? await r.json() : { characters: [], feature: 'off', signed_in: false }; } catch (e) { pron = { characters: [], feature: 'off', signed_in: false }; }
     paint();
@@ -31850,6 +31962,8 @@ function wpSoundOverrideHtml(t, ov) {
   }
   function onChange(e){
     var t = e.target; if (!t) return;
+    // Picking a ready-made line uses it: it clears anything typed, which would otherwise win.
+    if (t.id === 'wpVoicePreset') { phrase.preset = t.value === '' ? -1 : Number(t.value); phrase.text = ''; var pt = document.getElementById('wpVoicePhraseText'); if (pt) pt.value = ''; savePhrase(); return; }
     if (t.name === 'wpVoicePack') { cfgVoice.pack = t.value; save(); paint(); return; }
     if (t.name === 'wpVoiceEngine') { cfgVoice.engine = t.value; save(); paint(); return; }
     if (t.name === 'wpPiperVoice') { cfgVoice.piperVoice = t.value; cfgVoice.engine = 'piper'; save(); paint(); return; }
@@ -31859,6 +31973,7 @@ function wpSoundOverrideHtml(t, ov) {
   }
   function onInput(e){
     var t = e.target; if (!t) return;
+    if (t.id === 'wpVoicePhraseText') { phrase.text = t.value.slice(0, 300); savePhrase(); return; }
     if (t.id === 'wpVoiceRate') { cfgVoice.rate = Number(t.value) / 100; var rv = document.getElementById('wpVoiceRateV'); if (rv) rv.innerHTML = pct(cfgVoice.rate) + '&times;'; save(); return; }
     if (t.id === 'wpVoicePitch') { cfgVoice.pitch = Number(t.value) / 100; var pv = document.getElementById('wpVoicePitchV'); if (pv) pv.textContent = pct(cfgVoice.pitch); save(); return; }
     if (t.hasAttribute && t.hasAttribute('data-vn-say')) { var nm = charOf(t); if (nm) drafts[nm] = t.value; }
@@ -46286,6 +46401,16 @@ async function _handleSoundsVoices(req, res) {
     }
   }
   if (p === '/api/voice-packs' && req.method === 'GET') return send(200, { packs: VOICE_PACKS });
+  // This PC's size, for the Voice card's "will it keep up here" hint. Read once when the card opens (and after a download
+  // or a Test), never polled. Free disk is read where the agent keeps its files, which sits beside Mimic's downloaded voices.
+  if (p === '/api/pc-specs' && req.method === 'GET') {
+    const out = { cores: (os.cpus() || []).length, ram_bytes: os.totalmem(), ram_free_bytes: os.freemem(), disk_free_bytes: null };
+    try {
+      const st = fs.statfsSync(_vsDir() || os.homedir());
+      out.disk_free_bytes = Number(st.bavail) * Number(st.bsize);
+    } catch { /* an older Node, or an odd drive: the card just skips the disk line */ }
+    return send(200, out);
+  }
   if (p === '/api/pronunciations' && req.method === 'GET') return send(200, _pronStatePayload());
   if (p === '/api/pronunciations/local' && req.method === 'POST') {
     if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
