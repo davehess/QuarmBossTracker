@@ -33,9 +33,13 @@ Each of these was checked against the code on the date above.
 - **Private chat is filtered on your own PC first.** Officer chat, group chat,
   custom channels, `/say`, OOC, shouts and auctions are dropped on your machine
   before anything is sent. Tells are too, unless you turn tell relay on. If you
-  use Mimic's Chat overlay (beta), those same lines are also kept in memory on
-  your PC so the overlay can show them to you. They are never sent anywhere,
-  never written to disk, and gone when Mimic restarts.
+  use Mimic's Chat overlay (beta), those same lines are also kept on your PC so
+  the overlay can show them to you. They are never sent anywhere. To survive a
+  restart they are saved to one **encrypted** file on your PC (AES-256-GCM, with
+  a key Mimic keeps in your OS keychain — no key, no file), holding only the last
+  24 hours of what the overlay shows. It is deleted when you sign out and do not
+  sign back in within a day, the moment a different account signs in, and before
+  your access is ever revoked.
 - **The sensitive things are off until you turn them on:** tell relay, crash
   reports, uploading old logs, UI backups, and attaching your log to feedback.
 - **No selling, no ads, no third-party trackers.** wolfpack.quest loads no

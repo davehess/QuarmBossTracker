@@ -11366,3 +11366,31 @@ session review (`/raid/session`) and the public share page, a character with `ex
 - Shipped to **beta only** (web, no `web/package.json` bump — a beta-only web change keeps the main → beta sync
   clean). Review at `https://b.wolfpack.quest/raid/session`. Graduates to `main` on the guild lead's look, and the
   STATUS entry gets the stable web version then (the both-gates rule).
+
+### 357. The Chat overlay's feed is cached encrypted on the machine, wiped on logout-grace and before revoke (2026-10-18)
+The guild lead, 2026-10-17: *"cache the filled in chat overlay data encrypted locally and invalidate it on logout if a
+fresh session isn't established within a reasonable timeframe, and wipe before revoking access"*. Shipped on **beta**
+(agent 3.8.0 / Mimic 2.10.0, the Security Metapod and Live Optics line).
+- **What is kept:** the Chat overlay's own rings (chat/melee/spell/skill/loot/random/other + the relayed guild feed)
+  and the guild-feed cursor, so a restart shows the feed at once and asks the bot only for what is new. Only what the
+  overlay could show now (its Officer/Custom/Group/Tells/Away switches), newest 200 per ring, nothing older than 24 h,
+  at most 256 KB of JSON. File `logsync.chat-cache.bin` next to the agent, atomic write coalesced to one per 8 s.
+- **Encryption:** AES-256-GCM, fresh 96-bit IV per write. **Mimic makes a random 32-byte key once**, keeps it under
+  the OS keychain (`safeStorage` — DPAPI / Keychain) and hands it to the agent in `WOLFPACK_CHAT_CACHE_KEY`, with
+  `WOLFPACK_CHAT_CACHE_ID` = the session's Discord id. **No keychain / standalone agent / signed out = no key = nothing
+  written** (there is deliberately no plaintext mode). A wrong key, a torn or tampered file, or a different identity
+  inside it: the file is deleted and the feed starts empty.
+- **Mimic owns when it may live** (it holds the key and the session): on **logout** the cache stays sealed and unread
+  for a 24 h grace; the same id signing back in finds it, a different id wipes it, no session by the end deletes it.
+  24 h because the cache only holds 24 h of lines anyway. A **different Discord identity** signing in wipes it before
+  the new token is taken — one person's chat is never carried to another.
+- **Revoke:** a *definite* 401 (revoked session, `/token revoke`, member lockout) on the heartbeat, an upload, or the
+  guild-chat poll → the agent wipes the file + the live rings and refuses all writes for the process, prints
+  `[chat-cache] revoked`, and **Mimic drops the key from its config** so any leftover file is unreadable. A 5xx/429/dead
+  network is NOT a revoke (the bot answers a store blip with 503). Uninstall wipes it too.
+- **Kill switch / version floor is NOT a revoke** — it stands the agent down but overlays keep working on local data
+  (the control plane's own rule, §354/#74), so the on-screen chat must not go blank. That path calls
+  `chatCacheWipeFileOnly`: the on-disk copy goes and writes are held, but the live rings and guild feed stay.
+- Code: `packages/wolfpack-logsync/index.js` ("Chat cache": `chatCacheWipe` / `chatCacheWipeFileOnly` / `chatCacheRevoke`
+  / `chatCacheOnSessionPush`), `apps/mimic/main.js` ("Chat cache": `_chatCacheDecide` / key box / `_chatCacheWipeAll`).
+  Tests `test/chat-cache.test.js`.
