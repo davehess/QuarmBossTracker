@@ -114,6 +114,10 @@ let _agentManifestFetching = false;
 let _botReady = false;
 let _shuttingDown = false;
 
+// Node 20 exits the process on an unhandled promise rejection, so one stray `await` in a handler took the whole bot
+// (and every agent's uploads) down (the guild lead, 2026-10-17). Log it and keep serving. uncaughtException is left alone.
+process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e && e.stack || e));
+
 function _fetchBufferRaw(url) {
   return new Promise((resolve, reject) => {
     const req = require('https').get(url, { headers: { 'User-Agent': 'wolfpack-bot' }, timeout: 8000 }, (res) => {
@@ -294,6 +298,8 @@ const {
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList, isGuildMember, MEMBERS_ONLY } = require('./utils/roles');
 const mimicLink = require('./utils/mimicLink');
+const { clientIp } = require('./utils/clientIp');
+const { createIpLimiter } = require('./utils/ipLimiter');
 const { charmSpellName, charmRanFull } = require('./utils/charmSession');
 const popFlagStages = require('./utils/popFlagStages');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked, isPopEraLocked } = require('./utils/config');
@@ -12378,8 +12384,7 @@ function _budgetKey(req) {
     for (let i = 0; i < bearer.length; i++) h = (((h << 5) + h) ^ bearer.charCodeAt(i)) >>> 0;
     return 't' + h.toString(36);
   }
-  const xff = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
-  return 'ip' + (xff || req.socket?.remoteAddress || 'unknown');
+  return 'ip' + clientIp(req);
 }
 
 // Admission gate. Returns true when it has ALREADY written a response (429 or
@@ -23941,7 +23946,29 @@ async function _handleAgentUpload(req, res) {
   }
 }
 
+// Per-IP request ceiling, ahead of all routing (the guild lead, 2026-10-17: unauthenticated traffic could knock the
+// bot over). The whole fleet is ~23 req/s across ~20 players, 1-3 req/s per install, and a household can share one IP,
+// so 1200/min/IP only ever trips a flood. Tuning keys (same 60s map as budget_*): `ip_limit_per_min` (0 = off) and
+// `ip_failauth_per_min` (read by utils/mimicLink.js). Read straight off the cache, so a tuning-store blip fails open.
+const _IP_LIMIT_DEFAULT = 1200;
+const _ipLimiter = createIpLimiter({ max: _IP_LIMIT_DEFAULT });
+function _tuneNum(key, dflt) {
+  const v = _overlayTuningCache.values && _overlayTuningCache.values[key];
+  return (v === undefined || v === null || v === '' || !Number.isFinite(Number(v))) ? dflt : Number(v);
+}
+
 const httpServer = http.createServer(async (req, res) => {
+  // Per-IP limiter FIRST: over the limit costs one 429 and no further work. /health is exempt (Railway's healthcheck).
+  if (!/^\/healthz?(?:[?#]|$)/.test(req.url || '')) {
+    const _ip = clientIp(req);
+    mimicLink.setFailAuthPerMin(_tuneNum('ip_failauth_per_min', 60));
+    const _lim = _ipLimiter.hit(_ip, _tuneNum('ip_limit_per_min', _IP_LIMIT_DEFAULT));
+    if (_lim.limited) {
+      if (_lim.tripped) console.warn(`[ip-limit] ${_ip} over ${_tuneNum('ip_limit_per_min', _IP_LIMIT_DEFAULT)}/min — 429 until the window rolls`);
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(_lim.retryAfterSec) });
+      return res.end('{"error":"rate_limited"}');
+    }
+  }
   // #58 graceful shutdown: once SIGTERM has landed, refuse NEW HTTP work with a
   // 503 (agents treat 503 as retryable — the durable queue backs off, nothing is
   // lost) and let in-flight handlers drain. Health checks fall through so Railway
