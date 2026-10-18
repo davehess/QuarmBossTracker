@@ -48,9 +48,11 @@ describe('pictures the page points at', () => {
 });
 
 describe('the layouts', () => {
-  it('with no ?v= the page is the old one; ?v=b and ?v=c are the two new layouts', () => {
-    expect(page).toContain("if (v === 'b') return <AboutIllustrated s={s} />;");
-    expect(page).toContain("if (v === 'c') return <AboutTour s={s} />;");
+  it('with no ?v= the page is the old one; ?v=pb and ?v=pc keep the picture-led platform layouts, ?v=b and ?v=c are the guild layouts', () => {
+    expect(page).toContain("if (v === 'pb') return <AboutIllustrated s={s} />;");
+    expect(page).toContain("if (v === 'pc') return <AboutTour s={s} />;");
+    expect(page).toContain("if (v === 'b') return <AboutByTheRecord s={s} />;");
+    expect(page).toContain("if (v === 'c') return <AboutAsAHome s={s} />;");
     expect(page).toContain('Four pieces, built in about six weeks');       // the baseline, untouched
     expect(stripJs(story)).toContain('Four pieces, five months in, still shipping.');
   });
