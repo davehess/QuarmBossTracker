@@ -957,7 +957,7 @@ describe('every failure ends in the Windows voice (source, comments stripped)', 
   });
 
   it('the dashboard Kokoro row: Download (size), voice pick, ▶ Test, Remove, the licence and credit line, and the honest wording', () => {
-    expect(dash).toMatch(/btn\('data-vn-dl="kokoro:all"', 'Download &middot; ' \+ mb\(k\.downloadBytes \|\| k\.totalBytes\), true\)/);
+    expect(dash).toMatch(/btn\('data-vn-dl="kokoro:all"'[^\n]*?'Download &middot; ' \+ mb\(k\.downloadBytes \|\| k\.totalBytes\), true, !!fit\.block\)/);
     expect(dash).toMatch(/name="wpKokoroVoice"/);
     expect(dash).toMatch(/data-vn-engtest="kokoro:'/);
     expect(dash).toMatch(/btn\('data-vn-rm="kokoro"', 'Remove'\)/);
