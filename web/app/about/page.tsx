@@ -19,6 +19,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { Reveal, CountUp } from '@/components/about/Reveal';
 import { TankOverlayDemo, CommandCenterDemo, ChChainDemo, LootTtsDemo } from '@/components/about/OverlayDemo';
 import { AboutIllustrated, AboutTour } from './Story';
+import { AboutByTheRecord, AboutAsAHome } from './GuildAbout';
 
 export const revalidate = 3600;
 
@@ -118,10 +119,14 @@ function Chapter({
 
 export default async function AboutPage({ searchParams }: { searchParams: Promise<{ v?: string }> }) {
   const s = await getStats();
-  // Beta: two picture-led layouts to pick from (Story.tsx). No ?v= is this page, as production has it.
+  // Beta, 2026-10-18: /about is moving to be about the GUILD. ?v=b and ?v=c are the two guild layouts
+  // (GuildAbout.tsx); the platform story's two picture-led layouts (Story.tsx) keep their place at ?v=pb
+  // and ?v=pc until it moves to eqmimic.quest. No ?v= is this page, as production has it.
   const { v } = await searchParams;
-  if (v === 'b') return <AboutIllustrated s={s} />;
-  if (v === 'c') return <AboutTour s={s} />;
+  if (v === 'b') return <AboutByTheRecord s={s} />;
+  if (v === 'c') return <AboutAsAHome s={s} />;
+  if (v === 'pb') return <AboutIllustrated s={s} />;
+  if (v === 'pc') return <AboutTour s={s} />;
 
   return (
     <div className="space-y-20 sm:space-y-32 pb-24">
