@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Keepers of the (Overlay) Arts — Masterpieces + gallery** (§368) | Named; roadmap entry on main (web 1.9.3). Scoped: `docs/DESIGN-keepers-of-the-arts.md` (gallery B, set modes B, move-into-Canvas toggle + convert, socials library-lite; slice 0 = socials privacy fix) | the guild lead: go/no-go on the order and the open-decisions table there; approve the Tastemaker outreach wording before any DM |
 | **Mimic 3.0 on the beta channel** (§367) | Graduated 2026-10-18: `beta` park → 3.0.0 (builds `3.0.0-beta.N`), `alpha` re-parked → 3.0.1. The whole overlay-builder (Canvas, pieces, groups, previews, locate line) is now the beta fleet's, not alpha-only | the guild lead: install the `3.0.0-beta` build and run the in-game checks (preview crop (D), single-piece Upright bar stub (B), hover line (E)); decide a roadmap name for 3.0; say when it cuts stable |
 | **Per-section Canvas background: lockable** (§44, §360) | Backing is now per piece and per group, plate-only; still not lockable | the guild lead: say what "lock" means — hold the plate through a mode change, or something else |
 | **Security round two** (§354) | Round one shipped (Mimic local guard, bot flood limits, share-link limits). The verified insider findings (ownership checks on several member routes, relayed callouts, session expiry, Discord mentions, `/wishlist`) are in the private briefing | the guild lead: pick what to fix next; confirm Supabase sign-ups are off; 2FA on the platform accounts |
@@ -11534,3 +11535,34 @@ separate alpha-only line. Mechanics, for the next session that touches these bra
   since 3.0's public name is their call; and the usual in-game beta checks (the D/B/E items in the §360 row).
 - ⚠ **This is the beta CHANNEL, not stable.** 3.0 has NOT graduated to `main`/stable; the whole 3.0 estate (code + these
   §360–367 docs) flows to `main` only when the line is cut stable.
+
+### 368. "Keepers of the (Overlay) Arts": Mimic 3.0's name and the Masterpiece program (2026-10-18)
+The guild lead named the 3.0 line **"Keepers of the (Overlay) Arts — AKA: truly customizable canvas and gallery"**, with
+**Masterpieces** (shared layouts) made by **Tastemakers**. (The pun: "Keepers of the Art" is an EverQuest casters'
+faction, "the Art" meaning magic.) Roadmap entry added on main (web 1.9.3, beta-flagged). The program, in the guild
+lead's words where it matters:
+- **Masterpieces named for their makers.** Punny titles on a player's signature abilities — e.g. a bard's Boastful
+  Bellow layout, a warrior's enrage plan, a cleric's Divine Aura setup, a monk's fists, an enchanter's mana tools — each
+  carrying a layout, hotkeys/shortcuts and gear/clicky advice, "all built for our users around what their characters
+  have access to … to emulate some of the greatest players on our server, and in our guild."
+- ⚠ **Attribution stays out of the repo (it is public).** Titles and author credit are member-authored data in the
+  DATABASE, published by the author themselves (opt-in, revocable, same consent model as Profiles). Never hardcode a
+  member's name or a credited title in source, docs or fixtures-as-content.
+- **Recruit the Tastemakers from real use.** Ask the platform's heaviest users (counted in PLAYERS, by breadth of
+  streams + uploads over 30 days) to publish their full setup as the first Masterpieces. Every example the guild lead
+  named was already in that top 20 (measured 2026-10-18). The request goes out when a one-click **Publish** exists —
+  there is nothing to import into before then — and the wording is the guild lead's to approve before any DM is sent.
+- **Convert existing overlays into the Canvas** to cut RAM (one window instead of many), in a format that scales onto
+  any machine regardless of its UI files or resolution.
+- **Sets per character per mode** — PvP, charming, raiding, guild group, pug, power leveling, leveling, "dad-camp lazy
+  farming", and more; copy between characters; offer into the catalog with screenshots or rendered versions and a
+  preview with live data.
+- **Add without ruining modality** — a Masterpiece goes into a user's setup non-destructively (its own set, or merged
+  with Undo), never over what they have.
+- **Hotkey socials, voting and class A/B tests** — common socials refined by vote; members of a class who have the
+  items/spells/abilities try an A/B and give feedback. Privacy first: socials can carry free text, so nothing leaves a
+  machine unless the member shares that specific social.
+- **The boundary:** overlays replace display, not targeting — clicking to target stays EQ's own window (or Zeal).
+- **Status:** scoped the same day by four research passes; the synthesis, options and suggested order are in
+  `docs/DESIGN-keepers-of-the-arts.md`. Found on the way: a live privacy gap in the socials library (it counts
+  characters, not players, and ignores `exclude_from_stats`) — proposed as slice 0.
