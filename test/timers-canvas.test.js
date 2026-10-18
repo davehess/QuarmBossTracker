@@ -326,4 +326,23 @@ describe('Background on the Timers canvas', () => {
       .filter(f => /id="screenBtn"/.test(fs.readFileSync(path.join(ROOT, 'apps', 'mimic', f), 'utf8')));
     expect(others).toEqual([]);
   });
+
+  it('the panel menu has a Background row on the shared toggle; panel frames never self-plate', () => {
+    const c = stripJs(cv), p = stripJs(pre);
+    expect(c).toMatch(/data-bg[\s\S]{0,200}Background: /);
+    expect(c).toMatch(/hasAttribute\('data-bg'\)[\s\S]{0,80}M\.toggleBackdropThis\(\)/);
+    expect(p).toMatch(/toggleBackdropThis:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('wp-backdrop-toggle'\)/);
+    // Both the load-time pull and the push skip a canvas panel frame.
+    expect(p).toMatch(/s\.backdrop && _wpOverlayDoc\(\) && !_wpCanvasPart\(\)/);
+    expect(p).toMatch(/_wpOverlayDoc\(\) && !_wpCanvasPart\(\)\) document\.body\.classList\.toggle\('wp-backdrop'/);
+    // The detector is true only for an iframe carrying ?part=timers|callouts (the dock's panes, the Map pop-out
+    // window and ordinary overlays all stay plated).
+    const block = sliceBlock(pre, 'function _wpCanvasPart()', '\n}\n');
+    const fn = new Function('WP_IS_DOCKED', 'window', block + '\nreturn _wpCanvasPart();');
+    const run = (docked, search) => fn(docked, { location: { search } });
+    expect(run(true, '?part=timers&panel=p1')).toBe(true);
+    expect(run(true, '?part=callouts&panel=p2')).toBe(true);
+    expect(run(true, '')).toBe(false);          // a dock pane
+    expect(run(false, '?part=timers')).toBe(false);   // map.html?part=timers, a top-level window
+  });
 });

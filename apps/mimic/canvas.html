@@ -487,6 +487,8 @@
       + '<button class="btn" data-hide>' + (p.off ? '👁 Show panel' : '✕ Hide panel') + '</button>'
       + ((p.kind === 'timers' && !p.all) ? '<button class="btn warn" data-remove>Remove panel</button>' : '')
       + '</div>';
+    var bgOn = document.body.classList.contains('wp-backdrop');
+    h += '<div class="row"><button class="btn' + (bgOn ? ' on' : '') + '" data-bg title="A solid plate behind every panel (Ctrl+Shift+B)">🌫 Background: ' + (bgOn ? 'ON' : 'off') + ' (whole Canvas)</button></div>';
     menuEl.innerHTML = h;
     menuEl.classList.add('show');
     _menuAnchor = anchor;
@@ -542,6 +544,15 @@
     var p = panelById(_menuFor);
     if (!p) return;
     var t = ev.target;
+    if (t.hasAttribute('data-bg')) {
+      try {
+        M.toggleBackdropThis().then(function (on) {
+          document.body.classList.toggle('wp-backdrop', !!on);   // main's push may land after this reply
+          if (_menuFor === p.id && _els[p.id]) openMenu(p.id, _menuAnchor || _els[p.id].root);
+        });
+      } catch (err) { /* bridge missing on an older shell */ }
+      return;
+    }
     if (t.hasAttribute('data-test')) {
       if (p.kind === 'callouts') {
         try { var cw = _els[p.id].frame.contentWindow; if (cw && cw.wpPartFlash) cw.wpPartFlash('TEST — Death Touch on the main tank'); } catch (err) { /* page mid-load */ }
