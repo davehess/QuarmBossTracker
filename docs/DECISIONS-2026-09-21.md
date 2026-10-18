@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Quarm Oct 18 patch notes** (§369) | Applied: bot 3.2.1 + web 1.9.4 on main (Plane of Time B corpse DM 30 min; PoP guide: PoK turn-ins held when bags are full, the 6d18h cycle, phase loot limits, the Phase 3 checkpoint); agent 3.8.1 on beta (corpse DM names zones 222/223). NOT applied: the Plane of Time timer model | the guild lead: pick the PoTime timer model (A observed cycle end / B inferred / hybrid) and capture one `#timelockout` + one `/sll` during a live cycle; turn on the bot's Message Content intent in the Discord developer portal BEFORE anyone sets `MESSAGE_CONTENT_INTENT=1` |
 | **Keepers of the (Overlay) Arts — Masterpieces + gallery** (§368) | Named; roadmap entry on main (web 1.9.3). Scoped: `docs/DESIGN-keepers-of-the-arts.md` (gallery B, set modes B, move-into-Canvas toggle + convert, socials library-lite; slice 0 = socials privacy fix) | the guild lead: go/no-go on the order and the open-decisions table there; approve the Tastemaker outreach wording before any DM |
 | **Mimic 3.0 on the beta channel** (§367) | Graduated 2026-10-18: `beta` park → 3.0.0 (builds `3.0.0-beta.N`), `alpha` re-parked → 3.0.1. The whole overlay-builder (Canvas, pieces, groups, previews, locate line) is now the beta fleet's, not alpha-only | the guild lead: install the `3.0.0-beta` build and run the in-game checks (preview crop (D), single-piece Upright bar stub (B), hover line (E)); decide a roadmap name for 3.0; say when it cuts stable |
 | **Per-section Canvas background: lockable** (§44, §360) | Backing is now per piece and per group, plate-only; still not lockable | the guild lead: say what "lock" means — hold the plate through a mode change, or something else |
@@ -11566,3 +11567,40 @@ lead's words where it matters:
 - **Status:** scoped the same day by four research passes; the synthesis, options and suggested order are in
   `docs/DESIGN-keepers-of-the-arts.md`. Found on the way: a live privacy gap in the socials library (it counts
   characters, not players, and ignores `exclude_from_stats`) — proposed as slice 0.
+
+### 369. Quarm's October 18 patch notes: what we changed and what we did not (2026-10-18)
+The guild lead pasted the notes (the Discord ingestion stores no text, below). Same approach as §352.
+- **Applied, main (bot 3.2.1 · web 1.9.4):** the corpse DM gives 30 minutes in zone 223 (`potimeb`, "the second part
+  of the Plane of Time") instead of an hour; every other PoP zone keeps an hour (`_POTIME_B_CORPSE_MOVE_SEC`). The PoP
+  guide now says PoK spell turn-ins never drop on the ground or cursor (a spell or returned parchment goes to a free bag
+  slot, or is held until you make room and speak to any planar spell turn-in vendor; extras are held the same way), and
+  gives the Plane of Time rules: one fixed 6 day 18 hour cycle from the guild's first entry that kills no longer extend,
+  Phase 1 loot limited 12 hours and Phases 2–3 3.5 days (never past the cycle end), Phases 4–6 down until the cycle ends,
+  the Phase 3 checkpoint, the 10-minute empty-zone visit end, the 90 cap with 18 into each Phase 1 wing. Roadmap entry +
+  onboarding changelog. No web/bot text anywhere said "drops on the ground" — the guide only lacked the new facts.
+- **Applied, beta (agent 3.8.1):** the agent's zone-name table stopped at 221, so a death in zones 222/223 sent its
+  corpse DM with no zone; added `222 Plane of Earth` (`poearthb`) and `223 Plane of Time` (`potimeb`), checked against
+  `eqemu_zone`.
+- **NOT applied — the Plane of Time timer model.** Only Quarm is on the board (`data/bosses.json`, 162 h = 6d18h, counted
+  from the kill). Under the new rule the cycle starts at the guild's first ENTRY and kills don't extend it, so "kill +
+  162 h" is now the wrong meaning, and slow mode's 18 h override would also be wrong for Quarm. Options: **A** read the
+  server's own numbers (`#timelockout` / `/sll` — needs one captured sample first), **B** infer the cycle start from the
+  first guild member seen in zone 219/223, **hybrid** B's ledger overwritten by any observed value. Nothing is known to
+  log an entry, a cycle start or the portal's other-guild message. Waiting on the guild lead's pick + a capture.
+- **Not written, no safe wording:** the portal's "belongs to another guild" message, repeated portal clicks, Phase 5
+  room guards returning, the failed-attempt reset rules before/after the checkpoint.
+- **Catalog lag:** Putrescent Blood (item 26635) still lists only flayed horrors and skinless creatures; the 7% from the
+  Torment constructs and twisted crawlers lands when `sync-quarm.yml` pulls a newer upstream dump (the last one is from
+  2026-09-27). Venenzi's self-found turn-ins are in the mirrored script, but `scripted_npc_turnins` lacks them (an
+  importer gap that predates this patch — separate fix).
+- ⚠ **Patch-note ingestion holds no text.** All 1,358 `quarm_patch_notes` rows have `content_missing = true` because the
+  bot runs without Discord's Message Content intent. Fix order matters: turn the intent ON in the Discord developer
+  portal FIRST, then set `MESSAGE_CONTENT_INTENT=1` on Railway — requesting an intent the portal hasn't granted makes
+  Discord refuse the bot's login.
+
+**Same session, art and brand (records only):** the guild lead bought `raidmimic.com`, `.net` and `.quest` (Porkbun;
+what they point at is still a pick: park → eqmimic.quest, rename the front door, or a separate game-agnostic service
+page). Pixel art made with the MIT `claude-pxl` kit (not vendored; a yes/no is open): the friendly eared Mimic from the
+app icon, a "just a chest" variant, Discord emoji + a sticker (the guild lead picked Discord emotes as the first use),
+and a guild hall + roster card drawn from each active main's race and class. The roster, names and rendered images
+stay outside the repo; only a name-free generator could ever be committed.
