@@ -9524,7 +9524,7 @@ async function dismissTopDamage(key) {
     if (serverKey === "damage" && data.rows){
       html += "<table><tr><th>#</th><th>Character</th><th class=num>Total</th><th class=num>Peak DPS</th><th class=num>Enc</th></tr>";
       data.rows.slice(0,12).forEach(function(r, i){
-        html += "<tr><td class=dim>" + (i+1) + "</td><td class=name>" + r.character + "</td><td class=num>" + fmt(r.totalDamage) + "</td><td class=num>" + fmt(r.peakDps) + "</td><td class=num>" + r.encounters + "</td></tr>";
+        html += "<tr><td class=dim>" + (i+1) + "</td><td class=name>" + esc(r.character) + "</td><td class=num>" + fmt(r.totalDamage) + "</td><td class=num>" + fmt(r.peakDps) + "</td><td class=num>" + esc(r.encounters) + "</td></tr>";   // names come from other members' uploads: escape (2026-10-17)
       });
       html += "</table>";
     } else if (serverKey === "pvp"){
@@ -9537,7 +9537,7 @@ async function dismissTopDamage(key) {
         recent.forEach(function(r){
           var boss = (r.boss || "?").replace(/_/g, " ");
           var when = r.snapshot_at ? new Date(r.snapshot_at).toLocaleString() : "";
-          html += "<tr><td class=name>" + boss + "</td><td class=dim>" + when + "</td><td class=num>" + r.rank + " of " + r.of + "</td></tr>";
+          html += "<tr><td class=name>" + esc(boss) + "</td><td class=dim>" + when + "</td><td class=num>" + esc(r.rank) + " of " + esc(r.of) + "</td></tr>";
         });
         html += "</table>";
       }
