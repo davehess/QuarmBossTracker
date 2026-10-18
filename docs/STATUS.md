@@ -154,6 +154,15 @@ next touch one rather than assuming a missing row means a missing doc.
   `/api/raid/session/replay` so the members' board is labelled too. Code: `web/lib/raidSession.ts`,
   `raidSessionBids.ts`, `raidShareLookup.ts` (`loadAnon`); tests `test/raid-session-anon.test.js`. `/privacy` and
   `docs/PRIVACY.md` reworded. Waiting on the guild lead's look at `https://b.wolfpack.quest/raid/session`.
+- **✅ Kokoro voice install no longer needs Windows' bzip2 (Mimic, beta, 2026-10-18; DECISIONS §359).** Field report
+  (the guild lead, screenshot): the Kokoro download failed with `tar.exe: ... unable to run program "bzip2 -d"` —
+  Windows' bundled bsdtar wasn't built with internal bzip2 on that PC and shells out to a `bzip2.exe` stock Windows
+  lacks. Fix: `apps/mimic/neuralVoice.js` `extractTarBz2` now unpacks the two pinned `.tar.bz2` archives in pure JS
+  (vendored seek-bzip 2.0.0, MIT, `apps/mimic/vendor/seek-bzip/`) — no `tar.exe`, no external bzip2; same sha256 pins,
+  same path-traversal / regular-files-only guards (`safeZipTarget`), block-by-block decode so the tray stays
+  responsive (model unpack ~18 s, ~525 MB transient). Piper and the Windows voice were unaffected. `test/neural-voice.test.js`
+  (91 tests incl. traversal/symlink/device rejection; source test now bans `tar.exe`/`-xjf` in that file). ⚠ Needs a
+  Windows re-test on a box that showed the error (and that electron-builder ships `vendor/`).
 - **⏳ Chat overlay feed cached encrypted on the machine, wiped on logout-grace and before revoke (agent 3.8.0 / Mimic
   2.10.0, beta, 2026-10-18; DECISIONS §357).** The guild lead, 2026-10-17: *"cache the filled in chat overlay data
   encrypted locally and invalidate it on logout if a fresh session isn't established within a reasonable timeframe, and

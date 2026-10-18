@@ -11439,3 +11439,26 @@ graduation to the guild's own account. Decisions made this session:
   and §62a (eqmimic service model + licence) stays open.
 Full scoping in this session's handback; surfaces to touch for offboarding are in the report (member lockouts +
 `mimic_sessions` revoke + `audit_log`, which today has no tenant key and is not append-only).
+
+### 359. Kokoro voice unpacks without Windows' bzip2 (field fix, 2026-10-18)
+Field report (the guild lead, screenshot): installing the Kokoro voice failed with `tar.exe: Error opening archive:
+Can't initialize filter; unable to run program "bzip2 -d"`. Root cause: `apps/mimic/neuralVoice.js` unpacked the two
+sherpa-onnx `.tar.bz2` archives with Windows' `tar.exe` (`-j`/bzip2). Many Windows boxes' bundled bsdtar was NOT built
+with internal bzip2, so it tries to shell out to an external `bzip2.exe` that stock Windows does not ship — the
+comment's assumption that "Windows tar unpacks .tar.bz2" is false on those PCs. Piper and the Windows voice were
+unaffected (Kokoro is the optional upgrade), so it degraded, not broke.
+- **Fix (beta):** `extractTarBz2` now unpacks in **pure JS**, starting no process — bzip2 via **vendored seek-bzip
+  2.0.0** (MIT, AGPL-inbound-compatible, `apps/mimic/vendor/seek-bzip/` with a provenance header) + a small tar reader
+  (ustar prefix, GNU long names, pax). The two pinned URLs/sha256/sizes are **unchanged** (no re-host). Kept: the
+  `safeZipTarget` path-traversal guard, regular-files-only (links/devices/fifos refused), empty-archive check, size +
+  entry caps, bounds checks, and `_rmrf` cleanup on any failure; the whole entry list is validated before any write,
+  so a hostile entry late in the archive writes nothing. Removed `tarPath`/`_run`/`NO_TAR`/`execFile` for this path.
+  The model unpack decodes block-by-block with an event-loop yield so the tray stays responsive (~18 s, ~525 MB
+  transient; a streaming writer is the next step only if low-RAM PCs struggle).
+- **Why not re-host as .zip/.tar.gz:** sherpa-onnx publishes neither file as `.zip` (checked the v1.13.0 win-x64 and
+  tts-models releases), and re-hosting would mean producing + hosting ~120 MB of assets and re-pinning hashes; the
+  pure-JS path keeps the upstream pins and needs no ops.
+- **Guard for the future:** the comment-stripped source test in `test/neural-voice.test.js` now bans `tar.exe`,
+  `-xjf`/`-tjf` and `exec` in `neuralVoice.js`, so nobody reintroduces the system-tar dependency.
+- ⚠ **Not yet re-tested on Windows** (electron-builder packaging of `vendor/` + a real install on a box that showed
+  the error). A beta tester with the new build retries the Kokoro install button.
