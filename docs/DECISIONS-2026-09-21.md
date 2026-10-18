@@ -11655,3 +11655,11 @@ of versa's deployments for the day. did all of our changes for the other overlay
   (217 rows, 87 characters, all from 13:23–20:00 UTC on 2026-10-14). So "typical" was one "night": every character seen in ANY
   raid today, daytime groups and alts included (8 distinct druids). Second bug: signups say `Shadowknight`, the roster says
   `Shadow Knight`, so tonight's 4 SKs read as "0 tonight vs ~4". Fix waits for the guild lead's source pick and the freeze.
+
+**Same day — character gender lives in OpenDKP, not in our tables.** The guild lead corrected a "we hold nobody's gender"
+claim: OpenDKP's roster (`GET /clients/wolfpack/characters`, the same call `getCharacters` in `utils/opendkp.js` makes)
+carries `Gender` per character ("Male" / "Female", occasionally "F", sometimes blank). Of the 69 active mains, 66 have
+one; the guild lead confirmed three corrections against it. `utils/openDkpSync.js` copies `race`/`class`/`rank` into
+`characters` but not gender, and `raid_night_appearance.gender` stays NULL until Zeal sends entity looks. **Before
+saying gender is unknown, read OpenDKP.** The guild-hall sprites (scratch only) now draw from it. Storing it in
+`characters` (one column + one line in the sync) waits until the raid spectator needs it from the web.
