@@ -1,7 +1,10 @@
 // GET /api/spectator/replay: a recorded raid night, for /spectator/replay.
 //
 //   ?nights=1                         -> { nights: NightSummary[] }  newest first, the last 60 days, each split into
-//                                        sessions (gaps over 20 min) with the guild raid session marked (19:30-00:30 ET)
+//                                        sessions (gaps over 20 min) with the guild raid session marked (19:30-00:30 ET).
+//                                        Includes TODAY's night while it is being recorded: it is a plain read of
+//                                        raid_track_minutes, no upper bound, so `last` is the newest row written.
+//   ?nights=1&recent=1                -> the same for the last 50 hours only (the board's once-a-minute poll)
 //   ?night=<key>&from=<iso>&to=<iso>  -> { night, from, to, rows: [{ minute_at, zones, data }] }
 //
 // Members-only, the same gate as /api/spectator/positions: a signed-in Supabase session, 401 otherwise.
@@ -25,6 +28,7 @@ export const dynamic = 'force-dynamic';
 
 const GUILD = GUILD_TAG;
 const NIGHTS_DAYS = 60;
+const RECENT_HOURS = 50;
 const NO_STORE = { 'Cache-Control': 'no-store' };
 const fail = (status: number, error: string) => NextResponse.json({ error }, { status, headers: NO_STORE });
 
@@ -40,7 +44,10 @@ export async function GET(req: Request) {
     const admin = supabaseAdmin();
 
     if (q.get('nights')) {
-      const since = new Date(Date.now() - NIGHTS_DAYS * 86_400_000).toISOString();
+      // &recent=1 is the live board's poll: only the last RECENT_HOURS, so a minute-by-minute refresh does not pull
+      // sixty days. A night key rolls over at 06:00 ET, so today's and yesterday's nights begin inside 50 hours and
+      // come back whole; an older night caught at the edge is cut short, and the board ignores a cut-short summary.
+      const since = new Date(Date.now() - (q.get('recent') === '1' ? RECENT_HOURS * 3_600_000 : NIGHTS_DAYS * 86_400_000)).toISOString();
       const rows = await selectAll<NightMinute>((from, to) => admin.from('raid_track_minutes')
         .select('night_key, minute_at, zones, raiders')
         .eq('guild_id', GUILD)

@@ -10,6 +10,11 @@
 //     loop: two canvases, two views, one set of frames and one set of fetches.
 //   * The data arrives in 15-minute windows (/api/spectator/replay). The window the playhead is in and the next
 //     one are kept; the rest are dropped, so a whole night (~5.5 MB) is never held at once.
+//   * A raid still being recorded keeps arriving (the guild lead, 2026-10-17: "spectator should continuously pull
+//     fresh raid days so it can be used live data"): the night list is asked again every minute while the page is
+//     visible and merged in place (lib/raidReplay.ts mergeNights), a window loaded short is asked for again once the
+//     night grows past it, and Live follows the newest recorded minute at 1x. The data is about a minute behind real
+//     time: the recorder writes a minute when the next one begins. Bounded mode (below) does none of this.
 //   * Between two recorded frames (about 3 s apart) a dot is interpolated, so it glides instead of hopping.
 //   * Picks (highlighted raiders, the followed one, the split mode) are state in the URL, see lib/replayFollow.ts.
 //   * A night (a whole calendar day) is replayed one SESSION at a time: the guild raid by default, the daytime and
@@ -30,9 +35,10 @@ import {
   type View, type ZoneMap,
 } from '@/lib/spectator';
 import {
-  FRAME_GAP_MS, MINUTE_MS, REPLAY_WINDOW_MS, SPLIT_INIT, decodeRows, defaultSessionIndex, frameIndexAt, glideTargets,
+  FRAME_GAP_MS, MINUTE_MS, NIGHTS_POLL_MS, REPLAY_WINDOW_MS, SPLIT_INIT, decodeRows, defaultSessionIndex, frameIndexAt,
+  glideTargets, growSession, liveAvailable, liveLagging, livePlayhead, mergeNights, newNightToFollow, newestSession,
   nextSpanStart, parseSessionParam, pickReplayZone, pickSplit, recentTargetNames, sessionLabel, sessionSearch,
-  windowIndex, zoneCounts,
+  windowIndex, windowNeedsRefetch, zoneCounts,
   type NightSummary, type ReplayFrame, type ReplayRaider, type ReplaySession, type ReplayTarget, type SplitState,
 } from '@/lib/raidReplay';
 import { FRAME_SNAP_MS, easeScale, frameStep } from '@/lib/replayFraming';
@@ -72,7 +78,9 @@ type MapEntry =
   | { status: 'error' }
   | { status: 'ready'; map: ZoneMap; prep: Prepared };
 
-type Win = { state: 'loading' | 'ok' | 'err'; at: number };
+// `to`: how far the window reached when it came in (a window loaded short is stale once the night grows past it);
+// `busy`: an 'ok' window being asked for again, which keeps drawing what it has meanwhile.
+type Win = { state: 'loading' | 'ok' | 'err'; at: number; to: number; busy?: boolean };
 type Drawn = { name: string; cls: string | null; hp: number | null; px: number; py: number };
 type Placed = { r: ReplayRaider; x: number; y: number; z: number };
 
@@ -484,6 +492,9 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
   const [query, setQuery] = useState('');
   const [groupBy, setGroupBy] = useState<'class' | 'alpha'>('class');
   const [rosterVer, setRosterVer] = useState(0);
+  const [live, setLive] = useState(false);                  // following the newest recorded minute, at 1x
+  const [nowMs, setNowMs] = useState(() => Date.now());     // refreshed with each poll: whether Live is still on offer
+  const [tailLast, setTailLast] = useState<number | null>(null);   // newest minute the tail window has seen past the list
 
   // The session being replayed (`?session=` names it, and so its night, in a shared link). A night is a whole
   // calendar day, so the night list's default is its guild raid; the other sessions are options (lib/raidReplay.ts).
@@ -501,10 +512,11 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
   // coverage spans and its zone visits. The night_key stays the whole night's, which is what the data request needs.
   const night = useMemo<NightSummary | null>(() => {
     if (!chosen) return null;
-    const { night: n, session: s } = chosen;
-    if (!s) return n;
+    const { night: n, session: picked } = chosen;
+    if (!picked) return n;
+    const s = growSession(picked, tailLast);   // a minute the live tail has seen before the list has
     return { ...n, first: new Date(s.from).toISOString(), last: new Date(s.to - MINUTE_MS).toISOString(), minutes: s.minutes, zones: s.zones, runs: s.runs, spans: s.spans };
-  }, [chosen]);
+  }, [chosen, tailLast]);
   const split = info.zones[1] !== null;
 
   // ── refs: everything the drawing reads ─────────────────────────────────────
@@ -523,6 +535,13 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
   const winFrames = useRef(new Map<number, ReplayFrame[]>());
   const wins = useRef(new Map<number, Win>());
   const gen = useRef(0);
+  const liveRef = useRef(false);
+  const nightsRef = useRef<NightSummary[] | null>(null);   // the list as last merged, for the poll to compare against
+  const viewKeyRef = useRef<string | null>(null);          // the night on screen
+  viewKeyRef.current = chosen?.night.night_key ?? null;
+  const pendingLiveRef = useRef<{ from: number } | null>(null);   // go Live once the session starting here has loaded
+  const urlSessionRef = useRef<number | null>(null);       // the session the opening URL named, if any
+  const bootRef = useRef(false);
   const mapsRef = useRef<Record<string, MapEntry>>({});
   const mapReqs = useRef(new Set<string>());
   const rafRef = useRef(0);
@@ -554,16 +573,45 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
   useEffect(() => {
     if (urlsRef.current) return;   // bounded: the one window came in as a prop
     let dead = false;
-    fetch('/api/spectator/replay?nights=1')
-      .then(async res => {
-        if (res.status === 401) { if (!dead) setSignedOut(true); return; }
-        if (!res.ok) throw new Error('bad');
-        const j = await res.json();
-        if (!dead) setNights(Array.isArray(j.nights) ? j.nights : []);
-      })
-      .catch(() => { if (!dead) setNetErr(true); });
-    return () => { dead = true; };
-  }, []);
+    let busy = false;
+    // The first pull is the whole list; every later one asks only for the last two days and is merged in.
+    const pull = () => {
+      if (busy) return;
+      busy = true;
+      const first = !nightsRef.current;
+      fetch('/api/spectator/replay?nights=1' + (first ? '' : '&recent=1'), first ? undefined : { cache: 'no-store' })
+        .then(async res => {
+          if (res.status === 401) { if (!dead) setSignedOut(true); return; }
+          if (!res.ok) throw new Error('bad');
+          const j = await res.json();
+          if (dead) return;
+          const fresh: NightSummary[] = Array.isArray(j.nights) ? j.nights : [];
+          const prev = nightsRef.current;
+          const next = mergeNights(prev, fresh);
+          setNowMs(Date.now());
+          setNetErr(false);
+          if (next === prev) return;
+          nightsRef.current = next;
+          setNights(next);
+          // Today's raid starting is not a reason to move anyone, unless they are following the last one live.
+          const go = prev ? newNightToFollow(prev, next, viewKeyRef.current, liveRef.current) : null;
+          const s = go ? newestSession([go]) : null;
+          if (go && s) {
+            pendingLiveRef.current = { from: s.from };
+            setSessionFrom(s.from);
+            setNightKey(go.night_key);
+          }
+        })
+        .catch(() => { if (!dead && !nightsRef.current) setNetErr(true); })
+        .finally(() => { busy = false; });
+    };
+    pull();
+    // Once a minute while the page is on screen, and at once when it comes back to the front.
+    const timer = setInterval(() => { if (!document.hidden) pull(); }, NIGHTS_POLL_MS);
+    const onVisible = () => { if (!document.hidden) { pull(); schedule(); } };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { dead = true; clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
+  }, [schedule]);
 
   // Keep the windows around the playhead (the one it is in, one behind, two ahead), drop the rest.
   const rebuild = useCallback(() => {
@@ -584,11 +632,23 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
     const end = Date.parse(n.last) + MINUTE_MS;
     const from = start + w * REPLAY_WINDOW_MS;
     if (from >= end) return;
+    const now = Date.now();
     const have = wins.current.get(w);
-    if (have && (have.state !== 'err' || Date.now() - have.at < 5000)) return;   // an error is retried after 5 s
-    wins.current.set(w, { state: 'loading', at: Date.now() });
+    const following = liveRef.current && !urlsRef.current;
+    let refresh = false;
+    if (have) {
+      if (have.state === 'loading' || have.busy) return;
+      if (have.state === 'err') {
+        if (now - have.at < 5000) return;   // an error is retried after 5 s
+      } else if (windowNeedsRefetch(have.to, have.at, from, end, now, following)) {
+        refresh = true;   // loaded short and the night has grown past it, or Live and this is the tail
+      } else return;
+    }
+    // Live asks for the whole tail window, not just up to the end the list knows: the rows past it are the news.
+    const tail = following && end <= from + REPLAY_WINDOW_MS;
+    wins.current.set(w, have && refresh ? { ...have, busy: true } : { state: 'loading', at: now, to: from });
     const g = gen.current;
-    const to = Math.min(from + REPLAY_WINDOW_MS, end);
+    const to = tail ? from + REPLAY_WINDOW_MS : Math.min(from + REPLAY_WINDOW_MS, end);
     const url = urlsRef.current
       ? urlsRef.current.window(n.night_key, new Date(from).toISOString(), new Date(to).toISOString())
       : '/api/spectator/replay?night=' + encodeURIComponent(n.night_key)
@@ -601,23 +661,68 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
         if (!res.ok) throw new Error('bad');
         const j = await res.json();
         if (g !== gen.current) return;
-        const decoded = decodeRows(Array.isArray(j.rows) ? j.rows : []);
+        const rows: { minute_at: string }[] = Array.isArray(j.rows) ? j.rows : [];
+        const decoded = decodeRows(rows as Parameters<typeof decodeRows>[0]);
         winFrames.current.set(w, decoded);
-        wins.current.set(w, { state: 'ok', at: Date.now() });
+        // The newest minute that came back, which a tail request can find past the end the list knew.
+        const newest = rows.reduce((m, r) => Math.max(m, Date.parse(r.minute_at) || 0), 0);
+        wins.current.set(w, { state: 'ok', at: Date.now(), to: tail ? Math.min(from + REPLAY_WINDOW_MS, Math.max(end, newest + MINUTE_MS)) : to });
+        if (tail && newest + MINUTE_MS > end) setTailLast(p => Math.max(p ?? 0, newest));
         if (collectRoster(decoded, rosterRef.current)) setRosterVer(v => v + 1);
         rebuild();
       })
       .catch(() => {
         if (g !== gen.current) return;
-        wins.current.set(w, { state: 'err', at: Date.now() });
+        // A refresh that failed keeps the frames it has and tries again on the next due pass.
+        wins.current.set(w, have && refresh ? { ...have, busy: false, at: Date.now() } : { state: 'err', at: Date.now(), to: from });
         schedule();
         setTimeout(schedule, 5000);   // the next pass asks again
       });
   }, [rebuild, schedule]);
 
+  // Hold on to the night and session on screen. Until now an unset pick meant "the newest night", which would carry
+  // the viewer to a brand-new night the moment the list poll finds one.
+  useEffect(() => {
+    if (urlsRef.current || !urlReady || !chosen) return;
+    if (nightKey == null) setNightKey(chosen.night.night_key);
+    if (sessionFrom == null && chosen.session) setSessionFrom(chosen.session.from);
+  }, [chosen, nightKey, sessionFrom, urlReady]);
+
+  // Live: the playhead on the newest recorded minute (less LIVE_LAG_MS), playing at 1x. Any scrub or pause ends it.
+  const setLiveOff = useCallback(() => { liveRef.current = false; setLive(false); }, []);
+  const startLive = useCallback(() => {
+    const n = nightRef.current;
+    if (!n) return;
+    liveRef.current = true;
+    setLive(true);
+    speedRef.current = 1;
+    setSpeed(1);
+    playingRef.current = true;
+    setPlaying(true);
+    tRef.current = livePlayhead(Date.parse(n.first), Date.parse(n.last) + MINUTE_MS);
+    lastTs.current = 0;
+    setUiT(tRef.current);
+    schedule();
+  }, [schedule]);
+
+  // Choosing a night or session that is not the one on screen waits here until it has loaded, then starts Live.
+  // The page opens in Live when the newest session is being recorded and the URL did not name another one.
+  useEffect(() => {
+    if (urlsRef.current || bootRef.current || !nights || !urlReady) return;
+    bootRef.current = true;
+    const s = urlSessionRef.current == null ? newestSession(nights) : null;
+    if (!s || !liveAvailable(s.to, Date.now())) return;
+    pendingLiveRef.current = { from: s.from };
+    setSessionFrom(s.from);
+    setNightKey(nights[0].night_key);
+  }, [nights, urlReady]);
+
   // A new night starts at its first minute, paused, with nothing loaded.
   useEffect(() => {
     nightRef.current = night;
+    liveRef.current = false;
+    setLive(false);
+    setTailLast(null);
     gen.current++;
     winFrames.current.clear();
     wins.current.clear();
@@ -635,11 +740,31 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
     setInfo(i => (i.zones[0] === null && i.zones[1] === null ? i : { ...i, zones: [null, null] }));
     if (!night) return;
     tRef.current = Date.parse(night.first);
+    const wantLive = pendingLiveRef.current;
+    if (wantLive && wantLive.from === Date.parse(night.first)) {
+      pendingLiveRef.current = null;
+      if (liveAvailable(Date.parse(night.last) + MINUTE_MS, Date.now())) startLive();
+    }
     setUiT(tRef.current);
-    ensureWindow(0);
+    ensureWindow(windowIndex(Date.parse(night.first), tRef.current));
     schedule();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [night?.night_key, night?.first]);
+
+  // The same session grown (a later last minute from the list poll or the live tail): the refs follow, in place. The
+  // reset above keys on night_key and the session's first minute and never sees this, so nothing is cleared, the
+  // playhead stays, and the window that was loaded short now reads as stale and is asked for again (ensureWindow).
+  useEffect(() => {
+    nightRef.current = night;
+    schedule();
+    const t = setTimeout(schedule, 2100);   // a paused board still takes the stale tail once STALE_RETRY_MS has passed
+    return () => clearTimeout(t);
+  }, [night, schedule]);
+
+  // Live is on offer only while the session is being recorded; it ends by itself when the raid does.
+  useEffect(() => {
+    if (live && night && !liveAvailable(Date.parse(night.last) + MINUTE_MS, nowMs)) setLiveOff();
+  }, [live, night, nowMs, setLiveOff]);
 
   // The night's killed bosses with their spawn points: for nights recorded before the recorder kept targets.
   useEffect(() => {
@@ -795,19 +920,25 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
     const dt = lastTs.current ? Math.min(250, ts - lastTs.current) : 0;
     lastTs.current = ts;
     let t = tRef.current;
+    // Live: back to the tail if the playhead fell far behind it (a hidden tab), and keep the tail window fresh.
+    if (liveRef.current) {
+      if (liveLagging(t, end)) t = tRef.current = livePlayhead(start, end);
+      ensureWindow(windowIndex(start, end - 1));
+    }
     const w = windowIndex(start, t);
+    // Always asked: it returns at once for a window that is loaded and current, and refetches one that fell behind.
+    ensureWindow(w);
     const here = wins.current.get(w);
     const loaded = here?.state === 'ok';
-    if (!loaded) ensureWindow(w);
 
     if (playingRef.current) {
       const sp = nextSpanStart(n.spans, t);
       if (!sp.inside) {
-        // A break in the raid (nobody recorded): jump over it.
-        if (sp.next != null) t = sp.next; else { t = end - 1; playingRef.current = false; setPlaying(false); }
+        // A break in the raid (nobody recorded): jump over it. Live waits at the tail for the next minute instead.
+        if (sp.next != null) t = sp.next; else { t = end - 1; if (!liveRef.current) { playingRef.current = false; setPlaying(false); } }
       } else if (loaded) {
         t += dt * speedRef.current;
-        if (t >= end) { t = end - 1; playingRef.current = false; setPlaying(false); }
+        if (t >= end) { t = end - 1; if (!liveRef.current) { playingRef.current = false; setPlaying(false); } }
       }
       if (loaded) {
         ensureWindow(w + 1);
@@ -840,9 +971,10 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
     const lo = Date.parse(n.first), hi = Date.parse(n.last) + MINUTE_MS - 1;
     tRef.current = Math.min(hi, Math.max(lo, t));
     lastTs.current = 0;
+    setLiveOff();   // a scrub leaves the tail
     setUiT(tRef.current);
     schedule();
-  }, [schedule]);
+  }, [schedule, setLiveOff]);
 
   // A request from outside (bounded mode): move the playhead there and pause, so the picture stays on that moment.
   const seekN = bounded?.seek?.n ?? 0;
@@ -859,11 +991,12 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
     if (!n) return;
     const p = !playingRef.current;
     if (p && tRef.current >= Date.parse(n.last) + MINUTE_MS - 2000) tRef.current = Date.parse(n.first);
+    if (!p) setLiveOff();   // a pause leaves the tail
     playingRef.current = p;
     lastTs.current = 0;
     setPlaying(p);
     schedule();
-  }, [schedule]);
+  }, [schedule, setLiveOff]);
 
   useEffect(() => { speedRef.current = speed; }, [speed]);
   useEffect(() => { tailsRef.current = tails; schedule(); }, [tails, schedule]);
@@ -879,7 +1012,8 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
   useEffect(() => {
     try {
       setPicks(parsePicks(window.location.search));
-      setSessionFrom(parseSessionParam(window.location.search));
+      urlSessionRef.current = parseSessionParam(window.location.search);
+      setSessionFrom(urlSessionRef.current);
       setBg(parseBg(window.location.search));
     } catch { /* no URL to read */ }
     setUrlReady(true);
@@ -1102,6 +1236,7 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
   const pos = Math.min(total, Math.max(0, Math.round((uiT - start) / 1000)));
   const dur = Math.round((end - start) / 60_000);
   const hereTotal = info.here[0] + info.here[1];
+  const liveOn = !bounded && liveAvailable(end, nowMs);   // the session is being recorded: Live can follow it
   const where = split ? `${info.zones[0]} and ${info.zones[1]}` : (info.zones[0] ?? 'the raid');
   const aria = (mode === '3d' ? '3D replay' : 'Replay') + ` of ${night.night_key}: ${where} with ${hereTotal} raiders. `
     + 'Space plays or pauses, left and right arrows step ten seconds, plus and minus zoom, Home fits the raid.';
@@ -1321,9 +1456,15 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
             className={`${chip} ${playing ? chipOn : chipIdle} min-w-[4.5rem]`}>
             {playing ? 'Pause' : 'Play'}
           </button>
+          {liveOn && (
+            <button type="button" aria-pressed={live} onClick={live ? setLiveOff : startLive}
+              className={`${chip} ${live ? chipOn : chipIdle}`}>
+              <span aria-hidden="true" className={live ? 'text-red-400' : undefined}>●</span> Live
+            </button>
+          )}
           <div className="flex gap-1.5" role="group" aria-label="Speed">
             {SPEEDS.map(s => (
-              <button key={s} type="button" aria-pressed={speed === s} onClick={() => setSpeed(s)}
+              <button key={s} type="button" aria-pressed={speed === s} onClick={() => { setSpeed(s); if (s !== 1) setLiveOff(); }}
                 className={`${chip} ${speed === s ? chipOn : chipIdle}`}>{s}×</button>
             ))}
           </div>
