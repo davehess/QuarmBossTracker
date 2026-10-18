@@ -15,7 +15,7 @@
 //
 // Run: npx vitest run test/raid-share.test.js
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, stripJs, stripSql } from './_source-slice.js';
@@ -23,7 +23,7 @@ import {
   newToken, hashToken, tokenLooksValid, shareStatus, makeWindow, boundWindow, inWindow, replaySlice,
   windowOfShare, expiryDays, windowIso, MAX_WINDOW_MS,
 } from '../web/lib/raidShare.ts';
-import { resolveShare } from '../web/lib/raidShareLookup.ts';
+import { resolveShare, clearShareMemo } from '../web/lib/raidShareLookup.ts';
 import {
   nameKey, optedOutSet, isOptedOut, dropOptedOut, scrubMinuteData, attendanceFromMinutes, buildKills, buildLoot,
   buildRolls, buildTicks,
@@ -105,6 +105,10 @@ describe('looking a token up (unknown, expired and revoked are all 404)', () => 
     id: 'id1', guild_id: 'wolfpack', from_at: ISO, to_at: new Date(T0 + 3600_000).toISOString(), title: 't',
     created_at: '2026-10-15T00:00:00Z', expires_at: '2026-11-01T00:00:00Z', revoked_at: null, view_count: 0, ...over,
   });
+
+  // resolveShare is remembered per process (test/raid-share-abuse.test.js); these cases reuse one token across
+  // different rows, so each starts with nothing remembered.
+  beforeEach(() => clearShareMemo());
 
   it('a live share resolves to its row and ITS window', async () => {
     const db = fakeDb({ raid_shares: [row()] });

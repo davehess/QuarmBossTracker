@@ -78,6 +78,15 @@ module.exports = {
       },
     ];
   },
+  // Public share links (the guild lead, 2026-10-17): a leaked link must not be indexed or archived, on ANY response
+  // the page or its routes give (the routes also set it themselves; this covers errors and the 429 too).
+  async headers() {
+    const noindex = [{ key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' }];
+    return [
+      { source: '/share/:path*', headers: noindex },
+      { source: '/api/share/:path*', headers: noindex },
+    ];
+  },
   // /mimic/dirge: the Dirge Tactical Nuke demo, a static page built by scripts/build-dirge-demo.js
   // (it runs the real overlay script, which a React page would not execute).
   async rewrites() {
