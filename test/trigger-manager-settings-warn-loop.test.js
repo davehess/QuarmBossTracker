@@ -486,6 +486,11 @@ describe('renderGuildTriggersCard — an open row shows its settings and survive
       // the sound list and the "My sound" control the opened row carries (2026-10-14)
       sliceBlock(dash, 'var WPSounds = (function () {', '\n})();\n'),
       sliceBlock(dash, 'function wpSoundOverrideHtml(t, ov) {', '\n}\n'),
+      // the rows are filed into groups (2026-10-18), each a <details> that remembers its open state
+      'var _wpOpenDetails = {};',
+      sliceBlock(dash, 'function wpKeep(key, defaultOpen) {', '\n}\n'),
+      sliceBlock(dash, 'function wpGuildGroupOf(t) {', '\n}\n'),
+      sliceBlock(dash, 'function wpGuildCatBadge(cat) {', '\n}\n'),
       sliceBlock(dash, 'function renderGuildTriggersCard(s) {', '\n}\n'),
       sliceBlock(dash, 'function wpGuildTrigToggle(key) {', '\n}\n'),
       'function html() { return out; }',
