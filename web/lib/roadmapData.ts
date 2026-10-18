@@ -37,6 +37,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-9-0-2026-10-17',
+    title: 'Security Metapod and Live Optics',
+    version: 'Web 1.9.0 · Bot 3.2.0',
+    date: '2026-10-17',
+    headline: 'Shared raid links hold up if they leak, the bot shrugs off junk traffic, and corpses stay off your character list.',
+    features: [
+      { name: 'Shared raid links hold up', blurb: 'A public raid link that gets passed around can no longer be hammered: busy links say "try again in a minute", search engines are told to skip them, and revoking one stops it at once.' },
+      { name: 'Corpses on the Mimic map', blurb: 'Mimic\'s map shows where guildmates died, who is dragging a corpse and where a summoned corpse landed. Needs the next Mimic.' },
+      { name: 'Tip the maintainer', blurb: 'A ☕ Tip on Ko-fi link on the About page and in Mimic, for anyone who wants to say thanks.' },
+    ],
+    fixes: [
+      'A dead character\'s corpse ("Name\'s corpse") no longer shows up on /me as a character of yours.',
+      'The bot no longer slows down when flooded with fake logins.',
+    ],
+  },
+  {
     key: 'web-1-8-173-2026-10-17',
     title: 'Say your name on the website',
     version: 'Web 1.8.173 · Bot 3.1.289',

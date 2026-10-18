@@ -6172,6 +6172,11 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   ⏳ In-game check; ⏳ a looted-empty line if one exists.
 - ✅ Corpse names never recorded as characters; /me card skips them (bot 3.1.291, web 1.8.174, §353). ⏳ Optional cleanup SQL.
 - ✅ Dashboard: 🗣 Voice tab, Replay on Fights, Buffs (and blocking), kill switches folded with confirm (agent 3.7.193 beta, §353).
+- ✅ Security round one (§354): Mimic local server answers only Mimic + member names escaped (agent 3.7.195 beta); bot
+  token shape, bounded login caches, per-IP limits, crash guard (bot 3.1.292); share-link limits, 60 s shared cache,
+  prompt revoke, noindex (web 1.8.176). ⏳ Round two: private briefing list.
+- ✅ /spectator/replay refreshes itself and has ● Live (web, beta, §354). ⏳ Try during a raid.
+- ✅ main → beta sync unblocked (failed since 2026-10-17); beta-only web changes no longer bump the web version (§354).
 - ✅ Server patch notes Oct 5–17 applied to the hail board and PoP guide (bot 3.1.288, web 1.8.172, §352).
   ⏳ Lockout / retry-timer values not in the notes.
 - ⏳ Account labels encrypted at rest: branch claude/label-encrypt, waiting on the column SQL and the Vercel key (§352).

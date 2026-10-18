@@ -12527,6 +12527,7 @@ function _doOneUpload(entry) {
           if (Number.isFinite(secs)) retryAfterMs = Math.max(0, secs * 1000);
           else { const t = Date.parse(ra); if (Number.isFinite(t)) retryAfterMs = Math.max(0, t - Date.now()); }
         }
+        if (sc === 401) chatCacheRevoke('upload answered 401');   // the bot's 503 (store blip) and 429 are retried, never this
         if (sc >= 200 && sc < 300) {
           resolve({ ok: true,  permanent: false, statusCode: sc, body: data });
         } else if (QUEUE_PERMANENT_CODES.has(sc)) {
@@ -34626,6 +34627,7 @@ function startWebDashboard(port) {
         try { payload = JSON.parse(body); }
         catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
         const token = String(payload?.token || '').trim();
+        chatCacheOnSessionPush(token, payload?.identity);   // a different identity empties the Chat cache BEFORE its token is taken
         _mimicSessionToken = token || '';
         // Track the signed-out grace window (#120): clear it the instant a token
         // arrives, start it the instant one goes away.
@@ -38972,7 +38974,8 @@ function _pushRecentTell(tellEvt, character) {
 //
 // PRIVACY, the whole point of this block: these lines are kept on THIS PC for the user's own chat
 // window and never sent anywhere.
-//   • The ring is in memory only, capped, and gone on restart. No file, no queue.
+//   • The ring is capped and held in memory. THIS block names no file and no queue; the only copy that reaches a disk is
+//     the encrypted Chat cache (below, the guild lead 2026-10-17), which needs a key Mimic hands over and is never plaintext.
 //   • Nothing here touches the guild-chat upload batch, the tell upload buffer, the feedback excerpt
 //     or any POST. DEFAULT_DROP_PATTERNS / shouldKeep are untouched: they still gate everything that
 //     leaves the machine, and a line this feed shows is still dropped there.
@@ -39469,6 +39472,12 @@ function setChatPolicy(p, now) {
   _chatPolicy = next;
   _chatPolicyAt = now == null ? Date.now() : now;
 }
+// The switches the Chat cache honours when it saves: the overlay's last ask however long ago (a closed overlay must
+// not make a cached tell vanish or come back), else the ones the cache itself was saved under, else public channels.
+let _chatPolicyRestored = null;
+function chatCachePolicy(now) {
+  return _chatPolicy || _chatPolicyRestored || chatPolicyNow(now);
+}
 function chatPolicyNow(now) {
   const t = now == null ? Date.now() : now;
   if (_chatPolicy && t - _chatPolicyAt <= CHAT_POLICY_TTL_MS) return _chatPolicy;
@@ -39483,7 +39492,7 @@ function chatChannelAllowed(ch, policy) {
 // The ring. Memory only: never written to disk, never queued, never uploaded.
 const _chatRing = [];
 let _chatSeq = 0;
-const CHAT_BOOT = crypto.randomBytes(4).toString('hex');   // a new value after a restart tells the overlay to start over
+let CHAT_BOOT = crypto.randomBytes(4).toString('hex');   // a new value after a restart (or a Chat cache wipe) tells the overlay to start over
 // One person's main + alt logs both hear the same guild line: one key, one copy. A zone line is per
 // character (two characters zoning together each did), so it carries the character too. The overlay
 // builds the same key to drop a history line it already holds (chat.html chatKey).
@@ -39582,10 +39591,11 @@ function guildFeedTake(lines, now, ingame) {
   }
   const over = _guildFeedRing.length - CHAT_GUILD_RING_MAX;
   if (over > 0) _guildFeedRing.splice(0, over);
+  if (n) _chatCacheMarkDirty();
   return n;
 }
 // The game is running again: local lines take over, so nothing relayed stays to double them.
-function guildFeedClear() { _guildFeedRing.length = 0; _guildFeedOkAt = 0; _guildFeedIngame = null; }
+function guildFeedClear() { _guildFeedRing.length = 0; _guildFeedOkAt = 0; _guildFeedIngame = null; _chatCacheMarkDirty(); }
 function noteLocalChatLine(line, character, now) {
   const policy = chatPolicyNow(now);
   let evt = classifyChatLine(line, character);
@@ -39617,6 +39627,7 @@ function noteLocalChatLine(line, character, now) {
     ring.push({ seq: ++_chatSeq, k: mk, t: evt.t, ch: evt.ch, who: '', to: null, text: evt.text, self: !!evt.self, npc: false, on: character || '', cat: evt.cat || null, miss: !!evt.miss });
     const spill = ring.length - extra.max;
     if (spill > 0) ring.splice(0, spill);
+    _chatCacheMarkDirty();
     return true;
   }
   const key = chatLineKey(evt, character);
@@ -39628,6 +39639,7 @@ function noteLocalChatLine(line, character, now) {
   _chatRing.push({ seq: ++_chatSeq, k: key, t: evt.t, ch: evt.ch, who: evt.who, to: evt.to || null, text: evt.text, self: !!evt.self, npc: !!evt.npc, on: character || '', cn: evt.cn || null, cnum: evt.cnum || null });
   const over = _chatRing.length - CHAT_RING_MAX;
   if (over > 0) _chatRing.splice(0, over);
+  _chatCacheMarkDirty();
   return true;
 }
 
@@ -39673,7 +39685,7 @@ function serializeLocalChat(q, now) {
   // "nobody is in game" note. ingame = members in game with Mimic running (0 = nobody, null = unknown); null while the feed is not live.
   const away = (policy.away && _guildFeedOkAt > 0 && t - _guildFeedOkAt <= GUILD_FEED_LIVE_MS)
     ? { on: true, ingame: _guildFeedIngame, at: _guildFeedOkAt } : null;
-  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, away, lines };
+  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, wiped: _chatWipeAt, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, away, lines };
 }
 function _handleLocalChat(req, res) {
   const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(body); };
@@ -39690,6 +39702,91 @@ function _handleLocalChat(req, res) {
 }
 function _resetLocalChatForTest() {
   _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _lootRing.length = 0; _randomRing.length = 0; _otherRing.length = 0; guildFeedClear(); _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
+  _chatPolicyRestored = null; _chatWipeAt = 0;
+}
+
+// ── Chat cache seam ──
+// The "Chat cache" block further down owns the file, the key and the timer. THIS block only copies the rings out as plain
+// objects and takes them back, so the rings stay named in one place and nothing here touches a file.
+function _chatCacheRings() {
+  return { chat: _chatRing, melee: _meleeRing, spell: _spellRing, skill: _skillRing, loot: _lootRing, random: _randomRing, other: _otherRing, guild: _guildFeedRing };
+}
+const _CHAT_CACHE_RING_MAX = { chat: CHAT_RING_MAX, melee: CHAT_MELEE_RING_MAX, spell: CHAT_SPELL_RING_MAX, skill: CHAT_SKILL_RING_MAX, loot: CHAT_LOOT_RING_MAX, random: CHAT_RANDOM_RING_MAX, other: CHAT_OTHER_RING_MAX, guild: CHAT_GUILD_RING_MAX };
+let _chatWipeAt = 0;   // when the rings were last emptied by a revoke; the overlay clears what it holds when this changes
+// What may be saved, newest `o.perRingMax` per ring and nothing older than `o.maxAgeMs`. A line is kept only if the
+// switches in force NOW would still let the overlay show it: officer chat while Officer is off, tells while Tells is off,
+// the relayed guild feed while Away is off, never reach the file.
+function chatCacheSnapshot(now, o) {
+  const t = now == null ? Date.now() : now;
+  const policy = chatCachePolicy(t);
+  const rings = {};
+  for (const [name, ring] of Object.entries(_chatCacheRings())) {
+    const keep = [];
+    if (name !== 'guild' || policy.away) {
+      for (let i = ring.length - 1; i >= 0 && keep.length < o.perRingMax; i--) {
+        const l = ring[i];
+        if (!(t - l.t <= o.maxAgeMs)) continue;
+        if (!l.swap && !chatChannelAllowed(l.ch, policy)) continue;
+        keep.push(l);
+      }
+    }
+    rings[name] = keep.reverse();
+  }
+  const pol = {};
+  for (const k of CHAT_POLICY_KEYS) pol[k] = !!policy[k];
+  return { seq: _chatSeq, policy: pol, rings };
+}
+function _chatCacheStr(v, n) { return String(v == null ? '' : v).slice(0, n); }
+// One saved line back into the shape the rings hold, or null. A saved file is trusted no further than its shape.
+function _chatCacheLine(l, now, maxAgeMs) {
+  if (!l || typeof l !== 'object') return null;
+  const seq = Number(l.seq), t = Number(l.t);
+  if (!(seq > 0) || !Number.isFinite(t) || !(now - t <= maxAgeMs)) return null;
+  const text = _chatCacheStr(l.text, CHAT_TEXT_MAX);
+  if (l.swap) return { seq, k: 'swap|' + seq, swap: true, t, from: _chatCacheStr(l.from, 40), to: _chatCacheStr(l.to, 40), text };
+  if (!CHAT_CHANNELS[l.ch] || !text) return null;
+  const e = { seq, k: _chatCacheStr(l.k, 600), t, ch: l.ch, who: _chatCacheStr(l.who, 60), to: l.to ? _chatCacheStr(l.to, 60) : null, text,
+    self: !!l.self, npc: !!l.npc, on: _chatCacheStr(l.on, 40) };
+  if (l.cn) e.cn = _chatCacheStr(l.cn, 40);
+  if (Number.isFinite(Number(l.cnum)) && l.cnum) e.cnum = Number(l.cnum);
+  if (l.cat) e.cat = _chatCacheStr(l.cat, 20);
+  if (l.miss) e.miss = true;
+  if (l.via === 'guild') e.via = 'guild';
+  return e;
+}
+// Put saved lines back at startup (the rings are empty then). Returns how many landed. The sequence counter resumes
+// past the highest saved number so the merged paging order holds; the overlay starts over on the new boot value anyway.
+function chatCacheRestore(snap, now, o) {
+  if (!snap || typeof snap !== 'object' || !snap.rings || typeof snap.rings !== 'object') return 0;
+  const t = now == null ? Date.now() : now;
+  const rings = _chatCacheRings();
+  let n = 0, top = 0;
+  for (const name of Object.keys(rings)) {
+    const src = Array.isArray(snap.rings[name]) ? snap.rings[name] : [];
+    const lines = [];
+    for (const l of src) { const e = _chatCacheLine(l, t, o.maxAgeMs); if (e) lines.push(e); }
+    lines.sort((a, b) => a.seq - b.seq);
+    const take = lines.slice(Math.max(0, lines.length - Math.min(_CHAT_CACHE_RING_MAX[name], o.perRingMax)));
+    rings[name].length = 0;
+    for (const e of take) rings[name].push(e);
+    if (take.length) top = Math.max(top, take[take.length - 1].seq);
+    n += take.length;
+  }
+  if (top > _chatSeq) _chatSeq = top;
+  if (snap.policy && typeof snap.policy === 'object') {
+    const p = {};
+    for (const k of CHAT_POLICY_KEYS) p[k] = !!snap.policy[k];
+    _chatPolicyRestored = p;
+  }
+  return n;
+}
+// Empty every ring (and the relayed feed), and give the overlay a new boot value + a wipe stamp so it empties what IT holds.
+function chatCacheClearRings() {
+  for (const ring of Object.values(_chatCacheRings())) ring.length = 0;
+  guildFeedClear();
+  CHAT_BOOT = crypto.randomBytes(4).toString('hex');
+  _chatWipeAt = Date.now();
+  _chatPolicyRestored = null;
 }
 // ── end Local chat window ──
 
@@ -39855,6 +39952,7 @@ async function _handleLocalChatHistory(req, res) {
   return send(200, body);
 }
 function _resetChatHistoryForTest() { _chatHistCache = null; }
+function chatHistoryForget() { _chatHistCache = null; }   // a revoke drops the short history cache too
 // ── end Chat history ──
 
 // ── Guild feed while you are out of game ──────────────────────────────────────
@@ -39928,6 +40026,12 @@ function _eqInGameFrom(zealState, watchedLogs, now) {
 }
 function _eqInGame(now) { return _eqInGameFrom(_zealState, stats.watchedLogs, now); }
 function _guildFeedReset() { _guildFeed.cursor = 0; _guildFeed.boot = ''; _guildFeed.nextAt = 0; }
+// The poll's place in the bot's feed, for the Chat cache: after a restart the poll asks for what is NEW, not the whole backlog again.
+function _guildFeedCursorGet() { return { cursor: _guildFeed.cursor, boot: _guildFeed.boot }; }
+function _guildFeedCursorSet(c) {
+  if (!c || !(Number(c.cursor) >= 0) || typeof c.boot !== 'string') return;
+  _guildFeed.cursor = Math.floor(Number(c.cursor)); _guildFeed.boot = c.boot.slice(0, 64);
+}
 // One tick. Resolves a short word for what happened (the tests read it; nothing else does). `fetchImpl` is the test seam.
 async function _pollGuildFeed(now, fetchImpl) {
   const t = now == null ? Date.now() : now;
@@ -39952,6 +40056,9 @@ async function _pollGuildFeed(now, fetchImpl) {
       signal: AbortSignal.timeout(8_000),
     });
     if (res.status === 404) { _guildFeed.nextAt = t + GUILD_FEED_BACKOFF_MS; return 'unavailable'; }
+    // Only a definite 401 (the bot's "session token invalid or revoked", which a member lockout also answers) is a revoke;
+    // a 5xx, a 429 or a dead network is not, and falls through to the error back-off below.
+    if (res.status === 401) { chatCacheRevoke('guild-chat answered 401'); _guildFeed.nextAt = t + GUILD_FEED_ERROR_BACKOFF_MS; return 'unauthorized'; }
     if (!res.ok) { _guildFeed.nextAt = t + GUILD_FEED_ERROR_BACKOFF_MS; return 'error'; }
     const data = await res.json();
     if (!data || data.ok === false || !Array.isArray(data.lines)) { _guildFeed.nextAt = t + GUILD_FEED_ERROR_BACKOFF_MS; return 'error'; }
@@ -39982,6 +40089,166 @@ async function _pollGuildFeed(now, fetchImpl) {
 }
 setInterval(() => { _pollGuildFeed().catch(() => {}); }, GUILD_FEED_POLL_MS).unref();
 // ── end Guild feed ──
+
+// ── Chat cache: the Chat overlay's feed, kept across a restart ───────────────────────────────────────────
+// The guild lead, 2026-10-17: "cache the filled in chat overlay data encrypted locally and invalidate it on logout if a
+// fresh session isn't established within a reasonable timeframe, and wipe before revoking access".
+//
+// WHAT: the chat, melee, spell, skill, loot, random, other and relayed-guild rings (the Local chat window block owns them and
+// hands over a snapshot), plus the guild feed's cursor, so a restart shows the feed at once and asks the bot for what is
+// new instead of the whole backlog. Nothing is fetched from the bot for this; the only remote part of the feed is the
+// guild-chat poll, and the cursor saves its re-fetch.
+//
+// KEY: Mimic generates a random 32-byte key once, keeps it under the OS keychain (safeStorage) and hands it over in
+// WOLFPACK_CHAT_CACHE_KEY, with WOLFPACK_CHAT_CACHE_ID = the Discord identity the session belongs to. With either missing
+// (standalone agent, an old shell, no keychain, signed out) NOTHING is written: there is no plaintext mode. AES-256-GCM, a
+// fresh random 96-bit IV per write, the magic as AAD. A wrong key, a torn or tampered file, or a different identity
+// inside it: the file is deleted and the feed starts empty.
+//
+// WHAT IS KEPT: only what the overlay could show now (the Local chat window's switches: Officer/Custom/Group, Tells per
+// Settings, Away), the newest CHAT_CACHE_PER_RING_MAX per ring, nothing older than CHAT_CACHE_MAX_AGE_MS, and at most
+// CHAT_CACHE_MAX_BYTES of plain JSON (oldest lines go first). Written atomically (.tmp + rename), coalesced to one write per
+// CHAT_CACHE_WRITE_MS however fast lines arrive, and again at a clean exit (a hard kill loses at most that window).
+//
+// WHEN IT GOES (Mimic owns the logout side: it decides, it holds the key; see main.js "Chat cache"):
+//   • a definite 401 (a revoked session, a /token revoke, a member lockout) on the 20 s reporter heartbeat, an upload or the
+//     guild-chat poll: chatCacheRevoke. A 5xx, a 429 or a dead network is NOT a revoke (the bot answers a store blip with 503);
+//   • the fleet kill switch or a version floor standing this agent down: chatCacheWipe, BEFORE the reading is adopted;
+//   • a session push from a DIFFERENT Discord identity: chatCacheWipe BEFORE the new token is taken.
+// Each deletes the file first, then what the overlay holds (the rings, the guild feed, the history cache, and a new boot value
+// so the overlay empties its own copy). Plain unlink + the key being dropped by Mimic is the whole story; no overwrite pass.
+const CHAT_CACHE_FILE = path.join(__dirname, 'logsync.chat-cache.bin');
+const CHAT_CACHE_MAGIC = Buffer.from('WPCC1');
+const CHAT_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const CHAT_CACHE_PER_RING_MAX = 200;
+const CHAT_CACHE_MAX_BYTES = 256 * 1024;
+const CHAT_CACHE_WRITE_MS = 8_000;
+const CHAT_CACHE_FILE_MAX_BYTES = 2 * 1024 * 1024;   // a file past this is not one of ours
+const _chatCache = { key: null, id: '', file: CHAT_CACHE_FILE, dirty: false, timer: null, revoked: false };
+
+function chatCacheConfigure(o) {
+  if (_chatCache.timer) { clearTimeout(_chatCache.timer); _chatCache.timer = null; }
+  const hex = o && typeof o.key === 'string' && /^[0-9a-f]{64}$/i.test(o.key) ? o.key : '';
+  _chatCache.key = hex ? Buffer.from(hex, 'hex') : null;
+  _chatCache.id = o && typeof o.id === 'string' ? o.id.slice(0, 64) : '';
+  _chatCache.file = (o && o.file) || CHAT_CACHE_FILE;
+  _chatCache.dirty = false;
+  _chatCache.revoked = false;
+}
+function chatCacheEnabled() { return !!(_chatCache.key && _chatCache.id && !_chatCache.revoked); }
+// magic | iv (12) | auth tag (16) | ciphertext
+function chatCacheSeal(obj, key) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+  c.setAAD(CHAT_CACHE_MAGIC);
+  const ct = Buffer.concat([c.update(JSON.stringify(obj), 'utf8'), c.final()]);
+  return Buffer.concat([CHAT_CACHE_MAGIC, iv, c.getAuthTag(), ct]);
+}
+// The object, or null for anything that is not an untouched file sealed under this key.
+function chatCacheOpen(buf, key) {
+  try {
+    const m = CHAT_CACHE_MAGIC.length;
+    if (!Buffer.isBuffer(buf) || !key || buf.length < m + 12 + 16 || !buf.subarray(0, m).equals(CHAT_CACHE_MAGIC)) return null;
+    const d = crypto.createDecipheriv('aes-256-gcm', key, buf.subarray(m, m + 12));
+    d.setAAD(CHAT_CACHE_MAGIC);
+    d.setAuthTag(buf.subarray(m + 12, m + 28));
+    return JSON.parse(Buffer.concat([d.update(buf.subarray(m + 28)), d.final()]).toString('utf8'));
+  } catch { return null; }
+}
+function chatCacheUnlink() {
+  for (const f of [_chatCache.file, _chatCache.file + '.tmp']) { try { fs.unlinkSync(f); } catch (e) { void e; } }
+}
+// Drop the oldest lines (lowest sequence number, across every ring) until the plain JSON fits.
+function _chatCacheTrim(snap, maxBytes) {
+  let total = JSON.stringify(snap).length;
+  if (total <= maxBytes) return snap;
+  const all = [];
+  for (const arr of Object.values(snap.rings)) for (const l of arr) all.push(l);
+  all.sort((a, b) => a.seq - b.seq);
+  const drop = new Set();
+  for (const l of all) { if (total <= maxBytes) break; total -= JSON.stringify(l).length + 1; drop.add(l); }
+  for (const name of Object.keys(snap.rings)) snap.rings[name] = snap.rings[name].filter(l => !drop.has(l));
+  return snap;
+}
+function chatCacheSave(now) {
+  // No key or identity: no file. A stood-down agent writes nothing either (the wipe already emptied it).
+  if (!chatCacheEnabled() || _controlStandDown().down) return false;
+  const t = now == null ? Date.now() : now;
+  const snap = _chatCacheTrim(chatCacheSnapshot(t, { maxAgeMs: CHAT_CACHE_MAX_AGE_MS, perRingMax: CHAT_CACHE_PER_RING_MAX }), CHAT_CACHE_MAX_BYTES);
+  const tmp = _chatCache.file + '.tmp';
+  try {
+    const buf = chatCacheSeal({ v: 1, id: _chatCache.id, savedAt: t, guild: _guildFeedCursorGet(), snap }, _chatCache.key);
+    fs.writeFileSync(tmp, buf, { mode: 0o600 });
+    fs.renameSync(tmp, _chatCache.file);
+    _chatCache.dirty = false;
+    return true;
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) { void e2; }
+    return false;
+  }
+}
+// Called by the rings when a line lands: one write per CHAT_CACHE_WRITE_MS, however many lines arrive.
+function _chatCacheMarkDirty() {
+  if (!chatCacheEnabled()) return;
+  _chatCache.dirty = true;
+  if (_chatCache.timer) return;
+  _chatCache.timer = setTimeout(() => { _chatCache.timer = null; if (_chatCache.dirty) chatCacheSave(); }, CHAT_CACHE_WRITE_MS);
+  if (_chatCache.timer.unref) _chatCache.timer.unref();
+}
+function chatCacheLoad(now) {
+  if (!chatCacheEnabled()) return false;
+  let buf;
+  try {
+    if (fs.statSync(_chatCache.file).size > CHAT_CACHE_FILE_MAX_BYTES) { chatCacheUnlink(); return false; }
+    buf = fs.readFileSync(_chatCache.file);
+  } catch { return false; }                       // no file yet: the first start
+  const p = chatCacheOpen(buf, _chatCache.key);
+  if (!p || p.v !== 1 || p.id !== _chatCache.id) { chatCacheUnlink(); return false; }
+  chatCacheRestore(p.snap, now, { maxAgeMs: CHAT_CACHE_MAX_AGE_MS, perRingMax: CHAT_CACHE_PER_RING_MAX });
+  _guildFeedCursorSet(p.guild);
+  return true;
+}
+// File first, then what the overlay is holding. Does not stop later writes by itself (the stand-down gate and a revoke do).
+function chatCacheWipe(reason) {
+  if (_chatCache.timer) { clearTimeout(_chatCache.timer); _chatCache.timer = null; }
+  _chatCache.dirty = false;
+  chatCacheUnlink();
+  chatCacheClearRings();
+  _guildFeedReset();
+  chatHistoryForget();
+  console.log('[chat-cache] wiped (' + reason + ')');
+}
+// The fleet kill switch / version floor stands the agent down but overlays keep working on LOCAL data (the control
+// plane's own rule), so the on-screen chat must NOT go blank (the guild lead, 2026-10-17). This wipes the on-disk
+// copy and holds writes while stood down, but leaves the live rings and the guild feed alone.
+function chatCacheWipeFileOnly(reason) {
+  if (_chatCache.timer) { clearTimeout(_chatCache.timer); _chatCache.timer = null; }
+  _chatCache.dirty = false;
+  chatCacheUnlink();
+  console.log('[chat-cache] file wiped (' + reason + ')');
+}
+// A definite "this session is no longer valid". Wipes, then refuses every write for the life of this process; the
+// printed line is what Mimic reads to drop the key from its config (so a leftover file is unreadable) before it launches again.
+function chatCacheRevoke(reason) {
+  if (_chatCache.revoked) return false;
+  _chatCache.revoked = true;
+  chatCacheWipe(reason);
+  console.log('[chat-cache] revoked (' + reason + ')');
+  return true;
+}
+// Mimic pushing a session. Called BEFORE the token is taken: a different Discord identity than the cache belongs to
+// empties it first and turns the cache off, so one person's chat is never carried to another.
+function chatCacheOnSessionPush(token, identity) {
+  if (!_chatCache.key || !token) return;
+  const did = identity && identity.discord_id != null ? String(identity.discord_id) : '';
+  if (did && did !== _chatCache.id) { chatCacheWipe('a different identity signed in'); _chatCache.key = null; }
+}
+(function _chatCacheBoot() {
+  chatCacheConfigure({ key: process.env.WOLFPACK_CHAT_CACHE_KEY, id: process.env.WOLFPACK_CHAT_CACHE_ID });
+  if (chatCacheEnabled()) { try { chatCacheLoad(); } catch (e) { void e; } }
+  process.on('exit', () => { try { if (_chatCache.dirty) chatCacheSave(); } catch (e) { void e; } });
+})();
+// ── end Chat cache ──
 
 // ── /sll lockout parser ────────────────────────────────────────────────────
 // EQ /sll output in the log:
@@ -40222,6 +40489,8 @@ function _applyControlPlane(obj, source) {
   const rawFloor = Number(obj.min_agent_ver_num);
   const minVerNum = Number.isFinite(rawFloor) && rawFloor > 0 ? Math.floor(rawFloor) : 0;
   const prevKill = _controlPlane.kill, prevFloor = _controlPlane.minVerNum;
+  // Standing down withdraws access: empty the Chat cache BEFORE the reading is adopted (the guild lead, 2026-10-17).
+  if ((kill || (minVerNum > 0 && _verNum(AGENT_VERSION) < minVerNum)) && !_controlStandDown().down) chatCacheWipeFileOnly(kill ? 'fleet kill switch' : 'version floor');
   _controlPlane = { kill, minVerNum, at: Date.now() };
   if (kill !== prevKill)
     console.log(`[control] flag_agent_kill → ${kill ? 'DORMANT (paused by guild control plane)' : 'resumed'} (${source})`);
@@ -40345,6 +40614,8 @@ function _reporterHeartbeatOnce() {
       },
       timeout: 5000,
     }, (res) => {
+      // A definite 401 (session revoked, or the member locked out) wipes the Chat cache; anything else is not a revoke.
+      if (res.statusCode === 401) chatCacheRevoke('reporter-poll answered 401');
       if (res.statusCode !== 200) { res.resume(); _reporterFailOpen(); return; }  // old/erroring bot → fail-open
       let buf = '';
       res.on('data', (d) => { buf += d; if (buf.length > 8192) req.destroy(); });
@@ -57431,6 +57702,10 @@ module.exports = {
   _guildFeedResetForTest: _guildFeedReset, _applyControlPlane, CHAT_GUILD_RING_MAX,
   chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
   _handleLocalChatHistoryForTest: _handleLocalChatHistory, _resetChatHistoryForTest, CHAT_HISTORY_MAX, CHAT_SWAP_MIN_MS,
+  // Chat cache (2026-10-17): the encrypted on-disk copy of the Chat overlay's feed. See the "Chat cache" block.
+  chatCacheConfigure, chatCacheEnabled, chatCacheSeal, chatCacheOpen, chatCacheSave, chatCacheLoad, chatCacheWipe, chatCacheWipeFileOnly, chatCacheRevoke, chatCacheOnSessionPush,
+  chatCacheSnapshot, chatCacheRestore, _chatCacheMarkDirty, _chatCacheTrim, _chatCacheForTest: () => _chatCache,
+  CHAT_CACHE_FILE, CHAT_CACHE_MAX_AGE_MS, CHAT_CACHE_PER_RING_MAX, CHAT_CACHE_MAX_BYTES, CHAT_CACHE_WRITE_MS,
   _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,
   buffDurationFactorFor,
   SOURCELESS_SPELLS, BARD_SONGS,

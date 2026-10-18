@@ -29,6 +29,11 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.2.0': [
+    '**Map corpses for the whole guild.** Mimic\'s map shows where guildmates died, who is dragging a corpse and where a summoned one landed (needs the new Mimic).',
+    '**Safer under load.** The bot shrugs off floods of fake logins and junk traffic instead of slowing down, so a bad actor can\'t take the guild\'s tools offline mid-raid.',
+    '**Corpses are never mistaken for characters.** A dead character\'s corpse no longer turns up on your /me page as a character of yours.',
+  ],
   '3.1.279': [
     '**Mob Info now carries how far a mob\'s regular Rampage reaches.** For a mob that rampages, the lookup carries the reach, the chance per round and the damage, so Mimic\'s map can ring it too (needs the next Mimic beta).',
   ],

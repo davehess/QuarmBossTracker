@@ -196,7 +196,7 @@
         <div class="row" id="skillopts"></div>
         <div class="row nobrk" id="chans"></div>
         <div class="hint nobrk" id="tellhint"></div>
-        <div class="hint nobrk">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
+        <div class="hint nobrk">These lines stay on this PC and nothing here is uploaded. Mimic keeps an encrypted copy for the last day so a restart shows the feed again; signing out for a day, or losing access, deletes it. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
       </div></details>
     </div>
     <div id="chips"></div>
@@ -296,6 +296,7 @@
   var _histInfo = null;          // { loading } | { failed } | { truncated }
   var _histSig = '';             // the switch set the history on screen was read under
   var _histSeq = 0;
+  var _wipedAt = 0;              // the agent's last wipe stamp seen (a change = the session was revoked: forget everything held)
   var _connectedOnce = false;    // the agent has answered at least once (so PORT is the real one)
   var _lastOn = null;            // the character the last painted line was heard on (the "heard on" tag shows on a change)
 
@@ -1245,6 +1246,8 @@
       var st = takeStyle();
       if (firstGroups || st !== _lastStyle) { _lastStyle = st; paintChips(); paintBrkTitle(); paintEmpty(); }      if (s.reset || (s.boot && s.boot !== _boot)) { _lines = []; feedEl.innerHTML = ''; _boot = s.boot || ''; _lastN = 0; _unread = 0; paintNew(); }
       _seq = s.seq || 0;
+      // The agent emptied its chat cache and rings (the session was revoked): drop the history read back from the logs too.
+      if (s.wiped && s.wiped !== _wipedAt) { _wipedAt = s.wiped; _histLines = []; _histInfo = null; _histSig = ''; repaint(); }
       // First good answer from the agent: the port and the groups are known, so a remembered history window can be read now.
       if (!_connectedOnce) { _connectedOnce = true; if (_histHours) loadHistory(); }
       // Only lines newer than the last one taken: a replayed body (the agent serves its last good one if a

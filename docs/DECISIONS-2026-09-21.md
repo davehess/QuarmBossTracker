@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Security round two** (§354) | Round one shipped (Mimic local guard, bot flood limits, share-link limits). The verified insider findings (ownership checks on several member routes, relayed callouts, session expiry, Discord mentions, `/wishlist`) are in the private briefing | the guild lead: pick what to fix next; confirm Supabase sign-ups are off; 2FA on the platform accounts |
 | **Voices, corpses on the Map, Voice tab** (§352, §353) | On Mimic beta: agent 3.7.191 (Kokoro + licence-gated Piper voices, research tier marked experimental), 3.7.192 (☠ corpses, drag/summon), 3.7.193 (🗣 Voice tab, Replay on Fights, Buffs (and blocking), kill switches folded). Bot 3.1.290–3.1.291 on main | a Windows tester: install Kokoro, accept and play one research voice, drag a corpse with the Map open on a second PC; the guild lead: optional corpse cleanup SQL; a log line for a looted-empty corpse if one exists |
 | **Raid replay + session share links** (§335, §337) | **Graduated to main 2026-10-15 (web 1.8.170)** on the guild lead's word: replay 3D/floors/parchment/follow/bosses/split, guild-raid sessions, `/raid/session`, public `/share/raid/<token>` (works on wolfpack.quest and b.wolfpack.quest). Bot 3.1.274+ records NPC targets. §338: bot 3.1.276 puts a "Full session review" button on the final raid review (main); full per-fight parse tables on beta, web 1.8.171 (`https://b.wolfpack.quest/raid/session`) | the guild lead: send the share link; check the heading direction in game; look at the parse tables on beta, say graduate |
 | **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271). Round two (bot 3.1.273): `who_directory_lookup` (1.27 s → ms), trigram indexes on three ilike reads, the 30-day damage board memoised | (1) the guild lead: paste `20261015080000_drop_unused_indexes.sql` into the Supabase SQL editor (the speed-up and merge-lock files are applied); (2) a session after the next raid: re-read `pg_stat_statements` |
@@ -11285,3 +11286,57 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   "N switched on" badge and a confirm on every flip. *What you hear* and *Sounds* went to Voice (they are about what
   Mimic says); the per-trigger sound picker stays in the trigger editor.
 - Account-label encryption (§352) now ships as web past **1.8.174**.
+
+### 354. Security round one: Mimic's local server, bot floods, share-link abuse; live replay; the sync was broken (2026-10-17)
+The guild lead asked how exposed we are (doxing, DDoS and script kiddies, someone signed in, a member's PC or login
+stolen), then *"go ahead, fix 1 and 2, and also account for abusing views of the external sharing links"*. Two audits
+ran; every finding below was re-checked by hand before it was acted on. **The unfixed findings are in the private
+briefing, not here** — they name ways in.
+- **Mimic's local server answers only Mimic** (agent 3.7.195, beta). Any web page open while Mimic ran could POST to
+  127.0.0.1 (DKP ticks, bids, the Mimic login, shutdown). One guard runs first in the router: Host must be loopback
+  (DNS rebinding), a present Origin must be loopback or file:, `Origin: null` needs a per-launch secret Mimic adds to its
+  own requests (`x-wolfpack-local`; allowed when no secret is configured, so a new agent under an older shell still
+  works), no Origin passes. The dashboard's damage table also printed other members' names as HTML; escaped now.
+  ⏳ Not run in Electron here: a beta tester confirms the overlays still load.
+- **Bot floods** (bot 3.1.292). The login cache only grew (every random `wpms_` token cost a store read and stayed
+  cached). Now: token shape checked before any lookup; found logins capped at 10,000, misses in a separate 2,000-entry
+  60 s cache; per-IP limit 1,200/min (`/health` exempt) and failed logins 60/min (tuning `ip_limit_per_min`,
+  `ip_failauth_per_min`, 0 = off); client IP from Railway's `X-Real-IP` (the first `X-Forwarded-For` hop was spoofable);
+  `unhandledRejection` logs instead of exiting. Railway showed 14 M requests/week, almost all the fleet; the 4xx rise
+  since 2026-10-14 is one install with a dead login retrying ~1.5/s, not an attack.
+- **Share links** (web 1.8.176). Per-IP 30 page loads/min per share and 300 API calls/min (a long scrub is ~150);
+  per share 600 views and 20,000 calls an hour; lookup memoised 60 s; replay and bosses cached across visitors for
+  **60 s** (an opt-out leaves a share within about a minute — chosen over the drafted 5 min); revoke clears and
+  revalidates at once; views counted once per visitor per 30 min; robots.txt and noindex on every share response.
+  Limits are per server instance.
+- **Checked and false:** "anonymous key can read Mimic link codes / live state" — both tables are RLS-on with no anon
+  grant, and no public table lacks RLS (queried live).
+- **Live replay** (web, beta — https://b.wolfpack.quest/spectator/replay; the guild lead: *"spectator should continuously
+  pull fresh raid days so it can be used live"*). Night list re-pulled every 60 s while visible, merged in place; a short
+  window refetches as the night grows; **● Live** follows the newest minute. Recording is per minute, so Live trails by
+  ~1–2.5 min. `/spectator` already polls every ~3 s.
+- **The main → beta sync had failed on every push since bot 3.1.290** (web `package.json` 1.8.172 on beta vs main's
+  bumps, plus two roadmap entries). Merged by hand. **Rule from now: a beta-only web change does not bump
+  `web/package.json`** — the version lives on main, and a beta bump collides with the next main bump and stops the sync.
+  Check `sync-beta.yml` runs when beta looks stale.
+- ⏳ The guild lead (dashboards): Supabase → Auth → confirm "Allow new users to sign up" is off; a Vercel Firewall
+  rate rule on wolfpack.quest; hardware-key 2FA on GitHub, Railway, Vercel, Supabase, Discord, Porkbun.
+
+### 355. Minor versions, the release name, and the road to 3.0 (2026-10-17)
+- **Bot 3.2.0 and web 1.9.0** (the guild lead: *"move to the next minor versions"*): onboarding "what's new" for 3.2.0 and
+  a roadmap entry.
+- **Release name: "Security Metapod and Live Optics"** (the guild lead: *"call this one security metapod and live
+  optics"*) — bot 3.2.0 / web 1.9.0 and the Mimic 2.10.0 / agent 3.8.0 line. On the roadmap entry; use it in the
+  Mimic park commit and any announcement.
+- **No 2.10.0 stable** (the guild lead: *"we're going to work on 3.0 next, so park 2.10.0 but probably going to swap over
+  to 3"*): beta parks at 2.10.0 (agent 3.8.0) once the encrypted chat cache and the session-review class labels land;
+  the next stable is expected to be 3.0.
+- **Alpha vs beta regression check:** every beta commit is in alpha (the beta → alpha sync is green again); alpha's
+  diff is Mimic files and their tests only (+6.4k / −108). Every removed line was traced to a deliberate alpha rewrite
+  (Canvas, group hotkeys, larger but still bounded layout limits, `lock`/`group` set verbs, HUD presets); `/pipe mimic
+  edit` coverage moved to `test/canvas-pieces.test.js`. Alpha passes 13,809 tests with the same 9 long-standing failures
+  as beta (tray-menu-layout ×5, mimic-agent-only-mode, mimic-destroyed-window-guard, window-process-names,
+  my-logs-local). ⏳ Fix those nine before a 3.0 stable so they stop masking real breaks.
+- **Update-or-pause plan** drafted in `docs/PLAN-update-or-pause-2026-10.md` (fleet: 33 players on 2.9.1, 7 older, 4
+  beta). ⏳ The guild lead: what "shut off" means (pause uploads vs blank guild overlays), 7 or 14 days, beta testers in
+  or out.
