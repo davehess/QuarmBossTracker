@@ -19,6 +19,7 @@
 import { NextResponse, type NextRequest, type NextFetchEvent } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { isEqmimicHost, eqmimicLandingTarget } from './lib/eqmimicHost';
+import { isRaidmimicHost, raidmimicLandingTarget } from './lib/raidmimicHost';
 import { isLockedOut } from './lib/lockout';
 
 // Routes we never log: API/RSC payloads, auth callbacks, admin pages
@@ -95,6 +96,18 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
     if (request.nextUrl.pathname.startsWith('/_next/')) return NextResponse.next();
     const url = request.nextUrl.clone();
     const to = eqmimicLandingTarget(request.nextUrl.pathname);
+    url.pathname = to.pathname;
+    url.search = to.search;
+    return NextResponse.rewrite(url);
+  }
+
+  // raidmimic.com / .net / .quest (the guild lead, 2026-10-18): the same shape as the branch above, for the
+  // game-agnostic guild-leader page. One page, so every path rewrites to it with the whole query dropped.
+  // Also before any session work, for the same reasons.
+  if (isRaidmimicHost(request.headers.get('host'))) {
+    if (request.nextUrl.pathname.startsWith('/_next/')) return NextResponse.next();
+    const url = request.nextUrl.clone();
+    const to = raidmimicLandingTarget();
     url.pathname = to.pathname;
     url.search = to.search;
     return NextResponse.rewrite(url);

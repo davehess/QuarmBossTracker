@@ -5,12 +5,13 @@
 // already exist still go to b.wolfpack.quest first, so they never carry this tag.
 //
 // Server component, no JS. The page title carries the same "[beta]" prefix.
-export default function NewPageTag({ note = 'New page, still being shaped.' }: { note?: string }) {
+// `href` is where "feedback" goes; only a page served on a host where /feedback is not a page (raidmimic.com) sets it.
+export default function NewPageTag({ note = 'New page, still being shaped.', href = '/feedback' }: { note?: string; href?: string }) {
   return (
     <div role="note" className="mb-4 flex flex-wrap items-center gap-x-2 rounded-md border border-orange/50 bg-orange/10 px-3 py-1.5 font-mono text-xs text-orange">
       <b className="tracking-wider">[beta]</b>
       <span>
-        {note} Tell us what you think on <a href="/feedback" className="underline hover:text-text">feedback</a>.
+        {note} Tell us what you think on <a href={href} className="underline hover:text-text">feedback</a>.
       </span>
     </div>
   );

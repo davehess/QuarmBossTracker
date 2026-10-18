@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **raidmimic.com — the guild leaders' door** (§370) | Page live at `wolfpack.quest/raidmimic` marked [beta], layouts A (default) and B (`?v=b`). All six raidmimic hosts are on Vercel as 307s to eqmimic.quest; DNS is still Porkbun's parking page | the guild lead: pick A or B; at Porkbun, set apex A `216.198.79.1` and `www` CNAME `cname.vercel-dns.com` on all three domains (delete the parking records); then a session removes the six Vercel redirects so the page serves on raidmimic.com |
 | **Quarm Oct 18 patch notes** (§369) | Applied: bot 3.2.1 + web 1.9.4 on main (Plane of Time B corpse DM 30 min; PoP guide: PoK turn-ins held when bags are full, the 6d18h cycle, phase loot limits, the Phase 3 checkpoint); agent 3.8.1 on beta (corpse DM names zones 222/223). NOT applied: the Plane of Time timer model | the guild lead: pick the PoTime timer model (A observed cycle end / B inferred / hybrid) and capture one `#timelockout` + one `/sll` during a live cycle; turn on the bot's Message Content intent in the Discord developer portal BEFORE anyone sets `MESSAGE_CONTENT_INTENT=1` |
 | **Keepers of the (Overlay) Arts — Masterpieces + gallery** (§368) | Named; roadmap entry on main (web 1.9.3). Scoped: `docs/DESIGN-keepers-of-the-arts.md` (gallery B, set modes B, move-into-Canvas toggle + convert, socials library-lite; slice 0 = socials privacy fix) | the guild lead: go/no-go on the order and the open-decisions table there; approve the Tastemaker outreach wording before any DM |
 | **Mimic 3.0 on the beta channel** (§367) | Graduated 2026-10-18: `beta` park → 3.0.0 (builds `3.0.0-beta.N`), `alpha` re-parked → 3.0.1. The whole overlay-builder (Canvas, pieces, groups, previews, locate line) is now the beta fleet's, not alpha-only | the guild lead: install the `3.0.0-beta` build and run the in-game checks (preview crop (D), single-piece Upright bar stub (B), hover line (E)); decide a roadmap name for 3.0; say when it cuts stable |
@@ -11601,6 +11602,27 @@ The guild lead pasted the notes (the Discord ingestion stores no text, below). S
 **Same session, art and brand (records only):** the guild lead bought `raidmimic.com`, `.net` and `.quest` (Porkbun;
 what they point at is still a pick: park → eqmimic.quest, rename the front door, or a separate game-agnostic service
 page). Pixel art made with the MIT `claude-pxl` kit (not vendored; a yes/no is open): the friendly eared Mimic from the
-app icon, a "just a chest" variant, Discord emoji + a sticker (the guild lead picked Discord emotes as the first use),
-and a guild hall + roster card drawn from each active main's race and class. The roster, names and rendered images
-stay outside the repo; only a name-free generator could ever be committed.
+app icon, a "just a chest" variant, Discord emoji + a sticker, and a guild hall + roster card drawn from each active
+main's race and class. The roster, names and rendered images stay outside the repo; only a name-free generator could
+ever be committed. (Corrected by §370: the guild lead's "C" answered the raidmimic question, not the art one. Where the
+art goes first is still open.)
+
+### 370. raidmimic.com is the guild leaders' door; eqmimic.quest stays the players' (2026-10-18, web 1.9.5)
+The guild lead: *"C was for raidmimic.com"*. That is option C from §369's list, "two doors": **eqmimic.quest** stays the
+free EverQuest player tool, and **raidmimic.com / .net / .quest** becomes the game-agnostic page selling raid
+orchestration and analytics as a service to guild leaders.
+- **The page (new, so it ships to `main` marked [beta]):** `web/app/raidmimic/`, all words in
+  `web/lib/raidmimicLanding.ts`. Two layouts, as usual for a UI pick: **A "The pitch"** (default, text first, reads as
+  an argument) and **B "The tour"** (`?v=b`, drawn screens first with the small print folded away). Every block carries
+  a status (live / alpha / coming) and one "What is not built yet" list holds every promise; a test fails if anything
+  is marked coming that the list does not name. No price list, customer count or testimonial: the one number is our own
+  measured hosting bill, labelled as scale and not a quote. "Register interest" opens the existing anonymous form on
+  eqmimic.quest as an Idea (AFB rules apply: untrusted text, read by people). Not indexed yet, like eqmimic.
+- **Hosts:** `web/lib/raidmimicHost.ts` lists six names; the middleware rewrites every path on them to `/raidmimic`
+  with the query dropped (so `?v=b` is only visible on wolfpack.quest), and the root layout drops the Wolf Pack chrome.
+- **Vercel, done this session:** all six names are on the project as 307 redirects to eqmimic.quest. They cannot chain,
+  so each points straight at eqmimic.quest. DNS is still Porkbun's parking page. **To serve the page on raidmimic.com:**
+  set the DNS (apex A `216.198.79.1`, `www` CNAME `cname.vercel-dns.com`; Vercel also suggests a project-specific
+  CNAME, either works), then remove the redirects on the six domains.
+- **Copy matches the privacy page:** the private-chat line was checked against `docs/PRIVACY.md` and gained the tells
+  clause (tells are dropped too unless the player turns relay on).
