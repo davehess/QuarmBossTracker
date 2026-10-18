@@ -134,6 +134,17 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/target-info-item-links.test.js`. ⚠ Found on the way: the chat relay's item links decode the id as HEX, but
   Quarm writes it in DECIMAL, so those PQDI links point at the wrong item (see the bot-side note, not fixed here).
   Waits on the guild lead pasting a copied link into EQ to confirm the 7-digit form.
+- **⏳ Raid session review + share page: opt-outs show as their class; bid winners keep their name and get a Bids tab
+  (web, beta only, built 2026-10-18, no version bump).** The guild lead, 2026-10-17: *"if someone opts out, just put their
+  class on that spot to anonymize them. do not anonymize bid winners, but link all of those with a unique handle that
+  shows what they all bid on."* An opted-out raider is "Cleric 2" (class, then a number from a salted key, never from the
+  name) in the replay, attendance, ticks, parses, loot and rolls, swapped on the server so the name never reaches the
+  browser; their damage now counts in the shares. Anyone who won an item in the window (a closed `opendkp_auctions` row
+  or a `loot_observations` award) is shown by name, and their name opens the new **Bids** tab: what they won and paid,
+  and the closed auctions they bid on and lost (`opendkp_auction_bids`). Open auctions are never shown. New route
+  `/api/raid/session/replay` so the members' board is labelled too. Code: `web/lib/raidSession.ts`,
+  `raidSessionBids.ts`, `raidShareLookup.ts` (`loadAnon`); tests `test/raid-session-anon.test.js`. `/privacy` and
+  `docs/PRIVACY.md` reworded. Waiting on the guild lead's look at `https://b.wolfpack.quest/raid/session`.
 - **✅ PoP flags pages to production (web 1.8.158, 2026-10-14; the guild lead: "push the updates for web to main, the popflags pages, links to latest").**
   One file-level promotion from `beta` (never a branch merge): the "Latest flags" strip (`/pop?flags=a|b`), alts grouped
   under their main (`/pop?alts=group`, the default on All characters; `?alts=flat` opts out), the Seer paste box at the top
