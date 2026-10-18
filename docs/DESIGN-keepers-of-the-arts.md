@@ -55,6 +55,21 @@ or overwrites.
 
 **v1 limits:** `part` panels only (no whole-overlay iframes); author byline opt-in; officer hide + a report button.
 
+**Gallery UI picks (scoped 2026-10-18, drawn for the guild lead; awaiting the pick):**
+- **Mimic — A, a Gallery tab in the Pieces chooser** *(recommended)*: browse next to the Canvas; "Try it" lays the
+  Masterpiece over the real screen with live data, Keep / Cancel, auto-revert after a minute. Low on all four costs.
+  **B, a separate Gallery window**: roomier (grid + detail drawer) but owes the full overlay parity checklist and a
+  renderer while open (~25–40 MB). B can follow A if the catalog passes ~30 per class.
+- **wolfpack.quest — B, a class-first playbook** *(recommended)*: pick a class; every row says whether it fits the
+  viewer's own characters and where to get what is missing. **A, a card grid with filters**: faster, discovery-first.
+  Both go up as `?v=` variants on b.wolfpack.quest before it settles; the route itself ships live with `[beta]`.
+- **Detail view** (both surfaces): title + opt-in byline, class/level/mode, live preview, a needs checklist (have /
+  missing + where it drops or sells + how many guildmates hold one), suggested hotkeys (a taken key stays unbound and
+  says so), socials into empty slots only, Add as a new set / Add to my canvas / Try it / Report.
+- **Proposed defaults:** members only in v1 (a per-Masterpiece public "showcase" switch later); any member may
+  publish, the Tastemaker invitations seed it; a Discord unfurl reads "Masterpiece · <Class>", never the title or
+  byline (member-written text).
+
 ## Workstream 2 — sets per character, per mode (recommended: **B**, tags on free names)
 
 Today a set has no owner: two characters that both save "raid" overwrite one set. Fix that first, then add modes.
