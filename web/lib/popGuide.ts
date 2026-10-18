@@ -318,7 +318,7 @@ const BASE_ITEMS: GuideItem[] = [
   { key: 'spells_parchments', section: 'spells', who: 'group', must: true, title: 'Collect [[Ethereal Parchment#29112]], [[Spectral Parchment#29131]] and [[Glyphed Rune Word#29132]]',
     detail: 'They drop in the planes and now stack to 20.' },
   { key: 'spells_turn_in', section: 'spells', who: 'solo', must: true, title: 'Turn them in to your class trainer in PoK',
-    detail: 'One at a time; each gives a random spell from that parchment’s list for your class.' },
+    detail: 'One at a time; each gives a random spell from that parchment’s list for your class. Since the October 18 patch nothing drops on the ground or your cursor: the spell, or a returned parchment, goes to a free bag slot. With full bags it is held, so make room and speak to any planar spell turn-in vendor to collect it. Extras you hand in together are held and returned the same way.' },
 
   // ── Tier one ──────────────────────────────────────────────────────────────
   { key: 't1_trash', section: 't1', who: 'group', title: 'Level and farm in the tier-one planes',
@@ -609,8 +609,9 @@ const BASE_ITEMS: GuideItem[] = [
     ],
     where: [L.muon, L.loreseeker, L.timeMachine] },
   { key: 'time_timelockout', section: 'time', who: 'solo', title: 'Type #timelockout',
-    detail: 'Shows your guild’s timeline, when it retires, and which encounters are open in each phase.' },
-  { key: 'flag_quarm', section: 'time', who: 'raid', must: true, flag: 'quarm_dead', title: 'Kill Quarm', link: popZone('time') },
+    detail: 'Shows your guild’s timeline, when it retires, and which encounters are open in each phase. Since the October 18 patch your guild has one fixed cycle of 6 days 18 hours from its first entry: kills no longer extend it, and when it ends the next run starts fresh.' },
+  { key: 'flag_quarm', section: 'time', who: 'raid', must: true, flag: 'quarm_dead', title: 'Kill Quarm', link: popZone('time'),
+    detail: 'Loot from Phase 1 bosses is limited for 12 hours and from Phases 2 and 3 for 3.5 days (never past the end of the cycle); Phase 4 to 6 bosses stay down until the cycle ends. Once your guild clears Phase 3 it keeps a checkpoint for the cycle: later visits clear Phase 1, then continue at the first unfinished phase from Phase 4. A visit ends after 10 minutes with no participating players in the zone. The raid cap is 90, with 18 straight into each Phase 1 wing.' },
 ];
 
 // ── The order of each step (the guild lead, 2026-10-03; see Act above) ──────────────────────────────

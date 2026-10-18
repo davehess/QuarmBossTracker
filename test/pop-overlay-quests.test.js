@@ -547,7 +547,7 @@ describe('the generated guide through the renderer', () => {
 
   it('every step with a brief shows it first, and still carries its full detail and expect, folded under More', () => {
     const withBrief = all.filter(q => q.brief);
-    expect(withBrief.length).toBe(26);
+    expect(withBrief.length).toBe(29);
     for (const q of withBrief) {
       const h = R.questHtml(q);
       const more = h.indexOf('data-dk="' + q.key + '|more"');

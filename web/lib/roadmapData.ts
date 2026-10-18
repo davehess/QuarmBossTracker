@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-9-4-2026-10-18',
+    title: 'Planes of Power: the October 18 server changes',
+    version: 'Web 1.9.4 · Bot 3.2.1',
+    date: '2026-10-18',
+    headline: 'The PoP guide follows the new Plane of Time cycle and spell turn-ins, and the corpse DM knows the second part of the Plane of Time moves a corpse in 30 minutes.',
+    features: [
+      { name: 'Plane of Time cycle', blurb: 'The guide now says your guild has one fixed cycle of 6 days 18 hours from its first entry, that kills no longer extend it, how long each phase\'s loot is limited, and that clearing Phase 3 gives your guild a checkpoint for the cycle.' },
+      { name: 'Spell turn-ins', blurb: 'The guide now says a spell or returned parchment goes to a free bag slot instead of the ground, and is held for you if your bags are full: make room and speak to any planar spell turn-in vendor to collect it.' },
+      { name: 'Corpse DM in Plane of Time B', blurb: 'A corpse in the second part of the Plane of Time moves to the graveyard after 30 minutes, and your corpse DM shows that time.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-3-0-beta-2026-10-18',
     title: 'Keepers of the (Overlay) Arts',
     version: 'Mimic 3.0.0 beta · Agent 3.7.176',

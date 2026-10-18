@@ -1110,7 +1110,8 @@ window.POP_QUESTS = {
        "title": "Turn them in to your class trainer in PoK",
        "who": "solo",
        "must": true,
-       "detail": "One at a time; each gives a random spell from that parchment’s list for your class."
+       "detail": "One at a time; each gives a random spell from that parchment’s list for your class. Since the October 18 patch nothing drops on the ground or your cursor: the spell, or a returned parchment, goes to a free bag slot. With full bags it is held, so make room and speak to any planar spell turn-in vendor to collect it. Extras you hand in together are held and returned the same way.",
+       "brief": "One at a time. Full bags hold the spell for you: make room, then speak to any planar spell turn-in vendor."
       }
      ]
     }
@@ -4745,13 +4746,16 @@ window.POP_QUESTS = {
        "key": "time_timelockout",
        "title": "Type #timelockout",
        "who": "solo",
-       "detail": "Shows your guild’s timeline, when it retires, and which encounters are open in each phase."
+       "detail": "Shows your guild’s timeline, when it retires, and which encounters are open in each phase. Since the October 18 patch your guild has one fixed cycle of 6 days 18 hours from its first entry: kills no longer extend it, and when it ends the next run starts fresh.",
+       "brief": "Your guild has one fixed 6 day 18 hour cycle from its first entry; kills no longer extend it."
       },
       {
        "key": "flag_quarm",
        "title": "Kill Quarm",
        "who": "raid",
-       "must": true
+       "must": true,
+       "detail": "Loot from Phase 1 bosses is limited for 12 hours and from Phases 2 and 3 for 3.5 days (never past the end of the cycle); Phase 4 to 6 bosses stay down until the cycle ends. Once your guild clears Phase 3 it keeps a checkpoint for the cycle: later visits clear Phase 1, then continue at the first unfinished phase from Phase 4. A visit ends after 10 minutes with no participating players in the zone. The raid cap is 90, with 18 straight into each Phase 1 wing.",
+       "brief": "Phase 1 loot is limited 12 hours, Phases 2 and 3 for 3.5 days, Phase 4 to 6 until the cycle ends. Raid cap 90."
       }
      ]
     }

@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.2.1': [
+    '**Your corpse DM is right for the second part of the Plane of Time.** Since the October 18 patch a corpse there moves to the graveyard after 30 minutes, not an hour, and the DM shows that time.',
+  ],
   '3.2.0': [
     '**Map corpses for the whole guild.** Mimic\'s map shows where guildmates died, who is dragging a corpse and where a summoned one landed (needs the new Mimic).',
     '**Safer under load.** The bot shrugs off floods of fake logins and junk traffic instead of slowing down, so a bad actor can\'t take the guild\'s tools offline mid-raid.',
