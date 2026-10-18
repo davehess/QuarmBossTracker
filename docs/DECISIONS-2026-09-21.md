@@ -11321,3 +11321,22 @@ briefing, not here** — they name ways in.
   Check `sync-beta.yml` runs when beta looks stale.
 - ⏳ The guild lead (dashboards): Supabase → Auth → confirm "Allow new users to sign up" is off; a Vercel Firewall
   rate rule on wolfpack.quest; hardware-key 2FA on GitHub, Railway, Vercel, Supabase, Discord, Porkbun.
+
+### 355. Minor versions, the release name, and the road to 3.0 (2026-10-17)
+- **Bot 3.2.0 and web 1.9.0** (the guild lead: *"move to the next minor versions"*): onboarding "what's new" for 3.2.0 and
+  a roadmap entry.
+- **Release name: "Security Metapod and Live Optics"** (the guild lead: *"call this one security metapod and live
+  optics"*) — bot 3.2.0 / web 1.9.0 and the Mimic 2.10.0 / agent 3.8.0 line. On the roadmap entry; use it in the
+  Mimic park commit and any announcement.
+- **No 2.10.0 stable** (the guild lead: *"we're going to work on 3.0 next, so park 2.10.0 but probably going to swap over
+  to 3"*): beta parks at 2.10.0 (agent 3.8.0) once the encrypted chat cache and the session-review class labels land;
+  the next stable is expected to be 3.0.
+- **Alpha vs beta regression check:** every beta commit is in alpha (the beta → alpha sync is green again); alpha's
+  diff is Mimic files and their tests only (+6.4k / −108). Every removed line was traced to a deliberate alpha rewrite
+  (Canvas, group hotkeys, larger but still bounded layout limits, `lock`/`group` set verbs, HUD presets); `/pipe mimic
+  edit` coverage moved to `test/canvas-pieces.test.js`. Alpha passes 13,809 tests with the same 9 long-standing failures
+  as beta (tray-menu-layout ×5, mimic-agent-only-mode, mimic-destroyed-window-guard, window-process-names,
+  my-logs-local). ⏳ Fix those nine before a 3.0 stable so they stop masking real breaks.
+- **Update-or-pause plan** drafted in `docs/PLAN-update-or-pause-2026-10.md` (fleet: 33 players on 2.9.1, 7 older, 4
+  beta). ⏳ The guild lead: what "shut off" means (pause uploads vs blank guild overlays), 7 or 14 days, beta testers in
+  or out.

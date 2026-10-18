@@ -38,7 +38,7 @@ export type Release = {
 export const releases: Release[] = [
   {
     key: 'web-1-9-0-2026-10-17',
-    title: 'Safer sharing, cleaner /me',
+    title: 'Security Metapod and Live Optics',
     version: 'Web 1.9.0 · Bot 3.2.0',
     date: '2026-10-17',
     headline: 'Shared raid links hold up if they leak, the bot shrugs off junk traffic, and corpses stay off your character list.',
