@@ -50,6 +50,8 @@ jobs:
 
       - name: Merge main into beta
         shell: bash
+        env:
+          HOOK_BETA: ${{ secrets.VERCEL_DEPLOY_HOOK_BETA }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
@@ -62,6 +64,7 @@ jobs:
             echo "beta already contains main — nothing to do."
             exit 0
           fi
+          BETA_BEFORE="$(git rev-parse HEAD)"
 
           # These two are DELIBERATELY ahead on beta and must never be pulled
           # backwards by the sync:
@@ -101,6 +104,16 @@ jobs:
 
           git push origin beta
           echo "beta synced to $(git rev-parse --short origin/main)"
+
+          # The push above uses GITHUB_TOKEN, so deploy-web.yml does not run for it. When the merge brought
+          # web/ changes to beta, ask Vercel for the b.wolfpack.quest build here instead (DECISIONS §333).
+          if git diff --quiet "$BETA_BEFORE" HEAD -- web/; then
+            echo "no web/ change reached beta — no website build."
+          elif [ -z "$HOOK_BETA" ]; then
+            echo "::warning::web/ changed on beta but VERCEL_DEPLOY_HOOK_BETA is not set — b.wolfpack.quest was not rebuilt."
+          else
+            curl -fsS -X POST "$HOOK_BETA" && echo && echo "b.wolfpack.quest build requested."
+          fi
 
       # A red X in the Actions tab is not a notification. This workflow failed
       # EIGHT times in one evening (2026-08-12) on an append-append conflict in

@@ -1,9 +1,10 @@
-// test/vercel-deploy-branches.test.js — only main and beta build the website.
+// test/vercel-deploy-branches.test.js — only a push that changes web/ builds the website.
 //
-// Vercel's Hobby plan allows 100 deployments a day, and every push to every branch spends one. On
-// 2026-09-29 the new `alpha` branch (a merge on every main and beta push) spent about 100 of them by
-// itself, and b.wolfpack.quest went 90 minutes without a build ("Deployment rate limited — retry in 24
-// hours"). The guild lead picked "main + beta only" the same day (DECISIONS 2026-09-21 §101).
+// Vercel's Hobby plan allows 100 deployments a day, and every push Vercel sees spends one, even one its
+// Ignored Build Step skips. 2026-09-29: the alpha branch's sync merges spent ~100 (§101, main + beta only).
+// 2026-10-14: the cap was hit again with only 15 real website builds among the 100 — beta sync merges, docs,
+// Mimic/agent and bot pushes spent the rest. The guild lead picked B: Vercel's own Git deployments OFF for
+// every branch, and a GitHub workflow calls the branch's Deploy Hook only when web/ changed (§333).
 //
 // Run: npx vitest run test/vercel-deploy-branches.test.js
 
@@ -13,18 +14,40 @@ import path from 'node:path';
 import { ROOT } from './_source-slice.js';
 
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/vercel.json'), 'utf8'));
+const read = (f) => fs.readFileSync(path.join(ROOT, '.github/workflows', f), 'utf8');
+// Comments explain the hooks at length, so assert on the YAML with them stripped.
+const strip = (s) => s.split('\n').filter(l => !/^\s*#/.test(l)).join('\n');
+const deploy = strip(read('deploy-web.yml'));
+const sync = strip(read('sync-beta.yml'));
 
-describe('web/vercel.json deploys', () => {
-  it('every branch is off, then main and beta are switched back on', () => {
-    expect(cfg.git.deploymentEnabled).toEqual({ '**': false, main: true, beta: true });
+describe('web/vercel.json', () => {
+  it('Vercel builds nothing on its own from a Git push', () => {
+    expect(cfg.git.deploymentEnabled).toBe(false);
   });
-  // The same evening, Deployment Storage passed the Hobby 10 GB. Every finished build keeps its whole output
-  // until retention removes it, and most main and beta pushes change the bot, the agent or the docs, not the
-  // website. A push that leaves web/ alone now skips the build. A skipped build still counts toward the 100
-  // a day, but it stores nothing.
-  it('a push that changes nothing under web/ skips the build', () => {
-    // Vercel builds on exit 1 and skips on 0; `git diff --quiet` exits 1 when something changed. The command
-    // runs in the project root (web/), so "." is web/ — the site imports nothing from outside it.
-    expect(cfg.ignoreCommand).toBe('git diff --quiet HEAD^ HEAD -- .');
+  it('has no Ignored Build Step: the workflow decides, and a hook build must not be skipped by a later non-web commit', () => {
+    expect(cfg.ignoreCommand).toBeUndefined();
+  });
+});
+
+describe('deploy-web.yml', () => {
+  it('runs on pushes to main and beta that touch web/', () => {
+    expect(deploy).toMatch(/branches:\s*\[main,\s*beta\]/);
+    expect(deploy).toMatch(/paths:\s*\['web\/\*\*'\]/);
+  });
+  it('calls the branch\'s own hook and fails loudly when its secret is missing', () => {
+    expect(deploy).toMatch(/main\) HOOK="\$HOOK_MAIN"/);
+    expect(deploy).toMatch(/beta\) HOOK="\$HOOK_BETA"/);
+    expect(deploy).toMatch(/secrets\.VERCEL_DEPLOY_HOOK_MAIN/);
+    expect(deploy).toMatch(/secrets\.VERCEL_DEPLOY_HOOK_BETA/);
+    expect(deploy).toMatch(/::error::[\s\S]*exit 1/);
+  });
+});
+
+describe('sync-beta.yml', () => {
+  it('rebuilds b.wolfpack.quest itself when its merge brought web/ changes (a GITHUB_TOKEN push triggers no workflow)', () => {
+    expect(sync).toMatch(/BETA_BEFORE="\$\(git rev-parse HEAD\)"/);
+    expect(sync).toMatch(/git diff --quiet "\$BETA_BEFORE" HEAD -- web\//);
+    expect(sync).toMatch(/curl -fsS -X POST "\$HOOK_BETA"/);
+    expect(sync).toMatch(/HOOK_BETA:\s*\$\{\{\s*secrets\.VERCEL_DEPLOY_HOOK_BETA\s*\}\}/);
   });
 });
