@@ -472,6 +472,9 @@ describe('canvas.html: which pieces are which saved group', () => {
         + 'function num(v, lo, hi, d) { v = Number(v); return (isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d); }\n'
         + sliceBlock(canvasRaw, '  function newId(prefix)', '  function dropThing(what, X, Y) {').replace(/  function dropThing\(what, X, Y\) \{$/, '')
         + sliceBlock(canvasRaw, '  function dropThing(what, X, Y) {', '\n  }\n')
+        + '\nfunction note() {}\n' + sliceBlock(canvasRaw, '  function namedGroup(grp) {', ': null; }')
+        + '\n' + sliceBlock(canvasRaw, '  function groupPartsOf(ps) {', '\n  }\n') + '\n' + sliceBlock(canvasRaw, '  function putGroups() {', 'catch (e) {} }')
+        + '\n' + sliceBlock(canvasRaw, '  function uniqueGroupName(base, exceptId) {', '\n  }\n')
         + '\n' + sliceBlock(canvasRaw, '  function saveSelectionAsGroup(name) {', '\n  }\n')
         + '\nreturn { dropThing, saveSelectionAsGroup, _layout, get groups() { return _groups; }, sel(ids) { _sel = {}; ids.forEach(function (i) { _sel[i] = true; }); } };');
       globalThis.window = globalThis;
@@ -858,12 +861,15 @@ describe('canvas.html: the wiring', () => {
     expect(canvas).toMatch(/else if \(t\.hasAttribute\('data-gclear'\)\) \{ setGroupKey\(t\.getAttribute\('data-gclear'\), ''\); return; \}/);
   });
   it('the chooser: each saved group\'s row carries the chip; a click on it sets, on "clear" removes — and neither starts a drag', () => {
-    expect(canvas).toMatch(/\+ g\.parts\.length \+ ' pieces' \+ groupHiddenText\(g\.id\) \+ '<\/span>'\s*\+ groupKeyChip\(g\)\s*\+ '<span class="x" data-delgrp="'/);
+    expect(canvas).toMatch(/\(here \? ' · ' \+ here \+ ' here' : ''\) \+ groupHiddenText\(g\.id\) \+ '<\/span>'\s*\+ groupKeyChip\(g\)\s*\+ '<span class="x" data-dupgrp="'/);
     expect(canvas).toMatch(/if \(kg\) \{ captureGroupKey\(kg\.getAttribute\('data-keygrp'\)\); return; \}\s*if \(cg\) \{ setGroupKey\(cg\.getAttribute\('data-clrgrp'\), ''\); return; \}/);
-    expect(canvas).toContain("ev.target.closest('[data-delgrp],[data-keygrp],[data-clrgrp]')");
+    expect(canvas).toContain("ev.target.closest('[data-delgrp],[data-keygrp],[data-clrgrp],[data-dupgrp],[data-rengrp],[data-renin]')");
   });
-  it('deleting a saved group forgets its marks and its key', () => {
-    expect(canvas).toMatch(/_groups = _groups\.filter\(function \(g\) \{ return g\.id !== id; \}\);[^\n]*\n[^\n]*canvasGroupsSave\(_groups\)[^\n]*\n\s*forgetSavedGroup\(id\);/);
+  it('deleting a saved group forgets its marks and its key (behaviour: test/canvas-pieces-round.test.js)', () => {
+    // the click goes to deleteSavedGroup, which drops it from the list, saves, and forgets it (run for real in the round's test)
+    expect(canvas).toMatch(/deleteSavedGroup\(id, del\.hasAttribute\('data-with'\)\);/);
+    const del = sliceBlock(canvasRaw, '  function deleteSavedGroup(id, withPieces) {', '\n  }\n');
+    expect(stripJs(del)).toMatch(/_groups = _groups\.filter\(function \(x\) \{ return x\.id !== id; \}\);\s*putGroups\(\);\s*forgetSavedGroup\(id\);/);
   });
   it('what main sends is applied after the layout is: keys for the chips, then the queued presses', () => {
     const body = sliceBlock(canvasRaw, '  function loadState(st) {', '\n  }\n');
@@ -888,7 +894,8 @@ describe('canvas.html: the wiring', () => {
     expect(c.calls).toEqual(['render', 'setEdit']);
   });
   it('a member who locked a set together is told that saving it as a group is how it gets a hotkey', () => {
-    expect(canvas).toContain('title="Keep this set in the chooser\\\'s Groups tab, to drop again anywhere — and give it a hotkey that shows or hides it">💾 Save as a group</button>');
+    expect(canvas).toContain('title="Keep this set in the chooser\\\'s Groups tab, to drop again anywhere — and give it a hotkey that shows or hides it\' + (ng ?');
+    expect(canvas).toContain("(ng ? 'Save as new' : 'Save as a group')");
   });
   it('a press made while the Canvas is up is read at once', () => {
     expect(canvas).toContain('try { if (M.onCanvasGroupOps) M.onCanvasGroupOps(refresh); } catch (e) {}');

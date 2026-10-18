@@ -156,11 +156,15 @@
 
   /* ── Pieces (3.0 alpha): single data elements drawn by parts.js ─────────── */
   .panel.part > .pbody{position:absolute;inset:0;padding:1px 3px;box-sizing:border-box;overflow:hidden}
-  .panel.part.back > .pbody{background:rgba(13,17,23,var(--bg-alpha,0.72));border:1px solid #30363d;border-radius:5px;padding:3px 6px}
+  /* Backing is ONLY a plate (the guild lead, 2026-10-18: "backing changes spacing instead of just background"):
+     the same box, padding and content area with or without it. The outline is an inset shadow, not a
+     border, so it takes no room; it used to add 1px border + 3px 6px padding, which shrank the piece's
+     content box by 8 x 6 px and made Fit (+4) come up short. */
+  .panel.part.back > .pbody{background:rgba(13,17,23,var(--bg-alpha,0.72));box-shadow:inset 0 0 0 1px #30363d;border-radius:5px}
   body.edit .panel.part.sample > .pbody{opacity:0.7}
-  /* A Ring arc is drawn into its panel's whole box, so the arcs of one ring line up: no padding, no border. */
-  .panel.part.seg > .pbody,.panel.part.seg.back > .pbody{padding:0}
-  .panel.part.seg.back > .pbody{border:0}
+  /* A Ring arc is drawn into its panel's whole box, so the arcs of one ring line up: no padding, no outline. */
+  .panel.part.seg > .pbody{padding:0}
+  .panel.part.seg.back > .pbody{box-shadow:none}
   /* Pieces sit close together, so a piece's tab shows only while the mouse is
      on it (the piece itself drags; right-click opens its ⚙). */
   body.edit .panel.part .tab{display:none}
@@ -207,6 +211,12 @@
      (the guild lead, 2026-09-29, on one crowded line: "i can't read this"). */
   #chooser .pc.pp{border-bottom-color:#21262d;border-radius:0}
   #chooser .pc.pp .pc-l{white-space:normal;font-weight:600}
+  /* The piece as it would be drawn, with the client's data right now (parts.js render, the same call a placed
+     piece makes); a fixed height so hovering a mode chip never moves the chips. It is not a drag target of its
+     own: the mouse goes to its row. */
+  #chooser .pc-pv{flex-basis:100%;height:42px;box-sizing:border-box;overflow:hidden;pointer-events:none;
+    padding:1px 3px;border-radius:4px;background:rgba(13,17,23,0.6)}
+  #chooser .pc-pv.sample{opacity:0.55}
   #chooser .pc-ms{flex-basis:100%;display:flex;flex-wrap:wrap;gap:3px}
   #chooser .pc-m{padding:0 5px;border:1px solid #30363d;border-radius:3px;color:#58a6ff;cursor:grab;font-size:11px;line-height:17px}
   #chooser .pc-m:hover{border-color:#58a6ff}
@@ -222,6 +232,19 @@
   #chooser .ch-f{border-top:1px solid #30363d;padding:5px 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
   #chooser .ch-f input{flex:1;min-width:80px;font:inherit;font-size:11px;padding:2px 6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
   #chooser .dim{color:#6e7681}
+  /* Where is it? A row of the chooser and the piece(s) it is on the screen as: the piece is outlined in green
+     (steady while hovered, a short pulse after a click on an already-placed row) and a dashed line runs between
+     them. The chooser and the pieces are one page, so the line is just an SVG over it that takes no clicks. */
+  .panel.hl,.panel.loc{outline:3px solid #56d364!important;outline-offset:2px;z-index:60;box-shadow:0 0 14px 3px rgba(86,211,100,0.6)}
+  .panel.loc{animation:locpulse 0.5s ease-in-out 4 alternate}
+  @keyframes locpulse{from{box-shadow:0 0 6px 1px rgba(86,211,100,0.3)}to{box-shadow:0 0 26px 8px rgba(86,211,100,0.9)}}
+  body.edit .panel.off.hl,body.edit .panel.off.loc{opacity:0.9}
+  #chooser .pc.hl,#chooser .ch-tab.hl{border-color:#56d364;background:rgba(86,211,100,0.14)}
+  #loc{display:none;position:fixed;inset:0;width:100%;height:100%;z-index:84;pointer-events:none}
+  #loc.on{display:block}
+  #loc line{stroke:#56d364;stroke-width:2.5;stroke-dasharray:7 5;filter:drop-shadow(0 0 3px #56d364);animation:locdash 0.5s linear infinite}
+  #loc circle{fill:#56d364}
+  @keyframes locdash{to{stroke-dashoffset:-12}}
   #ghost{display:none;position:fixed;z-index:99;pointer-events:none;padding:3px 8px;font-size:11px;
     background:rgba(31,111,235,0.85);color:#fff;border-radius:4px;white-space:nowrap}
 </style></head>
@@ -249,6 +272,7 @@
     <div class="ch-list" id="chList"></div>
     <div class="ch-f" id="chFoot"></div>
   </div>
+  <svg id="loc"></svg>
   <div id="ghost"></div>
 <script src="parts.js"></script>
 <script src="sections.js"></script>
@@ -1149,7 +1173,8 @@
         h += '<div class="sec">Group · ' + gn + ' pieces move together</div><div class="row" style="flex-wrap:wrap">'
           + '<button class="btn" data-selgrp title="Select every piece in this group (then save it as your own from the bar at the top)">Select its group</button>'
           + '<button class="btn" data-leave title="It stops moving with the others (Alt-drag does the same)">Leave the group</button>'
-          + '<button class="btn warn" data-rmgrp title="Delete every piece in this group">Delete the group</button></div>';
+          + '<button class="btn warn" data-rmgrp title="Delete every piece in this group">Delete the group</button></div>'
+          + bulkMenuHtml(_layout.panels.filter(function (q) { return q.grp === p.grp && q.kind === 'part'; }));
       }
     } else if (p.kind === 'overlay') {
       var o = ovEntry(p.key);
@@ -1425,6 +1450,11 @@
     else if (t.hasAttribute('data-align')) { p.align = t.getAttribute('data-align'); }
     else if (t.hasAttribute('data-color')) { p.color = t.getAttribute('data-color'); }
     else if (t.hasAttribute('data-back')) { p.back = t.getAttribute('data-back') === '1'; }
+    else if (t.hasAttribute('data-bulk')) {
+      // The group-level row: one choice for every piece that shares this one's group.
+      var bn = bulkSet(_layout.panels.filter(function (q) { return q.grp === p.grp && q.kind === 'part'; }), bulkPatch(t.getAttribute('data-bulk'), t.getAttribute('data-v')));
+      if (bn.skipped) note(bn.skipped + (bn.skipped === 1 ? ' piece' : ' pieces') + ' cannot be drawn that way and kept their look', 3500);
+    }
     else if (t.hasAttribute('data-leave')) { p.grp = null; }
     else if (t.hasAttribute('data-selgrp')) {
       _layout.panels.forEach(function (q) { if (q.grp && q.grp === p.grp) _sel[q.id] = true; });
@@ -1630,6 +1660,7 @@
     if (!window.WpParts) return;
     var any = _layout.panels.some(function (p) { var d = p.kind === 'part' && !p.off && partDef(p); return d && d.kind === 'countdown'; });
     if (any) paintParts('__countdowns');
+    if (chooserShown() && chList.querySelector('[data-pvc]')) paintChooserPreviews();
   }, 250);
 
   // ── The chooser ──
@@ -1678,12 +1709,26 @@
           + '<span class="pc-l">' + (real ? '▣ ' : '▦ ') + esc(g.name) + '</span><span class="pc-v">' + (real ? 'the overlay itself' : g.parts.length + ' pieces') + '</span>'
           + (real ? '<span class="pc-m" data-drag="preset:' + g.id + ':pieces" title="Drag to place it as ' + g.parts.length + ' separate pieces instead">as pieces</span>' : '') + '</div>';
       });
+      // How to make your own version of one of these (the guild lead, 2026-10-18: change Command Center and
+      // save it as a new version or under another name): a "▣" is the overlay's own page, so it is changed as pieces.
+      lh += '<div class="dim" style="margin:3px 0">To change one: drag its “as pieces” chip, edit the pieces, select them, then 💾 Save as a group. '
+        + 'A group below can be copied with ⧉ or renamed with ✎.</div>';
       lh += '<div class="ch-sec">My groups</div>';
       if (!_groups.length) lh += '<div class="dim">Shift-click pieces on the screen, then 💾 below.</div>';
       _groups.forEach(function (g) {
-        lh += '<div class="pc" data-drag="group:' + g.id + '"><span class="pc-l">★ ' + esc(g.name) + '</span><span class="pc-v">' + g.parts.length + ' pieces' + groupHiddenText(g.id) + '</span>'
+        var here = groupPanels(g.id).length;
+        // Deleting a group that is on the screen asks what to do with its pieces: they are not "ghosts" unless you want them.
+        var del = _delArm !== g.id ? '<span class="x" data-delgrp="' + g.id + '" title="Delete this group">🗑</span>'
+          : here ? '<span class="x" data-delgrp="' + g.id + '" data-with="1" title="Delete the group and take its ' + here + ' pieces off the screen (Undo)">delete + remove ' + here + ' on screen</span>'
+              + '<span class="x" data-delgrp="' + g.id + '" title="Delete the group; its pieces stay where they are">delete, keep them</span>'
+            : '<span class="x" data-delgrp="' + g.id + '">sure?</span>';
+        lh += '<div class="pc" data-drag="group:' + g.id + '"><span class="pc-l">'
+          + (_renId === g.id ? '<input data-renin="' + esc(g.id) + '" maxlength="24" value="' + esc(g.name) + '" style="width:100%;font:inherit;font-size:11px;background:#0d1117;color:#e6edf3;border:1px solid #58a6ff;border-radius:4px">' : '★ ' + esc(g.name))
+          + '</span><span class="pc-v">' + g.parts.length + ' pieces' + (here ? ' · ' + here + ' here' : '') + groupHiddenText(g.id) + '</span>'
           + groupKeyChip(g)
-          + '<span class="x" data-delgrp="' + g.id + '" title="Delete this group">' + (_delArm === g.id ? 'sure?' : '🗑') + '</span></div>';
+          + '<span class="x" data-dupgrp="' + g.id + '" title="Save a copy to change (the original stays as it is)">⧉</span>'
+          + '<span class="x" data-rengrp="' + g.id + '" title="Rename (its hotkey and its pieces on the screen stay with it)">✎</span>'
+          + del + '</div>';
       });
       var on = {};
       _layout.panels.forEach(function (q) { if (q.kind === 'overlay') on[q.key] = true; });
@@ -1715,7 +1760,8 @@
       WpParts.PARTS.forEach(function (d) {
         if (d.cat !== st.tab) return;
         lh += '<div class="pc pp" data-drag="part:' + d.id + '" title="' + esc(d.note || d.label) + '"><span class="pc-l">' + esc(d.label) + '</span>'
-          + '<span class="pc-v" data-val="' + d.id + '"></span><span class="pc-ms">';
+          + '<span class="pc-v" data-val="' + d.id + '"></span>'
+          + '<div class="pc-pv" data-pv="' + d.id + '"' + (d.kind === 'countdown' ? ' data-pvc' : '') + '></div><span class="pc-ms">';
         (WpParts.MODES[d.kind] || []).forEach(function (m) {
           lh += '<span class="pc-m" data-drag="part:' + d.id + ':' + m[0] + '" title="Drag to place as ' + esc(m[1].toLowerCase()) + '">'
             + (MODE_ICON[m[0]] ? MODE_ICON[m[0]] + ' ' : '') + esc(m[1]) + '</span>';
@@ -1749,7 +1795,36 @@
       if (el.textContent !== t) el.textContent = t;
       el.style.fontStyle = it ? 'italic' : '';
     }
+    paintChooserPreviews();
   }
+  // Each piece drawn as it would be on the screen, in its first mode (or the mode chip last hovered), from the
+  // same view the placed piece would get: the client's data now, else its sample (dimmed). Same render call
+  // as paintParts, so a new mode or a fix shows here with no change; the HTML is compared first.
+  var _pvMode = {};
+  function paintChooserPreviews() {
+    var els = chList.querySelectorAll('[data-pv]'), now = Date.now();
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i], d = WpParts.byId[el.getAttribute('data-pv')];
+      if (!d) continue;
+      var modes = WpParts.MODES[d.kind] || [], mode = _pvMode[d.id] || d.mode || (modes[0] ? modes[0][0] : 'readout');
+      var v = viewFor(d), live = !!v;
+      if (!v) v = sampleFor(d, now);
+      var html = WpParts.render(d, mode, v, now, { uid: 'pv' + d.id });
+      if (el._h !== html) { el._h = html; el.innerHTML = html; }
+      var w = Math.min(300, (WpParts.DEFAULT_SIZE[mode] || [220])[0]) + 'px';
+      if (el.style.maxWidth !== w) el.style.maxWidth = w;
+      el.classList.toggle('sample', !live);
+    }
+  }
+  // Hovering a mode chip previews that mode (not 'Ring arc': it needs the ring around it).
+  chList.addEventListener('mouseover', function (ev) {
+    var m = ev.target.closest ? ev.target.closest('.pc-m[data-drag^="part:"]') : null;
+    if (!m) return;
+    var bits = m.getAttribute('data-drag').split(':');
+    if (!bits[2] || bits[2] === 'seg' || _pvMode[bits[1]] === bits[2]) return;
+    _pvMode[bits[1]] = bits[2];
+    paintChooserPreviews();
+  });
 
   chTabs.addEventListener('click', function (ev) {
     var t = ev.target.closest('[data-tab]');
@@ -1773,20 +1848,55 @@
     var kg = ev.target.closest('[data-keygrp]'), cg = ev.target.closest('[data-clrgrp]');
     if (kg) { captureGroupKey(kg.getAttribute('data-keygrp')); return; }
     if (cg) { setGroupKey(cg.getAttribute('data-clrgrp'), ''); return; }
+    var dup = ev.target.closest('[data-dupgrp]'), ren = ev.target.closest('[data-rengrp]');
+    if (dup) { duplicateGroup(dup.getAttribute('data-dupgrp')); return; }
+    if (ren) { _renId = ren.getAttribute('data-rengrp'); renderChooser(); var ri = chList.querySelector('[data-renin]'); if (ri) { ri.focus(); ri.select(); } return; }
     var del = ev.target.closest('[data-delgrp]');
     if (!del) return;
     var id = del.getAttribute('data-delgrp');
     if (_delArm !== id) {                       // two clicks: a group is an evening's arranging
       _delArm = id; clearTimeout(_delArmT);
-      _delArmT = setTimeout(function () { _delArm = null; renderChooser(); }, 3000);
+      _delArmT = setTimeout(function () { _delArm = null; renderChooser(); }, 5000);
       renderChooser(); return;
     }
     _delArm = null;
-    _groups = _groups.filter(function (g) { return g.id !== id; });
-    try { if (M.canvasGroupsSave) M.canvasGroupsSave(_groups); } catch (e) {}
-    forgetSavedGroup(id);
-    renderChooser();
+    deleteSavedGroup(id, del.hasAttribute('data-with'));
   });
+  // Rename in place: Enter or leaving the box keeps it, Esc leaves the name as it was.
+  chList.addEventListener('keydown', function (ev) {
+    if (!ev.target.hasAttribute || !ev.target.hasAttribute('data-renin')) return;
+    if (ev.key === 'Enter') { ev.preventDefault(); renameGroup(ev.target.getAttribute('data-renin'), ev.target.value); }
+    else if (ev.key === 'Escape') { ev.stopPropagation(); _renId = null; renderChooser(); }
+  });
+  chList.addEventListener('focusout', function (ev) {
+    if (ev.target.hasAttribute && ev.target.hasAttribute('data-renin') && _renId) renameGroup(ev.target.getAttribute('data-renin'), ev.target.value);
+  });
+  // Delete a saved group. withPieces: also take the pieces it put on the screen off it, so nothing is left
+  // behind as a locked set nobody can name. Either way one Undo (the toast, or Ctrl+Z) puts back the group,
+  // its pieces if they went, and its hotkey.
+  function deleteSavedGroup(id, withPieces) {
+    var g = savedById(id);
+    if (!g) return;
+    var snap = { g: g, at: _groups.indexOf(g), key: _gkeys[id] || '', live: [] };
+    var named = _layout.named || {};
+    Object.keys(named).forEach(function (k) { if (named[k] === id) snap.live.push(k); });
+    var ids = withPieces ? groupPanels(id).map(function (q) { return q.id; }) : [];
+    _groups = _groups.filter(function (x) { return x.id !== id; });
+    putGroups();
+    forgetSavedGroup(id);
+    if (ids.length) {
+      removePanels(ids);
+      toastMsg.textContent = 'Deleted “' + g.name + '” and its ' + ids.length + ' pieces';
+    } else {
+      _undo = [];
+      toastMsg.textContent = 'Deleted “' + g.name + '”';
+      toastEl.classList.add('undo'); toastEl.classList.add('on');
+      clearTimeout(_undoT);
+      _undoT = setTimeout(function () { _undo = null; toastEl.classList.remove('on'); }, 8000);
+    }
+    if (_undo) _undo.group = snap;
+    renderChooser();
+  }
 
   // Move the chooser by its header.
   var _cd = null;
@@ -1803,7 +1913,7 @@
   // the screen, or click it to drop it near the middle.
   var _pd = null, _cascade = 0;
   chList.addEventListener('mousedown', function (ev) {
-    if (ev.button !== 0 || ev.target.closest('[data-delgrp],[data-keygrp],[data-clrgrp]')) return;
+    if (ev.button !== 0 || ev.target.closest('[data-delgrp],[data-keygrp],[data-clrgrp],[data-dupgrp],[data-rengrp],[data-renin]')) return;
     var el = ev.target.closest('[data-drag]');
     if (!el) return;
     ev.preventDefault();
@@ -1840,6 +1950,8 @@
     try { M.overlayHoverInteractive(false); } catch (e) {}
     var r = chEl.getBoundingClientRect();
     if (pd.moved && ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom) return;
+    // A click on a row that is already on the screen shows where it is, rather than stacking a second copy on it.
+    if (!pd.moved && clickLocates(pd.what, pd.label.replace(/^[★▣▦✂]\s*/, ''))) return;
     dropThing(pd.what, pd.moved ? ev.clientX : null, pd.moved ? ev.clientY : null);
   });
 
@@ -1873,6 +1985,10 @@
     pieces.forEach(function (q) { addPart(q.part, q.mode, X + (q.dx || 0), Y + (q.dy || 0), grp, q); });
     return grp;
   }
+  // A preset laid out as pieces remembers which preset it was ('preset:<id>' in _layout.named, beside a saved
+  // group's id), so a click or a hover on its row can find where it went. Nothing else reads a name that is
+  // not a saved group's id (namedGroup is null for it).
+  function markPreset(grp, g) { (_layout.named = _layout.named || {})[grp] = 'preset:' + g.id; return grp; }
   // a[6], where a row has one, is a Ring arc's arc (its place on the HUD's circle), colour and no-label.
   function presetPiece(a) {
     var x = a[6] || {};
@@ -1903,9 +2019,9 @@
         // they are scaled to the size "as is" gives the ring and centred as it is: in the middle of the screen when
         // clicked in, on the drop when dragged (dropEmbed's rule).
         var S = embedSize({ key: g.embed }, g.style)[0], k = S / g.ring;
-        placeGroup(g.parts.map(function (a) { return ringPiece(a, k); }), (clicked ? W / 2 : X) - S / 2, (clicked ? H / 2 : Y) - S / 2);
+        markPreset(placeGroup(g.parts.map(function (a) { return ringPiece(a, k); }), (clicked ? W / 2 : X) - S / 2, (clicked ? H / 2 : Y) - S / 2), g);
       }
-      else if (g) placeGroup(g.parts.map(presetPiece), X, Y);
+      else if (g) markPreset(placeGroup(g.parts.map(presetPiece), X, Y), g);
     }
     else if (bits[0] === 'group') {
       // A saved group: its pieces are marked as that group (_layout.named), so its hotkey finds them.
@@ -1939,7 +2055,7 @@
     var o = ovEntry(g.embed), W = window.innerWidth, H = window.innerHeight;
     // at: null — a preset goes where it is dropped, not where the overlay's window happens to be.
     var p = addOverlay(Object.assign({}, o, { at: null, style: g.style || '' }), 0);
-    if (!p) { note(g.name + ' is already on the canvas'); return; }
+    if (!p) { if (!locate(placedFor('preset:' + g.id), g.name)) note(g.name + ' is already on the canvas'); return; }
     var sz = embedSize(o, g.style), ring = g.embed === 'me' && g.style === 'hud';
     p.name = String(g.name).slice(0, 24); p.w = sz[0]; p.h = sz[1];
     // The ring wraps the middle of the screen: clicked in, it lands there; dragged, it is centred on the drop.
@@ -2026,27 +2142,75 @@
   };
   window.wpCanvasFit = function (win) { var id = panelOfWin(win); return id ? fitEmbed(id, false) : false; };
 
-  function saveSelectionAsGroup(name) {
+  // The pieces as a saved group stores them: each one's look, and where it sits from the set's top-left.
+  function groupPartsOf(ps) {
     var W = window.innerWidth, H = window.innerHeight;
-    var ps = _layout.panels.filter(function (p) { return _sel[p.id] && p.kind === 'part'; });
-    if (!ps.length) return;
     var minX = Math.min.apply(null, ps.map(function (p) { return p.x * W; }));
     var minY = Math.min.apply(null, ps.map(function (p) { return p.y * H; }));
-    var g = { id: newId('s'), name: String(name || '').trim().slice(0, 24) || ('Group ' + (_groups.length + 1)),
-      parts: ps.map(function (p) {
-        return { part: p.part, mode: p.mode, dx: Math.round(p.x * W - minX), dy: Math.round(p.y * H - minY),
-          w: p.w, h: p.h, scale: p.scale, back: p.back, nolabel: !!p.nolabel, thick: p.thick || '', color: p.color || '', align: p.align || '',
-          arc: p.arc || null };
-      }) };
+    return ps.map(function (p) {
+      return { part: p.part, mode: p.mode, dx: Math.round(p.x * W - minX), dy: Math.round(p.y * H - minY),
+        w: p.w, h: p.h, scale: p.scale, back: p.back, nolabel: !!p.nolabel, thick: p.thick || '', color: p.color || '', align: p.align || '',
+        arc: p.arc || null };
+    });
+  }
+  function putGroups() { try { if (M.canvasGroupsSave) M.canvasGroupsSave(_groups); } catch (e) {} }
+  // A group's name is what its tray entry, the dashboard and /pipe mimic group find it by (the FIRST match,
+  // case-folded), so two may never share one: "Name", then "Name copy", "Name copy 2"…
+  function uniqueGroupName(base, exceptId) {
+    var taken = {};
+    _groups.forEach(function (g) { if (g.id !== exceptId) taken[g.name.toLowerCase()] = true; });
+    base = String(base || '').trim().slice(0, 24) || 'Group';
+    if (!taken[base.toLowerCase()]) return base;
+    for (var n = 2; n < 100; n++) {
+      var suffix = n === 2 ? ' copy' : ' copy ' + (n - 1), name = base.replace(/ copy( \d+)?$/i, '').slice(0, 24 - suffix.length) + suffix;
+      if (!taken[name.toLowerCase()]) return name;
+    }
+    return base.slice(0, 20) + ' ' + newId('').slice(-3);
+  }
+  function saveSelectionAsGroup(name) {
+    var ps = _layout.panels.filter(function (p) { return _sel[p.id] && p.kind === 'part'; });
+    if (!ps.length) return;
+    // Saving a set that already IS a saved group makes a NEW group beside it; the original is not touched.
+    var from = ps[0].grp ? namedGroup(ps[0].grp) : null;
+    var g = { id: newId('s'), name: uniqueGroupName(String(name || '').trim() || (from ? from.name + ' copy' : 'Group ' + (_groups.length + 1))),
+      parts: groupPartsOf(ps) };
     _groups.push(g);
     _groups = _groups.slice(-60);
-    try { if (M.canvasGroupsSave) M.canvasGroupsSave(_groups); } catch (e) {}
+    putGroups();
     // The selection is that group on the screen too.
     var grp = newId('g');
     ps.forEach(function (p) { p.grp = grp; });
     (_layout.named = _layout.named || {})[grp] = g.id;
     _sel = {};
     save(); render();
+    if (from) note('Saved as “' + g.name + '” — “' + from.name + '” is unchanged', 4000);
+  }
+  // 💾 Update: what is on the screen replaces the saved group's pieces (its name, key and id stay).
+  function updateSavedGroup(id) {
+    var g = savedById(id), ps = _layout.panels.filter(function (p) { return _sel[p.id] && p.kind === 'part'; });
+    if (!g || !ps.length) return;
+    g.parts = groupPartsOf(ps).slice(0, 80);
+    putGroups(); _sel = {};
+    save(); render();
+    note('“' + g.name + '” updated with these ' + ps.length + ' pieces', 4000);
+  }
+  // ⧉ A copy to change: same pieces, a new id (so no hotkey), its own name.
+  function duplicateGroup(id) {
+    var g = savedById(id);
+    if (!g || _groups.length >= 60) { if (g) note('60 groups is the most — delete one first', 4000); return; }
+    var c = { id: newId('s'), name: uniqueGroupName(g.name + ' copy'), parts: JSON.parse(JSON.stringify(g.parts)) };
+    _groups.splice(_groups.indexOf(g) + 1, 0, c);
+    putGroups();
+    renderChooser();
+    note('Copied to “' + c.name + '” — drag it onto the screen, change it, 💾 Update', 4000);
+  }
+  // ✎ Rename: the id stays, so its hotkey and its pieces on the screen stay with it.
+  var _renId = null;
+  function renameGroup(id, raw) {
+    var g = savedById(id), want = String(raw || '').trim();
+    _renId = null;
+    if (g && want && want !== g.name) { g.name = uniqueGroupName(want, id); putGroups(); }
+    renderChooser();
   }
   function sanitizeGroups(list) {
     return (Array.isArray(list) ? list : []).filter(function (g) {
@@ -2260,6 +2424,121 @@
     else if ((ev.key === 'z' || ev.key === 'Z') && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); undoRemove(); }
   });
 
+  // ── Where is it? ─────────────────────────────────────────────────────────────
+  // The guild lead, 2026-10-18: "clicking on the charm group it says it's up, but I don't know that it's a
+  // different set, or maybe it's buried" and "hover a row and draw a line to where it is". The chooser and the
+  // pieces are one page, so: a click on a row that is already on the screen outlines and pulses what it is
+  // there (and says where, and if it is hidden); hovering a row — or a piece — outlines the other side and
+  // draws a dashed line between them. A thing placed from a preset or a saved group is found by the live
+  // group id its pieces share (_layout.named: a saved group's id, or 'preset:<id>').
+  function placedFor(what) {
+    var bits = String(what).split(':'), P = _layout.panels;
+    if (bits[0] === 'part') return P.filter(function (q) { return q.kind === 'part' && q.part === bits[1]; });
+    if (bits[0] === 'group') return groupPanels(bits[1]);
+    if (bits[0] === 'overlay') return P.filter(function (q) { return q.kind === 'overlay' && q.key === bits[1]; });
+    if (bits[0] === 'sect') return P.filter(function (q) { return q.kind === 'sect' && q.key === bits[1] && q.sect === bits[2]; });
+    if (bits[0] === 'preset') {
+      var g = presetById(bits[1]);
+      if (!g) return [];
+      if (g.embed && bits[2] !== 'pieces' && ovEntry(g.embed)) return P.filter(function (q) { return q.kind === 'overlay' && q.key === g.embed && (q.style || '') === (g.style || ''); });
+      return groupPanels('preset:' + g.id);
+    }
+    return [];
+  }
+  function whereText(b) {
+    var W = window.innerWidth, H = window.innerHeight, cx = (b.x + b.w / 2) / W, cy = (b.y + b.h / 2) / H;
+    var v = cy < 0.34 ? 'top' : cy > 0.66 ? 'bottom' : 'middle', h = cx < 0.34 ? 'left' : cx > 0.66 ? 'right' : 'centre';
+    return v === 'middle' && h === 'centre' ? 'in the middle of the screen' : v === 'middle' ? 'at the ' + h + ' of the screen' : h === 'centre' ? 'at the ' + v + ' of the screen' : v + ' ' + h;
+  }
+  function boxOf(ps) {
+    return groupBox(ps.filter(function (q) { return _els[q.id]; }).map(function (q) {
+      var r = _els[q.id].root; return { x0: r.offsetLeft, y0: r.offsetTop, w0: r.offsetWidth, h0: r.offsetHeight };
+    }));
+  }
+  // Pulse them and say where. false when none of them is here to show.
+  function locate(ps, label) {
+    ps = ps.filter(function (q) { return _els[q.id]; });
+    if (!ps.length) return false;
+    ps.forEach(function (q) {
+      var r = _els[q.id].root;
+      r.classList.remove('loc'); void r.offsetWidth; r.classList.add('loc');
+      setTimeout(function () { r.classList.remove('loc'); }, 2600);
+    });
+    var hidden = ps.every(function (q) { return q.off; });
+    note('“' + label + '” is already here — ' + whereText(boxOf(ps)) + (hidden ? ', hidden (👁 or its key shows it)' : '')
+      + (ps.length > 1 ? ', ' + ps.length + ' pieces' : '') + '. Drag it out of the list to place another copy.', 5000);
+    return true;
+  }
+  // A click (not a drag) on a row that is already on the screen shows where. A piece is the exception: a second
+  // copy of a piece is routine.
+  function clickLocates(what, label) {
+    var kind = String(what).split(':')[0];
+    if (kind !== 'preset' && kind !== 'group' && kind !== 'overlay') return false;
+    return locate(placedFor(what), label);
+  }
+  var locEl = document.getElementById('loc'), _hlRow = null;
+  function endLink() {
+    locEl.classList.remove('on'); locEl.innerHTML = '';
+    var hs = document.querySelectorAll('.hl');
+    for (var i = 0; i < hs.length; i++) hs[i].classList.remove('hl');
+    _hlRow = null;
+  }
+  function clampTo(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  // Outline `ps` and run a dashed line from `anchor` (a chooser row or tab) to each one's nearest edge; the
+  // pieces of one live group share one line, to the box around them.
+  function showLink(anchor, ps) {
+    if (!_edit || _drag || _pd || _cd) return;
+    ps = ps.filter(function (q) { return _els[q.id]; });
+    if (!ps.length || !anchor) return;
+    anchor.classList.add('hl');
+    ps.forEach(function (q) { _els[q.id].root.classList.add('hl'); });
+    var ar = anchor.getBoundingClientRect(), lr = chList.getBoundingClientRect(), cr = chEl.getBoundingClientRect();
+    // Where it leaves the chooser: the row's height (kept inside the list's window), on the side facing the pieces.
+    var ay = clampTo((ar.top + ar.bottom) / 2, lr.top + 4, lr.bottom - 4), units = {};
+    ps.forEach(function (q) { (units[q.grp || q.id] = units[q.grp || q.id] || []).push(q); });
+    var svg = '';
+    Object.keys(units).forEach(function (k) {
+      var b = boxOf(units[k]);
+      var ax = (b.x + b.w / 2) < (cr.left + cr.right) / 2 ? cr.left : cr.right;
+      var tx = clampTo(ax, b.x, b.x + b.w), ty = clampTo(ay, b.y, b.y + b.h);
+      if (Math.abs(tx - ax) + Math.abs(ty - ay) < 6) return;       // the piece is under the chooser's edge: the outline says it
+      svg += '<line x1="' + Math.round(ax) + '" y1="' + Math.round(ay) + '" x2="' + Math.round(tx) + '" y2="' + Math.round(ty) + '"/>'
+        + '<circle cx="' + Math.round(tx) + '" cy="' + Math.round(ty) + '" r="4"/>';
+    });
+    locEl.innerHTML = svg; locEl.classList.add('on');
+  }
+  // Row → pieces.
+  chList.addEventListener('mouseover', function (ev) {
+    var row = ev.target.closest ? ev.target.closest('.pc[data-drag]') : null;
+    if (row === _hlRow) return;
+    endLink();
+    if (!row) return;
+    _hlRow = row;
+    showLink(row, placedFor(row.getAttribute('data-drag')));
+  });
+  chList.addEventListener('mouseleave', endLink);
+  // Piece → its row (or its tab, when the row is on another tab).
+  panelsEl.addEventListener('mouseover', function (ev) {
+    var root = ev.target.closest ? ev.target.closest('.panel') : null;
+    if (!root || !_edit) return;
+    var p = panelById(root.getAttribute('data-id')), cand = [], tab = null;
+    if (!p || root === _hlRow) return;
+    endLink();
+    _hlRow = root;
+    var named = p.grp && _layout.named && _layout.named[p.grp];
+    if (p.kind === 'part') { cand.push('part:' + p.part); tab = (partDef(p) || {}).cat; }
+    if (named) { cand.push((named.indexOf('preset:') === 0 ? 'preset:' + named.slice(7) : 'group:' + named)); tab = tab || 'groups'; }
+    if (p.kind === 'overlay') { WpParts.PRESETS.forEach(function (g) { if (g.embed === p.key && (g.style || '') === (p.style || '')) cand.push('preset:' + g.id); }); tab = 'groups'; }
+    if (p.kind === 'sect') { cand.push('sect:' + p.key + ':' + p.sect); tab = 'cuts'; }
+    var row = null;
+    for (var i = 0; i < cand.length && !row; i++) row = chList.querySelector('.pc[data-drag="' + cand[i] + '"]');
+    var anchor = row || (tab && chEl.classList.contains('open') ? chTabs.querySelector('[data-tab="' + tab + '"]') : null);
+    if (!anchor) return;
+    showLink(anchor, p.grp ? _layout.panels.filter(function (q) { return q.grp === p.grp; }) : [p]);
+  });
+  panelsEl.addEventListener('mouseleave', endLink);
+  document.addEventListener('mousedown', endLink, true);
+
   // ── Removing, with Undo ──────────────────────────────────────────────────────
   // The callouts panel and the catch-all timers panel are never removed (a
   // callout or a countdown would have nowhere to show); everything else is.
@@ -2285,10 +2564,20 @@
   }
   function undoRemove() {
     if (!_undo) return;
+    var gp = _undo.group;
     _undo.sort(function (a, b) { return a.i - b.i; }).forEach(function (g) {
       _layout.panels.splice(Math.min(g.i, _layout.panels.length), 0, g.p);
     });
     _undo = null; clearTimeout(_undoT); toastEl.classList.remove('on');
+    // A deleted saved group comes back with its place in the list, its link to the pieces, and its key.
+    if (gp && !savedById(gp.g.id)) {
+      _groups.splice(Math.min(gp.at < 0 ? _groups.length : gp.at, _groups.length), 0, gp.g);
+      putGroups();
+      gp.live.forEach(function (k) { if (_layout.panels.some(function (q) { return q.grp === k; })) (_layout.named = _layout.named || {})[k] = gp.g.id; });
+      if (gp.key && M.canvasGroupHotkey) {
+        M.canvasGroupHotkey(gp.g.id, gp.key).then(function (r) { if (r && r.ok) { _gkeys = r.keys || {}; _gblocked = r.blocked || {}; } repaintKeys(); }).catch(function () {});
+      }
+    }
     save(); render();
   }
   document.getElementById('undoBtn').addEventListener('click', undoRemove);
@@ -2320,6 +2609,85 @@
     else if (url) { try { if (M.openExternal) M.openExternal(url); } catch (e) {} note('Opening in your browser'); }
   }, true);
 
+  // ── One choice for a whole set of pieces ─────────────────────────────────────
+  // The guild lead, 2026-10-18: "select the whole group and say slim bar or upright bar". One walker for
+  // both doors — the selection bar's selects (a click on a grouped piece selects its whole group) and the
+  // GROUP section of a piece's ⚙ — so a Slim bar means the same thing as it does on one piece. A mode a
+  // piece's data cannot be drawn in (a list has no Bar) is skipped and counted, never forced.
+  function bulkPatch(kind, v) {
+    if (kind === 'mode') return { mode: v };
+    if (kind === 'thick') return { thick: v === 'normal' ? '' : v };
+    if (kind === 'back') return { back: v === '1' };
+    if (kind === 'align') return { align: v === 'left' ? '' : v };
+    return {};
+  }
+  // The modes any of these pieces can be drawn in, first seen first: [id, label].
+  function bulkModes(ps) {
+    var seen = {}, out = [];
+    ps.forEach(function (q) {
+      var d = partDef(q);
+      (d ? (WpParts.MODES[d.kind] || []) : []).forEach(function (m) { if (!seen[m[0]] && m[0] !== 'seg') { seen[m[0]] = true; out.push(m); } });
+    });
+    return out;
+  }
+  function bulkSet(ps, patch) {
+    var W = window.innerWidth, H = window.innerHeight, res = { changed: 0, skipped: 0 }, flowed = [];
+    ps.forEach(function (q) {
+      var d = q.kind === 'part' ? partDef(q) : null;
+      if (!d) return;
+      if (patch.mode !== undefined) {
+        var modes = WpParts.MODES[d.kind] || [], was = q.mode || (modes[0] ? modes[0][0] : '');
+        if (!modes.some(function (m) { return m[0] === patch.mode; })) { res.skipped++; return; }
+        if (was !== patch.mode) {
+          // The size the new shape wants, as the single piece's Show as takes it (data-mode): its height
+          // always; an upright bar its width too (it is narrow), and a bar coming back from upright gets a bar's width.
+          var sz = (d.size && d.size[patch.mode]) || WpParts.DEFAULT_SIZE[patch.mode];
+          if (sz) {
+            if (patch.mode === 'vbar' || patch.mode === 'ring' || patch.mode === 'arc') q.w = sz[0];
+            else if (was === 'vbar') q.w = Math.max(q.w, WpParts.DEFAULT_SIZE.bar[0]);
+            q.h = sz[1];
+          }
+          q.mode = patch.mode;
+        }
+        flowed.push(q);
+      }
+      if (patch.thick !== undefined) q.thick = patch.thick;
+      if (patch.back !== undefined) q.back = !!patch.back;
+      if (patch.align !== undefined) q.align = patch.align;
+      res.changed++;
+    });
+    // Every piece changed shape, so the old stack no longer fits: upright bars stand in a row, bars and slim
+    // bars stack in a column, from the set's top-left corner. Anything else keeps its place.
+    if (flowed.length > 1 && !res.skipped && (patch.mode === 'vbar' || patch.mode === 'bar' || patch.mode === 'thin')) {
+      var row = patch.mode === 'vbar', cx = Infinity, cy = Infinity;
+      flowed.forEach(function (q) { cx = Math.min(cx, q.x * W); cy = Math.min(cy, q.y * H); });
+      flowed.slice().sort(function (a, b) { return row ? (a.x - b.x || a.y - b.y) : (a.y - b.y || a.x - b.x); }).forEach(function (q) {
+        q.x = num(cx / W, 0, 1, q.x); q.y = num(cy / H, 0, 1, q.y);
+        if (row) cx += q.w + 6; else cy += q.h + 4;
+      });
+    }
+    return res;
+  }
+  var BULK_THICK = [['thin', 'Thin'], ['normal', 'Normal'], ['thick', 'Thick']];
+  // The selection bar's way in: three selects that act and go back to their heading (selWhen's pattern).
+  function bulkSelectsHtml(ps) {
+    var h = '<select data-bulksel="mode" title="Draw every selected piece this way (a piece that cannot be drawn so keeps its look)"><option value="">Show as…</option>';
+    bulkModes(ps).forEach(function (m) { h += '<option value="' + esc(m[0]) + '">' + esc(m[1]) + '</option>'; });
+    h += '</select><select data-bulksel="thick" title="Bar or ring thickness, for every selected piece"><option value="">Thickness…</option>';
+    BULK_THICK.forEach(function (t) { h += '<option value="' + t[0] + '">' + t[1] + '</option>'; });
+    return h + '</select><select data-bulksel="back" title="A plate behind every selected piece, or none"><option value="">Backing…</option><option value="0">Clear</option><option value="1">Panel</option></select>';
+  }
+  // The GROUP section's way in: the same choices as buttons, on the whole group.
+  function bulkMenuHtml(ps) {
+    if (ps.length < 2) return '';
+    var h = '<div class="sec">Whole group · all ' + ps.length + ' at once</div><div class="row" style="flex-wrap:wrap">';
+    bulkModes(ps).forEach(function (m) { h += '<button class="btn" data-bulk="mode" data-v="' + esc(m[0]) + '">' + esc(m[1]) + '</button>'; });
+    h += '</div><div class="row">';
+    BULK_THICK.forEach(function (t) { h += '<button class="btn" data-bulk="thick" data-v="' + t[0] + '">' + t[1] + '</button>'; });
+    h += '<button class="btn" data-bulk="back" data-v="0">Clear</button><button class="btn" data-bulk="back" data-v="1">Panel</button></div>';
+    return h;
+  }
+
   // ── The selection bar: lock together, unlock, save as a group, delete ────────
   // The guild lead, 2026-09-29: "I should be able to select multiple pieces, lock them together (and not
   // necessarily touching) and move them at the same time. Should be able to save my own subsets."
@@ -2334,13 +2702,17 @@
     var locked = Object.keys(grps).length === 1 && ids.every(function (id) { return panelById(id).grp; })
       && _layout.panels.filter(function (q) { return q.grp === Object.keys(grps)[0]; }).length === ids.length;
     var parts = ids.filter(function (id) { return panelById(id).kind === 'part'; }).length;
+    // The selection is exactly one placed saved group: saving makes a new one beside it, or updates it.
+    var ng = locked ? namedGroup(Object.keys(grps)[0]) : null;
     var h = '<b>' + ids.length + ' selected</b>'
       + (ids.length > 1 && !locked ? '<button class="btn go" data-sel="lock" title="They move together from now on, wherever they sit">🔗 Lock together</button>' : '')
       + (locked ? '<span class="dim">locked together</span>' : '')
       + (Object.keys(grps).length ? '<button class="btn" data-sel="unlock" title="Each moves on its own again">🔓 Unlock</button>' : '')
-      + (parts ? '<input id="selName" maxlength="24" placeholder="name it"><button class="btn" data-sel="save" title="Keep this set in the chooser\'s Groups tab, to drop again anywhere — and give it a hotkey that shows or hides it">💾 Save as a group</button>' : '')
+      + (parts ? '<input id="selName" maxlength="24" placeholder="' + (ng ? 'a new name' : 'name it') + '"><button class="btn" data-sel="save" title="Keep this set in the chooser\'s Groups tab, to drop again anywhere — and give it a hotkey that shows or hides it' + (ng ? '. “' + esc(ng.name) + '” itself is not changed.' : '') + '">💾 ' + (ng ? 'Save as new' : 'Save as a group') + '</button>' : '')
+      + (parts && ng ? '<button class="btn go" data-sel="update" title="Replace the pieces of “' + esc(ng.name) + '” with these (its name and hotkey stay)">💾 Update “' + esc(ng.name) + '”</button>' : '')
       + '<select id="selWhen" title="Show every selected piece only when this holds, out in play">' + whenOptions('Show when…', 'Always', WHEN) + '</select>'
       + '<select id="selCls" title="Show every selected piece only for this class">' + whenOptions('Only for…', 'Any class', WHEN_CLASSES.map(function (c) { return [c[0], c[0]]; })) + '</select>'
+      + (parts ? bulkSelectsHtml(ids.map(panelById).filter(function (q) { return q.kind === 'part'; })) : '')
       + '<button class="btn warn" data-sel="delete" title="Delete the selected (Undo appears)">🗑 Delete</button>'
       + '<button class="btn" data-sel="clear">Clear</button>';
     if (selbar._html !== h) { selbar._html = h; selbar.innerHTML = h; }
@@ -2352,6 +2724,7 @@
     if (a === 'lock') { var g = newId('g'); ids.forEach(function (id) { panelById(id).grp = g; }); save(); render(); }
     else if (a === 'unlock') { ids.forEach(function (id) { panelById(id).grp = null; }); save(); render(); }
     else if (a === 'save') { var inp = document.getElementById('selName'); saveSelectionAsGroup(inp ? inp.value : ''); }
+    else if (a === 'update') { var ug = ids.length ? namedGroup(panelById(ids[0]).grp) : null; if (ug) updateSavedGroup(ug.id); }
     else if (a === 'delete') removePanels(ids);
     else if (a === 'clear') { _sel = {}; render(); }
   });
@@ -2364,7 +2737,15 @@
   }
   selbar.addEventListener('change', function (ev) {
     var t = ev.target, v = t.value, ps = selIds().map(panelById);
-    if (!v || (t.id !== 'selWhen' && t.id !== 'selCls')) return;
+    if (!v) return;
+    if (t.hasAttribute && t.hasAttribute('data-bulksel')) {
+      var bn = bulkSet(ps.filter(function (q) { return q.kind === 'part'; }), bulkPatch(t.getAttribute('data-bulksel'), v));
+      t.value = '';
+      if (bn.skipped) note(bn.skipped + (bn.skipped === 1 ? ' piece' : ' pieces') + ' cannot be drawn that way and kept their look', 3500);
+      save(); render();
+      return;
+    }
+    if (t.id !== 'selWhen' && t.id !== 'selCls') return;
     if (t.id === 'selWhen') setWhen(ps, v === '*' ? '' : v);
     else setWhenClasses(ps, v === '*' ? [] : [v]);
     t.value = '';

@@ -378,7 +378,8 @@ describe('the chooser stays readable', () => {
   it('a piece shows its whole name, then its ways to draw it by name on a line of their own', () => {
     const c = stripJs(canvas);
     expect(c).toMatch(/lh \+= '<div class="pc pp" data-drag="part:' \+ d\.id/);
-    expect(c).toMatch(/'<span class="pc-v" data-val="' \+ d\.id \+ '"><\/span><span class="pc-ms">'/);
+    // the value, then (2026-10-18) the live preview box, then the mode chips on their own line
+    expect(c).toMatch(/'<span class="pc-v" data-val="' \+ d\.id \+ '"><\/span>'\s*\+ '<div class="pc-pv" data-pv="' \+ d\.id \+ '"'[^\n]*<span class="pc-ms">'/);
     expect(c).toMatch(/\+ \(MODE_ICON\[m\[0\]\] \? MODE_ICON\[m\[0\]\] \+ ' ' : ''\) \+ esc\(m\[1\]\) \+ '<\/span>'/);
     expect(canvas).toContain('#chooser .pc-ms{flex-basis:100%;display:flex;flex-wrap:wrap;gap:3px}');
     expect(canvas).toContain('#chooser .pc.pp .pc-l{white-space:normal;font-weight:600}');

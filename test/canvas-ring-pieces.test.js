@@ -199,6 +199,10 @@ describe('choosing HUD (ring) "as pieces" lays out the one ring', () => {
       + slice('  function newId(prefix) {', '.slice(0, 24); }') + '\n' + slice('  function addPart(pid, mode, X, Y, grp, o) {') + '\n'
       + slice('  function placeGroup(pieces, X, Y) {') + '\n' + slice('  function presetPiece(a) {') + '\n' + slice('  function ringPiece(a, k) {') + '\n'
       + slice('  function presetById(id)', 'return null; }') + '\n' + slice('  function dropThing(what, X, Y) {') + '\n'
+      + slice('  function markPreset(grp, g) {', 'return grp; }') + '\n'
+      + 'function placedFor() { return []; } function locate() { return false; }\n'
+      + slice('  function namedGroup(grp) {', ': null; }') + '\n'
+      + slice('  function groupPartsOf(ps) {') + '\n' + slice('  function putGroups() {', 'catch (e) {} }') + '\n' + slice('  function uniqueGroupName(base, exceptId) {') + '\n'
       + slice('  function saveSelectionAsGroup(name) {')
       + '\nfunction __setOv(o) { _overlays = o; } function __sel(ids) { _sel = {}; ids.forEach(function (i) { _sel[i] = true; }); } function __groups() { return _groups; }',
     ['dropThing', 'addPart', 'placeGroup', '_layout', 'sanitize', 'saveSelectionAsGroup', '__setOv', '__sel', '__groups', 'notes']);
@@ -334,8 +338,9 @@ describe('the canvas paints and edits a Ring arc', () => {
     expect(els.q3.html).toContain('class="pt pt-bar"');   // any other mode is drawn as it was
   });
   it('a Ring arc fills its panel to the edge (no padding or border), so the arcs of one ring line up', () => {
-    expect(stripCss(canvas)).toContain('.panel.part.seg > .pbody,.panel.part.seg.back > .pbody{padding:0}');
-    expect(stripCss(canvas)).toContain('.panel.part.seg.back > .pbody{border:0}');
+    // (backing is an inset shadow now, not a border, so a Ring arc's plate has only the shadow to switch off)
+    expect(stripCss(canvas)).toContain('.panel.part.seg > .pbody{padding:0}');
+    expect(stripCss(canvas)).toContain('.panel.part.seg.back > .pbody{box-shadow:none}');
     expect(c).toContain("e.root.classList.toggle('seg', p.mode === 'seg');");
   });
   it('switching a piece to Ring arc gives it a ring\'s shape and does not fit it to its text', () => {

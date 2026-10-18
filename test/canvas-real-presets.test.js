@@ -75,6 +75,7 @@ describe('choosing a preset', () => {
       + 'function ovEntry(k) { return have ? { key: k } : null; }\n'
       + 'function presetPiece(a) { return a; } function savedById() { return null; }\n'
       + 'function addPart() { calls.push(["part"]); } function placeGroup(ps) { calls.push(["pieces", ps.length]); }\n'
+      + 'function markPreset(grp) { return grp; }\n'
       + 'function dropEmbed(g, X, Y, clicked) { calls.push(["embed", g.embed, g.style || "", X, Y, clicked]); }\n'
       + 'function addOverlay() { return null; } function sectPanel() { return null; } function refresh() {} function save() {} function render() {}\n'
       + slice('  function presetById(id)', 'return null; }') + '\n'
@@ -102,7 +103,7 @@ describe('choosing a preset', () => {
     expect(c).toMatch(/var real = !!\(g\.embed && ovEntry\(g\.embed\)\);/);
     expect(c).toContain("data-drag=\"preset:' + g.id + ':pieces\"");
     expect(c).toContain("(real ? '▣ ' : '▦ ')");
-    expect(c).toMatch(/else if \(g\) placeGroup\(g\.parts\.map\(presetPiece\), X, Y\);/);
+    expect(c).toMatch(/else if \(g\) markPreset\(placeGroup\(g\.parts\.map\(presetPiece\), X, Y\), g\);/);
   });
   it('"Whole overlays" lists only the overlays with no preset, so the HUD is not offered a second, half-size way', () => {
     expect(c).toMatch(/WpParts\.PRESETS\.forEach\(function \(g\) \{ if \(g\.embed\) preset\[g\.embed\] = true; \}\);\s*var whole = _overlays\.filter\(function \(o\) \{ return !on\[o\.key\] && !preset\[o\.key\]; \}\);/);
@@ -111,7 +112,9 @@ describe('choosing a preset', () => {
 
 describe('the overlay panel a preset adds', () => {
   const env = () => evalBlock('var window = { innerWidth: 1920, innerHeight: 1080 }; var _fitAdd = {}; var notes = [];\n'
-    + 'function note(m) { notes.push(m); } function refresh() {}\n' + rules + '\n'
+    + 'function note(m) { notes.push(m); } function refresh() {}\n'
+    // nothing is drawn in this harness, so there is nothing to locate: the refusal falls back to the plain note
+    + 'function placedFor() { return []; } function locate() { return false; }\n' + rules + '\n'
     + slice('  function addOverlay(o, n) {') + '\n' + slice('  function embedSize(o, style) {') + '\n' + slice('  function dropEmbed(g, X, Y, clicked) {')
     + '\nfunction __setOv(o) { _overlays = o; }', ['dropEmbed', '_layout', '_fitAdd', 'notes', '__setOv', 'sanitize', 'ovSrc', 'addOverlay']);
   const OVS = [{ key: 'me', label: 'HUD', src: 'me.html', w: 330, h: 300 },
@@ -245,7 +248,8 @@ describe('an overlay panel is the page, with nothing of the canvas\'s own around
       expect(body, sel).not.toMatch(/(?:^|;)\s*border:\s*1px/);
     }
     // the plate that exists is the piece's, and a hand-set Background on a piece
-    expect(css).toMatch(/\.panel\.part\.back > \.pbody\{background:rgba\(13,17,23,var\(--bg-alpha,0\.72\)\);border:1px solid #30363d/);
+    // (backing is only the plate, no border/padding of its own: see test/canvas-pieces-round.test.js)
+    expect(css).toMatch(/\.panel\.part\.back > \.pbody\{background:rgba\(13,17,23,var\(--bg-alpha,0\.72\)\);box-shadow:inset 0 0 0 1px #30363d/);
     expect(css).toContain('body.edit .panel{outline:1px dashed');
   });
   it('click-through is untouched: arranging blocks the page, only an open builder gets the mouse back', () => {
