@@ -590,6 +590,20 @@ web page. Design + the content cuts: `docs/DESIGN-80-raid-night-review.md`.
 `/raid/session?from=&to=` (members only; never an auto-made public share). The window is the recorded
 `raid_track_minutes` session overlapping 19:30–00:30 ET, picked by `utils/raidSessionWindow.js` with the web's
 rules (20-min gap split, most minutes wins), falling back to the raid window itself (§338).
+
+**The public SHARE of that review** (#347): an officer mints a token link (`/share/raid/<token>`, `raid_shares` row,
+7/30/90-day expiry, revocable, secret stored only as a hash). It shows the same sections with no sign-in, and is
+abuse-guarded (per-IP + per-share rate limits, `robots`/`noindex`, short private cache that a revoke bites within a
+minute — `web/lib/shareGuard.ts`, `raidShare.ts`, §354).
+**Opted-out characters are a class, not a name, on BOTH the members' review and the share (§356, 2026-10-18).** A
+character with `exclude_from_stats` or `exclude_inventory` is shown as "Cleric 2" (class + a salted-order number,
+never the name) in the replay board, attendance, ticks, parses, loot and rolls — swapped **server-side**
+(`web/lib/raidSession.ts` `scrubMinuteData`, `raidShareLookup.ts` `loadAnon`) so the browser never sees the name.
+The one exception is a **bid winner** in the window (a closed `opendkp_auctions` row or a `loot_observations`
+award): shown by name, linking a **Bids** section (`web/lib/raidSessionBids.ts`, opaque `#bids-<handle>`) with what
+they won and the **closed** auctions they bid on and lost (`opendkp_auction_bids`; open auctions sealed). The
+members' board reads the sign-in-gated `/api/raid/session/replay` (twin of the share's replay route) so it is
+labelled the same way. Tests: `test/raid-session-anon.test.js`.
 Load-bearing details:
 - **Anchored on the night's FIRST ENCOUNTER**, never `Date.now()` — by the time
   the review runs the scheduled-event window has closed, so "now" can plan a
