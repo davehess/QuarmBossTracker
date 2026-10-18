@@ -1101,6 +1101,13 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Chat overlay — guild feed while away** (bot 3.1.277 `utils/guildChatFeed.js` + `GET /api/agent/guild-chat`; agent
   3.7.182 `_pollGuildFeed` / `_guildFeedRing`, policy key `away`; §342): other Mimics' /gu and /rs relayed while this
   player's game is not running; `ingame` count from the bot's reporter heartbeat registry.
+- **Chat overlay — feed cached across a restart** (agent 3.8.0 / Mimic 2.10.0 beta, §357): the overlay's rings + the
+  guild-feed cursor are written ENCRYPTED to `logsync.chat-cache.bin` (AES-256-GCM, agent `packages/wolfpack-logsync/index.js`
+  "Chat cache"; key made + held by Mimic under `safeStorage` and handed over in `WOLFPACK_CHAT_CACHE_KEY`, `apps/mimic/main.js`
+  "Chat cache"). No key = nothing written (no plaintext mode). Caps: newest 200/ring, ≤24 h, ≤256 KB, one atomic write per 8 s.
+  Logout keeps it sealed for a 24 h grace (`_chatCacheDecide`) then deletes; a different Discord id wipes it; a definite 401
+  revokes (`chatCacheRevoke`, file + key gone). The kill switch / version floor wipes only the file (`chatCacheWipeFileOnly`) so
+  on-screen chat stays while overlays run on local data. Tests `test/chat-cache.test.js`.
 - **Chat overlay — Loot / Random / Other** (agent 3.7.181 beta, §340): opt-in groups beside Melee/Spells/Skills
   (`classifyLootLine`, `classifyRandomLine`, `classifyOtherLine` — Other last, re-asks the switched-off classifiers,
   never takes chat), their own 300-line rings in `_chatExtraRings`, policy keys `loot/random/other`.
