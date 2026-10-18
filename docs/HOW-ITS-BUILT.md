@@ -283,7 +283,8 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
   - It is sheddable: `flag_shed_corpse`.
   - In a Planes of Power zone (`_POP_CORPSE_MOVE_ZONES`, ids 200–223 less 202 and 203) it adds
     when the corpse moves, an hour after death, and where (bot 3.1.190, the 2026-10-02 server
-    patch; DECISIONS-2026-09-21 §130).
+    patch; DECISIONS-2026-09-21 §130). In the second part of the Plane of Time (zone 223, `potimeb`) it is
+    30 minutes (`_POTIME_B_CORPSE_MOVE_SEC`, bot 3.2.1, the 2026-10-18 server patch).
 - **Tests:** `test/corpse-dm.test.js` and `test/corpse-dm-agent.test.js`.
   DECISIONS-2026-09-21 §43.
 
@@ -1201,7 +1202,7 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   - Built by `release-mimic.yml` from the `alpha` branch; `sync-alpha.yml` keeps alpha = beta + builder
     work. The bot and site count only `-beta.N` tags as the beta (`test/alpha-release-isolation.test.js`).
   - **Overlay sets — on BETA since 2026-10-14** (alpha `e9e4f3d6`, §83a; ported to beta `5206a591`, §329, with `/pipe mimic
-    edit|arrange` for beta's Canvas; `/pipe mimic group` stays alpha-only because it needs alpha's saved Canvas groups;
+    edit|arrange` for beta's Canvas; `/pipe mimic group` came to beta with the 3.0 graduation on 2026-10-18, §367);
     beta's tray puts 🗂 Overlay sets right under Overlays). `apps/mimic/overlaySets.js` is the store
     (`overlay-sets.json` beside `mimic.config.json`) and the `/pipe mimic load|save|next|prev|lock`
     parser; `main.js` `_captureOverlaySet` / `_applyOverlaySet` / `_overlaySetCommand`, called from the
