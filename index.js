@@ -22012,6 +22012,10 @@ const CORPSE_DM_MAX_PER_HOUR = 6;
 // Decay and Plane of Justice under expansion 0.
 const _POP_CORPSE_MOVE_ZONES = new Set([200, 201, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214,
   215, 216, 217, 218, 219, 220, 221, 222, 223]);
+// The second part of the Plane of Time (potimeb) moves a corpse after 30 minutes, not 60 (Quarm patch notes,
+// 2026-10-18: "Corpses in the second part of Plane of Time move to the graveyard after 30 minutes").
+const _POTIME_B_ZONE_ID = 223;
+const _POTIME_B_CORPSE_MOVE_SEC = 30 * 60;
 
 function _corpseDmText({ character, zone, zoneId, loc, diedAtMs }) {
   const unix = Math.floor(diedAtMs / 1000);
@@ -22022,9 +22026,9 @@ function _corpseDmText({ character, zone, zoneId, loc, diedAtMs }) {
   } else {
     lines.push('Corpse position unknown: Zeal was not sending your location.');
   }
-  // The /loc above is good for an hour in the Planes of Power, then the corpse moves.
+  // The /loc above is good for an hour in the Planes of Power (half an hour in Plane of Time B), then the corpse moves.
   if (_POP_CORPSE_MOVE_ZONES.has(Number(zoneId))) {
-    const moveAt = unix + 3600;
+    const moveAt = unix + (Number(zoneId) === _POTIME_B_ZONE_ID ? _POTIME_B_CORPSE_MOVE_SEC : 3600);
     lines.push(`It moves <t:${moveAt}:R>: to the Plane of Tranquility graveyard from a guild instance, or to this zone's graveyard in the open world.`);
     if (Number(zoneId) === 201) lines.push('A corpse from a failed trial goes to the Tribunal instead, in the same instance.');
   }
