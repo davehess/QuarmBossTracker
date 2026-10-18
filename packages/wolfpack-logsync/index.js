@@ -40113,10 +40113,13 @@ setInterval(() => { _pollGuildFeed().catch(() => {}); }, GUILD_FEED_POLL_MS).unr
 // WHEN IT GOES (Mimic owns the logout side: it decides, it holds the key; see main.js "Chat cache"):
 //   • a definite 401 (a revoked session, a /token revoke, a member lockout) on the 20 s reporter heartbeat, an upload or the
 //     guild-chat poll: chatCacheRevoke. A 5xx, a 429 or a dead network is NOT a revoke (the bot answers a store blip with 503);
-//   • the fleet kill switch or a version floor standing this agent down: chatCacheWipe, BEFORE the reading is adopted;
+//   • the fleet kill switch or a version floor standing this agent down: chatCacheWipeFileOnly, BEFORE the reading is adopted.
+//     Stand-down keeps overlays running on LOCAL data, so this deletes the on-disk copy and holds writes but LEAVES the live
+//     rings and guild feed alone — the on-screen chat must not blank (the guild lead, 2026-10-17);
 //   • a session push from a DIFFERENT Discord identity: chatCacheWipe BEFORE the new token is taken.
-// Each deletes the file first, then what the overlay holds (the rings, the guild feed, the history cache, and a new boot value
-// so the overlay empties its own copy). Plain unlink + the key being dropped by Mimic is the whole story; no overwrite pass.
+// A full chatCacheWipe (revoke, identity change) deletes the file first, then what the overlay holds (the rings, the guild feed,
+// the history cache, and a new boot value so the overlay empties its own copy); chatCacheWipeFileOnly deletes only the file.
+// Plain unlink + the key being dropped by Mimic is the whole story; no overwrite pass.
 const CHAT_CACHE_FILE = path.join(__dirname, 'logsync.chat-cache.bin');
 const CHAT_CACHE_MAGIC = Buffer.from('WPCC1');
 const CHAT_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;

@@ -7,7 +7,8 @@
 // share row (lib/raidShare.ts replaySlice), so there is no parameter that can reach outside it. An unknown,
 // expired or revoked token is a plain 404 (lib/raidShareLookup.ts).
 //
-// Opted-out characters are removed from every row before it leaves (lib/raidSession.ts scrubMinuteData).
+// Opted-out characters are renamed to their class label ("Cleric 2") in every row before it leaves, unless they won
+// an item in the share's window (lib/raidSession.ts scrubMinuteData, lib/raidShareLookup.ts loadAnon).
 // Cache-Control is private and short so a revoke bites within a minute even for a browser that kept a slice.
 //
 // ABUSE (the guild lead, 2026-10-17; lib/shareGuard.ts): the per-IP limit runs before the token is looked up and
@@ -18,7 +19,7 @@ import { NextResponse } from 'next/server';
 import { unstable_cache } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
 import { replaySlice, shareTag, SHARE_CACHE_S, windowIso } from '@/lib/raidShare';
-import { loadOptedOut, resolveShare } from '@/lib/raidShareLookup';
+import { loadAnon, resolveShare } from '@/lib/raidShareLookup';
 import { scrubMinuteData } from '@/lib/raidSession';
 import { ceilingApi, guardApi } from '@/lib/shareGuard';
 
@@ -42,6 +43,7 @@ export async function GET(req: Request, { params }: { params: { token: string } 
 
     const { from, to } = windowIso(slice);
     const guild = share.row.guild_id;
+    const win = share.win;   // the winners are the whole session's, not the slice's
     const rows = await unstable_cache(async () => {
       const db = supabaseAdmin();
       const { data, error } = await db.from('raid_track_minutes')
@@ -51,9 +53,9 @@ export async function GET(req: Request, { params }: { params: { token: string } 
         .order('minute_at')
         .limit(15);   // a literal: REPLAY_WINDOW_MS / MINUTE_MS, one row per minute of the slice
       if (error) throw error;   // a throw is never cached
-      const optedOut = await loadOptedOut(db, guild);
+      const anon = await loadAnon(db, guild, win);
       return (data ?? []).map((r: { minute_at: string; zones: string[] | null; data: string }) => ({
-        minute_at: r.minute_at, zones: r.zones, data: scrubMinuteData(r.data, optedOut),
+        minute_at: r.minute_at, zones: r.zones, data: scrubMinuteData(r.data, anon),
       }));
     }, ['raid-share', share.row.id, 'replay', String(slice.fromMs)], { revalidate: SHARE_CACHE_S, tags: [shareTag(share.row.id)] })();
     return NextResponse.json({ rows }, { headers: HEADERS });

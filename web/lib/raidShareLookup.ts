@@ -5,7 +5,8 @@
 // ask this for a different one.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { hashToken, shareStatus, tokenLooksValid, windowOfShare, type ShareRow, type ShareWindow } from './raidShare';
-import { optedOutSet, type CharFlags } from './raidSession';
+import { anonLabels, exemptWinners, type AnonMap, type CharFlags } from './raidSession';
+import { loadWinnerKeys } from './raidSessionBids';
 import { selectAll } from './selectAll';
 
 const COLUMNS = 'id, guild_id, from_at, to_at, title, created_at, expires_at, revoked_at, view_count';
@@ -90,18 +91,40 @@ export function clearViewMemo() {
 }
 
 const OPT_TTL_MS = 60_000;
-let optCache: { at: number; guild: string; set: Set<string> } | null = null;
+let optCache: { at: number; guild: string; map: AnonMap } | null = null;
 
-/** The characters that must not appear in a share, as nameKeys. Held for a minute per process. */
-export async function loadOptedOut(sb: SupabaseClient, guild: string): Promise<Set<string>> {
-  if (optCache && optCache.guild === guild && Date.now() - optCache.at < OPT_TTL_MS) return optCache.set;
+/** The salt behind the label order and the bids handles. The demo-mode salt, so one secret covers both. */
+export const anonSalt = (): string => process.env.DEMO_OBFUSCATE_SALT || 'raid-anon';
+
+/** Forgets the held opt-out labels (tests). */
+export function clearOptedOutCache() {
+  optCache = null;
+}
+
+/**
+ * The characters that must not appear by name in a share, as nameKey -> label ("Cleric 2"). Held for a minute per
+ * process, which is also how long an opt-out can take to leave a share. Winners are NOT taken out here; see loadAnon.
+ */
+export async function loadOptedOut(sb: SupabaseClient, guild: string): Promise<AnonMap> {
+  if (optCache && optCache.guild === guild && Date.now() - optCache.at < OPT_TTL_MS) return optCache.map;
   const rows = await selectAll<CharFlags>((from, to) => sb.from('characters')
-    .select('name, exclude_from_stats, exclude_inventory')
+    .select('name, class, exclude_from_stats, exclude_inventory')
     .eq('guild_id', guild)
     .or('exclude_from_stats.eq.true,exclude_inventory.eq.true')
     .order('name')
     .range(from, to));
-  const set = optedOutSet(rows);
-  optCache = { at: Date.now(), guild, set };
-  return set;
+  const map = anonLabels(rows, anonSalt());
+  optCache = { at: Date.now(), guild, map };
+  return map;
+}
+
+/**
+ * What to show instead of a name, for one window: the opted-out characters' labels, minus anyone who won an item in
+ * `win` (a bid winner is shown by name, lib/raidSessionBids.ts). Without a window nobody is exempt, so a caller
+ * that cannot name the window labels every opted-out character. Nobody opted out: no winner read at all.
+ */
+export async function loadAnon(sb: SupabaseClient, guild: string, win?: ShareWindow): Promise<AnonMap> {
+  const base = await loadOptedOut(sb, guild);
+  if (!base.size || !win) return base;
+  return exemptWinners(base, await loadWinnerKeys(sb, guild, win));
 }

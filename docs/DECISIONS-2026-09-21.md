@@ -11340,3 +11340,57 @@ briefing, not here** — they name ways in.
 - **Update-or-pause plan** drafted in `docs/PLAN-update-or-pause-2026-10.md` (fleet: 33 players on 2.9.1, 7 older, 4
   beta). ⏳ The guild lead: what "shut off" means (pause uploads vs blank guild overlays), 7 or 14 days, beta testers in
   or out.
+
+### 356. Opt-outs are a class on the raid session review and share links; bid winners keep their name (2026-10-18)
+The guild lead, 2026-10-17: *"if someone opts out, just put their class on that spot to anonymize them. do not
+anonymize bid winners, but link all of those with a unique handle that shows what they all bid on."* So on the raid
+session review (`/raid/session`) and the public share page, a character with `exclude_from_stats` or
+`exclude_inventory`:
+- is shown as its **class and a number** — "Cleric 2", the same label in the replay board, attendance, ticks,
+  parses, loot and rolls. The number is from a salted `opaqueKey` order, **never the name**, so "Cleric 1" is not
+  the alphabetically-first opted-out cleric. Names are swapped **on the server** (`scrubMinuteData`,
+  `raidShareLookup.loadAnon`) before any row leaves — the browser never sees the real name. This REVERSES the old
+  "drop the line, keep nobody" behaviour: an opted-out raider's damage now counts in the share, under their label.
+- **unless they won an item in the window** — the one exception. A winner (a closed `opendkp_auctions` row, or a
+  `loot_observations` award, inside the session's window) is shown by **name**, because a closed auction's winner is
+  already public in OpenDKP. Their name links to a new **Bids** section under an opaque `#bids-<handle>` (the handle
+  carries no name): what they won and paid, and the **closed** auctions they bid on and lost (top bid + who won),
+  from the `opendkp_auction_bids` mirror. **Open auctions are sealed**: no win, no bid, no name until they end.
+- Where: `web/lib/raidSession.ts` (`anonLabels`/`anonName`/`scrubMinuteData`/`exemptWinners`),
+  `web/lib/raidSessionBids.ts` (`winsOf`/`buildBidders`/the reads), `web/lib/raidShareLookup.ts` (`loadAnon`),
+  new sign-in-gated `/api/raid/session/replay` so the members' board is labelled too; tests
+  `test/raid-session-anon.test.js`. `/privacy` and `docs/PRIVACY.md` reworded.
+- **Known gap (TODO in raidSessionBids.ts):** a losing bid made under an OpenDKP login that differs from the
+  character name and carries no `character_id` is not attributed — a missing line in someone's "lost" list, **never a
+  wrong name**. Rare: the sync stores `character_id` for every list-endpoint bid.
+- Shipped to **beta only** (web, no `web/package.json` bump — a beta-only web change keeps the main → beta sync
+  clean). Review at `https://b.wolfpack.quest/raid/session`. Graduates to `main` on the guild lead's look, and the
+  STATUS entry gets the stable web version then (the both-gates rule).
+
+### 357. The Chat overlay's feed is cached encrypted on the machine, wiped on logout-grace and before revoke (2026-10-18)
+The guild lead, 2026-10-17: *"cache the filled in chat overlay data encrypted locally and invalidate it on logout if a
+fresh session isn't established within a reasonable timeframe, and wipe before revoking access"*. Shipped on **beta**
+(agent 3.8.0 / Mimic 2.10.0, the Security Metapod and Live Optics line).
+- **What is kept:** the Chat overlay's own rings (chat/melee/spell/skill/loot/random/other + the relayed guild feed)
+  and the guild-feed cursor, so a restart shows the feed at once and asks the bot only for what is new. Only what the
+  overlay could show now (its Officer/Custom/Group/Tells/Away switches), newest 200 per ring, nothing older than 24 h,
+  at most 256 KB of JSON. File `logsync.chat-cache.bin` next to the agent, atomic write coalesced to one per 8 s.
+- **Encryption:** AES-256-GCM, fresh 96-bit IV per write. **Mimic makes a random 32-byte key once**, keeps it under
+  the OS keychain (`safeStorage` — DPAPI / Keychain) and hands it to the agent in `WOLFPACK_CHAT_CACHE_KEY`, with
+  `WOLFPACK_CHAT_CACHE_ID` = the session's Discord id. **No keychain / standalone agent / signed out = no key = nothing
+  written** (there is deliberately no plaintext mode). A wrong key, a torn or tampered file, or a different identity
+  inside it: the file is deleted and the feed starts empty.
+- **Mimic owns when it may live** (it holds the key and the session): on **logout** the cache stays sealed and unread
+  for a 24 h grace; the same id signing back in finds it, a different id wipes it, no session by the end deletes it.
+  24 h because the cache only holds 24 h of lines anyway. A **different Discord identity** signing in wipes it before
+  the new token is taken — one person's chat is never carried to another.
+- **Revoke:** a *definite* 401 (revoked session, `/token revoke`, member lockout) on the heartbeat, an upload, or the
+  guild-chat poll → the agent wipes the file + the live rings and refuses all writes for the process, prints
+  `[chat-cache] revoked`, and **Mimic drops the key from its config** so any leftover file is unreadable. A 5xx/429/dead
+  network is NOT a revoke (the bot answers a store blip with 503). Uninstall wipes it too.
+- **Kill switch / version floor is NOT a revoke** — it stands the agent down but overlays keep working on local data
+  (the control plane's own rule, §354/#74), so the on-screen chat must not go blank. That path calls
+  `chatCacheWipeFileOnly`: the on-disk copy goes and writes are held, but the live rings and guild feed stay.
+- Code: `packages/wolfpack-logsync/index.js` ("Chat cache": `chatCacheWipe` / `chatCacheWipeFileOnly` / `chatCacheRevoke`
+  / `chatCacheOnSessionPush`), `apps/mimic/main.js` ("Chat cache": `_chatCacheDecide` / key box / `_chatCacheWipeAll`).
+  Tests `test/chat-cache.test.js`.
