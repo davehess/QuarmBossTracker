@@ -1218,6 +1218,8 @@
       + (p.kind === 'overlay' ? '<button class="btn warn" data-remove title="Take it off the canvas; it opens as its own window again">Remove · own window</button>' : '')
       + ((p.kind === 'part' || p.kind === 'sect') ? '<button class="btn warn" data-remove>Remove piece</button>' : '')
       + '</div>';
+    var bgOn = document.body.classList.contains('wp-backdrop');
+    h += '<div class="row"><button class="btn' + (bgOn ? ' on' : '') + '" data-bg title="A solid plate behind every panel (Ctrl+Shift+B)">🌫 Background: ' + (bgOn ? 'ON' : 'off') + ' (whole Canvas)</button></div>';
     menuEl.innerHTML = h;
     menuEl.classList.add('show');
     _menuAnchor = anchor;
@@ -1377,6 +1379,15 @@
       chooserState().open = true; save();
       if (!_edit) { try { if (M.canvasEdit) M.canvasEdit(true); } catch (err) {} }
       render(); return;
+    }
+    if (t.hasAttribute('data-bg')) {
+      try {
+        M.toggleBackdropThis().then(function (on) {
+          document.body.classList.toggle('wp-backdrop', !!on);   // main's push may land after this reply
+          if (_menuFor === p.id && _els[p.id]) openMenu(p.id, _menuAnchor || _els[p.id].root);
+        });
+      } catch (err) { /* bridge missing on an older shell */ }
+      return;
     }
     if (t.hasAttribute('data-test')) {
       if (p.kind === 'callouts') {

@@ -275,8 +275,15 @@ document.addEventListener('mousemove', function (ev) {
 // load-time pull covers windows created after the last push. Gated to overlay
 // documents (the main window / settings must never get a forced background).
 ipcRenderer.on('wp-backdrop', function (_e, on) {
-  try { if (_wpOverlayDoc()) document.body.classList.toggle('wp-backdrop', !!on); } catch (e) {}
+  try { if (_wpOverlayDoc() && !_wpCanvasPart()) document.body.classList.toggle('wp-backdrop', !!on); } catch (e) {}
 });
+// A panel frame inside the Timers canvas (triggers.html?part=timers|callouts, in an iframe). The canvas plates each
+// panel's ROOT itself, and a push from main reaches only the top frame, so a plate the frame added to itself at
+// load could never be cleared again: "background off" left the old plate behind. Such a frame stays unplated.
+// (map.html?part=timers is a top-level window, so it is not matched.)
+function _wpCanvasPart() {
+  try { return WP_IS_DOCKED && /[?&]part=(timers|callouts)(&|$)/.test(String(window.location.search || '')); } catch (e) { return false; }
+}
 // Live overlay zoom → --wp-zoom CSS var, pushed by main on every scale apply
 // and tween step. Feeds the counter-zoom rules injected below that keep the
 // setup bar at one painted size spanning the window width no matter the
@@ -567,7 +574,7 @@ document.addEventListener('DOMContentLoaded', function () {
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
       if (s && s.pointer === false) _wpPointerOn = false;   // the stand-in pointer switch, pulled at load
-      if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
+      if (s && s.backdrop && _wpOverlayDoc() && !_wpCanvasPart()) document.body.classList.add('wp-backdrop');
       if (s && s.theme) _wpApplyTheme(s.theme);
       if (s && s.growUp) _wpApplyGrowUp(true);   // the top-right grip, pulled like the backdrop
       // Mini is PULLED at load, not only pushed. A window created while its
@@ -1144,6 +1151,9 @@ contextBridge.exposeInMainWorld('mimic', {
   canvasSave:        (layout) => ipcRenderer.invoke('canvas-save', layout),
   canvasEdit:        (on)     => ipcRenderer.invoke('canvas-edit', !!on),
   canvasNextDisplay: ()       => ipcRenderer.invoke('canvas-next-display'),
+  // The panel menu's "Background" row: the SAME writer as the shared overlay menu, Ctrl+Shift+B and the dashboard
+  // button (main's wp-backdrop-toggle finds the key from the sender window). Resolves to the new on/off state.
+  toggleBackdropThis: ()      => ipcRenderer.invoke('wp-backdrop-toggle'),
   onCanvasEdit:      (cb)     => ipcRenderer.on('canvas-edit', (_e, on) => cb(!!on)),
   // Saved groups of pieces (3.0 alpha), one list for every screen.
   canvasGroups:      ()       => ipcRenderer.invoke('canvas-groups'),
