@@ -154,6 +154,24 @@ next touch one rather than assuming a missing row means a missing doc.
   `/api/raid/session/replay` so the members' board is labelled too. Code: `web/lib/raidSession.ts`,
   `raidSessionBids.ts`, `raidShareLookup.ts` (`loadAnon`); tests `test/raid-session-anon.test.js`. `/privacy` and
   `docs/PRIVACY.md` reworded. Waiting on the guild lead's look at `https://b.wolfpack.quest/raid/session`.
+- **⏳ Mimic voice + trigger UX batch (beta, 2026-10-18).** A run of field-driven Mimic dashboard/voice fixes, all on
+  `beta`, pending an in-game ear/eye test:
+    - **Trigger sounds normalized** — the eight built-in alert sounds (alarm/bell/chime/gong/horn/pop/slap/whoosh in
+      `apps/mimic/sounds/`) were painfully loud and unmatched (−8.6 to −18.9 LUFS); re-normalized with ffmpeg to
+      −18 LUFS / −3 dBTP (clicks to −10 dBFS peak), durations/formats/names unchanged. `test/sounds-voices.test.js` green.
+    - **Voice card** (`dashboard.html` 🗣 Voice & names): a **Test-phrase picker** (preset raid callouts or type your
+      own, saved per viewer) that every Test button speaks; a **"will it keep up on this PC" readout** (cores/RAM/free
+      disk via a new `GET /api/pc-specs`; measured synth time after a neural Test, flagging "too slow for live callouts"
+      past the ~2.5 s fallback; Kokoro download gated/hinted on low disk/RAM); a link to `wolfpack.quest/me/voice`; and
+      the **currently-playing character's name shown large at the top** (`#wpActiveChar`, from Zeal live state, byte-stable).
+    - **Triggers** (`dashboard.html` + agent): the editor's **▶ Preview now speaks** the callout (shared `wpTrigPreviewAudio`
+      via the voice card's speak path; overlay flash sent `silent:true` so Mimic doesn't say it twice); **▶ Preview + ✎
+      Configure on every Suggested and Guild row** (Preview hears it; Configure opens a pre-filled personal-trigger copy);
+      and **guild triggers grouped by category** (fight timers / class / buffs-debuffs / per-zone / stat cards / mechanics
+      / heals / callouts) via the agent's `rule_group`. ⚠ Follow-up: a real `group`/`expansion` column on `guild_triggers`
+      set in `/admin/triggers` is the proper officer-assigned fix (bot + web, not yet built) — current grouping is derived
+      from `tags`. Tests: `test/trigger-preview-configure-groups.test.js` (19). ⚠ Also: the 9 long-standing
+      `apps/mimic` tray/window test failures still fail on beta and need their own owner before a 3.0 stable.
 - **✅ Kokoro voice install no longer needs Windows' bzip2 (Mimic, beta, 2026-10-18; DECISIONS §359).** Field report
   (the guild lead, screenshot): the Kokoro download failed with `tar.exe: ... unable to run program "bzip2 -d"` —
   Windows' bundled bsdtar wasn't built with internal bzip2 on that PC and shells out to a `bzip2.exe` stock Windows
