@@ -6,7 +6,7 @@
 //   · the download manifest: exact pinned URLs, byte sizes and sha256, plus each voice's licence line
 //   · the plan / checksum / zip-path guards that stop a bad download becoming a live install
 //   · a real child process: a fake piper.exe / sherpa-onnx CLI that succeeds, fails, or hangs (POSIX only)
-//   · Kokoro: the pinned sherpa-onnx + model archives, the tar unpack command and its path guard, the CLI argument
+//   · Kokoro: the pinned sherpa-onnx + model archives, the pure-JS .tar.bz2 unpack and its path guard, the CLI argument
 //     list, the longer limit for a ▶ Test, the background warm-up
 //   · the three Piper tiers (free / non-commercial / research only): nothing downloads without the ticked boxes,
 //     the acceptance record sits next to the voice and goes with it
@@ -532,39 +532,6 @@ describe('Kokoro: the command line, the unpack command, the start-up problems', 
     }
   });
 
-  it("the unpack tool is Windows' own bsdtar by absolute path; elsewhere plain tar", () => {
-    expect(nv.tarPath('win32', { SystemRoot: 'C:\\Windows' })).toMatch(/^C:\\Windows.System32.tar\.exe$/);
-    expect(nv.tarPath('win32', {})).toMatch(/^C:\\Windows.System32.tar\.exe$/);
-    expect(nv.tarPath('linux')).toBe('tar');
-  });
-
-  it('the unpack runs as an argument array (list, validate, then extract into the target) — never a shell string', async () => {
-    const calls = [];
-    const dest = path.join(os.tmpdir(), 'nv-never-created-' + process.pid);
-    const run = async (file, args) => { calls.push([file, args]); return args[0] === '-tjf' ? 'pkg/\npkg/a.txt\n' : ''; };
-    await expect(nv.extractTarBz2('/x/a b.tar.bz2', dest, 'C:\\Windows\\System32\\tar.exe', run)).resolves.toBeUndefined();
-    expect(calls).toEqual([
-      ['C:\\Windows\\System32\\tar.exe', ['-tjf', '/x/a b.tar.bz2']],
-      ['C:\\Windows\\System32\\tar.exe', ['-xjf', '/x/a b.tar.bz2', '-C', dest]],
-    ]);
-    fs.rmSync(dest, { recursive: true, force: true });
-  });
-
-  it('a listing with a name outside the target is refused before anything is extracted', async () => {
-    for (const bad of ['../evil.dll', 'pkg/../../evil.dll', '/etc/passwd', 'C:\\Windows\\evil.dll', 'C:/x']) {
-      const calls = [];
-      const run = async (file, args) => { calls.push(args[0]); return args[0] === '-tjf' ? 'pkg/ok.txt\n' + bad + '\n' : ''; };
-      await expect(nv.extractTarBz2('/x/a.tar.bz2', path.join(os.tmpdir(), 'nv-nope'), 'tar', run), bad).rejects.toThrow(/unsafe file path/);
-      expect(calls).toEqual(['-tjf']);
-    }
-  });
-
-  it('a missing tar.exe is said in plain words, and the Windows voice is named as the fallback', async () => {
-    await expect(nv.extractTarBz2('/x/a.tar.bz2', path.join(os.tmpdir(), 'nv-nope'), path.join(os.tmpdir(), 'no-such-tar.exe'))).rejects.toThrow(nv.NO_TAR);
-    expect(nv.NO_TAR).toMatch(/Windows 10/);
-    expect(nv.NO_TAR).toMatch(/Windows voice keeps working/);
-  });
-
   it('a program that will not start becomes a plain sentence: a missing Visual C++ runtime is named, any other code is said', () => {
     for (const code of [3221225781, -1073741515]) expect(nv.kokoroStartProblem(code)).toBe(nv.NO_VCRT);
     expect(nv.NO_VCRT).toMatch(/Visual C\+\+/);
@@ -572,12 +539,13 @@ describe('Kokoro: the command line, the unpack command, the start-up problems', 
   });
 });
 
-// Real tar + bzip2 on POSIX, with hand-built archives so the hostile ones (../, absolute, symlink) are exact.
-describe.skipIf(process.platform === 'win32')('Kokoro: unpack and install through the real tar', () => {
+// The archives are built with the real bzip2 (and, for the format cases, the real tar) on POSIX, with hand-built
+// ones where the hostile entries (../, absolute, symlink) must be exact. Unpacking itself is pure JS: Windows' tar.exe
+// has no bzip2 on some PCs (field report), so nothing here — or in Mimic — runs a tar program to unpack.
+describe.skipIf(process.platform === 'win32')('Kokoro: unpack and install without any tar program', () => {
   const dirs = [];
   const tmp = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'nv-')); dirs.push(d); return d; };
   afterEach(() => { for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
-  const TAR = execFileSync('which', ['tar'], { encoding: 'utf8' }).trim();
 
   function entry(name, body = '', type = '0', link = '') {
     const b = Buffer.from(body), h = Buffer.alloc(512);
@@ -600,32 +568,99 @@ describe.skipIf(process.platform === 'win32')('Kokoro: unpack and install throug
   it('unpacks a good archive into the target', async () => {
     const d = tmp(), dest = path.join(d, 'out');
     const f = bz2(d, 'ok.tar.bz2', [entry('pkg/', '', '5'), entry('pkg/bin/', '', '5'), entry('pkg/bin/a.txt', 'hello'), entry('pkg/b.txt', 'bee')]);
-    await nv.extractTarBz2(f, dest, TAR);
+    await nv.extractTarBz2(f, dest);
     expect(fs.readFileSync(path.join(dest, 'pkg', 'bin', 'a.txt'), 'utf8')).toBe('hello');
     expect(fs.readFileSync(path.join(dest, 'pkg', 'b.txt'), 'utf8')).toBe('bee');
   });
 
-  it('refuses a ../ entry, an absolute entry and a symlink, and leaves nothing behind', async () => {
+  it('refuses a ../ entry, an absolute entry, a drive-letter entry, a symlink, a hard link and a device, and leaves nothing behind', async () => {
     const d = tmp(); const sub = path.join(d, 'sub'); fs.mkdirSync(sub);
     const cases = {
       'a ../ entry': { archive: [entry('pkg/ok.txt', 'x'), entry('../evil.txt', 'bad')], re: /unsafe file path/ },
+      'a nested ../ entry': { archive: [entry('pkg/../../evil.txt', 'bad')], re: /unsafe file path/ },
       'an absolute entry': { archive: [entry('/tmp/nv-abs-evil.txt', 'bad')], re: /unsafe file path/ },
+      'a drive-letter entry': { archive: [entry('C:/evil.txt', 'bad')], re: /unsafe file path/ },
       'a symlink': { archive: [entry('pkg/', '', '5'), entry('pkg/link', '', '2', '/etc/passwd')], re: /plain files/ },
+      'a hard link': { archive: [entry('pkg/ok.txt', 'x'), entry('pkg/hl', '', '1', 'pkg/ok.txt')], re: /plain files/ },
+      'a device': { archive: [entry('pkg/dev', '', '3')], re: /plain files/ },
+      'nothing at all': { archive: [], re: /was empty/ },
     };
     for (const [name, c] of Object.entries(cases)) {
       const dest = path.join(sub, 'out');
       const f = bz2(d, 'bad.tar.bz2', c.archive);
-      await expect(nv.extractTarBz2(f, dest, TAR), name).rejects.toThrow(c.re);
+      await expect(nv.extractTarBz2(f, dest), name).rejects.toThrow(c.re);
       expect(fs.existsSync(dest), name + ' left a folder').toBe(false);
       expect(fs.existsSync(path.join(d, 'evil.txt')), name).toBe(false);
       expect(fs.existsSync('/tmp/nv-abs-evil.txt'), name).toBe(false);
     }
   });
 
+  it('a hostile entry LATE in the archive stops it before any earlier file is written (list first, then write)', async () => {
+    const d = tmp(), dest = path.join(d, 'out');
+    const f = bz2(d, 'late.tar.bz2', [entry('pkg/first.txt', 'one'), entry('pkg/second.txt', 'two'), entry('../evil.txt', 'bad')]);
+    const real = fs.writeFileSync; let writes = 0;
+    fs.writeFileSync = (...a) => { writes++; return real(...a); };
+    try { await expect(nv.extractTarBz2(f, dest)).rejects.toThrow(/unsafe file path/); } finally { fs.writeFileSync = real; }
+    expect(writes).toBe(0);
+    expect(fs.existsSync(dest)).toBe(false);
+  });
+
   it('a file that is not a bzip2 archive is refused in plain words', async () => {
     const d = tmp(), f = path.join(d, 'junk.tar.bz2'); fs.writeFileSync(f, 'this is not an archive');
-    await expect(nv.extractTarBz2(f, path.join(d, 'out'), TAR)).rejects.toThrow(/could not unpack the Kokoro download.*Windows voice keeps working/);
+    await expect(nv.extractTarBz2(f, path.join(d, 'out'))).rejects.toThrow(/could not unpack the Kokoro download.*Windows voice keeps working/);
     expect(fs.existsSync(path.join(d, 'out'))).toBe(false);
+  });
+
+  it('a cut-off archive and a damaged archive are refused, with nothing left behind', async () => {
+    const d = tmp(), dest = path.join(d, 'out');
+    const f = bz2(d, 'ok.tar.bz2', [entry('pkg/a.txt', 'x'.repeat(5000)), entry('pkg/b.txt', 'y'.repeat(5000))]);
+    const whole = fs.readFileSync(f);
+    for (const [name, bytes, re] of [
+      ['cut off', whole.subarray(0, whole.length - 12), /cut short|could not unpack/],
+      ['cut off early', whole.subarray(0, 30), /cut short|could not unpack/],
+      ['a flipped byte', Buffer.concat([whole.subarray(0, 40), Buffer.from([whole[40] ^ 0xff]), whole.subarray(41)]), /could not unpack/],
+    ]) {
+      fs.writeFileSync(f, bytes);
+      await expect(nv.extractTarBz2(f, dest), name).rejects.toThrow(re);
+      expect(fs.existsSync(dest), name).toBe(false);
+    }
+  });
+
+  it('a tar that is not a tar (a valid bzip2 of other bytes) and a bad header checksum are refused', async () => {
+    const d = tmp(), dest = path.join(d, 'out'), raw = path.join(d, 'text.txt');
+    fs.writeFileSync(raw, 'just some text\n'.repeat(100)); execFileSync('bzip2', ['-f', raw]);
+    await expect(nv.extractTarBz2(raw + '.bz2', dest)).rejects.toThrow(/damaged/);
+    const e = entry('pkg/a.txt', 'x'); e[0] ^= 1;                                  // header no longer matches its checksum
+    await expect(nv.extractTarBz2(bz2(d, 'sum.tar.bz2', [e]), dest)).rejects.toThrow(/damaged/);
+    expect(fs.existsSync(dest)).toBe(false);
+  });
+
+  it('reads what real tar writes: GNU, POSIX ustar (prefix field) and pax, with a path over 100 characters', async () => {
+    const d = tmp(), src = path.join(d, 'src'), deep = 'd'.repeat(60) + '/' + 'e'.repeat(60) + '/f.txt';
+    fs.mkdirSync(path.join(src, path.dirname(deep)), { recursive: true });
+    fs.writeFileSync(path.join(src, deep), 'deep'); fs.writeFileSync(path.join(src, 'top.txt'), 'top');
+    fs.writeFileSync(path.join(src, 'unicodé.txt'), 'uni');
+    for (const fmt of ['gnu', 'ustar', 'pax']) {
+      const t = path.join(d, fmt + '.tar'), dest = path.join(d, 'out-' + fmt);
+      execFileSync('tar', ['--format=' + fmt, '-cf', t, '-C', src, '.']);
+      execFileSync('bzip2', ['-f', t]);
+      await nv.extractTarBz2(t + '.bz2', dest);
+      expect(fs.readFileSync(path.join(dest, deep), 'utf8'), fmt).toBe('deep');
+      expect(fs.readFileSync(path.join(dest, 'top.txt'), 'utf8'), fmt).toBe('top');
+      expect(fs.readFileSync(path.join(dest, 'unicodé.txt'), 'utf8'), fmt).toBe('uni');
+    }
+  });
+
+  it('reads a bzip2 made of several streams joined (what a parallel bzip2 writes) and a file bigger than one bzip2 block', async () => {
+    const d = tmp(), dest = path.join(d, 'out'), raw = path.join(d, 'm.tar');
+    const big = Buffer.alloc(1_300_000); for (let i = 0; i < big.length; i++) big[i] = (i * 2654435761 >>> 24) & 0xff;
+    const tar = Buffer.concat([entry('pkg/', '', '5'), entry('pkg/big.bin', big), entry('pkg/tail.txt', 'tail'), Buffer.alloc(1024)]);
+    const cut = 512 * 10;                                                          // split the tar on a header boundary
+    const parts = [tar.subarray(0, cut), tar.subarray(cut)].map((b, i) => { fs.writeFileSync(raw + i, b); execFileSync('bzip2', ['-f', raw + i]); return fs.readFileSync(raw + i + '.bz2'); });
+    fs.writeFileSync(path.join(d, 'm.tar.bz2'), Buffer.concat(parts));
+    await nv.extractTarBz2(path.join(d, 'm.tar.bz2'), dest);
+    expect(fs.readFileSync(path.join(dest, 'pkg', 'big.bin')).equals(big)).toBe(true);
+    expect(fs.readFileSync(path.join(dest, 'pkg', 'tail.txt'), 'utf8')).toBe('tail');
   });
 
   // The whole install with stand-in archives (and a stand-in manifest, since the real files are 120 MB): download →
@@ -650,7 +685,7 @@ describe.skipIf(process.platform === 'win32')('Kokoro: unpack and install throug
     const d = tmp(), root = path.join(d, 'voices'), { kokoro, files } = fixtures(d);
     const asked = [], seen = [];
     const get = async (u, o) => { asked.push(u); o.onProgress(10, 20); seen.push(nv.status(root, 'win32').progress); return files[u]; };
-    await nv.install(root, 'kokoro', '', 'win32', { deps: { get, tarExe: TAR, kokoro } });
+    await nv.install(root, 'kokoro', '', 'win32', { deps: { get, kokoro } });
     const kp = nv.kokoroPaths(root);
     expect(asked).toEqual([kokoro.runtime.url, kokoro.model.url]);
     expect(seen.map(s => s && s.engine)).toEqual(['kokoro', 'kokoro']);
@@ -668,27 +703,20 @@ describe.skipIf(process.platform === 'win32')('Kokoro: unpack and install throug
   it('a wrong download is thrown away: nothing live, no scratch left, and the next try starts clean', async () => {
     const d = tmp(), root = path.join(d, 'voices'), { kokoro, files } = fixtures(d);
     const bad = Buffer.from(files[kokoro.runtime.url]); bad[bad.length - 1] ^= 1;     // same size, different bytes
-    await expect(nv.install(root, 'kokoro', '', 'win32', { deps: { get: async () => bad, tarExe: TAR, kokoro } })).rejects.toThrow(/checksum/);
-    await expect(nv.install(root, 'kokoro', '', 'win32', { deps: { get: async () => Buffer.alloc(4), tarExe: TAR, kokoro } })).rejects.toThrow(/wrong size/);
+    await expect(nv.install(root, 'kokoro', '', 'win32', { deps: { get: async () => bad, kokoro } })).rejects.toThrow(/checksum/);
+    await expect(nv.install(root, 'kokoro', '', 'win32', { deps: { get: async () => Buffer.alloc(4), kokoro } })).rejects.toThrow(/wrong size/);
     const kp = nv.kokoroPaths(root);
     expect(fs.existsSync(kp.runtime)).toBe(false);
     expect(fs.readdirSync(kp.base)).toEqual([]);
-    await nv.install(root, 'kokoro', '', 'win32', { deps: { get: async (u) => files[u], tarExe: TAR, kokoro } });
+    await nv.install(root, 'kokoro', '', 'win32', { deps: { get: async (u) => files[u], kokoro } });
     expect(fs.existsSync(kp.exe)).toBe(true);
-  });
-
-  it('with no tar.exe nothing is downloaded and the reason is plain', async () => {
-    const d = tmp(), root = path.join(d, 'voices'), { kokoro } = fixtures(d); let asked = 0;
-    await expect(nv.install(root, 'kokoro', '', 'win32', { deps: { get: async () => { asked++; return Buffer.alloc(1); }, tarExe: path.join(d, 'no-tar.exe'), kokoro } })).rejects.toThrow(nv.NO_TAR);
-    expect(asked).toBe(0);
-    expect(nv.status(root, 'win32').progress).toBeNull();
   });
 
   it('a download that is not a tar leaves the engine not installed (and the error says the Windows voice keeps working)', async () => {
     const d = tmp(), root = path.join(d, 'voices'), { kokoro } = fixtures(d);
     const junk = Buffer.alloc(kokoro.runtime.size, 7);
     const k2 = { ...kokoro, runtime: { ...kokoro.runtime, sha256: require_('node:crypto').createHash('sha256').update(junk).digest('hex') } };
-    await expect(nv.install(root, 'kokoro', '', 'win32', { deps: { get: async () => junk, tarExe: TAR, kokoro: k2 } })).rejects.toThrow(/Windows voice keeps working/);
+    await expect(nv.install(root, 'kokoro', '', 'win32', { deps: { get: async () => junk, kokoro: k2 } })).rejects.toThrow(/Windows voice keeps working/);
     expect(nv.status(root, 'win32').kokoro.ready).toBe(false);
   });
 });
@@ -879,17 +907,20 @@ describe('every failure ends in the Windows voice (source, comments stripped)', 
     expect(JSON.stringify(pkg.build)).not.toMatch(/piper|kokoro|onnx|sherpa/i);
   });
 
-  it('the Kokoro unpack is an argument array through execFile (no shell), by an absolute System32 path, and the voices need no new dependency', () => {
+  it("the Kokoro unpack starts no program (Windows' tar.exe has no bzip2 on some PCs): vendored seek-bzip + a JS tar reader, names checked before any write, and no new npm dependency", () => {
     const nvSrc = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'neuralVoice.js')));
-    expect(nvSrc).toMatch(/\['-tjf', archive\]/);
-    expect(nvSrc).toMatch(/\['-xjf', archive, '-C', destDir\]/);
-    expect(nvSrc).toMatch(/execFile\(file, args,/);
-    expect(nvSrc).not.toMatch(/\bexec\(|shell:\s*true|execSync/);
-    expect(nvSrc).toMatch(/path\.join\(env\.SystemRoot \|\| env\.windir \|\| 'C:\\\\Windows', 'System32', 'tar\.exe'\)/);
-    // the listing is validated against the target BEFORE the extract command runs
-    const body = sliceBlock(nvSrc, 'async function extractTarBz2(', 'walk(destDir);');
-    expect(body.indexOf('safeZipTarget(destDir, name)')).toBeGreaterThan(0);
-    expect(body.indexOf('safeZipTarget(destDir, name)')).toBeLessThan(body.indexOf("'-xjf'"));
+    expect(nvSrc).not.toMatch(/\bexec\(|execFile|execSync|shell:\s*true|tar\.exe|-xjf|-tjf/);
+    expect(nvSrc).toMatch(/require\('\.\/vendor\/seek-bzip'\)/);
+    expect(nvSrc.match(/spawn\(/g)).toHaveLength(2);                              // only the two synthesiser launches (Piper, Kokoro)
+    const body = sliceBlock(nvSrc, 'async function extractTarBz2(', '_rmrf(destDir);');
+    expect(body.indexOf('_tarList(tar, destDir)')).toBeGreaterThan(0);
+    expect(body.indexOf('_tarList(tar, destDir)')).toBeLessThan(body.indexOf('writeFileSync'));
+    const list = sliceBlock(nvSrc, 'function _tarList(', 'return list;\n}');
+    expect(list).toMatch(/safeZipTarget\(destDir, name\)/);
+    expect(list).toMatch(/!isFile && type !== '5'\) throw odd\(\)/);                // links, devices, fifos refused
+    const vend = path.join(ROOT, 'apps', 'mimic', 'vendor', 'seek-bzip');
+    expect(readSource(path.join(vend, 'LICENSE'))).toMatch(/MIT License/);
+    expect(readSource(path.join(vend, 'index.js'))).toMatch(/VENDORED: seek-bzip 2\.0\.0.*MIT/);
   });
 
   it('main: the install handler passes only the two ticks, the warm-up runs in the background after boot, a Test reaches the engine', () => {
