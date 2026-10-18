@@ -1,6 +1,6 @@
 // FB-54 — web/lib/npcDecode.ts is a COPY of utils/mobSpecials.js's special-ability
 // table (the web cannot import from outside web/: Vercel builds from that folder
-// and its ignoreCommand assumes nothing there reads outside it). This test is the
+// and deploy-web.yml builds only on web/** changes, assuming nothing there reads outside it). This test is the
 // drift guard: the two tables must agree on every code's label, show flag and
 // danger flag, and the web decoder must give the same chips as the bot's.
 // REAL-IMPORT: both modules are executed; the only text match is the page's
