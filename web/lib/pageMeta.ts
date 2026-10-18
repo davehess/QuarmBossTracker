@@ -114,6 +114,7 @@ const ADMIN_TITLES: Record<string, string> = {
   '/admin/console':            'Officer console',
   '/admin/encounters':         'Encounter repair',
   '/admin/extra-spells':       'Extra PoP spells',
+  '/admin/flag-lab':           '[beta] Flag lab',
   '/admin/feedback':           'Feedback',
   '/admin/feedback/anonymous': 'Anonymous feedback',
   '/admin/links':              'Character links',
