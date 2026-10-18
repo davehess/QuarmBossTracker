@@ -262,6 +262,11 @@ const PANEL_OVERLAYS = [
 let tray = null;
 let agentProc = null;
 let agentPort = BASE_PORT;
+// Per-launch secret for the agent's local port (the guild lead, 2026-10-17). Our file:// pages send
+// "Origin: null", which a sandboxed iframe on any website can send too; the agent only lets "null" through
+// with this value in `x-wolfpack-local`. It goes to the agent in its env (launchAgent) and onto our own windows'
+// requests to that one port (_wireLocalSecretHeader) - nowhere else.
+const _LOCAL_SECRET = require('crypto').randomBytes(32).toString('hex');
 let restartBackoff = 1000;
 let quitting = false;
 let updatePending = null; // { version } once an update is downloaded and ready
@@ -3651,6 +3656,7 @@ async function launchAgent() {
     ELECTRON_RUN_AS_NODE:   '1',
     WOLFPACK_CLIENT:        'mimic',
     WOLFPACK_APP_VERSION:   app.getVersion(),
+    WOLFPACK_LOCAL_SECRET:  _LOCAL_SECRET,
   };
   if (primaryEqDir) env.WOLFPACK_EQ_DIR = primaryEqDir;
   // The sound library's two folders, so the agent's dashboard lists and plays the same sounds Mimic does.
@@ -14197,6 +14203,23 @@ ipcMain.handle('get-agent-log-tail', (_e, lines) => {
   return logTail.slice(-n).join('');
 });
 
+// Our windows' requests to the agent's port carry the per-launch secret (see _LOCAL_SECRET). Electron allows ONE
+// onBeforeSendHeaders listener per session and every window uses defaultSession (no partitions), so this is the
+// only one. '<all_urls>' + the check below rather than a port-wildcard pattern: the header goes to the agent's
+// own http://127.0.0.1:<agentPort> / http://localhost:<agentPort> and to nothing else, and the check is ours.
+function _wireLocalSecretHeader() {
+  require('electron').session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, (details, cb) => {
+    const headers = details.requestHeaders;
+    try {
+      const u = new URL(details.url);
+      if (u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost')) {
+        headers['x-wolfpack-local'] = _LOCAL_SECRET;
+      }
+    } catch { void 0; }
+    cb({ requestHeaders: headers });
+  });
+}
+
 // ── Boot ────────────────────────────────────────────────────────────────────
 // Guard the entire boot on the single-instance lock. A second launch already
 // called app.quit() above, but app.quit() is async — without this guard the
@@ -14204,6 +14227,7 @@ ipcMain.handle('get-agent-log-tail', (_e, lines) => {
 // "Service already running"), and flash a blank dashboard before quitting.
 app.whenReady().then(async () => {
   if (!_gotSingleInstanceLock) return;
+  _wireLocalSecretHeader();
   appendAgentLog(`[mimic] boot — Mimic v${app.getVersion()}, single-instance lock acquired, userData=${app.getPath('userData')}\n`);
   // Zeal auto-updater: notify-only check ~25s after boot (let the EQ folder +
   // agent settle), then every 12h. Install stays a one-click user action; this

@@ -28000,7 +28000,7 @@ async function dismissTopDamage(key) {
     if (serverKey === "damage" && data.rows){
       html += "<table><tr><th>#</th><th>Character</th><th class=num>Total</th><th class=num>Peak DPS</th><th class=num>Enc</th></tr>";
       data.rows.slice(0,12).forEach(function(r, i){
-        html += "<tr><td class=dim>" + (i+1) + "</td><td class=name>" + r.character + "</td><td class=num>" + fmt(r.totalDamage) + "</td><td class=num>" + fmt(r.peakDps) + "</td><td class=num>" + r.encounters + "</td></tr>";
+        html += "<tr><td class=dim>" + (i+1) + "</td><td class=name>" + esc(r.character) + "</td><td class=num>" + fmt(r.totalDamage) + "</td><td class=num>" + fmt(r.peakDps) + "</td><td class=num>" + esc(r.encounters) + "</td></tr>";   // names come from other members' uploads: escape (2026-10-17)
       });
       html += "</table>";
     } else if (serverKey === "pvp"){
@@ -28013,7 +28013,7 @@ async function dismissTopDamage(key) {
         recent.forEach(function(r){
           var boss = (r.boss || "?").replace(/_/g, " ");
           var when = r.snapshot_at ? new Date(r.snapshot_at).toLocaleString() : "";
-          html += "<tr><td class=name>" + boss + "</td><td class=dim>" + when + "</td><td class=num>" + r.rank + " of " + r.of + "</td></tr>";
+          html += "<tr><td class=name>" + esc(boss) + "</td><td class=dim>" + when + "</td><td class=num>" + esc(r.rank) + " of " + esc(r.of) + "</td></tr>";
         });
         html += "</table>";
       }
@@ -33140,6 +33140,9 @@ const COMMAND_HTML = `<!doctype html>
 function startWebDashboard(port) {
   const server = http.createServer(async (req, res) => {
     try {
+      // ONE guard for every route (the guild lead, 2026-10-17): any web page the member visits can fire
+      // "simple" cross-site POSTs at this port, and a rebound DNS name can read it. Must stay ABOVE the first route.
+      if (_localGuardBlock(req, res)) return;
       if (req.url === '/' || req.url === '/index.html' || (req.url && req.url.indexOf('/?') === 0)) {
         // no-store so Electron's BrowserWindow (and browsers) never serve a
         // stale dashboard after a hot-swap — caching the old HTML was a prime
@@ -53765,15 +53768,54 @@ function _hailNpcWanted(npc) {
   const k = _hailNpcKey(npc);
   return !!k && _hailBoard.windows.some(w => _hailNpcKey(w.npc_name) === k);
 }
-// The local port answers a browser that is not one of ours with 403: a web page can POST to 127.0.0.1.
-// Mimic's own pages send this origin, "null" (the file:// fallback) or none at all.
-function _localOriginOk(req) {
-  const o = req && req.headers && req.headers.origin;
-  if (!o || o === 'null') return true;
+// The local port answers a browser that is not one of ours with 403: a web page can POST to 127.0.0.1
+// (the guild lead, 2026-10-17). `_localRequestGuard` is the one rule, applied to EVERY route by the router
+// (`_localGuardBlock`, top of startWebDashboard); `_localOriginOk` below asks the same question.
+//   Host      absent or loopback, else 403 (DNS rebinding).
+//   Origin    absent -> ok (Mimic main, zealPipe, the agent's own takeover call, curl).
+//             loopback / file:// -> ok. Anything else -> 403.
+//             "null" (Mimic's file:// pages; also a sandboxed iframe on ANY site) -> ok only with the per-launch
+//             secret in `x-wolfpack-local` when Mimic handed us one (WOLFPACK_LOCAL_SECRET); with no secret
+//             (a new agent under an older Mimic shell) the legacy allowance stands.
+// Returns null when the request may proceed, else the reason.
+const _LOCAL_SECRET = String(process.env.WOLFPACK_LOCAL_SECRET || '');
+const _LOCAL_HOST_RX = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+function _localSecretEq(a, b) {
+  a = String(a == null ? '' : a); b = String(b == null ? '' : b);
+  let d = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) d |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return d === 0;
+}
+function _localRequestGuard(req, secret) {
+  const h = (req && req.headers) || {};
+  if (h.host !== undefined && !_LOCAL_HOST_RX.test(String(h.host))) return 'host';
+  const o = h.origin;
+  if (!o) return null;
+  if (o === 'null') {
+    if (!secret) return null;
+    return _localSecretEq(h['x-wolfpack-local'], secret) ? null : 'null-origin';
+  }
   try {
     const u = new URL(o);
-    return u.protocol === 'file:' || u.hostname === '127.0.0.1' || u.hostname === 'localhost';
-  } catch { return false; }
+    if (u.protocol === 'file:') return null;
+    if ((u.protocol === 'http:' || u.protocol === 'https:') && (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]')) return null;
+  } catch { void 0; }
+  return 'origin';
+}
+function _localOriginOk(req) { return _localRequestGuard(req, _LOCAL_SECRET) === null; }
+// The router's use of the guard: 403 + log each reason at most once a minute (a hostile page can loop).
+const _localGuardLoggedAt = {};
+function _localGuardBlock(req, res) {
+  const why = _localRequestGuard(req, _LOCAL_SECRET);
+  if (!why) return false;
+  const now = Date.now();
+  if (!_localGuardLoggedAt[why] || now - _localGuardLoggedAt[why] > 60000) {
+    _localGuardLoggedAt[why] = now;
+    try { console.warn(`[web-dashboard] refused a request (${why}) ${req.method} ${String(req.url).slice(0, 80)}`); } catch { void 0; }
+  }
+  res.writeHead(403, { 'Content-Type': 'application/json' });
+  res.end('{"error":"forbidden"}');
+  return true;
 }
 // Every 30 s, every 5 s while a window is open, ten minutes after a 404. Nothing without a token, and
 // nothing while the guild has paused the fleet.
