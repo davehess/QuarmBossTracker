@@ -115,6 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Canvas Pieces round** (§360–366) | Built + gated on `alpha` (park 3.0.0): backing plate-only, whole-group look choices, copy/rename/update a saved group, live-data palette previews, locate line + pulse, delete-with-pieces + Undo | the guild lead, on the next alpha build: (1) list-mode preview crop at 42px (D), (2) single-piece Show as → Upright bar stub (B), (3) the hover line reaches the canvas while arranging (E) |
+| **Mimic 3.0 on the beta channel** (§367) | Graduated 2026-10-18: `beta` park → 3.0.0 (builds `3.0.0-beta.N`), `alpha` re-parked → 3.0.1. The whole overlay-builder (Canvas, pieces, groups, previews, locate line) is now the beta fleet's, not alpha-only | the guild lead: install the `3.0.0-beta` build and run the in-game checks (preview crop (D), single-piece Upright bar stub (B), hover line (E)); decide a roadmap name for 3.0; say when it cuts stable |
 | **Per-section Canvas background: lockable** (§44, §360) | Backing is now per piece and per group, plate-only; still not lockable | the guild lead: say what "lock" means — hold the plate through a mode change, or something else |
 | **Security round two** (§354) | Round one shipped (Mimic local guard, bot flood limits, share-link limits). The verified insider findings (ownership checks on several member routes, relayed callouts, session expiry, Discord mentions, `/wishlist`) are in the private briefing | the guild lead: pick what to fix next; confirm Supabase sign-ups are off; 2FA on the platform accounts |
 | **Voices, corpses on the Map, Voice tab** (§352, §353) | On Mimic beta: agent 3.7.191 (Kokoro + licence-gated Piper voices, research tier marked experimental), 3.7.192 (☠ corpses, drag/summon), 3.7.193 (🗣 Voice tab, Replay on Fights, Buffs (and blocking), kill switches folded). Bot 3.1.290–3.1.291 on main | a Windows tester: install Kokoro, accept and play one research voice, drag a corpse with the Map open on a second PC; the guild lead: optional corpse cleanup SQL; a log line for a looted-empty corpse if one exists |
@@ -11515,3 +11516,22 @@ links; the pieces kept their shared group id. The delete's second click now asks
 "delete, keep them"; one Undo restores the group at its place, its pieces, its links and its hotkey. Ghosts left by
 past deletes cannot be told from a hand-locked set, so those are cleaned up by hand (⚙ → Select its group → Delete the
 group).
+
+### 367. Mimic 3.0 graduates to the beta channel; alpha re-parks at 3.0.1 (2026-10-18)
+The guild lead: *"move the alpha work all up to beta 3.0 and move alpha to 3.0.1."* The 3.0 overlay-builder (the Canvas,
+overlays-as-panels, Pieces and everything §160–366 built on the alpha line) is now the Windows **beta** channel, not a
+separate alpha-only line. Mechanics, for the next session that touches these branches:
+- `alpha` was `beta` + the 3.0 overlay-builder and nothing else (verified: `beta` was an ancestor of `alpha`, and the
+  delta was only `apps/mimic/{canvas,sections,parts,preload}` + the overlay part-hooks + their tests + these docs — no
+  bot/web divergence). So graduating was a `--no-ff` merge of `alpha` into `beta`, which brought exactly the 3.0 work.
+- **Parks:** `beta` park moved `2.10.0` → **3.0.0** (the channel now builds `3.0.0-beta.N`); `alpha` re-parked
+  `3.0.0` → **3.0.1** so it keeps leading beta by semver and builds `3.0.1-alpha.N`. `sync-alpha` keeps alpha's park on
+  a conflict, so the two stay apart on their own.
+- **The agent is unchanged** — alpha always carried beta's agent, so the 3.0 beta runs the same agent line the 2.x beta
+  did; nothing on the agent moved.
+- The beta graduation commit (`da3ad2e8`) carries the member-facing 3.0 notes in a `<!--player-notes-->` block, so the
+  #mimic-releases announcer reposts those, not a git log.
+- **Not yet done:** a roadmap entry (`web/lib/roadmapData.ts`) for the 3.0 beta line — held for the guild lead's wording
+  since 3.0's public name is their call; and the usual in-game beta checks (the D/B/E items in the §360 row).
+- ⚠ **This is the beta CHANNEL, not stable.** 3.0 has NOT graduated to `main`/stable; the whole 3.0 estate (code + these
+  §360–367 docs) flows to `main` only when the line is cut stable.
