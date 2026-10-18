@@ -23,7 +23,8 @@ window.POP_RAIDS = {
   quarmGlobalNotes: [
     'Access levels differ by source (46 / 55 / 60 / 62 per-zone on TAKP) — verify per zone.',
     'PoStorms flag = Askr collect quest (not a boss kill).',
-    'Flag caps: 72 standard · 36 Carprin · 54 Earth A.',
+    'Flag caps: 72 standard · 36 Carprin · 72 Earth A (was 54 before the server patch of 2026-10-17).',
+    'Since 2026-10-17 a projection or essence remembers who earned the kill: members of the killing raid/group can still claim after camping out or changing raid/group, late joiners to it qualify, and a flag cannot be claimed twice.',
     'Quarm combat changes already live carry into PoP: pet/invis rework, hybrid fizzle (incl. Beastlords), zone-punt grace, raid-crash handling.',
   ],
   sections: [
@@ -217,7 +218,7 @@ window.POP_RAIDS = {
             'Need Screaming Sphere key (1 person) for Saryrn\'s tower. Clear 4 named up (Salczek, Acolyte, Ta\'Grusch, Maareq).',
             'Kill MAAREQ THE PROPHET (flurries) → Tylis targetable. Raid under cage, RL on stairs LoS → "we are ready" → mini-dungeon.',
             'DON\'T FALL IN WATER/MUD (spawns adds). Path: right stair → next right + up → straight ahead → ramp.',
-            'Kill Keeper (trivial) → ALL hail Tylis → ONLY hail, no other dialogue → one person "ready to return".',
+            'Kill Keeper (trivial) → ALL hail Tylis → ONLY hail, no other dialogue → one person "ready to return". A temporary entrance Tylis also appears; both Tylis stay 30 min (rescued one was 10), and the entrance Tylis needs no Screaming Sphere in that time (Tylis pre-flag still needed).',
           ],
           stats: { hp: 'trivial', hits: null, slow: null, ramp: null },
           abilities: [],
@@ -236,7 +237,7 @@ window.POP_RAIDS = {
           callouts: [
             'Spawns adds periodically — kill or CC.',
             'Pet bird SORROWSONG (untargetable early, PBAE silence) becomes targetable — MUST kill.',
-            'Hail the Projection after.',
+            'Hail the Projection after (it stays 30 min, was 20).',
           ],
           stats: { hp: '~800K', hits: '700+', slow: 'partially slowable', ramp: 'AE ramps' },
           abilities: [],
@@ -261,7 +262,7 @@ window.POP_RAIDS = {
             'P1: Evynd Firestorm (FIRE-IMMUNE, 500K) + kill 3 red summon portals fast → "transport".',
             'P2: Emmerik Skyfury (high cold resist, 600K; nasty AEs Meteor Storm / Storm Comet) + 3 portals → "storm".',
             'P3: tanks in FIRST (instant aggro), then healers. 5 portals (middle unkillable). Named adds ~100/75/50/25%: Jolur / Ekil (fire-immune) / Oljin (cold-immune) / Hibdin (slow-immune).',
-            'Karana → "follow the path of the fallen".',
+            'Karana → "follow the path of the fallen". Karana stays 20 min; Askr (both floors) and the Vortex no longer despawn at 55 min, they stay until his flagging window ends.',
           ],
           stats: { hp: '1.1M', hits: '1600+', slow: null, ramp: null },
           abilities: [

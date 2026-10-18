@@ -145,6 +145,16 @@ describe('POST /api/agent/pronunciation', () => {
     expect(upserts).toHaveLength(0);
   });
 
+  it("lets an officer set anyone's (set_by is the officer), but still 403s for a character that does not exist", async () => {
+    identity = { discord_id: '999', is_officer: true };
+    const h = load();
+    const r = await post(h, { character: 'Corvale', say: 'KOR-vayl' });
+    expect(r.status).toBe(200);
+    expect(upserts[0].rows[0]).toMatchObject({ character_lc: 'corvale', display_name: 'Corvale', set_by_discord_id: '999' });
+    expect((await post(h, { character: 'Nobodyhere', say: 'no' })).status).toBe(403);
+    expect(upserts).toHaveLength(1);
+  });
+
   it('400s on a spelling that is empty, too long, or has digits or symbols', async () => {
     const h = load();
     for (const say of ['', 'x'.repeat(61), 'AL-3', 'AL<den>', '-lead']) {

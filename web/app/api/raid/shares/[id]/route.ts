@@ -1,11 +1,15 @@
 // DELETE /api/raid/shares/<id>: an officer revokes a share link. The row stays (its view count and who made it
-// are worth keeping); `revoked_at` is set, and the very next request to the public page or its routes is a 404.
+// are worth keeping); `revoked_at` is set, and the public page and its routes answer 404 from then on (at once on
+// this instance, within a minute on the others: the lookup is memoised for 60 s).
 // Revoking twice is fine. Officers only, same-origin only.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
+import { revalidateTag } from 'next/cache';
+import { shareTag } from '@/lib/raidShare';
+import { invalidateShare } from '@/lib/raidShareLookup';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +36,11 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
     .is('revoked_at', null)
     .select('id');
   if (error) return fail(502, 'could not revoke');
+  // Prompt revoke (the guild lead, 2026-10-17). The public lookup is memoised 60 s per process: this clears the
+  // instance that took the click, the TTL bounds every other one. The tag drops the slices and bosses kept across
+  // visitors so none is served after this. Run even when nothing updated (already revoked): it is idempotent.
+  invalidateShare(params.id);
+  revalidateTag(shareTag(params.id));
   // Nothing updated: already revoked, or not ours. Either way the link is not live, which is what was asked.
   return NextResponse.json({ ok: true, revoked: (data ?? []).length }, { headers: NO_STORE });
 }

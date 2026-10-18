@@ -51,12 +51,12 @@ function mockRes() {
     end(body) { this._ended = true; this.body = body; return this; },
   };
 }
-// Real session tokens are prefixed wpms_; requireAgentAuth rejects anything else
+// Real session tokens are wpms_ + 64 hex; requireAgentAuth rejects anything else
 // before touching Supabase. Distinct token per case avoids the 5-min identity
 // cache carrying a prior result over.
 let seq = 0;
-const bearerReq = () => ({ headers: { authorization: 'Bearer wpms_' + String(seq++).padStart(4, '0') + 'x'.repeat(60) } });
-const uiReq     = () => ({ headers: { 'x-wolfpack-mimic-session': 'wpms_' + String(seq++).padStart(4, '0') + 'y'.repeat(60) } });
+const bearerReq = () => ({ headers: { authorization: 'Bearer wpms_' + String(seq++).padStart(4, '0') + 'a'.repeat(60) } });
+const uiReq     = () => ({ headers: { 'x-wolfpack-mimic-session': 'wpms_' + String(seq++).padStart(4, '0') + 'b'.repeat(60) } });
 
 const OK   = (rows) => () => ({ ok: true,  status: 200, text: async () => JSON.stringify(rows) });
 const DOWN = ()     => () => ({ ok: false, status: 500, text: async () => '{}' }); // → select null

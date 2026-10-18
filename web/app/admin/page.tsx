@@ -160,6 +160,11 @@ export default function AdminPage() {
           href="/admin/voice"
         />
         <Card
+          title="🔊 Name pronunciations"
+          body="[beta] How Mimic's voice callouts say each character's name. See every saved one, hear it, and set or clear anyone's. Members set their own on My stats."
+          href="/admin/pronunciations"
+        />
+        <Card
           title="✉ Mimic Mail"
           body="Broadcast notices to every Mimic user — pulsing mail icon on their dashboard within ~90s, plus a Discord post for critical ones. Version-independent: reaches all future Mimic versions with no release."
           href="/admin/notices"

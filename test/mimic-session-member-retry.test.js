@@ -34,11 +34,13 @@ afterEach(() => {
 });
 
 const req = (token) => ({ headers: { 'x-wolfpack-mimic-session': token } });
+// A real token shape (wpms_ + 64 hex) — mimicLink rejects anything else before any lookup.
+const freshToken = () => 'wpms_' + nodeRequire('node:crypto').randomBytes(32).toString('hex');
 const OFFICER = [{ nickname: 'Aldenmar', global_name: null, role_names: ['Officer'] }];
 
 describe('session identity when the member read fails', () => {
   it('keeps the last good officer identity through a failed read', async () => {
-    const token = 'wpms_keep_' + Math.random();
+    const token = freshToken();
     memberRead = OFFICER;
     expect((await mimicLink.resolveMimicSession(req(token))).is_officer).toBe(true);
     vi.advanceTimersByTime(6 * 60 * 1000);   // past the 5-minute cache: the next call reads again
@@ -47,7 +49,7 @@ describe('session identity when the member read fails', () => {
   });
 
   it('retries within 15 seconds instead of holding a failed read for 5 minutes', async () => {
-    const token = 'wpms_retry_' + Math.random();
+    const token = freshToken();
     memberRead = null;
     expect((await mimicLink.resolveMimicSession(req(token))).is_officer).toBe(false);
     memberRead = OFFICER;
@@ -60,7 +62,7 @@ describe('session identity when the member read fails', () => {
   });
 
   it('a successful read that finds no member still caches for the full 5 minutes', async () => {
-    const token = 'wpms_none_' + Math.random();
+    const token = freshToken();
     memberRead = [];
     expect((await mimicLink.resolveMimicSession(req(token))).is_officer).toBe(false);
     vi.advanceTimersByTime(60 * 1000);

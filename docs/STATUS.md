@@ -6147,6 +6147,18 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
 - ✅ Target Info: "Silences" / "Silences (AoE)" card from the mob's spells (bot 3.1.286; warning colour agent 3.7.188 beta, DECISIONS §350).
 - ✅ Map: ★ watch a named's placeholder spot, guild-shared timer with PH / spot / /loc; easier respawn list (bot 3.1.287,
   agent 3.7.189 beta, DECISIONS §351). ⏳ In-game /loc check; ⏳ C (hunt list + route) next; ⏳ corpses-on-map pick.
+- ✅ Pronunciations on the website: /me/voice and /admin/pronunciations [beta]; officers may set anyone's (web 1.8.173,
+  bot 3.1.289, DECISIONS §352).
+- ✅ Mimic free voices: Piper download with two public-domain voices, Windows fallback (agent 3.7.190 beta, §352).
+  ✅ Kokoro via sherpa-onnx + licence-gated non-commercial / research Piper voices, auto = Piper first (agent 3.7.191
+  beta, §353). ⏳ Windows test.
+- ✅ Map: guild corpses ☠ with the dragger, drags, summons, rez (bot 3.1.290, agent 3.7.192 beta, §353).
+  ⏳ In-game check; ⏳ a looted-empty line if one exists.
+- ✅ Corpse names never recorded as characters; /me card skips them (bot 3.1.291, web 1.8.174, §353). ⏳ Optional cleanup SQL.
+- ✅ Dashboard: 🗣 Voice tab, Replay on Fights, Buffs (and blocking), kill switches folded with confirm (agent 3.7.193 beta, §353).
+- ✅ Server patch notes Oct 5–17 applied to the hail board and PoP guide (bot 3.1.288, web 1.8.172, §352).
+  ⏳ Lockout / retry-timer values not in the notes.
+- ⏳ Account labels encrypted at rest: branch claude/label-encrypt, waiting on the column SQL and the Vercel key (§352).
 - ✅ Name pronunciations table created and the four unused indexes dropped, by hand in the SQL editor 2026-10-16
   (verified: table + RLS + read policy present, indexes gone; DECISIONS §350). Not recorded in the migration history.
   ⏳ Migrations are not auto-applying: find out why before the next one.

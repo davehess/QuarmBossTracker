@@ -37,6 +37,31 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-173-2026-10-17',
+    title: 'Say your name on the website',
+    version: 'Web 1.8.173 · Bot 3.1.289',
+    date: '2026-10-17',
+    headline: 'Set how Mimic says your characters’ names from the website, and hear it before you save.',
+    features: [
+      { name: 'Say your name [beta]', blurb: 'wolfpack.quest/me/voice lists your characters. Type how a name should sound, press ▶ to hear it, pick from suggestions, then save. Mimic picks up the change within about 10 minutes.' },
+      { name: 'Officers can fix any name [beta]', blurb: 'wolfpack.quest/admin/pronunciations lists every saved name with who set it. Officers can add, change or clear anyone’s, here or from Mimic.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1-8-172-2026-10-17',
+    title: 'Planes of Power: the October 17 server changes',
+    version: 'Web 1.8.172 · Bot 3.1.288',
+    date: '2026-10-17',
+    headline: 'The PoP guide and the hail board follow the server’s new flagging rules and timers.',
+    features: [
+      { name: 'Claim your flag after camping out', blurb: 'The guide now says it: if you were in the raid or group that killed the boss, you can still hail the Planar Projection after camping out or switching groups, and late joiners count too.' },
+      { name: 'New numbers on the hail board', blurb: 'The Plane of Earth A projection flags up to 72 (was 54). Saryrn’s projection and Tylis Newleaf stay 30 minutes. The countdowns and flag counts use the new values.' },
+      { name: 'Torment and Bastion of Thunder steps', blurb: 'A second Tylis appears at the entrance for 30 minutes after the Keeper of Sorrows dies, and needs no Screaming Sphere. Askr and the vortex no longer leave after 55 minutes, and Karana stays 20 minutes.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-8-171-2026-10-15',
     title: 'Full parses in the raid session review',
     version: 'Web 1.8.172 · Bot 3.1.276',
