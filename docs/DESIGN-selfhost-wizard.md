@@ -579,6 +579,11 @@ and the same never-refetch guarantee.
   gaming PC over the LAN, free but only up while that PC is). Compose, not a plain image app, so redeploys never run
   two gateways on one bot token. A guild without a local GPU swaps the provider block for a hosted model (per-message
   cost, larger window). The wizard must ask: Discord app for the persona, model host, honest context window.
+- **2026-10-18 — a third front door, raidmimic.com / .net / .quest, on the same web deployment** (`DECISIONS-2026-09-21.md`
+  §370): six hostnames on our Vercel project, one page (`/raidmimic`), the eqmimic host pattern copied
+  (`web/lib/raidmimicHost.ts`). No new service, table or cost beyond the domains themselves (Porkbun registration). Until
+  Porkbun's DNS points at Vercel, Vercel 307-redirects all six to eqmimic.quest; to serve the page there, remove the
+  redirects. For the wizard: entirely ours and optional, like eqmimic.quest; a self-hosting guild needs none of it.
 
 ## 4. Open questions for whoever builds it
 

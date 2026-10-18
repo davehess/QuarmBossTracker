@@ -1,0 +1,380 @@
+// test/raidmimic-landing.test.js — the raidmimic.com front door (the guild lead, 2026-10-18, option C "two doors").
+// A FIRST-DRAFT page for guild leaders, modelled on test/eqmimic-landing.test.js.
+//
+// What this pins:
+//   - the host list (six hosts, exact match, lookalikes refused) and the routing function: every path on those
+//     hosts goes to /raidmimic with EVERY query parameter dropped,
+//   - the middleware, RUN against a stand-in for next/server, agrees, and the eqmimic host still behaves as before;
+//     the branch sits before any session work and the link-preview rewrite,
+//   - the root layout gives the raidmimic hosts the same bare shell as eqmimic's,
+//   - the page: [beta] title, not indexable, public, two layouts picked by `?v=` (A default, B for `b`), the
+//     [beta] tag, and the Register-interest address (the existing anonymous form, text in the FRAGMENT),
+//   - both layouts carry every required section, and both draw their words from the one content module,
+//   - honesty: every "coming" claim is in the COMING inventory, nothing invents a price, a customer count or a
+//     testimonial, and the one dollar figure is the measured Wolf Pack number eqmimic already publishes,
+//   - the metadata is in lib/pageMeta.ts as well as the page (test/page-metadata.test.js walks the rest),
+//   - the content is public-safe.
+//
+// Source-text assertions run over comment-stripped source (CLAUDE.md "comments satisfy text assertions").
+// Run: npx vitest run test/raidmimic-landing.test.js
+
+import { describe, it, expect, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { ROOT, stripJs } from './_source-slice.js';
+import {
+  RAIDMIMIC_HOSTS, RAIDMIMIC_LANDING_PATH, isRaidmimicHost, raidmimicLandingTarget,
+} from '../web/lib/raidmimicHost.ts';
+import { isEqmimicHost } from '../web/lib/eqmimicHost.ts';
+import * as C from '../web/lib/raidmimicLanding.ts';
+import * as EQ from '../web/lib/eqmimicLanding.ts';
+import { metaForPath, DEFAULT_DESCRIPTION } from '../web/lib/pageMeta.ts';
+
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const code = (rel) => stripJs(read(rel));
+const L = 'web/app/raidmimic/_landing/';
+
+// Every sentence the content module can put on the page, as one string (for the "no invented X" sweeps).
+const allText = () => JSON.stringify([
+  C.HERO, C.BLOCKS, C.WORKS_WITH, C.DATA, C.COST, C.WORLDS, C.CTA, C.MOMENTS, C.COMING, C.ILLUSTRATIVE_NOTE,
+]);
+
+describe('the host list', () => {
+  it('is the six hosts the guild lead bought, with and without www', () => {
+    expect(RAIDMIMIC_HOSTS).toEqual([
+      'raidmimic.com', 'www.raidmimic.com', 'raidmimic.net', 'www.raidmimic.net', 'raidmimic.quest', 'www.raidmimic.quest',
+    ]);
+  });
+  it('matches any case and an optional port, exactly', () => {
+    for (const h of [...RAIDMIMIC_HOSTS, 'RaidMimic.COM', 'raidmimic.com:443', 'www.raidmimic.net:3000']) expect(isRaidmimicHost(h), h).toBe(true);
+  });
+  it('refuses lookalikes, the other front doors and empties', () => {
+    for (const h of ['raidmimic.com.evil.com', 'evil-raidmimic.com', 'sub.raidmimic.com', 'raidmimic.org', 'eqmimic.quest',
+      'wolfpack.quest', 'b.wolfpack.quest', 'localhost:3000', '', null, undefined]) expect(isRaidmimicHost(h), String(h)).toBe(false);
+  });
+  it('is disjoint from the eqmimic hosts', () => {
+    for (const h of RAIDMIMIC_HOSTS) expect(isEqmimicHost(h), h).toBe(false);
+    expect(isRaidmimicHost('eqmimic.quest')).toBe(false);
+  });
+});
+
+describe('raidmimicLandingTarget', () => {
+  it('is the landing page with no query, always', () => {
+    expect(RAIDMIMIC_LANDING_PATH).toBe('/raidmimic');
+    expect(raidmimicLandingTarget()).toEqual({ pathname: '/raidmimic', search: '' });
+  });
+  it('the host module holds no query handling at all (the layout switch is a page concern, not a host one)', () => {
+    expect(code('web/lib/raidmimicHost.ts')).not.toMatch(/URLSearchParams|[?&]v=|searchParams/);
+  });
+});
+
+describe('the middleware, run', () => {
+  // Same stand-in as test/eqmimic-landing.test.js: the host branches touch only NextResponse.next/rewrite and
+  // request.nextUrl/headers, so no session client may be built.
+  function fakeNextServer() {
+    class NextRequest {
+      constructor(url, init = {}) {
+        const nu = new URL(url);
+        nu.clone = () => new URL(nu.href);
+        this.url = url; this.method = init.method || 'GET';
+        this.headers = new Headers(init.headers || {}); this.nextUrl = nu;
+      }
+    }
+    const res = (h) => ({ headers: new Headers(h) });
+    return { NextRequest, NextResponse: { next: () => res({ 'x-middleware-next': '1' }), rewrite: (u) => res({ 'x-middleware-rewrite': String(u) }) } };
+  }
+  async function run(url) {
+    vi.resetModules();
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co';
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= 'anon-test-key';
+    const fake = fakeNextServer();
+    vi.doMock('next/server', () => fake);
+    vi.doMock('@supabase/ssr', () => ({ createServerClient: () => { throw new Error('a front-door branch must not build a session client'); } }));
+    const { middleware } = await import('../web/middleware.ts');
+    const res = await middleware(new fake.NextRequest(url, { headers: { host: new URL(url).host } }), { waitUntil() {} });
+    const to = res.headers.get('x-middleware-rewrite');
+    return { to: to ? new URL(to) : null, next: res.headers.get('x-middleware-next') };
+  }
+
+  it.each(RAIDMIMIC_HOSTS)('%s / -> the landing page, no query', async (h) => {
+    const { to } = await run(`https://${h}/`);
+    expect(to.pathname).toBe('/raidmimic');
+    expect(to.search).toBe('');
+  });
+  it('every path and every query parameter is dropped, ?v=b included (B is previewed on the Wolf Pack hosts)', async () => {
+    for (const u of ['https://raidmimic.com/?v=b', 'https://www.raidmimic.net/anything?x=1', 'https://raidmimic.quest/feedback?v=b&utm=1&token=secret',
+      'https://raidmimic.com/admin/feedback', 'https://raidmimic.com/api/agent/chat', 'https://raidmimic.com/me?v=B']) {
+      const { to } = await run(u);
+      expect(to.pathname, u).toBe('/raidmimic');
+      expect(to.search, u).toBe('');
+    }
+  });
+  it('/_next/ assets are let through, not rewritten (or the page would have no scripts)', async () => {
+    const { to, next } = await run('https://raidmimic.com/_next/data/x.json');
+    expect(to).toBeNull();
+    expect(next).toBe('1');
+  });
+  it('the eqmimic host is unchanged: / is its landing page, /feedback its form', async () => {
+    expect((await run('https://eqmimic.quest/?v=b')).to.pathname).toBe('/eqmimic');
+    expect((await run('https://eqmimic.quest/feedback')).to.pathname).toBe('/eqmimic/feedback');
+  });
+
+  const mw = code('web/middleware.ts');
+  it('the raidmimic branch returns before the link-preview rewrite and before any session client', () => {
+    const at = mw.indexOf('isRaidmimicHost(request.headers.get(\'host\'))');
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(mw.indexOf('PREVIEW_BOT_RX.test'));
+    expect(at).toBeLessThan(mw.indexOf('createServerClient('));
+    expect(mw).toMatch(/raidmimicLandingTarget\(\)/);
+  });
+});
+
+describe('the root layout', () => {
+  const layout = code('web/app/layout.tsx');
+  it('gives a raidmimic host the bare shell, before any session lookup', () => {
+    const at = layout.indexOf('isRaidmimicHost(headers().get(\'host\'))');
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(layout.indexOf('await getSessionUser()'));
+    // …and it is the SAME branch as the eqmimic one, so the two shells cannot drift
+    const branch = layout.slice(layout.indexOf('if (isEqmimicHost('), layout.indexOf('await getSessionUser()'));
+    expect(branch).toMatch(/isEqmimicHost\(headers\(\)\.get\('host'\)\) \|\| isRaidmimicHost\(headers\(\)\.get\('host'\)\)/);
+    expect(branch).not.toMatch(/max-w-/);
+  });
+});
+
+describe('the page', () => {
+  const page = code('web/app/raidmimic/page.tsx');
+  it('is [beta] in its title, not indexable, and public (no session code)', () => {
+    expect(page).toMatch(/const TITLE = '\[beta\] raidmimic · raid orchestration as a service'/);
+    expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
+    expect(page).not.toMatch(/getSessionUser|supabase/i);
+  });
+  it('picks the layout from ?v= and defaults to the pitch', () => {
+    expect(page).toMatch(/raidmimicVariant\(searchParams\?\.v\) === 'b' \? <TourLayout ctx=\{ctx\} \/> : <PitchLayout ctx=\{ctx\} \/>/);
+  });
+  it('raidmimicVariant: b (any case, an array’s first) is the tour; everything else is the pitch', () => {
+    expect(C.raidmimicVariant('b')).toBe('b');
+    expect(C.raidmimicVariant(' B ')).toBe('b');
+    expect(C.raidmimicVariant(['b', 'a'])).toBe('b');
+    for (const v of [undefined, '', 'a', 'c', 'bb', 'zzz', ['a', 'b'], []]) expect(C.raidmimicVariant(v), String(v)).toBe('a');
+  });
+  it('the Register-interest address is the anonymous form: absolute on a raidmimic host, its real path on Wolf Pack hosts', () => {
+    expect(page).toMatch(/interest: interestUrl\(`\$\{EQMIMIC_ORIGIN\}\/feedback`\)/);
+    expect(page).toMatch(/interest: interestUrl\(EQMIMIC_FEEDBACK_PATH\)/);
+    expect(C.EQMIMIC_ORIGIN + '/feedback').toBe('https://eqmimic.quest/feedback');
+    expect(C.EQMIMIC_FEEDBACK_PATH).toBe('/eqmimic/feedback');
+    // the form really is at that path, and really reads a fragment
+    expect(fs.existsSync(path.join(ROOT, 'web/app/eqmimic/feedback/page.tsx'))).toBe(true);
+    expect(code('web/app/eqmimic/feedback/AnonFeedbackForm.tsx')).toMatch(/window\.location\.hash/);
+  });
+  it('interestUrl puts an Idea and the template in the FRAGMENT, never the query string, and it round-trips', () => {
+    const u = C.interestUrl('https://eqmimic.quest/feedback');
+    expect(u.startsWith('https://eqmimic.quest/feedback#')).toBe(true);
+    expect(u).not.toMatch(/\?/);
+    const p = new URLSearchParams(u.split('#')[1]);
+    expect(p.get('cat')).toBe('idea');
+    expect(p.get('text')).toBe(C.INTEREST_TEXT);
+    expect(C.INTEREST_TEXT.length).toBeLessThan(400);   // the form keeps 4000; this is a template, not an essay
+  });
+  it('no mailto, no new form, no new endpoint', () => {
+    for (const f of ['page.tsx', 'Parts.tsx', 'PitchLayout.tsx', 'TourLayout.tsx', 'Figures.tsx']) {
+      const src = f === 'page.tsx' ? page : code(L + f);
+      expect(src, f).not.toMatch(/mailto:|<form\b|fetch\(|action=/);
+    }
+    expect(allText()).not.toMatch(/mailto:|@[a-z0-9-]+\.[a-z]{2,}/i);
+  });
+});
+
+describe('both layouts', () => {
+  const pitch = code(L + 'PitchLayout.tsx');
+  const tour = code(L + 'TourLayout.tsx');
+  const parts = code(L + 'Parts.tsx');
+
+  it('the [beta] tag is the site’s NewPageTag, at the top of both, and its link works on a raidmimic host', () => {
+    expect(parts).toMatch(/import NewPageTag from '@\/components\/NewPageTag'/);
+    expect(parts).toMatch(/<NewPageTag [^>]*href=\{ctx\.onHost \? ctx\.interest : '\/feedback'\}/);
+    for (const [n, src] of [['pitch', pitch], ['tour', tour]]) {
+      expect(src.indexOf('<BetaTag'), n).toBeGreaterThan(-1);
+      expect(src.indexOf('<BetaTag'), n).toBeLessThan(src.indexOf('<Hero'));
+    }
+    expect(code('web/components/NewPageTag.tsx')).toMatch(/href = '\/feedback'/);   // every other page keeps its link
+  });
+
+  // The required sections, by the id each layout gives them, in each layout’s own order.
+  const REQUIRED = ['works-with', 'data', 'cost', 'worlds'];
+  it('A carries the six blocks, works-with, data, cost, worlds, the coming list and the ask — in that order', () => {
+    const order = ['<BlockGrid', 'id="works-with"', 'id="data"', 'id="cost"', 'id="worlds"', '<ComingList', '<CtaBand', '<Footer'].map(s => pitch.indexOf(s));
+    expect(order.every(i => i > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(C.BLOCKS).toHaveLength(6);
+    expect(pitch).toMatch(/<Hero ctx=\{ctx\} \/>/);
+  });
+  it('B carries the four moments first, then the same four facts folded away, the coming list and the ask', () => {
+    const order = ['MOMENTS.map', ...REQUIRED.map(r => `id="${r}"`), '<ComingList', '<CtaBand', '<Footer'].map(s => tour.indexOf(s));
+    expect(order.every(i => i > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(C.MOMENTS).toHaveLength(4);
+    expect(tour).toMatch(/<details\b/);
+  });
+  it('they are genuinely different: B has the pictures and no block grid, A has the grid and no pictures', () => {
+    expect(pitch).not.toMatch(/Figure|MOMENTS|<details/);
+    expect(tour).not.toMatch(/BlockGrid|BLOCKS/);
+    expect(tour).toMatch(/<Figure k=\{m\.figure\}/);
+  });
+  it('both reuse the SAME section bodies from Parts, so a fact is corrected in one place', () => {
+    for (const body of ['WorksWithBody', 'DataBody', 'CostBody', 'WorldsBody']) {
+      expect(pitch, body).toMatch(new RegExp(`<${body} />`));
+      expect(tour, body).toMatch(new RegExp(`<${body} />`));
+    }
+  });
+  it('the Register-interest button is in the hero and again at the end of both', () => {
+    expect(parts).toMatch(/export function Hero[\s\S]*?<InterestButton ctx=\{ctx\} \/>/);
+    expect(parts).toMatch(/export function CtaBand[\s\S]*?<InterestButton ctx=\{ctx\} \/>/);
+    expect(parts).toMatch(/href=\{ctx\.interest\}/);
+  });
+  it('the layout switch shows only on the Wolf Pack hosts (a raidmimic host drops the query)', () => {
+    expect(parts).toMatch(/if \(ctx\.onHost\) return null;/);
+    expect(parts).toMatch(/\?v=b/);
+  });
+  it('the footer carries the rights notice and the fan-project line, verbatim from the eqmimic module', () => {
+    expect(C.RIGHTS_NOTICE).toBe(EQ.RIGHTS_NOTICE);
+    expect(C.FAN_PROJECT_LINE).toBe(EQ.FAN_PROJECT_LINE);
+    const footer = parts.slice(parts.indexOf('export function Footer'));
+    expect(footer).toMatch(/\{RIGHTS_NOTICE\}/);
+    expect(footer).toMatch(/\{FAN_PROJECT_LINE\}/);
+    expect(footer).not.toMatch(/text-\[(?:9|10|11)px\]/);
+    expect(pitch.indexOf('<Footer')).toBeGreaterThan(pitch.lastIndexOf('</section>'));
+  });
+  it('the pictures are CSS and text only: no image, no fetch, no external address, one role="img" per figure', () => {
+    const fig = code(L + 'Figures.tsx');
+    expect(fig).not.toMatch(/<img\b|<Image\b|url\(|https?:\/\/|fetch\(|dangerouslySetInnerHTML/);
+    expect((fig.match(/role="img"/g) || []).length).toBe(4);
+    expect(new Set(C.MOMENTS.map(m => m.figure))).toEqual(new Set(['boards', 'flags', 'parse', 'builder']));
+  });
+  it('server components only: no client JS on the page', () => {
+    for (const f of ['page.tsx', 'Parts.tsx', 'PitchLayout.tsx', 'TourLayout.tsx', 'Figures.tsx']) {
+      expect(read(f === 'page.tsx' ? 'web/app/raidmimic/page.tsx' : L + f), f).not.toMatch(/['"]use client['"]/);
+    }
+  });
+  it('fetches and embeds nothing external; every outbound link is one we name', () => {
+    const urls = new Set();
+    for (const f of ['page.tsx', 'Parts.tsx', 'PitchLayout.tsx', 'TourLayout.tsx']) {
+      for (const m of (f === 'page.tsx' ? code('web/app/raidmimic/page.tsx') : code(L + f)).matchAll(/https?:\/\/[^\s'"`)<>]+/g)) urls.add(m[0]);
+    }
+    expect([...urls]).toEqual([]);   // every address is a constant in the content module
+    const mod = code('web/lib/raidmimicLanding.ts');
+    const inModule = [...mod.matchAll(/https?:\/\/[^\s'"`)<>]+/g)].map(m => m[0]).filter(u => !/\$\{/.test(u));
+    expect(new Set(inModule)).toEqual(new Set(['https://eqmimic.quest', 'https://wolfpack.quest/privacy']));
+  });
+});
+
+describe('honesty: "coming" means coming', () => {
+  it('every block, moment and world carries a known status', () => {
+    for (const x of [...C.BLOCKS, ...C.MOMENTS, ...C.WORLDS.list]) expect(['live', 'alpha', 'coming'], x.title || x.name).toContain(x.status);
+    expect(Object.keys(C.STATUS_LABEL).sort()).toEqual(['alpha', 'coming', 'live']);
+    expect(C.STATUS_LABEL.coming).toBe('Coming');
+  });
+  it('the cross-guild board, the shared trial and the other games are NOT marked live', () => {
+    expect(C.MOMENTS.find(m => m.figure === 'boards').status).toBe('coming');
+    expect(C.COST.trialStatus).toBe('coming');
+    for (const w of C.WORLDS.list.filter(w => /Monsters|Warcraft/.test(w.name))) expect(w.status, w.name).toBe('coming');
+    expect(C.WORLDS.list.find(w => w.name === 'EverQuest').status).toBe('live');
+    expect(C.MOMENTS.find(m => m.figure === 'builder').status).toBe('alpha');
+  });
+  it('the inventory of promises names each of them, and a block that owns up to a "coming" says Coming or In alpha', () => {
+    const inv = C.COMING.join(' ');
+    for (const re of [/other than Wolf Pack|multi-guild/i, /shared between guilds/i, /shared trial/i, /setup wizard/i, /Monsters & Memories/, /Warcraft/]) expect(inv).toMatch(re);
+    for (const b of C.BLOCKS.filter(b => b.aside)) expect(b.aside, b.id).toMatch(/^(Coming|In alpha):/);
+    expect(C.DATA.aside).toMatch(/is coming/);
+    expect(C.COMING_TITLE).toBe('What is not built yet');
+  });
+  it('the live claims are things this platform has: each names the real surface that backs it', () => {
+    // A cheap tripwire against a "live" block with nothing behind it: the surfaces exist in the repo.
+    for (const rel of ['web/app/boards/page.tsx', 'web/app/pop/page.tsx', 'web/app/admin/lockouts/page.tsx', 'web/app/parses/page.tsx',
+      'web/app/raid/review/page.tsx', 'utils/opendkp.js']) expect(fs.existsSync(path.join(ROOT, rel)), rel).toBe(true);
+  });
+  it('invents no price, customer count or testimonial', () => {
+    const t = allText();
+    const dollars = t.match(/\$\s?\d[\d,.]*/g) || [];
+    expect(dollars).toEqual(['$30']);                       // the one measured Wolf Pack number, below
+    expect(t).not.toMatch(/\bper (?:month|year|seat|user|raider)\b|\/\s?(?:mo|month|yr|year)\b|% off|free trial|money-back/i);
+    expect(t).not.toMatch(/\b\d[\d,]*\+? (?:guilds|customers|raiders|users|teams)\b/i);
+    expect(t).not.toMatch(/testimonial|trusted by|loved by|“|”|\bsaid\b|\bcalls it\b/);
+    expect(C.COST.scale).toMatch(/No price list yet/);
+    expect(C.COST.scale).toMatch(/not a quote/);
+    expect(code('web/app/raidmimic/_landing/Parts.tsx') + pitchTourSrc()).not.toMatch(/\$\d/);
+  });
+  it('the one dollar figure is the measured Wolf Pack hosting number eqmimic.quest already publishes', () => {
+    expect(EQ.COSTS.total).toMatch(/\$30\b/);
+    expect(C.COST.scale).toMatch(/about \$30 a month in September 2026/);
+    expect(EQ.COSTS.measured).toMatch(/September 2026/);
+  });
+  it('says what is true of the cost model: pass-through hosting by size, a small development share, a trial', () => {
+    const t = JSON.stringify(C.COST);
+    expect(t).toMatch(/own cloud account/);
+    expect(t).toMatch(/by the size of your guild/);
+    expect(t).toMatch(/small amount on top|small development share/i);
+    expect(t).toMatch(/shared trial/);
+    expect(C.COST.notTurnkey).toMatch(/not turnkey/);
+  });
+  it('the consent model is the one the platform runs: opt in, revoke, private chat on the PC, shown where it lives', () => {
+    const heads = C.DATA.points.map(p => p.head);
+    expect(heads).toEqual(['Each member opts in', 'Revoke any time', 'Private chat stays on the PC', 'Shown where it lives']);
+    // the first three are claims about TODAY: they must match eqmimic's published privacy bullets
+    expect(EQ.PRIVACY_BULLETS.join(' ')).toMatch(/signing out stops every upload/);
+    expect(EQ.PRIVACY_BULLETS.join(' ')).toMatch(/Officer, group, custom-channel/);
+  });
+  it('works-with names the three tools and does not claim to replace or beat them', () => {
+    expect(C.WORKS_WITH.tools).toEqual(['PQ Companion', 'GINA', 'EQLogParser']);
+    expect(C.WORKS_WITH.lead).toMatch(/keep running/);
+    expect(C.WORKS_WITH.lead).toMatch(/log file/);
+    expect(JSON.stringify(C.WORKS_WITH)).not.toMatch(/better than|replace|instead of|switch from|unlike/i);
+    expect(C.WORKS_WITH.rights).toMatch(/not affiliated/);
+  });
+  it('any solved world: EverQuest first, then the two named, the engine "meant to" serve them', () => {
+    expect(C.WORLDS.list.map(w => w.name)).toEqual(['EverQuest', 'Monsters & Memories', 'Classic-era Warcraft']);
+    expect(C.WORLDS.lead).toMatch(/meant to serve/);
+    expect(C.WORLDS.rights).toMatch(/not affiliated/);
+  });
+  it('the two doors point at each other: the hero sends players to eqmimic.quest', () => {
+    expect(C.HERO.playerLine).toMatch(/free player tool/);
+    expect(code(L + 'Parts.tsx')).toMatch(/<a href=\{EQMIMIC_ORIGIN\}[^>]*>eqmimic\.quest<\/a>/);
+  });
+});
+
+function pitchTourSrc() { return code(L + 'PitchLayout.tsx') + code(L + 'TourLayout.tsx') + code(L + 'Figures.tsx'); }
+
+describe('metadata: the tab AND the Discord card (CLAUDE.md, every page unfurls with its own name)', () => {
+  it('lib/pageMeta.ts knows /raidmimic, with the same words as the page', () => {
+    const m = metaForPath('/raidmimic');
+    expect(m.title).toBe('[beta] raidmimic · raid orchestration as a service');
+    expect(m.description).not.toBe(DEFAULT_DESCRIPTION);
+    expect(m.description.length).toBeGreaterThan(20);
+    expect(m.description.length).toBeLessThanOrEqual(300);
+    const page = code('web/app/raidmimic/page.tsx');
+    expect(page).toContain(`const TITLE = '${m.title}'`);
+    const desc = page.match(/const DESCRIPTION =\s*'([^']+)'/)[1];
+    expect(desc).toBe(m.description);
+    expect(page).toMatch(/title: \{ absolute: TITLE \}/);   // not "· WolfPack.quest": this page is also raidmimic.com
+  });
+  it('the card carries nothing from the database: a static entry, no lookup', () => {
+    expect(code('web/lib/pageMeta.ts')).toMatch(/'\/raidmimic':\s+\{ title: '\[beta\] raidmimic/);
+  });
+});
+
+describe('the content is public-safe', () => {
+  it('no ids, tokens, addresses, project refs, member names or invented people', () => {
+    const t = allText() + code('web/lib/raidmimicLanding.ts') + pitchTourSrc();
+    expect(t).not.toMatch(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);                 // an IP
+    expect(t).not.toMatch(/zhtoekwakucbckvatfky|1168893924329402420|service_role|SUPABASE_|WOLFPACK_AGENT_TOKEN|Bearer /);
+    expect(t).not.toMatch(/\b\d{17,20}\b/);                                           // a Discord id
+    expect(t).not.toMatch(/\b[a-z0-9]{32,}\b/i);                                       // a long token
+  });
+  it('the tour’s pictures use placeholder labels only', () => {
+    const fig = code(L + 'Figures.tsx');
+    const labels = [...fig.matchAll(/'((?:Raider|Boss|Gate|Log|Guild) [^']*)'/g)].map(m => m[1]);
+    expect(labels.length).toBeGreaterThan(6);
+    expect(fig).toMatch(/Raider \{r \+ 1\}/);
+    expect(fig).not.toMatch(/Lantern Watch|Wolf Pack/);
+  });
+});
