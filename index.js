@@ -114,6 +114,10 @@ let _agentManifestFetching = false;
 let _botReady = false;
 let _shuttingDown = false;
 
+// Node 20 exits the process on an unhandled promise rejection, so one stray `await` in a handler took the whole bot
+// (and every agent's uploads) down (the guild lead, 2026-10-17). Log it and keep serving. uncaughtException is left alone.
+process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e && e.stack || e));
+
 function _fetchBufferRaw(url) {
   return new Promise((resolve, reject) => {
     const req = require('https').get(url, { headers: { 'User-Agent': 'wolfpack-bot' }, timeout: 8000 }, (res) => {
@@ -294,6 +298,8 @@ const {
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList, isGuildMember, MEMBERS_ONLY } = require('./utils/roles');
 const mimicLink = require('./utils/mimicLink');
+const { clientIp } = require('./utils/clientIp');
+const { createIpLimiter } = require('./utils/ipLimiter');
 const { charmSpellName, charmRanFull } = require('./utils/charmSession');
 const popFlagStages = require('./utils/popFlagStages');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked, isPopEraLocked } = require('./utils/config');
@@ -4692,6 +4698,9 @@ function _flushUploadStats() {
 }
 function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode = 200, errorMessage = null, payloadBytes = null, agentState = null, uploadedBy = null }) {
   void payloadBytes;
+  // A dead character's Zeal name is "<Name>'s corpse<N>"; it is not a character, and /me listed it as one
+  // under "Characters we think are yours" (the guild lead, 2026-10-17).
+  if (character && require('./utils/raidBuffs').isCorpse(character)) character = null;
   try {
     const supabase = require('./utils/supabase');
     if (!supabase.isEnabled() || !endpoint) return;
@@ -9418,7 +9427,7 @@ async function _handleAgentTriggerFeedback(req, res) {
       direction:       String(v.direction),
       fired_at:        v.fired_at ? new Date(v.fired_at).toISOString() : null,
       voted_at:        v.voted_at ? new Date(v.voted_at).toISOString() : new Date().toISOString(),
-      voter_character: v.voter_character ? String(v.voter_character).slice(0, 80) : null,
+      voter_character: v.voter_character && !require('./utils/raidBuffs').isCorpse(v.voter_character) ? String(v.voter_character).slice(0, 80) : null,   // a dead voter's Zeal name is their corpse
       voter_discord_id: identity.discord_id,
       note:            v.note ? String(v.note).slice(0, 500) : null,
     }));
@@ -11463,7 +11472,9 @@ async function _handleAgentPronunciationSet(req, res) {
     const root = await supabase.select('characters', q(row.main_name));
     mine = Array.isArray(root) && !!root[0] && !!root[0].discord_id && String(root[0].discord_id) === String(identity.discord_id);
   }
-  if (!mine) {
+  // An officer may set anyone's (the guild lead, 2026-10-17; same rule as the website's /admin/pronunciations).
+  // The character still has to exist, and set_by_discord_id records who did it.
+  if (!mine && !(row && identity.is_officer)) {
     res.writeHead(403, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'not your character' }));
   }
@@ -12373,8 +12384,7 @@ function _budgetKey(req) {
     for (let i = 0; i < bearer.length; i++) h = (((h << 5) + h) ^ bearer.charCodeAt(i)) >>> 0;
     return 't' + h.toString(36);
   }
-  const xff = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
-  return 'ip' + (xff || req.socket?.remoteAddress || 'unknown');
+  return 'ip' + clientIp(req);
 }
 
 // Admission gate. Returns true when it has ALREADY written a response (429 or
@@ -17765,6 +17775,8 @@ async function _handleAgentMapSyncGet(req, res) {
   const out = { zone, now, events: hit.events.filter(e => e.at > since) };
   // The guild's ★ watched spots here (utils/mapWatch.js). Fail soft: a bot_kv hiccup is "no watches", never a failed pull.
   out.watches = require('./utils/mapWatch').liveWatches(await _mapWatchList(zone).catch(() => null), now);
+  // Corpses here (utils/mapCorpses.js), same fail-soft: a read failure is [], never a failed pull.
+  out.corpses = require('./utils/mapCorpses').liveCorpses(await _mapCorpseList(zone).catch(() => null), now);
   // The raid's targets here and the escort trails (utils/raidTargets.js): memory and one cached bot_kv read, no Supabase
   // query per pull. Best-effort: a failure leaves the events exactly as before.
   try { Object.assign(out, await _raidTargetsFor(identity, zone, sp)); }
@@ -17824,6 +17836,59 @@ async function _handleAgentMapWatch(req, res) {
   if (!saved) return _ptsJson(res, 503, { error: 'try again shortly' });
   _mapWatchCache.set(w.zone, { at: now, list: watches });
   return _ptsJson(res, 200, { ok: true, watches });
+}
+
+// POST /api/agent/map-corpse — corpse events from the Mimic Spawn map (the guild lead, 2026-10-17): where a corpse died,
+// was seen, was dragged or summoned to, or is gone. Stored per zone in bot_kv `map_corpses:<zone>` = { corpses: [...] }
+// (no migration), rides back to every agent as `corpses` on the map-sync GET. Shares the map_sync budget. Cached 30 s
+// and primed by the POST, exactly like the watches above (one bot replica, CLAUDE.md; every Map pull reads this).
+const _MAP_CORPSE_CACHE_MS = 30_000;
+const _mapCorpseCache = new Map();                // zone -> { at, list }
+async function _mapCorpseList(zone) {
+  const now = Date.now();
+  const hit = _mapCorpseCache.get(zone);
+  if (hit && now - hit.at <= _MAP_CORPSE_CACHE_MS) return hit.list;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return null;
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(supabase.guildId())}&key=eq.${encodeURIComponent('map_corpses:' + zone)}&select=value&limit=1`);
+  if (!Array.isArray(rows)) return null;
+  const v = rows[0] && rows[0].value;
+  const list = v && Array.isArray(v.corpses) ? v.corpses : [];
+  if (_mapCorpseCache.size >= 100) {
+    for (const [z, c] of _mapCorpseCache) if (now - c.at > _MAP_CORPSE_CACHE_MS) _mapCorpseCache.delete(z);
+  }
+  _mapCorpseCache.set(zone, { at: now, list });
+  return list;
+}
+
+async function _handleAgentMapCorpse(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const mapCorpses = require('./utils/mapCorpses');
+  const supabase = require('./utils/supabase');
+  const got = await _ptsReadBody(req, 8 * 1024);
+  if (got.tooBig) return _ptsJson(res, 413, { error: 'payload too large' });
+  if (got.error) return _ptsJson(res, 400, { error: 'read failed' });
+  let body; try { body = JSON.parse(got.text); } catch { return _ptsJson(res, 400, { error: 'invalid json' }); }
+  const now = Date.now();
+  const v = mapCorpses.validateCorpseEvents(body, now);
+  if (v.error) return _ptsJson(res, 400, { error: v.error });
+  if (!v.events.length) return _ptsJson(res, 200, { ok: true, stored: 0 });
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+
+  // Read-modify-write on one row, from the database rather than the cache; a failed read must not overwrite the list.
+  _mapCorpseCache.delete(v.zone);
+  const current = await _mapCorpseList(v.zone).catch(() => null);
+  if (!Array.isArray(current)) return _ptsJson(res, 503, { error: 'try again shortly' });
+  const corpses = mapCorpses.applyCorpseEvents(current, v, now);
+  const saved = await supabase.upsert('bot_kv', [{
+    guild_id: supabase.guildId(), key: 'map_corpses:' + v.zone, value: { corpses }, updated_at: new Date(now).toISOString(),
+  }], 'guild_id,key', { minimal: true, confirm: true }).catch(err => { console.error('[map-corpse] save failed:', err?.message || err); return null; });
+  _mapCorpseCache.delete(v.zone);
+  if (!saved) return _ptsJson(res, 503, { error: 'try again shortly' });
+  _mapCorpseCache.set(v.zone, { at: now, list: corpses });
+  return _ptsJson(res, 200, { ok: true, stored: v.events.length, corpses });
 }
 
 // Each Mimic's current target rides its live-state upload (_handleAgentLiveState); this is what the Map's pull gets
@@ -18618,6 +18683,7 @@ async function _handleAgentLiveState(req, res) {
   for (const st of states) {
     const character = String(st?.character || '').trim();
     if (!character || character.length > 64) continue;
+    if (require('./utils/raidBuffs').isCorpse(character)) continue;   // "<Name>'s corpse<N>": Zeal's name for a dead character, not a character
     // Character-swap record (agent v3.1.13+): the same EQ client logged a
     // different character in, so this one is gone. Stamp swapped_to WITHOUT
     // touching the rest of the row (buffs etc. stay as the last-known
@@ -23880,7 +23946,29 @@ async function _handleAgentUpload(req, res) {
   }
 }
 
+// Per-IP request ceiling, ahead of all routing (the guild lead, 2026-10-17: unauthenticated traffic could knock the
+// bot over). The whole fleet is ~23 req/s across ~20 players, 1-3 req/s per install, and a household can share one IP,
+// so 1200/min/IP only ever trips a flood. Tuning keys (same 60s map as budget_*): `ip_limit_per_min` (0 = off) and
+// `ip_failauth_per_min` (read by utils/mimicLink.js). Read straight off the cache, so a tuning-store blip fails open.
+const _IP_LIMIT_DEFAULT = 1200;
+const _ipLimiter = createIpLimiter({ max: _IP_LIMIT_DEFAULT });
+function _tuneNum(key, dflt) {
+  const v = _overlayTuningCache.values && _overlayTuningCache.values[key];
+  return (v === undefined || v === null || v === '' || !Number.isFinite(Number(v))) ? dflt : Number(v);
+}
+
 const httpServer = http.createServer(async (req, res) => {
+  // Per-IP limiter FIRST: over the limit costs one 429 and no further work. /health is exempt (Railway's healthcheck).
+  if (!/^\/healthz?(?:[?#]|$)/.test(req.url || '')) {
+    const _ip = clientIp(req);
+    mimicLink.setFailAuthPerMin(_tuneNum('ip_failauth_per_min', 60));
+    const _lim = _ipLimiter.hit(_ip, _tuneNum('ip_limit_per_min', _IP_LIMIT_DEFAULT));
+    if (_lim.limited) {
+      if (_lim.tripped) console.warn(`[ip-limit] ${_ip} over ${_tuneNum('ip_limit_per_min', _IP_LIMIT_DEFAULT)}/min — 429 until the window rolls`);
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(_lim.retryAfterSec) });
+      return res.end('{"error":"rate_limited"}');
+    }
+  }
   // #58 graceful shutdown: once SIGTERM has landed, refuse NEW HTTP work with a
   // 503 (agents treat 503 as retryable — the durable queue backs off, nothing is
   // lost) and let in-flight handlers drain. Health checks fall through so Railway
@@ -24169,6 +24257,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentMapWatch(req, res); }
     catch (err) {
       console.error('[map-watch] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url.split('?')[0] === '/api/agent/map-corpse') {
+    if (await _overBudget('map_sync', req, res)) return;
+    try { return await _handleAgentMapCorpse(req, res); }
+    catch (err) {
+      console.error('[map-corpse] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

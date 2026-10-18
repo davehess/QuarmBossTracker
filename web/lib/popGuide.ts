@@ -225,7 +225,10 @@ const L = {
 const MAZE = 'ponightmare/encounters/Maze.lua';
 const MAELIN = 'poknowledge/Grand_Librarian_Maelin.lua';
 
-const PROJECTION = 'Then hail A Planar Projection before anyone leaves.';
+// The server's patch notes, 2026-10-17: a projection (or essence) remembers who earned the kill. Anyone eligible in the
+// raid or group that killed the boss can still claim after camping out or changing raid or group, a late joiner to that
+// raid or group qualifies, and the claim limit survives a quest reload (a checklist flag cannot be claimed twice).
+const PROJECTION = 'Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late.';
 
 // The steps as authored; GUIDE_ITEMS below is this list with each step's `seq` attached.
 const BASE_ITEMS: GuideItem[] = [
@@ -444,15 +447,15 @@ const BASE_ITEMS: GuideItem[] = [
     detail: 'Needs the Disease, Crypt and Nightmare flags done in order.',
     says: [{ to: 'Fahlia Shadyglade', text: 'i will go' }], where: [L.fahlia] },
   { key: 'torment_sphere', section: 't2', who: 'raid', title: 'Optional: [[A Screaming Sphere#22954]] for Saryrn’s tower door',
-    detail: 'One person needs it. An Unimaginable Horror now respawns in 30 minutes.' },
+    detail: 'One person needs it. An Unimaginable Horror now respawns in 30 minutes. For 30 minutes after the Keeper of Sorrows dies, the temporary entrance Tylis does not require it (you still need the Tylis pre-flag).' },
   { key: 'flag_keeper', section: 't2', who: 'raid', flag: 'keeper_dead', title: 'The Keeper of Sorrows, then hail Tylis Newleaf',
-    detail: 'A small raid; resets every 2 hours. Whoever asks for it must be flagged this far. Tylis stands in Torment after the kill. His hail gives the flag (your Tylis flag from 1 to 2) only if Fahlia’s “will go” came first; otherwise it is a checklist flag the Seer’s “unlock my memories” turns into the real one. “ready to return” asks him to send you out of the plane.',
+    detail: 'A small raid; resets every 2 hours. Whoever asks for it must be flagged this far. Tylis stands in Torment after the kill, and a second, temporary entrance Tylis appears beside him; both stay 30 minutes (the rescued Tylis used to stay 10). For those 30 minutes the entrance Tylis needs no Screaming Sphere, but you still need the Tylis pre-flag. His hail gives the flag (your Tylis flag from 1 to 2) only if Fahlia’s “will go” came first; otherwise it is a checklist flag the Seer’s “unlock my memories” turns into the real one. “ready to return” asks him to send you out of the plane.',
     says: [
       { to: 'Tylis Newleaf (in Torment)', text: 'Hail', src: 'potorment/#Tylis_Newleaf.lua' },
       { to: 'Tylis Newleaf (in Torment)', text: 'ready to return', src: 'potorment/#Tylis_Newleaf.lua' },
     ],
     link: popZone('torment') },
-  { key: 'flag_saryrn', section: 't2', who: 'raid', must: true, flag: 'saryrn_dead', title: 'Kill Saryrn', detail: PROJECTION, link: popZone('torment') },
+  { key: 'flag_saryrn', section: 't2', who: 'raid', must: true, flag: 'saryrn_dead', title: 'Kill Saryrn', detail: `${PROJECTION} Her projection stays 30 minutes (it used to be 20).`, link: popZone('torment') },
   { key: 'torment_return', section: 't2', who: 'solo', title: 'Hail Fahlia Shadyglade and Tylis Newleaf in the sick bay, then Maelin',
     detail: 'Story only: neither hail gives a flag. Fahlia thanks you, and Tylis points you at the Grand Librarian in Knowledge for the cipher.',
     says: [
@@ -467,11 +470,11 @@ const BASE_ITEMS: GuideItem[] = [
     detail: 'Combine the [[Sandstorm Sphere#9429]], [[Lightning Sphere#9430]], [[Blizzard Sphere#9431]] and [[Tornado Sphere#9432]] inside an [[Unadorned Symbol of Torden#17169]]. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has 5 minutes to click in. Anyone else clicking wakes the storm watchers.',
     where: [L.botTower] },
   { key: 'bot_tower', section: 't3', who: 'raid', must: true, title: 'In the tower: Evynd Firestorm, then Askr; Emmerik Skyfury, then Askr again',
-    detail: 'Everyone does both. When Evynd Firestorm dies, hail Askr the Lost and say “transport”. When Emmerik Skyfury dies, hail him again and say “what storm”; he opens A Chaotic Vortex. Click it to reach Agnarr. Askr, the vortex and Karana leave after 55 minutes.',
+    detail: 'Everyone does both. When Evynd Firestorm dies, hail Askr the Lost and say “transport”. When Emmerik Skyfury dies, hail him again and say “what storm”; he opens A Chaotic Vortex. Click it to reach Agnarr. Askr and the vortex stay until Karana’s flagging window ends.',
     says: [{ to: 'Askr the Lost', text: 'transport' }, { to: 'Askr the Lost', text: 'what storm' }],
     where: [L.askrTower1, L.askrTower2] },
   { key: 'flag_agnarr', section: 't3', who: 'raid', must: true, flag: 'agnarr_dead', title: 'Kill Agnarr the Storm Lord, then speak to Karana',
-    detail: 'Karana answers only the raid that got the kill, up to 72 people. “Follow the path of the Fallen” gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point.',
+    detail: 'Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. “Follow the path of the Fallen” gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point.',
     says: [{ to: 'Karana', text: 'I will follow the path of the Fallen.' }, { to: 'Karana', text: 'Send me on my path.' }],
     where: [L.karana], link: popZone('bot') },
   // Halls of Honor
@@ -573,7 +576,7 @@ const BASE_ITEMS: GuideItem[] = [
   { key: 'earth_key', section: 't4', who: 'raid', title: 'Optional: [[A Gem-Etched Key#28636]] from Tantisala Jaggedtooth',
     detail: 'One person needs it to open the door to the tunnels in Plane of Earth A.' },
   { key: 'flag_arbitor', section: 't4', who: 'raid', must: true, flag: 'arbitor_dead', check: true, title: 'The four earth rings and A Mystical Arbitor of Earth',
-    detail: 'Hail A Planar Projection for the Passkey of the Twelve, then click the door into Plane of Earth B.', link: popZone('earth') },
+    detail: 'Hail A Planar Projection for the Passkey of the Twelve, then click the door into Plane of Earth B. In Plane of Earth A the projection now flags up to 72 players (it was 54). If you were in the raid or group that made the kill you can still claim it after camping out or changing groups.', link: popZone('earth') },
   { key: 'flag_rathe', section: 't4', who: 'raid', must: true, flag: 'rathe_dead', title: 'Kill the Rathe Council (the Avatar of Earth)',
     detail: 'Hail Essence of Earth, who appears where the Avatar of Earth falls, to receive the [[Mound of Living Stone#29146]].', link: popZone('poeb') },
   // Essences of Power, part 2 (poknowledge/Councilwoman_Kerasha.lua; the bowl recipe is tradeskill

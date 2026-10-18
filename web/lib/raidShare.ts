@@ -123,6 +123,12 @@ export function replaySlice(win: ShareWindow, w: unknown): ShareWindow | null {
   return { fromMs: from, toMs: Math.min(from + REPLAY_WINDOW_MS, win.toMs) };
 }
 
+/** The cache tag on everything the public routes keep across visitors for one share; revoking revalidates it. */
+export const shareTag = (shareId: string) => `raid-share:${shareId}`;
+
+/** How long a share's heavy reads are kept across visitors, in seconds. It is also how long an opt-out can take to show. */
+export const SHARE_CACHE_S = 60;   // a minute, so an opt-out leaves a public share within about that (the guild lead's privacy rule)
+
 // ── The link ─────────────────────────────────────────────────────────────────
 
 /** The address an officer sends: the production host, whichever host made it. */

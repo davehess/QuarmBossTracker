@@ -36,6 +36,7 @@ import KeysUpload from './KeysUpload';
 import SpellbookUpload from './SpellbookUpload';
 import SuspectedCharacters, { type Suspect } from './SuspectedCharacters';
 import { selectAll } from '@/lib/selectAll';
+import { isCorpse } from '@/lib/buffs';
 import {
   fetchLiveStateRows, fetchFloorAndCoverage, fetchCharAggs, fetchScrapView, EMPTY_AGG,
   type CharAgg, type ScrapView,
@@ -624,7 +625,7 @@ async function loadSuspectedCharacters(discordId: string | null): Promise<Suspec
       .range(from, to));
   const byName = new Map<string, string | null>();   // name → newest upload
   for (const u of ups) {
-    if (!u.character) continue;
+    if (!u.character || isCorpse(u.character)) continue;   // a dead character's Zeal name, not a character (the guild lead, 2026-10-17)
     const k = u.character;
     const cur = byName.get(k);
     if (!cur || (u.last_uploaded_at && u.last_uploaded_at > cur)) byName.set(k, u.last_uploaded_at);
@@ -1149,6 +1150,9 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
             </Link>
             <Link href="/me/accounts" className="text-blue hover:underline text-sm whitespace-nowrap">
               🗂 Game accounts →
+            </Link>
+            <Link href="/me/voice" className="text-blue hover:underline text-sm whitespace-nowrap">
+              🔊 Say your name →
             </Link>
             <Link href="/me/tells" className="text-blue hover:underline text-sm whitespace-nowrap">
               📬 Inbound /tell →

@@ -20,6 +20,8 @@
 const crypto = require('crypto');
 const supabase = require('./supabase');
 const memberLockout = require('./memberLockout');
+const { clientIp } = require('./clientIp');
+const { createIpLimiter } = require('./ipLimiter');
 
 const LINK_CODE_TTL_SECONDS = 10 * 60;     // 10 minutes from /start
 const POLL_INTERVAL_SECONDS = 2;
@@ -28,9 +30,32 @@ const VERIFICATION_URL_DEFAULT = 'https://wolfpack.quest/auth/mimic-link';
 // In-process session cache to avoid hitting Supabase on every upload. Mimic
 // installs send the session token as a header on every agent request which the
 // agent forwards to the bot on every call — cache for 5 minutes per token.
-const _sessionCache = new Map();   // token → { resolvedAt, value }
+// Both caches are BOUNDED (unauthenticated-flood hardening, the guild lead, 2026-10-17): the positive cache holds only
+// tokens the store vouched for, the not-found/revoked answers live in a separate small cache with a short TTL, so a
+// stream of random tokens can neither grow memory without limit nor evict a real member's session.
+const _sessionCache = new Map();   // token → { resolvedAt, value }   (positive only; FIFO-capped)
 const SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
+const SESSION_CACHE_MAX = 10_000;
+const _sessionMissCache = new Map();   // token → resolvedAt            (not found / revoked; FIFO-capped)
+const SESSION_MISS_TTL_MS = 60 * 1000;
+const SESSION_MISS_MAX = 2_000;
 const SESSION_RETRY_MS = 15 * 1000;   // how soon a failed member read is tried again
+
+// A real token is exactly this (see _generateSessionToken). Anything else is rejected before ANY lookup or cache write.
+const SESSION_TOKEN_RE = /^wpms_[0-9a-f]{64}$/;
+
+// Failed-auth throttle, per client IP: a lookup that costs a store read and finds nothing counts. Over the limit an
+// IP's further UNKNOWN tokens get a 429 with no read; tokens already known good still pass (a member mid-relink is
+// not locked out by an old install on the same IP). index.js re-reads the tuning knob `ip_failauth_per_min`.
+const FAILAUTH_PER_MIN_DEFAULT = 60;
+let _failAuthPerMin = FAILAUTH_PER_MIN_DEFAULT;
+const _failAuth = createIpLimiter({ max: FAILAUTH_PER_MIN_DEFAULT });
+function setFailAuthPerMin(n) { _failAuthPerMin = Number.isFinite(Number(n)) ? Number(n) : FAILAUTH_PER_MIN_DEFAULT; }
+
+function _setBounded(map, max, key, val) {
+  if (!map.has(key) && map.size >= max) map.delete(map.keys().next().value);   // Map keeps insertion order → FIFO
+  map.set(key, val);
+}
 
 // Per-IP rate limit on the UNAUTHENTICATED /start — it does a Supabase INSERT
 // per call, so an open loop could spam mimic_link_codes (audit: unauthenticated
@@ -40,8 +65,7 @@ const START_RATE_WINDOW_MS = 10 * 60 * 1000;
 const START_RATE_MAX       = 10;
 const _startRate = new Map();   // ip → [tsMs, ...]
 function _startRateLimited(req) {
-  const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  const ip  = xff || req.socket?.remoteAddress || 'unknown';
+  const ip  = clientIp(req);
   const now = Date.now();
   const arr = (_startRate.get(ip) || []).filter(t => now - t < START_RATE_WINDOW_MS);
   if (arr.length >= START_RATE_MAX) { _startRate.set(ip, arr); return true; }
@@ -219,13 +243,14 @@ async function handlePoll(req, res) {
 async function handleRevoke(req, res) {
   const token = String(req.headers['x-wolfpack-mimic-session'] || '').trim();
   if (!token) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'X-Wolfpack-Mimic-Session header required' })); }
+  if (!SESSION_TOKEN_RE.test(token)) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid session token' })); }
   if (!supabase.isEnabled()) { res.writeHead(503, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'service unavailable' })); }
   await supabase.update(
     'mimic_sessions',
     `session_token=eq.${encodeURIComponent(token)}`,
     { revoked_at: new Date().toISOString() },
   ).catch(() => null);
-  _sessionCache.delete(token);
+  invalidateSessionCache(token);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true }));
 }
@@ -252,19 +277,31 @@ const LOOKUP_ERROR = Symbol('session_lookup_error');
 // X-Wolfpack-Mimic-Session resolver (UI flows) and requireAgentAuth (agent
 // uploads). Single cache means a session token used by both surfaces only
 // hits Supabase once per 5 min.
-async function _resolveSessionToken(token) {
-  const r = await _lookupSessionToken(token);
+async function _resolveSessionToken(token, ip) {
+  const r = await _lookupSessionToken(token, ip);
   // Member lockout (utils/memberLockout.js): a locked member's token behaves exactly like a revoked one. The check
   // sits OUTSIDE the 5-minute cache on purpose, so an unlock (or a lock) takes effect within one lockout refresh.
-  if (r && r !== LOOKUP_ERROR && memberLockout.isLocked(r.discord_id)) return null;
+  if (r && r !== LOOKUP_ERROR && r !== RATE_LIMITED && memberLockout.isLocked(r.discord_id)) return null;
   return r;
 }
 
-async function _lookupSessionToken(token) {
-  if (!token) return null;
+// Sentinel: this IP has burned its failed-auth budget and the token is not one we already know — answered with no
+// store read. requireAgentAuth turns it into a 429; the UI resolver into null.
+const RATE_LIMITED = Symbol('session_lookup_rate_limited');
+
+async function _lookupSessionToken(token, ip) {
+  if (!token || !SESSION_TOKEN_RE.test(token)) return null;   // wrong shape: nothing to look up, nothing to cache
   const cached = _sessionCache.get(token);
   if (cached && (Date.now() - cached.resolvedAt) < SESSION_CACHE_TTL_MS) return cached.value;
+  const missAt = _sessionMissCache.get(token);
+  if (missAt !== undefined) {
+    if (Date.now() - missAt < SESSION_MISS_TTL_MS) return null;
+    _sessionMissCache.delete(token);
+  }
   if (!supabase.isEnabled()) return null;
+  // Failed-auth throttle. A token we hold in the positive cache (even past its TTL) is a known member, so it still
+  // gets its refresh; only unknown tokens from a spent IP are turned away.
+  if (!cached && _failAuth.isOver(ip, _failAuthPerMin)) return RATE_LIMITED;
   // Distinguish a FAILED lookup from an empty result. supabase.select (see
   // utils/supabase.js _request) resolves to `null` on any request failure
   // (5xx / network — it never rejects) and to an array (possibly []) on
@@ -277,9 +314,13 @@ async function _lookupSessionToken(token) {
   if (rows === null) return LOOKUP_ERROR;   // store down — do NOT cache, do NOT 401
   const row = Array.isArray(rows) ? rows[0] : null;
   if (!row || row.revoked_at) {
-    _sessionCache.set(token, { resolvedAt: Date.now(), value: null });
+    // Not found / revoked: short-lived, separate, bounded cache, and one strike against this IP.
+    _sessionCache.delete(token);
+    _setBounded(_sessionMissCache, SESSION_MISS_MAX, token, Date.now());
+    _failAuth.hit(ip, _failAuthPerMin);
     return null;
   }
+  _sessionMissCache.delete(token);
   // Sessions minted for OAuth-blocked members carry no user_id — fall back
   // to the discord_id key (wolfpack_members' PK) so display + roles resolve.
   const memberFilter = row.user_id
@@ -297,7 +338,7 @@ async function _lookupSessionToken(token) {
       user_id: row.user_id || null, discord_id: row.discord_id, display_name: row.discord_id,
       role_names: [], is_officer: false,
     };
-    _sessionCache.set(token, { resolvedAt: Date.now() - SESSION_CACHE_TTL_MS + SESSION_RETRY_MS, value });
+    _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now() - SESSION_CACHE_TTL_MS + SESSION_RETRY_MS, value });
     return value;
   }
   const member = Array.isArray(memberRows) ? memberRows[0] : null;
@@ -309,7 +350,7 @@ async function _lookupSessionToken(token) {
     role_names:    roleNames,
     is_officer:    _hasOfficerRole(roleNames),
   };
-  _sessionCache.set(token, { resolvedAt: Date.now(), value });
+  _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now(), value });
   // Best-effort bump last_used_at so we can show "this install last seen X ago".
   supabase.update(
     'mimic_sessions',
@@ -321,10 +362,10 @@ async function _lookupSessionToken(token) {
 
 async function resolveMimicSession(req) {
   const token = String(req.headers?.['x-wolfpack-mimic-session'] || '').trim();
-  const r = await _resolveSessionToken(token);
-  // UI flows expect null-or-identity; a transient lookup blip fails closed to
-  // null (unauthenticated), same as before — never leak the truthy sentinel.
-  return r === LOOKUP_ERROR ? null : r;
+  const r = await _resolveSessionToken(token, clientIp(req));
+  // UI flows expect null-or-identity; a transient lookup blip (or a throttled IP) fails closed to
+  // null (unauthenticated), same as before — never leak a truthy sentinel.
+  return (r === LOOKUP_ERROR || r === RATE_LIMITED) ? null : r;
 }
 
 // requireAgentAuth(req, res) — gate for every /api/agent/* endpoint after the
@@ -338,10 +379,10 @@ async function requireAgentAuth(req, res) {
   const auth   = String(req.headers?.['authorization'] || '');
   const bearer = auth.replace(/^Bearer\s+/i, '').trim();
 
-  // Cheap pre-check: real session tokens are prefixed wpms_ (see
+  // Cheap pre-check: real session tokens are exactly wpms_ + 64 hex (see
   // _generateSessionToken). Anything else — empty, shared-secret, scanner
-  // probes — gets rejected without a Supabase round-trip.
-  if (!bearer || !bearer.startsWith('wpms_')) {
+  // probes — gets rejected without a Supabase round-trip or a cache write.
+  if (!bearer || !SESSION_TOKEN_RE.test(bearer)) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       error: 'unauthorized',
@@ -356,7 +397,12 @@ async function requireAgentAuth(req, res) {
     return null;
   }
 
-  const identity = await _resolveSessionToken(bearer);
+  const identity = await _resolveSessionToken(bearer, clientIp(req));
+  if (identity === RATE_LIMITED) {
+    res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+    res.end(JSON.stringify({ error: 'rate_limited', retry_after: 60 }));
+    return null;
+  }
   if (identity === LOOKUP_ERROR) {
     // Auth-store blip (Supabase 5xx/network). MUST be retryable: a 401 here
     // would make the agent's durable queue drop the payload as permanent (4xx),
@@ -382,7 +428,7 @@ async function requireAgentAuth(req, res) {
 // revokes a session so the next upload sees the revocation without waiting
 // for the 5-min TTL.
 function invalidateSessionCache(token) {
-  if (token) _sessionCache.delete(token);
+  if (token) { _sessionCache.delete(token); _sessionMissCache.delete(token); }
 }
 
 // Mint a new mimic_session for a Discord user — bypasses the OAuth device
@@ -425,7 +471,7 @@ async function revokeSessionForUser({ sessionId, discordId }) {
     `id=eq.${encodeURIComponent(sessionId)}&discord_id=eq.${encodeURIComponent(discordId)}`,
     { revoked_at: new Date().toISOString() },
   ).catch(() => null);
-  if (row.session_token) _sessionCache.delete(row.session_token);
+  if (row.session_token) invalidateSessionCache(row.session_token);
   return true;
 }
 
@@ -450,6 +496,9 @@ module.exports = {
   mintSessionForUser,
   revokeSessionForUser,
   listSessionsForUser,
+  setFailAuthPerMin,   // index.js feeds the `ip_failauth_per_min` tuning knob in here
+  // Exposed for test/bot-auth-flood.test.js — the bounded caches and the failed-auth throttle.
+  _sessionCache, _sessionMissCache, _failAuth,
   // Exposed for the characterization test suite (test/rate-limit.test.js) — the
   // per-IP sliding-window limiter on the unauthenticated /start endpoint.
   _startRateLimited,

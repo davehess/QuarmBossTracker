@@ -81,5 +81,5 @@ divergences back into `pop-raids.js`:
 
 Known-divergence starting points (from the poptodo capture): access levels
 46/55/60/62 differ by source; PoStorms flag = Askr collect quest, not a boss;
-flag caps 72 / 36 (Carprin) / 54 (Earth A); pet/invis rework, hybrid fizzle,
+flag caps 72 / 36 (Carprin) / 72 (Earth A, was 54 until the server's patch notes of 2026-10-17); pet/invis rework, hybrid fizzle,
 and zone-punt grace already live on Quarm and carry into PoP.

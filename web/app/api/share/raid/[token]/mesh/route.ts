@@ -9,6 +9,12 @@ import { fetchEqemuMesh } from '@/lib/zoneMap/load';
 import { isZoneShort } from '@/lib/zoneMap/source';
 import { packMesh } from '@/lib/zoneMesh';
 import { resolveShare } from '@/lib/raidShareLookup';
+import { ceilingApi, guardApi } from '@/lib/shareGuard';
+
+// ABUSE (the guild lead, 2026-10-17): per-IP limit before the lookup, per-share hourly ceiling after it. The mesh
+// itself is static per zone (the upstream file is already kept by Next for a day, and nothing here touches the
+// database), so it is deliberately NOT wrapped in a cache of its own: a packed mesh is binary and runs to
+// megabytes, which the data cache would store as a JSON array of bytes.
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,8 +24,13 @@ const fail = (error: string, status: number) =>
   NextResponse.json({ error }, { status, headers: { 'Cache-Control': status === 404 ? 'private, max-age=60' : 'no-store', 'X-Robots-Tag': 'noindex' } });
 
 export async function GET(req: Request, { params }: { params: { token: string } }) {
+  const limited = guardApi(req);
+  if (limited) return limited;
   try {
-    if (!(await resolveShare(supabaseAdmin(), params.token))) return fail('not found', 404);
+    const share = await resolveShare(supabaseAdmin(), params.token);
+    if (!share) return fail('not found', 404);
+    const over = ceilingApi(share.row.id);
+    if (over) return over;
     const q = new URL(req.url).searchParams;
     const zone = q.get('zone');
     if (!isZoneShort(zone)) return fail('bad zone', 400);
