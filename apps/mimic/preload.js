@@ -24,6 +24,25 @@ const WP_IS_DOCKED = (() => {
   try { return window.top !== window.self; } catch { return false; }
 })();
 
+// A pane on the Timers canvas (Mimic 3.0 alpha) is docked in every sense above,
+// and one more: the canvas gives each panel its own ✥, its size and its hide,
+// so the overlay's own corner ✥/✕ and its setup bar step aside — dragging the
+// page's own ✥ would try to move the screen-sized canvas window. The canvas
+// marks its panes with ?wpcanvas=1 (no overlay reads its own query string).
+const WP_IN_CANVAS = WP_IS_DOCKED && (() => {
+  try { return /[?&]wpcanvas=1(&|$)/.test(String(window.location.search || '')); } catch { return false; }
+})();
+if (WP_IN_CANVAS) {
+  document.addEventListener('DOMContentLoaded', function () {
+    try {
+      const st = document.createElement('style');
+      st.textContent = '#move-btn,#hide-btn,#drag-controls,#setupbar{display:none!important}';
+      document.head.appendChild(st);
+      document.body.classList.add('wp-in-canvas');
+    } catch (e) { /* page without a head — nothing to hide */ }
+  });
+}
+
 // A pane's identity is the file it was loaded from — the dock points each
 // iframe at that overlay's own .html.
 function _wpDockKey() {
@@ -669,6 +688,9 @@ function _buildOverlayMenu(onClose, state) {
   // Both keep the window as tall as the menu made it: the setup bar needs the room.
   menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => { _wpMenuKeepRoom = true; return ipcRenderer.invoke('set-setup-mode', true); }));
   menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => { _wpMenuKeepRoom = true; return ipcRenderer.invoke('set-setup-mode-this', true); }));
+  // 3.0 alpha: the canvas editor from any overlay's corner (the guild lead, 2026-09-29: "I have no way of
+  // bringing up the overlay editing other than the taskbar now").
+  menu.appendChild(mkItem('🧩 Arrange the canvas (pieces)', '#1f3d57', () => ipcRenderer.invoke('canvas-edit', true)));
   // Visibility + layout actions (a member, 2026-07-10). `state` comes from
   // main's wp-overlay-menu-state so the toggles show their current value.
   const st = state || {};
@@ -1133,6 +1155,15 @@ contextBridge.exposeInMainWorld('mimic', {
   // button (main's wp-backdrop-toggle finds the key from the sender window). Resolves to the new on/off state.
   toggleBackdropThis: ()      => ipcRenderer.invoke('wp-backdrop-toggle'),
   onCanvasEdit:      (cb)     => ipcRenderer.on('canvas-edit', (_e, on) => cb(!!on)),
+  // Saved groups of pieces (3.0 alpha), one list for every screen.
+  canvasGroups:      ()       => ipcRenderer.invoke('canvas-groups'),
+  canvasGroupsSave:  (groups) => ipcRenderer.invoke('canvas-groups-save', groups),
+  // ⌨ A hotkey per saved group: canvasGroupHotkey(id, accel | '') sets or clears it → { ok, keys, blocked };
+  // toggleCanvasGroup(id) is the key's own press (show / hide the group); onCanvasGroupOps hears a press
+  // made while the Canvas is up (it then asks canvasState for it).
+  canvasGroupHotkey: (id, accel) => ipcRenderer.invoke('canvas-group-hotkey', id, accel || ''),
+  toggleCanvasGroup: (id)     => ipcRenderer.invoke('canvas-group-toggle', id),
+  onCanvasGroupOps:  (cb)     => ipcRenderer.on('canvas-group-ops', () => cb()),
 
   // ── Dock ──────────────────────────────────────────────────────────────────
   // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()

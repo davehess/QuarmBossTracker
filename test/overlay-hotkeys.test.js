@@ -16,7 +16,9 @@ const regBlock = sliceBlock(mainRaw, 'const _OVERLAY_HOTKEY_KEYS', '\n}\n');
 function loadReg() {
   const toggled = [], log = [];
   // eslint-disable-next-line no-new-func
-  const mod = new Function('_toggleOverlay', 'appendAgentLog', regBlock
+  // A press goes through _overlayHotkeyPress, which is _toggleOverlay for an overlay with no Canvas panel
+  // (test/canvas-group-hotkeys.test.js runs the Canvas side).
+  const mod = new Function('_overlayHotkeyPress', 'appendAgentLog', regBlock
     + '\nreturn { _registerOverlayHotkeys, _OVERLAY_HOTKEY_KEYS, get blocked(){ return _blockedOverlayAccels; }, get bound(){ return _registeredOverlayAccels; } };')(
     (k) => toggled.push(k), (s) => log.push(s));
   const held = new Map();                      // accelerator → callback
