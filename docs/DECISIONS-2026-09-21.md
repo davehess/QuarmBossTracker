@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Mimic 3.0 on the beta channel** (§367) | Graduated 2026-10-18: `beta` park → 3.0.0 (builds `3.0.0-beta.N`), `alpha` re-parked → 3.0.1. The whole overlay-builder (Canvas, pieces, groups, previews, locate line) is now the beta fleet's, not alpha-only | the guild lead: install the `3.0.0-beta` build and run the in-game checks (preview crop (D), single-piece Upright bar stub (B), hover line (E)); decide a roadmap name for 3.0; say when it cuts stable |
+| **Per-section Canvas background: lockable** (§44, §360) | Backing is now per piece and per group, plate-only; still not lockable | the guild lead: say what "lock" means — hold the plate through a mode change, or something else |
 | **Security round two** (§354) | Round one shipped (Mimic local guard, bot flood limits, share-link limits). The verified insider findings (ownership checks on several member routes, relayed callouts, session expiry, Discord mentions, `/wishlist`) are in the private briefing | the guild lead: pick what to fix next; confirm Supabase sign-ups are off; 2FA on the platform accounts |
 | **Voices, corpses on the Map, Voice tab** (§352, §353) | On Mimic beta: agent 3.7.191 (Kokoro + licence-gated Piper voices, research tier marked experimental), 3.7.192 (☠ corpses, drag/summon), 3.7.193 (🗣 Voice tab, Replay on Fights, Buffs (and blocking), kill switches folded). Bot 3.1.290–3.1.291 on main | a Windows tester: install Kokoro, accept and play one research voice, drag a corpse with the Map open on a second PC; the guild lead: optional corpse cleanup SQL; a log line for a looted-empty corpse if one exists |
 | **Raid replay + session share links** (§335, §337) | **Graduated to main 2026-10-15 (web 1.8.170)** on the guild lead's word: replay 3D/floors/parchment/follow/bosses/split, guild-raid sessions, `/raid/session`, public `/share/raid/<token>` (works on wolfpack.quest and b.wolfpack.quest). Bot 3.1.274+ records NPC targets. §338: bot 3.1.276 puts a "Full session review" button on the final raid review (main); full per-fight parse tables on beta, web 1.8.171 (`https://b.wolfpack.quest/raid/session`) | the guild lead: send the share link; check the heading direction in game; look at the parse tables on beta, say graduate |
@@ -11462,3 +11464,73 @@ unaffected (Kokoro is the optional upgrade), so it degraded, not broke.
   `-xjf`/`-tjf` and `exec` in `neuralVoice.js`, so nobody reintroduces the system-tar dependency.
 - ⚠ **Not yet re-tested on Windows** (electron-builder packaging of `vendor/` + a real install on a box that showed
   the error). A beta tester with the new build retries the Kokoro install button.
+
+### 360. Canvas Pieces round: backing is only a plate (alpha, 2026-10-18)
+The guild lead: *"Backing changes spacing instead of just background."* Root cause: `.panel.part.back > .pbody` added
+`border:1px` and `padding:3px 6px` over the base `1px 3px`, so Panel shrank the content box by 8 × 6 px (text and bars
+moved) and ↕ Fit, which adds a flat 4px, clipped a Panel piece by 4px. Decision (the guild lead picked plate-only over
+a padded plate): the plate is `background` + `box-shadow: inset 0 0 0 1px`, no border or padding, so Clear and Panel
+are the same box and every existing Clear piece is unchanged. The whole-Canvas 🌫 Background switch is separate.
+Landed: `canvas.html` CSS; `test/canvas-pieces-round.test.js` (A).
+
+### 361. Canvas: one choice for a whole group (alpha, 2026-10-18)
+The guild lead: *"select the whole group and say slim bar or upright bar."* The selection bar already was the bulk
+path (a click on a grouped piece selects its group) but had no look controls. Added Show as / Thickness / Backing
+there and a "Whole group" row in the piece ⚙ GROUP section, both through `bulkSet`. A piece whose data cannot be drawn
+that way keeps its look and is counted. Upright bar re-flows the set into a row, Bar / Slim bar into a column, only
+when every piece changed shape. Fit is skipped (see the open check on the single-piece Upright bar).
+
+### 362. Canvas: copy, rename and update a saved group (alpha, 2026-10-18)
+The guild lead: make changes to a default grouping (Command Center) and *"save a new version of that one or make it
+called something else."* Saving a set that already is a saved group now makes a NEW group beside it (original
+untouched); 💾 Update replaces its pieces; ⧉ copies; ✎ renames in place (id kept, so hotkey and placed pieces stay).
+Group names are unique case-folded because `/pipe mimic group <name>`, the tray and the dashboard take the first match.
+Command Center is an overlay preset (the page itself), so it is changed by placing it "as pieces"; the Groups tab
+now says so. Known: saving at 60 groups still drops the oldest (`slice(-60)`), copy refuses at 60.
+
+### 363. Canvas: previews with real data in the palette (alpha, 2026-10-18)
+The guild lead: *"the pieces could have samples of the actual data from the client and displays to just drag off."*
+Chose the cheap version: one preview per piece row, drawn by the same `WpParts.render` call a placed piece uses, from
+the data now (else the part's sample, dimmed); hovering a mode chip previews that mode. Rejected for now: one preview
+per mode (about 10× the DOM), previews of "Overlay parts" (each needs an isolated page), group thumbnails (own round).
+Cost: build about a day, maintenance low (new modes appear by themselves), runtime ≤ ~25 renders per source answer and
+the 250 ms countdown repaint on a countdown tab only, change low. Pets: the Zeal pipe gives a pet's name and HP only,
+so no pet mana, endurance or speed pieces exist or can.
+
+### 364. Canvas: a line between a row and its piece (alpha, 2026-10-18)
+The guild lead asked for a dashed, bright-green line from a Pieces row to its placed overlay, and back. The chooser is a
+div in the same page as the pieces (not a separate window), so it is a real SVG line, not a cross-window impossibility.
+A preset placed as pieces is now remembered as `'preset:<id>'` in `_layout.named` so its row can find it; nothing else
+reads that value as a saved-group id.
+
+### 365. Canvas: clicking a placed group shows where it is (alpha, 2026-10-18)
+The guild lead: *"clicking on the charm group it says it's up, but I don't know that it's a different set, or maybe
+it's buried."* A click on a preset, saved-group or overlay row that is already on the screen pulses it and says where
+(and if it is hidden) instead of "already on the canvas" or, for a saved group, stacking another copy. A piece row
+still places a copy. Dragging always places another.
+
+### 366. Canvas: deleting a saved group can take its pieces, with Undo (alpha, 2026-10-18)
+The guild lead called the leftover pieces *ghosts*. Cause: deleting a saved group dropped only its `_layout.named`
+links; the pieces kept their shared group id. The delete's second click now asks "delete + remove N on screen" or
+"delete, keep them"; one Undo restores the group at its place, its pieces, its links and its hotkey. Ghosts left by
+past deletes cannot be told from a hand-locked set, so those are cleaned up by hand (⚙ → Select its group → Delete the
+group).
+
+### 367. Mimic 3.0 graduates to the beta channel; alpha re-parks at 3.0.1 (2026-10-18)
+The guild lead: *"move the alpha work all up to beta 3.0 and move alpha to 3.0.1."* The 3.0 overlay-builder (the Canvas,
+overlays-as-panels, Pieces and everything §160–366 built on the alpha line) is now the Windows **beta** channel, not a
+separate alpha-only line. Mechanics, for the next session that touches these branches:
+- `alpha` was `beta` + the 3.0 overlay-builder and nothing else (verified: `beta` was an ancestor of `alpha`, and the
+  delta was only `apps/mimic/{canvas,sections,parts,preload}` + the overlay part-hooks + their tests + these docs — no
+  bot/web divergence). So graduating was a `--no-ff` merge of `alpha` into `beta`, which brought exactly the 3.0 work.
+- **Parks:** `beta` park moved `2.10.0` → **3.0.0** (the channel now builds `3.0.0-beta.N`); `alpha` re-parked
+  `3.0.0` → **3.0.1** so it keeps leading beta by semver and builds `3.0.1-alpha.N`. `sync-alpha` keeps alpha's park on
+  a conflict, so the two stay apart on their own.
+- **The agent is unchanged** — alpha always carried beta's agent, so the 3.0 beta runs the same agent line the 2.x beta
+  did; nothing on the agent moved.
+- The beta graduation commit (`da3ad2e8`) carries the member-facing 3.0 notes in a `<!--player-notes-->` block, so the
+  #mimic-releases announcer reposts those, not a git log.
+- **Not yet done:** a roadmap entry (`web/lib/roadmapData.ts`) for the 3.0 beta line — held for the guild lead's wording
+  since 3.0's public name is their call; and the usual in-game beta checks (the D/B/E items in the §360 row).
+- ⚠ **This is the beta CHANNEL, not stable.** 3.0 has NOT graduated to `main`/stable; the whole 3.0 estate (code + these
+  §360–367 docs) flows to `main` only when the line is cut stable.
