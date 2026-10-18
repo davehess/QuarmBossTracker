@@ -4661,7 +4661,9 @@ function renderGuildTriggersCard(s) {
     h += '<div class="dim" style="font-size:12px">No guild triggers loaded. Officers can add them at <a href="https://wolfpack.quest/admin/triggers" target="_blank" rel="noreferrer" style="color:var(--blue)">/admin/triggers</a>.</div>';
   } else {
     h += '<div class="dim" style="font-size:11px;margin-bottom:4px">' + gt.length + ' trigger' + (gt.length === 1 ? '' : 's') + ' loaded</div>';
-    h += '<table style="font-size:12px"><tr><th>Name</th><th>Category</th><th>Pattern</th><th>Cooldown</th><th></th></tr>';
+    // Grouped (see wpGuildGroupOf): one collapsible section per group, each with its own table. The rows
+    // are built in the loop below and filed under their group; the sections are written after it.
+    var _groups = {}, _gorder = [];
     // Render all of them — guild trigger sets are small enough (~100 rows max)
     // that pagination is overkill. NOTE: deliberately NOT using class="name"
     // on the trigger-name cells; the wolfpack.quest character-link click
@@ -4682,6 +4684,8 @@ function renderGuildTriggersCard(s) {
         pattern: t.pattern || '',
         cooldown_seconds: t.cooldown_seconds || 0,
         overlay: _act.text || (t.name || ''),
+        tts: _act.tts || '',
+        voice_pack: _act.voice_pack || t.voice_pack || '',
         color: _act.color || 'red',
         duration_ms: _act.duration_ms || 5000,
         timer_duration_sec: t.timer_duration_sec || 0,
@@ -4706,16 +4710,38 @@ function renderGuildTriggersCard(s) {
       // 🔊 this PC's own sound for the row, if the member picked one (kept off-guild, see Sounds)
       var _ov = (s.soundOverrides || {})[t.id];
       if (_ov && _ov.sound) _rbadge += '<span class="rbadge" title="Your own sound for this guild trigger, on this PC only">🔊 ' + esc(String(_ov.sound).replace(/^custom:/i, '').replace(/^https?:.*/i, 'web sound')) + '</span>';
-      h += '<tr data-trig-key="' + esc(key) + '" style="cursor:pointer"><td>'
+      // ▶ Preview: what a live fire would say and play, with this PC's own sound for the row if it has one.
+      var _prev = {
+        text: _act.text || (t.name || ''), tts: _act.tts || '',
+        sound: _ov && _ov.sound ? _ov.sound : (_act.sound || ''),
+        sound_volume: _ov && _ov.sound ? (_ov.sound_volume != null ? _ov.sound_volume : null) : (_act.sound_volume != null ? _act.sound_volume : null),
+        sound_mode: _ov && _ov.sound ? (_ov.sound_mode || '') : (_act.sound_mode || ''),
+        voice_pack: _act.voice_pack || t.voice_pack || '',
+      };
+      var _g = wpGuildGroupOf(t);
+      if (!_groups[_g.id]) { _groups[_g.id] = { g: _g, rows: '', n: 0 }; _gorder.push(_g.id); }
+      _groups[_g.id].n++;
+      _groups[_g.id].rows += '<tr data-trig-key="' + esc(key) + '" style="cursor:pointer"><td>'
         + '<button type="button" class="trigname" data-trig-view="' + esc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '" style="color:var(--orange)" title="Show this trigger\'s settings">'
         + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button>' + _rbadge + '</td>' +
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
-           '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger to your own list so you can customize it without changing the guild\'s version">⎘ Copy to personal</button></td></tr>';
-      if (open) h += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + wpSoundOverrideHtml(t, _ov) + '</td></tr>';
+           '<td style="white-space:nowrap"><button type="button" data-trig-prev="' + esc(JSON.stringify(_prev)) + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Hear this callout: it speaks and plays as it would live, here on this PC only. Nothing is sent.">▶ Preview</button>'
+           + '<button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Configure: open a copy of this guild trigger in the Personal triggers form, filled in, to tweak and add as your own. The guild\'s version is not changed.">✎ Configure</button></td></tr>';
+      if (open) _groups[_g.id].rows += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + wpSoundOverrideHtml(t, _ov) + '</td></tr>';
     }
-    h += '</table>';
+    _gorder.sort(function (a, b) {
+      var ga = _groups[a].g, gb = _groups[b].g;
+      return ga.order !== gb.order ? ga.order - gb.order : (ga.label < gb.label ? -1 : ga.label > gb.label ? 1 : 0);
+    });
+    // A short list opens flat; a long one starts folded (each section remembers what you opened).
+    for (var gi = 0; gi < _gorder.length; gi++) {
+      var _gr = _groups[_gorder[gi]];
+      h += '<details ' + wpKeep('gtrig|' + _gorder[gi], gt.length <= 12) + ' style="margin-top:6px"><summary style="cursor:pointer;font-size:12px">'
+        + wpGuildCatBadge(_gr.g.cat) + ' <b>' + esc(_gr.g.label) + '</b> <span class="dim">(' + _gr.n + ')</span></summary>'
+        + '<table style="font-size:12px"><tr><th>Name</th><th>Category</th><th>Pattern</th><th>Cooldown</th><th></th></tr>' + _gr.rows + '</table></details>';
+    }
   }
   morphInto(el, h);
 }
@@ -11446,21 +11472,97 @@ var WPSounds = (function () {
     for (var i = 0; i < packs.length; i++) h += '<option value="' + esc(packs[i].id) + '"' + (packs[i].id === selected ? ' selected' : '') + '>' + esc(packs[i].label) + '</option>';
     return h;
   }
-  function play(name, vol) {
+  // onFail (optional): called once if the file cannot be played. A callout set to play the sound INSTEAD of
+  // speaking uses it to speak after all, as the live overlay does, so a missing sound never costs the callout.
+  function play(name, vol, onFail) {
     name = String(name || '');
     if (!name) return;
     try { if (cur) { cur.pause(); cur = null; } } catch (e) { void e; }
     var url = /^https?:\/\//i.test(name) ? name : '/sounds/' + encodeURIComponent(name);
+    var failed = false;
+    function fail() { if (failed) return; failed = true; if (onFail) { try { onFail(); } catch (e) { void e; } } }
     try {
       var a = new Audio(url), v = Number(vol);
       a.volume = (vol != null && vol !== '' && isFinite(v) && v >= 0 && v <= 1) ? v : 0.9;
       cur = a;
-      var p = a.play(); if (p && p.catch) p.catch(function () { void 0; });
-    } catch (e) { void e; }
+      if (onFail) a.addEventListener('error', fail);
+      var p = a.play(); if (p && p.catch) p.catch(function () { fail(); });
+    } catch (e) { fail(); }
   }
   return { load: load, loadPacks: loadPacks, optionsHtml: optionsHtml, packOptionsHtml: packOptionsHtml, fill: fill, play: play, labelOf: labelOf,
     list: function () { return list; }, userDir: function () { return userDir; }, packs: function () { return packs; } };
 })();
+
+// ── ▶ Hear a callout without a log line (the guild lead, 2026-10-18) ───────────
+// "Preview doesn't speak the callout", and the Suggested and Guild rows had no way to hear one before
+// switching it on. One function does it for all three: the editor's ▶ Preview, a Suggested row's ▶ and a
+// Guild row's ▶. It speaks the way a live callout does: the Spoken text, else the Overlay text (cleaned of
+// emoji and " - " separators, the same cleaning triggers.html applies), through the voice card's own
+// speak path (Mimic's downloaded voice, else the Windows one) in this callout's voice pack. A sound plays
+// with it, or INSTEAD of it ("Play the sound instead of speaking"), and a sound that cannot play falls back
+// to speaking. Capped at 300 characters, which is what Mimic's voice engine takes. a = { text, tts, sound,
+// sound_volume, sound_mode, voice_pack }. Returns what it said, for the caller's message line.
+function wpTrigSpeakable(txt) {
+  // Character by character, not a regex of symbol ranges: arrows, dingbats and emoji (and the two halves of a
+  // surrogate pair) become a space, as triggers.html does; a long dash between words becomes a plain one so the
+  // " - " separator rule below sees it. A character name or a number is never touched.
+  var s = String(txt == null ? '' : txt), out = '';
+  for (var k = 0; k < s.length; k++) {
+    var c = s.charCodeAt(k);
+    if ((c >= 0x2190 && c <= 0x2BFF) || (c >= 0x2600 && c <= 0x27BF) || c === 0xFE0F || c === 0x2028 || c === 0x2029 || (c >= 0xD800 && c <= 0xDFFF)) out += ' ';
+    else out += (c === 0x2013 || c === 0x2014) ? '-' : s.charAt(k);
+  }
+  return out.replace(/\s+-+\s+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+// {target}, {s1} and the like have no capture to fill them here: read the word, not the braces.
+function wpTrigPreviewText(a) {
+  a = a || {};
+  var unbrace = function (s) { return String(s == null ? '' : s).replace(/\{([^{}]*)\}/g, function (m, n) { return n.replace(/_/g, ' '); }); };
+  var said = String(a.tts || '').trim() ? unbrace(a.tts) : wpTrigSpeakable(unbrace(a.text));
+  return said.trim().slice(0, 300);
+}
+function wpTrigPreviewAudio(a) {
+  a = a || {};
+  var said = wpTrigPreviewText(a);
+  var replaced = !!(a.sound && a.sound_mode === 'replace');
+  var speakIt = function () {
+    if (said && window._wpVoiceNames && window._wpVoiceNames.say) window._wpVoiceNames.say(said, a.voice_pack || '');
+  };
+  if (a.sound) WPSounds.play(a.sound, a.sound_volume, replaced ? speakIt : null);
+  if (!replaced) speakIt();
+  return { said: said, sound: a.sound || '', replaced: replaced };
+}
+
+// ── Guild triggers, grouped (the guild lead, 2026-10-18) ────────────────────
+// "Guild triggers broken out by abilities / expansions / zones / bosses / fight timers / etc." The table
+// has a real `category` (callout / mechanic / class / personal / heal) but it is coarse: 241 of ~490 are
+// just "callout", 226 "mechanic". The finer split already exists in the folder `tags` the import kept
+// (a zone short name, "Debuffs", "Cooldown Timers") and in the agent's "What you hear" grouping, which the
+// agent now sends on each row as rule_group / rule_group_label (stat cards, one group per zone, class).
+// TODO: a proper `group`/`expansion` column on guild_triggers, set by the officers in /admin/triggers,
+// is the real fix (bot + web side). Until then this is display-only and derived; nothing is written.
+function wpGuildGroupOf(t) {
+  t = t || {};
+  var cat = String(t.category || '').toLowerCase();
+  var rg = String(t.rule_group || '');
+  var tags = Array.isArray(t.tags) ? t.tags.map(function (x) { return String(x).toLowerCase(); }) : [];
+  var has = function (k) { return tags.indexOf(k) >= 0; };
+  if (rg === 'statcards') return { id: 'statcards', label: 'Stat cards', cat: 'stat card', order: 60 };
+  if (rg.indexOf('zone:') === 0) return { id: rg, label: String(t.rule_group_label || rg.slice(5)), cat: 'zone', order: 40 };
+  if (cat === 'class' || rg === 'class') return { id: 'class', label: 'Class abilities', cat: 'class', order: 20 };
+  if (has('cooldown timers') || has('zone-timer')) return { id: 'timers', label: 'Fight timers', cat: 'timer', order: 10 };
+  if (has('debuffs') || has('buffs')) return { id: 'abilities', label: 'Buffs and debuffs', cat: 'ability', order: 30 };
+  if (cat === 'personal') return { id: 'personal', label: 'Meant for your own list', cat: 'personal', order: 70 };
+  if (cat === 'mechanic') return { id: 'cat:mechanic', label: 'Boss mechanics', cat: 'mechanic', order: 80 };
+  if (cat === 'heal') return { id: 'cat:heal', label: 'Heals', cat: 'heal', order: 82 };
+  if (cat === 'callout' || !cat) return { id: 'cat:callout', label: 'General callouts', cat: 'callout', order: 90 };
+  return { id: 'cat:' + cat, label: cat.charAt(0).toUpperCase() + cat.slice(1), cat: cat, order: 95 };
+}
+function wpGuildCatBadge(cat) {
+  var color = ({ zone: '#f0883e', mechanic: '#f0883e', 'stat card': '#d2a8ff', class: '#79c0ff', timer: '#a371f7',
+                 ability: '#ff7b72', heal: '#7ee787', personal: '#8b949e', callout: '#8b949e' })[cat] || '#8b949e';
+  return '<span style="font-size:9px;color:' + color + ';background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px">' + esc(cat) + '</span>';
+}
 
 // ── Trigger settings: what a trigger is set to do ───────────────────────────
 // FB-23 / FB-30: a trigger's name and pattern were all the list showed. A personal row's name was
@@ -12026,32 +12128,50 @@ function wpTrigApplyForm(base, f) {
     var color = (document.getElementById('trigNewColor') || {}).value || 'red';
     var duration = parseInt((document.getElementById('trigNewDuration') || {}).value || '5000', 10) || 5000;
     var msg = document.getElementById('trigAddMsg');
+    // Only a spoken line: it is also what the overlay flashes.
+    if (!overlayText && ttsText) overlayText = ttsText;
     if (!overlayText) {
-      if (msg) { msg.textContent = 'Need overlay text to preview.'; msg.style.color = 'var(--orange)'; }
+      if (msg) { msg.textContent = 'Need overlay text (or spoken text) to preview.'; msg.style.color = 'var(--orange)'; }
       return;
     }
+    // The sound, its volume, "instead of speaking" and this callout's voice, as the form has them now.
+    var snd = (document.getElementById('trigNewSound') || {}).value || '';
+    var pack = (document.getElementById('trigNewVoicePack') || {}).value || '';
+    var audio = { text: overlayText, tts: ttsText, voice_pack: pack };
+    if (snd) { audio.sound = snd; audio.sound_volume = soundVolume(); audio.sound_mode = (document.getElementById('trigNewSoundReplace') || {}).checked ? 'replace' : 'add'; }
+    // HEAR IT HERE (2026-10-18: "Preview does not speak the callout"). The flash below goes to the trigger overlay,
+    // a separate window that only exists in Mimic and only speaks while "Trigger alerts (TTS)" is on, so the
+    // preview could flash and say nothing. The dashboard speaks and plays it itself, through the same voice path as
+    // the voice card's Test, and asks the agent to flash it silently (silent: true) so Mimic's overlay does not say
+    // it a second time. The sound is left off the flash for the same reason.
+    var heard = wpTrigPreviewAudio(audio);
     // Fire ad-hoc — no captures available since we did not match a real line.
-    // Named-group references in the text stay literal so the user sees the
+    // Named-group references in the text stay literal on the flash so the user sees the
     // raw template (a good "this is what it will look like with placeholders"
-    // signal). To preview with substitution, run a Test below first.
-    await fetch('/api/triggers/fire', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        trigger: {
-          name: name,
-          // tts only when the user typed one: absent means the overlay falls back
-          // to the display text (cleaned of emoji by triggers.html), which is the
-          // sane default for the many triggers that read fine as written.
-          actions: [Object.assign({ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }, ttsText ? { tts: ttsText } : {},
-            // the sound, its volume, "instead of speaking" and this callout's voice pack play in the preview too
-            (document.getElementById('trigNewSound') || {}).value ? { sound: document.getElementById('trigNewSound').value, sound_volume: soundVolume(),
-              sound_mode: (document.getElementById('trigNewSoundReplace') || {}).checked ? 'replace' : 'add' } : {},
-            (document.getElementById('trigNewVoicePack') || {}).value ? { voice_pack: document.getElementById('trigNewVoicePack').value } : {})],
-        },
-      }),
-    });
-    if (msg) { msg.textContent = 'Previewed.'; msg.style.color = 'var(--green)'; }
+    // signal); the voice reads the word without its braces. To preview with substitution,
+    // run a Test below first.
+    var flashed = true;
+    try {
+      var r = await fetch('/api/triggers/fire', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          silent: true,
+          trigger: {
+            name: name,
+            // tts only when the user typed one: absent means the overlay falls back
+            // to the display text (cleaned of emoji by triggers.html), which is the
+            // sane default for the many triggers that read fine as written.
+            actions: [Object.assign({ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }, ttsText ? { tts: ttsText } : {})],
+          },
+        }),
+      });
+      flashed = !!(r && r.ok);
+    } catch (e) { flashed = false; }
+    if (msg) {
+      msg.textContent = (heard.replaced ? 'Played the sound' : 'Said “' + heard.said + '”' + (heard.sound ? ' and played the sound' : '')) + (flashed ? '.' : ' (the overlay flash did not reach the agent).');
+      msg.style.color = 'var(--green)';
+    }
   }
   async function onClearAll() {
     await fetch('/api/triggers/clear', { method: 'POST' });
@@ -12313,7 +12433,8 @@ function wpTrigApplyForm(base, f) {
     set('trigNewPattern',  cfg.pattern || '');
     set('trigNewCooldown', cfg.cooldown_seconds || 0);
     set('trigNewOverlay',  cfg.overlay || '');
-    set('trigNewColor',    cfg.color || 'red');
+    set('trigNewTts',      cfg.tts || '');   // the form is reused between copies: clear the last one's spoken text
+    setVal('trigNewColor', cfg.color || 'red');   // setVal gives a colour the dropdown lacks (cyan, yellow) an option
     set('trigNewDuration', cfg.duration_ms || 5000);
     set('trigNewTimerSec', cfg.timer_duration_sec || 0);
     set('trigNewEndEarly', cfg.end_early_pattern || '');
@@ -12327,9 +12448,9 @@ function wpTrigApplyForm(base, f) {
     var wt = document.getElementById('trigNewWarnTts'); if (wt) wt.checked = cfg.warn_tts !== false;
     var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = cfg.timer_loop === true;
     set('trigNewLoopMax',  cfg.timer_loop_max || '');
-    setSoundFields(cfg.sound, cfg.sound_volume, cfg.sound_mode === 'replace', '');
+    setSoundFields(cfg.sound, cfg.sound_volume, cfg.sound_mode === 'replace', cfg.voice_pack || '');
     var msg = document.getElementById('trigAddMsg');
-    if (msg) { msg.textContent = 'Copied from guild trigger — review and click "Add trigger" to save your personal copy.'; msg.style.color = 'var(--blue)'; }
+    if (msg) { msg.textContent = 'Copied from ' + (cfg.from === 'suggested' ? 'a suggested alert' : 'guild trigger') + ' — review, hear it with Preview, and click "Add trigger" to save your personal copy.'; msg.style.color = 'var(--blue)'; }
     var panel = document.getElementById('trigEditorPanel');
     if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
     var nameEl = document.getElementById('trigNewName');
@@ -12519,6 +12640,13 @@ function wpTrigApplyForm(base, f) {
           try { prefill(JSON.parse(cp.getAttribute('data-trig-copy'))); } catch (err) { void err; }
           return;
         }
+        // ▶ Preview on a Suggested or Guild row: speak and play it here. Before the row test below, which
+        // would otherwise open the row.
+        var pv = t.closest ? t.closest('[data-trig-prev]') : null;
+        if (pv) {
+          try { wpTrigPreviewAudio(JSON.parse(pv.getAttribute('data-trig-prev'))); } catch (err) { void err; }
+          return;
+        }
         // A guild trigger's name, or a plain cell of its row, opens its settings (FB-30). Dragging across
         // the pattern to copy it is not a click on the row.
         var gr = t.closest ? t.closest('tr[data-trig-key]') : null;
@@ -12621,7 +12749,26 @@ function wpTrigApplyForm(base, f) {
          + (t.no_tts
            ? '<td style="padding:4px 6px;text-align:center;color:var(--dim)">—</td>'
            : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS) — for every character it is on for" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
+         + '<td style="padding:4px 6px;white-space:nowrap">' + actionsHtml(t) + '</td>'
          + '</tr>';
+  }
+  // ▶ Preview and ✎ Configure (the guild lead, 2026-10-18: "none of the suggestions have the ability to preview or
+  // configure"). Static markup; the section's delegated click handler (the Triggers editor) does the work, the same
+  // one the guild rows use: Preview speaks and plays the callout here (wpTrigPreviewAudio), Configure opens a COPY
+  // in the Personal triggers form, filled in (prefill), so the suggested template itself is never changed. A timer
+  // bar says nothing, so it has neither. A row matched by the spell catalog has no pattern to put in a form, so it
+  // gets Preview only; switching it on is still the tick box.
+  function actionsHtml(t){
+    if (t.no_tts) return '<span class="dim">—</span>';
+    // What it says: the filled-in words when the panel has them ("RESISTED: Tashanian — a gnoll warlord").
+    var prev = { text: t.overlay_preview || t.overlay_text || t.label || '', tts: '', sound: t.sound || '',
+                 sound_volume: t.sound_volume != null ? t.sound_volume : null, sound_mode: t.sound_mode || '', voice_pack: '' };
+    var copy = { name: (t.label || 'trigger') + ' (copy)', pattern: t.pattern || '', cooldown_seconds: t.cooldown_seconds || 0,
+                 overlay: t.overlay_text || '', tts: '', color: t.overlay_color || 'red', duration_ms: t.overlay_ms || 4000,
+                 zeal_condition: t.zeal_condition || null, sound: t.sound || '', sound_volume: t.sound_volume != null ? t.sound_volume : null,
+                 sound_mode: t.sound_mode || '', from: 'suggested' };
+    return '<button type="button" data-trig-prev="' + esc(JSON.stringify(prev)) + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Hear this alert before you switch it on: it speaks and plays as it would live, here on this PC only.">▶ Preview</button>'
+      + (t.catalog ? '' : '<button type="button" data-trig-copy="' + esc(JSON.stringify(copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px" title="Configure: open a copy of this alert in the Personal triggers form, filled in, to change its words, sound or voice and add it as your own. The suggested alert itself is not changed.">✎ Configure</button>' );
   }
   function pickerHtml(chars){
     var opts = '<option value="">Every character</option>';
@@ -12645,6 +12792,7 @@ function wpTrigApplyForm(base, f) {
          + '<th style="padding:3px 6px;text-align:left">cat</th>'
          + '<th style="padding:3px 6px;text-align:left">trigger</th>'
          + '<th style="padding:3px 6px;text-align:center;width:60px">TTS</th>'
+         + '<th style="padding:3px 6px;text-align:left"></th>'
          + '</tr>' + rows + '</table></div>';
   }
   async function fetchAndRender(){
@@ -13514,7 +13662,20 @@ function wpSoundOverrideHtml(t, ov) {
     if (window.speechSynthesis && !vcBound) { vcBound = true; window.speechSynthesis.addEventListener('voiceschanged', function(){ if (el && document.body.contains(el)) paint(); }); }
   }
   var vcBound = false;
-  window._wpVoiceNames = { mount: mount };
+  // SAY (2026-10-18): speak a line the way a live callout is spoken (the chosen voice engine, else the Windows
+  // voice), from anywhere on the page: the trigger editor's and the Suggested/Guild rows' ▶ Preview use it. The
+  // voice settings and the downloaded-voice status are normally read when the Voice tab is drawn, so the first
+  // call reads them here, quietly (paint() does nothing while that tab is not on screen). Capped like Mimic's
+  // voice engine (300 characters). packId: this callout's own voice pack, '' for the player's own.
+  var warm = null;
+  async function say(text, packId){
+    text = String(text || '').trim().slice(0, 300);
+    if (!text) return;
+    if (!warm) warm = loadAll().catch(function(){ warm = null; });
+    await warm;
+    speak(text, packId || null);
+  }
+  window._wpVoiceNames = { mount: mount, say: say };
 })();
 
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
