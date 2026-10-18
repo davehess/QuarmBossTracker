@@ -13510,6 +13510,7 @@ function _corpseNoteLine(line, character) {
       agent_version: AGENT_VERSION, character: p.character, died_at: p.died_at,
       zone_id: p.zone_id, zone: p.zone, loc: p.loc,
     });
+    try { _mapCorpseNoteDied(p, p.character, now); } catch { void 0; }   // the same death, on the Map's corpses (see "Guild corpses")
   }
 }
 // Deliberately forgets a death after DEAD_FORGET_MS. We do not see every rez —
@@ -18859,8 +18860,8 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
   <button class="active" data-tab="dash">Dashboard</button>
   <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="raid">⚔ Raid</button>
-  <button data-tab="buffs">✨ Buffs</button>
-  <button data-tab="buffblocks">🔇 Buff blocks</button>
+  <!-- The Buff blocks picker now lives at the foot of this tab (the guild lead, 2026-10-17). -->
+  <button data-tab="buffs">✨ Buffs (and blocking)</button>
   <button data-tab="fights">⚔️ Fights</button>
   <!-- 📈 My parses (2026-10-06): your own fights from the guild's record, charted over a window you pick.
        The tray's "📈 My parses" opens this tab through the #myparses hash. -->
@@ -18874,6 +18875,8 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
   <button data-tab="loot">💰 Loot</button>
   <button data-tab="stats">📊 Stats</button>
   <button data-tab="triggers">⚡ Triggers</button>
+  <!-- 🗣 Voice (the guild lead, 2026-10-17): every card about how Mimic speaks, carved out of Triggers. -->
+  <button data-tab="voice">🗣 Voice</button>
   <button data-tab="diag">🩺 Diagnostics</button>
   <button data-tab="info">Info</button>
   <button data-tab="optin">Logsync</button>
@@ -18890,6 +18893,8 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
   <div class="wp-rail-foot">
     <button id="wpTourBtn" class="wp-gear" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
     <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpFeedbackClick()">💬 Feedback</button>
+    <!-- ☕ Tip (the guild lead, 2026-10-17): the maintainer's Ko-fi, same link as the README and /about. -->
+    <a id="wpTipLink" class="wp-gear" href="https://ko-fi.com/davehess" target="_blank" rel="noreferrer" style="text-decoration:none;text-align:center" title="Buy the maintainer a coffee on Ko-fi (opens in your browser)">☕ Tip</a>
     <!-- ⏻ Quit (2026-09-26): the tray's Quit, here too — tray ↔ dashboard parity, and the way out when
          the tray menu will not open (a raider then ended Mimic from Task Manager and lost settings).
          Mimic only; shown by wpShowQuit below. -->
@@ -18906,20 +18911,27 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
 <div id="dash" class="section active"></div>
 <div id="overlays" class="section"></div>
 <div id="raid" class="section"></div>
-<div id="buffs" class="section"></div>
-<div id="buffblocks" class="section"></div>
+<!-- Buffs (and blocking): #buffsMain is renderBuffsTab's render-target; #buffblocks is the #blockbuff
+     picker, which builds and polls its own card (not a .section of its own any more). -->
+<div id="buffs" class="section">
+  <div id="buffsMain"></div>
+  <div id="buffblocks"></div>
+</div>
 <!-- Fights = Tanks/Healers + DPS combined. #tanks and #deeps are inner
      render-targets (renderTanks/renderDeeps still setSectionHTML into them),
-     not independent .section tabs, so both show whenever Fights is active. -->
+     not independent .section tabs, so both show whenever Fights is active.
+     #fightsReplay holds the ⏪ Replay card (renderReplayCard). -->
 <div id="fights" class="section">
   <div id="tanks"></div>
   <div id="deeps"></div>
+  <div id="fightsReplay"></div>
 </div>
 <div id="myparses" class="section"></div>
 <div id="loot" class="section"></div>
 <div id="stats" class="section"></div>
 <div id="info" class="section"></div>
 <div id="triggers" class="section"></div>
+<div id="voice" class="section"></div>
 <div id="diag" class="section"></div>
 <div id="optin" class="section"></div>
 <div id="admin" class="section"></div>
@@ -19584,7 +19596,7 @@ function _wpBuffSummary(list) {
 }
 // ── Buffs tab ───────────────────────────────────────────────────────────────
 function renderBuffsTab(s) {
-  var root = document.getElementById('buffs');
+  var root = document.getElementById('buffsMain');
   if (!root) return;
   var active = (s && s.buffsActive) || [];
   var durs   = (s && s.buffDurations) || [];
@@ -19714,7 +19726,7 @@ function renderBuffsTab(s) {
   h += '</div>';
 
   h += '</div>';
-  setSectionHTML('buffs', h);
+  setSectionHTML('buffsMain', h);
 }
 
 // ── The DOM write path ──────────────────────────────────────────────────────
@@ -22158,7 +22170,7 @@ function renderRecentFires(s) {
 // Byte-stable when idle (empty + hidden) so it never flickers the section.
 function renderReplayStatus(s) {
   var el = document.getElementById('wpReplayStatus');
-  if (!el) return;   // Triggers tab not painted yet
+  if (!el) return;   // Replay card (Fights tab) not painted yet
   var r = (s && s.replay) || {};
   if (!r.running && !r.done) {
     if (el.style.display !== 'none') el.style.display = 'none';
@@ -22895,32 +22907,18 @@ function wpMpLink(a) {
   return true;
 }
 
-function renderTriggers(s) {
-  let h = '';
-  h += '<div class="grid">';
-
-  // (The Zeal pipe / charm / pet-buff / trigger-journal / boss-mechanics
-  // diagnostic cards moved to the 🩺 Diagnostics tab — see renderDiag. Their
-  // render fns are unchanged; only the placeholder location moved.)
-
-  // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
-  // that tick every poll, so it MUST live in its own wp* placeholder filled by
-  // renderRecentFires() each poll. Rendered inline it made this whole section's
-  // HTML differ every 2s, forcing setSectionHTML to rewrite the guild-trigger
-  // table + remount the trigger editor and suggested list on every poll — the
-  // Triggers-tab "flash" the guild lead reported (#120). Isolating it keeps the
-  // section byte-stable when triggers don't change, so only this small card
-  // repaints (same pattern as wpZealCard / wpTriggerJournal). Clear buttons keep
-  // their ids; the section-root click delegation still routes them.
-  h += '<div id="wpRecentFires" class="card wide"></div>';
-
-  // ⏪ Replay (#101) — walk a slice of a watched log back through the real
-  // trigger pipeline (rehearsal-flagged; nothing uploads/relays). The FORM is
-  // byte-stable — its picker uses only stable watchedLog fields (character +
-  // logPath, plus level + hidden, which change once when /who or the prefs poll
-  // learns them, never per poll), so idle polls don't rewrite it and the user's
-  // from/to typing + datetime focus survive. The volatile progress/results live in the nested
-  // #wpReplayStatus placeholder filled by renderReplayStatus() every poll.
+// ⏪ Replay card — on the ⚔️ Fights tab since 2026-10-17 (the guild lead: "Replay should be on the fights
+// tab"); it was a Triggers card. Fills #fightsReplay. The replay start/stop buttons are routed by the
+// delegated click handler the trigger editor binds to #fights as well as #triggers.
+// ⏪ Replay (#101) — walk a slice of a watched log back through the real
+// trigger pipeline (rehearsal-flagged; nothing uploads/relays). The FORM is
+// byte-stable — its picker uses only stable watchedLog fields (character +
+// logPath, plus level + hidden, which change once when /who or the prefs poll
+// learns them, never per poll), so idle polls don't rewrite it and the user's
+// from/to typing + datetime focus survive. The volatile progress/results live in the nested
+// #wpReplayStatus placeholder filled by renderReplayStatus() every poll.
+function renderReplayCard(s) {
+  var h = '<div class="grid">';
   h += '<div class="card wide"><h2>⏪ Replay <span class="dim" style="font-size:11px;font-weight:normal">· walk part of a log back through the real trigger pipeline — hear the TTS, nothing uploads</span></h2>';
   var _rls = (s.watchedLogs || []).filter(function(w){ return w && w.logPath; });
   // Characters known to be under 46, or hidden by their owner, sit behind the same toggle as the Me card's
@@ -22959,6 +22957,41 @@ function renderTriggers(s) {
     h += '<div class="dim" style="font-size:11px;margin-top:6px">Replay fires are rehearsals — they speak + flash with a ⏪ tag but never upload, relay, or touch your live cooldowns. One replay at a time; blocked during a live fight. Real-time hears the fight as it happened; fast pauses briefly on each fire for a quick audit.</div>';
   }
   h += '</div>';
+  h += '</div>';
+  setSectionHTML('fightsReplay', h);
+}
+
+// 🗣 Voice tab (the guild lead, 2026-10-17: "All of the voice things are getting to be that they need their
+// own tab"). Every card about how Mimic speaks, carved out of Triggers: the voice engine + names, "What you
+// hear" (speak / overlay only / off), the raid callout allow-list, loot-post speech, and the sound library.
+// Each of the wp* placeholders is filled by the same mount fn it always had; only the section moved. The
+// loot and allow-list toggles keep their ids and are saved by the change handler the trigger editor
+// binds to #voice as well as #triggers.
+function renderVoice(s) {
+  let h = '';
+  h += '<div class="grid">';
+
+  // 🗣 Voice & names: engine (Windows / Piper / Kokoro), voice pack, speed and pitch, how names are said.
+  // Its own wp* placeholder, filled by setupVoiceNames, so this section's HTML stays byte-stable.
+  h += '<div id="wpVoice" class="card wide"></div>';
+
+  // 🔊 What you hear (the guild lead, 2026-10-12) — speak / overlay only / off for every callout,
+  // by group and per trigger. Its own wp* placeholder, filled by setupTriggerRules.
+  h += '<div id="wpTrigRules" class="card wide"></div>';
+
+  // #136 Raid callout allow-list — mutes guild-pushed + cross-client RELAYED
+  // voice fires outside the critical categories (slow, deaths, tank swaps,
+  // discs, deathtouches, charms + the curated boss-mechanic countdowns).
+  // Personal triggers the user made themselves always speak. No <details> here,
+  // so no wpKeep; the checked bit tracks server state and only flips on user
+  // action, keeping this HTML byte-stable across polls.
+  h += '<div class="card wide"><h2>&#128266; Raid callout allow-list <span class="dim" style="font-size:11px;font-weight:normal">(voice only the critical categories)</span></h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="calloutAllow"' + (s.calloutAllowlist !== false ? ' checked' : '') + '>';
+  h += '<span>Speak only high-value guild callouts &mdash; slow, deaths, tank swaps, discs, deathtouches, charms (plus the boss-mechanic countdowns)</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Guild-pushed and cross-client <b>relayed</b> trigger fires are the raid-wide firehose &mdash; every raider hears every other raider. With this on, those fires only <b>speak</b> when they match a critical category; the rest still <b>flash</b> on the trigger overlay, just silently. <b>Personal triggers you created yourself always speak.</b> The curated built-ins (rampage, buster, AoE dance, slow land/drop, CH GO, loot) are always audible.</div>';
+  h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
+  h += '</div>';
 
   // #107/#149 Loot auction announce — dashboard toggle + default-duration knob.
   // The countdown chip opens from the bot's loot-post broadcast regardless; this
@@ -22975,23 +23008,49 @@ function renderTriggers(s) {
   h += '<span id="lootAucMsg" class="dim" style="font-size:11px;margin-left:8px"></span>';
   h += '</div>';
 
-  // #136 Raid callout allow-list — mutes guild-pushed + cross-client RELAYED
-  // voice fires outside the critical categories (slow, deaths, tank swaps,
-  // discs, deathtouches, charms + the curated boss-mechanic countdowns).
-  // Personal triggers the user made themselves always speak. No <details> here,
-  // so no wpKeep; the checked bit tracks server state and only flips on user
-  // action, keeping this HTML byte-stable across polls.
-  h += '<div class="card wide"><h2>&#128266; Raid callout allow-list <span class="dim" style="font-size:11px;font-weight:normal">(voice only the critical categories)</span></h2>';
-  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
-  h += '<input type="checkbox" id="calloutAllow"' + (s.calloutAllowlist !== false ? ' checked' : '') + '>';
-  h += '<span>Speak only high-value guild callouts &mdash; slow, deaths, tank swaps, discs, deathtouches, charms (plus the boss-mechanic countdowns)</span></label>';
-  h += '<div class="dim" style="font-size:11px;margin-top:5px">Guild-pushed and cross-client <b>relayed</b> trigger fires are the raid-wide firehose &mdash; every raider hears every other raider. With this on, those fires only <b>speak</b> when they match a critical category; the rest still <b>flash</b> on the trigger overlay, just silently. <b>Personal triggers you created yourself always speak.</b> The curated built-ins (rampage, buster, AoE dance, slow land/drop, CH GO, loot) are always audible.</div>';
-  h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
+  // 🔊 Sounds (the guild lead, 2026-10-14) — the sound library, a wp* placeholder filled by setupSounds.
+  h += '<div id="wpSounds" class="card wide"></div>';
+
   h += '</div>';
+  if (!setSectionHTML('voice', h)) return;
+  if (window._wpVoiceNames && window._wpVoiceNames.mount) {
+    window._wpVoiceNames.mount();
+  }
+  if (window._wpTrigRules && window._wpTrigRules.mount) {
+    window._wpTrigRules.mount();
+  }
+  if (window._wpSounds && window._wpSounds.mount) {
+    window._wpSounds.mount();
+  }
+}
+
+function renderTriggers(s) {
+  let h = '';
+  h += '<div class="grid">';
+
+  // (The Zeal pipe / charm / pet-buff / trigger-journal / boss-mechanics
+  // diagnostic cards moved to the 🩺 Diagnostics tab — see renderDiag. Their
+  // render fns are unchanged; only the placeholder location moved.)
+
+  // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
+  // that tick every poll, so it MUST live in its own wp* placeholder filled by
+  // renderRecentFires() each poll. Rendered inline it made this whole section's
+  // HTML differ every 2s, forcing setSectionHTML to rewrite the guild-trigger
+  // table + remount the trigger editor and suggested list on every poll — the
+  // Triggers-tab "flash" the guild lead reported (#120). Isolating it keeps the
+  // section byte-stable when triggers don't change, so only this small card
+  // repaints (same pattern as wpZealCard / wpTriggerJournal). Clear buttons keep
+  // their ids; the section-root click delegation still routes them.
+  h += '<div id="wpRecentFires" class="card wide"></div>';
+
+  // (The ⏪ Replay card moved to the ⚔️ Fights tab — renderReplayCard. The voice cards — voice & names,
+  // What you hear, the raid callout allow-list, loot-post speech and the sound library — moved to the
+  // 🗣 Voice tab — renderVoice. 2026-10-17.)
 
   // Timing votes (the guild lead, 2026-10-01: "Need to be able to opt out for tts timing
   // feedback"). Off: no « Earlier / ✓ Good! / » Too early row after a fire, and no callout
-  // timing (votes, ✕, age-outs) leaves this machine. Same byte-stable rule as the card above.
+  // timing (votes, ✕, age-outs) leaves this machine. Byte-stable across polls: the checked bit
+  // only flips on user action.
   h += '<div class="card wide"><h2>&#128499; Timing votes <span class="dim" style="font-size:11px;font-weight:normal">(after each callout)</span></h2>';
   h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
   h += '<input type="checkbox" id="timingVotes"' + (s.timingFeedback !== false ? ' checked' : '') + '>';
@@ -22999,16 +23058,6 @@ function renderTriggers(s) {
   h += '<div class="dim" style="font-size:11px;margin-top:5px">Your votes, and which callouts you clear with &#10005; or leave to run out, help the officers fix trigger timing. Untick to hide the buttons and send none of it. The &#128277; on the buttons does the same.</div>';
   h += '<span id="timingVotesMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
-
-  // 🔊 What you hear (the guild lead, 2026-10-12) — speak / overlay only / off for every callout,
-  // by group and per trigger. Its own wp* placeholder, filled by setupTriggerRules below, so the
-  // section HTML here stays byte-stable and the card is not rewritten by a Triggers repaint.
-  h += '<div id="wpTrigRules" class="card wide"></div>';
-
-  // 🔊 Sounds and 🗣 Voice & names (the guild lead, 2026-10-14) — each its own wp* placeholder, filled by
-  // setupSounds / setupVoiceNames below, so this section's HTML stays byte-stable.
-  h += '<div id="wpSounds" class="card wide"></div>';
-  h += '<div id="wpVoice" class="card wide"></div>';
 
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
@@ -23035,7 +23084,7 @@ function renderTriggers(s) {
 
   // Guild triggers — read-only (managed in wolfpack.quest/admin/triggers). Its own wp* placeholder,
   // filled by renderGuildTriggersCard: opening a row repaints just this card, so the Add form's
-  // half-typed text and the Replay inputs above are not wiped by it (FB-30).
+  // half-typed text is not wiped by it (FB-30).
   h += '<div id="wpGuildTriggers" class="card wide"></div>';
 
   h += '</div>';
@@ -23047,15 +23096,6 @@ function renderTriggers(s) {
   }
   if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.mount) {
     window._wpSuggestedTriggers.mount();
-  }
-  if (window._wpTrigRules && window._wpTrigRules.mount) {
-    window._wpTrigRules.mount();
-  }
-  if (window._wpSounds && window._wpSounds.mount) {
-    window._wpSounds.mount();
-  }
-  if (window._wpVoiceNames && window._wpVoiceNames.mount) {
-    window._wpVoiceNames.mount();
   }
   if (window._wpTrigSync && window._wpTrigSync.mount) {
     window._wpTrigSync.mount();
@@ -25120,7 +25160,17 @@ function renderKillSwitches(s) {
       if (onLoc === onTun) delete _wpKill.local[lkk];
     }
   }
-  var h = '<h2>🛑 Kill switches <span class="dim" style="font-size:11px;font-weight:normal">— control-plane flags · officer · ~60s fleet-wide</span></h2>';
+  // Closed by default (the guild lead, 2026-10-17: "Minimize the kill switches so people don't
+  // accidentally hit them"). The title stays an h2 inside the summary so the card keeps its panel key;
+  // a count on the summary says when something is switched on while it is folded away.
+  var nKillOn = 0;
+  for (var kci = 0; kci < WP_KILL_FLAGS.length; kci++) {
+    var kcf = WP_KILL_FLAGS[kci], kcOn = _wpFlagIsOn(kcf, tuning);
+    if (kcf.defaultOn ? !kcOn : kcOn) nKillOn++;
+  }
+  var h = '<details ' + wpKeep('admin-killswitches') + '><summary style="cursor:pointer"><h2 style="display:inline;border:0;padding:0;margin:0">🛑 Kill switches (emergency only) <span class="dim" style="font-size:11px;font-weight:normal">— control-plane flags · officer · ~60s fleet-wide</span></h2>'
+    + (nKillOn ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,81,73,0.18);color:var(--red);border:1px solid rgba(248,81,73,0.4)">' + nKillOn + ' switched on</span>' : '')
+    + '</summary><div style="margin-top:12px">';
   h += '<div class="dim" style="font-size:11px;margin-bottom:7px">Live values from the tuning this agent polls. One click writes to the bot immediately (officer-authed + whitelisted); the fleet honors it within ~60s. Leave everything off in normal operation. The free-form numeric knobs stay on /admin/overlays.</div>';
   for (var i = 0; i < WP_KILL_FLAGS.length; i++) {
     var fl = WP_KILL_FLAGS[i];
@@ -25140,6 +25190,7 @@ function renderKillSwitches(s) {
   }
   h += _wpKillVersionFloorRow(tuning);
   h += '<div id="wpKillMsg" class="dim" style="font-size:11px;min-height:14px;margin-top:2px"></div>';
+  h += '</div></details>';
   morphInto(sec, h);
 }
 function _wpKillAgentKillRow(fl, tuning) {
@@ -25191,7 +25242,14 @@ function _wpKillVersionFloorRow(tuning) {
 document.addEventListener('click', function (ev) {
   var t = ev.target; if (!t || !t.closest) return;
   var tog = t.closest('.wpKillToggle');
-  if (tog) { _wpFlagOverride(tog.getAttribute('data-key'), (Number(tog.getAttribute('data-next')) >= 1 ? 1 : 0)); return; }
+  if (tog) {
+    // Every flip asks first: the card is emergency-only and a stray click should cost nothing.
+    var tkey = tog.getAttribute('data-key'), tfl = _wpKillFlagFor(tkey), tnext = Number(tog.getAttribute('data-next')) >= 1 ? 1 : 0;
+    var tmsg = (tnext === 1 ? 'Turn ON' : 'Turn OFF') + ' "' + (tfl ? tfl.label : tkey) + '" for the whole fleet?\\n\\nThe guild honors it within about a minute.';
+    if (!confirm(tmsg)) return;
+    _wpFlagOverride(tkey, tnext);
+    return;
+  }
   if (t.closest('.wpKillArm'))    { _wpKill.arm = true;  var mA = document.getElementById('wpKillMsg'); if (mA) mA.textContent = ''; return; }
   if (t.closest('.wpKillCancel')) { _wpKill.arm = false; return; }
   if (t.closest('.wpKillConfirm')) {
@@ -26778,8 +26836,9 @@ async function refresh() {
                      ['damagedone', renderDamageDoneCard],
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
-                     ['tanks', renderTanks], ['deeps', renderDeeps],
+                     ['tanks', renderTanks], ['deeps', renderDeeps], ['fightsReplay', renderReplayCard],
                      ['triggers', renderTriggers], ['guildtriggers', renderGuildTriggersCard],
+                     ['voice', renderVoice],
                      // 🩺 Diagnostics owns the pipe/charm/pet/journal/mechanics/
                      // explorer placeholders — it MUST run before their fillers
                      // below, same rule as renderDash → renderMeCard.
@@ -26789,7 +26848,7 @@ async function refresh() {
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
-                     ['buffs', renderBuffsTab], ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
+                     ['buffsMain', renderBuffsTab], ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
                      ['loottab', renderLootTab],
                      // After info: fill the placeholders renderInfo/renderDiag
                      // just (re)painted, so they show same-tick. renderCrashReview
@@ -27033,9 +27092,22 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   go();
   window.addEventListener('hashchange', go);
 })();
+// #buffblocks opens the blocking half of ✨ Buffs (and blocking): the picker was a tab of its own until
+// 2026-10-17, so an old link or shortcut to that tab lands on the Buffs tab, scrolled to the picker.
+(function () {
+  function go() {
+    if ((location.hash || '').toLowerCase() !== '#buffblocks') return;
+    var btn = document.querySelector('.nav button[data-tab="buffs"]');
+    if (btn) btn.click();
+    setTimeout(function () { var c = document.getElementById('wpBuffBlocks'); if (c && c.scrollIntoView) c.scrollIntoView({ block: 'start' }); }, 250);
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { void e; }
+  }
+  go();
+  window.addEventListener('hashchange', go);
+})();
 // ⏪ Replay deep-link (#101) — a link like #replay&from=<iso>&to=<iso> (built
 // by wolfpack.quest/parses on the "Replay this fight locally" link) opens the
-// Triggers tab with the Replay form prefilled. It never auto-starts — the user
+// Fights tab (where the Replay card lives since 2026-10-17) with the form prefilled. It never auto-starts — the user
 // still clicks Start. from/to arrive as ISO instants; we render them into the
 // datetime-local inputs as LOCAL wall-clock (the basis the agent parses EQ log
 // timestamps on this machine).
@@ -27066,7 +27138,7 @@ function _wpApplyReplayPrefill(attempt) {
     if (i > 0) { try { params[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); } catch (e) { void e; } }
   });
   window._wpReplayPrefill = { from: params.from || '', to: params.to || '' };
-  var btn = document.querySelector('.nav button[data-tab="triggers"]');
+  var btn = document.querySelector('.nav button[data-tab="fights"]');
   if (btn) btn.click();
   _wpApplyReplayPrefill(0);
 })();
@@ -27643,7 +27715,7 @@ async function dismissTopDamage(key) {
     });
   }
   var obs = new MutationObserver(function(){ applyHidden(); });
-  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -27812,7 +27884,7 @@ async function dismissTopDamage(key) {
     try { if (window.mimic) window.mimic.createPanelOverlay(pk); } catch (err) {}
   }, true);
   var obs = new MutationObserver(decorateButtons);
-  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -27852,7 +27924,7 @@ async function dismissTopDamage(key) {
       return matched;
     }
     var obs2 = new MutationObserver(applyOverlayTarget);
-    ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+    ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
       var el = document.getElementById(id);
       if (el) obs2.observe(el, { childList: true, subtree: true });
     });
@@ -27928,7 +28000,7 @@ async function dismissTopDamage(key) {
     if (serverKey === "damage" && data.rows){
       html += "<table><tr><th>#</th><th>Character</th><th class=num>Total</th><th class=num>Peak DPS</th><th class=num>Enc</th></tr>";
       data.rows.slice(0,12).forEach(function(r, i){
-        html += "<tr><td class=dim>" + (i+1) + "</td><td class=name>" + r.character + "</td><td class=num>" + fmt(r.totalDamage) + "</td><td class=num>" + fmt(r.peakDps) + "</td><td class=num>" + r.encounters + "</td></tr>";
+        html += "<tr><td class=dim>" + (i+1) + "</td><td class=name>" + esc(r.character) + "</td><td class=num>" + fmt(r.totalDamage) + "</td><td class=num>" + fmt(r.peakDps) + "</td><td class=num>" + esc(r.encounters) + "</td></tr>";   // names come from other members' uploads: escape (2026-10-17)
       });
       html += "</table>";
     } else if (serverKey === "pvp"){
@@ -27941,7 +28013,7 @@ async function dismissTopDamage(key) {
         recent.forEach(function(r){
           var boss = (r.boss || "?").replace(/_/g, " ");
           var when = r.snapshot_at ? new Date(r.snapshot_at).toLocaleString() : "";
-          html += "<tr><td class=name>" + boss + "</td><td class=dim>" + when + "</td><td class=num>" + r.rank + " of " + r.of + "</td></tr>";
+          html += "<tr><td class=name>" + esc(boss) + "</td><td class=dim>" + when + "</td><td class=num>" + esc(r.rank) + " of " + esc(r.of) + "</td></tr>";
         });
         html += "</table>";
       }
@@ -28017,7 +28089,7 @@ async function dismissTopDamage(key) {
     }
   }
   var obs = new MutationObserver(decorate);
-  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -29304,8 +29376,10 @@ async function dismissTopDamage(key) {
 })();
 
 // ── 🔇 Buff blocks: the #blockbuff picker (the guild lead, 2026-10-04) ───────
+// (2026-10-17: no tab of its own now. It is the "blocking" half of ✨ Buffs (and blocking),
+// below the buffs cards.)
 // Quarm's #blockbuff / #blockbuffif / #allowbuff commands keep other players'
-// buffs off you. This tab is the picker: a set list per character, bard-song
+// buffs off you. This is the picker: a set list per character, bard-song
 // starters, and two ways to use a set. Copy its lines (EQ's chat box takes one
 // line per paste), or have Mimic write them into social macros in the
 // character's ini: right away when the character is logged out, queued until
@@ -29319,6 +29393,8 @@ async function dismissTopDamage(key) {
 (function(){
   var sec = document.getElementById("buffblocks");
   if (!sec) return;
+  // The picker sits at the foot of the Buffs tab, so "the tab is showing" means #buffs is active.
+  var tab = document.getElementById("buffs") || sec;
   var data = null;          // the last /api/buffblocks answer
   var character = "";       // the picked character ("" = whichever the agent lists first)
   var ui = { lines: {}, msg: {}, q: {}, cond: {} };
@@ -29375,7 +29451,7 @@ async function dismissTopDamage(key) {
     });
   }
   function poll(){
-    if (!sec.classList.contains("active") || document.hidden) return;
+    if (!tab.classList.contains("active") || document.hidden) return;
     api("/api/buffblocks?character=" + encodeURIComponent(character)).catch(function(){});
   }
   function saveSets(sets){ return api("/api/buffblocks/sets", { character: character, sets: sets }).catch(function(){}); }
@@ -29736,7 +29812,7 @@ async function dismissTopDamage(key) {
     fillRes(id);
   });
 
-  var navBtn = document.querySelector('.nav button[data-tab="buffblocks"]');
+  var navBtn = document.querySelector('.nav button[data-tab="buffs"]');
   if (navBtn) navBtn.addEventListener("click", function(){ setTimeout(poll, 0); });
   setInterval(poll, 5000);
 })();
@@ -30886,9 +30962,9 @@ function wpTrigApplyForm(base, f) {
     // Clear-overlay buttons get re-rendered by renderTriggers every 2s poll,
     // so direct addEventListener would die on the first refresh. Use event
     // delegation on the section root — it survives every inner morph and
-    // routes clicks by element id.
-    if (!section._wpTrigClickBound) {
-      section.addEventListener('click', function(e){
+    // routes clicks by element id. The same handler is bound to #fights too: the ⏪ Replay
+    // card (Start / Stop / journal link) lives there since 2026-10-17.
+    var onSectionClick = function(e){
         var t = e.target;
         if (!t) return;
         // "Copy to personal" on a guild-trigger row — the data-attr may live on
@@ -30913,16 +30989,20 @@ function wpTrigApplyForm(base, f) {
         else if (t.id === 'replayStopBtn')    onReplayStop();
         else if (t.id === 'replayJournalLink') {
           if (e && e.preventDefault) e.preventDefault();
+          // The checkpoint journal is a 🩺 Diagnostics card, so open that tab first.
+          var dgBtn = document.querySelector('.nav button[data-tab="diag"]');
+          if (dgBtn) dgBtn.click();
           var j = document.getElementById('wpTriggerJournal');
           if (j) j.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
-      });
-      section._wpTrigClickBound = true;
-    }
+    };
+    [section, document.getElementById('fights')].forEach(function(host){
+      if (host && !host._wpTrigClickBound) { host.addEventListener('click', onSectionClick); host._wpTrigClickBound = true; }
+    });
     // Delegated change handler (survives the 2s section morph) for the loot
-    // auction announce toggle + default-duration knob (#107).
-    if (!section._wpTrigChangeBound) {
-      section.addEventListener('change', function(e){
+    // auction announce toggle + default-duration knob (#107). Bound to #voice as well as
+    // #triggers: the loot and raid-callout cards live on the 🗣 Voice tab since 2026-10-17.
+    var onSectionChange = function(e){
         var t = e.target;
         if (!t || !t.id) return;
         if (t.id === 'lootAucTts') {
@@ -30937,9 +31017,10 @@ function wpTrigApplyForm(base, f) {
         } else if (t.id === 'timingVotes') {
           saveCalloutPref({ timingFeedback: !!t.checked }, 'timingVotesMsg');
         }
-      });
-      section._wpTrigChangeBound = true;
-    }
+    };
+    [section, document.getElementById('voice')].forEach(function(host){
+      if (host && !host._wpTrigChangeBound) { host.addEventListener('change', onSectionChange); host._wpTrigChangeBound = true; }
+    });
     fetchAndRenderList();
     mounted = true;
   }
@@ -31472,13 +31553,59 @@ function wpSoundOverrideHtml(t, ov) {
     }
     return { voice: voice, rate: rate, pitch: pitch };
   }
-  function speak(text, packId){
+  function speakWin(text, packId){
     if (!window.speechSynthesis) return;
     var v = pick(packId), u = new SpeechSynthesisUtterance(text);
     if (v.voice) u.voice = v.voice;
     u.rate = v.rate; u.pitch = v.pitch;
     try { window.speechSynthesis.cancel(); } catch (e) { void e; }
     window.speechSynthesis.speak(u);
+  }
+  // ENGINE (2026-10-17): the same rules as Mimic's voice.js chooseEngine — auto takes Piper first (the default), Kokoro
+  // only when Piper is not installed or picked; an explicit pick takes that engine only, anything not installed is Windows.
+  function chooseEngine(cfg, status) {
+    cfg = cfg || {};
+    var want = cfg.engine || 'auto';
+    var order = want === 'windows' ? [] : (want === 'auto' ? ['piper', 'kokoro'] : [want]);
+    for (var i = 0; i < order.length; i++) {
+      var e = order[i], s = status && status[e];
+      if (s && s.ready && Array.isArray(s.voices) && s.voices.length) {
+        var asked = cfg[e + 'Voice'];
+        return { engine: e, voice: s.voices.indexOf(asked) >= 0 ? asked : s.voices[0] };
+      }
+    }
+    return { engine: 'windows', voice: null };
+  }
+  // acc: the accept panel that is open for a non-free voice ({ id, terms, research }), or null.
+  var eng = { st: null, note: '', busy: false, acc: null }, curAudio = null;
+  // A phrase from a downloaded voice, made by Mimic. Resolves true once it is playing, false on ANY trouble.
+  // test true is a person pressing ▶ Test: Mimic and this wait longer, because Kokoro can take several seconds.
+  function playNeural(ch, text, packId, test){
+    var m = window.mimic;
+    if (!m || !m.voiceSynth) return Promise.resolve(false);
+    return new Promise(function(done){
+      var late = false, t = setTimeout(function(){ late = true; done(false); }, test ? 12900 : 2900);
+      var spec = { engine: ch.engine, voice: ch.voice, rate: pick(packId).rate };
+      if (test) spec.test = true;
+      Promise.resolve(m.voiceSynth(text, spec)).then(function(buf){
+        if (late) return;
+        clearTimeout(t);
+        if (!buf || !buf.byteLength) { done(false); return; }
+        try {
+          var url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })), a = new Audio(url);
+          a.onended = a.onerror = function(){ try { URL.revokeObjectURL(url); } catch (e) { void e; } };
+          if (curAudio) { try { curAudio.pause(); } catch (e) { void e; } }
+          curAudio = a;
+          a.play().then(function(){ done(true); }, function(){ done(false); });
+        } catch (e) { done(false); }
+      }, function(){ if (!late) { clearTimeout(t); done(false); } });
+    });
+  }
+  // Any trouble with a downloaded voice speaks the line with the Windows one instead.
+  function speak(text, packId){
+    var ch = chooseEngine(cfgVoice, eng.st);
+    if (ch.engine !== 'windows' && inMimic()) { playNeural(ch, text, packId, true).then(function(ok){ if (!ok) speakWin(text, packId); }); return; }
+    speakWin(text, packId);
   }
   function save(){ if (inMimic()) { try { window.mimic.saveConfig({ voice: cfgVoice }); } catch (e) { void e; } } }
   function pct(n){ return Math.round(n * 100) / 100; }
@@ -31510,8 +31637,122 @@ function wpSoundOverrideHtml(t, ov) {
       + '<button type="button" id="wpVoiceHear" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>'
       + '<button type="button" id="wpVoiceReset" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;font-family:inherit;font-size:12px"' + (inMimic() ? '' : ' disabled') + '>Back to the pack\\'s own</button>'
       + '</div>';
-    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor.</div>';
+    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor. Speed applies to every voice engine; pitch and the installed-voice pick apply to the Windows voice only.</div>';
     return h;
+  }
+  // 🗣 Voice engine (the guild lead, 2026-10-17): Windows voices, Piper (free, open source, downloaded on demand),
+  // Kokoro (the upgrade: sherpa-onnx + Kokoro-82M, one download). Mimic downloads and plays them; see
+  // apps/mimic/neuralVoice.js. Non-free Piper voices sit behind an accept screen (acceptHtml).
+  function mb(b){ var m = b / 1048576; return (m >= 10 ? Math.round(m) : Math.round(m * 10) / 10) + ' MB'; }
+  function btn(attrs, label, blue){
+    return '<button type="button" ' + attrs + ' style="background:' + (blue ? '#1f6feb;color:#fff;border:0' : 'var(--panel);color:var(--text);border:1px solid var(--border)') + ';border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (eng.busy ? ' disabled' : '') + '>' + label + '</button>';
+  }
+  // The accept screen for a non-commercial or research-only voice: licence, the publisher's model card, the credit,
+  // and the box(es) that must be ticked before Download turns on. Research voices add the warning and a second box.
+  function acceptHtml(v){
+    var a = eng.acc, research = v.tier === 'research', ok = a.terms && (!research || a.research);
+    var h = '<div data-vn-accept="' + esc(v.id) + '" style="width:100%;margin:2px 0 4px 22px;padding:8px 10px;border:1px solid ' + (research ? 'var(--red)' : 'var(--border)') + ';border-radius:5px;font-size:12px;display:flex;flex-direction:column;gap:6px">';
+    if (research) h += '<div style="border:2px solid var(--red);border-radius:4px;padding:6px 8px;color:var(--red)"><b>Research only and experimental.</b> This voice is built from data licensed for research use only. Using it for game callouts may fall outside that licence; you take that on yourself by downloading it. It may also sound or behave unexpectedly.</div>';
+    h += '<div>Licence: <b>' + esc(v.licence) + '</b> &middot; <a href="' + esc(v.modelCardUrl) + '" target="_blank" rel="noopener noreferrer">Model card</a></div>'
+      + '<div class="dim">' + esc(v.credit) + '</div>';
+    if (!research) h += '<div>For personal, non-commercial use. Mimic downloads it from its publisher for you; we don\\'t share it.</div>';
+    h += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-acc="terms"' + (a.terms ? ' checked' : '') + '> I accept these terms</label>';
+    if (research) h += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-acc="research"' + (a.research ? ' checked' : '') + '> I understand this voice is for research use only and is experimental</label>';
+    h += '<div style="display:flex;gap:8px"><button type="button" data-vn-dl-gated="' + esc(v.id) + '" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (ok && !eng.busy ? '' : ' disabled') + '>Download &middot; ' + mb(v.downloadBytes) + '</button>'
+      + btn('data-vn-acc-cancel', 'Cancel') + '</div></div>';
+    return h;
+  }
+  function engineHtml(){
+    var st = eng.st, ch = chooseEngine(cfgVoice, st), mi = inMimic();
+    var box = function(on){ return 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;padding:4px 6px;border:1px solid ' + (on ? 'var(--blue)' : 'var(--border)') + ';border-radius:5px'; };
+    var h = '<h3 style="font-size:13px;margin:8px 0 4px">Voice engine</h3>'
+      + '<div class="dim" style="font-size:11px;margin-bottom:6px">' + (mi ? 'Downloads are free and open source, kept on this PC, and never part of the installer. ' : 'Mimic downloads and plays these voices; open this dashboard from Mimic to change them. ')
+      + 'If a downloaded voice is slow or fails, that callout is spoken with the Windows voice instead, so none is lost.</div>'
+      + '<div style="display:flex;flex-direction:column;gap:4px">';
+    h += '<div style="' + box(ch.engine === 'windows') + '"><label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer"><input type="radio" name="wpVoiceEngine" value="windows"' + (ch.engine === 'windows' ? ' checked' : '') + (mi ? '' : ' disabled') + '><b>Windows voices</b><span class="dim">Built in to Windows. Always works, and is the fallback.</span></label>'
+      + '<button type="button" data-vn-engtest="windows" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654; Test</button></div>';
+    var p = st && st.piper;
+    h += '<div style="' + box(ch.engine === 'piper') + ';align-items:flex-start;flex-direction:column"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%"><label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer"><input type="radio" name="wpVoiceEngine" value="piper"' + (ch.engine === 'piper' ? ' checked' : '') + (mi && p && p.ready ? '' : ' disabled') + '><b>Piper</b><span class="dim">' + esc((p && p.blurb) || 'Free and open source. Natural, quick, and light on older PCs.') + '</span></label>'
+      + (p && p.ready ? btn('data-vn-rm="piper"', 'Remove') : '') + '</div>';
+    if (!st) h += '<div class="dim" style="font-size:11px">' + (mi ? 'Checking what is installed…' : 'Not available outside Mimic.') + '</div>';
+    else if (!p.available) h += '<div class="dim" style="font-size:11px">' + esc(p.reason) + '</div>';
+    else {
+      // Three groups (the guild lead, 2026-10-17): free ones download on a click; the other two make you read
+      // the terms and tick a box first. Neither is hosted or shipped by us: Mimic fetches it from its publisher.
+      var groups = [['free', 'Free', ''], ['nc', 'Non-commercial &mdash; accept to download', 'Personal, non-commercial use only. You read the terms and accept them before it downloads.'],
+        ['research', 'Research only &mdash; experimental', 'Built on research-only data. Experimental, and you take the licence risk yourself.']];
+      for (var g = 0; g < groups.length; g++) {
+        var inGroup = p.catalog.filter(function(c){ return (c.tier || 'free') === groups[g][0]; });
+        if (!inGroup.length) continue;
+        var research = groups[g][0] === 'research';
+        h += '<div style="width:100%;padding-left:22px;margin-top:4px;font-size:11px;' + (research ? 'color:var(--red);border-left:3px solid var(--red);padding-left:8px;margin-left:14px' : '') + '"><b>' + groups[g][1] + '</b>' + (groups[g][2] ? ' <span class="dim">' + groups[g][2] + '</span>' : '') + '</div>';
+        for (var i = 0; i < inGroup.length; i++) {
+          var v = inGroup[i], sel = ch.engine === 'piper' && ch.voice === v.id, gated = (v.tier || 'free') !== 'free';
+          h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">'
+            + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="wpPiperVoice" value="' + esc(v.id) + '"' + (sel ? ' checked' : '') + (v.installed && mi ? '' : ' disabled') + '>' + esc(v.label) + '</label>'
+            + '<span class="dim" title="' + esc(v.credit) + '">' + esc(v.licence) + ' &mdash; ' + esc(v.credit) + '</span>'
+            + (v.installed ? '<button type="button" data-vn-engtest="piper:' + esc(v.id) + '" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654; Test</button><span class="dim">Installed</span>' + (gated ? btn('data-vn-rm="piper:' + esc(v.id) + '"', 'Remove') : '')
+              : (!mi ? '' : (gated ? btn('data-vn-acc-open="' + esc(v.id) + '"', 'Read terms &amp; download') : btn('data-vn-dl="piper:' + esc(v.id) + '"', 'Download &middot; ' + mb(v.downloadBytes), true)))) + '</div>';
+          if (gated && !v.installed && eng.acc && eng.acc.id === v.id) h += acceptHtml(v);
+        }
+      }
+      h += '<div class="dim" style="font-size:11px;padding-left:22px">Piper itself is MIT-licensed (rhasspy/piper). Speed applies to it; it has no pitch.</div>';
+    }
+    h += '</div>';
+    var k = st && st.kokoro;
+    h += '<div style="' + box(ch.engine === 'kokoro') + ';align-items:flex-start;flex-direction:column"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%"><label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer"><input type="radio" name="wpVoiceEngine" value="kokoro"' + (ch.engine === 'kokoro' ? ' checked' : '') + (mi && k && k.ready ? '' : ' disabled') + '><b>Kokoro</b><span class="dim">' + esc((k && k.blurb) || 'Sounds better, slower on older PCs.') + '</span></label>'
+      + (k && k.ready ? btn('data-vn-rm="kokoro"', 'Remove') : '') + '</div>';
+    if (!st) h += '<div class="dim" style="font-size:11px">' + (mi ? 'Checking what is installed…' : 'Not available outside Mimic.') + '</div>';
+    else if (!k.available) h += '<div class="dim" style="font-size:11px">' + esc(k.reason) + '</div>';
+    else {
+      if (!k.ready) h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">' + (mi ? btn('data-vn-dl="kokoro:all"', 'Download &middot; ' + mb(k.downloadBytes || k.totalBytes), true) : '')
+        + '<span class="dim">About ' + mb((k.totalBytes || 0) + 60 * 1048576) + ' of disk once unpacked. Pick a voice after it installs.</span></div>';
+      else for (var q = 0; q < k.catalog.length; q++) {
+        var kv = k.catalog[q], ksel = ch.engine === 'kokoro' && ch.voice === kv.id;
+        h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">'
+          + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="wpKokoroVoice" value="' + esc(kv.id) + '"' + (ksel ? ' checked' : '') + (mi ? '' : ' disabled') + '>' + esc(kv.label) + '</label>'
+          + '<button type="button" data-vn-engtest="kokoro:' + esc(kv.id) + '" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654; Test</button></div>';
+      }
+      if (k.problem) h += '<div style="font-size:11px;padding-left:22px;color:var(--red)">' + esc(k.problem) + '</div>';
+      h += '<div class="dim" style="font-size:11px;padding-left:22px">' + esc(k.licence || 'Apache-2.0') + ' &mdash; ' + esc(k.credit || '') + ' Slower than Piper: on an older PC a quick callout may be spoken by the Windows voice instead.</div>';
+    }
+    h += '</div>';
+    h += '</div><div id="wpVoiceProg" class="dim" style="font-size:11px;margin-top:4px"></div><div id="wpVoiceNote" style="font-size:11px;margin-top:2px">' + esc(eng.note) + '</div>';
+    return h;
+  }
+  function setNote(t){ eng.note = t; var n = document.getElementById('wpVoiceNote'); if (n) n.textContent = t; }
+  async function refreshEngines(){
+    if (!inMimic() || !window.mimic.voiceStatus) return;
+    try { eng.st = await window.mimic.voiceStatus(); } catch (e) { void e; }
+  }
+  async function download(engine, voice, accept){
+    if (eng.busy) return;
+    eng.busy = true; eng.note = ''; eng.acc = null; paint();
+    var poll = setInterval(function(){
+      window.mimic.voiceStatus().then(function(s){ var pr = s && s.progress, n = document.getElementById('wpVoiceProg'); if (n) n.textContent = pr ? pr.text + ' ' + pr.pct + '%' : ''; }, function(){});
+    }, 600);
+    try {
+      var r = await window.mimic.voiceInstall(engine, voice, accept);
+      if (r && r.ok) { eng.st = r.status; eng.note = 'Installed. Callouts now use it' + ((cfgVoice.engine || 'auto') === 'auto' ? '.' : ' once you pick it above.') + (engine === 'kokoro' ? ' Mimic is warming it up in the background, so the first ▶ Test may still take a moment.' : ''); }
+      else eng.note = (r && r.error) || 'The download did not finish. Nothing was changed.';
+    } catch (e) { eng.note = 'Could not reach Mimic to download.'; }
+    clearInterval(poll); eng.busy = false; paint();
+  }
+  async function removeEngine(engine, voice){
+    if (eng.busy) return;
+    try {
+      var r = await window.mimic.voiceRemove(engine, voice);
+      if (r && r.ok) { eng.st = r.status; eng.note = 'Removed. Callouts use the Windows voice.'; } else eng.note = (r && r.error) || 'Could not remove it.';
+    } catch (e) { eng.note = 'Could not reach Mimic.'; }
+    paint();
+  }
+  async function engineTest(spec){
+    var parts = spec.split(':'), line = sampleLine();
+    if (parts[0] === 'windows') { speakWin(line, null); return; }
+    setNote(parts[0] === 'kokoro' ? 'Making it… Kokoro can take several seconds.' : 'Making it…');
+    var ok = await playNeural({ engine: parts[0], voice: parts[1] }, line, null, true);
+    if (ok) setNote('');
+    else { setNote('That voice did not answer in time, so the Windows voice spoke instead. Callouts do the same.'); speakWin(line, null); }
   }
   function namesHtml(){
     var h = '<h3 style="font-size:13px;margin:14px 0 4px">Say your name</h3>';
@@ -31553,11 +31794,12 @@ function wpSoundOverrideHtml(t, ov) {
   }
   function paint(){
     if (!el) return;
-    el.innerHTML = '<h2>🗣 Voice &amp; names <span class="dim" style="font-size:11px;font-weight:normal">(how callouts sound, and how your characters are said)</span></h2>' + voiceHtml() + namesHtml();
+    el.innerHTML = '<h2>🗣 Voice &amp; names <span class="dim" style="font-size:11px;font-weight:normal">(how callouts sound, and how your characters are said)</span></h2>' + engineHtml() + voiceHtml() + namesHtml();
   }
   async function loadAll(){
     await WPSounds.loadPacks();
     if (inMimic()) { try { var c = await window.mimic.getConfig(); if (c && c.voice) cfgVoice = Object.assign({ pack: 'default', voiceName: '', rate: null, pitch: null }, c.voice); } catch (e) { void e; } }
+    await refreshEngines();
     paint();
     try { var r = await fetch('/api/pronunciations'); pron = r.ok ? await r.json() : { characters: [], feature: 'off', signed_in: false }; } catch (e) { pron = { characters: [], feature: 'off', signed_in: false }; }
     paint();
@@ -31586,6 +31828,12 @@ function wpSoundOverrideHtml(t, ov) {
     if (!t) return;
     var b;
     if ((b = t.closest('[data-vn-sample]'))) { speak(sampleLine(), b.getAttribute('data-vn-sample')); return; }
+    if ((b = t.closest('[data-vn-engtest]'))) { engineTest(b.getAttribute('data-vn-engtest')); return; }
+    if ((b = t.closest('[data-vn-dl]'))) { var dl = b.getAttribute('data-vn-dl').split(':'); download(dl[0], dl[1]); return; }
+    if ((b = t.closest('[data-vn-acc-open]'))) { eng.acc = { id: b.getAttribute('data-vn-acc-open'), terms: false, research: false }; paint(); return; }
+    if (t.closest('[data-vn-acc-cancel]')) { eng.acc = null; paint(); return; }
+    if ((b = t.closest('[data-vn-dl-gated]'))) { if (eng.acc && eng.acc.terms) download('piper', b.getAttribute('data-vn-dl-gated'), { terms: !!eng.acc.terms, research: !!eng.acc.research }); return; }
+    if ((b = t.closest('[data-vn-rm]'))) { var rm = b.getAttribute('data-vn-rm').split(':'); removeEngine(rm[0], rm[1]); return; }
     if (t.closest('#wpVoiceHear')) { speak(sampleLine()); return; }
     if (t.closest('#wpVoiceReset')) { cfgVoice.voiceName = ''; cfgVoice.rate = null; cfgVoice.pitch = null; save(); paint(); return; }
     var nm = charOf(t);
@@ -31602,6 +31850,10 @@ function wpSoundOverrideHtml(t, ov) {
   function onChange(e){
     var t = e.target; if (!t) return;
     if (t.name === 'wpVoicePack') { cfgVoice.pack = t.value; save(); paint(); return; }
+    if (t.name === 'wpVoiceEngine') { cfgVoice.engine = t.value; save(); paint(); return; }
+    if (t.name === 'wpPiperVoice') { cfgVoice.piperVoice = t.value; cfgVoice.engine = 'piper'; save(); paint(); return; }
+    if (t.name === 'wpKokoroVoice') { cfgVoice.kokoroVoice = t.value; cfgVoice.engine = 'kokoro'; save(); paint(); return; }
+    if (t.hasAttribute && t.hasAttribute('data-vn-acc') && eng.acc) { eng.acc[t.getAttribute('data-vn-acc')] = !!t.checked; paint(); return; }
     if (t.id === 'wpVoiceName') { cfgVoice.voiceName = t.value; save(); return; }
   }
   function onInput(e){
@@ -32888,6 +33140,9 @@ const COMMAND_HTML = `<!doctype html>
 function startWebDashboard(port) {
   const server = http.createServer(async (req, res) => {
     try {
+      // ONE guard for every route (the guild lead, 2026-10-17): any web page the member visits can fire
+      // "simple" cross-site POSTs at this port, and a rebound DNS name can read it. Must stay ABOVE the first route.
+      if (_localGuardBlock(req, res)) return;
       if (req.url === '/' || req.url === '/index.html' || (req.url && req.url.indexOf('/?') === 0)) {
         // no-store so Electron's BrowserWindow (and browsers) never serve a
         // stale dashboard after a hot-swap — caching the old HTML was a prime
@@ -48330,6 +48585,7 @@ function _mapSyncPull(zone, now) {
       if (j) _mapWatchApplyBot(zone, j, Date.now());   // first: a spot just watched takes its events from this same answer
       if (j && Array.isArray(j.events)) _mapApplyRemote(zone, j.events, Date.now());
       if (j) _mapApplyShared(zone, j, Date.now());
+      if (j) _mapCorpseApplyBot(zone, j, Date.now());   // the guild's corpses (see "Guild corpses"); an older bot sends none
     } catch { /* an unreadable answer is ignored; the next pull asks again */ }
   });
   return true;
@@ -48442,6 +48698,261 @@ function _mapWatchTimerRows(now) {
   return rows;
 }
 // ── end Watched spots ──
+// ── Guild corpses (the guild lead, 2026-10-17: "add the corpses on to the map and give a link to someone that is dragging
+// that corpse and if their machine says that they start dragging the corpse or stop dragging the corpse that's where it
+// ends up landing near that player's location; there's also a one-off summoning corpse that would have the player
+// targeting that corpse so we should be able to tell where that corpse landed if it changes") ──────────────────────────
+// Only PLAYER corpses, only the ones this machine can vouch for. Events go to the bot as POST <bot>/map-corpse (an older bot
+// answers 404: nothing is asked of it for 10 minutes, quietly, like the ★ watch POST) and the pull brings the guild's back as
+// `corpses`. Everything is also kept here, so the Map shows what THIS machine knows when the bot is old or local mode is on.
+//   died        this character died (the same confirmed death that drives the corpse DM), at its position then
+//   seen        a Mimic targeted "<Name>'s corpse" and Zeal gave target_loc (covers a summoned corpse and any later move)
+//   drag_start  "You begin to drag <corpse>."            drag_move  the dragger's own position, at most every 5 s while dragging
+//   drag_stop   "You stop dragging the corpse(s)."       summoned   "Summoning <Name>'s corpse." / "Summoning your corpse."
+//   gone        "You regain some experience from resurrection." (own corpse rezzed)
+// The log lines are the EQMacEmu server's own strings (zone/string_ids.h: CORPSEDRAG_BEGIN 4064, CORPSEDRAG_STOP 4066,
+// CORPSEDRAG_STOPALL 4065, SUMMONING_CORPSE 429 and _OTHER 430, REZ_REGAIN 289); a corpse is moved to the summoner's or
+// dragger's position (Corpse::Summon, GMMove to client->GetX/Y/Z), so those positions ARE the corpse's. x, y, z are the SERVER
+// frame (see FRAMES above); the bot's `corpse` field is the owner's name ("Aldenmar"), not "Aldenmar's corpse".
+const MAP_CORPSE_BATCH        = 20;                  // events per POST
+const MAP_CORPSE_SEEN_UNITS   = 5;                   // a corpse already reported is re-reported only when it moved further than this...
+const MAP_CORPSE_SEEN_MS      = 60 * 1000;           // ...or this long has passed
+const MAP_CORPSE_MOVE_MS      = 5000;                // drag_move: at most one per this
+const MAP_CORPSE_MOVE_UNITS   = 3;                   // ...and only when the dragger moved this far since the last
+const MAP_CORPSE_DRAG_STALE_MS = 2 * 60 * 1000;      // a "being dragged" nobody has refreshed for this long is shown as not dragged
+const MAP_CORPSE_KEEP_MS      = 12 * 60 * 60 * 1000; // a corpse nobody has refreshed for this long is dropped here (the bot ages its own)
+const MAP_CORPSE_MAX          = 60;                  // per zone
+const MAP_CORPSE_GONE_GRACE_MS = 15 * 1000;          // a pull that raced our own `gone` does not bring the corpse back
+const MAP_CORPSE_DRAG_BEGIN_RE = /\]\s+You begin to drag (.+?)\.\s*$/;
+const MAP_CORPSE_DRAG_STOP_RE  = /\]\s+You stop dragging the corpse(s)?\.\s*$/;
+const MAP_CORPSE_SUMMON_RE     = /\]\s+Summoning (?:your|([A-Za-z]{3,20})[`'’]s) corpse\.\s*$/;
+const MAP_CORPSE_REZ_RE        = /\]\s+You regain some experience from resurrection\./;
+// local[zone][owner lower] = { name, x, y, z, died, upd, dragger, dupd, by, inst } (this machine's own events, ms on its clock;
+// dupd = when `dragger` was last SAID, null if never: a plain look at the corpse moves it and leaves who drags it alone)
+// shared[zone] = { rows: [same shape, from the bot], pulledAt }   gone[zone][owner lower] = ms   seenLast: 'zone|owner' -> { x, y, at }
+// drags: 'character|owner' -> { character, owner, zone, startedAt, lastAt, last, sentStart }
+const _mapCorpse = { q: [], flushTimer: null, backoffUntil: 0, local: {}, shared: {}, gone: {}, seenLast: new Map(), drags: new Map() };
+const _mapCorpseKey = (owner) => String(owner).toLowerCase();
+// The owner of a PLAYER corpse named "<Owner>'s corpse" (underscore or space, optional trailing duplicate number), or null.
+// Zeal's target_type says it outright (3 player corpse, 2 NPC corpse); an older Zeal sends none, and then only a one-word
+// capitalised owner passes ("a gnoll's corpse" and "Lord Nagafen's corpse" do not). A named one-word NPC would still pass
+// without a type: the type is the real test, the name shape is the fallback.
+function _mapPlayerCorpseOwner(name, type) {
+  const m = /^#?([A-Za-z]{3,20})[`'’]s[ _]corpse\d*$/.exec(String(name == null ? '' : name).trim());
+  if (!m) return null;
+  if (type != null && Number(type) !== 3) return null;
+  if (type == null && !/^[A-Z][a-z]+$/.test(m[1])) return null;
+  return m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+}
+// The bot's `corpse` field: the bare owner name, or the full "<Owner>'s corpse".
+function _mapCorpseOwnerOf(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (/^[A-Za-z]{3,20}$/.test(s)) return s[0].toUpperCase() + s.slice(1).toLowerCase();
+  return _mapPlayerCorpseOwner(s, 3);
+}
+// A time from the bot: epoch ms, epoch seconds, or an ISO string. null when it is none of them.
+function _mapCorpseMs(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number' || /^\d+(\.\d+)?$/.test(String(v))) { const n = Number(v); return n > 0 ? (n < 1e11 ? n * 1000 : n) : null; }
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? t : null;
+}
+const _mapCorpseRound = (n) => Math.round(Number(n) * 10) / 10;
+// This character's own spot from the pipe, in the server frame, when it is fresh: { zone, loc } or null.
+function _mapCorpseSelf(character, now) {
+  const cl = String(character || '').toLowerCase();
+  let st = null;
+  for (const ch of Object.keys(_zealState || {})) if (ch.toLowerCase() === cl) { st = _zealState[ch]; break; }
+  if (!st || !(now - (st.updatedAt || 0) <= 30000)) return null;
+  const zone = _mapZoneShort(st.zone), loc = _mapServerXY(st.loc);
+  return zone && loc ? { zone, loc } : null;
+}
+function _mapCorpseMayPost(character) {
+  if (!_mapFetchAllowed()) return false;
+  if (_uploadOpts && _uploadOpts.dryRun) return false;
+  return typeof shouldUploadForCharacter !== 'function' || shouldUploadForCharacter(character);   // exclude_from_stats sends nothing
+}
+// One event: kept here at once (the Map shows it even with an older bot) and queued for the guild when this machine may talk to
+// the bot and the bot has not answered 404 lately. ev = { kind, corpse (the owner), x, y, z, at, dragger? }.
+function _mapCorpseEvent(zone, character, ev, now) {
+  if (!zone || !character || !ev || !ev.corpse || !Number.isFinite(Number(ev.x)) || !Number.isFinite(Number(ev.y))) return;
+  const e = { kind: ev.kind, corpse: String(ev.corpse), x: _mapCorpseRound(ev.x), y: _mapCorpseRound(ev.y),
+    z: Number.isFinite(Number(ev.z)) ? _mapCorpseRound(ev.z) : 0, at: Math.min(Number.isFinite(Number(ev.at)) ? Number(ev.at) : now, now) };
+  if (ev.dragger) e.dragger = String(ev.dragger).slice(0, 40);
+  const copy = _mapCurrentCopy(zone, now), inst = copy ? copy.token : null;
+  _mapCorpseApplyLocal(zone, character, e, inst, now);
+  if (!_mapCorpseMayPost(character) || now < _mapCorpse.backoffUntil) return;
+  if (_mapCorpse.q.length >= 200) _mapCorpse.q.shift();
+  _mapCorpse.q.push({ zone, character: String(character), inst, ev: e });
+  if (!_mapCorpse.flushTimer) {
+    _mapCorpse.flushTimer = setTimeout(() => { _mapCorpse.flushTimer = null; _mapCorpseFlush(Date.now()); }, MAP_SYNC_FLUSH_MS);
+    if (_mapCorpse.flushTimer.unref) _mapCorpse.flushTimer.unref();
+  }
+}
+function _mapCorpseApplyLocal(zone, character, e, inst, now) {
+  const key = _mapCorpseKey(e.corpse);
+  const zl = _mapCorpse.local[zone] || (_mapCorpse.local[zone] = {});
+  if (e.kind === 'gone') {
+    delete zl[key];
+    (_mapCorpse.gone[zone] || (_mapCorpse.gone[zone] = {}))[key] = now;
+    return;
+  }
+  if (_mapCorpse.gone[zone]) delete _mapCorpse.gone[zone][key];   // it is back (died again)
+  const old = zl[key];
+  const row = { name: e.corpse, x: e.x, y: e.y, z: e.z, died: old ? old.died : null, upd: e.at,
+    dragger: old ? old.dragger : null, dupd: old ? old.dupd : null, by: String(character), inst };
+  if (e.kind === 'died') { row.died = e.at; row.dragger = null; row.dupd = e.at; }
+  else if (e.kind === 'seen') { /* position only */ }
+  else if (e.kind === 'drag_start' || e.kind === 'drag_move') { row.dragger = e.dragger || String(character); row.dupd = e.at; }
+  else if (e.kind === 'drag_stop' || e.kind === 'summoned') { row.dragger = null; row.dupd = e.at; }
+  else return;
+  if (!old && Object.keys(zl).length >= MAP_CORPSE_MAX) delete zl[Object.keys(zl)[0]];
+  zl[key] = row;
+}
+// Send the oldest batch (one zone + character + copy, up to 20). Returns true when a POST went out.
+function _mapCorpseFlush(now) {
+  const q = _mapCorpse.q;
+  if (!q.length) return false;
+  if (!_mapFetchAllowed() || now < _mapCorpse.backoffUntil) { q.length = 0; return false; }
+  const first = q[0], batch = [];
+  for (let i = 0; i < q.length && batch.length < MAP_CORPSE_BATCH;) {
+    if (q[i].zone === first.zone && q[i].character === first.character && q[i].inst === first.inst) batch.push(q.splice(i, 1)[0].ev); else i++;
+  }
+  if (q.length && !_mapCorpse.flushTimer) {
+    _mapCorpse.flushTimer = setTimeout(() => { _mapCorpse.flushTimer = null; _mapCorpseFlush(Date.now()); }, MAP_SYNC_FLUSH_MS);
+    if (_mapCorpse.flushTimer.unref) _mapCorpse.flushTimer.unref();
+  }
+  _mapSyncRequest('POST', '', { zone: first.zone, inst: first.inst, character: first.character, events: batch }, (err, status) => {
+    if (!err && status === 404) _mapCorpse.backoffUntil = now + MAP_SYNC_BACKOFF_MS;   // an older bot: the corpses stay on this machine
+  }, '/map-corpse');
+  return true;
+}
+function _mapCorpseStop() {
+  if (_mapCorpse.flushTimer) { clearTimeout(_mapCorpse.flushTimer); _mapCorpse.flushTimer = null; }
+  _mapCorpse.q.length = 0;
+}
+// The bot's answer: `corpses: [{ corpse, inst, x, y, z, died_at, updated_at, dragger, by }]` for the zone. No such field (an
+// older bot) changes nothing. Ages are kept on this machine's clock (the bot's `now` against its own times), like targets.
+function _mapCorpseApplyBot(zone, j, now) {
+  if (!j || !Array.isArray(j.corpses)) return;
+  const botNow = _mapCorpseMs(j.now) || now;
+  const rows = [];
+  for (const c of j.corpses.slice(0, MAP_CORPSE_MAX)) {
+    const name = c ? _mapCorpseOwnerOf(c.corpse) : null, x = Number(c && c.x), y = Number(c && c.y);
+    if (!name || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const local = (ms) => (ms == null ? null : now - Math.max(0, botNow - ms));
+    const died = local(_mapCorpseMs(c.died_at)), upd = local(_mapCorpseMs(c.updated_at));
+    rows.push({ name, x, y, z: Number.isFinite(Number(c.z)) ? Number(c.z) : 0, died, upd: upd != null ? upd : (died != null ? died : now),
+      dragger: typeof c.dragger === 'string' && c.dragger.trim() ? c.dragger.trim().slice(0, 40) : null, dupd: upd != null ? upd : (died != null ? died : now),
+      by: c.by ? String(c.by).slice(0, 40) : null, inst: typeof c.inst === 'string' && c.inst ? c.inst : null });
+  }
+  _mapCorpse.shared[zone] = { rows, pulledAt: now };
+}
+// The corpses to draw in the copy of the zone you are in: this machine's own and the guild's, newest word per owner. A look
+// ("seen") moves a corpse but keeps who was dragging it; a dragger nobody has refreshed for two minutes is shown as not dragging.
+// Another copy of the zone (inst set on both sides and different) is ignored; null on either side is taken.
+function _mapCorpseList(zone, now) {
+  const mine = _mapCurrentCopy(zone, now), by = new Map();
+  const gone = _mapCorpse.gone[zone] || {};
+  const consider = (r, shared) => {
+    if (!r || (r.inst && mine && r.inst !== mine.token) || !(now - r.upd <= MAP_CORPSE_KEEP_MS)) return;
+    const k = _mapCorpseKey(r.name);
+    if (shared && gone[k] != null && r.upd <= gone[k] + MAP_CORPSE_GONE_GRACE_MS) return;
+    (by.get(k) || by.set(k, []).get(k)).push(r);
+  };
+  const zl = _mapCorpse.local[zone] || {};
+  for (const [k, r] of Object.entries(zl)) { if (now - r.upd > MAP_CORPSE_KEEP_MS) delete zl[k]; else consider(r, false); }
+  const sh = _mapCorpse.shared[zone];
+  if (sh) for (const r of sh.rows) consider(r, true);
+  const out = [];
+  for (const cs of by.values()) {
+    cs.sort((a, b) => b.upd - a.upd);
+    const w = cs[0], dead = cs.find(c => c.died != null);
+    const drag = cs.filter(c => c.dupd != null).sort((a, b) => b.dupd - a.dupd)[0];
+    out.push({ name: w.name, x: w.x, y: w.y, z: w.z, age: Math.max(0, Math.round(now - w.upd)),
+      died_age: dead ? Math.max(0, Math.round(now - dead.died)) : null,
+      dragger: drag && drag.dragger && now - drag.dupd <= MAP_CORPSE_DRAG_STALE_MS ? drag.dragger : null, by: w.by || null });
+  }
+  return out.sort((a, b) => a.age - b.age).slice(0, MAP_CORPSE_MAX);
+}
+// A target frame: a player corpse with a position. Reported when it is new here, moved more than 5 units, or 60 s have passed.
+function _mapCorpseNoteTarget(zone, character, next, now) {
+  const owner = _mapPlayerCorpseOwner(next && next.target_name, next && next.target_type);
+  const loc = owner ? _mapServerXY(next.target_loc) : null;
+  if (!loc) return;
+  const k = zone + '|' + _mapCorpseKey(owner), last = _mapCorpse.seenLast.get(k);
+  if (last && now - last.at < MAP_CORPSE_SEEN_MS && _mapDist2(last, loc) <= MAP_CORPSE_SEEN_UNITS) return;
+  if (_mapCorpse.seenLast.size > 200) _mapCorpse.seenLast.clear();
+  _mapCorpse.seenLast.set(k, { x: loc.x, y: loc.y, at: now });
+  _mapCorpseEvent(zone, character, { kind: 'seen', corpse: owner, x: loc.x, y: loc.y, z: loc.z, at: now }, now);
+}
+// This character died (the confirmed death behind the corpse DM: `p` is _corpsePending, its loc in Zeal's pipe order).
+function _mapCorpseNoteDied(p, character, now) {
+  if (!p || !character) return;
+  const zone = _mapZoneShort(p.zone_id), loc = _mapServerXY(p.loc);
+  if (!zone || !loc) return;
+  const at = Date.parse(p.died_at);
+  _mapCorpseEvent(zone, character, { kind: 'died', corpse: String(character), x: loc.x, y: loc.y, z: loc.z, at: Number.isFinite(at) ? at : now }, now);
+}
+// Every log line of the live tail. Cheap gate first: only four strings matter.
+function _mapCorpseNoteLine(line, character, lineMs, now) {
+  if (!character || typeof line !== 'string') return;
+  if (line.indexOf('drag') < 0 && line.indexOf('Summoning') < 0 && line.indexOf('resurrection') < 0) return;
+  if (Number.isFinite(lineMs) && now - lineMs > 60000) return;           // a backfill replays old log text
+  let m;
+  if ((m = MAP_CORPSE_DRAG_BEGIN_RE.exec(line))) {
+    const owner = _mapPlayerCorpseOwner(m[1], 3);                         // the server only lets you drag a player corpse
+    if (!owner) return;
+    const me = _mapCorpseSelf(character, now);
+    _mapCorpse.drags.set(_mapCorpseKey(character) + '|' + _mapCorpseKey(owner),
+      { character: String(character), owner, zone: me ? me.zone : null, startedAt: now, lastAt: 0, last: null, sentStart: false });
+    _mapCorpseTickDrag(character, now);                                   // the start goes out now when the pipe has a spot
+    return;
+  }
+  if ((m = MAP_CORPSE_DRAG_STOP_RE.exec(line))) {
+    // "the corpses" ends them all. "the corpse" does not say which one when you drag two (the server loops over them): the
+    // oldest drag is the one ended, which is right for the usual single corpse.
+    const mine = [..._mapCorpse.drags.values()].filter(d => _mapCorpseKey(d.character) === _mapCorpseKey(character)).sort((a, b) => a.startedAt - b.startedAt);
+    for (const d of m[1] ? mine : mine.slice(0, 1)) _mapCorpseEndDrag(d, now);
+    return;
+  }
+  if ((m = MAP_CORPSE_SUMMON_RE.exec(line))) {                            // the caster's spot is where the corpse lands
+    const me = _mapCorpseSelf(character, now);
+    if (!me) return;
+    const owner = m[1] ? _mapPlayerCorpseOwner(m[1] + "'s corpse", 3) : String(character);
+    if (owner) _mapCorpseEvent(me.zone, character, { kind: 'summoned', corpse: owner, x: me.loc.x, y: me.loc.y, z: me.loc.z, at: lineMs || now }, now);
+    return;
+  }
+  if (MAP_CORPSE_REZ_RE.test(line)) {                                     // own corpse rezzed
+    const me = _mapCorpseSelf(character, now);
+    if (me) _mapCorpseEvent(me.zone, character, { kind: 'gone', corpse: String(character), x: me.loc.x, y: me.loc.y, z: me.loc.z, at: lineMs || now }, now);
+  }
+}
+// drag_stop at the dragger's spot (the corpse stays where it was last moved to, within a few units of it), then forget the drag.
+function _mapCorpseEndDrag(d, now) {
+  _mapCorpse.drags.delete(_mapCorpseKey(d.character) + '|' + _mapCorpseKey(d.owner));
+  const me = _mapCorpseSelf(d.character, now);
+  const at = me && me.zone === d.zone ? me.loc : d.last;                  // zoned away: where it was left
+  if (d.zone && at) _mapCorpseEvent(d.zone, d.character, { kind: 'drag_stop', corpse: d.owner, x: at.x, y: at.y, z: at.z, at: now, dragger: d.character }, now);
+}
+// Each Zeal frame while this character drags: the first spot sends drag_start, then drag_move every 5 s the dragger has moved.
+// Zoning ends a drag on the server without a word (ClearDraggedCorpses), so a changed zone ends it here.
+function _mapCorpseTickDrag(character, now) {
+  if (!_mapCorpse.drags.size) return;
+  const cl = _mapCorpseKey(character);
+  const me = _mapCorpseSelf(character, now);
+  for (const d of [..._mapCorpse.drags.values()]) {
+    if (_mapCorpseKey(d.character) !== cl) continue;
+    if (!me) continue;
+    if (d.zone && me.zone !== d.zone) { _mapCorpseEndDrag(d, now); continue; }
+    if (!d.zone) d.zone = me.zone;
+    const kind = d.sentStart ? 'drag_move' : 'drag_start';
+    if (d.sentStart && (now - d.lastAt < MAP_CORPSE_MOVE_MS || _mapDist2(d.last, me.loc) <= MAP_CORPSE_MOVE_UNITS)) continue;
+    d.sentStart = true; d.lastAt = now; d.last = { x: me.loc.x, y: me.loc.y, z: me.loc.z };
+    _mapCorpseEvent(d.zone, d.character, { kind, corpse: d.owner, x: me.loc.x, y: me.loc.y, z: me.loc.z, at: now, dragger: d.character }, now);
+  }
+}
+// ── end Guild corpses ──
 // Whose map events you take (the guild lead, 2026-10-13, option C: "A now, B later"): your raid, or your group when
 // you are not in a raid, plus yourself. Zeal sends the zone id but no instance id, so the open world, our guild copy
 // and the PvP copy of a zone all looked like one; a raid or group is nearly always in one copy. B (the zone
@@ -48929,7 +49440,7 @@ function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
@@ -49011,6 +49522,8 @@ function _mapStatePayload(have, now, haveLocal) {
     const lLive = lOk && now - r.at <= MAP_PATH_LIVE_MS, sLive = sOk && h.live && now - h.pulledAt <= MAP_SYNC_PULL_MS + 2000;
     out.paths[k] = { name: lOk ? r.name : h.name, at: Math.max(lOk ? r.at : 0, sOk ? h.at : 0), live: lLive || sLive, pts };
   }
+  // Guild corpses (see "Guild corpses"): { name, x, y, z, age, died_age, dragger, by }, before the spawn data like the paths.
+  try { out.corpses = _mapCorpseList(zone, now); } catch { out.corpses = []; }
   try {   // before the spawn data: the walls draw even in a zone we hold no points for
     _mapBrewallEnsure(zone, now);   // first visit to a zone: fetch Brewall's map for it (see "Brewall maps")
     const lm = _mapLocalFor(zone, now);
@@ -49068,9 +49581,11 @@ function _mapStatePayload(have, now, haveLocal) {
 
 // Zeal state hooks. Called with every /api/zeal-state frame (prev = the last one for that character).
 function _mapNoteState(character, prev, next, now) {
+  try { _mapCorpseTickDrag(character, now); } catch { /* corpses are a nicety: never break the frame */ }   // before the zone check: zoning ends a drag
   const zone = _mapZoneShort(next && next.zone);
   if (!zone) return;
   _mapEnsureZone(zone, next.zone, now);
+  try { _mapCorpseNoteTarget(zone, character, next, now); } catch { /* same */ }
   const tl = _mapServerXY(next.target_loc);
   const isNpc = next.target_type == null || next.target_type === 1;
   if (isNpc && tl && next.target_id > 0 && next.target_name && !MAP_CORPSE_RE.test(String(next.target_name))) {
@@ -53253,15 +53768,54 @@ function _hailNpcWanted(npc) {
   const k = _hailNpcKey(npc);
   return !!k && _hailBoard.windows.some(w => _hailNpcKey(w.npc_name) === k);
 }
-// The local port answers a browser that is not one of ours with 403: a web page can POST to 127.0.0.1.
-// Mimic's own pages send this origin, "null" (the file:// fallback) or none at all.
-function _localOriginOk(req) {
-  const o = req && req.headers && req.headers.origin;
-  if (!o || o === 'null') return true;
+// The local port answers a browser that is not one of ours with 403: a web page can POST to 127.0.0.1
+// (the guild lead, 2026-10-17). `_localRequestGuard` is the one rule, applied to EVERY route by the router
+// (`_localGuardBlock`, top of startWebDashboard); `_localOriginOk` below asks the same question.
+//   Host      absent or loopback, else 403 (DNS rebinding).
+//   Origin    absent -> ok (Mimic main, zealPipe, the agent's own takeover call, curl).
+//             loopback / file:// -> ok. Anything else -> 403.
+//             "null" (Mimic's file:// pages; also a sandboxed iframe on ANY site) -> ok only with the per-launch
+//             secret in `x-wolfpack-local` when Mimic handed us one (WOLFPACK_LOCAL_SECRET); with no secret
+//             (a new agent under an older Mimic shell) the legacy allowance stands.
+// Returns null when the request may proceed, else the reason.
+const _LOCAL_SECRET = String(process.env.WOLFPACK_LOCAL_SECRET || '');
+const _LOCAL_HOST_RX = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+function _localSecretEq(a, b) {
+  a = String(a == null ? '' : a); b = String(b == null ? '' : b);
+  let d = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) d |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return d === 0;
+}
+function _localRequestGuard(req, secret) {
+  const h = (req && req.headers) || {};
+  if (h.host !== undefined && !_LOCAL_HOST_RX.test(String(h.host))) return 'host';
+  const o = h.origin;
+  if (!o) return null;
+  if (o === 'null') {
+    if (!secret) return null;
+    return _localSecretEq(h['x-wolfpack-local'], secret) ? null : 'null-origin';
+  }
   try {
     const u = new URL(o);
-    return u.protocol === 'file:' || u.hostname === '127.0.0.1' || u.hostname === 'localhost';
-  } catch { return false; }
+    if (u.protocol === 'file:') return null;
+    if ((u.protocol === 'http:' || u.protocol === 'https:') && (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]')) return null;
+  } catch { void 0; }
+  return 'origin';
+}
+function _localOriginOk(req) { return _localRequestGuard(req, _LOCAL_SECRET) === null; }
+// The router's use of the guard: 403 + log each reason at most once a minute (a hostile page can loop).
+const _localGuardLoggedAt = {};
+function _localGuardBlock(req, res) {
+  const why = _localRequestGuard(req, _LOCAL_SECRET);
+  if (!why) return false;
+  const now = Date.now();
+  if (!_localGuardLoggedAt[why] || now - _localGuardLoggedAt[why] > 60000) {
+    _localGuardLoggedAt[why] = now;
+    try { console.warn(`[web-dashboard] refused a request (${why}) ${req.method} ${String(req.url).slice(0, 80)}`); } catch { void 0; }
+  }
+  res.writeHead(403, { 'Content-Type': 'application/json' });
+  res.end('{"error":"forbidden"}');
+  return true;
 }
 // Every 30 s, every 5 s while a window is open, ten minutes after a 404. Nothing without a token, and
 // nothing while the guild has paused the fleet.
@@ -56793,6 +57347,8 @@ async function main() {
         // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
         // log never DMs anyone).
         try { _corpseNoteLine(line, b.character); } catch { void 0; }
+        // Map corpses: drag begin / stop, a Summon Corpse landing, your own corpse rezzed (live tail only).
+        try { _mapCorpseNoteLine(line, b.character, ts ? ts.getTime() : null, Date.now()); } catch { void 0; }
 
         // ── Normal combat filter (gates parse + upload only) ────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;

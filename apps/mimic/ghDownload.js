@@ -14,7 +14,9 @@ const zlib = require('zlib');
 // GitHub asset browser_download_url (and the API zipball_url) 302-redirect to
 // codeload / objects.githubusercontent; the API itself needs a User-Agent or it
 // 403s. json:true parses the body; otherwise we resolve a Buffer (the zip).
-function httpsGet(url, { json = false, redirects = 5 } = {}) {
+// onProgress(received, total) is optional (total is 0 when the server does not say); a big download
+// (neuralVoice.js) uses it for its progress bar, every other caller is unchanged.
+function httpsGet(url, { json = false, redirects = 5, onProgress = null } = {}) {
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(url); } catch (e) { reject(e); return; }
@@ -32,7 +34,7 @@ function httpsGet(url, { json = false, redirects = 5 } = {}) {
       if (code >= 300 && code < 400 && res.headers.location && redirects > 0) {
         res.resume();
         const next = new URL(res.headers.location, url).toString();
-        resolve(httpsGet(next, { json, redirects: redirects - 1 }));
+        resolve(httpsGet(next, { json, redirects: redirects - 1, onProgress }));
         return;
       }
       if (code < 200 || code >= 300) {
@@ -41,7 +43,13 @@ function httpsGet(url, { json = false, redirects = 5 } = {}) {
         return;
       }
       const chunks = [];
-      res.on('data', (c) => chunks.push(c));
+      const total = Number(res.headers['content-length']) || 0;
+      let got = 0;
+      res.on('data', (c) => {
+        chunks.push(c);
+        got += c.length;
+        if (onProgress) { try { onProgress(got, total); } catch { /* a progress bar must not break a download */ } }
+      });
       res.on('end', () => {
         const buf = Buffer.concat(chunks);
         if (!json) { resolve(buf); return; }

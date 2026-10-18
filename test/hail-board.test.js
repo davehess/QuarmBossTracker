@@ -150,12 +150,12 @@ describe('a hail boss kill opens a window', () => {
     expect(kv.value.windows[0].id).toBe(w.id);
   });
 
-  it('opens by name for bosses the board does not carry, and a Tylis window is the ten minutes his script gives', async () => {
+  it('opens by name for bosses the board does not carry, and a Tylis window is the thirty minutes the 2026-10-17 patch notes gave him', async () => {
     const e = env({ raid_roster: rosterRows(RAID, 'u1') });
     const marr = await e.hb.openWindow({ bossName: 'Lord Mithaniel Marr', killedAtMs: KILL });
     expect(marr).toMatchObject({ boss_id: 'lord_mithaniel_marr', zone: 'Temple of Marr', expires_at: at(20) });
     const keeper = await e.hb.openWindow({ bossName: 'The Keeper of Sorrows', killedAtMs: KILL });
-    expect(keeper).toMatchObject({ npc_name: 'Tylis Newleaf', expires_at: at(10) });
+    expect(keeper).toMatchObject({ npc_name: 'Tylis Newleaf', expires_at: at(30) });
   });
 
   it('does not open for a boss with no hail, Agnarr included', async () => {
@@ -700,12 +700,13 @@ describe('the board a poller gets', () => {
 
 describe('the flag cap and the NPC\'s departure', () => {
   // boss id → [cap in raiders, minutes the NPC stays]. Grummus and Marr declare 72 * 2 because one hail can
-  // tick twice; the Arbitor of Earth has no FLAG_LIMIT but MAX_KEYS = 54.
+  // tick twice. The server's patch notes of 2026-10-17 changed three rows: Saryrn's projection stays 30 minutes
+  // (was 20), Tylis stays 30 (was 10), and the Arbitor of Earth (MAX_KEYS, no FLAG_LIMIT) flags 72 (was 54).
   const SCRIPTS = {
-    grummus: [72, 20], bertoxxulous: [72, 20], terris_thule: [72, 20], aerin_dar: [72, 20], saryrn: [72, 20],
-    keeper_of_sorrows: [72, 10], lord_mithaniel_marr: [72, 20], manaetic_behemoth: [72, 10],
+    grummus: [72, 20], bertoxxulous: [72, 20], terris_thule: [72, 20], aerin_dar: [72, 20], saryrn: [72, 30],
+    keeper_of_sorrows: [72, 30], lord_mithaniel_marr: [72, 20], manaetic_behemoth: [72, 10],
     tallon_zek: [72, 20], vallon_zek: [72, 20], rallos_zek_warlord: [72, 20], solusek_ro: [72, 20],
-    arbitor_of_earth: [54, 20],
+    arbitor_of_earth: [72, 20],
   };
 
   it('every hail boss carries the cap and the stay its script gives, and no boss is missing from this list', async () => {
@@ -748,15 +749,15 @@ describe('the flag cap and the NPC\'s departure', () => {
   });
 
   it('flags_left runs down to zero and stops there, however many grants we saw', async () => {
-    // 56 raiders with a letters-only name each (the roster validator), all granted: more than the Arbitor's 54 keys.
-    const names = Array.from({ length: 56 }, (_, i) => 'Raider' + String.fromCharCode(97 + Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26)));
+    // 76 raiders with a letters-only name each (the roster validator), all granted: more than the Arbitor's 72 keys.
+    const names = Array.from({ length: 76 }, (_, i) => 'Raider' + String.fromCharCode(97 + Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26)));
     const e = env({ raid_roster: rosterRows(names, 'u1') });
     await e.hb.openWindow({ bossId: 'arbitor_of_earth', killedAtMs: KILL });
-    names.slice(0, 50).forEach((n) => e.flag(n, 'earthb_key_1', 'event', at(2)));
-    expect((await e.hb.getBoard()).windows[0]).toMatchObject({ flag_cap: 54, flags_granted: 50, flags_left: 4 });
-    names.slice(50).forEach((n) => e.flag(n, 'earthb_key_1', 'event', at(3)));
+    names.slice(0, 68).forEach((n) => e.flag(n, 'earthb_key_1', 'event', at(2)));
+    expect((await e.hb.getBoard()).windows[0]).toMatchObject({ flag_cap: 72, flags_granted: 68, flags_left: 4 });
+    names.slice(68).forEach((n) => e.flag(n, 'earthb_key_1', 'event', at(3)));
     e.advance(6_000);
-    expect((await e.hb.getBoard()).windows[0]).toMatchObject({ flag_cap: 54, flags_granted: 56, flags_left: 0 });
+    expect((await e.hb.getBoard()).windows[0]).toMatchObject({ flag_cap: 72, flags_granted: 76, flags_left: 0 });
   });
 
   it('ms_left is read off the clock at each response, not frozen in the five-second cache', async () => {

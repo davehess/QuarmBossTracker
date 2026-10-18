@@ -737,9 +737,11 @@ describe('Quarm rule 3: the picker never drives the game client', () => {
     expect(new Set(urls)).toEqual(new Set(['/api/buffblocks', '/api/spell-names.json', '/api/buffblocks/state', '/api/buffblocks/socials', '/api/buffblocks/sets']));
   });
 
-  it('is wired into the dashboard as a tab with a section', () => {
+  it('is wired into the dashboard inside the Buffs tab, with no tab of its own', () => {
+    // The guild lead, 2026-10-17: the picker became the "blocking" half of ✨ Buffs (and blocking).
     const html = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'dashboard.html'));
-    expect(html).toContain('<button data-tab="buffblocks">');
-    expect(html).toContain('<div id="buffblocks" class="section"></div>');
+    expect(html).not.toContain('data-tab="buffblocks"');
+    expect(html).toContain('<button data-tab="buffs">✨ Buffs (and blocking)</button>');
+    expect(html).toMatch(/<div id="buffs" class="section">\s*<div id="buffsMain"><\/div>\s*<div id="buffblocks"><\/div>\s*<\/div>/);
   });
 });

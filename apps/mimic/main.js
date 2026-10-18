@@ -34,6 +34,7 @@ const { applyIniKeyEdits } = require('./iniKeyEdits');
 const { visibleUiRects, zealAreas, applyPicks, cleanPicks } = require('./uiClearRects');
 const uiLayouts = require('./uiLayouts');
 const soundLib = require('./sounds');
+const neuralVoice = require('./neuralVoice');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -113,6 +114,8 @@ const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
 // folders through env so its dashboard can list and play them too (see _soundDirs in the agent).
 const SOUNDS_SHIPPED_DIR = () => (app.isPackaged ? path.join(process.resourcesPath, 'sounds') : path.join(__dirname, 'sounds'));
 const SOUNDS_USER_DIR    = () => path.join(app.getPath('userData'), 'sounds');
+// Downloaded callout voices (Piper), under the user's data folder, never in the installer. See neuralVoice.js.
+const VOICES_DIR         = () => path.join(app.getPath('userData'), 'voices');
 function _ensureSoundsDir() { try { fs.mkdirSync(SOUNDS_USER_DIR(), { recursive: true }); } catch { /* read-only profile: the library is just the shipped set */ } }
 function _openSoundsFolder() { _ensureSoundsDir(); return shell.openPath(SOUNDS_USER_DIR()); }
 
@@ -221,6 +224,11 @@ const PANEL_OVERLAYS = [
 let tray = null;
 let agentProc = null;
 let agentPort = BASE_PORT;
+// Per-launch secret for the agent's local port (the guild lead, 2026-10-17). Our file:// pages send
+// "Origin: null", which a sandboxed iframe on any website can send too; the agent only lets "null" through
+// with this value in `x-wolfpack-local`. It goes to the agent in its env (launchAgent) and onto our own windows'
+// requests to that one port (_wireLocalSecretHeader) - nowhere else.
+const _LOCAL_SECRET = require('crypto').randomBytes(32).toString('hex');
 let restartBackoff = 1000;
 let quitting = false;
 let updatePending = null; // { version } once an update is downloaded and ready
@@ -390,6 +398,9 @@ function defaultConfig() {
     runMode: 'full',
     // Spoken-callout voice (the guild lead, 2026-10-14): a voice pack id (the agent's VOICE_PACKS), optionally an installed
     // voice by name, and a speed / pitch that override the pack's own (null = the pack's). Read by triggers.html; see voice.js.
+    // Absent keys on it (2026-10-17): engine ('auto' = the best downloaded voice, else Windows; or 'windows' /
+    // 'piper' / 'kokoro') and piperVoice / kokoroVoice (the voice in each). Downloaded voices ignore voiceName
+    // and pitch. They are written only when the player picks, and read as auto when missing: voice.js chooseEngine.
     voice: { pack: 'default', voiceName: '', rate: null, pitch: null },
   };
 }
@@ -3276,6 +3287,7 @@ async function launchAgent() {
     ELECTRON_RUN_AS_NODE:   '1',
     WOLFPACK_CLIENT:        'mimic',
     WOLFPACK_APP_VERSION:   app.getVersion(),
+    WOLFPACK_LOCAL_SECRET:  _LOCAL_SECRET,
   };
   if (primaryEqDir) env.WOLFPACK_EQ_DIR = primaryEqDir;
   // The sound library's two folders, so the agent's dashboard lists and plays the same sounds Mimic does.
@@ -12115,6 +12127,32 @@ ipcMain.handle('get-config', () => configForRenderer(loadConfig()));
 ipcMain.handle('sounds:list', () => soundLib.listSounds(SOUNDS_SHIPPED_DIR(), SOUNDS_USER_DIR()));
 ipcMain.handle('sounds:resolve', (_e, name) => soundLib.resolveSoundUrl(name, SOUNDS_SHIPPED_DIR(), SOUNDS_USER_DIR()));
 ipcMain.handle('sounds:open-folder', () => _openSoundsFolder().then(() => SOUNDS_USER_DIR()));
+// Downloaded callout voices (neuralVoice.js; the guild lead, 2026-10-17). The engine pick itself is cfg.voice
+// (voice.js chooseEngine) and is saved with save-config like the rest. Failures come back as { ok:false, error }
+// in plain words; voice:synth returns the WAV or null, and null means "speak it with the Windows voice".
+ipcMain.handle('voice:status', () => neuralVoice.status(VOICES_DIR()));
+// A non-commercial or research-only Piper voice downloads only with the user's ticked boxes in `accept`
+// ({ terms, research }); neuralVoice.install refuses without them, and writes the acceptance record next to the
+// download (this PC only). Kokoro installs as a whole (the voice argument is ignored).
+ipcMain.handle('voice:install', async (_e, engine, voice, accept) => {
+  try {
+    const a = accept && typeof accept === 'object' ? { terms: accept.terms === true, research: accept.research === true } : {};
+    const st = await neuralVoice.install(VOICES_DIR(), String(engine || ''), String(voice || ''), process.platform, { accept: a });
+    appendAgentLog(`[voice] installed ${engine} ${voice || ''}\n`);
+    return { ok: true, status: st };
+  } catch (e) {
+    appendAgentLog(`[voice] install failed: ${e && e.message}\n`);
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('voice:remove', (_e, engine, voice) => {
+  try { return { ok: true, status: neuralVoice.remove(VOICES_DIR(), String(engine || ''), process.platform, String(voice || '')) }; }
+  catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
+});
+ipcMain.handle('voice:synth', (_e, text, spec) => {
+  const s = spec && typeof spec === 'object' ? spec : {};
+  return neuralVoice.synthesize(VOICES_DIR(), { engine: s.engine, voice: s.voice, rate: s.rate, test: s.test === true, text });
+});
 // Mute (cfg.quietMode) reaches every overlay renderer as one boolean, so the
 // three places that speak or play a sound (triggers.html, chchain.html,
 // charm.html) check window.mimic.isMuted() with no config round-trip. Sent on
@@ -13670,6 +13708,23 @@ ipcMain.handle('get-agent-log-tail', (_e, lines) => {
   return logTail.slice(-n).join('');
 });
 
+// Our windows' requests to the agent's port carry the per-launch secret (see _LOCAL_SECRET). Electron allows ONE
+// onBeforeSendHeaders listener per session and every window uses defaultSession (no partitions), so this is the
+// only one. '<all_urls>' + the check below rather than a port-wildcard pattern: the header goes to the agent's
+// own http://127.0.0.1:<agentPort> / http://localhost:<agentPort> and to nothing else, and the check is ours.
+function _wireLocalSecretHeader() {
+  require('electron').session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, (details, cb) => {
+    const headers = details.requestHeaders;
+    try {
+      const u = new URL(details.url);
+      if (u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost')) {
+        headers['x-wolfpack-local'] = _LOCAL_SECRET;
+      }
+    } catch { void 0; }
+    cb({ requestHeaders: headers });
+  });
+}
+
 // ── Boot ────────────────────────────────────────────────────────────────────
 // Guard the entire boot on the single-instance lock. A second launch already
 // called app.quit() above, but app.quit() is async — without this guard the
@@ -13677,6 +13732,7 @@ ipcMain.handle('get-agent-log-tail', (_e, lines) => {
 // "Service already running"), and flash a blank dashboard before quitting.
 app.whenReady().then(async () => {
   if (!_gotSingleInstanceLock) return;
+  _wireLocalSecretHeader();
   appendAgentLog(`[mimic] boot — Mimic v${app.getVersion()}, single-instance lock acquired, userData=${app.getPath('userData')}\n`);
   // Zeal auto-updater: notify-only check ~25s after boot (let the EQ folder +
   // agent settle), then every 12h. Install stays a one-click user action; this
@@ -13698,6 +13754,9 @@ app.whenReady().then(async () => {
   _materializeEnabledOverlays();
   pushStatus();
   startZealCapture();
+  // Kokoro loads a 130 MB model per phrase: if it is the voice that will speak, say one word in the background a
+  // few seconds after boot so the first real callout is not the one that pays for the cold disk. Never awaited.
+  setTimeout(() => { try { neuralVoice.warmUp(VOICES_DIR(), (loadConfig() || {}).voice).catch(() => {}); } catch { /* optional */ } }, 15000);
 
   // UI Studio deferred saves — load any pending from a prior session and start
   // the background watcher that applies them once the character logs out.

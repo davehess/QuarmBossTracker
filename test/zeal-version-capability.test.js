@@ -58,7 +58,7 @@ describe('the bot records both facts off agent_state', () => {
     const block = sliceBlock(src, 'const _UPLOAD_STAT_FLUSH_MS', '\n}\n') + sliceBlock(src, 'function _trackUpload(', '\n}\n');
     // eslint-disable-next-line no-new-func
     const run = new Function('require', 'setTimeout', block + '\nreturn { _trackUpload, _flushUploadStats };');
-    const m = run(() => fakeSb, () => ({}));
+    const m = run((p) => (/raidBuffs/.test(p) ? { isCorpse: () => false } : fakeSb), () => ({}));
     m._trackUpload({ endpoint: 'encounter', character: 'Aldenmar', agentVersion: '3.7.1' });
     m._trackUpload({ endpoint: 'encounter', character: 'Aldenmar', ok: false, statusCode: 500, errorMessage: 'boom' });
     m._trackUpload({ endpoint: 'chat', character: '', agentState: { spawn_id_capable: true, zeal_version: '1.4.8' } });

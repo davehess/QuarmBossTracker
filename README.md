@@ -10,6 +10,8 @@ The guild platform for **Wolf Pack** on Project Quarm (EverQuest emu, Luclin era
 
 Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances). Architecture map + release playbook: `CLAUDE.md`. Component versions live in each `package.json`; builds on the [Releases](https://github.com/davehess/QuarmBossTracker/releases) page.
 
+☕ **Tips:** if this saves your raid some grief, you can buy the maintainer a coffee at [ko-fi.com/davehess](https://ko-fi.com/davehess).
+
 ---
 
 ## Raid members — install Mimic

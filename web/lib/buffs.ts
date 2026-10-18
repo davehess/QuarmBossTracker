@@ -414,7 +414,7 @@ export function isCurseBuff(name: string | null | undefined): boolean {
 // EQ corpses register as their own "character" named "<Owner>'s corpse<id>"
 // (e.g. "Rethlan's corpse2854"). They leak into character_live_state / raid_roster
 // but are NOT raiders, so the raid + buff views must filter them out.
-const CORPSE_RX = /'s\s+corpse\d*$/i;
+const CORPSE_RX = /[`'’]s[\s_]+corpse\d*$/i;
 export function isCorpse(name: string | null | undefined): boolean {
   return !!name && CORPSE_RX.test(name.trim());
 }

@@ -79,9 +79,15 @@
   .lv span{min-width:64px}
   #msg{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
     color:rgba(255,255,255,0.65);font-size:12px;text-shadow:0 1px 2px #000;padding:0 16px;pointer-events:none}
-  #card,#menu{position:absolute;z-index:8;background:rgba(14,17,22,0.96);border:1px solid rgba(110,118,129,0.6);
+  #card,#menu,#ccard{position:absolute;z-index:8;background:rgba(14,17,22,0.96);border:1px solid rgba(110,118,129,0.6);
     border-radius:5px;padding:5px 7px;font-size:10px;line-height:1.35;max-width:260px;display:none}
   #card{pointer-events:none}
+  /* The corpse card is the one hover card you can move into: its dragger is a link that centres the map on them. */
+  #ccard{pointer-events:auto}
+  #ccard .h{font-weight:bold;font-size:11px;color:#e6edf3}
+  #ccard .s{color:#8b949e}
+  #ccard .lnk{display:inline;padding:0;border:0;background:none;color:#79c0ff;font:inherit;text-decoration:underline;cursor:pointer}
+  #ccard .lnk:hover{color:#a5d6ff}
   #card .h,#menu .h{font-weight:bold;font-size:11px;color:#e6edf3}
   #card .s{color:#8b949e}
   #card .n{display:flex;justify-content:space-between;gap:10px}
@@ -111,6 +117,8 @@
   .trow .src{grid-column:1;color:#586069;font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .sec.watch{color:#f0b429}
   .trow.watch .nm{font-weight:bold}
+  .trow.corpse{border-left-color:#8b949e} .trow.corpse .tm{color:#8b949e}
+  .trow.corpse.drag{border-left-color:#f0b429} .trow.corpse.drag .tm{color:#f0b429}
   .trow.wait{border-left-color:#f85149} .trow.wait .tm{color:#f85149}
   .trow.window{border-left-color:#f0b429} .trow.window .tm{color:#f0b429}
   .trow.flash{border-left-color:#f0b429;background:rgba(240,180,41,0.22)} .trow.flash .tm{color:#ffd866;font-weight:bold}
@@ -234,6 +242,7 @@
       </div>
       <button class="tb" id="sideBtn" type="button" title="Slide the respawn timers list in or out. Slid in, the map takes the whole width.">Timers ▸</button>
       <div id="card"></div>
+      <div id="ccard" data-wp-interact></div>
       <div id="menu"></div>
       <!-- Edit clear areas: drag a box on the map to keep it clear of drawing. Interactive only while editing (data-wp-interact). -->
       <div id="clearEdit" hidden data-wp-interact>
@@ -426,6 +435,18 @@
       return (a.t ? a.t.earliest : Infinity) - (b.t ? b.t.earliest : Infinity) || Number(a.pid) - Number(b.pid);
     });
   }
+  // ☠ Guild corpses (the guild lead, 2026-10-17: "add the corpses on to the map and give a link to someone that is dragging
+  // that corpse"). The agent's `corpses`: [{ name, x, y, z, age, died_age, dragger, by }], ages in ms as of the poll (p.now).
+  // corpseWords: the hover card's words, "☠ Aldenmar's corpse · died 12m ago · being dragged by Brackwyn", in parts so the dragger
+  // can be a link. A corpse nobody saw die says "seen 3m ago" instead of "died".
+  function corpseWords(c, p, now) {
+    var since = Math.max(0, now - (Number(p && p.now) || now));
+    var died = c.died_age == null ? null : Number(c.died_age) + since;
+    var ago = fmtDur(died != null ? died : (Number(c.age) || 0) + since);
+    return { head: '☠ ' + c.name + '\'s corpse', when: (died != null ? 'died ' : 'seen ') + ago + ' ago', ago: ago,
+      dragger: c.dragger ? String(c.dragger) : null };
+  }
+  function corpseLine(w) { return [w.head, w.when, w.dragger ? 'being dragged by ' + w.dragger : ''].filter(Boolean).join(' · '); }
   // A badge from the bot -> a tiny glyph. Unknown ones still show (first letter), so a new badge is never silent.
   function badgeGlyph(b) {
     var k = String(b || '').toLowerCase();
@@ -822,6 +843,7 @@
   // walks none), 'away' off it and getting further, 'back' off it and closing in. The crumb where it first stepped off
   // is marked `leave`. `home` = homeOf(...); null = nothing known, everything reads as pathing.
   var FOCUS_COL = '#ff3df2';   // the raid's focus mob (MA's target / most targeted): magenta, used nowhere else on the map
+  var CORPSE_DRAG_COL = '#f0b429';   // a corpse someone is dragging (the rest use ⚙ → Corpses, muted)
   var TRAIL_COL = { path: '#ffd23f', away: '#ff3b30', back: '#ff7a33' };
   // Random wanderers (EQEmu grid types 1 Random10, 2 Random, 5 Rand5LoS, 7 CenterPoint, 8 RandomCenterPoint) walk
   // straight to a random waypoint, not along the list, so a line through the list in order is a path nobody walks:
@@ -1196,7 +1218,7 @@
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
     ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
     ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['conNames', 'Mob names in con colour'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
-    ['focus', 'Raid focus target (MA / most targeted)'],
+    ['focus', 'Raid focus target (MA / most targeted)'], ['corpses', 'Guild corpses (☠)'],
     ['kite', 'Kite coach (your circling: lap, drift)'], ['kiteLoops', 'Guild kite loops'],
   ];
   var CFG_GLYPHS = [
@@ -1210,22 +1232,22 @@
     ['aggroSafe', 'Aggro: not to you'], ['aggroNone', 'Aggro: nobody'], ['aeRamp', 'AE rampage ring'], ['ramp', 'Rampage ring'],
     ['glyph', 'Ability icons'], ['pather', 'Walker mark'], ['bossLabel', 'Boss name'], ['raidLabel', 'Raid target name'],
     ['upLabel', 'Known mob name'], ['room', 'Room names'], ['you', 'You'], ['target', 'Target'], ['tot', 'Target\'s target'], ['pinLine', 'Target → spawn line'],
-    ['group', 'Group'], ['raid', 'Raid'],
+    ['group', 'Group'], ['raid', 'Raid'], ['corpse', 'Corpses'],
   ];
   var MAP_SCHEMES = {
     default: { wall: '#c8d6ea', oursWall: '#d6e6ff', route: '#39c5cf', routeTarget: '#7ee787', dot: '#c9d1d9', named: '#f2cc60',
       raidTarget: '#ff7b72', up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff', aggro: '#e5534b', aggroSafe: '#e3b341', aggroNone: '#56d364', aeRamp: '#ff5c5c', ramp: '#ff79c6',
       glyph: '#e6edf3', pather: '#9ecbff', bossLabel: '#f2cc60', raidLabel: '#ffa198', upLabel: '#7ee787', room: '#c9d9ee',
-      you: '#58a6ff', target: '#f0883e', tot: '#f778ba', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', bg: '#131a26' },
+      you: '#58a6ff', target: '#f0883e', tot: '#f778ba', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', corpse: '#9aa4b2', bg: '#131a26' },
     contrast: { wall: '#ffffff', oursWall: '#ffffff', route: '#00e5ff', routeTarget: '#00ff66', dot: '#ffffff', named: '#ffd700',
       raidTarget: '#ff3b30', up: '#00ff66', ringWait: '#ff3b30', ringWindow: '#ffcc00', ringUp: '#00ff66', candidate: '#e040fb', aggro: '#ff3b30', aggroSafe: '#ffcc00', aggroNone: '#00ff66', aeRamp: '#ff3b30', ramp: '#ff80ab',
       glyph: '#ffffff', pather: '#00e5ff', bossLabel: '#ffd700', raidLabel: '#ff6b6b', upLabel: '#00ff66', room: '#ffffff',
-      you: '#00b0ff', target: '#ff9100', tot: '#ff4fd8', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', bg: '#000000' },
+      you: '#00b0ff', target: '#ff9100', tot: '#ff4fd8', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', corpse: '#c9d1d9', bg: '#000000' },
     // Okabe–Ito: no red/green pair carries a meaning (up is sky blue, "not yet" vermillion, the window yellow).
     cb: { wall: '#d9d9d9', oursWall: '#e0e0e0', route: '#56b4e9', routeTarget: '#f0e442', dot: '#d9d9d9', named: '#e69f00',
       raidTarget: '#d55e00', up: '#56b4e9', ringWait: '#d55e00', ringWindow: '#f0e442', ringUp: '#56b4e9', candidate: '#cc79a7', aggro: '#d55e00', aggroSafe: '#f0e442', aggroNone: '#56b4e9', aeRamp: '#d55e00', ramp: '#f0e442',
       glyph: '#ffffff', pather: '#56b4e9', bossLabel: '#e69f00', raidLabel: '#d55e00', upLabel: '#56b4e9', room: '#d9d9d9',
-      you: '#009e73', target: '#e69f00', tot: '#cc79a7', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', bg: '#14171c' },
+      you: '#009e73', target: '#e69f00', tot: '#cc79a7', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', corpse: '#999999', bg: '#14171c' },
   };
   var HEX_RE = /^#[0-9a-f]{6}$/i;
   function mapCfgDefaults() {
@@ -1431,6 +1453,7 @@
   var ctx = cv.getContext('2d');
   var hitsEl = document.getElementById('hits');
   var card = document.getElementById('card');
+  var ccard = document.getElementById('ccard');
   var menu = document.getElementById('menu');
   var msgEl = document.getElementById('msg');
   var levelsEl = document.getElementById('levels');
@@ -2211,7 +2234,7 @@
       }
     }
     // Spawn dots, and first the pather routes (under the dots; every route in range, not only visible points').
-    var bossC = [];
+    var bossC = [], corpseVis = [];
     var vis = [], flashOn =Math.floor(now / 450) % 2 === 0, anyFlash = false, kiteDots = false, srange = spawnRange();
     // Your target's own spawn point shows at any height (the guild lead, 2026-10-13: "Going above a spawn point should
     // still show you the spawn point of the creature that's targetted").
@@ -2292,6 +2315,20 @@
       };
       if (SH.raid) dotsOf(P.raid, CO.raid, 3 * I.dot, 'r:', SH.raidNames);
       if (SH.group) dotsOf(P.group, CO.group, 4 * I.dot, 'g:', SH.groupNames);
+      // ☠ Guild corpses: muted, and amber with a dashed ring while someone is dragging it. The name is drawn from the same zoom as
+      // raider names; each marker also gets a hover button below (layoutCorpseHits), so the card and its dragger link can be reached.
+      if (SH.corpses) (P.corpses || []).forEach(function (c) {
+        var cq = wpt(c.x, c.y);
+        if (cq[0] < -20 || cq[0] > w + 20 || cq[1] < -20 || cq[1] > h + 20) return;
+        if (S.clearPx.length && inClearArea(cq[0], cq[1], S.clearPx)) return;   // nothing is drawn (or clickable) inside a keep-clear area
+        corpseVis.push({ c: c, x: cq[0], y: cq[1] });
+        ctx.globalAlpha = inLevelRange(c.z, sz, range) ? 1 : 0.4;
+        var cCol = c.dragger ? CORPSE_DRAG_COL : CO.corpse;
+        if (c.dragger) { ctx.beginPath(); ctx.setLineDash([3, 3]); ctx.arc(cq[0], cq[1], 10 * I.dot, 0, 6.2832); ctx.lineWidth = 1.6; ctx.strokeStyle = cCol; ctx.stroke(); ctx.setLineDash([]); }
+        halo('☠', cq[0], cq[1], 'bold ' + Math.round(13 * (S.cfg.text || 1) * I.dot) + 'px ui-monospace,Consolas,monospace', cCol, 'center');
+        if (S.labels !== 'off' && v.scale >= 0.4) halo(c.name, cq[0] + 9 * I.dot, cq[1], fontSmall, cCol);
+        ctx.globalAlpha = 1;
+      });
       // Tracked NPCs' walks (the agent's MAP_TRACKED_PATHS: Thelin in the hedge maze), recorded whenever anyone on this
       // machine had them targeted, whether or not you do now: the same trail, solid while they are being watched, faded after.
       if (SH.trail && P.paths) for (var pk in P.paths) {
@@ -2450,7 +2487,7 @@
         ctx.closePath(); ctx.fillStyle = CO.you; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#ffffff'; ctx.stroke();
       }
     }
-    if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : []); }   // hidden points take no clicks
+    if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : []); layoutCorpseHits(corpseVis); }   // hidden points take no clicks
     if (posAgeEl && rt - lastAge >= 200) { lastAge = rt; posAgeEl.textContent = S.sampleAt ? posAgeText(rt - S.sampleAt, S.sampleSrc) : ''; }
     if (rt - lastLoc >= 200) { lastLoc = rt; updateLocBar(rt); }
     if (rt - lastKiteChip >= 250) { lastKiteChip = rt; updateKiteChip(); }   // ~4 a second, not once a frame
@@ -2492,6 +2529,50 @@
   });
   hitsEl.addEventListener('mouseout', function (e) { if (hitFor(e)) { card.style.display = 'none'; setHoverGrid(null); } });
   hitsEl.addEventListener('click', function (e) { var pid = hitFor(e); if (pid) { card.style.display = 'none'; openMenu(pid, e); } });
+
+  // ☠ Corpse markers: one real button per drawn corpse (so the hover handshake arms the click-through window), and a card you
+  // can move into - its dragger is a link that centres the map on them when the Map can place them (you, group, raid), plain
+  // text when it cannot. The card stays 350 ms after the pointer leaves the marker, long enough to reach it.
+  var corpseHitEls = {}, corpseHideT = 0;
+  function layoutCorpseHits(list) {
+    var used = {};
+    for (var i = 0; i < list.length && i < 60; i++) {
+      var k = String(list[i].c.name).toLowerCase();
+      used[k] = 1;
+      var b = corpseHitEls[k];
+      if (!b) {
+        b = corpseHitEls[k] = el('button', 'hit');
+        b.type = 'button'; b.setAttribute('data-wp-interact', ''); b.setAttribute('data-cname', k);
+        hitsEl.appendChild(b);
+      }
+      b.hidden = false; b.style.left = list[i].x + 'px'; b.style.top = list[i].y + 'px';
+    }
+    for (var u in corpseHitEls) if (!used[u]) corpseHitEls[u].hidden = true;
+  }
+  function cnameOf(e) { var t = e.target; return t && t.getAttribute && t.getAttribute('data-cname'); }
+  function corpseHideSoon() { clearTimeout(corpseHideT); corpseHideT = setTimeout(function () { ccard.style.display = 'none'; }, 350); }
+  function showCorpseCard(k, anchor) {
+    var list = (S.p && S.p.corpses) || [], c = null;
+    for (var i = 0; i < list.length; i++) if (String(list[i].name).toLowerCase() === k) c = list[i];
+    if (!c) return;
+    var w = corpseWords(c, S.p, nowMs()), line = el('div', 'h', w.head + ' · ' + w.when + (w.dragger ? ' · being dragged by ' : ''));
+    if (w.dragger) {
+      var mv = totMember(S.p, w.dragger);
+      if (mv) {
+        var a = el('button', 'lnk', w.dragger); a.type = 'button'; a.setAttribute('data-wp-interact', ''); a.title = 'Centre the map on ' + w.dragger;
+        a.addEventListener('click', function () { ccard.style.display = 'none'; centreOn(drawn(mv.key, mv.m, Date.now())); });
+        line.appendChild(a);
+      } else line.appendChild(el('span', null, w.dragger));   // not in your group or raid: no dot to go to
+    }
+    ccard.innerHTML = '';
+    ccard.appendChild(line);
+    var r = anchor.getBoundingClientRect();
+    placeBox(ccard, { clientX: r.left + r.width - 10, clientY: r.top + r.height - 10 });   // 2 px off the marker, so the pointer can cross
+  }
+  hitsEl.addEventListener('mouseover', function (e) { var k = cnameOf(e); if (!k) return; clearTimeout(corpseHideT); showCorpseCard(k, e.target); });
+  hitsEl.addEventListener('mouseout', function (e) { if (cnameOf(e)) corpseHideSoon(); });
+  ccard.addEventListener('mouseenter', function () { clearTimeout(corpseHideT); });
+  ccard.addEventListener('mouseleave', corpseHideSoon);
 
   function placeBox(box, e) {
     var pane = document.getElementById('mapPane').getBoundingClientRect();
@@ -2624,6 +2705,19 @@
         r.appendChild(el('span', 'nm', s.name || 'a mob')); r.appendChild(el('span', 'tm', fmtDur(now - s.at) + ' ago'));
         r.appendChild(el('span', 'src', (s.spawn_id != null ? 'spawn #' + s.spawn_id : 'pinned') + (s.by ? ' · by ' + s.by : '')));
         r.addEventListener('click', function () { centreOn(S.byId[String(s.point_id)]); });
+        box.appendChild(r);
+      });
+    }
+    // ☠ Corpses: newest word first; a click centres the map on it. Not in the pop-out (it has no map to centre).
+    var corpseList = !PART_TIMERS && P && S.cfg.show.corpses ? (P.corpses || []) : [];
+    if (corpseList.length) {
+      box.appendChild(el('div', 'sec', '☠ Corpses (' + corpseList.length + ')'));
+      corpseList.forEach(function (c) {
+        var w = corpseWords(c, P, now);
+        var r = el('div', 'trow corpse' + (c.dragger ? ' drag' : '')); r.setAttribute('data-wp-interact', ''); r.title = corpseLine(w);
+        r.appendChild(el('span', 'nm', c.name)); r.appendChild(el('span', 'tm', w.ago));
+        r.appendChild(el('span', 'src', c.dragger ? 'being dragged by ' + c.dragger : c.died_age != null ? 'died' : 'seen'));
+        r.addEventListener('click', function () { centreOn({ x: c.x, y: c.y }); });
         box.appendChild(r);
       });
     }
