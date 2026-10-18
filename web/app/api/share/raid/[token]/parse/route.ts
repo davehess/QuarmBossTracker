@@ -6,7 +6,7 @@
 // The window comes ONLY from the share row (lib/raidShareLookup.ts), never from the URL; the visitor sends an
 // encounter id and loadFightParse refuses it unless the fight lies in that window (lib/raidSessionParse.ts). An
 // unknown, expired or revoked token, a fight outside the window and an id that does not exist all give the same
-// plain 404. Opted-out characters are removed from the rows. Cache-Control is private and short so a revoke bites
+// plain 404. Opted-out characters are labelled by class in the rows (winners excepted). Cache-Control is private and short so a revoke bites
 // within a minute.
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';

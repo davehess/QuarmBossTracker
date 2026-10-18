@@ -6,8 +6,9 @@
 //   3. WINDOW     the window belongs to the share row; the only operation that narrows it can never widen it.
 //   4. LOADER     driven against a recording fake database: EVERY read of a table with a time column carries
 //                 the window's exact bounds, and the tables without one are read only for ids a bounded read gave.
-//   5. OPT-OUTS   a character with exclude_from_stats or exclude_inventory appears nowhere (pure filters, and
-//                 the replay rows are scrubbed).
+//   5. OPT-OUTS   a character with exclude_from_stats or exclude_inventory appears nowhere BY NAME: they are
+//                 their class label ("Cleric 1") in the pure builders and the replay rows (test/raid-session-anon
+//                 .test.js holds the labels, the winners and the bids view in depth).
 //   6. SOURCE     the public page and its routes never read a time from the URL, and the table is service-role only.
 //
 // Source assertions run on comment-stripped text (stripJs/stripSql): this repo's comments explain exactly the
@@ -23,9 +24,9 @@ import {
   newToken, hashToken, tokenLooksValid, shareStatus, makeWindow, boundWindow, inWindow, replaySlice,
   windowOfShare, expiryDays, windowIso, MAX_WINDOW_MS,
 } from '../web/lib/raidShare.ts';
-import { resolveShare, clearShareMemo } from '../web/lib/raidShareLookup.ts';
+import { resolveShare, clearShareMemo, clearOptedOutCache } from '../web/lib/raidShareLookup.ts';
 import {
-  nameKey, optedOutSet, isOptedOut, dropOptedOut, scrubMinuteData, attendanceFromMinutes, buildKills, buildLoot,
+  nameKey, anonLabels, anonName, scrubMinuteData, attendanceFromMinutes, buildKills, buildLoot,
   buildRolls, buildTicks,
 } from '../web/lib/raidSession.ts';
 import { loadSessionReview } from '../web/lib/raidSessionLoad.ts';
@@ -202,7 +203,7 @@ describe('the session loader bounds every read to the window', () => {
   const { from, to } = windowIso(W);
   const minuteData = JSON.stringify({ v: 1, step_s: 3, who: [['Aldenmar', 'Cleric', 1, 60], ['Hushed', 'Wizard', 1, 60]], zones: ['x'], f: [[0, 0, 1, 2, 3, 4, 90, 0, 1, 5, 6, 7, 8, 80, 0]] });
   const db = fakeDb({
-    characters: [{ name: 'Hushed', exclude_from_stats: true, exclude_inventory: false }],
+    characters: [{ name: 'Hushed', class: 'Wizard', exclude_from_stats: true, exclude_inventory: false }],
     raid_track_minutes: [{ minute_at: new Date(W.fromMs).toISOString(), night_key: '10/14/2026', zones: ['x'], raiders: 2, data: minuteData }],
     encounters: [{ id: 'e1', npc_id: 5, started_at: from, ended_at: from, duration_sec: 30, total_damage: 100, zone_short: 'x', eqemu_npc_types: { name: 'A_Mob' } }],
     opendkp_raids: [{ raid_id: 7 }],
@@ -210,12 +211,13 @@ describe('the session loader bounds every read to the window', () => {
     encounter_players: [{ encounter_id: 'e1', character_name: 'Aldenmar', total_damage: 90, dps: 3 }, { encounter_id: 'e1', character_name: 'Hushed', total_damage: 99, dps: 4 }],
   });
   let out;
-  it('runs', async () => { out = await loadSessionReview(db, W); expect(out.bundle.fromMs).toBe(W.fromMs); });
+  it('runs', async () => { clearOptedOutCache(); out = await loadSessionReview(db, W); expect(out.bundle.fromMs).toBe(W.fromMs); });
 
   // table -> the column the window is on
   const TIMED = {
     raid_track_minutes: 'minute_at', encounters: 'ended_at', looted_items: 'looted_at', loot_observations: 'posted_at',
     roll_sets: 'started_at', roll_set_overrides: 'started_at', raid_attendance_ticks: 'scheduled_for', opendkp_raids: 'ts',
+    opendkp_auctions: 'end_at',   // the bid winners (lib/raidSessionBids.ts)
   };
   for (const [table, col] of Object.entries(TIMED)) {
     it(`${table} is read with ${col} >= from and < to, exactly the window`, () => {
@@ -241,9 +243,9 @@ describe('the session loader bounds every read to the window', () => {
     const allowed = new Set([...Object.keys(TIMED), 'characters', 'encounter_players', 'opendkp_ticks', 'opendkp_loot_recent', 'bosses_local']);
     for (const q of db.queries) expect(allowed.has(q.table), `unexpected read of ${q.table}`).toBe(true);
   });
-  it('the opted-out raider is in neither the attendance nor the parses', () => {
-    expect(out.bundle.attendance.map(a => a.name)).toEqual(['Aldenmar']);
-    expect(out.bundle.kills[0].top.map(p => p.name)).toEqual(['Aldenmar']);
+  it('the opted-out raider is their class label in the attendance and the parses, and their name is nowhere', () => {
+    expect(out.bundle.attendance.map(a => a.name).sort()).toEqual(['Aldenmar', 'Wizard 1']);
+    expect(out.bundle.kills[0].top.map(p => p.name)).toEqual(['Wizard 1', 'Aldenmar']);   // 99 damage then 90: they are IN the list now
     expect(out.bundle.kills[0].boss).toBe(true);
     expect(JSON.stringify(out)).not.toContain('Hushed');
   });
@@ -252,8 +254,9 @@ describe('the session loader bounds every read to the window', () => {
 // ── 4b. FULL PARSE OF ONE FIGHT ──────────────────────────────────────────────────────────────────────────────
 // loadFightParse is what both parse routes call. The fake database ignores filters, so the window guard is
 // proved by the row it is handed (started/ended outside the window -> null) and the opt-out by the players it
-// is handed (the hidden one never reaches the result, or the shares and totals).
+// is handed (the hidden one reaches the result only as a class label, with their damage in the shares and totals).
 describe('the full parse of one fight', () => {
+  beforeEach(() => clearOptedOutCache());
   const W = makeWindow(T0, T0 + 120 * MINUTE_MS);
   const ID = '0b9a6d3e-1c2f-4a5b-8c7d-123456789abc';
   const at = (min) => new Date(T0 + min * MINUTE_MS).toISOString();
@@ -271,13 +274,14 @@ describe('the full parse of one fight', () => {
   const inside = { started_at: at(10), ended_at: at(11), duration_sec: 40 };
   const opts = { guild: 'parse-test-guild', win: W };
 
-  it('a fight inside the window is returned, biggest first, with shares of what is shown', async () => {
+  it('a fight inside the window is returned, biggest first, with shares of everyone\'s damage', async () => {
     const p = await loadFightParse(dbFor(inside), ID, opts);
-    expect(p.players.map(x => x.name)).toEqual(['Aldenmar', 'Brackwyn']);
-    expect(p.players[0]).toMatchObject({ cls: 'Cleric', damage: 300, dps: 10, durationSec: 30 });
-    expect(p.players[1]).toMatchObject({ cls: null, dps: null, durationSec: 40 });   // no per-player time: the fight's
-    expect(p.totalDamage).toBe(400);
-    expect(p.players.map(x => x.pct)).toEqual([75, 25]);
+    expect(p.players.map(x => x.name)).toEqual(['Wizard 1', 'Aldenmar', 'Brackwyn']);
+    expect(p.players[0]).toMatchObject({ cls: 'Wizard', damage: 9000 });     // the opted-out player, as their label and class
+    expect(p.players[1]).toMatchObject({ cls: 'Cleric', damage: 300, dps: 10, durationSec: 30 });
+    expect(p.players[2]).toMatchObject({ cls: null, dps: null, durationSec: 40 });   // no per-player time: the fight's
+    expect(p.totalDamage).toBe(9400);
+    expect(p.players.map(x => Math.round(x.pct * 10) / 10)).toEqual([95.7, 3.2, 1.1]);
   });
   it('a fight outside the window is rejected, before or after it', async () => {
     expect(await loadFightParse(dbFor({ started_at: at(-60), ended_at: at(-55), duration_sec: 9 }), ID, opts)).toBeNull();
@@ -292,7 +296,7 @@ describe('the full parse of one fight', () => {
     expect(fightInWindow({ started_at: 'junk', ended_at: null }, W)).toBe(false);
   });
   it('a members call has no window; an unknown id, a junk id and a missing fight are all null', async () => {
-    expect((await loadFightParse(dbFor({ started_at: at(-600), ended_at: at(-599), duration_sec: 9 }), ID, { guild: 'parse-test-guild' })).players.length).toBe(2);
+    expect((await loadFightParse(dbFor({ started_at: at(-600), ended_at: at(-599), duration_sec: 9 }), ID, { guild: 'parse-test-guild' })).players.length).toBe(3);
     expect(await loadFightParse(dbFor(null), ID, opts)).toBeNull();
     const db = dbFor(inside);
     for (const bad of [null, undefined, '', 'e1', `${ID}' or 1=1`, 42]) expect(await loadFightParse(db, bad, opts)).toBeNull();
@@ -307,76 +311,77 @@ describe('the full parse of one fight', () => {
     expect(hasOp(enc, 'eq', 'id', ID)).toBe(true);
     expect(hasOp(db.queries.find(q => q.table === 'encounter_players'), 'eq', 'encounter_id', ID)).toBe(true);
   });
-  it('an opted-out character is in no row, no share and no total, nor anywhere in the JSON', async () => {
+  it('an opted-out character\'s name is nowhere in the JSON, but their damage is in the total', async () => {
     const p = await loadFightParse(dbFor(inside), ID, opts);
     expect(JSON.stringify(p)).not.toContain('Hushed');
-    expect(p.totalDamage).toBe(400);   // 9,000 would be there if they were counted
+    expect(p.totalDamage).toBe(9400);   // 400 would be the total if they were left out
   });
-  it('buildFightParse drops opted-out pets with their owner, and zero-damage rows', () => {
+  it('buildFightParse labels opted-out pets with their owner\'s label, and drops zero-damage rows', () => {
     const enc = { id: 'x', started_at: at(0), ended_at: at(1), duration_sec: 5 };
     const rows = [
       { character_name: 'Hushed`s pet', total_damage: 50, dps: 1, duration_sec: 5 },
       { character_name: 'Visible', total_damage: 50, dps: 1, duration_sec: 5 },
       { character_name: 'Idle', total_damage: 0, dps: 0, duration_sec: 5 },
     ];
-    const p = buildFightParse(enc, rows, new Map(), new Set(['hushed']));
-    expect(p.players.map(x => x.name)).toEqual(['Visible']);
-    expect(p.players[0].pct).toBe(100);
+    const p = buildFightParse(enc, rows, new Map(), anonLabels([{ name: 'Hushed', class: 'Wizard', exclude_from_stats: true }]));
+    expect(p.players.map(x => x.name).sort()).toEqual(['Visible', 'Wizard 1`s pet']);
+    expect(p.players.find(x => x.name === 'Wizard 1`s pet').cls).toBeNull();   // a pet has no class
+    expect(p.players[0].pct).toBe(50);
   });
 });
 
 // ── 5. OPT-OUTS ──────────────────────────────────────────────────────────────────────────────────────────────
 describe('opted-out characters', () => {
-  const set = optedOutSet([
-    { name: 'Hushed', exclude_from_stats: true },
-    { name: 'Quietone', exclude_inventory: true },
-    { name: 'Visible', exclude_from_stats: false, exclude_inventory: false },
+  const set = anonLabels([
+    { name: 'Hushed', class: 'Wizard', exclude_from_stats: true },
+    { name: 'Quietone', class: 'Monk', exclude_inventory: true },
+    { name: 'Visible', class: 'Cleric', exclude_from_stats: false, exclude_inventory: false },
     { name: 'Nulled', exclude_from_stats: null },
   ]);
   it('either flag opts a character out; neither does not', () => {
-    expect([...set].sort()).toEqual(['hushed', 'quietone']);
+    expect([...set.keys()].sort()).toEqual(['hushed', 'quietone']);
+    expect(set.get('hushed')).toEqual({ label: 'Wizard 1', cls: 'Wizard' });
+    expect(set.get('quietone')).toEqual({ label: 'Monk 1', cls: 'Monk' });
   });
   it('is case-insensitive, and a pet counts as its owner', () => {
-    expect(isOptedOut(set, 'HUSHED')).toBe(true);
-    expect(isOptedOut(set, ' quietone ')).toBe(true);
-    expect(isOptedOut(set, 'Hushed`s pet')).toBe(true);
+    expect(anonName(set, 'HUSHED')).toBe('Wizard 1');
+    expect(anonName(set, ' quietone ')).toBe('Monk 1');
+    expect(anonName(set, 'Hushed`s pet')).toBe('Wizard 1`s pet');
     expect(nameKey('Hushed`s warder')).toBe('hushed');
-    expect(isOptedOut(set, 'Visible')).toBe(false);
-    expect(isOptedOut(set, null)).toBe(false);
-  });
-  it('dropOptedOut removes exactly those rows', () => {
-    const rows = [{ n: 'Hushed' }, { n: 'Aldenmar' }, { n: 'quietone' }, { n: null }];
-    expect(dropOptedOut(rows, r => r.n, set).map(r => r.n)).toEqual(['Aldenmar', null]);
-    expect(dropOptedOut(rows, r => r.n, new Set()).length).toBe(4);
+    expect(anonName(set, 'Visible')).toBe('Visible');
+    expect(anonName(new Map(), 'Hushed')).toBe('Hushed');
   });
 
-  it('scrubMinuteData removes the name and the samples; the others still decode', () => {
+  it('scrubMinuteData swaps the name for the label and keeps the samples; the others still decode', () => {
     const data = JSON.stringify({ v: 1, step_s: 3, who: [['Aldenmar', 'Cleric', 1, 60], ['Hushed', 'Wizard', 1, 60], ['Brackwyn', 'Monk', 2, 60]], zones: ['x'],
       f: [[0, 0, 1, 2, 3, 4, 90, 0, 1, 5, 6, 7, 8, 80, 0, 2, 9, 9, 9, 9, 70, 0], [3, 1, 5, 6, 7, 8, 80, 0]] });
     const scrubbed = scrubMinuteData(data, set);
     expect(scrubbed).not.toMatch(/Hushed/);
     const frames = decodeMinute({ minute_at: ISO, data: scrubbed });
-    expect(frames.length).toBe(1);                                  // the second frame held only the opted-out raider
-    expect(frames[0].raiders.map(r => r.name)).toEqual(['Aldenmar', 'Brackwyn']);
-    expect(scrubMinuteData(data, new Set())).toBe(data);            // nothing to hide: untouched
+    expect(frames.length).toBe(2);                                  // the second frame held only the opted-out raider: still there
+    expect(frames[0].raiders.map(r => r.name)).toEqual(['Aldenmar', 'Wizard 1', 'Brackwyn']);
+    expect(frames[0].raiders[1]).toMatchObject({ cls: 'Wizard', x: expect.any(Number) });
+    expect(frames[1].raiders.map(r => r.name)).toEqual(['Wizard 1']);
+    expect(scrubMinuteData(data, new Map())).toBe(data);            // nothing to hide: untouched
     expect(scrubMinuteData('not json', set)).toBe('{}');            // cannot be shown clean: not passed through
   });
-  it('attendance never lists an opted-out character', () => {
+  it('attendance lists an opted-out character as their label, once, with their minutes', () => {
     const data = JSON.stringify({ v: 1, who: [['Aldenmar', 'Cleric', 1, 60], ['Hushed', 'Wizard', 1, 60], ['Quietone', 'Monk', 1, 60]], f: [] });
     const rows = [{ minute_at: ISO, data }, { minute_at: new Date(T0 + MINUTE_MS).toISOString(), data }];
     const a = attendanceFromMinutes(rows, set);
-    expect(a.map(x => x.name)).toEqual(['Aldenmar']);
-    expect(a[0].minutes).toBe(2);
+    expect(a.map(x => x.name).sort()).toEqual(['Aldenmar', 'Monk 1', 'Wizard 1']);
+    expect(a.every(x => x.minutes === 2)).toBe(true);
+    expect(JSON.stringify(a)).not.toMatch(/Hushed|Quietone/);
   });
-  it('parses drop them from the top list', () => {
+  it('parses list them in the top list as their label', () => {
     const encs = [{ id: 'e', npc_id: 1, started_at: ISO, ended_at: ISO, duration_sec: 10, total_damage: 5, zone_short: 'x', eqemu_npc_types: { name: 'M' } }];
     const players = [
       { encounter_id: 'e', character_name: 'Hushed', total_damage: 500, dps: 1 },
       { encounter_id: 'e', character_name: 'Aldenmar', total_damage: 400, dps: 1 },
     ];
-    expect(buildKills(encs, players, new Set(), set)[0].top.map(p => p.name)).toEqual(['Aldenmar']);
+    expect(buildKills(encs, players, new Set(), set)[0].top.map(p => p.name)).toEqual(['Wizard 1', 'Aldenmar']);
   });
-  it('loot keeps the item but not the name', () => {
+  it('loot keeps the item and shows the label in place of the name', () => {
     const loot = buildLoot(
       [{ looter_character: 'Hushed', item_name: 'Rusty Helm', zone: 'x', looted_at: ISO }, { looter_character: 'Aldenmar', item_name: 'Cloak', zone: 'x', looted_at: ISO }],
       [{ item_name: 'Ring', winner_character: 'Quietone', dkp_amount: 5, posted_at: ISO }],
@@ -384,18 +389,18 @@ describe('opted-out characters', () => {
       set,
     );
     expect(JSON.stringify(loot)).not.toMatch(/Hushed|Quietone|hushed/);
-    expect(loot.find(l => l.item === 'Rusty Helm')).toMatchObject({ who: null, whoHidden: true });
-    expect(loot.find(l => l.item === 'Cloak')).toMatchObject({ who: 'Aldenmar', whoHidden: false });
+    expect(loot.find(l => l.item === 'Rusty Helm')).toMatchObject({ who: 'Wizard 1' });
+    expect(loot.find(l => l.item === 'Ring')).toMatchObject({ who: 'Monk 1', dkp: 5 });
+    expect(loot.find(l => l.item === 'Cloak')).toMatchObject({ who: 'Aldenmar' });
   });
-  it('a roll won by an opted-out character does not promote the runner-up', () => {
+  it('a roll won by an opted-out character stays theirs, as their label', () => {
     const rows = [{ roll_from: 0, roll_to: 1000, item: 'Shiny Sword', qty: 1, zone: 'x', started_at: ISO, last_at: ISO,
       rolls: [{ name: 'Hushed', value: 900, at: ISO }, { name: 'Aldenmar', value: 500, at: ISO }] }];
     const [r] = buildRolls(rows, [], [{ looter_character: 'Hushed', item_name: 'Shiny Sword', zone: 'x', looted_at: ISO }], set);
-    expect(r.winners).toEqual([]);
-    expect(r.winnerHidden).toBe(true);
-    expect(r.lines.map(l => l.name)).toEqual(['Aldenmar']);
-    expect(r.rollers).toBe(1);
-    expect(r.lootedBy).toEqual([]);
+    expect(r.winners).toEqual([{ name: 'Wizard 1', value: 900 }]);
+    expect(r.lines.map(l => l.name)).toEqual(['Wizard 1', 'Aldenmar']);
+    expect(r.rollers).toBe(2);
+    expect(r.lootedBy).toEqual(['Wizard 1']);
     expect(JSON.stringify(r)).not.toMatch(/Hushed/);
   });
   it('an officer-hidden roll set is not shared', () => {
@@ -403,9 +408,9 @@ describe('opted-out characters', () => {
     const hide = [{ roll_from: 0, roll_to: 100, started_at: ISO, hidden: true }];
     expect(buildRolls(rows, hide, [], set)).toEqual([]);
   });
-  it('tick lists drop them too', () => {
+  it('tick lists show them as labels too', () => {
     const t = buildTicks([{ description: 'Tick 1', scheduled_for: ISO, names: ['Aldenmar', 'Hushed'] }], [{ description: 'T', attendees: ['Quietone', 'Brackwyn'] }], set);
-    expect(t.map(x => x.names)).toEqual([['Aldenmar'], ['Brackwyn']]);
+    expect(t.map(x => x.names)).toEqual([['Aldenmar', 'Wizard 1'], ['Brackwyn', 'Monk 1']]);
   });
 });
 

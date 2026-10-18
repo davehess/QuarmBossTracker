@@ -7,7 +7,8 @@
 //   * the window comes from the share ROW. This file reads no search parameter at all, and the replay's routes
 //     (/api/share/raid/<token>/*) take the token, not a time (test/raid-share.test.js holds both);
 //   * the review is loaded by the same loader the members' page uses, so what is shown is what a member would see
-//     for that window, minus anything about a character who opted out;
+//     for that window, with a character who opted out shown as their class and a number ("Cleric 2"), the real
+//     name swapped in the loader before it reaches this page (a bid winner is the exception: their name stands);
 //   * noindex everywhere, no link into a member page (the middleware gives /share/* a bare shell, see
 //     app/layout.tsx), and no cookie is read or set for the visitor.
 //   * abuse (the guild lead, 2026-10-17; lib/shareGuard.ts): a per-IP limit runs BEFORE the token is looked up and a
@@ -65,7 +66,7 @@ export default async function SharedRaidSession({ params }: { params: { token: s
       <h1 className="mt-1 text-2xl text-gold">{share.row.title || 'Raid session'}</h1>
       <p className="mt-1 mb-4 text-sm text-dim">
         {etStamp.format(share.win.fromMs)} to {etStamp.format(share.win.toMs)} ET. Tap a time in any list to see that moment on the map.
-        Characters who opted out of stats are left out.
+        Characters who opted out of stats appear as their class and a number, unless they won an item here.
       </p>
       <SessionReview bundle={review.bundle} night={review.night} mode={{ kind: 'share', token: params.token }} />
     </div>
