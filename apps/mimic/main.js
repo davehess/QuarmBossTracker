@@ -577,6 +577,7 @@ function configForRenderer(cfg) {
     delete safe.session.token;
   }
   delete safe.token;
+  delete safe.chatCache;   // holds the Chat cache key box
   // Derived booleans the UI actually wants.
   safe.connected   = !!resolveUploadToken(cfg);
   safe.connectedAs = cfg.session?.identity?.display_name || null;
@@ -2546,6 +2547,8 @@ function cancelMimicLink() {
 // Sign out. Best-effort revoke on the bot; clear cfg.session locally regardless
 // so the user is signed out even if the network is down.
 async function signOutMimic() {
+  // A logout (the guild lead, 2026-10-17): start the Chat cache's grace window BEFORE the session is cleared below.
+  try { _chatCacheOnLogout(); } catch (e) { void e; }
   const cfg = loadConfig();
   const token = resolveUploadToken(cfg) || '';
   delete cfg.session;
@@ -2560,6 +2563,100 @@ async function signOutMimic() {
     try { await _httpsJsonPost(_botBaseUrl(cfg), '/api/mimic-link/revoke', {}, { 'X-Wolfpack-Mimic-Session': token }); } catch (e) { void e; }
   }
 }
+// ── Chat cache: the Chat overlay's feed, kept across a restart ───────────────────────────────────────────
+// The guild lead, 2026-10-17: "cache the filled in chat overlay data encrypted locally and invalidate it on logout if a
+// fresh session isn't established within a reasonable timeframe, and wipe before revoking access". The agent owns the file
+// and the encryption (packages/wolfpack-logsync/index.js, "Chat cache"). Mimic owns the KEY and the SESSION, so Mimic decides
+// when the cache may live:
+//   • KEY: 32 random bytes, made once, kept under safeStorage (DPAPI / Keychain) in cfg.chatCache.keyBox and handed to the
+//     agent in WOLFPACK_CHAT_CACHE_KEY. No keychain means no key means no cache: _encryptSecret's plaintext fallback is
+//     deliberately NOT used here. The key is handed over only while a session is live, so a signed-out agent cannot read or write.
+//   • IDENTITY: WOLFPACK_CHAT_CACHE_ID is the session's Discord id ('local' for a local-only install). The agent refuses a
+//     file saved for another id, and a different id here wipes the cache before the agent starts: never one person's chat to another.
+//   • LOGOUT: Sign out records outAt. The cache stays on disk, sealed and unread, for CHAT_CACHE_GRACE_MS. The same id signing in
+//     inside the window finds it again; a different id wipes it; no session by the end of the window deletes it (checked at every
+//     agent launch and every CHAT_CACHE_CHECK_MS). 24 h because the cache only keeps 24 h of lines anyway: a longer grace would
+//     keep nothing worth keeping, and a shorter one would lose it on the commonest reason to sign back in (next raid night).
+//   • REVOKE: the agent prints "[chat-cache] revoked" after a definite 401 (see the agent); Mimic then deletes the file again and
+//     drops the key from the config, so any leftover file is unreadable. Uninstalling does the same.
+const CHAT_CACHE_GRACE_MS = 24 * 60 * 60 * 1000;
+const CHAT_CACHE_CHECK_MS = 15 * 60 * 1000;
+const CHAT_CACHE_FILE = () => path.join(AGENT_DIR(), 'logsync.chat-cache.bin');
+let _chatCacheTimer = null;
+// Pure. st = cfg.chatCache ({ id: the identity the cache belongs to, outAt: when it was logged out of, 0 = not }); id = the
+// identity of the session Mimic is running with now ('' = none). Returns { wipe, state }.
+function _chatCacheDecide(st, id, now) {
+  const cur = st && typeof st === 'object' ? st : {};
+  const owner = typeof cur.id === 'string' ? cur.id : '';
+  const outAt = Number(cur.outAt) > 0 ? Number(cur.outAt) : 0;
+  const expired = outAt > 0 && now - outAt > CHAT_CACHE_GRACE_MS;
+  if (id) {
+    if ((owner && owner !== id) || expired) return { wipe: true, state: { id, outAt: 0 } };
+    return { wipe: false, state: { id, outAt: 0 } };
+  }
+  if (!owner) return { wipe: false, state: { id: '', outAt: 0 } };
+  if (!outAt) return { wipe: false, state: { id: owner, outAt: now } };
+  if (expired) return { wipe: true, state: { id: '', outAt: 0 } };
+  return { wipe: false, state: { id: owner, outAt } };
+}
+function _chatCacheIdentity(cfg) {
+  if (resolveUploadToken(cfg)) { const d = cfg.session && cfg.session.identity && cfg.session.identity.discord_id; return d ? String(d) : ''; }
+  return cfg.localOnly === true ? 'local' : '';
+}
+function _chatCacheDrop(c) {
+  for (const f of [CHAT_CACHE_FILE(), CHAT_CACHE_FILE() + '.tmp']) { try { fs.unlinkSync(f); } catch (e) { void e; } }
+  if (c.chatCache) delete c.chatCache.keyBox;
+}
+// Run the decision, delete the file (and the key) when it says wipe, save the new state. c is a freshly loaded config.
+function _chatCacheApply(c, id, now) {
+  if (!c.chatCache && !id) return { wipe: false };
+  const before = JSON.stringify(c.chatCache || null);
+  const d = _chatCacheDecide(c.chatCache, id, now);
+  if (d.wipe) _chatCacheDrop(c);
+  c.chatCache = Object.assign({}, c.chatCache, d.state);
+  if (JSON.stringify(c.chatCache) !== before) saveConfig(c);
+  return d;
+}
+function _chatCacheKeyBox(hex) {
+  try { if (safeStorage.isEncryptionAvailable()) return { enc: safeStorage.encryptString(hex).toString('base64') }; } catch (e) { void e; }
+  return null;
+}
+function _chatCacheKeyUnbox(box) {
+  if (!box || !box.enc) return null;
+  try { const k = safeStorage.decryptString(Buffer.from(box.enc, 'base64')); return /^[0-9a-f]{64}$/.test(k) ? k : null; } catch (e) { void e; return null; }
+}
+// The two env vars for the agent about to launch ({} = no cache). Applies the decision first, so a different identity or an
+// expired grace window is wiped before the agent can read anything.
+function _chatCacheEnv() {
+  const out = {};
+  try {
+    const c = loadConfig();
+    const id = _chatCacheIdentity(c);
+    _chatCacheApply(c, id, Date.now());
+    if (id) {
+      let key = _chatCacheKeyUnbox(c.chatCache.keyBox);
+      if (!key) {
+        try { fs.unlinkSync(CHAT_CACHE_FILE()); } catch (e) { void e; }   // a file no key opens is dead weight
+        key = require('crypto').randomBytes(32).toString('hex');
+        const box = _chatCacheKeyBox(key);
+        if (box) { c.chatCache.keyBox = box; saveConfig(c); } else key = null;
+      }
+      if (key) { out.WOLFPACK_CHAT_CACHE_KEY = key; out.WOLFPACK_CHAT_CACHE_ID = id; }
+    }
+  } catch (e) { void e; }
+  return out;
+}
+function _chatCacheOnLogout() { const c = loadConfig(); _chatCacheApply(c, '', Date.now()); }
+function _chatCacheMaintain() { const c = loadConfig(); _chatCacheApply(c, _chatCacheIdentity(c), Date.now()); }
+// Revoked (or uninstalling): the file and the key go, and the cache belongs to no one.
+function _chatCacheWipeAll(why) {
+  const c = loadConfig();
+  _chatCacheDrop(c);
+  c.chatCache = { id: '', outAt: 0 };
+  saveConfig(c);
+  appendAgentLog(`[mimic] chat cache deleted and its key dropped (${why})\n`);
+}
+// ── end Chat cache ──
 // Short "resumes at" clock for the tray label, e.g. "3:45 PM".
 function _fmtPauseClock(ms) {
   try {
@@ -3306,6 +3403,11 @@ async function launchAgent() {
   // when we have a token + upload URL — local-only installs leave it unset so
   // the agent never tries to upload.
   if (uploadToken && cfg.botUrl) env.WOLFPACK_TOKEN = uploadToken;
+  // The Chat cache key + the identity it belongs to (see "Chat cache"). Anything inherited from our own environment is
+  // dropped first: only Mimic's decision counts, and no decision means no cache.
+  delete env.WOLFPACK_CHAT_CACHE_KEY; delete env.WOLFPACK_CHAT_CACHE_ID;
+  Object.assign(env, _chatCacheEnv());
+  if (!_chatCacheTimer) { _chatCacheTimer = setInterval(() => { try { _chatCacheMaintain(); } catch (e) { void e; } }, CHAT_CACHE_CHECK_MS); if (_chatCacheTimer.unref) _chatCacheTimer.unref(); }
   // Per-character "do not transmit" list — for friends' characters that play in
   // other guilds, or any toon the user wants kept out of our DB entirely. The
   // agent honors this at the outermost boundary (excluded logs aren't tailed),
@@ -3324,7 +3426,11 @@ async function launchAgent() {
     cwd: AGENT_DIR(),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  agentProc.stdout.on('data', d => { const s = `[agent] ${d}`; process.stdout.write(s); appendAgentLog(s); });
+  agentProc.stdout.on('data', d => {
+    const s = `[agent] ${d}`; process.stdout.write(s); appendAgentLog(s);
+    // The agent saw a definite 401 and has already deleted the cache: drop the key too, so a leftover file is unreadable.
+    if (/(?:^\[agent\] |\n)\[chat-cache\] revoked \(/.test(s)) { try { _chatCacheWipeAll('the bot refused this session'); } catch (e) { void e; } }
+  });
   agentProc.stderr.on('data', d => { const s = `[agent] ${d}`; process.stderr.write(s); appendAgentLog(s); });
   agentProc.on('exit', (code, signal) => {
     agentProc = null;
@@ -9301,6 +9407,9 @@ async function runUninstaller() {
   // detached uninstaller. unref() lets it outlive us.
   quitting = true;
   try { if (agentProc) agentProc.kill(); } catch (e) { void e; }
+  // Uninstalling takes the login with it, so the Chat cache and its key go too, before the uninstaller starts. (The agent
+  // is stopped first: on Windows a kill is hard and runs no exit handler, so it cannot write the file back.)
+  try { _chatCacheWipeAll('uninstall'); } catch (e) { void e; }
   try {
     spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
   } catch (e) {
