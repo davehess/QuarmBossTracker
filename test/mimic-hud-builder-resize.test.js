@@ -20,10 +20,14 @@ describe('the HUD ring\'s builder panel puts back the size you left it at', () =
   // The panel grows the window by 300 px on one side; the ring keeps the rest.
   const block = sliceBlock(ME, '  function ringBoundsOf(win, panelW, left){', '    hoverOff();\n  }');
   // Closes the panel on a fake window and returns every setBounds the page asked for.
-  function close({ win, left, atLoad = false, pre = { x: 500, y: 200, width: 300, height: 300 } }) {
+  // inCanvas: the alpha's Canvas runs the same page as a panel (?wpcanvas=1); a panel gives the builder's
+  // width back through canvasWiden and must never set window bounds (its window is the whole Canvas).
+  function close({ win, left, atLoad = false, inCanvas = false, pre = { x: 500, y: 200, width: 300, height: 300 } }) {
     const { __run } = evalBlock(`
       const PANEL_W = 300, BUILD_KEY = 'k';
+      const IN_CANVAS = ${inCanvas ? 'true' : 'false'};
       const calls = [];
+      function canvasWiden(on) { calls.push({ canvasWiden: on }); }
       const store = { k: ${JSON.stringify(JSON.stringify(pre))} };
       const localStorage = { getItem(k) { return store[k] == null ? null : store[k]; }, removeItem(k) { delete store[k]; } };
       const cls = new Set(${left ? "['building', 'build-left']" : "['building']"});
@@ -71,5 +75,10 @@ describe('the HUD ring\'s builder panel puts back the size you left it at', () =
   it('an unreadable window falls back to the stored bounds', () => {
     const calls = close({ win: { x: 0, y: 0, width: 350, height: 300 }, left: false });
     expect(calls).toEqual([{ x: 500, y: 200, width: 300, height: 300 }]);
+  });
+
+  it('a Canvas panel gives the builder width back and never resizes the window', () => {
+    const calls = close({ win: { x: 500, y: 200, width: 500, height: 220 }, left: false, inCanvas: true });
+    expect(calls).toEqual([{ canvasWiden: false }]);
   });
 });

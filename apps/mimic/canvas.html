@@ -24,23 +24,56 @@
 
      Layout: one per screen resolution, positions as fractions of the screen
      and sizes in px — the ini rule EQ uses, so a new resolution keeps the
-     arrangement's shape. */
+     arrangement's shape.
+
+     Overlay panels (Mimic 3.0 alpha; the guild lead, 2026-09-29: "the next
+     version of alpha [should] have all of the data elements from the current
+     overlays … as they are today, no new modalities"): any overlay's own page
+     as a panel, the way the dock hosts it — the builder plan's "compat part".
+     While it is here it has no window of its own (main.js _canvasHostedKeys);
+     Remove hands it back. Its size is the panel; its text size scales the
+     whole page. The different views come later, one overlay at a time. */
   html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,"Cascadia Code",Consolas,Menlo,monospace;color:#c9d1d9;user-select:none}
   #panels{position:fixed;inset:0}
   .panel{position:absolute;box-sizing:border-box}
   .panel > iframe{position:absolute;inset:0;width:100%;height:100%;border:0;
     background:transparent;display:block}
+  /* An overlay page keeps its own layout at its own size and is scaled as a
+     whole (place() sets the width/height to the panel ÷ scale). */
+  .panel.ov > iframe{inset:auto;left:0;top:0;transform-origin:0 0}
+  /* An overlay panel is the page itself, with no plate, border or padding of the canvas's own (the guild
+     lead, 2026-10-03: "the margins around the actual data is too large … the canvas elements themselves do
+     not all have to be prim and properly squared off"). Its only frame is the dashed outline body.edit
+     draws while arranging; the Background switch plates a panel from the preload, and a piece cut from a
+     page (kind 'sect') sets its card's colour inline. */
+  .panel.ov{background:transparent;border:0;padding:0}
+  /* A page with its own builder open (the HUD ring's ⚙) takes the mouse even while arranging. */
+  body.edit .panel.building > iframe{pointer-events:auto}
+  /* A piece cut from an overlay's page: a window onto one section of the page (cropSections()
+     moves the page under the panel and clips it to the section). With nothing to show it steps
+     aside. */
+  .panel.sect.nodata{visibility:hidden}
   /* A hidden panel keeps its page (a callouts panel is where a pinned callout
      lives); it is only invisible. */
   .panel.off{visibility:hidden}
+  /* A show-when rule that is false hides a panel the same way, as a class of its own so `off` is never
+     touched; while arranging nothing carries it, and the badge says which rule the panel has. */
+  .panel.wh{visibility:hidden}
+  .whb{display:none}
   .tab,.grip{display:none}
 
   /* ── Arranging ─────────────────────────────────────────────────────────── */
   body.edit .panel{outline:1px dashed rgba(88,166,255,0.85);outline-offset:0;
     background:rgba(31,111,235,0.07);cursor:move}
   body.edit .panel > iframe{pointer-events:none}
+  body.edit .panel.sect.nodata{visibility:visible;opacity:0.45;min-width:90px;min-height:18px}
+  /* Its size is its section's; A−/A+ and the page width in ⚙ change it, not a drag. */
+  .panel.sect > .grip{display:none!important}
   body.edit .panel.off{visibility:visible;opacity:0.4}
+  body.edit .whb.on{display:block;position:absolute;left:2px;bottom:2px;z-index:3;max-width:calc(100% - 22px);
+    padding:0 5px;font-size:10px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    pointer-events:none;color:#0d1117;background:rgba(210,153,34,0.92);border-radius:3px}
   body.edit .panel.lift{z-index:50;outline-style:solid}
   body.edit .tab{display:flex;align-items:center;gap:6px;position:absolute;left:-1px;
     bottom:100%;max-width:calc(100% + 2px);box-sizing:border-box;
@@ -72,6 +105,8 @@
   .mvbtn:hover{opacity:1}
   .panel.mvin .mvbtn{right:auto;left:0;border-radius:0 0 3px 0}
   body.edit .mvbtn{display:none}
+  /* One ✥ per group: the top-left piece carries it and moves them all. */
+  .panel.mvtail .mvbtn{display:none}
 
   /* The drag shield: while a panel moves, one screen-sized interactive layer
      keeps the window taking the mouse, so a fast drag that outruns the panel
@@ -109,6 +144,8 @@
   #menu label.chk input{accent-color:#1f6feb;cursor:pointer}
   #menu label.chk .dim{color:#6e7681}
   #menu .btn.on{background:rgba(31,111,235,0.25);border-color:#1f6feb;color:#e6edf3}
+  #menu .btn.sw{width:22px;height:20px;padding:0;border:2px solid #30363d;border-radius:4px}
+  #menu .btn.sw.on{border-color:#e6edf3}
   .chips{display:flex;flex-wrap:wrap;gap:4px}
   .chip{display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:10px;
     background:#21262d;border:1px solid #30363d;cursor:pointer}
@@ -116,23 +153,134 @@
   .chip .cx{color:#6e7681}
   .chip:hover .cx{color:#f85149}
   .chip.add{color:#58a6ff}
+
+  /* ── Pieces (3.0 alpha): single data elements drawn by parts.js ─────────── */
+  .panel.part > .pbody{position:absolute;inset:0;padding:1px 3px;box-sizing:border-box;overflow:hidden}
+  /* Backing is ONLY a plate (the guild lead, 2026-10-18: "backing changes spacing instead of just background"):
+     the same box, padding and content area with or without it. The outline is an inset shadow, not a
+     border, so it takes no room; it used to add 1px border + 3px 6px padding, which shrank the piece's
+     content box by 8 x 6 px and made Fit (+4) come up short. */
+  .panel.part.back > .pbody{background:rgba(13,17,23,var(--bg-alpha,0.72));box-shadow:inset 0 0 0 1px #30363d;border-radius:5px}
+  body.edit .panel.part.sample > .pbody{opacity:0.7}
+  /* A Ring arc is drawn into its panel's whole box, so the arcs of one ring line up: no padding, no outline. */
+  .panel.part.seg > .pbody{padding:0}
+  .panel.part.seg.back > .pbody{box-shadow:none}
+  /* Pieces sit close together, so a piece's tab shows only while the mouse is
+     on it (the piece itself drags; right-click opens its ⚙). */
+  body.edit .panel.part .tab{display:none}
+  body.edit .panel.part:hover .tab,body.edit .panel.part.lift .tab{display:flex;z-index:60}
+  body.edit .panel.sel{outline:2px solid #d29922;outline-offset:1px}
+  /* Two or more selected (a group, or a Shift-click set): one box around them all, and its ◢
+     stretches every piece at once. The box itself lets clicks through; only the ◢ takes the mouse. */
+  #gbox{display:none;position:fixed;z-index:55;border:1px dashed rgba(210,153,34,0.8);pointer-events:none}
+  body.edit #gbox.on{display:block}
+  #gbox .ggrip{position:absolute;right:-9px;bottom:-9px;width:16px;height:16px;pointer-events:auto;cursor:nwse-resize;
+    background:#d29922;color:#0d1117;font-size:11px;line-height:16px;text-align:center;border-radius:3px}
+  /* What is selected, and what can be done with it: lock together, save as a
+     group, remove. A row of its own under the toolbar, only while there is one. */
+  #selbar{display:none;flex-basis:100%;align-items:center;gap:6px;flex-wrap:wrap;padding-top:4px;border-top:1px solid #30363d}
+  #selbar.on{display:flex}
+  #selbar b{color:#d29922}
+  #selbar select{font:inherit;font-size:11px;padding:2px 4px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
+  #selbar input{font:inherit;font-size:11px;padding:2px 6px;width:120px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
+  /* ✕ on a piece deletes it; Undo stays here for a few seconds. */
+  #toast{display:none;position:fixed;left:50%;bottom:48px;transform:translateX(-50%);z-index:96;align-items:center;gap:10px;
+    padding:6px 10px;font-size:12px;background:rgba(22,27,34,0.97);border:1px solid #d29922;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
+  #toast.on{display:flex}
+  #toast:not(.undo) #undoBtn{display:none}
+
+  /* The chooser: a movable palette of every piece, by category, and of the
+     groups — today's overlays first. Only while arranging. */
+  /* Wide enough to read, and wider on request: drag its right edge (the width is kept). */
+  #chooser{display:none;position:fixed;z-index:85;width:360px;min-width:280px;max-width:640px;max-height:75vh;box-sizing:border-box;
+    flex-direction:column;font-size:12px;background:rgba(22,27,34,0.97);border:1px solid #1f6feb;
+    border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.6);resize:horizontal;overflow:hidden}
+  body.edit #chooser.open{display:flex}
+  #chooser .ch-h{display:flex;align-items:center;gap:6px;padding:5px 8px;cursor:move;border-bottom:1px solid #30363d}
+  #chooser .ch-h b{color:#e6edf3;flex:1}
+  #chooser .ch-tabs{display:flex;flex-wrap:wrap;gap:3px;padding:5px 6px;border-bottom:1px solid #30363d}
+  #chooser .ch-tab{padding:1px 6px;border-radius:9px;border:1px solid #30363d;cursor:pointer;color:#8b949e;background:#0d1117}
+  #chooser .ch-tab.on{color:#e6edf3;border-color:#1f6feb;background:rgba(31,111,235,0.25)}
+  #chooser .ch-list{overflow:auto;padding:4px 6px;flex:1;min-height:60px}
+  #chooser .ch-sec{margin:6px 0 3px;color:#6e7681;text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
+  #chooser .pc{display:flex;flex-wrap:wrap;align-items:center;gap:3px 6px;padding:4px 5px;border:1px solid transparent;border-radius:4px;cursor:grab}
+  #chooser .pc:hover{border-color:#30363d;background:#0d1117}
+  #chooser .pc-l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
+  #chooser .pc-v{color:#6e7681;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* A piece: its whole name, what it reads now, then the ways to draw it on a line of their own
+     (the guild lead, 2026-09-29, on one crowded line: "i can't read this"). */
+  #chooser .pc.pp{border-bottom-color:#21262d;border-radius:0}
+  #chooser .pc.pp .pc-l{white-space:normal;font-weight:600}
+  /* The piece as it would be drawn, with the client's data right now (parts.js render, the same call a placed
+     piece makes); a fixed height so hovering a mode chip never moves the chips. It is not a drag target of its
+     own: the mouse goes to its row. */
+  #chooser .pc-pv{flex-basis:100%;height:42px;box-sizing:border-box;overflow:hidden;pointer-events:none;
+    padding:1px 3px;border-radius:4px;background:rgba(13,17,23,0.6)}
+  #chooser .pc-pv.sample{opacity:0.55}
+  #chooser .pc-ms{flex-basis:100%;display:flex;flex-wrap:wrap;gap:3px}
+  #chooser .pc-m{padding:0 5px;border:1px solid #30363d;border-radius:3px;color:#58a6ff;cursor:grab;font-size:11px;line-height:17px}
+  #chooser .pc-m:hover{border-color:#58a6ff}
+  /* A saved group's hotkey: dashed when it has none, blue with a key, amber while it listens, red when
+     another program holds it. */
+  #chooser .pc-k{padding:0 5px;border:1px dashed #30363d;border-radius:3px;color:#6e7681;cursor:pointer;font-size:11px;line-height:17px}
+  #chooser .pc-k:hover{border-color:#58a6ff;color:#e6edf3}
+  #chooser .pc-k.set{border-style:solid;color:#58a6ff}
+  #chooser .pc-k.on{border-style:solid;border-color:#d29922;color:#d29922}
+  #chooser .pc-k.clash{border-style:solid;border-color:#f85149;color:#f85149}
+  #chooser .pc .x{color:#6e7681;cursor:pointer;padding:0 3px}
+  #chooser .pc .x:hover{color:#f85149}
+  #chooser .ch-f{border-top:1px solid #30363d;padding:5px 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  #chooser .ch-f input{flex:1;min-width:80px;font:inherit;font-size:11px;padding:2px 6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
+  #chooser .dim{color:#6e7681}
+  /* Where is it? A row of the chooser and the piece(s) it is on the screen as: the piece is outlined in green
+     (steady while hovered, a short pulse after a click on an already-placed row) and a dashed line runs between
+     them. The chooser and the pieces are one page, so the line is just an SVG over it that takes no clicks. */
+  .panel.hl,.panel.loc{outline:3px solid #56d364!important;outline-offset:2px;z-index:60;box-shadow:0 0 14px 3px rgba(86,211,100,0.6)}
+  .panel.loc{animation:locpulse 0.5s ease-in-out 4 alternate}
+  @keyframes locpulse{from{box-shadow:0 0 6px 1px rgba(86,211,100,0.3)}to{box-shadow:0 0 26px 8px rgba(86,211,100,0.9)}}
+  body.edit .panel.off.hl,body.edit .panel.off.loc{opacity:0.9}
+  #chooser .pc.hl,#chooser .ch-tab.hl{border-color:#56d364;background:rgba(86,211,100,0.14)}
+  #loc{display:none;position:fixed;inset:0;width:100%;height:100%;z-index:84;pointer-events:none}
+  #loc.on{display:block}
+  #loc line{stroke:#56d364;stroke-width:2.5;stroke-dasharray:7 5;filter:drop-shadow(0 0 3px #56d364);animation:locdash 0.5s linear infinite}
+  #loc circle{fill:#56d364}
+  @keyframes locdash{to{stroke-dashoffset:-12}}
+  #ghost{display:none;position:fixed;z-index:99;pointer-events:none;padding:3px 8px;font-size:11px;
+    background:rgba(31,111,235,0.85);color:#fff;border-radius:4px;white-space:nowrap}
 </style></head>
 <body data-wp-overlay>
   <div id="panels"></div>
+  <div id="gbox"><span class="ggrip" data-wp-interact title="Drag to size the whole group · Shift: keep its shape">◢</span></div>
   <div id="shield" data-wp-interact></div>
   <div id="bar" data-wp-interact>
     <b>🧩 Canvas</b>
-    <span class="dim">drag a panel · stretch it from ◢ · ⚙ picks what it shows · Shift while dragging: no snapping</span>
+    <span class="dim">drag a piece and its group comes with it · Alt-drag pulls one piece out · click selects a piece's whole group (Alt-click: just the piece), Shift- or Ctrl-click adds · the group's ◢ sizes them all · double-click or right-click: settings · Shift while dragging: no snapping</span>
+    <button class="btn" id="pcBtn" title="The pieces: every data element of every overlay, by category, and today's overlays as groups">🧩 Pieces</button>
     <button class="btn" id="addBtn" title="A new panel for some of the countdowns">＋ Timers panel</button>
+    <button class="btn" id="ovBtn" title="Put any overlay on the canvas, as it is today">＋ Overlay</button>
     <button class="btn" id="screenBtn" title="Move the canvas to your next screen">⇆ Next screen</button>
     <button class="btn" id="resetBtn" title="Put the three starting panels back where they began">↺ Reset</button>
     <button class="btn" id="hideBtn" title="Turn the canvas off — the trigger overlay shows its timers and callouts again">✕ Turn off</button>
     <button class="btn go" id="doneBtn" title="Finish arranging (locks overlays if they were unlocked)">✓ Done</button>
+    <div id="selbar"></div>
   </div>
   <div id="menu" data-wp-interact></div>
+  <div id="toast" data-wp-interact><span id="toastMsg"></span><button class="btn" id="undoBtn" title="Put it back (Ctrl+Z)">↶ Undo</button></div>
+  <div id="chooser" data-wp-interact>
+    <div class="ch-h" id="chHead"><b>🧩 Pieces</b><span class="dim">drag onto the screen</span><button class="btn" id="chClose" title="Put the chooser away (🧩 Pieces brings it back)">✕</button></div>
+    <div class="ch-tabs" id="chTabs"></div>
+    <div class="ch-list" id="chList"></div>
+    <div class="ch-f" id="chFoot"></div>
+  </div>
+  <svg id="loc"></svg>
+  <div id="ghost"></div>
+<script src="parts.js"></script>
+<script src="sections.js"></script>
 <script>
   var M = window.mimic || {};
   var PORT = 7779;
+  // The pieces' own stylesheet (parts.js), once.
+  if (window.WpParts) { var _pcss = document.createElement('style'); _pcss.textContent = WpParts.CSS; document.head.appendChild(_pcss); }
   try { if (M.getAgentPort) M.getAgentPort().then(function (p) { if (p) PORT = p; }).catch(function () {}); } catch (e) {}
   try { if (M.onAgentPort) M.onAgentPort(function (p) { PORT = p; }); } catch (e) {}
 
@@ -146,7 +294,144 @@
     ['tick',    'Server tick',        ''],
     ['loot',    'Loot bids',          ''],
   ];
-  var MAX_PANELS = 12;
+  var MAX_PANELS = 150;
+
+  // ── Show when ───────────────────────────────────────────────────────────────
+  // The guild lead picked "show-when rules" for the Canvas: the screen empties itself between pulls, each
+  // piece with a condition. A panel's `when` is one of WHEN (absent = always), and `cls` an optional list of
+  // classes it is for; together they are an AND. A rule that is FALSE hides the panel exactly as `off` does
+  // (not drawn, not a click target, place kept) but is computed, never saved into `off`; one the agent
+  // cannot answer is TRUE (a hidden callout is worse than a visible one). Arranging shows everything.
+  var WHEN = [
+    ['combat',   'In combat'],
+    ['nocombat', 'Out of combat'],
+    ['target',   'Have a target'],
+    ['npc',      'NPC target'],
+    ['raid',     'In a raid'],
+  ];
+  var WHEN_CLASSES = [['Warrior', 'WAR'], ['Cleric', 'CLR'], ['Paladin', 'PAL'], ['Ranger', 'RNG'], ['Shadow Knight', 'SHD'],
+    ['Druid', 'DRU'], ['Monk', 'MNK'], ['Bard', 'BRD'], ['Rogue', 'ROG'], ['Shaman', 'SHM'], ['Necromancer', 'NEC'],
+    ['Wizard', 'WIZ'], ['Magician', 'MAG'], ['Enchanter', 'ENC'], ['Beastlord', 'BST']];
+  // When a fight ends, combat-only pieces stay up this long, so the gap between two mobs does not flicker them.
+  var COMBAT_HOLD_MS = 8000;
+  // The agent keeps the last Zeal raid window it saw and never clears it on leaving; a raid is "a window
+  // within this long" (the agent's own rule for the same question: EXT_RAID_FRESH_MS).
+  var RAID_FRESH_MS = 60000;
+
+  // A panel's rule as the layout keeps it: only valid values, and only the keys that are set.
+  function cleanWhen(src, dst) {
+    var w = String((src && src.when) || '');
+    if (WHEN.some(function (x) { return x[0] === w; })) dst.when = w;
+    if (src && Array.isArray(src.cls)) {
+      var c = WHEN_CLASSES.filter(function (k) { return src.cls.indexOf(k[0]) >= 0; }).map(function (k) { return k[0]; });
+      if (c.length) dst.cls = c;
+    }
+    return dst;
+  }
+  // The agent's sources a rule reads (the canvas polls a source only while something needs it).
+  function whenSources(p) {
+    var k = [];
+    if (p.when === 'raid') k.push('state');
+    else if (p.when) k.push('me');
+    if (p.cls && p.cls.length && k.indexOf('me') < 0) k.push('me');
+    return k;
+  }
+  // true / false when the target is known to be an NPC / a player; null when it cannot be told yet. The
+  // agent marks no target as an NPC, but only a catalog mob carries level_src 'catalog' and only a player
+  // gets one from /who, Zeal, a con or history; a name with a space (or a leading #) is an NPC's.
+  function targetIsNpc(t) {
+    if (!t) return false;
+    if (t.corpse) return false;
+    if (t.level_src === 'catalog') return true;
+    if (t.level_src) return false;
+    var n = String(t.name || '');
+    if (/\s/.test(n) || n.charAt(0) === '#') return true;
+    return null;
+  }
+  // What the agent says right now, from /api/me and /api/state: true / false, or null when unknown. `miss`
+  // names a signal the agent answered without (an older agent), so the menu can say so.
+  function whenSignals(me, state, now) {
+    var s = { combat: null, target: null, npc: null, raid: null, cls: null, miss: {} };
+    if (me && me.character) {
+      if (me.combat && typeof me.combat.live === 'boolean') s.combat = me.combat.live; else s.miss.combat = true;
+      if ('target' in me) { s.target = !!me.target; s.npc = targetIsNpc(me.target); } else { s.miss.target = true; s.miss.npc = true; }
+      if (!('class' in me)) s.miss.cls = true;
+      else if (typeof me.class === 'string' && me.class) s.cls = me.class;
+    }
+    if (state) {
+      if (!('raidPipe' in state)) s.miss.raid = true;
+      else {
+        var rp = state.raidPipe;
+        s.raid = !!(rp && Array.isArray(rp.members) && rp.members.length && now - rp.at < RAID_FRESH_MS);
+      }
+    }
+    return s;
+  }
+  var _combatAt = -Infinity;
+  function holdCombat(live, now) {
+    if (live === null) return null;
+    if (live) { _combatAt = now; return true; }
+    return now - _combatAt < COMBAT_HOLD_MS;
+  }
+  // Does the panel's rule hold? An unknown signal holds.
+  function whenHolds(p, sig) {
+    var v = true;
+    if (p.when === 'combat') v = sig.combat;
+    else if (p.when === 'nocombat') v = sig.combat === null ? null : !sig.combat;
+    else if (p.when === 'target') v = sig.target;
+    else if (p.when === 'npc') v = sig.npc;
+    else if (p.when === 'raid') v = sig.raid;
+    if (v === false) return false;
+    if (p.cls && p.cls.length && sig.cls !== null) {
+      var mine = sig.cls.toLowerCase();
+      if (!p.cls.some(function (c) { return c.toLowerCase() === mine; })) return false;
+    }
+    return true;
+  }
+  // The small label on a panel while arranging, '' for a panel with no rule.
+  function whenBadge(p) {
+    var t = [];
+    for (var i = 0; i < WHEN.length; i++) if (WHEN[i][0] === p.when) t.push(WHEN[i][1]);
+    if (p.cls && p.cls.length) t.push(p.cls.map(function (c) {
+      for (var j = 0; j < WHEN_CLASSES.length; j++) if (WHEN_CLASSES[j][0] === c) return WHEN_CLASSES[j][1];
+      return c;
+    }).join(' '));
+    return t.join(' · ');
+  }
+  // Setting a rule on panels (the ⚙ menu: one; the selection bar: every selected one). '' = always / any class.
+  function setWhen(ps, w) {
+    if (w && !WHEN.some(function (x) { return x[0] === w; })) return;
+    ps.forEach(function (q) { if (w) q.when = w; else delete q.when; });
+  }
+  function setWhenClasses(ps, list) {
+    var c = WHEN_CLASSES.filter(function (k) { return list.indexOf(k[0]) >= 0; }).map(function (k) { return k[0]; });
+    ps.forEach(function (q) { if (c.length) q.cls = c.slice(); else delete q.cls; });
+  }
+  function toggleWhenClass(p, c) {
+    var cur = p.cls || [];
+    setWhenClasses([p], !c ? [] : cur.indexOf(c) >= 0 ? cur.filter(function (x) { return x !== c; }) : cur.concat([c]));
+  }
+  // ── end Show when ──
+
+  // Every overlay the canvas can host, from main (canvas-state): key, label,
+  // the page to load, and where its own window is right now.
+  var _overlays = [];
+  function ovEntry(key) { for (var i = 0; i < _overlays.length; i++) if (_overlays[i].key === key) return _overlays[i]; return null; }
+  function ovSrc(key, style) {
+    var o = ovEntry(key);
+    if (!o || !o.src) return null;
+    // A page that can be drawn two ways takes its look from the panel (me.html reads ?wpstyle=hud|a), so
+    // the HUD's ring and its box can each be a panel of the same page.
+    return o.src + (o.src.indexOf('?') >= 0 ? '&' : '?') + 'wpcanvas=1' + (style ? '&wpstyle=' + encodeURIComponent(style) : '');
+  }
+  // A piece cut from an overlay (sections.js): its page, told which section it is and, where the
+  // section only exists on one tab, that tab.
+  function sectSrc(p) {
+    var base = ovSrc(p.key);
+    if (!base) return null;
+    var d = window.WpSections ? window.WpSections.find(p.key, p.sect) : null;
+    return base + '&wpsect=' + encodeURIComponent(p.sect) + (d && d.tab ? '&wptab=' + encodeURIComponent(d.tab) : '');
+  }
 
   function defaultLayout() {
     return { panels: [
@@ -172,16 +457,80 @@
     var src = (layout && Array.isArray(layout.panels)) ? layout.panels : null;
     if (!src) return null;
     var out = [], seen = {}, haveCallouts = false, haveAll = false;
+    var seenKey = {};
+    function add(src1, o) { out.push(cleanWhen(src1, o)); }
     for (var i = 0; i < src.length && out.length < MAX_PANELS; i++) {
       var p = src[i];
       if (!p || typeof p.id !== 'string' || !p.id || seen[p.id]) continue;
+      // A piece: one data element (parts.js), in a mode, maybe one of a group
+      // it was placed with. The same piece may sit on the screen twice.
+      if (p.kind === 'part') {
+        var pid = String(p.part || '');
+        if (!/^[a-z]+\.[A-Za-z0-9_]+$/.test(pid)) continue;
+        seen[p.id] = true;
+        add(p, {
+          id: p.id.slice(0, 24), kind: 'part', part: pid.slice(0, 40),
+          mode: /^[a-z]{2,10}$/.test(String(p.mode || '')) ? p.mode : '',
+          name: String(p.name || '').slice(0, 32),
+          x: num(p.x, 0, 1, 0.3), y: num(p.y, 0, 1, 0.3),
+          w: num(p.w, 40, 4000, 200), h: num(p.h, 16, 3000, 30),
+          scale: num(p.scale, 0.5, 3, 1), back: !!p.back,
+          // Its own look: label hidden, bar thickness, colour, text alignment.
+          nolabel: !!p.nolabel,
+          thick: (p.thick === 'thin' || p.thick === 'thick') ? p.thick : '',
+          color: /^#[0-9a-fA-F]{6}$/.test(String(p.color || '')) ? p.color : '',
+          align: (p.align === 'c' || p.align === 'r') ? p.align : '',
+          // A Ring arc's place on the HUD's circle (parts.js cleanArc); null for any other mode.
+          arc: (window.WpParts && p.arc) ? WpParts.cleanArc(p.arc) : null,
+          grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
+          off: !!p.off,
+        });
+        continue;
+      }
+      // A piece cut from an overlay's own page (sections.js): that page once per piece, cropped to
+      // one section, so several may come from the same overlay. Its size follows the section; pw/ph
+      // is the size the page lays out at, as its window did.
+      if (p.kind === 'sect') {
+        var skey = String(p.key || ''), sid = String(p.sect || '');
+        if (!/^[A-Za-z]{2,16}$/.test(skey) || !/^[a-z][a-z0-9-]{0,23}$/.test(sid)) continue;
+        seen[p.id] = true;
+        add(p, {
+          id: p.id.slice(0, 24), kind: 'sect', key: skey, sect: sid,
+          name: String(p.name || '').slice(0, 32),
+          x: num(p.x, 0, 1, 0.3), y: num(p.y, 0, 1, 0.3),
+          w: num(p.w, 16, 4000, 200), h: num(p.h, 8, 3000, 40),
+          pw: num(p.pw, 160, 2400, 340), ph: num(p.ph, 120, 3000, 400),
+          scale: num(p.scale, 0.5, 2.5, 1),
+          grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
+          off: !!p.off,
+        });
+        continue;
+      }
+      // An overlay's page, once each: two copies would be the same page twice. The one page that has two
+      // looks (the HUD, as a ring and as a box) may sit here once in each.
+      if (p.kind === 'overlay') {
+        var key = String(p.key || '');
+        var look = (key === 'me' && /^(hud|a)$/.test(String(p.style || ''))) ? p.style : '';
+        if (!/^[A-Za-z]{2,16}$/.test(key) || seenKey[key + ':' + look]) continue;
+        seen[p.id] = true; seenKey[key + ':' + look] = true;
+        add(p, {
+          id: p.id.slice(0, 24), kind: 'overlay', key: key, style: look,
+          name: String(p.name || key).slice(0, 24),
+          x: num(p.x, 0, 1, 0.3), y: num(p.y, 0, 1, 0.3),
+          w: num(p.w, 80, 4000, 320), h: num(p.h, 36, 3000, 240),
+          scale: num(p.scale, 0.5, 2.5, 1),
+          grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
+          off: !!p.off,
+        });
+        continue;
+      }
       var kind = p.kind === 'callouts' ? 'callouts' : 'timers';
       if (kind === 'callouts' && haveCallouts) continue;
       var all = kind === 'timers' && !!p.all && !haveAll;
       seen[p.id] = true;
       if (kind === 'callouts') haveCallouts = true;
       if (all) haveAll = true;
-      out.push({
+      add(p, {
         id: p.id.slice(0, 24), kind: kind, all: all,
         name: String(p.name || (kind === 'callouts' ? 'Callouts' : 'Timers')).slice(0, 24),
         groups: Array.isArray(p.groups) ? p.groups.filter(function (g) { return GROUPS.some(function (G) { return G[0] === g; }); }) : [],
@@ -190,13 +539,34 @@
         w: num(p.w, 120, 4000, 340), h: num(p.h, 36, 3000, 160),
         scale: num(p.scale, 0.6, 2.5, 1),
         anchor: p.anchor === 'top' ? 'top' : 'bottom',
+        // Any panel can be locked together with pieces (the selection bar's 🔗).
+        grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
         off: !!p.off,
       });
     }
     var d = defaultLayout().panels;
     if (!haveCallouts) out.unshift(d[0]);
     if (!haveAll) out.push(d[1]);
-    return { panels: out };
+    var res = { panels: out };
+    // Which live group (the grp its pieces share) was placed or saved as which SAVED group: how a
+    // group's hotkey finds its pieces. Only for a group that still has pieces here.
+    if (layout.named && typeof layout.named === 'object') {
+      var live = {}, nm = {}, any = false;
+      out.forEach(function (q) { if (q.grp) live[q.grp] = true; });
+      Object.keys(layout.named).forEach(function (g) {
+        var sid = layout.named[g];
+        if (live[g] && typeof sid === 'string' && sid) { nm[g] = sid.slice(0, 24); any = true; }
+      });
+      if (any) res.named = nm;
+    }
+    // The chooser remembers whether it was open, where, how wide, and on which tab.
+    var ch = layout.chooser;
+    if (ch && typeof ch === 'object') {
+      res.chooser = { open: ch.open !== false, x: num(ch.x, 0, 1, 0.72), y: num(ch.y, 0, 1, 0.12),
+        tab: /^[a-z]{2,12}$/.test(String(ch.tab || '')) ? ch.tab : 'groups' };
+      if (ch.w != null) res.chooser.w = num(ch.w, 280, 640, 360);
+    }
+    return res;
   }
 
   var _layout = defaultLayout();
@@ -232,10 +602,24 @@
   var shield = document.getElementById('shield');
   var menuEl = document.getElementById('menu');
   var _els = {};
+  // Never saved: a panel whose page has its builder open is wider for as long as it is (id → { add: screen px,
+  // left: it grew to the left }), and a panel just added from a preset is fitted to its page once the page
+  // has loaded (id → true, then 'run').
+  var _widen = {}, _fitAdd = {};
   var _edit = false, _locked = true, _setup = false, _arrange = false;
   var _bgAlpha = null;
 
+  function partDef(p) { return (window.WpParts && WpParts.byId[p.part]) || null; }
+  function pdefOf(p) { return p && p.kind === 'part' ? partDef(p) : null; }
+  function modeLabel(def, mode) {
+    var ms = def ? (WpParts.MODES[def.kind] || []) : [];
+    for (var i = 0; i < ms.length; i++) if (ms[i][0] === mode) return ms[i][1];
+    return ms.length ? ms[0][1] : '';
+  }
   function claimText(p) {
+    if (p.kind === 'part') { var d = partDef(p); return d ? modeLabel(d, p.mode).toLowerCase() + (p.grp ? ' · in a group' : '') : 'unknown piece'; }
+    if (p.kind === 'overlay') return 'the overlay, as it is';
+    if (p.kind === 'sect') { var so = ovEntry(p.key); return 'cut from ' + (so ? so.label : p.key) + ', as it is'; }
     if (p.kind === 'callouts') return 'what the voice says';
     if (p.all) return 'everything else';
     var parts = [];
@@ -253,9 +637,19 @@
     tab.innerHTML = '<span class="mv">✥</span><span class="nm"></span><span class="what"></span>'
       + '<span class="ctl gear" role="button" title="What this panel shows, its text size">⚙</span>'
       + '<span class="ctl x" role="button"></span>';
-    var fr = document.createElement('iframe');
-    fr.setAttribute('scrolling', 'no');
-    fr.setAttribute('src', 'triggers.html?part=' + p.kind + '&panel=' + encodeURIComponent(p.id));
+    // A piece is drawn right here (parts.js); every other panel is a page.
+    var fr = null, body = null;
+    if (p.kind === 'part') {
+      root.classList.add('part');
+      body = document.createElement('div');
+      body.className = 'pbody';
+    } else {
+      fr = document.createElement('iframe');
+      fr.setAttribute('scrolling', 'no');
+      if (p.kind === 'overlay') root.classList.add('ov');
+      else if (p.kind === 'sect') { root.classList.add('ov'); root.classList.add('sect'); }
+      else fr.setAttribute('src', 'triggers.html?part=' + p.kind + '&panel=' + encodeURIComponent(p.id));
+    }
     var grip = document.createElement('span');
     grip.className = 'grip';
     grip.textContent = '◢';
@@ -266,9 +660,18 @@
     mv.textContent = '✥';
     mv.setAttribute('data-wp-interact', '');
     mv.title = 'Drag to move this panel · right-click for what it shows';
-    root.appendChild(fr); root.appendChild(tab); root.appendChild(grip); root.appendChild(mv);
-    var e = { root: root, tab: tab, frame: fr, grip: grip, mv: mv };
-    fr.addEventListener('load', function () { var q = panelById(p.id); if (q) applyFrame(e, q); });
+    var whb = document.createElement('span');
+    whb.className = 'whb';
+    root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(mv); root.appendChild(whb);
+    var e = { root: root, tab: tab, frame: fr, body: body, grip: grip, mv: mv, whb: whb };
+    if (fr) fr.addEventListener('load', function () {
+      var q = panelById(p.id);
+      if (!q) return;
+      // A page that loads again comes back with its builder closed.
+      if (_widen[p.id]) { delete _widen[p.id]; root.classList.remove('building'); place(e, q); }
+      applyFrame(e, q);
+      if (_fitAdd[p.id] === true) { _fitAdd[p.id] = 'run'; scheduleFit(p.id); }
+    });
     root.addEventListener('mousedown', function (ev) {
       if (ev.target.closest('.ctl')) return;
       if (ev.target === mv) { startDrag(ev, p.id, 'move', true); return; }
@@ -276,12 +679,16 @@
       startDrag(ev, p.id, 'move');
     });
     tab.querySelector('.gear').addEventListener('click', function (ev) { ev.stopPropagation(); openMenu(p.id, root); });
+    // ✕ on a piece deletes it (the guild lead, 2026-09-29: "I should be able to delete out the elements
+    // instead of hiding them"); Undo stays up a few seconds. Other panels still hide.
     tab.querySelector('.x').addEventListener('click', function (ev) {
       ev.stopPropagation();
       var q = panelById(p.id); if (!q) return;
+      if (q.kind === 'part' || q.kind === 'sect') { removePanels([q.id]); return; }
       q.off = !q.off; save(); render();
     });
     root.addEventListener('contextmenu', function (ev) { ev.preventDefault(); if (_edit || ev.target === mv) openMenu(p.id, ev.target === mv ? mv : root); });
+    root.addEventListener('dblclick', function (ev) { if (_edit && !ev.target.closest('.ctl')) openMenu(p.id, root); });
     panelsEl.appendChild(root);
     return e;
   }
@@ -290,11 +697,15 @@
   // size, its stack direction, whether it is being arranged (sample rows),
   // and the card alpha the overlay-wide slider sets.
   function applyFrame(e, p) {
+    if (!e.frame) return;
     try {
       var doc = e.frame.contentDocument;
       if (!doc || !doc.body) return;
-      doc.documentElement.style.setProperty('--part-scale', String(p.scale || 1));
       if (_bgAlpha != null) doc.documentElement.style.setProperty('--bg-alpha', String(_bgAlpha));
+      // An overlay's page is left as it is; it is scaled from outside (place).
+      if (p.kind === 'overlay') return;
+      if (p.kind === 'sect') { isolateFrame(e, p); return; }
+      doc.documentElement.style.setProperty('--part-scale', String(p.scale || 1));
       doc.body.classList.toggle('timers-topdown', p.anchor === 'top');
       doc.body.classList.toggle('part-edit', _edit);
       var w = e.frame.contentWindow;
@@ -304,13 +715,123 @@
 
   function place(e, p) {
     var W = window.innerWidth, H = window.innerHeight;
-    var w = Math.min(p.w, W), h = Math.min(p.h, H);
-    var x = Math.max(0, Math.min(W - w, Math.round(p.x * W)));
+    // Wider while its page's builder is open, toward the side with room; the page's own part keeps its place.
+    var wd = _widen[p.id];
+    var w = Math.min(p.w + (wd ? wd.add : 0), W), h = Math.min(p.h, H);
+    var x = Math.max(0, Math.min(W - w, Math.round(p.x * W) - (wd && wd.left ? wd.add : 0)));
     var y = Math.max(0, Math.min(H - h, Math.round(p.y * H)));
     e.root.style.left = x + 'px'; e.root.style.top = y + 'px';
     e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
     e.root.classList.toggle('tabin', y < 22);
     e.root.classList.toggle('mvin', x < 18);
+    sizeFrame(e, p, w, h);
+  }
+  // An overlay page lays out at the panel's size ÷ its scale, then is scaled
+  // back up, so A+ makes the whole overlay bigger the way its window zoom did.
+  function sizeFrame(e, p, w, h) {
+    if (p.kind !== 'overlay') return;
+    var s = p.scale || 1;
+    e.frame.style.width = Math.round(w / s) + 'px';
+    e.frame.style.height = Math.round(h / s) + 'px';
+    e.frame.style.transform = s === 1 ? '' : 'scale(' + s + ')';
+  }
+
+  // ── Pieces cut from an overlay's own page (kind 'sect', sections.js) ────────
+  // The page runs as it does in its window; everything but the section is made invisible (its
+  // boxes keep their space, so the layout is the window's), and the panel shows only the section's
+  // box. Exact by construction: same code, same look, same buttons.
+  function isolateFrame(e, p) {
+    var d = window.WpSections ? WpSections.find(p.key, p.sect) : null;
+    var doc = e.frame && e.frame.contentDocument;
+    if (!d || !doc || !doc.head) return;
+    var st = doc.getElementById('wp-sect-iso');
+    if (!st) { st = doc.createElement('style'); st.id = 'wp-sect-iso'; doc.head.appendChild(st); }
+    var css = WpSections.isolateCss(d.sel);
+    if (st.textContent !== css) st.textContent = css;
+    // One voice per overlay (Charm and the CH chain speak from their page): the whole overlay's
+    // panel if it is here, else its first piece. Every other copy is silent.
+    var w = e.frame.contentWindow;
+    if (w && w.speechSynthesis && !isVoice(p)) { try { w.speechSynthesis.speak = function () {}; } catch (err) { /* */ } }
+  }
+  function isVoice(p) {
+    var first = null;
+    for (var i = 0; i < _layout.panels.length; i++) {
+      var q = _layout.panels[i];
+      if (q.key !== p.key || q.off) continue;
+      if (q.kind === 'overlay') return false;
+      if (q.kind === 'sect' && !first) first = q;
+    }
+    return first === p;
+  }
+  // Each piece follows its section: the page lays out at its own size (pw × ph, the window's), the
+  // panel is the section's box, and grows or shrinks with it. A section that is not there right
+  // now (no target, no fight) leaves its panel empty and out of the way.
+  var SECT_PAD = 4;   // page px of the card kept around a piece, so its text is not flush with the edge
+  function cropSections() {
+    var moved = false;
+    _layout.panels.forEach(function (p) {
+      if (p.kind !== 'sect' || p.off) return;
+      var e = _els[p.id], d = window.WpSections ? WpSections.find(p.key, p.sect) : null;
+      var doc = null;
+      try { doc = e && e.frame && e.frame.contentDocument; } catch (err) { doc = null; }
+      if (!d || !doc || !doc.body) return;
+      if (!doc.getElementById('wp-sect-iso')) isolateFrame(e, p);
+      // Still in its group (just taken apart) its box is exactly the section's, so the parts abut
+      // and read as the overlay did; on its own it keeps a little of its card around it.
+      var s = p.scale || 1, r = WpSections.unionRect(doc, d.sel, p.grp ? 0 : SECT_PAD);
+      e.root.classList.toggle('nodata', !r);
+      // The card it sat on in its window (Target Info's dark panel) goes behind it here too.
+      var bd = r ? WpSections.backdrop(doc, d.sel) : null;
+      var bg = bd ? bd.bg : '', rad = (bd && !p.grp) ? Math.round(bd.radius * s) + 'px' : '';
+      if (e.root.style.backgroundColor !== bg) e.root.style.backgroundColor = bg;
+      if (e.root.style.borderRadius !== rad) e.root.style.borderRadius = rad;
+      var fw = Math.round(p.pw), fh = Math.round(Math.max(p.ph, r ? r.top + r.height + 8 : 0));
+      e.frame.style.width = fw + 'px';
+      e.frame.style.height = fh + 'px';
+      e.frame.style.transform = s === 1 ? '' : 'scale(' + s + ')';
+      if (!r) return;
+      e.frame.style.left = Math.round(-r.left * s) + 'px';
+      e.frame.style.top = Math.round(-r.top * s) + 'px';
+      // Clipped in the page's own pixels (before the scale), so only the section can be seen or
+      // clicked; the rest of the page is still there, laid out as in its window.
+      e.frame.style.clipPath = 'inset(' + r.top + 'px ' + Math.max(0, fw - r.left - r.width) + 'px '
+        + Math.max(0, fh - r.top - r.height) + 'px ' + r.left + 'px)';
+      var w = Math.max(16, Math.round(r.width * s)), h = Math.max(8, Math.round(r.height * s));
+      if (Math.abs(w - p.w) > 1 || Math.abs(h - p.h) > 1) { p.w = w; p.h = h; place(e, p); moved = true; }
+    });
+    if (moved) placeGbox();
+  }
+  setInterval(cropSections, 250);
+  function sectPanel(key, sect, x, y, o) {
+    o = o || {};
+    var d = window.WpSections ? WpSections.find(key, sect) : null;
+    var ov = ovEntry(key);
+    return { id: newId('c'), kind: 'sect', key: key, sect: sect,
+      name: ((ov ? ov.label : key) + ' · ' + (d ? d.label : sect)).slice(0, 32),
+      x: x, y: y, w: o.w || 200, h: o.h || 40, pw: o.pw || (ov && ov.w) || 340, ph: o.ph || (ov && ov.h) || 400,
+      scale: o.scale || 1, grp: o.grp || null, off: false };
+  }
+  // ✂ Take apart: the overlay's panel becomes one piece per section it shows right now, each at
+  // the spot it has on the page, grouped so they still move together until one is pulled out
+  // (Alt-drag). It looks the same as before; now each part can go its own way.
+  function takeApart(p) {
+    var e = _els[p.id], list = window.WpSections ? WpSections.list(p.key) : [];
+    var doc = null;
+    try { doc = e && e.frame && e.frame.contentDocument; } catch (err) { doc = null; }
+    if (!doc || !doc.body || !list.length) return 0;
+    var W = window.innerWidth, H = window.innerHeight, s = p.scale || 1;
+    var x0 = e.root.offsetLeft, y0 = e.root.offsetTop, grp = newId('g'), n = 0, made = [];
+    list.forEach(function (d) {
+      if (d.id === 'empty') return;
+      var r = WpSections.unionRect(doc, d.sel);
+      if (!r || made.length + _layout.panels.length >= MAX_PANELS) return;
+      made.push(sectPanel(p.key, d.id, num((x0 + r.left * s) / W, 0, 1, 0.3), num((y0 + r.top * s) / H, 0, 1, 0.3),
+        { w: Math.round(r.width * s), h: Math.round(r.height * s), pw: Math.round(p.w / s), ph: Math.round(p.h / s), scale: s, grp: grp }));
+    });
+    if (!made.length) return 0;
+    _layout.panels = _layout.panels.filter(function (q) { return q.id !== p.id; });
+    made.forEach(function (q) { _layout.panels.push(q); n++; });
+    return n;
   }
 
   function render() {
@@ -318,18 +839,55 @@
     _layout.panels.forEach(function (p) {
       keep[p.id] = true;
       var e = _els[p.id] || (_els[p.id] = build(p));
+      // A hidden overlay panel unloads its page, so it stops polling; showing
+      // it again loads it fresh.
+      if (p.kind === 'overlay' || p.kind === 'sect') {
+        var want = p.off ? 'about:blank' : ((p.kind === 'sect' ? sectSrc(p) : ovSrc(p.key, p.style)) || 'about:blank');
+        if (e.src !== want) { e.src = want; e.frame.setAttribute('src', want); }
+      }
+      if (p.kind === 'part') {
+        e.root.style.setProperty('--ps', String(p.scale || 1));
+        e.root.classList.toggle('back', !!p.back);
+        e.root.classList.toggle('seg', p.mode === 'seg');
+      }
+      e.root.classList.toggle('sel', !!_sel[p.id]);
       place(e, p);
       e.root.classList.toggle('off', !!p.off);
       if (_edit) e.root.setAttribute('data-wp-interact', ''); else e.root.removeAttribute('data-wp-interact');
-      e.tab.querySelector('.nm').textContent = p.name;
+      e.tab.querySelector('.nm').textContent = p.name || (partDef(p) ? partDef(p).label : p.part || '');
       e.tab.querySelector('.what').textContent = '· ' + claimText(p);
       var x = e.tab.querySelector('.x');
       x.textContent = p.off ? '👁' : '✕';
-      x.title = p.off ? 'Show this panel again' : 'Hide this panel';
+      x.title = p.kind === 'part' ? 'Delete this piece (Undo appears for a few seconds)' : p.off ? 'Show this panel again' : 'Hide this panel';
       applyFrame(e, p);
     });
     Object.keys(_els).forEach(function (id) {
-      if (!keep[id]) { _els[id].root.remove(); delete _els[id]; }
+      if (!keep[id]) { _els[id].root.remove(); delete _els[id]; delete _widen[id]; delete _fitAdd[id]; }
+    });
+    applyWhen();
+    markGroupMovers();
+    paintParts();
+    syncSources();
+    renderChooser();
+    renderSelbar();
+    placeGbox();
+  }
+
+  // One ✥ per group (the guild lead, 2026-09-30, FB-40: "Some huds will want to be closer and overlap
+  // like thin hp and mana and then we end up seeing multiple 'move' icons. When groups there should only
+  // be one move icon for that group"). The top-left piece keeps it; dragging it moves the group
+  // (togetherWith). Alt-drag on a piece still takes that one out, from the arranging tab.
+  function markGroupMovers() {
+    var lead = {};
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id];
+      if (!p.grp || !e || p.off) return;
+      var l = lead[p.grp], x = e.root.offsetLeft, y = e.root.offsetTop;
+      if (!l || y < l.y || (y === l.y && x < l.x)) lead[p.grp] = { id: p.id, x: x, y: y };
+    });
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id];
+      if (e) e.root.classList.toggle('mvtail', !!(p.grp && lead[p.grp] && lead[p.grp].id !== p.id));
     });
   }
 
@@ -347,7 +905,7 @@
     if (e === _edit) return;
     _edit = e;
     document.body.classList.toggle('edit', e);
-    if (!e) closeMenu();
+    if (!e) { closeMenu(); _sel = {}; }
     render();
   }
   try { if (M.onOverlayLocked) M.onOverlayLocked(function (l) { _locked = !!l; setEdit(); }); } catch (e) {}
@@ -363,14 +921,37 @@
   // Drag to move / drag ◢ to size. Snaps to the screen's edges and centre and
   // to the other panels' edges, within 8px; Shift turns it off.
   var SNAP = 8;
-  var _drag = null;
+  var _drag = null, _lastClick = null;
   // anyTime: the always-on ✥, which moves a panel even while locked.
   function startDrag(ev, id, mode, anyTime) {
     if ((!_edit && !anyTime) || ev.button !== 0) return;
     ev.preventDefault(); ev.stopPropagation();
     var e = _els[id];
-    _drag = { id: id, mode: mode, sx: ev.clientX, sy: ev.clientY,
+    // A panel whose page has its builder open goes back to its own size before it is moved or sized.
+    if (_widen[id]) {
+      try { e.frame.contentWindow.wpCloseBuilder(); } catch (err) { /* page gone */ }
+      delete _widen[id]; e.root.classList.remove('building'); place(e, panelById(id));
+    }
+    _drag = { id: id, mode: mode, sx: ev.clientX, sy: ev.clientY, add: ev.shiftKey || ev.ctrlKey, alt: ev.altKey, fromMv: !!anyTime,
       x0: e.root.offsetLeft, y0: e.root.offsetTop, w0: e.root.offsetWidth, h0: e.root.offsetHeight };
+    // What moves together (the guild lead, 2026-09-29: "I should also be able to drag the whole group …
+    // instead of grabbing the top one and having it get disconnected"): the selection, if this panel is in
+    // it; else the group it was placed or locked with. Alt-drag moves this one alone and takes it out.
+    // ◢ on a grouped or selected piece sizes them all (the guild lead, 2026-09-29: "when a group is
+    // selected … you should be able to resize the entire group"); Alt sizes just this one.
+    var ids = [];
+    if (!ev.altKey) ids = togetherWith(id);
+    if (ids.length > 1) {
+      _drag.members = [];
+      _drag.skip = {};
+      ids.forEach(function (k) {
+        if (!_els[k]) return;
+        var r = _els[k].root, q = panelById(k);
+        _drag.members.push({ id: k, x0: r.offsetLeft, y0: r.offsetTop, w0: r.offsetWidth, h0: r.offsetHeight, sc0: (q && q.scale) || 1 });
+        _drag.skip[k] = true;
+      });
+      if (mode === 'size') _drag.box = groupBox(_drag.members);
+    }
     e.root.classList.add('lift');
     shield.classList.add('on');
     shield.style.cursor = mode === 'size' ? 'nwse-resize' : 'move';
@@ -382,11 +963,52 @@
     for (var i = 0; i < targets.length; i++) { var d = Math.abs(targets[i] - v); if (d < bd) { bd = d; best = targets[i]; } }
     return best;
   }
-  function snapMove(id, x, y, w, h) {
+  // The panels that move with this one: the selection it belongs to, else its group.
+  function togetherWith(id) {
+    var sel = Object.keys(_sel).filter(function (k) { return panelById(k); });
+    if (_sel[id] && sel.length > 1) return sel;
+    var me = panelById(id);
+    if (me && me.grp) return _layout.panels.filter(function (q) { return q.grp === me.grp; }).map(function (q) { return q.id; });
+    return [id];
+  }
+  // The box around a set of panels ({x0, y0, w0, h0} each).
+  function groupBox(ms) {
+    var x = Infinity, y = Infinity, r = -Infinity, b = -Infinity;
+    ms.forEach(function (m) { x = Math.min(x, m.x0); y = Math.min(y, m.y0); r = Math.max(r, m.x0 + m.w0); b = Math.max(b, m.y0 + m.h0); });
+    return { x: x, y: y, w: r - x, h: b - y };
+  }
+  // Stretch a set to a new box size, from its top-left corner: every piece keeps its place
+  // and share of the box. Text grows with the height (a wider box alone keeps the text size);
+  // keep = the same factor both ways (Shift). Pure: returns each piece's new x, y, w, h, scale.
+  function scaleGroup(ms, box, w, h, keep, minW, minH) {
+    var sx = Math.max(0.2, w / box.w), sy = Math.max(0.2, h / box.h);
+    if (keep) sx = sy = Math.max(sx, sy);
+    return ms.map(function (m) {
+      return { id: m.id,
+        x: Math.round(box.x + (m.x0 - box.x) * sx), y: Math.round(box.y + (m.y0 - box.y) * sy),
+        w: Math.max(minW || 16, Math.round(m.w0 * sx)), h: Math.max(minH || 12, Math.round(m.h0 * sy)),
+        scale: Math.round(Math.min(3, Math.max(0.5, m.sc0 * sy)) * 100) / 100 };
+    });
+  }
+  // The dashed box and its ◢ around two or more selected panels.
+  function placeGbox() {
+    var gbox = document.getElementById('gbox');
+    var ids = _edit ? selIds().filter(function (k) { return _els[k]; }) : [];
+    if (ids.length < 2) { gbox.classList.remove('on'); return; }
+    var b = groupBox(ids.map(function (k) { var r = _els[k].root; return { x0: r.offsetLeft, y0: r.offsetTop, w0: r.offsetWidth, h0: r.offsetHeight }; }));
+    gbox.style.left = (b.x - 3) + 'px'; gbox.style.top = (b.y - 3) + 'px';
+    gbox.style.width = (b.w + 6) + 'px'; gbox.style.height = (b.h + 6) + 'px';
+    gbox.classList.add('on');
+  }
+  document.querySelector('#gbox .ggrip').addEventListener('mousedown', function (ev) {
+    var ids = selIds();
+    if (ids.length > 1) startDrag(ev, ids[0], 'size');
+  });
+  function snapMove(id, x, y, w, h, skip) {
     var W = window.innerWidth, H = window.innerHeight;
     var xs = [0, Math.round(W / 2 - w / 2), W - w], ys = [0, Math.round(H / 2 - h / 2), H - h];
     Object.keys(_els).forEach(function (k) {
-      if (k === id) return;
+      if (k === id || (skip && skip[k])) return;
       var r = _els[k].root, ox = r.offsetLeft, oy = r.offsetTop, ow = r.offsetWidth, oh = r.offsetHeight;
       xs.push(ox, ox + ow - w, ox + ow, ox - w);
       ys.push(oy, oy + oh - h, oy + oh, oy - h);
@@ -397,7 +1019,38 @@
     if (!_drag) return;
     var d = _drag, e = _els[d.id], W = window.innerWidth, H = window.innerHeight;
     if (!e) return;
-    if (d.mode === 'move') {
+    if (Math.abs(ev.clientX - d.sx) + Math.abs(ev.clientY - d.sy) > 3) d.moved = true;
+    if (d.mode === 'move' && d.members) {
+      // The grabbed piece snaps (to anything outside its group); the rest keep
+      // their distance from it, and none leaves the screen.
+      var gx = d.x0 + ev.clientX - d.sx, gy = d.y0 + ev.clientY - d.sy;
+      if (!ev.shiftKey) { var gs = snapMove(d.id, gx, gy, d.w0, d.h0, d.skip); gx = gs.x; gy = gs.y; }
+      var dx = gx - d.x0, dy = gy - d.y0;
+      d.members.forEach(function (m) {
+        var r = _els[m.id] && _els[m.id].root; if (!r) return;
+        dx = Math.min(Math.max(dx, -m.x0), W - r.offsetWidth - m.x0);
+        dy = Math.min(Math.max(dy, -m.y0), H - r.offsetHeight - m.y0);
+      });
+      d.members.forEach(function (m) {
+        var r = _els[m.id] && _els[m.id].root; if (!r) return;
+        m.x = m.x0 + dx; m.y = m.y0 + dy;
+        r.style.left = m.x + 'px'; r.style.top = m.y + 'px';
+      });
+      placeGbox();
+    } else if (d.mode === 'size' && d.box) {
+      var bw = Math.min(W - d.box.x, Math.max(40, d.box.w + ev.clientX - d.sx));
+      var bh = Math.min(H - d.box.y, Math.max(20, d.box.h + ev.clientY - d.sy));
+      scaleGroup(d.members, d.box, bw, bh, ev.shiftKey).forEach(function (n) {
+        var ee = _els[n.id], q = panelById(n.id); if (!ee || !q) return;
+        var m = d.members.filter(function (k) { return k.id === n.id; })[0];
+        m.x = n.x; m.y = n.y; m.w = n.w; m.h = n.h; m.scale = n.scale;
+        ee.root.style.left = n.x + 'px'; ee.root.style.top = n.y + 'px';
+        ee.root.style.width = n.w + 'px'; ee.root.style.height = n.h + 'px';
+        if (q.kind === 'part') ee.root.style.setProperty('--ps', String(n.scale));
+        sizeFrame(ee, q, n.w, n.h);
+      });
+      placeGbox();
+    } else if (d.mode === 'move') {
       var x = d.x0 + ev.clientX - d.sx, y = d.y0 + ev.clientY - d.sy;
       if (!ev.shiftKey) { var s = snapMove(d.id, x, y, d.w0, d.h0); x = s.x; y = s.y; }
       x = Math.max(0, Math.min(W - d.w0, x)); y = Math.max(0, Math.min(H - d.h0, y));
@@ -406,9 +1059,12 @@
       e.root.classList.toggle('mvin', x < 18);
       d.x = x; d.y = y;
     } else {
-      var w = Math.max(120, Math.min(W - d.x0, d.w0 + ev.clientX - d.sx));
-      var h = Math.max(36, Math.min(H - d.y0, d.h0 + ev.clientY - d.sy));
+      var dp = panelById(d.id);
+      var isPart = dp && dp.kind === 'part';
+      var w = Math.max(isPart ? 40 : (dp && dp.kind === 'overlay') ? 80 : 120, Math.min(W - d.x0, d.w0 + ev.clientX - d.sx));
+      var h = Math.max(isPart ? 16 : 36, Math.min(H - d.y0, d.h0 + ev.clientY - d.sy));
       e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
+      if (dp) sizeFrame(e, dp, w, h);
       d.w = w; d.h = h;
     }
   });
@@ -418,10 +1074,37 @@
     shield.classList.remove('on');
     var p = panelById(d.id);
     if (_els[d.id]) _els[d.id].root.classList.remove('lift');
-    if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = d.y / window.innerHeight; save(); }
-    if (p && d.mode === 'size' && d.w != null) { p.w = Math.round(d.w); p.h = Math.round(d.h); save(); }
-    render();
     try { M.overlayHoverInteractive(false); } catch (err) {}
+    // A click, no drag. On the always-on ✥ while playing: that panel's settings,
+    // straight away. While arranging: select it (Shift or Ctrl adds / removes).
+    if (!d.moved && p) {
+      if (d.fromMv && !_edit) { render(); if (_els[p.id]) openMenu(p.id, _els[p.id].mv); return; }
+      if (_edit) {
+        // Two clicks on one piece: its settings. The browser's own dblclick never reaches the piece —
+        // the drag shield is up between the press and the release — so the canvas counts the clicks.
+        var tNow = Date.now();
+        if (!d.add && _lastClick && _lastClick.id === p.id && tNow - _lastClick.t < 450) {
+          _lastClick = null; render(); if (_els[p.id]) openMenu(p.id, _els[p.id].root); return;
+        }
+        _lastClick = { id: p.id, t: tNow };
+        if (d.add) { if (_sel[p.id]) delete _sel[p.id]; else _sel[p.id] = true; }
+        // A click on a grouped piece picks up its whole group (its ◢ then sizes them all); Alt-click, just the one.
+        else { _sel = {}; (d.alt ? [p.id] : togetherWith(p.id)).forEach(function (k) { _sel[k] = true; }); }
+      }
+    }
+    // Alt-drag took this one out of its group.
+    if (d.moved && d.alt && p && p.grp) { p.grp = null; delete _sel[p.id]; save(); }
+    if (d.members) {
+      d.members.forEach(function (m) {
+        var q = panelById(m.id);
+        if (q && m.x != null) { q.x = m.x / window.innerWidth; q.y = m.y / window.innerHeight; }
+        // A group size: each piece's size, and a piece's text with it.
+        if (q && m.w != null) { q.w = m.w; q.h = m.h; if (q.kind === 'part') q.scale = m.scale; }
+      });
+      save();
+    } else if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = d.y / window.innerHeight; save(); }
+    if (p && d.mode === 'size' && d.w != null) { p.w = Math.round(d.w); p.h = Math.round(d.h); delete _fitAdd[p.id]; save(); }
+    render();
   }
   document.addEventListener('mouseup', endDrag);
   window.addEventListener('blur', endDrag);
@@ -450,9 +1133,74 @@
     var p = panelById(id);
     if (!p) return;
     _menuFor = id;
-    var h = '<div class="mh">' + esc(p.name) + '</div>';
-    h += '<div class="row"><input type="text" id="mName" maxlength="24" value="' + esc(p.name) + '" placeholder="panel name"></div>';
-    if (p.kind === 'callouts') {
+    var pdef = p.kind === 'part' ? partDef(p) : null;
+    var title = p.name || (pdef ? pdef.label : '');
+    var h = '<div class="mh">' + esc(title) + '</div>';
+    // The way into editing from any panel, locked or not (the guild lead, 2026-09-29: "It needs to be
+    // something that i can get to from the right click menu in the top corner of the overlay panel").
+    h += '<div class="row">'
+      + (_edit ? '<button class="btn go" data-arrange="0">✓ Done arranging</button>' : '<button class="btn go" data-arrange="1" title="Arrange every panel and piece on the canvas">✏ Arrange the canvas</button>')
+      + '<button class="btn" data-pieces title="Open the chooser of every piece">🧩 Pieces</button></div>';
+    h += '<div class="row"><input type="text" id="mName" maxlength="24" value="' + esc(title) + '" placeholder="panel name"></div>';
+    if (p.kind === 'part') {
+      // Show as: every mode this kind of data can be drawn in (parts.js MODES).
+      h += '<div class="note">' + esc(pdef ? (catName(pdef.cat) + ' · ' + (pdef.note || pdef.label)) : p.part) + '</div>';
+      h += '<div class="sec">Show as</div><div class="row" style="flex-wrap:wrap">';
+      (pdef ? (WpParts.MODES[pdef.kind] || []) : []).forEach(function (m) {
+        h += '<button class="btn' + ((p.mode || WpParts.MODES[pdef.kind][0][0]) === m[0] ? ' on' : '') + '" data-mode="' + m[0] + '">' + esc(m[1]) + '</button>';
+      });
+      h += '<button class="btn" data-fit title="Make it as tall as what it shows right now">↕ Fit</button>';
+      h += '</div><div class="sec">Backing</div><div class="row">'
+        + '<button class="btn' + (!p.back ? ' on' : '') + '" data-back="0">Clear</button>'
+        + '<button class="btn' + (p.back ? ' on' : '') + '" data-back="1">Panel</button></div>';
+      // Its own look, on any mode (the guild lead, 2026-09-29: "more element types, sizes, formats
+      // like in the hud").
+      h += '<div class="sec">Label</div><div class="row">'
+        + '<button class="btn' + (!p.nolabel ? ' on' : '') + '" data-nolabel="0">Show</button>'
+        + '<button class="btn' + (p.nolabel ? ' on' : '') + '" data-nolabel="1">Hide</button></div>';
+      h += '<div class="sec">Bar or ring</div><div class="row">';
+      WpParts.THICK.forEach(function (t) { h += '<button class="btn' + ((p.thick || '') === t[0] ? ' on' : '') + '" data-thick="' + t[0] + '">' + esc(t[1]) + '</button>'; });
+      h += '</div><div class="sec">Text</div><div class="row">';
+      WpParts.ALIGN.forEach(function (a) { h += '<button class="btn' + ((p.align || '') === a[0] ? ' on' : '') + '" data-align="' + a[0] + '">' + esc(a[1]) + '</button>'; });
+      h += '</div><div class="sec">Colour</div><div class="row" style="flex-wrap:wrap">'
+        + '<button class="btn' + (!p.color ? ' on' : '') + '" data-color="" title="The data\'s own colour (health goes green → red)">Auto</button>';
+      WpParts.PALETTE.forEach(function (c) {
+        h += '<button class="btn sw' + (p.color === c ? ' on' : '') + '" data-color="' + c + '" title="' + c + '" style="background:' + c + '"></button>';
+      });
+      h += '</div>';
+      if (p.grp) {
+        var gn = _layout.panels.filter(function (q) { return q.grp === p.grp; }).length;
+        h += '<div class="sec">Group · ' + gn + ' pieces move together</div><div class="row" style="flex-wrap:wrap">'
+          + '<button class="btn" data-selgrp title="Select every piece in this group (then save it as your own from the bar at the top)">Select its group</button>'
+          + '<button class="btn" data-leave title="It stops moving with the others (Alt-drag does the same)">Leave the group</button>'
+          + '<button class="btn warn" data-rmgrp title="Delete every piece in this group">Delete the group</button></div>'
+          + bulkMenuHtml(_layout.panels.filter(function (q) { return q.grp === p.grp && q.kind === 'part'; }));
+      }
+    } else if (p.kind === 'overlay') {
+      var o = ovEntry(p.key);
+      h += '<div class="note">' + esc(o ? o.label : p.key) + ' as it is today: the same page, its own buttons and tabs. '
+        + 'While it is on the canvas it has no window of its own.</div>';
+      // Fit: the panel as big as the page's content. Build: the HUD ring's own ⚙ builder, from here too
+      // (the page is not clickable while arranging; a builder that is open is).
+      h += '<div class="row"><button class="btn" data-fitc title="Make the panel as big as what the page shows right now">↕ Fit to content</button>'
+        + ((p.key === 'me' && p.style !== 'a') ? '<button class="btn go" data-build title="Choose which parts the ring shows, and how big their text is; saved for the character, shared with the HUD\'s own window">⚙ Build the ring</button>' : '')
+        + '</div>';
+      if (window.WpSections && WpSections.list(p.key).length) {
+        h += '<div class="row"><button class="btn go" data-apart title="One piece per part of it that shows right now, each where it is, moving together until you Alt-drag one out">'
+          + '✂ Take it apart</button></div>';
+      }
+    } else if (p.kind === 'sect') {
+      var so = ovEntry(p.key), sd = window.WpSections ? WpSections.find(p.key, p.sect) : null;
+      h += '<div class="note">' + esc(sd ? sd.label : p.sect) + ', cut from ' + esc(so ? so.label : p.key)
+        + ': its own page, drawn as in its window, with its own buttons. Its size follows what it shows; '
+        + 'A−/A+ make it bigger or smaller, and the page width below lets its text wrap differently.</div>'
+        + '<div class="sec">Page width</div><div class="row">'
+        + '<button class="btn" data-pw="-20">−</button><span style="min-width:4em;text-align:center">' + Math.round(p.pw) + ' px</span>'
+        + '<button class="btn" data-pw="20">+</button></div>';
+      if (p.grp) {
+        h += '<div class="row"><button class="btn" data-leave title="It stops moving with the other pieces (Alt-drag does the same)">Leave the group</button></div>';
+      }
+    } else if (p.kind === 'callouts') {
       h += '<div class="note">The text of every callout, where you want to read it. The voice is unchanged.</div>';
     } else if (p.all) {
       h += '<div class="note">Every countdown no other panel claims lands here, so nothing goes missing.</div>';
@@ -474,18 +1222,26 @@
         + '<button class="btn' + (p.anchor !== 'top' ? ' on' : '') + '" data-anchor="bottom">↑ grows up</button>'
         + '<button class="btn' + (p.anchor === 'top' ? ' on' : '') + '" data-anchor="top">↓ grows down</button></div>';
     }
-    h += '<div class="sec">Text size</div><div class="row">'
+    h += '<div class="sec">' + ((p.kind === 'overlay' || p.kind === 'sect') ? 'Size' : 'Text size') + '</div><div class="row">'
       + '<button class="btn" data-sc="-1">A−</button><span style="min-width:3em;text-align:center">' + Math.round((p.scale || 1) * 100) + '%</span>'
       + '<button class="btn" data-sc="1">A+</button></div>';
-    h += '<div class="row" style="margin-top:8px">'
-      + (p.kind === 'callouts'
-        ? '<button class="btn" data-test title="One sample callout, shown and not spoken">🧪 Show a test callout</button>'
-        : '<button class="btn' + (_isTesting(p.id) ? ' on' : '') + '" data-test title="A sample of every kind of countdown this panel shows, for 30 seconds">'
-          + (_isTesting(p.id) ? '🧪 Hide the test rows' : '🧪 Show test rows') + '</button>')
-      + '</div>';
+    if (p.kind !== 'overlay' && p.kind !== 'part' && p.kind !== 'sect') {
+      h += '<div class="row" style="margin-top:8px">'
+        + (p.kind === 'callouts'
+          ? '<button class="btn" data-test title="One sample callout, shown and not spoken">🧪 Show a test callout</button>'
+          : '<button class="btn' + (_isTesting(p.id) ? ' on' : '') + '" data-test title="A sample of every kind of countdown this panel shows, for 30 seconds">'
+            + (_isTesting(p.id) ? '🧪 Hide the test rows' : '🧪 Show test rows') + '</button>')
+        + '</div>';
+    }
+    h += whenMenuHtml(p);
+    // A piece of a SAVED group: show / hide the whole group, and the key that does it from anywhere.
+    var ng = p.grp ? namedGroup(p.grp) : null;
+    if (ng) h += groupMenuHtml(ng);
     h += '<div class="row">'
       + '<button class="btn" data-hide>' + (p.off ? '👁 Show panel' : '✕ Hide panel') + '</button>'
       + ((p.kind === 'timers' && !p.all) ? '<button class="btn warn" data-remove>Remove panel</button>' : '')
+      + (p.kind === 'overlay' ? '<button class="btn warn" data-remove title="Take it off the canvas; it opens as its own window again">Remove · own window</button>' : '')
+      + ((p.kind === 'part' || p.kind === 'sect') ? '<button class="btn warn" data-remove>Remove piece</button>' : '')
       + '</div>';
     var bgOn = document.body.classList.contains('wp-backdrop');
     h += '<div class="row"><button class="btn' + (bgOn ? ' on' : '') + '" data-bg title="A solid plate behind every panel (Ctrl+Shift+B)">🌫 Background: ' + (bgOn ? 'ON' : 'off') + ' (whole Canvas)</button></div>';
@@ -496,19 +1252,47 @@
     if (p.kind === 'timers' && !p.all) fillLive(p);
   }
   // Whole on the screen wherever the panel sits (the guild lead, 2026-09-29:
-  // "This view could go off the screen"): below the ✥ or panel it came from,
-  // else above it, else as low as it can sit while whole. Never taller than
-  // the screen (it scrolls inside), and placed again when the live list fills in.
+  // "This view could go off the screen"), and beside the panel rather than on it
+  // ("The right click in the corner of an element completely covers the overlay. We need to
+  // adaptively find a spot where we can put it above or to the side depending on how far from
+  // the edge of the screen it is"). Never taller than the screen (it scrolls inside), and placed
+  // again when the live list fills in.
   function placeMenu() {
     if (!_menuAnchor || !menuEl.classList.contains('show')) return;
     var W = window.innerWidth, H = window.innerHeight;
     menuEl.style.maxHeight = (H - 16) + 'px';
-    var r = _menuAnchor.getBoundingClientRect(), mr = menuEl.getBoundingClientRect();
-    var left = Math.max(8, Math.min(W - mr.width - 8, r.left));
-    var top = r.bottom + 6;
-    if (top + mr.height > H - 8) top = r.top - mr.height - 6;
-    if (top < 8) top = Math.max(8, H - mr.height - 8);
-    menuEl.style.left = left + 'px'; menuEl.style.top = top + 'px';
+    var mr = menuEl.getBoundingClientRect(), box = menuAvoid();
+    var s = menuSpot(W, H, box, mr.width, mr.height);
+    menuEl.style.left = s.left + 'px'; menuEl.style.top = s.top + 'px';
+  }
+  // What the menu must not cover: the panel it is for, and the rest of its group.
+  function menuAvoid() {
+    var ids = _menuFor ? togetherWith(_menuFor).filter(function (k) { return _els[k]; }) : [];
+    if (!ids.length) { var r = _menuAnchor.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; }
+    var b = groupBox(ids.map(function (k) { var e = _els[k].root; return { x0: e.offsetLeft, y0: e.offsetTop, w0: e.offsetWidth, h0: e.offsetHeight }; }));
+    return { left: b.x, top: b.y, right: b.x + b.w, bottom: b.y + b.h };
+  }
+  // Where a mw × mh menu goes next to box on a W × H screen: to the right, else the left, else
+  // below, else above — the first side with room for all of it. With no room anywhere, the spot
+  // that covers the least of the box. Pure, so the tests run it.
+  function menuSpot(W, H, box, mw, mh) {
+    var G = 8, M = 8;
+    function cl(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+    var vTop = cl(box.top, M, H - mh - M), hLeft = cl(box.left, M, W - mw - M);
+    var c = [
+      { left: box.right + G, top: vTop, ok: box.right + G + mw <= W - M },
+      { left: box.left - G - mw, top: vTop, ok: box.left - G - mw >= M },
+      { left: hLeft, top: box.bottom + G, ok: box.bottom + G + mh <= H - M },
+      { left: hLeft, top: box.top - G - mh, ok: box.top - G - mh >= M },
+    ];
+    for (var i = 0; i < c.length; i++) if (c[i].ok) return { left: Math.round(c[i].left), top: Math.round(c[i].top) };
+    var best = null, bestCover = Infinity;
+    c.forEach(function (s) {
+      var l = cl(s.left, M, W - mw - M), t = cl(s.top, M, H - mh - M);
+      var cover = Math.max(0, Math.min(l + mw, box.right) - Math.max(l, box.left)) * Math.max(0, Math.min(t + mh, box.bottom) - Math.max(t, box.top));
+      if (cover < bestCover) { bestCover = cover; best = { left: Math.round(l), top: Math.round(t) }; }
+    });
+    return best;
   }
 
   // The countdowns up right now, as one-click claims — the way to pull a
@@ -540,10 +1324,87 @@
     if (p.names.indexOf(n) < 0 && p.names.length < 20) p.names.push(n);
   }
 
+  // ── ＋ Overlay ───────────────────────────────────────────────────────────────
+  // Any overlay not on the canvas yet, one click each; or every overlay that
+  // is on screen right now (its own window or a Dock pane) in one go, each
+  // where its window was, at its size and zoom. main then closes those
+  // windows (the page runs here now) and takes them out of the Dock.
+  var PICKER = '__picker';
+  function openPicker(anchor) {
+    _menuFor = PICKER;
+    var on = {};
+    _layout.panels.forEach(function (q) { if (q.kind === 'overlay') on[q.key] = true; });
+    var free = _overlays.filter(function (o) { return !on[o.key]; });
+    var showing = free.filter(function (o) { return o.showing || o.docked; });
+    var h = '<div class="mh">＋ Overlay</div>'
+      + '<div class="note">Any overlay as it is today: the same page, its own buttons and tabs. '
+      + 'It leaves its own window (or the Dock) while it is here; Remove in its ⚙ gives it back.</div>';
+    if (showing.length) {
+      h += '<div class="row" style="margin-top:6px"><button class="btn go" data-bringall>⇲ Bring in the '
+        + showing.length + ' on screen now</button></div>';
+    }
+    h += '<div class="sec">Add one</div><div class="chips">';
+    free.forEach(function (o) {
+      h += '<span class="chip add" data-ov="' + esc(o.key) + '">＋ ' + esc(o.label)
+        + (o.showing ? ' <span class="dim">· on screen</span>' : o.docked ? ' <span class="dim">· in the Dock</span>' : '') + '</span>';
+    });
+    if (!free.length) h += '<span class="dim">' + (_overlays.length ? 'every overlay is on the canvas' : 'still loading…') + '</span>';
+    h += '</div>';
+    menuEl.innerHTML = h;
+    menuEl.classList.add('show');
+    _menuAnchor = anchor;
+    placeMenu();
+  }
+  function addOverlay(o, n) {
+    if (!o || _layout.panels.length >= MAX_PANELS) return null;
+    // o.style: the HUD's look (a preset's), so its ring and its box may both be here.
+    var look = (o.key === 'me' && (o.style === 'hud' || o.style === 'a')) ? o.style : '';
+    for (var k = 0; k < _layout.panels.length; k++) {
+      if (_layout.panels[k].kind === 'overlay' && _layout.panels[k].key === o.key && (_layout.panels[k].style || '') === look) return null;
+    }
+    var at = o.at || null, here = !!(at && at.x != null && at.y != null);
+    var step = Math.min(0.5, 0.03 * (n || 0));
+    var p = { id: ('o' + o.key.slice(0, 12) + Date.now().toString(36).slice(-5) + (n || 0)).slice(0, 24),
+      kind: 'overlay', key: o.key, style: look, name: String(o.label || o.key).slice(0, 24),
+      x: here ? num(at.x, 0, 1, 0.3) : 0.25 + step, y: here ? num(at.y, 0, 1, 0.3) : 0.2 + step,
+      w: num((at && at.w) || o.w, 80, 4000, 320), h: num((at && at.h) || o.h, 36, 3000, 240),
+      scale: num((at && at.zoom) || 1, 0.5, 2.5, 1), off: false };
+    _layout.panels.push(p);
+    return p;
+  }
+  function pickerClick(t) {
+    var chip = t.closest('.chip');
+    if (t.hasAttribute('data-bringall')) {
+      var n = 0;
+      _overlays.forEach(function (o) { if ((o.showing || o.docked) && addOverlay(o, n)) n++; });
+    } else if (chip && chip.hasAttribute('data-ov')) {
+      var n2 = 0;
+      _layout.panels.forEach(function (q) { if (q.kind === 'overlay') n2++; });
+      addOverlay(ovEntry(chip.getAttribute('data-ov')), n2);
+    } else return;
+    save(); render(); closeMenu();
+    // Where each overlay's window is has just changed (they close as panels
+    // take over); read the list again for the next ＋.
+    setTimeout(refresh, 600);
+  }
+
   menuEl.addEventListener('click', function (ev) {
+    if (_menuFor === PICKER) { pickerClick(ev.target); return; }
     var p = panelById(_menuFor);
     if (!p) return;
     var t = ev.target;
+    if (t.hasAttribute('data-arrange')) {
+      closeMenu();
+      if (t.getAttribute('data-arrange') === '1') { try { if (M.canvasEdit) M.canvasEdit(true); } catch (err) {} }
+      else finishArranging();
+      return;
+    }
+    if (t.hasAttribute('data-pieces')) {
+      closeMenu();
+      chooserState().open = true; save();
+      if (!_edit) { try { if (M.canvasEdit) M.canvasEdit(true); } catch (err) {} }
+      render(); return;
+    }
     if (t.hasAttribute('data-bg')) {
       try {
         M.toggleBackdropThis().then(function (on) {
@@ -566,12 +1427,57 @@
     if (chip && chip.hasAttribute('data-rm')) { var rm = chip.getAttribute('data-rm'); p.names = p.names.filter(function (x) { return x !== rm; }); }
     else if (chip && chip.hasAttribute('data-add')) { claimName(p, chip.getAttribute('data-add')); }
     else if (t.id === 'mAddBtn') { var inp = document.getElementById('mAdd'); if (inp) claimName(p, inp.value); }
+    else if (t.hasAttribute('data-mode')) {
+      // A new mode brings its own shape: a ring wants a square, rows want height.
+      // Otherwise it keeps its width and takes the height its content needs (the guild lead,
+      // 2026-09-29: chips on "Its buffs" "doesn't expand to match the size of the overlay").
+      var nm = t.getAttribute('data-mode'), sz = (pdefOf(p) && pdefOf(p).size && pdefOf(p).size[nm]) || WpParts.DEFAULT_SIZE[nm];
+      var ringy = nm === 'ring' || p.mode === 'ring' || nm === 'arc' || p.mode === 'arc' || nm === 'seg' || p.mode === 'seg';
+      if (nm !== p.mode && sz) { if (ringy || !p.w) p.w = sz[0]; p.h = sz[1]; }
+      var fit = nm !== p.mode && !ringy;
+      p.mode = nm;
+      if (fit) { var fid = p.id; setTimeout(function () { fitPiece(fid); }, 0); }
+    }
+    else if (t.hasAttribute('data-fit')) { setTimeout(function () { fitPiece(p.id); }, 0); }
+    else if (t.hasAttribute('data-fitc')) { delete _fitAdd[p.id]; setTimeout(function () { fitEmbed(p.id, false); }, 0); }
+    else if (t.hasAttribute('data-build')) {
+      closeMenu();
+      try { var bw = _els[p.id].frame.contentWindow; if (bw && bw.wpToggleBuilder) bw.wpToggleBuilder(); } catch (err) { /* page mid-load */ }
+      return;
+    }
+    else if (t.hasAttribute('data-nolabel')) { p.nolabel = t.getAttribute('data-nolabel') === '1'; }
+    else if (t.hasAttribute('data-thick')) { p.thick = t.getAttribute('data-thick'); }
+    else if (t.hasAttribute('data-align')) { p.align = t.getAttribute('data-align'); }
+    else if (t.hasAttribute('data-color')) { p.color = t.getAttribute('data-color'); }
+    else if (t.hasAttribute('data-back')) { p.back = t.getAttribute('data-back') === '1'; }
+    else if (t.hasAttribute('data-bulk')) {
+      // The group-level row: one choice for every piece that shares this one's group.
+      var bn = bulkSet(_layout.panels.filter(function (q) { return q.grp === p.grp && q.kind === 'part'; }), bulkPatch(t.getAttribute('data-bulk'), t.getAttribute('data-v')));
+      if (bn.skipped) note(bn.skipped + (bn.skipped === 1 ? ' piece' : ' pieces') + ' cannot be drawn that way and kept their look', 3500);
+    }
+    else if (t.hasAttribute('data-leave')) { p.grp = null; }
+    else if (t.hasAttribute('data-selgrp')) {
+      _layout.panels.forEach(function (q) { if (q.grp && q.grp === p.grp) _sel[q.id] = true; });
+      closeMenu(); render(); return;
+    }
     else if (t.hasAttribute('data-anchor')) { p.anchor = t.getAttribute('data-anchor'); }
-    else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), 0.6, 2.5, 1) * 10) / 10; }
+    else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), (p.kind === 'overlay' || p.kind === 'part' || p.kind === 'sect') ? 0.5 : 0.6, p.kind === 'part' ? 3 : 2.5, 1) * 10) / 10; }
+    else if (t.hasAttribute('data-pw')) { p.pw = num((p.pw || 340) + Number(t.getAttribute('data-pw')), 160, 2400, 340); }
+    else if (t.hasAttribute('data-apart')) {
+      closeMenu();
+      if (takeApart(p)) { save(); render(); }
+      return;
+    }
+    else if (t.hasAttribute('data-gtoggle')) { toggleSavedGroup(t.getAttribute('data-gtoggle'), 'toggle'); }
+    else if (t.hasAttribute('data-gkey')) { captureGroupKey(t.getAttribute('data-gkey')); return; }
+    else if (t.hasAttribute('data-gclear')) { setGroupKey(t.getAttribute('data-gclear'), ''); return; }
+    else if (t.hasAttribute('data-when')) { setWhen([p], t.getAttribute('data-when')); }
+    else if (t.hasAttribute('data-wcls')) { toggleWhenClass(p, t.getAttribute('data-wcls')); }
     else if (t.hasAttribute('data-hide')) { p.off = !p.off; }
-    else if (t.hasAttribute('data-remove')) {
-      _layout.panels = _layout.panels.filter(function (q) { return q !== p; });
-      save(); closeMenu(); render(); return;
+    else if (t.hasAttribute('data-remove')) { closeMenu(); removePanels([p.id]); return; }
+    else if (t.hasAttribute('data-rmgrp')) {
+      var gids = _layout.panels.filter(function (q) { return q.grp && q.grp === p.grp; }).map(function (q) { return q.id; });
+      closeMenu(); removePanels(gids); return;
     }
     else return;
     save(); render(); openMenu(p.id, _menuAnchor || _els[p.id].root);
@@ -580,7 +1486,8 @@
     var p = panelById(_menuFor);
     if (!p) return;
     var t = ev.target;
-    if (t.id === 'mName') { p.name = String(t.value || '').trim().slice(0, 24) || p.name; }
+    // A piece left blank goes back to its own label.
+    if (t.id === 'mName') { p.name = String(t.value || '').trim().slice(0, 24) || (p.kind === 'part' ? '' : p.name); }
     else if (t.hasAttribute('data-g')) {
       var g = t.getAttribute('data-g');
       p.groups = p.groups.filter(function (x) { return x !== g; });
@@ -599,6 +1506,1255 @@
   // here — so leaving the menu closes it.
   menuEl.addEventListener('mouseleave', function () { if (!_edit) closeMenu(); });
 
+  // ── Pieces: data hub, painting, the chooser, groups (3.0 alpha) ─────────────
+  // Every data element is a piece (parts.js). The canvas polls an agent source
+  // only while a placed piece — or the chooser's open tab — needs it, and paints
+  // pieces itself: no iframe, no page per piece.
+  var _sel = {};                 // selected piece ids (Shift-click), for "save as a group"
+  var _src = {};                 // source key → { data, at, running }
+  var _groups = [];              // saved groups, one list for every screen (main: canvas-groups)
+  var STALE_MS = 10000;          // older than this and a source counts as silent
+  var MODE_ICON = { bar: '▭', thin: '▬', vbar: '▮', ring: '◯', arc: '◠', readout: 'ab', big: '12', badge: '◉', pips: '⁞⁞',
+    rows: '☰', chips: '◌◌', inline: '⋯', columns: '▦', seg: '◜' };
+
+  function catName(k) {
+    var c = window.WpParts ? WpParts.CATS : [];
+    for (var i = 0; i < c.length; i++) if (c[i][0] === k) return c[i][1];
+    return k;
+  }
+  function chooserState() {
+    if (!_layout.chooser) _layout.chooser = { open: true, x: 0.72, y: 0.12, tab: 'groups' };
+    return _layout.chooser;
+  }
+  function chooserShown() { return _edit && !!chooserState().open; }
+
+  function neededSources() {
+    var need = {};
+    if (!window.WpParts) return need;
+    _layout.panels.forEach(function (p) {
+      if (!p.off && (p.when || p.cls)) whenSources(p).forEach(function (k) { need[k] = true; });
+      if (p.kind !== 'part' || p.off) return;
+      var d = partDef(p);
+      if (d) need[d.src] = true;
+    });
+    var tab = chooserState().tab;
+    if (chooserShown() && tab !== 'groups') WpParts.PARTS.forEach(function (d) { if (d.cat === tab) need[d.src] = true; });
+    // A source whose path is read from another (the target NPC's script needs the target) keeps
+    // that one polling too.
+    Object.keys(need).forEach(function (k) { var S = WpParts.SOURCES[k]; (S && S.needs || []).forEach(function (n) { need[n] = true; }); });
+    return need;
+  }
+  function syncSources() {
+    var need = neededSources();
+    Object.keys(need).forEach(function (k) { if (!_src[k] || !_src[k].running) pollSource(k); });
+  }
+  function pollSource(k) {
+    var S = WpParts.SOURCES[k];
+    if (!S) return;
+    var s = _src[k] || (_src[k] = {});
+    s.running = true;
+    (function tick() {
+      if (!neededSources()[k]) { s.running = false; return; }
+      // A path that depends on another source: nothing to ask yet waits a second; a new path
+      // (a new target) drops the old answer at once, and asks again soon while it is loading.
+      var path = typeof S.path === 'function' ? S.path(liveData) : S.path;
+      if (!path) { if (s.path) { s.path = null; s.data = null; paintParts(k); } setTimeout(tick, 1000); return; }
+      if (path !== s.path) { s.path = path; s.data = null; }
+      fetch('http://127.0.0.1:' + PORT + path, { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) { if (j && s.path === path) { s.data = j; s.at = Date.now(); } })
+        .catch(function () {})
+        .then(function () { paintParts(k); paintChooserValues(); applyWhen(); setTimeout(tick, (s.data && s.data.loading) ? 1500 : S.every); });
+    })();
+  }
+  function liveData(k) { var s = _src[k]; return (s && s.data && Date.now() - s.at < STALE_MS) ? s.data : null; }
+  // ── Show when, on the screen ──
+  // Read at the cadence the sources already poll at (a rule adds none of its own: whenSources above);
+  // the combat hold runs out on the next answer from /api/me, at most half a second later.
+  function currentWhen() {
+    var now = Date.now(), sig = whenSignals(liveData('me'), liveData('state'), now);
+    sig.combat = holdCombat(sig.combat, now);
+    return sig;
+  }
+  // The ⚙ menu's "Show when" rows. Saying "needs a newer agent" reads the agent's answer as it is when the
+  // menu opens: an agent that answered without a signal the rule needs.
+  function whenMenuHtml(p) {
+    var h = '<div class="sec">Show when</div><div class="row" style="flex-wrap:wrap">'
+      + '<button class="btn' + (!p.when ? ' on' : '') + '" data-when="">Always</button>';
+    WHEN.forEach(function (w) { h += '<button class="btn' + (p.when === w[0] ? ' on' : '') + '" data-when="' + w[0] + '">' + esc(w[1]) + '</button>'; });
+    var anyCls = !(p.cls && p.cls.length);
+    h += '</div><div class="sec">Only for</div><div class="row" style="flex-wrap:wrap">'
+      + '<button class="btn' + (anyCls ? ' on' : '') + '" data-wcls="">Any class</button>';
+    WHEN_CLASSES.forEach(function (c) {
+      h += '<button class="btn' + (!anyCls && p.cls.indexOf(c[0]) >= 0 ? ' on' : '') + '" data-wcls="' + esc(c[0]) + '" title="' + esc(c[0]) + '">' + c[1] + '</button>';
+    });
+    var miss = (p.when || !anyCls) ? currentWhen().miss : {};
+    var lacks = (p.when && miss[p.when === 'nocombat' ? 'combat' : p.when]) || (!anyCls && miss.cls);
+    h += '</div><div class="note">' + (lacks
+      ? 'This agent does not report what the rule needs: needs a newer agent. The panel stays visible until it does.'
+      : 'Out in play it hides while the rule is false and comes back on its own. Arranging shows everything.') + '</div>';
+    return h;
+  }
+  function applyWhen() {
+    var sig = null;
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id];
+      if (!e) return;
+      var ruled = !!(p.when || (p.cls && p.cls.length));
+      var hide = false;
+      if (ruled && !_edit) { sig = sig || currentWhen(); hide = !whenHolds(p, sig); }
+      e.root.classList.toggle('wh', hide);
+      var badge = ruled && _edit ? whenBadge(p) : '';
+      if (e.whb._t !== badge) { e.whb._t = badge; e.whb.textContent = badge; }
+      e.whb.classList.toggle('on', !!badge);
+    });
+  }
+  // get(data, at): `at` is when the answer arrived, so a "ms left" in it
+  // becomes an end time the piece can count down to between polls.
+  function viewFor(d) {
+    var data = liveData(d.src);
+    if (!data) return null;
+    try { return d.get(data, _src[d.src].at) || null; } catch (e) { return null; }
+  }
+  function sampleFor(d, now) {
+    if (!d.sample) return null;
+    try { return typeof d.sample === 'function' ? d.sample(now) : d.sample; } catch (e) { return null; }
+  }
+  function setBody(e, html) { if (e.html !== html) { e.html = html; e.body.innerHTML = html; } }
+  // A piece repaints when its source answers; countdowns every 250 ms. The HTML
+  // is compared first, so a piece that did not change is never touched. With
+  // nothing live, a piece shows its sample while arranging and a dim dash in play.
+  function paintParts(onlySrc) {
+    if (!window.WpParts) return;
+    var now = Date.now();
+    _layout.panels.forEach(function (p) {
+      if (p.kind !== 'part') return;
+      var e = _els[p.id], d = partDef(p);
+      if (!e || !e.body) return;
+      if (!d) { setBody(e, '<div class="pt pt-none"><span class="pt-l">unknown piece</span></div>'); return; }
+      if (onlySrc && d.src !== onlySrc && d.kind !== 'countdown') return;
+      var v = viewFor(d), sample = false;
+      if (!v && _edit) { v = sampleFor(d, now); sample = !!v; }
+      e.root.classList.toggle('sample', sample);
+      setBody(e, WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align, arc: p.arc, uid: p.id }));
+    });
+  }
+  // A piece's height to what it shows right now (chips wrap onto however many lines they need),
+  // never off the screen. Its width stays.
+  function fitPiece(id) {
+    var p = panelById(id), e = _els[id];
+    if (!p || p.kind !== 'part' || !e || !e.body) return;
+    var pt = e.body.querySelector('.pt');
+    if (!pt) return;
+    var was = pt.style.height;
+    pt.style.height = 'auto';
+    var need = Math.ceil(pt.getBoundingClientRect().height) + 4;
+    pt.style.height = was;
+    var H = window.innerHeight, top = e.root.offsetTop;
+    p.h = Math.max(16, Math.min(H - top, need));
+    e.root.style.height = p.h + 'px';
+    save();
+    if (_menuFor === id) placeMenu();
+  }
+  setInterval(function () {
+    if (!window.WpParts) return;
+    var any = _layout.panels.some(function (p) { var d = p.kind === 'part' && !p.off && partDef(p); return d && d.kind === 'countdown'; });
+    if (any) paintParts('__countdowns');
+    if (chooserShown() && chList.querySelector('[data-pvc]')) paintChooserPreviews();
+  }, 250);
+
+  // ── The chooser ──
+  var chEl = document.getElementById('chooser'), chTabs = document.getElementById('chTabs');
+  var chList = document.getElementById('chList'), chFoot = document.getElementById('chFoot');
+  var chHead = document.getElementById('chHead'), ghost = document.getElementById('ghost');
+  function placeChooser() {
+    var st = chooserState(), W = window.innerWidth, H = window.innerHeight;
+    if (st.w) chEl.style.width = st.w + 'px';
+    var w = chEl.offsetWidth || 360, h = chEl.offsetHeight || 300;
+    chEl.style.left = Math.max(0, Math.min(W - w, Math.round(st.x * W))) + 'px';
+    chEl.style.top = Math.max(0, Math.min(H - Math.min(h, 60), Math.round(st.y * H))) + 'px';
+  }
+  // Dragging the chooser's right edge wider (or narrower) is kept with the layout.
+  if (window.ResizeObserver) {
+    var _chWT = null;
+    new ResizeObserver(function () {
+      if (!chEl.classList.contains('open') || !chEl.offsetWidth) return;
+      var st = chooserState(), w = Math.round(chEl.offsetWidth);
+      if (w === st.w) return;
+      clearTimeout(_chWT);
+      _chWT = setTimeout(function () { st.w = Math.max(280, Math.min(640, w)); save(); }, 300);
+    }).observe(chEl);
+  }
+  function presetById(id) { for (var i = 0; i < WpParts.PRESETS.length; i++) if (WpParts.PRESETS[i].id === id) return WpParts.PRESETS[i]; return null; }
+  function savedById(id) { for (var i = 0; i < _groups.length; i++) if (_groups[i].id === id) return _groups[i]; return null; }
+  function renderChooser() {
+    if (!window.WpParts) return;
+    var st = chooserState();
+    chEl.classList.toggle('open', !!st.open);
+    var th = '<span class="ch-tab' + (st.tab === 'groups' ? ' on' : '') + '" data-tab="groups">★ Groups</span>'
+      + (window.WpSections ? '<span class="ch-tab' + (st.tab === 'cuts' ? ' on' : '') + '" data-tab="cuts" title="Parts of each overlay, drawn exactly as in its window">✂ Overlay parts</span>' : '');
+    WpParts.CATS.forEach(function (c) {
+      if (!WpParts.PARTS.some(function (d) { return d.cat === c[0]; })) return;
+      th += '<span class="ch-tab' + (st.tab === c[0] ? ' on' : '') + '" data-tab="' + c[0] + '">' + esc(c[1]) + '</span>';
+    });
+    if (chTabs._html !== th) { chTabs._html = th; chTabs.innerHTML = th; }
+    var lh = '';
+    if (st.tab === 'groups') {
+      // A preset that is an overlay IS the overlay (its own page, so it matches the window and follows any
+      // change to it); "as pieces" lays out the old stack of separate pieces instead.
+      lh += '<div class="ch-sec">Today\'s overlays</div>';
+      WpParts.PRESETS.forEach(function (g) {
+        var real = !!(g.embed && ovEntry(g.embed));
+        lh += '<div class="pc" data-drag="preset:' + g.id + '" title="' + esc(g.note || (real ? 'Drag onto the screen: the overlay itself, as its window draws it.' : 'Drag onto the screen: every piece of it, laid out as the overlay was. Ctrl-drag one to move them all; drag one alone to pull it out.')) + '">'
+          + '<span class="pc-l">' + (real ? '▣ ' : '▦ ') + esc(g.name) + '</span><span class="pc-v">' + (real ? 'the overlay itself' : g.parts.length + ' pieces') + '</span>'
+          + (real ? '<span class="pc-m" data-drag="preset:' + g.id + ':pieces" title="Drag to place it as ' + g.parts.length + ' separate pieces instead">as pieces</span>' : '') + '</div>';
+      });
+      // How to make your own version of one of these (the guild lead, 2026-10-18: change Command Center and
+      // save it as a new version or under another name): a "▣" is the overlay's own page, so it is changed as pieces.
+      lh += '<div class="dim" style="margin:3px 0">To change one: drag its “as pieces” chip, edit the pieces, select them, then 💾 Save as a group. '
+        + 'A group below can be copied with ⧉ or renamed with ✎.</div>';
+      lh += '<div class="ch-sec">My groups</div>';
+      if (!_groups.length) lh += '<div class="dim">Shift-click pieces on the screen, then 💾 below.</div>';
+      _groups.forEach(function (g) {
+        var here = groupPanels(g.id).length;
+        // Deleting a group that is on the screen asks what to do with its pieces: they are not "ghosts" unless you want them.
+        var del = _delArm !== g.id ? '<span class="x" data-delgrp="' + g.id + '" title="Delete this group">🗑</span>'
+          : here ? '<span class="x" data-delgrp="' + g.id + '" data-with="1" title="Delete the group and take its ' + here + ' pieces off the screen (Undo)">delete + remove ' + here + ' on screen</span>'
+              + '<span class="x" data-delgrp="' + g.id + '" title="Delete the group; its pieces stay where they are">delete, keep them</span>'
+            : '<span class="x" data-delgrp="' + g.id + '">sure?</span>';
+        lh += '<div class="pc" data-drag="group:' + g.id + '"><span class="pc-l">'
+          + (_renId === g.id ? '<input data-renin="' + esc(g.id) + '" maxlength="24" value="' + esc(g.name) + '" style="width:100%;font:inherit;font-size:11px;background:#0d1117;color:#e6edf3;border:1px solid #58a6ff;border-radius:4px">' : '★ ' + esc(g.name))
+          + '</span><span class="pc-v">' + g.parts.length + ' pieces' + (here ? ' · ' + here + ' here' : '') + groupHiddenText(g.id) + '</span>'
+          + groupKeyChip(g)
+          + '<span class="x" data-dupgrp="' + g.id + '" title="Save a copy to change (the original stays as it is)">⧉</span>'
+          + '<span class="x" data-rengrp="' + g.id + '" title="Rename (its hotkey and its pieces on the screen stay with it)">✎</span>'
+          + del + '</div>';
+      });
+      var on = {};
+      _layout.panels.forEach(function (q) { if (q.kind === 'overlay') on[q.key] = true; });
+      // The overlays with a preset above are not listed twice (the HUD's would be a style-less panel at half
+      // the ring's size, the old "HUD at 330×300"); this list is the ones with none.
+      var preset = {};
+      WpParts.PRESETS.forEach(function (g) { if (g.embed) preset[g.embed] = true; });
+      var whole = _overlays.filter(function (o) { return !on[o.key] && !preset[o.key]; });
+      if (whole.length) {
+        lh += '<div class="ch-sec">Whole overlays, as today</div>';
+        whole.forEach(function (o) { lh += '<div class="pc" data-drag="overlay:' + o.key + '"><span class="pc-l">▣ ' + esc(o.label) + '</span></div>'; });
+      }
+    } else if (st.tab === 'cuts') {
+      // Each overlay's parts, cut from its own page: the same drawing and buttons as its window.
+      lh += '<div class="dim" style="margin:2px 0 6px">Exactly as each overlay draws it, one part at a time. '
+        + 'A whole overlay on the screen comes apart with ⚙ → ✂ Take it apart.</div>';
+      _overlays.forEach(function (o) {
+        var secs = WpSections.list(o.key);
+        if (!secs.length) return;
+        lh += '<div class="ch-sec">' + esc(o.label) + '</div>';
+        secs.forEach(function (d) {
+          if (d.id === 'empty') return;
+          lh += '<div class="pc" data-drag="sect:' + o.key + ':' + d.id + '" title="' + esc(d.note || ('Drag onto the screen: ' + d.label + ', as ' + o.label + ' draws it')) + '">'
+            + '<span class="pc-l">✂ ' + esc(d.label) + '</span>' + (d.tab ? '<span class="pc-v">its own tab</span>' : '') + '</div>';
+        });
+      });
+      if (!_overlays.some(function (o) { return WpSections.list(o.key).length; })) lh += '<div class="dim">still loading…</div>';
+    } else {
+      WpParts.PARTS.forEach(function (d) {
+        if (d.cat !== st.tab) return;
+        lh += '<div class="pc pp" data-drag="part:' + d.id + '" title="' + esc(d.note || d.label) + '"><span class="pc-l">' + esc(d.label) + '</span>'
+          + '<span class="pc-v" data-val="' + d.id + '"></span>'
+          + '<div class="pc-pv" data-pv="' + d.id + '"' + (d.kind === 'countdown' ? ' data-pvc' : '') + '></div><span class="pc-ms">';
+        (WpParts.MODES[d.kind] || []).forEach(function (m) {
+          lh += '<span class="pc-m" data-drag="part:' + d.id + ':' + m[0] + '" title="Drag to place as ' + esc(m[1].toLowerCase()) + '">'
+            + (MODE_ICON[m[0]] ? MODE_ICON[m[0]] + ' ' : '') + esc(m[1]) + '</span>';
+        });
+        lh += '</span></div>';
+      });
+    }
+    if (chList._html !== lh) { chList._html = lh; chList.innerHTML = lh; }
+    var fh = '<span class="dim">Click a piece to select it, Shift- or Ctrl-click to add more; the bar at the top locks them together or saves them as a group.</span>';
+    if (chFoot._html !== fh) { chFoot._html = fh; chFoot.innerHTML = fh; }
+    placeChooser();
+    paintChooserValues();
+  }
+  function shortText(d, v) {
+    if (!v) return '';
+    if (d.kind === 'list') { var n = (v.items || []).length; return n + (n === 1 ? ' item' : ' items'); }
+    var r = WpParts.resolve(d.kind, v, Date.now());
+    if (!r) return '';
+    if (r.text != null) return String(r.text);
+    return r.pct != null ? Math.round(r.pct) + '%' : '';
+  }
+  // Each piece in the list shows its value now — live, or its sample in italics.
+  function paintChooserValues() {
+    if (!chooserShown() || !window.WpParts) return;
+    var els = chList.querySelectorAll('[data-val]');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i], d = WpParts.byId[el.getAttribute('data-val')];
+      if (!d) continue;
+      var v = viewFor(d), t = v ? shortText(d, v) : '', it = false;
+      if (!t) { t = shortText(d, sampleFor(d, Date.now())); it = !!t; }
+      if (el.textContent !== t) el.textContent = t;
+      el.style.fontStyle = it ? 'italic' : '';
+    }
+    paintChooserPreviews();
+  }
+  // Each piece drawn as it would be on the screen, in its first mode (or the mode chip last hovered), from the
+  // same view the placed piece would get: the client's data now, else its sample (dimmed). Same render call
+  // as paintParts, so a new mode or a fix shows here with no change; the HTML is compared first.
+  var _pvMode = {};
+  function paintChooserPreviews() {
+    var els = chList.querySelectorAll('[data-pv]'), now = Date.now();
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i], d = WpParts.byId[el.getAttribute('data-pv')];
+      if (!d) continue;
+      var modes = WpParts.MODES[d.kind] || [], mode = _pvMode[d.id] || d.mode || (modes[0] ? modes[0][0] : 'readout');
+      var v = viewFor(d), live = !!v;
+      if (!v) v = sampleFor(d, now);
+      var html = WpParts.render(d, mode, v, now, { uid: 'pv' + d.id });
+      if (el._h !== html) { el._h = html; el.innerHTML = html; }
+      var w = Math.min(300, (WpParts.DEFAULT_SIZE[mode] || [220])[0]) + 'px';
+      if (el.style.maxWidth !== w) el.style.maxWidth = w;
+      el.classList.toggle('sample', !live);
+    }
+  }
+  // Hovering a mode chip previews that mode (not 'Ring arc': it needs the ring around it).
+  chList.addEventListener('mouseover', function (ev) {
+    var m = ev.target.closest ? ev.target.closest('.pc-m[data-drag^="part:"]') : null;
+    if (!m) return;
+    var bits = m.getAttribute('data-drag').split(':');
+    if (!bits[2] || bits[2] === 'seg' || _pvMode[bits[1]] === bits[2]) return;
+    _pvMode[bits[1]] = bits[2];
+    paintChooserPreviews();
+  });
+
+  chTabs.addEventListener('click', function (ev) {
+    var t = ev.target.closest('[data-tab]');
+    if (!t) return;
+    chooserState().tab = t.getAttribute('data-tab');
+    save(); renderChooser(); syncSources();
+  });
+  document.getElementById('chClose').addEventListener('click', function () { chooserState().open = false; save(); render(); });
+  document.getElementById('pcBtn').addEventListener('click', function () {
+    var st = chooserState(); st.open = !st.open; save(); render();
+  });
+  chFoot.addEventListener('click', function (ev) {
+    if (ev.target.id === 'chSave') { var inp = document.getElementById('chName'); saveSelectionAsGroup(inp ? inp.value : ''); }
+    else if (ev.target.id === 'chClear') { _sel = {}; render(); }
+  });
+  chFoot.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && ev.target.id === 'chName') { ev.preventDefault(); saveSelectionAsGroup(ev.target.value); }
+  });
+  var _delArm = null, _delArmT = null;
+  chList.addEventListener('click', function (ev) {
+    var kg = ev.target.closest('[data-keygrp]'), cg = ev.target.closest('[data-clrgrp]');
+    if (kg) { captureGroupKey(kg.getAttribute('data-keygrp')); return; }
+    if (cg) { setGroupKey(cg.getAttribute('data-clrgrp'), ''); return; }
+    var dup = ev.target.closest('[data-dupgrp]'), ren = ev.target.closest('[data-rengrp]');
+    if (dup) { duplicateGroup(dup.getAttribute('data-dupgrp')); return; }
+    if (ren) { _renId = ren.getAttribute('data-rengrp'); renderChooser(); var ri = chList.querySelector('[data-renin]'); if (ri) { ri.focus(); ri.select(); } return; }
+    var del = ev.target.closest('[data-delgrp]');
+    if (!del) return;
+    var id = del.getAttribute('data-delgrp');
+    if (_delArm !== id) {                       // two clicks: a group is an evening's arranging
+      _delArm = id; clearTimeout(_delArmT);
+      _delArmT = setTimeout(function () { _delArm = null; renderChooser(); }, 5000);
+      renderChooser(); return;
+    }
+    _delArm = null;
+    deleteSavedGroup(id, del.hasAttribute('data-with'));
+  });
+  // Rename in place: Enter or leaving the box keeps it, Esc leaves the name as it was.
+  chList.addEventListener('keydown', function (ev) {
+    if (!ev.target.hasAttribute || !ev.target.hasAttribute('data-renin')) return;
+    if (ev.key === 'Enter') { ev.preventDefault(); renameGroup(ev.target.getAttribute('data-renin'), ev.target.value); }
+    else if (ev.key === 'Escape') { ev.stopPropagation(); _renId = null; renderChooser(); }
+  });
+  chList.addEventListener('focusout', function (ev) {
+    if (ev.target.hasAttribute && ev.target.hasAttribute('data-renin') && _renId) renameGroup(ev.target.getAttribute('data-renin'), ev.target.value);
+  });
+  // Delete a saved group. withPieces: also take the pieces it put on the screen off it, so nothing is left
+  // behind as a locked set nobody can name. Either way one Undo (the toast, or Ctrl+Z) puts back the group,
+  // its pieces if they went, and its hotkey.
+  function deleteSavedGroup(id, withPieces) {
+    var g = savedById(id);
+    if (!g) return;
+    var snap = { g: g, at: _groups.indexOf(g), key: _gkeys[id] || '', live: [] };
+    var named = _layout.named || {};
+    Object.keys(named).forEach(function (k) { if (named[k] === id) snap.live.push(k); });
+    var ids = withPieces ? groupPanels(id).map(function (q) { return q.id; }) : [];
+    _groups = _groups.filter(function (x) { return x.id !== id; });
+    putGroups();
+    forgetSavedGroup(id);
+    if (ids.length) {
+      removePanels(ids);
+      toastMsg.textContent = 'Deleted “' + g.name + '” and its ' + ids.length + ' pieces';
+    } else {
+      _undo = [];
+      toastMsg.textContent = 'Deleted “' + g.name + '”';
+      toastEl.classList.add('undo'); toastEl.classList.add('on');
+      clearTimeout(_undoT);
+      _undoT = setTimeout(function () { _undo = null; toastEl.classList.remove('on'); }, 8000);
+    }
+    if (_undo) _undo.group = snap;
+    renderChooser();
+  }
+
+  // Move the chooser by its header.
+  var _cd = null;
+  chHead.addEventListener('mousedown', function (ev) {
+    if (ev.button !== 0 || ev.target.closest('button')) return;
+    ev.preventDefault();
+    var r = chEl.getBoundingClientRect();
+    _cd = { dx: ev.clientX - r.left, dy: ev.clientY - r.top };
+    shield.classList.add('on'); shield.style.cursor = 'move';
+    try { M.overlayHoverInteractive(true); } catch (e) {}
+  });
+
+  // Put a piece down: drag it (or one of its mode chips) from the chooser onto
+  // the screen, or click it to drop it near the middle.
+  var _pd = null, _cascade = 0;
+  chList.addEventListener('mousedown', function (ev) {
+    if (ev.button !== 0 || ev.target.closest('[data-delgrp],[data-keygrp],[data-clrgrp],[data-dupgrp],[data-rengrp],[data-renin]')) return;
+    var el = ev.target.closest('[data-drag]');
+    if (!el) return;
+    ev.preventDefault();
+    _pd = { what: el.getAttribute('data-drag'), label: (el.closest('.pc') || el).querySelector('.pc-l').textContent, sx: ev.clientX, sy: ev.clientY, moved: false };
+    shield.classList.add('on'); shield.style.cursor = 'copy';
+    try { M.overlayHoverInteractive(true); } catch (e) {}
+  });
+  document.addEventListener('mousemove', function (ev) {
+    var W = window.innerWidth, H = window.innerHeight;
+    if (_cd) {
+      var st = chooserState();
+      st.x = Math.max(0, Math.min(1, (ev.clientX - _cd.dx) / W));
+      st.y = Math.max(0, Math.min(1, (ev.clientY - _cd.dy) / H));
+      placeChooser();
+      return;
+    }
+    if (!_pd) return;
+    if (!_pd.moved && Math.abs(ev.clientX - _pd.sx) + Math.abs(ev.clientY - _pd.sy) > 4) {
+      _pd.moved = true;
+      ghost.textContent = '＋ ' + _pd.label;
+      ghost.style.display = 'block';
+    }
+    if (_pd.moved) { ghost.style.left = (ev.clientX + 12) + 'px'; ghost.style.top = (ev.clientY + 8) + 'px'; }
+  });
+  document.addEventListener('mouseup', function (ev) {
+    if (_cd) {
+      _cd = null; shield.classList.remove('on');
+      try { M.overlayHoverInteractive(false); } catch (e) {}
+      save(); return;
+    }
+    if (!_pd) return;
+    var pd = _pd; _pd = null;
+    ghost.style.display = 'none'; shield.classList.remove('on');
+    try { M.overlayHoverInteractive(false); } catch (e) {}
+    var r = chEl.getBoundingClientRect();
+    if (pd.moved && ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom) return;
+    // A click on a row that is already on the screen shows where it is, rather than stacking a second copy on it.
+    if (!pd.moved && clickLocates(pd.what, pd.label.replace(/^[★▣▦✂]\s*/, ''))) return;
+    dropThing(pd.what, pd.moved ? ev.clientX : null, pd.moved ? ev.clientY : null);
+  });
+
+  function newId(prefix) { return (prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).slice(0, 24); }
+  function addPart(pid, mode, X, Y, grp, o) {
+    var d = WpParts.byId[pid];
+    if (!d || _layout.panels.length >= MAX_PANELS) return null;
+    var modes = WpParts.MODES[d.kind] || [];
+    if (!modes.some(function (m) { return m[0] === mode; })) mode = d.mode || (modes[0] ? modes[0][0] : '');
+    var sz = (o && o.w) ? [o.w, o.h] : ((d.size && d.size[mode]) || WpParts.DEFAULT_SIZE[mode] || [200, 30]);
+    var W = window.innerWidth, H = window.innerHeight;
+    var p = { id: newId('q'), kind: 'part', part: pid, mode: mode, name: '',
+      x: num(X / W, 0, 1, 0.3), y: num(Y / H, 0, 1, 0.3), w: num(sz[0], 40, 4000, 200), h: num(sz[1], 16, 3000, 30),
+      scale: num(o && o.scale, 0.5, 3, 1), back: !!(o && o.back), grp: grp || null, off: false, arc: null };
+    // A saved group brings each piece's own look with it.
+    if (o) {
+      p.arc = o.arc ? WpParts.cleanArc(o.arc) : null;   // a Ring arc's place on the HUD's circle
+      p.nolabel = !!o.nolabel;
+      p.thick = (o.thick === 'thin' || o.thick === 'thick') ? o.thick : '';
+      p.color = /^#[0-9a-fA-F]{6}$/.test(String(o.color || '')) ? o.color : '';
+      p.align = (o.align === 'c' || o.align === 'r') ? o.align : '';
+    }
+    _layout.panels.push(p);
+    return p;
+  }
+  // A group goes down as separate pieces that remember they came together:
+  // Ctrl-drag moves them as one, a plain drag pulls one out.
+  // Returns the group id the pieces share (a SAVED group going down links it to its own id; see dropThing).
+  function placeGroup(pieces, X, Y) {
+    var grp = newId('g');
+    pieces.forEach(function (q) { addPart(q.part, q.mode, X + (q.dx || 0), Y + (q.dy || 0), grp, q); });
+    return grp;
+  }
+  // A preset laid out as pieces remembers which preset it was ('preset:<id>' in _layout.named, beside a saved
+  // group's id), so a click or a hover on its row can find where it went. Nothing else reads a name that is
+  // not a saved group's id (namedGroup is null for it).
+  function markPreset(grp, g) { (_layout.named = _layout.named || {})[grp] = 'preset:' + g.id; return grp; }
+  // a[6], where a row has one, is a Ring arc's arc (its place on the HUD's circle), colour and no-label.
+  function presetPiece(a) {
+    var x = a[6] || {};
+    return { part: a[0], mode: a[1], dx: a[2], dy: a[3], w: a[4], h: a[5], arc: x.arc, color: x.color, nolabel: x.nolabel };
+  }
+  // A row of a preset in the ring's own space (parts.js `ring`), scaled to a ring k times as big.
+  function ringPiece(a, k) {
+    var q = presetPiece(a);
+    ['dx', 'dy', 'w', 'h'].forEach(function (f) { q[f] = Math.round(q[f] * k * 10) / 10; });
+    return q;
+  }
+  function dropThing(what, X, Y) {
+    var W = window.innerWidth, H = window.innerHeight;
+    var clicked = X == null;
+    if (X == null) {
+      _cascade = (_cascade + 1) % 8;
+      X = Math.round(W * 0.34) + _cascade * 26; Y = Math.round(H * 0.28) + _cascade * 26;
+    }
+    var bits = String(what).split(':');
+    if (bits[0] === 'part') addPart(bits[1], bits[2] || '', X, Y, null);
+    else if (bits[0] === 'preset') {
+      var g = presetById(bits[1]);
+      // A preset that is an overlay is that overlay's own page; "as pieces", or a page the list from main has
+      // not named yet, lays out the pieces.
+      if (g && g.embed && bits[2] !== 'pieces' && ovEntry(g.embed)) dropEmbed(g, X, Y, clicked);
+      else if (g && g.ring) {
+        // The ring as pieces (FB-64): one circle, every arc a piece on it. The rows are in the ring's space, so
+        // they are scaled to the size "as is" gives the ring and centred as it is: in the middle of the screen when
+        // clicked in, on the drop when dragged (dropEmbed's rule).
+        var S = embedSize({ key: g.embed }, g.style)[0], k = S / g.ring;
+        markPreset(placeGroup(g.parts.map(function (a) { return ringPiece(a, k); }), (clicked ? W / 2 : X) - S / 2, (clicked ? H / 2 : Y) - S / 2), g);
+      }
+      else if (g) markPreset(placeGroup(g.parts.map(presetPiece), X, Y), g);
+    }
+    else if (bits[0] === 'group') {
+      // A saved group: its pieces are marked as that group (_layout.named), so its hotkey finds them.
+      var sg = savedById(bits[1]);
+      if (sg) { var sgrp = placeGroup(sg.parts, X, Y); (_layout.named = _layout.named || {})[sgrp] = sg.id; }
+    }
+    else if (bits[0] === 'overlay') {
+      var o = ovEntry(bits[1]);
+      var added = o ? addOverlay(o, 0) : null;
+      if (added) { added.x = num(X / W, 0, 1, 0.3); added.y = num(Y / H, 0, 1, 0.3); setTimeout(refresh, 600); }
+    }
+    else if (bits[0] === 'sect' && window.WpSections && WpSections.find(bits[1], bits[2]) && _layout.panels.length < MAX_PANELS) {
+      _layout.panels.push(sectPanel(bits[1], bits[2], num(X / W, 0, 1, 0.3), num(Y / H, 0, 1, 0.3)));
+      // Its overlay's own window steps aside, as for a whole overlay (main _canvasHostedKeys).
+      setTimeout(refresh, 600);
+    }
+    save(); render();
+  }
+
+  // ── A preset that is an overlay: the overlay's own page ─────────────────────
+  // The guild lead, 2026-10-03: "when I look at an overlay outside of the canvas or choose it as a preset
+  // within the canvas they should be extremely close to being identical." So a preset that is an overlay is
+  // that overlay's page (kind 'overlay': one code path, so a change to the overlay reaches its preset), not a
+  // stack of re-drawn pieces. The HUD's ring has a shape of its own: the square me.html gives its window,
+  // half the screen's short side.
+  function embedSize(o, style) {
+    if (o.key === 'me' && style === 'hud') { var side = Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.5); return [side, side]; }
+    return [num(o.w, 80, 4000, 320), num(o.h, 36, 3000, 240)];
+  }
+  function dropEmbed(g, X, Y, clicked) {
+    var o = ovEntry(g.embed), W = window.innerWidth, H = window.innerHeight;
+    // at: null — a preset goes where it is dropped, not where the overlay's window happens to be.
+    var p = addOverlay(Object.assign({}, o, { at: null, style: g.style || '' }), 0);
+    if (!p) { if (!locate(placedFor('preset:' + g.id), g.name)) note(g.name + ' is already on the canvas'); return; }
+    var sz = embedSize(o, g.style), ring = g.embed === 'me' && g.style === 'hud';
+    p.name = String(g.name).slice(0, 24); p.w = sz[0]; p.h = sz[1];
+    // The ring wraps the middle of the screen: clicked in, it lands there; dragged, it is centred on the drop.
+    p.x = num(((ring ? (clicked ? W / 2 : X) - sz[0] / 2 : X)) / W, 0, 1, 0.3);
+    p.y = num(((ring ? (clicked ? H / 2 : Y) - sz[1] / 2 : Y)) / H, 0, 1, 0.3);
+    _fitAdd[p.id] = true;
+    // The overlay's own window steps aside (main _canvasHostedKeys), so the list is read again.
+    setTimeout(refresh, 600);
+  }
+
+  // ── Fit to content ──────────────────────────────────────────────────────────
+  // The size a page asks for, in its own pixels. A page with a shape of its own says so (me.html's
+  // window.wpFitSize: the ring's square, as wide as the numbers outside it need); any other is measured the
+  // way its own window measured it for the auto-height (its #wrap, or .hud) — the height always, the width
+  // only where the content is wider than the panel, because a page's width is the raider's call.
+  function embedWant(e) {
+    var w = null, doc = null;
+    try { w = e.frame.contentWindow; doc = e.frame.contentDocument; } catch (err) { return null; }
+    if (!w || !doc || !doc.body) return null;
+    if (typeof w.wpFitSize === 'function') {
+      try { var r = w.wpFitSize(); if (r && r[0] > 0 && r[1] > 0) return { w: r[0], h: r[1], exact: true }; } catch (err) { /* mid-load */ }
+    }
+    var el = doc.getElementById('wrap') || doc.querySelector('.hud');
+    if (!el) return null;
+    return { w: el.scrollWidth > el.clientWidth + 1 ? el.scrollWidth : 0, h: el.offsetTop + el.scrollHeight, exact: false };
+  }
+  // grow: the first fit after a preset is added. A page with nothing to show yet (no fight, no target) is
+  // not what it will look like, so then the panel only grows to its content, never below the overlay's own
+  // default size; the menu's ↕ Fit to content is exact.
+  function fitEmbed(id, grow) {
+    var p = panelById(id), e = _els[id];
+    if (!p || p.kind !== 'overlay' || !e || !e.frame) return false;
+    var want = embedWant(e);
+    if (!want) return false;
+    var s = p.scale || 1, W = window.innerWidth, H = window.innerHeight;
+    var w = want.w ? Math.ceil(want.w * s) : p.w, h = Math.ceil(want.h * s);
+    if (grow && !want.exact) h = Math.max(h, p.h);
+    w = num(w, 80, Math.min(4000, W), p.w); h = num(h, 36, Math.min(3000, H), p.h);
+    if (w === p.w && h === p.h) return true;
+    // The ring keeps its middle when its width changes (its numbers outside it, or not), as its window did.
+    if (want.exact) p.x = num((p.x * W - (w - p.w) / 2) / W, 0, 1, p.x);
+    p.w = w; p.h = h;
+    place(e, p); save(); placeGbox();
+    if (_menuFor === id) placeMenu();
+    return true;
+  }
+  // A page just added is not at its settled look when it loads (its data has not come in), so the fit is
+  // tried three times; sizing it by hand (◢) or the menu's Fit ends it.
+  function scheduleFit(id) {
+    [700, 2000, 4500].forEach(function (ms, i, all) {
+      setTimeout(function () {
+        if (!_fitAdd[id]) return;
+        fitEmbed(id, true);
+        if (i === all.length - 1) delete _fitAdd[id];
+      }, ms);
+    });
+  }
+
+  // ── The HUD's ⚙ builder, on the canvas ──────────────────────────────────────
+  // me.html's builder opens beside the ring by growing its WINDOW; a panel has no window, so the page asks
+  // here instead (window.parent.wpCanvasWiden): this panel grows by the builder's width toward the side with
+  // room (the answer, 'left' or 'right'; the ring keeps its place and size) and gives it back on close.
+  // Nothing of it is saved. The builder edits the same per-character parts as the HUD's own window
+  // (me.html reads and writes them in localStorage, which both share). wpCanvasFit: the page's shape
+  // changed (its numbers moved outside the ring), so fit it again.
+  function panelOfWin(win) {
+    var ids = Object.keys(_els);
+    for (var i = 0; i < ids.length; i++) {
+      try { if (_els[ids[i]].frame && _els[ids[i]].frame.contentWindow === win) return ids[i]; } catch (err) { /* frame gone */ }
+    }
+    return null;
+  }
+  window.wpCanvasWiden = function (win, px, on) {
+    var id = panelOfWin(win), p = id && panelById(id), e = id && _els[id];
+    if (!p || p.kind !== 'overlay') return false;
+    if (!on) { delete _widen[id]; e.root.classList.remove('building'); place(e, p); placeGbox(); return true; }
+    var add = Math.round(num(px, 0, 1000, 0) * (p.scale || 1)), W = window.innerWidth;
+    var x = e.root.offsetLeft, w = e.root.offsetWidth;
+    var left = x + w + add > W && x - add >= 0;
+    _widen[id] = { add: add, left: left };
+    e.root.classList.add('building');
+    place(e, p); placeGbox();
+    return left ? 'left' : 'right';
+  };
+  window.wpCanvasFit = function (win) { var id = panelOfWin(win); return id ? fitEmbed(id, false) : false; };
+
+  // The pieces as a saved group stores them: each one's look, and where it sits from the set's top-left.
+  function groupPartsOf(ps) {
+    var W = window.innerWidth, H = window.innerHeight;
+    var minX = Math.min.apply(null, ps.map(function (p) { return p.x * W; }));
+    var minY = Math.min.apply(null, ps.map(function (p) { return p.y * H; }));
+    return ps.map(function (p) {
+      return { part: p.part, mode: p.mode, dx: Math.round(p.x * W - minX), dy: Math.round(p.y * H - minY),
+        w: p.w, h: p.h, scale: p.scale, back: p.back, nolabel: !!p.nolabel, thick: p.thick || '', color: p.color || '', align: p.align || '',
+        arc: p.arc || null };
+    });
+  }
+  function putGroups() { try { if (M.canvasGroupsSave) M.canvasGroupsSave(_groups); } catch (e) {} }
+  // A group's name is what its tray entry, the dashboard and /pipe mimic group find it by (the FIRST match,
+  // case-folded), so two may never share one: "Name", then "Name copy", "Name copy 2"…
+  function uniqueGroupName(base, exceptId) {
+    var taken = {};
+    _groups.forEach(function (g) { if (g.id !== exceptId) taken[g.name.toLowerCase()] = true; });
+    base = String(base || '').trim().slice(0, 24) || 'Group';
+    if (!taken[base.toLowerCase()]) return base;
+    for (var n = 2; n < 100; n++) {
+      var suffix = n === 2 ? ' copy' : ' copy ' + (n - 1), name = base.replace(/ copy( \d+)?$/i, '').slice(0, 24 - suffix.length) + suffix;
+      if (!taken[name.toLowerCase()]) return name;
+    }
+    return base.slice(0, 20) + ' ' + newId('').slice(-3);
+  }
+  function saveSelectionAsGroup(name) {
+    var ps = _layout.panels.filter(function (p) { return _sel[p.id] && p.kind === 'part'; });
+    if (!ps.length) return;
+    // Saving a set that already IS a saved group makes a NEW group beside it; the original is not touched.
+    var from = ps[0].grp ? namedGroup(ps[0].grp) : null;
+    var g = { id: newId('s'), name: uniqueGroupName(String(name || '').trim() || (from ? from.name + ' copy' : 'Group ' + (_groups.length + 1))),
+      parts: groupPartsOf(ps) };
+    _groups.push(g);
+    _groups = _groups.slice(-60);
+    putGroups();
+    // The selection is that group on the screen too.
+    var grp = newId('g');
+    ps.forEach(function (p) { p.grp = grp; });
+    (_layout.named = _layout.named || {})[grp] = g.id;
+    _sel = {};
+    save(); render();
+    if (from) note('Saved as “' + g.name + '” — “' + from.name + '” is unchanged', 4000);
+  }
+  // 💾 Update: what is on the screen replaces the saved group's pieces (its name, key and id stay).
+  function updateSavedGroup(id) {
+    var g = savedById(id), ps = _layout.panels.filter(function (p) { return _sel[p.id] && p.kind === 'part'; });
+    if (!g || !ps.length) return;
+    g.parts = groupPartsOf(ps).slice(0, 80);
+    putGroups(); _sel = {};
+    save(); render();
+    note('“' + g.name + '” updated with these ' + ps.length + ' pieces', 4000);
+  }
+  // ⧉ A copy to change: same pieces, a new id (so no hotkey), its own name.
+  function duplicateGroup(id) {
+    var g = savedById(id);
+    if (!g || _groups.length >= 60) { if (g) note('60 groups is the most — delete one first', 4000); return; }
+    var c = { id: newId('s'), name: uniqueGroupName(g.name + ' copy'), parts: JSON.parse(JSON.stringify(g.parts)) };
+    _groups.splice(_groups.indexOf(g) + 1, 0, c);
+    putGroups();
+    renderChooser();
+    note('Copied to “' + c.name + '” — drag it onto the screen, change it, 💾 Update', 4000);
+  }
+  // ✎ Rename: the id stays, so its hotkey and its pieces on the screen stay with it.
+  var _renId = null;
+  function renameGroup(id, raw) {
+    var g = savedById(id), want = String(raw || '').trim();
+    _renId = null;
+    if (g && want && want !== g.name) { g.name = uniqueGroupName(want, id); putGroups(); }
+    renderChooser();
+  }
+  function sanitizeGroups(list) {
+    return (Array.isArray(list) ? list : []).filter(function (g) {
+      return g && typeof g.id === 'string' && Array.isArray(g.parts);
+    }).slice(-60).map(function (g) {
+      return { id: g.id.slice(0, 24), name: String(g.name || 'Group').slice(0, 24),
+        parts: g.parts.filter(function (q) { return q && /^[a-z]+\.[A-Za-z0-9_]+$/.test(String(q.part || '')); }).slice(0, 80) };
+    });
+  }
+  try { if (M.canvasGroups) M.canvasGroups().then(function (g) { _groups = sanitizeGroups(g); renderChooser(); }).catch(function () {}); } catch (e) {}
+
+  // ── ⌨ Saved groups: show / hide them, and a hotkey that does it ──────────────
+  // The guild lead, 2026-10-07: "we should be able to assign hotkeys to show or hide canvas groups as
+  // well". A group here is a SAVED group (★ Groups → My groups). Pieces placed from it, or saved as it,
+  // are marked in _layout.named (the live group they share → the saved group's id), so one press finds
+  // every piece of it on this screen and hides them or shows them again: panel.off, the hide the ✕ on a
+  // panel makes — not drawn, not a click target, place and size kept, saved with the layout. The key
+  // itself belongs to main.js (cfg.canvasGroupHotkeys, by saved group id, so a rename keeps it); it
+  // queues each press and loadState reads it. A group that is not here (no pieces on this screen's
+  // layout) says so instead of doing nothing.
+  var _gkeys = {}, _gblocked = {};   // saved group id → its accelerator / the one the OS refused
+  var _capKey = null;                // the saved group whose key is being captured now
+  var _capBusy = false;
+  function namedGroup(grp) { return (_layout.named && _layout.named[grp]) ? savedById(_layout.named[grp]) : null; }
+  function groupPanels(savedId) {
+    var named = _layout.named || {};
+    return _layout.panels.filter(function (q) { return q.grp && named[q.grp] === savedId; });
+  }
+  function groupHiddenText(savedId) {
+    var ps = groupPanels(savedId);
+    return ps.length && ps.every(function (q) { return q.off; }) ? ' · hidden' : '';
+  }
+  // A deleted saved group is no one's any more: its pieces stay, as the locked set they are.
+  function forgetSavedGroup(id) {
+    var named = _layout.named;
+    if (named) { Object.keys(named).forEach(function (g) { if (named[g] === id) delete named[g]; }); save(); }
+    delete _gkeys[id]; delete _gblocked[id];
+  }
+  // mode 'show' forces them on. Otherwise all hidden → shown, anything else (shown, or a mix) → hidden.
+  // 'shown' | 'hidden', or null when none of its pieces is on this screen's canvas.
+  function toggleSavedGroup(id, mode) {
+    var ps = groupPanels(id);
+    if (!ps.length) return null;
+    var hide = mode === 'show' ? false : !ps.every(function (q) { return q.off; });
+    ps.forEach(function (q) { q.off = hide; });
+    save(); render();
+    return hide ? 'hidden' : 'shown';
+  }
+  // An overlay's own hotkey (main.js _overlayHotkeyPress) sets its "as is" panels — the whole overlay's page,
+  // kind 'overlay', one per look — shown or hidden, the same `off` as a group's. A piece taken apart from the
+  // overlay ('sect') or any other piece ('part') is not the overlay: the groups' keys are theirs.
+  function setOverlayPanels(key, show) {
+    var ps = _layout.panels.filter(function (q) { return q.kind === 'overlay' && q.key === key; });
+    if (!ps.length) return false;
+    ps.forEach(function (q) { q.off = !show; });
+    save(); render();
+    return true;
+  }
+  // The presses main queued (a hotkey, the tray, /pipe mimic group), oldest first.
+  function applyGroupOps(ops) {
+    (Array.isArray(ops) ? ops : []).forEach(function (op) {
+      if (op && typeof op.overlay === 'string') { setOverlayPanels(op.overlay, !!op.show); return; }
+      if (!op || typeof op.id !== 'string') return;
+      if (toggleSavedGroup(op.id, op.show ? 'show' : 'toggle') !== null) return;
+      var g = savedById(op.id);
+      note('“' + (g ? g.name : 'That group') + '” is not on this screen’s canvas — drag it in from ★ Groups', 4000);
+    });
+  }
+
+  // The key capture, the dashboard's (_wpCaptureAccel) for the Canvas: waits for a real key with Ctrl, Alt or
+  // Shift held and hands back an Electron accelerator. Esc cancels; Backspace/Delete run onClear(true) to
+  // remove the key. Letters and digits come from the physical key (e.code), so Shift+1 is "Shift+1". While it
+  // listens Mimic lets go of every key it holds (hotkeyCapture), so its own keys arrive and are checked
+  // against the list it returns — the same list the dashboard's capture checks, groups' keys included.
+  // `selfId` is the control being set, which may keep its own key. A key another PROGRAM holds never
+  // arrives (Windows hands it to its owner): modifiers pressed and let go with no key between is said out loud.
+  var KEY_USES = { hideAllHotkey: 'the Show / hide ALL key', backdropHotkey: 'the backgrounds key',
+    damageAlertHotkey: 'the damage-alert key', miniHotkey: 'the Minimize ALL key' };
+  function fmtAccel(a) { return String(a || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
+  // "Ctrl+Shift+H", "CommandOrControl+Shift+h" and "Shift+Control+H" are one key.
+  function accelNorm(a) {
+    var mods = [], key = '';
+    String(a || '').split('+').forEach(function (p) {
+      var t = p.trim().toLowerCase();
+      if (/^(commandorcontrol|cmdorctrl|control|ctrl|command|cmd)$/.test(t)) mods.push('ctrl');
+      else if (t === 'alt' || t === 'option') mods.push('alt');
+      else if (t === 'shift') mods.push('shift');
+      else if (t) key = t;
+    });
+    return mods.sort().join('+') + '+' + key;
+  }
+  function useLabel(u) {
+    if (u.label) return u.label;
+    if (KEY_USES[u.id]) return KEY_USES[u.id];
+    var o = ovEntry(String(u.id).replace(/^overlay:/, ''));
+    return o ? 'the ' + o.label + ' overlay’s key' : 'another Mimic key';
+  }
+  function captureAccel(say, onAccel, onClear, selfId) {
+    if (_capBusy) return false;
+    _capBusy = true;
+    var uses = [], modsDown = false, gotKey = false, timer = null;
+    var bridge = !!M.hotkeyCapture;
+    if (bridge) { try { M.hotkeyCapture(true).then(function (u) { uses = Array.isArray(u) ? u : []; }).catch(function () {}); } catch (e) {} }
+    try { window.focus(); } catch (e) {}
+    function stop() {
+      _capBusy = false;
+      clearTimeout(timer);
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('keyup', onUp, true);
+      if (bridge) { try { M.hotkeyCapture(false); } catch (e) {} }
+    }
+    function onUp(e) {
+      var mod = e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift' || e.key === 'Meta';
+      if (!mod || e.ctrlKey || e.altKey || e.shiftKey) return;   // still holding one
+      if (modsDown && !gotKey) say('Nothing came through with those held. If you pressed a key with them, another program is already using that combination as its own hotkey — try a different one (Esc cancels).');
+      modsDown = false; gotKey = false;
+    }
+    function onKey(e) {
+      e.preventDefault(); e.stopPropagation();
+      var k = e.key, code = e.code || '';
+      if (k === 'Escape') { stop(); say('Cancelled.', true); if (onClear) onClear(null); return; }
+      if (onClear && (k === 'Backspace' || k === 'Delete') && !e.ctrlKey && !e.altKey && !e.shiftKey) { stop(); onClear(true); return; }
+      if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') { modsDown = true; return; }  // wait for the real key
+      gotKey = true;
+      if (!e.ctrlKey && !e.altKey && !e.shiftKey) { say('Add Ctrl, Alt or Shift — a bare key would eat normal typing.'); return; }
+      var key = /^Key[A-Z]$/.test(code) ? code.slice(3)
+        : /^Digit[0-9]$/.test(code) ? code.slice(5)
+        : /^Numpad[0-9]$/.test(code) ? 'num' + code.slice(6)
+        : (k.length === 1 ? k.toUpperCase() : k);                     // F1-F12 etc. pass through
+      if (key === ' ') key = 'Space';
+      var parts = [];
+      if (e.ctrlKey)  parts.push('CommandOrControl');
+      if (e.altKey)   parts.push('Alt');
+      if (e.shiftKey) parts.push('Shift');
+      parts.push(key);
+      var accel = parts.join('+'), n = accelNorm(accel);
+      for (var i = 0; i < uses.length; i++) {
+        if (uses[i].id !== selfId && accelNorm(uses[i].accel) === n) {
+          say(fmtAccel(accel) + ' is already ' + useLabel(uses[i]) + ' — press a different one (Esc cancels).');
+          return;                                                     // keep listening
+        }
+      }
+      stop();
+      onAccel(accel);
+    }
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('keyup', onUp, true);
+    // A capture nobody finishes lets go on its own, so it cannot hold the keys (or the next capture) for good.
+    timer = setTimeout(function () { stop(); say('No key came through — click the key to try again.', true); if (onClear) onClear(null); }, 20000);
+    return true;
+  }
+
+  function keyText(id) { return _capKey === id ? 'press keys…' : _gkeys[id] ? '⌨ ' + fmtAccel(_gkeys[id]) : '⌨ Hotkey…'; }
+  function keyTitle(id) {
+    if (_gblocked[id]) return 'Another program already uses ' + fmtAccel(_gblocked[id]) + ', so it does nothing here — click to pick a different one.';
+    return _gkeys[id] ? 'Press ' + fmtAccel(_gkeys[id]) + ' anywhere to show or hide this group. Click to change it.'
+      : 'A key that shows or hides this group from anywhere. Click, then press Ctrl, Alt or Shift + a key.';
+  }
+  // A saved group's row in the chooser: its key (click to set or change it) and a way to clear it.
+  function groupKeyChip(g) {
+    var cls = _capKey === g.id ? ' on' : _gkeys[g.id] ? (_gblocked[g.id] ? ' clash' : ' set') : '';
+    return '<span class="pc-k' + cls + '" data-keygrp="' + esc(g.id) + '" title="' + esc(keyTitle(g.id)) + '">' + esc(keyText(g.id)) + '</span>'
+      + (_gkeys[g.id] && _capKey !== g.id ? '<span class="pc-k" data-clrgrp="' + esc(g.id) + '" title="Take this group\'s hotkey off">clear</span>' : '');
+  }
+  // …and in the ⚙ of any piece that belongs to it.
+  function groupMenuHtml(g) {
+    var ps = groupPanels(g.id), shown = ps.some(function (q) { return !q.off; });
+    return '<div class="sec">Saved group “' + esc(g.name) + '” · ' + ps.length + ' here</div><div class="row" style="flex-wrap:wrap">'
+      + '<button class="btn" data-gtoggle="' + esc(g.id) + '" title="Every piece of this group, together; the key does the same">' + (shown ? '✕ Hide the group' : '👁 Show the group') + '</button>'
+      + '<button class="btn' + (_capKey === g.id ? ' on' : '') + '" data-gkey="' + esc(g.id) + '" title="' + esc(keyTitle(g.id)) + '">' + esc(keyText(g.id)) + '</button>'
+      + (_gkeys[g.id] && _capKey !== g.id ? '<button class="btn warn" data-gclear="' + esc(g.id) + '" title="Take this group\'s hotkey off">Clear hotkey</button>' : '')
+      + '</div>';
+  }
+  function repaintKeys() {
+    renderChooser();
+    if (_menuFor && _menuFor !== PICKER && panelById(_menuFor) && menuEl.classList.contains('show')) openMenu(_menuFor, _menuAnchor || (_els[_menuFor] && _els[_menuFor].root));
+  }
+  function captureGroupKey(id) {
+    var g = savedById(id);
+    if (!g || _capKey) return;
+    var started = captureAccel(function (msg, fade) { note(msg, fade ? 4000 : 20000); },
+      function (accel) { _capKey = null; setGroupKey(id, accel); },
+      function (clear) { _capKey = null; if (clear) setGroupKey(id, ''); else repaintKeys(); },
+      'canvasGroup:' + id);
+    if (!started) return;
+    _capKey = id;
+    repaintKeys();
+    note('Press the keys for “' + g.name + '” now (Ctrl, Alt or Shift + a key). Backspace removes it, Esc cancels.', 20000);
+  }
+  // accel '' takes the key off. main answers with every key and the ones the OS refused.
+  function setGroupKey(id, accel) {
+    var g = savedById(id), name = g ? g.name : 'the group';
+    if (!M.canvasGroupHotkey) return;
+    M.canvasGroupHotkey(id, accel).then(function (r) {
+      if (r && r.ok) { _gkeys = r.keys || {}; _gblocked = r.blocked || {}; }
+      repaintKeys();
+      if (!r || !r.ok) note('Could not save that key.', 4000);
+      else if (!accel) note('Hotkey removed from “' + name + '”.', 4000);
+      else if (_gblocked[id]) note('Another program already uses ' + fmtAccel(accel) + ', so it does nothing here — pick a different one.', 6000);
+      else note('Saved — press ' + fmtAccel(accel) + ' anywhere to show or hide “' + name + '”.', 5000);
+    }).catch(function () { repaintKeys(); note('Could not save that key.', 4000); });
+  }
+
+  // Delete removes the selected pieces; Esc clears the selection.
+  document.addEventListener('keydown', function (ev) {
+    // Not while a group's hotkey is being captured: Backspace there removes the key, not the pieces.
+    if (!_edit || _capKey || (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName))) return;
+    if (ev.key === 'Delete' || ev.key === 'Backspace') {
+      if (Object.keys(_sel).length) removePanels(Object.keys(_sel));
+    } else if (ev.key === 'Escape') { _sel = {}; render(); }
+    else if ((ev.key === 'z' || ev.key === 'Z') && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); undoRemove(); }
+  });
+
+  // ── Where is it? ─────────────────────────────────────────────────────────────
+  // The guild lead, 2026-10-18: "clicking on the charm group it says it's up, but I don't know that it's a
+  // different set, or maybe it's buried" and "hover a row and draw a line to where it is". The chooser and the
+  // pieces are one page, so: a click on a row that is already on the screen outlines and pulses what it is
+  // there (and says where, and if it is hidden); hovering a row — or a piece — outlines the other side and
+  // draws a dashed line between them. A thing placed from a preset or a saved group is found by the live
+  // group id its pieces share (_layout.named: a saved group's id, or 'preset:<id>').
+  function placedFor(what) {
+    var bits = String(what).split(':'), P = _layout.panels;
+    if (bits[0] === 'part') return P.filter(function (q) { return q.kind === 'part' && q.part === bits[1]; });
+    if (bits[0] === 'group') return groupPanels(bits[1]);
+    if (bits[0] === 'overlay') return P.filter(function (q) { return q.kind === 'overlay' && q.key === bits[1]; });
+    if (bits[0] === 'sect') return P.filter(function (q) { return q.kind === 'sect' && q.key === bits[1] && q.sect === bits[2]; });
+    if (bits[0] === 'preset') {
+      var g = presetById(bits[1]);
+      if (!g) return [];
+      if (g.embed && bits[2] !== 'pieces' && ovEntry(g.embed)) return P.filter(function (q) { return q.kind === 'overlay' && q.key === g.embed && (q.style || '') === (g.style || ''); });
+      return groupPanels('preset:' + g.id);
+    }
+    return [];
+  }
+  function whereText(b) {
+    var W = window.innerWidth, H = window.innerHeight, cx = (b.x + b.w / 2) / W, cy = (b.y + b.h / 2) / H;
+    var v = cy < 0.34 ? 'top' : cy > 0.66 ? 'bottom' : 'middle', h = cx < 0.34 ? 'left' : cx > 0.66 ? 'right' : 'centre';
+    return v === 'middle' && h === 'centre' ? 'in the middle of the screen' : v === 'middle' ? 'at the ' + h + ' of the screen' : h === 'centre' ? 'at the ' + v + ' of the screen' : v + ' ' + h;
+  }
+  function boxOf(ps) {
+    return groupBox(ps.filter(function (q) { return _els[q.id]; }).map(function (q) {
+      var r = _els[q.id].root; return { x0: r.offsetLeft, y0: r.offsetTop, w0: r.offsetWidth, h0: r.offsetHeight };
+    }));
+  }
+  // Pulse them and say where. false when none of them is here to show.
+  function locate(ps, label) {
+    ps = ps.filter(function (q) { return _els[q.id]; });
+    if (!ps.length) return false;
+    ps.forEach(function (q) {
+      var r = _els[q.id].root;
+      r.classList.remove('loc'); void r.offsetWidth; r.classList.add('loc');
+      setTimeout(function () { r.classList.remove('loc'); }, 2600);
+    });
+    var hidden = ps.every(function (q) { return q.off; });
+    note('“' + label + '” is already here — ' + whereText(boxOf(ps)) + (hidden ? ', hidden (👁 or its key shows it)' : '')
+      + (ps.length > 1 ? ', ' + ps.length + ' pieces' : '') + '. Drag it out of the list to place another copy.', 5000);
+    return true;
+  }
+  // A click (not a drag) on a row that is already on the screen shows where. A piece is the exception: a second
+  // copy of a piece is routine.
+  function clickLocates(what, label) {
+    var kind = String(what).split(':')[0];
+    if (kind !== 'preset' && kind !== 'group' && kind !== 'overlay') return false;
+    return locate(placedFor(what), label);
+  }
+  var locEl = document.getElementById('loc'), _hlRow = null;
+  function endLink() {
+    locEl.classList.remove('on'); locEl.innerHTML = '';
+    var hs = document.querySelectorAll('.hl');
+    for (var i = 0; i < hs.length; i++) hs[i].classList.remove('hl');
+    _hlRow = null;
+  }
+  function clampTo(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  // Outline `ps` and run a dashed line from `anchor` (a chooser row or tab) to each one's nearest edge; the
+  // pieces of one live group share one line, to the box around them.
+  function showLink(anchor, ps) {
+    if (!_edit || _drag || _pd || _cd) return;
+    ps = ps.filter(function (q) { return _els[q.id]; });
+    if (!ps.length || !anchor) return;
+    anchor.classList.add('hl');
+    ps.forEach(function (q) { _els[q.id].root.classList.add('hl'); });
+    var ar = anchor.getBoundingClientRect(), lr = chList.getBoundingClientRect(), cr = chEl.getBoundingClientRect();
+    // Where it leaves the chooser: the row's height (kept inside the list's window), on the side facing the pieces.
+    var ay = clampTo((ar.top + ar.bottom) / 2, lr.top + 4, lr.bottom - 4), units = {};
+    ps.forEach(function (q) { (units[q.grp || q.id] = units[q.grp || q.id] || []).push(q); });
+    var svg = '';
+    Object.keys(units).forEach(function (k) {
+      var b = boxOf(units[k]);
+      var ax = (b.x + b.w / 2) < (cr.left + cr.right) / 2 ? cr.left : cr.right;
+      var tx = clampTo(ax, b.x, b.x + b.w), ty = clampTo(ay, b.y, b.y + b.h);
+      if (Math.abs(tx - ax) + Math.abs(ty - ay) < 6) return;       // the piece is under the chooser's edge: the outline says it
+      svg += '<line x1="' + Math.round(ax) + '" y1="' + Math.round(ay) + '" x2="' + Math.round(tx) + '" y2="' + Math.round(ty) + '"/>'
+        + '<circle cx="' + Math.round(tx) + '" cy="' + Math.round(ty) + '" r="4"/>';
+    });
+    locEl.innerHTML = svg; locEl.classList.add('on');
+  }
+  // Row → pieces.
+  chList.addEventListener('mouseover', function (ev) {
+    var row = ev.target.closest ? ev.target.closest('.pc[data-drag]') : null;
+    if (row === _hlRow) return;
+    endLink();
+    if (!row) return;
+    _hlRow = row;
+    showLink(row, placedFor(row.getAttribute('data-drag')));
+  });
+  chList.addEventListener('mouseleave', endLink);
+  // Piece → its row (or its tab, when the row is on another tab).
+  panelsEl.addEventListener('mouseover', function (ev) {
+    var root = ev.target.closest ? ev.target.closest('.panel') : null;
+    if (!root || !_edit) return;
+    var p = panelById(root.getAttribute('data-id')), cand = [], tab = null;
+    if (!p || root === _hlRow) return;
+    endLink();
+    _hlRow = root;
+    var named = p.grp && _layout.named && _layout.named[p.grp];
+    if (p.kind === 'part') { cand.push('part:' + p.part); tab = (partDef(p) || {}).cat; }
+    if (named) { cand.push((named.indexOf('preset:') === 0 ? 'preset:' + named.slice(7) : 'group:' + named)); tab = tab || 'groups'; }
+    if (p.kind === 'overlay') { WpParts.PRESETS.forEach(function (g) { if (g.embed === p.key && (g.style || '') === (p.style || '')) cand.push('preset:' + g.id); }); tab = 'groups'; }
+    if (p.kind === 'sect') { cand.push('sect:' + p.key + ':' + p.sect); tab = 'cuts'; }
+    var row = null;
+    for (var i = 0; i < cand.length && !row; i++) row = chList.querySelector('.pc[data-drag="' + cand[i] + '"]');
+    var anchor = row || (tab && chEl.classList.contains('open') ? chTabs.querySelector('[data-tab="' + tab + '"]') : null);
+    if (!anchor) return;
+    showLink(anchor, p.grp ? _layout.panels.filter(function (q) { return q.grp === p.grp; }) : [p]);
+  });
+  panelsEl.addEventListener('mouseleave', endLink);
+  document.addEventListener('mousedown', endLink, true);
+
+  // ── Removing, with Undo ──────────────────────────────────────────────────────
+  // The callouts panel and the catch-all timers panel are never removed (a
+  // callout or a countdown would have nowhere to show); everything else is.
+  var toastEl = document.getElementById('toast'), toastMsg = document.getElementById('toastMsg');
+  var _undo = null, _undoT = null;
+  function removable(q) { return q.kind === 'part' || q.kind === 'sect' || q.kind === 'overlay' || (q.kind === 'timers' && !q.all); }
+  function removePanels(ids) {
+    var gone = [];
+    _layout.panels = _layout.panels.filter(function (q, i) {
+      if (ids.indexOf(q.id) >= 0 && removable(q)) { gone.push({ p: q, i: i }); return false; }
+      return true;
+    });
+    if (!gone.length) return;
+    ids.forEach(function (id) { delete _sel[id]; });
+    _undo = gone;
+    var nm = gone.length === 1 ? (gone[0].p.name || (partDef(gone[0].p) ? partDef(gone[0].p).label : 'panel')) : gone.length + ' pieces';
+    toastMsg.textContent = 'Deleted ' + nm;
+    toastEl.classList.add('undo');
+    toastEl.classList.add('on');
+    clearTimeout(_undoT);
+    _undoT = setTimeout(function () { _undo = null; toastEl.classList.remove('on'); }, 8000);
+    save(); render();
+  }
+  function undoRemove() {
+    if (!_undo) return;
+    var gp = _undo.group;
+    _undo.sort(function (a, b) { return a.i - b.i; }).forEach(function (g) {
+      _layout.panels.splice(Math.min(g.i, _layout.panels.length), 0, g.p);
+    });
+    _undo = null; clearTimeout(_undoT); toastEl.classList.remove('on');
+    // A deleted saved group comes back with its place in the list, its link to the pieces, and its key.
+    if (gp && !savedById(gp.g.id)) {
+      _groups.splice(Math.min(gp.at < 0 ? _groups.length : gp.at, _groups.length), 0, gp.g);
+      putGroups();
+      gp.live.forEach(function (k) { if (_layout.panels.some(function (q) { return q.grp === k; })) (_layout.named = _layout.named || {})[k] = gp.g.id; });
+      if (gp.key && M.canvasGroupHotkey) {
+        M.canvasGroupHotkey(gp.g.id, gp.key).then(function (r) { if (r && r.ok) { _gkeys = r.keys || {}; _gblocked = r.blocked || {}; } repaintKeys(); }).catch(function () {});
+      }
+    }
+    save(); render();
+  }
+  document.getElementById('undoBtn').addEventListener('click', undoRemove);
+
+  // A piece's clickable items: a /say or /map copies (paste it into EQ), PQDI opens the browser.
+  // They work locked too — each carries data-wp-interact, so the click reaches the canvas.
+  function note(msg, ms) {
+    toastMsg.textContent = msg;
+    toastEl.classList.remove('undo');
+    toastEl.classList.add('on');
+    clearTimeout(_undoT);
+    _undoT = setTimeout(function () { _undo = null; toastEl.classList.remove('on'); }, ms || 2500);
+  }
+  function copyText(text) {
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {} finally { ta.remove(); }
+    }
+    try { navigator.clipboard.writeText(text).catch(fallback); } catch (e) { fallback(); }
+  }
+  document.addEventListener('click', function (ev) {
+    var a = ev.target && ev.target.closest ? ev.target.closest('.pt-act') : null;
+    if (!a || !a.closest('.panel')) return;
+    ev.stopPropagation();
+    var cp = a.getAttribute('data-copy'), url = a.getAttribute('data-url');
+    if (cp) { copyText(cp); note('Copied ' + cp + ' — paste it into EQ'); }
+    else if (url) { try { if (M.openExternal) M.openExternal(url); } catch (e) {} note('Opening in your browser'); }
+  }, true);
+
+  // ── One choice for a whole set of pieces ─────────────────────────────────────
+  // The guild lead, 2026-10-18: "select the whole group and say slim bar or upright bar". One walker for
+  // both doors — the selection bar's selects (a click on a grouped piece selects its whole group) and the
+  // GROUP section of a piece's ⚙ — so a Slim bar means the same thing as it does on one piece. A mode a
+  // piece's data cannot be drawn in (a list has no Bar) is skipped and counted, never forced.
+  function bulkPatch(kind, v) {
+    if (kind === 'mode') return { mode: v };
+    if (kind === 'thick') return { thick: v === 'normal' ? '' : v };
+    if (kind === 'back') return { back: v === '1' };
+    if (kind === 'align') return { align: v === 'left' ? '' : v };
+    return {};
+  }
+  // The modes any of these pieces can be drawn in, first seen first: [id, label].
+  function bulkModes(ps) {
+    var seen = {}, out = [];
+    ps.forEach(function (q) {
+      var d = partDef(q);
+      (d ? (WpParts.MODES[d.kind] || []) : []).forEach(function (m) { if (!seen[m[0]] && m[0] !== 'seg') { seen[m[0]] = true; out.push(m); } });
+    });
+    return out;
+  }
+  function bulkSet(ps, patch) {
+    var W = window.innerWidth, H = window.innerHeight, res = { changed: 0, skipped: 0 }, flowed = [];
+    ps.forEach(function (q) {
+      var d = q.kind === 'part' ? partDef(q) : null;
+      if (!d) return;
+      if (patch.mode !== undefined) {
+        var modes = WpParts.MODES[d.kind] || [], was = q.mode || (modes[0] ? modes[0][0] : '');
+        if (!modes.some(function (m) { return m[0] === patch.mode; })) { res.skipped++; return; }
+        if (was !== patch.mode) {
+          // The size the new shape wants, as the single piece's Show as takes it (data-mode): its height
+          // always; an upright bar its width too (it is narrow), and a bar coming back from upright gets a bar's width.
+          var sz = (d.size && d.size[patch.mode]) || WpParts.DEFAULT_SIZE[patch.mode];
+          if (sz) {
+            if (patch.mode === 'vbar' || patch.mode === 'ring' || patch.mode === 'arc') q.w = sz[0];
+            else if (was === 'vbar') q.w = Math.max(q.w, WpParts.DEFAULT_SIZE.bar[0]);
+            q.h = sz[1];
+          }
+          q.mode = patch.mode;
+        }
+        flowed.push(q);
+      }
+      if (patch.thick !== undefined) q.thick = patch.thick;
+      if (patch.back !== undefined) q.back = !!patch.back;
+      if (patch.align !== undefined) q.align = patch.align;
+      res.changed++;
+    });
+    // Every piece changed shape, so the old stack no longer fits: upright bars stand in a row, bars and slim
+    // bars stack in a column, from the set's top-left corner. Anything else keeps its place.
+    if (flowed.length > 1 && !res.skipped && (patch.mode === 'vbar' || patch.mode === 'bar' || patch.mode === 'thin')) {
+      var row = patch.mode === 'vbar', cx = Infinity, cy = Infinity;
+      flowed.forEach(function (q) { cx = Math.min(cx, q.x * W); cy = Math.min(cy, q.y * H); });
+      flowed.slice().sort(function (a, b) { return row ? (a.x - b.x || a.y - b.y) : (a.y - b.y || a.x - b.x); }).forEach(function (q) {
+        q.x = num(cx / W, 0, 1, q.x); q.y = num(cy / H, 0, 1, q.y);
+        if (row) cx += q.w + 6; else cy += q.h + 4;
+      });
+    }
+    return res;
+  }
+  var BULK_THICK = [['thin', 'Thin'], ['normal', 'Normal'], ['thick', 'Thick']];
+  // The selection bar's way in: three selects that act and go back to their heading (selWhen's pattern).
+  function bulkSelectsHtml(ps) {
+    var h = '<select data-bulksel="mode" title="Draw every selected piece this way (a piece that cannot be drawn so keeps its look)"><option value="">Show as…</option>';
+    bulkModes(ps).forEach(function (m) { h += '<option value="' + esc(m[0]) + '">' + esc(m[1]) + '</option>'; });
+    h += '</select><select data-bulksel="thick" title="Bar or ring thickness, for every selected piece"><option value="">Thickness…</option>';
+    BULK_THICK.forEach(function (t) { h += '<option value="' + t[0] + '">' + t[1] + '</option>'; });
+    return h + '</select><select data-bulksel="back" title="A plate behind every selected piece, or none"><option value="">Backing…</option><option value="0">Clear</option><option value="1">Panel</option></select>';
+  }
+  // The GROUP section's way in: the same choices as buttons, on the whole group.
+  function bulkMenuHtml(ps) {
+    if (ps.length < 2) return '';
+    var h = '<div class="sec">Whole group · all ' + ps.length + ' at once</div><div class="row" style="flex-wrap:wrap">';
+    bulkModes(ps).forEach(function (m) { h += '<button class="btn" data-bulk="mode" data-v="' + esc(m[0]) + '">' + esc(m[1]) + '</button>'; });
+    h += '</div><div class="row">';
+    BULK_THICK.forEach(function (t) { h += '<button class="btn" data-bulk="thick" data-v="' + t[0] + '">' + t[1] + '</button>'; });
+    h += '<button class="btn" data-bulk="back" data-v="0">Clear</button><button class="btn" data-bulk="back" data-v="1">Panel</button></div>';
+    return h;
+  }
+
+  // ── The selection bar: lock together, unlock, save as a group, delete ────────
+  // The guild lead, 2026-09-29: "I should be able to select multiple pieces, lock them together (and not
+  // necessarily touching) and move them at the same time. Should be able to save my own subsets."
+  var selbar = document.getElementById('selbar');
+  function selIds() { return Object.keys(_sel).filter(function (id) { return panelById(id); }); }
+  function renderSelbar() {
+    var ids = selIds();
+    selbar.classList.toggle('on', ids.length > 0);
+    if (!ids.length) { selbar._html = ''; selbar.innerHTML = ''; return; }
+    var grps = {};
+    ids.forEach(function (id) { var q = panelById(id); if (q.grp) grps[q.grp] = true; });
+    var locked = Object.keys(grps).length === 1 && ids.every(function (id) { return panelById(id).grp; })
+      && _layout.panels.filter(function (q) { return q.grp === Object.keys(grps)[0]; }).length === ids.length;
+    var parts = ids.filter(function (id) { return panelById(id).kind === 'part'; }).length;
+    // The selection is exactly one placed saved group: saving makes a new one beside it, or updates it.
+    var ng = locked ? namedGroup(Object.keys(grps)[0]) : null;
+    var h = '<b>' + ids.length + ' selected</b>'
+      + (ids.length > 1 && !locked ? '<button class="btn go" data-sel="lock" title="They move together from now on, wherever they sit">🔗 Lock together</button>' : '')
+      + (locked ? '<span class="dim">locked together</span>' : '')
+      + (Object.keys(grps).length ? '<button class="btn" data-sel="unlock" title="Each moves on its own again">🔓 Unlock</button>' : '')
+      + (parts ? '<input id="selName" maxlength="24" placeholder="' + (ng ? 'a new name' : 'name it') + '"><button class="btn" data-sel="save" title="Keep this set in the chooser\'s Groups tab, to drop again anywhere — and give it a hotkey that shows or hides it' + (ng ? '. “' + esc(ng.name) + '” itself is not changed.' : '') + '">💾 ' + (ng ? 'Save as new' : 'Save as a group') + '</button>' : '')
+      + (parts && ng ? '<button class="btn go" data-sel="update" title="Replace the pieces of “' + esc(ng.name) + '” with these (its name and hotkey stay)">💾 Update “' + esc(ng.name) + '”</button>' : '')
+      + '<select id="selWhen" title="Show every selected piece only when this holds, out in play">' + whenOptions('Show when…', 'Always', WHEN) + '</select>'
+      + '<select id="selCls" title="Show every selected piece only for this class">' + whenOptions('Only for…', 'Any class', WHEN_CLASSES.map(function (c) { return [c[0], c[0]]; })) + '</select>'
+      + (parts ? bulkSelectsHtml(ids.map(panelById).filter(function (q) { return q.kind === 'part'; })) : '')
+      + '<button class="btn warn" data-sel="delete" title="Delete the selected (Undo appears)">🗑 Delete</button>'
+      + '<button class="btn" data-sel="clear">Clear</button>';
+    if (selbar._html !== h) { selbar._html = h; selbar.innerHTML = h; }
+  }
+  selbar.addEventListener('click', function (ev) {
+    var a = ev.target.getAttribute && ev.target.getAttribute('data-sel');
+    if (!a) return;
+    var ids = selIds();
+    if (a === 'lock') { var g = newId('g'); ids.forEach(function (id) { panelById(id).grp = g; }); save(); render(); }
+    else if (a === 'unlock') { ids.forEach(function (id) { panelById(id).grp = null; }); save(); render(); }
+    else if (a === 'save') { var inp = document.getElementById('selName'); saveSelectionAsGroup(inp ? inp.value : ''); }
+    else if (a === 'update') { var ug = ids.length ? namedGroup(panelById(ids[0]).grp) : null; if (ug) updateSavedGroup(ug.id); }
+    else if (a === 'delete') removePanels(ids);
+    else if (a === 'clear') { _sel = {}; render(); }
+  });
+  // A select here is an action, not a state (the pieces selected may each have their own rule): it applies
+  // to every selected panel, then goes back to its heading.
+  function whenOptions(head, none, list) {
+    var h = '<option value="">' + head + '</option><option value="*">' + none + '</option>';
+    list.forEach(function (x) { h += '<option value="' + esc(x[0]) + '">' + esc(x[1]) + '</option>'; });
+    return h;
+  }
+  selbar.addEventListener('change', function (ev) {
+    var t = ev.target, v = t.value, ps = selIds().map(panelById);
+    if (!v) return;
+    if (t.hasAttribute && t.hasAttribute('data-bulksel')) {
+      var bn = bulkSet(ps.filter(function (q) { return q.kind === 'part'; }), bulkPatch(t.getAttribute('data-bulksel'), v));
+      t.value = '';
+      if (bn.skipped) note(bn.skipped + (bn.skipped === 1 ? ' piece' : ' pieces') + ' cannot be drawn that way and kept their look', 3500);
+      save(); render();
+      return;
+    }
+    if (t.id !== 'selWhen' && t.id !== 'selCls') return;
+    if (t.id === 'selWhen') setWhen(ps, v === '*' ? '' : v);
+    else setWhenClasses(ps, v === '*' ? [] : [v]);
+    t.value = '';
+    save(); render();
+  });
+  selbar.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && ev.target.id === 'selName') { ev.preventDefault(); saveSelectionAsGroup(ev.target.value); }
+  });
+
   // ── Toolbar ─────────────────────────────────────────────────────────────────
   document.getElementById('addBtn').addEventListener('click', function () {
     if (_layout.panels.length >= MAX_PANELS) return;
@@ -609,6 +2765,11 @@
     _layout.panels.push(p);
     save(); render();
     openMenu(p.id, _els[p.id].root);
+  });
+  var ovBtn = document.getElementById('ovBtn');
+  ovBtn.addEventListener('click', function () {
+    if (_menuFor === PICKER) { closeMenu(); return; }
+    openPicker(ovBtn);
   });
   var screenBtn = document.getElementById('screenBtn');
   screenBtn.addEventListener('click', function () {
@@ -632,15 +2793,17 @@
   document.getElementById('hideBtn').addEventListener('click', function () {
     try { M.hideThisOverlay(); } catch (e) {}
   });
-  document.getElementById('doneBtn').addEventListener('click', function () {
+  function finishArranging() {
     try { if (_arrange && M.canvasEdit) M.canvasEdit(false); } catch (e) {}
     try { if (_setup && M.setSetupMode) M.setSetupMode(false); } catch (e) {}
     try { if (!_locked && M.setOverlaysLocked) M.setOverlaysLocked(true); } catch (e) {}
-  });
+  }
+  document.getElementById('doneBtn').addEventListener('click', finishArranging);
 
   // ── State from main ─────────────────────────────────────────────────────────
   function loadState(st) {
     if (!st) return;
+    if (Array.isArray(st.overlays)) _overlays = st.overlays;
     var fresh = !st.layout;
     if (st.res !== _res || !_res) {
       _res = st.res;
@@ -648,8 +2811,12 @@
     }
     _arrange = !!st.edit;
     screenBtn.style.display = (st.displays > 1) ? '' : 'none';
+    // Each saved group's key, and the ones another program holds (the chooser's chips).
+    if (st.groupKeys) { _gkeys = st.groupKeys; _gblocked = st.groupKeysBlocked || {}; }
     render();
     setEdit();
+    // A group's hotkey pressed since the last look (or the press that switched the canvas on).
+    if (st.groupOps && st.groupOps.length) applyGroupOps(st.groupOps);
     // First time on: keep the starting layout and open arranging, so the three
     // panels are placed before a pull (and not re-opened on the next refresh).
     if (fresh) {
@@ -659,6 +2826,8 @@
   }
   function refresh() { try { if (M.canvasState) M.canvasState().then(loadState).catch(function () {}); } catch (e) {} }
   refresh();
+  // A group's hotkey pressed while this is up: read it now.
+  try { if (M.onCanvasGroupOps) M.onCanvasGroupOps(refresh); } catch (e) {}
   // A resolution change resizes this window; keep the fractions, re-read the
   // layout saved for the new size if there is one.
   var _rsT = null;

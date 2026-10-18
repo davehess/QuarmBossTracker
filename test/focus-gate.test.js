@@ -147,6 +147,7 @@ describe('focus gate: hotkeys', () => {
       const loadConfig = () => globalThis.__fg.cfg;
       const appendAgentLog = (s) => globalThis.__fg.log.push(s);
       const _toggleOverlay = () => {};
+      const _registerCanvasGroupHotkeys = () => {};
       let _hideAllActive = false, _hideAllPrev = null, _registeredHideAccel = null, _registeredBackdropAccel = null,
           _registeredDamageAccel = null, _registeredMiniAccel = null, _miniAllActive = false, _miniAllPrev = null;
       const _DEFAULT_BACKDROP_HOTKEY = 'CommandOrControl+Shift+B', _DEFAULT_MINI_HOTKEY = 'CommandOrControl+Shift+M',

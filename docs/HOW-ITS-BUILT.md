@@ -1331,6 +1331,27 @@ each window's spot, size and zoom). Test `test/canvas-overlays.test.js`. Alpha o
 - `fitPiece` sizes a piece to its content on a mode change and on ↕ Fit.
 - The canvas counts two clicks itself to open settings; dblclick never gets past the drag shield.
 Tests `test/canvas-pieces.test.js`, `test/timers-canvas.test.js`. Alpha only.
+**Pieces round (alpha, 2026-10-18, DECISIONS-2026-09-21 §360–366), all in `canvas.html`:**
+- **Backing** (`.panel.part.back > .pbody`) is a background plus `box-shadow: inset`, with no border or padding of
+  its own: Clear and Panel share one box, so ↕ Fit's flat +4 is right for both. The 🌫 Background row is the
+  whole-Canvas `wp-backdrop` switch and is separate.
+- **One choice for many pieces:** `bulkPatch` / `bulkModes` / `bulkSet(ps, patch)`. Two doors: `#selbar`'s
+  `data-bulksel` selects (Show as / Thickness / Backing) and the GROUP section's `data-bulk` buttons
+  (`bulkMenuHtml`). A mode a piece cannot be drawn in is skipped and counted; reflow (row for `vbar`, column for
+  `bar` / `thin`) only when every piece changed.
+- **Saved groups:** `groupPartsOf`, `putGroups`, `uniqueGroupName` (case-folded; `/pipe mimic group`, the tray and
+  the dashboard find a group by name), `saveSelectionAsGroup` (new group beside an existing one, never over it),
+  `updateSavedGroup` (selbar 💾 Update), `duplicateGroup` (⧉), `renameGroup` (✎, inline). Stored in
+  `cfg.canvasGroups` through `canvas-groups-save` (cap 60).
+- **Where is it:** `placedFor(what)` maps a chooser row to its panels (`part:` by piece, `group:` by
+  `_layout.named`, `preset:` by overlay key + look, or by `'preset:<id>'` in `_layout.named` for a preset placed
+  as pieces: `markPreset`). Hover draws `#loc` (SVG, no clicks) and outlines `.hl`; a click on a placed row runs
+  `clickLocates` → `locate` (pulse `.loc` + a toast with `whereText`).
+- **Delete a saved group:** `deleteSavedGroup(id, withPieces)`; the snapshot rides on the undo array
+  (`_undo.group`), so `undoRemove` restores panels, the group at its list index, its `named` links and its key.
+- **Palette previews:** `.pc-pv[data-pv]` per part row, filled by `paintChooserPreviews()` with the same
+  `WpParts.render` call `paintParts` makes (live view, else sample); `_pvMode` follows the hovered mode chip.
+Test `test/canvas-pieces-round.test.js`.
 **Show-when rules (alpha `d97ae9d7`, 2026-10-07, design rule A, DECISIONS §187):** a panel's `when` (`combat`,
 `nocombat`, `target`, `npc`, `raid`; absent = always) and optional `cls` class list, ANDed. A false rule adds class
 `wh` (hidden like `.off`, never writes `off`; `off` wins). Arranging shows everything with a rule badge. Signals,

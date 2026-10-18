@@ -178,6 +178,9 @@
   .mini-who{font-weight:700;color:#fff}
   .mini-da{color:#f0c419;font-size:10px;font-weight:700}
   .mini-call{flex:0 0 auto;color:#fff;background:#f85149;border-radius:3px;padding:0 4px;font-size:10px;font-weight:800;text-shadow:none}
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the window's padding goes. */
+  body.wp-in-canvas #wrap{padding:2px 3px}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>

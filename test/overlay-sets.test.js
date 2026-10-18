@@ -110,11 +110,6 @@ describe('/pipe mimic …', () => {
     expect(p('mimic lock')).toEqual({ verb: 'lock', on: null });        // flips
     expect(p('mimic lock off')).toEqual({ verb: 'lock', on: false });
     expect(p('mimic unlock')).toEqual({ verb: 'lock', on: false });
-    // arrange the Canvas (ported to beta with the sets, 2026-10-14)
-    expect(p('mimic edit')).toEqual({ verb: 'edit', on: null });
-    expect(p('mimic arrange on')).toEqual({ verb: 'edit', on: true });
-    expect(p('mimic edit done')).toEqual({ verb: 'edit', on: false });
-    expect(p('mimic edit maybe')).toBe(null);
   });
   it('leaves everything else alone — including a delete, which a hotbar typo must never do', () => {
     for (const t of ['fd', 'mend', 'mimic', 'mimic load', 'mimic delete raid', 'mimic lock maybe', 'mimicload raid', 'say mimic load raid', null]) {

@@ -189,6 +189,12 @@
      shrinks) so the category name gives way first and the chip is no wider than its column. */
   .mchip .mtop{color:#6e7681;font-variant-numeric:tabular-nums}
   body.wp-mini #empty{padding:4px 24px}
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the window's padding and the 30px kept clear of ✕
+     go (the lag? button's is inline, hence !important). */
+  body.wp-in-canvas #wrap{padding:2px 3px}
+  body.wp-in-canvas .clsPick{margin-right:0}
+  body.wp-in-canvas #lag-btn{margin-right:0 !important}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
