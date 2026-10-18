@@ -11626,3 +11626,11 @@ orchestration and analytics as a service to guild leaders.
   CNAME, either works), then remove the redirects on the six domains.
 - **Copy matches the privacy page:** the private-chat line was checked against `docs/PRIVACY.md` and gained the tells
   clause (tells are dropped too unless the player turns relay on).
+
+**Same day — character gender lives in OpenDKP, not in our tables.** The guild lead corrected a "we hold nobody's gender"
+claim: OpenDKP's roster (`GET /clients/wolfpack/characters`, the same call `getCharacters` in `utils/opendkp.js` makes)
+carries `Gender` per character ("Male" / "Female", occasionally "F", sometimes blank). Of the 69 active mains, 66 have
+one; the guild lead confirmed three corrections against it. `utils/openDkpSync.js` copies `race`/`class`/`rank` into
+`characters` but not gender, and `raid_night_appearance.gender` stays NULL until Zeal sends entity looks. **Before
+saying gender is unknown, read OpenDKP.** The guild-hall sprites (scratch only) now draw from it. Storing it in
+`characters` (one column + one line in the sync) waits until the raid spectator needs it from the web.
