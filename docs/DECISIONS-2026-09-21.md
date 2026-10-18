@@ -11394,3 +11394,48 @@ fresh session isn't established within a reasonable timeframe, and wipe before r
 - Code: `packages/wolfpack-logsync/index.js` ("Chat cache": `chatCacheWipe` / `chatCacheWipeFileOnly` / `chatCacheRevoke`
   / `chatCacheOnSessionPush`), `apps/mimic/main.js` ("Chat cache": `_chatCacheDecide` / key box / `_chatCacheWipeAll`).
   Tests `test/chat-cache.test.js`.
+
+### 358. The shared hosted trial: a separate project, a schema per guild (2026-10-18)
+The guild lead's direction for a multi-tenant "raid orchestration + analytics as a service": a shared trial we run →
+graduation to the guild's own account. Decisions made this session:
+- **Hosting/billing:** we run the free/shared trial (our infra, we bill, scale economics), and a guild that graduates
+  moves to a dedicated tenant **in their own account + domain** — the epic's exit-promise (§609) stays intact. The
+  trial is **NOT in the Wolf Pack production database** (the guild lead: *"not in the Wolfpack database"*).
+- **Isolation (the guild lead's pick):** **one separate Supabase project, a Postgres schema per guild.** Never
+  production. Migrating a guild out = dump its schema into their new project; removing one = `DROP SCHEMA`. This is
+  external-tenancy §5.4(i). It also makes offboarding safe — a tenant can be exported or wiped with zero risk to our
+  DB.
+- **Tenant unit = a prospective guild's small cohort (6–12 raiders cap each), not a melting pot of strangers.** That
+  keeps "data belongs to your guild" true and gives the dedicated tenant an owner at graduation. ⚠ This REVERSES the
+  earlier read of "shared tenant" as unrelated individuals; the scoping showed a mixed-guild roster breaks three
+  TERMS-hosted promises and has nobody to own the graduated tenant.
+- ⚠ **A shared project leaks today:** RLS is an app sign-in gate, not data scoping (71 `using (true)`, the web holds
+  service-role, ~480 unfiltered web queries). So the schema-per-guild isolation (a role per schema) is load-bearing,
+  not optional — a plain shared project would serve every guild's rows to any signed-in trial user.
+- **Trial agents run PvP/who-collection OFF** (`features.pvp=false`, `flag_shed_pvp*`) — DECISIONS §8.6, we never
+  ingest other tenants' /who.
+- **Vercel Hobby is non-commercial** — a paid-ish trial needs a paid Vercel plan or careful framing (DESIGN-business
+  §4.1).
+- **Offline/non-platform replay capture:** local-file + a no-account viewer first (the agent already captures the
+  raid window locally; mostly a packaging job), then a signed-in "claim/merge" later. There is **no raid id today** —
+  the workable merge key is shared-roster-overlap + the zone-copy token (`host:port` from `dbg.txt`), which works with
+  no account.
+- **Offboarding / ToS / privacy (the guild lead asked for contractual data removal, updated privacy agreements, and
+  ending service for an abusive customer with a data export + an audit log of the removal):** the flow is suspend →
+  encrypted export → audit-logged purge, on a new `tenants` table (status / `purge_after`) with an **append-only
+  removal log that lives OUTSIDE the tenant's data** (an operator-side project) so deleting the tenant can't erase the
+  record. ⚠ Conflicts to resolve: the public privacy page currently says "no self-serve export or delete — ask an
+  officer" (must be rewritten), and our nightly `pg_dump` backup + the never-delete Tower archive hold tenant rows
+  past a delete, so the terms need an explicit **backup-expiry window**. ⚠ **The deletion window, backup expiry, and
+  notice period are a professional's call — a session drafts the mechanics + copy with those left as clearly-marked
+  placeholders, never invented.**
+- **Brand:** `raidboss.quest` is the pick for the trial's front door (available ~$2 first year / ~$17 renewal; `.boss`
+  is not a TLD; `.io`/`.gg`/`.app` of "raidboss" are taken). Needs registration at Porkbun (human-only; the API is
+  blocked from cloud sessions). `eqmimic.quest` (owned) is the alternative front door.
+- **Priority (the guild lead):** shared-SaaS funnel, Discord-app wizard + pricing, and the quick wins first; the
+  chat-window overlay + Zeal-geometry work is scoped but parked.
+- **Still open for the guild lead:** what "Discord linking as an app" means (OAuth sign-in vs a bot installed per
+  guild vs a user-installable app — each is a different build); whether a single shared trial bot or one per tenant;
+  and §62a (eqmimic service model + licence) stays open.
+Full scoping in this session's handback; surfaces to touch for offboarding are in the report (member lockouts +
+`mimic_sessions` revoke + `audit_log`, which today has no tenant key and is not append-only).

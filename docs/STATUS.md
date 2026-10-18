@@ -105,6 +105,15 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Flag lab: an officer sandbox for the PoP flags and the hail board (web 1.9.2, DRAFT on `claude/flag-lab`, not
+  pushed, 2026-10-18).** `/admin/flag-lab` (new route, `[beta]` tag, officer only, **off unless `FLAG_LAB=1`**, which the
+  officer sets in Vercel's Preview environment only). Fake members with presets and per-flag source ticks (Mimic /
+  /who / loot / self-tick, proof outranks a tick) drawn with `/pop`'s own gate functions and `GateMark`; a fake boss
+  kill with a fake roster drawn as the Command Center's still / hailed / already-flagged lists with flag cap and depop
+  countdown. In-memory only, zero database writes. The hail view is a port (`web/lib/hailBoardView.ts`) of
+  `utils/hailBoard.js`, held to the bot by `test/flag-lab-hail-parity.test.js`. Waiting on: review, then merge to
+  `main` (outside the raid window), then `FLAG_LAB=1` in Preview. See HOW-ITS-BUILT.
+
 - **⏳ "What you hear": speak / overlay only / off for every callout (agent 3.7.128, Mimic beta, DRAFT, uncommitted;
   the guild lead, 2026-10-12).** *"pick ones that we specifically do not want to hear or can just be shown on the trigger
   overlay. The charm aging. And many other callouts do not have a way to turn them off, such as enrage soon."* They

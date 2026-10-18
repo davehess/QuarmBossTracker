@@ -9,7 +9,7 @@
 //               Pitch is NOT applied: Piper has no pitch control.
 //   · KOKORO  — the Kokoro-82M model (Apache-2.0) run by the sherpa-onnx project's prebuilt command-line
 //               synthesiser (Apache-2.0), both fetched on demand from k2-fsa/sherpa-onnx's GitHub releases. Their
-//               archives are .tar.bz2, which Windows' own tar.exe unpacks (Windows 10 1803+). One process per
+//               archives are .tar.bz2, unpacked in JS (extractTarBz2). One process per
 //               phrase, text as an argument, a WAV file out. Speed = --kokoro-length-scale (1 / rate). Slower
 //               than Piper, so it gets a longer limit for a ▶ Test and a background warm-up (warmUp).
 //
@@ -18,15 +18,16 @@
 // CLI argument list, the timeout wrapper. A failure of any kind resolves to null and the caller speaks with the
 // Windows voice — a callout is never silenced by a download that went wrong.
 //
-// Zero npm deps: the download and unzip are ghDownload.js's, the same ones Zeal and the UI packs use; the tar
-// unpack is the operating system's.
+// Zero npm deps: the download and unzip are ghDownload.js's, the same ones Zeal and the UI packs use; the .tar.bz2
+// unpack is vendor/seek-bzip plus a small tar reader below (Windows' tar.exe lacks bzip2 on some PCs).
 
 const fs     = require('fs');
 const os     = require('os');
 const path   = require('path');
 const crypto = require('crypto');
-const { spawn, execFile } = require('child_process');
+const { spawn } = require('child_process');
 const { httpsGet, unzip, stamp } = require('./ghDownload');
+const Bunzip = require('./vendor/seek-bzip');   // pure-JS bzip2 (MIT), vendored; see its header
 
 // A callout is stale after ~5 s (triggers.html SPEAK_TTL_MS); past this the line is spoken by the Windows voice.
 const SYNTH_TIMEOUT_MS = 2500;
@@ -163,8 +164,7 @@ const MANIFEST = Object.freeze({
 });
 
 const KOKORO_EXE = 'bin/sherpa-onnx-offline-tts.exe';
-// Plain words for the two ways the unpack can be impossible (the Windows voice keeps working in both).
-const NO_TAR = 'Kokoro needs the unpack tool that comes with Windows 10 (version 1803 or newer), and this PC does not have it. Nothing was downloaded; the Windows voice keeps working.';
+// Plain words for the one way the synthesiser can refuse to start (the Windows voice keeps working meanwhile).
 const NO_VCRT = 'Kokoro could not start because this PC is missing the Microsoft Visual C++ runtime. Installing "Microsoft Visual C++ Redistributable" (free, from Microsoft) fixes it; until then the Windows voice is used.';
 
 // ── Pure pieces ─────────────────────────────────────────────────────────────────────────────────────
@@ -257,52 +257,123 @@ function kokoroArgs(p, sid, rate, text, out, threads = 2) {
 function _kokoroText(text) { return _cleanText(text).replace(/^[-=\s]+/, ''); }
 function _kokoroThreads() { return Math.max(1, Math.min(4, Math.floor(os.cpus().length / 2))); }
 
-// Windows ships bsdtar at System32\tar.exe from 1803 on. Absolute path on purpose: a GNU tar earlier on PATH
-// (Git for Windows) mistakes "C:" in a file name for a remote host.
-function tarPath(platform = process.platform, env = process.env) {
-  if (platform !== 'win32') return 'tar';
-  return path.join(env.SystemRoot || env.windir || 'C:\\Windows', 'System32', 'tar.exe');
-}
-
-function _run(file, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { windowsHide: true, maxBuffer: 64 * 1024 * 1024, ...opts }, (err, stdout, stderr) => {
-      if (err) { err.stderr = String(stderr || '').slice(0, 300); reject(err); } else resolve(String(stdout || ''));
-    });
-  });
-}
 function _plain(msg) { const e = new Error(msg); e.plain = true; return e; }
 
-// Unpack a .tar.bz2 into `destDir` with the system tar, refusing anything that could land outside it. The archive
-// was already pinned by sha256, so this is a second lock, not the only one: every listed name must stay inside
-// destDir (the same guard as the zip reader), and after unpacking nothing may be a link or a device. Any failure
-// removes what was written and throws a message for a person.
-async function extractTarBz2(archive, destDir, tarExe, run = _run) {
-  try {
-    const listing = await run(tarExe, ['-tjf', archive], { timeout: 120000 });
-    let n = 0;
-    for (const raw of listing.split(/\r?\n/)) {
-      const name = raw.replace(/^(\.[\\/])+/, '');
-      if (!name || name === '.') continue;
-      if (!safeZipTarget(destDir, name)) throw _plain('The Kokoro download had an unsafe file path in it, so it was thrown away.');
-      n++;
+// ── Unpacking a .tar.bz2 in JS ──────────────────────────────────────────────────────────────────────
+// Not Windows' tar.exe: on many PCs its bundled bsdtar was built without bzip2 and tries to run an external
+// "bzip2 -d" that Windows does not have ("Can't initialize filter", field report). So the bzip2 layer is the vendored
+// seek-bzip and the tar layer is the ~60 lines below; nothing here starts a process.
+const MAX_UNPACKED_BYTES = 1024 * 1024 * 1024;   // the real archives unpack to ~130 MB; past this it is not ours
+const MAX_TAR_ENTRIES = 20000;
+const _tick = () => new Promise(r => setImmediate(r));
+const _ZERO_BLOCK = Buffer.alloc(512);
+
+// bzip2 → one Buffer, in JS. seek-bzip's block decoder driven by hand so the main process breathes between blocks
+// (each is <= 900 KB; the whole 100 MB model takes a few seconds and must not freeze the tray). The input stream
+// throws at the end of the data instead of returning -1, so a cut-off file fails loudly rather than decoding junk.
+async function _bunzip(buf) {
+  const SZ = 1 << 20, chunks = [];
+  let cur = Buffer.allocUnsafe(SZ), n = 0, pos = 0;
+  const inp = new Bunzip.Stream();
+  inp.readByte = () => { if (pos >= buf.length) throw _plain('The Kokoro download was cut short, so it was thrown away.'); return buf[pos++]; };
+  const out = new Bunzip.Stream();
+  out.writeByte = (b) => {
+    if (n === SZ) {
+      chunks.push(cur); cur = Buffer.allocUnsafe(SZ); n = 0;
+      if (chunks.length * SZ > MAX_UNPACKED_BYTES) throw _plain('The Kokoro download unpacked to far more than expected, so it was thrown away.');
     }
-    if (!n) throw _plain('The Kokoro download was empty, so it was thrown away.');
+    cur[n++] = b;
+  };
+  const bz = new Bunzip(inp, out);
+  for (;;) {
+    if (bz._init_block()) { bz._read_bunzip(); await _tick(); continue; }
+    if ((bz.reader.read(32) >>> 0) !== bz.streamCRC) throw new TypeError('Bad stream CRC');
+    if (pos >= buf.length) break;
+    bz._start_bunzip(inp, out);                       // another bzip2 stream follows (parallel bzip2 writes several)
+  }
+  chunks.push(cur.subarray(0, n));
+  return Buffer.concat(chunks);
+}
+
+// A NUL-terminated field of a tar header.
+function _tarStr(b, s, len) { let e = s; while (e < s + len && b[e] !== 0) e++; return b.toString('utf8', s, e); }
+// pax extended header: "<len> key=value\n" records, len counting the whole record in bytes (so read it as latin1).
+function _paxRecords(buf) {
+  const s = buf.toString('latin1'), r = {};
+  for (let i = 0; i < s.length;) {
+    const sp = s.indexOf(' ', i), len = parseInt(s.slice(i, sp), 10), eq = s.indexOf('=', sp);
+    if (!(len > 0) || eq < 0 || eq > i + len) break;
+    r[s.slice(sp + 1, eq)] = Buffer.from(s.slice(eq + 1, i + len - 1), 'latin1').toString('utf8');
+    i += len;
+  }
+  return r;
+}
+
+// Read the tar's headers into a list of {target, dir, off, size}, checking every name against `destDir` and
+// refusing anything but plain files and folders, BEFORE a byte is written. Handles ustar (with its prefix field),
+// GNU long names ('L') and pax path/size records ('x'); a link, device or fifo is refused, same as the zip reader's posture.
+function _tarList(tar, destDir) {
+  const unsafe = () => _plain('The Kokoro download had an unsafe file path in it, so it was thrown away.');
+  const odd = () => _plain('The Kokoro download contained something other than plain files, so it was thrown away.');
+  const bad = () => _plain('The Kokoro download was damaged, so it was thrown away.');
+  const list = [];
+  let pos = 0, longName = null, pax = {};
+  while (pos + 512 <= tar.length) {
+    const h = tar.subarray(pos, pos + 512);
+    if (h.equals(_ZERO_BLOCK)) return list;           // end-of-archive marker
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += (i >= 148 && i < 156) ? 32 : h[i];
+    if (sum !== parseInt(_tarStr(h, 148, 8).trim(), 8)) throw bad();
+    if (h[124] & 0x80) throw bad();                    // base-256 size: a file over 8 GB, not ours
+    let size = parseInt(_tarStr(h, 124, 12).trim() || '0', 8);
+    const type = String.fromCharCode(h[156]);
+    const isFile = type === '0' || type === '\0';
+    if (type === 'x') { const p = _paxRecords(tar.subarray(pos + 512, pos + 512 + size)); pax = { ...pax, ...p }; }
+    if (isFile && pax.size != null) size = Number(pax.size);
+    if (!(size >= 0) || size > MAX_UNPACKED_BYTES || pos + 512 + size > tar.length) throw bad();
+    const start = pos + 512, next = start + Math.ceil(size / 512) * 512;
+    if (type === 'L') { longName = _tarStr(tar, start, size); pos = next; continue; }
+    if (type === 'x' || type === 'g' || type === 'K') { pos = next; continue; }   // K: a link's long target; the link itself is refused
+    if (!isFile && type !== '5') throw odd();
+    let name = longName != null ? longName : pax.path != null ? pax.path : _tarStr(h, 0, 100);
+    if (longName == null && pax.path == null && h.toString('latin1', 257, 263) === 'ustar\0') {
+      const prefix = _tarStr(h, 345, 155);
+      if (prefix) name = prefix + '/' + name;
+    }
+    longName = null; pax = {};
+    const dir = type === '5' || /[\\/]$/.test(name);
+    name = name.replace(/^(\.[\\/])+/, '');
+    if (name && name !== '.') {
+      const target = safeZipTarget(destDir, name);
+      if (!target) throw unsafe();
+      if (list.length >= MAX_TAR_ENTRIES) throw bad();
+      list.push({ target, dir, off: start, size });
+    }
+    pos = next;
+  }
+  if (pos !== tar.length) throw bad();                  // a header cut in half
+  return list;
+}
+
+// Unpack a .tar.bz2 into `destDir`, refusing anything that could land outside it. The archive was already pinned
+// by sha256, so this is a second lock, not the only one: every name must stay inside destDir (the same guard as
+// the zip reader) and only plain files and folders are written. Any failure removes what was written and throws a
+// message for a person.
+async function extractTarBz2(archive, destDir) {
+  try {
+    const tar = await _bunzip(fs.readFileSync(archive));
+    const list = _tarList(tar, destDir);
+    if (!list.length) throw _plain('The Kokoro download was empty, so it was thrown away.');
     fs.mkdirSync(destDir, { recursive: true });
-    await run(tarExe, ['-xjf', archive, '-C', destDir], { timeout: 300000 });
-    const walk = (d) => {
-      for (const ent of fs.readdirSync(d)) {
-        const f = path.join(d, ent), st = fs.lstatSync(f);
-        if (st.isDirectory()) walk(f);
-        else if (!st.isFile()) throw _plain('The Kokoro download contained something other than plain files, so it was thrown away.');
-      }
-    };
-    walk(destDir);
+    for (const e of list) {
+      if (e.dir) { fs.mkdirSync(e.target, { recursive: true }); continue; }
+      fs.mkdirSync(path.dirname(e.target), { recursive: true });
+      fs.writeFileSync(e.target, tar.subarray(e.off, e.off + e.size));
+    }
   } catch (e) {
     _rmrf(destDir);
     if (e && e.plain) throw e;
-    if (e && e.code === 'ENOENT') throw _plain(NO_TAR);
-    throw _plain('Mimic could not unpack the Kokoro download' + (e && e.stderr ? ' (' + String(e.stderr).trim().split('\n')[0] + ')' : '') + '. Nothing was changed; the Windows voice keeps working.');
+    throw _plain('Mimic could not unpack the Kokoro download' + (e && e.message ? ' (' + String(e.message).split('\n')[0].slice(0, 120) + ')' : '') + '. Nothing was changed; the Windows voice keeps working.');
   }
 }
 
@@ -456,13 +527,11 @@ function _installVoice(p, v, bufs, record) {
 }
 
 // Download + verify + place Kokoro (the engine, then the model). Each archive is checked against its pinned size
-// and sha256, unpacked by the system tar into a scratch folder inside kokoro/, and swapped in whole, so a failed or
-// cut-off install never leaves a half-written folder looking live. `deps` (tests only): get, tarExe, run, kokoro.
+// and sha256, unpacked (in JS, see extractTarBz2) into a scratch folder inside kokoro/, and swapped in whole, so a
+// failed or cut-off install never leaves a half-written folder looking live. `deps` (tests only): get, kokoro.
 async function _installKokoro(root, platform, deps) {
   const K = deps.kokoro || MANIFEST.kokoro;
   const get = deps.get || httpsGet;
-  const tarExe = deps.tarExe || tarPath(platform);
-  if (!fs.existsSync(tarExe)) throw new Error(NO_TAR);
   const p = kokoroPaths(root);
   const plan = [];
   if (!_kokoroRuntimeReady(p)) plan.push({ kind: 'runtime', ...K.runtime });
@@ -490,7 +559,7 @@ async function _installKokoro(root, platform, deps) {
       buf = null;
       _progress = { engine: 'kokoro', phase: 'unpack', pct: 99, text: 'Unpacking ' + what + '…' };
       const out = path.join(scratch, 'x-' + f.kind);
-      await extractTarBz2(archive, out, tarExe, deps.run);
+      await extractTarBz2(archive, out);
       fs.unlinkSync(archive);
       if (f.kind === 'runtime') _placeKokoroRuntime(p, K, out, scratch);
       else _placeKokoroModel(p, K, out);
@@ -681,11 +750,11 @@ function warmUp(root, cfgVoice, platform = process.platform, { force = false } =
 }
 
 module.exports = {
-  MANIFEST, SYNTH_TIMEOUT_MS, TEST_TIMEOUT_MS, PIPER_VOICES_REV, NO_TAR, NO_VCRT, WARM_PHRASE,
+  MANIFEST, SYNTH_TIMEOUT_MS, TEST_TIMEOUT_MS, PIPER_VOICES_REV, NO_VCRT, WARM_PHRASE,
   status, install, remove, synthesize, warmUp,
   // pure, for tests
   lengthScale, cacheKey, createLru, synthOrNull, downloadPlan, safeZipTarget, verifyFile, findVoice, piperPaths,
-  kokoroPaths, kokoroArgs, tarPath, extractTarBz2, acceptanceProblem, acceptanceRecord, kokoroStartProblem: _kokoroStartProblem,
+  kokoroPaths, kokoroArgs, extractTarBz2, acceptanceProblem, acceptanceRecord, kokoroStartProblem: _kokoroStartProblem,
   installVoiceFiles: _installVoice,
   lastWarmUp: () => _lastWarm,
 };

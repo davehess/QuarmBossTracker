@@ -692,3 +692,19 @@ and the same never-refetch guarantee.
   only (DECISIONS 2026-09-21 §101). A guild that adds sync-merged channel
   branches, as we did with alpha, multiplies its pushes; the wizard should
   write the same allow-list, not Vercel's default of every branch.
+
+### Shared hosted trial — a separate project, schema per guild (2026-10-18, DECISIONS §358)
+A new funnel shape on top of the self-host epic: before a guild stands up its own infra, they can try the platform in
+a **shared trial we run**. The decided architecture (do not re-derive):
+- **One separate Supabase project, a Postgres schema per guild — never the Wolf Pack production DB.** Isolation is a
+  role per schema; a plain shared project leaks (RLS is a sign-in gate, the web holds service-role). Export a guild =
+  `pg_dump -n <schema>` into their new project; remove one = `DROP SCHEMA`.
+- **Tenant = a prospective guild's cohort (6–12 raider cap), not unrelated individuals.** Graduation moves them to a
+  dedicated tenant in their own account + domain (the §609 exit-promise). Trial agents run with PvP/who OFF (§8.6).
+- **Offboarding is first-class:** a `tenants` table (status / `purge_after`), suspend → encrypted export →
+  audit-logged purge, and an append-only removal log kept OUTSIDE the tenant's data. The ToS needs a backup-expiry
+  window (our nightly dump + the never-delete archive hold rows past a delete), and the deletion/notice/backup
+  numbers are a professional's call. The public privacy page's "no self-serve export or delete" must be rewritten.
+- **Front door:** `raidboss.quest` (to register) or `eqmimic.quest`; the Mimic sign-in URL is already bot-controlled
+  (`MIMIC_LINK_VERIFICATION_URL`), so a trial bot can point clients at the trial site with no client change, but
+  Mimic's hard-coded wolfpack.quest links (~20) need a manifest field.
