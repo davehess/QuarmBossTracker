@@ -3523,6 +3523,15 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
 
 ## Web features
 
+- **Flag lab, officer sandbox (`/admin/flag-lab`, web 1.9.2, `[beta]`, DRAFT)** — pre-test the PoP flag matrix and
+  the hail board with invented raiders and no raid. Off unless `FLAG_LAB=1` (set it in Vercel's Preview
+  environment only). All state is client `useState`; no table read, no server action, no write (asserted by
+  `test/flag-lab-no-writes.test.js`). The matrix reuses `zoneAccess`/`missingFor` (`web/lib/popFlags.ts`),
+  `gateState`/`proofFor` (`web/lib/popGateCell.ts`) and `GateMark` (`web/app/pop/GateMark.tsx`), merging sources
+  Mimic > /who > loot > self-tick in `web/lib/flagLabModel.ts` the way `/pop` does. The hail preview runs
+  `web/lib/hailBoardView.ts`, a PORT of `utils/hailBoard.js` (`buildViews`, `HAIL_BOSSES`, `HAIL_FLAGGERS`),
+  because web imports nothing outside `web/`; `test/flag-lab-hail-parity.test.js` runs both on one fixture, so a
+  change to the bot's tables or `buildViews` must be mirrored there or that test goes red.
 - **Link previews: every page unfurls with its own name (web 1.8.135, 2026-10-10, DECISIONS §215)**:
   - **Discord never reads a page's `metadata`.** `web/middleware.ts` rewrites preview crawlers (Discordbot, Slackbot,
     Twitterbot…) to `/api/embed-meta`, which serves the card from `web/lib/pageMeta.ts` `metaForPath(path)`.

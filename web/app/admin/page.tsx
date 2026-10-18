@@ -100,6 +100,11 @@ export default function AdminPage() {
           href="/admin/extra-spells"
         />
         <Card
+          title="🧪 Flag lab"
+          body="[beta] An in-memory sandbox for the PoP flag matrix and the hail board: invented raiders, nothing saved. Off unless FLAG_LAB=1."
+          href="/admin/flag-lab"
+        />
+        <Card
           title="💰 Loot by value"
           body="[beta] What the raid has looted, highest base value first, with totals per character. The looter is not always who ends up with the item."
           href="/admin/loot"
