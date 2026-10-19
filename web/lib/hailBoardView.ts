@@ -189,7 +189,7 @@ export function buildViews(windows: HailWindow[], data: HailData | null | undefi
       still.push({ name, prior_missing: missing });
     }
     const cap = cfg.flagCap ? Math.floor(cfg.flagCap / (cfg.flagTicks || 1)) : null;
-    const granted = hailed.filter(h => h.how === 'flag').length;
+    const granted = hailed.length;   // every hailed raider spends one of the cap (bot 3.2.6, utils/hailBoard.js)
     views.set(w.id, {
       id: w.id, boss_id: w.boss_id, boss_name: w.boss_name, npc_name: w.npc_name, zone: w.zone,
       opened_at: w.opened_at, expires_at: w.expires_at,
