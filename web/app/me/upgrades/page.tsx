@@ -34,6 +34,7 @@ import {
   type StatKey, type Tier,
 } from '@/lib/gearWeights';
 import { MR_FLOOR } from '@/lib/raidKit';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const metadata: Metadata = {
   title: '[beta] Gear upgrades',
@@ -131,7 +132,7 @@ async function CharacterUpgrades({ pick }: { pick: OwnedChar }) {
   const { data: flagRows } = await sb
     .from('characters')
     .select('name, race, class, exclude_inventory, exclude_from_stats')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', name)
     .limit(1);
   const flags = ((flagRows ?? [])[0] ?? null) as { race: string | null; class: string | null; exclude_inventory: boolean | null; exclude_from_stats: boolean | null } | null;
