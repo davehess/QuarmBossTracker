@@ -231,8 +231,9 @@ describe('the localStorage registry: a key is shared, private, or not read at al
 
   it('writes back strings exactly as the overlays store them, and only for the overlays asked for', () => {
     const opts = { overlay: { tab: 'history', rows: 9 }, who: { zekOnly: false, height: 'fit' }, zeal: { layout: 'dials', detail: true } };
-    expect(sb.storageFromOptions(opts)).toEqual({ 'wp.damageTabMode': 'history', 'wp.deepsRows': '9', 'wp:who:zekOnly': '0', 'wp:who:height': 'fit', 'wp:tick:layout': 'dials', 'wp:tick:detail': '1' });
-    expect(sb.storageFromOptions(opts, ['zeal'])).toEqual({ 'wp:tick:layout': 'dials', 'wp:tick:detail': '1' });
+    // `layout` is no longer a Tick option (bars only), so a bundle that still carries it writes nothing for it.
+    expect(sb.storageFromOptions(opts)).toEqual({ 'wp.damageTabMode': 'history', 'wp.deepsRows': '9', 'wp:who:zekOnly': '0', 'wp:who:height': 'fit', 'wp:tick:detail': '1' });
+    expect(sb.storageFromOptions(opts, ['zeal'])).toEqual({ 'wp:tick:detail': '1' });
   });
 
   it('round-trips: what the overlays store → options → what is stored', () => {

@@ -85,7 +85,6 @@ const SHARED = [
   ['chchain_ddr', 'chchain', 'ddr', FLAG],
   ['chchain_lead_auto', 'chchain', 'leadAuto', FLAG],
   ['chchain_lead_sec', 'chchain', 'leadSec', NUM(0, 10)],
-  ['wp:tick:layout', 'zeal', 'layout', ENUM(['bars', 'dials'])],
   ['wp:tick:detail', 'zeal', 'detail', FLAG],
   ['wpTargetMana', 'mobinfo', 'mana', ENUM(['on', 'off'])],
   ['wpTargetFqv', 'mobinfo', 'sub', WORD],
@@ -110,6 +109,7 @@ const PRIVATE_KEYS = new Set([
   'wpMeCardBounds', 'wpHudPreBuild',      // window positions
   'wp:settings:draft',                    // an unsaved Settings form
   'uiInspectorWidth',                     // a dialog's width
+  'wpTargetPgFilter', 'wp.damageHistView', // which history filter / view this person last looked at
 ]);
 const PRIVATE_PREFIXES = ['wp-map-', 'wpChatMore:', 'wpChatMoreSet:', 'wpChatHistH:', 'wpChatBrkOff:'];
 
