@@ -115,6 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Canvas Pieces round** (§360–366) | Built + gated on `alpha` (park 3.0.0): backing plate-only, whole-group look choices, copy/rename/update a saved group, live-data palette previews, locate line + pulse, delete-with-pieces + Undo | the guild lead, on the next alpha build: (1) list-mode preview crop at 42px (D), (2) single-piece Show as → Upright bar stub (B), (3) the hover line reaches the canvas while arranging (E) |
+| **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: say whether to build a zone gate for guild triggers (agent change on beta) so the bars fire only in the named's zone |
 | **raidmimic.com — the guild leaders' door** (§370) | Page live at `wolfpack.quest/raidmimic` marked [beta], layouts A (default) and B (`?v=b`). All six raidmimic hosts are on Vercel as 307s to eqmimic.quest; DNS is still Porkbun's parking page | the guild lead: pick A or B; at Porkbun, set apex A `216.198.79.1` and `www` CNAME `cname.vercel-dns.com` on all three domains (delete the parking records); then a session removes the six Vercel redirects so the page serves on raidmimic.com |
 | **Quarm Oct 18 patch notes** (§369) | Applied: bot 3.2.1 + web 1.9.4 on main (Plane of Time B corpse DM 30 min; PoP guide: PoK turn-ins held when bags are full, the 6d18h cycle, phase loot limits, the Phase 3 checkpoint); agent 3.8.1 on beta (corpse DM names zones 222/223). NOT applied: the Plane of Time timer model | the guild lead: pick the PoTime timer model (A observed cycle end / B inferred / hybrid) and capture one `#timelockout` + one `/sll` during a live cycle; turn on the bot's Message Content intent in the Discord developer portal BEFORE anyone sets `MESSAGE_CONTENT_INTENT=1` |
 | **Keepers of the (Overlay) Arts — Masterpieces + gallery** (§368) | Named; roadmap entry on main (web 1.9.3). Scoped: `docs/DESIGN-keepers-of-the-arts.md` (gallery B, set modes B, move-into-Canvas toggle + convert, socials library-lite; slice 0 = socials privacy fix) | the guild lead: go/no-go on the order and the open-decisions table there; approve the Tastemaker outreach wording before any DM |
@@ -11635,3 +11636,21 @@ one; the guild lead confirmed three corrections against it. `utils/openDkpSync.j
 `characters` but not gender, and `raid_night_appearance.gender` stays NULL until Zeal sends entity looks. **Before
 saying gender is unknown, read OpenDKP.** The guild-hall sprites (scratch only) now draw from it. Storing it in
 `characters` (one column + one line in the sync) waits until the raid spectator needs it from the web.
+
+### 371. PoP "recast" timers fired on our own nukes; the other-target line is dropped (2026-10-19, data only)
+The guild lead, with a screenshot of "Garrison's Superior Sundering recast — Punisher of Flame, Arch Mage Alchtonion",
+"Brushfire recast — Emmerik Skyfury" and "Frozen Wind recast" bars: *"Why am i seeing these? we're not fighting that
+named"*.
+- **Cause:** the 150 `guild_triggers` rows named "<spell> recast — <mob>" (`source_pack='pop-2026-10'`, §112) match the
+  spell's landing text with no mob or zone in the pattern. The text prints whoever casts it. Garrison's Superior
+  Sundering is a wizard nuke (scroll class mask 2048) and sits in 441 NPCs' spell lists. Brushfire and Frozen Wind are
+  ranger spells carried by 195 NPCs. So our wizards and rangers, or any mob nearby, started a named's recast bar.
+- **Applied (data only, 20 rows):** the "<someone> is …" alternative is removed from the high-risk rows. Each keeps
+  "You resist the X spell!" and its on-you line, so a raider who is hit still gets the bar, and a nuke landing on a mob
+  no longer starts one. Each row's `notes` holds the old pattern (`[2026-10-19] … Was: …`) for a revert. The other 7
+  high-risk rows (Markar's Discord, Invert Gravity, Gravity Flux, Greater Fetter, Boltran`s Agacerie, Life Leech, Touch
+  of Innoruuk) already had only "you" lines. The ~15 medium-risk rows (spells 2–28 NPCs carry: Meteor Storm, Storm
+  Comet, Lava Breath, …) were left as they are.
+- **Still open:** the engine has no zone or target gate (`zeal_condition` is HP-only; `condition_expr` is read by
+  nothing). A `zone_ids` gate checked against Zeal's zone (old agents ignore it and fail open) would let the bars fire
+  only in the named's zone, and would let the other-target lines come back. Not built; the guild lead's call.
