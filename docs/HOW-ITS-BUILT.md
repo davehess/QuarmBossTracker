@@ -1048,6 +1048,39 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Where:** agent `stats.currentRampages`, tank state `rampages`, `apps/mimic/command.html` `rampHtml`. Test:
   `test/rampage-multi-boss.test.js`.
 
+### Enrage callouts and their mutes (agent 3.8.13 beta, 2026-10-19; DECISIONS §379)
+- **What:** "Enrage soon" at 12% for bosses, "<mob> enraging" at 9% for any other mob that can enrage; mute per mob for
+  the session, all for the session, or per mob always.
+- **Where:** agent `ENRAGE_OTHER_PCT`, `_enrageMuteSession`, `/api/enrage-mute`; the "always" mute is a
+  `builtin:enrage_soon:<mob>` rule in `trigger_rules.json`; buttons in `apps/mimic/triggers.html` and the dashboard's
+  Recent fires. Test: `test/enrage-callouts.test.js`.
+
+### Voice unclear reports (agent 3.8.15 beta · bot 3.2.8 · web 1.9.9, 2026-10-19; DECISIONS §379)
+- **What:** a raider flags a spoken callout nobody understood, with the text, the voice that really played it and the
+  speed; Recent fires replays it and takes a suggested wording; officers review on the site.
+- **Where:** `apps/mimic/triggers.html` (spoken-line log, 🔊 button), agent `/api/voice-spoken` + `/api/voice-report`
+  (relay), bot `utils/voiceReports.js` + `POST /api/agent/voice-report`, web `web/app/admin/voice-reports/` [beta],
+  table `voice_reports` (`supabase/migrations/20261019150000_voice_reports.sql`, not yet created). Tests:
+  `test/voice-reports-mimic.test.js`, `test/voice-reports.test.js`.
+
+### Death recap (agent 3.8.14 beta, 2026-10-19; FB-84 part A; DECISIONS §379)
+- **What:** the last 20 s before each death seen in your own log: hits, heals, CHs, damage in the last 6 s, killer,
+  time since the last CH. Local only, last 50, kept across an agent restart within ten minutes.
+- **Where:** agent `stats.deathRecaps`; the dashboard's Deaths card; `apps/mimic/command.html` beside the rez board;
+  targeting a corpse focuses that player's recap. Test: `test/death-recap.test.js`.
+
+### "☠ killed" on the Map's timers (agent 3.8.16 beta, 2026-10-19; DECISIONS §379)
+- **What:** starts a mob's respawn timer by hand, from its last death line in your log or from now.
+- **Where:** agent `POST /api/map-kill` (same path as a log death); buttons on the Map's Up, Watched and Engaged rows.
+  Test: `test/map-watch-agent.test.js`. Charm aging's default-off lives beside it in `BUILTIN_DEFAULT_MODES`
+  (`test/trigger-rules.test.js`).
+
+### Debuff timers end with the mob (agent 3.8.17 beta, 2026-10-19; DECISIONS §379)
+- **What:** a dead mob's "<mob> - <spell>" countdowns disappear; the row names the spawn id when known.
+- **Where:** agent `_dropDebuffTimersOnDeath` (called from the live tail beside `_cancelTimersOnMobDeath`, and from
+  `_mapNoteState` on a Zeal corpse / 0 HP), label in `_builtinTimerRows` (`target_id` on the row). Test:
+  `test/debuff-timers-on-death.test.js`.
+
 ### raidmimic.com landing page (web 1.9.5, 2026-10-18, [beta]; DECISIONS §370)
 - **What:** the guild leaders' door, game-agnostic: what the platform does, each block tagged live / alpha / coming,
   works-with (PQ Companion, GINA, EQLogParser), the consent model, what it costs (no price list), "any solved world",
