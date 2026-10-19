@@ -128,7 +128,7 @@ describe('the flag cap line', () => {
   it('says how many of the cap are used, and that it counts only what we saw', () => {
     const html = hailBoardHtml([capped()], 'x');
     expect(html).toContain('Flags: <b>23 / 72</b> used<span class="note">seen only</span>');
-    expect(html).toContain('Counts only the flags we saw granted.');
+    expect(html).toContain('Counts every raider we saw hail or get the flag.');
     expect(html).not.toContain('hail-cap warn');         // 49 left, 6 still to hail
   });
 
