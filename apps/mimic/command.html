@@ -587,6 +587,21 @@
     return h;
   }
 
+  function rampHtml(r, multi){
+    var rhp = r.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(r.hp_pct)));
+    var rda = r.da || null;
+    var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
+    var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
+    var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
+    var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
+    var lead = multi ? ('💀 ' + esc(r.attacker || 'Boss') + ': rampage on ') : '💀 Rampage on ';
+    return '<div class="ramp">'
+         +    '<div class="row">' + lead + '<span class="who">' + esc(r.target) + '</span></div>'
+         +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'
+         +      daTags
+         +      '<div class="val">' + valText + '</div></div>'
+         +  '</div>';
+  }
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -638,20 +653,10 @@
 
     // Rampage target + invuln (DA/Harmshield/etc) highlight — identical to
     // the Tank overlay's card.
-    if (s.rampage && s.rampage.target) {
-      var rhp = s.rampage.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.rampage.hp_pct)));
-      var rda = s.rampage.da || null;
-      var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
-      var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
-      var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
-      var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
-      html += '<div class="ramp">'
-           +    '<div class="row">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>'
-           +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'
-           +      daTags
-           +      '<div class="val">' + valText + '</div></div>'
-           +  '</div>';
-    }
+    // Several bosses rampaging at once (rampages has 2+): one row per attacker. With 0-1 it is the single
+    // card above, byte for byte, and an older agent that sends no rampages array lands here too.
+    var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
+    for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
     // above the long lists: after a kill there is no fight to push it down, and a fight that starts while

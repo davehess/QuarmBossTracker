@@ -602,24 +602,36 @@
   // the fight (the guild lead, 2026-10-14: "dps METER counts the same amount of time for everyone versus
   // just when the person engaged"). A row with no span - a fight saved by an older agent, a guild-only
   // player, the zeroed "you" row - reads the fight's seconds, as every row used to.
-  function _rowSecs(row, fightSecs) {
+  // The clock runs from the first hit to the END of the fight (`endMs`, the fight's last damage), unless the
+  // raider stopped: it stops one tick (DPS_IDLE_MS) after their last hit (the guild lead, 2026-10-18: "not
+  // counting enough time on sec" - first-to-last made a lone nuke read as 1 s - "but if someone stops
+  // attacking ... we stop their DPS Sec counter"). Without `endMs` the tick still applies, capped by the fight.
+  var DPS_IDLE_MS = 6000;
+  function _fightEndMs(rows) {
+    var e = 0;
+    for (var i = 0; i < (rows || []).length; i++) { var b = Number(rows[i][12]); if (b > e) e = b; }
+    return e;
+  }
+  function _rowSecs(row, fightSecs, endMs) {
     var a = Number(row[11]), b = Number(row[12]);
     if (!(a > 0) || !(b >= a)) return fightSecs;
-    var s = Math.max(1, Math.round((b - a) / 1000));
+    var stop = b + DPS_IDLE_MS;
+    if (endMs > 0) stop = Math.min(stop, Math.max(endMs, b));
+    var s = Math.max(1, Math.round((stop - a) / 1000));
     return fightSecs > 0 ? Math.min(s, fightSecs) : s;
   }
   // The Sec and DPS a row shows. Tank tab rows keep the fight's seconds: the span stamps damage DEALT.
-  function _rowTiming(row, fightSecs, tank) {
-    var secs = tank ? fightSecs : _rowSecs(row, fightSecs);
+  function _rowTiming(row, fightSecs, tank, endMs) {
+    var secs = tank ? fightSecs : _rowSecs(row, fightSecs, endMs);
     return { secs: secs, dps: secs > 0 ? Math.round((row[1] || 0) / secs) : 0 };
   }
   // One mini row: rank, name, total, @rate, then a share-of-raid bar under
   // the name. "me" reuses the full board's li.me highlight.
-  function miniRowsHtml(rows, me, totalDmg, secs, tank) {
+  function miniRowsHtml(rows, me, totalDmg, secs, tank, endMs) {
     var lc = me ? String(me).toLowerCase() : null;
     return rows.map(function(row){
       var d = row[1];
-      var rt = _rowTiming(row, secs, tank);
+      var rt = _rowTiming(row, secs, tank, endMs);
       var pct = totalDmg > 0 ? Math.min(100, (d / totalDmg) * 100) : 0;
       var isMe = !!lc && String(row[0]).toLowerCase() === lc;
       return '<li class="mrow' + (isMe ? ' me' : '') + (tank ? ' tk' : '') + '">'
@@ -813,11 +825,12 @@
   function _rsLine(boss, secs, totalDmg, rows) {
     var real = _rsRaiders(rows);
     if (!real.length || !(totalDmg > 0) || !(secs > 0)) return null;
+    var endMs = _fightEndMs(rows);
     return '/rs ' + boss + ' in ' + secs + 's, ' + pnumK(totalDmg)
       + ' Damage @' + pnum(Math.round(totalDmg / secs)) + ', '
       + real.map(function(x, i){
           // The header is the fight's; each raider's own "in Ns" is theirs, as EQLogParser writes it.
-          var rs = _rowSecs(x, secs);
+          var rs = _rowSecs(x, secs, endMs);
           return (i + 1) + '. ' + x[0] + (x[8] ? ' +Pets' : '') + ' = ' + pnum(x[1]) + '@'
                + pnum(Math.round(x[1] / rs)) + ' in ' + rs + 's';
         }).join(' | ');
@@ -1061,7 +1074,7 @@
         var n = row[0], d = row[1], mx = row[2], petOwner = row[3], rank = row[4], extra = row[5], petCharm = row[6];
         var pct = totalDmg > 0 ? (d / totalDmg) * 100 : 0;
         // DPS tab: this row's own active seconds. Tank tab: the fight's (_rowTiming).
-        var rt = _rowTiming(row, secs, TAB_MODE === 'tank');
+        var rt = _rowTiming(row, secs, TAB_MODE === 'tank', _fightEndMs(allRows));
         var rsecs = rt.secs, dps = rt.dps;
         var isMe = me && n.toLowerCase() === me.toLowerCase();
         // Pet rows carry their owner in dim parens — same convention as the
@@ -1145,7 +1158,7 @@
         // Mini keeps you in its three rows too: at zero when you did nothing yet.
         var miniRows = (me && allRows.length && !allRows.some(function(r){ return String(r[0]).toLowerCase() === me.toLowerCase(); }))
           ? allRows.concat([[me, 0, 0, null, '—', true, false, 0, false]]) : allRows;
-        bodyHtml = miniRowsHtml(miniWindow(miniRows, me), me, totalDmg, secs, TAB_MODE === 'tank');
+        bodyHtml = miniRowsHtml(miniWindow(miniRows, me), me, totalDmg, secs, TAB_MODE === 'tank', _fightEndMs(allRows));
       }
       // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
       // innerHTML re-layout.
