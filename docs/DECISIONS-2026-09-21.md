@@ -117,6 +117,8 @@ is ephemeral. It is a desktop-session job.
 | **Canvas Pieces round** (§360–366) | Built + gated on `alpha` (park 3.0.0): backing plate-only, whole-group look choices, copy/rename/update a saved group, live-data palette previews, locate line + pulse, delete-with-pieces + Undo | the guild lead, on the next alpha build: (1) list-mode preview crop at 42px (D), (2) single-piece Show as → Upright bar stub (B), (3) the hover line reaches the canvas while arranging (E) |
 | **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: say whether to build a zone gate for guild triggers (agent change on beta) so the bars fire only in the named's zone |
 | **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | All recommendations taken; slice-0 draft lost (never pushed) | a session: redo slice 0 (portable layout + set fork-on-save) on beta, then slice 1 (publish → Gallery tab → add as a new set) — 3.0 stable waits on slice 1 |
+| **Other games** (§377) | Decided: a thin reader per game posting the same upload. Drafting: the EQ family (other EQ servers, local edition) and a Classic WoW combat-log reader + a `game`/`boss_key` seam on `encounters`. Monsters & Memories is on hold: its policy forbids parsers | a session: review and ship both drafts; the `encounters` migration needs the guild lead's approval prompt |
+| **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side on branch `claude/gallery-server` (bot 3.2.7); `GALLERY_SALT` set on Railway. The tables migration was approved but its run was cancelled at the confirmation prompt | a session: apply `20261019120000_gallery_masterpieces` (guild lead approves the prompt), push bot 3.2.7, then the Mimic Gallery tab (design with samples first) — 3.0 stable waits on slice 1 |
 | **FB-84 death log before a death** (§373) | Scoped: A local recap (recommended first slice), B web per-death panel, C extend heal gaps/timeline | the guild lead: pick A/B/C (with samples) before any build |
 | **Raid night 2026-10-18 fixes** (§373) | Live: bot 3.2.6 (HoH trial cards, pet filter, flag counter, named-boss list); beta agent 3.8.4 + Mimic DPS Sec rule (rez NPC fix, trial credit lines, three rampagers) | the guild lead: look over `data/named-bosses.json` for missing or unwanted nameds (the hail-cap tooltip was reworded in agent 3.8.5 beta) |
 | **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: A (keep, recommended) or B (zone gate, agent change on beta) — B brings back the "hits the tank" bar but our own nukes in the named's zone would start it again |
@@ -11815,3 +11817,28 @@ the format the public Gallery (`docs/DESIGN-keepers-of-the-arts.md`, Workstream 
   inside a set), the Gallery itself, the fit badge and the "needs" check beyond listing it.
 - Tests: `test/portable-layout.test.js` (round trip at 1080p, 1440p and an ultrawide, windowed EQ, privacy, validation,
   wiring), each assertion mutation-checked.
+
+### 377. Other games: a thin reader per game; the EQ family and Classic WoW first; Monsters & Memories on hold (2026-10-19)
+The guild lead: *"start consuming other games"*, then *"find a list of other solved games we could pull in and implement
+similar systems"*.
+- **Research (two agents, sources cited in their reports):**
+  - **Monsters & Memories' Play Nice Policy (2026-10-09) lists "screen readers/parsers" as cheating.** No combat or chat
+    log on disk is confirmed, and the only existing DPS parser reads network packets with keys from game memory. On hold
+    until the developers allow a parser or write a combat log.
+  - **Classic-era WoW writes `Logs\WoWCombatLog.txt` after `/combatlog`.** Blizzard's 2025 policy targets software that
+    modifies the client; reading the log is how Warcraft Logs works. Retail is out: Midnight limits addons in encounters.
+  - **The EverQuest family** (Project 1999, live, other emulators) writes the same `eqlog` text we already tail.
+  - The ranked list: EQ family, Classic WoW, Turtle WoW, then EQ2, SWTOR, GW2 (arcdps), retail WoW. FFXIV, Pantheon and
+    ESO are avoided (ToS risk or no log on disk).
+- **Shape (recommended by the coupling map, taken):** a thin, zero-dependency reader per game posting the same normalized
+  upload to `/api/agent/encounter`. Each reader owns its own privacy allow-list, and a WoW fix never rides the EverQuest
+  fleet's update chain.
+  - The one schema wall: `encounters` names its boss only by an EverQuest `npc_id` (an FK to `eqemu_npc_types`). Add
+    `game`, `boss_name` and `boss_key`, plus a key-based find-or-create. Additive; EQ unchanged.
+  - `game` starts as deployment config (`guild/config.json`), not a column on every table.
+- **First slices (drafting):**
+  - the EQ family in the local edition: any `eqlog_<Name>_<server>.txt`, a per-server capability table, and no guild
+    upload off Quarm;
+  - `packages/wowlogsync/` with the `encounters` seam, proven by a Classic combat-log line becoming a fight on `/parses`.
+- **Landing page (web 1.9.8):** raidmimic's "Any solved world" no longer calls Monsters & Memories next. It lists other
+  EverQuest servers and classic-era Warcraft as next, and says Monsters & Memories waits on its rules.

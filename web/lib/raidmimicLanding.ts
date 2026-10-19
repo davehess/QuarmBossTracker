@@ -138,8 +138,9 @@ export const WORLDS = {
     'EverQuest is the first. The same engine is meant to serve the others, which is why this page is not about one game.',
   list: [
     { name: 'EverQuest', status: 'live', note: 'On Project Quarm. This is what runs today.' },
-    { name: 'Monsters & Memories', status: 'coming', note: 'Next on the list. Not built.' },
-    { name: 'Classic-era Warcraft', status: 'coming', note: 'Next on the list. Not built.' },
+    { name: 'Other EverQuest servers', status: 'coming', note: 'Project 1999, live EverQuest and other servers write the same log. Next.' },
+    { name: 'Classic-era Warcraft', status: 'coming', note: 'Next, from the game\'s own combat log. Not built yet.' },
+    { name: 'Monsters & Memories', status: 'coming', note: 'Waiting on the game: its rules forbid combat parsers today, and we have found no combat log to read.' },
   ] as World[],
   rights: 'Game names belong to their owners. This project is not affiliated with or endorsed by any of them.',
 };
@@ -201,6 +202,7 @@ export const COMING: string[] = [
   'Sharing between guilds under the same opt-in rule.',
   'The shared trial for a small group of guilds.',
   'A setup wizard that stands a guild up on its own cloud account.',
-  'Monsters & Memories and classic-era Warcraft.',
+  'Other EverQuest servers and classic-era Warcraft.',
+  'Monsters & Memories, once its rules allow a combat parser.',
 ];
 export const COMING_TITLE = 'What is not built yet';
