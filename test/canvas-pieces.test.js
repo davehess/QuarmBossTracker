@@ -332,12 +332,17 @@ describe('pieces, round three', () => {
     expect(W.render(W.byId['target.quest'], 'rows', { items: q }, now)).toContain('data-copy="/say unlock memories" data-wp-interact');
     expect(g('target.vendor', { npc }).items).toEqual([{ name: 'Bone Chips', text: '1p 2g 3c' }]);
   });
-  it('Target Info as a group has the tabs too, in a second column', () => {
+  it('Target Info as a group is its Stats tab in the overlay\'s own width; the tabs are the set beside it', () => {
     const t = W.PRESETS.find(p => p.id === 'target');
     const ids = t.parts.map(a => a[0]);
-    for (const id of ['target.statgrid', 'target.specials', 'target.sight', 'target.pqdi', 'target.loot', 'target.spells', 'target.factions', 'target.quest', 'target.vendor']) expect(ids).toContain(id);
-    const loot = t.parts.find(a => a[0] === 'target.loot');
-    expect(loot[2]).toBe(268);                                    // the right-hand column
+    for (const id of ['target.statgrid', 'target.specials', 'target.sight', 'target.pqdi']) expect(ids).toContain(id);
+    // The overlay shows one tab at a time, so the tabs are not a second column that doubles the footprint (the
+    // guild lead, 2026-10-19: "the as pieces version is HUGE"); they are the preset of their own.
+    for (const id of ['target.loot', 'target.spells', 'target.factions', 'target.quest', 'target.vendor']) {
+      expect(ids).not.toContain(id);
+      expect(W.PRESETS.find(p => p.id === 'target-tabs').parts.map(a => a[0])).toContain(id);
+    }
+    expect(W.rowsBox(t.parts)[0]).toBeLessThanOrEqual(320);
   });
   it('the canvas polls a source that depends on another, and passes each piece its look', () => {
     const c = stripJs(canvas);

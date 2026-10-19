@@ -438,7 +438,7 @@
   // A piece cut from an overlay (sections.js): its page, told which section it is and, where the
   // section only exists on one tab, that tab.
   function sectSrc(p) {
-    var base = ovSrc(p.key);
+    var base = ovSrc(p.key, p.style);
     if (!base) return null;
     var d = window.WpSections ? window.WpSections.find(p.key, p.sect) : null;
     return base + '&wpsect=' + encodeURIComponent(p.sect) + (d && d.tab ? '&wptab=' + encodeURIComponent(d.tab) : '');
@@ -516,6 +516,7 @@
           w: num(p.w, 16, 4000, 200), h: num(p.h, 8, 3000, 40),
           pw: num(p.pw, 160, 2400, 340), ph: num(p.ph, 120, 3000, 400),
           scale: num(p.scale, 0.5, 2.5, 1),
+          style: (skey === 'me' && p.style === 'a') ? 'a' : '', follow: !!p.follow,
           grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
           off: !!p.off,
         });
@@ -794,6 +795,9 @@
       // Still in its group (just taken apart) its box is exactly the section's, so the parts abut
       // and read as the overlay did; on its own it keeps a little of its card around it.
       var s = p.scale || 1, r = WpSections.unionRect(doc, d.sel, p.grp ? 0 : SECT_PAD);
+      // A part of one tab, taken apart with the part that has the tabs: it shows while that tab is the one picked.
+      var ref = (p.follow && d.tab) ? tabRef(p) : null;
+      if (ref && WpSections.tabNow(p.key) !== d.tab) r = null;
       e.root.classList.toggle('nodata', !r);
       // The card it sat on in its window (Target Info's dark panel) goes behind it here too.
       var bd = r ? WpSections.backdrop(doc, d.sel) : null;
@@ -804,7 +808,8 @@
       e.frame.style.width = fw + 'px';
       e.frame.style.height = fh + 'px';
       e.frame.style.transform = s === 1 ? '' : 'scale(' + s + ')';
-      if (!r) return;
+      // Nothing to show: nothing of the page either (arranging shows the empty box, not what the page last had).
+      if (!r) { e.frame.style.clipPath = 'inset(100%)'; return; }
       e.frame.style.left = Math.round(-r.left * s) + 'px';
       e.frame.style.top = Math.round(-r.top * s) + 'px';
       // Clipped in the page's own pixels (before the scale), so only the section can be seen or
@@ -812,9 +817,32 @@
       e.frame.style.clipPath = 'inset(' + r.top + 'px ' + Math.max(0, fw - r.left - r.width) + 'px '
         + Math.max(0, fh - r.top - r.height) + 'px ' + r.left + 'px)';
       var w = Math.max(16, Math.round(r.width * s)), h = Math.max(8, Math.round(r.height * s));
-      if (Math.abs(w - p.w) > 1 || Math.abs(h - p.h) > 1) { p.w = w; p.h = h; place(e, p); moved = true; }
+      var wasX = p.x, wasY = p.y;
+      if (ref) {
+        // Where it sits on the page, from where the part with the tabs sits on its own page and on the screen.
+        var W = window.innerWidth, H = window.innerHeight;
+        var ox = ref.e.root.offsetLeft - ref.r.left * ref.s, oy = ref.e.root.offsetTop - ref.r.top * ref.s;
+        p.x = num((ox + r.left * s) / W, 0, 1, p.x); p.y = num((oy + r.top * s) / H, 0, 1, p.y);
+      }
+      var shifted = Math.abs((p.x - wasX) * window.innerWidth) > 1 || Math.abs((p.y - wasY) * window.innerHeight) > 1;
+      if (shifted || Math.abs(w - p.w) > 1 || Math.abs(h - p.h) > 1) { p.w = w; p.h = h; place(e, p); moved = true; }
     });
     if (moved) placeGbox();
+  }
+  // The part of this one's group that has the page's tabs (sections.js anchorOf), with its box on its own page,
+  // or null: pulled out of the group, or the tabs part has nothing showing, a tab's part stands on its own.
+  function tabRef(p) {
+    var id = WpSections.anchorOf(p.key), want = WpSections.find(p.key, id);
+    if (!p.grp || !want) return null;
+    for (var i = 0; i < _layout.panels.length; i++) {
+      var q = _layout.panels[i], qe = _els[q.id];
+      if (q.kind !== 'sect' || q.key !== p.key || q.grp !== p.grp || q.sect !== id || q.off || !qe) continue;
+      var qd = null;
+      try { qd = qe.frame && qe.frame.contentDocument; } catch (err) { qd = null; }
+      var qr = qd && qd.body ? WpSections.unionRect(qd, want.sel, 0) : null;
+      return qr ? { e: qe, r: qr, s: q.scale || 1 } : null;
+    }
+    return null;
   }
   setInterval(cropSections, 250);
   function sectPanel(key, sect, x, y, o) {
@@ -824,25 +852,47 @@
     return { id: newId('c'), kind: 'sect', key: key, sect: sect,
       name: ((ov ? ov.label : key) + ' · ' + (d ? d.label : sect)).slice(0, 32),
       x: x, y: y, w: o.w || 200, h: o.h || 40, pw: o.pw || (ov && ov.w) || 340, ph: o.ph || (ov && ov.h) || 400,
+      // style: the look of the page it is cut from (the HUD's Box); follow: a part that belongs to one tab of
+      // the page, shown only while that tab is the one picked on the part that has the tabs (cropSections).
+      style: o.style != null ? o.style : (window.WpSections ? WpSections.styleOf(key) : ''), follow: !!o.follow,
       scale: o.scale || 1, grp: o.grp || null, off: false };
   }
   // ✂ Take apart: the overlay's panel becomes one piece per section it shows right now, each at
   // the spot it has on the page, grouped so they still move together until one is pulled out
   // (Alt-drag). It looks the same as before; now each part can go its own way.
+  // A part that belongs to one tab of the page (Target Info's Loot, Spells, F/Q/V) is made too, even while its
+  // tab is not the one showing: the tabs stay on the title part, and clicking one used to leave the other parts
+  // gone with nothing to take their place (the guild lead, 2026-10-19: "broken apart looks like it breaks when
+  // you click"). Those follow the tab and hang from the title part (cropSections).
   function takeApart(p) {
-    var e = _els[p.id], list = window.WpSections ? WpSections.list(p.key) : [];
+    var e = _els[p.id], list = window.WpSections ? WpSections.list(p.key, p.style || '') : [];
     var doc = null;
     try { doc = e && e.frame && e.frame.contentDocument; } catch (err) { doc = null; }
     if (!doc || !doc.body || !list.length) return 0;
     var W = window.innerWidth, H = window.innerHeight, s = p.scale || 1;
-    var x0 = e.root.offsetLeft, y0 = e.root.offsetTop, grp = newId('g'), n = 0, made = [];
+    var x0 = e.root.offsetLeft, y0 = e.root.offsetTop, grp = newId('g'), n = 0, made = [], tabbed = [];
+    var anchor = WpSections.anchorOf(p.key);
     list.forEach(function (d) {
       if (d.id === 'empty') return;
       var r = WpSections.unionRect(doc, d.sel);
-      if (!r || made.length + _layout.panels.length >= MAX_PANELS) return;
-      made.push(sectPanel(p.key, d.id, num((x0 + r.left * s) / W, 0, 1, 0.3), num((y0 + r.top * s) / H, 0, 1, 0.3),
-        { w: Math.round(r.width * s), h: Math.round(r.height * s), pw: Math.round(p.w / s), ph: Math.round(p.h / s), scale: s, grp: grp }));
+      if (made.length + tabbed.length + _layout.panels.length >= MAX_PANELS) return;
+      var opt = { w: Math.round((r ? r.width : 200) * s), h: Math.round((r ? r.height : 40) * s), pw: Math.round(p.w / s), ph: Math.round(p.h / s), scale: s, grp: grp, style: p.style || '' };
+      if (d.tab && anchor) {
+        opt.follow = true;
+        var tp = sectPanel(p.key, d.id, num((x0 + (r ? r.left : 0) * s) / W, 0, 1, 0.3), num((y0 + (r ? r.top : 0) * s) / H, 0, 1, 0.3), opt);
+        tp.placed = !!r;
+        tabbed.push(tp);
+        return;
+      }
+      if (!r) return;
+      made.push(sectPanel(p.key, d.id, num((x0 + r.left * s) / W, 0, 1, 0.3), num((y0 + r.top * s) / H, 0, 1, 0.3), opt));
     });
+    if (made.length) {
+      // A tab's parts only mean something beside the part that has the tabs; until their page has told where
+      // they sit (cropSections), they wait on the first part, so the group's one ✥ stays on a part that shows.
+      tabbed.forEach(function (q) { if (!q.placed) { q.x = made[0].x; q.y = made[0].y; } delete q.placed; });
+      made = made.concat(tabbed);
+    }
     if (!made.length) return 0;
     _layout.panels = _layout.panels.filter(function (q) { return q.id !== p.id; });
     made.forEach(function (q) { _layout.panels.push(q); n++; });
@@ -1214,7 +1264,7 @@
       h += '<div class="row"><button class="btn" data-fitc title="Make the panel as big as what the page shows right now">↕ Fit to content</button>'
         + ((p.key === 'me' && p.style !== 'a') ? '<button class="btn go" data-build title="Choose which parts the ring shows, and how big their text is; saved for the character, shared with the HUD\'s own window">⚙ Build the ring</button>' : '')
         + '</div>';
-      if (window.WpSections && WpSections.list(p.key).length) {
+      if (window.WpSections && WpSections.list(p.key, p.style || '').length) {
         h += '<div class="row"><button class="btn go" data-apart title="One piece per part of it that shows right now, each where it is, moving together until you Alt-drag one out">'
           + '✂ Take it apart</button></div>';
       }
@@ -1727,6 +1777,7 @@
     if (!window.WpParts) return;
     var st = chooserState();
     chEl.classList.toggle('open', !!st.open);
+    if (!st.open && locEl && locEl.classList.contains('on')) endLink();   // its start is the chooser: no chooser, no line
     var th = '<span class="ch-tab' + (st.tab === 'groups' ? ' on' : '') + '" data-tab="groups">★ Groups</span>'
       + (window.WpSections ? '<span class="ch-tab' + (st.tab === 'cuts' ? ' on' : '') + '" data-tab="cuts" title="Parts of each overlay, drawn exactly as in its window">✂ Overlay parts</span>' : '');
     WpParts.CATS.forEach(function (c) {
@@ -1742,12 +1793,16 @@
       WpParts.PRESETS.forEach(function (g) {
         var real = !!(g.embed && ovEntry(g.embed));
         lh += '<div class="pc" data-drag="preset:' + g.id + '" title="' + esc(g.note || (real ? 'Drag onto the screen: the overlay itself, as its window draws it.' : 'Drag onto the screen: every piece of it, laid out as the overlay was. Ctrl-drag one to move them all; drag one alone to pull it out.')) + '">'
-          + '<span class="pc-l">' + (real ? '▣ ' : '▦ ') + esc(g.name) + '</span><span class="pc-v">' + (real ? 'the overlay itself' : g.parts.length + ' pieces') + '</span>'
-          + (real ? '<span class="pc-m" data-drag="preset:' + g.id + ':pieces" title="Drag to place it as ' + g.parts.length + ' separate pieces instead">as pieces</span>' : '') + '</div>';
+          + '<span class="pc-l">' + (real ? '▣ ' : '▦ ') + esc(g.name) + '</span>' + (real ? '' : '<span class="pc-v">' + g.parts.length + ' pieces</span>')
+          // Two chips of one kind: the overlay as its window draws it, or the same overlay as separate pieces (the
+          // guild lead, 2026-10-19: the old dim "the overlay itself" was a label, cut off at "the overlay it…", that
+          // looked like the control for it and was not one).
+          + (real ? '<span class="pc-m" data-drag="preset:' + g.id + ':whole" title="Drag onto the screen, or click: the overlay itself, as its window draws it (one at a time)">as whole</span>'
+            + '<span class="pc-m" data-drag="preset:' + g.id + ':pieces" title="Drag onto the screen, or click: the same overlay as ' + g.parts.length + ' separate pieces, in the same footprint">as pieces</span>' : '') + '</div>';
       });
       // How to make your own version of one of these (the guild lead, 2026-10-18: change Command Center and
       // save it as a new version or under another name): a "▣" is the overlay's own page, so it is changed as pieces.
-      lh += '<div class="dim" style="margin:3px 0">To change one: drag its “as pieces” chip, edit the pieces, select them, then 💾 Save as a group. '
+      lh += '<div class="dim" style="margin:3px 0">Drag a chip onto the screen, or click it. To change one: place it “as pieces”, edit the pieces, select them, then 💾 Save as a group. '
         + 'A group below can be copied with ⧉ or renamed with ✎.</div>';
       lh += '<div class="ch-sec">My groups</div>';
       if (!_groups.length) lh += '<div class="dim">Shift-click pieces on the screen, then 💾 below.</div>';
@@ -2057,7 +2112,15 @@
         var S = embedSize({ key: g.embed }, g.style)[0], k = S / g.ring;
         markPreset(placeGroup(g.parts.map(function (a) { return ringPiece(a, k); }), (clicked ? W / 2 : X) - S / 2, (clicked ? H / 2 : Y) - S / 2), g);
       }
-      else if (g) markPreset(placeGroup(g.parts.map(presetPiece), X, Y), g);
+      else if (g) {
+        // A preset that is an overlay is laid out in that overlay's footprint (the guild lead, 2026-10-19: "the as
+        // pieces version is HUGE by comparison. it should fit into the same setup"): the rows are scaled so their
+        // box is the whole's, and again once the whole's page has said how tall its content is.
+        var box = (g.embed && ovEntry(g.embed)) ? wholeBox(g) : null;
+        var fit = box ? WpParts.fitRows(g.parts, box) : null;
+        var pg = markPreset(placeGroup(fit ? fit.rows.map(function (a) { var q = presetPiece(a); q.scale = fit.scale; return q; }) : g.parts.map(presetPiece), X, Y), g);
+        if (fit && !wholePanel(g)) watchPieceFit(pg, g, X, Y);
+      }
     }
     else if (bits[0] === 'group') {
       // A saved group: its pieces are marked as that group (_layout.named), so its hotkey finds them.
@@ -2086,6 +2149,60 @@
   function embedSize(o, style) {
     if (o.key === 'me' && style === 'hud') { var side = Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.5); return [side, side]; }
     return [num(o.w, 80, 4000, 320), num(o.h, 36, 3000, 240)];
+  }
+  // ── A preset "as pieces" keeps the whole's footprint ────────────────────────
+  // The panel of this preset's own page (same overlay, same look) if it is on the canvas.
+  function wholePanel(g) {
+    for (var i = 0; i < _layout.panels.length; i++) {
+      var q = _layout.panels[i];
+      if (q.kind === 'overlay' && q.key === g.embed && (q.style || '') === (g.style || '')) return q;
+    }
+    return null;
+  }
+  // The size the whole is, or would be: its panel as it is, else what dropEmbed gives it.
+  function wholeBox(g) {
+    var q = wholePanel(g), sz = embedSize(ovEntry(g.embed) || {}, g.style);
+    return q ? { w: q.w, h: q.h } : { w: sz[0], h: sz[1] };
+  }
+  // The whole's page is read for how tall its content is (the same measure ↕ Fit takes, and the same rule:
+  // never smaller than the overlay's own size), twice, off screen, and the pieces just placed are fitted again
+  // to it unless they have been touched. The page is the real one, so the footprint is the real one.
+  var _pfit = {};
+  function sigOf(ps) { return ps.map(function (q) { return [q.id, q.x, q.y, q.w, q.h, q.scale].join(','); }).join('|'); }
+  function watchPieceFit(grp, g, X, Y) {
+    var ps = _layout.panels.filter(function (q) { return q.grp === grp; });
+    _pfit[grp] = { g: g, X: X, Y: Y, ids: ps.map(function (q) { return q.id; }), sig: sigOf(ps) };
+    probeWhole(g, function (want) {
+      var f = _pfit[grp], now = f && f.ids.map(panelById);
+      if (!f || now.some(function (q) { return !q; }) || sigOf(now) !== f.sig) { delete _pfit[grp]; return; }
+      var base = wholeBox(g), W = window.innerWidth, H = window.innerHeight;
+      var fit = WpParts.fitRows(g.parts, { w: want.w ? Math.max(base.w, want.w) : base.w, h: Math.max(base.h, want.h) });
+      now.forEach(function (q, i) {
+        var r = fit.rows[i];
+        q.x = num((X + r[2]) / W, 0, 1, q.x); q.y = num((Y + r[3]) / H, 0, 1, q.y);
+        q.w = num(r[4], 40, 4000, q.w); q.h = num(r[5], 16, 3000, q.h); q.scale = fit.scale;
+      });
+      f.sig = sigOf(now);
+      save(); render();
+    });
+  }
+  function probeWhole(g, done) {
+    var o = ovEntry(g.embed), src = ovSrc(g.embed, g.style);
+    if (!o || !src) return;
+    var sz = embedSize(o, g.style), fr = document.createElement('iframe');
+    fr.setAttribute('scrolling', 'no'); fr.setAttribute('aria-hidden', 'true');
+    fr.style.cssText = 'position:fixed;left:-30000px;top:0;border:0;visibility:hidden;pointer-events:none;width:' + sz[0] + 'px;height:' + sz[1] + 'px';
+    // A page that speaks (Charm, the CH chain) does not, from here.
+    fr.addEventListener('load', function () { try { var w = fr.contentWindow; if (w && w.speechSynthesis) w.speechSynthesis.speak = function () {}; } catch (err) { /* cross-origin */ } });
+    document.body.appendChild(fr);
+    fr.setAttribute('src', src);
+    [1300, 2800].forEach(function (ms, i, all) {
+      setTimeout(function () {
+        var want = embedWant({ frame: fr });
+        if (want) done(want);
+        if (i === all.length - 1 && fr.parentNode) fr.parentNode.removeChild(fr);
+      }, ms);
+    });
   }
   function dropEmbed(g, X, Y, clicked) {
     var o = ovEntry(g.embed), W = window.innerWidth, H = window.innerHeight;
@@ -2522,15 +2639,25 @@
   function clampTo(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
   // Outline `ps` and run a dashed line from `anchor` (a chooser row or tab) to each one's nearest edge; the
   // pieces of one live group share one line, to the box around them.
+  // Where the line leaves the chooser (the row's height, on the chooser's edge), or null when there is no
+  // real start: the chooser closed (every rect is 0,0 and the line ran from the screen's corner, the guild
+  // lead 2026-10-19: "when pieces isn't on the screen its confusing why this line is there"), or the row
+  // scrolled out of the list's window. ar / lr / cr: the anchor's, the list's and the chooser's rects.
+  function linkStart(ar, lr, cr) {
+    if (!(cr.width > 0 && cr.height > 0 && ar.width > 0 && ar.height > 0 && lr.height > 0)) return null;
+    if (ar.bottom <= lr.top + 2 || ar.top >= lr.bottom - 2) return null;
+    return { y: clampTo((ar.top + ar.bottom) / 2, lr.top + 4, lr.bottom - 4) };
+  }
   function showLink(anchor, ps) {
     if (!_edit || _drag || _pd || _cd) return;
     ps = ps.filter(function (q) { return _els[q.id]; });
     if (!ps.length || !anchor) return;
+    var ar = anchor.getBoundingClientRect(), lr = chList.getBoundingClientRect(), cr = chEl.getBoundingClientRect();
+    var st0 = linkStart(ar, lr, cr);
+    if (!st0) return;
     anchor.classList.add('hl');
     ps.forEach(function (q) { _els[q.id].root.classList.add('hl'); });
-    var ar = anchor.getBoundingClientRect(), lr = chList.getBoundingClientRect(), cr = chEl.getBoundingClientRect();
-    // Where it leaves the chooser: the row's height (kept inside the list's window), on the side facing the pieces.
-    var ay = clampTo((ar.top + ar.bottom) / 2, lr.top + 4, lr.bottom - 4), units = {};
+    var ay = st0.y, units = {};
     ps.forEach(function (q) { (units[q.grp || q.id] = units[q.grp || q.id] || []).push(q); });
     var svg = '';
     Object.keys(units).forEach(function (k) {
@@ -2553,6 +2680,7 @@
     showLink(row, placedFor(row.getAttribute('data-drag')));
   });
   chList.addEventListener('mouseleave', endLink);
+  chList.addEventListener('scroll', endLink);
   // Piece → its row (or its tab, when the row is on another tab).
   panelsEl.addEventListener('mouseover', function (ev) {
     var root = ev.target.closest ? ev.target.closest('.panel') : null;

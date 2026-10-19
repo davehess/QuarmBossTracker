@@ -49,7 +49,44 @@
     ],
   };
 
-  function list(key) { return S[key] || []; }
+  // The HUD's Box (me.html?wpstyle=a; the guild lead, 2026-10-19: "can't break the as-is hud box into
+  // pieces"). me.html marks each block of the Box with data-wp-sect (renderA); the ring is one SVG and has
+  // no parts here (its "as pieces" are the arcs).
+  S.me = [
+    { id: 'title',  label: 'Name and class',      sel: '.card > .title' },
+    { id: 'hp',     label: 'Health bar',          sel: '[data-wp-sect="hp"]' },
+    { id: 'mana',   label: 'Mana bar',            sel: '[data-wp-sect="mana"]' },
+    { id: 'end',    label: 'Endurance',           sel: '[data-wp-sect="end"]' },
+    { id: 'xp',     label: 'XP per hour',         sel: '[data-wp-sect="xp"]' },
+    { id: 'aa',     label: 'AA per hour',         sel: '[data-wp-sect="aa"]' },
+    { id: 'meta',   label: 'Level, weight, pet',  sel: '[data-wp-sect="meta"]' },
+    { id: 'cast',   label: 'Casting',             sel: '[data-wp-sect="cast"]' },
+    { id: 'target', label: 'Target',              sel: '[data-wp-sect="target"]' },
+    { id: 'mine',   label: 'Procs, stuns, shield', sel: '[data-wp-sect="mine"]' },
+    { id: 'focus',  label: 'Class numbers',       sel: '[data-wp-sect="focus"]' },
+    { id: 'damage', label: 'Damage',              sel: '[data-wp-sect="damage"]' },
+    { id: 'group',  label: 'Group',               sel: '[data-wp-sect="group"]' },
+    { id: 'gems',   label: 'Spell gems',          sel: '[data-wp-sect="gems"]' },
+  ];
+  // The look a page's parts belong to: the HUD page draws a ring and a box, and only the box has parts.
+  var STYLE = { me: 'a' };
+  function styleOf(key) { return STYLE[key] || ''; }
+  // A page with tabs says where its chosen tab is kept (sessionStorage, shared by the Canvas's frames), and
+  // the part every tab keeps in the same place, which the parts that belong to one tab hang from.
+  var TABS = { mobinfo: { storage: 'wpTargetTab', first: 'stats', anchor: 'title' } };
+  // The tab picked right now, or the page's first.
+  function tabNow(key) {
+    var t = TABS[key];
+    if (!t) return '';
+    try { var v = root.sessionStorage && root.sessionStorage.getItem(t.storage); if (v) return v; } catch (e) { /* storage blocked */ }
+    return t.first;
+  }
+  function anchorOf(key) { return TABS[key] ? TABS[key].anchor : ''; }
+  // style: the look the panel is drawn in; given, a page with a look of its own has parts only in that one.
+  function list(key, style) {
+    if (style !== undefined && STYLE[key] && style !== STYLE[key]) return [];
+    return S[key] || [];
+  }
   function find(key, id) {
     var l = list(key);
     for (var i = 0; i < l.length; i++) if (l[i].id === id) return l[i];
@@ -96,5 +133,6 @@
     return null;
   }
 
-  root.WpSections = { byKey: S, list: list, find: find, isolateCss: isolateCss, unionRect: unionRect, backdrop: backdrop };
+  root.WpSections = { byKey: S, list: list, find: find, isolateCss: isolateCss, unionRect: unionRect, backdrop: backdrop,
+    styleOf: styleOf, tabNow: tabNow, anchorOf: anchorOf };
 })(typeof window !== 'undefined' ? window : globalThis);
