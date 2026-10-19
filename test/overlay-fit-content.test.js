@@ -349,11 +349,15 @@ describe('Canvas: sanitize keeps what an item chose, and adds nothing to what it
 
 // ── the live fit: fitStep, run against fake panels ──────────────────────────────────────────────────────────
 const fitCode = sliceBlock(CANVAS, '  var FIT_POLL_MS = 300', '  setInterval(fitStep, FIT_POLL_MS);');
+// fitStep keeps an item on the screen it is on (Span all screens); with one screen that is the whole window.
+const screensCode = sliceBlock(CANVAS, '  var _screens = null, _conv', '  // ── Routing: which panel shows a countdown');
 
 function canvasEnv(panels, { H = 1000 } = {}) {
   const E = new Function(`
     var window = { innerHeight: ${H}, innerWidth: 1920 };
     ${pure}
+    function num(v, lo, hi, d) { v = Number(v); return (isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d); }
+    ${screensCode}
     var _layout = { panels: [] }, _els = {}, _widen = {}, _fitAdd = {}, _fitEmpty = {}, _drag = null, _menuFor = null, PICKER = '__picker';
     var saves = 0, placed = [], intervals = [];
     function setInterval(f, ms) { intervals.push([f, ms]); }

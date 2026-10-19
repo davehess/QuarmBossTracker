@@ -875,10 +875,13 @@ describe('canvas.html: the wiring', () => {
     const body = sliceBlock(canvasRaw, '  function loadState(st) {', '\n  }\n');
     const run = (st, layoutRes = '1920x1080') => {
       const calls = [];
-      const f = new Function('M', 'screenBtn', 'render', 'setEdit', 'applyGroupOps', 'save', 'sanitize',
-        'var _overlays = [], _res = ' + JSON.stringify(layoutRes) + ', _layout = {}, _arrange = false, _gkeys = {}, _gblocked = {};\n' + body
+      // stateKey / adoptLayout / paintSpan (Span all screens) are the Canvas's own and are tested in test/canvas-span.test.js;
+      // here the key is the resolution and the layout is the one main sent.
+      const f = new Function('M', 'render', 'setEdit', 'applyGroupOps', 'save', 'sanitize',
+        'var _overlays = [], _res = ' + JSON.stringify(layoutRes) + ', _layout = {}, _arrange = false, _gkeys = {}, _gblocked = {};\n'
+        + 'function stateKey(s) { return s.res; } function adoptLayout(s) { return sanitize(s.layout); } function paintSpan() {}\n' + body
         + '\nreturn { loadState, get gkeys() { return _gkeys; }, get gblocked() { return _gblocked; } };');
-      const r = f({}, { style: {} }, () => calls.push('render'), () => calls.push('setEdit'), (ops) => calls.push(['ops', ops]), () => {}, (l) => l);
+      const r = f({}, () => calls.push('render'), () => calls.push('setEdit'), (ops) => calls.push(['ops', ops]), () => {}, (l) => l);
       r.loadState(st);
       return { r, calls };
     };

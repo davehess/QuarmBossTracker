@@ -193,7 +193,9 @@ describe('F: a click on a row that is already on the screen shows where', () => 
     const els = {};
     placed.forEach(q => { els[q.id] = { root: { offsetLeft: q.x, offsetTop: q.y, offsetWidth: q.w, offsetHeight: q.h, classList: { remove() {}, add() { flashed.push(q.id); } } } }; });
     const f = new Function('_els', 'note', 'placedFor', 'groupBox', 'window',
-      slice('  function whereText(b) {') + '\n' + slice('  function boxOf(ps) {') + '\n' + slice('  function locate(ps, label) {') + '\n' + slice('  function clickLocates(what, label) {')
+      'var num = function (v, lo, hi, d) { v = Number(v); return isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d; };\n'
+      + slice('  var _screens = null, _conv', '  // ── Routing: which panel shows a countdown') + '\n'   // the screens: with one, the window
+      + slice('  function whereText(b) {') + '\n' + slice('  function boxOf(ps) {') + '\n' + slice('  function locate(ps, label) {') + '\n' + slice('  function clickLocates(what, label) {')
       + '\nreturn { whereText, locate, clickLocates };')(els, (m) => notes.push(m), () => placed,
       (ms) => ({ x: Math.min(...ms.map(m => m.x0)), y: Math.min(...ms.map(m => m.y0)), w: Math.max(...ms.map(m => m.x0 + m.w0)) - Math.min(...ms.map(m => m.x0)), h: Math.max(...ms.map(m => m.y0 + m.h0)) - Math.min(...ms.map(m => m.y0)) }),
       { innerWidth: 1000, innerHeight: 900 });

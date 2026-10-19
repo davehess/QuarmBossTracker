@@ -3304,7 +3304,13 @@ function _layoutOfSet(set) {
   // EverQuest's rect counts only for the screen setup it was captured on.
   const eq = (key === res && set.eq && (!set.sig || set.sig === _screenSignature()))
     ? { x: set.eq.x - d.bounds.x, y: set.eq.y - d.bounds.y, width: set.eq.width, height: set.eq.height } : null;
-  return { layout: all[key], screen: { width: +m[1], height: +m[2] }, eq };
+  // A file is for ONE screen: a piece that sat on another screen of a spanning Canvas (`scr` is not the home
+  // screen's) has no place on it, so it stays out of the file and the caller says how many.
+  const homeSig = _canvasScreenSig(d);
+  const panels = Array.isArray(all[key].panels) ? all[key].panels : [];
+  const kept = panels.filter(p => !(p && typeof p.scr === 'string' && p.scr !== homeSig));
+  const layout = kept.length === panels.length ? all[key] : Object.assign({}, all[key], { panels: kept });
+  return { layout, screen: { width: +m[1], height: +m[2] }, eq, offScreen: panels.length - kept.length };
 }
 // opts: { setName? (a saved set; none = the screen as it is now), title?, description?, author?, mode? }
 // → { ok, message, nudge? } or { ok:false, canceled:true }.
@@ -3342,7 +3348,8 @@ async function _exportLayoutFile(opts) {
       fs.writeFileSync(file + '.tmp', JSON.stringify(made.doc, null, 2));
       fs.renameSync(file + '.tmp', file);
     } catch (e) { return { ok: false, message: `Could not write the file: ${e.message}` }; }
-    return { ok: true, message: `Exported "${made.doc.meta.title}" to ${path.basename(file)}`, nudge: _LAYOUT_NUDGE };
+    const left = src.offScreen ? ` (${src.offScreen} piece${src.offScreen === 1 ? '' : 's'} on your other screens left out: a file fits one screen)` : '';
+    return { ok: true, message: `Exported "${made.doc.meta.title}" to ${path.basename(file)}${left}`, nudge: _LAYOUT_NUDGE };
   } catch (e) {
     return { ok: false, message: `Could not export: ${e && e.message || e}` };
   } finally { _layoutFileBusy = false; }
@@ -4201,19 +4208,22 @@ function _displayChangePlan(o) {
     const from = oldDisplays.find(d => inside(d, cx, cy));
     if (from && stillThere(from)) continue;   // its screen is unchanged: leave it where the raider put it
     const wasWithEq = !oldEq || !from || same(from, oldEq);
+    // A Canvas panel ('canvas:<id>', on a screen that went away) follows the same sides, and is counted on its own.
+    const cv = k.startsWith('canvas:');
     if (wasWithEq || !sideDest) {
       moves[k] = _projectRect(was, from || o.target.bounds, o.target.workArea);
-      if (wasWithEq) withEq++; else { side++; sideOntoEq++; }
+      if (cv) { /* counted on its own, in _displayPlanText */ } else if (wasWithEq) withEq++; else { side++; sideOntoEq++; }
     } else {
       moves[k] = _projectRect(was, from, sideDest);
-      side++;
+      if (!cv) side++;
     }
   }
   return Object.keys(moves).length ? { kind: 'bring', moves, withEq, side, sideOntoEq } : { kind: 'none', moves: {} };
 }
 // The question, in words that say where each overlay is going.
 function _displayPlanText(plan, eqKnown) {
-  const n = Object.keys(plan.moves).length;
+  const cv = Object.keys(plan.moves).filter(k => k.startsWith('canvas:')).length;   // Canvas panels, counted apart from the windows
+  const n = Object.keys(plan.moves).length - cv;
   const count = (k) => (k === 1 ? '1 overlay' : k + ' overlays');
   if (plan.kind === 'restore') {
     return { message: 'Your screens are back the way they were.',
@@ -4226,6 +4236,7 @@ function _displayPlanText(plan, eqKnown) {
   if (withEq) parts.push(count(withEq) + ' that sat with EverQuest onto ' + eqScreen);
   if (side - sideOntoEq) parts.push(count(side - sideOntoEq) + ' from your other screen onto the other screen you still have');
   if (sideOntoEq) parts.push(count(sideOntoEq) + ' from your other screen onto ' + eqScreen + ' (the only screen left)');
+  if (cv) parts.push((cv === 1 ? '1 Canvas panel' : cv + ' Canvas panels') + ' that sat on the screen that went away');
   const detail = (parts.length ? 'Move ' + parts.join(', and ') : 'Move ' + count(n) + ' onto ' + eqScreen)
     + ', each at the same spot it had? They sat on a screen that went away or changed shape.';
   return { message: 'Your screen setup changed.', detail, buttons: ['Move them', 'Leave them'] };
@@ -4304,7 +4315,8 @@ async function _askAboutDisplays() {
   catch { target = screen.getPrimaryDisplay(); }
   const cfg = loadConfig();
   const plan = _displayChangePlan({
-    prevSig, curSig, memory: cfg.overlayLayoutBySig || {}, currentRects: _overlayRectsNow(),
+    prevSig, curSig, memory: cfg.overlayLayoutBySig || {},
+    currentRects: Object.assign(_overlayRectsNow(), _canvasAwayRects(cfg, prevSig)),   // + Canvas panels left on a screen that went away
     curDisplays: screen.getAllDisplays().map(d => ({ bounds: d.bounds, workArea: d.workArea })),
     target: { bounds: target.bounds, workArea: target.workArea },
   });
@@ -4329,6 +4341,7 @@ async function _askAboutDisplays() {
       if (bk && plan.moves[bk]) { try { win.setBounds(plan.moves[bk]); } catch { /* mid-close */ } }
     }
     if (plan.kind === 'bring') { const c = loadConfig(); c.canvasDisplayId = target.id; saveConfig(c); }
+    _applyCanvasMoves(plan.moves);
     _fitCanvasToDisplay();
   } else {
     _rescueOffscreenOverlays();
@@ -7003,9 +7016,124 @@ function _canvasDisplay() {
   }
   return screen.getPrimaryDisplay();
 }
+// ── Span all screens (the guild lead picked option A, 2026-10-19: "canvas should be able to span multiple
+// screens, not just be on one") ──
+// ONE Canvas window over the union of every display, behind cfg.canvasSpan (off by default), and only while all
+// the displays share one scaleFactor: a window across two scalings is drawn at one of them and blurs or
+// mis-sizes on the other, so the switch is refused with a reason instead. cfg.canvasDisplayId stays the HOME
+// display: the layout is still keyed by the home display's WxH, and a panel with no `scr` is on it. A panel
+// MAY carry `scr` (a display's _canvasScreenSig) with its x/y as fractions of THAT display. Screens that are
+// not here (or span switched off) leave those panels hidden, never moved or deleted.
+let _canvasLayoutRev = 0;   // bumped when main rewrites a saved layout, so the Canvas re-reads it
+function _canvasScreenSig(d) { const b = d.bounds; return b.x + ',' + b.y + ',' + b.width + 'x' + b.height; }
+// null = span can be on; else the one-line reason the switch is off.
+function _canvasSpanWhy(all) {
+  if (!all || all.length < 2) return 'Only one screen is connected.';
+  if (all.some(d => d.scaleFactor !== all[0].scaleFactor)) return 'Your screens use different display scaling, so one Canvas cannot cover them evenly. Set the same scaling on each in Windows display settings.';
+  return null;
+}
+function _canvasSpanOn(cfg) {
+  try { return !!(cfg || loadConfig()).canvasSpan && !_canvasSpanWhy(screen.getAllDisplays()); } catch { return false; }
+}
+function _canvasUnionBounds(all) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const d of all) {
+    const b = d.bounds;
+    x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+    x1 = Math.max(x1, b.x + b.width); y1 = Math.max(y1, b.y + b.height);
+  }
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+// What the window covers: every screen while spanning, else the home screen.
+function _canvasBounds() { return _canvasSpanOn() ? _canvasUnionBounds(screen.getAllDisplays()) : _canvasDisplay().bounds; }
+// The home screen: the layout's key. Not "the display the window mostly covers", which is arbitrary once it spans.
+function _canvasHomeDisplay() {
+  try {
+    const id = loadConfig().canvasDisplayId;
+    const pinned = screen.getAllDisplays().some(d => String(d.id) === String(id));
+    if (!pinned && !_canvasSpanOn() && canvasWindow && !canvasWindow.isDestroyed()) return screen.getDisplayMatching(canvasWindow.getBounds());
+    return _canvasDisplay();
+  } catch { return screen.getPrimaryDisplay(); }
+}
+// The screens as the Canvas sees them, relative to the window's own corner.
+function _canvasScreens(all, home, span) {
+  const o = span ? _canvasUnionBounds(all) : home.bounds;
+  return (span ? all : [home]).map(d => ({ sig: _canvasScreenSig(d), x: d.bounds.x - o.x, y: d.bounds.y - o.y,
+    w: d.bounds.width, h: d.bounds.height, home: d.id === home.id, scale: d.scaleFactor }));
+}
+function _canvasSetSpan(on) {
+  const cfg = loadConfig();
+  const why = _canvasSpanWhy(screen.getAllDisplays());
+  if (on && why) return { ok: false, span: !!cfg.canvasSpan, why };
+  const home = _canvasHomeDisplay();   // before the switch flips: the screen the Canvas is on now
+  cfg.canvasSpan = !!on;
+  // Home is pinned to it, so it does not wander with EverQuest's window once the layout is keyed by it and
+  // the panels on it carry no `scr`.
+  if (on && !screen.getAllDisplays().some(d => String(d.id) === String(cfg.canvasDisplayId))) cfg.canvasDisplayId = home.id;
+  saveConfig(cfg);
+  _fitCanvasToDisplay();
+  _canvasLayoutRev++;
+  try { if (canvasWindow && !canvasWindow.isDestroyed()) canvasWindow.webContents.send('canvas-group-ops'); } catch { /* mid-close */ }
+  try { buildTrayMenu(); } catch { /* */ }
+  pushStatus();
+  return { ok: true, span: !!on, why: '' };
+}
+// The layout the Canvas is using now: { res: home display's WxH, key: the saved layout's key, layout }.
+function _canvasLayoutNow(cfg) {
+  const all = (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {};
+  const b = _canvasHomeDisplay().bounds;
+  const res = b.width + 'x' + b.height;
+  const key = all[res] ? res : (all[cfg.canvasLastRes] ? cfg.canvasLastRes : null);
+  return { res, key, layout: key ? all[key] : null };
+}
+// Panels that sat on a screen that was there before this change and is not now, as screen rects keyed
+// 'canvas:<id>' for _displayChangePlan. A panel on a screen that is merely not shown (span off) is not "away".
+function _canvasAwayRects(cfg, prevSig) {
+  const out = {};
+  const { layout } = _canvasLayoutNow(cfg);
+  const was = _parseSigDisplays(prevSig).map(d => d.x + ',' + d.y + ',' + d.width + 'x' + d.height);
+  let here;
+  try { here = screen.getAllDisplays().map(_canvasScreenSig); } catch { return out; }
+  for (const p of (layout && Array.isArray(layout.panels)) ? layout.panels : []) {
+    if (!p || typeof p.scr !== 'string' || here.includes(p.scr) || !was.includes(p.scr)) continue;
+    const f = _parseSigDisplays(p.scr)[0];
+    if (!f) continue;
+    out['canvas:' + p.id] = { x: Math.round(f.x + (+p.x || 0) * f.width), y: Math.round(f.y + (+p.y || 0) * f.height),
+      width: Math.round(+p.w || 200), height: Math.round(+p.h || 100) };
+  }
+  return out;
+}
+// "Move them": each away panel goes where the plan put it, as fractions of the screen it lands on. With span off
+// the only screen shown is home, so they land there at the same relative spot.
+function _applyCanvasMoves(moves) {
+  const ids = Object.keys(moves || {}).filter(k => k.startsWith('canvas:'));
+  if (!ids.length) return 0;
+  const cfg = loadConfig();
+  const cur = _canvasLayoutNow(cfg);
+  if (!cur.layout || !Array.isArray(cur.layout.panels)) return 0;
+  const all = screen.getAllDisplays(), home = _canvasHomeDisplay(), span = _canvasSpanOn(cfg);
+  const frac = (v) => Math.max(0, Math.min(1, v));
+  let n = 0;
+  for (const p of cur.layout.panels) {
+    const r = p && moves['canvas:' + p.id];
+    if (!r) continue;
+    const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+    const at = all.find(d => cx >= d.bounds.x && cx < d.bounds.x + d.bounds.width && cy >= d.bounds.y && cy < d.bounds.y + d.bounds.height) || home;
+    p.x = frac((r.x - at.bounds.x) / at.bounds.width);
+    p.y = frac((r.y - at.bounds.y) / at.bounds.height);
+    const dest = span ? at : home;
+    if (dest.id === home.id) delete p.scr; else p.scr = _canvasScreenSig(dest);
+    n++;
+  }
+  cfg.canvasLayouts = Object.assign({}, cfg.canvasLayouts, { [cur.key]: cur.layout });
+  saveConfig(cfg);
+  _canvasLayoutRev++;
+  try { if (canvasWindow && !canvasWindow.isDestroyed()) canvasWindow.webContents.send('canvas-group-ops'); } catch { /* mid-close */ }
+  return n;
+}
 function createCanvasWindow() {
   if (_agentOnly()) return;
-  const d = _canvasDisplay();
+  const d = { bounds: _canvasBounds() };
   canvasWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Canvas',
     x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
@@ -7034,13 +7162,11 @@ function applyCanvasVisibility() {
 // A monitor added, removed or re-sized: the canvas re-covers its screen.
 function _fitCanvasToDisplay() {
   if (!canvasWindow || canvasWindow.isDestroyed()) return;
-  try { canvasWindow.setBounds(_canvasDisplay().bounds); } catch { /* mid-close */ }
+  try { canvasWindow.setBounds(_canvasBounds()); } catch { /* mid-close */ }
 }
 function _canvasStatePayload() {
   const cfg = loadConfig();
-  let d;
-  try { d = (canvasWindow && !canvasWindow.isDestroyed()) ? screen.getDisplayMatching(canvasWindow.getBounds()) : _canvasDisplay(); }
-  catch { d = screen.getPrimaryDisplay(); }
+  const d = _canvasHomeDisplay();
   const res = d.bounds.width + 'x' + d.bounds.height;
   const all = (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {};
   // Per resolution, like EQ's own ini; a new resolution starts from the last
@@ -7048,7 +7174,11 @@ function _canvasStatePayload() {
   const layout = all[res] || all[cfg.canvasLastRes] || null;
   // backdrop: the Canvas's default Background (cfg.overlayBackdrop.canvas). Each item has its own now; this is
   // what an item that never chose follows, and what a layout saved before that is stamped with, once.
-  return { res, layout, edit: _canvasArrange, displays: screen.getAllDisplays().length,
+  // screens: the displays this window covers, relative to its corner (one while not spanning); span / spanWhy:
+  // the switch and, when it cannot be on, why; rev: bumped when main rewrote the layout under the Canvas.
+  const scrs = screen.getAllDisplays(), span = _canvasSpanOn(cfg);
+  return { res, layout, edit: _canvasArrange, displays: scrs.length,
+    screens: _canvasScreens(scrs, d, span), span, spanWhy: _canvasSpanWhy(scrs) || '', rev: _canvasLayoutRev,
     backdrop: !!((cfg.overlayBackdrop && typeof cfg.overlayBackdrop === 'object') ? cfg.overlayBackdrop : {}).canvas };
 }
 // Arrange from the tray or the dashboard. Turning it on turns the canvas on.
@@ -8585,7 +8715,7 @@ function _canvasHostedKeys(cfg) {
   let res = null;
   try {
     if (canvasWindow && !canvasWindow.isDestroyed()) {
-      const b = screen.getDisplayMatching(canvasWindow.getBounds()).bounds;
+      const b = _canvasHomeDisplay().bounds;   // the home screen, which keys the layout (not the screen a spanning window mostly covers)
       res = b.width + 'x' + b.height;
     }
   } catch { /* mid-close */ }
@@ -9442,6 +9572,9 @@ function currentStatus() {
     showCanvas: !!cfg.showCanvas,
     canvasOwnsTriggers: !!cfg.showCanvas,
     canvasArrange: !!_canvasArrange,
+    // "Span all screens": the switch, and why it cannot be on (blank = it can) — the tray and the dashboard read these.
+    canvasSpan: !!cfg.canvasSpan,
+    canvasSpanWhy: (() => { try { return _canvasSpanWhy(screen.getAllDisplays()) || ''; } catch { return ''; } })(),
     // 💥 Damage-taken audio alert — drives the tray checkbox (and is available
     // to any renderer that wants to show the state). Default off.
     damageAlert: !!cfg.damageAlert,
@@ -9842,6 +9975,11 @@ function buildTrayMenu() {
     { label: 'Canvas (callouts, timers, pieces and any overlay, placed anywhere)', type: 'checkbox', checked: !!s.showCanvas, enabled: !s.hideOverlays, click: () => {
         _toggleOverlay('canvas');
         buildTrayMenu();
+      } },
+    // Same setter as the Canvas's own button and the dashboard's. Greyed, with the reason, when it cannot be on.
+    { label: s.canvasSpanWhy ? '  ↳ Span all screens — ' + s.canvasSpanWhy : '  ↳ Span all screens', type: 'checkbox', checked: !!s.canvasSpan,
+      enabled: !s.hideOverlays && (!s.canvasSpanWhy || !!s.canvasSpan), click: (mi) => {
+        _canvasSetSpan(mi.checked);
       } },
     { label: _canvasArrange ? '  ↳ ✓ Done arranging the canvas' : '  ↳ Arrange the canvas…', enabled: !s.hideOverlays, click: () => {
         _setCanvasArrange(!_canvasArrange);
@@ -11526,7 +11664,8 @@ ipcMain.handle('wp-mini-all', () => { try { toggleMinimizeAllOverlays(); return 
 function _canvasOverlayList() {
   const cfg = loadConfig();
   let B;
-  try { B = ((canvasWindow && !canvasWindow.isDestroyed()) ? screen.getDisplayMatching(canvasWindow.getBounds()) : _canvasDisplay()).bounds; }
+  // B is what the Canvas's fractions are of: the window, which is every screen's union while it spans.
+  try { B = (canvasWindow && !canvasWindow.isDestroyed()) ? canvasWindow.getBounds() : _canvasBounds(); }
   catch { B = screen.getPrimaryDisplay().bounds; }
   const docked = _dockedKeys(cfg);
   return _CANVAS_CATALOG.map(c => {
@@ -11644,10 +11783,12 @@ ipcMain.handle('canvas-group-hotkey', (_e, id, accel) => {
 // Show or hide a saved group: the key's own toggle, for any UI that lists the groups.
 ipcMain.handle('canvas-group-toggle', (_e, id) => _toggleCanvasGroup(String(id)));
 ipcMain.handle('canvas-edit', (_e, on) => _setCanvasArrange(!!on));
+// "Span all screens": the Canvas's own toolbar, the tray and the dashboard all land here. → { ok, span, why }
+ipcMain.handle('canvas-span', (_e, on) => _canvasSetSpan(!!on));
 ipcMain.handle('canvas-next-display', () => {
   if (!canvasWindow || canvasWindow.isDestroyed()) return _canvasStatePayload();
   const all = screen.getAllDisplays();
-  if (all.length < 2) return _canvasStatePayload();
+  if (all.length < 2 || _canvasSpanOn()) return _canvasStatePayload();   // spanning covers them all: nothing to move to
   const cur = screen.getDisplayMatching(canvasWindow.getBounds());
   const next = all[(Math.max(0, all.findIndex(d => d.id === cur.id)) + 1) % all.length];
   const cfg = loadConfig();
