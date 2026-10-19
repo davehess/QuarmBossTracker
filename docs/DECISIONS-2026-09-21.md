@@ -118,7 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side LIVE on main (bot 3.2.7, `5c545c42`); `GALLERY_SALT` set on Railway. The tables are NOT created: four MCP attempts stalled at the approval step, and the 2026-10-19 SQL paste created `voice_reports` only | the guild lead: paste `supabase/migrations/20261019120000_gallery_masterpieces.sql` into the Supabase SQL Editor; then a session confirms the routes and designs the Mimic Gallery tab (samples first) — 3.0 stable waits on slice 1 |
 | **FB-84 death log before a death** (§373, §379) | A (local recap) on beta, agent 3.8.14; the guild lead: *"A first then B"* | a beta tester: die once, target the corpse, check the recap; then a session scopes B (web per-death panel) with samples |
 | **Voice unclear reports** (§379) | Mimic half on beta (agent 3.8.15); route + `/admin/voice-reports` [beta] live on main (bot 3.2.8, web 1.9.9). Table created 2026-10-19 (pasted by the guild lead; RLS on), so reports now store | a beta tester: press 🔊 Voice unclear once and check `https://wolfpack.quest/admin/voice-reports`; then a session builds slice 2 (officer-approved respellings every Mimic reads) |
-| **Decision Desk picks, round one — built** (§380, §382) | Nine picks read back and built on beta (agent 3.8.20–3.8.25: timer-row menu, Span all screens, ET player timers, #petstats fold-out, voice volume, fade-line triggers) and main (raidmimic "The tour", web 1.9.10); WoW reader waits on its SQL. The desk still lists 35 open picks | the guild lead: keep picking on the Decision Desk; a session reads `picks` at the start of each exchange. Say whether a muted countdown should still speak its pre-end warning (today it goes quiet with the row), and whether to add after-the-fact "levitate / run speed dropped" alerts (no before-warning exists). A Windows tester: Command Center on the Canvas, whole and as pieces (the blank cause was inferred, not reproduced); click a Canvas timer ✕ (FB-92, §381: if it fails, the agent log's `[hover] first arm` lines). The guild lead: should trigger, tick, recharm and Bellow rows also turn blue (§381) |
+| **Decision Desk picks** (§380, §382, §383) | Round one (9) built. Round two: 32 more picks recorded in §383, not built; 2 are "more detail first" (canvas-bg-lock, state-payload), 6 notes add new features, 7 follow-up questions unanswered, `potime-model` unpicked. §383 also evaluates the desk | the guild lead: say go on the build order (tranches in the reply of 2026-10-19 evening); a session builds them tranche by tranche, writes the two breakdowns, and rebuilds the desk with Built / Needs detail states. Say whether a muted countdown should still speak its pre-end warning (today it goes quiet with the row), and whether to add after-the-fact "levitate / run speed dropped" alerts (no before-warning exists). A Windows tester: Command Center on the Canvas, whole and as pieces (the blank cause was inferred, not reproduced); click a Canvas timer ✕ (FB-92, §381: if it fails, the agent log's `[hover] first arm` lines). The guild lead: should trigger, tick, recharm and Bellow rows also turn blue (§381) |
 | **Raid night 2026-10-18 fixes** (§373) | Live: bot 3.2.6 (HoH trial cards, pet filter, flag counter, named-boss list); beta agent 3.8.4 + Mimic DPS Sec rule (rez NPC fix, trial credit lines, three rampagers) | the guild lead: look over `data/named-bosses.json` for missing or unwanted nameds (the hail-cap tooltip was reworded in agent 3.8.5 beta) |
 | **CI quarantine — expires 2026-11-02** (§382) | Test workflow green on main and beta; 1 file quarantined on main, 5 more on beta (`test/quarantine*.json`, guarded) | a session before 2026-11-02: update the stale counts (window-process-names, mimic-destroyed-window-guard), refresh the tray snapshot, fake the clock in rampage-multi-boss and my-logs-local, and decide whether the feedback window opens in agent-only mode (mimic-agent-only-mode); then empty the lists |
 | **raidmimic.com — the guild leaders' door** (§370) | Page live at `wolfpack.quest/raidmimic` marked [beta]; layout B "The tour" picked and is the only layout (web 1.9.10, §382). **LIVE at https://raidmimic.com since 2026-10-19**: DNS points at Vercel; `raidmimic.com` serves Production, `www.raidmimic.com` / `raidmimic.quest` / `www.raidmimic.quest` / `www.raidmimic.net` 308 to it, `raidmimic.net` serves the page itself. The Vercel MCP has no domain-edit call, so domain edits stay a dashboard step | the guild lead, optional: `raidmimic.net` → 308 to raidmimic.com; the three `www` CNAMEs → `47a066baed80762d.vercel-dns-017.com` (Vercel's "DNS Change Recommended"); delete the `*` → `pixie.porkbun.com` parking wildcards |
@@ -12000,3 +12000,61 @@ The guild lead picked nine decisions on the Decision Desk (§380), read back fro
   mimic-destroyed-window-guard, and rampage-multi-boss, a fixture that only passes near 20:00). `vitest.config.js`
   excludes them; `test/quarantine-guard.test.js` fails on an expired or malformed entry. **All expire 2026-11-02.** Parked
   passing coverage: 46 tests on main, 160 on beta.
+
+### 383. Decision Desk round two: 32 more picks recorded, and an evaluation of the desk (2026-10-19)
+Read from the desk's `picks` store (41 of 42 open decisions answered between 19:34 and 20:57; only `potime-model` is
+unanswered). The nine of §382 are built; these 32 are recorded here so they do not live only in the page. Notes are
+the guild lead's, condensed.
+
+| Decision (§) | Pick | Note / what it adds |
+|---|---|---|
+| about-layout (§47) | B Tour | make new pictures for Planes of Power; add older pictures from previous expansions |
+| buffs-groups (§149) | B Buff lines | |
+| canvas-bg-lock (§44, §360) | leaning B Lock place and size | **do not build**: wants more detail and examples of the difference |
+| chat-overlay (§300) | A all three channels | split channels by **Zeal's** channel options, not only the log's EQ breakdown ("a LOT ends up in Other"); officer + group in game are useful because the overlay can sit off the streamed screen |
+| companion-gaps (§94) | A Gear upgrade finder; extra: Both | |
+| discord-onboarding | A Doorway | the agent-release-DM extra was not answered |
+| discord-setup (§148) | B Pick on the site | |
+| eqmimic-demo (§123) | B, as a combination | one long scroll with a table of contents at the side |
+| export-title (§376) | A use the set's name | already how it behaves |
+| fb51-log-archive (§162) | A wire archiving into watch mode | renames logs over 500 MB on members' machines (first time watch mode does) |
+| haste-foci (§155) | A fix the haste-focus reader | the trigger-votes extra was not answered |
+| history-tank | A same list on both tabs | |
+| history-target | A Pager | add a tab of recents |
+| instruction-text (§168) | A fold in place | the "Also found straight to main" extra was not answered |
+| item-page-b-c (§12) | C Grouped | **new request**: a Tradeskill overlay that highlights recipes for an item linked in raid/guild/group/say/tell, starred/pinned recipes, and an anonymous "who has this?" request that sends the holder a Mimic mail |
+| keepers-outreach (§368) | A approve the draft; send when Publish works on beta | the draft was agent-written: re-read before any DM |
+| npc-deaths-pvp (§132) | A keep posting | no change |
+| pieces-way (§125) | B rebuild from pieces | **reverses §125's "A taken"**; condition: "too far apart … compactness is what made Target Info nice … B if we can make it look nice and keep all functionality"; both previews were judged too spread out |
+| pop-essences (§96) | B by essence | |
+| pvp-fights-layout (§46) | A Fight cards | |
+| quest-nav | A drill-down blocks | the end-of-plane ▶ extra was not answered |
+| raid-announcers (§169) | B the guild lead performs Bristlebane's voice | the eight persona extras were not answered |
+| raid-split (§124) | B tick per raid | "we won't do ticks in multiple raids most likely; if we do, capture both"; **new**: capture a tick from the combined view, not only submit |
+| session-parse-tables (§338) | A graduate to main | |
+| setup-walkthrough (§93) | A the trail | |
+| share-setup (§91) | A file + share code | |
+| state-payload (§114/115) | leaning B trigger notes out of `/api/state` | **do not build**: wants a breakdown first |
+| targetpet (§59e) | A `/targetpet` command | |
+| tick-bars-dials (§56) | A Bars | |
+| unfurl-boss (§215) | B name the boss in parse unfurls | **changes a CLAUDE.md rule** ("Metadata is PUBLIC" never names a parse's boss) and `test/page-metadata.test.js` |
+| xp-defaults (§127) | A keep defaults | **new**: smooth XP/AA per hour so a `/resetexp` drop to zero followed by a spike is evened out |
+| zeal-icons (§39/§213) | B Guild index | |
+
+**Evaluation of the desk (what to change before round three):**
+- It worked: 41 picks in ~85 minutes, after weeks of the same items sitting in the Open table.
+- Follow-up chips get skipped: 7 of 8 decisions with `extra` questions came back with them blank (raid-announcers' 8
+  all blank). Put each follow-up inside the option it belongs to, or make it its own card.
+- Notes carry new work: 6 notes add features (Tradeskill overlay + Mimic mail, Zeal channel split, recents tab, PoP
+  pictures, combined-view tick, XP smoothing). The desk needs a way to turn a note into a new item, and the reader must
+  treat a note as a request, not as colour.
+- "Not yet, more detail" is a real answer: 2 picks say do not implement. Add a "Need more detail" button so a lean is
+  not mistaken for a go.
+- Previews must be faithful: pieces-way's mocks were "too far apart", which steered the pick. Layout picks should use
+  screenshots of the real thing, not drawn mocks.
+- Engineering trade-offs (state-payload, haste-foci) were pushed to the desk although §10.6 rule 6 says the agent
+  decides those; one came back "give me a breakdown". Apply rule 6.
+- Policy changes hide inside a pick (unfurl-boss changes a CLAUDE.md rule; pieces-way reverses §125). Mark such cards
+  "changes an earlier decision" with the reference.
+- No lifecycle on the page: built picks still read "Picked". Show Built / In progress / Needs detail, and rebuild the
+  desk after each round so it reflects §382/§383.
