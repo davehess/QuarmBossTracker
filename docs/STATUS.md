@@ -801,6 +801,11 @@ next touch one rather than assuming a missing row means a missing doc.
   Voice volume slider; buff-faded triggers on each spell's own fade line. Tests: `test/timer-row-menu.test.js`,
   `test/canvas-span.test.js`, `test/ext-target-player-timers.test.js`, `test/pet-sheet-foldout.test.js`,
   `test/voice-volume.test.js`, `test/buff-fade-triggers.test.js`.
+- **🧪 Decision Desk tranche 1 (agent 3.8.27–3.8.32 beta; bot 3.2.11–3.2.13, web 1.9.12–1.9.13 main; 2026-10-19;
+  DECISIONS §384):** Tick bars only; setup trail for everyone; log archiving in watch mode (FB-51); Chat channels from
+  Zeal; share a whole setup by file or code; Target Info pager + Recent; meter History on DPS or Tank; quest drill-down;
+  haste foci on cast bars; Plane of Time hybrid cycle; `/me/upgrades` [beta]. Zeal `/targetpet` patch in
+  `docs/upstream/zeal-targetpet/`.
 - **✅ raidmimic.com: "The tour" is the layout (web 1.9.10, 2026-10-19; §382).**
 - **✅ CI green again (2026-10-19; §382):** quarantined test files with owners and a 2026-11-02 expiry,
   `test/quarantine-guard.test.js`.

@@ -2087,8 +2087,11 @@ Tests: `test/net-meter.test.js`.
   `logRotations`; `in_use` when EQ holds the file (→ `/log off`, click again, `/log on`). Buttons on
   the log-silent banner and in the Info tab's 🗂 Log archiving card. `tailFile`'s size < pos reset
   picks up the new file.
-⚠ **Log archiving (`_logRotateSweep`, 500 MB) never runs in watch mode.** Its timers are inside
-the `--once` branch, which exits within seconds; found 2026-10-05, not changed (§162).
+**Log archiving (`_logRotateSweep`, 500 MB) runs in watch mode since agent 3.8.29 (2026-10-19, FB-51, §384).**
+`_logRotateStartTimers()` (first pass at 2 min, then every 10 min) is called by both the watch and `--once` branches. A
+log moves only when it is over the cap, quiet ≥ 15 min, unread by the agent in that window, its character silent on
+Zeal for 5 min, and unchanged on a re-stat just before the rename; nothing is ever deleted. Test:
+`test/log-rotate-watch.test.js`.
 
 ### Durable upload queue
 Every outbound POST persists to `logsync.queue.json`; 15s drain, exponential
