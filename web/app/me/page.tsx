@@ -935,6 +935,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
             <Link href={`/character/${encodeURIComponent(c.name)}/quests`} className="text-blue hover:underline">quests →</Link>
             <Link href={`/character/${encodeURIComponent(c.name)}/spells`} className="text-blue hover:underline">spells →</Link>
             <Link href={`/character/${encodeURIComponent(c.name)}/inventory`} className="text-blue hover:underline">inventory →</Link>
+            <Link href={`/me/upgrades?c=${encodeURIComponent(c.name)}`} className="text-blue hover:underline">upgrades →</Link>
             {c.quarmy_url && (
               <a href={c.quarmy_url} target="_blank" rel="noreferrer" className="text-blue hover:underline">quarmy →</a>
             )}
@@ -1149,6 +1150,9 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
             </Link>
             <Link href="/me/accounts" className="text-blue hover:underline text-sm whitespace-nowrap">
               🗂 Game accounts →
+            </Link>
+            <Link href="/me/upgrades" className="text-blue hover:underline text-sm whitespace-nowrap">
+              ⬆ Gear upgrades →
             </Link>
             <Link href="/me/voice" className="text-blue hover:underline text-sm whitespace-nowrap">
               🔊 Say your name →
