@@ -5211,13 +5211,13 @@ function _npcManaEvict() {
 // (player names); multi-word NPC names never match and have no cast to join.
 const _HEAL_LAND_HINT = /(?:healed|better|chlorophyll|glow|light|away)\.\s*$/;
 const _HEAL_LAND_RX = /\]\s+([A-Z][A-Za-z]+)(?:'s wounds fade away|'s body is covered with a soft glow| is completely healed| feels much better| feels better| is blasted with chlorophyll| is bathed in a divine light)\.\s*$/;
-const _recentHealLands = [];   // { ts(ms), target }
+const _recentHealLands = [];   // { ts(ms), target, ch(bool — "is completely healed", the Complete Heal landing) }
 function noteHealLandLine(line) {
   if (!_HEAL_LAND_HINT.test(line)) return;   // cheap end-anchored prefilter
   const m = line.match(_HEAL_LAND_RX);
   if (!m) return;
   const t = parseEqTimestamp(line);
-  _recentHealLands.push({ ts: t ? t.getTime() : Date.now(), target: m[1] });
+  _recentHealLands.push({ ts: t ? t.getTime() : Date.now(), target: m[1], ch: / is completely healed\.\s*$/.test(line) });
   const cutoff = Date.now() - 10 * 60_000;
   while (_recentHealLands.length > 400 || (_recentHealLands.length && _recentHealLands[0].ts < cutoff)) {
     _recentHealLands.shift();
@@ -11121,6 +11121,7 @@ class EncounterBuilder {
         const dMs = Date.parse(d.ts) || 0;
         if (atMs - dMs > DEATH_CONFIRM_WINDOW_MS) break;   // too old — stop scanning back
         d.confirmed = true;
+        _confirmDeathRecap(meLower, dMs);
         break;
       }
       return;
@@ -11150,6 +11151,7 @@ class EncounterBuilder {
         // are a corpse. Silent builders (old-log replay) must not tombstone
         // anyone in the live session.
         if (!this.silent) _noteDeath(defName, deathTs);
+        if (!this.silent) { try { _noteDeathRecap(this, defName, event, deathTs); } catch (e) { void e; } }
         // Silent builders (opt-in backfill) skip the session-wide deaths
         // counter — old log replays shouldn't move the Deaths panel.
         if (!this.silent) {
@@ -12987,6 +12989,8 @@ const stats = {
   // deaths field in uploaded parse cards.
   // { playerName: count }
   sessionDeaths:   {},
+  // deathRecaps: the last DEATH_RECAP_KEEP death recaps, oldest first (FB-84). LOCAL ONLY — never uploaded.
+  deathRecaps:     [],
   // sessionHealers: per-healer healing totals accumulated across all fights this session.
   // { healerName: { healed, ticks, targets: Set<string> } }
   sessionHealers:  {},
@@ -13102,6 +13106,7 @@ function resetSessionStats() {
   stats.damageShield       = {};
   stats.abilityStats       = new Map();
   stats.sessionDeaths      = {};
+  stats.deathRecaps        = [];
   stats.sessionHealers     = {};
   stats.sessionDefenders   = {};
   stats.sessionMends       = { attempts: 0, success: 0, crit: 0, fail: 0 };
@@ -13362,12 +13367,13 @@ function saveSessionState() {
       sessionHealers:     healersOut,
       sessionProcs:       stats.sessionProcs,
       sessionDeaths:      stats.sessionDeaths,
+      deathRecaps:        stats.deathRecaps,
       sessionMends:       stats.sessionMends,
       sessionCritHeals:   stats.sessionCritHeals,
       sessionCrits:       stats.sessionCrits,
       resistedSpells:     stats.resistedSpells,
       inboundSpellDamage: stats.inboundSpellDamage,
-      sessionDeeps:       stats.sessionDeeps,
+      sessionDeeps:      stats.sessionDeeps,
       abilityStats:       Object.fromEntries(stats.abilityStats),
       castCounts:         stats.castCounts,
       uploadCount:        stats.uploadCount,
@@ -13405,7 +13411,11 @@ function loadSessionState() {
     if (raw.sessionDefenders)   stats.sessionDefenders   = raw.sessionDefenders;
     if (raw.sessionProcs)       stats.sessionProcs       = raw.sessionProcs;
     if (raw.sessionDeaths)      stats.sessionDeaths      = raw.sessionDeaths;
-    if (raw.sessionMends)       stats.sessionMends       = raw.sessionMends;
+    if (Array.isArray(raw.deathRecaps)) {
+      stats.deathRecaps = raw.deathRecaps.filter(r => r && Number.isFinite(r.id) && Array.isArray(r.hits)).slice(-DEATH_RECAP_KEEP);
+      _deathRecapSeq = stats.deathRecaps.reduce((m, r) => Math.max(m, r.id), _deathRecapSeq);
+    }
+    if (raw.sessionMends)      stats.sessionMends       = raw.sessionMends;
     if (raw.sessionCritHeals)   stats.sessionCritHeals   = raw.sessionCritHeals;
     if (raw.sessionCrits)       stats.sessionCrits       = raw.sessionCrits;
     if (raw.resistedSpells)     stats.resistedSpells     = raw.resistedSpells;
@@ -13597,6 +13607,119 @@ function _clearDeath(name) {
   // needs-rez board (defined below): HP above zero after a death is exactly
   // the "enter the zone with about 20% health" moment.
   if (wasDead) { try { noteRezDone(k); } catch (e) { void e; } }
+}
+
+// ── Death recap (FB-84, the guild lead 2026-10-19: "A first then B") ────────────────────────────
+// At each player death this log shows, snapshot the 20 s before it: the hits that landed on them, the
+// heal landings on them (Complete Heals flagged), the damage in the last 6 s, the killer, and where the
+// CH chain's beat stood. Built ONLY from lines this machine already parsed: it is never uploaded
+// (not in the encounter payload, not in the deaths[] rows, not in any enqueueUpload) — it reaches the
+// local dashboard and Command Center through /api/state and /api/command-center and nothing else.
+// A recap belongs to a player and a time, NOT to a corpse: a corpse with no loot vanishes at once, and
+// the recap must outlive it. Targeting "<Name>'s corpse" only HIGHLIGHTS that player's latest recap.
+// Persistence: stats.deathRecaps rides the existing session file (saveSessionState), so a restart within
+// SESSION_TTL_MS keeps the list; past that the list starts fresh, like the other session counters.
+const DEATH_RECAP_WINDOW_MS = 20_000;
+const DEATH_RECAP_BURST_MS  = 6_000;
+const DEATH_RECAP_KEEP      = 50;
+const DEATH_RECAP_MAX_HITS  = 60;
+const DEATH_RECAP_MAX_HEALS = 30;
+let _deathRecapSeq = 0;
+// The chain's typical beat (median of its recent gaps) as of `atMs` (log time), or null with no live
+// chain. Read-only: unlike chChainSnapshot this never retires an idle chain.
+function _chBeatMsAt(atMs) {
+  if (!_chChain || !Array.isArray(_chChain.beats) || !_chChain.beats.length) return null;
+  if ((atMs - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) return null;
+  const b = _chChain.beats.slice().sort((x, y) => x - y);
+  return b[Math.floor(b.length / 2)];
+}
+// Pure: events (chronological parsed events), lands ([{ts, target, ch}]) → one recap. `isSelf` makes a
+// null defender (the log's "You") count as a hit on this player.
+function buildDeathRecap({ name, deathMs, events, lands, isSelf, killer, beatMs }) {
+  const nameL = String(name || '').toLowerCase();
+  const from = deathMs - DEATH_RECAP_WINDOW_MS;
+  const hits = [];
+  for (const e of (events || [])) {
+    if (!e || e.type !== 'damage' || !(e.amount > 0)) continue;
+    const t = Date.parse(e.ts);
+    if (!(t >= from && t <= deathMs)) continue;
+    const d = e.defender;
+    const onVictim = (d == null || /^you$/i.test(String(d))) ? !!isSelf : String(d).toLowerCase() === nameL;
+    if (!onVictim) continue;
+    hits.push({ offMs: deathMs - t, attacker: e.attacker || null, amount: e.amount, ability: e.ability || null });
+  }
+  hits.sort((a, b) => b.offMs - a.offMs);   // oldest first
+  const heals = [];
+  for (const l of (lands || [])) {
+    if (!l || String(l.target || '').toLowerCase() !== nameL) continue;
+    if (!(l.ts >= from && l.ts <= deathMs)) continue;
+    heals.push({ offMs: deathMs - l.ts, ch: !!l.ch });
+  }
+  heals.sort((a, b) => b.offMs - a.offMs);
+  let dmg6 = 0, dmg20 = 0;
+  for (const h of hits) { dmg20 += h.amount; if (h.offMs <= DEATH_RECAP_BURST_MS) dmg6 += h.amount; }
+  const chs = heals.filter(h => h.ch);
+  const lastHit = hits.length ? hits[hits.length - 1] : null;
+  return {
+    id: ++_deathRecapSeq,
+    name,
+    ts: new Date(deathMs).toISOString(),
+    atMs: deathMs,
+    self: !!isSelf,
+    killer: killer || (lastHit && lastHit.attacker) || null,
+    dmg6, dmg20,
+    lastChOffMs: chs.length ? chs[chs.length - 1].offMs : null,
+    beatMs: beatMs || null,
+    hits: hits.slice(-DEATH_RECAP_MAX_HITS),
+    heals: heals.slice(-DEATH_RECAP_MAX_HEALS),
+  };
+}
+// Called from the encounter builder for a confirmed player death (live builders only).
+function _noteDeathRecap(builder, name, event, deathMs) {
+  const isSelf = String(name).toLowerCase() === String(builder.character || '').toLowerCase();
+  const recap = buildDeathRecap({
+    name, deathMs, events: builder.events, lands: _recentHealLands, isSelf,
+    killer: event.attacker || null, beatMs: _chBeatMsAt(deathMs),
+  });
+  const list = stats.deathRecaps || (stats.deathRecaps = []);
+  // Several watched logs see the same death: keep one recap per player and moment, the fuller one.
+  const dupe = list.findIndex(r => r && String(r.name).toLowerCase() === String(name).toLowerCase() && Math.abs(r.atMs - deathMs) <= 5000);
+  if (dupe >= 0) {
+    if (recap.hits.length + recap.heals.length > list[dupe].hits.length + list[dupe].heals.length) { recap.confirmed = list[dupe].confirmed; list[dupe] = recap; }
+    return;
+  }
+  list.push(recap);
+  while (list.length > DEATH_RECAP_KEEP) list.shift();
+}
+// The corpse-run tail arrived for your own death: stamp the recap too.
+function _confirmDeathRecap(nameLower, deathMs) {
+  const r = (stats.deathRecaps || []).slice().reverse().find(x => String(x.name).toLowerCase() === nameLower && Math.abs(x.atMs - deathMs) <= 5000);
+  if (r) r.confirmed = true;
+}
+// Zeal's target name for a corpse: "Moash's corpse", "Moash`s corpse" (EQ's own spelling), the curly
+// apostrophe, and a numeric suffix ("corpse0", "corpse12") when several lie in one place.
+const _CORPSE_TARGET_RX = /^(.+?)['`’]s corpse\d*$/i;
+function corpseTargetOwner(targetName) {
+  const m = String(targetName || '').trim().match(_CORPSE_TARGET_RX);
+  return m ? m[1].trim() : null;
+}
+// The id of the newest recap for the player whose corpse any watched client has targeted, else null.
+function deathRecapFocusId() {
+  const list = stats.deathRecaps || [];
+  if (!list.length) return null;
+  for (const ch of Object.keys(_zealState)) {
+    const owner = corpseTargetOwner(_zealState[ch] && _zealState[ch].target_name);
+    if (!owner) continue;
+    const o = owner.toLowerCase();
+    for (let i = list.length - 1; i >= 0; i--) if (String(list[i].name).toLowerCase() === o) return list[i].id;
+  }
+  return null;
+}
+// Newest first. `compact` drops the per-hit lists (the Command Center line needs none of it).
+function deathRecapSnapshot(limit, compact) {
+  const out = (stats.deathRecaps || []).slice(-limit).reverse();
+  if (!compact) return out;
+  return out.map(r => ({ id: r.id, name: r.name, ts: r.ts, killer: r.killer, dmg6: r.dmg6, lastChOffMs: r.lastChOffMs, beatMs: r.beatMs }));
 }
 
 // ── Corpse DM (the guild lead, 2026-09-26: "when a character dies we should discord message them to send
@@ -16952,6 +17075,7 @@ function _serializeCommandCenterState() {
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
     needs_rez:     _rezBoardSnapshot(),
+    death_recaps:  deathRecapSnapshot(3, true),
     da_broadcasts: daBroadcastsSnapshot(),
     // SELF ONLY — see trackDisciplineTimerLine. Null when ready or unobserved.
     discipline:    _disciplineTimerSnapshot(activeChar),
@@ -17632,6 +17756,9 @@ function _serializeForDashboard() {
     inboundSpellDamage: stats.inboundSpellDamage || {},
     sessionProcs:       stats.sessionProcs,
     sessionDeaths:      stats.sessionDeaths,
+    // FB-84 death recaps (newest first) + the one whose player's corpse a watched client is targeting. Local only.
+    deathRecaps:        deathRecapSnapshot(DEATH_RECAP_KEEP),
+    deathRecapFocus:    deathRecapFocusId(),
     sessionMends:       stats.sessionMends,
     abilityStats:       Object.fromEntries(stats.abilityStats),
     castCounts:         stats.castCounts,
@@ -21474,11 +21601,64 @@ function renderTanks(s) {
   h += '<div class="card"><h2>Deaths This Session</h2>';
   if (!deaths.length) h += '<div class="dim">Nobody died. Very respectable.</div>';
   else { h += '<table>'; for (const [n,c] of deaths) h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>'; h += '</table>'; }
+  h += wpDeathRecapsHtml(s);
   h += '</div>';
   h += '</div>';
   // Healers fold in below the tank cards — one combat-support tab.
   h += buildHealersHtml(s);
-  if (!setSectionHTML('tanks', h)) return;
+  setSectionHTML('tanks', h);
+  wpDeathFocusScroll(s);
+}
+
+// ── Death recap (FB-84) — one line per death, newest first, with the last 20 s behind a fold. Built from the
+// agent's local recaps (s.deathRecaps); nothing here is relative to now, so the HTML is byte-stable between polls.
+function wpDeathRecapLine(r) {
+  var d = new Date(r.ts), p = function (n) { return (n < 10 ? '0' : '') + n; };
+  var t = isNaN(d.getTime()) ? '' : (' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()));
+  var parts = [];
+  parts.push(r.lastChOffMs != null ? ((r.lastChOffMs / 1000).toFixed(1) + ' s after the last CH landed') : 'no CH landed in the last 20 s');
+  if (r.beatMs) parts.push('chain beat ' + Math.round(r.beatMs / 1000) + ' s');
+  parts.push('took ' + fmtK(r.dmg6) + ' in the last 6 s');
+  if (r.killer) parts.push('killed by ' + r.killer);
+  return '💀 ' + r.name + ' died' + t + ' · ' + parts.join(' · ');
+}
+function wpDeathRecapsHtml(s) {
+  var list = s.deathRecaps || [];
+  if (!list.length) return '';
+  var h = '<div class="subtle" style="margin-top:8px">Death recaps · the last 20 s before each death, newest first. Target a corpse to jump to that player’s latest.</div>';
+  for (var i = 0; i < list.length; i++) {
+    var r = list[i], focus = (s.deathRecapFocus === r.id);
+    var rows = [];
+    for (var a = 0; a < (r.hits || []).length; a++) {
+      var x = r.hits[a];
+      rows.push({ off: x.offMs, txt: fmtK(x.amount) + ' from ' + (x.attacker || '?') + (x.ability ? (' (' + x.ability + ')') : ''), cls: 'var(--red)' });
+    }
+    for (var b = 0; b < (r.heals || []).length; b++) {
+      var y = r.heals[b];
+      rows.push({ off: y.offMs, txt: y.ch ? 'Complete Heal landed' : 'heal landed', cls: y.ch ? 'var(--green)' : 'var(--blue)' });
+    }
+    rows.sort(function (m, n) { return n.off - m.off; });
+    h += '<details ' + wpKeep('deathrecap|' + r.id, focus) + ' id="deathrecap-' + r.id + '" style="margin-top:4px;padding-left:6px;border-left:3px solid '
+       + (focus ? 'var(--gold)' : 'transparent') + '"><summary style="cursor:pointer;font-size:12px">' + esc(wpDeathRecapLine(r))
+       + (focus ? ' <span class="dim">· corpse targeted</span>' : '') + '</summary>';
+    if (!rows.length) h += '<div class="dim" style="font-size:11px">Nothing in this log for the last 20 s.</div>';
+    else {
+      h += '<table style="font-size:11px">';
+      for (var k = 0; k < rows.length; k++) h += '<tr><td class="num dim">−' + (rows[k].off / 1000).toFixed(1) + ' s</td><td style="color:' + rows[k].cls + '">' + esc(rows[k].txt) + '</td></tr>';
+      h += '</table>';
+    }
+    h += '</details>';
+  }
+  return h;
+}
+// Targeting a corpse opens that player's latest recap; bring it into view once per change of target.
+var _wpDeathFocusSeen = null;
+function wpDeathFocusScroll(s) {
+  var f = s.deathRecapFocus == null ? null : s.deathRecapFocus;
+  if (f === _wpDeathFocusSeen) return;
+  _wpDeathFocusSeen = f;
+  if (f == null) return;
+  try { var el = document.getElementById('deathrecap-' + f); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' }); } catch (e) { void e; }
 }
 
 function buildLoadoutsHtml(s) {
@@ -33540,6 +33720,30 @@ const COMMAND_HTML = `<!doctype html>
                +    (age ? '<span class="rez-age">dead ' + age + '</span>' : '<span class="rez-age"></span>')
                +    '<span class="rezDismiss" data-rez-name="' + esc(r.name) + '" title="Clear this row for the WHOLE raid — use when they are up and we missed it.">✕</span>'
                +  '</div>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
+    // ── Last deaths (FB-84) ───────────────────────────────────────────────
+    // One line per recent death from this machine's own log, next to the rez board it explains.
+    // Local only: /api/command-center is this machine's agent; nothing here is uploaded.
+    if (s.death_recaps && s.death_recaps.length) {
+      var drCollapsed = _isCollapsed('deathrecaps');
+      html += '<div class="card"><div class="head">' + secToggle('deathrecaps', '💀 Last deaths', s.death_recaps.length) + '</div>';
+      if (!drCollapsed) {
+        html += '<div class="list">';
+        for (var dr = 0; dr < s.death_recaps.length; dr++) {
+          var rc = s.death_recaps[dr];
+          var dd = new Date(rc.ts), pad2 = function (n) { return (n < 10 ? '0' : '') + n; };
+          var when = isNaN(dd.getTime()) ? '' : (' ' + pad2(dd.getHours()) + ':' + pad2(dd.getMinutes()) + ':' + pad2(dd.getSeconds()));
+          var bits = [];
+          bits.push(rc.lastChOffMs != null ? ((rc.lastChOffMs / 1000).toFixed(1) + ' s after the last CH') : 'no CH in 20 s');
+          if (rc.beatMs) bits.push('beat ' + Math.round(rc.beatMs / 1000) + ' s');
+          bits.push('took ' + (rc.dmg6 >= 1000 ? (rc.dmg6 / 1000).toFixed(1) + 'k' : rc.dmg6) + ' in 6 s');
+          if (rc.killer) bits.push('by ' + rc.killer);
+          html += '<div class="row"><span class="nm">' + esc(rc.name) + '</span><span class="dim">' + esc('died' + when + ' · ' + bits.join(' · ')) + '</span></div>';
         }
         html += '</div>';
       }
@@ -58604,6 +58808,9 @@ module.exports = {
   // Age + liveness (2026-08-10) — exported so the wrapper is tested against
   // the shipped code rather than a copy.
   _noteDeath, _clearDeath, _isDead, _deadNamesSnapshot, _ageOfServerStamp,
+  // FB-84 death recap: exported so the tests exercise the shipped code. noteHealLandLine feeds the landings; stats is the session store.
+  buildDeathRecap, deathRecapSnapshot, deathRecapFocusId, corpseTargetOwner, noteHealLandLine, _recentHealLandsForTest: () => _recentHealLands,
+  _deathRecapsForTest: () => stats.deathRecaps, _zealStateForTest: () => _zealState, confirmPlayer,
   // #205 group-HP death watcher — the independent death source feeding that
   // registry. Exported so the tests exercise the shipped code, not a copy.
   _noteGroupHpFromState, _groupHpObservations, _groupDeathWatchSnapshot,
