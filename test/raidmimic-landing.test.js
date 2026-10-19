@@ -331,8 +331,10 @@ describe('honesty: "coming" means coming', () => {
     expect(JSON.stringify(C.WORKS_WITH)).not.toMatch(/better than|replace|instead of|switch from|unlike/i);
     expect(C.WORKS_WITH.rights).toMatch(/not affiliated/);
   });
-  it('any solved world: EverQuest first, then the two named, the engine "meant to" serve them', () => {
-    expect(C.WORLDS.list.map(w => w.name)).toEqual(['EverQuest', 'Monsters & Memories', 'Classic-era Warcraft']);
+  it('any solved world: EverQuest first, then the EQ family and Warcraft; Monsters & Memories waits on its rules', () => {
+    expect(C.WORLDS.list.map(w => w.name)).toEqual(['EverQuest', 'Other EverQuest servers', 'Classic-era Warcraft', 'Monsters & Memories']);
+    // The game's own policy forbids parsers (2026-10-19 research), so the page must not call it next.
+    expect(C.WORLDS.list.find(w => w.name === 'Monsters & Memories').note).toMatch(/rules forbid/);
     expect(C.WORLDS.lead).toMatch(/meant to serve/);
     expect(C.WORLDS.rights).toMatch(/not affiliated/);
   });
