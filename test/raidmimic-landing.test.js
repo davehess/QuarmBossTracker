@@ -7,9 +7,10 @@
 //   - the middleware, RUN against a stand-in for next/server, agrees, and the eqmimic host still behaves as before;
 //     the branch sits before any session work and the link-preview rewrite,
 //   - the root layout gives the raidmimic hosts the same bare shell as eqmimic's,
-//   - the page: [beta] title, not indexable, public, two layouts picked by `?v=` (A default, B for `b`), the
-//     [beta] tag, and the Register-interest address (the existing anonymous form, text in the FRAGMENT),
-//   - both layouts carry every required section, and both draw their words from the one content module,
+//   - the page: [beta] title, not indexable, public, one layout ("The tour", the guild lead's pick, 2026-10-19;
+//     no `?v=` switch), the [beta] tag, and the Register-interest address (the existing anonymous form, text in
+//     the FRAGMENT),
+//   - the layout carries every required section and draws its words from the one content module,
 //   - honesty: every "coming" claim is in the COMING inventory, nothing invents a price, a customer count or a
 //     testimonial, and the one dollar figure is the measured Wolf Pack number eqmimic already publishes,
 //   - the metadata is in lib/pageMeta.ts as well as the page (test/page-metadata.test.js walks the rest),
@@ -36,7 +37,7 @@ const L = 'web/app/raidmimic/_landing/';
 
 // Every sentence the content module can put on the page, as one string (for the "no invented X" sweeps).
 const allText = () => JSON.stringify([
-  C.HERO, C.BLOCKS, C.WORKS_WITH, C.DATA, C.COST, C.WORLDS, C.CTA, C.MOMENTS, C.COMING, C.ILLUSTRATIVE_NOTE,
+  C.HERO, C.WORKS_WITH, C.DATA, C.COST, C.WORLDS, C.CTA, C.MOMENTS, C.COMING, C.ILLUSTRATIVE_NOTE,
 ]);
 
 describe('the host list', () => {
@@ -63,7 +64,7 @@ describe('raidmimicLandingTarget', () => {
     expect(RAIDMIMIC_LANDING_PATH).toBe('/raidmimic');
     expect(raidmimicLandingTarget()).toEqual({ pathname: '/raidmimic', search: '' });
   });
-  it('the host module holds no query handling at all (the layout switch is a page concern, not a host one)', () => {
+  it('the host module holds no query handling at all', () => {
     expect(code('web/lib/raidmimicHost.ts')).not.toMatch(/URLSearchParams|[?&]v=|searchParams/);
   });
 });
@@ -101,7 +102,7 @@ describe('the middleware, run', () => {
     expect(to.pathname).toBe('/raidmimic');
     expect(to.search).toBe('');
   });
-  it('every path and every query parameter is dropped, ?v=b included (B is previewed on the Wolf Pack hosts)', async () => {
+  it('every path and every query parameter is dropped, ?v=b included (a stale link must not change the page)', async () => {
     for (const u of ['https://raidmimic.com/?v=b', 'https://www.raidmimic.net/anything?x=1', 'https://raidmimic.quest/feedback?v=b&utm=1&token=secret',
       'https://raidmimic.com/admin/feedback', 'https://raidmimic.com/api/agent/chat', 'https://raidmimic.com/me?v=B']) {
       const { to } = await run(u);
@@ -149,14 +150,12 @@ describe('the page', () => {
     expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
     expect(page).not.toMatch(/getSessionUser|supabase/i);
   });
-  it('picks the layout from ?v= and defaults to the pitch', () => {
-    expect(page).toMatch(/raidmimicVariant\(searchParams\?\.v\) === 'b' \? <TourLayout ctx=\{ctx\} \/> : <PitchLayout ctx=\{ctx\} \/>/);
-  });
-  it('raidmimicVariant: b (any case, an array’s first) is the tour; everything else is the pitch', () => {
-    expect(C.raidmimicVariant('b')).toBe('b');
-    expect(C.raidmimicVariant(' B ')).toBe('b');
-    expect(C.raidmimicVariant(['b', 'a'])).toBe('b');
-    for (const v of [undefined, '', 'a', 'c', 'bb', 'zzz', ['a', 'b'], []]) expect(C.raidmimicVariant(v), String(v)).toBe('a');
+  it('renders the tour, always: no ?v= switch, no second layout left behind', () => {
+    expect(page).toMatch(/return <TourLayout ctx=\{ctx\} \/>;/);
+    expect(page).not.toMatch(/searchParams|raidmimicVariant|PitchLayout/);
+    expect(fs.existsSync(path.join(ROOT, L + 'PitchLayout.tsx'))).toBe(false);
+    expect(C).not.toHaveProperty('raidmimicVariant');
+    expect(C).not.toHaveProperty('BLOCKS');
   });
   it('the Register-interest address is the anonymous form: absolute on a raidmimic host, its real path on Wolf Pack hosts', () => {
     expect(page).toMatch(/interest: interestUrl\(`\$\{EQMIMIC_ORIGIN\}\/feedback`\)/);
@@ -177,7 +176,7 @@ describe('the page', () => {
     expect(C.INTEREST_TEXT.length).toBeLessThan(400);   // the form keeps 4000; this is a template, not an essay
   });
   it('no mailto, no new form, no new endpoint', () => {
-    for (const f of ['page.tsx', 'Parts.tsx', 'PitchLayout.tsx', 'TourLayout.tsx', 'Figures.tsx']) {
+    for (const f of ['page.tsx', 'Parts.tsx', 'TourLayout.tsx', 'Figures.tsx']) {
       const src = f === 'page.tsx' ? page : code(L + f);
       expect(src, f).not.toMatch(/mailto:|<form\b|fetch\(|action=/);
     }
@@ -185,56 +184,43 @@ describe('the page', () => {
   });
 });
 
-describe('both layouts', () => {
-  const pitch = code(L + 'PitchLayout.tsx');
+describe('the layout', () => {
   const tour = code(L + 'TourLayout.tsx');
   const parts = code(L + 'Parts.tsx');
 
-  it('the [beta] tag is the site’s NewPageTag, at the top of both, and its link works on a raidmimic host', () => {
+  it('the [beta] tag is the site’s NewPageTag, at the top, and its link works on a raidmimic host', () => {
     expect(parts).toMatch(/import NewPageTag from '@\/components\/NewPageTag'/);
     expect(parts).toMatch(/<NewPageTag [^>]*href=\{ctx\.onHost \? ctx\.interest : '\/feedback'\}/);
-    for (const [n, src] of [['pitch', pitch], ['tour', tour]]) {
-      expect(src.indexOf('<BetaTag'), n).toBeGreaterThan(-1);
-      expect(src.indexOf('<BetaTag'), n).toBeLessThan(src.indexOf('<Hero'));
-    }
+    expect(tour.indexOf('<BetaTag')).toBeGreaterThan(-1);
+    expect(tour.indexOf('<BetaTag')).toBeLessThan(tour.indexOf('<Hero'));
     expect(code('web/components/NewPageTag.tsx')).toMatch(/href = '\/feedback'/);   // every other page keeps its link
   });
 
-  // The required sections, by the id each layout gives them, in each layout’s own order.
+  // The required sections, by the id the layout gives them.
   const REQUIRED = ['works-with', 'data', 'cost', 'worlds'];
-  it('A carries the six blocks, works-with, data, cost, worlds, the coming list and the ask — in that order', () => {
-    const order = ['<BlockGrid', 'id="works-with"', 'id="data"', 'id="cost"', 'id="worlds"', '<ComingList', '<CtaBand', '<Footer'].map(s => pitch.indexOf(s));
-    expect(order.every(i => i > -1)).toBe(true);
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(C.BLOCKS).toHaveLength(6);
-    expect(pitch).toMatch(/<Hero ctx=\{ctx\} \/>/);
-  });
-  it('B carries the four moments first, then the same four facts folded away, the coming list and the ask', () => {
+  it('carries the four moments first, then the four facts folded away, the coming list and the ask', () => {
     const order = ['MOMENTS.map', ...REQUIRED.map(r => `id="${r}"`), '<ComingList', '<CtaBand', '<Footer'].map(s => tour.indexOf(s));
     expect(order.every(i => i > -1)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(C.MOMENTS).toHaveLength(4);
     expect(tour).toMatch(/<details\b/);
+    expect(tour).toMatch(/<Hero ctx=\{ctx\} compact \/>/);
   });
-  it('they are genuinely different: B has the pictures and no block grid, A has the grid and no pictures', () => {
-    expect(pitch).not.toMatch(/Figure|MOMENTS|<details/);
-    expect(tour).not.toMatch(/BlockGrid|BLOCKS/);
+  it('draws a picture per moment', () => {
     expect(tour).toMatch(/<Figure k=\{m\.figure\}/);
   });
-  it('both reuse the SAME section bodies from Parts, so a fact is corrected in one place', () => {
-    for (const body of ['WorksWithBody', 'DataBody', 'CostBody', 'WorldsBody']) {
-      expect(pitch, body).toMatch(new RegExp(`<${body} />`));
-      expect(tour, body).toMatch(new RegExp(`<${body} />`));
-    }
+  it('takes the section bodies from Parts, so a fact is corrected in one place', () => {
+    for (const body of ['WorksWithBody', 'DataBody', 'CostBody', 'WorldsBody']) expect(tour, body).toMatch(new RegExp(`<${body} />`));
   });
-  it('the Register-interest button is in the hero and again at the end of both', () => {
+  it('the Register-interest button is in the hero and again at the end', () => {
     expect(parts).toMatch(/export function Hero[\s\S]*?<InterestButton ctx=\{ctx\} \/>/);
     expect(parts).toMatch(/export function CtaBand[\s\S]*?<InterestButton ctx=\{ctx\} \/>/);
     expect(parts).toMatch(/href=\{ctx\.interest\}/);
   });
-  it('the layout switch shows only on the Wolf Pack hosts (a raidmimic host drops the query)', () => {
-    expect(parts).toMatch(/if \(ctx\.onHost\) return null;/);
-    expect(parts).toMatch(/\?v=b/);
+  it('the layout switch is gone: no VariantSwitch, no ?v=b link, no landing path on the context', () => {
+    expect(parts).not.toMatch(/VariantSwitch|\?v=b|Layout preview|landing:/);
+    expect(tour).not.toMatch(/VariantSwitch/);
+    expect(code('web/app/raidmimic/page.tsx')).not.toMatch(/landing:/);
   });
   it('the footer carries the rights notice and the fan-project line, verbatim from the eqmimic module', () => {
     expect(C.RIGHTS_NOTICE).toBe(EQ.RIGHTS_NOTICE);
@@ -243,7 +229,7 @@ describe('both layouts', () => {
     expect(footer).toMatch(/\{RIGHTS_NOTICE\}/);
     expect(footer).toMatch(/\{FAN_PROJECT_LINE\}/);
     expect(footer).not.toMatch(/text-\[(?:9|10|11)px\]/);
-    expect(pitch.indexOf('<Footer')).toBeGreaterThan(pitch.lastIndexOf('</section>'));
+    expect(tour.indexOf('<Footer')).toBeGreaterThan(tour.lastIndexOf('</section>'));
   });
   it('the pictures are CSS and text only: no image, no fetch, no external address, one role="img" per figure', () => {
     const fig = code(L + 'Figures.tsx');
@@ -252,13 +238,13 @@ describe('both layouts', () => {
     expect(new Set(C.MOMENTS.map(m => m.figure))).toEqual(new Set(['boards', 'flags', 'parse', 'builder']));
   });
   it('server components only: no client JS on the page', () => {
-    for (const f of ['page.tsx', 'Parts.tsx', 'PitchLayout.tsx', 'TourLayout.tsx', 'Figures.tsx']) {
+    for (const f of ['page.tsx', 'Parts.tsx', 'TourLayout.tsx', 'Figures.tsx']) {
       expect(read(f === 'page.tsx' ? 'web/app/raidmimic/page.tsx' : L + f), f).not.toMatch(/['"]use client['"]/);
     }
   });
   it('fetches and embeds nothing external; every outbound link is one we name', () => {
     const urls = new Set();
-    for (const f of ['page.tsx', 'Parts.tsx', 'PitchLayout.tsx', 'TourLayout.tsx']) {
+    for (const f of ['page.tsx', 'Parts.tsx', 'TourLayout.tsx']) {
       for (const m of (f === 'page.tsx' ? code('web/app/raidmimic/page.tsx') : code(L + f)).matchAll(/https?:\/\/[^\s'"`)<>]+/g)) urls.add(m[0]);
     }
     expect([...urls]).toEqual([]);   // every address is a constant in the content module
@@ -269,8 +255,8 @@ describe('both layouts', () => {
 });
 
 describe('honesty: "coming" means coming', () => {
-  it('every block, moment and world carries a known status', () => {
-    for (const x of [...C.BLOCKS, ...C.MOMENTS, ...C.WORLDS.list]) expect(['live', 'alpha', 'coming'], x.title || x.name).toContain(x.status);
+  it('every moment and world carries a known status', () => {
+    for (const x of [...C.MOMENTS, ...C.WORLDS.list]) expect(['live', 'alpha', 'coming'], x.title || x.name).toContain(x.status);
     expect(Object.keys(C.STATUS_LABEL).sort()).toEqual(['alpha', 'coming', 'live']);
     expect(C.STATUS_LABEL.coming).toBe('Coming');
   });
@@ -281,17 +267,15 @@ describe('honesty: "coming" means coming', () => {
     expect(C.WORLDS.list.find(w => w.name === 'EverQuest').status).toBe('live');
     expect(C.MOMENTS.find(m => m.figure === 'builder').status).toBe('alpha');
   });
-  it('the inventory of promises names each of them, and a block that owns up to a "coming" says Coming or In alpha', () => {
+  it('the inventory of promises names each of them', () => {
     const inv = C.COMING.join(' ');
     for (const re of [/other than Wolf Pack|multi-guild/i, /shared between guilds/i, /shared trial/i, /setup wizard/i, /Monsters & Memories/, /Warcraft/]) expect(inv).toMatch(re);
-    for (const b of C.BLOCKS.filter(b => b.aside)) expect(b.aside, b.id).toMatch(/^(Coming|In alpha):/);
     expect(C.DATA.aside).toMatch(/is coming/);
     expect(C.COMING_TITLE).toBe('What is not built yet');
   });
   it('the live claims are things this platform has: each names the real surface that backs it', () => {
-    // A cheap tripwire against a "live" block with nothing behind it: the surfaces exist in the repo.
-    for (const rel of ['web/app/boards/page.tsx', 'web/app/pop/page.tsx', 'web/app/admin/lockouts/page.tsx', 'web/app/parses/page.tsx',
-      'web/app/raid/review/page.tsx', 'utils/opendkp.js']) expect(fs.existsSync(path.join(ROOT, rel)), rel).toBe(true);
+    // A cheap tripwire against a "live" moment with nothing behind it: the surfaces exist in the repo.
+    for (const rel of ['web/app/pop/page.tsx', 'web/app/admin/lockouts/page.tsx', 'web/app/parses/page.tsx']) expect(fs.existsSync(path.join(ROOT, rel)), rel).toBe(true);
   });
   it('invents no price, customer count or testimonial', () => {
     const t = allText();
@@ -302,7 +286,7 @@ describe('honesty: "coming" means coming', () => {
     expect(t).not.toMatch(/testimonial|trusted by|loved by|“|”|\bsaid\b|\bcalls it\b/);
     expect(C.COST.scale).toMatch(/No price list yet/);
     expect(C.COST.scale).toMatch(/not a quote/);
-    expect(code('web/app/raidmimic/_landing/Parts.tsx') + pitchTourSrc()).not.toMatch(/\$\d/);
+    expect(code('web/app/raidmimic/_landing/Parts.tsx') + tourSrc()).not.toMatch(/\$\d/);
   });
   it('the one dollar figure is the measured Wolf Pack hosting number eqmimic.quest already publishes', () => {
     expect(EQ.COSTS.total).toMatch(/\$30\b/);
@@ -344,7 +328,7 @@ describe('honesty: "coming" means coming', () => {
   });
 });
 
-function pitchTourSrc() { return code(L + 'PitchLayout.tsx') + code(L + 'TourLayout.tsx') + code(L + 'Figures.tsx'); }
+function tourSrc() { return code(L + 'TourLayout.tsx') + code(L + 'Figures.tsx'); }
 
 describe('metadata: the tab AND the Discord card (CLAUDE.md, every page unfurls with its own name)', () => {
   it('lib/pageMeta.ts knows /raidmimic, with the same words as the page', () => {
@@ -366,7 +350,7 @@ describe('metadata: the tab AND the Discord card (CLAUDE.md, every page unfurls 
 
 describe('the content is public-safe', () => {
   it('no ids, tokens, addresses, project refs, member names or invented people', () => {
-    const t = allText() + code('web/lib/raidmimicLanding.ts') + pitchTourSrc();
+    const t = allText() + code('web/lib/raidmimicLanding.ts') + tourSrc();
     expect(t).not.toMatch(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);                 // an IP
     expect(t).not.toMatch(/zhtoekwakucbckvatfky|1168893924329402420|service_role|SUPABASE_|WOLFPACK_AGENT_TOKEN|Bearer /);
     expect(t).not.toMatch(/\b\d{17,20}\b/);                                           // a Discord id
