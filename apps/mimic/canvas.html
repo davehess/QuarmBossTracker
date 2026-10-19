@@ -269,6 +269,7 @@
     <button class="btn" id="ovBtn" title="Put any overlay on the canvas, as it is today">＋ Overlay</button>
     <button class="btn" id="bgBtn" title="The Background a panel or piece has until you set its own (its ⚙ → Background). Never overrides one that is set. Ctrl+Shift+B flips it too">🌫 Default background</button>
     <button class="btn" id="screenBtn" title="Move the canvas to your next screen">⇆ Next screen</button>
+    <button class="btn" id="spanBtn" title="One Canvas across every screen">⇔ Span all screens</button>
     <button class="btn" id="resetBtn" title="Put the three starting panels back where they began">↺ Reset</button>
     <button class="btn" id="hideBtn" title="Turn the canvas off — the trigger overlay shows its timers and callouts again">✕ Turn off</button>
     <button class="btn go" id="doneBtn" title="Finish arranging (locks overlays if they were unlocked)">✓ Done</button>
@@ -468,11 +469,13 @@
   // Fitting is on unless the item was sized by hand (fit === false). A piece cut from a page always follows it.
   function fitOn(p, def) { return fitKind(p, def) && p.kind !== 'sect' && p.fit !== false; }
   // The box an item takes for `need` px of content: its anchored edge stays, it never leaves the screen and
-  // never goes below `min`. y is the top as a fraction of the screen height H, h and need are px.
-  function fitBox(y, h, need, up, H, min) {
+  // never goes below `min`. y is the top as a fraction of the screen height H, h and need are px. lo / hi: the
+  // screen's top and bottom in px when it is not the whole window (Span all screens); default 0 and H.
+  function fitBox(y, h, need, up, H, min, lo, hi) {
+    lo = lo || 0; if (hi == null) hi = H;
     var top = Math.round(y * H), bottom = top + h;
-    var nh = Math.max(min, Math.min(Math.ceil(need), up ? bottom : H - top));
-    return up ? { y: Math.max(0, (bottom - nh) / H), h: nh } : { y: y, h: nh };
+    var nh = Math.max(min, Math.min(Math.ceil(need), up ? bottom - lo : hi - top));
+    return up ? { y: Math.max(lo, bottom - nh) / H, h: nh } : { y: y, h: nh };
   }
   // ── end Background and height ──
 
@@ -530,6 +533,8 @@
       if (bk === undefined) delete o.back; else o.back = bk;
       if (o.kind !== 'timers' && o.kind !== 'callouts') { if (src1.anchor === 'bottom') o.anchor = 'bottom'; else delete o.anchor; }
       if (src1.fit === false) o.fit = false;
+      // The screen it sits on, when not the home screen (Span all screens): a screen's sig, "x,y,WxH".
+      if (typeof src1.scr === 'string' && /^-?\d{1,6},-?\d{1,6},\d{1,6}x\d{1,6}$/.test(src1.scr)) o.scr = src1.scr;
       out.push(cleanWhen(src1, o));
     }
     for (var i = 0; i < src.length && out.length < MAX_PANELS; i++) {
@@ -651,6 +656,71 @@
     return null;
   }
 
+  // ── Screens: "Span all screens" ─────────────────────────────────────────────
+  // While the switch is on, main covers every screen with this one window and sends them as `screens`
+  // ([{ sig, x, y, w, h, home }] in this window's pixels; one entry, the home screen, while it is off). In the
+  // saved layout a panel MAY carry `scr` (a screen's sig) with x/y as fractions of THAT screen; with none it is
+  // on the home screen. In memory a panel's x/y stay fractions of the whole window, as they always were, so
+  // everything that places, drags and groups panels is unchanged; toWindow / toDisk convert at the two edges
+  // (load and save). A panel whose screen is not here is `gone`: hidden, kept as it was, back with the screen.
+  var _screens = null, _conv = { list: null, W: 0, H: 0 };
+  function screenList(W, H) {
+    // One screen is the whole window, exactly (rounding between main's rect and the window must not shift a panel).
+    if (_screens && _screens.length > 1) return _screens;
+    return [{ sig: (_screens && _screens[0] && _screens[0].sig) || '', x: 0, y: 0, w: W, h: H, home: true }];
+  }
+  function homeOf(list) { for (var i = 0; i < list.length; i++) if (list[i].home) return list[i]; return list[0]; }
+  // The screen holding a point; in a gap or off every screen, the nearest one.
+  function screenAt(list, cx, cy) {
+    var best = list[0], bd = Infinity;
+    list.forEach(function (r) {
+      var dx = Math.max(r.x - cx, 0, cx - (r.x + r.w)), dy = Math.max(r.y - cy, 0, cy - (r.y + r.h));
+      if (dx * dx + dy * dy < bd) { bd = dx * dx + dy * dy; best = r; }
+    });
+    return best;
+  }
+  // A box kept whole on the screen holding its middle (one bigger than the screen is cut to it).
+  function fitRect(list, left, top, w, h) {
+    var r = screenAt(list, left + w / 2, top + h / 2);
+    w = Math.min(w, r.w); h = Math.min(h, r.h);
+    return { r: r, x: Math.max(r.x, Math.min(r.x + r.w - w, left)), y: Math.max(r.y, Math.min(r.y + r.h - h, top)), w: w, h: h };
+  }
+  // The callouts panel and the catch-all timers panel are the places a callout and a countdown go: they are
+  // never hidden for want of a screen, they come to the home screen.
+  function needsHome(p) { return p.kind === 'callouts' || (p.kind === 'timers' && p.all); }
+  // As saved → as held in memory (mutates the layout).
+  function toWindow(layout, list, W, H) {
+    var home = homeOf(list);
+    layout.panels.forEach(function (p) {
+      var r = home;
+      if (p.scr) { r = null; list.forEach(function (s) { if (s.sig === p.scr) r = s; }); }
+      if (!r && needsHome(p)) r = home;
+      if (!r) { p.gone = true; return; }   // its x / y / scr stay as saved
+      p.x = (r.x + p.x * r.w) / W; p.y = (r.y + p.y * r.h) / H;
+      delete p.scr; delete p.gone;
+    });
+    return layout;
+  }
+  // As held in memory → as saved (a copy). Each panel goes to the screen holding its middle.
+  function toDisk(layout, list, W, H) {
+    var home = homeOf(list), out = JSON.parse(JSON.stringify(layout));
+    out.panels.forEach(function (p) {
+      if (p.gone) { delete p.gone; return; }
+      var r = screenAt(list, p.x * W + p.w / 2, p.y * H + p.h / 2);
+      p.x = num((p.x * W - r.x) / r.w, 0, 1, 0); p.y = num((p.y * H - r.y) / r.h, 0, 1, 0);
+      if (r === home) delete p.scr; else p.scr = r.sig;
+    });
+    return out;
+  }
+  // Which screen of several a spot is on, in words ('' with one screen).
+  function screenSide(list, r) {
+    if (list.length < 2) return '';
+    var stacked = list.every(function (s) { return s.x === list[0].x; });
+    var order = list.slice().sort(function (a, b) { return stacked ? a.y - b.y : a.x - b.x; });
+    var i = order.indexOf(r), n = order.length;
+    return (stacked ? ['top', 'middle', 'bottom'] : ['left', 'middle', 'right'])[n === 2 ? (i ? 2 : 0) : (i === 0 ? 0 : i === n - 1 ? 2 : 1)];
+  }
+
   // ── Routing: which panel shows a countdown ──────────────────────────────────
   // Called by every timers part (window.parent.wpCanvasRoute). A timer claimed
   // BY NAME goes to that panel; else to the first panel claiming its group;
@@ -664,7 +734,7 @@
     var all = null, byGroup = null;
     for (var i = 0; i < _layout.panels.length; i++) {
       var p = _layout.panels[i];
-      if (p.kind !== 'timers') continue;
+      if (p.kind !== 'timers' || p.gone) continue;   // a panel on a screen that is not here shows nothing
       if (p.all) { if (!all) all = p.id; continue; }
       if (eff && p.names.indexOf(eff) >= 0) return p.id;
       if (!byGroup && p.groups.indexOf(grp) >= 0) byGroup = p.id;
@@ -797,10 +867,10 @@
   function place(e, p) {
     var W = window.innerWidth, H = window.innerHeight;
     // Wider while its page's builder is open, toward the side with room; the page's own part keeps its place.
+    // Kept whole on the screen holding its middle (the whole window when there is one screen).
     var wd = _widen[p.id];
-    var w = Math.min(p.w + (wd ? wd.add : 0), W), h = Math.min(p.h, H);
-    var x = Math.max(0, Math.min(W - w, Math.round(p.x * W) - (wd && wd.left ? wd.add : 0)));
-    var y = Math.max(0, Math.min(H - h, Math.round(p.y * H)));
+    var f = fitRect(screenList(W, H), Math.round(p.x * W) - (wd && wd.left ? wd.add : 0), Math.round(p.y * H), p.w + (wd ? wd.add : 0), p.h);
+    var x = f.x, y = f.y, w = f.w, h = f.h;
     e.root.style.left = x + 'px'; e.root.style.top = y + 'px';
     e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
     e.root.classList.toggle('tabin', y < 22);
@@ -970,6 +1040,7 @@
   function render() {
     var keep = {};
     _layout.panels.forEach(function (p) {
+      if (p.gone) return;   // its screen is not here: no element (so no page running), and the panel stays in the layout
       keep[p.id] = true;
       var e = _els[p.id] || (_els[p.id] = build(p));
       // A hidden overlay panel unloads its page, so it stops polling; showing
@@ -1029,9 +1100,12 @@
   var _saveT = null;
   function save() {
     clearTimeout(_saveT);
-    _saveT = setTimeout(function () {
-      try { if (M.canvasSave) M.canvasSave(_layout); } catch (e) {}
-    }, 250);
+    _saveT = setTimeout(doSave, 250);
+  }
+  // Written as the screens were when the panels were last read (_conv), which is what their x / y are fractions of.
+  function doSave() {
+    _saveT = null;
+    try { if (M.canvasSave) M.canvasSave(toDisk(_layout, _conv.list || screenList(window.innerWidth, window.innerHeight), _conv.W || window.innerWidth, _conv.H || window.innerHeight)); } catch (e) {}
   }
 
   // ── Arranging ───────────────────────────────────────────────────────────────
@@ -1141,7 +1215,12 @@
   });
   function snapMove(id, x, y, w, h, skip) {
     var W = window.innerWidth, H = window.innerHeight;
-    var xs = [0, Math.round(W / 2 - w / 2), W - w], ys = [0, Math.round(H / 2 - h / 2), H - h];
+    // The edges and the middle of every screen (of the window, with one).
+    var xs = [], ys = [];
+    screenList(W, H).forEach(function (r) {
+      xs.push(r.x, Math.round(r.x + r.w / 2 - w / 2), r.x + r.w - w);
+      ys.push(r.y, Math.round(r.y + r.h / 2 - h / 2), r.y + r.h - h);
+    });
     Object.keys(_els).forEach(function (k) {
       if (k === id || (skip && skip[k])) return;
       var r = _els[k].root, ox = r.offsetLeft, oy = r.offsetTop, ow = r.offsetWidth, oh = r.offsetHeight;
@@ -1505,7 +1584,7 @@
   function moveTargets(info) {
     var out = [];
     _layout.panels.forEach(function (q) {
-      if (q.kind !== 'timers' || q.id === _rowPanel) return;
+      if (q.kind !== 'timers' || q.id === _rowPanel || q.gone) return;   // (a panel on a screen that is not here shows nothing)
       if (q.all && routeTimer(info, true) !== q.id) return;
       out.push(q);
     });
@@ -1976,7 +2055,8 @@
       if (need == null) return;
       var empty = need <= 0;
       if (!!_fitEmpty[p.id] !== empty) { if (empty) _fitEmpty[p.id] = true; else delete _fitEmpty[p.id]; e.root.classList.toggle('fitempty', empty); }
-      var b = fitBox(p.y, p.h, need, growsUp(p), H, p.kind === 'part' ? 16 : p.kind === 'overlay' ? 50 : 36);
+      var sr = screenAt(screenList(window.innerWidth, H), p.x * window.innerWidth + p.w / 2, p.y * H + p.h / 2);   // it grows within its own screen
+      var b = fitBox(p.y, p.h, need, growsUp(p), H, p.kind === 'part' ? 16 : p.kind === 'overlay' ? 50 : 36, sr.y, sr.y + sr.h);
       if (Math.abs(b.h - p.h) < 3) { _fitCreep[p.id] = 0; return; }
       // A page whose box tracks its frame reads frame + a few px after every fit: that is a loop, not a content
       // height. Six steps of that and the item is left alone for this session.
@@ -2850,9 +2930,13 @@
     return [];
   }
   function whereText(b) {
-    var W = window.innerWidth, H = window.innerHeight, cx = (b.x + b.w / 2) / W, cy = (b.y + b.h / 2) / H;
+    // Within the screen it is on, and which screen when there are several ("at the left of the right screen").
+    var W = window.innerWidth, H = window.innerHeight, list = screenList(W, H);
+    var r = screenAt(list, b.x + b.w / 2, b.y + b.h / 2), cx = (b.x + b.w / 2 - r.x) / r.w, cy = (b.y + b.h / 2 - r.y) / r.h;
     var v = cy < 0.34 ? 'top' : cy > 0.66 ? 'bottom' : 'middle', h = cx < 0.34 ? 'left' : cx > 0.66 ? 'right' : 'centre';
-    return v === 'middle' && h === 'centre' ? 'in the middle of the screen' : v === 'middle' ? 'at the ' + h + ' of the screen' : h === 'centre' ? 'at the ' + v + ' of the screen' : v + ' ' + h;
+    var t = v === 'middle' && h === 'centre' ? 'in the middle of the screen' : v === 'middle' ? 'at the ' + h + ' of the screen' : h === 'centre' ? 'at the ' + v + ' of the screen' : v + ' ' + h;
+    var side = screenSide(list, r);
+    return !side ? t : /screen$/.test(t) ? t.replace(/screen$/, side + ' screen') : t + ' of the ' + side + ' screen';
   }
   function boxOf(ps) {
     return groupBox(ps.filter(function (q) { return _els[q.id]; }).map(function (q) {
@@ -2861,7 +2945,10 @@
   }
   // Pulse them and say where. false when none of them is here to show.
   function locate(ps, label) {
+    var away = ps.some(function (q) { return q.gone; });
     ps = ps.filter(function (q) { return _els[q.id]; });
+    // Placed on a screen that is not connected: say so, rather than stacking a second copy it would then lose.
+    if (!ps.length && away) { note('“' + label + '” is on a screen that is not connected right now — it comes back with that screen.', 5000); return true; }
     if (!ps.length) return false;
     ps.forEach(function (q) {
       var r = _els[q.id].root;
@@ -3262,6 +3349,23 @@
   screenBtn.addEventListener('click', function () {
     try { if (M.canvasNextDisplay) M.canvasNextDisplay().then(loadState); } catch (e) {}
   });
+  // "Span all screens" (same switch as the tray and the dashboard). Off by default; greyed, with the reason in its
+  // tooltip, while the screens do not share one scaling. While it is on the Canvas covers every screen, so there
+  // is no "next screen" to go to.
+  var spanBtn = document.getElementById('spanBtn'), _spanOn = false;
+  spanBtn.addEventListener('click', function () {
+    try { if (M.canvasSpan) M.canvasSpan(!_spanOn).then(refresh); } catch (e) {}
+  });
+  function paintSpan(st) {
+    _spanOn = !!st.span;
+    spanBtn.style.display = (st.displays > 1 && M.canvasSpan) ? '' : 'none';
+    screenBtn.style.display = (st.displays > 1 && !st.span) ? '' : 'none';
+    spanBtn.disabled = !st.span && !!st.spanWhy;
+    spanBtn.style.opacity = spanBtn.disabled ? '0.5' : '';
+    spanBtn.classList.toggle('go', _spanOn);
+    spanBtn.textContent = '⇔ Span all screens: ' + (_spanOn ? 'ON' : 'off');
+    spanBtn.title = spanBtn.disabled ? 'Not available: ' + st.spanWhy : _spanOn ? 'The Canvas covers every screen. Click to go back to one screen.' : 'One Canvas across every screen, so panels can sit on any of them';
+  }
   // The Canvas default for Background: for items that have not chosen. Ctrl+Shift+B (main's backdrop hotkey)
   // flips the same flag, and main's push toggles the body class, which is what is watched here.
   var bgBtn = document.getElementById('bgBtn'), _bgSeen = null;
@@ -3308,19 +3412,37 @@
   document.getElementById('doneBtn').addEventListener('click', finishArranging);
 
   // ── State from main ─────────────────────────────────────────────────────────
+  // The layout is read again when what its fractions mean changes: the home resolution (as before), the screens
+  // and the window they are in (Span all screens, a monitor added or removed), or main rewrote it (rev).
+  function stateKey(st) {
+    return [st.res, st.rev || 0, JSON.stringify(st.screens || null), window.innerWidth, window.innerHeight].join('|');
+  }
+  // → the layout from disk as held in memory; null when none is saved for this state; false when edits not yet
+  // written were written first (the caller then waits for the state to be asked for again, so it is read AFTER them).
+  function adoptLayout(st) {
+    if (_saveT && _res) { clearTimeout(_saveT); doSave(); refresh(); return false; }
+    var W = window.innerWidth, H = window.innerHeight;
+    _screens = Array.isArray(st.screens) ? st.screens : null;
+    _conv = { list: screenList(W, H), W: W, H: H };
+    var disk = sanitize(st.layout);
+    return disk ? toWindow(disk, _conv.list, W, H) : null;
+  }
   function loadState(st) {
     if (!st) return;
     if (Array.isArray(st.overlays)) _overlays = st.overlays;
     var fresh = !st.layout;
-    if (st.res !== _res || !_res) {
-      _res = st.res;
-      _layout = sanitize(st.layout) || _layout || defaultLayout();
+    var key = stateKey(st);
+    if (key !== _res || !_res) {
+      var adopted = adoptLayout(st);
+      if (adopted === false) return;   // edits not yet saved were saved first; the state is asked for again
+      _res = key;
+      _layout = adopted || _layout || defaultLayout();
       // The whole-Canvas Background switch became each item's own: once, every item takes the value the
       // switch had, so nothing looks different after the update (main sends it as st.backdrop).
       if (migrateBack(_layout, !!st.backdrop)) save();
     }
     _arrange = !!st.edit;
-    screenBtn.style.display = (st.displays > 1) ? '' : 'none';
+    paintSpan(st);
     // Each saved group's key, and the ones another program holds (the chooser's chips).
     if (st.groupKeys) { _gkeys = st.groupKeys; _gblocked = st.groupKeysBlocked || {}; }
     render();

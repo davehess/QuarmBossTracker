@@ -24,6 +24,8 @@ const HEADERS = ['Behaviour', 'Mode', 'Account'];
 const UPDATES_LABEL = /^Updates( — v\S+ ready)?$/;
 // '🗂 Overlay sets' came over from alpha after layout B (the guild lead, 2026-10-14): a new submenu, not a moved item.
 const CONTAINERS = ['Settings', 'Updates', 'Open', 'Help', '🗂 Overlay sets'];
+// Items added since the snapshot that are features, not structure: "Span all screens" under the Canvas entry (2026-10-19).
+const NEW_ITEMS = [/^ {2}↳ Span all screens/];
 const isContainer = (label) => CONTAINERS.includes(label) || UPDATES_LABEL.test(label);
 
 const shown = (items) => items.filter((i) => i.type !== 'separator' && i.visible !== false);
@@ -212,6 +214,7 @@ describe('nothing lost, nothing changed, nothing sneaked in', () => {
       // ... and the only additions are the new structure
       const extra = now.filter((x) => !before.includes(x)).map((x) => JSON.parse(x));
       for (const e of extra) {
+        if (NEW_ITEMS.some((rx) => rx.test(e.label))) continue;
         expect(HEADERS.includes(e.label) || isContainer(e.label)).toBe(true);
         if (HEADERS.includes(e.label)) expect(e).toEqual({ label: e.label, enabled: false });
         else expect(e).toEqual({ label: e.label, submenu: true });

@@ -1187,6 +1187,8 @@ contextBridge.exposeInMainWorld('mimic', {
   canvasSave:        (layout) => ipcRenderer.invoke('canvas-save', layout),
   canvasEdit:        (on)     => ipcRenderer.invoke('canvas-edit', !!on),
   canvasNextDisplay: ()       => ipcRenderer.invoke('canvas-next-display'),
+  // "Span all screens": one Canvas over every monitor (same scaling only). → { ok, span, why }
+  canvasSpan:        (on)     => ipcRenderer.invoke('canvas-span', !!on),
   // The panel menu's "Background" row: the SAME writer as the shared overlay menu, Ctrl+Shift+B and the dashboard
   // button (main's wp-backdrop-toggle finds the key from the sender window). Resolves to the new on/off state.
   toggleBackdropThis: ()      => ipcRenderer.invoke('wp-backdrop-toggle'),

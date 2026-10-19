@@ -23925,6 +23925,7 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act wp-btn" data-act="lock" id="wpOvLockBtn">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="arrange" title="Arranging only ever runs when you click it — never automatically.">✨ Auto-arrange now</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="rescue" title="Lost an overlay off the edge of a screen? Brings back only the overlays you cannot reach, each to a free spot on the screen this window is on; nothing else moves. Overlays sitting on another screen come too only if you say yes. That screen becomes the overlays\\' home for future arranges.">🧲 Rescue to this screen</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="canvasSpan" id="wpOvSpanBtn" style="display:none" title="One Canvas across every screen, so its panels can sit on any of them. Needs every screen at the same Windows display scaling. The same switch as the tray and the Canvas&rsquo;s own toolbar.">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="mapMode" id="wpOvMapModeBtn" title="The Map as a window you place, or laid over EverQuest and click-through so you play straight through it (it keeps clear of your UI windows). The same switch as the Map&rsquo;s own toolbar button and the tray.">…</button>'
     + '</span>'
     + '</div>';
@@ -24857,6 +24858,16 @@ function wpRefreshOverlayToggles() {
         arBtn.textContent = st.canvasArrange ? '✓ Done arranging' : '✏ Arrange on screen';
         arBtn.className = 'wp-ov-act wp-btn pri' + (st.canvasArrange ? ' on' : '');
       }
+      // ⇔ Span all screens: as the tray item and the Canvas's own button. Greyed with the reason when the screens do
+      // not share one scaling (or there is one); an older Mimic does not report it: no button.
+      var spBtn = document.getElementById('wpOvSpanBtn');
+      if (spBtn) {
+        var spKnown = typeof st.canvasSpan === 'boolean';
+        spBtn.style.display = spKnown ? '' : 'none';
+        spBtn.disabled = !st.canvasSpan && !!st.canvasSpanWhy;
+        spBtn.className = 'wp-ov-act wp-btn' + (st.canvasSpan ? ' on' : '');
+        spBtn.textContent = spBtn.disabled ? '⇔ Span all screens — ' + st.canvasSpanWhy : '⇔ Span all screens: ' + (st.canvasSpan ? 'ON — back to one screen' : 'off');
+      }
       // 🗺 Map: Window ↔ Full, as the tray item and the Map's own button. An older Mimic does not report it: no button.
       var mmBtn = document.getElementById('wpOvMapModeBtn');
       if (mmBtn) {
@@ -25019,6 +25030,12 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
         }).catch(function(){});
       } else if (a === 'canvasArrange' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      // Same setter as the tray item and the Canvas's own button.
+      if (a === 'canvasSpan' && window.mimic.canvasSpan) {
+        window.mimic.canvasSpan(!act.classList.contains('on')).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
       // Same setter as the tray item and the Map's own button.
       if (a === 'mapMode' && window.mimic.setMapMode) {
         window.mimic.getStatus().then(function(st){
