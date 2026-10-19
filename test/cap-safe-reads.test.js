@@ -69,12 +69,16 @@ describe('1 · _refreshFocusHaste reads every equipped row (character_gear)', ()
   const BLOCK = sliceBlock(SRC, 'let _focusHasteByChar = null;', '    .finally(() => { _focusHasteInflight = false; });\n}');
   const load = () => evalSlice(BLOCK, ['refresh: _refreshFocusHaste', 'map: () => _focusHasteByChar'], {}, 'let _spellFxByName = null;');
 
-  // 120 characters × 13 worn slots = 1,560 equipped rows; every third item is a focus (worn spell
-  // with SPA 127), so a character's foci follow from the slots they wear. Plus noise the query
-  // must leave out: bank rows and another guild's gear.
+  // 120 characters × 13 worn slots = 1,560 equipped rows; every third item is a focus (focus_effect
+  // spell with SPA 127), so a character's foci follow from the slots they wear. The other items carry
+  // the same haste spell in worneffect — the old, wrong column — and must NOT count. Plus noise the
+  // query must leave out: bank rows and another guild's gear.
   function fixture() {
     const gear = [], items = [], spells = [], expected = new Map();
-    for (let i = 0; i < 400; i++) items.push({ id: 1000 + i, worneffect: i % 3 === 0 ? 5000 + (i % 7) : 0 });
+    for (let i = 0; i < 400; i++) {
+      items.push(i % 3 === 0 ? { id: 1000 + i, focus_effect: 5000 + (i % 7), worneffect: 0 }
+                             : { id: 1000 + i, focus_effect: 0, worneffect: 5000 + (i % 7) });
+    }
     for (let s = 0; s < 7; s++) spells.push({ id: 5000 + s, raw: { eff: [127], base: [15 + s] } });
     for (let c = 0; c < 120; c++) {
       let foci = 0;
