@@ -147,6 +147,13 @@ Buff queue / Extended Target routes answer `local_only: true` (the overlays labe
 pages live in the separate hesstastic repo (`eqmimic/`, `vercel.json`). Tests:
 `test/local-mode.test.js`, `test/public-catalog.test.js`.
 
+### Other EverQuest servers (agent 3.8.7, 2026-10-19; DECISIONS §377)
+**Agent:** `index.js` block "EverQuest servers" (`eqServerForLog`, `EQ_SERVERS`, `noteLogServer`,
+`_offGuildServerChar`): the log suffix names the server; only Quarm may feed the guild bot or use the Quarm catalog.
+Every log off-guild = token withheld at boot (local mode); mixed = `shouldUploadForCharacter` + `enqueueUpload` refuse
+the character; `fetchMobInfo` answers "no row" off-Quarm. **Mimic:** `EQ_LOG_OTHER_STEM_RX` in `main.js` finds the
+logs. Tests: `test/eq-family-servers.test.js`.
+
 ### Guild kit — the tenant config contract (`guild/`, 2026-09-18)
 **Slice 1a live (bot 3.1.129):** `_loadGuildDiscordJson` at the top of
 `index.js` reads `guild/discord.json` right after dotenv and fills only the
