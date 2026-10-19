@@ -15508,6 +15508,34 @@ function _targetPlayerTimers(st, cached, now) {
   return out.length ? out : null;
 }
 
+// Extended Target rows for PLAYERS carry the same timers (the guild lead, 2026-10-19, picked A for
+// DECISIONS §126, "say if this should also show on Extended Target rows"). Same source as Target
+// Info — _targetPlayerTimers — so a chip reads the same in both places. Raid / Group rows come
+// from the bot with kind 'player'; Self rows are all kind 'npc' (the agent does not know which of
+// the things you tabbed to were players), so on the Self tab a single-word name is tried and the
+// timer sources, which are keyed by player name, decide. The overlay asks with `timers=1` (when it
+// is showing players, or on Self), because a lookup of another raider's Mimic costs the bot a read.
+// At most EXT_TIMERS_FETCH_MAX such lookups per poll; each is cached for MT_LIVE_STATE_TTL_MS.
+// Never mutates the cached payload: a row with timers is a copy.
+const EXT_TIMERS_FETCH_MAX = 8;
+function _attachExtRowTimers(payload, now, fetchLive) {
+  if (!payload || !Array.isArray(payload.targets) || !payload.targets.length) return payload;
+  const selfScope = payload.scope === 'self';
+  let asked = 0, any = false;
+  const targets = payload.targets.map(t => {
+    if (!t || !t.name) return t;
+    if (!(t.kind === 'player' || (selfScope && (t.kind || 'npc') === 'npc'))) return t;
+    const k = String(t.name).trim().toLowerCase();
+    if (!k || /\s/.test(k)) return t;
+    if (!_meZealFor(k) && asked < EXT_TIMERS_FETCH_MAX) { asked++; try { fetchLive(t.name); } catch { /* cached / offline */ } }
+    const timers = _targetPlayerTimers({ target_name: t.name }, null, now);
+    if (!timers) return t;
+    any = true;
+    return { ...t, timers: timers.map(c => ({ key: c.key, label: c.label, ms_left: c.ms_left, est: !!c.est, source: c.source, level_known: c.level_known })) };
+  });
+  return any ? { ...payload, targets } : payload;
+}
+
 // The DIRGE NUKE board on the Melody overlay (the guild lead, 2026-09-26): the
 // pre-buffs it waits for that the bard strip does not carry, Puretone
 // Discipline (up now, or ready by the shared disc timer), and mana for the
@@ -34530,7 +34558,11 @@ function startWebDashboard(port) {
         if (/[?&]scope=self(?:&|$)/.test(req.url)) {
           const km = /[?&]keep=(\d+)/.exec(req.url);
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify(selfTargetPayload(selfCharacter, km ? km[1] : null, Date.now())));
+          let selfPayload = selfTargetPayload(selfCharacter, km ? km[1] : null, Date.now());
+          // A targeted player's timers ride their row (the overlay asks with timers=1).
+          try { if (/[?&]timers=1(?:&|$)/.test(req.url)) selfPayload = _attachExtRowTimers(selfPayload, Date.now(), fetchCharacterLiveState); }
+          catch { /* the chips are extra: never break the list */ }
+          return res.end(JSON.stringify(selfPayload));
         }
         fetchExtendedTarget(selfCharacter);
         const cached = _extTargetCache.get(String(selfCharacter || '').toLowerCase());
@@ -34598,6 +34630,10 @@ function startWebDashboard(port) {
             wantScope, _lastRaidPipe && _lastRaidPipe.members);
         }
         catch { /* scoping must never break the proxy — fall back to the zone view */ }
+        // A targeted player's timers ride their row (the overlay asks with timers=1). After the scoping,
+        // so only the rows that will be shown are looked up.
+        try { if (/[?&]timers=1(?:&|$)/.test(req.url)) outPayload = _attachExtRowTimers(outPayload, Date.now(), fetchCharacterLiveState); }
+        catch { /* the chips are extra: never break the proxy */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
       }
