@@ -116,6 +116,8 @@
   .trow .tm{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:12px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
   .trow .src{grid-column:1;color:#586069;font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .sec.watch{color:#f0b429}
+  .sec.engaged{color:#f0883e}
+  .trow.engaged{border-left-color:#f0883e;cursor:default} .trow.engaged .tm{color:#f0883e}
   .trow.watch .nm{font-weight:bold}
   .trow.corpse{border-left-color:#8b949e} .trow.corpse .tm{color:#8b949e}
   .trow.corpse.drag{border-left-color:#f0b429} .trow.corpse.drag .tm{color:#f0b429}
@@ -2680,6 +2682,21 @@
     else tg.textContent = '';
     var box = document.getElementById('lists');
     box.innerHTML = '';
+    // ⚔ Engaged on top (FB-89): the mobs raiders are on right now, with their health and how many are on each. From the
+    // agent's Extended Target rows; nothing on it changes between polls unless a number does.
+    var engaged = (P && P.engaged) || [];
+    if (engaged.length) {
+      box.appendChild(el('div', 'sec engaged', '⚔ Engaged (' + engaged.length + ')'));
+      engaged.forEach(function (g) {
+        var r = el('div', 'trow engaged');
+        var etm = el('span', 'tm', g.n + ' on it');
+        var ehp = hpTag(g.hp_pct);
+        if (ehp) etm.insertBefore(el('span', ehp.cls, ehp.text), etm.firstChild);
+        r.appendChild(el('span', 'nm', g.name)); r.appendChild(etm);
+        r.appendChild(el('span', 'src', g.spawn_id != null ? 'spawn #' + g.spawn_id : 'engaged'));
+        box.appendChild(r);
+      });
+    }
     // ★ Watched first (the guild lead, 2026-10-16): the named, its placeholder and spot, and the time. A watched spot is
     // listed here only, not again under Respawns / Up · seen.
     var wrows = watchedRows(S.watchBy, S.byId, S.timerBy, S.seenBy);

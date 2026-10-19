@@ -50218,6 +50218,21 @@ function _mapSeenHp(seen, rows, own) {
     s.hp_pct = hp;
   }
 }
+// The "Engaged" section at the top of the Map's timers list (FB-89, a raider: "add a section in the timers tab for
+// 'Engaged' mobs. put their HP there and how many are targetting them, similar to the Extended target overlay"). Reads the
+// same Extended Target rows as _mapSeenHp: live NPC rows (not stale) with at least one raider on them. Most-targeted first,
+// the more hurt mob ahead on a tie, then name and spawn id so the order never wobbles between polls. → [{ name, spawn_id,
+// hp_pct, n }], at most MAP_ENGAGED_MAX; spawn_id null and hp_pct null when the row had none.
+const MAP_ENGAGED_MAX = 12;
+function _mapEngaged(rows) {
+  const pct = (v) => (typeof v === 'number' && Number.isFinite(v)) ? Math.max(0, Math.min(100, Math.round(v))) : null;
+  return (Array.isArray(rows) ? rows : [])
+    .filter(t => t && t.kind === 'npc' && !t.stale && (Number(t.raider_count) || 0) >= 1 && t.name)
+    .map(t => ({ name: String(t.name), spawn_id: Number(t.spawn_id) > 0 ? Number(t.spawn_id) : null, hp_pct: pct(t.hp_pct), n: Number(t.raider_count) }))
+    .sort((a, b) => b.n - a.n || (a.hp_pct == null ? 101 : a.hp_pct) - (b.hp_pct == null ? 101 : b.hp_pct)
+      || a.name.localeCompare(b.name) || (a.spawn_id || 0) - (b.spawn_id || 0))
+    .slice(0, MAP_ENGAGED_MAX);
+}
 // How far the target's Area Rampage reaches ({ radius_still, radius_moving, chance, targets, damage_pct }, game units) and
 // its regular Rampage reaches ({ range, chance, damage_pct }), off the same cached mob-info row Target Info reads (a zone
 // pack on disk, else the bot's lookup, started here when nothing else has). Returns { ae, rampage }; either is null when
@@ -50240,7 +50255,7 @@ function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
@@ -50359,6 +50374,10 @@ function _mapStatePayload(have, now, haveLocal) {
     const ec = typeof _extTargetCache === 'undefined' ? null : _extTargetCache.get(String(character).trim().toLowerCase());
     _mapSeenHp(out.seen, ec && ec.payload && ec.payload.targets, out.target);
   } catch { for (const s of out.seen) s.hp_pct = null; }
+  try {   // the Engaged section (FB-89): the mobs raiders are on right now, from the same cache
+    const ec2 = typeof _extTargetCache === 'undefined' ? null : _extTargetCache.get(String(character).trim().toLowerCase());
+    out.engaged = _mapEngaged(ec2 && ec2.payload && ec2.payload.targets);
+  } catch { out.engaged = []; }
   // Not your target: where the raid's shared targets (the bot, _mapApplyShared) put a mob of that name. The most-targeted
   // row when several share the name and no spawn id was given; a row older than two minutes is not a position.
   if (out.focus && out.focus.x == null) {
