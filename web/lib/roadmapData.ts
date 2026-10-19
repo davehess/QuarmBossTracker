@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-9-12-2026-10-19',
+    title: 'Gear upgrades for your characters',
+    version: 'Web 1.9.12',
+    date: '2026-10-19',
+    headline: 'A new page shows, for each worn slot, the best upgrades that exist right now, scored for your class, and where they drop or sell.',
+    features: [
+      { name: 'Gear upgrades (beta)', blurb: 'Pick one of your characters and see what is worn in every slot with the three best swaps. Each one is scored for your class, says what it changes, and tells you the zone and mob it drops from or the vendor that sells it.' },
+      { name: 'Your wishlist and your bags', blurb: 'An upgrade that is already on your wishlist is marked, and one already sitting in your bags is called out so you can just put it on.' },
+      { name: 'Respects the caps', blurb: 'Attack stops counting at 250 worn, haste does not stack, and magic resist counts for more until you reach the raid floor of 100.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'bot-3-2-6-2026-10-19',
     title: 'Halls of Honor trials on the hail board',
     version: 'Web 1.9.6 · Bot 3.2.6 · Agent 3.8.4 beta',
