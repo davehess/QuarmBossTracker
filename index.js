@@ -16528,11 +16528,14 @@ function _castingOnTarget(name) {
 }
 
 // ── Focus spell-haste from Quarmy gear ──────────────────────────────────────
-// characterLower → [{ pct, minCastMs, minDurTicks, beneficialOnly }] decoded
-// from equipped items' worn effects (SPA 127 + limit slots 138/140/143; the
+// characterLower → [{ pct, minCastMs, minDurTicks, beneficialOnly, detrimentalOnly }]
+// decoded from equipped items' FOCUS effects (SPA 127 + limit slots 138/140/143; the
 // max-spell-level limit 134 is skipped — we don't track per-class spell
 // levels, and in-era casts are below the cap anyway). Source: character_gear
-// (the member's own Quarmy export) ⨯ eqemu_items.worneffect ⨯ eqemu_spells.
+// (the member's own Quarmy export) ⨯ eqemu_items.focus_effect ⨯ eqemu_spells.
+// ⚠ focus_effect, NOT worneffect (the guild lead, 2026-10-19, DECISIONS §383 / §155): a spell-haste
+// focus is stored in the item's focus slot. This used to read worneffect and found none, though
+// ~180 haste foci are held by ~100 characters, so every one of their cast bars ran long.
 // Only known for raiders whose owners run the gear sync — absence = no
 // adjustment, which just leaves the old (catalog-speed) behavior.
 let _focusHasteByChar = null;
@@ -16551,6 +16554,7 @@ function _focusHastePctFor(caster, spell, baseCastSecs) {
   let best = 0;
   for (const f of foci) {
     if (f.beneficialOnly && !(fx && fx.good === 1)) continue;
+    if (f.detrimentalOnly && !(fx && fx.good === 0)) continue;
     if (f.minCastMs && baseCastMs < f.minCastMs) continue;
     if (f.minDurTicks && !(fx && (fx.dur || 0) >= f.minDurTicks)) continue;
     if (f.pct > best) best = f.pct;
@@ -16583,16 +16587,16 @@ function _refreshFocusHaste() {
     if (!Array.isArray(gear)) { backoff(); return; }
     if (gear.length === 0) { _focusHasteByChar = new Map(); _focusHasteAt = Date.now(); return; }
     const itemIds = [...new Set(gear.map(g => g && g.item_id).filter(Boolean))];
-    // item → worn-effect spell id (chunked in() lists keep the URLs sane)
+    // item → focus-effect spell id (chunked in() lists keep the URLs sane)
     const wornByItem = new Map();
     for (let i = 0; i < itemIds.length; i += 150) {
       const chunk = itemIds.slice(i, i + 150);
       const rows = await supabase.select('eqemu_items',
-        `id=in.(${chunk.join(',')})&select=id,worneffect`);
+        `id=in.(${chunk.join(',')})&select=id,focus_effect`);
       // A failed chunk throws to the catch below: a map built without it would
       // be cached as the whole truth.
       if (!Array.isArray(rows)) throw new Error('eqemu_items chunk read failed');
-      for (const r of rows) if (r && r.worneffect > 0) wornByItem.set(r.id, r.worneffect);
+      for (const r of rows) if (r && r.focus_effect > 0) wornByItem.set(r.id, r.focus_effect);
     }
     const spellIds = [...new Set(wornByItem.values())];
     const fociBySpell = new Map();   // spell id → focus decode (or null)
@@ -16603,7 +16607,7 @@ function _refreshFocusHaste() {
       if (!Array.isArray(rows)) throw new Error('eqemu_spells chunk read failed');
       for (const sp of rows) {
         if (!sp || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
-        let pct = 0, minCastMs = 0, minDurTicks = 0, beneficialOnly = false;
+        let pct = 0, minCastMs = 0, minDurTicks = 0, beneficialOnly = false, detrimentalOnly = false;
         for (let j = 0; j < sp.raw.eff.length; j++) {
           const eff = sp.raw.eff[j];
           const base = (sp.raw.base && sp.raw.base[j]) || 0;
@@ -16611,8 +16615,9 @@ function _refreshFocusHaste() {
           if (eff === 143 && base > 0) minCastMs = base;      // Limit: Min Cast Time (ms)
           if (eff === 140 && base > 0) minDurTicks = base;    // Limit: Min Duration (ticks)
           if (eff === 138 && base === 1) beneficialOnly = true;
+          if (eff === 138 && base === 0) detrimentalOnly = true;   // Affliction Haste: detrimental spells only
         }
-        if (pct > 0) fociBySpell.set(sp.id, { pct, minCastMs, minDurTicks, beneficialOnly });
+        if (pct > 0) fociBySpell.set(sp.id, { pct, minCastMs, minDurTicks, beneficialOnly, detrimentalOnly });
       }
     }
     const m = new Map();
@@ -16626,7 +16631,7 @@ function _refreshFocusHaste() {
     }
     _focusHasteByChar = m;
     _focusHasteAt = Date.now();
-    console.log(`[focus-haste] refreshed: ${m.size} characters with worn spell-haste foci`);
+    console.log(`[focus-haste] refreshed: ${m.size} characters with equipped spell-haste foci`);
   })().catch(e => { console.warn('[focus-haste] refresh failed:', e && e.message); backoff(); })
     .finally(() => { _focusHasteInflight = false; });
 }
