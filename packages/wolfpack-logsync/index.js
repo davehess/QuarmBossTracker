@@ -34199,6 +34199,13 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_fightHistoryPayload(have)));
       }
+      // Target Info's pager and Recent tab: the mobs this PC targeted, newest first; `key` adds that entry's mob.
+      if (req.url && (req.url === '/api/target-history' || req.url.indexOf('/api/target-history?') === 0)) {
+        let have = '', key = '';
+        try { const q = new URL(req.url, 'http://x').searchParams; have = q.get('rev') || ''; key = q.get('key') || ''; } catch { /* */ }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(_targetHistoryPayload(have, key)));
+      }
       // The dashboard's 📈 My parses tab: the guild's record of THIS raider's fights, proxied from the bot and
       // cached 5 minutes per (window, scope, character, zone, search). Always 200 with an `error` field on a
       // miss — the dashboard reads the body without checking the status. Local mode answers signed_out with no
@@ -35601,6 +35608,8 @@ function startWebDashboard(port) {
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
           // The fight's mob seen dead in the target window: split the DPS/Tank Meter's fight there.
           try { _noteMobDeathFromState(character, prevState, st); } catch (e) { void e; }
+          // Target Info's pager and Recent tab: the mobs this PC has targeted, and whether each died.
+          try { _tgtHistNoteFromState(character, prevState, _zealState[character], Date.now()); } catch (e) { void e; }
           // Spawn map: first sightings off target_loc, and a mob seen dead starts its respawn window.
           try { _mapNoteState(character, prevState, _zealState[character], Date.now()); } catch (e) { void e; }
           // #205 — group member HP hitting (and holding) zero is death evidence
@@ -42459,6 +42468,193 @@ function _startFightHistoryPersistence() {
   _loadFightHistory();
   _resettleRestoredFights();
   _fightsPersist = true;
+}
+
+// ── Target history (Target Info's pager and Recent tab) ─────────────────────
+// The guild lead, 2026-10-04: "Target Info would be good to have a history (and filter for if we killed
+// it or not) forward/back button ... so we could scroll back through these mobs and see the drops"
+// (picked as the Pager, Decision Desk 2026-10-19; docs/DESIGN-history-and-quest-nav.md §1).
+// The last 50 mobs this PC targeted, newest first: zone, spawn id, name, first and last seen, lowest HP
+// and whether it was seen to die. Local only (nothing here is uploaded), about 12 KB, and kept for 24 hours
+// across a restart in a file of its own. Spawn ids restart with every zone visit, so an entry restored from
+// disk is marked `restored` and never joined to a live frame.
+// "Killed" comes from, best first: the target turned into a corpse that carries the same spawn id; into a
+// same-name corpse; its bar went from above zero to 0; a "slain" line named it. Whether an NPC corpse keeps
+// the mob's spawn id is unmeasured on Quarm, so both corpse readings are kept and the entry says which.
+const TGT_HIST_MAX = 50;
+const TGT_HIST_KEEP_MS = 24 * 60 * 60 * 1000;
+const TGT_HIST_TOUCH_MS = 30_000;          // how often a steady target's "last seen" is rewritten (and the file saved)
+const TGT_HIST_NOID_GAP_MS = 2 * 60_000;   // a frame with no spawn id joins a same-name entry seen this recently
+const TGT_FILE = path.join(__dirname, 'logsync.targets.json');
+const _TGT_CORPSE_RX = /[`'’]s\s+corpse\d*$/i;
+let _tgtHist = [];                         // newest first (by lastMs)
+let _tgtFile = TGT_FILE;                   // a test points this at a temp file
+let _tgtPersist = false;
+let _tgtSaveTimer = null;
+let _tgtRev = 0;
+const _TGT_BOOT = Date.now().toString(36);
+const _tgtCur = new Map();                 // character (lower) → key of the entry its target window is on now
+function _tgtRevision() { return _TGT_BOOT + '.' + _tgtRev; }
+function _tgtChanged() {
+  _tgtRev++;
+  if (!_tgtPersist || _tgtSaveTimer) return;
+  _tgtSaveTimer = setTimeout(() => { _tgtSaveTimer = null; _saveTargetHistory(); }, 5_000);
+  if (_tgtSaveTimer.unref) _tgtSaveTimer.unref();
+}
+function _saveTargetHistory(file = _tgtFile) {
+  try {
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ savedAt: Date.now(), targets: _tgtHist }));
+    fs.renameSync(file + '.tmp', file);
+  } catch { /* non-fatal */ }
+}
+function _trimTargetHistory(now = Date.now()) {
+  const keep = _tgtHist.filter(e => e && now - (e.lastMs || 0) <= TGT_HIST_KEEP_MS);
+  keep.sort((a, b) => b.lastMs - a.lastMs);
+  if (keep.length > TGT_HIST_MAX) keep.length = TGT_HIST_MAX;
+  _tgtHist = keep;
+}
+function _loadTargetHistory(file = _tgtFile, now = Date.now()) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!raw || !Array.isArray(raw.targets)) return;
+    _tgtHist = raw.targets.filter(e => e && e.name && e.key && Number(e.lastMs) > 0).map(e => ({ ...e, restored: true }));
+    _trimTargetHistory(now);
+    _tgtCur.clear();
+    _tgtRev++;
+  } catch { /* no file yet, or unreadable: start empty */ }
+}
+function _startTargetHistoryPersistence() {
+  _loadTargetHistory();
+  _tgtPersist = true;
+}
+// The entry a target frame belongs to, or null. A spawn id is exact; with no id (an older Zeal, or 0) a
+// same-name entry seen in the last 2 minutes stands in. Restored entries are never joined.
+function _tgtFind(zone, id, nameLower, now) {
+  for (const e of _tgtHist) {
+    if (e.restored || e.zone !== zone || String(e.name).toLowerCase() !== nameLower) continue;
+    if (id > 0 && e.id > 0) { if (e.id === id) return e; continue; }
+    if (now - e.lastMs <= TGT_HIST_NOID_GAP_MS) return e;
+  }
+  return null;
+}
+// A corpse frame's mob: the open (not yet killed) entry of that name in the zone, the same spawn id first.
+function _tgtOpenByName(zone, nameLower, id) {
+  let byName = null;
+  for (const e of _tgtHist) {
+    if (e.restored || e.killedMs || e.zone !== zone || String(e.name).toLowerCase() !== nameLower) continue;
+    if (id > 0 && e.id === id) return e;
+    if (!byName) byName = e;
+  }
+  return byName;
+}
+function _tgtMarkKilled(e, now, how) {
+  if (!e || e.killedMs) return false;
+  e.killedMs = now;
+  e.killedHow = how;
+  return true;
+}
+// Every Zeal frame for a character (prev = the one before it). Cheap: one list walk of at most 50.
+function _tgtHistNoteFromState(character, prev, next, now = Date.now()) {
+  if (!character) return;
+  const cl = String(character).toLowerCase();
+  const raw = next && next.target_name ? String(next.target_name).replace(/^#/, '').trim() : '';
+  let changed = false;
+  let e = null;
+  if (raw) {
+    const zone = Number.isFinite(Number(next.zone)) ? Number(next.zone) : null;
+    const id = Number(next.target_id) > 0 ? Number(next.target_id) : 0;
+    const hp = (typeof next.target_hp_pct === 'number' && Number.isFinite(next.target_hp_pct)) ? Math.round(next.target_hp_pct) : null;
+    const base = raw.replace(_TGT_CORPSE_RX, '');
+    if (base !== raw) {
+      // The target became "<mob>'s corpse": the mob is dead. (A player's corpse finds no open entry: players are never recorded.)
+      const c = _tgtOpenByName(zone, base.toLowerCase(), id);
+      if (c && _tgtMarkKilled(c, now, id > 0 && c.id === id ? 'corpse-id' : 'corpse-name')) changed = true;
+    } else if (next.target_type == null ? /\s/.test(raw) : Number(next.target_type) === 1) {
+      // An NPC. (A frame with no type is taken for one only when the name has a space: "a gnoll" is a mob, "Aldenmar" may be a raider.)
+      e = _tgtFind(zone, id, raw.toLowerCase(), now);
+      if (e && e.killedMs && hp != null && hp > 0) e = null;   // a killed spawn standing up again is a new one
+      if (!e) {
+        e = { key: (zone == null ? 'x' : zone) + '#' + id + '#' + now.toString(36) + '#' + raw.toLowerCase(), zone, zoneName: _zoneName(zone), id: id || null,
+              name: raw, ch: character, firstMs: now, lastMs: now, minHp: hp, hp, killedMs: null, killedHow: null };
+        _tgtHist.unshift(e);
+        changed = true;
+      } else if (hp != null) {
+        e.hp = hp;
+        if (e.minHp == null || hp < e.minHp) { e.minHp = hp; changed = true; }
+      }
+      // Its bar went from above zero to 0 under the same name (and id, when both frames carry one): it died in the target window.
+      if (hp === 0 && !e.killedMs && prev && typeof prev.target_hp_pct === 'number' && prev.target_hp_pct > 0
+          && String(prev.target_name || '').replace(/^#/, '').trim().toLowerCase() === raw.toLowerCase()
+          && !(Number(prev.target_id) > 0 && id > 0 && Number(prev.target_id) !== id)) {
+        if (_tgtMarkKilled(e, now, 'hp0')) changed = true;
+      }
+    }
+  }
+  // "Last seen": stamped when the window moves onto or off a mob, and every 30 s while it stays on one.
+  const curKey = _tgtCur.get(cl);
+  if (e) {
+    if (curKey !== e.key) { e.lastMs = now; changed = true; }
+    else if (now - e.lastMs >= TGT_HIST_TOUCH_MS) { e.lastMs = now; changed = true; }
+    _tgtCur.set(cl, e.key);
+  } else {
+    _tgtCur.delete(cl);
+  }
+  if (curKey && (!e || e.key !== curKey)) {
+    const old = _tgtHist.find(x => x.key === curKey);
+    if (old && old.lastMs < now) { old.lastMs = now; changed = true; }
+  }
+  if (changed) { _trimTargetHistory(now); _tgtChanged(); }
+}
+// "<Mob> has been slain by …" / "You have slain <Mob>!" from a live log line: the newest open entry of that
+// name seen in the last 3 minutes died. The target-window readings above usually got there first.
+function _tgtHistNoteSlain(deadName, now = Date.now()) {
+  const want = String(deadName || '').replace(/^#/, '').trim().toLowerCase();
+  if (!want || want === 'you') return;
+  const e = _tgtHist.find(x => !x.restored && !x.killedMs && String(x.name).toLowerCase() === want && now - x.lastMs <= 3 * 60_000);
+  if (e && _tgtMarkKilled(e, now, 'slain')) { _trimTargetHistory(now); _tgtChanged(); }
+}
+// Which entry the live target is, for the overlay to skip it while paging (null when it has none).
+function _tgtLiveKey(st, now = Date.now()) {
+  if (!st || !st.target_name) return null;
+  const zone = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
+  const e = _tgtFind(zone, Number(st.target_id) > 0 ? Number(st.target_id) : 0, String(st.target_name).replace(/^#/, '').trim().toLowerCase(), now);
+  return e ? e.key : null;
+}
+// A past mob in the shape buildMobInfo gives a live one, so the overlay paints it with the same code: the
+// catalog row for its name in its zone (the one Target Info reads, fetched if it is not cached), HP at the
+// lowest it was seen (0 when it died), and nothing for what only a live target has (buffs, casts, mana, slow).
+function _pastMobInfo(e, now = Date.now()) {
+  if (!e) return null;
+  const zone = e.zone != null ? e.zone : null;
+  const mobKey = _mobInfoCacheKey(e.name, zone);
+  let cached = _mobInfoByName.get(mobKey);
+  if (!cached || (now - cached.at) >= MOB_INFO_TTL_MS) {
+    fetchMobInfo(e.name, e.ch || '', zone);
+    cached = _mobInfoByName.get(mobKey) || cached;
+  }
+  return {
+    target_name: e.name,
+    target_hp_pct: e.killedMs ? 0 : (e.minHp != null ? e.minHp : null),
+    target_hp_cur: null, target_hp_max: null,
+    mob: cached ? cached.mob : null,
+    loading: !cached,
+    target_buffs: [], target_is_pc: false, target_slots: null, target_casting: [], target_slow: null,
+    target_mana: null, target_lastcast: null, target_player: null, target_npc_ht: null, target_timers: null,
+    target_lull: lullVerdictFor(e.name, zone),
+    target_hits: mobHitTypesFor(e.name),
+    target_hist_key: e.key,
+    past: { key: e.key, firstMs: e.firstMs, lastMs: e.lastMs, minHp: e.minHp, killedMs: e.killedMs || null, killedHow: e.killedHow || null, restored: !!e.restored },
+  };
+}
+// GET /api/target-history[?rev=…][&key=…] — the list the pager and the Recent tab read. An unchanged list
+// answers in a few bytes; `key` asks for that entry's mob too (only while the overlay is showing a past one).
+function _targetHistoryPayload(haveRev, key, now = Date.now()) {
+  const rev = _tgtRevision();
+  const out = { rev, max: TGT_HIST_MAX };
+  if (haveRev && haveRev === rev) out.unchanged = true;
+  else out.targets = _tgtHist.map(e => { const { ch, ...rest } = e; void ch; return rest; });
+  if (key) out.mi = _pastMobInfo(_tgtHist.find(x => x.key === key), now);
+  return out;
 }
 
 // ── Fun-event detection ─────────────────────────────────────────────────────
@@ -53566,6 +53762,8 @@ function buildMobInfo() {
     // How this mob hits, from the melee verbs seen: { seen, slash, pierce, blunt, max, verbs } or
     // null until one was seen (noteMobMelee). Local only; the overlay draws nothing for null.
     target_hits:    mobHitTypesFor(st.target_name),
+    // Which Target Info history entry this target is, so the pager steps past it (null when none).
+    target_hist_key: _tgtLiveKey(st),
   };
 }
 
@@ -58568,6 +58766,7 @@ async function main() {
   // The DPS meter's History: its own file, 7 days, loaded here and NOT consumed (the session snapshot
   // below is deleted when read and expires after 10 minutes). After _uploadOpts is set above, so a
   // restored fight the guild never answered for can be asked about again.
+  _startTargetHistoryPersistence();   // Target Info's pager list (logsync.targets.json, 24 h), beside the fight ring
   _startFightHistoryPersistence();
   // Restore in-flight session state if the previous run snapshotted within the
   // last 10 minutes (typical for [U] update-and-restart, or quick Ctrl+C).
@@ -59481,7 +59680,12 @@ async function main() {
         // (a --since backfill replays old ones; _mapNoteLogDeath drops anything over a minute old).
         try {
           const _mapDead = _deadMobNameFromLine(line);
-          if (_mapDead) { const _ts = parseEqTimestamp(line); _mapNoteLogDeath(_mapDead, b.character, _ts ? _ts.getTime() : NaN, Date.now()); }
+          if (_mapDead) {
+            const _ts = parseEqTimestamp(line);
+            _mapNoteLogDeath(_mapDead, b.character, _ts ? _ts.getTime() : NaN, Date.now());
+            // Target Info's history: the same line settles a mob whose death the target window never showed (live lines only).
+            if (!_ts || Date.now() - _ts.getTime() <= 60000) _tgtHistNoteSlain(_mapDead, Date.now());
+          }
         } catch { /* never let a bad line break the tail */ }
         // #205 — "<Name> dies." is the FEIGN emote (never a death; see
         // test/feign-death-not-a-death.test.js). Nothing else in the agent
@@ -59693,6 +59897,10 @@ module.exports = {
   // Meter History on disk + its own endpoint (2026-10-04).
   FIGHT_HISTORY_MAX, FIGHT_HISTORY_KEEP_MS, _saveFightHistory, _loadFightHistory, _resettleRestoredFights,
   _fightHistoryPayload, _setUploadOptsForTest: (o) => { _uploadOpts = o; },
+  // Target Info history (2026-10-19): the last 50 targets, the frame hook, the slain-line hook, the past-mob shape and its endpoint.
+  TGT_HIST_MAX, TGT_HIST_KEEP_MS, _tgtHistNoteFromState, _tgtHistNoteSlain, _targetHistoryPayload, _pastMobInfo,
+  _saveTargetHistory, _loadTargetHistory, _trimTargetHistory,
+  _tgtHistForTest: () => _tgtHist, _tgtHistResetForTest: () => { _tgtHist = []; _tgtCur.clear(); },
   // Kite loops (2026-10-15): the Map's summary gate + queue, the guild's loops in, and the queue the summary lands in.
   _kiteLoopSubmit, _kiteLoopBody, _kiteLoopsClean, _kiteLoopsFor, _kiteLoopCache, _handleKiteLoopPost, _handleKiteLoopsGet,
   _uploadQueueForTest: () => _uploadQueue, _applyCharacterPrefsResponse, _applyControlPlane,
