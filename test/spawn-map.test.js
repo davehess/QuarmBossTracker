@@ -1811,7 +1811,7 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       expect(c._mapPinGet('thedeep', 9)).toMatchObject({ point_id: 1 });
       watch(c, s);
       const p = c._mapStatePayload('', N + 1000);
-      expect(p.seen).toEqual([{ point_id: 1, spawn_id: 9, name: 'a decaying skeleton', at: N, by: null }]);
+      expect(p.seen).toEqual([{ point_id: 1, spawn_id: 9, name: 'a decaying skeleton', at: N, by: null, hp_pct: 100 }]);   // hp_pct: your own target, pinned to that point (FB-87)
       expect(p.target.point_id).toBe(1);
     });
     it('an ambiguous spot pins nothing: no pin, no seen, no target.point_id, nothing queued', () => {
@@ -2104,7 +2104,7 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
     });
     it('seen / empty / up / clear from the guild, each only when newer', () => {
       c._mapApplyRemote('thedeep', [ev({ point_id: 3, kind: 'seen', at: T0 + 1000, by: 'Corvale' })], NOWR);
-      expect(state().seen).toEqual([{ point_id: 3, spawn_id: 5, name: 'a decaying skeleton', at: T0 + 1000, by: 'Corvale' }]);
+      expect(state().seen).toEqual([{ point_id: 3, spawn_id: 5, name: 'a decaying skeleton', at: T0 + 1000, by: 'Corvale', hp_pct: null }]);
       c._mapApplyRemote('thedeep', [ev({ point_id: 3, kind: 'died', at: T0 + 2000 })], NOWR);
       expect(state().seen).toEqual([]);
       expect(state().timers).toEqual([expect.objectContaining({ point_id: 3, by: 'Brackwyn' })]);

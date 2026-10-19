@@ -125,6 +125,8 @@
   .trow.up{border-left-color:#56d364} .trow.up .tm{color:#56d364;font-weight:bold}
   .trow.q{border-left-color:#d2a8ff} .trow.q .tm{color:#d2a8ff}
   .trow.seen{border-left-color:#56d364;background:rgba(86,211,100,0.12)} .trow.seen .tm{color:#56d364}
+  .trow .tm .hp{font-size:10px;font-weight:bold;margin-right:5px}
+  .trow .tm .hp.hi{color:#56d364} .trow .tm .hp.mid{color:#f0b429} .trow .tm .hp.lo{color:#f87171}
   #empty{color:rgba(255,255,255,0.45);font-size:10px;padding:2px 4px}
   #foot{font-size:9px;color:#6e7681;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* drag/lock/setup - same pattern as the other overlays. */
@@ -422,6 +424,13 @@
     });
     return best ? prettyNpc(best) : null;
   }
+  // The health chip on an alive row (FB-87): "NN%", tiered like Extended Target (60+ hi, 30+ mid, below lo). null when the
+  // agent sent no health, so the row stays as it was. The text changes only when the number does.
+  function hpTag(hp) {
+    if (hp == null || !isFinite(Number(hp))) return null;
+    var n = Math.round(Number(hp));
+    return { text: n + '%', cls: 'hp ' + (n >= 60 ? 'hi' : n >= 30 ? 'mid' : 'lo') };
+  }
   // The "★ Watched" section: one row per watched spot that the zone data knows, soonest timer first, spots with no timer after.
   function watchedRows(watched, byId, timerBy, seenBy) {
     var rows = [];
@@ -429,7 +438,7 @@
       var p = byId && byId[pid];
       if (!p) return;
       var w = watched[pid] || {}, t = (timerBy && timerBy[pid]) || null;
-      rows.push({ pid: pid, p: p, named: w.named || bestName(p), by: w.by || null, t: t, up: !!(seenBy && seenBy[pid]), ph: placeholderName(p, w.named, t) });
+      rows.push({ pid: pid, p: p, named: w.named || bestName(p), by: w.by || null, t: t, up: !!(seenBy && seenBy[pid]), hp: seenBy && seenBy[pid] ? seenBy[pid].hp_pct : null, ph: placeholderName(p, w.named, t) });
     });
     return rows.sort(function (a, b) {
       return (a.t ? a.t.earliest : Infinity) - (b.t ? b.t.earliest : Infinity) || Number(a.pid) - Number(b.pid);
@@ -2679,7 +2688,10 @@
       wrows.forEach(function (w) {
         var r = el('div', 'trow watch ' + (w.t ? timerState(w.t, now) : w.up ? 'seen' : '')); r.setAttribute('data-wp-interact', '');
         if (w.by) r.title = 'watched by ' + w.by;
-        r.appendChild(el('span', 'nm', w.named)); r.appendChild(el('span', 'tm', w.t ? timerText(w.t, now) : w.up ? 'up' : 'watching'));
+        var wtm = el('span', 'tm', w.t ? timerText(w.t, now) : w.up ? 'up' : 'watching');
+        var whp = !w.t && w.up ? hpTag(w.hp) : null;
+        if (whp) wtm.insertBefore(el('span', whp.cls, whp.text), wtm.firstChild);
+        r.appendChild(el('span', 'nm', w.named)); r.appendChild(wtm);
         r.appendChild(el('span', 'src', 'PH: ' + (w.ph || '—') + ' · spot #' + w.pid));
         r.addEventListener('click', function () { centreOn(w.p); });
         box.appendChild(r);
@@ -2702,7 +2714,10 @@
       box.appendChild(el('div', 'sec', 'Up · seen (' + seenList.length + ')'));
       seenList.forEach(function (s) {
         var r = el('div', 'trow seen'); r.setAttribute('data-wp-interact', '');
-        r.appendChild(el('span', 'nm', s.name || 'a mob')); r.appendChild(el('span', 'tm', fmtDur(now - s.at) + ' ago'));
+        var stm = el('span', 'tm', fmtDur(now - s.at) + ' ago');
+        var shp = hpTag(s.hp_pct);
+        if (shp) stm.insertBefore(el('span', shp.cls, shp.text), stm.firstChild);
+        r.appendChild(el('span', 'nm', s.name || 'a mob')); r.appendChild(stm);
         r.appendChild(el('span', 'src', (s.spawn_id != null ? 'spawn #' + s.spawn_id : 'pinned') + (s.by ? ' · by ' + s.by : '')));
         r.addEventListener('click', function () { centreOn(S.byId[String(s.point_id)]); });
         box.appendChild(r);
