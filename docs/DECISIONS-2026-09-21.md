@@ -114,6 +114,9 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | All recommendations taken; slice-0 draft lost (never pushed) | a session: redo slice 0 (portable layout + set fork-on-save) on beta, then slice 1 (publish → Gallery tab → add as a new set) — 3.0 stable waits on slice 1 |
+| **FB-84 death log before a death** (§373) | Scoped: A local recap (recommended first slice), B web per-death panel, C extend heal gaps/timeline | the guild lead: pick A/B/C (with samples) before any build |
+| **Raid night 2026-10-18 fixes** (§373) | Live: bot 3.2.6 (HoH trial cards, pet filter, flag counter, named-boss list); beta agent 3.8.4 + Mimic DPS Sec rule (rez NPC fix, trial credit lines, three rampagers) | the guild lead: look over `data/named-bosses.json` for missing or unwanted nameds; next Command Center change fixes the hail-cap tooltip wording |
 | **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: A (keep, recommended) or B (zone gate, agent change on beta) — B brings back the "hits the tank" bar but our own nukes in the named's zone would start it again |
 | **Voice volume for spoken callouts** (no § yet) | There is none: trigger sounds have a slider, speech always plays at full volume (Windows, Piper and Kokoro) | the guild lead: yes/no on a Voice volume slider in the dashboard's 🗣 Voice tab, beside speed and pitch (Mimic beta) |
 | **raidmimic.com — the guild leaders' door** (§370) | Page live at `wolfpack.quest/raidmimic` marked [beta], layouts A (default) and B (`?v=b`). All six raidmimic hosts are on Vercel as 307s to eqmimic.quest; DNS is still Porkbun's parking page | the guild lead: pick A or B; at Porkbun, set apex A `216.198.79.1` and `www` CNAME `cname.vercel-dns.com` on all three domains (delete the parking records); then a session removes the six Vercel redirects so the page serves on raidmimic.com |
@@ -11664,3 +11667,63 @@ multi-word names are). A raider then tapped it, so it showed under "Hailed" as a
 (`guildOnly`); a failed read keeps the names. Test: `test/hail-board.test.js`. **Not fixed here:** the same unowned
 pet still counts as a player in the parse and `encounter_players` (the attribution in `index.js` near the "direct
 player damage" branch); that is its own task.
+
+### 373. Raid night 2026-10-18: Halls of Honor trials, a rez-board NPC, three rampagers (bot 3.2.3–3.2.6, agent 3.8.2–3.8.4)
+Shipped live during the raid at the guild lead's request (*"can we push this during the raid as a hotfix"*, then
+*"do it on beta too"*); the rest held until *"raid is complete"*.
+- **HoH trial hail cards (bot 3.2.3 + 3.2.4, `[hotfix]`).** *"we did not get credit on the command center for this trial
+  hailing - we should do it for each HoH trial."* `utils/hailBoard.js` `HAIL_TRIALS`: Trydan Faye opens on Rydda`Dar's
+  death; Rhaliq Trell when all 12 villager attackers have died; Alekson Garn when Advocent Joran, Halgoz Rellinic and
+  Freegan Haun have all died (`noteTrialKill`, within 15 min). 10-minute windows (the zone scripts' depop). 3.2.3 named the
+  NPCs "Trydan Faye (trial 1)", which the agent's `_hailNpcWanted` never matches, so 3.2.4 made them bare — a window's
+  `npc_name` must be the NPC's exact name. Trial 3 opened on the night and credited 59 raiders.
+- **Trial credit lines (agent 3.8.3, beta).** The agent reads "An ethereal mist … the power of <NPC>." as a grant
+  (`kind:'trial'`) and "You have already received credit for completing this trial." (the same words for all three) as
+  held credit, naming the NPC this character hailed in the last 30 s. The bot: `utils/popFlagStages.js` `resolveTrial`,
+  source `credit` in `PROOF_SOURCES`. Old agents send neither.
+- **The dragon on the needs-rez board (agent 3.8.2, beta).** *"The dragon is on this list."* `isConfirmedPlayer` now
+  refuses any name that is not letters only (a player's name never carries a backtick, apostrophe, space or digit), for
+  every caller. `test/death-confirmation.test.js`.
+- **Flag counter (bot 3.2.6).** *"shows only 1 flag used but 59 of us flagged"*: `flags_granted` counted only grants an
+  agent saw. It now counts every hailed raider (grant, witnessed hail or tap), since each spends one of the cap.
+  ⚠ The Mimic tooltip still says "counts only the flags we saw granted"; fix it with the next Command Center change.
+- **Named bosses (bot 3.2.5).** *"The named bosses in Halls of Honor can be listed, same with the other major named
+  bosses in the zones."* The catalog's `raid_target` is false for nearly all of PoP (5 NPCs flagged, not even Mithaniel
+  Marr), and the weekly sync overwrites the table, so the fix is a committed list: `data/named-bosses.json` (140 bosses,
+  20 zones, every entry tied to a catalog id) read by `utils/namedBosses.js` `raidTarget()`, which `_buildMobInfo` and
+  `utils/zoneSpawns.js` now serve. `_MOB_PACK_VERSION` 9 rebuilds the zone packs. Agents see it within ~6 h (mob info)
+  to 1–2 days (cached zone packs). Left out on purpose: the 12 villager attackers, The Tribunal, three HoH rare spawns.
+  Not in the catalog: Charassis the Corrupter, Ture. `utils/charmPets.js` still reads the catalog flag alone.
+- **Three rampagers (agent 3.8.4, beta).** *"for the third trial in HoH we have 3 bosses each with a rampage"*: rampage
+  targets are tracked per attacker (`stats.currentRampages`), tank state carries `rampages: [...]` beside the unchanged
+  `rampage`, and the Command Center draws one "💀 <boss>: rampage on <victim>" row each when 2+ are live (0–1: the old
+  card, byte for byte). A named raid mob's rampage now speaks even when it is not the main target ("Rellinic rampage on
+  X"); trash stays silent (#155). That rule reads `raid_target`, so it depends on the named-boss list above.
+- **DPS meter seconds (Mimic beta).** *"dps totals look wrong and too high"*, *"not counting enough time on sec"*. The
+  Oct 14 rule (each row's first hit to its last, 1 s minimum) made a lone nuke read as 1 s. The guild lead picked **A —
+  first hit to the end of the fight**, plus *"if someone stops attacking … we stop their DPS Sec counter"*: the clock
+  stops one tick (6 s, `DPS_IDLE_MS`) after a raider's last hit. `apps/mimic/overlay.html` `_rowSecs`/`_fightEndMs`;
+  the total row and the Tank tab keep the fight's seconds.
+- **FB-84 (a raider, new): a death log of the last 10–20 s before a death**, to judge the CH chain delay. Scoped, not
+  built: nothing today keeps per-hit damage and heal landings before a death; the agent holds them in memory per
+  encounter, and the bot receives but does not store them. Options for the guild lead: A local recap in Mimic/dashboard
+  from the uploader's own log (cheap, beta only), B a cross-client per-death panel on the web (needs an upload + a
+  table + a retention call), C extend the heal-gap and timeline data. Recommended first slice: A, one line per death
+  ("died 3.1 s after the last CH landing; chain beat 12 s; took 9.4k in the last 6 s; killed by X").
+
+### 374. The Masterpiece Gallery goes as recommended, and it gates Mimic 3.0 stable (2026-10-19)
+The guild lead: *"for masterpiece gallery we'll go with the recommendations. that needs to be there before 3.0 goes
+live"*. Every open decision in `docs/DESIGN-keepers-of-the-arts.md` and the gallery scope page is taken as
+recommended:
+- In Mimic, a Gallery tab in the Pieces chooser.
+- On the web, the class-first playbook with fit per row.
+- Members only in v1.
+- The author chooses whether a byline shows.
+- Pieces and groups only.
+- Any member publishes, with invitations to seed it.
+- Set modes B.
+- Social aggregates are opt-in, with a floor of 3 players.
+
+**Mimic 3.0 does not cut stable until gallery slice 1 is on beta.**
+
+⚠ **The slice-0 foundations draft is lost.** Branch `claude/keepers-foundations`, commit `b1789d77` (`portableLayout.js`, `overlaySets.js` fork-on-save, the `main.js` one-token remove fix and their tests) was never pushed, and the container reset since. Slice 0 is redone first.

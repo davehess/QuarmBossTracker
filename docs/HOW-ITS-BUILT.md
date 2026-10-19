@@ -1029,6 +1029,18 @@ offering it on "add a dark mode" collects data we asked for and do not need.
 would otherwise wipe a half-typed report.
 Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
 
+### Named PoP bosses (bot 3.2.5, 2026-10-19; DECISIONS §373)
+- **What:** the list of Planes of Power named bosses the catalog's `raid_target` misses, so Mob Info, boss-fight
+  tracking and the rampage callouts treat them as bosses.
+- **Where:** `data/named-bosses.json` (per zone, catalog ids), `utils/namedBosses.js` (`raidTarget(row)` = the catalog's
+  flag OR the list), served by `_buildMobInfo` in `index.js` and `utils/zoneSpawns.js`. Add a boss by adding its id to
+  the JSON. Test: `test/named-bosses.test.js`.
+
+### Several rampages at once (agent 3.8.4 beta, 2026-10-19; DECISIONS §373)
+- **What:** one Command Center row per rampaging boss, and named bosses' rampages spoken by name.
+- **Where:** agent `stats.currentRampages`, tank state `rampages`, `apps/mimic/command.html` `rampHtml`. Test:
+  `test/rampage-multi-boss.test.js`.
+
 ### raidmimic.com landing page (web 1.9.5, 2026-10-18, [beta]; DECISIONS §370)
 - **What:** the guild leaders' door, game-agnostic: what the platform does, each block tagged live / alpha / coming,
   works-with (PQ Companion, GINA, EQLogParser), the consent model, what it costs (no price list), "any solved world",

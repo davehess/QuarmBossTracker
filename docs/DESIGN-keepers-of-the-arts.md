@@ -132,9 +132,15 @@ guild lead approves the wording before any DM.
 5. **`/gallery` web page** (two layouts on beta for the pick), screenshots + rendered thumbnails.
 6. Social sharing + votes, then the class A/B; suggest-only mode toasts; bindings and version updates.
 
-## Open decisions (the guild lead)
+## Decisions (the guild lead, 2026-10-19: "we'll go with the recommendations. that needs to be there before 3.0 goes live")
 
-| Decision | Recommended |
+Every row below is DECIDED as recommended, and so are the scope page's picks (Mimic: a Gallery tab in the Pieces
+chooser, a Gallery window later if it outgrows the panel; web: the class-first playbook with fit per row; members-only
+in v1; pieces and groups only; any member can publish, invitations seed it). **The gallery gates Mimic 3.0 stable:**
+3.0 does not cut a stable release until slice 1 (publish → Gallery tab → add as a new set, with Undo) ships on beta.
+DECISIONS-2026-09-21 §374.
+
+| Decision | Recommended (decided) |
 |---|---|
 | Gallery approach | B |
 | Set modes | B: free names + closed tag list + per-character default |
