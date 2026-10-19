@@ -954,6 +954,30 @@
       html += '</div>';
     }
 
+    // ── Last deaths (FB-84) ───────────────────────────────────────────────
+    // One line per recent death from this machine's own log, next to the rez board it explains.
+    // Local only: /api/command-center is this machine's agent; nothing here is uploaded.
+    if (s.death_recaps && s.death_recaps.length) {
+      var drCollapsed = _isCollapsed('deathrecaps');
+      html += '<div class="card"><div class="head">' + secToggle('deathrecaps', '💀 Last deaths', s.death_recaps.length) + '</div>';
+      if (!drCollapsed) {
+        html += '<div class="list">';
+        for (var dr = 0; dr < s.death_recaps.length; dr++) {
+          var rc = s.death_recaps[dr];
+          var dd = new Date(rc.ts), pad2 = function (n) { return (n < 10 ? '0' : '') + n; };
+          var when = isNaN(dd.getTime()) ? '' : (' ' + pad2(dd.getHours()) + ':' + pad2(dd.getMinutes()) + ':' + pad2(dd.getSeconds()));
+          var bits = [];
+          bits.push(rc.lastChOffMs != null ? ((rc.lastChOffMs / 1000).toFixed(1) + ' s after the last CH') : 'no CH in 20 s');
+          if (rc.beatMs) bits.push('beat ' + Math.round(rc.beatMs / 1000) + ' s');
+          bits.push('took ' + (rc.dmg6 >= 1000 ? (rc.dmg6 / 1000).toFixed(1) + 'k' : rc.dmg6) + ' in 6 s');
+          if (rc.killer) bits.push('by ' + rc.killer);
+          html += '<div class="row"><span class="nm">' + esc(rc.name) + '</span><span class="dim">' + esc('died' + when + ' · ' + bits.join(' · ')) + '</span></div>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
     if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, rolls, or curses seen yet.</div>';
 
     if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
