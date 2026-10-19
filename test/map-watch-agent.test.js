@@ -316,7 +316,9 @@ async function boot(payloadExtra) {
     const e = { tag, children: [], style: {}, dataset: {}, attrs: {}, listeners: {}, hidden: false, textContent: '', innerHTML: '', title: '',
       clientWidth: 600, clientHeight: 400, offsetWidth: 50, offsetHeight: 20,
       classList: { _s: new Set(), add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); }, toggle(c, on) { if (on === undefined ? !this._s.has(c) : on) this._s.add(c); else this._s.delete(c); }, contains(c) { return this._s.has(c); } },
-      appendChild(ch) { this.children.push(ch); return ch; }, addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); },
+      appendChild(ch) { this.children.push(ch); return ch; },
+      insertBefore(ch, ref) { const i = ref ? this.children.indexOf(ref) : -1; if (i < 0) this.children.push(ch); else this.children.splice(i, 0, ch); return ch; },
+      addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); },
       setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; }, getAttribute(k) { return this.attrs[k] ?? null; },
       getBoundingClientRect() { return { left: 0, top: 0, width: 600, height: 400 }; }, closest() { return null; },
       getContext() { return new Proxy({}, { get: (_t, k) => (k === 'measureText' ? () => ({ width: 5 }) : () => {}), set: () => true }); },
@@ -404,5 +406,85 @@ describe('map.html: the menu, the star and the stylesheet', () => {
     expect(tm[1]).toMatch(/grid-column:2;grid-row:1 \/ span 2/);
     expect(Number(/font-size:(\d+)px/.exec(src[1])[1])).toBeLessThan(Number(row[1]));
     expect(src[1]).toMatch(/color:#586069/);
+  });
+});
+
+// ───────────── FB-87: health on the alive rows ─────────────
+// (a raider: "if we already have health of each mob engaged, we could be putting this into the timers page of maps as
+// well"). Agent half: _mapSeenHp joins the Extended Target rows onto `seen`; overlay half: hpTag + renderSide.
+// Mutation-checked: drop the `!t.stale` filter; drop the duplicate-name null; drop the spawn-id mismatch guard; drop the
+// own-target clause; drop the chip insert in renderSide's Up · seen loop or the Watched loop.
+const SEEN_HP = new Function(sliceBlock(AGENT, 'function _mapNormName(n) {', '\n}\n') + sliceBlock(AGENT, 'function _mapSeenHp(', '\n}\n') + '\nreturn _mapSeenHp;')();
+const seenRow = (point_id, spawn_id, name) => ({ point_id, spawn_id, name, at: 1, by: null });
+const hpOf = (seen, rows, own) => { SEEN_HP(seen, rows, own); return seen.map(s => s.hp_pct); };
+
+describe('agent: hp_pct on the seen rows (_mapSeenHp)', () => {
+  it('joins by spawn id, even when two mobs share the name', () => {
+    const rows = [{ name: 'a blood raven', spawn_id: 11, hp_pct: 40, kind: 'npc' }, { name: 'a blood raven', spawn_id: 12, hp_pct: 90, kind: 'npc' }];
+    expect(hpOf([seenRow(1, 12, 'a blood raven'), seenRow(2, 11, 'a blood raven')], rows, null)).toEqual([90, 40]);
+  });
+  it('falls back to the name only when exactly one fresh row carries it', () => {
+    const rows = [{ name: 'The_Avatar_of_Anguish', spawn_id: 5, hp_pct: 72.4, kind: 'npc' }];
+    expect(hpOf([seenRow(1, null, 'The Avatar of Anguish')], rows, null)).toEqual([72]);
+    expect(hpOf([seenRow(1, 5, 'The Avatar of Anguish')], [{ name: 'The Avatar of Anguish', hp_pct: 33, kind: 'npc' }], null)).toEqual([33]);
+  });
+  it('never guesses: two rows with the name, a name row naming a different spawn id, or no row at all, leave it null', () => {
+    const two = [{ name: 'a bat', spawn_id: 1, hp_pct: 10, kind: 'npc' }, { name: 'a bat', spawn_id: 2, hp_pct: 20, kind: 'npc' }];
+    expect(hpOf([seenRow(1, null, 'a bat')], two, null)).toEqual([null]);
+    expect(hpOf([seenRow(1, 3, 'a bat')], two, null)).toEqual([null]);
+    expect(hpOf([seenRow(1, 7, 'a bat')], [{ name: 'a bat', spawn_id: 8, hp_pct: 55, kind: 'npc' }], null)).toEqual([null]);
+    expect(hpOf([seenRow(1, 7, 'a bat')], [], null)).toEqual([null]);
+    expect(hpOf([seenRow(1, 7, 'a bat')], undefined, null)).toEqual([null]);
+  });
+  it('skips stale rows, and rows that are not NPCs', () => {
+    expect(hpOf([seenRow(1, 5, 'a bat')], [{ name: 'a bat', spawn_id: 5, hp_pct: 50, stale: true, kind: 'npc' }], null)).toEqual([null]);
+    expect(hpOf([seenRow(1, null, 'Aldenmar')], [{ name: 'Aldenmar', hp_pct: 50, kind: 'player' }], null)).toEqual([null]);
+    // a stale duplicate does not turn a unique name into a duplicate
+    const rows = [{ name: 'a bat', spawn_id: 5, hp_pct: 50, kind: 'npc' }, { name: 'a bat', spawn_id: 6, hp_pct: 60, stale: true, kind: 'npc' }];
+    expect(hpOf([seenRow(1, null, 'a bat')], rows, null)).toEqual([50]);
+  });
+  it('your own target speaks for the spawn point it is pinned to', () => {
+    const own = { point_id: 9, hp_pct: 64 };
+    expect(hpOf([seenRow(9, 4, 'a bat'), seenRow(8, 4, 'a bat')], [{ name: 'a bat', spawn_id: 4, hp_pct: 20, kind: 'npc' }], own)).toEqual([64, 20]);
+    expect(hpOf([seenRow(9, 4, 'a bat')], [], { point_id: 3, hp_pct: 64 })).toEqual([null]);
+  });
+  it('the payload wires it up after out.seen is built', () => {
+    const js = stripJs(AGENT);
+    expect(js).toMatch(/_mapSeenHp\(out\.seen, ec && ec\.payload && ec\.payload\.targets, out\.target\)/);
+    expect(js.indexOf('_mapSeenHp(out.seen')).toBeGreaterThan(js.indexOf('out.seen = Object.values(zd.seen)'));
+  });
+});
+
+describe('map.html: the health chip on alive rows', () => {
+  const tag = new Function(sliceBlock(MAP_HTML, 'function hpTag(hp) {', '\n  }\n') + '\nreturn hpTag;')();
+  it('tiers like Extended Target (60+ hi, 30+ mid, below lo) and is silent without a number', () => {
+    expect(tag(100)).toEqual({ text: '100%', cls: 'hp hi' });
+    expect(tag(60)).toEqual({ text: '60%', cls: 'hp hi' });
+    expect(tag(59.6)).toEqual({ text: '60%', cls: 'hp hi' });
+    expect(tag(30)).toEqual({ text: '30%', cls: 'hp mid' });
+    expect(tag(29)).toEqual({ text: '29%', cls: 'hp lo' });
+    expect(tag(0)).toEqual({ text: '0%', cls: 'hp lo' });
+    expect(tag(null)).toBeNull(); expect(tag(undefined)).toBeNull(); expect(tag('x')).toBeNull();
+  });
+  it('Up · seen rows show it ahead of the time; a row without health is exactly as before', async () => {
+    const { all } = await boot({ seen: [{ point_id: 7, spawn_id: 4, name: 'a blood raven', at: T0 - 60000, by: null, hp_pct: 42 }, { point_id: 8, spawn_id: null, name: 'a bat', at: T0 - 60000, by: null, hp_pct: null }] });
+    const rows = all.lists.children.filter(c => /trow seen/.test(c.className));
+    expect(rows).toHaveLength(2);
+    const tm = rows[0].children[1];
+    expect(tm.children.map(k => [k.className, k.textContent])).toEqual([['hp mid', '42%']]);
+    expect(rows[1].children[1].children).toEqual([]);
+  });
+  it('a watched spot that is up shows it; a respawn row never does', async () => {
+    const w = await boot({ watched: { 7: { named: 'The Avatar of Anguish', by: null } }, seen: [{ point_id: 7, spawn_id: 4, name: 'a blood raven', at: T0 - 1000, by: null, hp_pct: 88 }] });
+    const row = w.all.lists.children.find(c => /trow watch/.test(c.className));
+    expect(row.children[1].children.map(k => [k.className, k.textContent])).toEqual([['hp hi', '88%']]);
+    const t = await boot({ timers: [Object.assign(T(8, 'a blood raven', 300000, 400000), { hp_pct: 50 })] });
+    expect(t.all.lists.children.find(c => /trow wait/.test(c.className)).children[1].children).toEqual([]);
+  });
+  it('the chip has colours for all three tiers', () => {
+    const css = stripCss(MAP_HTML);
+    expect(css).toMatch(/\.trow \.tm \.hp\.hi\{color:#56d364\}/);
+    expect(css).toMatch(/\.hp\.mid\{color:#f0b429\}/);
+    expect(css).toMatch(/\.hp\.lo\{color:#f87171\}/);
   });
 });

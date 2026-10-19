@@ -1309,7 +1309,8 @@
         n.target = target;
         n.effect = effect;
       }
-      n.ends_at_local = Date.now() + t.remaining_ms;
+      n.ends_at_local = t.cycle_ms > 0 ? smoothAnchor(n.ends_at_local, Date.now() + t.remaining_ms, t.cycle_ms)
+                                       : Date.now() + t.remaining_ms;
       n.duration_sec  = t.duration_sec || n.duration_sec;
       // Warning callout config (EQLP "N seconds before the timer ends"). Fired
       // once by paintTimers when the countdown crosses the threshold.
@@ -1362,6 +1363,21 @@
     }
     while (timersEl.children.length > want.length) timersEl.lastChild.remove();
     refreshClearButton();
+  }
+  // A cyclic row's boundary (the 6 s server / recharm tick) is an ESTIMATE that arrives with 0-300 ms of flush-delay noise
+  // each poll, so re-anchoring on it jumped the countdown (FB-85, a raider: "very jumpy instead of not a smooth
+  // countdown"). Keep the anchor and move it only as far as the real drift: the error is taken modulo the cycle (a
+  // boundary one cycle off is the same boundary); under 250 ms it is noise and ignored; up to 1.5 s it is closed a
+  // quarter at a time per poll; past 1.5 s, or with no anchor yet (a new row), the estimate is taken as it comes.
+  // The same function sits in zealhealth.html (separate window, no shared script).
+  function smoothAnchor(prev, next, cycle){
+    if (prev == null || !(cycle > 0)) return next;
+    var err = (((next - prev) % cycle) + cycle) % cycle;
+    if (err > cycle / 2) err -= cycle;
+    var a = Math.abs(err);
+    if (a < 250) return prev;
+    if (a > 1500) return next;
+    return prev + err * 0.25;
   }
   function paintTimers(){
     const now = Date.now();
