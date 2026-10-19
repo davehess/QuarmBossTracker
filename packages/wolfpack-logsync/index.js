@@ -34083,6 +34083,12 @@ function startWebDashboard(port) {
             }
           }
         } catch { /* */ }
+        // Self scope (FB-88): your own tab-through list, answered from this agent alone — no bot call.
+        if (/[?&]scope=self(?:&|$)/.test(req.url)) {
+          const km = /[?&]keep=(\d+)/.exec(req.url);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(selfTargetPayload(selfCharacter, km ? km[1] : null, Date.now())));
+        }
         fetchExtendedTarget(selfCharacter);
         const cached = _extTargetCache.get(String(selfCharacter || '').toLowerCase());
         const payload = (cached && cached.payload)
@@ -35006,6 +35012,7 @@ function startWebDashboard(port) {
           noteSpawnIdSeen(st.spawn_id);
           noteSpawnIdSeen(st.target_id);
           noteSpawnIdSeen(st.pet_id);
+          try { _noteSelfTarget(character, st, Date.now()); } catch (e) { void e; }   // Extended Target "Self" list
           try { _noteOwnPetForLoot(character, st, Date.now()); } catch (e) { void e; }   // own-pet loot flag: remember the pet's id while it lives
           // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
           // target across frames → a mob_heal timeline tick on the live fight.
@@ -51182,6 +51189,52 @@ function fetchExtendedTarget(character) {
     req.on('timeout', () => { req.destroy(); _extTargetInflight.delete(key); });
     req.end();
   } catch { _extTargetInflight.delete(key); }
+}
+
+// Extended Target "Self" scope (FB-88, the guild lead's option A, "Local roster"): the mobs YOU tabbed
+// through, kept by this agent and answered locally, so it works with no bot and no raid. charLower →
+// Map(key → { name, spawn_id, hp_pct, seen_at }). Fed from every Zeal report of the character's target
+// (the live-state POST handler). Keyed by spawn id when Zeal sent one (Zeal 1.4.6+); 0 means NO target,
+// never an id, so it is never recorded as one. A mob with no id is keyed by lowercased name instead.
+const SELF_TARGET_MAX_KEEP_S = 300;
+const SELF_TARGET_DEFAULT_KEEP_S = 60;
+const SELF_TARGET_CAP = 200;
+const _selfTargets = new Map();
+function _noteSelfTarget(character, st, nowMs) {
+  const cl = String(character || '').trim().toLowerCase();
+  const name = st && st.target_name ? String(st.target_name).replace(/^#/, '').replace(/_/g, ' ').trim() : '';
+  if (!cl || !name) return;
+  let hp = Number(st.target_hp_pct);
+  if (st.target_hp_pct == null || !Number.isFinite(hp)) {
+    const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot === 6) : null;
+    hp = g && g.hp_pct != null ? Number(g.hp_pct) : NaN;
+  }
+  const id = Number.isFinite(st.target_id) && st.target_id > 0 ? st.target_id : null;
+  let m = _selfTargets.get(cl);
+  if (!m) { m = new Map(); _selfTargets.set(cl, m); }
+  const key = id != null ? 'id:' + id : 'n:' + name.toLowerCase();
+  m.delete(key);   // re-insert so Map order stays oldest-first
+  m.set(key, { name, spawn_id: id, hp_pct: Number.isFinite(hp) ? hp : null, seen_at: nowMs });
+  for (const [k, e] of m) {
+    if (nowMs - e.seen_at > SELF_TARGET_MAX_KEEP_S * 1000 || m.size > SELF_TARGET_CAP) m.delete(k);
+    else break;
+  }
+}
+function selfTargetPayload(character, keepSecRaw, nowMs) {
+  let keep = parseInt(keepSecRaw, 10);
+  if (!(keep > 0)) keep = SELF_TARGET_DEFAULT_KEEP_S;
+  keep = Math.min(keep, SELF_TARGET_MAX_KEEP_S);
+  let m = _selfTargets.get(String(character || '').trim().toLowerCase());
+  if (!m) {   // the "active" character may not be the one Zeal streams: use whichever list moved last
+    let newest = -1;
+    for (const mm of _selfTargets.values()) for (const e of mm.values()) if (e.seen_at > newest) { newest = e.seen_at; m = mm; }
+  }
+  const targets = [];
+  if (m) for (const e of [...m.values()].sort((a, b) => b.seen_at - a.seen_at)) {
+    const age = Math.max(0, Math.round((nowMs - e.seen_at) / 1000));
+    if (age <= keep) targets.push({ name: e.name, kind: 'npc', spawn_id: e.spawn_id, hp_pct: e.hp_pct, seen_secs: age });
+  }
+  return { scope: 'self', keep_secs: keep, targets };
 }
 
 // ── "My parses" proxy — the dashboard's 📈 My parses tab ────────────────────
