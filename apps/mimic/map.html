@@ -115,6 +115,10 @@
   /* the time sits in its own right-aligned column, 2px bigger than the name; the source line is small and dim under the name */
   .trow .tm{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:12px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
   .trow .src{grid-column:1;color:#586069;font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* "☠ killed" on an alive row: its own third column, so rows without one keep their two */
+  .trow .kill{grid-column:3;grid-row:1 / span 2;align-self:center;background:rgba(22,27,34,.9);color:#c9d1d9;border:1px solid rgba(110,118,129,0.5);
+    border-radius:4px;font:inherit;font-size:9px;padding:0 5px;cursor:pointer;white-space:nowrap}
+  .trow .kill:hover{color:#ffd866;border-color:#f0b429}
   .sec.watch{color:#f0b429}
   .sec.engaged{color:#f0883e}
   .trow.engaged{border-left-color:#f0883e;cursor:default} .trow.engaged .tm{color:#f0883e}
@@ -1670,6 +1674,13 @@
     fetch('http://127.0.0.1:' + PORT + '/api/map-mark', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ zone: zone, point_id: pid, kind: kind }) }).then(function () { S.sideAt = 0; poll(); }).catch(function () {});
   }
+  function postKill(name, pid, spawnId) {
+    var zone = S.p && S.p.zone;
+    if (!zone || !name) return;
+    fetch('http://127.0.0.1:' + PORT + '/api/map-kill', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone: zone, name: name, point_id: pid == null ? null : pid, spawn_id: spawnId == null ? null : spawnId }) })
+      .then(function () { S.sideAt = 0; poll(); }).catch(function () {});
+  }
   // "Watch for <named>" / "Stop watching" in the click menu: the agent keeps the watch, shares it with the guild, and
   // sends it back in the next poll as `watched`.
   function postWatch(pid, named, on) {
@@ -2659,6 +2670,14 @@
     placeBox(menu, e);
   }
   function closeMenu() { S.menuPid = null; menu.style.display = 'none'; }
+  // "☠ killed" on an alive row (the guild lead, 2026-10-19: "put a button on the timers sidebar to kill that mob"): the agent starts
+  // the respawn timer from that mob's newest death message in your log, else from now. data-wp-interact arms the click-through window.
+  function addKillBtn(row, name, pid, spawnId) {
+    var b = el('button', 'kill', '☠ killed'); b.type = 'button'; b.setAttribute('data-wp-interact', '');
+    b.title = 'Start the respawn timer from its last death message, or from now if none was seen';
+    b.addEventListener('click', function (e) { e.stopPropagation(); postKill(name, pid, spawnId); });
+    row.appendChild(b);
+  }
 
   // Which copy of the zone you are in (agent "Zone copies": the zone server's port from dbg.txt, and a /who check).
   // open = /who listed someone outside the guild and raid: the live zone or PvP. closed = only guild and raid so far.
@@ -2694,6 +2713,7 @@
         if (ehp) etm.insertBefore(el('span', ehp.cls, ehp.text), etm.firstChild);
         r.appendChild(el('span', 'nm', g.name)); r.appendChild(etm);
         r.appendChild(el('span', 'src', g.spawn_id != null ? 'spawn #' + g.spawn_id : 'engaged'));
+        addKillBtn(r, g.name, null, g.spawn_id);
         box.appendChild(r);
       });
     }
@@ -2710,6 +2730,8 @@
         if (whp) wtm.insertBefore(el('span', whp.cls, whp.text), wtm.firstChild);
         r.appendChild(el('span', 'nm', w.named)); r.appendChild(wtm);
         r.appendChild(el('span', 'src', 'PH: ' + (w.ph || '—') + ' · spot #' + w.pid));
+        var wsn = S.seenBy[w.pid];   // set only for a spot with no timer and a mob seen alive: the one to mark dead
+        if (wsn && wsn.name) addKillBtn(r, wsn.name, w.pid, wsn.spawn_id);
         r.addEventListener('click', function () { centreOn(w.p); });
         box.appendChild(r);
       });
@@ -2736,6 +2758,7 @@
         if (shp) stm.insertBefore(el('span', shp.cls, shp.text), stm.firstChild);
         r.appendChild(el('span', 'nm', s.name || 'a mob')); r.appendChild(stm);
         r.appendChild(el('span', 'src', (s.spawn_id != null ? 'spawn #' + s.spawn_id : 'pinned') + (s.by ? ' · by ' + s.by : '')));
+        if (s.name) addKillBtn(r, s.name, s.point_id, s.spawn_id);
         r.addEventListener('click', function () { centreOn(S.byId[String(s.point_id)]); });
         box.appendChild(r);
       });

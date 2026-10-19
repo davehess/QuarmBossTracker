@@ -190,7 +190,7 @@ describe('muting — this mob, all, and for good', () => {
       mute('always', GNOLL);
       const builtin = agent._computeRuleGroups().find(g => g.id === 'builtin');
       expect(builtin.members.some(m => m.key.startsWith('builtin:enrage_soon:'))).toBe(false);
-      expect(agent._builtinRuleModes()).toEqual({});
+      expect(Object.keys(agent._builtinRuleModes()).filter(k => /enrage/.test(k))).toEqual([]);   // (Charm aging's muted default is not what this is about)
     });
   });
 

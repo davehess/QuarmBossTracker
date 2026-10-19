@@ -34409,6 +34409,7 @@ function startWebDashboard(port) {
         return res.end(JSON.stringify(_cb));
       }
       if (req.url === '/api/map-mark' && req.method === 'POST') return _handleMapMark(req, res);
+      if (req.url === '/api/map-kill' && req.method === 'POST') return _handleMapKill(req, res);
       if (req.url === '/api/map-watch' && req.method === 'POST') return _handleMapWatch(req, res);
       if (req.url === '/api/map-leg' && req.method === 'POST') return _handleMapLeg(req, res);
       // Kite coach (map.html): one loop summary out, the guild's loops for the zone in.
@@ -46451,6 +46452,10 @@ const BUILTIN_CALLOUTS = [
   { key: 'loot_post',      label: 'Loot posted' },
   { key: 'blind',          label: 'Blind alerts' },
 ];
+// Built-ins that start MUTED until someone switches them on (the guild lead, 2026-10-19: "Mute Charm aging by default, make
+// this configurable to turn off"). The last step of _resolveRule, below every rule a person has set: anyone who already set
+// Charm aging (or its group) keeps what they chose, because that rule is a file entry and wins over this.
+const BUILTIN_DEFAULT_MODES = { 'builtin:charm_aging': 'off' };
 // Zone short names that appear in guild_triggers.tags, with a readable group label. The second
 // Plane of Earth tag folds into the first so the two share one group.
 const RULE_ZONE_NAMES = {
@@ -46567,10 +46572,10 @@ function _resolveRule(key, groupId, charLc) {
     if (charLc && (m = one('group:' + groupId, charLc))) return { mode: m, from: 'group' };
     if ((m = one('group:' + groupId, '*')))              return { mode: m, from: charLc ? 'group_all' : 'group' };
   }
-  return { mode: 'speak', from: 'default' };
+  return { mode: BUILTIN_DEFAULT_MODES[key] || 'speak', from: 'default' };
 }
 function _ruleModeNow(key, charLc) {
-  if (!key || !Object.keys(_triggerRules).length) return 'speak';
+  if (!key || (!Object.keys(_triggerRules).length && !BUILTIN_DEFAULT_MODES[key])) return 'speak';
   return _resolveRule(key, _ruleGroupOfKey(key), String(charLc || _ruleActiveChar() || '').toLowerCase()).mode;
 }
 // false = drop the fire; true = push it (with mute:true when the rule says overlay-only).
@@ -46585,7 +46590,7 @@ function _applyTriggerRule(o) {
 // built-in map rides /api/state so charm.html, which speaks its own lines, can honour the same rules.
 function _builtinRuleModes() {
   const out = {};
-  if (!Object.keys(_triggerRules).length) return out;
+  if (!Object.keys(_triggerRules).length && !Object.keys(BUILTIN_DEFAULT_MODES).length) return out;
   const c = _ruleActiveChar();
   for (const b of BUILTIN_CALLOUTS) {
     const m = _resolveRule('builtin:' + b.key, 'builtin', c).mode;
@@ -50421,6 +50426,10 @@ function _mapNoteSighting(zone, spawnId, name, loc, now) {
 }
 // The same death reaches us twice (the target window and the log line, from every log on the machine).
 const _mapRecentDeaths = [];   // { name, at, spawn_id, src }
+// '<zone>|<normalised name>' → epoch ms of the newest "died." / "has been slain by" / "You have slain" line for it
+// (_mapNoteLogDeath). Read by _mapKillNow, so the button can start a timer from a death the Map could not place.
+const _mapLastDeathLine = new Map();
+const MAP_DEATH_LINE_KEEP_MS = 30 * 60 * 1000;
 function _mapDeathIsDup(name, spawnId, src, now) {
   for (let i = _mapRecentDeaths.length - 1; i >= 0; i--) {
     const e = _mapRecentDeaths[i];
@@ -50440,7 +50449,7 @@ function _mapNoteDeath(zone, ev, now) {
   if (!rec || !rec.body) return { kind: 'nodata' };
   const name = _mapNormName(ev.name);
   if (!name) return { kind: 'none' };
-  if (_mapDeathIsDup(name, ev.spawn_id == null ? null : ev.spawn_id, ev.src || 'zeal', now)) return { kind: 'dup' };
+  if (!ev.force && _mapDeathIsDup(name, ev.spawn_id == null ? null : ev.spawn_id, ev.src || 'zeal', now)) return { kind: 'dup' };
   const zd = _mapZoneDoc(zone);
   let loc = null, locSource = null;
   const sight = ev.spawn_id != null ? zd.sightings[String(ev.spawn_id)] : null;
@@ -50450,15 +50459,19 @@ function _mapNoteDeath(zone, ev, now) {
   // A pinned mob dies on its own point wherever it was pulled to. The pin is spent either way (ids get reused).
   const pin = ev.spawn_id != null ? _mapPinGet(zone, ev.spawn_id, ev.name) : null;
   if (ev.spawn_id != null && _mapPins.zone === zone) { _mapPins.m.delete(ev.spawn_id); _mapPins.tried.delete(ev.spawn_id); }
-  const att = pin && rec.byId.get(String(pin.point_id))
-    ? { kind: 'assigned', point_id: pin.point_id, dist: null, pinned: true }
-    : _mapAttribute(rec.body.points, ev.name, loc, rec.body.grids);
+  // `ev.point_id` (the sidebar's ☠ killed button, see _mapKillNow) names the spot outright.
+  const forced = ev.point_id != null ? rec.byId.get(String(ev.point_id)) : null;
+  const att = forced
+    ? { kind: 'assigned', point_id: forced.id, dist: null, pinned: true }
+    : pin && rec.byId.get(String(pin.point_id))
+      ? { kind: 'assigned', point_id: pin.point_id, dist: null, pinned: true }
+      : _mapAttribute(rec.body.points, ev.name, loc, rec.body.grids);
   if (att.kind === 'none') return att;
   _mapRecentDeaths.push({ name, at: now, spawn_id: ev.spawn_id == null ? null : ev.spawn_id, src: ev.src || 'zeal' });
   const at = Number.isFinite(ev.at) ? ev.at : now;
   if (att.kind === 'assigned') {
     const point = rec.byId.get(String(att.point_id));
-    const timer = _mapMakeTimer(point, at, 'seen', _mapPrettyName(ev.name));
+    const timer = _mapMakeTimer(point, at, ev.marked ? 'marked' : 'seen', _mapPrettyName(ev.name));   // a button press is a mark, not a sighting
     if (timer) zd.timers[String(att.point_id)] = timer;          // an observed death overrides a mark
     delete zd.seen[String(att.point_id)];                         // dead now, no longer "seen alive"
     if (timer) _mapLocalEvent(zone, zd, ev.character, { point_id: att.point_id, kind: 'died', spawn_id: ev.spawn_id, name: _mapPrettyName(ev.name), at }, now);
@@ -50519,6 +50532,37 @@ function _mapApplyMark(zone, mark, now, character) {
   send(kind === 'killed' ? 'died' : 'empty', spawnId, name, diedAt);
   _mapSaveSoon();
   return { ok: true, timer, settled };
+}
+// The sidebar's "☠ killed" button on an alive row (Up · seen, ★ Watched, ⚔ Engaged): start that mob's respawn timer from
+// its newest death line in your log, else from now. It goes down the same road as an observed death (_mapNoteDeath), so the
+// timer, the "seen alive" removal and the guild share are the ones a log line makes. The spot is the row's own point_id,
+// else the one a pin or a seen-alive mob of that name holds; an Engaged row with neither is placed by name alone, and may
+// land under "Not pinned down". A death line from before the mob was last seen alive belongs to an earlier spawn: skipped.
+function _mapKillNow(zone, b, now, character) {
+  const rec = _mapZones.get(zone);
+  if (!rec || !rec.body) return { ok: false, error: 'no spawn data for this zone' };
+  const name = _mapPrettyName(b && b.name).slice(0, 80);
+  if (!name) return { ok: false, error: 'name is required' };
+  const want = _mapNormName(name);
+  const spawnId = Number(b.spawn_id) > 0 ? Math.trunc(Number(b.spawn_id)) : null;
+  const zd = _mapZoneDoc(zone);
+  let pid = b.point_id != null && rec.byId.get(String(b.point_id)) ? String(b.point_id) : null;
+  if (pid == null) {
+    const pin = spawnId != null ? _mapPinGet(zone, spawnId, name) : null;
+    const alive = Object.values(zd.seen).filter(s => s && _mapNormName(s.name) === want);
+    const hit = pin ? { point_id: pin.point_id }
+      : (spawnId != null && alive.find(s => s.spawn_id === spawnId)) || (alive.length === 1 ? alive[0] : null);
+    if (hit && rec.byId.get(String(hit.point_id))) pid = String(hit.point_id);
+  }
+  const seenAt = pid != null && zd.seen[pid] ? Number(zd.seen[pid].at) || 0 : 0;
+  const line = _mapLastDeathLine.get(zone + '|' + want);
+  const fromLine = line != null && now - line <= MAP_DEATH_LINE_KEEP_MS && line >= seenAt;
+  const at = fromLine ? line : now;
+  const r = _mapNoteDeath(zone, { name, spawn_id: spawnId, loc: null, at, src: 'button', character, point_id: pid, force: true, marked: true }, now);
+  if (r.kind === 'none') return { ok: false, error: 'no spawn point here makes that mob' };
+  if (r.kind === 'nodata') return { ok: false, error: 'no spawn data for this zone' };
+  if (r.kind === 'assigned' && !r.timer) return { ok: false, error: 'this spawn point has no respawn time' };
+  return { ok: true, kind: r.kind, timer: r.timer || null, at, from_line: fromLine };
 }
 
 // A random wanderer seen walking from waypoint `a` to waypoint `b` of route `grid` (the Map works the leg out from its
@@ -51017,6 +51061,10 @@ function _mapNoteLogDeath(deadName, character, lineMs, now) {
   const zone = _mapZoneShort(st.zone);
   if (!zone) return;
   const want = _mapNormName(deadName);
+  // The sidebar's ☠ killed button starts from this time when the mob has no timer yet (see _mapKillNow).
+  _mapLastDeathLine.delete(zone + '|' + want);
+  _mapLastDeathLine.set(zone + '|' + want, Number.isFinite(lineMs) ? Math.min(lineMs, now) : now);
+  while (_mapLastDeathLine.size > 200) _mapLastDeathLine.delete(_mapLastDeathLine.keys().next().value);
   // The mob in this character's target window, when it is the one named: its id and position are exact.
   let id = null, loc = null, src = 'self';
   if (st.target_name && _mapNormName(st.target_name) === want && st.target_id > 0) {
@@ -51057,6 +51105,22 @@ async function _handleMapMark(req, res) {
   if (live && zone !== live) return send(409, { error: 'that is not the zone you are in' });
   if (!b || b.point_id == null) return send(400, { error: 'point_id is required' });
   const r = _mapApplyMark(zone, { point_id: b.point_id, kind: b.kind }, now, ch);
+  send(r.ok ? 200 : 400, r);
+}
+// POST /api/map-kill { zone?, name, point_id?, spawn_id? } - the sidebar's "☠ killed" button (see _mapKillNow).
+async function _handleMapKill(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 2048)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { error: 'bad body' }); }
+  const now = Date.now();
+  const ch = _mapActiveCharacter(now);
+  const live = ch ? _mapZoneShort(_zealState[ch].zone) : null;
+  const zone = b && b.zone ? String(b.zone).slice(0, 40) : live;
+  if (!zone) return send(400, { error: 'no zone' });
+  if (live && zone !== live) return send(409, { error: 'that is not the zone you are in' });
+  if (!b || !b.name) return send(400, { error: 'name is required' });
+  const r = _mapKillNow(zone, b, now, ch);
   send(r.ok ? 200 : 400, r);
 }
 // POST /api/map-watch { zone?, point_id, named, on } - the click menu's "Watch for <named>" (see "Watched spots").
