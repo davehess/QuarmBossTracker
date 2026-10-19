@@ -1753,6 +1753,10 @@ function _startWindowDrag(win, persistKey) {
       // along; null for every other overlay, which is untouched.
       chat: (() => { try { return _chatDragBegin(win); } catch { return null; } })(),
     };
+    // A fit must not run under a drag (the guild lead, 2026-10-19: overlays fit their content, but a fit
+    // that lands mid-drag is overwritten by the drag's next step, which writes the height it began with).
+    // overlay-auto-height holds its fit while this is set and _stopWindowDrag asks the page for one.
+    win.__wpDragging = true;
     _dragSession.interval = setInterval(() => {
       if (!_dragSession) return;
       if (_dragSession.win.isDestroyed()) { _stopWindowDrag(); return; }
@@ -2168,6 +2172,13 @@ function _stopWindowDrag() {
     if (_dragSession.restoreFocusable && _dragSession.win && !_dragSession.win.isDestroyed()) {
       try { _dragSession.win.setFocusable(false); } catch {}
     }
+    // The drag is over: a fit that was held back while it ran is asked for now, from the page, so it
+    // measures what the content is at this moment rather than replaying a stale height.
+    const w = _dragSession.win;
+    try { w.__wpDragging = false; } catch { /* window gone */ }
+    try {
+      if (w.__wpFitPending && !w.isDestroyed()) { w.__wpFitPending = false; w.webContents.send('wp-refit'); }
+    } catch { /* window gone */ }
     _dragSession = null;
   }
 }
@@ -7585,7 +7596,10 @@ function _canvasStatePayload() {
   // Per resolution, like EQ's own ini; a new resolution starts from the last
   // one used (positions are fractions, so the shape carries over).
   const layout = all[res] || all[cfg.canvasLastRes] || null;
-  return { res, layout, edit: _canvasArrange, displays: screen.getAllDisplays().length };
+  // backdrop: the Canvas's default Background (cfg.overlayBackdrop.canvas). Each item has its own now; this is
+  // what an item that never chose follows, and what a layout saved before that is stamped with, once.
+  return { res, layout, edit: _canvasArrange, displays: screen.getAllDisplays().length,
+    backdrop: !!((cfg.overlayBackdrop && typeof cfg.overlayBackdrop === 'object') ? cfg.overlayBackdrop : {}).canvas };
 }
 // Arrange from the tray or the dashboard. Turning it on turns the canvas on.
 function _setCanvasArrange(on) {
@@ -11266,6 +11280,8 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
     win.__wpHeightMode = 'fit';   // this page fits its window: a drag can set a height floor
+    // Not under a drag: the drag writes its own bounds every 16 ms. Held, and asked for again when it ends.
+    if (win.__wpDragging) { win.__wpFitPending = true; return true; }
     // ↕ Fit height to content asks for an exact fit, once (see overlay-fit-height).
     const fitNow = (Date.now() - (win.__wpFitNowAt || 0)) < 3000;
     win.__wpFitNowAt = 0;

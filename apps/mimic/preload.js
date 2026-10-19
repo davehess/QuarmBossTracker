@@ -235,7 +235,8 @@ function _wpOverSolid(el) {
   if (document.getElementById('panels') && document.body && document.body.hasAttribute('data-wp-overlay')) {
     if (!(el && el.closest && el.closest('#panels > .panel'))) return false;
   }
-  if (document.body && document.body.classList.contains('wp-backdrop')) return true;
+  // (not on the Canvas: there the class is only a default, so a panel's own plate is read below like any other)
+  if (document.body && document.body.classList.contains('wp-backdrop') && !document.getElementById('screenBtn')) return true;
   while (el && el.nodeType === 1 && el !== document.documentElement) {
     try { if (_wpAlpha(getComputedStyle(el).backgroundColor) >= 0.35) return true; } catch (e) { return false; }
     el = el.parentElement;
@@ -538,8 +539,9 @@ document.addEventListener('DOMContentLoaded', function () {
       + 'body.wp-backdrop:not(:has(#wrap)):not(:has(#screenBtn)){background:rgb(8 10 14 / calc(max(var(--bg-alpha,0.92), 0.92) * var(--wp-content-alpha,1))) !important;border-radius:8px}'
       // The Timers canvas is a screen-sized window, so a plate on its <body> blacked out the whole screen
       // (the guild lead, 2026-09-29: "background on the timer canvas just makes the whole screen dark").
-      // There each panel gets the plate instead. #screenBtn is the canvas's own toolbar button.
-      + 'body.wp-backdrop:has(#screenBtn) #panels > .panel:not(.off){background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92));border-radius:6px}'
+      // It gets no plate from here at all: each panel and piece carries its own Background (canvas.html
+      // `.panel.back`; the guild lead, 2026-10-19: "Canvas items should be able to individually set background,
+      // or avoid the all-toggle"), and this body class is only the Canvas's default for items that never chose.
       // Setup strip must survive narrow windows: wrap onto a second row
       // instead of pushing the Done button past the right edge.
       + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
@@ -872,6 +874,40 @@ function _openOverlayMenu(state) {
   }, 0);
 }
 
+// ── Content watcher: a page that has fit once keeps fitting (the guild lead, 2026-10-19: "we should always
+// fit vertically to content with overlays, whether growing up or down") ────────────────────────────
+// Most overlay pages ask for a height only when they repaint their HTML, so a change that is not a repaint
+// (a section opening, a font loading, a class flipping a row on) left the window the old size until the next
+// poll rewrote something. The first time a page hands _autoFitOverlay an element, that element is watched
+// here: any size change of it, or structural change inside it, re-runs the SAME fit (so the open-menu hold,
+// the dock opt-out and main's hysteresis, grow direction and width hold all still apply). One IPC, no
+// per-overlay code. Pages that call overlayAutoHeight(h) directly (nine of them, several with their own
+// fixed-height modes) are NOT watched: this cannot know what number they mean.
+// Guard: an element that tracks its window (height:100%) reads window + 12 after every fit, so a watched
+// element whose height only ever creeps up by the buffer is a feedback loop and the watch ends itself.
+const WP_FIT_WATCH_MS = 150;
+const WP_FIT_WATCH_MAX_CREEP = 6;
+const _wpFitWatched = new WeakSet();
+function _wpWatchFitContent(el) {
+  if (WP_IS_DOCKED || !el || _wpFitWatched.has(el)) return;
+  _wpFitWatched.add(el);
+  const st = { timer: null, last: 0, creep: 0, dead: false, obs: [] };
+  const run = function () {
+    st.timer = null;
+    if (st.dead || !el.isConnected) return;
+    const h = (el.scrollHeight || 0) + 12;
+    if (h === st.last) return;
+    if (h > st.last && h - st.last <= 16) {
+      if (++st.creep >= WP_FIT_WATCH_MAX_CREEP) { st.dead = true; st.obs.forEach(function (o) { try { o.disconnect(); } catch (e) {} }); return; }
+    } else st.creep = 0;
+    st.last = h;
+    _autoFitOverlay(el);
+  };
+  const kick = function () { if (!st.dead && !st.timer) st.timer = setTimeout(run, WP_FIT_WATCH_MS); };
+  try { const ro = new ResizeObserver(kick); ro.observe(el); st.obs.push(ro); } catch (e) { void e; }
+  try { const mo = new MutationObserver(kick); mo.observe(el, { childList: true, subtree: true }); st.obs.push(mo); } catch (e) { void e; }
+}
+
 // Ask main to size the window to the renderer's content height. Pass the
 // wrap element whose scrollHeight defines the desired height; falls back to
 // document.body if nothing's passed. Adds a small buffer so the bottom of
@@ -883,7 +919,7 @@ function _autoFitOverlay(wrapEl) {
   try {
     _wpPageUsesAutoFit = true;
     _wpLastFitWasRaw = false;
-    if (wrapEl) _wpLastFitEl = wrapEl;
+    if (wrapEl) { _wpLastFitEl = wrapEl; try { _wpWatchFitContent(wrapEl); } catch (e) { void e; } }
     // Chrome menu open → defer; the menu's close handler replays the fit.
     // Bounded (#159): a stuck menu flag can pause fits at most MENU_FIT_PAUSE_MS.
     if (_menuFitPaused()) { _wpMenuSuppressedFit = wrapEl || null; return; }

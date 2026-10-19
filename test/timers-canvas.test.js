@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { readSource, sliceBlock, evalBlock, stripJs, ROOT } from './_source-slice.js';
+import { readSource, sliceBlock, evalBlock, stripJs, stripCss, ROOT } from './_source-slice.js';
 
 const canvas   = readSource(path.join(ROOT, 'apps', 'mimic', 'canvas.html'));
 const triggers = readSource(path.join(ROOT, 'apps', 'mimic', 'triggers.html'));
@@ -406,9 +406,11 @@ describe('tray ↔ dashboard parity', () => {
 describe('Background on the Timers canvas', () => {
   const pre = readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js'));
   const cv = readSource(path.join(ROOT, 'apps', 'mimic', 'canvas.html'));
-  it('plates each panel, never the screen-sized body', () => {
+  it('plates each panel on its own say-so, never the screen-sized body and never off one body class', () => {
+    // 2026-10-19: the preload no longer plates every panel at once; canvas.html's `.panel.back` is each item's own.
     expect(pre).toMatch(/body\.wp-backdrop:not\(:has\(#wrap\)\):not\(:has\(#screenBtn\)\)\{background:/);
-    expect(pre).toMatch(/body\.wp-backdrop:has\(#screenBtn\) #panels > \.panel:not\(\.off\)\{background:/);
+    expect(stripJs(pre)).not.toMatch(/#panels > \.panel:not\(\.off\)\{background/);
+    expect(stripCss(cv)).toMatch(/\.panel\.back:not\(\.part\)\{background:rgb\(8 10 14 \/ max\(var\(--bg-alpha,0\.92\), 0\.92\)\);border-radius:6px\}/);
     // The marker is the canvas's alone.
     expect(cv).toMatch(/id="screenBtn"/);
     const fs = require('node:fs');
@@ -417,10 +419,11 @@ describe('Background on the Timers canvas', () => {
     expect(others).toEqual([]);
   });
 
-  it('the panel menu has a Background row on the shared toggle; panel frames never self-plate', () => {
+  it('the panel menu has its own Background row; the shared toggle is the toolbar\'s default; panel frames never self-plate', () => {
     const c = stripJs(cv), p = stripJs(pre);
-    expect(c).toMatch(/data-bg[\s\S]{0,200}Background: /);
-    expect(c).toMatch(/hasAttribute\('data-bg'\)[\s\S]{0,80}M\.toggleBackdropThis\(\)/);
+    expect(c).toMatch(/<div class="sec">Background<\/div>[\s\S]{0,300}data-back="0"[\s\S]{0,200}data-back="1"/);
+    expect(c).not.toMatch(/data-bg\b/);
+    expect(c).toMatch(/bgBtn\.addEventListener\('click'[\s\S]{0,80}M\.toggleBackdropThis\(\)/);
     expect(p).toMatch(/toggleBackdropThis:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('wp-backdrop-toggle'\)/);
     // Both the load-time pull and the push skip a canvas panel frame.
     expect(p).toMatch(/s\.backdrop && _wpOverlayDoc\(\) && !_wpCanvasPart\(\)/);
