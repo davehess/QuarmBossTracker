@@ -778,6 +778,14 @@ next touch one rather than assuming a missing row means a missing doc.
   per item with a "Default background" for the rest; the Canvas timer ✕ takes the click; spell rows coloured by kind;
   a whole Target Info on the Canvas grows to show its buffs. Tests: `test/overlay-fit-content.test.js`,
   `test/canvas-timer-hover-and-colours.test.js`, `test/mobinfo-canvas-whole-fit.test.js`.
+- **🧪 Decision Desk picks (agent 3.8.20–3.8.25 beta, 2026-10-19; DECISIONS §382):** timer-row ⋮ Move to / Mute + Muted
+  timers card; Canvas "Span all screens"; a targeted player's timers on Extended Target rows; #petstats fold-out sheet;
+  Voice volume slider; buff-faded triggers on each spell's own fade line. Tests: `test/timer-row-menu.test.js`,
+  `test/canvas-span.test.js`, `test/ext-target-player-timers.test.js`, `test/pet-sheet-foldout.test.js`,
+  `test/voice-volume.test.js`, `test/buff-fade-triggers.test.js`.
+- **✅ raidmimic.com: "The tour" is the layout (web 1.9.10, 2026-10-19; §382).**
+- **✅ CI green again (2026-10-19; §382):** quarantined test files with owners and a 2026-11-02 expiry,
+  `test/quarantine-guard.test.js`.
 - **✅ raidmimic.com live (2026-10-19; DECISIONS §370).** https://raidmimic.com serves the guild leaders' page.
 - **✅ Voice reports, server half (bot 3.2.8 · web 1.9.9, 2026-10-19; DECISIONS §379).** `POST /api/agent/voice-report`
   and `/admin/voice-reports` [beta]; the `voice_reports` table was created 2026-10-19. `test/voice-reports.test.js`.
