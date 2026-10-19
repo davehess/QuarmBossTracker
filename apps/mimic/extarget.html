@@ -179,6 +179,13 @@
     opacity:0.55;transition:opacity .1s,color .1s;text-shadow:0 1px 2px #000}
   .row:hover .rowhide{opacity:0.9}
   .row .rowhide:hover{color:#f87171;opacity:1}
+  /* A targeted player's known timers (disc, Mend, Lay on Hands, AAs) — Target Info's chips, on ONE
+     compact line: the first few, then "+N" with the rest in its tooltip. */
+  .row .cds{grid-column:1 / -1;display:flex;flex-wrap:nowrap;gap:3px;overflow:hidden;margin-top:2px;min-width:0}
+  .row .cd{font-size:9px;line-height:1.35;padding:0 3px;border:1px solid currentColor;border-radius:3px;
+    white-space:nowrap;font-variant-numeric:tabular-nums;color:#f85149;flex-shrink:0;cursor:help}
+  .row .cd.ok{color:#56d364}
+  .row .cd.more{color:#9aa4ad}
   /* Who's targeting this — the raiders on each target, dim full-width line
      under the row (a member, 2026-07-15: "Extended Target should show who is
      targeting which target"). */
@@ -351,6 +358,31 @@
     if (secs < 60) return secs + 's';
     var m = Math.floor(secs / 60), s = secs % 60;
     return m + 'm' + (s ? s + 's' : '');
+  }
+  // A targeted player's known timers — the same chips Target Info shows (mobinfo.html timersLine; the
+  // agent builds both from _targetPlayerTimers): ✓ when ready, else the time left, "~" for an estimate,
+  // and the tooltip names where it came from. Compact for a list: at most EXT_CD_SHOW chips, then
+  // "+N" whose tooltip lists the rest. Rows with no timers emit nothing (byte-stable).
+  var EXT_CD_SHOW = 3;
+  var _CD_FROM = { own: 'from your own character', mimic: 'from their Mimic', seen: 'you saw them start it' };
+  function fmtCd(s){ s = Math.max(0, Math.round(s)); if (s >= 3600) return Math.floor(s/3600)+'h'+String(Math.floor((s%3600)/60)).padStart(2,'0'); var m = Math.floor(s/60); return m+':'+String(s-m*60).padStart(2,'0'); }
+  function cdText(c){ return esc(c.label) + ' ' + (!(c.ms_left > 0) ? '✓' : (c.est ? '~' : '') + fmtCd(c.ms_left / 1000)); }
+  function timersLine(list){
+    if (!Array.isArray(list)) return '';
+    var rows = list.filter(function(c){ return c && c.label; });
+    if (!rows.length) return '';
+    var h = '';
+    for (var i = 0; i < rows.length && i < EXT_CD_SHOW; i++) {
+      var c = rows[i];
+      var tip = esc(c.label) + ' — ' + (_CD_FROM[c.source] || 'from a Mimic');
+      if (c.source === 'seen') tip += c.level_known ? '; the time is estimated from their level' : '; their level is unknown, so this is the longest it can take';
+      else if (c.est) tip += '; the time is an estimate';
+      h += '<span class="cd' + (!(c.ms_left > 0) ? ' ok' : '') + '" title="' + tip + '">' + cdText(c) + '</span>';
+    }
+    if (rows.length > EXT_CD_SHOW) {
+      h += '<span class="cd more" title="' + rows.slice(EXT_CD_SHOW).map(function(c){ return cdText(c); }).join(', ') + '">+' + (rows.length - EXT_CD_SHOW) + '</span>';
+    }
+    return '<div class="cds" data-wp-sect="timers">' + h + '</div>';
   }
   // Build the mob-stats sub-line from the agent-attached V2 fields. NPC rows
   // only; each field is independently optional, so player/pet "needs
@@ -595,6 +627,7 @@
       +    '<div class="bar"><div class="fill ' + tier + '" style="width:' + bw + '%"></div></div>'
       +    mobxLine(t)
       +    whoLine
+      +    timersLine(t.timers)
       +    deb
       +  '</div>';
   }
@@ -767,6 +800,7 @@
       +    '<span class="ago">' + selfAgo(age) + '</span>'
       +    '<span class="hp ' + tier + '">' + (t.hp_pct != null ? Math.round(t.hp_pct) + '%' : '—') + '</span>'
       +    '<div class="bar"><div class="fill ' + tier + '" style="width:' + bw + '%"></div></div>'
+      +    timersLine(t.timers)
       +  '</div>';
   }
   function renderSelf(payload){
@@ -949,7 +983,7 @@
   async function tick(){
     try {
       var asked = _scope;
-      var r = await fetch('http://127.0.0.1:'+PORT+'/api/extended-target?scope='+asked+(asked === 'self' ? '&keep='+_keep : ''), { cache: 'no-store' });
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/extended-target?scope='+asked+(asked === 'self' ? '&keep='+_keep : '')+((asked === 'self' || _showPlayers) ? '&timers=1' : ''), { cache: 'no-store' });
       var p = await r.json();
       if (asked !== _scope) return;   // the switch flipped mid-request; the next tick is the right answer
       document.getElementById('conn').className = 'conn ok';

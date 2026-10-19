@@ -15508,6 +15508,34 @@ function _targetPlayerTimers(st, cached, now) {
   return out.length ? out : null;
 }
 
+// Extended Target rows for PLAYERS carry the same timers (the guild lead, 2026-10-19, picked A for
+// DECISIONS §126, "say if this should also show on Extended Target rows"). Same source as Target
+// Info — _targetPlayerTimers — so a chip reads the same in both places. Raid / Group rows come
+// from the bot with kind 'player'; Self rows are all kind 'npc' (the agent does not know which of
+// the things you tabbed to were players), so on the Self tab a single-word name is tried and the
+// timer sources, which are keyed by player name, decide. The overlay asks with `timers=1` (when it
+// is showing players, or on Self), because a lookup of another raider's Mimic costs the bot a read.
+// At most EXT_TIMERS_FETCH_MAX such lookups per poll; each is cached for MT_LIVE_STATE_TTL_MS.
+// Never mutates the cached payload: a row with timers is a copy.
+const EXT_TIMERS_FETCH_MAX = 8;
+function _attachExtRowTimers(payload, now, fetchLive) {
+  if (!payload || !Array.isArray(payload.targets) || !payload.targets.length) return payload;
+  const selfScope = payload.scope === 'self';
+  let asked = 0, any = false;
+  const targets = payload.targets.map(t => {
+    if (!t || !t.name) return t;
+    if (!(t.kind === 'player' || (selfScope && (t.kind || 'npc') === 'npc'))) return t;
+    const k = String(t.name).trim().toLowerCase();
+    if (!k || /\s/.test(k)) return t;
+    if (!_meZealFor(k) && asked < EXT_TIMERS_FETCH_MAX) { asked++; try { fetchLive(t.name); } catch { /* cached / offline */ } }
+    const timers = _targetPlayerTimers({ target_name: t.name }, null, now);
+    if (!timers) return t;
+    any = true;
+    return { ...t, timers: timers.map(c => ({ key: c.key, label: c.label, ms_left: c.ms_left, est: !!c.est, source: c.source, level_known: c.level_known })) };
+  });
+  return any ? { ...payload, targets } : payload;
+}
+
 // The DIRGE NUKE board on the Melody overlay (the guild lead, 2026-09-26): the
 // pre-buffs it waits for that the bard strip does not carry, Puretone
 // Discipline (up now, or ready by the shared disc timer), and mana for the
@@ -32278,8 +32306,11 @@ function wpSoundOverrideHtml(t, ov) {
       var frag = String(p.voices[f]).toLowerCase();
       for (var j = 0; j < vs.length; j++) if (vs[j].name.toLowerCase().indexOf(frag) >= 0) { voice = vs[j]; break; }
     }
-    return { voice: voice, rate: rate, pitch: pitch };
+    return { voice: voice, rate: rate, pitch: pitch, volume: volumeNow() };
   }
+  // VOLUME (the guild lead, 2026-10-19): cfgVoice.volume is 0-1, absent = full. Not part of a voice, so a forced pack
+  // does not change it. The same rule as Mimic's voice.js.
+  function volumeNow(){ var n = cfgVoice.volume; return (typeof n === 'number' && isFinite(n) && n >= 0 && n <= 1) ? n : 1; }
   // over (optional): a past line's own { voice (name), rate, pitch }, which outrank the pack's (REPLAY, below).
   function speakWin(text, packId, over){
     if (!window.speechSynthesis) return;
@@ -32292,6 +32323,7 @@ function wpSoundOverrideHtml(t, ov) {
     }
     if (v.voice) u.voice = v.voice;
     u.rate = v.rate; u.pitch = v.pitch;
+    if (v.volume >= 0 && v.volume <= 1) u.volume = v.volume;
     try { window.speechSynthesis.cancel(); } catch (e) { void e; }
     window.speechSynthesis.speak(u);
   }
@@ -32394,6 +32426,7 @@ function wpSoundOverrideHtml(t, ov) {
           a.onended = a.onerror = function(){ try { URL.revokeObjectURL(url); } catch (e) { void e; } };
           if (curAudio) { try { curAudio.pause(); } catch (e) { void e; } }
           curAudio = a;
+          a.volume = volumeNow();
           a.play().then(function(){ done(true); }, function(){ done(false); });
         } catch (e) { done(false); }
       }, function(){ if (!late) { clearTimeout(t); done(false); } });
@@ -32432,10 +32465,11 @@ function wpSoundOverrideHtml(t, ov) {
     h += '</select></label>'
       + '<label>Speed <input type="range" id="wpVoiceRate" min="50" max="200" value="' + Math.round((cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoiceRateV" class="dim">' + pct(cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) + '&times;</span></label>'
       + '<label>Pitch <input type="range" id="wpVoicePitch" min="0" max="200" value="' + Math.round((cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoicePitchV" class="dim">' + pct(cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) + '</span></label>'
+      + '<label>Volume <input type="range" id="wpVoiceVolume" min="10" max="100" step="5" value="' + Math.round(volumeNow() * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoiceVolumeV" class="dim">' + Math.round(volumeNow() * 100) + '%</span></label>'
       + '<button type="button" id="wpVoiceHear" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>'
       + '<button type="button" id="wpVoiceReset" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;font-family:inherit;font-size:12px"' + (inMimic() ? '' : ' disabled') + '>Back to the pack\\'s own</button>'
       + '</div>';
-    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor. Speed applies to every voice engine; pitch and the installed-voice pick apply to the Windows voice only.</div>';
+    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor. Speed and volume apply to every voice engine; pitch and the installed-voice pick apply to the Windows voice only. Volume is how loud callouts play inside Mimic; trigger sounds have their own volume.</div>';
     return h;
   }
   // 🗣 Voice engine (the guild lead, 2026-10-17): Windows voices, Piper (free, open source, downloaded on demand),
@@ -32688,6 +32722,8 @@ function wpSoundOverrideHtml(t, ov) {
     if (t.id === 'wpVoicePhraseText') { phrase.text = t.value.slice(0, 300); savePhrase(); return; }
     if (t.id === 'wpVoiceRate') { cfgVoice.rate = Number(t.value) / 100; var rv = document.getElementById('wpVoiceRateV'); if (rv) rv.innerHTML = pct(cfgVoice.rate) + '&times;'; save(); return; }
     if (t.id === 'wpVoicePitch') { cfgVoice.pitch = Number(t.value) / 100; var pv = document.getElementById('wpVoicePitchV'); if (pv) pv.textContent = pct(cfgVoice.pitch); save(); return; }
+    // Volume moves a sample that is playing right now too; the next ▶ Hear it / ▶ Test plays at the new level.
+    if (t.id === 'wpVoiceVolume') { cfgVoice.volume = Number(t.value) / 100; var vv = document.getElementById('wpVoiceVolumeV'); if (vv) vv.textContent = Math.round(cfgVoice.volume * 100) + '%'; if (curAudio) { try { curAudio.volume = volumeNow(); } catch (e) { void e; } } save(); return; }
     if (t.hasAttribute && t.hasAttribute('data-vn-say')) { var nm = charOf(t); if (nm) drafts[nm] = t.value; }
   }
   function mount(){
@@ -34530,7 +34566,11 @@ function startWebDashboard(port) {
         if (/[?&]scope=self(?:&|$)/.test(req.url)) {
           const km = /[?&]keep=(\d+)/.exec(req.url);
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify(selfTargetPayload(selfCharacter, km ? km[1] : null, Date.now())));
+          let selfPayload = selfTargetPayload(selfCharacter, km ? km[1] : null, Date.now());
+          // A targeted player's timers ride their row (the overlay asks with timers=1).
+          try { if (/[?&]timers=1(?:&|$)/.test(req.url)) selfPayload = _attachExtRowTimers(selfPayload, Date.now(), fetchCharacterLiveState); }
+          catch { /* the chips are extra: never break the list */ }
+          return res.end(JSON.stringify(selfPayload));
         }
         fetchExtendedTarget(selfCharacter);
         const cached = _extTargetCache.get(String(selfCharacter || '').toLowerCase());
@@ -34598,6 +34638,10 @@ function startWebDashboard(port) {
             wantScope, _lastRaidPipe && _lastRaidPipe.members);
         }
         catch { /* scoping must never break the proxy — fall back to the zone view */ }
+        // A targeted player's timers ride their row (the overlay asks with timers=1). After the scoping,
+        // so only the rows that will be shown are looked up.
+        try { if (/[?&]timers=1(?:&|$)/.test(req.url)) outPayload = _attachExtRowTimers(outPayload, Date.now(), fetchCharacterLiveState); }
+        catch { /* the chips are extra: never break the proxy */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
       }
@@ -45902,27 +45946,43 @@ function _addMyTarget(t, captures, character) {
 }
 const SUGGESTED_TRIGGERS = [
   // ── Buff drops on YOU — the most-requested alert class. The pattern matches
-  //    the EQ "Your <buff> spell has worn off." line; we cover common Clarity /
-  //    KEI / Aego / POTG / Symbol / Virtue lines individually so each shows
-  //    a category-specific overlay text.
+  //    each spell's OWN spell_fades text (eqemu_spells, checked 2026-10-19). The old
+  //    "Your <buff> spell has worn off." is only what the server prints to a CASTER
+  //    about a spell on someone else (SPELL_WORN_OFF, string 437), so a buff
+  //    dropping off you never read that way and these five were dead. Every rank
+  //    that shares a fade line shares a pattern. Lines are shared across a whole
+  //    kind of buff (all the skins, all the hastes), so the alert says which kind.
+  //      Clarity: The cool breeze fades. (Clarity 174) / The soft breeze fades. (Clarity II 1693) /
+  //        Your mind returns to normal. (Voice of Quellious 3360, Koadic's Endless Intellect 2570) /
+  //        Your gift of insight fades. (1409) / Your gift of brilliance fades. (1410)
+  //      Aego: Your aegolism fades. (1447, 2510) / Your virtue fades. (3467, 3479) / The mystic symbol fades. (485-488, 1535)
+  //      POTG: Your skin returns to normal. (Glades 1442, Cabbage 2188, Nine 3234). The same line ends
+  //        Spikecoat / Bramblecoat / Thistlecoat (515-518), which are damage shields: it is POTG's alert only,
+  //        or one drop would raise both.
+  //      Haste: Your speed returns to normal. (39, 171, 172, 1708) / The pulsing energy fades. (Augmentation 10, Augment 1729)
+  //      Damage shield: The brambles fall away. (129, 356, 432, 1727, 1975) / The blades fall away. (1560) /
+  //        The maelstrom fades away. (Shield of the Eighth 1963)
+  //    Left out because they have no fade text to match, or never were what the old name said: Augment
+  //    Death / Augmentation of Death (null), Pack Regeneration (a regen buff, not POTG), Shield of the Magi
+  //    (an armour buff), and names the Quarm spell list does not have (Conviction, Symbol of Tnarg, Shield of the Pellarus).
   { id: 'buff_clarity_drop', category: 'buff', label: 'Clarity / C2 / VoQ dropped',
-    pattern: '^Your (?:Clarity(?: II)?|Voice of Quellious|Gift of (?:Insight|Brilliance)|Koadic\'s Endless Intellect) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:The cool breeze fades|The soft breeze fades|Your mind returns to normal|Your gift of (?:insight|brilliance) fades)\\.\\s*$',
     overlay_text: 'CLARITY DROPPED', overlay_color: 'cyan',  overlay_ms: 5000,
     tts_default: true,  cooldown_seconds: 3 },
   { id: 'buff_aego_drop', category: 'buff', label: 'Aego / Virtue / Symbol dropped',
-    pattern: '^Your (?:Aegolism|Virtue|Symbol of (?:Marzin|Ryltan|Naltron|Tnarg|Pinzarn|Transal)|Hand of Virtue|Conviction|Blessing of Aegolism) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:Your aegolism fades|Your virtue fades|The mystic symbol fades)\\.\\s*$',
     overlay_text: 'AEGO/SYMBOL DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
     tts_default: true,  cooldown_seconds: 3 },
   { id: 'buff_potg_drop', category: 'buff', label: 'POTG / POTC dropped',
-    pattern: '^Your (?:Protection of the (?:Glades|Cabbage|Nine)|Pack Regen) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+Your skin returns to normal\\.\\s*$',
     overlay_text: 'POTG DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
     tts_default: true,  cooldown_seconds: 3 },
   { id: 'buff_haste_drop', category: 'buff', label: 'Haste dropped',
-    pattern: '^Your (?:Augment(?:ation)?(?: of Death)?|Aanya\'s Quickening|Celerity|Quickness|Swift Like the Wind) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:Your speed returns to normal|The pulsing energy fades)\\.\\s*$',
     overlay_text: 'HASTE DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
     tts_default: false, cooldown_seconds: 3 },
   { id: 'buff_dmg_shield_drop', category: 'buff', label: 'Damage shield dropped',
-    pattern: '^Your (?:Shield of (?:Thorns|Spikes|Blades|Brambles|the Eighth|the Magi|the Pellarus)|Thorny Shield|Thistlecoat|Bramblecoat|Spikecoat|Legacy of Spike) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:The brambles fall away|The blades fall away|The maelstrom fades away)\\.\\s*$',
     overlay_text: 'DAMAGE SHIELD DROPPED', overlay_color: 'cyan', overlay_ms: 4000,
     tts_default: false, cooldown_seconds: 3 },
 
@@ -46093,6 +46153,9 @@ const SUGGESTED_TRIGGERS = [
     pattern: 'Insufficient Mana to cast this spell!',
     overlay_text: 'NOT ENOUGH MANA', overlay_color: 'yellow', overlay_ms: 2500,
     tts_default: false, cooldown_seconds: 3 },
+  // INVIS_BEGIN_BREAK (string 275), sent one tick (6 s) before an invisibility ends — not for bard songs
+  // (EQMacEmu zone/spell_effects.cpp, SE_Invisibility). The server sends no such warning for levitation or run
+  // speed, so there is no "about to drop" trigger for those two: only the fade text, after the fact.
   { id: 'self_invis_fading', category: 'utility', label: 'Your invisibility is about to drop',
     pattern: 'You feel yourself starting to appear\\.',
     overlay_text: 'INVIS FADING', overlay_color: 'yellow', overlay_ms: 4000,
@@ -46149,6 +46212,13 @@ const SUGGESTED_RETIRED_PATTERNS = {
   self_mezzed:      ['^You feel (?:calm|charmed)\\.'],
   self_feared:      ['^You are afraid\\.'],
   cast_interrupted: ['^Your (?:spell|target) (?:was )?interrupted'],
+  // 2026-10-19: "Your <buff> spell has worn off." is what a CASTER is told about a spell on someone else;
+  // a buff ending on you prints the spell's own fade text. These five never fired.
+  buff_clarity_drop: ['^Your (?:Clarity(?: II)?|Voice of Quellious|Gift of (?:Insight|Brilliance)|Koadic\'s Endless Intellect) (?:spell )?has worn off\\.'],
+  buff_aego_drop: ['^Your (?:Aegolism|Virtue|Symbol of (?:Marzin|Ryltan|Naltron|Tnarg|Pinzarn|Transal)|Hand of Virtue|Conviction|Blessing of Aegolism) (?:spell )?has worn off\\.'],
+  buff_potg_drop: ['^Your (?:Protection of the (?:Glades|Cabbage|Nine)|Pack Regen) (?:spell )?has worn off\\.'],
+  buff_haste_drop: ['^Your (?:Augment(?:ation)?(?: of Death)?|Aanya\'s Quickening|Celerity|Quickness|Swift Like the Wind) (?:spell )?has worn off\\.'],
+  buff_dmg_shield_drop: ['^Your (?:Shield of (?:Thorns|Spikes|Blades|Brambles|the Eighth|the Magi|the Pellarus)|Thorny Shield|Thistlecoat|Bramblecoat|Spikecoat|Legacy of Spike) (?:spell )?has worn off\\.'],
 };
 // The same for a template's alert text: a saved row still saying exactly this
 // gets the current text (cast_resisted_self now names the mob, 2026-10-02).

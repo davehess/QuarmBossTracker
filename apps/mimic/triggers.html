@@ -651,8 +651,8 @@
   function _speakNeural(item, choice){
     var tok = { neural: true };
     _speakingUtt = tok; _speakingPrio = item.prio;
-    var rate = 1.05;
-    try { rate = window.WPVoice.pick(_voicePacks, _voiceCfg, item.meta && item.meta.voice_pack, []).rate; } catch (e) {}
+    var rate = 1.05, volume = 1;
+    try { var vp = window.WPVoice.pick(_voicePacks, _voiceCfg, item.meta && item.meta.voice_pack, []); rate = vp.rate; volume = vp.volume; } catch (e) {}
     // Same watchdog as the Windows path: the queue drains on a timer even if nothing ever finishes.
     var est = Math.min(20000, 3500 + String(item.text || '').length * 110);
     _speakWatchdog = setTimeout(function(){
@@ -662,6 +662,7 @@
       if (_speakingUtt !== tok) return;            // preempted, or the watchdog already moved on
       if (!a){ _fallbackToWindows(item); return; }
       _speakingAudio = a;
+      a.volume = volume;                           // the player's Voice volume (0-1)
       a.addEventListener('ended', function(){ if (_speakingUtt === tok){ _speakingAudio = null; _speakPump(); } });
       a.addEventListener('error', function(){ if (_speakingUtt === tok){ _speakingAudio = null; _fallbackToWindows(item); } });
       a.play().then(function(){ reportPlayback('started', choice.engine, item.meta); _noteSpoken(item, choice.engine, choice.voice, rate, 1); },
@@ -685,6 +686,7 @@
           const vp = window.WPVoice.pick(_voicePacks, _voiceCfg, item.meta && item.meta.voice_pack, window.speechSynthesis.getVoices());
           if (vp.voice) u.voice = vp.voice;
           u.rate = vp.rate; u.pitch = vp.pitch;
+          if (vp.volume >= 0 && vp.volume <= 1) u.volume = vp.volume;
         }
       } catch (e) {}
       var settled = false;
