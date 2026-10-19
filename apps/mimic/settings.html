@@ -209,6 +209,13 @@
     <button id="layoutExport" type="button" style="margin-top:0;white-space:nowrap" title="Save the layout on screen now to a .mimic-layout.json file. Use Export on a set above to share that set instead.">📤 Export the current layout…</button>
     <button id="layoutImport" type="button" style="margin-top:0;white-space:nowrap" title="Open a layout file someone sent you. You see what is in it first; it is added as a new set and your setup is saved first.">📥 Import a layout…</button>
   </div>
+  <div class="sub" style="margin-top:12px"><b>Share your whole setup.</b> Your overlay layouts, HUD, overlay options, personal triggers and &ldquo;What you hear&rdquo; settings, as a file or as a six-character code that works for 24 hours. The name, byline and note above go on it. Your characters travel as &ldquo;Character 1&rdquo;, &ldquo;Character 2&rdquo; and the person who opens it picks which of theirs get those parts. Never included: your sign-in, tokens, EverQuest and log paths, bids or character names.</div>
+  <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+    <button id="setupExport" type="button" style="margin-top:0;white-space:nowrap" title="Save your whole setup to a .mimic-setup.json file you can send. You see what goes in it first.">📦 Export my whole setup…</button>
+    <button id="setupCode" type="button" style="margin-top:0;white-space:nowrap" title="Get a six-character code for your whole setup, good for 24 hours. Needs you to be signed in. You see what goes in it first.">🔗 Get a code</button>
+    <button id="setupImport" type="button" style="margin-top:0;white-space:nowrap" title="Open a setup file someone sent you. You preview it with a tick on every part before anything changes.">📥 Import a setup…</button>
+    <button id="setupEnter" type="button" style="margin-top:0;white-space:nowrap" title="Type a code someone gave you. You preview it with a tick on every part before anything changes. Needs you to be signed in.">🔢 Enter a code…</button>
+  </div>
   <div class="hint">In game (needs Zeal), put these on social buttons: <code>/pipe mimic load raid</code> · <code>/pipe mimic save raid</code> (no name saves over the set you are on) · <code>/pipe mimic next</code> · <code>/pipe mimic lock</code> (locks or unlocks the overlays). The tray has the same under 🗂 Overlay sets.</div>
 
   <h2>Local UI</h2>
@@ -1682,6 +1689,20 @@
   });
   document.getElementById('layoutExport').addEventListener('click', function(){ _layoutRun(function(){ return window.mimic.overlayLayoutExport(_layoutOpts()); }); });
   document.getElementById('layoutImport').addEventListener('click', function(){ _layoutRun(function(){ return window.mimic.overlayLayoutImport(); }); });
+  // 📦🔗 A whole setup: the same four functions the tray runs (main.js _exportSetupFile / _getSetupCode / _importSetupFile /
+  // _enterSetupCode). A window that opens says everything itself, so an empty message is not painted.
+  async function _setupRun(call){
+    var r;
+    try { r = await call(); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
+    if (!r || r.canceled || (r.ok && !r.message)) return;
+    _setsMsg(r);
+  }
+  [['setupExport', 'overlaySetupExport', true], ['setupCode', 'overlaySetupCode', true], ['setupImport', 'overlaySetupImport', false], ['setupEnter', 'overlaySetupEnterCode', false]].forEach(function(b){
+    document.getElementById(b[0]).addEventListener('click', function(){
+      if (!window.mimic || !window.mimic[b[1]]) { _setsMsg({ ok: false, message: 'This Mimic is too old to share a whole setup. Update it first.' }); return; }
+      _setupRun(function(){ return window.mimic[b[1]](b[2] ? _layoutOpts() : undefined); });
+    });
+  });
   _renderOverlaySets();
 </script>
 

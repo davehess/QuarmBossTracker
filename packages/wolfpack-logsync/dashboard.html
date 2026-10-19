@@ -5053,6 +5053,16 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act wp-btn" data-act="layoutExport" title="Saves the Canvas layout on screen now to a .mimic-layout.json file. Positions are pinned to EverQuest&rsquo;s window so it fits other screens; no character names or filters go in it.">📤 Export…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="layoutImport" title="Opens a layout file someone sent you. You see what is in it first; it is added as a new set and your setup is saved first, with one Undo.">📥 Import…</button>'
     + '<span id="wpShareMsg" class="dim"></span></div>';
+  // 📦🔗 A WHOLE setup — tray parity for "Export my whole setup…", "Get a share code…", "Import a whole setup…" and "Enter a
+  // share code…" (the guild lead, 2026-10-19, DECISIONS §383). Mimic runs the same four functions the tray does; the name and
+  // byline typed above go on it. Layouts, HUD, overlay options, personal triggers and rules travel; never a sign-in, token,
+  // path or bid, and characters as "Character 1…". Static HTML: the message is painted by the click handler.
+  h += '<div class="wp-strip" style="margin:0 0 10px"><span class="wp-lbl">Share your whole setup</span>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupExport" title="Saves your overlay layouts, HUD, overlay options, personal triggers and &ldquo;What you hear&rdquo; settings to a .mimic-setup.json file. You see what goes in it first. Never included: sign-in, tokens, EverQuest paths, bids or character names.">📦 Export…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupCode" title="A six-character code for the same thing, good for 24 hours. You see what goes in it first. Needs you to be signed in.">🔗 Get a code</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupImport" title="Opens a setup file someone sent you. You preview it with a tick on every part, and pick which of your characters get the per-character parts, before anything changes.">📥 Import…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupEnter" title="Type a code someone gave you. You preview it before anything changes. Needs you to be signed in.">🔢 Enter a code…</button>'
+    + '<span id="wpSetupMsg" class="dim"></span></div>';
   // On screen now | Add. Every overlay is written into BOTH — a row in the list
   // and a card in the drawer — and the painter shows exactly one of the two, so
   // switching an overlay on or off never changes the section HTML.
@@ -6135,6 +6145,22 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
           msgEl.style.color = r.ok ? 'var(--green)' : 'var(--red)';
           msgEl.textContent = (r.ok ? '✓ ' : '✕ ') + r.message + (r.nudge ? ' ' + r.nudge : '');
         }).catch(function(){});
+      }
+      // A whole setup as a file or a code — the tray's four items (main.js _exportSetupFile / _getSetupCode / _importSetupFile /
+      // _enterSetupCode). A window that opens says everything itself, so an empty message is not painted.
+      var setupCalls = { setupExport: 'overlaySetupExport', setupCode: 'overlaySetupCode', setupImport: 'overlaySetupImport', setupEnter: 'overlaySetupEnterCode' };
+      if (setupCalls[a]) {
+        var setupMsg = document.getElementById('wpSetupMsg');
+        var setupSay = function(ok, text){ if (setupMsg) { setupMsg.style.color = ok ? 'var(--green)' : 'var(--red)'; setupMsg.textContent = (ok ? '✓ ' : '✕ ') + text; } };
+        if (!window.mimic[setupCalls[a]]) setupSay(false, 'This Mimic is too old to share a whole setup. Update it first.');
+        else {
+          var sv2 = function(id){ var el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+          var wantsOpts = a === 'setupExport' || a === 'setupCode';
+          Promise.resolve(window.mimic[setupCalls[a]](wantsOpts ? { title: sv2('wpShareTitle'), author: sv2('wpShareBy') } : undefined)).then(function(r){
+            if (!r || r.canceled || (r.ok && !r.message)) return;
+            setupSay(!!r.ok, r.message);
+          }).catch(function(){});
+        }
       }
       // Same internals as the tray's "Arrange the canvas…" (turns it on too),
       // and like that item a second press is "Done". A Mimic without the

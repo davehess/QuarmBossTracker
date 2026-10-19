@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Mimic storage</title>
+<!--
+  Empty on purpose. Mimic's overlay pages are file:// pages and share ONE localStorage (where the HUD builder keeps its
+  parts and the overlays keep their options). main.js opens this page hidden, reads or writes those keys with
+  executeJavaScript, and closes it — the way "Share a whole setup" gets at them without any overlay being open.
+  It has no script of its own and shows nothing.
+-->
+</head><body></body></html>

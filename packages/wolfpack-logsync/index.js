@@ -23938,6 +23938,16 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act wp-btn" data-act="layoutExport" title="Saves the Canvas layout on screen now to a .mimic-layout.json file. Positions are pinned to EverQuest&rsquo;s window so it fits other screens; no character names or filters go in it.">📤 Export…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="layoutImport" title="Opens a layout file someone sent you. You see what is in it first; it is added as a new set and your setup is saved first, with one Undo.">📥 Import…</button>'
     + '<span id="wpShareMsg" class="dim"></span></div>';
+  // 📦🔗 A WHOLE setup — tray parity for "Export my whole setup…", "Get a share code…", "Import a whole setup…" and "Enter a
+  // share code…" (the guild lead, 2026-10-19, DECISIONS §383). Mimic runs the same four functions the tray does; the name and
+  // byline typed above go on it. Layouts, HUD, overlay options, personal triggers and rules travel; never a sign-in, token,
+  // path or bid, and characters as "Character 1…". Static HTML: the message is painted by the click handler.
+  h += '<div class="wp-strip" style="margin:0 0 10px"><span class="wp-lbl">Share your whole setup</span>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupExport" title="Saves your overlay layouts, HUD, overlay options, personal triggers and &ldquo;What you hear&rdquo; settings to a .mimic-setup.json file. You see what goes in it first. Never included: sign-in, tokens, EverQuest paths, bids or character names.">📦 Export…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupCode" title="A six-character code for the same thing, good for 24 hours. You see what goes in it first. Needs you to be signed in.">🔗 Get a code</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupImport" title="Opens a setup file someone sent you. You preview it with a tick on every part, and pick which of your characters get the per-character parts, before anything changes.">📥 Import…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupEnter" title="Type a code someone gave you. You preview it before anything changes. Needs you to be signed in.">🔢 Enter a code…</button>'
+    + '<span id="wpSetupMsg" class="dim"></span></div>';
   // On screen now | Add. Every overlay is written into BOTH — a row in the list
   // and a card in the drawer — and the painter shows exactly one of the two, so
   // switching an overlay on or off never changes the section HTML.
@@ -25020,6 +25030,22 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
           msgEl.style.color = r.ok ? 'var(--green)' : 'var(--red)';
           msgEl.textContent = (r.ok ? '✓ ' : '✕ ') + r.message + (r.nudge ? ' ' + r.nudge : '');
         }).catch(function(){});
+      }
+      // A whole setup as a file or a code — the tray's four items (main.js _exportSetupFile / _getSetupCode / _importSetupFile /
+      // _enterSetupCode). A window that opens says everything itself, so an empty message is not painted.
+      var setupCalls = { setupExport: 'overlaySetupExport', setupCode: 'overlaySetupCode', setupImport: 'overlaySetupImport', setupEnter: 'overlaySetupEnterCode' };
+      if (setupCalls[a]) {
+        var setupMsg = document.getElementById('wpSetupMsg');
+        var setupSay = function(ok, text){ if (setupMsg) { setupMsg.style.color = ok ? 'var(--green)' : 'var(--red)'; setupMsg.textContent = (ok ? '✓ ' : '✕ ') + text; } };
+        if (!window.mimic[setupCalls[a]]) setupSay(false, 'This Mimic is too old to share a whole setup. Update it first.');
+        else {
+          var sv2 = function(id){ var el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+          var wantsOpts = a === 'setupExport' || a === 'setupCode';
+          Promise.resolve(window.mimic[setupCalls[a]](wantsOpts ? { title: sv2('wpShareTitle'), author: sv2('wpShareBy') } : undefined)).then(function(r){
+            if (!r || r.canceled || (r.ok && !r.message)) return;
+            setupSay(!!r.ok, r.message);
+          }).catch(function(){});
+        }
       }
       // Same internals as the tray's "Arrange the canvas…" (turns it on too),
       // and like that item a second press is "Done". A Mimic without the
@@ -34515,6 +34541,8 @@ function startWebDashboard(port) {
       if (req.url && req.url.split('?')[0] === '/api/voice-report' && req.method === 'POST') return _handleVoiceReport(req, res);
       // Personal trigger sync — Push / Pull between this household's PCs (2026-10-12).
       if (req.url && req.url.startsWith('/api/trigger-sync/')) return _handleTriggerSync(req, res);
+      // Share a whole setup: Mimic reads and applies the personal triggers + rules of a bundle here (2026-10-19).
+      if (req.url && /^\/api\/setup-share\/triggers(?:\/restore)?(?:\?|$)/.test(req.url)) return _handleSetupShareTriggers(req, res);
       // Sounds, voice packs, this PC's sound overrides, how names are pronounced (2026-10-14).
       if (req.url && /^\/(?:sounds\/[^?#]|api\/(?:sounds(?:\/open-folder)?|trigger-sound-overrides|voice-packs|pronunciations(?:\/local)?|pronunciation-suggest|pronunciation)(?:[?#]|$))/.test(req.url)) return _handleSoundsVoices(req, res);
       // Command Center ✕ on a needs-rez row — clears it for the WHOLE raid.
@@ -47437,6 +47465,76 @@ async function _handleTriggerSync(req, res) {
   const o = route === 'push' ? await _triggerSyncPush() : await _triggerSyncPull(b);
   send(o.ok ? 200 : 400, o);
 }
+// ── Share a whole setup — the trigger half (the guild lead, 2026-10-19, DECISIONS §383: "file + share code") ──────────
+// Mimic builds the shareable bundle (apps/mimic/setupBundle.js) and holds the HTML windows; the personal triggers and the
+// "What you hear" rules live HERE, so these three local routes are how it reads them and puts a bundle's back. They reuse the
+// sync's own machinery above: an applied bundle is a merge that backs both files up first, switches Discord posts off, and
+// compiles every row through the code a dashboard save runs. Nothing here touches the network.
+//   GET  /api/setup-share/triggers          → { ok, triggers: [plain rows], rules, chars: [the characters this PC watches] }
+//   POST /api/setup-share/triggers          { triggers, rules } → the merge's report, with `backups` (the files it saved)
+//   POST /api/setup-share/triggers/restore  { backups: [names from the report] } → puts those files back (the import's Undo)
+const SETUP_SHARE_MAX_TRIGGERS = 1000;
+const _SETUP_BACKUP_RX = /^(?:personal_triggers|trigger_rules)\.json\.bak-[0-9A-Za-z-]{10,40}$/;
+function _setupShareExport() {
+  return {
+    ok: true,
+    triggers: JSON.parse(JSON.stringify(_personalTriggers.map(_tsPlain))),
+    rules: JSON.parse(JSON.stringify(_triggerRules)),
+    chars: _watchedCharacters(),
+  };
+}
+function _setupShareApply(b, dir = path.dirname(STATS_FILE || '')) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return { ok: false, error: 'bad body' };
+  const triggers = Array.isArray(b.triggers) ? b.triggers : [];
+  const rules = (b.rules && typeof b.rules === 'object' && !Array.isArray(b.rules)) ? b.rules : {};
+  if (triggers.length > SETUP_SHARE_MAX_TRIGGERS) return { ok: false, error: 'too many triggers' };
+  // A sound that is a file on the SENDER's PC is not here: the same drop Mimic makes, in case a bundle came another way.
+  const clean = triggers.filter(t => t && typeof t === 'object' && !Array.isArray(t)).map(t => {
+    const dropCustom = (x) => { if (x && typeof x.sound === 'string' && /^custom:/i.test(x.sound.trim())) { delete x.sound; delete x.sound_volume; delete x.sound_mode; } };
+    const c = { ...t, actions: Array.isArray(t.actions) ? t.actions.map(a => (a && typeof a === 'object') ? { ...a } : a) : t.actions };
+    dropCustom(c);
+    if (Array.isArray(c.actions)) c.actions.forEach(dropCustom);
+    return c;
+  });
+  return _applyTriggerPull({ triggers: clean, rules }, 'merge', dir);
+}
+// Undo of an import: the files the merge saved come back. A file with no copy in `backups` did not exist before the
+// import, so it goes back to empty. Both files are backed up again first, so an Undo can itself be undone by hand.
+function _setupShareRestore(b, dir = path.dirname(STATS_FILE || '')) {
+  const names = Array.isArray(b && b.backups) ? b.backups : null;
+  if (!names || names.length > 2 || names.some(n => typeof n !== 'string' || n !== path.basename(n) || !_SETUP_BACKUP_RX.test(n))) return { ok: false, error: 'bad backup name' };
+  const pick = (base) => names.find(n => n.startsWith(base + '.bak-')) || null;
+  const read = (n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'));
+  let trigRaw = [], rulesRaw = {};
+  try {
+    const t = pick('personal_triggers.json'), r = pick('trigger_rules.json');
+    if (t) { const j = read(t); trigRaw = Array.isArray(j) ? j : (Array.isArray(j && j.triggers) ? j.triggers : []); }
+    if (r) rulesRaw = read(r);
+  } catch (err) { return { ok: false, error: 'could not read the saved copy: ' + String(err && err.message || err) }; }
+  const bk = _tsBackupLocal(dir);
+  if (!bk.ok) return { ok: false, error: 'could not back up your files first: ' + bk.error };
+  _personalTriggers = _normalizeIncomingPersonal(trigRaw).compiled;
+  if (!savePersonalTriggers()) return { ok: false, error: 'could not save your triggers' };
+  for (const k of Object.keys(_triggerRules)) delete _triggerRules[k];
+  Object.assign(_triggerRules, _cleanRules(rulesRaw));
+  const rulesSaved = saveTriggerRules();
+  _stateJsonCache = { at: 0, body: null };
+  scheduleRender();
+  return { ok: true, triggers: _personalTriggers.length, rules_saved: rulesSaved };
+}
+async function _handleSetupShareTriggers(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  const route = String(req.url || '').split('?')[0].slice('/api/setup-share/triggers'.length);
+  if (route !== '' && route !== '/restore') return send(404, { ok: false, error: 'not found' });
+  if (req.method === 'GET' && route === '') return send(200, _setupShareExport());
+  if (req.method !== 'POST') return send(405, { ok: false, error: 'method not allowed' });
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 1536 * 1024)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  const out = route === '' ? _setupShareApply(b) : _setupShareRestore(b);
+  send(out.ok ? 200 : 400, out);
+}
+// ── end share a whole setup (trigger half) ──
 // ── end personal trigger sync (agent half) ──
 
 // ── Sounds, voices and pronunciations (the guild lead, 2026-10-14) ───────────────────────────────
@@ -59733,6 +59831,8 @@ module.exports = {
   _setEnrageMute, _enrageMutesView, _enrageMuteSession, loadTriggerRules, _tickEnrageWarn, _mobInfoCacheKey, _enrageWarned,
   // Personal trigger sync (agent half) — exported for test/personal-trigger-sync-agent.test.js.
   _applyTriggerPull, _triggerSyncPush, _triggerSyncList, _triggerSyncPull, _tsBackupLocal,
+  // Share a whole setup (2026-10-19) — exported for test/setup-share-agent.test.js.
+  _setupShareExport, _setupShareApply, _setupShareRestore, _handleSetupShareTriggers,
   _runRelayedFire, _pushBlindEvent, _blindEvents, _maybeAnnounceDamageTaken,
   _applyGuildTriggersResponse,
   // Sounds, voices, pronunciations, after_my_melee_ms (2026-10-14) — exported for test/sounds-voices.test.js.

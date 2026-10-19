@@ -3475,6 +3475,420 @@ async function _layoutFileFromTray(run) {
     await dialog.showMessageBox({ type: r.ok ? 'info' : 'warning', title: 'Wolf Pack miMIC', noLink: true, message: r.message, detail: r.nudge || '' });
   } catch { /* no dialog */ }
 }
+// ── Share a WHOLE setup: a file, or a six-character code (the guild lead, 2026-10-19, DECISIONS §383) ─────────────
+// "Share a whole setup = A, file + share code" (§91). setupBundle.js builds and checks the document and plans an import;
+// everything that touches this PC is here: the Canvas layouts of every saved set (portableLayout, as above), the HUD
+// builder and overlay options (Mimic's own localStorage, read through a hidden page of the same origin), and the personal
+// triggers and "What you hear" rules (the engine's /api/setup-share/triggers routes, which merge and back up first).
+// A file needs no sign-in and no network, so the local edition has Export and Import-from-file; a CODE is the bot
+// (/api/agent/setup-share, the Mimic session as the bearer) and needs a signed-in member. The sign-in and token are used
+// by _botSetupShare below and go nowhere else: they are not in the bundle, a window or a log line.
+// Import is the layout import's shape, whole: a preview with a tick on every part, the sharer's characters as "Character 1…"
+// with YOUR characters picked for them, a "Before …" copy of your layouts, and one Undo for all of it.
+const setupBundle = require('./setupBundle');
+let _setupBusy = false;
+let _setupWin = null;
+let _setupFlow = null;   // { stage: 'code'|'preview'|'done', setup, source, mine, result, undo }
+const _SETUP_NEVER = 'Never included: your sign-in, tokens, EverQuest and log paths, bids, or your character names.';
+
+function _setupShareAuth() {
+  const cfg = loadConfig();
+  const token = resolveUploadToken(cfg);
+  return token ? { base: _botBaseUrl(cfg), token } : null;
+}
+// One call to the bot. → { status, body, retry } (status 0 = unreachable), or { signedOut:true }. Never rejects.
+function _botSetupShare(method, route, body) {
+  return new Promise((resolve) => {
+    const auth = _setupShareAuth();
+    if (!auth) return resolve({ status: 0, signedOut: true });
+    let u;
+    try { u = new URL(auth.base + '/api/agent/setup-share' + route); } catch { return resolve({ status: 0 }); }
+    const lib = u.protocol === 'http:' ? require('http') : require('https');
+    const data = body == null ? null : JSON.stringify(body);
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    const req = lib.request(u, {
+      method, timeout: 20000,
+      headers: Object.assign({ Authorization: 'Bearer ' + auth.token, Accept: 'application/json' },
+        data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {}),
+    }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (c) => { size += c.length; if (size > 2 * 1024 * 1024) { finish({ status: 0 }); res.destroy(); } else chunks.push(c); });
+      res.on('end', () => {
+        let j = null;
+        try { j = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* not JSON */ }
+        finish({ status: res.statusCode || 0, body: j, retry: Number(res.headers['retry-after']) || 0 });
+      });
+      res.on('error', () => finish({ status: 0 }));
+    });
+    req.on('error', () => finish({ status: 0 }));
+    req.on('timeout', () => { req.destroy(); finish({ status: 0 }); });
+    req.end(data || undefined);
+  });
+}
+
+// Mimic's overlay pages are file:// pages and share one localStorage; this hidden page is another of them, so it can read and
+// write what the HUD builder and the overlays keep there. It runs nothing of its own (storage.html is empty).
+async function _withStorage(fn) {
+  const win = new BrowserWindow({ show: false, width: 200, height: 120, skipTaskbar: true, webPreferences: _wpPrefs('Setup storage') });
+  try {
+    await win.loadFile('storage.html');
+    return await fn(win.webContents);
+  } finally { try { win.destroy(); } catch { /* gone */ } }
+}
+// → { key: string } for the keys setupBundle marks readable (shared options and the HUD builder), nothing else.
+async function _lsRead() {
+  const raw = await _withStorage((wc) => wc.executeJavaScript(
+    '(function(){var o={};try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(/^(wp|chchain_)/.test(k))o[k]=localStorage.getItem(k);}}catch(e){}return JSON.stringify(o);})()'));
+  const all = JSON.parse(raw);
+  const out = {};
+  for (const [k, v] of Object.entries(all)) if (setupBundle.readableKey(k) && typeof v === 'string') out[k] = v;
+  return out;
+}
+// writes: { key: string | null }  (null removes the key). Only readable keys, only short strings: the page is not trusted
+// with a key of its own choosing, and neither is a bundle.
+async function _lsWrite(writes) {
+  const clean = {};
+  for (const [k, v] of Object.entries(writes || {})) {
+    if (!setupBundle.readableKey(k)) continue;
+    if (v === null || (typeof v === 'string' && v.length <= 8192)) clean[k] = v;
+  }
+  if (!Object.keys(clean).length) return true;
+  const json = JSON.stringify(clean).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+  return _withStorage((wc) => wc.executeJavaScript(
+    '(function(w){try{for(var k in w){if(w[k]===null)localStorage.removeItem(k);else localStorage.setItem(k,w[k]);}return true;}catch(e){return false;}})(' + json + ')'));
+}
+function _reloadOverlayWindows(storageKeys) {
+  const want = new Set(setupBundle.windowsToReload(storageKeys));
+  for (const [key, win] of _overlayEntries()) {
+    if (want.has(key) && _live(win)) { try { win.webContents.reload(); } catch { /* mid-close */ } }
+  }
+}
+
+// The characters this PC watches (the engine's logs), the active one first. Names only ever come from the engine.
+async function _setupMyChars() {
+  const r = await _agentCall('GET', '/api/setup-share/triggers');
+  const out = (r && r.ok && Array.isArray(r.chars) ? r.chars : []).filter(c => typeof c === 'string' && /^[A-Za-z]{1,24}$/.test(c));
+  if (_activeCharName && /^[A-Za-z]{1,24}$/.test(_activeCharName)) {
+    const i = out.findIndex(c => c.toLowerCase() === _activeCharName.toLowerCase());
+    if (i > 0) out.splice(i, 1);
+    if (i !== 0) out.unshift(_activeCharName);
+  }
+  return out;
+}
+
+// Everything shareable from this PC, as a validated bundle. → { ok, setup, bytes, report } | { ok:false, message }.
+async function _collectSetup(opts) {
+  const o = (opts && typeof opts === 'object') ? opts : {};
+  const text = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const eng = await _agentCall('GET', '/api/setup-share/triggers');
+  if (!eng || !eng.ok) return { ok: false, message: 'The parser engine is not running yet, so Mimic cannot read your triggers. Open the dashboard once, then try again.' };
+
+  const layouts = [];
+  const skipped = [];
+  const add = (set, name, active) => {
+    const src = _layoutOfSet(set);
+    if (!src) return;
+    const made = portableLayout.toPortable(src.layout, src.screen, src.eq, { title: name });
+    if (made.ok) layouts.push({ name, active, doc: made.doc }); else skipped.push(name);
+  };
+  add(_captureOverlaySet(), 'Current layout', true);
+  const store = overlaySets.load(_SETS_FILE());
+  for (const key of Object.keys(store.sets).sort()) { if (layouts.length >= 40) break; add(store.sets[key], store.sets[key].name, false); }
+
+  let ls = {};
+  try { ls = await _lsRead(); } catch (e) { appendAgentLog(`[setup] could not read the overlay options: ${e && e.message || e}\n`); }
+
+  const made = setupBundle.build({
+    meta: { title: text(o.title, 60) || 'My Mimic setup', byline: text(o.author, 32), note: text(o.description, 280) },
+    layouts, hud: setupBundle.hudFromStorage(ls), options: setupBundle.optionsFromStorage(ls),
+    triggers: eng.triggers, rules: eng.rules, ownChars: await _setupMyChars(),
+  });
+  if (!made.ok) return { ok: false, message: made.error };
+  for (const n of skipped) made.report.left.push({ what: `layout "${n}"`, why: 'it would not export' });
+  return made;
+}
+function _collectSummary(made) {
+  const s = made.report.summary;
+  const bits = [];
+  if (s.layouts) bits.push(`${s.layouts} overlay layout${s.layouts === 1 ? '' : 's'}`);
+  if (s.options) bits.push(`options for ${s.options} overlay${s.options === 1 ? '' : 's'}`);
+  if (s.hud) bits.push(`the HUD builder for ${s.hud} character${s.hud === 1 ? '' : 's'}`);
+  if (s.triggers) bits.push(`${s.triggers} personal trigger${s.triggers === 1 ? '' : 's'}`);
+  if (s.rules) bits.push(`${s.rules} "What you hear" rule${s.rules === 1 ? '' : 's'}`);
+  const left = made.report.left.length ? 'Left out: ' + made.report.left.slice(0, 6).map(x => `${x.what} (${x.why})`).join('; ') + (made.report.left.length > 6 ? `; and ${made.report.left.length - 6} more` : '') + '.' : '';
+  return [bits.join(', ') + '.', s.characters ? 'Your characters go in as "Character 1", "Character 2"… and the person who opens it picks which of theirs get those parts.' : '', left, _SETUP_NEVER].filter(Boolean).join('\n\n');
+}
+
+// opts: { title?, author?, description? } → { ok, message, nudge? } or { ok:false, canceled:true }.
+async function _exportSetupFile(opts) {
+  if (_setupBusy) return { ok: false, message: 'A setup window is already open.' };
+  _setupBusy = true;
+  try {
+    const made = await _collectSetup(opts);
+    if (!made.ok) return made;
+    const win = BrowserWindow.getFocusedWindow();
+    const ask = await dialog.showMessageBox(win || null, {
+      type: 'question', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Choose where to save', 'Cancel'], defaultId: 0, cancelId: 1,
+      message: `Export "${made.setup.meta.title}"?`, detail: _collectSummary(made),
+    });
+    if (ask.response !== 0) return { ok: false, canceled: true, message: '' };
+    const pick = await dialog.showSaveDialog(win || null, {
+      title: 'Export my setup',
+      defaultPath: path.join(app.getPath('documents'), portableLayout.fileStem(made.setup.meta.title) + '.mimic-setup.json'),
+      filters: [{ name: 'Mimic setup', extensions: ['json'] }],
+    });
+    if (pick.canceled || !pick.filePath) return { ok: false, canceled: true, message: '' };
+    const file = /\.json$/i.test(pick.filePath) ? pick.filePath : pick.filePath + '.mimic-setup.json';
+    try {
+      fs.writeFileSync(file + '.tmp', JSON.stringify(made.setup, null, 2));
+      fs.renameSync(file + '.tmp', file);
+    } catch (e) { return { ok: false, message: `Could not write the file: ${e.message}` }; }
+    appendAgentLog(`[setup] exported a setup to ${path.basename(file)} (${made.bytes} bytes)\n`);
+    return { ok: true, message: `Exported "${made.setup.meta.title}" to ${path.basename(file)}.` };
+  } catch (e) {
+    return { ok: false, message: `Could not export: ${e && e.message || e}` };
+  } finally { _setupBusy = false; }
+}
+
+// "Get a code": the same bundle, held by the bot for 24 hours. → { ok, told, message, code? } | { ok:false, canceled:true }.
+async function _getSetupCode(opts) {
+  if (_setupBusy) return { ok: false, message: 'A setup window is already open.' };
+  if (!_setupShareAuth()) return { ok: false, message: setupBundle.botMessage({ signedOut: true }, 'make') };
+  _setupBusy = true;
+  try {
+    const made = await _collectSetup(opts);
+    if (!made.ok) return made;
+    const win = BrowserWindow.getFocusedWindow();
+    const ask = await dialog.showMessageBox(win || null, {
+      type: 'question', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Get a code', 'Cancel'], defaultId: 0, cancelId: 1,
+      message: `Get a share code for "${made.setup.meta.title}"?`,
+      detail: _collectSummary(made) + '\n\nThe code works for 24 hours. Anyone signed in to Wolf Pack Mimic who has it can preview this and import a copy.',
+    });
+    if (ask.response !== 0) return { ok: false, canceled: true, message: '' };
+    const r = await _botSetupShare('POST', '', { setup: made.setup });
+    if (!(r.status === 201 && r.body && r.body.ok && typeof r.body.code === 'string')) return { ok: false, message: setupBundle.botMessage(r, 'make') };
+    const code = r.body.code;
+    appendAgentLog(`[setup] made a share code for a setup (${made.bytes} bytes), good until ${r.body.expires_at}\n`);
+    const shown = await dialog.showMessageBox(win || null, {
+      type: 'info', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Copy the code', 'Close', 'End this code now'], defaultId: 0, cancelId: 1,
+      message: `Your code is ${setupBundle.showCode(code)}`,
+      detail: 'It works for 24 hours, on as many installs as you like. On the other install: Overlays, "Enter a code", then preview before anything is changed.',
+    });
+    if (shown.response === 0) { try { require('electron').clipboard.writeText(code); } catch { /* no clipboard */ } return { ok: true, told: true, message: `Code ${setupBundle.showCode(code)} copied.`, code }; }
+    if (shown.response === 2) {
+      const gone = await _botSetupShare('DELETE', '/' + code);
+      return { ok: gone.status === 200, message: gone.status === 200 ? 'That code no longer works.' : setupBundle.botMessage(gone, 'make') };
+    }
+    return { ok: true, told: true, message: `Code ${setupBundle.showCode(code)} is good for 24 hours.`, code };
+  } catch (e) {
+    return { ok: false, message: `Could not get a code: ${e && e.message || e}` };
+  } finally { _setupBusy = false; }
+}
+
+// ── The import window: enter a code or look at a file, tick what to take, pick which of YOUR characters get Character 1… ──
+function _openSetupWindow() {
+  if (_setupWin && !_setupWin.isDestroyed()) { try { _setupWin.show(); _setupWin.focus(); } catch { /* mid-close */ } return _setupWin; }
+  _setupWin = new BrowserWindow({
+    width: 660, height: 740, minWidth: 460, minHeight: 420, title: 'Wolf Pack miMIC — Import a setup', backgroundColor: '#0e1116',
+    skipTaskbar: true,   // only the dashboard and Feedback take a taskbar slot
+    webPreferences: _wpPrefs('Setup import'),
+  });
+  _setupWin.setMenu(null);
+  _setupWin.loadFile('setup-share.html');
+  _setupWin.on('closed', () => { _setupWin = null; _setupFlow = null; });
+  return _setupWin;
+}
+const _fromSetupWindow = (e) => !!(_setupWin && !_setupWin.isDestroyed() && e && e.sender === _setupWin.webContents);
+
+// A file → the preview. → { ok, told } | { ok:false, canceled } | { ok:false, message }.
+async function _importSetupFile() {
+  const win = BrowserWindow.getFocusedWindow();
+  const pick = await dialog.showOpenDialog(win || null, { title: 'Import a setup', properties: ['openFile'], filters: [{ name: 'Mimic setup', extensions: ['json'] }] });
+  if (pick.canceled || !pick.filePaths || !pick.filePaths[0]) return { ok: false, canceled: true, message: '' };
+  let text;
+  try {
+    if (fs.statSync(pick.filePaths[0]).size > setupBundle.MAX_BYTES) return { ok: false, message: 'That file is too big to be a Mimic setup.' };
+    text = fs.readFileSync(pick.filePaths[0], 'utf8');
+  } catch (e) { return { ok: false, message: `Could not read that file: ${e.message}` }; }
+  const parsed = setupBundle.parseText(text);
+  if (!parsed.ok) return { ok: false, message: parsed.error };
+  _setupFlow = { stage: 'preview', setup: parsed.setup, source: 'file', mine: await _setupMyChars(), result: null, undo: null };
+  _openSetupWindow();
+  return { ok: true, told: true, message: '' };
+}
+// "Enter a code": the window opens at the code box.
+async function _enterSetupCode() {
+  if (!_setupShareAuth()) return { ok: false, message: setupBundle.botMessage({ signedOut: true }, 'get') };
+  _setupFlow = { stage: 'code', setup: null, source: 'code', mine: [], result: null, undo: null };
+  _openSetupWindow();
+  return { ok: true, told: true, message: '' };
+}
+function _setupState() {
+  const f = _setupFlow;
+  if (!f) return { stage: 'code', model: null, result: null };
+  return { stage: f.stage, source: f.source, result: f.result,
+    model: f.stage === 'preview' && f.setup ? setupBundle.describe(f.setup, f.mine) : null };
+}
+
+// Apply a plan. Each step is its own try: a failure says what did and did not happen, and Undo covers what did.
+async function _applySetup(selection, assign) {
+  const f = _setupFlow;
+  if (!f || f.stage !== 'preview' || !f.setup) return { ok: false, message: 'There is nothing to import.' };
+  const plan = setupBundle.plan(f.setup, selection, assign, f.mine);
+  const lines = [];
+  const undo = { triggers: null, storage: null, layouts: null };
+  let failed = null;
+
+  // 1. Triggers and rules: the engine merges them in and backs both files up first.
+  if (plan.triggers.length || Object.keys(plan.rules).length) {
+    const r = await _agentCall('POST', '/api/setup-share/triggers', { triggers: plan.triggers, rules: plan.rules });
+    if (r && r.ok) {
+      undo.triggers = { backups: Array.isArray(r.backups) ? r.backups : [] };
+      lines.push(`${plan.triggers.length} trigger${plan.triggers.length === 1 ? '' : 's'}: ${r.added || 0} new, ${r.updated || 0} replaced one of yours` + (r.discord_off ? `; ${r.discord_off} Discord post${r.discord_off === 1 ? '' : 's'} switched off` : '') + '.');
+      if (Object.keys(plan.rules).length) lines.push(`${r.rules_changed || 0} "What you hear" setting${r.rules_changed === 1 ? '' : 's'} changed.`);
+    } else { failed = 'The triggers could not be added: ' + ((r && r.error) || 'the parser engine did not answer') + '.'; }
+  }
+
+  // 2. The HUD builder and the overlay options (localStorage).
+  const keys = Object.keys(plan.storage);
+  if (!failed && keys.length) {
+    try {
+      const prior = await _lsRead();
+      const before = {};
+      for (const k of keys) before[k] = Object.prototype.hasOwnProperty.call(prior, k) ? prior[k] : null;
+      if (await _lsWrite(plan.storage)) {
+        undo.storage = before;
+        _reloadOverlayWindows(keys);
+        lines.push(`HUD and overlay options: ${keys.length} setting${keys.length === 1 ? '' : 's'} written; the overlays reloaded.`);
+      } else { failed = 'The HUD and overlay options could not be saved.'; }
+    } catch (e) { failed = 'The HUD and overlay options could not be saved: ' + (e && e.message || e); }
+  }
+
+  // 3. The Canvas layouts, as new sets (the way a layout file is imported), the sender's own on screen loaded.
+  if (!failed && plan.layouts.length) {
+    const r = _addSetupLayouts(f.setup, plan.layouts);
+    if (r.ok) { undo.layouts = r.undo; lines.push(r.message); } else failed = r.message;
+  }
+
+  for (const s of plan.report.skipped) lines.push('Skipped ' + s + '.');
+  const did = !!(undo.triggers || undo.storage || undo.layouts);
+  f.undo = did ? undo : null;
+  f.stage = 'done';
+  f.result = { ok: !failed, message: failed || (did ? 'Imported.' : 'Nothing was ticked, so nothing changed.'), lines, canUndo: did };
+  appendAgentLog(`[setup] import ${failed ? 'stopped: ' + failed : 'done'}: ${lines.join(' | ')}\n`);
+  return f.result;
+}
+// The sender's layouts → new sets on this screen. The current setup is saved first as "Before <title>".
+function _addSetupLayouts(setup, layouts) {
+  const d = _canvasDisplay();
+  const eqw = _eqMainWindow(10 * 60 * 1000);
+  const eqRect = eqw ? { x: eqw.client.x - d.bounds.x, y: eqw.client.y - d.bounds.y, width: eqw.client.width, height: eqw.client.height } : null;
+  const screenSize = { width: d.bounds.width, height: d.bounds.height };
+  const made = [];
+  for (const l of layouts) {
+    const r = portableLayout.fromPortable(l.doc, screenSize, eqRect);
+    if (r.ok) made.push({ l, layout: r.layout });
+  }
+  if (!made.length) return { ok: false, message: 'None of the layouts would fit this screen.' };
+  const file = _SETS_FILE();
+  const store = overlaySets.load(file);
+  if (Object.keys(store.sets).length + made.length + 1 > overlaySets.MAX_SETS) {
+    return { ok: false, message: `You have ${Object.keys(store.sets).length} sets and this needs room for ${made.length + 1} more. Delete a few first.` };
+  }
+  const title = overlaySets.cleanName(setup.meta.title) || 'setup';
+  const beforeName = overlaySets.uniqueName(store, 'Before ' + title);
+  if (!beforeName) return { ok: false, message: 'Could not find a free name for the saved copy of your setup.' };
+  const who = _activeCharName || null;
+  const prevKey = overlaySets.current(store, who);
+  overlaySets.put(store, beforeName, _captureOverlaySet(), who);
+  const baseJson = JSON.stringify(_captureOverlaySet());
+  const res = `${d.bounds.width}x${d.bounds.height}`;
+  const added = [];
+  let loadName = null;
+  for (const m of made) {
+    const snap = JSON.parse(baseJson);
+    snap.canvas = Object.assign({}, snap.canvas || {}, { [res]: m.layout });
+    snap.show.showCanvas = true;
+    for (const k of m.l.doc.needs.overlays) { const spec = _canvasSpec(k); if (spec) snap.show[spec.flag] = true; }
+    const name = overlaySets.uniqueName(store, m.l.name);
+    if (!name) continue;
+    overlaySets.put(store, name, snap, who);
+    added.push(name);
+    if (!loadName && m.l.active) loadName = name;
+  }
+  if (!added.length) return { ok: false, message: 'Could not find free names for the new sets.' };
+  if (!loadName) loadName = added[0];
+  try { overlaySets.save(file, store); } catch (e) { return { ok: false, message: `Could not save the sets: ${e.message}` }; }
+  _overlaySetCommand({ verb: 'load', name: loadName }, who, true);
+  return { ok: true, undo: { beforeName, added, prevKey, who },
+    message: `${added.length} layout${added.length === 1 ? '' : 's'} added as new sets, and "${loadName}" is on screen. Your earlier setup is saved as "${beforeName}".` };
+}
+async function _undoSetup() {
+  const f = _setupFlow;
+  if (!f || !f.undo) return { ok: false, message: 'There is nothing to undo.' };
+  const u = f.undo;
+  const lines = [];
+  let ok = true;
+  if (u.layouts) {
+    try {
+      const file = _SETS_FILE();
+      _overlaySetCommand({ verb: 'load', name: u.layouts.beforeName }, u.layouts.who, true);
+      const s2 = overlaySets.load(file);
+      for (const n of u.layouts.added) overlaySets.remove(s2, n);
+      overlaySets.remove(s2, u.layouts.beforeName);
+      if (u.layouts.prevKey && s2.sets[u.layouts.prevKey]) overlaySets.use(s2, s2.sets[u.layouts.prevKey].name, u.layouts.who);
+      overlaySets.save(file, s2);
+      try { buildTrayMenu(); } catch { /* */ }
+      lines.push('Your earlier layouts are back and the new sets are removed.');
+    } catch (e) { ok = false; lines.push('Could not put the layouts back: ' + (e && e.message || e)); }
+  }
+  if (u.storage) {
+    try {
+      if (await _lsWrite(u.storage)) { _reloadOverlayWindows(Object.keys(u.storage)); lines.push('Your HUD and overlay options are back.'); }
+      else { ok = false; lines.push('Could not put the HUD and overlay options back.'); }
+    } catch (e) { ok = false; lines.push('Could not put the HUD and overlay options back: ' + (e && e.message || e)); }
+  }
+  if (u.triggers) {
+    const r = await _agentCall('POST', '/api/setup-share/triggers/restore', { backups: u.triggers.backups });
+    if (r && r.ok) lines.push('Your triggers and "What you hear" settings are back.');
+    else { ok = false; lines.push('Could not put the triggers back: ' + ((r && r.error) || 'the parser engine did not answer')); }
+  }
+  f.undo = null;
+  f.result = { ok, message: ok ? 'Undone.' : 'Undone, except for what is listed.', lines, canUndo: false };
+  appendAgentLog(`[setup] undo: ${lines.join(' | ')}\n`);
+  return f.result;
+}
+ipcMain.handle('setup-share-state', (e) => (_fromSetupWindow(e) ? _setupState() : { stage: 'code', model: null, result: null }));
+ipcMain.handle('setup-share-lookup', async (e, code) => {
+  if (!_fromSetupWindow(e) || !_setupFlow) return { ok: false, message: 'Close this window and open it again.' };
+  const c = setupBundle.normalizeCode(code);
+  if (!c) return { ok: false, message: setupBundle.botMessage({ status: 400, body: { error: 'bad_code' } }, 'get') };
+  const r = await _botSetupShare('GET', '/' + c);
+  if (!(r.status === 200 && r.body && r.body.ok)) return { ok: false, message: setupBundle.botMessage(r, 'get') };
+  const v = setupBundle.validate(r.body.setup);     // the bot checked it; so does Mimic: a code is only as good as who made it
+  if (!v.ok) return { ok: false, message: v.error };
+  _setupFlow = Object.assign(_setupFlow, { stage: 'preview', setup: v.setup, source: 'code', mine: await _setupMyChars(), result: null, undo: null });
+  appendAgentLog('[setup] looked up a share code\n');
+  return { ok: true, state: _setupState() };
+});
+ipcMain.handle('setup-share-apply', async (e, selection, assign) => {
+  if (!_fromSetupWindow(e)) return { ok: false, message: 'Close this window and open it again.' };
+  const list = (v) => (Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(0, 500) : []);
+  const sel = selection && typeof selection === 'object' ? selection : {};
+  const asg = {};
+  if (assign && typeof assign === 'object') for (const [slot, names] of Object.entries(assign)) if (/^c\d{1,2}$/.test(slot)) asg[slot] = list(names).slice(0, 12);
+  const out = await _applySetup({ layouts: list(sel.layouts), options: list(sel.options), hud: list(sel.hud), triggers: list(sel.triggers), rules: sel.rules === true }, asg);
+  return Object.assign({}, out, { state: _setupState() });
+});
+ipcMain.handle('setup-share-undo', async (e) => {
+  if (!_fromSetupWindow(e)) return { ok: false, message: 'Close this window and open it again.' };
+  const out = await _undoSetup();
+  return Object.assign({}, out, { state: _setupState() });
+});
+ipcMain.handle('setup-share-close', (e) => { if (_fromSetupWindow(e)) { try { _setupWin.close(); } catch { /* gone */ } } return true; });
+
 // Tray: the sets by name (the active character's current one ticked), next,
 // save over the current one, save as a new one. Delete lives in Settings,
 // which can also take a name.
@@ -3500,6 +3914,12 @@ function _overlaySetTrayItems() {
     { type: 'separator' },
     { label: '📤 Export the Canvas layout to a file…', click: () => { _layoutFileFromTray(() => _exportLayoutFile({})); } },
     { label: '📥 Import a layout from a file…', click: () => { _layoutFileFromTray(() => _importLayoutFile()); } },
+    { type: 'separator' },
+    { label: '📦 Export my whole setup to a file…', click: () => { _layoutFileFromTray(() => _exportSetupFile({})); } },
+    { label: '🔗 Get a share code for my whole setup…', click: () => { _layoutFileFromTray(() => _getSetupCode({})); } },
+    { label: '📥 Import a whole setup from a file…', click: () => { _layoutFileFromTray(() => _importSetupFile()); } },
+    { label: '🔢 Enter a share code…', click: () => { _layoutFileFromTray(() => _enterSetupCode()); } },
+    { type: 'separator' },
     { label: 'Name, delete, and the /pipe commands… (Settings)', click: () => { try { openSettings(); } catch { /* */ } } },
   );
   return items;
@@ -12756,6 +13176,11 @@ ipcMain.handle('overlay-sets-command', (_e, cmd) => {
 // Share a layout as a file — Settings and the dashboard's Overlays tab; the tray runs the same two functions.
 ipcMain.handle('overlay-layout-export', (_e, opts) => _exportLayoutFile(opts));
 ipcMain.handle('overlay-layout-import', () => _importLayoutFile());
+// Share a WHOLE setup (file or code) — the same four functions as the tray's items.
+ipcMain.handle('overlay-setup-export', (_e, opts) => _exportSetupFile(opts));
+ipcMain.handle('overlay-setup-code', (_e, opts) => _getSetupCode(opts));
+ipcMain.handle('overlay-setup-import', () => _importSetupFile());
+ipcMain.handle('overlay-setup-enter-code', () => _enterSetupCode());
 ipcMain.handle('get-agent-port', () => agentPort);
 // "Set up for me" from Settings — bridge to the agent's single writer
 // (POST /api/eq-setup → _applyEqSetup). Routed through main (Node, no CORS) so
