@@ -201,4 +201,22 @@ function startZealWatch({ onEvent, onStatus, log } = {}) {
   };
 }
 
-module.exports = { startZealWatch, _extractJsonObjects };
+// A pipe type-0 message → { c: character, k: colour index, x: text } for the Chat overlay's channels, or null.
+// Zeal sends one for every line the game prints: data is `{"type": <colour index>, "text": "..."}` (Zeal's
+// NamedPipe::chat_msg), where the index is the client's chat colour, i.e. the channel (USERCOLOR_SAY 256 ... Zeal's own
+// 1000+ channels) — information the game LOG does not carry. The agent matches it to the log line by text. The colours of
+// melee HITS and non-melee damage are not sent: they are the flood, every one carries "points of damage", and the agent's
+// text parsers own them already (misses stay: a bare "X misses Y." is not one they claim). The 6 s "Tick" heartbeat
+// (colour 0) IS sent: it is how the agent knows this character's pipe is talking.
+const CHAT_COLOURS_NOT_SENT = new Set([265, 266, 279, 283, 1000, 1001]);
+function chatLineOf(obj) {
+  if (!obj || obj.type !== 0 || typeof obj.character !== 'string' || !obj.character) return null;
+  let d = obj.data;
+  if (typeof d === 'string') { try { d = JSON.parse(d); } catch { return null; } }
+  if (!d || typeof d !== 'object' || typeof d.text !== 'string') return null;
+  const k = Number(d.type);
+  if (!Number.isInteger(k) || k < 0 || k > 4096 || CHAT_COLOURS_NOT_SENT.has(k)) return null;
+  return { c: obj.character.slice(0, 40), k, x: d.text.slice(0, 600) };
+}
+
+module.exports = { startZealWatch, _extractJsonObjects, chatLineOf };

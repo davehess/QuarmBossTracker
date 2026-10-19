@@ -427,7 +427,7 @@
     // conversation read across alts says which one sent or took each line (the guild lead, 2026-10-15: "know which
     // character i sent it from"). No character known (an old line) falls back to "You".
     var tellOn = l.ch === 'tell' && !l.npc && l.on ? String(l.on) : '';
-    if (l.ch === 'zone' || /^(?:melee|spell|skill|loot|random|other)$/.test(l.ch)) who = '';   // the log's own sentence: no speaker
+    if (l.ch === 'zone' || /^(?:melee|spell|skill|loot|random|other|money|emote|pet|who|death|bcast|zeal)$/.test(l.ch)) who = '';   // the log's own sentence: no speaker
     else if (l.npc) who = '<span class="who npc">' + esc(l.who) + '</span>';
     else if (you && tellOn) who = '<span class="who you" title="sent from ' + esc(tellOn) + '">' + esc(tellOn) + '</span>';
     else if (you) who = '<span class="who you">You</span>';
@@ -470,7 +470,7 @@
   function copyLineText(l){
     // a zone change copies as the plain log line, not as something a character said
     if (l.ch === 'zone') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + 'You have entered ' + l.text + '.';
-    if (/^(?:melee|spell|skill|loot|random|other)$/.test(l.ch)) return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
+    if (/^(?:melee|spell|skill|loot|random|other|money|emote|pet|who|death|bcast|zeal)$/.test(l.ch)) return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
     var tellOn = l.ch === 'tell' && !l.npc && l.on ? String(l.on) : '';
     var who = l.npc ? l.who : (l.self ? (tellOn || 'You') : l.who);
     if (l.to) who += ' → ' + l.to;
@@ -899,7 +899,7 @@
     ['skills',  'Skills',         'Skill-ups, what your skills did (taunt, forage, mend, feign death, hide...), tradeskill combines and disciplines. Right-click the Skills chip to give it a window of its own.', 1],
     ['loot',    'Loot',           'Your own "You have looted ..." lines. Right-click the Loot chip to give it a window of its own.', 1],
     ['random',  'Random',         'Everyone\'s /random rolls heard in the zone: who rolled, and the range and number that turned up.', 1],
-    ['other',   'Other',          'Game and system messages no other chip claims (experience, faction, bandolier and the like). Never chat, tells or any channel you have switched off.', 1]
+    ['other',   'Other',          'Game and system messages, split into their own chips by the channel Zeal says they came on: Money, Emotes, Pets, Who, Deaths, Broadcast and Zeal (item speech, /mystats, Bandolier), with Other keeping what has no channel (experience, faction and the like). Without Zeal, Deaths, Broadcast, the /who list and Bandolier are still found from the log; the rest wait for Zeal. Never chat, tells or any channel you have switched off.', 1]
   ];
   // ── this window's text settings ──────────────────────────────────────────
   // Every Chat window (the main one, and each breakout) keeps its own: win[<id>] in the prefs, id being 'main' or

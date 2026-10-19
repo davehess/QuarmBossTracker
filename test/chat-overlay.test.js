@@ -155,9 +155,10 @@ describe('CHAT_GROUPS: the channel groups are a list of { id, label, channels[] 
     }
     expect(Object.keys(owner).sort()).toEqual(Object.keys(agent.CHAT_CHANNELS).sort());
   });
-  it('the gated groups are exactly tells, group, officer, custom, melee, spells, skills, loot, random and other: the private ones, and the floods', () => {
+  it('the gated groups are exactly tells, group, officer, custom, melee, spells, skills, loot, random and other, plus the seven splits of Other that ride its switch: the private ones, and the floods', () => {
     const gated = Object.fromEntries(agent.CHAT_GROUPS.filter(g => g.gate).map(g => [g.id, g.gate]));
-    expect(gated).toEqual({ tell: 'tells', group: 'group', officer: 'officer', custom: 'custom', melee: 'melee', spells: 'spells', skills: 'skills', loot: 'loot', random: 'random', other: 'other' });
+    expect(gated).toEqual({ tell: 'tells', group: 'group', officer: 'officer', custom: 'custom', melee: 'melee', spells: 'spells', skills: 'skills', loot: 'loot', random: 'random', other: 'other',
+      money: 'other', emotes: 'other', pets: 'other', who: 'other', deaths: 'other', bcast: 'other', zeal: 'other' });
   });
   it('the public channels have no gate', () => {
     for (const id of ['guild', 'raid', 'say', 'ooc', 'auction', 'npc']) {
@@ -1771,7 +1772,7 @@ describe('Melee: one combined group, off by default, in a ring of its own', () =
     // its definition, noteLocalChatLine, and classifyOtherLine (which asks it so a swing is never "Other"; that one is
     // only reachable from noteLocalChatLine: the Loot/Random/Other describe below pins it)
     expect(code.match(/classifyMeleeLine\(/g)).toHaveLength(3);
-    const note = sliceBlock(code, 'function noteLocalChatLine(line, character, now) {', '\n}\n');
+    const note = sliceBlock(code, 'function noteLocalChatLine(line, character, now, opts) {', '\n}\n');
     expect(note).toContain('classifyMeleeLine(line, character)');
     expect(note).not.toMatch(/chatBuffer|tellBuffer|enqueueUpload|fetch\(|writeFile/);
     const tap = code.indexOf('noteLocalChatLine(line, b.character)');
@@ -2160,7 +2161,7 @@ describe('Spells [SP] and Skills [SK]: two more combined groups, built the way M
     const code = stripJs(AGENT_SRC);
     expect(code.match(/classifySpellLine\(/g)).toHaveLength(2);                          // its definition, and noteLocalChatLine
     expect(code.match(/classifySkillLine\(/g)).toHaveLength(2);
-    const note = sliceBlock(code, 'function noteLocalChatLine(line, character, now) {', '\n}\n');
+    const note = sliceBlock(code, 'function noteLocalChatLine(line, character, now, opts) {', '\n}\n');
     expect(note).toContain('classifySpellLine(line, character)');
     expect(note).toContain('classifySkillLine(line)');
     expect(note).not.toMatch(/chatBuffer|tellBuffer|enqueueUpload|fetch\(|writeFile/);
@@ -2992,7 +2993,7 @@ describe('Loot, Random and Other: three more opt-in groups, built the way Skills
     expect(code.match(/classifyOtherLine\(/g)).toHaveLength(2);                          // its definition, and noteLocalChatLine
     expect(code.match(/classifyLootLine\(/g)).toHaveLength(3);                            // its definition, noteLocalChatLine, classifyOtherLine
     expect(code.match(/classifyRandomLine\(/g)).toHaveLength(3);
-    const note = sliceBlock(code, 'function noteLocalChatLine(line, character, now) {', '\n}\n');
+    const note = sliceBlock(code, 'function noteLocalChatLine(line, character, now, opts) {', '\n}\n');
     for (const used of ['classifyLootLine(line)', 'classifyRandomLine(line)', 'classifyOtherLine(line, character,']) expect(note, used).toContain(used);
     expect(note.indexOf('classifyOtherLine(')).toBeGreaterThan(note.indexOf('classifySpellLine('));   // asked last
     const block = stripJs(AGENT_SRC.slice(AGENT_SRC.indexOf('// ── Loot, Random and Other rows'), AGENT_SRC.indexOf('// The overlay\'s switches, handed over')));
@@ -3039,6 +3040,27 @@ describe('Loot, Random and Other: three more opt-in groups, built the way Skills
       expect(all.lineHtml(lines[id])).toContain(`[${tag}]`);
       expect(all.lineHtml(lines[id])).not.toContain('class="who');                       // the log's own sentence: no speaker
     }
+  });
+  // The seven splits of Other (2026-10-19, from Zeal's channels): one chip each, hidden until Other is on, tagged and nameless.
+  it('Money, Emotes, Pets, Who, Deaths, Broadcast and Zeal wait for Other\'s switch, then are chips of their own, tagged and nameless', () => {
+    const SPLITS = [['money', 'money', 'MN'], ['emotes', 'emote', 'EM'], ['pets', 'pet', 'PET'], ['who', 'who', 'WHO'], ['deaths', 'death', 'DTH'], ['bcast', 'bcast', 'B'], ['zeal', 'zeal', 'ZL']];
+    const off = overlay({}), on = overlay({ other: true });
+    for (const [gid, ch, tag] of SPLITS) {
+      const line = { n: 1, t: 0, ch, who: '', text: 'a line', self: false };
+      expect(off.shownGroupIds(), gid).not.toContain(gid);
+      expect(off.makeFilter(off.shownGroupIds())(line), gid).toBe(false);
+      expect(on.shownGroupIds(), gid).toContain(gid);
+      expect(on.makeFilter(on.shownGroupIds())(line), gid).toBe(true);
+      expect(on.lineHtml(line), gid).toContain(`[${tag}]`);
+      expect(on.lineHtml(line), gid).not.toContain('class="who');                        // no speaker, like the rest of Other
+      const brk = overlay({ other: true }, { brk: gid });                                 // each breaks out like any group
+      expect(brk.makeFilter(brk.shownGroupIds())(line), `${gid} breakout`).toBe(true);
+    }
+    // one chip hides only its own lines
+    const noMoney = overlay({ other: true, off: ['money'] });
+    expect(noMoney.makeFilter(noMoney.shownGroupIds())({ ch: 'money' })).toBe(false);
+    expect(noMoney.makeFilter(noMoney.shownGroupIds())({ ch: 'emote' })).toBe(true);
+    expect(noMoney.makeFilter(noMoney.shownGroupIds())({ ch: 'other' })).toBe(true);
   });
   it('the ⚙ lists the three switches in the fold, sends them with every poll, and reads them back with the prefs', () => {
     const code = stripJs(CHAT_HTML);

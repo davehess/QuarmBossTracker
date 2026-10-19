@@ -27,7 +27,7 @@ const fs    = require('fs');
 const net   = require('net');
 const http  = require('http');
 const { spawn } = require('child_process');
-const { startZealWatch } = require('./zealPipe');
+const { startZealWatch, chatLineOf } = require('./zealPipe');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
 const { applyIniKeyEdits } = require('./iniKeyEdits');
@@ -1856,6 +1856,36 @@ function _flushZealToAgent() {
   req.write(body); req.end();
 }
 
+// Zeal's chat colour per printed line, for the Chat overlay's channels (the guild lead, 2026-10-19: "the differentiation ...
+// based on the Zeal options"; DECISIONS §383). Sent to the agent on this PC only, and ONLY while the Chat overlay exists:
+// the pipe's log stream carries every line (tells and officer chat too), so with the overlay closed nothing is read from it
+// here. The agent keeps a line's colour as a short hint and shows nothing from it (see the agent's "Zeal's own channel").
+let _zealChatPending = [];
+let _zealChatTimer = null;
+function _flushZealChat() {
+  _zealChatTimer = null;
+  if (!agentPort || !_zealChatPending.length) return;
+  const lines = _zealChatPending.splice(0, 200);
+  if (_zealChatPending.length) _zealChatTimer = setTimeout(_flushZealChat, 50);
+  const body = JSON.stringify({ lines });
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: '/api/zeal-chat', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    timeout: 3000,
+  }, (res) => { res.resume(); });
+  req.on('error', () => {}); req.on('timeout', () => req.destroy());
+  req.write(body); req.end();
+}
+function _zealChatNote(obj) {
+  if (!chatWindow || chatWindow.isDestroyed()) { _zealChatPending = []; return; }
+  const l = chatLineOf(obj);
+  if (!l) return;
+  _zealChatPending.push(l);
+  if (_zealChatPending.length > 1000) _zealChatPending.splice(0, 500);
+  if (_zealChatPending.length >= 100) { if (_zealChatTimer) clearTimeout(_zealChatTimer); _flushZealChat(); }
+  else if (!_zealChatTimer) _zealChatTimer = setTimeout(_flushZealChat, 100);
+}
+
 // Live Zeal state per character, parsed from the gauge(2)/player(3) stream.
 // Drives gauge-condition triggers. We keep the running state here in Mimic
 // (cheap — updated per event) and push a condensed snapshot to the agent at a
@@ -2743,6 +2773,7 @@ function startZealCapture() {
         // the previous character's state (see _zealAbsorb/_retireZealChar).
         try { _zealAbsorb(obj, pid); } catch (e) { void e; }
         try { _mapDirect.note(obj); } catch (e) { void e; }   // the Map's direct position path (a no-op unless it is up)
+        try { _zealChatNote(obj); } catch (e) { void e; }     // the Chat overlay's channels (a no-op unless it is open)
       },
     });
     setInterval(_flushZealToAgent, 2000);
