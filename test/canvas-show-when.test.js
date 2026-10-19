@@ -332,8 +332,9 @@ describe('on the screen (applyWhen)', () => {
     expect(html).toMatch(/Show when/);
     for (const v of ['', 'combat', 'nocombat', 'target', 'npc', 'raid']) expect(html).toContain('data-when="' + v + '"');
     for (const l of ['Always', 'In combat', 'Out of combat', 'Have a target', 'NPC target', 'In a raid']) expect(html).toContain('>' + l + '<');
-    expect(html).toContain('data-wcls=""');
-    expect(html).toContain('data-wcls="Shadow Knight"');
+    expect(html).toContain('data-clsmode="any"');
+    expect(html).toContain('data-clsmode="specific"');
+    expect(html).toContain('data-wcls="Shadow Knight"');           // this rule names classes, so the chips are open
     expect(html).toMatch(/class="btn on" data-when="combat"/);
     expect(html).toMatch(/class="btn on" data-wcls="Cleric"/);
     expect(html).not.toMatch(/needs a newer agent/);
@@ -345,6 +346,84 @@ describe('on the screen (applyWhen)', () => {
     // Out of combat reads the same fight flag as in combat.
     expect(old.api.whenMenuHtml({ id: 'n', when: 'nocombat' })).toMatch(/needs a newer agent/);
     expect(ok.api.whenMenuHtml({ id: 'n', when: 'nocombat' })).not.toMatch(/needs a newer agent/);
+  });
+});
+
+// The guild lead, 2026-10-19: "Only For should say Any class or specific classes, then show the rest."
+describe('"Only for" asks Any class or Specific classes first', () => {
+  const MENU = sliceBlock(canvasRaw, '  function whenMenuHtml(p) {', '\n    return h;\n  }\n');
+  const menu = (p, E = engine()) => new Function('esc', 'WHEN', 'WHEN_CLASSES', 'clsSpecific', 'currentWhen',
+    MENU + '\nreturn whenMenuHtml;')((s) => String(s), E.WHEN, E.WHEN_CLASSES, E.clsSpecific, () => ({ miss: {} }))(p);
+  const chips = (html) => (html.match(/data-wcls="/g) || []).length;
+  const API = [...ENGINE_API, 'clsSpecific', 'setClsMode'];
+  const fresh = () => evalBlock(ENGINE, API);
+
+  it('a panel with no classes opens on Any class, with no chips', () => {
+    const E = fresh();
+    const html = menu({ id: 'a' }, E);
+    expect(html).toMatch(/class="btn on" data-clsmode="any"/);
+    expect(html).toMatch(/class="btn" data-clsmode="specific"/);
+    expect(chips(html)).toBe(0);
+    expect(html).not.toMatch(/Pick one or more/);
+  });
+
+  it('a panel whose rule already names classes opens on Specific, with those chips lit and all 15 shown', () => {
+    const E = fresh();
+    const html = menu({ id: 'a', cls: ['Cleric', 'Bard'] }, E);
+    expect(html).toMatch(/class="btn on" data-clsmode="specific"/);
+    expect(chips(html)).toBe(15);
+    expect(html).toMatch(/class="btn on" data-wcls="Cleric"/);
+    expect(html).toMatch(/class="btn on" data-wcls="Bard"/);
+    expect(html).toMatch(/class="btn" data-wcls="Wizard"/);
+    expect(html).not.toMatch(/Pick one or more/);
+  });
+
+  it('choosing Specific shows the chips and a hint, stores nothing, and the panel still shows for everyone', () => {
+    const E = fresh(), p = { id: 'a' };
+    E.setClsMode(p, true);
+    expect(p.cls).toBeUndefined();
+    const html = menu(p, E);
+    expect(chips(html)).toBe(15);
+    expect(html).toContain('Pick one or more');
+    expect(html).toMatch(/class="btn on" data-clsmode="specific"/);
+    expect(E.whenHolds(p, E.whenSignals(me({ class: 'Bard' }), null, NOW))).toBe(true);
+  });
+
+  it('ticking a chip stores the class list in the same shape as before; unticking the last keeps the picker open', () => {
+    const E = fresh(), p = { id: 'a' };
+    E.setClsMode(p, true);
+    E.toggleWhenClass(p, 'Cleric');
+    E.toggleWhenClass(p, 'Bard');
+    expect(p.cls).toEqual(['Cleric', 'Bard']);
+    E.toggleWhenClass(p, 'Cleric'); E.toggleWhenClass(p, 'Bard');
+    expect(p.cls).toBeUndefined();
+    expect(chips(menu(p, E))).toBe(15);
+    expect(menu(p, E)).toContain('Pick one or more');
+  });
+
+  it('a panel that opened on Specific from its stored classes stays there when its last class is unticked', () => {
+    const E = fresh(), p = { id: 'a', cls: ['Cleric'] };
+    E.toggleWhenClass(p, 'Cleric');
+    expect(p.cls).toBeUndefined();
+    expect(E.clsSpecific(p)).toBe(true);
+    expect(menu(p, E)).toContain('Pick one or more');
+  });
+
+  it('choosing Any class clears the list and hides the chips', () => {
+    const E = fresh(), p = { id: 'a', cls: ['Cleric', 'Bard'] };
+    E.setClsMode(p, false);
+    expect(p.cls).toBeUndefined();
+    expect('cls' in p).toBe(false);
+    const html = menu(p, E);
+    expect(html).toMatch(/class="btn on" data-clsmode="any"/);
+    expect(chips(html)).toBe(0);
+  });
+
+  it('the choice is per panel', () => {
+    const E = fresh(), a = { id: 'a' }, b = { id: 'b' };
+    E.setClsMode(a, true);
+    expect(E.clsSpecific(a)).toBe(true);
+    expect(E.clsSpecific(b)).toBe(false);
   });
 });
 
@@ -391,6 +470,7 @@ describe('hidden the way off hides, without touching off', () => {
     expect(canvas).toMatch(/h \+= whenMenuHtml\(p\);/);
     expect(canvas).toMatch(/else if \(t\.hasAttribute\('data-when'\)\) \{ setWhen\(\[p\], t\.getAttribute\('data-when'\)\); \}/);
     expect(canvas).toMatch(/else if \(t\.hasAttribute\('data-wcls'\)\) \{ toggleWhenClass\(p, t\.getAttribute\('data-wcls'\)\); \}/);
+    expect(canvas).toMatch(/else if \(t\.hasAttribute\('data-clsmode'\)\) \{ setClsMode\(p, t\.getAttribute\('data-clsmode'\) === 'specific'\); \}/);
     expect(canvas).toMatch(/id="selWhen"/);
     expect(canvas).toMatch(/id="selCls"/);
   });

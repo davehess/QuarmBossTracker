@@ -260,11 +260,79 @@ describe('🧪 test rows, and a settings view that stays on screen', () => {
 
   it('the button turns one panel\'s samples on, locked or not, for 30 seconds; a callouts panel shows one callout', () => {
     const c = stripJs(canvas);
-    expect(c).toContain("if (w && typeof w.wpPartSample === 'function') w.wpPartSample(_edit || _isTesting(p.id));");
+    expect(c).toContain("if (w && typeof w.wpPartSample === 'function') w.wpPartSample(sampleOn(p, _edit, _isTesting(p.id)));");
     expect(c).toContain('var TEST_MS = 30000;');
-    expect(c).toMatch(/setTesting\(p\.id, !_isTesting\(p\.id\)\);/);
+    expect(c).toMatch(/setTesting\(p\.id, toggleSample\(p, _edit, _isTesting\(p\.id\)\)\);/);
     expect(c).toMatch(/cw\.wpPartFlash\('TEST — Death Touch on the main tank'\)/);
     expect(c).toContain("window.wpCanvasPanelNames = function (id) { var p = panelById(id); return p ? p.names.slice() : []; };");
+  });
+
+  // The guild lead, 2026-10-19: "No way to turn off the sample lines." Root cause: arranging forced the
+  // samples on (wpPartSample(_edit || testing)) while the button read only the 30-second test, so it said
+  // "Show test rows" with TEST rows on screen and pressing it could never take them off.
+  describe('the button speaks for what is on screen, and turns it off', () => {
+    const rows = () => evalBlock(sliceBlock(canvas, '  // ── Test rows ──', '  // ── end Test rows ──'), ['sampleOn', 'toggleSample']);
+    const R = rows();
+
+    it('samples are on while testing, or while arranging unless the panel hid them', () => {
+      expect(R.sampleOn({}, true, false)).toBe(true);                    // arranging shows the shape of an empty panel
+      expect(R.sampleOn({}, false, false)).toBe(false);                  // out in play: only a test
+      expect(R.sampleOn({}, false, true)).toBe(true);
+      expect(R.sampleOn({ noSample: true }, true, false)).toBe(false);   // hidden while arranging
+      expect(R.sampleOn({ noSample: true }, true, true)).toBe(true);     // a test still shows them
+    });
+
+    it('arranging, rows showing: the button hides them and keeps them hidden', () => {
+      const p = {};
+      expect(R.toggleSample(p, true, false)).toBe(false);                // no timed test to start
+      expect(p.noSample).toBe(true);
+      expect(R.sampleOn(p, true, false)).toBe(false);
+    });
+
+    it('arranging, rows hidden: the button brings them back', () => {
+      const p = { noSample: true };
+      expect(R.toggleSample(p, true, false)).toBe(false);
+      expect('noSample' in p).toBe(false);
+      expect(R.sampleOn(p, true, false)).toBe(true);
+    });
+
+    it('arranging while a 30-second test runs: one press clears both', () => {
+      const p = {};
+      expect(R.toggleSample(p, true, true)).toBe(false);
+      expect(R.sampleOn(p, true, false)).toBe(false);
+    });
+
+    it('out in play: a press starts the timed test, the next ends it, and neither writes noSample', () => {
+      const p = {};
+      expect(R.toggleSample(p, false, false)).toBe(true);
+      expect(R.toggleSample(p, false, true)).toBe(false);
+      expect('noSample' in p).toBe(false);
+    });
+
+    it('the label follows sampleOn, so it is Hide whenever rows are showing', () => {
+      const c = stripJs(canvas);
+      expect(c).toContain("(sampleOn(p, _edit, _isTesting(p.id)) ? '🧪 Hide test rows' : '🧪 Show test rows')");
+    });
+
+    it('the choice survives a reload: sanitize keeps noSample on a timers panel, and writes nothing when unset', () => {
+      const r = canvasRules();
+      const s = r.sanitize({ panels: [
+        { id: 'a', kind: 'timers', groups: ['charm'], noSample: true },
+        { id: 'b', kind: 'timers', groups: ['lull'] },
+        { id: 'c', kind: 'timers', groups: ['mez'], noSample: 'yes' },
+        { id: 'd', kind: 'callouts', noSample: true },
+      ] });
+      const by = (id) => s.panels.find(q => q.id === id);
+      expect(by('a').noSample).toBe(true);
+      expect('noSample' in by('b')).toBe(false);
+      expect('noSample' in by('c')).toBe(false);
+      expect('noSample' in by('d')).toBe(false);
+    });
+
+    it('pressing the button saves the layout', () => {
+      const c = stripJs(canvas);
+      expect(c).toMatch(/setTesting\(p\.id, toggleSample\(p, _edit, _isTesting\(p\.id\)\)\);\s*save\(\); render\(\);/);
+    });
   });
 
   // placeMenu with its two helpers; the box to keep clear is the anchor's (the panel's) own.
