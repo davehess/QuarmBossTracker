@@ -4867,6 +4867,16 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act wp-btn" data-act="mapMode" id="wpOvMapModeBtn" title="The Map as a window you place, or laid over EverQuest and click-through so you play straight through it (it keeps clear of your UI windows). The same switch as the Map&rsquo;s own toolbar button and the tray.">…</button>'
     + '</span>'
     + '</div>';
+  // 📤📥 A layout as a file — tray parity for "Export the Canvas layout to a file…" and "Import a layout from a
+  // file…" (Keepers of the (Overlay) Arts, the guild lead, 2026-10-19). Mimic runs the same two functions the
+  // tray does (_exportLayoutFile / _importLayoutFile); the file holds Canvas pieces only, no names, and the
+  // byline goes on it only if typed here. Static HTML: the message is painted by the click handler.
+  h += '<div class="wp-strip" style="margin:0 0 10px"><span class="wp-lbl">Share a layout</span>'
+    + '<input id="wpShareTitle" type="text" maxlength="60" placeholder="Layout name" style="width:150px" />'
+    + '<input id="wpShareBy" type="text" maxlength="32" placeholder="Your name on it (optional)" style="width:190px" />'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="layoutExport" title="Saves the Canvas layout on screen now to a .mimic-layout.json file. Positions are pinned to EverQuest&rsquo;s window so it fits other screens; no character names or filters go in it.">📤 Export…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="layoutImport" title="Opens a layout file someone sent you. You see what is in it first; it is added as a new set and your setup is saved first, with one Undo.">📥 Import…</button>'
+    + '<span id="wpShareMsg" class="dim"></span></div>';
   // On screen now | Add. Every overlay is written into BOTH — a row in the list
   // and a card in the drawer — and the painter shows exactly one of the two, so
   // switching an overlay on or off never changes the section HTML.
@@ -5927,6 +5937,19 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
         }).catch(function(){});
       }
       if (a === 'setup' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      // A layout as a file — the tray's export / import items; the result (or the Gallery nudge) shows beside the buttons.
+      if ((a === 'layoutExport' && window.mimic.overlayLayoutExport) || (a === 'layoutImport' && window.mimic.overlayLayoutImport)) {
+        var sv = function(id){ var el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+        var msgEl = document.getElementById('wpShareMsg');
+        var run = a === 'layoutExport'
+          ? window.mimic.overlayLayoutExport({ title: sv('wpShareTitle'), author: sv('wpShareBy') })
+          : window.mimic.overlayLayoutImport();
+        Promise.resolve(run).then(function(r){
+          if (!msgEl || !r || r.canceled) return;
+          msgEl.style.color = r.ok ? 'var(--green)' : 'var(--red)';
+          msgEl.textContent = (r.ok ? '✓ ' : '✕ ') + r.message + (r.nudge ? ' ' + r.nudge : '');
+        }).catch(function(){});
+      }
       // Same internals as the tray's "Arrange the canvas…" (turns it on too),
       // and like that item a second press is "Done". A Mimic without the
       // Canvas falls back to setup mode, which places every overlay.

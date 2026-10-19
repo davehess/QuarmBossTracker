@@ -91,6 +91,19 @@ function put(store, name, snapshot, char, now) {
   return { ok: true, key, name: n, created };
 }
 
+// A name no set has yet: "Raid", then "Raid 2", "Raid 3"… An imported layout takes one of these, so it can
+// never land on top of a set the person already has. (The store holds at most MAX_SETS, so 100 tries is plenty.)
+function uniqueName(store, base) {
+  const n = cleanName(base) || 'Imported layout';
+  if (!store.sets[keyOf(n)]) return n;
+  for (let i = 2; i < 100; i++) {
+    const suffix = ' ' + i;
+    const c = cleanName(n.slice(0, NAME_MAX - suffix.length) + suffix);
+    if (c && !store.sets[keyOf(c)]) return c;
+  }
+  return null;
+}
+
 // Mark a set in use by a character. → the set or null.
 function use(store, name, char) {
   const n = cleanName(name);
@@ -172,4 +185,4 @@ function parsePipeCommand(text) {
   return null;
 }
 
-module.exports = { MAX_SETS, NAME_MAX, cleanName, keyOf, empty, normalize, load, save, put, use, step, remove, current, list, parsePipeCommand };
+module.exports = { MAX_SETS, NAME_MAX, cleanName, keyOf, empty, normalize, load, save, put, uniqueName, use, step, remove, current, list, parsePipeCommand };
