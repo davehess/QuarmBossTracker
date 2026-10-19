@@ -572,6 +572,86 @@ describe('Mimic keeps the switch', () => {
   });
 });
 
+// ── FB-91: the local copy wins over the relayed one, whatever the capitalisation ─────────────────────
+describe('FB-91: a line in your own log is shown once, as local', () => {
+  const LT = new Date('Wed Oct 14 21:10:01 2026').getTime();   // the local line's own timestamp, which is what a relayed copy sits near
+  const said = (text, ts = T0) => agent.noteLocalChatLine(`${TS} Corvale tells the guild, '${text}'`, ME, ts);
+  it('relayed copy arrives after the local one, differing only in capitalisation: not added', () => {
+    said('what is nimic?');
+    const local = agent._chatRingForTest()[0].t;
+    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'What is Nimic?', local + 1000)], T0)).toBe(0);
+    expect(agent.guildFeedTake([L(2, 'guild', 'Corvale', 'what  is nimic?', local)], T0)).toBe(0);
+    expect(agent._guildFeedRingForTest()).toHaveLength(0);
+  });
+  it('relayed copy arrived first, then the local line: the relayed one is removed and the local one has no via', () => {
+    agent.guildFeedTake([L(1, 'guild', 'Corvale', 'What is nimic?', LT + 1000)], T0);
+    expect(agent._guildFeedRingForTest()).toHaveLength(1);
+    said('what is nimic?');
+    expect(agent._guildFeedRingForTest()).toHaveLength(0);
+    const r = feed({ away: true });
+    expect(r.lines).toHaveLength(1);
+    expect(r.lines[0].via).toBeUndefined();
+    expect(r.lines[0].text).toBe('what is nimic?');
+  });
+  it('your own line is "You" locally and your name in the relay, in either order', () => {
+    agent.guildFeedTake([L(1, 'guild', ME, 'Ready', LT)], T0);
+    agent.noteLocalChatLine(`${TS} You say to your guild, 'ready'`, ME, T0);
+    expect(agent._guildFeedRingForTest()).toHaveLength(0);
+  });
+  it('two genuinely different messages both stay', () => {
+    said('what is nimic?');
+    const local = agent._chatRingForTest()[0].t;
+    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'what is mimic?', local), L(2, 'guild', 'Rethlan', 'what is nimic?', local)], T0)).toBe(2);
+    agent.noteLocalChatLine(`${TS} Brackwyn tells the guild, 'something else'`, ME, T0);
+    expect(agent._guildFeedRingForTest()).toHaveLength(2);
+  });
+});
+
+describe('FB-91: chat.html merges a relayed and a local copy into the local one', () => {
+  const merge = evalBlock(`
+    var _lines = [], _histLines = [], _histHours = 0, repainted = 0, cleaned = [];
+    function learnChannel(){ return false; } function paintChans(){} function shownGroupIds(){ return []; }
+    function makeFilter(){ return function(){ return true; }; } function pinned(){ return true; } function toBottom(){} function paintEmpty(){} function paintNew(){}
+    function lineVisible(){ return true; } function rowHtml(l){ return ''; }
+    var feedEl = { insertAdjacentHTML: function(){}, children: [], removeChild: function(){} };
+    var FEED_MAX = 500, _unread = 0;
+    function repaint(){ repainted++; }
+    ${sliceBlock(SCRIPT, 'function normText(s){', 'if (sameSaid(v, pool[i])) return true; return false; }')}
+    ${sliceBlock(SCRIPT, 'function addLines(fresh){', 'if (stick) toBottom(); else { _unread += shown; paintNew(); }\n    }\n    paintEmpty();\n  }')}
+    function reset(){ _lines.length = 0; _histLines.length = 0; repainted = 0; }
+    function lines(){ return _lines; }
+    function setLines(a){ _lines = a; } function setHist(a){ _histLines = a; }
+  `, ['addLines', 'reset', 'lines', 'setLines', 'setHist', 'sameSaid']);
+  const relay = { n: 1, t: T0, ch: 'guild', who: 'Corvale', text: 'What is Nimic?', via: 'guild' };
+  const local = { n: 2, t: T0 + 1000, ch: 'guild', who: 'Corvale', text: 'what is nimic?' };
+  it('local first, relayed second (case differs): shown once, no via', () => {
+    merge.reset(); merge.addLines([local]); merge.addLines([relay]);
+    expect(merge.lines().map(l => l.via)).toEqual([undefined]);
+  });
+  it('relayed first, local second: the relayed one is dropped and the local one stays unlabelled', () => {
+    merge.reset(); merge.addLines([relay]); merge.addLines([local]);
+    expect(merge.lines()).toEqual([local]);
+  });
+  it('both in one answer: only the local one', () => {
+    merge.reset(); merge.addLines([relay, local]);
+    expect(merge.lines()).toEqual([local]);
+  });
+  it('a history line from the log also beats a relayed copy', () => {
+    merge.reset(); merge.setHist([{ ...local, n: -1 }]); merge.addLines([relay]);
+    expect(merge.lines()).toHaveLength(0);
+  });
+  it('different text, speaker or channel keeps both', () => {
+    merge.reset(); merge.addLines([local]);
+    merge.addLines([{ ...relay, n: 3, text: 'what is mimic?' }, { ...relay, n: 4, who: 'Rethlan' }, { ...relay, n: 5, ch: 'raid' }]);
+    expect(merge.lines()).toHaveLength(4);
+  });
+  it('your own local line (who "You", heard on your character) matches your name in the relay', () => {
+    merge.reset(); merge.addLines([{ n: 1, t: T0, ch: 'guild', who: 'You', self: true, on: 'Aldenmar', text: 'ready' }]);
+    merge.addLines([{ n: 2, t: T0, ch: 'guild', who: 'Aldenmar', text: 'Ready', via: 'guild' }]);
+    expect(merge.lines()).toHaveLength(1);
+  });
+});
+
 // Mutation checks run when this file was written (each reverted):
 //   1. `if (policy.away) feeds.push(_guildFeedRing)` -> `feeds.push(_guildFeedRing)`: "served only while the overlay asks" fails.
 //   2. `if (_controlStandDown().down) return 'dormant'` removed: the dormant and version-floor gates fail, and so does
