@@ -9816,13 +9816,16 @@ async function _handleAgentPopFlags(req, res) {
     // The server's own flag step first (utils/popFlagStages.js), then what it proves in the catalog's
     // terms; the boss map is the fallback for anything the step tables do not name.
     const hit = popFlagStages.resolveStage(e, bossLower);
-    const source = e.kind === 'recital' ? 'recital' : (e.kind === 'checklist' ? 'checklist' : 'event');
+    // A trial credit the character already held ("You have already received credit...") proves the state,
+    // not a grant at this moment: source 'credit' settles them on the hail board whenever it was stored.
+    const source = e.kind === 'recital' ? 'recital' : (e.kind === 'checklist' ? 'checklist'
+      : (hit && hit.via === 'trial' && !hit.fresh ? 'credit' : 'event'));
     if (hit) {
       push(e, iso, hit.stage, { source, stage: hit.stage });
       for (const k of popFlagStages.STAGE_IMPLIES[hit.stage] || []) push(e, iso, k, { source, stage: hit.stage });
       continue;
     }
-    if (e.kind === 'recital') continue;   // a sentence the tables do not know proves nothing
+    if (e.kind === 'recital' || e.kind === 'trial') continue;   // a sentence the tables do not know proves nothing
     push(e, iso, POP_FLAG_BY_BOSS[bossLower] || 'unmapped', { source });
   }
   let written = 0;
