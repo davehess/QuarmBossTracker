@@ -318,9 +318,9 @@ describe('the mob-info answer carries quest_id (the real _buildMobInfo)', () => 
       return bodies.filter((b) => b.name.replace(/^#/, '').toLowerCase() === want);
     },
   };
-  const build = () => new Function('mobSpecials', 'factionAssist', '_factionRowsFor', 'npcProcs', 'process', 'console',
+  const build = () => new Function('mobSpecials', 'factionAssist', '_factionRowsFor', 'npcProcs', 'process', 'console', 'namedBosses',
     `${helpers}\n${GENDER}\n${CLASSES}\n${slice}\nreturn _buildMobInfo;`)(
-    ms, { getIndex: async () => null, assistFor: () => null }, async () => null, nodeRequire('../utils/npcProcs.js'), process, console);
+    ms, { getIndex: async () => null, assistFor: () => null }, async () => null, nodeRequire('../utils/npcProcs.js'), process, console, nodeRequire('../utils/namedBosses.js'));
   const ask = (reqZoneId) => build()(sb, { name: 'Giwin Mirakon', norm: 'giwin_mirakon', caseKey: 'giwin_Mirakon', reqZoneId, reqGender: null });
 
   it('in Innovation: the stats are Tactics\' (unchanged), quest_id is the inside Giwin', async () => {

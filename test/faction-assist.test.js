@@ -387,9 +387,9 @@ describe('_buildMobInfo', () => {
 
   function build(factionRowsFor) {
     // eslint-disable-next-line no-new-func
-    return new Function('mobSpecials', 'factionAssist', '_factionRowsFor', 'process', 'console',
+    return new Function('mobSpecials', 'factionAssist', '_factionRowsFor', 'process', 'console', 'namedBosses',
       `${helpers}\n${GENDER}\n${CLASSES}\n${slice}\nreturn _buildMobInfo;`)(
-      nodeRequire('../utils/mobSpecials.js'), FA, factionRowsFor || (async () => null), process, console);
+      nodeRequire('../utils/mobSpecials.js'), FA, factionRowsFor || (async () => null), process, console, nodeRequire('../utils/namedBosses.js'));
   }
   const ask = (fn, sb, name, reqZoneId = 201) =>
     fn(sb, { name, norm: name.toLowerCase().replace(/\s+/g, '_'), caseKey: name.replace(/\s+/g, '_'), reqZoneId, reqGender: null });
