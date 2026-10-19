@@ -2,12 +2,12 @@
 // eqmimic.quest stays the free EverQuest PLAYER tool; this page is the game-agnostic "raid orchestration and
 // analytics as a service" pitch for GUILD LEADERS. It is a FIRST DRAFT: nothing here is settled copy.
 //
-// ONE content module, TWO layouts (web/app/raidmimic/_landing/): A "The pitch" (default) and B "The tour"
-// (`?v=b`). The layouts decide order and shape; they never carry a sentence of their own, so a fact is
+// ONE content module, ONE layout (web/app/raidmimic/_landing/TourLayout.tsx, "The tour", the guild lead's pick
+// of 2026-10-19). The layout decides order and shape; it never carries a sentence of its own, so a fact is
 // corrected in exactly one place. Plain data, strings and a few pure helpers: no JSX. test/raidmimic-landing.test.js
 // reads this file as text and imports it.
 //
-// RULE for every sentence below: say what exists, and say "coming" plainly for what does not. Each block and
+// RULE for every sentence below: say what exists, and say "coming" plainly for what does not. Each moment and
 // each world carries a `status`; the `COMING` list at the bottom is the whole inventory of promises, and a
 // test keeps the page honest about it. No prices, customer counts or testimonials are invented here.
 //
@@ -48,41 +48,6 @@ export const HERO = {
     'and this page says plainly which parts are which.',
   playerLine: 'Playing, not leading? The free player tool is Mimic, at eqmimic.quest.',
 };
-
-// ─── What it does ───────────────────────────────────────────────────────────────────────────────────
-// `aside` is the one sentence of "not yet" that belongs to that block, so a block can be live and still own up
-// to the part that is coming.
-export const BLOCKS_TITLE = 'What it does';
-export const BLOCKS_LEAD = 'Six things, each marked with where it stands. Green runs today; a dashed orange tag is a plan.';
-export interface Block { id: string; title: string; body: string; status: Status; aside?: string }
-export const BLOCKS: Block[] = [
-  {
-    id: 'board', title: 'Shared raid boards', status: 'live',
-    body: 'One board for the whole raid: what is up, what is down, when it spawns next. Every raider sees the same board, in Discord and on the web.',
-    aside: 'Coming: the same board shared between guilds that raid together.',
-  },
-  {
-    id: 'flags', title: 'Flags and lockouts at a glance', status: 'live',
-    body: 'Who holds the flag to get in, who is locked out of a boss, and who can enter tonight’s zone. Answered before the pull, not after someone is pulled out of the zone.',
-  },
-  {
-    id: 'loot', title: 'Loot and DKP', status: 'live',
-    body: 'What dropped, who wants it, and where everyone stands, in one place. Works with OpenDKP today, with sealed bids.',
-  },
-  {
-    id: 'parse', title: 'Parses from everyone’s view', status: 'live',
-    body: 'One raider’s log sees part of a fight. Merged from every raider, you get one record of the fight: damage, healing, deaths and who was there.',
-  },
-  {
-    id: 'review', title: 'Raid-night review and attendance', status: 'live',
-    body: 'The morning-after summary of the night and who showed up, built from the same data.',
-  },
-  {
-    id: 'overlays', title: 'Overlays: the on-screen half', status: 'live',
-    body: 'Timers, damage meters, buff and debuff queues and trigger alerts drawn over the game, fed by the same shared data. Mimic is that half, and its player edition is free.',
-    aside: 'In alpha: an overlay builder that lets you lay out your own panels.',
-  },
-];
 
 // ─── Works with what you already run ────────────────────────────────────────────────────────────────
 export const WORKS_WITH = {
@@ -164,8 +129,8 @@ export function interestUrl(base: string): string {
   return `${base}#${new URLSearchParams({ cat: 'idea', text: INTEREST_TEXT }).toString()}`;
 }
 
-// ─── The tour layout (B): screens first ─────────────────────────────────────────────────────────────
-// `figure` names the CSS-only illustration in Tour.tsx. They are drawn, not captured: no screenshot is used, so
+// ─── The tour: screens first ─────────────────────────────────────────────────────────────
+// `figure` names the CSS-only illustration in Figures.tsx. They are drawn, not captured: no screenshot is used, so
 // nothing here can carry a real name.
 export type FigureKey = 'boards' | 'flags' | 'parse' | 'builder';
 export interface Moment { id: string; figure: FigureKey; title: string; line: string; status: Status }
@@ -185,16 +150,8 @@ export const ILLUSTRATIVE_NOTE = 'Drawn for this page, not screenshots. Labels a
 // ─── Rights and footer ──────────────────────────────────────────────────────────────────────────────
 export { RIGHTS_NOTICE, FAN_PROJECT_LINE } from './eqmimicLanding';
 
-// ─── Layout choice ──────────────────────────────────────────────────────────────────────────────────
-export type Variant = 'a' | 'b';
-/** `?v=b` shows B, the tour. Anything else (missing, `a`, junk, an array) shows A, the pitch. */
-export function raidmimicVariant(v: string | string[] | undefined): Variant {
-  const first = Array.isArray(v) ? v[0] : v;
-  return typeof first === 'string' && first.trim().toLowerCase() === 'b' ? 'b' : 'a';
-}
-
 // ─── The inventory of promises ──────────────────────────────────────────────────────────────────────
-// Everything the page says is coming, in one list. Shown on both layouts as "What is not built yet", and the
+// Everything the page says is coming, in one list. Shown on the page as "What is not built yet", and the
 // test fails if a status of 'coming' appears anywhere that this list does not name.
 export const COMING: string[] = [
   'Running it for guilds other than Wolf Pack (multi-guild hosting).',
