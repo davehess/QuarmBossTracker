@@ -186,9 +186,15 @@ Zeal's map.
 - Groupmate class/level/zone + exact HP require **`/pipeverbose on`**; without
   it groupmates are name + HP% only (label 30-44 / gauge 11-21). Groupmate
   mana is never exposed.
-- Log stream (type 0) is intentionally unused for chat — it bypasses the
-  agent's byte-level privacy filter (officer chat / tells / group), so chat
-  stays sourced from the log files where the filter runs.
+- Log stream (type 0) is not a SOURCE of chat — it bypasses the agent's
+  byte-level privacy filter (officer chat / tells / group), so chat lines stay
+  sourced from the log files where the filter runs. Since agent 3.8.30 (§384) its
+  colour index is read as a local, 30-second HINT of a line's channel, only while
+  the Chat overlay is open, to route log lines the text parser cannot place
+  (money, emotes, pet speech, /who, deaths, broadcasts, Zeal's own messages).
+  Nothing from it is stored, queued or uploaded. Colour table:
+  `apps/mimic/zealPipe.js` `chatLineOf`, from Zeal's `game_structures.h` /
+  `chatfilter.h` (not yet checked against a live capture).
 
 ## Surfaced in Mimic/agent
 
