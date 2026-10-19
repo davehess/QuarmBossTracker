@@ -9619,6 +9619,14 @@ class EncounterBuilder {
       perPlayer,
       spans,
     };
+    // Damage-shield damage per wearer (lowercase name → total), for the meter's Tank History. A SIBLING of
+    // perPlayer for the same reason spans is: the threat_snapshot upload sends perPlayer whole. Omitted when no
+    // shield landed this fight.
+    if (this.dsByTank && this.dsByTank.size > 0) {
+      const dsBy = {};
+      for (const [k, v] of this.dsByTank.entries()) { const t = Math.round(v && v.total || 0); if (t > 0) dsBy[k] = t; }
+      if (Object.keys(dsBy).length) snap.dsBy = dsBy;
+    }
     // Pet aggro rollup — every charm or summoned pet that has a row in
     // perPlayer with a known pet_owner contributes its total threat back to
     // its OWNER's row as `pet_threat_total`. Lets the threat overlay show
@@ -14468,7 +14476,7 @@ function _meNoteFight(entry) {
   const seen = new Set();
   for (const p of (entry.local || [])) {
     const k = String(p.pet_owner || p.character || '').toLowerCase();
-    if (!k) continue;
+    if (!k || !(Number(p.dmg) > 0)) continue;   // a tank row with no damage is History's (Tank view), not a fight dealt
     const e = _meNight.byChar.get(k) || { dmg: 0, secs: 0, fights: 0 };
     e.dmg += Number(p.dmg) || 0;
     if (!seen.has(k)) { e.secs += entry.durationSec || 0; e.fights += 1; seen.add(k); }
@@ -42333,7 +42341,8 @@ function _recordFightHistory(et, character) {
     // board altogether (the guild lead, 2026-10-04: History "correctly attributes pet data to owners
     // and DS hits from tanks").
     const dmg = Number(p.dmg) || 0;
-    if (dmg <= 0) continue;
+    // A tank who dealt nothing but ate the fight still gets a row: Tank History reads damage TAKEN.
+    if (dmg <= 0 && !(p.took > 0)) continue;
     const row = { character: name, dmg, pet_owner: p.pet_owner || null };
     // What the live row said about a pet, so the History merge can fold an owned pet into its owner
     // and label an unowned one "(pet)" / "(charmed)" instead of passing it off as a raider.
@@ -42343,9 +42352,12 @@ function _recordFightHistory(et, character) {
     // Their own first and last damage time, for the row's Sec and DPS (an older entry has none).
     const span = et.spans && et.spans[name];
     if (span && span[0] > 0 && span[1] >= span[0]) { row.first_ms = span[0]; row.last_ms = span[1]; }
-    // Damage taken, kept for a Tank History to come — stored, not rendered.
+    // Damage taken, biggest single hit and damage shield: the Tank side of History (the meter's DPS and Tank
+    // buttons both read the fight picked there).
     if (p.took > 0) row.took = p.took;
     if (p.tookMax > 0) row.tookMax = p.tookMax;
+    const ds = Math.round(Number(et.dsBy && et.dsBy[String(name).toLowerCase()]) || 0);
+    if (ds > 0) row.ds = ds;
     local.push(row);
   }
   local.sort((a, b) => b.dmg - a.dmg);

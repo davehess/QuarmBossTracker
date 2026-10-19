@@ -204,7 +204,8 @@ describe('another raider\'s charm pet (FB-52) lands on the same line', () => {
 describe('and both copies are wired through it', () => {
   const clean = stripJs(overlay);
   it('History copies _rsLine over the rows it is browsing', () => {
-    expect(clean).toMatch(/_histParseLine = _rsLine\(boss, secs, totalDmg, allRows\);/);
+    // The damage rows of the fight, even when its Tank view is showing damage taken (test/meter-tank-history.test.js).
+    expect(clean).toMatch(/_histParseLine = _rsLine\(boss, secs, histDmgTotal, histDmgRows\);/);
   });
   it('the live copy folds the live rows first', () => {
     expect(clean).toMatch(/var liveRs = _liveRsRows\(et\.perPlayer, et\.spans\);/);
