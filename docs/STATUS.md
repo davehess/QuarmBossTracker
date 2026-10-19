@@ -781,6 +781,19 @@ next touch one rather than assuming a missing row means a missing doc.
   player-name check (the dragon off the needs-rez board), per-boss rampage rows + callouts, and the DPS meter's Sec rule
   (first hit to fight end, stopping a tick after the last hit). Tests: `test/pop-flag-agent.test.js`,
   `test/death-confirmation.test.js`, `test/rampage-multi-boss.test.js`, `test/dps-active-time.test.js`.
+- **🧪 On beta (agent 3.8.13–3.8.17, 2026-10-19; DECISIONS §379):** enrage callouts by boss (12%) or not (9%) with
+  per-mob / session / always mutes; 🔊 Voice unclear + Recent fires replay and Say line; FB-84 A death recap (Deaths
+  card, Command Center, corpse target opens it); "☠ killed" on the Map's timers; Charm aging off by default; a mob's
+  death clears its debuff timers and the row shows `#<spawn id>`. Tests: `test/enrage-callouts.test.js`,
+  `test/voice-reports-mimic.test.js`, `test/death-recap.test.js`, `test/map-watch-agent.test.js`,
+  `test/charm-aging.test.js`, `test/trigger-rules.test.js`, `test/debuff-timers-on-death.test.js`.
+- **🧪 Canvas on Mimic beta (2026-10-19; DECISIONS §379):** Timers panel "Only for" asks Any / Specific classes and the
+  test rows turn off (`5206c69c`); prebuilt pieces keep the whole overlay's footprint, an "as whole" chip, Target Info
+  tab pieces, HUD box apart, Command Center loads the bundled page, the locate line only with Pieces open (`a15ddca4`).
+  Tests: `test/canvas-show-when.test.js`, `test/timers-canvas.test.js`, `test/canvas-prebuilt-fit.test.js`.
+- **✅ raidmimic.com live (2026-10-19; DECISIONS §370).** https://raidmimic.com serves the guild leaders' page.
+- **✅ Voice reports, server half (bot 3.2.8 · web 1.9.9, 2026-10-19; DECISIONS §379).** `POST /api/agent/voice-report`
+  and `/admin/voice-reports` [beta]; the `voice_reports` table was created 2026-10-19. `test/voice-reports.test.js`.
 - **🧪 raidmimic.com landing, [beta] (web 1.9.5, 2026-10-18; DECISIONS §370).** The guild leaders' door, live at
   `wolfpack.quest/raidmimic` with layouts A (default) and B (`?v=b`). Waiting on: the guild lead's A/B pick, Porkbun DNS for
   the three domains, then removing the six Vercel redirects to eqmimic.quest. `test/raidmimic-landing.test.js`.
