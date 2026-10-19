@@ -115,7 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Other games** (§377) | EQ family live on beta (agent 3.8.7: any `eqlog_<Name>_<server>.txt` in the local edition, never uploads off Quarm). Classic WoW reader built on branch `claude/wow-classic-reader` (bot 3.2.8, web 1.9.9, migration `20261019130000_encounters_game_and_boss_key`, not applied). Monsters & Memories on hold (its policy forbids parsers) | the guild lead: approve the `encounters` migration; someone with a Classic client runs `node packages/wowlogsync/index.js --log <Logs dir> --character <name> --dry-run --from-start` and reports. Confirm real P1999/live log suffixes |
-| **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side on branch `claude/gallery-server` (bot 3.2.7); `GALLERY_SALT` set on Railway. The tables migration was approved but its run was cancelled at the confirmation prompt | a session: apply `20261019120000_gallery_masterpieces` (guild lead approves the prompt), push bot 3.2.7, then the Mimic Gallery tab (design with samples first) — 3.0 stable waits on slice 1 |
+| **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side LIVE on main (bot 3.2.7, `5c545c42`); `GALLERY_SALT` set on Railway. The tables are NOT created: four MCP attempts stalled at the approval step with nothing reaching the database | the guild lead: paste `supabase/migrations/20261019120000_gallery_masterpieces.sql` into the Supabase SQL Editor; then a session confirms the routes and designs the Mimic Gallery tab (samples first) — 3.0 stable waits on slice 1 |
 | **FB-84 death log before a death** (§373) | Scoped: A local recap (recommended first slice), B web per-death panel, C extend heal gaps/timeline | the guild lead: pick A/B/C (with samples) before any build |
 | **Raid night 2026-10-18 fixes** (§373) | Live: bot 3.2.6 (HoH trial cards, pet filter, flag counter, named-boss list); beta agent 3.8.4 + Mimic DPS Sec rule (rez NPC fix, trial credit lines, three rampagers) | the guild lead: look over `data/named-bosses.json` for missing or unwanted nameds (the hail-cap tooltip was reworded in agent 3.8.5 beta) |
 | **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: A (keep, recommended) or B (zone gate, agent change on beta) — B brings back the "hits the tank" bar but our own nukes in the named's zone would start it again |
@@ -11873,3 +11873,32 @@ similar systems"*.
   always Quarm, so a renamed copy never stops uploads. The P1999 and live suffixes are from memory and unverified.
   The Classic WoW reader is ready on `claude/wow-classic-reader` (bot 3.2.8 / web 1.9.9). Its migration is renumbered
   `20261019130000` so it does not collide with the gallery's `20261019120000`. Nothing applied.
+
+### 378. The morning's reports, all on beta (2026-10-19, agent 3.8.8–3.8.11)
+- **FB-85, the server tick was jumpy** (agent 3.8.8). The overlay re-anchored the countdown to every poll's estimate, and
+  that estimate carries 0–300 ms of noise. Now `smoothAnchor`, in `apps/mimic/triggers.html` and `zealhealth.html`,
+  works on the error taken modulo the 6 s cycle:
+  - under 250 ms: ignored;
+  - up to 1.5 s: closed by a quarter each poll;
+  - beyond 1.5 s: snapped.
+- **FB-87, HP on the Map's timers page** (agent 3.8.8). Living rows get an "NN%" chip from the Extended Target cache,
+  joined by spawn id, or by name only when that name is unique. No guess on duplicate names and nothing when stale
+  (`_mapSeenHp`).
+- **FB-86, the Feedback window on the taskbar** (the guild lead picked A). The dashboard and Feedback window are the
+  only two windows on the taskbar; FB-61's rule holds for everything else. `test/mimic-taskbar.test.js`.
+- **FB-89, an "⚔ Engaged" section at the top of the Map's timers list** (agent 3.8.9). Up to 12 mobs raiders are on,
+  each with HP and "N on it", most-targeted first (`_mapEngaged`).
+- **FB-88, Extended Target "Self"** (the guild lead picked A, agent 3.8.10). Your own tab-through list, kept by your
+  agent:
+  - keyed by spawn id; 0 is never recorded;
+  - a "keep for" choice of 30s / 60s / 2m / 5m, with 5 minutes and 200 rows held;
+  - served at `/api/extended-target?scope=self`, so no bot call.
+  - B (a shared, bot-kept roster) stays possible later.
+- **FB-90, regen per tick** (the guild lead said yes to the observed version, agent 3.8.11):
+  - HP and mana are measured between server ticks on clean ticks only: no damage, heal, cast, combat, zone change,
+    max change or drop.
+  - The value is the median of the last 4 clean ticks, shown after 2 and hidden in combat.
+  - "+N / tick" sits on the HUD and Canvas bars, with a pulse in the last second before the tick.
+  - The per-source split (spell / AA / gear) is not built.
+- **Process note:** two agents slipped to `sed`/heredoc edits despite the Edit/Write rule, and docs drafted on beta
+  branches were moved to main before shipping each time. Gallery tables: see the Open row.
