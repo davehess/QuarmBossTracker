@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vitest/config';
 
 // Test discovery excludes.
@@ -12,6 +13,20 @@ import { defineConfig } from 'vitest/config';
 //
 // Everything else here is vitest's default exclude set — spelled out because
 // setting `exclude` replaces the defaults rather than extending them.
+//
+// Quarantine: test files listed in test/quarantine.json (main) and
+// test/quarantine.beta.json (beta only) are skipped, each with an owner, a
+// reason and an expiry that test/quarantine-guard.test.js enforces. A missing
+// list file excludes nothing.
+const quarantined = ['quarantine.json', 'quarantine.beta.json'].flatMap((name) => {
+  try {
+    const list = JSON.parse(readFileSync(new URL(`./test/${name}`, import.meta.url), 'utf8'));
+    return (list.files || []).map((e) => e.file);
+  } catch {
+    return [];
+  }
+});
+
 export default defineConfig({
   test: {
     exclude: [
@@ -21,6 +36,7 @@ export default defineConfig({
       '**/.{idea,git,cache,output,temp}/**',
       '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build}.config.*',
       '**/.claude/worktrees/**',
+      ...quarantined,
     ],
   },
 });

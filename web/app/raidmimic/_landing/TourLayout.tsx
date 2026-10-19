@@ -1,10 +1,10 @@
-// Layout B, "The tour" (`?v=b`): screens first. Four product moments, each a drawn picture beside one plain
-// sentence, alternating sides down the page, then the same four facts as the pitch (works with, your data, cost,
+// The raidmimic layout, "The tour" (the guild lead's pick, 2026-10-19): screens first. Four product moments, each a drawn picture beside one plain
+// sentence, alternating sides down the page, then the four facts (works with, your data, cost,
 // worlds) folded into one-line accordions so the pictures stay the page and the small print stays one tap away.
-// The words are the same module as layout A; only the order and the shape differ.
+// Every word comes from web/lib/raidmimicLanding.ts.
 import { ILLUSTRATIVE_NOTE, MOMENTS, COST, DATA, WORKS_WITH, WORLDS } from '@/lib/raidmimicLanding';
 import {
-  BetaTag, ComingList, CostBody, CtaBand, DataBody, Footer, Hero, StatusChip, VariantSwitch,
+  BetaTag, ComingList, CostBody, CtaBand, DataBody, Footer, Hero, StatusChip,
   WorksWithBody, WorldsBody, type Ctx,
 } from './Parts';
 import { Figure } from './Figures';
@@ -22,7 +22,6 @@ function Fold({ id, title, children }: { id: string; title: string; children: Re
 export default function TourLayout({ ctx }: { ctx: Ctx }) {
   return (
     <div className="mx-auto max-w-5xl pb-12">
-      <VariantSwitch ctx={ctx} current="b" />
       <BetaTag ctx={ctx} />
       <Hero ctx={ctx} compact />
 

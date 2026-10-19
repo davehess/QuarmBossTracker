@@ -61,7 +61,7 @@ export const releases: Release[] = [
     date: '2026-10-18',
     headline: 'A new page for guild leaders shows what the platform does for a whole raid, and says plainly which parts run today and which are still coming.',
     features: [
-      { name: 'The guild leaders\' page', blurb: 'Raid boards, flags and lockouts, loot, merged parses, the night\'s review and overlays, each marked as running today, in testing or coming. Two layouts to compare while it is new. It will live at raidmimic.com; Mimic for players stays at eqmimic.quest.' },
+      { name: 'The guild leaders\' page', blurb: 'Raid boards, flags and lockouts, loot, merged parses, the night\'s review and overlays, each marked as running today, in testing or coming. It is laid out as a short tour of screens, with the small print folded away. It will live at raidmimic.com; Mimic for players stays at eqmimic.quest.' },
     ],
     fixes: [],
   },
