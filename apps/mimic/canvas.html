@@ -409,7 +409,18 @@
   }
   function toggleWhenClass(p, c) {
     var cur = p.cls || [];
+    if (c) _clsPick[p.id] = true;     // unticking the last chip leaves the picker open
     setWhenClasses([p], !c ? [] : cur.indexOf(c) >= 0 ? cur.filter(function (x) { return x !== c; }) : cur.concat([c]));
+  }
+  // "Only for" asks first: Any class, or Specific classes (the guild lead, 2026-10-19: "Only For should say
+  // Any class or specific classes, then show the rest"). The class chips show only under Specific, which a
+  // panel is in when its rule already names classes, or when it was just chosen and nothing is ticked yet
+  // (that choice is a view state, not stored: with no class ticked the panel behaves as Any class).
+  var _clsPick = {};
+  function clsSpecific(p) { return !!((p.cls && p.cls.length) || _clsPick[p.id]); }
+  function setClsMode(p, specific) {
+    if (specific) _clsPick[p.id] = true;
+    else { delete _clsPick[p.id]; setWhenClasses([p], []); }
   }
   // ── end Show when ──
 
@@ -458,7 +469,11 @@
     if (!src) return null;
     var out = [], seen = {}, haveCallouts = false, haveAll = false;
     var seenKey = {};
-    function add(src1, o) { out.push(cleanWhen(src1, o)); }
+    // noSample: the arranging sample rows turned off (🧪 Hide test rows); a timers panel keeps it.
+    function add(src1, o) {
+      if (o.kind === 'timers' && src1.noSample === true) o.noSample = true;
+      out.push(cleanWhen(src1, o));
+    }
     for (var i = 0; i < src.length && out.length < MAX_PANELS; i++) {
       var p = src[i];
       if (!p || typeof p.id !== 'string' || !p.id || seen[p.id]) continue;
@@ -709,7 +724,7 @@
       doc.body.classList.toggle('timers-topdown', p.anchor === 'top');
       doc.body.classList.toggle('part-edit', _edit);
       var w = e.frame.contentWindow;
-      if (w && typeof w.wpPartSample === 'function') w.wpPartSample(_edit || _isTesting(p.id));
+      if (w && typeof w.wpPartSample === 'function') w.wpPartSample(sampleOn(p, _edit, _isTesting(p.id)));
     } catch (err) { /* page mid-load — its load handler re-applies */ }
   }
 
@@ -1114,9 +1129,23 @@
   // data there of each type that's selected there"): one panel shows a sample
   // of every kind of countdown that would land in it, for 30 seconds or until
   // pressed again, locked or not. Nothing is saved.
+  // Arranging ALSO shows the sample rows on its own, so an empty panel still shows its shape (the guild
+  // lead, 2026-10-19: "No way to turn off the sample lines" - the button read "Show test rows" with TEST
+  // rows on screen, because the arranging samples did not answer to it). The button now speaks for what is
+  // on screen: a panel's samples are on while it is being tested, or while arranging unless it was told
+  // `noSample` (kept in the layout, so a reload keeps it off).
+  // ── Test rows ──
   var TEST_MS = 30000;
   var _testing = {};
   function _isTesting(id) { return !!_testing[id] && _testing[id] > Date.now(); }
+  function sampleOn(p, edit, testing) { return !!testing || (!!edit && !p.noSample); }
+  // Flips what is on screen; returns whether a timed test should now be running.
+  function toggleSample(p, edit, testing) {
+    if (sampleOn(p, edit, testing)) { if (edit) p.noSample = true; return false; }
+    delete p.noSample;
+    return !edit;
+  }
+  // ── end Test rows ──
   function setTesting(id, on) {
     _testing[id] = on ? Date.now() + TEST_MS : 0;
     if (on) setTimeout(function () {
@@ -1229,8 +1258,8 @@
       h += '<div class="row" style="margin-top:8px">'
         + (p.kind === 'callouts'
           ? '<button class="btn" data-test title="One sample callout, shown and not spoken">🧪 Show a test callout</button>'
-          : '<button class="btn' + (_isTesting(p.id) ? ' on' : '') + '" data-test title="A sample of every kind of countdown this panel shows, for 30 seconds">'
-            + (_isTesting(p.id) ? '🧪 Hide the test rows' : '🧪 Show test rows') + '</button>')
+          : '<button class="btn' + (sampleOn(p, _edit, _isTesting(p.id)) ? ' on' : '') + '" data-test title="A sample of every kind of countdown this panel shows. Out in play they stay 30 seconds; while arranging they stay until you hide them">'
+            + (sampleOn(p, _edit, _isTesting(p.id)) ? '🧪 Hide test rows' : '🧪 Show test rows') + '</button>')
         + '</div>';
     }
     h += whenMenuHtml(p);
@@ -1419,8 +1448,8 @@
         try { var cw = _els[p.id].frame.contentWindow; if (cw && cw.wpPartFlash) cw.wpPartFlash('TEST — Death Touch on the main tank'); } catch (err) { /* page mid-load */ }
         return;
       }
-      setTesting(p.id, !_isTesting(p.id));
-      render(); openMenu(p.id, _menuAnchor || _els[p.id].root);
+      setTesting(p.id, toggleSample(p, _edit, _isTesting(p.id)));
+      save(); render(); openMenu(p.id, _menuAnchor || _els[p.id].root);
       return;
     }
     var chip = t.closest('.chip');
@@ -1472,6 +1501,7 @@
     else if (t.hasAttribute('data-gkey')) { captureGroupKey(t.getAttribute('data-gkey')); return; }
     else if (t.hasAttribute('data-gclear')) { setGroupKey(t.getAttribute('data-gclear'), ''); return; }
     else if (t.hasAttribute('data-when')) { setWhen([p], t.getAttribute('data-when')); }
+    else if (t.hasAttribute('data-clsmode')) { setClsMode(p, t.getAttribute('data-clsmode') === 'specific'); }
     else if (t.hasAttribute('data-wcls')) { toggleWhenClass(p, t.getAttribute('data-wcls')); }
     else if (t.hasAttribute('data-hide')) { p.off = !p.off; }
     else if (t.hasAttribute('data-remove')) { closeMenu(); removePanels([p.id]); return; }
@@ -1582,15 +1612,21 @@
     var h = '<div class="sec">Show when</div><div class="row" style="flex-wrap:wrap">'
       + '<button class="btn' + (!p.when ? ' on' : '') + '" data-when="">Always</button>';
     WHEN.forEach(function (w) { h += '<button class="btn' + (p.when === w[0] ? ' on' : '') + '" data-when="' + w[0] + '">' + esc(w[1]) + '</button>'; });
-    var anyCls = !(p.cls && p.cls.length);
-    h += '</div><div class="sec">Only for</div><div class="row" style="flex-wrap:wrap">'
-      + '<button class="btn' + (anyCls ? ' on' : '') + '" data-wcls="">Any class</button>';
-    WHEN_CLASSES.forEach(function (c) {
-      h += '<button class="btn' + (!anyCls && p.cls.indexOf(c[0]) >= 0 ? ' on' : '') + '" data-wcls="' + esc(c[0]) + '" title="' + esc(c[0]) + '">' + c[1] + '</button>';
-    });
-    var miss = (p.when || !anyCls) ? currentWhen().miss : {};
-    var lacks = (p.when && miss[p.when === 'nocombat' ? 'combat' : p.when]) || (!anyCls && miss.cls);
-    h += '</div><div class="note">' + (lacks
+    var hasCls = !!(p.cls && p.cls.length), specific = clsSpecific(p);
+    h += '</div><div class="sec">Only for</div><div class="row">'
+      + '<button class="btn' + (!specific ? ' on' : '') + '" data-clsmode="any">Any class</button>'
+      + '<button class="btn' + (specific ? ' on' : '') + '" data-clsmode="specific">Specific classes</button></div>';
+    if (specific) {
+      h += '<div class="row" style="flex-wrap:wrap">';
+      WHEN_CLASSES.forEach(function (c) {
+        h += '<button class="btn' + (hasCls && p.cls.indexOf(c[0]) >= 0 ? ' on' : '') + '" data-wcls="' + esc(c[0]) + '" title="' + esc(c[0]) + '">' + c[1] + '</button>';
+      });
+      h += '</div>';
+      if (!hasCls) h += '<div class="note">Pick one or more. Until you do, the panel shows for every class.</div>';
+    }
+    var miss = (p.when || hasCls) ? currentWhen().miss : {};
+    var lacks = (p.when && miss[p.when === 'nocombat' ? 'combat' : p.when]) || (hasCls && miss.cls);
+    h += '<div class="note">' + (lacks
       ? 'This agent does not report what the rule needs: needs a newer agent. The panel stays visible until it does.'
       : 'Out in play it hides while the rule is false and comes back on its own. Arranging shows everything.') + '</div>';
     return h;
