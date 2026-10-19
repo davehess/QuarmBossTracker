@@ -66,20 +66,23 @@
      Rides the same row as the timing votes: it shows only for a callout that was SPOKEN and carries a
      rule key, and when timing votes are off the row shows it alone (mute-only). After a click the same
      button becomes "Muted — undo". It is a real <button>, so the preload's hover handshake covers it. */
-  .mute-btn, .enrage-opt{
+  .mute-btn, .enrage-opt, .voice-btn{
     display:none; font:600 12px ui-monospace,Menlo,Consolas,monospace;
     color:#fff; background:rgba(14,17,22,0.85); border:1px solid rgba(255,255,255,0.25);
     border-radius:4px; padding:5px 10px; cursor:pointer; text-shadow:0 1px 2px #000;
     transition: background .15s, border-color .15s;
   }
   #feedback.canmute .mute-btn{display:inline-block}
+  /* 🔊 Voice unclear (the guild lead, 2026-10-19): beside the 🔇 under any callout that was spoken. */
+  #feedback.canvoice .voice-btn{display:inline-block}
+  #feedback.enragemenu .voice-btn{display:none}
   #feedback.mute-only .fb-btn, #feedback.mute-only #fbThanks{display:none}
   /* An enrage callout's 🔇 opens three choices in the same row (the guild lead, 2026-10-19: "muteable per
      mob / this session / permanently"); while they are open they take the place of the timing votes. */
   #feedback.enragemenu .enrage-opt{ display:inline-block }
   #feedback.enragemenu .fb-btn, #feedback.enragemenu #fbThanks{ display:none }
-  .mute-btn:hover, .enrage-opt:hover{ background:rgba(110,118,129,0.55); border-color:#6e7681 }
-  .mute-btn.done{ border-color:#56d364; color:#56d364 }
+  .mute-btn:hover, .enrage-opt:hover, .voice-btn:hover{ background:rgba(110,118,129,0.55); border-color:#6e7681 }
+  .mute-btn.done, .voice-btn.done{ border-color:#56d364; color:#56d364 }
   /* Sticky critical callouts (#76). A trigger flagged `sticky` pins here and
      stays until the user clicks it away (or a generous ~5min timeout) instead
      of fading with the normal 3.5s flash. Loud red so a life-or-death callout
@@ -306,6 +309,7 @@
       <button class="fb-btn late" data-dir="too_early" title="The trigger fired BEFORE the actual event — delay the trigger next time.">» Too early</button>
       <button class="fb-btn off" data-dir="off" title="Stop asking — no timing votes after callouts, and nothing about callout timing is sent. Turn it back on in the dashboard, Triggers tab, Timing votes.">🔕</button>
       <button id="muteBtn" class="mute-btn" title="Stop saying this callout out loud. It still shows on screen. Undo it from here right after, or any time in the dashboard, Voice tab, What you hear.">🔇 Mute</button>
+      <button id="voiceBtn" class="voice-btn" title="Say this callout was hard to understand. It sends what was spoken, the voice it was spoken in and your character to the officers; no audio leaves your PC. You can suggest a better wording from the dashboard, Triggers tab, Recent fires.">🔊 Voice unclear</button>
       <button class="enrage-opt" data-scope="mob" title="Stop this mob's enrage callouts (text and speech) until Mimic restarts.">This mob · session</button>
       <button class="enrage-opt" data-scope="all" title="Stop every enrage callout (text and speech) until Mimic restarts.">All enrage · session</button>
       <button class="enrage-opt" data-scope="always" title="Stop this mob's enrage callouts for good. Undo it any time in the dashboard, Triggers tab, Recent fires.">This mob · always</button>
@@ -560,6 +564,35 @@
     if (_speakingAudio){ try { _speakingAudio.pause(); } catch (e) {} _speakingAudio = null; }
   }
 
+  // What was ACTUALLY said (the guild lead, 2026-10-19: "B for voice"): the last 20 spoken lines with the engine and
+  // voice that played them, so a callout nobody could understand can be reported with the voice that mangled it, and
+  // replayed from the dashboard. The engine is the one that played: a downloaded voice that fell back to the Windows
+  // voice is recorded as Windows (it is only noted when the line starts, in _speakNeural / _speakWindows). Each entry
+  // is also handed to the agent, which keeps it on the matching Recent fires row (POST /api/voice-spoken).
+  var SPOKEN_KEEP = 20, _spokenLog = [];
+  function _noteSpoken(item, engine, voice, rate, pitch){
+    var m = (item && item.meta) || {};
+    var e = {
+      spoken: String((item && item.text) || '').slice(0, 300), original: String(m.original || '').slice(0, 300),
+      engine: String(engine || 'windows').slice(0, 20), voice: String(voice || 'default').slice(0, 80),
+      rate: rate, pitch: pitch, trigger_id: m.trigger_id || null, trigger_name: String(m.trigger || '').slice(0, 200),
+      ts: m.ts || 0, at: Date.now(),
+    };
+    _spokenLog.push(e);
+    while (_spokenLog.length > SPOKEN_KEEP) _spokenLog.shift();
+    try {
+      fetch('http://127.0.0.1:' + PORT + '/api/voice-spoken', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(e),
+      }).catch(function(){});
+    } catch (err) {}
+    return e;
+  }
+  // The newest spoken line that came from this fire, or null (nothing has played yet, or it was muted).
+  function _spokenFor(f){
+    for (var i = _spokenLog.length - 1; i >= 0; i--) if (f && _spokenLog[i].ts === f.ts) return _spokenLog[i];
+    return null;
+  }
+
   function _speakPriority(meta){
     var t = String((meta && meta.trigger) || '');
     // A missed CH beat wipes the raid; everything else can wait 2 seconds.
@@ -631,7 +664,7 @@
       _speakingAudio = a;
       a.addEventListener('ended', function(){ if (_speakingUtt === tok){ _speakingAudio = null; _speakPump(); } });
       a.addEventListener('error', function(){ if (_speakingUtt === tok){ _speakingAudio = null; _fallbackToWindows(item); } });
-      a.play().then(function(){ reportPlayback('started', choice.engine, item.meta); },
+      a.play().then(function(){ reportPlayback('started', choice.engine, item.meta); _noteSpoken(item, choice.engine, choice.voice, rate, 1); },
         function(){ if (_speakingUtt === tok){ _speakingAudio = null; _fallbackToWindows(item); } });
     }, function(){ if (_speakingUtt === tok) _fallbackToWindows(item); });
   }
@@ -672,6 +705,7 @@
       _speakWatchdog = setTimeout(function(){
         if (_speakingUtt === u){ _speakingUtt = null; _speakingPrio = -1; _speakPump(); }
       }, est);
+      _noteSpoken(item, 'windows', u.voice && u.voice.name, u.rate, u.pitch);
       window.speechSynthesis.speak(u);
     }catch(e){
       reportPlayback('error', String((e && e.message) || e), item.meta);
@@ -894,6 +928,63 @@
     b.addEventListener('click', function(){ pickEnrageMute(b.getAttribute('data-scope')); });
   });
 
+  // 🔊 Voice unclear (the guild lead, 2026-10-19: "B for voice"). One click reports what was SPOKEN for the fire
+  // under the banner (the ring above), with the engine and voice that said it. The agent adds the version and the
+  // character and passes it to the server; the officers read it at /admin/voice-reports. A real <button>, so the
+  // hover handshake covers it. If the server is not set up for reports yet the button says so and stays
+  // clickable; nothing is queued behind the person's back.
+  let _voiceFire = null;
+  const voiceBtn = document.getElementById('voiceBtn');
+  function setVoiceIdle(t){
+    _voiceFire = t || null;
+    if (!voiceBtn) return;
+    voiceBtn.textContent = '🔊 Voice unclear';
+    voiceBtn.classList.remove('done');
+    fbWrap.classList.toggle('canvoice', !!t);
+  }
+  // Called after offerMute for a fire drawn on this page. Any callout that was spoken offers it, with or without a
+  // rule key. Not on a canvas panel: it never speaks, so it has no record of what was said (the trigger window
+  // does, and the dashboard's Recent fires reaches the same line). When no other button made the row, this one
+  // shows it alone, as the 🔇 does when timing votes are off. One timer slot (offerMute._t) serves all the buttons.
+  function offerVoice(t){
+    const can = !!(t && !PART && !t.mute && !t.test && !t.rehearsal && !t.replay);
+    setVoiceIdle(can ? t : null);
+    if (!can) return;
+    fbWrap.classList.toggle('mute-only', !_votesOn);
+    fbWrap.classList.add('show');
+    if (!_muteFire){ clearTimeout(offerMute._t); offerMute._t = setTimeout(function(){ fbWrap.classList.remove('show'); }, 8000); }
+  }
+  function postVoiceReport(e){
+    return fetch('http://127.0.0.1:' + PORT + '/api/voice-report', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spoken: e.spoken, original: e.original, engine: e.engine, voice: e.voice, rate: e.rate, pitch: e.pitch,
+        trigger_id: e.trigger_id, trigger_name: e.trigger_name }),
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(j){
+        return { ok: r.ok && !(j && j.ok === false), unavailable: r.status === 503, limited: r.status === 429 };
+      });
+    }, function(){ return { ok: false }; });
+  }
+  function voiceClick(){
+    const f = _voiceFire;
+    if (!f || voiceBtn.classList.contains('done')) return;
+    const e = _spokenFor(f);
+    if (!e){ voiceBtn.textContent = 'Nothing was spoken'; return; }
+    voiceBtn.textContent = 'Sending…';
+    postVoiceReport(e).then(function(r){
+      voiceBtn.textContent = r.ok ? 'Reported' : r.unavailable ? 'Voice reports are not switched on yet' : r.limited ? 'Too many reports, try again soon' : 'Could not send';
+      if (r.ok) voiceBtn.classList.add('done');
+    });
+    // Keep the row up long enough to read the answer.
+    clearTimeout(offerMute._t); clearTimeout(showFeedback._t);
+    offerMute._t = setTimeout(function(){ fbWrap.classList.remove('show'); }, 8000);
+  }
+  if (voiceBtn) {
+    voiceBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
+    voiceBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
+    voiceBtn.addEventListener('click', voiceClick);
+  }
+
   // Sticky critical callouts (#76). A fire flagged `sticky` pins a row that
   // stays until dismissed (click) or a generous timeout, rather than fading on
   // the normal 3.5s schedule. Keyed on trigger+text so a repeat refreshes the
@@ -1008,13 +1099,15 @@
     // sound_mode 'replace' (the guild lead, 2026-10-14: "allow them to use the sound effects instead of
     // callouts tts"): the sound plays INSTEAD of the spoken line. If it cannot play (no such file on this
     // PC) the line is spoken after all, so a missing sound never costs the callout.
-    const speakMeta = { trigger: t.trigger || t.text || t.label || spoken, rehearsal: !!t.rehearsal, voice_pack: t.voice_pack || null };
+    const speakMeta = { trigger: t.trigger || t.text || t.label || spoken, rehearsal: !!t.rehearsal, voice_pack: t.voice_pack || null,
+      original: t.text || '', trigger_id: t.trigger_id || null, ts: t.ts || 0 };
     const replaced = !!(t.sound && t.sound_mode === 'replace');
     if (!t.mute && !replaced) speak(spoken, speakMeta);
     const played = playSound(t.sound, t.sound_volume);
     if (replaced && !t.mute && played && played.then) played.then(function(ok){ if (!ok) speak(spoken, speakMeta); });
     if (visual) showFeedback(t);
     if (visual) offerMute(t);   // "What you hear": 🔇 under a callout that was actually spoken
+    if (visual) offerVoice(t);  // 🔊 Voice unclear beside it
     if (t.sticky && !_visualElsewhere) pinSticky(t);
   }
 
