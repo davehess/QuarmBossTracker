@@ -22452,6 +22452,23 @@ async function _recordKillLockouts({
     + (foreign ? `, ${foreign} not from our raid` : ''));
 }
 
+// game:'wow' uploads (utils/wowUpload.js): key-based encounter RPC, no EQ boss resolver, no Discord card in v1.
+async function _handleWowUpload(res, payload, identity) {
+  const wow = require('./utils/wowUpload');
+  const norm = wow.normalizeWowUpload(payload);
+  if (!norm.ok) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: norm.error }));
+  }
+  let recorded = null;
+  try {
+    const sb = require('./utils/supabase');
+    recorded = await wow.recordWowUpload({ supabase: sb, guildId: sb.guildId(), identity, payload, rec: norm.rec });
+  } catch (err) { console.warn('[wow] supabase write failed:', err?.message); }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, game: 'wow', encounter_id: recorded?.encounterId || null }));
+}
+
 async function _handleAgentUpload(req, res) {
   // Auth: shared-secret bearer token. WOLFPACK_AGENT_TOKEN must be set.
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -22484,6 +22501,9 @@ async function _handleAgentUpload(req, res) {
   // and stomp every active boss timer.
   const { character, encounter } = payload || {};
   const isBackfill = payload?.backfill === true;
+  // Another game's reader (packages/wowlogsync/) posts this same envelope with game:'wow'. It leaves here, before
+  // anything EverQuest-shaped runs; an upload with no `game` falls straight through, untouched.
+  if (require('./utils/wowUpload').isWowUpload(payload)) return _handleWowUpload(res, payload, identity);
   if (!encounter || !Array.isArray(encounter.events)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'missing encounter.events' }));

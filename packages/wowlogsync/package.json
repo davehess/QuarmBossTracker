@@ -1,0 +1,16 @@
+{
+  "name": "wowlogsync",
+  "version": "0.1.0",
+  "description": "Classic-era World of Warcraft combat-log reader for the Wolf Pack platform. Only damage, healing, death and encounter events leave the PC.",
+  "license": "AGPL-3.0-or-later",
+  "main": "index.js",
+  "bin": {
+    "wowlogsync": "./index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}

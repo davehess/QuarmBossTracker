@@ -5041,6 +5041,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   while dragged, hover card linking the dragger, a Corpses side section and a ⚙ switch. No loot-emptied line and no
   line for a no-experience rez exist, so those corpses age out. Tests: `test/map-corpses.test.js`,
   `test/map-corpses-agent.test.js`.
+- **Other games: Classic WoW reader (bot 3.2.8, web 1.9.8, §377; migration draft).** `packages/wowlogsync/` (`core.js`
+  parser + allow-list + fight tracker, `index.js` tail + queue + post) posts the EverQuest envelope plus `game:'wow'`;
+  `_handleAgentUpload` hands it to `_handleWowUpload` (`utils/wowUpload.js`) → `find_or_create_encounter_by_key` →
+  `recordContribution` → `merge_encounter_players`. `encounters` gains `game`, `boss_name`, `boss_key`; `npc_id` is
+  nullable. `/parses/[id]` falls back to `boss_name`. Tests: `test/wowlogsync.test.js`, `test/wow-upload.test.js`.
 - **A corpse is never a character (bot 3.1.291, web 1.8.174, §353).** Zeal names a dead character
   "<Name>'s corpse<N>"; `isCorpse` (`utils/raidBuffs.js`, twin in `web/lib/buffs.ts`) is checked in `_trackUpload`,
   the trigger-feedback voter and live-state ingest, and /me's suspected-characters card. Test:

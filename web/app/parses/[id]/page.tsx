@@ -153,6 +153,10 @@ type EncounterDetail = {
   total_dps: number;
   zone_short: string | null;
   npc_id: number | null;
+  // 'eq' for every EverQuest row; another game's reader writes its own tag and a boss_name of its own
+  // (it has no eqemu_npc_types row to join).
+  game: string | null;
+  boss_name: string | null;
   classification: string | null;
   classification_reason: string | null;
   classification_by: string | null;
@@ -181,7 +185,7 @@ async function load(id: string) {
     const { data: enc, error: encErr } = await sb
       .from('encounters')
       .select(`
-        id, started_at, duration_sec, total_damage, total_dps, zone_short, npc_id,
+        id, started_at, duration_sec, total_damage, total_dps, zone_short, npc_id, game, boss_name,
         classification, classification_reason, classification_by, discord_msg_link,
         eqemu_npc_types ( id, name, zone_short ),
         encounter_players ( character_name, total_damage, dps, duration_sec, rank, has_pets )
@@ -407,6 +411,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       .eq('id', id)
       .maybeSingle();
     if (!data) return PARSE_FALLBACK_META;
+    // Catalog names only: encounters.boss_name is uploader-supplied text, and this runs for anonymous crawlers.
     const boss = cleanBossName((data as { eqemu_npc_types?: { name?: string } }).eqemu_npc_types?.name);
     if (!boss) return PARSE_FALLBACK_META;
     const when = data.started_at
@@ -472,7 +477,8 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
     return petSet.has(lower) || looksLikePet(lower);
   };
 
-  const bossName = cleanBossName(enc.eqemu_npc_types?.name);
+  const bossName = cleanBossName(enc.eqemu_npc_types?.name || enc.boss_name);
+  const gameTag  = enc.game && enc.game !== 'eq' ? enc.game.toUpperCase() : null;
   const bossId   = enc.npc_id;
   const zoneShort = enc.zone_short || enc.eqemu_npc_types?.zone_short || bossLocalZone;
   const zoneLong = zoneShort ? zones.get(zoneShort)?.long_name || zoneShort : 'Unknown zone';
@@ -666,7 +672,9 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
           </div>
         )}
         <div className="text-sm text-dim flex flex-wrap gap-x-4 gap-y-1">
-          <span><span className="text-orange">📍</span> {zoneLong}</span>
+          {gameTag
+            ? <span title="Recorded from another game's combat log">🎮 {gameTag}</span>
+            : <span><span className="text-orange">📍</span> {zoneLong}</span>}
           <span>{fmtDuration(enc.duration_sec)}</span>
           <span className="text-text">{fmtDmg(enc.total_damage)} damage</span>
           {enc.total_dps > 0 && <span>{fmtDmg(enc.total_dps)}/s overall</span>}
