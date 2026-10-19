@@ -228,6 +228,22 @@
      the press too, without moving the row's layout. */
   .timer-row .timer-x{position:relative}
   .timer-row .timer-x::before{content:'';position:absolute;inset:-5px}
+  /* ⋮ beside the ✕: Move to another panel / Mute (the guild lead, 2026-10-19). Same size, handshake and
+     press target as the ✕; the row itself stays click-through. */
+  .timer-row .timer-menu{flex-shrink:0;width:16px;height:16px;display:flex;position:relative;
+    align-items:center;justify-content:center;border-radius:3px;margin-left:2px;
+    background:rgba(0,0,0,0.35);color:#c9d1d9;border:1px solid rgba(255,255,255,0.18);
+    font-size:12px;line-height:1;cursor:pointer;pointer-events:auto}
+  .timer-row .timer-menu:hover{color:#fff;background:rgba(88,166,255,0.55);border-color:#58a6ff}
+  .timer-row .timer-menu::before{content:'';position:absolute;inset:-5px}
+  /* The row's menu when there is no Canvas page to draw it (the standalone Timers window). */
+  #row-menu{position:fixed;z-index:80;min-width:190px;max-width:260px;box-sizing:border-box;pointer-events:auto;
+    background:rgba(14,17,22,0.96);border:1px solid rgba(110,118,129,0.5);border-radius:6px;padding:4px;
+    color:#e6edf3;font:12px/1.3 system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,0.5)}
+  #row-menu .rm-h{padding:3px 6px 4px;color:#8b949e;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #row-menu button{display:block;width:100%;text-align:left;background:none;border:0;color:inherit;
+    font:inherit;padding:5px 8px;border-radius:4px;cursor:pointer}
+  #row-menu button:hover{background:rgba(88,166,255,0.22)}
   /* (The stack is bottom-anchored now, so the setup bar at the top of the
      window no longer sits on it — the old `body.setup #timers{top:58px}`
      nudge is gone. measureWanted() still reserves the taller top gutter in
@@ -1236,15 +1252,26 @@
     const row = x && x.closest ? x.closest('.timer-row') : null;
     return row && row.dataset ? row.dataset.timerId : null;
   }
+  // The ⋮ beside the ✕ takes the same hover handshake and the same press.
+  function _timerMenuOf(ev){
+    const t = ev && ev.target;
+    return (t && t.closest) ? t.closest('.timer-menu') : null;
+  }
   function onTimerXOver(ev){
-    if (_timerXOf(ev)) { try { window.mimic.overlayHoverInteractive(true); } catch(e){} }
+    if (_timerXOf(ev) || _timerMenuOf(ev)) { try { window.mimic.overlayHoverInteractive(true); } catch(e){} }
   }
   function onTimerXOut(ev){
-    const x = _timerXOf(ev);
+    const x = _timerXOf(ev) || _timerMenuOf(ev);
     if (x && !(ev.relatedTarget && x.contains(ev.relatedTarget))) { try { window.mimic.overlayHoverInteractive(false); } catch(e){} }
   }
   function onTimerXPress(ev){
     if (ev.button != null && ev.button !== 0) return;
+    const m = _timerMenuOf(ev);
+    if (m){
+      const mid = _timerIdOf(m);
+      if (mid){ if (ev.preventDefault) ev.preventDefault(); openRowMenu(mid, m); }
+      return;
+    }
     const x = _timerXOf(ev);
     const id = _timerIdOf(x);
     if (!id) return;
@@ -1254,6 +1281,103 @@
   timersEl.addEventListener('mouseover', onTimerXOver);
   timersEl.addEventListener('mouseout', onTimerXOut);
   timersEl.addEventListener('mousedown', onTimerXPress);
+
+  // ── ⋮ on a row: Move to another panel, Mute (the guild lead, 2026-10-19: "click on a line and move it to a new timer, not
+  // just X it out … permanently mute and review those lines somewhere") ──────────────────────────────────────────────────
+  // In a Canvas panel the menu is drawn by the Canvas page (parent.wpCanvasRowMenu): this iframe is only as big as its
+  // panel, so a menu drawn here would be clipped by it. The standalone Timers window has no such page and draws the Mute
+  // choices itself (Move needs panels). A mute is the agent's (POST /api/timer-mute): the row is dropped there, so every
+  // surface agrees; this page only hides it at once instead of waiting for the next poll.
+  var _rowMenuEl = null, _rowMenuTimer = null;
+  const NO_MUTE_ID = /^(loot|auction|named|sample)\|/;
+  function _rowMutable(id, kind){ return kind !== 'loot' && !NO_MUTE_ID.test(String(id)); }
+  function _canvasMenuFn(){
+    if (PART !== 'timers') return null;
+    try { const f = window.parent && window.parent.wpCanvasRowMenu; return (typeof f === 'function') ? f : null; } catch(e){ return null; }
+  }
+  // Does this row get a ⋮ at all: something to move (Canvas, not a loot chip) or something to mute.
+  function _rowHasMenu(t){
+    if (t.test || t.kind === 'loot') return false;
+    return !!_canvasMenuFn() || _rowMutable(t.id, t.kind);
+  }
+  function _rowMenuInfo(id){
+    const n = timerNodes.get(id);
+    if (!n) return null;
+    const isSpell = String(id).indexOf('bt|spell|') === 0;
+    return {
+      id: id, effect: n.effect, target: n.target, group: n.group || null, kind: n.kind || null,
+      spell: isSpell ? String(n.effect).replace(/\s*⏱\s*$/, '').replace(/\?+$/, '').trim() : null,
+      mob: isSpell ? String(n.target || '').replace(/\s+#\d+\s*$/, '').trim() : null,
+      mutable: _rowMutable(id, n.kind),
+    };
+  }
+  // Gone from the screen now, and kept from a poll already in flight (the same 4 s as the ✕); nothing is sent.
+  function hideRowLocal(id){
+    _dismissedIds.set(id, Date.now() + 4000);
+    const n = timerNodes.get(id);
+    if (n){ n.row.remove(); timerNodes.delete(id); }
+    try { requestAutoHeight(); } catch(e){}
+    try { refreshClearButton(); } catch(e){}
+  }
+  window.wpPartHide = hideRowLocal;
+  function openRowMenu(id, handle){
+    const info = _rowMenuInfo(id);
+    if (!info) return;
+    const row = (handle && handle.closest) ? handle.closest('.timer-row') : null;
+    const r = (row || handle).getBoundingClientRect();
+    const rect = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    const canvas = _canvasMenuFn();
+    if (canvas){ try { canvas(info, rect, PANEL); return; } catch(e){} }
+    localRowMenu(info, rect);
+  }
+  function closeRowMenu(){
+    if (_rowMenuTimer){ clearTimeout(_rowMenuTimer); _rowMenuTimer = null; }
+    if (_rowMenuEl){ _rowMenuEl.remove(); _rowMenuEl = null; }
+    try { requestAutoHeight(); } catch(e){}
+  }
+  function postTimerMute(info, scope, onlyMob){
+    hideRowLocal(info.id);
+    try {
+      fetch('http://127.0.0.1:'+PORT+'/api/timer-mute', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ action:'mute', scope: scope, id: info.id, only_mob: !!onlyMob }),
+      }).catch(function(){});
+    } catch(e){}
+  }
+  function localRowMenu(info, rect){
+    const same = !!(_rowMenuEl && _rowMenuEl.getAttribute('data-id') === info.id);
+    closeRowMenu();
+    if (same || !info.mutable) return;
+    const items = [['session', 'Mute this session', false], ['always', 'Mute always', false]];
+    if (info.spell && info.mob) items.push(['always', 'Mute ' + info.spell + ' on this mob only', true]);
+    const el = document.createElement('div');
+    el.id = 'row-menu';
+    el.setAttribute('data-wp-interact', '');
+    el.setAttribute('data-id', info.id);
+    let h = '<div class="rm-h">' + _esc(info.effect) + '</div>';
+    items.forEach(function(it, i){ h += '<button type="button" data-i="' + i + '">' + _esc(it[1]) + '</button>'; });
+    el.innerHTML = h;
+    el.addEventListener('mouseenter', function(){ if (_rowMenuTimer){ clearTimeout(_rowMenuTimer); _rowMenuTimer = null; } try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
+    el.addEventListener('mouseleave', function(){ closeRowMenu(); try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
+    el.addEventListener('click', function(ev){
+      const b = ev.target && ev.target.closest ? ev.target.closest('button') : null;
+      const it = b ? items[Number(b.getAttribute('data-i'))] : null;
+      if (!it) return;
+      closeRowMenu();
+      postTimerMute(info, it[0], it[2]);
+      try { window.mimic.overlayHoverInteractive(false); } catch(e){}
+    });
+    document.body.appendChild(el);
+    _rowMenuEl = el;
+    const w = el.offsetWidth, hh = el.offsetHeight, W = window.innerWidth, H = window.innerHeight;
+    el.style.left = Math.max(4, Math.min(rect.right - w, W - w - 4)) + 'px';
+    let top = rect.bottom + 2;
+    if (top + hh > H - 4) top = rect.top - hh - 2;
+    el.style.top = Math.max(4, top) + 'px';
+    // Never entered: it goes away by itself (a locked window cannot see a click elsewhere).
+    _rowMenuTimer = setTimeout(closeRowMenu, 5000);
+    try { requestAutoHeight(); } catch(e){}
+  }
   // 🗑 title-bar clear-all — countdowns AND pinned callouts in one click.
   // "this is annoying and no way to clear it" (Rethlan, live on Ssra): before
   // this the only escape was hiding the whole overlay.
@@ -1419,6 +1543,15 @@
           + '<span class="timer-effect">' + _esc(effect) + '</span>'
           + '</span>'
           + '<div class="timer-bar"></div>';
+        // ⋮ before the ✕: Move to another panel (Canvas) / Mute. Not on a loot chip, a test row, or a row with nothing to offer.
+        if (_rowHasMenu(t)){
+          const mn = document.createElement('span');
+          mn.className = 'timer-menu';
+          mn.setAttribute('data-wp-interact', '');   // a clickable <span>, like the ✕
+          mn.textContent = '⋮';
+          mn.title = _canvasMenuFn() ? 'Move this to another panel, or mute it' : 'Mute this timer';
+          row.appendChild(mn);
+        }
         // #207: EVERY countdown gets a ✕, not just the #107 loot chips.
         {
           const x = document.createElement('span');
@@ -1481,6 +1614,8 @@
       // expiring and popping back in on the next poll.
       n.cycle_ms = t.cycle_ms > 0 ? t.cycle_ms : 0;
       n.pinned = !!t.pinned;
+      n.group  = t.group || null;   // what the ⋮ menu hands the Canvas to route/move the row
+      n.kind   = t.kind || null;
       // "What you hear": the agent's rule for this countdown's trigger. The pre-end warnings are
       // fired from here, not from the agent, so the rule has to be honoured here too.
       n.rule_key  = t.rule_key || null;
@@ -1628,7 +1763,9 @@
       var ch = _alertColEl.scrollHeight;
       if (ch > 0) colNeeded = ch + 24 + space;
     }
-    var wanted = Math.max(baseline, timersBottom, colNeeded);
+    // The row ⋮ menu (standalone window) must fit inside the window it is drawn in.
+    var menuNeed = _rowMenuEl ? _rowMenuEl.offsetHeight + 16 : 0;
+    var wanted = Math.max(baseline, timersBottom, colNeeded, menuNeed);
     var avail = (window.screen && window.screen.availHeight) ? window.screen.availHeight : 1000;
     // #129: loot-auction (dismissible) chips are ACTIONABLE — a raider must see
     // every open bid window to bid on it. #timers is click-through, so any chip
