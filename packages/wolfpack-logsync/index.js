@@ -45946,27 +45946,43 @@ function _addMyTarget(t, captures, character) {
 }
 const SUGGESTED_TRIGGERS = [
   // ── Buff drops on YOU — the most-requested alert class. The pattern matches
-  //    the EQ "Your <buff> spell has worn off." line; we cover common Clarity /
-  //    KEI / Aego / POTG / Symbol / Virtue lines individually so each shows
-  //    a category-specific overlay text.
+  //    each spell's OWN spell_fades text (eqemu_spells, checked 2026-10-19). The old
+  //    "Your <buff> spell has worn off." is only what the server prints to a CASTER
+  //    about a spell on someone else (SPELL_WORN_OFF, string 437), so a buff
+  //    dropping off you never read that way and these five were dead. Every rank
+  //    that shares a fade line shares a pattern. Lines are shared across a whole
+  //    kind of buff (all the skins, all the hastes), so the alert says which kind.
+  //      Clarity: The cool breeze fades. (Clarity 174) / The soft breeze fades. (Clarity II 1693) /
+  //        Your mind returns to normal. (Voice of Quellious 3360, Koadic's Endless Intellect 2570) /
+  //        Your gift of insight fades. (1409) / Your gift of brilliance fades. (1410)
+  //      Aego: Your aegolism fades. (1447, 2510) / Your virtue fades. (3467, 3479) / The mystic symbol fades. (485-488, 1535)
+  //      POTG: Your skin returns to normal. (Glades 1442, Cabbage 2188, Nine 3234). The same line ends
+  //        Spikecoat / Bramblecoat / Thistlecoat (515-518), which are damage shields: it is POTG's alert only,
+  //        or one drop would raise both.
+  //      Haste: Your speed returns to normal. (39, 171, 172, 1708) / The pulsing energy fades. (Augmentation 10, Augment 1729)
+  //      Damage shield: The brambles fall away. (129, 356, 432, 1727, 1975) / The blades fall away. (1560) /
+  //        The maelstrom fades away. (Shield of the Eighth 1963)
+  //    Left out because they have no fade text to match, or never were what the old name said: Augment
+  //    Death / Augmentation of Death (null), Pack Regeneration (a regen buff, not POTG), Shield of the Magi
+  //    (an armour buff), and names the Quarm spell list does not have (Conviction, Symbol of Tnarg, Shield of the Pellarus).
   { id: 'buff_clarity_drop', category: 'buff', label: 'Clarity / C2 / VoQ dropped',
-    pattern: '^Your (?:Clarity(?: II)?|Voice of Quellious|Gift of (?:Insight|Brilliance)|Koadic\'s Endless Intellect) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:The cool breeze fades|The soft breeze fades|Your mind returns to normal|Your gift of (?:insight|brilliance) fades)\\.\\s*$',
     overlay_text: 'CLARITY DROPPED', overlay_color: 'cyan',  overlay_ms: 5000,
     tts_default: true,  cooldown_seconds: 3 },
   { id: 'buff_aego_drop', category: 'buff', label: 'Aego / Virtue / Symbol dropped',
-    pattern: '^Your (?:Aegolism|Virtue|Symbol of (?:Marzin|Ryltan|Naltron|Tnarg|Pinzarn|Transal)|Hand of Virtue|Conviction|Blessing of Aegolism) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:Your aegolism fades|Your virtue fades|The mystic symbol fades)\\.\\s*$',
     overlay_text: 'AEGO/SYMBOL DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
     tts_default: true,  cooldown_seconds: 3 },
   { id: 'buff_potg_drop', category: 'buff', label: 'POTG / POTC dropped',
-    pattern: '^Your (?:Protection of the (?:Glades|Cabbage|Nine)|Pack Regen) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+Your skin returns to normal\\.\\s*$',
     overlay_text: 'POTG DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
     tts_default: true,  cooldown_seconds: 3 },
   { id: 'buff_haste_drop', category: 'buff', label: 'Haste dropped',
-    pattern: '^Your (?:Augment(?:ation)?(?: of Death)?|Aanya\'s Quickening|Celerity|Quickness|Swift Like the Wind) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:Your speed returns to normal|The pulsing energy fades)\\.\\s*$',
     overlay_text: 'HASTE DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
     tts_default: false, cooldown_seconds: 3 },
   { id: 'buff_dmg_shield_drop', category: 'buff', label: 'Damage shield dropped',
-    pattern: '^Your (?:Shield of (?:Thorns|Spikes|Blades|Brambles|the Eighth|the Magi|the Pellarus)|Thorny Shield|Thistlecoat|Bramblecoat|Spikecoat|Legacy of Spike) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:The brambles fall away|The blades fall away|The maelstrom fades away)\\.\\s*$',
     overlay_text: 'DAMAGE SHIELD DROPPED', overlay_color: 'cyan', overlay_ms: 4000,
     tts_default: false, cooldown_seconds: 3 },
 
@@ -46137,6 +46153,9 @@ const SUGGESTED_TRIGGERS = [
     pattern: 'Insufficient Mana to cast this spell!',
     overlay_text: 'NOT ENOUGH MANA', overlay_color: 'yellow', overlay_ms: 2500,
     tts_default: false, cooldown_seconds: 3 },
+  // INVIS_BEGIN_BREAK (string 275), sent one tick (6 s) before an invisibility ends — not for bard songs
+  // (EQMacEmu zone/spell_effects.cpp, SE_Invisibility). The server sends no such warning for levitation or run
+  // speed, so there is no "about to drop" trigger for those two: only the fade text, after the fact.
   { id: 'self_invis_fading', category: 'utility', label: 'Your invisibility is about to drop',
     pattern: 'You feel yourself starting to appear\\.',
     overlay_text: 'INVIS FADING', overlay_color: 'yellow', overlay_ms: 4000,
@@ -46193,6 +46212,13 @@ const SUGGESTED_RETIRED_PATTERNS = {
   self_mezzed:      ['^You feel (?:calm|charmed)\\.'],
   self_feared:      ['^You are afraid\\.'],
   cast_interrupted: ['^Your (?:spell|target) (?:was )?interrupted'],
+  // 2026-10-19: "Your <buff> spell has worn off." is what a CASTER is told about a spell on someone else;
+  // a buff ending on you prints the spell's own fade text. These five never fired.
+  buff_clarity_drop: ['^Your (?:Clarity(?: II)?|Voice of Quellious|Gift of (?:Insight|Brilliance)|Koadic\'s Endless Intellect) (?:spell )?has worn off\\.'],
+  buff_aego_drop: ['^Your (?:Aegolism|Virtue|Symbol of (?:Marzin|Ryltan|Naltron|Tnarg|Pinzarn|Transal)|Hand of Virtue|Conviction|Blessing of Aegolism) (?:spell )?has worn off\\.'],
+  buff_potg_drop: ['^Your (?:Protection of the (?:Glades|Cabbage|Nine)|Pack Regen) (?:spell )?has worn off\\.'],
+  buff_haste_drop: ['^Your (?:Augment(?:ation)?(?: of Death)?|Aanya\'s Quickening|Celerity|Quickness|Swift Like the Wind) (?:spell )?has worn off\\.'],
+  buff_dmg_shield_drop: ['^Your (?:Shield of (?:Thorns|Spikes|Blades|Brambles|the Eighth|the Magi|the Pellarus)|Thorny Shield|Thistlecoat|Bramblecoat|Spikecoat|Legacy of Spike) (?:spell )?has worn off\\.'],
 };
 // The same for a template's alert text: a saved row still saying exactly this
 // gets the current text (cast_resisted_self now names the mob, 2026-10-02).
