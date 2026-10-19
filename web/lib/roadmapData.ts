@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bot-3-2-6-2026-10-19',
+    title: 'Halls of Honor trials on the hail board',
+    version: 'Web 1.9.6 · Bot 3.2.6 · Agent 3.8.4 beta',
+    date: '2026-10-19',
+    headline: 'Each Halls of Honor trial gets its own hail card, the named PoP bosses are known as bosses, and the Command Center can follow three rampaging bosses at once.',
+    features: [
+      { name: 'Trial hail cards', blurb: 'Winning a Halls of Honor trial opens a hail card for Trydan Faye, Rhaliq Trell or Alekson Garn. Raiders move to Hailed when they are seen hailing, and on the Mimic beta the trial\'s own credit message marks you by itself.' },
+      { name: 'Named bosses', blurb: 'A list of the Planes of Power named bosses fills in what the game data leaves out, so Mob Info, boss fights and rampage callouts treat them as bosses.' },
+      { name: 'Several rampages at once', blurb: 'Mimic beta: when more than one boss is rampaging, the Command Center shows one row per boss, and each named boss\'s rampage is spoken.' },
+      { name: 'DPS seconds', blurb: 'Mimic beta: each raider\'s seconds run from their first hit to the end of the fight, and stop a tick after they stop attacking, so a single nuke no longer reads as huge DPS.' },
+    ],
+    fixes: [
+      'The hail card\'s flag count now counts everyone who hailed, not only the few flags Mimic could confirm.',
+      'A summoned pet no longer appears on the hail card as a raider.',
+      'Mimic beta: a boss with a backtick in its name no longer appears on the needs-rez list.',
+    ],
+  },
+  {
     key: 'web-1-9-5-2026-10-18',
     title: 'A front door for guild leaders',
     version: 'Web 1.9.5',

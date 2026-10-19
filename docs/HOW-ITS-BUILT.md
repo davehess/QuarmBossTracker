@@ -1029,6 +1029,18 @@ offering it on "add a dark mode" collects data we asked for and do not need.
 would otherwise wipe a half-typed report.
 Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
 
+### Named PoP bosses (bot 3.2.5, 2026-10-19; DECISIONS §373)
+- **What:** the list of Planes of Power named bosses the catalog's `raid_target` misses, so Mob Info, boss-fight
+  tracking and the rampage callouts treat them as bosses.
+- **Where:** `data/named-bosses.json` (per zone, catalog ids), `utils/namedBosses.js` (`raidTarget(row)` = the catalog's
+  flag OR the list), served by `_buildMobInfo` in `index.js` and `utils/zoneSpawns.js`. Add a boss by adding its id to
+  the JSON. Test: `test/named-bosses.test.js`.
+
+### Several rampages at once (agent 3.8.4 beta, 2026-10-19; DECISIONS §373)
+- **What:** one Command Center row per rampaging boss, and named bosses' rampages spoken by name.
+- **Where:** agent `stats.currentRampages`, tank state `rampages`, `apps/mimic/command.html` `rampHtml`. Test:
+  `test/rampage-multi-boss.test.js`.
+
 ### raidmimic.com landing page (web 1.9.5, 2026-10-18, [beta]; DECISIONS §370)
 - **What:** the guild leaders' door, game-agnostic: what the platform does, each block tagged live / alpha / coming,
   works-with (PQ Companion, GINA, EQLogParser), the consent model, what it costs (no price list), "any solved world",
@@ -1220,6 +1232,14 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
     parser; `main.js` `_captureOverlaySet` / `_applyOverlaySet` / `_overlaySetCommand`, called from the
     Zeal type-4 branch of `_zealAbsorb`, the tray's 🗂 Overlay sets, and Settings → Overlay sets (IPC
     `overlay-sets-list` / `overlay-sets-command`). `test/overlay-sets.test.js` (on `alpha`).
+  - **Overlays as files — export / import (Mimic beta, agent 3.8.6, §376).** `apps/mimic/portableLayout.js` is the
+    format (pure: `toPortable` / `fromPortable` / `validate` / `parse`; groups pinned to EverQuest's window, lengths in
+    reference-height units, names and filters stripped, an untrusted-file validator). `main.js` `_exportLayoutFile` /
+    `_importLayoutFile` (save/open dialogs, a preview, a "Before <title>" set, one Undo) are called from the tray's
+    🗂 Overlay sets, Settings → Overlay sets (IPC `overlay-layout-export` / `overlay-layout-import`, bridge
+    `overlayLayoutExport` / `overlayLayoutImport`) and the dashboard's Overlays tab "Share a layout" strip. File-only, so
+    the local edition has it. `overlaySets.uniqueName` keeps an import off the person's own sets.
+    `test/portable-layout.test.js`. The public Gallery that reuses the format is `DESIGN-keepers-of-the-arts.md`.
 Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 `test/dashboard-join-beta.test.js`, `test/mimic-alpha-channel.test.js`.
 

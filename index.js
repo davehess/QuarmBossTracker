@@ -9816,13 +9816,16 @@ async function _handleAgentPopFlags(req, res) {
     // The server's own flag step first (utils/popFlagStages.js), then what it proves in the catalog's
     // terms; the boss map is the fallback for anything the step tables do not name.
     const hit = popFlagStages.resolveStage(e, bossLower);
-    const source = e.kind === 'recital' ? 'recital' : (e.kind === 'checklist' ? 'checklist' : 'event');
+    // A trial credit the character already held ("You have already received credit...") proves the state,
+    // not a grant at this moment: source 'credit' settles them on the hail board whenever it was stored.
+    const source = e.kind === 'recital' ? 'recital' : (e.kind === 'checklist' ? 'checklist'
+      : (hit && hit.via === 'trial' && !hit.fresh ? 'credit' : 'event'));
     if (hit) {
       push(e, iso, hit.stage, { source, stage: hit.stage });
       for (const k of popFlagStages.STAGE_IMPLIES[hit.stage] || []) push(e, iso, k, { source, stage: hit.stage });
       continue;
     }
-    if (e.kind === 'recital') continue;   // a sentence the tables do not know proves nothing
+    if (e.kind === 'recital' || e.kind === 'trial') continue;   // a sentence the tables do not know proves nothing
     push(e, iso, POP_FLAG_BY_BOSS[bossLower] || 'unmapped', { source });
   }
   let written = 0;
@@ -11585,6 +11588,7 @@ async function _handleAgentItemCatalog(req, res, isPublic) {
 // special-ability code means. See docs/audit-mob-specials.md.
 const mobSpecials = require('./utils/mobSpecials');const npcProcs = require('./utils/npcProcs');
 const factionAssist = require('./utils/factionAssist');
+const namedBosses = require('./utils/namedBosses');   // the PoP raid bosses the catalog's raid_target misses (data/named-bosses.json)
 const _MOB_CLASS_NAMES = {
   1:'Warrior', 2:'Cleric', 3:'Paladin', 4:'Ranger', 5:'Shadow Knight', 6:'Druid',
   7:'Monk', 8:'Bard', 9:'Rogue', 10:'Shaman', 11:'Necromancer', 12:'Wizard',
@@ -17361,7 +17365,8 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         resists: { mr: r.mr ?? null, fr: r.fr ?? null, cr: r.cr ?? null, pr: r.pr ?? null, dr: r.dr ?? null },
         mindmg:  r.mindmg ?? null,
         maxdmg:  r.maxdmg ?? null,
-        raid_target: !!r.raid_target,
+        // The catalog's flag is false for nearly all of PoP; the curated list fills it in (utils/namedBosses.js).
+        raid_target: namedBosses.raidTarget(r),
         // Sight flags — drive Mob Info chips so the player can tell whether
         // a regular invis OR invis vs undead will hide them from this NPC.
         // see_hide / see_improved_hide piped through for rogues too. EQEmu
@@ -17450,7 +17455,8 @@ const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 //   6 (2026-10-15): ae_rampage { radius_still, radius_moving, chance, targets, damage_pct }
 //   7 (2026-10-15): rampage { range, chance, damage_pct }
 //   8 (2026-10-16): "Silences" / "Silences (AoE)" in specials, from the mob's spell list
-const _MOB_PACK_VERSION = 8;
+//   9 (2026-10-19): raid_target also true for the curated PoP bosses (data/named-bosses.json)
+const _MOB_PACK_VERSION = 9;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
 const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build

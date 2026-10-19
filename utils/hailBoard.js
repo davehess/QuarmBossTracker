@@ -177,10 +177,42 @@ const HAIL_FLAGGERS = [
     done: ['thelin_2', 'thelin_3', 'thelin_4', 'hedge_event'], checklist: 'cl_maze', prior: [['thelin_1']] },
 ];
 
+// The three Halls of Honor trials (the guild lead, 2026-10-18: "we did not get credit on the command center for
+// this trial hailing - we should do it for each HoH trial"). Each trial's script (hohonora/encounters/*.lua,
+// read 2026-10-19) spawns a "#<NPC>" when the trial is WON, which stays 10 minutes and gives the trial's credit
+// to the group or raid that won: the mist line "An ethereal mist descends ... the power of <NPC>." or, to a
+// raider who holds it, "You have already received credit for completing this trial." (the same line for all three).
+// Credit is `hohtrials` digit 1/2/3, which the recital reports as hoh_trial_1/2/3 and hohtrials_111 as all three.
+// Cap 72 per spawn (`flags < FLAG_LIMIT`, counting real grants only). Same row shape as HAIL_BOSSES, but kept
+// OUT of that table (the site's Flag lab copy must stay identical to it), so buildViews and the openers read it
+// through BY_ID. The window opens when the trial is won:
+//   `names`  one boss whose death wins it (Rydda`Dar) — same path as every hail boss.
+//   `kills`  a trial won only when ALL of them have died inside TRIAL_KILL_SPAN_MS (the 12 raiders who attack
+//            the villagers; the three bosses of the Crazed Norrathians). The window opens at the last death.
+// Also opens on a flag-kind grant (`done[0]`, the mist line from an agent that reads it), as grantOpener does.
+// ⚠ `npc` is the NPC's bare name: the agent uploads a hail only when it matches a window's npc_name
+// (_hailNpcWanted), so a suffix here would silence every hail of it.
+const HAIL_TRIALS = [
+  { id: 'hoh_trial_1', name: 'Rydda`Dar', names: ['rydda`dar', 'rydda dar'], zone: 'Halls of Honor', zoneShort: 'hohonora',
+    npc: 'Trydan Faye', npcKeys: ['trydan faye', 'trydan'], minutes: 10, flagCap: 72,
+    done: ['hoh_trial_1', 'hohtrials_111', 'hoh_trials'], checklist: null, prior: [] },
+  { id: 'hoh_trial_2', name: 'Save the villagers', zone: 'Halls of Honor', zoneShort: 'hohonora',
+    kills: ['granmuck reiga', 'fligg starp', 'trann berk', 'shott tarbs', 'ruark barr', 'zullkata reeps',
+      'maeryn malladry', 'thullias rhidron', 'herot terkins', 'mirezvakla ry`ten', 'yarezka tri`lok', 'merken lysonn'],
+    npc: 'Rhaliq Trell', npcKeys: ['rhaliq trell', 'rhaliq'], minutes: 10, flagCap: 72,
+    done: ['hoh_trial_2', 'hohtrials_111', 'hoh_trials'], checklist: null, prior: [] },
+  { id: 'hoh_trial_3', name: 'Crazed Norrathians', zone: 'Halls of Honor', zoneShort: 'hohonora',
+    kills: ['advocent joran', 'halgoz rellinic', 'freegan haun'],
+    npc: 'Alekson Garn', npcKeys: ['alekson garn', 'alekson'], minutes: 10, flagCap: 72,
+    done: ['hoh_trial_3', 'hohtrials_111', 'hoh_trials'], checklist: null, prior: [] },
+];
+const TRIAL_KILL_SPAN_MS = 15 * MIN;   // the deaths that win a trial all land inside one attempt
+
 // Row sources that prove a state HELD, not when it began, so they settle a raider whenever they were stored:
-// the Seer's recital, a member's own tick on the PoP guide ('tick'), and a /who sighting in a gated plane
-// ('who'). The last two are built in readProof below, never stored in pop_flags.
-const PROOF_SOURCES = new Set(['recital', 'tick', 'who']);
+// the Seer's recital, a member's own tick on the PoP guide ('tick'), a /who sighting in a gated plane ('who'),
+// and 'credit' — the server's "You have already received credit for completing this trial." (utils/popFlagStages
+// resolveTrial). The 'tick' and 'who' rows are built in readProof below, never stored in pop_flags.
+const PROOF_SOURCES = new Set(['recital', 'tick', 'who', 'credit']);
 
 // A catalog name ("#Aerin`Dar", "Terris_Thule") and a log name ("Terris Thule") are the same boss.
 function bossKey(name) {
@@ -188,9 +220,12 @@ function bossKey(name) {
     .replace(/\s+/g, ' ').trim().toLowerCase();
 }
 const BOSS_BY_ID = new Map(HAIL_BOSSES.map(b => [b.id, b]));
-const BY_ID = new Map([...HAIL_BOSSES, ...HAIL_FLAGGERS].map(b => [b.id, b]));   // every window's row
+const BY_ID = new Map([...HAIL_BOSSES, ...HAIL_FLAGGERS, ...HAIL_TRIALS].map(b => [b.id, b]));   // every window's row
 const BY_NAME = new Map();
-for (const b of HAIL_BOSSES) for (const n of b.names) BY_NAME.set(bossKey(n), b);
+for (const b of [...HAIL_BOSSES, ...HAIL_TRIALS]) for (const n of b.names || []) BY_NAME.set(bossKey(n), b);
+// A kill that is one of several that win a trial → that trial's row.
+const TRIAL_BY_KILL = new Map();
+for (const b of HAIL_TRIALS) for (const n of b.kills || []) TRIAL_BY_KILL.set(bossKey(n), b);
 
 // The hail row for a boss kill, or null. The board's own id wins; the name covers bosses the board does not
 // carry (Mithaniel Marr, Solusek Ro, the Keeper, the Behemoth, the Arbitor).
@@ -277,12 +312,14 @@ function buildViews(windows, data, nowMs) {
       const missing = known.has(k) && cfg.prior.some(any => !any.some(key => keys.has(key)));
       still.push({ name, prior_missing: missing });
     }
-    // The NPC's flag cap (see HAIL_BOSSES), in raiders. `flags_granted` is the raiders on THIS board whose
-    // grant landed after the kill ('flag' — a witnessed hail or a tap is not proof anything was granted).
-    // ⚠ A LOWER BOUND on what the NPC has handed out: a raider without Mimic, a hail by somebody outside the
-    // kill roster, or a grant whose log line never reached us is not counted, so `flags_left` is an UPPER bound.
+    // The NPC's flag cap (see HAIL_BOSSES), in raiders. `flags_granted` is every raider on THIS board who hailed
+    // after the kill — a grant we saw ('flag'), a witnessed hail ('seen') or a tap ('marked'): a hail by a raider
+    // without the flag spends one of the cap (the guild lead, 2026-10-18: "shows only 1 flag used but 59 of us
+    // flagged" — only beta Mimic reads the trial's credit line, so nearly every hail read as 'seen').
+    // Still not the NPC's whole count (a hail by somebody outside the kill roster is missed), so `flags_left`
+    // stays an upper bound, now a tighter one.
     const cap = cfg.flagCap ? Math.floor(cfg.flagCap / (cfg.flagTicks || 1)) : null;
-    const granted = hailed.filter(h => h.how === 'flag').length;
+    const granted = hailed.length;
     views.set(w.id, {
       id: w.id, boss_id: w.boss_id, boss_name: w.boss_name, npc_name: w.npc_name, zone: w.zone,
       opened_at: w.opened_at, expires_at: w.expires_at,
@@ -378,10 +415,32 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
     return list.filter(n => known.has(lc(n)));
   }
 
+  // Deaths seen toward a trial that takes several (HAIL_TRIALS `kills`): lower-case name → when it died. Memory
+  // only; a restart mid-trial just means the window opens from the deaths seen afterwards or not at all. A second
+  // agent's report of the same death changes nothing. → { cfg, at } once every name has died inside the span
+  // (`at` = the last death, when the NPC spawned), else null.
+  const trialKills = new Map();
+  function noteTrialKill(bossName, killedAtMs) {
+    const cfg = TRIAL_BY_KILL.get(bossKey(bossName));
+    if (!cfg) return null;
+    const t = now();
+    const at = Math.min(Number.isFinite(killedAtMs) ? killedAtMs : t, t);
+    const seen = trialKills.get(cfg.id) || new Map();
+    for (const [k, v] of seen) if (at - v > TRIAL_KILL_SPAN_MS) seen.delete(k);
+    seen.set(bossKey(bossName), Math.max(at, seen.get(bossKey(bossName)) || 0));
+    trialKills.set(cfg.id, seen);
+    if (!cfg.kills.every(n => seen.has(bossKey(n)))) return null;
+    return { cfg, at: Math.max(...cfg.kills.map(n => seen.get(bossKey(n)))) };
+  }
+
   // Open the window for a kill, or fold a second report of the same kill into the one already open.
   // → the stored window, or null (not a hail boss / already expired).
   function openWindow({ bossId, bossName, killedAtMs, participants } = {}) {
-    const cfg = hailFor({ bossId, bossName });
+    let cfg = hailFor({ bossId, bossName });
+    if (!cfg) {                                    // one of the deaths that together win a Halls of Honor trial
+      const won = noteTrialKill(bossName, killedAtMs);
+      if (won) { cfg = won.cfg; killedAtMs = won.at; }
+    }
     if (!cfg || !enabled()) return Promise.resolve(null);
     const t = now();
     const killed = Math.min(Number.isFinite(killedAtMs) ? killedAtMs : t, t);
@@ -432,7 +491,7 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
   function grantOpener(r) {
     const z = popFlagStages.zoneShort(r.zone);
     return HAIL_FLAGGERS.find(x => x.opensOn.includes(r.flag_key) && z === x.zoneShort)
-      || HAIL_BOSSES.find(x => Array.isArray(x.done) && x.done[0] === r.flag_key && z === x.zoneShort);
+      || HAIL_BOSSES.concat(HAIL_TRIALS).find(x => Array.isArray(x.done) && x.done[0] === r.flag_key && z === x.zoneShort);
   }
   function noteGrants(rows) {
     if (!enabled()) return Promise.resolve(null);
@@ -450,7 +509,7 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
       await load();
       prune();
       let opened = null;
-      for (const cfg of HAIL_FLAGGERS.concat(HAIL_BOSSES).filter(f => first.has(f.id))) opened = (await openFromGrant(cfg, first.get(cfg.id))) || opened;
+      for (const cfg of HAIL_FLAGGERS.concat(HAIL_BOSSES, HAIL_TRIALS).filter(f => first.has(f.id))) opened = (await openFromGrant(cfg, first.get(cfg.id))) || opened;
       return opened;
     }).catch(err => { log.warn('[hail-board] grant open failed:', err && err.message); return null; });
   }
@@ -653,6 +712,6 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
 }
 
 module.exports = {
-  create, hailFor, buildViews, bossKey, HAIL_BOSSES, HAIL_FLAGGERS,
+  create, hailFor, buildViews, bossKey, HAIL_BOSSES, HAIL_FLAGGERS, HAIL_TRIALS,
   WINDOW_MS, KEEP_AFTER_MS, FLAG_SLACK_MS, ROSTER_FRESH_MS, KV_KEY,
 };

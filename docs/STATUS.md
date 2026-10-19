@@ -755,6 +755,14 @@ next touch one rather than assuming a missing row means a missing doc.
   2026-10-01, beta 3.7.64).** Its footer names the zone; the rows
   used to go up with none (7,263 of ~9,400 in two days). Supersedes §73's "upload untouched".
   `test/who-zone-column.test.js`, `test/pop-who.test.js`. `DECISIONS-2026-09-21.md` §123.
+- **✅ Halls of Honor trial hail cards + named-boss list (bot 3.2.3–3.2.6, 2026-10-18/19; DECISIONS §373).** A hail
+  card per trial (`utils/hailBoard.js` `HAIL_TRIALS`), the flag count over every hailed raider, a pet filter on the kill
+  roster, and `data/named-bosses.json` (140 PoP bosses) OR'd into `raid_target` (`utils/namedBosses.js`). Tests:
+  `test/hail-board.test.js`, `test/named-bosses.test.js`.
+- **🧪 On beta (agent 3.8.2–3.8.4, 2026-10-19; DECISIONS §373):** trial credit lines read by the agent, a letters-only
+  player-name check (the dragon off the needs-rez board), per-boss rampage rows + callouts, and the DPS meter's Sec rule
+  (first hit to fight end, stopping a tick after the last hit). Tests: `test/pop-flag-agent.test.js`,
+  `test/death-confirmation.test.js`, `test/rampage-multi-boss.test.js`, `test/dps-active-time.test.js`.
 - **🧪 raidmimic.com landing, [beta] (web 1.9.5, 2026-10-18; DECISIONS §370).** The guild leaders' door, live at
   `wolfpack.quest/raidmimic` with layouts A (default) and B (`?v=b`). Waiting on: the guild lead's A/B pick, Porkbun DNS for
   the three domains, then removing the six Vercel redirects to eqmimic.quest. `test/raidmimic-landing.test.js`.
@@ -6203,3 +6211,8 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
 - ✅ Mimic chat wrap spacing (beta). ✅ Feedback in its own window with an autosaved draft (agent 3.7.179 beta; ⏳ live check).
   ❓ Dashboard drag stutter (waiting on the guild lead's tests).
 - ⏳ Picks: compute upgrade A/B; pre-raid "typical" source; Vercel deploy hooks (secrets).
+- ✅ Overlays as files (Keepers of the (Overlay) Arts, private half; agent 3.8.6, Mimic beta, §376): the portable layout
+  format (`apps/mimic/portableLayout.js`: groups pinned to EQ's window edges, sizes by screen height, nothing private)
+  + Export / Import in the tray, Settings → Overlay sets and the dashboard's Overlays tab; import adds a NEW set after a
+  "Before" copy, with one Undo; works in the local edition. ⏳ Not stable yet: graduates to `main` with the 3.0 line
+  (roadmap entry then). ⏳ Gallery (public half) not built.
