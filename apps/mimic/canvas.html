@@ -2293,7 +2293,7 @@
     place(e, p); placeGbox();
     return left ? 'left' : 'right';
   };
-  window.wpCanvasFit = function (win) { var id = panelOfWin(win); return id ? fitEmbed(id, false) : false; };
+  window.wpCanvasFit = function (win, grow) { var id = panelOfWin(win); return id ? fitEmbed(id, !!grow) : false; };
 
   // The pieces as a saved group stores them: each one's look, and where it sits from the set's top-left.
   function groupPartsOf(ps) {

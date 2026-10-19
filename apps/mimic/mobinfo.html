@@ -1644,6 +1644,15 @@
         window.mimic.overlayAutoHeight(w.scrollHeight + 12);
       }
     } catch (e) {}
+    // FB-93: on the Canvas, "as whole" is a fixed box (overlayAutoHeight does nothing in a pane), and the
+    // buffs list is the last block of the Stats tab, so a pet or a raider with a few buffs ran past the
+    // bottom and was cut off. Ask the Canvas to grow the panel to the content (grow only: a panel the
+    // raider sized taller keeps its size). A piece cut from this page (?wpsect=) is not the whole page.
+    try {
+      if (_wpQs.get('wpcanvas') === '1' && !_wpQs.get('wpsect') && window.parent !== window && window.parent.wpCanvasFit) {
+        window.parent.wpCanvasFit(window, true);
+      }
+    } catch (e) {}
   }
   // Mini flips (preload's _wpApplyMini) repaint from the last poll at once
   // rather than up to 500ms later, then refit — the no-target path returns
