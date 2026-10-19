@@ -291,6 +291,7 @@ function agent({ tickAt = true } = {}) {
     const _charmTickTracker = new Map(), _buffLandingsByTarget = new Map(), _meSkillCds = new Map(), _spellByNameLower = new Map();
     const CHARM_SPELLS = new Set();
     const _mobTickFor = () => null, _entityTickFadeAt = () => null, _isPacifySpell = () => false;
+    const _timerRowMuted = () => false;   // the ⋮ mutes have their own tests (timer-row-menu.test.js)
     function enqueueUpload() {}
     ${AGENT_BLOCK}
     return { _activeTimers, _handleTimerCancel, _activeTimersSnapshot, _builtinTimerHidden, _lootAuctions, _dkpAuctionsDismissed,

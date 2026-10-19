@@ -18756,6 +18756,8 @@ function _serializeForDashboard() {
     builtinRuleModes:    _builtinRuleModes(),
     // Enrage callouts muted right now (the Recent fires row's 🔇 and its muted list).
     enrageMutes:         _enrageMutesView(),
+    // Timer rows muted right now (the ⋮ menu's Mute, and the Muted timers card under Recent fires).
+    timerMutes:          _timerMutesView(),
     // This PC's own sound on a guild trigger it cannot edit ({trigger_id: {sound, sound_mode}}); the guild table badges it.
     soundOverrides:      _soundOverrides,
     personalTriggerCount: (_personalTriggers || []).length,
@@ -22736,6 +22738,35 @@ function enrageMutePost(action, scope, mob) {
   return fetch('/api/enrage-mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: action, scope: scope, mob: mob }) }).catch(function() { return null; });
 }
+// 🔇 Muted timers (the guild lead, 2026-10-19: "permanently mute and review those lines somewhere"): every timer row the
+// ⋮ menu has muted, for good and for this session, with a ✕ that unmutes it. Fills its own #wpMutedTimers placeholder.
+function renderMutedTimers(s) {
+  var el = document.getElementById('wpMutedTimers');
+  if (!el) return;   // Triggers tab not painted yet
+  var tm = (s && s.timerMutes) || {};
+  var rows = [];
+  (tm.always || []).forEach(function(e) { rows.push({ e: e, scope: 'always', when: 'always' }); });
+  (tm.session || []).forEach(function(e) { rows.push({ e: e, scope: 'session', when: 'this session' }); });
+  var h = '<h2>🔇 Muted timers</h2>';
+  if (!rows.length) {
+    h += '<div class="dim" style="font-size:12px">Nothing is muted. The <b>⋮</b> beside a timer row\\'s ✕ mutes that timer for this session or for good, and it lands here so you can bring it back. A mute hides the row only; a trigger\\'s spoken callout follows its <b>What you hear</b> setting.</div>';
+  } else {
+    h += '<table style="font-size:12px"><tr><th>Timer</th><th>What</th><th>Muted</th><th></th></tr>';
+    rows.forEach(function(r) {
+      // Not class="name": the character-link delegation would open /character/<first word> for a timer name.
+      h += '<tr><td style="color:var(--text)">' + esc(r.e.label || r.e.key) + '</td>'
+        + '<td class="dim">' + esc(r.e.detail || '') + '</td>'
+        + '<td class="dim">' + r.when + '</td>'
+        + '<td><button type="button" data-timer-unmute="' + esc(r.e.key) + '" data-scope="' + r.scope + '" title="Show this timer again" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">✕ Unmute</button></td></tr>';
+    });
+    h += '</table>';
+  }
+  morphInto(el, h);
+}
+function timerMutePost(body) {
+  return fetch('/api/timer-mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body) }).catch(function() { return null; });
+}
 // ⏪ Replay status (#101) — the volatile counterpart to the byte-stable Replay
 // FORM. Fills its own #wpReplayStatus placeholder every poll: progress + a STOP
 // button while running, or a compact results line + journal jump when done.
@@ -23614,6 +23645,9 @@ function renderTriggers(s) {
   // repaints (same pattern as wpZealCard / wpTriggerJournal). Clear buttons keep
   // their ids; the section-root click delegation still routes them.
   h += '<div id="wpRecentFires" class="card wide"></div>';
+  // 🔇 Muted timers — what the ⋮ on a timer row has muted, for good and this session, each with an unmute. Its own
+  // placeholder (renderMutedTimers), so this section stays byte-stable.
+  h += '<div id="wpMutedTimers" class="card wide"></div>';
 
   // (The ⏪ Replay card moved to the ⚔️ Fights tab — renderReplayCard. The voice cards — voice & names,
   // What you hear, the raid callout allow-list, loot-post speech and the sound library — moved to the
@@ -27466,7 +27500,7 @@ async function refresh() {
                      ['diag', renderDiag],
                      ['netmeter', renderNetMeter],
                      ['zealcard', renderZealCard],
-                     ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
+                     ['recentfires', renderRecentFires], ['mutedtimers', renderMutedTimers], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
                      ['buffsMain', renderBuffsTab], ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
@@ -31710,6 +31744,9 @@ function wpTrigApplyForm(base, f) {
         if (em) { enrageMutePost('mute', em.getAttribute('data-enrage-mute'), em.getAttribute('data-mob')); return; }
         var eu = t.closest ? t.closest('[data-enrage-unmute]') : null;
         if (eu) { enrageMutePost('unmute', eu.getAttribute('data-enrage-unmute'), eu.getAttribute('data-mob')); return; }
+        // ✕ Unmute on the Muted timers card.
+        var tu = t.closest ? t.closest('[data-timer-unmute]') : null;
+        if (tu) { timerMutePost({ action: 'unmute', key: tu.getAttribute('data-timer-unmute'), scope: tu.getAttribute('data-scope') }); return; }
         // 🔊 on a spoken fire (Recent fires): replay it, hear a new wording, or send the suggestion.
         var vf = t.closest ? t.closest('[data-vf-play],[data-vf-say],[data-vf-suggest]') : null;
         if (vf) {
@@ -34455,6 +34492,8 @@ function startWebDashboard(port) {
       if (req.url && req.url.split('?')[0] === '/api/trigger-rules' && (req.method === 'GET' || req.method === 'POST')) return _handleTriggerRules(req, res);
       // Enrage callout mutes: this mob / all, this session / this mob always (2026-10-19).
       if (req.url && req.url.split('?')[0] === '/api/enrage-mute' && (req.method === 'GET' || req.method === 'POST')) return _handleEnrageMute(req, res);
+      // Timer-row mutes: the ⋮ on a countdown row, and the Muted timers card (2026-10-19).
+      if (req.url && req.url.split('?')[0] === '/api/timer-mute' && (req.method === 'GET' || req.method === 'POST')) return _handleTimerMute(req, res);
       // "Voice unclear": what the trigger window spoke, and the report that goes to the officers (2026-10-19).
       if (req.url && req.url.split('?')[0] === '/api/voice-spoken' && req.method === 'POST') return _handleVoiceSpoken(req, res);
       if (req.url && req.url.split('?')[0] === '/api/voice-report' && req.method === 'POST') return _handleVoiceReport(req, res);
@@ -46724,7 +46763,8 @@ function _triggerRulesPayload(charLc) {
 // POST { key, char?: '*' | name, mode } — mode null clears the rule.
 function _setTriggerRule(b) {
   const key = b && typeof b.key === 'string' ? b.key.trim() : '';
-  if (!/^(group|guild|personal|builtin):.{1,200}$/.test(key)) return { ok: false, error: 'bad key' };
+  if (!/^(group|guild|personal|builtin|timer):.{1,200}$/.test(key)) return { ok: false, error: 'bad key' };
+  if (key.startsWith('timer:') && !/^timer:(trigger|spell|spellmob|bar):.+$/.test(key)) return { ok: false, error: 'bad timer key' };
   if (key.startsWith('builtin:') && !key.startsWith(ENRAGE_ALWAYS_PREFIX) && !BUILTIN_CALLOUTS.some(x => 'builtin:' + x.key === key)) return { ok: false, error: 'unknown built-in' };
   const mode = b.mode == null ? null : b.mode;
   if (mode !== null && !TRIGGER_RULE_MODES.includes(mode)) return { ok: false, error: 'bad mode' };
@@ -46794,6 +46834,122 @@ async function _handleEnrageMute(req, res) {
   let b = null;
   try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
   const out = _setEnrageMute(b);
+  scheduleRender();
+  send(out.ok ? 200 : 400, out);
+}
+
+// ── Timer-row mutes (the guild lead, 2026-10-19: "Need to be able to click on a line and move it to a new timer, not just X it
+// out. Should be able to permanently mute and review those lines somewhere.") ─────────────────────────────────────────────
+// The ⋮ beside a countdown row's ✕ mutes it for the session (memory) or for good (a 'timer:<kind>:<name>' rule = off in
+// trigger_rules.json, the "What you hear" file). A muted row is dropped HERE, where the rows are built (_activeTimersSnapshot for
+// trigger countdowns, _builtinTimerRows for the bt| bars), so the standalone window, the Canvas panels, the pieces and the Death
+// Touch tank bar all agree. It hides the ROW only: a trigger's spoken callout still follows its own rule mode. (The pre-end warning
+// a countdown speaks is spoken by the overlay FROM the row, so it goes quiet with the row.) Loot chips, auctions and watched
+// spots cannot be muted: ✕ is the only thing they take.
+//   timer:trigger:<rule key, else the effect>   a trigger's countdown, whatever it is counting on
+//   timer:spell:<spell>                         a spell bar of yours, on any mob
+//   timer:spellmob:<mob lower>|<spell>          that spell bar on that mob only (the bare name, no " #<spawn id>")
+//   timer:bar:<effect>                          any other derived bar (Recharm tick, Server tick, Boastful Bellow)
+const _timerMuteSession = new Set();   // full keys; gone at restart
+function _timerMuteMob(target) {
+  return String(target == null ? '' : target).replace(/\s+#\d+\s*$/, '').trim().toLowerCase().slice(0, 60);
+}
+function _timerMuteSpell(row) {
+  return String(row.spell || row.effect || row.name || '').replace(/\s*⏱\s*$/, '').replace(/\?+$/, '').trim().slice(0, 100);
+}
+// What a row is for muting: { kind, key, mobKey } or null when it cannot be muted.
+function _timerMuteKeys(row) {
+  if (!row) return null;
+  const id = String(row.id || '');
+  if (row.kind === 'loot' || /^(loot|auction|named|sample)\|/.test(id)) return null;
+  if (id.startsWith('bt|spell|')) {
+    const spell = _timerMuteSpell(row), mob = _timerMuteMob(row.target);
+    if (!spell) return null;
+    return { kind: 'spell', key: 'timer:spell:' + spell, mobKey: mob ? 'timer:spellmob:' + mob + '|' + spell : null };
+  }
+  if (id.startsWith('bt|')) {
+    const eff = String(row.effect || row.name || '').trim().slice(0, 150);
+    return eff ? { kind: 'bar', key: 'timer:bar:' + eff, mobKey: null } : null;
+  }
+  const name = String(row.rule_key || row.effect || row.name || '').trim().slice(0, 150);
+  return name ? { kind: 'trigger', key: 'timer:trigger:' + name, mobKey: null } : null;
+}
+function _timerKeyMuted(key) {
+  if (_timerMuteSession.has(key)) return true;
+  const r = _triggerRules[key];
+  return !!(r && r['*'] === 'off');
+}
+function _timerRowMuted(row) {
+  const k = _timerMuteKeys(row);
+  return !!(k && (_timerKeyMuted(k.key) || (k.mobKey && _timerKeyMuted(k.mobKey))));
+}
+function _timerMuteEntry(key) {
+  const m = /^timer:(trigger|spell|spellmob|bar):(.*)$/.exec(key);
+  if (!m) return { key, kind: 'other', label: key, detail: '' };
+  const kind = m[1], name = m[2];
+  if (kind === 'spell') return { key, kind, label: name, detail: 'spell bar, every mob' };
+  if (kind === 'bar') return { key, kind, label: name, detail: 'timer bar' };
+  if (kind === 'spellmob') { const i = name.indexOf('|'); return { key, kind, label: name.slice(i + 1), detail: 'spell bar on ' + name.slice(0, i) }; }
+  let label = name;
+  try {
+    let t = null;
+    if (name.startsWith('guild:')) t = (stats.guildTriggers || []).find(g => g && 'guild:' + g.id === name);
+    else if (name.startsWith('personal:')) t = (_personalTriggers || []).find(p => p && 'personal:' + (p.id || p.name) === name);
+    else if (name.startsWith('builtin:')) t = BUILTIN_CALLOUTS.find(x => 'builtin:' + x.key === name);
+    if (t) label = t.name || t.label || name;
+  } catch { /* the key is a fine label */ }
+  return { key, kind, label, detail: 'trigger countdown' };
+}
+// What is muted right now, for the Muted timers card: [{ key, kind, label, detail }] for this session and for good.
+function _timerMutesView() {
+  const byLabel = (a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key);
+  const always = [];
+  for (const [k, r] of Object.entries(_triggerRules)) {
+    if (k.startsWith('timer:') && r && r['*'] === 'off') always.push(_timerMuteEntry(k));
+  }
+  return { session: [..._timerMuteSession].map(_timerMuteEntry).sort(byLabel), always: always.sort(byLabel) };
+}
+// POST { action: 'mute', scope: 'session' | 'always', id, only_mob? } mutes the row with that id as it is now;
+//      { action: 'unmute', key, scope? } lifts one mute (both kinds when scope is left out).
+function _setTimerMute(b) {
+  const on = !(b && b.action === 'unmute');
+  if (on) {
+    const scope = b && b.scope;
+    if (scope !== 'session' && scope !== 'always') return { ok: false, error: 'bad scope' };
+    const id = String((b && b.id) || '');
+    const row = id ? _activeTimersSnapshot().find(r => r.id === id) : null;
+    if (!row) return { ok: false, error: 'that row is gone' };
+    const k = _timerMuteKeys(row);
+    if (!k) return { ok: false, error: 'this row cannot be muted' };
+    const key = b.only_mob ? k.mobKey : k.key;
+    if (!key) return { ok: false, error: 'no mob to mute it on' };
+    if (scope === 'session') {
+      if (_timerMuteSession.size >= 500) return { ok: false, error: 'too many muted' };
+      _timerMuteSession.add(key);
+    } else {
+      const out = _setTriggerRule({ key, char: '*', mode: 'off' });
+      if (!out.ok) return out;
+    }
+  } else {
+    const key = String((b && b.key) || '');
+    if (!key.startsWith('timer:')) return { ok: false, error: 'bad key' };
+    const scope = b && b.scope;
+    if (scope !== 'always') _timerMuteSession.delete(key);
+    if (scope !== 'session' && _triggerRules[key]) {
+      const out = _setTriggerRule({ key, char: '*', mode: null });
+      if (!out.ok) return out;
+    }
+  }
+  _stateJsonCache = { at: 0, body: null };   // /api/state carries the list
+  return { ok: true, ..._timerMutesView() };
+}
+async function _handleTimerMute(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (req.method === 'GET') return send(200, { ok: true, ..._timerMutesView() });
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  const out = _setTimerMute(b);
   scheduleRender();
   send(out.ok ? 200 : 400, out);
 }
@@ -55066,6 +55222,7 @@ function _builtinTimerRows(now) {
   const push = (row) => {
     live.add(row.id);
     if (_builtinTimerHidden.has(row.id)) return;
+    if (_timerRowMuted(row)) return;   // muted from the row's ⋮ (see "Timer-row mutes")
     rows.push(Object.assign({ color: null, end_text: null, warning_ms: 0, warn_text: null,
       warnings: [], pinned: false, scope: 'personal', kind: 'builtin', dismissible: true, test: false }, row));
   };
@@ -55137,7 +55294,7 @@ function _builtinTimerRows(now) {
         const sid = Number(b.target_id) > 0 ? Number(b.target_id) : null;
         const mobLabel = sid ? mob + ' #' + sid : mob;
         push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mobLabel + ' - ' + b.name,
-               target: mobLabel, target_id: sid, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
+               target: mobLabel, target_id: sid, spell: b.name, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
                remaining_ms: remMs, duration_sec: totalSec, bar_color: _builtinSpellBarColor(b.name, mob, group), tick_snapped: fade.snapped, group });
       }
     }
@@ -55185,7 +55342,7 @@ function _activeTimersSnapshot() {
     if (t.show_at_ms > 0 && (t.ends_at_ms - now) > t.show_at_ms) continue;
     // Test timers bypass the rules, like every other test fire.
     const _rm = (t.rule_key && !t.test) ? _ruleModeNow(t.rule_key) : 'speak';
-    out.push({
+    const _row = {
       rule_key:     t.rule_key || null,
       rule_mode:    _rm,
       id:           t.id,
@@ -55208,7 +55365,10 @@ function _activeTimersSnapshot() {
       dismissible:  !!t.dismissible,
       test:         t.test,
       group:        t.kind === 'loot' ? 'loot' : 'trigger',   // Timers-canvas panel routing
-    });
+    };
+    // Muted from the row's ⋮ (see "Timer-row mutes"): the countdown keeps running, the row is not handed out. A test timer is never muted.
+    if (!t.test && _timerRowMuted(_row)) continue;
+    out.push(_row);
   }
   try { for (const r of _builtinTimerRows(now)) out.push(r); }
   catch { /* a derived bar must never cost the trigger countdowns */ }
@@ -59238,6 +59398,7 @@ module.exports = {
   _ruleKeyOf, _ruleGroupOfGuild, _applyTriggerRule, _builtinRuleModes, _guildRuleModes,
   // Enrage mutes (2026-10-19) — exported for test/enrage-callouts.test.js.
   _handleVoiceSpoken, _handleVoiceReport, _voiceReportBody,
+  _setTimerMute, _timerMutesView, _timerMuteSession, _timerMuteKeys, _timerRowMuted,
   _setEnrageMute, _enrageMutesView, _enrageMuteSession, loadTriggerRules, _tickEnrageWarn, _mobInfoCacheKey, _enrageWarned,
   // Personal trigger sync (agent half) — exported for test/personal-trigger-sync-agent.test.js.
   _applyTriggerPull, _triggerSyncPush, _triggerSyncList, _triggerSyncPull, _tsBackupLocal,

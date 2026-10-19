@@ -3853,6 +3853,35 @@ function enrageMutePost(action, scope, mob) {
   return fetch('/api/enrage-mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: action, scope: scope, mob: mob }) }).catch(function() { return null; });
 }
+// 🔇 Muted timers (the guild lead, 2026-10-19: "permanently mute and review those lines somewhere"): every timer row the
+// ⋮ menu has muted, for good and for this session, with a ✕ that unmutes it. Fills its own #wpMutedTimers placeholder.
+function renderMutedTimers(s) {
+  var el = document.getElementById('wpMutedTimers');
+  if (!el) return;   // Triggers tab not painted yet
+  var tm = (s && s.timerMutes) || {};
+  var rows = [];
+  (tm.always || []).forEach(function(e) { rows.push({ e: e, scope: 'always', when: 'always' }); });
+  (tm.session || []).forEach(function(e) { rows.push({ e: e, scope: 'session', when: 'this session' }); });
+  var h = '<h2>🔇 Muted timers</h2>';
+  if (!rows.length) {
+    h += '<div class="dim" style="font-size:12px">Nothing is muted. The <b>⋮</b> beside a timer row\'s ✕ mutes that timer for this session or for good, and it lands here so you can bring it back. A mute hides the row only; a trigger\'s spoken callout follows its <b>What you hear</b> setting.</div>';
+  } else {
+    h += '<table style="font-size:12px"><tr><th>Timer</th><th>What</th><th>Muted</th><th></th></tr>';
+    rows.forEach(function(r) {
+      // Not class="name": the character-link delegation would open /character/<first word> for a timer name.
+      h += '<tr><td style="color:var(--text)">' + esc(r.e.label || r.e.key) + '</td>'
+        + '<td class="dim">' + esc(r.e.detail || '') + '</td>'
+        + '<td class="dim">' + r.when + '</td>'
+        + '<td><button type="button" data-timer-unmute="' + esc(r.e.key) + '" data-scope="' + r.scope + '" title="Show this timer again" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">✕ Unmute</button></td></tr>';
+    });
+    h += '</table>';
+  }
+  morphInto(el, h);
+}
+function timerMutePost(body) {
+  return fetch('/api/timer-mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body) }).catch(function() { return null; });
+}
 // ⏪ Replay status (#101) — the volatile counterpart to the byte-stable Replay
 // FORM. Fills its own #wpReplayStatus placeholder every poll: progress + a STOP
 // button while running, or a compact results line + journal jump when done.
@@ -4731,6 +4760,9 @@ function renderTriggers(s) {
   // repaints (same pattern as wpZealCard / wpTriggerJournal). Clear buttons keep
   // their ids; the section-root click delegation still routes them.
   h += '<div id="wpRecentFires" class="card wide"></div>';
+  // 🔇 Muted timers — what the ⋮ on a timer row has muted, for good and this session, each with an unmute. Its own
+  // placeholder (renderMutedTimers), so this section stays byte-stable.
+  h += '<div id="wpMutedTimers" class="card wide"></div>';
 
   // (The ⏪ Replay card moved to the ⚔️ Fights tab — renderReplayCard. The voice cards — voice & names,
   // What you hear, the raid callout allow-list, loot-post speech and the sound library — moved to the
@@ -8583,7 +8615,7 @@ async function refresh() {
                      ['diag', renderDiag],
                      ['netmeter', renderNetMeter],
                      ['zealcard', renderZealCard],
-                     ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
+                     ['recentfires', renderRecentFires], ['mutedtimers', renderMutedTimers], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
                      ['buffsMain', renderBuffsTab], ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
@@ -12827,6 +12859,9 @@ function wpTrigApplyForm(base, f) {
         if (em) { enrageMutePost('mute', em.getAttribute('data-enrage-mute'), em.getAttribute('data-mob')); return; }
         var eu = t.closest ? t.closest('[data-enrage-unmute]') : null;
         if (eu) { enrageMutePost('unmute', eu.getAttribute('data-enrage-unmute'), eu.getAttribute('data-mob')); return; }
+        // ✕ Unmute on the Muted timers card.
+        var tu = t.closest ? t.closest('[data-timer-unmute]') : null;
+        if (tu) { timerMutePost({ action: 'unmute', key: tu.getAttribute('data-timer-unmute'), scope: tu.getAttribute('data-scope') }); return; }
         // 🔊 on a spoken fire (Recent fires): replay it, hear a new wording, or send the suggestion.
         var vf = t.closest ? t.closest('[data-vf-play],[data-vf-say],[data-vf-suggest]') : null;
         if (vf) {

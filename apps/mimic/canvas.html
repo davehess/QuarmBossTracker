@@ -656,8 +656,10 @@
   // BY NAME goes to that panel; else to the first panel claiming its group;
   // else to the catch-all. So pulling one debuff into its own panel takes it
   // out of its group's panel too.
-  window.wpCanvasRoute = function (t) {
-    var eff = normEffect(t && (t.effect || t.name));
+  window.wpCanvasRoute = function (t) { return routeTimer(t, false); };
+  // noName: route as if no panel claimed the timer by name (the ⋮ menu asks where a row would land once released).
+  function routeTimer(t, noName) {
+    var eff = noName ? '' : normEffect(t && (t.effect || t.name));
     var grp = (t && t.group) || ((t && t.kind === 'loot') ? 'loot' : 'trigger');
     var all = null, byGroup = null;
     for (var i = 0; i < _layout.panels.length; i++) {
@@ -668,7 +670,7 @@
       if (!byGroup && p.groups.indexOf(grp) >= 0) byGroup = p.id;
     }
     return byGroup || all;
-  };
+  }
   // A part's 🧪 test rows include one per timer its panel claims by name.
   window.wpCanvasPanelNames = function (id) { var p = panelById(id); return p ? p.names.slice() : []; };
 
@@ -1491,6 +1493,96 @@
     if (p.names.indexOf(n) < 0 && p.names.length < 20) p.names.push(n);
   }
 
+  // ── ⋮ on a timer row (the guild lead, 2026-10-19: "click on a line and move it to a new timer, not just X it out …
+  // permanently mute and review those lines somewhere") ────────────────────────────────────────────────────────────────
+  // A panel's page (triggers.html, an iframe only as big as its panel) calls window.wpCanvasRowMenu with the row and its
+  // box; the menu is drawn HERE, in #menu, so the panel's edge cannot clip it. Move claims the row's name for the chosen
+  // panel (claimName: a name lives in one panel); a mute is the agent's (POST /api/timer-mute), which drops the row on every
+  // surface. The mutes are reviewed and undone on the dashboard's Triggers tab, under Muted timers.
+  var ROWMENU = '__row', _rowInfo = null, _rowPanel = null, _rowMenuT = null;
+  // The timers panels a row can move to: all but the one it is in. The catch-all only when, with the row's name released
+  // everywhere, the router would still hand it there (a panel claiming its whole group would win otherwise).
+  function moveTargets(info) {
+    var out = [];
+    _layout.panels.forEach(function (q) {
+      if (q.kind !== 'timers' || q.id === _rowPanel) return;
+      if (q.all && routeTimer(info, true) !== q.id) return;
+      out.push(q);
+    });
+    return out;
+  }
+  function moveRowTo(q, info) {
+    var n = normEffect(info.effect);
+    if (!n) return;
+    if (q.all) _layout.panels.forEach(function (x) { x.names = x.names.filter(function (y) { return y !== n; }); });
+    else {
+      claimName(q, n);
+      if (q.names.indexOf(n) < 0) { note('That panel already claims 20 timers by name', 3500); return; }
+    }
+    closeMenu(); save(); render();
+  }
+  // how: 'session' | 'always' | 'mob' (this spell on this mob only, for good).
+  function muteRow(info, how) {
+    try {
+      fetch('http://127.0.0.1:' + PORT + '/api/timer-mute', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mute', scope: how === 'session' ? 'session' : 'always', id: info.id, only_mob: how === 'mob' }),
+      }).catch(function () { /* the row comes back at the next look; nothing was muted */ });
+    } catch (err) { /* */ }
+    // Gone from its panel at once, not at the next poll.
+    try { var cw = _els[_rowPanel].frame.contentWindow; if (cw && cw.wpPartHide) cw.wpPartHide(info.id); } catch (err) { /* page mid-load */ }
+    closeMenu();
+  }
+  window.wpCanvasRowMenu = function (info, rect, panelId) {
+    if (!info || !info.id) return;
+    if (_menuFor === ROWMENU && _rowInfo && _rowInfo.id === info.id) { closeMenu(); return; }
+    // The row's box is in its page's pixels; the page sits in a frame that may be scaled.
+    var e = _els[panelId], fr = (e && e.frame) ? e.frame.getBoundingClientRect() : null;
+    var k = (fr && e.frame.offsetWidth) ? fr.width / e.frame.offsetWidth : 1;
+    var r = rect || { left: 0, top: 0, right: 0, bottom: 0 };
+    var box = fr ? { left: fr.left + r.left * k, top: fr.top + r.top * k, right: fr.left + r.right * k, bottom: fr.top + r.bottom * k } : r;
+    _rowInfo = info; _rowPanel = panelId;
+    var h = '<div class="mh">' + esc(info.effect) + '</div>';
+    if (info.kind !== 'loot') {
+      h += '<div class="sec">Move to</div><div class="chips">';
+      moveTargets(info).forEach(function (q) {
+        h += '<span class="chip add" data-mvto="' + esc(q.id) + '">' + esc(q.name || q.id) + (q.off ? ' <span class="dim">· hidden</span>' : '') + '</span>';
+      });
+      h += '<span class="chip add" data-mvnew>＋ New panel…</span></div>'
+        + '<div class="note" style="margin-top:4px">Every row called “' + esc(info.effect) + '” goes with it.</div>';
+    }
+    if (info.mutable) {
+      h += '<div class="sec">Mute</div>'
+        + '<div class="row"><button class="btn" data-rmute="session" title="Gone until Mimic restarts">Mute this session</button>'
+        + '<button class="btn" data-rmute="always" title="Gone for good; Muted timers on the dashboard\'s Triggers tab brings it back">Mute always</button></div>';
+      if (info.spell && info.mob) {
+        h += '<div class="row"><button class="btn" data-rmute="mob" title="For good, on this mob only">Mute ' + esc(info.spell) + ' on this mob only</button></div>';
+      }
+    }
+    _menuFor = ROWMENU;
+    menuEl.innerHTML = h;
+    menuEl.classList.add('show');
+    _menuAnchor = { getBoundingClientRect: function () { return box; } };
+    placeMenu();
+    // A locked canvas cannot see a click elsewhere (it lands in EQ): left alone and never entered, the menu goes by itself.
+    clearTimeout(_rowMenuT);
+    _rowMenuT = _edit ? null : setTimeout(function () { if (_menuFor === ROWMENU) closeMenu(); }, 6000);
+  };
+  function rowMenuClick(t) {
+    var info = _rowInfo;
+    if (!info) return;
+    var chip = t.closest('.chip');
+    if (chip && chip.hasAttribute('data-mvto')) {
+      var q = panelById(chip.getAttribute('data-mvto'));
+      if (q) moveRowTo(q, info);
+    } else if (chip && chip.hasAttribute('data-mvnew')) {
+      closeMenu();
+      if (!addTimersPanel([normEffect(info.effect)])) note('The canvas is full', 3500);
+    } else if (t.hasAttribute('data-rmute')) {
+      muteRow(info, t.getAttribute('data-rmute'));
+    }
+  }
+
   // ── ＋ Overlay ───────────────────────────────────────────────────────────────
   // Any overlay not on the canvas yet, one click each; or every overlay that
   // is on screen right now (its own window or a Dock pane) in one go, each
@@ -1557,6 +1649,7 @@
 
   menuEl.addEventListener('click', function (ev) {
     if (_menuFor === PICKER) { pickerClick(ev.target); return; }
+    if (_menuFor === ROWMENU) { rowMenuClick(ev.target); return; }
     var p = panelById(_menuFor);
     if (!p) return;
     var t = ev.target;
@@ -1669,6 +1762,7 @@
   // Opened from ✥ while locked, a click outside the menu lands in EQ, never
   // here — so leaving the menu closes it.
   menuEl.addEventListener('mouseleave', function () { if (!_edit) closeMenu(); });
+  menuEl.addEventListener('mouseenter', function () { clearTimeout(_rowMenuT); });
 
   // ── Pieces: data hub, painting, the chooser, groups (3.0 alpha) ─────────────
   // Every data element is a piece (parts.js). The canvas polls an agent source
@@ -3145,16 +3239,20 @@
   });
 
   // ── Toolbar ─────────────────────────────────────────────────────────────────
-  document.getElementById('addBtn').addEventListener('click', function () {
-    if (_layout.panels.length >= MAX_PANELS) return;
+  // A new timers panel in the middle of the screen, claiming `names` (the ⋮ on a row passes its timer's name).
+  function addTimersPanel(names) {
+    if (_layout.panels.length >= MAX_PANELS) return null;
     var n = 1;
     _layout.panels.forEach(function (q) { if (q.kind === 'timers') n++; });
     var p = { id: 'p' + Date.now().toString(36), kind: 'timers', all: false, name: 'Timers ' + n,
       groups: [], names: [], x: 0.42, y: 0.42, w: 300, h: 110, scale: 1, anchor: 'bottom', off: false };
     _layout.panels.push(p);
+    (names || []).forEach(function (nm) { claimName(p, nm); });
     save(); render();
     openMenu(p.id, _els[p.id].root);
-  });
+    return p;
+  }
+  document.getElementById('addBtn').addEventListener('click', function () { addTimersPanel([]); });
   var ovBtn = document.getElementById('ovBtn');
   ovBtn.addEventListener('click', function () {
     if (_menuFor === PICKER) { closeMenu(); return; }
