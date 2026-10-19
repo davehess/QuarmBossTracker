@@ -6211,3 +6211,8 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
 - ✅ Mimic chat wrap spacing (beta). ✅ Feedback in its own window with an autosaved draft (agent 3.7.179 beta; ⏳ live check).
   ❓ Dashboard drag stutter (waiting on the guild lead's tests).
 - ⏳ Picks: compute upgrade A/B; pre-raid "typical" source; Vercel deploy hooks (secrets).
+- ✅ Overlays as files (Keepers of the (Overlay) Arts, private half; agent 3.8.6, Mimic beta, §376): the portable layout
+  format (`apps/mimic/portableLayout.js`: groups pinned to EQ's window edges, sizes by screen height, nothing private)
+  + Export / Import in the tray, Settings → Overlay sets and the dashboard's Overlays tab; import adds a NEW set after a
+  "Before" copy, with one Undo; works in the local edition. ⏳ Not stable yet: graduates to `main` with the 3.0 line
+  (roadmap entry then). ⏳ Gallery (public half) not built.

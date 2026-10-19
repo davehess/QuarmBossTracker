@@ -1232,6 +1232,14 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
     parser; `main.js` `_captureOverlaySet` / `_applyOverlaySet` / `_overlaySetCommand`, called from the
     Zeal type-4 branch of `_zealAbsorb`, the tray's 🗂 Overlay sets, and Settings → Overlay sets (IPC
     `overlay-sets-list` / `overlay-sets-command`). `test/overlay-sets.test.js` (on `alpha`).
+  - **Overlays as files — export / import (Mimic beta, agent 3.8.6, §376).** `apps/mimic/portableLayout.js` is the
+    format (pure: `toPortable` / `fromPortable` / `validate` / `parse`; groups pinned to EverQuest's window, lengths in
+    reference-height units, names and filters stripped, an untrusted-file validator). `main.js` `_exportLayoutFile` /
+    `_importLayoutFile` (save/open dialogs, a preview, a "Before <title>" set, one Undo) are called from the tray's
+    🗂 Overlay sets, Settings → Overlay sets (IPC `overlay-layout-export` / `overlay-layout-import`, bridge
+    `overlayLayoutExport` / `overlayLayoutImport`) and the dashboard's Overlays tab "Share a layout" strip. File-only, so
+    the local edition has it. `overlaySets.uniqueName` keeps an import off the person's own sets.
+    `test/portable-layout.test.js`. The public Gallery that reuses the format is `DESIGN-keepers-of-the-arts.md`.
 Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 `test/dashboard-join-beta.test.js`, `test/mimic-alpha-channel.test.js`.
 

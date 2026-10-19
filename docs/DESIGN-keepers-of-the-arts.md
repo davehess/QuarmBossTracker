@@ -127,6 +127,9 @@ guild lead approves the wording before any DM.
 
 1. **Slice 0** — socials privacy fix (bot, small).
 2. **Foundations** — portable layout format + set ownership (fork-on-save) + mode tags. Approach-independent.
+   *The portable format is built (2026-10-19, DECISIONS §376, `apps/mimic/portableLayout.js`) together with Export / Import
+   to a file, which is the "A — a file you pass around" slice of Workstream 1 and works in the local edition. The Gallery
+   reuses the same document; overlap nudging, `masterpieceFit` and set ownership are still to do.*
 3. **Gallery slice 1** — Publish (parts only) → Gallery tab → "Add as a new set" with Undo. **Outreach goes out here.**
 4. **Live preview + fit badge + "Add to my canvas"**, and the move-into-Canvas toggle + convert.
 5. **`/gallery` web page** (two layouts on beta for the pick), screenshots + rendered thumbnails.
