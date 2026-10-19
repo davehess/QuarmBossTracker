@@ -157,10 +157,10 @@ describe('_buildMobInfo carries procs', () => {
       return [];
     },
   });
-  const build = () => new Function('mobSpecials', 'factionAssist', '_factionRowsFor', 'npcProcs', 'process', 'console',
+  const build = () => new Function('mobSpecials', 'factionAssist', '_factionRowsFor', 'npcProcs', 'process', 'console', 'namedBosses',
     `${helpers}\n${GENDER}\n${CLASSES}\n${slice}\nreturn _buildMobInfo;`)(
     nodeRequire('../utils/mobSpecials.js'), { getIndex: async () => null, assistFor: () => null }, async () => null,
-    nodeRequire('../utils/npcProcs.js'), process, console);
+    nodeRequire('../utils/npcProcs.js'), process, console, nodeRequire('../utils/namedBosses.js'));
   const ask = (name) => build()(sb(), { name, norm: name.toLowerCase(), caseKey: name, reqZoneId: 209, reqGender: null });
 
   it('Gaukr Sandstorm carries Stone Gale as an attack proc at 10%', async () => {

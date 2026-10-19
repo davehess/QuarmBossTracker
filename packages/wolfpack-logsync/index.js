@@ -1483,6 +1483,69 @@ function isBackupLogFile(filepath) {
   return m ? _splitBackupSuffix(m[1]).isBackup : false;
 }
 
+// ── EverQuest servers (the guild lead, 2026-10-19) ──────────────────────────
+// "support other games, starting with the rest of the EverQuest family." Live EQ, Project 1999, Lazarus and other
+// emulators write the same eqlog_<Name>_<server>.txt text log, so the tail, the DPS meter, triggers, timers and
+// the chat window read them unchanged. What they do NOT share is Project Quarm: the guild bot, the eqemu catalog
+// mirrored from Quarm's database, and the spell/mob numbers in it. This block names the server a log belongs to
+// and says what each server may do. It lives in index.js (not its own file) because only index.js, supervisor.js
+// and package.json are bundled and hot-swapped; a sibling module would never reach an installed Mimic.
+//   guildUpload  may feed the Wolf Pack guild bot (Quarm only; the bot, its boards and its catalog are Quarm's)
+//   catalog      the Quarm catalog (Mob Info stats, spell/item lists, durations) describes this server
+// Zeal needs no entry: the pipe is detected (zealPipe.js), never assumed, so it works wherever Zeal runs.
+// A suffix this table does not know gets the default row: log-only behaviour, nothing leaves the machine.
+const EQ_SERVER_QUARM = 'quarm';
+const EQ_SERVERS = {
+  quarm: { label: 'Project Quarm', guildUpload: true,  catalog: true  },
+  p1999: { label: 'Project 1999',  guildUpload: false, catalog: false },
+};
+const EQ_SERVER_OTHER = { label: null, guildUpload: false, catalog: false };
+// eqlog_<Name>_<suffix>.txt plus rotation tails (.txt2, .txt.bak, " BACKUP.txt"). The name holds no underscore.
+const EQ_LOG_SUFFIX_RX = /^eqlog_[^_]+_(.+?)\.txt(?:[\d.a-z]*)?$/i;
+// 'pq.proj' is Quarm's, 'P1999Green' / 'P1999Blue' / 'P1999Red' / 'P1999PVP' are Project 1999's; anything else keeps
+// its own suffix, lowercased, as the key. Not a log name at all (a custom --log path) stays Quarm, as it always was.
+function eqServerKeyFromSuffix(suffix) {
+  const s = String(suffix || '').toLowerCase().replace(/\s+backup$/, '').trim();
+  if (!s) return EQ_SERVER_QUARM;
+  // A prefix, not an exact match: a renamed or dated copy ("pq.proj_2026-10-18") is still Quarm, and wrongly calling a
+  // Quarm log off-guild would silently stop that raider's uploads.
+  if (s.startsWith('pq.proj')) return EQ_SERVER_QUARM;
+  if (/^p1999/.test(s)) return 'p1999';
+  return s;
+}
+function eqServerForLog(filepath) {
+  const m = path.basename(String(filepath || '')).match(EQ_LOG_SUFFIX_RX);
+  return m ? eqServerKeyFromSuffix(m[1]) : EQ_SERVER_QUARM;
+}
+function eqServerCaps(serverKey) {
+  return Object.prototype.hasOwnProperty.call(EQ_SERVERS, serverKey) ? EQ_SERVERS[serverKey] : EQ_SERVER_OTHER;
+}
+// Every log given is off-guild (and there is at least one): nothing here belongs to the guild bot.
+function eqLogsAllOffGuild(paths) {
+  return Array.isArray(paths) && paths.length > 0 && paths.every(p => !eqServerCaps(eqServerForLog(p)).guildUpload);
+}
+// character (lowercase) → server key, filled as logs are registered. A name seen on a guild server AND an off-guild
+// one resolves to the off-guild side: holding back a Quarm upload costs a night's data, sending a Project 1999
+// character's lines to the guild cannot be taken back.
+const _charServers = new Map();
+function noteLogServer(filepath) {
+  const c = characterFromFilename(filepath);
+  if (!c) return;
+  const server = eqServerForLog(filepath);
+  const k = c.toLowerCase();
+  const prev = _charServers.get(k);
+  if (prev === undefined || !eqServerCaps(server).guildUpload) _charServers.set(k, server);
+}
+function eqServerForCharacter(character) {
+  return _charServers.get(String(character || '').toLowerCase()) || EQ_SERVER_QUARM;
+}
+// True when a token is set (uploads are possible) and this character's server is not the guild's.
+function _offGuildServerChar(character) {
+  if (!character) return false;
+  const server = _charServers.get(String(character).toLowerCase());
+  return server !== undefined && !eqServerCaps(server).guildUpload && !_localOnly();
+}
+
 // ── Encounter detection state machine ───────────────────────────────────────
 // We don't have explicit "encounter started" events in EQ. Heuristic:
 //   - Begin a new encounter when we see a damage event involving a known boss
@@ -12396,6 +12459,8 @@ function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
 function enqueueUpload(kind, payload) {
   // Local mode: nothing is queued, so nothing can be sent.
   if (_localOnly()) return null;
+  // A payload that names a character on a server that is not the guild's never leaves (eqServerForLog).
+  if (payload && _offGuildServerChar(payload.character)) return null;
   // Cross-instance guard: only the elected uploader sends. A read-only
   // instance (another Parser/Mimic on this machine already owns the lock)
   // drops outbound uploads so the same line isn't posted twice. Its local
@@ -43122,6 +43187,8 @@ function pollCharacterPrefs({ botUrl, token }) {
 // poll pending), so we don't accidentally drop anything during startup.
 function shouldUploadForCharacter(character) {
   if (!character) return true;
+  // A character on a server that is not the guild's (Project 1999, live EQ...) feeds nothing to the guild bot.
+  if (_offGuildServerChar(character)) return false;
   const p = stats.characterPrefs && stats.characterPrefs[String(character).toLowerCase()];
   return !p || !p.exclude_from_stats;
 }
@@ -48102,6 +48169,12 @@ function fetchMobInfo(name, selfChar, zoneId) {
   const norm = _normMobNameAgent(name);
   if (!norm) return;
   const key = _mobInfoCacheKey(name, zoneId);
+  // The catalog (stats, resists, rampage, zone packs) is Project Quarm's data: off Quarm it would state numbers the
+  // mob does not have. Cache "no row" so Mob Info shows log-only data instead of waiting on a lookup.
+  if (!eqServerCaps(eqServerForCharacter(selfChar || _primaryCharacter())).catalog) {
+    _mobInfoByName.set(key, { at: Date.now(), mob: null });
+    return;
+  }
   if (_mobInfoInflight.has(key)) return;
   const cached = _mobInfoByName.get(key);
   if (cached && (Date.now() - cached.at) < MOB_INFO_TTL_MS) return;
@@ -56974,10 +57047,13 @@ async function main() {
   }
 
   const botUrl = args.flags.botUrl || DEFAULT_BOT_URL;
-  const token  = args.flags.token  || process.env.WOLFPACK_TOKEN || null;
+  // Every log is on a server that is not the guild's: behave exactly like local mode (no token, nothing leaves).
+  const _tokenWithheld = !!(args.flags.token || process.env.WOLFPACK_TOKEN) && eqLogsAllOffGuild(args.logs);
+  const token  = _tokenWithheld ? null : (args.flags.token || process.env.WOLFPACK_TOKEN || null);
   const dryRun = args.flags.dryRun;
+  if (_tokenWithheld) console.log('[server] these logs are not Project Quarm - guild uploads are off, running local-only');
 
-  if (!dryRun && !token) {
+  if (!dryRun && !token && !_tokenWithheld) {
     console.warn('⚠️  No --token / WOLFPACK_TOKEN set. Uploads will likely fail auth.');
   }
 
@@ -56989,9 +57065,12 @@ async function main() {
   // dashboard render has spell names + PQDI ids, then fire a background fetch
   // to refresh from the bot. We don't await — a slow fetch must not delay
   // boot, and the resisted-spell card just shows plain names until it lands.
-  _loadSpellCatalogFromDisk();
-  _loadItemClickiesFromDisk();
-  loadItemCatalogFromDisk();
+  // The shipped catalogs are Project Quarm's; with only off-Quarm logs they stay unloaded (log-only behaviour).
+  if (!eqLogsAllOffGuild(args.logs)) {
+    _loadSpellCatalogFromDisk();
+    _loadItemClickiesFromDisk();
+    loadItemCatalogFromDisk();
+  }
   // Restore the Pet tracker's in-memory state (last /pet health, observed buff
   // landings, running combat stats) so a Mimic restart or LD reconnect brings
   // the existing pet timers + stats back instead of starting blank. TTLs in
@@ -57239,6 +57318,7 @@ async function main() {
     const character = fromName
       || (args.logs.length === 1 ? args.flags.character : null)
       || 'unknown';
+    noteLogServer(logPath);
     // Register this log in the dashboard's watched list. Seed lastSeen from
     // file mtime so the dashboard shows useful "ago" times immediately —
     // without this seed, every log shows '?' until a fresh line arrives,

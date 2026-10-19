@@ -127,14 +127,23 @@ guild lead approves the wording before any DM.
 
 1. **Slice 0** — socials privacy fix (bot, small).
 2. **Foundations** — portable layout format + set ownership (fork-on-save) + mode tags. Approach-independent.
+   *The portable format is built (2026-10-19, DECISIONS §376, `apps/mimic/portableLayout.js`) together with Export / Import
+   to a file, which is the "A — a file you pass around" slice of Workstream 1 and works in the local edition. The Gallery
+   reuses the same document; overlap nudging, `masterpieceFit` and set ownership are still to do.*
 3. **Gallery slice 1** — Publish (parts only) → Gallery tab → "Add as a new set" with Undo. **Outreach goes out here.**
 4. **Live preview + fit badge + "Add to my canvas"**, and the move-into-Canvas toggle + convert.
 5. **`/gallery` web page** (two layouts on beta for the pick), screenshots + rendered thumbnails.
 6. Social sharing + votes, then the class A/B; suggest-only mode toasts; bindings and version updates.
 
-## Open decisions (the guild lead)
+## Decisions (the guild lead, 2026-10-19: "we'll go with the recommendations. that needs to be there before 3.0 goes live")
 
-| Decision | Recommended |
+Every row below is DECIDED as recommended, and so are the scope page's picks (Mimic: a Gallery tab in the Pieces
+chooser, a Gallery window later if it outgrows the panel; web: the class-first playbook with fit per row; members-only
+in v1; pieces and groups only; any member can publish, invitations seed it). **The gallery gates Mimic 3.0 stable:**
+3.0 does not cut a stable release until slice 1 (publish → Gallery tab → add as a new set, with Undo) ships on beta.
+DECISIONS-2026-09-21 §374.
+
+| Decision | Recommended (decided) |
 |---|---|
 | Gallery approach | B |
 | Set modes | B: free names + closed tag list + per-character default |
