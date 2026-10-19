@@ -5828,16 +5828,40 @@ const _POP_GRANT_RX = /^You (?:have received|receive) a (new checklist|character
 const _POP_PREV_RX = /^(?:Mavuin |The Tribunal |Adler Fuirstel |Elder Fuirstel |Adroha Jezith |Thelin |Fahlia Shadyglade |Miak the Searedsoul|You recognize the |Milyk Fuirstel's |Tarkil Adan |Giwin Mirakon|Giwin's invitation|Nitram Anizok |You realize that the image |Maelin|Tylis |The Planar Projection|A Planar Projection |Karana begins|Askr |An aura of soft light|As you place your hand on the burning cauldron|For a moment you pause|You have learned the meaning|You black out for a moment|You focus back to your battle|You feel the searing pain|The Cipher on your arm|As you think back to your meeting|An Image of Mithaniel)/;
 const _POP_RECITAL_RX = /^(?:Your soul has formed a bond|The History translated for you|Learning of Zebuxoruk|The information obtained from (?:Mithaniel|Karana)|You have shown your prowess|You have obtained the Talisman|The Cipher of the Divine Language|Saryrn been destroyed|Mithaniel has been bested|You have (?:completed all of Honor|beaten Rydda|saved the villagers|defeated the nomads)|You have bested Aerin|The evidence of Mavuin|Having endured the trials|Mavuin is grateful|Tylis (?:is being tortured|has been removed)|Thelin (?:being tormented|has completed his pact)|Terris Thule's grasp|Saved from a world|Alder Fuirstel wishes|Grummus has been destroyed|Milyk has been saved|Bertoxxulous has been slain|Saved from certain doom|Now that Grummus has been destroyed|The portal into the Plane of Fire|Xuzl's arcane|Arlyxir's wealth|The power of Dresolik|Rizlona's song|Jiva's strength|The true route to the Plane of Fire|Giwin would like you|The pack of notes from|The words of Maelin echo|The parchments of Rallos|You remember Nitram's words)/;
 const _popPrevLine = new Map();   // character (lowercase) → the message of the line before this one
+// The Halls of Honor trial credit (the guild lead, 2026-10-18: "we did not get credit on the command center for
+// this trial hailing"). Hailing the NPC a won trial leaves standing prints the mist line below, naming the NPC,
+// INSTEAD of a flag message; a raider who already holds the credit gets the second line, which names nobody, so
+// the NPC is the one this character last hailed. Both are the zone script's own words (hohonora/encounters).
+// Sent as kind 'trial'; the bot (utils/popFlagStages.js resolveTrial) names the trial and ignores anything else.
+const _POP_TRIAL_MIST_RX = /^An ethereal mist descends from the air and surrounds your very being\. Your body begins to emanate with the power of ([A-Za-z`' ]{2,40}?)\.$/;
+const _POP_TRIAL_HELD = 'You have already received credit for completing this trial.';
+const _POP_SELF_HAIL_RX = /^You say,?\s*['"]Hail[,!. ]+\s*([^'"]{2,48}?)[!.?]*['"]/i;
+const _popLastHail = new Map();   // character (lowercase) → { npc, ms } of its own latest "Hail, <npc>"
 function parsePopFlagLine(line, character) {
   if (!character || !line) return null;
   const cl = String(character).toLowerCase();
   const msg = String(line).replace(/^\[[^\]]*\]\s*/, '');
   const prev = _popPrevLine.get(cl) || null;
   _popPrevLine.set(cl, msg);
+  if (msg.charCodeAt(0) === 89 && msg.startsWith('You say')) {     // 'Y': remember who this character hailed last
+    const h = _POP_SELF_HAIL_RX.exec(msg);
+    if (h) { const hts = parseEqTimestamp(line); _popLastHail.set(cl, { npc: h[1].trim(), ms: hts ? hts.getTime() : Date.now() }); }
+  }
   let kind = null;
   let text = null;
-  const g = msg.indexOf(' flag!') !== -1 ? _POP_GRANT_RX.exec(msg) : null;
-  if (g) kind = /checklist/i.test(g[1]) ? 'checklist' : 'grant';
+  let trialNpc = null;
+  if (msg.charCodeAt(0) === 65 && msg.startsWith('An ethereal mist')) {            // 'A'
+    const m = _POP_TRIAL_MIST_RX.exec(msg.trim());
+    if (m) { kind = 'trial'; text = msg.slice(0, 160); trialNpc = m[1].trim(); }
+  } else if (msg.charCodeAt(0) === 89 && msg.trim() === _POP_TRIAL_HELD) {      // 'Y'
+    const lh = _popLastHail.get(cl);
+    const tms = (parseEqTimestamp(line) || new Date()).getTime();
+    // The hail comes first and the answer a moment later; a hail from minutes ago is another conversation.
+    if (lh && tms - lh.ms >= 0 && tms - lh.ms <= 30_000) { kind = 'trial'; text = _POP_TRIAL_HELD; trialNpc = lh.npc; }
+  }
+  const g = !kind && msg.indexOf(' flag!') !== -1 ? _POP_GRANT_RX.exec(msg) : null;
+  if (kind) { /* a trial credit line, above */ }
+  else if (g) kind = /checklist/i.test(g[1]) ? 'checklist' : 'grant';
   else if (_POP_RECITAL_RX.test(msg)) { kind = 'recital'; text = msg.slice(0, 160); }
   if (!kind) return null;
   const ts = parseEqTimestamp(line);
@@ -5847,14 +5871,17 @@ function parsePopFlagLine(line, character) {
   }
   const enc = (stats.currentEncounterThreatByChar || {})[cl] || stats.currentEncounterThreat;
   const boss = enc && enc.bossName ? String(enc.bossName) : null;
+  // These two lines print nowhere but the Halls of Honor, so a missing zone is still that zone.
+  if (kind === 'trial' && !zone) zone = 'hohonora';
   return {
     character,
     zone:  zone ? String(zone).slice(0, 64) : null,
     boss:  boss ? boss.slice(0, 64) : null,
     ts:    ts ? ts.toISOString() : new Date().toISOString(),
     kind,
-    prev:  kind !== 'recital' && prev && _POP_PREV_RX.test(prev) ? prev.slice(0, 160) : null,
+    prev:  kind !== 'recital' && kind !== 'trial' && prev && _POP_PREV_RX.test(prev) ? prev.slice(0, 160) : null,
     text,
+    ...(kind === 'trial' ? { npc: trialNpc.slice(0, 64) } : {}),
   };
 }
 
