@@ -118,7 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side LIVE on main (bot 3.2.7, `5c545c42`); `GALLERY_SALT` set on Railway. The tables are NOT created: four MCP attempts stalled at the approval step, and the 2026-10-19 SQL paste created `voice_reports` only | the guild lead: paste `supabase/migrations/20261019120000_gallery_masterpieces.sql` into the Supabase SQL Editor; then a session confirms the routes and designs the Mimic Gallery tab (samples first) — 3.0 stable waits on slice 1 |
 | **FB-84 death log before a death** (§373, §379) | A (local recap) on beta, agent 3.8.14; the guild lead: *"A first then B"* | a beta tester: die once, target the corpse, check the recap; then a session scopes B (web per-death panel) with samples |
 | **Voice unclear reports** (§379) | Mimic half on beta (agent 3.8.15); route + `/admin/voice-reports` [beta] live on main (bot 3.2.8, web 1.9.9). Table created 2026-10-19 (pasted by the guild lead; RLS on), so reports now store | a beta tester: press 🔊 Voice unclear once and check `https://wolfpack.quest/admin/voice-reports`; then a session builds slice 2 (officer-approved respellings every Mimic reads) |
-| **Timers: move / mute a row; Canvas across screens** (§379) | Scoped with pictures. Row: A ⋮ menu (Move to ▸ panel, Mute session/always/this mob; "Muted timers" card on the dashboard, mutes as `timer:*` keys in `trigger_rules.json`) or B drag + right-click. Screens: A one window over all screens behind a "Span all screens" switch (same scaling only; per-panel `scr` tag, no migration) or B a Canvas per screen. Canvas prebuilt-pieces fixes on beta (`a15ddca4`). All open picks, with a preview per option, are on the guild lead's private "Wolf Pack Decision Desk" page (§380), which stores each pick | the guild lead: pick on the Decision Desk; a session reads the picks back (`ArtifactData list picks`) and builds them. A Windows tester: Command Center on the Canvas, whole and as pieces (the blank cause was inferred, not reproduced) |
+| **Timers: move / mute a row; Canvas across screens** (§379) | Scoped with pictures. Row: A ⋮ menu (Move to ▸ panel, Mute session/always/this mob; "Muted timers" card on the dashboard, mutes as `timer:*` keys in `trigger_rules.json`) or B drag + right-click. Screens: A one window over all screens behind a "Span all screens" switch (same scaling only; per-panel `scr` tag, no migration) or B a Canvas per screen. Canvas prebuilt-pieces fixes on beta (`a15ddca4`). All open picks, with a preview per option, are on the guild lead's private "Wolf Pack Decision Desk" page (§380), which stores each pick | the guild lead: pick on the Decision Desk; a session reads the picks back (`ArtifactData list picks`) and builds them. A Windows tester: Command Center on the Canvas, whole and as pieces (the blank cause was inferred, not reproduced); click a Canvas timer ✕ (FB-92, §381: if it fails, the agent log's `[hover] first arm` lines). The guild lead: should trigger, tick, recharm and Bellow rows also turn blue (§381) |
 | **Raid night 2026-10-18 fixes** (§373) | Live: bot 3.2.6 (HoH trial cards, pet filter, flag counter, named-boss list); beta agent 3.8.4 + Mimic DPS Sec rule (rez NPC fix, trial credit lines, three rampagers) | the guild lead: look over `data/named-bosses.json` for missing or unwanted nameds (the hail-cap tooltip was reworded in agent 3.8.5 beta) |
 | **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: A (keep, recommended) or B (zone gate, agent change on beta) — B brings back the "hits the tank" bar but our own nukes in the named's zone would start it again |
 | **Voice volume for spoken callouts** (no § yet) | There is none: trigger sounds have a slider, speech always plays at full volume (Windows, Piper and Kokoro) | the guild lead: yes/no on a Voice volume slider in the dashboard's 🗣 Voice tab, beside speed and pitch (Mimic beta) |
@@ -11942,3 +11942,29 @@ don't have to bounce back and forth finding them"*.
 - Picks are stored in the page's database, collection `picks`, one document per decision id: `{choice, extras, note,
   at}`. A session reads them with `ArtifactData` (`action: list`, `collection: picks`) and builds from them.
 - raidmimic.com went live the same hour (§370 row).
+
+### 381. Overlays fit to content up or down; Canvas items own their background; FB-92, FB-93 (2026-10-19, agent 3.8.18, Mimic beta)
+The guild lead: *"we should always fit vertically to content with overlays, whether growing up or down. Canvas should
+be able to grow up as well. Canvas items should be able to individually set background, or avoid the all-toggle"*.
+- **Fit to content** (`709693c4`). The shared IPC (`overlay-auto-height`, holds the top edge growing down and the bottom
+  edge growing up) already existed. New:
+  - no fit while a window is being dragged; one refit on release (`__wpDragging`, `wp-refit`);
+  - a preload content watcher re-runs the same fit when a fitted element changes (ResizeObserver + MutationObserver,
+    150 ms, stops itself after 6 buffer-sized creeps);
+  - pages that call `overlayAutoHeight(h)` directly are not watched.
+  - Excluded, with reasons: Map, Map timers pop-out, Chat, the Canvas, the HUD ring, the Dock, `panel:*` overlays, and
+    /who and Pop Raid in their fixed-height modes.
+- **Canvas** (same commit): every item whose height follows its content fits it and offers ↑ grows up / ↓ grows down
+  (reusing `anchor`; absent stays as before). A hand resize of the height turns fitting off; ⚙ turns it back on.
+- **Background per item** (same commit): each panel, piece and group has its own Background; the whole-Canvas switch is
+  now "Default background" for items that never chose. A layout's first load stamps each item from the old switch
+  (`backV = 1`), so nothing changes visually.
+- **FB-93, Target Info on the Canvas missing buffs** (`6f05c65b`): the buffs were there; a whole Target Info panel was
+  a fixed 320×200 box and cut them off. It now grows to fit (`wpCanvasFit(win, true)`). Not pet-specific. Separate,
+  unchanged: a pet's buffs known only to its owner's Mimic (`petBuffsForOwner`) never reach Target Info.
+- **FB-92, Canvas timer ✕ and colours** (agent 3.8.18, `8956b301`):
+  - The Canvas now arms the window itself when the pointer is over a control inside a panel iframe (hit-test in the
+    page, 150 ms re-assert). The cause is not proven; earlier in-page fixes failed (§317).
+  - Spell-row colours, first match wins: purple Avatar/Ferocity, red mez/lull/charm or harmful on a mob, green buffs,
+    orange harmful on our players or pets, blue unclassified on friendlies (`_builtinSpellBarColor`). Trigger-author
+    rows, server tick, recharm and Bellow keep their colours: asked whether they should turn blue.
