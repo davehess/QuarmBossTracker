@@ -35457,6 +35457,17 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, total: _zeal.total }));
       }
+      // Zeal's chat colour per line, from Mimic (same machine; the router's local guard applies). Body:
+      // { lines: [{ c: character, k: colour index, x: text }] }. Kept as short-lived hints for the Chat overlay's channels and
+      // only while it is asking; see "Zeal's own channel for a line". Never stored, queued or uploaded.
+      if (req.url === '/api/zeal-chat' && req.method === 'POST') {
+        const body = await _readBody(req, 256 * 1024);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, kept: zealChatTake(payload) }));
+      }
       // Throttled live-state snapshot from Mimic (≈3-4/sec, not the raw event
       // stream). Drives gauge-condition triggers. Body:
       // { character, state: { self_hp_pct, target_name, target_hp_pct, zone,
@@ -40010,6 +40021,15 @@ const CHAT_CHANNELS = {
   loot:    { label: 'Loot',    color: '#f778ba', tag: 'LT' },
   random:  { label: 'Random',  color: '#2fb8c9', tag: 'RND' },
   other:   { label: 'Other',   color: '#a0a8b8', tag: 'OT' },
+  // Split out of Other by Zeal's own chat channels (the guild lead, 2026-10-19: "A LOT of items currently end up in
+  // Other"). Same gate and same ring as Other; see ZEAL_CHAT_COLOR below for where each one comes from.
+  money:   { label: 'Money',     color: '#a3be5a', tag: 'MN' },
+  emote:   { label: 'Emotes',    color: '#e08fd0', tag: 'EM' },
+  pet:     { label: 'Pets',      color: '#8fb98f', tag: 'PET' },
+  who:     { label: 'Who',       color: '#79c0ff', tag: 'WHO' },
+  death:   { label: 'Deaths',    color: '#e5534b', tag: 'DTH' },
+  bcast:   { label: 'Broadcast', color: '#ffc857', tag: 'B' },
+  zeal:    { label: 'Zeal',      color: '#9cc2b5', tag: 'ZL' },
 };
 // One chip each. `gate` names the policy switch that must be on for these channels to be captured,
 // served and shown; no gate = public, shown by default. A tab is a group plus a filter, so this list
@@ -40040,12 +40060,23 @@ const CHAT_GROUPS = [
   // money, other, etc"). The game's own filter menu names them Loot / Random (Zeal) and Other (ChannelMap 22; see
   // ui-studio.html). Built like Skills: gated off until the ⚙ switches them on, a small ring each. Loot = your own
   // "--You have looted ...--" line; Random = the /random pair; Other = a game or system line no other group claims
-  // (experience, faction, bandolier and the like), never anything that looks like speech. Money has no group yet:
-  // no coin line is in the repo's parsers or fixtures, and a pattern is not guessed. Until one is added a coin line
-  // reads as Other.
+  // (experience, faction and the like), never anything that looks like speech. Money, Emotes, Pets, Who, Deaths,
+  // Broadcast and Zeal were split out of it on 2026-10-19 (below); Zeal's channel for the line decides, the log text only
+  // when Zeal said nothing.
   { id: 'loot',    label: 'Loot',      channels: ['loot'],    gate: 'loot' },
   { id: 'random',  label: 'Random',    channels: ['random'],  gate: 'random' },
   { id: 'other',   label: 'Other',     channels: ['other'],   gate: 'other' },
+  // Splits of Other (the guild lead, 2026-10-19; DECISIONS §383: "the differentiation ... based on the Zeal options ...
+  // A LOT of items currently end up in Other"). One chip per Zeal chat filter that has no group of its own. They ride
+  // Other's switch and Other's ring (turning Other on is what asks for them; each chip then shows or hides its own
+  // lines), so no new switch, pref or ring exists and nothing is captured that Other was not already allowed to take.
+  { id: 'money',   label: 'Money',     channels: ['money'],   gate: 'other' },
+  { id: 'emotes',  label: 'Emotes',    channels: ['emote'],   gate: 'other' },
+  { id: 'pets',    label: 'Pets',      channels: ['pet'],     gate: 'other' },
+  { id: 'who',     label: 'Who',       channels: ['who'],     gate: 'other' },
+  { id: 'deaths',  label: 'Deaths',    channels: ['death'],   gate: 'other' },
+  { id: 'bcast',   label: 'Broadcast', channels: ['bcast'],   gate: 'other' },
+  { id: 'zeal',    label: 'Zeal',      channels: ['zeal'],    gate: 'other' },
 ];
 // `away` is not a group gate: it asks for the guild feed (see "Guild feed while you are out of game" below) and
 // gates no channel, so no CHAT_GROUPS entry names it.
@@ -40462,6 +40493,185 @@ function classifyOtherLine(line, character, ran) {
   return { ch: 'other', who: '', text, t: ts.getTime(), self: /^Your?\b/.test(body), npc: false };
 }
 
+// ── Zeal's own channel for a line (the guild lead, 2026-10-19; DECISIONS §383: "I need the differentiation to be present
+// based on the Zeal options, not just what's in the logs ... A LOT of items currently end up in Other") ──
+// WHAT ZEAL SENDS. Zeal prints every line through one function and, for each, hands the pipe `{ type: <colour index>, text }`
+// as a message of pipe type 0 (Zeal/named_pipe.cpp NamedPipe::chat_msg; docs/zeal-pipe-protocol.md). The index is the
+// client's chat colour: the USERCOLOR_* ids (256 + n, Zeal/game_structures.h) and Zeal's own channels (1000+,
+// Zeal/chatfilter.h), which are exactly what its Filters menu offers (ChannelMap, apps/mimic/ui-studio.html). The game LOG
+// has none of this: a coin split, an emote, a pet's reply and a Bandolier swap are all just a sentence there.
+// HOW IT ARRIVES. Mimic reads the pipe (apps/mimic/zealPipe.js `chatLineOf`) and POSTs the lines to /api/zeal-chat. They are
+// HINTS, keyed by character + the line's text: the log tail still reads the line itself (it carries the timestamp), and
+// asks the hint what channel it was. Local only (127.0.0.1), memory only, never uploaded, never a trigger or a parse input.
+// PRIVACY. The pipe carries EVERYTHING, tells, group and officer included, which is why docs/zeal-pipe-protocol.md says the
+// pipe log is not relayed. This keeps to that: (1) Mimic sends lines only while the Chat overlay is open and the agent keeps
+// them only while the overlay is asking (CHAT_POLICY_TTL_MS); (2) a hint only ever NAMES a channel, it never shows a line:
+// the line is the log's own, and every channel it can resolve to goes through chatChannelAllowed like any other; (3) a chat
+// colour resolves to `null`: never Other, never re-homed. So a tell the log parser could not read stays invisible instead of
+// falling into Other, which is a gain over text alone.
+// WHAT IT CHANGES. Only a line the log-text parsers left unclaimed. Chat, loot, random, melee, spells and skills keep their
+// own richer parsers (speaker, category); Zeal's colour decides the rest, and a line with no hint (no Zeal, the pipe
+// switched off, a hint that lost the race) takes the log-text fallback below.
+// value: { ch, cat?, miss? }  — cat '?' = mine when the sentence opens with You/Your, else others.
+//        null                 — chat, owned by classifyChatLine and its gates: never Other.
+//        absent               — a colour no table covers (Default 273, unused ids, anything new): the log-text path decides.
+const ZEAL_CHAT_COLOR = (() => {
+  const m = {};
+  const to = (ch, cat, miss) => { const r = { ch }; if (cat) r.cat = cat; if (miss) r.miss = true; return r; };
+  for (const k of [256, 257, 258, 259, 260, 261, 262, 275, 276, 327]) m[k] = null;      // say tell group guild ooc auction shout, merchant, raid say
+  for (let k = 290; k <= 300; k++) m[k] = null;                                          // chat channel, channels 1-10
+  for (let k = 307; k <= 313; k++) m[k] = null;                                          // echoes of what you typed
+  for (let k = 315; k <= 324; k++) m[k] = null;                                          // channel echoes
+  m[263] = m[314] = to('emote');                                                     // emote, emote echo
+  m[264] = to('spell', '?'); m[284] = to('spell', 'mine'); m[289] = to('spell', 'mine'); // spells, worn off, failures
+  m[283] = to('spell', '?'); m[288] = to('spell', 'others'); m[302] = to('spell', '?');  // non-melee damage, others' spells, spell crit
+  m[270] = to('skill', '?'); m[271] = to('skill', '?');                                  // skills, disciplines
+  m[265] = to('melee', 'mine'); m[266] = to('melee', 'on_me'); m[267] = to('melee', 'mine', true); m[268] = to('melee', 'on_me', true);
+  m[279] = to('melee', 'others'); m[280] = to('melee', 'others', true);
+  m[301] = to('melee', '?'); m[303] = to('melee', 'mine');                                // crits, "too far away"
+  m[304] = m[305] = m[306] = to('melee', 'others');                                      // NPC rampage, flurry, enrage
+  m[269] = to('bcast'); m[282] = to('bcast');                                            // broadcasts (duels), yell for help
+  m[277] = to('death'); m[278] = to('death');                                            // your death, others' deaths
+  m[281] = to('who');
+  m[285] = to('money'); m[328] = to('money');                                            // money split, auto-split echo
+  m[286] = to('loot'); m[287] = to('random');
+  m[1000] = to('melee', 'mine'); m[1001] = to('melee', 'others');                        // my / other pet damage (melee's own, as the text path has them)
+  m[1002] = to('pet'); m[1003] = to('pet');                                              // my / other pet say
+  m[1004] = to('melee', 'mine'); m[1005] = to('melee', 'others');                        // my / other melee special
+  m[1008] = to('melee', 'others'); m[1009] = to('melee', 'others');                      // other melee critical, other damage shield
+  for (const k of [1006, 1007, 1010, 1011, 1012]) m[k] = to('zeal');                      // /mystats, item speech, Zeal spam, Bandolier (status, failure)
+  return m;
+})();
+const ZEAL_CHAT_HINT_TTL_MS = 30_000;      // a hint is for the line that follows it; older than this it is a different line
+const ZEAL_CHAT_HINT_MAX = 800;
+const ZEAL_CHAT_LIVE_MS = 15_000;          // the pipe's tick (every 6 s) keeps a character "live"; a line may wait for its hint only while live
+const ZEAL_CHAT_DEFER_MS = 300;            // how long an unclaimed line waits for its hint (the pipe speaks first, but the tail can beat the POST)
+const _zealChatHints = new Map();          // "<character>|<text>" -> { k, at }
+const _zealChatSeen = new Map();           // lower-case character -> when its pipe last spoke
+const _zealChatDeferred = [];              // { line, character, due }
+let _zealChatTimer = null;
+// The same reduction on both sides of the match: the pipe strips non-printing characters (an item link's \x12) and the log keeps them.
+function _zealChatNorm(s) { return String(s == null ? '' : s).replace(/[^\x20-\x7e]/g, '').replace(/\s+/g, ' ').trim(); }
+// Take Mimic's batch `{ lines: [{ c: character, k: colour, x: text }] }`. Returns how many hints were kept. Nothing is kept
+// unless the Chat overlay is asking right now, for an excluded character, or for a colour no table knows.
+function zealChatTake(payload, now) {
+  const t = now == null ? Date.now() : now;
+  if (!(_chatPolicy && t - _chatPolicyAt <= CHAT_POLICY_TTL_MS)) return 0;
+  const lines = payload && Array.isArray(payload.lines) ? payload.lines : [];
+  let n = 0;
+  for (const r of lines.slice(0, 400)) {
+    if (!r || typeof r.c !== 'string' || !r.c || r.c.length > 40) continue;
+    if (!shouldUploadForCharacter(r.c)) continue;
+    const lc = r.c.toLowerCase();
+    _zealChatSeen.set(lc, t);
+    const k = Number(r.k);
+    if (!Number.isInteger(k) || !(k in ZEAL_CHAT_COLOR) || typeof r.x !== 'string') continue;
+    const x = _zealChatNorm(r.x.slice(0, 700));
+    if (!x) continue;
+    const key = lc + '|' + x;
+    _zealChatHints.delete(key);
+    _zealChatHints.set(key, { k, at: t });
+    n++;
+  }
+  for (const [key, h] of _zealChatHints) {
+    if (_zealChatHints.size <= ZEAL_CHAT_HINT_MAX && t - h.at <= ZEAL_CHAT_HINT_TTL_MS) break;   // oldest first: stop at the first keeper
+    _zealChatHints.delete(key);
+  }
+  return n;
+}
+// The Zeal colour of this log line, or null (no hint: no Zeal, or it has not arrived).
+function zealChannelHint(character, line, now) {
+  const body = _chatLogBody(line);
+  if (!body || !character) return null;
+  const h = _zealChatHints.get(String(character).toLowerCase() + '|' + _zealChatNorm(body));
+  const t = now == null ? Date.now() : now;
+  return h && t - h.at <= ZEAL_CHAT_HINT_TTL_MS ? h : null;
+}
+// A routed line: the log's own sentence, whole, in the channel Zeal named.
+function classifyZealLine(line, route) {
+  const body = _chatLogBody(line);
+  const ts = parseEqTimestamp(line);
+  if (!route || !body || !ts) return null;
+  const text = _chatCleanText(body);
+  if (!text) return null;
+  const self = /^Your?\b/.test(body);
+  const evt = { ch: route.ch, who: '', text, t: ts.getTime(), self, npc: false };
+  if (route.cat) evt.cat = route.cat === '?' ? (self ? 'mine' : 'others') : route.cat;
+  if (route.miss) evt.miss = true;
+  return evt;
+}
+// The fallback when Zeal gave no channel: the sentences each split owns, read off the log text. Only these have a shape the
+// repo has seen: a slain line (golden raid log), a server broadcast (PvP fixtures), the /who list and count (golden raid log) and
+// Bandolier (docs/zeal-bandolier-filter-request.md). ⚠ The two coin lines are EQEmu's string table from memory and have not
+// been seen in a Quarm log: if Money never fills without Zeal, check the real line before widening it, and do not "fix"
+// the pattern into a guess. Emotes, a pet's reply and /who rows have no shape the log gives away: they need Zeal's channel.
+const CHAT_ZEAL_TEXT_RXS = [
+  ['death', /^(?:You have been slain by [^,"]+|[^,"]+ has been slain by [^,"]+)!$/],
+  ['bcast', /^[^,'"]+ BROADCASTS, ['"].*['"]$/],
+  ['who',   /^There (?:are|is) \d+ players? in .+\.$/],
+  ['who',   /^(?:Players on EverQuest:|-{20,})$/],
+  ['who',   /^(?:(?:AFK|LFG|LD) )*\[(?:\d{1,2} [^\]]+|ANONYMOUS|GM)\] [A-Za-z`' ]+(?: \([^)]+\))?(?: <[^>]*>)?(?: ZONE: \w+)?$/],
+  ['zeal',  /^(?:Loading bandolier set \[|Bandolier set \[)/],
+  ['money', /^You receive .+ (?:from the corpse|as your split)\.$/],
+];
+function classifyZealTextLine(line) {
+  const body = _chatLogBody(line);
+  if (!body) return null;
+  for (const [ch, rx] of CHAT_ZEAL_TEXT_RXS) if (rx.test(body)) return classifyZealLine(line, { ch });
+  return null;
+}
+// A line nothing claimed may wait a moment for its hint, but only when it could use one (a switch that takes Zeal's channels
+// is on), the pipe is talking for this character, and it is not combat (Mimic does not send those colours).
+function _zealChatShouldDefer(line, character, policy, t) {
+  if (!character || !(policy.other || policy.melee || policy.spells || policy.skills || policy.loot || policy.random)) return false;
+  const seen = _zealChatSeen.get(String(character).toLowerCase());
+  if (!seen || t - seen > ZEAL_CHAT_LIVE_MS || _zealChatDeferred.length >= 300) return false;
+  const body = _chatLogBody(line);
+  return !!body && !CHAT_OTHER_COMBAT_RX.test(body);
+}
+function _zealChatDefer(line, character, t) {
+  _zealChatDeferred.push({ line, character, due: t + ZEAL_CHAT_DEFER_MS });
+  if (!_zealChatTimer) {
+    _zealChatTimer = setTimeout(() => { _zealChatTimer = null; zealChatFlushDeferred(); }, ZEAL_CHAT_DEFER_MS + 20);
+    if (_zealChatTimer.unref) _zealChatTimer.unref();
+  }
+}
+// Re-ask every waiting line whose time is up, once more and without waiting again. Returns how many landed.
+function zealChatFlushDeferred(now) {
+  const t = now == null ? Date.now() : now;
+  let n = 0;
+  for (let i = 0; i < _zealChatDeferred.length;) {
+    const d = _zealChatDeferred[i];
+    if (d.due > t) { i++; continue; }
+    _zealChatDeferred.splice(i, 1);
+    try { if (noteLocalChatLine(d.line, d.character, t, { late: true })) n++; } catch (e) { void e; }
+  }
+  if (_zealChatDeferred.length && !_zealChatTimer) {
+    _zealChatTimer = setTimeout(() => { _zealChatTimer = null; zealChatFlushDeferred(); }, ZEAL_CHAT_DEFER_MS);
+    if (_zealChatTimer.unref) _zealChatTimer.unref();
+  }
+  return n;
+}
+function _zealChatReset() { _zealChatHints.clear(); _zealChatSeen.clear(); _zealChatDeferred.length = 0; if (_zealChatTimer) { clearTimeout(_zealChatTimer); _zealChatTimer = null; } _chatSlotNames.clear(); }
+// A joined channel's slot number is the only thing Zeal's /abc lines carry ("[5] [Name]: text"), so which channel a number is
+// can only be learned from a line that names it ("tells Wolfpackofficer:5"). Learned per character, in memory, names only
+// (never a message). An abbreviated line on a slot known to be an officer channel is Officer's; an unknown slot stays
+// Custom, as before.
+const _chatSlotNames = new Map();          // "<character>|<slot>" -> channel name
+function _chatLearnSlot(evt, character) {
+  if (!evt || !character || !evt.cnum || (evt.ch !== 'custom' && evt.ch !== 'officer')) return;
+  const key = String(character).toLowerCase() + '|' + evt.cnum;
+  if (evt.cn) {
+    if (_chatSlotNames.size >= 200 && !_chatSlotNames.has(key)) _chatSlotNames.clear();
+    _chatSlotNames.set(key, evt.cn);
+    return;
+  }
+  const name = _chatSlotNames.get(key);
+  if (!name) return;
+  evt.cn = name;
+  if (/officer/i.test(name)) evt.ch = 'officer';
+}
+
 // The overlay's switches, handed over on every poll. Default (nothing asked for, or the overlay went
 // quiet for CHAT_POLICY_TTL_MS) is public channels only.
 let _chatPolicy = null;
@@ -40545,6 +40755,8 @@ const _chatExtraRings = {
   random: { ring: _randomRing, max: CHAT_RANDOM_RING_MAX, gate: 'random' },
   other:  { ring: _otherRing,  max: CHAT_OTHER_RING_MAX,  gate: 'other' },
 };
+// The splits of Other share its ring and its gate (see CHAT_GROUPS): the channel id on each line tells them apart.
+for (const ch of ['money', 'emote', 'pet', 'who', 'death', 'bcast', 'zeal']) _chatExtraRings[ch] = _chatExtraRings.other;
 // The guild feed ring (the guild lead, 2026-10-15: guild and raid chat from other members' Mimics while this player is
 // out of game). DISPLAY ONLY: its lines come from the poller block below (a GET to the bot), land here with the
 // channel ids the local lines use ('guild' / 'raid', so they colour and filter alike) plus via: 'guild', and are served
@@ -40609,9 +40821,10 @@ function guildFeedTake(lines, now, ingame) {
 }
 // The game is running again: local lines take over, so nothing relayed stays to double them.
 function guildFeedClear() { _guildFeedRing.length = 0; _guildFeedOkAt = 0; _guildFeedIngame = null; _chatCacheMarkDirty(); }
-function noteLocalChatLine(line, character, now) {
+function noteLocalChatLine(line, character, now, opts) {
   const policy = chatPolicyNow(now);
   let evt = classifyChatLine(line, character);
+  _chatLearnSlot(evt, character);
   // Only looked for while the overlay has asked for melee, skills or spells: an overlay that did not leaves nothing
   // accumulating. Melee first, then Skills, then Spells, so a line is only ever one of them.
   // Loot and Random have exact shapes of their own, so they are asked first; Other is asked LAST and only for a line
@@ -40621,7 +40834,18 @@ function noteLocalChatLine(line, character, now) {
   if (!evt && policy.melee) evt = classifyMeleeLine(line, character);
   if (!evt && policy.skills) evt = classifySkillLine(line);
   if (!evt && policy.spells) evt = classifySpellLine(line, character);
-  if (!evt && policy.other) evt = classifyOtherLine(line, character, { melee: policy.melee, skills: policy.skills, spells: policy.spells });
+  // What is left asks Zeal which channel it was (see "Zeal's own channel for a line"): the hint is a colour index from the
+  // game's own print function. A chat colour means "not Other" (null route); a known colour routes the line to its channel
+  // (the gates below still apply); no hint and no colour fall back to the log text. A line may wait ~300 ms for its hint.
+  if (!evt) {
+    const t = now == null ? Date.now() : now;
+    const hint = zealChannelHint(character, line, t);
+    if (!hint && !(opts && opts.late) && _zealChatShouldDefer(line, character, policy, t)) { _zealChatDefer(line, character, t); return false; }
+    const route = hint ? ZEAL_CHAT_COLOR[hint.k] : undefined;
+    if (route === null) return false;                                                   // chat the log parser could not read: never Other
+    if (route) evt = classifyZealLine(line, route);
+    else if (policy.other) evt = classifyZealTextLine(line) || classifyOtherLine(line, character, { melee: policy.melee, skills: policy.skills, spells: policy.spells });
+  }
   if (!evt) return false;
   if (!chatChannelAllowed(evt.ch, policy)) return false;
   const extra = _chatExtraRings[evt.ch];
@@ -40671,7 +40895,7 @@ function serializeLocalChat(q, now) {
   // Chat, melee, spell and skill rows page together, newest first, by their shared sequence number. A side ring is
   // only read while its switch is on, so the common case is the chat ring alone.
   const feeds = [_chatRing];
-  for (const x of Object.values(_chatExtraRings)) if (policy[x.gate]) feeds.push(x.ring);
+  for (const x of Object.values(_chatExtraRings)) if (policy[x.gate] && feeds.indexOf(x.ring) === -1) feeds.push(x.ring);   // Other's splits share its ring: once
   if (policy.away) feeds.push(_guildFeedRing);   // relayed guild/raid lines: only while the overlay asked for them
   const at = feeds.map(r => r.length - 1);
   while (lines.length < CHAT_PAGE_MAX) {
@@ -40716,7 +40940,7 @@ function _handleLocalChat(req, res) {
 }
 function _resetLocalChatForTest() {
   _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _lootRing.length = 0; _randomRing.length = 0; _otherRing.length = 0; guildFeedClear(); _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
-  _chatPolicyRestored = null; _chatWipeAt = 0;
+  _chatPolicyRestored = null; _chatWipeAt = 0; _zealChatReset();
 }
 
 // ── Chat cache seam ──
@@ -59347,6 +59571,7 @@ module.exports = {
   _uploadBuffersForTest: () => ({ chatBuffer, tellBuffer, recentTells: stats.recentTells }),
   _chatRingForTest: () => _chatRing, _meleeRingForTest: () => _meleeRing, CHAT_MELEE_RING_MAX, _handleLocalChatForTest: _handleLocalChat,
   classifySpellLine, classifySkillLine, noteSelfCast, _rebuildLandingIndexesForTest: () => { _rebuildBuffMatchers(); _rebuildMechanicMatchers(); }, _spellRingForTest: () => _spellRing, _skillRingForTest: () => _skillRing, CHAT_SPELL_RING_MAX, CHAT_SKILL_RING_MAX,
+  ZEAL_CHAT_COLOR, zealChatTake, zealChannelHint, zealChatFlushDeferred, classifyZealLine, classifyZealTextLine, CHAT_ZEAL_TEXT_RXS,
   classifyLootLine, classifyRandomLine, classifyOtherLine, _lootRingForTest: () => _lootRing, _randomRingForTest: () => _randomRing, _otherRingForTest: () => _otherRing, CHAT_LOOT_RING_MAX, CHAT_RANDOM_RING_MAX, CHAT_OTHER_RING_MAX,
   // Guild feed while out of game (2026-10-15): the poller, its in-game test, the ring and the control-plane setter its gate reads.
   _pollGuildFeed, _eqInGameFrom, guildFeedTake, guildFeedClear, _guildFeedNoteCampLine, _guildFeedRingForTest: () => _guildFeedRing, _guildFeedStateForTest: () => _guildFeed,
