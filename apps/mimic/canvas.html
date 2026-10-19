@@ -2293,7 +2293,7 @@
     place(e, p); placeGbox();
     return left ? 'left' : 'right';
   };
-  window.wpCanvasFit = function (win) { var id = panelOfWin(win); return id ? fitEmbed(id, false) : false; };
+  window.wpCanvasFit = function (win, grow) { var id = panelOfWin(win); return id ? fitEmbed(id, !!grow) : false; };
 
   // The pieces as a saved group stores them: each one's look, and where it sits from the set's top-left.
   function groupPartsOf(ps) {
@@ -2702,6 +2702,64 @@
   });
   panelsEl.addEventListener('mouseleave', endLink);
   document.addEventListener('mousedown', endLink, true);
+
+  // ── A panel's page takes the mouse through THIS page too (FB-92) ─────────────
+  // "Despite hovering over the canvas timers, I cannot click the X." The canvas window is click-through
+  // always, so a control inside a panel's iframe (the timer row's ✕, the callouts' buttons) is clickable only
+  // while the window is armed through the hover handshake. The page inside the iframe tries to arm it itself
+  // (the preload's mousemove), but that rests on the window forwarding its mouse moves into the SUB-frame;
+  // twice that was fixed from inside the page and the ✕ still did nothing. So the canvas does it as well,
+  // from the one place it can always see: its own mousemoves (the iframe element is the target while the
+  // window is click-through) and the page's own mousemoves once the window is armed. Both ask the same
+  // question — is the pointer on a control? — and answer through the same overlayHoverInteractive bridge,
+  // so the two paths agree and the window falls back to click-through the moment the pointer leaves.
+  // Arranging is left alone: the frames take no pointer then and the shield owns the mouse.
+  var PANEL_CTL = 'button, a, input, select, textarea, [role="button"], [data-wp-interact]';
+  var _panelHot = false, _panelHotAt = 0;
+  function panelWantsMouse(el) {
+    try { return !!(el && el.closest && el.closest(PANEL_CTL)); } catch (err) { return false; }
+  }
+  // Re-asserted every 150 ms while over a control, as the preload does: a ✕ that was just pressed disarms
+  // the window when its row goes, and the next row's ✕ must not be skipped because we believe we are armed.
+  function panelHover(want) {
+    var now = Date.now();
+    if (want) {
+      if (!_panelHot || now - _panelHotAt > 150) { _panelHotAt = now; try { M.overlayHoverInteractive(true); } catch (err) { /* no bridge */ } }
+      _panelHot = true;
+    } else if (_panelHot) {
+      _panelHot = false;
+      try { M.overlayHoverInteractive(false); } catch (err) { /* no bridge */ }
+    }
+  }
+  // The element under a point of the CANVAS, looked up inside an iframe (scaled panels included).
+  function panelFrameWants(fr, cx, cy) {
+    var doc = null, r = null;
+    try { doc = fr.contentDocument; r = fr.getBoundingClientRect(); } catch (err) { return false; }
+    if (!doc || !doc.elementFromPoint || !r) return false;
+    var sx = fr.offsetWidth ? r.width / fr.offsetWidth : 1, sy = fr.offsetHeight ? r.height / fr.offsetHeight : 1;
+    return panelWantsMouse(doc.elementFromPoint((cx - r.left) / (sx || 1), (cy - r.top) / (sy || 1)));
+  }
+  document.addEventListener('mousemove', function (ev) {
+    if (_edit) return;
+    var t = ev.target;
+    if (t && t.tagName === 'IFRAME' && panelsEl.contains(t)) panelHover(panelFrameWants(t, ev.clientX, ev.clientY));
+    else if (_panelHot && !panelWantsMouse(t)) panelHover(false);   // off the page onto empty screen; a canvas control keeps its own arm
+  }, true);
+  // The page itself, once it exists: its own moves while the window is armed (the canvas no longer sees them).
+  function watchPanelFrame(fr) {
+    var doc = null;
+    try { doc = fr.contentDocument; } catch (err) { return; }
+    if (!doc || !doc.addEventListener) return;
+    doc.addEventListener('mousemove', function (ev) { if (!_edit) panelHover(panelWantsMouse(ev.target)); }, true);
+    doc.addEventListener('mouseout', function (ev) { if (!ev.relatedTarget) panelHover(false); }, true);
+  }
+  panelsEl.addEventListener('load', function (ev) {
+    if (ev.target && ev.target.tagName === 'IFRAME') watchPanelFrame(ev.target);
+  }, true);
+  Array.prototype.forEach.call(panelsEl.querySelectorAll('iframe'), function (fr) {
+    try { if (fr.contentDocument && fr.contentDocument.readyState === 'complete') watchPanelFrame(fr); } catch (err) { /* cross-origin */ }
+  });
+  // ── end FB-92 ───────────────────────────────────────────────────────────────
 
   // ── Removing, with Undo ──────────────────────────────────────────────────────
   // The callouts panel and the catch-all timers panel are never removed (a

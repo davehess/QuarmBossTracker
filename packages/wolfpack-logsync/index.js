@@ -54968,6 +54968,25 @@ function noteMyMezWornOff(line, character) {
   }
   if (best) best.worn_off_at = Date.now();
 }
+// The bar colour of a spell row, by what it is (FB-92: "Red for mobs, Orange for affects on friendlies, green for
+// buffs, blue for other. Purple for Avatar and Ferocity lines"). The first rule that fits wins:
+//   purple — the name carries "Avatar" or "Ferocity" (a buff you watch for; beats green),
+//   red    — a crowd-control line (charm, mez, lull) or anything not a beneficial buff, landing on a mob,
+//   green  — a beneficial spell (good_effect 1),
+//   orange — a detrimental spell (good_effect 0) landing on a known player or one of our pets,
+//   blue   — the rest (a spell the catalog has not classified, landing on a friendly).
+// "A friendly" is _knownPlayerName: who data, our own characters, our group, our pets. A name nobody knows is a mob.
+const BUILTIN_BAR_COLORS = { mob: '#da3633', friendly_bad: '#db6d28', buff: '#2ea043', special: '#a371f7', other: '#1f6feb' };
+function _builtinSpellBarColor(spellName, targetName, group) {
+  const spell = String(spellName || '');
+  if (/avatar|ferocity/i.test(spell)) return BUILTIN_BAR_COLORS.special;
+  if (group === 'charm' || group === 'mez' || group === 'lull') return BUILTIN_BAR_COLORS.mob;
+  const good = _spellGood(spell);
+  if (good === 1) return BUILTIN_BAR_COLORS.buff;
+  const friendly = _knownPlayerName(String(targetName || '').trim().toLowerCase());
+  if (!friendly) return BUILTIN_BAR_COLORS.mob;
+  return good === 0 ? BUILTIN_BAR_COLORS.friendly_bad : BUILTIN_BAR_COLORS.other;
+}
 function _builtinTimerRows(now) {
   const on = _builtinTimerKindsOn();
   if (on.size === 0) { _builtinTimerHidden.clear(); return []; }
@@ -55049,7 +55068,7 @@ function _builtinTimerRows(now) {
         const mobLabel = sid ? mob + ' #' + sid : mob;
         push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mobLabel + ' - ' + b.name,
                target: mobLabel, target_id: sid, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
-               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb', tick_snapped: fade.snapped, group });
+               remaining_ms: remMs, duration_sec: totalSec, bar_color: _builtinSpellBarColor(b.name, mob, group), tick_snapped: fade.snapped, group });
       }
     }
   }
@@ -59116,7 +59135,7 @@ module.exports = {
   _meRegenFrame, _meRegenFor, _meRegenStep, _meRegenTaint, _meRegen, _meRegenInCombat, _serializeMeState, _meNoteHit,   // FB-90 — test/me-regen.test.js
   _setSpellCatalogForTest: (entries) => { _spellByNameLower = new Map((entries || []).map(e => [String(e.name).toLowerCase(), e])); },
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
-  _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
+  _builtinTimerRows, _builtinSpellBarColor, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
   _isMezSpell, noteMyMezWornOff,
   _bumpCharmTick, _reconcileGaugeCharms, _classOf,
   _petBuffLandings, _npcCasterLevelFor, _npcCastStarts, _charmMobId,
