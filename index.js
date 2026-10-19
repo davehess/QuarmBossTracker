@@ -419,6 +419,8 @@ client.once(Events.ClientReady, async (readyClient) => {
   try { setInterval(_refreshAgentManifestBeta, AGENT_MANIFEST_REFRESH_MS).unref(); } catch (_) { /* non-fatal */ }
   // Slow mode (utils/slowMode.js) before any kill is recorded or reconciled: it decides the timer length.
   await require('./utils/slowMode').loadSlowMode();
+  // Plane of Time cycle ledger (utils/potimeCycle.js): Quarm's timer is the cycle end, so load it before the same reconcile.
+  await require('./utils/potimeCycle').loadPotimeCycle();
   // Member lockout (utils/memberLockout.js): load the set before interactions and agent calls are judged by it.
   require('./utils/memberLockout').start();
   await registerCommands();
@@ -6398,6 +6400,8 @@ async function _handleAgentBossKill(req, res) {
       // Boss not on the board: the kill listener never sees it, so a hail boss (Mithaniel Marr, Solusek Ro,
       // the Keeper, the Behemoth, the Arbitor) opens its hail window here, by name.
       _hailKill({ bossName, killedAtMs: killedAt });
+      // Any kill in the Plane of Time is first-entry evidence for the cycle ledger (utils/potimeCycle.js).
+      if (/plane of time/i.test(String(zone || ''))) require('./utils/potimeCycle').noteActivity(killedAt, 'kill');
       // Boss not in database — still post to raid channel as FYI (deferred).
       // A boss taken off the board on purpose says so, instead of inviting an
       // officer to /addboss it back (§132).
@@ -10589,6 +10593,10 @@ async function _handleAgentLockout(req, res) {
     }
 
     const nextSpawn   = Date.now() + remainingMs;
+    // Quarm's lockout is the server's own statement of the Plane of Time cycle end: it replaces the bot's
+    // inference (utils/potimeCycle.js), and moves a Quarm timer already on the board to it — later OR earlier,
+    // unlike the refine-only-later rule below.
+    if (require('./utils/potimeCycle').isPotimeBoss(boss.id)) require('./utils/potimeCycle').applyObservedCycleEnd(nextSpawn, 'sll');
     const existing    = getBossState(boss.id);
 
     // Record the lockout itself, not just what it implies for the timer
@@ -18723,6 +18731,9 @@ async function _handleAgentLiveState(req, res) {
       ...(b && typeof b.slot === 'number' && b.slot >= 1 && b.slot <= 30 ? { slot: Math.trunc(b.slot) } : {}),
     })).filter(b => b.name);
     const zoneId    = Number.isFinite(Number(st?.zone_id)) ? Math.trunc(Number(st.zone_id)) : null;
+    // A guild member standing in a Plane of Time zone is the first-entry evidence for the cycle ledger
+    // (utils/potimeCycle.js: a no-op while a cycle is running).
+    if (zoneId !== null && require('./utils/potimeCycle').isPotimeZone(zoneId)) require('./utils/potimeCycle').noteActivity(Date.now(), 'zone-in');
     const selfHp    = (st?.self_hp_pct != null && Number.isFinite(Number(st.self_hp_pct))) ? Number(st.self_hp_pct) : null;
     // Exact self HP (agent v3.3.42+, Zeal labels 17/18) — powers the
     // cross-client Tank overlay "cur / max · pct%" label for a Mimic MT.

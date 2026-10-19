@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.2.12': [
+    '**Quarm\'s timer follows the new Plane of Time cycle.** Since the October 18 patch the Plane of Time runs one fixed 6 day 18 hour cycle from the guild\'s first entry, and kills no longer extend it. The board now counts to the end of that cycle, and says whether the time is an estimate or came from the game.',
+  ],
   '3.2.11': [
     '**Cast bars are right for spell-haste focus items.** If you wear gear with a spell-haste focus (a Quickening, Spell Haste or similar), your cast bar now counts the faster casting. Before, it ignored those items and ran long.',
   ],
