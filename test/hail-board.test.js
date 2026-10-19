@@ -36,7 +36,8 @@ const rosterRows = (names, uploader, minAgo = 0) =>
 
 // One board over a fake database and a clock the test moves.
 function env(tables = {}, { enabled = true } = {}) {
-  const t = { raid_roster: [], pop_flags: [], pop_guide_ticks: [], bot_kv: [], ...tables };
+  const t = { raid_roster: [], pop_flags: [], pop_guide_ticks: [], bot_kv: [],
+    characters: RAID.map(name => ({ guild_id: 'g', name })), ...tables };
   const fake = makeFakePostgrest(t);
   const upserts = [];
   let nextId = 1;
@@ -196,6 +197,24 @@ describe('a hail boss kill opens a window', () => {
     expect([...w.roster].sort()).toEqual(['Aldenmar', 'Brackwyn', 'Corvale', 'Nyssara', 'Rethlan']);
     expect(w.roster_pending).toBeUndefined();         // the read worked and found people: nothing to retry
     expect(w.uploaders).toEqual(['u1']);
+  });
+
+  it('a pet in the fight\'s player list is not a raider: only fighters the guild knows join the board', async () => {
+    // A summoned pet whose owner the parse could not resolve is listed as a player, with damage, like a raider.
+    const e = env({ raid_roster: rosterRows(['Aldenmar', 'Brackwyn'], 'u1') });
+    const w = await e.hb.openWindow({ bossName: 'The Keeper of Sorrows', killedAtMs: KILL,
+      participants: ['Aldenmar', 'Rethlan', 'Lararer'] });
+    expect([...w.roster].sort()).toEqual(['Aldenmar', 'Brackwyn', 'Rethlan']);
+    // ... and with the roster read failed, the pet is still not a raider.
+    const f = env();
+    f.failRoster = true;
+    const p = await f.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL, participants: ['Rethlan', 'Lararer'] });
+    expect(p.roster).toEqual(['Rethlan']);
+    // A failed characters read keeps the names rather than thinning the roster.
+    const g = env();
+    g.fake.selectAllPaged = ((orig) => (t, ...a) => (t === 'characters' ? Promise.reject(new Error('timeout')) : orig(t, ...a)))(g.fake.selectAllPaged);
+    const k = await g.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL, participants: ['Rethlan', 'Lararer'] });
+    expect(k.roster).toEqual(['Rethlan', 'Lararer']);
   });
 
   it('a roster read that fails does not freeze the window: it opens pending with the participants', async () => {
