@@ -57422,26 +57422,111 @@ function _logRotateCandidates() {
   return out;
 }
 
-async function _logRotateSweep() {
-  if (!_logRotateEnabled()) return;
-  const now = Date.now();
-  for (const w of (stats.watchedLogs || [])) {
-    if (!w || !w.logPath) continue;
-    try {
-      const st = await fs.promises.stat(w.logPath);
-      if (!_shouldRotateLog(st.size, st.mtimeMs, now, LOG_ROTATE_MB, LOG_ROTATE_IDLE_MS)) continue;
-      const dir = path.join(path.dirname(w.logPath), 'LogArchive');
-      try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
-      const dest = path.join(dir, _rotateArchiveName(w.logPath, now));
-      fs.renameSync(w.logPath, dest);              // EQ holding it open → throws → skip
-      try { fs.writeFileSync(w.logPath, '', { flag: 'wx' }); } catch { /* recreated by EQ */ }
-      const mb = Math.round(st.size / (1024 * 1024));
-      if (!Array.isArray(stats.logRotations)) stats.logRotations = [];
-      stats.logRotations.unshift({ file: path.basename(w.logPath), dest, mb, at: new Date(now).toISOString() });
-      if (stats.logRotations.length > 10) stats.logRotations.length = 10;
-      console.log('[log-rotate] ' + path.basename(w.logPath) + ' (' + mb + 'MB) → ' + dest);
-    } catch { /* stat failed or rename refused (EQ has it open) — next sweep */ }
+// ── The sweep, in WATCH mode too (FB-51, DECISIONS §162/§383, the guild lead's pick 2026-10-19) ──
+// The sweep's timers used to live only inside the `--once` branch (which exits seconds later), so Mimic's
+// normal watch mode never ran it while the dashboard card said archiving was ON, and a log reached 540 MB.
+// Renaming a member's file is new for watch mode, so every move is gated, in this order:
+//   - archiving is on (WP_LOG_ROTATE_MB > 0 and the dashboard switch not off);
+//   - the file is over the cap AND its mtime is >= LOG_ROTATE_IDLE_MS old (_shouldRotateLog);
+//   - the agent itself read no line from it inside that window (watched.lastSeen);
+//   - Zeal has not heard from that character recently (they are in game: EverQuest is writing it, or
+//     holding it open, even when the log is quiet);
+//   - one more stat right before the rename: size and mtime unchanged, still idle;
+//   - the archive name is free (a rename onto an existing file silently replaces it on Windows).
+// Nothing is deleted. A refused or failed move is logged (at most once an hour per file) and simply
+// tried again at the next sweep, 10 minutes later; one sweep never overlaps another.
+const LOG_ROTATE_SWEEP_MS      = 10 * 60_000;
+const LOG_ROTATE_FIRST_MS      = 2 * 60_000;    // first pass, so an oversized log from last session is handled promptly
+const LOG_ROTATE_ZEAL_FRESH_MS = 5 * 60_000;    // Zeal heard from the character this recently = in game
+const LOG_ROTATE_FAIL_LOG_MS   = 60 * 60_000;
+let _logRotateBusy = false;
+const _logRotateFailAt = new Map();   // logPath → last time a failure was logged
+
+// Pure decision, null = safe to move. Exercised by test/log-rotate-watch.test.js.
+function _logRotateSkipReason({ sizeBytes, mtimeMs, nowMs, thresholdMb, idleMs, lastLineAt, zealUpdatedAt }) {
+  if (!_shouldRotateLog(sizeBytes, mtimeMs, nowMs, thresholdMb, idleMs)) {
+    return (thresholdMb > 0 && sizeBytes > thresholdMb * 1024 * 1024) ? 'recent_write' : 'under_cap';
   }
+  if (lastLineAt && nowMs - lastLineAt < idleMs) return 'agent_read_line';
+  if (zealUpdatedAt && nowMs - zealUpdatedAt < LOG_ROTATE_ZEAL_FRESH_MS) return 'in_game';
+  return null;
+}
+
+function _zealUpdatedAtFor(character) {
+  const lc = String(character || '').toLowerCase();
+  let t = 0;
+  for (const k of Object.keys(_zealState)) {
+    if (k.toLowerCase() === lc) t = Math.max(t, (_zealState[k] && _zealState[k].updatedAt) || 0);
+  }
+  return t;
+}
+
+// `d` is for tests only: a fake fs / clock / on-off / cap, so the real gates run with no 500 MB file.
+async function _logRotateSweep(d = {}) {
+  const moved = [];
+  if (!(d.enabled === undefined ? _logRotateEnabled() : d.enabled)) return moved;
+  if (_logRotateBusy) return moved;
+  _logRotateBusy = true;
+  const F = d.fs || fs;
+  const clock = d.now || Date.now;
+  const thresholdMb = d.thresholdMb === undefined ? LOG_ROTATE_MB : d.thresholdMb;
+  const idleMs = d.idleMs === undefined ? LOG_ROTATE_IDLE_MS : d.idleMs;
+  try {
+    for (const w of [...(stats.watchedLogs || [])]) {
+      if (!w || !w.logPath) continue;
+      try {
+        const now = clock();
+        const st = await F.promises.stat(w.logPath);
+        const probe = (s, at) => _logRotateSkipReason({
+          sizeBytes: s.size, mtimeMs: s.mtimeMs, nowMs: at, thresholdMb, idleMs,
+          lastLineAt: w.lastSeen, zealUpdatedAt: _zealUpdatedAtFor(w.character),
+        });
+        if (probe(st, now)) continue;
+        // Re-check right before the move: EverQuest may have started writing since the first stat.
+        const st2 = F.statSync(w.logPath);
+        const now2 = clock();
+        if (st2.size !== st.size || st2.mtimeMs !== st.mtimeMs || probe(st2, now2)) continue;
+        const dir = path.join(path.dirname(w.logPath), 'LogArchive');
+        try { F.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+        let dest = path.join(dir, _rotateArchiveName(w.logPath, now2));
+        if (F.existsSync(dest)) dest = path.join(dir, _rotateArchiveNameSeconds(w.logPath, now2));
+        if (F.existsSync(dest)) {
+          console.warn('[log-archive] ' + path.basename(w.logPath) + ': the archive name ' + path.basename(dest) + ' is taken — not moved, trying again next sweep');
+          continue;
+        }
+        F.renameSync(w.logPath, dest);              // EQ holding it open → throws → skip
+        try { F.writeFileSync(w.logPath, '', { flag: 'wx' }); } catch { /* recreated by EQ */ }
+        _logRotateFailAt.delete(w.logPath);
+        const mb = Math.round(st.size / (1024 * 1024));
+        const rec = { file: path.basename(w.logPath), dest, mb, at: new Date(now2).toISOString() };
+        if (!Array.isArray(stats.logRotations)) stats.logRotations = [];
+        stats.logRotations.unshift(rec);
+        if (stats.logRotations.length > 10) stats.logRotations.length = 10;
+        moved.push(rec);
+        console.log('[log-archive] ' + rec.file + ' (' + mb + 'MB) → ' + dest + ' (quiet ' + Math.round((now2 - st2.mtimeMs) / 60_000) + ' min, ' + w.character + ' not in game)');
+      } catch (err) {
+        // Stat failed, or the rename was refused (EQ has it open): leave the file alone, retry next sweep.
+        const at = clock();
+        if (at - (_logRotateFailAt.get(w.logPath) || 0) >= LOG_ROTATE_FAIL_LOG_MS) {
+          _logRotateFailAt.set(w.logPath, at);
+          const busy = err && (err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES');
+          console.warn('[log-archive] ' + path.basename(w.logPath) + (busy ? ' is in use by EverQuest' : ' could not be moved (' + ((err && err.message) || err) + ')') + ' — not archived, trying again at the next sweep');
+        }
+      }
+    }
+  } finally {
+    _logRotateBusy = false;
+  }
+  return moved;
+}
+
+// First pass shortly after start, then every 10 minutes. Unref'd: the sweep never keeps the agent alive.
+function _logRotateStartTimers(sweep = _logRotateSweep) {
+  const first = setTimeout(() => { Promise.resolve(sweep()).catch(() => {}); }, LOG_ROTATE_FIRST_MS);
+  const every = setInterval(() => { Promise.resolve(sweep()).catch(() => {}); }, LOG_ROTATE_SWEEP_MS);
+  if (first.unref) first.unref();
+  if (every.unref) every.unref();
+  return { first, every };
 }
 
 // ── 📶 Connection meter — a local-only lag meter (2026-10-05) ───────────────
@@ -59215,6 +59300,8 @@ async function main() {
     // FB-51: say so when the primary character's log goes quiet while Zeal has them in game.
     const _silentTimer = setInterval(() => { try { _logSilentSweep(); } catch { void 0; } }, LOG_SILENT_SWEEP_MS);
     if (_silentTimer.unref) _silentTimer.unref();
+    // FB-51 (§383): log archiving runs in normal use, not just --once (every 10 min; see the gates at _logRotateSweep).
+    _logRotateStartTimers();
     // 📶 Connection meter: ping the router and the game host from this PC (Windows; local only).
     try { _netStart(); } catch { void 0; }
     // Run forever; intervals keep us alive
@@ -59237,8 +59324,7 @@ async function main() {
     // Log-size sweep (a member's feedback): every 10 min, archive any watched
     // log over the size cap that has been idle long enough. First pass after
     // 2 min so an oversized log from a previous session is handled promptly.
-    setTimeout(() => { _logRotateSweep().catch(() => {}); }, 2 * 60_000);
-    setInterval(() => { _logRotateSweep().catch(() => {}); }, 10 * 60_000);
+    _logRotateStartTimers();
     setInterval(() => {
       idleCount++;
       if (idleCount > 10) {  // ~5s idle
@@ -59397,6 +59483,10 @@ module.exports = {
   tailFile, _tailStalled, _tailStatus,
   _logSilentCheck, _logSilentSweep, _logSilentForTest: () => _logSilent,
   _archiveLogNow, _rotateArchiveName, _rotateArchiveNameSeconds, _logRotationsForTest: () => stats.logRotations,
+  // FB-51 (§383) watch-mode archive sweep — the shipped sweep, driven with a fake fs / clock by test/log-rotate-watch.test.js.
+  _logRotateSweep, _logRotateSkipReason, _logRotateStartTimers,
+  _setAgentPrefsForTest: (o) => { _agentPrefsCache = o; },
+  _resetLogRotateForTest: () => { _logRotateBusy = false; _logRotateFailAt.clear(); stats.logRotations = []; },
   // 📶 Connection meter — pure parts + the stdout feed, exported so the tests drive the shipped code.
   _netParsePingLine, _netParseEqHost, _netParseGateway, _netStats, _netVerdict, _netSeries, _netFightSpan,
   _netNewTarget, _netOnData, _netPush, _netPayload, _netTargetsForTest: () => _net,
