@@ -204,10 +204,33 @@ function zoneShort(zone) {
   return String(zone).toLowerCase();
 }
 
+// The Halls of Honor trial credit (hohonora/encounters/*.lua, read 2026-10-19). Winning a trial spawns its NPC
+// (Trydan Faye, Rhaliq Trell, Alekson Garn); hailing it while in the winning group or raid prints the mist line
+// below — "... the power of <NPC>." — instead of a flag message, or "You have already received credit for
+// completing this trial." (the same words for all three, so the agent sends the NPC it last hailed as `npc`).
+// → { stage, fresh } or null; `fresh` is false for the already-held line.
+const TRIAL_STAGE_BY_NPC = { 'trydan faye': 'hoh_trial_1', 'rhaliq trell': 'hoh_trial_2', 'alekson garn': 'hoh_trial_3' };
+const _MIST_RX = /^an ethereal mist descends from the air and surrounds your very being\. your body begins to emanate with the power of ([a-z`' ]+?)\.?$/;
+const _ALREADY_RX = /^you have already received credit for completing this trial\.?$/;
+function resolveTrial(e) {
+  const t = _norm(e && e.text);
+  const mist = _MIST_RX.exec(t);
+  if (mist) { const stage = TRIAL_STAGE_BY_NPC[mist[1].trim()]; return stage ? { stage, fresh: true } : null; }
+  if (_ALREADY_RX.test(t)) {
+    const stage = TRIAL_STAGE_BY_NPC[_norm(e.npc).replace(/^(a|an|the)\s+/, '')];
+    return stage ? { stage, fresh: false } : null;
+  }
+  return null;
+}
+
 // One uploaded event → { stage, via } or null. `boss` is the agent's last boss kill, already lowercased
 // by the caller's key function.
 function resolveStage(e, bossKey) {
   if (!e) return null;
+  if (e.kind === 'trial') {
+    const r = resolveTrial(e);
+    return r ? { stage: r.stage, via: 'trial', fresh: r.fresh } : null;
+  }
   const kind = e.kind === 'checklist' ? 'checklist' : (e.kind === 'recital' ? 'recital' : 'grant');
   if (kind === 'recital') {
     const t = _norm(e.text);
@@ -237,5 +260,5 @@ function resolveStage(e, bossKey) {
 
 module.exports = {
   ZONE_BY_ID, PREV_STAGES, RECITAL_STAGES, ZONE_ONLY, STAGE_IMPLIES, TACTICS_CHECKLIST_BY_BOSS,
-  zoneShort, resolveStage,
+  zoneShort, resolveStage, resolveTrial, TRIAL_STAGE_BY_NPC,
 };
