@@ -100,4 +100,20 @@ describe('death confirmation', () => {
   it('a corpse run with no self-death of ours confirms nothing', () => {
     expect(run([[12, 'Returning to home point, please wait...']])).toHaveLength(0);
   });
+
+  it('an NPC whose name has a backtick is never a player death, even if something confirmed it', () => {
+    // The Halls of Honor dragon reached the needs-rez board (2026-10-18). Player names are letters only.
+    agent.whoData.set('rydda`dar', { name: 'Rydda`Dar' });
+    agent.whoData.set('corvale', { name: 'Corvale' });
+    try {
+      const d = run([
+        [10, 'Rydda`Dar has been slain by Moash!'],
+        [11, 'Corvale has been slain by Rydda`Dar!'],
+      ]);
+      expect(d.map(x => x.name)).toEqual(['Corvale']);
+    } finally {
+      agent.whoData.delete('rydda`dar');
+      agent.whoData.delete('corvale');
+    }
+  });
 });
