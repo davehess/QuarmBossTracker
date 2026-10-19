@@ -1181,7 +1181,7 @@ describe('Halls of Honor trials', () => {
     const e = env({ raid_roster: rosterRows(RAID, 'u1', 1) });
     const w = await e.hb.openWindow({ bossName: 'Rydda`Dar', killedAtMs: KILL });
     expect(w).toMatchObject({ boss_id: 'hoh_trial_1', zone: 'Halls of Honor' });
-    expect(w.npc_name).toMatch(/^Trydan Faye/);
+    expect(w.npc_name).toBe('Trydan Faye');    // bare: the agent sends a hail only when it equals a window's npc_name
     expect(Date.parse(w.expires_at) - Date.parse(w.opened_at)).toBe(10 * MIN);
     const [view] = (await e.hb.getBoard()).windows;
     expect(view.still.map(s => s.name).sort()).toEqual(RAID.slice().sort());
