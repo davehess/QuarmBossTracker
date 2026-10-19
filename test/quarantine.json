@@ -1,0 +1,10 @@
+{
+  "files": [
+    {
+      "file": "test/my-logs-local.test.js",
+      "reason": "One test pins its fixture fight to 2026-10-05, so the History ring's 7-day age-out drops it once the clock passes 2026-10-12 (a dated fixture, not a product bug).",
+      "owner": "the shipping session",
+      "expires": "2026-11-02"
+    }
+  ]
+}
