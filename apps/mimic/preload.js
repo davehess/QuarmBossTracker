@@ -1285,6 +1285,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // command({ verb: 'save'|'load'|'next'|'prev'|'delete', name }) → { ok, message }.
   overlaySetsList:    ()    => ipcRenderer.invoke('overlay-sets-list'),
   overlaySetsCommand: (cmd) => ipcRenderer.invoke('overlay-sets-command', cmd),
+  // 📤📥 A Canvas layout as a file (Settings, the dashboard's Overlays tab): export({ setName?, title?,
+  // description?, author?, mode? }) → { ok, message, nudge?, canceled? }; import() picks a file in Mimic's own
+  // window, shows what it holds, and adds it as a new set → { ok, message, canceled? }. No path crosses the bridge.
+  overlayLayoutExport: (opts) => ipcRenderer.invoke('overlay-layout-export', opts),
+  overlayLayoutImport: ()     => ipcRenderer.invoke('overlay-layout-import'),
 
   // Diagnostics.
   getAgentLogTail: (lines) => ipcRenderer.invoke('get-agent-log-tail', lines),

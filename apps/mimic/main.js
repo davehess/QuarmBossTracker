@@ -3643,6 +3643,163 @@ function _overlaySetCommand(cmd, char, quiet) {
   }
   return { ok: false, message: 'Unknown overlay set command' };
 }
+
+// ── Share a layout as a file (Keepers of the (Overlay) Arts; the guild lead, 2026-10-19) ─────────────
+// "make it so overlays are exportable into file and importable if people want to share privately but also
+// encourage people to share publicly". The Canvas layout of a set (or of the screen as it is now) is
+// written by portableLayout.js: positions pinned to EverQuest's window, sizes by screen height, nothing
+// private. File only — no token, no network — so the local edition (eqmimic.quest) has it exactly as the
+// guild edition does. An import is untrusted: portableLayout.parse() rebuilds it from a whitelist, the
+// person sees what it holds first, and it becomes a NEW set after the current setup is saved as "Before …".
+// Standalone overlay windows are not in the file (their rects are this computer's); only Canvas pieces are.
+const portableLayout = require('./portableLayout');
+const _LAYOUT_NUDGE = 'Share it in the Gallery and your name goes on it. The Gallery is coming soon.';
+let _layoutFileBusy = false;
+// The Canvas layout a set holds for this screen, the display it was made on, and where EverQuest sat there.
+function _layoutOfSet(set) {
+  const cfg = loadConfig();
+  const d = _canvasDisplay();
+  const all = (set && set.canvas && typeof set.canvas === 'object') ? set.canvas : {};
+  const res = d.bounds.width + 'x' + d.bounds.height;
+  const key = all[res] ? res : (all[cfg.canvasLastRes] ? cfg.canvasLastRes : Object.keys(all)[0]);
+  const m = /^(\d+)x(\d+)$/.exec(String(key || ''));
+  if (!m || !all[key]) return null;
+  // EverQuest's rect counts only for the screen setup it was captured on.
+  const eq = (key === res && set.eq && (!set.sig || set.sig === _screenSignature()))
+    ? { x: set.eq.x - d.bounds.x, y: set.eq.y - d.bounds.y, width: set.eq.width, height: set.eq.height } : null;
+  return { layout: all[key], screen: { width: +m[1], height: +m[2] }, eq };
+}
+// opts: { setName? (a saved set; none = the screen as it is now), title?, description?, author?, mode? }
+// → { ok, message, nudge? } or { ok:false, canceled:true }.
+async function _exportLayoutFile(opts) {
+  opts = (opts && typeof opts === 'object') ? opts : {};
+  if (_layoutFileBusy) return { ok: false, message: 'A layout file window is already open.' };
+  _layoutFileBusy = true;
+  try {
+    let set;
+    if (opts.setName) {
+      const n = overlaySets.cleanName(opts.setName);
+      set = n && overlaySets.load(_SETS_FILE()).sets[overlaySets.keyOf(n)];
+      if (!set) return { ok: false, message: `No overlay set called "${opts.setName}"` };
+    } else {
+      set = _captureOverlaySet();
+    }
+    const src = _layoutOfSet(set);
+    if (!src) return { ok: false, message: 'The Canvas has no layout to export yet. Arrange something on it first.' };
+    const text = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+    const made = portableLayout.toPortable(src.layout, src.screen, src.eq, {
+      title: text(opts.title, 60) || set.name || 'My layout',
+      description: text(opts.description, 280), author: text(opts.author, 32),
+      modes: portableLayout.MODES.includes(opts.mode) ? [opts.mode] : [],
+    });
+    if (!made.ok) return { ok: false, message: made.error };
+    const win = BrowserWindow.getFocusedWindow();
+    const pick = await dialog.showSaveDialog(win || null, {
+      title: 'Export layout',
+      defaultPath: path.join(app.getPath('documents'), portableLayout.fileStem(made.doc.meta.title) + '.mimic-layout.json'),
+      filters: [{ name: 'Mimic layout', extensions: ['json'] }],
+    });
+    if (pick.canceled || !pick.filePath) return { ok: false, canceled: true, message: '' };
+    const file = /\.json$/i.test(pick.filePath) ? pick.filePath : pick.filePath + '.mimic-layout.json';
+    try {
+      fs.writeFileSync(file + '.tmp', JSON.stringify(made.doc, null, 2));
+      fs.renameSync(file + '.tmp', file);
+    } catch (e) { return { ok: false, message: `Could not write the file: ${e.message}` }; }
+    return { ok: true, message: `Exported "${made.doc.meta.title}" to ${path.basename(file)}`, nudge: _LAYOUT_NUDGE };
+  } catch (e) {
+    return { ok: false, message: `Could not export: ${e && e.message || e}` };
+  } finally { _layoutFileBusy = false; }
+}
+// Pick a file, show what it holds, and add it as a NEW set (the current setup saved first, one Undo).
+// → { ok, message, told? } (told: the person already saw the outcome in a window) or { ok:false, canceled:true }.
+async function _importLayoutFile() {
+  if (_layoutFileBusy) return { ok: false, message: 'A layout file window is already open.' };
+  _layoutFileBusy = true;
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const pick = await dialog.showOpenDialog(win || null, {
+      title: 'Import a layout', properties: ['openFile'],
+      filters: [{ name: 'Mimic layout', extensions: ['json'] }],
+    });
+    if (pick.canceled || !pick.filePaths || !pick.filePaths[0]) return { ok: false, canceled: true, message: '' };
+    let text;
+    try {
+      if (fs.statSync(pick.filePaths[0]).size > portableLayout.MAX_BYTES) return { ok: false, message: 'That file is too big to be a Mimic layout.' };
+      text = fs.readFileSync(pick.filePaths[0], 'utf8');
+    } catch (e) { return { ok: false, message: `Could not read that file: ${e.message}` }; }
+    const parsed = portableLayout.parse(text);
+    if (!parsed.ok) return { ok: false, message: parsed.error };
+    const doc = parsed.doc;
+    const d = _canvasDisplay();
+    const eqw = _eqMainWindow(10 * 60 * 1000);
+    const made = portableLayout.fromPortable(doc, { width: d.bounds.width, height: d.bounds.height },
+      eqw ? { x: eqw.client.x - d.bounds.x, y: eqw.client.y - d.bounds.y, width: eqw.client.width, height: eqw.client.height } : null);
+    if (!made.ok) return { ok: false, message: made.error };
+
+    const file = _SETS_FILE();
+    const store = overlaySets.load(file);
+    if (Object.keys(store.sets).length + 2 > overlaySets.MAX_SETS) {
+      return { ok: false, message: `You have ${Object.keys(store.sets).length} sets. Delete a couple first, so the new set and the "Before" copy of your setup both fit.` };
+    }
+    const info = portableLayout.describe(doc);
+    const newName = overlaySets.uniqueName(store, info.title);
+    const beforeName = overlaySets.uniqueName(store, 'Before ' + newName);
+    if (!newName || !beforeName) return { ok: false, message: 'Could not find a free name for the new set.' };
+    const bits = [`${info.pieces} piece${info.pieces === 1 ? '' : 's'}`];
+    if (info.classes.length) bits.push(info.classes.join(', '));
+    if (info.modes.length) bits.push(info.modes.join(', '));
+    const ask = await dialog.showMessageBox(win || null, {
+      type: 'question', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Add as a new set', 'Cancel'], defaultId: 0, cancelId: 1,
+      message: `Add "${info.title}" as a new set?`,
+      detail: [info.author ? `By ${info.author}` : 'No author name on it', info.description, bits.join(' · '),
+        `Your setup now is saved first as "${beforeName}", then this layout is loaded as "${newName}". You can undo it right after.`]
+        .filter(Boolean).join('\n\n'),
+    });
+    if (ask.response !== 0) return { ok: false, canceled: true, message: '' };
+
+    const who = _activeCharName || null;
+    const prevKey = overlaySets.current(store, who);
+    overlaySets.put(store, beforeName, _captureOverlaySet(), who);
+    const snap = _captureOverlaySet();
+    snap.canvas = Object.assign({}, snap.canvas || {}, { [`${d.bounds.width}x${d.bounds.height}`]: made.layout });
+    // A layout on the Canvas needs the Canvas on, and each overlay page it hosts has its own switch on.
+    snap.show.showCanvas = true;
+    for (const k of doc.needs.overlays) { const spec = _canvasSpec(k); if (spec) snap.show[spec.flag] = true; }
+    overlaySets.put(store, newName, snap, who);
+    try { overlaySets.save(file, store); }
+    catch (e) { return { ok: false, message: `Could not save the set: ${e.message}` }; }
+    _overlaySetCommand({ verb: 'load', name: newName }, who, true);
+    appendAgentLog(`[sets] imported layout "${newName}" (${info.pieces} pieces); previous setup saved as "${beforeName}"\n`);
+
+    const done = await dialog.showMessageBox(win || null, {
+      type: 'info', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Keep it', 'Undo'], defaultId: 0, cancelId: 0,
+      message: `Added "${newName}" and switched to it.`,
+      detail: `Your setup from before is saved as "${beforeName}". Undo puts it back and removes "${newName}".`,
+    });
+    if (done.response === 1) {
+      _overlaySetCommand({ verb: 'load', name: beforeName }, who, true);
+      const s2 = overlaySets.load(file);
+      overlaySets.remove(s2, newName);
+      overlaySets.remove(s2, beforeName);
+      if (prevKey && s2.sets[prevKey]) overlaySets.use(s2, s2.sets[prevKey].name, who);
+      try { overlaySets.save(file, s2); } catch { /* the sets stay; Settings can delete them */ }
+      try { buildTrayMenu(); } catch { /* */ }
+      return { ok: true, told: true, message: `Undone: your earlier setup is back and "${newName}" is removed.` };
+    }
+    return { ok: true, told: true, message: `Added "${newName}" and switched to it. Your earlier setup is saved as "${beforeName}".` };
+  } catch (e) {
+    return { ok: false, message: `Could not import: ${e && e.message || e}` };
+  } finally { _layoutFileBusy = false; }
+}
+// The tray has no status line: a result that nothing has told the person yet gets a window.
+async function _layoutFileFromTray(run) {
+  let r;
+  try { r = await run(); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
+  if (!r || r.canceled || (r.ok && r.told)) return;
+  try {
+    await dialog.showMessageBox({ type: r.ok ? 'info' : 'warning', title: 'Wolf Pack miMIC', noLink: true, message: r.message, detail: r.nudge || '' });
+  } catch { /* no dialog */ }
+}
 // Tray: the sets by name (the active character's current one ticked), next,
 // save over the current one, save as a new one. Delete lives in Settings,
 // which can also take a name.
@@ -3665,6 +3822,9 @@ function _overlaySetTrayItems() {
       while (store.sets[overlaySets.keyOf('Set ' + n)]) n++;
       _overlaySetCommand({ verb: 'save', name: 'Set ' + n }, who);
     } },
+    { type: 'separator' },
+    { label: '📤 Export the Canvas layout to a file…', click: () => { _layoutFileFromTray(() => _exportLayoutFile({})); } },
+    { label: '📥 Import a layout from a file…', click: () => { _layoutFileFromTray(() => _importLayoutFile()); } },
     { label: 'Name, delete, and the /pipe commands… (Settings)', click: () => { try { openSettings(); } catch { /* */ } } },
   );
   return items;
@@ -12986,6 +13146,9 @@ ipcMain.handle('overlay-sets-command', (_e, cmd) => {
   if (!['save', 'load', 'next', 'prev', 'delete'].includes(verb)) return { ok: false, message: 'Unknown overlay set command' };
   return _overlaySetCommand({ verb, name: overlaySets.cleanName(cmd.name) }, null, true);
 });
+// Share a layout as a file — Settings and the dashboard's Overlays tab; the tray runs the same two functions.
+ipcMain.handle('overlay-layout-export', (_e, opts) => _exportLayoutFile(opts));
+ipcMain.handle('overlay-layout-import', () => _importLayoutFile());
 ipcMain.handle('get-agent-port', () => agentPort);
 // "Set up for me" from Settings — bridge to the agent's single writer
 // (POST /api/eq-setup → _applyEqSetup). Routed through main (Node, no CORS) so
