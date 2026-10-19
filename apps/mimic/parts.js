@@ -127,18 +127,23 @@
   function valueText(v) { var p = pct(v.pct); return v.text != null ? v.text : (p == null ? '—' : Math.round(p) + '%'); }
   // A gauge's own number is its percent in the round and big modes; its text moves underneath.
   function headline(part, v) { var p = pct(v.pct); return (part.kind === 'gauge' && p != null) ? Math.round(p) + '%' : valueText(v); }
+  // Regen per tick (FB-90): a gauge view may carry `regen: { text, pulse, tip }` (me.hp, me.mana). The words
+  // ride in the label, right of its name (so Label → Hide takes them too); the pulse is a class on the track,
+  // there only for the last second before the server tick.
+  function rgSpan(v) { return v.regen ? ' <span class="pt-rg" title="' + esc(v.regen.tip) + '">' + esc(v.regen.text) + '</span>' : ''; }
+  function rgCls(v) { return v.regen && v.regen.pulse ? ' rgp' : ''; }
   function rBar(part, v, o) {
     var p = pct(v.pct);
-    return '<div class="pt pt-bar"><div class="pt-lr"><span class="pt-l">' + esc(lbl(part, v)) + '</span>'
+    return '<div class="pt pt-bar"><div class="pt-lr"><span class="pt-l">' + esc(lbl(part, v)) + rgSpan(v) + '</span>'
       + '<span class="pt-v">' + act(v, esc(valueText(v))) + '</span></div>'
-      + '<div class="pt-track"><div class="pt-fill" style="width:' + (p == null ? 0 : p.toFixed(1)) + '%;background:' + fillCol(part, v, o) + '"></div></div>'
+      + '<div class="pt-track' + rgCls(v) + '"><div class="pt-fill" style="width:' + (p == null ? 0 : p.toFixed(1)) + '%;background:' + fillCol(part, v, o) + '"></div></div>'
       + (v.sub ? '<div class="pt-sub">' + esc(v.sub) + '</div>' : '') + '</div>';
   }
   // One line: label, a slim bar, the value.
   function rThin(part, v, o) {
     var p = pct(v.pct);
-    return '<div class="pt pt-thin"><span class="pt-l">' + esc(lbl(part, v)) + '</span>'
-      + '<div class="pt-track"><div class="pt-fill" style="width:' + (p == null ? 0 : p.toFixed(1)) + '%;background:' + fillCol(part, v, o) + '"></div></div>'
+    return '<div class="pt pt-thin"><span class="pt-l">' + esc(lbl(part, v)) + rgSpan(v) + '</span>'
+      + '<div class="pt-track' + rgCls(v) + '"><div class="pt-fill" style="width:' + (p == null ? 0 : p.toFixed(1)) + '%;background:' + fillCol(part, v, o) + '"></div></div>'
       + '<span class="pt-v">' + esc(valueText(v)) + '</span></div>';
   }
   // Fills from the bottom, like the HUD's hit columns.
@@ -332,9 +337,17 @@
         + (vs ? '<tspan fill="' + SEG_DIM + '">' + esc(vs) + '</tspan>' : ''), vt.length + vs.length);
     } else {
       var col2 = fillCol(part, v, o), p = pct(v.pct), txt2 = lbl(part, v) + ' ' + headline(part, v);
-      h += segGauge(a, p == null ? 0 : p / 100, col2, w, null, null, a.rev);
+      var rgv = v.regen || null, f2 = p == null ? 0 : p / 100, span2 = a.a1 - a.a0;
+      h += segGauge(a, f2, col2, w, null, null, a.rev);
+      // Regen per tick (FB-90): a white glow at the fill's edge, lit only for the last second before the tick.
+      if (rgv) {
+        var ea = a.rev ? a.a1 - span2 * f2 : a.a0 + span2 * f2;
+        h += '<path class="pt-edge' + (rgv.pulse ? ' on' : '') + '" d="' + arcD(a.r, ea - 1.2, ea + 1.2) + '" stroke="#fff" stroke-width="' + f1(w + 1.5) + '" fill="none" stroke-linecap="round"/>';
+      }
       if (!nl) h += segLabel(id, a, a.a0, a.a1, '<tspan fill="' + SEG_DIM + '">' + esc(lbl(part, v)) + ' </tspan>'
-        + '<tspan fill="' + col2 + '" font-weight="500">' + esc(headline(part, v)) + '</tspan>', txt2.length);
+        + '<tspan fill="' + col2 + '" font-weight="500">' + esc(headline(part, v)) + '</tspan>'
+        + (rgv ? '<tspan fill="' + C.green + '" font-weight="700"> ' + esc(rgv.text) + '<title>' + esc(rgv.tip) + '</title></tspan>' : ''),
+        txt2.length + (rgv ? 1 + rgv.text.length : 0));
     }
     return '<div class="pt pt-seg"><svg viewBox="' + box.map(f1).join(' ') + '" preserveAspectRatio="xMidYMid meet">' + h + '</svg></div>';
   }
@@ -385,6 +398,13 @@
     + '.pt-chips{display:flex;flex-wrap:wrap;gap:3px;align-items:center;align-content:flex-start}'
     + '.pt-chip{padding:0 5px;border:1px solid;border-radius:9px;background:rgba(13,17,23,0.7);white-space:nowrap}'
     + '.pt-none{opacity:0.55}'
+    // Regen per tick (FB-90): the words, and the glow at the fill's edge for the last second before the tick.
+    + '.pt-rg{color:' + C.green + ';font-weight:700;font-variant-numeric:tabular-nums}'
+    + '.pt-track.rgp .pt-fill{animation:ptrg 1s ease-in-out}'
+    + '@keyframes ptrg{0%{box-shadow:0 0 0 0 rgba(255,255,255,0)}60%{box-shadow:0 0 7px 2px #fff}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}'
+    + '.pt-edge{opacity:0;filter:drop-shadow(0 0 3px #fff)}.pt-edge.on{opacity:1;animation:ptedge 1s ease-in-out}'
+    + '@keyframes ptedge{0%{opacity:.25}60%{opacity:1}100%{opacity:.25}}'
+    + '@media (prefers-reduced-motion: reduce){.pt-track.rgp .pt-fill,.pt-edge.on{animation:none}}'
     // The newer formats.
     + '.pt-thin{display:flex;align-items:center;gap:6px;white-space:nowrap}'
     + '.pt-thin .pt-track{flex:1;margin-top:0;height:calc(6px * var(--ps,1))}'
@@ -498,12 +518,34 @@
   P('me.name', 'me', 'Name, level, class', 'me', 'value',
     function (d) { return d.character ? { text: d.character, sub: [d.level, d['class']].filter(Boolean).join(' ') } : null; },
     { text: 'Aldenmar', sub: '60 Enchanter' }, { short: 'Me' });
+  // Regen per tick (FB-90). The agent measures it (d.regen = { hp, mana, n_ticks, quiet }, null until two quiet
+  // ticks and while in combat); the pulse is on for the last REGEN_PULSE_MS before the server tick, the tick
+  // the agent sent aged to now. `repaint` makes the canvas redraw these two between polls so it flips on time.
+  var REGEN_PULSE_MS = 1000;
+  function regenPulse(msLeft) { return msLeft != null && msLeft > 0 && msLeft <= REGEN_PULSE_MS; }
+  function regenView(d, at, key) {
+    var r = d && d.regen, n = r && r.quiet !== false ? num(r[key]) : null;
+    if (n == null || n <= 0) return null;
+    var t = d.tick && num(d.tick.ms_left), period = (d.tick && num(d.tick.period_ms)) || 6000, left = null;
+    if (t != null) left = (((t - Math.max(0, Date.now() - (num(at) || Date.now()))) % period) + period) % period;
+    return { text: '+' + fmtInt(n) + ' / tick', pulse: regenPulse(left), tip: 'observed over ' + (num(r.n_ticks) || 0) + ' quiet ticks' };
+  }
   P('me.hp', 'me', 'My health', 'me', 'gauge',
-    function (d) { var p = d.character && gPct(d.hp); return p == null ? null : { pct: p, text: curMax(d.hp), color: hpColor(p) }; },
-    { pct: 84, text: '3,512 / 4,180', color: C.green }, { short: 'HP' });
+    function (d, at) {
+      var p = d.character && gPct(d.hp); if (p == null) return null;
+      var v = { pct: p, text: curMax(d.hp), color: hpColor(p) }, rg = regenView(d, at, 'hp');
+      if (rg) v.regen = rg;
+      return v;
+    },
+    { pct: 84, text: '3,512 / 4,180', color: C.green }, { short: 'HP', repaint: true });
   P('me.mana', 'me', 'My mana', 'me', 'gauge',
-    function (d) { var p = d.character && !d.no_mana && gPct(d.mana); return p == null || p === false ? null : { pct: p, text: curMax(d.mana) }; },
-    { pct: 62, text: '2,410 / 3,890' }, { short: 'Mana', color: C.blue });
+    function (d, at) {
+      var p = d.character && !d.no_mana && gPct(d.mana); if (p == null || p === false) return null;
+      var v = { pct: p, text: curMax(d.mana) }, rg = regenView(d, at, 'mana');
+      if (rg) v.regen = rg;
+      return v;
+    },
+    { pct: 62, text: '2,410 / 3,890' }, { short: 'Mana', color: C.blue, repaint: true });
   P('me.end', 'me', 'My endurance', 'me', 'gauge',
     function (d) { var p = d.character && gPct(d.end); return p == null ? null : { pct: p }; },
     { pct: 91 }, { short: 'End', color: C.gold });
@@ -1087,7 +1129,7 @@
 
   root.WpParts = {
     C: C, CATS: CATS, MODES: MODES, DEFAULT_SIZE: DEFAULT_SIZE, CSS: CSS, THICK: THICK, ALIGN: ALIGN, PALETTE: PALETTE,
-    RING: RING, cleanArc: cleanArc, segBox: segBox,
+    RING: RING, cleanArc: cleanArc, segBox: segBox, regenPulse: regenPulse,
     render: render, resolve: resolve,
     util: { esc: esc, num: num, pct: pct, hpColor: hpColor, mmss: mmss, fmtNum: fmtNum, pctOf: pctOf, at: at },
     SOURCES: SOURCES, PARTS: PARTS, byId: byId, PRESETS: PRESETS,

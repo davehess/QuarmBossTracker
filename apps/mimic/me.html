@@ -215,7 +215,16 @@
   body.hud.wp-backdrop #wrap{background:transparent !important}
   body.hud.wp-backdrop #hudsvg,body.hud.wp-backdrop #hudlanes{
     filter:drop-shadow(0 0 2px rgb(0 0 0 / var(--bg-alpha,0.92))) drop-shadow(0 0 7px rgb(8 10 14 / var(--bg-alpha,0.92)))}
-  @media (prefers-reduced-motion: reduce){ .bar > i{transition:none} }
+  @media (prefers-reduced-motion: reduce){ .bar > i{transition:none} .bar.rgp > i,.rgp-edge.on{animation:none} }
+  /* FB-90, regen per tick: green "+N / tick" at the right of the bar, and in the last second before the
+     server tick a white glow at the fill's edge. The pulse is a class (rgp / on) that is there only for
+     that second; the markup does not change otherwise. */
+  .bar > span .rg{position:absolute;right:4px;top:0;color:var(--green);font-style:normal;font-weight:700;font-size:10px}
+  .bar.rgp > i{animation:rgbar 1s ease-in-out}
+  .rgp-edge{opacity:0;filter:drop-shadow(0 0 3px #fff)}
+  .rgp-edge.on{opacity:1;animation:rgedge 1s ease-in-out}
+  @keyframes rgbar{0%{box-shadow:0 0 0 0 rgb(255 255 255 / 0)}60%{box-shadow:0 0 7px 2px #fff}100%{box-shadow:0 0 0 0 rgb(255 255 255 / 0)}}
+  @keyframes rgedge{0%{opacity:.25}60%{opacity:1}100%{opacity:.25}}
 
   /* On the Timers canvas (Mimic 3.0 alpha; the guild lead, 2026-10-03: "the margins around the actual data
      is too large … when I look at an overlay outside of the canvas or choose it as a preset within the canvas
@@ -443,8 +452,9 @@
     return '<div class="bar' + (cls ? ' ' + cls : '') + '"><i style="width:' + w.toFixed(1) + '%;background:' + color + '"></i><span>' + (text || '') + '</span></div>';
   }
   // `counts`: words that take the percentage's place (a bard's mana slot, below) and the room they need.
-  function brow(p, color, text, counts){
-    return '<div class="brow' + (counts ? ' counts' : '') + '">' + bar(p, color, text) + '<div class="pct" style="color:' + color + '">'
+  function brow(p, color, text, counts, regen){
+    if (regen) text = (text || '') + '<em class="rg" title="' + esc(regen.tip) + '">' + regen.w + '</em>';
+    return '<div class="brow' + (counts ? ' counts' : '') + '">' + bar(p, color, text, regen && regen.pulse ? 'rgp' : '') + '<div class="pct" style="color:' + color + '">'
       + (counts ? esc(counts) : (p == null ? '' : Math.round(p) + '%')) + '</div></div>';
   }
   function curMax(o){ return (o && o.cur != null && o.max != null) ? n0(o.cur) + ' / ' + n0(o.max) : ''; }
@@ -465,6 +475,31 @@
     return out.length ? out : null;
   }
   function bardText(counts){ return counts.map(function(c){ return c[0] + ' ' + c[1]; }).join(' · '); }
+  // ── Regen per tick (FB-90: "Add per tick hp and mana regen to HUD and highlight the regen on the bars when
+  // its about to come back up"). The agent measures it (s.regen = { hp, mana, n_ticks, quiet }, or null until
+  // two quiet ticks and while in combat); this draws it. A stat with no regen (full, or a class with no mana)
+  // is left out. The pulse is on for the last REGEN_PULSE_MS before the server tick, from the tick the agent
+  // sent aged to now, so it is a pure function of the clock and flips twice a tick.
+  var REGEN_PULSE_MS = 1000;
+  function regenPulse(msLeft){ return msLeft != null && msLeft > 0 && msLeft <= REGEN_PULSE_MS; }
+  function regenWord(n){ return typeof n === 'number' && isFinite(n) && n > 0 ? '+' + n0(n) + ' / tick' : null; }
+  function regenInfo(s){
+    var r = s && s.regen;
+    if (!r || r.quiet === false) return null;
+    var hp = regenWord(r.hp), mana = s.no_mana === true ? null : regenWord(r.mana);
+    if (!hp && !mana) return null;
+    var left = null;
+    if (s.tick && s.tick.ms_left != null) left = (((s.tick.ms_left - Math.max(0, Date.now() - _lastAt)) % 6000) + 6000) % 6000;
+    return { hp: hp, mana: mana, pulse: regenPulse(left), tip: 'observed over ' + (r.n_ticks || 0) + ' quiet ticks' };
+  }
+  // The glow at the fill's edge (angle `ang` on radius r): always drawn while there is a regen to show,
+  // lit (class "on") only for the last second.
+  function regenEdge(r, ang, W, on){
+    return '<path class="rgp-edge' + (on ? ' on' : '') + '" d="' + arcD(r, ang - 1.2, ang + 1.2) + '" stroke="#fff" stroke-width="' + f1(6 * W + 1.5) + '" fill="none" stroke-linecap="round"/>';
+  }
+  function regenTspan(word, tip){ return '<tspan fill="var(--green)" font-weight="700"> ' + word + '<title>' + esc(tip) + '</title></tspan>'; }
+  // The label's length as drawn: tags and the tooltip's words do not take room on the ring.
+  function plainLen(h){ return h.replace(/<title>[^<]*<\/title>/g, '').replace(/<[^>]*>/g, '').length; }
   // Time left on a cast, as a DEPLETING bar — countdowns run right to left
   // across the platform (the CH cast bar).
   function castHtml(c){
@@ -555,11 +590,11 @@
   // ── A · Classic ───────────────────────────────────────────────────────────
   function renderA(s){
     var hpP = pctOf(s.hp), mnP = pctOf(s.mana);
-    var h = '';
-    h += brow(hpP, hpColor(hpP), curMax(s.hp));
+    var h = '', rg = regenInfo(s);
+    h += brow(hpP, hpColor(hpP), curMax(s.hp), null, rg && rg.hp ? { w: rg.hp, tip: rg.tip, pulse: rg.pulse } : null);
     // No mana row for a warrior, rogue or monk — the HUD's rule (it had
     // shown an empty 0% bar for a monk).
-    if (mnP != null && !s.no_mana) { var bc = bardCounts(s); h += brow(mnP, 'var(--blue)', curMax(s.mana), bc ? bardText(bc) : null); }
+    if (mnP != null && !s.no_mana) { var bc = bardCounts(s); h += brow(mnP, 'var(--blue)', curMax(s.mana), bc ? bardText(bc) : null, rg && rg.mana ? { w: rg.mana, tip: rg.tip, pulse: rg.pulse } : null); }
     // "Endurance can be small": a thin bar, its % beside it.
     if (s.end && s.end.pct != null) h += '<div class="brow small">' + bar(s.end.pct, 'var(--orange)', '', 'thin')
       + '<div class="pct" style="color:var(--orange)">' + Math.round(s.end.pct) + '%</div></div>';
@@ -841,13 +876,14 @@
   // Damage IN sits with your health, OUT on the right with your hits (the guild
   // lead, round seven: "IN and Out should be side-swapped. Damage in should be
   // next to health and out should be on the right").
-  function hpLabel(d, withDps){ return lbl('HP', pctTxt(d.hp), hpColor(d.hp)) + (withDps && d.inn != null ? '<tspan fill="#8b949e">  · in ' + big(d.inn) + '</tspan>' : ''); }
+  function hpLabel(d, withDps, rg){ return lbl('HP', pctTxt(d.hp), hpColor(d.hp)) + (rg && rg.hp ? regenTspan(rg.hp, rg.tip) : '') + (withDps && d.inn != null ? '<tspan fill="#8b949e">  · in ' + big(d.inn) + '</tspan>' : ''); }
   // A bard's counts take the place of "MANA nn%": DIRGE 4 · FM 5 · CHARM 12, in the arc's own colour.
   function bardLabel(counts, color){
     return counts.map(function(c){ return lbl(c[0], c[1], color); }).join('<tspan fill="#8b949e"> · </tspan>');
   }
-  function rightLabel(d, withDps, withFocus){
+  function rightLabel(d, withDps, withFocus, rg){
     return (d.bard ? bardLabel(d.bard, d.right.color) : lbl(d.noMana ? 'END' : 'MANA', pctTxt(d.right.pct), d.right.color))
+      + (rg && rg.mana && d.right.part === 'mana' ? regenTspan(rg.mana, rg.tip) : '')
       + (withDps && d.out != null ? '<tspan fill="#8b949e">  · out ' + big(d.out) + '</tspan>' : '')
       + (withFocus && d.focus ? '<tspan fill="#e6edf3">  · ' + d.focus + '</tspan>' : '');
   }
@@ -880,7 +916,7 @@
   // leaves a gap rather than moving the others under the player's eye.
   var HUD_PARTS = [
     ['Target', [['target', 'Name, health, level, class'], ['tot', 'Its target (on top)'], ['tres', 'Its resists'], ['status', 'Slow · F/R · summon · enrage']]],
-    ['You', [['hp', 'Health'], ['mana', 'Mana (right arc)'], ['end', 'Endurance (thin arc; right arc with no mana)'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
+    ['You', [['hp', 'Health'], ['mana', 'Mana (right arc)'], ['end', 'Endurance (thin arc; right arc with no mana)'], ['regen', 'Regen per tick (+N, glows before the tick)'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
     ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick'], ['swing', 'Swing timer'], ['cast', 'Cast bar (in the swing\'s place)']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
       ['procs', 'Procs and stuns/aggro on target'],
@@ -896,7 +932,7 @@
   // round-three look. It scales every arc and the text's dark edge, and takes
   // the numbers off bold.
   var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
-  var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
+  var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, regen: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
     track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyRows: 1, clickyPick: [], sizes: {} };
   // Text size per part, from the small slider beside it in the builder (the
@@ -1448,6 +1484,7 @@
   function renderHud(s){
     var d = hudData(s), p = hudParts, h = '', R = 172;
     var W = HUD_WEIGHTS[p.weight] || HUD_WEIGHTS.thin;
+    var rg = p.regen ? regenInfo(s) : null;   // FB-90
     if (p.target && d.t) {
       // The enrage zone: a red outline round the last 10% of the health bar
       // (its low end — the bar empties toward the left), solid while it IS
@@ -1530,7 +1567,9 @@
     }
     if (p.hp) {
       h += gauge(R, 236, 304, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 6 * W);
-      h += ringLabel('hhp', R + 10, 236, 304, hpLabel(d, p.dps), 11 * sz('hp'));
+      var hl = hpLabel(d, p.dps, rg), hs = 11 * sz('hp');
+      if (rg && rg.hp) { h += regenEdge(R, 236 + 68 * Math.max(0, Math.min(1, (d.hp || 0) / 100)), W, rg.pulse); hs = fitSize(hs, plainLen(hl), 68, R + 10); }
+      h += ringLabel('hhp', R + 10, 236, 304, hl, hs);
     }
     // The right arc belongs to Mana, or to Endurance for a class with none (d.right.part); each part
     // switches only its own drawing (FB-12). Endurance on a class WITH mana is the thin arc under health.
@@ -1538,8 +1577,9 @@
       h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6 * W, true);
       // Fitted to the arc (68°): a bard's three counts with the damage out beside them is longer than
       // "MANA 45%" ever was, and a label the arc cuts off reads as a different number.
-      var rl = rightLabel(d, p.dps, p.focus);
-      h += ringLabel('hrt', R + 10, 56, 124, rl, fitSize(11 * sz(d.right.part), rl.replace(/<[^>]*>/g, '').length, 68, R + 10));
+      var rl = rightLabel(d, p.dps, p.focus, rg);
+      if (rg && rg.mana && d.right.part === 'mana') h += regenEdge(R, 124 - 68 * Math.max(0, Math.min(1, d.right.pct / 100)), W, rg.pulse);
+      h += ringLabel('hrt', R + 10, 56, 124, rl, fitSize(11 * sz(d.right.part), plainLen(rl), 68, R + 10));
     }
     if (p.end && !d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2 * W);
     // Cooldowns: an inner arc across the bottom (at most 80°, centred on 6

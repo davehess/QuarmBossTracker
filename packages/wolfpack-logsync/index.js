@@ -14438,6 +14438,7 @@ function _meNoteHit(character, ev) {
   if ((ev.attacker == null && ev.defender == null) || isYou(ev.defender)) dir = 'in';
   else if ((ev.attacker == null || isYou(ev.attacker)) && ev.defender) dir = 'out';
   if (!dir) return;
+  if (dir === 'in') _meRegenTaint(cl);   // FB-90: damage taken spoils the tick's regen reading
   const t = ev.ts ? Date.parse(ev.ts) : Date.now();
   const label = String(ev.spellName || ev.ability || '').trim();
   const spell = label && label.toLowerCase() !== 'non-melee' ? _meSpell(label) : null;
@@ -14742,6 +14743,88 @@ function _meTick(st, now) {
   const ms = (Number.isFinite(secs) && shows(fwd) !== secs && shows(rev) === secs) ? rev : fwd;
   const age = Math.max(0, now - (st.updatedAt || now));
   return { ms_left: Math.round((((ms - age) % _ME_TICK_MS) + _ME_TICK_MS) % _ME_TICK_MS), period_ms: _ME_TICK_MS, source: 'zeal' };
+}
+
+// REGEN PER TICK — observed (FB-90: "Add per tick hp and mana regen to HUD and highlight the regen on the
+// bars when its about to come back up. same with canvas."; the guild lead chose the OBSERVED version).
+// The pipe never says what a tick will give, so it is measured: once per server tick (the first Zeal frame
+// 1.5 s after the boundary, so the server's update has reached the client) the agent takes your HP and mana,
+// and the difference to the sample one tick earlier is that tick's regen. Only a CLEAN tick counts. A tick
+// is dropped when, since the previous sample, ANY of these happened (all already tracked here):
+//   · you took damage (_meNoteHit, dir 'in')          · a heal landed on you ("You have been healed…")
+//   · you began a cast (the log line), or Zeal's casting label (134) was up, so a mana cost is in it
+//   · you were in combat (a live fight, auto-attack on, or any hit in or out in the last 10 s)
+//   · you changed zone (the whole history goes)       · your max HP or max mana changed
+//   · the samples are not one tick apart (a missed frame), or Zeal went quiet for 15 s
+//   · HP or mana went DOWN (something we did not see took it)
+// A stat already full at either end of the tick says nothing about regen (the cap hid it), so it does not
+// count for that stat. The answer is the MEDIAN of the last 4 clean ticks (one stray potion or buff cannot
+// move it), kept 90 s. Null until 2 clean ticks, and null while in combat. `quiet` is true whenever it is sent.
+const _ME_REGEN_SAMPLE_MS = 1500;     // into the tick, before a sample is taken
+const _ME_REGEN_KEEP = 4;             // clean ticks the median reads
+const _ME_REGEN_FRESH_MS = 90_000;    // a clean tick older than this is forgotten (sit/stand changes regen)
+const _ME_REGEN_GAP_MS = 15_000;      // no Zeal frame for this long: start over
+const _ME_REGEN_COMBAT_MS = 10_000;
+const _meRegen = new Map();           // charLower → { t0, last, dirty, ticks: [{ at, hp, mana }], zone, lastNow }
+function _meRegenTaint(cl) { const r = _meRegen.get(cl); if (r) r.dirty = true; }
+function _meRegenInCombat(cl, st, now) {
+  const et = stats.currentEncounterThreat;
+  if (et && !et.flushedAt && et.startedAt) return true;
+  if (st && st.autoattack) return true;
+  const arr = _meHits.get(cl);
+  return !!(arr && arr.length && now - arr[arr.length - 1].t < _ME_REGEN_COMBAT_MS);
+}
+// One Zeal frame. `f`: { now, phase (ms since the last tick boundary), hp, hpMax, mana, manaMax, zone, busy }.
+function _meRegenStep(r, f) {
+  if (r.lastNow && f.now - r.lastNow > _ME_REGEN_GAP_MS) { r.ticks = []; r.last = null; r.t0 = null; r.dirty = false; }
+  r.lastNow = f.now;
+  if (r.zone != null && f.zone != null && f.zone !== r.zone) { r.ticks = []; r.last = null; r.t0 = null; r.dirty = false; }
+  if (f.zone != null) r.zone = f.zone;
+  if (f.hp == null || f.hpMax == null) return;
+  if (f.busy) r.dirty = true;
+  if (f.phase < _ME_REGEN_SAMPLE_MS) return;
+  if (r.t0 == null) r.t0 = f.now - f.phase;
+  const idx = Math.round((f.now - f.phase - r.t0) / _ME_TICK_MS);
+  if (r.last && r.last.idx === idx) return;   // one sample a tick
+  const s = { idx, hp: f.hp, hpMax: f.hpMax, mana: f.mana, manaMax: f.manaMax };
+  const prev = r.last, dirty = r.dirty;
+  r.last = s; r.dirty = false;
+  if (!prev || dirty || prev.idx + 1 !== idx || prev.hpMax !== s.hpMax || prev.manaMax !== s.manaMax) return;
+  const dh = s.hp - prev.hp;
+  const dm = (s.mana != null && prev.mana != null) ? s.mana - prev.mana : null;
+  if (dh < 0 || (dm != null && dm < 0)) return;
+  r.ticks.push({
+    at: f.now,
+    hp: (prev.hp < s.hpMax && s.hp < s.hpMax) ? dh : null,
+    mana: (dm != null && s.manaMax > 0 && prev.mana < s.manaMax && s.mana < s.manaMax) ? dm : null,
+  });
+  while (r.ticks.length > _ME_REGEN_KEEP) r.ticks.shift();
+}
+function _meMedian(a) {
+  const s = a.slice().sort((x, y) => x - y), m = s.length >> 1;
+  return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
+}
+function _meRegenFrame(character, st, now) {
+  const t = st ? _meTick(st, now) : null;
+  if (!t || st.self_hp_cur == null || st.self_hp_max == null) return;
+  const cl = String(character).toLowerCase();
+  let r = _meRegen.get(cl);
+  if (!r) { r = { t0: null, last: null, dirty: false, ticks: [], zone: null, lastNow: 0 }; _meRegen.set(cl, r); }
+  _meRegenStep(r, {
+    now, phase: _ME_TICK_MS - t.ms_left, hp: st.self_hp_cur, hpMax: st.self_hp_max,
+    mana: st.self_mana_cur != null ? st.self_mana_cur : null, manaMax: st.self_mana_max != null ? st.self_mana_max : null,
+    zone: st.zone != null ? st.zone : null,
+    busy: !!String(st.casting || '').trim() || _meRegenInCombat(cl, st, now),
+  });
+}
+function _meRegenFor(cl, now, inCombat) {
+  const r = _meRegen.get(cl);
+  if (!r || inCombat) return null;
+  r.ticks = r.ticks.filter(x => now - x.at <= _ME_REGEN_FRESH_MS);
+  if (r.ticks.length < 2) return null;
+  const pick = (k) => { const v = r.ticks.map(x => x[k]).filter(x => x != null); return v.length >= 2 ? _meMedian(v) : null; };
+  const hp = pick('hp'), mana = pick('mana');
+  return (hp == null && mana == null) ? null : { hp, mana, n_ticks: r.ticks.length, quiet: true };
 }
 
 // SWING TIMER — measured, not read. Zeal draws an attack-recovery gauge (34)
@@ -15538,6 +15621,8 @@ function _meNoteRawLine(line, character) {
     return;
   }
   if (msg.startsWith('You')) {
+    // A cast (its mana cost) or a heal landing on you spoils the tick's regen reading (FB-90, _meRegenStep).
+    if (msg.startsWith('You begin casting ') || msg.startsWith('You have been healed') || msg.startsWith('You feel much better')) _meRegenTaint(cl);
     // The refusal line is parsed by trackDisciplineTimerLine; save what it set.
     if (msg.startsWith('You can use a new discipline')) _meTimersSave();
     // An AA pressed before it was ready: the exact time left (_meNoteAaRefusal).
@@ -16329,6 +16414,7 @@ function _serializeMeState() {
     hp: { cur: st.self_hp_cur ?? null, max: st.self_hp_max ?? null, pct: st.self_hp_pct ?? null },
     mana: { cur: manaCur, max: manaMax, pct: manaPct },
     tick: _meTick(st, now),
+    regen: _meRegenFor(cl, now, _meRegenInCombat(cl, st, now)),   // FB-90: { hp, mana, n_ticks, quiet } or null
     swing,
     autoattack: !!st.autoattack,
     cooldowns,
@@ -34995,6 +35081,7 @@ function startWebDashboard(port) {
           const prevCasting = (prevState.casting || '').trim();
           const newCasting  = (st.casting || '').trim();
           _zealState[character] = { ...st, updatedAt: Date.now() };
+          try { _meRegenFrame(character, _zealState[character], Date.now()); } catch (e) { void e; }   // FB-90: observed regen per tick
           // First sight of this character on this PC: fetch any stored pet timers (once per run; no-op when the
           // log already gave us local history).
           try { _ownRestoreOnFirstSight(character, _lastLineMs.has(String(character).toLowerCase()), null); } catch (e) { void e; }
@@ -58422,6 +58509,7 @@ module.exports = {
   SUGGESTED_TRIGGERS, SUGGESTED_RETIRED_PATTERNS, PERSONAL_CARRY_FIELDS,
   _templateToPersonalRow, _compilePersonalTrigger, _migrateRetiredSuggestedPattern,
   _catalogTriggerMatch, _normCatalogMatch, _addMyTarget, _buildCaptureBag, _expandTemplate, _meNoteRawLine,
+  _meRegenFrame, _meRegenFor, _meRegenStep, _meRegenTaint, _meRegen, _meRegenInCombat, _serializeMeState, _meNoteHit,   // FB-90 — test/me-regen.test.js
   _setSpellCatalogForTest: (entries) => { _spellByNameLower = new Map((entries || []).map(e => [String(e.name).toLowerCase(), e])); },
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
   _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,

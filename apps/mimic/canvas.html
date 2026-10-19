@@ -1632,7 +1632,7 @@
       var e = _els[p.id], d = partDef(p);
       if (!e || !e.body) return;
       if (!d) { setBody(e, '<div class="pt pt-none"><span class="pt-l">unknown piece</span></div>'); return; }
-      if (onlySrc && d.src !== onlySrc && d.kind !== 'countdown') return;
+      if (onlySrc && d.src !== onlySrc && d.kind !== 'countdown' && !d.repaint) return;
       var v = viewFor(d), sample = false;
       if (!v && _edit) { v = sampleFor(d, now); sample = !!v; }
       e.root.classList.toggle('sample', sample);
@@ -1658,7 +1658,7 @@
   }
   setInterval(function () {
     if (!window.WpParts) return;
-    var any = _layout.panels.some(function (p) { var d = p.kind === 'part' && !p.off && partDef(p); return d && d.kind === 'countdown'; });
+    var any = _layout.panels.some(function (p) { var d = p.kind === 'part' && !p.off && partDef(p); return d && (d.kind === 'countdown' || d.repaint); });   // repaint: me.hp / me.mana's regen pulse (FB-90)
     if (any) paintParts('__countdowns');
     if (chooserShown() && chList.querySelector('[data-pvc]')) paintChooserPreviews();
   }, 250);
