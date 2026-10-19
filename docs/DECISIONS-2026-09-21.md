@@ -114,13 +114,15 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Other games** (§377) | EQ family live on beta (agent 3.8.7: any `eqlog_<Name>_<server>.txt` in the local edition, never uploads off Quarm). Classic WoW reader built on branch `claude/wow-classic-reader` (bot 3.2.8, web 1.9.9, migration `20261019130000_encounters_game_and_boss_key`, not applied). Monsters & Memories on hold (its policy forbids parsers) | the guild lead: approve the `encounters` migration; someone with a Classic client runs `node packages/wowlogsync/index.js --log <Logs dir> --character <name> --dry-run --from-start` and reports. Confirm real P1999/live log suffixes |
-| **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side LIVE on main (bot 3.2.7, `5c545c42`); `GALLERY_SALT` set on Railway. The tables are NOT created: four MCP attempts stalled at the approval step with nothing reaching the database | the guild lead: paste `supabase/migrations/20261019120000_gallery_masterpieces.sql` into the Supabase SQL Editor; then a session confirms the routes and designs the Mimic Gallery tab (samples first) — 3.0 stable waits on slice 1 |
-| **FB-84 death log before a death** (§373) | Scoped: A local recap (recommended first slice), B web per-death panel, C extend heal gaps/timeline | the guild lead: pick A/B/C (with samples) before any build |
+| **Other games** (§377) | EQ family live on beta (agent 3.8.7: any `eqlog_<Name>_<server>.txt` in the local edition, never uploads off Quarm). Classic WoW reader built on branch `claude/wow-classic-reader` (it claims bot 3.2.8 / web 1.9.9, which main has since used: renumber when it lands; migration `20261019130000_encounters_game_and_boss_key`, not applied). Monsters & Memories on hold (its policy forbids parsers) | the guild lead: approve the `encounters` migration; someone with a Classic client runs `node packages/wowlogsync/index.js --log <Logs dir> --character <name> --dry-run --from-start` and reports. Confirm real P1999/live log suffixes |
+| **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side LIVE on main (bot 3.2.7, `5c545c42`); `GALLERY_SALT` set on Railway. The tables are NOT created: four MCP attempts stalled at the approval step, and the 2026-10-19 SQL paste created `voice_reports` only | the guild lead: paste `supabase/migrations/20261019120000_gallery_masterpieces.sql` into the Supabase SQL Editor; then a session confirms the routes and designs the Mimic Gallery tab (samples first) — 3.0 stable waits on slice 1 |
+| **FB-84 death log before a death** (§373, §379) | A (local recap) on beta, agent 3.8.14; the guild lead: *"A first then B"* | a beta tester: die once, target the corpse, check the recap; then a session scopes B (web per-death panel) with samples |
+| **Voice unclear reports** (§379) | Mimic half on beta (agent 3.8.15); route + `/admin/voice-reports` [beta] live on main (bot 3.2.8, web 1.9.9). Table created 2026-10-19 (pasted by the guild lead; RLS on), so reports now store | a beta tester: press 🔊 Voice unclear once and check `https://wolfpack.quest/admin/voice-reports`; then a session builds slice 2 (officer-approved respellings every Mimic reads) |
+| **Timers: move / mute a row; Canvas across screens** (§379) | Scoped with pictures. Row: A ⋮ menu (Move to ▸ panel, Mute session/always/this mob; "Muted timers" card on the dashboard, mutes as `timer:*` keys in `trigger_rules.json`) or B drag + right-click. Screens: A one window over all screens behind a "Span all screens" switch (same scaling only; per-panel `scr` tag, no migration) or B a Canvas per screen. Canvas prebuilt-pieces fixes on beta (`a15ddca4`). All open picks, with a preview per option, are on the guild lead's private "Wolf Pack Decision Desk" page (§380), which stores each pick | the guild lead: pick on the Decision Desk; a session reads the picks back (`ArtifactData list picks`) and builds them. A Windows tester: Command Center on the Canvas, whole and as pieces (the blank cause was inferred, not reproduced) |
 | **Raid night 2026-10-18 fixes** (§373) | Live: bot 3.2.6 (HoH trial cards, pet filter, flag counter, named-boss list); beta agent 3.8.4 + Mimic DPS Sec rule (rez NPC fix, trial credit lines, three rampagers) | the guild lead: look over `data/named-bosses.json` for missing or unwanted nameds (the hail-cap tooltip was reworded in agent 3.8.5 beta) |
 | **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: A (keep, recommended) or B (zone gate, agent change on beta) — B brings back the "hits the tank" bar but our own nukes in the named's zone would start it again |
 | **Voice volume for spoken callouts** (no § yet) | There is none: trigger sounds have a slider, speech always plays at full volume (Windows, Piper and Kokoro) | the guild lead: yes/no on a Voice volume slider in the dashboard's 🗣 Voice tab, beside speed and pitch (Mimic beta) |
-| **raidmimic.com — the guild leaders' door** (§370) | Page live at `wolfpack.quest/raidmimic` marked [beta], layouts A (default) and B (`?v=b`). All six raidmimic hosts are on Vercel as 307s to eqmimic.quest; DNS is still Porkbun's parking page | the guild lead: pick A or B; at Porkbun, set apex A `216.198.79.1` and `www` CNAME `cname.vercel-dns.com` on all three domains (delete the parking records); then a session removes the six Vercel redirects so the page serves on raidmimic.com |
+| **raidmimic.com — the guild leaders' door** (§370) | Page live at `wolfpack.quest/raidmimic` marked [beta], layouts A (default) and B (`?v=b`). **LIVE at https://raidmimic.com since 2026-10-19**: DNS points at Vercel; `raidmimic.com` serves Production, `www.raidmimic.com` / `raidmimic.quest` / `www.raidmimic.quest` / `www.raidmimic.net` 308 to it, `raidmimic.net` serves the page itself. The Vercel MCP has no domain-edit call, so domain edits stay a dashboard step | the guild lead: pick A or B (Decision Desk); optional: `raidmimic.net` → 308 to raidmimic.com; the three `www` CNAMEs → `47a066baed80762d.vercel-dns-017.com` (Vercel's "DNS Change Recommended"); delete the `*` → `pixie.porkbun.com` parking wildcards |
 | **Quarm Oct 18 patch notes** (§369) | Applied: bot 3.2.1 + web 1.9.4 on main (Plane of Time B corpse DM 30 min; PoP guide: PoK turn-ins held when bags are full, the 6d18h cycle, phase loot limits, the Phase 3 checkpoint); agent 3.8.1 on beta (corpse DM names zones 222/223). NOT applied: the Plane of Time timer model | the guild lead: pick the PoTime timer model (A observed cycle end / B inferred / hybrid) and capture one `#timelockout` + one `/sll` during a live cycle; turn on the bot's Message Content intent in the Discord developer portal BEFORE anyone sets `MESSAGE_CONTENT_INTENT=1` |
 | **Overlays as files — export / import** (§376) | Built on `beta` (agent 3.8.6): portable layout format + Export / Import in the tray, Settings and the dashboard's Overlays tab; local edition included; the Gallery nudge says "coming soon" | the guild lead: try Export then Import on two screens (1080p and 1440p); say whether the title should default to the set's name |
 | **Keepers of the (Overlay) Arts — Masterpieces + gallery** (§368) | Named; roadmap entry on main (web 1.9.3). The portable format and the private file half are built (§376). Scoped: `docs/DESIGN-keepers-of-the-arts.md` (gallery B, set modes B, move-into-Canvas toggle + convert, socials library-lite; slice 0 = socials privacy fix) | the guild lead: go/no-go on the order and the open-decisions table there; approve the Tastemaker outreach wording before any DM |
@@ -11902,3 +11904,70 @@ similar systems"*.
   - The per-source split (spell / AA / gear) is not built.
 - **Process note:** two agents slipped to `sed`/heredoc edits despite the Edit/Write rule, and docs drafted on beta
   branches were moved to main before shipping each time. Gallery tables: see the Open row.
+
+### 379. The afternoon's asks: enrage, voice reports, death recap, map kill, charm aging (2026-10-19, agent 3.8.13–3.8.16, bot 3.2.8, web 1.9.9)
+- **Enrage callouts** (agent 3.8.13). The guild lead: *"restrict them to bosses. enrage needs to pop off at 9% on other
+  mobs. should be muteable per mob/this session/permanently."*
+  - Bosses (the named list or the catalog's raid target flag) keep "Enrage soon" at 12%. Any other mob that can enrage
+    gets one "<mob> enraging" at 9% (`ENRAGE_OTHER_PCT`).
+  - 🔇 on an enrage callout, and on its Recent fires row, offers: this mob for the session, all enrage for the session,
+    this mob always. "Always" is a `builtin:enrage_soon:<mob>` rule in `trigger_rules.json`; session mutes live in memory.
+    `/api/enrage-mute`.
+- **Voice unclear, slice 1** (the guild lead picked B: raiders fix in Mimic, officers approve on the site).
+  - Mimic (agent 3.8.15): a 🔊 Voice unclear button under spoken callouts; Recent fires keeps what was spoken, the voice
+    that really played it and the speed, with replay and a "Say" line to suggest a better wording.
+  - Bot 3.2.8 / web 1.9.9 on main: `POST /api/agent/voice-report` (`utils/voiceReports.js`, the reporter is the session's
+    Discord id, 30 an hour), `/admin/voice-reports` [beta]. The table
+    (`supabase/migrations/20261019150000_voice_reports.sql`) is **not created**; until it is, the route answers 503 and
+    Mimic says reports are not set up.
+  - Slice 2 (not built): a phrase-respelling table that officers approve, read by every Mimic.
+- **FB-84, part A: a death recap from your own log** (agent 3.8.14; the guild lead: *"A first then B"*). The last 20 s
+  before each death: hits, heals (CHs marked), damage in the last 6 s, the killer, time since the last CH, the chain's
+  beat. On the dashboard's Deaths card and in the Command Center beside the rez board. Targeting a corpse opens that
+  player's recap, and the recap stays when an empty corpse vanishes. Local only, last 50. B (a web panel per death) next.
+- **"☠ killed" on the Map's timers** (agent 3.8.16). Up, Watched and Engaged rows get a button that starts the respawn
+  timer from the mob's last death line in your log, or from now. `POST /api/map-kill` goes down the log-death path.
+- **Charm aging is off by default** (agent 3.8.16): `BUILTIN_DEFAULT_MODES`. A choice already made, by the cue or its
+  group, is kept.
+- **A mob's death clears its debuff timers; the row shows its spawn id** (agent 3.8.17, `c931616f`). The guild lead:
+  *"when a mob dies it should remove those triggers for debuffs. Mention the mob's spawn id in the timer"*.
+  - `_dropDebuffTimersOnDeath` runs on a live slain/died line and when the Zeal target turns into a corpse or hits 0 HP.
+  - Matched by spawn id when the landing proved one, else by name only while the name is provably one mob. With two or
+    more same-name mobs and no id, nothing is removed and the timers run out. Players, pets, charm spells and friendly
+    buffs are never touched; a landing more than 1.5 s after the death is a new mob.
+  - The row reads "A scrounging rat #4182 - Turgur's Insects" when the id is known.
+- **Timers panel settings** (Mimic beta `5206c69c`). The guild lead: *"Only For should say Any class or specific
+  classes, then show the rest. No way to turn off the sample lines."*
+  - "Only for" asks Any class / Specific classes; the class chips show only under Specific. The stored `cls` shape is
+    unchanged; Specific with nothing ticked behaves as Any class.
+  - The sample rows: arranging forced them on and the button only knew the 30 s test, so it read "Show test rows" with
+    TEST rows up. A per-panel `noSample` flag (saved in the layout) now turns them off while arranging.
+- **Asked, with pictures (open):** a row menu to move a countdown to another panel and mute it for good, with a review
+  list on the dashboard (A, recommended) or drag + right-click (B); the Canvas across several screens, one window over
+  all screens behind a switch (A, recommended) or one Canvas per screen (B).
+- **Canvas prebuilt pieces** (Mimic beta `a15ddca4`). The guild lead: *"TARGET INFO broken apart looks like it breaks
+  when you click. Command center is blank, can't break the as-is hud box into pieces, the as pieces version is HUGE by
+  comparison. it should fit into the same setup. that applies for all of these prebuilts. … needs a 'As Whole' button"*,
+  and *"when pieces isn't on the screen its confusing why this line is there"*.
+  - Target Info taken apart made pieces only for the Stats tab; picking another tab emptied them. The Loot, Spells and
+    F/Q/V parts are now made too and show only while their tab is picked. The ⚡ mana switch now reaches every copy.
+  - Command Center: the Canvas loaded the agent-served copy (another origin, no fallback); it now loads the bundled
+    `command.html`. Inferred, not reproduced.
+  - HUD (box): `me.html` marks its blocks, `sections.js` has a 14-part `me` map, so ✂ Take it apart works.
+  - "As pieces" is scaled to the whole overlay's footprint (`fitRows` in `parts.js`), then refit from the real page.
+  - "the overlay it…" was a label, not a control: now an **as whole** chip beside **as pieces**.
+  - The chooser-row ↔ piece line draws only while the Pieces list is open and the row is in view (`linkStart`).
+  - Test: `test/canvas-prebuilt-fit.test.js`.
+
+### 380. One page for every open pick: the Decision Desk (2026-10-19)
+The guild lead: *"give me one page with all the outstanding decisions to make and generate previews for each one so i
+don't have to bounce back and forth finding them"*.
+- A private claude.ai page titled **"Wolf Pack Decision Desk"** (find it by title in the guild lead's artifact list; the
+  repo does not carry its link) lists every open pick from the Open table, each with its options, a one-line difference,
+  a preview picture per option and a live link where one exists. Security round two stays in the private briefing.
+- Four agents checked each Open row against later § entries and commits; rows already settled are listed at the
+  bottom of the page as such (e.g. the Command Center hail slot, §165; the 3.0 name, §368; /pop alts, web 1.8.158).
+  **The Open table still carries some of those rows: prune them when they come up.**
+- Picks are stored in the page's database, collection `picks`, one document per decision id: `{choice, extras, note,
+  at}`. A session reads them with `ArtifactData` (`action: list`, `collection: picks`) and builds from them.
+- raidmimic.com went live the same hour (§370 row).
