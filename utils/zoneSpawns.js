@@ -27,6 +27,7 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const mobSpecials = require('./mobSpecials');
 const { kosClass } = require('./factionCon');
+const namedBosses = require('./namedBosses');
 
 const ZONE_RE = /^[a-z0-9_]{1,32}$/;
 const MAP_SELECT = 'bands,segs,bounds';
@@ -69,7 +70,7 @@ function badgesFor(npc) {
 // raid_target, or a board boss by name, or the odd one out of a multi-NPC group: a low-chance entry whose
 // name is a proper name rather than "a ..." / "an ..." / "the ...". Name alone flags every guard and citizen.
 function isNamed({ npc, name, chance, groupSize, bossNames }) {
-  if (npc.raid_target) return true;
+  if (namedBosses.raidTarget(npc)) return true;
   if (bossNames.has(name.toLowerCase())) return true;
   return groupSize > 1 && Number(chance) < 50 && !ARTICLE_RE.test(name);
 }
@@ -169,7 +170,7 @@ async function build(supabase, zone, bosses) {
         level: num(npc.level),
         chance: num(e.chance),
         named: isNamed({ npc, name, chance: e.chance, groupSize: entries.length, bossNames }),
-        raid_target: !!npc.raid_target,
+        raid_target: namedBosses.raidTarget(npc),
         badges: badgesFor(npc),
         // How close you can get before it aggros, in game units (eqemu_npc_types.aggroradius; median 60). The Map's
         // aggro rings (the guild lead, 2026-10-13). 0 / missing = null: the server then falls back to its default.

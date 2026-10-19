@@ -752,7 +752,7 @@ describe('the flag cap and the NPC\'s departure', () => {
     } finally { row.flagCap = kept; }
   });
 
-  it('counts the raiders whose grant landed after the kill — not a witnessed hail, a tap, or a flag held before', async () => {
+  it('counts every raider who hailed after the kill (a grant, a witnessed hail, a tap) — not a flag held before', async () => {
     const e = env({ raid_roster: rosterRows(RAID, 'u1') });
     await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL });
     e.flag('Aldenmar', 'fuirstel_2', 'event', at(-2 * 24 * 60));                   // held since two days ago: no grant here
@@ -763,8 +763,9 @@ describe('the flag cap and the NPC\'s departure', () => {
     const marked = await e.hb.markHailed({ windowId: `grummus:${KILL / 1000}`, name: 'Rethlan', hailed: true, by: 'Aldenmar' });
     expect(marked.window.hailed.map(h => h.how).sort()).toEqual(['flag', 'flag', 'marked', 'seen']);
     const [view] = (await e.hb.getBoard()).windows;
-    expect(view).toMatchObject({ flag_cap: 72, flags_granted: 2, flags_left: 70 });
-    expect(marked.window).toMatchObject({ flag_cap: 72, flags_granted: 2, flags_left: 70 });
+    // Four hailed (two grants, one seen, one tap) spend four of the 72.
+    expect(view).toMatchObject({ flag_cap: 72, flags_granted: 4, flags_left: 68 });
+    expect(marked.window).toMatchObject({ flag_cap: 72, flags_granted: 4, flags_left: 68 });
   });
 
   it('flags_left runs down to zero and stops there, however many grants we saw', async () => {

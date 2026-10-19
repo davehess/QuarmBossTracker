@@ -116,11 +116,15 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Canvas Pieces round** (§360–366) | Built + gated on `alpha` (park 3.0.0): backing plate-only, whole-group look choices, copy/rename/update a saved group, live-data palette previews, locate line + pulse, delete-with-pieces + Undo | the guild lead, on the next alpha build: (1) list-mode preview crop at 42px (D), (2) single-piece Show as → Upright bar stub (B), (3) the hover line reaches the canvas while arranging (E) |
 | **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: say whether to build a zone gate for guild triggers (agent change on beta) so the bars fire only in the named's zone |
+| **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | All recommendations taken; slice-0 draft lost (never pushed) | a session: redo slice 0 (portable layout + set fork-on-save) on beta, then slice 1 (publish → Gallery tab → add as a new set) — 3.0 stable waits on slice 1 |
+| **FB-84 death log before a death** (§373) | Scoped: A local recap (recommended first slice), B web per-death panel, C extend heal gaps/timeline | the guild lead: pick A/B/C (with samples) before any build |
+| **Raid night 2026-10-18 fixes** (§373) | Live: bot 3.2.6 (HoH trial cards, pet filter, flag counter, named-boss list); beta agent 3.8.4 + Mimic DPS Sec rule (rez NPC fix, trial credit lines, three rampagers) | the guild lead: look over `data/named-bosses.json` for missing or unwanted nameds (the hail-cap tooltip was reworded in agent 3.8.5 beta) |
 | **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: A (keep, recommended) or B (zone gate, agent change on beta) — B brings back the "hits the tank" bar but our own nukes in the named's zone would start it again |
 | **Voice volume for spoken callouts** (no § yet) | There is none: trigger sounds have a slider, speech always plays at full volume (Windows, Piper and Kokoro) | the guild lead: yes/no on a Voice volume slider in the dashboard's 🗣 Voice tab, beside speed and pitch (Mimic beta) |
 | **raidmimic.com — the guild leaders' door** (§370) | Page live at `wolfpack.quest/raidmimic` marked [beta], layouts A (default) and B (`?v=b`). All six raidmimic hosts are on Vercel as 307s to eqmimic.quest; DNS is still Porkbun's parking page | the guild lead: pick A or B; at Porkbun, set apex A `216.198.79.1` and `www` CNAME `cname.vercel-dns.com` on all three domains (delete the parking records); then a session removes the six Vercel redirects so the page serves on raidmimic.com |
 | **Quarm Oct 18 patch notes** (§369) | Applied: bot 3.2.1 + web 1.9.4 on main (Plane of Time B corpse DM 30 min; PoP guide: PoK turn-ins held when bags are full, the 6d18h cycle, phase loot limits, the Phase 3 checkpoint); agent 3.8.1 on beta (corpse DM names zones 222/223). NOT applied: the Plane of Time timer model | the guild lead: pick the PoTime timer model (A observed cycle end / B inferred / hybrid) and capture one `#timelockout` + one `/sll` during a live cycle; turn on the bot's Message Content intent in the Discord developer portal BEFORE anyone sets `MESSAGE_CONTENT_INTENT=1` |
-| **Keepers of the (Overlay) Arts — Masterpieces + gallery** (§368) | Named; roadmap entry on main (web 1.9.3). Scoped: `docs/DESIGN-keepers-of-the-arts.md` (gallery B, set modes B, move-into-Canvas toggle + convert, socials library-lite; slice 0 = socials privacy fix) | the guild lead: go/no-go on the order and the open-decisions table there; approve the Tastemaker outreach wording before any DM |
+| **Overlays as files — export / import** (§376) | Built on `beta` (agent 3.8.6): portable layout format + Export / Import in the tray, Settings and the dashboard's Overlays tab; local edition included; the Gallery nudge says "coming soon" | the guild lead: try Export then Import on two screens (1080p and 1440p); say whether the title should default to the set's name |
+| **Keepers of the (Overlay) Arts — Masterpieces + gallery** (§368) | Named; roadmap entry on main (web 1.9.3). The portable format and the private file half are built (§376). Scoped: `docs/DESIGN-keepers-of-the-arts.md` (gallery B, set modes B, move-into-Canvas toggle + convert, socials library-lite; slice 0 = socials privacy fix) | the guild lead: go/no-go on the order and the open-decisions table there; approve the Tastemaker outreach wording before any DM |
 | **Mimic 3.0 on the beta channel** (§367) | Graduated 2026-10-18: `beta` park → 3.0.0 (builds `3.0.0-beta.N`), `alpha` re-parked → 3.0.1. The whole overlay-builder (Canvas, pieces, groups, previews, locate line) is now the beta fleet's, not alpha-only | the guild lead: install the `3.0.0-beta` build and run the in-game checks (preview crop (D), single-piece Upright bar stub (B), hover line (E)); decide a roadmap name for 3.0; say when it cuts stable |
 | **Per-section Canvas background: lockable** (§44, §360) | Backing is now per piece and per group, plate-only; still not lockable | the guild lead: say what "lock" means — hold the plate through a mode change, or something else |
 | **Security round two** (§354) | Round one shipped (Mimic local guard, bot flood limits, share-link limits). The verified insider findings (ownership checks on several member routes, relayed callouts, session expiry, Discord mentions, `/wishlist`) are in the private briefing | the guild lead: pick what to fix next; confirm Supabase sign-ups are off; 2FA on the platform accounts |
@@ -11666,3 +11670,148 @@ multi-word names are). A raider then tapped it, so it showed under "Hailed" as a
 (`guildOnly`); a failed read keeps the names. Test: `test/hail-board.test.js`. **Not fixed here:** the same unowned
 pet still counts as a player in the parse and `encounter_players` (the attribution in `index.js` near the "direct
 player damage" branch); that is its own task.
+
+### 373. Raid night 2026-10-18: Halls of Honor trials, a rez-board NPC, three rampagers (bot 3.2.3–3.2.6, agent 3.8.2–3.8.4)
+Shipped live during the raid at the guild lead's request (*"can we push this during the raid as a hotfix"*, then
+*"do it on beta too"*); the rest held until *"raid is complete"*.
+- **HoH trial hail cards (bot 3.2.3 + 3.2.4, `[hotfix]`).** *"we did not get credit on the command center for this trial
+  hailing - we should do it for each HoH trial."* `utils/hailBoard.js` `HAIL_TRIALS`: Trydan Faye opens on Rydda`Dar's
+  death; Rhaliq Trell when all 12 villager attackers have died; Alekson Garn when Advocent Joran, Halgoz Rellinic and
+  Freegan Haun have all died (`noteTrialKill`, within 15 min). 10-minute windows (the zone scripts' depop). 3.2.3 named the
+  NPCs "Trydan Faye (trial 1)", which the agent's `_hailNpcWanted` never matches, so 3.2.4 made them bare — a window's
+  `npc_name` must be the NPC's exact name. Trial 3 opened on the night and credited 59 raiders.
+- **Trial credit lines (agent 3.8.3, beta).** The agent reads "An ethereal mist … the power of <NPC>." as a grant
+  (`kind:'trial'`) and "You have already received credit for completing this trial." (the same words for all three) as
+  held credit, naming the NPC this character hailed in the last 30 s. The bot: `utils/popFlagStages.js` `resolveTrial`,
+  source `credit` in `PROOF_SOURCES`. Old agents send neither.
+- **The dragon on the needs-rez board (agent 3.8.2, beta).** *"The dragon is on this list."* `isConfirmedPlayer` now
+  refuses any name that is not letters only (a player's name never carries a backtick, apostrophe, space or digit), for
+  every caller. `test/death-confirmation.test.js`.
+- **Flag counter (bot 3.2.6).** *"shows only 1 flag used but 59 of us flagged"*: `flags_granted` counted only grants an
+  agent saw. It now counts every hailed raider (grant, witnessed hail or tap), since each spends one of the cap.
+  ⚠ The Mimic tooltip still says "counts only the flags we saw granted"; fix it with the next Command Center change.
+- **Named bosses (bot 3.2.5).** *"The named bosses in Halls of Honor can be listed, same with the other major named
+  bosses in the zones."* The catalog's `raid_target` is false for nearly all of PoP (5 NPCs flagged, not even Mithaniel
+  Marr), and the weekly sync overwrites the table, so the fix is a committed list: `data/named-bosses.json` (140 bosses,
+  20 zones, every entry tied to a catalog id) read by `utils/namedBosses.js` `raidTarget()`, which `_buildMobInfo` and
+  `utils/zoneSpawns.js` now serve. `_MOB_PACK_VERSION` 9 rebuilds the zone packs. Agents see it within ~6 h (mob info)
+  to 1–2 days (cached zone packs). Left out on purpose: the 12 villager attackers, The Tribunal, three HoH rare spawns.
+  Not in the catalog: Charassis the Corrupter, Ture. `utils/charmPets.js` still reads the catalog flag alone.
+- **Three rampagers (agent 3.8.4, beta).** *"for the third trial in HoH we have 3 bosses each with a rampage"*: rampage
+  targets are tracked per attacker (`stats.currentRampages`), tank state carries `rampages: [...]` beside the unchanged
+  `rampage`, and the Command Center draws one "💀 <boss>: rampage on <victim>" row each when 2+ are live (0–1: the old
+  card, byte for byte). A named raid mob's rampage now speaks even when it is not the main target ("Rellinic rampage on
+  X"); trash stays silent (#155). That rule reads `raid_target`, so it depends on the named-boss list above.
+- **DPS meter seconds (Mimic beta).** *"dps totals look wrong and too high"*, *"not counting enough time on sec"*. The
+  Oct 14 rule (each row's first hit to its last, 1 s minimum) made a lone nuke read as 1 s. The guild lead picked **A —
+  first hit to the end of the fight**, plus *"if someone stops attacking … we stop their DPS Sec counter"*: the clock
+  stops one tick (6 s, `DPS_IDLE_MS`) after a raider's last hit. `apps/mimic/overlay.html` `_rowSecs`/`_fightEndMs`;
+  the total row and the Tank tab keep the fight's seconds.
+- **FB-84 (a raider, new): a death log of the last 10–20 s before a death**, to judge the CH chain delay. Scoped, not
+  built: nothing today keeps per-hit damage and heal landings before a death; the agent holds them in memory per
+  encounter, and the bot receives but does not store them. Options for the guild lead: A local recap in Mimic/dashboard
+  from the uploader's own log (cheap, beta only), B a cross-client per-death panel on the web (needs an upload + a
+  table + a retention call), C extend the heal-gap and timeline data. Recommended first slice: A, one line per death
+  ("died 3.1 s after the last CH landing; chain beat 12 s; took 9.4k in the last 6 s; killed by X").
+
+### 374. The Masterpiece Gallery goes as recommended, and it gates Mimic 3.0 stable (2026-10-19)
+The guild lead: *"for masterpiece gallery we'll go with the recommendations. that needs to be there before 3.0 goes
+live"*. Every open decision in `docs/DESIGN-keepers-of-the-arts.md` and the gallery scope page is taken as
+recommended:
+- In Mimic, a Gallery tab in the Pieces chooser.
+- On the web, the class-first playbook with fit per row.
+- Members only in v1.
+- The author chooses whether a byline shows.
+- Pieces and groups only.
+- Any member publishes, with invitations to seed it.
+- Set modes B.
+- Social aggregates are opt-in, with a floor of 3 players.
+
+**Mimic 3.0 does not cut stable until gallery slice 1 is on beta.**
+
+**Same night, widened** (the guild lead: *"make it so overlays are exportable into file and importable if people want
+to share privately but also encourage people to share publicly and then they can have their name on the overlay. the
+templates would be good to have in both the Wolfpack version and the one that's available for everyone else"*):
+- **Private sharing is a file.** Export a Canvas set or group to a portable layout file and import one as a new set,
+  with Undo. It works in local mode too. The file format is the redone slice 0.
+- **Public sharing is encouraged:** an export offers the Gallery, and a published layout carries its author's name.
+- **The gallery reaches both editions.** This replaces "members only in v1".
+- **Who publishes, decided** (the guild lead: *"I like the idea of window shopping, sorting by most uses, and also making
+  curated content"*):
+  - **A, window shop:** anyone browses and adopts with no account. Wolf Pack members publish, and switch each layout to
+    public themselves (private by default).
+  - **Sorted by most uses** by default.
+  - **Plus C, curated:** officers pick layouts into a featured "Hall" shown first.
+  - Bylines are typed by the author, never filled in. A server-set "Wolf Pack member" badge cannot be faked by a byline.
+  - Thumbnails are drawn from the layout itself, with no image uploads. Report and officer hide.
+  - Local-mode Mimic contacts us only on an explicit "Browse the gallery".
+  - The schema keeps room for public submissions later (B): `submitter_kind`, `pending`, `edit_key_hash`, unused in v1.
+  - The 3.0-gate slice:
+    1. the tables;
+    2. public read routes (`/api/public/gallery`, copied from the public catalog route);
+    3. member Publish with a public switch;
+    4. the Mimic Gallery tab: browse, Hall first, most used, add as a new set with Undo;
+    5. a read-only `eqmimic.quest/gallery`;
+    6. report and officer hide or feature.
+
+⚠ **The slice-0 foundations draft is lost.** Branch `claude/keepers-foundations`, commit `b1789d77` (`portableLayout.js`, `overlaySets.js` fork-on-save, the `main.js` one-token remove fix and their tests) was never pushed, and the container reset since. Slice 0 is redone first.
+
+### 375. Feedback sweep: acknowledged reports checked against shipped code (2026-10-19)
+The guild lead: *"go through the raid-bosses bot feedback and mark any of the acknowledged feedback as implemented when
+they have been"*. Every open report was checked against `origin/main` and `origin/beta`, with code or commit evidence.
+- **Implemented on main (marked by this commit):**
+  - FB-59: the parses page defaults to 7 days, `d3cde6f1`.
+  - FB-70: the counts were right, no bug (§206). The related zero-cast-time clicky fix (FB-68, agent 3.7.113) is on main via 2.8.0.
+- **On beta (marked by a beta commit the same night):** FB-83, debuffs shown only on the spawn they landed on (`3947fa39`, agent 3.7.187, §349).
+- **Already "on beta"; they close at the 3.0 stable cut:** FB-40 (`f7881fc3`), FB-64 (`fc18eaa1`).
+- **Partial:**
+  - FB-27: bard charm from Zeal (§75); the charm-break speech and Recharm bar are unbuilt.
+  - FB-32: §76 is fixed; the boxed-character layout debounce is not.
+  - FB-37: XP per hour on the HUD; no per-zone or best-zone view.
+  - FB-44: upright bars exist; no text side or rotation.
+  - FB-3: PvP last-hit kills need a repro.
+- **Not done:**
+  - FB-24: Test still runs an imported trigger that is stored disabled.
+  - FB-76: "Sees Invis" should read "May see invis"; a wording fix.
+  - FB-78: the spells page's wrong and missing spells; uninvestigated.
+  - FB-80: two "a war boar" bodies collapse into one; no level hint.
+  - FB-81: a vendor/quest button for held loot.
+  - FB-84: the death log, scoped in §373.
+  - FB-1: map pathfinder.
+  - FB-17: click-target a pet; the pipe is outbound only.
+- **Unclear, need the reporter or the screenshot:** FB-20, FB-28, FB-74 (Linux, a Wine path), FB-79 ("cOMMAND CENTER"). FB-8 is probably not ours.
+### 376. Overlays as files: export, import, and the portable layout format (2026-10-19, Mimic beta, agent 3.8.6)
+The guild lead: *"make it so overlays are exportable into file and importable if people want to share privately but
+also encourage people to share publicly and then they can have their name on the overlay. the templates would be good
+to have in both the Wolfpack version and the one that's available for everyone else."* This is the PRIVATE half, plus
+the format the public Gallery (`docs/DESIGN-keepers-of-the-arts.md`, Workstream 1) will reuse. The Gallery is not built.
+- **The format** (`apps/mimic/portableLayout.js`, pure; `format: "mimic-layout"`, `version: 1`, `kind: "canvas"`):
+  `meta` (title, description, `author` byline, class and mode tags), `ref` (EQ's window or the display, aspect only),
+  `needs` (the data pieces and overlay pages it uses, worked out from the pieces, never read from a file), and
+  `groups`: each group of pieces (those sharing a `grp`, or one piece alone) is pinned to the nearest of nine anchors
+  (`tl tc tr / ml mc mr / bl bc br`) of EverQuest's client rect, falling back to the display when EQ's rect is unknown
+  or mostly off this display. Every length (offsets, sizes) is in units of the reference HEIGHT, and text scale is
+  normalised to a 1080-tall screen. Import multiplies by the importer's own reference height, so a left column stays
+  left on an ultrawide, a centred cast bar stays centred, and 1440p lands at 0.75 on 1080p. A group that would hang
+  off the display slides whole; it is never squashed. Not yet done (Gallery slice): nudging off overlaps and off open
+  EQ windows.
+- **Private by construction, not by filter:** `names` (a timers panel's name filters) and every free-text panel name
+  are dropped, as are panel and group ids, the saved-group links and hotkeys, window rects, file paths and the chooser's
+  state. A one-group timers panel is renamed after its group (Charm, Lulls…) on the way back in. The byline is blank
+  unless the person types one. The title defaults to the set's name, which the person typed: it is shown in the preview.
+- **A file is untrusted:** `validate()` rebuilds the document from a whitelist (unknown keys are never copied), checks
+  every number and string, caps the file at 256 KB and 150 pieces, and refuses the WHOLE file on anything malformed
+  or from a newer format. Nothing in it is evaluated.
+- **In Mimic:** Settings → Overlay sets has 📤 per set, "Export the current layout…", "Import a layout…" and four
+  optional fields (name, byline, note, mode); the tray's 🗂 Overlay sets has the same two actions; the dashboard's
+  Overlays tab has a "Share a layout" strip (tray parity). Import shows title, byline and piece count in a native
+  window, then saves the current setup as "Before <title>", adds the file as a NEW set (a taken name counts up, never
+  overwritten), loads it, and offers one Undo (puts the old setup back and removes both sets). Sets cap at 40, so it
+  asks for room first. Only Canvas pieces travel: standalone overlay windows' rects are this computer's.
+- **Both editions:** file-only, no token and no network, so the local edition (eqmimic.quest) has it exactly as the
+  guild edition does; a test fails if either function reaches for a token, the bot URL or the network.
+- **The nudge:** after an export, one line: "Share it in the Gallery and your name goes on it. The Gallery is coming soon."
+- **Not built:** exporting a saved group on its own (a saved group has no place on the screen to pin; its pieces travel
+  inside a set), the Gallery itself, the fit badge and the "needs" check beyond listing it.
+- Tests: `test/portable-layout.test.js` (round trip at 1080p, 1440p and an ultrawide, windowed EQ, privacy, validation,
+  wiring), each assertion mutation-checked.

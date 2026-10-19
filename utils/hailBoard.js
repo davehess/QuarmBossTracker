@@ -312,12 +312,14 @@ function buildViews(windows, data, nowMs) {
       const missing = known.has(k) && cfg.prior.some(any => !any.some(key => keys.has(key)));
       still.push({ name, prior_missing: missing });
     }
-    // The NPC's flag cap (see HAIL_BOSSES), in raiders. `flags_granted` is the raiders on THIS board whose
-    // grant landed after the kill ('flag' — a witnessed hail or a tap is not proof anything was granted).
-    // ⚠ A LOWER BOUND on what the NPC has handed out: a raider without Mimic, a hail by somebody outside the
-    // kill roster, or a grant whose log line never reached us is not counted, so `flags_left` is an UPPER bound.
+    // The NPC's flag cap (see HAIL_BOSSES), in raiders. `flags_granted` is every raider on THIS board who hailed
+    // after the kill — a grant we saw ('flag'), a witnessed hail ('seen') or a tap ('marked'): a hail by a raider
+    // without the flag spends one of the cap (the guild lead, 2026-10-18: "shows only 1 flag used but 59 of us
+    // flagged" — only beta Mimic reads the trial's credit line, so nearly every hail read as 'seen').
+    // Still not the NPC's whole count (a hail by somebody outside the kill roster is missed), so `flags_left`
+    // stays an upper bound, now a tighter one.
     const cap = cfg.flagCap ? Math.floor(cfg.flagCap / (cfg.flagTicks || 1)) : null;
-    const granted = hailed.filter(h => h.how === 'flag').length;
+    const granted = hailed.length;
     views.set(w.id, {
       id: w.id, boss_id: w.boss_id, boss_name: w.boss_name, npc_name: w.npc_name, zone: w.zone,
       opened_at: w.opened_at, expires_at: w.expires_at,
