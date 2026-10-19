@@ -48,6 +48,15 @@
      draws while arranging; the Background switch plates a panel from the preload, and a piece cut from a
      page (kind 'sect') sets its card's colour inline. */
   .panel.ov{background:transparent;border:0;padding:0}
+  /* Background is each item's own (the guild lead, 2026-10-19: "Canvas items should be able to individually set
+     background, or avoid the all-toggle"): a panel with .back carries the plate, any kind but a piece (a piece
+     plates its own body, below). The preload used to paint this on every panel at once off one body class. A
+     fitted panel with nothing in it (.fitempty) shows no plate: a plate around nothing is just a smudge. */
+  .panel.back:not(.part){background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92));border-radius:6px}
+  .panel.back.fitempty:not(.part){background:transparent}
+  body.edit .panel.back.fitempty:not(.part){background:rgb(8 10 14 / 0.35)}
+  .panel.part.back.fitempty > .pbody{background:transparent;box-shadow:none}
+  body.edit .panel.part.back.fitempty > .pbody{background:rgba(13,17,23,0.35)}
   /* A page with its own builder open (the HUD ring's ⚙) takes the mouse even while arranging. */
   body.edit .panel.building > iframe{pointer-events:auto}
   /* A piece cut from an overlay's page: a window onto one section of the page (cropSections()
@@ -258,6 +267,7 @@
     <button class="btn" id="pcBtn" title="The pieces: every data element of every overlay, by category, and today's overlays as groups">🧩 Pieces</button>
     <button class="btn" id="addBtn" title="A new panel for some of the countdowns">＋ Timers panel</button>
     <button class="btn" id="ovBtn" title="Put any overlay on the canvas, as it is today">＋ Overlay</button>
+    <button class="btn" id="bgBtn" title="The Background a panel or piece has until you set its own (its ⚙ → Background). Never overrides one that is set. Ctrl+Shift+B flips it too">🌫 Default background</button>
     <button class="btn" id="screenBtn" title="Move the canvas to your next screen">⇆ Next screen</button>
     <button class="btn" id="resetBtn" title="Put the three starting panels back where they began">↺ Reset</button>
     <button class="btn" id="hideBtn" title="Turn the canvas off — the trigger overlay shows its timers and callouts again">✕ Turn off</button>
@@ -424,6 +434,48 @@
   }
   // ── end Show when ──
 
+  // ── Background and height, per item ─────────────────────────────────────────
+  // The guild lead, 2026-10-19: "we should always fit vertically to content with overlays, whether growing
+  // up or down. Canvas should be able to grow up as well. Canvas items should be able to individually set
+  // background, or avoid the all-toggle."
+  // BACKGROUND is an item's own `back` (true / false); an item that has none follows the Canvas default (the
+  // toolbar's switch, which is cfg.overlayBackdrop.canvas and the backdrop hotkey) and the default never
+  // overrides one that has. Layouts saved before this had only the whole-Canvas switch: migrateBack stamps its
+  // value onto every item once (layout.backV marks it done), so nothing changes on screen on update.
+  function cleanBack(v) { return typeof v === 'boolean' ? v : undefined; }
+  function backOf(p, dflt) { return typeof p.back === 'boolean' ? p.back : !!dflt; }
+  function migrateBack(layout, wasOn) {
+    if (!layout || layout.backV === 1 || !Array.isArray(layout.panels)) return false;
+    layout.panels.forEach(function (q) { q.back = wasOn ? true : (typeof q.back === 'boolean' ? q.back : false); });
+    layout.backV = 1;
+    return true;
+  }
+  // HEIGHT follows the content, up or down. `anchor` is the edge that stays put: 'bottom' = the item grows UP
+  // (its bottom edge stays where it is), 'top' = it grows DOWN. A timers or callouts panel with no anchor has
+  // always been bottom-anchored (its stack hangs off the bottom edge); every other kind has always grown down,
+  // so absent means what it meant, and nothing saved needs migrating.
+  function growsUp(p) { return (p.kind === 'timers' || p.kind === 'callouts') ? p.anchor !== 'top' : p.anchor === 'bottom'; }
+  // Which items have a height that follows what they show: the countdown and callout panels, an overlay's whole
+  // page, a piece cut from a page (always, cropSections), and a list piece drawn as rows, chips or columns.
+  // Not: a gauge, a number, a ring or a one-line piece (fixed shapes), nor a Ring arc.
+  function fitKind(p, def) {
+    // (not the HUD's ring: it is a circle, its window is square, and the page sizes it itself)
+    if (p.kind === 'overlay') return !(p.key === 'me' && p.style !== 'a');
+    if (p.kind === 'timers' || p.kind === 'callouts' || p.kind === 'sect') return true;
+    if (p.kind !== 'part' || !def || def.kind !== 'list') return false;
+    return /^(|rows|chips|columns)$/.test(p.mode || '');
+  }
+  // Fitting is on unless the item was sized by hand (fit === false). A piece cut from a page always follows it.
+  function fitOn(p, def) { return fitKind(p, def) && p.kind !== 'sect' && p.fit !== false; }
+  // The box an item takes for `need` px of content: its anchored edge stays, it never leaves the screen and
+  // never goes below `min`. y is the top as a fraction of the screen height H, h and need are px.
+  function fitBox(y, h, need, up, H, min) {
+    var top = Math.round(y * H), bottom = top + h;
+    var nh = Math.max(min, Math.min(Math.ceil(need), up ? bottom : H - top));
+    return up ? { y: Math.max(0, (bottom - nh) / H), h: nh } : { y: y, h: nh };
+  }
+  // ── end Background and height ──
+
   // Every overlay the canvas can host, from main (canvas-state): key, label,
   // the page to load, and where its own window is right now.
   var _overlays = [];
@@ -472,6 +524,12 @@
     // noSample: the arranging sample rows turned off (🧪 Hide test rows); a timers panel keeps it.
     function add(src1, o) {
       if (o.kind === 'timers' && src1.noSample === true) o.noSample = true;
+      // Background, grow direction and fit are every kind's own, and each is stored only when it was chosen:
+      // absent is "follow the Canvas default" / today's direction / fit to content.
+      var bk = cleanBack(src1.back);
+      if (bk === undefined) delete o.back; else o.back = bk;
+      if (o.kind !== 'timers' && o.kind !== 'callouts') { if (src1.anchor === 'bottom') o.anchor = 'bottom'; else delete o.anchor; }
+      if (src1.fit === false) o.fit = false;
       out.push(cleanWhen(src1, o));
     }
     for (var i = 0; i < src.length && out.length < MAX_PANELS; i++) {
@@ -564,6 +622,7 @@
     if (!haveCallouts) out.unshift(d[0]);
     if (!haveAll) out.push(d[1]);
     var res = { panels: out };
+    if (layout.backV === 1) res.backV = 1;
     // Which live group (the grp its pieces share) was placed or saved as which SAVED group: how a
     // group's hotkey finds its pieces. Only for a group that still has pieces here.
     if (layout.named && typeof layout.named === 'object') {
@@ -624,6 +683,10 @@
   var _widen = {}, _fitAdd = {};
   var _edit = false, _locked = true, _setup = false, _arrange = false;
   var _bgAlpha = null;
+  // The Canvas default for Background (toolbar switch / backdrop hotkey): main's push toggles the body class.
+  function canvasDefaultBack() { return document.body.classList.contains('wp-backdrop'); }
+  // Never saved: a fitted item with nothing in it right now (id → true), so its plate steps aside.
+  var _fitEmpty = {};
 
   function partDef(p) { return (window.WpParts && WpParts.byId[p.part]) || null; }
   function pdefOf(p) { return p && p.kind === 'part' ? partDef(p) : null; }
@@ -818,6 +881,9 @@
         + Math.max(0, fh - r.top - r.height) + 'px ' + r.left + 'px)';
       var w = Math.max(16, Math.round(r.width * s)), h = Math.max(8, Math.round(r.height * s));
       var wasX = p.x, wasY = p.y;
+      // Grows up: its bottom edge stays where it is while the section's height changes (a piece still in its
+      // group stays with it, and one that follows another part's tabs is placed from that part).
+      if (!ref && !p.grp && p.anchor === 'bottom' && Math.abs(h - p.h) > 1) p.y = num((p.y * window.innerHeight + p.h - h) / window.innerHeight, 0, 1, p.y);
       if (ref) {
         // Where it sits on the page, from where the part with the tabs sits on its own page and on the screen.
         var W = window.innerWidth, H = window.innerHeight;
@@ -912,9 +978,11 @@
       }
       if (p.kind === 'part') {
         e.root.style.setProperty('--ps', String(p.scale || 1));
-        e.root.classList.toggle('back', !!p.back);
         e.root.classList.toggle('seg', p.mode === 'seg');
       }
+      // Every kind has its own Background; the Canvas default speaks only for one that has not chosen.
+      e.root.classList.toggle('back', backOf(p, canvasDefaultBack()));
+      e.root.classList.toggle('fitempty', !!_fitEmpty[p.id]);
       e.root.classList.toggle('sel', !!_sel[p.id]);
       place(e, p);
       e.root.classList.toggle('off', !!p.off);
@@ -1165,10 +1233,16 @@
         if (q && m.x != null) { q.x = m.x / window.innerWidth; q.y = m.y / window.innerHeight; }
         // A group size: each piece's size, and a piece's text with it.
         if (q && m.w != null) { q.w = m.w; q.h = m.h; if (q.kind === 'part') q.scale = m.scale; }
+        // A height chosen by hand is the item's now: it stops following its content (⚙ → ↕ Fit height turns it back on).
+        if (q && m.w != null && Math.abs(m.h - m.h0) > 2 && fitOn(q, pdefOf(q))) q.fit = false;
       });
       save();
     } else if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = d.y / window.innerHeight; save(); }
-    if (p && d.mode === 'size' && d.w != null) { p.w = Math.round(d.w); p.h = Math.round(d.h); delete _fitAdd[p.id]; save(); }
+    if (p && d.mode === 'size' && d.w != null) {
+      // Dragging the height by hand turns the live fit off for this item, and says so; dragging only the width does not.
+      if (Math.abs(Math.round(d.h) - p.h) > 2 && fitOn(p, pdefOf(p))) { p.fit = false; note('Fit height is off for this one (its ⚙ turns it back on)', 3500); }
+      p.w = Math.round(d.w); p.h = Math.round(d.h); delete _fitAdd[p.id]; save();
+    }
     render();
   }
   document.addEventListener('mouseup', endDrag);
@@ -1229,9 +1303,10 @@
         h += '<button class="btn' + ((p.mode || WpParts.MODES[pdef.kind][0][0]) === m[0] ? ' on' : '') + '" data-mode="' + m[0] + '">' + esc(m[1]) + '</button>';
       });
       h += '<button class="btn" data-fit title="Make it as tall as what it shows right now">↕ Fit</button>';
+      var pbk = backOf(p, canvasDefaultBack());
       h += '</div><div class="sec">Backing</div><div class="row">'
-        + '<button class="btn' + (!p.back ? ' on' : '') + '" data-back="0">Clear</button>'
-        + '<button class="btn' + (p.back ? ' on' : '') + '" data-back="1">Panel</button></div>';
+        + '<button class="btn' + (!pbk ? ' on' : '') + '" data-back="0">Clear</button>'
+        + '<button class="btn' + (pbk ? ' on' : '') + '" data-back="1">Panel</button></div>';
       // Its own look, on any mode (the guild lead, 2026-09-29: "more element types, sizes, formats
       // like in the hud").
       h += '<div class="sec">Label</div><div class="row">'
@@ -1296,10 +1371,17 @@
       h += '<div class="row"><input type="text" id="mAdd" maxlength="48" placeholder="a timer or spell name"><button class="btn" id="mAddBtn">Add</button></div>';
       h += '<div class="sec">On screen now — click to claim</div><div class="chips" id="mLive"><span class="dim">…</span></div>';
     }
-    if (p.kind === 'timers') {
-      h += '<div class="sec">Stack</div><div class="row">'
-        + '<button class="btn' + (p.anchor !== 'top' ? ' on' : '') + '" data-anchor="bottom">↑ grows up</button>'
-        + '<button class="btn' + (p.anchor === 'top' ? ' on' : '') + '" data-anchor="top">↓ grows down</button></div>';
+    // Height (the guild lead, 2026-10-19: "Canvas should be able to grow up as well"): every item whose height
+    // follows its content says which edge stays put when it does. The timers panel's old Stack row, for all.
+    if (fitKind(p, pdef)) {
+      var fitIsOn = fitOn(p, pdef), up = growsUp(p);
+      h += '<div class="sec">' + ((p.kind === 'timers' || p.kind === 'callouts') ? 'Stack' : 'Height') + '</div>';
+      if (p.kind !== 'sect') {
+        h += '<div class="row"><button class="btn' + (fitIsOn ? ' on' : '') + '" data-fitlive title="The panel is as tall as what it shows right now, and follows it. Off keeps the height you gave it by dragging ◢">↕ Fit height to content: ' + (fitIsOn ? 'ON' : 'off') + '</button></div>';
+      }
+      h += '<div class="row">'
+        + '<button class="btn' + (up ? ' on' : '') + '" data-anchor="bottom" title="The bottom edge stays where it is; it grows upward">↑ grows up</button>'
+        + '<button class="btn' + (!up ? ' on' : '') + '" data-anchor="top" title="The top edge stays where it is; it grows downward">↓ grows down</button></div>';
     }
     h += '<div class="sec">' + ((p.kind === 'overlay' || p.kind === 'sect') ? 'Size' : 'Text size') + '</div><div class="row">'
       + '<button class="btn" data-sc="-1">A−</button><span style="min-width:3em;text-align:center">' + Math.round((p.scale || 1) * 100) + '%</span>'
@@ -1322,8 +1404,14 @@
       + (p.kind === 'overlay' ? '<button class="btn warn" data-remove title="Take it off the canvas; it opens as its own window again">Remove · own window</button>' : '')
       + ((p.kind === 'part' || p.kind === 'sect') ? '<button class="btn warn" data-remove>Remove piece</button>' : '')
       + '</div>';
-    var bgOn = document.body.classList.contains('wp-backdrop');
-    h += '<div class="row"><button class="btn' + (bgOn ? ' on' : '') + '" data-bg title="A solid plate behind every panel (Ctrl+Shift+B)">🌫 Background: ' + (bgOn ? 'ON' : 'off') + ' (whole Canvas)</button></div>';
+    // Background is this item's own (a piece has its Backing row above). The whole-Canvas switch is the toolbar's
+    // "default for new items" and never overrides what is set here.
+    if (p.kind !== 'part') {
+      var bgOn = backOf(p, canvasDefaultBack());
+      h += '<div class="sec">Background</div><div class="row">'
+        + '<button class="btn' + (!bgOn ? ' on' : '') + '" data-back="0" title="No plate behind this panel">Off</button>'
+        + '<button class="btn' + (bgOn ? ' on' : '') + '" data-back="1" title="A solid plate behind this panel only">On</button></div>';
+    }
     menuEl.innerHTML = h;
     menuEl.classList.add('show');
     _menuAnchor = anchor;
@@ -1484,15 +1572,6 @@
       if (!_edit) { try { if (M.canvasEdit) M.canvasEdit(true); } catch (err) {} }
       render(); return;
     }
-    if (t.hasAttribute('data-bg')) {
-      try {
-        M.toggleBackdropThis().then(function (on) {
-          document.body.classList.toggle('wp-backdrop', !!on);   // main's push may land after this reply
-          if (_menuFor === p.id && _els[p.id]) openMenu(p.id, _menuAnchor || _els[p.id].root);
-        });
-      } catch (err) { /* bridge missing on an older shell */ }
-      return;
-    }
     if (t.hasAttribute('data-test')) {
       if (p.kind === 'callouts') {
         try { var cw = _els[p.id].frame.contentWindow; if (cw && cw.wpPartFlash) cw.wpPartFlash('TEST — Death Touch on the main tank'); } catch (err) { /* page mid-load */ }
@@ -1531,7 +1610,8 @@
     else if (t.hasAttribute('data-back')) { p.back = t.getAttribute('data-back') === '1'; }
     else if (t.hasAttribute('data-bulk')) {
       // The group-level row: one choice for every piece that shares this one's group.
-      var bn = bulkSet(_layout.panels.filter(function (q) { return q.grp === p.grp && q.kind === 'part'; }), bulkPatch(t.getAttribute('data-bulk'), t.getAttribute('data-v')));
+      var gkind = t.getAttribute('data-bulk');
+      var bn = bulkSet(_layout.panels.filter(function (q) { return q.grp === p.grp && (q.kind === 'part' || gkind === 'back'); }), bulkPatch(gkind, t.getAttribute('data-v')));
       if (bn.skipped) note(bn.skipped + (bn.skipped === 1 ? ' piece' : ' pieces') + ' cannot be drawn that way and kept their look', 3500);
     }
     else if (t.hasAttribute('data-leave')) { p.grp = null; }
@@ -1539,7 +1619,11 @@
       _layout.panels.forEach(function (q) { if (q.grp && q.grp === p.grp) _sel[q.id] = true; });
       closeMenu(); render(); return;
     }
-    else if (t.hasAttribute('data-anchor')) { p.anchor = t.getAttribute('data-anchor'); }
+    else if (t.hasAttribute('data-anchor')) { p.anchor = t.getAttribute('data-anchor') === 'top' ? 'top' : 'bottom'; }
+    else if (t.hasAttribute('data-fitlive')) {
+      // On again: the item takes its content's height at the next look; off: it keeps the height it has now.
+      if (fitOn(p, pdefOf(p))) p.fit = false; else delete p.fit;
+    }
     else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), (p.kind === 'overlay' || p.kind === 'part' || p.kind === 'sect') ? 0.5 : 0.6, p.kind === 'part' ? 3 : 2.5, 1) * 10) / 10; }
     else if (t.hasAttribute('data-pw')) { p.pw = num((p.pw || 340) + Number(t.getAttribute('data-pw')), 160, 2400, 340); }
     else if (t.hasAttribute('data-apart')) {
@@ -1742,6 +1826,79 @@
     save();
     if (_menuFor === id) placeMenu();
   }
+
+  // ── Fit height to content, live (the guild lead, 2026-10-19: "we should always fit vertically to content") ──
+  // Every item whose height follows what it shows (fitKind) is measured a few times a second and given that
+  // height, with its anchored edge held (growsUp: bottom stays = grows up, top stays = grows down). The
+  // height is the item's own p.h, so what is on screen, what is dragged and what is saved are one thing; a
+  // height dragged by hand sets fit:false and the item keeps it. Not while something is being dragged, not
+  // while a panel's builder has it widened, and not for the HUD's ring.
+  var FIT_POLL_MS = 300, FIT_ROWS = 14;
+  var _fitStop = {};   // never saved: an overlay page that tracks its own frame creeps instead of fitting
+  var _fitCreep = {};
+  // A fitted countdown panel shows as many rows as its content has, not as many as a fixed box holds
+  // (triggers.html _partRowCap asks); a panel that keeps its hand-set height answers 0 and caps as it always did.
+  window.wpCanvasRowCap = function (id) {
+    var p = panelById(id);
+    return (p && p.kind === 'timers' && fitOn(p, null) && !_fitStop[id]) ? FIT_ROWS : 0;
+  };
+  // What an item's content wants right now, in screen px: 0 = nothing to show, null = cannot be read (yet).
+  function contentNeed(p, e) {
+    var s = p.scale || 1;
+    if (p.kind === 'part') {
+      var pt = e.body && e.body.querySelector('.pt');
+      if (!pt) return null;
+      var was = pt.style.height;
+      pt.style.height = 'auto';
+      var pn = Math.ceil(pt.getBoundingClientRect().height) + 4;
+      pt.style.height = was;
+      return pn;
+    }
+    var doc = null;
+    try { doc = e.frame && e.frame.contentDocument; } catch (err) { return null; }
+    if (!doc || !doc.body) return null;
+    if (p.kind === 'timers') {
+      var t = doc.getElementById('timers');
+      return t ? (t.children.length ? Math.ceil(t.offsetHeight * s) + 8 : 0) : null;
+    }
+    if (p.kind === 'callouts') {
+      var a = doc.getElementById('alertcol');
+      return a ? Math.ceil(a.offsetHeight * s) : null;
+    }
+    if (p.kind === 'overlay') {
+      var w = embedWant(e);
+      return (!w || w.exact) ? null : Math.ceil(w.h * s);
+    }
+    return null;
+  }
+  function fitStep() {
+    if (_drag) return;
+    var H = window.innerHeight, changed = false;
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id];
+      if (!e || p.off || _widen[p.id] || _fitAdd[p.id] || _fitStop[p.id]) return;
+      if (!fitOn(p, pdefOf(p))) { if (_fitEmpty[p.id]) { delete _fitEmpty[p.id]; e.root.classList.remove('fitempty'); } return; }
+      var need = contentNeed(p, e);
+      if (need == null) return;
+      var empty = need <= 0;
+      if (!!_fitEmpty[p.id] !== empty) { if (empty) _fitEmpty[p.id] = true; else delete _fitEmpty[p.id]; e.root.classList.toggle('fitempty', empty); }
+      var b = fitBox(p.y, p.h, need, growsUp(p), H, p.kind === 'part' ? 16 : p.kind === 'overlay' ? 50 : 36);
+      if (Math.abs(b.h - p.h) < 3) { _fitCreep[p.id] = 0; return; }
+      // A page whose box tracks its frame reads frame + a few px after every fit: that is a loop, not a content
+      // height. Six steps of that and the item is left alone for this session.
+      if (p.kind === 'overlay' && b.h > p.h && b.h - p.h <= 16) {
+        if ((_fitCreep[p.id] = (_fitCreep[p.id] || 0) + 1) >= 6) { _fitStop[p.id] = true; return; }
+      } else _fitCreep[p.id] = 0;
+      p.h = b.h; p.y = b.y;
+      place(e, p);
+      changed = true;
+    });
+    if (changed) { placeGbox(); if (_menuFor && _menuFor !== PICKER) placeMenu(); saveLazy(); }
+  }
+  // A fit changes height on content, often; the layout file is written at most every two seconds for it.
+  var _lazyT = null;
+  function saveLazy() { if (!_lazyT) _lazyT = setTimeout(function () { _lazyT = null; save(); }, 2000); }
+  setInterval(fitStep, FIT_POLL_MS);
   setInterval(function () {
     if (!window.WpParts) return;
     var any = _layout.panels.some(function (p) { var d = p.kind === 'part' && !p.off && partDef(p); return d && (d.kind === 'countdown' || d.repaint); });   // repaint: me.hp / me.mana's regen pulse (FB-90)
@@ -2056,7 +2213,7 @@
     var W = window.innerWidth, H = window.innerHeight;
     var p = { id: newId('q'), kind: 'part', part: pid, mode: mode, name: '',
       x: num(X / W, 0, 1, 0.3), y: num(Y / H, 0, 1, 0.3), w: num(sz[0], 40, 4000, 200), h: num(sz[1], 16, 3000, 30),
-      scale: num(o && o.scale, 0.5, 3, 1), back: !!(o && o.back), grp: grp || null, off: false, arc: null };
+      scale: num(o && o.scale, 0.5, 3, 1), back: (o && typeof o.back === 'boolean') ? o.back : undefined, grp: grp || null, off: false, arc: null };
     // A saved group brings each piece's own look with it.
     if (o) {
       p.arc = o.arc ? WpParts.cleanArc(o.arc) : null;   // a Ring arc's place on the HUD's circle
@@ -2856,7 +3013,12 @@
     var W = window.innerWidth, H = window.innerHeight, res = { changed: 0, skipped: 0 }, flowed = [];
     ps.forEach(function (q) {
       var d = q.kind === 'part' ? partDef(q) : null;
-      if (!d) return;
+      if (!d) {
+        // Background is every kind's own, so a whole set takes it whatever the kinds; a mode, thickness or
+        // alignment is a piece's and leaves the rest alone.
+        if (patch.back !== undefined && patch.mode === undefined && patch.thick === undefined && patch.align === undefined) { q.back = !!patch.back; res.changed++; }
+        return;
+      }
       if (patch.mode !== undefined) {
         var modes = WpParts.MODES[d.kind] || [], was = q.mode || (modes[0] ? modes[0][0] : '');
         if (!modes.some(function (m) { return m[0] === patch.mode; })) { res.skipped++; return; }
@@ -2897,7 +3059,11 @@
     bulkModes(ps).forEach(function (m) { h += '<option value="' + esc(m[0]) + '">' + esc(m[1]) + '</option>'; });
     h += '</select><select data-bulksel="thick" title="Bar or ring thickness, for every selected piece"><option value="">Thickness…</option>';
     BULK_THICK.forEach(function (t) { h += '<option value="' + t[0] + '">' + t[1] + '</option>'; });
-    return h + '</select><select data-bulksel="back" title="A plate behind every selected piece, or none"><option value="">Backing…</option><option value="0">Clear</option><option value="1">Panel</option></select>';
+    return h + '</select>' + bulkBackSelect();
+  }
+  // Background for every selected item, of whatever kind (each keeps its own afterwards).
+  function bulkBackSelect() {
+    return '<select data-bulksel="back" title="A plate behind every selected item, or none"><option value="">Backing…</option><option value="0">Clear</option><option value="1">Panel</option></select>';
   }
   // The GROUP section's way in: the same choices as buttons, on the whole group.
   function bulkMenuHtml(ps) {
@@ -2934,7 +3100,7 @@
       + (parts && ng ? '<button class="btn go" data-sel="update" title="Replace the pieces of “' + esc(ng.name) + '” with these (its name and hotkey stay)">💾 Update “' + esc(ng.name) + '”</button>' : '')
       + '<select id="selWhen" title="Show every selected piece only when this holds, out in play">' + whenOptions('Show when…', 'Always', WHEN) + '</select>'
       + '<select id="selCls" title="Show every selected piece only for this class">' + whenOptions('Only for…', 'Any class', WHEN_CLASSES.map(function (c) { return [c[0], c[0]]; })) + '</select>'
-      + (parts ? bulkSelectsHtml(ids.map(panelById).filter(function (q) { return q.kind === 'part'; })) : '')
+      + (parts ? bulkSelectsHtml(ids.map(panelById).filter(function (q) { return q.kind === 'part'; })) : bulkBackSelect())
       + '<button class="btn warn" data-sel="delete" title="Delete the selected (Undo appears)">🗑 Delete</button>'
       + '<button class="btn" data-sel="clear">Clear</button>';
     if (selbar._html !== h) { selbar._html = h; selbar.innerHTML = h; }
@@ -2961,7 +3127,8 @@
     var t = ev.target, v = t.value, ps = selIds().map(panelById);
     if (!v) return;
     if (t.hasAttribute && t.hasAttribute('data-bulksel')) {
-      var bn = bulkSet(ps.filter(function (q) { return q.kind === 'part'; }), bulkPatch(t.getAttribute('data-bulksel'), v));
+      var bkind = t.getAttribute('data-bulksel');
+      var bn = bulkSet(ps.filter(function (q) { return q.kind === 'part' || bkind === 'back'; }), bulkPatch(bkind, v));
       t.value = '';
       if (bn.skipped) note(bn.skipped + (bn.skipped === 1 ? ' piece' : ' pieces') + ' cannot be drawn that way and kept their look', 3500);
       save(); render();
@@ -2997,6 +3164,26 @@
   screenBtn.addEventListener('click', function () {
     try { if (M.canvasNextDisplay) M.canvasNextDisplay().then(loadState); } catch (e) {}
   });
+  // The Canvas default for Background: for items that have not chosen. Ctrl+Shift+B (main's backdrop hotkey)
+  // flips the same flag, and main's push toggles the body class, which is what is watched here.
+  var bgBtn = document.getElementById('bgBtn'), _bgSeen = null;
+  function paintBgBtn() {
+    var on = canvasDefaultBack();
+    bgBtn.classList.toggle('on', on);
+    bgBtn.textContent = '🌫 Default background: ' + (on ? 'ON' : 'off');
+    if (_bgSeen !== null && _bgSeen !== on) render();
+    _bgSeen = on;
+  }
+  bgBtn.addEventListener('click', function () {
+    try {
+      M.toggleBackdropThis().then(function (on) {
+        document.body.classList.toggle('wp-backdrop', !!on);   // main's push may land after this reply
+        paintBgBtn();
+      });
+    } catch (err) { /* bridge missing on an older shell */ }
+  });
+  try { new MutationObserver(paintBgBtn).observe(document.body, { attributes: true, attributeFilter: ['class'] }); } catch (e) { /* */ }
+  paintBgBtn();
   var resetBtn = document.getElementById('resetBtn');
   var _resetArmed = null;
   resetBtn.addEventListener('click', function () {
@@ -3030,6 +3217,9 @@
     if (st.res !== _res || !_res) {
       _res = st.res;
       _layout = sanitize(st.layout) || _layout || defaultLayout();
+      // The whole-Canvas Background switch became each item's own: once, every item takes the value the
+      // switch had, so nothing looks different after the update (main sends it as st.backdrop).
+      if (migrateBack(_layout, !!st.backdrop)) save();
     }
     _arrange = !!st.edit;
     screenBtn.style.display = (st.displays > 1) ? '' : 'none';

@@ -1334,6 +1334,9 @@
   }
   // Rows that fit the panel: its height in unscaled px over one row plus the 3px gap.
   function _partRowCap(){
+    // A panel that fits its height to its rows grows with them, so its height cannot be what caps them
+    // (canvas.html wpCanvasRowCap answers 0 for a panel that keeps a height set by hand).
+    try { var fc = window.parent && window.parent.wpCanvasRowCap, fitRows = (typeof fc === 'function') ? fc(PANEL) : 0; if (fitRows > 0) return fitRows; } catch (e) {}
     var first = timersEl.querySelector('.timer-row:not(.timer-more)');
     var rowH = (first && first.offsetHeight) || 24;
     return Math.max(1, Math.floor(((window.innerHeight - 8) / _partScale() + 3) / (rowH + 3)));
