@@ -114,7 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: say whether to build a zone gate for guild triggers (agent change on beta) so the bars fire only in the named's zone |
+| **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: A (keep, recommended) or B (zone gate, agent change on beta) — B brings back the "hits the tank" bar but our own nukes in the named's zone would start it again |
+| **Voice volume for spoken callouts** (no § yet) | There is none: trigger sounds have a slider, speech always plays at full volume (Windows, Piper and Kokoro) | the guild lead: yes/no on a Voice volume slider in the dashboard's 🗣 Voice tab, beside speed and pitch (Mimic beta) |
 | **raidmimic.com — the guild leaders' door** (§370) | Page live at `wolfpack.quest/raidmimic` marked [beta], layouts A (default) and B (`?v=b`). All six raidmimic hosts are on Vercel as 307s to eqmimic.quest; DNS is still Porkbun's parking page | the guild lead: pick A or B; at Porkbun, set apex A `216.198.79.1` and `www` CNAME `cname.vercel-dns.com` on all three domains (delete the parking records); then a session removes the six Vercel redirects so the page serves on raidmimic.com |
 | **Quarm Oct 18 patch notes** (§369) | Applied: bot 3.2.1 + web 1.9.4 on main (Plane of Time B corpse DM 30 min; PoP guide: PoK turn-ins held when bags are full, the 6d18h cycle, phase loot limits, the Phase 3 checkpoint); agent 3.8.1 on beta (corpse DM names zones 222/223). NOT applied: the Plane of Time timer model | the guild lead: pick the PoTime timer model (A observed cycle end / B inferred / hybrid) and capture one `#timelockout` + one `/sll` during a live cycle; turn on the bot's Message Content intent in the Discord developer portal BEFORE anyone sets `MESSAGE_CONTENT_INTENT=1` |
 | **Keepers of the (Overlay) Arts — Masterpieces + gallery** (§368) | Named; roadmap entry on main (web 1.9.3). Scoped: `docs/DESIGN-keepers-of-the-arts.md` (gallery B, set modes B, move-into-Canvas toggle + convert, socials library-lite; slice 0 = socials privacy fix) | the guild lead: go/no-go on the order and the open-decisions table there; approve the Tastemaker outreach wording before any DM |
@@ -11682,3 +11683,13 @@ named"*.
 - **Still open:** the engine has no zone or target gate (`zeal_condition` is HP-only; `condition_expr` is read by
   nothing). A `zone_ids` gate checked against Zeal's zone (old agents ignore it and fail open) would let the bars fire
   only in the named's zone, and would let the other-target lines come back. Not built; the guild lead's call.
+
+### 372. A summoned pet showed on the hail board as a raider (2026-10-19, bot 3.2.2)
+The guild lead, with a screenshot of the Command Center hail card for Tylis Newleaf: *"Larerer is a pet, should not be in
+this grouping"*. The kill roster unions the raid_roster snapshot with the fight's player list, and a pet whose owner the
+parse could not resolve sits in that list as a player with damage (single generated words are not skipped; only
+multi-word names are). A raider then tapped it, so it showed under "Hailed" as a marked chip. **Fix:** in
+`utils/hailBoard.js` `openWindow`, a name that comes only from the fight must be in `characters` to join the board
+(`guildOnly`); a failed read keeps the names. Test: `test/hail-board.test.js`. **Not fixed here:** the same unowned
+pet still counts as a player in the parse and `encounter_players` (the attribution in `index.js` near the "direct
+player damage" branch); that is its own task.

@@ -363,6 +363,21 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
     return { names: [...names.values()].slice(0, MAX_NAMES), uploaders: [...uploaders], ok: Array.isArray(rows) };
   }
 
+  // The fight's player list is every name that dealt damage, and a summoned pet whose owner the parse could not
+  // resolve (a magician or necromancer pet, a single generated word like "Lararer") sits in it as if it were a
+  // raider. The guild lead, 2026-10-19: a pet showed under "Hailed" on the Tylis Newleaf card. A name taken from
+  // the fight (not from the raid roster) must be a character the guild knows (`characters`) to join the board.
+  // A failed read keeps the names: a stray pet is better than a thin roster.
+  async function guildOnly(names) {
+    const list = unionNames(names);
+    if (!list.length) return [];
+    const rows = await supabase.selectAllPaged('characters',
+      `guild_id=eq.${enc(gid())}&name=in.(${list.map(enc).join(',')})&select=name`, 'name').catch(() => null);
+    if (!Array.isArray(rows)) return list;
+    const known = new Set(rows.map(r => lc(r.name)));
+    return list.filter(n => known.has(lc(n)));
+  }
+
   // Open the window for a kill, or fold a second report of the same kill into the one already open.
   // → the stored window, or null (not a hail boss / already expired).
   function openWindow({ bossId, bossName, killedAtMs, participants } = {}) {
@@ -388,10 +403,12 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
       // (the post-kill upload burst times Supabase out) or came back empty does not freeze a thin roster: the
       // window opens `roster_pending` and getBoard re-reads it (FB-71: 47 of 48 hailers were invisible).
       const snap = await snapshotRoster(killed);
+      const inRaid = new Set(snap.names.map(lc));
+      const fighters = await guildOnly((participants || []).filter(n => !inRaid.has(lc(n))));
       const w = {
         id: `${cfg.id}:${Math.floor(killed / 1000)}`, boss_id: cfg.id, boss_name: cfg.name, npc_name: cfg.npc,
         zone: cfg.zone, opened_at: iso(killed), expires_at: iso(expires),
-        roster: unionNames(snap.names, participants), uploaders: snap.uploaders, marks: {},
+        roster: unionNames(snap.names, fighters), uploaders: snap.uploaders, marks: {},
       };
       if (!(snap.ok && snap.names.length)) { w.roster_pending = true; rosterRetryAt = t; }
       windows.push(w); version++;
