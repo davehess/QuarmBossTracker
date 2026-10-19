@@ -115,6 +115,11 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Canvas Pieces round** (§360–366) | Built + gated on `alpha` (park 3.0.0): backing plate-only, whole-group look choices, copy/rename/update a saved group, live-data palette previews, locate line + pulse, delete-with-pieces + Undo | the guild lead, on the next alpha build: (1) list-mode preview crop at 42px (D), (2) single-piece Show as → Upright bar stub (B), (3) the hover line reaches the canvas while arranging (E) |
+| **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: say whether to build a zone gate for guild triggers (agent change on beta) so the bars fire only in the named's zone |
+| **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: A (keep, recommended) or B (zone gate, agent change on beta) — B brings back the "hits the tank" bar but our own nukes in the named's zone would start it again |
+| **Voice volume for spoken callouts** (no § yet) | There is none: trigger sounds have a slider, speech always plays at full volume (Windows, Piper and Kokoro) | the guild lead: yes/no on a Voice volume slider in the dashboard's 🗣 Voice tab, beside speed and pitch (Mimic beta) |
+| **raidmimic.com — the guild leaders' door** (§370) | Page live at `wolfpack.quest/raidmimic` marked [beta], layouts A (default) and B (`?v=b`). All six raidmimic hosts are on Vercel as 307s to eqmimic.quest; DNS is still Porkbun's parking page | the guild lead: pick A or B; at Porkbun, set apex A `216.198.79.1` and `www` CNAME `cname.vercel-dns.com` on all three domains (delete the parking records); then a session removes the six Vercel redirects so the page serves on raidmimic.com |
+| **Quarm Oct 18 patch notes** (§369) | Applied: bot 3.2.1 + web 1.9.4 on main (Plane of Time B corpse DM 30 min; PoP guide: PoK turn-ins held when bags are full, the 6d18h cycle, phase loot limits, the Phase 3 checkpoint); agent 3.8.1 on beta (corpse DM names zones 222/223). NOT applied: the Plane of Time timer model | the guild lead: pick the PoTime timer model (A observed cycle end / B inferred / hybrid) and capture one `#timelockout` + one `/sll` during a live cycle; turn on the bot's Message Content intent in the Discord developer portal BEFORE anyone sets `MESSAGE_CONTENT_INTENT=1` |
 | **Keepers of the (Overlay) Arts — Masterpieces + gallery** (§368) | Named; roadmap entry on main (web 1.9.3). Scoped: `docs/DESIGN-keepers-of-the-arts.md` (gallery B, set modes B, move-into-Canvas toggle + convert, socials library-lite; slice 0 = socials privacy fix) | the guild lead: go/no-go on the order and the open-decisions table there; approve the Tastemaker outreach wording before any DM |
 | **Mimic 3.0 on the beta channel** (§367) | Graduated 2026-10-18: `beta` park → 3.0.0 (builds `3.0.0-beta.N`), `alpha` re-parked → 3.0.1. The whole overlay-builder (Canvas, pieces, groups, previews, locate line) is now the beta fleet's, not alpha-only | the guild lead: install the `3.0.0-beta` build and run the in-game checks (preview crop (D), single-piece Upright bar stub (B), hover line (E)); decide a roadmap name for 3.0; say when it cuts stable |
 | **Per-section Canvas background: lockable** (§44, §360) | Backing is now per piece and per group, plate-only; still not lockable | the guild lead: say what "lock" means — hold the plate through a mode change, or something else |
@@ -11567,3 +11572,97 @@ lead's words where it matters:
 - **Status:** scoped the same day by four research passes; the synthesis, options and suggested order are in
   `docs/DESIGN-keepers-of-the-arts.md`. Found on the way: a live privacy gap in the socials library (it counts
   characters, not players, and ignores `exclude_from_stats`) — proposed as slice 0.
+
+### 369. Quarm's October 18 patch notes: what we changed and what we did not (2026-10-18)
+The guild lead pasted the notes (the Discord ingestion stores no text, below). Same approach as §352.
+- **Applied, main (bot 3.2.1 · web 1.9.4):** the corpse DM gives 30 minutes in zone 223 (`potimeb`, "the second part
+  of the Plane of Time") instead of an hour; every other PoP zone keeps an hour (`_POTIME_B_CORPSE_MOVE_SEC`). The PoP
+  guide now says PoK spell turn-ins never drop on the ground or cursor (a spell or returned parchment goes to a free bag
+  slot, or is held until you make room and speak to any planar spell turn-in vendor; extras are held the same way), and
+  gives the Plane of Time rules: one fixed 6 day 18 hour cycle from the guild's first entry that kills no longer extend,
+  Phase 1 loot limited 12 hours and Phases 2–3 3.5 days (never past the cycle end), Phases 4–6 down until the cycle ends,
+  the Phase 3 checkpoint, the 10-minute empty-zone visit end, the 90 cap with 18 into each Phase 1 wing. Roadmap entry +
+  onboarding changelog. No web/bot text anywhere said "drops on the ground" — the guide only lacked the new facts.
+- **Applied, beta (agent 3.8.1):** the agent's zone-name table stopped at 221, so a death in zones 222/223 sent its
+  corpse DM with no zone; added `222 Plane of Earth` (`poearthb`) and `223 Plane of Time` (`potimeb`), checked against
+  `eqemu_zone`.
+- **NOT applied — the Plane of Time timer model.** Only Quarm is on the board (`data/bosses.json`, 162 h = 6d18h, counted
+  from the kill). Under the new rule the cycle starts at the guild's first ENTRY and kills don't extend it, so "kill +
+  162 h" is now the wrong meaning, and slow mode's 18 h override would also be wrong for Quarm. Options: **A** read the
+  server's own numbers (`#timelockout` / `/sll` — needs one captured sample first), **B** infer the cycle start from the
+  first guild member seen in zone 219/223, **hybrid** B's ledger overwritten by any observed value. Nothing is known to
+  log an entry, a cycle start or the portal's other-guild message. Waiting on the guild lead's pick + a capture.
+- **Not written, no safe wording:** the portal's "belongs to another guild" message, repeated portal clicks, Phase 5
+  room guards returning, the failed-attempt reset rules before/after the checkpoint.
+- **Catalog lag:** Putrescent Blood (item 26635) still lists only flayed horrors and skinless creatures; the 7% from the
+  Torment constructs and twisted crawlers lands when `sync-quarm.yml` pulls a newer upstream dump (the last one is from
+  2026-09-27). Venenzi's self-found turn-ins are in the mirrored script, but `scripted_npc_turnins` lacks them (an
+  importer gap that predates this patch — separate fix).
+- ⚠ **Patch-note ingestion holds no text.** All 1,358 `quarm_patch_notes` rows have `content_missing = true` because the
+  bot runs without Discord's Message Content intent. Fix order matters: turn the intent ON in the Discord developer
+  portal FIRST, then set `MESSAGE_CONTENT_INTENT=1` on Railway — requesting an intent the portal hasn't granted makes
+  Discord refuse the bot's login.
+
+**Same session, art and brand (records only):** the guild lead bought `raidmimic.com`, `.net` and `.quest` (Porkbun;
+what they point at is still a pick: park → eqmimic.quest, rename the front door, or a separate game-agnostic service
+page). Pixel art made with the MIT `claude-pxl` kit (not vendored; a yes/no is open): the friendly eared Mimic from the
+app icon, a "just a chest" variant, Discord emoji + a sticker, and a guild hall + roster card drawn from each active
+main's race and class. The roster, names and rendered images stay outside the repo; only a name-free generator could
+ever be committed. (Corrected by §370: the guild lead's "C" answered the raidmimic question, not the art one. Where the
+art goes first is still open.)
+
+### 370. raidmimic.com is the guild leaders' door; eqmimic.quest stays the players' (2026-10-18, web 1.9.5)
+The guild lead: *"C was for raidmimic.com"*. That is option C from §369's list, "two doors": **eqmimic.quest** stays the
+free EverQuest player tool, and **raidmimic.com / .net / .quest** becomes the game-agnostic page selling raid
+orchestration and analytics as a service to guild leaders.
+- **The page (new, so it ships to `main` marked [beta]):** `web/app/raidmimic/`, all words in
+  `web/lib/raidmimicLanding.ts`. Two layouts, as usual for a UI pick: **A "The pitch"** (default, text first, reads as
+  an argument) and **B "The tour"** (`?v=b`, drawn screens first with the small print folded away). Every block carries
+  a status (live / alpha / coming) and one "What is not built yet" list holds every promise; a test fails if anything
+  is marked coming that the list does not name. No price list, customer count or testimonial: the one number is our own
+  measured hosting bill, labelled as scale and not a quote. "Register interest" opens the existing anonymous form on
+  eqmimic.quest as an Idea (AFB rules apply: untrusted text, read by people). Not indexed yet, like eqmimic.
+- **Hosts:** `web/lib/raidmimicHost.ts` lists six names; the middleware rewrites every path on them to `/raidmimic`
+  with the query dropped (so `?v=b` is only visible on wolfpack.quest), and the root layout drops the Wolf Pack chrome.
+- **Vercel, done this session:** all six names are on the project as 307 redirects to eqmimic.quest. They cannot chain,
+  so each points straight at eqmimic.quest. DNS is still Porkbun's parking page. **To serve the page on raidmimic.com:**
+  set the DNS (apex A `216.198.79.1`, `www` CNAME `cname.vercel-dns.com`; Vercel also suggests a project-specific
+  CNAME, either works), then remove the redirects on the six domains.
+- **Copy matches the privacy page:** the private-chat line was checked against `docs/PRIVACY.md` and gained the tells
+  clause (tells are dropped too unless the player turns relay on).
+
+**Same day — character gender lives in OpenDKP, not in our tables.** The guild lead corrected a "we hold nobody's gender"
+claim: OpenDKP's roster (`GET /clients/wolfpack/characters`, the same call `getCharacters` in `utils/opendkp.js` makes)
+carries `Gender` per character ("Male" / "Female", occasionally "F", sometimes blank). Of the 69 active mains, 66 have
+one; the guild lead confirmed three corrections against it. `utils/openDkpSync.js` copies `race`/`class`/`rank` into
+`characters` but not gender, and `raid_night_appearance.gender` stays NULL until Zeal sends entity looks. **Before
+saying gender is unknown, read OpenDKP.** The guild-hall sprites (scratch only) now draw from it. Storing it in
+`characters` (one column + one line in the sync) waits until the raid spectator needs it from the web.
+
+### 371. PoP "recast" timers fired on our own nukes; the other-target line is dropped (2026-10-19, data only)
+The guild lead, with a screenshot of "Garrison's Superior Sundering recast — Punisher of Flame, Arch Mage Alchtonion",
+"Brushfire recast — Emmerik Skyfury" and "Frozen Wind recast" bars: *"Why am i seeing these? we're not fighting that
+named"*.
+- **Cause:** the 150 `guild_triggers` rows named "<spell> recast — <mob>" (`source_pack='pop-2026-10'`, §112) match the
+  spell's landing text with no mob or zone in the pattern. The text prints whoever casts it. Garrison's Superior
+  Sundering is a wizard nuke (scroll class mask 2048) and sits in 441 NPCs' spell lists. Brushfire and Frozen Wind are
+  ranger spells carried by 195 NPCs. So our wizards and rangers, or any mob nearby, started a named's recast bar.
+- **Applied (data only, 20 rows):** the "<someone> is …" alternative is removed from the high-risk rows. Each keeps
+  "You resist the X spell!" and its on-you line, so a raider who is hit still gets the bar, and a nuke landing on a mob
+  no longer starts one. Each row's `notes` holds the old pattern (`[2026-10-19] … Was: …`) for a revert. The other 7
+  high-risk rows (Markar's Discord, Invert Gravity, Gravity Flux, Greater Fetter, Boltran`s Agacerie, Life Leech, Touch
+  of Innoruuk) already had only "you" lines. The ~15 medium-risk rows (spells 2–28 NPCs carry: Meteor Storm, Storm
+  Comet, Lava Breath, …) were left as they are.
+- **Still open:** the engine has no zone or target gate (`zeal_condition` is HP-only; `condition_expr` is read by
+  nothing). A `zone_ids` gate checked against Zeal's zone (old agents ignore it and fail open) would let the bars fire
+  only in the named's zone, and would let the other-target lines come back. Not built; the guild lead's call.
+
+### 372. A summoned pet showed on the hail board as a raider (2026-10-19, bot 3.2.2)
+The guild lead, with a screenshot of the Command Center hail card for Tylis Newleaf: *"Larerer is a pet, should not be in
+this grouping"*. The kill roster unions the raid_roster snapshot with the fight's player list, and a pet whose owner the
+parse could not resolve sits in that list as a player with damage (single generated words are not skipped; only
+multi-word names are). A raider then tapped it, so it showed under "Hailed" as a marked chip. **Fix:** in
+`utils/hailBoard.js` `openWindow`, a name that comes only from the fight must be in `characters` to join the board
+(`guildOnly`); a failed read keeps the names. Test: `test/hail-board.test.js`. **Not fixed here:** the same unowned
+pet still counts as a player in the parse and `encounter_players` (the attribution in `index.js` near the "direct
+player damage" branch); that is its own task.

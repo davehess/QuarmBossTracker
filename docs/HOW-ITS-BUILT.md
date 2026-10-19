@@ -1029,6 +1029,18 @@ offering it on "add a dark mode" collects data we asked for and do not need.
 would otherwise wipe a half-typed report.
 Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
 
+### raidmimic.com landing page (web 1.9.5, 2026-10-18, [beta]; DECISIONS §370)
+- **What:** the guild leaders' door, game-agnostic: what the platform does, each block tagged live / alpha / coming,
+  works-with (PQ Companion, GINA, EQLogParser), the consent model, what it costs (no price list), "any solved world",
+  and Register interest. Two layouts: A "The pitch" (default) and B "The tour" (`?v=b`).
+- **Where:** `web/app/raidmimic/page.tsx` (metadata, host-dependent links), `web/app/raidmimic/_landing/`
+  (`PitchLayout.tsx`, `TourLayout.tsx`, `Parts.tsx`, `Figures.tsx` CSS-only drawings), ALL words in
+  `web/lib/raidmimicLanding.ts` (`COMING` is the whole list of promises). Hosts: `web/lib/raidmimicHost.ts`,
+  `web/middleware.ts` (rewrite to `/raidmimic`, query dropped), `web/app/layout.tsx` (bare shell). Register interest
+  reuses the eqmimic.quest anonymous form. Test: `test/raidmimic-landing.test.js`.
+- **Live at:** `https://wolfpack.quest/raidmimic` (and `?v=b`). On raidmimic.com once DNS points at Vercel and the
+  Vercel redirects to eqmimic.quest come off.
+
 ### eqmimic.quest landing page (web, 2026-10-09, [beta]; DECISIONS §209)
 - **What:** the page a newcomer to Mimic reads, video first: a large player with a picker of recorded scenarios
   (placeholders until the clips arrive), then the overlay gallery (each tagged local or guild), standalone setup

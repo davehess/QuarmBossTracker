@@ -775,6 +775,9 @@ next touch one rather than assuming a missing row means a missing doc.
   2026-10-01, beta 3.7.64).** Its footer names the zone; the rows
   used to go up with none (7,263 of ~9,400 in two days). Supersedes §73's "upload untouched".
   `test/who-zone-column.test.js`, `test/pop-who.test.js`. `DECISIONS-2026-09-21.md` §123.
+- **🧪 raidmimic.com landing, [beta] (web 1.9.5, 2026-10-18; DECISIONS §370).** The guild leaders' door, live at
+  `wolfpack.quest/raidmimic` with layouts A (default) and B (`?v=b`). Waiting on: the guild lead's A/B pick, Porkbun DNS for
+  the three domains, then removing the six Vercel redirects to eqmimic.quest. `test/raidmimic-landing.test.js`.
 - **🧪 eqmimic.quest demo with sample data (hesstastic `e2d2f62`).** `hesstastic.com/eqmimic/demo/` (tour)
   and `/eqmimic/demo/b/` (app): overlays replaying a real fight, the control panel, guild and officer
   pages, every name invented. eqmimic.quest itself is not live: no Vercel project builds the hesstastic

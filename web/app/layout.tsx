@@ -13,6 +13,7 @@ import BetaLink from '@/components/BetaLink';
 import { getSessionUser } from '@/lib/session';
 import { isOfficer } from '@/lib/officer';
 import { isEqmimicHost } from '@/lib/eqmimicHost';
+import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { headers } from 'next/headers';
 
 // b.wolfpack.quest. Set at BUILD time from the branch (see next.config.js), so
@@ -69,7 +70,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // the anonymous feedback form) have no sign-in. Keyed on the Host header; the layout is already
   // per-request (it reads the session cookie below), so reading a header costs nothing extra. The
   // shell sets NO max width: each page sets its own (the form is narrow, the landing page is wide).
-  if (isEqmimicHost(headers().get('host'))) {
+  // raidmimic.com and its sister hosts (2026-10-18) get the same bare shell: one public page, no sign-in.
+  if (isEqmimicHost(headers().get('host')) || isRaidmimicHost(headers().get('host'))) {
     return (
       <html lang="en">
         <body className="font-mono">

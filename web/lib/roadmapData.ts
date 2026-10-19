@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-9-5-2026-10-18',
+    title: 'A front door for guild leaders',
+    version: 'Web 1.9.5',
+    date: '2026-10-18',
+    headline: 'A new page for guild leaders shows what the platform does for a whole raid, and says plainly which parts run today and which are still coming.',
+    features: [
+      { name: 'The guild leaders\' page', blurb: 'Raid boards, flags and lockouts, loot, merged parses, the night\'s review and overlays, each marked as running today, in testing or coming. Two layouts to compare while it is new. It will live at raidmimic.com; Mimic for players stays at eqmimic.quest.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-9-4-2026-10-18',
     title: 'Planes of Power: the October 18 server changes',
     version: 'Web 1.9.4 · Bot 3.2.1',

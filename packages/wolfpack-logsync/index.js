@@ -1511,6 +1511,9 @@ function isConfirmedPlayer(name) {
   if (!name) return false;
   // Multi-word names with lowercase start (NPCs like "a netherbian drone")
   if (/^[a-z]/.test(name)) return false;
+  // A player's name is letters only. A backtick, apostrophe, space or digit is an NPC, however it got confirmed:
+  // the Halls of Honor dragon "Rydda`Dar" sat on the needs-rez board (the guild lead, 2026-10-18).
+  if (!/^[A-Za-z]+$/.test(name)) return false;
   const lower = name.toLowerCase();
   if (confirmedPlayers.has(lower)) return true;
   // Watched character (uploader's own log)

@@ -36,7 +36,8 @@ const rosterRows = (names, uploader, minAgo = 0) =>
 
 // One board over a fake database and a clock the test moves.
 function env(tables = {}, { enabled = true } = {}) {
-  const t = { raid_roster: [], pop_flags: [], pop_guide_ticks: [], bot_kv: [], ...tables };
+  const t = { raid_roster: [], pop_flags: [], pop_guide_ticks: [], bot_kv: [],
+    characters: RAID.map(name => ({ guild_id: 'g', name })), ...tables };
   const fake = makeFakePostgrest(t);
   const upserts = [];
   let nextId = 1;
@@ -196,6 +197,24 @@ describe('a hail boss kill opens a window', () => {
     expect([...w.roster].sort()).toEqual(['Aldenmar', 'Brackwyn', 'Corvale', 'Nyssara', 'Rethlan']);
     expect(w.roster_pending).toBeUndefined();         // the read worked and found people: nothing to retry
     expect(w.uploaders).toEqual(['u1']);
+  });
+
+  it('a pet in the fight\'s player list is not a raider: only fighters the guild knows join the board', async () => {
+    // A summoned pet whose owner the parse could not resolve is listed as a player, with damage, like a raider.
+    const e = env({ raid_roster: rosterRows(['Aldenmar', 'Brackwyn'], 'u1') });
+    const w = await e.hb.openWindow({ bossName: 'The Keeper of Sorrows', killedAtMs: KILL,
+      participants: ['Aldenmar', 'Rethlan', 'Lararer'] });
+    expect([...w.roster].sort()).toEqual(['Aldenmar', 'Brackwyn', 'Rethlan']);
+    // ... and with the roster read failed, the pet is still not a raider.
+    const f = env();
+    f.failRoster = true;
+    const p = await f.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL, participants: ['Rethlan', 'Lararer'] });
+    expect(p.roster).toEqual(['Rethlan']);
+    // A failed characters read keeps the names rather than thinning the roster.
+    const g = env();
+    g.fake.selectAllPaged = ((orig) => (t, ...a) => (t === 'characters' ? Promise.reject(new Error('timeout')) : orig(t, ...a)))(g.fake.selectAllPaged);
+    const k = await g.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL, participants: ['Rethlan', 'Lararer'] });
+    expect(k.roster).toEqual(['Rethlan', 'Lararer']);
   });
 
   it('a roster read that fails does not freeze the window: it opens pending with the participants', async () => {
@@ -1145,5 +1164,75 @@ describe('a boss window opens from its first fresh flag grant', () => {
     await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
     await e.hb.openWindow({ bossName: 'Bertoxxulous', killedAtMs: KILL - MIN, participants: ['Brackwyn'] });
     expect(e.hb._windows().filter(w => w.boss_id === 'bertoxxulous')).toHaveLength(1);
+  });
+});
+
+// ── The three Halls of Honor trials (the guild lead, 2026-10-18: "we did not get credit on the command center
+// for this trial hailing - we should do it for each HoH trial"). The lines are the server script's own words
+// (hohonora/encounters/RyddaDar.lua), as in the guild lead's log of 2026-10-18 ────────────────────────────────
+describe('Halls of Honor trials', () => {
+  const HOH = '211';                                                   // the zone id the agent sends
+  const MIST = 'An ethereal mist descends from the air and surrounds your very being. Your body begins to emanate with the power of Trydan Faye.';
+  const HELD = 'You have already received credit for completing this trial.';
+  const VILLAGERS = ['Granmuck_Reiga', 'Fligg_Starp', 'Trann_Berk', 'Shott_Tarbs', 'Ruark_Barr', 'Zullkata_Reeps',
+    'Maeryn_Malladry', 'Thullias_Rhidron', 'Herot_Terkins', 'Mirezvakla_Ry`Ten', 'Yarezka_Tri`Lok', 'Merken_Lysonn'];
+
+  it('winning trial 1 (Rydda`Dar dies) opens a Trydan Faye window for 10 minutes', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1', 1) });
+    const w = await e.hb.openWindow({ bossName: 'Rydda`Dar', killedAtMs: KILL });
+    expect(w).toMatchObject({ boss_id: 'hoh_trial_1', zone: 'Halls of Honor' });
+    expect(w.npc_name).toMatch(/^Trydan Faye/);
+    expect(Date.parse(w.expires_at) - Date.parse(w.opened_at)).toBe(10 * MIN);
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view.still.map(s => s.name).sort()).toEqual(RAID.slice().sort());
+  });
+
+  it('a witnessed hail of the trial NPC in the Halls credits "seen"; another NPC does not', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1', 1) });
+    await e.hb.openWindow({ bossName: 'Rydda`Dar', killedAtMs: KILL });
+    e.flag('Aldenmar', 'hail', 'hail_witnessed', at(3), { npc: 'Trydan Faye', zone: 'hohonora' });
+    e.flag('Brackwyn', 'hail', 'hail_witnessed', at(3), { npc: 'Rhaliq Trell', zone: 'hohonora' });
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view.hailed).toEqual([{ name: 'Aldenmar', how: 'seen' }]);
+  });
+
+  it('the mist line (a fresh grant) is "flag"; the already-held line settles them as already flagged', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1', 1) });
+    await e.hb.openWindow({ bossName: 'Rydda`Dar', killedAtMs: KILL });
+    const mist = popFlagStages.resolveStage({ kind: 'trial', text: MIST, zone: HOH }, '');
+    const held = popFlagStages.resolveStage({ kind: 'trial', text: HELD, npc: 'Trydan Faye', zone: HOH }, '');
+    expect(mist).toMatchObject({ stage: 'hoh_trial_1', fresh: true });
+    expect(held).toMatchObject({ stage: 'hoh_trial_1', fresh: false });
+    e.flag('Aldenmar', mist.stage, 'event', at(5));
+    e.flag('Brackwyn', held.stage, 'credit', at(6));
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view.hailed).toEqual([{ name: 'Aldenmar', how: 'flag' }]);
+    expect(view.already_flagged).toEqual(['Brackwyn']);
+  });
+
+  it('a mist grant opens the window by itself when no kill was seen', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1', 1) });
+    const w = await e.hb.noteGrants([{ character: 'Aldenmar', flag_key: 'hoh_trial_2', source: 'event', earned_at: at(0), zone: HOH }]);
+    expect(w).toMatchObject({ boss_id: 'hoh_trial_2' });
+    expect(w.npc_name).toMatch(/^Rhaliq Trell/);
+  });
+
+  it('trial 3 opens only when all three bosses have died; trial 2 only when all twelve have', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1', 1) });
+    expect(await e.hb.openWindow({ bossName: 'Advocent_Joran', killedAtMs: KILL - 4 * MIN })).toBeNull();
+    expect(await e.hb.openWindow({ bossName: 'Halgoz_Rellinic', killedAtMs: KILL - 2 * MIN })).toBeNull();
+    const w3 = await e.hb.openWindow({ bossName: 'Freegan_Haun', killedAtMs: KILL });
+    expect(w3).toMatchObject({ boss_id: 'hoh_trial_3', opened_at: new Date(KILL).toISOString() });
+    // A second agent reporting the same last death folds into the same window.
+    await e.hb.openWindow({ bossName: 'Freegan Haun', killedAtMs: KILL + 1000 });
+    expect(e.hb._windows().filter(w => w.boss_id === 'hoh_trial_3')).toHaveLength(1);
+    for (const n of VILLAGERS.slice(0, 11)) expect(await e.hb.openWindow({ bossName: n, killedAtMs: KILL })).toBeNull();
+    expect(await e.hb.openWindow({ bossName: VILLAGERS[11], killedAtMs: KILL })).toMatchObject({ boss_id: 'hoh_trial_2' });
+  });
+
+  it('a mist line for an NPC that is not a trial NPC, or the held line with no NPC, resolves to nothing', () => {
+    expect(popFlagStages.resolveStage({ kind: 'trial', text: MIST.replace('Trydan Faye', 'Somebody Else') }, '')).toBeNull();
+    expect(popFlagStages.resolveStage({ kind: 'trial', text: HELD }, '')).toBeNull();
+    expect(popFlagStages.resolveStage({ kind: 'trial', text: 'You say, hello' }, '')).toBeNull();
   });
 });
