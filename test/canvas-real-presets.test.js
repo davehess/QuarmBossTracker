@@ -76,6 +76,7 @@ describe('choosing a preset', () => {
       + 'function presetPiece(a) { return a; } function savedById() { return null; }\n'
       + 'function addPart() { calls.push(["part"]); } function placeGroup(ps) { calls.push(["pieces", ps.length]); }\n'
       + 'function markPreset(grp) { return grp; }\n'
+      + 'function wholeBox() { return { w: 300, h: 300 }; } function wholePanel() { return null; } function watchPieceFit() { calls.push(["watch"]); }\n'
       + 'function dropEmbed(g, X, Y, clicked) { calls.push(["embed", g.embed, g.style || "", X, Y, clicked]); }\n'
       + 'function addOverlay() { return null; } function sectPanel() { return null; } function refresh() {} function save() {} function render() {}\n'
       + slice('  function presetById(id)', 'return null; }') + '\n'
@@ -94,7 +95,9 @@ describe('choosing a preset', () => {
   });
   it('"as pieces" — or an overlay main has not listed yet — lays out the old stack of pieces', () => {
     const tank = W.PRESETS.find(p => p.id === 'tank');
-    expect(drop('preset:tank:pieces')).toEqual([['pieces', tank.parts.length]]);
+    // (An overlay's pieces are laid out in its footprint and watched for the page's real size: canvas-prebuilt-fit.test.js.)
+    expect(drop('preset:tank:pieces')).toEqual([['pieces', tank.parts.length], ['watch']]);
+    expect(drop('preset:tank:whole')).toEqual([['embed', 'tank', '', 120, 340, false]]);
     expect(drop('preset:tank', { have: false })).toEqual([['pieces', tank.parts.length]]);
     // A preset with no overlay behind it is only ever pieces.
     expect(drop('preset:group')).toEqual([['pieces', W.PRESETS.find(p => p.id === 'group').parts.length]]);
@@ -102,8 +105,9 @@ describe('choosing a preset', () => {
   it('the Groups tab shows the real overlays, each with an "as pieces" chip, and the rest as pieces', () => {
     expect(c).toMatch(/var real = !!\(g\.embed && ovEntry\(g\.embed\)\);/);
     expect(c).toContain("data-drag=\"preset:' + g.id + ':pieces\"");
+    expect(c).toContain("data-drag=\"preset:' + g.id + ':whole\"");
     expect(c).toContain("(real ? '▣ ' : '▦ ')");
-    expect(c).toMatch(/else if \(g\) markPreset\(placeGroup\(g\.parts\.map\(presetPiece\), X, Y\), g\);/);
+    expect(c).toMatch(/: g\.parts\.map\(presetPiece\), X, Y\), g\);/);
   });
   it('"Whole overlays" lists only the overlays with no preset, so the HUD is not offered a second, half-size way', () => {
     expect(c).toMatch(/WpParts\.PRESETS\.forEach\(function \(g\) \{ if \(g\.embed\) preset\[g\.embed\] = true; \}\);\s*var whole = _overlays\.filter\(function \(o\) \{ return !on\[o\.key\] && !preset\[o\.key\]; \}\);/);

@@ -720,6 +720,13 @@
   if (_tab !== 'stats') _setTab(_tab, true);
   if (_shareTab) window.addEventListener('storage', function(ev){
     if (ev.key === 'wpTargetTab' && _TABS[ev.newValue] && ev.newValue !== _tab) _setTab(ev.newValue, true);
+    // The ⚡ mana switch is kept in localStorage; the other copies of this page follow it too, so the mana
+    // part taken apart from the title bar changes when the title bar's ⚡ is clicked.
+    if (ev.key === 'wpTargetMana') {
+      _manaView = ev.newValue !== 'off';
+      if (tabManaBtn) tabManaBtn.classList.toggle('on', _manaView);
+      _renderBody(_lastMi);
+    }
   });
 
   // #186 — PQDI link (delegated: the header re-renders every poll). Opens the

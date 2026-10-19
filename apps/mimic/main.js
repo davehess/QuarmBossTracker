@@ -12107,8 +12107,14 @@ function _canvasOverlayList() {
       }
     } catch { /* mid-close */ }
     const size = _CANVAS_SIZES[c.key] || [320, 240];
+    // The Canvas always loads the bundled page, never the agent-served copy the Dock and the window prefer
+    // (#65): that one is another origin (http://127.0.0.1 inside this file:// page), so the Canvas can neither
+    // read its size nor cut it into pieces, and there is no probe-and-fall-back here, so an agent that is not
+    // answering yet leaves a panel that never loads (the guild lead, 2026-10-19: "Command center is blank").
+    // The bundled page is byte-identical to the served one (check:dashboard) and reads its data from the
+    // agent's port the same way.
     return { key: c.key, label: c.label,
-      src: (c.agentPath && agentPort) ? `http://127.0.0.1:${agentPort}${c.agentPath}` : c.file,
+      src: c.file,
       showing: !!at, docked: docked.includes(c.key), at, w: size[0], h: size[1] };
   });
 }
