@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Other games** (§377) | Decided: a thin reader per game posting the same upload. Drafting: the EQ family (other EQ servers, local edition) and a Classic WoW combat-log reader + a `game`/`boss_key` seam on `encounters`. Monsters & Memories is on hold: its policy forbids parsers | a session: review and ship both drafts; the `encounters` migration needs the guild lead's approval prompt |
+| **Other games** (§377) | EQ family live on beta (agent 3.8.7: any `eqlog_<Name>_<server>.txt` in the local edition, never uploads off Quarm). Classic WoW reader built on branch `claude/wow-classic-reader` (bot 3.2.8, web 1.9.9, migration `20261019130000_encounters_game_and_boss_key`, not applied). Monsters & Memories on hold (its policy forbids parsers) | the guild lead: approve the `encounters` migration; someone with a Classic client runs `node packages/wowlogsync/index.js --log <Logs dir> --character <name> --dry-run --from-start` and reports. Confirm real P1999/live log suffixes |
 | **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side on branch `claude/gallery-server` (bot 3.2.7); `GALLERY_SALT` set on Railway. The tables migration was approved but its run was cancelled at the confirmation prompt | a session: apply `20261019120000_gallery_masterpieces` (guild lead approves the prompt), push bot 3.2.7, then the Mimic Gallery tab (design with samples first) — 3.0 stable waits on slice 1 |
 | **FB-84 death log before a death** (§373) | Scoped: A local recap (recommended first slice), B web per-death panel, C extend heal gaps/timeline | the guild lead: pick A/B/C (with samples) before any build |
 | **Raid night 2026-10-18 fixes** (§373) | Live: bot 3.2.6 (HoH trial cards, pet filter, flag counter, named-boss list); beta agent 3.8.4 + Mimic DPS Sec rule (rez NPC fix, trial credit lines, three rampagers) | the guild lead: look over `data/named-bosses.json` for missing or unwanted nameds (the hail-cap tooltip was reworded in agent 3.8.5 beta) |
@@ -11839,3 +11839,8 @@ similar systems"*.
   - `packages/wowlogsync/` with the `encounters` seam, proven by a Classic combat-log line becoming a fight on `/parses`.
 - **Landing page (web 1.9.8):** raidmimic's "Any solved world" no longer calls Monsters & Memories next. It lists other
   EverQuest servers and classic-era Warcraft as next, and says Monsters & Memories waits on its rules.
+- **Shipped 2026-10-19:** the EQ family on beta (agent 3.8.7, `ad1169de`). Mimic reads any `eqlog_<Name>_<server>.txt`;
+  a per-server table allows only Quarm to feed the guild bot or use the Quarm catalog. A suffix starting with `pq.proj` is
+  always Quarm, so a renamed copy never stops uploads. The P1999 and live suffixes are from memory and unverified.
+  The Classic WoW reader is ready on `claude/wow-classic-reader` (bot 3.2.8 / web 1.9.9). Its migration is renumbered
+  `20261019130000` so it does not collide with the gallery's `20261019120000`. Nothing applied.
