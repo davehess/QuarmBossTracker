@@ -857,7 +857,8 @@ describe('every recorded kill reaches the listeners', () => {
   const load = (recordKill) =>
     // eslint-disable-next-line no-new-func
     // slowMode: the wrapper also applies the slow-mode timer (test/slow-mode.test.js); here it changes nothing.
-    new Function('recordKill', 'slowMode', `${wrapper}\nreturn { onKillRecorded, recordKillNotifying };`)(recordKill, { timerHoursForKill: (id, h) => h });
+    // potime: nor the Plane of Time cycle (test/potime-cycle.test.js).
+    new Function('recordKill', 'slowMode', 'potime', `${wrapper}\nreturn { onKillRecorded, recordKillNotifying };`)(recordKill, { timerHoursForKill: (id, h) => h }, { endForKill: () => null });
 
   it('hands each listener the boss, the kill time and the killer, and returns the record untouched', () => {
     const entry = { killedAt: 1234, nextSpawn: 9999, killedBy: 'x' };

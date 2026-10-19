@@ -111,7 +111,9 @@ async function computeRecoverList(sinceMs) {
     if (!boss?.timerHours)  { skipped.noTimer++;    continue; }
     const killedAt  = new Date(enc.started_at).getTime();
     // A slow-mode kill runs 18h, not timerHours (utils/slowMode.js) — this rebuild bypasses recordKill.
-    const nextSpawn = killedAt + require('./slowMode').effectiveTimerHours(boss, boss.timerHours, killedAt) * 3600000;
+    // Quarm is on the Plane of Time's fixed cycle instead (utils/potimeCycle.js): his timer is the cycle end.
+    const nextSpawn = require('./potimeCycle').endForKill(bossId, killedAt)
+      || killedAt + require('./slowMode').effectiveTimerHours(boss, boss.timerHours, killedAt) * 3600000;
     if (nextSpawn <= now)   { skipped.alreadyRespawned++; continue; }
     const live = existing[bossId];
     if (live?.nextSpawn && live.nextSpawn >= nextSpawn) { skipped.alreadyCurrent++; continue; }

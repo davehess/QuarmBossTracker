@@ -4,6 +4,7 @@ const { EmbedBuilder } = require('discord.js');
 const { discordRelativeTime, discordAbsoluteTime, statusEmoji, isShortTimerBoss } = require('./timer');
 const { getDefaultTz } = require('./timezone');
 const { isSlowModeTimer } = require('./slowMode');
+const { boardTag: potimeTag } = require('./potimeCycle');   // Quarm's "estimated" / "from #timelockout" label
 
 const EXP_ORDER = ['Classic', 'Kunark', 'Velious', 'Luclin', 'PoP'];
 const EXP_EMOJI = { Classic: '⚔️', Kunark: '🦎', Velious: '❄️', Luclin: '🌙', PoP: '🔥' };
@@ -16,7 +17,7 @@ function buildZoneKillCard(zone, killedBosses) {
   for (const { boss, entry, killedBy } of killedBosses) {
     embed.addFields({
       name: `${boss.emoji || '☠️'} ${boss.name} killed`,
-      value: `Recorded by <@${killedBy}> • [PQDI](${boss.pqdiUrl})${isSlowModeTimer(boss, entry) ? ' • 🐢 slow mode' : ''}\n**Next spawn:** ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,
+      value: `Recorded by <@${killedBy}> • [PQDI](${boss.pqdiUrl})${isSlowModeTimer(boss, entry) && !potimeTag(boss.id, entry) ? ' • 🐢 slow mode' : ''}${potimeTag(boss.id, entry)}\n**Next spawn:** ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,
       inline: false,
     });
   }
@@ -44,7 +45,7 @@ function buildSummaryCard(bosses, killState) {
     if (!byExp[exp]?.length) continue;
     any = true;
     const lines = byExp[exp].map(({ boss, entry }) =>
-      `${boss.emoji || '•'} **${boss.name}** (${boss.zone}) — ${discordAbsoluteTime(entry.nextSpawn)} ${discordRelativeTime(entry.nextSpawn)}`
+      `${boss.emoji || '•'} **${boss.name}** (${boss.zone}) — ${discordAbsoluteTime(entry.nextSpawn)} ${discordRelativeTime(entry.nextSpawn)}${potimeTag(boss.id, entry)}`
     );
     chunkLines(lines, 1000).forEach((chunk, i) =>
       embed.addFields({ name: i === 0 ? `${EXP_EMOJI[exp]} ${exp}` : `${exp} (cont.)`, value: chunk, inline: false })
@@ -124,7 +125,7 @@ function buildExpansionCooldownCard(expansion, bosses, killState) {
 
   for (const [zone, items] of Object.entries(byZone)) {
     const lines = items.map(({ boss, entry }) =>
-      `${boss.emoji || '•'} **${boss.name}** — ${discordAbsoluteTime(entry.nextSpawn)} ${discordRelativeTime(entry.nextSpawn)}`
+      `${boss.emoji || '•'} **${boss.name}** — ${discordAbsoluteTime(entry.nextSpawn)} ${discordRelativeTime(entry.nextSpawn)}${potimeTag(boss.id, entry)}`
     );
     chunkLines(lines, 1000).forEach((chunk, i) =>
       embed.addFields({ name: i === 0 ? `📍 ${zone}` : `${zone} (cont.)`, value: chunk, inline: false })
@@ -154,7 +155,7 @@ function buildStatusEmbed(bosses, state, filterZone = null) {
       const rem = entry.nextSpawn - now;
       const emoji = statusEmoji(entry.nextSpawn);
       if (rem <= 0) return `${emoji} **${boss.name}** — SPAWNED`;
-      return `${emoji} **${boss.name}** — ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`;
+      return `${emoji} **${boss.name}** — ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})${potimeTag(boss.id, entry)}`;
     });
     chunkLines(lines, 1000).forEach((chunk, i) =>
       embed.addFields({ name: i === 0 ? zone : `${zone} (cont.)`, value: chunk, inline: false })
