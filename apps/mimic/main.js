@@ -6034,7 +6034,8 @@ function openFeedback() {
   feedbackWindow = new BrowserWindow({
     width: 560, height: 720, minWidth: 400, minHeight: 420, resizable: true,
     title: 'Wolf Pack miMIC — Feedback', backgroundColor: '#0d1117',
-    skipTaskbar: true,   // only the dashboard takes a taskbar slot (FB-61)
+    // On the taskbar, unlike every window but the dashboard (FB-61): a report is written over minutes, often while
+    // tabbing back to EQ, and a window with no taskbar item could not be found again (FB-86, the guild lead picked A).
     webPreferences: _wpPrefs('Feedback'),
   });
   feedbackWindow.setMenu(null);

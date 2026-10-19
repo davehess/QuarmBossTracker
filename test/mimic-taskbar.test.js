@@ -73,10 +73,14 @@ describe('the window scan sees every window (it is not vacuous)', () => {
   });
 });
 
-describe('only the dashboard takes a taskbar slot', () => {
+// The dashboard, and since FB-86 (the guild lead picked A, 2026-10-19) the Feedback window: a report is written over
+// minutes while tabbing back to EQ, so it must be findable on the taskbar. Every other window stays off it.
+const ON_TASKBAR = new Set(['mainWindow', 'feedbackWindow']);
+
+describe('only the dashboard and the Feedback window take a taskbar slot', () => {
   it('every other window declares skipTaskbar: true', () => {
     const missing = all
-      .filter(w => w.target !== 'mainWindow')
+      .filter(w => !ON_TASKBAR.has(w.target))
       .filter(w => !/\bskipTaskbar:\s*true\b/.test(w.options))
       .map(w => `${w.file}: ${w.target}`);
     expect(missing, 'windows that would show on the taskbar:\n' + missing.join('\n')).toEqual([]);
@@ -95,6 +99,12 @@ describe('only the dashboard takes a taskbar slot', () => {
   it('the dashboard stays ON the taskbar (it is how a user finds Mimic again)', () => {
     const dash = all.find(w => w.target === 'mainWindow');
     expect(dash.options).not.toMatch(/skipTaskbar:\s*true/);
+  });
+
+  it('the Feedback window is on the taskbar too (FB-86)', () => {
+    const fb = all.find(w => w.target === 'feedbackWindow');
+    expect(fb, 'feedbackWindow should be found').toBeTruthy();
+    expect(fb.options).not.toMatch(/skipTaskbar:\s*true/);
   });
 
   it('nothing ever puts a window back on the taskbar afterwards', () => {
