@@ -9,12 +9,11 @@
   It shouldn't look the same, and should show some of the optional setup pieces that we have for
   /me and the abilities that entails"). DECISIONS §93.
 
-  Two layouts over ONE step registry, so they differ in shape and never in what they do:
-    ?v=a  the trail — a rail of every step on the left, one step at a time, Back / Skip / Next;
-    ?v=b  essentials + unlocks — the three steps that gate the dashboard as a short stepper, then
-          every optional piece as a card you open in any order.
-  loading.html stays the first-run page until the guild lead picks one; this page is reached from
-  the tray (✨ Setup walkthrough) and the dashboard's Setup card.
+  THE TRAIL (the guild lead picked it over "essentials, then unlocks", 2026-10-19, DECISIONS §383): a
+  rail of every step on the left, one step at a time, Back / Skip / Next; the three steps that gate the
+  dashboard hold Next until they are done.
+  loading.html stays the first-run page; this page is reached from the tray (✨ Setup walkthrough) and
+  the dashboard's Setup card.
 
   Every action goes through the same bridge calls the classic page and the dashboard use — no new
   write path. The two agent POSTs (old-log import, the main's backfill) go through main.js
@@ -81,7 +80,7 @@
   /* link code */
   .code{font-size:22px;letter-spacing:.3em;color:var(--gold);font-weight:bold;background:var(--ink);border:1px solid var(--border);border-radius:4px;padding:4px 12px}
 
-  /* ── Layout A: the trail ─────────────────────────────────────────────── */
+  /* ── The trail ───────────────────────────────────────────────────────── */
   .a-shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
   .rail{background:var(--panel);border-right:1px solid var(--border);padding:18px 0 70px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow:auto}
   .rail .brand{padding:0 18px 14px;font-weight:600;color:#e6edf3}
@@ -104,36 +103,11 @@
   .a-nav .gap{flex:1}
   .a-nav .hint{font-size:12px;color:var(--dim)}
 
-  /* ── Layout B: essentials + unlocks ──────────────────────────────────── */
-  .b-shell{max-width:980px;margin:0 auto;padding:24px 22px 96px}
-  .b-shell h1{margin:0;font-size:20px;color:#e6edf3}
-  .b-shell h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);font-weight:normal;margin:26px 0 8px}
-  .ess{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-top:14px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
-  .ess button{border:0;border-radius:0;border-right:1px solid var(--border);background:var(--panel);padding:10px 12px;text-align:left}
-  .ess button:last-child{border-right:0}
-  .ess button.cur{background:#1f6feb22;box-shadow:inset 0 -3px 0 var(--blue)}
-  .ess .n{color:var(--dim);font-size:11px;display:block}
-  .ess .done .n{color:var(--green)}
-  .ess-body{border:1px solid var(--border);border-top:0;border-radius:0 0 6px 6px;padding:14px 16px;margin-top:-1px;background:var(--bg)}
-  .deck{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:8px}
-  .card{border:1px solid var(--border);border-radius:6px;background:var(--panel)}
-  .card > button{display:block;width:100%;text-align:left;border:0;background:none;padding:12px 14px}
-  .card .ct{display:flex;gap:8px;align-items:center;font-weight:600;color:#e6edf3}
-  .card .ct .st{margin-left:auto;font-weight:normal;font-size:11px}
-  .card .cs{color:var(--dim);font-size:12px;margin-top:3px}
-  .card.open{grid-column:1/-1;border-color:var(--blue)}
-  .card .cb{padding:0 16px 14px}
-  .b-foot{position:fixed;left:0;right:0;bottom:0;border-top:1px solid var(--border);background:var(--bg)}
-  .b-foot .in{max-width:980px;margin:0 auto;padding:12px 22px;display:flex;gap:10px;align-items:center}
-  .b-foot .hint{flex:1;font-size:12px;color:var(--dim)}
-
   @media (max-width:720px){
     .a-shell{grid-template-columns:1fr}
     .rail{display:none}
     .a-nav{left:0;padding:10px 16px}
     .stage{padding:18px 16px 90px}
-    .ess{grid-template-columns:1fr}
-    .ess button{border-right:0;border-bottom:1px solid var(--border)}
   }
 </style>
 </head>
@@ -146,8 +120,6 @@
   // Outside Mimic (a browser preview, the headless render) there is no bridge. A stub with
   // plausible answers lets the page draw; inside Mimic window.mimic is always present.
   var M = window.mimic || _previewBridge();
-  var V = /[?&]v=b\b/.test(location.search) ? 'b' : 'a';
-  document.body.dataset.v = V;
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -183,47 +155,38 @@
   }
 
   // ── Steps ─────────────────────────────────────────────────────────────────
-  // kind: 'req' gates the dashboard, 'rec' is worth doing, '' is optional. `ess` = one of the
-  // three essentials layout B puts in its stepper; the rest become its unlock cards.
+  // kind: 'req' gates the dashboard (the trail holds Next until it is done), 'rec' is worth doing,
+  // '' is optional (and gets a Skip). `bookend` = the Welcome and Ready pages, which are not counted as steps.
   var STEPS = [
-    { id: 'welcome',  icon: '🐺', title: 'Welcome',              onlyA: true, body: bWelcome },
-    { id: 'account',  icon: '🔑', title: 'Wolf Pack account',    kind: 'req', ess: true, body: bAccount,
+    { id: 'welcome',  icon: '🐺', title: 'Welcome',              bookend: true, body: bWelcome },
+    { id: 'account',  icon: '🔑', title: 'Wolf Pack account',    kind: 'req', body: bAccount,
       lede: 'Signing in is what puts your fights, tells and characters on wolfpack.quest. Local-only works too — nothing leaves this PC.' },
-    { id: 'folder',   icon: '📁', title: 'EverQuest folder',     kind: 'req', ess: true, body: bFolder,
+    { id: 'folder',   icon: '📁', title: 'EverQuest folder',     kind: 'req', body: bFolder,
       lede: 'Mimic reads the log files EverQuest writes. Tick the folder you play from.' },
-    { id: 'chars',    icon: '👤', title: 'Your characters',      kind: 'req', ess: true, body: bChars,
+    { id: 'chars',    icon: '👤', title: 'Your characters',      kind: 'req', body: bChars,
       lede: 'Every character with a log in that folder. Star your main, and say how each one shows up.' },
     // 2026-10-14 (the guild lead: "different voice packs, get player pronunciation right … build this voice
     // pack bit into onboarding"). Both optional; both live on in Settings → Voice and sounds and the dashboard's
     // Voice & names card.
     { id: 'voice',    icon: '🗣', title: 'Your voice',           body: bVoice,
-      summary: 'How callouts sound: pick a voice pack and hear a sample of each.',
       lede: 'Mimic speaks its callouts with a Windows voice. A voice pack changes the speed and pitch, and picks a different installed voice when it can.' },
     { id: 'names',    icon: '📣', title: 'Say your name',        body: bNames,
-      summary: 'Tell Mimic how your characters are pronounced, so the raid hears them right.',
       lede: 'Callouts read a name the way it is spelled, which is often wrong. Pick a suggestion or type how it should sound, and hear it first.' },
     { id: 'zeal',     icon: '📡', title: 'Zeal',                 kind: 'rec', body: bZeal,
-      summary: 'Live HP, mana, raid groups and charm breaks — the things the log never says.',
       lede: 'Zeal is a free add-on for the Quarm client: one file, Zeal.asi, in your EverQuest folder. It hands Mimic what the game knows but never writes down.' },
     { id: 'eq',       icon: '🔧', title: 'Set up EverQuest',     kind: 'rec', body: bEq,
-      summary: 'Logging on, exports on camp, and the two Windows fixes raiders trip over.',
       lede: 'Three one-click fixes. Each says what it changes before it changes it.' },
     { id: 'mode',     icon: '🧩', title: 'How to run Mimic',     body: bMode,
-      summary: 'Full Mimic with overlays, or agent only: upload your logs, no overlays.',
       lede: 'Mimic can float overlays over the game, or just upload your logs and keep the dashboard. You can switch either way later.' },
     { id: 'screen',   icon: '🖥️', title: 'Screen flicker',       body: bScreen,
-      summary: 'One question about black screens, so Mimic draws its overlays the safe way for you.',
       lede: 'A few graphics setups cannot keep up with overlays drawn over a game. One question decides how Mimic draws them.' },
     { id: 'overlays', icon: '🪟', title: 'Overlays',             body: bOverlays,
-      summary: 'Pick what floats over EverQuest. Change it any time from the tray.',
       lede: 'Windows that sit over the game. Start with a few — each one can be moved, resized and hidden later.' },
     { id: 'me',       icon: '🌐', title: 'Your /me page',        body: bMe,
-      summary: 'Tells on your phone, every item on every character, UI backups, corpse DMs.',
       lede: 'What your account adds on wolfpack.quest. Nothing to set up here — this is where to find it.' },
     { id: 'history',  icon: '📜', title: 'Old fights and chat',  body: bHistory,
-      summary: 'Read your main\'s whole log once, so past raids count.',
       lede: 'Mimic only reads new lines as you play. This reads what came before, once, in the background.' },
-    { id: 'done',     icon: '✓',  title: 'Ready',                onlyA: true, body: bDone },
+    { id: 'done',     icon: '✓',  title: 'Ready',                bookend: true, body: bDone },
   ];
   function step(id) { for (var i = 0; i < STEPS.length; i++) if (STEPS[i].id === id) return STEPS[i]; return null; }
 
@@ -246,7 +209,7 @@
       + items.map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ul></div>';
   }
 
-  // ── Bodies (shared by both layouts) ─────────────────────────────────────
+  // ── Bodies ──────────────────────────────────────────────────────────────
   function bWelcome(el) {
     el.innerHTML = '<p>Mimic reads your EverQuest log and turns it into overlays, timers and callouts while you play — '
       + 'and, if you sign in, into your parses, tells and characters on wolfpack.quest.</p>'
@@ -862,7 +825,7 @@
   }
 
   function bDone(el) {
-    var rows = STEPS.filter(function (s) { return !s.onlyA; }).map(function (s) {
+    var rows = STEPS.filter(function (s) { return !s.bookend; }).map(function (s) {
       var st = stepState(s.id);
       return '<div class="row" style="padding:3px 0"><span style="width:18px" class="' + (st === 'done' ? 'ok' : st === 'need' ? 'warn' : 'dim') + '">' + (st === 'done' ? '✓' : st === 'need' ? '!' : '·') + '</span>'
         + s.icon + ' ' + esc(s.title) + (st === 'done' ? '' : ' <button class="link" data-go="' + s.id + '">' + (st === 'need' ? 'finish' : 'open') + '</button>') + '</div>';
@@ -912,10 +875,10 @@
       .catch(function () { _finishing = false; });
   }
 
-  // ── Layout A: the trail ─────────────────────────────────────────────────
+  // ── The trail ───────────────────────────────────────────────────────────
   var cur = 'welcome';
   var aSteps = STEPS;
-  function renderA() {
+  function renderTrail() {
     var i = aSteps.indexOf(step(cur)), s = aSteps[i];
     var reqLeft = !!(s.kind === 'req' && stepState(s.id) === 'need');
     var last = i === aSteps.length - 1;
@@ -928,12 +891,12 @@
             + (x.kind === 'req' ? '<span class="k chip req">req</span>' : x.kind === 'rec' ? '<span class="k chip rec">rec</span>' : '') + '</button></li>';
         }).join('')
       + '</ol><div class="foot">' + engineLine() + '<div style="margin-top:6px"><a href="loading.html">Classic setup page</a></div></div></nav>'
-      + '<main class="stage"><div class="kicker">' + (s.onlyA ? '&nbsp;' : 'Step ' + i + ' of ' + (aSteps.length - 2) + (s.kind === 'req' ? ' · needed' : s.kind === 'rec' ? ' · recommended' : ' · optional')) + '</div>'
+      + '<main class="stage"><div class="kicker">' + (s.bookend ? '&nbsp;' : 'Step ' + i + ' of ' + (aSteps.length - 2) + (s.kind === 'req' ? ' · needed' : s.kind === 'rec' ? ' · recommended' : ' · optional')) + '</div>'
       + '<h1>' + s.icon + ' ' + esc(s.title) + '</h1>' + (s.lede ? '<p class="lede">' + esc(s.lede) + '</p>' : '')
       + '<div id="body"></div></main>'
       + '<footer class="a-nav"><button data-nav="back"' + (i === 0 ? ' disabled' : '') + '>← Back</button><span class="gap"></span>'
       + '<span class="hint">' + (last ? esc(gateHint()) : reqLeft ? 'Needed before the dashboard opens.' : '') + '</span>'
-      + (!last && !s.kind && !s.onlyA ? '<button data-nav="skip">Skip</button>' : '')
+      + (!last && !s.kind && !s.bookend ? '<button data-nav="skip">Skip</button>' : '')
       + (last ? '<button class="primary" data-nav="finish"' + (gateOk(S) ? '' : ' disabled') + '>Open the dashboard →</button>'
               : '<button class="primary" data-nav="next"' + (reqLeft ? ' disabled' : '') + '>Next →</button>')
       + '</footer></div>';
@@ -949,39 +912,6 @@
     });
   }
 
-  // ── Layout B: essentials + unlocks ──────────────────────────────────────
-  var ess = null, open = null;
-  function renderB() {
-    var E = STEPS.filter(function (s) { return s.ess; });
-    var U = STEPS.filter(function (s) { return !s.ess && !s.onlyA; });
-    if (!ess) { ess = 'account'; for (var k = 0; k < E.length; k++) if (stepState(E[k].id) !== 'done') { ess = E[k].id; break; } }
-    var essCur = step(ess);
-    $('#app').innerHTML =
-        '<div class="b-shell"><h1>🐺 Three things and you are in.</h1>'
-      + '<div class="dim" style="margin-top:4px">Everything under them is optional — do it now, later, or never. ' + engineLine() + ' · <a href="loading.html">classic setup page</a></div>'
-      + '<div class="ess" role="tablist">' + E.map(function (s, j) {
-          var st = stepState(s.id);
-          return '<button role="tab" data-ess="' + s.id + '" class="' + (s.id === ess ? 'cur ' : '') + (st === 'done' ? 'done' : '') + '"' + (s.id === ess ? ' aria-selected="true"' : '') + '>'
-            + '<span class="n">' + (st === 'done' ? '✓ done' : st === 'need' ? (j + 1) + ' · needed' : (j + 1) + ' · waiting') + '</span>' + s.icon + ' ' + esc(s.title) + '</button>';
-        }).join('') + '</div>'
-      + '<div class="ess-body"><div class="dim" style="margin-bottom:8px">' + esc(essCur.lede || '') + '</div><div id="essBody"></div></div>'
-      + '<h2>Unlock more</h2><div class="deck">' + U.map(function (s) {
-          var st = stepState(s.id), isOpen = s.id === open;
-          return '<div class="card' + (isOpen ? ' open' : '') + '"><button data-card="' + s.id + '" aria-expanded="' + isOpen + '">'
-            + '<div class="ct">' + s.icon + ' ' + esc(s.title) + (s.kind === 'rec' ? ' <span class="chip rec">recommended</span>' : '')
-            + '<span class="st ' + (st === 'done' ? 'ok' : 'dim') + '">' + (st === 'done' ? '✓' : isOpen ? '▾' : '▸') + '</span></div>'
-            + '<div class="cs">' + esc(isOpen ? (s.lede || '') : (s.summary || '')) + '</div></button>'
-            + (isOpen ? '<div class="cb" id="cardBody"></div>' : '') + '</div>';
-        }).join('') + '</div></div>'
-      + '<footer class="b-foot"><div class="in"><span class="hint">' + esc(gateHint() || 'Ready. Anything left above waits on the dashboard\'s Setup card.') + '</span>'
-      + '<button class="primary" data-a="finish"' + (gateOk(S) ? '' : ' disabled') + '>Open the dashboard →</button></div></footer>';
-    mount(ess, $('#essBody'));
-    if (open) mount(open, $('#cardBody'));
-    document.querySelectorAll('[data-ess]').forEach(function (b) { b.addEventListener('click', function () { ess = b.dataset.ess; render(); }); });
-    document.querySelectorAll('[data-card]').forEach(function (b) { b.addEventListener('click', function () { open = open === b.dataset.card ? null : b.dataset.card; render(); }); });
-    $('[data-a="finish"]').addEventListener('click', finish);
-  }
-
   function engineLine() {
     return S.agentReady ? '<span class="ok">● engine ready</span>'
       : S.engineFailed ? '<span class="bad">● engine did not start</span> — <a href="loading.html">see why</a>'
@@ -993,8 +923,7 @@
   var mounted = {};
   function mount(id, el) { mounted = {}; if (!el) return; mounted[id] = el; step(id).body(el); }
   function go(id) {
-    if (V === 'b') { var s = step(id); if (s && s.ess) ess = id; else if (s && !s.onlyA) open = id; }
-    else cur = id;
+    cur = id;
     render(); window.scrollTo(0, 0);
   }
   // A redraw rebuilds the page, which would eat what someone is typing: while a text box marked data-keep-typing
@@ -1004,7 +933,7 @@
     var ae = document.activeElement;
     if (ae && ae.hasAttribute && ae.hasAttribute('data-keep-typing')) { _renderHeld = true; return; }
     _renderHeld = false;
-    if (V === 'b') renderB(); else renderA();
+    renderTrail();
   }
   document.addEventListener('focusout', function (e) {
     // (a beat of delay, so the click on Save that took the focus away is not eaten by the rebuild under it)
@@ -1086,7 +1015,7 @@
     var saved = Array.isArray(S.cfg.eqPaths) ? S.cfg.eqPaths : (S.cfg.eqPath ? [S.cfg.eqPath] : []);
     S.eqConfigured = saved.length > 0;
     if (S.cfg.mainCharacter) S.main = S.cfg.mainCharacter;
-    if (V === 'a' && S.cfg.onboarded) cur = 'account';
+    if (S.cfg.onboarded) cur = 'account';
     render();
     loadFolders(); loadChars(); refreshZeal(); refreshDefender(); refreshClock();
     Promise.resolve(M.getStatus()).then(onStatus).catch(function () {});

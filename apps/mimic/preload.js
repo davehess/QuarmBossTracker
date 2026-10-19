@@ -1034,9 +1034,9 @@ contextBridge.exposeInMainWorld('mimic', {
   hotkeyCapture:   (on)   => ipcRenderer.invoke('hotkey-capture', !!on),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
-  // ✨ Setup walkthrough (welcome.html, layout 'a' or 'b') and its relay for the two agent
+  // ✨ Setup walkthrough (welcome.html, the trail) and its relay for the two agent
   // POSTs it makes: 'import' old logs, 'backfill' the main's log.
-  openWelcome:     (v)    => ipcRenderer.invoke('open-welcome', v === 'b' ? 'b' : 'a'),
+  openWelcome:     ()     => ipcRenderer.invoke('open-welcome'),
   welcomeOptin:    (action, paths) => ipcRenderer.invoke('welcome-optin', action, paths),
   // Main / alt · Inventory only · Hide completely (2026-10-06). characterModes: the website's family merged
   // with this PC's characters. setCharacterMode: the one call that makes a choice — the engine asks

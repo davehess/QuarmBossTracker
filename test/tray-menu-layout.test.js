@@ -25,7 +25,14 @@ const UPDATES_LABEL = /^Updates( — v\S+ ready)?$/;
 // '🗂 Overlay sets' came over from alpha after layout B (the guild lead, 2026-10-14): a new submenu, not a moved item.
 const CONTAINERS = ['Settings', 'Updates', 'Open', 'Help', '🗂 Overlay sets'];
 // Items added since the snapshot that are features, not structure: "Span all screens" under the Canvas entry (2026-10-19).
-const NEW_ITEMS = [/^ {2}↳ Span all screens/];
+// ... and the setup walkthrough: one plain item on every build (the trail was picked, 2026-10-19, DECISIONS §383).
+const NEW_ITEMS = [/^ {2}↳ Span all screens/, /^✨ Setup walkthrough$/];
+// Items the snapshot has that were removed on purpose: the beta-only A / B layout submenu for that walkthrough.
+const REMOVED = [
+  '{"label":"A · one step at a time","click":"() => openWelcome(\'a\')"}',
+  '{"label":"B · essentials, then unlocks","click":"() => openWelcome(\'b\')"}',
+  '{"label":"✨ Setup walkthrough","submenu":true}',
+];
 const isContainer = (label) => CONTAINERS.includes(label) || UPDATES_LABEL.test(label);
 
 const shown = (items) => items.filter((i) => i.type !== 'separator' && i.visible !== false);
@@ -179,13 +186,13 @@ describe('the groups behind the submenus', () => {
       'Resource use — what Mimic costs this machine',
     ]);
   });
-  it('Help › — the setup walkthrough only on beta / alpha builds', () => {
-    expect(labelsOf(sub(top('win32 full, stable, flags on'), 'Help'))).toEqual([
-      'Send feedback — bug or idea', 'Restart agent',
-    ]);
-    const beta = sub(top('win32 beta build, local only, update pending, no uninstaller'), 'Help');
-    expect(labelsOf(beta)).toEqual(['✨ Setup walkthrough', 'Send feedback — bug or idea', 'Restart agent']);
-    expect(labelsOf(beta[0].submenu)).toEqual(['A · one step at a time', 'B · essentials, then unlocks']);
+  it('Help › — the setup walkthrough is one plain item on stable and beta alike', () => {
+    for (const name of ['win32 full, stable, flags on', 'win32 beta build, local only, update pending, no uninstaller']) {
+      const help = sub(top(name), 'Help');
+      expect(labelsOf(help)).toEqual(['✨ Setup walkthrough', 'Send feedback — bug or idea', 'Restart agent']);
+      expect(help[0].submenu).toBeUndefined();   // no A / B layout pick any more
+      expect(describeItem(help[0]).click).toBe("() => openWelcome()");
+    }
   });
   it('the dynamic conditionals still follow their inputs', () => {
     const pend = sub(top('win32 beta build, local only, update pending, no uninstaller'), 'Settings');
@@ -209,8 +216,9 @@ describe('nothing lost, nothing changed, nothing sneaked in', () => {
       const now = flatten(top(name));
       const before = BEFORE[name].items;
       // every old item (same type / checked / enabled / visible / handler) is still there ...
-      const missing = before.filter((x) => !now.includes(x));
+      const missing = before.filter((x) => !now.includes(x) && !REMOVED.includes(x));
       expect(missing).toEqual([]);
+      const removed = before.filter((x) => REMOVED.includes(x)).length;
       // ... and the only additions are the new structure
       const extra = now.filter((x) => !before.includes(x)).map((x) => JSON.parse(x));
       for (const e of extra) {
@@ -219,7 +227,7 @@ describe('nothing lost, nothing changed, nothing sneaked in', () => {
         if (HEADERS.includes(e.label)) expect(e).toEqual({ label: e.label, enabled: false });
         else expect(e).toEqual({ label: e.label, submenu: true });
       }
-      expect(now.length - before.length).toBe(extra.length);
+      expect(now.length - before.length + removed).toBe(extra.length);
     });
   }
   it('the snapshot itself is the old top level (sanity: ~30 lines)', () => {
