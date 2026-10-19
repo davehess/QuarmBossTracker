@@ -190,18 +190,20 @@ const HAIL_FLAGGERS = [
 //   `kills`  a trial won only when ALL of them have died inside TRIAL_KILL_SPAN_MS (the 12 raiders who attack
 //            the villagers; the three bosses of the Crazed Norrathians). The window opens at the last death.
 // Also opens on a flag-kind grant (`done[0]`, the mist line from an agent that reads it), as grantOpener does.
+// ⚠ `npc` is the NPC's bare name: the agent uploads a hail only when it matches a window's npc_name
+// (_hailNpcWanted), so a suffix here would silence every hail of it.
 const HAIL_TRIALS = [
   { id: 'hoh_trial_1', name: 'Rydda`Dar', names: ['rydda`dar', 'rydda dar'], zone: 'Halls of Honor', zoneShort: 'hohonora',
-    npc: 'Trydan Faye (trial 1)', npcKeys: ['trydan faye', 'trydan'], minutes: 10, flagCap: 72,
+    npc: 'Trydan Faye', npcKeys: ['trydan faye', 'trydan'], minutes: 10, flagCap: 72,
     done: ['hoh_trial_1', 'hohtrials_111', 'hoh_trials'], checklist: null, prior: [] },
   { id: 'hoh_trial_2', name: 'Save the villagers', zone: 'Halls of Honor', zoneShort: 'hohonora',
     kills: ['granmuck reiga', 'fligg starp', 'trann berk', 'shott tarbs', 'ruark barr', 'zullkata reeps',
       'maeryn malladry', 'thullias rhidron', 'herot terkins', 'mirezvakla ry`ten', 'yarezka tri`lok', 'merken lysonn'],
-    npc: 'Rhaliq Trell (trial 2)', npcKeys: ['rhaliq trell', 'rhaliq'], minutes: 10, flagCap: 72,
+    npc: 'Rhaliq Trell', npcKeys: ['rhaliq trell', 'rhaliq'], minutes: 10, flagCap: 72,
     done: ['hoh_trial_2', 'hohtrials_111', 'hoh_trials'], checklist: null, prior: [] },
   { id: 'hoh_trial_3', name: 'Crazed Norrathians', zone: 'Halls of Honor', zoneShort: 'hohonora',
     kills: ['advocent joran', 'halgoz rellinic', 'freegan haun'],
-    npc: 'Alekson Garn (trial 3)', npcKeys: ['alekson garn', 'alekson'], minutes: 10, flagCap: 72,
+    npc: 'Alekson Garn', npcKeys: ['alekson garn', 'alekson'], minutes: 10, flagCap: 72,
     done: ['hoh_trial_3', 'hohtrials_111', 'hoh_trials'], checklist: null, prior: [] },
 ];
 const TRIAL_KILL_SPAN_MS = 15 * MIN;   // the deaths that win a trial all land inside one attempt
