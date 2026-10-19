@@ -25,7 +25,8 @@ const CORE = sliceBlock(AGENT, '// ── Spawn map core (Mimic 2.9', '// ──
 const MAP_HTML = readSource(path.join(ROOT, 'apps', 'mimic', 'map.html'));
 
 const EXPORTS = ['_mapApplyRemote', '_mapApplyMark', '_mapStatePayload', '_mapSaveNow', '_mapZoneDoc', '_mapEnsureZone', '_mapPaths',
-  '_zealState', '_mapSync', '_mapSyncStop', '_mapCopy', '_mapWatchFor', '_mapWatchApplyBot', '_mapWatchSet', '_mapWatchTimerRows'];
+  '_zealState', '_mapSync', '_mapSyncStop', '_mapCopy', '_mapWatchFor', '_mapWatchApplyBot', '_mapWatchSet', '_mapWatchTimerRows',
+  '_mapKillNow', '_mapNoteLogDeath'];
 const LULL_DEFS = sliceBlock(AGENT, '// ── Pacify / lull line (SPA 30', 'return PACIFY_AE.has(String(name).toLowerCase().replace(/`/g, "\'").trim());\n}');
 const MEZ_DEF = sliceBlock(AGENT, 'function _isMezSpell(name) {', "includes('mez'));\n}");
 const CON_DEFS = AGENT.slice(AGENT.indexOf('const CON_STANDINGS = ['), AGENT.indexOf('\n', AGENT.indexOf('const _CON_RX = ')));
@@ -338,11 +339,12 @@ async function boot(payloadExtra) {
   }, payloadExtra);
   const win = { addEventListener() {}, devicePixelRatio: 1, outerWidth: 1000, outerHeight: 500, mimic: undefined };
   const ls = { getItem: () => null, setItem() {} };
+  const calls = [];
   // eslint-disable-next-line no-new-func
   const S = new Function('window', 'document', 'location', 'fetch', 'localStorage', 'ResizeObserver', 'setInterval', 'clearInterval',
-    script + '\nreturn S;')(win, doc, { search: '' }, () => Promise.resolve({ json: () => Promise.resolve(payload) }), ls, undefined, () => 1, () => {});
+    script + '\nreturn S;')(win, doc, { search: '' }, (u, o) => { calls.push([u, o]); return Promise.resolve({ json: () => Promise.resolve(payload) }); }, ls, undefined, () => 1, () => {});
   await tick();
-  return { S, all };
+  return { S, all, calls };
 }
 const lines = (all) => all.lists.children.map(c => ({ cls: c.className, kids: c.children.map(k => k.textContent) , text: c.textContent }));
 
@@ -561,5 +563,135 @@ describe('map.html: the Engaged section', () => {
     const css = stripCss(MAP_HTML);
     expect(css).toMatch(/\.sec\.engaged\{color:#f0883e\}/);
     expect(css).toMatch(/\.trow\.engaged\{border-left-color:#f0883e;cursor:default\}/);
+  });
+});
+
+// ───────────── the sidebar's "☠ killed" button ─────────────
+// (the guild lead, 2026-10-19: "Put a button on the timers sidebar to kill that mob from when the message of 'X died'"). Agent
+// half: POST /api/map-kill -> _mapKillNow, which goes down the road a log death takes (_mapNoteDeath) with the death line's
+// time (_mapLastDeathLine, set by _mapNoteLogDeath) or now. Overlay half: the button on the alive rows of renderSide.
+// Mutation-checked: always use `now` for the time; drop the `line >= seenAt` guard; drop the forced point in _mapNoteDeath;
+// drop the _mapLastDeathLine.set in _mapNoteLogDeath; drop the button from the Up · seen, Watched or Engaged loop; give a
+// Respawns row a button; drop data-wp-interact; drop stopPropagation; drop the route.
+describe('agent: _mapKillNow starts the timer from the last death line, else now', () => {
+  const kill = (c, b) => c._mapKillNow('thedeep', b, N, 'Aldenmar');
+  const timerOf = (c, pid) => c._mapStatePayload('', N).timers.find(t => t.point_id === pid);
+  it('uses the time of the newest death message for that mob, even one the Map could not place', () => {
+    const { c } = liveCore();
+    c._mapNoteLogDeath('a blood raven', 'Aldenmar', N - 30000, N);        // three spots make ravens: unassigned, no timer
+    expect(c._mapStatePayload('', N).timers).toEqual([]);
+    expect(kill(c, { name: 'a blood raven', point_id: 8 })).toMatchObject({ ok: true, kind: 'assigned', from_line: true, at: N - 30000 });
+    expect(timerOf(c, 8)).toMatchObject({ died_at: N - 30000, earliest: N - 30000 + 540000, latest: N - 30000 + 660000, source: 'marked' });
+  });
+  it('starts from now when no death message was seen', () => {
+    const { c } = liveCore();
+    expect(kill(c, { name: 'a blood raven', point_id: 9 })).toMatchObject({ ok: true, from_line: false, at: N });
+    expect(timerOf(c, 9)).toMatchObject({ died_at: N, earliest: N + 540000 });
+  });
+  it('a death line from before the mob was last seen alive is an earlier spawn: skipped', () => {
+    const { c } = liveCore();
+    c._mapNoteLogDeath('a blood raven', 'Aldenmar', N - 50000, N);
+    c._mapZoneDoc('thedeep').seen['8'] = { point_id: 8, spawn_id: 4, name: 'a blood raven', at: N - 5000 };
+    expect(kill(c, { name: 'a blood raven', point_id: 8 })).toMatchObject({ ok: true, from_line: false, at: N });
+    c._mapNoteLogDeath('a blood raven', 'Aldenmar', N - 3000, N);          // a death AFTER it was seen
+    c._mapZoneDoc('thedeep').seen['8'] = { point_id: 8, spawn_id: 4, name: 'a blood raven', at: N - 5000 };
+    expect(kill(c, { name: 'a blood raven', point_id: 8 })).toMatchObject({ ok: true, from_line: true, at: N - 3000 });
+  });
+  it('a death line older than half an hour is not used', () => {
+    const { c } = liveCore();
+    c._mapNoteLogDeath('a blood raven', 'Aldenmar', N - 30000, N);
+    expect(c._mapKillNow('thedeep', { name: 'a blood raven', point_id: 9 }, N + 31 * 60000, 'Aldenmar')).toMatchObject({ ok: true, from_line: false, at: N + 31 * 60000 });
+  });
+  it('the seen-alive row goes away, exactly as an observed death clears it', () => {
+    const { c } = liveCore();
+    c._mapZoneDoc('thedeep').seen['8'] = { point_id: 8, spawn_id: 4, name: 'a blood raven', at: N - 5000 };
+    expect(c._mapStatePayload('', N).seen).toHaveLength(1);
+    expect(kill(c, { name: 'a blood raven', point_id: 8, spawn_id: 4 }).ok).toBe(true);
+    const p = c._mapStatePayload('', N);
+    expect(p.seen).toEqual([]);
+    expect(p.timers.map(t => t.point_id)).toEqual([8]);
+  });
+  it('an Engaged row has no spot: the one seen-alive mob of that name, or the only spot that makes it, is used', () => {
+    const { c } = liveCore();
+    c._mapZoneDoc('thedeep').seen['9'] = { point_id: 9, spawn_id: 4, name: 'a blood raven', at: N - 5000 };
+    expect(kill(c, { name: 'a blood raven', spawn_id: 4 })).toMatchObject({ ok: true, kind: 'assigned' });
+    expect(timerOf(c, 9)).toBeTruthy();
+    expect(kill(c, { name: 'The Avatar of Anguish' })).toMatchObject({ ok: true, kind: 'assigned' });   // only point 7 makes him
+    expect(timerOf(c, 7)).toMatchObject({ name: 'The Avatar of Anguish' });
+  });
+  it('a second press (or a press just after the log line) is not swallowed as a duplicate death', () => {
+    const { c } = liveCore();
+    expect(kill(c, { name: 'The Avatar of Anguish' })).toMatchObject({ ok: true, kind: 'assigned' });
+    expect(kill(c, { name: 'The Avatar of Anguish' })).toMatchObject({ ok: true, kind: 'assigned' });
+  });
+  it('an ambiguous name with no spot is kept under "Not pinned down", not guessed', () => {
+    const { c } = liveCore();
+    expect(kill(c, { name: 'a blood raven' })).toMatchObject({ ok: true, kind: 'unassigned' });
+    const p = c._mapStatePayload('', N);
+    expect(p.timers).toEqual([]);
+    expect(p.unassigned.map(u => u.name)).toEqual(['a blood raven']);
+  });
+  it('refuses a name nothing here makes, a missing name, and a zone with no data', () => {
+    const { c } = liveCore();
+    expect(kill(c, { name: 'a griffon' })).toMatchObject({ ok: false });
+    expect(kill(c, { name: '' })).toMatchObject({ ok: false, error: 'name is required' });
+    expect(c._mapKillNow('nowhere', { name: 'a bat' }, N, 'Aldenmar')).toMatchObject({ ok: false, error: 'no spawn data for this zone' });
+  });
+  it('the route is registered, local-origin only, and the log hook records the time', () => {
+    const js = stripJs(AGENT);
+    expect(js).toMatch(/req\.url === '\/api\/map-kill' && req\.method === 'POST'\) return _handleMapKill\(req, res\)/);
+    const handler = sliceBlock(js, 'async function _handleMapKill(req, res) {', '\n}\n');
+    expect(handler).toMatch(/if \(!_localOriginOk\(req\)\) return send\(403/);
+    expect(handler).toMatch(/_mapKillNow\(zone, b, now, ch\)/);
+    expect(sliceBlock(js, 'function _mapNoteLogDeath(', '\n}\n')).toMatch(/_mapLastDeathLine\.set\(zone \+ '\|' \+ want,/);
+  });
+});
+
+describe('map.html: the ☠ killed button on alive rows', () => {
+  const kids = (row) => row.children.filter(k => k.className === 'kill');
+  const SEEN = [{ point_id: 8, spawn_id: 4, name: 'a blood raven', at: T0 - 60000, by: null, hp_pct: 42 }];
+  it('Up · seen, Engaged and an up Watched spot each get one, armed for the click-through window', async () => {
+    const { all } = await boot({ seen: [...SEEN, { point_id: 7, spawn_id: 5, name: 'a blood raven', at: T0 - 1000, by: null }], watched: { 7: { named: 'The Avatar of Anguish', by: null } },
+      engaged: [{ name: 'a bat', spawn_id: 11, hp_pct: 50, n: 2 }] });
+    const rows = all.lists.children.filter(c => /^trow/.test(c.className));
+    expect(rows).toHaveLength(3);
+    for (const r of rows) {
+      const b = kids(r);
+      expect(b).toHaveLength(1);
+      expect(b[0].textContent).toBe('☠ killed');
+      expect(b[0].tag).toBe('button');
+      expect(b[0].attrs['data-wp-interact']).toBe('');
+    }
+  });
+  it('a Respawns row, a watched spot with a timer and one that is only watched have none', async () => {
+    const { all } = await boot({ timers: [T(8, 'a blood raven', 300000, 400000), T(7, 'a blood raven', 100000, 200000)],
+      watched: { 7: { named: 'The Avatar of Anguish', by: null }, 9: { named: 'The Avatar of Anguish', by: null } } });
+    const rows = all.lists.children.filter(c => /^trow/.test(c.className));
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    for (const r of rows) expect(kids(r)).toEqual([]);
+  });
+  it('a click posts the row\'s name, spot and spawn id to /api/map-kill, and does not also centre the map', async () => {
+    const { all, calls, S } = await boot({ seen: SEEN });
+    const row = all.lists.children.find(c => /trow seen/.test(c.className));
+    let stopped = false;
+    const cx = S.view.cx;
+    kids(row)[0].listeners.click.forEach(f => f({ stopPropagation() { stopped = true; } }));
+    expect(stopped).toBe(true);
+    expect(S.view.cx).toBe(cx);
+    const post = calls.find(c => /\/api\/map-kill$/.test(c[0]));
+    expect(post[1].method).toBe('POST');
+    expect(JSON.parse(post[1].body)).toEqual({ zone: 'thedeep', name: 'a blood raven', point_id: 8, spawn_id: 4 });
+  });
+  it('an Engaged row posts no spot (the agent finds it) and its spawn id', async () => {
+    const { all, calls } = await boot({ engaged: [{ name: 'a bat', spawn_id: null, hp_pct: null, n: 1 }] });
+    kids(all.lists.children.find(c => /trow engaged/.test(c.className)))[0].listeners.click.forEach(f => f({ stopPropagation() {} }));
+    expect(JSON.parse(calls.find(c => /\/api\/map-kill$/.test(c[0]))[1].body)).toEqual({ zone: 'thedeep', name: 'a bat', point_id: null, spawn_id: null });
+  });
+  it('the rows render the same each time, and the button sits in its own third grid column', async () => {
+    const snap = (x) => x.all.lists.children.map(c => c.className + '|' + c.children.map(k => k.className + ':' + k.textContent).join(','));
+    const a = await boot({ seen: SEEN, engaged: [{ name: 'a bat', spawn_id: 11, hp_pct: 50, n: 2 }] });
+    const b = await boot({ seen: SEEN, engaged: [{ name: 'a bat', spawn_id: 11, hp_pct: 50, n: 2 }] });
+    expect(snap(a)).toEqual(snap(b));
+    expect(stripCss(MAP_HTML)).toMatch(/\.trow \.kill\{grid-column:3;grid-row:1 \/ span 2;/);
   });
 });
