@@ -32306,8 +32306,11 @@ function wpSoundOverrideHtml(t, ov) {
       var frag = String(p.voices[f]).toLowerCase();
       for (var j = 0; j < vs.length; j++) if (vs[j].name.toLowerCase().indexOf(frag) >= 0) { voice = vs[j]; break; }
     }
-    return { voice: voice, rate: rate, pitch: pitch };
+    return { voice: voice, rate: rate, pitch: pitch, volume: volumeNow() };
   }
+  // VOLUME (the guild lead, 2026-10-19): cfgVoice.volume is 0-1, absent = full. Not part of a voice, so a forced pack
+  // does not change it. The same rule as Mimic's voice.js.
+  function volumeNow(){ var n = cfgVoice.volume; return (typeof n === 'number' && isFinite(n) && n >= 0 && n <= 1) ? n : 1; }
   // over (optional): a past line's own { voice (name), rate, pitch }, which outrank the pack's (REPLAY, below).
   function speakWin(text, packId, over){
     if (!window.speechSynthesis) return;
@@ -32320,6 +32323,7 @@ function wpSoundOverrideHtml(t, ov) {
     }
     if (v.voice) u.voice = v.voice;
     u.rate = v.rate; u.pitch = v.pitch;
+    if (v.volume >= 0 && v.volume <= 1) u.volume = v.volume;
     try { window.speechSynthesis.cancel(); } catch (e) { void e; }
     window.speechSynthesis.speak(u);
   }
@@ -32422,6 +32426,7 @@ function wpSoundOverrideHtml(t, ov) {
           a.onended = a.onerror = function(){ try { URL.revokeObjectURL(url); } catch (e) { void e; } };
           if (curAudio) { try { curAudio.pause(); } catch (e) { void e; } }
           curAudio = a;
+          a.volume = volumeNow();
           a.play().then(function(){ done(true); }, function(){ done(false); });
         } catch (e) { done(false); }
       }, function(){ if (!late) { clearTimeout(t); done(false); } });
@@ -32460,10 +32465,11 @@ function wpSoundOverrideHtml(t, ov) {
     h += '</select></label>'
       + '<label>Speed <input type="range" id="wpVoiceRate" min="50" max="200" value="' + Math.round((cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoiceRateV" class="dim">' + pct(cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) + '&times;</span></label>'
       + '<label>Pitch <input type="range" id="wpVoicePitch" min="0" max="200" value="' + Math.round((cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoicePitchV" class="dim">' + pct(cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) + '</span></label>'
+      + '<label>Volume <input type="range" id="wpVoiceVolume" min="10" max="100" step="5" value="' + Math.round(volumeNow() * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoiceVolumeV" class="dim">' + Math.round(volumeNow() * 100) + '%</span></label>'
       + '<button type="button" id="wpVoiceHear" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>'
       + '<button type="button" id="wpVoiceReset" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;font-family:inherit;font-size:12px"' + (inMimic() ? '' : ' disabled') + '>Back to the pack\\'s own</button>'
       + '</div>';
-    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor. Speed applies to every voice engine; pitch and the installed-voice pick apply to the Windows voice only.</div>';
+    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor. Speed and volume apply to every voice engine; pitch and the installed-voice pick apply to the Windows voice only. Volume is how loud callouts play inside Mimic; trigger sounds have their own volume.</div>';
     return h;
   }
   // 🗣 Voice engine (the guild lead, 2026-10-17): Windows voices, Piper (free, open source, downloaded on demand),
@@ -32716,6 +32722,8 @@ function wpSoundOverrideHtml(t, ov) {
     if (t.id === 'wpVoicePhraseText') { phrase.text = t.value.slice(0, 300); savePhrase(); return; }
     if (t.id === 'wpVoiceRate') { cfgVoice.rate = Number(t.value) / 100; var rv = document.getElementById('wpVoiceRateV'); if (rv) rv.innerHTML = pct(cfgVoice.rate) + '&times;'; save(); return; }
     if (t.id === 'wpVoicePitch') { cfgVoice.pitch = Number(t.value) / 100; var pv = document.getElementById('wpVoicePitchV'); if (pv) pv.textContent = pct(cfgVoice.pitch); save(); return; }
+    // Volume moves a sample that is playing right now too; the next ▶ Hear it / ▶ Test plays at the new level.
+    if (t.id === 'wpVoiceVolume') { cfgVoice.volume = Number(t.value) / 100; var vv = document.getElementById('wpVoiceVolumeV'); if (vv) vv.textContent = Math.round(cfgVoice.volume * 100) + '%'; if (curAudio) { try { curAudio.volume = volumeNow(); } catch (e) { void e; } } save(); return; }
     if (t.hasAttribute && t.hasAttribute('data-vn-say')) { var nm = charOf(t); if (nm) drafts[nm] = t.value; }
   }
   function mount(){
