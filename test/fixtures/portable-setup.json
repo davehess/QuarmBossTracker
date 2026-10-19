@@ -1,0 +1,484 @@
+{
+ "note": "A whole-setup bundle produced by apps/mimic/setupBundle.js build() (invented names). The bot gate must accept it and return it unchanged.",
+ "docs": {
+  "full": {
+   "format": "mimic-setup",
+   "version": 1,
+   "meta": {
+    "title": "Raid night",
+    "byline": "Aldenmar",
+    "note": "Meter on the left, lulls on the right."
+   },
+   "slots": [
+    {
+     "slot": "c1",
+     "label": "Character 1"
+    },
+    {
+     "slot": "c2",
+     "label": "Character 2"
+    }
+   ],
+   "layouts": [
+    {
+     "name": "Raid",
+     "active": true,
+     "doc": {
+      "format": "mimic-layout",
+      "version": 1,
+      "kind": "canvas",
+      "meta": {
+       "title": "Raid Wizard",
+       "description": "Big meter on the left, lulls on the right.",
+       "author": "Aldenmar",
+       "classes": [
+        "Wizard"
+       ],
+       "modes": [
+        "raid",
+        "group"
+       ]
+      },
+      "needs": {
+       "parts": [
+        "dps.meter",
+        "me.ring"
+       ],
+       "overlays": [
+        "mob",
+        "zeal"
+       ],
+       "sections": [
+        "mob:stats"
+       ]
+      },
+      "ref": {
+       "of": "screen",
+       "aspect": 1.778
+      },
+      "groups": [
+       {
+        "anchor": "ml",
+        "ox": 0.03519,
+        "oy": -0.01019,
+        "panels": [
+         {
+          "kind": "part",
+          "dx": 0,
+          "dy": -0.18981,
+          "w": 0.2963,
+          "h": 0.2037,
+          "scale": 1.1,
+          "cls": [
+           "Wizard",
+           "Magician"
+          ],
+          "part": "dps.meter",
+          "mode": "bars",
+          "back": true
+         },
+         {
+          "kind": "part",
+          "dx": 0,
+          "dy": 0.06019,
+          "w": 0.2963,
+          "h": 0.12963,
+          "scale": 1,
+          "part": "me.ring",
+          "thick": "thick",
+          "color": "#ff8800",
+          "align": "r",
+          "arc": {
+           "r": 90,
+           "a0": -120,
+           "a1": 120,
+           "w": 4,
+           "ls": 11,
+           "lr": 100,
+           "rev": false,
+           "below": false
+          }
+         }
+        ]
+       },
+       {
+        "anchor": "tr",
+        "ox": -0.05741,
+        "oy": 0.1,
+        "panels": [
+         {
+          "kind": "sect",
+          "dx": -0.33333,
+          "dy": 0,
+          "w": 0.33333,
+          "h": 0.24074,
+          "scale": 1,
+          "when": "target",
+          "key": "mob",
+          "sect": "stats",
+          "pw": 420,
+          "ph": 300
+         }
+        ]
+       },
+       {
+        "anchor": "bc",
+        "ox": 0.15185,
+        "oy": -0.05648,
+        "panels": [
+         {
+          "kind": "overlay",
+          "dx": -0.24074,
+          "dy": -0.08333,
+          "w": 0.48148,
+          "h": 0.08333,
+          "scale": 1,
+          "when": "combat",
+          "key": "zeal",
+          "style": "hud"
+         }
+        ]
+       },
+       {
+        "anchor": "tc",
+        "ox": 0.11852,
+        "oy": 0.05,
+        "panels": [
+         {
+          "kind": "callouts",
+          "dx": -0.2963,
+          "dy": 0,
+          "w": 0.59259,
+          "h": 0.11111,
+          "scale": 1,
+          "grow": "top"
+         }
+        ]
+       },
+       {
+        "anchor": "mr",
+        "ox": -0.04074,
+        "oy": 0.14259,
+        "panels": [
+         {
+          "kind": "timers",
+          "dx": -0.31481,
+          "dy": -0.09259,
+          "w": 0.31481,
+          "h": 0.18519,
+          "scale": 1.2,
+          "grow": "bottom",
+          "groups": [
+           "lull",
+           "mez"
+          ]
+         }
+        ]
+       },
+       {
+        "anchor": "br",
+        "ox": -0.04074,
+        "oy": -0.05185,
+        "panels": [
+         {
+          "kind": "timers",
+          "dx": -0.31481,
+          "dy": -0.14815,
+          "w": 0.31481,
+          "h": 0.14815,
+          "scale": 1,
+          "off": true,
+          "grow": "bottom",
+          "all": true
+         }
+        ]
+       }
+      ]
+     }
+    },
+    {
+     "name": "Group",
+     "active": false,
+     "doc": {
+      "format": "mimic-layout",
+      "version": 1,
+      "kind": "canvas",
+      "meta": {
+       "title": "Raid Wizard",
+       "description": "Big meter on the left, lulls on the right.",
+       "author": "Aldenmar",
+       "classes": [
+        "Wizard"
+       ],
+       "modes": [
+        "raid",
+        "group"
+       ]
+      },
+      "needs": {
+       "parts": [
+        "dps.meter",
+        "me.ring"
+       ],
+       "overlays": [
+        "mob",
+        "zeal"
+       ],
+       "sections": [
+        "mob:stats"
+       ]
+      },
+      "ref": {
+       "of": "eq",
+       "aspect": 1.778
+      },
+      "groups": [
+       {
+        "anchor": "ml",
+        "ox": -0.25764,
+        "oy": -0.02639,
+        "panels": [
+         {
+          "kind": "part",
+          "dx": 0,
+          "dy": -0.17361,
+          "w": 0.22222,
+          "h": 0.15278,
+          "scale": 0.825,
+          "cls": [
+           "Wizard",
+           "Magician"
+          ],
+          "part": "dps.meter",
+          "mode": "bars",
+          "back": true
+         },
+         {
+          "kind": "part",
+          "dx": 0,
+          "dy": 0.07639,
+          "w": 0.22222,
+          "h": 0.09722,
+          "scale": 0.75,
+          "part": "me.ring",
+          "thick": "thick",
+          "color": "#ff8800",
+          "align": "r",
+          "arc": {
+           "r": 90,
+           "a0": -120,
+           "a1": 120,
+           "w": 4,
+           "ls": 11,
+           "lr": 100,
+           "rev": false,
+           "below": false
+          }
+         }
+        ]
+       },
+       {
+        "anchor": "tr",
+        "ox": 0.02986,
+        "oy": 0.1,
+        "panels": [
+         {
+          "kind": "sect",
+          "dx": -0.25,
+          "dy": 0,
+          "w": 0.25,
+          "h": 0.18056,
+          "scale": 0.75,
+          "when": "target",
+          "key": "mob",
+          "sect": "stats",
+          "pw": 420,
+          "ph": 300
+         }
+        ]
+       },
+       {
+        "anchor": "bc",
+        "ox": 0.06111,
+        "oy": -0.07778,
+        "panels": [
+         {
+          "kind": "overlay",
+          "dx": -0.18056,
+          "dy": -0.0625,
+          "w": 0.36111,
+          "h": 0.0625,
+          "scale": 0.75,
+          "when": "combat",
+          "key": "zeal",
+          "style": "hud"
+         }
+        ]
+       },
+       {
+        "anchor": "tc",
+        "ox": -0.01667,
+        "oy": 0.05,
+        "panels": [
+         {
+          "kind": "callouts",
+          "dx": -0.22222,
+          "dy": 0,
+          "w": 0.44444,
+          "h": 0.08333,
+          "scale": 0.75,
+          "grow": "top"
+         }
+        ]
+       },
+       {
+        "anchor": "mr",
+        "ox": 0.06389,
+        "oy": 0.11944,
+        "panels": [
+         {
+          "kind": "timers",
+          "dx": -0.23611,
+          "dy": -0.06944,
+          "w": 0.23611,
+          "h": 0.13889,
+          "scale": 0.9,
+          "grow": "bottom",
+          "groups": [
+           "lull",
+           "mez"
+          ]
+         }
+        ]
+       },
+       {
+        "anchor": "br",
+        "ox": 0.06389,
+        "oy": -0.08889,
+        "panels": [
+         {
+          "kind": "timers",
+          "dx": -0.23611,
+          "dy": -0.11111,
+          "w": 0.23611,
+          "h": 0.11111,
+          "scale": 0.75,
+          "off": true,
+          "grow": "bottom",
+          "all": true
+         }
+        ]
+       }
+      ]
+     }
+    }
+   ],
+   "options": {
+    "overlay": {
+     "tab": "tank",
+     "rows": 12
+    },
+    "who": {
+     "zekOnly": true,
+     "filters": {
+      "classes": [
+       "Cleric"
+      ],
+      "guilds": [],
+      "sortBy": "name"
+     }
+    },
+    "zeal": {
+     "layout": "dials"
+    }
+   },
+   "hud": [
+    {
+     "slot": "c1",
+     "parts": {
+      "ring": 1,
+      "sizes": {
+       "all": 1.2
+      },
+      "clickyPick": [
+       "Spell: Heal"
+      ]
+     }
+    },
+    {
+     "slot": "c2",
+     "parts": {
+      "ring": 0
+     }
+    }
+   ],
+   "triggers": [
+    {
+     "for": [
+      "c1"
+     ],
+     "trigger": {
+      "id": "p_1",
+      "name": "Gravel Rain",
+      "pattern": "Gravel Rain",
+      "pattern_flags": "i",
+      "use_regex": true,
+      "enabled": true,
+      "cooldown_seconds": 0,
+      "actions": [
+       {
+        "type": "text_overlay",
+        "text": "rain",
+        "color": "red",
+        "duration_ms": 4000
+       },
+       {
+        "type": "tts",
+        "text": "rain",
+        "sound": "bell"
+       },
+       {
+        "type": "discord",
+        "message": "rain"
+       }
+      ]
+     }
+    },
+    {
+     "for": [],
+     "trigger": {
+      "id": "p_2",
+      "name": "Mez broke",
+      "pattern": "Your mez broke",
+      "pattern_flags": "i",
+      "use_regex": true,
+      "enabled": true,
+      "actions": [
+       {
+        "type": "text_overlay",
+        "text": "mez",
+        "color": "yellow",
+        "duration_ms": 3000
+       }
+      ]
+     }
+    }
+   ],
+   "rules": {
+    "personal:p_1": {
+     "all": "speak",
+     "c1": "off"
+    },
+    "guild:7": {
+     "all": "overlay"
+    },
+    "builtin:charm_aging": {
+     "c2": "off"
+    },
+    "group:zone:potime": {
+     "all": "off"
+    }
+   }
+  }
+ }
+}
