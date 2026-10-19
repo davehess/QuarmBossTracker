@@ -50191,6 +50191,33 @@ function _mapFocusTarget(character) {
   } catch { void 0; }
   return null;
 }
+// Health on the Map's alive rows (FB-87, a raider: "if we already have health of each mob engaged, we could be putting
+// this into the timers page of maps as well"). Sets `hp_pct` (0-100, or null = unknown) on each `seen` row from what
+// the agent already holds: your own target when its pin is that spawn point, else the Extended Target rows (`rows`)
+// matched by spawn id, else by normalized name ONLY when exactly one fresh NPC row carries that name and it does not
+// name a different spawn id. Stale rows never count; a duplicate name is left blank rather than guessed.
+function _mapSeenHp(seen, rows, own) {
+  const pct = (v) => (typeof v === 'number' && Number.isFinite(v)) ? Math.max(0, Math.min(100, Math.round(v))) : null;
+  const live = (Array.isArray(rows) ? rows : []).filter(t => t && !t.stale && (t.kind == null || t.kind === 'npc'));
+  const byId = new Map(), byName = new Map();
+  for (const t of live) {
+    const id = Number(t.spawn_id);
+    if (id > 0 && !byId.has(id)) byId.set(id, t);
+    const k = _mapNormName(t.name);
+    byName.set(k, byName.has(k) ? null : t);   // null = two or more rows share the name: no guess
+  }
+  for (const s of seen) {
+    let hp = null;
+    if (own && own.point_id != null && String(own.point_id) === String(s.point_id)) hp = pct(own.hp_pct);
+    if (hp == null && s.spawn_id != null && byId.has(Number(s.spawn_id))) hp = pct(byId.get(Number(s.spawn_id)).hp_pct);
+    if (hp == null) {
+      const t = byName.get(_mapNormName(s.name));
+      const tid = t ? Number(t.spawn_id) : 0;
+      if (t && !(tid > 0 && s.spawn_id != null && tid !== Number(s.spawn_id))) hp = pct(t.hp_pct);
+    }
+    s.hp_pct = hp;
+  }
+}
 // How far the target's Area Rampage reaches ({ radius_still, radius_moving, chance, targets, damage_pct }, game units) and
 // its regular Rampage reaches ({ range, chance, damage_pct }), off the same cached mob-info row Target Info reads (a zone
 // pack on disk, else the bot's lookup, started here when nothing else has). Returns { ae, rampage }; either is null when
@@ -50328,6 +50355,10 @@ function _mapStatePayload(have, now, haveLocal) {
     .filter(s => s && now - s.at <= MAP_SEEN_KEEP_MS && !(zd.timers[String(s.point_id)] && zd.timers[String(s.point_id)].died_at >= s.at))
     .map(s => ({ point_id: s.point_id, spawn_id: s.spawn_id == null ? null : s.spawn_id, name: s.name, at: s.at, by: s.by || null }))
     .sort((a, b) => b.at - a.at);
+  try {   // health on the alive rows (FB-87): your target, else the Extended Target cache; blank when it is not certain
+    const ec = typeof _extTargetCache === 'undefined' ? null : _extTargetCache.get(String(character).trim().toLowerCase());
+    _mapSeenHp(out.seen, ec && ec.payload && ec.payload.targets, out.target);
+  } catch { for (const s of out.seen) s.hp_pct = null; }
   // Not your target: where the raid's shared targets (the bot, _mapApplyShared) put a mob of that name. The most-targeted
   // row when several share the name and no spawn id was given; a row older than two minutes is not a position.
   if (out.focus && out.focus.x == null) {
