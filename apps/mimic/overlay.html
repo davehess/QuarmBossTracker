@@ -96,6 +96,8 @@
   .rowcfg{display:flex;align-items:center;gap:1px;margin-left:auto}
   .rowsn{font-size:9px;color:#9aa4ad;min-width:15px;text-align:center;font-variant-numeric:tabular-nums}
   .maxhit{font-size:9px;color:#f87171;font-weight:500;margin-left:4px}
+  /* Tank History: the damage shield this tank dealt back, beside the biggest hit (blue: it is dealt, not taken). */
+  .dsret{font-size:9px;color:#79c0ff;font-weight:500;margin-left:4px}
   .colhdr{display:grid;grid-template-columns:24px minmax(0,1fr) 38px 50px 42px 32px;
      gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;
      text-transform:uppercase;padding:2px 0 1px;border-bottom:1px solid rgba(110,118,129,0.18);margin-bottom:2px}
@@ -296,7 +298,7 @@
              line (the guild lead, 2026-10-06), read from the same fight ring History lists. -->
         <span class="tabrow">
           <button id="tabHist" class="tab"    type="button"
-                  title="The guild's numbers for the last few mobs, once every client has reported">History</button>
+                  title="The guild's numbers for the last few mobs, once every client has reported. In History, DPS shows the fight's damage and Tank its damage taken; click History again to go back to the live board">History</button>
           <button id="tabTrend" class="tab"   type="button"
                   title="Your own damage per fight, tonight or over 7 days, as a line">Trend</button>
         </span>
@@ -484,13 +486,22 @@
   // persisted: after a restart "the fight I was looking at" no longer means
   // anything, and the history ring itself lives in the agent's memory.
   var HIST_IDX = 0;
+  // Same list, both tabs (the guild lead, Decision Desk 2026-10-19): while History is open the DPS and Tank buttons
+  // choose how the fight picked there is shown: DPS = damage dealt, Tank = damage taken, the biggest hit and the
+  // damage shield. HIST_VIEW is that choice (kept across a restart); History itself, clicked again, goes back to
+  // the live tab it came from (LIVE_TAB).
+  var HIST_VIEW_KEY = 'wp.damageHistView';
+  var HIST_VIEW = 'dps';
+  try { if (localStorage.getItem(HIST_VIEW_KEY) === 'tank') HIST_VIEW = 'tank'; } catch (e) {}
+  var LIVE_TAB = TAB_MODE === 'tank' ? 'tank' : 'dps';
   // `idx` is a ring index (newest first): a Trend row opens History on the fight it drew.
   function _setTab(mode, idx) {
+    if (TAB_MODE === 'dps' || TAB_MODE === 'tank') LIVE_TAB = TAB_MODE;    // before it changes: where History returns to
     TAB_MODE = mode;
     if (mode === 'history') HIST_IDX = idx > 0 ? idx : 0;    // otherwise always open on the latest kill
     try { localStorage.setItem(TAB_MODE_KEY, mode); } catch (e) {}
-    if (tabDpsBtn)  tabDpsBtn .classList.toggle('on', mode === 'dps');
-    if (tabTankBtn) tabTankBtn.classList.toggle('on', mode === 'tank');
+    if (tabDpsBtn)  tabDpsBtn .classList.toggle('on', mode === 'dps' || (mode === 'history' && HIST_VIEW === 'dps'));
+    if (tabTankBtn) tabTankBtn.classList.toggle('on', mode === 'tank' || (mode === 'history' && HIST_VIEW === 'tank'));
     if (tabHistBtn) tabHistBtn.classList.toggle('on', mode === 'history');
     if (tabTrendBtn) tabTrendBtn.classList.toggle('on', mode === 'trend');
     document.body.classList.toggle('trendmode', mode === 'trend');   // shows the Trend panel in place of the board
@@ -508,6 +519,9 @@
     if (TAB_MODE === 'history') {
       if (tabHistBtn) tabHistBtn.classList.add('on');
       document.body.classList.add('hist');
+      // History keeps one of the two buttons lit: the view it shows the fight in.
+      if (HIST_VIEW === 'dps' && tabDpsBtn) tabDpsBtn.classList.add('on');
+      if (HIST_VIEW === 'tank' && tabTankBtn) tabTankBtn.classList.add('on');
     }
     if (TAB_MODE === 'trend') {
       if (tabTrendBtn) tabTrendBtn.classList.add('on');
@@ -526,9 +540,17 @@
     btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
   });
-  if (tabDpsBtn)  tabDpsBtn .addEventListener('click', function(){ _setTab('dps'); });
-  if (tabTankBtn) tabTankBtn.addEventListener('click', function(){ _setTab('tank'); });
-  if (tabHistBtn) tabHistBtn.addEventListener('click', function(){ _setTab('history'); });
+  // In History, DPS / Tank pick how the fight is shown and stay in History; History again returns to the live tab.
+  function _setHistView(view) {
+    HIST_VIEW = view === 'tank' ? 'tank' : 'dps';
+    try { localStorage.setItem(HIST_VIEW_KEY, HIST_VIEW); } catch (e) {}
+    if (tabDpsBtn)  tabDpsBtn .classList.toggle('on', HIST_VIEW === 'dps');
+    if (tabTankBtn) tabTankBtn.classList.toggle('on', HIST_VIEW === 'tank');
+    tick().catch(function(){});
+  }
+  if (tabDpsBtn)  tabDpsBtn .addEventListener('click', function(){ if (TAB_MODE === 'history') _setHistView('dps'); else _setTab('dps'); });
+  if (tabTankBtn) tabTankBtn.addEventListener('click', function(){ if (TAB_MODE === 'history') _setHistView('tank'); else _setTab('tank'); });
+  if (tabHistBtn) tabHistBtn.addEventListener('click', function(){ _setTab(TAB_MODE === 'history' ? LIVE_TAB : 'history'); });
   if (tabTrendBtn) tabTrendBtn.addEventListener('click', function(){ _setTab('trend'); });
   // A row's index is its place in the ring, newest first (0 = the last kill).
   if (histListEl) histListEl.addEventListener('click', function(e){
@@ -746,7 +768,8 @@
         if (!owner || owner === r) { _folded.push(r); return; }
         owner[1] += (r[1] || 0);
         owner[2]  = Math.max(owner[2] || 0, r[2] || 0);
-        owner[8]  = true;                       // index 8 = absorbed a pet → "+pet"
+        owner[13] = (owner[13] || 0) + (r[13] || 0);   // index 13 = damage shield dealt back (Tank History)
+        owner[8]  = true;                      // index 8 = absorbed a pet → "+pet"
                                                 // (7 is localDmg once the guild merge runs)
         // index 11 / 12 = first / last damage time: the owner's span grows to cover the pet's, so
         // "owner +pet" is timed from the first swing of either to the last of either.
@@ -805,6 +828,19 @@
       if (!seen.has(String(r[0]).toLowerCase())) merged.push(r);
     });
     return merged.sort(function(a,b){ return (b[1]||0) - (a[1]||0); });
+  }
+
+  // The rows for ONE History fight on the Tank view: damage TAKEN, the biggest single hit, and the damage shield
+  // dealt back, in the live board's tuple shape (index 13 is the shield). This machine's view only: damage taken
+  // is read off this machine's own log and the guild's numbers carry none. Pets are folded into their owner the
+  // way the DPS rows are, and a fight stored before the agent kept `took` has no rows.
+  function _histTankRows(HIST) {
+    var rows = (HIST.local || []).map(function(p){
+      return [p.character, p.took || 0, p.tookMax || 0, p.pet_owner || null, 0, 0,
+              p.pet_charm || (p.pet_summoned ? 'pet' : false), undefined, false, p.pet_spawn_id || null,
+              undefined, null, null, p.ds || 0];
+    }).filter(function(x){ return x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0; });
+    return _foldPetsIntoOwners(rows);
   }
 
   // ── The /rs parse line (📋) ─────────────────────────────────────────────────
@@ -899,6 +935,8 @@
       // So the fix is about WHEN the number is shown, not whether it works.
       var HISTLIST = [];
       var HIST = null;
+      // The Tank view: the Tank tab, or History with its Tank button lit (damage taken for the fight picked).
+      var isTank = TAB_MODE === 'tank' || (TAB_MODE === 'history' && HIST_VIEW === 'tank');
       // The one place the ring is read. Trend draws from it too (it is the same fights), so it asks
       // here, with the same revision, and only while it is on screen: a mini keeps the scoreboard.
       var _trendShown = TAB_MODE === 'trend' && !document.body.classList.contains('wp-mini');
@@ -934,7 +972,7 @@
       if (emptyHint) {
         var focused = s.activeCharacter || null;
         emptyHint.textContent = (TAB_MODE === 'history')
-          ? (HISTLIST.length ? 'no damage recorded for that fight' : 'no fights yet this session')
+          ? (HISTLIST.length ? (isTank ? 'no damage taken recorded for that fight' : 'no damage recorded for that fight') : 'no fights yet this session')
           : (_otherCharFight
             ? (focused ? 'waiting on ' + focused + '’s combat…' : 'waiting for combat…')
             : 'waiting for combat…');
@@ -990,6 +1028,7 @@
       // legitimately doubling damage." Do not re-point this at s.guildDamage
       // without solving the settling problem first.
       var GUILD = null;
+      var histDmgRows = [];   // the fight's damage rows, whichever view is showing (the /rs line is always a damage parse)
       try {
         if (HIST) {
           // The history entry carries its own local view — the live encounter
@@ -997,8 +1036,10 @@
           // _histRows builds it (pets folded, as the live board does) and, settled,
           // merges the guild's numbers over it; before that, or with a bot too old to
           // serve them, it is what this machine saw rather than an empty tab.
-          allRows = _histRows(HIST);
-          if (HIST && Array.isArray(HIST.players) && HIST.players.length) GUILD = HIST;
+          histDmgRows = _histRows(HIST);
+          // Tank view: damage taken, this machine's only (the guild's numbers are damage dealt), so no guild merge.
+          allRows = isTank ? _histTankRows(HIST) : histDmgRows;
+          if (!isTank && HIST && Array.isArray(HIST.players) && HIST.players.length) GUILD = HIST;
         } else if (TAB_MODE === 'history') {
           allRows = [];
         }
@@ -1051,8 +1092,10 @@
         // every tick and nulled first, so paging to a fight with no data
         // can't leave the previous fight's line copyable.
         _histParseLine = null;
-        if (HIST && boss && secs > 0 && allRows.length && totalDmg > 0) {
-          _histParseLine = _rsLine(boss, secs, totalDmg, allRows);
+        // On the Tank view allRows holds damage TAKEN, so the line is built from the damage rows (histDmgRows).
+        var histDmgTotal = histDmgRows.reduce(function(a, x){ return a + x[1]; }, 0);
+        if (HIST && boss && secs > 0 && histDmgRows.length && histDmgTotal > 0) {
+          _histParseLine = _rsLine(boss, secs, histDmgTotal, histDmgRows);
         }
         // ⚠ `!HIST` is load-bearing: on the History tab `boss` and `secs`
         // describe the fight being BROWSED while et.perPlayer is still the live
@@ -1074,7 +1117,7 @@
         var n = row[0], d = row[1], mx = row[2], petOwner = row[3], rank = row[4], extra = row[5], petCharm = row[6];
         var pct = totalDmg > 0 ? (d / totalDmg) * 100 : 0;
         // DPS tab: this row's own active seconds. Tank tab: the fight's (_rowTiming).
-        var rt = _rowTiming(row, secs, TAB_MODE === 'tank', _fightEndMs(allRows));
+        var rt = _rowTiming(row, secs, isTank, _fightEndMs(allRows));
         var rsecs = rt.secs, dps = rt.dps;
         var isMe = me && n.toLowerCase() === me.toLowerCase();
         // Pet rows carry their owner in dim parens — same convention as the
@@ -1101,10 +1144,12 @@
         // damage stand out vs the running total. Suppressed in DPS mode
         // since outbound max-hit isn't tracked (would require another
         // per-attacker bucket).
-        var maxHitHtml = (TAB_MODE === 'tank' && mx > 0)
+        var maxHitHtml = (isTank && mx > 0)
           ? ' <span class="maxhit" title="biggest single hit absorbed">·' + fmt(mx) + '</span>'
           : '';
-        var cls = 'pbrow' + (TAB_MODE === 'tank' ? ' tkrow' : '') + (isMe ? ' me' : '') + (extra ? ' me-extra' : '');
+        // Tank History also names the damage shield this tank dealt back (index 13, kept in History only).
+        if (isTank && row[13] > 0) maxHitHtml += ' <span class="dsret" title="damage shield dealt back to the mob">DS ' + fmt(row[13]) + '</span>';
+        var cls = 'pbrow' + (isTank ? ' tkrow' : '') + (isMe ? ' me' : '') + (extra ? ' me-extra' : '');
         var _obsDiffers = !!(GUILD && row[7] !== undefined && row[7] !== d);
         var barW = topDmg > 0 ? Math.min(100, (d / topDmg) * 100) : 0;
         var petW = (petSum > 0 && d > 0) ? barW * Math.min(1, petSum / d) : 0;
@@ -1139,7 +1184,7 @@
       // duration, scored over EVERY witnessed player this fight.
       if (rows.length && totalDmg > 0) {
         var totalDps = secs > 0 ? Math.round(totalDmg / secs) : 0;
-        var totLabel = boss || (TAB_MODE === 'tank' ? 'Raid taken' : 'Mob total');
+        var totLabel = boss || (isTank ? 'Raid taken' : 'Mob total');
         bodyHtml += '<li class="total">'
              + '<span class="r"></span>'
              + '<span class="n">' + esc(totLabel) + '</span>'
@@ -1158,7 +1203,7 @@
         // Mini keeps you in its three rows too: at zero when you did nothing yet.
         var miniRows = (me && allRows.length && !allRows.some(function(r){ return String(r[0]).toLowerCase() === me.toLowerCase(); }))
           ? allRows.concat([[me, 0, 0, null, '—', true, false, 0, false]]) : allRows;
-        bodyHtml = miniRowsHtml(miniWindow(miniRows, me), me, totalDmg, secs, TAB_MODE === 'tank', _fightEndMs(allRows));
+        bodyHtml = miniRowsHtml(miniWindow(miniRows, me), me, totalDmg, secs, isTank, _fightEndMs(allRows));
       }
       // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
       // innerHTML re-layout.
@@ -1181,15 +1226,17 @@
       // even without looking at the tab buttons (e.g. screenshots).
       var colD   = document.getElementById('colD');
       var colDps = document.getElementById('colDps');
-      if (colD)   colD  .textContent = TAB_MODE === 'tank' ? 'Taken'
+      if (colD)   colD  .textContent = isTank ? 'Taken'
                                      : (TAB_MODE === 'history' ? 'Guild' : 'Damage');
-      if (colDps) colDps.textContent = TAB_MODE === 'tank' ? 'DTPS'  : 'DPS';
+      if (colDps) colDps.textContent = isTank ? 'DTPS'  : 'DPS';
       // A history entry that hasn't heard back from the bot yet is showing THIS
       // machine's view only. Say so — an unlabelled small number reads as the
       // guild's answer, which is exactly the misreading this tab exists to stop.
       var hdrEl = document.getElementById('boss-name');
       if (hdrEl && TAB_MODE === 'history' && HIST) {
-        hdrEl.textContent = HIST.boss + (HIST.settled
+        hdrEl.textContent = HIST.boss + (isTank
+          ? ' · this machine'   // damage taken is read off this machine's own log: nothing to wait on or merge
+          : HIST.settled
           ? (GUILD ? ' · ' + (HIST.uploaders || 0) + ' clients' : ' · this machine')   // settled with no guild rows: a restored fight the bot could no longer be asked about
           : ' · settling…');
       }

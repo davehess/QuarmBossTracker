@@ -1323,6 +1323,19 @@ contextBridge.exposeInMainWorld('mimic', {
   // window, shows what it holds, and adds it as a new set → { ok, message, canceled? }. No path crosses the bridge.
   overlayLayoutExport: (opts) => ipcRenderer.invoke('overlay-layout-export', opts),
   overlayLayoutImport: ()     => ipcRenderer.invoke('overlay-layout-import'),
+  // 📦🔗 A WHOLE setup (overlay layouts, HUD, options, personal triggers, "What you hear") as a file or a six-character
+  // code (DECISIONS §383). export/code({ title?, description?, author? }) → { ok, message, code?, canceled?, told? };
+  // import() picks a file and opens the preview window; enterCode() opens it at the code box. Neither the sign-in nor any
+  // path crosses the bridge. The preview window's own calls are setupShare* below (main answers only that window).
+  overlaySetupExport:    (opts) => ipcRenderer.invoke('overlay-setup-export', opts),
+  overlaySetupCode:      (opts) => ipcRenderer.invoke('overlay-setup-code', opts),
+  overlaySetupImport:    ()     => ipcRenderer.invoke('overlay-setup-import'),
+  overlaySetupEnterCode: ()     => ipcRenderer.invoke('overlay-setup-enter-code'),
+  setupShareState:  ()                    => ipcRenderer.invoke('setup-share-state'),
+  setupShareLookup: (code)                => ipcRenderer.invoke('setup-share-lookup', code),
+  setupShareApply:  (selection, assign)   => ipcRenderer.invoke('setup-share-apply', selection, assign),
+  setupShareUndo:   ()                    => ipcRenderer.invoke('setup-share-undo'),
+  setupShareClose:  ()                    => ipcRenderer.invoke('setup-share-close'),
 
   // Diagnostics.
   getAgentLogTail: (lines) => ipcRenderer.invoke('get-agent-log-tail', lines),

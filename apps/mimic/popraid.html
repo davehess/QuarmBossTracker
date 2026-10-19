@@ -162,6 +162,22 @@
   .qnext{padding:1px 4px;font-size:10px;color:#8b949e;cursor:pointer;line-height:1.4;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 1px 2px #000}
   .qnext:hover{color:#e9d5ff;background:rgba(163,113,247,0.12)}
+  /* Drill-down blocks (the guild lead, 2026-10-04: "an era/continent/plane separation in an easy big block way
+     up top ... drill down from top to bottom or up with the up button"; picked 2026-10-19): big tap blocks for
+     era → plane → quest, ▲ to climb, ◀ ▶ to stay inside the plane. Quests mode only. */
+  body:not(.quests) #upBtn{display:none}
+  .nbtn:disabled{opacity:0.35;cursor:default;border-color:#30363d;color:#c9d1d9}
+  .crumb{font-size:9px;color:#8b949e;letter-spacing:0.04em;margin-bottom:3px;text-shadow:0 1px 2px #000}
+  .qgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:5px}
+  .qblock{display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:46px;padding:5px 8px;
+    text-align:left;font-family:inherit;color:#e6edf3;cursor:pointer;text-shadow:0 1px 2px #000;
+    background:rgb(8 5 16 / var(--bg-alpha));border:1px solid rgba(163,113,247,0.30);border-left:4px solid #a371f7;border-radius:5px}
+  .qblock:hover{background:rgb(40 24 70 / var(--bg-alpha));border-color:#a371f7}
+  .qblock.cur{outline:1px solid #f0b429;outline-offset:-1px}
+  .qblock .qbt{font-size:12px;font-weight:600;line-height:1.25}
+  .qblock .qbs{font-size:9px;color:#8b949e}
+  .qblock.era{min-height:64px}
+  .qblock.qq .qbt{font-size:11px;font-weight:500}
   /* Fixed height, the default (the guild lead, 2026-10-04: the overlay "jumps around when resizing"):
      the window keeps the height you gave it and #content scrolls, the same pattern as who.html. The
      grip at the bottom sets the height; double-click it to size to the content instead. Mini never
@@ -237,6 +253,7 @@
           <button id="modeQuests" class="nbtn" title="Quests and flags: who to talk to, what to say, where to go">Quests</button>
         </span>
         <select id="encPick" class="pick" title="Jump to an encounter"></select>
+        <button id="upBtn" class="nbtn" title="Up one level: the step's list, then the planes">▲</button>
         <button id="prevBtn" class="nbtn" title="Previous encounter">◀</button>
         <button id="nextBtn" class="nbtn" title="Next encounter">▶</button>
         <button id="frameBtn" class="nbtn" title="Framed multi-panel layout (ultrawide monitors)">🖥</button>
@@ -383,6 +400,11 @@
     var savedQ = localStorage.getItem('wp:pop:quest');
     if (savedQ) { var fq = QUESTS.findIndex(function(e){ return e.q.key === savedQ; }); if (fq >= 0) qIdx = fq; }
   } catch (e) {}
+  // Drill-down: which screen Quests mode shows. 'card' is the selected step (where it opens, as ever); ▲ climbs
+  // to 'list' (the steps of its plane), then 'planes' (the era's planes), then 'eras' (only if there are several).
+  // qEra / qPlane are the era and plane the block screens are showing.
+  var QIDX = null;      // built after qBuildIndex is defined, below
+  var qScreen = 'card', qEra = '', qPlane = '';
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); }); }
   function imgUrl(f){ return /^https?:/i.test(f) ? f : (DB.imageBase + f); }
@@ -414,7 +436,7 @@
     var v = encPick.value;
     if (popMode === 'quests') {
       var qi = QUESTS.findIndex(function(e){ return e.q.key === v; });
-      if (qi >= 0) { qIdx = qi; renderSlide(); }
+      if (qi >= 0) { qIdx = qi; qScreen = 'card'; renderSlide(); }
       return;
     }
     var f = SLIDES.findIndex(function(s){
@@ -423,13 +445,48 @@
     if (f >= 0) { idx = f; renderSlide(); }
   });
   document.getElementById('prevBtn').addEventListener('click', function(){
-    if (popMode === 'quests') { qIdx = (qIdx - 1 + QUESTS.length) % QUESTS.length; renderSlide(); return; }
+    if (popMode === 'quests') { qStep(-1); return; }
     idx = (idx - 1 + SLIDES.length) % SLIDES.length; renderSlide();
   });
   document.getElementById('nextBtn').addEventListener('click', function(){
-    if (popMode === 'quests') { qIdx = (qIdx + 1) % QUESTS.length; renderSlide(); return; }
+    if (popMode === 'quests') { qStep(1); return; }
     idx = (idx + 1) % SLIDES.length; renderSlide();
   });
+  // ◀ ▶ in Quests mode: the step before or after, inside the plane (QUEST_PLANE_END says what the ends do).
+  // They only work on a step's card; on a block screen they are greyed and the blocks are the way on.
+  function qStep(dir){
+    if (qScreen !== 'card') return;
+    var to = qStepIdx(QUESTS, QIDX, qIdx, dir, QUEST_PLANE_END);
+    if (to >= 0) { qIdx = to; renderSlide(); }
+  }
+  // ▲ climbs one level: the card → its plane's steps → the planes → the eras (skipped while there is only one).
+  function qUpOk(){ return qScreen === 'card' || qScreen === 'list' || (qScreen === 'planes' && QIDX.eras.length > 1); }
+  document.getElementById('upBtn').addEventListener('click', function(){
+    if (popMode !== 'quests' || !qUpOk()) return;
+    var pl = qPlaneOf(QUESTS, QIDX, qIdx);
+    if (qScreen === 'card') { qScreen = 'list'; qPlane = pl ? pl.key : ''; qEra = pl ? pl.era : ''; }
+    else if (qScreen === 'list') { qScreen = 'planes'; var lp = QIDX.planes[qPlane]; qEra = lp ? lp.era : qEra; }
+    else qScreen = 'eras';
+    renderSlide();
+  });
+  // Greys ◀ ▶ ▲ for where Quests mode is, and says why in the tooltip. Slides mode gets its plain buttons back.
+  function paintNav(){
+    var prev = document.getElementById('prevBtn'), next = document.getElementById('nextBtn'), up = document.getElementById('upBtn');
+    if (popMode !== 'quests') {
+      prev.disabled = false; next.disabled = false;
+      prev.title = 'Previous encounter'; next.title = 'Next encounter';
+      return;
+    }
+    var onCard = qScreen === 'card';
+    var pl = qPlaneOf(QUESTS, QIDX, qIdx), name = pl ? pl.title : 'this plane';
+    var pi = onCard ? qStepIdx(QUESTS, QIDX, qIdx, -1, QUEST_PLANE_END) : -1;
+    var ni = onCard ? qStepIdx(QUESTS, QIDX, qIdx, 1, QUEST_PLANE_END) : -1;
+    prev.disabled = pi < 0; next.disabled = ni < 0;
+    prev.title = !onCard ? 'Open a step to use ◀ ▶' : pi < 0 ? 'This is the first step in ' + name + ' (▲ for the planes)' : 'Previous step in ' + name;
+    next.title = !onCard ? 'Open a step to use ◀ ▶' : ni < 0 ? 'That was the last step in ' + name + ' (▲ for the planes)' : 'Next step in ' + name;
+    up.disabled = !qUpOk();
+    up.title = qScreen === 'card' ? 'Up: the steps of ' + name : qScreen === 'list' ? 'Up: the planes' : qUpOk() ? 'Up: the eras' : 'Already at the top';
+  }
 
   var frameBtn = document.getElementById('frameBtn');
   function applyFramed(){
@@ -914,14 +971,109 @@
     }
     return h || '<div class="empty">Nothing more is recorded for this step.</div>';
   }
-  // Mini: the selected quest's title and the title of the step after it (the guide is an ordered
+  // ── Quest navigation: era → plane → quest ──────────────────────────────────
+  // Every step carries a hand-set `plane` (scripts/pop-quest-planes.js); the file carries `eras`, each with its
+  // planes in block order. ◀ ▶ walk the steps of ONE plane in guide order; what they do at the end of it is
+  // this one constant. 'stop' (picked as the default, Decision Desk 2026-10-19; the guild lead has not answered
+  // the question): ▶ is disabled on the plane's last step and ◀ on its first. 'wrap' goes round to the other end
+  // of the plane. 'hop' goes on into the next plane in block order (and stops at the last or first plane).
+  var QUEST_PLANE_END = 'stop';
+  var QB_WHO = { solo: 'Solo', group: 'Group', raid: 'Raid' };
+  // The index of what the screens draw: eras → planes → the QUESTS indexes in each plane. A step whose plane the
+  // file does not know (data from before planes) lands in an "Other steps" block of its own, so none is out of reach.
+  function qBuildIndex(db, quests){
+    var eras = [], planes = {}, order = [];
+    (db.eras || []).forEach(function(e){
+      var era = { key: e.key, title: e.title, planes: [] };
+      (e.planes || []).forEach(function(p){
+        planes[p.key] = { key: p.key, title: p.title, era: e.key, idxs: [], color: '' };
+        era.planes.push(p.key); order.push(p.key);
+      });
+      eras.push(era);
+    });
+    var other = null;
+    quests.forEach(function(e, i){
+      var k = e.q.plane || '';
+      if (!planes[k]) {
+        if (!other) { other = { key: '', title: 'Other steps', planes: [] }; eras.push(other); }
+        planes[k] = { key: k, title: k || 'Other steps', era: other.key, idxs: [], color: '' };
+        other.planes.push(k); order.push(k);
+      }
+      planes[k].idxs.push(i);
+      if (!planes[k].color && e.level && e.level.color) planes[k].color = e.level.color;
+    });
+    // A plane no step is in has nothing to draw: it is left out of the blocks.
+    eras.forEach(function(era){ era.planes = era.planes.filter(function(k){ return planes[k].idxs.length; }); });
+    return { eras: eras.filter(function(era){ return era.planes.length; }), planes: planes, order: order.filter(function(k){ return planes[k].idxs.length; }) };
+  }
+  // The QUESTS index ◀ (dir -1) or ▶ (dir 1) goes to from step i, or -1 when it cannot (the button is disabled).
+  function qStepIdx(quests, idx, i, dir, rule){
+    var e = quests[i];
+    if (!e) return -1;
+    var pl = idx.planes[e.q.plane || ''];
+    if (!pl) return -1;
+    var at = pl.idxs.indexOf(i), to = at + dir;
+    if (to >= 0 && to < pl.idxs.length) return pl.idxs[to];
+    if (rule === 'wrap') return pl.idxs.length > 1 ? pl.idxs[(to + pl.idxs.length) % pl.idxs.length] : -1;
+    if (rule === 'hop') {
+      var p = idx.order.indexOf(pl.key) + dir;
+      if (p < 0 || p >= idx.order.length) return -1;
+      var next = idx.planes[idx.order[p]].idxs;
+      return dir > 0 ? next[0] : next[next.length - 1];
+    }
+    return -1;
+  }
+  function qPlaneOf(quests, idx, i){
+    var e = quests[i];
+    return (e && idx.planes[e.q.plane || '']) || null;
+  }
+  // One big tap block: a <button> (a locked overlay is click-through; the preload arms every button).
+  function qBlockHtml(nav, key, title, small, color, cur, cls){
+    return '<button type="button" class="qblock' + (cls ? ' ' + cls : '') + (cur ? ' cur' : '') + '" data-nav="' + esc(nav) + '" data-key="' + esc(key) + '"'
+      + (color ? ' style="border-left-color:' + esc(color) + '"' : '') + '>'
+      + '<span class="qbt">' + esc(title) + '</span>' + (small ? '<span class="qbs">' + esc(small) + '</span>' : '') + '</button>';
+  }
+  function qCountText(n, noun){ return n + ' ' + noun + (n === 1 ? '' : 's'); }
+  // The path above a screen: the era (only when there are several), then the plane.
+  function qCrumb(idx, eraKey, planeKey){
+    var parts = [];
+    if (idx.eras.length > 1) idx.eras.forEach(function(e){ if (e.key === eraKey) parts.push(e.title); });
+    if (planeKey && idx.planes[planeKey]) parts.push(idx.planes[planeKey].title);
+    return parts.length ? '<div class="crumb">' + esc(parts.join(' › ')) + '</div>' : '';
+  }
+  // The three screens ▲ climbs through. The block holding where you are is marked.
+  function qErasHtml(idx, curEra){
+    return '<div class="qgrid">' + idx.eras.map(function(e){
+      var n = 0; e.planes.forEach(function(k){ n += idx.planes[k].idxs.length; });
+      return qBlockHtml('era', e.key, e.title, qCountText(e.planes.length, 'plane') + ' · ' + qCountText(n, 'step'), '', e.key === curEra, 'era');
+    }).join('') + '</div>';
+  }
+  function qPlanesHtml(idx, eraKey, curPlane){
+    var era = idx.eras.filter(function(e){ return e.key === eraKey; })[0] || idx.eras[0];
+    if (!era) return '<div class="empty">no quests loaded</div>';
+    return qCrumb(idx, era.key, '') + '<div class="qgrid">' + era.planes.map(function(k){
+      var p = idx.planes[k];
+      return qBlockHtml('plane', k, p.title, qCountText(p.idxs.length, 'step'), p.color, k === curPlane, '');
+    }).join('') + '</div>';
+  }
+  function qListHtml(idx, quests, planeKey, curIdx){
+    var p = idx.planes[planeKey];
+    if (!p) return '<div class="empty">no quests loaded</div>';
+    return qCrumb(idx, p.era, p.key) + '<div class="qgrid">' + p.idxs.map(function(i, n){
+      var q = quests[i].q;
+      return qBlockHtml('quest', q.key, (n + 1) + '. ' + q.title, (QB_WHO[q.who] || q.who) + (q.must ? ' · ★ must' : ''), p.color, i === curIdx, 'qq');
+    }).join('') + '</div>';
+  }
+  // ── /Quest navigation ──────────────────────────────────────────────────────
+
+  // Mini: the selected quest's title and the title of the step after it IN ITS PLANE (the guide is an ordered
   // checklist and its titles are the steps). The next row is clickable so mini can walk on without
-  // flipping to full mode.
-  function questMiniHtml(list, i){
-    var e = list[i], nx = list[i + 1];
+  // flipping to full mode. ni = the next step's index in the list, or -1 at the end of the plane.
+  function questMiniHtml(list, i, ni){
+    var e = list[i], nx = ni >= 0 ? list[ni] : null;
     return '<div class="mini-ttl"><span class="wp-mini-name">PoP · ' + esc(e.q.title) + '</span></div>'
       + (nx ? '<div class="qnext" data-wp-interact title="Next step: click to move on">next · ' + esc(nx.q.title) + '</div>'
-            : '<div class="empty">last step in the guide</div>');
+            : '<div class="empty">last step in this plane</div>');
   }
   // ── /PoP quests — renderers ────────────────────────────────────────────────
 
@@ -932,7 +1084,8 @@
     applyFixed();
     applyFs();
     document.getElementById('content').scrollTop = 0;
-    if (popMode === 'quests') { renderQuest(); return; }
+    if (popMode === 'quests') { renderQuest(); paintNav(); return; }
+    paintNav();
     var s = SLIDES[idx]; if (!s) return;
     var sec = s.sec, enc = s.enc;
     _lootLoadedFor = null;
@@ -1087,6 +1240,8 @@
     return html;
   })();
 
+  QIDX = qBuildIndex(QDB, QUESTS);
+
   function renderQuest(){
     var content = document.getElementById('content');
     var e = QUESTS[qIdx];
@@ -1095,12 +1250,23 @@
     try { localStorage.setItem('wp:pop:quest', q.key); } catch (er) {}
     encPick.value = q.key;
     if (document.body.classList.contains('wp-mini')) {
-      content.innerHTML = questMiniHtml(QUESTS, qIdx);
+      qScreen = 'card';   // mini is a two-line strip: no block screens
+      content.innerHTML = questMiniHtml(QUESTS, qIdx, qStepIdx(QUESTS, QIDX, qIdx, 1, QUEST_PLANE_END));
+      _fit();
+      return;
+    }
+    var pl = qPlaneOf(QUESTS, QIDX, qIdx);
+    // The block screens ▲ climbs to. The block that holds the selected step is marked on each.
+    if (qScreen !== 'card') {
+      if (qScreen === 'eras') content.innerHTML = qErasHtml(QIDX, pl ? pl.era : '');
+      else if (qScreen === 'planes') content.innerHTML = qPlanesHtml(QIDX, qEra, pl ? pl.key : '');
+      else content.innerHTML = qListHtml(QIDX, QUESTS, qPlane, qIdx);
       _fit();
       return;
     }
     content.innerHTML = '<div class="enc-hdr">'
-      +   '<span class="pos">' + (qIdx + 1) + '/' + QUESTS.length + '</span>'
+      +   '<span class="pos">' + (pl ? pl.idxs.indexOf(qIdx) + 1 : qIdx + 1) + '/' + (pl ? pl.idxs.length : QUESTS.length) + '</span>'
+      +   (pl ? qCrumb(QIDX, pl.era, pl.key) : '')
       +   '<div class="nm">' + esc(q.title) + '</div>'
       +   '<div class="zone">' + questTags(q) + '</div>'
       +   '<div class="sect">' + esc(qGroupLabel(e.level, e.sec)) + '</div>'
@@ -1135,7 +1301,23 @@
       setTimeout(function(){ chip.classList.remove('ok'); chip.textContent = chip.getAttribute('data-copy') || ''; }, 1200);
       return;
     }
-    if (t.closest('.qnext') && qIdx < QUESTS.length - 1) { qIdx++; renderSlide(); }
+    // A drill-down block: an era opens its planes, a plane its steps, a step its card.
+    var blk = t.closest('.qblock');
+    if (blk) {
+      var nav = blk.getAttribute('data-nav'), key = blk.getAttribute('data-key');
+      if (nav === 'era') { qEra = key; qScreen = 'planes'; }
+      else if (nav === 'plane') { qPlane = key; qScreen = 'list'; }
+      else if (nav === 'quest') {
+        var qi = QUESTS.findIndex(function(x){ return x.q.key === key; });
+        if (qi >= 0) { qIdx = qi; qScreen = 'card'; }
+      }
+      renderSlide();
+      return;
+    }
+    if (t.closest('.qnext')) {
+      var nx = qStepIdx(QUESTS, QIDX, qIdx, 1, QUEST_PLANE_END);
+      if (nx >= 0) { qIdx = nx; renderSlide(); }
+    }
   });
   // <details> do not bubble `toggle`; the capture phase sees it. Open state goes to _qOpen. A fold changes
   // the card's height, so fit mode re-measures (fixed height keeps its window and the card scrolls).
@@ -1150,6 +1332,7 @@
   var modeQuestsBtn = document.getElementById('modeQuests');
   function applyMode(){
     var q = popMode === 'quests';
+    if (q) qScreen = 'card';   // Quests opens on the step you left, not on a block screen
     modeSlidesBtn.classList.toggle('on', !q);
     modeQuestsBtn.classList.toggle('on', q);
     document.body.classList.toggle('quests', q);

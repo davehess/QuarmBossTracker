@@ -475,14 +475,15 @@ describe('quest renderer: picker labels and mini', () => {
 
   it('mini is the selected step\'s title and the title of the step after it', () => {
     const list = [{ q: { title: 'First step' } }, { q: { title: 'Second step' } }, { q: { title: 'Last step' } }];
-    const mid = R.questMiniHtml(list, 1);
+    // The third argument is the index of the next step IN ITS PLANE (-1 at the plane's end): test/pop-quest-nav.test.js.
+    const mid = R.questMiniHtml(list, 1, 2);
     expect(mid).toContain('<span class="wp-mini-name">PoP · Second step</span>');
     expect(mid).toContain('<div class="qnext" data-wp-interact');
     expect(mid).toContain('next · Last step');
-    const last = R.questMiniHtml(list, 2);
+    const last = R.questMiniHtml(list, 2, -1);
     expect(last).toContain('PoP · Last step');
     expect(last).not.toContain('qnext');
-    expect(last).toContain('last step in the guide');
+    expect(last).toContain('last step in this plane');
   });
 });
 
@@ -763,14 +764,15 @@ describe('Quests mode on the page', () => {
     expect(h.content()).toContain('<div class="nm">Quest C</div>');
   });
 
-  it('prev / next walk the quests in guide order and wrap', async () => {
-    const h = bootPop();
+  it('prev / next walk the quests in guide order and stop at the end of the plane (test/pop-quest-nav.test.js has the rest)', async () => {
+    const h = bootPop();   // these invented quests carry no plane, so they all sit in one "Other steps" plane
     h.byId.modeQuests.fire('click');
     const title = () => h.content().match(/<div class="nm">([^<]+)<\/div>/)[1];
     h.byId.nextBtn.fire('click'); expect(title()).toBe('Quest B');
     h.byId.nextBtn.fire('click'); expect(title()).toBe('Quest C');
-    h.byId.nextBtn.fire('click'); expect(title()).toBe('Quest A');
-    h.byId.prevBtn.fire('click'); expect(title()).toBe('Quest C');
+    h.byId.nextBtn.fire('click'); expect(title()).toBe('Quest C');   // the last one: ▶ is disabled, not wrapped round
+    expect(h.byId.nextBtn.disabled).toBe(true);
+    h.byId.prevBtn.fire('click'); expect(title()).toBe('Quest B');
     // …and Slides still walks encounters, untouched.
     h.byId.modeSlides.fire('click');
     expect(h.content()).toContain('<div class="nm">Rallos Zek</div>');

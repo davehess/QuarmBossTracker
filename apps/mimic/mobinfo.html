@@ -148,6 +148,31 @@
   .tab:hover{color:#fff;border-color:#a371f7}
   .tab.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
   .tab .beta{font-size:8px;color:#1f1300;background:#f0b429;border-radius:2px;padding:0 3px;margin-left:3px;font-weight:600}
+  /* Target history (the guild lead, 2026-10-19, Decision Desk "Pager"): ◀ ▶ step back through the mobs you have
+     targeted, a chip cycles All / Killed / Left alive, and the ⟲ tab lists them. The strip hides until there is a
+     past target to step to, and its right edge stays short of the ✕ in the corner. */
+  .pager{display:none;align-items:center;gap:4px;margin:0 28px 5px 0;font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000}
+  .pager.on{display:flex}
+  .pager .tab{padding:0 7px}
+  .pager .tab[disabled]{opacity:.35;cursor:default;border-color:rgba(255,255,255,0.10);color:#9aa4ad}
+  .pgpos{min-width:34px;text-align:center;font-variant-numeric:tabular-nums}
+  /* The stamp under a past target's name: gold when it was seen to die, blue when it was left alive. */
+  .mob .past{font-size:10px;margin-top:2px;font-variant-numeric:tabular-nums}
+  .mob .past.k{color:#f0b429}
+  .mob .past.a{color:#79c0ff}
+  /* The ⟲ Recent tab: newest first, one button per target, scrolls inside itself once it passes ~8 rows. */
+  .rclist{margin-top:5px;padding-top:18px;display:flex;flex-direction:column;gap:2px;max-height:250px;overflow-y:auto}
+  .rcrow{display:block;width:100%;box-sizing:border-box;text-align:left;font:inherit;color:inherit;cursor:pointer;
+    background:rgba(255,255,255,0.03);border:0;border-left:2px solid transparent;border-radius:3px;padding:2px 5px;line-height:1.35}
+  .rcrow:hover{background:rgba(255,255,255,0.08)}
+  .rcrow.k{border-left-color:#f0b429}
+  .rcrow.a{border-left-color:#79c0ff}
+  .rcrow.on{background:#2a1d3d}
+  .rcrow .rn{display:block;font-size:11px;color:#e9d5ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rcrow .rz{display:block;font-size:9px;color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .rcempty{font-size:11px;color:#6e7681;font-style:italic;padding:18px 0 5px}
+  body.wp-in-canvas .pager,body.wp-in-canvas #tabRecent{display:none !important}
+  body.wp-in-canvas .rclist{padding-top:0}
   /* loot list — slightly smaller text, tighter rows so the table fits more
      items at a glance. Top padding keeps the first row out from under the ✕
      hide button at top-right (previous layout had the % column overlapping). */
@@ -288,9 +313,17 @@
         <button id="tabLoot"   class="tab"    type="button">Loot</button>
         <button id="tabSpells" class="tab"    type="button">Spells</button>
         <button id="tabFactions" class="tab"  type="button" title="Faction · Quest · Vendor">F/Q/V</button>
+        <button id="tabRecent" class="tab"    type="button" title="Recent targets, newest first. Click one to open it here.">&#10226;</button>
         <button id="tabMana" class="tab" type="button"
                 title="Estimated mana bar on/off. OFF shows only the spell the mob was seen casting; ON also subtracts its mana cost from the catalog pool. The estimate is a FLOOR — a resisted or interrupted cast spends mana and prints no message.">&#9889;</button>
       </span>
+    </div>
+    <div id="pager" class="pager wp-mini-hide">
+      <button id="pgPrev" class="tab" type="button" title="The target before this one">&#9664;</button>
+      <button id="pgNext" class="tab" type="button" title="The target after this one; past the newest it is back to your current target">&#9654;</button>
+      <span id="pgPos" class="pgpos"></span>
+      <button id="pgFilter" class="tab" type="button">All</button>
+      <button id="pgLive" class="tab" type="button" style="display:none" title="Back to your current target">Live</button>
     </div>
     <div id="body"></div>
     <div id="empty">no target</div>
@@ -664,6 +697,78 @@
     return '<span class="chip hits" title="'+esc(tip)+'">Hits: ' + esc(parts.join(' · ')) + ' (seen ' + h.seen + ')</span>';
   }
 
+  // ── Target history: pure helpers ────────────────────────────────────────────
+  // The agent keeps the last 50 mobs this PC targeted (/api/target-history: key, name, zoneName, firstMs,
+  // lastMs, minHp, killedMs, killedHow, restored), newest first. ◀ ▶ step through them with the live target
+  // skipped; a past mob is painted by the same code as a live one, with a stamp under its name.
+  var PG_LABEL = { all: 'All', killed: 'Killed', alive: 'Left alive' };
+  var PG_NEXT_FILTER = { all: 'killed', killed: 'alive', alive: 'all' };
+  var PG_HOW = { 'corpse-id': 'its corpse took its place in your target window', 'corpse-name': 'a corpse of its name took its place in your target window',
+                 hp0: 'its health bar reached 0', slain: 'a "slain" message named it' };
+  // "killed 4m ago" · "last seen 1h 5m ago" · "killed just now".
+  function pgWhen(verb, ms){
+    var m = Math.floor(Math.max(0, ms) / 60000);
+    if (m < 1) return verb + ' just now';
+    return verb + ' ' + (m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '')) + ' ago';
+  }
+  function pgMatches(e, filter){
+    return filter === 'killed' ? !!e.killedMs : (filter === 'alive' ? !e.killedMs : true);
+  }
+  // Where the pinned entry (curKey; null = following the live target) sits in the list, with the live target
+  // left out. older: the next match further back (undefined = none); newer: the next match toward the present,
+  // null when the pinned one is the newest match (▶ then returns to the live target), undefined while live.
+  // n = entries matching the filter, at = the pinned one's 1-based place among them (0 when it does not match).
+  function pgNeighbours(list, filter, liveKey, curKey){
+    var base = [], i;
+    for (i = 0; i < list.length; i++) if (list[i] && list[i].key !== liveKey) base.push(list[i]);
+    var p = -1;
+    if (curKey) for (i = 0; i < base.length; i++) if (base[i].key === curKey) { p = i; break; }
+    var n = 0, at = 0, older, newer;
+    for (i = 0; i < base.length; i++) if (pgMatches(base[i], filter)) { n++; if (i === p) at = n; }
+    for (i = p + 1; i < base.length; i++) if (pgMatches(base[i], filter)) { older = base[i].key; break; }
+    if (p >= 0) {
+      newer = null;
+      for (i = p - 1; i >= 0; i--) if (pgMatches(base[i], filter)) { newer = base[i].key; break; }
+    }
+    return { older: older, newer: newer, n: n, at: at, total: base.length, found: p >= 0 };
+  }
+  // Paging stops following the moment you target something new: a different live mob than the one you
+  // paged away from, or the same one after you had no target. Clearing the target alone changes nothing.
+  // pg = { key, liveAtPin, gap }; live = the current live entry's key (null: none). True when it let go.
+  function pgFollow(pg, live){
+    if (!pg.key) return false;
+    if (live == null) { pg.gap = true; return false; }
+    if (live !== pg.liveAtPin || pg.gap) { pg.key = null; pg.gap = false; return true; }
+    return false;
+  }
+  function pastStampHtml(p, now){
+    if (!p) return '';
+    var killed = !!p.killedMs;
+    var txt = killed ? pgWhen('killed', now - p.killedMs)
+            : 'left alive · ' + pgWhen('last seen', now - p.lastMs) + (p.minHp != null ? ' · lowest HP ' + p.minHp + '%' : '');
+    var tip = killed ? 'Seen to die: ' + (PG_HOW[p.killedHow] || 'seen in your target window') + '.'
+                     : 'You targeted it and never saw it die.';
+    if (p.restored) tip += ' Kept from before Mimic restarted.';
+    return '<div class="past ' + (killed ? 'k' : 'a') + '" data-wp-sect="past" title="' + esc(tip) + '">⏮ ' + esc(txt) + '</div>';
+  }
+  // The Recent tab: one button per target that passes the filter, newest first; the live one reads "now".
+  function recentRowsHtml(list, filter, liveKey, pinKey, now){
+    var rows = '';
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (!e || !e.key || !pgMatches(e, filter)) continue;
+      var live = e.key === liveKey;
+      var st = live ? 'now' : (e.killedMs ? pgWhen('killed', now - e.killedMs) : pgWhen('left alive, seen', now - e.lastMs));
+      var zone = e.zoneName || (e.zone != null ? 'zone ' + e.zone : '');
+      var line2 = (zone ? zone + ' · ' : '') + st + (e.minHp != null && !e.killedMs ? ' · lowest HP ' + e.minHp + '%' : '');
+      rows += '<button type="button" class="rcrow ' + (e.killedMs ? 'k' : 'a') + (e.key === pinKey ? ' on' : '') + '" data-rk="' + esc(e.key) + '" title="Open ' + esc(e.name) + ' here">'
+            +   '<span class="rn">' + esc(e.name) + '</span><span class="rz">' + esc(line2) + '</span></button>';
+    }
+    if (!rows) return '<div class="rcempty">' + (list.length ? 'nothing matches ' + esc(PG_LABEL[filter] || 'that') : 'no targets yet — target a mob and it lands here') + '</div>';
+    return '<div class="rclist" data-wp-sect="recent">' + rows + '</div>';
+  }
+  // ── end target history helpers ──────────────────────────────────────────────
+
   // ── DOM handles + tab state ─────────────────────────────────────────────────
   var bodyEl = document.getElementById('body');
   var emptyEl = document.getElementById('empty');
@@ -679,6 +784,7 @@
   var tabSpellsBtn = document.getElementById('tabSpells');
   var tabFactionsBtn = document.getElementById('tabFactions');
   var tabManaBtn   = document.getElementById('tabMana');
+  var tabRecentBtn = document.getElementById('tabRecent');
   // The A/B the guild lead asked to compare in beta: OFF is "just tell me what
   // it cast", ON adds the estimated pool. Per-viewer convenience only, so
   // localStorage is right — and every read/write is guarded because an overlay
@@ -703,6 +809,7 @@
     tabLootBtn  .classList.toggle('on', t === 'loot');
     tabSpellsBtn.classList.toggle('on', t === 'spells');
     if (tabFactionsBtn) tabFactionsBtn.classList.toggle('on', t === 'factions');
+    if (tabRecentBtn) tabRecentBtn.classList.toggle('on', t === 'recent');
     _renderBody(_lastMi);
   }
   function _setManaView(on){
@@ -715,6 +822,7 @@
   tabLootBtn  .addEventListener('click', function(){ _setTab('loot'); });
   tabSpellsBtn.addEventListener('click', function(){ _setTab('spells'); });
   if (tabFactionsBtn) tabFactionsBtn.addEventListener('click', function(){ _setTab('factions'); });
+  if (tabRecentBtn) tabRecentBtn.addEventListener('click', function(){ _setTab('recent'); });
   if (tabManaBtn) tabManaBtn.addEventListener('click', function(){ _setManaView(!_manaView); });
   if (tabManaBtn) tabManaBtn.classList.toggle('on', _manaView);
   if (_tab !== 'stats') _setTab(_tab, true);
@@ -729,6 +837,85 @@
     }
   });
 
+  // ── Target history: the pager's state and buttons ───────────────────────────
+  // key = the past target on screen (null: following the live one); list = the agent's ring, newest first;
+  // liveKey = which entry the live target is; mi = the past target as the agent painted it for us.
+  var _pg = { key: null, liveAtPin: null, gap: false, liveKey: null, list: [], rev: null, mi: null, filter: 'all' };
+  try { var _pgf = window.localStorage.getItem('wpTargetPgFilter'); if (PG_LABEL[_pgf]) _pg.filter = _pgf; } catch (e) {}
+  // A piece cut from this page (?wpsect=) shows one part of the live target and has no pager.
+  var _pgOff = !!_wpQs.get('wpsect');
+  var pagerEl = document.getElementById('pager');
+  var pgPrevBtn = document.getElementById('pgPrev'), pgNextBtn = document.getElementById('pgNext');
+  var pgFilterBtn = document.getElementById('pgFilter'), pgLiveBtn = document.getElementById('pgLive');
+  var pgPosEl = document.getElementById('pgPos');
+  function _pgPin(key){
+    _pg.key = key; _pg.liveAtPin = _pg.liveKey; _pg.gap = false; _pg.mi = null;
+    tick().catch(function(){});
+  }
+  function _pgLive(){
+    _pg.key = null; _pg.mi = null;
+    tick().catch(function(){});
+  }
+  function _pgPaint(){
+    if (!pagerEl) return;
+    var nb = pgNeighbours(_pg.list, _pg.filter, _pg.liveKey, _pg.key);
+    pagerEl.classList.toggle('on', !_pgOff && (nb.total > 0 || !!_pg.key));
+    if (pgPrevBtn) pgPrevBtn.disabled = nb.older === undefined;
+    if (pgNextBtn) pgNextBtn.disabled = !_pg.key;
+    if (pgPosEl) pgPosEl.textContent = _pg.key ? ((nb.at || '·') + '/' + nb.n) : 'live';
+    if (pgFilterBtn) {
+      pgFilterBtn.textContent = PG_LABEL[_pg.filter];
+      pgFilterBtn.title = 'Which targets ◀ ▶ and the ⟲ tab show: All, only the ones you saw die, or only the ones left alive. Click to change.';
+    }
+    if (pgLiveBtn) pgLiveBtn.style.display = _pg.key ? '' : 'none';
+  }
+  if (pgPrevBtn) pgPrevBtn.addEventListener('click', function(){
+    var nb = pgNeighbours(_pg.list, _pg.filter, _pg.liveKey, _pg.key);
+    if (nb.older !== undefined) _pgPin(nb.older);
+  });
+  if (pgNextBtn) pgNextBtn.addEventListener('click', function(){
+    var nb = pgNeighbours(_pg.list, _pg.filter, _pg.liveKey, _pg.key);
+    if (nb.newer) _pgPin(nb.newer); else if (_pg.key) _pgLive();
+  });
+  if (pgLiveBtn) pgLiveBtn.addEventListener('click', _pgLive);
+  if (pgFilterBtn) pgFilterBtn.addEventListener('click', function(){
+    _pg.filter = PG_NEXT_FILTER[_pg.filter] || 'all';
+    try { window.localStorage.setItem('wpTargetPgFilter', _pg.filter); } catch (e) {}
+    _pgPaint();
+    _renderBody(_lastMi);
+  });
+  // The pager's buttons and the Recent tab's are clickable on a locked (click-through) overlay.
+  [pgPrevBtn, pgNextBtn, pgFilterBtn, pgLiveBtn, tabRecentBtn].forEach(function(btn){
+    if (!btn) return;
+    btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+  });
+  // The ring, asked for on every poll but answered in a few bytes while nothing changed (rev). Pinned, it also
+  // brings the past target's own card. null = an agent from before the route: no pager, the live card as ever.
+  async function _pgFetch(){
+    if (_pgOff) return null;
+    try {
+      var q = [];
+      if (_pg.rev) q.push('rev=' + encodeURIComponent(_pg.rev));
+      if (_pg.key) q.push('key=' + encodeURIComponent(_pg.key));
+      var r = await fetch('http://127.0.0.1:' + PORT + '/api/target-history' + (q.length ? '?' + q.join('&') : ''), { cache: 'no-store' });
+      if (!r.ok) return null;
+      var j = await r.json();
+      if (j && Array.isArray(j.targets)) _pg.list = j.targets;
+      if (j && j.rev) _pg.rev = j.rev;
+      return j;
+    } catch (e) { return null; }
+  }
+  // What to paint this poll: the live card, or the pinned past target's. The pinned one gone from the ring
+  // (aged out, or the agent restarted) lets go of the pin.
+  function _pgPick(liveMi, j){
+    _pg.liveKey = (liveMi && liveMi.target_hist_key) || null;
+    pgFollow(_pg, _pg.liveKey);
+    if (_pg.key && j && j.mi === null) _pg.key = null;
+    else if (_pg.key && j && j.mi) _pg.mi = j.mi;
+    return _pg.key ? (_pg.mi || _lastMi) : liveMi;
+  }
+
   // #186 — PQDI link (delegated: the header re-renders every poll). Opens the
   // mob's pqdi.cc/npc page in the system browser via the open-external IPC
   // (pqdi.cc is on main.js's allow-list). The hover-interact handshake is
@@ -738,6 +925,14 @@
     bodyEl.addEventListener('click', function(ev){
       var t = (ev.target && ev.target.closest) ? ev.target : null;
       if (!t) return;
+      // A row of the Recent tab opens that target here (the live one's row returns to the live target).
+      var rc = t.closest('.rcrow');
+      if (rc) {
+        var rk = rc.getAttribute('data-rk');
+        if (rk && rk === _pg.liveKey) _pgLive(); else if (rk) _pgPin(rk);
+        _setTab('stats');
+        return;
+      }
       // F/Q/V sub-tabs and the /say + /map copy chips live in the repainted body too.
       var sub = t.closest('.fqvtab');
       if (sub) {
@@ -1257,7 +1452,22 @@
     return !!o && (o === norm(enc.targetName) || o === norm(enc.bossName));
   }
 
+  // The ⟲ Recent tab: the agent's ring as buttons, newest first. It needs no live target, so it answers before
+  // the "no target" empty state. Rewritten only when its HTML changed (the minute-level "ago" text), keeping the scroll.
+  function _renderRecent(){
+    emptyEl.style.display = 'none';
+    var lvlElRc = document.getElementById('lvlRange'); if (lvlElRc) lvlElRc.textContent = '';
+    var html = recentRowsHtml(_pg.list, _pg.filter, _pg.liveKey, _pg.key, Date.now());
+    if (html === bodyEl.__wpHtml) return;
+    var oldList = bodyEl.querySelector('.rclist'), top = oldList ? oldList.scrollTop : 0;
+    bodyEl.innerHTML = html;
+    bodyEl.__wpHtml = html;
+    var newList = bodyEl.querySelector('.rclist');
+    if (newList) newList.scrollTop = top;
+    _fitHeight();
+  }
   function _renderBody(mi){
+    if (_tab === 'recent' && !document.body.classList.contains('wp-mini')) { _renderRecent(); return; }
     if (!mi || !mi.target_name) {
       bodyEl.innerHTML = '';
       bodyEl.__wpHtml = null;
@@ -1612,6 +1822,7 @@
     var pqdiChip = (mob && mob.id) ? ' <a class="pqdi" data-pqdi="https://www.pqdi.cc/npc/'+mob.id+'" title="Open this mob on PQDI.cc (opens your browser)">🔗 PQDI</a>' : '';
     var html = '<div class="mob">'
       + '<div data-wp-sect="name"><span class="nm">'+esc(nm)+'</span>'+cls+pqdiChip+'</div>'
+      + pastStampHtml(mi.past, Date.now())
       + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
       + (sub.length ? '<div class="sub" data-wp-sect="stats">'+sub.join(' · ')+'</div>' : '')
       + slotLine
@@ -1658,6 +1869,8 @@
   // rather than up to 500ms later, then refit — the no-target path returns
   // before _renderBody's own fit, and the flip still changes the height there.
   window.addEventListener('wp-mini-change', function(){
+    // Mini has no pager, so a past target would have no way back: it returns to the live one.
+    if (document.body.classList.contains('wp-mini') && _pg.key) { _pg.key = null; _pg.mi = null; }
     _renderBody(_lastMi);
     _fitHeight();
   });
@@ -1680,7 +1893,10 @@
       if (mi && enc) {
         mi = Object.assign({}, mi, { _enc: enc });
       }
+      // Target history: the ring (and the pinned past target's card), then whichever of the two is painted.
+      mi = _pgPick(mi, await _pgFetch());
       _lastMi = mi;
+      _pgPaint();
       _renderBody(_lastMi);
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';

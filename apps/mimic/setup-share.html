@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Import a setup</title>
+<!--
+  Import a whole setup (the guild lead, 2026-10-19, DECISIONS §383: "file + share code"). One window, three stages:
+    code     the box for a six-character code (the tray's, Settings' and the dashboard's "Enter a code")
+    preview  what is in it, a tick on every part, and which of YOUR characters get "Character 1", "Character 2"…
+    done     what was imported, and one Undo for all of it
+  main.js holds the setup and does every read and write (setupShare* on the bridge); this page only shows the model it is
+  given and sends back the ticks. Everything that came out of the setup — its title, byline, note, trigger names — is a
+  stranger's text and is only ever set with textContent, never as markup.
+-->
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0e1116; color: #c9d1d9; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; padding: 16px 18px 24px; }
+  h1 { color: #f6c365; font-size: 15px; font-weight: normal; margin: 0 0 4px; }
+  h2 { color: #f6c365; font-size: 12px; font-weight: normal; margin: 18px 0 6px; letter-spacing: .02em; }
+  .sub, .note { color: #8b949e; font-size: 11px; line-height: 1.5; margin: 4px 0 8px; }
+  .box { background: #161b22; border: 1px solid #2a3140; border-radius: 6px; padding: 10px 12px; margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
+  .row label { flex: 1; cursor: pointer; overflow-wrap: anywhere; }
+  .row .detail { color: #6e7681; font-size: 11px; }
+  input[type=text] { background: #0b0f14; border: 1px solid #2a3140; border-radius: 4px; color: #e6edf3; padding: 8px 10px; font: inherit; }
+  #code { width: 11ch; font-size: 22px; letter-spacing: .25em; text-transform: uppercase; text-align: center; }
+  button { background: #21262d; border: 1px solid #2a3140; border-radius: 4px; color: #c9d1d9; padding: 6px 14px; font: inherit; cursor: pointer; }
+  button.pri { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .msg { min-height: 1.4em; margin: 8px 0; font-size: 12px; }
+  .msg.bad { color: #ff9b9b; }
+  .msg.good { color: #56d364; }
+  .who { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 4px 0; }
+  .who b { min-width: 11ch; font-weight: normal; color: #e6edf3; }
+  .who .what { color: #6e7681; font-size: 11px; flex: 1 1 14em; }
+  .who label { white-space: nowrap; }
+  details summary { cursor: pointer; color: #8b949e; font-size: 11px; margin: 4px 0; }
+  .actions { display: flex; gap: 8px; margin-top: 14px; }
+  ul.lines { margin: 8px 0; padding-left: 18px; line-height: 1.6; }
+  [hidden] { display: none !important; }
+</style></head>
+<body>
+  <h1 id="head">Import a setup</h1>
+
+  <section id="stCode" hidden>
+    <div class="sub">Type the six-character code the other person gave you. It works for 24 hours. You will see what is in it before anything on this PC is changed.</div>
+    <div class="row"><input id="code" type="text" maxlength="12" autocomplete="off" spellcheck="false" aria-label="Share code" placeholder="ABC-DEF" /><button id="look" class="pri" type="button">Look it up</button></div>
+    <div id="codeMsg" class="msg" role="status"></div>
+  </section>
+
+  <section id="stPreview" hidden>
+    <div class="box">
+      <div id="pvTitle" style="color:#e6edf3;font-size:15px"></div>
+      <div id="pvBy" class="sub"></div>
+      <div id="pvNote" class="sub"></div>
+    </div>
+    <div class="sub">Everything is ticked. Untick what you do not want. Nothing here is a sign-in, a token, a path on their PC, or a bid.</div>
+    <div id="pvSections"></div>
+    <div id="pvWho"></div>
+    <div id="pvMsg" class="msg" role="status"></div>
+    <div class="actions"><button id="go" class="pri" type="button">Import the ticked parts</button><button id="cancel" type="button">Cancel</button></div>
+  </section>
+
+  <section id="stDone" hidden>
+    <div id="doneMsg" class="msg" role="status"></div>
+    <ul id="doneLines" class="lines"></ul>
+    <div class="actions"><button id="undo" type="button">Undo all of it</button><button id="close" class="pri" type="button">Done</button></div>
+  </section>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var api = window.mimic || {};
+  var model = null;                      // describe() from main
+  var ticks = {};                        // section id -> { item id -> bool }
+  var rulesOn = true;
+  var assign = {};                       // slot -> [my character]
+
+  function say(el, text, kind){ el.textContent = text || ''; el.className = 'msg' + (kind ? ' ' + kind : ''); }
+  function show(stage){
+    ['stCode', 'stPreview', 'stDone'].forEach(function(id){ $(id).hidden = (id !== stage); });
+    $('head').textContent = stage === 'stDone' ? 'Setup imported' : 'Import a setup';
+  }
+  function mk(tag, props, kids){
+    var e = document.createElement(tag);
+    Object.keys(props || {}).forEach(function(k){ if (k === 'text') e.textContent = props[k]; else e.setAttribute(k, props[k]); });
+    (kids || []).forEach(function(c){ e.appendChild(c); });
+    return e;
+  }
+
+  function renderPreview(){
+    $('pvTitle').textContent = model.title;
+    $('pvBy').textContent = model.byline ? 'By ' + model.byline : 'No name on it';
+    $('pvNote').textContent = model.note || '';
+    $('pvNote').hidden = !model.note;
+    var host = $('pvSections');
+    host.textContent = '';
+    ticks = {};
+    model.sections.forEach(function(sec){
+      ticks[sec.id] = {};
+      sec.items.forEach(function(it){ ticks[sec.id][it.id] = true; });
+      var box = mk('div', { 'class': 'box' });
+      var master = mk('input', { type: 'checkbox', id: 'sec-' + sec.id });
+      master.checked = true;
+      var head = mk('div', { 'class': 'row' }, [master, mk('label', { 'for': 'sec-' + sec.id, text: sec.label + ' (' + sec.items.length + ')' })]);
+      box.appendChild(head);
+      box.appendChild(mk('div', { 'class': 'note', text: sec.note }));
+      var list = mk('div');
+      var many = sec.items.length > 6;
+      var wrap = many ? mk('details', {}, [mk('summary', { text: 'Pick one by one' })]) : list;
+      sec.items.forEach(function(it){
+        var cb = mk('input', { type: 'checkbox', id: 'it-' + sec.id + '-' + it.id });
+        cb.checked = true;
+        cb.addEventListener('change', function(){
+          ticks[sec.id][it.id] = cb.checked;
+          var vals = Object.keys(ticks[sec.id]).map(function(k){ return ticks[sec.id][k]; });
+          master.checked = vals.every(Boolean);
+          master.indeterminate = !master.checked && vals.some(Boolean);
+        });
+        var label = mk('label', { 'for': cb.id, text: it.label });
+        var row = mk('div', { 'class': 'row' }, [cb, label]);
+        if (it.detail) row.appendChild(mk('span', { 'class': 'detail', text: it.detail }));
+        (many ? wrap : list).appendChild(row);
+      });
+      master.addEventListener('change', function(){
+        Object.keys(ticks[sec.id]).forEach(function(k){
+          ticks[sec.id][k] = master.checked;
+          $('it-' + sec.id + '-' + k).checked = master.checked;
+        });
+        master.indeterminate = false;
+      });
+      if (many) box.appendChild(wrap); else box.appendChild(list);
+      host.appendChild(box);
+    });
+    rulesOn = true;
+
+    var who = $('pvWho');
+    who.textContent = '';
+    if (model.characters.length) {
+      who.appendChild(mk('h2', { text: 'Which of your characters get their per-character parts?' }));
+      who.appendChild(mk('div', { 'class': 'sub', text: model.mine.length
+        ? 'Their characters are numbered, never named. Tick yours for each; a number with none ticked is skipped.'
+        : 'Mimic has not seen any of your characters yet, so the per-character parts have nowhere to go. Play once with Mimic open, then import again.' }));
+      assign = {};
+      model.characters.forEach(function(c){
+        assign[c.slot] = (model.assign[c.slot] || []).slice();
+        var bits = [];
+        if (c.hud) bits.push('HUD');
+        if (c.triggers) bits.push(c.triggers + ' trigger' + (c.triggers === 1 ? '' : 's'));
+        if (c.rules) bits.push(c.rules + ' "What you hear" setting' + (c.rules === 1 ? '' : 's'));
+        var row = mk('div', { 'class': 'who' }, [mk('b', { text: c.label }), mk('span', { 'class': 'what', text: bits.join(' · ') || 'nothing of its own' })]);
+        model.mine.forEach(function(name){
+          var cb = mk('input', { type: 'checkbox' });
+          cb.checked = assign[c.slot].indexOf(name) >= 0;
+          cb.addEventListener('change', function(){
+            var a = assign[c.slot].filter(function(n){ return n !== name; });
+            if (cb.checked) a.push(name);
+            assign[c.slot] = a;
+          });
+          row.appendChild(mk('label', {}, [cb, document.createTextNode(' ' + name)]));
+        });
+        who.appendChild(row);
+      });
+    }
+  }
+
+  function selection(){
+    function ids(sec){ var t = ticks[sec] || {}; return Object.keys(t).filter(function(k){ return t[k]; }); }
+    return { layouts: ids('layouts'), options: ids('options'), hud: ids('hud'), triggers: ids('triggers'), rules: ids('rules').length > 0 };
+  }
+  function renderDone(res){
+    say($('doneMsg'), res.message, res.ok ? 'good' : 'bad');
+    var ul = $('doneLines');
+    ul.textContent = '';
+    (res.lines || []).forEach(function(l){ ul.appendChild(mk('li', { text: l })); });
+    $('undo').hidden = !res.canUndo;
+    show('stDone');
+  }
+  function apply(state){
+    if (!state) return;
+    if (state.stage === 'preview' && state.model) { model = state.model; renderPreview(); show('stPreview'); }
+    else if (state.stage === 'done' && state.result) renderDone(state.result);
+    else { show('stCode'); $('code').focus(); }
+  }
+
+  $('look').addEventListener('click', function(){
+    var btn = $('look');
+    btn.disabled = true;
+    say($('codeMsg'), 'Looking it up…');
+    Promise.resolve(api.setupShareLookup($('code').value)).then(function(r){
+      btn.disabled = false;
+      if (r && r.ok) { say($('codeMsg'), ''); apply(r.state); }
+      else say($('codeMsg'), (r && r.message) || 'That did not work.', 'bad');
+    }).catch(function(){ btn.disabled = false; say($('codeMsg'), 'That did not work.', 'bad'); });
+  });
+  $('code').addEventListener('keydown', function(e){ if (e.key === 'Enter') $('look').click(); });
+  $('go').addEventListener('click', function(){
+    var btn = $('go');
+    btn.disabled = true;
+    say($('pvMsg'), 'Importing…');
+    Promise.resolve(api.setupShareApply(selection(), assign)).then(function(r){
+      btn.disabled = false;
+      if (r && r.state) apply(r.state); else say($('pvMsg'), (r && r.message) || 'That did not work.', 'bad');
+    }).catch(function(){ btn.disabled = false; say($('pvMsg'), 'That did not work.', 'bad'); });
+  });
+  $('undo').addEventListener('click', function(){
+    $('undo').disabled = true;
+    Promise.resolve(api.setupShareUndo()).then(function(r){ $('undo').disabled = false; if (r && r.state) apply(r.state); }).catch(function(){ $('undo').disabled = false; });
+  });
+  $('cancel').addEventListener('click', function(){ api.setupShareClose(); });
+  $('close').addEventListener('click', function(){ api.setupShareClose(); });
+
+  Promise.resolve(api.setupShareState()).then(apply).catch(function(){ show('stCode'); });
+})();
+</script>
+</body></html>

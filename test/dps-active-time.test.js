@@ -162,9 +162,10 @@ describe('the guild\'s numbers over this machine\'s spans', () => {
 describe('and the board is wired through it', () => {
   const clean = stripJs(overlay);
   it('the DPS rows and the mini rows time themselves with _rowTiming', () => {
-    expect(clean).toMatch(/var rt = _rowTiming\(row, secs, TAB_MODE === 'tank', _fightEndMs\(allRows\)\);/);
+    // isTank: the Tank tab, or History with its Tank button lit (test/meter-tank-history.test.js).
+    expect(clean).toMatch(/var rt = _rowTiming\(row, secs, isTank, _fightEndMs\(allRows\)\);/);
     expect(clean).toMatch(/var rt = _rowTiming\(row, secs, tank, endMs\);/);
-    expect(clean).toMatch(/miniRowsHtml\(miniWindow\(miniRows, me\), me, totalDmg, secs, TAB_MODE === 'tank', _fightEndMs\(allRows\)\)/);
+    expect(clean).toMatch(/miniRowsHtml\(miniWindow\(miniRows, me\), me, totalDmg, secs, isTank, _fightEndMs\(allRows\)\)/);
   });
   it('the live board and the live copy hand the snapshot\'s spans to the rows', () => {
     expect(clean).toMatch(/_liveRsRows\(et\.perPlayer, et\.spans\)/);
