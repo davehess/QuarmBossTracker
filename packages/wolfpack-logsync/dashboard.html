@@ -2746,11 +2746,64 @@ function renderTanks(s) {
   h += '<div class="card"><h2>Deaths This Session</h2>';
   if (!deaths.length) h += '<div class="dim">Nobody died. Very respectable.</div>';
   else { h += '<table>'; for (const [n,c] of deaths) h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>'; h += '</table>'; }
+  h += wpDeathRecapsHtml(s);
   h += '</div>';
   h += '</div>';
   // Healers fold in below the tank cards — one combat-support tab.
   h += buildHealersHtml(s);
-  if (!setSectionHTML('tanks', h)) return;
+  setSectionHTML('tanks', h);
+  wpDeathFocusScroll(s);
+}
+
+// ── Death recap (FB-84) — one line per death, newest first, with the last 20 s behind a fold. Built from the
+// agent's local recaps (s.deathRecaps); nothing here is relative to now, so the HTML is byte-stable between polls.
+function wpDeathRecapLine(r) {
+  var d = new Date(r.ts), p = function (n) { return (n < 10 ? '0' : '') + n; };
+  var t = isNaN(d.getTime()) ? '' : (' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()));
+  var parts = [];
+  parts.push(r.lastChOffMs != null ? ((r.lastChOffMs / 1000).toFixed(1) + ' s after the last CH landed') : 'no CH landed in the last 20 s');
+  if (r.beatMs) parts.push('chain beat ' + Math.round(r.beatMs / 1000) + ' s');
+  parts.push('took ' + fmtK(r.dmg6) + ' in the last 6 s');
+  if (r.killer) parts.push('killed by ' + r.killer);
+  return '💀 ' + r.name + ' died' + t + ' · ' + parts.join(' · ');
+}
+function wpDeathRecapsHtml(s) {
+  var list = s.deathRecaps || [];
+  if (!list.length) return '';
+  var h = '<div class="subtle" style="margin-top:8px">Death recaps · the last 20 s before each death, newest first. Target a corpse to jump to that player’s latest.</div>';
+  for (var i = 0; i < list.length; i++) {
+    var r = list[i], focus = (s.deathRecapFocus === r.id);
+    var rows = [];
+    for (var a = 0; a < (r.hits || []).length; a++) {
+      var x = r.hits[a];
+      rows.push({ off: x.offMs, txt: fmtK(x.amount) + ' from ' + (x.attacker || '?') + (x.ability ? (' (' + x.ability + ')') : ''), cls: 'var(--red)' });
+    }
+    for (var b = 0; b < (r.heals || []).length; b++) {
+      var y = r.heals[b];
+      rows.push({ off: y.offMs, txt: y.ch ? 'Complete Heal landed' : 'heal landed', cls: y.ch ? 'var(--green)' : 'var(--blue)' });
+    }
+    rows.sort(function (m, n) { return n.off - m.off; });
+    h += '<details ' + wpKeep('deathrecap|' + r.id, focus) + ' id="deathrecap-' + r.id + '" style="margin-top:4px;padding-left:6px;border-left:3px solid '
+       + (focus ? 'var(--gold)' : 'transparent') + '"><summary style="cursor:pointer;font-size:12px">' + esc(wpDeathRecapLine(r))
+       + (focus ? ' <span class="dim">· corpse targeted</span>' : '') + '</summary>';
+    if (!rows.length) h += '<div class="dim" style="font-size:11px">Nothing in this log for the last 20 s.</div>';
+    else {
+      h += '<table style="font-size:11px">';
+      for (var k = 0; k < rows.length; k++) h += '<tr><td class="num dim">−' + (rows[k].off / 1000).toFixed(1) + ' s</td><td style="color:' + rows[k].cls + '">' + esc(rows[k].txt) + '</td></tr>';
+      h += '</table>';
+    }
+    h += '</details>';
+  }
+  return h;
+}
+// Targeting a corpse opens that player's latest recap; bring it into view once per change of target.
+var _wpDeathFocusSeen = null;
+function wpDeathFocusScroll(s) {
+  var f = s.deathRecapFocus == null ? null : s.deathRecapFocus;
+  if (f === _wpDeathFocusSeen) return;
+  _wpDeathFocusSeen = f;
+  if (f == null) return;
+  try { var el = document.getElementById('deathrecap-' + f); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' }); } catch (e) { void e; }
 }
 
 function buildLoadoutsHtml(s) {

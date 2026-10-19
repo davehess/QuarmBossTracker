@@ -134,6 +134,7 @@ const ADMIN_TITLES: Record<string, string> = {
   '/admin/spells':             'Spell exchange',
   '/admin/triggers':           'Guild triggers',
   '/admin/voice':              'Voice triggers',
+  '/admin/voice-reports':      '[beta] Voice reports',
   '/admin/who':                'Who',
 };
 export const ADMIN_FALLBACK_TITLE = 'Officer Tools';
