@@ -674,10 +674,14 @@ else on a working branch and land it after midnight ET.
 
 ### Migrations
 Timestamped `YYYYMMDDHHMMSS_description.sql` in `supabase/migrations/`,
-idempotent (`IF NOT EXISTS`). The GitHub integration auto-applies on merge to
-`main`. When a change needs the column *now* (agents already sending the new
-field), apply via the Supabase MCP `apply_migration` with the same name AND
-commit the identical file so repo and prod history stay in sync.
+idempotent (`IF NOT EXISTS`). ⚠ **Nothing applies them automatically** (checked
+2026-10-19: every recent row in `supabase_migrations.schema_migrations` carries
+its APPLY time as the version, not the file's name, and a migration pushed to
+`main` that day never appeared). Apply via the Supabase MCP `apply_migration`
+AND commit the identical file so repo and prod history stay in sync. If the
+MCP call stalls at its approval step (it did four times on 2026-10-19 with
+nothing reaching the database), the guild lead pastes the file into the
+Supabase SQL Editor instead.
 
 ### When git state looks wrong
 This environment's local clone can come up with stale refs (it has happened —
