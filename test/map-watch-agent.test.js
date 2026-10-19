@@ -488,3 +488,78 @@ describe('map.html: the health chip on alive rows', () => {
     expect(css).toMatch(/\.hp\.lo\{color:#f87171\}/);
   });
 });
+
+// ───────────── FB-89: the Engaged section ─────────────
+// (a raider: "add a section in the timers tab for 'Engaged' mobs. put their HP there and how many are targetting them,
+// similar to the Extended target overlay"). Agent half: _mapEngaged reads the Extended Target rows; overlay half: the top
+// of renderSide, which the ?part=timers pop-out shares. Mutation-checked: drop the `!t.stale` filter; drop the
+// raider_count >= 1 filter; drop the kind === 'npc' filter; flip the sort; drop the MAP_ENGAGED_MAX slice; drop the
+// section in renderSide; drop the chip insert; drop the payload wiring.
+const ENGAGED = new Function(sliceBlock(AGENT, 'const MAP_ENGAGED_MAX', '\n}\n') + '\nreturn { f: _mapEngaged, max: MAP_ENGAGED_MAX };')();
+const npcRow = (name, spawn_id, hp_pct, raider_count, extra) => Object.assign({ name, spawn_id, hp_pct, raider_count, kind: 'npc' }, extra);
+
+describe('agent: the engaged rows (_mapEngaged)', () => {
+  it('keeps live NPC rows with a raider on them, and drops the rest', () => {
+    const rows = [npcRow('a bat', 1, 50, 2), npcRow('a rat', 2, 60, 0), npcRow('a wolf', 3, 70, 1, { stale: true }),
+      { name: 'Aldenmar', kind: 'player', hp_pct: 40, raider_count: 3 }, { name: 'Aldenmar`s warder', kind: 'pet', hp_pct: 40, raider_count: 3 }, null];
+    expect(ENGAGED.f(rows).map(r => r.name)).toEqual(['a bat']);
+    expect(ENGAGED.f(undefined)).toEqual([]);
+  });
+  it('carries name, spawn id, rounded health and the number of raiders; blanks stay null', () => {
+    expect(ENGAGED.f([npcRow('a bat', 11, 41.6, 3), npcRow('a rat', 0, null, 1)]))
+      .toEqual([{ name: 'a bat', spawn_id: 11, hp_pct: 42, n: 3 }, { name: 'a rat', spawn_id: null, hp_pct: null, n: 1 }]);
+  });
+  it('most targeted first, the more hurt mob ahead on a tie, then name; the same rows in any order give the same list', () => {
+    const rows = [npcRow('b', 1, 90, 2), npcRow('a', 2, 90, 2), npcRow('c', 3, 20, 2), npcRow('d', 4, 100, 5), npcRow('e', 5, null, 2)];
+    const want = ['d', 'c', 'a', 'b', 'e'];
+    expect(ENGAGED.f(rows).map(r => r.name)).toEqual(want);
+    expect(ENGAGED.f(rows.slice().reverse()).map(r => r.name)).toEqual(want);
+  });
+  it('is capped', () => {
+    const rows = Array.from({ length: ENGAGED.max + 5 }, (_v, i) => npcRow('mob' + i, i + 1, 50, 1));
+    expect(ENGAGED.f(rows)).toHaveLength(ENGAGED.max);
+  });
+  it('the payload carries it, from the same cache the health chips use', () => {
+    const js = stripJs(AGENT);
+    expect(js).toMatch(/out\.engaged = _mapEngaged\(ec2 && ec2\.payload && ec2\.payload\.targets\)/);
+    expect(js).toMatch(/seen: \[\], engaged: \[\], unassigned: \[\]/);
+  });
+});
+
+describe('map.html: the Engaged section', () => {
+  const ROWS = [{ name: 'a blood raven', spawn_id: 11, hp_pct: 42, n: 3 }, { name: 'a bat', spawn_id: null, hp_pct: null, n: 1 }];
+  it('is the first thing in the list, ahead of Watched and Respawns, one row per mob', async () => {
+    const { all } = await boot({ engaged: ROWS, watched: { 7: { named: 'The Avatar of Anguish', by: null } }, timers: [T(8, 'a blood raven', 300000, 400000)] });
+    const kids = all.lists.children;
+    expect(kids[0].className).toBe('sec engaged');
+    expect(kids[0].textContent).toBe('⚔ Engaged (2)');
+    expect(kids.slice(1, 3).map(r => r.className)).toEqual(['trow engaged', 'trow engaged']);
+    expect(kids.findIndex(c => /sec watch/.test(c.className))).toBeGreaterThan(2);
+    expect(kids.findIndex(c => c.textContent === 'Respawns (1)')).toBeGreaterThan(2);
+  });
+  it('a row is name, health chip, "N on it" and the spawn id; no health means no chip', async () => {
+    const { all } = await boot({ engaged: ROWS });
+    const [a, b] = all.lists.children.filter(c => /trow engaged/.test(c.className));
+    expect(a.children[0].textContent).toBe('a blood raven');
+    expect(a.children[1].textContent).toBe('3 on it');
+    expect(a.children[1].children.map(k => [k.className, k.textContent])).toEqual([['hp mid', '42%']]);
+    expect(a.children[2].textContent).toBe('spawn #11');
+    expect(b.children[1].textContent).toBe('1 on it');
+    expect(b.children[1].children).toEqual([]);
+    expect(b.children[2].textContent).toBe('engaged');
+  });
+  it('shows nothing when nobody is engaged or the agent sent no field, and renders the same rows each time', async () => {
+    const none = await boot({ engaged: [] });
+    expect(none.all.lists.children.some(c => /engaged/.test(c.className))).toBe(false);
+    const old = await boot({});
+    expect(old.all.lists.children.some(c => /engaged/.test(c.className))).toBe(false);
+    const a = await boot({ engaged: ROWS }), b = await boot({ engaged: ROWS });
+    const snap = (x) => x.all.lists.children.map(c => c.className + '|' + c.textContent + '|' + c.children.map(k => k.className + ':' + k.textContent).join(','));
+    expect(snap(a)).toEqual(snap(b));
+  });
+  it('the section has its own colour', () => {
+    const css = stripCss(MAP_HTML);
+    expect(css).toMatch(/\.sec\.engaged\{color:#f0883e\}/);
+    expect(css).toMatch(/\.trow\.engaged\{border-left-color:#f0883e;cursor:default\}/);
+  });
+});
