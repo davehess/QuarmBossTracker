@@ -40102,14 +40102,27 @@ let _guildFeedIngame = null;             // members in game WITH MIMIC RUNNING p
 // A relayed line this PC's own log already heard (same channel, speaker and text within 5 s): the bot hands a new
 // poll the recent backlog, which includes what the player read in game just before logging out. Your own line
 // is "You" locally and your name in the relay, so the character the line was heard on counts as the speaker too.
+// FB-91: two copies of one line can differ in capitalisation or spacing, so the text compares lower-cased and
+// whitespace-collapsed (a case-only difference used to show the line twice, once labelled "via guild").
+function _chatNormText(s) { return String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim(); }
 function _guildFeedHeardLocally(ch, who, text, at) {
-  const w = who.toLowerCase();
+  const w = who.toLowerCase(), nt = _chatNormText(text);
   for (let i = _chatRing.length - 1, n = 0; i >= 0 && n < 150; i--, n++) {
     const x = _chatRing[i];
-    if (x.swap || x.ch !== ch || x.text !== text || Math.abs(x.t - at) > 5000) continue;
+    if (x.swap || x.ch !== ch || Math.abs(x.t - at) > 5000 || _chatNormText(x.text) !== nt) continue;
     if (String(x.who).toLowerCase() === w || (x.self && String(x.on).toLowerCase() === w)) return true;
   }
   return false;
+}
+// The other order: the relayed copy landed first (the game looked absent for a moment), then this PC's own log heard
+// the line. The local copy wins, so the relayed one is removed from the ring (and from the cache that saves it).
+function _guildFeedDropHeard(evt, character) {
+  if (!_guildFeedRing.length || (evt.ch !== 'guild' && evt.ch !== 'raid')) return;
+  const w = String(evt.self ? character : evt.who).toLowerCase(), nt = _chatNormText(evt.text);
+  for (let i = _guildFeedRing.length - 1; i >= 0; i--) {
+    const x = _guildFeedRing[i];
+    if (x.ch === evt.ch && Math.abs(x.t - evt.t) <= 5000 && String(x.who).toLowerCase() === w && _chatNormText(x.text) === nt) _guildFeedRing.splice(i, 1);
+  }
 }
 // Take the bot's lines ({ seq, t, ch, who, text }); returns how many landed. Anything that is not a plain guild or
 // raid line from a named speaker is dropped, and a line already held (same speaker, text and second) is not added twice
@@ -40183,6 +40196,7 @@ function noteLocalChatLine(line, character, now) {
   _chatRing.push({ seq: ++_chatSeq, k: key, t: evt.t, ch: evt.ch, who: evt.who, to: evt.to || null, text: evt.text, self: !!evt.self, npc: !!evt.npc, on: character || '', cn: evt.cn || null, cnum: evt.cnum || null });
   const over = _chatRing.length - CHAT_RING_MAX;
   if (over > 0) _chatRing.splice(0, over);
+  _guildFeedDropHeard(evt, character);
   _chatCacheMarkDirty();
   return true;
 }
