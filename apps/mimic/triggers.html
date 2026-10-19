@@ -66,7 +66,7 @@
      Rides the same row as the timing votes: it shows only for a callout that was SPOKEN and carries a
      rule key, and when timing votes are off the row shows it alone (mute-only). After a click the same
      button becomes "Muted — undo". It is a real <button>, so the preload's hover handshake covers it. */
-  .mute-btn{
+  .mute-btn, .enrage-opt{
     display:none; font:600 12px ui-monospace,Menlo,Consolas,monospace;
     color:#fff; background:rgba(14,17,22,0.85); border:1px solid rgba(255,255,255,0.25);
     border-radius:4px; padding:5px 10px; cursor:pointer; text-shadow:0 1px 2px #000;
@@ -74,7 +74,11 @@
   }
   #feedback.canmute .mute-btn{display:inline-block}
   #feedback.mute-only .fb-btn, #feedback.mute-only #fbThanks{display:none}
-  .mute-btn:hover{ background:rgba(110,118,129,0.55); border-color:#6e7681 }
+  /* An enrage callout's 🔇 opens three choices in the same row (the guild lead, 2026-10-19: "muteable per
+     mob / this session / permanently"); while they are open they take the place of the timing votes. */
+  #feedback.enragemenu .enrage-opt{ display:inline-block }
+  #feedback.enragemenu .fb-btn, #feedback.enragemenu #fbThanks{ display:none }
+  .mute-btn:hover, .enrage-opt:hover{ background:rgba(110,118,129,0.55); border-color:#6e7681 }
   .mute-btn.done{ border-color:#56d364; color:#56d364 }
   /* Sticky critical callouts (#76). A trigger flagged `sticky` pins here and
      stays until the user clicks it away (or a generous ~5min timeout) instead
@@ -302,6 +306,9 @@
       <button class="fb-btn late" data-dir="too_early" title="The trigger fired BEFORE the actual event — delay the trigger next time.">» Too early</button>
       <button class="fb-btn off" data-dir="off" title="Stop asking — no timing votes after callouts, and nothing about callout timing is sent. Turn it back on in the dashboard, Triggers tab, Timing votes.">🔕</button>
       <button id="muteBtn" class="mute-btn" title="Stop saying this callout out loud. It still shows on screen. Undo it from here right after, or any time in the dashboard, Voice tab, What you hear.">🔇 Mute</button>
+      <button class="enrage-opt" data-scope="mob" title="Stop this mob's enrage callouts (text and speech) until Mimic restarts.">This mob · session</button>
+      <button class="enrage-opt" data-scope="all" title="Stop every enrage callout (text and speech) until Mimic restarts.">All enrage · session</button>
+      <button class="enrage-opt" data-scope="always" title="Stop this mob's enrage callouts for good. Undo it any time in the dashboard, Triggers tab, Recent fires.">This mob · always</button>
       <span id="fbThanks">thanks — recorded.</span>
     </div>
     <div id="sticky"></div>
@@ -791,6 +798,7 @@
   // handshake covers it, and it asks for the handshake itself like the vote buttons do.
   let _muteFire = null;           // the fire the button is currently offered for
   let _muteUndoKey = null;        // set once muted: the key the undo clears
+  let _enrageUndo = null;         // an enrage callout muted from the three choices: { scope, mob }
   const muteBtn = document.getElementById('muteBtn');
   function postRule(key, mode){
     return fetch('http://127.0.0.1:' + PORT + '/api/trigger-rules', {
@@ -799,10 +807,12 @@
     }).then(function(r){ return r.ok; }).catch(function(){ return false; });
   }
   function setMuteIdle(t){
-    _muteFire = t || null; _muteUndoKey = null;
+    _muteFire = t || null; _muteUndoKey = null; _enrageUndo = null;
     if (!muteBtn) return;
-    muteBtn.textContent = '🔇 Mute';
+    // An enrage callout (it names its mob) opens three choices instead of muting in one click.
+    muteBtn.textContent = (t && t.enrage_mob) ? '🔇 Mute…' : '🔇 Mute';
     muteBtn.classList.remove('done');
+    fbWrap.classList.remove('enragemenu');
     fbWrap.classList.toggle('canmute', !!t);
   }
   // Called after showFeedback for a fire drawn on this page. Only a fire that was actually spoken
@@ -818,6 +828,13 @@
     offerMute._t = setTimeout(function(){ if (!_muteUndoKey) fbWrap.classList.remove('show'); }, 8000);
   }
   function muteClick(){
+    if (_enrageUndo){
+      const u = _enrageUndo;
+      postEnrageMute('unmute', u.scope, u.mob).then(function(ok){ if (ok) fbWrap.classList.remove('show'); });
+      setMuteIdle(null);
+      return;
+    }
+    if (_muteFire && _muteFire.enrage_mob && !_muteUndoKey){ toggleEnrageMenu(); return; }
     if (_muteUndoKey){
       const k = _muteUndoKey;
       postRule(k, null).then(function(ok){ if (ok) fbWrap.classList.remove('show'); });
@@ -842,6 +859,40 @@
     muteBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
     muteBtn.addEventListener('click', muteClick);
   }
+
+  // The three choices behind an enrage callout's 🔇 (the guild lead, 2026-10-19). The agent owns the mutes
+  // (POST /api/enrage-mute): this mob or every enrage callout until Mimic restarts, or this mob for good.
+  // A muted callout shows nothing and says nothing. Real <button>s, so the hover handshake covers them.
+  function postEnrageMute(action, scope, mob){
+    return fetch('http://127.0.0.1:' + PORT + '/api/enrage-mute', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action, scope: scope, mob: mob }),
+    }).then(function(r){ return r.ok; }).catch(function(){ return false; });
+  }
+  function toggleEnrageMenu(){
+    fbWrap.classList.toggle('enragemenu');
+    // Keep the row up while the choices are open.
+    clearTimeout(offerMute._t); clearTimeout(showFeedback._t);
+    offerMute._t = setTimeout(function(){ fbWrap.classList.remove('enragemenu'); fbWrap.classList.remove('show'); }, 12000);
+  }
+  function pickEnrageMute(scope){
+    const f = _muteFire;
+    if (!f || !f.enrage_mob) return;
+    postEnrageMute('mute', scope, f.enrage_mob).then(function(ok){
+      if (!ok) return;
+      _enrageUndo = { scope: scope, mob: f.enrage_mob };
+      fbWrap.classList.remove('enragemenu');
+      muteBtn.textContent = 'Muted — undo';
+      muteBtn.classList.add('done');
+      clearTimeout(offerMute._t); clearTimeout(showFeedback._t);
+      offerMute._t = setTimeout(function(){ fbWrap.classList.remove('show'); }, 8000);
+    });
+  }
+  fbWrap.querySelectorAll('.enrage-opt').forEach(function(b){
+    b.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
+    b.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
+    b.addEventListener('click', function(){ pickEnrageMute(b.getAttribute('data-scope')); });
+  });
 
   // Sticky critical callouts (#76). A fire flagged `sticky` pins a row that
   // stays until dismissed (click) or a generous timeout, rather than fading on

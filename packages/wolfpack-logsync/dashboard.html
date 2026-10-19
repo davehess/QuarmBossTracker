@@ -3690,7 +3690,7 @@ function renderRecentFires(s) {
   if (overlays.length === 0) {
     h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Rehearse</b> on a row to drive a synthesized line through the real pipeline (pattern + cooldown + suppression) and hear the actual TTS.</div>';
   } else {
-    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
+    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th><th></th></tr>';
     for (var i = 0; i < overlays.length; i++) {
       var o = overlays[i];
       var ago = fmtAgo(o.shownAt || 0);
@@ -3703,11 +3703,41 @@ function renderRecentFires(s) {
       h += '<tr><td class="dim">' + esc(ago) + '</td>' +
            '<td style="color:var(--text)">' + esc(o.trigger || '?') + '</td>' +
            '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
-           '<td>' + esc(o.text || '') + '</td></tr>';
+           '<td>' + esc(o.text || '') + '</td>' +
+           '<td>' + enrageMuteCell(o) + '</td></tr>';
     }
     h += '</table>';
   }
+  h += enrageMutedList(s.enrageMutes);
   morphInto(el, h);
+}
+// 🔇 on an enrage callout's row: the same three choices the trigger overlay offers (the guild lead,
+// 2026-10-19). Plain buttons with data attributes; the section-root click delegation routes them.
+function enrageMuteCell(o) {
+  if (!o || !o.enrage_mob) return '';
+  var m = esc(o.enrage_mob);
+  var b = 'background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 6px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:4px';
+  return '<button type="button" data-enrage-mute="mob" data-mob="' + m + '" style="' + b + '" title="Stop this mob\'s enrage callouts (text and speech) until the agent restarts">🔇 this mob</button>'
+       + '<button type="button" data-enrage-mute="all" data-mob="' + m + '" style="' + b + '" title="Stop every enrage callout until the agent restarts">🔇 all</button>'
+       + '<button type="button" data-enrage-mute="always" data-mob="' + m + '" style="' + b + '" title="Stop this mob\'s enrage callouts for good">🔇 always</button>';
+}
+// What is muted, each with a ✕ that unmutes it. Empty when nothing is, so the card stays as it was.
+function enrageMutedList(em) {
+  if (!em) return '';
+  var chips = [];
+  var chip = function(label, scope, mob) {
+    chips.push('<span style="display:inline-block;margin:4px 6px 0 0;padding:2px 6px;border:1px solid var(--border);border-radius:4px">' + esc(label)
+      + ' <button type="button" data-enrage-unmute="' + scope + '" data-mob="' + esc(mob || '') + '" title="Unmute" style="background:none;border:0;color:var(--text);cursor:pointer;font-family:inherit;font-size:11px">✕</button></span>');
+  };
+  if (em.all) chip('all enrage callouts · this session', 'all', '');
+  (em.session || []).forEach(function(m) { chip(m + ' · this session', 'mob', m); });
+  (em.always || []).forEach(function(m) { chip(m + ' · always', 'always', m); });
+  if (!chips.length) return '';
+  return '<div style="margin-top:8px;font-size:12px"><span class="dim">🔇 Muted enrage callouts</span> ' + chips.join('') + '</div>';
+}
+function enrageMutePost(action, scope, mob) {
+  return fetch('/api/enrage-mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: action, scope: scope, mob: mob }) }).catch(function() { return null; });
 }
 // ⏪ Replay status (#101) — the volatile counterpart to the byte-stable Replay
 // FORM. Fills its own #wpReplayStatus placeholder every poll: progress + a STOP
@@ -12678,6 +12708,11 @@ function wpTrigApplyForm(base, f) {
           wpGuildTrigToggle(gr.getAttribute('data-trig-key'));
           return;
         }
+        // 🔇 on an enrage fire (Recent fires) and ✕ on the muted list under it.
+        var em = t.closest ? t.closest('[data-enrage-mute]') : null;
+        if (em) { enrageMutePost('mute', em.getAttribute('data-enrage-mute'), em.getAttribute('data-mob')); return; }
+        var eu = t.closest ? t.closest('[data-enrage-unmute]') : null;
+        if (eu) { enrageMutePost('unmute', eu.getAttribute('data-enrage-unmute'), eu.getAttribute('data-mob')); return; }
         if (!t.id) return;
         if (t.id === 'trigClearAllBtn')  onClearAll();
         else if (t.id === 'trigClearTestBtn') onClearTests();
