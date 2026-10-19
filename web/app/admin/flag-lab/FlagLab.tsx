@@ -302,7 +302,7 @@ function HailBoardPanel({ roster, setRoster }: { roster: LabHailMember[]; setRos
               <div className="mb-2">
                 {view.flag_cap == null
                   ? <span className="text-dim">No flag cap known</span>
-                  : <span>Flags: <b className="text-text">{view.flags_left}</b> left of {view.flag_cap} <span className="text-dim">({view.flags_granted} landed)</span></span>}
+                  : <span>Flags: <b className="text-text">{view.flags_left}</b> left of {view.flag_cap} <span className="text-dim">({view.flags_granted} hailed)</span></span>}
               </div>
               <HailList title={`Still to hail (${view.still.length})`} cls="text-orange" empty="Nobody left.">
                 {view.still.map(s => (
