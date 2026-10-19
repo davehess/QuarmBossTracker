@@ -10235,14 +10235,9 @@ function buildTrayMenu() {
 
   // Help › — the walkthrough, feedback, and the agent restart.
   const helpSubmenu = [
-    // ✨ The setup walkthrough, both layouts until the guild lead picks one (§93). Same IPC
-    // as the dashboard Setup card's two buttons. Beta and alpha builds only: two unpicked
-    // layouts do not ship to the stable fleet (the UI-options rule), so a stable cut can still
-    // be the beta byte for byte.
-    ...(/-/.test(String(app.getVersion() || '')) ? [{ label: '✨ Setup walkthrough', submenu: [
-        { label: 'A · one step at a time', click: () => openWelcome('a') },
-        { label: 'B · essentials, then unlocks', click: () => openWelcome('b') },
-      ] }] : []),
+    // ✨ The setup walkthrough: the trail, one step at a time (picked 2026-10-19, §383). Same IPC
+    // as the dashboard Setup card's button. On every build: the pick lifted the beta-only hold (§93, §111).
+    { label: '✨ Setup walkthrough', click: () => openWelcome() },
     // Tray ↔ dashboard parity (CLAUDE.md): the feedback card lives on the
     // dashboard, so it needs a tray route too. Same destination, same internals
     // — Mimic's Feedback window (the dashboard page in feedback-only mode), the very
@@ -12753,17 +12748,17 @@ ipcMain.handle('eq-setup-for-me', () => new Promise((resolve) => {
   req.on('timeout', () => { req.destroy(); resolve({ ok: false, message: 'The engine did not respond in time.' }); });
   req.end();
 }));
-// The setup walkthrough (welcome.html, DECISIONS §93): open it in the main window as layout
-// a or b, and relay its two agent POSTs — a file:// page cannot read the agent's reply to a
+// The setup walkthrough (welcome.html, DECISIONS §93, §383): open it in the main window, and
+// relay its two agent POSTs — a file:// page cannot read the agent's reply to a
 // POST, the same reason eq-setup-for-me exists. Only the two actions the page needs pass:
 // `import` (old logs, exactly the dashboard's importer) and `backfill` (the main's log).
-function openWelcome(v) {
+function openWelcome() {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
-  mainWindow.loadFile('welcome.html', { query: { v: v === 'b' ? 'b' : 'a' } });
+  mainWindow.loadFile('welcome.html');
   try { mainWindow.show(); mainWindow.focus(); } catch { /* */ }
   return true;
 }
-ipcMain.handle('open-welcome', (_e, v) => openWelcome(v));
+ipcMain.handle('open-welcome', () => openWelcome());
 ipcMain.handle('welcome-optin', (_e, action, paths) => new Promise((resolve) => {
   if (action !== 'import' && action !== 'backfill') return resolve({ ok: false, error: 'unsupported action' });
   const list = (Array.isArray(paths) ? paths : []).filter(p => typeof p === 'string' && p && p.length <= 1024).slice(0, 200);
