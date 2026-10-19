@@ -1,0 +1,185 @@
+{
+  "about": "Named bosses of the Planes of Power zones that the catalog (eqemu_npc_types.raid_target) does not flag. utils/namedBosses.js ORs this list into every raid_target the bot serves. Committed data so the weekly mirror sync cannot overwrite it. A boss matches by npc id, or by name inside the zone its id sits in (id = zoneid * 1000 + n). Names are the catalog's spelling, # and underscores dropped. Sources: data/bosses.json (PoP board), apps/mimic/pop-raids.js, utils/hailBoard.js, ids and names checked against eqemu_npc_types 2026-10-19. Left out on purpose: the 12 Halls of Honor trial 2 villager attackers (60-90k, trash for a raid), The Tribunal, and the board's three Halls of Honor rare spawns (an undead inhabitant, a rabid wrulon, a recuso degenerate).",
+  "zones": {
+    "hohonora": { "zoneId": 211, "name": "Halls of Honor", "bosses": [
+      { "id": 211107, "name": "Rydda`Dar" },
+      { "id": 211084, "name": "Advocent Joran" },
+      { "id": 211086, "name": "Halgoz Rellinic" },
+      { "id": 211085, "name": "Freegan Haun" }
+    ] },
+    "hohonorb": { "zoneId": 220, "name": "Temple of Marr", "bosses": [
+      { "id": 220020, "name": "Lord Mithaniel Marr" },
+      { "id": 220012, "name": "Ralthazor, Champion of Marr" },
+      { "id": 220022, "name": "Halon of Marr" },
+      { "id": 220021, "name": "Edium, Guardian of Marr" }
+    ] },
+    "pojustice": { "zoneId": 201, "name": "Plane of Justice", "bosses": [
+      { "id": 201074, "name": "The Seventh Hammer" },
+      { "id": 201485, "name": "Prime Executioner Vathoch" },
+      { "id": 201486, "name": "Punisher of Flame" },
+      { "id": 201479, "name": "Lashman Azakal" },
+      { "id": 201496, "name": "Yurae Zhaleem" },
+      { "id": 201477, "name": "Gallows Master Teion" },
+      { "id": 201487, "name": "Punisher Veshtaq" },
+      { "id": 201492, "name": "The Ancient Crawler" }
+    ] },
+    "podisease": { "zoneId": 205, "name": "Plane of Disease", "bosses": [
+      { "id": 205091, "name": "Grummus" },
+      { "id": 205095, "name": "Aramin the Spider Guardian" },
+      { "id": 205134, "name": "Rallius Rattican" }
+    ] },
+    "ponightmare": { "zoneId": 204, "name": "Plane of Nightmares", "bosses": [
+      { "id": 204039, "name": "Mujaki the Devourer" },
+      { "id": 204028, "name": "Vhaksiz the Shade" },
+      { "id": 204034, "name": "Terror Matriarch" },
+      { "id": 204010, "name": "The Bullyrag Bat" },
+      { "id": 204047, "name": "Seilaen" },
+      { "id": 204035, "name": "Untel`Dak" }
+    ] },
+    "nightmareb": { "zoneId": 221, "name": "The Lair of Terris Thule", "bosses": [
+      { "id": 221041, "name": "Terris Thule" }
+    ] },
+    "bothunder": { "zoneId": 209, "name": "Bastion of Thunder", "bosses": [
+      { "id": 209026, "name": "Agnarr the Storm Lord" },
+      { "id": 209054, "name": "Evynd Firestorm" },
+      { "id": 209053, "name": "Emmerik Skyfury" },
+      { "id": 209147, "name": "Jolur Sandstorm" },
+      { "id": 209142, "name": "Ekil Thundercall" },
+      { "id": 209148, "name": "Oljin Stormtide" },
+      { "id": 209146, "name": "Hibdin Cyclone" },
+      { "id": 209136, "name": "Karana" },
+      { "id": 209071, "name": "Gaukr Sandstorm" },
+      { "id": 209082, "name": "Hreidar Lynhillig" },
+      { "id": 209070, "name": "Laef Windfall" },
+      { "id": 209072, "name": "Oreen Wavecrasher" },
+      { "id": 209059, "name": "Auliffe Chaoswind" },
+      { "id": 209016, "name": "Brynju Thunderclap" },
+      { "id": 209061, "name": "Kuanbyr Hailstorm" },
+      { "id": 209060, "name": "Eindride Icestorm" }
+    ] },
+    "postorms": { "zoneId": 210, "name": "Plane of Storms", "bosses": [
+      { "id": 210062, "name": "Askr the Lost" },
+      { "id": 210251, "name": "Neffiken, Lord of Kelek`Vor" },
+      { "id": 210332, "name": "Gurebk, Lord of Krendic" }
+    ] },
+    "povalor": { "zoneId": 208, "name": "Plane of Valor", "bosses": [
+      { "id": 208074, "name": "Aerin`Dar" },
+      { "id": 208157, "name": "The Sleep Walker" },
+      { "id": 208176, "name": "Rahlgon" }
+    ] },
+    "poinnovation": { "zoneId": 206, "name": "Plane of Innovation", "bosses": [
+      { "id": 206046, "name": "Manaetic Behemoth" },
+      { "id": 206208, "name": "Xanamech Nezmirthafen" },
+      { "id": 206054, "name": "Manaetic Prototype IX" },
+      { "id": 206053, "name": "Manaetic Prototype X" },
+      { "id": 206055, "name": "Manaetic Prototype XI" }
+    ] },
+    "codecay": { "zoneId": 200, "name": "The Crypt of Decay", "bosses": [
+      { "id": 200007, "name": "Carprin Deatharn" },
+      { "id": 200226, "name": "Bertoxxulous" },
+      { "id": 200016, "name": "Spectre of Corruption" },
+      { "id": 200252, "name": "Overlord Banord Paffa" }
+    ] },
+    "potorment": { "zoneId": 207, "name": "Torment, the Plane of Pain", "bosses": [
+      { "id": 207001, "name": "Saryrn" },
+      { "id": 207004, "name": "Maareq the Prophet" },
+      { "id": 207027, "name": "Salczek the Fleshgrinder" },
+      { "id": 207003, "name": "The Acolyte of Affliction" },
+      { "id": 207002, "name": "Ta`Grusch the Abomination" },
+      { "id": 207052, "name": "Sorrowsong" },
+      { "id": 207015, "name": "The Keeper of Sorrows" }
+    ] },
+    "pofire": { "zoneId": 217, "name": "Plane of Fire", "bosses": [
+      { "id": 217440, "name": "Fennin Ro the Tyrant of Fire" },
+      { "id": 217003, "name": "Blazzax the Omnifiend" },
+      { "id": 217032, "name": "General Reparm" },
+      { "id": 217056, "name": "Quavonis Firetail" },
+      { "id": 217059, "name": "Magmaton" },
+      { "id": 217019, "name": "Arch Mage Yozanni" },
+      { "id": 217063, "name": "Pyronis" },
+      { "id": 217005, "name": "Babnoxis the Spider Queen" },
+      { "id": 217051, "name": "Criare Sunmane" },
+      { "id": 217049, "name": "Jaxoliz Dawneyes" },
+      { "id": 217036, "name": "General Druav Flamesinger" },
+      { "id": 217050, "name": "Guardian of Doomfire" },
+      { "id": 217425, "name": "Azobian the Darklord" },
+      { "id": 217426, "name": "Javonn the Overlord" },
+      { "id": 217427, "name": "Reaxnous the Chaoslord" },
+      { "id": 217453, "name": "Hebabbilys the Ragelord" },
+      { "id": 217432, "name": "Chancellor Kirtra" },
+      { "id": 217433, "name": "Chancellor Traxom" },
+      { "id": 217429, "name": "Omni Magus Crato" },
+      { "id": 217428, "name": "Warlord Prollaz" }
+    ] },
+    "poair": { "zoneId": 215, "name": "Plane of Air", "bosses": [
+      { "id": 215056, "name": "Xegony the Queen of Air" },
+      { "id": 215053, "name": "Muzlakh the Chosen" },
+      { "id": 215375, "name": "Sigismond Windwalker" },
+      { "id": 215034, "name": "Rinturion Windblade" },
+      { "id": 215003, "name": "Queen Silandria" },
+      { "id": 215054, "name": "Baltaldor the Cursed" },
+      { "id": 215024, "name": "Gakamenial Fir`Disralsi" },
+      { "id": 215011, "name": "Arch Mage Alchtonion" },
+      { "id": 215060, "name": "Lossenmachar" },
+      { "id": 215324, "name": "Calebgrothiel" }
+    ] },
+    "poeartha": { "zoneId": 218, "name": "Plane of Earth", "bosses": [
+      { "id": 218038, "name": "Tantisala Jaggedtooth" },
+      { "id": 218375, "name": "A Mystical Arbitor of Earth" }
+    ] },
+    "poearthb": { "zoneId": 222, "name": "Plane of Earth", "bosses": [
+      { "id": 222038, "name": "Warlord Gintolaken" },
+      { "id": 222037, "name": "War Chieftan Awisano" },
+      { "id": 222035, "name": "War Chieftan Birak" },
+      { "id": 222036, "name": "War Chieftan Galronar" },
+      { "id": 222040, "name": "Avatar of Earth" },
+      { "id": 222003, "name": "A Rathe Councilman" }
+    ] },
+    "powater": { "zoneId": 216, "name": "Plane of Water", "bosses": [
+      { "id": 216048, "name": "Coirnav the Avatar of Water" },
+      { "id": 216041, "name": "Krziik the Mighty" },
+      { "id": 216040, "name": "Ofossaa the Enlightened" },
+      { "id": 216043, "name": "Hydrotha" },
+      { "id": 216042, "name": "Grioihin the Wise" },
+      { "id": 216236, "name": "Pwelon of Vapor" },
+      { "id": 216245, "name": "Nrinda of Ice" },
+      { "id": 216247, "name": "Vamuil of Water" },
+      { "id": 216053, "name": "Guardian of Coirnav" }
+    ] },
+    "potactics": { "zoneId": 214, "name": "Drunder, the Fortress of Zek", "bosses": [
+      { "id": 214026, "name": "Tallon Zek" },
+      { "id": 214316, "name": "Vallon Zek" },
+      { "id": 214312, "name": "Rallos Zek the Warlord" },
+      { "id": 214053, "name": "Glykus Helmir" },
+      { "id": 214054, "name": "Tagrin Maldric" },
+      { "id": 214092, "name": "The Diaku Overseer" },
+      { "id": 214056, "name": "Decorin Berik" },
+      { "id": 214057, "name": "Decorin Grunhork" }
+    ] },
+    "solrotower": { "zoneId": 212, "name": "Tower of Solusek Ro", "bosses": [
+      { "id": 212025, "name": "Solusek Ro" },
+      { "id": 212023, "name": "Arlyxir" },
+      { "id": 212014, "name": "Jiva" },
+      { "id": 212055, "name": "Xuzl" },
+      { "id": 212407, "name": "Rizlona" },
+      { "id": 212408, "name": "The Protector of Dresolik" },
+      { "id": 212046, "name": "Guardian of Dresolik" }
+    ] },
+    "potimeb": { "zoneId": 223, "name": "Plane of Time", "bosses": [
+      { "id": 223000, "name": "Vallon Zek" },
+      { "id": 223001, "name": "Tallon Zek" },
+      { "id": 223002, "name": "Terris Thule" },
+      { "id": 223003, "name": "Saryrn" },
+      { "id": 223004, "name": "Cazic Thule" },
+      { "id": 223005, "name": "Bertoxxulous" },
+      { "id": 223006, "name": "Rallos Zek" },
+      { "id": 223007, "name": "Innoruuk" },
+      { "id": 223008, "name": "Quarm" },
+      { "id": 223044, "name": "Neimon of Air" },
+      { "id": 223032, "name": "Terlok of Earth" },
+      { "id": 223018, "name": "Kazrok of Fire" },
+      { "id": 223029, "name": "Rythor of the Undead" },
+      { "id": 223037, "name": "Anar of Water" }
+    ] }
+  }
+}
