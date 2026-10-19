@@ -20,7 +20,7 @@
 
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { readSource, ROOT, stripCss } from './_source-slice.js';
+import { readSource, ROOT, stripCss, WpPetSheet } from './_source-slice.js';
 
 const extHtml = readSource(path.join(ROOT, 'apps', 'mimic', 'extarget.html'));
 const petHtml = readSource(path.join(ROOT, 'apps', 'mimic', 'pets.html'));
@@ -74,9 +74,9 @@ function runPage(html, { mini = false, state = null, snapId, exportNames }) {
     ? () => new Promise(() => {})
     : async () => ({ json: async () => page.state });
   // eslint-disable-next-line no-new-func
-  const api = new Function('window', 'document', 'localStorage', 'fetch', 'setInterval', 'requestAnimationFrame',
+  const api = new Function('window', 'document', 'localStorage', 'fetch', 'setInterval', 'requestAnimationFrame', 'WpPetSheet',
     scriptOf(html) + '\nreturn { ' + exportNames.join(', ') + ' };')(
-    window, document, localStorage, fetch, () => 0, () => 0);
+    window, document, localStorage, fetch, () => 0, () => 0, WpPetSheet);
   return {
     ...api, el, fits, page,
     flip(on) {

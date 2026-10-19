@@ -141,6 +141,7 @@
     <div id="list"></div>
     <div id="empty">no pet — run <b>/pet health</b> in game</div>
   </div>
+<script src="petsheet.js"></script>
 <script>
   let PORT = 7779;
   window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
@@ -429,15 +430,18 @@
           ? '<div class="hpbar"><div style="width:' + hp.toFixed(0) + '%;background:' + hpColor + '"></div></div>'
           : '';
         var ageStr = obs ? ' · ' + Math.round(ageMs/1000) + 's ago' : '';
+        // The #petstats sheet folds out of the name row (the guild lead, 2026-10-19, picked B for §63).
+        var sk = WpPetSheet.key(p.owner, p.pet);
         html += '<div class="pet' + (stale ? ' stale' : '') + '" data-owner="' + esc(p.owner || '') + '">'
           + '<button class="dismiss" data-dismiss="' + esc(p.owner || '') + '" title="Dismiss — remove this pet from the tracker">&times;</button>'
-          + '<div class="head"><span class="nm">' + esc(p.pet || 'pet') + '</span>'
+          + '<div class="head"' + WpPetSheet.rowAttrs(p.sheet, sk) + '><span class="nm">' + WpPetSheet.chevron(p.sheet, sk) + esc(p.pet || 'pet') + '</span>'
           + '<span class="owner">' + esc(p.owner || '') + '</span></div>'
           + '<div class="meta">HP' + (hp != null ? '' : ' ?') + hpStr + ageStr + '</div>'
           + hpBar
           + renderTarget(p)
           + renderBuffs(p)
           + renderStats(p)
+          + WpPetSheet.sheetHtml(p.sheet, sk)
           + '</div>';
       }
       if (listEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
@@ -457,6 +461,10 @@
   }
   // Delegated dismiss handler (see charm.html for the why).
   listEl.addEventListener('click', function(e){
+    // A click on the name row folds the #petstats sheet out / away (open state lives in WpPetSheet, so the
+    // 500 ms repaint keeps it). The ✕ is not inside that row; ignore any other button inside it.
+    var row = e.target && e.target.closest && e.target.closest('[data-sheet]');
+    if (row && !e.target.closest('button')) { WpPetSheet.toggle(row.getAttribute('data-sheet')); tick(); return; }
     var btn = e.target && e.target.closest && e.target.closest('button.dismiss');
     if (!btn) return;
     e.stopPropagation();

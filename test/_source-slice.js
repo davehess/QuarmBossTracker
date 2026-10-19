@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const BOT_INDEX   = path.join(ROOT, 'index.js');
@@ -89,3 +90,7 @@ export const stripJs  = (s) => s
   .replace(/^[ \t]*\/\*[\s\S]*?\*\/[ \t]*$/gm, '');
 export const stripSql = (s) => s.replace(/^[ \t]*--.*$/gm, '');
 export const stripCss = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
+
+// The Pet and Charm overlays load apps/mimic/petsheet.js with a <script src>; a harness that runs their inline
+// <script> in a sandbox has to hand the module in the way the page gets it (as the global WpPetSheet).
+export const WpPetSheet = createRequire(import.meta.url)(path.join(ROOT, 'apps', 'mimic', 'petsheet.js'));
