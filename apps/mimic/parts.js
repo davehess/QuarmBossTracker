@@ -1066,6 +1066,41 @@
   }
   // A second column: the same rows moved dx to the right.
   function beside(rows, dx) { return rows.map(function (r) { return [r[0], r[1], r[2] + dx, r[3], r[4], r[5]]; }); }
+  // The same, at the heights a page's own rows have (an overlay's bar is 15 px, its line of text 13): the
+  // preset's pieces as "as pieces" lays them out start from the size the overlay itself is, then fitRows puts
+  // them in its footprint. (stack's heights are the chooser's, for a piece placed on its own.)
+  var COMPACT = { bar: 22, thin: 16, vbar: 80, ring: 70, arc: 60, readout: 15, big: 34, badge: 40, pips: 22,
+    rows: 80, chips: 20, inline: 15, columns: 40, seg: 40 };
+  function stackC(list, width) {
+    var y = 0;
+    return list.map(function (e) {
+      var w = e[3] || width || (DEFAULT_SIZE[e[1]] || [220])[0], h = e[2] || COMPACT[e[1]] || 22;
+      var row = [e[0], e[1], 0, y, w, h];
+      y += h + 3;
+      return row;
+    });
+  }
+  // The bounding box of a preset's rows, [w, h] from their top-left.
+  function rowsBox(rows) {
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    rows.forEach(function (r) { x0 = Math.min(x0, r[2]); y0 = Math.min(y0, r[3]); x1 = Math.max(x1, r[2] + r[4]); y1 = Math.max(y1, r[3] + r[5]); });
+    return x1 > x0 && y1 > y0 ? [x1 - x0, y1 - y0, x0, y0] : [0, 0, 0, 0];
+  }
+  // "As pieces" fits the overlay (the guild lead, 2026-10-19: "the as pieces version is HUGE by comparison. it
+  // should fit into the same setup. that applies for all of these prebuilts"). The rows are scaled so their
+  // box is exactly `box` ({ w, h }: what the whole overlay is, or would be): positions and sizes stretch with
+  // it, so every piece sits where it sits in the whole. A box that would squeeze the rows below `minK` (0.55)
+  // of their own size is kept at that size instead (an overlay with nothing to show is smaller than the
+  // pieces it has, and nothing can be read at half size). Returns { rows, sx, sy, scale } — scale is the text size to give
+  // each piece, the smaller of the two stretches, between 0.6 and 1.3.
+  function fitRows(rows, box, minK) {
+    var b = rowsBox(rows), k = minK > 0 ? minK : 0.55;
+    if (!(b[0] > 0 && b[1] > 0)) return { rows: rows.slice(), sx: 1, sy: 1, scale: 1 };
+    var sx = Math.max(k, box.w / b[0]), sy = Math.max(k, box.h / b[1]);
+    function r1(n) { return Math.round(n * 10) / 10; }
+    return { sx: sx, sy: sy, scale: Math.round(Math.max(0.6, Math.min(1.3, sx < sy ? sx : sy)) * 20) / 20,
+      rows: rows.map(function (r) { return [r[0], r[1], r1((r[2] - b[2]) * sx), r1((r[3] - b[3]) * sy), r1(r[4] * sx), r1(r[5] * sy), r[6]]; }) };
+  }
   // The HUD ring as pieces (FB-64: it used to be six separate small rings and three text rows, "a bunch of
   // individual rings, rather than the one big ring"). The ring is ONE circle, so a row is [piece, arc, look?]:
   // the arc me.html draws that piece on, in the ring's own 400-unit space, and the row it makes carries the
@@ -1098,38 +1133,47 @@
       ['tick.swing', { r: 172, a0: 132, a1: 176, w: 2.2, lr: 187, ls: 8.5, below: true }],
       ['me.cast', { r: 172, a0: 132, a1: 176, w: 2.2, lr: 187, ls: 8.5, below: true }],
       ['me.cooldowns', { r: 150, a0: 140, a1: 220, w: 2.2, lr: 165, ls: 8.5, below: true }]]) },
-    { id: 'hud-box', name: 'HUD (box)', embed: 'me', style: 'a', parts: stack([['me.name', 'readout'], ['me.hp', 'bar'], ['me.mana', 'bar'], ['me.end', 'bar'], ['me.xp', 'bar'], ['me.aa', 'bar'],
-      ['me.cast', 'bar'], ['target.name', 'readout'], ['target.hp', 'bar'], ['pet.hp', 'bar'], ['group.members', 'rows', 110], ['me.gems', 'rows', 150]], 240) },
-    { id: 'tank', name: 'Tank', embed: 'tank', parts: stack([['tank.mt', 'bar'], ['tank.heals', 'rows', 80], ['tank.da', 'bar'], ['tank.target', 'bar'], ['tank.enrage', 'readout'],
+    // The Box's rows are where me.html draws them (its blocks, measured in a 300 px wide Box with every block
+    // showing, x y w h from its top-left; sections.js "me"): the pieces take the Box's own places, then
+    // fitRows sets them to the Box's footprint on the Canvas.
+    { id: 'hud-box', name: 'HUD (box)', embed: 'me', style: 'a', parts: [
+      ['me.name', 'readout', 0, 0, 300, 20], ['me.hp', 'thin', 0, 23, 300, 15], ['me.mana', 'thin', 0, 41, 300, 15], ['me.end', 'thin', 0, 58, 300, 11],
+      ['me.xp', 'thin', 0, 72, 300, 15], ['me.aa', 'thin', 0, 90, 300, 15], ['pet.hp', 'thin', 0, 108, 300, 13], ['me.cast', 'thin', 0, 124, 300, 19],
+      ['target.name', 'readout', 0, 146, 150, 19], ['target.hp', 'thin', 150, 146, 150, 19], ['group.members', 'rows', 0, 234, 300, 41],
+      ['me.gems', 'columns', 0, 280, 300, 28]] },
+    { id: 'tank', name: 'Tank', embed: 'tank', parts: stackC([['tank.mt', 'bar'], ['tank.heals', 'rows', 80], ['tank.da', 'bar'], ['tank.target', 'bar'], ['tank.enrage', 'readout'],
       ['tank.dt', 'bar'], ['tank.rampage', 'bar'], ['heal.chdue', 'bar'], ['tank.ds', 'readout'], ['tank.mtbuffs', 'rows', 130], ['tank.offtanks', 'rows', 70]], 260) },
-    { id: 'command', name: 'Command Center', embed: 'command', parts: stack([['tank.target', 'bar'], ['tank.enrage', 'readout'], ['tank.dt', 'bar'], ['tank.mt', 'bar'], ['tank.rampage', 'bar'],
+    { id: 'command', name: 'Command Center', embed: 'command', parts: stackC([['tank.target', 'bar'], ['tank.enrage', 'readout'], ['tank.dt', 'bar'], ['tank.mt', 'bar'], ['tank.rampage', 'bar'],
       ['raid.defensives', 'rows', 70], ['me.cd_disc', 'bar'], ['heal.mana', 'rows', 110], ['heal.di', 'chips'], ['raid.rolls', 'rows', 80], ['raid.cures', 'rows', 70], ['raid.rez', 'rows', 70]], 260) },
-    // Target Info as the overlay has it: the Stats tab down the left, its Loot, Spells and F/Q/V
-    // tabs down the right.
-    { id: 'target', name: 'Target Info', embed: 'mobinfo', parts: stack([['target.name', 'readout'], ['target.level', 'readout'], ['target.pqdi', 'readout'], ['target.hpmax', 'readout'],
-      ['target.dmg', 'readout'], ['target.hp', 'bar'], ['target.statgrid', 'columns', 58], ['target.specials', 'chips', 92], ['target.sight', 'chips', 24], ['target.flags', 'chips'],
-      ['target.ht', 'readout'], ['target.slow', 'readout'], ['target.mana', 'bar'], ['target.lastcast', 'readout'], ['target.tot', 'readout'],
-      ['target.casting', 'rows', 60], ['target.debuffs', 'rows', 100], ['target.buffs', 'rows', 70]], 260)
-      .concat(beside(stack([['target.loot', 'rows', 170], ['target.spells', 'rows', 170], ['target.factions', 'rows', 90], ['target.quest', 'rows', 170], ['target.vendor', 'rows', 90]], 280), 268)) },
+    // Target Info's Stats tab as the overlay lays it out, name and numbers on shared lines, one overlay wide.
+    // Its Loot, Spells and F/Q/V tabs: the overlay shows one tab at a time, so as pieces they are their own
+    // set (the preset below), not a second column that would double its footprint.
+    { id: 'target', name: 'Target Info', embed: 'mobinfo', parts: [
+      ['target.name', 'readout', 0, 0, 190, 15], ['target.level', 'readout', 190, 0, 60, 15], ['target.pqdi', 'readout', 250, 0, 70, 15],
+      ['target.hpmax', 'readout', 0, 18, 120, 15], ['target.dmg', 'readout', 120, 18, 200, 15], ['target.hp', 'thin', 0, 36, 320, 16],
+      ['target.statgrid', 'columns', 0, 55, 320, 40], ['target.specials', 'chips', 0, 98, 320, 40], ['target.sight', 'chips', 0, 141, 160, 20],
+      ['target.flags', 'chips', 160, 141, 160, 20], ['target.ht', 'readout', 0, 164, 80, 15], ['target.slow', 'readout', 80, 164, 120, 15],
+      ['target.mana', 'thin', 200, 164, 120, 16], ['target.lastcast', 'readout', 0, 182, 200, 15], ['target.tot', 'readout', 200, 182, 120, 15],
+      ['target.casting', 'rows', 0, 200, 320, 40], ['target.debuffs', 'rows', 0, 243, 320, 60], ['target.buffs', 'rows', 0, 306, 320, 50]] },
     { id: 'target-tabs', name: 'Target: drops, spells, F/Q/V', parts: stack([['target.loot', 'rows', 170], ['target.spells', 'rows', 170],
       ['target.factions', 'rows', 90], ['target.quest', 'rows', 170], ['target.vendor', 'rows', 90]], 280) },
-    { id: 'charm', name: 'Charm', embed: 'charm', parts: stack([['charm.pet', 'bar'], ['charm.uptime', 'readout'], ['charm.breaks', 'bar'], ['charm.servertick', 'bar'], ['charm.mobtick', 'bar'], ['charm.buffs', 'rows', 90]], 240) },
-    { id: 'pets', name: 'Pets', embed: 'pets', parts: stack([['pet.hp', 'bar'], ['pet.target', 'readout'], ['pet.combat', 'readout'], ['pet.buffs', 'rows', 100]], 240) },
-    { id: 'dps', name: 'DPS HUD', embed: 'hud', parts: stack([['fight.name', 'readout'], ['fight.dps', 'rows', 200], ['fight.mine', 'readout']], 280) },
-    { id: 'threat', name: 'Threat meter', embed: 'threat', parts: stack([['fight.name', 'readout'], ['fight.threat', 'rows', 200]], 280) },
+    { id: 'charm', name: 'Charm', embed: 'charm', parts: stackC([['charm.pet', 'bar'], ['charm.uptime', 'readout'], ['charm.breaks', 'bar'], ['charm.servertick', 'bar'], ['charm.mobtick', 'bar'], ['charm.buffs', 'rows', 90]], 240) },
+    { id: 'pets', name: 'Pets', embed: 'pets', parts: stackC([['pet.hp', 'bar'], ['pet.target', 'readout'], ['pet.combat', 'readout'], ['pet.buffs', 'rows', 100]], 240) },
+    { id: 'dps', name: 'DPS HUD', embed: 'hud', parts: stackC([['fight.name', 'readout'], ['fight.dps', 'rows', 200], ['fight.mine', 'readout']], 280) },
+    { id: 'threat', name: 'Threat meter', embed: 'threat', parts: stackC([['fight.name', 'readout'], ['fight.threat', 'rows', 200]], 280) },
     { id: 'group', name: 'Group', parts: stack([['group.m1', 'bar'], ['group.m2', 'bar'], ['group.m3', 'bar'], ['group.m4', 'bar'], ['group.m5', 'bar'], ['pet.hp', 'bar']], 220) },
-    { id: 'tick', name: 'Tick', embed: 'zeal', parts: stack([['tick.server', 'bar'], ['charm.mobtick', 'bar'], ['tick.zeal', 'readout'], ['tick.clock', 'readout']], 220) },
-    { id: 'exttarget', name: 'Extended Target', embed: 'exttarget', parts: stack([['raid.online', 'readout'], ['raid.offtanked', 'readout'], ['raid.targets', 'rows', 240]], 280) },
-    { id: 'buffq', name: 'Buff queue', embed: 'buffQueue', parts: stack([['raid.debuffq', 'rows', 120], ['raid.buffq', 'rows', 140], ['raid.burst', 'rows', 70]], 280) },
-    { id: 'who', name: '/who', embed: 'who', parts: stack([['zone.target', 'readout'], ['zone.count', 'readout'], ['zone.who', 'rows', 220], ['zone.gone', 'rows', 90]], 280) },
-    { id: 'melody', name: 'Melody', embed: 'melody', parts: stack([['cast.now', 'readout'], ['cast.melody', 'rows', 110], ['cast.accelerating_chorus', 'bar'], ['cast.amplification', 'bar'], ['cast.counts', 'rows', 90]], 260) },
-    { id: 'chchain', name: 'CH chain', embed: 'chchain', parts: stack([['heal.chnext', 'readout'], ['heal.chdue', 'bar'], ['heal.chain', 'rows', 130], ['heal.di', 'chips']], 260) },
+    { id: 'tick', name: 'Tick', embed: 'zeal', parts: stackC([['tick.server', 'bar'], ['charm.mobtick', 'bar'], ['tick.zeal', 'readout'], ['tick.clock', 'readout']], 220) },
+    { id: 'exttarget', name: 'Extended Target', embed: 'exttarget', parts: stackC([['raid.online', 'readout'], ['raid.offtanked', 'readout'], ['raid.targets', 'rows', 240]], 280) },
+    { id: 'buffq', name: 'Buff queue', embed: 'buffQueue', parts: stackC([['raid.debuffq', 'rows', 120], ['raid.buffq', 'rows', 140], ['raid.burst', 'rows', 70]], 280) },
+    { id: 'who', name: '/who', embed: 'who', parts: stackC([['zone.target', 'readout'], ['zone.count', 'readout'], ['zone.who', 'rows', 220], ['zone.gone', 'rows', 90]], 280) },
+    { id: 'melody', name: 'Melody', embed: 'melody', parts: stackC([['cast.now', 'readout'], ['cast.melody', 'rows', 110], ['cast.accelerating_chorus', 'bar'], ['cast.amplification', 'bar'], ['cast.counts', 'rows', 90]], 260) },
+    { id: 'chchain', name: 'CH chain', embed: 'chchain', parts: stackC([['heal.chnext', 'readout'], ['heal.chdue', 'bar'], ['heal.chain', 'rows', 130], ['heal.di', 'chips']], 260) },
     { id: 'timers', name: 'Timers', parts: stack([['tick.server', 'bar'], ['timers.all', 'rows', 200]], 280) },
   ];
 
   root.WpParts = {
     C: C, CATS: CATS, MODES: MODES, DEFAULT_SIZE: DEFAULT_SIZE, CSS: CSS, THICK: THICK, ALIGN: ALIGN, PALETTE: PALETTE,
-    RING: RING, cleanArc: cleanArc, segBox: segBox, regenPulse: regenPulse,
+    RING: RING, cleanArc: cleanArc, segBox: segBox, regenPulse: regenPulse, fitRows: fitRows, rowsBox: rowsBox,
     render: render, resolve: resolve,
     util: { esc: esc, num: num, pct: pct, hpColor: hpColor, mmss: mmss, fmtNum: fmtNum, pctOf: pctOf, at: at },
     SOURCES: SOURCES, PARTS: PARTS, byId: byId, PRESETS: PRESETS,

@@ -588,32 +588,35 @@
   }
 
   // ── A · Classic ───────────────────────────────────────────────────────────
+  // Each block of the Box is marked with data-wp-sect, so the Canvas can cut the Box into its parts
+  // (apps/mimic/sections.js, "me"): an inert attribute on a plain block, so the Box lays out as before.
+  function sectOf(id, html){ return html ? '<div data-wp-sect="' + id + '">' + html + '</div>' : ''; }
   function renderA(s){
     var hpP = pctOf(s.hp), mnP = pctOf(s.mana);
     var h = '', rg = regenInfo(s);
-    h += brow(hpP, hpColor(hpP), curMax(s.hp), null, rg && rg.hp ? { w: rg.hp, tip: rg.tip, pulse: rg.pulse } : null);
+    h += sectOf('hp', brow(hpP, hpColor(hpP), curMax(s.hp), null, rg && rg.hp ? { w: rg.hp, tip: rg.tip, pulse: rg.pulse } : null));
     // No mana row for a warrior, rogue or monk — the HUD's rule (it had
     // shown an empty 0% bar for a monk).
-    if (mnP != null && !s.no_mana) { var bc = bardCounts(s); h += brow(mnP, 'var(--blue)', curMax(s.mana), bc ? bardText(bc) : null, rg && rg.mana ? { w: rg.mana, tip: rg.tip, pulse: rg.pulse } : null); }
+    if (mnP != null && !s.no_mana) { var bc = bardCounts(s); h += sectOf('mana', brow(mnP, 'var(--blue)', curMax(s.mana), bc ? bardText(bc) : null, rg && rg.mana ? { w: rg.mana, tip: rg.tip, pulse: rg.pulse } : null)); }
     // "Endurance can be small": a thin bar, its % beside it.
-    if (s.end && s.end.pct != null) h += '<div class="brow small">' + bar(s.end.pct, 'var(--orange)', '', 'thin')
-      + '<div class="pct" style="color:var(--orange)">' + Math.round(s.end.pct) + '%</div></div>';
-    if (s.xp && s.xp.pct != null) h += brow(s.xp.pct, 'var(--gold)', 'XP/hr ' + (s.xp.per_hr == null ? '…' : s.xp.per_hr.toFixed(1) + '%'));
-    if (s.aa && s.aa.pct != null) h += brow(s.aa.pct, 'var(--purple)', 'AA/hr ' + (s.aa.per_hr == null ? '…' : s.aa.per_hr.toFixed(1) + '%') + (s.aa.banked ? ' · ' + s.aa.banked + ' banked' : ''));
+    if (s.end && s.end.pct != null) h += sectOf('end', '<div class="brow small">' + bar(s.end.pct, 'var(--orange)', '', 'thin')
+      + '<div class="pct" style="color:var(--orange)">' + Math.round(s.end.pct) + '%</div></div>');
+    if (s.xp && s.xp.pct != null) h += sectOf('xp', brow(s.xp.pct, 'var(--gold)', 'XP/hr ' + (s.xp.per_hr == null ? '…' : s.xp.per_hr.toFixed(1) + '%')));
+    if (s.aa && s.aa.pct != null) h += sectOf('aa', brow(s.aa.pct, 'var(--purple)', 'AA/hr ' + (s.aa.per_hr == null ? '…' : s.aa.per_hr.toFixed(1) + '%') + (s.aa.banked ? ' · ' + s.aa.banked + ' banked' : '')));
     var meta = [];
     if (s.level != null) meta.push('Level <b>' + s.level + '</b>');
     if (s.weight && s.weight.cur != null) meta.push('Wt <b>' + s.weight.cur + '</b>/' + (s.weight.max != null ? s.weight.max : '?'));
     if (s.pet) meta.push('🐾 ' + esc(s.pet.name) + ' <b style="color:' + hpColor(s.pet.hp_pct) + '">' + Math.round(s.pet.hp_pct || 0) + '%</b>');
-    if (meta.length) h += '<div class="kv">' + meta.join('') + '</div>';
-    h += castHtml(s.casting);
-    h += targetHtml(s.target);
-    h += mineHtml(s);
+    if (meta.length) h += sectOf('meta', '<div class="kv">' + meta.join('') + '</div>');
+    h += sectOf('cast', castHtml(s.casting));
+    h += sectOf('target', targetHtml(s.target));
+    h += sectOf('mine', mineHtml(s));
     if (s.focus && s.focus.length) {
-      h += '<div class="kv">' + s.focus.map(function(f){ return esc(f.label) + ' <b>' + focusValue(f) + '</b>' + (f.sub ? ' <span class="dim">' + esc(f.sub) + '</span>' : ''); }).join('') + '</div>';
+      h += sectOf('focus', '<div class="kv">' + s.focus.map(function(f){ return esc(f.label) + ' <b>' + focusValue(f) + '</b>' + (f.sub ? ' <span class="dim">' + esc(f.sub) + '</span>' : ''); }).join('') + '</div>');
     }
-    var d = dpsLine(s.dps); if (d) h += '<div class="lbl">damage</div>' + d;
-    if (s.group && s.group.length) h += '<div class="lbl">group</div>' + groupHtml(s.group);
-    if (s.gems && s.gems.length) h += '<div class="lbl">spells <span class="dim">(casts left at current mana)</span></div>' + gemsHtml(s.gems);
+    var d = dpsLine(s.dps); if (d) h += sectOf('damage', '<div class="lbl">damage</div>' + d);
+    if (s.group && s.group.length) h += sectOf('group', '<div class="lbl">group</div>' + groupHtml(s.group));
+    if (s.gems && s.gems.length) h += sectOf('gems', '<div class="lbl">spells <span class="dim">(casts left at current mana)</span></div>' + gemsHtml(s.gems));
     return h;
   }
 
