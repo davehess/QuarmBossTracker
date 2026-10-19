@@ -357,7 +357,7 @@ describe('triggers.html: a muted countdown does not speak its warning', () => {
     const prelude = `
       let alertsEnabled = true, _visualElsewhere = false; const PART = null;
       function flash(t){ calls.flash.push(t); } function speak(t){ calls.speak.push(t); }
-      function playSound(){} function showFeedback(){} function offerMute(){} function pinSticky(){} function requestAutoHeight(){}
+      function playSound(){} function showFeedback(){} function offerMute(){} function offerVoice(){} function pinSticky(){} function requestAutoHeight(){}
       function fmtRemain(){ return ''; }
       const timerNodes = new Map();
     `;

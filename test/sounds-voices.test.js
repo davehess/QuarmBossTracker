@@ -494,7 +494,7 @@ describe('triggers.html — what a fire does with a sound', () => {
       const calls = []; var PART = null, _visualElsewhere = false;
       function flash(){ calls.push('flash'); } function speak(t, m){ calls.push('speak:' + t + (m && m.voice_pack ? '@' + m.voice_pack : '')); }
       function playSound(u, v){ calls.push('sound:' + u + (v != null ? '@' + v : '')); return playResult === undefined ? undefined : Promise.resolve(playResult); }
-      function showFeedback(){} function offerMute(){} function pinSticky(){}
+      function showFeedback(){} function offerMute(){} function offerVoice(){} function pinSticky(){}
       function _speakable(s){ return s; }
       ${cut('  let alertsEnabled = true;')}
       ${cut('  function fire(t){')}

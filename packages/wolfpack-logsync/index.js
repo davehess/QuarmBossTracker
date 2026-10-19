@@ -22589,6 +22589,10 @@ function renderMechanics(s) {
 function renderRecentFires(s) {
   var el = document.getElementById('wpRecentFires');
   if (!el) return;   // Triggers tab not painted yet
+  // Typing a better wording in a row's "Say" box: leave the card alone until the box loses focus (the draft is
+  // kept in _wpVfDraft, so the next paint shows it again).
+  var ae = document.activeElement;
+  if (ae && ae.tagName === 'INPUT' && el.contains(ae)) return;
   var overlays = (s.activeOverlays || []).slice(0, 6);
   var h = '<h2>⚡ Recent fires';
   h += '<span style="float:right;font-size:11px;font-weight:normal">';
@@ -22611,7 +22615,7 @@ function renderRecentFires(s) {
       h += '<tr><td class="dim">' + esc(ago) + '</td>' +
            '<td style="color:var(--text)">' + esc(o.trigger || '?') + '</td>' +
            '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
-           '<td>' + esc(o.text || '') + '</td>' +
+           '<td>' + esc(o.text || '') + voiceFireCell(o) + '</td>' +
            '<td>' + enrageMuteCell(o) + '</td></tr>';
     }
     h += '</table>';
@@ -22619,6 +22623,63 @@ function renderRecentFires(s) {
   h += enrageMutedList(s.enrageMutes);
   morphInto(el, h);
 }
+// 🔊 on a row that was SPOKEN (the guild lead, 2026-10-19: "B for voice"). The trigger window tells the agent what it
+// said and in which voice (o.voice, set by POST /api/voice-spoken), so this opens to: what was spoken, the engine /
+// voice / speed, ▶ to hear it again exactly so, a "Say" line to type a better wording (▶ plays it in the CURRENT
+// voice), and Suggest, which sends the report with that wording to the officers. The draft and the last answer live
+// in JS-side stores so a repaint (this card repaints as the "when" column ticks) never loses them.
+var _wpVfDraft = {}, _wpVfMsg = {};
+function wpVfKey(o) { return String((o && (o.firedAt || o.shownAt)) || 0); }
+function voiceFireCell(o) {
+  var v = o && o.voice;
+  if (!v || !v.spoken) return '';
+  var k = wpVfKey(o), say = _wpVfDraft[k] !== undefined ? _wpVfDraft[k] : v.spoken;
+  var b = 'background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px';
+  var how = (v.engine || 'windows') + (v.voice ? ' / ' + v.voice : '') + (v.rate ? ' · ' + v.rate + '×' : '');
+  return '<details ' + wpKeep('vfire|' + k) + ' style="margin-top:4px"><summary style="cursor:pointer" title="What was spoken, and the voice it was spoken in">🔊</summary>'
+    + '<div class="dim" style="font-size:11px;margin-top:4px">spoke: <span style="color:var(--text)">' + esc(v.spoken) + '</span> · ' + esc(how)
+    + ' <button type="button" data-vf-play="' + esc(k) + '" style="' + b + '" title="Hear it again with the same voice, speed and pitch">▶</button></div>'
+    + '<div style="font-size:11px;margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;align-items:center"><span class="dim">Say:</span>'
+    + '<input type="text" data-vf-draft="' + esc(k) + '" maxlength="300" value="' + esc(say) + '" style="flex:1;min-width:160px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-family:inherit;font-size:11px">'
+    + '<button type="button" data-vf-say="' + esc(k) + '" style="' + b + '" title="Hear this wording in your current voice">▶</button>'
+    + '<button type="button" data-vf-suggest="' + esc(k) + '" style="' + b + '" title="Send this report, with this wording, to the officers">Suggest</button></div>'
+    + (_wpVfMsg[k] ? '<div class="dim" style="font-size:11px;margin-top:4px">' + esc(_wpVfMsg[k]) + '</div>' : '')
+    + '</details>';
+}
+function wpVfFind(k) {
+  var list = (window.__wpLastState && window.__wpLastState.activeOverlays) || [];
+  for (var i = 0; i < list.length; i++) if (wpVfKey(list[i]) === k && list[i].voice) return list[i];
+  return null;
+}
+// ▶ replay, ▶ say, Suggest. A report the server cannot take yet says so and keeps the typed wording.
+function wpVfAct(kind, k) {
+  var o = wpVfFind(k);
+  if (!o) return;
+  var v = o.voice, draft = _wpVfDraft[k] !== undefined ? _wpVfDraft[k] : v.spoken;
+  if (kind === 'play') {
+    if (window._wpVoiceNames && window._wpVoiceNames.replay) window._wpVoiceNames.replay({ text: v.spoken, engine: v.engine, voice: v.voice, rate: v.rate, pitch: v.pitch });
+    return;
+  }
+  if (kind === 'say') { if (window._wpVoiceNames && window._wpVoiceNames.say) window._wpVoiceNames.say(draft); return; }
+  if (!String(draft).trim() || String(draft).trim() === String(v.spoken).trim()) { _wpVfMsg[k] = 'Change the wording first, then Suggest.'; if (window.__wpLastState) renderRecentFires(window.__wpLastState); return; }
+  _wpVfMsg[k] = 'Sending…'; if (window.__wpLastState) renderRecentFires(window.__wpLastState);
+  fetch('/api/voice-report', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ spoken: v.spoken, original: v.original, engine: v.engine, voice: v.voice, rate: v.rate, pitch: v.pitch,
+      trigger_id: o.trigger_id || null, trigger_name: o.trigger || o.text || '', suggested_say: String(draft).trim() }) })
+    .then(function(r) { return r.json().catch(function() { return {}; }).then(function(j) { return { status: r.status, j: j || {} }; }); },
+      function() { return { status: 0, j: {} }; })
+    .then(function(x) {
+      _wpVfMsg[k] = x.status === 200 && x.j.ok ? 'Sent. Thank you.'
+        : x.status === 503 ? 'Voice reports aren\\'t switched on yet. Your wording stays here.'
+        : x.status === 429 ? 'Too many reports just now. Try again in a minute.'
+        : (x.j.error || 'Could not send it.');
+      if (window.__wpLastState) renderRecentFires(window.__wpLastState);
+    });
+}
+document.addEventListener('input', function(e) {
+  var t = e.target;
+  if (t && t.getAttribute && t.hasAttribute('data-vf-draft')) _wpVfDraft[t.getAttribute('data-vf-draft')] = t.value;
+});
 // 🔇 on an enrage callout's row: the same three choices the trigger overlay offers (the guild lead,
 // 2026-10-19). Plain buttons with data attributes; the section-root click delegation routes them.
 function enrageMuteCell(o) {
@@ -31621,6 +31682,13 @@ function wpTrigApplyForm(base, f) {
         if (em) { enrageMutePost('mute', em.getAttribute('data-enrage-mute'), em.getAttribute('data-mob')); return; }
         var eu = t.closest ? t.closest('[data-enrage-unmute]') : null;
         if (eu) { enrageMutePost('unmute', eu.getAttribute('data-enrage-unmute'), eu.getAttribute('data-mob')); return; }
+        // 🔊 on a spoken fire (Recent fires): replay it, hear a new wording, or send the suggestion.
+        var vf = t.closest ? t.closest('[data-vf-play],[data-vf-say],[data-vf-suggest]') : null;
+        if (vf) {
+          var vk = vf.hasAttribute('data-vf-play') ? 'play' : (vf.hasAttribute('data-vf-say') ? 'say' : 'suggest');
+          wpVfAct(vk, vf.getAttribute('data-vf-' + vk));
+          return;
+        }
         if (!t.id) return;
         if (t.id === 'trigClearAllBtn')  onClearAll();
         else if (t.id === 'trigClearTestBtn') onClearTests();
@@ -32212,9 +32280,16 @@ function wpSoundOverrideHtml(t, ov) {
     }
     return { voice: voice, rate: rate, pitch: pitch };
   }
-  function speakWin(text, packId){
+  // over (optional): a past line's own { voice (name), rate, pitch }, which outrank the pack's (REPLAY, below).
+  function speakWin(text, packId, over){
     if (!window.speechSynthesis) return;
     var v = pick(packId), u = new SpeechSynthesisUtterance(text);
+    if (over) {
+      if (over.rate > 0) v.rate = over.rate;
+      if (over.pitch > 0) v.pitch = over.pitch;
+      var vs0 = voices();
+      for (var vi = 0; vi < vs0.length; vi++) if (vs0[vi].name === over.voice) { v.voice = vs0[vi]; break; }
+    }
     if (v.voice) u.voice = v.voice;
     u.rate = v.rate; u.pitch = v.pitch;
     try { window.speechSynthesis.cancel(); } catch (e) { void e; }
@@ -32303,12 +32378,12 @@ function wpSoundOverrideHtml(t, ov) {
   }
   // A phrase from a downloaded voice, made by Mimic. Resolves true once it is playing, false on ANY trouble.
   // test true is a person pressing ▶ Test: Mimic and this wait longer, because Kokoro can take several seconds.
-  function playNeural(ch, text, packId, test){
+  function playNeural(ch, text, packId, test, rate){
     var m = window.mimic;
     if (!m || !m.voiceSynth) return Promise.resolve(false);
     return new Promise(function(done){
       var late = false, t = setTimeout(function(){ late = true; done(false); }, test ? 12900 : 2900);
-      var spec = { engine: ch.engine, voice: ch.voice, rate: pick(packId).rate };
+      var spec = { engine: ch.engine, voice: ch.voice, rate: rate > 0 ? rate : pick(packId).rate };
       if (test) spec.test = true;
       Promise.resolve(m.voiceSynth(text, spec)).then(function(buf){
         if (late) return;
@@ -32641,7 +32716,16 @@ function wpSoundOverrideHtml(t, ov) {
     await warm;
     speak(text, packId || null);
   }
-  window._wpVoiceNames = { mount: mount, say: say };
+  // REPLAY (2026-10-19): a line that was spoken, again, with the engine, voice, speed and pitch it was spoken with
+  // (the 🔊 on a Recent fires row). s = { text, engine, voice, rate, pitch }. A downloaded voice is asked for by name;
+  // any trouble, or a voice that is gone, speaks it with the Windows voice that was named (else the default).
+  async function replay(s){
+    var text = String((s && s.text) || '').trim().slice(0, 300);
+    if (!text) return;
+    if (s.engine && s.engine !== 'windows' && await playNeural({ engine: s.engine, voice: s.voice }, text, null, true, s.rate)) return;
+    speakWin(text, null, s);
+  }
+  window._wpVoiceNames = { mount: mount, say: say, replay: replay };
 })();
 
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
@@ -34334,6 +34418,9 @@ function startWebDashboard(port) {
       if (req.url && req.url.split('?')[0] === '/api/trigger-rules' && (req.method === 'GET' || req.method === 'POST')) return _handleTriggerRules(req, res);
       // Enrage callout mutes: this mob / all, this session / this mob always (2026-10-19).
       if (req.url && req.url.split('?')[0] === '/api/enrage-mute' && (req.method === 'GET' || req.method === 'POST')) return _handleEnrageMute(req, res);
+      // "Voice unclear": what the trigger window spoke, and the report that goes to the officers (2026-10-19).
+      if (req.url && req.url.split('?')[0] === '/api/voice-spoken' && req.method === 'POST') return _handleVoiceSpoken(req, res);
+      if (req.url && req.url.split('?')[0] === '/api/voice-report' && req.method === 'POST') return _handleVoiceReport(req, res);
       // Personal trigger sync — Push / Pull between this household's PCs (2026-10-12).
       if (req.url && req.url.startsWith('/api/trigger-sync/')) return _handleTriggerSync(req, res);
       // Sounds, voice packs, this PC's sound overrides, how names are pronounced (2026-10-14).
@@ -46636,6 +46723,68 @@ async function _handleEnrageMute(req, res) {
   send(out.ok ? 200 : 400, out);
 }
 
+// ── Voice reports (the guild lead, 2026-10-19: "B for voice") ───────────────────────────────────────────────────
+// "Voice unclear": a callout nobody could understand, reported with the exact text, engine, voice, speed and pitch
+// that said it. Two local routes, both from Mimic's own pages:
+//   POST /api/voice-spoken  the trigger window says what it just played. It is kept on the matching Recent fires
+//                           entry (o.voice), which /api/state already carries to the dashboard: no second store.
+//   POST /api/voice-report  the 🔊 Voice unclear button, and the dashboard's Suggest. Relayed to the bot's
+//                           POST /api/agent/voice-report with the agent's token and Mimic session; this adds the
+//                           version and the character. No Discord id is sent: the server knows who the token is.
+// A 503 (or 404, an older bot) from the server is "not switched on yet": the caller is told so and keeps its text.
+function _voiceClip(v, n) { return String(v == null ? '' : v).trim().slice(0, n); }
+function _voiceNum(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
+// The one place that decides what a report carries (a whitelist; length caps are the server contract's).
+function _voiceReportBody(b, character) {
+  b = b || {};
+  const spoken = _voiceClip(b.spoken, 300);
+  if (!spoken) return null;
+  const out = {
+    spoken, original: _voiceClip(b.original, 300), engine: _voiceClip(b.engine, 20), voice: _voiceClip(b.voice, 80),
+    rate: _voiceNum(b.rate), pitch: _voiceNum(b.pitch), agent_version: AGENT_VERSION,
+    trigger_id: b.trigger_id == null ? null : _voiceClip(b.trigger_id, 80), trigger_name: _voiceClip(b.trigger_name, 200),
+    character: _voiceClip(character, 40),
+  };
+  const say = _voiceClip(b.suggested_say, 300), note = _voiceClip(b.note, 280);
+  if (say) out.suggested_say = say;
+  if (note) out.note = note;
+  return out;
+}
+// The overlay's account of a line it just spoke → the Recent fires entry it came from. ts is the fire's own
+// timestamp; fires pushed in the same millisecond are told apart by the text shown.
+function _noteVoiceSpoken(b) {
+  const ts = Number(b && b.ts);
+  if (!(ts > 0) || !_voiceClip(b.spoken, 300)) return false;
+  const same = _activeOverlays.filter(o => (o.firedAt || o.shownAt || 0) === ts);
+  const o = same.find(x => (x.text || '') === String(b.original || '')) || same[0];
+  if (!o) return false;
+  o.voice = { spoken: _voiceClip(b.spoken, 300), original: _voiceClip(b.original, 300), engine: _voiceClip(b.engine, 20) || 'windows',
+    voice: _voiceClip(b.voice, 80), rate: _voiceNum(b.rate), pitch: _voiceNum(b.pitch) };
+  _stateJsonCache = { at: 0, body: null };   // /api/state carries activeOverlays
+  return true;
+}
+async function _handleVoiceSpoken(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  send(200, { ok: true, matched: _noteVoiceSpoken(b) });
+}
+async function _handleVoiceReport(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  const body = _voiceReportBody(b, _primaryCharacter());
+  if (!body) return send(400, { ok: false, error: 'nothing to report' });
+  const r = await _pronBotCall('POST', '/voice-report', body);
+  if (r.ok) return send(200, { ok: true, id: r.data && r.data.id != null ? r.data.id : null });
+  if (r.local) return send(409, { ok: false, error: r.error });
+  if (r.status === 503 || r.status === 404) return send(503, { ok: false, unavailable: true, error: "Voice reports aren't switched on yet." });
+  if (r.status === 429) return send(429, { ok: false, error: 'Too many reports just now. Try again in a minute.' });
+  send(r.status === 400 ? 400 : 502, { ok: false, error: r.error });
+}
+
 // ── Personal trigger sync — the agent half (the guild lead, 2026-10-12: "Push and Pull buttons, like UI
 // backups"). Push sends this PC's personal triggers + "what you hear" rules to the bot, which keeps them
 // encrypted for the household; Pull on another PC fetches one and merges it in, or replaces the lot.
@@ -58874,6 +59023,7 @@ module.exports = {
   _triggerRules, _resolveRule, _computeRuleGroups, _triggerRulesPayload, _setTriggerRule, _cleanRules,
   _ruleKeyOf, _ruleGroupOfGuild, _applyTriggerRule, _builtinRuleModes, _guildRuleModes,
   // Enrage mutes (2026-10-19) — exported for test/enrage-callouts.test.js.
+  _handleVoiceSpoken, _handleVoiceReport, _voiceReportBody,
   _setEnrageMute, _enrageMutesView, _enrageMuteSession, loadTriggerRules, _tickEnrageWarn, _mobInfoCacheKey, _enrageWarned,
   // Personal trigger sync (agent half) — exported for test/personal-trigger-sync-agent.test.js.
   _applyTriggerPull, _triggerSyncPush, _triggerSyncList, _triggerSyncPull, _tsBackupLocal,
