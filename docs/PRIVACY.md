@@ -34,7 +34,8 @@ Each of these was checked against the code on the date above.
   custom channels, `/say`, OOC, shouts and auctions are dropped on your machine
   before anything is sent. Tells are too, unless you turn tell relay on. If you
   use Mimic's Chat overlay (beta), those same lines are also kept on your PC so
-  the overlay can show them to you. They are never sent anywhere. To survive a
+  the overlay can show them to you; while it is open it also reads which channel
+  Zeal says a line came from, on your PC, to sort it. They are never sent anywhere. To survive a
   restart they are saved to one **encrypted** file on your PC (AES-256-GCM, with
   a key Mimic keeps in your OS keychain — no key, no file), holding only the last
   24 hours of what the overlay shows. It is deleted when you sign out and do not
