@@ -773,6 +773,11 @@ next touch one rather than assuming a missing row means a missing doc.
   test rows turn off (`5206c69c`); prebuilt pieces keep the whole overlay's footprint, an "as whole" chip, Target Info
   tab pieces, HUD box apart, Command Center loads the bundled page, the locate line only with Pieces open (`a15ddca4`).
   Tests: `test/canvas-show-when.test.js`, `test/timers-canvas.test.js`, `test/canvas-prebuilt-fit.test.js`.
+- **🧪 Fit to content, per-item background, FB-92, FB-93 (agent 3.8.18 + Mimic beta, 2026-10-19; DECISIONS §381):**
+  overlays keep fitting their height (up or down) and never mid-drag; Canvas items fit and grow up or down; Background
+  per item with a "Default background" for the rest; the Canvas timer ✕ takes the click; spell rows coloured by kind;
+  a whole Target Info on the Canvas grows to show its buffs. Tests: `test/overlay-fit-content.test.js`,
+  `test/canvas-timer-hover-and-colours.test.js`, `test/mobinfo-canvas-whole-fit.test.js`.
 - **✅ raidmimic.com live (2026-10-19; DECISIONS §370).** https://raidmimic.com serves the guild leaders' page.
 - **✅ Voice reports, server half (bot 3.2.8 · web 1.9.9, 2026-10-19; DECISIONS §379).** `POST /api/agent/voice-report`
   and `/admin/voice-reports` [beta]; the `voice_reports` table was created 2026-10-19. `test/voice-reports.test.js`.
