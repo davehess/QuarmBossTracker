@@ -23994,6 +23994,17 @@ function _galleryRoutes() {
   return _gallery;
 }
 
+let _setupShare = null;
+function _setupShareRoutes() {
+  if (!_setupShare) {
+    _setupShare = require('./utils/setupShare').createSetupShare({
+      supabase: require('./utils/supabase'),
+      requireAuth: (rq, rs) => mimicLink.requireAgentAuth(rq, rs),
+    });
+  }
+  return _setupShare;
+}
+
 let _voiceReports = null;
 function _voiceReportRoutes() {
   if (!_voiceReports) {
@@ -24491,6 +24502,17 @@ const httpServer = http.createServer(async (req, res) => {
     try { if (await _galleryRoutes().handle(req, res)) return; }
     catch (err) {
       console.error('[gallery] handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Share a whole Mimic setup by a six-character code, 24 hours (the guild lead, 2026-10-19, DECISIONS §383).
+  // Mimic session required; the bundle is held in bot_kv. Routes, limits and the alphabet live in utils/setupShare.js.
+  if (/^\/api\/agent\/setup-share(?:[/?#]|$)/.test(req.url)) {
+    try { if (await _setupShareRoutes().handle(req, res)) return; }
+    catch (err) {
+      console.error('[setup-share] handler error:', err);
       if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
