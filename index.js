@@ -23967,6 +23967,17 @@ function _tuneNum(key, dflt) {
   return (v === undefined || v === null || v === '' || !Number.isFinite(Number(v))) ? dflt : Number(v);
 }
 
+let _gallery = null;
+function _galleryRoutes() {
+  if (!_gallery) {
+    _gallery = require('./utils/gallery').createGallery({
+      supabase: require('./utils/supabase'),
+      requireAuth: (rq, rs) => mimicLink.requireAgentAuth(rq, rs),
+    });
+  }
+  return _gallery;
+}
+
 const httpServer = http.createServer(async (req, res) => {
   // Per-IP limiter FIRST: over the limit costs one 429 and no further work. /health is exempt (Railway's healthcheck).
   if (!/^\/healthz?(?:[?#]|$)/.test(req.url || '')) {
@@ -24443,6 +24454,17 @@ const httpServer = http.createServer(async (req, res) => {
     catch (err) {
       console.error('[public-catalog] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // The Masterpiece Gallery (the guild lead, 2026-10-19): /api/public/gallery* needs no sign-in, /api/agent/gallery*
+  // takes a Mimic session. Routes, caches and the private-column rules live in utils/gallery.js.
+  if (/^\/api\/(?:public|agent)\/gallery(?:[/?#]|$)/.test(req.url)) {
+    try { if (await _galleryRoutes().handle(req, res)) return; }
+    catch (err) {
+      console.error('[gallery] handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
   }
