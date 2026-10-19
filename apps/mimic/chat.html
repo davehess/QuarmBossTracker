@@ -553,14 +553,26 @@
       }
       h += hh + histDividerHtml(shownH);
     }
-    for (i = 0; i < _lines.length; i++) if (lineVisible(f, _lines[i])) h += rowHtml(_lines[i]);
+    for (i = 0; i < _lines.length; i++) if (lineVisible(f, _lines[i]) && !(_histHours && _lines[i].via && heardLocally(_lines[i], _histLines))) h += rowHtml(_lines[i]);
     var stick = pinned();
     feedEl.innerHTML = h;
     if (stick) toBottom();
     paintEmpty();
   }
+  // FB-91: a relayed ("via guild") line whose own copy is in this PC's log is the same line. The local copy wins and keeps
+  // its label, whichever arrived first and whatever the capitalisation or spacing (v = the relayed line, l = a local one).
+  function normText(s){ return String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim(); }
+  function sameSaid(v, l){
+    if (!l || l.via || l.sep || v.ch !== l.ch || Math.abs(v.t - l.t) > 5000 || normText(v.text) !== normText(l.text)) return false;
+    var w = String(v.who == null ? '' : v.who).toLowerCase();
+    return String(l.who == null ? '' : l.who).toLowerCase() === w || (!!l.self && String(l.on == null ? '' : l.on).toLowerCase() === w);
+  }
+  function heardLocally(v, pool){ for (var i = 0; i < pool.length; i++) if (sameSaid(v, pool[i])) return true; return false; }
   function addLines(fresh){
-    if (!fresh.length) return;
+    var gone = false, pool = fresh.concat(_lines, _histLines), k;
+    for (k = _lines.length - 1; k >= 0; k--) if (_lines[k].via && heardLocally(_lines[k], fresh)) { _lines.splice(k, 1); gone = true; }
+    fresh = fresh.filter(function(l){ return !(l.via && heardLocally(l, pool)); });
+    if (!fresh.length) { if (gone) repaint(); return; }
     // A first sight of a channel, or of a slot's name, changes what the ⚙ lists (and may resolve older "#n" rows).
     var learned = false, anyChan = false;
     for (var j = 0; j < fresh.length; j++) {
@@ -568,7 +580,7 @@
       if (fresh[j].ch === 'custom') anyChan = true;
     }
     if (anyChan) paintChans();
-    if (learned) { for (var q = 0; q < fresh.length; q++) _lines.push(fresh[q]); if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX); repaint(); return; }
+    if (learned || gone) { for (var q = 0; q < fresh.length; q++) _lines.push(fresh[q]); if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX); repaint(); return; }
     var f = makeFilter(shownGroupIds()), h = '', shown = 0, stick = pinned();
     for (var i = 0; i < fresh.length; i++) { _lines.push(fresh[i]); if (lineVisible(f, fresh[i])) { h += rowHtml(fresh[i]); if (!fresh[i].sep) shown++; } }
     if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX);

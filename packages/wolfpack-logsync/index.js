@@ -15496,8 +15496,29 @@ const _meEnraged = new Map();   // mobLower → until
 // at 12-10% of mob hp left'): the warning now lands as the target shows 12%, checked four times a
 // second, and the trigger window speaks it ahead of anything else in its queue.
 const ENRAGE_WARN_PCT = 12;
+// 2026-10-19 (the guild lead: "enrage soon callouts are too often, maybe just restrict them to bosses.
+// enrage needs to pop off at 9% on other mobs. should be muteable per mob/this session/permanently"):
+// a boss keeps "Enrage soon" at 12%; any other mob that can enrage gets one short "<mob> enraging" at 9%.
+const ENRAGE_OTHER_PCT = 9;
 const _meEnrageEnded = new Map();   // mobLower → when its enrage ended
 const _enrageWarned = new Map();    // "mobLower#spawnid" → when "Enrage soon" was spoken
+// Mutes. This session (gone at restart): one mob by name, or every enrage callout. Always: a rule
+// 'builtin:enrage_soon:<mob>' = off in trigger_rules.json ("What you hear"'s file, so it survives a
+// restart and rides the personal-trigger sync). A muted mob shows nothing and says nothing.
+const _enrageMuteSession = { all: false, mobs: new Set() };
+const ENRAGE_ALWAYS_PREFIX = 'builtin:enrage_soon:';
+function _enrageMobKey(name) {
+  return String(name || '').replace(/^#/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 120);
+}
+function _enrageMuted(mobKey) {
+  if (_enrageMuteSession.all || _enrageMuteSession.mobs.has(mobKey)) return true;
+  const r = _triggerRules[ENRAGE_ALWAYS_PREFIX + mobKey];
+  return !!(r && r['*'] === 'off');
+}
+// A boss by the curated list or by the catalog's raid_target flag (_myFightIsBoss).
+function _enrageIsBoss(name, zoneId) {
+  return _isEnrageBoss(name) || _myFightIsBoss(name, zoneId);
+}
 function _mobCanEnrage(name, zoneId) {
   if (_isEnrageBoss(name)) return true;
   const c = _mobInfoByName.get(_mobInfoCacheKey(name, zoneId));
@@ -15516,11 +15537,15 @@ function _tickEnrageWarn(nowMs) {
   if (!(hp > 0 && hp <= ENRAGE_WARN_PCT) || _enrageWarned.has(key)) return;
   const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
   if (!_mobCanEnrage(st.target_name, zoneId)) return;
+  const boss = _enrageIsBoss(st.target_name, zoneId);
+  if (!boss && hp > ENRAGE_OTHER_PCT) return;   // not a boss: wait for 9%
+  const mobKey = _enrageMobKey(name);
+  if (_enrageMuted(mobKey)) return;
   _enrageWarned.set(key, nowMs);
   if (_enrageWarned.size > 100) _enrageWarned.delete(_enrageWarned.keys().next().value);
   _pushOverlay({
-    text:        '⚠ ' + name + ' at ' + Math.round(hp) + '% — enrage soon',
-    tts:         'Enrage soon',
+    text:        '⚠ ' + name + ' at ' + Math.round(hp) + '% — ' + (boss ? 'enrage soon' : 'enraging'),
+    tts:         boss ? 'Enrage soon' : name + ' enraging',
     color:       'red',
     duration_ms: 5000,
     shownAt:     nowMs,
@@ -15528,6 +15553,7 @@ function _tickEnrageWarn(nowMs) {
     trigger:     'Enrage soon',
     scope:       'enrage',
     rule_key:    'builtin:enrage_soon',
+    enrage_mob:  mobKey,   // the overlay's 🔇 and the dashboard row mute by this
     test:        false,
   });
 }
@@ -18573,6 +18599,8 @@ function _serializeForDashboard() {
     // lines, honour the same rules.
     guildRuleModes:      _guildRuleModes(),
     builtinRuleModes:    _builtinRuleModes(),
+    // Enrage callouts muted right now (the Recent fires row's 🔇 and its muted list).
+    enrageMutes:         _enrageMutesView(),
     // This PC's own sound on a guild trigger it cannot edit ({trigger_id: {sound, sound_mode}}); the guild table badges it.
     soundOverrides:      _soundOverrides,
     personalTriggerCount: (_personalTriggers || []).length,
@@ -22390,7 +22418,7 @@ function renderRecentFires(s) {
   if (overlays.length === 0) {
     h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Rehearse</b> on a row to drive a synthesized line through the real pipeline (pattern + cooldown + suppression) and hear the actual TTS.</div>';
   } else {
-    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
+    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th><th></th></tr>';
     for (var i = 0; i < overlays.length; i++) {
       var o = overlays[i];
       var ago = fmtAgo(o.shownAt || 0);
@@ -22403,11 +22431,41 @@ function renderRecentFires(s) {
       h += '<tr><td class="dim">' + esc(ago) + '</td>' +
            '<td style="color:var(--text)">' + esc(o.trigger || '?') + '</td>' +
            '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
-           '<td>' + esc(o.text || '') + '</td></tr>';
+           '<td>' + esc(o.text || '') + '</td>' +
+           '<td>' + enrageMuteCell(o) + '</td></tr>';
     }
     h += '</table>';
   }
+  h += enrageMutedList(s.enrageMutes);
   morphInto(el, h);
+}
+// 🔇 on an enrage callout's row: the same three choices the trigger overlay offers (the guild lead,
+// 2026-10-19). Plain buttons with data attributes; the section-root click delegation routes them.
+function enrageMuteCell(o) {
+  if (!o || !o.enrage_mob) return '';
+  var m = esc(o.enrage_mob);
+  var b = 'background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 6px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:4px';
+  return '<button type="button" data-enrage-mute="mob" data-mob="' + m + '" style="' + b + '" title="Stop this mob\\'s enrage callouts (text and speech) until the agent restarts">🔇 this mob</button>'
+       + '<button type="button" data-enrage-mute="all" data-mob="' + m + '" style="' + b + '" title="Stop every enrage callout until the agent restarts">🔇 all</button>'
+       + '<button type="button" data-enrage-mute="always" data-mob="' + m + '" style="' + b + '" title="Stop this mob\\'s enrage callouts for good">🔇 always</button>';
+}
+// What is muted, each with a ✕ that unmutes it. Empty when nothing is, so the card stays as it was.
+function enrageMutedList(em) {
+  if (!em) return '';
+  var chips = [];
+  var chip = function(label, scope, mob) {
+    chips.push('<span style="display:inline-block;margin:4px 6px 0 0;padding:2px 6px;border:1px solid var(--border);border-radius:4px">' + esc(label)
+      + ' <button type="button" data-enrage-unmute="' + scope + '" data-mob="' + esc(mob || '') + '" title="Unmute" style="background:none;border:0;color:var(--text);cursor:pointer;font-family:inherit;font-size:11px">✕</button></span>');
+  };
+  if (em.all) chip('all enrage callouts · this session', 'all', '');
+  (em.session || []).forEach(function(m) { chip(m + ' · this session', 'mob', m); });
+  (em.always || []).forEach(function(m) { chip(m + ' · always', 'always', m); });
+  if (!chips.length) return '';
+  return '<div style="margin-top:8px;font-size:12px"><span class="dim">🔇 Muted enrage callouts</span> ' + chips.join('') + '</div>';
+}
+function enrageMutePost(action, scope, mob) {
+  return fetch('/api/enrage-mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: action, scope: scope, mob: mob }) }).catch(function() { return null; });
 }
 // ⏪ Replay status (#101) — the volatile counterpart to the byte-stable Replay
 // FORM. Fills its own #wpReplayStatus placeholder every poll: progress + a STOP
@@ -31378,6 +31436,11 @@ function wpTrigApplyForm(base, f) {
           wpGuildTrigToggle(gr.getAttribute('data-trig-key'));
           return;
         }
+        // 🔇 on an enrage fire (Recent fires) and ✕ on the muted list under it.
+        var em = t.closest ? t.closest('[data-enrage-mute]') : null;
+        if (em) { enrageMutePost('mute', em.getAttribute('data-enrage-mute'), em.getAttribute('data-mob')); return; }
+        var eu = t.closest ? t.closest('[data-enrage-unmute]') : null;
+        if (eu) { enrageMutePost('unmute', eu.getAttribute('data-enrage-unmute'), eu.getAttribute('data-mob')); return; }
         if (!t.id) return;
         if (t.id === 'trigClearAllBtn')  onClearAll();
         else if (t.id === 'trigClearTestBtn') onClearTests();
@@ -34065,6 +34128,8 @@ function startWebDashboard(port) {
       if (req.url && req.url.split('?')[0] === '/api/kite-loops' && req.method === 'GET') return _handleKiteLoopsGet(req, res);
       // "What you hear" — per-person rules for every callout (the guild lead, 2026-10-12).
       if (req.url && req.url.split('?')[0] === '/api/trigger-rules' && (req.method === 'GET' || req.method === 'POST')) return _handleTriggerRules(req, res);
+      // Enrage callout mutes: this mob / all, this session / this mob always (2026-10-19).
+      if (req.url && req.url.split('?')[0] === '/api/enrage-mute' && (req.method === 'GET' || req.method === 'POST')) return _handleEnrageMute(req, res);
       // Personal trigger sync — Push / Pull between this household's PCs (2026-10-12).
       if (req.url && req.url.startsWith('/api/trigger-sync/')) return _handleTriggerSync(req, res);
       // Sounds, voice packs, this PC's sound overrides, how names are pronounced (2026-10-14).
@@ -40102,14 +40167,27 @@ let _guildFeedIngame = null;             // members in game WITH MIMIC RUNNING p
 // A relayed line this PC's own log already heard (same channel, speaker and text within 5 s): the bot hands a new
 // poll the recent backlog, which includes what the player read in game just before logging out. Your own line
 // is "You" locally and your name in the relay, so the character the line was heard on counts as the speaker too.
+// FB-91: two copies of one line can differ in capitalisation or spacing, so the text compares lower-cased and
+// whitespace-collapsed (a case-only difference used to show the line twice, once labelled "via guild").
+function _chatNormText(s) { return String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim(); }
 function _guildFeedHeardLocally(ch, who, text, at) {
-  const w = who.toLowerCase();
+  const w = who.toLowerCase(), nt = _chatNormText(text);
   for (let i = _chatRing.length - 1, n = 0; i >= 0 && n < 150; i--, n++) {
     const x = _chatRing[i];
-    if (x.swap || x.ch !== ch || x.text !== text || Math.abs(x.t - at) > 5000) continue;
+    if (x.swap || x.ch !== ch || Math.abs(x.t - at) > 5000 || _chatNormText(x.text) !== nt) continue;
     if (String(x.who).toLowerCase() === w || (x.self && String(x.on).toLowerCase() === w)) return true;
   }
   return false;
+}
+// The other order: the relayed copy landed first (the game looked absent for a moment), then this PC's own log heard
+// the line. The local copy wins, so the relayed one is removed from the ring (and from the cache that saves it).
+function _guildFeedDropHeard(evt, character) {
+  if (!_guildFeedRing.length || (evt.ch !== 'guild' && evt.ch !== 'raid')) return;
+  const w = String(evt.self ? character : evt.who).toLowerCase(), nt = _chatNormText(evt.text);
+  for (let i = _guildFeedRing.length - 1; i >= 0; i--) {
+    const x = _guildFeedRing[i];
+    if (x.ch === evt.ch && Math.abs(x.t - evt.t) <= 5000 && String(x.who).toLowerCase() === w && _chatNormText(x.text) === nt) _guildFeedRing.splice(i, 1);
+  }
 }
 // Take the bot's lines ({ seq, t, ch, who, text }); returns how many landed. Anything that is not a plain guild or
 // raid line from a named speaker is dropped, and a line already held (same speaker, text and second) is not added twice
@@ -40183,6 +40261,7 @@ function noteLocalChatLine(line, character, now) {
   _chatRing.push({ seq: ++_chatSeq, k: key, t: evt.t, ch: evt.ch, who: evt.who, to: evt.to || null, text: evt.text, self: !!evt.self, npc: !!evt.npc, on: character || '', cn: evt.cn || null, cnum: evt.cnum || null });
   const over = _chatRing.length - CHAT_RING_MAX;
   if (over > 0) _chatRing.splice(0, over);
+  _guildFeedDropHeard(evt, character);
   _chatCacheMarkDirty();
   return true;
 }
@@ -46280,7 +46359,7 @@ function _triggerRulesPayload(charLc) {
 function _setTriggerRule(b) {
   const key = b && typeof b.key === 'string' ? b.key.trim() : '';
   if (!/^(group|guild|personal|builtin):.{1,200}$/.test(key)) return { ok: false, error: 'bad key' };
-  if (key.startsWith('builtin:') && !BUILTIN_CALLOUTS.some(x => 'builtin:' + x.key === key)) return { ok: false, error: 'unknown built-in' };
+  if (key.startsWith('builtin:') && !key.startsWith(ENRAGE_ALWAYS_PREFIX) && !BUILTIN_CALLOUTS.some(x => 'builtin:' + x.key === key)) return { ok: false, error: 'unknown built-in' };
   const mode = b.mode == null ? null : b.mode;
   if (mode !== null && !TRIGGER_RULE_MODES.includes(mode)) return { ok: false, error: 'bad mode' };
   const ch = b.char == null || b.char === '' ? '*' : String(b.char).trim().toLowerCase();
@@ -46307,6 +46386,48 @@ async function _handleTriggerRules(req, res) {
   let b = null;
   try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
   const out = _setTriggerRule(b);
+  scheduleRender();
+  send(out.ok ? 200 : 400, out);
+}
+
+// Enrage mutes (2026-10-19). What is muted right now: every enrage callout this session, mobs muted this
+// session, and mobs muted for good (the 'builtin:enrage_soon:<mob>' rules in trigger_rules.json).
+function _enrageMutesView() {
+  const always = [];
+  for (const [k, r] of Object.entries(_triggerRules)) {
+    if (k.startsWith(ENRAGE_ALWAYS_PREFIX) && r && r['*'] === 'off') always.push(k.slice(ENRAGE_ALWAYS_PREFIX.length));
+  }
+  return { all: _enrageMuteSession.all, session: [..._enrageMuteSession.mobs].sort(), always: always.sort() };
+}
+// POST { action: 'mute' | 'unmute', scope: 'mob' | 'all' | 'always', mob? }. 'mob' and 'all' last until
+// the agent restarts; 'always' is written to the rules file.
+function _setEnrageMute(b) {
+  const on = !(b && b.action === 'unmute');
+  const scope = b && b.scope;
+  if (scope !== 'mob' && scope !== 'all' && scope !== 'always') return { ok: false, error: 'bad scope' };
+  if (scope === 'all') {
+    _enrageMuteSession.all = on;
+  } else {
+    const mob = _enrageMobKey(b.mob);
+    if (!mob) return { ok: false, error: 'mob needed' };
+    if (scope === 'mob') {
+      if (on && _enrageMuteSession.mobs.size >= 500) return { ok: false, error: 'too many muted' };
+      if (on) _enrageMuteSession.mobs.add(mob); else _enrageMuteSession.mobs.delete(mob);
+    } else {
+      const out = _setTriggerRule({ key: ENRAGE_ALWAYS_PREFIX + mob, char: '*', mode: on ? 'off' : null });
+      if (!out.ok) return out;
+    }
+  }
+  _stateJsonCache = { at: 0, body: null };   // /api/state carries the list
+  return { ok: true, ..._enrageMutesView() };
+}
+async function _handleEnrageMute(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (req.method === 'GET') return send(200, { ok: true, ..._enrageMutesView() });
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  const out = _setEnrageMute(b);
   scheduleRender();
   send(out.ok ? 200 : 400, out);
 }
@@ -46966,6 +47087,8 @@ function _fireForWeb(o) {
     mute:    !!o.mute,
     // "What you hear" — the key its rule is stored under, so the overlay's 🔇 can mute it.
     rule_key: o.rule_key || null,
+    // An enrage callout names its mob, so the overlay's 🔇 can mute that mob (_setEnrageMute).
+    enrage_mob: o.enrage_mob || null,
     // The inverse: speak it but do NOT flash it or ask for a timing vote.
     // Set by the damage-taken alert, whose cadence would otherwise camp the
     // shared centre flash and clobber other callouts on it.
@@ -58543,6 +58666,8 @@ module.exports = {
   // "What you hear" (2026-10-12) — exported for test/trigger-rules.test.js.
   _triggerRules, _resolveRule, _computeRuleGroups, _triggerRulesPayload, _setTriggerRule, _cleanRules,
   _ruleKeyOf, _ruleGroupOfGuild, _applyTriggerRule, _builtinRuleModes, _guildRuleModes,
+  // Enrage mutes (2026-10-19) — exported for test/enrage-callouts.test.js.
+  _setEnrageMute, _enrageMutesView, _enrageMuteSession, loadTriggerRules, _tickEnrageWarn, _mobInfoCacheKey, _enrageWarned,
   // Personal trigger sync (agent half) — exported for test/personal-trigger-sync-agent.test.js.
   _applyTriggerPull, _triggerSyncPush, _triggerSyncList, _triggerSyncPull, _tsBackupLocal,
   _runRelayedFire, _pushBlindEvent, _blindEvents, _maybeAnnounceDamageTaken,
