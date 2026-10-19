@@ -6952,8 +6952,7 @@ function diCalloutSnapshot() {
 //     the rampage was seen during THIS fight — the startedAt bound keeps last
 //     fight's victim from haunting the next pull.
 const RAMPAGE_FRESH_MS = 8000;
-function _currentRampageForDisplay(now) {
-  const r = stats.currentRampage;
+function _rampageShown(r, now) {
   if (!r || !r.target || !r.at) return null;
   if ((now - r.at) <= RAMPAGE_FRESH_MS) return r;
   const et = stats.currentEncounterThreat;
@@ -6962,6 +6961,30 @@ function _currentRampageForDisplay(now) {
     if (r.at >= startMs - 30_000) return r;
   }
   return null;
+}
+function _currentRampageForDisplay(now) {
+  return _rampageShown(stats.currentRampage, now);
+}
+// Several bosses rampaging at once (HoH trial 3: three Crazed Norrathians, the guild lead, 2026-10-19):
+// one current victim PER ATTACKER, same persistence rule as above. Sorted by attacker name so the card
+// order is byte-stable between polls. stats.currentRampage (the latest, whoever it was) is untouched.
+const RAMPAGE_ATTACKERS_MAX = 12;
+function _noteRampageAttacker(attacker, target, at) {
+  if (!attacker || !target) return;
+  const m = stats.currentRampages || (stats.currentRampages = {});
+  m[String(attacker).toLowerCase()] = { target, attacker, at };
+  const keys = Object.keys(m);
+  if (keys.length > RAMPAGE_ATTACKERS_MAX) {
+    keys.sort((a, b) => m[a].at - m[b].at);
+    for (const k of keys.slice(0, keys.length - RAMPAGE_ATTACKERS_MAX)) delete m[k];
+  }
+}
+function _currentRampagesForDisplay(now) {
+  const out = [];
+  for (const r of Object.values(stats.currentRampages || {})) {
+    if (_rampageShown(r, now)) out.push(r);
+  }
+  return out.sort((a, b) => String(a.attacker).toLowerCase() < String(b.attacker).toLowerCase() ? -1 : 1);
 }
 const OFFHEAL_WINDOW_MS = 20_000;
 const OFFHEAL_MIN_HITS  = 2;
@@ -10366,7 +10389,17 @@ class EncounterBuilder {
         // (opt-in backfill replays) must NOT speak old rampages. #155 — gate on
         // the rampaging mob being the raid's main target so adds' rampages on a
         // multi-mob pull don't spam the TTS.
-        if (!this.silent && _rampageOnMainTarget(event.attacker)) _announceRampage(def, Date.parse(event.ts) || Date.now());
+        // Several bosses at once (HoH trial 3): a named raid mob's rampage speaks too, tagged with the
+        // boss's name once more than one is rampaging; trash adds stay suppressed (#155).
+        const rampAtMs = Date.parse(event.ts) || Date.now();
+        _noteRampageAttacker(event.attacker, def, rampAtMs);
+        if (!this.silent) {
+          if (_rampageOnMainTarget(event.attacker)) {
+            _announceRampage(def, rampAtMs, _rampageBossLabel(event.attacker, rampAtMs, false));
+          } else if (_rampageAttackerIsRaidMob(event.attacker, this.bossName)) {
+            _announceRampage(def, rampAtMs, _rampageBossLabel(event.attacker, rampAtMs, true));
+          }
+        }
         // We don't know the exact rampage damage from the announcement line alone —
         // the actual hit lines will follow and be counted in damageTaken normally.
         // rampageDmg is accumulated from tagged damage events below.
@@ -16371,9 +16404,7 @@ function _serializeTankState() {
   // the same way MT HP does below: local gauges first, the rampage victim's
   // own uploaded live-state as the cross-client fallback (they're almost
   // always a raider, not us).
-  let rampage = null;
-  const r = _currentRampageForDisplay(now);
-  if (r) {
+  const buildRampage = (r) => {
     const rLower = String(r.target).toLowerCase();
     try { fetchCharacterLiveState(r.target); } catch {}
     // DA on the rampage target — gold-highlight the HP bar while it's up (they're
@@ -16389,7 +16420,7 @@ function _serializeTankState() {
     // so the overlay falls back to the bare % (or "HP not visible") instead of
     // showing a number that isn't the victim's health.
     const rVals = _resolveHpValuesForName(rLower, active, st);
-    rampage = {
+    return {
       target: r.target, attacker: r.attacker || null, ageMs: now - r.at,
       // fresh = a rampage swing landed within the last few seconds — lets the
       // overlays pulse on the hit while the card itself stays up all fight.
@@ -16406,7 +16437,11 @@ function _serializeTankState() {
       // which is the only one that works for a tank running nothing at all.
       da: _findDA(rampBuffs, 5) || _daBroadcastForName(r.target, 5) || _invulnObservedForName(r.target),
     };
-  }
+  };
+  const rLatest = _currentRampageForDisplay(now);
+  const rampage = rLatest ? buildRampage(rLatest) : null;
+  // One entry per rampaging attacker (HoH trial 3 has three at once); `rampage` above stays the latest.
+  const rampages = _currentRampagesForDisplay(now).map(buildRampage);
 
   // Main Tank resolution (user ask 2026-07-01: "the Tank overlay should
   // focus on the Main Tank and Rampage, and THEIR buffs, not the caster") —
@@ -16643,6 +16678,7 @@ function _serializeTankState() {
       off: dsOff,
     },
     rampage,
+    rampages,
     enrage,
     deathtouch,
     // CH chain spot-heal window — v1.1.4 (the guild lead, 2026-06-26).
@@ -16735,6 +16771,7 @@ function _serializeCommandCenterState() {
     target:        tank.target,
     mt:            tank.mt,
     rampage:       tank.rampage,
+    rampages:      tank.rampages,
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
     needs_rez:     _rezBoardSnapshot(),
@@ -32905,6 +32942,21 @@ const COMMAND_HTML = `<!doctype html>
     return h;
   }
 
+  function rampHtml(r, multi){
+    var rhp = r.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(r.hp_pct)));
+    var rda = r.da || null;
+    var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
+    var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
+    var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
+    var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
+    var lead = multi ? ('💀 ' + esc(r.attacker || 'Boss') + ': rampage on ') : '💀 Rampage on ';
+    return '<div class="ramp">'
+         +    '<div class="row">' + lead + '<span class="who">' + esc(r.target) + '</span></div>'
+         +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'
+         +      daTags
+         +      '<div class="val">' + valText + '</div></div>'
+         +  '</div>';
+  }
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -32956,20 +33008,10 @@ const COMMAND_HTML = `<!doctype html>
 
     // Rampage target + invuln (DA/Harmshield/etc) highlight — identical to
     // the Tank overlay's card.
-    if (s.rampage && s.rampage.target) {
-      var rhp = s.rampage.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.rampage.hp_pct)));
-      var rda = s.rampage.da || null;
-      var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
-      var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
-      var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
-      var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
-      html += '<div class="ramp">'
-           +    '<div class="row">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>'
-           +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'
-           +      daTags
-           +      '<div class="val">' + valText + '</div></div>'
-           +  '</div>';
-    }
+    // Several bosses rampaging at once (rampages has 2+): one row per attacker. With 0-1 it is the single
+    // card above, byte for byte, and an older agent that sends no rampages array lands here too.
+    var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
+    for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
     // above the long lists: after a kill there is no fight to push it down, and a fight that starts while
@@ -46850,24 +46892,55 @@ function _rampageOnMainTarget(attacker) {
   if (!mainName) return true;   // unresolved → fail open (never lose the boss rampage)
   return a === _normMobNameAgent(mainName);
 }
-function _announceRampage(target, tsMs) {
+// Is this attacker a named raid mob — the catalog's raid_target flag (a Mob Info row or zone pack this
+// machine already holds), or the encounter's own boss? Adds and trash are not (#155 stays).
+function _rampageAttackerIsRaidMob(attacker, bossName) {
+  if (!attacker) return false;
+  const a = _normMobNameAgent(attacker);
+  if (bossName && a === _normMobNameAgent(bossName)) return true;
+  const et = stats.currentEncounterThreat;
+  if (et && ((et.bossName && a === _normMobNameAgent(et.bossName)) || (et.targetName && a === _normMobNameAgent(et.targetName)))) return true;
+  return _myFightIsBoss(attacker, null);
+}
+// The name the announcement carries: the boss's first name ("Joran") when it is not the main target,
+// or when two or more attackers are rampaging at once; null for the one-boss fight, which reads as today.
+function _rampageBossLabel(attacker, nowMs, force) {
+  if (!attacker) return null;
+  if (!force) {
+    let live = 0;
+    for (const r of Object.values(stats.currentRampages || {})) if (r && (nowMs - r.at) <= RAMPAGE_IDLE_RESET_MS) live++;
+    if (live < 2) return null;
+  }
+  const words = String(attacker).replace(/\s+the\s+.*$/i, '').trim().split(/\s+/);
+  return words[words.length - 1];
+}
+const _rampageByBoss = new Map();   // boss label (lower) → { key, seen } — the labelled path's own dedupe
+function _announceRampage(target, tsMs, bossLabel) {
   if (!target) return;
   const key = target.toLowerCase();
   const now = tsMs || Date.now();
-  // Idle reset — if the previous rampage went quiet for 60s, the next
-  // line (even on the same name) counts as a fresh rampage. Without this,
-  // a re-pull or quick re-engage would never re-announce.
-  if (_rampageLastSeenMs && (now - _rampageLastSeenMs) > RAMPAGE_IDLE_RESET_MS) {
-    _rampageCurrentTarget = null;
+  if (bossLabel) {
+    // Each boss is deduped on its own: the same victim stays silent, a switch speaks, 60s idle re-arms.
+    const bk = bossLabel.toLowerCase();
+    const prev = _rampageByBoss.get(bk);
+    _rampageByBoss.set(bk, { key, seen: now });
+    if (prev && prev.key === key && (now - prev.seen) <= RAMPAGE_IDLE_RESET_MS) return;
+  } else {
+    // Idle reset — if the previous rampage went quiet for 60s, the next
+    // line (even on the same name) counts as a fresh rampage. Without this,
+    // a re-pull or quick re-engage would never re-announce.
+    if (_rampageLastSeenMs && (now - _rampageLastSeenMs) > RAMPAGE_IDLE_RESET_MS) {
+      _rampageCurrentTarget = null;
+    }
+    _rampageLastSeenMs = now;
+    // Same target as current rampage → suppress. The user already heard the
+    // initial "New rampage: Rethlan"; subsequent hits on Rethlan are noise until
+    // the boss switches.
+    if (_rampageCurrentTarget === key) return;
+    _rampageCurrentTarget = key;
   }
-  _rampageLastSeenMs = now;
-  // Same target as current rampage → suppress. The user already heard the
-  // initial "New rampage: Rethlan"; subsequent hits on Rethlan are noise until
-  // the boss switches.
-  if (_rampageCurrentTarget === key) return;
-  _rampageCurrentTarget = key;
-  const displayText = '🔥 NEW RAMPAGE: ' + target;
-  const ttsText     = 'New rampage: ' + target;
+  const displayText = bossLabel ? '🔥 ' + bossLabel + ' RAMPAGE: ' + target : '🔥 NEW RAMPAGE: ' + target;
+  const ttsText     = bossLabel ? bossLabel + ' rampage on ' + target : 'New rampage: ' + target;
   _pushOverlay({
     text:    displayText,
     tts:     ttsText,
@@ -46883,7 +46956,7 @@ function _announceRampage(target, tsMs) {
   _broadcastTriggerToDiscord({
     name:    'rampage',
     message: '🔥 **NEW RAMPAGE**: ' + target,
-    key:     'rampage:' + key,
+    key:     'rampage:' + (bossLabel ? bossLabel.toLowerCase() + ':' : '') + key,
     tsMs:    now,
     mode:    'post',
   });
@@ -46893,7 +46966,7 @@ function _announceRampage(target, tsMs) {
   // _markFireSeen is wired into _relayLocalFire's downstream check on
   // each receiver so a raider who detected AND received the fire
   // doesn't double-play.
-  const fireKey = 'rampage:' + JSON.stringify({ target });
+  const fireKey = 'rampage:' + JSON.stringify(bossLabel ? { target, boss: bossLabel } : { target });
   _markFireSeen(fireKey, now);
   _relayLocalFire(
     { name: 'New Rampage', _scope: 'guild', timer_duration_sec: 0 },
@@ -58131,6 +58204,9 @@ module.exports = {
   // #136 raid callout allow-list — exported for the scratchpad fixture.
   _fireTriggerActions, _calloutAllowedToSpeak, _calloutScopeGated, _CALLOUT_ALLOW_CATEGORIES,
   _setCurrentBossForTest: (name) => { stats.currentEncounterThreat = name ? { bossName: name } : null; },
+  // Several bosses rampaging at once: the tank-state object, the fires it spoke, a clean slate.
+  _serializeTankState, _activeOverlaysForTest: () => _activeOverlays,
+  _resetRampagesForTest: () => { stats.currentRampage = null; stats.currentRampages = {}; _rampageByBoss.clear(); _rampageCurrentTarget = null; _rampageLastSeenMs = 0; _activeOverlays.length = 0; },
   _getReplayStateForTest: () => _replayStateForWeb(),
   _setPersonalTriggersForTest: (arr) => { _personalTriggers = arr; },
   _getPersonalTriggersForTest: () => _personalTriggers,
