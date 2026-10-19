@@ -1075,6 +1075,15 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   Test: `test/map-watch-agent.test.js`. Charm aging's default-off lives beside it in `BUILTIN_DEFAULT_MODES`
   (`test/trigger-rules.test.js`).
 
+### Overlays fit their height to content; Canvas items grow up/down and own their background (Mimic beta, 2026-10-19; DECISIONS §381)
+- **Where:** `apps/mimic/main.js` `overlay-auto-height` (anchor-aware, held while `__wpDragging`, `wp-refit` on drag
+  end); `apps/mimic/preload.js` `_wpWatchFitContent`; `apps/mimic/canvas.html` `growsUp`/`fitKind`/`fitStep`/
+  `wpCanvasRowCap`, per-item `back`, "Default background", `backV` migration. Test: `test/overlay-fit-content.test.js`.
+
+### Canvas timer rows: the ✕ clicks; colour by kind (agent 3.8.18 beta, 2026-10-19; FB-92; DECISIONS §381)
+- **Where:** `apps/mimic/canvas.html` FB-92 hover block (arms the window over controls inside panel iframes);
+  agent `_builtinSpellBarColor` / `BUILTIN_BAR_COLORS`. Test: `test/canvas-timer-hover-and-colours.test.js`.
+
 ### Debuff timers end with the mob (agent 3.8.17 beta, 2026-10-19; DECISIONS §379)
 - **What:** a dead mob's "<mob> - <spell>" countdowns disappear; the row names the spawn id when known.
 - **Where:** agent `_dropDebuffTimersOnDeath` (called from the live tail beside `_cancelTimersOnMobDeath`, and from

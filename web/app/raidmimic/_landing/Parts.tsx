@@ -1,21 +1,19 @@
-// The pieces both raidmimic.com layouts are assembled from. Every sentence comes from web/lib/raidmimicLanding.ts;
+// The pieces the raidmimic.com landing page is assembled from. Every sentence comes from web/lib/raidmimicLanding.ts;
 // this file only decides how a block LOOKS. Server components, no client JS: the tour's small print is <details>.
 //
 // Colour is semantic, as everywhere (frontend-design): gold is the one action, green is "live today", purple is
 // "in alpha", and a dashed orange chip is "coming" so a promise is never dressed up as a feature.
-import type { ReactNode } from 'react';
 import NewPageTag from '@/components/NewPageTag';
 import {
-  BLOCKS, COMING, COMING_TITLE, COST, CTA, DATA, FAN_PROJECT_LINE, HERO, PRIVACY_URL, REPO_URL, RIGHTS_NOTICE,
+  COMING, COMING_TITLE, COST, CTA, DATA, FAN_PROJECT_LINE, HERO, PRIVACY_URL, REPO_URL, RIGHTS_NOTICE,
   SELFHOST_NOTE_URL, STATUS_LABEL, WORKS_WITH, WORLDS, EQMIMIC_ORIGIN,
-  type Block, type Status,
+  type Status,
 } from '@/lib/raidmimicLanding';
 
 /** Links that differ between the raidmimic host and the Wolf Pack hosts (where /feedback is a different page). */
 export interface Ctx {
   onHost: boolean;      // served on a raidmimic host (bare shell, no query string, no Wolf Pack header)
   interest: string;     // the Register-interest address
-  landing: string;      // this page's own path, for the layout switch
 }
 
 const BTN = 'inline-flex min-h-11 items-center justify-center rounded-md border px-4 py-2 text-sm font-semibold no-underline transition-colors motion-reduce:transition-none';
@@ -43,19 +41,6 @@ export function BetaTag({ ctx }: { ctx: Ctx }) {
   return <NewPageTag note="New page, a first draft, still being shaped." href={ctx.onHost ? ctx.interest : '/feedback'} />;
 }
 
-/** The layout switch. Wolf Pack hosts only: a raidmimic host drops the query string, so B is previewed there. */
-export function VariantSwitch({ ctx, current }: { ctx: Ctx; current: 'a' | 'b' }) {
-  if (ctx.onHost) return null;
-  const cls = (on: boolean) => `inline-flex min-h-11 items-center rounded-md border px-3 text-xs no-underline ${on ? 'border-blue bg-blue/10 text-blue' : 'border-border text-dim hover:text-text'}`;
-  return (
-    <nav aria-label="Layout preview" className="mb-4 flex flex-wrap items-center gap-2 text-xs text-dim">
-      <span>Layout preview:</span>
-      <a href={ctx.landing} aria-current={current === 'a' ? 'page' : undefined} className={cls(current === 'a')}>A · The pitch</a>
-      <a href={`${ctx.landing}?v=b`} aria-current={current === 'b' ? 'page' : undefined} className={cls(current === 'b')}>B · The tour</a>
-    </nav>
-  );
-}
-
 export function InterestButton({ ctx, className = PRIMARY_BTN }: { ctx: Ctx; className?: string }) {
   return <a href={ctx.interest} className={className} {...(ctx.onHost ? EXT : {})}>{CTA.button}</a>;
 }
@@ -79,37 +64,7 @@ export function Hero({ ctx, compact = false }: { ctx: Ctx; compact?: boolean }) 
   );
 }
 
-// ─── Section scaffolding ────────────────────────────────────────────────────────────────────────────
-export function SectionHead({ id, title, lead }: { id: string; title: string; lead?: string }) {
-  return (
-    <div id={id} className="scroll-mt-4">
-      <h2 className="text-xl text-[#f2ede1] sm:text-2xl">{title}</h2>
-      {lead && <p className="mt-2 max-w-[64ch] text-sm leading-6 text-text">{lead}</p>}
-    </div>
-  );
-}
-
-// ─── What it does ───────────────────────────────────────────────────────────────────────────────────
-export function BlockCard({ b }: { b: Block }) {
-  return (
-    <li id={`block-${b.id}`} className="flex flex-col rounded-md border border-border bg-panel p-4">
-      <div className="mb-2"><StatusChip status={b.status} /></div>
-      <h3 className="text-base text-[#f2ede1]">{b.title}</h3>
-      <p className="mt-2 text-sm leading-6 text-text">{b.body}</p>
-      {b.aside && <p className="mt-2 border-t border-border pt-2 text-xs leading-5 text-orange">{b.aside}</p>}
-    </li>
-  );
-}
-
-export function BlockGrid() {
-  return (
-    <ul className="m-0 mt-4 grid list-none gap-3 p-0 sm:grid-cols-2 lg:grid-cols-3">
-      {BLOCKS.map(b => <BlockCard key={b.id} b={b} />)}
-    </ul>
-  );
-}
-
-// ─── Works with / data / cost / worlds (each: the full body, reused whole by both layouts) ──────────
+// ─── Works with / data / cost / worlds (each: the full body) ──────────
 export function WorksWithBody() {
   return (
     <>
@@ -176,16 +131,6 @@ export function WorldsBody() {
       </ul>
       <p className="mt-3 text-xs leading-5 text-dim">{WORLDS.rights}</p>
     </>
-  );
-}
-
-/** A titled panel. */
-export function Panel({ id, title, children }: { id: string; title: string; children: ReactNode }) {
-  return (
-    <section id={id} className="scroll-mt-4 rounded-md border border-border bg-panel p-4 sm:p-5">
-      <h2 className="mb-3 text-lg text-[#f2ede1]">{title}</h2>
-      {children}
-    </section>
   );
 }
 

@@ -10,6 +10,8 @@
 // Beside it, engine / piperVoice / kokoroVoice choose WHICH synthesiser speaks (chooseEngine below): a downloaded
 // open-source voice made in Mimic's main process (neuralVoice.js), or the Windows voice that all of the above
 // describes. Rate applies to every engine; pitch and voiceName to the Windows voice only.
+// cfg.volume (0-1, absent = 1; the guild lead, 2026-10-19) is how loud a spoken callout plays, on every engine. It is a
+// playback preference, not part of a voice, so a trigger's own pack does not override it.
 // A trigger's own `voice_pack` outranks all of that for that one callout: the pack as shipped.
 // A named voice that is not installed falls back to the next fragment, then to the default voice —
 // the pack's rate and pitch still apply, so "Herald" is slower and lower even on a bare PC.
@@ -19,7 +21,7 @@
 
   function _num(v, lo, hi) { v = Number(v); return (isFinite(v) && v >= lo && v <= hi) ? v : null; }
 
-  // → { voice: SpeechSynthesisVoice|null, rate, pitch, pack: id }
+  // → { voice: SpeechSynthesisVoice|null, rate, pitch, volume, pack: id }
   function pick(packs, cfg, packId, voices) {
     cfg = cfg || {};
     packs = Array.isArray(packs) ? packs : [];
@@ -47,7 +49,8 @@
         for (var b = 0; b < voices.length; b++) if (String(voices[b].name || '').toLowerCase().indexOf(frag) >= 0) { voice = voices[b]; break; }
       }
     }
-    return { voice: voice, rate: rate, pitch: pitch, pack: pack ? pack.id : 'default' };
+    var vol = typeof cfg.volume === 'number' ? _num(cfg.volume, 0, 1) : null;   // null / '' would read as 0 (silence)
+    return { voice: voice, rate: rate, pitch: pitch, volume: vol == null ? 1 : vol, pack: pack ? pack.id : 'default' };
   }
 
   // ENGINE (the guild lead, 2026-10-17): cfg.engine is 'auto' (or absent), 'windows', 'piper' or 'kokoro', and
@@ -109,7 +112,7 @@
     var v = pick(packs, cfg, packId, root.speechSynthesis.getVoices());
     var u = new root.SpeechSynthesisUtterance(String(text || ''));
     if (v.voice) u.voice = v.voice;
-    u.rate = v.rate; u.pitch = v.pitch; u.volume = 1;
+    u.rate = v.rate; u.pitch = v.pitch; u.volume = v.volume;
     try { root.speechSynthesis.cancel(); } catch (e) { void e; }
     root.speechSynthesis.speak(u);
     return true;
@@ -127,6 +130,7 @@
         return neuralAudio(text, pick(packs, cfg, packId, []).rate, choice, undefined, true).then(function (a) {
           if (!a) return _sampleWindows(text, packs, cfg, packId);
           _sampleAudio = a;
+          a.volume = pick(packs, cfg, packId, []).volume;
           return a.play().catch(function () { _sampleWindows(text, packs, cfg, packId); });
         });
       }, function () { _sampleWindows(text, packs, cfg, packId); });

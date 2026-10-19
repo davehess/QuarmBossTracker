@@ -169,6 +169,7 @@ const clean = stripJs(html);
 const { selfAgo, selfRowHtml } = evalBlock(
   sliceBlock(html, 'function esc(s){', '\n') + '\n'
     + sliceBlock(html, 'function hpTier(h){', '\n') + '\n'
+    + sliceBlock(html, 'var EXT_CD_SHOW = 3;', "\n    return '<div class=\"cds\" data-wp-sect=\"timers\">' + h + '</div>';\n  }") + '\n'   // a Self row may carry a player's timers
     + sliceBlock(html, 'function selfAgo(s){', '\n') + '\n'
     + sliceBlock(html, 'function selfRowHtml(t, keep){', "\n      +  '</div>';\n  }"),
   ['selfAgo', 'selfRowHtml'],
