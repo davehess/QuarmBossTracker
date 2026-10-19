@@ -193,6 +193,22 @@
     <button id="overlaySetSave" type="button" style="margin-top:0;white-space:nowrap">💾 Save as</button>
   </div>
   <div id="overlaySetMsg" class="hint"></div>
+  <div class="sub" style="margin-top:12px"><b>Share a layout as a file.</b> It holds your Canvas pieces, pinned to EverQuest&rsquo;s window so it fits other screens. No character names or filters go in it, and your name goes on it only if you type one below.</div>
+  <div style="display:flex;gap:8px;margin-top:6px">
+    <input id="layoutTitle" type="text" maxlength="60" placeholder="Layout name (blank = the set&rsquo;s name)" style="flex:1" />
+    <input id="layoutByline" type="text" maxlength="32" placeholder="Your name on it (optional)" style="flex:1" />
+  </div>
+  <div style="display:flex;gap:8px;margin-top:6px">
+    <input id="layoutNote" type="text" maxlength="140" placeholder="What it is for (optional)" style="flex:1" />
+    <select id="layoutMode" style="background:#161b22;border:1px solid #2a3140;border-radius:4px;color:#c9d1d9;padding:5px 8px;font-size:12px">
+      <option value="">Mode (optional)</option><option value="raid">Raid</option><option value="group">Group</option><option value="pvp">PvP</option>
+      <option value="charm">Charm</option><option value="leveling">Leveling</option><option value="solo">Solo</option><option value="other">Other</option>
+    </select>
+  </div>
+  <div style="display:flex;gap:8px;margin-top:6px">
+    <button id="layoutExport" type="button" style="margin-top:0;white-space:nowrap" title="Save the layout on screen now to a .mimic-layout.json file. Use Export on a set above to share that set instead.">📤 Export the current layout…</button>
+    <button id="layoutImport" type="button" style="margin-top:0;white-space:nowrap" title="Open a layout file someone sent you. You see what is in it first; it is added as a new set and your setup is saved first.">📥 Import a layout…</button>
+  </div>
   <div class="hint">In game (needs Zeal), put these on social buttons: <code>/pipe mimic load raid</code> · <code>/pipe mimic save raid</code> (no name saves over the set you are on) · <code>/pipe mimic next</code> · <code>/pipe mimic lock</code> (locks or unlocks the overlays). The tray has the same under 🗂 Overlay sets.</div>
 
   <h2>Local UI</h2>
@@ -1606,7 +1622,19 @@
     var m = document.getElementById('overlaySetMsg');
     if (!m) return;
     m.style.color = r && r.ok ? '#56d364' : '#ff9b9b';
-    m.textContent = r ? (r.ok ? '✓ ' : '✕ ') + r.message : '';
+    m.textContent = r ? (r.ok ? '✓ ' : '✕ ') + r.message + (r.nudge ? ' ' + r.nudge : '') : '';
+  }
+  // 📤📥 A layout as a file: the same two functions the tray runs (main.js _exportLayoutFile / _importLayoutFile).
+  async function _layoutRun(call){
+    var r;
+    try { r = await call(); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
+    if (r && r.canceled) return;
+    _setsMsg(r);
+    await _renderOverlaySets();
+  }
+  function _layoutOpts(setName){
+    var v = function(id){ return (document.getElementById(id).value || '').trim(); };
+    return { setName: setName || undefined, title: v('layoutTitle'), author: v('layoutByline'), description: v('layoutNote'), mode: v('layoutMode') };
   }
   async function _setsRun(cmd){
     var r;
@@ -1632,6 +1660,7 @@
           ' <span style="color:#6e7681;font-size:10px">· ' + s.overlays + ' overlay' + (s.overlays === 1 ? '' : 's') + '</span></span>' +
         '<button type="button" data-set-load="' + _esc(s.name) + '" style="' + btn + '">Load</button>' +
         '<button type="button" data-set-save="' + _esc(s.name) + '" style="' + btn + '" title="Replace this set with the layout on screen now">Save over</button>' +
+        '<button type="button" data-set-export="' + _esc(s.name) + '" style="' + btn + '" title="Save this set\'s Canvas layout to a file you can send, with the details typed below">📤</button>' +
         '<button type="button" data-set-del="' + _esc(s.name) + '" style="' + btn + ';color:#ff9b9b" title="Delete this set">✕</button>' +
       '</div>';
     }).join('');
@@ -1641,6 +1670,7 @@
     if (!b) return;
     if (b.dataset.setLoad) return _setsRun({ verb: 'load', name: b.dataset.setLoad });
     if (b.dataset.setSave) return _setsRun({ verb: 'save', name: b.dataset.setSave });
+    if (b.dataset.setExport) return _layoutRun(function(){ return window.mimic.overlayLayoutExport(_layoutOpts(b.dataset.setExport)); });
     if (b.dataset.setDel && confirm('Delete the overlay set "' + b.dataset.setDel + '"?')) return _setsRun({ verb: 'delete', name: b.dataset.setDel });
   });
   document.getElementById('overlaySetSave').addEventListener('click', async function(){
@@ -1650,6 +1680,8 @@
     var r = await _setsRun({ verb: 'save', name: name });
     if (r && r.ok) inp.value = '';
   });
+  document.getElementById('layoutExport').addEventListener('click', function(){ _layoutRun(function(){ return window.mimic.overlayLayoutExport(_layoutOpts()); }); });
+  document.getElementById('layoutImport').addEventListener('click', function(){ _layoutRun(function(){ return window.mimic.overlayLayoutImport(); }); });
   _renderOverlaySets();
 </script>
 
