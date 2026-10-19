@@ -52,6 +52,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/me':           { title: 'My Stats', description: 'Your characters, tells, buffs, and personal history — private to you.' },
   '/me/parses':    { title: '[beta] My parses', description: 'Your own parses on a chart over a day, a week or a month, with your average for each raid night.' },
   '/me/accounts':  { title: '[beta] Game accounts', description: 'Which of your characters are on which EverQuest game account. Private to you.' },
+  '/me/upgrades':  { title: '[beta] Gear upgrades', description: 'For one of your characters, the best upgrade for every worn slot in the current era, scored for the class, with where it drops or sells.' },
   '/me/voice':     { title: '[beta] Say your name', description: 'Set how your characters’ names sound when Mimic reads them out loud, and hear it first.' },
   '/loadouts':     { title: 'Tank Loadouts', description: 'Bandolier sets across the raid — who runs what weapons and procs.' },
   '/planner':      { title: 'Loadout Planner', description: 'Theory-craft weapon setups from the item database with hate-per-minute estimates.' },

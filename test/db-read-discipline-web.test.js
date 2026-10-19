@@ -598,6 +598,11 @@ const UNIQUE_KEYS = {
   loot_observations: [['id']],
   roll_set_overrides: [['id']],
   raid_attendance_ticks: [['id']],
+  // lib/gearUpgradesLoad.ts (the gear upgrade finder, /me/upgrades). eqemu_merchantlist's pkey is (merchantid, slot).
+  // eqemu_npc_drops is a view with no unique key (an NPC can reach one item through two loot drops): the finder
+  // orders on its WHOLE selected tuple, so rows that tie are identical rows and a page boundary cannot lose one.
+  eqemu_merchantlist: [['merchantid', 'slot']],
+  eqemu_npc_drops: [['effective_chance', 'npc_id', 'item_id']],
 };
 
 const SOURCES = webSources().map(f => [f, stripJs(read(f))]);

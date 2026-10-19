@@ -118,7 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side LIVE on main (bot 3.2.7, `5c545c42`); `GALLERY_SALT` set on Railway. The tables are NOT created: four MCP attempts stalled at the approval step, and the 2026-10-19 SQL paste created `voice_reports` only | the guild lead: paste `supabase/migrations/20261019120000_gallery_masterpieces.sql` into the Supabase SQL Editor; then a session confirms the routes and designs the Mimic Gallery tab (samples first) — 3.0 stable waits on slice 1 |
 | **FB-84 death log before a death** (§373, §379) | A (local recap) on beta, agent 3.8.14; the guild lead: *"A first then B"* | a beta tester: die once, target the corpse, check the recap; then a session scopes B (web per-death panel) with samples |
 | **Voice unclear reports** (§379) | Mimic half on beta (agent 3.8.15); route + `/admin/voice-reports` [beta] live on main (bot 3.2.8, web 1.9.9). Table created 2026-10-19 (pasted by the guild lead; RLS on), so reports now store | a beta tester: press 🔊 Voice unclear once and check `https://wolfpack.quest/admin/voice-reports`; then a session builds slice 2 (officer-approved respellings every Mimic reads) |
-| **Decision Desk picks** (§380, §382, §383) | Round one (9) built. Round two: 32 more picks recorded in §383, not built; 2 are "more detail first" (canvas-bg-lock, state-payload), 6 notes add new features, 7 follow-up questions unanswered, `potime-model` unpicked. §383 also evaluates the desk | the guild lead: say go on the build order (tranches in the reply of 2026-10-19 evening); a session builds them tranche by tranche, writes the two breakdowns, and rebuilds the desk with Built / Needs detail states. Say whether a muted countdown should still speak its pre-end warning (today it goes quiet with the row), and whether to add after-the-fact "levitate / run speed dropped" alerts (no before-warning exists). A Windows tester: Command Center on the Canvas, whole and as pieces (the blank cause was inferred, not reproduced); click a Canvas timer ✕ (FB-92, §381: if it fails, the agent log's `[hover] first arm` lines). The guild lead: should trigger, tick, recharm and Bellow rows also turn blue (§381) |
+| **Decision Desk picks** (§380, §382–§384) | Round one (9) and tranche 1 of round two (12, + Plane of Time C) built (§384). Left: tranche 2 (web: /about tour + PoP pictures, buff lines, essences by essence, PvP fight cards, session parse tables, grouped item page, guild Zeal index, eqmimic demo combo, instruction text folded), tranche 3 (Discord doorway, Discord setup on the site, per-raid ticks + combined-view capture, XP smoothing), held items (§383), and the companion "Both" extras (per-overlay lock modes, timers red until recast) | the guild lead: go on tranche 2; a Windows tester runs the §384 checks; a session writes the canvas-bg-lock and state-payload breakdowns and rebuilds the desk with Built / Needs detail states. Say whether a muted countdown should still speak its pre-end warning (today it goes quiet with the row), and whether to add after-the-fact "levitate / run speed dropped" alerts (no before-warning exists). A Windows tester: Command Center on the Canvas, whole and as pieces (the blank cause was inferred, not reproduced); click a Canvas timer ✕ (FB-92, §381: if it fails, the agent log's `[hover] first arm` lines). The guild lead: should trigger, tick, recharm and Bellow rows also turn blue (§381) |
 | **Raid night 2026-10-18 fixes** (§373) | Live: bot 3.2.6 (HoH trial cards, pet filter, flag counter, named-boss list); beta agent 3.8.4 + Mimic DPS Sec rule (rez NPC fix, trial credit lines, three rampagers) | the guild lead: look over `data/named-bosses.json` for missing or unwanted nameds (the hail-cap tooltip was reworded in agent 3.8.5 beta) |
 | **CI quarantine — expires 2026-11-02** (§382) | Test workflow green on main and beta; 1 file quarantined on main, 5 more on beta (`test/quarantine*.json`, guarded) | a session before 2026-11-02: update the stale counts (window-process-names, mimic-destroyed-window-guard), refresh the tray snapshot, fake the clock in rampage-multi-boss and my-logs-local, and decide whether the feedback window opens in agent-only mode (mimic-agent-only-mode); then empty the lists |
 | **raidmimic.com — the guild leaders' door** (§370) | Page live at `wolfpack.quest/raidmimic` marked [beta]; layout B "The tour" picked and is the only layout (web 1.9.10, §382). **LIVE at https://raidmimic.com since 2026-10-19**: DNS points at Vercel; `raidmimic.com` serves Production, `www.raidmimic.com` / `raidmimic.quest` / `www.raidmimic.quest` / `www.raidmimic.net` 308 to it, `raidmimic.net` serves the page itself. The Vercel MCP has no domain-edit call, so domain edits stay a dashboard step | the guild lead, optional: `raidmimic.net` → 308 to raidmimic.com; the three `www` CNAMEs → `47a066baed80762d.vercel-dns-017.com` (Vercel's "DNS Change Recommended"); delete the `*` → `pixie.porkbun.com` parking wildcards |
@@ -12087,3 +12087,38 @@ the guild lead's, condensed.
   "changes an earlier decision" with the reference.
 - No lifecycle on the page: built picks still read "Picked". Show Built / In progress / Needs detail, and rebuild the
   desk after each round so it reflects §382/§383.
+
+### 384. Tranche 1 of the round-two picks, and Plane of Time C, built (2026-10-19)
+The guild lead: *"go on tranche 1, C for Plane of Time"*.
+- **Tick overlay, bars only** (Mimic, `76f2015f`; agent 3.8.27): dials, the switch and `wp:tick:layout` removed.
+- **Setup walkthrough, the trail** (`2349b01f`): the other layout and the tray/dashboard A/B entries removed; the stable
+  hold lifted. Not made the first-run page (loading.html stays): a separate call. Web /start still describes the classic
+  first-run order.
+- **Log archiving in watch mode** (agent 3.8.29, `f3c9d797`, Fixes FB-51): see HOW-ITS-BUILT. A Windows check is owed: a
+  log over 500 MB, its character logged out 15 min, then `[log-archive]` and a fresh log on login.
+- **Chat channels from Zeal** (agent 3.8.30, `5c79f941`): Zeal's colour index on each printed line is a local hint for
+  lines the log parser cannot place. Seven new chips under More (Money, Emotes, Pets, Who, Deaths, Broadcast, Zeal);
+  "Other" on the golden logs 33 → 12; an `/abc 2` slot seen as officer stays Officer. The colour table is from Zeal's
+  headers, unchecked against a live capture. §300's abbreviated tags are settled from Zeal's `chat.cpp` (G R P S O Sh A B
+  Fr To + slot).
+- **Share a whole setup by file or code** (bot 3.2.13 `dc28dc17` on main; agent 3.8.31 `a6e3e527` on beta): a 6-char
+  code (no 0/O/1/I/L) valid 24 h in `bot_kv`, reusable, members only; 512 KB; 10 codes / 60 reads / 15 wrong codes an
+  hour. Bundle = layouts, curated overlay options, HUD parts, personal triggers and rules; characters travel as slots
+  c1–c12, never names; `utils/portableSetup.js` (byte-identical in Mimic) refuses private keys/values. Import previews
+  with ticks, saves "Before <title>" first, one Undo. Version-pinning tests removed when renumbered.
+- **Target Info pager + Recent** (agent 3.8.32, `adfaaaea`): last 50 targets in `logsync.targets.json` (24 h); ◀ ▶,
+  All / Killed / Left alive, "killed 4m ago", ⟲ Recent. Whether an NPC corpse keeps the spawn id on Quarm is unmeasured.
+- **Meter History on DPS or Tank** (`9febb42d`): while History is open, DPS/Tank choose the view (a behaviour change:
+  they no longer leave History); tank rows store damage taken, biggest hit and damage shield.
+- **Quest drill-down** (`f683e600`): era → plane → step blocks, ▲ climbs, ◀ ▶ inside the plane; 79 steps in 23 plane
+  blocks from `scripts/pop-quest-planes.js` (groupings to check); end of plane = `QUEST_PLANE_END = 'stop'`.
+- **Haste foci** (bot 3.2.11): read from `focus_effect`; detrimental-only foci limited to detrimental spells.
+- **Plane of Time C, hybrid** (bot 3.2.12, `utils/potimeCycle.js`): an inferred 162 h cycle from the first PoTime
+  activity, overwritten by an observed end; the Quarm /sll relay counts as observed (unconfirmed that a character's
+  lockout equals the guild cycle; one line to unwire, `_handleAgentLockout`). `#timelockout` has no captured line yet.
+  The board says "⏳ estimated" / "from /sll" / "from #timelockout".
+- **Gear upgrade finder** (web 1.9.12 + 1.9.13 guild-tag fix): `/me/upgrades` [beta]; first slice; 14k-row first load
+  per server cache (a SQL function is the next slice).
+- **/targetpet**: `docs/upstream/zeal-targetpet/` (uncompiled; `set_target`'s signature is the likely compile fix).
+- Process: several helpers used `sed`/python for single edits despite the Edit/Write rule; three helper changes met on
+  beta and failed the share-setup key guard and the guild-tag guard until reconciled (`a9eae2b8`, web 1.9.13).

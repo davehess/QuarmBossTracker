@@ -419,6 +419,8 @@ client.once(Events.ClientReady, async (readyClient) => {
   try { setInterval(_refreshAgentManifestBeta, AGENT_MANIFEST_REFRESH_MS).unref(); } catch (_) { /* non-fatal */ }
   // Slow mode (utils/slowMode.js) before any kill is recorded or reconciled: it decides the timer length.
   await require('./utils/slowMode').loadSlowMode();
+  // Plane of Time cycle ledger (utils/potimeCycle.js): Quarm's timer is the cycle end, so load it before the same reconcile.
+  await require('./utils/potimeCycle').loadPotimeCycle();
   // Member lockout (utils/memberLockout.js): load the set before interactions and agent calls are judged by it.
   require('./utils/memberLockout').start();
   await registerCommands();
@@ -6398,6 +6400,8 @@ async function _handleAgentBossKill(req, res) {
       // Boss not on the board: the kill listener never sees it, so a hail boss (Mithaniel Marr, Solusek Ro,
       // the Keeper, the Behemoth, the Arbitor) opens its hail window here, by name.
       _hailKill({ bossName, killedAtMs: killedAt });
+      // Any kill in the Plane of Time is first-entry evidence for the cycle ledger (utils/potimeCycle.js).
+      if (/plane of time/i.test(String(zone || ''))) require('./utils/potimeCycle').noteActivity(killedAt, 'kill');
       // Boss not in database — still post to raid channel as FYI (deferred).
       // A boss taken off the board on purpose says so, instead of inviting an
       // officer to /addboss it back (§132).
@@ -10589,6 +10593,10 @@ async function _handleAgentLockout(req, res) {
     }
 
     const nextSpawn   = Date.now() + remainingMs;
+    // Quarm's lockout is the server's own statement of the Plane of Time cycle end: it replaces the bot's
+    // inference (utils/potimeCycle.js), and moves a Quarm timer already on the board to it — later OR earlier,
+    // unlike the refine-only-later rule below.
+    if (require('./utils/potimeCycle').isPotimeBoss(boss.id)) require('./utils/potimeCycle').applyObservedCycleEnd(nextSpawn, 'sll');
     const existing    = getBossState(boss.id);
 
     // Record the lockout itself, not just what it implies for the timer
@@ -16528,11 +16536,14 @@ function _castingOnTarget(name) {
 }
 
 // ── Focus spell-haste from Quarmy gear ──────────────────────────────────────
-// characterLower → [{ pct, minCastMs, minDurTicks, beneficialOnly }] decoded
-// from equipped items' worn effects (SPA 127 + limit slots 138/140/143; the
+// characterLower → [{ pct, minCastMs, minDurTicks, beneficialOnly, detrimentalOnly }]
+// decoded from equipped items' FOCUS effects (SPA 127 + limit slots 138/140/143; the
 // max-spell-level limit 134 is skipped — we don't track per-class spell
 // levels, and in-era casts are below the cap anyway). Source: character_gear
-// (the member's own Quarmy export) ⨯ eqemu_items.worneffect ⨯ eqemu_spells.
+// (the member's own Quarmy export) ⨯ eqemu_items.focus_effect ⨯ eqemu_spells.
+// ⚠ focus_effect, NOT worneffect (the guild lead, 2026-10-19, DECISIONS §383 / §155): a spell-haste
+// focus is stored in the item's focus slot. This used to read worneffect and found none, though
+// ~180 haste foci are held by ~100 characters, so every one of their cast bars ran long.
 // Only known for raiders whose owners run the gear sync — absence = no
 // adjustment, which just leaves the old (catalog-speed) behavior.
 let _focusHasteByChar = null;
@@ -16551,6 +16562,7 @@ function _focusHastePctFor(caster, spell, baseCastSecs) {
   let best = 0;
   for (const f of foci) {
     if (f.beneficialOnly && !(fx && fx.good === 1)) continue;
+    if (f.detrimentalOnly && !(fx && fx.good === 0)) continue;
     if (f.minCastMs && baseCastMs < f.minCastMs) continue;
     if (f.minDurTicks && !(fx && (fx.dur || 0) >= f.minDurTicks)) continue;
     if (f.pct > best) best = f.pct;
@@ -16583,16 +16595,16 @@ function _refreshFocusHaste() {
     if (!Array.isArray(gear)) { backoff(); return; }
     if (gear.length === 0) { _focusHasteByChar = new Map(); _focusHasteAt = Date.now(); return; }
     const itemIds = [...new Set(gear.map(g => g && g.item_id).filter(Boolean))];
-    // item → worn-effect spell id (chunked in() lists keep the URLs sane)
+    // item → focus-effect spell id (chunked in() lists keep the URLs sane)
     const wornByItem = new Map();
     for (let i = 0; i < itemIds.length; i += 150) {
       const chunk = itemIds.slice(i, i + 150);
       const rows = await supabase.select('eqemu_items',
-        `id=in.(${chunk.join(',')})&select=id,worneffect`);
+        `id=in.(${chunk.join(',')})&select=id,focus_effect`);
       // A failed chunk throws to the catch below: a map built without it would
       // be cached as the whole truth.
       if (!Array.isArray(rows)) throw new Error('eqemu_items chunk read failed');
-      for (const r of rows) if (r && r.worneffect > 0) wornByItem.set(r.id, r.worneffect);
+      for (const r of rows) if (r && r.focus_effect > 0) wornByItem.set(r.id, r.focus_effect);
     }
     const spellIds = [...new Set(wornByItem.values())];
     const fociBySpell = new Map();   // spell id → focus decode (or null)
@@ -16603,7 +16615,7 @@ function _refreshFocusHaste() {
       if (!Array.isArray(rows)) throw new Error('eqemu_spells chunk read failed');
       for (const sp of rows) {
         if (!sp || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
-        let pct = 0, minCastMs = 0, minDurTicks = 0, beneficialOnly = false;
+        let pct = 0, minCastMs = 0, minDurTicks = 0, beneficialOnly = false, detrimentalOnly = false;
         for (let j = 0; j < sp.raw.eff.length; j++) {
           const eff = sp.raw.eff[j];
           const base = (sp.raw.base && sp.raw.base[j]) || 0;
@@ -16611,8 +16623,9 @@ function _refreshFocusHaste() {
           if (eff === 143 && base > 0) minCastMs = base;      // Limit: Min Cast Time (ms)
           if (eff === 140 && base > 0) minDurTicks = base;    // Limit: Min Duration (ticks)
           if (eff === 138 && base === 1) beneficialOnly = true;
+          if (eff === 138 && base === 0) detrimentalOnly = true;   // Affliction Haste: detrimental spells only
         }
-        if (pct > 0) fociBySpell.set(sp.id, { pct, minCastMs, minDurTicks, beneficialOnly });
+        if (pct > 0) fociBySpell.set(sp.id, { pct, minCastMs, minDurTicks, beneficialOnly, detrimentalOnly });
       }
     }
     const m = new Map();
@@ -16626,7 +16639,7 @@ function _refreshFocusHaste() {
     }
     _focusHasteByChar = m;
     _focusHasteAt = Date.now();
-    console.log(`[focus-haste] refreshed: ${m.size} characters with worn spell-haste foci`);
+    console.log(`[focus-haste] refreshed: ${m.size} characters with equipped spell-haste foci`);
   })().catch(e => { console.warn('[focus-haste] refresh failed:', e && e.message); backoff(); })
     .finally(() => { _focusHasteInflight = false; });
 }
@@ -18718,6 +18731,9 @@ async function _handleAgentLiveState(req, res) {
       ...(b && typeof b.slot === 'number' && b.slot >= 1 && b.slot <= 30 ? { slot: Math.trunc(b.slot) } : {}),
     })).filter(b => b.name);
     const zoneId    = Number.isFinite(Number(st?.zone_id)) ? Math.trunc(Number(st.zone_id)) : null;
+    // A guild member standing in a Plane of Time zone is the first-entry evidence for the cycle ledger
+    // (utils/potimeCycle.js: a no-op while a cycle is running).
+    if (zoneId !== null && require('./utils/potimeCycle').isPotimeZone(zoneId)) require('./utils/potimeCycle').noteActivity(Date.now(), 'zone-in');
     const selfHp    = (st?.self_hp_pct != null && Number.isFinite(Number(st.self_hp_pct))) ? Number(st.self_hp_pct) : null;
     // Exact self HP (agent v3.3.42+, Zeal labels 17/18) — powers the
     // cross-client Tank overlay "cur / max · pct%" label for a Mimic MT.
@@ -23978,6 +23994,17 @@ function _galleryRoutes() {
   return _gallery;
 }
 
+let _setupShare = null;
+function _setupShareRoutes() {
+  if (!_setupShare) {
+    _setupShare = require('./utils/setupShare').createSetupShare({
+      supabase: require('./utils/supabase'),
+      requireAuth: (rq, rs) => mimicLink.requireAgentAuth(rq, rs),
+    });
+  }
+  return _setupShare;
+}
+
 let _voiceReports = null;
 function _voiceReportRoutes() {
   if (!_voiceReports) {
@@ -24475,6 +24502,17 @@ const httpServer = http.createServer(async (req, res) => {
     try { if (await _galleryRoutes().handle(req, res)) return; }
     catch (err) {
       console.error('[gallery] handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Share a whole Mimic setup by a six-character code, 24 hours (the guild lead, 2026-10-19, DECISIONS §383).
+  // Mimic session required; the bundle is held in bot_kv. Routes, limits and the alphabet live in utils/setupShare.js.
+  if (/^\/api\/agent\/setup-share(?:[/?#]|$)/.test(req.url)) {
+    try { if (await _setupShareRoutes().handle(req, res)) return; }
+    catch (err) {
+      console.error('[setup-share] handler error:', err);
       if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

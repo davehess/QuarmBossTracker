@@ -1,0 +1,181 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 19 Oct 2026 00:00:00 +0000
+Subject: [PATCH] Add /targetpet to target your own pet
+
+Add a /targetpet command that targets the player's own pet, so it can be bound
+to a hotkey or a social button instead of clicking the pet window.
+
+The pet's spawn id is ActorInfo->PetID (a SHORT that holds -1, not 0, when
+there is no pet), looked up with get_entity_by_id() and targeted with
+set_target(). With no pet the command prints "You do not have a pet to
+target."; if the id is not in the spawn table (zoning, out of range) it prints
+"Your pet could not be found (out of range or zoning).". Either way the current
+target is left alone. A charmed pet fills the same field, so it works there too.
+
+A small class registers the command, wired the same way as the other
+single-purpose features. Documented in the README.
+---
+diff --git a/README.md b/README.md
+index 79929a8..90f522a 100644
+--- a/README.md
++++ b/README.md
+@@ -532,6 +532,11 @@ ___
+   - **Description:** Supports very simplistic countdown timers from chat parsing triggers.
+      See the [Triggers](#Triggers) section for more details.
+ 
++- `/targetpet`
++  - **Arguments:** none
++  - **Description:** Targets your own pet (a charmed pet too), so it can be bound to a hotkey or a social button.
++     If you have no pet, or it cannot be found, prints one line and leaves your target alone.
++
+ - `/uierrors`
+   - **Arguments:** `on`, `off`
+   - **Description:** Sets (on) or clears (off) the enable for showing dialog messages for unknown xml errors.
+diff --git a/Zeal/Zeal.vcxproj b/Zeal/Zeal.vcxproj
+index 1084304..8218f2f 100644
+--- a/Zeal/Zeal.vcxproj
++++ b/Zeal/Zeal.vcxproj
+@@ -83,6 +83,7 @@
+     <ClInclude Include="items.h" />
+     <ClInclude Include="json.hpp" />
+     <ClInclude Include="helm_manager.h" />
++    <ClInclude Include="target_pet.h" />
+     <ClInclude Include="music.h" />
+     <ClInclude Include="raid_bars.h" />
+     <ClInclude Include="raid_bars_manage.h" />
+@@ -169,6 +170,7 @@
+     <ClCompile Include="equip_item.cpp" />
+     <ClCompile Include="floating_damage.cpp" />
+     <ClCompile Include="helm_manager.cpp" />
++    <ClCompile Include="target_pet.cpp" />
+     <ClCompile Include="items.cpp" />
+     <ClCompile Include="music.cpp" />
+     <ClCompile Include="raid_bars.cpp" />
+diff --git a/Zeal/Zeal.vcxproj.filters b/Zeal/Zeal.vcxproj.filters
+index eda60ee..84eb812 100644
+--- a/Zeal/Zeal.vcxproj.filters
++++ b/Zeal/Zeal.vcxproj.filters
+@@ -240,6 +240,9 @@
+     <ClInclude Include="helm_manager.h">
+       <Filter>Header Files\hooks</Filter>
+     </ClInclude>
++    <ClInclude Include="target_pet.h">
++      <Filter>Header Files\other</Filter>
++    </ClInclude>
+     <ClInclude Include="music.h">
+       <Filter>Header Files\hooks</Filter>
+     </ClInclude>
+@@ -479,6 +482,9 @@
+     <ClCompile Include="helm_manager.cpp">
+       <Filter>Source Files\hooks</Filter>
+     </ClCompile>
++    <ClCompile Include="target_pet.cpp">
++      <Filter>Source Files\other</Filter>
++    </ClCompile>
+     <ClCompile Include="ui_buff.cpp">
+       <Filter>Source Files\ui</Filter>
+     </ClCompile>
+diff --git a/Zeal/zeal.cpp b/Zeal/zeal.cpp
+index f6ef22d..79ac8c3 100644
+--- a/Zeal/zeal.cpp
++++ b/Zeal/zeal.cpp
+@@ -32,6 +32,7 @@
+ #include "game_addresses.h"
+ #include "game_str.h"
+ #include "helm_manager.h"
++#include "target_pet.h"
+ #include "hook_wrapper.h"
+ #include "io_ini.h"
+ #include "item_display.h"
+@@ -150,6 +151,7 @@ ZealService::ZealService() {
+   // Adds DirectX (and UISkin for resource file paths) dependencies.
+   target_ring = MakeCheckedUnique(TargetRing);
+   floating_damage = MakeCheckedUnique(FloatingDamage);  // Uses target ring method.
++  target_pet = MakeCheckedUnique(TargetPet);     // Uses commands.
+ 
+   // Classes that add more explicit dependencies on the new UI.
+   utils = MakeCheckedUnique(Utils);                 // Uses container manager.
+diff --git a/Zeal/zeal.h b/Zeal/zeal.h
+index 93f2d1a..49d02df 100644
+--- a/Zeal/zeal.h
++++ b/Zeal/zeal.h
+@@ -51,6 +51,7 @@ class ZealService {
+   std::unique_ptr<class GameStr> gamestr_hook = nullptr;
+   std::unique_ptr<class CycleTarget> cycle_target = nullptr;
+   std::unique_ptr<class CameraMods> camera_mods = nullptr;
++  std::unique_ptr<class TargetPet> target_pet = nullptr;
+   std::unique_ptr<class Raid> raid_hook = nullptr;
+   std::unique_ptr<class Tooltip> tooltips = nullptr;
+   std::unique_ptr<class OutputFile> outputfile = nullptr;
+diff --git a/Zeal/target_pet.cpp b/Zeal/target_pet.cpp
+new file mode 100644
+index 0000000..e639fde
+--- /dev/null
++++ b/Zeal/target_pet.cpp
+@@ -0,0 +1,42 @@
++#include "target_pet.h"
++
++#include <string>
++#include <vector>
++
++#include "commands.h"
++#include "game_functions.h"
++#include "zeal.h"
++
++namespace {
++
++// Targets the player's own pet. Always says something when it cannot, and never changes the target in that case.
++bool target_pet(std::vector<std::string> &args) {
++  if (args.size() > 1) {
++    Zeal::Game::print_chat("Usage: /targetpet");
++    return true;
++  }
++  if (!Zeal::Game::is_in_game()) return true;
++
++  // ActorInfo::PetID is the pet's spawn id, but it is a SHORT that holds -1 (not 0) when there is no pet.
++  const auto *self = Zeal::Game::get_self();
++  const int pet_id = (self && self->ActorInfo) ? self->ActorInfo->PetID : -1;
++  if (pet_id <= 0) {
++    Zeal::Game::print_chat("You do not have a pet to target.");
++    return true;
++  }
++
++  auto *pet = Zeal::Game::get_entity_by_id(pet_id);  // Rejects ids outside the spawn table, so null means "not here".
++  if (!pet) {
++    Zeal::Game::print_chat("Your pet could not be found (out of range or zoning).");
++    return true;
++  }
++
++  if (pet != Zeal::Game::get_target()) Zeal::Game::set_target(pet);  // Already on target: nothing to do.
++  return true;
++}
++
++}  // namespace
++
++TargetPet::TargetPet(ZealService *zeal) {
++  zeal->commands_hook->Add("/targetpet", {}, "Targets your own pet (works for a charmed pet too).", target_pet);
++}
+diff --git a/Zeal/target_pet.h b/Zeal/target_pet.h
+new file mode 100644
+index 0000000..ee44ae9
+--- /dev/null
++++ b/Zeal/target_pet.h
+@@ -0,0 +1,14 @@
++#pragma once
++
++// Adds /targetpet: target your own pet from a hotkey or a social button, so a pet class does not need to click the
++// pet window mid-fight. A charmed pet is a pet like any other (the client fills the same pet id), so a bard,
++// enchanter or necromancer can put it on target from the keyboard.
++class TargetPet {
++ public:
++  explicit TargetPet(class ZealService *zeal);
++  ~TargetPet() = default;
++
++  // Disable copy.
++  TargetPet(TargetPet const &) = delete;
++  TargetPet &operator=(TargetPet const &) = delete;
++};
+-- 
+2.43.0
+

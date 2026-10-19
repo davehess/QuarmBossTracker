@@ -6,6 +6,7 @@ const fs   = require('fs');
 const path = require('path');
 const { normalizeClass } = require('./classTitles');
 const slowMode = require('./slowMode');
+const potime = require('./potimeCycle');
 const STATE_FILE = path.join(__dirname, '../data/state.json');
 
 function _empty() {
@@ -131,10 +132,10 @@ function saveState(state) {
 }
 
 // ── Boss kills ──────────────────────────────────────────────────────────────────────────────
-function recordKill(bossId, timerHours, killedBy, killedAtOverride) {
+function recordKill(bossId, timerHours, killedBy, killedAtOverride, nextSpawnOverride) {
   const state     = loadState();
   const killedAt  = killedAtOverride || Date.now();
-  const nextSpawn = killedAt + timerHours * 3600000;
+  const nextSpawn = nextSpawnOverride || killedAt + timerHours * 3600000;
   state.bosses[bossId] = { killedAt, nextSpawn, killedBy };
   state.dailyKills.push({ bossId, killedAt, killedBy });
   saveState(state);
@@ -151,7 +152,13 @@ function onKillRecorded(fn) { _killListeners.push(fn); }
 // the kill's own timestamp. utils/slowMode.js has the rule and the officer switch.
 function recordKillNotifying(bossId, timerHours, killedBy, killedAtOverride) {
   const killedAt = killedAtOverride || Date.now();
-  const entry = recordKill(bossId, slowMode.timerHoursForKill(bossId, timerHours, killedAt), killedBy, killedAt);
+  // The Plane of Time's Quarm is on a fixed 162 h cycle from the guild's first entry, which a kill does not
+  // extend and slow mode does not shorten (utils/potimeCycle.js, §369/§383): his timer is the cycle END.
+  // endForKill is null for every other boss.
+  const cycleEnd = potime.endForKill(bossId, killedAt);
+  const entry = cycleEnd
+    ? recordKill(bossId, timerHours, killedBy, killedAt, cycleEnd)
+    : recordKill(bossId, slowMode.timerHoursForKill(bossId, timerHours, killedAt), killedBy, killedAt);
   for (const fn of _killListeners) {
     try { Promise.resolve(fn({ bossId, killedAt: entry.killedAt, killedBy })).catch(() => {}); } catch { /* a listener never fails a kill */ }
   }

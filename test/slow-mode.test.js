@@ -23,8 +23,8 @@ function makeRecordKill() {
   const inner = sliceBlock(stateSrc, 'function recordKill(', '\n}\n');
   const wrapper = sliceBlock(stateSrc, 'const _killListeners = [];', '  return entry;\n}\n');
   const S = { bosses: {}, dailyKills: [] };
-  const rk = new Function('S', 'slowMode',
-    `const loadState = () => S; const saveState = () => {};\n${inner}\n${wrapper}\nreturn recordKillNotifying;`)(S, slowMode);
+  const rk = new Function('S', 'slowMode', 'potime',
+    `const loadState = () => S; const saveState = () => {};\n${inner}\n${wrapper}\nreturn recordKillNotifying;`)(S, slowMode, require('../utils/potimeCycle.js'));
   return { rk, S };
 }
 
