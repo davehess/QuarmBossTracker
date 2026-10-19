@@ -51047,6 +51047,7 @@ function _mapNoteState(character, prev, next, now) {
   if (prev.target_type != null && prev.target_type !== 1) return;   // a player (or a pet corpse) going down is not a spawn
   const id = next.target_id > 0 ? next.target_id : (prev.target_id > 0 ? prev.target_id : null);
   const loc = _mapServerXY(next.target_loc) || _mapServerXY(prev.target_loc) || _mapServerXY(next.loc);
+  try { _dropDebuffTimersOnDeath(base, id, now, 'zeal'); } catch { /* the timers are a nicety: never break the frame */ }
   _mapNoteDeath(zone, { name: base, spawn_id: id, loc, loc_source: _mapServerXY(next.target_loc) || _mapServerXY(prev.target_loc) ? 'target' : 'self', at: now, src: 'zeal', character }, now);
 }
 // "<Mob> has been slain by <killer>!" / "You have slain <Mob>!" from a log the agent is tailing right now.
@@ -54477,6 +54478,54 @@ function _cancelTimersOnMobDeath(line) {
   return cancelled;
 }
 
+// A mob died: its debuff countdowns (the "<mob> - <spell>" rows _builtinTimerRows builds from _buffLandingsByTarget)
+// go with it (the guild lead, 2026-10-19: "when a mob dies it should remove those triggers for debuffs"). Deleted from
+// the map, so the very next snapshot omits the rows and the overlay drops them instead of sitting at 00:00.
+// The map is keyed by NAME, so two same-name mobs share one bucket and the only proof of WHICH mob an entry sits on
+// is its target_id (null when unprovable, which is most landings). The rule, in order:
+//   • the dead name is a player, a pet or an active charm → nothing (buffs on players and charm pets are never touched);
+//   • the death carries a spawn id → drop the entries stamped with THAT id; entries with no id go too, but only while
+//     the bucket is provably one mob (no entry stamped with another id, and the name is not seen at K>=2);
+//   • the death has no id → drop only when the bucket is provably one mob (at most one distinct id, K<2). With two
+//     or more same-name mobs and no id we cannot say whose timers are whose, so nothing is removed — they expire.
+// Charm spells and friendly buffs stay (a beneficial spell is not a debuff; Pacify/Harmony count as ours to clear).
+function _dropDebuffTimersOnDeath(deadName, spawnId, atMs, src) {
+  if (!deadName) return 0;
+  const lower = String(deadName).trim().toLowerCase();
+  if (!lower || lower === 'you') return 0;
+  if (whoData.has(lower) || _petOwnerByName(lower)) return 0;
+  if (_watchedCharacters().some(c => String(c).toLowerCase() === lower)) return 0;
+  const mp = _buffLandingsByTarget.get(lower);
+  if (!mp || !mp.size) return 0;
+  const nowMs = Date.now();
+  const id = Number(spawnId) > 0 ? Number(spawnId) : null;
+  const at = Number.isFinite(atMs) ? atMs : nowMs;
+  const cand = [];
+  for (const [k, b] of mp) {
+    if (!b || b.is_charm_spell || CHARM_SPELLS.has(String(b.name || '').toLowerCase())) continue;
+    if (_spellGood(b.name) === 1 && !_isPacifySpell(b.name)) continue;
+    if ((Number(b.landed_at) || 0) > at + 1500) continue;   // landed after the death: a new mob of the same name
+    cand.push(k);
+  }
+  const ids = new Set();
+  for (const k of cand) { const i = Number(mp.get(k).target_id); if (i > 0) ids.add(i); }
+  const several = (typeof _mobTrackK === 'function' ? _mobTrackK(lower, nowMs) : 0) >= 2;
+  let drop;
+  if (id != null) {
+    const other = [...ids].some(i => i !== id);
+    drop = cand.filter(k => { const i = Number(mp.get(k).target_id); return i > 0 ? i === id : (!other && !several); });
+  } else {
+    drop = (ids.size <= 1 && !several) ? cand : [];
+  }
+  for (const k of drop) mp.delete(k);
+  if (mp.size === 0) _buffLandingsByTarget.delete(lower);
+  if (drop.length) {
+    _savePetStateSoon();
+    console.log('[timers] ' + deadName + (id ? ' #' + id : '') + ' died (' + (src || 'log') + ') — cleared ' + drop.length + ' debuff timer' + (drop.length === 1 ? '' : 's'));
+  }
+  return drop.length;
+}
+
 // ── #142 boss spawn-chain + tank-buster detection ───────────────────────────
 // Data-driven, per-boss, reusable (#36). A "chain" encodes: when the PRECURSOR
 // mob dies, the BOSS spawns spawn_delay_sec later and busts the tank at spawn,
@@ -54994,8 +55043,12 @@ function _builtinTimerRows(now) {
         // group: which Timers-canvas panel claims the row (a charm spell sits
         // with the recharm tick, a lull with the lulls, a mez with the mezzes, the rest are spells).
         const group = isCharm ? 'charm' : isMez ? 'mez' : _isPacifySpell(b.name) ? 'lull' : 'spell';
-        push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mob + ' - ' + b.name,
-               target: mob, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
+        // The mob's spawn id, when the landing proved one (the guild lead, 2026-10-19: "mention the mob's spawn id in
+        // the timer"): "A scrounging rat #4182 - Turgur's Insects". Unknown id → the label stays as it was.
+        const sid = Number(b.target_id) > 0 ? Number(b.target_id) : null;
+        const mobLabel = sid ? mob + ' #' + sid : mob;
+        push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mobLabel + ' - ' + b.name,
+               target: mobLabel, target_id: sid, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
                remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb', tick_snapped: fade.snapped, group });
       }
     }
@@ -58744,6 +58797,14 @@ async function main() {
         // Ssraeshza dies → 2:10 cycle, "Paladin DA NOW" at 2:00). Both key off the
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
+        // The slain mob's debuff countdowns go too (2026-10-19). Live lines only: a --since backfill replays old ones.
+        try {
+          const _dbDead = _deadMobNameFromLine(line);
+          if (_dbDead) {
+            const _dbTs = parseEqTimestamp(line), _dbAt = _dbTs ? _dbTs.getTime() : Date.now();
+            if (Date.now() - _dbAt <= 60000) _dropDebuffTimersOnDeath(_dbDead, _provableTargetId(b.character, _dbDead), _dbAt, 'log');
+          }
+        } catch { /* never let a bad line break the tail */ }
         // Spawn map: the same slain/died line starts that spawn point's respawn window. Live lines only
         // (a --since backfill replays old ones; _mapNoteLogDeath drops anything over a minute old).
         try {
@@ -59015,7 +59076,7 @@ module.exports = {
   startReplay, stopReplay, _replayEvaluateLine, _liveFightActive,
   _fireLog, _triggerJournal, _triggerLastFire,
   // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
-  _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
+  _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine, _dropDebuffTimersOnDeath,
   // #207 callout dismissals — exported for the scratchpad fixture.
   _recordCalloutFeedback, _calloutFeedbackSnapshot, _flushCalloutVotes,
   // Age + liveness (2026-08-10) — exported so the wrapper is tested against
