@@ -592,7 +592,7 @@ describe('agent: hidden_from_lists is carried for display and gates nothing', ()
   const uploadFn = sliceBlock(agentRaw, 'function shouldUploadForCharacter(character) {', '\n}\n');
   const quarmyFn = sliceBlock(agentRaw, 'function _quarmyPrefsBlock(lowerName) {', '\n}\n');
   const env = evalBlock(
-    `const stats = {}; function scheduleRender() {}\n${applyFn}\n${hiddenFn}\n${uploadFn}\n${quarmyFn}`,
+    `const stats = {}; function scheduleRender() {} const _offGuildServerChar = () => false;\n${applyFn}\n${hiddenFn}\n${uploadFn}\n${quarmyFn}`,
     ['stats', '_applyCharacterPrefsResponse', '_hiddenFromLists', 'shouldUploadForCharacter', '_quarmyPrefsBlock'],
   );
 

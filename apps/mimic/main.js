@@ -773,6 +773,10 @@ const EQ_LOG_CANONICAL_RX = /^eqlog_.+_pq\.proj\.txt$/i;
 // " BACKUP.txt", ".txt.old", etc. We still want these so a rotated history
 // isn't silently dropped. Lazy capture stops at "_pq.proj".
 const EQ_LOG_STEM_RX = /^eqlog_(.+?)_pq\.proj/i;
+// Other EverQuest servers (Project 1999, live EQ, Lazarus...; the guild lead, 2026-10-19) write eqlog_<Name>_<server>.txt.
+// They only ever pass through the welcome-line check below (never on the filename alone), so a stray eqlog_-ish file
+// is not tailed. The agent (index.js, eqServerForLog) decides what each server may do; Mimic only has to find them.
+const EQ_LOG_OTHER_STEM_RX = /^eqlog_([^_]+)_.+?\.txt/i;
 // Every EQ log opens with "[<timestamp>] Welcome to EverQuest!". We use that
 // signature to confirm a NON-canonical filename really is an EQ log (vs some
 // unrelated eqlog_-ish file) before we tail it.
@@ -780,7 +784,7 @@ const EQ_WELCOME_RX = /^\[[^\]]+\]\s+Welcome to EverQuest!/;
 
 // Character name from an EQ log filename, tolerant of rotation/backup suffixes.
 function _characterFromLogName(filename) {
-  const m = filename.match(EQ_LOG_STEM_RX);
+  const m = filename.match(EQ_LOG_STEM_RX) || filename.match(EQ_LOG_OTHER_STEM_RX);
   return m ? m[1] : null;
 }
 
@@ -850,7 +854,7 @@ function _flushEqVerdicts() {
 
 function _isEqLogFile(dir, filename) {
   if (EQ_LOG_CANONICAL_RX.test(filename)) return true;   // filename alone — no I/O
-  if (!EQ_LOG_STEM_RX.test(filename)) return false;      // not even a candidate
+  if (!EQ_LOG_STEM_RX.test(filename) && !EQ_LOG_OTHER_STEM_RX.test(filename)) return false;      // not even a candidate
   const full = path.join(dir, filename);
   const key  = full.toLowerCase();
   const map  = _loadEqVerdicts();
