@@ -170,6 +170,11 @@ export default function AdminPage() {
           href="/admin/pronunciations"
         />
         <Card
+          title="🗣️ Voice reports"
+          body="[beta] Lines Mimic said wrong, reported by raiders with an optional better spelling. Hear them again, then mark them fixed or dismiss them."
+          href="/admin/voice-reports"
+        />
+        <Card
           title="✉ Mimic Mail"
           body="Broadcast notices to every Mimic user — pulsing mail icon on their dashboard within ~90s, plus a Discord post for critical ones. Version-independent: reaches all future Mimic versions with no release."
           href="/admin/notices"

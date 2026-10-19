@@ -23978,6 +23978,17 @@ function _galleryRoutes() {
   return _gallery;
 }
 
+let _voiceReports = null;
+function _voiceReportRoutes() {
+  if (!_voiceReports) {
+    _voiceReports = require('./utils/voiceReports').createVoiceReports({
+      supabase: require('./utils/supabase'),
+      requireAuth: (rq, rs) => mimicLink.requireAgentAuth(rq, rs),
+    });
+  }
+  return _voiceReports;
+}
+
 const httpServer = http.createServer(async (req, res) => {
   // Per-IP limiter FIRST: over the limit costs one 429 and no further work. /health is exempt (Railway's healthcheck).
   if (!/^\/healthz?(?:[?#]|$)/.test(req.url || '')) {
@@ -24464,6 +24475,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { if (await _galleryRoutes().handle(req, res)) return; }
     catch (err) {
       console.error('[gallery] handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // "That was said wrong" reports from Mimic (the guild lead, 2026-10-19: "B for voice"). utils/voiceReports.js.
+  if (req.method === 'POST' && req.url.split('?')[0] === '/api/agent/voice-report') {
+    try { if (await _voiceReportRoutes().handle(req, res)) return; }
+    catch (err) {
+      console.error('[voice-report] handler error:', err);
       if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
