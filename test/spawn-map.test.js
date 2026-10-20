@@ -1811,7 +1811,7 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       expect(c._mapPinGet('thedeep', 9)).toMatchObject({ point_id: 1 });
       watch(c, s);
       const p = c._mapStatePayload('', N + 1000);
-      expect(p.seen).toEqual([{ point_id: 1, spawn_id: 9, name: 'a decaying skeleton', at: N, by: null, hp_pct: 100 }]);   // hp_pct: your own target, pinned to that point (FB-87)
+      expect(p.seen).toEqual([{ point_id: 1, spawn_id: 9, name: 'a decaying skeleton', at: N, by: null, hp_pct: 100, hp_at: N + 1000, hp_live: true }]);   // hp_pct: your own target, pinned to that point (FB-87); read this poll
       expect(p.target.point_id).toBe(1);
     });
     it('an ambiguous spot pins nothing: no pin, no seen, no target.point_id, nothing queued', () => {

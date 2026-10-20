@@ -121,6 +121,7 @@
   .trow .kill:hover{color:#ffd866;border-color:#f0b429}
   .sec.watch{color:#f0b429}
   .sec.engaged{color:#f0883e}
+  .kite{font-size:11px;color:#8b949e;padding:0 2px 4px}
   .trow.engaged{border-left-color:#f0883e;cursor:default} .trow.engaged .tm{color:#f0883e}
   .trow.watch .nm{font-weight:bold}
   .trow.corpse{border-left-color:#8b949e} .trow.corpse .tm{color:#8b949e}
@@ -432,10 +433,25 @@
   }
   // The health chip on an alive row (FB-87): "NN%", tiered like Extended Target (60+ hi, 30+ mid, below lo). null when the
   // agent sent no health, so the row stays as it was. The text changes only when the number does.
-  function hpTag(hp) {
+  // ageMs: only for a health that is remembered rather than read this poll ("93% · 12s"), so tabbing through a pack
+  // visibly refreshes each row; null/absent = live, no age.
+  function hpTag(hp, ageMs) {
     if (hp == null || !isFinite(Number(hp))) return null;
     var n = Math.round(Number(hp));
-    return { text: n + '%', cls: 'hp ' + (n >= 60 ? 'hi' : n >= 30 ? 'mid' : 'lo') };
+    return { text: n + '%' + (ageMs != null && isFinite(ageMs) ? ' · ' + fmtDur(ageMs) : ''), cls: 'hp ' + (n >= 60 ? 'hi' : n >= 30 ? 'mid' : 'lo') };
+  }
+  // The kite's totals line (agent _mapKite): "Kite: 10 mobs · avg 61% · ~41k HP left · 3 unread". No HP total when the
+  // agent did not know every mob's max HP (null); same input, same text, so the list does not repaint for nothing.
+  function kiteLine(k) {
+    if (!k || !(k.n >= 2)) return '';
+    var hp = k.hp_left;
+    return 'Kite: ' + k.n + ' mobs' + (k.avg != null ? ' · avg ' + k.avg + '%' : '')
+      + (hp != null ? ' · ~' + (hp >= 1000 ? Math.round(hp / 1000) + 'k' : hp) + ' HP left' : '')
+      + (k.unread ? ' · ' + k.unread + ' unread' : '');
+  }
+  // The age of a row's health when it is not live (the agent sends hp_live false + hp_at); null when live or unknown.
+  function hpAge(row, now) {
+    return row && row.hp_live === false && row.hp_at != null && isFinite(Number(row.hp_at)) ? Math.max(0, now - Number(row.hp_at)) : null;
   }
   // The "★ Watched" section: one row per watched spot that the zone data knows, soonest timer first, spots with no timer after.
   function watchedRows(watched, byId, timerBy, seenBy) {
@@ -2672,9 +2688,12 @@
   function closeMenu() { S.menuPid = null; menu.style.display = 'none'; }
   // "☠ killed" on an alive row (the guild lead, 2026-10-19: "put a button on the timers sidebar to kill that mob"): the agent starts
   // the respawn timer from that mob's newest death message in your log, else from now. data-wp-interact arms the click-through window.
-  function addKillBtn(row, name, pid, spawnId) {
-    var b = el('button', 'kill', '☠ killed'); b.type = 'button'; b.setAttribute('data-wp-interact', '');
-    b.title = 'Start the respawn timer from its last death message, or from now if none was seen';
+  // q = "killed?": a death message named this mob but several of that name are up, so the agent has not picked one. Tab onto
+  // the ones that are alive, or press this to say it was this one.
+  function addKillBtn(row, name, pid, spawnId, q) {
+    var b = el('button', 'kill', q ? '☠ killed?' : '☠ killed'); b.type = 'button'; b.setAttribute('data-wp-interact', '');
+    b.title = q ? 'A death message named this mob but several of that name are up. Target the ones that are alive; the last one left is the dead one. Press to say it was this one.'
+      : 'Start the respawn timer from its last death message, or from now if none was seen';
     b.addEventListener('click', function (e) { e.stopPropagation(); postKill(name, pid, spawnId); });
     row.appendChild(b);
   }
@@ -2706,14 +2725,19 @@
     var engaged = (P && P.engaged) || [];
     if (engaged.length) {
       box.appendChild(el('div', 'sec engaged', '⚔ Engaged (' + engaged.length + ')'));
+      var kl = kiteLine(P && P.kite);
+      if (kl) box.appendChild(el('div', 'kite', kl));
       engaged.forEach(function (g) {
         var r = el('div', 'trow engaged');
-        var etm = el('span', 'tm', g.n + ' on it');
-        var ehp = hpTag(g.hp_pct);
+        // n 0 = nobody targets it but it is hurt and alive (an AE-kited pack): "93% hurt" instead of "0 on it".
+        var etm = el('span', 'tm', g.n >= 1 ? g.n + ' on it' : 'hurt');
+        var ehp = hpTag(g.hp_pct, hpAge(g, now));
         if (ehp) etm.insertBefore(el('span', ehp.cls, ehp.text), etm.firstChild);
         r.appendChild(el('span', 'nm', g.name)); r.appendChild(etm);
-        r.appendChild(el('span', 'src', g.spawn_id != null ? 'spawn #' + g.spawn_id : 'engaged'));
-        addKillBtn(r, g.name, null, g.spawn_id);
+        r.appendChild(el('span', 'src', (g.spawn_id != null ? 'spawn #' + g.spawn_id : 'engaged') + (g.killed_q ? ' · killed?' : '')));
+        addKillBtn(r, g.name, g.point_id != null ? g.point_id : null, g.spawn_id, g.killed_q);
+        // a row promoted from Up · seen still centres on its spawn point
+        if (g.point_id != null) { r.setAttribute('data-wp-interact', ''); r.addEventListener('click', function () { centreOn(S.byId[String(g.point_id)]); }); }
         box.appendChild(r);
       });
     }
@@ -2726,12 +2750,12 @@
         var r = el('div', 'trow watch ' + (w.t ? timerState(w.t, now) : w.up ? 'seen' : '')); r.setAttribute('data-wp-interact', '');
         if (w.by) r.title = 'watched by ' + w.by;
         var wtm = el('span', 'tm', w.t ? timerText(w.t, now) : w.up ? 'up' : 'watching');
-        var whp = !w.t && w.up ? hpTag(w.hp) : null;
+        var whp = !w.t && w.up ? hpTag(w.hp, hpAge(S.seenBy[w.pid], now)) : null;
         if (whp) wtm.insertBefore(el('span', whp.cls, whp.text), wtm.firstChild);
         r.appendChild(el('span', 'nm', w.named)); r.appendChild(wtm);
         r.appendChild(el('span', 'src', 'PH: ' + (w.ph || '—') + ' · spot #' + w.pid));
         var wsn = S.seenBy[w.pid];   // set only for a spot with no timer and a mob seen alive: the one to mark dead
-        if (wsn && wsn.name) addKillBtn(r, wsn.name, w.pid, wsn.spawn_id);
+        if (wsn && wsn.name) addKillBtn(r, wsn.name, w.pid, wsn.spawn_id, wsn.killed_q);
         r.addEventListener('click', function () { centreOn(w.p); });
         box.appendChild(r);
       });
@@ -2748,17 +2772,18 @@
       box.appendChild(r);
     });
     if (!timers.length && !wrows.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot')).id = 'empty';
-    var seenList = ((P && P.seen) || []).filter(function (s) { return !S.timerBy[String(s.point_id)] && !S.watchBy[String(s.point_id)]; });
+    // a seen mob already listed under Engaged (the agent flags it) is not listed twice
+    var seenList = ((P && P.seen) || []).filter(function (s) { return !s.engaged && !S.timerBy[String(s.point_id)] && !S.watchBy[String(s.point_id)]; });
     if (seenList.length) {
       box.appendChild(el('div', 'sec', 'Up · seen (' + seenList.length + ')'));
       seenList.forEach(function (s) {
         var r = el('div', 'trow seen'); r.setAttribute('data-wp-interact', '');
-        var stm = el('span', 'tm', fmtDur(now - s.at) + ' ago');
-        var shp = hpTag(s.hp_pct);
+        var stm = el('span', 'tm', fmtDur(now - s.at) + ' ago' + (s.n >= 1 ? ' · ' + s.n + ' on it' : ''));
+        var shp = hpTag(s.hp_pct, hpAge(s, now));
         if (shp) stm.insertBefore(el('span', shp.cls, shp.text), stm.firstChild);
         r.appendChild(el('span', 'nm', s.name || 'a mob')); r.appendChild(stm);
-        r.appendChild(el('span', 'src', (s.spawn_id != null ? 'spawn #' + s.spawn_id : 'pinned') + (s.by ? ' · by ' + s.by : '')));
-        if (s.name) addKillBtn(r, s.name, s.point_id, s.spawn_id);
+        r.appendChild(el('span', 'src', (s.spawn_id != null ? 'spawn #' + s.spawn_id : 'pinned') + (s.by ? ' · by ' + s.by : '') + (s.killed_q ? ' · killed?' : '')));
+        if (s.name) addKillBtn(r, s.name, s.point_id, s.spawn_id, s.killed_q);
         r.addEventListener('click', function () { centreOn(S.byId[String(s.point_id)]); });
         box.appendChild(r);
       });
