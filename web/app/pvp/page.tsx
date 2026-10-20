@@ -16,8 +16,11 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
 import QuakeBanner from './QuakeBanner';
 import WindowPicker from '@/components/WindowPicker';
+import { FightCards } from './Fights';
+import type { PvpFightRow } from '@/lib/pvpMedia';
 import { resolveWindow, type ResolvedWindow } from '@/lib/timeWindow';
 import { loadPvpBossKills } from '@/lib/fullReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -64,7 +67,7 @@ async function loadLeaderboard(sortKey: SortKey, w: ResolvedWindow) {
   const { data: roster } = await sb
     .from('characters')
     .select('name, main_name')
-    .eq('guild_id', 'wolfpack');
+    .eq('guild_id', GUILD_TAG);
   const rosterRows = (roster ?? []) as { name: string; main_name: string | null }[];
   const rosterNames = rosterRows.map(r => r.name);
   if (rosterNames.length === 0) return { rows: [] as LeaderboardRow[], error: null as string | null };
@@ -84,13 +87,13 @@ async function loadLeaderboard(sortKey: SortKey, w: ResolvedWindow) {
   // Merge by killer name into one row per character.
   let killQuery = sb.from('pvp_kills')
     .select('killer, victim, via_pet, killed_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .in('killer', rosterNames)
     .order('killed_at', { ascending: false })
     .limit(20000);
   let assistQuery = sb.from('pvp_assists')
     .select('assister')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .in('assister', rosterNames)
     .limit(20000);
   if (w.sinceIso) {
@@ -205,7 +208,7 @@ async function loadQuake(): Promise<string | null> {
   const { data } = await sb
     .from('pvp_quake')
     .select('next_quake_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .maybeSingle();
   const iso = (data as { next_quake_at: string | null } | null)?.next_quake_at ?? null;
   if (!iso) return null;
@@ -234,7 +237,7 @@ async function loadHotZones(): Promise<HotZone[]> {
   const { data: kills } = await sb
     .from('pvp_kills')
     .select('zone, killer, victim, killer_is_npc, killed_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .gte('killed_at', sinceIso)
     .not('zone', 'is', null)
     .limit(1000);
@@ -262,6 +265,18 @@ async function loadHotZones(): Promise<HotZone[]> {
     .sort((a, b) => (b.last_event_at || '').localeCompare(a.last_event_at || ''));
 }
 
+// Fights from every PvP death (pvp_fights, DECISIONS-2026-09-21.md §46), drawn as the Fight cards below.
+async function loadFights(): Promise<PvpFightRow[]> {
+  const { data, error } = await supabaseAdmin().rpc('pvp_fights', {
+    p_since: new Date(Date.now() - 30 * 86400000).toISOString(),
+    p_wave_gap: '3 minutes',
+    p_join_gap: '20 minutes',
+    p_limit: 15,
+  });
+  if (error) console.warn('[pvp] pvp_fights failed:', error.message);
+  return (data ?? []) as PvpFightRow[];
+}
+
 // Who follows Discord right now: the latest #togglepvp line each character's own Mimic saw
 // ("You are now player kill and follow the ways of Discord." / "You now follow the ways of Order."),
 // through the pvp_flag_state view (migration 20260927040100). Self-only lines, so only characters
@@ -272,7 +287,7 @@ async function loadFlagged(): Promise<Flagged[]> {
   const { data, error } = await supabaseAdmin()
     .from('pvp_flag_state')
     .select('character, since')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('discord', true)
     .order('since', { ascending: false })
     .limit(200);
@@ -319,11 +334,12 @@ export default async function PvpPage({
   const w = resolveWindow(sp?.w, 'life');
 
   const tz = await userTz();
-  const [{ rows, error }, bossTimers, quakeAt, hotZones, flagged] = await Promise.all([
+  const [{ rows, error }, bossTimers, quakeAt, hotZones, fights, flagged] = await Promise.all([
     loadLeaderboard(sortKey, w),
     loadBossTimers(),
     loadQuake(),
     loadHotZones(),
+    loadFights(),
     loadFlagged(),
   ]);
   if (error) {
@@ -442,6 +458,8 @@ export default async function PvpPage({
           </table>
         )}
       </section>
+
+      <FightCards fights={fights} tz={tz} />
 
       {/* Next earthquake — a quake repops every PvP mob, so it sits directly
           above the boss timers (it resets all of them). Live countdown. */}
