@@ -174,9 +174,12 @@ describe('Guild triggers grouped', () => {
       sliceBlock(dash, 'function wpKeep(key, defaultOpen) {', '\n}\n'),
       sliceBlock(dash, 'function wpGuildGroupOf(t) {', '\n}\n'),
       sliceBlock(dash, 'function wpGuildCatBadge(cat) {', '\n}\n'),
+      // the rows are fetched from /api/guild-triggers and held here, not read off the state (2026-10-20)
+      sliceBlock(dash, 'var _wpGt = {', ';\n'),
+      sliceBlock(dash, 'function wpGuildTriggersSync(s, el) {', '\n}\n'),
       sliceBlock(dash, 'function renderGuildTriggersCard(s) {', '\n}\n'),
       'function html() { return out; }',
-    ].join('\n'), ['renderGuildTriggersCard', 'wpGuildGroupOf', 'html', '_wpOpenDetails']);
+    ].join('\n'), ['renderGuildTriggersCard', 'wpGuildGroupOf', 'html', '_wpOpenDetails', '_wpGt']);
   }
 
   it('files a trigger by stat card, zone, class, timer tag, buff/debuff tag, then its coarse category', () => {
@@ -192,15 +195,18 @@ describe('Guild triggers grouped', () => {
     expect(g({ category: 'rampage' }).label).toBe('Rampage');
   });
 
-  const STATE = { guildTriggers: [
+  const ROWS = [
     { id: 'g-1', name: 'Rampage on me', category: 'mechanic', pattern: 'rampages', actions: [{ type: 'text_overlay', text: 'RAMPAGE', tts: 'rampage', voice_pack: 'drill', sound: 'slap', sound_mode: 'replace' }] },
     { id: 'g-2', name: 'Chain Lightning', category: 'mechanic', pattern: 'x', rule_group: 'zone:potime', rule_group_label: 'Plane of Time', actions: [] },
     { id: 'g-3', name: 'Zarrin — stat card', category: 'callout', pattern: 'y', rule_group: 'statcards', actions: [] },
     { id: 'g-4', name: 'Other', pattern: 'z', actions: [] },
-  ] };
+  ];
+  // /api/state carries the count and a revision; the card holds the rows (fetched from /api/guild-triggers)
+  const STATE = { guildTriggerCount: 4, guildTriggersRev: '4.abc' };
+  const loaded = (rows = ROWS) => { const h = build(); h._wpGt.rows = rows; return h; };
 
   it('draws one <details> per group, in order, each kept open/closed by wpKeep, with its count', () => {
-    const h = build();
+    const h = loaded();
     h.renderGuildTriggersCard(STATE);
     const out = h.html();
     const sums = [...out.matchAll(/<summary[^>]*>.*?<b>(.*?)<\/b> <span class="dim">\((\d+)\)/g)].map(m => [m[1], m[2]]);
@@ -211,19 +217,19 @@ describe('Guild triggers grouped', () => {
   });
 
   it('a long list starts folded, a short one open, and a choice the user made is kept', () => {
-    const h = build();
+    const h = loaded();
     h.renderGuildTriggersCard(STATE);
     expect(h.html()).toMatch(/<details data-keep="gtrig\|cat:mechanic" open/);   // 4 triggers: open
-    const many = { guildTriggers: Array.from({ length: 20 }, (_, i) => ({ id: 'm' + i, name: 'M' + i, category: 'mechanic', pattern: 'p', actions: [] })) };
-    h.renderGuildTriggersCard(many);
+    h._wpGt.rows = Array.from({ length: 20 }, (_, i) => ({ id: 'm' + i, name: 'M' + i, category: 'mechanic', pattern: 'p', actions: [] }));
+    h.renderGuildTriggersCard(STATE);
     expect(h.html()).not.toMatch(/<details[^>]* open/);
     h._wpOpenDetails['gtrig|cat:mechanic'] = true;
-    h.renderGuildTriggersCard(many);
+    h.renderGuildTriggersCard(STATE);
     expect(h.html()).toMatch(/<details data-keep="gtrig\|cat:mechanic" open/);
   });
 
   it('every row has ▶ Preview (what it says and plays) and ✎ Configure (the whole form, voice and spoken text included)', () => {
-    const h = build();
+    const h = loaded();
     h.renderGuildTriggersCard(STATE);
     const out = h.html();
     expect((out.match(/data-trig-prev=/g) || [])).toHaveLength(4);
@@ -236,7 +242,7 @@ describe('Guild triggers grouped', () => {
   });
 
   it('this PC\'s own sound for a row is what Preview plays', () => {
-    const h = build();
+    const h = loaded();
     h.renderGuildTriggersCard({ ...STATE, soundOverrides: { 'g-1': { sound: 'bell', sound_mode: 'add' } } });
     expect(h.html()).toContain('&quot;sound&quot;:&quot;bell&quot;');
   });

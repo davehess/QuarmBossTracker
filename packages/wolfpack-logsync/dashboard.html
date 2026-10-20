@@ -4822,6 +4822,28 @@ function renderTriggers(s) {
   }
 }
 
+// The guild trigger list, held here: rows (null until the first answer), the revision they are (rev), the
+// state revision already asked about (asked) and whether an ask is out (busy).
+var _wpGt = { rows: null, rev: '', asked: '', busy: false };
+// Fetch the list from /api/guild-triggers — only while the card is on screen (the Triggers tab is open) and
+// only when /api/state's `guildTriggersRev` is not the one held. Hidden → nothing is asked; the poll that
+// finds the tab open asks then. The answer is {rev, unchanged:true} or {rev, triggers:[...]}.
+function wpGuildTriggersSync(s, el) {
+  var rev = s && s.guildTriggersRev;
+  if (!rev || rev === _wpGt.rev || rev === _wpGt.asked || _wpGt.busy) return;
+  if (!el || !el.getClientRects || el.getClientRects().length === 0) return;
+  _wpGt.busy = true;
+  fetch('/api/guild-triggers' + (_wpGt.rev ? '?rev=' + encodeURIComponent(_wpGt.rev) : ''), { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j && Array.isArray(j.triggers)) _wpGt.rows = j.triggers;
+      if (j && j.rev) _wpGt.rev = j.rev;
+      _wpGt.asked = rev;
+      _wpGt.busy = false;
+      if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState);
+    })
+    .catch(function () { _wpGt.busy = false; });   // the next poll asks again
+}
 // 🛡️ Guild triggers (FB-30) — read-only list, filled into the #wpGuildTriggers placeholder renderTriggers
 // emits. A name (or any plain cell of its row) opens the trigger's settings beneath it, with a link to
 // edit it on the site. Which rows are open is kept in _wpTrigOpen, so a repaint puts them back.
@@ -4830,9 +4852,14 @@ function renderGuildTriggersCard(s) {
   if (!el) return;   // Triggers tab not painted yet
   // The sound list a row's "My sound" box needs arrives once, a moment after the first paint: draw again then.
   if (!window._wpSndAsked) { window._wpSndAsked = true; WPSounds.load().then(function () { if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState); }); }
-  var gt = s.guildTriggers || [];
+  wpGuildTriggersSync(s, el);
+  // The rows are not on /api/state (the overlays poll that ~10x/s): they are fetched below, once, and held.
+  // Until the first answer the card says so; a state that already counts none is an empty list, not a wait.
+  var gt = _wpGt.rows || (s && s.guildTriggerCount === 0 ? [] : null);
   var h = '<h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2>';
-  if (gt.length === 0) {
+  if (gt === null) {
+    h += '<div class="dim" style="font-size:12px">Loading the guild triggers…</div>';
+  } else if (gt.length === 0) {
     h += '<div class="dim" style="font-size:12px">No guild triggers loaded. Officers can add them at <a href="https://wolfpack.quest/admin/triggers" target="_blank" rel="noreferrer" style="color:var(--blue)">/admin/triggers</a>.</div>';
   } else {
     h += '<div class="dim" style="font-size:11px;margin-bottom:4px">' + gt.length + ' trigger' + (gt.length === 1 ? '' : 's') + ' loaded</div>';

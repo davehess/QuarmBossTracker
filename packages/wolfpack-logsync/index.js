@@ -18744,19 +18744,10 @@ function _serializeForDashboard() {
     // Trigger summary for the dashboard. Strip _regex (not JSON-safe).
     guildTriggerCount:   (stats.guildTriggers || []).length,
     guildTriggersCheckedAt: stats.guildTriggersCheckedAt,
-    // Full guild trigger list for the Triggers tab. Strip the compiled _regex
-    // (RegExp can't round-trip JSON) and _scope (an internal flag the dashboard
-    // doesn't need to see).
-    guildTriggers: (stats.guildTriggers || []).map(function(t) {
-      const { _regex, _scope, ...rest } = t;
-      void _regex; void _scope;
-      // The grouping "What you hear" already uses (stat cards, a zone, class), so the Guild triggers card can
-      // fold its rows into the same sections without a second copy of the zone list.
-      const rg = _ruleGroupOfGuild(t);
-      rest.rule_group = rg;
-      if (rg.startsWith('zone:')) rest.rule_group_label = RULE_ZONE_NAMES[rg.slice(5)] || '';
-      return rest;
-    }),
+    // The list itself is NOT here any more (~675 KB of a ~0.8 MB body, polled ~10x/s by the overlays, read
+    // only by the Guild triggers card). It is at GET /api/guild-triggers; this revision tells the dashboard
+    // when to fetch it again. See _guildTriggersView.
+    guildTriggersRev:    _guildTriggersView().rev,
     // "What you hear" — effective modes for the active character, non-speak only. The guild map
     // badges the Guild triggers table; the built-in map lets charm.html, which speaks its own
     // lines, honour the same rules.
@@ -23715,6 +23706,28 @@ function renderTriggers(s) {
   }
 }
 
+// The guild trigger list, held here: rows (null until the first answer), the revision they are (rev), the
+// state revision already asked about (asked) and whether an ask is out (busy).
+var _wpGt = { rows: null, rev: '', asked: '', busy: false };
+// Fetch the list from /api/guild-triggers — only while the card is on screen (the Triggers tab is open) and
+// only when /api/state's \`guildTriggersRev\` is not the one held. Hidden → nothing is asked; the poll that
+// finds the tab open asks then. The answer is {rev, unchanged:true} or {rev, triggers:[...]}.
+function wpGuildTriggersSync(s, el) {
+  var rev = s && s.guildTriggersRev;
+  if (!rev || rev === _wpGt.rev || rev === _wpGt.asked || _wpGt.busy) return;
+  if (!el || !el.getClientRects || el.getClientRects().length === 0) return;
+  _wpGt.busy = true;
+  fetch('/api/guild-triggers' + (_wpGt.rev ? '?rev=' + encodeURIComponent(_wpGt.rev) : ''), { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j && Array.isArray(j.triggers)) _wpGt.rows = j.triggers;
+      if (j && j.rev) _wpGt.rev = j.rev;
+      _wpGt.asked = rev;
+      _wpGt.busy = false;
+      if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState);
+    })
+    .catch(function () { _wpGt.busy = false; });   // the next poll asks again
+}
 // 🛡️ Guild triggers (FB-30) — read-only list, filled into the #wpGuildTriggers placeholder renderTriggers
 // emits. A name (or any plain cell of its row) opens the trigger's settings beneath it, with a link to
 // edit it on the site. Which rows are open is kept in _wpTrigOpen, so a repaint puts them back.
@@ -23723,9 +23736,14 @@ function renderGuildTriggersCard(s) {
   if (!el) return;   // Triggers tab not painted yet
   // The sound list a row's "My sound" box needs arrives once, a moment after the first paint: draw again then.
   if (!window._wpSndAsked) { window._wpSndAsked = true; WPSounds.load().then(function () { if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState); }); }
-  var gt = s.guildTriggers || [];
+  wpGuildTriggersSync(s, el);
+  // The rows are not on /api/state (the overlays poll that ~10x/s): they are fetched below, once, and held.
+  // Until the first answer the card says so; a state that already counts none is an empty list, not a wait.
+  var gt = _wpGt.rows || (s && s.guildTriggerCount === 0 ? [] : null);
   var h = '<h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2>';
-  if (gt.length === 0) {
+  if (gt === null) {
+    h += '<div class="dim" style="font-size:12px">Loading the guild triggers…</div>';
+  } else if (gt.length === 0) {
     h += '<div class="dim" style="font-size:12px">No guild triggers loaded. Officers can add them at <a href="https://wolfpack.quest/admin/triggers" target="_blank" rel="noreferrer" style="color:var(--blue)">/admin/triggers</a>.</div>';
   } else {
     h += '<div class="dim" style="font-size:11px;margin-bottom:4px">' + gt.length + ' trigger' + (gt.length === 1 ? '' : 's') + ' loaded</div>';
@@ -34207,6 +34225,14 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_fightHistoryPayload(have)));
       }
+      // The Guild triggers card's list, read only while the Triggers tab is on screen and only when the
+      // `guildTriggersRev` on /api/state moved. Out of /api/state so the overlays do not parse it ~10x/s.
+      if (req.url && (req.url === '/api/guild-triggers' || req.url.indexOf('/api/guild-triggers?') === 0)) {
+        let have = '';
+        try { have = new URL(req.url, 'http://x').searchParams.get('rev') || ''; } catch { /* */ }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(_guildTriggersBody(have));
+      }
       // Target Info's pager and Recent tab: the mobs this PC targeted, newest first; `key` adds that entry's mob.
       if (req.url && (req.url === '/api/target-history' || req.url.indexOf('/api/target-history?') === 0)) {
         let have = '', key = '';
@@ -42455,6 +42481,44 @@ function _fightHistoryPayload(haveRev) {
   const rev = _fightsRevision();
   if (haveRev && haveRev === rev) return { rev, unchanged: true };
   return { rev, max: FIGHT_HISTORY_MAX, fights: stats.fightHistory || [] };
+}
+// The guild trigger list the Guild triggers card shows, built ONCE per change to `stats.guildTriggers` (a new
+// array every time _applyGuildTriggersResponse recompiles it), never per poll. It used to ride every
+// /api/state body: 487 enabled rows were ~675 KB of a ~0.8 MB body that every overlay re-reads ~10 times a
+// second, and the dashboard's card was the only reader. Now /api/state carries only `guildTriggersRev` and
+// the dashboard asks GET /api/guild-triggers?rev=<rev it holds> while the Triggers tab is on screen.
+// A row drops the compiled internals (_regex, _scope, _conditions, ... a RegExp does not survive JSON) and
+// every empty column (null, '' and []), none of which the card reads. The revision is the row count plus a
+// hash of the serialized rows, so a recompile that changed nothing (an older bot sends no version) keeps it.
+let _gtView = { src: null, rev: '0.empty', json: '[]' };
+function _guildTriggerRow(t) {
+  const row = {};
+  for (const k of Object.keys(t)) {
+    if (k.charAt(0) === '_') continue;
+    const v = t[k];
+    if (v == null || v === '' || (Array.isArray(v) && v.length === 0)) continue;
+    row[k] = v;
+  }
+  // The grouping "What you hear" already uses (stat cards, a zone, class), so the card can fold its rows
+  // into the same sections without a second copy of the zone list.
+  const rg = _ruleGroupOfGuild(t);
+  row.rule_group = rg;
+  if (rg.startsWith('zone:')) row.rule_group_label = RULE_ZONE_NAMES[rg.slice(5)] || '';
+  return row;
+}
+function _guildTriggersView() {
+  const src = stats.guildTriggers;
+  if (_gtView.src === src && src) return _gtView;
+  const list = Array.isArray(src) ? src.filter(Boolean) : [];
+  const json = JSON.stringify(list.map(_guildTriggerRow));
+  _gtView = { src, json, rev: list.length + '.' + crypto.createHash('sha1').update(json).digest('hex').slice(0, 10) };
+  return _gtView;
+}
+// GET /api/guild-triggers[?rev=…] — answers `{rev, unchanged:true}` to the revision it already holds, else the rows.
+function _guildTriggersBody(haveRev) {
+  const v = _guildTriggersView();
+  if (haveRev && haveRev === v.rev) return JSON.stringify({ rev: v.rev, unchanged: true });
+  return '{"rev":' + JSON.stringify(v.rev) + ',"triggers":' + v.json + '}';
 }
 function _loadFightHistory(file = _fightsFile, now = Date.now()) {
   try {
