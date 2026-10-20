@@ -45132,7 +45132,15 @@ function noteTagChannelLine(line, selfCharacter) {
   const parts = _tagLineParts(line, selfCharacter);
   if (!parts || !_isZealTagPayload(parts.payload)) return false;
   const ts = parseEqTimestamp(line);
-  return _applyZealTagMessage(parts.payload, parts.tagger, ts ? ts.getTime() : Date.now());
+  const applied = _applyZealTagMessage(parts.payload, parts.tagger, ts ? ts.getTime() : Date.now());
+  if (applied && typeof _mapNoteTagDead === 'function') {
+    // A tag reading "dead" on a spawn id is the same proof as its corpse in your target window (the Map's respawn timer).
+    try {
+      const sid = parseInt(parts.payload.split(' | ').pop(), 10);
+      _mapNoteTagDead(selfCharacter, _zealTags.get(sid), Date.now());
+    } catch { /* the Map is a nicety: never break log ingest */ }
+  }
+  return applied;
 }
 // zeal.ini readiness check — "people already autojoin the channel and seeing
 // the channel once persists it for that user. my zeal ini should contain
@@ -51416,6 +51424,15 @@ function _mapDeathIsDup(name, spawnId, src, now) {
 // else where its target window last placed it, else where YOU stood (loc_source says which).
 // Returns { kind: 'assigned'|'unassigned'|'none'|'dup'|'nodata', ... }.
 function _mapNoteDeath(zone, ev, now) {
+  if (ev.spawn_id != null && _mapHpMem.zone === zone) _mapHpMem.m.delete(Number(ev.spawn_id));   // dead: no health to remember
+  if (ev.spawn_id != null) {   // named: one of the "killed?" deaths is explained, and this spawn is no longer a candidate for the rest
+    for (const [k, g] of _mapKilledQ) {
+      if (g.zone !== zone || !g.ids.has(Number(ev.spawn_id))) continue;
+      g.ids.delete(Number(ev.spawn_id)); g.n -= 1;
+      if (g.n <= 0 || g.ids.size === 0) _mapKilledQ.delete(k);
+      else if (g.ids.size <= g.n) _mapKilledQResolve(g, now);
+    }
+  }
   const rec = _mapZones.get(zone);
   if (!rec || !rec.body) return { kind: 'nodata' };
   const name = _mapNormName(ev.name);
@@ -51781,7 +51798,11 @@ function _mapFocusTarget(character) {
 // the agent already holds: your own target when its pin is that spawn point, else the Extended Target rows (`rows`)
 // matched by spawn id, else by normalized name ONLY when exactly one fresh NPC row carries that name and it does not
 // name a different spawn id. Stale rows never count; a duplicate name is left blank rather than guessed.
-function _mapSeenHp(seen, rows, own) {
+// Tabbing through a pack (the guild lead, 2026-10-20: "tab target through them quickly and get all of their healths out"):
+// your own target also counts by SPAWN ID (a roamer has no pin), and a spawn you tabbed off keeps the last health read
+// in `mem` (_mapHpMem: spawn id -> { hp_pct, at }), by spawn id only, never by name. Each row gets hp_at (when that
+// health was read) and hp_live (true = read this poll; false = remembered, so the Map shows its age).
+function _mapSeenHp(seen, rows, own, mem, now) {
   const pct = (v) => (typeof v === 'number' && Number.isFinite(v)) ? Math.max(0, Math.min(100, Math.round(v))) : null;
   const live = (Array.isArray(rows) ? rows : []).filter(t => t && !t.stale && (t.kind == null || t.kind === 'npc'));
   const byId = new Map(), byName = new Map();
@@ -51794,29 +51815,214 @@ function _mapSeenHp(seen, rows, own) {
   for (const s of seen) {
     let hp = null;
     if (own && own.point_id != null && String(own.point_id) === String(s.point_id)) hp = pct(own.hp_pct);
-    if (hp == null && s.spawn_id != null && byId.has(Number(s.spawn_id))) hp = pct(byId.get(Number(s.spawn_id)).hp_pct);
-    if (hp == null) {
+    if (hp == null && s.spawn_id != null && own && Number(own.id) > 0 && Number(own.id) === Number(s.spawn_id)
+        && (own.type == null || own.type === 1)) hp = pct(own.hp_pct);
+    let ext = null;   // the Extended Target row for this mob: its raider count rides along ("N on it")
+    if (s.spawn_id != null && byId.has(Number(s.spawn_id))) ext = byId.get(Number(s.spawn_id));
+    if (hp == null && ext) hp = pct(ext.hp_pct);
+    if (hp == null || !ext) {
       const t = byName.get(_mapNormName(s.name));
       const tid = t ? Number(t.spawn_id) : 0;
-      if (t && !(tid > 0 && s.spawn_id != null && tid !== Number(s.spawn_id))) hp = pct(t.hp_pct);
+      if (t && !(tid > 0 && s.spawn_id != null && tid !== Number(s.spawn_id))) { if (hp == null) hp = pct(t.hp_pct); if (!ext) ext = t; }
+    }
+    if (ext && Number(ext.raider_count) >= 1) s.n = Number(ext.raider_count);
+    let readAt = now, liveNow = true;
+    if (hp == null && mem && s.spawn_id != null) {
+      const m = mem.get(Number(s.spawn_id));
+      if (m && Number.isFinite(m.at) && !(now - m.at > MAP_SEEN_KEEP_MS)) { hp = pct(m.hp_pct); readAt = m.at; liveNow = false; }
     }
     s.hp_pct = hp;
+    if (hp != null) { s.hp_at = readAt; s.hp_live = liveNow; }   // a row without a health carries neither
   }
+}
+// The per-spawn health memory behind that: zone-scoped (spawn ids are reused between zones), fed every Map poll from your
+// own target (Zeal's spawn id + health) and from every live NPC Extended Target row that carries a spawn id. A read of 0
+// is a corpse and forgets the spawn; so does _mapNoteDeath, and anything older than MAP_SEEN_KEEP_MS.
+const _mapHpMem = { zone: null, m: new Map() };
+function _mapHpNote(mem, own, rows, now) {
+  const put = (id, hp, name) => {
+    id = Number(id);
+    if (!(id > 0) || typeof hp !== 'number' || !Number.isFinite(hp)) return;
+    if (hp <= 0) { mem.delete(id); return; }
+    mem.delete(id);   // re-insert so the oldest read is first for the cap
+    mem.set(id, { hp_pct: Math.min(100, hp), at: now, name: name ? String(name) : null });
+  };
+  if (own && (own.type == null || own.type === 1) && !MAP_CORPSE_NAME_RE.test(String(own.name || ''))) put(own.id, own.hp_pct, own.name);
+  for (const t of (Array.isArray(rows) ? rows : [])) {
+    if (t && !t.stale && (t.kind == null || t.kind === 'npc')) put(t.spawn_id, t.hp_pct, t.name);
+  }
+  for (const [id, m] of mem) if (now - m.at > MAP_SEEN_KEEP_MS) mem.delete(id);
+  while (mem.size > MAP_PIN_MAX) mem.delete(mem.keys().next().value);
+}
+function _mapHpMemFor(zone) {
+  if (_mapHpMem.zone !== zone) { _mapHpMem.zone = zone; _mapHpMem.m.clear(); }   // spawn ids are only good within a zone
+  return _mapHpMem.m;
+}
+// "killed?" (the guild lead, 2026-10-20: "i want each of these to get a question mark on 'killed?' if we cant make the
+// assumption that it died from the AOE songs"). A death LINE names a mob, not a spawn. When nothing says which spawn died (no
+// spawn id, not your target) and more than one live spawn of that name is on the list (a seen row, or a health read), the
+// Map does not pick one: every candidate is queued here and shown "killed?", and NO respawn timer starts. A candidate you
+// tab onto and read alive (_mapKilledQAlive) leaves the queue; once no more candidates remain than unexplained deaths (n)
+// the rest are the dead ones and take the normal kill path. A death that names its spawn (_mapNoteDeath with a spawn id:
+// the target window, or the ☠ button) explains the line and drops the queue.
+// zone|name -> { zone, name, at (the death line), queuedAt, n (deaths), ids:Set, character }
+const _mapKilledQ = new Map();
+function _mapAliveOf(zone, want, zd, now) {
+  const ids = new Set();
+  for (const s of Object.values(zd.seen)) if (s && s.spawn_id != null && _mapNormName(s.name) === want && now - s.at <= MAP_SEEN_KEEP_MS) ids.add(Number(s.spawn_id));
+  if (_mapHpMem.zone === zone) for (const [id, m] of _mapHpMem.m) if (m.name && _mapNormName(m.name) === want && now - m.at <= MAP_SEEN_KEEP_MS) ids.add(id);
+  return [...ids];
+}
+function _mapKilledQResolve(g, now) {
+  _mapKilledQ.delete(g.zone + '|' + _mapNormName(g.name));
+  const seen = Object.values(_mapZoneDoc(g.zone).seen);
+  for (const id of g.ids) {
+    const row = seen.find(s => s && s.spawn_id != null && Number(s.spawn_id) === id);   // its own spawn point, when it is a seen row
+    _mapNoteDeath(g.zone, { name: g.name, spawn_id: id, loc: null, loc_source: 'self', at: g.at, src: 'log', character: g.character, force: true,
+      point_id: row ? row.point_id : undefined }, now);
+  }
+}
+function _mapKilledQAdd(zone, name, ids, at, now, character) {
+  for (const [k, q] of _mapKilledQ) if (now - q.queuedAt > MAP_SEEN_KEEP_MS) _mapKilledQ.delete(k);
+  const key = zone + '|' + _mapNormName(name);
+  let g = _mapKilledQ.get(key);
+  if (g && now - g.queuedAt <= 2000) return;   // the same line from a second log on this machine
+  if (g) { g.n += 1; g.queuedAt = now; }
+  else { g = { zone, name: _mapPrettyName(name), at, queuedAt: now, n: 1, ids: new Set(ids), character }; _mapKilledQ.set(key, g); }
+  if (g.ids.size <= g.n) _mapKilledQResolve(g, now);
+}
+function _mapKilledQAlive(zone, id, now) {
+  for (const g of [..._mapKilledQ.values()]) {
+    if (g.zone !== zone || !g.ids.has(id) || !(now > g.queuedAt)) continue;
+    g.ids.delete(id);
+    if (g.ids.size <= g.n) _mapKilledQResolve(g, now);
+  }
+}
+// Every death line heard, per zone|name (epoch ms, newest last, 30 minutes): _mapLastDeathLine keeps only the newest.
+const _mapDeathLineLog = new Map();
+function _mapNoteDeathLineTime(zone, want, t, now) {
+  const key = zone + '|' + want, a = (_mapDeathLineLog.get(key) || []).filter(x => now - x <= MAP_SEEN_KEEP_MS);
+  if (!a.includes(t)) a.push(t);
+  _mapDeathLineLog.set(key, a.slice(-20));
+  while (_mapDeathLineLog.size > 200) _mapDeathLineLog.delete(_mapDeathLineLog.keys().next().value);
+}
+// A corpse is proof of death (the guild lead, 2026-10-20: "targetted this corpse, even tagged it with 'dead' but didn't see
+// it update on the respawns"): your target "<name>'s corpse" (or `s, the game uses the backtick) keeps the spawn id of the
+// mob it was, and a Zeal /tag "dead" on a spawn id says the same. When that spawn is still listed alive (a seen row, a
+// health read, or a "killed?" candidate) it is the dead one: the normal kill path, on its own spawn point, with the "killed?"
+// group losing it. The death time is the EARLIEST death line for that name after the spawn's last health reading
+// (why 'line'), else that reading (why 'read'), else now (why 'now'). Not listed alive = already counted (the kill removed
+// it) or never seen: nothing happens, so it can never count twice. → { why } or null.
+const MAP_CORPSE_NAME_RE = /^(.*?)[`'’]s\s+corpse\d*$/i;
+function _mapProveDead(zone, character, id, base, loc, now) {
+  id = Number(id);
+  const want = _mapNormName(base);
+  if (!(id > 0) || !want) return null;
+  const zd = _mapZoneDoc(zone);
+  const row = Object.values(zd.seen).find(s => s && s.spawn_id != null && Number(s.spawn_id) === id && _mapNormName(s.name) === want);
+  const m = _mapHpMem.zone === zone ? _mapHpMem.m.get(id) : null;
+  const memOk = !!(m && m.name && _mapNormName(m.name) === want);
+  let inGroup = false;
+  for (const g of _mapKilledQ.values()) if (g.zone === zone && g.ids.has(id) && _mapNormName(g.name) === want) inGroup = true;
+  if (!row && !memOk && !inGroup) return null;
+  const lastRead = memOk ? m.at : null;
+  const floor = lastRead != null ? lastRead : (row ? Number(row.at) || 0 : 0);
+  const lines = (_mapDeathLineLog.get(zone + '|' + want) || []).filter(t => t >= floor && now - t <= MAP_SEEN_KEEP_MS);
+  let at, why;
+  if (lines.length) { at = Math.min(...lines); why = 'line'; }
+  else if (lastRead != null) { at = lastRead; why = 'read'; }
+  else { at = now; why = 'now'; }
+  _mapNoteDeath(zone, { name: row ? row.name : base, spawn_id: id, loc: loc || null, loc_source: 'target', at, src: 'zeal', character, force: true,
+    point_id: row ? row.point_id : undefined }, now);
+  return { why, at };
+}
+// A Zeal tag "dead" (case-insensitive, trimmed) on a spawn id, heard on the tag channel (noteTagChannelLine).
+function _mapNoteTagDead(character, tag, now) {
+  if (!tag || String(tag.text || '').trim().toLowerCase() !== 'dead') return null;
+  if (!(now - tag.tsMs <= 60000)) return null;   // a --since backfill replays old tags
+  const cl = String(character || '').toLowerCase();
+  let st = null;
+  for (const ch of Object.keys(_zealState || {})) if (ch.toLowerCase() === cl) { st = _zealState[ch]; break; }
+  const zone = st ? _mapZoneShort(st.zone) : null;
+  if (!zone) return null;
+  return _mapProveDead(zone, character, tag.spawn_id, tag.mob, null, now);
+}
+// The kite's totals line over the Engaged rows (the guild lead, 2026-10-20: "Kite: 10 mobs · avg 61% · ~41k HP left · 3
+// unread"). `maxHpOf(name)` is the catalog's max HP or null; the HP total is shown only when EVERY mob with a health has
+// one (a partial sum would read as the whole pack). unread = engaged mobs whose health is unknown or older than 30 s: the
+// ones still to tab onto. A row without hp_live (an Extended Target row) was read this poll. Null under two mobs.
+const MAP_KITE_UNREAD_MS = 30000;
+function _mapKite(engaged, maxHpOf, now) {
+  const rows = Array.isArray(engaged) ? engaged : [];
+  if (rows.length < 2) return null;
+  const known = rows.filter(g => typeof g.hp_pct === 'number');
+  let left = 0, all = known.length > 0;
+  for (const g of known) { const mx = maxHpOf(g.name); if (mx > 0) left += g.hp_pct / 100 * mx; else all = false; }
+  const unread = rows.filter(g => typeof g.hp_pct !== 'number' || (g.hp_live === false && !(now - g.hp_at <= MAP_KITE_UNREAD_MS))).length;
+  return { n: rows.length, avg: known.length ? Math.round(known.reduce((a, g) => a + g.hp_pct, 0) / known.length) : null,
+    hp_left: all ? Math.round(left) : null, unread };
 }
 // The "Engaged" section at the top of the Map's timers list (FB-89, a raider: "add a section in the timers tab for
 // 'Engaged' mobs. put their HP there and how many are targetting them, similar to the Extended target overlay"). Reads the
 // same Extended Target rows as _mapSeenHp: live NPC rows (not stale) with at least one raider on them. Most-targeted first,
 // the more hurt mob ahead on a tie, then name and spawn id so the order never wobbles between polls. → [{ name, spawn_id,
 // hp_pct, n }], at most MAP_ENGAGED_MAX; spawn_id null and hp_pct null when the row had none.
-const MAP_ENGAGED_MAX = 12;
+// ENGAGED = HURT (the guild lead, 2026-10-20: "engaged mobs should be the ones with lower health"; before that: "all of these
+// with less health than 100 are engaged"): every live mob whose known health is 1-99%, whether or not anyone targets it.
+// A mob at 100%, or with no health read, is NOT engaged because a raider has it targeted; `n` (the raiders on it) is only
+// information on the row, and a seen row carries it too. Lowest health first (nearest to dying on top); ties: the older
+// reading first (it needs a tab), then name, then spawn id, so the order never wobbles between polls.
+// The bot's own cache of hurt-but-untargeted mobs comes back `stale` and only for a UNIQUE name (index.js: "if (t.kind !==
+// 'npc' || t.ambiguous) continue"), so an AE-kited pack of one name never arrives here; _mapPromoteHurt below covers it.
+const MAP_ENGAGED_MAX = 24;
+function _mapEngagedOrder(a, b) {
+  const at = (g) => (g.hp_at == null ? Number.MAX_SAFE_INTEGER : g.hp_at);   // an Extended Target row was read this poll
+  return (a.hp_pct - b.hp_pct) || (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0)
+    || a.name.localeCompare(b.name) || (a.spawn_id || 0) - (b.spawn_id || 0);
+}
 function _mapEngaged(rows) {
   const pct = (v) => (typeof v === 'number' && Number.isFinite(v)) ? Math.max(0, Math.min(100, Math.round(v))) : null;
   return (Array.isArray(rows) ? rows : [])
-    .filter(t => t && t.kind === 'npc' && !t.stale && (Number(t.raider_count) || 0) >= 1 && t.name)
-    .map(t => ({ name: String(t.name), spawn_id: Number(t.spawn_id) > 0 ? Number(t.spawn_id) : null, hp_pct: pct(t.hp_pct), n: Number(t.raider_count) }))
-    .sort((a, b) => b.n - a.n || (a.hp_pct == null ? 101 : a.hp_pct) - (b.hp_pct == null ? 101 : b.hp_pct)
-      || a.name.localeCompare(b.name) || (a.spawn_id || 0) - (b.spawn_id || 0))
+    .filter(t => t && t.kind === 'npc' && !t.stale && t.name && pct(t.hp_pct) > 0 && pct(t.hp_pct) < 100)
+    .map(t => ({ name: String(t.name), spawn_id: Number(t.spawn_id) > 0 ? Number(t.spawn_id) : null, hp_pct: pct(t.hp_pct), n: Number(t.raider_count) || 0 }))
+    .sort(_mapEngagedOrder)
     .slice(0, MAP_ENGAGED_MAX);
+}
+// Seen rows join Engaged when their health is 1-99, read live this poll or within MAP_HURT_FRESH_MS, and they are not
+// dead (a death removes the seen row and forgets the health, _mapNoteDeath). Unknown health stays in Up · seen. They are
+// flagged `engaged` rather than removed, because the Map also reads `seen` for watched spots and dots; the sidebar lists
+// a flagged row once, under Engaged. A mob already engaged from an Extended Target row (same spawn id, or, with no ids,
+// the only mob of that name on both sides) is not added twice. `mem` (the per-spawn health memory) also adds the hurt
+// mobs that are not a seen row at all (a roamer you tabbed onto), by spawn id.
+const MAP_HURT_FRESH_MS = 3 * 60 * 1000;
+function _mapPromoteHurt(seen, engaged, now, mem) {
+  const list = Array.isArray(engaged) ? engaged.slice() : [];
+  const ids = new Set(list.filter(g => g.spawn_id != null).map(g => Number(g.spawn_id)));
+  const idlessByName = new Map(), seenByName = new Map();
+  for (const g of list) if (g.spawn_id == null) idlessByName.set(_mapNormName(g.name), (idlessByName.get(_mapNormName(g.name)) || 0) + 1);
+  for (const s of seen) seenByName.set(_mapNormName(s.name), (seenByName.get(_mapNormName(s.name)) || 0) + 1);
+  const dupOf = (s) => (s.spawn_id != null && ids.has(Number(s.spawn_id)))
+    || (idlessByName.get(_mapNormName(s.name)) === 1 && seenByName.get(_mapNormName(s.name)) === 1);
+  const add = [], dups = [];
+  for (const s of seen) {
+    if (!s || !s.name) continue;
+    const hurt = typeof s.hp_pct === 'number' && s.hp_pct > 0 && s.hp_pct < 100
+      && (s.hp_live || (Number.isFinite(s.hp_at) && now - s.hp_at <= MAP_HURT_FRESH_MS));
+    if (dupOf(s)) { dups.push(s); continue; }
+    if (hurt) add.push({ s, g: { name: String(s.name), spawn_id: s.spawn_id == null ? null : s.spawn_id, hp_pct: s.hp_pct, n: 0,
+      point_id: s.point_id, hp_at: s.hp_at, hp_live: !!s.hp_live } });
+  }
+  const known = new Set([...ids, ...seen.filter(s => s && s.spawn_id != null).map(s => Number(s.spawn_id))]);
+  const extra = [];
+  if (mem) for (const [id, m] of mem) {
+    const hp = typeof m.hp_pct === 'number' ? Math.round(m.hp_pct) : null;
+    if (known.has(id) || !m.name || !(hp > 0 && hp < 100) || !(now - m.at <= MAP_HURT_FRESH_MS)) continue;
+    extra.push({ name: String(m.name), spawn_id: id, hp_pct: hp, n: 0, point_id: null, hp_at: m.at, hp_live: now - m.at <= 1000 });
+  }
+  const all = list.concat(add.map(a => a.g), extra).sort(_mapEngagedOrder).slice(0, MAP_ENGAGED_MAX);
+  for (const a of add) if (all.includes(a.g)) a.s.engaged = true;
+  for (const s of dups) s.engaged = true;
+  return all;
 }
 // How far the target's Area Rampage reaches ({ radius_still, radius_moving, chance, targets, damage_pct }, game units) and
 // its regular Rampage reaches ({ range, chance, damage_pct }), off the same cached mob-info row Target Info reads (a zone
@@ -51945,6 +52151,13 @@ function _mapStatePayload(have, now, haveLocal) {
   }
   try { out.me = _mapMe(character, st); } catch { out.me = null; }
   const zd = _mapZoneDoc(zone);
+  try {   // a corpse in the Extended Target rows (if the bot ever sends one) is proof of death too, same as your own target
+    const ecc = typeof _extTargetCache === 'undefined' ? null : _extTargetCache.get(String(character).trim().toLowerCase());
+    for (const t of (ecc && ecc.payload && Array.isArray(ecc.payload.targets) ? ecc.payload.targets : [])) {
+      const cm = t && !t.stale && Number(t.spawn_id) > 0 ? MAP_CORPSE_NAME_RE.exec(String(t.name || '').trim()) : null;
+      if (cm) _mapProveDead(zone, character, t.spawn_id, cm[1], null, now);
+    }
+  } catch { /* a nicety */ }
   if (_mapPrune(zd, rec.body.points, now)) _mapSaveSoon();
   out.timers = Object.values(zd.timers).map(t => Object.assign({}, t, { state: _mapTimerState(t, now) })).sort((a, b) => a.earliest - b.earliest);
   out.unassigned = zd.unassigned.map(u => ({ id: u.id, name: u.name, died_at: u.died_at, candidates: u.candidates || [] }));
@@ -51957,12 +52170,37 @@ function _mapStatePayload(have, now, haveLocal) {
     .sort((a, b) => b.at - a.at);
   try {   // health on the alive rows (FB-87): your target, else the Extended Target cache; blank when it is not certain
     const ec = typeof _extTargetCache === 'undefined' ? null : _extTargetCache.get(String(character).trim().toLowerCase());
-    _mapSeenHp(out.seen, ec && ec.payload && ec.payload.targets, out.target);
+    const ecRows = ec && ec.payload && ec.payload.targets;
+    const hpMem = _mapHpMemFor(zone);
+    _mapHpNote(hpMem, out.target, ecRows, now);   // your own target is also read on every Zeal frame (_mapNoteState)
+    _mapSeenHp(out.seen, ecRows, out.target, hpMem, now);
   } catch { for (const s of out.seen) s.hp_pct = null; }
-  try {   // the Engaged section (FB-89): the mobs raiders are on right now, from the same cache
+  try {   // the Engaged section (FB-89): the mobs raiders are on right now, plus hurt ones nobody has targeted
     const ec2 = typeof _extTargetCache === 'undefined' ? null : _extTargetCache.get(String(character).trim().toLowerCase());
-    out.engaged = _mapEngaged(ec2 && ec2.payload && ec2.payload.targets);
+    out.engaged = _mapPromoteHurt(out.seen, _mapEngaged(ec2 && ec2.payload && ec2.payload.targets), now, _mapHpMemFor(zone));
   } catch { out.engaged = []; }
+  try {   // the kite's totals line over those rows; max HP from the cached Mob Info row (a lookup is started when missing)
+    const maxHp = new Map();
+    out.kite = _mapKite(out.engaged, (name) => {
+      const k = _mapNormName(name);
+      if (!maxHp.has(k)) {
+        let v = null;
+        if (typeof _mobInfoByName !== 'undefined' && typeof _mobInfoCacheKey === 'function') {
+          const key = _mobInfoCacheKey(name, out.zone_id);
+          let hit = _mobInfoByName.get(key);
+          if (!hit || (now - hit.at) >= MOB_INFO_TTL_MS) { fetchMobInfo(name, character, out.zone_id); hit = _mobInfoByName.get(key) || hit; }
+          v = hit && hit.mob && Number(hit.mob.hp) > 0 ? Number(hit.mob.hp) : null;
+        }
+        maxHp.set(k, v);
+      }
+      return maxHp.get(k);
+    }, now);
+  } catch { out.kite = null; }
+  for (const [k, g] of _mapKilledQ) if (now - g.queuedAt > MAP_SEEN_KEEP_MS) _mapKilledQ.delete(k);
+  for (const g of _mapKilledQ.values()) {   // "killed?": the spawns a death line could have meant (see _mapKilledQ)
+    if (g.zone !== zone) continue;
+    for (const r of out.seen.concat(out.engaged)) if (r.spawn_id != null && g.ids.has(Number(r.spawn_id))) r.killed_q = true;
+  }
   // Not your target: where the raid's shared targets (the bot, _mapApplyShared) put a mob of that name. The most-targeted
   // row when several share the name and no spawn id was given; a row older than two minutes is not a position.
   if (out.focus && out.focus.x == null) {
@@ -51996,6 +52234,18 @@ function _mapNoteState(character, prev, next, now) {
   try { _mapCorpseNoteTarget(zone, character, next, now); } catch { /* same */ }
   const tl = _mapServerXY(next.target_loc);
   const isNpc = next.target_type == null || next.target_type === 1;
+  // Every frame (Mimic flushes one about every 300 ms), not only when the Map is polled: tabbing through a pack leaves a
+  // health for each spawn it landed on, and a candidate read alive leaves a "killed?" group.
+  try {
+    // BEFORE the health note, which would forget this spawn: a corpse in your target window is proof that spawn died.
+    const cm = MAP_CORPSE_NAME_RE.exec(String(next.target_name || '').replace(/^#/, '').trim());
+    // (Not when you watched it die: the target was that same spawn a frame ago, and the death below stamps that moment itself.)
+    const wasAlive = cm && prev && prev.target_name && Number(prev.target_id) === Number(next.target_id)
+      && String(prev.target_name).replace(/^#/, '').trim().toLowerCase() === cm[1].trim().toLowerCase();
+    if (cm && !wasAlive && next.target_id > 0) _mapProveDead(zone, character, next.target_id, cm[1], _mapServerXY(next.target_loc), now);
+    _mapHpNote(_mapHpMemFor(zone), { id: next.target_id, name: next.target_name, type: next.target_type, hp_pct: next.target_hp_pct }, null, now);
+    if (isNpc && next.target_id > 0 && Number(next.target_hp_pct) > 0 && !MAP_CORPSE_RE.test(String(next.target_name || ''))) _mapKilledQAlive(zone, Number(next.target_id), now);
+  } catch { /* health memory is a nicety: never break the frame */ }
   if (isNpc && tl && next.target_id > 0 && next.target_name && !MAP_CORPSE_RE.test(String(next.target_name))) {
     _mapNoteSighting(zone, next.target_id, next.target_name, tl, now);
     _mapNotePath(zone, next.target_name, tl, now);   // a tracked NPC (Thelin): one more point on his trail
@@ -52037,11 +52287,20 @@ function _mapNoteLogDeath(deadName, character, lineMs, now) {
   _mapLastDeathLine.delete(zone + '|' + want);
   _mapLastDeathLine.set(zone + '|' + want, Number.isFinite(lineMs) ? Math.min(lineMs, now) : now);
   while (_mapLastDeathLine.size > 200) _mapLastDeathLine.delete(_mapLastDeathLine.keys().next().value);
+  _mapNoteDeathLineTime(zone, want, Number.isFinite(lineMs) ? Math.min(lineMs, now) : now, now);   // every line, for a corpse's death time
   // The mob in this character's target window, when it is the one named: its id and position are exact.
   let id = null, loc = null, src = 'self';
   if (st.target_name && _mapNormName(st.target_name) === want && st.target_id > 0) {
     id = st.target_id;
     loc = _mapServerXY(st.target_loc); if (loc) src = 'target';
+  }
+  if (id == null) {
+    // Nothing says WHICH spawn died and several of that name are up: queue them all as "killed?" (see _mapKilledQ).
+    const alive = _mapAliveOf(zone, want, _mapZoneDoc(zone), now);
+    if (alive.length > 1) {
+      if (!_mapDeathIsDup(want, null, 'log', now)) _mapKilledQAdd(zone, deadName, alive, Number.isFinite(lineMs) ? Math.min(lineMs, now) : now, now, character);
+      return;
+    }
   }
   if (!loc) {
     // Else the only mob of that name we have seen and not seen die; else where you stand (approximate).
