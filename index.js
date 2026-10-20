@@ -23780,8 +23780,9 @@ async function _handleAgentUpload(req, res) {
             owner:         s.owner,
             started_at:    new Date(s.started_at).toISOString(),
             ended_at:      s.ended_at ? new Date(s.ended_at).toISOString() : null,
-            duration_sec:  s.duration_sec || null,
-            total_damage:  s.total_damage || 0,
+            // Both columns are integer/bigint; the agent sends decimals ("50.346" → 22P02 and the whole upsert lost).
+            duration_sec:  Number.isFinite(Number(s.duration_sec)) && Number(s.duration_sec) > 0 ? Math.round(Number(s.duration_sec)) : null,
+            total_damage:  Math.round(Number(s.total_damage)) || 0,
             is_dire_charm: !!s.is_dire_charm,
             encounter_id:  recParseResult.encounterId,
             end_reason:    s.end_reason || null,
