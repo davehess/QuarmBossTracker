@@ -169,18 +169,17 @@ const KIND_ICONS: Record<string, string> = {
 };
 
 export default async function PopFlagsPage(
-  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string; flags?: string; alts?: string; sort?: string; open?: string }> },
+  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string; flags?: string; alts?: string; sort?: string; open?: string }> },
 ) {
-  const { zone: zoneKey, view, scope: scopeParam, v, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam, flags: flagsParam, alts: altsParam, sort: sortParam, open: openParam } = await searchParams;
+  const { zone: zoneKey, view, scope: scopeParam, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam, flags: flagsParam, alts: altsParam, sort: sortParam, open: openParam } = await searchParams;
   const showAll = allParam === '1';
   const { data: { user } } = await supabaseServer().auth.getUser();
-  // Keep the query through sign-in, so a shared ?v=b&demo=1 or ?zone= link still opens what it names.
+  // Keep the query through sign-in, so a shared ?demo=1 or ?zone= link still opens what it names.
   if (!user) redirect(`/auth/signin?next=${encodeURIComponent('/pop?' + new URLSearchParams(await searchParams as Record<string, string>))}`);
-  // 💠 The Essences of Power queue, two layouts on beta until one is picked (DECISIONS §96). No ?v= is
-  // production as it was. &demo=1 swaps in labelled sample data, to compare the layouts before any drop.
-  const essLayout: 'b' | 'c' | null = v === 'b' || v === 'c' ? v : null;
+  // 💠 The Essences of Power queue, laid out by essence (the guild lead picked "By essence" on the Decision
+  // Desk, 2026-10-19; DECISIONS §96, §383). ?demo=1 swaps in labelled sample data, to see it before any drop.
   const essDemo = demo === '1';
-  const essences = essLayout ? (essDemo ? demoEssenceQueue() : await loadEssenceQueue()) : null;
+  const essences = essDemo ? demoEssenceQueue() : await loadEssenceQueue();
 
   // PoP spell needs + the viewer's own characters (for the submit widget and
   // the My Characters view — that one deliberately ignores `scope`, see the
@@ -205,8 +204,7 @@ export default async function PopFlagsPage(
   const scope = choice.scope;
   const altsView = parseAltsView({ alts: choice.groupAlts ? 'group' : undefined, sort: sortParam, open: openParam });
   // "Latest flags" strip (the guild lead, 2026-10-14), two layouts on beta until one is picked:
-  // ?flags=a is newest-first, ?flags=b is grouped by step. No ?flags= is the page as production has it. Its own
-  // param because ?v=b already opens the Essences queue's layout b above.
+  // ?flags=a is newest-first, ?flags=b is grouped by step. No ?flags= is the page as production has it.
   const latestLayout: 'a' | 'b' | null = flagsParam === 'a' || flagsParam === 'b' ? flagsParam : null;
   const latestRows = latestLayout ? await latestFlagsFor(sbAdmin, traderNames, flaggedHidden) : null;
 
@@ -1012,7 +1010,7 @@ export default async function PopFlagsPage(
 
       {latestLayout && latestRows && <LatestFlags layout={latestLayout} rows={latestRows} now={Date.now()} />}
 
-      {essLayout && essences && <EssencesQueue layout={essLayout} demo={essDemo} {...essences} />}
+      <EssencesQueue demo={essDemo} {...essences} />
 
       {selected ? (
         // ── Zone detail: who's in, who's missing what ─────────────────────────

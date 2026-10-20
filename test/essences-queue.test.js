@@ -87,10 +87,14 @@ describe('where the pieces come from', () => {
 
 describe('the page', () => {
   const page = stripJs(fs.readFileSync(path.join(ROOT, 'web/app/pop/page.tsx'), 'utf8'));
-  it('shows only on ?v=b or ?v=c, so /pop without it is production as it was', () => {
-    expect(page).toMatch(/const essLayout: 'b' \| 'c' \| null = v === 'b' \|\| v === 'c' \? v : null;/);
-    expect(page).toMatch(/const essences = essLayout \? \(essDemo \? demoEssenceQueue\(\) : await loadEssenceQueue\(\)\) : null;/);
-    expect(page).toMatch(/\{essLayout && essences && <EssencesQueue layout=\{essLayout\} demo=\{essDemo\} \{\.\.\.essences\} \/>\}/);
+  it('always shows the by-essence queue: no ?v= layouts, no by-person table', () => {
+    expect(page).toMatch(/const essences = essDemo \? demoEssenceQueue\(\) : await loadEssenceQueue\(\);/);
+    expect(page).toMatch(/<EssencesQueue demo=\{essDemo\} \{\.\.\.essences\} \/>/);
+    expect(page).not.toMatch(/essLayout|\bv\?: string|\bv === 'b'/);
+    const card = stripJs(fs.readFileSync(path.join(ROOT, 'web/app/pop/EssencesQueue.tsx'), 'utf8'));
+    expect(card).not.toMatch(/layout|<table/);
+    expect(card).toMatch(/ESSENCES\.map\(ess => \{/);
+    expect(card).toMatch(/waiting = queue\.filter\(e => !e\.pieces\[ess\.key\]\)/);
   });
   it('sample data (&demo=1) is labelled as such, and its names are the invented placeholders', () => {
     const card = stripJs(fs.readFileSync(path.join(ROOT, 'web/app/pop/EssencesQueue.tsx'), 'utf8'));

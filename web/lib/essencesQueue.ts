@@ -85,7 +85,7 @@ export function buildEssenceQueue(
   return { queue, done: all.filter(e => e.done), next };
 }
 
-// Sample data for comparing the layouts before any essence has dropped (?demo=1). The names are the
+// Sample data for seeing the queue before any essence has dropped (?demo=1). The names are the
 // repo's invented placeholders — none of them is anybody.
 export function demoEssenceQueue() {
   const a = (character: string, item: string, dkp: number, at: string): Award => ({ character, item, dkp, at });
