@@ -40858,31 +40858,11 @@ const _guildFeedRing = [];
 const GUILD_FEED_LIVE_MS = 30_000;       // the title-bar hint holds while the last good poll is this recent
 let _guildFeedOkAt = 0;
 let _guildFeedIngame = null;             // members in game WITH MIMIC RUNNING per the bot's last answer; null = unknown
-// A relayed line this PC's own log already heard (same channel, speaker and text within 5 s): the bot hands a new
-// poll the recent backlog, which includes what the player read in game just before logging out. Your own line
-// is "You" locally and your name in the relay, so the character the line was heard on counts as the speaker too.
-// FB-91: two copies of one line can differ in capitalisation or spacing, so the text compares lower-cased and
-// whitespace-collapsed (a case-only difference used to show the line twice, once labelled "via guild").
-function _chatNormText(s) { return String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim(); }
-function _guildFeedHeardLocally(ch, who, text, at) {
-  const w = who.toLowerCase(), nt = _chatNormText(text);
-  for (let i = _chatRing.length - 1, n = 0; i >= 0 && n < 150; i--, n++) {
-    const x = _chatRing[i];
-    if (x.swap || x.ch !== ch || Math.abs(x.t - at) > 5000 || _chatNormText(x.text) !== nt) continue;
-    if (String(x.who).toLowerCase() === w || (x.self && String(x.on).toLowerCase() === w)) return true;
-  }
-  return false;
-}
-// The other order: the relayed copy landed first (the game looked absent for a moment), then this PC's own log heard
-// the line. The local copy wins, so the relayed one is removed from the ring (and from the cache that saves it).
-function _guildFeedDropHeard(evt, character) {
-  if (!_guildFeedRing.length || (evt.ch !== 'guild' && evt.ch !== 'raid')) return;
-  const w = String(evt.self ? character : evt.who).toLowerCase(), nt = _chatNormText(evt.text);
-  for (let i = _guildFeedRing.length - 1; i >= 0; i--) {
-    const x = _guildFeedRing[i];
-    if (x.ch === evt.ch && Math.abs(x.t - evt.t) <= 5000 && String(x.who).toLowerCase() === w && _chatNormText(x.text) === nt) _guildFeedRing.splice(i, 1);
-  }
-}
+// The agent does NOT match a relayed line against its own log's copy (the guild lead, 2026-10-20: "my messages should
+// always be displayed"). It used to, and dropped the relayed copy of a line whenever the local ring held one, while
+// the overlay might not be showing that local copy (a character search, a channel switched off, a window that
+// holds the group). Only the overlay knows what is on screen, so it alone merges a local and a relayed copy of
+// one line (chat.html sameSaid): the local copy wins, and a relayed line is dropped only against a copy it shows.
 // Take the bot's lines ({ seq, t, ch, who, text }); returns how many landed. Anything that is not a plain guild or
 // raid line from a named speaker is dropped, and a line already held (same speaker, text and second) is not added twice
 // (a bot restart replays from 0 and must not repeat what the overlay shows).
@@ -40901,7 +40881,7 @@ function guildFeedTake(lines, now, ingame) {
     if (!who || !text) continue;
     const at = Number.isFinite(Number(r.t)) && Number(r.t) > 0 ? Number(r.t) : t;
     const key = chatLineKey({ ch: r.ch, who, text, t: at }, '');
-    if (_guildFeedRing.some(x => x.k === key) || _guildFeedHeardLocally(r.ch, who, text, at)) continue;
+    if (_guildFeedRing.some(x => x.k === key)) continue;
     _guildFeedRing.push({ seq: ++_chatSeq, k: key, t: at, ch: r.ch, who, to: null, text, self: false, npc: false, on: '', via: 'guild' });
     n++;
   }
@@ -40967,7 +40947,6 @@ function noteLocalChatLine(line, character, now, opts) {
   _chatRing.push({ seq: ++_chatSeq, k: key, t: evt.t, ch: evt.ch, who: evt.who, to: evt.to || null, text: evt.text, self: !!evt.self, npc: !!evt.npc, on: character || '', cn: evt.cn || null, cnum: evt.cnum || null });
   const over = _chatRing.length - CHAT_RING_MAX;
   if (over > 0) _chatRing.splice(0, over);
-  _guildFeedDropHeard(evt, character);
   _chatCacheMarkDirty();
   return true;
 }
@@ -43219,7 +43198,14 @@ function uploadChat(messages, { botUrl, token, dryRun }) {
   // only the elected chat reporter uploads. Non-reporters drop it (the reporter
   // sees the same lines). Fail-open default keeps every agent uploading until
   // the bot says otherwise, so this can never make chat go dark.
-  if (!_reporterRoles.chat) return Promise.resolve();
+  // The player's OWN lines (self-form: "You say to your guild") are the one thing a stood-down agent still sends
+  // (the guild lead, 2026-10-20: "missing my own messages to guild on /camp"). A /camp demotes the agent at once,
+  // so a batch still waiting for the 5 s flush, its own last words included, was dropped here whole. The bot's
+  // dedup collapses the copy a reporter also sends.
+  if (!_reporterRoles.chat) {
+    messages = messages.filter(m => m && (m.speaker_source === 'log_name' || m.speaker_source === 'zeal'));
+    if (!messages.length) return Promise.resolve();
+  }
   enqueueUpload('chat', { agent_version: AGENT_VERSION, messages });
   return Promise.resolve();
 }
@@ -60348,6 +60334,7 @@ module.exports = {
   // Guild feed while out of game (2026-10-15): the poller, its in-game test, the ring and the control-plane setter its gate reads.
   _pollGuildFeed, _eqInGameFrom, guildFeedTake, guildFeedClear, _guildFeedNoteCampLine, _guildFeedRingForTest: () => _guildFeedRing, _guildFeedStateForTest: () => _guildFeed,
   _guildFeedResetForTest: _guildFeedReset, _applyControlPlane, CHAT_GUILD_RING_MAX,
+  uploadChat, _setReporterRolesForTest: (r) => { _reporterRoles = { chat: true, buffs: true, roster: true, ...r }; },
   chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
   _handleLocalChatHistoryForTest: _handleLocalChatHistory, _resetChatHistoryForTest, CHAT_HISTORY_MAX, CHAT_SWAP_MIN_MS,
   // Chat cache (2026-10-17): the encrypted on-disk copy of the Chat overlay's feed. See the "Chat cache" block.
