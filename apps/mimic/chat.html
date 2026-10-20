@@ -541,7 +541,7 @@
     return t ? '<div class="hdiv">— ' + esc(t) + ' —</div>' : '';
   }
   function repaint(){
-    var f = makeFilter(shownGroupIds()), h = '', i;
+    var f = makeFilter(shownGroupIds()), h = '', i, histShown = [];
     _lastOn = null;
     if (_histHours) {
       var have = {}, hh = '', shownH = 0;
@@ -549,11 +549,12 @@
       for (i = 0; i < _histLines.length; i++) {
         var hl = _histLines[i];
         if (!hl.sep && have[chatKey(hl)]) continue;
-        if (lineVisible(f, hl)) { hh += rowHtml(hl); if (!hl.sep) shownH++; }
+        if (lineVisible(f, hl)) { hh += rowHtml(hl); if (!hl.sep) { shownH++; histShown.push(hl); } }
       }
       h += hh + histDividerHtml(shownH);
     }
-    for (i = 0; i < _lines.length; i++) if (lineVisible(f, _lines[i]) && !(_histHours && _lines[i].via && heardLocally(_lines[i], _histLines))) h += rowHtml(_lines[i]);
+    var liveShown = shownCopies(_lines);   // a relayed line is hidden only behind a local copy that is on screen too
+    for (i = 0; i < _lines.length; i++) if (lineVisible(f, _lines[i]) && !(_lines[i].via && (heardLocally(_lines[i], liveShown) || (_histHours && heardLocally(_lines[i], histShown))))) h += rowHtml(_lines[i]);
     var stick = pinned();
     feedEl.innerHTML = h;
     if (stick) toBottom();
@@ -561,16 +562,25 @@
   }
   // FB-91: a relayed ("via guild") line whose own copy is in this PC's log is the same line. The local copy wins and keeps
   // its label, whichever arrived first and whatever the capitalisation or spacing (v = the relayed line, l = a local one).
-  function normText(s){ return String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim(); }
+  function normText(s){ var lower = String(s == null ? '' : s).toLowerCase(); return lower.replace(/[^a-z0-9]+/g, ' ').trim() || lower.replace(/\s+/g, ' ').trim(); }
   function sameSaid(v, l){
     if (!l || l.via || l.sep || v.ch !== l.ch || Math.abs(v.t - l.t) > 5000 || normText(v.text) !== normText(l.text)) return false;
     var w = String(v.who == null ? '' : v.who).toLowerCase();
     return String(l.who == null ? '' : l.who).toLowerCase() === w || (!!l.self && String(l.on == null ? '' : l.on).toLowerCase() === w);
   }
   function heardLocally(v, pool){ for (var i = 0; i < pool.length; i++) if (sameSaid(v, pool[i])) return true; return false; }
+  // Only a local copy this window actually SHOWS stands in for a relayed one: a copy hidden by a character search, a
+  // channel switched off, or a group held by another window must not take the relayed line down with it (the guild
+  // lead, 2026-10-20: "my messages should always be displayed"). History counts only while it is on.
+  function shownCopies(pool){
+    var f = makeFilter(shownGroupIds()), out = [];
+    for (var i = 0; i < pool.length; i++) if (!pool[i].via && !pool[i].sep && lineVisible(f, pool[i])) out.push(pool[i]);
+    return out;
+  }
   function addLines(fresh){
-    var gone = false, pool = fresh.concat(_lines, _histLines), k;
-    for (k = _lines.length - 1; k >= 0; k--) if (_lines[k].via && heardLocally(_lines[k], fresh)) { _lines.splice(k, 1); gone = true; }
+    var gone = false, pool = shownCopies(fresh.concat(_lines, _histHours ? _histLines : [])), k;
+    var freshShown = shownCopies(fresh);
+    for (k = _lines.length - 1; k >= 0; k--) if (_lines[k].via && heardLocally(_lines[k], freshShown)) { _lines.splice(k, 1); gone = true; }
     fresh = fresh.filter(function(l){ return !(l.via && heardLocally(l, pool)); });
     if (!fresh.length) { if (gone) repaint(); return; }
     // A first sight of a channel, or of a slot's name, changes what the ⚙ lists (and may resolve older "#n" rows).

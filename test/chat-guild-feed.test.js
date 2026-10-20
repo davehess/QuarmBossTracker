@@ -339,14 +339,14 @@ describe('lines land in /api/chat with the existing channel ids and via: guild',
     expect(n).toBe(1);
     expect(agent._guildFeedRingForTest().map(r => r.text)).toEqual(['kept']);
   });
-  it('a line this PC\'s own log already heard is not shown again, including your own as "You"', () => {
+  it('a line this PC\'s own log also heard is still taken: only the overlay knows what it shows, so it alone merges the two copies', () => {
     agent.setChatPolicy({ away: true }, T0);
     agent.noteLocalChatLine(`${TS} Corvale tells the guild, 'on my way'`, ME, T0);
     agent.noteLocalChatLine(`${TS} You say to your guild, 'ready'`, ME, T0);
     const local = agent._chatRingForTest().map(x => x.t);
     expect(local.length).toBe(2);
     const n = agent.guildFeedTake([L(1, 'guild', 'Corvale', 'on my way', local[0] + 2000), L(2, 'guild', ME, 'ready', local[1]), L(3, 'guild', 'Corvale', 'new', local[0])], T0);
-    expect(n).toBe(1);
+    expect(n).toBe(3);
   });
   it('the ring is its own, capped at 300, and never touches the chat ring', async () => {
     const lines = []; for (let i = 1; i <= 320; i++) lines.push(L(i, 'guild', 'Corvale', 'line ' + i, T0 + i * 1000));
@@ -576,27 +576,25 @@ describe('Mimic keeps the switch', () => {
 describe('FB-91: a line in your own log is shown once, as local', () => {
   const LT = new Date('Wed Oct 14 21:10:01 2026').getTime();   // the local line's own timestamp, which is what a relayed copy sits near
   const said = (text, ts = T0) => agent.noteLocalChatLine(`${TS} Corvale tells the guild, '${text}'`, ME, ts);
-  it('relayed copy arrives after the local one, differing only in capitalisation: not added', () => {
+  // The agent no longer merges the two copies (2026-10-20): it served the local one only when the overlay might not be
+  // showing it, and the relayed line vanished. It hands the overlay both, and the overlay merges them (next describe).
+  it('relayed copy after the local one, differing only in capitalisation: both are served, local first with no via', () => {
     said('what is nimic?');
     const local = agent._chatRingForTest()[0].t;
-    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'What is Nimic?', local + 1000)], T0)).toBe(0);
-    expect(agent.guildFeedTake([L(2, 'guild', 'Corvale', 'what  is nimic?', local)], T0)).toBe(0);
-    expect(agent._guildFeedRingForTest()).toHaveLength(0);
+    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'What is Nimic?', local + 1000)], T0)).toBe(1);
+    expect(feed({ away: true }).lines.map(l => l.via)).toEqual([undefined, 'guild']);
   });
-  it('relayed copy arrived first, then the local line: the relayed one is removed and the local one has no via', () => {
+  it('relayed copy first, then the local line: neither is removed by the agent', () => {
     agent.guildFeedTake([L(1, 'guild', 'Corvale', 'What is nimic?', LT + 1000)], T0);
-    expect(agent._guildFeedRingForTest()).toHaveLength(1);
     said('what is nimic?');
-    expect(agent._guildFeedRingForTest()).toHaveLength(0);
-    const r = feed({ away: true });
-    expect(r.lines).toHaveLength(1);
-    expect(r.lines[0].via).toBeUndefined();
-    expect(r.lines[0].text).toBe('what is nimic?');
+    expect(agent._guildFeedRingForTest()).toHaveLength(1);
+    expect(feed({ away: true }).lines.map(l => l.via)).toEqual(['guild', undefined]);
   });
-  it('your own line is "You" locally and your name in the relay, in either order', () => {
+  it('your own line is kept in the relay whether or not your own log also has it ("You" locally, your name in the relay)', () => {
     agent.guildFeedTake([L(1, 'guild', ME, 'Ready', LT)], T0);
     agent.noteLocalChatLine(`${TS} You say to your guild, 'ready'`, ME, T0);
-    expect(agent._guildFeedRingForTest()).toHaveLength(0);
+    expect(agent._guildFeedRingForTest()).toHaveLength(1);
+    expect(feed({ away: true }).lines.map(l => [l.who, l.via])).toEqual([[ME, 'guild'], ['You', undefined]]);
   });
   it('two genuinely different messages both stay', () => {
     said('what is nimic?');
@@ -607,21 +605,27 @@ describe('FB-91: a line in your own log is shown once, as local', () => {
   });
 });
 
+// The overlay's harness: the real addLines/repaint-side merge code, with a visibility switch so a local copy can be
+// "in the list but not on screen" (a character search, a channel switched off).
+const mergeHarness = () => evalBlock(`
+  var _lines = [], _histLines = [], _histHours = 0, repainted = 0, hidden = {};
+  function learnChannel(){ return false; } function paintChans(){} function shownGroupIds(){ return []; }
+  function makeFilter(){ return function(){ return true; }; } function pinned(){ return true; } function toBottom(){} function paintEmpty(){} function paintNew(){}
+  function lineVisible(f, l){ return !hidden[l.n]; } function rowHtml(l){ return ''; }
+  var feedEl = { insertAdjacentHTML: function(){}, children: [], removeChild: function(){} };
+  var FEED_MAX = 500, _unread = 0;
+  function repaint(){ repainted++; }
+  ${sliceBlock(SCRIPT, 'function normText(s){', 'if (sameSaid(v, pool[i])) return true; return false; }')}
+  ${sliceBlock(SCRIPT, 'function shownCopies(pool){', 'return out;\n  }')}
+  ${sliceBlock(SCRIPT, 'function addLines(fresh){', 'if (stick) toBottom(); else { _unread += shown; paintNew(); }\n    }\n    paintEmpty();\n  }')}
+  function reset(){ _lines.length = 0; _histLines.length = 0; repainted = 0; hidden = {}; _histHours = 0; }
+  function lines(){ return _lines; }
+  function setLines(a){ _lines = a; } function setHist(a){ _histLines = a; _histHours = a.length ? 6 : 0; }
+  function hide(n){ hidden[n] = true; }
+`, ['addLines', 'reset', 'lines', 'setLines', 'setHist', 'sameSaid', 'hide']);
+
 describe('FB-91: chat.html merges a relayed and a local copy into the local one', () => {
-  const merge = evalBlock(`
-    var _lines = [], _histLines = [], _histHours = 0, repainted = 0, cleaned = [];
-    function learnChannel(){ return false; } function paintChans(){} function shownGroupIds(){ return []; }
-    function makeFilter(){ return function(){ return true; }; } function pinned(){ return true; } function toBottom(){} function paintEmpty(){} function paintNew(){}
-    function lineVisible(){ return true; } function rowHtml(l){ return ''; }
-    var feedEl = { insertAdjacentHTML: function(){}, children: [], removeChild: function(){} };
-    var FEED_MAX = 500, _unread = 0;
-    function repaint(){ repainted++; }
-    ${sliceBlock(SCRIPT, 'function normText(s){', 'if (sameSaid(v, pool[i])) return true; return false; }')}
-    ${sliceBlock(SCRIPT, 'function addLines(fresh){', 'if (stick) toBottom(); else { _unread += shown; paintNew(); }\n    }\n    paintEmpty();\n  }')}
-    function reset(){ _lines.length = 0; _histLines.length = 0; repainted = 0; }
-    function lines(){ return _lines; }
-    function setLines(a){ _lines = a; } function setHist(a){ _histLines = a; }
-  `, ['addLines', 'reset', 'lines', 'setLines', 'setHist', 'sameSaid']);
+  const merge = mergeHarness();
   const relay = { n: 1, t: T0, ch: 'guild', who: 'Corvale', text: 'What is Nimic?', via: 'guild' };
   const local = { n: 2, t: T0 + 1000, ch: 'guild', who: 'Corvale', text: 'what is nimic?' };
   it('local first, relayed second (case differs): shown once, no via', () => {
@@ -649,6 +653,98 @@ describe('FB-91: chat.html merges a relayed and a local copy into the local one'
     merge.reset(); merge.addLines([{ n: 1, t: T0, ch: 'guild', who: 'You', self: true, on: 'Aldenmar', text: 'ready' }]);
     merge.addLines([{ n: 2, t: T0, ch: 'guild', who: 'Aldenmar', text: 'Ready', via: 'guild' }]);
     expect(merge.lines()).toHaveLength(1);
+  });
+});
+
+// ── Your own words always reach the feed (the guild lead, 2026-10-20: "missing my own messages to guild on /camp") ─────
+describe('own lines: a stood-down agent (a /camp demotes it at once) still sends what the player said', () => {
+  let queue;
+  const selfLine = { channel: 'guild', speaker: ME, text: 'anyone else for Hate Factioning?', ts: '2026-10-20T15:12:10.000Z', speaker_source: 'log_name' };
+  const zealLine = { ...selfLine, text: 'need a rez', speaker_source: 'zeal' };
+  const heard = { channel: 'guild', speaker: 'Corvale', text: 'need to go 2/3 hours guys see you soon !!', ts: '2026-10-20T15:12:12.000Z', speaker_source: 'line' };
+  const sent = () => queue.flatMap(q => q.kind === 'chat' ? q.payload.messages : []);
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });   // enqueueUpload's disk save never fires
+    queue = agent._uploadQueueForTest();
+    queue.splice(0);
+  });
+  afterEach(() => {
+    queue.splice(0);
+    agent._setReporterRolesForTest({});
+    vi.useRealTimers();
+  });
+  it('the reporter sends everything it heard (unchanged)', async () => {
+    agent._setReporterRolesForTest({ chat: true });
+    await agent.uploadChat([selfLine, heard], { dryRun: false });
+    expect(sent().map(m => m.speaker)).toEqual([ME, 'Corvale']);
+  });
+  it('a stood-down agent still sends the player\'s own lines, whichever way the speaker was resolved, and nothing it merely heard', async () => {
+    agent._setReporterRolesForTest({ chat: false });
+    await agent.uploadChat([selfLine, heard, zealLine], { dryRun: false });
+    expect(sent().map(m => m.text)).toEqual([selfLine.text, zealLine.text]);
+  });
+  it('a stood-down agent that only heard others sends nothing at all', async () => {
+    agent._setReporterRolesForTest({ chat: false });
+    await agent.uploadChat([heard], { dryRun: false });
+    expect(queue).toHaveLength(0);
+  });
+  it('what the player\'s own client can send is only guild and raid: officer, group and tells never take this road', () => {
+    expect(agent.guildFeedTake([L(1, 'officer', ME, 'x'), L(2, 'tell', ME, 'x'), L(3, 'group', ME, 'x')], T0)).toBe(0);
+  });
+});
+
+describe('own lines: in away mode, and once when a local and a relayed copy both exist', () => {
+  const SAID = 'anyone else for Hate Factioning?';
+  it('away, with no local copy at all: the relayed copy of your own line is shown (not dropped as "yours")', () => {
+    expect(agent.guildFeedTake([L(1, 'guild', ME, SAID, T0), L(2, 'guild', 'Corvale', 'see you soon', T0 + 2000)], T0)).toBe(2);
+    const r = feed({ away: true });
+    expect(r.lines.map(l => [l.who, l.via])).toEqual([[ME, 'guild'], ['Corvale', 'guild']]);
+  });
+  it('away, with a local copy too: the agent serves BOTH (it cannot know the overlay shows the local one); the overlay merges them', () => {
+    agent.noteLocalChatLine(`${TS} You say to your guild, '${SAID}'`, ME, T0);
+    const at = agent._chatRingForTest()[0].t;
+    expect(agent.guildFeedTake([L(1, 'guild', ME, SAID, at + 1000)], T0)).toBe(1);
+    const r = feed({ away: true });
+    expect(r.lines.map(l => [l.who, l.via])).toEqual([['You', undefined], [ME, 'guild']]);
+  });
+  it('another member\'s lines are unchanged: shown via guild, and a different message is never merged away', () => {
+    agent.noteLocalChatLine(`${TS} Corvale tells the guild, 'pull in five'`, ME, T0);
+    const at = agent._chatRingForTest()[0].t;
+    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'pull in six', at), L(2, 'guild', 'Rethlan', 'pull in five', at)], T0)).toBe(2);
+  });
+});
+
+describe('own lines: chat.html merges a rewritten relayed copy of a line into the local one', () => {
+  const merge = mergeHarness();
+  const mine = { n: 1, t: T0, ch: 'guild', who: 'You', self: true, on: ME, text: 'ok!/camp now - brb' };
+  const relayed = { n: 2, t: T0 + 2000, ch: 'guild', who: ME, text: 'Ok camp now brb', via: 'guild' };
+  it('local first or relayed first: your line shows once, as yours', () => {
+    merge.reset(); merge.addLines([mine]); merge.addLines([relayed]);
+    expect(merge.lines()).toEqual([mine]);
+    merge.reset(); merge.addLines([relayed]); merge.addLines([mine]);
+    expect(merge.lines()).toEqual([mine]);
+  });
+  it('a local copy that is held but NOT on screen does not take the relayed line down with it (away: the line shows once, via guild)', () => {
+    merge.reset(); merge.hide(1);                       // e.g. a character search or a switched-off channel hides the local row
+    merge.addLines([mine]); merge.addLines([relayed]);
+    expect(merge.lines()).toEqual([mine, relayed]);     // both held; the repaint shows the relayed one only (see the next test)
+    merge.reset(); merge.hide(1);
+    merge.addLines([relayed, mine]);                    // both in one answer
+    expect(merge.lines()).toEqual([relayed, mine]);
+  });
+  it('a hidden history copy does not drop it either; a shown one still does', () => {
+    merge.reset(); merge.setHist([{ ...mine, n: -1 }]); merge.hide(-1); merge.addLines([relayed]);
+    expect(merge.lines()).toEqual([relayed]);
+    merge.reset(); merge.setHist([{ ...mine, n: -1 }]); merge.addLines([relayed]);
+    expect(merge.lines()).toEqual([]);
+  });
+  it('a relayed line with no local copy stays (your own line is never filtered out for being yours)', () => {
+    merge.reset(); merge.addLines([relayed]);
+    expect(merge.lines()).toEqual([relayed]);
+  });
+  it('different words are different lines', () => {
+    merge.reset(); merge.addLines([mine]); merge.addLines([{ ...relayed, text: 'Ok camp now brb soon' }]);
+    expect(merge.lines()).toHaveLength(2);
   });
 });
 

@@ -458,6 +458,8 @@ describe('chat.html: search, history and rows', () => {
     ${sliceBlock(SCRIPT, 'function groupOf(ch){', 'return out;\n  }')}
     ${sliceBlock(SCRIPT, 'function learnChannel(l){', "esc(t) + ']</span>' : '';\n  }")}
     ${LINEHTML}
+    ${sliceBlock(SCRIPT, 'function normText(s){', 'if (sameSaid(v, pool[i])) return true; return false; }')}
+    ${sliceBlock(SCRIPT, 'function shownCopies(pool){', 'return out;\n  }')}
     ${REPAINT}
     ${COPYLINE}
     function setState(o){
@@ -563,6 +565,15 @@ describe('chat.html: search, history and rows', () => {
     m.setState({ hist: [hist, ln(-2, 'guild', 'Corvale', 'only in history', 'Aldenmar', { t: T - 99_000 })], lines: [live] });
     m.repaint();
     expect(ids(m)).toEqual([-2, 5]);
+  });
+  it('a relayed (via guild) line and a local copy that are both held: only the local one is painted; with the local one hidden, the relayed one is', () => {
+    const m = make();
+    const mine = ln(1, 'guild', 'You', 'anyone else?', 'Aldenmar', { self: true });
+    const relayed = ln(2, 'guild', 'Aldenmar', 'anyone else?', '', { via: 'guild', t: mine.t + 1000 });
+    m.setState({ lines: [mine, relayed] }); m.repaint();
+    expect(ids(m)).toEqual([1]);
+    m.setState({ lines: [{ ...mine, ch: 'zone' }, relayed] }); m.repaint();   // the local copy is not a guild line any more: nothing to stand in for the relayed one
+    expect(ids(m)).toContain(2);
   });
   it('the client key equals the agent key for the same line, zone lines included', () => {
     const m = make();
