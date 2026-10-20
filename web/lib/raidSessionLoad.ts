@@ -5,9 +5,10 @@
 //
 // BOUNDED, on purpose. Every table that has a time column is read with `gte(col, from).lt(col, to)` on the
 // window: raid_track_minutes.minute_at, encounters.ended_at, looted_items.looted_at, loot_observations.posted_at,
-// roll_sets.started_at, roll_set_overrides.started_at, raid_attendance_ticks.scheduled_for and opendkp_raids.ts.
-// The tables with none (encounter_players, opendkp_ticks, opendkp_loot_recent, bosses_local) are read only for ids
-// that one of those reads returned. test/raid-share.test.js drives this file against a recording client and fails
+// roll_sets.started_at, roll_set_overrides.started_at, raid_attendance_ticks.scheduled_for, opendkp_raids.ts and
+// opendkp_auctions.end_at (the bid winners, lib/raidSessionBids.ts).
+// The tables with none (encounter_players, opendkp_ticks, opendkp_loot_recent, opendkp_auction_bids, bosses_local)
+// are read only for ids that one of those reads returned. test/raid-share.test.js drives this file against a recording client and fails
 // if a read comes back without the window on it.
 //
 // Every read is bounded for the 1,000-row cap (test/db-read-discipline-web.test.js): pages through selectAll on
@@ -26,9 +27,10 @@ import { selectAll } from './selectAll';
 import { GUILD_TAG } from './guild';
 import { chunk } from './replayBosses';
 import { windowIso, type ShareWindow } from './raidShare';
-import { loadOptedOut } from './raidShareLookup';
+import { anonSalt, loadAnon } from './raidShareLookup';
+import { loadBidders } from './raidSessionBids';
 import {
-  attendanceFromMinutes, buildKills, buildLoot, buildRolls, buildTicks, windowNight,
+  anonSig, attendanceFromMinutes, buildKills, buildLoot, buildRolls, buildTicks, windowNight,
   type CapturedTickIn, type DkpLootIn, type DkpTickIn, type EncounterIn, type LootedIn,
   type ObservedIn, type PlayerIn, type SessionBundle,
 } from './raidSession';
@@ -38,9 +40,15 @@ import type { RollOverride, RollSetRow } from './rolls';
 export type SessionReview = { bundle: SessionBundle; night: NightSummary | null };
 
 const MINUTE_PAGE = 30;       // rows of ~25 KB each: ~750 KB a response
-const TOP_FIGHTS = 60;        // parses are read for the biggest unclassified fights at most
+// The top-five list is read for this many fights at most (curated bosses first, then the biggest). It was 60, which
+// left the later fights of a long night with no parse line at all. A night is one window of under 24 hours and a
+// raid night's unclassified fights number in the low hundreds, so 400 covers all of one; the cost is 20 ids a read,
+// at most 20 reads, once per window (the bundle is cached below). The full table of any fight loads on demand.
+const TOP_FIGHTS = 400;
 const CACHE_MS = 5 * 60_000;
-const cache = new Map<string, { at: number; value: SessionReview }>();
+// Kept with the labels it was built with (`sig`): a bundle is reused only while the opt-outs and the winners are
+// what they were, so an opt-out leaves a cached review within the minute loadOptedOut is held, not in five.
+const cache = new Map<string, { at: number; sig: string; value: SessionReview }>();
 
 type MinuteRowIn = NightMinute & { data: string };
 type RaidIn = { raid_id: number };
@@ -103,10 +111,12 @@ async function readAll(sb: SupabaseClient, win: ShareWindow) {
 
 export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow): Promise<SessionReview> {
   const key = `${GUILD_TAG}|${win.fromMs}|${win.toMs}`;
+  const anon = await loadAnon(sb, GUILD_TAG, win);
+  const sig = anonSig(anon);
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;
+  if (hit && hit.sig === sig && Date.now() - hit.at < CACHE_MS) return hit.value;
 
-  const [r, optedOut] = await Promise.all([readAll(sb, win), loadOptedOut(sb, GUILD_TAG)]);
+  const [r, bidders] = await Promise.all([readAll(sb, win), loadBidders(sb, GUILD_TAG, win, anonSalt())]);
 
   // Ids that the windowed reads returned: the opendkp children, the parses and the curated-boss flags.
   const raidIds = r.raids.map(x => x.raid_id);
@@ -154,15 +164,16 @@ export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow): P
     fromMs: win.fromMs,
     toMs: win.toMs,
     minutesRecorded: r.minutes.length,
-    attendance: attendanceFromMinutes(r.minutes, optedOut),
-    ticks: buildTicks(r.captured, dkpTicks, optedOut),
-    kills: buildKills(r.encounters, players, bossIds, optedOut),
-    loot: buildLoot(r.looted, r.observed, dkpLoot, optedOut),
-    rolls: buildRolls(r.rollRows, r.overrides, r.looted, optedOut),
+    attendance: attendanceFromMinutes(r.minutes, anon),
+    ticks: buildTicks(r.captured, dkpTicks, anon),
+    kills: buildKills(r.encounters, players, bossIds, anon),
+    loot: buildLoot(r.looted, r.observed, dkpLoot, anon),
+    rolls: buildRolls(r.rollRows, r.overrides, r.looted, anon),
+    bidders,
   };
   const value: SessionReview = { bundle, night: windowNight(r.minutes, win) };
 
   if (cache.size >= 20) cache.delete(cache.keys().next().value as string);
-  cache.set(key, { at: Date.now(), value });
+  cache.set(key, { at: Date.now(), sig, value });
   return value;
 }

@@ -26,8 +26,9 @@ export default function DataSources() {
           clients see them.
         </p>
         <p>
-          <b className="text-text">What is left out.</b> Characters whose owners opted out of stats or inventory are removed
-          before this page is built. A shared link shows only this session&apos;s window, expires, and can be withdrawn by a
+          <b className="text-text">What is left out.</b> Characters whose owners opted out of stats or inventory are shown
+          only as their class and a number (&ldquo;Cleric 2&rdquo;), swapped in before this page is built. Anyone who won an
+          item in this window is shown by name, since a closed auction&apos;s winner is public in OpenDKP. A shared link shows only this session&apos;s window, expires, and can be withdrawn by a
           Wolf Pack officer at any time.
         </p>
         <p>

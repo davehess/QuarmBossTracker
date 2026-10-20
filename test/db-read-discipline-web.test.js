@@ -565,6 +565,7 @@ const UNIQUE_KEYS = {
   opendkp_ticks: [['tick_id']],
   opendkp_raids: [['raid_id']],
   opendkp_auction_bids: [['id'], ['auction_id', 'character_name', 'value']],
+  opendkp_auctions: [['auction_id']],   // primary key (20260528290000_opendkp_auctions.sql); lib/raidSessionBids.ts pages the window's auctions
   opendkp_loot_recent: [['raid_date', 'character_name', 'item_name', 'auction_id']],
   agent_upload_stats: [['character', 'endpoint']],
   wolfpack_members: [['discord_id']],
