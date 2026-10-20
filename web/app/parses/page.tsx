@@ -19,6 +19,7 @@ import { guildShare, isAutoForeign } from '@/lib/anomalies';
 import { curatedNpcIds } from '@/lib/bossFilter';
 import { classifyEncounter, clearClassification } from './actions';
 import WindowPicker from '@/components/WindowPicker';
+import MoreInfo from '@/components/MoreInfo';
 import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
 import { loadLootRecent, loadOffcardRollup, loadTicksForRaids } from '@/lib/fullReads';
 
@@ -443,16 +444,19 @@ export default async function ParsesPage(
           <span>📊 Boss Kills</span>
           <WindowPicker page="parses" current={w.key} options={['7d', '30d', '60d', '90d', 'exp', 'life']} />
         </h2>
-        <p className="text-sm text-dim">
+        <div className="text-sm text-dim">
           {w.key === 'life' ? `Newest ${ROW_LIMIT} merged encounters` : `${w.label} window (newest ${ROW_LIMIT})`},
-          grouped by raid night and zone. Within each zone, kills are shown in the order they happened. Damage
+          grouped by raid night and zone. Within each zone, kills are shown in the order they happened.
+          <MoreInfo>
+          Damage
           is the max-per-player merge across all parser uploads for the same
           kill. Click a card for the full breakdown. Non-boss kills roll up into
           the 🗡 lines under each night, split into what the raid cleared and
           what was killed outside it. Loot blocks
           and attendance rollups come from OpenDKP, mirrored every 6h (or via{' '}
           <code>/syncopendkp</code>).
-        </p>
+          </MoreInfo>
+        </div>
         {caveat && <p className="text-xs text-orange mt-1">⚠ {caveat}</p>}
       </section>
 

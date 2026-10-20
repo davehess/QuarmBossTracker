@@ -15,6 +15,7 @@
 // Officer-only: requireOfficer() first, like every admin page.
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
+import MoreInfo from '@/components/MoreInfo';
 import { userTz } from '@/lib/timezone';
 import { fmtTime, dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 import { classifyEncounter, clearClassification } from '@/app/parses/actions';
@@ -190,15 +191,18 @@ export default async function AnomaliesPage() {
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-5">
         <h2 className="text-xl text-gold mb-2">🚩 Anomalies</h2>
-        <p className="text-sm text-dim leading-6">
-          Raid data-quality review. <b className="text-purple">Foreign raids</b> — a Pack member
+        <div className="text-sm text-dim leading-6">
+          Raid data-quality review.
+          <MoreInfo>
+          <b className="text-purple">Foreign raids</b> — a Pack member
           pugging another guild whose agent uploaded the fight — are auto-hidden from{' '}
           <code>/parses</code> when fewer than {pct(AUTO_FOREIGN_MAX_MEMBER_FRAC)} of a{' '}
           {AUTO_FOREIGN_MIN_PLAYERS}+ raid are on the roster. Everything in the majority-non-member
           band (&lt;{pct(REVIEW_FOREIGN_MAX_MEMBER_FRAC)} members) is listed below to confirm or clear.
           Boss kills only — the bosses on the curated kill-card list, the same ones <code>/parses</code>{' '}
           shows. Farm trash is collected but never reviewed here.
-        </p>
+          </MoreInfo>
+        </div>
       </section>
 
       {/* Off-hours kills of raid-night mobs */}
@@ -209,14 +213,17 @@ export default async function AnomaliesPage() {
             <span className="text-dim normal-case tracking-normal"> · {offHours.length - offPending} already marked</span>
           )}
         </h3>
-        <p className="text-xs text-dim leading-5 mb-3">
+        <div className="text-xs text-dim leading-5 mb-3">
           Every {OFFHOURS_MIN_PLAYERS}+ player boss kill since April that started outside
-          Sun/Wed/Thu 19:30–00:30 ET. <b className="text-orange">Raid-night mob</b> means the
+          Sun/Wed/Thu 19:30–00:30 ET.
+          <MoreInfo>
+          <b className="text-orange">Raid-night mob</b> means the
           guild also kills it during raids — those at a low roster share are the pug case and
           sort first. Off-night clears like The Va`Dyn run 80–100% roster and sort last;
           they are listed for completeness, not because they are suspect.
           Nothing here is auto-hidden — this queue is the decision.
-        </p>
+          </MoreInfo>
+        </div>
         {offHours.length === 0 ? (
           <p className="text-xs text-dim italic">Nothing outside the raid window.</p>
         ) : (

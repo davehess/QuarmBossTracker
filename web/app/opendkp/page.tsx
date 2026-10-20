@@ -19,6 +19,7 @@
 // against his table with no translation step.
 
 import Link from 'next/link';
+import MoreInfo from '@/components/MoreInfo';
 import { supabaseAdmin } from '@/lib/supabase';
 import AutoRefresh from './AutoRefresh';
 
@@ -140,16 +141,20 @@ export default async function OpenDkpPage() {
             <h1 className="text-2xl text-gold mb-1">OpenDKP traffic — live</h1>
             <p className="text-sm text-dim leading-6 max-w-2xl">
               Every request Wolf Pack&apos;s bot sends to the OpenDKP API, counted as it happens.
-              This page is <b className="text-text">open to anyone</b> — no sign-in — because the
-              person who most needs to see it is the one paying for the API.
-              Endpoint names match the shape OpenDKP&apos;s own API Gateway logs use, so this can be
-              read side by side with them.
             </p>
-            <p className="text-sm text-dim leading-6 max-w-2xl mt-2">
-              This counts what our <b className="text-text">server</b> sends. Since 27 Aug 2026 that
-              is everything: the desktop app no longer contacts the OpenDKP API at all — the call it
-              used to make from each player&apos;s PC was removed, not just slowed down.
-            </p>
+            <MoreInfo>
+              <p className="text-sm text-dim leading-6 max-w-2xl mt-1">
+                This page is <b className="text-text">open to anyone</b> — no sign-in — because the
+                person who most needs to see it is the one paying for the API.
+                Endpoint names match the shape OpenDKP&apos;s own API Gateway logs use, so this can be
+                read side by side with them.
+              </p>
+              <p className="text-sm text-dim leading-6 max-w-2xl mt-2">
+                This counts what our <b className="text-text">server</b> sends. Since 27 Aug 2026 that
+                is everything: the desktop app no longer contacts the OpenDKP API at all — the call it
+                used to make from each player&apos;s PC was removed, not just slowed down.
+              </p>
+            </MoreInfo>
           </div>
           <div className="text-right shrink-0">
             <div className="text-xs tracking-widest font-bold px-3 py-1 rounded border inline-block"
@@ -346,7 +351,9 @@ export default async function OpenDkpPage() {
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim leading-6">
         <b className="text-text">What changed after the incident.</b> The live-bidding panel used to
         poll <code>/auctions</code> every 7 seconds per open dashboard, uncached — that is what put
-        1,678 calls and 1.1 GB on the API in one afternoon. It now reads OpenDKP&apos;s own
+        1,678 calls and 1.1 GB on the API in one afternoon.
+        <MoreInfo>
+        It now reads OpenDKP&apos;s own
         <code> /auctions/active</code> endpoint through a single shared cache, so the whole guild
         costs one call per interval no matter how many people are playing, and a hard ceiling of
         60 calls/minute sits below every request path we have. Full write-up:{' '}
@@ -356,6 +363,7 @@ export default async function OpenDkpPage() {
         recording a row per call would repeat the exact mistake this page exists to answer for.
         &ldquo;Refused by us&rdquo; are calls stopped before they left our server, so they never
         reached OpenDKP at all.
+        </MoreInfo>
       </section>
     </div>
   );

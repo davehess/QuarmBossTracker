@@ -22,6 +22,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import MoreInfo from '@/components/MoreInfo';
 import { loadRoster } from '@/lib/roster';
 import { selectAll } from '@/lib/selectAll';
 
@@ -220,14 +221,18 @@ export default async function RosterPage(
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-2xl text-gold mb-1">🐺 Raid Roster{altView && <span className="text-orange text-lg ml-2">— Alt nights</span>}</h2>
-        <p className="text-sm text-dim leading-6">
+        <div className="text-sm text-dim leading-6">
           Typical raiders over the <b className="text-text">last 60 days</b>, straight from DKP attendance ticks.
+          <MoreInfo>
           Each row is a <b className="text-text">person</b>: the % is raid attendance on <i>any</i> of their characters
           out of {totalTicks} possible ticks, with the tick count beside it. Alts under {Math.round(ALT_FOLD_SHARE * 100)}%
-          of that person&apos;s usage fold under the main — expand to see each alt&apos;s ticks. Families at ≥{minRa}% make
+          of that person&apos;s usage fold under the main — expand to see each alt&apos;s ticks.
+          </MoreInfo>
+          {/* The filter links are controls, not instructions, so they stay in view. */}
+          Families at ≥{minRa}% make
           the list (<Link href={qs({ min: 0 })} className="text-blue hover:underline">show everyone</Link>
           {minRa !== DEFAULT_MIN_RA && <> · <Link href={qs({ min: DEFAULT_MIN_RA })} className="text-blue hover:underline">default {DEFAULT_MIN_RA}%</Link></>}).
-        </p>
+        </div>
         <div className="flex gap-2 mt-3">
           <Link
             href={qs({ raids: null })}
@@ -315,8 +320,10 @@ export default async function RosterPage(
             <b className="text-text">Math:</b> a person&apos;s RA = distinct ticks attended on ANY of their linked
             characters ÷ {totalTicks} valid ticks{altView ? ' on alt-night raids' : ''} in the last 60 days (ticks
             with no captured attendees are sync gaps and count for nobody — same rule as OpenDKP and /admin/attendance).
+            <MoreInfo>
             Attending one tick on two of your characters counts once. Alts fold under mains via character links set on /admin/links; an alt
             missing its link shows as its own italic row. Officers: the 30/60/90 recruiting view lives at /admin/attendance.
+            </MoreInfo>
           </section>
         </>
       )}

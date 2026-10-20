@@ -11,6 +11,7 @@
 
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import MoreInfo from '@/components/MoreInfo';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
@@ -117,14 +118,19 @@ export default async function RollsPage() {
           <span>Roll nights</span>
         </h2>
         <p className="text-sm text-dim mt-2">
-          Off-night NBG loot rolls, captured straight from the game. Each session
-          shows the range, who rolled, and the winning roll. Since every drop is
-          no-drop, whoever actually <em>looted</em> it (from their own log) shows
-          beside the winner when they aren&apos;t the same person — a re-roll or a
-          pass hands it on. 🎲🔥 marks a perfect roll; the night crown goes to
-          whoever out-rolled everyone on more than 20% of the night&apos;s
-          contested sets.
+          Off-night NBG loot rolls, captured straight from the game.
         </p>
+        <MoreInfo>
+          <p className="text-sm text-dim mt-1">
+            Each session
+            shows the range, who rolled, and the winning roll. Since every drop is
+            no-drop, whoever actually <em>looted</em> it (from their own log) shows
+            beside the winner when they aren&apos;t the same person — a re-roll or a
+            pass hands it on. 🎲🔥 marks a perfect roll; the night crown goes to
+            whoever out-rolled everyone on more than 20% of the night&apos;s
+            contested sets.
+          </p>
+        </MoreInfo>
         <p className="text-xs text-dim mt-2">
           Last {LOOKBACK_DAYS} days · {totalSessions} roll {totalSessions === 1 ? 'session' : 'sessions'} · {totalLoot} looted {totalLoot === 1 ? 'item' : 'items'}.
           {' '}Capture needs Mimic/Parser v3.3.97+ running during the raid.

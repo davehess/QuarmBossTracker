@@ -29,6 +29,7 @@ import {
 } from '@/lib/consoleHealth';
 import { RUNBOOKS, type Runbook, type LeverRef } from '@/lib/runbooks';
 import { DriftList, EmergencyPanel } from './ConsoleControls';
+import MoreInfo from '@/components/MoreInfo';
 
 export const metadata = {
   title: 'Officer console · Admin',
@@ -310,12 +311,14 @@ export default async function OfficerConsolePage() {
             ? <b className="text-orange">inside the raid window</b>
             : <>outside the raid window, so stale-data warnings are downgraded to <b>quiet</b></>}.
         </p>
-        <p className="text-xs text-dim leading-5 mt-2">
+        <div className="text-xs text-dim leading-5 mt-2">
           Mid-fight, the faster surface is Mimic&apos;s <b>🛡 Admin</b> tab — same levers, no alt-tab.
+          <MoreInfo>
           This page is for setup, for the officer who isn&apos;t raid-leading, and for after.
           Raw tuning lives on <Link href="/admin/overlays" className="text-blue no-underline hover:underline">/admin/overlays</Link>;
           the per-character fleet table on <Link href="/admin/agents" className="text-blue no-underline hover:underline">/admin/agents</Link>.
-        </p>
+          </MoreInfo>
+        </div>
       </section>
 
       {/* 1 — health board */}

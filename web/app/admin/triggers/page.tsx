@@ -19,6 +19,7 @@ import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { normalizeTriggerPattern, isDeadAnchored } from '@/lib/triggerPattern';
 import { foldFeedback, loadFeedbackRollup, loadGuildTriggers, type FbAgg } from '@/lib/triggerFeedback';
+import MoreInfo from '@/components/MoreInfo';
 
 export const metadata = {
   title: 'Guild triggers · Admin',
@@ -190,13 +191,16 @@ export default async function AdminTriggersPage({
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">⚡ Raid triggers</h2>
-        <p className="text-sm text-dim leading-6">
-          Officer-tuned callouts that fire on the agent during raids. Agents
+        <div className="text-sm text-dim leading-6">
+          Officer-tuned callouts that fire on the agent during raids.
+          <MoreInfo>
+          Agents
           poll <code>/api/agent/guild-triggers</code> every 10 min, merge
           with each player&apos;s local <code>personal_triggers.json</code>,
           and evaluate against the live log tail. v1 supports text-overlay
           actions; TTS / sound / Discord come next.
-        </p>
+          </MoreInfo>
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
           <Stat label="Total" value={counts.total} />
           <Stat label="Enabled" value={counts.enabled} color="text-green" />
@@ -213,13 +217,15 @@ export default async function AdminTriggersPage({
             last 30 days · {fbTotal.toLocaleString()} vote{fbTotal === 1 ? '' : 's'} on {fbAll.length.toLocaleString()} trigger{fbAll.length === 1 ? '' : 's'}
           </span>
         </div>
-        <p className="text-xs text-dim leading-5 mb-3">
+        <div className="text-xs text-dim leading-5 mb-3">
           Aggregated from Mimic v1.1.2+&apos;s in-overlay vote buttons (« Earlier / ✓ Good! / » Too early).
+          <MoreInfo>
           The <strong>recommend</strong> column lights up at ≥3 votes with ≥60% consensus — anything weaker
           stays <em>mixed</em> so a drive-by click can&apos;t flip a trigger&apos;s posture.
           Direction reminder: <span className="text-orange">« earlier</span> = real event happens BEFORE the trigger → push the trigger
           earlier; <span className="text-red-400">» delay</span> = trigger fires BEFORE the event → push the trigger later.
-        </p>
+          </MoreInfo>
+        </div>
         {fbAggs.length === 0 ? (
           <p className="text-sm text-dim italic">No feedback yet — once members vote in the trigger overlay (Mimic v1.1.2+), the rollup will appear here.</p>
         ) : (

@@ -6,6 +6,7 @@
 
 import SprintBoard from '@/components/SprintBoard';
 import RoadmapQueue from '@/components/RoadmapQueue';
+import MoreInfo from '@/components/MoreInfo';
 import { releases, queueItems, sprintMeta } from '@/lib/roadmapData';
 
 export const dynamic = 'force-static';
@@ -39,17 +40,21 @@ export default function RoadmapPage() {
         <SprintBoard />
         <div className="bg-panel border border-border rounded-lg p-4 space-y-2">
           <div className="text-[11px] uppercase tracking-wide text-red">What the new safety gates already caught</div>
-          {sprintMeta.lintFinds.map((f, i) => (
-            <p key={i} className="text-xs text-dim leading-5">{f}</p>
-          ))}
+          <MoreInfo>
+            {sprintMeta.lintFinds.map((f, i) => (
+              <p key={i} className="text-xs text-dim leading-5 mt-2">{f}</p>
+            ))}
+          </MoreInfo>
         </div>
         <div className="bg-panel border border-border rounded-lg p-4 space-y-2">
           <div className="text-[11px] uppercase tracking-wide text-green">On beta? Here&apos;s what to watch for (and report in #feedback)</div>
-          <ul className="space-y-1 list-disc list-inside">
-            {sprintMeta.watchList.map((w, i) => (
-              <li key={i} className="text-xs text-dim leading-5">{w}</li>
-            ))}
-          </ul>
+          <MoreInfo>
+            <ul className="space-y-1 list-disc list-inside mt-2">
+              {sprintMeta.watchList.map((w, i) => (
+                <li key={i} className="text-xs text-dim leading-5">{w}</li>
+              ))}
+            </ul>
+          </MoreInfo>
         </div>
       </section>
 
@@ -111,7 +116,11 @@ export default function RoadmapPage() {
             contributor brief
           </a>{' '}
           into ChatGPT, Gemini or Claude and it will draft a change for one of the items
-          above that we can review and merge. If your AI can read code, start from the{' '}
+          above that we can review and merge.
+        </p>
+        <MoreInfo>
+        <p className="text-sm text-text mt-1">
+          If your AI can read code, start from the{' '}
           <a
             href="https://github.com/davehess/QuarmBossTracker/blob/main/docs/GEMINI-SPARK-HELPER.md"
             target="_blank"
@@ -133,6 +142,7 @@ export default function RoadmapPage() {
           . Send a draft, an idea or feedback{' '}
           <a href="/feedback" className="text-blue hover:underline">here</a> — one item per post.
         </p>
+        </MoreInfo>
       </section>
     </article>
   );

@@ -541,10 +541,13 @@ next touch one rather than assuming a missing row means a missing doc.
   engine `docs/DESIGN-announcer-engine.md`; the personas are Character Card V2 files. Waits on the guild lead: a
   voice per persona and six picks. Then this week's four: retire the doubled guild-trigger callouts, prove Discord
   voice playback, latch PoP first kills, re-voice today's callouts as clips. §169.
-- **⏳ Instruction text nobody reads: audited, nothing changed yet (2026-10-06).** 130 blocks, ~9,900 words on 63
-  routes, ranked with a one-line rewrite each and the 13 explanations repeated across pages
-  (`docs/AUDIT-site-monologues-2026-10-06.md`). Waits on the guild lead: A (fold in place) or B (help drawer), and
-  whether the out-of-date corrections may go straight to `main`. §168.
+- **⏳ Instruction text nobody reads: A (fold in place) picked 2026-10-19, first sweep built (web 1.9.17).** 130 blocks,
+  ~9,900 words on 63 routes (`docs/AUDIT-site-monologues-2026-10-06.md`). The first sentence stays and the rest folds
+  behind "Click here for more info" (`web/components/MoreInfo.tsx`) on the admin hub, `/admin/overlays` and the other
+  heavy officer pages, `/raid`, `/roadmap`, `/start`, `/buffs`, `/pop`, `/roster`, the character pages and more
+  (`test/more-info-fold.test.js` lists them). Still open: pages not yet swept, the shared components for the 13
+  repeats, and the "Also found" corrections (wrong or out-of-date text, a named person in rendered text), which wait on
+  the guild lead's yes to go straight to `main`. §168, §383.
 - **⏳ How raiders look, kept per raid night (bot 3.1.208, 2026-10-05).** `raid_night_appearance`: race,
   deity and worn armor/weapons (models from the new `eqemu_items.idfile/material/color`) beside the
   position track; zone sky/fog columns too. First real night: Wednesday 2026-10-07. Next: the Zeal fork's
