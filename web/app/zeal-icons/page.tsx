@@ -4,17 +4,15 @@
 // database, and takes no uploads (logos come in through Discord); that is what the 2026-09-26 audit
 // cleared for a public page.
 //
-// Live since 2026-10-03 with the [beta] tag (a new page goes live first, DECISIONS §135). Two
-// layouts until the guild lead picks one:
-//   A (no ?v=): one catalogue page, every guild with anchors (#eur);
-//   B (?v=b):   a short guild index; each guild has its own page at /zeal-icons/<code>.
+// Live since 2026-10-03 with the [beta] tag (a new page goes live first, DECISIONS §135). The guild
+// lead picked the guild index on 2026-10-19 (§383): a short list of guilds, and each guild has its own
+// page at /zeal-icons/<code>. The one-catalogue layout and its switch are gone.
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { GUILDS, markSrc } from '@/lib/zealIcons';
 import NewPageTag from '@/components/NewPageTag';
 import {
-  GetYours, GuildKeys, H1, H2, LayoutSwitch, Lead, Mark, NumbersAndPaws, PictureDownloads, InstallSteps,
-  StatusNote, SymbolsGrid,
+  GetYours, H1, H2, Lead, Mark, NumbersAndPaws, StatusNote, SymbolsGrid,
 } from './parts';
 
 export const metadata: Metadata = {
@@ -22,80 +20,9 @@ export const metadata: Metadata = {
   description: 'Guild banners and icons for Zeal /tag, with the keys to type and picture files to download.',
 };
 
-export default async function ZealIconsPage({ searchParams }: { searchParams: Promise<{ v?: string }> }) {
-  const { v } = await searchParams;
-  return v === 'b' ? <GuildIndex /> : <Catalogue />;
-}
-
-function Catalogue() {
-  const withPictures = GUILDS.filter(g => g.pictures?.length);
-  return (
-    <div className="mx-auto max-w-5xl py-2">
-      <LayoutSwitch current="a" />
-      <NewPageTag />
-      <h1 className={H1}>Zeal tag icons</h1>
-      <Lead />
-      <StatusNote />
-
-      <section id="guilds" className="mt-10">
-        <h2 className={H2}>Your guild</h2>
-        <p className="mt-1 text-sm text-dim">A banner with your guild&rsquo;s code, and an icon. {GUILDS.length} guilds so far.</p>
-        <ul className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {GUILDS.map(g => (
-            <li key={g.code} id={g.code.toLowerCase()}
-                className="flex scroll-mt-20 items-center gap-3 rounded-md border border-border bg-panel p-2 target:border-[#d29922]">
-              <Mark src={markSrc.banner(g.code)} alt={`${g.name} banner`} size={56} />
-              <Mark src={markSrc.guild(g.code)} alt={`${g.name} icon`} size={56} />
-              <div className="min-w-0 space-y-1.5">
-                <div className="text-sm leading-tight text-[#f2ede1]">{g.name}</div>
-                <GuildKeys guild={g} />
-                {g.pictures?.length ? (
-                  <a href="#pictures" className="text-xs text-[#d29922] hover:underline">Picture file ↓</a>
-                ) : null}
-              </div>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section id="pictures" className="mt-10 scroll-mt-20">
-        <h2 className={H2}>Pictures to download</h2>
-        <p className="mt-1 text-sm text-dim">
-          A guild&rsquo;s own logo, shown in place of its built-in icon for players who have the file.
-        </p>
-        <div className="mt-4 space-y-4">
-          {withPictures.map(g => (
-            <div key={g.code} className="rounded-md border border-border bg-panel p-3">
-              <div className="mb-3 text-sm text-[#f2ede1]">{g.name} <span className="font-mono text-dim">^I{g.code}^</span></div>
-              <PictureDownloads guild={g} />
-            </div>
-          ))}
-          <InstallSteps />
-        </div>
-      </section>
-
-      <section id="symbols" className="mt-10">
-        <h2 className={H2}>Symbols</h2>
-        <div className="mt-4"><SymbolsGrid /></div>
-      </section>
-
-      <section id="numbers" className="mt-10">
-        <h2 className={H2}>Numbers and paws</h2>
-        <div className="mt-4"><NumbersAndPaws /></div>
-      </section>
-
-      <section id="yours" className="mt-10 mb-6">
-        <h2 className={H2}>Get your guild&rsquo;s icon</h2>
-        <div className="mt-3"><GetYours /></div>
-      </section>
-    </div>
-  );
-}
-
-function GuildIndex() {
+export default function ZealIconsPage() {
   return (
     <div className="mx-auto max-w-4xl py-2">
-      <LayoutSwitch current="b" />
       <NewPageTag />
       <h1 className={H1}>Zeal tag icons</h1>
       <Lead />

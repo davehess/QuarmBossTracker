@@ -3636,9 +3636,8 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
     icon with click-to-copy keys (`^BEUR^`, `^IEUR^`), the symbols, badges and paws, and
     picture files to download (`public/zeal/tagicons`, e.g. Europa's shield as
     `EUR.png`/`EUR.tga`). Logos come in through Discord; the page takes no uploads.
-  - **Layouts:** two on offer until the guild lead picks.
-    - A (no `?v=`): one catalogue page, with an anchor per guild.
-    - B (`?v=b`): a guild index, plus a page per guild at `/zeal-icons/<code>`.
+  - **Layout:** a guild index, plus a page per guild at `/zeal-icons/<code>`. The guild lead
+    picked it on 2026-10-19 (§383); the one-catalogue layout and the `?v=b` switch are gone.
   - **Code:** `web/app/zeal-icons/`, with a shared `parts.tsx` and a `CopyKey` client
     button. The data is `web/lib/zealIcons.ts`, mirroring `kGuilds` in the fork's
     `tag_shapes.cpp`.

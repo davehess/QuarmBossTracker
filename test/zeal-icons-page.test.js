@@ -40,6 +40,23 @@ describe('/zeal-icons stays public and inert', () => {
   });
 });
 
+describe('the guild index is the only layout (the guild lead, 2026-10-19, DECISIONS §383)', () => {
+  const read = f => stripJs(fs.readFileSync(path.join(WEB, 'app', 'zeal-icons', f), 'utf8'));
+
+  it('the index lists each guild as a link to its own page, with no layout switch or ?v= branch', () => {
+    const page = read('page.tsx');
+    expect(page).toMatch(/href=\{`\/zeal-icons\/\$\{g\.code\.toLowerCase\(\)\}`\}/);
+    expect(page).not.toMatch(/searchParams|LayoutSwitch|Catalogue/);
+    for (const f of pageFiles.map(p => path.relative(path.join(WEB, 'app', 'zeal-icons'), p))) {
+      expect(read(f), f).not.toMatch(/LayoutSwitch|\?v=b|IS_BETA/);
+    }
+  });
+
+  it('a guild page links back to the index', () => {
+    expect(read('[code]/page.tsx')).toMatch(/href="\/zeal-icons"/);
+  });
+});
+
 describe('every image the data names exists', () => {
   it('guild banners and icons', () => {
     for (const g of GUILDS) {
