@@ -51847,7 +51847,7 @@ function _mapHpNote(mem, own, rows, now) {
     mem.delete(id);   // re-insert so the oldest read is first for the cap
     mem.set(id, { hp_pct: Math.min(100, hp), at: now, name: name ? String(name) : null });
   };
-  if (own && (own.type == null || own.type === 1) && !MAP_CORPSE_NAME_RE.test(String(own.name || ''))) put(own.id, own.hp_pct, own.name);
+  if (own && (own.type == null || own.type === 1) && !/[`'’]s\s+corpse\d*$/i.test(String(own.name || ''))) put(own.id, own.hp_pct, own.name);
   for (const t of (Array.isArray(rows) ? rows : [])) {
     if (t && !t.stale && (t.kind == null || t.kind === 'npc')) put(t.spawn_id, t.hp_pct, t.name);
   }
