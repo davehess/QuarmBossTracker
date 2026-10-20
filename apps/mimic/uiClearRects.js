@@ -18,8 +18,10 @@
 //  - Only Show=1 (or true/yes/on) counts. A section with no Show key is NOT shown: EQ writes Show for the windows it
 //    opens and closes, and a closed window is the common case, so leaving it out is the quieter mistake.
 //  - The live resolution is the XPos<W>x<H> block with the most keys, as auto-arrange assumes.
-//  - A shown window with no Width/Height is given a 200 x 100 stand-in and marked `guess: true`: its real size lives in
-//    the skin's XML, which this does not read. The user's own keep-clear boxes cover what a guess misses.
+//  - A shown window with no Width/Height takes the skin's design size when the caller passes `opts.skinSizes` (read from
+//    uifiles/<UISkin>/EQUI_*.xml by main.js; the name is matched the way UI Studio matches it - see skinSizeFor), noted
+//    "size from skin" and NOT a guess. Only when the skin has no size either is it given a 200 x 100 stand-in, noted
+//    "size guessed" and marked `guess: true`. The user's own keep-clear boxes cover what a guess misses.
 //  - A guess is listed in the Map's settings as "size unknown" / "saved for <res>" and is NOT kept clear until the raider
 //    ticks it (applyPicks): drawing over a window by mistake costs a glance, cutting a hole where nothing is costs the map.
 //  - Nothing here reads a "minimised" or "collapsed" key: no such key is confirmed in any UI ini the repo has seen, and
@@ -88,12 +90,34 @@ function chooseResolution(sections, client) {
 function areaId(kind, name) { return kind + ':' + String(name == null ? '' : name).trim().toLowerCase(); }
 function areaText(name, notes) { return notes && notes.length ? name + ' (' + notes.join(', ') + ')' : name; }
 
+// The skin's design size for a UI ini section, from `skinSizes` ({ windowName: { w, h } }, the XML's <Screen item="…">
+// names), or null. Matched the way UI Studio's _xmlLookup does, but ignoring case: the exact name; the name + "Window";
+// the name + "Wnd"; then, for a trailing number ("HotButtonWnd_2", "GroupWindow1"), the same three on the name without it.
+// Chat windows are left out on purpose (UI Studio does the same): each is resized by hand, so the ChatWindow template's
+// size says nothing about it.
+const CHAT_RX = /chat|^cw/i;
+function skinSizeFor(skinSizes, sectionName) {
+  if (!skinSizes || typeof skinSizes !== 'object') return null;
+  const n = String(sectionName == null ? '' : sectionName).trim();
+  if (!n || CHAT_RX.test(n)) return null;
+  const lower = {};
+  for (const k of Object.keys(skinSizes)) lower[k.trim().toLowerCase()] = skinSizes[k];
+  const find = (b) => { const v = lower[b.toLowerCase()] || lower[(b + 'Window').toLowerCase()] || lower[(b + 'Wnd').toLowerCase()]; return v && v.w > 0 && v.h > 0 ? v : null; };
+  const direct = find(n);
+  if (direct) return direct;
+  const m = /^(.+?)[_]?(\d+)$/.exec(n);
+  return m ? find(m[1]) : null;
+}
+
 // → { res: { w, h, match? } | null, rects: [{ name, id, text, x, y, w, h, guess, notes }] }, every rect in EverQuest pixels.
-// `opts.client` = { w, h }: EverQuest's client size now, to choose the block by (see chooseResolution). A rect is `guess`
-// when its size or place is not stated by the file: no Width/Height (a 200 x 100 stand-in), or the file was last saved for
-// another resolution than EverQuest is running at. A guess is not kept clear unless the raider ticks it (applyPicks).
+// `opts.client` = { w, h }: EverQuest's client size now, to choose the block by (see chooseResolution). `opts.skinSizes`
+// = { windowName: { w, h } }: the skin's design sizes, used for a window the ini gives no Width/Height. A rect is `guess`
+// when its size or place is not stated: no Width/Height and no skin size either (a 200 x 100 stand-in), or the file was
+// last saved for another resolution than EverQuest is running at. A skin size is not a guess. A guess is not kept clear
+// unless the raider ticks it (applyPicks).
 function visibleUiRects(text, opts) {
   const skip = opts && opts.skip instanceof RegExp ? opts.skip : null;
+  const skinSizes = opts && opts.skinSizes;
   const sections = parseSections(text);
   const chosen = chooseResolution(sections, opts && opts.client);
   const res = chosen;
@@ -110,13 +134,16 @@ function visibleUiRects(text, opts) {
     if (x == null || y == null) continue;
     const rw = num(p.width != null ? p.width : p['size.cx']);
     const rh = num(p.height != null ? p.height : p['size.cy']);
-    const sizeGuess = rw == null || rh == null;
-    const w = sizeGuess ? 200 : rw, h = sizeGuess ? 100 : rh;
+    const noSize = rw == null || rh == null;
+    const skinSize = noSize ? skinSizeFor(skinSizes, s.name) : null;
+    const sizeGuess = noSize && !skinSize;
+    const w = skinSize ? skinSize.w : sizeGuess ? 200 : rw, h = skinSize ? skinSize.h : sizeGuess ? 100 : rh;
     if (w <= 0 || h <= 0 || x < -50 || y < -50) continue;
     const notes = [];
     if (sizeGuess) notes.push('size guessed');
+    if (skinSize) notes.push('size from skin');
     if (savedFor) notes.push('saved for ' + savedFor);
-    rects.push({ name: s.name, id: areaId('ui', s.name), text: areaText(s.name, notes), x, y, w, h, guess: notes.length > 0, notes });
+    rects.push({ name: s.name, id: areaId('ui', s.name), text: areaText(s.name, notes), x, y, w, h, guess: sizeGuess || !!savedFor, notes });
   }
   const out = res ? { w: res.w, h: res.h } : null;
   if (out && res.match !== undefined) out.match = res.match;
@@ -155,4 +182,4 @@ function cleanPicks(picks) {
   return out;
 }
 
-module.exports = { visibleUiRects, parseSections, dominantResolution, chooseResolution, zealAreas, applyPicks, cleanPicks, areaId };
+module.exports = { visibleUiRects, skinSizeFor, parseSections, dominantResolution, chooseResolution, zealAreas, applyPicks, cleanPicks, areaId };
