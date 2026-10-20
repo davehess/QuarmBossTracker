@@ -1,18 +1,15 @@
-// /about, rebuilt around pictures (the guild lead, 2026-09-26: "could use some updating, possibly some
-// generated images and assets so it's not just blocks of text"). Two layouts on beta until the guild
-// lead picks one (CLAUDE.md, UI options); with no ?v= the page is still the old one, so there is a
-// baseline to compare against.
-//   B (?v=b), Illustrated: the same story, and every chapter opens with a picture.
-//   C (?v=c), Tour: pictures first, one line each; the long text folds away under each stop.
-// The chapters are written once, below, and both layouts read them. Facts refreshed the same day:
-// test and migration counts, "six weeks", and a chapter for what has shipped since July.
+// /about: the Tour. Pictures first, one line each; the long text folds away under each stop (the guild
+// lead, 2026-09-26: "could use some updating, possibly some generated images and assets so it's not just
+// blocks of text"; picked over the Illustrated layout on 2026-10-19, DECISIONS §383, with the note "make new
+// ones for Planes of Power, and add in older pictures from previous expansions", which are stops 09 and 10).
+// Facts refreshed 2026-09-26: test and migration counts and the months; 2026-10-20: stop count and months.
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Reveal, CountUp } from '@/components/about/Reveal';
 import { TankOverlayDemo, CommandCenterDemo, ChChainDemo, LootTtsDemo } from '@/components/about/OverlayDemo';
 import {
   BossBoardFigure, LogLineFigure, ParseCardFigure, OverlayShot, FollowYouFigure, RaidNightFigure,
-  FreezeWeekFigure, TagStripFigure,
+  FreezeWeekFigure, TagStripFigure, EraBoardFigure, PopFigure,
 } from '@/components/about/Figures';
 
 export type AboutStats = {
@@ -168,6 +165,34 @@ function chapters(s: AboutStats): Chapter[] {
         <p>The fights are one table of every PvP death broadcast and a query that groups them into waves and fights.</p>
       </>,
     },
+    {
+      n: '09', date: 'Classic to Luclin', accent: 'text-blue',
+      title: 'The board remembers every expansion',
+      short: 'Every raid target from Classic to Luclin keeps its own timer on the same board, and Luclin is the era this platform grew up in.',
+      figure: <EraBoardFigure />,
+      plat: <>
+        <p>The board was never only for the newest zone. Every raid target from <span className="text-text">Classic through Luclin</span> is on it with its own respawn time, from the 18-hour Chardok kills to the 162-hour (6 days 18 hours) ones like Lord Nagafen and King Tormax.</p>
+        <p>Luclin is the era the platform was built in: the parses, attendance and loot on the site are Luclin&apos;s record, down to the Aten Ha Ra kill in Vex Thal that we made a <Link href="/film" className="text-blue hover:underline">film</Link> of.</p>
+      </>,
+      infra: <>
+        <p>One boss catalog that the bot reloads without a restart, so a new expansion&apos;s raid targets are a list to extend, not code to ship.</p>
+        <p>Where a boss has its own timer rules they are in the catalog too: the Plane of Hate bosses carry their own variance and quakes, and the PvP server has its own math.</p>
+      </>,
+    },
+    {
+      n: '10', date: '1 October 2026', accent: 'text-orange',
+      title: 'Planes of Power: who is flagged for what',
+      short: 'Planes of Power opened on 1 October. The platform shows which flag each raider is missing for each plane, and the named bosses are on the board.',
+      figure: <PopFigure />,
+      plat: <>
+        <p>Planes of Power is gated by flags, and a raider missing one stands at the portal while the raid goes in. The <Link href="/pop" className="text-blue hover:underline">PoP Flags page</Link> (members sign in) lists every step the server keeps and, for each, who can get in but has not done it yet.</p>
+        <p>A step counts when Mimic saw it happen, when <span className="text-text">/who</span> proved it, or when the raider looted something in that plane, and raiders can tick their own. The named bosses are on the board too: three-hour timers in the Bastion of Thunder, and the 24-hour named in each plane. <Link href="/pop/guide" className="text-blue hover:underline">The guide</Link> walks the steps in the order the NPCs need them.</p>
+      </>,
+      infra: <>
+        <p>Quarm&apos;s gates were read off the server&apos;s own portal scripts the day Planes of Power opened, because Quarm turned the classic level bypasses off. The chart is Quarm&apos;s, not the classic one.</p>
+        <p>Each mark records how a flag is known (Mimic, /who, loot, or the raider&apos;s own word), so a ✓ never claims more than we saw.</p>
+      </>,
+    },
   ];
 }
 
@@ -243,64 +268,7 @@ function Wolf({ className = '' }: { className?: string }) {
   );
 }
 
-/* ── B: Illustrated ─────────────────────────────────────────────────────── */
-
-export function AboutIllustrated({ s }: { s: AboutStats }) {
-  return (
-    <div className="space-y-20 sm:space-y-28 pb-24">
-      <section className="pt-6 sm:pt-12 grid md:grid-cols-[minmax(0,1fr)_280px] gap-6 items-center">
-        <div>
-          <Reveal>
-            <div className="text-[11px] uppercase tracking-widest text-gold mb-3">Wolf Pack · Project Quarm</div>
-            <h1 className="text-3xl sm:text-5xl font-bold text-text leading-[1.1]">It started as a bot that answered <span className="text-blue">one question.</span></h1>
-          </Reveal>
-          <Reveal delay={140}>
-            <p className="mt-5 text-base sm:text-lg text-dim max-w-2xl leading-relaxed">
-              <span className="text-text">“When does the boss come back?”</span> Everything on this site grew out of that, and out of the fact that EverQuest will happily tell you what just happened, as long as something is reading the log.
-            </p>
-            <p className="mt-4 text-xs text-dim">Four pieces, five months in, still shipping. <Link href="/shortabout" className="text-blue hover:underline">The short version →</Link></p>
-          </Reveal>
-        </div>
-        <Reveal delay={200} from="scale"><Wolf className="w-40 sm:w-56 md:w-full mx-auto opacity-90" /></Reveal>
-      </section>
-
-      {chapters(s).map(c => (
-        <section key={c.n} className="scroll-mt-16">
-          <Reveal>
-            <div className="flex items-baseline gap-3 flex-wrap">
-              <span className={`text-4xl sm:text-6xl font-bold ${c.accent} opacity-30 leading-none`}>{c.n}</span>
-              <div>
-                <div className="text-[11px] uppercase tracking-widest text-dim">{c.date}</div>
-                <h2 className="text-xl sm:text-3xl text-text font-bold leading-tight">{c.title}</h2>
-              </div>
-            </div>
-          </Reveal>
-          <Reveal delay={80}><div className="mt-5">{c.figure}</div></Reveal>
-          <div className="grid md:grid-cols-2 gap-4 sm:gap-5 mt-5">
-            <Reveal from="left" delay={120}>
-              <div className={`h-full rounded-lg border-l-2 ${c.accent.replace('text-', 'border-')} bg-panel/60 border-y border-r border-border p-4 sm:p-5`}>
-                <div className={`text-[10px] uppercase tracking-widest ${c.accent} mb-2`}>What the guild got</div>
-                <div className="text-sm text-text leading-relaxed space-y-2">{c.plat}</div>
-              </div>
-            </Reveal>
-            <Reveal from="right" delay={180}>
-              <div className="h-full rounded-lg border border-border bg-bg/40 p-4 sm:p-5">
-                <div className="text-[10px] uppercase tracking-widest text-dim mb-2">What had to exist</div>
-                <div className="text-sm text-dim leading-relaxed space-y-2">{c.infra}</div>
-              </div>
-            </Reveal>
-          </div>
-          {c.extra && <Reveal delay={220}><div className="mt-5">{c.extra}</div></Reveal>}
-        </section>
-      ))}
-
-      <StatsBand s={s} />
-      <Close />
-    </div>
-  );
-}
-
-/* ── C: Tour ────────────────────────────────────────────────────────────── */
+/* ── The Tour ───────────────────────────────────────────────────────────── */
 
 export function AboutTour({ s }: { s: AboutStats }) {
   const list = chapters(s);
@@ -310,7 +278,7 @@ export function AboutTour({ s }: { s: AboutStats }) {
         <Reveal from="scale"><Wolf className="w-28 sm:w-36 mx-auto" /></Reveal>
         <Reveal delay={120}>
           <h1 className="mt-4 text-3xl sm:text-5xl font-bold text-text leading-[1.1]">From one question to <span className="text-blue">a raid platform.</span></h1>
-          <p className="mt-4 text-base text-dim max-w-xl mx-auto leading-relaxed">A Discord bot, a log reader, this website, and overlays on top of the game. Eight stops, five months. Tap any stop for the long version.</p>
+          <p className="mt-4 text-base text-dim max-w-xl mx-auto leading-relaxed">A Discord bot, a log reader, this website, and overlays on top of the game. Ten stops, six months. Tap any stop for the long version, or take <Link href="/shortabout" className="text-blue hover:underline">the short version</Link>.</p>
         </Reveal>
         <Reveal delay={220}>
           <nav className="mt-6 flex flex-wrap gap-2 justify-center text-[11px]" aria-label="Stops">
