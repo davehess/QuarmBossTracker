@@ -30952,7 +30952,7 @@ function wpTrigApplyForm(base, f) {
       + '    <button id="trigCancelBtn" type="button" style="display:none;background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Cancel edit</button>'
       + '    <button id="trigPreviewBtn" type="button" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Fire the overlay with the current form text (no save, no DB)">▶ Preview</button>'
       + '    <button id="trigTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Test pattern…</button>'
-      + '    <button id="trigImportBtn" type="button" style="background:#21262d;color:var(--blue);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Paste a GINA or EQLogParser trigger XML to bulk-import">⬇ Import GINA / EQLP</button>'
+      + '    <button id="trigImportBtn" type="button" style="background:#21262d;color:var(--blue);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Bulk-import a GINA, EQLogParser or PQ Companion trigger file">⬇ Import GINA / EQLP / PQ Companion</button>'
       + '    <span id="trigAddMsg" class="dim" style="font-size:11px"></span>'
       + '  </div>'
       + '  <div id="trigTestPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
@@ -30962,7 +30962,7 @@ function wpTrigApplyForm(base, f) {
       + '    <div id="trigTestResult" class="dim" style="font-size:11px;margin-top:6px"></div>'
       + '  </div>'
       + '  <div id="trigImportPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
-+ '    <div class="dim" style="font-size:11px;margin-bottom:6px">Import from <b>EQLogParser</b> (.tgf / .tgf.gz — the .gz is read directly, no need to unzip) or <b>GINA</b> (.gtp / XML). Pick a file or paste the text. Every trigger in the file is added; duplicates by name are skipped and existing triggers are preserved. Display, Speak (TTS), countdown timer + the "N seconds before" warning, and capture placeholders ({s1}, {n1}) all carry over.</div>'
++ '    <div class="dim" style="font-size:11px;margin-bottom:6px">Import from <b>EQLogParser</b> (.tgf / .tgf.gz — the .gz is read directly, no need to unzip) or <b>GINA</b> (.gtp / XML) or <b>PQ Companion</b> (its exported .json trigger pack). Pick a file or paste the text. Every trigger in the file is added; duplicates by name are skipped and existing triggers are preserved. Display, Speak (TTS), countdown timer + the "N seconds before" warning, and capture placeholders ({s1}, {n1}) all carry over.</div>'
       + '    <input id="trigImportFile" type="file" accept=".tgf,.gz,.gtp,.xml,.json,application/gzip,application/json,text/xml" style="display:block;margin-bottom:6px;font-size:11px;color:var(--text)">'
       + '    <textarea id="trigImportXml" placeholder="…or paste the .tgf JSON / SharedTriggers XML here" style="width:100%;height:120px;background:#161b22;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px"></textarea>'
       + '    <button id="trigImportRun" type="button" style="background:#1f6feb;color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Import pasted text</button>'
@@ -31671,6 +31671,12 @@ function wpTrigApplyForm(base, f) {
       if (Array.isArray(j.sound_notes) && j.sound_notes.length > 0) {
         summary += '<br><span class="dim" style="font-size:11px">' + j.sound_notes.length + ' trigger' + (j.sound_notes.length === 1 ? '' : 's') + ' played a sound that could not come along, so ' + (j.sound_notes.length === 1 ? 'it keeps' : 'they keep') + ' the spoken callout: '
           + j.sound_notes.slice(0, 4).map(function(n){ return esc(n.name) + (n.file ? ' (' + esc(n.file) + ')' : '') + ' &mdash; ' + esc(n.why); }).join('; ') + (j.sound_notes.length > 4 ? '; and ' + (j.sound_notes.length - 4) + ' more' : '') + '. Drop the file in your sounds folder and pick it in the trigger.</span>';
+      }
+      // PQ Companion packs: what a personal trigger has no place for.
+      if (Array.isArray(j.not_carried) && j.not_carried.length > 0) {
+        summary += '<br><span class="dim" style="font-size:11px">Not carried over: '
+          + j.not_carried.slice(0, 6).map(function(n){ return esc(n.name) + ' (' + n.what.map(esc).join('; ') + ')'; }).join('; ')
+          + (j.not_carried.length > 6 ? '; and ' + (j.not_carried.length - 6) + ' more' : '') + '.</span>';
       }
       if (Array.isArray(j.errors) && j.errors.length > 0) {
         summary += '<br><span class="dim" style="font-size:10px">' + j.errors.length + ' bad pattern' + (j.errors.length === 1 ? '' : 's') + ': ' + j.errors.slice(0, 3).map(function(e){ return esc(e.name) + ' (' + esc(e.error) + ')'; }).join('; ') + (j.errors.length > 3 ? '; …' : '') + '</span>';
@@ -36202,7 +36208,8 @@ function startWebDashboard(port) {
       }
 
       // POST /api/personal-triggers/import — accepts a GINA / EQLogParser
-      // XML blob (both export the same SharedTriggers shape) and APPENDS
+      // XML blob (both export the same SharedTriggers shape), an EQLogParser
+      // .tgf tree or a PQ Companion JSON pack (_parseTriggerImport) and APPENDS
       // parsed entries to the personal triggers list. Existing personal
       // triggers are preserved; duplicates by name are skipped (caller can
       // delete + re-import to overwrite). Returns { imported, skipped,
@@ -36275,15 +36282,23 @@ function startWebDashboard(port) {
         if (!raw.trim()) {
           res.writeHead(400); return res.end(JSON.stringify({ error: 'import body required' }));
         }
-        const isJson = /^\s*[\[{]/.test(raw);
-        const parsed = isJson ? (_parseTriggerTgfJson(raw) || []) : _parseTriggerXml(raw);
+        const parsed = _parseTriggerImport(raw);
+        if (!parsed.length) {
+          res.writeHead(400); return res.end(JSON.stringify({ error: 'no triggers found in that file (GINA, EQLogParser and PQ Companion exports are supported)' }));
+        }
         const existingNames = new Set(_personalTriggers.map(t => String(t.name || '').toLowerCase()));
         const compiled = [];
         const errors = [];
         let imported = 0, skipped = 0, soundsCopied = 0;
         const soundNotes = [];   // triggers whose sound file could not come along
+        const notCarried = [];   // pieces of a trigger a personal trigger has no place for (PQ Companion packs)
+        const noteNotCarried = (t) => {
+          if (Array.isArray(t.not_carried) && t.not_carried.length) {
+            notCarried.push({ name: String(t.name || '').slice(0, 100), what: t.not_carried.slice(0, 8).map(s => String(s).slice(0, 120)) });
+          }
+        };
         for (const t of parsed) {
-          if (!t.name || !t.pattern) { skipped++; continue; }
+          if (!t.name || !t.pattern) { noteNotCarried(t); skipped++; continue; }
           if (existingNames.has(t.name.toLowerCase())) { skipped++; continue; }
           const ttsText = String(t.tts_text || '').slice(0, 200);
           // Only create an on-match alert when EQLP actually had display OR speak
@@ -36328,8 +36343,13 @@ function startWebDashboard(port) {
             actions,
           };
           if (t.timer_duration_sec > 0) row.timer_duration_sec = Math.max(1, Math.min(3600, t.timer_duration_sec));
+          // PQ Companion pack fields the parser already cleaned (timer warnings, excludes, capture-timed
+          // timers, bar colour, loop); other formats never set them.
+          for (const k of _PQC_ROW_FIELDS) if (t[k] !== undefined) row[k] = t[k];
+          if (t.enabled === false) row.enabled = false;
           // Nothing to do (no alert, no timer) → skip rather than store a no-op.
-          if (actions.length === 0 && !(row.timer_duration_sec > 0)) { skipped++; continue; }
+          if (actions.length === 0 && !(row.timer_duration_sec > 0) && !row.timer_duration_capture) { noteNotCarried(t); skipped++; continue; }
+          noteNotCarried(t);
           if (t.warning_seconds > 0 && t.warning_text) {
             row.warning_seconds = Math.max(1, Math.min(3600, t.warning_seconds));
             row.warning_text    = String(t.warning_text).slice(0, 200);
@@ -36356,7 +36376,7 @@ function startWebDashboard(port) {
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, imported, skipped, total_in_xml: parsed.length, errors,
-          sounds_copied: soundsCopied, sound_notes: soundNotes.slice(0, 50) }));
+          not_carried: notCarried.slice(0, 100), sounds_copied: soundsCopied, sound_notes: soundNotes.slice(0, 50) }));
       }
 
       // Live regex tester — paste a sample log line, see which patterns match
@@ -47052,6 +47072,121 @@ function _parseTriggerTgfJson(text) {
   };
   visit(root);
   return out;
+}
+
+// PQ Companion's trigger pack (2026-10-20): plain JSON, {pack_name, description, triggers:[…]}, written by
+// its Triggers page "Export" (a whole list or one category). Read from its published trigger model; the
+// code here is our own. A trigger is one record: `pattern` (Go regex, run on the message with the timestamp
+// already stripped, so a leading ^ is normal — compileTriggerPattern handles that and the (?P<name>…) groups,
+// and {C}/{S}/{N} are the same tokens GINA uses), a list of `actions` (overlay_text / text_to_speech /
+// play_sound / clipboard / discord_webhook), and timer fields (timer_type, timer_duration_secs,
+// worn_off_pattern, timer_alerts, …). Same output shape as the other two parsers, plus `not_carried`: plain
+// sentences for whatever has no home in a personal trigger, which the import result lists. A trigger with
+// nothing to match on comes back with no pattern, so the endpoint reports it without storing it.
+// `characters` is deliberately never carried — it names the exporter's own characters.
+// Returns null when the text is not a PQ Companion pack, so the caller can try the next format.
+const _PQC_ROW_FIELDS = ['timer_warnings', 'exclude_patterns', 'timer_duration_capture', 'timer_key_capture',
+  'bar_color', 'pinned', 'display_threshold_sec', 'timer_loop', 'timer_loop_max'];
+function _parsePqCompanionPack(text) {
+  const src = String(text || '').replace(/^﻿/, '');
+  if (src.indexOf('"pack_name"') < 0) return null;
+  let root;
+  try { root = JSON.parse(src); } catch { return null; }
+  if (!root || typeof root !== 'object' || Array.isArray(root) || typeof root.pack_name !== 'string' || !Array.isArray(root.triggers)) return null;
+  const out = [];
+  for (const raw of root.triggers.slice(0, 2000)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const name = String(raw.name || '').trim();
+    if (!name) continue;
+    if (raw.source === 'pipe') {
+      out.push({ name, pattern: '', not_carried: ['the whole trigger: it watches Zeal (target health, buffs, /pipe), not the log'] });
+      continue;
+    }
+    const notCarried = [];
+    const patterns = [String(raw.pattern || '').trim()];
+    if (!patterns[0] && !(Array.isArray(raw.extra_patterns) && raw.extra_patterns.some(e => e && e.enabled !== false && String(e.pattern || '').trim()))) {
+      out.push({ name, pattern: '', not_carried: ['the whole trigger: it has no log pattern to match'] });
+      continue;
+    }
+    let extraTimers = false;
+    for (const ep of (Array.isArray(raw.extra_patterns) ? raw.extra_patterns : [])) {
+      if (!ep || ep.enabled === false || !String(ep.pattern || '').trim()) continue;
+      patterns.push(String(ep.pattern).trim());
+      if (Number(ep.timer_duration_secs) > 0 || Number(ep.spell_id) > 0) extraTimers = true;
+    }
+    if (extraTimers) notCarried.push('a different timer length on an extra pattern');
+    const pattern = patterns.filter(Boolean).join('|');
+    const hasTargetGroup = /\(\?P?<target>/.test(pattern);
+    const tokens = (s) => String(s || '').replace(/\{(?:target|t)\}/gi, hasTargetGroup ? '{target}' : '{mytarget}');
+    let display = '', speak = '', soundFile = '', playsSound = false, moreText = 0, clip = false, hook = false;
+    for (const a of (Array.isArray(raw.actions) ? raw.actions : [])) {
+      if (!a || typeof a !== 'object') continue;
+      const txt = tokens(String(a.text || '').trim());
+      if (a.type === 'overlay_text') { if (!display) display = txt; else if (txt !== display) moreText++; }
+      else if (a.type === 'text_to_speech') { if (!speak) speak = txt; else if (txt !== speak) moreText++; }
+      else if (a.type === 'play_sound') {
+        const f = String(a.sound_path || '').trim();
+        if (f && !soundFile) { soundFile = f; playsSound = true; }
+      }
+      else if (a.type === 'clipboard') clip = true;
+      else if (a.type === 'discord_webhook') hook = true;
+    }
+    if (moreText) notCarried.push(moreText + ' more on-screen or spoken line' + (moreText === 1 ? '' : 's') + ' (one of each is kept)');
+    if (clip) notCarried.push('the copy-to-clipboard action');
+    if (hook) notCarried.push('the Discord post action');
+
+    const timerOn = String(raw.timer_type || 'none') !== 'none';
+    const durCapture = timerOn ? String(raw.timer_duration_capture || '').trim() : '';
+    const dur = timerOn ? Math.max(0, Math.round(Number(raw.timer_duration_secs) || 0)) : 0;
+    const warnings = [];
+    let soundWarn = 0;
+    if (timerOn) {
+      for (const ta of (Array.isArray(raw.timer_alerts) ? raw.timer_alerts : [])) {
+        if (!ta || !(Number(ta.seconds) > 0)) continue;
+        if (ta.type === 'text_to_speech' || ta.type === 'overlay_text') {
+          const t = String(ta.type === 'overlay_text' ? ta.text : ta.tts_template || '').replace(/\{spell\}/gi, name).trim();
+          if (t) warnings.push({ seconds: Math.round(Number(ta.seconds) * 10) / 10, text: t.slice(0, 200), tts: ta.type === 'text_to_speech' });
+        } else soundWarn++;
+      }
+      if (soundWarn) notCarried.push(soundWarn + ' sound-only warning' + (soundWarn === 1 ? '' : 's') + ' before the timer ends');
+      if (raw.timer_stack) notCarried.push('a separate timer row for every match');
+      const tgt = String(raw.timer_target_capture || '').trim();
+      if (tgt && tgt !== 'target') notCarried.push('the timer\'s target label (name the capture "target" to get one)');
+      if (Number(raw.cooldown_secs) > 0) notCarried.push('the reuse-cooldown timer');
+    }
+    if (Number(raw.repeat_reset_secs) > 0) notCarried.push('repeat counting');
+    const bar = String(raw.bar_color || '').trim();
+    const row = {
+      name,
+      pattern,
+      ...(playsSound ? { sound_file: soundFile, plays_sound: true } : {}),
+      use_regex:          true,
+      display_text:       display,
+      tts_text:           speak,
+      cooldown_seconds:   Math.max(0, Math.ceil(Number(raw.refire_cooldown_secs) || 0)),
+      timer_duration_sec: dur,
+      ...(String(raw.worn_off_pattern || '').trim() ? { end_early_pattern: String(raw.worn_off_pattern).trim(), end_use_regex: true } : {}),
+      ...(raw.enabled === false ? { enabled: false } : {}),
+      ...(warnings.length ? { timer_warnings: warnings.slice(0, 10) } : {}),
+      ...(durCapture ? { timer_duration_capture: durCapture.slice(0, 60) } : {}),
+      ...(timerOn && String(raw.timer_key_capture || '').trim() ? { timer_key_capture: String(raw.timer_key_capture).trim().slice(0, 60) } : {}),
+      ...(/^#[0-9a-f]{3,8}$/i.test(bar) && timerOn ? { bar_color: bar } : {}),
+      ...(raw.pinned === true && timerOn ? { pinned: true } : {}),
+      ...(timerOn && Number(raw.display_threshold_secs) > 0 ? { display_threshold_sec: Math.round(Number(raw.display_threshold_secs)) } : {}),
+      ...(timerOn && raw.timer_repeat === true && !raw.timer_stack ? { timer_loop: true, timer_loop_max: Math.max(0, Math.min(1000, Math.floor(Number(raw.timer_repeat_max)) || 0)) } : {}),
+      ...(Array.isArray(raw.exclude_patterns) && raw.exclude_patterns.some(p => String(p || '').trim())
+        ? { exclude_patterns: raw.exclude_patterns.map(p => String(p || '').trim()).filter(Boolean).slice(0, 20).map(p => p.slice(0, 1000)) } : {}),
+    };
+    if (notCarried.length) row.not_carried = notCarried;
+    out.push(row);
+  }
+  return out;
+}
+// One door for the import endpoint: XML (GINA / EQLogParser share-data), a PQ Companion pack, or an
+// EQLogParser .tgf tree — told apart by what the text is, never by file name.
+function _parseTriggerImport(raw) {
+  if (!/^\s*[[{]/.test(raw)) return _parseTriggerXml(raw);
+  return _parsePqCompanionPack(raw) || _parseTriggerTgfJson(raw) || [];
 }
 
 // (_translateGinaPlaceholders removed 2026-08-07 — imports now store the RAW
@@ -60126,6 +60261,8 @@ module.exports = {
   _setPronunciationsForTest: (synced, local) => { _pronSynced = new Map(_pronPairs(synced)); _pronLocal = { ...(local || {}) }; _pronMerged = null; },
   _noteOwnMelee, _afterMyMeleeOk, _ownMeleeAt,
   _importSoundFile, _parseTriggerXml, _parseTriggerTgfJson,
+  // PQ Companion pack import (2026-10-20) — exported for test/pqc-import.test.js.
+  _parsePqCompanionPack, _parseTriggerImport, _PQC_ROW_FIELDS, compileTriggerPattern,
   _setVoiceStateDirForTest: (d) => { _voiceStateDir = d || null; },
   _setGuildTriggersForTest: (arr) => { stats.guildTriggers = arr; stats.guildTriggersVersion = null; },
 };
