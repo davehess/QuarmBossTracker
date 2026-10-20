@@ -4822,6 +4822,28 @@ function renderTriggers(s) {
   }
 }
 
+// The guild trigger list, held here: rows (null until the first answer), the revision they are (rev), the
+// state revision already asked about (asked) and whether an ask is out (busy).
+var _wpGt = { rows: null, rev: '', asked: '', busy: false };
+// Fetch the list from /api/guild-triggers — only while the card is on screen (the Triggers tab is open) and
+// only when /api/state's `guildTriggersRev` is not the one held. Hidden → nothing is asked; the poll that
+// finds the tab open asks then. The answer is {rev, unchanged:true} or {rev, triggers:[...]}.
+function wpGuildTriggersSync(s, el) {
+  var rev = s && s.guildTriggersRev;
+  if (!rev || rev === _wpGt.rev || rev === _wpGt.asked || _wpGt.busy) return;
+  if (!el || !el.getClientRects || el.getClientRects().length === 0) return;
+  _wpGt.busy = true;
+  fetch('/api/guild-triggers' + (_wpGt.rev ? '?rev=' + encodeURIComponent(_wpGt.rev) : ''), { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j && Array.isArray(j.triggers)) _wpGt.rows = j.triggers;
+      if (j && j.rev) _wpGt.rev = j.rev;
+      _wpGt.asked = rev;
+      _wpGt.busy = false;
+      if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState);
+    })
+    .catch(function () { _wpGt.busy = false; });   // the next poll asks again
+}
 // 🛡️ Guild triggers (FB-30) — read-only list, filled into the #wpGuildTriggers placeholder renderTriggers
 // emits. A name (or any plain cell of its row) opens the trigger's settings beneath it, with a link to
 // edit it on the site. Which rows are open is kept in _wpTrigOpen, so a repaint puts them back.
@@ -4830,9 +4852,14 @@ function renderGuildTriggersCard(s) {
   if (!el) return;   // Triggers tab not painted yet
   // The sound list a row's "My sound" box needs arrives once, a moment after the first paint: draw again then.
   if (!window._wpSndAsked) { window._wpSndAsked = true; WPSounds.load().then(function () { if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState); }); }
-  var gt = s.guildTriggers || [];
+  wpGuildTriggersSync(s, el);
+  // The rows are not on /api/state (the overlays poll that ~10x/s): they are fetched below, once, and held.
+  // Until the first answer the card says so; a state that already counts none is an empty list, not a wait.
+  var gt = _wpGt.rows || (s && s.guildTriggerCount === 0 ? [] : null);
   var h = '<h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2>';
-  if (gt.length === 0) {
+  if (gt === null) {
+    h += '<div class="dim" style="font-size:12px">Loading the guild triggers…</div>';
+  } else if (gt.length === 0) {
     h += '<div class="dim" style="font-size:12px">No guild triggers loaded. Officers can add them at <a href="https://wolfpack.quest/admin/triggers" target="_blank" rel="noreferrer" style="color:var(--blue)">/admin/triggers</a>.</div>';
   } else {
     h += '<div class="dim" style="font-size:11px;margin-bottom:4px">' + gt.length + ' trigger' + (gt.length === 1 ? '' : 's') + ' loaded</div>';
@@ -12041,7 +12068,7 @@ function wpTrigApplyForm(base, f) {
       + '    <button id="trigCancelBtn" type="button" style="display:none;background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Cancel edit</button>'
       + '    <button id="trigPreviewBtn" type="button" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Fire the overlay with the current form text (no save, no DB)">▶ Preview</button>'
       + '    <button id="trigTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Test pattern…</button>'
-      + '    <button id="trigImportBtn" type="button" style="background:#21262d;color:var(--blue);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Paste a GINA or EQLogParser trigger XML to bulk-import">⬇ Import GINA / EQLP</button>'
+      + '    <button id="trigImportBtn" type="button" style="background:#21262d;color:var(--blue);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Bulk-import a GINA, EQLogParser or PQ Companion trigger file">⬇ Import GINA / EQLP / PQ Companion</button>'
       + '    <span id="trigAddMsg" class="dim" style="font-size:11px"></span>'
       + '  </div>'
       + '  <div id="trigTestPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
@@ -12051,7 +12078,7 @@ function wpTrigApplyForm(base, f) {
       + '    <div id="trigTestResult" class="dim" style="font-size:11px;margin-top:6px"></div>'
       + '  </div>'
       + '  <div id="trigImportPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
-+ '    <div class="dim" style="font-size:11px;margin-bottom:6px">Import from <b>EQLogParser</b> (.tgf / .tgf.gz — the .gz is read directly, no need to unzip) or <b>GINA</b> (.gtp / XML). Pick a file or paste the text. Every trigger in the file is added; duplicates by name are skipped and existing triggers are preserved. Display, Speak (TTS), countdown timer + the "N seconds before" warning, and capture placeholders ({s1}, {n1}) all carry over.</div>'
++ '    <div class="dim" style="font-size:11px;margin-bottom:6px">Import from <b>EQLogParser</b> (.tgf / .tgf.gz — the .gz is read directly, no need to unzip) or <b>GINA</b> (.gtp / XML) or <b>PQ Companion</b> (its exported .json trigger pack). Pick a file or paste the text. Every trigger in the file is added; duplicates by name are skipped and existing triggers are preserved. Display, Speak (TTS), countdown timer + the "N seconds before" warning, and capture placeholders ({s1}, {n1}) all carry over.</div>'
       + '    <input id="trigImportFile" type="file" accept=".tgf,.gz,.gtp,.xml,.json,application/gzip,application/json,text/xml" style="display:block;margin-bottom:6px;font-size:11px;color:var(--text)">'
       + '    <textarea id="trigImportXml" placeholder="…or paste the .tgf JSON / SharedTriggers XML here" style="width:100%;height:120px;background:#161b22;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px"></textarea>'
       + '    <button id="trigImportRun" type="button" style="background:#1f6feb;color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Import pasted text</button>'
@@ -12760,6 +12787,12 @@ function wpTrigApplyForm(base, f) {
       if (Array.isArray(j.sound_notes) && j.sound_notes.length > 0) {
         summary += '<br><span class="dim" style="font-size:11px">' + j.sound_notes.length + ' trigger' + (j.sound_notes.length === 1 ? '' : 's') + ' played a sound that could not come along, so ' + (j.sound_notes.length === 1 ? 'it keeps' : 'they keep') + ' the spoken callout: '
           + j.sound_notes.slice(0, 4).map(function(n){ return esc(n.name) + (n.file ? ' (' + esc(n.file) + ')' : '') + ' &mdash; ' + esc(n.why); }).join('; ') + (j.sound_notes.length > 4 ? '; and ' + (j.sound_notes.length - 4) + ' more' : '') + '. Drop the file in your sounds folder and pick it in the trigger.</span>';
+      }
+      // PQ Companion packs: what a personal trigger has no place for.
+      if (Array.isArray(j.not_carried) && j.not_carried.length > 0) {
+        summary += '<br><span class="dim" style="font-size:11px">Not carried over: '
+          + j.not_carried.slice(0, 6).map(function(n){ return esc(n.name) + ' (' + n.what.map(esc).join('; ') + ')'; }).join('; ')
+          + (j.not_carried.length > 6 ? '; and ' + (j.not_carried.length - 6) + ' more' : '') + '.</span>';
       }
       if (Array.isArray(j.errors) && j.errors.length > 0) {
         summary += '<br><span class="dim" style="font-size:10px">' + j.errors.length + ' bad pattern' + (j.errors.length === 1 ? '' : 's') + ': ' + j.errors.slice(0, 3).map(function(e){ return esc(e.name) + ' (' + esc(e.error) + ')'; }).join('; ') + (j.errors.length > 3 ? '; …' : '') + '</span>';

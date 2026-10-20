@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import BuffLagButton from '@/components/BuffLagButton';
+import MoreInfo from '@/components/MoreInfo';
 import {
   CATEGORY_LABELS, ROLE_TARGETS, ROLE_LABELS, HP_SLOTS, HP_SLOT_LABELS,
   RESIST_TYPES, RESIST_LABELS, UPGRADE_CHAINS, chainPosition, hasteRank,
@@ -428,12 +429,15 @@ export default function RaidView({
         <div className="bg-panel border border-orange/50 rounded-lg p-3 text-xs text-dim leading-relaxed">
           <span className="text-orange font-semibold">⚠ No Zeal raid roster is flowing.</span>{' '}
           The grouped view needs the <b className="text-text">Raid</b> data type from at least one raider&apos;s
-          Mimic. If people you expect are missing here (but their <b className="text-text">/who</b> or buffs still
-          show), it&apos;s almost always this. Two things to check on a raider whose Mimic is up:
-          {' '}(1) they&apos;re in an actual <b className="text-text">raid</b>, not just a group; and
-          {' '}(2) <b className="text-text">Raid</b> output is enabled in Zeal — the Mimic <b className="text-text">Zeal health</b> overlay
-          flags it as <span className="text-orange">&ldquo;Optional types missing: Raid&rdquo;</span> when it&apos;s off.
-          {' '}Anyone with live state still appears below under <b className="text-text">Not in raid</b>.
+          Mimic.
+          <MoreInfo>
+            If people you expect are missing here (but their <b className="text-text">/who</b> or buffs still
+            show), it&apos;s almost always this. Two things to check on a raider whose Mimic is up:
+            {' '}(1) they&apos;re in an actual <b className="text-text">raid</b>, not just a group; and
+            {' '}(2) <b className="text-text">Raid</b> output is enabled in Zeal — the Mimic <b className="text-text">Zeal health</b> overlay
+            flags it as <span className="text-orange">&ldquo;Optional types missing: Raid&rdquo;</span> when it&apos;s off.
+            {' '}Anyone with live state still appears below under <b className="text-text">Not in raid</b>.
+          </MoreInfo>
         </div>
       )}
 
@@ -1352,15 +1356,13 @@ function CharacterDetail({ row, dsValues, onClose }: { row: RaidRow; dsValues: R
 // night and the pitch writes itself.
 function CoverageUnlocks({ raidSize, mimicCovered }: { raidSize: number; mimicCovered: number }) {
   const pct = raidSize > 0 ? Math.round((mimicCovered / raidSize) * 100) : 0;
-  // Collapsed by default once we've passed the 50% mark — the pitch ladder has
-  // diminishing real-time value when most of the raid is already on Mimic, and
-  // the header card stays useful at a glance.
+  // Folded by default (the guild lead, DECISIONS §383: instruction text folds in place); the headline
+  // number and bar stay visible, and a raider who opened it keeps it open (the stored choice wins).
   const [collapsed, setCollapsed] = useState(() => {
-    if (typeof window === 'undefined') return false;
+    if (typeof window === 'undefined') return true;
     const v = window.localStorage.getItem('wp:raid:coverage:collapsed');
-    if (v === '1') return true;
     if (v === '0') return false;
-    return pct >= 50;
+    return true;
   });
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -1482,7 +1484,8 @@ function ComingSoon() {
   return (
     <section className="bg-panel border border-dashed border-border/60 rounded-lg p-3 text-[11px] text-dim">
       <div className="text-orange text-xs mb-1">🛠️ wiring next (preview)</div>
-      <ul className="list-disc list-inside leading-6 space-y-0.5">
+      <MoreInfo>
+      <ul className="list-disc list-inside leading-6 space-y-0.5 mt-1">
         <li><b>Real buff timers</b> — once we track the cast → countdown bars per buff, the &quot;expiring soon&quot; tier becomes precise (instead of inferring from low-tick remaining).</li>
         <li><b>Mass-buff cooldowns</b> — surface &quot;Aego MGB ready: Cordina · 2m · 12m · …&quot; so the raid lead can stagger casts.</li>
         <li><b>Feral Avatar queue</b> — sorted by recent damage, with worn-attack-capped players skipped automatically (needs Quarmy AA + worn-item parser, in flight).</li>
@@ -1491,6 +1494,7 @@ function ComingSoon() {
         <li><b>Group regrouping</b> — &quot;Move Hopeya/Melting/Hitya into Grp 4 so Bardtholemu can MGB all three in one cast.&quot;</li>
       </ul>
       <div className="mt-2 text-dim/70">Full plan: <code>docs/raid-hub-roadmap.md</code></div>
+      </MoreInfo>
     </section>
   );
 }

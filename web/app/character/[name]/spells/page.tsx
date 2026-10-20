@@ -32,6 +32,7 @@ import { poolTierByName, type PoolRow } from '@/lib/popSpells';
 import { GUILD_TAG } from '@/lib/guild';
 
 import type { Metadata } from 'next';
+import MoreInfo from '@/components/MoreInfo';
 import { characterMeta } from '@/lib/pageMeta';
 
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
@@ -179,10 +180,12 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
           📖 {decoded} — Missing spells
           <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
         </h2>
-        <p className="text-sm text-dim leading-6">
+        <div className="text-sm text-dim leading-6">
           Every {baseClass ?? 'class'} spell {decoded} hasn&apos;t scribed yet —
           both vendor-buyable ones and the quest/drop/planar spells you have to
-          go get. <span className="text-orange">🛒</span> = sold by a vendor;{' '}
+          go get.
+          <MoreInfo>
+          <span className="text-orange">🛒</span> = sold by a vendor;{' '}
           <span className="text-purple">⚔</span> = not sold, acquire it in the world.
           <b> Click any spell</b> to see exactly who sells or drops it and where —
           or flip to <b>🛒 Shopping list</b> to plan zone by zone.{' '}
@@ -192,7 +195,8 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
           = Planes of Power (level 61+, or only sold in PoK / dropped in a PoP
           zone). Levels come from guild spellbooks, so a few may be blank until
           someone uploads.
-        </p>
+          </MoreInfo>
+        </div>
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-dim">
           <span>Class: <span className="text-text">{baseClass ?? '—'}</span></span>
           <span>Scribed: <span className="text-text">{scribedCount ?? 0}</span></span>

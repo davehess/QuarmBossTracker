@@ -3,6 +3,7 @@
 // + a "fix it" link to the page where the officer action lives.
 
 import Link from 'next/link';
+import MoreInfo, { FoldText } from '@/components/MoreInfo';
 
 import { loadAdminQueue, type QueueCategory } from '@/lib/admin-queue';
 import { requireOfficer } from '@/lib/officer';
@@ -38,7 +39,7 @@ function Section({ cat }: { cat: QueueCategory }) {
           </Link>
         )}
       </div>
-      <p className="text-sm text-dim mt-1">{cat.summary}</p>
+      <div className="mt-1"><FoldText text={cat.summary} className="text-sm text-dim" /></div>
 
       {cat.count === 0 ? (
         <div className="mt-3 text-sm text-dim italic">Nothing to review in this category.</div>
@@ -101,10 +102,15 @@ export default async function AdminQueuePage() {
         </div>
         <p className="text-sm text-dim mt-2">
           Cross-checks the roster, /who, and chat history for gaps that affect downstream
-          features (attendance, in-game chat display, leaderboards). Categories live in{' '}
-          <code className="bg-bg px-1 rounded">web/lib/admin-queue.ts</code> — add a loader function
-          to surface a new class of officer-action items here.
+          features (attendance, in-game chat display, leaderboards).
         </p>
+        <MoreInfo>
+          <p className="text-sm text-dim mt-1">
+            Categories live in{' '}
+            <code className="bg-bg px-1 rounded">web/lib/admin-queue.ts</code> — add a loader function
+            to surface a new class of officer-action items here.
+          </p>
+        </MoreInfo>
       </section>
 
       {categories.map(cat => <Section key={cat.id} cat={cat} />)}

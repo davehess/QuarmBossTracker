@@ -101,6 +101,7 @@ import { changesByCharacter, groupFamilies, parseAltsView } from '@/lib/popAltGr
 import { POP_SCOPES, resolvePopView } from '@/lib/popScope';
 import { loadSpellInfo, spellIdsOf, type SpellInfo } from '@/lib/popMissingSpells';
 import MissingSpells from './MissingSpells';
+import MoreInfo from '@/components/MoreInfo';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
@@ -169,18 +170,17 @@ const KIND_ICONS: Record<string, string> = {
 };
 
 export default async function PopFlagsPage(
-  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string; flags?: string; alts?: string; sort?: string; open?: string }> },
+  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string; flags?: string; alts?: string; sort?: string; open?: string }> },
 ) {
-  const { zone: zoneKey, view, scope: scopeParam, v, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam, flags: flagsParam, alts: altsParam, sort: sortParam, open: openParam } = await searchParams;
+  const { zone: zoneKey, view, scope: scopeParam, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam, flags: flagsParam, alts: altsParam, sort: sortParam, open: openParam } = await searchParams;
   const showAll = allParam === '1';
   const { data: { user } } = await supabaseServer().auth.getUser();
-  // Keep the query through sign-in, so a shared ?v=b&demo=1 or ?zone= link still opens what it names.
+  // Keep the query through sign-in, so a shared ?demo=1 or ?zone= link still opens what it names.
   if (!user) redirect(`/auth/signin?next=${encodeURIComponent('/pop?' + new URLSearchParams(await searchParams as Record<string, string>))}`);
-  // 💠 The Essences of Power queue, two layouts on beta until one is picked (DECISIONS §96). No ?v= is
-  // production as it was. &demo=1 swaps in labelled sample data, to compare the layouts before any drop.
-  const essLayout: 'b' | 'c' | null = v === 'b' || v === 'c' ? v : null;
+  // 💠 The Essences of Power queue, laid out by essence (the guild lead picked "By essence" on the Decision
+  // Desk, 2026-10-19; DECISIONS §96, §383). ?demo=1 swaps in labelled sample data, to see it before any drop.
   const essDemo = demo === '1';
-  const essences = essLayout ? (essDemo ? demoEssenceQueue() : await loadEssenceQueue()) : null;
+  const essences = essDemo ? demoEssenceQueue() : await loadEssenceQueue();
 
   // PoP spell needs + the viewer's own characters (for the submit widget and
   // the My Characters view — that one deliberately ignores `scope`, see the
@@ -205,8 +205,7 @@ export default async function PopFlagsPage(
   const scope = choice.scope;
   const altsView = parseAltsView({ alts: choice.groupAlts ? 'group' : undefined, sort: sortParam, open: openParam });
   // "Latest flags" strip (the guild lead, 2026-10-14), two layouts on beta until one is picked:
-  // ?flags=a is newest-first, ?flags=b is grouped by step. No ?flags= is the page as production has it. Its own
-  // param because ?v=b already opens the Essences queue's layout b above.
+  // ?flags=a is newest-first, ?flags=b is grouped by step. No ?flags= is the page as production has it.
   const latestLayout: 'a' | 'b' | null = flagsParam === 'a' || flagsParam === 'b' ? flagsParam : null;
   const latestRows = latestLayout ? await latestFlagsFor(sbAdmin, traderNames, flaggedHidden) : null;
 
@@ -1012,7 +1011,7 @@ export default async function PopFlagsPage(
 
       {latestLayout && latestRows && <LatestFlags layout={latestLayout} rows={latestRows} now={Date.now()} />}
 
-      {essLayout && essences && <EssencesQueue layout={essLayout} demo={essDemo} {...essences} />}
+      <EssencesQueue demo={essDemo} {...essences} />
 
       {selected ? (
         // ── Zone detail: who's in, who's missing what ─────────────────────────
@@ -1268,13 +1267,16 @@ export default async function PopFlagsPage(
           {/* ── Raid-night planner ── */}
           <section className="bg-panel border border-border rounded-lg p-4">
             <h3 className="text-base text-orange mb-1">⚔ Raid-night planner</h3>
-            <p className="text-xs text-dim mb-3">
-              What to run to move the most raiders forward. <b className="text-text">Attend</b> = can enter the zone
+            <div className="text-xs text-dim mb-3">
+              What to run to move the most raiders forward.
+              <MoreInfo>
+              <b className="text-text">Attend</b> = can enter the zone
               today · <b className="text-text">gain</b> = attendees still missing the flag · <b className="text-text">unlocks</b> =
               people this kill pushes through a later gate (they have every OTHER flag for it). Every number is
               <b className="text-text"> mains</b>, with <b className="text-text">alts</b> in parentheses; ranked by mains.
               Flags an owner ticked on the site (<span className="text-gold">☑</span>) count here like any other.
-            </p>
+              </MoreInfo>
+            </div>
             {chars.length === 0 ? (
               <p className="text-sm text-dim">
                 No flags recorded yet. As members raid the planes with Mimic running, grants land here
@@ -1326,11 +1328,13 @@ export default async function PopFlagsPage(
             <h2 className="text-lg text-gold mb-1">
               📜 PoP spells {scope === 'all' ? 'characters' : 'mains'} still need
             </h2>
-            <p className="text-sm text-dim leading-6 max-w-3xl">
+            <div className="text-sm text-dim leading-6 max-w-3xl">
               PoP spells come from turning a parchment in to your class&apos;s spell NPC, and each turn-in
               gives a <b className="text-text">random</b> spell from that trainer&apos;s hand-picked list for that
               parchment (read from the actual quest scripts — not guessed from spell levels) — so what matters is
-              how many a person still needs from each list. Highest level first: whoever reaches the level first gets first dibs.
+              how many a person still needs from each list.
+              <MoreInfo>
+              Highest level first: whoever reaches the level first gets first dibs.
               Only {scope === 'all' ? 'characters' : 'mains'} who have{' '}
               <b className="text-text">submitted a spellbook</b> appear — without one we
               can&apos;t tell &ldquo;doesn&apos;t have it&rdquo; from &ldquo;we don&apos;t know&rdquo;.{' '}
@@ -1338,7 +1342,8 @@ export default async function PopFlagsPage(
                 <>Alts need PoP spells too — see <Link href={hrefFor({ scope: 'all' })} className="underline">all characters</Link>{' '}
                 or your own full roster under <Link href={hrefFor({ scope: 'mine', view: null, zone: null })} className="underline">My Characters</Link>.</>
               )}
-            </p>
+              </MoreInfo>
+            </div>
           </div>
           {/* min-w-0, not shrink-0: a no-shrink box sized itself to the whole picker row and ran off a phone
               screen, so the page scrolled sideways (the guild lead, 2026-10-03). Now the row wraps. */}
@@ -1413,10 +1418,13 @@ export default async function PopFlagsPage(
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim leading-5">
         <b className="text-text">How this fills in:</b> agents detect the universal grant line and the bot attributes
         it from the zone + the boss just killed; unattributable grants stay visible as <i>unmapped</i> until the
-        catalog names them. At launch: verify every * gate against Quarm&apos;s documented QoL changes (data-only
+        catalog names them.
+        <MoreInfo>
+        At launch: verify every * gate against Quarm&apos;s documented QoL changes (data-only
         edits), wire Seer Mal Nae recital parsing for authoritative backfill, and split multi-step gates (earth
         rings, Time phases) if Quarm keeps them. Sources: TAKP progression wiki · EQProgression planar guide ·
         Samanna chart v3.0.
+        </MoreInfo>
       </section>
     </div>
   );

@@ -1,7 +1,7 @@
 // /about, reoriented to be about the GUILD, not the tool (the guild lead, 2026-10-18: the platform story is
 // moving to eqmimic.quest; wolfpack.quest/about should be about Wolf Pack). Two layouts on beta until the
-// guild lead picks one (CLAUDE.md, UI options). With no ?v= the page is still the platform story, so there
-// is a baseline to compare against:
+// guild lead picks one (CLAUDE.md, UI options). With no ?v= the page is the Tour (picked 2026-10-19), so
+// there is a baseline to compare against:
 //   B (?v=b), By the record: a ledger. The guild as numbers: when it raids, how big, how much it has done.
 //   C (?v=c), As a home:     people first. What a raid night is like, the film, and how to join.
 //
@@ -15,7 +15,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Reveal, CountUp } from '@/components/about/Reveal';
-import type { AboutStats } from './Story';
+import type { AboutStats } from './Tour';
 
 // Where "come say hello" points. The repo carries no Discord invite (it is not ours to guess), so this is
 // null until the guild lead supplies one; with null, the join step says so instead of linking nowhere.

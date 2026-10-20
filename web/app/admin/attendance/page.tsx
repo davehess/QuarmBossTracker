@@ -31,6 +31,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { loadRoster } from '@/lib/roster';
+import MoreInfo from '@/components/MoreInfo';
 import { supabaseServer } from '@/lib/supabase-server';
 import { getDemoMode, maybeFake } from '@/lib/obfuscate';
 import { GUILD_TAG } from '@/lib/guild';
@@ -493,9 +494,11 @@ export default async function AdminAttendancePage({
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">📊 Raid attendance roster</h2>
-        <p className="text-sm text-dim leading-6">
+        <div className="text-sm text-dim leading-6">
           <b>Class summary</b> compares the 60-man target against the
-          current roster headcount per class. Headcount is pulled from
+          current roster headcount per class.
+          <MoreInfo>
+          Headcount is pulled from
           <code className="ml-1">characters.rank</code> (Raid Pack / Officer
           / Pack Leader / Recruit — Raid Alts are excluded as DKP-tracker
           placeholders). <b>Delta = current − target</b>: negative means
@@ -506,7 +509,8 @@ export default async function AdminAttendancePage({
           {pct(threshold)} threshold drives the new / downturn highlights.
           Targets are tunable via{' '}
           <code>?targets=Bard=8,Cleric=8,...</code>.
-        </p>
+          </MoreInfo>
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
           <Stat label="Target (60-man)" value={totalTarget} />
           <Stat label="Current roster"  value={totalCurrent} color="text-text" />
@@ -601,11 +605,13 @@ export default async function AdminAttendancePage({
           </span>
         </h3>
         <div className="px-4 py-2 text-[10px] text-dim flex items-center justify-between flex-wrap gap-2">
-          <span>
+          <div>
             RA% is tick-based (matches OpenDKP&apos;s &quot;30 Day (52/52)&quot;).
+            <MoreInfo>
             Attendance counts once per family — a main and its alts collapse into
             one row (<code>member_attendance_metrics</code> view). Sorted by 90d RA%.
-          </span>
+            </MoreInfo>
+          </div>
           <span className="whitespace-nowrap">
             <b className="text-text">{activeMetrics.length}</b> active ·{' '}
             <b className="text-text">{inactiveMetrics.length}</b> inactive{' '}
@@ -618,9 +624,12 @@ export default async function AdminAttendancePage({
           </span>
         </div>
         <div className="px-4 pb-2 text-[10px] text-dim">
-          <b className="text-text">Inactive</b> = no ticks in the last 30 days. They are hidden by
+          <b className="text-text">Inactive</b> = no ticks in the last 30 days.
+          <MoreInfo>
+          They are hidden by
           default — {inactiveMetrics.length} of {familyMetrics.length} rows here have not raided in
           a month, and burying the people who have makes the page harder to read, not more complete.
+          </MoreInfo>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">

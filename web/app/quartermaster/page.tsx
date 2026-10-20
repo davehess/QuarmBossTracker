@@ -21,6 +21,7 @@
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import MoreInfo from '@/components/MoreInfo';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
@@ -218,14 +219,18 @@ export default async function QuartermasterPage() {
           <b> how far along the recurring quest chains</b> each of them is. So &quot;does anyone have X?&quot;
           stops being a <code>/gu</code> question. Everything here is <b>visible ownership only</b>: the
           bank and shared bank are stripped on each member&apos;s machine before anything uploads, so a blank
-          means <i>we can&apos;t see it</i>, not that nobody has it. Characters opted out of inventory/stats
-          tracking never appear.
+          means <i>we can&apos;t see it</i>, not that nobody has it.
         </p>
-        <p className="text-xs text-dim leading-5 mt-2">
-          {officer
-            ? <>🛡 You&apos;re an officer, so both boards show the <b>whole roster</b> by name. Everyone else sees only their own characters.</>
-            : <>This page shows <b>your</b> characters. Guild-wide numbers are counts only — we don&apos;t list other people&apos;s gear or quest progress by name.</>}
-        </p>
+        <MoreInfo>
+          <p className="text-sm text-dim leading-6 mt-1">
+            Characters opted out of inventory/stats tracking never appear.
+          </p>
+          <p className="text-xs text-dim leading-5 mt-2">
+            {officer
+              ? <>🛡 You&apos;re an officer, so both boards show the <b>whole roster</b> by name. Everyone else sees only their own characters.</>
+              : <>This page shows <b>your</b> characters. Guild-wide numbers are counts only — we don&apos;t list other people&apos;s gear or quest progress by name.</>}
+          </p>
+        </MoreInfo>
       </section>
 
       {/* ── Board 1 — utility-kit coverage ─────────────────────────────────── */}
@@ -269,10 +274,15 @@ export default async function QuartermasterPage() {
           <p className="text-xs text-dim leading-5">
             The guild&apos;s recurring chains (keys, shards, turn-ins), officer-managed in{' '}
             <Link href="/admin/quests" className="text-blue hover:underline">the quest catalog</Link>, checked off
-            against each character&apos;s <b>visible inventory</b>. A step you&apos;ve already turned in or stashed in
-            the bank reads as <i>not seen</i> — visible bags only. Steps with nothing to detect show as
-            <span className="text-dim"> —</span> (officer/manual — no manual check-off UI yet).
+            against each character&apos;s <b>visible inventory</b>.
           </p>
+          <MoreInfo>
+            <p className="text-xs text-dim leading-5 mt-1">
+              A step you&apos;ve already turned in or stashed in
+              the bank reads as <i>not seen</i> — visible bags only. Steps with nothing to detect show as
+              <span className="text-dim"> —</span> (officer/manual — no manual check-off UI yet).
+            </p>
+          </MoreInfo>
         </div>
 
         {quests.length === 0 ? (

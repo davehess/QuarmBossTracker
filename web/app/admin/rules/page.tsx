@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
+import MoreInfo from '@/components/MoreInfo';
 
 export const metadata = {
   title: 'Guild rules · Admin',
@@ -77,18 +78,21 @@ export default async function AdminRulesPage() {
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">📖 Guild rules store</h2>
-        <p className="text-sm text-dim leading-6">
+        <div className="text-sm text-dim leading-6">
           The Discord rulebook (<code>#rules</code> / <code>#raid-rules</code> /
           <code>#loot-rules</code>) ingested into the queryable{' '}
           <code>guild_rules</code> table by the officer command{' '}
-          <code>/ingestrules</code>. This is the single source later features
+          <code>/ingestrules</code>.
+          <MoreInfo>
+          This is the single source later features
           (raid-kit checker, comp matcher, eligibility) read from instead of
           hard-coding rules. <b>Read-only</b> — edit a rule in Discord and re-run{' '}
           <code>/ingestrules</code>; edits update in place and deleted messages
           are flipped inactive. Numbered messages parse into a rule number +
           title; anything else is kept verbatim as a <b>raw</b> row so nothing is
           dropped.
-        </p>
+          </MoreInfo>
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
           <Stat label="Active rules" value={totalActive} />
           <Stat label="Channels ingested" value={byChannel.size} />

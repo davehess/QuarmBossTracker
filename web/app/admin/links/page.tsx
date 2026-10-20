@@ -30,6 +30,7 @@ import { authorizeMimicForMember } from './mimic-link-actions';
 import { createSiteAccessInvite } from './site-access-actions';
 import { loadAgentUploadStats, loadWhoForNames } from '@/lib/adminReads';
 import { GUILD_TAG } from '@/lib/guild';
+import MoreInfo from '@/components/MoreInfo';
 
 export const metadata = {
   title: 'Character links · Admin',
@@ -1033,11 +1034,14 @@ export default async function AdminLinksPage({
         </h3>
         <div className="p-4 text-xs text-dim leading-6 border-b border-border/40">
           Each row group is one Mimic install (one member&apos;s Discord token) whose uploads span
-          multiple roster families — usually alts never parented in OpenDKP. Linking sets an
+          multiple roster families — usually alts never parented in OpenDKP.
+          <MoreInfo>
+          Linking sets an
           officer override that <b>survives the OpenDKP sync</b> and re-points the whole family
           at once. Leave it alone if the member genuinely runs someone else&apos;s toon.
           {' '}
           <span className="text-dim">A <span className="px-1.5 py-0.5 rounded bg-red/20 border border-red/60 text-red text-[10px] uppercase">⚠ bad override</span> badge means an override is incorrectly re-parenting a character that&apos;s their own HOME — clear it from that row.</span>
+          </MoreInfo>
         </div>
         {familyGroups.length === 0 ? (
           <div className="p-4 text-xs text-dim">No candidates — every uploader&apos;s characters fold into one family. 🎉</div>

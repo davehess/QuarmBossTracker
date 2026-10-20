@@ -1,12 +1,17 @@
 // Pictures for /about (the guild lead, 2026-09-26: "could use some updating, possibly some generated
-// images and assets so it's not just blocks of text"). One figure per chapter, drawn in the overlays'
+// images and assets so it's not just blocks of text"; 2026-10-19, picking the Tour: "make new ones for
+// Planes of Power, and add in older pictures from previous expansions"). One figure per chapter, drawn in the overlays'
 // own chrome — translucent black card, ✥ and ✕ in the corners, mono type with a hard outline — so the
 // page's pictures look like the product rather than like a slide deck.
 //
 // Server-rendered HTML and SVG, no client JS: the only motion is CSS, and it stops for
 // prefers-reduced-motion. Names are the invented set from OverlayDemo.tsx (Aldenmar, Brackwyn, Corvale,
 // Rethlan, Nyssara, Mirenne, Kelbrin, Elowin, Thessaly, Wyldane, Zarrin): this page is public.
+import Link from 'next/link';
 import type { ReactNode } from 'react';
+import GateMark from '@/app/pop/GateMark';
+import type { GateMarkKind } from '@/lib/popGateCell';
+import { ERAS } from '@/lib/eras';
 
 const OUTLINE = { textShadow: '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000' };
 
@@ -31,22 +36,35 @@ const MOTION = `@media (prefers-reduced-motion: reduce){.fig-anim,.fig-anim *{an
 
 /* ── 01: the boss board ─────────────────────────────────────────────────── */
 
-const BOSSES = [
+type BoardRow = { name: string; zone: string; left: string; pct: number; up: boolean };
+
+const BOSSES: BoardRow[] = [
   { name: 'Lord Nagafen', zone: "Nagafen's Lair", left: '6h 12m', pct: 22, up: false },
   { name: 'Lady Vox', zone: 'Permafrost', left: '1h 40m', pct: 78, up: false },
   { name: 'Trakanon', zone: 'Old Sebilis', left: 'in window', pct: 100, up: true },
 ];
 
-export function BossBoardFigure() {
+// The same board, filled with Planes of Power named: the 3-hour Bastion of Thunder named, the 24-hour named
+// in a plane, and the longer ones. Zones and respawn lengths are the boss catalog's (data/bosses.json); the
+// time left is illustrative, like the Classic board's.
+const POP_BOSSES: BoardRow[] = [
+  { name: 'Gaukr Sandstorm', zone: 'Bastion of Thunder', left: '1h 05m', pct: 64, up: false },
+  { name: 'Seilaen', zone: 'Plane of Nightmare', left: '9h 30m', pct: 40, up: false },
+  { name: 'Bertoxxulous', zone: 'Plane of Disease', left: 'in window', pct: 100, up: true },
+];
+
+export function BossBoardFigure({ rows = BOSSES, sub = 'Respawn windows with the ±variance done for you', label = 'The Discord boss board' }: {
+  rows?: BoardRow[]; sub?: string; label?: string;
+}) {
   return (
-    <div className="rounded-md border border-border bg-[#2b2d31] p-3 sm:p-4 font-sans max-w-md" aria-label="The Discord boss board">
+    <div className="rounded-md border border-border bg-[#2b2d31] p-3 sm:p-4 font-sans max-w-md" aria-label={label}>
       <div className="flex gap-3">
         <div className="w-1 rounded bg-gold shrink-0" aria-hidden />
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-semibold text-[#f2f3f5]">⏳ Active cooldowns</div>
-          <div className="text-[11px] text-[#b5bac1] mt-0.5">Respawn windows with the ±variance done for you</div>
+          <div className="text-[11px] text-[#b5bac1] mt-0.5">{sub}</div>
           <ul className="mt-3 space-y-2.5">
-            {BOSSES.map(b => (
+            {rows.map(b => (
               <li key={b.name}>
                 <div className="flex items-baseline justify-between gap-2 text-[12px]">
                   <span className="text-[#f2f3f5] font-medium truncate">{b.name} <span className="text-[#949ba4] font-normal">· {b.zone}</span></span>
@@ -284,6 +302,141 @@ export function TagStripFigure() {
         ))}
       </div>
       <div className="text-[11px] text-dim text-center mt-3">Marks Zeal draws over a target’s head, from <span className="text-text">/tag</span>. Everyone in the raid sees the same one.</div>
+    </div>
+  );
+}
+
+/* ── 09: every expansion on the board ────────────────────────────────────── */
+
+// Two raid targets per era, as the boss catalog (data/bosses.json) has them: name, zone and respawn in hours.
+// test/about-figures.test.js checks every row against the catalog, so a rename there turns it red here.
+const ERA_CARDS = [
+  { era: 'Classic', color: '#d29922', bosses: [
+    { name: 'Lord Nagafen', zone: "Nagafen's Lair", hours: 162 },
+    { name: 'Maestro of Rancor', zone: 'Plane of Hate', hours: 66 },
+  ] },
+  { era: 'Kunark', color: '#56d364', bosses: [
+    { name: 'Trakanon', zone: 'Ruins of Sebilis', hours: 66 },
+    { name: 'Overking Bathezid', zone: 'Chardok', hours: 18 },
+  ] },
+  { era: 'Velious', color: '#58a6ff', bosses: [
+    { name: 'King Tormax', zone: 'Kael Drakkel', hours: 162 },
+    { name: 'The Progenitor', zone: "Sleeper's Tomb", hours: 162 },
+  ] },
+  { era: 'Luclin', color: '#a371f7', bosses: [
+    { name: 'Emperor Ssraeshza', zone: 'Ssraeshza Temple', hours: 162 },
+    { name: 'Aten Ha Ra', zone: 'Vex Thal', hours: 162 },
+  ] },
+];
+
+function eraRange(era: string): string {
+  const e = ERAS.find(x => x.name === era);
+  if (!e) return '';
+  const m = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+  return `${m(e.start)} to ${m(e.end)}`;
+}
+
+function respawn(hours: number): string {
+  return hours >= 48 ? `${Math.floor(hours / 24)}d ${hours % 24}h` : `${hours}h`;
+}
+
+export function EraBoardFigure() {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,1fr)_minmax(0,300px)] gap-5 items-start">
+      <div className="grid sm:grid-cols-2 gap-3" aria-label="Raid targets from each earlier expansion, with their respawn times">
+        {ERA_CARDS.map(c => (
+          <div key={c.era} className="rounded-lg border border-border bg-panel p-3 sm:p-4 border-l-2" style={{ borderLeftColor: c.color }}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-sm font-semibold" style={{ color: c.color }}>{c.era}</span>
+              <span className="text-[10px] text-dim tabular-nums">{eraRange(c.era)}</span>
+            </div>
+            <ul className="mt-2.5 space-y-2">
+              {c.bosses.map(b => (
+                <li key={b.name} className="flex items-baseline justify-between gap-2 text-[12px]">
+                  <span className="min-w-0 text-text">{b.name} <span className="text-dim">· {b.zone}</span></span>
+                  <span className="shrink-0 text-dim tabular-nums">{respawn(b.hours)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+      <OverlayShot src="/film/wolfpack-rise.jpg" width={1280} height={720}
+        alt="Wolf Pack raiders raising weapons before the four-armed queen Aten Ha Ra, in a cartoon title card"
+        caption={<>Luclin&apos;s picture: the title card of our film of the Aten Ha Ra kill in Vex Thal. <Link href="/film" className="text-blue hover:underline">The film (members sign in) →</Link></>} />
+    </div>
+  );
+}
+
+/* ── 10: Planes of Power ─────────────────────────────────────────────────── */
+
+// Five gates from the PoP flag catalog (web/lib/popFlags.ts, key in `flag`) and five invented raiders, one of
+// each way the page knows a flag: Mimic saw it, /who proved it, only loot proved it, the raider ticked it.
+const POP_GATES = [
+  { flag: 'trial_justice', short: 'Justice' },
+  { flag: 'grummus_dead', short: 'Grummus' },
+  { flag: 'hedge_event', short: 'Hedge' },
+  { flag: 'aerindar_dead', short: 'Aerin`Dar' },
+  { flag: 'askr_quest', short: 'Storms' },
+];
+
+const POP_ROWS: { n: string; c: string; marks: GateMarkKind[] }[] = [
+  { n: 'Aldenmar', c: 'Monk', marks: ['mimic', 'mimic', 'mimic', 'mimic', 'mimic'] },
+  { n: 'Zarrin', c: 'Wizard', marks: ['mimic', 'mimic', 'who', 'mimic', 'none'] },
+  { n: 'Corvale', c: 'Ranger', marks: ['mimic', 'loot', 'none', 'none', 'none'] },
+  { n: 'Wyldane', c: 'Warrior', marks: ['self', 'self', 'mimic', 'none', 'none'] },
+  { n: 'Mirenne', c: 'Druid', marks: ['mimic', 'none', 'none', 'none', 'none'] },
+];
+
+const POP_LEGEND: { kind: Exclude<GateMarkKind, 'none'>; text: string }[] = [
+  { kind: 'mimic', text: 'Mimic saw it' },
+  { kind: 'who', text: '/who proved it' },
+  { kind: 'loot', text: 'looted there' },
+  { kind: 'self', text: 'their own word' },
+];
+
+export function PopFlagsFigure() {
+  return (
+    <div className="rounded-lg border border-border bg-panel p-3 sm:p-4 max-w-md" aria-label="Planes of Power flags: who has which gate">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-sm text-text font-semibold">PoP Flags</div>
+        <div className="text-[11px] text-dim">first five gates</div>
+      </div>
+      <div className="overflow-x-auto mt-2">
+        <table className="w-full text-[11px] border-collapse">
+          <thead>
+            <tr className="text-dim">
+              <th className="text-left font-normal py-1 pr-2">Raider</th>
+              {POP_GATES.map(g => <th key={g.flag} className="font-normal py-1 px-1.5 text-center">{g.short}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {POP_ROWS.map(r => (
+              <tr key={r.n} className="border-t border-border/60">
+                <td className="py-1.5 pr-2 whitespace-nowrap text-text">{r.n} <span className="text-dim">{r.c}</span></td>
+                {r.marks.map((k, i) => (
+                  <td key={POP_GATES[i].flag} className="py-1.5 px-1.5 text-center">
+                    {k === 'none' ? <span className="text-dim" aria-label="not yet">·</span> : <GateMark kind={k} />}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-dim list-none p-0 m-0">
+        {POP_LEGEND.map(l => <li key={l.kind}><GateMark kind={l.kind} /> {l.text}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+export function PopFigure() {
+  return (
+    <div className="grid md:grid-cols-2 gap-5 items-start">
+      <PopFlagsFigure />
+      <BossBoardFigure rows={POP_BOSSES} label="The Discord boss board with Planes of Power named"
+        sub="Planes of Power named: 3 hours in the Bastion of Thunder, 24 hours and up in each plane" />
     </div>
   );
 }

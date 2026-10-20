@@ -1,0 +1,172 @@
+{
+  "pack_name": "Aldenmar Raid Pack",
+  "description": "Exported from PQ Companion",
+  "triggers": [
+    {
+      "id": "a1f0c2d3e4b50001",
+      "name": "Brackwyn Falls",
+      "enabled": true,
+      "pattern": "^{C} has fallen to the ground\\.$",
+      "actions": [
+        { "type": "overlay_text", "text": "FALLEN", "duration_secs": 5, "color": "#ff0000", "sound_path": "", "volume": 0, "voice": "" },
+        { "type": "text_to_speech", "text": "You fell", "duration_secs": 0, "color": "", "sound_path": "", "volume": 1, "voice": "" }
+      ],
+      "pack_name": "Misc Alerts",
+      "source": "log",
+      "timer_type": "none",
+      "timer_duration_secs": 0,
+      "worn_off_pattern": "",
+      "spell_id": 0,
+      "display_threshold_secs": 0,
+      "characters": ["Aldenmar", "Corvale"],
+      "timer_alerts": [],
+      "extra_patterns": [],
+      "exclude_patterns": [],
+      "sort_order": 0
+    },
+    {
+      "id": "a1f0c2d3e4b50002",
+      "name": "Rethlan Slowed",
+      "enabled": true,
+      "pattern": "^(?P<target>[A-Z][a-zA-Z' ]{2,30}) slows down\\.$",
+      "actions": [
+        { "type": "overlay_text", "text": "{target} is slowed", "duration_secs": 4, "color": "#44ddff", "sound_path": "", "volume": 0, "voice": "" }
+      ],
+      "pack_name": "Enchanter",
+      "source": "log",
+      "timer_type": "detrimental",
+      "timer_duration_secs": 90,
+      "worn_off_pattern": "^Your slow spell has worn off of (?P<target>.+)\\.$",
+      "spell_id": 1234,
+      "timer_target_capture": "target",
+      "timer_key_capture": "target",
+      "display_threshold_secs": 30,
+      "bar_color": "#22c55e",
+      "pinned": true,
+      "characters": ["Nyssara"],
+      "timer_alerts": [
+        { "id": "fade-60", "seconds": 60, "type": "text_to_speech", "sound_path": "", "volume": 0, "tts_template": "{spell} fading soon", "voice": "", "tts_volume": 100 },
+        { "id": "fade-10", "seconds": 10, "type": "overlay_text", "sound_path": "", "volume": 0, "text": "Slow is nearly up", "duration_secs": 3, "color": "#ffaa00" },
+        { "id": "fade-5", "seconds": 5, "type": "play_sound", "sound_path": "C:\\Sounds\\ding.wav", "volume": 80, "tts_template": "" }
+      ],
+      "extra_patterns": [],
+      "exclude_patterns": [],
+      "sort_order": 1
+    },
+    {
+      "id": "a1f0c2d3e4b50003",
+      "name": "Zarrin Tells",
+      "enabled": true,
+      "pattern": "^\\w+ tells you, '(?P<msg>.+)'$",
+      "actions": [
+        { "type": "overlay_text", "text": "Tell: {msg} about {t}", "duration_secs": 6, "color": "#ffffff", "sound_path": "", "volume": 0, "voice": "" },
+        { "type": "overlay_text", "text": "A second line", "duration_secs": 6, "color": "#ffffff", "sound_path": "", "volume": 0, "voice": "" },
+        { "type": "text_to_speech", "text": "Incoming tell", "duration_secs": 0, "color": "", "sound_path": "", "volume": 1, "voice": "" },
+        { "type": "clipboard", "text": "/tar {1}", "duration_secs": 0, "color": "", "sound_path": "", "volume": 0, "voice": "" },
+        { "type": "discord_webhook", "text": "tell from {1}", "duration_secs": 0, "color": "", "sound_path": "", "volume": 0, "voice": "", "webhook_id": "hook-1" },
+        { "type": "play_sound", "text": "", "duration_secs": 0, "color": "", "sound_path": "C:\\Sounds\\ding.wav", "volume": 1, "voice": "" }
+      ],
+      "pack_name": "",
+      "source": "log",
+      "timer_type": "none",
+      "timer_duration_secs": 0,
+      "worn_off_pattern": "",
+      "spell_id": 0,
+      "display_threshold_secs": 0,
+      "refire_cooldown_secs": 1.5,
+      "repeat_reset_secs": 20,
+      "characters": [],
+      "timer_alerts": [],
+      "extra_patterns": [
+        { "pattern": "^\\w+ says out of character, '(?P<msg>.+)'$", "enabled": true, "timer_duration_secs": 30 },
+        { "pattern": "^never used$", "enabled": false }
+      ],
+      "exclude_patterns": ["tells you, 'That'll be", "Master\\.'$"],
+      "sort_order": 2
+    },
+    {
+      "id": "a1f0c2d3e4b50004",
+      "name": "Corvale Low Health",
+      "enabled": true,
+      "pattern": "",
+      "source": "pipe",
+      "pipe_condition": { "kind": "target_hp_below", "hp_threshold": 20 },
+      "actions": [
+        { "type": "text_to_speech", "text": "Target low", "duration_secs": 0, "color": "", "sound_path": "", "volume": 1, "voice": "" }
+      ],
+      "pack_name": "Zeal",
+      "timer_type": "none",
+      "timer_duration_secs": 0,
+      "worn_off_pattern": "",
+      "spell_id": 0,
+      "display_threshold_secs": 0,
+      "characters": [],
+      "timer_alerts": [],
+      "extra_patterns": [],
+      "exclude_patterns": [],
+      "sort_order": 3
+    },
+    {
+      "id": "a1f0c2d3e4b50005",
+      "name": "Nyssara Wave Spawn",
+      "enabled": false,
+      "pattern": "The ground trembles for (?P<mins>\\d+m\\d+s)\\.",
+      "actions": [],
+      "pack_name": "Raid Events",
+      "source": "log",
+      "timer_type": "custom",
+      "timer_duration_secs": 49,
+      "timer_duration_capture": "mins",
+      "worn_off_pattern": "",
+      "timer_repeat": true,
+      "timer_repeat_max": 6,
+      "cooldown_secs": 120,
+      "spell_id": 0,
+      "display_threshold_secs": 0,
+      "characters": [],
+      "timer_alerts": [
+        { "id": "w-5", "seconds": 5, "type": "text_to_speech", "sound_path": "", "volume": 0, "tts_template": "Wave in five", "voice": "", "tts_volume": 100 }
+      ],
+      "extra_patterns": [],
+      "exclude_patterns": [],
+      "sort_order": 4
+    },
+    {
+      "id": "a1f0c2d3e4b50006",
+      "name": "Rethlan Stacked Respawn",
+      "enabled": true,
+      "pattern": "^(?P<mob>.+) has been slain by",
+      "actions": [],
+      "pack_name": "Raid Events",
+      "source": "log",
+      "timer_type": "custom",
+      "timer_duration_secs": 600,
+      "timer_stack": true,
+      "timer_target_capture": "mob",
+      "worn_off_pattern": "",
+      "spell_id": 0,
+      "display_threshold_secs": 0,
+      "characters": [],
+      "timer_alerts": [],
+      "extra_patterns": [],
+      "exclude_patterns": [],
+      "sort_order": 5
+    },
+    {
+      "id": "a1f0c2d3e4b50007",
+      "name": "Zarrin Empty",
+      "enabled": true,
+      "pattern": "",
+      "actions": [],
+      "pack_name": "Misc Alerts",
+      "source": "log",
+      "timer_type": "none",
+      "timer_duration_secs": 0,
+      "characters": [],
+      "timer_alerts": [],
+      "extra_patterns": [],
+      "exclude_patterns": [],
+      "sort_order": 6
+    }
+  ]
+}

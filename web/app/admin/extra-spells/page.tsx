@@ -18,6 +18,7 @@ import NewPageTag from '@/components/NewPageTag';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
+import MoreInfo from '@/components/MoreInfo';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
@@ -72,11 +73,14 @@ export default async function AdminExtraSpellsPage() {
           still needs the spell. Who needs it follows the first-dibs order on{' '}
           <Link href="/pop" className="text-blue hover:underline">/pop</Link>: highest level first.
         </p>
-        <p className="text-xs text-dim leading-5 mt-2">
+        <div className="text-xs text-dim leading-5 mt-2">
           A scroll can be stale: if the holder scribed it after their last inventory export, it still shows
-          until they export again. Rows marked <span className="text-orange">check</span> have a spellbook export
+          until they export again.
+          <MoreInfo>
+          Rows marked <span className="text-orange">check</span> have a spellbook export
           newer than the bags, which is the case to ask about first.
-        </p>
+          </MoreInfo>
+        </div>
         {error && <p className="text-xs text-red mt-3">⚠ {error.message}</p>}
       </section>
 

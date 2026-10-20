@@ -13,6 +13,7 @@
 // every successful upload — first agent ping after deploy populates this.
 
 import Link from 'next/link';
+import MoreInfo from '@/components/MoreInfo';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
@@ -679,18 +680,26 @@ export default async function AdminAgentsPage() {
         <h2 className="text-xl text-gold mb-1">🧿 Zeal</h2>
         <p className="text-sm text-dim leading-6">
           Zeal is the in-game DLL, not ours — it prints its version to the log at
-          zone-in, and the agent forwards whatever it sees. Counted in{' '}
-          <strong className="text-text">players</strong>, not characters: one person
-          runs several characters off one Zeal install, so a character count would
-          overstate this roughly tenfold.
+          zone-in, and the agent forwards whatever it sees.
         </p>
+        <MoreInfo>
+          <p className="text-sm text-dim leading-6 mt-1">
+            Counted in{' '}
+            <strong className="text-text">players</strong>, not characters: one person
+            runs several characters off one Zeal install, so a character count would
+            overstate this roughly tenfold.
+          </p>
+        </MoreInfo>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4 text-xs">
           <Stat label="Players active 24h" value={activeFamilies.length} />
           <Stat label="Reporting a Zeal version" value={zealPlayers.length} color="text-blue" />
           <Stat label="Proven spawn-id capable" value={capablePlayers.length} color={capablePlayers.length > 0 ? 'text-green' : 'text-dim'} />
         </div>
         <p className="text-xs text-dim leading-6 mt-4">
-          <strong className="text-orange">Capability is observed, never inferred from the version.</strong>{' '}
+          <strong className="text-orange">Capability is observed, never inferred from the version.</strong>
+        </p>
+        <MoreInfo>
+        <p className="text-xs text-dim leading-6 mt-1">
           Zeal <a href="https://github.com/CoastalRedwood/Zeal/pull/229" target="_blank" rel="noreferrer" className="text-blue hover:underline">PR #229</a>{' '}
           — which puts spawn ids on the pipe — is not in a numbered release yet, and a
           build carrying it reports the <em>same</em> version string as a stock build of the
@@ -704,6 +713,7 @@ export default async function AdminAgentsPage() {
           <code>/tag</code> as the accurate fallback — it broadcasts the same spawn id over
           chat, but a human has to target and tag each mob, against a server rate limit.
         </p>
+        </MoreInfo>
         {zealVersions.length > 0 && (
           <div className="text-xs text-dim mt-4">
             <span className="text-dim">Zeal versions in the active fleet:</span>
@@ -834,11 +844,13 @@ export default async function AdminAgentsPage() {
 
         <div className="mt-5 text-xs text-dim leading-6 border-t border-border/60 pt-4">
           <div className="text-text mb-1">Officer ops cheat-sheet</div>
-          <ul className="list-disc list-inside space-y-1">
+          <MoreInfo>
+          <ul className="list-disc list-inside space-y-1 mt-1">
             <li>Tester reports the engine won&apos;t start? The loading screen shows the agent log inline with a copy button — ask them to paste it.</li>
             <li>Tester stuck on a pre-1.0.0 beta? The old <code className="text-blue">mimic-beta</code> update channel was retired at 1.0.0, so beta installs won&apos;t auto-update across the switch. Have them grab a fresh installer from <a href="/mimic" target="_blank" rel="noreferrer" className="text-blue hover:underline">/mimic</a>; settings + state preserved across install. Once on 1.0.0+ everything auto-updates again.</li>
             <li>Per-tester fleet visibility (Mimic vs Parser.bat) requires the agent to identify itself in <code>agent_state</code>; planned for a follow-up. Until then this section is informational and the Active table below mixes both clients.</li>
           </ul>
+          </MoreInfo>
         </div>
       </section>
 

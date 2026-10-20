@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getRoadmapVotes, toggleRoadmapVote, submitRoadmapEvidence } from '@/app/roadmap/actions';
 import ScreenshotPicker from '@/components/ScreenshotPicker';
+import MoreInfo from '@/components/MoreInfo';
 import type { QueueItem } from '@/lib/roadmapData';
 
 const EFFORT_ORDER = ['quick', 'medium', 'large'] as const;
@@ -98,13 +99,18 @@ export default function RoadmapQueue({ items }: { items: QueueItem[] }) {
         </div>
       </div>
       <p className="text-sm text-dim">
-        The open queue, straight from the design docs — smallest first. Every item has
-        its tracking number, the chips say which parts of the platform it touches, and
-        the ▲ is yours: vote for what you want built next. Items blocked on something a
-        member can supply have a box right on the card — paste the log line, we build
-        the thing.
+        The open queue, straight from the design docs — smallest first.
         {!signedIn && ' (Sign in with Discord to vote or submit.)'}
       </p>
+      <MoreInfo>
+        <p className="text-sm text-dim mt-1">
+          Every item has
+          its tracking number, the chips say which parts of the platform it touches, and
+          the ▲ is yours: vote for what you want built next. Items blocked on something a
+          member can supply have a box right on the card — paste the log line, we build
+          the thing.
+        </p>
+      </MoreInfo>
       {voteErr && <p className="text-xs text-red">{voteErr}</p>}
 
       {sort === 'effort' ? (

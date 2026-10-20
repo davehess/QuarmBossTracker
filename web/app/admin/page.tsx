@@ -1,5 +1,6 @@
 // Admin landing — officer-only. Auth + officer gating handled by parent layout.
 import Link from 'next/link';
+import { FoldText } from '@/components/MoreInfo';
 
 export const metadata = {
   title: 'Officer tools · Admin',
@@ -11,11 +12,10 @@ export default function AdminPage() {
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-3">🛡️ Officer Tools</h2>
-        <p className="text-sm text-dim">
-          You're seeing this because you have the Officer or Pack Leader role on
-          Discord. Tools here are for raid lead / loot council / parse review
-          work that shouldn't be exposed to the general guild membership.
-        </p>
+        <FoldText
+          className="text-sm text-dim"
+          text="You're seeing this because you have the Officer or Pack Leader role on Discord. Tools here are for raid lead / loot council / parse review work that shouldn't be exposed to the general guild membership."
+        />
       </section>
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -201,9 +201,13 @@ export default function AdminPage() {
 
 function Card({ title, body, href }: { title: string; body: string; href: string }) {
   return (
-    <Link href={href} className="block bg-panel border border-border rounded-lg p-4 hover:border-blue transition-colors no-underline">
-      <h3 className="text-base text-orange mb-1">{title}</h3>
-      <p className="text-xs text-dim leading-5">{body}</p>
-    </Link>
+    // The title link is stretched over the whole card (the ::after); the fold sits above it (z-10) so
+    // opening it does not follow the link.
+    <div className="relative bg-panel border border-border rounded-lg p-4 hover:border-blue transition-colors">
+      <h3 className="text-base text-orange mb-1">
+        <Link href={href} className="text-orange no-underline after:absolute after:inset-0">{title}</Link>
+      </h3>
+      <FoldText text={body} className="text-xs text-dim leading-5" moreClassName="relative z-10 mt-1" />
+    </div>
   );
 }

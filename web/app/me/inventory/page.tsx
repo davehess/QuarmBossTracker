@@ -23,6 +23,7 @@ import { selectAll } from '@/lib/selectAll';
 import { planSharedBanks, pickSharedRows } from '@/lib/sharedBank';
 import { loadAccountPlacements } from '@/lib/accountPlacements';
 import { GUILD_TAG } from '@/lib/guild';
+import MoreInfo from '@/components/MoreInfo';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
@@ -175,16 +176,19 @@ export default async function MyInventoryPage() {
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-2xl text-gold mb-1">🎒 My account inventory</h2>
-        <p className="text-sm text-dim leading-6">
+        <div className="text-sm text-dim leading-6">
           Everything across <b className="text-text">all your characters</b> at once — total count of each item and
-          exactly who&apos;s holding it. Items in the <b className="text-purple">shared bank</b> are tagged, since any
+          exactly who&apos;s holding it.
+          <MoreInfo>
+          Items in the <b className="text-purple">shared bank</b> are tagged, since any
           of your characters can pull those — and they count <b className="text-text">once per game account</b>, not
           once per character (characters placed on a game account are grouped by that account; the
           rest are grouped as &quot;same account?&quot; when their shared-bank contents match).
           Filter by type, and toggle which characters or which places (equipped /
           bags / bank / shared) to include. Data comes from your <code>/outputfile inventory</code> uploads
           (📖 on <Link href="/me" className="text-blue hover:underline">/me</Link>) — only your own characters, private to you.
-        </p>
+          </MoreInfo>
+        </div>
         <div className="mt-3 text-xs text-dim flex flex-wrap gap-x-6 gap-y-1">
           <span>Characters: <span className="text-text">{chars.length}</span></span>
           <span>Inventory rows: <span className="text-text">{rowCount.toLocaleString()}</span></span>

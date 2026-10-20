@@ -35,6 +35,7 @@
 // on that parse: "taeya reported this Ventani kill so they should have a
 // lockout." A kill row never overwrites a live /sll row.
 import Link from 'next/link';
+import MoreInfo from '@/components/MoreInfo';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
@@ -188,7 +189,11 @@ export default async function LockoutsPage() {
           Who is currently locked out of which raid boss — from a <code>/sll</code> relay, or worked out from a
           boss-kill parse they uploaded. A lockout is an{' '}
           <b className="text-text">engage lock, not a loot lock</b> — a locked character can&apos;t fight the mob
-          at all, and gets <b className="text-text">teleported out of the zone on engage</b>. So this is a
+          at all, and gets <b className="text-text">teleported out of the zone on engage</b>.
+        </p>
+        <MoreInfo>
+        <p className="text-sm text-dim mt-1 max-w-3xl leading-6">
+          So this is a
           before-the-pull question: someone locked who engages anyway is a body that vanishes mid-fight. The point
           The first three sections cover <b className="text-text">{eraLabel}</b> — the content we actually raid;
           anything older is real but changes nothing about a raid night, so it sits at the bottom. The point
@@ -198,6 +203,7 @@ export default async function LockoutsPage() {
           <Link href="/admin/anomalies" className="text-blue hover:underline">Anomalies</Link> — they are kept out
           of our parses; these are kept <i>in</i>, on purpose.
         </p>
+        </MoreInfo>
       </section>
 
       <Section

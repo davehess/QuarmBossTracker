@@ -17,6 +17,7 @@ import { requireOfficer } from '@/lib/officer';
 import { loadRoster } from '@/lib/roster';
 import { GUILD_TAG } from '@/lib/guild';
 import { selectAll } from '@/lib/selectAll';
+import MoreInfo from '@/components/MoreInfo';
 import {
   computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult,
 } from '@/lib/raidKit';
@@ -163,16 +164,19 @@ export default async function AdminReadinessPage() {
           🎒 Raid Kit readiness
           <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue uppercase">Rule 12</span>
         </h2>
-        <p className="text-sm text-dim leading-6">
+        <div className="text-sm text-dim leading-6">
           Every roster raider&apos;s <b>{MR_FLOOR} magic-resist floor</b> and utility kit
           (Enduring Breath / Levitate / self-invis / self-port, plus the Necro coffin),
           from the same Quarmy gear snapshot the <Link href="/admin/rules" className="text-blue hover:underline">rulebook</Link> rule 12
-          asks for. MR is summed from <b>worn gear only</b> and is the one hard check —
+          asks for.
+          <MoreInfo>
+          MR is summed from <b>worn gear only</b> and is the one hard check —
           shown red only when a raider HAS a snapshot and falls short. A blank utility means
           <b> the source isn&apos;t visible</b> (bank items are stripped before upload, class
           self-buffs need a spellbook upload) — never a red fail. Raiders with no export
           simply read &quot;no snapshot&quot;.
-        </p>
+          </MoreInfo>
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
           <Stat label="Roster raiders" value={rows.length} />
           <Stat label="Have a snapshot" value={withSnapshot} color="text-blue" />
@@ -237,12 +241,14 @@ export default async function AdminReadinessPage() {
         </div>
       </section>
 
-      <p className="text-[11px] text-dim leading-5">
+      <div className="text-[11px] text-dim leading-5">
         <span className="text-green">✓</span> covered · <span className="text-orange">○</span> not detected (source not visible — not a fail).
+        <MoreInfo>
         Hover a cell for the source item / spell. Utility detection deliberately under-claims — it credits a
         class-innate self-buff only for the certain cases and otherwise needs a real item effect or a scribed
         spell, so a false &quot;covered&quot; never hides a gap.
-      </p>
+        </MoreInfo>
+      </div>
     </div>
   );
 }
