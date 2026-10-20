@@ -1,4 +1,4 @@
-// /pvp fights and fight film, on beta as two variants (DECISIONS-2026-09-21.md §46). The guild lead,
+// /pvp fights and fight film, as Fight cards (picked 2026-10-19; DECISIONS-2026-09-21.md §46, §383). The guild lead,
 // 2026-09-26: "Lets start combining PVP encounters into history" and "Embed this video onto the PVP
 // page along with these screenshots".
 //
@@ -50,11 +50,14 @@ describe('the film itself', () => {
 });
 
 describe('the page', () => {
-  it('with no ?v= it is what production shows: no fights read, nothing new drawn', () => {
-    expect(page).toContain("const variant = sp?.v === 'b' || sp?.v === 'c' ? sp.v : null;");
-    expect(page).toContain('variant ? loadFights() : Promise.resolve([] as PvpFightRow[]),');
-    expect(page).toContain("{variant === 'b' && <FightCards fights={fights} tz={tz} />}");
-    expect(page).toContain("{variant === 'c' && <FightTable fights={fights} tz={tz} />}");
+  it('it always reads the fights and draws them as Fight cards: no ?v= layouts, no table', () => {
+    expect(page).toContain('    loadFights(),');
+    expect(page).toContain('<FightCards fights={fights} tz={tz} />');
+    expect(page).not.toMatch(/variant|sp\?\.v|FightTable/);
+    expect(page).not.toMatch(/v\?: string/);
+    const cards = stripJs(fs.readFileSync(path.join(ROOT, 'web', 'app', 'pvp', 'Fights.tsx'), 'utf8'));
+    expect(cards).toContain('export function FightCards(');
+    expect(cards).not.toMatch(/FightTable|PVP_NIGHTS/);
   });
   it('it calls pvp_fights with the parameter names the function really has', () => {
     const call = page.slice(page.indexOf("rpc('pvp_fights', {"), page.indexOf('});', page.indexOf("rpc('pvp_fights', {")));

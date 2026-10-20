@@ -16,7 +16,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
 import QuakeBanner from './QuakeBanner';
 import WindowPicker from '@/components/WindowPicker';
-import { FightCards, FightTable } from './Fights';
+import { FightCards } from './Fights';
 import type { PvpFightRow } from '@/lib/pvpMedia';
 import { resolveWindow, type ResolvedWindow } from '@/lib/timeWindow';
 import { loadPvpBossKills } from '@/lib/fullReads';
@@ -265,7 +265,7 @@ async function loadHotZones(): Promise<HotZone[]> {
     .sort((a, b) => (b.last_event_at || '').localeCompare(a.last_event_at || ''));
 }
 
-// Fights from every PvP death (pvp_fights, DECISIONS-2026-09-21.md §46). Beta variants only for now.
+// Fights from every PvP death (pvp_fights, DECISIONS-2026-09-21.md §46), drawn as the Fight cards below.
 async function loadFights(): Promise<PvpFightRow[]> {
   const { data, error } = await supabaseAdmin().rpc('pvp_fights', {
     p_since: new Date(Date.now() - 30 * 86400000).toISOString(),
@@ -318,7 +318,7 @@ function fmtCountdown(toIso: string, fromMs: number = Date.now()): string {
 export default async function PvpPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sort?: string; w?: string; v?: string }>;
+  searchParams: Promise<{ sort?: string; w?: string }>;
 }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pvp');
@@ -334,13 +334,12 @@ export default async function PvpPage({
   const w = resolveWindow(sp?.w, 'life');
 
   const tz = await userTz();
-  const variant = sp?.v === 'b' || sp?.v === 'c' ? sp.v : null;
   const [{ rows, error }, bossTimers, quakeAt, hotZones, fights, flagged] = await Promise.all([
     loadLeaderboard(sortKey, w),
     loadBossTimers(),
     loadQuake(),
     loadHotZones(),
-    variant ? loadFights() : Promise.resolve([] as PvpFightRow[]),
+    loadFights(),
     loadFlagged(),
   ]);
   if (error) {
@@ -460,8 +459,7 @@ export default async function PvpPage({
         )}
       </section>
 
-      {variant === 'b' && <FightCards fights={fights} tz={tz} />}
-      {variant === 'c' && <FightTable fights={fights} tz={tz} />}
+      <FightCards fights={fights} tz={tz} />
 
       {/* Next earthquake — a quake repops every PvP mob, so it sits directly
           above the boss timers (it resets all of them). Live countdown. */}

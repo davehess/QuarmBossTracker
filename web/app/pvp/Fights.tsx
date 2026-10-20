@@ -1,10 +1,9 @@
-// /pvp fight history and fight film (DECISIONS-2026-09-21.md §46). Two layouts on beta until the
-// guild lead picks one (CLAUDE.md, UI options); with no ?v= the page is what production shows.
-//   B (?v=b): each fight is a card, and a night's videos and clips hang on its biggest fight.
-//   C (?v=c): the fights as a compact table, and the film in a gallery of its own.
+// /pvp fight history and fight film (DECISIONS-2026-09-21.md §46). Fight cards, picked by the guild lead on
+// the Decision Desk 2026-10-19 (§383): each fight is a card, and a night's videos and clips hang on its
+// biggest fight.
 import { fmtShort } from '@/lib/timezone';
 import {
-  PVP_CHANNEL, PVP_NIGHTS, fightSides, medalEmbed, medalPage, nightForFight, youtubeEmbed, youtubeWatch,
+  PVP_CHANNEL, fightSides, medalEmbed, medalPage, nightForFight, youtubeEmbed, youtubeWatch,
   type PvpFightRow, type PvpMediaItem, type PvpNight,
 } from '@/lib/pvpMedia';
 
@@ -136,7 +135,7 @@ function ChannelLink() {
   );
 }
 
-// B: every fight a card; the night's film opens on its biggest fight.
+// Every fight a card; the night's film opens on its biggest fight.
 export function FightCards({ fights, tz }: { fights: PvpFightRow[]; tz: string }) {
   return (
     <section className="bg-panel border border-border rounded-lg p-4 sm:p-6">
@@ -182,57 +181,5 @@ export function FightCards({ fights, tz }: { fights: PvpFightRow[]; tz: string }
         </ul>
       )}
     </section>
-  );
-}
-
-// C: a compact table of fights, and the film in its own gallery.
-export function FightTable({ fights, tz }: { fights: PvpFightRow[]; tz: string }) {
-  return (
-    <>
-      <section className="bg-panel border border-border rounded-lg p-4 sm:p-6">
-        <h2 className="text-xl text-gold flex items-center gap-2"><span aria-hidden>⚔️</span><span>Fights</span></h2>
-        <Explainer />
-        {fights.length === 0 ? (
-          <p className="text-sm text-dim italic mt-3">No fights in the last 30 days.</p>
-        ) : (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-dim text-left">
-                <tr className="border-b border-border">
-                  <th className="py-1 pr-3">Zone</th>
-                  <th className="py-1 pr-3">Started</th>
-                  <th className="py-1 pr-3 text-right">Length</th>
-                  <th className="py-1 pr-3 text-right">Deaths</th>
-                  <th className="py-1 pr-3 text-right">Zek</th>
-                  <th className="py-1 pr-3 text-right" title="On the field, Zek v allies: at least this many">Sides</th>
-                  <th className="py-1 pr-3">Top killer</th>
-                </tr>
-              </thead>
-              <tbody>
-                {fights.map(f => {
-                  const top = (f.top_killers ?? [])[0];
-                  return (
-                    <tr key={f.zone + f.started_at} className="border-b border-border/30">
-                      <td className="py-1 pr-3 text-text">{f.zone}{nightForFight(f, fights) && <span title="Film below"> 🎬</span>}</td>
-                      <td className="py-1 pr-3 text-dim tabular-nums whitespace-nowrap">{fmtShort(f.started_at, tz)}</td>
-                      <td className="py-1 pr-3 text-right text-dim tabular-nums">{length(f.started_at, f.ended_at)}</td>
-                      <td className="py-1 pr-3 text-right text-text tabular-nums">{f.deaths}</td>
-                      <td className="py-1 pr-3 text-right text-red tabular-nums">{f.zek_deaths}</td>
-                      <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">{(() => { const s = fightSides(f); return s ? <><span className="text-red">{s.zek}</span><span className="text-dim"> v </span><span className="text-text">{s.allies}</span></> : <span className="text-dim">—</span>; })()}</td>
-                      <td className="py-1 pr-3 text-dim">{top ? <><span className="text-text">{top.killer}</span> {top.kills}</> : '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-      <section className="bg-panel border border-border rounded-lg p-4 sm:p-6">
-        <h2 className="text-xl text-gold flex items-center gap-2"><span aria-hidden>🎬</span><span>Fight film</span></h2>
-        {PVP_NIGHTS.map(n => <Film key={n.key} night={n} />)}
-        <ChannelLink />
-      </section>
-    </>
   );
 }

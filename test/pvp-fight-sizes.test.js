@@ -1,4 +1,4 @@
-// Fight sizes on the /pvp fight cards and table (the guild lead, 2026-09-27: "try to figure out fight
+// Fight sizes on the /pvp fight cards (the guild lead, 2026-09-27: "try to figure out fight
 // sizes for opponents vs allies when a fight happens in pvp").
 //
 // Run: npx vitest run test/pvp-fight-sizes.test.js
@@ -45,11 +45,10 @@ describe('the database side', () => {
 });
 
 describe('the page', () => {
-  it('both layouts show the sides, and the card calls it a floor', () => {
+  it('each fight card shows the sides, and calls it a floor', () => {
     expect(fights).toMatch(/<Sides f=\{f\} \/>/);
     expect(fights).toMatch(/On the field: /);
     expect(fights).toMatch(/at least/);
-    expect(fights).toMatch(/<th [^>]*>Sides<\/th>/);
-    expect(fights).toMatch(/const s = fightSides\(f\); return s \?/);
+    expect(fights).toMatch(/const s = fightSides\(f\);\s+if \(!s\) return null;/);
   });
 });
