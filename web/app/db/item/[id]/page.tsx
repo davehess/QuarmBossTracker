@@ -20,7 +20,7 @@ import {
   isNoDrop, isNoRent, isLoreItem, loreText,
   CLASS_TAGS, RACE_TAGS, ALL_CLASS_MASK, ALL_RACE_MASK, ERA_LABEL,
 } from '@/lib/itemDecode';
-import { type ItemRecipe, TradeskillsInline, TradeskillsGrouped, INLINE_CAP } from './Tradeskills';
+import { type ItemRecipe, TradeskillsGrouped } from './Tradeskills';
 
 import { pageMetadata } from '@/lib/pageMetaData';
 
@@ -32,11 +32,9 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export const dynamic = 'force-dynamic';
 
-// Beta preview (2026-09-24): ?v=b / ?v=c add a Tradeskills section in two
-// layouts (see ./Tradeskills.tsx) and widen Quest turn-ins to every Quarm quest
-// script that takes or gives the item (quest_scripts_for_item). No ?v= renders
-// production's page unchanged, so the comparison has a baseline.
-type Variant = 'b' | 'c' | null;
+// Quests come from every Quarm quest script that takes or gives the item
+// (quest_scripts_for_item), and Tradeskills from item_recipes (see ./Tradeskills.tsx).
+// The guild lead picked the grouped recipe layout (2026-10-19, DECISIONS §383).
 type ScriptHit = {
   path: string; zone_short: string; zone_name: string | null; npc_name: string | null;
   npc_id: number | null; is_encounter: boolean; as_component: boolean; as_reward: boolean;
@@ -65,28 +63,23 @@ const ATTR_ORDER: [keyof ItemRow, string][] = [
 const zoneOf = (entityId: number) => Math.floor(entityId / 1000);
 const deUnderscore = (s: string | null) => (s ?? '').replace(/_/g, ' ').trim();
 
-export default async function DbItemPage({ params, searchParams }: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ v?: string }>;
-}) {
+export default async function DbItemPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const itemId = Number(id);
   if (!Number.isInteger(itemId) || itemId <= 0) notFound();
-  const { v: vRaw } = await searchParams;
-  const variant: Variant = vRaw === 'b' || vRaw === 'c' ? vRaw : null;
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/db/item/${itemId}`);
 
   const sb = supabaseAdmin();
 
-  // Started before the main batch so both run in parallel. B renders each
-  // recipe's combine inline, so only B asks for parts.
-  const previewRes = variant ? Promise.all([
-    sb.rpc('item_recipes', { p_item_id: itemId, p_with_parts: variant === 'b' ? INLINE_CAP : 0 }),
+  // Started before the main batch so both run in parallel. The grouped layout lists
+  // recipe names only, so no parts are asked for.
+  const extrasRes = Promise.all([
+    sb.rpc('item_recipes', { p_item_id: itemId, p_with_parts: 0 }),
     // The function stops at 200 rows itself, so one 200-row page is the whole answer.
     sb.rpc('quest_scripts_for_item', { p_item_id: itemId }).range(0, 199),
-  ]) : null;
+  ]);
 
   const [cardRes, itemRes, dropRes, dropCounts, merchRes, givesRes, getsRes] = await Promise.all([
     sb.rpc('item_card_info', { p_item_ids: [itemId] }),
@@ -194,9 +187,9 @@ export default async function DbItemPage({ params, searchParams }: {
     return io.qty && io.qty > 1 ? `${nm} ×${io.qty}` : nm;
   };
 
-  const preview = previewRes ? await previewRes : null;
-  const recipes = (preview?.[0].data ?? []) as ItemRecipe[];
-  const scriptHits = (preview?.[1].data ?? []) as ScriptHit[];
+  const extras = await extrasRes;
+  const recipes = (extras[0].data ?? []) as ItemRecipe[];
+  const scriptHits = (extras[1].data ?? []) as ScriptHit[];
 
   return (
     <div className="space-y-4 max-w-3xl">
@@ -204,19 +197,6 @@ export default async function DbItemPage({ params, searchParams }: {
         <Link href="/search" className="text-blue hover:underline">← search</Link>
         <span className="mx-2">·</span>
         <span className="text-dim/70">wpqdi · item #{itemId}</span>
-        {process.env.NEXT_PUBLIC_IS_BETA === '1' && (
-          <span className="ml-3 text-[11px]">
-            preview:{' '}
-            {([[null, 'current'], ['b', 'B inline'], ['c', 'C grouped']] as const).map(([v, label], i) => (
-              <span key={label}>
-                {i > 0 && <span className="text-dim/60"> · </span>}
-                {variant === v
-                  ? <span className="text-gold">{label}</span>
-                  : <Link href={v ? `/db/item/${itemId}?v=${v}` : `/db/item/${itemId}`} className="text-blue hover:underline">{label}</Link>}
-              </span>
-            ))}
-          </span>
-        )}
       </div>
 
       {/* Item window — laid out like the in-game card: a flags line, then one
@@ -325,33 +305,9 @@ export default async function DbItemPage({ params, searchParams }: {
         ) : <p className="text-dim text-xs">No drop sources in the mirror.</p>}
       </section>
 
-      {/* Quest turn-ins — what this is FOR, and what hands it out. */}
-      {!variant && (gives.length > 0 || gets.length > 0) && (
-        <section className="bg-panel border border-border rounded-lg p-4">
-          <h2 className="text-sm text-orange mb-2">Quest turn-ins</h2>
-          {gives.length > 0 && (
-            <>
-              <h3 className="text-xs text-dim uppercase tracking-wide mb-1">Hand in to</h3>
-              <ul className="text-sm space-y-1 mb-3">
-                {gives.map(t => <TurninRow key={`g${t.id}`} t={t} ioLabel={ioLabel} />)}
-              </ul>
-            </>
-          )}
-          {gets.length > 0 && (
-            <>
-              <h3 className="text-xs text-dim uppercase tracking-wide mb-1">Received from</h3>
-              <ul className="text-sm space-y-1">
-                {gets.map(t => <TurninRow key={`r${t.id}`} t={t} ioLabel={ioLabel} />)}
-              </ul>
-            </>
-          )}
-          <p className="text-dim/60 text-[10px] mt-2">Read from the server&apos;s quest scripts — rewards can be conditional (faction, class, or a spoken keyword) in ways a script scrape can&apos;t always see.</p>
-        </section>
-      )}
-
-      {variant && <QuestsMerged hits={scriptHits} gives={gives} gets={gets} ioLabel={ioLabel} />}
-      {variant === 'b' && <TradeskillsInline recipes={recipes} itemId={itemId} />}
-      {variant === 'c' && <TradeskillsGrouped recipes={recipes} />}
+      {/* Quests — what this is FOR, and what hands it out. */}
+      <QuestsMerged hits={scriptHits} gives={gives} gets={gets} ioLabel={ioLabel} />
+      <TradeskillsGrouped recipes={recipes} />
 
       {/* Sold by */}
       {soldZones.length > 0 && (
@@ -373,29 +329,7 @@ export default async function DbItemPage({ params, searchParams }: {
   );
 }
 
-// "<NPC> (zone): give A, B → get C, D  +exp/coin"
-function TurninRow({ t, ioLabel }: { t: Turnin; ioLabel: (io: TurninIO) => string | null }) {
-  const give = (t.inputs  ?? []).map(ioLabel).filter(Boolean).join(', ');
-  const get  = (t.outputs ?? []).map(ioLabel).filter(Boolean).join(', ');
-  return (
-    <li className="border-b border-border/30 pb-1">
-      <span className="text-text">
-        {t.npc_id
-          ? <Link href={`/db/npc/${t.npc_id}`} className="hover:text-blue hover:underline">{deUnderscore(t.npc_name)}</Link>
-          : deUnderscore(t.npc_name)}
-      </span>
-      {t.zone_short && <span className="text-dim text-[11px]"> · {t.zone_short}</span>}
-      <div className="text-[11px] text-dim">
-        {give && <>give <span className="text-text/90">{give}</span></>}
-        {give && get ? ' → ' : ''}
-        {get && <>get <span className="text-green/90">{get}</span></>}
-        {!!t.exp_award && <span className="text-purple/80"> · {t.exp_award.toLocaleString()} exp</span>}
-      </div>
-    </li>
-  );
-}
-
-// ── Beta: Quests, one row per quest NPC ─────────────────────────────────────
+// ── Quests, one row per quest NPC ───────────────────────────────────────────
 // Coverage comes from Quarm's own scripts (quest_scripts_for_item); the
 // give → get detail line comes from the parsed turn-ins where one exists for the
 // same NPC. The parsed table alone missed every script whose reward is computed
