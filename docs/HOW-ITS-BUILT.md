@@ -3629,6 +3629,17 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   - **Root layout** pins no `openGraph.title`/`description`/`url`, so Next fills OG from each page.
   - **Test:** `test/page-metadata.test.js` walks every `page.tsx`. Rule: `CLAUDE.md`.
 
+- **Instruction text folds in place ("Click here for more info", web 1.9.17, 2026-10-19; DECISIONS §168, §383)**:
+  - **What it is:** long explainer paragraphs on site pages keep their first sentence and fold the rest behind a
+    one-line summary, next to the thing they explain. It is a plain `<details>`: no script, and the text stays in
+    the HTML.
+  - **Code:** `web/components/MoreInfo.tsx` (`MoreInfo` for JSX, `FoldText` for a plain string) and
+    `web/lib/foldText.ts` (where a paragraph splits). Never put it inside a `<p>`, `<span>` or `<label>`, and never
+    fold a warning that must be seen (the `/buffs` accuracy banner, a danger switch on `/admin/overlays`, the
+    pause-the-fleet caution on `/admin/console`).
+  - **Test:** `test/more-info-fold.test.js` lists the swept pages and the warnings left in view.
+  - **/pop and /pop/raid** keep their own inline `<details>`; `test/pop-steps.test.js` asserts that markup.
+
 - **Zeal tag icons gallery (`/zeal-icons`, live with the `[beta]` tag since web 1.8.81, 2026-10-03; built 2026-09-26)**:
   - **[beta] tag:** `web/components/NewPageTag.tsx`, the marker every new page carries when it
     goes live (DECISIONS §135); the page titles and link previews start with `[beta]` too.

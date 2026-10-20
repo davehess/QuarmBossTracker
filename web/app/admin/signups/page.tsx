@@ -22,6 +22,7 @@
 //   - 🚫 Signed Absence = expected absent (informational)
 
 import Link from 'next/link';
+import MoreInfo from '@/components/MoreInfo';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import {
@@ -318,12 +319,15 @@ export default async function AdminSignupsPage({
           Cross-references RaidHelper sign-ups with reality (OpenDKP ticks
           first; parses + <code>/who</code> as fallback) to surface no-shows,
           late arrivals, exceeded tentatives, and people who showed up
-          without signing up. Sign-up data comes from two sources:
+          without signing up.
         </p>
-        <ul className="text-xs text-dim leading-6 list-disc ml-5 mt-2 space-y-1">
-          <li><b>Now (preview):</b> Discord-embed scrape via <code>/scanraidhelper</code> — pulls Discord-mention sign-ups from the embed fields of the RH bot&apos;s posts in the sign-up channel.</li>
-          <li><b>Once enabled:</b> Raid-Helper REST API every 30 min — full sign-up records including class, spec, signup time, decline reasons, plus signups RH stores but doesn&apos;t render in the embed.</li>
-        </ul>
+        <MoreInfo>
+          <p className="text-sm text-dim leading-6 mt-2">Sign-up data comes from two sources:</p>
+          <ul className="text-xs text-dim leading-6 list-disc ml-5 mt-2 space-y-1">
+            <li><b>Now (preview):</b> Discord-embed scrape via <code>/scanraidhelper</code> — pulls Discord-mention sign-ups from the embed fields of the RH bot&apos;s posts in the sign-up channel.</li>
+            <li><b>Once enabled:</b> Raid-Helper REST API every 30 min — full sign-up records including class, spec, signup time, decline reasons, plus signups RH stores but doesn&apos;t render in the embed.</li>
+          </ul>
+        </MoreInfo>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
           <Stat label="Events" value={events.length} />
           <Stat label="Sign-ups" value={totalSignups} />
@@ -351,8 +355,10 @@ export default async function AdminSignupsPage({
           <p>
             Today this page already works without the API — the embed scrape covers
             roughly 80% of the signal because RH renders most signups in the visible
-            embed fields. But the API gets us things the embed never shows:
+            embed fields.
           </p>
+          <MoreInfo className="mt-1 space-y-2">
+          <p>But the API gets us things the embed never shows:</p>
           <ul className="list-disc ml-5 space-y-1">
             <li><b>Signup timing.</b> Did they sign up days in advance or 5 minutes before raid start? Distinguishes planners from last-minute hopefuls.</li>
             <li><b>Spec / role tracked separately from class.</b> The embed shows &quot;Cleric&quot; in a list; the API tells us &quot;Cleric — main heal&quot; vs &quot;Cleric — chain&quot;. Lets us audit comp coverage by spec.</li>
@@ -365,6 +371,7 @@ export default async function AdminSignupsPage({
           <p className="mt-2">
             <b>What it costs:</b> generate the key once in Discord (<code>/apikey refresh</code> then <code>/apikey show</code>), drop it into Railway as <code>RH_API_KEY</code>, redeploy. That&apos;s it — sync turns on automatically every 30 min and this page picks up the richer data without any other change.
           </p>
+          </MoreInfo>
         </div>
       </section>
 

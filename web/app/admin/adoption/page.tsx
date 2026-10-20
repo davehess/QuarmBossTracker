@@ -22,6 +22,7 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
+import MoreInfo from '@/components/MoreInfo';
 import {
   weeklyActive, activations, activationsByMonth, retention,
   corroborationByNight, versionSpread, conversionTargets, displayName,
@@ -231,11 +232,13 @@ export default async function AdminAdoptionPage() {
       {/* Blind spots — deliberately visible */}
       <section className="bg-panel border border-border/60 rounded-lg p-4">
         <h2 className="text-sm text-orange mb-2">What this page cannot see yet</h2>
-        <ul className="text-xs text-dim list-disc ml-4 space-y-1">
+        <MoreInfo>
+        <ul className="text-xs text-dim list-disc ml-4 space-y-1 mt-1">
           <li><b className="text-text">Hours &amp; sessions</b> — heartbeats aren&apos;t persisted as a time series (a deliberate storage decision), so stickiness and in-raid hours are unmeasurable until a small per-day session roll-up lands.</li>
           <li><b className="text-text">The install funnel</b> — we see the first upload, never the install, so onboarding drop-off is invisible without a first-boot ping (privacy call: guild lead&apos;s).</li>
           <li><b className="text-text">Feature usage</b> — which overlays each player actually runs (CH chain, buff queue, rolls) is unobserved; trigger fires are the only per-feature signal today.</li>
         </ul>
+        </MoreInfo>
       </section>
     </div>
   );

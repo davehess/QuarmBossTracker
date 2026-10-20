@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { ARCHETYPES } from '@/lib/comp';
 import CompEditor from './CompEditor';
+import MoreInfo from '@/components/MoreInfo';
 
 export const metadata = {
   title: 'Raid composition · Admin',
@@ -65,17 +66,19 @@ export default async function AdminCompPage() {
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">🧩 Raid comp templates</h2>
-        <p className="text-sm text-dim leading-6">
+        <div className="text-sm text-dim leading-6">
           Named target compositions the <Link href="/admin/signups" className="text-blue hover:underline">sign-ups matcher</Link> checks
           a raid against — role/archetype gap deltas at pull time (&quot;need 1 more cleric-archetype healer&quot;).
+          <MoreInfo>
           Each template is groups of slots; a slot names either a specific <code>class</code> or an
           <code> archetype</code> ({ARCHETYPES.join(' / ')}) and a <code>count</code>. Optional raid-wide
           <code> minimums</code> act as FLOORS (they raise a requirement, they don&apos;t add bodies to the headcount).
           Edits validate as you type; Save writes the whole set.
+          </MoreInfo>
           {data?.updated_by_name
             ? <> Last saved by <span className="text-text">{data.updated_by_name}</span> · {new Date(data.updated_at).toLocaleString()}.</>
             : <> Never saved — the box below is a starter you can edit.</>}
-        </p>
+        </div>
         {seeded && (
           <p className="text-xs text-orange mt-2">
             No templates saved yet — showing a starter &quot;Standard 60-man&quot;. Nothing is stored until you Save.

@@ -20,6 +20,7 @@ import { isMustEquipClicky, usableByClass, pickSlot, buildClickyMacro } from '@/
 import { computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult } from '@/lib/raidKit';
 
 import type { Metadata } from 'next';
+import MoreInfo from '@/components/MoreInfo';
 import { characterMeta } from '@/lib/pageMeta';
 
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
@@ -552,21 +553,25 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
                 </div>
               ))}
             </div>
-            <p className="text-xs text-dim mt-2">
-              Item stats plus what their worn effects grant (+ATK, Regen, Flowing Thought). An
+            <div className="text-xs text-dim mt-2">
+              Item stats plus what their worn effects grant (+ATK, Regen, Flowing Thought).
+              {/* The over-cap finding is about THIS character, so it stays in view; the rest is explanation. */}
+              {atkOverCap > 0 && (
+                <> This gear alone sums to {atkSum} worn ATK — <span className="text-orange">{atkOverCap} over the {WORN_ATK_CAP} cap</span>, so some ATK pieces are wasted and could carry AC/HP instead.</>
+              )}
+              <MoreInfo>
+              An
               item&apos;s <span className="text-text">+ATK column and its worn effect are the same stat</span> (the effect delivers
               the attack) — counted once, not summed. The in-game <span className="text-text">item-attack pool caps at {WORN_ATK_CAP}</span> and
               also counts a self-procced Avatar (+100); a shaman/beastlord&apos;s Avatar/Savagery is
               <span className="text-text"> separate spell-attack</span>, uncapped by this — so a raider near {WORN_ATK_CAP} worn ATK is the
               one to hand those buffs.
-              {atkOverCap > 0 && (
-                <> This gear alone sums to {atkSum} worn ATK — <span className="text-orange">{atkOverCap} over the {WORN_ATK_CAP} cap</span>, so some ATK pieces are wasted and could carry AC/HP instead.</>
-              )}
               {hasteUnknownItems > 0 && (
                 <> Haste % is per-item (Yelinak&apos;s 41, Hierophant&apos;s 27, …) and our eqmac mirror leaves the column empty — {hasteUnknownItems} worn-haste item{hasteUnknownItems === 1 ? '' : 's'} are missing their % until the quarmy.com harvester populates them.</>
               )}
               {' '}The full calculator (base stats, softcaps, self-buffs, clicky layers, PvP best-practice buffs) is on the roadmap.
-            </p>
+              </MoreInfo>
+            </div>
           </section>
 
           <section className="bg-panel border border-border rounded-lg p-4">
@@ -587,14 +592,17 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
                 </div>
               ))}
             </div>
-            <p className="text-xs text-dim mt-2">
-              <span className="text-text">Gear contribution only</span> — this is NOT the character&apos;s total. In-game each
+            <div className="text-xs text-dim mt-2">
+              <span className="text-text">Gear contribution only</span> — this is NOT the character&apos;s total.
+              <MoreInfo>
+              In-game each
               attribute also includes race/class base, level, and AAs, then buffs, and the whole
               thing caps at {STAT_CAP} (rising to 355 with Planes of Power AAs). So a gear sum well
               under {STAT_CAP} can still be capped in play. True <span className="text-text">255(280)</span>-style over-cap detection
               lands once we capture each raider&apos;s base stats — planned via a naked (post-death)
               stat snapshot, added to these gear sums.
-            </p>
+              </MoreInfo>
+            </div>
           </section>
 
           <section className="bg-panel border border-border rounded-lg p-4">

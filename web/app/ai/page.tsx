@@ -21,6 +21,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import AiMethodology from '@/components/AiMethodology';
+import MoreInfo from '@/components/MoreInfo';
 import AiWorkflowTree from '@/components/AiWorkflowTree';
 import {
   MILESTONES, PRINCIPLES, WORKFLOW, GATES, METHOD_NOTES, MEASURED,
@@ -117,7 +118,8 @@ export default function AiPage() {
         <p className="text-sm leading-6 text-text">
           Three levels of access, three ways in. All of them describe the same method.
         </p>
-        <ol className="space-y-2 text-sm leading-6">
+        <MoreInfo>
+        <ol className="space-y-2 text-sm leading-6 mt-2">
           <li>
             <span className="text-dim">No repo access —</span>{' '}
             fetch <a href="/ai.txt" className="text-blue hover:underline">/ai.txt</a> (plain markdown,
@@ -144,6 +146,7 @@ export default function AiPage() {
           small number of readers, and consequences that land on a schedule. Some of it would be
           overhead somewhere else.
         </p>
+        </MoreInfo>
       </section>
 
       {/* ── Timeline + rules (interactive) ─────────────────────────────── */}

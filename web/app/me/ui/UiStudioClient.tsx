@@ -16,6 +16,7 @@
 import { useMemo, useState, useTransition } from 'react';
 import { stageMacroEdit, stageMacroMove, cancelPendingEdit } from './actions';
 import type { MacroSuggestion } from '@/lib/macroSuggestions';
+import MoreInfo from '@/components/MoreInfo';
 
 export type CharUiData = {
   name: string;
@@ -200,13 +201,16 @@ export default function UiStudioClient({ chars, pending, common, suggestions, ha
             </p>
           ) : (
             <>
-              <p className="text-[10px] text-dim leading-4">
+              <div className="text-[10px] text-dim leading-4">
                 ✥ Drag a macro onto an empty cell to <b>move</b> it, onto another macro to <b>swap</b> —
-                staged like any edit and applied while the character is logged out. Hot-bar buttons
+                staged like any edit and applied while the character is logged out.
+                <MoreInfo>
+                Hot-bar buttons
                 reference socials <b>by slot</b>: after a move, re-drag that hot button in game (same as
                 rearranging the socials window by hand). Click an empty cell to create a macro in that
                 exact slot.
-              </p>
+                </MoreInfo>
+              </div>
               <div className="space-y-2">
                 {pages.map(p => (
                   <div key={p}>
