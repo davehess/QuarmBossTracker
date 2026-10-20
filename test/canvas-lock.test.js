@@ -313,7 +313,7 @@ describe('Fit to content keeps working on a locked item', () => {
   });
 });
 
-describe('Take apart passes the lock on to every piece', () => {
+describe('Take apart passes the lock on to every piece, and the panel\'s Background', () => {
   function world(p0) {
     const rects = { '#wrap > .title': [8, 4, 322, 42], '[data-wp-sect="name"]': [10, 56, 305, 19], '.mob > .zone': [10, 77, 305, 10],
       '[data-wp-sect="stats"]': [10, 88, 305, 10], '.mob > .hpbar': [10, 100, 305, 8], '.mob > .res': [10, 112, 305, 31], '.mob > .spec': [10, 150, 305, 17] };
@@ -347,6 +347,50 @@ describe('Take apart passes the lock on to every piece', () => {
     const ps = w.env._layout.panels.filter(q => q.kind === 'sect');
     expect(ps.length).toBeGreaterThan(5);
     expect(ps.some(q => q.lock)).toBe(false);
+  });
+
+  // The A gap: pieces got no `back`, fell back to the toolbar default, and the text floated over the game.
+  it('a panel with its Background ON makes every piece with it ON, tab parts included', () => {
+    const w = world({ back: true });
+    w.env.takeApart(w.whole);
+    const ps = w.env._layout.panels.filter(q => q.kind === 'sect');
+    expect(ps.length).toBeGreaterThan(5);
+    expect(ps.some(q => q.follow)).toBe(true);
+    expect(ps.every(q => q.back === true)).toBe(true);
+  });
+  it('a panel with its Background explicitly OFF keeps every piece OFF (not "follow the default")', () => {
+    const w = world({ back: false });
+    w.env.takeApart(w.whole);
+    const ps = w.env._layout.panels.filter(q => q.kind === 'sect');
+    expect(ps.every(q => q.back === false)).toBe(true);
+  });
+  it('a panel that follows the Canvas default makes pieces that follow it too', () => {
+    const w = world({});
+    w.env.takeApart(w.whole);
+    const ps = w.env._layout.panels.filter(q => q.kind === 'sect');
+    expect(ps.some(q => typeof q.back === 'boolean')).toBe(false);
+  });
+  it('the Background and the lock survive a save and a reload of the pieces', () => {
+    const w = world({ back: true, lock: true });
+    w.env.takeApart(w.whole);
+    const disk = JSON.parse(JSON.stringify({ panels: w.env._layout.panels }));
+    const back = rules().sanitize(disk).panels.filter(q => q.kind === 'sect');
+    expect(back.length).toBeGreaterThan(5);
+    expect(back.every(q => q.back === true && q.lock === true)).toBe(true);
+  });
+});
+
+describe('a saved group puts its pieces down with their Background', () => {
+  const mk = (id, y, back) => ({ id, kind: 'part', part: 'me.hp', mode: 'bar', x: 0.1, y: y / 800, w: 220, h: 34, scale: 1, back });
+  it('on, off and "follow the default" each come back as they were saved', () => {
+    const lay = { panels: [] };
+    const e = new Function('WpParts', 'window', 'num', '_layout',
+      'var MAX_PANELS = 150; var __n = 0; function newId(p) { return p + (++__n); }\n'
+      + slice('  function groupPartsOf(ps) {') + slice('  function addPart(pid, mode, X, Y, grp, o) {') + slice('  function placeGroup(pieces, X, Y) {')
+      + '\nreturn { groupPartsOf, placeGroup };')(W, { innerWidth: 1000, innerHeight: 800 }, num, lay);
+    const saved = e.groupPartsOf([mk('a', 100, true), mk('b', 140, false), mk('c', 180, undefined)]);
+    e.placeGroup(JSON.parse(JSON.stringify(saved)), 300, 300);
+    expect(lay.panels.map(p => p.back)).toEqual([true, false, undefined]);
   });
 });
 

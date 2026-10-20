@@ -1031,8 +1031,9 @@
       // the page, shown only while that tab is the one picked on the part that has the tabs (cropSections).
       style: o.style != null ? o.style : (window.WpSections ? WpSections.styleOf(key) : ''), follow: !!o.follow,
       scale: o.scale || 1, grp: o.grp || null, off: false,
-      // Take apart: a piece inherits the panel's lock (absent = free, stored as nothing).
-      lock: o.lock === true ? true : undefined };
+      // Take apart: a piece inherits the panel's lock (absent = free, stored as nothing) and its Background, so the
+      // text it had a plate behind does not float over the game. No back chosen = follows the Canvas default, as the panel did.
+      back: typeof o.back === 'boolean' ? o.back : undefined, lock: o.lock === true ? true : undefined };
   }
   // ✂ Take apart: the overlay's panel becomes one piece per section it shows right now, each at
   // the spot it has on the page, grouped so they still move together until one is pulled out
@@ -1053,7 +1054,7 @@
       if (d.id === 'empty') return;
       var r = WpSections.unionRect(doc, d.sel);
       if (made.length + tabbed.length + _layout.panels.length >= MAX_PANELS) return;
-      var opt = { w: Math.round((r ? r.width : 200) * s), h: Math.round((r ? r.height : 40) * s), pw: Math.round(p.w / s), ph: Math.round(p.h / s), scale: s, grp: grp, style: p.style || '', lock: p.lock };
+      var opt = { w: Math.round((r ? r.width : 200) * s), h: Math.round((r ? r.height : 40) * s), pw: Math.round(p.w / s), ph: Math.round(p.h / s), scale: s, grp: grp, style: p.style || '', lock: p.lock, back: p.back };
       if (d.tab && anchor) {
         opt.follow = true;
         var tp = sectPanel(p.key, d.id, num((x0 + (r ? r.left : 0) * s) / W, 0, 1, 0.3), num((y0 + (r ? r.top : 0) * s) / H, 0, 1, 0.3), opt);
