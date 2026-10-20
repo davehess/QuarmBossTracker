@@ -1,5 +1,5 @@
-// /zeal-icons/<code>: one guild's banner, icon and picture file (layout B; live with the [beta] tag
-// until the guild lead picks a layout, DECISIONS §135). A link to hand one guild leader. Public,
+// /zeal-icons/<code>: one guild's banner, icon and picture file (live with the [beta] tag, DECISIONS
+// §135; the guild index is the only layout since §383). A link to hand one guild leader. Public,
 // static, no user and no database.
 import Link from 'next/link';
 import NewPageTag from '@/components/NewPageTag';
@@ -29,7 +29,7 @@ export default async function GuildIconsPage({ params }: { params: Promise<{ cod
   return (
     <div className="mx-auto max-w-3xl py-2">
       <NewPageTag />
-      <Link href="/zeal-icons?v=b" className="text-sm text-dim no-underline hover:text-text">← All guilds</Link>
+      <Link href="/zeal-icons" className="text-sm text-dim no-underline hover:text-text">← All guilds</Link>
       <h1 className={`${H1} mt-3`}>{guild.name}</h1>
 
       <div className="mt-6 flex flex-wrap items-end justify-center gap-8 rounded-lg bg-[radial-gradient(ellipse_at_50%_120%,#3a4a2e,#141b10)] px-4 py-8">

@@ -4,6 +4,7 @@
 // from the formulas you posted in the screenshot (PPM × proc_hate + swing rate ×
 // (DMG + bonus)).
 import { redirect } from 'next/navigation';
+import MoreInfo from '@/components/MoreInfo';
 import { supabaseServer } from '@/lib/supabase-server';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
@@ -28,13 +29,15 @@ export default async function PlannerPage() {
           Pick a primary, secondary, range, and ammo from the item database; the
           planner will project hate/min from procs + swings using the Quarm formulas:
         </p>
-        <ul className="text-xs text-dim mt-3 space-y-1 list-disc list-inside">
-          <li>Main hand hate = weapon damage + damage bonus per swing (lv28+ melee)</li>
-          <li>Offhand hate = weapon damage only, no damage bonus</li>
-          <li>Procs fire at ~2 PPM at 255 DEX, independent of delay and haste</li>
-          <li>Misses do not reduce hate</li>
-          <li>Riposte / taunt / damage shields / spells / heals not modeled</li>
-        </ul>
+        <MoreInfo>
+          <ul className="text-xs text-dim mt-2 space-y-1 list-disc list-inside">
+            <li>Main hand hate = weapon damage + damage bonus per swing (lv28+ melee)</li>
+            <li>Offhand hate = weapon damage only, no damage bonus</li>
+            <li>Procs fire at ~2 PPM at 255 DEX, independent of delay and haste</li>
+            <li>Misses do not reduce hate</li>
+            <li>Riposte / taunt / damage shields / spells / heals not modeled</li>
+          </ul>
+        </MoreInfo>
         <p className="text-sm text-orange mt-4">
           UI lands once the proc-hate catalog stabilises. Tracking via the agent's
           live PROC_HATE map and the new eqemu_spells join.

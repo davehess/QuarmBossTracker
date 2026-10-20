@@ -8,6 +8,7 @@ import {
   type BuffCategory, type Role, type HpSlotState,
 } from '@/lib/buffs';
 import BuffLagButton from '@/components/BuffLagButton';
+import MoreInfo from '@/components/MoreInfo';
 
 export type BuffRow = {
   name: string;
@@ -446,9 +447,10 @@ export default function BuffsGrid({ rows, categories, spellIds = {} }: { rows: B
         </div>
       )}
 
-      <p className="text-[11px] text-dim">
+      <div className="text-[11px] text-dim">
         The first three columns are the <b>HP buff slots</b> every raider wants filled —
         <b> POTG/Aego</b>, <b>Symbol</b>, and <b>Khura/Brell</b> (hover a header for who provides it).
+        <MoreInfo>
         Aegolism fills both POTG and Symbol at once. Cells show the
         <span className="text-green"> buff&apos;s guild shorthand</span> (hover for the full name) plus its
         <span className="text-dim"> time left</span> from the raider&apos;s own Zeal feed —
@@ -460,7 +462,8 @@ export default function BuffsGrid({ rows, categories, spellIds = {} }: { rows: B
         The <b>Other</b> column counts buffs we couldn&apos;t categorize yet —
         hover it and send the names to an officer so we can map them. Target profiles per role are a
         starting point (<code>lib/buffs.ts</code>) and easy to tune.
-      </p>
+        </MoreInfo>
+      </div>
     </div>
   );
 }

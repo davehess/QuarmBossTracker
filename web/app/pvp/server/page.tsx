@@ -19,6 +19,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
 import VengeanceList from './VengeanceList';
 import { GUILD_TAG, GUILD_INGAME_NAME } from '@/lib/guild';
+import MoreInfo from '@/components/MoreInfo';
 
 export const metadata = {
   title: 'Server PvP top 10',
@@ -264,16 +265,20 @@ export default async function ServerPvpPage() {
         </h2>
         <p className="text-sm text-dim mt-2">
           Targets who&apos;ve killed Wolf Pack members, sorted by outstanding debt.
-          Hit the <span className="font-mono">📋 copy</span> button right before you land the
-          kill — it puts a line on your clipboard you can paste straight into EQ:
         </p>
-        <p className="text-xs text-dim mt-1 font-mono italic">
-          &quot;I have avenged a Wolf Pack member&apos;s death by your hand. N vengeance kills remaining&quot;
-        </p>
-        <p className="text-xs text-dim mt-1">
-          N reflects the debt AFTER the kill you&apos;re about to land — so when it reads &quot;0
-          remaining&quot;, you&apos;ve squared the score on that target.
-        </p>
+        <MoreInfo>
+          <p className="text-sm text-dim mt-1">
+            Hit the <span className="font-mono">📋 copy</span> button right before you land the
+            kill — it puts a line on your clipboard you can paste straight into EQ:
+          </p>
+          <p className="text-xs text-dim mt-1 font-mono italic">
+            &quot;I have avenged a Wolf Pack member&apos;s death by your hand. N vengeance kills remaining&quot;
+          </p>
+          <p className="text-xs text-dim mt-1">
+            N reflects the debt AFTER the kill you&apos;re about to land — so when it reads &quot;0
+            remaining&quot;, you&apos;ve squared the score on that target.
+          </p>
+        </MoreInfo>
         <div className="mt-4">
           <VengeanceList rows={vengeance} />
         </div>

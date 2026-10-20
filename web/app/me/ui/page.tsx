@@ -15,6 +15,7 @@
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import MoreInfo from '@/components/MoreInfo';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { MACRO_SUGGESTIONS } from '@/lib/macroSuggestions';
@@ -130,15 +131,17 @@ export default async function MeUiPage() {
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
         <h1 className="text-xl text-gold mb-2">🪟 UI Studio — layouts &amp; macros</h1>
-        <p className="text-sm text-dim leading-6">
+        <div className="text-sm text-dim leading-6">
           Your characters&apos; backed-up UI layouts and social macros, editable from anywhere.
+          <MoreInfo>
           Macro edits are applied by <b>Mimic on the machine that plays the character</b>, once the
           character is <b>logged out</b> (EQ rewrites its ini from memory on /camp — editing a live
           character would be clobbered). Expect ~5 minutes from staging to applied when Mimic is
           running and the character is offline. Layout (window position) editing stays in Mimic&apos;s
           UI Studio — this page covers macros, backups, and the guild&apos;s common-macro library.
-          {' '}<Link href="/me" className="text-blue underline">← back to /me</Link>
-        </p>
+          </MoreInfo>
+          <Link href="/me" className="text-blue underline">← back to /me</Link>
+        </div>
       </section>
       <UiStudioClient
         chars={charData}

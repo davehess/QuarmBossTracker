@@ -19,6 +19,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { GUILD_TAG } from '@/lib/guild';
+import MoreInfo, { FoldText } from '@/components/MoreInfo';
 
 export const metadata = {
   title: 'Overlay tuning · Admin',
@@ -304,14 +305,19 @@ export default async function OverlayTuningPage() {
         <h2 className="text-xl text-gold mb-2">🎛 Overlay tuning</h2>
         <p className="text-sm text-dim leading-6">
           Live thresholds for the Extended Target board and Mimic overlays — no bot
-          redeploy, no Mimic release. The bot re-reads within <b>~60s</b>; every running
-          Mimic picks agent-side knobs up within <b>~90s</b>. Leave a field <b>empty</b> to
-          use the built-in default (shown greyed in the box). Values are clamped to the
-          listed range on save.
+          redeploy, no Mimic release.
           {overrideCount > 0 && (
             <> Currently <span className="text-orange font-semibold">{overrideCount} override{overrideCount === 1 ? '' : 's'}</span> active.</>
           )}
         </p>
+        <MoreInfo>
+          <p className="text-sm text-dim leading-6 mt-1">
+            The bot re-reads within <b>~60s</b>; every running
+            Mimic picks agent-side knobs up within <b>~90s</b>. Leave a field <b>empty</b> to
+            use the built-in default (shown greyed in the box). Values are clamped to the
+            listed range on save.
+          </p>
+        </MoreInfo>
       </section>
 
       <form action={saveOverlayTuning} className="space-y-5">
@@ -324,7 +330,8 @@ export default async function OverlayTuningPage() {
                 const current = tuning[k.key];
                 const hasOverride = typeof current === 'number';
                 return (
-                  <label key={k.key} className="block">
+                  <div key={k.key}>
+                  <label className="block">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-sm font-semibold text-text">{k.label}</span>
                       <code className="text-[10px] text-dim">{k.key}</code>
@@ -347,8 +354,9 @@ export default async function OverlayTuningPage() {
                       />
                       <span className="text-[10px] text-dim">range {k.min}–{k.max}</span>
                     </div>
-                    <p className="text-xs text-dim mt-1 leading-5">{k.desc}</p>
                   </label>
+                  <div className="mt-1"><FoldText text={k.desc} className="text-xs text-dim leading-5" /></div>
+                  </div>
                 );
               })}
             </div>
@@ -365,7 +373,8 @@ export default async function OverlayTuningPage() {
             {FLAGS.map(f => {
               const on = Number(tuning[f.key]) >= 1;
               return (
-                <label key={f.key} className="block cursor-pointer">
+                <div key={f.key}>
+                <label className="block cursor-pointer">
                   <div className="flex items-center gap-2 mb-1">
                     <input
                       type="checkbox"
@@ -379,13 +388,19 @@ export default async function OverlayTuningPage() {
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-red/20 text-red border border-red/40">ON</span>
                     )}
                   </div>
-                  <p className="text-xs text-dim leading-5 ml-6">{f.desc}</p>
                 </label>
+                {/* A danger switch's caution stays in view; only the plain explanations fold. */}
+                <div className="ml-6">
+                  {f.danger
+                    ? <p className="text-xs text-dim leading-5">{f.desc}</p>
+                    : <FoldText text={f.desc} className="text-xs text-dim leading-5" />}
+                </div>
+                </div>
               );
             })}
 
             {/* Version floor (#74) — a number, not a toggle. Empty = unset. */}
-            <label className="block pt-2 border-t border-border/60">
+            <div className="block pt-2 border-t border-border/60">
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-sm font-semibold text-text">Minimum agent version</span>
                 <code className="text-[10px] text-dim">{VERSION_FLOOR_KEY}</code>
@@ -420,11 +435,16 @@ export default async function OverlayTuningPage() {
               ))}
               <p className="text-xs text-dim leading-5 mt-1">
                 Fleet version floor (#74). Enter the numeric form of a version — <b>major×10000 + minor×100 + patch</b>,
-                e.g. agent <b>3.3.85 → 30385</b>. Any agent below the floor pauses uploads exactly like the kill switch
-                and shows an <b>update</b> nudge on its dashboard (Mimic auto-updates handle the rest). Leave <b>empty</b> to
-                impose no floor. Conservative v1 — coordinate with Hitya. Fail-open: an agent that can’t reach the bot runs normally.
+                e.g. agent <b>3.3.85 → 30385</b>.
               </p>
-            </label>
+              <MoreInfo>
+                <p className="text-xs text-dim leading-5 mt-1">
+                  Any agent below the floor pauses uploads exactly like the kill switch
+                  and shows an <b>update</b> nudge on its dashboard (Mimic auto-updates handle the rest). Leave <b>empty</b> to
+                  impose no floor. Conservative v1 — coordinate with Hitya. Fail-open: an agent that can’t reach the bot runs normally.
+                </p>
+              </MoreInfo>
+            </div>
           </div>
         </section>
 
@@ -446,16 +466,21 @@ export default async function OverlayTuningPage() {
       <form action={saveClassSets} className="space-y-5">
         <section className="bg-panel border border-border rounded-lg p-5">
           <div className="text-base font-semibold text-text mb-1">🧩 Per-class default overlay sets</div>
-          <p className="text-xs text-dim mb-4 leading-5">
-            Which overlays a <b>brand-new</b> Mimic install turns on, per class. Applied once
-            per character the first time Mimic learns their class — <b>only</b> on installs
-            where the user has never enabled an overlay themselves, then auto-arranged around
-            their in-game windows. Existing setups are never touched. A class with nothing
-            checked gets no seeding at all.
+          <p className="text-xs text-dim mb-1 leading-5">
+            Which overlays a <b>brand-new</b> Mimic install turns on, per class.
             {craftedCount > 0 && (
               <> Currently <span className="text-orange font-semibold">{craftedCount} class set{craftedCount === 1 ? '' : 's'}</span> crafted.</>
             )}
           </p>
+          <MoreInfo className="mb-4">
+            <p className="text-xs text-dim mt-1 leading-5">
+              Applied once
+              per character the first time Mimic learns their class — <b>only</b> on installs
+              where the user has never enabled an overlay themselves, then auto-arranged around
+              their in-game windows. Existing setups are never touched. A class with nothing
+              checked gets no seeding at all.
+            </p>
+          </MoreInfo>
           <div className="space-y-3">
             {CLASSES.map(c => (
               <div key={c.key} className="border border-border rounded p-3">
@@ -496,12 +521,14 @@ export default async function OverlayTuningPage() {
 
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim leading-5">
         <div className="font-semibold text-text mb-1">How it propagates</div>
-        <ul className="list-disc list-inside space-y-1">
-          <li><b>Extended Target knobs</b> — read by the bot on the next board refresh (60s cache).</li>
-          <li><b>Off-heal / CH knobs</b> — every agent polls <code>/api/agent/overlay-tuning</code> every 90s and applies them on the next overlay tick. Requires Mimic 1.5.0+ (older Mimics silently keep their built-in defaults).</li>
-          <li><b>Class default sets</b> — ride the same 90s poll; consumed by Mimic 1.7.2-beta+ on fresh installs only (a set change never toggles overlays on an install that already has some).</li>
-          <li>Clearing a field and saving removes the override — the compiled default takes back over on the same schedule.</li>
-        </ul>
+        <MoreInfo>
+          <ul className="list-disc list-inside space-y-1 mt-1">
+            <li><b>Extended Target knobs</b> — read by the bot on the next board refresh (60s cache).</li>
+            <li><b>Off-heal / CH knobs</b> — every agent polls <code>/api/agent/overlay-tuning</code> every 90s and applies them on the next overlay tick. Requires Mimic 1.5.0+ (older Mimics silently keep their built-in defaults).</li>
+            <li><b>Class default sets</b> — ride the same 90s poll; consumed by Mimic 1.7.2-beta+ on fresh installs only (a set change never toggles overlays on an install that already has some).</li>
+            <li>Clearing a field and saving removes the override — the compiled default takes back over on the same schedule.</li>
+          </ul>
+        </MoreInfo>
       </section>
     </div>
   );

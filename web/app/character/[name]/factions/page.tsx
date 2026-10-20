@@ -31,6 +31,7 @@ import {
 } from '@/lib/capSafeReads';
 
 import type { Metadata } from 'next';
+import MoreInfo from '@/components/MoreInfo';
 import { characterMeta } from '@/lib/pageMeta';
 
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
@@ -457,8 +458,9 @@ export default async function CharacterFactionsPage(
           <span>🤝 {decoded} — Factions</span>
           <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Beta</span>
         </h2>
-        <p className="text-sm text-dim leading-6">
+        <div className="text-sm text-dim leading-6">
           Faction hits and <code>/consider</code> standings mined from this character&apos;s logs.
+          <MoreInfo>
           Classic logs don&apos;t print point values — counts below are <b>hits</b>, not points; cross-reference
           per-mob and per-quest magnitudes on{' '}
           <a href="https://www.pqdi.cc/factions" target="_blank" rel="noreferrer" className="text-blue hover:underline">PQDI&apos;s faction pages</a>.
@@ -466,20 +468,23 @@ export default async function CharacterFactionsPage(
           server said standing could not possibly get any better/worse from the kills being done — that pins your
           position against <i>that activity&apos;s</i> ceiling or floor (hover for dates). Re-running the agent over old
           logs backfills history.
-        </p>
+          </MoreInfo>
+        </div>
       </section>
 
       <section className="bg-panel border border-border rounded-lg p-4">
         <h3 className="text-sm text-orange mb-1">Faction standing ({standings.length} recorded)</h3>
-        <p className="text-xs text-dim mb-3">
+        <div className="text-xs text-dim mb-3">
           Grouped by the wars you grind them in — raising one side of a bloc usually lowers the other.
+          <MoreInfo>
           <b className="text-text"> Base</b> is your starting standing (faction base + per-race/class/deity
           adjustments from the eqemu mirror, computed for{' '}
           {[race, cls, deityId ? `deity #${deityId}` : null].filter(Boolean).join(' / ') || 'this character'});
           hover the cell for the breakdown.{' '}
           <span className="text-text"> ? rows</span> are bloc factions with no recorded hits yet — their cons-tier
           estimate is shown alongside. <code>/con</code> something on that faction in-game to pin the real tier.
-        </p>
+          </MoreInfo>
+        </div>
         {grouped.length === 0 ? (
           <div className="text-sm text-dim p-2">
             No faction hits recorded yet. They flow automatically while this character plays with the agent
@@ -720,13 +725,16 @@ export default async function CharacterFactionsPage(
 
       <section className="bg-panel border border-border rounded-lg p-4">
         <h3 className="text-sm text-orange mb-1">Consider standings ({conRows.length} mob{conRows.length === 1 ? '' : 's'})</h3>
-        <p className="text-xs text-dim mb-3">
-          Latest <b>non-hostile</b> <code>/con</code> per mob. Scowling/threatening cons are
+        <div className="text-xs text-dim mb-3">
+          Latest <b>non-hostile</b> <code>/con</code> per mob.
+          <MoreInfo>
+          Scowling/threatening cons are
           deliberately excluded — an engaged mob always cons hostile, so they carry no faction signal. A row
           here means this mob&apos;s faction visibly accepts {decoded} (and is the proof a Feign Death stuck).
           Sort by standing or observed; mob + faction link out to PQDI; an <span className="text-green">ally</span> con
           is the maximum standing for that faction.
-        </p>
+          </MoreInfo>
+        </div>
         <ConsTable rows={conRows} character={decoded} />
       </section>
 

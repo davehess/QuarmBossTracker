@@ -17,6 +17,7 @@
 // it before they have an account (docs/DESIGN-onboarding-overhaul.md §Surface 2).
 import Link from 'next/link';
 import type { Metadata } from 'next';
+import MoreInfo from '@/components/MoreInfo';
 
 export const metadata: Metadata = {
   title: 'Getting started',
@@ -156,24 +157,31 @@ export default function StartPage() {
             <dt className="text-[#f2ede1]">Live raid data never arrives, and the log repeats <code className="text-dim">EPERM</code></dt>
             <dd className="text-text">
               Right-click <code className="text-dim">eqgame.exe</code> → Properties → Compatibility, and
-              untick <b className="text-[#f2ede1]">Run this program in compatibility mode for</b>. A
-              popular crash-reduction checklist recommends XP mode, and it blocks the Zeal
-              connection outright. Check this one first.
+              untick <b className="text-[#f2ede1]">Run this program in compatibility mode for</b>.
+              <MoreInfo>
+                A popular crash-reduction checklist recommends XP mode, and it blocks the Zeal
+                connection outright. Check this one first.
+              </MoreInfo>
             </dd>
           </div>
           <div>
             <dt className="text-[#f2ede1]">miMIC cannot find Zeal at all</dt>
             <dd className="text-text">
               Reinstall miMIC <b className="text-[#f2ede1]">outside</b> your EverQuest folder.
-              Installing it inside the game folder can shadow the files Zeal needs.
+              <MoreInfo>
+                Installing it inside the game folder can shadow the files Zeal needs.
+              </MoreInfo>
             </dd>
           </div>
           <div>
             <dt className="text-[#f2ede1]">It connects, then drops immediately</dt>
             <dd className="text-text">
               Check whether EverQuest is running as administrator while miMIC is not, or the other
-              way round. They need to match. That checkbox sits on the same Compatibility tab as the
-              one above, so check them separately.
+              way round.
+              <MoreInfo>
+                They need to match. That checkbox sits on the same Compatibility tab as the
+                one above, so check them separately.
+              </MoreInfo>
             </dd>
           </div>
           <div>
