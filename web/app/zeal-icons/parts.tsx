@@ -1,6 +1,5 @@
-// Pieces shared by both /zeal-icons layouts (the catalogue and the guild pages). Server components;
+// Pieces shared by the /zeal-icons guild index and the guild pages. Server components;
 // only CopyKey runs in the browser.
-import Link from 'next/link';
 import type { ReactNode } from 'react';
 import CopyKey from './CopyKey';
 import {
@@ -147,22 +146,5 @@ export function GetYours() {
         or digits (<Code>EUR.png</Code> is <Code>^IEUR^</Code>).
       </p>
     </div>
-  );
-}
-
-// Beta only: switch between the two layouts on offer. Hidden in production builds.
-export function LayoutSwitch({ current }: { current: 'a' | 'b' }) {
-  if (process.env.NEXT_PUBLIC_IS_BETA !== '1') return null;
-  const items: [('a' | 'b'), string, string][] = [
-    ['a', 'A · one catalogue page', '/zeal-icons'],
-    ['b', 'B · a page per guild', '/zeal-icons?v=b'],
-  ];
-  return (
-    <nav className="mb-6 flex flex-wrap gap-3 text-xs text-dim" aria-label="Layout preview">
-      <span>Preview layout:</span>
-      {items.map(([v, label, href]) => (
-        <Link key={v} href={href} className={v === current ? 'text-gold' : 'hover:text-text'}>{label}</Link>
-      ))}
-    </nav>
   );
 }
