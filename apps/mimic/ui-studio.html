@@ -101,6 +101,8 @@
   #side .row{display:flex;gap:6px}
   #side .row .field{flex:1}
   #side .meta{color:#6e7681;font-size:9px;margin-top:8px}
+  #side .meta button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:2px 10px;font-size:11px;cursor:pointer}
+  #side .meta button:hover{background:#30363d}
   /* The Hotbar Pages editor is docked beside the canvas (a flex item of #content), so the canvas gives up
      width instead of being covered; the window-properties panel steps aside while it is open. */
   body.inspecting #side{display:none !important}
@@ -518,6 +520,35 @@
       if (!w.toEdgeB || w.sizeEdited) e.Bottom = w.y + w.h;
     }
     return e;
+  }
+  // The chat command that puts a Zeal bar where it is on the stage now, in the target resolution's pixels (the same numbers
+  // Save writes, _zealBarEdits). Zeal moves the bar at once and keeps it; a zeal.ini written while EverQuest runs is only
+  // read at the next start, which is why the command is offered at all. Never a command Zeal would refuse: it rejects a
+  // negative left/top, and a right/bottom that is not 0 (0 = run to the screen edge) but sits before left/top.
+  //   /assistbar position <left> <top>
+  //   /raidbars position <left> <top>                    (the box still runs to both edges)
+  //   /raidbars position <left> <top> <right> <bottom>   (0 for an edge that still runs to the screen edge)
+  function _zealBarCommand(w){
+    if (!w || (w.zealBar !== 'raidbars' && w.zealBar !== 'assistbar')) return '';
+    var e = _zealBarEdits(w);
+    var px = function(v){ v = Math.round(Number(v)); return isFinite(v) ? v : 0; };
+    var L = Math.max(0, px(e.Left)), T = Math.max(0, px(e.Top));
+    if (w.zealBar === 'assistbar') return '/assistbar position ' + L + ' ' + T;
+    if (e.Right == null && e.Bottom == null) return '/raidbars position ' + L + ' ' + T;
+    var R = e.Right == null ? 0 : Math.max(px(e.Right), L + 16);
+    var B = e.Bottom == null ? 0 : Math.max(px(e.Bottom), T + 16);
+    return '/raidbars position ' + L + ' ' + T + ' ' + R + ' ' + B;
+  }
+  // Copy text to the clipboard: navigator.clipboard, then a hidden textarea (the same two steps as the overlays' copy chips).
+  function _copyText(text, btn){
+    function fallback(){
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (err) { /* nothing more to try */ } finally { ta.remove(); }
+    }
+    try { navigator.clipboard.writeText(text).catch(fallback); } catch (err) { fallback(); }
+    if (btn) { var was = btn.textContent; btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = was; }, 1200); }
   }
 
   // ── Load + rescale ───────────────────────────────────────────────────────
@@ -1582,7 +1613,17 @@
               + '<span style="color:#e6edf3;word-break:break-all">' + escapeHtml(c.value) + '</span></div>';
       }
     }
+    var zcmd = _zealBarCommand(w);
+    if (zcmd) {
+      meta += '<hr style="border:none;border-top:1px solid #30363d;margin:8px 0">'
+            + '<div style="color:#7ee7c7;font-size:11px;margin-bottom:4px">Move it in game</div>'
+            + '<code id="zealCmdText" style="display:block;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:4px 6px;color:#e6edf3;font-size:11px;word-break:break-all;user-select:all">' + escapeHtml(zcmd) + '</code>'
+            + '<button id="zealCmdCopy" type="button" style="margin-top:4px">Copy</button>'
+            + '<div style="margin-top:4px">Paste this in EverQuest chat: Zeal moves it now and remembers it. Saving here instead takes effect next time EverQuest starts.</div>';
+    }
     document.getElementById('sideMeta').innerHTML = meta;
+    var zcb = document.getElementById('zealCmdCopy');
+    if (zcb) zcb.addEventListener('click', function(){ _copyText(zcmd, zcb); });
   }
   ['fX','fY','fW','fH'].forEach(function(id){
     document.getElementById(id).addEventListener('input', function(){

@@ -6386,10 +6386,19 @@ ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
 // per-character INI's Width/Height can desync (resized at a different
 // resolution, partially saved, etc.) so the XML size is the right cap.
 // Returns { skin, sizes: { windowName: { cx, cy, file } }, scanned: <count> }.
-ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => {
+// ONE function for both callers (UI Studio's IPC below and the Map's keep-clear outlines, _mapClearUiRects): the Map
+// asks with { withDefault: true } so a window the raider's skin does not redefine takes uifiles/default's size, as EQ does.
+// Cached per (eqDir, skin, which dirs, newest XML mtime), and re-checked at most every 20s, so the Map's polling does not
+// re-read the XML.
+const _skinSizesCache = new Map();
+function _scanSkinWindowSizes(eqDir, opts) {
   try {
     const d = String(eqDir || '').trim();
     if (!d || !fs.existsSync(d)) return { ok: false, error: 'eqDir does not exist' };
+    const withDefault = !!(opts && opts.withDefault);
+    const cacheId = d + '|' + (withDefault ? 'def' : 'skin');
+    const hit = _skinSizesCache.get(cacheId);
+    if (hit && !(opts && opts.fresh) && Date.now() - hit.at < 20000) return hit.result;
     // Resolve the active skin from eqclient.ini. Falls back to 'default' when
     // missing — that's what EQ uses too. Case-insensitive UISkin lookup
     // because some clients write USkin / UI_SKIN variants.
@@ -6403,14 +6412,30 @@ ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => {
       } catch {}
     }
     const skinDir = path.join(d, 'uifiles', skin);
-    if (!fs.existsSync(skinDir) || !fs.statSync(skinDir).isDirectory()) {
+    const isDir = (p) => { try { return fs.existsSync(p) && fs.statSync(p).isDirectory(); } catch { return false; } };
+    const dirs = [skinDir];
+    if (withDefault && skin.toLowerCase() !== 'default') dirs.push(path.join(d, 'uifiles', 'default'));
+    const liveDirs = dirs.filter(isDir);
+    if (!liveDirs.length) {
       return { ok: true, skin, sizes: {}, scanned: 0, note: 'skin dir missing: ' + skinDir };
     }
+    const entries = [];   // skin dir first, so its definition of a window beats the default's
+    let newest = 0;
+    for (const dir of liveDirs) {
+      for (const f of fs.readdirSync(dir)) {
+        if (!/\.xml$/i.test(f)) continue;
+        const fp = path.join(dir, f);
+        let mt = 0;
+        try { mt = fs.statSync(fp).mtimeMs || 0; } catch { /* read below decides */ }
+        if (mt > newest) newest = mt;
+        entries.push({ f, fp });
+      }
+    }
+    const sig = skin + '|' + liveDirs.length + '|' + entries.length + '|' + newest;
+    if (hit && hit.sig === sig) { hit.at = Date.now(); return hit.result; }
     const sizes = {};
     let scanned = 0;
-    const files = fs.readdirSync(skinDir).filter(f => /\.xml$/i.test(f));
-    for (const f of files) {
-      const fp = path.join(skinDir, f);
+    for (const { f, fp } of entries) {
       let xml;
       try { xml = fs.readFileSync(fp, 'utf8'); } catch { continue; }
       scanned++;
@@ -6449,11 +6474,14 @@ ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => {
         }
       }
     }
-    return { ok: true, skin, sizes, scanned };
+    const result = { ok: true, skin, sizes, scanned };
+    _skinSizesCache.set(cacheId, { at: Date.now(), sig, result });
+    return result;
   } catch (err) {
     return { ok: false, error: err && err.message };
   }
-});
+}
+ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => _scanSkinWindowSizes(eqDir, { fresh: true }));
 
 ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
   try {
@@ -7934,7 +7962,13 @@ function _mapClearUiRects(char) {
     let phys = eq ? eq.client : null;
     try { if (eq && process.platform === 'win32') phys = screen.dipToScreenRect(null, eq.client); } catch { /* DIPs it is */ }
     const client = phys && phys.width > 0 && phys.height > 0 ? { w: Math.round(phys.width), h: Math.round(phys.height) } : null;
-    const r = visibleUiRects(fs.readFileSync(file, 'utf8'), { skip: _UI_PHANTOM_RX, client });
+    // A window the ini gives no Width/Height takes the skin's design size (the same scan UI Studio uses), not a flat stand-in.
+    const skinSizes = {};
+    try {
+      const scan = _scanSkinWindowSizes(path.dirname(file), { withDefault: true });
+      for (const k of Object.keys((scan && scan.ok && scan.sizes) || {})) skinSizes[k] = { w: scan.sizes[k].cx, h: scan.sizes[k].cy };
+    } catch { /* no skin sizes: the stand-in stays */ }
+    const r = visibleUiRects(fs.readFileSync(file, 'utf8'), { skip: _UI_PHANTOM_RX, client, skinSizes });
     const res = r.res || client;
     let rects = r.rects.slice();
     try {
