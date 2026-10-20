@@ -360,7 +360,9 @@ describe('pieces, round three', () => {
   });
   it('a piece keeps its width and takes the height it needs when its mode changes; ↕ Fit does it on demand', () => {
     const c = stripJs(canvas);
-    expect(c).toMatch(/if \(nm !== p\.mode && sz\) \{ if \(ringy \|\| !p\.w\) p\.w = sz\[0\]; p\.h = sz\[1\]; \}/);
+    // (moved into boxForMode when the lock landed; test/canvas-lock.test.js runs it)
+    expect(c).toMatch(/return \{ w: \(ringy \|\| !p\.w\) \? sz\[0\] : p\.w, h: sz\[1\] \};/);
+    expect(c).toMatch(/if \(nb\) \{ p\.w = nb\.w; p\.h = nb\.h; \}/);
     expect(c).toMatch(/if \(fit\) \{ var fid = p\.id; setTimeout\(function \(\) \{ fitPiece\(fid\); \}, 0\); \}/);
     expect(c).toContain('data-fit title="Make it as tall as what it shows right now"');
     expect(c).toMatch(/pt\.style\.height = 'auto';\s*var need = Math\.ceil\(pt\.getBoundingClientRect\(\)\.height\) \+ 4;/);
