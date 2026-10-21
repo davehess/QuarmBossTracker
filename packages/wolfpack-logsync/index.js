@@ -2727,6 +2727,102 @@ function mobHitTypesFor(mobName) {
   return { seen, slash: rec.slash, pierce: rec.pierce, blunt: rec.blunt, max: { ...rec.max }, verbs: { ...rec.verbs } };
 }
 
+// ── Does it really see your invis? Your own /consider while invisible is the test (the guild lead, 2026-10-21) ──────
+// "WHEN SOMETHING can see invis but doesn't we should mark CAN see invis, and then cancel it out when it doesn't by con
+// and invis". The catalog's see_invis is a CLAIM; a con made while you are invisible is the evidence.
+// The server (EQMacEmu zone/client.cpp Client::GetFactionLevel) returns FACTION_INDIFFERENTLY for a mob that
+// cannot see you — `if (IsInvisible(tnpc)) return FACTION_INDIFFERENTLY;` — BEFORE it looks at faction. So, invisible:
+//   · "regards you indifferently" = cannot see you, OR its faction toward you is naturally indifferent. Firm only
+//     when this session already conned the same name NON-indifferent while visible (the baseline below); else soft.
+//   · "glares at you threateningly" = no evidence: Handle_OP_Consider turns a mob that has YOU on its hate list
+//     threatening whether or not it can see you.
+//   · any other tier = it saw you (a mob that cannot would have said indifferent).
+// Known holes, all rare: NPCs with a NEGATIVE primary faction go through GetSpecialFactionCon, which never checks
+// invisibility (they read "sees you" regardless); no-combat zones and pets con indifferent regardless.
+// Only PLAIN invisibility is tested. Invisibility versus Undead has a server quirk (the check ignores the target's body
+// type), and hide/sneak have no buff to read.
+// Local only, in memory: the Hits chip's pattern. Keyed by name AND spawn id when the Zeal target proves it, since a
+// see_invis above 1 is a percentage rolled once per spawn, and the mirror flattens it to a boolean.
+const SELF_INVIS_SPELLS = new Set([
+  'invisibility', 'improved invisibility', 'invisibility cloak', 'camouflage', 'superior camouflage',
+  'improved superior camouflage', 'gather shadows', 'shroud of stealth', 'veil of elements', 'foliage shield',
+  'skin of the shadow', 'shauri`s sonorous clouding', 'selo`s song of travel', 'vampyre invis', 'hide in a can',
+]);
+const SIGHT_OBS_MAX = 300;
+const SIGHT_OBS_TTL_MS = 60 * 60_000;
+const SIGHT_LINE_FRESH_MS = 30_000;
+const SIGHT_ZEAL_FRESH_MS = 20_000;
+const _sightObs = new Map();        // mobCaseKey|spawnId (0 = latest by name) → { saw, firm, rank, at, id }
+const _sightBaseline = new Map();   // charLower|mobCaseKey → { rank, at } — a NON-indifferent con while visible
+// true / false for "is this character invisible right now", null when Zeal is not live enough to say.
+function selfInvisState(character, now) {
+  const want = String(character || '').toLowerCase();
+  for (const ch of Object.keys(_zealState)) {
+    if (ch.toLowerCase() !== want) continue;
+    const st = _zealState[ch];
+    if (!st || !Array.isArray(st.buffs) || !(st.updatedAt && now - st.updatedAt <= SIGHT_ZEAL_FRESH_MS)) return null;
+    for (const b of st.buffs) {
+      if (!b || !b.name || !SELF_INVIS_SPELLS.has(String(b.name).toLowerCase().replace(/['’]/g, '`'))) continue;
+      if (typeof b.ticks === 'number' && b.ticks > 0 && b.ticks <= 1) continue;   // its last tick: "starting to appear" has fired
+      return true;
+    }
+    return false;
+  }
+  return null;
+}
+// rank is CON_STANDINGS' (4 indifferent, 1 threateningly). null = no evidence either way.
+function classifyInvisCon(rank, baselineRank) {
+  if (rank === 4) return { saw: false, firm: baselineRank != null && baselineRank !== 4 && baselineRank !== 1 };
+  if (rank === 1) return null;
+  return { saw: true, firm: true };
+}
+function noteSightCon(line, character, nowMs) {
+  const now = nowMs || Date.now();
+  if (!line || !character || line.indexOf(' you') === -1) return null;
+  const m = line.match(_CON_RX);
+  if (!m) return null;
+  const mob = m[1].trim();
+  if (!mob || mob.length > 64 || /['"‘’]/.test(mob) || /\b(?:says|tells|shouts|auctions)\b/i.test(mob)) return null;
+  const entry = CON_STANDINGS.find(([p]) => p === m[2].toLowerCase());
+  const ts = parseEqTimestamp(line);
+  if (!entry || !ts || Math.abs(now - ts.getTime()) > SIGHT_LINE_FRESH_MS) return null;   // a live con only, never a replayed one
+  // A player cons "ally" whatever it can see, so only a target the catalog knows (or an article name) is a test.
+  if (!_knownNpcNotPlayer(mob) && !/^(?:an?|the)\s/i.test(mob)) return null;
+  const invis = selfInvisState(character, now);
+  if (invis === null) return null;
+  const mk = _mobCaseKey(mob);
+  const bk = String(character).toLowerCase() + '|' + mk;
+  const rank = entry[2];
+  if (!invis) {
+    if (rank !== 4 && rank !== 1) {
+      _sightBaseline.delete(bk);
+      _sightBaseline.set(bk, { rank, at: now });
+      if (_sightBaseline.size > SIGHT_OBS_MAX) _sightBaseline.delete(_sightBaseline.keys().next().value);
+    }
+    return null;
+  }
+  const base = _sightBaseline.get(bk);
+  const cls = classifyInvisCon(rank, base && now - base.at <= 6 * 3_600_000 ? base.rank : null);
+  if (!cls) return null;
+  const id = Number(_provableTargetId(character, mob)) || 0;
+  const rec = { saw: cls.saw, firm: cls.firm, rank, at: now, id };
+  for (const k of id ? [mk + '|' + id, mk + '|0'] : [mk + '|0']) {
+    _sightObs.delete(k);
+    _sightObs.set(k, rec);
+  }
+  while (_sightObs.size > SIGHT_OBS_MAX) _sightObs.delete(_sightObs.keys().next().value);
+  return rec;
+}
+// What Target Info shows for the current target: this spawn's own test when the Zeal id proves it, else the latest test
+// of that name (`exact` false). null until one was made, or after an hour.
+function seeInvisObsFor(mobName, spawnId) {
+  const mk = _mobCaseKey(mobName), id = Number(spawnId) > 0 ? Number(spawnId) : 0;
+  const exactRec = id ? _sightObs.get(mk + '|' + id) : null;
+  const rec = exactRec || _sightObs.get(mk + '|0');
+  if (!rec || Date.now() - rec.at > SIGHT_OBS_TTL_MS) return null;
+  return { saw: rec.saw, firm: rec.firm, at_ms: rec.at, exact: !!exactRec };
+}
+
 // ── Your own timers pause while you are logged out (the guild lead, 2026-10-13) ───────────────────
 // "My buffs on my pet and myself should pause if I log out. When I log back in I should have a lot more time on
 // this. And these should be synced to the database so if I logged on from a different machine or if my
@@ -43498,6 +43594,7 @@ function _pastMobInfo(e, now = Date.now()) {
     target_mana: null, target_lastcast: null, target_player: null, target_npc_ht: null, target_timers: null,
     target_lull: lullVerdictFor(e.name, zone),
     target_hits: mobHitTypesFor(e.name),
+    target_invis: seeInvisObsFor(e.name, null),
     target_hist_key: e.key,
     past: { key: e.key, firstMs: e.firstMs, lastMs: e.lastMs, minHp: e.minHp, killedMs: e.killedMs || null, killedHow: e.killedHow || null, restored: !!e.restored },
   };
@@ -55037,6 +55134,8 @@ function buildMobInfo() {
     // How this mob hits, from the melee verbs seen: { seen, slash, pierce, blunt, max, verbs } or
     // null until one was seen (noteMobMelee). Local only; the overlay draws nothing for null.
     target_hits:    mobHitTypesFor(st.target_name),
+    // Whether a /consider made while invisible showed it seeing you: { saw, firm, at_ms, exact } or null (noteSightCon).
+    target_invis:   seeInvisObsFor(st.target_name, _curIdForRelay),
     // Which Target Info history entry this target is, so the pager steps past it (null when none).
     target_hist_key: _tgtLiveKey(st),
   };
@@ -60865,6 +60964,7 @@ async function main() {
         // …and its level phrase (Target Info's player level / range).
         try { noteConsiderLevel(line, b.character); } catch (e) { void e; }
         try { _mapNoteCon(line, b.character); } catch (e) { void e; }   // …and its faction tier (the Map's aggro-ring colour)
+        try { noteSightCon(line, b.character); } catch (e) { void e; }   // …and, while you are invisible, whether it saw you
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
         // A hail, yours or one you witnessed: the Command Center's hail board (the guild lead,

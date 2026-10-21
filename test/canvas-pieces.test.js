@@ -300,7 +300,7 @@ describe('pieces, round three', () => {
     expect(g('target.statgrid', d).items.map(i => [i.name, i.text, i.color])).toEqual([
       ['AC', 200, '#d2a8ff'], ['MR', 46, '#56d364'], ['FR', 160, '#f85149'], ['CR', 80, '#ffa657'], ['PR', 46, '#56d364'], ['DR', '?', '#6e7681']]);
     expect(g('target.specials', d).items.map(i => [i.name, i.color])).toEqual([['Summon', '#f85149'], ['Unslowable', '#58a6ff'], ['Magical', '#6e7681']]);
-    expect(g('target.sight', d).items.map(i => i.name)).toEqual(['Sees Invis', 'Sees Improved Hide']);
+    expect(g('target.sight', d).items.map(i => i.name)).toEqual(['Can see invis', 'Sees Improved Hide']);
     expect(g('target.sight', { mobInfo: { mob: { undead: true, see_invis: true } } }).items).toEqual([]);   // undead: regular invis is not the question
     expect(g('target.pqdi', d)).toMatchObject({ url: 'https://www.pqdi.cc/npc/204045' });
     expect(W.render(W.byId['target.pqdi'], 'readout', g('target.pqdi', d), now)).toMatch(/class="ctl pt-act" data-url="https:\/\/www\.pqdi\.cc\/npc\/204045" data-wp-interact/);

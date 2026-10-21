@@ -781,13 +781,18 @@
   P('target.sight', 'target', 'Sees through invis or hide', 'state', 'list',
     function (d) {
       var m = mob(d); if (!m) return null; var it = [];
-      if (m.undead) { if (m.see_invis_undead) it.push({ name: 'Sees Invis vs Undead', color: C.orange }); }
-      else if (m.see_invis) it.push({ name: 'Sees Invis', color: C.orange });
+      var o = d.mobInfo.target_invis;   // a /consider made while invisible (the agent's noteSightCon): the claim, proved or cancelled
+      var at = '';
+      if (o && o.at_ms) { var t = new Date(o.at_ms); at = ' · con ' + ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2); }
+      if (m.undead) { if (m.see_invis_undead) it.push({ name: 'Can see invis vs undead', color: C.orange }); }
+      else if (at && o.saw) it.push({ name: 'Sees invis ✓' + at, color: C.orange });
+      else if (at && m.see_invis) it.push({ name: (o.firm ? "Can't see your invis" : "Didn't react to your invis") + at, color: C.dim });
+      else if (m.see_invis) it.push({ name: 'Can see invis', color: C.orange });
       if (m.see_improved_hide) it.push({ name: 'Sees Improved Hide', color: C.orange });
       else if (m.see_hide) it.push({ name: 'Sees Hide', color: C.orange });
       return { items: it, empty: 'invis and hide work' };
     },
-    { items: [{ name: 'Sees Invis', color: C.orange }] }, { short: 'Sight', mode: 'chips' });
+    { items: [{ name: 'Can see invis', color: C.orange }] }, { short: 'Sight', mode: 'chips' });
   P('target.pqdi', 'target', 'PQDI link', 'state', 'value',
     function (d) { var m = mob(d); return m && m.id ? { text: '🔗 PQDI', url: 'https://www.pqdi.cc/npc/' + m.id, color: '#d2a8ff' } : null; },
     { text: '🔗 PQDI', color: '#d2a8ff' }, { short: 'PQDI' });
