@@ -119,6 +119,12 @@
   .tab .ctl.x:hover{color:#f85149;background:rgba(248,81,73,0.18)}
   :is(body.edit, .panel.one) .grip{display:block;position:absolute;right:0;bottom:0;width:16px;height:16px;
     line-height:16px;text-align:center;font-size:11px;color:#58a6ff;cursor:nwse-resize}
+  /* Resize corner ON (⚙ → Position): the ◢ stays on the piece while playing, on the hover handshake like the ✥ (it carries
+     data-wp-interact), so the rest of the piece stays click-through. Locked pieces show none; a cut piece has no ◢ at all. */
+  .panel.rc:not(.plock):not(.sect) > .grip{display:block;position:absolute;right:0;bottom:0;width:16px;height:16px;
+    line-height:16px;text-align:center;font-size:11px;color:#58a6ff;cursor:nwse-resize;
+    background:rgba(13,17,23,0.6);border-radius:3px 0 0 0;opacity:0.6}
+  .panel.rc:not(.plock):not(.sect) > .grip:hover{opacity:1}
   /* The right and bottom EDGES size one direction (width alone, height alone), like an overlay window's edges
      (the guild lead, 2026-10-21: "◢ grip and edge drags"). Page frames only: a piece has its ◢, and a cut piece
      follows its section. The ◢ sits over the corner where the two meet. */
@@ -489,6 +495,10 @@
   // "Keep inside the screen" OFF: one saved flag, `free: true`; absent means kept inside (today's clamp), so a
   // layout saved before this reads unchanged. See yBounds for what free allows.
   function isFree(q) { return !!(q && q.free === true); }
+  // "Resize corner" ON: one saved flag, `corner: true`; absent means the ◢ shows only while arranging or editing one item,
+  // so a layout saved before this reads unchanged. ON keeps the ◢ on the piece in PLAY too (a cut piece sizes by its
+  // section, so it never has one). A locked piece shows none: the lock freezes size as well as place.
+  function isCorner(q) { return !!(q && q.corner === true); }
   // Lock or unlock a set at once (the selection bar); an unlocked item stores nothing.
   function setLock(ps, on) { ps.forEach(function (q) { if (on) q.lock = true; else delete q.lock; }); }
   // 'all' / 'none' / 'some' of a set — what the selection bar's button should offer next.
@@ -654,6 +664,8 @@
       if (src1.lock === true) o.lock = true;
       // Not kept inside the screen: stored only when chosen (absent = kept inside), for every kind.
       if (src1.free === true) o.free = true;
+      // Resize corner while playing: stored only when chosen (absent = the ◢ shows only while arranging / editing one).
+      if (src1.corner === true) o.corner = true;
       // Opacity, every kind's own: stored only when below solid (absent = solid).
       var al = cleanAlpha(src1.alpha);
       if (al !== undefined) o.alpha = al;
@@ -990,7 +1002,7 @@
     root.addEventListener('mousedown', function (ev) {
       if (ev.target.closest('.ctl')) return;
       if (ev.target === mv) { startDrag(ev, p.id, 'move', true); return; }
-      if (ev.target === grip) { startDrag(ev, p.id, 'size'); return; }
+      if (ev.target === grip) { startDrag(ev, p.id, 'size', false, '', true); return; }
       if (ev.target === er) { startDrag(ev, p.id, 'size', false, 'x'); return; }
       if (ev.target === eb) { startDrag(ev, p.id, 'size', false, 'y'); return; }
       startDrag(ev, p.id, 'move');
@@ -1178,7 +1190,7 @@
       // Take apart: a piece inherits the panel's lock (absent = free, stored as nothing) and its Background, so the
       // text it had a plate behind does not float over the game. No back chosen = follows the Canvas default, as the panel did.
       back: typeof o.back === 'boolean' ? o.back : undefined, lock: o.lock === true ? true : undefined,
-      free: o.free === true ? true : undefined };
+      free: o.free === true ? true : undefined, corner: o.corner === true ? true : undefined };
   }
   // ✂ Take apart: the overlay's panel becomes one piece per section it shows right now, each at
   // the spot it has on the page, grouped so they still move together until one is pulled out
@@ -1199,7 +1211,7 @@
       if (d.id === 'empty') return;
       var r = WpSections.unionRect(doc, d.sel);
       if (made.length + tabbed.length + _layout.panels.length >= MAX_PANELS) return;
-      var opt = { w: Math.round((r ? r.width : 200) * s), h: Math.round((r ? r.height : 40) * s), pw: Math.round(p.w / s), ph: Math.round(p.h / s), scale: s, grp: grp, style: p.style || '', lock: p.lock, free: p.free, back: p.back };
+      var opt = { w: Math.round((r ? r.width : 200) * s), h: Math.round((r ? r.height : 40) * s), pw: Math.round(p.w / s), ph: Math.round(p.h / s), scale: s, grp: grp, style: p.style || '', lock: p.lock, free: p.free, corner: p.corner, back: p.back };
       if (d.tab && anchor) {
         opt.follow = true;
         var tp = sectPanel(p.key, d.id, num((x0 + (r ? r.left : 0) * s) / W, 0, 1, 0.3), num((y0 + (r ? r.top : 0) * s) / H, 0, 1, 0.3), opt);
@@ -1241,6 +1253,7 @@
       // Every kind has its own Background; the Canvas default speaks only for one that has not chosen.
       e.root.classList.toggle('back', backOf(p, canvasDefaultBack()));
       e.root.classList.toggle('plock', isLocked(p));
+      e.root.classList.toggle('rc', isCorner(p));
       e.root.style.setProperty('--pa', String(alphaOf(p)));
       e.root.classList.toggle('pfade', alphaOf(p) < 1);
       e.root.classList.toggle('fitempty', !!_fitEmpty[p.id]);
@@ -1357,8 +1370,9 @@
   var _drag = null, _lastClick = null;
   // anyTime: the always-on ✥, which moves a panel even while locked.
   // axis: an edge drag sizes one direction only ('x' = width, 'y' = height); the ◢ corner sizes both.
-  function startDrag(ev, id, mode, anyTime, axis) {
-    if ((!isEd(id) && !anyTime) || ev.button !== 0) return;
+  // playCorner: the ◢ a piece keeps by its Resize corner switch, which sizes it while playing (a click on it does nothing else).
+  function startDrag(ev, id, mode, anyTime, axis, playCorner) {
+    if ((!isEd(id) && !anyTime && !(playCorner && isCorner(panelById(id)))) || ev.button !== 0) return;
     ev.preventDefault(); ev.stopPropagation();
     var e = _els[id];
     // A panel whose page has its builder open goes back to its own size before it is moved or sized.
@@ -1794,7 +1808,11 @@
       + '<button class="btn' + (!isFree(p) ? ' on' : '') + '" data-free title="' + (isFree(p)
         ? 'It may sit mostly off any edge of the screen; only a small strip of it must stay on screen so it can be grabbed. Press to keep it inside again.'
         : 'It is kept inside the screen. Press to let it sit partly off any edge (a small strip stays on screen to grab).') + '">'
-      + (isFree(p) ? 'Keep inside the screen: off' : 'Keep inside the screen: on') + '</button></div>';
+      + (isFree(p) ? 'Keep inside the screen: off' : 'Keep inside the screen: on') + '</button>'
+      + (p.kind === 'sect' ? '' : '<button class="btn' + (isCorner(p) ? ' on' : '') + '" data-corner title="' + (isCorner(p)
+        ? 'A ◢ stays on its bottom-right corner while you play, so you can drag it to size. A locked piece hides it. Press to take it away.'
+        : 'Show a ◢ on its bottom-right corner while you play, so you can drag it to size (it follows Keep inside the screen).') + '">'
+        + (isCorner(p) ? 'Resize corner: on' : 'Resize corner: off') + '</button>') + '</div>';
     menuEl.innerHTML = h;
     menuEl.classList.add('show');
     _menuAnchor = anchor;
@@ -2090,6 +2108,7 @@
     else if (t.hasAttribute('data-color')) { p.color = t.getAttribute('data-color'); }
     else if (t.hasAttribute('data-back')) { p.back = t.getAttribute('data-back') === '1'; }
     else if (t.hasAttribute('data-lock')) { setLock([p], !isLocked(p)); }
+    else if (t.hasAttribute('data-corner')) { if (isCorner(p)) delete p.corner; else p.corner = true; }
     else if (t.hasAttribute('data-free')) { if (isFree(p)) delete p.free; else p.free = true; }
     else if (t.hasAttribute('data-bulk')) {
       // The group-level row: one choice for every piece that shares this one's group.

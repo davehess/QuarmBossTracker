@@ -110,7 +110,7 @@ describe('Keep inside the screen also governs RESIZING', () => {
     expect(c).toMatch(/gfree \? 4000 : W - d\.box\.x/);
     expect(c).toMatch(/Math\.min\(sizeMax\(p, 3000, H - top\), need\)/);
     expect(c).toMatch(/pfree \? -Infinity : sr\.y/);
-    expect(c).toMatch(/lock: p\.lock, free: p\.free, back: p\.back/);
+    expect(c).toMatch(/lock: p\.lock, free: p\.free, corner: p\.corner, back: p\.back/);
     expect(c).toMatch(/free: o\.free === true \? true : undefined/);
     expect(c).toMatch(/Resizing follows/);
   });
