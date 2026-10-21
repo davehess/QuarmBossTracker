@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-9-21-2026-10-21',
+    title: 'Raid routes',
+    version: 'Web 1.9.21',
+    date: '2026-10-21',
+    headline: 'A new page lays our recorded raids in a zone over each other and averages them into one route, with the time of each leg and what we cleared on the way.',
+    features: [
+      { name: 'Raid routes (beta)', blurb: 'Pick a zone and the nights to include. Each night\'s raid is traced from the first mob we pulled to every named kill, and a gold line shows the average route with numbered stops.' },
+      { name: 'Time from first engage', blurb: 'Each night\'s clock starts at the first pull, not at zone-in, and each night says how much was cleared before the first named, so a pre-cleared night can be left out.' },
+      { name: 'What we clear', blurb: 'Each leg says how many mobs we killed and how long the clearing took, and the map marks the spawn points we cleared and on how many nights.' },
+      { name: 'Save a route', blurb: 'Officers can save the averaged route for a zone so Mimic can draw it on the in-game map in a later update.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-9-20-2026-10-21',
     title: 'Raid timeline for the Zek fights',
     version: 'Web 1.9.20 · Bot 3.2.17 · Agent 3.8.40 beta',
