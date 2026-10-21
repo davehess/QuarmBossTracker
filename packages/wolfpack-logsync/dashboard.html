@@ -3902,7 +3902,7 @@ function renderReplayStatus(s) {
     h += '<span style="color:var(--gold)">⏪ Replaying ' + esc(r.logLabel || 'log') + ' <span class="dim">· ' + esc(r.pace === 'fast' ? 'fast' : 'real-time') + '</span></span>';
     h += '<button type="button" id="replayStopBtn" style="background:#3d1418;color:#ff7b72;border:1px solid #6e2a2f;padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">■ Stop</button>';
     h += '</div>';
-    h += '<div style="margin-top:5px">' + (r.played || 0) + ' / ' + (r.total || 0) + ' lines · ' + (r.fired || 0) + ' fired</div>';
+    h += '<div style="margin-top:5px">' + (r.played || 0) + ' / ' + (r.total || 0) + ' lines · ' + (r.fired || 0) + ' fired · <a href="' + esc(wpReplayWebHref(r.fromMs, r.toMs)) + '" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="color:var(--blue);text-decoration:none" title="Open the raid replay on wolfpack.quest for this window">🎬 raid replay ↗</a></div>';
     h += '<div style="width:100%;background:var(--bg);border-radius:3px;height:6px;overflow:hidden;margin-top:4px"><div style="background:var(--gold);height:100%;width:' + pct + '%"></div></div>';
   } else {
     var label, color;
@@ -4634,6 +4634,23 @@ function wpMpLink(a) {
 // learns them, never per poll), so idle polls don't rewrite it and the user's
 // from/to typing + datetime focus survive. The volatile progress/results live in the nested
 // #wpReplayStatus placeholder filled by renderReplayStatus() every poll.
+// The website's raid replay for a window: /raid/session?from=<iso>&to=<iso> (web/app/raid/session/page.tsx).
+// It wants both ends and a window under 24h (makeWindow); anything else it answers with its session picker,
+// so that is what a missing or unusable window links to. Opens via wpMpLink (Mimic's open-external).
+function wpReplayWebHref(fromMs, toMs) {
+  var base = 'https://wolfpack.quest/raid/session';
+  if (!isFinite(fromMs) || !isFinite(toMs) || !(toMs > fromMs) || toMs - fromMs > 24 * 3600 * 1000) return base;
+  return base + '?from=' + encodeURIComponent(new Date(fromMs).toISOString()) + '&to=' + encodeURIComponent(new Date(toMs).toISOString());
+}
+// Keeps the form's link in step with the From/To inputs. The link is static markup in the byte-stable form;
+// only its href is touched, from the inputs' LOCAL wall-clock values (same basis the Start button reads).
+function wpReplayLinkSync() {
+  var a = document.getElementById('replayWebLink');
+  if (!a) return;
+  var f = document.getElementById('replayFrom'), t = document.getElementById('replayTo');
+  var href = wpReplayWebHref(f && f.value ? new Date(f.value).getTime() : NaN, t && t.value ? new Date(t.value).getTime() : NaN);
+  if (a.getAttribute('href') !== href) a.setAttribute('href', href);
+}
 function renderReplayCard(s) {
   var h = '<div class="grid">';
   h += '<div class="card wide"><h2>⏪ Replay <span class="dim" style="font-size:11px;font-weight:normal">· walk part of a log back through the real trigger pipeline — hear the TTS, nothing uploads</span></h2>';
@@ -4662,13 +4679,14 @@ function renderReplayCard(s) {
     }
     h += '</select></label>';
     if (_rlsHasLow) h += '<span class="dim" style="font-size:11px;padding-bottom:5px">' + wpLowToggleHtml(_rlsLow) + '</span>';
-    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">From</span><input type="datetime-local" step="1" id="replayFrom" style="' + _inStyle + '"></label>';
-    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">To</span><input type="datetime-local" step="1" id="replayTo" style="' + _inStyle + '"></label>';
+    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">From</span><input type="datetime-local" step="1" id="replayFrom" oninput="wpReplayLinkSync()" style="' + _inStyle + '"></label>';
+    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">To</span><input type="datetime-local" step="1" id="replayTo" oninput="wpReplayLinkSync()" style="' + _inStyle + '"></label>';
     h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">Pace</span><span style="display:flex;gap:10px;padding-top:4px">'
        + '<label style="cursor:pointer"><input type="radio" name="replayPace" value="real" checked> real-time</label>'
        + '<label style="cursor:pointer"><input type="radio" name="replayPace" value="fast"> fast</label></span></label>';
     h += '<button type="button" id="replayStartBtn" style="background:#1c2733;color:var(--gold);border:1px solid var(--border);padding:5px 14px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px">▶ Start</button>';
     h += '</div>';
+    h += '<div style="font-size:11px;margin-top:6px"><a id="replayWebLink" href="https://wolfpack.quest/raid/session" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="color:var(--blue);text-decoration:none" title="Open the raid replay on wolfpack.quest for the From/To window above (sign-in required; windows over 24 hours open the session picker)">🎬 Raid replay on wolfpack.quest ↗</a></div>';
     h += '<div id="replayMsg" class="dim" style="font-size:11px;margin-top:6px;min-height:14px"></div>';
     h += '<div id="wpReplayStatus"></div>';
     h += '<div class="dim" style="font-size:11px;margin-top:6px">Replay fires are rehearsals — they speak + flash with a ⏪ tag but never upload, relay, or touch your live cooldowns. One replay at a time; blocked during a live fight. Real-time hears the fight as it happened; fast pauses briefly on each fire for a quick audit.</div>';
@@ -8966,6 +8984,7 @@ function _wpApplyReplayPrefill(attempt) {
   if (!f || !t) { if (attempt < 40) setTimeout(function () { _wpApplyReplayPrefill(attempt + 1); }, 150); return; }
   if (pf.from) f.value = _wpToLocalInput(pf.from);
   if (pf.to)   t.value = _wpToLocalInput(pf.to);
+  wpReplayLinkSync();
   window._wpReplayPrefill = null;   // one-shot
 }
 (function () {
