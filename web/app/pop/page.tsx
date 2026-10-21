@@ -62,6 +62,13 @@
 // ?pclass=enc,wiz · ?psort=<column> · ?pdir=asc|desc — the spell-needs table's class filter and column sort
 // (the guild lead, 2026-10-09). Server-side, validated against whitelists in web/lib/popSpellsView.ts, carried by
 // every hrefFor link; unset = every class, highest level first.
+//
+// ?v=b | c — the sidebar previews (the guild lead, 2026-10-21: "Need a sidebar for the pop flags page, the essences
+// of power should be minimized and under the elementals section"), beta comparison; web/lib/popSidebar.ts. b is a
+// navigation sidebar on the left (the view buttons move into it, plus a jump link to every tier and plane); c is a
+// your-progress sidebar on the right (your characters' next step, what to raid next, the essences queue). In both
+// the Essences of Power card is folded at the foot of the Elemental tier. Carried by every hrefFor link (with
+// ?demo=1); no ?v= is the page exactly as production has it.
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -102,6 +109,14 @@ import { POP_SCOPES, resolvePopView } from '@/lib/popScope';
 import { loadSpellInfo, spellIdsOf, type SpellInfo } from '@/lib/popMissingSpells';
 import MissingSpells from './MissingSpells';
 import MoreInfo from '@/components/MoreInfo';
+import PopShell from './PopShell';
+import PopNavPanel from './PopNavPanel';
+import PopMinePanel from './PopMinePanel';
+import EssencesFold from './EssencesFold';
+import {
+  ELEMENTAL_TIER, demoMine, essencesPlace, mineProgress, navGroups, sideVariant, tierAnchor, zoneAnchor,
+  type RaidNextRow,
+} from '@/lib/popSidebar';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
@@ -170,10 +185,12 @@ const KIND_ICONS: Record<string, string> = {
 };
 
 export default async function PopFlagsPage(
-  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string; flags?: string; alts?: string; sort?: string; open?: string }> },
+  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string; flags?: string; alts?: string; sort?: string; open?: string; v?: string }> },
 ) {
-  const { zone: zoneKey, view, scope: scopeParam, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam, flags: flagsParam, alts: altsParam, sort: sortParam, open: openParam } = await searchParams;
+  const { zone: zoneKey, view, scope: scopeParam, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam, flags: flagsParam, alts: altsParam, sort: sortParam, open: openParam, v: vParam } = await searchParams;
   const showAll = allParam === '1';
+  // The sidebar previews (?v=b left, ?v=c right); null is the page as production has it.
+  const side = sideVariant(vParam);
   const { data: { user } } = await supabaseServer().auth.getUser();
   // Keep the query through sign-in, so a shared ?demo=1 or ?zone= link still opens what it names.
   if (!user) redirect(`/auth/signin?next=${encodeURIComponent('/pop?' + new URLSearchParams(await searchParams as Record<string, string>))}`);
@@ -611,6 +628,8 @@ export default async function PopFlagsPage(
     if (next.pclass) params.set('pclass', next.pclass);
     if (next.psort) params.set('psort', next.psort);
     if (next.pdir) params.set('pdir', next.pdir);
+    // A sidebar preview stays on its variant (and its sample data) from link to link.
+    if (side) { params.set('v', side); if (essDemo) params.set('demo', '1'); }
     const qs = params.toString();
     return '/pop' + (qs ? `?${qs}` : '');
   }
@@ -710,7 +729,8 @@ export default async function PopFlagsPage(
     const elig = eligibleCount.get(z.key) ?? 0;
     const kids = childrenOf(z.key);
     return (
-      <div className="bg-panel border border-border rounded-lg p-4 flex flex-col gap-3"
+      <div id={side ? zoneAnchor(z.key) : undefined}
+           className={`bg-panel border border-border rounded-lg p-4 flex flex-col gap-3${side ? ' scroll-mt-32' : ''}`}
            style={{ borderTop: `3px solid ${color}` }}>
         <div className="flex items-start justify-between gap-3">
           <Link href={hrefFor({ zone: z.key })} className="text-sm text-text font-semibold hover:underline leading-snug">
@@ -921,6 +941,54 @@ export default async function PopFlagsPage(
     </p>
   );
 
+  // ── The sidebar previews (?v=b / ?v=c; web/lib/popSidebar.ts). Everything here is built from data the page has
+  // already loaded; with no ?v= none of it is used and the JSX below renders as production does. ──
+  // The tier sections only exist on the chart; the other views have no Elemental tier to put the essences under.
+  const chartBody = !selected && !matrixView && !mineView;
+  const essPlace = essencesPlace(side, chartBody);
+  const essencesFold = side ? <EssencesFold demo={essDemo} {...essences} /> : null;
+  const chartHref = hrefFor({ view: 'chart', zone: null, alts: null, sort: null, open: null });
+  // On the chart a jump is a same-page hash link; from another view it opens the chart first.
+  const jumpBase = chartBody ? '' : chartHref;
+  const navPanel = side === 'b' ? (
+    <PopNavPanel
+      scopes={POP_SCOPES.map(s => ({
+        label: s.label, title: s.title, active: scope === s.key,
+        href: hrefFor(s.key === 'all' ? { scope: 'all', alts: null } : { scope: s.key }),
+      }))}
+      views={[
+        { label: 'Chart', href: chartHref, active: chartBody },
+        { label: 'Matrix', href: hrefFor({ view: 'matrix', zone: null }), active: matrixView || mineView },
+      ]}
+      extras={[{ label: '☑ My checklist', href: '/pop/guide' }, { label: 'Latest flags', href: '/pop/latest' }]}
+      groups={navGroups(topLevel, eligibleCount)}
+      base={jumpBase}
+      essencesQueued={essences.queue.length}
+    />
+  ) : null;
+  // Variant C reads the viewer's own characters (the My Characters list, whatever the scope) and their merged
+  // flags; ?demo=1 swaps in invented ones, like the essences card, so it can be seen without any data of your own.
+  const mine = side === 'c'
+    ? mineProgress(essDemo ? demoMine() : myCharsSorted.map(c => ({
+      name: c.name, cls: c.class, main: !c.main_name, flags: byChar.get(c.name.toLowerCase())?.flags ?? [],
+    })))
+    : null;
+  const raidNext: RaidNextRow[] = side === 'c'
+    ? planTop.slice(0, 3).map(p => ({
+      key: p.flag, icon: KIND_ICONS[POP_FLAGS[p.flag]?.kind ?? 'kill'], label: POP_FLAGS[p.flag]?.label ?? p.flag,
+      zoneShort: p.zone.short, zoneHref: hrefFor({ zone: p.zone.key }),
+      gains: p.gains.mains + p.gains.alts, unlocks: p.leverage.mains + p.leverage.alts,
+    }))
+    : [];
+  const minePanel = side === 'c' && mine ? (
+    <PopMinePanel
+      demo={essDemo} rows={mine.shown} hidden={mine.hidden}
+      mineHref={hrefFor({ scope: 'mine', view: null, zone: null })} guideHref="/pop/guide"
+      raid={raidNext} raidFor={scope === 'mine' ? 'your characters' : scope === 'mains' ? 'mains' : 'mains and alts'}
+      next={essences.next} queued={essences.queue.length} base={jumpBase}
+    />
+  ) : null;
+
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
@@ -987,6 +1055,8 @@ export default async function PopFlagsPage(
               </Link>
             </span>
           )}
+          {/* ?v=b moves these buttons into its navigation sidebar. */}
+          {side !== 'b' && (
           <span className="ml-auto flex flex-wrap gap-2 items-center">
             <span className="flex flex-wrap gap-1 mr-1" role="group" aria-label="Whose characters"
                   title={`Whose flags the chart, matrix and planner count. My Characters is every character on your account, alts included (traders, hidden characters and characters under ${LIST_MIN_LEVEL} sit behind Show all; ones with no known level are folded away). The spell-needs table at the bottom lists mains, or every character on All characters.`}>
@@ -1006,12 +1076,19 @@ export default async function PopFlagsPage(
             <Link href="/pop/guide" className={navCls(false)}>☑ My checklist</Link>
             <Link href="/pop/latest" className={navCls(false)}>Latest flags (try the new view)</Link>
           </span>
+          )}
         </div>
       </section>
 
+      <PopShell side={side} label={side === 'c' ? 'Your PoP progress' : 'PoP flags navigation'}
+                panel={side === 'c' ? minePanel : navPanel}
+                summary={side === 'c'
+                  ? <>Your progress · <b className="text-text">{mine?.shown.length ?? 0}{mine && mine.hidden > 0 ? `+${mine.hidden}` : ''}</b> characters · essences <b className="text-text">{essences.queue.length}</b> queued <span className="text-blue">· tap to open</span></>
+                  : <>Jump to a plane · views <span className="text-blue">· tap to open</span></>}>
       {latestLayout && latestRows && <LatestFlags layout={latestLayout} rows={latestRows} now={Date.now()} />}
 
-      <EssencesQueue demo={essDemo} {...essences} />
+      {essPlace === 'top' && <EssencesQueue demo={essDemo} {...essences} />}
+      {essPlace === 'top-fold' && essencesFold}
 
       {selected ? (
         // ── Zone detail: who's in, who's missing what ─────────────────────────
@@ -1240,7 +1317,8 @@ export default async function PopFlagsPage(
               if (zones.length === 0) return null;
               const t = TIER_LABELS[tier];
               return (
-                <div key={tier} className="relative rounded-lg border border-border/60 p-4 pt-3"
+                <div key={tier} id={side ? tierAnchor(tier) : undefined}
+                     className={`relative rounded-lg border border-border/60 p-4 pt-3${side ? ' scroll-mt-32' : ''}`}
                      style={{ background: 'rgba(110,118,129,0.05)' }}>
                   <div className="flex items-baseline gap-2 mb-3">
                     <span className="text-xs font-bold tracking-wide" style={{ color: TIER_COLORS[tier] }}>{t.name}</span>
@@ -1250,6 +1328,8 @@ export default async function PopFlagsPage(
                     {tier === 5 && <div className="hidden sm:block" />}
                     {zones.map(z => <ZoneCard key={z.key} z={z} />)}
                   </div>
+                  {/* ?v=b / ?v=c: the Essences of Power card lives here, folded, under the elementals. */}
+                  {essPlace === 'tier' && tier === ELEMENTAL_TIER && essencesFold}
                   {tier < 5 && (
                     <div className="text-center text-dim text-xs leading-none mt-3 select-none">▼</div>
                   )}
@@ -1426,6 +1506,7 @@ export default async function PopFlagsPage(
         Samanna chart v3.0.
         </MoreInfo>
       </section>
+      </PopShell>
     </div>
   );
 }

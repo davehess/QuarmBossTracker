@@ -11,6 +11,7 @@ type Props = {
   demo?: boolean;   // &demo=1: invented sample data, labelled on the card
   queue: QueueEntry[]; done: QueueEntry[]; next: NextUp[];
   classOf: Record<string, string | null>; raidLive: boolean;
+  bare?: boolean;   // inside EssencesFold (the ?v=b / ?v=c previews): the fold draws the card's border
 };
 
 function Present({ e, raidLive }: { e: QueueEntry; raidLive: boolean }) {
@@ -46,7 +47,7 @@ function Empty() {
   );
 }
 
-export default function EssencesQueue({ demo, queue, done, next, classOf, raidLive }: Props) {
+export default function EssencesQueue({ demo, queue, done, next, classOf, raidLive, bare }: Props) {
   const cls = (n: string) => classOf[n.toLowerCase()] ?? null;
   const header = (
     <div className="flex items-baseline gap-3 mb-1 flex-wrap">
@@ -57,7 +58,7 @@ export default function EssencesQueue({ demo, queue, done, next, classOf, raidLi
   );
 
   return (
-    <section className="bg-panel border border-border rounded-lg p-4">
+    <section className={bare ? 'px-4 pb-4' : 'bg-panel border border-border rounded-lg p-4'}>
       {header}
       <p className="text-xs text-dim mb-3">When one drops, it goes to the first name in its column{raidLive ? ' who is in the raid' : ''}. An empty column means bid it.</p>
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
