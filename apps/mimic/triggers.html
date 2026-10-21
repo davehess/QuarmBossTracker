@@ -311,27 +311,50 @@
   #tline{position:fixed;bottom:8px;left:8px;right:8px;z-index:41;display:none;
     pointer-events:none;font-family:ui-monospace,Menlo,Consolas,monospace;
     background:rgb(0 0 0 / var(--bg-alpha));border-radius:4px;border-left:3px solid #58a6ff;
-    padding:4px 8px 5px;text-shadow:0 1px 2px #000;color:#fff}
-  body.has-tline #tline{display:block}
+    padding:4px 8px 5px;text-shadow:0 1px 2px #000;color:#fff;--tl-s:1}
+  body.has-tline #tline{display:flex;align-items:flex-start;gap:6px}
   body.part #tline{display:none !important}
   body.has-tline:not(.part):not(.timers-topdown) #timers{bottom:calc(12px + var(--tline-h,0px))}
   #tline .tl-pair{margin:0 0 5px}
-  #tline .tl-pair-row{display:flex;align-items:baseline;gap:10px;font-size:22px;font-weight:800;line-height:1.15;color:#ffc14d}
+  #tline .tl-pair-row{display:flex;align-items:baseline;gap:10px;font-size:calc(22px * var(--tl-s));font-weight:800;line-height:1.15;color:#ffc14d}
   #tline .tl-pair-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #tline .tl-pair-clock{flex-shrink:0;font-variant-numeric:tabular-nums;font-size:26px}
-  #tline .tl-bar{height:6px;margin-top:3px;background:rgba(255,255,255,0.14);border-radius:3px;overflow:hidden}
+  #tline .tl-pair-clock{flex-shrink:0;font-variant-numeric:tabular-nums;font-size:calc(26px * var(--tl-s))}
+  #tline .tl-bar{height:calc(6px * var(--tl-s));margin-top:3px;background:rgba(255,255,255,0.14);border-radius:3px;overflow:hidden}
   #tline .tl-bar i{display:block;height:100%;width:100%;background:#ffb02e;transform-origin:left;border-radius:3px}
   #tline .tl-pair.urgent .tl-pair-row{color:#ff6b6b}
   #tline .tl-pair.urgent .tl-bar i{background:#ff4d4d}
   #tline .tl-pair.made .tl-pair-row{color:#5fe08a}
   #tline .tl-pair.missed .tl-pair-row{color:#ff6b6b}
-  #tline .tl-chain{display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 7px;font-size:13px;line-height:1.3;color:#e6edf3}
+  #tline .tl-chain{display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 7px;font-size:calc(13px * var(--tl-s));line-height:1.3;color:#e6edf3}
   #tline .tl-link{white-space:nowrap}
   #tline .tl-d b{font-weight:700;color:#fff}
   #tline .tl-d span{color:#9fb3c8;margin-left:4px;font-variant-numeric:tabular-nums}
   #tline .tl-gap{color:#f6c365;font-weight:700;font-variant-numeric:tabular-nums}
   #tline .tl-more{color:#9fb3c8}
   #tline .tl-since{margin-left:auto;color:#58a6ff;font-weight:700;font-variant-numeric:tabular-nums}
+  /* Controls (the guild lead, 2026-10-21: "minimizable, text size scalable"): ▾/▸ at the left edge, A−/A+ at the
+     right. Real <button>s, so the preload's hover handshake arms them; the strip itself stays click-through. */
+  #tline #tl-body{flex:1;min-width:0}
+  #tline .tl-btn{pointer-events:auto;cursor:pointer;flex-shrink:0;font:700 12px ui-monospace,Menlo,Consolas,monospace;
+    color:#cfe3ff;background:rgba(88,166,255,0.18);border:1px solid rgba(88,166,255,0.45);border-radius:3px;
+    padding:0;width:22px;height:20px;line-height:18px;text-align:center}
+  #tline .tl-btn:hover{background:rgba(88,166,255,0.38)}
+  #tline .tl-btn[disabled]{opacity:.35;cursor:default}
+  #tline #tl-size{display:flex;gap:3px;flex-shrink:0}
+  #tline .tl-up{margin-top:4px;padding-top:3px;border-top:1px solid rgba(255,255,255,0.14)}
+  #tline .tl-up-h{font-size:calc(11px * var(--tl-s));letter-spacing:.08em;text-transform:uppercase;color:#9fb3c8;margin-bottom:1px}
+  #tline .tl-up-row{display:flex;align-items:baseline;gap:10px;font-size:calc(15px * var(--tl-s));line-height:1.3;color:#e6edf3}
+  #tline .tl-up-lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #tline .tl-up-clk{flex-shrink:0;font-weight:800;font-variant-numeric:tabular-nums;color:#ffc14d}
+  #tline .tl-up-row.plan .tl-up-lbl{color:#9fd0ff;white-space:normal}
+  #tline .tl-one{display:flex;align-items:baseline;gap:8px;font-size:calc(16px * var(--tl-s));font-weight:700;line-height:1.3;min-height:20px;white-space:nowrap;overflow:hidden}
+  #tline .tl-one-main{color:#ffc14d;flex-shrink:0}
+  #tline .tl-one-main.urgent{color:#ff6b6b}
+  #tline .tl-one-main.since{color:#58a6ff}
+  #tline .tl-one-sep{color:#9fb3c8}
+  #tline .tl-one-next{color:#e6edf3;font-weight:600;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  #tline .tl-one-next i{font-style:normal;font-variant-numeric:tabular-nums;font-weight:800;color:#ffc14d;margin-left:10px}
+  #tline .tl-one b{font-weight:800}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -365,7 +388,7 @@
     <div id="sticky"></div>
   </div>
   <div id="timers"></div>
-  <div id="tline"></div>
+  <div id="tline"><button id="tl-toggle" class="tl-btn" type="button" title="Minimize the timeline">▾</button><div id="tl-body"></div><div id="tl-size"><button id="tl-sm" class="tl-btn" type="button" title="Smaller text">A−</button><button id="tl-lg" class="tl-btn" type="button" title="Bigger text">A+</button></div></div>
 <script src="voice.js"></script>
 <script>
   // ── Timers canvas part ─────────────────────────────────────────────────────
@@ -1901,7 +1924,181 @@
     return out;
   }
   // ── /death timeline: pure state ──
+  // ── death timeline: plan + queue ──
+  // The guild lead, 2026-10-21: "Timeline on TTS minimizable, text size scalable, next event due for next fight. Next
+  // major event in fights queued." Pure again (no DOM, no clock): which raid-plan phase is next, the "Up next" merge,
+  // the text-size clamp and the stored preferences. The plan wording is pop-raids.js's own (the rallos-event callouts).
+  var TL_SCALE_MIN = 0.8, TL_SCALE_MAX = 1.8, TL_UPNEXT_MAX = 3, TL_MAJOR_MS = 20000;
+  // Which deaths finish a plan phase, per zone. A phase with no entry (P3, the Fake Rallos despawn) has no death to
+  // see: it counts as done only once a later phase is.
+  var TL_PLAN_KILLS = {
+    'plane of tactics': { 1: ['Decorin Berik', 'Decorin Grunhork'], 2: ['Tallon Zek', 'Vallon Zek'], 4: ['Rallos Zek the Warlord'] }
+  };
+  function tlClampScale(v){
+    if (v == null || v === '') return 1;
+    v = Number(v);
+    if (!isFinite(v)) return 1;
+    return Math.max(TL_SCALE_MIN, Math.min(TL_SCALE_MAX, Math.round(v * 10) / 10));
+  }
+  function tlStepScale(cur, dir){ return tlClampScale(tlClampScale(cur) + (dir < 0 ? -0.1 : 0.1)); }
+  function tlLoadPrefs(store){
+    var out = { collapsed: false, scale: 1 };
+    try {
+      if (store){
+        out.collapsed = store.getItem('wp.tline.collapsed') === '1';
+        out.scale = tlClampScale(store.getItem('wp.tline.scale'));
+      }
+    } catch(e){}
+    return out;
+  }
+  function tlSavePref(store, key, val){ try { if (store) store.setItem('wp.tline.' + key, String(val)); } catch(e){} }
+  // The plan phases of a zone, read from pop-raids.js: the encounter callouts that start "P<n>". head = the label
+  // between "Pn" and the colon ('Fake Rallos'), text = the callout cut down to a line (first clause, plus the
+  // clause that carries a time or a consequence).
+  function tlPlanFor(zone, pop){
+    var z = tlKey(zone), out = [];
+    if (!z || !pop || !pop.sections) return out;
+    pop.sections.forEach(function(sec){
+      (sec.encounters || []).forEach(function(enc){
+        if (tlKey(enc.zone) !== z) return;
+        (enc.callouts || []).forEach(function(c){
+          var m = /^P(\d)\s*([^:]*):\s*(.+)$/.exec(String(c));
+          if (!m) return;
+          var body = m[3].replace(/\s*\([^)]*\)/g, '').split(/\.\s/)[0].replace(/\.\s*$/, '');
+          var segs = body.split(';').map(function(x){ return x.trim(); }).filter(Boolean);
+          var first = (segs[0] || '').split(',')[0].trim();
+          var extra = segs.slice(1).filter(function(x){ return /→|\d+\s*(?:s|sec|min)\b|despawn/i.test(x); })[0];
+          var head = m[2].trim();
+          out.push({ n: Number(m[1]), head: head, text: (head ? head + ': ' : '') + first + (extra ? '; ' + extra : '') });
+        });
+      });
+    });
+    return out.sort(function(a, b){ return a.n - b.n; });
+  }
+  // The zone the plan is read for: the newest death that names one; else the plan zone one of the deaths belongs to.
+  function tlPlanZone(deaths){
+    var z = null;
+    (deaths || []).forEach(function(d){ if (d && d.zone) z = d.zone; });
+    if (z) return z;
+    var seen = Object.create(null);
+    (deaths || []).forEach(function(d){ if (d) seen[tlKey(d.name)] = true; });
+    for (var zk in TL_PLAN_KILLS){
+      var kills = TL_PLAN_KILLS[zk];
+      for (var n in kills){ if (kills[n].some(function(k){ return seen[tlKey(k)]; })) return zk; }
+    }
+    return null;
+  }
+  function tlRuleFor(names, rules){
+    var want = names.map(tlKey).sort().join('|');
+    for (var i = 0; i < (rules || []).length; i++){
+      if (rules[i].names.map(tlKey).sort().join('|') === want) return rules[i];
+    }
+    return null;
+  }
+  // The next phase for the next fight: every phase up to the last one whose deaths were all seen is done; a phase whose
+  // pair window is running has the big countdown; the first of the rest is "next". null = no plan / all done.
+  function tlPlanNext(zone, phases, deaths, rules, pairs){
+    var kills = TL_PLAN_KILLS[tlKey(zone)];
+    if (!kills || !phases || !phases.length) return null;
+    var seen = Object.create(null), lastDone = 0;
+    (deaths || []).forEach(function(d){ if (d) seen[tlKey(d.name)] = true; });
+    phases.forEach(function(ph){
+      var ks = kills[ph.n];
+      if (ks && ks.every(function(k){ return seen[tlKey(k)]; })) lastDone = Math.max(lastDone, ph.n);
+    });
+    for (var i = 0; i < phases.length; i++){
+      var ph = phases[i];
+      if (ph.n <= lastDone) continue;
+      var ks2 = kills[ph.n], rule = ks2 ? tlRuleFor(ks2, rules) : null;
+      if (rule && (pairs || []).some(function(p){ return p.kind === 'open' && p.label === rule.label; })) continue;
+      return { n: ph.n, text: rule ? rule.label + ' — ' + Math.round(rule.windowSec / 60) + ' min window starts on the first death' : ph.text };
+    }
+    return null;
+  }
+  // A "major" countdown: it carries a pre-end warning (the trigger's author wanted a callout) or has 20 s or more left.
+  // Loot chips and cyclic rows (the 6 s tick) never are.
+  function tlTimerMajor(t, nowMs){
+    if (!t || t.loot || t.cycle) return false;
+    var rem = t.endsMs - nowMs;
+    return rem > 0 && (t.warns > 0 || rem >= TL_MAJOR_MS);
+  }
+  // The "Up next" merge: open pair-window deadlines + major countdowns, soonest first, deduped by key and by label,
+  // `skipKeys` left out (the rows the strip already shows big); the plan phase has no clock, so it holds the LAST slot.
+  function tlQueue(pairs, plan, timers, nowMs, skipKeys, max){
+    var timed = [], seenKey = Object.create(null), seenLbl = Object.create(null);
+    function add(it){
+      var lk = tlKey(it.label);
+      if (seenKey[it.key] || seenLbl[lk] || (skipKeys || []).indexOf(it.key) >= 0) return;
+      seenKey[it.key] = seenLbl[lk] = true;
+      timed.push(it);
+    }
+    (pairs || []).forEach(function(p){
+      if (p.kind === 'open') add({ kind: 'pair', key: 'pair:' + p.label, label: p.dueName + ' due', dueMs: p.deadlineMs });
+    });
+    (timers || []).forEach(function(t){
+      if (tlTimerMajor(t, nowMs)) add({ kind: 'timer', key: 'timer:' + t.key, label: t.label, dueMs: t.endsMs });
+    });
+    timed.sort(function(a, b){ return a.dueMs - b.dueMs; });
+    max = max || TL_UPNEXT_MAX;
+    var out = timed.slice(0, plan ? max - 1 : max);
+    if (plan) out.push({ kind: 'plan', key: 'plan:' + plan.n, label: plan.text, dueMs: null });
+    return out;
+  }
+  // ── /death timeline: plan + queue ──
   var _tlDeaths = [], _tlRules = [], _tlSig = '', _tlNodes = [];
+  var tlBodyEl = document.getElementById('tl-body');
+  var _tlPlanCache = null, _tlPopLoading = false;
+  var _tlStore = null;
+  try { _tlStore = window.localStorage; } catch(e){}   // the accessor itself can throw (private window, blocked site data)
+  var _tlPrefs = tlLoadPrefs(_tlStore), _tlColl = _tlPrefs.collapsed, _tlScale = _tlPrefs.scale;
+  // pop-raids.js is browser-safe (it only sets window.POP_RAIDS) and already ships in the Mimic bundle for popraid.html.
+  // It is ~43 KB, so it is fetched lazily — the first time the strip has a death to show, never in a canvas panel.
+  function tlPop(){
+    if (window.POP_RAIDS) return window.POP_RAIDS;
+    if (!_tlPopLoading){
+      _tlPopLoading = true;
+      try {
+        var sc = document.createElement('script');
+        sc.src = 'pop-raids.js';
+        sc.onload = function(){ tlineUpdate(); };
+        document.head.appendChild(sc);
+      } catch(e){}
+    }
+    return null;
+  }
+  // The overlay's own live countdowns (timerNodes), shaped for tlQueue.
+  function tlTimersNow(){
+    var out = [];
+    timerNodes.forEach(function(n, id){
+      out.push({ key: id, label: (n.target ? n.target + ' - ' : '') + n.effect, endsMs: n.ends_at_local,
+        warns: (n.warnings && n.warnings.length) || 0, loot: n.kind === 'loot', cycle: n.cycle_ms > 0 });
+    });
+    return out;
+  }
+  function tlApplyPrefs(){
+    var tg = document.getElementById('tl-toggle'), sm = document.getElementById('tl-sm'), lg = document.getElementById('tl-lg');
+    if (tlineEl) tlineEl.style.setProperty('--tl-s', String(_tlScale));
+    if (tg){ tg.textContent = _tlColl ? '▸' : '▾'; tg.title = _tlColl ? 'Expand the timeline' : 'Minimize the timeline'; }
+    if (sm){ sm.disabled = _tlScale <= TL_SCALE_MIN + 0.001; sm.title = 'Smaller text (' + Math.round(_tlScale * 100) + '%)'; }
+    if (lg){ lg.disabled = _tlScale >= TL_SCALE_MAX - 0.001; lg.title = 'Bigger text (' + Math.round(_tlScale * 100) + '%)'; }
+  }
+  (function(){
+    var tg = document.getElementById('tl-toggle'), sm = document.getElementById('tl-sm'), lg = document.getElementById('tl-lg');
+    if (PART || !tg || !sm || !lg) return;
+    tg.addEventListener('click', function(){
+      _tlColl = !_tlColl;
+      tlSavePref(_tlStore, 'collapsed', _tlColl ? '1' : '0');
+      tlApplyPrefs(); tlineUpdate(); syncTlineH();
+    });
+    function step(dir){
+      _tlScale = tlStepScale(_tlScale, dir);
+      tlSavePref(_tlStore, 'scale', _tlScale);
+      tlApplyPrefs(); syncTlineH();   // the font change is a layout change: re-measure now, not at the next resize callback
+    }
+    sm.addEventListener('click', function(){ step(-1); });
+    lg.addEventListener('click', function(){ step(1); });
+    tlApplyPrefs();
+  })();
   function tlFmt(sec){
     sec = Math.max(0, Math.floor(sec));
     var h = Math.floor(sec / 3600), m = Math.floor((sec - h * 3600) / 60), s = sec - h * 3600 - m * 60;
@@ -1933,11 +2130,39 @@
       .sort(function(a, b){ return a.atMs - b.atMs; });
     var pairs = ds.length ? deathPairStates(ds, _tlRules, now) : [];
     var shown = ds.slice(-5);
-    var sig = ds.length ? (ds.length - shown.length) + '|' + shown.map(function(d){ return d.atMs + d.name; }).join('|') + '#' +
-      pairs.map(function(p){ return p.label + p.kind + (p.dueName || '') + p.firstAtMs; }).join('|') : '';
+    // Plan phase + the Up next queue. Expanded: the open pairs already have their big countdown, so the queue
+    // leaves them out; collapsed: only the headline pair is on the line, the rest may queue behind it.
+    var plan = null, queue = [], headPair = null;
+    if (ds.length){
+      var zone = tlPlanZone(ds), pop = tlPop();
+      if (zone && pop){
+        if (!_tlPlanCache || _tlPlanCache.zone !== tlKey(zone)) _tlPlanCache = { zone: tlKey(zone), phases: tlPlanFor(zone, pop) };
+        plan = tlPlanNext(zone, _tlPlanCache.phases, ds, _tlRules, pairs);
+      }
+      pairs.forEach(function(p){ if (p.kind === 'open' && (!headPair || p.deadlineMs < headPair.deadlineMs)) headPair = p; });
+      var skip = _tlColl ? (headPair ? ['pair:' + headPair.label] : [])
+        : pairs.filter(function(p){ return p.kind === 'open'; }).map(function(p){ return 'pair:' + p.label; });
+      queue = tlQueue(pairs, plan, tlTimersNow(), now, skip, TL_UPNEXT_MAX);
+    }
+    var sig = ds.length ? (_tlColl ? 'c' : 'e') + '|' + (ds.length - shown.length) + '|' + shown.map(function(d){ return d.atMs + d.name; }).join('|') + '#' +
+      pairs.map(function(p){ return p.label + p.kind + (p.dueName || '') + p.firstAtMs; }).join('|') + '#' +
+      queue.map(function(q){ return q.key + q.label; }).join('|') : '';
     if (sig !== _tlSig){
       _tlSig = sig;
-      if (!sig){ tlineEl.innerHTML = ''; _tlNodes = []; }
+      if (!sig){ tlBodyEl.innerHTML = ''; _tlNodes = []; }
+      else if (_tlColl){
+        // One line: the most urgent thing (an open pair countdown, else the since-last clock) + the next queued item.
+        var nx = queue[0];
+        var h1 = '<div class="tl-one">';
+        if (headPair) h1 += '<span class="tl-one-main" data-tl-pair><b>' + _esc(headPair.dueName) + ' due</b> <span data-tl="due" data-t="' + headPair.deadlineMs + '"></span></span>';
+        else h1 += '<span class="tl-one-main since">since last <span data-tl="since" data-t="' + shown[shown.length - 1].atMs + '"></span></span>';
+        if (nx){
+          h1 += '<span class="tl-one-sep">·</span><span class="tl-one-next">' +
+            (nx.kind === 'plan' ? 'Next: ' + _esc(nx.label) : _esc(nx.label) + '<i data-tl="due" data-t="' + nx.dueMs + '"></i>') + '</span>';
+        }
+        tlBodyEl.innerHTML = h1 + '</div>';
+        _tlNodes = Array.prototype.slice.call(tlBodyEl.querySelectorAll('[data-tl]'));
+      }
       else {
         var h = '';
         pairs.forEach(function(p){
@@ -1961,8 +2186,16 @@
           h += '<span class="tl-d"><b>' + _esc(d.name) + '</b><span>' + tlHHMM(d.atMs) + '</span></span></span>';
         });
         h += '<span class="tl-since">since last <span data-tl="since" data-t="' + shown[shown.length - 1].atMs + '"></span></span></div>';
-        tlineEl.innerHTML = h;
-        _tlNodes = Array.prototype.slice.call(tlineEl.querySelectorAll('[data-tl]'));
+        if (queue.length){
+          h += '<div class="tl-up"><div class="tl-up-h">Up next</div>';
+          queue.forEach(function(q){
+            if (q.kind === 'plan') h += '<div class="tl-up-row plan"><span class="tl-up-lbl">Next: ' + _esc(q.label) + '</span></div>';
+            else h += '<div class="tl-up-row"><span class="tl-up-lbl">' + _esc(q.label) + '</span><span class="tl-up-clk" data-tl="due" data-t="' + q.dueMs + '"></span></div>';
+          });
+          h += '</div>';
+        }
+        tlBodyEl.innerHTML = h;
+        _tlNodes = Array.prototype.slice.call(tlBodyEl.querySelectorAll('[data-tl]'));
       }
       syncTlineH();
     }
