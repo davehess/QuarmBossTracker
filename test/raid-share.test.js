@@ -421,7 +421,7 @@ describe('the public surface never takes a time from the URL', () => {
   const page = stripJs(read('web', 'app', 'share', 'raid', '[token]', 'page.tsx'));
 
   it('found the routes (a path bug would make the rest vacuous)', () => {
-    expect(routes.map(r => r[0]).sort()).toEqual(['bosses', 'map', 'mesh', 'parse', 'replay']);
+    expect(routes.map(r => r[0]).sort()).toEqual(['bosses', 'map', 'mesh', 'parse', 'replay', 'timeline']);
     expect(page.length).toBeGreaterThan(500);
   });
   it('the share page reads no search parameter at all', () => {
