@@ -18910,6 +18910,20 @@ th,td { text-align:left; padding:3px 8px; }
 th { color:var(--dim); font-weight:normal; font-size:11px; text-transform:uppercase; }
 tr:hover td { background:#1f242c }
 .num { text-align:right; color:var(--green); font-variant-numeric:tabular-nums; }
+/* Ability tables (Top Abilities): ONE column layout for every player's table. Auto table layout sized each
+   table to its own content (so widths differed per player) and the headers stayed left-aligned over
+   right-aligned numbers (so every value looked one column to the right of its header). */
+table.wp-abtbl { table-layout:fixed; }
+table.wp-abtbl th:first-child, table.wp-abtbl td:first-child { width:auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+table.wp-abtbl th.wp-r, table.wp-abtbl td.wp-r { width:76px; text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+table.wp-abtbl th.wp-r { color:var(--dim); }
+/* wpMoreList: "▾ N more" row with a gentle pulsing underline; expands in place. */
+.wp-more-btn { display:block; width:100%; position:relative; background:transparent; border:0; color:var(--blue,#58a6ff); font:inherit; font-size:12px; text-align:left; padding:4px 8px 6px; cursor:pointer; }
+.wp-more-btn::after { content:''; position:absolute; left:8px; right:8px; bottom:1px; height:2px; border-radius:1px; background:var(--blue,#58a6ff); opacity:.25; animation:wp-more-pulse 2.2s ease-in-out infinite; }
+.wp-more-btn.wp-more-open::after { animation:none; opacity:.12; }
+.wp-more-btn:hover, .wp-more-btn:focus-visible { text-decoration:underline; }
+@keyframes wp-more-pulse { 0%,100% { opacity:.2 } 50% { opacity:.9 } }
+@media (prefers-reduced-motion: reduce) { .wp-more-btn::after { animation:none; opacity:.55; } }
 .name { color:var(--orange) }
 .dim { color:var(--dim) }
 .dot { color:var(--green) }
@@ -19439,6 +19453,54 @@ function wpKeep(key, defaultOpen) {
   // worse than never opening it at all.
   var _seen = (key in _wpOpenDetails) ? _wpOpenDetails[key] : !!defaultOpen;
   return 'data-keep="' + esc(String(key)) + '"' + (_seen ? ' open' : '');
+}
+// ── wpMoreList: cap a list that grows with characters / fights / rows ─────────────────────────────
+// (the guild lead, 2026-10-21: "anywhere that could run off with the vertical estate of an area… collapse
+// it down and say 'X more' and a pulsing highlight under that".) Shows the first \`show\` rows and a
+// "▾ N more" toggle; the rest are emitted HIDDEN (not omitted), so expanding is a DOM flip with no
+// repaint. Expanded state lives in _wpMoreOpen — JS-side, fed only by the click handler and never read
+// back from the DOM, the same contract as wpKeep's store — so a 2s repaint renders the rows already
+// open instead of collapsing them again. Built from <button>/<tr>/<div>, not <details>, because a table
+// cannot hold a <details> between its rows; the <details> wpKeep rule does not apply.
+//   rowsHtml: array of row strings, each starting with ONE opening tag (<tr …>, <div …>).
+//   opts: show (default 6), noun ('more'), cols (table rows: the toggle becomes <tr><td colspan=cols>).
+// Byte-stable: output depends only on the rows, the opts and the store.
+var _wpMoreOpen = {};
+function wpMoreLabel(open, hidden, noun) {
+  return open ? '▴ show fewer' : '▾ ' + hidden + ' ' + (noun || 'more');
+}
+function wpMoreList(key, rowsHtml, opts) {
+  opts = opts || {};
+  var rows = rowsHtml || [];
+  var show = opts.show > 0 ? opts.show : 6;
+  // Never hide exactly one row behind a "1 more" — the toggle would be as tall as the row.
+  if (rows.length <= show + 1) return rows.join('');
+  var hidden = rows.length - show;
+  var open = !!_wpMoreOpen[key];
+  var k = esc(String(key));
+  var noun = opts.noun || 'more';
+  var out = rows.slice(0, show).join('');
+  for (var i = show; i < rows.length; i++) {
+    out += String(rows[i]).replace(/^(\\s*<\\w+)/, function (m) { return m + ' data-more-row="' + k + '"' + (open ? '' : ' hidden'); });
+  }
+  var btn = '<button type="button" class="wp-more-btn' + (open ? ' wp-more-open' : '') + '" data-more="' + k
+    + '" data-n="' + hidden + '" data-noun="' + esc(noun) + '" aria-expanded="' + (open ? 'true' : 'false')
+    + '" onclick="wpMoreToggle(this)">' + wpMoreLabel(open, hidden, noun) + '</button>';
+  return out + (opts.cols
+    ? '<tr><td colspan="' + (opts.cols | 0) + '" style="padding:0">' + btn + '</td></tr>'
+    : '<div>' + btn + '</div>');
+}
+function wpMoreToggle(btn) {
+  var key = btn.getAttribute('data-more');
+  var open = !_wpMoreOpen[key];
+  _wpMoreOpen[key] = open;
+  var els = document.querySelectorAll('[data-more-row]');
+  for (var i = 0; i < els.length; i++) {
+    if (els[i].getAttribute('data-more-row') === key) els[i].hidden = !open;
+  }
+  btn.classList.toggle('wp-more-open', open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  btn.textContent = wpMoreLabel(open, btn.getAttribute('data-n'), btn.getAttribute('data-noun'));
 }
 // Publish the sticky top bar's REAL height so the tab rail can sit below it.
 // The bar changes height when the links wrap, when the update/beta pills appear,
@@ -21479,11 +21541,12 @@ function renderWatchedLogsCard(s) {
   }
   const _uniqueChars = _byChar.size;
   let h = '<h2>Watched Logs (' + _uniqueChars + (_wls.length > _uniqueChars ? ' chars · ' + _wls.length + ' files' : '') + ')</h2><table>';
-  const recent = [..._byChar.values()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).slice(0, 15);
-  for (const w of recent) {
+  // Most recently seen first; the old hard cap of 15 is gone — every character is reachable behind "N more".
+  const recent = [..._byChar.values()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  h += wpMoreList('dash|watched-logs', recent.map(function (w) {
     const hot = w.lastSeen && (Date.now() - w.lastSeen) < 3600000;
-    h += '<tr><td>' + (hot ? '<span class="dot">●</span> ' : '&nbsp;&nbsp;') + '<span class="name">' + esc(w.character) + '</span></td><td class="dim">' + fmtAgo(w.lastSeen) + '</td></tr>';
-  }
+    return '<tr><td>' + (hot ? '<span class="dot">●</span> ' : '&nbsp;&nbsp;') + '<span class="name">' + esc(w.character) + '</span></td><td class="dim">' + fmtAgo(w.lastSeen) + '</td></tr>';
+  }), { show: 8, cols: 2, noun: 'more characters' });
   h += '</table>';
   morphInto(el, h);
 }
@@ -21496,7 +21559,7 @@ function renderRecentTellsCard(s) {
   let h = '<h2>📬 Recent Tells <span class="dim" style="font-size:11px;font-weight:normal">(local, this machine only)</span></h2>';
   h += '<table style="font-size:11px"><tr><th>Who</th><th>Message</th><th>When</th></tr>';
   const _rtVisible = _rt.slice(-15).reverse();
-  for (const t of _rtVisible) {
+  const _rtRows = _rtVisible.map(function (t) {
     const outgoing = t.direction === 'outgoing';
     // SPEAKER → LISTENER in both directions — the left name is who spoke.
     const otherLink = '<a href="https://wolfpack.quest/me/tells" target="_blank" rel="noreferrer" class="tell-other" style="color:var(--blue);text-decoration:none">' + esc(t.other) + '</a>';
@@ -21504,8 +21567,9 @@ function renderRecentTellsCard(s) {
       ? '<span class="dim">' + esc(t.character) + '</span> → ' + otherLink
       : otherLink + ' → <span class="dim">' + esc(t.character) + '</span>';
     const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : Date.now());
-    h += '<tr><td style="white-space:nowrap">' + who + '</td><td>' + esc(t.text) + '</td><td class="dim" style="white-space:nowrap">' + fmtAgo(tsMs) + '</td></tr>';
-  }
+    return '<tr><td style="white-space:nowrap">' + who + '</td><td>' + esc(t.text) + '</td><td class="dim" style="white-space:nowrap">' + fmtAgo(tsMs) + '</td></tr>';
+  });
+  h += wpMoreList('dash|recent-tells', _rtRows, { show: 6, cols: 3, noun: 'older tells' });
   h += '</table>';
   morphInto(el, h);
 }
@@ -21931,18 +21995,22 @@ function renderDeeps(s) {
   if (withAbilities.length > 0) {
     h += '<div class="card wide"><h2>🎯 Top Abilities per Player</h2>';
     h += '<div class="subtle">Aggregated by named ability across the session. Hits, total damage, average.</div>';
-    for (const [name, d] of withAbilities.slice(0, 10)) {
+    // Each player is one block (heading + a fixed-layout table, see table.wp-abtbl), so every player's
+    // columns line up; the first 3 players show, the rest sit behind "N more players", and inside a block
+    // the top 5 abilities show with the remaining ones behind "N more".
+    const playerBlocks = withAbilities.slice(0, 10).map(function ([name, d]) {
       const abs = Object.entries(d.topAbilities).sort((a, b) => b[1].total - a[1].total).slice(0, 8);
-      h += '<h3 style="color:var(--orange);margin-top:14px">' + esc(name) + '</h3>';
-      h += '<table><tr><th>Ability</th><th>Total</th><th>Hits</th><th>Avg</th></tr>';
-      for (const [ab, st] of abs) {
+      const abRows = abs.map(function ([ab, st]) {
         const avg = st.count > 0 ? Math.round(st.total / st.count) : 0;
         const label = ab === 'non-melee' ? ab + ' (DS / DoT / procs)' : ab;
-        h += '<tr><td>' + esc(label) + '</td><td class="num"><b>' + fmtK(st.total) + '</b></td>' +
-             '<td class="num">' + st.count + '</td><td class="num">' + fmtK(avg) + '</td></tr>';
-      }
-      h += '</table>';
-    }
+        return '<tr><td title="' + esc(label) + '">' + esc(label) + '</td><td class="num wp-r"><b>' + fmtK(st.total) + '</b></td>' +
+               '<td class="num wp-r">' + st.count + '</td><td class="num wp-r">' + fmtK(avg) + '</td></tr>';
+      });
+      return '<div><h3 style="color:var(--orange);margin-top:14px">' + esc(name) + '</h3>' +
+             '<table class="wp-abtbl"><tr><th>Ability</th><th class="wp-r">Total</th><th class="wp-r">Hits</th><th class="wp-r">Avg</th></tr>' +
+             wpMoreList('deeps|abil|' + name, abRows, { show: 5, cols: 4 }) + '</table></div>';
+    });
+    h += wpMoreList('deeps|players', playerBlocks, { show: 3, noun: 'more players' });
     h += '</div>';
   }
 
@@ -21954,7 +22022,7 @@ function buildPetsHtml(s) {
   let h = '<div class="card"><h2>Known Pets This Session</h2>';
   const pets = (s.knownPets||[]);
   if (!pets.length) h += '<div class="dim">No pets observed yet.</div>';
-  else { h += '<table><tr><th>Pet</th><th>Owner(s)</th></tr>'; for (const p of pets) h += '<tr><td class="pet">' + esc(p.pet) + '</td><td class="name">' + p.owners.map(esc).join(', ') + '</td></tr>'; h += '</table>'; }
+  else { h += '<table><tr><th>Pet</th><th>Owner(s)</th></tr>' + wpMoreList('pets|known', pets.map(function (p) { return '<tr><td class="pet">' + esc(p.pet) + '</td><td class="name">' + p.owners.map(esc).join(', ') + '</td></tr>'; }), { show: 8, cols: 2, noun: 'more pets' }) + '</table>'; }
   h += '</div>';
   return h;
 }
@@ -22036,7 +22104,10 @@ function renderZealClients(s) {
   }
   if (el.style.display === 'none') el.style.display = '';
   let h = '<h2>🧪 Buffs &amp; Zone <span class="dim" style="font-size:11px;font-weight:normal">· what each character has buffwise and where they are (via Zeal)</span></h2>';
-  for (const c of clients) {
+  // One entry per character, each several lines tall; 33 characters used to be the whole page. The body
+  // below builds into its own local \`h\`, so the per-character markup is untouched.
+  const _zRows = clients.map(function (c) {
+    let h = '';
     const dot   = c.live ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--dim)">○</span>';
     const where = c.zone_name ? esc(c.zone_name) : (c.zone != null ? 'zone ' + esc(String(c.zone)) : 'unknown zone');
     const meta  = [];
@@ -22114,7 +22185,9 @@ function renderZealClients(s) {
       h += '</table></details>';
     }
     h += '</div>';   // .wp-zeal-row
-  }
+    return h;
+  });
+  h += wpMoreList('dash|zeal-clients', _zRows, { show: 5, noun: 'more characters' });
   if (_hiddenCount > 0) {
     h += '<div style="margin-top:8px;font-size:11px" class="dim">' + _hiddenCount + ' character'
        + (_hiddenCount === 1 ? '' : 's') + ' hidden · '
@@ -25282,7 +25355,10 @@ function renderZealExplorer(s) {
     return { rows: r, n: n };
   }
   let h = '<h2>🔌 Zeal Pipe <span class="dim" style="font-size:11px;font-weight:normal">· everything the pipe carries, decoded — field names from Zeal named_pipe.cpp; gauges are per-mille</span></h2>';
-  for (const c of clients) {
+  // One block per character; the per-character markup builds into its own local \`h\` (a wrapper <div>
+  // gives wpMoreList the single opening tag it hides).
+  const _zpRows = clients.map(function (c) {
+    let h = '<div>';
     var m = ciMap(c);
     var k = 'zx|' + c.character;
     var dot = c.live ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--dim)">○</span>';
@@ -25395,7 +25471,9 @@ function renderZealExplorer(s) {
         + '<td class="num">' + esc(String(aci.value)) + '</td></tr>';
     }
     if (allRows) h += grp(k + '|raw', 'All labels (raw)', (c.char_info || []).length, tbl(allRows, ['Id', 'Field', 'Value']));
-  }
+    return h + '</div>';
+  });
+  h += wpMoreList('dash|zeal-pipe-clients', _zpRows, { show: 4, noun: 'more characters' });
   // Raid (type 5) — the raid-window roster Zeal broadcasts on composition
   // change (the same sample that feeds raid_roster uploads + the /buffs
   // grid). Raid-wide, not per-character, so it renders once after the
@@ -26333,12 +26411,12 @@ function renderStats(s) {
   h += '<div class="card wide"><h2>Top Abilities (uploader)</h2>';
   if (!abs.length) h += '<div class="dim">(no damage events parsed yet)</div>';
   else {
-    h += '<table><tr><th>Ability</th><th>Total</th><th>Hits</th><th>Avg</th></tr>';
-    for (const [ab, st] of abs) {
+    h += '<table class="wp-abtbl"><tr><th>Ability</th><th class="wp-r">Total</th><th class="wp-r">Hits</th><th class="wp-r">Avg</th></tr>';
+    h += wpMoreList('deeps|uploader-abil', abs.map(function ([ab, st]) {
       const label = ab === 'non-melee' ? ab + ' (DS / DoT / procs)' : ab;
       const avg = st.count > 0 ? Math.round(st.total / st.count) : 0;
-      h += '<tr><td>' + esc(label) + '</td><td class="num">' + fmtK(st.total) + '</td><td class="num">' + st.count + '</td><td class="num">' + fmtK(avg) + '</td></tr>';
-    }
+      return '<tr><td title="' + esc(label) + '">' + esc(label) + '</td><td class="num wp-r">' + fmtK(st.total) + '</td><td class="num wp-r">' + st.count + '</td><td class="num wp-r">' + fmtK(avg) + '</td></tr>';
+    }), { show: 8, cols: 4 });
     h += '</table>';
   }
   h += '</div>';
@@ -26591,10 +26669,11 @@ function renderInfo(s) {
     });
     if (_archChars.length) {
       h += '<div style="margin-top:8px;font-size:11px" class="dim">Want a clean start? Move a log into <code>LogArchive</code> now. Nothing is deleted.</div>';
-      _archChars.forEach(function (c) {
-        h += '<div style="margin-top:4px"><button class="btn" data-char="' + esc(c) + '" onclick="wpLogArchive(this)">🗄 Archive log &amp; start fresh</button> '
+      // 33 watched characters used to be 33 rows down the page; show 5, the rest behind "N more characters".
+      h += wpMoreList('info|archive-chars', _archChars.map(function (c) {
+        return '<div style="margin-top:4px"><button class="btn" data-char="' + esc(c) + '" onclick="wpLogArchive(this)">🗄 Archive log &amp; start fresh</button> '
           + '<span class="dim" style="font-size:11px">' + esc(c) + '</span></div>';
-      });
+      }), { show: 5, noun: 'more characters' });
     }
     h += '</div>';
   }
