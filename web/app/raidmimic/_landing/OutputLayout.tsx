@@ -11,6 +11,7 @@ import {
   BetaTag, ComingList, CostBody, CtaBand, DataBody, Footer, InterestButton, StatusChip, WorksWithBody, WorldsBody, type Ctx,
 } from './Parts';
 import { Fold } from './TourLayout';
+import MascotHero from './MascotHero';
 
 const byId = (id: string): Shot => {
   const s = SHOTS.find(x => x.id === id);
@@ -35,20 +36,26 @@ function ShotFigure({ s }: { s: Shot }) {
   );
 }
 
-export default function OutputLayout({ ctx }: { ctx: Ctx }) {
+// `hero` is the mascot preview: 'howl' (?v=b) puts the clip beside the headline, 'layered' (?v=c) puts the mascot
+// and the captures around it under it. Neither set: the page as it was.
+export default function OutputLayout({ ctx, hero }: { ctx: Ctx; hero?: 'howl' | 'layered' }) {
   return (
     <div className="mx-auto max-w-6xl pb-12">
       <BetaTag ctx={ctx} />
 
-      <header className="mb-6">
-        <p className="text-xs uppercase tracking-widest text-gold">{HERO.kicker}</p>
-        <h1 className="mt-1 text-3xl leading-tight text-[#f2ede1]">{HERO.name}</h1>
-        <p className="mt-2 max-w-[62ch] text-base leading-7 text-[#f2ede1]">{HERO.line}</p>
-        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <InterestButton ctx={ctx} />
-          <a href={SETUP_LINK.href} className="inline-flex min-h-11 items-center text-sm">{SETUP_LINK.label} →</a>
+      <header className={hero === 'howl' ? 'mb-6 grid items-center gap-4 lg:grid-cols-2' : 'mb-6'}>
+        <div>
+          <p className="text-xs uppercase tracking-widest text-gold">{HERO.kicker}</p>
+          <h1 className="mt-1 text-3xl leading-tight text-[#f2ede1]">{HERO.name}</h1>
+          <p className="mt-2 max-w-[62ch] text-base leading-7 text-[#f2ede1]">{HERO.line}</p>
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <InterestButton ctx={ctx} />
+            <a href={SETUP_LINK.href} className="inline-flex min-h-11 items-center text-sm">{SETUP_LINK.label} →</a>
+          </div>
         </div>
+        {hero === 'howl' && <MascotHero variant="howl" />}
       </header>
+      {hero === 'layered' && <MascotHero variant="layered" />}
 
       <section aria-label={SHOTS_HEAD.title} className="space-y-6">
         <div className="grid gap-6 lg:grid-cols-12 lg:items-start">

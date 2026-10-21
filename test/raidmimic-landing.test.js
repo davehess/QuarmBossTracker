@@ -152,8 +152,9 @@ describe('the page', () => {
   });
   it('renders the tour by default; the only switch is the ?v=b "Output first" PREVIEW, never on a raidmimic host', () => {
     expect(page).toMatch(/return <TourLayout ctx=\{ctx\} \/>;/);
-    expect(page).toMatch(/if \(!onHost && searchParams\?\.v === 'b'\) return <OutputLayout ctx=\{ctx\} \/>;/);
-    expect((page.match(/searchParams/g) || []).length).toBe(3);   // the prop's name, its type and the one read
+    expect(page).toMatch(/if \(!onHost && searchParams\?\.v === 'b'\) return <OutputLayout ctx=\{ctx\} hero="howl" \/>;/);
+    expect(page).toMatch(/if \(!onHost && searchParams\?\.v === 'c'\) return <OutputLayout ctx=\{ctx\} hero="layered" \/>;/);
+    expect((page.match(/searchParams/g) || []).length).toBe(4);   // the prop's name, its type and the two reads (b, c)
     expect(page).not.toMatch(/raidmimicVariant|PitchLayout/);
     expect(fs.existsSync(path.join(ROOT, L + 'PitchLayout.tsx'))).toBe(false);
     expect(C).not.toHaveProperty('raidmimicVariant');
@@ -389,7 +390,7 @@ describe('the "Output first" preview (?v=b)', () => {
   it('the page switches to it on ?v=b only, and the default is still the tour, untouched', () => {
     const page = code('web/app/raidmimic/page.tsx');
     expect(page).toMatch(/import OutputLayout from '\.\/_landing\/OutputLayout'/);
-    expect(page.match(/<OutputLayout /g)).toHaveLength(1);
+    expect(page.match(/<OutputLayout /g)).toHaveLength(2);   // ?v=b (howl hero) and ?v=c (layered hero)
     expect(page.indexOf('<OutputLayout')).toBeLessThan(page.indexOf('return <TourLayout'));
     // the tour file only gained an export (Fold, shared with the preview); its order and its words are as before
     expect(tour).toMatch(/export function Fold\(/);
@@ -491,5 +492,59 @@ describe('the "Output first" preview (?v=b)', () => {
     for (const n of F.PLAYERS) expect(words, n).not.toContain(n);
     // the fixture folder is scripts only: no capture metadata names a player either (a WebP carries none)
     for (const s of C.SHOTS) expect(fs.readFileSync(path.join(SHOTS_DIR, s.file)).includes(Buffer.from('Exif'))).toBe(false);
+  });
+});
+
+// ─── The mascot hero previews (?v=b howl clip, ?v=c layered), the guild lead, 2026-10-21 ─────────────────────
+describe('the mascot hero previews', () => {
+  const hero = code(L + 'MascotHero.tsx');
+  const video = read(L + 'MascotVideo.tsx');
+  const MASCOT = path.join(ROOT, 'web/public/raidmimic/mascot');
+
+  it('the clips and posters are shipped as small mp4/jpg files only (no webm), each under 600 KB', () => {
+    for (const f of ['howl.mp4', 'howl-poster.jpg', 'hop.mp4', 'hop-poster.jpg']) {
+      const size = fs.statSync(path.join(MASCOT, f)).size;
+      expect(size, f).toBeGreaterThan(1000);
+      expect(size, f).toBeLessThan(600 * 1024);
+    }
+    expect(fs.readdirSync(MASCOT).filter(f => f.endsWith('.webm'))).toEqual([]);
+    for (const f of ['howl-poster.jpg', 'hop-poster.jpg']) expect(fs.readFileSync(path.join(MASCOT, f))[0]).toBe(0xff);
+  });
+
+  it('the howl plays once and holds its last frame; the hop loops; both are muted inline autoplay with a poster', () => {
+    expect(hero).toMatch(/howl\.mp4/);
+    expect(hero).toMatch(/<MascotVideo src=\{`\$\{DIR\}\/hop\.mp4`\}[^>]*\bloop\b/);
+    expect(hero).not.toMatch(/howl\.mp4`\}[^>]*\bloop\b/);
+    expect(video).toMatch(/autoPlay muted loop=\{loop\} playsInline/);
+    expect(video).toMatch(/poster=\{poster\}/);
+  });
+
+  it('honours prefers-reduced-motion: CSS swaps the clip for its poster and the script frees the clip', () => {
+    expect(video).toMatch(/motion-reduce:hidden/);
+    expect(video).toMatch(/hidden motion-reduce:block/);
+    expect(video).toMatch(/prefers-reduced-motion: reduce/);
+    const css = read('web/app/globals.css');
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.rm-card \{ animation: none; \}/);
+  });
+
+  it('the fan-in animates transform and opacity only', () => {
+    const css = read('web/app/globals.css');
+    const kf = css.slice(css.indexOf('@keyframes rm-fan'), css.indexOf('@media (min-width: 1024px)', css.indexOf('@keyframes rm-fan')));
+    const props = [...kf.matchAll(/([a-z-]+)\s*:/g)].map(m => m[1]);
+    for (const p of props) expect(['opacity', 'transform'], p).toContain(p);
+    expect(props.length).toBeGreaterThan(0);
+  });
+
+  it('the layered hero uses every capture once, from the one shots folder, and only the content module', () => {
+    const ids = [...hero.matchAll(/\{ id: '([a-z-]+)',\s+l:/g)].map(m => m[1]);
+    expect(ids.sort()).toEqual(C.SHOTS.map(s => s.id).sort());
+    expect(hero).toMatch(/SHOTS_DIR/);
+    expect(hero).not.toMatch(/https?:\/\/|mailto:|<form\b|fetch\(/);
+  });
+
+  it('only the ?v= previews use it: the tour is untouched and the plain OutputLayout call sites are the two heroes', () => {
+    expect(code(L + 'TourLayout.tsx')).not.toMatch(/MascotHero|MascotVideo/);
+    expect(code(L + 'OutputLayout.tsx')).toMatch(/hero === 'howl'/);
+    expect(code(L + 'OutputLayout.tsx')).toMatch(/hero === 'layered'/);
   });
 });
