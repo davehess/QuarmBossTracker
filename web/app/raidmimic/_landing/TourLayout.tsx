@@ -10,7 +10,7 @@ import {
 import { Figure } from './Figures';
 import type { ReactNode } from 'react';
 
-function Fold({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+export function Fold({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
     <details id={id} className="scroll-mt-4 rounded-md border border-border bg-panel px-4">
       <summary className="flex min-h-11 cursor-pointer items-center text-base text-[#f2ede1]">{title}</summary>
