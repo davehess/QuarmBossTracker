@@ -16,12 +16,15 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { readSource, sliceBlock, evalBlock, ROOT } from './_source-slice.js';
 
+// The overlay minimum is read from the shared width table (overlaySizes.js); the sliced block gets the real one.
+globalThis.__overlaySizes = createRequire(import.meta.url)(path.join(ROOT, 'apps', 'mimic', 'overlaySizes.js'));
 const MAIN = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
 
 const onScreenBlock = sliceBlock(MAIN, 'function _boundsOnScreen(b) {', '  } catch { return false; }\n}');
-const boundsBlock = sliceBlock(MAIN, 'const _OVERLAY_MIN_W = 200;', '}, 400);\n}');
+const boundsBlock = sliceBlock(MAIN, 'const _OVERLAY_MIN_W = overlaySizes.MIN_W;', '}, 400);\n}');
 const panelBlock = sliceBlock(MAIN, 'function createPanelOverlay(panelKey) {',
   '  panelOverlays.set(panelKey, win);\n  return true;\n}');
 
@@ -30,6 +33,7 @@ const SIG = '1920x1080@1';
 
 function env() {
   return evalBlock(`
+    const overlaySizes = globalThis.__overlaySizes;
     let CFG = {};
     function loadConfig() { return JSON.parse(JSON.stringify(CFG)); }
     function saveConfig(c) { CFG = JSON.parse(JSON.stringify(c)); }

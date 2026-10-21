@@ -53,12 +53,21 @@
      plates its own body, below). The preload used to paint this on every panel at once off one body class. A
      fitted panel with nothing in it (.fitempty) shows no plate: a plate around nothing is just a smudge. */
   .panel.back:not(.part){background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92));border-radius:6px}
+  /* Opacity is each item's own (⚙ → Opacity; --pa, 1 = solid): what the item SHOWS fades, its plate with it
+     (.pfade, only while it is below solid), and the ✥, ◢ and tab that set it do not (at 15% the slider would vanish
+     under the cursor). The nearest thing to the window's opacity, which a Canvas has only once, for the whole screen. */
+  .panel > iframe,.panel > .pbody{opacity:var(--pa,1)}
+  .panel.pfade.back:not(.part){background:rgb(8 10 14 / calc(max(var(--bg-alpha,0.92), 0.92) * var(--pa,1)))}
+  .panel.pfade.back.fitempty:not(.part){background:transparent}
+  body.edit .panel.pfade.back.fitempty:not(.part){background:rgb(8 10 14 / 0.35)}
   .panel.back.fitempty:not(.part){background:transparent}
   body.edit .panel.back.fitempty:not(.part){background:rgb(8 10 14 / 0.35)}
   .panel.part.back.fitempty > .pbody{background:transparent;box-shadow:none}
   body.edit .panel.part.back.fitempty > .pbody{background:rgba(13,17,23,0.35)}
   /* A page with its own builder open (the HUD ring's ⚙) takes the mouse even while arranging. */
   body.edit .panel.building > iframe{pointer-events:auto}
+  /* ...and so does one whose own options (⚙ → Page options) are showing. */
+  body.edit .panel.opts > iframe{pointer-events:auto}
   /* A piece cut from an overlay's page: a window onto one section of the page (cropSections()
      moves the page under the panel and clips it to the section). With nothing to show it steps
      aside. */
@@ -104,6 +113,14 @@
   .tab .ctl.x:hover{color:#f85149;background:rgba(248,81,73,0.18)}
   body.edit .grip{display:block;position:absolute;right:0;bottom:0;width:16px;height:16px;
     line-height:16px;text-align:center;font-size:11px;color:#58a6ff;cursor:nwse-resize}
+  /* The right and bottom EDGES size one direction (width alone, height alone), like an overlay window's edges
+     (the guild lead, 2026-10-21: "◢ grip and edge drags"). Page frames only: a piece has its ◢, and a cut piece
+     follows its section. The ◢ sits over the corner where the two meet. */
+  .edge{display:none}
+  body.edit .panel:not(.part):not(.sect) > .edge{display:block;position:absolute;z-index:2}
+  body.edit .edge.er{top:0;right:-3px;width:7px;height:calc(100% - 16px);cursor:ew-resize}
+  body.edit .edge.eb{left:0;bottom:-3px;height:7px;width:calc(100% - 16px);cursor:ns-resize}
+  body.edit .panel.plock > .edge{cursor:not-allowed}
 
   /* ✥ on every panel, all the time (the guild lead, 2026-09-29: "they do not
      have a move button on them which should be there at all times"). Locked,
@@ -291,6 +308,7 @@
   <div id="ghost"></div>
 <script src="parts.js"></script>
 <script src="sections.js"></script>
+<script src="overlaySizes.js"></script>
 <script>
   var M = window.mimic || {};
   var PORT = 7779;
@@ -505,6 +523,64 @@
   }
   // ── end Background and height ──
 
+  // ── Size: the width presets, steppers and opacity of a frame (the guild lead, 2026-10-21: "Canvas frames need
+  // the resizing, basically all of the options that we have from the normal overlays need to be present") ──
+  // An overlay's right-click menu sets its WIDTH to XS … XL (overlaySizes.js, the table both read) and sizes it by
+  // its edges; a frame on the Canvas is the same page in a box, so the same widths apply to the box (p.w). A piece
+  // cut from a page (kind 'sect') lays its page out at p.pw and its box follows the section, so for it the page
+  // width IS the width. Not for a data piece (it is drawn, not framed: its ◢ sizes it) and not for the HUD's ring
+  // (a circle, sized by its page). All of it is a HAND change to size, so the 🔒 lock refuses it; text size and
+  // opacity change how it looks, not where it sits, and stay open.
+  function sizable(p) { return !!p && p.kind !== 'part' && !(p.kind === 'overlay' && p.key === 'me' && p.style !== 'a'); }
+  function widthKey(p) { return p.kind === 'sect' ? 'pw' : 'w'; }
+  function widthOf(p) { return Math.round(p[widthKey(p)] || 0); }
+  // The widths one kind may take, in its own unit: what a hand drag already allowed it.
+  function widthRange(p, W) {
+    if (p.kind === 'sect') return [160, 2400];
+    return [p.kind === 'overlay' ? 80 : 120, Math.min(4000, W)];
+  }
+  // Set the width; false (nothing changed) for a locked item or one with no frame to size.
+  function setWidth(p, w, W) {
+    if (!sizable(p) || isLocked(p)) return false;
+    var r = widthRange(p, W), k = widthKey(p);
+    p[k] = Math.round(num(w, r[0], r[1], p[k]));
+    return true;
+  }
+  // Set the height; false for a locked item, a ring, or a cut piece (its height is its section's). The edge
+  // that stays put is the one the item grows from (growsUp), as the live fit holds it; and a height chosen by
+  // hand is the item's own now, so it stops following its content (the ◢ rule; ⚙ → Fit height turns it back on).
+  function setHeight(p, h, H) {
+    if (!sizable(p) || p.kind === 'sect' || isLocked(p)) return false;
+    var n = Math.round(num(h, 36, Math.min(3000, H), p.h));
+    if (growsUp(p)) p.y = Math.max(0, Math.round(p.y * H) + p.h - n) / H;
+    if (fitOn(p, pdefOf(p)) && n !== Math.round(p.h)) p.fit = false;
+    p.h = n;
+    return true;
+  }
+  // Opacity, each item's own: stored only when it is below solid (absent = solid), never under 15% (the floor of
+  // an overlay window's own slider).
+  function cleanAlpha(v) { v = Number(v); return (isFinite(v) && v >= 0.15 && v < 1) ? Math.round(v * 100) / 100 : undefined; }
+  function alphaOf(p) { return typeof p.alpha === 'number' ? p.alpha : 1; }
+  function stepAlpha(p, dir) {
+    var a = Math.max(0.15, Math.min(1, Math.round((alphaOf(p) + 0.1 * dir) * 100) / 100));
+    if (a >= 1) delete p.alpha; else p.alpha = a;
+  }
+  // The widest run of text a page cut short with "…", in the page's own px (0 = nothing is cut short). A
+  // page cuts a name, a zone, a spell with text-overflow:ellipsis in a box that is too narrow (Charm's "Best pets
+  // here": "a C…", "a w…"), and scrollWidth > clientWidth on such a box says by how much.
+  function cutShort(doc, win) {
+    var worst = 0, all = doc.querySelectorAll('*');
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (!(el.scrollWidth > el.clientWidth + 1)) continue;
+      var to = '';
+      try { to = win.getComputedStyle(el).textOverflow; } catch (err) { /* gone mid-read */ }
+      if (to === 'ellipsis') worst = Math.max(worst, el.scrollWidth - el.clientWidth);
+    }
+    return worst;
+  }
+  // ── end Size ──
+
   // Every overlay the canvas can host, from main (canvas-state): key, label,
   // the page to load, and where its own window is right now.
   var _overlays = [];
@@ -561,6 +637,9 @@
       if (src1.fit === false) o.fit = false;
       // Locked in place: stored only when set (absent = free), for every kind.
       if (src1.lock === true) o.lock = true;
+      // Opacity, every kind's own: stored only when below solid (absent = solid).
+      var al = cleanAlpha(src1.alpha);
+      if (al !== undefined) o.alpha = al;
       // The screen it sits on, when not the home screen (Span all screens): a screen's sig, "x,y,WxH".
       if (typeof src1.scr === 'string' && /^-?\d{1,6},-?\d{1,6},\d{1,6}x\d{1,6}$/.test(src1.scr)) o.scr = src1.scr;
       out.push(cleanWhen(src1, o));
@@ -850,11 +929,18 @@
     mv.title = 'Drag to move this panel · right-click for what it shows';
     var whb = document.createElement('span');
     whb.className = 'whb';
-    root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(mv); root.appendChild(whb);
+    // The right and bottom edges, each sizing one direction (CSS shows them while arranging, page frames only).
+    var er = document.createElement('span'), eb = document.createElement('span');
+    er.className = 'edge er'; eb.className = 'edge eb';
+    er.setAttribute('data-wp-interact', ''); eb.setAttribute('data-wp-interact', '');
+    er.title = 'Drag to set the width'; eb.title = 'Drag to set the height';
+    root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(er); root.appendChild(eb); root.appendChild(mv); root.appendChild(whb);
     var e = { root: root, tab: tab, frame: fr, body: body, grip: grip, mv: mv, whb: whb };
     if (fr) fr.addEventListener('load', function () {
       var q = panelById(p.id);
       if (!q) return;
+      // A page that loads again comes back with its own options closed (⚙ → Page options).
+      root.classList.remove('opts');
       // A page that loads again comes back with its builder closed.
       if (_widen[p.id]) { delete _widen[p.id]; root.classList.remove('building'); place(e, q); }
       applyFrame(e, q);
@@ -864,6 +950,8 @@
       if (ev.target.closest('.ctl')) return;
       if (ev.target === mv) { startDrag(ev, p.id, 'move', true); return; }
       if (ev.target === grip) { startDrag(ev, p.id, 'size'); return; }
+      if (ev.target === er) { startDrag(ev, p.id, 'size', false, 'x'); return; }
+      if (ev.target === eb) { startDrag(ev, p.id, 'size', false, 'y'); return; }
       startDrag(ev, p.id, 'move');
     });
     tab.querySelector('.gear').addEventListener('click', function (ev) { ev.stopPropagation(); openMenu(p.id, root); });
@@ -881,6 +969,19 @@
     return e;
   }
 
+  // ▭ Mini mode, for the nine overlays that have a mini rendition (main's _MINI_KEYS, sent as `mini` on each
+  // overlay's entry). The flag is the overlay's own (cfg.overlayMini, the one its right-click menu, the dashboard
+  // and Ctrl+Shift+M write); a window gets it pushed, and a frame has no window, so the canvas puts the page's
+  // body class on itself and tells the page, as the preload does for a window.
+  function miniOf(key) { var o = ovEntry(key); return (o && o.mini) || null; }
+  function applyMini(e, p, doc) {
+    var m = miniOf(p.key), on = !!(m && m.on);
+    if (doc.body.classList.contains('wp-mini') === on) return;
+    doc.body.classList.toggle('wp-mini', on);
+    var w = e.frame.contentWindow;
+    try { w.dispatchEvent(new w.Event('wp-mini-change')); w.dispatchEvent(new w.Event('resize')); } catch (err) { /* page mid-load */ }
+  }
+
   // Same-origin, so the canvas reaches into each part directly: its text
   // size, its stack direction, whether it is being arranged (sample rows),
   // and the card alpha the overlay-wide slider sets.
@@ -890,8 +991,9 @@
       var doc = e.frame.contentDocument;
       if (!doc || !doc.body) return;
       if (_bgAlpha != null) doc.documentElement.style.setProperty('--bg-alpha', String(_bgAlpha));
-      // An overlay's page is left as it is; it is scaled from outside (place).
-      if (p.kind === 'overlay') return;
+      // An overlay's page is left as it is; it is scaled from outside (place). Except ▭ Mini mode, which is the
+      // overlay's own setting (its right-click menu's row) and has no window here to be pushed to.
+      if (p.kind === 'overlay') { applyMini(e, p, doc); return; }
       if (p.kind === 'sect') { isolateFrame(e, p); return; }
       doc.documentElement.style.setProperty('--part-scale', String(p.scale || 1));
       doc.body.classList.toggle('timers-topdown', p.anchor === 'top');
@@ -1096,6 +1198,8 @@
       // Every kind has its own Background; the Canvas default speaks only for one that has not chosen.
       e.root.classList.toggle('back', backOf(p, canvasDefaultBack()));
       e.root.classList.toggle('plock', isLocked(p));
+      e.root.style.setProperty('--pa', String(alphaOf(p)));
+      e.root.classList.toggle('pfade', alphaOf(p) < 1);
       e.root.classList.toggle('fitempty', !!_fitEmpty[p.id]);
       e.root.classList.toggle('sel', !!_sel[p.id]);
       place(e, p);
@@ -1173,7 +1277,8 @@
   var SNAP = 8;
   var _drag = null, _lastClick = null;
   // anyTime: the always-on ✥, which moves a panel even while locked.
-  function startDrag(ev, id, mode, anyTime) {
+  // axis: an edge drag sizes one direction only ('x' = width, 'y' = height); the ◢ corner sizes both.
+  function startDrag(ev, id, mode, anyTime, axis) {
     if ((!_edit && !anyTime) || ev.button !== 0) return;
     ev.preventDefault(); ev.stopPropagation();
     var e = _els[id];
@@ -1182,7 +1287,7 @@
       try { e.frame.contentWindow.wpCloseBuilder(); } catch (err) { /* page gone */ }
       delete _widen[id]; e.root.classList.remove('building'); place(e, panelById(id));
     }
-    _drag = { id: id, mode: mode, sx: ev.clientX, sy: ev.clientY, add: ev.shiftKey || ev.ctrlKey, alt: ev.altKey, fromMv: !!anyTime,
+    _drag = { id: id, mode: mode, axis: axis || '', sx: ev.clientX, sy: ev.clientY, add: ev.shiftKey || ev.ctrlKey, alt: ev.altKey, fromMv: !!anyTime,
       x0: e.root.offsetLeft, y0: e.root.offsetTop, w0: e.root.offsetWidth, h0: e.root.offsetHeight };
     // What moves together (the guild lead, 2026-09-29: "I should also be able to drag the whole group …
     // instead of grabbing the top one and having it get disconnected"): the selection, if this panel is in
@@ -1207,7 +1312,7 @@
     _drag.blocked = dragBlocked(panelById(id), _drag.members, !!(ev.target && ev.target.closest && ev.target.closest('.ggrip')));
     e.root.classList.add('lift');
     shield.classList.add('on');
-    shield.style.cursor = mode === 'size' ? 'nwse-resize' : 'move';
+    shield.style.cursor = mode === 'size' ? (axis === 'x' ? 'ew-resize' : axis === 'y' ? 'ns-resize' : 'nwse-resize') : 'move';
     closeMenu();
     try { M.overlayHoverInteractive(true); } catch (err) {}
   }
@@ -1301,8 +1406,8 @@
       });
       placeGbox();
     } else if (d.mode === 'size' && d.box) {
-      var bw = Math.min(W - d.box.x, Math.max(40, d.box.w + ev.clientX - d.sx));
-      var bh = Math.min(H - d.box.y, Math.max(20, d.box.h + ev.clientY - d.sy));
+      var bw = d.axis === 'y' ? d.box.w : Math.min(W - d.box.x, Math.max(40, d.box.w + ev.clientX - d.sx));
+      var bh = d.axis === 'x' ? d.box.h : Math.min(H - d.box.y, Math.max(20, d.box.h + ev.clientY - d.sy));
       scaleGroup(d.members, d.box, bw, bh, ev.shiftKey).forEach(function (n) {
         var ee = _els[n.id], q = panelById(n.id); if (!ee || !q) return;
         var m = d.members.filter(function (k) { return k.id === n.id; })[0];
@@ -1324,8 +1429,8 @@
     } else {
       var dp = panelById(d.id);
       var isPart = dp && dp.kind === 'part';
-      var w = Math.max(isPart ? 40 : (dp && dp.kind === 'overlay') ? 80 : 120, Math.min(W - d.x0, d.w0 + ev.clientX - d.sx));
-      var h = Math.max(isPart ? 16 : 36, Math.min(H - d.y0, d.h0 + ev.clientY - d.sy));
+      var w = d.axis === 'y' ? d.w0 : Math.max(isPart ? 40 : (dp && dp.kind === 'overlay') ? 80 : 120, Math.min(W - d.x0, d.w0 + ev.clientX - d.sx));
+      var h = d.axis === 'x' ? d.h0 : Math.max(isPart ? 16 : 36, Math.min(H - d.y0, d.h0 + ev.clientY - d.sy));
       e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
       if (dp) sizeFrame(e, dp, w, h);
       d.w = w; d.h = h;
@@ -1419,6 +1524,26 @@
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
   function closeMenu() { _menuFor = null; menuEl.classList.remove('show'); }
 
+  var LOCK_TIP = 'Locked in place: its size is held too. Position, below, unlocks it';
+  // ⚙ → Width: the XS … XL of an overlay's right-click menu (the same table), a −/+ in 20 px steps, and ↔ Fit width.
+  // Locked, they show and do nothing (a hand change to size); text size and opacity stay open.
+  function widthMenuHtml(p) {
+    var lk = isLocked(p), dis = lk ? ' disabled title="' + LOCK_TIP + '"' : '', now = widthOf(p);
+    var h = '<div class="sec">' + (p.kind === 'sect' ? 'Page width' : 'Width') + '</div><div class="row" style="flex-wrap:wrap">';
+    WpSizes.PRESETS.forEach(function (s) {
+      h += '<button class="btn' + (now === s[2] ? ' on' : '') + '" data-wpre="' + s[0] + '"'
+        + (lk ? dis : ' title="' + s[1] + ' · ' + s[2] + ' px wide, as in an overlay\'s right-click menu"') + '>' + s[1] + '</button>';
+    });
+    return h + '</div><div class="row">'
+      + '<button class="btn" data-wd="-20"' + dis + '>−</button><span style="min-width:4em;text-align:center">' + now + ' px</span>'
+      + '<button class="btn" data-wd="20"' + dis + '>+</button>'
+      + '<button class="btn" data-fitw' + (lk ? dis : ' title="Widen until nothing the page cut short with … is cut short any more"') + '>↔ Fit width</button></div>';
+  }
+  // The control a page marks as its own option (data-wp-opt, in its setup bar), or null.
+  function pageOptEl(e) {
+    try { return (e && e.frame && e.frame.contentDocument && e.frame.contentDocument.querySelector('[data-wp-opt]')) || null; } catch (err) { return null; }
+  }
+
   function openMenu(id, anchor) {
     var p = panelById(id);
     if (!p) return;
@@ -1484,10 +1609,7 @@
       var so = ovEntry(p.key), sd = window.WpSections ? WpSections.find(p.key, p.sect) : null;
       h += '<div class="note">' + esc(sd ? sd.label : p.sect) + ', cut from ' + esc(so ? so.label : p.key)
         + ': its own page, drawn as in its window, with its own buttons. Its size follows what it shows; '
-        + 'A−/A+ make it bigger or smaller, and the page width below lets its text wrap differently.</div>'
-        + '<div class="sec">Page width</div><div class="row">'
-        + '<button class="btn" data-pw="-20">−</button><span style="min-width:4em;text-align:center">' + Math.round(p.pw) + ' px</span>'
-        + '<button class="btn" data-pw="20">+</button></div>';
+        + 'A−/A+ make it bigger or smaller, and the page width below lets its text wrap differently.</div>';
       if (p.grp) {
         h += '<div class="row"><button class="btn" data-leave title="It stops moving with the other pieces (Alt-drag does the same)">Leave the group</button></div>';
       }
@@ -1519,10 +1641,32 @@
       h += '<div class="row">'
         + '<button class="btn' + (up ? ' on' : '') + '" data-anchor="bottom" title="The bottom edge stays where it is; it grows upward">↑ grows up</button>'
         + '<button class="btn' + (!up ? ' on' : '') + '" data-anchor="top" title="The top edge stays where it is; it grows downward">↓ grows down</button></div>';
+      // The height by number: the edge it grows from stays put (as the fit holds it); a height set by hand turns Fit off.
+      if (sizable(p) && p.kind !== 'sect') {
+        var hdis = isLocked(p) ? ' disabled title="' + LOCK_TIP + '"' : '';
+        h += '<div class="row"><button class="btn" data-ht="-20"' + hdis + '>−</button><span style="min-width:4em;text-align:center">' + Math.round(p.h) + ' px</span>'
+          + '<button class="btn" data-ht="20"' + hdis + '>+</button></div>';
+      }
     }
     h += '<div class="sec">' + ((p.kind === 'overlay' || p.kind === 'sect') ? 'Size' : 'Text size') + '</div><div class="row">'
       + '<button class="btn" data-sc="-1">A−</button><span style="min-width:3em;text-align:center">' + Math.round((p.scale || 1) * 100) + '%</span>'
       + '<button class="btn" data-sc="1">A+</button></div>';
+    if (sizable(p)) h += widthMenuHtml(p);
+    h += '<div class="sec">Opacity</div><div class="row">'
+      + '<button class="btn" data-al="-1" title="Fade what it shows (its background with it); the ✥ and ◢ stay solid">−</button><span style="min-width:3em;text-align:center">' + Math.round(alphaOf(p) * 100) + '%</span>'
+      + '<button class="btn" data-al="1">+</button></div>';
+    var mini = p.kind === 'overlay' ? miniOf(p.key) : null;
+    if (mini) {
+      h += '<div class="sec">Mini mode</div><div class="row">'
+        + '<button class="btn' + (mini.on ? ' on' : '') + '" data-mini title="The overlay\'s own mini setting: the same one its right-click menu, the dashboard and Ctrl+Shift+M change">▭ Mini mode: ' + (mini.on ? 'ON' : 'off') + '</button>'
+        + '<button class="btn' + (mini.pin ? ' on' : '') + '" data-minipin title="Stays mini when Ctrl+Shift+M restores the others">📌 Keep mini: ' + (mini.pin ? 'ON' : 'off') + '</button></div>';
+    }
+    // The page's own options (its setup bar's extras: Charm's "recharm warn at"), which the panel hides with the rest of that bar.
+    if (p.kind === 'overlay' && pageOptEl(_els[p.id])) {
+      var optsOn = !!(_els[p.id] && _els[p.id].root.classList.contains('opts'));
+      h += '<div class="sec">This page\'s own options</div><div class="row">'
+        + '<button class="btn' + (optsOn ? ' on' : '') + '" data-popt title="Show the options this overlay keeps in its setup bar, here in its panel">⚙ Page options: ' + (optsOn ? 'shown' : 'hidden') + '</button></div>';
+    }
     if (p.kind !== 'overlay' && p.kind !== 'part' && p.kind !== 'sect') {
       h += '<div class="row" style="margin-top:8px">'
         + (p.kind === 'callouts'
@@ -1862,7 +2006,32 @@
       if (fitOn(p, pdefOf(p))) p.fit = false; else delete p.fit;
     }
     else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), (p.kind === 'overlay' || p.kind === 'part' || p.kind === 'sect') ? 0.5 : 0.6, p.kind === 'part' ? 3 : 2.5, 1) * 10) / 10; }
-    else if (t.hasAttribute('data-pw')) { p.pw = num((p.pw || 340) + Number(t.getAttribute('data-pw')), 160, 2400, 340); }
+    // Size by hand: refused (with the reason) while locked; a new width lets a fit that gave up try again.
+    else if (t.hasAttribute('data-wpre') || t.hasAttribute('data-wd') || t.hasAttribute('data-ht') || t.hasAttribute('data-fitw')) {
+      var sized = false, SW = window.innerWidth, SH = window.innerHeight;
+      if (t.hasAttribute('data-wpre')) sized = setWidth(p, WpSizes.widthOf(t.getAttribute('data-wpre')), SW);
+      else if (t.hasAttribute('data-wd')) sized = setWidth(p, widthOf(p) + Number(t.getAttribute('data-wd')), SW);
+      else if (t.hasAttribute('data-ht')) sized = setHeight(p, p.h + Number(t.getAttribute('data-ht')), SH);
+      else sized = fitWidth(p, _els[p.id], SW);
+      if (!sized && isLocked(p)) note('🔒 ' + LOCK_TIP, 3500);
+      delete _fitStop[p.id]; delete _fitCreep[p.id];
+    }
+    else if (t.hasAttribute('data-al')) { stepAlpha(p, Number(t.getAttribute('data-al')) < 0 ? -1 : 1); }
+    else if (t.hasAttribute('data-mini') || t.hasAttribute('data-minipin')) {
+      // The overlay's own setting, through the same setters as its right-click menu and the dashboard; the canvas hears it back.
+      var mm = miniOf(p.key), isPin = t.hasAttribute('data-minipin');
+      try {
+        var done = isPin ? (M.setOverlayMiniPin && M.setOverlayMiniPin(p.key, !(mm && mm.pin))) : (M.setOverlayMini && M.setOverlayMini(p.key, !(mm && mm.on)));
+        if (done && done.then) done.then(refresh).then(function () {
+          if (_menuFor === p.id && _els[p.id]) openMenu(p.id, _menuAnchor || _els[p.id].root);
+        }, function () {});
+      } catch (err) { /* main gone */ }
+      return;
+    }
+    else if (t.hasAttribute('data-popt')) {
+      var oe = _els[p.id], od = oe && oe.frame && oe.frame.contentDocument;
+      if (od && od.body) { var oo = !od.body.classList.contains('wp-opts'); od.body.classList.toggle('wp-opts', oo); oe.root.classList.toggle('opts', oo); }
+    }
     else if (t.hasAttribute('data-apart')) {
       closeMenu();
       if (takeApart(p)) { save(); render(); }
@@ -2650,6 +2819,35 @@
     place(e, p); save(); placeGbox();
     if (_menuFor === id) placeMenu();
     return true;
+  }
+  // ↔ Fit width: the narrowest width at which the page cuts nothing short with "…" (Charm's "Best pets here":
+  // "a C…"). The page is laid out at each candidate width in turn, measured (cutShort), and widened by what the
+  // widest cut-short text still lacked; it stops when nothing is cut, when a wider page stops helping (a box with
+  // a width of its own: the last step is taken back), or at the widest the item may be. It only ever widens: the
+  // width a raider chose is a floor. False for a locked item or a page that is not here yet.
+  function fitWidth(p, e, W) {
+    if (!sizable(p) || isLocked(p) || !e || !e.frame) return false;
+    var doc = null, win = null;
+    try { doc = e.frame.contentDocument; win = e.frame.contentWindow; } catch (err) { return false; }
+    if (!doc || !doc.body || !win) return false;
+    // The page lays out at the item's width ÷ its scale (an overlay is scaled as a whole); its px are 1:1 elsewhere.
+    var k = p.kind === 'overlay' ? (p.scale || 1) : 1, r = widthRange(p, W);
+    var lay = p.kind === 'overlay' ? p.w / k : widthOf(p), start = lay, prev = null, step = 0;
+    function lay1(x) {
+      if (p.kind === 'timers' || p.kind === 'callouts') e.root.style.width = Math.round(x) + 'px';
+      else e.frame.style.width = Math.round(x) + 'px';
+    }
+    for (var i = 0; i < 6; i++) {
+      lay1(lay);
+      var d = cutShort(doc, win);
+      if (d <= 0) break;
+      if (prev !== null && d >= prev) { lay -= step; break; }
+      prev = d; step = Math.ceil(d) + 2; lay += step;
+      if (lay * k >= r[1]) { lay = r[1] / k; lay1(lay); break; }
+    }
+    place(e, p);   // the real sizes back; setWidth below is what changes them
+    delete _fitAdd[p.id];
+    return lay > start ? setWidth(p, Math.ceil(lay * k), W) : true;
   }
   // A page just added is not at its settled look when it loads (its data has not come in), so the fit is
   // tried three times; sizing it by hand (◢) or the menu's Fit ends it.
@@ -3526,8 +3724,10 @@
       if (!_arrange && M.canvasEdit) { try { M.canvasEdit(true); } catch (e) {} }
     }
   }
-  function refresh() { try { if (M.canvasState) M.canvasState().then(loadState).catch(function () {}); } catch (e) {} }
+  function refresh() { try { if (M.canvasState) return M.canvasState().then(loadState).catch(function () {}); } catch (e) {} }
   refresh();
+  // ▭ Mini mode changed from anywhere (the overlay's own menu, the dashboard, Ctrl+Shift+M): read it now.
+  try { if (M.onCanvasMini) M.onCanvasMini(refresh); } catch (e) {}
   // A group's hotkey pressed while this is up: read it now.
   try { if (M.onCanvasGroupOps) M.onCanvasGroupOps(refresh); } catch (e) {}
   // A resolution change resizes this window; keep the fractions, re-read the

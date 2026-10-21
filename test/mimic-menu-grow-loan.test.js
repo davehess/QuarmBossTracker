@@ -19,8 +19,11 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { readSource, sliceBlock, evalBlock, stripJs, ROOT } from './_source-slice.js';
 
+// The preset handler reads the shared width table (overlaySizes.js); the sliced block gets the real one.
+globalThis.__overlaySizes = createRequire(import.meta.url)(path.join(ROOT, 'apps', 'mimic', 'overlaySizes.js'));
 const MAIN = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
 const PRELOAD = readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js'));
 
@@ -53,6 +56,7 @@ function env({ growsUp = false, skew = 0, work = { x: 0, y: 0, width: 1920, heig
     let _displaySettleUntil = 0;
     function _rememberLayout() {}
     const _OVERLAY_MIN_W = 200;
+    const overlaySizes = globalThis.__overlaySizes;
     const _GROW_UP_DEFAULT_KEYS = new Set(['trigger']);
     const setupMode = false;
     const _singleSetupWins = new Set();
