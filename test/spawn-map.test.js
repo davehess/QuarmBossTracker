@@ -84,13 +84,16 @@ function fakeNet(responder) {
   const calls = [];
   const mod = {
     request(o, cb) {
-      calls.push(o);
+      // The saved raid route's read (test/map-raid-route.test.js owns it) rides the first poll in a zone; it is answered
+      // "no route" here and kept out of `calls`, which these tests use to count the zone-data and guild-sync traffic.
+      const routeRead = /\/raid-route/.test(o.path);
+      if (!routeRead) calls.push(o);
       const req = {
         on() { return req; }, destroy() {},
         end(body) {
           o.__body = body ? Buffer.from(body).toString('utf8') : null;   // what a POST sent
           setImmediate(() => {
-            const r = responder ? responder(o) : { status: 500 };
+            const r = routeRead ? { status: 404 } : responder ? responder(o) : { status: 500 };
             const res = new EventEmitter();
             res.statusCode = r.status; res.headers = r.etag ? { etag: r.etag } : {};
             cb(res);
@@ -1283,9 +1286,9 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(30);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring + Guild corpses
+    expect(showRows).toHaveLength(31);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring + Guild corpses + Saved raid route
     expect(glyphRows).toHaveLength(9);
-    expect(colRows).toHaveLength(30);                                          // ...and the Corpses colour
+    expect(colRows).toHaveLength(31);                                          // ...and the Corpses and Saved raid route colours
     const walls = showRows[0].children[0];                                     // Walls
     walls.checked = false; walls.listeners.change.forEach(f => f());
     const eye = glyphRows[0].children[0];                                      // 👁

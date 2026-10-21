@@ -105,6 +105,12 @@
   #zone{font-size:12px;color:#79c0ff;padding-right:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #posage{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap}
   #wallsrc{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* The saved raid route's legend, which is also its switch. A button because a click-through window needs the hover handshake
+     on anything clickable (the preload arms it for buttons). Dimmed and struck through while the line is hidden. */
+  #routenote{display:block;max-width:100%;margin:0;padding:0;border:0;background:none;font:inherit;font-size:9px;line-height:11px;text-align:left;
+    color:#e8b923;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;text-shadow:inherit}
+  #routenote[hidden]{display:none}
+  #routenote.off{color:#6e7681;text-decoration:line-through}
   #setupbar select{font:inherit;font-size:10px;max-width:90px}
   #tgt{font-size:10px;color:#f0883e;min-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* The header lines (zone, position age, walls, target) and the foot never shrink: they are overflow:hidden flex items, so in a
@@ -302,6 +308,7 @@
       <div id="zone">Map <span style="color:#6e7681">[beta]</span></div>
       <div id="posage" title="Age of the newest position when drawn, and where it came from."></div>
       <div id="wallsrc" title="Where the walls on the map come from."></div>
+      <button id="routenote" type="button" hidden></button>
       <div id="tgt"></div>
       <div id="lists" data-wp-interact></div>
       <div id="foot"></div>
@@ -1221,6 +1228,31 @@
     if (!local) return 'walls: built-in';
     return local.source === 'brewall' ? "walls: Brewall (Zeal's maps)" : 'walls: your map files';
   }
+  // The saved raid route (the guild lead, 2026-10-21: "make the route that gets displayed on the maps overlay"): the route an
+  // officer saved for this zone on the website, sent by the agent as `route` { points:[[x,y]], legs:[[from,to]] (index ranges
+  // into points), stops:[{ n, name, x, y }], saved_at } in the server frame, so it draws through wpt() like a spawn point.
+  // Each leg is its own line (the legs are not joined end to end). null when there is nothing to draw.
+  function prepRoute(r) {
+    if (!r || !Array.isArray(r.points) || !Array.isArray(r.legs)) return null;
+    var legs = [], stops = [], i, l, s;
+    for (i = 0; i < r.legs.length; i++) {
+      l = r.legs[i];
+      if (Array.isArray(l) && l[0] >= 0 && l[1] > l[0] && l[1] < r.points.length) legs.push([l[0] | 0, l[1] | 0]);
+    }
+    if (!legs.length) return null;
+    var list = Array.isArray(r.stops) ? r.stops : [];
+    for (i = 0; i < list.length; i++) {
+      s = list[i];
+      if (s && isFinite(s.x) && isFinite(s.y) && s.n >= 1) stops.push({ n: s.n | 0, name: String(s.name || ''), x: +s.x, y: +s.y });
+    }
+    return { points: r.points, legs: legs, stops: stops, saved: typeof r.saved_at === 'string' ? r.saved_at : null };
+  }
+  // "Raid route (saved Oct 21)" - the line under the zone name, which is also the switch.
+  function routeNote(route) {
+    if (!route) return '';
+    var t = route.saved ? Date.parse(route.saved) : NaN;
+    return 'Raid route' + (isFinite(t) ? ' (saved ' + new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ')' : '');
+  }
   // The agent's local_map -> lines grouped by colour into typed arrays in the SCREEN frame (the same trick as
   // prepMap), the z of each line's midpoint, the bounds in the server frame, and the labels.
   function prepLocal(lm) {
@@ -1283,7 +1315,7 @@
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
     ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
     ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['conNames', 'Mob names in con colour'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
-    ['focus', 'Raid focus target (MA / most targeted)'], ['corpses', 'Guild corpses (☠)'],
+    ['focus', 'Raid focus target (MA / most targeted)'], ['corpses', 'Guild corpses (☠)'], ['raidRoute', 'Saved raid route (gold line, numbered stops)'],
     ['kite', 'Kite coach (your circling: lap, drift)'], ['kiteLoops', 'Guild kite loops'],
   ];
   var CFG_GLYPHS = [
@@ -1297,22 +1329,22 @@
     ['aggroSafe', 'Aggro: not to you'], ['aggroNone', 'Aggro: nobody'], ['aeRamp', 'AE rampage ring'], ['ramp', 'Rampage ring'],
     ['glyph', 'Ability icons'], ['pather', 'Walker mark'], ['bossLabel', 'Boss name'], ['raidLabel', 'Raid target name'],
     ['upLabel', 'Known mob name'], ['room', 'Room names'], ['you', 'You'], ['target', 'Target'], ['tot', 'Target\'s target'], ['pinLine', 'Target → spawn line'],
-    ['group', 'Group'], ['raid', 'Raid'], ['corpse', 'Corpses'],
+    ['group', 'Group'], ['raid', 'Raid'], ['corpse', 'Corpses'], ['raidRoute', 'Saved raid route'],
   ];
   var MAP_SCHEMES = {
     default: { wall: '#c8d6ea', oursWall: '#d6e6ff', route: '#39c5cf', routeTarget: '#7ee787', dot: '#c9d1d9', named: '#f2cc60',
       raidTarget: '#ff7b72', up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff', aggro: '#e5534b', aggroSafe: '#e3b341', aggroNone: '#56d364', aeRamp: '#ff5c5c', ramp: '#ff79c6',
       glyph: '#e6edf3', pather: '#9ecbff', bossLabel: '#f2cc60', raidLabel: '#ffa198', upLabel: '#7ee787', room: '#c9d9ee',
-      you: '#58a6ff', target: '#f0883e', tot: '#f778ba', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', corpse: '#9aa4b2', bg: '#131a26' },
+      you: '#58a6ff', target: '#f0883e', tot: '#f778ba', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', corpse: '#9aa4b2', raidRoute: '#e8b923', bg: '#131a26' },
     contrast: { wall: '#ffffff', oursWall: '#ffffff', route: '#00e5ff', routeTarget: '#00ff66', dot: '#ffffff', named: '#ffd700',
       raidTarget: '#ff3b30', up: '#00ff66', ringWait: '#ff3b30', ringWindow: '#ffcc00', ringUp: '#00ff66', candidate: '#e040fb', aggro: '#ff3b30', aggroSafe: '#ffcc00', aggroNone: '#00ff66', aeRamp: '#ff3b30', ramp: '#ff80ab',
       glyph: '#ffffff', pather: '#00e5ff', bossLabel: '#ffd700', raidLabel: '#ff6b6b', upLabel: '#00ff66', room: '#ffffff',
-      you: '#00b0ff', target: '#ff9100', tot: '#ff4fd8', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', corpse: '#c9d1d9', bg: '#000000' },
+      you: '#00b0ff', target: '#ff9100', tot: '#ff4fd8', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', corpse: '#c9d1d9', raidRoute: '#ffd700', bg: '#000000' },
     // Okabe–Ito: no red/green pair carries a meaning (up is sky blue, "not yet" vermillion, the window yellow).
     cb: { wall: '#d9d9d9', oursWall: '#e0e0e0', route: '#56b4e9', routeTarget: '#f0e442', dot: '#d9d9d9', named: '#e69f00',
       raidTarget: '#d55e00', up: '#56b4e9', ringWait: '#d55e00', ringWindow: '#f0e442', ringUp: '#56b4e9', candidate: '#cc79a7', aggro: '#d55e00', aggroSafe: '#f0e442', aggroNone: '#56b4e9', aeRamp: '#d55e00', ramp: '#f0e442',
       glyph: '#ffffff', pather: '#56b4e9', bossLabel: '#e69f00', raidLabel: '#d55e00', upLabel: '#56b4e9', room: '#d9d9d9',
-      you: '#009e73', target: '#e69f00', tot: '#cc79a7', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', corpse: '#999999', bg: '#14171c' },
+      you: '#009e73', target: '#e69f00', tot: '#cc79a7', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', corpse: '#999999', raidRoute: '#e69f00', bg: '#14171c' },
   };
   var HEX_RE = /^#[0-9a-f]{6}$/i;
   function mapCfgDefaults() {
@@ -1475,6 +1507,7 @@
     sideMode: 'grow',   // Timers button: 'grow' widens the window by the list (map keeps its size), 'share' shrinks the map
     timerBy: {}, candBy: {}, seenBy: {}, watchBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
+    route: null, routeVer: null,   // the saved raid route (prepRoute) and the agent's version of it (route_ver)
     local: null, localVer: null, walls: 'auto', labels: 'all',   // the player's own map files (prepLocal), the version held, Walls: Auto|Ours only, Labels all|targets|off
     followOff: { x: 0, y: 0 }, followLock: false, followWho: 'me', pointTrails: {}, kills: 0, killSeen: {},   // Follow me's screen spot + lock; killed mobs' paths (see noteKills)
     src: 'direct', smooth: 'light', direct: null, sampleAt: 0, sampleSrc: '',   // beta tuning knobs + the latest pushed positions
@@ -1593,16 +1626,20 @@
       if (S.kite) { S.kite.reset(); S.kiteView = null; }   // a new zone: the kite coach starts over, and so do the guild's loops
       S.guild = { zone: null, loops: [], asked: 0, retried: false };
       if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; S.sgs = null; }
-      S.local = null; S.localVer = null;
+      S.local = null; S.localVer = null; S.route = null; S.routeVer = null;
       document.getElementById('followBtn').classList.add('on');
     }
     // Your own map files: sent when the version changed, null with a version = unchanged, null without = none.
     if (p.local_map) { S.local = PART_TIMERS ? null : prepLocal(p.local_map); S.localVer = (S.local || PART_TIMERS) ? (p.local_version || null) : null; }
     else if (!p.local_version) { S.local = null; S.localVer = null; }
+    // The saved raid route, the same way: sent when its version changed, null with a version = unchanged, null without = none.
+    if (p.route && !PART_TIMERS) { S.route = prepRoute(p.route); S.routeVer = S.route ? (p.route_ver || null) : null; }
+    else if (!p.route_ver) { S.route = null; S.routeVer = null; }
     S.ver = p.version || null;
     S.skew = (p.now || Date.now()) - Date.now();
     S.p = p;
     syncWallNote();
+    syncRouteNote();
     noteClearKey();   // a new zone or character: read the keep-clear areas again
     S.timerBy = {}; S.candBy = {}; S.seenBy = {};
     S.watchBy = p.watched && typeof p.watched === 'object' ? p.watched : {};   // spots marked "watch for <named>": { <point_id>: { named, by } }
@@ -1714,7 +1751,8 @@
     if (inflight || document.hidden) return;
     inflight = true;
     var url = 'http://127.0.0.1:' + PORT + '/api/map-state' + (S.ver ? '?have=' + encodeURIComponent(S.ver) : '')
-      + (S.localVer ? (S.ver ? '&' : '?') + 'have_local=' + encodeURIComponent(S.localVer) : '');
+      + (S.localVer ? (S.ver ? '&' : '?') + 'have_local=' + encodeURIComponent(S.localVer) : '')
+      + (S.routeVer ? (S.ver || S.localVer ? '&' : '?') + 'have_route=' + encodeURIComponent(S.routeVer) : '');
     fetch(url).then(function (r) { return r.json(); }).then(function (p) { inflight = false; applyPayload(p); })
       .catch(function () { inflight = false; S.err = true; renderAll(); });
   }
@@ -1950,6 +1988,46 @@
       list.push(seen[key] = { gid: key, near: near });
     }
     return list.sort(function (a, b) { return (a.gid === targetGrid) - (b.gid === targetGrid); });   // targeted last = on top
+  }
+  // The saved raid route (prepRoute): one thin gold line per leg, under the spawn dots and everything live (the stops' badges
+  // follow in drawRaidRouteStops). Nothing here is clickable, so it costs the window nothing; the switch is the legend line
+  // under the zone name (and ⚙ → Saved raid route).
+  function drawRaidRoute(I, CO) {
+    var R = S.route;
+    if (!R) return;
+    var col = CO.raidRoute, pts = R.points, i, j, q;
+    ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.setLineDash([]); ctx.globalAlpha = 1;
+    ctx.beginPath();
+    for (i = 0; i < R.legs.length; i++) {
+      for (j = R.legs[i][0]; j <= R.legs[i][1]; j++) {
+        q = wpt(pts[j][0], pts[j][1]);
+        if (j === R.legs[i][0]) ctx.moveTo(q[0], q[1]); else ctx.lineTo(q[0], q[1]);
+      }
+    }
+    var width = 1.25 * I.line;
+    if (I.casing > 0) { ctx.strokeStyle = 'rgba(0,0,0,' + (I.casing * 0.6) + ')'; ctx.lineWidth = width + 2; ctx.stroke(); }
+    ctx.strokeStyle = hexA(col, 0.9); ctx.lineWidth = width; ctx.stroke();
+    ctx.restore();
+  }
+  // The numbered stops, drawn once the spawn dots and names are down: a stop is nearly always a named mob's spawn point, and its
+  // badge belongs on top of that dot (the label beside it still names it). Still under the group, raid, you and target marks.
+  function drawRaidRouteStops(CO) {
+    var R = S.route, i, q;
+    if (!R || !R.stops.length) return;
+    var col = CO.raidRoute, px = Math.round(10 * (S.cfg.text || 1)), rad = Math.round(px * 0.8) + 1;
+    ctx.save();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    ctx.font = 'bold ' + px + 'px ui-monospace,Consolas,monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (i = 0; i < R.stops.length; i++) {
+      q = wpt(R.stops[i].x, R.stops[i].y);
+      if (q[0] < -20 || q[0] > S.w + 20 || q[1] < -20 || q[1] > S.h + 20) continue;
+      ctx.beginPath(); ctx.arc(q[0], q[1], rad, 0, 6.2832);
+      ctx.fillStyle = 'rgba(13,17,23,0.88)'; ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = col; ctx.stroke();
+      ctx.fillStyle = col; ctx.fillText(String(R.stops[i].n), q[0], q[1] + 0.5);
+    }
+    ctx.restore();
   }
   function drawRoutes(sz, range, srange, targetGrid, onlyTarget) {
     if (!S.grids) return;
@@ -2305,6 +2383,8 @@
         strokeWall(oursStyle, (bright ? 1.6 : 1) * I.line, bright ? I.casing : I.casing / 2);
       }
     }
+    // The saved raid route: above the walls, under every live marker and every spawn dot.
+    if (SH.raidRoute) drawRaidRoute(I, CO);
     // Spawn dots, and first the pather routes (under the dots; every route in range, not only visible points').
     var bossC = [], corpseVis = [];
     var vis = [], flashOn =Math.floor(now / 450) % 2 === 0, anyFlash = false, kiteDots = false, srange = spawnRange();
@@ -2393,6 +2473,7 @@
     }
     ctx.globalAlpha = 1;
     drawLabels(bossC, sz, range, w, h);
+    if (SH.raidRoute) drawRaidRouteStops(CO);
     // Group and raid.
     var P = S.p;
     if (P) {
@@ -3010,9 +3091,30 @@
   });
   wallsSel.value = S.walls;
   syncWallNote();
+  // The saved raid route's legend, "Raid route (saved Oct 21)", under the walls note. It is also the switch (the same one as
+  // ⚙ → Saved raid route, saved with the other layer toggles): struck through and dim while the line is hidden. Hidden
+  // altogether when this zone has no saved route. Each field is written only when it changed, so a poll repaints nothing.
+  var routeNoteEl = document.getElementById('routenote');
+  function syncRouteNote() {
+    var R = S.route, on = !!(S.cfg && S.cfg.show.raidRoute), text = routeNote(R), title = '';
+    if (R) {
+      title = 'Click to ' + (on ? 'hide' : 'show') + ' the raid route on the map: the route the officers saved from the recorded raid nights. Stops: '
+        + (R.stops.length ? R.stops.map(function (s) { return s.n + ' ' + s.name; }).join(' · ') : 'none named') + '.';
+    }
+    if (routeNoteEl.hidden !== !R) routeNoteEl.hidden = !R;
+    if (routeNoteEl.textContent !== text) routeNoteEl.textContent = text;
+    if (routeNoteEl.title !== title) routeNoteEl.title = title;
+    routeNoteEl.classList.toggle('off', !on);
+  }
+  routeNoteEl.addEventListener('click', function () {
+    S.cfg.show.raidRoute = !S.cfg.show.raidRoute;
+    if (cfgBuilt) buildCfg();   // keep the open settings panel's checkbox in step
+    cfgCommit();
+  });
+  syncRouteNote();
   // ⚙ Map settings: built from CFG_SHOW / CFG_GLYPHS / CFG_COLS on first open, saved on every change.
   var cfgEl = document.getElementById('cfg'), cfgBtn = document.getElementById('cfgBtn');
-  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncClearCtl(); rebuildClear(); }
+  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncRouteNote(); syncClearCtl(); rebuildClear(); }
   // ◯ on the toolbar (the guild lead, 2026-10-13: "add aggro rings onto the map, make a circle icon on the main
   // screen"): the same switch as ⚙ → Show → Aggro rings.
   var aggroBtn = document.getElementById('aggroBtn');
