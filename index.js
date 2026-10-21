@@ -23309,6 +23309,10 @@ async function _handleAgentUpload(req, res) {
 
         card.setFooter({ text: `${perspLabel}${stagingTag} · ${perspNames} · ${encounter.events.length} events (latest)` });
 
+        // Link the card to its wolfpack.quest parse page. The edit path rebuilds the whole card, so a card first
+        // posted before the encounter id existed gains the link on the next merged upload.
+        require('./commands/parse').withParseWebLink(card, _encIdForLink);
+
         // ⏱️ How we did — the kill recap rides on THIS card (utils/killRecap.js). Raid bosses only, and only
         // once a death line has confirmed the kill; any failure just leaves the card as it was.
         if (_isBossCard && _encIdForLink) {

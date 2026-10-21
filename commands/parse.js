@@ -286,8 +286,16 @@ function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
     return `${rank}. ${name} ${dmg}  ${dps}  ${dur}`;
   });
 
-  // Trim rows until the wrapped code block fits Discord's 1024-char field limit
-  const wrap = (r) => '```\n' + [hdr, divider, ...r].join('\n') + '\n```';
+  // Trim rows until the wrapped code block fits Discord's 1024-char field limit. Players past the cut get
+  // one "+N more" line with their damage (the guild lead, 2026-10-21: a 47-player kill listed 19 rows and
+  // the other 28 raiders' 335k just vanished — "the damage is all missing").
+  const moreLine = (shown) => {
+    const rest = parsed.players.slice(shown);
+    if (!rest.length) return [];
+    const restDmg = rest.reduce((s, p) => s + (Number(p.damage) || 0), 0);
+    return [`    +${rest.length} more · ${fmt(restDmg)}`];
+  };
+  const wrap = (r) => '```\n' + [hdr, divider, ...r, ...moreLine(r.length)].join('\n') + '\n```';
   while (rows.length > 0 && wrap(rows).length > 1024) rows.pop();
 
   // Top-5 class breakdown (inline markdown — cleaner than a code block for 5 lines)
@@ -304,7 +312,7 @@ function buildParseEmbed(bossName, parsed, bossEmoji, extras = {}) {
     .setDescription(`Fight: **${parsed.duration}s** · ${fmt(parsed.totalDamage)} dmg · ${fmt(parsed.totalDps)}/s raid DPS${isRaidWindow ? '  🎯 *raid night*' : ''}`)
     .addFields(
       { name: '🏆 Top Classes', value: classValue, inline: false },
-      { name: 'DPS Rankings',   value: wrap(rows),  inline: false },
+      { name: `DPS Rankings (${parsed.players.length})`, value: wrap(rows), inline: false },
     )
     .setTimestamp();
 
@@ -422,6 +430,17 @@ async function logParseToDiscord(client, bossId, parseEntry) {
 // loadParsesFromDiscord parses that description as pure JSON on startup, so any
 // extra text there would corrupt parse recovery.
 const WOLFPACK_PARSE_BASE = 'https://wolfpack.quest/parses/';
+
+// The per-boss card in the raid thread (index.js, rebuilt on every merged upload) links to the same page:
+// the title becomes clickable and a short visible line says where it goes (the guild lead, 2026-10-21:
+// "each of these parses should link back to the parses in the website"). No encounter id yet → card untouched.
+function withParseWebLink(embed, encounterId) {
+  if (!embed || !encounterId) return embed;
+  const url = WOLFPACK_PARSE_BASE + encounterId;
+  embed.setURL(url);
+  embed.setDescription(((embed.data && embed.data.description) || '') + `\n[Full parse on wolfpack.quest](${url})`);
+  return embed;
+}
 
 async function applyEncounterParseLink(msg, encounterId) {
   if (!msg || !encounterId) return;
@@ -831,6 +850,7 @@ module.exports = {
   buildParseEmbed,
   logParseToDiscord,
   applyEncounterParseLink,
+  withParseWebLink,
   loadParsesFromDiscord,
   pendingParses,
   handleParseConfirm,
