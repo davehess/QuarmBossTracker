@@ -18974,12 +18974,39 @@ table.wp-abtbl th.wp-r { color:var(--dim); }
 .nav { display:flex; flex-direction:column; gap:4px; margin:12px 0; align-items:stretch; }
 .nav button { text-align:left; }
 .nav .wp-gear { margin-left:0 !important; }   /* the row layout pushed Tour right with margin-left:auto */
+/* Layout A - Triage (the guild lead, 2026-10-21: "Things are so spaced out, important sections are buried at the
+   bottom of a huge scrolling page"). The rail is grouped by WHEN you reach for a tab: Live / After the raid /
+   Set up / Machine. A heading is a plain div (no data-tab, not a button), so the tab switcher, the tour and every
+   \`.nav button[data-tab]\` lookup never see it. */
+.nav .wp-rail-h { color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.09em; margin:10px 2px 0; }
+.nav .wp-rail-h:first-child { margin-top:0; }
+/* The pinned section index: one row of chips under the top bar naming this tab's cards. Solid background (cards
+   pass UNDER it); a single line that scrolls sideways rather than a second and third row. */
+.wp-index { position:sticky; top:var(--wp-topbar-h, 118px); z-index:110; display:flex; gap:6px; align-items:center;
+            overflow-x:auto; white-space:nowrap; padding:6px 0; margin:0 0 8px; background:var(--bg,#0d1117);
+            border-bottom:1px solid var(--border); scrollbar-width:thin; }
+.wp-index[hidden] { display:none; }
+.wp-index .wp-ixl { color:var(--gold); font-size:12px; flex:none; }
+.wp-index button { flex:none; max-width:26ch; overflow:hidden; text-overflow:ellipsis; background:transparent; color:var(--text);
+                   border:1px solid var(--border); border-radius:999px; padding:2px 10px; font:inherit; font-size:11px; cursor:pointer; }
+.wp-index button:hover, .wp-index button:focus-visible { border-color:var(--blue); color:var(--blue); outline:none; }
+body.wp-overlay-mode .wp-index, body.wp-feedback-mode .wp-index { display:none !important; }
+/* A card that starts folded: its h2 sits inside the <summary>, so the panel keys, the overlay matcher and the
+   hide machinery (which all read the card's h2) keep working. Opening one in a multi-column grid gives it the
+   whole row. */
+.card.wp-fold { padding:8px 14px; }
+.wp-fold > details > summary { cursor:pointer; color:var(--dim); }
+.wp-fold > details > summary h2 { display:inline; border:0; padding:0; margin:0; }
+.wp-fold > details > summary h2 .dim { text-transform:none; letter-spacing:0; }
+.wp-fold > details[open] > summary { margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+.wp-fold:has(> details[open]) { grid-column:1/-1; }
 /* The dashboard is also opened in a plain browser at localhost:7777, and Mimic
    windows get resized small. Below this the rail would eat the content, so fall
    back to the original wrapping row. */
 @media (max-width: 700px) {
   .shell { display:block; }
   .shell > .nav { position:static; height:auto; }
+  .nav .wp-rail-h { display:none; }          /* the group headings have no room in the wrapping row */
   .nav .wp-rail-foot { display:contents; }   /* Tour + Feedback just join the wrapping row; .nav outranks the base rule declared below */
   .nav { flex-direction:row; flex-wrap:wrap; align-items:center; }
   .nav button { text-align:center; }
@@ -19289,26 +19316,32 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
 </div>
 <div class="shell">
 <div class="nav">
+  <!-- The rail is grouped by WHEN you reach for a tab (Layout A, the guild lead, 2026-10-21). The headings are
+       plain divs: no data-tab, not buttons, so nothing that binds '.nav button[data-tab]' ever sees them. -->
+  <div class="wp-rail-h">Live &mdash; raid night</div>
   <button class="active" data-tab="dash">Dashboard</button>
-  <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="raid">⚔ Raid</button>
-  <!-- The Buff blocks picker now lives at the foot of this tab (the guild lead, 2026-10-17). -->
-  <button data-tab="buffs">✨ Buffs (and blocking)</button>
   <button data-tab="fights">⚔️ Fights</button>
+  <div class="wp-rail-h">After the raid</div>
   <!-- 📈 My parses (2026-10-06): your own fights from the guild's record, charted over a window you pick.
        The tray's "📈 My parses" opens this tab through the #myparses hash. -->
   <button data-tab="myparses">📈 My parses</button>
+  <button data-tab="stats">📊 Stats</button>
+  <button data-tab="loot">💰 Loot</button>
   <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (the guild lead
        2026-08-13 — "having to scroll in our dashboard is somewhat annoying to
        navigate"). Info had grown to 16 cards and Triggers to 12 by mixing three
        unrelated jobs: what your log SAW (session stats), whether the machinery
        WORKS (diagnostics), and the thing the tab is actually named for. The
        sidebar rail is what made room for more destinations. -->
-  <button data-tab="loot">💰 Loot</button>
-  <button data-tab="stats">📊 Stats</button>
+  <div class="wp-rail-h">Set up</div>
+  <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="triggers">⚡ Triggers</button>
   <!-- 🗣 Voice (the guild lead, 2026-10-17): every card about how Mimic speaks, carved out of Triggers. -->
   <button data-tab="voice">🗣 Voice</button>
+  <!-- The Buff blocks picker now lives at the foot of this tab (the guild lead, 2026-10-17). -->
+  <button data-tab="buffs">✨ Buffs (and blocking)</button>
+  <div class="wp-rail-h">Machine</div>
   <button data-tab="diag">🩺 Diagnostics</button>
   <button data-tab="info">Info</button>
   <button data-tab="optin">Logsync</button>
@@ -19339,6 +19372,9 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
      its data-tab buttons, so the switcher, the Panels popover and the guided
      tour all keep working untouched - this is a layout change, not a rewrite. -->
 <div class="panes">
+<!-- The pinned section index: chips naming the open tab's cards, filled by wpIndexSync. Its id starts "wp" so a
+     section repaint never touches it. -->
+<div id="wpIndex" class="wp-index" hidden></div>
 <div id="wpMailPanel" style="display:none;margin:8px 0;border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:rgba(88,166,255,0.04)"></div>
 <div id="dash" class="section active"></div>
 <div id="overlays" class="section"></div>
@@ -19352,11 +19388,15 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
 <!-- Fights = Tanks/Healers + DPS combined. #tanks and #deeps are inner
      render-targets (renderTanks/renderDeeps still setSectionHTML into them),
      not independent .section tabs, so both show whenever Fights is active.
-     #fightsReplay holds the ⏪ Replay card (renderReplayCard). -->
+     #fightsReplay holds the ⏪ Replay card (renderReplayCard), folded at the TOP; #fightsMore holds the three
+     cards that start folded below everything else (pets, damage shields, weapon loadouts: renderFightsMore).
+     Layout A order, most important first: Replay (folded) · threat · deaths · incoming · healers · DPS breakdown
+     · top abilities · the folded three. -->
 <div id="fights" class="section">
+  <div id="fightsReplay"></div>
   <div id="tanks"></div>
   <div id="deeps"></div>
-  <div id="fightsReplay"></div>
+  <div id="fightsMore"></div>
 </div>
 <div id="myparses" class="section"></div>
 <div id="loot" class="section"></div>
@@ -19502,6 +19542,69 @@ function wpMoreToggle(btn) {
   btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   btn.textContent = wpMoreLabel(open, btn.getAttribute('data-n'), btn.getAttribute('data-noun'));
 }
+// A card that starts FOLDED (Layout A - Triage, the guild lead, 2026-10-21): the h2 sits inside the <summary>, so the
+// panel key, the overlay matcher and the hide button (all of which read the card's h2) behave as for any card.
+// Open state lives in wpKeep's store, so a repaint keeps what the person opened. \`index\` is the short name the
+// pinned section index shows for it.
+function wpFoldCard(key, titleHtml, bodyHtml, opts) {
+  opts = opts || {};
+  return '<div class="card' + (opts.wide === false ? '' : ' wide') + ' wp-fold"' + (opts.index ? ' data-index="' + esc(opts.index) + '"' : '') + '>'
+    + '<details ' + wpKeep(key, opts.open) + '><summary><h2>' + titleHtml + '</h2></summary>' + bodyHtml + '</details></div>';
+}
+// ── The pinned section index (Layout A - Triage, the guild lead, 2026-10-21) ──────────────────────────────────────
+// A sticky row of chips under the top bar, one per card on the open tab; a click scrolls to that card. Each chip's
+// name is the card's data-index when it has one, else its title (the h2's own text up to the first "(" / "—" / "·",
+// the same cut the Panels menu makes). A card the Panels menu hid, or one that is not on screen, is not listed.
+// BYTE-STABLE: the chips are rewritten only when the tab or the list of names changes, never on a plain poll, so
+// a horizontal scroll position inside the row (and a keyboard focus on a chip) survives. Fewer than two cards: no row.
+function wpCardLabel(card) {
+  var ix = card.getAttribute('data-index');
+  if (ix) return ix;
+  var h = card.querySelector('h2');
+  if (!h) return '';
+  var t = '';
+  for (var i = 0; i < h.childNodes.length; i++) if (h.childNodes[i].nodeType === 3) t += h.childNodes[i].nodeValue;
+  if (!t) t = h.textContent || '';
+  return t.split('(')[0].split('—')[0].split('·')[0].replace(/\\s+/g, ' ').trim();
+}
+function wpIndexCards() {
+  var sec = document.querySelector('.section.active');
+  var out = [], seen = {};
+  if (!sec) return out;
+  var cards = sec.querySelectorAll('.card');
+  for (var i = 0; i < cards.length; i++) {
+    var c = cards[i];
+    if (c.classList.contains('wp-hidden') || !c.getClientRects().length) continue;
+    var label = wpCardLabel(c);
+    if (!label || seen[label]) continue;
+    seen[label] = true;
+    out.push({ label: label, card: c });
+  }
+  return out;
+}
+var _wpIndexSig = null;
+function wpIndexSync() {
+  var el = document.getElementById('wpIndex');
+  if (!el) return;
+  var sec = document.querySelector('.section.active');
+  var list = wpIndexCards();
+  var sig = list.length < 2 ? 'none' : (sec ? sec.id : '') + '|' + list.map(function (x) { return x.label; }).join('|');
+  if (sig === _wpIndexSig) return;
+  _wpIndexSig = sig;
+  if (list.length < 2) { el.hidden = true; el.innerHTML = ''; return; }
+  var h = '<span class="wp-ixl">On this tab</span>';
+  for (var i = 0; i < list.length; i++) h += '<button type="button" data-ix="' + esc(list[i].label) + '" title="Jump to ' + esc(list[i].label) + '">' + esc(list[i].label) + '</button>';
+  el.innerHTML = h;
+  el.hidden = false;
+}
+// Scroll so the card's top sits just under the top bar AND the index row, which together cover the top of the page.
+function wpIndexGo(card) {
+  var bar = document.getElementById('wpTopBar'), ix = document.getElementById('wpIndex');
+  var off = (bar ? bar.getBoundingClientRect().height : 0) + (ix && !ix.hidden ? ix.getBoundingClientRect().height : 0) + 10;
+  var reduce = false;
+  try { reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { void e; }
+  window.scrollTo({ top: Math.max(0, card.getBoundingClientRect().top + window.pageYOffset - off), behavior: reduce ? 'auto' : 'smooth' });
+}
 // Publish the sticky top bar's REAL height so the tab rail can sit below it.
 // The bar changes height when the links wrap, when the update/beta pills appear,
 // and at the short-window breakpoint, so this is measured rather than assumed —
@@ -19519,6 +19622,23 @@ var _wpLastTopBarH = 0;
 // Resize changes wrapping and can cross the short-window breakpoint, and the
 // first paint happens before any poll has run.
 window.addEventListener('resize', function () { try { _wpSyncTopBarHeight(); } catch (e) { void e; } });
+
+// The pinned index's listeners (functions above). Top level on purpose: the wpMoreList/wpKeep helpers are sliced
+// out and evaluated by tests with no \`document\`, so nothing that touches it may sit among them.
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  var b = t && t.closest ? t.closest('#wpIndex button[data-ix]') : null;
+  if (b) {
+    var want = b.getAttribute('data-ix'), list = wpIndexCards();
+    for (var i = 0; i < list.length; i++) if (list[i].label === want) { wpIndexGo(list[i].card); break; }
+    return;
+  }
+  // Hiding or re-showing a panel changes the list: look again once the Panels code has applied it.
+  if (t && t.closest && (t.closest('.wp-hide-btn') || t.closest('#wpPanelMenu'))) setTimeout(wpIndexSync, 80);
+}, true);   // capture: the hide button's own handler stops the event before it could bubble to here
+document.addEventListener('change', function (e) {
+  if (e.target && e.target.closest && e.target.closest('#wpPanelMenu')) setTimeout(wpIndexSync, 80);
+});
 
 // Feedback mode — the page loaded as /?feedback=1 inside Mimic's own Feedback window
 // (the guild lead, 2026-10-15: the in-page form was wiped whenever Mimic reloaded the
@@ -21627,81 +21747,59 @@ function renderTanks(s) {
   if (et && et.perPlayer && Object.keys(et.perPlayer).length > 0) {
     const ranked = Object.entries(et.perPlayer).sort((a, b) => b[1].total - a[1].total);
     const staleLabel2 = et.flushedAt ? ' <span style="color:var(--dim);font-size:12px;font-weight:normal">(ended ' + fmtAgo(et.flushedAt) + ')</span>' : '';
-    h += '<div class="card wide"><h2>⚔️ Threat Detail — ' + esc(et.bossName || 'current fight') + staleLabel2 + '</h2>';
+    h += '<div class="card wide" data-index="Threat"><h2>⚔️ Threat Detail — ' + esc(et.bossName || 'current fight') + staleLabel2 + '</h2>';
     h += '<div class="subtle">Per-source breakdown. Phase-2 will add Quarmy build links + theoretical TPS from weapon procs/haste.</div>';
     h += '<table style="margin-top:6px">' +
          '<tr><th>Player</th><th>Total</th><th>Swing</th><th>Proc</th><th>Spell</th><th>Heal</th><th>Threat procs detected</th></tr>';
-    for (const [name, t] of ranked) {
+    // Layout A: the top 5 show; the rest sit behind "N more".
+    h += wpMoreList('fights|threat', ranked.map(function ([name, t]) {
       const procs = Object.entries(t.procDetail || {})
         .sort((a, b) => b[1] - a[1])
         .map(([n, c]) => esc(n) + ' ×' + c)
         .join(' · ') || '<span class="dim">—</span>';
-      h += '<tr><td class="name">' + esc(name) + '</td>' +
+      return '<tr><td class="name">' + esc(name) + '</td>' +
            '<td class="num"><b>' + fmtK(t.total) + '</b></td>' +
            '<td class="num">' + (t.swing ? fmtK(t.swing) : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (t.proc  ? fmtK(t.proc)  : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (t.spell ? fmtK(t.spell) : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (t.heal  ? fmtK(t.heal)  : '<span class="dim">—</span>') + '</td>' +
            '<td class="dim" style="font-size:11px">' + procs + '</td></tr>';
-    }
+    }), { show: 5, cols: 7, noun: 'more players' });
     h += '</table></div>';
   }
 
-  // (Weapon Loadouts moved to Info / Stats — buildLoadoutsHtml.)
+  // (Weapon Loadouts moved to Info / Stats — buildLoadoutsHtml; since Layout A they, the pets and the damage
+  // shields sit folded at the foot of this tab — renderFightsMore.)
+
+  // Layout A order (the guild lead, 2026-10-21): Threat, Deaths, Incoming, then Healers (below), DPS breakdown
+  // (renderDeeps). Deaths and Incoming are ordinary half-width cards, so the pair share a row.
+  const deaths = Object.entries(s.sessionDeaths||{}).sort((a,b)=>b[1]-a[1]);
+  h += '<div class="card" data-index="Deaths"><h2>Deaths This Session</h2>';
+  if (!deaths.length) h += '<div class="dim">Nobody died. Very respectable.</div>';
+  else {
+    h += '<table>' + wpMoreList('fights|deaths', deaths.map(function ([n, c]) {
+      return '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>';
+    }), { show: 5, cols: 2, noun: 'more players' }) + '</table>';
+  }
+  h += wpDeathRecapsHtml(s);
+  h += '</div>';
 
   const defs = Object.entries(s.sessionDefenders||{}).sort((a,b)=>b[1].damageTaken-a[1].damageTaken);
-  h += '<div class="card wide"><h2>Incoming Damage</h2>';
+  h += '<div class="card" data-index="Incoming"><h2>Incoming Damage</h2>';
   if (!defs.length) h += '<div class="dim">No tanking data yet — join a fight first.</div>';
   else {
     h += '<table><tr><th>Tank</th><th>Dmg Taken</th><th>Hits</th><th>Ramp Hits</th><th>Ramp Dmg</th><th>Invuln Avoided</th><th>Riposted For</th></tr>';
-    for (const [n, d] of defs.slice(0,12)) {
-      h += '<tr><td class="name">' + esc(n) + '</td>' +
+    h += wpMoreList('fights|incoming', defs.slice(0,12).map(function ([n, d]) {
+      return '<tr><td class="name">' + esc(n) + '</td>' +
            '<td class="num">' + fmtK(d.damageTaken) + '</td>' +
            '<td class="num">' + (d.hits||0) + '</td>' +
            '<td class="num">' + (d.rampageHits ? '<span class="tag ramp">'+d.rampageHits+'</span>' : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (d.rampageDmg ? fmtK(d.rampageDmg) : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (d.invulnAvoidedDmg ? '<span class="tag invuln">'+fmtK(d.invulnAvoidedDmg)+'</span>' : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + fmtK(d.ripostedFor||0) + '</td></tr>';
-    }
+    }), { show: 5, cols: 7, noun: 'more tanks' });
     h += '</table>';
   }
-  h += '</div>';
-  // 🛡️ Damage Shield card — per-tank DS output, grouped by source spell/song.
-  // Detected at parse time via the DS allow-list (parseEvent → ds:true). Sorted
-  // by total damage descending so heavy DS wearers float to the top; expand a
-  // row to see the spell/song breakdown that's feeding it.
-  const ds = s.damageShield || {};
-  const dsTotals = Object.entries(ds).map(function(kv){
-    const name = kv[0];
-    const sources = kv[1] || {};
-    var total = 0, hits = 0;
-    for (const k in sources) { total += sources[k].total; hits += sources[k].count; }
-    return { name: name, total: total, hits: hits, sources: sources };
-  }).filter(function(r){ return r.total > 0; }).sort(function(a, b){ return b.total - a.total; });
-  h += '<div class="card wide"><h2>🛡️ Damage Shields <span class="dim" style="font-size:11px;font-weight:normal">(DS damage by tank, grouped by spell/song)</span></h2>';
-  if (dsTotals.length === 0) {
-    h += '<div class="dim" style="font-size:12px">No damage-shield procs observed yet this session. The agent recognizes the druid/ranger thorn lines (thorns, thistles, brambles, spikes, barbs, the -coat selfs, Legacy of Thorn/Spike), the magician fire shields (Shield of Fire/Flame/Lava, Inferno Shield, Barrier of Combustion, Boon of Immolation, Cadeau of Flame), enchanter Feedback, the bard Psalms, and DS clickies casting those lines. Missing one? Let an officer know.</div>';
-  } else {
-    h += '<table style="font-size:12px"><tr><th>Tank</th><th>Total DS</th><th>Hits</th><th>Spells / songs feeding it</th></tr>';
-    for (const t of dsTotals.slice(0, 12)) {
-      const srcEntries = Object.entries(t.sources).sort(function(a, b){ return b[1].total - a[1].total; });
-      const srcSummary = srcEntries.map(function(kv){
-        return '<span style="color:var(--gold)">' + esc(kv[0]) + '</span> <span class="dim">(' + fmtK(kv[1].total) + ' · ' + kv[1].count + 'h)</span>';
-      }).join(' · ');
-      h += '<tr><td class="name">' + esc(t.name) + '</td>' +
-           '<td class="num">' + fmtK(t.total) + '</td>' +
-           '<td class="num">' + t.hits + '</td>' +
-           '<td style="font-size:11px">' + srcSummary + '</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
-  // Deaths
-  const deaths = Object.entries(s.sessionDeaths||{}).sort((a,b)=>b[1]-a[1]);
-  h += '<div class="card"><h2>Deaths This Session</h2>';
-  if (!deaths.length) h += '<div class="dim">Nobody died. Very respectable.</div>';
-  else { h += '<table>'; for (const [n,c] of deaths) h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>'; h += '</table>'; }
-  h += wpDeathRecapsHtml(s);
   h += '</div>';
   h += '</div>';
   // Healers fold in below the tank cards — one combat-support tab.
@@ -21726,7 +21824,12 @@ function wpDeathRecapsHtml(s) {
   var list = s.deathRecaps || [];
   if (!list.length) return '';
   var h = '<div class="subtle" style="margin-top:8px">Death recaps · the last 20 s before each death, newest first. Target a corpse to jump to that player’s latest.</div>';
+  // Layout A: the three newest recaps show, the older ones sit behind "N older recaps". A recap the person just
+  // targeted a corpse for is never left behind the fold (it is the one they came for).
+  var recaps = [];
   for (var i = 0; i < list.length; i++) {
+    if (s.deathRecapFocus === list[i].id && i >= 3) _wpMoreOpen['fights|recaps'] = true;
+    var d = '';
     var r = list[i], focus = (s.deathRecapFocus === r.id);
     var rows = [];
     for (var a = 0; a < (r.hits || []).length; a++) {
@@ -21738,18 +21841,19 @@ function wpDeathRecapsHtml(s) {
       rows.push({ off: y.offMs, txt: y.ch ? 'Complete Heal landed' : 'heal landed', cls: y.ch ? 'var(--green)' : 'var(--blue)' });
     }
     rows.sort(function (m, n) { return n.off - m.off; });
-    h += '<details ' + wpKeep('deathrecap|' + r.id, focus) + ' id="deathrecap-' + r.id + '" style="margin-top:4px;padding-left:6px;border-left:3px solid '
+    d += '<details ' + wpKeep('deathrecap|' + r.id, focus) + ' id="deathrecap-' + r.id + '" style="margin-top:4px;padding-left:6px;border-left:3px solid '
        + (focus ? 'var(--gold)' : 'transparent') + '"><summary style="cursor:pointer;font-size:12px">' + esc(wpDeathRecapLine(r))
        + (focus ? ' <span class="dim">· corpse targeted</span>' : '') + '</summary>';
-    if (!rows.length) h += '<div class="dim" style="font-size:11px">Nothing in this log for the last 20 s.</div>';
+    if (!rows.length) d += '<div class="dim" style="font-size:11px">Nothing in this log for the last 20 s.</div>';
     else {
-      h += '<table style="font-size:11px">';
-      for (var k = 0; k < rows.length; k++) h += '<tr><td class="num dim">−' + (rows[k].off / 1000).toFixed(1) + ' s</td><td style="color:' + rows[k].cls + '">' + esc(rows[k].txt) + '</td></tr>';
-      h += '</table>';
+      d += '<table style="font-size:11px">';
+      for (var k = 0; k < rows.length; k++) d += '<tr><td class="num dim">−' + (rows[k].off / 1000).toFixed(1) + ' s</td><td style="color:' + rows[k].cls + '">' + esc(rows[k].txt) + '</td></tr>';
+      d += '</table>';
     }
-    h += '</details>';
+    d += '</details>';
+    recaps.push(d);
   }
-  return h;
+  return h + wpMoreList('fights|recaps', recaps, { show: 3, noun: 'older recaps' });
 }
 // Targeting a corpse opens that player's latest recap; bring it into view once per change of target.
 var _wpDeathFocusSeen = null;
@@ -21771,7 +21875,8 @@ function buildLoadoutsHtml(s) {
   const invs       = invsAll.filter(([c]) => !hidden.has(c.toLowerCase()));
   const hiddenList = invsAll.filter(([c]) =>  hidden.has(c.toLowerCase()));
   if (invsAll.length > 0) {
-    h += '<div class="card wide"><h2>🗡️ Weapon Loadouts</h2>';
+    // Folded by default (Layout A): wpKeep remembers it open. The count stays out of the panel key (split on "(").
+    h += '<div class="card wp-fold" data-index="Loadouts"><details ' + wpKeep('fights|loadouts') + '><summary><h2>🗡️ Weapon Loadouts <span class="dim" style="font-size:11px;font-weight:normal">(' + invs.length + ')</span></h2></summary>';
     h += '<div class="subtle">Parsed from <code>/output inventory</code> files in the EQ directory. ' +
          'Phase 2: cross-reference item IDs with proc DB for theoretical TPS. ' +
          'Click ⊘ to hide alts you do not care about.</div>';
@@ -21858,7 +21963,7 @@ function buildLoadoutsHtml(s) {
     }
     h += '<div class="subtle" style="margin-top:6px">Tip: run <code>/output inventory</code> in-game to refresh. ' +
          'Files are auto-detected from <code>' + esc(invsAll[0][1]._path?.split(/[/\\\\]/).slice(0, -1).join('\\\\') || '') + '</code></div>';
-    h += '</div>';
+    h += '</details></div>';
   }
 
   return h;
@@ -21907,7 +22012,7 @@ function wireLoadoutControls() {
 }
 
 function buildHealersHtml(s) {
-  let h = '<div class="grid"><div class="card wide">' +
+  let h = '<div class="grid"><div class="card wide" data-index="Healers">' +
           '<h2>Healers This Session ' +
           '<span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span>' +
           '</h2>' +
@@ -21916,39 +22021,36 @@ function buildHealersHtml(s) {
   if (!healers.length) h += '<div class="dim">No healing parsed yet.</div>';
   else {
     h += '<table><tr><th>Healer</th><th>Healed</th><th>Ticks</th><th>Targets</th></tr>';
-    for (const [n, st] of healers.slice(0,15)) {
-      h += '<tr><td class="name">' + esc(n) + '</td>' +
+    h += wpMoreList('fights|healers', healers.slice(0,15).map(function ([n, st]) {
+      return '<tr><td class="name">' + esc(n) + '</td>' +
            '<td class="num">' + fmtK(st.healed) + '</td>' +
            '<td class="num">' + (st.ticks||0) + '</td>' +
            '<td class="dim">' + (st.targets||[]).map(esc).slice(0,6).join(', ') + '</td></tr>';
-    }
+    }), { show: 5, cols: 4, noun: 'more healers' });
     h += '</table>';
   }
   h += '</div></div>';
   // Exceptional Heals leaderboard — populated by the bystander-visible
   // "<X> performs an exceptional heal! (N)" line, so a single parser
-  // anywhere in the raid sees every cleric's crit heals.
+  // anywhere in the raid sees every cleric's crit heals. Layout A: folded under the healers.
   const crits = Object.entries(s.sessionCritHeals||{})
     .sort((a, b) => (b[1].total||0) - (a[1].total||0));
   if (crits.length > 0) {
-    let ch = '<div class="grid"><div class="card wide">' +
-             '<h2>💚 Exceptional Heals This Session</h2>' +
-             '<div class="subtle" style="font-size:11px;margin-bottom:6px">Crit heals are public — any parser in the raid sees them, no healer adoption required.</div>' +
-             '<table><tr><th>Healer</th><th>Crits</th><th>Total</th><th>Biggest</th></tr>';
-    for (const [n, st] of crits.slice(0, 15)) {
-      ch += '<tr><td class="name">' + esc(n) + '</td>' +
-            '<td class="num">' + (st.count||0) + '</td>' +
-            '<td class="num">' + fmtK(st.total||0) + '</td>' +
-            '<td class="num">' + fmtK(st.max||0) + '</td></tr>';
-    }
-    ch += '</table></div></div>';
-    h += ch;
+    let cb = '<div class="subtle" style="font-size:11px;margin-bottom:6px">Crit heals are public — any parser in the raid sees them, no healer adoption required.</div>' +
+             '<table><tr><th>Healer</th><th>Crits</th><th>Total</th><th>Biggest</th></tr>' +
+             wpMoreList('fights|crits', crits.slice(0, 15).map(function ([n, st]) {
+               return '<tr><td class="name">' + esc(n) + '</td>' +
+                 '<td class="num">' + (st.count||0) + '</td>' +
+                 '<td class="num">' + fmtK(st.total||0) + '</td>' +
+                 '<td class="num">' + fmtK(st.max||0) + '</td></tr>';
+             }), { show: 5, cols: 4, noun: 'more healers' }) + '</table>';
+    h += '<div class="grid">' + wpFoldCard('fights|exceptional', '💚 Exceptional Heals This Session <span class="dim" style="font-size:11px;font-weight:normal">(' + crits.length + ')</span>', cb, { index: 'Exceptional heals' }) + '</div>';
   }
   return h;
 }
 
 function renderDeeps(s) {
-  let h = '<div class="grid"><div class="card wide"><h2>💥 DEEPS — Damage Breakdown (this session)</h2>';
+  let h = '<div class="grid"><div class="card wide" data-index="DPS"><h2>💥 DEEPS — Damage Breakdown (this session)</h2>';
   h += '<div class="subtle">Per-attacker melee / spell / proc / DoT damage and crit stats. Names with spaces (NPCs) are filtered out.</div>';
   const entries = Object.entries(s.sessionDeeps || {})
     .map(([n, d]) => {
@@ -21961,7 +22063,8 @@ function renderDeeps(s) {
   } else {
     h += '<table style="margin-top:6px">' +
          '<tr><th>Player</th><th>Total</th><th>Melee</th><th>Spell</th><th>Proc</th><th>DoT</th><th>Crits</th><th>Crit dmg</th></tr>';
-    for (const [name, d, total] of entries) {
+    // Layout A: the top 5 show; the rest sit behind "N more players".
+    h += wpMoreList('fights|deeps', entries.map(function ([name, d, total]) {
       const fmtCat = (b) => {
         if (!b || !b.count) return '<span class="dim">—</span>';
         const avg = Math.round(b.total / b.count);
@@ -21971,7 +22074,7 @@ function renderDeeps(s) {
       const critPct = ((d.melee?.count||0) + (d.spell?.count||0)) > 0
         ? Math.round((d.crits?.count||0) / ((d.melee?.count||0) + (d.spell?.count||0)) * 100)
         : 0;
-      h += '<tr>' +
+      return '<tr>' +
            '<td class="name">' + esc(name) + '</td>' +
            '<td class="num"><b>' + fmtK(total) + '</b></td>' +
            '<td>' + fmtCat(d.melee) + '</td>' +
@@ -21985,7 +22088,7 @@ function renderDeeps(s) {
                                    ? '<span style="color:var(--gold)">+' + fmtK(d.crits.bonusDmg) + '</span> <span class="dim" style="font-size:11px">max +' + fmtK(d.crits.maxBonus) + '</span>'
                                    : '<span class="dim">—</span>') + '</td>' +
            '</tr>';
-    }
+    }), { show: 5, cols: 8, noun: 'more players' });
     h += '</table>';
   }
   h += '</div>';
@@ -21993,7 +22096,7 @@ function renderDeeps(s) {
   // Per-player top abilities (rolled up by ability name)
   const withAbilities = entries.filter(([, d]) => d.topAbilities && Object.keys(d.topAbilities).length > 0);
   if (withAbilities.length > 0) {
-    h += '<div class="card wide"><h2>🎯 Top Abilities per Player</h2>';
+    h += '<div class="card wide" data-index="Abilities"><h2>🎯 Top Abilities per Player</h2>';
     h += '<div class="subtle">Aggregated by named ability across the session. Hits, total damage, average.</div>';
     // Each player is one block (heading + a fixed-layout table, see table.wp-abtbl), so every player's
     // columns line up; the first 3 players show, the rest sit behind "N more players", and inside a block
@@ -22019,12 +22122,52 @@ function renderDeeps(s) {
 }
 
 function buildPetsHtml(s) {
-  let h = '<div class="card"><h2>Known Pets This Session</h2>';
+  // Folded by default (Layout A): the count rides in the title so a closed card still says what is in it.
   const pets = (s.knownPets||[]);
-  if (!pets.length) h += '<div class="dim">No pets observed yet.</div>';
-  else { h += '<table><tr><th>Pet</th><th>Owner(s)</th></tr>' + wpMoreList('pets|known', pets.map(function (p) { return '<tr><td class="pet">' + esc(p.pet) + '</td><td class="name">' + p.owners.map(esc).join(', ') + '</td></tr>'; }), { show: 8, cols: 2, noun: 'more pets' }) + '</table>'; }
-  h += '</div>';
-  return h;
+  let b = '';
+  if (!pets.length) b += '<div class="dim">No pets observed yet.</div>';
+  else { b += '<table><tr><th>Pet</th><th>Owner(s)</th></tr>' + wpMoreList('pets|known', pets.map(function (p) { return '<tr><td class="pet">' + esc(p.pet) + '</td><td class="name">' + p.owners.map(esc).join(', ') + '</td></tr>'; }), { show: 8, cols: 2, noun: 'more pets' }) + '</table>'; }
+  return wpFoldCard('fights|pets', 'Known Pets This Session <span class="dim" style="font-size:11px;font-weight:normal">(' + pets.length + ')</span>', b, { wide: false, index: 'Pets' });
+}
+
+// 🛡️ Damage Shield card — per-tank DS output, grouped by source spell/song.
+// Detected at parse time via the DS allow-list (parseEvent → ds:true). Sorted
+// by total damage descending so heavy DS wearers float to the top; expand a
+// row to see the spell/song breakdown that's feeding it. (Moved here from renderTanks by Layout A: folded.)
+function buildDamageShieldsHtml(s) {
+  const ds = s.damageShield || {};
+  const dsTotals = Object.entries(ds).map(function(kv){
+    const name = kv[0];
+    const sources = kv[1] || {};
+    var total = 0, hits = 0;
+    for (const k in sources) { total += sources[k].total; hits += sources[k].count; }
+    return { name: name, total: total, hits: hits, sources: sources };
+  }).filter(function(r){ return r.total > 0; }).sort(function(a, b){ return b.total - a.total; });
+  let b = '';
+  if (dsTotals.length === 0) {
+    b += '<div class="dim" style="font-size:12px">No damage-shield procs observed yet this session. The agent recognizes the druid/ranger thorn lines (thorns, thistles, brambles, spikes, barbs, the -coat selfs, Legacy of Thorn/Spike), the magician fire shields (Shield of Fire/Flame/Lava, Inferno Shield, Barrier of Combustion, Boon of Immolation, Cadeau of Flame), enchanter Feedback, the bard Psalms, and DS clickies casting those lines. Missing one? Let an officer know.</div>';
+  } else {
+    b += '<table style="font-size:12px"><tr><th>Tank</th><th>Total DS</th><th>Hits</th><th>Spells / songs feeding it</th></tr>';
+    b += wpMoreList('fights|ds', dsTotals.slice(0, 12).map(function (t) {
+      const srcEntries = Object.entries(t.sources).sort(function(a, b){ return b[1].total - a[1].total; });
+      const srcSummary = srcEntries.map(function(kv){
+        return '<span style="color:var(--gold)">' + esc(kv[0]) + '</span> <span class="dim">(' + fmtK(kv[1].total) + ' · ' + kv[1].count + 'h)</span>';
+      }).join(' · ');
+      return '<tr><td class="name">' + esc(t.name) + '</td>' +
+           '<td class="num">' + fmtK(t.total) + '</td>' +
+           '<td class="num">' + t.hits + '</td>' +
+           '<td style="font-size:11px">' + srcSummary + '</td></tr>';
+    }), { show: 5, cols: 4, noun: 'more tanks' });
+    b += '</table>';
+  }
+  return wpFoldCard('fights|damage-shields', '🛡️ Damage Shields <span class="dim" style="font-size:11px;font-weight:normal">(' + dsTotals.length + ')</span>', '<div class="subtle" style="margin-top:0">DS damage by tank, grouped by spell/song.</div>' + b, { wide: false, index: 'Shields' });
+}
+
+// The three cards that start folded at the foot of ⚔️ Fights (Layout A, the guild lead, 2026-10-21): pets, damage
+// shields, weapon loadouts. They sit side by side while closed; opening one gives it the whole row.
+function renderFightsMore(s) {
+  setSectionHTML('fightsMore', '<div class="grid">' + buildPetsHtml(s) + buildDamageShieldsHtml(s) + buildLoadoutsHtml(s) + '</div>');
+  wireLoadoutControls();
 }
 
 // ── Triggers tab ───────────────────────────────────────────────────────────
@@ -22702,7 +22845,8 @@ function renderRecentFires(s) {
   // kept in _wpVfDraft, so the next paint shows it again).
   var ae = document.activeElement;
   if (ae && ae.tagName === 'INPUT' && el.contains(ae)) return;
-  var overlays = (s.activeOverlays || []).slice(0, 6);
+  // Layout A: the newest 5 show and the last 30 are kept behind "N more fires" (it was the newest 6, no more).
+  var overlays = (s.activeOverlays || []).slice(0, 30);
   var h = '<h2>⚡ Recent fires';
   h += '<span style="float:right;font-size:11px;font-weight:normal">';
   h += '<button id="trigClearTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px" title="Remove only TEST-flagged overlays">🧪 Clear test fires</button>';
@@ -22712,6 +22856,7 @@ function renderRecentFires(s) {
     h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Rehearse</b> on a row to drive a synthesized line through the real pipeline (pattern + cooldown + suppression) and hear the actual TTS.</div>';
   } else {
     h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th><th></th></tr>';
+    var _fireRows = [];
     for (var i = 0; i < overlays.length; i++) {
       var o = overlays[i];
       var ago = fmtAgo(o.shownAt || 0);
@@ -22721,12 +22866,13 @@ function renderRecentFires(s) {
       // character-link delegation slices a .name cell to its first word and
       // opens /character/<token> (404 for a trigger name). Same trap the guild
       // table avoids; it used to bite here (#120).
-      h += '<tr><td class="dim">' + esc(ago) + '</td>' +
+      _fireRows.push('<tr><td class="dim">' + esc(ago) + '</td>' +
            '<td style="color:var(--text)">' + esc(o.trigger || '?') + '</td>' +
            '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
            '<td>' + esc(o.text || '') + voiceFireCell(o) + '</td>' +
-           '<td>' + enrageMuteCell(o) + '</td></tr>';
+           '<td>' + enrageMuteCell(o) + '</td></tr>');
     }
+    h += wpMoreList('trig|fires', _fireRows, { show: 5, cols: 5, noun: 'more fires' });
     h += '</table>';
   }
   h += enrageMutedList(s.enrageMutes);
@@ -23618,7 +23764,10 @@ function wpReplayLinkSync() {
 }
 function renderReplayCard(s) {
   var h = '<div class="grid">';
-  h += '<div class="card wide"><h2>⏪ Replay <span class="dim" style="font-size:11px;font-weight:normal">· walk part of a log back through the real trigger pipeline — hear the TTS, nothing uploads</span></h2>';
+  // Layout A (the guild lead, 2026-10-21): a compact entry at the TOP of Fights, folded until opened. It leaves
+  // this tab for a Rehearse tab of its own later (a separate job); until then the form lives here. A #replay
+  // deep link opens it (see the hash handler).
+  h += '<div class="card wide wp-fold" data-index="Replay"><details ' + wpKeep('fights|replay') + '><summary><h2>⏪ Replay <span class="dim" style="font-size:11px;font-weight:normal">· walk part of a log back through the real trigger pipeline — hear the TTS, nothing uploads · Rehearse tab coming</span></h2></summary>';
   var _rls = (s.watchedLogs || []).filter(function(w){ return w && w.logPath; });
   // Characters known to be under 46, or hidden by their owner, sit behind the same toggle as the Me card's
   // list, and ones with no known level close up in a trailing "no known level" group (a <select> cannot hold
@@ -23656,7 +23805,7 @@ function renderReplayCard(s) {
     h += '<div id="wpReplayStatus"></div>';
     h += '<div class="dim" style="font-size:11px;margin-top:6px">Replay fires are rehearsals — they speak + flash with a ⏪ tag but never upload, relay, or touch your live cooldowns. One replay at a time; blocked during a live fight. Real-time hears the fight as it happened; fast pauses briefly on each fire for a quick audit.</div>';
   }
-  h += '</div>';
+  h += '</details></div>';
   h += '</div>';
   setSectionHTML('fightsReplay', h);
 }
@@ -23788,7 +23937,7 @@ function renderTriggers(s) {
   // Guild triggers — read-only (managed in wolfpack.quest/admin/triggers). Its own wp* placeholder,
   // filled by renderGuildTriggersCard: opening a row repaints just this card, so the Add form's
   // half-typed text is not wiped by it (FB-30).
-  h += '<div id="wpGuildTriggers" class="card wide"></div>';
+  h += '<div id="wpGuildTriggers" class="card wide wp-fold" data-index="Guild triggers"></div>';
 
   h += '</div>';
   if (!setSectionHTML('triggers', h)) return;
@@ -23839,7 +23988,9 @@ function renderGuildTriggersCard(s) {
   // The rows are not on /api/state (the overlays poll that ~10x/s): they are fetched below, once, and held.
   // Until the first answer the card says so; a state that already counts none is an empty list, not a wait.
   var gt = _wpGt.rows || (s && s.guildTriggerCount === 0 ? [] : null);
-  var h = '<h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2>';
+  // Layout A (the guild lead, 2026-10-21): the whole list starts folded - it is reference, not something to watch. The
+  // card (#wpGuildTriggers) carries class wp-fold; wpKeep remembers it open, and each group inside keeps its own fold.
+  var h = '<details ' + wpKeep('trig|guild') + '><summary><h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(' + (gt ? gt.length + ' loaded · ' : '') + 'read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2></summary>';
   if (gt === null) {
     h += '<div class="dim" style="font-size:12px">Loading the guild triggers…</div>';
   } else if (gt.length === 0) {
@@ -23928,6 +24079,7 @@ function renderGuildTriggersCard(s) {
         + '<table style="font-size:12px"><tr><th>Name</th><th>Category</th><th>Pattern</th><th>Cooldown</th><th></th></tr>' + _gr.rows + '</table></details>';
     }
   }
+  h += '</details>';
   morphInto(el, h);
 }
 function wpGuildTrigToggle(key) {
@@ -25485,19 +25637,20 @@ function renderZealExplorer(s) {
       var ga = parseInt(a.group, 10) || 99, gb = parseInt(b.group, 10) || 99;
       return (ga - gb) || String(a.name).localeCompare(String(b.name));
     });
-    var rpRows = '';
+    // Layout A: the first 5 raid members show, the rest sit behind "N more members" (a raid is up to 72 rows).
+    var rpRows = [];
     for (var rpi = 0; rpi < rpSorted.length; rpi++) {
       var rm = rpSorted[rpi];
       var rhp = rm.hp_pct != null ? (rm.hp_current != null && rm.hp_max != null ? rm.hp_current + '/' + rm.hp_max + ' - ' + rm.hp_pct + '%' : rm.hp_pct + '%') : '';
-      rpRows += '<tr><td class="num">' + esc(String(rm.group || '')) + '</td>'
+      rpRows.push('<tr><td class="num">' + esc(String(rm.group || '')) + '</td>'
         + '<td>' + esc(String(rm.name)) + '</td>'
         + '<td class="dim">' + esc(String(rm.class || '')) + '</td>'
         + '<td class="num">' + esc(String(rm.level || '')) + '</td>'
         + '<td class="dim">' + esc(String(rm.rank || '')) + '</td>'
-        + '<td class="num">' + esc(rhp) + '</td></tr>';
+        + '<td class="num">' + esc(rhp) + '</td></tr>');
     }
     h += grp('zx|raid', '5 - raid (last sample ' + fmtAgo(rp.at) + ')', rp.members.length,
-      tbl(rpRows, ['Grp', 'Name', 'Class', 'Lvl', 'Rank', 'HP']));
+      tbl(wpMoreList('diag|zeal-raid', rpRows, { show: 5, cols: 6, noun: 'more members' }), ['Grp', 'Name', 'Class', 'Lvl', 'Rank', 'HP']));
   }
   morphInto(el, h);
 }
@@ -26342,32 +26495,37 @@ function renderLootTab(s) {
   if (_rollSets.length > 0) {
     h += '<div class="card wide"><h2>🎲 Rolls (this session)</h2>';
     h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Every /random heard in the zone, grouped by roll range. Link loot in raid chat as <code>Item Name (qty)NNN | ...</code> and each set picks up its item name — (3) means the top three rolls win one each. First roll per player counts; re-rolls are listed struck through.</div>';
+    // Layout A: the first 5 sets show, the rest sit behind "N more roll sets" (one row per set, each its own <details>).
+    var _rollRows = [];
     for (var rsi = 0; rsi < _rollSets.length; rsi++) {
       var rset = _rollSets[rsi];
-      if (rset.kind === 'deathroll') { h += _wpDeathrollHtml(rset); continue; }
+      if (rset.kind === 'deathroll') { _rollRows.push(_wpDeathrollHtml(rset)); continue; }
+      var rh = '';   // this set's markup
       var rWinners = _wpRollWhoHtml(rset);
       var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
       // 📦 Only when the looter is NOT a winner drawn here (a re-roll or a pass).
       var rLooted = wpNightLootedBy(rset, _wpNightLoot && _wpNightLoot.sessions);
-      h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
-      h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
+      rh += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
+      rh += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
          + (rset.item ? ' (' + esc(rset.item) + (rset.qty ? ' ×' + rset.qty : '') + ')' : '')
          + ' — <span style="color:var(' + (rset.tie && rset.tie.state !== 'done' ? '--orange' : '--gold,#f0c419') + ')">' + (rWinners || '—') + '</span>'
          + (rLooted.length ? ' <span style="color:var(--blue)">· 📦 looted by ' + rLooted.map(esc).join(', ') + '</span>' : '')
          + ' <span class="dim">· ' + rset.players + ' roller' + (rset.players === 1 ? '' : 's')
          + ' · ' + rTime + (rset.open ? ' · open' : '') + '</span></summary>';
-      h += _wpRollTiePrompt(rset);
-      h += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
+      rh += _wpRollTiePrompt(rset);
+      rh += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
       var rRows = (rset.rolls || []).slice().sort(function (a, b) { return b.value - a.value; });
       for (var rri = 0; rri < rRows.length; rri++) {
         var rr = rRows[rri];
-        h += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
+        rh += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
            + '<td class="num">' + rr.value + '</td>'
            + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + _wpRollRowMark(rset, rr) + '</td>'
            + '<td class="dim">' + new Date(rr.at_ms).toLocaleTimeString() + '</td></tr>';
       }
-      h += '</table></details>';
+      rh += '</table></details>';
+      _rollRows.push(rh);
     }
+    h += wpMoreList('loot|rolls', _rollRows, { show: 5, noun: 'more roll sets' });
     h += '</div>';
   }
 
@@ -26503,28 +26661,31 @@ function renderStats(s) {
   if (_rsNames.length > 0) {
     h += '<div class="card wide"><h2>🛡 Spells Resisted (incoming)</h2>';
     h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Spells mobs cast at you that you resisted — this names what their "a spell" casts actually were. Expand a row to see which mobs cast it + how many times.</div>';
-    _rsNames.map(function (n) { return [n, _rs[n]]; })
+    // Layout A: the top 5 spells show, the rest sit behind "N more spells".
+    h += wpMoreList('stats|resisted', _rsNames.map(function (n) { return [n, _rs[n]]; })
       .sort(function (a, b) { return (b[1].count || 0) - (a[1].count || 0); })
-      .forEach(function (e) {
+      .map(function (e) {
+        var d = '';
         var rec = e[1] || {};
         var byMob = rec.byMob || {};
         var mobs = Object.keys(byMob).map(function (m) { return [m, byMob[m]]; })
           .sort(function (a, b) { return (b[1] || 0) - (a[1] || 0); }).slice(0, 20);
-        h += '<details ' + wpKeep('rs|' + e[0]) + '>';
-        h += '<summary><span class="name">' + spellLink(e[0]) + '</span> '
+        d += '<details ' + wpKeep('rs|' + e[0]) + '>';
+        d += '<summary><span class="name">' + spellLink(e[0]) + '</span> '
            + '<span class="dim">— ' + (rec.count || 0) + ' resisted'
            + (rec.lastMob ? ', last from ' + esc(rec.lastMob) : '') + '</span></summary>';
         if (mobs.length > 0) {
-          h += '<table><tr><th>Cast by</th><th class="num">Resisted</th></tr>';
+          d += '<table><tr><th>Cast by</th><th class="num">Resisted</th></tr>';
           for (var mi = 0; mi < mobs.length; mi++) {
-            h += '<tr><td>' + esc(mobs[mi][0]) + '</td><td class="num">' + (mobs[mi][1] || 0) + '</td></tr>';
+            d += '<tr><td>' + esc(mobs[mi][0]) + '</td><td class="num">' + (mobs[mi][1] || 0) + '</td></tr>';
           }
-          h += '</table>';
+          d += '</table>';
         } else {
-          h += '<div class="dim" style="font-size:11px;padding:2px 0">No mob attribution yet — resisted outside a tracked fight.</div>';
+          d += '<div class="dim" style="font-size:11px;padding:2px 0">No mob attribution yet — resisted outside a tracked fight.</div>';
         }
-        h += '</details>';
-      });
+        d += '</details>';
+        return d;
+      }), { show: 5, noun: 'more spells' });
     h += '</div>';
   }
 
@@ -26543,29 +26704,29 @@ function renderStats(s) {
     var _isdOrdered = _isdCasters.map(function (name) {
       return { name: name, rec: _isd[name] || { total: 0, count: 0, spells: {} } };
     }).sort(function (a, b) { return (b.rec.total || 0) - (a.rec.total || 0); });
-    _isdOrdered.slice(0, 12).forEach(function (c) {
+    // Layout A: the top 5 casters show, the rest sit behind "N more casters".
+    h += wpMoreList('stats|inbound', _isdOrdered.slice(0, 12).map(function (c) {
       var spells = Object.entries(c.rec.spells || {})
         .sort(function (a, b) { return (b[1].total || 0) - (a[1].total || 0); })
         .slice(0, 12);
-      h += '<details ' + wpKeep('isd|' + c.name) + '>';
-      h += '<summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + fmtK(c.rec.total || 0) + ' over ' + (c.rec.count || 0) + ' hit' + ((c.rec.count === 1) ? '' : 's') + '</span></summary>';
-      h += '<table><tr><th>Spell</th><th class="num">Total</th><th class="num">Hits</th><th class="num">Max</th></tr>';
+      var d = '<details ' + wpKeep('isd|' + c.name) + '>';
+      d += '<summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + fmtK(c.rec.total || 0) + ' over ' + (c.rec.count || 0) + ' hit' + ((c.rec.count === 1) ? '' : 's') + '</span></summary>';
+      d += '<table><tr><th>Spell</th><th class="num">Total</th><th class="num">Hits</th><th class="num">Max</th></tr>';
       for (var k = 0; k < spells.length; k++) {
-        h += '<tr><td>' + spellLink(spells[k][0]) + '</td>' +
+        d += '<tr><td>' + spellLink(spells[k][0]) + '</td>' +
              '<td class="num">' + fmtK(spells[k][1].total || 0) + '</td>' +
              '<td class="num">' + (spells[k][1].count || 0) + '</td>' +
              '<td class="num">' + fmtK(spells[k][1].max || 0) + '</td></tr>';
       }
-      h += '</table></details>';
-    });
+      return d + '</table></details>';
+    }), { show: 5, noun: 'more casters' });
     h += '</div>';
   }
 
   h += '</div>';
-  // Weapon Loadouts + Known Pets live here now (moved off the combat tabs).
-  h += '<div class="grid">' + buildLoadoutsHtml(s) + buildPetsHtml(s) + '</div>';
+  // (Weapon Loadouts + Known Pets sat here until Layout A, 2026-10-21: they are folded cards at the foot of the
+  // ⚔️ Fights tab now - renderFightsMore.)
   setSectionHTML('stats', h);
-  wireLoadoutControls();
 }
 
 function renderInfo(s) {
@@ -26586,9 +26747,9 @@ function renderInfo(s) {
   // client running" is a fact about the install, not a health check.)
   // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
   // restore controls survive #info repaints).
-  h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
+  // (Layout A: below the grid now, so Parser info and Log archiving are the first things on the tab.)
   h += '<div class="grid">';
-  h += '<div class="card"><h2>Parser Info</h2>';
+  h += '<div class="card" data-index="Parser info"><h2>Parser Info</h2>';
   h += '<div>Agent v' + esc(s.version) + '</div>';
   h += '<div>Watching ' + (s.watchedLogs?.length||0) + ' log(s)</div>';
   h += '<div>Uploads this session: ' + (s.uploadCount||0) + ' (' + (s.uploadErrors||0) + ' errors)</div>';
@@ -26607,22 +26768,24 @@ function renderInfo(s) {
   // runs the command, so no wp* placeholder is needed. Rendering a relative
   // "2m ago" here instead of the fixed stamp would repaint #info every 2s and
   // reset anything the user had open (dashboard rendering rules).
+  // Layout A (the guild lead, 2026-10-21): Parser info and Log archiving lead the tab; this card is built here and
+  // appended after the log-archiving card below.
   const _cv = s.clientVersions || [];
-  h += '<div class="card"><h2>🧩 Client versions</h2>';
+  let _cvH = '<div class="card"><h2>🧩 Client versions</h2>';
   if (!_cv.length) {
-    h += '<div class="dim">Nothing captured yet. Type <b>/zeal version</b> in game and it appears here — Zeal, eqw.dll and eqgame.dll builds, per character. We never send the command for you.</div>';
+    _cvH += '<div class="dim">Nothing captured yet. Type <b>/zeal version</b> in game and it appears here — Zeal, eqw.dll and eqgame.dll builds, per character. We never send the command for you.</div>';
   } else {
-    h += '<table>';
+    _cvH += '<table>';
     for (const c of _cv) {
-      h += '<tr><td colspan="2" style="padding-top:6px"><b>' + esc(c.character) + '</b></td></tr>';
-      if (c.zeal)   h += '<tr><td>Zeal</td><td class="num">' + esc(c.zeal) + (c.zeal_hash ? ' <span class="dim">(' + esc(c.zeal_hash) + ')</span>' : '') + '</td></tr>';
-      if (c.eqw)    h += '<tr><td>eqw.dll</td><td class="num">' + esc(c.eqw) + '</td></tr>';
-      if (c.eqgame) h += '<tr><td>eqgame.dll</td><td class="num">' + esc(c.eqgame) + '</td></tr>';
-      if (c.at)     h += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
+      _cvH += '<tr><td colspan="2" style="padding-top:6px"><b>' + esc(c.character) + '</b></td></tr>';
+      if (c.zeal)   _cvH += '<tr><td>Zeal</td><td class="num">' + esc(c.zeal) + (c.zeal_hash ? ' <span class="dim">(' + esc(c.zeal_hash) + ')</span>' : '') + '</td></tr>';
+      if (c.eqw)    _cvH += '<tr><td>eqw.dll</td><td class="num">' + esc(c.eqw) + '</td></tr>';
+      if (c.eqgame) _cvH += '<tr><td>eqgame.dll</td><td class="num">' + esc(c.eqgame) + '</td></tr>';
+      if (c.at)     _cvH += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
     }
-    h += '</table>';
+    _cvH += '</table>';
   }
-  h += '</div>';
+  _cvH += '</div>';
   // 🏷 Zeal tag capture readiness (#194). Byte-stable: zeal.ini values change
   // rarely and the fresh-tag count only moves while tags are actually flowing
   // (an acceptable repaint — the Info tab is not a form surface mid-raid).
@@ -26677,6 +26840,7 @@ function renderInfo(s) {
     }
     h += '</div>';
   }
+  h += _cvH;
   h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
   if (s.zealTagRateLimit) {
     h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ The server rate limited your chat around <code>'
@@ -26727,6 +26891,7 @@ function renderInfo(s) {
   }
   h += '</div>';
   h += '</div>';
+  h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
   // GINA/EQLP scan placeholder card — populated by wpScanLocalTriggers() on
   // dashboard load via /api/triggers/local-scan. (the guild lead, 2026-06-26 — v1.1.1
   // foundation; parse + import land in 1.1.2+.) Empty placeholder so the
@@ -27664,7 +27829,7 @@ async function refresh() {
                      ['damagedone', renderDamageDoneCard],
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
-                     ['tanks', renderTanks], ['deeps', renderDeeps], ['fightsReplay', renderReplayCard],
+                     ['tanks', renderTanks], ['deeps', renderDeeps], ['fightsMore', renderFightsMore], ['fightsReplay', renderReplayCard],
                      ['triggers', renderTriggers], ['guildtriggers', renderGuildTriggersCard],
                      ['voice', renderVoice],
                      // 🩺 Diagnostics owns the pipe/charm/pet/journal/mechanics/
@@ -27714,6 +27879,7 @@ async function refresh() {
       }
     }
     if (window.scrollX !== _sx || window.scrollY !== _sy) window.scrollTo(_sx, _sy);
+    try { wpIndexSync(); } catch (e) { void e; }   // the pinned section index (rewrites itself only when the card list changes)
     // The bar's height can change on any render — the update pill appears, the
     // links wrap, a beta badge shows up — and the rail's sticky offset is
     // derived from it. Cheap: it only writes the custom property on a real
@@ -27906,6 +28072,7 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   if (b.dataset.tab === 'optin') refreshOptin();
   if (b.dataset.tab === 'raid') refreshRaidTab();
   if (b.dataset.tab === 'myparses') wpMpOpenTab();
+  try { wpIndexSync(); } catch (e) { void e; }   // the pinned index follows the tab at once, not on the next poll
 }));
 // #myparses opens the 📈 My parses tab — the tray's "📈 My parses" item loads the dashboard with that hash, the
 // same way its "Send feedback" item loads #feedback. Read on load and on every change, then dropped from the URL
@@ -27967,6 +28134,7 @@ function _wpApplyReplayPrefill(attempt) {
     if (i > 0) { try { params[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); } catch (e) { void e; } }
   });
   window._wpReplayPrefill = { from: params.from || '', to: params.to || '' };
+  _wpOpenDetails['fights|replay'] = true;   // the card starts folded; a link that prefills it wants it open
   var btn = document.querySelector('.nav button[data-tab="fights"]');
   if (btn) btn.click();
   _wpApplyReplayPrefill(0);
@@ -30364,7 +30532,8 @@ async function dismissTopDamage(key) {
       + (data.starters || []).map(function(st){ return '<div class="wp-bb-note"><b>' + esc(st.name) + '</b> (' + st.entries.length + ' blocks): ' + esc(st.note || "") + '</div>'; }).join("")
       + '</details>';
     var ss = data.sets || [];
-    h += ss.length ? ss.map(setHtml).join("") : '<div class="dim" style="padding:6px 0">No sets for ' + esc(data.character) + ' yet. Add a starter set above and make it yours.</div>';
+    // Layout A: the first 3 sets show, the rest sit behind "N more sets" (each set is one <div class="wp-bb-set">).
+    h += ss.length ? wpMoreList("bb|sets|" + String(data.character || "").toLowerCase(), ss.map(function(s){ return setHtml(s); }), { show: 3, noun: "more sets" }) : '<div class="dim" style="padding:6px 0">No sets for ' + esc(data.character) + ' yet. Add a starter set above and make it yours.</div>';
     return h;
   }
 

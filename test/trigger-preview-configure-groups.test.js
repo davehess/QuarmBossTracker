@@ -211,7 +211,9 @@ describe('Guild triggers grouped', () => {
     const out = h.html();
     const sums = [...out.matchAll(/<summary[^>]*>.*?<b>(.*?)<\/b> <span class="dim">\((\d+)\)/g)].map(m => [m[1], m[2]]);
     expect(sums).toEqual([['Plane of Time', '1'], ['Stat cards', '1'], ['Boss mechanics', '1'], ['General callouts', '1']]);
-    expect((out.match(/<details /g) || [])).toHaveLength(4);
+    // 4 groups + the one fold around the whole card (Layout A: the list starts folded, key trig|guild)
+    expect((out.match(/<details /g) || [])).toHaveLength(5);
+    expect((out.match(/<details data-keep="trig\|guild"/g) || [])).toHaveLength(1);
     expect((out.match(/<details data-keep="gtrig\|/g) || [])).toHaveLength(4);   // every one through wpKeep
     expect(out).toContain('<table');
   });

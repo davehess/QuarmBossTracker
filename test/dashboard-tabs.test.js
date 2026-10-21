@@ -238,10 +238,11 @@ describe('the split actually moved the cards', () => {
   });
 
   it('moves the post-render wiring with the card it wires', () => {
-    // wireLoadoutControls binds the loadouts card (now on Stats) and
+    // wireLoadoutControls binds the loadouts card (now folded at the foot of Fights, Layout A) and
     // wpWireZealCapture binds the raw-capture buttons (now on Diagnostics).
     // Left behind on Info they would silently bind nothing.
-    expect(bodyOf('renderStats')).toContain('wireLoadoutControls()');
+    expect(bodyOf('renderFightsMore')).toContain('wireLoadoutControls()');
+    expect(bodyOf('renderStats')).not.toContain('wireLoadoutControls()');
     expect(bodyOf('renderDiag')).toContain('wpWireZealCapture()');
     expect(bodyOf('renderInfo')).toContain('wpScanLocalTriggers()');   // this one stays
   });

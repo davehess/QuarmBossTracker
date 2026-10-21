@@ -26,12 +26,13 @@ function runRender(startMarker, endMarker, fnName, stubs, state) {
   const writes = {};
   const setSectionHTML = (id, h) => { writes[id] = h; return true; };
   const body = sliceBlock(html, startMarker, endMarker).replace(/\n[^\n]*$/, '');
-  const names = ['esc', 'setSectionHTML', 'wpPartitionChars', 'wpLowToggleHtml', 'window', ...Object.keys(stubs || {})];
+  const names = ['esc', 'setSectionHTML', 'wpPartitionChars', 'wpLowToggleHtml', 'wpKeep', 'window', ...Object.keys(stubs || {})];
   const vals = [
     (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;'),
     setSectionHTML,
     (list) => ({ shown: list, unknown: [], tucked: [] }),
     () => '',
+    (k) => 'data-keep="' + k + '"',
     {},
     ...Object.values(stubs || {}),
   ];
@@ -86,11 +87,19 @@ describe('the 🗣 Voice tab', () => {
 describe('the ⏪ Replay card on the ⚔️ Fights tab', () => {
   const logs = { watchedLogs: [{ character: 'Aldenmar', logPath: 'C:/eq/eqlog_Aldenmar_pq.proj.txt' }] };
 
-  it('lives inside #fights, after the tanks and deeps targets', () => {
+  it('lives inside #fights, at the TOP, ahead of the tanks and deeps targets (Layout A)', () => {
     const fights = sliceBlock(html, '<div id="fights" class="section">', '</div>\n<div id="myparses"');
     expect(fights).toContain('<div id="fightsReplay"></div>');
-    expect(fights.indexOf('id="fightsReplay"')).toBeGreaterThan(fights.indexOf('id="deeps"'));
+    expect(fights.indexOf('id="fightsReplay"')).toBeLessThan(fights.indexOf('id="tanks"'));
+    expect(fights.indexOf('id="fightsReplay"')).toBeLessThan(fights.indexOf('id="deeps"'));
     expect(stripJs(html)).toMatch(/\['fightsReplay', renderReplayCard\]/);
+  });
+
+  it('is a folded card that says the Rehearse tab is coming', () => {
+    const w = runRender('function renderReplayCard(s) {', '\n// 🗣 Voice tab', 'renderReplayCard', {}, logs);
+    expect(w.fightsReplay).toContain('wp-fold');
+    expect(w.fightsReplay).toMatch(/<details data-keep="fights\|replay"><summary><h2>⏪ Replay/);
+    expect(w.fightsReplay).toContain('Rehearse tab coming');
   });
 
   it('renders the form into #fightsReplay with the ids its handlers look up', () => {

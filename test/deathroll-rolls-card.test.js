@@ -115,7 +115,8 @@ describe('the dashboard line', () => {
 
   it('the Rolls card hands deathroll entries to that renderer', () => {
     const tab = stripJs(sliceBlock(dash, 'function renderLootTab(s) {', "var host = document.getElementById('wpLootRolls');"));
-    expect(tab).toContain("if (rset.kind === 'deathroll') { h += _wpDeathrollHtml(rset); continue; }");
+    // (Layout A: each set is one row of the "N more roll sets" fold, so the entry is pushed rather than appended.)
+    expect(tab).toContain("if (rset.kind === 'deathroll') { _rollRows.push(_wpDeathrollHtml(rset)); continue; }");
   });
 });
 

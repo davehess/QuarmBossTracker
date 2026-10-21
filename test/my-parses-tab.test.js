@@ -1370,8 +1370,9 @@ describe('asking: only when opened, on a change, or on ↻', () => {
 describe('the tab is wired into the dashboard', () => {
   const code = stripJs(dash);
 
-  it('has a button on the rail and a pane to show, right after Fights', () => {
-    expect(dash).toMatch(/<button data-tab="fights">[^<]*<\/button>\s*(?:<!--[\s\S]*?-->\s*)?<button data-tab="myparses">📈 My parses<\/button>/);
+  it('has a button on the rail and a pane to show, first of the "After the raid" group (right after Fights)', () => {
+    // Layout A groups the rail: a plain-div heading sits between the two buttons.
+    expect(dash).toMatch(/<button data-tab="fights">[^<]*<\/button>\s*<div class="wp-rail-h">After the raid<\/div>\s*(?:<!--[\s\S]*?-->\s*)?<button data-tab="myparses">📈 My parses<\/button>/);
     expect(dash).toContain('<div id="myparses" class="section"></div>');
   });
 

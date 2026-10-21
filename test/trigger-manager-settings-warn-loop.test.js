@@ -437,7 +437,8 @@ describe('the Triggers tab wiring', () => {
 
   it('the guild list is its own card, repainted without touching the form above it', () => {
     const triggers = sliceBlock(code, 'function renderTriggers(s) {', '\n}\n');
-    expect(triggers).toContain('<div id="wpGuildTriggers" class="card wide"></div>');
+    // (Layout A: the card starts folded — wp-fold, and its title lives in a <summary>.)
+    expect(triggers).toContain('<div id="wpGuildTriggers" class="card wide wp-fold" data-index="Guild triggers"></div>');
     expect(triggers).not.toContain('data-trig-copy');   // the rows moved with the card
     const card = sliceBlock(code, 'function renderGuildTriggersCard(s) {', '\n}\n');
     expect(card).toMatch(/data-trig-view=/);
