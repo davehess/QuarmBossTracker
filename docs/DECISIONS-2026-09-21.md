@@ -118,6 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Compress the heavy routes; read egress** (§386) | The $25 guild price only holds if `/poll`, buff-queue and live-damage are compressed (about $16/mo marginal at 60 raiders after compression). Not built. Live-damage still has a `.slice(0,60)` cap | a session: gzip those three routes, raise the live-damage cap; the guild lead: read Supabase egress in the dashboard (the MCP cannot) and say the number |
 | **Game-data pack** (§392, bot 3.2.15) | Step 1 (publish) on main: `scripts/build-data-pack.js`, `.github/workflows/build-data-pack.yml`, rolling prerelease `data-latest`. Never run yet; size estimated 11–14 MB. Step 2 (Mimic reads the pack) not built | a session: dispatch "Build game data pack" once, outside a raid window, and record the real size and counts here; then build step 2 |
 | **Self-host: load game data** (§392) | Built: `scripts/selfhost-load-game-data.js`, guide in `docs/SELFHOSTING.md`. Not yet run against a real empty project | a session or the guild lead: run it once against a throwaway project and record the table counts |
+| **Saryrn fight filed under her add** (§399) | PoP named cards fixed (38 rows promoted; bot 3.2.16 on `ship-ac`). The Saryrn card still shows 34k: the agent names a fight after its top-damaged target, so her damage is under "a summoned servant" | the guild lead: say go for the agent fix (name the fight after a curated boss with ≥25% of the window); then a session re-points that night's servant contributions to Saryrn |
 | **Chat /camp case** (§398, agent 3.8.36) | On beta: own guild/raid lines are no longer lost; a stood-down chat reporter still uploads its own lines | a beta tester: type `/camp` (and a guild line right before) and check the line stays in the Chat overlay |
 | **Map 3.8.35 in a kite** (§398) | On beta: engaged = hurt, per-spawn health memory, kite totals, "killed?" marks, corpse/"dead" tag confirms a kill. Mimic forwards Zeal snapshots every 300 ms | a beta tester: kite a pull and read the Map; then decide whether Mimic should send each target change instead of the 300 ms snapshot |
 | **Picks decided, not built** (§390, §393, §394) | Zeal/UI release picker A (watch list; a Zeal zip can overwrite `uifiles/default` today, guard first); Raid Mimic register-interest form A; raidmimic.com "How it works" section B (draft artifact exists; committing the iso-glow kit under `.claude/skills` is an open call); mute a countdown mutes its warning A; warn BEFORE levitate/run speed drops from Zeal buff `meta.ticks` | the guild lead: say which to build first (recommendation: the release-picker guard, since it protects UI folders today). `/loadskin` vs `/load` wording is unverified in game |
@@ -12230,3 +12231,19 @@ Land a shared web change once, then let the sync carry it.
   ms. **3.8.36:** Chat overlay: own guild / raid lines are never lost (dedupe only against copies actually on screen; a
   stood-down chat reporter still uploads its own lines).
 - **Bot 3.2.14:** §397. **Bot 3.2.15:** the data pack (§392).
+
+### 399. PoP named bosses are curated from their first kill (2026-10-21)
+The guild lead, 2026-10-21, on the 2026-10-18 night on /parses: *"This raid is missing all the parses except for
+Saryrn."* The fights were stored; the cards filter to curated `bosses_local` rows (`auto_registered = false`), and
+every PoP named the bot met first registered as trash. The curated list the guild lead set on 2026-10-18
+(`data/named-bosses.json`, served as `raid_target` by `utils/namedBosses.js`) was never applied to that flag.
+- **Data, done 2026-10-21:** 38 `bosses_local` rows on that list promoted (id match, or name inside the zone its id
+  sits in — the same rule as `isNamedBoss`). The night now shows 13 cards: the six Torment nameds, Saryrn, the four
+  Halls of Honor nameds, Halon of Marr and Lord Mithaniel Marr.
+- **Bot 3.2.16:** `_resolveBossForPersist` registers a listed boss with `auto_registered = false` on its first kill.
+  Kill lockouts are unaffected (they key on `data/bosses.json`).
+- **Still wrong: the Saryrn card (34k of an 850k boss).** The agent names a fight after its top-damaged target, so
+  most of the Saryrn damage sits in the defenders of the "a summoned servant" encounter (553k, 12 contributions; one
+  uploader saw 243k on Saryrn there) and of a long Maareq window. Cut and naming: `packages/wolfpack-logsync/index.js`
+  `flush()` (~10974–10996, fallback ~11167–11173). Proposed fix (agent, beta): name the fight after a curated boss
+  that took at least 25% of the window, never after an add. Waiting on the guild lead.
