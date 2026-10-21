@@ -51866,6 +51866,64 @@ function _mapSyncPull(zone, now) {
   });
   return true;
 }
+// ── Saved raid route (the guild lead, 2026-10-21: "make the route that gets displayed on the maps overlay") ─────────────
+// An officer saves a zone's averaged raid route on the website; the bot serves it as GET /api/agent/raid-route?zone=
+// (utils/raidRoute.js there: `{ route: null }` when none is saved, else `{ v, zone, name, saved_at, points:[[x,y]], legs:[[a,b]],
+// stops:[{ n, name, x, y, at }] }`, server frame). It is asked for on the first Map poll in a zone and again at most every
+// 5 minutes, and the answer rides /api/map-state as `route_ver` always and `route` only when the overlay does not hold that
+// version (the Map polls four times a second; a few thousand points must not). A local-only install, a paused agent, an
+// older bot (404) and a shed bot ({ shed: true }) all leave the route as it was, quietly: it is a decoration, never a reason
+// to fail a poll.
+const MAP_ROUTE_REFRESH_MS = 5 * 60 * 1000;
+const MAP_ROUTE_RETRY_MS = 5 * 60 * 1000;
+const MAP_ROUTE_ZONES_MAX = 8;
+const MAP_ROUTE_POINTS_MAX = 4000;
+const _mapRoutes = new Map();   // zone → { route, fetchedAt, retryAt, inflight }
+// The bot's route, re-checked: nothing in an answer is trusted to be the shape it should be. null when it is not a route.
+function _mapRouteClean(r) {
+  if (!r || typeof r !== 'object' || !Array.isArray(r.points) || r.points.length > MAP_ROUTE_POINTS_MAX) return null;
+  const num = (v) => typeof v === 'number' && Number.isFinite(v);
+  const points = [];
+  for (const p of r.points) {
+    if (!Array.isArray(p) || !num(p[0]) || !num(p[1])) return null;   // legs index into points: one bad point and the indexes lie
+    points.push([p[0], p[1]]);
+  }
+  const legs = [];
+  for (const l of (Array.isArray(r.legs) ? r.legs : [])) {
+    if (Array.isArray(l) && Number.isInteger(l[0]) && Number.isInteger(l[1]) && l[0] >= 0 && l[1] > l[0] && l[1] < points.length) legs.push([l[0], l[1]]);
+  }
+  if (!legs.length) return null;
+  const stops = [];
+  for (const s of (Array.isArray(r.stops) ? r.stops : []).slice(0, 60)) {
+    if (!s || typeof s !== 'object' || !num(s.x) || !num(s.y) || !Number.isInteger(s.n) || s.n < 1 || typeof s.name !== 'string' || !s.name) continue;
+    stops.push({ n: s.n, name: s.name.slice(0, 64), x: s.x, y: s.y, at: s.at === 'spawn' ? 'spawn' : 'raid' });
+  }
+  const saved = typeof r.saved_at === 'string' && Number.isFinite(Date.parse(r.saved_at)) ? r.saved_at : null;
+  return { name: typeof r.name === 'string' ? r.name.slice(0, 64) : null, saved_at: saved, points, legs, stops };
+}
+// The zone's saved route (or null), starting a read when one is due and allowed.
+function _mapRouteFor(zone, now) {
+  let rec = _mapRoutes.get(zone);
+  if (!rec) {
+    if (_mapRoutes.size >= MAP_ROUTE_ZONES_MAX) _mapRoutes.delete(_mapRoutes.keys().next().value);
+    rec = { route: null, fetchedAt: 0, retryAt: 0, inflight: false };
+    _mapRoutes.set(zone, rec);
+  }
+  if (!rec.inflight && now >= rec.retryAt && now - rec.fetchedAt >= MAP_ROUTE_REFRESH_MS && _mapFetchAllowed()) {
+    rec.inflight = true;
+    _mapSyncRequest('GET', '?zone=' + encodeURIComponent(zone), null, (err, status, buf) => {
+      rec.inflight = false;
+      if (err || status !== 200) { rec.retryAt = now + MAP_ROUTE_RETRY_MS; return; }
+      try {
+        const j = JSON.parse(buf.toString('utf8'));
+        if (!j || j.shed) { rec.retryAt = now + MAP_ROUTE_RETRY_MS; return; }
+        rec.route = j.route ? _mapRouteClean(j.route) : null;
+        rec.fetchedAt = now;
+      } catch { rec.retryAt = now + MAP_ROUTE_RETRY_MS; }
+    }, '/raid-route');
+  }
+  return rec.route;
+}
 // ── Watched spots (the guild lead, 2026-10-16: "when we snipe a single mob we should be able to mark it and create a
 // timer for everyone with the named PH spot and map loc") ─────────────────────────────────────────────────────────────
 // A watch is "this spawn point is where <named> shows up": the click menu sets it, the bot shares it with the guild
@@ -53031,11 +53089,11 @@ function _mapAeRampage(name, zoneId, character, now) {
     rampage: rp && Number(rp.range) > 0 ? rp : null,
   };
 }
-function _mapStatePayload(have, now, haveLocal) {
+function _mapStatePayload(have, now, haveLocal, haveRoute) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], route_ver: null, now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
@@ -53119,6 +53177,11 @@ function _mapStatePayload(have, now, haveLocal) {
   }
   // Guild corpses (see "Guild corpses"): { name, x, y, z, age, died_age, dragger, by }, before the spawn data like the paths.
   try { out.corpses = _mapCorpseList(zone, now); } catch { out.corpses = []; }
+  // The saved raid route (see "Saved raid route"): its version always, the route itself only when the overlay lacks that version.
+  try {
+    const route = _mapRouteFor(zone, now);
+    if (route) { out.route_ver = zone + '@' + (route.saved_at || '0'); if (haveRoute !== out.route_ver) out.route = route; }
+  } catch { /* a decoration: never a failed poll */ }
   try {   // before the spawn data: the walls draw even in a zone we hold no points for
     _mapBrewallEnsure(zone, now);   // first visit to a zone: fetch Brewall's map for it (see "Brewall maps")
     const lm = _mapLocalFor(zone, now);
@@ -53308,9 +53371,9 @@ function _mapNoteLogDeath(deadName, character, lineMs, now) {
 function _handleMapState(req, res) {
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
-  let have = '', haveLocal = '';
-  try { const q = new URL(req.url, 'http://127.0.0.1').searchParams; have = q.get('have') || ''; haveLocal = q.get('have_local') || ''; } catch { void 0; }
-  try { send(200, _mapStatePayload(have, Date.now(), haveLocal)); }
+  let have = '', haveLocal = '', haveRoute = '';
+  try { const q = new URL(req.url, 'http://127.0.0.1').searchParams; have = q.get('have') || ''; haveLocal = q.get('have_local') || ''; haveRoute = q.get('have_route') || ''; } catch { void 0; }
+  try { send(200, _mapStatePayload(have, Date.now(), haveLocal, haveRoute)); }
   catch (e) { console.error('[api/map-state]', e && (e.stack || e.message || e)); send(500, { error: 'map state failed' }); }
 }
 // POST /api/map-mark { zone?, point_id, kind: 'killed'|'empty'|'up'|'clear' } - the overlay's click menu.
