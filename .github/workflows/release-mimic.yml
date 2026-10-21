@@ -199,6 +199,7 @@ jobs:
           npx next build
           test -f out/inventory/index.html || { echo "::error::web/local did not export out/inventory/index.html"; exit 1; }
           test -f out/replay/index.html || { echo "::error::web/local did not export out/replay/index.html"; exit 1; }
+          test -f out/parses/index.html || { echo "::error::web/local did not export out/parses/index.html"; exit 1; }
 
       - name: Build Windows installer
         if: steps.tag.outputs.build == 'true'

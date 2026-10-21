@@ -10783,6 +10783,7 @@ function buildTrayMenu() {
     { label: '📈 My parses', click: () => showDashboardTab('myparses') },
     // Tray ↔ dashboard parity: the dashboard rail's "On this PC › Inventory" opens this same window (openLocalSite).
     { label: '🎒 Inventory (on this PC)', click: () => { if (!openLocalSite('inventory')) shell.openExternal(`http://127.0.0.1:${agentPort}/local/inventory/`); } },
+    { label: '📊 My fights (on this PC)', click: () => { if (!openLocalSite('parses')) shell.openExternal(`http://127.0.0.1:${agentPort}/local/parses/`); } },
     { label: '🎬 My replay (on this PC)', click: () => { if (!openLocalSite('replay')) shell.openExternal(`http://127.0.0.1:${agentPort}/local/replay/`); } },
     { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },

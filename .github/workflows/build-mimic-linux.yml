@@ -77,6 +77,7 @@ jobs:
           npx next build
           test -f out/inventory/index.html || { echo "::error::web/local did not export out/inventory/index.html"; exit 1; }
           test -f out/replay/index.html || { echo "::error::web/local did not export out/replay/index.html"; exit 1; }
+          test -f out/parses/index.html || { echo "::error::web/local did not export out/parses/index.html"; exit 1; }
 
       # Version =<mimic base>-linux.<run_number>, e.g. 2.6.1-linux.19.
       #

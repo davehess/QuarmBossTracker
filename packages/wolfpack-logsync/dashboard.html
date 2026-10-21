@@ -473,12 +473,13 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
   <!-- 🖥 On this PC (the guild lead, 2026-10-21, option B: the website's own pages bundled into Mimic and
        served by this agent under /local/). Built from your own logs and inventory files; nothing leaves
        the PC. Inventory and My replay open in their own Mimic window (the tray's "Inventory (on this PC)"
-       and "My replay (on this PC)" are the same window); in a plain browser they open a new tab. My parses
-       is a placeholder until it exists. No data-tab, so the tab switcher ignores them. -->
+       and "My replay (on this PC)" are the same window); in a plain browser they open a new tab. "My fights
+       (this PC)" is the local site's My parses page, named differently here so it is not mistaken for the
+       📈 My parses tab above it. No data-tab, so the tab switcher ignores them. -->
   <div class="wp-rail-grp" id="wpLocalGrp">
     <div class="wp-lbl">On this PC</div>
     <button id="wpLocalInv" type="button" onclick="wpOpenLocalSite('inventory')" title="Every item across your characters, from the inventory files on this PC (opens in its own window). Nothing leaves the PC.">🎒 Inventory</button>
-    <button type="button" disabled title="Coming soon: your own parses, built from your own logs">📈 My parses<span class="wp-soon">soon</span></button>
+    <button id="wpLocalFights" type="button" onclick="wpOpenLocalSite('parses')" title="Your own fights as this PC recorded them, every player it saw, and how they differ from the guild's record when you are a member (opens in its own window). Not the 📈 My parses tab above: that one graphs your numbers over time. Nothing leaves the PC.">📊 My fights (this PC)</button>
     <button id="wpLocalReplay" type="button" onclick="wpOpenLocalSite('replay')" title="Play back where you and your raid stood, from the recording Mimic keeps on this PC (opens in its own window). Nothing leaves the PC.">🎬 My replay</button>
     <button id="wpLocalRebuild" type="button" onclick="wpRebuildOpen()" title="Build your fights, raids, deaths and loot from the log files on this PC. Nothing is uploaded.">🔁 Rebuild from my logs</button>
   </div>
