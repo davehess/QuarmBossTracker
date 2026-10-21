@@ -367,7 +367,7 @@ function makeWorld(specs) {
   const shield = { classList: { add() {}, remove() {} }, style: {} };
   const block = NUM + SIZE_BLOCK + '\n' + slice('  var SNAP = 8;', "document.addEventListener('mouseup', endDrag);\n");
   const env = new Function('window', 'document', '_layout', '_els', '_sel', 'notes', 'saves', 'frames', 'screenList', 'M', 'shield',
-    'var _widen = {}; var _fitAdd = {}; var _edit = true;\n'
+    'var _widen = {}; var _fitAdd = {}; var _edit = true; var _one = null; function isEd(id) { return _edit || (_one != null && _one === id); }\n'
     + 'function panelById(id) { return _layout.panels.filter(function (q) { return q.id === id; })[0] || null; }\n'
     + 'function selIds() { return Object.keys(_sel).filter(function (id) { return panelById(id); }); }\n'
     + 'function place() {} function sizeFrame(e, q, w, h) { frames.push([q.id, w, h]); } function closeMenu() {} function openMenu() {} function render() {}\n'
@@ -432,9 +432,9 @@ describe('the right and bottom edges size one direction, the ◢ both', () => {
     expect(c).toMatch(/er\.setAttribute\('data-wp-interact', ''\)/);
     const css = stripCss(canvas);
     expect(css).toMatch(/\.edge\{display:none\}/);
-    expect(css).toMatch(/body\.edit \.panel:not\(\.part\):not\(\.sect\) > \.edge\{display:block;/);
-    expect(css).toMatch(/body\.edit \.edge\.er\{[^}]*cursor:ew-resize\}/);
-    expect(css).toMatch(/body\.edit \.edge\.eb\{[^}]*cursor:ns-resize\}/);
+    expect(css).toMatch(/:is\(body\.edit \.panel, \.panel\.one\):not\(\.part\):not\(\.sect\) > \.edge\{display:block;/);
+    expect(css).toMatch(/:is\(body\.edit, \.panel\.one\) \.edge\.er\{[^}]*cursor:ew-resize\}/);
+    expect(css).toMatch(/:is\(body\.edit, \.panel\.one\) \.edge\.eb\{[^}]*cursor:ns-resize\}/);
   });
 });
 

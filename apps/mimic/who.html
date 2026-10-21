@@ -567,8 +567,8 @@
       for (var j=0;j<shown;j++) h += safeRow(gone[j], true);
       if (total > GONE_CAP) {
         h += collapsed
-          ? '<div class="gone-toggle" data-gone-toggle="1" title="Show all recently-gone rows">+ ' + (total - GONE_CAP) + ' more</div>'
-          : '<div class="gone-toggle" data-gone-toggle="1" title="Collapse the recently-gone list">− show fewer</div>';
+          ? '<div class="gone-toggle" data-wp-interact data-gone-toggle="1" title="Show all recently-gone rows">+ ' + (total - GONE_CAP) + ' more</div>'
+          : '<div class="gone-toggle" data-wp-interact data-gone-toggle="1" title="Collapse the recently-gone list">− show fewer</div>';
       }
       h += '</div></div>';
     }

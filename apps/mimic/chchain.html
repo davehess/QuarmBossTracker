@@ -524,7 +524,7 @@
         <span class="dicall-lbl">🛡 D.I. DOWN</span>
         <span class="dicall-tank" id="dicallTank"></span>
         <span class="dicall-cd" id="dicallCd"></span>
-        <span class="dicall-x" id="dicallX" title="Dismiss this callout">✕</span>
+        <span class="dicall-x" id="dicallX" data-wp-interact title="Dismiss this callout">✕</span>
       </div>
       <div id="dicallNames" class="dicall-names"></div>
       <div id="dicallNote" class="dicall-note" style="display:none"></div>
@@ -1120,7 +1120,7 @@
   // data attribute so a CONTESTED slot removes the right claimant — see
   // removeChChainSlot in the agent.
   function rmvBtn(n, name){
-    return '<span class="rmv" data-num="' + n + '" data-name="' + esc(name || '') + '"'
+    return '<span class="rmv" data-wp-interact data-num="' + n + '" data-name="' + esc(name || '') + '"'
       + ' title="Take ' + esc(name || 'this healer') + ' off the chain">&#10006;</span>';
   }
   // Delegated, because the rows' innerHTML is rebuilt on every paint — a

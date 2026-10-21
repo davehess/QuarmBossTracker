@@ -33434,7 +33434,7 @@ const COMMAND_HTML = `<!doctype html>
   function secToggle(key, label, count){
     var col = _isCollapsed(key);
     var cnt = (col && count != null) ? ' (' + count + ')' : '';
-    return '<span class="sec-toggle" data-collapse-key="' + esc(key) + '" title="'
+    return '<span class="sec-toggle" data-wp-interact data-collapse-key="' + esc(key) + '" title="'
          + (col ? 'Expand' : 'Collapse') + ' this section">'
          + (col ? '▸' : '▾') + ' ' + esc(label) + cnt + '</span>';
   }
@@ -33796,7 +33796,7 @@ const COMMAND_HTML = `<!doctype html>
         var rollsCollapsed = _isCollapsed('rolls');
         html += '<div class="card rolls-card"><div class="head rolls-head">'
              +    secToggle('rolls', '🎲 Rolls', visRolls.length)
-             +    (rollsCollapsed ? '' : '<span class="rollClearAll" title="Dismiss every roll set (this client, until new ones land)">clear all</span>')
+             +    (rollsCollapsed ? '' : '<span class="rollClearAll" data-wp-interact title="Dismiss every roll set (this client, until new ones land)">clear all</span>')
              +  '</div>';
         if (!rollsCollapsed) {
           html += '<div class="list">';
@@ -33819,13 +33819,13 @@ const COMMAND_HTML = `<!doctype html>
                 : '<span style="opacity:.6">stopped</span>');
               html += '<div class="row roll-row"><span class="nm">☠️ <b>' + Number(rs.to).toLocaleString('en-US') + '</b> — '
                    +    (dn.length === 2 ? dn[0] + ' vs ' + dn[1] : dn.join(', ')) + ' · ' + dState + '</span>'
-                   +    '<span class="rollCopy" data-roll-id="' + esc(rid) + '" title="Copy this deathroll as one line to paste in game">'
+                   +    '<span class="rollCopy" data-wp-interact data-roll-id="' + esc(rid) + '" title="Copy this deathroll as one line to paste in game">'
                    +      (rid === _copiedRoll && Date.now() < _copiedUntil ? '✓' : '📋') + '</span>'
-                   +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
+                   +    '<span class="rollMore" data-wp-interact data-roll-key="' + esc(rid) + '" title="'
                    +      (expanded ? 'Hide' : 'Show') + ' every roll in this deathroll">'
                    +      (expanded ? '▾' : '▸') + ' ' + (dg.steps || []).length + ' rolls</span>'
                    +    '<span class="cls">' + (rs.open ? 'live' : '') + '</span>'
-                   +    '<span class="rollDismiss" data-roll-id="' + esc(rid) + '" title="Dismiss this deathroll (this client)">✕</span></div>';
+                   +    '<span class="rollDismiss" data-wp-interact data-roll-id="' + esc(rid) + '" title="Dismiss this deathroll (this client)">✕</span></div>';
               if (expanded) {
                 html += '<div class="roll-detail">';
                 for (var dk = 0; dk < (dg.steps || []).length; dk++) {
@@ -33843,13 +33843,13 @@ const COMMAND_HTML = `<!doctype html>
             html += '<div class="row roll-row"><span class="nm"><b>' + (rs.from ? rs.from + '–' : '') + rs.to + '</b>'
                  +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
                  +    ' — ' + (rs.tie ? rollTieWhoHtml(rs) : '<span style="color:#f0c419">' + (winners || '—') + '</span>') + '</span>'
-                 +    (rs.tie ? '<span class="rollCopy" data-roll-id="' + esc(rid) + '" title="Copy a raid-say line announcing this tie and its deathroll">'
+                 +    (rs.tie ? '<span class="rollCopy" data-wp-interact data-roll-id="' + esc(rid) + '" title="Copy a raid-say line announcing this tie and its deathroll">'
                  +      (rid === _copiedRoll && Date.now() < _copiedUntil ? '✓' : '📋') + '</span>' : '')
-                 +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
+                 +    '<span class="rollMore" data-wp-interact data-roll-key="' + esc(rid) + '" title="'
                  +      (expanded ? 'Hide' : 'Show') + ' every roll in this set">'
                  +      (expanded ? '▾' : '▸') + ' ' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + '</span>'
                  +    '<span class="cls">' + (rs.open ? 'open' : '') + '</span>'
-                 +    '<span class="rollDismiss" data-roll-id="' + esc(rid) + '" title="Dismiss this roll set (this client)">✕</span></div>';
+                 +    '<span class="rollDismiss" data-wp-interact data-roll-id="' + esc(rid) + '" title="Dismiss this roll set (this client)">✕</span></div>';
             if (expanded) {
               // Highest first, so the losing rolls read straight down from the
               // winner. Re-rolls are shown but flagged — they never win, and
@@ -33907,7 +33907,7 @@ const COMMAND_HTML = `<!doctype html>
         var cureCollapsed = _isCollapsed('cures');
         html += '<div class="card cure-card"><div class="head cure-head">'
              +    secToggle('cures', 'Curse / Cure', visibleCures.length)
-             +    (cureCollapsed ? '' : '<span class="cureClearAll" title="Dismiss all cure/curse alerts (this client, until they change)">clear all</span>')
+             +    (cureCollapsed ? '' : '<span class="cureClearAll" data-wp-interact title="Dismiss all cure/curse alerts (this client, until they change)">clear all</span>')
              +  '</div>';
         if (!cureCollapsed) {
           html += '<div class="list">';
@@ -33919,7 +33919,7 @@ const COMMAND_HTML = `<!doctype html>
               return '<span class="cure-chip' + (cc.being_cured ? ' being-cured' : '') + '">' + esc(cc.cure) + (cc.counters ? ' ×' + cc.counters : '') + (cc.being_cured ? ' (curing)' : '') + '</span>';
             }).join(' ');
             html += '<div class="row cure-row"><span class="nm">' + esc(c.name) + '</span>' + chips
-                 +    '<span class="cureDismiss" data-cure-id="' + esc(cId) + '" title="Dismiss this alert (this client)">✕</span></div>';
+                 +    '<span class="cureDismiss" data-wp-interact data-cure-id="' + esc(cId) + '" title="Dismiss this alert (this client)">✕</span></div>';
           }
           html += '</div>';
         }
@@ -33951,7 +33951,7 @@ const COMMAND_HTML = `<!doctype html>
                +    '<span class="nm">' + esc(r.name) + '</span>'
                +    (tag ? '<span class="rez-tag">' + tag + '</span>' : '')
                +    (age ? '<span class="rez-age">dead ' + age + '</span>' : '<span class="rez-age"></span>')
-               +    '<span class="rezDismiss" data-rez-name="' + esc(r.name) + '" title="Clear this row for the WHOLE raid — use when they are up and we missed it.">✕</span>'
+               +    '<span class="rezDismiss" data-wp-interact data-rez-name="' + esc(r.name) + '" title="Clear this row for the WHOLE raid — use when they are up and we missed it.">✕</span>'
                +  '</div>';
         }
         html += '</div>';

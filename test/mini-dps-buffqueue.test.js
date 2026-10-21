@@ -438,7 +438,7 @@ describe('Buff queue mini: the page', () => {
   it('every section header arms the hover handshake, so a locked overlay takes the click', async () => {
     const preload = readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js'));
     const { _wpIsInteractive } = evalBlock(
-      'const document = { body: null };\n' + sliceBlock(preload, 'function _wpIsInteractive(el) {', '\n}'),
+      'const document = { body: null };\nconst getComputedStyle = () => ({ cursor: \'auto\' });\n' + sliceBlock(preload, 'const WP_INTERACT_SEL =', '\n}'),
       ['_wpIsInteractive'],
     );
     // An element that answers matches() for the selector list the preload actually passes.

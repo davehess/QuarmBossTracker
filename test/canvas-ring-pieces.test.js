@@ -326,7 +326,7 @@ describe('the canvas paints and edits a Ring arc', () => {
     ];
     const els = Object.fromEntries(panels.map(p => [p.id, { root: { classList: { toggle() {} } }, body: {} }]));
     const run = new Function('WpParts', 'panels', 'els',
-      'var window = { WpParts: WpParts }; var _layout = { panels: panels }; var _els = els; var _edit = true;\n'
+      'var window = { WpParts: WpParts }; var _layout = { panels: panels }; var _els = els; var _edit = true; var _one = null; function isEd(id) { return _edit || (_one != null && _one === id); }\n'
       + 'function partDef(p) { return WpParts.byId[p.part] || null; } function viewFor() { return null; }\n'
       + 'function sampleFor(d, now) { return typeof d.sample === "function" ? d.sample(now) : d.sample; }\n'
       + 'function setBody(e, html) { e.html = html; }\n'

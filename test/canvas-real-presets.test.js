@@ -254,12 +254,12 @@ describe('an overlay panel is the page, with nothing of the canvas\'s own around
     // the plate that exists is the piece's, and a hand-set Background on a piece
     // (backing is only the plate, no border/padding of its own: see test/canvas-pieces-round.test.js)
     expect(css).toMatch(/\.panel\.part\.back > \.pbody\{background:rgba\(13,17,23,var\(--bg-alpha,0\.72\)\);box-shadow:inset 0 0 0 1px #30363d/);
-    expect(css).toContain('body.edit .panel{outline:1px dashed');
+    expect(css).toContain(':is(body.edit .panel, .panel.one){outline:1px dashed');
   });
   it('click-through is untouched: arranging blocks the page, only an open builder gets the mouse back', () => {
-    expect(css).toContain('body.edit .panel > iframe{pointer-events:none}');
-    expect(css).toContain('body.edit .panel.building > iframe{pointer-events:auto}');
-    expect(c).toMatch(/if \(_edit\) e\.root\.setAttribute\('data-wp-interact', ''\); else e\.root\.removeAttribute\('data-wp-interact'\);/);
+    expect(css).toContain(':is(body.edit .panel, .panel.one) > iframe{pointer-events:none}');
+    expect(css).toContain(':is(body.edit .panel, .panel.one).building > iframe{pointer-events:auto}');
+    expect(c).toMatch(/if \(isEd\(p\.id\)\) e\.root\.setAttribute\('data-wp-interact', ''\); else e\.root\.removeAttribute\('data-wp-interact'\);/);
   });
   it('the always-on ✥ is still on every panel, a preset\'s included', () => {
     expect(c).toMatch(/mv\.className = 'mvbtn';\s*mv\.textContent = '✥';\s*mv\.setAttribute\('data-wp-interact', ''\);/);

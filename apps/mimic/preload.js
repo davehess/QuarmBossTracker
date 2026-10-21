@@ -97,10 +97,17 @@ function _wpOverlayDoc() {
   }
   return _wpIsOverlayDoc === true;
 }
+// What takes the mouse. canvas.html keeps a copy of this list (PANEL_CTL: the Canvas page cannot require this file);
+// test/canvas-clicks.test.js holds the two equal. A <summary> is a control (a collapsible header), and anything the
+// page styles cursor:pointer is clickable by the page's own account of itself (the guild lead, 2026-10-21: the
+// Command Center's section headers, ✕s and "clear all" on the Canvas were spans nobody had marked, the FB-49 class again).
+const WP_INTERACT_SEL = 'button, a, input, select, textarea, summary, [role="button"], [data-wp-interact]';
 function _wpIsInteractive(el) {
+  // cursor is inherited, so the element under the pointer answers for its ancestors too.
+  try { if (el && el.nodeType === 1 && getComputedStyle(el).cursor === 'pointer') return true; } catch (e) { /* no style: fall to the list */ }
   while (el && el.nodeType === 1 && el !== document.body) {
     try {
-      if (el.matches('button, a, input, select, textarea, [role="button"], [data-wp-interact]')) return true;
+      if (el.matches(WP_INTERACT_SEL)) return true;
     } catch (e) { return false; }
     el = el.parentElement;
   }
@@ -1209,6 +1216,10 @@ contextBridge.exposeInMainWorld('mimic', {
   onCanvasGroupOps:  (cb)     => ipcRenderer.on('canvas-group-ops', () => cb()),
   // ▭ An overlay's Mini mode (or its 📌) changed from anywhere: a frame has no window to be pushed to, so the Canvas reads it again.
   onCanvasMini:      (cb)     => ipcRenderer.on('canvas-mini', () => cb()),
+  // Where the cursor is on the Canvas ({x, y} in its CSS pixels, null off the window), told by main while the Canvas is up:
+  // a click-through window may never be handed the moves over a panel's frame, and the cursor's position is the one fact
+  // that does not depend on that.
+  onCanvasCursor:    (cb)     => ipcRenderer.on('canvas-cursor', (_e, p) => cb(p && Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: p.x, y: p.y } : null)),
 
   // ── Dock ──────────────────────────────────────────────────────────────────
   // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()

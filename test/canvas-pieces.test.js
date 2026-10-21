@@ -162,7 +162,7 @@ describe('the canvas places pieces', () => {
     expect(run(P, { d: true, e: true }, 'a')).toEqual(['a', 'b', 'c']);   // not in the selection: its group
     expect(run(P, { d: true }, 'd')).toEqual(['d']);                        // a selection of one is just itself
     const c = stripJs(canvas);
-    expect(c).toMatch(/if \(!ev\.altKey\) ids = togetherWith\(id\);/);
+    expect(c).toMatch(/if \(!ev\.altKey && _one !== id\) ids = togetherWith\(id\);/);
     expect(c).toMatch(/if \(d\.moved && d\.alt && p && p\.grp\) \{ p\.grp = null;/);
   });
   // The guild lead, 2026-09-29: "when a group is selected by grabbing the top bar you should be able to
@@ -222,10 +222,10 @@ describe('the canvas places pieces', () => {
   // to get to the editing mode for individual components".
   it('editing is one click away: ✥ opens the settings, which can start arranging; every overlay\'s menu too; /pipe mimic edit', () => {
     const c = stripJs(canvas);
-    expect(c).toMatch(/if \(d\.fromMv && !_edit\) \{ render\(\); if \(_els\[p\.id\]\) openMenu\(p\.id, _els\[p\.id\]\.mv\); return; \}/);
+    expect(c).toMatch(/if \(d\.fromMv && !_edit\) \{\s*if \(_one === p\.id\) \{ endOne\(\); return; \}\s*editOne\(p\.id\);\s*render\(\); if \(_els\[p\.id\]\) openMenu\(p\.id, _els\[p\.id\]\.mv\); return;\s*\}/);
     expect(c).toMatch(/data-arrange="1"[^']*✏ Arrange the canvas/);
     expect(c).toMatch(/if \(t\.getAttribute\('data-arrange'\) === '1'\) \{ try \{ if \(M\.canvasEdit\) M\.canvasEdit\(true\); \}/);
-    expect(c).toMatch(/root\.addEventListener\('dblclick', function \(ev\) \{ if \(_edit && !ev\.target\.closest\('\.ctl'\)\) openMenu\(p\.id, root\); \}\);/);
+    expect(c).toMatch(/root\.addEventListener\('dblclick', function \(ev\) \{ if \(isEd\(p\.id\) && !ev\.target\.closest\('\.ctl'\)\) openMenu\(p\.id, root\); \}\);/);
     expect(stripJs(preload)).toMatch(/mkItem\('🧩 Arrange the canvas \(pieces\)', '#1f3d57', \(\) => ipcRenderer\.invoke\('canvas-edit', true\)\)/);
     const sets = require(path.join(ROOT, 'apps', 'mimic', 'overlaySets.js'));
     expect(sets.parsePipeCommand('mimic edit')).toEqual({ verb: 'edit', on: null });
