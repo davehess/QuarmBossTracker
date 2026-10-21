@@ -315,6 +315,13 @@
   body.has-tline #tline{display:flex;align-items:flex-start;gap:6px}
   body.part #tline{display:none !important}
   body.has-tline:not(.part):not(.timers-topdown) #timers{bottom:calc(12px + var(--tline-h,0px))}
+  /* ⇅ Timers at the TOP (the guild lead, 2026-10-21: "if the timers start at the top the timeline should start at
+     the top too"): the strip hangs off the top edge, below the ✥ / 🗑 / ✕ gutter (34px, 58px in setup), and the
+     stack starts under it. The class is the same one the setting already toggles, so the swap is live. */
+  body.timers-topdown #tline{top:34px;bottom:auto}
+  body.setup.timers-topdown #tline{top:58px}
+  body.has-tline:not(.part).timers-topdown #timers{top:calc(38px + var(--tline-h,0px))}
+  body.has-tline:not(.part).setup.timers-topdown #timers{top:calc(62px + var(--tline-h,0px))}
   #tline .tl-pair{margin:0 0 5px}
   #tline .tl-pair-row{display:flex;align-items:baseline;gap:10px;font-size:calc(22px * var(--tl-s));font-weight:800;line-height:1.15;color:#ffc14d}
   #tline .tl-pair-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1800,7 +1807,8 @@
     // Height the bottom-anchored stack occupies, including its 8px bottom gap.
     var timersContent = (timersEl && timersEl.children.length) ? (timersEl.scrollHeight + 8) : 0;
     // The death timeline strip sits under the stack on the window's bottom edge: its height (+ the 4px gap
-    // above it) is added, plus the 8px bottom gap when the stack is not there to carry it.
+    // above it) is added, plus the 8px bottom gap when the stack is not there to carry it. Top-down (⇅) puts the
+    // strip under the top gutter with the stack below it: the same pieces in the other order, so the same total.
     var tlH = (tlineEl && document.body.classList.contains('has-tline') && tlineEl.offsetHeight) ? tlineEl.offsetHeight + 4 : 0;
     if (tlH) timersContent += tlH + (timersContent ? 0 : 8);
     if (timersContent){

@@ -196,6 +196,23 @@ describe('wiring (comments stripped)', () => {
     const measure = sliceBlock(t, 'function measureWanted(){', 'var hasLoot');
     expect(measure).toMatch(/tlineEl\.offsetHeight/);
   });
+  it('the strip follows the timers anchor: bottom by default, top (under the gutter, stack below it) when top-down', () => {
+    const css = stripCss(TRIGGERS.slice(0, TRIGGERS.indexOf('</style>')));
+    expect(css).toMatch(/#tline\s*\{\s*position:\s*fixed;\s*bottom:\s*8px/);                                  // bottom edge by default
+    expect(css).toMatch(/body\.timers-topdown #tline\s*\{\s*top:\s*34px;\s*bottom:\s*auto/);                   // top edge when top-down
+    expect(css).toMatch(/body\.setup\.timers-topdown #tline\s*\{\s*top:\s*58px/);                              // clear of the setup bar
+    expect(css).toMatch(/body\.has-tline:not\(\.part\)\.timers-topdown #timers\s*\{\s*top:\s*calc\(38px \+ var\(--tline-h,0px\)\)/);
+    expect(css).toMatch(/body\.has-tline:not\(\.part\)\.setup\.timers-topdown #timers\s*\{\s*top:\s*calc\(62px \+ var\(--tline-h,0px\)\)/);
+    // the bottom-anchored stack rule must not apply top-down (it would pin the stack to both edges)
+    expect(css).toMatch(/body\.has-tline:not\(\.part\):not\(\.timers-topdown\) #timers/);
+  });
+  it('the swap is live: the setting toggles the one body class both rules key on, and the page re-reads it on every status push', () => {
+    const toggle = sliceBlock(t, 'function applyTimersOrder(s){', 'window.mimic.onStatus(applyTimersOrder)');
+    expect(toggle).toMatch(/classList\.toggle\('timers-topdown', !!\(s && s\.triggerTimersTopDown\)\)/);
+    expect(t).toMatch(/window\.mimic\.onStatus\(applyTimersOrder\)/);
+    // the strip's own control + collapse stay inside #tline, so they move with it
+    expect(TRIGGERS).toMatch(/<div id="tline"><button id="tl-toggle"[\s\S]*?id="tl-sm"[\s\S]*?id="tl-lg"/);
+  });
   it('the strip speaks nothing', () => {
     const block = stripJs(sliceBlock(TRIGGERS, '// ── death timeline: pure state ──', 'setInterval(tlineUpdate, 250);'));
     expect(block).toMatch(/function tlineUpdate\(\)/);   // the slice is the strip's code, not an empty match
