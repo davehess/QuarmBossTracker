@@ -22347,7 +22347,7 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase, { track
     }
   }
   const or = eqemuForms.map(f => `name.eq.${encodeURIComponent(f)}`).join(',');
-  const npcs = await supabase.select('eqemu_npc_types', `or=(${or})&select=id&limit=3`);
+  const npcs = await supabase.select('eqemu_npc_types', `or=(${or})&select=id,name&limit=3`);
   const ids = [...new Set((Array.isArray(npcs) ? npcs : []).map(r => r.id).filter(n => Number.isFinite(n)))];
   if (ids.length !== 1) return null;   // no exact match, or ambiguous — refuse
   const npcId = ids[0];
@@ -22364,7 +22364,10 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase, { track
     // (/parses cards, landing widget) show curated rows only — without this
     // flag, one farm night put 300+ trash cards on /parses (2026-08-19).
     // Flip to false to promote a named to card status.
-    auto_registered: true,
+    // A boss on the curated PoP list (data/named-bosses.json) is curated from its
+    // first kill: the 2026-10-18 raid's Maareq, Mithaniel Marr and the rest
+    // registered as trash and /parses showed only Saryrn (the guild lead, 2026-10-21).
+    auto_registered: !namedBosses.isNamedBoss((npcs || []).find(r => r.id === npcId)),
   }]).catch(() => {});
   // Re-read rather than trusting our insert — a concurrent upload of the same
   // new mob may have won the race with a different-cased slug.
