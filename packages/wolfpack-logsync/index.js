@@ -34531,6 +34531,8 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         return res.end(JSON.stringify(out));
       }
+      // This PC's own recorded positions (local-first; the store block above module.exports). Answered from disk, never uploaded.
+      if (_localTrackRoute(req, res)) return;
       // Tank overlay snapshot (the guild lead, 2026-06-25). Aggregates everything the
       // tank.html overlay needs from the active character's live state:
       //   • self HP %, target name + HP %, current buffs (with ticks remaining)
@@ -60690,6 +60692,8 @@ async function main() {
     _logRotateStartTimers();
     // 📶 Connection meter: ping the router and the game host from this PC (Windows; local only).
     try { _netStart(); } catch { void 0; }
+    // This PC's own position recorder: a minute row every minute into the local store, never uploaded.
+    try { _localRecorderStart(); } catch { void 0; }
     // Run forever; intervals keep us alive
     return;
   }
@@ -60721,9 +60725,553 @@ async function main() {
   }
 }
 
+// ── Local store + own position recorder (local-first, 2026-10-21) ─────────────────────────────────────────
+// Two things, both PC-local. NOTHING in this block reaches enqueueUpload, http or https: a record put here is
+// read back by this agent's own dashboard routes and by nothing else (test/local-recorder.test.js asserts it).
+//
+// 1. _localStore: zero-dependency, append-only NDJSON segments behind put / get / scan / cursor.
+//    Mimic pins Electron 31 (Node 20), so node:sqlite (Node 22.5+) is not there, and the agent ships as ONE
+//    index.js (Mimic copies only index.js, supervisor.js and package.json), so this lives here rather than in a
+//    module. Layout, beside logsync.queue.json:
+//        local/<kind>/<UTC day>.ndjson     one line per put: {"s":seq,"id":id,"ts":ms,"r":record}
+//        local/index.json                  per kind: seq, lastTs, per segment {n, bytes}. A CACHE: a missing or
+//                                          stale index is rebuilt from the segments, never trusted over them.
+//        local/config.json                 optional: {"retain_days":{"track_minute":90},"max_mb":{"track_minute":400}}
+//    A later put with the same (kind, id) supersedes the earlier one (scan and get keep the highest seq).
+//    CRASH SAFETY: a put is one appendFileSync of one whole line. A crash can leave the last line torn; the next
+//    append into that segment starts with a newline, and a reader skips any line that does not parse.
+//    SIZE: each kind has a byte cap (oldest segment dropped first) and a retention in days; prune() applies both.
+const _LSTORE_KIND_RX = /^[a-z][a-z0-9_]{0,39}$/;
+const _LSTORE_SEG_RX = /^\d{4}-\d{2}-\d{2}\.ndjson$/;
+const _LSTORE_MB = 1024 * 1024;
+const _LSTORE_RECORD_MAX = _LSTORE_MB;
+const _LSTORE_SEG_READ_MAX = 256 * _LSTORE_MB;
+const _LSTORE_INDEX_WRITE_MS = 5000;
+const _LSTORE_POLICY = {
+  track_minute:   { retainDays: 90, maxBytes: 400 * _LSTORE_MB },
+  track_presence: { retainDays: 90, maxBytes: 25 * _LSTORE_MB },
+};
+const _LSTORE_POLICY_DEFAULT = { retainDays: 0, maxBytes: 256 * _LSTORE_MB };   // 0 days = no age limit, the byte cap still applies
+
+function _localStoreOpen(dir, opts = {}) {
+  const clock = typeof opts.now === 'function' ? opts.now : Date.now;
+  const policy = {};
+  const kinds = new Map();         // kind -> { seq, lastTs, segments: { day: { n, bytes } } }
+  const tailChecked = new Set();   // "kind/day" segments whose last byte was checked this run
+  let dirty = false;
+  let timer = null;
+  let saved = null;
+  try { saved = JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')); } catch { saved = null; }
+  if (!saved || saved.v !== 1 || !saved.kinds || typeof saved.kinds !== 'object') saved = null;
+  const dayOf = (ts) => new Date(ts).toISOString().slice(0, 10);
+  const segFile = (kind, day) => path.join(dir, kind, day + '.ndjson');
+  const polOf = (kind) => Object.assign({}, _LSTORE_POLICY[kind] || _LSTORE_POLICY_DEFAULT, policy[kind] || {});
+
+  function configure(c) {
+    const cfg = c && typeof c === 'object' ? c : {};
+    for (const [kind, n] of Object.entries(cfg.retainDays || {})) {
+      if (!_LSTORE_KIND_RX.test(kind)) continue;
+      const d = Math.trunc(Number(n));
+      if (Number.isFinite(d) && d >= 0 && d <= 3650) policy[kind] = Object.assign({}, policy[kind], { retainDays: d });
+    }
+    for (const [kind, n] of Object.entries(cfg.maxBytes || {})) {
+      if (!_LSTORE_KIND_RX.test(kind)) continue;
+      const b = Math.trunc(Number(n));
+      if (Number.isFinite(b) && b >= _LSTORE_MB) policy[kind] = Object.assign({}, policy[kind], { maxBytes: b });
+    }
+  }
+  try {
+    const f = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
+    const mb = {};
+    for (const [kind, n] of Object.entries((f && f.max_mb) || {})) mb[kind] = Number(n) * _LSTORE_MB;
+    configure({ retainDays: f && f.retain_days, maxBytes: mb });
+  } catch { void 0; }
+  if (opts.policy) configure(opts.policy);
+
+  // One line per record; a line that does not parse (a torn last line) is skipped.
+  function readSegment(kind, day) {
+    let text = '';
+    try {
+      const file = segFile(kind, day);
+      if (fs.statSync(file).size > _LSTORE_SEG_READ_MAX) return [];
+      text = fs.readFileSync(file, 'utf8');
+    } catch { return []; }
+    const out = [];
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      let o;
+      try { o = JSON.parse(line); } catch { continue; }
+      if (!o || typeof o.id !== 'string' || !Number.isFinite(o.ts) || !Number.isFinite(o.s) || !('r' in o)) continue;
+      out.push({ id: o.id, ts: o.ts, seq: o.s, rec: o.r });
+    }
+    return out;
+  }
+
+  // The state of one kind: the saved index, checked against what is on disk. A segment whose size differs
+  // from the index (or that the index never heard of) is counted again from the file.
+  function kindState(kind) {
+    let k = kinds.get(kind);
+    if (k) return k;
+    const s = saved && saved.kinds[kind];
+    k = { seq: s && Number.isFinite(s.seq) ? s.seq : 0, lastTs: s && Number.isFinite(s.lastTs) ? s.lastTs : 0, segments: {} };
+    let files = [];
+    try { files = fs.readdirSync(path.join(dir, kind)); } catch { files = []; }
+    for (const f of files) {
+      if (!_LSTORE_SEG_RX.test(f)) continue;
+      const day = f.slice(0, 10);
+      let size = 0;
+      try { size = fs.statSync(path.join(dir, kind, f)).size; } catch { continue; }
+      const have = s && s.segments && s.segments[day];
+      if (have && have.bytes === size && Number.isFinite(have.n)) { k.segments[day] = { n: have.n, bytes: size }; continue; }
+      const rows = readSegment(kind, day);
+      k.segments[day] = { n: rows.length, bytes: size };
+      for (const r of rows) { if (r.seq > k.seq) k.seq = r.seq; if (r.ts > k.lastTs) k.lastTs = r.ts; }
+      dirty = true;
+    }
+    kinds.set(kind, k);
+    return k;
+  }
+
+  function writeIndex() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (!dirty) return;
+    try {
+      const out = { v: 1, kinds: {} };
+      for (const [kind, k] of kinds) out.kinds[kind] = { seq: k.seq, lastTs: k.lastTs, segments: k.segments };
+      fs.mkdirSync(dir, { recursive: true });
+      const tmp = path.join(dir, 'index.json.tmp');
+      fs.writeFileSync(tmp, JSON.stringify(out));
+      fs.renameSync(tmp, path.join(dir, 'index.json'));
+      dirty = false;
+    } catch { void 0; }   // the index is a cache: a failed write costs a recount on the next open
+  }
+  function markDirty() {
+    dirty = true;
+    if (timer) return;
+    timer = setTimeout(writeIndex, _LSTORE_INDEX_WRITE_MS);
+    if (timer.unref) timer.unref();
+  }
+
+  // Does the segment end without a newline (a crash mid-append)? Then the next line must start on a fresh one.
+  function endsTorn(file) {
+    let fd = null;
+    try {
+      fd = fs.openSync(file, 'r');
+      const size = fs.fstatSync(fd).size;
+      if (size === 0) return false;
+      const b = Buffer.alloc(1);
+      fs.readSync(fd, b, 0, 1, size - 1);
+      return b[0] !== 10;
+    } catch { return false; } finally { if (fd !== null) { try { fs.closeSync(fd); } catch { void 0; } } }
+  }
+
+  // put(kind, id, record, { ts }) -> true when the line is on disk. ts (ms) picks the day segment and orders scans;
+  // default now. A record over 1 MB, a bad kind or id, or a full disk returns false and changes nothing.
+  function put(kind, id, record, o = {}) {
+    try {
+      if (!_LSTORE_KIND_RX.test(String(kind)) || typeof id !== 'string' || !id || id.length > 200 || record === undefined) return false;
+      const ts = Number.isFinite(o.ts) ? o.ts : clock();
+      const k = kindState(kind);
+      const seq = k.seq + 1;
+      const line = JSON.stringify({ s: seq, id, ts, r: record }) + '\n';
+      let bytes = Buffer.byteLength(line);
+      if (bytes > _LSTORE_RECORD_MAX) return false;
+      const day = dayOf(ts);
+      const file = segFile(kind, day);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const key = kind + '/' + day;
+      let prefix = '';
+      if (!tailChecked.has(key)) { if (endsTorn(file)) { prefix = '\n'; bytes += 1; } tailChecked.add(key); }
+      fs.appendFileSync(file, prefix + line);
+      k.seq = seq;
+      if (ts > k.lastTs) k.lastTs = ts;
+      const seg = k.segments[day] || (k.segments[day] = { n: 0, bytes: 0 });
+      seg.n++;
+      seg.bytes += bytes;
+      markDirty();
+      return true;
+    } catch { return false; }
+  }
+
+  // scan(kind, { since, until, afterSeq, limit }) -> [{ id, ts, seq, rec }] with since <= ts < until, oldest first.
+  // The newest put of an id wins. afterSeq is the cursor: only records put after it.
+  function scan(kind, o = {}) {
+    if (!_LSTORE_KIND_RX.test(String(kind))) return [];
+    const k = kindState(kind);
+    const lo = Number.isFinite(o.since) ? dayOf(o.since) : '';
+    const hi = Number.isFinite(o.until) ? dayOf(o.until) : '9999-99-99';
+    const byId = new Map();
+    for (const day of Object.keys(k.segments).sort()) {
+      if (day < lo || day > hi) continue;
+      for (const e of readSegment(kind, day)) { const p = byId.get(e.id); if (!p || e.seq > p.seq) byId.set(e.id, e); }
+    }
+    const since = Number.isFinite(o.since) ? o.since : -Infinity;
+    const until = Number.isFinite(o.until) ? o.until : Infinity;
+    const after = Number.isFinite(o.afterSeq) ? o.afterSeq : -1;
+    const out = [...byId.values()].filter(e => e.ts >= since && e.ts < until && e.seq > after)
+      .sort((a, b) => a.ts - b.ts || a.seq - b.seq);
+    return Number.isFinite(o.limit) && o.limit > 0 ? out.slice(0, o.limit) : out;
+  }
+
+  // get(kind, id, { ts }) -> the newest record put under id, or null. ts (the one given to put) names the day to
+  // read; without it every segment is read, newest first.
+  function get(kind, id, o = {}) {
+    if (!_LSTORE_KIND_RX.test(String(kind)) || typeof id !== 'string') return null;
+    const k = kindState(kind);
+    const days = Number.isFinite(o.ts) ? [dayOf(o.ts)] : Object.keys(k.segments).sort().reverse();
+    for (const day of days) {
+      if (!k.segments[day]) continue;
+      let best = null;
+      for (const e of readSegment(kind, day)) if (e.id === id && (!best || e.seq > best.seq)) best = e;
+      if (best) return best.rec;
+    }
+    return null;
+  }
+
+  // cursor(kind) -> where the kind stands: the highest seq, newest ts, lines on disk (superseded ones included), bytes.
+  function cursor(kind) {
+    const k = kindState(kind);
+    const days = Object.keys(k.segments).sort();
+    let count = 0, bytes = 0;
+    for (const d of days) { count += k.segments[d].n; bytes += k.segments[d].bytes; }
+    return { seq: k.seq, lastTs: k.lastTs, count, bytes, segments: days.length, firstDay: days[0] || null, lastDay: days[days.length - 1] || null };
+  }
+
+  function kindNames() {
+    const names = new Set(kinds.keys());
+    try { for (const d of fs.readdirSync(dir, { withFileTypes: true })) if (d.isDirectory() && _LSTORE_KIND_RX.test(d.name)) names.add(d.name); } catch { void 0; }
+    return [...names].sort();
+  }
+
+  // prune() drops whole segments: older than the kind's retention, then the oldest while the kind is over its byte
+  // cap (the newest segment always stays). Returns what it removed.
+  function prune(o = {}) {
+    const now = Number.isFinite(o.now) ? o.now : clock();
+    const removed = [];
+    let freed = 0;
+    for (const kind of kindNames()) {
+      const k = kindState(kind);
+      const p = polOf(kind);
+      const drop = (day) => {
+        try { fs.unlinkSync(segFile(kind, day)); } catch (e) { if (!e || e.code !== 'ENOENT') return false; }
+        freed += k.segments[day].bytes;
+        delete k.segments[day];
+        tailChecked.delete(kind + '/' + day);
+        removed.push(kind + '/' + day);
+        dirty = true;
+        return true;
+      };
+      const cutoff = p.retainDays > 0 ? dayOf(now - p.retainDays * 86400000) : null;
+      if (cutoff) for (const day of Object.keys(k.segments).sort()) if (day < cutoff) drop(day);
+      const days = Object.keys(k.segments).sort();
+      let total = days.reduce((a, d) => a + k.segments[d].bytes, 0);
+      for (let i = 0; i < days.length - 1 && total > p.maxBytes; i++) {
+        const b = k.segments[days[i]].bytes;
+        if (drop(days[i])) total -= b;
+      }
+    }
+    writeIndex();
+    return { removed, freedBytes: freed };
+  }
+
+  function stats() { const out = {}; for (const kind of kindNames()) out[kind] = cursor(kind); return out; }
+  return { dir, put, get, scan, cursor, prune, stats, configure, flush: writeIndex, policyOf: polOf };
+}
+
+// The agent's own store, opened on first use (requiring the module touches no disk). WP_LOCAL_DIR moves it.
+let _localStoreInst = null;
+function _localStoreDefault() {
+  if (_localStoreInst) return _localStoreInst;
+  const st = _localStoreOpen(process.env.WP_LOCAL_DIR || path.join(__dirname, 'local'));
+  const days = parseInt(process.env.WP_LOCAL_TRACK_DAYS, 10);
+  if (Number.isFinite(days) && days > 0) st.configure({ retainDays: { track_minute: days, track_presence: days } });
+  _localStoreInst = st;
+  return st;
+}
+const _localStore = {
+  open: _localStoreOpen,
+  put:    (...a) => _localStoreDefault().put(...a),
+  get:    (...a) => _localStoreDefault().get(...a),
+  scan:   (...a) => _localStoreDefault().scan(...a),
+  cursor: (...a) => _localStoreDefault().cursor(...a),
+  prune:  (...a) => _localStoreDefault().prune(...a),
+  stats:  (...a) => _localStoreDefault().stats(...a),
+  flush:  () => { if (_localStoreInst) _localStoreInst.flush(); },
+};
+
+// ── Own position recorder ──────────────────────────────────────────────────────────────────────────────
+// Every 3 s this PC cuts a frame of where it stands, and a finished UTC minute becomes ONE row in exactly the
+// shape of utils/raidTrack.js buildMinuteRow (the raid_track_minutes row web/lib/raidReplay.ts decodes):
+//   { v:1, step_s, who:[[name,cls,group,level],...], zones:['short',...],
+//     f:[[dt, i,x,y,z,heading,hp%,zi, ...], ...], mobs:[[name, spawn_id|null],...], mf:[[dt, mi,x,y,z,n,zi], ...] }
+// Source: Zeal's raid snapshot (_lastRaidPipe, the positions of the raid members in THIS zone) plus this PC's own
+// character from its live state. In a group or alone there is no raid snapshot and who is just [self].
+// _localTrackNightKey and _localTrackMinuteRow are PORTS of the hub's pure code: keep them in step with
+// utils/raidNight.js and utils/raidTrack.js (the parity test feeds both the same frames and compares the rows).
+// Positions are the pipe's x/y as received, no swap. A target is stored swapped back (mf x = server y), as the hub does.
+// PRIVACY: a character this PC knows is exclude_from_stats (stats.characterPrefs, which holds THIS PC's own
+// characters only) is never written, and when the active character is one of them nothing is recorded. The agent has
+// no list of OTHER raiders' flags, so raiders seen on the raid snapshot are recorded; the hub recorder filters those
+// server-side. Nothing recorded here is uploaded, queued or relayed.
+const LOCAL_TRACK_STEP_S_DEFAULT = 3;
+const LOCAL_TRACK_FRESH_MS = 10_000;        // a raid snapshot or a live state older than this is not in a frame
+const LOCAL_TRACK_SAFETY_MS = 30_000;       // closes a minute nothing else closed (zoned out, camped, Zeal gone)
+const LOCAL_TRACK_PRUNE_MS = 6 * 3600_000;
+
+function _localTrackStepS() {
+  const n = parseInt(process.env.WP_LOCAL_TRACK_STEP_S, 10);
+  return Number.isFinite(n) ? Math.min(30, Math.max(1, n)) : LOCAL_TRACK_STEP_S_DEFAULT;
+}
+// Port of utils/raidNight.js nightKey: MM/DD/YYYY in the guild timezone, the night rolling over at 06:00 so a raid
+// past midnight keeps the date it started on.
+function _localTrackNightKey(ts) {
+  const h = parseInt(process.env.RAID_NIGHT_ROLLOVER_HOUR, 10);
+  const roll = Number.isInteger(h) && h >= 0 && h <= 12 ? h : 6;
+  const at = (Number.isFinite(ts) ? ts : Date.now()) - roll * 3600_000;
+  try {
+    return new Date(at).toLocaleDateString('en-US', { timeZone: process.env.DEFAULT_TIMEZONE || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
+  } catch {
+    return new Date(at).toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
+  }
+}
+// Port of utils/raidTrack.js buildMinuteRow. frames: [{ t, rows:[{name,cls,group,level,hp,x,y,z,h,src}],
+// mobs:[{name,id,zone,x,y,z,n}] }]. opts: { guildId, excluded:Set<lowercase name>, srcZone:Map<src, short|null>, stepS }.
+function _localTrackMinuteRow(minuteStartMs, frames, opts = {}) {
+  const excluded = opts.excluded instanceof Set ? opts.excluded : null;
+  const srcZone = opts.srcZone instanceof Map ? opts.srcZone : new Map();
+  const who = [];
+  const whoIdx = new Map();
+  const zones = [];
+  const zoneIdx = new Map();
+  const f = [];
+  const mobs = [];
+  const mobIdx = new Map();
+  const mf = [];
+  const rnd = (n) => Math.round(n);
+  const zoneOf = (zs) => {
+    if (!zs) return -1;
+    let zi = zoneIdx.get(zs);
+    if (zi === undefined) { zi = zones.length; zoneIdx.set(zs, zi); zones.push(zs); }
+    return zi;
+  };
+  for (const fr of frames) {
+    const arr = [Math.min(59, Math.max(0, Math.floor((fr.t - minuteStartMs) / 1000)))];
+    let placed = 0;
+    for (const r of fr.rows) {
+      const k = r.name.toLowerCase();
+      if (excluded && excluded.has(k)) continue;
+      let i = whoIdx.get(k);
+      if (i === undefined) {
+        i = who.length;
+        whoIdx.set(k, i);
+        who.push([r.name, r.cls, r.group, r.level]);
+      } else {   // last seen in the minute wins, but a missing value never erases a known one
+        const w = who[i];
+        who[i] = [r.name, r.cls ?? w[1], r.group ?? w[2], r.level ?? w[3]];
+      }
+      const zi = zoneOf(srcZone.get(r.src) || null);
+      arr.push(i, rnd(r.x), rnd(r.y), rnd(r.z), r.h == null ? -1 : rnd(r.h), r.hp == null ? -1 : rnd(r.hp), zi);
+      placed++;
+    }
+    if (!placed) continue;
+    f.push(arr);
+    for (const m of fr.mobs || []) {
+      const mk = m.name + '\u0000' + (m.id ?? '');
+      let mi = mobIdx.get(mk);
+      if (mi === undefined) { mi = mobs.length; mobIdx.set(mk, mi); mobs.push([m.name, Number.isFinite(m.id) ? m.id : null]); }
+      mf.push([arr[0], mi, rnd(m.y), rnd(m.x), rnd(m.z || 0), m.n, zoneOf(m.zone || null)]);
+    }
+  }
+  if (!f.length) return null;
+  return {
+    guild_id: opts.guildId || 'local',
+    minute_at: new Date(minuteStartMs).toISOString(),
+    night_key: _localTrackNightKey(minuteStartMs),
+    raiders: who.length,
+    frames: f.length,
+    zones: zones.slice(),
+    data: JSON.stringify({ v: 1, step_s: opts.stepS || LOCAL_TRACK_STEP_S_DEFAULT, who, zones, f, ...(mf.length ? { mobs, mf } : {}) }),
+  };
+}
+
+// One frame from what this PC knows right now, or null when there is nothing to place. Pure: everything comes in as c.
+//   c = { raid:{at,members}|null, active:'Name'|null, state:<_zealState entry>|null, selfInfo:{cls,level}|null,
+//         excluded:Set<lowercase name>|null, targetPos:{id,x,y,z,zone}|null }
+function _localTrackFrame(nowMs, c) {
+  const st = c.state;
+  const active = c.active ? String(c.active) : '';
+  const ex = c.excluded instanceof Set ? c.excluded : new Set();
+  if (!active || !st || ex.has(active.toLowerCase())) return null;
+  const zone = _mapZoneShort(st.zone);
+  const src = zone || '';
+  const num = (v) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
+  const rows = [];
+  const seen = new Set();
+  const raid = c.raid && Array.isArray(c.raid.members) && nowMs - c.raid.at <= LOCAL_TRACK_FRESH_MS ? c.raid : null;
+  const meLower = active.toLowerCase();
+  let raidMe = null;
+  for (const m of raid ? raid.members : []) {
+    if (!m || typeof m.name !== 'string' || !m.name) continue;
+    const k = m.name.toLowerCase();
+    if (seen.has(k) || ex.has(k)) continue;
+    if (!Number.isFinite(m.loc_x) || !Number.isFinite(m.loc_y)) continue;
+    const z = Number.isFinite(m.loc_z) ? m.loc_z : 0;
+    if (m.loc_x === 0 && m.loc_y === 0 && z === 0) continue;   // not in this PC's zone
+    seen.add(k);
+    const row = { name: m.name, cls: m.class || null, group: num(m.group), level: num(m.level), hp: Number.isFinite(m.hp_pct) ? m.hp_pct : null,
+      x: m.loc_x, y: m.loc_y, z, h: Number.isFinite(m.heading) ? m.heading : null, src };
+    if (k === meLower) raidMe = row;
+    rows.push(row);
+  }
+  // This PC's own character from its live state (about 3 a second, fresher than the raid snapshot).
+  const lx = st.loc && Number(st.loc.x), ly = st.loc && Number(st.loc.y), lz = st.loc && Number(st.loc.z);
+  const fresh = Number.isFinite(st.updatedAt) && nowMs - st.updatedAt <= LOCAL_TRACK_FRESH_MS;
+  if (fresh && Number.isFinite(lx) && Number.isFinite(ly) && !(lx === 0 && ly === 0 && (lz || 0) === 0)) {
+    const info = c.selfInfo || {};
+    const hd = st.heading != null && Number.isFinite(Number(st.heading)) ? Number(st.heading) : (raidMe ? raidMe.h : null);
+    const me = { name: active, cls: (raidMe && raidMe.cls) || info.cls || null, group: raidMe ? raidMe.group : null,
+      level: (raidMe && raidMe.level) || info.level || null,
+      hp: Number.isFinite(st.self_hp_pct) ? st.self_hp_pct : (raidMe ? raidMe.hp : null),
+      x: lx, y: ly, z: Number.isFinite(lz) ? lz : 0, h: hd, src };
+    const at = raidMe ? rows.indexOf(raidMe) : -1;
+    if (at >= 0) rows[at] = me; else rows.unshift(me);
+  }
+  if (!rows.length) return null;
+  const mobs = [];
+  const tp = c.targetPos;
+  if (tp && st.target_name && Number.isFinite(tp.x) && Number.isFinite(tp.y)) {
+    mobs.push({ name: String(st.target_name), id: Number.isFinite(tp.id) ? tp.id : null, zone: tp.zone || null, x: tp.x, y: tp.y, z: tp.z || 0, n: 1 });
+  }
+  return { t: nowMs, rows, mobs };
+}
+
+// The recorder: frames of the minute being filled; a frame in a new minute (or the safety timer) closes the one before.
+const _localTrack = { cur: null, frameTimer: null, safetyTimer: null, pruneTimer: null, store: null, exitHooked: false };
+function _localTrackStore() { return _localTrack.store || _localStoreDefault(); }
+
+function _localTrackSave(row, minuteStartMs) {
+  const st = _localTrackStore();
+  st.put('track_minute', row.minute_at, row, { ts: minuteStartMs });
+  st.put('track_presence', row.minute_at, { night_key: row.night_key, minute_at: row.minute_at, zones: row.zones, raiders: row.raiders }, { ts: minuteStartMs });
+}
+function _localTrackClose() {
+  const cur = _localTrack.cur;
+  _localTrack.cur = null;
+  if (!cur || !cur.frames.length) return null;
+  const srcZone = new Map();
+  for (const fr of cur.frames) for (const r of fr.rows) if (!srcZone.has(r.src)) srcZone.set(r.src, r.src || null);
+  const start = cur.minute * 60_000;
+  const row = _localTrackMinuteRow(start, cur.frames, { srcZone, stepS: _localTrackStepS() });
+  if (row) _localTrackSave(row, start);
+  return row;
+}
+function _localTrackPush(frame) {
+  const minute = Math.floor(frame.t / 60_000);
+  if (_localTrack.cur && _localTrack.cur.minute !== minute) _localTrackClose();
+  if (!_localTrack.cur) _localTrack.cur = { minute, frames: [] };
+  _localTrack.cur.frames.push(frame);
+}
+function _localTrackCloseFinished(nowMs) {
+  if (_localTrack.cur && _localTrack.cur.minute < Math.floor(nowMs / 60_000)) _localTrackClose();
+}
+
+// What this PC knows right now, gathered for _localTrackFrame. Never throws.
+function _localTrackContext(nowMs) {
+  const active = _mapActiveCharacter(nowMs);
+  const st = active ? _zealState[active] : null;
+  const excluded = new Set();
+  for (const [name, p] of Object.entries((stats && stats.characterPrefs) || {})) if (p && p.exclude_from_stats) excluded.add(String(name).toLowerCase());
+  let selfInfo = null;
+  try { selfInfo = st ? { cls: normalizeClass(_meLabel(st, 3) || '') || _raidClassByName.get(active.toLowerCase()) || null, level: _zealLevelFor(active) } : null; } catch { selfInfo = null; }
+  let targetPos = null;
+  try { const p = st ? _liveTargetPosOf(st) : null; targetPos = p ? { id: p.id, x: p.x, y: p.y, z: p.z, zone: p.zone } : null; } catch { targetPos = null; }
+  return { raid: _lastRaidPipe, active, state: st, selfInfo, excluded, targetPos };
+}
+function _localTrackTick(nowMs = Date.now()) {
+  if (!_isUploaderInstance) return null;   // another instance on this machine owns the folder
+  try {
+    const frame = _localTrackFrame(nowMs, _localTrackContext(nowMs));
+    if (frame) _localTrackPush(frame);
+    return frame;
+  } catch { return null; }
+}
+
+function _localRecorderStart() {
+  if (_localTrack.frameTimer || process.env.WP_LOCAL_TRACK === '0') return false;
+  if (_uploadOpts && _uploadOpts.dryRun) return false;
+  _localTrack.frameTimer = setInterval(() => { _localTrackTick(); }, _localTrackStepS() * 1000);
+  _localTrack.safetyTimer = setInterval(() => { try { _localTrackCloseFinished(Date.now()); } catch { void 0; } }, LOCAL_TRACK_SAFETY_MS);
+  _localTrack.pruneTimer = setInterval(() => { try { _localTrackStore().prune(); } catch { void 0; } }, LOCAL_TRACK_PRUNE_MS);
+  for (const t of [_localTrack.frameTimer, _localTrack.safetyTimer, _localTrack.pruneTimer]) if (t.unref) t.unref();
+  const first = setTimeout(() => { try { _localTrackStore().prune(); } catch { void 0; } }, 20_000);
+  if (first.unref) first.unref();
+  if (!_localTrack.exitHooked) {
+    _localTrack.exitHooked = true;
+    process.on('exit', () => { try { _localTrackClose(); _localStore.flush(); } catch { void 0; } });
+  }
+  return true;
+}
+function _localRecorderStop() {
+  for (const k of ['frameTimer', 'safetyTimer', 'pruneTimer']) { if (_localTrack[k]) clearInterval(_localTrack[k]); _localTrack[k] = null; }
+}
+
+// ── Local track routes (same origin as the dashboard; nothing here leaves the PC) ───────────────────────────
+//   GET /api/local/track/nights[?days=60]  -> { nights:[{night_key,first,last,minutes,zones}], rows:[{night_key,minute_at,zones,raiders}] }
+//        newest night first; `rows` is the minute presence web/lib/raidReplay.ts summarizeNights takes.
+//   GET /api/local/track?from=<iso>&to=<iso>[&night=<key>] -> { night, from, to, rows:[{minute_at,zones,data}] }
+//        at most 15 minutes, the shape /api/spectator/replay returns, for ReplayBoard's bounded.urls.window.
+const LOCAL_TRACK_WINDOW_MS = 15 * 60_000;
+function _localTrackNights(store, o = {}) {
+  const now = Number.isFinite(o.now) ? o.now : Date.now();
+  const days = Math.min(365, Math.max(1, Math.trunc(Number(o.days)) || 60));
+  const rows = store.scan('track_presence', { since: now - days * 86400_000 }).map(e => e.rec)
+    .filter(r => r && typeof r.minute_at === 'string' && r.night_key);
+  const by = new Map();
+  for (const r of rows) {
+    let n = by.get(r.night_key);
+    if (!n) by.set(r.night_key, n = { night_key: r.night_key, first: r.minute_at, last: r.minute_at, minutes: 0, zones: [] });
+    n.minutes++;
+    if (r.minute_at < n.first) n.first = r.minute_at;
+    if (r.minute_at > n.last) n.last = r.minute_at;
+    for (const z of Array.isArray(r.zones) ? r.zones : []) if (typeof z === 'string' && z && !n.zones.includes(z)) n.zones.push(z);
+  }
+  return { nights: [...by.values()].sort((a, b) => (a.first < b.first ? 1 : -1)), rows };
+}
+function _localTrackWindow(store, o = {}) {
+  const fromMs = Date.parse(o.from || ''), toMs = Date.parse(o.to || '');
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return { status: 400, body: { error: 'bad request' } };
+  const end = Math.min(toMs, fromMs + LOCAL_TRACK_WINDOW_MS);
+  const night = o.night ? String(o.night) : '';
+  if (night && !/^\d{2}\/\d{2}\/\d{4}$/.test(night)) return { status: 400, body: { error: 'bad request' } };
+  const rows = store.scan('track_minute', { since: fromMs, until: end, limit: LOCAL_TRACK_WINDOW_MS / 60_000 })
+    .map(e => e.rec).filter(r => r && (!night || r.night_key === night))
+    .map(r => ({ minute_at: r.minute_at, zones: r.zones, data: r.data }));
+  return { status: 200, body: { night: night || _localTrackNightKey(fromMs), from: new Date(fromMs).toISOString(), to: new Date(end).toISOString(), rows } };
+}
+// Returns true when it answered. Called from the dashboard router, after the local guard.
+function _localTrackRoute(req, res) {
+  if (!req || req.method !== 'GET' || !req.url || req.url.indexOf('/api/local/track') !== 0) return false;
+  let u;
+  try { u = new URL(req.url, 'http://x'); } catch { return false; }
+  if (u.pathname !== '/api/local/track' && u.pathname !== '/api/local/track/nights') return false;
+  let out;
+  try {
+    out = u.pathname === '/api/local/track/nights'
+      ? { status: 200, body: _localTrackNights(_localTrackStore(), { days: u.searchParams.get('days') }) }
+      : _localTrackWindow(_localTrackStore(), { from: u.searchParams.get('from'), to: u.searchParams.get('to'), night: u.searchParams.get('night') });
+  } catch { out = { status: 500, body: { error: 'local track unavailable' } }; }
+  res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(out.body));
+  return true;
+}
+function _localTrackSetStoreForTest(st) { _localTrack.store = st; }
+
 // Export internals for tests; only run main() when invoked directly as CLI.
 module.exports = {
   AGENT_VERSION,
+  // Local store + own position recorder (2026-10-21): see the block above module.exports.
+  _localStore, _localStoreOpen, _localTrackFrame, _localTrackMinuteRow, _localTrackNightKey, _localTrackTick, _localTrackClose, _localTrackPush,
+  _localTrackNights, _localTrackWindow, _localTrackRoute, _localTrackSetStoreForTest, _localRecorderStart, _localRecorderStop,
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   buildFeedbackLogSlice, _feedbackLineAllowed,
