@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-9-20-2026-10-21',
+    title: 'Raid timeline for the Zek fights',
+    version: 'Web 1.9.20 · Bot 3.2.17 · Agent 3.8.40 beta',
+    date: '2026-10-21',
+    headline: 'A timeline of the night\'s boss deaths sits on the spectator and replay pages, with countdowns for the Plane of Tactics pairs, and boss parse cards now link to their full parse.',
+    features: [
+      { name: 'Raid timeline', blurb: 'The top of the live spectator map and the replay shows each boss death on a time line, the time between deaths, and a clock since the last one.' },
+      { name: 'Pair countdowns', blurb: 'After the first Decorin dies, a bar counts down the 6 minutes to kill the other. Tallon Zek and Vallon Zek get the same with 20 minutes. It turns red under a minute and says made or missed.' },
+      { name: 'On your overlay', blurb: 'Mimic beta: the same timeline and countdown appear along the bottom of the trigger overlay after a boss dies near you. Nothing new is spoken.' },
+      { name: 'Parse cards link to the site', blurb: 'Every boss parse card in Discord links to its full parse on wolfpack.quest, and says how many raiders did not fit in the list and how much damage they did.' },
+      { name: 'Planes of Power bosses get cards', blurb: 'Named Planes of Power bosses show as kill cards on the parses page from their first kill.' },
+    ],
+    fixes: [
+      'The 18 October raid showed only Saryrn on the parses page; its other named kills show again.',
+      'A long boss fight\'s Discord card dropped the raiders who did not fit without saying so.',
+    ],
+  },
+  {
     key: 'web-1-9-12-2026-10-19',
     title: 'Gear upgrades for your characters',
     version: 'Web 1.9.12',
