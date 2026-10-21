@@ -1,0 +1,29 @@
+{
+  "release": "3.0",
+  "posts": [
+    {
+      "part": 1,
+      "title": "The new name",
+      "image": "1-raid-mimic.jpg",
+      "text": "**Mimic is now Raid Mimic** 📦🐺\n\nSame app, new name, and a face to go with it: a treasure chest with wolf ears. In the dungeon a mimic sits there looking like loot and quietly watches everything. That is what our app does with your log.\n\n- **Nothing to do.** Your next update installs Raid Mimic over Mimic. Same settings, same overlays, same characters.\n- **New installer name** (Raid-Mimic-Setup), same download page: https://wolfpack.quest/mimic\n- **wolfpack.quest stays ours.** raidmimic.com is where other guilds will find it.\n\n**Why a new name:** the tool is starting to travel beyond Wolf Pack: guests are already joining raids with raid codes. A name that isn't ours lets it go further, and Wolf Pack stays the home it was built in."
+    },
+    {
+      "part": 2,
+      "title": "Mimic 3.0: overlays you build",
+      "image": "2-overlays.jpg",
+      "text": "**Raid Mimic 3.0: your screen, your way**\n\nThe big one. Overlays stop being a pile of separate windows and become something you build.\n\n- **The Canvas:** one layer over your whole screen (every monitor if you like). Bring any overlay onto it, move it, resize it, lock it in place.\n- **Pieces:** pull an overlay apart (your health, one timer, your target's name) and put each bit where your eyes already are, as a bar, ring, number or badge. Group them, name the group, give it a hotkey.\n- **Only when it matters:** a panel can show only in combat, with a target, in a raid, or for your class.\n- **Share a setup** with a friend by file or a six-character code.\n- **Your choice:** new players get a short tour that offers each overlay and the Canvas. Nothing is switched on for you. Take the tour again any time from the tray or the dashboard.\n- **Also new:** Command Center names every death and lets you dismiss them, the Map stops repeating one mob's health across a whole pack, and you can rehearse a raid from an old log before the real night.\n\n**Next:** the Overlay Gallery. Browse the setups other raiders built and take the one you like."
+    },
+    {
+      "part": 3,
+      "title": "Your raid, kept on your PC",
+      "image": null,
+      "text": "**Your raid, kept on your own PC**\n\nThe part of Raid Mimic that reads your log now keeps your own copy of everything, on your computer.\n\n- **On this PC** (tray or dashboard menu):\n  - **Inventory** across all your characters, the shared bank counted once.\n  - **My replay:** every raid you are in, where everyone stood minute by minute, boss kills along the top. Works with no internet.\n- **Rebuild from my logs:** point it at your old EverQuest logs and it rebuilds your fights, raids, zones, deaths and loot. It pauses during a fight and never keeps tells or private channels.\n- **Nothing from On this PC is uploaded.** In local mode nothing goes to the guild server at all.\n- Officer, group, tells and private channels are still dropped on your PC before anything is sent. That has not changed.\n\n**Use it on your own:** no guild, account or password needed. On first start pick **Run local-only** and everything stays on your PC: overlays, triggers, the Canvas, Inventory, My replay, My parses and Rebuild from my logs. Good for alts, friends outside the guild, or a night with another group. Sign in to the guild later and nothing is lost. Step-by-step guide: https://wolfpack.quest/raidmimic/setup\n\n**Why:** your history should be yours. It should not depend on our server being up. The guild site still gets what it always got; now you keep your own copy too."
+    },
+    {
+      "part": 4,
+      "title": "One shared picture",
+      "image": "4-shared-picture.jpg",
+      "text": "**One shared picture of the raid**\n\nWhat every raider's Raid Mimic sees comes together on the website.\n\n- **Raid timeline:** each boss death, the time between kills and a clock since the last one, on top of the live spectator map and the raid replay: https://wolfpack.quest/spectator\n- **Raid routes:** our recorded raids in a zone laid over each other into one route, with each leg's time and what we cleared on the way: https://wolfpack.quest/raid/routes\n- **Share a raid:** officers can send a link to a raid, timeline included, to people outside the guild. No sign-in needed, and it can follow the raid until it ends.\n- **Plane of Tactics:** the timeline now follows the fight's own script. No made-up kill windows between the Decorins or the Zeks.\n\n**Where it's heading:** raidmimic.com is the same idea for other guilds' leaders: one shared picture of their raid, built from logs their raiders already write, with their data staying theirs."
+    }
+  ]
+}
