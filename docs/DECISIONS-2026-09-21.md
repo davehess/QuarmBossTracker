@@ -118,6 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Compress the heavy routes; read egress** (§386) | The $25 guild price only holds if `/poll`, buff-queue and live-damage are compressed (about $16/mo marginal at 60 raiders after compression). Not built. Live-damage still has a `.slice(0,60)` cap | a session: gzip those three routes, raise the live-damage cap; the guild lead: read Supabase egress in the dashboard (the MCP cannot) and say the number |
 | **Game-data pack** (§392, bot 3.2.15) | Step 1 (publish) on main: `scripts/build-data-pack.js`, `.github/workflows/build-data-pack.yml`, rolling prerelease `data-latest`. Never run yet; size estimated 11–14 MB. Step 2 (Mimic reads the pack) not built | a session: dispatch "Build game data pack" once, outside a raid window, and record the real size and counts here; then build step 2 |
 | **Self-host: load game data** (§392) | Built: `scripts/selfhost-load-game-data.js`, guide in `docs/SELFHOSTING.md`. Not yet run against a real empty project | a session or the guild lead: run it once against a throwaway project and record the table counts |
+| **Dashboard A, Rehearse tab, local-first A** (§401) | Picked 2026-10-21. Layout A being built on beta; Rehearse tab and local-first being planned (plans in the session scratchpad, to be committed as design docs) | a session: ship layout A to beta, then the replay-window bot route (main) + Rehearse tab (beta); the guild lead: say whether to keep a server-side callout history |
 | **Raid timeline + map explorer** (§400) | Timeline strip on `/spectator` and `/spectator/replay` (web 1.9.20, on `ship-ac`; on beta now) and at the bottom of the trigger overlay (agent 3.8.40, beta). Map explorer `/raid/routes` (B, first engage, clearing) being drafted | the guild lead: say go for main before the Wednesday 19:30 ET freeze; a raider: check the overlay strip during the Decorins |
 | **Saryrn fight filed under her add** (§399) | PoP named cards fixed (38 rows promoted; bot 3.2.16 on `ship-ac`). The Saryrn card still shows 34k: the agent names a fight after its top-damaged target, so her damage is under "a summoned servant" | the guild lead: say go for the agent fix (name the fight after a curated boss with ≥25% of the window); then a session re-points that night's servant contributions to Saryrn |
 | **Chat /camp case** (§398, agent 3.8.36) | On beta: own guild/raid lines are no longer lost; a stood-down chat reporter still uploads its own lines | a beta tester: type `/camp` (and a guild line right before) and check the line stays in the Chat overlay |
@@ -12266,4 +12267,27 @@ having to say it out loud ... a timeline view show up on the bottom of the TTS."
   `decorin_grunhork` 214057.
 - **Map explorer:** B, kill to kill (*"A already is recorded technically"* — the replay board). Timing starts at
   the first engage, not zone-in (*"precleaning makes a difference"*), and each leg shows the clearing: *"time
-  between named and which spawns we clear."* New page `/raid/routes` drafting.
+  between named and which spawns we clear."* New page `/raid/routes` built as web 1.9.21 (waits on the main push).
+- **Overlay strip, later the same night:** *"Timeline on TTS minimizable, text size scalable, next event due for
+  next fight. Next major event in fights queued"* — ▾/▸ collapse, A−/A+ scale, Up next queue, next plan phase
+  (beta, `28a4fd99`). *"i need a way to test these things before our raid nights"* — Replay drives the strip as a
+  ⏪ rehearsal on the log's own clock (agent 3.8.41, beta).
+
+### 401. Dashboard triage, a Rehearse tab, and local-first personal mode (2026-10-21)
+Picked on the Decision Desk the same night.
+- **Dashboard layout A — Triage** (*"Things are so spaced out, important sections are buried at the bottom of a
+  huge scrolling page"*; *"Anywhere that could run off with the vertical estate of an area ... collapse it down and
+  say 'X more' and a pulsing highlight"*): same tabs, importance order, the rail grouped Live / After the raid /
+  Set up / Machine, a pinned section index per tab, every growing card folded with `wpMoreList` (the fold itself
+  shipped on beta, `d58d910f`). B (a cockpit band per tab) was not picked.
+- **Replay A — a Rehearse tab:** scrubber with kills, deaths and callouts; the target and raid health as the raid
+  recorded them (`raid_track_minutes`); the user's own log lines stepping in sync, the clock offset matched from
+  kills and nudgeable. Needs a bearer-auth bot route for a recorded window. Open: whether to keep a server-side
+  callout history (not answered).
+- **Local-first personal mode A, all three first pieces together** (account inventory, own spectator/replay, own
+  parses from a local database in Mimic; the hub keeps the shared raid record; a guildless player needs no hub).
+  The guild lead's notes: *"The parses definitely need the difference ... In this mode everyone gets a copy of the
+  data. We should try to rebuild more of the past data ... We really need to get object images working locally,
+  and it can come from EQ files if need be. It would be nice to find a way to replace specific items with a custom
+  image locally."* Not picked: volunteer relays (B), a full peer network (C — home IPs, no referee, weak PCs).
+  Hosting note for `docs/DESIGN-selfhost-wizard.md` §3 once the plan lands: personal reads move off the hub.
