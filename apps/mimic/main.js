@@ -1350,6 +1350,55 @@ function _findEqInstallsUncached(hint) {
 // at ~60fps and applies setBounds. 1:1 cursor-to-window motion, no Chromium
 // hit-test path involved.
 let _dragSession = null;  // { win, offsetX, offsetY, width, height, interval }
+
+// ── A window the OS is moving is not ours to place (the guild lead, 2026-10-21: "when dragging the electron mimic
+// dashboard it will jump back and forth as i'm dragging it") ──────────────────────────────────────────────────
+// The dashboard is the one framed window: Windows drags it from its title bar, in a modal loop that owns the
+// window's position until the button comes up. Electron reports that loop as 'will-move' (every step) and 'moved'
+// (the end); a programmatic setBounds only fires 'move'. Any code that writes bounds to that window meanwhile is a
+// second hand on the wheel, and each write lands one step behind the cursor: back and forth. Nothing in main.js
+// targets the dashboard on purpose, but the one writer that runs on a 16 ms timer (_startWindowDrag, which the
+// resize grips ride on) resolves its window from the IPC sender, so it asks here first. The mark goes stale after
+// 1.5 s in case 'moved' never arrives.
+const NATIVE_MOVE_STALE_MS = 1500;
+function _nativeMoving(win, now) {
+  const at = win && win.__wpMoveAt;
+  return !!at && ((now == null ? Date.now() : now) - at) < NATIVE_MOVE_STALE_MS;
+}
+// Direction changes along a drag's x positions (steps of 2 px or less are rounding, not a direction). A hand
+// dragging one way has a handful at most; a window fighting itself has one every other step.
+function _moveReversals(xs) {
+  let last = 0, n = 0;
+  for (let i = 1; i < xs.length; i++) {
+    const d = xs[i] - xs[i - 1];
+    if (Math.abs(d) <= 2) continue;
+    const s = d > 0 ? 1 : -1;
+    if (last && s !== last) n++;
+    last = s;
+  }
+  return n;
+}
+const MOVE_JITTER_MIN_REVERSALS = 6;
+function _noteNativeMove(win, bounds) {
+  win.__wpMoveAt = Date.now();
+  const t = win.__wpMoveTrace || (win.__wpMoveTrace = []);
+  if (t.length < 400) t.push(bounds.x);
+}
+function _endNativeMove(win) {
+  const t = win.__wpMoveTrace || [];
+  win.__wpMoveAt = 0;
+  win.__wpMoveTrace = [];
+  const rev = _moveReversals(t);
+  if (rev < MOVE_JITTER_MIN_REVERSALS) return;
+  // The evidence a Windows repro needs: how many screens and at what scaling, and the size floor.
+  let where = '';
+  try {
+    const b = win.getBounds(), min = win.getMinimumSize ? win.getMinimumSize() : [0, 0];
+    where = ` size=${b.width}x${b.height} min=${min[0]}x${min[1]} scale=${screen.getDisplayMatching(b).scaleFactor}`
+      + ` displays=${screen.getAllDisplays().map(d => d.scaleFactor).join('/')}`;
+  } catch { /* the window went with the drag */ }
+  appendAgentLog(`[window] drag jitter: ${rev} direction changes over ${t.length} steps${where}\n`);
+}
 // Map an overlay window to its config bounds key, so a manual ✥-drag persists
 // to the SAME key the window restores from (_resolveBounds). Without this the
 // drag end persisted to `undefined`, so position never saved → every launch
@@ -1384,7 +1433,7 @@ function _boundsKeyForWindow(win) {
   return null;
 }
 function _startWindowDrag(win, persistKey) {
-  if (!win || win.isDestroyed()) return;
+  if (!win || win.isDestroyed() || _nativeMoving(win)) return;
   _stopWindowDrag();
   try {
     const c = screen.getCursorScreenPoint();
@@ -4379,6 +4428,10 @@ function createMainWindow() {
   // (loading.html → the agent dashboard) overwrite it — so this process stays
   // identifiable as the main window rather than "Mimic — getting ready" etc.
   mainWindow.on('page-title-updated', (e) => e.preventDefault());
+  // The dashboard is the one framed window, so the OS moves it from the title bar: see _nativeMoving. These two only
+  // observe - they never touch the bounds.
+  mainWindow.on('will-move', (_ev, newBounds) => { try { _noteNativeMove(mainWindow, newBounds); } catch (e) { void e; } });
+  mainWindow.on('moved', () => { try { _endNativeMove(mainWindow); } catch (e) { void e; } });
   if (_firstRunAfterUpdate && !_autoStarted) {
     _checkEqRunning().then((eqUp) => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
