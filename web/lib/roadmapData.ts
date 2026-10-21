@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-9-26-2026-10-21',
+    title: 'Web 1.9.26',
+    version: 'Web 1.9.26',
+    date: '2026-10-21',
+    headline: 'A raid shared by link now carries the raid timeline too, so guests see the night\'s boss deaths without signing in, and the timeline drops two Plane of Tactics countdowns the fight never had.',
+    features: [
+      { name: 'Timeline on shared raids', blurb: 'The top of a shared raid page shows each boss death and the time between deaths. It updates by itself while the raid is on, and stops at the end of the shared time.' },
+    ],
+    fixes: [
+      'The timeline counted down "kill both Decorins within 6 minutes" and "Tallon and Vallon within 20 minutes". The fight\'s own script has neither: the Decorins only both need to be dead, and Tallon and Vallon can die any time apart. The countdowns are gone.',
+    ],
+  },
+  {
     key: 'web-1-9-21-2026-10-21',
     title: 'Raid routes',
     version: 'Web 1.9.21',
