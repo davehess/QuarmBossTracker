@@ -23,14 +23,14 @@ def rgb(value):
     return ((value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF)
 
 
-def render_rgba(mesh, color, size, scale):
+def render_rgba(mesh, color, size, scale, logo=None, text=None):
     """preview.render, face-on, with coverage kept as alpha (straight, not premultiplied)."""
     ss = 3
     w = h = size * ss
     s = scale * ss
     buf = [None] * (w * h)
     depth = [1e9] * (w * h)
-    cols = preview.vertex_colors(mesh, color)
+    cols = preview.vertex_colors(mesh, color, logo, text)
     mid = (mesh["min_z"] + mesh["max_z"]) / 2
     pts = [(w / 2 + x * s, h / 2 - (z - mid) * s, y) for x, y, z, _ in mesh["vertices"]]
     for a, b, c in mesh["triangles"]:
@@ -93,8 +93,8 @@ def main():
     scale = size * 33 / 120  # preview_all's cell 120 at scale 33.
     os.makedirs(out, exist_ok=True)
 
-    def save(name, mesh, color):
-        write_rgba_png(os.path.join(out, name + ".png"), render_rgba(mesh, color, size, scale))
+    def save(name, mesh, color, logo=None, text=None):
+        write_rgba_png(os.path.join(out, name + ".png"), render_rgba(mesh, color, size, scale, logo, text))
 
     for name, color in ICON_COLORS.items():
         save("icon-" + name.lower(), meshes[name], color)
@@ -105,7 +105,9 @@ def main():
         save(f"paw-{g}", combine(paw_v, paw_t, meshes["P" + g]), PAW_COLOR)
     guilds = re.findall(r'\{"(\w+)", "([^"]+)", 0x([0-9a-f]{6}), (0x[0-9a-f]{6}|0), ("[^"]*"|nullptr)\}', source)
     for code, _, banner, icon, alias in guilds:
-        save(f"banner-{code}", meshes["B" + code], rgb(int(banner, 16)))
+        mesh = meshes["B" + code]  # The banner's logo and name colors come from the dump (BannerLogoRgb / BannerTextRgb).
+        save(f"banner-{code}", mesh, rgb(int(banner, 16)), rgb(mesh["logo"]) if mesh.get("logo") else None,
+             rgb(mesh["text"]) if mesh.get("text") else None)
         if alias == "nullptr":
             save(f"guild-{code}", meshes["I" + code], rgb(int(icon, 16)))
         else:

@@ -543,6 +543,18 @@ and the same never-refetch guarantee.
 - The pinned list (zone ids 200–223) is ours. The wizard should derive it from
   whatever expansion the guild is heading into, not copy it.
 
+### Local-first: personal data lives on each PC (2026-10-21, DECISIONS §401–§403)
+- **Personal reads move off the hub.** Inventory, My replay, My parses and a rebuild of old raids come from files and a
+  small local store on the member's PC (`local/` beside the agent's queue file; recorded minutes 90 days, the guild's merged
+  fights 120 days). They cost the hub no database reads and no egress, and a guildless player needs no hub at all. The hub
+  keeps the shared raid record, which is the only thing a guild pays to store.
+- **A guild hub that wants "the difference" in My parses needs the change-cursor route** (`/api/agent/local-sync`: merged
+  encounters paged by a change cursor, plus tombstones) and its migration. It is not applied on our deployment yet; the
+  agent feature-detects a 404, so a hub without it simply shows no guild record. The wizard should create it with the rest
+  of the schema and treat it as optional.
+- **Raid codes hold raid-wide uploads while active**, so a member visiting another guild's raid feeds neither hub; the
+  per-guild separation rule above (no tenant's observations merged into another's) is kept on the client.
+
 ### Public catalogs and installers that carry them (2026-10-01)
 - **The bot serves the spell, clicky and item catalogs without sign-in**
   (`/api/public/catalog/*`, DECISIONS §118), and every Mimic build fetches them into the

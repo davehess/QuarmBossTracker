@@ -114,13 +114,23 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Canvas Pieces round** (§360–366) | Built + gated on `alpha` (park 3.0.0): backing plate-only, whole-group look choices, copy/rename/update a saved group, live-data palette previews, locate line + pulse, delete-with-pieces + Undo | the guild lead, on the next alpha build: (1) list-mode preview crop at 42px (D), (2) single-piece Show as → Upright bar stub (B), (3) the hover line reaches the canvas while arranging (E) |
+| **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: say whether to build a zone gate for guild triggers (agent change on beta) so the bars fire only in the named's zone |
+| **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | All recommendations taken; slice-0 draft lost (never pushed) | a session: redo slice 0 (portable layout + set fork-on-save) on beta, then slice 1 (publish → Gallery tab → add as a new set) — 3.0 stable waits on slice 1 |
+| **Other games** (§377) | Decided: a thin reader per game posting the same upload. Drafting: the EQ family (other EQ servers, local edition) and a Classic WoW combat-log reader + a `game`/`boss_key` seam on `encounters`. Monsters & Memories is on hold: its policy forbids parsers | a session: review and ship both drafts; the `encounters` migration needs the guild lead's approval prompt |
+| **Other games** (§377) | EQ family live on beta (agent 3.8.7: any `eqlog_<Name>_<server>.txt` in the local edition, never uploads off Quarm). Classic WoW reader built on branch `claude/wow-classic-reader` (bot 3.2.8, web 1.9.9, migration `20261019130000_encounters_game_and_boss_key`, not applied). Monsters & Memories on hold (its policy forbids parsers) | the guild lead: approve the `encounters` migration; someone with a Classic client runs `node packages/wowlogsync/index.js --log <Logs dir> --character <name> --dry-run --from-start` and reports. Confirm real P1999/live log suffixes |
+| **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side LIVE on main (bot 3.2.7, `5c545c42`); `GALLERY_SALT` set on Railway. The tables are NOT created: four MCP attempts stalled at the approval step with nothing reaching the database | the guild lead: paste `supabase/migrations/20261019120000_gallery_masterpieces.sql` into the Supabase SQL Editor; then a session confirms the routes and designs the Mimic Gallery tab (samples first) — 3.0 stable waits on slice 1 |
+| **FB-84 death log before a death** (§373) | Scoped: A local recap (recommended first slice), B web per-death panel, C extend heal gaps/timeline | the guild lead: pick A/B/C (with samples) before any build |
+| **Other games** (§377) | EQ family live on beta (agent 3.8.7: any `eqlog_<Name>_<server>.txt` in the local edition, never uploads off Quarm). Classic WoW reader built on branch `claude/wow-classic-reader` (it claims bot 3.2.8 / web 1.9.9, which main has since used: renumber when it lands; migration `20261019130000_encounters_game_and_boss_key`, not applied). Monsters & Memories on hold (its policy forbids parsers) | the guild lead: approve the `encounters` migration; someone with a Classic client runs `node packages/wowlogsync/index.js --log <Logs dir> --character <name> --dry-run --from-start` and reports. Confirm real P1999/live log suffixes |
 | **Threat data cleanup, B** (§389) | Decided: raw threat snapshots deleted 30 days after the fight's graph is stored, archived or not. NOT built: the bot's nightly sweep still gates on the home-archive watermark, stuck at 2026-09-06; raw threat was 2.5 GB of the 4.1 GB database. The "top of threat" rank rollup last ran 2026-08-19 (stalled) | a session: build the 30-day-after-graph sweep (bot, main, outside a raid window) and find why the rank rollup stopped |
 | **Compress the heavy routes; read egress** (§386) | The $25 guild price only holds if `/poll`, buff-queue and live-damage are compressed (about $16/mo marginal at 60 raiders after compression). Not built. Live-damage still has a `.slice(0,60)` cap | a session: gzip those three routes, raise the live-damage cap; the guild lead: read Supabase egress in the dashboard (the MCP cannot) and say the number |
 | **Game-data pack** (§392, bot 3.2.15) | Step 1 (publish) on main: `scripts/build-data-pack.js`, `.github/workflows/build-data-pack.yml`, rolling prerelease `data-latest`. Never run yet; size estimated 11–14 MB. Step 2 (Mimic reads the pack) not built | a session: dispatch "Build game data pack" once, outside a raid window, and record the real size and counts here; then build step 2 |
 | **Self-host: load game data** (§392) | Built: `scripts/selfhost-load-game-data.js`, guide in `docs/SELFHOSTING.md`. Not yet run against a real empty project | a session or the guild lead: run it once against a throwaway project and record the table counts |
-| **Dashboard A, Rehearse tab, local-first A** (§401) | Picked 2026-10-21. Layout A being built on beta; Rehearse tab and local-first being planned (plans in the session scratchpad, to be committed as design docs) | a session: ship layout A to beta, then the replay-window bot route (main) + Rehearse tab (beta); the guild lead: say whether to keep a server-side callout history |
-| **Raid timeline + map explorer** (§400) | Timeline strip on `/spectator` and `/spectator/replay` (web 1.9.20, on `ship-ac`; on beta now) and at the bottom of the trigger overlay (agent 3.8.40, beta). Map explorer `/raid/routes` (B, first engage, clearing) being drafted | the guild lead: say go for main before the Wednesday 19:30 ET freeze; a raider: check the overlay strip during the Decorins |
-| **Saryrn fight filed under her add** (§399) | PoP named cards fixed (38 rows promoted; bot 3.2.16 on `ship-ac`). The Saryrn card still shows 34k: the agent names a fight after its top-damaged target, so her damage is under "a summoned servant" | the guild lead: say go for the agent fix (name the fight after a curated boss with ≥25% of the window); then a session re-points that night's servant contributions to Saryrn |
+| **3.0 release: bot 4.0.0 · web 2.0.0 · agent 4.0.0 · Mimic 3.0.0** (§403) | Rebuilt (§404) on a local branch `release-3.0b` from the 2026-10-21 `main` + beta `e382b151` (agent 3.8.57): the Raid Mimic rename, the hub `local-sync` route and the setup page ride along; the raidmimic landing previews and the PoP Flags sticky bar are held. Gated, NOT pushed. One migration FILE (`20261021120000_encounters_change_cursor.sql`) is committed and NOT applied. Gallery slice 1, listed above as gating 3.0 stable (§374), is not built | the guild lead: check the beta build, say go, and name the release or leave it unnamed; paste the migration into the SQL Editor off a raid night; a session: push `release-3.0b:main` outside the freeze (Sun/Wed/Thu 19:30–00:30 ET), then re-park beta at 3.0.1 (agent 4.0.0) and alpha at 3.1.0 |
+| **Dashboard A, Rehearse tab, local-first A** (§401, §403) | Layout A (agent 3.8.42), the local store and recorder (3.8.43), Inventory (3.8.44), My replay (3.8.45), Rebuild from my logs (3.8.46), My parses (3.8.47) and raid codes (3.8.48) are built and ship in the 3.0 release. Replay-window bot route live on main (bot 3.2.18); the Rehearse tab itself is not built | a session: the hub change-cursor route `local-sync` + migration (unpushed branch; the guild lead pastes the SQL) so My parses can show the difference; item icons from the game's files (the guild lead's PC session); the Rehearse tab; the guild lead: say whether to keep a server-side callout history |
+| **Guest pass A** (§402, §403) | Slice 1 (raid codes: hold raid-wide uploads, tag local records, `.rmpack` export/import) is in the 3.0 release. Slice 2 (the hub reads a guest's overlay feeds) is not built | a session: slice 2 after the 3.0 push |
+| **Raid timeline + map explorer** (§400) | Timeline strip on `/spectator` and `/spectator/replay` (web 1.9.20) and `/raid/routes` (web 1.9.21, marked [beta]) are on main; the bottom-of-overlay strip (agent 3.8.40, beta) ships in the 3.0 release | a raider: check the overlay strip during the Decorins; the guild lead: try https://wolfpack.quest/raid/routes (live) |
+| **Saryrn fight filed under her add** (§399) | PoP named cards fixed (38 rows promoted; bot 3.2.16 on main). The Saryrn card still shows 34k: the agent names a fight after its top-damaged target, so her damage is under "a summoned servant" | the guild lead: say go for the agent fix (name the fight after a curated boss with ≥25% of the window); then a session re-points that night's servant contributions to Saryrn |
 | **Chat /camp case** (§398, agent 3.8.36) | On beta: own guild/raid lines are no longer lost; a stood-down chat reporter still uploads its own lines | a beta tester: type `/camp` (and a guild line right before) and check the line stays in the Chat overlay |
 | **Map 3.8.35 in a kite** (§398) | On beta: engaged = hurt, per-spawn health memory, kite totals, "killed?" marks, corpse/"dead" tag confirms a kill. Mimic forwards Zeal snapshots every 300 ms | a beta tester: kite a pull and read the Map; then decide whether Mimic should send each target change instead of the 300 ms snapshot |
 | **Picks decided, not built** (§390, §393, §394) | Zeal/UI release picker A (watch list; a Zeal zip can overwrite `uifiles/default` today, guard first); Raid Mimic register-interest form A; raidmimic.com "How it works" section B (draft artifact exists; committing the iso-glow kit under `.claude/skills` is an open call); mute a countdown mutes its warning A; warn BEFORE levitate/run speed drops from Zeal buff `meta.ticks` | the guild lead: say which to build first (recommendation: the release-picker guard, since it protects UI folders today). `/loadskin` vs `/load` wording is unverified in game |
@@ -12290,4 +12300,70 @@ Picked on the Decision Desk the same night.
   data. We should try to rebuild more of the past data ... We really need to get object images working locally,
   and it can come from EQ files if need be. It would be nice to find a way to replace specific items with a custom
   image locally."* Not picked: volunteer relays (B), a full peer network (C — home IPs, no referee, weak PCs).
-  Hosting note for `docs/DESIGN-selfhost-wizard.md` §3 once the plan lands: personal reads move off the hub.
+  Hosting note for `docs/DESIGN-selfhost-wizard.md` §3 once the plan lands: personal reads move off the hub
+  (written there 2026-10-22, §403).
+
+### 402. Local Mimic site B, guest pass A, and the rest of the 2026-10-21 desk picks
+- **Local Mimic site: B** — the website's own pages bundled into Mimic (web/local, static export, served by the
+  agent under /local/), not a second copy as dashboard tabs. The guild lead: *"We need the local things to be
+  accessible on the left nav still, things that are local to the game client."* So the dashboard rail gets an
+  "On this PC" group. Shipping (inside Mimic vs a downloaded pack) not answered yet.
+- **Guest mode: A, a 6-hour pass.** The guild lead's note, verbatim: *"The intent is for them to be able to see the
+  target info, command center, the TTS callouts, buff queue. Really overlays to work, the rest of the info and dkp
+  bits should not be mixed into anything in Wolf Pack. Parses they attend should have a *GUEST* on them and point
+  them out. We are already letting some guests into our raids for flagging purposes. They really need their own view
+  rules. They could be asked if they want to associate any alts/mains/discord with their character."* So a guest
+  pass grants READ of the raid's overlay feeds (guild triggers, buff queue, target info, Command Center relay) plus
+  marked uploads — never DKP, member pages or Wolf Pack's own record — and it also covers guests in OUR raids.
+  Earlier the same night: *"if the environments are separate, the user data would need to be local to their
+  machines to push up to production later for their guild."*
+- **Not now:** rev-merch, rev-appliance, rev-raid-content, rev-operator-bundle.
+- **Also picked:** fold-copy-corrections A; buffs-classic-grid B (*"needs demo data to preview, updated for pop
+  spells"*); brand-protection A with legal review first; rev-setup-service A; rev-decision-desk-kit A (*"nobody
+  will pay these options try again"*).
+- **Desk:** every card now has "Neither" and "Not now" (*"Decision desk needs a neither choice or not now"*).
+
+### 403. Overnight 2026-10-21/22: local-first built, and the 3.0 cut prepared
+Built on `beta` in one night after the §401 picks (local-first personal mode A, §402 local site B). Agent versions:
+- **3.8.42** dashboard layout A (Triage: grouped rail, section index per tab, folded lists).
+- **3.8.43** the local store and Mimic's own raid recorder (a minute of the raid per row, 90 days on the PC).
+- **3.8.44** the local site opens: Inventory (account-wide, shared bank once).
+- **3.8.45** My replay on the local site, with boss kills and the timeline strip.
+- **3.8.46** Rebuild from my logs (fights, raid sessions, zones, deaths, loot from old logs; pauses in a fight).
+- **3.8.47** My parses on the local site, with the difference against the guild's record.
+- **3.8.48** raid codes: join another group's raid with a six-hour code; raid-wide uploads are held and the data
+  stays on the PC; export and import as a file (the first slice of guest pass A, §402).
+- **Promoted to `main` as the 3.0 release** (bot 4.0.0 · web 2.0.0 · agent 4.0.0 · Mimic 3.0.0): beta's whole tree,
+  because `web/local` imports 12 web files that differ from main. The bot, data and migrations were already
+  identical on both branches, so the cut applies no database change. The release has no name yet (the guild lead
+  names releases).
+- **NOT done:** (1) the hub change-cursor route `GET /api/agent/local-sync` and its migration, which My parses'
+  difference needs on a guild hub: written on a bot branch that is not pushed, migration not applied (the agent
+  feature-detects the 404 and says so). (2) Item icons from the game's own files: running in the guild lead's own
+  PC session, not here. (3) Guest slice 2: the hub reading a guest's overlay feeds (guild triggers, buff queue,
+  target info, Command Center relay). (4) The Rehearse tab itself (only its bot route, §401, is on main). (5) The
+  Saryrn naming fix (§399) and a callout-history decision (§401) are still open. (6) The public privacy page
+  (`web/app/privacy/page.tsx`) still carries the 2026-10-15 text; `docs/PRIVACY.md` was updated 2026-10-22 with the
+  local-store, raid-code and rebuild paragraphs. (Items 1 and 6 changed in §404.)
+
+### 404. The 3.0 cut rebuilt on the 2026-10-21 main: Raid Mimic, the hub route, and what is held (2026-10-21)
+The first `release-3.0` branch went stale the same day (beta took agent 3.8.49 to 3.8.57 and web 1.9.22 to 1.9.29), so
+the cut was redone as `release-3.0b`: file-level promotion from beta `e382b151` onto `main` `ff98babe`, still no branch merge.
+- **Added to beta since the first cut:** 3.8.49 roll calls in the "Item x6 - 555" form; 3.8.50 raid codes let the live overlay
+  streams through; 3.8.51 Death Touch never fires for a pet destroying itself; 3.8.52 the Map aggro circle follows the mob;
+  3.8.53 "Can see invis" and a /consider while invisible proving or cancelling it; 3.8.54 the Tactics timeline counts down no
+  pair windows (the encounter script has none; the notes no longer promise countdowns); 3.8.55 Command Center Last deaths
+  always names who died and rows can be dismissed; 3.8.56 the Map stops copying one name-only health onto a pack; 3.8.57 the
+  Canvas is a choice in the setup tour and "Take the tour again" sits in the tray and on the dashboard. Mimic: Canvas resize
+  corner, "Keep inside the screen", text-size slider, the timers header on the Map, local-site back and forward, a dashboard
+  drag guard (a guard plus evidence, not a proven fix). Web: raid share links can be extended or follow the raid.
+- **The app is renamed Raid Mimic (option A):** same appId `quest.wolfpack.mimic`, package name `wolfpack-mimic` (so
+  `%APPDATA%\wolfpack-mimic` and every setting carry over), `productName` "Raid Mimic", artifacts `Raid-Mimic-*`. The
+  download routes, the release announcer, `/admin/agents` and the Linux helper accept BOTH installer names and land
+  BEFORE the rename in the push. The Map's built-in walls now read "walls: built-in" instead of "walls: Wolf Pack".
+- **Carried from the first cut:** the `local-sync` route and its migration FILE (bot, applied by hand), the privacy
+  page's on-PC paragraph, and the approved setup page `/raidmimic/setup` (marked [beta]).
+- **HELD, not promoted (no pick yet):** the raidmimic landing previews (output gallery, mascot hero, their images and
+  the screenshot scripts) and the PoP Flags sticky controls bar (web 1.9.23). They stay on beta.
+- **Versions:** bot 4.0.0, web 2.0.0, agent 4.0.0, Mimic 3.0.0, Bristlebane 1.0.0. Unnamed ("Version 3.0"). The release body
+  no longer mentions the Decorin and Tallon / Vallon countdowns.

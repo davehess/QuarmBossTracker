@@ -1124,6 +1124,15 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Live at:** `https://wolfpack.quest/raidmimic` (and `?v=b`). On raidmimic.com once DNS points at Vercel and the
   Vercel redirects to eqmimic.quest come off.
 
+### Set up Raid Mimic yourself: /raidmimic/setup (web, 2026-10-21, [beta]; DECISIONS §404)
+- **What:** a step-by-step guide for players outside the guild: download, run it local-only, what works on your own
+  (overlays, Inventory, My replay, My parses, Rebuild from my logs), joining someone else's raid with a code, what a guild
+  hub adds, privacy in plain words, the two known Zeal fixes. Marked [beta] (a new page goes live first).
+- **Where:** `web/app/raidmimic/setup/page.tsx`, the words in `web/lib/raidmimicSetup.ts`; `raidmimicLandingTarget(pathname)`
+  in `web/lib/raidmimicHost.ts` maps `/setup` on raidmimic.com to it; `pageMeta.ts` entry. Test: `test/raidmimic-setup.test.js`.
+- **Live at:** `https://wolfpack.quest/raidmimic/setup`. The landing's `?v=b`/`?v=c` previews (output gallery, mascot hero)
+  are NOT promoted; they stay on beta until the guild lead picks.
+
 ### eqmimic.quest landing page (web, 2026-10-09, [beta]; DECISIONS §209)
 - **What:** the page a newcomer to Mimic reads, video first: a large player with a picker of recorded scenarios
   (placeholders until the clips arrive), then the overlay gallery (each tagged local or guild), standalone setup
@@ -1435,6 +1444,27 @@ each window's spot, size and zoom). Test `test/canvas-overlays.test.js`. Alpha o
 - `fitPiece` sizes a piece to its content on a mode change and on ↕ Fit.
 - The canvas counts two clicks itself to open settings; dblclick never gets past the drag shield.
 Tests `test/canvas-pieces.test.js`, `test/timers-canvas.test.js`. Alpha only.
+**Pieces round (alpha, 2026-10-18, DECISIONS-2026-09-21 §360–366), all in `canvas.html`:**
+- **Backing** (`.panel.part.back > .pbody`) is a background plus `box-shadow: inset`, with no border or padding of
+  its own: Clear and Panel share one box, so ↕ Fit's flat +4 is right for both. The 🌫 Background row is the
+  whole-Canvas `wp-backdrop` switch and is separate.
+- **One choice for many pieces:** `bulkPatch` / `bulkModes` / `bulkSet(ps, patch)`. Two doors: `#selbar`'s
+  `data-bulksel` selects (Show as / Thickness / Backing) and the GROUP section's `data-bulk` buttons
+  (`bulkMenuHtml`). A mode a piece cannot be drawn in is skipped and counted; reflow (row for `vbar`, column for
+  `bar` / `thin`) only when every piece changed.
+- **Saved groups:** `groupPartsOf`, `putGroups`, `uniqueGroupName` (case-folded; `/pipe mimic group`, the tray and
+  the dashboard find a group by name), `saveSelectionAsGroup` (new group beside an existing one, never over it),
+  `updateSavedGroup` (selbar 💾 Update), `duplicateGroup` (⧉), `renameGroup` (✎, inline). Stored in
+  `cfg.canvasGroups` through `canvas-groups-save` (cap 60).
+- **Where is it:** `placedFor(what)` maps a chooser row to its panels (`part:` by piece, `group:` by
+  `_layout.named`, `preset:` by overlay key + look, or by `'preset:<id>'` in `_layout.named` for a preset placed
+  as pieces: `markPreset`). Hover draws `#loc` (SVG, no clicks) and outlines `.hl`; a click on a placed row runs
+  `clickLocates` → `locate` (pulse `.loc` + a toast with `whereText`).
+- **Delete a saved group:** `deleteSavedGroup(id, withPieces)`; the snapshot rides on the undo array
+  (`_undo.group`), so `undoRemove` restores panels, the group at its list index, its `named` links and its key.
+- **Palette previews:** `.pc-pv[data-pv]` per part row, filled by `paintChooserPreviews()` with the same
+  `WpParts.render` call `paintParts` makes (live view, else sample); `_pvMode` follows the hovered mode chip.
+Test `test/canvas-pieces-round.test.js`.
 **Show-when rules (alpha `d97ae9d7`, 2026-10-07, design rule A, DECISIONS §187):** a panel's `when` (`combat`,
 `nocombat`, `target`, `npc`, `raid`; absent = always) and optional `cls` class list, ANDed. A false rule adds class
 `wh` (hidden like `.off`, never writes `off`; `off` wins). Arranging shows everything with a rule badge. Signals,
@@ -2037,6 +2067,15 @@ auctions link (`opendkpAuctionsUrl()` in `utils/loot.js`, built from
 `OPENDKP_CLIENT_NAME` → `https://wolfpack.opendkp.com/#/auctions`). The
 `/loot` message itself stays in the officer's channel — it's the staging UI
 `interaction.editReply` owns — so the raid-facing copy is a second post.
+
+### Replay window for the agent (bot 3.2.18, 2026-10-21, §401)
+- **`GET /api/agent/replay-window?from=&to=[&index=1]`** (`utils/raidReplayWindow.js`, handler `_handleAgentReplayWindowGet`
+  in `index.js`, bearer-gated by `mimicLink.requireAgentAuth`): up to 15 minutes of the recorded raid the website's replay
+  reads (`raid_track_minutes` rows, curated kills, targets, callout counts), or with `index=1` a night's minute strip for up to
+  24 hours. Step 1 of the agent's Rehearse tab (the tab itself is not built). Privacy is the website's: characters with
+  `exclude_from_stats` or `exclude_inventory` leave only as "<Class> <n>"; it FAILS CLOSED (503 if the opt-out list cannot be
+  read); callouts are counts only and dropped below `MIN_SEEN_BY`; targets never name the character who held them. Cached in
+  bot memory (10 min for a closed slice, 15 s near now). Test: `test/replay-window.test.js`.
 
 ---
 
@@ -2744,6 +2783,63 @@ Records only opted-in members (`/bristlebane optin|optout|forget|status`) as `<n
 fields only. Models come from `eqemu_items.idfile/material/color` (sync `scripts/sync-from-eqmac.js`,
 migration 20261006010000). ARCHIVE table on Tower (`scripts/lib/archive-merge.sql`). Tests:
 `test/raid-appearance.test.js`, `test/sync-model-and-fog-columns.test.js`.
+
+### Local-first: "On this PC" (agent 3.8.43–3.8.48, Mimic 3.0, 2026-10-21, §401–§403)
+Personal data lives on each player's PC; the hub keeps the shared raid record. Nothing in this group uploads.
+- **The local site (`web/local/`, served at `/local/` on the dashboard port).** A small Next.js app exported static
+  (`web/local/out`), shipped inside Mimic as `resources/local-site` (`extraResources` in `apps/mimic/package.json`; the
+  `release-mimic.yml` / `build-mimic-linux.yml` step "Build the local site" fails the release if `out/inventory`,
+  `out/replay` or `out/parses` is missing). The agent serves it read-only (`_serveLocalSite`, path-traversal refused;
+  `WOLFPACK_LOCAL_SITE_DIR` points at the bundle, a dev run finds `web/local/out`) and answers `/api/local/*` from this
+  PC's files behind the same local-request guard as every route. It imports `web/components` and `web/lib` through `@/`, so
+  the web tree travels as a unit. Pages: Inventory (`/api/local/inventory`, shared bank counted once per account), My replay,
+  My parses. Mimic opens a page in its own window (`openLocalSite`, `window.mimic.openLocalSite`); the dashboard rail group
+  "On this PC" and the tray items drive the same function. An older Mimic running agent 4.x answers `/local/` with a plain
+  "not installed in this build". Tests: `test/local-site-agent.test.js`, `test/local-mode.test.js`.
+- **Local store + own recorder (3.8.43).** `_localStore` (agent `index.js`): zero-dependency append-only NDJSON segments,
+  `local/<kind>/<UTC day>.ndjson` beside `logsync.queue.json`, per-kind retention and byte cap (`_LSTORE_POLICY`: recorded
+  minutes 90 days / 400 MB). Every 3 s the recorder cuts a frame from Zeal's raid snapshot plus this PC's own character, and a
+  finished minute becomes one row in the exact shape of the hub's `raid_track_minutes` (`_localTrackMinuteRow` is a port of
+  `utils/raidTrack.js`; a parity test feeds both the same frames). Routes `/api/local/track*` feed My replay (nights, 15-minute
+  windows, boss kills from this PC's own fight records, the zone map). A character this PC knows is `exclude_from_stats` is
+  never written. `WP_LOCAL_TRACK=0` turns it off. Test: `test/local-recorder.test.js`, `test/local-replay.test.js`.
+- **Rebuild from my logs (3.8.46).** `/api/local/backfill/start|stop|status` and `/api/local/raids`: walks old EverQuest logs
+  from a start date and writes `fight`, `raid_session`, `death`, `loot` and `zone_visit` records to the local store (no
+  `enqueueUpload`, no network; the opt-in upload backfill is a separate path). Reuses the live tail's privacy filters
+  (`triggerVisibleLine`, `shouldKeep`) so tells, group, officer and custom channels are never read into a record. Resumable
+  (`local/rebuild.json` holds a byte cursor and snapshot per file, taken only where no fight is open), throttled, and waits
+  while a live fight is on. Linked members get sessions marked as matching the guild's raid schedule; local-only skips that.
+  Test: `test/local-backfill.test.js`.
+- **My parses + the difference (3.8.47).** The local site's `/local/parses/` page reads `/api/local/parses[/<id>]`, merging this
+  PC's own fight log (one row per own character, 365 days), the History ring (all players, 7 days) and rebuilt `fight` records
+  by mob + start within 8 s. The difference against the guild's merged record uses the hub's `local-sync` route, which is
+  FEATURE-DETECTED (404, 503, 401/403 and a local-only PC all just show "no guild record"); only the fields in `_localHubClean`
+  are kept (kind `hub_encounter`, 120 days). ⚠ The hub route (change cursor + tombstones) is not applied yet: it needs a
+  migration and lives on an unpushed bot branch, so on a guild install the difference says "the guild server does not offer
+  the guild record yet" until it ships. Test: `test/local-parses.test.js`.
+- **Raid codes (3.8.48).** A code (`BC-7KQ2`: two to four letters, a dash, four to six letters or numbers) is a six-hour label
+  kept in `logsync.raidcode.json` (`GET/POST /api/raid-code`). While active, `enqueueUpload` HOLDS the raid-wide kinds
+  (`RAID_HOLD_KINDS`) so a member standing in another guild's raid is in neither hub's raid tables; streams about the
+  member's own character continue. Fights, recorded minutes and loot made under a code carry `code` and `role` (`guest` on a
+  local-only PC, `away` for a member). Export / import is a gzipped NDJSON `.rmpack` (`/api/local/raid-code/export|import`,
+  random per-install `person_key`, no Discord id, no character-name key; import merges and dedupes). Test: `test/raid-code.test.js`.
+- **The hub half of My parses' difference (bot 4.0.0, DECISIONS §404).** `GET /api/agent/local-sync?since=<cursor>`
+  (`utils/localSync.js`, one route in `index.js`, budget/shed kind `local_sync`, 30 a minute) pages WHOLE changed
+  encounters (players and time-window-matched loot) plus the ids of deleted ones, oldest change first, so a player's
+  PC can compare its own fights with the guild's record. Opted-out characters go out as class labels, and the route
+  fails closed (503) if the opt-out list cannot be read. It needs
+  `supabase/migrations/20261021120000_encounters_change_cursor.sql` (`encounters.updated_at`, bump triggers,
+  `encounter_tombstones`, two indexes), which is committed but NOT applied by the cut: apply it (SQL Editor, off a raid
+  night) before or right after the push; until then the route cannot read the new column and the difference stays
+  unavailable. Tests: `test/local-sync.test.js`, `test/encounters-change-cursor-migration.test.js`.
+- **Raid Mimic (the rename, Mimic 3.0.0, DECISIONS §404).** `productName` "Raid Mimic", artifacts `Raid-Mimic-*` and
+  `Raid-Mimic-Setup-*`; `appId` (`quest.wolfpack.mimic`) and the package `name` (`wolfpack-mimic`, which names the userData
+  folder `%APPDATA%\wolfpack-mimic`) are unchanged, so an existing install updates in place and keeps its settings.
+  `build/installer.nsh` sweeps the old exe, uninstaller and shortcuts; the Startup entry keeps its value name; `main.js`
+  accepts both exe names. Everything that finds a release by its installer file (`utils/mimicReleases.js`,
+  `web/app/mimic/**/route.ts`, `web/lib/linuxRelease.ts`, `/admin/agents`, `apps/mimic/scripts/patch-latest-yml.js`)
+  accepts BOTH `Raid-Mimic-*` and the earlier `Wolf-Pack-Mimic-*` names. Tests: `test/raid-mimic-rename.test.js`,
+  `test/data-release-isolation.test.js`.
 
 ---
 
@@ -4200,6 +4296,21 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
 - **Encryption boundary**: the web has the service-role key but NOT
   `WISHLIST_BID_KEY` — anything encrypted (bids, UI snapshots) is bot-only;
   the bot must extract/serve plaintext derivatives the web needs.
+
+### Raid timeline strip and Raid routes (web 1.9.20–1.9.21, 2026-10-21, §400)
+- **Raid timeline strip.** `web/components/RaidTimeline.tsx` at the top of `/spectator` (live: polls the members-only
+  `/api/spectator/timeline` every 10 s, curated kills by `ended_at`, corrected by the server's `now`) and `/spectator/replay`
+  (the board passes the night's bosses and its playhead). One time axis for the night, a tick per death, the gap written on each
+  span, the open pair window as a shrinking bar (the Decorins within 6 minutes, Tallon and Vallon Zek within 20), and a
+  since-last-death clock. The rules are pure in `web/lib/raidTimeline.ts`, twinned by the agent's `DEATH_PAIR_RULES` for the
+  overlay strip. Rallos Zek the Warlord has no spawn point, so the replay strip lacks him. Tests: `test/raid-timeline.test.js`,
+  `test/death-timeline.test.js`.
+- **Raid routes (`/raid/routes`, marked [beta]).** Members-only. Every recorded night in a zone becomes a centroid path (median
+  position of placed raiders, frame by frame); the clock starts at first engage, not zone-in; legs are cut at curated named
+  kills, resampled by distance and averaged across nights; each leg also lists the trash cleared in it and its spawn points.
+  Pure rules in `web/lib/raidRoutes.ts`, loader `raidRoutesLoad.ts`, board `RoutesBoard.tsx`, member-gated `/api/raid/routes`;
+  officers can save a route (`actions.ts`, stored in `bot_kv` as `raid_route:<zone>`, so no migration). Server frame throughout; the page negates axes to draw north up. Test:
+  `test/raid-routes.test.js`.
 
 ---
 
