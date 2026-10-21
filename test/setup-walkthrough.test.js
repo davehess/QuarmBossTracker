@@ -237,7 +237,8 @@ describe('the trail: one step at a time, Back / Skip / Next, the needed steps ho
     expect(t.nav('next')).not.toContain(' disabled');
     expect(t.nav('skip')).toBeNull();
     const rail = [...t.app().matchAll(/data-go="(\w+)"/g)].map(m => m[1]);
-    expect(rail).toEqual(['welcome', 'account', 'folder', 'chars', 'voice', 'names', 'zeal', 'eq', 'mode', 'screen', 'overlays', 'me', 'history', 'done']);
+    expect(rail).toEqual(['welcome', 'account', 'folder', 'chars', 'voice', 'names', 'zeal', 'eq', 'mode', 'screen',
+      'overlays', 'tourself', 'tourraid', 'tourmap', 'tourcanvas', 'me', 'history', 'done']);   // the five tour steps (2026-10-21)
   });
 
   it('a needed step holds Next until it is done, and offers no Skip', async () => {

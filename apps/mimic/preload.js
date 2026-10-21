@@ -1052,6 +1052,8 @@ contextBridge.exposeInMainWorld('mimic', {
   // ✨ Setup walkthrough (welcome.html, the trail) and its relay for the two agent
   // POSTs it makes: 'import' old logs, 'backfill' the main's log.
   openWelcome:     ()     => ipcRenderer.invoke('open-welcome'),
+  // 🧭 Take the tour again: the overlay steps of the same page (tray item and dashboard button).
+  openTour:        ()     => ipcRenderer.invoke('open-tour'),
   welcomeOptin:    (action, paths) => ipcRenderer.invoke('welcome-optin', action, paths),
   // Main / alt · Inventory only · Hide completely (2026-10-06). characterModes: the website's family merged
   // with this PC's characters. setCharacterMode: the one call that makes a choice — the engine asks

@@ -278,6 +278,13 @@ function defaultConfig() {
     // installs keep whatever they had: loadConfig does Object.assign over the
     // saved config, and onboarded users have these persisted already.)
     showHud: false,          // DPS HUD overlay user pref
+    // The Timers canvas is a CHOICE, never a default (the guild lead, 2026-10-21: "don't automatically open up
+    // canvas on new users. it should be a choice, include it in the tour"). Written out so the answer for a fresh
+    // install is on the page, not "absent, therefore false". A saved config keeps whatever it stored.
+    showCanvas: false,
+    // Set when the tour (welcome.html) is finished or skipped. Nothing reads it to force the tour on anyone;
+    // "Take the tour again" (tray + dashboard) always opens it.
+    tourSeen: false,
     enableTriggerTts: true,  // Trigger TTS/callouts MASTER switch — default ON
                              // so fresh installs see countdown timer rows
                              // during a raid without an extra opt-in.
@@ -10902,6 +10909,8 @@ function buildTrayMenu() {
     // ✨ The setup walkthrough: the trail, one step at a time (picked 2026-10-19, §383). Same IPC
     // as the dashboard Setup card's button. On every build: the pick lifted the beta-only hold (§93, §111).
     { label: '✨ Setup walkthrough', click: () => openWelcome() },
+    // 🧭 The tour of the overlays, any time (the guild lead, 2026-10-21). Same function as the dashboard's button.
+    { label: '🧭 Take the tour again', click: () => openTour() },
     // Tray ↔ dashboard parity (CLAUDE.md): the feedback card lives on the
     // dashboard, so it needs a tray route too. Same destination, same internals
     // — Mimic's Feedback window (the dashboard page in feedback-only mode), the very
@@ -13457,6 +13466,16 @@ ipcMain.handle('welcome-optin', (_e, action, paths) => new Promise((resolve) => 
   appendAgentLog(`[welcome] ${action} ${list.length} path(s)\n`);
   req.end(body);
 }));
+// 🧭 Take the tour again (the guild lead, 2026-10-21: "let users rejoin the tour later"): the tour is the overlay
+// steps of the same walkthrough page, opened at the first of them. Tray and dashboard both land here.
+// It never writes a setting: what is on or off stays as the person left it.
+function openTour() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  mainWindow.loadFile('welcome.html', { hash: 'tour' });
+  try { mainWindow.show(); mainWindow.focus(); } catch { /* */ }
+  return true;
+}
+ipcMain.handle('open-tour', () => openTour());
 // A JSON POST to one of the engine's local routes, for the setup walkthrough's "Say your name" (a file://
 // page cannot read the reply to a POST). Only the routes listed here, only JSON, only 127.0.0.1.
 const _AGENT_POST_OK = new Set(['/api/pronunciation', '/api/pronunciations/local']);

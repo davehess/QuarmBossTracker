@@ -21583,6 +21583,8 @@ function renderSetupChecks(s) {
      // ✨ The setup walkthrough: the trail (picked, DECISIONS §383). Mimic-only;
      // the tray's ✨ Setup walkthrough opens the same page.
      + '<button class="wp-welcome" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Setup, one step at a time">✨ Setup walkthrough</button>'
+     // 🧭 The tour of the overlays, any time (the guild lead, 2026-10-21). Mimic-only; the tray's Help › item is the same call.
+     + '<button class="wp-tour" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Look through the overlays again and switch on the ones you want. Nothing you already chose changes.">🧭 Take the tour again</button>'
      + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
      + '</div>'
      + '<div class="wp-fixer-note dim" style="display:none;font-size:11px;margin-top:6px"></div>';
@@ -21689,6 +21691,13 @@ function wpWireFixerButtons(s) {
     if (wBtn.dataset.wired) return;
     wBtn.dataset.wired = '1';
     wBtn.addEventListener('click', function () { window.mimic.openWelcome(); });
+  });
+  document.querySelectorAll('.wp-tour').forEach(function (tBtn) {
+    if (!(window.mimic && window.mimic.openTour)) return;
+    tBtn.style.display = '';
+    if (tBtn.dataset.wired) return;
+    tBtn.dataset.wired = '1';
+    tBtn.addEventListener('click', function () { window.mimic.openTour(); });
   });
   var cBtn = document.querySelector('.wp-clock-fix');
   if (cBtn && window.mimic && window.mimic.clockResync) {

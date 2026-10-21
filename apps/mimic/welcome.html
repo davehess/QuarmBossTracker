@@ -135,8 +135,11 @@
     chars: [], excluded: new Set(), main: null,
     modes: {}, modeBusy: {}, modesAt: 0, modesBusyLoad: false, modesSynced: null, modesRetried: false, focusKey: null,
     zeal: null, zealLatest: null, eqSetup: null, defender: null, clock: null,
-    backfill: true, imported: [], visited: new Set(),
+    backfill: true, imported: [], visited: new Set(), tourBusy: {},
   };
+  // Opened by "Take the tour again" (location.hash is #tour): start at the first overlay step, not at Welcome or the
+  // account step, and do not offer to read the main's old log again at the finish.
+  var TOUR_ONLY = /#tour\b/.test(String((typeof location !== 'undefined' && location && location.hash) || ''));
 
   // The dashboard gate, identical to the classic page's: connected (or local-only by choice),
   // an EQ folder, and the engine up.
@@ -180,8 +183,18 @@
       lede: 'Mimic can float overlays over the game, or just upload your logs and keep the dashboard. You can switch either way later.' },
     { id: 'screen',   icon: '🖥️', title: 'Screen flicker',       body: bScreen,
       lede: 'A few graphics setups cannot keep up with overlays drawn over a game. One question decides how Mimic draws them.' },
-    { id: 'overlays', icon: '🪟', title: 'Overlays',             body: bOverlays,
+    // The tour (2026-10-21): the overlays, a step per purpose. Each row switches a real overlay and shows whether
+    // it is on now; "Take the tour again" (tray + dashboard) opens the page here. `tour` steps get "Skip the tour".
+    { id: 'overlays',   icon: '🪟', title: 'In the fight',   tour: true, body: tourBody('overlays'),
       lede: 'Windows that sit over the game. Start with a few — each one can be moved, resized and hidden later.' },
+    { id: 'tourself',   icon: '🧍', title: 'Your character', tour: true, body: tourBody('tourself'),
+      lede: 'Your own health, ticks, pets and chat.' },
+    { id: 'tourraid',   icon: '⚔️', title: 'Raid leading',   tour: true, body: tourBody('tourraid'),
+      lede: 'For the raid\'s healers, tanks and leaders. Skip them if you just play your own character.' },
+    { id: 'tourmap',    icon: '🗺', title: 'Map & pulls',    tour: true, body: tourBody('tourmap'),
+      lede: 'See where you are and when the next spawn can be up.' },
+    { id: 'tourcanvas', icon: '🧱', title: 'The Canvas',     tour: true, body: bTourCanvas,
+      lede: 'Your callouts and timers as pieces you place anywhere. A choice, never turned on for you.' },
     { id: 'me',       icon: '🌐', title: 'Your /me page',        body: bMe,
       lede: 'What your account adds on wolfpack.quest. Nothing to set up here — this is where to find it.' },
     { id: 'history',  icon: '📜', title: 'Old fights and chat',  body: bHistory,
@@ -554,17 +567,74 @@
     });
   }
 
-  var OVERLAYS = [
-    ['showHud',          '⚔️ DPS/Tank Meter',   'Live damage for the fight you are in.'],
-    ['enableTriggerTts', '⚡ Trigger alerts',     'Speaks and flashes raid callouts; debuff timers.'],
-    ['showMobInfo',      '👁 Target Info',        'Your target\'s stats, loot, spells and buffs.'],
-    ['showCharm',        '🔮 Charm tracker',      'Recharm countdown for charm classes.'],
-    ['showPets',         '🐾 Pet tracker',        'Your summoned pet\'s health and buffs.'],
-    ['showBuffQueue',    '🛡 Buff queue',          'Who in the raid is missing your buffs.'],
-    ['showWho',          '📜 /who',               'The zone roster from your last /who.'],
-    ['showMelody',       '🎶 Casting tracker',    'Melody for bards; spell casts for everyone else.'],
-    ['showThreat',       '🎯 Threat meter',       'Live hate ranking for the current fight.'],
-  ];
+  // ── The tour (the guild lead, 2026-10-21: "don't automatically open up canvas on new users. it should be a
+  // choice, include it in the tour, as well as many of the other components. let users rejoin the tour later").
+  // Every row is one real overlay: [bridge key, config flag, name, one plain line]. A switch goes through
+  // setOverlay below, which is M.toggleOverlay(key) — the very call the dashboard's Overlays tab and the tray make.
+  // Nothing is on because the tour was opened: a row shows what the overlay is NOW and changes it only on a click.
+  var TOUR_GROUPS = {
+    overlays: [
+      ['hud',     'showHud',          '⚔️ DPS/Tank Meter', 'Live damage for the fight you are in.'],
+      ['trigger', 'enableTriggerTts', '⚡ Trigger alerts',  'Flashes and speaks raid callouts, with debuff timers. Turning it off silences the spoken callouts too.'],
+      ['mobinfo', 'showMobInfo',      '👁 Target Info',     'Your target\'s health, resists, special attacks and what it drops.'],
+      ['threat',  'showThreat',       '🎯 Threat meter',    'Who the mob is angry at, for the fight you are in.'],
+    ],
+    tourself: [
+      ['me',     'showMe',     '🩺 HUD',             'Your own health, mana, ticks and cooldowns, drawn around your character.'],
+      ['zeal',   'showZeal',   '⏱ Tick',             'A countdown to the next server tick for each of your characters.'],
+      ['charm',  'showCharm',  '🔮 Charm tracker',   'Counts down to your charm breaking, so you can recharm in time.'],
+      ['pet',    'showPets',   '🐾 Pet tracker',     'Your pet\'s health, buffs and target.'],
+      ['melody', 'showMelody', '🎶 Casting tracker', 'Bard song queue; spell casts for everyone else.'],
+      ['chat',   'showChat',   '💬 Chat [beta]',     'Your chat in a window of its own, a switch for each channel.'],
+    ],
+    tourraid: [
+      ['buffQueue', 'showBuffQueue', '🛡 Buff queue',       'Who in the raid needs a buff, a cure or a debuff, most urgent first.'],
+      ['who',       'showWho',       '📜 /who',             'The zone roster from your last /who.'],
+      ['chchain',   'showChChain',   '💚 CH chain',         'The Complete Heal rotation: who is next and when.'],
+      ['exttarget', 'showExtTarget', '🎯 Extended Target',  'Every mob the raid is on, with health and who is hitting it.'],
+      ['tank',      'showTank',      '🛡 Tank HUD',         'The main tank\'s health and buffs, boss health and enrage warnings.'],
+      ['command',   'showCommand',   '📋 Command Center',   'One raid board: boss, tank, enrage, healer mana, curses.'],
+      ['popraid',   'showPopRaid',   '🚩 PoP raids',        'Planes of Power encounter notes, callouts and drops.'],
+    ],
+    tourmap: [
+      ['map',       'showMap',       '🗺 Map [beta]',        'The zone from above: spawn points, respawn timers, you, your group and your target.'],
+      ['maptimers', 'showMapTimers', '⏳ Map timers [beta]', 'The Map\'s respawn timers in a window of their own.'],
+    ],
+  };
+  function tourRow(r) {
+    var on = !!S.cfg[r[1]], busy = !!S.tourBusy[r[0]];
+    return '<div class="box" style="margin:6px 0"><div class="row"><b>' + r[2] + '</b>'
+      + '<span class="chip ' + (on ? 'rec' : '') + '">' + (on ? 'on' : 'off') + '</span>'
+      + '<span class="gap" style="flex:1"></span>'
+      + '<button data-tour="' + r[0] + '"' + (busy ? ' disabled' : '') + (on ? '' : ' class="primary"') + '>' + (busy ? 'One moment…' : on ? 'Turn it off' : 'Turn it on') + '</button></div>'
+      + '<div class="dim" style="font-size:12px">' + esc(r[3]) + '</div></div>';
+  }
+  // Switch one overlay to the state asked for. Reads the saved setting first, so a stale page can never flip it the
+  // wrong way, then asks Mimic for the same flip the dashboard and tray make.
+  function setOverlay(key, flag, want) {
+    S.tourBusy[key] = true; changed();
+    return Promise.resolve(M.getConfig()).catch(function () { return {}; }).then(function (c) {
+      if (c && !!c[flag] === want) return c;
+      return Promise.resolve(M.toggleOverlay(key)).catch(function () {}).then(function () { return M.getConfig(); });
+    }).catch(function () { return {}; }).then(function (c) {
+      if (c && typeof c === 'object') S.cfg[flag] = !!c[flag];
+      delete S.tourBusy[key]; changed();
+    });
+  }
+  function wireTour(el, rows) {
+    el.querySelectorAll('[data-tour]').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        e.preventDefault();
+        var r = rows.filter(function (x) { return x[0] === b.dataset.tour; })[0];
+        if (r) setOverlay(r[0], r[1], !S.cfg[r[1]]);
+      });
+    });
+  }
+  // Setting it down means the tour was seen: finishing and "Skip the tour" both land here.
+  function markTourSeen() {
+    S.cfg.tourSeen = true;
+    Promise.resolve(M.saveConfig({ tourSeen: true })).catch(function () {});
+  }
   // The run-mode question (cfg.runMode, 'full' | 'agent'). Same setter as the tray, Settings and the
   // dashboard; setup never restarts Mimic mid-walkthrough, so a changed answer lands next start.
   function agentNote() {
@@ -590,18 +660,50 @@
     wire(el, { 'mode-full': function () { pick('full'); }, 'mode-agent': function () { pick('agent'); } });
   }
 
-  function bOverlays(el) {
-    S.visited.add('overlays');
-    el.innerHTML = agentNote() + '<div class="grid2">' + OVERLAYS.map(function (o) {
-      return '<label class="tick"><input type="checkbox" data-ov="' + o[0] + '"' + (S.cfg[o[0]] ? ' checked' : '') + '><span>' + o[1] + '<span class="d">' + esc(o[2]) + '</span></span></label>';
-    }).join('') + '</div>'
-      + '<label class="tick" style="margin-top:10px"><input type="checkbox" data-quiet' + (S.cfg.quietMode ? ' checked' : '') + '><span>🔕 Start quiet<span class="d">Overlays stay hidden and nothing speaks until you turn Mimic on from the tray.</span></span></label>'
-      + '<div class="note dim">They appear the moment you tick them. The first time you finish, Mimic packs them into the free space around your EverQuest windows.</div>';
-    el.querySelectorAll('[data-ov]').forEach(function (cb) {
-      cb.addEventListener('change', function () { var o = {}; o[cb.dataset.ov] = cb.checked; S.cfg[cb.dataset.ov] = cb.checked; M.saveConfig(o).catch(function () {}); });
+  // One tour step: its rows, each a switch on a real overlay and showing whether it is on now.
+  function tourBody(id) {
+    return function (el) {
+      S.visited.add(id);
+      var rows = TOUR_GROUPS[id];
+      el.innerHTML = agentNote() + rows.map(tourRow).join('')
+        + (id === 'overlays'
+          ? '<label class="tick" style="margin-top:10px"><input type="checkbox" data-quiet' + (S.cfg.quietMode ? ' checked' : '') + '><span>🔕 Start quiet<span class="d">Overlays stay hidden and nothing speaks until you turn Mimic on from the tray.</span></span></label>'
+          : '')
+        + '<div class="note dim">They appear the moment you turn them on, and you can move, resize or hide each one later. '
+        + 'You can come back to this tour any time: the tray\'s Help menu and the dashboard\'s Setup card both have <b>Take the tour again</b>.</div>';
+      wireTour(el, rows);
+      var q = $('[data-quiet]', el);
+      if (q) q.addEventListener('change', function () { S.cfg.quietMode = q.checked; Promise.resolve(M.setQuietMode(q.checked)).catch(function () {}); });
+    };
+  }
+  // The Canvas gets a step to itself: it is the one overlay that takes over the others' job (the callouts and
+  // timers move onto it), it is still in beta, and it is a choice, never something a new install starts with.
+  function bTourCanvas(el) {
+    S.visited.add('tourcanvas');
+    var on = !!S.cfg.showCanvas, busy = !!S.tourBusy.canvas;
+    el.innerHTML = agentNote()
+      + '<div class="box"><h3>🧱 The Canvas ' + '<span class="chip ' + (on ? 'rec' : '') + '">' + (on ? 'on' : 'off') + '</span></h3>'
+      + '<div class="dim">Normally your callouts and timers stack in one window. The Canvas pulls them apart into pieces you can place and size anywhere on the screen, '
+      + 'and any other overlay can sit on it too. It takes a little arranging, and it is still in beta. Most people start without it.</div>'
+      + '<div class="row" style="margin-top:10px">'
+      + (on
+        ? '<button data-tc="off"' + (busy ? ' disabled' : '') + '>Turn it off</button><button class="primary" data-tc="keep">Keep it on</button>'
+        : '<button class="primary" data-tc="on"' + (busy ? ' disabled' : '') + '>Turn it on</button><button data-tc="skip">Not now</button>')
+      + '</div></div>'
+      + turnsOn([
+        '<b>Callouts and timers</b> move onto the Canvas; turn it off and they come back to the trigger window',
+        'Use <b>✏ Arrange on screen</b> (dashboard Overlays tab, or the tray) to place the pieces',
+        'Your voice callouts do not change',
+      ]);
+    el.querySelectorAll('[data-tc]').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        e.preventDefault();
+        var a = b.dataset.tc;
+        if (a === 'on') setOverlay('canvas', 'showCanvas', true);
+        else if (a === 'off') setOverlay('canvas', 'showCanvas', false);
+        else go('me');   // "Not now" / "Keep it on": nothing changes, on to the next step
+      });
     });
-    var q = $('[data-quiet]', el);
-    q.addEventListener('change', function () { S.cfg.quietMode = q.checked; Promise.resolve(M.setQuietMode(q.checked)).catch(function () {}); });
   }
 
   // The graphics-card question. Same flag as Settings → "Use the graphics card for overlays"
@@ -862,6 +964,7 @@
     }
     if (_finishing || !gateOk(S)) return;
     _finishing = true;
+    markTourSeen();
     if (!S.main && S.chars.length) { S.main = S.chars[0].character; M.saveConfig({ mainCharacter: S.main }).catch(function () {}); }
     Promise.resolve(M.markOnboarded()).catch(function () {})
       .then(function () {
@@ -896,6 +999,7 @@
       + '<div id="body"></div></main>'
       + '<footer class="a-nav"><button data-nav="back"' + (i === 0 ? ' disabled' : '') + '>← Back</button><span class="gap"></span>'
       + '<span class="hint">' + (last ? esc(gateHint()) : reqLeft ? 'Needed before the dashboard opens.' : '') + '</span>'
+      + (s.tour ? '<button data-nav="skiptour" title="Leave the rest of the overlays as they are">Skip the tour</button>' : '')
       + (!last && !s.kind && !s.bookend ? '<button data-nav="skip">Skip</button>' : '')
       + (last ? '<button class="primary" data-nav="finish"' + (gateOk(S) ? '' : ' disabled') + '>Open the dashboard →</button>'
               : '<button class="primary" data-nav="next"' + (reqLeft ? ' disabled' : '') + '>Next →</button>')
@@ -907,6 +1011,7 @@
         var n = b.dataset.nav;
         if (n === 'back') go(aSteps[Math.max(0, i - 1)].id);
         else if (n === 'next' || n === 'skip') go(aSteps[Math.min(aSteps.length - 1, i + 1)].id);
+        else if (n === 'skiptour') { markTourSeen(); go('me'); }
         else if (n === 'finish') finish();
       });
     });
@@ -1016,6 +1121,7 @@
     S.eqConfigured = saved.length > 0;
     if (S.cfg.mainCharacter) S.main = S.cfg.mainCharacter;
     if (S.cfg.onboarded) cur = 'account';
+    if (TOUR_ONLY) { cur = 'overlays'; S.backfill = false; }
     render();
     loadFolders(); loadChars(); refreshZeal(); refreshDefender(); refreshClock();
     Promise.resolve(M.getStatus()).then(onStatus).catch(function () {});
@@ -1047,6 +1153,7 @@
         { name: 'Corvale', mode: 'hidden', src: 'site', on_pc: true, log_read: false } ] }),
       setCharacterMode: ok({ ok: true, synced: true, restart_needed: false }),
       agentPost: ok({ ok: true, status: 200, body: { ok: true } }),
+      toggleOverlay: ok({}),
     };
   }
 })();
