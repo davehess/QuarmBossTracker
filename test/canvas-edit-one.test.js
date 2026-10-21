@@ -70,6 +70,7 @@ function world(panels) {
     ${sliceBlock(SRC, '  function yBounds(rTop, rH, h, up, free) {', '\n  }\n')}
     ${sliceBlock(SRC, '  function xBounds(rLeft, rW, w, free) {', '\n  }\n')}
     ${sliceBlock(SRC, '  function isFree(q) {', '\n')}
+    ${sliceBlock(SRC, '  function sizeMax(p, cap, avail) {', '\n')}
     ${LOCK}
     ${IS_ED}
     ${DRAG}

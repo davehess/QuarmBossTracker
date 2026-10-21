@@ -546,8 +546,11 @@
   // The widths one kind may take, in its own unit: what a hand drag already allowed it.
   function widthRange(p, W) {
     if (p.kind === 'sect') return [160, 2400];
-    return [p.kind === 'overlay' ? 80 : 120, Math.min(4000, W)];
+    return [p.kind === 'overlay' ? 80 : 120, sizeMax(p, 4000, W)];
   }
+  // The largest a size may be: the screen's edge while "Keep inside the screen" is on, the saved cap alone when
+  // it is off (a piece may be stretched past any edge; the minimum size and the grab strip still hold).
+  function sizeMax(p, cap, avail) { return isFree(p) ? cap : Math.min(cap, avail); }
   // Set the width; false (nothing changed) for a locked item or one with no frame to size.
   function setWidth(p, w, W) {
     if (!sizable(p) || isLocked(p)) return false;
@@ -560,8 +563,8 @@
   // hand is the item's own now, so it stops following its content (the ◢ rule; ⚙ → Fit height turns it back on).
   function setHeight(p, h, H) {
     if (!sizable(p) || p.kind === 'sect' || isLocked(p)) return false;
-    var n = Math.round(num(h, 36, Math.min(3000, H), p.h));
-    if (growsUp(p)) p.y = Math.max(0, Math.round(p.y * H) + p.h - n) / H;
+    var n = Math.round(num(h, 36, sizeMax(p, 3000, H), p.h));
+    if (growsUp(p)) p.y = (isFree(p) ? (Math.round(p.y * H) + p.h - n) : Math.max(0, Math.round(p.y * H) + p.h - n)) / H;
     if (fitOn(p, pdefOf(p)) && n !== Math.round(p.h)) p.fit = false;
     p.h = n;
     return true;
@@ -1174,7 +1177,8 @@
       scale: o.scale || 1, grp: o.grp || null, off: false,
       // Take apart: a piece inherits the panel's lock (absent = free, stored as nothing) and its Background, so the
       // text it had a plate behind does not float over the game. No back chosen = follows the Canvas default, as the panel did.
-      back: typeof o.back === 'boolean' ? o.back : undefined, lock: o.lock === true ? true : undefined };
+      back: typeof o.back === 'boolean' ? o.back : undefined, lock: o.lock === true ? true : undefined,
+      free: o.free === true ? true : undefined };
   }
   // ✂ Take apart: the overlay's panel becomes one piece per section it shows right now, each at
   // the spot it has on the page, grouped so they still move together until one is pulled out
@@ -1195,7 +1199,7 @@
       if (d.id === 'empty') return;
       var r = WpSections.unionRect(doc, d.sel);
       if (made.length + tabbed.length + _layout.panels.length >= MAX_PANELS) return;
-      var opt = { w: Math.round((r ? r.width : 200) * s), h: Math.round((r ? r.height : 40) * s), pw: Math.round(p.w / s), ph: Math.round(p.h / s), scale: s, grp: grp, style: p.style || '', lock: p.lock, back: p.back };
+      var opt = { w: Math.round((r ? r.width : 200) * s), h: Math.round((r ? r.height : 40) * s), pw: Math.round(p.w / s), ph: Math.round(p.h / s), scale: s, grp: grp, style: p.style || '', lock: p.lock, free: p.free, back: p.back };
       if (d.tab && anchor) {
         opt.follow = true;
         var tp = sectPanel(p.key, d.id, num((x0 + (r ? r.left : 0) * s) / W, 0, 1, 0.3), num((y0 + (r ? r.top : 0) * s) / H, 0, 1, 0.3), opt);
@@ -1483,8 +1487,10 @@
       });
       placeGbox();
     } else if (d.mode === 'size' && d.box) {
-      var bw = d.axis === 'y' ? d.box.w : Math.min(W - d.box.x, Math.max(40, d.box.w + ev.clientX - d.sx));
-      var bh = d.axis === 'x' ? d.box.h : Math.min(H - d.box.y, Math.max(20, d.box.h + ev.clientY - d.sy));
+      // Stretched past the screen only when every piece in the set has "Keep inside the screen" off.
+      var gfree = d.members.every(function (m) { return isFree(panelById(m.id)); });
+      var bw = d.axis === 'y' ? d.box.w : Math.min(gfree ? 4000 : W - d.box.x, Math.max(40, d.box.w + ev.clientX - d.sx));
+      var bh = d.axis === 'x' ? d.box.h : Math.min(gfree ? 3000 : H - d.box.y, Math.max(20, d.box.h + ev.clientY - d.sy));
       scaleGroup(d.members, d.box, bw, bh, ev.shiftKey).forEach(function (n) {
         var ee = _els[n.id], q = panelById(n.id); if (!ee || !q) return;
         var m = d.members.filter(function (k) { return k.id === n.id; })[0];
@@ -1507,8 +1513,8 @@
     } else {
       var dp = panelById(d.id);
       var isPart = dp && dp.kind === 'part';
-      var w = d.axis === 'y' ? d.w0 : Math.max(isPart ? 40 : (dp && dp.kind === 'overlay') ? 80 : 120, Math.min(W - d.x0, d.w0 + ev.clientX - d.sx));
-      var h = d.axis === 'x' ? d.h0 : Math.max(isPart ? 16 : 36, Math.min(H - d.y0, d.h0 + ev.clientY - d.sy));
+      var w = d.axis === 'y' ? d.w0 : Math.max(isPart ? 40 : (dp && dp.kind === 'overlay') ? 80 : 120, Math.min(sizeMax(dp, 4000, W - d.x0), d.w0 + ev.clientX - d.sx));
+      var h = d.axis === 'x' ? d.h0 : Math.max(isPart ? 16 : 36, Math.min(sizeMax(dp, 3000, H - d.y0), d.h0 + ev.clientY - d.sy));
       e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
       if (dp) sizeFrame(e, dp, w, h);
       d.w = w; d.h = h;
@@ -1737,6 +1743,7 @@
       + '<button class="btn" data-sc="-1">A−</button><span style="min-width:3em;text-align:center">' + Math.round((p.scale || 1) * 100) + '%</span>'
       + '<button class="btn" data-sc="1">A+</button></div>';
     if (sizable(p)) h += widthMenuHtml(p);
+    h += '<div class="note">Resizing follows “Keep inside the screen” (Position, below).</div>';
     h += '<div class="sec">Opacity</div><div class="row">'
       + '<button class="btn" data-al="-1" title="Fade what it shows (its background with it); the ✥ and ◢ stay solid">−</button><span style="min-width:3em;text-align:center">' + Math.round(alphaOf(p) * 100) + '%</span>'
       + '<button class="btn" data-al="1">+</button></div>';
@@ -2323,7 +2330,7 @@
     var need = Math.ceil(pt.getBoundingClientRect().height) + 4;
     pt.style.height = was;
     var H = window.innerHeight, top = e.root.offsetTop;
-    p.h = Math.max(16, Math.min(H - top, need));
+    p.h = Math.max(16, Math.min(sizeMax(p, 3000, H - top), need));
     e.root.style.height = p.h + 'px';
     save();
     if (_menuFor === id) placeMenu();
@@ -2385,7 +2392,8 @@
       var empty = need <= 0;
       if (!!_fitEmpty[p.id] !== empty) { if (empty) _fitEmpty[p.id] = true; else delete _fitEmpty[p.id]; e.root.classList.toggle('fitempty', empty); }
       var sr = screenAt(screenList(window.innerWidth, H), p.x * window.innerWidth + p.w / 2, p.y * H + p.h / 2);   // it grows within its own screen
-      var b = fitBox(p.y, p.h, need, growsUp(p), H, p.kind === 'part' ? 16 : p.kind === 'overlay' ? 50 : 36, sr.y, sr.y + sr.h);
+      var pfree = isFree(p);   // "Keep inside the screen" off: it may grow past its screen's edge
+      var b = fitBox(p.y, p.h, need, growsUp(p), H, p.kind === 'part' ? 16 : p.kind === 'overlay' ? 50 : 36, pfree ? -Infinity : sr.y, pfree ? Infinity : sr.y + sr.h);
       if (Math.abs(b.h - p.h) < 3) { _fitCreep[p.id] = 0; return; }
       // A page whose box tracks its frame reads frame + a few px after every fit: that is a loop, not a content
       // height. Six steps of that and the item is left alone for this session.
@@ -2906,7 +2914,7 @@
     var s = p.scale || 1, W = window.innerWidth, H = window.innerHeight;
     var w = want.w ? Math.ceil(want.w * s) : p.w, h = Math.ceil(want.h * s);
     if (grow && !want.exact) h = Math.max(h, p.h);
-    w = num(w, 80, Math.min(4000, W), p.w); h = num(h, 36, Math.min(3000, H), p.h);
+    w = num(w, 80, sizeMax(p, 4000, W), p.w); h = num(h, 36, sizeMax(p, 3000, H), p.h);
     if (w === p.w && h === p.h) return true;
     // The ring keeps its middle when its width changes (its numbers outside it, or not), as its window did.
     if (want.exact) p.x = num((p.x * W - (w - p.w) / 2) / W, 0, 1, p.x);
