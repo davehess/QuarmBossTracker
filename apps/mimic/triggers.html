@@ -624,7 +624,12 @@
     if (PART) return;   // a canvas panel shows; the trigger window speaks
     if (_wpMutedNow()) return;
     if (!window.speechSynthesis && !_neuralChoice()){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
-    var item = { text: text, meta: meta, prio: _speakPriority(meta), at: Date.now() };
+    // The one place spoken text is handed to a voice: respelled for the ear and stripped of symbols (voice.js
+    // speakable). `text` stays what the flash shows; item.text is what is SAID and what the spoken log records.
+    var said = text;
+    try { if (window.WPVoice && window.WPVoice.speakable) said = window.WPVoice.speakable(text); } catch (e) {}
+    if (!said) return;   // nothing but symbols: there is nothing to say
+    var item = { text: said, meta: meta, prio: _speakPriority(meta), at: Date.now() };
     if (!_speakingUtt){ _speakNow(item); return; }
     if (item.prio > _speakingPrio){
       // Preempt. The interrupted one is DROPPED, not requeued — by the time the

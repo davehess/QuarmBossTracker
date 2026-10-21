@@ -74,7 +74,46 @@
     return { engine: 'windows', voice: null };
   }
 
-  var NEURAL_WAIT_MS = 2900;   // Mimic gives up on a phrase at 2.5 s (neuralVoice.js); this is the renderer's own backstop
+  // HOW A WORD IS SPELLED FOR THE VOICE (the guild lead, 2026-10-21: the Piper voice read "Slowed. Turgur's" as
+  // "DONT TURRIS"). The words on screen are for the eye; this table is for the ear. ⚠ ADD ANY WORD THE VOICES MANGLE
+  // HERE — `written: spoken`, one line each, no other change needed. Matching is case-insensitive and on WHOLE words
+  // only, so "Turgurs" never rewrites the middle of a longer word. It is applied to EVERY spoken callout (built-in,
+  // guild and personal triggers alike) and to the sample buttons, by speakable() below.
+  var SPOKEN_RESPELL = {
+    "Turgur's": 'Ter gurs',
+    'Turgurs': 'Ter gurs',
+  };
+
+  function _escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  // Written with char codes, not literals: U+2028/2029 are line terminators and would end a regex literal.
+  var _c = String.fromCharCode;
+  var SYMBOLS = new RegExp('[' + _c(0x2190) + '-' + _c(0x2BFF) + _c(0x2600) + '-' + _c(0x27BF) + _c(0xFE0F) + _c(0x2028) + _c(0x2029) + ']', 'g');
+  var CURLY_APOSTROPHES = new RegExp('[' + _c(0x2018) + _c(0x2019) + '`]', 'g');
+  var SEPARATOR_DASHES = new RegExp('\\s+[-' + _c(0x2013) + _c(0x2014) + ']+\\s+', 'g');   // " - " / " -- " read as words
+  var _respellRules = null;   // built on first use from SPOKEN_RESPELL, so an edit to the table needs no other change
+  function _rules() {
+    if (_respellRules) return _respellRules;
+    _respellRules = Object.keys(SPOKEN_RESPELL).map(function (k) {
+      return { re: new RegExp('(?<![A-Za-z0-9_])' + _escRe(k.replace(CURLY_APOSTROPHES, "'")) + '(?![A-Za-z0-9_])', 'gi'), to: SPOKEN_RESPELL[k] };
+    });
+    return _respellRules;
+  }
+
+  // The text a voice is actually handed: pictographs and symbols dropped (the on-screen snail must never be voiced; an
+  // explicit `tts` used to reach the voice untouched), " - " separators dropped, then the respell table applied.
+  // Display text elsewhere is never changed. Pure; never throws.
+  function speakable(text) {
+    var t = String(text == null ? '' : text)
+      .replace(SYMBOLS, ' ')
+      .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ' ')   // surrogate-pair emoji
+      .replace(CURLY_APOSTROPHES, "'")
+      .replace(SEPARATOR_DASHES, ' ');
+    var rules = _rules();
+    for (var i = 0; i < rules.length; i++) t = t.replace(rules[i].re, rules[i].to);
+    return t.replace(/\s{2,}/g, ' ').trim();
+  }
+
+  var NEURAL_WAIT_MS = 2900;  // Mimic gives up on a phrase at 2.5 s (neuralVoice.js); this is the renderer's own backstop
   var NEURAL_TEST_WAIT_MS = 12900;   // a ▶ Test waits on purpose (Mimic's own limit for it is 12 s)
 
   // Ask Mimic for the phrase in `choice`'s engine and hand back an <audio> element ready to .play(), or null for
@@ -121,6 +160,7 @@
   // Speak `text` once with the picked settings (a sample button). Cancels what is being said first. With a
   // downloaded engine picked it plays that voice, and any trouble falls back to the Windows one.
   function sample(text, packs, cfg, packId) {
+    text = speakable(text);   // the same words a real callout would be spoken with
     var m = root.mimic;
     if (m && m.voiceStatus && m.voiceSynth) {
       if (_sampleAudio) { try { _sampleAudio.pause(); } catch (e) { void e; } _sampleAudio = null; }
@@ -139,7 +179,7 @@
     return _sampleWindows(text, packs, cfg, packId);
   }
 
-  var api = { pick: pick, sample: sample, chooseEngine: chooseEngine, neuralAudio: neuralAudio, DEFAULT_RATE: DEFAULT_RATE, DEFAULT_PITCH: DEFAULT_PITCH, NEURAL_WAIT_MS: NEURAL_WAIT_MS, NEURAL_TEST_WAIT_MS: NEURAL_TEST_WAIT_MS };
+  var api = { pick: pick, sample: sample, chooseEngine: chooseEngine, neuralAudio: neuralAudio, speakable: speakable, SPOKEN_RESPELL: SPOKEN_RESPELL, DEFAULT_RATE: DEFAULT_RATE, DEFAULT_PITCH: DEFAULT_PITCH, NEURAL_WAIT_MS: NEURAL_WAIT_MS, NEURAL_TEST_WAIT_MS: NEURAL_TEST_WAIT_MS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WPVoice = api;
 })(typeof window !== 'undefined' ? window : this);

@@ -40,13 +40,13 @@ describe('Requiem of Time is a bard slow', () => {
   it('the land callout reads "Bard Slow (55%)" and says "Bard Slow"', () => {
     const o = landed({ name: 'Requiem of Time', magnitude: 55, caster: null }, 'a vann militis #412');
     expect(o.text).toBe('🐌 Slowed a vann militis #412 — Bard Slow (55%)');
-    expect(o.tts).toBe('Slowed. Bard Slow');
+    expect(o.tts).toBe('Slow landed. Bard Slow');
     expect(slow._slowShortName('Requiem of Time')).toBe('Bard Slow');   // the drop / fading callouts too
   });
   it('other slows keep their own names', () => {
     const o = landed({ name: "Turgur's Insects", magnitude: 75, caster: null }, 'a vann militis');
     expect(o.text).toBe("🐌 Slowed a vann militis — Turgur's Insects 75%");
-    expect(o.tts).toBe("Slowed. Turgur's");
+    expect(o.tts).toBe("Slow landed. Turgur's");   // Mimic's voice.js respells the name for the ear
   });
 });
 
