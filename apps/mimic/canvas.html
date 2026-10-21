@@ -793,10 +793,23 @@
     return best;
   }
   // A box kept whole on the screen holding its middle (one bigger than the screen is cut to it).
-  function fitRect(list, left, top, w, h) {
+  // The lowest and highest top a box of height h may have on a screen spanning rTop..rTop+rH. A normal box stays
+  // whole on the screen. A TALL one (over half the screen, e.g. a Command Center configured 1121 px high whose
+  // content is ~120 px) is held by a GRAB-px strip instead of its whole configured height, or its top could never
+  // go below (screen - h) — "can't move it below the middle" (the guild lead, 2026-10-21). Grows down: the top
+  // strip (with the ✥) stays on screen and the empty tail may hang off the bottom. Grows up is left whole: its
+  // content sits at the bottom edge, so hanging the head off the top needs a negative saved y (the layout keeps
+  // y in 0..1), which is a schema change, not a clamp.
+  var TALL_GRAB = 120;
+  function yBounds(rTop, rH, h, up) {
+    if (up || h <= rH / 2) return { lo: rTop, hi: rTop + rH - h };
+    return { lo: rTop, hi: rTop + rH - TALL_GRAB };
+  }
+  function fitRect(list, left, top, w, h, up) {
     var r = screenAt(list, left + w / 2, top + h / 2);
     w = Math.min(w, r.w); h = Math.min(h, r.h);
-    return { r: r, x: Math.max(r.x, Math.min(r.x + r.w - w, left)), y: Math.max(r.y, Math.min(r.y + r.h - h, top)), w: w, h: h };
+    var yb = yBounds(r.y, r.h, h, up);
+    return { r: r, x: Math.max(r.x, Math.min(r.x + r.w - w, left)), y: Math.max(yb.lo, Math.min(yb.hi, top)), w: w, h: h };
   }
   // The callouts panel and the catch-all timers panel are the places a callout and a countdown go: they are
   // never hidden for want of a screen, they come to the home screen.
@@ -1021,7 +1034,7 @@
     // Wider while its page's builder is open, toward the side with room; the page's own part keeps its place.
     // Kept whole on the screen holding its middle (the whole window when there is one screen).
     var wd = _widen[p.id];
-    var f = fitRect(screenList(W, H), Math.round(p.x * W) - (wd && wd.left ? wd.add : 0), Math.round(p.y * H), p.w + (wd ? wd.add : 0), p.h);
+    var f = fitRect(screenList(W, H), Math.round(p.x * W) - (wd && wd.left ? wd.add : 0), Math.round(p.y * H), p.w + (wd ? wd.add : 0), p.h, growsUp(p));
     var x = f.x, y = f.y, w = f.w, h = f.h;
     e.root.style.left = x + 'px'; e.root.style.top = y + 'px';
     e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
@@ -1446,7 +1459,8 @@
       movers.forEach(function (m) {
         var r = _els[m.id] && _els[m.id].root; if (!r) return;
         dx = Math.min(Math.max(dx, -m.x0), W - r.offsetWidth - m.x0);
-        dy = Math.min(Math.max(dy, -m.y0), H - r.offsetHeight - m.y0);
+        var mq = panelById(m.id), myb = yBounds(0, H, r.offsetHeight, !!mq && growsUp(mq));
+        dy = Math.min(Math.max(dy, myb.lo - m.y0), myb.hi - m.y0);
       });
       movers.forEach(function (m) {
         var r = _els[m.id] && _els[m.id].root; if (!r) return;
@@ -1470,7 +1484,8 @@
     } else if (d.mode === 'move') {
       var x = d.x0 + ev.clientX - d.sx, y = d.y0 + ev.clientY - d.sy;
       if (!ev.shiftKey) { var s = snapMove(d.id, x, y, d.w0, d.h0); x = s.x; y = s.y; }
-      x = Math.max(0, Math.min(W - d.w0, x)); y = Math.max(0, Math.min(H - d.h0, y));
+      var dq = panelById(d.id), yb = yBounds(0, H, d.h0, !!dq && growsUp(dq));
+      x = Math.max(0, Math.min(W - d.w0, x)); y = Math.max(yb.lo, Math.min(yb.hi, y));
       e.root.style.left = x + 'px'; e.root.style.top = y + 'px';
       e.root.classList.toggle('tabin', y < 22);
       e.root.classList.toggle('mvin', x < 18);
