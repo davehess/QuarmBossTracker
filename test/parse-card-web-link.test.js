@@ -23,9 +23,11 @@ describe('parse card web link', () => {
   });
 
   it('leaves the card untouched while the encounter id is unknown', () => {
-    const before = buildParseEmbed('a Boss', parsed, '🤖', {}).toJSON();
+    // Two builds a millisecond apart carry different setTimestamp() values; compare without it.
+    const noTs = ({ timestamp, ...rest }) => rest;   // eslint-disable-line no-unused-vars
+    const before = noTs(buildParseEmbed('a Boss', parsed, '🤖', {}).toJSON());
     const card = withParseWebLink(buildParseEmbed('a Boss', parsed, '🤖', {}), null);
-    expect(card.toJSON()).toEqual(before);
+    expect(noTs(card.toJSON())).toEqual(before);
     expect(card.toJSON().url).toBeUndefined();
   });
 
