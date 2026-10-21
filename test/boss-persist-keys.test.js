@@ -12,8 +12,11 @@
 // Run: npx vitest run test/boss-persist-keys.test.js
 
 import { describe, it, expect } from 'vitest';
+import { createRequire } from 'node:module';
 import { readSource, BOT_INDEX, sliceBlock, evalBlock } from './_source-slice.js';
 
+// The slice reads the bot's top-level `namedBosses` (utils/namedBosses.js) — the real module.
+globalThis.__namedBosses = createRequire(import.meta.url)('../utils/namedBosses.js');
 const src = readSource(BOT_INDEX);
 const block = sliceBlock(
   src,
@@ -21,7 +24,7 @@ const block = sliceBlock(
   "console.warn('[lockout] promote failed for \"' + bossName + '\":', e?.message);\n  }\n}",
 );
 const { _bossPersistKeys, _resolveBossForPersist, _promoteLockoutBoss } =
-  evalBlock('const console = { log(){}, warn(){} };\n' + block,
+  evalBlock('const console = { log(){}, warn(){} };\nconst namedBosses = globalThis.__namedBosses;\n' + block,
     ['_bossPersistKeys', '_resolveBossForPersist', '_promoteLockoutBoss']);
 
 describe('_bossPersistKeys — the three candidate keys', () => {
@@ -93,6 +96,23 @@ function fakeSupabase({ localByKey = {}, localByNpc = {}, eqemuByName = {}, auto
     },
   };
 }
+
+describe('_resolveBossForPersist — curated PoP bosses register curated', () => {
+  // The guild lead, 2026-10-21: the 2026-10-18 raid's /parses showed only Saryrn — Maareq,
+  // Mithaniel Marr and the rest self-registered as trash and the cards filter to curated rows.
+  it('a first kill of a data/named-bosses.json boss registers with auto_registered false', async () => {
+    const sb = fakeSupabase({ eqemuByName: { Maareq_the_Prophet: 207004 } });
+    const r = await _resolveBossForPersist('Maareq the Prophet', null, sb);
+    expect(r).toEqual({ internalId: 'maareq_the_prophet', registered: true });
+    expect(sb.inserts).toEqual([expect.objectContaining({ npc_id: 207004, auto_registered: false })]);
+  });
+
+  it('trash in the same zone still registers as auto', async () => {
+    const sb = fakeSupabase({ eqemuByName: { An_acolyte_of_Pain: 207023 } });
+    await _resolveBossForPersist('An acolyte of Pain', null, sb);
+    expect(sb.inserts).toEqual([expect.objectContaining({ npc_id: 207023, auto_registered: true })]);
+  });
+});
 
 describe('_resolveBossForPersist — resolution order', () => {
   it('THE P1 CASE: a backfilled "The Final Arbiter" resolves to the curated row', async () => {

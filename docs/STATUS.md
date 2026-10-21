@@ -810,6 +810,22 @@ next touch one rather than assuming a missing row means a missing doc.
   Zeal; share a whole setup by file or code; Target Info pager + Recent; meter History on DPS or Tank; quest drill-down;
   haste foci on cast bars; Plane of Time hybrid cycle; `/me/upgrades` [beta]. Zeal `/targetpet` patch in
   `docs/upstream/zeal-targetpet/`.
+- **🧾 2026-10-20/21 — decisions, data pack, self-host data step, Map and Chat fixes (DECISIONS §385–§398).**
+  - **✅ Bot 3.2.14 + web 1.9.19 on main (2026-10-21 01:20 UTC):** a duplicate row no longer rejects a whole batch
+    (`insert_ignore_duplicates` RPC, migration `20261020200000`, applied 2026-10-20); rollup deadlock and charm decimal
+    fixed (§397). Web 1.9.17–1.9.19: `/pvp` Fight cards, `/pop` by essence, `/zeal-icons` guild index, instruction folds,
+    `/about` is the Tour.
+  - **✅ Bot 3.2.15 (main): weekly game-data pack, step 1** (`scripts/build-data-pack.js`,
+    `.github/workflows/build-data-pack.yml`, rolling prerelease `data-latest`; §392). Never dispatched yet; Mimic does not
+    read it yet. Test: `test/data-release-isolation.test.js`.
+  - **✅ Self-host "load game data" step** (`scripts/selfhost-load-game-data.js`; guide in `docs/SELFHOSTING.md`; §392).
+  - **🧪 Mimic beta:** Canvas 🔒 lock; Map outlines from the skin's real window sizes; UI Studio "Move it in game"
+    commands. **Agent 3.8.33** (trigger list off `/api/state`), **3.8.34** (PQ Companion import; empty import is an
+    error), **3.8.35** (Map: engaged = hurt, health memory, kite totals, "killed?", corpse / "dead" tag confirms a
+    kill), **3.8.36** (Chat: own guild / raid lines never lost).
+  - **⏳ Decided, not built:** Raid Mimic hosting model, price and data model (§385–§387), eqmimic.quest lookup
+    directory (§388), 30-day-after-graph threat sweep (§389), release picker (§390), raidmimic.com section and interest
+    form (§393), mute-warning and pre-drop levitate warning (§394). Open table in DECISIONS has the next step for each.
 - **✅ raidmimic.com: "The tour" is the layout (web 1.9.10, 2026-10-19; §382).**
 - **✅ CI green again (2026-10-19; §382):** quarantined test files with owners and a 2026-11-02 expiry,
   `test/quarantine-guard.test.js`.

@@ -98,3 +98,4 @@ if [ -n "$MISSING" ]; then
 fi
 echo; echo "OK: all core tables present. Next: seed data/bosses.json via /addboss,"
 echo "and see docs/SELFHOSTING.md for the eqemu_* catalog (not included)."
+echo "NEXT STEP — load the game data: SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/selfhost-load-game-data.js"

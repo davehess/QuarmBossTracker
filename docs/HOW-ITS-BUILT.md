@@ -1048,6 +1048,28 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Where:** agent `stats.currentRampages`, tank state `rampages`, `apps/mimic/command.html` `rampHtml`. Test:
   `test/rampage-multi-boss.test.js`.
 
+### Weekly game-data pack (bot 3.2.15, 2026-10-21; DECISIONS §392; step 1 of 2)
+- **What:** game data only (spell catalog, item clickies, item catalog, per-zone packs, quests) as files on ONE rolling
+  prerelease, tag `data-latest`, rebuilt weekly after the catalog sync. For a standalone raider whose Mimic has no
+  database to ask. Mimic does not read it yet (step 2).
+- **Where:** `scripts/build-data-pack.js`, `scripts/lib/botBuilders.js` (runs the bot's own handlers' blocks out of
+  `index.js`, so there is one builder per answer), `.github/workflows/build-data-pack.yml`. Checks (row counts against the
+  database, zone packs, sha256, gunzip + parse, 60 MB budget) fail the build. Tests: `test/data-release-isolation.test.js`
+  (nothing that reads releases can mistake it for Mimic; the announcer needs a `v<number>` tag).
+
+### Self-host: load the game data (2026-10-21; DECISIONS §392)
+- **What:** the step after the schema bootstrap that fills the `eqemu_*` catalog and mob scripts in a guild's own
+  project, then counts every table and exits non-zero if any is empty or differs.
+- **Where:** `scripts/selfhost-load-game-data.js` (wraps `sync-from-eqmac.js` and `sync-quest-scripts.js`; refuses Wolf
+  Pack's project; `DUMP_URL`, `SYNC_STATE_FILE`); guide in `docs/SELFHOSTING.md`.
+
+### Duplicate-tolerant inserts (bot 3.2.14, 2026-10-20; DECISIONS §397)
+- **What:** an insert that must ignore duplicates no longer fails the whole batch on a unique index other than the
+  primary key.
+- **Where:** `public.insert_ignore_duplicates(p_table, p_rows, p_return_rows)` (migration `20261020200000`);
+  `insertIgnoreDuplicates` in `utils/supabase.js` routes through it with a PGRST202 fallback. PostgREST's own
+  `resolution=ignore-duplicates` without `on_conflict` targets the primary key only.
+
 ### Enrage callouts and their mutes (agent 3.8.13 beta, 2026-10-19; DECISIONS §379)
 - **What:** "Enrage soon" at 12% for bosses, "<mob> enraging" at 9% for any other mob that can enrage; mute per mob for
   the session, all for the session, or per mob always.

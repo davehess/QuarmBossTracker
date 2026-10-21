@@ -166,7 +166,16 @@ export function installFakePostgrest({ tables = {}, rpcs = {}, failWhen = null }
     if (!tables[table]) { calls.push({ method, table, query, rows: 0 }); return reply(404, { message: `no table ${table}` }); }
     const q = parseQuery(query);
     const filters = q.filter(([k]) => !['select', 'order', 'limit', 'offset', 'on_conflict'].includes(k));
-    const pass = filters.map(([k, v]) => matcher(k, v));
+    // or=(col.op.val,col.op.val): any one condition passes (conditions are split on commas, so a value
+    // holding a comma breaks here as it does on the real server).
+    const pass = filters.map(([k, v]) => {
+      if (k !== 'or') return matcher(k, v);
+      const any = v.replace(/^\(/, '').replace(/\)$/, '').split(',').map((c) => {
+        const dot = c.indexOf('.');
+        return matcher(c.slice(0, dot), c.slice(dot + 1));
+      });
+      return (r) => any.some((f) => f(r));
+    });
     const all = tables[table].filter((r) => pass.every((f) => f(r)));
 
     if (method === 'POST') {
@@ -195,7 +204,12 @@ export function installFakePostgrest({ tables = {}, rpcs = {}, failWhen = null }
       page = page.map((r) => Object.fromEntries(cols.map((c) => [c, r[c]])));
     }
     calls.push({ method, table, query, rows: page.length });
-    return reply(200, page);
+    const res = reply(200, page);
+    // Prefer: count=exact → Content-Range carries the total the filters matched (what utils/supabase.js count() reads).
+    const range = /count=exact/.test(init.headers?.Prefer || '')
+      ? (page.length ? `${off}-${off + page.length - 1}/${all.length}` : `*/${all.length}`) : null;
+    res.headers = { get: (k) => (String(k).toLowerCase() === 'content-range' ? range : null) };
+    return res;
   };
 
   return handle;

@@ -16,10 +16,13 @@
 
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { readSource, BOT_INDEX, ROOT, sliceBlock, evalBlock, stripJs } from './_source-slice.js';
 
 const src = readSource(BOT_INDEX);
+// The resolver slice reads the bot's top-level `namedBosses` — the real module.
+globalThis.__namedBosses = createRequire(import.meta.url)('../utils/namedBosses.js');
 
 const resolverBlock = sliceBlock(
   src,
@@ -27,7 +30,7 @@ const resolverBlock = sliceBlock(
   "console.warn('[lockout] promote failed for \"' + bossName + '\":', e?.message);\n  }\n}",
 );
 const { _resolveBossForPersist } = evalBlock(
-  'const console = { log(){}, warn(){} };\n' + resolverBlock, ['_resolveBossForPersist']);
+  'const console = { log(){}, warn(){} };\nconst namedBosses = globalThis.__namedBosses;\n' + resolverBlock, ['_resolveBossForPersist']);
 
 function fakeSupabase({ rows = [], npcs = [], byNpc = [] } = {}) {
   const inserted = [];

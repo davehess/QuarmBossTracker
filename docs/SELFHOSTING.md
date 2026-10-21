@@ -72,6 +72,27 @@ and rows a new install does not have. They create no schema. One of them
 on the single missing one, so the script re-runs failures non-strict to land the
 other 23 — that is what "PARTIAL" means in its output, and it is deliberate.
 
+### 2b. Load the game data (the `eqemu_*` catalog)
+
+After `selfhost-bootstrap-db.sh` succeeds, your database has the tables but not the game catalog (zones, items, NPCs,
+spells, loot, spawns, factions, recipes, doors, pather routes; about 97 MB) or the mob scripts. Load them with the same
+importer Wolf Pack runs every week:
+
+```bash
+SUPABASE_URL=<your project URL> SUPABASE_SERVICE_ROLE_KEY=<your service-role key> node scripts/selfhost-load-game-data.js
+```
+
+The step refuses to run against Wolf Pack's production project. It then counts every catalog table in YOUR database and
+compares it with what the importer reported writing, prints table / rows written / rows present / status, and exits
+non-zero if any table is empty or any count differs, so a green run means the data is there. Re-running is safe: an
+unchanged upstream dump is skipped, and a project with any empty catalog table is always imported in full. Keep the
+catalog fresh by running the same command weekly (cron or a scheduled GitHub Action; snippets in the script header).
+`FORCE_RESYNC=true` re-imports an unchanged dump; `ALLOW_EXTRA_ROWS=1` accepts rows the upstream later removed (the
+importer only adds and updates). A guild on its own EQEmu server sets `DUMP_URL` to its database tarball; it must match
+the EQMacEmu schema the importer expects (other EQEmu schemas are untested), and mob scripts then load only with
+`QUESTS_REPO`. Not running a database at all (a standalone raider)? You don't need this step; Mimic will use the weekly
+data pack.
+
 ### 3. Bot
 
 Already containerized at the repo root:
@@ -102,10 +123,9 @@ Point `cfg.botUrl` at your bot. Nothing else changes — the agent already takes
 
 - **The `eqemu_*` catalog** — ~97 MB of zone/item/NPC/spell mirrors that powers
   Mob Info, the item database and the spell tools. It syncs weekly from a source
-  we mirror; there is no self-serve import path yet. Without it the platform runs,
-  but item/NPC/spell lookups are empty. The design doc's recommendation stands:
-  publish this as a read-only shared resource rather than making each guild
-  rebuild it.
+  we mirror. It is no longer left out of the walkthrough: step 2b above loads it into
+  your own project and verifies the counts. Skip that step and the platform runs,
+  but item/NPC/spell lookups are empty.
 - **PvP `/who` intelligence** — deliberately carved out (guild lead, 2026-08-02). The
   tables exist and the code ships; they start empty and stay that way unless you
   run the harvest yourself.
