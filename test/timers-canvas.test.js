@@ -97,7 +97,7 @@ describe('layout: always one callouts panel and one catch-all', () => {
     const s = r.sanitize({ panels: [{ id: 'x', kind: 'timers', groups: ['charm', 'nonsense'], x: 7, y: -3, w: 5, h: 99999, scale: 9 }] });
     const p = s.panels.find(q => q.id === 'x');
     expect(p.groups).toEqual(['charm']);
-    expect([p.x, p.y, p.w, p.h, p.scale]).toEqual([1, 0, 120, 3000, 2.5]);
+    expect([p.x, p.y, p.w, p.h, p.scale]).toEqual([1, -3, 120, 3000, 2.5]);   // y may now be negative (a box hanging off the top), down to POS_MIN
   });
 
   it('a garbage file is no layout at all, not a crash', () => {

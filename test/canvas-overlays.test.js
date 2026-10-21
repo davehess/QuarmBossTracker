@@ -35,7 +35,7 @@ describe('the canvas keeps overlay panels', () => {
     const ov = s.panels.filter(p => p.kind === 'overlay');
     expect(ov.map(p => [p.id, p.key])).toEqual([['a', 'charm'], ['c', 'hud']]);
     expect(ov[0].scale).toBe(1.25);
-    expect(ov[1]).toMatchObject({ x: 1, y: 0, w: 80, h: 3000, scale: 2.5 });
+    expect(ov[1]).toMatchObject({ x: 1, y: -1, w: 80, h: 3000, scale: 2.5 });   // y may now be negative (a box hanging off the top), down to POS_MIN
     expect(s.panels.filter(p => p.kind === 'callouts')).toHaveLength(1);
     expect(s.panels.filter(p => p.kind === 'timers' && p.all)).toHaveLength(1);
   });
