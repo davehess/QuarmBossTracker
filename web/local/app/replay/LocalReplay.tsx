@@ -42,6 +42,9 @@ function sessionNight(n: NightSummary, s: ReplaySession): NightSummary {
   };
 }
 
+/** A minute the recorder made under a raid code (the agent adds `raid_code` to that minute's row). */
+type CodedMinute = NightMinute & { raid_code?: string };
+
 const etDay = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' });
 const select = 'rounded border border-border bg-panel px-2 py-1.5 text-xs text-text';
 
@@ -50,11 +53,17 @@ export default function LocalReplay() {
   const [err, setErr] = useState<string | null>(null);
   const [nightKey, setNightKey] = useState<string | null>(null);
   const [sessionFrom, setSessionFrom] = useState<number | null>(null);
+  const [coded, setCoded] = useState<{ at: number; code: string }[]>([]);
 
   const load = useCallback(() => {
     fetch(`${API}/nights`, { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : Promise.reject(new Error(`the agent answered ${r.status}`))))
-      .then((j: { rows?: NightMinute[] }) => { setNights(summarizeNights(Array.isArray(j.rows) ? j.rows : [])); setErr(null); })
+      .then((j: { rows?: CodedMinute[] }) => {
+        const rows = Array.isArray(j.rows) ? j.rows : [];
+        setNights(summarizeNights(rows));
+        setCoded(rows.filter(r => r.raid_code).map(r => ({ at: Date.parse(r.minute_at), code: String(r.raid_code) })));
+        setErr(null);
+      })
       .catch((e: Error) => setErr(e.message || 'could not reach the agent'));
   }, []);
   // Once on open, and again when the window regains focus: a raid you just finished is in the list on tab-back.
@@ -69,6 +78,10 @@ export default function LocalReplay() {
     if (!night) return null;
     return night.sessions.find(s => s.from === sessionFrom) ?? night.sessions[defaultSessionIndex(night.sessions)] ?? null;
   }, [night, sessionFrom]);
+  // The raid codes that recorded minutes in [from, to): shown beside the night and the session so a code raid is told apart.
+  const codesIn = useCallback((from: number, to: number) => [...new Set(coded.filter(c => c.at >= from && c.at < to).map(c => c.code))], [coded]);
+  const nightCodes = night ? codesIn(Date.parse(night.first), Date.parse(night.last) + MINUTE_MS) : [];
+  const sessionCodes = session ? codesIn(session.from, session.to) : [];
   const bounded = useMemo<BoundedReplay | null>(
     () => (night && session ? { night: sessionNight(night, session), urls: localUrls(), flat: true } : null),
     [night, session]);
@@ -95,6 +108,7 @@ export default function LocalReplay() {
                 {nights.map(n => (
                   <option key={n.night_key} value={n.night_key}>
                     {n.night_key} · {etDay.format(Date.parse(n.first))} · {n.sessions.length} {n.sessions.length === 1 ? 'session' : 'sessions'}
+                    {codesIn(Date.parse(n.first), Date.parse(n.last) + MINUTE_MS).map(c => ` · Raid code ${c}`).join('')}
                   </option>
                 ))}
               </select>
@@ -102,9 +116,19 @@ export default function LocalReplay() {
             <label className="flex items-center gap-1.5">
               <span>Session</span>
               <select className={select} value={session?.from ?? ''} onChange={e => setSessionFrom(Number(e.target.value))}>
-                {(night?.sessions ?? []).map(s => <option key={s.from} value={s.from}>{sessionLabel(s)}</option>)}
+                {(night?.sessions ?? []).map(s => (
+                  <option key={s.from} value={s.from}>{sessionLabel(s)}{codesIn(s.from, s.to).map(c => ` · Raid code ${c}`).join('')}</option>
+                ))}
               </select>
             </label>
+            {(sessionCodes.length > 0 || nightCodes.length > 0) && (
+              <span className="flex flex-wrap items-center gap-1" data-raid-code={(sessionCodes[0] ?? nightCodes[0])}>
+                {(sessionCodes.length ? sessionCodes : nightCodes).map(c => (
+                  <span key={c} className="text-[10px] uppercase tracking-wide px-1.5 py-px rounded border border-blue/50 text-blue"
+                    title="Minutes recorded under this raid code, or merged in from another raider’s pack">Raid code {c}</span>
+                ))}
+              </span>
+            )}
           </div>
         )}
       </section>

@@ -17,6 +17,8 @@ type ListFight = {
   id: string; t: string; end: string; name: string; zone: string | null; boss: boolean; dur: number;
   mine: Mine[]; dmg: number; dps: number; detail: boolean; players_n: number | null; seen_total: number | null;
   guild: null | { damage: number; seen_pct: number | null; others: number; classification: string | null; mine_delta_pct: number | null };
+  /** Set when the fight was made under a raid code: the code, and whose side this PC was on ('guest' = not signed in to Wolf Pack). */
+  code?: string; role?: 'guest' | 'away'; imported?: boolean;
 };
 type ListResponse = { ok: boolean; total: number; truncated: boolean; hub: Hub; fights: ListFight[] };
 
@@ -40,6 +42,7 @@ type DetailResponse = {
   ok: boolean; hub: Hub; guild: Guild | null; diff: Diff | null;
   fight: {
     id: string; t: string; end: string; name: string; zone: string | null; boss: boolean; dur: number; mine: Mine[];
+    code?: string; role?: 'guest' | 'away'; imported?: boolean;
     detail: boolean; players: Player[] | null; healers: { name: string; heal: number; hps: number }[];
     deaths: { name: string; at_sec: number }[]; deaths_kept: boolean; sources: string[];
   };
@@ -58,6 +61,29 @@ function useFightId(): string {
   const [id, setId] = useState('');
   useEffect(() => { setId(new URLSearchParams(window.location.search).get('id') || ''); }, []);
   return id;
+}
+
+/**
+ * A fight made under a raid code: the code, and GUEST when this PC is not signed in to Wolf Pack (it was somebody else's
+ * raid and these are a guest's records), or "away raid" for a Wolf Pack member standing in another guild's raid. Nothing
+ * for a fight with no code.
+ */
+function CodeBadge({ code, role, imported }: { code?: string; role?: 'guest' | 'away'; imported?: boolean }) {
+  if (!code) return null;
+  return (
+    <span className="ml-2 inline-flex flex-wrap items-center gap-1 align-middle" data-raid-code={code}>
+      <span className="text-[9px] uppercase tracking-wide px-1 py-px rounded border border-blue/50 text-blue"
+        title={imported ? 'Made under this raid code; includes what another raider’s pack added' : 'Made under this raid code'}>Raid code {code}</span>
+      {role === 'guest' && (
+        <span data-guest="1" className="text-[9px] uppercase tracking-wide px-1 py-px rounded border border-orange/60 text-orange"
+          title="This PC is not signed in to Wolf Pack: a guest in someone else’s raid. It stays on this PC.">GUEST</span>
+      )}
+      {role === 'away' && (
+        <span data-away="1" className="text-[9px] uppercase tracking-wide px-1 py-px rounded border border-border text-dim"
+          title="A Wolf Pack member in someone else’s raid. It was not sent to the guild.">away raid</span>
+      )}
+    </span>
+  );
 }
 
 /** The guild record's state in one line: green when it is on this PC, a plain "not available" when it is not. */
@@ -168,6 +194,7 @@ function FightList() {
                   <td className="py-2 px-2">
                     <a href={`/local/parses/?id=${encodeURIComponent(f.id)}`} className="text-blue">{f.name}</a>
                     {f.boss && <span className="ml-2 text-[9px] uppercase tracking-wide px-1 py-px rounded border border-gold/40 text-gold">boss</span>}
+                    <CodeBadge code={f.code} role={f.role} imported={f.imported} />
                     {f.zone && <div className="text-[11px] text-dim">{f.zone}</div>}
                   </td>
                   <td className="py-2 px-2 text-right whitespace-nowrap">
@@ -267,6 +294,7 @@ function FightView({ id }: { id: string }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <h2 className="text-2xl text-gold">{f.name}</h2>
           {f.boss && <span className="text-[9px] uppercase tracking-wide px-1 py-px rounded border border-gold/40 text-gold">boss</span>}
+          <CodeBadge code={f.code} role={f.role} imported={f.imported} />
           {guild && <ClassificationChip classification={guild.classification} />}
         </div>
         <div className="text-sm text-dim mt-1">

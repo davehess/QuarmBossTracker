@@ -482,6 +482,7 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
     <button id="wpLocalFights" type="button" onclick="wpOpenLocalSite('parses')" title="Your own fights as this PC recorded them, every player it saw, and how they differ from the guild's record when you are a member (opens in its own window). Not the 📈 My parses tab above: that one graphs your numbers over time. Nothing leaves the PC.">📊 My fights (this PC)</button>
     <button id="wpLocalReplay" type="button" onclick="wpOpenLocalSite('replay')" title="Play back where you and your raid stood, from the recording Mimic keeps on this PC (opens in its own window). Nothing leaves the PC.">🎬 My replay</button>
     <button id="wpLocalRebuild" type="button" onclick="wpRebuildOpen()" title="Build your fights, raids, deaths and loot from the log files on this PC. Nothing is uploaded.">🔁 Rebuild from my logs</button>
+    <button id="wpLocalRaid" type="button" onclick="wpRaidCodeOpen()" title="In someone else's raid? Enter their raid code: this PC keeps the raid's data to itself, tagged with the code, for six hours. The tray's Open menu has the same item.">🎟 Join a raid with a code</button>
   </div>
   <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
        2026-09-23: "We're running out of horizontal real estate"). They went up to
@@ -4583,6 +4584,141 @@ function wpRebuildOpen() {
   };
   go(0);
 }
+
+// ── 🎟 Join a raid with a code (Logsync tab, above Rebuild; the rail's "On this PC" group and the tray open it) ──
+// The guild lead, 2026-10-21: a guest in someone else's raid keeps their data on their own PC. The code is a
+// label: while it is on, this PC tags what it records with the code and HOLDS the raid-wide uploads (roster,
+// fights, chat relay, loot, threat, trigger relays and the rest), so nothing raid-wide reaches the Wolf Pack
+// server. A pass lasts six hours and then ends on its own. The state lives in the agent (GET/POST /api/raid-code,
+// and `s.raidCode` on /api/state); the card reads it from the poll, so it asks for nothing of its own. The
+// minutes shown change once a minute, so the card rewrites once a minute at most. A raid pack (.rmpack) is the
+// way to share a raid with another PC: Save writes one, Merge reads someone else's into this PC's records.
+var _wpRc = { note: '', tone: '', busy: false };
+function wpRcDur(ms) {
+  var m = Math.max(0, Math.floor(ms / 60000)), h = Math.floor(m / 60);
+  return h > 0 ? h + 'h ' + (m % 60) + 'm' : m + 'm';
+}
+function wpRcHtml(s) {
+  var r = s && s.raidCode;
+  var h = '';
+  if (r) {
+    var now = Date.now();
+    var guest = r.role === 'guest';
+    h += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0">'
+       + '<span id="wpRcActive" style="font-size:20px;font-weight:700;letter-spacing:1px;border:1px solid var(--blue);border-radius:6px;padding:2px 12px">' + esc(r.code) + '</span>'
+       + '<span class="dim" style="font-size:12px">running ' + esc(wpRcDur(now - r.since)) + ' · ends in ' + esc(wpRcDur(r.expires - now)) + ' (a pass lasts ' + Math.round(r.ttl_ms / 3600000) + ' hours)</span>'
+       + '<button type="button" class="wp-btn" onclick="wpRcLeave()">✕ Leave this raid code</button></div>';
+    h += '<div style="font-size:12px;margin-bottom:6px">' + (guest
+      ? '<b>GUEST</b> · this PC is not signed in to Wolf Pack, so everything it records stays here and is marked GUEST.'
+      : '<b>Away raid</b> · you are in someone else\'s raid. Your own characters still sync; the raid itself stays on this PC.')
+      + ' <span class="dim">' + (r.held_total > 0 ? r.held_total.toLocaleString() + ' raid uploads held back so far.' : 'Nothing raid-wide leaves this PC while the code is on.') + '</span></div>';
+  } else {
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">'
+       + '<input id="wpRcCode" type="text" maxlength="12" placeholder="BC-7KQ2" autocomplete="off" spellcheck="false" style="width:120px;text-transform:uppercase;font-size:14px;letter-spacing:1px" onkeydown="if (event.key === \'Enter\') wpRcJoin()">'
+       + '<button type="button" class="wp-btn pri" onclick="wpRcJoin()">🎟 Join</button></div>';
+  }
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">'
+     + '<button type="button" class="wp-btn" onclick="wpRcExport()" title="Save everything this PC holds under ' + (r ? 'this code' : 'the code typed above') + ' as a raid pack (.rmpack) to hand to another raider. No Discord id and no account name goes in it.">⬇ Save raid pack</button>'
+     + '<button type="button" class="wp-btn" onclick="document.getElementById(\'wpRcFile\').click()" title="Merge a raid pack someone else saved into this PC\'s records. The same fight is not counted twice.">⬆ Merge a raid pack</button></div>';
+  if (_wpRc.note) h += '<div id="wpRcNote" style="color:' + (_wpRc.tone === 'ok' ? 'var(--green)' : 'var(--orange)') + ';font-size:12px;margin-bottom:6px">' + esc(_wpRc.note) + '</div>';
+  return h;
+}
+function wpRcRepaint(s) {
+  var el = document.getElementById('wpRaidCode');
+  if (!el) return;
+  if (!document.getElementById('wpRcBody')) {
+    el.innerHTML = '<h2>🎟 Join a raid with a code</h2>'
+      + '<div class="subtle">In someone else\'s raid? Enter the code they gave you. While it is on, what this PC records of the raid (fights, roster, loot) is kept here, tagged with the code, '
+      + 'and nothing raid-wide is sent to the Wolf Pack server. Your overlays keep working. The pass ends by itself after 6 hours. '
+      + 'Parses made under a code show a code badge, and GUEST on a PC that is not signed in.</div>'
+      + '<div id="wpRcBody"></div><input type="file" id="wpRcFile" accept=".rmpack,application/gzip" style="display:none" onchange="wpRcMerge(this)">';
+    el._wpLastHtml = null;
+  }
+  morphInto(document.getElementById('wpRcBody'), wpRcHtml(s));
+}
+function renderRaidCodeCard(s) {
+  wpRcRepaint(s);
+  var b = document.getElementById('wpLocalRaid');   // the rail button says so while a pass is on
+  if (b) {
+    var t = s && s.raidCode ? '🎟 Raid code · ' + s.raidCode.code : '🎟 Join a raid with a code';
+    if (b.textContent !== t) b.textContent = t;
+  }
+}
+function wpRcPost(body) {
+  return fetch('/api/raid-code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
+}
+function wpRcRefresh() {
+  fetch('/api/state', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (s) { wpRcRepaint(s); }, function () { });
+}
+function wpRcJoin() {
+  var inp = document.getElementById('wpRcCode');
+  var v = inp ? inp.value : '';
+  wpRcPost({ code: v }).then(function (x) {
+    _wpRc.note = x.ok ? '' : ((x.j && x.j.error) || 'Could not join.'); _wpRc.tone = x.ok ? 'ok' : '';
+    wpRcRefresh();
+  }, function () { _wpRc.note = 'The agent did not answer.'; _wpRc.tone = ''; wpRcRefresh(); });
+}
+function wpRcLeave() {
+  wpRcPost({ clear: true }).then(function () { _wpRc.note = 'Left the raid code. The raid-wide streams are back to normal.'; _wpRc.tone = 'ok'; wpRcRefresh(); },
+    function () { _wpRc.note = 'The agent did not answer.'; _wpRc.tone = ''; wpRcRefresh(); });
+}
+function wpRcExport() {
+  var act = document.getElementById('wpRcActive');
+  var inp = document.getElementById('wpRcCode');
+  var code = act ? act.textContent : (inp ? inp.value : '');
+  fetch('/api/local/raid-code/export?code=' + encodeURIComponent(code), { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) return r.json().then(function (j) { throw new Error((j && j.error) || 'Could not save the pack.'); });
+    var cd = r.headers.get('Content-Disposition') || '';
+    var m = /filename="([^"]+)"/.exec(cd);
+    return r.blob().then(function (b) { return { b: b, name: m ? m[1] : 'raid.rmpack' }; });
+  }).then(function (x) {
+    var a = document.createElement('a');
+    var u = URL.createObjectURL(x.b);
+    a.href = u; a.download = x.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(u); }, 10000);
+    _wpRc.note = 'Saved ' + x.name + '.'; _wpRc.tone = 'ok'; wpRcRefresh();
+  }).catch(function (e) { _wpRc.note = String((e && e.message) || e); _wpRc.tone = ''; wpRcRefresh(); });
+}
+function wpRcMerge(inp) {
+  var f = inp && inp.files && inp.files[0];
+  if (!f) return;
+  fetch('/api/local/raid-code/import', { method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body: f })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (x) {
+      if (!x.ok) { _wpRc.note = (x.j && x.j.error) || 'Could not merge that pack.'; _wpRc.tone = ''; return; }
+      var j = x.j;
+      _wpRc.note = 'Merged ' + j.code + ': ' + j.fights.added + ' new fights, ' + j.fights.merged + ' already here, '
+        + (j.minutes.added + j.minutes.merged) + ' minutes of positions. Look under My fights and My replay.';
+      _wpRc.tone = 'ok';
+    }, function () { _wpRc.note = 'The agent did not answer.'; _wpRc.tone = ''; })
+    .then(function () { inp.value = ''; wpRcRefresh(); });
+}
+// The rail's "Join a raid with a code" and the tray's: the Logsync tab, scrolled to the card.
+function wpRaidCodeOpen() {
+  var tab = document.querySelector('.nav button[data-tab="optin"]');
+  if (tab && !tab.classList.contains('active')) tab.click();
+  var go = function (n) {
+    var card = document.getElementById('wpRaidCode');
+    if (!card) { if (n < 12) setTimeout(function () { go(n + 1); }, 200); return; }
+    var bar = document.getElementById('wpTopBar');
+    var pad = (bar ? bar.getBoundingClientRect().height : 0) + 10;
+    window.scrollTo({ top: Math.max(0, card.getBoundingClientRect().top + window.scrollY - pad), behavior: 'smooth' });
+    var inp = document.getElementById('wpRcCode');
+    if (inp) { try { inp.focus(); } catch (e) { void e; } }
+  };
+  go(0);
+}
+// #raidcode opens the card — the tray's "Join a raid with a code" item loads the dashboard with that hash, as #myparses does.
+(function () {
+  function go() {
+    if ((location.hash || '').toLowerCase() !== '#raidcode') return;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { void e; }
+    wpRaidCodeOpen();
+  }
+  go();
+  window.addEventListener('hashchange', go);
+})();
 
 // ── 📈 My parses ────────────────────────────────────────────────────────────
 // A member asked (2026-10-06) for "a page in Mimic that graphs my parses over a variable time window"; the
@@ -8776,6 +8912,7 @@ function renderOptin(o) {
   // 🔁 Rebuild from my logs (the guild lead, 2026-10-21): its own placeholder, filled by renderRebuildCard, so the
   // progress it shows does not rewrite this whole tab every poll.
   wpRebuildSetFiles(o);
+  h += '<div id="wpRaidCode" class="card wide"></div>';   // 🎟 Join a raid with a code: filled by renderRaidCodeCard
   h += '<div id="wpRebuild" class="card wide"></div>';
 
   // Imported log backups (the guild lead, 2026-09-13). Inside Mimic: native pickers plus
@@ -9143,7 +9280,7 @@ async function refresh() {
                      // below, same rule as renderDash → renderMeCard.
                      ['diag', renderDiag],
                      ['netmeter', renderNetMeter],
-                     ['rebuild', renderRebuildCard],
+                     ['rebuild', renderRebuildCard], ['raidcode', renderRaidCodeCard],
                      ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['mutedtimers', renderMutedTimers], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
