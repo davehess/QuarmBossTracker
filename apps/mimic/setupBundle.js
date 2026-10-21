@@ -102,6 +102,7 @@ const SHARED_BY_KEY = new Map(SHARED.map(r => [r[0], r]));
 const PRIVATE_KEYS = new Set([
   'wp:bufferClass',                       // the class this person buffs as
   'wp:bq:collapsed', 'wp_cmd_collapsed',  // which sections are folded
+  'wp_cmd_dead_dismissed',                // Last deaths rows put away (who + when, this session's deaths)
   'wp_ext_hidden',                        // mobs / names hidden by hand
   'wpCharmPetsOpen',                      // a panel's open state
   'wp:pop:enc', 'wp:pop:quest',           // where the person is in the Planes of Power
