@@ -24,6 +24,30 @@ const WP_IS_DOCKED = (() => {
   try { return window.top !== window.self; } catch { return false; }
 })();
 
+// A pane on the Timers canvas (Mimic 3.0 alpha) is docked in every sense above,
+// and one more: the canvas gives each panel its own ✥, its size and its hide,
+// so the overlay's own corner ✥/✕ and its setup bar step aside — dragging the
+// page's own ✥ would try to move the screen-sized canvas window. The canvas
+// marks its panes with ?wpcanvas=1 (no overlay reads its own query string).
+const WP_IN_CANVAS = WP_IS_DOCKED && (() => {
+  try { return /[?&]wpcanvas=1(&|$)/.test(String(window.location.search || '')); } catch { return false; }
+})();
+if (WP_IN_CANVAS) {
+  document.addEventListener('DOMContentLoaded', function () {
+    try {
+      const st = document.createElement('style');
+      st.textContent = '#move-btn,#hide-btn,#drag-controls,#setupbar{display:none!important}';
+      // The page's OWN options live in its setup bar (Charm's "recharm warn at"), marked data-wp-opt. The panel's
+      // ⚙ → Page options puts body.wp-opts on this page, and then the bar shows in the page's flow with ONLY those
+      // controls: the page's own inputs and handlers, reachable on the canvas (the guild lead, 2026-10-21).
+      st.textContent += 'body.wp-in-canvas.wp-opts #setupbar{display:flex!important;position:static;margin:0;flex-wrap:wrap}'
+        + 'body.wp-in-canvas.wp-opts #setupbar > :not([data-wp-opt]){display:none!important}';
+      document.head.appendChild(st);
+      document.body.classList.add('wp-in-canvas');
+    } catch (e) { /* page without a head — nothing to hide */ }
+  });
+}
+
 // A pane's identity is the file it was loaded from — the dock points each
 // iframe at that overlay's own .html.
 function _wpDockKey() {
@@ -73,10 +97,17 @@ function _wpOverlayDoc() {
   }
   return _wpIsOverlayDoc === true;
 }
+// What takes the mouse. canvas.html keeps a copy of this list (PANEL_CTL: the Canvas page cannot require this file);
+// test/canvas-clicks.test.js holds the two equal. A <summary> is a control (a collapsible header), and anything the
+// page styles cursor:pointer is clickable by the page's own account of itself (the guild lead, 2026-10-21: the
+// Command Center's section headers, ✕s and "clear all" on the Canvas were spans nobody had marked, the FB-49 class again).
+const WP_INTERACT_SEL = 'button, a, input, select, textarea, summary, [role="button"], [data-wp-interact]';
 function _wpIsInteractive(el) {
+  // cursor is inherited, so the element under the pointer answers for its ancestors too.
+  try { if (el && el.nodeType === 1 && getComputedStyle(el).cursor === 'pointer') return true; } catch (e) { /* no style: fall to the list */ }
   while (el && el.nodeType === 1 && el !== document.body) {
     try {
-      if (el.matches('button, a, input, select, textarea, [role="button"], [data-wp-interact]')) return true;
+      if (el.matches(WP_INTERACT_SEL)) return true;
     } catch (e) { return false; }
     el = el.parentElement;
   }
@@ -216,7 +247,8 @@ function _wpOverSolid(el) {
   if (document.getElementById('panels') && document.body && document.body.hasAttribute('data-wp-overlay')) {
     if (!(el && el.closest && el.closest('#panels > .panel'))) return false;
   }
-  if (document.body && document.body.classList.contains('wp-backdrop')) return true;
+  // (not on the Canvas: there the class is only a default, so a panel's own plate is read below like any other)
+  if (document.body && document.body.classList.contains('wp-backdrop') && !document.getElementById('screenBtn')) return true;
   while (el && el.nodeType === 1 && el !== document.documentElement) {
     try { if (_wpAlpha(getComputedStyle(el).backgroundColor) >= 0.35) return true; } catch (e) { return false; }
     el = el.parentElement;
@@ -256,8 +288,15 @@ document.addEventListener('mousemove', function (ev) {
 // load-time pull covers windows created after the last push. Gated to overlay
 // documents (the main window / settings must never get a forced background).
 ipcRenderer.on('wp-backdrop', function (_e, on) {
-  try { if (_wpOverlayDoc()) document.body.classList.toggle('wp-backdrop', !!on); } catch (e) {}
+  try { if (_wpOverlayDoc() && !_wpCanvasPart()) document.body.classList.toggle('wp-backdrop', !!on); } catch (e) {}
 });
+// A panel frame inside the Timers canvas (triggers.html?part=timers|callouts, in an iframe). The canvas plates each
+// panel's ROOT itself, and a push from main reaches only the top frame, so a plate the frame added to itself at
+// load could never be cleared again: "background off" left the old plate behind. Such a frame stays unplated.
+// (map.html?part=timers is a top-level window, so it is not matched.)
+function _wpCanvasPart() {
+  try { return WP_IS_DOCKED && /[?&]part=(timers|callouts)(&|$)/.test(String(window.location.search || '')); } catch (e) { return false; }
+}
 // Live overlay zoom → --wp-zoom CSS var, pushed by main on every scale apply
 // and tween step. Feeds the counter-zoom rules injected below that keep the
 // setup bar at one painted size spanning the window width no matter the
@@ -512,8 +551,9 @@ document.addEventListener('DOMContentLoaded', function () {
       + 'body.wp-backdrop:not(:has(#wrap)):not(:has(#screenBtn)){background:rgb(8 10 14 / calc(max(var(--bg-alpha,0.92), 0.92) * var(--wp-content-alpha,1))) !important;border-radius:8px}'
       // The Timers canvas is a screen-sized window, so a plate on its <body> blacked out the whole screen
       // (the guild lead, 2026-09-29: "background on the timer canvas just makes the whole screen dark").
-      // There each panel gets the plate instead. #screenBtn is the canvas's own toolbar button.
-      + 'body.wp-backdrop:has(#screenBtn) #panels > .panel:not(.off){background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92));border-radius:6px}'
+      // It gets no plate from here at all: each panel and piece carries its own Background (canvas.html
+      // `.panel.back`; the guild lead, 2026-10-19: "Canvas items should be able to individually set background,
+      // or avoid the all-toggle"), and this body class is only the Canvas's default for items that never chose.
       // Setup strip must survive narrow windows: wrap onto a second row
       // instead of pushing the Done button past the right edge.
       + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
@@ -548,7 +588,7 @@ document.addEventListener('DOMContentLoaded', function () {
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
       if (s && s.pointer === false) _wpPointerOn = false;   // the stand-in pointer switch, pulled at load
-      if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
+      if (s && s.backdrop && _wpOverlayDoc() && !_wpCanvasPart()) document.body.classList.add('wp-backdrop');
       if (s && s.theme) _wpApplyTheme(s.theme);
       if (s && s.growUp) _wpApplyGrowUp(true);   // the top-right grip, pulled like the backdrop
       // Mini is PULLED at load, not only pushed. A window created while its
@@ -662,6 +702,9 @@ function _buildOverlayMenu(onClose, state) {
   // Both keep the window as tall as the menu made it: the setup bar needs the room.
   menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => { _wpMenuKeepRoom = true; return ipcRenderer.invoke('set-setup-mode', true); }));
   menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => { _wpMenuKeepRoom = true; return ipcRenderer.invoke('set-setup-mode-this', true); }));
+  // 3.0 alpha: the canvas editor from any overlay's corner (the guild lead, 2026-09-29: "I have no way of
+  // bringing up the overlay editing other than the taskbar now").
+  menu.appendChild(mkItem('🧩 Arrange the canvas (pieces)', '#1f3d57', () => ipcRenderer.invoke('canvas-edit', true)));
   // Visibility + layout actions (a member, 2026-07-10). `state` comes from
   // main's wp-overlay-menu-state so the toggles show their current value.
   const st = state || {};
@@ -843,6 +886,40 @@ function _openOverlayMenu(state) {
   }, 0);
 }
 
+// ── Content watcher: a page that has fit once keeps fitting (the guild lead, 2026-10-19: "we should always
+// fit vertically to content with overlays, whether growing up or down") ────────────────────────────
+// Most overlay pages ask for a height only when they repaint their HTML, so a change that is not a repaint
+// (a section opening, a font loading, a class flipping a row on) left the window the old size until the next
+// poll rewrote something. The first time a page hands _autoFitOverlay an element, that element is watched
+// here: any size change of it, or structural change inside it, re-runs the SAME fit (so the open-menu hold,
+// the dock opt-out and main's hysteresis, grow direction and width hold all still apply). One IPC, no
+// per-overlay code. Pages that call overlayAutoHeight(h) directly (nine of them, several with their own
+// fixed-height modes) are NOT watched: this cannot know what number they mean.
+// Guard: an element that tracks its window (height:100%) reads window + 12 after every fit, so a watched
+// element whose height only ever creeps up by the buffer is a feedback loop and the watch ends itself.
+const WP_FIT_WATCH_MS = 150;
+const WP_FIT_WATCH_MAX_CREEP = 6;
+const _wpFitWatched = new WeakSet();
+function _wpWatchFitContent(el) {
+  if (WP_IS_DOCKED || !el || _wpFitWatched.has(el)) return;
+  _wpFitWatched.add(el);
+  const st = { timer: null, last: 0, creep: 0, dead: false, obs: [] };
+  const run = function () {
+    st.timer = null;
+    if (st.dead || !el.isConnected) return;
+    const h = (el.scrollHeight || 0) + 12;
+    if (h === st.last) return;
+    if (h > st.last && h - st.last <= 16) {
+      if (++st.creep >= WP_FIT_WATCH_MAX_CREEP) { st.dead = true; st.obs.forEach(function (o) { try { o.disconnect(); } catch (e) {} }); return; }
+    } else st.creep = 0;
+    st.last = h;
+    _autoFitOverlay(el);
+  };
+  const kick = function () { if (!st.dead && !st.timer) st.timer = setTimeout(run, WP_FIT_WATCH_MS); };
+  try { const ro = new ResizeObserver(kick); ro.observe(el); st.obs.push(ro); } catch (e) { void e; }
+  try { const mo = new MutationObserver(kick); mo.observe(el, { childList: true, subtree: true }); st.obs.push(mo); } catch (e) { void e; }
+}
+
 // Ask main to size the window to the renderer's content height. Pass the
 // wrap element whose scrollHeight defines the desired height; falls back to
 // document.body if nothing's passed. Adds a small buffer so the bottom of
@@ -854,7 +931,7 @@ function _autoFitOverlay(wrapEl) {
   try {
     _wpPageUsesAutoFit = true;
     _wpLastFitWasRaw = false;
-    if (wrapEl) _wpLastFitEl = wrapEl;
+    if (wrapEl) { _wpLastFitEl = wrapEl; try { _wpWatchFitContent(wrapEl); } catch (e) { void e; } }
     // Chrome menu open → defer; the menu's close handler replays the fit.
     // Bounded (#159): a stuck menu flag can pause fits at most MENU_FIT_PAUSE_MS.
     if (_menuFitPaused()) { _wpMenuSuppressedFit = wrapEl || null; return; }
@@ -895,6 +972,12 @@ contextBridge.exposeInMainWorld('mimic', {
   // Resource use in its own window — the dashboard's "what does Mimic cost?"
   // link calls this, same as the tray entry.
   openResources:       ()         => ipcRenderer.invoke('open-resources'),
+  // Feedback in its own window — the dashboard's 💬 Feedback button and the tray item.
+  // Resolves false when the agent has no port yet (the page then opens its in-page card).
+  openFeedback:        ()         => ipcRenderer.invoke('open-feedback'),
+  // A page of the local site ("On this PC", served by the agent under /local/) in its own window: the
+  // dashboard rail's Inventory item and the tray item. Resolves false when the agent has no port yet.
+  openLocalSite:       (page)     => ipcRenderer.invoke('open-local-site', page),
   createPanelOverlay:  (panelKey) => ipcRenderer.invoke('create-panel-overlay', panelKey),
   getConfig:     () => ipcRenderer.invoke('get-config'),
   isMuted:       () => _wpMuted,
@@ -902,6 +985,12 @@ contextBridge.exposeInMainWorld('mimic', {
   listSounds:       ()     => ipcRenderer.invoke('sounds:list'),
   resolveSound:     (name) => ipcRenderer.invoke('sounds:resolve', name),
   openSoundsFolder: ()     => ipcRenderer.invoke('sounds:open-folder'),
+  // Downloaded callout voices (neuralVoice.js): what is installed, fetch / delete one, and a phrase as a WAV
+  // (null = speak it with the Windows voice instead).
+  voiceStatus:      ()                    => ipcRenderer.invoke('voice:status'),
+  voiceInstall:     (engine, voice, accept) => ipcRenderer.invoke('voice:install', engine, voice, accept),
+  voiceRemove:      (engine, voice)       => ipcRenderer.invoke('voice:remove', engine, voice),
+  voiceSynth:       (text, spec)          => ipcRenderer.invoke('voice:synth', text, spec),
   // A JSON POST to one of the engine's pronunciation routes (main keeps the list); → { ok, status, body }.
   agentPost:        (route, body) => ipcRenderer.invoke('agent-post', route, body),
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),
@@ -960,9 +1049,11 @@ contextBridge.exposeInMainWorld('mimic', {
   hotkeyCapture:   (on)   => ipcRenderer.invoke('hotkey-capture', !!on),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
-  // ✨ Setup walkthrough (welcome.html, layout 'a' or 'b') and its relay for the two agent
+  // ✨ Setup walkthrough (welcome.html, the trail) and its relay for the two agent
   // POSTs it makes: 'import' old logs, 'backfill' the main's log.
-  openWelcome:     (v)    => ipcRenderer.invoke('open-welcome', v === 'b' ? 'b' : 'a'),
+  openWelcome:     ()     => ipcRenderer.invoke('open-welcome'),
+  // 🧭 Take the tour again: the overlay steps of the same page (tray item and dashboard button).
+  openTour:        ()     => ipcRenderer.invoke('open-tour'),
   welcomeOptin:    (action, paths) => ipcRenderer.invoke('welcome-optin', action, paths),
   // Main / alt · Inventory only · Hide completely (2026-10-06). characterModes: the website's family merged
   // with this PC's characters. setCharacterMode: the one call that makes a choice — the engine asks
@@ -1085,7 +1176,7 @@ contextBridge.exposeInMainWorld('mimic', {
     : ipcRenderer.invoke('hide-overlay')),
 
   // ── Chat overlay (chat.html) ──────────────────────────────────────────────
-  // getChatPrefs(char) → { fontSize, group, officer, custom, tells, melee, spells, skills, off:[group ids], offChannels:[channel names] } for that character;
+  // getChatPrefs(char) → { fontSize, group, officer, custom, tells, melee, spells, skills, loot, random, other, away, off:[group ids], offChannels:[channel names] } for that character;
   // setChatPrefs(char, patch) stores a whitelisted patch in Mimic's config and returns the same shape.
   getChatPrefs:      (char)        => ipcRenderer.invoke('chat-prefs-get', char || ''),
   setChatPrefs:      (char, patch) => ipcRenderer.invoke('chat-prefs-set', char || '', patch || {}),
@@ -1113,7 +1204,27 @@ contextBridge.exposeInMainWorld('mimic', {
   canvasSave:        (layout) => ipcRenderer.invoke('canvas-save', layout),
   canvasEdit:        (on)     => ipcRenderer.invoke('canvas-edit', !!on),
   canvasNextDisplay: ()       => ipcRenderer.invoke('canvas-next-display'),
+  // "Span all screens": one Canvas over every monitor (same scaling only). → { ok, span, why }
+  canvasSpan:        (on)     => ipcRenderer.invoke('canvas-span', !!on),
+  // The panel menu's "Background" row: the SAME writer as the shared overlay menu, Ctrl+Shift+B and the dashboard
+  // button (main's wp-backdrop-toggle finds the key from the sender window). Resolves to the new on/off state.
+  toggleBackdropThis: ()      => ipcRenderer.invoke('wp-backdrop-toggle'),
   onCanvasEdit:      (cb)     => ipcRenderer.on('canvas-edit', (_e, on) => cb(!!on)),
+  // Saved groups of pieces (3.0 alpha), one list for every screen.
+  canvasGroups:      ()       => ipcRenderer.invoke('canvas-groups'),
+  canvasGroupsSave:  (groups) => ipcRenderer.invoke('canvas-groups-save', groups),
+  // ⌨ A hotkey per saved group: canvasGroupHotkey(id, accel | '') sets or clears it → { ok, keys, blocked };
+  // toggleCanvasGroup(id) is the key's own press (show / hide the group); onCanvasGroupOps hears a press
+  // made while the Canvas is up (it then asks canvasState for it).
+  canvasGroupHotkey: (id, accel) => ipcRenderer.invoke('canvas-group-hotkey', id, accel || ''),
+  toggleCanvasGroup: (id)     => ipcRenderer.invoke('canvas-group-toggle', id),
+  onCanvasGroupOps:  (cb)     => ipcRenderer.on('canvas-group-ops', () => cb()),
+  // ▭ An overlay's Mini mode (or its 📌) changed from anywhere: a frame has no window to be pushed to, so the Canvas reads it again.
+  onCanvasMini:      (cb)     => ipcRenderer.on('canvas-mini', () => cb()),
+  // Where the cursor is on the Canvas ({x, y} in its CSS pixels, null off the window), told by main while the Canvas is up:
+  // a click-through window may never be handed the moves over a panel's frame, and the cursor's position is the one fact
+  // that does not depend on that.
+  onCanvasCursor:    (cb)     => ipcRenderer.on('canvas-cursor', (_e, p) => cb(p && Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: p.x, y: p.y } : null)),
 
   // ── Dock ──────────────────────────────────────────────────────────────────
   // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()
@@ -1167,6 +1278,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // Named layouts per character (uiLayouts.js): list / save (id = update in place) / rename / delete /
   // switch (queued for after logout when EQ is running) / cancel a queued switch / import from a backup.
   uiStudioLayoutList:     (character, eqDir) => ipcRenderer.invoke('ui-studio-layout-list', character, eqDir),
+  uiStudioLiveInfo:       (character, eqDir) => ipcRenderer.invoke('ui-studio-live-info', character, eqDir),
   uiStudioLayoutSave:     (params)  => ipcRenderer.invoke('ui-studio-layout-save', params),
   uiStudioLayoutRename:   (params)  => ipcRenderer.invoke('ui-studio-layout-rename', params),
   uiStudioLayoutDelete:   (params)  => ipcRenderer.invoke('ui-studio-layout-delete', params),
@@ -1229,6 +1341,24 @@ contextBridge.exposeInMainWorld('mimic', {
   // command({ verb: 'save'|'load'|'next'|'prev'|'delete', name }) → { ok, message }.
   overlaySetsList:    ()    => ipcRenderer.invoke('overlay-sets-list'),
   overlaySetsCommand: (cmd) => ipcRenderer.invoke('overlay-sets-command', cmd),
+  // 📤📥 A Canvas layout as a file (Settings, the dashboard's Overlays tab): export({ setName?, title?,
+  // description?, author?, mode? }) → { ok, message, nudge?, canceled? }; import() picks a file in Mimic's own
+  // window, shows what it holds, and adds it as a new set → { ok, message, canceled? }. No path crosses the bridge.
+  overlayLayoutExport: (opts) => ipcRenderer.invoke('overlay-layout-export', opts),
+  overlayLayoutImport: ()     => ipcRenderer.invoke('overlay-layout-import'),
+  // 📦🔗 A WHOLE setup (overlay layouts, HUD, options, personal triggers, "What you hear") as a file or a six-character
+  // code (DECISIONS §383). export/code({ title?, description?, author? }) → { ok, message, code?, canceled?, told? };
+  // import() picks a file and opens the preview window; enterCode() opens it at the code box. Neither the sign-in nor any
+  // path crosses the bridge. The preview window's own calls are setupShare* below (main answers only that window).
+  overlaySetupExport:    (opts) => ipcRenderer.invoke('overlay-setup-export', opts),
+  overlaySetupCode:      (opts) => ipcRenderer.invoke('overlay-setup-code', opts),
+  overlaySetupImport:    ()     => ipcRenderer.invoke('overlay-setup-import'),
+  overlaySetupEnterCode: ()     => ipcRenderer.invoke('overlay-setup-enter-code'),
+  setupShareState:  ()                    => ipcRenderer.invoke('setup-share-state'),
+  setupShareLookup: (code)                => ipcRenderer.invoke('setup-share-lookup', code),
+  setupShareApply:  (selection, assign)   => ipcRenderer.invoke('setup-share-apply', selection, assign),
+  setupShareUndo:   ()                    => ipcRenderer.invoke('setup-share-undo'),
+  setupShareClose:  ()                    => ipcRenderer.invoke('setup-share-close'),
 
   // Diagnostics.
   getAgentLogTail: (lines) => ipcRenderer.invoke('get-agent-log-tail', lines),
@@ -1256,7 +1386,9 @@ contextBridge.exposeInMainWorld('mimic', {
 // The `?overlay=` PANEL windows below are different and still need it — they
 // are the dashboard rendered into a small floating window with no chrome of
 // its own.
-const _isAgentServedOverlay = location.pathname.startsWith('/overlay/');
+// The local site ("On this PC", /local/, 2026-10-21) is the same case: a page with its own header, where a fixed
+// ⚙ at top-right would sit on top of it.
+const _isAgentServedOverlay = location.pathname.startsWith('/overlay/') || location.pathname.startsWith('/local/');
 if (location.protocol === 'http:' && !_isAgentServedOverlay) {
   const ready = (fn) => {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);

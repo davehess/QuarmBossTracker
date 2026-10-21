@@ -9,7 +9,7 @@
      timer"), with the Zeal health check and this PC's clock offset one click
      down (the guild lead: "the zeal health info could still be accessible
      there. could also display clock skew offset").
-     Two layouts to choose between on beta: bars and dials (▭ / ◯). */
+     Bars only (the guild lead picked them over dials, DECISIONS §383): a number plus a bar that drains. */
   /* --bg-alpha: card-surface alpha, driven by slider via main → preload
      'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
   :root{ --bg-alpha:0.5; --srv:#58a6ff; --mob:#a371f7; }
@@ -21,9 +21,6 @@
   .title .grow{flex:1}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
-  #layoutBtn{background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
-    border-radius:4px;font:inherit;font-size:11px;line-height:1;padding:2px 5px;cursor:pointer}
-  #layoutBtn:hover{color:#e6edf3;border-color:#8b949e}
   .card{background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 7px}
 
   /* Bars: seconds left, and a bar that drains toward the left. One grid for
@@ -39,17 +36,6 @@
   .tk.srv .tv{color:var(--srv)} .tk.srv .bar i{background:var(--srv)}
   .tk.mob .tv{color:var(--mob)} .tk.mob .bar i{background:var(--mob)}
   .tk .tn{grid-column:1 / -1;color:#6e7681;font-size:10px;line-height:1.2;margin-top:-2px}
-
-  /* Dials: one ring per tick, seconds in the middle. */
-  .dials{display:flex;flex-wrap:wrap;gap:8px}
-  .dl{display:flex;flex-direction:column;align-items:center;width:58px;text-shadow:0 1px 2px #000}
-  .dl svg{width:52px;height:52px;display:block}
-  .dl .ring-bg{fill:none;stroke:rgba(255,255,255,0.14);stroke-width:5}
-  .dl .ring{fill:none;stroke-width:5;stroke-linecap:round}
-  .dl.srv .ring{stroke:var(--srv)} .dl.mob .ring{stroke:var(--mob)}
-  .dl .num{font-size:15px;font-weight:700;dominant-baseline:central;text-anchor:middle;fill:#fff}
-  .dl .cap{font-size:10px;color:#c9d1d9;max-width:58px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .dl.mob .cap{color:#d2b8ff}
 
   #empty{color:rgba(255,255,255,0.55);font-size:11px;text-shadow:0 1px 2px #000;padding:2px 0}
 
@@ -113,6 +99,10 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#2da68a;border-color:#2da68a}
   body.setup #move-btn{top:30px}
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the window's padding and the title's gutters go. */
+  body.wp-in-canvas #wrap{padding:2px 3px}
+  body.wp-in-canvas .title{padding-left:0;padding-right:0}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -127,8 +117,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span>⏱ Tick</span><span class="grow"></span>
-      <button id="layoutBtn" title="Show as dials">◯</button></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span>⏱ Tick</span><span class="grow"></span></div>
     <div id="ticks" class="card"></div>
     <div id="status" title="Click for the Zeal health check and this PC's clock"></div>
     <div id="net" data-wp-interact style="display:none"></div>
@@ -212,6 +201,30 @@
     var d = (at - now) % TICK_MS;
     return d <= 0 ? d + TICK_MS : d;
   }
+  // The agent's boundary is an estimate with 0-300 ms of flush-delay noise per poll, so using each one as it came made the
+  // countdown jump (FB-85, a raider: "very jumpy instead of not a smooth countdown"). Keep the anchor and move it only as
+  // far as the real drift: error taken modulo the cycle; under 250 ms ignored; up to 1.5 s closed a quarter per poll; past
+  // 1.5 s, or with no anchor yet, taken as it comes. The same function sits in triggers.html (separate window).
+  function smoothAnchor(prev, next, cycle){
+    if (prev == null || !(cycle > 0)) return next;
+    var err = (((next - prev) % cycle) + cycle) % cycle;
+    if (err > cycle / 2) err -= cycle;
+    var a = Math.abs(err);
+    if (a < 250) return prev;
+    if (a > 1500) return next;
+    return prev + err * 0.25;
+  }
+  var _anchors = {};   // row key → the smoothed boundary
+  function smoothRows(rows){
+    var kept = {};
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (r.at == null) continue;
+      r.at = kept[r.key] = smoothAnchor(_anchors[r.key], r.at, TICK_MS);
+    }
+    _anchors = kept;
+    return rows;
+  }
   // One row per character streaming Zeal (server tick), then one per active
   // charm (the mob's own tick — learned from DoT ticks or a break, "?" until
   // then). A single character is just "Server tick".
@@ -251,18 +264,7 @@
     try { window.mimic.overlayAutoHeight(w.scrollHeight + 8); } catch (e) {}
   }
 
-  var layout = 'bars';
-  try { if (localStorage.getItem('wp:tick:layout') === 'dials') layout = 'dials'; } catch (e) {}
   try { if (localStorage.getItem('wp:tick:detail') === '1') document.body.classList.add('show-detail'); } catch (e) {}
-  var layoutBtn = document.getElementById('layoutBtn');
-  function _paintLayoutBtn(){ layoutBtn.textContent = layout === 'bars' ? '◯' : '▭'; layoutBtn.title = layout === 'bars' ? 'Show as dials' : 'Show as bars'; }
-  _paintLayoutBtn();
-  _hoverInteract(layoutBtn);
-  layoutBtn.addEventListener('click', function(){
-    layout = layout === 'bars' ? 'dials' : 'bars';
-    try { localStorage.setItem('wp:tick:layout', layout); } catch (e) {}
-    _paintLayoutBtn(); _rowsSig = null; renderTicks(); _requestAutoHeight();
-  });
   var statusEl = document.getElementById('status');
   _hoverInteract(statusEl);
   statusEl.addEventListener('click', function(){
@@ -276,15 +278,14 @@
   // just moves numbers and widths, ten times a second.
   var _rows = [], _rowsSig = null, _haveZeal = false;
   var ticksEl = document.getElementById('ticks');
-  var R = 22, C = 2 * Math.PI * R;
   function renderTicks(){
-    var sig = layout + '|' + _haveZeal + '|' + _rows.map(function(r){ return r.key + (r.at == null ? '?' : ''); }).join(',');
+    var sig = _haveZeal + '|' + _rows.map(function(r){ return r.key + (r.at == null ? '?' : ''); }).join(',');
     if (sig !== _rowsSig) {
       _rowsSig = sig;
       var html = '';
       if (!_rows.length) {
         html = '<div id="empty">' + (_haveZeal ? 'waiting for the server tick from Zeal…' : 'needs Zeal — start EverQuest with Zeal loaded') + '</div>';
-      } else if (layout === 'bars') {
+      } else {
         html = '<div class="bars">';
         for (var i = 0; i < _rows.length; i++) {
           var r = _rows[i];
@@ -293,18 +294,6 @@
           html += '<div class="tk ' + r.kind + '" data-i="' + i + '"><span class="tl" title="' + esc(r.note || r.label) + '">' + esc(r.label) + '</span>'
                 + '<span class="tv">—</span><span class="bar"><i></i></span>'
                 + (r.note && r.at == null ? '<span class="tn">' + esc(r.note) + '</span>' : '') + '</div>';
-        }
-        html += '</div>';
-      } else {
-        html = '<div class="dials">';
-        for (var k = 0; k < _rows.length; k++) {
-          var d = _rows[k];
-          html += '<div class="dl ' + d.kind + '" data-i="' + k + '" title="' + esc(d.note || d.label) + '">'
-                + '<svg viewBox="0 0 52 52"><circle class="ring-bg" cx="26" cy="26" r="' + R + '"></circle>'
-                + '<circle class="ring" cx="26" cy="26" r="' + R + '" transform="rotate(-90 26 26)"'
-                + ' stroke-dasharray="' + C.toFixed(2) + '" stroke-dashoffset="' + C.toFixed(2) + '"></circle>'
-                + '<text class="num" x="26" y="26">—</text></svg>'
-                + '<span class="cap">' + esc(d.label) + '</span></div>';
         }
         html += '</div>';
       }
@@ -317,14 +306,8 @@
       var row = _rows[+els[n].getAttribute('data-i')];
       if (!row) continue;
       var left = tickLeft(row.at, now);
-      var txt = left == null ? '?' : (layout === 'bars' ? (row.rough ? '~' : '') + (left / 1000).toFixed(1) : String(Math.ceil(left / 1000)));
-      if (layout === 'bars') {
-        els[n].querySelector('.tv').textContent = txt;
-        els[n].querySelector('.bar i').style.width = left == null ? '0%' : ((left / TICK_MS) * 100).toFixed(1) + '%';
-      } else {
-        els[n].querySelector('.num').textContent = txt;
-        els[n].querySelector('.ring').setAttribute('stroke-dashoffset', left == null ? C.toFixed(2) : (C * (1 - left / TICK_MS)).toFixed(2));
-      }
+      els[n].querySelector('.tv').textContent = left == null ? '?' : (row.rough ? '~' : '') + (left / 1000).toFixed(1);
+      els[n].querySelector('.bar i').style.width = left == null ? '0%' : ((left / TICK_MS) * 100).toFixed(1) + '%';
     }
   }
   setInterval(renderTicks, 100);
@@ -360,7 +343,7 @@
       const pids = Array.isArray(z.connectedPids) ? z.connectedPids : [];
       const ageMs = lastEventAt ? (Date.now() - lastEventAt) : null;
       _haveZeal = pids.length > 0;
-      _rows = tickRows(s);
+      _rows = smoothRows(tickRows(s));
 
       // PID summary — what EQ processes Mimic is reading from.
       if (pids.length === 0) {

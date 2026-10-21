@@ -50,6 +50,7 @@ export function buildTemplate(src, sc) {
     _dockedKeys: () => [],
     _charProfileTrayItems: () => [],
     _overlaySetTrayItems: () => [],
+    _canvasGroupTrayItems: () => [],
     _damageAlertHotkeyLabelNow: () => 'Ctrl+Shift+D',
     _hideAllHotkeyMenuLabel: () => 'Ctrl+Shift+H',
     _fmtPauseClock: () => '9:00',

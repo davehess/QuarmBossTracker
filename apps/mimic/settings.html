@@ -183,8 +183,8 @@
     <div class="hint">Loading UI packs…</div>
   </div>
 
-  <h2>Overlay sets <span style="background:#2d1b4e;color:#d2a8ff;border:1px solid #6e40c9;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span></h2>
-  <div class="sub">Save how your overlays are laid out — which are on, where each one sits, how see-through, and the Timers canvas panels — then switch layouts in one step. Sets are kept on this computer.</div>
+  <h2>Overlay sets <span style="background:#2d1b4e;color:#d2a8ff;border:1px solid #6e40c9;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">ALPHA</span></h2>
+  <div class="sub">Save how your overlays are laid out — which are on, where each one sits, how see-through, and the Canvas panels — then switch layouts in one step. Sets are kept on this computer.</div>
   <div id="overlaySetsList" style="margin-top:10px">
     <div class="hint">Loading overlay sets…</div>
   </div>
@@ -193,6 +193,29 @@
     <button id="overlaySetSave" type="button" style="margin-top:0;white-space:nowrap">💾 Save as</button>
   </div>
   <div id="overlaySetMsg" class="hint"></div>
+  <div class="sub" style="margin-top:12px"><b>Share a layout as a file.</b> It holds your Canvas pieces, pinned to EverQuest&rsquo;s window so it fits other screens. No character names or filters go in it, and your name goes on it only if you type one below.</div>
+  <div style="display:flex;gap:8px;margin-top:6px">
+    <input id="layoutTitle" type="text" maxlength="60" placeholder="Layout name (blank = the set&rsquo;s name)" style="flex:1" />
+    <input id="layoutByline" type="text" maxlength="32" placeholder="Your name on it (optional)" style="flex:1" />
+  </div>
+  <div style="display:flex;gap:8px;margin-top:6px">
+    <input id="layoutNote" type="text" maxlength="140" placeholder="What it is for (optional)" style="flex:1" />
+    <select id="layoutMode" style="background:#161b22;border:1px solid #2a3140;border-radius:4px;color:#c9d1d9;padding:5px 8px;font-size:12px">
+      <option value="">Mode (optional)</option><option value="raid">Raid</option><option value="group">Group</option><option value="pvp">PvP</option>
+      <option value="charm">Charm</option><option value="leveling">Leveling</option><option value="solo">Solo</option><option value="other">Other</option>
+    </select>
+  </div>
+  <div style="display:flex;gap:8px;margin-top:6px">
+    <button id="layoutExport" type="button" style="margin-top:0;white-space:nowrap" title="Save the layout on screen now to a .mimic-layout.json file. Use Export on a set above to share that set instead.">📤 Export the current layout…</button>
+    <button id="layoutImport" type="button" style="margin-top:0;white-space:nowrap" title="Open a layout file someone sent you. You see what is in it first; it is added as a new set and your setup is saved first.">📥 Import a layout…</button>
+  </div>
+  <div class="sub" style="margin-top:12px"><b>Share your whole setup.</b> Your overlay layouts, HUD, overlay options, personal triggers and &ldquo;What you hear&rdquo; settings, as a file or as a six-character code that works for 24 hours. The name, byline and note above go on it. Your characters travel as &ldquo;Character 1&rdquo;, &ldquo;Character 2&rdquo; and the person who opens it picks which of theirs get those parts. Never included: your sign-in, tokens, EverQuest and log paths, bids or character names.</div>
+  <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+    <button id="setupExport" type="button" style="margin-top:0;white-space:nowrap" title="Save your whole setup to a .mimic-setup.json file you can send. You see what goes in it first.">📦 Export my whole setup…</button>
+    <button id="setupCode" type="button" style="margin-top:0;white-space:nowrap" title="Get a six-character code for your whole setup, good for 24 hours. Needs you to be signed in. You see what goes in it first.">🔗 Get a code</button>
+    <button id="setupImport" type="button" style="margin-top:0;white-space:nowrap" title="Open a setup file someone sent you. You preview it with a tick on every part before anything changes.">📥 Import a setup…</button>
+    <button id="setupEnter" type="button" style="margin-top:0;white-space:nowrap" title="Type a code someone gave you. You preview it with a tick on every part before anything changes. Needs you to be signed in.">🔢 Enter a code…</button>
+  </div>
   <div class="hint">In game (needs Zeal), put these on social buttons: <code>/pipe mimic load raid</code> · <code>/pipe mimic save raid</code> (no name saves over the set you are on) · <code>/pipe mimic next</code> · <code>/pipe mimic lock</code> (locks or unlocks the overlays). The tray has the same under 🗂 Overlay sets.</div>
 
   <h2>Local UI</h2>
@@ -298,7 +321,7 @@
     <button id="voiceReset" type="button" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">Back to the pack's own</button>
     <button id="soundsFolder" type="button" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">Open my sounds folder</button>
   </div>
-  <div class="hint">A pack whose voices are not installed on this PC still sets the speed and pitch. Add your own trigger sounds (.wav, .mp3, .ogg) to the sounds folder; the dashboard's Triggers tab lists them. How your characters' names are said is under <b>Voice &amp; names</b> there too.</div>
+  <div class="hint">A pack whose voices are not installed on this PC still sets the speed and pitch. Add your own trigger sounds (.wav, .mp3, .ogg) to the sounds folder; the dashboard's Voice tab lists them. How your characters' names are said is under <b>Voice &amp; names</b> there too.</div>
 
   <h2>Private — /tells <span class="lock">🔒</span></h2>
   <div class="hint" style="margin-bottom:8px">EQ writes your tells to your log. Local and Synced show your tells in the Chat overlay on this PC; Off keeps them out of it. Tells are never sent anywhere unless you opt a character into the wolfpack.quest tells inbox.</div>
@@ -1606,7 +1629,19 @@
     var m = document.getElementById('overlaySetMsg');
     if (!m) return;
     m.style.color = r && r.ok ? '#56d364' : '#ff9b9b';
-    m.textContent = r ? (r.ok ? '✓ ' : '✕ ') + r.message : '';
+    m.textContent = r ? (r.ok ? '✓ ' : '✕ ') + r.message + (r.nudge ? ' ' + r.nudge : '') : '';
+  }
+  // 📤📥 A layout as a file: the same two functions the tray runs (main.js _exportLayoutFile / _importLayoutFile).
+  async function _layoutRun(call){
+    var r;
+    try { r = await call(); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
+    if (r && r.canceled) return;
+    _setsMsg(r);
+    await _renderOverlaySets();
+  }
+  function _layoutOpts(setName){
+    var v = function(id){ return (document.getElementById(id).value || '').trim(); };
+    return { setName: setName || undefined, title: v('layoutTitle'), author: v('layoutByline'), description: v('layoutNote'), mode: v('layoutMode') };
   }
   async function _setsRun(cmd){
     var r;
@@ -1632,6 +1667,7 @@
           ' <span style="color:#6e7681;font-size:10px">· ' + s.overlays + ' overlay' + (s.overlays === 1 ? '' : 's') + '</span></span>' +
         '<button type="button" data-set-load="' + _esc(s.name) + '" style="' + btn + '">Load</button>' +
         '<button type="button" data-set-save="' + _esc(s.name) + '" style="' + btn + '" title="Replace this set with the layout on screen now">Save over</button>' +
+        '<button type="button" data-set-export="' + _esc(s.name) + '" style="' + btn + '" title="Save this set\'s Canvas layout to a file you can send, with the details typed below">📤</button>' +
         '<button type="button" data-set-del="' + _esc(s.name) + '" style="' + btn + ';color:#ff9b9b" title="Delete this set">✕</button>' +
       '</div>';
     }).join('');
@@ -1641,6 +1677,7 @@
     if (!b) return;
     if (b.dataset.setLoad) return _setsRun({ verb: 'load', name: b.dataset.setLoad });
     if (b.dataset.setSave) return _setsRun({ verb: 'save', name: b.dataset.setSave });
+    if (b.dataset.setExport) return _layoutRun(function(){ return window.mimic.overlayLayoutExport(_layoutOpts(b.dataset.setExport)); });
     if (b.dataset.setDel && confirm('Delete the overlay set "' + b.dataset.setDel + '"?')) return _setsRun({ verb: 'delete', name: b.dataset.setDel });
   });
   document.getElementById('overlaySetSave').addEventListener('click', async function(){
@@ -1649,6 +1686,22 @@
     if (!name) { _setsMsg({ ok: false, message: 'Give the set a name first.' }); inp.focus(); return; }
     var r = await _setsRun({ verb: 'save', name: name });
     if (r && r.ok) inp.value = '';
+  });
+  document.getElementById('layoutExport').addEventListener('click', function(){ _layoutRun(function(){ return window.mimic.overlayLayoutExport(_layoutOpts()); }); });
+  document.getElementById('layoutImport').addEventListener('click', function(){ _layoutRun(function(){ return window.mimic.overlayLayoutImport(); }); });
+  // 📦🔗 A whole setup: the same four functions the tray runs (main.js _exportSetupFile / _getSetupCode / _importSetupFile /
+  // _enterSetupCode). A window that opens says everything itself, so an empty message is not painted.
+  async function _setupRun(call){
+    var r;
+    try { r = await call(); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
+    if (!r || r.canceled || (r.ok && !r.message)) return;
+    _setsMsg(r);
+  }
+  [['setupExport', 'overlaySetupExport', true], ['setupCode', 'overlaySetupCode', true], ['setupImport', 'overlaySetupImport', false], ['setupEnter', 'overlaySetupEnterCode', false]].forEach(function(b){
+    document.getElementById(b[0]).addEventListener('click', function(){
+      if (!window.mimic || !window.mimic[b[1]]) { _setsMsg({ ok: false, message: 'This Mimic is too old to share a whole setup. Update it first.' }); return; }
+      _setupRun(function(){ return window.mimic[b[1]](b[2] ? _layoutOpts() : undefined); });
+    });
   });
   _renderOverlaySets();
 </script>

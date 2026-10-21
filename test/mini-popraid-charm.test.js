@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
-import { readSource, ROOT, stripJs, stripCss, AGENT_INDEX } from './_source-slice.js';
+import { readSource, ROOT, stripJs, stripCss, AGENT_INDEX, WpPetSheet } from './_source-slice.js';
 
 const MIMIC = path.join(ROOT, 'apps', 'mimic');
 const charmHtml = readSource(path.join(MIMIC, 'charm.html'));
@@ -108,9 +108,9 @@ function boot(html, { win = {}, fetchImpl, pre = '', returns = [], bodyClasses =
     fire(ev) { for (const fn of wOn[ev] || []) fn({ type: ev }); },
   }, win);
   const localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
-  const run = new Function('window', 'document', 'fetch', 'localStorage', 'setInterval', 'setTimeout',
+  const run = new Function('window', 'document', 'fetch', 'localStorage', 'setInterval', 'setTimeout', 'WpPetSheet',
     pre + inlineScript(html) + '\nreturn { ' + returns.join(', ') + ' };');
-  const api = run(window, document, fetchImpl, localStorage, () => 0, () => 0);
+  const api = run(window, document, fetchImpl, localStorage, () => 0, () => 0, WpPetSheet);
   // Flip mini the way preload's _wpApplyMini does: class first, then the event.
   const setMini = async (on) => { document.body.classList.toggle('wp-mini', on); window.fire('wp-mini-change'); await flush(); };
   return { api, window, document, byId, rec, setMini };

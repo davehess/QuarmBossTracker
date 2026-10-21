@@ -31,7 +31,7 @@ const overlay = readSource(path.join(ROOT, 'apps', 'mimic', 'overlay.html'));
 const { _foldPetsIntoOwners, _histRows, _rsLine, _liveRsRows } = evalBlock(
   sliceBlock(overlay, '  function pnum(n){', 'return String(n); }') + '\n'
   + sliceBlock(overlay, '  function pnumK(n){', "return (n/1e3).toFixed(2)+'K'; }") + '\n'
-  + sliceBlock(overlay, '  function _rowSecs(row, fightSecs) {', '  // One mini row: rank, name') + '\n'
+  + sliceBlock(overlay, '  var DPS_IDLE_MS = 6000;', '  // One mini row: rank, name') + '\n'
   + sliceBlock(overlay, '  function _foldPetsIntoOwners(allRows){', '\n  // ── Poll loop '),
   ['_foldPetsIntoOwners', '_histRows', '_rsLine', '_liveRsRows'],
 );
@@ -140,7 +140,8 @@ describe('History\'s copy says whose pet it is', () => {
     const settled = { ...entry, players: botRollup(et.perPlayer), uploaders: 3, settled: true };
     expect(histLine(settled)).toBe(
       '/rs a Shissar acolyte in 60s, 0.90K Damage @15, '
-      + '1. Corvale = 500@500 in 1s | 2. Nyssara +Pets = 400@400 in 1s');
+      // Corvale's one hit came first, so its clock runs to the fight's end (the pet's hit), 2 s.
+      + '1. Corvale = 500@250 in 2s | 2. Nyssara +Pets = 400@400 in 1s');
   });
 
   it('settled, when the bot left the pet as a raider: no line of its own, no double count', () => {
@@ -203,7 +204,8 @@ describe('another raider\'s charm pet (FB-52) lands on the same line', () => {
 describe('and both copies are wired through it', () => {
   const clean = stripJs(overlay);
   it('History copies _rsLine over the rows it is browsing', () => {
-    expect(clean).toMatch(/_histParseLine = _rsLine\(boss, secs, totalDmg, allRows\);/);
+    // The damage rows of the fight, even when its Tank view is showing damage taken (test/meter-tank-history.test.js).
+    expect(clean).toMatch(/_histParseLine = _rsLine\(boss, secs, histDmgTotal, histDmgRows\);/);
   });
   it('the live copy folds the live rows first', () => {
     expect(clean).toMatch(/var liveRs = _liveRsRows\(et\.perPlayer, et\.spans\);/);

@@ -26,12 +26,16 @@ import {
 import { WRITE_TRUST_MS, judgeRead, type WriteMark } from '@/lib/screenLive';
 import { useScreenLive, type ScreenLive } from '@/lib/useScreenLive';
 import type { Positions } from '@/lib/spectator';
+import type { PlanOverlay, PreflagSummary } from '@/lib/screenPlan';
 import SlideEditor from './SlideEditor';
 import { LootView, OverviewView, SlidesView, SpawnList, card, label } from './ScreenPanels';
 
 // The map is the spectator board with its own chrome dropped. Memoised so the rail's clock does not redraw it.
-const MapPanel = memo(function MapPanel({ shared }: { shared: Pick<ScreenLive, 'feed' | 'netErr' | 'signedOut'> }) {
-  return <SpectatorBoard embedded shared={shared} />;
+// `plan` is tonight's plan; the board draws it under the dots when the raid is in a zone the plan covers.
+const MapPanel = memo(function MapPanel({ shared, plan }: {
+  shared: Pick<ScreenLive, 'feed' | 'netErr' | 'signedOut'>; plan?: PlanOverlay[];
+}) {
+  return <SpectatorBoard embedded shared={shared} plan={plan} />;
 });
 
 function useNow(ms: number) {
@@ -94,7 +98,11 @@ function usePoll<T>(url: string, ms: number, data: (d: T) => void, fail: (status
 
 const modeBtn = 'rounded border px-3 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue disabled:opacity-60';
 
-export default function ScreenBoard({ canDrive }: { canDrive: boolean }) {
+export default function ScreenBoard({ canDrive, plan, preflags = null }: {
+  canDrive: boolean;
+  plan?: PlanOverlay[];
+  preflags?: PreflagSummary | null;   // read when the page loaded, not live
+}) {
   const [state, setState] = useState<ScreenState | null>(null);
   const [feedSignedOut, setFeedSignedOut] = useState(false);
   const [feed, setFeed] = useState<ScreenFeed | null>(null);
@@ -121,7 +129,7 @@ export default function ScreenBoard({ canDrive }: { canDrive: boolean }) {
       if (verdict.show) setState(d);
     },
   });
-  const { stateErr, auctions, kick: kickState } = feeds;
+  const { stateErr, auctions, recap, kick: kickState } = feeds;
   const positions: Positions | null = feeds.feed?.data ?? null;
   const signedOut = feeds.signedOut || feedSignedOut;
   // The map's slice of it, kept the same object until it changes so the memoised map is not redrawn by a clock.
@@ -222,7 +230,7 @@ export default function ScreenBoard({ canDrive }: { canDrive: boolean }) {
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-4">
-          {mode === 'map' && <MapPanel shared={mapShared} />}
+          {mode === 'map' && <MapPanel shared={mapShared} plan={plan} />}
           {mode === 'slides' && state && (
             <>
               <SlidesView state={state} canDrive={canDrive} busy={busy} editing={editing}
@@ -233,7 +241,7 @@ export default function ScreenBoard({ canDrive }: { canDrive: boolean }) {
             </>
           )}
           {mode === 'loot' && <LootView feed={feed} auctions={auctions} now={panelNow} />}
-          {mode === 'overview' && <OverviewView positions={positions} feed={feed} now={panelNow} />}
+          {mode === 'overview' && <OverviewView positions={positions} feed={feed} now={panelNow} preflags={preflags} recap={recap} />}
         </div>
 
         <Rail state={state} feed={feed} positions={positions} />

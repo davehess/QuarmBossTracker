@@ -152,6 +152,21 @@
     .rez-row.incoming .nm { animation: none; }
   }
 
+  /* 💀 Last deaths — same shape as the cure card: extra right padding keeps "clear all" and the row ✕ clear of
+     the fixed ✕-hide gutter. The NAME never shrinks (a flex:1 name with a long unshrinkable detail beside it was
+     squeezed to zero width at a narrow overlay and the row read as nobody having died); the detail is what
+     ellipsizes, with the full line on hover. */
+  .card.death-card{padding-right:28px}
+  .head.death-head{display:flex;align-items:center;gap:6px}
+  .deathClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
+    letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
+  .deathClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  .list .row.death-row .nm{flex:0 0 auto;max-width:55%;font-weight:600}
+  .death-row .death-det{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9aa4ad}
+  .death-row .deathDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
+    flex-shrink:0;opacity:0.6}
+  .death-row .deathDismiss:hover{opacity:1;color:#f87171}
+
   /* #153 collapsible sections — the caret+label in a section header is the
      click target that collapses/expands it. Collapse state lives in a JS store
      consulted at render time (localStorage-backed), NOT DOM state, so repaints
@@ -338,6 +353,74 @@
   // the 15 minutes it stays in the payload.
   function _rollId(r){ return r ? (r.from + '-' + r.to + '@' + (r.started_at_ms || 0)) : null; }
 
+  // 💀 Last deaths — local dismiss (the guild lead, 2026-10-21: "it can't be minimized or ignored"). Keyed by
+  // WHO + WHEN (the recap's own timestamp), so a death stays gone on every later poll. The agent keeps one recap
+  // per player per 5 s and may swap in the fuller one with a slightly different stamp, hence the tolerance.
+  // Nothing is uploaded; localStorage keeps it across an overlay reload because the agent holds the recaps for
+  // the whole session and a reload would otherwise bring them all back.
+  var DEATH_SAME_MS = 5000, DEATH_DISMISS_KEEP = 100;
+  var _dismissedDeaths = [];
+  try { _dismissedDeaths = JSON.parse(localStorage.getItem('wp_cmd_dead_dismissed') || '[]'); } catch (e) { _dismissedDeaths = []; }
+  if (!Array.isArray(_dismissedDeaths)) _dismissedDeaths = [];
+  // Who died, always a name: the agent writes "You" when it did not know the character, so that (or nothing)
+  // reads as the active character, else "You".
+  function deathWho(rc, me){
+    var n = rc && rc.name != null ? String(rc.name).trim() : '';
+    if (n && !/^you$/i.test(n)) return n;
+    return (me && String(me).trim()) || 'You';
+  }
+  function _deathMs(rc){ var t = Date.parse(rc && rc.ts); return isNaN(t) ? 0 : t; }
+  function isDeathDismissed(rc, me){
+    var who = deathWho(rc, me).toLowerCase(), t = _deathMs(rc);
+    for (var i = 0; i < _dismissedDeaths.length; i++) {
+      var d = _dismissedDeaths[i];
+      if (d && d.n === who && Math.abs(d.t - t) <= DEATH_SAME_MS) return true;
+    }
+    return false;
+  }
+  function dismissDeath(rc, me){
+    if (!rc || isDeathDismissed(rc, me)) return;
+    _dismissedDeaths.push({ n: deathWho(rc, me).toLowerCase(), t: _deathMs(rc) });
+    if (_dismissedDeaths.length > DEATH_DISMISS_KEEP) _dismissedDeaths = _dismissedDeaths.slice(-DEATH_DISMISS_KEEP);
+    try { localStorage.setItem('wp_cmd_dead_dismissed', JSON.stringify(_dismissedDeaths)); } catch (e) {}
+  }
+  function dismissAllDeaths(list, me){
+    for (var i = 0; list && i < list.length; i++) dismissDeath(list[i], me);
+  }
+  function deathDetail(rc){
+    var dd = new Date(rc.ts), pad2 = function (n) { return (n < 10 ? '0' : '') + n; };
+    var when = isNaN(dd.getTime()) ? '' : (' ' + pad2(dd.getHours()) + ':' + pad2(dd.getMinutes()) + ':' + pad2(dd.getSeconds()));
+    var bits = [];
+    bits.push(rc.lastChOffMs != null ? ((rc.lastChOffMs / 1000).toFixed(1) + ' s after the last CH') : 'no CH in 20 s');
+    if (rc.beatMs) bits.push('beat ' + Math.round(rc.beatMs / 1000) + ' s');
+    bits.push('took ' + (rc.dmg6 >= 1000 ? (rc.dmg6 / 1000).toFixed(1) + 'k' : rc.dmg6) + ' in 6 s');
+    if (rc.killer) bits.push('by ' + rc.killer);
+    return 'died' + when + ' · ' + bits.join(' · ');
+  }
+  // The whole card ('' when every death is dismissed or there are none). The name is its own never-shrinking
+  // cell and the detail is the part that gives way (ellipsis, full text on hover): at a narrow width the old
+  // row gave the name zero width and read as "died 14:46:50 · ..." with nobody in front of it.
+  function deathRecapsHtml(list, me){
+    var vis = [];
+    for (var i = 0; list && i < list.length; i++) if (!isDeathDismissed(list[i], me)) vis.push(list[i]);
+    if (!vis.length) return '';
+    var col = _isCollapsed('deathrecaps');
+    var html = '<div class="card death-card"><div class="head death-head">' + secToggle('deathrecaps', '💀 Last deaths', vis.length)
+             + (col ? '' : '<span class="deathClearAll" data-wp-interact title="Dismiss all of these deaths (this client)">clear all</span>')
+             + '</div>';
+    if (!col) {
+      html += '<div class="list">';
+      for (var j = 0; j < vis.length; j++) {
+        var rc = vis[j], who = deathWho(rc, me), det = deathDetail(rc);
+        html += '<div class="row death-row"><span class="nm" title="' + esc(who) + '">' + esc(who) + '</span>'
+             +    '<span class="death-det" title="' + esc(who + ' ' + det) + '">' + esc(det) + '</span>'
+             +    '<span class="deathDismiss" data-wp-interact data-death-who="' + esc(who) + '" data-death-ts="' + esc(rc.ts) + '" title="Dismiss this death (this client)">✕</span></div>';
+      }
+      html += '</div>';
+    }
+    return html + '</div>';
+  }
+
   // 📋 on a deathroll (the guild lead, 2026-09-29: "add in a copy button for deathrolls"): the whole
   // game as ONE chat line to paste in game, e.g. "Deathroll 32,000: A 26189 > B 24160 > ... > B 0.
   // B loses." Plain ASCII (EQ's chat font has no dash or arrow glyphs) and at most 250 characters:
@@ -429,7 +512,7 @@
   function secToggle(key, label, count){
     var col = _isCollapsed(key);
     var cnt = (col && count != null) ? ' (' + count + ')' : '';
-    return '<span class="sec-toggle" data-collapse-key="' + esc(key) + '" title="'
+    return '<span class="sec-toggle" data-wp-interact data-collapse-key="' + esc(key) + '" title="'
          + (col ? 'Expand' : 'Collapse') + ' this section">'
          + (col ? '▸' : '▾') + ' ' + esc(label) + cnt + '</span>';
   }
@@ -518,7 +601,7 @@
     var used = Math.max(0, Number(w.flags_granted) || 0);
     var left = w.flags_left == null ? Math.max(0, cap - used) : Math.max(0, Number(w.flags_left) || 0);
     var tight = stillCount > 0 && left <= stillCount;
-    return '<div class="hail-cap" title="Counts only the flags we saw granted. A raider without Mimic, or a hail outside our data, is not counted, so more may be gone.">'
+    return '<div class="hail-cap" title="Counts every raider we saw hail or get the flag. A hail we never saw, or by someone outside the raid, is not counted, so more may be gone.">'
          + 'Flags: <b>' + used + ' / ' + cap + '</b> used<span class="note">seen only</span></div>'
          + (tight ? '<div class="hail-cap warn">' + (left === 0 ? '⚠ No flags left, ' : '⚠ Only ' + left + ' flag' + (left === 1 ? '' : 's') + ' left, ')
          + stillCount + ' still to hail</div>' : '');
@@ -587,6 +670,21 @@
     return h;
   }
 
+  function rampHtml(r, multi){
+    var rhp = r.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(r.hp_pct)));
+    var rda = r.da || null;
+    var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
+    var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
+    var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
+    var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
+    var lead = multi ? ('💀 ' + esc(r.attacker || 'Boss') + ': rampage on ') : '💀 Rampage on ';
+    return '<div class="ramp">'
+         +    '<div class="row">' + lead + '<span class="who">' + esc(r.target) + '</span></div>'
+         +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'
+         +      daTags
+         +      '<div class="val">' + valText + '</div></div>'
+         +  '</div>';
+  }
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -638,20 +736,10 @@
 
     // Rampage target + invuln (DA/Harmshield/etc) highlight — identical to
     // the Tank overlay's card.
-    if (s.rampage && s.rampage.target) {
-      var rhp = s.rampage.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.rampage.hp_pct)));
-      var rda = s.rampage.da || null;
-      var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
-      var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
-      var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
-      var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
-      html += '<div class="ramp">'
-           +    '<div class="row">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>'
-           +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'
-           +      daTags
-           +      '<div class="val">' + valText + '</div></div>'
-           +  '</div>';
-    }
+    // Several bosses rampaging at once (rampages has 2+): one row per attacker. With 0-1 it is the single
+    // card above, byte for byte, and an older agent that sends no rampages array lands here too.
+    var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
+    for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
     // above the long lists: after a kill there is no fight to push it down, and a fight that starts while
@@ -786,7 +874,7 @@
         var rollsCollapsed = _isCollapsed('rolls');
         html += '<div class="card rolls-card"><div class="head rolls-head">'
              +    secToggle('rolls', '🎲 Rolls', visRolls.length)
-             +    (rollsCollapsed ? '' : '<span class="rollClearAll" title="Dismiss every roll set (this client, until new ones land)">clear all</span>')
+             +    (rollsCollapsed ? '' : '<span class="rollClearAll" data-wp-interact title="Dismiss every roll set (this client, until new ones land)">clear all</span>')
              +  '</div>';
         if (!rollsCollapsed) {
           html += '<div class="list">';
@@ -809,13 +897,13 @@
                 : '<span style="opacity:.6">stopped</span>');
               html += '<div class="row roll-row"><span class="nm">☠️ <b>' + Number(rs.to).toLocaleString('en-US') + '</b> — '
                    +    (dn.length === 2 ? dn[0] + ' vs ' + dn[1] : dn.join(', ')) + ' · ' + dState + '</span>'
-                   +    '<span class="rollCopy" data-roll-id="' + esc(rid) + '" title="Copy this deathroll as one line to paste in game">'
+                   +    '<span class="rollCopy" data-wp-interact data-roll-id="' + esc(rid) + '" title="Copy this deathroll as one line to paste in game">'
                    +      (rid === _copiedRoll && Date.now() < _copiedUntil ? '✓' : '📋') + '</span>'
-                   +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
+                   +    '<span class="rollMore" data-wp-interact data-roll-key="' + esc(rid) + '" title="'
                    +      (expanded ? 'Hide' : 'Show') + ' every roll in this deathroll">'
                    +      (expanded ? '▾' : '▸') + ' ' + (dg.steps || []).length + ' rolls</span>'
                    +    '<span class="cls">' + (rs.open ? 'live' : '') + '</span>'
-                   +    '<span class="rollDismiss" data-roll-id="' + esc(rid) + '" title="Dismiss this deathroll (this client)">✕</span></div>';
+                   +    '<span class="rollDismiss" data-wp-interact data-roll-id="' + esc(rid) + '" title="Dismiss this deathroll (this client)">✕</span></div>';
               if (expanded) {
                 html += '<div class="roll-detail">';
                 for (var dk = 0; dk < (dg.steps || []).length; dk++) {
@@ -833,13 +921,13 @@
             html += '<div class="row roll-row"><span class="nm"><b>' + (rs.from ? rs.from + '–' : '') + rs.to + '</b>'
                  +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
                  +    ' — ' + (rs.tie ? rollTieWhoHtml(rs) : '<span style="color:#f0c419">' + (winners || '—') + '</span>') + '</span>'
-                 +    (rs.tie ? '<span class="rollCopy" data-roll-id="' + esc(rid) + '" title="Copy a raid-say line announcing this tie and its deathroll">'
+                 +    (rs.tie ? '<span class="rollCopy" data-wp-interact data-roll-id="' + esc(rid) + '" title="Copy a raid-say line announcing this tie and its deathroll">'
                  +      (rid === _copiedRoll && Date.now() < _copiedUntil ? '✓' : '📋') + '</span>' : '')
-                 +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
+                 +    '<span class="rollMore" data-wp-interact data-roll-key="' + esc(rid) + '" title="'
                  +      (expanded ? 'Hide' : 'Show') + ' every roll in this set">'
                  +      (expanded ? '▾' : '▸') + ' ' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + '</span>'
                  +    '<span class="cls">' + (rs.open ? 'open' : '') + '</span>'
-                 +    '<span class="rollDismiss" data-roll-id="' + esc(rid) + '" title="Dismiss this roll set (this client)">✕</span></div>';
+                 +    '<span class="rollDismiss" data-wp-interact data-roll-id="' + esc(rid) + '" title="Dismiss this roll set (this client)">✕</span></div>';
             if (expanded) {
               // Highest first, so the losing rolls read straight down from the
               // winner. Re-rolls are shown but flagged — they never win, and
@@ -897,7 +985,7 @@
         var cureCollapsed = _isCollapsed('cures');
         html += '<div class="card cure-card"><div class="head cure-head">'
              +    secToggle('cures', 'Curse / Cure', visibleCures.length)
-             +    (cureCollapsed ? '' : '<span class="cureClearAll" title="Dismiss all cure/curse alerts (this client, until they change)">clear all</span>')
+             +    (cureCollapsed ? '' : '<span class="cureClearAll" data-wp-interact title="Dismiss all cure/curse alerts (this client, until they change)">clear all</span>')
              +  '</div>';
         if (!cureCollapsed) {
           html += '<div class="list">';
@@ -909,7 +997,7 @@
               return '<span class="cure-chip' + (cc.being_cured ? ' being-cured' : '') + '">' + esc(cc.cure) + (cc.counters ? ' ×' + cc.counters : '') + (cc.being_cured ? ' (curing)' : '') + '</span>';
             }).join(' ');
             html += '<div class="row cure-row"><span class="nm">' + esc(c.name) + '</span>' + chips
-                 +    '<span class="cureDismiss" data-cure-id="' + esc(cId) + '" title="Dismiss this alert (this client)">✕</span></div>';
+                 +    '<span class="cureDismiss" data-wp-interact data-cure-id="' + esc(cId) + '" title="Dismiss this alert (this client)">✕</span></div>';
           }
           html += '</div>';
         }
@@ -941,13 +1029,18 @@
                +    '<span class="nm">' + esc(r.name) + '</span>'
                +    (tag ? '<span class="rez-tag">' + tag + '</span>' : '')
                +    (age ? '<span class="rez-age">dead ' + age + '</span>' : '<span class="rez-age"></span>')
-               +    '<span class="rezDismiss" data-rez-name="' + esc(r.name) + '" title="Clear this row for the WHOLE raid — use when they are up and we missed it.">✕</span>'
+               +    '<span class="rezDismiss" data-wp-interact data-rez-name="' + esc(r.name) + '" title="Clear this row for the WHOLE raid — use when they are up and we missed it.">✕</span>'
                +  '</div>';
         }
         html += '</div>';
       }
       html += '</div>';
     }
+
+    // ── Last deaths (FB-84) ───────────────────────────────────────────────
+    // One line per recent death from this machine's own log, next to the rez board it explains.
+    // Local only: /api/command-center is this machine's agent; nothing here is uploaded.
+    if (s.death_recaps && s.death_recaps.length) html += deathRecapsHtml(s.death_recaps, s.character);
 
     if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, rolls, or curses seen yet.</div>';
 
@@ -993,7 +1086,7 @@
   if (contentEl) {
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle') || t.closest('.deathDismiss') || t.closest('.deathClearAll')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy')
                              || t.closest('[data-wp-interact]'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
@@ -1001,7 +1094,7 @@
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle') || t.closest('.deathDismiss') || t.closest('.deathClearAll')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy')
                              || t.closest('[data-wp-interact]'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
@@ -1077,6 +1170,20 @@
           }
           render(_lastState);
         }
+        return;
+      }
+      // 💀 Last deaths — dismiss one / dismiss all. Local only: flip the store, re-render from the last state.
+      var dthX = e.target && e.target.closest ? e.target.closest('.deathDismiss') : null;
+      if (dthX) {
+        e.preventDefault(); e.stopPropagation();
+        dismissDeath({ name: dthX.getAttribute('data-death-who'), ts: dthX.getAttribute('data-death-ts') }, _lastState && _lastState.character);
+        if (_lastState) render(_lastState);
+        return;
+      }
+      var dthAll = e.target && e.target.closest ? e.target.closest('.deathClearAll') : null;
+      if (dthAll) {
+        e.preventDefault(); e.stopPropagation();
+        if (_lastState) { dismissAllDeaths(_lastState.death_recaps, _lastState.character); render(_lastState); }
         return;
       }
       var rezX = e.target && e.target.closest ? e.target.closest('.rezDismiss') : null;

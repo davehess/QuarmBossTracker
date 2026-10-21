@@ -101,6 +101,8 @@
   #side .row{display:flex;gap:6px}
   #side .row .field{flex:1}
   #side .meta{color:#6e7681;font-size:9px;margin-top:8px}
+  #side .meta button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:2px 10px;font-size:11px;cursor:pointer}
+  #side .meta button:hover{background:#30363d}
   /* The Hotbar Pages editor is docked beside the canvas (a flex item of #content), so the canvas gives up
      width instead of being covered; the window-properties panel steps aside while it is open. */
   body.inspecting #side{display:none !important}
@@ -519,6 +521,35 @@
     }
     return e;
   }
+  // The chat command that puts a Zeal bar where it is on the stage now, in the target resolution's pixels (the same numbers
+  // Save writes, _zealBarEdits). Zeal moves the bar at once and keeps it; a zeal.ini written while EverQuest runs is only
+  // read at the next start, which is why the command is offered at all. Never a command Zeal would refuse: it rejects a
+  // negative left/top, and a right/bottom that is not 0 (0 = run to the screen edge) but sits before left/top.
+  //   /assistbar position <left> <top>
+  //   /raidbars position <left> <top>                    (the box still runs to both edges)
+  //   /raidbars position <left> <top> <right> <bottom>   (0 for an edge that still runs to the screen edge)
+  function _zealBarCommand(w){
+    if (!w || (w.zealBar !== 'raidbars' && w.zealBar !== 'assistbar')) return '';
+    var e = _zealBarEdits(w);
+    var px = function(v){ v = Math.round(Number(v)); return isFinite(v) ? v : 0; };
+    var L = Math.max(0, px(e.Left)), T = Math.max(0, px(e.Top));
+    if (w.zealBar === 'assistbar') return '/assistbar position ' + L + ' ' + T;
+    if (e.Right == null && e.Bottom == null) return '/raidbars position ' + L + ' ' + T;
+    var R = e.Right == null ? 0 : Math.max(px(e.Right), L + 16);
+    var B = e.Bottom == null ? 0 : Math.max(px(e.Bottom), T + 16);
+    return '/raidbars position ' + L + ' ' + T + ' ' + R + ' ' + B;
+  }
+  // Copy text to the clipboard: navigator.clipboard, then a hidden textarea (the same two steps as the overlays' copy chips).
+  function _copyText(text, btn){
+    function fallback(){
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (err) { /* nothing more to try */ } finally { ta.remove(); }
+    }
+    try { navigator.clipboard.writeText(text).catch(fallback); } catch (err) { fallback(); }
+    if (btn) { var was = btn.textContent; btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = was; }, 1200); }
+  }
 
   // ── Load + rescale ───────────────────────────────────────────────────────
   // Heuristic window classifier — derives a kind + icon + extracted
@@ -673,31 +704,116 @@
     document.addEventListener('keydown', esc);
   }
 
-  document.getElementById('loadBtn').addEventListener('click', loadAndRescale);
-  async function loadAndRescale(){
+  // ── Native load: pick a character, see their current UI as it is ─────────
+  // The guild lead, 2026-10-15: "selecting the character from the UI studio dropdown should just pull up
+  // the current configuration in the current format, no conversion target necessary." Picking a
+  // character reads the LIVE UI files off the disk (never a saved layout, never an earlier read) and
+  // shows them at the resolution the file holds: Source = Target, nothing rescaled. Rescaling stays
+  // its own step: set a Target, then click Load + Rescale.
+  //
+  // _nativeResolution: the resolution block holding the most windows (a tie goes to the larger
+  // screen). EQ keeps old XPos<W>x<H> blocks in the file after a resolution change, so a file can hold
+  // several; the one with the most windows is the one in real use. null when the file has none.
+  function _nativeResolution(counts){
+    var best = null, bestN = 0, bestArea = 0;
+    for (var k in counts) {
+      var p = k.split('x'), w = parseInt(p[0], 10), h = parseInt(p[1], 10), n = counts[k];
+      if (!w || !h) continue;
+      if (n > bestN || (n === bestN && w * h > bestArea)) { best = { w: w, h: h }; bestN = n; bestArea = w * h; }
+    }
+    return best;
+  }
+  // eqclient.ini [VideoMode] Width/Height (keys confirmed from a real file, DECISIONS 2026-09-18) → {w,h}, or
+  // null when the bundle has no eqclient.ini or the keys are missing / not positive (windowed -1 etc).
+  function _videoModeRes(bundle){
+    var name = Object.keys(bundle || {}).find(function(k){ return /^eqclient\.ini$/i.test(k); });
+    if (!name) return null;
+    var vm = null, w = 0, h = 0;
+    String(bundle[name]).split(/\r?\n/).forEach(function(line){
+      var sec = /^\s*\[([^\]]+)\]/.exec(line);
+      if (sec) { vm = /^videomode$/i.test(sec[1].trim()); return; }
+      if (!vm) return;
+      var kv = /^\s*(width|height)\s*=\s*(-?\d+)/i.exec(line);
+      if (!kv) return;
+      if (/^width$/i.test(kv[1])) w = parseInt(kv[2], 10); else h = parseInt(kv[2], 10);
+    });
+    return w > 0 && h > 0 ? { w: w, h: h } : null;
+  }
+  function _ageWords(ms, nowMs){
+    var s = Math.max(0, Math.round((nowMs - ms) / 1000));
+    if (s < 60) return 'just now';
+    var m = Math.round(s / 60);
+    if (m < 60) return m + ' min ago';
+    var h = Math.round(m / 60);
+    if (h < 48) return h + ' h ago';
+    return Math.round(h / 24) + ' days ago';
+  }
+  // "10/15/2026, 3:41:00 PM (12 min ago)" — when EverQuest last wrote the file, so an old file is
+  // visible rather than looking like a wrong read. '' when the time is unknown.
+  function _fileTimeText(ms){
+    if (!ms) return '';
+    return new Date(ms).toLocaleString() + ' (' + _ageWords(ms, Date.now()) + ')';
+  }
+  function _setSide(side, w, h){
+    document.getElementById(side + 'W').value = w;
+    document.getElementById(side + 'H').value = h;
+    _syncPresetFromInputs(side);
+  }
+  async function _liveFileInfo(){
+    try {
+      var r = await window.mimic.uiStudioLiveInfo(STATE.character, STATE.eqDir);
+      STATE.fileMs = (r && r.ok && r.newestMs) || null;
+    } catch (e) { STATE.fileMs = null; }
+  }
+
+  document.getElementById('charSelect').addEventListener('change', function(){
+    if (this.value) loadAndRescale(true).catch(function(e){ setStatus('read failed: ' + (e && e.message), 'err'); });
+  });
+  document.getElementById('loadBtn').addEventListener('click', function(){ loadAndRescale(); });
+  // native === true: the character pick. Source/Target come from the file, not the inputs.
+  async function loadAndRescale(native){
     var sel = document.getElementById('charSelect').value;
     if (!sel) { setStatus('pick a character', 'err'); return; }
     var parts = sel.split('|');
     STATE.character = parts[0];
     STATE.eqDir     = parts[1];
     _showEqDir(STATE.eqDir);
-    // Read the W/H inputs (source of truth — preset dropdown is just a picker).
-    var sW = parseInt(document.getElementById('srcW').value, 10);
-    var sH = parseInt(document.getElementById('srcH').value, 10);
-    var tW = parseInt(document.getElementById('tgtW').value, 10);
-    var tH = parseInt(document.getElementById('tgtH').value, 10);
-    if (!sW || !sH || !tW || !tH || sW < 640 || sH < 480 || tW < 640 || tH < 480) {
-      setStatus('enter valid Source/Target sizes (≥ 640×480)', 'err'); return;
+    STATE.nativeLoad = native === true;
+    if (!STATE.nativeLoad) {
+      // Read the W/H inputs (source of truth — preset dropdown is just a picker).
+      var sW = parseInt(document.getElementById('srcW').value, 10);
+      var sH = parseInt(document.getElementById('srcH').value, 10);
+      var tW = parseInt(document.getElementById('tgtW').value, 10);
+      var tH = parseInt(document.getElementById('tgtH').value, 10);
+      if (!sW || !sH || !tW || !tH || sW < 640 || sH < 480 || tW < 640 || tH < 480) {
+        setStatus('enter valid Source/Target sizes (≥ 640×480)', 'err'); return;
+      }
+      STATE.srcW = sW; STATE.srcH = sH;
+      STATE.tgtW = tW; STATE.tgtH = tH;
     }
-    STATE.srcW = sW; STATE.srcH = sH;
-    STATE.tgtW = tW; STATE.tgtH = tH;
     setStatus('loading ' + STATE.character + '…');
+    // Always a fresh read of the files on disk — nothing from an earlier load or a saved layout.
     try {
       STATE.bundle = await window.mimic.uiStudioReadBundle(STATE.character, STATE.eqDir);
     } catch (e) { setStatus('read failed: ' + e.message, 'err'); return; }
     if (!STATE.bundle || Object.keys(STATE.bundle).length === 0) {
       setStatus('no ini files for ' + STATE.character, 'err');
       return;
+    }
+    await _liveFileInfo();
+    STATE.otherRes = [];
+    if (STATE.nativeLoad) {
+      var counts = _detectResolutions(STATE.bundle);
+      // The game's own resolution (eqclient.ini [VideoMode] Width/Height) wins when the UI file holds
+      // a block for it; otherwise the block with the most windows.
+      var vm = _videoModeRes(STATE.bundle);
+      var nat = (vm && counts[vm.w + 'x' + vm.h]) ? vm : _nativeResolution(counts);
+      if (!nat) nat = { w: parseInt(document.getElementById('srcW').value, 10) || 2560, h: parseInt(document.getElementById('srcH').value, 10) || 1440 };
+      STATE.srcW = nat.w; STATE.srcH = nat.h;
+      STATE.tgtW = nat.w; STATE.tgtH = nat.h;     // no conversion until the member sets a Target
+      _setSide('src', STATE.srcW, STATE.srcH);
+      _setSide('tgt', STATE.tgtW, STATE.tgtH);
+      STATE.otherRes = Object.keys(counts).filter(function(k){ return k !== nat.w + 'x' + nat.h; });
     }
     // Scan the active UI skin's XML files for each window's design CX/CY —
     // gives us authoritative MAX sizes when the INI's W/H is stale (saved at a
@@ -948,6 +1064,10 @@
       if (STATE.fromCloud) {
         msg = '☁ restored ' + STATE.windows.length + ' windows from cloud backup · set Target to ' +
           'this machine\'s resolution, then Save to write ' + STATE.tgtW + '×' + STATE.tgtH + ' to ' + STATE.character + '\'s EQ folder';
+      } else if (STATE.nativeLoad) {
+        msg = 'showing ' + STATE.windows.length + ' windows as saved in the UI file now · ' + STATE.srcW + '×' + STATE.srcH;
+        if (STATE.otherRes && STATE.otherRes.length) msg += ' (the file also holds ' + STATE.otherRes.join(', ') + ')';
+        msg += ' · to move them to another screen size, set Target and click Load + Rescale';
       } else {
         msg = 'loaded ' + STATE.windows.length + ' windows · ' +
           STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH +
@@ -956,6 +1076,7 @@
           msg = 'file is saved at ' + STATE.srcW + '×' + STATE.srcH + ' — ' + msg;
         }
       }
+      if (!STATE.fromCloud && STATE.fileMs) msg += ' · UI file last written ' + _fileTimeText(STATE.fileMs);
       var _warn = _resMismatchWarning(STATE.srcW, STATE.srcH, STATE.tgtW, STATE.tgtH);
       if (_warn) msg += ' · ' + _warn;
       // Duplicates are worth naming, not hiding: the user needs to know a
@@ -1339,6 +1460,14 @@
 
   // ── Drag + resize ────────────────────────────────────────────────────────
   var DRAG = null;   // { i, mode, startX, startY, origX, origY, origW, origH }
+  // A press on a rectangle only SELECTS it until the pointer has really travelled. Without this a click
+  // that wobbled by a pixel moved the window (a pixel on screen is several in the layout, and snap pulls
+  // it up to 10 more), which marked a layout nobody meant to change as edited.
+  var DRAG_DEAD_ZONE = 4;   // screen pixels
+  function _dragPassedDeadZone(dxScreen, dyScreen) {
+    return Math.abs(dxScreen) >= DRAG_DEAD_ZONE || Math.abs(dyScreen) >= DRAG_DEAD_ZONE;
+  }
+  // /drag dead zone
 
   stage.addEventListener('mousedown', function(e){
     var el = e.target.closest('.win');
@@ -1396,6 +1525,10 @@
 
   document.addEventListener('mousemove', function(e){
     if (!DRAG) return;
+    if (!DRAG.moved) {
+      if (!_dragPassedDeadZone(e.clientX - DRAG.startMx, e.clientY - DRAG.startMy)) return;
+      DRAG.moved = true;
+    }
     var dx = (e.clientX - DRAG.startMx) / STATE.sliceScale;
     var dy = (e.clientY - DRAG.startMy) / STATE.sliceScale;
     var w = STATE.windows[DRAG.i];
@@ -1480,7 +1613,17 @@
               + '<span style="color:#e6edf3;word-break:break-all">' + escapeHtml(c.value) + '</span></div>';
       }
     }
+    var zcmd = _zealBarCommand(w);
+    if (zcmd) {
+      meta += '<hr style="border:none;border-top:1px solid #30363d;margin:8px 0">'
+            + '<div style="color:#7ee7c7;font-size:11px;margin-bottom:4px">Move it in game</div>'
+            + '<code id="zealCmdText" style="display:block;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:4px 6px;color:#e6edf3;font-size:11px;word-break:break-all;user-select:all">' + escapeHtml(zcmd) + '</code>'
+            + '<button id="zealCmdCopy" type="button" style="margin-top:4px">Copy</button>'
+            + '<div style="margin-top:4px">Paste this in EverQuest chat: Zeal moves it now and remembers it. Saving here instead takes effect next time EverQuest starts.</div>';
+    }
     document.getElementById('sideMeta').innerHTML = meta;
+    var zcb = document.getElementById('zealCmdCopy');
+    if (zcb) zcb.addEventListener('click', function(){ _copyText(zcmd, zcb); });
   }
   ['fX','fY','fW','fH'].forEach(function(id){
     document.getElementById(id).addEventListener('input', function(){
@@ -1506,7 +1649,7 @@
       w.sizeEdited = false;
     }
     renderStage();
-    setStatus('reset to last load', 'ok');
+    setStatus('reset to last load or save', 'ok');
   });
   // What Save sends: KEY EDITS, [{ file, section, key, value }], not file texts
   // (the guild lead, 2026-10-05: "A for UI Studio"). Save used to rebuild whole
@@ -1535,6 +1678,18 @@
   }
   function _windowChanged(w){
     return w.x !== w.origX || w.y !== w.origY || _sizeChanged(w);
+  }
+  // A successful Save wrote the windows to the ini, so the ini is the baseline again: what a fresh Load
+  // would show. Without this every saved move stayed "changed" until the next Load, and anything that asks
+  // "is the layout unsaved?" (the chat window 🗑) refused for good after a Save. A size pinned here is in
+  // the ini now (hasWH; the raid bars' box has real edges), so it stops counting as an edit.
+  function _rebaselineWindows(wins) {
+    for (var i = 0; i < wins.length; i++) {
+      var w = wins[i];
+      if (w.sizeEdited) { if (w.zealBar === 'raidbars') { w.toEdgeR = false; w.toEdgeB = false; } else if (!w.zealBar) w.hasWH = true; }
+      w.sizeEdited = false;
+      w.origX = w.x; w.origY = w.y; w.origW = w.w; w.origH = w.h;
+    }
   }
   // Writes into the TARGET resolution's suffix block (XPos<W>x<H>); main adds
   // the keys when absent and leaves other-resolution blocks alone.
@@ -1584,6 +1739,8 @@
     var tgtSuffix = built.tgtSuffix;
     var res = await window.mimic.uiStudioWriteEdits(STATE.eqDir, built.edits, deferred ? { backupTag: 'eq' } : null);
     if (!res || !res.ok) { setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err'); return false; }
+    _rebaselineWindows(STATE.windows);
+    if (INSPECTOR_SAVED) INSPECTOR_SAVED(built.edits);
     var resWarn = '';
     try {
       var disp = await window.mimic.uiStudioListDisplays();
@@ -1905,13 +2062,18 @@
   });
   _layEl('layoutUpdate').addEventListener('click', async function(){
     var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
-    if (!window.confirm('Replace the saved layout "' + p.name + '" with ' + who.character + '\'s current UI files?')) return;
+    // The copy comes from the UI file on disk right now; say when EverQuest last wrote it.
+    var info = await window.mimic.uiStudioLiveInfo(who.character, who.eqDir).catch(function(){ return null; });
+    var when = _fileTimeText(info && info.ok && info.newestMs);
+    if (!window.confirm('Replace the saved layout "' + p.name + '" with ' + who.character + '\'s current UI files?' +
+        (when ? '\n\nThe UI file on disk was last written ' + when + '.' : ''))) return;
     var r = await window.mimic.uiStudioLayoutSave({ character: who.character, eqDir: who.eqDir, id: p.id })
       .catch(function(e){ return { ok: false, error: e && e.message }; });
     if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
     var up = await _layBackup(p.id, true);
     await _layRefresh(p.id);
-    _layMsg('updated "' + p.name + '"' + (up ? ' · ☁ backed up' : ' · ⚠ cloud backup failed — use ☁ Back up'), up ? 'ok' : 'err');
+    _layMsg('updated "' + p.name + '"' + (when ? ' from the UI file written ' + when : '') +
+      (up ? ' · ☁ backed up' : ' · ⚠ cloud backup failed — use ☁ Back up'), up ? 'ok' : 'err');
   });
   _layEl('layoutRename').addEventListener('click', async function(){
     var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
@@ -1925,7 +2087,8 @@
     _layMsg('renamed to "' + r.layout.name + '" · ☁ Back up to put the new name on the cloud copy', 'ok');
   });
   _layEl('layoutDelete').addEventListener('click', async function(){
-    var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
+    var who = _selectedCharEqDir(), p = _layPicked();
+    if (!who || !p) { _layMsg(!who ? 'pick a character first' : 'pick a layout in the list first', 'err'); return; }
     if (!window.confirm('Delete the layout "' + p.name + '" from this computer?\n\nCloud backups of it stay; the UI files EQ is using now are not touched.')) return;
     var r = await window.mimic.uiStudioLayoutDelete({ character: who.character, id: p.id })
       .catch(function(e){ return { ok: false, error: e && e.message }; });
@@ -2566,6 +2729,27 @@
     return { ok: true, mode: chk.mode, model: { cm: cm2, geo: geo2 }, moved: moved, renumbered: renum, renamedSections: renamed,
       removedSection: names[idx] != null ? names[idx] : null, lastSection: names[last] != null ? names[last] : null };
   }
+  // Why a press on 🗑 will not go ahead, in words ('' = it will). `check` is _chatDeleteWindow's answer.
+  // The guild lead, 2026-10-15: "DELETE BUTTONS DON'T WORK IN UI STUDIO" — every refusal here used to be
+  // one line in a note at the top of the chat block, out of sight; the caller now shows this text at the
+  // window's own card and in the status bar, so a refusal can be read where the press was.
+  function _chatDeleteBlocked(check, layoutDirty) {
+    if (!check.ok) return check.error;
+    if (layoutDirty) return 'Not deleted: windows in the layout were moved or resized and are not saved yet. Deleting a chat window renumbers the ones after it, so those moves would land on the wrong window. Press Save (a save waiting for logout does not count) or Reset in the toolbar, then 🗑 again.';
+    return '';
+  }
+  // The toolbar Save wrote `edits` to the ini: bring this model's chat geometry blocks up to what is on
+  // disk now, as a fresh read would show it. Without it a delete after a Save copies the old positions
+  // from the model over the saved ones. Only sections the model already holds, only keys of `file`.
+  function _chatAdoptSaved(model, edits, file) {
+    for (var i = 0; i < edits.length; i++) {
+      var e = edits[i];
+      if (file && e.file !== file) continue;
+      if (_csSecIdx(e.section) == null) continue;
+      var s = _csLook(model.geo, e.section);
+      if (s != null) _csPut(model.geo[s], e.key, e.value);
+    }
+  }
   // <option>s for the font picker: 0..6, the current one selected. A missing or out-of-range value gets
   // its own disabled placeholder so the picker never claims a value the ini does not hold.
   function _chatFontOptions(cur) {
@@ -2620,10 +2804,12 @@
   // press itself is not replayed). A chip dragged out of the editor onto a rectangle is not a press
   // outside — it starts inside — so routing from the layout still works.
   var INSPECTOR_GUARD = null;   // set by openSocialsInspector while it is open: { isDirty, revert, close }
+  var INSPECTOR_SAVED = null;   // set with it: (edits) => the toolbar Save wrote these; refresh the chat geometry baseline
   function _closeInspectorNow() {
     var d = document.getElementById('socialsInspector');
     if (d) d.remove();
     INSPECTOR_GUARD = null;
+    INSPECTOR_SAVED = null;
     document.body.classList.remove('inspecting');
   }
   function _askDiscardHotbar(onAnswer) {
@@ -2746,6 +2932,7 @@
     var JOINED = Array.isArray(chat && chat.autojoin) ? chat.autojoin : null;
     var _chatLog = [];          // what is staged, in words, for the unsaved hint
     var _chatNoteMsg = '';      // the last refusal / explanation, shown under the block's title
+    var _chatWhy = null;        // { idx, msg }: why 🗑 on that window did nothing, shown inside its card
     var _chatStructural = false; // a window was added or deleted (layout rectangles changed too)
     function _chatBlockHtml(){
       var html = '';
@@ -2804,6 +2991,9 @@
             (delWhy ? ' disabled' : '') +
             ' style="background:none;border:1px solid #30363d;color:' + (delWhy ? '#484f58' : '#f87171') + ';cursor:' + (delWhy ? 'not-allowed' : 'pointer') + ';font-size:12px;line-height:1;padding:2px 6px;border-radius:3px">🗑</button>' +
           '</div>';
+        if (_chatWhy && _chatWhy.idx === cwn.index) {
+          html += '<div class="chatCardWhy" role="alert" style="margin-top:6px;padding:4px 6px;border:1px solid #f87171;border-radius:3px;color:#f6c365;font-size:11px;font-family:sans-serif">' + escapeHtml(_chatWhy.msg) + '</div>';
+        }
         // Channel chips row
         html += '<div class="chatChipRow" data-win="' + cwn.index + '" data-drop="' + (isTell?'0':'1') + '" ' +
           'style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;min-height:18px">';
@@ -3130,6 +3320,14 @@
       },
       close: _closeInspectorNow,
     };
+    // The toolbar Save changed the chat windows' geometry blocks on disk: both copies of the model follow,
+    // so a delete afterwards starts from the saved positions, not the ones read when this opened.
+    INSPECTOR_SAVED = function(edits){
+      if (!CHAT_ORIG || !CHAT_MODEL || !chat) return;
+      _chatAdoptSaved(CHAT_ORIG, edits, chat.file);
+      _chatAdoptSaved(CHAT_MODEL, edits, chat.file);
+      _chatRebuildEdits();
+    };
     document.getElementById('uiInspectorClose').addEventListener('click', _inspectorTryLeave);
 
     // ── Chat routing interactions ────────────────────────────────────────────
@@ -3201,7 +3399,7 @@
       return out;
     }
     function _chatAfterChange(logLine){
-      if (logLine) _chatLog.push(logLine);
+      if (logLine) { _chatLog.push(logLine); _chatWhy = null; }
       _chatRebuildEdits();
       var host = document.getElementById('chatHost');
       if (host) { host.innerHTML = _chatBlockHtml(); _wireChat(); }
@@ -3267,9 +3465,18 @@
       if (t) t.click();
     }
     function _chatDelete(idx){
+      _chatWhy = null;
       var r = _chatDeleteWindow(CHAT_MODEL, idx);
-      if (!r.ok) { _chatNote(r.error); _chatAfterChange(); return; }
-      if (_chatLayoutDirty()) { _chatNote('You have unsaved window moves in the layout. Save or Reset them first: deleting a chat window renumbers the ones after it, and the moves would land on the wrong window.'); _chatAfterChange(); return; }
+      var why = _chatDeleteBlocked(r, _chatLayoutDirty());
+      if (why) {
+        // Said where the press was (inside the window's card) and in the status bar, not only in the note
+        // at the top of the block, which is out of sight whenever the list is scrolled.
+        _chatNote(why); _chatWhy = { idx: idx, msg: why }; setStatus(why, 'err');
+        _chatAfterChange();
+        var wEl = chatBlock && chatBlock.querySelector('.chatCardWhy');
+        if (wEl && wEl.scrollIntoView) wEl.scrollIntoView({ block: 'nearest' });
+        return;
+      }
       var v = _chatView(CHAT_MODEL), nm = '';
       for (var i = 0; i < v.windows.length; i++) if (v.windows[i].index === idx) nm = v.windows[i].name || ('Chat ' + idx);
       var movedNames = r.moved.map(function(id){ return _chatChannelInfo(id, JOINED).text; });

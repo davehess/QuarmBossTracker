@@ -536,8 +536,10 @@ function makeTab(agent, extra = {}) {
   const wpKeep = (key) => 'data-keep="' + esc(key) + '"';
   const keepStore = {};
   const nav = { clipboard: { writeText: async (t) => { clipboard.push(t); } } };
-  new Function('document', 'fetch', 'navigator', 'confirm', 'setInterval', 'setTimeout', 'esc', 'fmtAgo', 'morphInto', 'wpKeep', '_wpOpenDetails', tabScript)(
-    document, fetchStub, nav, extra.confirm || (() => true), () => 0, (fn) => fn(), esc, (ms) => Math.round((NOW - ms) / 1000) + 's ago', morphInto, wpKeep, keepStore);
+  // The tab folds a long list of sets behind the shared "N more" helper (Layout A, 2026-10-21): hand it the REAL one.
+  const wpMoreList = new Function('esc', sliceBlock(dashHtml, 'var _wpMoreOpen = {};', "btn.textContent = wpMoreLabel(open, btn.getAttribute('data-n'), btn.getAttribute('data-noun'));\n}") + '\nreturn wpMoreList;')(esc);
+  new Function('document', 'fetch', 'navigator', 'confirm', 'setInterval', 'setTimeout', 'esc', 'fmtAgo', 'morphInto', 'wpKeep', '_wpOpenDetails', 'wpMoreList', tabScript)(
+    document, fetchStub, nav, extra.confirm || (() => true), () => 0, (fn) => fn(), esc, (ms) => Math.round((NOW - ms) / 1000) + 's ago', morphInto, wpKeep, keepStore, wpMoreList);
   const node = (attrs, extraProps = {}) => ({ tagName: 'BUTTON', disabled: false, getAttribute: (n) => (n in attrs ? attrs[n] : null), closest() { return this; }, ...extraProps });
   const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); };
   return {
@@ -737,9 +739,11 @@ describe('Quarm rule 3: the picker never drives the game client', () => {
     expect(new Set(urls)).toEqual(new Set(['/api/buffblocks', '/api/spell-names.json', '/api/buffblocks/state', '/api/buffblocks/socials', '/api/buffblocks/sets']));
   });
 
-  it('is wired into the dashboard as a tab with a section', () => {
+  it('is wired into the dashboard inside the Buffs tab, with no tab of its own', () => {
+    // The guild lead, 2026-10-17: the picker became the "blocking" half of ✨ Buffs (and blocking).
     const html = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'dashboard.html'));
-    expect(html).toContain('<button data-tab="buffblocks">');
-    expect(html).toContain('<div id="buffblocks" class="section"></div>');
+    expect(html).not.toContain('data-tab="buffblocks"');
+    expect(html).toContain('<button data-tab="buffs">✨ Buffs (and blocking)</button>');
+    expect(html).toMatch(/<div id="buffs" class="section">\s*<div id="buffsMain"><\/div>\s*<div id="buffblocks"><\/div>\s*<\/div>/);
   });
 });

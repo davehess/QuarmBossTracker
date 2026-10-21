@@ -843,7 +843,7 @@ describe('parseLive', () => {
   const ok = () => ({ at: iso(NOW), positions: { rows: [], live: [], zones: [] }, state: null, auctions: null });
 
   it('takes what the bot sends', () => {
-    expect(parseLive(ok())).toEqual({ positions: { at: iso(NOW), raiders: [], zones: [], unplaced: 0 }, state: null, auctions: null });
+    expect(parseLive(ok())).toEqual({ positions: { at: iso(NOW), raiders: [], zones: [], unplaced: 0 }, state: null, auctions: null, recap: null });
   });
 
   it('is null for anything that is not that shape, so it counts as a failed read', () => {

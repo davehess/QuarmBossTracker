@@ -332,8 +332,8 @@ window.POP_RAIDS = {
         {
           id: 'rallos-event', name: 'Rallos Zek the Warlord (event, 4 phases)', zone: 'Plane of Tactics', npcName: 'Rallos Zek the Warlord',
           callouts: [
-            'P1: kill Decorin Berik + Decorin Grunhork within 6 MIN of each other (clear both halls; don\'t kill on Tallon/Vallon spawn points).',
-            'P2: Tallon + Vallon spawn N/S halls; pull before they roam into the Fake Rallos room; split one out. Kill within ~20 min of each other. Tallon harder — lev + hide from AE; Vallon splits, kill real first.',
+            'P1: Kill both Decorins (no time limit between them; a respawned Decorin\'s kill no longer counts). Clear both halls; don\'t kill on Tallon/Vallon spawn points.',
+            'P2: Tallon + Vallon spawn N/S halls; pull before they roam into the Fake Rallos room; split one out. Kill both, any order, no window between them; each has its own 20-minute out-of-combat clock (150 minutes in a guild instance). Tallon harder — lev + hide from AE; Vallon splits, kill real first.',
             'P3 Fake Rallos: corner tank, raid in the adjacent corner; AE ramps + hall adds; despawns ~50% → real spawns in arena.',
             'P4 Rallos (arena): DPS check; corner tank; adds every 54s (kite team); melee at max range (AE ramp). Hail Projection center.',
           ],

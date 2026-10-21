@@ -1483,6 +1483,69 @@ function isBackupLogFile(filepath) {
   return m ? _splitBackupSuffix(m[1]).isBackup : false;
 }
 
+// ── EverQuest servers (the guild lead, 2026-10-19) ──────────────────────────
+// "support other games, starting with the rest of the EverQuest family." Live EQ, Project 1999, Lazarus and other
+// emulators write the same eqlog_<Name>_<server>.txt text log, so the tail, the DPS meter, triggers, timers and
+// the chat window read them unchanged. What they do NOT share is Project Quarm: the guild bot, the eqemu catalog
+// mirrored from Quarm's database, and the spell/mob numbers in it. This block names the server a log belongs to
+// and says what each server may do. It lives in index.js (not its own file) because only index.js, supervisor.js
+// and package.json are bundled and hot-swapped; a sibling module would never reach an installed Mimic.
+//   guildUpload  may feed the Wolf Pack guild bot (Quarm only; the bot, its boards and its catalog are Quarm's)
+//   catalog      the Quarm catalog (Mob Info stats, spell/item lists, durations) describes this server
+// Zeal needs no entry: the pipe is detected (zealPipe.js), never assumed, so it works wherever Zeal runs.
+// A suffix this table does not know gets the default row: log-only behaviour, nothing leaves the machine.
+const EQ_SERVER_QUARM = 'quarm';
+const EQ_SERVERS = {
+  quarm: { label: 'Project Quarm', guildUpload: true,  catalog: true  },
+  p1999: { label: 'Project 1999',  guildUpload: false, catalog: false },
+};
+const EQ_SERVER_OTHER = { label: null, guildUpload: false, catalog: false };
+// eqlog_<Name>_<suffix>.txt plus rotation tails (.txt2, .txt.bak, " BACKUP.txt"). The name holds no underscore.
+const EQ_LOG_SUFFIX_RX = /^eqlog_[^_]+_(.+?)\.txt(?:[\d.a-z]*)?$/i;
+// 'pq.proj' is Quarm's, 'P1999Green' / 'P1999Blue' / 'P1999Red' / 'P1999PVP' are Project 1999's; anything else keeps
+// its own suffix, lowercased, as the key. Not a log name at all (a custom --log path) stays Quarm, as it always was.
+function eqServerKeyFromSuffix(suffix) {
+  const s = String(suffix || '').toLowerCase().replace(/\s+backup$/, '').trim();
+  if (!s) return EQ_SERVER_QUARM;
+  // A prefix, not an exact match: a renamed or dated copy ("pq.proj_2026-10-18") is still Quarm, and wrongly calling a
+  // Quarm log off-guild would silently stop that raider's uploads.
+  if (s.startsWith('pq.proj')) return EQ_SERVER_QUARM;
+  if (/^p1999/.test(s)) return 'p1999';
+  return s;
+}
+function eqServerForLog(filepath) {
+  const m = path.basename(String(filepath || '')).match(EQ_LOG_SUFFIX_RX);
+  return m ? eqServerKeyFromSuffix(m[1]) : EQ_SERVER_QUARM;
+}
+function eqServerCaps(serverKey) {
+  return Object.prototype.hasOwnProperty.call(EQ_SERVERS, serverKey) ? EQ_SERVERS[serverKey] : EQ_SERVER_OTHER;
+}
+// Every log given is off-guild (and there is at least one): nothing here belongs to the guild bot.
+function eqLogsAllOffGuild(paths) {
+  return Array.isArray(paths) && paths.length > 0 && paths.every(p => !eqServerCaps(eqServerForLog(p)).guildUpload);
+}
+// character (lowercase) → server key, filled as logs are registered. A name seen on a guild server AND an off-guild
+// one resolves to the off-guild side: holding back a Quarm upload costs a night's data, sending a Project 1999
+// character's lines to the guild cannot be taken back.
+const _charServers = new Map();
+function noteLogServer(filepath) {
+  const c = characterFromFilename(filepath);
+  if (!c) return;
+  const server = eqServerForLog(filepath);
+  const k = c.toLowerCase();
+  const prev = _charServers.get(k);
+  if (prev === undefined || !eqServerCaps(server).guildUpload) _charServers.set(k, server);
+}
+function eqServerForCharacter(character) {
+  return _charServers.get(String(character || '').toLowerCase()) || EQ_SERVER_QUARM;
+}
+// True when a token is set (uploads are possible) and this character's server is not the guild's.
+function _offGuildServerChar(character) {
+  if (!character) return false;
+  const server = _charServers.get(String(character).toLowerCase());
+  return server !== undefined && !eqServerCaps(server).guildUpload && !_localOnly();
+}
+
 // ── Encounter detection state machine ───────────────────────────────────────
 // We don't have explicit "encounter started" events in EQ. Heuristic:
 //   - Begin a new encounter when we see a damage event involving a known boss
@@ -1511,6 +1574,9 @@ function isConfirmedPlayer(name) {
   if (!name) return false;
   // Multi-word names with lowercase start (NPCs like "a netherbian drone")
   if (/^[a-z]/.test(name)) return false;
+  // A player's name is letters only. A backtick, apostrophe, space or digit is an NPC, however it got confirmed:
+  // the Halls of Honor dragon "Rydda`Dar" sat on the needs-rez board (the guild lead, 2026-10-18).
+  if (!/^[A-Za-z]+$/.test(name)) return false;
   const lower = name.toLowerCase();
   if (confirmedPlayers.has(lower)) return true;
   // Watched character (uploader's own log)
@@ -2661,6 +2727,102 @@ function mobHitTypesFor(mobName) {
   return { seen, slash: rec.slash, pierce: rec.pierce, blunt: rec.blunt, max: { ...rec.max }, verbs: { ...rec.verbs } };
 }
 
+// ── Does it really see your invis? Your own /consider while invisible is the test (the guild lead, 2026-10-21) ──────
+// "WHEN SOMETHING can see invis but doesn't we should mark CAN see invis, and then cancel it out when it doesn't by con
+// and invis". The catalog's see_invis is a CLAIM; a con made while you are invisible is the evidence.
+// The server (EQMacEmu zone/client.cpp Client::GetFactionLevel) returns FACTION_INDIFFERENTLY for a mob that
+// cannot see you — `if (IsInvisible(tnpc)) return FACTION_INDIFFERENTLY;` — BEFORE it looks at faction. So, invisible:
+//   · "regards you indifferently" = cannot see you, OR its faction toward you is naturally indifferent. Firm only
+//     when this session already conned the same name NON-indifferent while visible (the baseline below); else soft.
+//   · "glares at you threateningly" = no evidence: Handle_OP_Consider turns a mob that has YOU on its hate list
+//     threatening whether or not it can see you.
+//   · any other tier = it saw you (a mob that cannot would have said indifferent).
+// Known holes, all rare: NPCs with a NEGATIVE primary faction go through GetSpecialFactionCon, which never checks
+// invisibility (they read "sees you" regardless); no-combat zones and pets con indifferent regardless.
+// Only PLAIN invisibility is tested. Invisibility versus Undead has a server quirk (the check ignores the target's body
+// type), and hide/sneak have no buff to read.
+// Local only, in memory: the Hits chip's pattern. Keyed by name AND spawn id when the Zeal target proves it, since a
+// see_invis above 1 is a percentage rolled once per spawn, and the mirror flattens it to a boolean.
+const SELF_INVIS_SPELLS = new Set([
+  'invisibility', 'improved invisibility', 'invisibility cloak', 'camouflage', 'superior camouflage',
+  'improved superior camouflage', 'gather shadows', 'shroud of stealth', 'veil of elements', 'foliage shield',
+  'skin of the shadow', 'shauri`s sonorous clouding', 'selo`s song of travel', 'vampyre invis', 'hide in a can',
+]);
+const SIGHT_OBS_MAX = 300;
+const SIGHT_OBS_TTL_MS = 60 * 60_000;
+const SIGHT_LINE_FRESH_MS = 30_000;
+const SIGHT_ZEAL_FRESH_MS = 20_000;
+const _sightObs = new Map();        // mobCaseKey|spawnId (0 = latest by name) → { saw, firm, rank, at, id }
+const _sightBaseline = new Map();   // charLower|mobCaseKey → { rank, at } — a NON-indifferent con while visible
+// true / false for "is this character invisible right now", null when Zeal is not live enough to say.
+function selfInvisState(character, now) {
+  const want = String(character || '').toLowerCase();
+  for (const ch of Object.keys(_zealState)) {
+    if (ch.toLowerCase() !== want) continue;
+    const st = _zealState[ch];
+    if (!st || !Array.isArray(st.buffs) || !(st.updatedAt && now - st.updatedAt <= SIGHT_ZEAL_FRESH_MS)) return null;
+    for (const b of st.buffs) {
+      if (!b || !b.name || !SELF_INVIS_SPELLS.has(String(b.name).toLowerCase().replace(/['’]/g, '`'))) continue;
+      if (typeof b.ticks === 'number' && b.ticks > 0 && b.ticks <= 1) continue;   // its last tick: "starting to appear" has fired
+      return true;
+    }
+    return false;
+  }
+  return null;
+}
+// rank is CON_STANDINGS' (4 indifferent, 1 threateningly). null = no evidence either way.
+function classifyInvisCon(rank, baselineRank) {
+  if (rank === 4) return { saw: false, firm: baselineRank != null && baselineRank !== 4 && baselineRank !== 1 };
+  if (rank === 1) return null;
+  return { saw: true, firm: true };
+}
+function noteSightCon(line, character, nowMs) {
+  const now = nowMs || Date.now();
+  if (!line || !character || line.indexOf(' you') === -1) return null;
+  const m = line.match(_CON_RX);
+  if (!m) return null;
+  const mob = m[1].trim();
+  if (!mob || mob.length > 64 || /['"‘’]/.test(mob) || /\b(?:says|tells|shouts|auctions)\b/i.test(mob)) return null;
+  const entry = CON_STANDINGS.find(([p]) => p === m[2].toLowerCase());
+  const ts = parseEqTimestamp(line);
+  if (!entry || !ts || Math.abs(now - ts.getTime()) > SIGHT_LINE_FRESH_MS) return null;   // a live con only, never a replayed one
+  // A player cons "ally" whatever it can see, so only a target the catalog knows (or an article name) is a test.
+  if (!_knownNpcNotPlayer(mob) && !/^(?:an?|the)\s/i.test(mob)) return null;
+  const invis = selfInvisState(character, now);
+  if (invis === null) return null;
+  const mk = _mobCaseKey(mob);
+  const bk = String(character).toLowerCase() + '|' + mk;
+  const rank = entry[2];
+  if (!invis) {
+    if (rank !== 4 && rank !== 1) {
+      _sightBaseline.delete(bk);
+      _sightBaseline.set(bk, { rank, at: now });
+      if (_sightBaseline.size > SIGHT_OBS_MAX) _sightBaseline.delete(_sightBaseline.keys().next().value);
+    }
+    return null;
+  }
+  const base = _sightBaseline.get(bk);
+  const cls = classifyInvisCon(rank, base && now - base.at <= 6 * 3_600_000 ? base.rank : null);
+  if (!cls) return null;
+  const id = Number(_provableTargetId(character, mob)) || 0;
+  const rec = { saw: cls.saw, firm: cls.firm, rank, at: now, id };
+  for (const k of id ? [mk + '|' + id, mk + '|0'] : [mk + '|0']) {
+    _sightObs.delete(k);
+    _sightObs.set(k, rec);
+  }
+  while (_sightObs.size > SIGHT_OBS_MAX) _sightObs.delete(_sightObs.keys().next().value);
+  return rec;
+}
+// What Target Info shows for the current target: this spawn's own test when the Zeal id proves it, else the latest test
+// of that name (`exact` false). null until one was made, or after an hour.
+function seeInvisObsFor(mobName, spawnId) {
+  const mk = _mobCaseKey(mobName), id = Number(spawnId) > 0 ? Number(spawnId) : 0;
+  const exactRec = id ? _sightObs.get(mk + '|' + id) : null;
+  const rec = exactRec || _sightObs.get(mk + '|0');
+  if (!rec || Date.now() - rec.at > SIGHT_OBS_TTL_MS) return null;
+  return { saw: rec.saw, firm: rec.firm, at_ms: rec.at, exact: !!exactRec };
+}
+
 // ── Your own timers pause while you are logged out (the guild lead, 2026-10-13) ───────────────────
 // "My buffs on my pet and myself should pause if I log out. When I log back in I should have a lot more time on
 // this. And these should be synced to the database so if I logged on from a different machine or if my
@@ -3651,6 +3813,20 @@ function _provableTargetId(observer, targetName) {
   }
   return null;
 }
+// FB-83 (the guild lead, 2026-10-16: "We're clearly not putting the right debuffs on the right mobs - this one
+// had Tepid Deeds display but it was not actually slowed"). A landing LINE names the mob type, not the spawn:
+// with two "A War Boar"s up, "A War Boar slows down." landing on boar B while this observer targets boar A
+// matched A's name above and was stamped with A's id, so A showed a PROVEN slow it never had. The id at land
+// time is proof only for our own cast (the target captured when we cast it, `_castTargetId`) or for a mob
+// whose name has no article (a named mob is one spawn). A generic "a/an/the …" landing stays id-less, and
+// the readers show it as unproven rather than as fact.
+const _GENERIC_MOB_RX = /^\s*(a|an|the)\s/i;
+function _landingTargetId(observer, evt) {
+  if (evt && Number(evt._castTargetId) > 0) return Number(evt._castTargetId);
+  const name = evt && evt.target;
+  if (!name || _GENERIC_MOB_RX.test(String(name))) return null;
+  return _provableTargetId(observer, name);
+}
 // ── Measured buff durations (the guild lead, 2026-09-02) ──────────────────────────────
 // "give it a more robust view of effects and timeframes ... provide an estimate
 // of how long cast buffs will last by character."
@@ -4032,6 +4208,10 @@ function targetBuffsFor(targetLower, wantId) {
       pacified: _isPacifySpell(b.name),
       pacify_ae: _isAePacify(b.name),
       unconfirmed: !!(b && b.unconfirmed),
+      // FB-83: no proven spawn on a generic "a/an/the …" name while a specific spawn is on screen — it landed on
+      // A mob of this name, maybe not this one. Shown marked, never as fact. (typeof: sliced tests lift this alone.)
+      unproven: wantId != null && b.target_id == null && typeof _GENERIC_MOB_RX !== 'undefined'
+        && _GENERIC_MOB_RX.test(String(b.target_name || targetLower)),
       tick_snapped: !!(fade && fade.snapped),
       owner: (b && b.owner) ? b.owner : null });
   }
@@ -4403,7 +4583,10 @@ function noteSelfCast(line, character) {
   let arr = _recentSelfCast.get(cl);
   if (!arr) { arr = []; _recentSelfCast.set(cl, arr); }
   const spellLower = m[1].trim().toLowerCase();
-  arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
+  const castTarget = _zealTargetForChar(cl);
+  // FB-83: the spawn id of that target at CAST time (null on a Zeal that sends none; 0 = no target).
+  const castId = (castTarget && typeof _provableTargetId === 'function') ? _provableTargetId(cl, castTarget) : null;
+  arr.push({ spellLower, name: m[1].trim(), atMs, target: castTarget, targetId: castId > 0 ? castId : null });
   // DI availability — stamp the recast on every Divine Intervention cast.
   if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
   // Me overlay: long-recast timers (Theft of Thought, Harvest, …).
@@ -5124,13 +5307,13 @@ function _npcManaEvict() {
 // (player names); multi-word NPC names never match and have no cast to join.
 const _HEAL_LAND_HINT = /(?:healed|better|chlorophyll|glow|light|away)\.\s*$/;
 const _HEAL_LAND_RX = /\]\s+([A-Z][A-Za-z]+)(?:'s wounds fade away|'s body is covered with a soft glow| is completely healed| feels much better| feels better| is blasted with chlorophyll| is bathed in a divine light)\.\s*$/;
-const _recentHealLands = [];   // { ts(ms), target }
+const _recentHealLands = [];   // { ts(ms), target, ch(bool — "is completely healed", the Complete Heal landing) }
 function noteHealLandLine(line) {
   if (!_HEAL_LAND_HINT.test(line)) return;   // cheap end-anchored prefilter
   const m = line.match(_HEAL_LAND_RX);
   if (!m) return;
   const t = parseEqTimestamp(line);
-  _recentHealLands.push({ ts: t ? t.getTime() : Date.now(), target: m[1] });
+  _recentHealLands.push({ ts: t ? t.getTime() : Date.now(), target: m[1], ch: / is completely healed\.\s*$/.test(line) });
   const cutoff = Date.now() - 10 * 60_000;
   while (_recentHealLands.length > 400 || (_recentHealLands.length && _recentHealLands[0].ts < cutoff)) {
     _recentHealLands.shift();
@@ -5407,6 +5590,8 @@ function resolveSelfCastLanding(line, observer) {
       dur_formula: e.durf,
       cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
       observer:    observer,
+      // FB-83: the spawn we aimed at, only when the land names that same target (not a pet-buff exception).
+      _castTargetId: (rc.targetId > 0 && rc.target && String(rc.target).toLowerCase() === name.toLowerCase()) ? rc.targetId : null,
       _selfCast:   true,
     };
   }
@@ -5802,16 +5987,40 @@ const _POP_GRANT_RX = /^You (?:have received|receive) a (new checklist|character
 const _POP_PREV_RX = /^(?:Mavuin |The Tribunal |Adler Fuirstel |Elder Fuirstel |Adroha Jezith |Thelin |Fahlia Shadyglade |Miak the Searedsoul|You recognize the |Milyk Fuirstel's |Tarkil Adan |Giwin Mirakon|Giwin's invitation|Nitram Anizok |You realize that the image |Maelin|Tylis |The Planar Projection|A Planar Projection |Karana begins|Askr |An aura of soft light|As you place your hand on the burning cauldron|For a moment you pause|You have learned the meaning|You black out for a moment|You focus back to your battle|You feel the searing pain|The Cipher on your arm|As you think back to your meeting|An Image of Mithaniel)/;
 const _POP_RECITAL_RX = /^(?:Your soul has formed a bond|The History translated for you|Learning of Zebuxoruk|The information obtained from (?:Mithaniel|Karana)|You have shown your prowess|You have obtained the Talisman|The Cipher of the Divine Language|Saryrn been destroyed|Mithaniel has been bested|You have (?:completed all of Honor|beaten Rydda|saved the villagers|defeated the nomads)|You have bested Aerin|The evidence of Mavuin|Having endured the trials|Mavuin is grateful|Tylis (?:is being tortured|has been removed)|Thelin (?:being tormented|has completed his pact)|Terris Thule's grasp|Saved from a world|Alder Fuirstel wishes|Grummus has been destroyed|Milyk has been saved|Bertoxxulous has been slain|Saved from certain doom|Now that Grummus has been destroyed|The portal into the Plane of Fire|Xuzl's arcane|Arlyxir's wealth|The power of Dresolik|Rizlona's song|Jiva's strength|The true route to the Plane of Fire|Giwin would like you|The pack of notes from|The words of Maelin echo|The parchments of Rallos|You remember Nitram's words)/;
 const _popPrevLine = new Map();   // character (lowercase) → the message of the line before this one
+// The Halls of Honor trial credit (the guild lead, 2026-10-18: "we did not get credit on the command center for
+// this trial hailing"). Hailing the NPC a won trial leaves standing prints the mist line below, naming the NPC,
+// INSTEAD of a flag message; a raider who already holds the credit gets the second line, which names nobody, so
+// the NPC is the one this character last hailed. Both are the zone script's own words (hohonora/encounters).
+// Sent as kind 'trial'; the bot (utils/popFlagStages.js resolveTrial) names the trial and ignores anything else.
+const _POP_TRIAL_MIST_RX = /^An ethereal mist descends from the air and surrounds your very being\. Your body begins to emanate with the power of ([A-Za-z`' ]{2,40}?)\.$/;
+const _POP_TRIAL_HELD = 'You have already received credit for completing this trial.';
+const _POP_SELF_HAIL_RX = /^You say,?\s*['"]Hail[,!. ]+\s*([^'"]{2,48}?)[!.?]*['"]/i;
+const _popLastHail = new Map();   // character (lowercase) → { npc, ms } of its own latest "Hail, <npc>"
 function parsePopFlagLine(line, character) {
   if (!character || !line) return null;
   const cl = String(character).toLowerCase();
   const msg = String(line).replace(/^\[[^\]]*\]\s*/, '');
   const prev = _popPrevLine.get(cl) || null;
   _popPrevLine.set(cl, msg);
+  if (msg.charCodeAt(0) === 89 && msg.startsWith('You say')) {     // 'Y': remember who this character hailed last
+    const h = _POP_SELF_HAIL_RX.exec(msg);
+    if (h) { const hts = parseEqTimestamp(line); _popLastHail.set(cl, { npc: h[1].trim(), ms: hts ? hts.getTime() : Date.now() }); }
+  }
   let kind = null;
   let text = null;
-  const g = msg.indexOf(' flag!') !== -1 ? _POP_GRANT_RX.exec(msg) : null;
-  if (g) kind = /checklist/i.test(g[1]) ? 'checklist' : 'grant';
+  let trialNpc = null;
+  if (msg.charCodeAt(0) === 65 && msg.startsWith('An ethereal mist')) {            // 'A'
+    const m = _POP_TRIAL_MIST_RX.exec(msg.trim());
+    if (m) { kind = 'trial'; text = msg.slice(0, 160); trialNpc = m[1].trim(); }
+  } else if (msg.charCodeAt(0) === 89 && msg.trim() === _POP_TRIAL_HELD) {      // 'Y'
+    const lh = _popLastHail.get(cl);
+    const tms = (parseEqTimestamp(line) || new Date()).getTime();
+    // The hail comes first and the answer a moment later; a hail from minutes ago is another conversation.
+    if (lh && tms - lh.ms >= 0 && tms - lh.ms <= 30_000) { kind = 'trial'; text = _POP_TRIAL_HELD; trialNpc = lh.npc; }
+  }
+  const g = !kind && msg.indexOf(' flag!') !== -1 ? _POP_GRANT_RX.exec(msg) : null;
+  if (kind) { /* a trial credit line, above */ }
+  else if (g) kind = /checklist/i.test(g[1]) ? 'checklist' : 'grant';
   else if (_POP_RECITAL_RX.test(msg)) { kind = 'recital'; text = msg.slice(0, 160); }
   if (!kind) return null;
   const ts = parseEqTimestamp(line);
@@ -5821,14 +6030,17 @@ function parsePopFlagLine(line, character) {
   }
   const enc = (stats.currentEncounterThreatByChar || {})[cl] || stats.currentEncounterThreat;
   const boss = enc && enc.bossName ? String(enc.bossName) : null;
+  // These two lines print nowhere but the Halls of Honor, so a missing zone is still that zone.
+  if (kind === 'trial' && !zone) zone = 'hohonora';
   return {
     character,
     zone:  zone ? String(zone).slice(0, 64) : null,
     boss:  boss ? boss.slice(0, 64) : null,
     ts:    ts ? ts.toISOString() : new Date().toISOString(),
     kind,
-    prev:  kind !== 'recital' && prev && _POP_PREV_RX.test(prev) ? prev.slice(0, 160) : null,
+    prev:  kind !== 'recital' && kind !== 'trial' && prev && _POP_PREV_RX.test(prev) ? prev.slice(0, 160) : null,
     text,
+    ...(kind === 'trial' ? { npc: trialNpc.slice(0, 64) } : {}),
   };
 }
 
@@ -6899,8 +7111,7 @@ function diCalloutSnapshot() {
 //     the rampage was seen during THIS fight — the startedAt bound keeps last
 //     fight's victim from haunting the next pull.
 const RAMPAGE_FRESH_MS = 8000;
-function _currentRampageForDisplay(now) {
-  const r = stats.currentRampage;
+function _rampageShown(r, now) {
   if (!r || !r.target || !r.at) return null;
   if ((now - r.at) <= RAMPAGE_FRESH_MS) return r;
   const et = stats.currentEncounterThreat;
@@ -6909,6 +7120,30 @@ function _currentRampageForDisplay(now) {
     if (r.at >= startMs - 30_000) return r;
   }
   return null;
+}
+function _currentRampageForDisplay(now) {
+  return _rampageShown(stats.currentRampage, now);
+}
+// Several bosses rampaging at once (HoH trial 3: three Crazed Norrathians, the guild lead, 2026-10-19):
+// one current victim PER ATTACKER, same persistence rule as above. Sorted by attacker name so the card
+// order is byte-stable between polls. stats.currentRampage (the latest, whoever it was) is untouched.
+const RAMPAGE_ATTACKERS_MAX = 12;
+function _noteRampageAttacker(attacker, target, at) {
+  if (!attacker || !target) return;
+  const m = stats.currentRampages || (stats.currentRampages = {});
+  m[String(attacker).toLowerCase()] = { target, attacker, at };
+  const keys = Object.keys(m);
+  if (keys.length > RAMPAGE_ATTACKERS_MAX) {
+    keys.sort((a, b) => m[a].at - m[b].at);
+    for (const k of keys.slice(0, keys.length - RAMPAGE_ATTACKERS_MAX)) delete m[k];
+  }
+}
+function _currentRampagesForDisplay(now) {
+  const out = [];
+  for (const r of Object.values(stats.currentRampages || {})) {
+    if (_rampageShown(r, now)) out.push(r);
+  }
+  return out.sort((a, b) => String(a.attacker).toLowerCase() < String(b.attacker).toLowerCase() ? -1 : 1);
 }
 const OFFHEAL_WINDOW_MS = 20_000;
 const OFFHEAL_MIN_HITS  = 2;
@@ -7382,11 +7617,15 @@ function _slowShortName(name) {
   if (alias) return alias;
   return String(name || '').replace(/\s+(insects|deeds|pace|sleep)$/i, '').trim() || String(name || '');
 }
-// Active slows observed per target: targetLower → Map<spellLower,
-// { name, magnitude, caster, landedAtMs, expiresAtMs }>. `caster` is set only
+// Active slows observed per target NAME: targetLower → Map<key,
+// { name, magnitude, caster, targetId, landedAtMs, expiresAtMs }>. `caster` is set only
 // when we KNOW it (our own self-cast); a bystander-observed land carries null
 // (the same limitation the raid-review slows section documents). expiresAtMs 0 =
 // unknown catalog duration (rare — the classic slows are all catalog-timed).
+// FB-83: `key` is the lowercased spell name, plus "#<spawn id>" when the landing is
+// tied to one spawn (our own cast at our own Zeal target) — so two boars each slowed
+// by the same spell are two entries. `targetId` null = the id is unknown (a bystander
+// line names no spawn); readers that know their spawn id use it (_bestSlowForTarget).
 const _slowsByTarget = new Map();
 const SLOW_TARGET_CAP     = 200;
 const SLOW_PRUNE_GRACE_MS = 3000;
@@ -7416,8 +7655,13 @@ function _pickBestActiveSlow(entries, nowMs) {
   return best;
 }
 // Best active slow on a target for DISPLAY — { name, magnitude, caster,
-// remaining_secs, total_secs } or null. Prunes long-expired entries as it reads.
-function _bestSlowForTarget(targetLower, nowMs) {
+// remaining_secs, total_secs, uncertain } or null. Prunes long-expired entries as it reads.
+// FB-83: `wantId` is the spawn id of the mob the reader is showing, when it knows one
+// (null/absent = old Zeal: name only, as before). With it, an entry tied to THAT id is
+// certain, an entry tied to a DIFFERENT id is some other mob of the same name and is
+// left out, and an id-less entry (a bystander line) may or may not be this mob: it is
+// returned with `uncertain: true`, and only when no certain entry exists.
+function _bestSlowForTarget(targetLower, nowMs, wantId) {
   const mp = _slowsByTarget.get(targetLower);
   if (!mp || mp.size === 0) return null;
   const now = nowMs || Date.now();
@@ -7427,7 +7671,13 @@ function _bestSlowForTarget(targetLower, nowMs) {
     if (e) entries.push(e);
   }
   if (mp.size === 0) { _slowsByTarget.delete(targetLower); return null; }
-  const best = _pickBestActiveSlow(entries, now);
+  let pool = entries, uncertain = false;
+  if (wantId > 0) {
+    const certain = entries.filter(e => e.targetId === wantId);
+    if (_pickBestActiveSlow(certain, now)) pool = certain;
+    else { pool = entries.filter(e => !(e.targetId > 0)); uncertain = true; }
+  }
+  const best = _pickBestActiveSlow(pool, now);
   if (!best) return null;
   const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
   const total     = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - best.landedAtMs) / 1000)) : null;
@@ -7438,12 +7688,12 @@ function _bestSlowForTarget(targetLower, nowMs) {
   if (best.ambiguous) {
     return { name: best.name, display_name: 'SLOWED', ambiguous: true,
              family: best.family || null,
-             magnitude: null, caster: null, cls: null,
+             magnitude: null, caster: null, cls: null, uncertain,
              remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
   }
   return { name: best.name, display_name: null, ambiguous: false, family: null,
            magnitude: best.magnitude, caster: best.caster || null,
-           cls: _slowClass(best.name),
+           cls: _slowClass(best.name), uncertain,
            remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
 }
 // #181 — the bystander land text for the classic slows is a bare shared emote:
@@ -7459,13 +7709,17 @@ const SLOW_AMBIG_FAMILIES = [
   { rx: /\byawns\.\s*$/i,      family: new Set(["turgur's insects", "togor's insects", "tagar's insects", "walking sleep", "drowsy"]) },
   { rx: /\bslows down\.\s*$/i, family: new Set(["tepid deeds", "forlorn deeds", "shiftless deeds", "languid pace"]) },
 ];
-function _refreshSlowFromAmbiguousLand(targetName, line, nowMs) {
+// FB-83: `curId` is the observer's own target id when it is this mob (null otherwise). The line names
+// no spawn, so an entry tied to a DIFFERENT spawn is left alone; id-less entries and ones tied to
+// `curId` are the only ones it cannot contradict. No `curId` (old Zeal) → every entry, as before.
+function _refreshSlowFromAmbiguousLand(targetName, line, nowMs, curId) {
   const mp = _slowsByTarget.get(String(targetName || '').toLowerCase());
   if (!mp || mp.size === 0) return false;
   for (const fam of SLOW_AMBIG_FAMILIES) {
     if (!fam.rx.test(line)) continue;
     for (const [k, e] of mp) {
-      if (!fam.family.has(k)) continue;
+      if (!fam.family.has(String(k).split('#')[0])) continue;
+      if (curId > 0 && e.targetId > 0 && e.targetId !== curId) continue;
       const at = nowMs || Date.now();
       const span = (e.expiresAtMs > 0 && e.landedAtMs) ? (e.expiresAtMs - e.landedAtMs) : 0;
       e.landedAtMs = at;
@@ -7544,12 +7798,19 @@ function _noteSlowForTarget(evt, caster) {
   const magnitude   = _slowMagnitude(evt.spell_name);
   let mp = _slowsByTarget.get(targetLower);
   if (!mp) { mp = new Map(); _slowsByTarget.set(targetLower, mp); }
+  // FB-83: tie the slow to a spawn only when our own cast proves it (resolveSelfCastLanding
+  // stamps the Zeal target id from cast time). A bystander line names no spawn → id-less.
+  const targetId = Number(evt._castTargetId) > 0 ? Number(evt._castTargetId) : null;
+  const key = targetId ? spellLower + '#' + targetId : spellLower;
+  for (const [k, e] of mp) {   // spawn-keyed entries pile up under one name: drop the long-expired
+    if (e && e.expiresAtMs > 0 && e.expiresAtMs <= atMs - SLOW_PRUNE_GRACE_MS) mp.delete(k);
+  }
   // An ambiguous crown is only a guess at WHICH slow landed, so the magnitude
   // that comes with it is a guess too. A named caster resolves it (a self-cast
   // or relayed cast names the spell exactly), so ambiguity clears the moment we
   // get one.
   const ambiguous = !caster && !!evt.ambiguous;
-  const existing = mp.get(spellLower);
+  const existing = mp.get(key);
   if (existing) {
     existing.landedAtMs = atMs;
     if (expiresAtMs) existing.expiresAtMs = expiresAtMs;
@@ -7559,8 +7820,8 @@ function _noteSlowForTarget(evt, caster) {
     else if (ambiguous) existing.ambiguous = true;
     if (evt.family) existing.family = evt.family;
   } else {
-    mp.set(spellLower, { name: evt.spell_name, magnitude, caster: caster || null,
-                         ambiguous, family: evt.family || null, landedAtMs: atMs, expiresAtMs });
+    mp.set(key, { name: evt.spell_name, magnitude, caster: caster || null, targetId,
+                  ambiguous, family: evt.family || null, landedAtMs: atMs, expiresAtMs });
   }
   if (_slowsByTarget.size > SLOW_TARGET_CAP) {
     const oldest = _slowsByTarget.keys().next().value;
@@ -7573,15 +7834,34 @@ function _noteSlowForTarget(evt, caster) {
 // stronger one, or a plain refresh, is silent (the best spell doesn't change).
 function _maybeAnnounceSlowLand(targetLower, targetName, nowMs) {
   if (!_rampageOnMainTarget(targetName)) return;   // #155-style main-target gate
-  const best = _bestSlowForTarget(targetLower, nowMs);
+  // FB-83: when a watched client's Zeal target names the one spawn we are looking at, a slow
+  // proven to be on a DIFFERENT spawn of the same name is not this mob's and stays silent.
+  const wantId = _watchedTargetId(targetName || targetLower);
+  const best = _bestSlowForTarget(targetLower, nowMs, wantId);
   if (!best) return;
   const prev = _slowCalloutState.get(targetLower);
-  const changed = !prev || String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase();
+  const changed = !prev || String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase()
+    || (prev.id != null && wantId != null && prev.id !== wantId);
   // `display` keeps the mob's name as the log cased it; the fading and drop
   // callouts run off the lowercased key alone and have no other source for it.
   const display = targetName || (prev && prev.display) || null;
-  _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude, display });
+  _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude, display, id: wantId });
   if (changed) _announceSlowLand(best, _slowCalloutMob(display, targetLower));
+}
+// The spawn id of the mob called `name` when the watched clients' Zeal targets agree on exactly one
+// (same proof rule as _slowCalloutMob below); null when none do, or when two disagree.
+function _watchedTargetId(name) {
+  const want = _normMobNameAgent(name);
+  if (!want) return null;
+  const ids = new Set();
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState)) {
+    const st = _zealState[ch];
+    if (!st || (now - (st.updatedAt || 0)) > 60000) continue;
+    if (!Number.isFinite(st.target_id) || st.target_id <= 0) continue;
+    if (_normMobNameAgent(st.target_name) === want) ids.add(st.target_id);
+  }
+  return ids.size === 1 ? [...ids][0] : null;
 }
 // Which mob a slow callout is about — "A Plagued Soriz #4745" (a member,
 // 2026-09-23: "we should say the target these are based around, name of mob and
@@ -7608,7 +7888,9 @@ function _announceSlowLand(best, mob) {
   const casterTxt = best.caster ? ' · ' + best.caster : '';
   _pushOverlay({
     text:        '🐌 Slowed ' + (mob ? mob + ' ' : '') + '— ' + (alias || best.name) + magTxt + casterTxt,
-    tts:         'Slowed. ' + _slowShortName(best.name),
+    // "Slowed." opened the utterance and the neural voice heard "DONT TURRIS" (the guild lead, 2026-10-21): a longer
+    // opener, and the name respelled for the ear in Mimic's voice.js. The on-screen text keeps "Slowed".
+    tts:         'Slow landed. ' + _slowShortName(best.name),
     color:       'amber',
     duration_ms: 5000,
     shownAt:     Date.now(),
@@ -7662,7 +7944,11 @@ const SLOW_FADING_WARN_SECS = 60;
 function _tickSlowCallouts() {
   const now = Date.now();
   for (const [targetLower, prev] of _slowCalloutState) {
-    const best = _bestSlowForTarget(targetLower, now);
+    // FB-83: the watched target is now a different spawn of this name than the one the callout
+    // state was written for — that is a target switch, not the slow wearing off. Forget it silently.
+    const wantId = _watchedTargetId(targetLower);
+    if (prev.id != null && wantId != null && prev.id !== wantId) { _slowCalloutState.delete(targetLower); continue; }
+    const best = _bestSlowForTarget(targetLower, now, wantId);
     if (best) {
       const nameChanged = String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase();
       // #181 — "re-slow soon" pre-warn: once per landing window, when the
@@ -7678,7 +7964,7 @@ function _tickSlowCallouts() {
         && _isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower);
       if (nameChanged || warnDue) {
         _slowCalloutState.set(targetLower, {
-          name: best.name, magnitude: best.magnitude, display: prev.display || null,
+          name: best.name, magnitude: best.magnitude, display: prev.display || null, id: prev.id ?? null,
           warnedForLandMs: warnDue ? best.landedAtMs : prev.warnedForLandMs,
         });   // name change is a silent downgrade; warn stamps the window
       }
@@ -8056,6 +8342,7 @@ function trackLootedLine(line, character) {
     ...(fromOwnPet ? { fromOwnPet: true } : {}),
   });
   if (lootedBuffer.length > 200) lootedBuffer.splice(0, lootedBuffer.length - 200);
+  try { _raidCodeNoteLoot(lootedBuffer[lootedBuffer.length - 1], character); } catch { void 0; }   // under a raid code: kept on this PC
 }
 
 // Upload recently-looted items. Mirrors uploadRollSets' recency discipline:
@@ -8126,7 +8413,7 @@ const _ROLL_TIER_WORDS = new Set([
 function _cleanRollItemCandidate(seg) {
   let t = String(seg || '')
     .replace(/[\x00-\x1f]/g, ' ')        // EQ item-link control bytes
-    .replace(/\(\s*\d{1,2}\s*\)\s*$/, ' ');  // trailing (qty) belongs to the NUMBER
+    .replace(/\(\s*\d{1,2}\s*\)[\s:\-–]*$/, ' ');  // trailing (qty) belongs to the NUMBER
   // A separator ENDS the previous item, so only the text after the LAST one is
   // this number's name. Collapsing separators to spaces instead would glue a
   // numberless item onto the next one — "Golden Ember Powder | Unadorned Plate
@@ -8134,7 +8421,8 @@ function _cleanRollItemCandidate(seg) {
   // is actually for.
   const cut = Math.max(t.lastIndexOf('|'), t.lastIndexOf(','), t.lastIndexOf(';'));
   if (cut >= 0) t = t.slice(cut + 1);
-  t = t.replace(/\s+/g, ' ').trim();
+  // "Ethereal Parchment: 555" / "… – 555": a dangling : or dash is the separator, not the name.
+  t = t.replace(/\s+/g, ' ').replace(/[\s:\-–—]+$/, '').trim();
   if (!t) return null;
   const bare = (w) => w.toLowerCase().replace(/[^a-z]/g, '');
   // Drop tokens that are pure punctuation — "Shadow Tendril - 111" is a real
@@ -8184,13 +8472,23 @@ const _ITEM_NAME_STOPWORDS = new Set(['of', 'the', 'a', 'an', 'in', 'on', 'and',
  */
 function parseRollItemLine(text) {
   const out = [];
-  const s = String(text || '').replace(/[\x00-\x1f]/g, ' ');
+  let s = String(text || '').replace(/[\x00-\x1f]/g, ' ');
   if (!s) return out;
+  // Quantity written as "xN" / "×N" after the name, or "Nx" before it (the guild lead, 2026-10-21:
+  // "Ethereal Parchment x6 - 555"), is the same thing as "(N)": rewrite it to that shape, which also
+  // swallows the " - " / ":" between the item and its range, so the walk below never sees the N as
+  // a roll range or leaves "x6" glued to the item name.
+  s = s.replace(/(^|[\s|,;])(\d{1,2})\s*[x×]\s+([^|,;\d]*?[A-Za-z][^|,;\d]*?)\s*[-–:]?\s*(?=\d{3,4}(?!\d))/g,
+    (_m, pre, n, name) => `${pre}${name} (${n}) `);
+  s = s.replace(/(\S)\s+[x×]\s*(\d{1,2})(?![\dA-Za-z])\s*[-–:]?\s*/g, '$1 ($2) ');
 
-  const RX = /(?<!\d)(\d{2,4})(?!\d)/g;
+  // A "(N)" quantity is matched only to be stepped over, so a two-digit one — "(12)" — never
+  // ends the segment and strands the item name before it.
+  const RX = /\(\s*\d{1,2}\s*\)|(?<!\d)(\d{2,4})(?!\d)/g;
   let m, prevEnd = 0, carried = null, first = true;
   const pending = [];
   while ((m = RX.exec(s)) !== null) {
+    if (m[1] === undefined) continue;
     const num = parseInt(m[1], 10);
     const start = m.index;
     const end = start + m[1].length;
@@ -8209,7 +8507,7 @@ function parseRollItemLine(text) {
     if (after === '.' && /\d/.test(s.charAt(end + 1))) { first = false; continue; }
     if (!Number.isFinite(num) || num < 100) { first = false; continue; }
 
-    const qm = segRaw.match(/\(\s*(\d{1,2})\s*\)\s*$/);
+    const qm = segRaw.match(/\(\s*(\d{1,2})\s*\)[\s:\-–]*$/);
     const cand = _cleanRollItemCandidate(segRaw);
     if (cand) carried = { item: cand, qty: qm ? parseInt(qm[1], 10) : null };
     if (carried) {
@@ -8229,13 +8527,18 @@ function parseRollItemLine(text) {
   return out;
 }
 
+// "[timestamp] [R] [Name]: text" — raid / guild / group / say / shout only (never a tell).
+const _ROLL_ABBR_RX = /^\[[^\]]+\]\s+\[(?:R|G|P|S|Sh)\]\s+\[([^\]]+)\]:\s+(.+?)\s*$/;
 function trackRollItemLine(line) {
   if (!line) return;
   // Cheap gate — this runs on every kept log line, and only player chat can
   // carry a roll call.
-  if (line.indexOf(' tells ') === -1 && line.indexOf(' shouts') === -1
+  const abbr = line.indexOf(']: ') !== -1;
+  if (!abbr && line.indexOf(' tells ') === -1 && line.indexOf(' shouts') === -1
       && line.indexOf(' says') === -1) return;
-  const m = line.match(_CH_SPEAKER_RX);
+  // Zeal's AbbreviatedChat rewrites the LOG line to "[R] [Name]: text" (no quotes; see _tagLineParts),
+  // so the roll caller's chat arrives in either shape.
+  const m = line.match(_CH_SPEAKER_RX) || line.match(_ROLL_ABBR_RX);
   if (!m) return;
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
@@ -9431,6 +9734,14 @@ class EncounterBuilder {
       perPlayer,
       spans,
     };
+    // Damage-shield damage per wearer (lowercase name → total), for the meter's Tank History. A SIBLING of
+    // perPlayer for the same reason spans is: the threat_snapshot upload sends perPlayer whole. Omitted when no
+    // shield landed this fight.
+    if (this.dsByTank && this.dsByTank.size > 0) {
+      const dsBy = {};
+      for (const [k, v] of this.dsByTank.entries()) { const t = Math.round(v && v.total || 0); if (t > 0) dsBy[k] = t; }
+      if (Object.keys(dsBy).length) snap.dsBy = dsBy;
+    }
     // Pet aggro rollup — every charm or summoned pet that has a row in
     // perPlayer with a known pet_owner contributes its total threat back to
     // its OWNER's row as `pet_threat_total`. Lets the threat overlay show
@@ -10264,7 +10575,17 @@ class EncounterBuilder {
         // (opt-in backfill replays) must NOT speak old rampages. #155 — gate on
         // the rampaging mob being the raid's main target so adds' rampages on a
         // multi-mob pull don't spam the TTS.
-        if (!this.silent && _rampageOnMainTarget(event.attacker)) _announceRampage(def, Date.parse(event.ts) || Date.now());
+        // Several bosses at once (HoH trial 3): a named raid mob's rampage speaks too, tagged with the
+        // boss's name once more than one is rampaging; trash adds stay suppressed (#155).
+        const rampAtMs = Date.parse(event.ts) || Date.now();
+        _noteRampageAttacker(event.attacker, def, rampAtMs);
+        if (!this.silent) {
+          if (_rampageOnMainTarget(event.attacker)) {
+            _announceRampage(def, rampAtMs, _rampageBossLabel(event.attacker, rampAtMs, false));
+          } else if (_rampageAttackerIsRaidMob(event.attacker, this.bossName)) {
+            _announceRampage(def, rampAtMs, _rampageBossLabel(event.attacker, rampAtMs, true));
+          }
+        }
         // We don't know the exact rampage damage from the announcement line alone —
         // the actual hit lines will follow and be counted in damageTaken normally.
         // rampageDmg is accumulated from tagged damage events below.
@@ -10923,6 +11244,7 @@ class EncounterBuilder {
         const dMs = Date.parse(d.ts) || 0;
         if (atMs - dMs > DEATH_CONFIRM_WINDOW_MS) break;   // too old — stop scanning back
         d.confirmed = true;
+        _confirmDeathRecap(meLower, dMs);
         break;
       }
       return;
@@ -10952,6 +11274,7 @@ class EncounterBuilder {
         // are a corpse. Silent builders (old-log replay) must not tombstone
         // anyone in the live session.
         if (!this.silent) _noteDeath(defName, deathTs);
+        if (!this.silent) { try { _noteDeathRecap(this, defName, event, deathTs); } catch (e) { void e; } }
         // Silent builders (opt-in backfill) skip the session-wide deaths
         // counter — old log replays shouldn't move the Deaths panel.
         if (!this.silent) {
@@ -11686,7 +12009,7 @@ class EncounterBuilder {
       if (stats.currentEncounterThreat) {
         stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
       }
-      if (this._liveSnap) _recordFightHistory({ ...this._liveSnap, flushedAt: Date.now() }, this.character);
+      if (this._liveSnap) _recordFightHistory({ ...this._liveSnap, flushedAt: Date.now(), deaths: this.deaths }, this.character);
       // Mirror to the per-character map so the 2-min stale window applies
       // independently per character (a player's other character can
       // still be mid-fight while this one wraps up).
@@ -11832,6 +12155,9 @@ const QUEUE_PERMANENT_CODES = new Set([400, 401, 403, 404, 413, 422, 431]);
 // stays cheap and durable events are what actually persist.
 const _EPHEMERAL_KINDS   = new Set(['casting', 'raid_roster', 'threat_snapshot']);
 const _CASTING_STALE_MS  = 90_000;   // a cast relayed >90s late is useless
+// Kinds whose body is a fixed contract and carries nobody: enqueueUpload stamps neither the operator's `character`
+// nor `agent_state` on them (kite_loop: the bot is written against exactly the fields in "Kite loops" below).
+const _BARE_KINDS        = new Set(['kite_loop']);
 
 let _uploadQueue       = [];        // in-memory mirror, persisted to QUEUE_FILE
 let _queueDrainTimer   = null;
@@ -12073,6 +12399,7 @@ function _endpointForKind(kind, botUrl) {
     case 'optin_summary':   return base + '/optin_summary';
     case 'bosskill':        return base + '/bosskill';
     case 'hatekill':        return base + '/hatekill';
+    case 'slow_mode':       return base + '/slow-mode';
     case 'lockout':         return base + '/lockout';
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
@@ -12097,6 +12424,7 @@ function _endpointForKind(kind, botUrl) {
     case 'casting':         return base + '/casting';
     case 'ari_lead':        return base + '/ari-lead';
     case 'crash_report':    return base + '/crash_report';
+    case 'kite_loop':       return base + '/kite-loop';
     default:                return botUrl;
   }
 }
@@ -12256,6 +12584,10 @@ function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
 function enqueueUpload(kind, payload) {
   // Local mode: nothing is queued, so nothing can be sent.
   if (_localOnly()) return null;
+  // A raid code is active (this PC is in someone else's raid): the record / DKP streams stay on this PC.
+  if (_raidCodeHolds(kind, payload)) return null;
+  // A payload that names a character on a server that is not the guild's never leaves (eqServerForLog).
+  if (payload && _offGuildServerChar(payload.character)) return null;
   // Cross-instance guard: only the elected uploader sends. A read-only
   // instance (another Parser/Mimic on this machine already owns the lock)
   // drops outbound uploads so the same line isn't posted twice. Its local
@@ -12310,7 +12642,7 @@ function enqueueUpload(kind, payload) {
   // they carry no per-box `character`, which made the admin board file them all
   // under "(unknown)". Encounters already set their own per-box character and
   // are left untouched.
-  if (payload && typeof payload === 'object' && !payload.character) {
+  if (payload && typeof payload === 'object' && !payload.character && !_BARE_KINDS.has(kind)) {
     const pc = _primaryCharacter();
     if (pc) payload.character = pc;
   }
@@ -12319,7 +12651,7 @@ function enqueueUpload(kind, payload) {
   // WOLFPACK_CLIENT identifies the wrapper (e.g. 'mimic'); default 'parser'
   // for Parser.bat installs. WOLFPACK_APP_VERSION lets Mimic stamp its own
   // semver so the admin board can show beta.X without parsing tray strings.
-  if (payload && typeof payload === 'object' && !payload.agent_state) {
+  if (payload && typeof payload === 'object' && !payload.agent_state && !_BARE_KINDS.has(kind)) {
     payload.agent_state = {
       client:       process.env.WOLFPACK_CLIENT      || 'parser',
       app_version:  process.env.WOLFPACK_APP_VERSION || null,
@@ -12450,6 +12782,7 @@ function _doOneUpload(entry) {
           if (Number.isFinite(secs)) retryAfterMs = Math.max(0, secs * 1000);
           else { const t = Date.parse(ra); if (Number.isFinite(t)) retryAfterMs = Math.max(0, t - Date.now()); }
         }
+        if (sc === 401) chatCacheRevoke('upload answered 401');   // the bot's 503 (store blip) and 429 are retried, never this
         if (sc >= 200 && sc < 300) {
           resolve({ ok: true,  permanent: false, statusCode: sc, body: data });
         } else if (QUEUE_PERMANENT_CODES.has(sc)) {
@@ -12781,6 +13114,8 @@ const stats = {
   // deaths field in uploaded parse cards.
   // { playerName: count }
   sessionDeaths:   {},
+  // deathRecaps: the last DEATH_RECAP_KEEP death recaps, oldest first (FB-84). LOCAL ONLY — never uploaded.
+  deathRecaps:     [],
   // sessionHealers: per-healer healing totals accumulated across all fights this session.
   // { healerName: { healed, ticks, targets: Set<string> } }
   sessionHealers:  {},
@@ -12896,6 +13231,7 @@ function resetSessionStats() {
   stats.damageShield       = {};
   stats.abilityStats       = new Map();
   stats.sessionDeaths      = {};
+  stats.deathRecaps        = [];
   stats.sessionHealers     = {};
   stats.sessionDefenders   = {};
   stats.sessionMends       = { attempts: 0, success: 0, crit: 0, fail: 0 };
@@ -13156,12 +13492,13 @@ function saveSessionState() {
       sessionHealers:     healersOut,
       sessionProcs:       stats.sessionProcs,
       sessionDeaths:      stats.sessionDeaths,
+      deathRecaps:        stats.deathRecaps,
       sessionMends:       stats.sessionMends,
       sessionCritHeals:   stats.sessionCritHeals,
       sessionCrits:       stats.sessionCrits,
       resistedSpells:     stats.resistedSpells,
       inboundSpellDamage: stats.inboundSpellDamage,
-      sessionDeeps:       stats.sessionDeeps,
+      sessionDeeps:      stats.sessionDeeps,
       abilityStats:       Object.fromEntries(stats.abilityStats),
       castCounts:         stats.castCounts,
       uploadCount:        stats.uploadCount,
@@ -13199,7 +13536,11 @@ function loadSessionState() {
     if (raw.sessionDefenders)   stats.sessionDefenders   = raw.sessionDefenders;
     if (raw.sessionProcs)       stats.sessionProcs       = raw.sessionProcs;
     if (raw.sessionDeaths)      stats.sessionDeaths      = raw.sessionDeaths;
-    if (raw.sessionMends)       stats.sessionMends       = raw.sessionMends;
+    if (Array.isArray(raw.deathRecaps)) {
+      stats.deathRecaps = raw.deathRecaps.filter(r => r && Number.isFinite(r.id) && Array.isArray(r.hits)).slice(-DEATH_RECAP_KEEP);
+      _deathRecapSeq = stats.deathRecaps.reduce((m, r) => Math.max(m, r.id), _deathRecapSeq);
+    }
+    if (raw.sessionMends)      stats.sessionMends       = raw.sessionMends;
     if (raw.sessionCritHeals)   stats.sessionCritHeals   = raw.sessionCritHeals;
     if (raw.sessionCrits)       stats.sessionCrits       = raw.sessionCrits;
     if (raw.resistedSpells)     stats.resistedSpells     = raw.resistedSpells;
@@ -13393,6 +13734,119 @@ function _clearDeath(name) {
   if (wasDead) { try { noteRezDone(k); } catch (e) { void e; } }
 }
 
+// ── Death recap (FB-84, the guild lead 2026-10-19: "A first then B") ────────────────────────────
+// At each player death this log shows, snapshot the 20 s before it: the hits that landed on them, the
+// heal landings on them (Complete Heals flagged), the damage in the last 6 s, the killer, and where the
+// CH chain's beat stood. Built ONLY from lines this machine already parsed: it is never uploaded
+// (not in the encounter payload, not in the deaths[] rows, not in any enqueueUpload) — it reaches the
+// local dashboard and Command Center through /api/state and /api/command-center and nothing else.
+// A recap belongs to a player and a time, NOT to a corpse: a corpse with no loot vanishes at once, and
+// the recap must outlive it. Targeting "<Name>'s corpse" only HIGHLIGHTS that player's latest recap.
+// Persistence: stats.deathRecaps rides the existing session file (saveSessionState), so a restart within
+// SESSION_TTL_MS keeps the list; past that the list starts fresh, like the other session counters.
+const DEATH_RECAP_WINDOW_MS = 20_000;
+const DEATH_RECAP_BURST_MS  = 6_000;
+const DEATH_RECAP_KEEP      = 50;
+const DEATH_RECAP_MAX_HITS  = 60;
+const DEATH_RECAP_MAX_HEALS = 30;
+let _deathRecapSeq = 0;
+// The chain's typical beat (median of its recent gaps) as of `atMs` (log time), or null with no live
+// chain. Read-only: unlike chChainSnapshot this never retires an idle chain.
+function _chBeatMsAt(atMs) {
+  if (!_chChain || !Array.isArray(_chChain.beats) || !_chChain.beats.length) return null;
+  if ((atMs - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) return null;
+  const b = _chChain.beats.slice().sort((x, y) => x - y);
+  return b[Math.floor(b.length / 2)];
+}
+// Pure: events (chronological parsed events), lands ([{ts, target, ch}]) → one recap. `isSelf` makes a
+// null defender (the log's "You") count as a hit on this player.
+function buildDeathRecap({ name, deathMs, events, lands, isSelf, killer, beatMs }) {
+  const nameL = String(name || '').toLowerCase();
+  const from = deathMs - DEATH_RECAP_WINDOW_MS;
+  const hits = [];
+  for (const e of (events || [])) {
+    if (!e || e.type !== 'damage' || !(e.amount > 0)) continue;
+    const t = Date.parse(e.ts);
+    if (!(t >= from && t <= deathMs)) continue;
+    const d = e.defender;
+    const onVictim = (d == null || /^you$/i.test(String(d))) ? !!isSelf : String(d).toLowerCase() === nameL;
+    if (!onVictim) continue;
+    hits.push({ offMs: deathMs - t, attacker: e.attacker || null, amount: e.amount, ability: e.ability || null });
+  }
+  hits.sort((a, b) => b.offMs - a.offMs);   // oldest first
+  const heals = [];
+  for (const l of (lands || [])) {
+    if (!l || String(l.target || '').toLowerCase() !== nameL) continue;
+    if (!(l.ts >= from && l.ts <= deathMs)) continue;
+    heals.push({ offMs: deathMs - l.ts, ch: !!l.ch });
+  }
+  heals.sort((a, b) => b.offMs - a.offMs);
+  let dmg6 = 0, dmg20 = 0;
+  for (const h of hits) { dmg20 += h.amount; if (h.offMs <= DEATH_RECAP_BURST_MS) dmg6 += h.amount; }
+  const chs = heals.filter(h => h.ch);
+  const lastHit = hits.length ? hits[hits.length - 1] : null;
+  return {
+    id: ++_deathRecapSeq,
+    name,
+    ts: new Date(deathMs).toISOString(),
+    atMs: deathMs,
+    self: !!isSelf,
+    killer: killer || (lastHit && lastHit.attacker) || null,
+    dmg6, dmg20,
+    lastChOffMs: chs.length ? chs[chs.length - 1].offMs : null,
+    beatMs: beatMs || null,
+    hits: hits.slice(-DEATH_RECAP_MAX_HITS),
+    heals: heals.slice(-DEATH_RECAP_MAX_HEALS),
+  };
+}
+// Called from the encounter builder for a confirmed player death (live builders only).
+function _noteDeathRecap(builder, name, event, deathMs) {
+  const isSelf = String(name).toLowerCase() === String(builder.character || '').toLowerCase();
+  const recap = buildDeathRecap({
+    name, deathMs, events: builder.events, lands: _recentHealLands, isSelf,
+    killer: event.attacker || null, beatMs: _chBeatMsAt(deathMs),
+  });
+  const list = stats.deathRecaps || (stats.deathRecaps = []);
+  // Several watched logs see the same death: keep one recap per player and moment, the fuller one.
+  const dupe = list.findIndex(r => r && String(r.name).toLowerCase() === String(name).toLowerCase() && Math.abs(r.atMs - deathMs) <= 5000);
+  if (dupe >= 0) {
+    if (recap.hits.length + recap.heals.length > list[dupe].hits.length + list[dupe].heals.length) { recap.confirmed = list[dupe].confirmed; list[dupe] = recap; }
+    return;
+  }
+  list.push(recap);
+  while (list.length > DEATH_RECAP_KEEP) list.shift();
+}
+// The corpse-run tail arrived for your own death: stamp the recap too.
+function _confirmDeathRecap(nameLower, deathMs) {
+  const r = (stats.deathRecaps || []).slice().reverse().find(x => String(x.name).toLowerCase() === nameLower && Math.abs(x.atMs - deathMs) <= 5000);
+  if (r) r.confirmed = true;
+}
+// Zeal's target name for a corpse: "Moash's corpse", "Moash`s corpse" (EQ's own spelling), the curly
+// apostrophe, and a numeric suffix ("corpse0", "corpse12") when several lie in one place.
+const _CORPSE_TARGET_RX = /^(.+?)['`’]s corpse\d*$/i;
+function corpseTargetOwner(targetName) {
+  const m = String(targetName || '').trim().match(_CORPSE_TARGET_RX);
+  return m ? m[1].trim() : null;
+}
+// The id of the newest recap for the player whose corpse any watched client has targeted, else null.
+function deathRecapFocusId() {
+  const list = stats.deathRecaps || [];
+  if (!list.length) return null;
+  for (const ch of Object.keys(_zealState)) {
+    const owner = corpseTargetOwner(_zealState[ch] && _zealState[ch].target_name);
+    if (!owner) continue;
+    const o = owner.toLowerCase();
+    for (let i = list.length - 1; i >= 0; i--) if (String(list[i].name).toLowerCase() === o) return list[i].id;
+  }
+  return null;
+}
+// Newest first. `compact` drops the per-hit lists (the Command Center line needs none of it).
+function deathRecapSnapshot(limit, compact) {
+  const out = (stats.deathRecaps || []).slice(-limit).reverse();
+  if (!compact) return out;
+  return out.map(r => ({ id: r.id, name: r.name, ts: r.ts, killer: r.killer, dmg6: r.dmg6, lastChOffMs: r.lastChOffMs, beatMs: r.beatMs }));
+}
+
 // ── Corpse DM (the guild lead, 2026-09-26: "when a character dies we should discord message them to send
 // them their corpse coordinates and what zone they were in. we have all of that detail") ──────────────
 // Only the dying character's own client can say it, and it has everything: "You died." in its log, and
@@ -13433,6 +13887,7 @@ function _corpseNoteLine(line, character) {
       agent_version: AGENT_VERSION, character: p.character, died_at: p.died_at,
       zone_id: p.zone_id, zone: p.zone, loc: p.loc,
     });
+    try { _mapCorpseNoteDied(p, p.character, now); } catch { void 0; }   // the same death, on the Map's corpses (see "Guild corpses")
   }
 }
 // Deliberately forgets a death after DEAD_FORGET_MS. We do not see every rez —
@@ -14138,7 +14593,7 @@ function _meNoteFight(entry) {
   const seen = new Set();
   for (const p of (entry.local || [])) {
     const k = String(p.pet_owner || p.character || '').toLowerCase();
-    if (!k) continue;
+    if (!k || !(Number(p.dmg) > 0)) continue;   // a tank row with no damage is History's (Tank view), not a fight dealt
     const e = _meNight.byChar.get(k) || { dmg: 0, secs: 0, fights: 0 };
     e.dmg += Number(p.dmg) || 0;
     if (!seen.has(k)) { e.secs += entry.durationSec || 0; e.fights += 1; seen.add(k); }
@@ -14231,6 +14686,7 @@ function _meNoteHit(character, ev) {
   if ((ev.attacker == null && ev.defender == null) || isYou(ev.defender)) dir = 'in';
   else if ((ev.attacker == null || isYou(ev.attacker)) && ev.defender) dir = 'out';
   if (!dir) return;
+  if (dir === 'in') _meRegenTaint(cl);   // FB-90: damage taken spoils the tick's regen reading
   const t = ev.ts ? Date.parse(ev.ts) : Date.now();
   const label = String(ev.spellName || ev.ability || '').trim();
   const spell = label && label.toLowerCase() !== 'non-melee' ? _meSpell(label) : null;
@@ -14535,6 +14991,88 @@ function _meTick(st, now) {
   const ms = (Number.isFinite(secs) && shows(fwd) !== secs && shows(rev) === secs) ? rev : fwd;
   const age = Math.max(0, now - (st.updatedAt || now));
   return { ms_left: Math.round((((ms - age) % _ME_TICK_MS) + _ME_TICK_MS) % _ME_TICK_MS), period_ms: _ME_TICK_MS, source: 'zeal' };
+}
+
+// REGEN PER TICK — observed (FB-90: "Add per tick hp and mana regen to HUD and highlight the regen on the
+// bars when its about to come back up. same with canvas."; the guild lead chose the OBSERVED version).
+// The pipe never says what a tick will give, so it is measured: once per server tick (the first Zeal frame
+// 1.5 s after the boundary, so the server's update has reached the client) the agent takes your HP and mana,
+// and the difference to the sample one tick earlier is that tick's regen. Only a CLEAN tick counts. A tick
+// is dropped when, since the previous sample, ANY of these happened (all already tracked here):
+//   · you took damage (_meNoteHit, dir 'in')          · a heal landed on you ("You have been healed…")
+//   · you began a cast (the log line), or Zeal's casting label (134) was up, so a mana cost is in it
+//   · you were in combat (a live fight, auto-attack on, or any hit in or out in the last 10 s)
+//   · you changed zone (the whole history goes)       · your max HP or max mana changed
+//   · the samples are not one tick apart (a missed frame), or Zeal went quiet for 15 s
+//   · HP or mana went DOWN (something we did not see took it)
+// A stat already full at either end of the tick says nothing about regen (the cap hid it), so it does not
+// count for that stat. The answer is the MEDIAN of the last 4 clean ticks (one stray potion or buff cannot
+// move it), kept 90 s. Null until 2 clean ticks, and null while in combat. `quiet` is true whenever it is sent.
+const _ME_REGEN_SAMPLE_MS = 1500;     // into the tick, before a sample is taken
+const _ME_REGEN_KEEP = 4;             // clean ticks the median reads
+const _ME_REGEN_FRESH_MS = 90_000;    // a clean tick older than this is forgotten (sit/stand changes regen)
+const _ME_REGEN_GAP_MS = 15_000;      // no Zeal frame for this long: start over
+const _ME_REGEN_COMBAT_MS = 10_000;
+const _meRegen = new Map();           // charLower → { t0, last, dirty, ticks: [{ at, hp, mana }], zone, lastNow }
+function _meRegenTaint(cl) { const r = _meRegen.get(cl); if (r) r.dirty = true; }
+function _meRegenInCombat(cl, st, now) {
+  const et = stats.currentEncounterThreat;
+  if (et && !et.flushedAt && et.startedAt) return true;
+  if (st && st.autoattack) return true;
+  const arr = _meHits.get(cl);
+  return !!(arr && arr.length && now - arr[arr.length - 1].t < _ME_REGEN_COMBAT_MS);
+}
+// One Zeal frame. `f`: { now, phase (ms since the last tick boundary), hp, hpMax, mana, manaMax, zone, busy }.
+function _meRegenStep(r, f) {
+  if (r.lastNow && f.now - r.lastNow > _ME_REGEN_GAP_MS) { r.ticks = []; r.last = null; r.t0 = null; r.dirty = false; }
+  r.lastNow = f.now;
+  if (r.zone != null && f.zone != null && f.zone !== r.zone) { r.ticks = []; r.last = null; r.t0 = null; r.dirty = false; }
+  if (f.zone != null) r.zone = f.zone;
+  if (f.hp == null || f.hpMax == null) return;
+  if (f.busy) r.dirty = true;
+  if (f.phase < _ME_REGEN_SAMPLE_MS) return;
+  if (r.t0 == null) r.t0 = f.now - f.phase;
+  const idx = Math.round((f.now - f.phase - r.t0) / _ME_TICK_MS);
+  if (r.last && r.last.idx === idx) return;   // one sample a tick
+  const s = { idx, hp: f.hp, hpMax: f.hpMax, mana: f.mana, manaMax: f.manaMax };
+  const prev = r.last, dirty = r.dirty;
+  r.last = s; r.dirty = false;
+  if (!prev || dirty || prev.idx + 1 !== idx || prev.hpMax !== s.hpMax || prev.manaMax !== s.manaMax) return;
+  const dh = s.hp - prev.hp;
+  const dm = (s.mana != null && prev.mana != null) ? s.mana - prev.mana : null;
+  if (dh < 0 || (dm != null && dm < 0)) return;
+  r.ticks.push({
+    at: f.now,
+    hp: (prev.hp < s.hpMax && s.hp < s.hpMax) ? dh : null,
+    mana: (dm != null && s.manaMax > 0 && prev.mana < s.manaMax && s.mana < s.manaMax) ? dm : null,
+  });
+  while (r.ticks.length > _ME_REGEN_KEEP) r.ticks.shift();
+}
+function _meMedian(a) {
+  const s = a.slice().sort((x, y) => x - y), m = s.length >> 1;
+  return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
+}
+function _meRegenFrame(character, st, now) {
+  const t = st ? _meTick(st, now) : null;
+  if (!t || st.self_hp_cur == null || st.self_hp_max == null) return;
+  const cl = String(character).toLowerCase();
+  let r = _meRegen.get(cl);
+  if (!r) { r = { t0: null, last: null, dirty: false, ticks: [], zone: null, lastNow: 0 }; _meRegen.set(cl, r); }
+  _meRegenStep(r, {
+    now, phase: _ME_TICK_MS - t.ms_left, hp: st.self_hp_cur, hpMax: st.self_hp_max,
+    mana: st.self_mana_cur != null ? st.self_mana_cur : null, manaMax: st.self_mana_max != null ? st.self_mana_max : null,
+    zone: st.zone != null ? st.zone : null,
+    busy: !!String(st.casting || '').trim() || _meRegenInCombat(cl, st, now),
+  });
+}
+function _meRegenFor(cl, now, inCombat) {
+  const r = _meRegen.get(cl);
+  if (!r || inCombat) return null;
+  r.ticks = r.ticks.filter(x => now - x.at <= _ME_REGEN_FRESH_MS);
+  if (r.ticks.length < 2) return null;
+  const pick = (k) => { const v = r.ticks.map(x => x[k]).filter(x => x != null); return v.length >= 2 ? _meMedian(v) : null; };
+  const hp = pick('hp'), mana = pick('mana');
+  return (hp == null && mana == null) ? null : { hp, mana, n_ticks: r.ticks.length, quiet: true };
 }
 
 // SWING TIMER — measured, not read. Zeal draws an attack-recovery gauge (34)
@@ -15095,6 +15633,34 @@ function _targetPlayerTimers(st, cached, now) {
   return out.length ? out : null;
 }
 
+// Extended Target rows for PLAYERS carry the same timers (the guild lead, 2026-10-19, picked A for
+// DECISIONS §126, "say if this should also show on Extended Target rows"). Same source as Target
+// Info — _targetPlayerTimers — so a chip reads the same in both places. Raid / Group rows come
+// from the bot with kind 'player'; Self rows are all kind 'npc' (the agent does not know which of
+// the things you tabbed to were players), so on the Self tab a single-word name is tried and the
+// timer sources, which are keyed by player name, decide. The overlay asks with `timers=1` (when it
+// is showing players, or on Self), because a lookup of another raider's Mimic costs the bot a read.
+// At most EXT_TIMERS_FETCH_MAX such lookups per poll; each is cached for MT_LIVE_STATE_TTL_MS.
+// Never mutates the cached payload: a row with timers is a copy.
+const EXT_TIMERS_FETCH_MAX = 8;
+function _attachExtRowTimers(payload, now, fetchLive) {
+  if (!payload || !Array.isArray(payload.targets) || !payload.targets.length) return payload;
+  const selfScope = payload.scope === 'self';
+  let asked = 0, any = false;
+  const targets = payload.targets.map(t => {
+    if (!t || !t.name) return t;
+    if (!(t.kind === 'player' || (selfScope && (t.kind || 'npc') === 'npc'))) return t;
+    const k = String(t.name).trim().toLowerCase();
+    if (!k || /\s/.test(k)) return t;
+    if (!_meZealFor(k) && asked < EXT_TIMERS_FETCH_MAX) { asked++; try { fetchLive(t.name); } catch { /* cached / offline */ } }
+    const timers = _targetPlayerTimers({ target_name: t.name }, null, now);
+    if (!timers) return t;
+    any = true;
+    return { ...t, timers: timers.map(c => ({ key: c.key, label: c.label, ms_left: c.ms_left, est: !!c.est, source: c.source, level_known: c.level_known })) };
+  });
+  return any ? { ...payload, targets } : payload;
+}
+
 // The DIRGE NUKE board on the Melody overlay (the guild lead, 2026-09-26): the
 // pre-buffs it waits for that the bard strip does not carry, Puretone
 // Discipline (up now, or ready by the shared disc timer), and mana for the
@@ -15206,8 +15772,29 @@ const _meEnraged = new Map();   // mobLower → until
 // at 12-10% of mob hp left'): the warning now lands as the target shows 12%, checked four times a
 // second, and the trigger window speaks it ahead of anything else in its queue.
 const ENRAGE_WARN_PCT = 12;
+// 2026-10-19 (the guild lead: "enrage soon callouts are too often, maybe just restrict them to bosses.
+// enrage needs to pop off at 9% on other mobs. should be muteable per mob/this session/permanently"):
+// a boss keeps "Enrage soon" at 12%; any other mob that can enrage gets one short "<mob> enraging" at 9%.
+const ENRAGE_OTHER_PCT = 9;
 const _meEnrageEnded = new Map();   // mobLower → when its enrage ended
 const _enrageWarned = new Map();    // "mobLower#spawnid" → when "Enrage soon" was spoken
+// Mutes. This session (gone at restart): one mob by name, or every enrage callout. Always: a rule
+// 'builtin:enrage_soon:<mob>' = off in trigger_rules.json ("What you hear"'s file, so it survives a
+// restart and rides the personal-trigger sync). A muted mob shows nothing and says nothing.
+const _enrageMuteSession = { all: false, mobs: new Set() };
+const ENRAGE_ALWAYS_PREFIX = 'builtin:enrage_soon:';
+function _enrageMobKey(name) {
+  return String(name || '').replace(/^#/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 120);
+}
+function _enrageMuted(mobKey) {
+  if (_enrageMuteSession.all || _enrageMuteSession.mobs.has(mobKey)) return true;
+  const r = _triggerRules[ENRAGE_ALWAYS_PREFIX + mobKey];
+  return !!(r && r['*'] === 'off');
+}
+// A boss by the curated list or by the catalog's raid_target flag (_myFightIsBoss).
+function _enrageIsBoss(name, zoneId) {
+  return _isEnrageBoss(name) || _myFightIsBoss(name, zoneId);
+}
 function _mobCanEnrage(name, zoneId) {
   if (_isEnrageBoss(name)) return true;
   const c = _mobInfoByName.get(_mobInfoCacheKey(name, zoneId));
@@ -15226,11 +15813,15 @@ function _tickEnrageWarn(nowMs) {
   if (!(hp > 0 && hp <= ENRAGE_WARN_PCT) || _enrageWarned.has(key)) return;
   const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
   if (!_mobCanEnrage(st.target_name, zoneId)) return;
+  const boss = _enrageIsBoss(st.target_name, zoneId);
+  if (!boss && hp > ENRAGE_OTHER_PCT) return;   // not a boss: wait for 9%
+  const mobKey = _enrageMobKey(name);
+  if (_enrageMuted(mobKey)) return;
   _enrageWarned.set(key, nowMs);
   if (_enrageWarned.size > 100) _enrageWarned.delete(_enrageWarned.keys().next().value);
   _pushOverlay({
-    text:        '⚠ ' + name + ' at ' + Math.round(hp) + '% — enrage soon',
-    tts:         'Enrage soon',
+    text:        '⚠ ' + name + ' at ' + Math.round(hp) + '% — ' + (boss ? 'enrage soon' : 'enraging'),
+    tts:         boss ? 'Enrage soon' : name + ' enraging',
     color:       'red',
     duration_ms: 5000,
     shownAt:     nowMs,
@@ -15238,6 +15829,7 @@ function _tickEnrageWarn(nowMs) {
     trigger:     'Enrage soon',
     scope:       'enrage',
     rule_key:    'builtin:enrage_soon',
+    enrage_mob:  mobKey,   // the overlay's 🔇 and the dashboard row mute by this
     test:        false,
   });
 }
@@ -15331,6 +15923,8 @@ function _meNoteRawLine(line, character) {
     return;
   }
   if (msg.startsWith('You')) {
+    // A cast (its mana cost) or a heal landing on you spoils the tick's regen reading (FB-90, _meRegenStep).
+    if (msg.startsWith('You begin casting ') || msg.startsWith('You have been healed') || msg.startsWith('You feel much better')) _meRegenTaint(cl);
     // The refusal line is parsed by trackDisciplineTimerLine; save what it set.
     if (msg.startsWith('You can use a new discipline')) _meTimersSave();
     // An AA pressed before it was ready: the exact time left (_meNoteAaRefusal).
@@ -15541,7 +16135,7 @@ function _meTargetExtras(st, active, now) {
   const pipeTot = _pipeCandidateOf(st, 'target_of_target');
   const totName = pipeTot ? pipeTot.name : _victimForMob(tl, now);
   if (totName) tot = { name: totName, hp_pct: _meHpPctFor(String(totName).toLowerCase(), active, st), source: pipeTot ? 'zeal' : 'log' };
-  const slow = _bestSlowForTarget(tl, now);
+  const slow = _bestSlowForTarget(tl, now, st.target_id);   // FB-83: spawn-scoped when Zeal sends the id
   const until = _meEnraged.get(tl);
   if (until && until <= now) _meEnraged.delete(tl);
   const mine = _meMineFor(String(active || '').toLowerCase(), st.target_name, st.target_id, now);
@@ -15549,7 +16143,7 @@ function _meTargetExtras(st, active, now) {
     tot,
     // What you have put into it: procs landed, and stuns / aggro spells landed (see _meMineBump).
     my_procs: mine.procs, my_stuns: mine.stuns,
-    slow: slow ? { label: slow.display_name || slow.name, pct: slow.magnitude ?? null, remaining_secs: slow.remaining_secs ?? null } : null,
+    slow: slow ? { label: slow.display_name || slow.name, pct: slow.magnitude ?? null, remaining_secs: slow.remaining_secs ?? null, uncertain: !!slow.uncertain } : null,
     enrage: specials ? specials.includes('Enrage') : null,
     // A summoner starts pulling its target to it below 97% HP (the server's
     // default; a mob's own setting can move it, which the catalog row doesn't carry).
@@ -16122,6 +16716,7 @@ function _serializeMeState() {
     hp: { cur: st.self_hp_cur ?? null, max: st.self_hp_max ?? null, pct: st.self_hp_pct ?? null },
     mana: { cur: manaCur, max: manaMax, pct: manaPct },
     tick: _meTick(st, now),
+    regen: _meRegenFor(cl, now, _meRegenInCombat(cl, st, now)),   // FB-90: { hp, mana, n_ticks, quiet } or null
     swing,
     autoattack: !!st.autoattack,
     cooldowns,
@@ -16262,9 +16857,7 @@ function _serializeTankState() {
   // the same way MT HP does below: local gauges first, the rampage victim's
   // own uploaded live-state as the cross-client fallback (they're almost
   // always a raider, not us).
-  let rampage = null;
-  const r = _currentRampageForDisplay(now);
-  if (r) {
+  const buildRampage = (r) => {
     const rLower = String(r.target).toLowerCase();
     try { fetchCharacterLiveState(r.target); } catch {}
     // DA on the rampage target — gold-highlight the HP bar while it's up (they're
@@ -16280,7 +16873,7 @@ function _serializeTankState() {
     // so the overlay falls back to the bare % (or "HP not visible") instead of
     // showing a number that isn't the victim's health.
     const rVals = _resolveHpValuesForName(rLower, active, st);
-    rampage = {
+    return {
       target: r.target, attacker: r.attacker || null, ageMs: now - r.at,
       // fresh = a rampage swing landed within the last few seconds — lets the
       // overlays pulse on the hit while the card itself stays up all fight.
@@ -16297,7 +16890,11 @@ function _serializeTankState() {
       // which is the only one that works for a tank running nothing at all.
       da: _findDA(rampBuffs, 5) || _daBroadcastForName(r.target, 5) || _invulnObservedForName(r.target),
     };
-  }
+  };
+  const rLatest = _currentRampageForDisplay(now);
+  const rampage = rLatest ? buildRampage(rLatest) : null;
+  // One entry per rampaging attacker (HoH trial 3 has three at once); `rampage` above stays the latest.
+  const rampages = _currentRampagesForDisplay(now).map(buildRampage);
 
   // Main Tank resolution (user ask 2026-07-01: "the Tank overlay should
   // focus on the Main Tank and Rampage, and THEIR buffs, not the caster") —
@@ -16534,6 +17131,7 @@ function _serializeTankState() {
       off: dsOff,
     },
     rampage,
+    rampages,
     enrage,
     deathtouch,
     // CH chain spot-heal window — v1.1.4 (the guild lead, 2026-06-26).
@@ -16626,9 +17224,11 @@ function _serializeCommandCenterState() {
     target:        tank.target,
     mt:            tank.mt,
     rampage:       tank.rampage,
+    rampages:      tank.rampages,
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
     needs_rez:     _rezBoardSnapshot(),
+    death_recaps:  deathRecapSnapshot(3, true),
     da_broadcasts: daBroadcastsSnapshot(),
     // SELF ONLY — see trackDisciplineTimerLine. Null when ready or unobserved.
     discipline:    _disciplineTimerSnapshot(activeChar),
@@ -17288,6 +17888,11 @@ function _serializeForDashboard() {
     // Blind-event ring buffer (start / end / self-hit / target-change). The
     // trigger overlay dedupes on `ts` and speaks `tts`, same as trigger fires.
     blindEvents:        _blindEvents.slice(-20),
+    // Boss / Tactics-brother deaths from the last 30 min (the trigger overlay's timeline strip). No pair windows ship.
+    recentDeaths:       _recentDeathsSnapshot(),
+    // ⏪ A replay's own deaths + its clock (null when none runs) — the strip runs on these, never mixed with the live ring.
+    replayDeaths:       _replayDeathsSnapshot(),
+    replayClock:        _replayClockForWeb(),
     // Damage-taken audio alert — echoed so the dashboard row (and any
     // diagnostic) can show what the agent actually believes, independent of
     // what Mimic has saved in cfg.
@@ -17309,6 +17914,9 @@ function _serializeForDashboard() {
     inboundSpellDamage: stats.inboundSpellDamage || {},
     sessionProcs:       stats.sessionProcs,
     sessionDeaths:      stats.sessionDeaths,
+    // FB-84 death recaps (newest first) + the one whose player's corpse a watched client is targeting. Local only.
+    deathRecaps:        deathRecapSnapshot(DEATH_RECAP_KEEP),
+    deathRecapFocus:    deathRecapFocusId(),
     sessionMends:       stats.sessionMends,
     abilityStats:       Object.fromEntries(stats.abilityStats),
     castCounts:         stats.castCounts,
@@ -17362,6 +17970,8 @@ function _serializeForDashboard() {
     // Local mode: started with no token, so nothing goes to the guild server. The dashboard's
     // "(local-only)" tag and its "Uploading enabled" row read this; nothing set it before.
     localOnly:          _localOnly(),
+    // The raid code this PC joined (null when none): the dashboard card and Mimic's tray read it.
+    raidCode:           _raidCodeStatus(),
     // #120 — token present (signed in) but identity may not be confirmed yet.
     // Lets the header show a soft "verifying" state instead of the hard "not
     // signed in" banner, and gate the scary banner on the no-token case only.
@@ -18258,19 +18868,19 @@ function _serializeForDashboard() {
     // Trigger summary for the dashboard. Strip _regex (not JSON-safe).
     guildTriggerCount:   (stats.guildTriggers || []).length,
     guildTriggersCheckedAt: stats.guildTriggersCheckedAt,
-    // Full guild trigger list for the Triggers tab. Strip the compiled _regex
-    // (RegExp can't round-trip JSON) and _scope (an internal flag the dashboard
-    // doesn't need to see).
-    guildTriggers: (stats.guildTriggers || []).map(function(t) {
-      const { _regex, _scope, ...rest } = t;
-      void _regex; void _scope;
-      return rest;
-    }),
+    // The list itself is NOT here any more (~675 KB of a ~0.8 MB body, polled ~10x/s by the overlays, read
+    // only by the Guild triggers card). It is at GET /api/guild-triggers; this revision tells the dashboard
+    // when to fetch it again. See _guildTriggersView.
+    guildTriggersRev:    _guildTriggersView().rev,
     // "What you hear" — effective modes for the active character, non-speak only. The guild map
     // badges the Guild triggers table; the built-in map lets charm.html, which speaks its own
     // lines, honour the same rules.
     guildRuleModes:      _guildRuleModes(),
     builtinRuleModes:    _builtinRuleModes(),
+    // Enrage callouts muted right now (the Recent fires row's 🔇 and its muted list).
+    enrageMutes:         _enrageMutesView(),
+    // Timer rows muted right now (the ⋮ menu's Mute, and the Muted timers card under Recent fires).
+    timerMutes:          _timerMutesView(),
     // This PC's own sound on a guild trigger it cannot edit ({trigger_id: {sound, sound_mode}}); the guild table badges it.
     soundOverrides:      _soundOverrides,
     personalTriggerCount: (_personalTriggers || []).length,
@@ -18416,6 +19026,20 @@ th,td { text-align:left; padding:3px 8px; }
 th { color:var(--dim); font-weight:normal; font-size:11px; text-transform:uppercase; }
 tr:hover td { background:#1f242c }
 .num { text-align:right; color:var(--green); font-variant-numeric:tabular-nums; }
+/* Ability tables (Top Abilities): ONE column layout for every player's table. Auto table layout sized each
+   table to its own content (so widths differed per player) and the headers stayed left-aligned over
+   right-aligned numbers (so every value looked one column to the right of its header). */
+table.wp-abtbl { table-layout:fixed; }
+table.wp-abtbl th:first-child, table.wp-abtbl td:first-child { width:auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+table.wp-abtbl th.wp-r, table.wp-abtbl td.wp-r { width:76px; text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+table.wp-abtbl th.wp-r { color:var(--dim); }
+/* wpMoreList: "▾ N more" row with a gentle pulsing underline; expands in place. */
+.wp-more-btn { display:block; width:100%; position:relative; background:transparent; border:0; color:var(--blue,#58a6ff); font:inherit; font-size:12px; text-align:left; padding:4px 8px 6px; cursor:pointer; }
+.wp-more-btn::after { content:''; position:absolute; left:8px; right:8px; bottom:1px; height:2px; border-radius:1px; background:var(--blue,#58a6ff); opacity:.25; animation:wp-more-pulse 2.2s ease-in-out infinite; }
+.wp-more-btn.wp-more-open::after { animation:none; opacity:.12; }
+.wp-more-btn:hover, .wp-more-btn:focus-visible { text-decoration:underline; }
+@keyframes wp-more-pulse { 0%,100% { opacity:.2 } 50% { opacity:.9 } }
+@media (prefers-reduced-motion: reduce) { .wp-more-btn::after { animation:none; opacity:.55; } }
 .name { color:var(--orange) }
 .dim { color:var(--dim) }
 .dot { color:var(--green) }
@@ -18466,12 +19090,39 @@ tr:hover td { background:#1f242c }
 .nav { display:flex; flex-direction:column; gap:4px; margin:12px 0; align-items:stretch; }
 .nav button { text-align:left; }
 .nav .wp-gear { margin-left:0 !important; }   /* the row layout pushed Tour right with margin-left:auto */
+/* Layout A - Triage (the guild lead, 2026-10-21: "Things are so spaced out, important sections are buried at the
+   bottom of a huge scrolling page"). The rail is grouped by WHEN you reach for a tab: Live / After the raid /
+   Set up / Machine. A heading is a plain div (no data-tab, not a button), so the tab switcher, the tour and every
+   \`.nav button[data-tab]\` lookup never see it. */
+.nav .wp-rail-h { color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.09em; margin:10px 2px 0; }
+.nav .wp-rail-h:first-child { margin-top:0; }
+/* The pinned section index: one row of chips under the top bar naming this tab's cards. Solid background (cards
+   pass UNDER it); a single line that scrolls sideways rather than a second and third row. */
+.wp-index { position:sticky; top:var(--wp-topbar-h, 118px); z-index:110; display:flex; gap:6px; align-items:center;
+            overflow-x:auto; white-space:nowrap; padding:6px 0; margin:0 0 8px; background:var(--bg,#0d1117);
+            border-bottom:1px solid var(--border); scrollbar-width:thin; }
+.wp-index[hidden] { display:none; }
+.wp-index .wp-ixl { color:var(--gold); font-size:12px; flex:none; }
+.wp-index button { flex:none; max-width:26ch; overflow:hidden; text-overflow:ellipsis; background:transparent; color:var(--text);
+                   border:1px solid var(--border); border-radius:999px; padding:2px 10px; font:inherit; font-size:11px; cursor:pointer; }
+.wp-index button:hover, .wp-index button:focus-visible { border-color:var(--blue); color:var(--blue); outline:none; }
+body.wp-overlay-mode .wp-index, body.wp-feedback-mode .wp-index { display:none !important; }
+/* A card that starts folded: its h2 sits inside the <summary>, so the panel keys, the overlay matcher and the
+   hide machinery (which all read the card's h2) keep working. Opening one in a multi-column grid gives it the
+   whole row. */
+.card.wp-fold { padding:8px 14px; }
+.wp-fold > details > summary { cursor:pointer; color:var(--dim); }
+.wp-fold > details > summary h2 { display:inline; border:0; padding:0; margin:0; }
+.wp-fold > details > summary h2 .dim { text-transform:none; letter-spacing:0; }
+.wp-fold > details[open] > summary { margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+.wp-fold:has(> details[open]) { grid-column:1/-1; }
 /* The dashboard is also opened in a plain browser at localhost:7777, and Mimic
    windows get resized small. Below this the rail would eat the content, so fall
    back to the original wrapping row. */
 @media (max-width: 700px) {
   .shell { display:block; }
   .shell > .nav { position:static; height:auto; }
+  .nav .wp-rail-h { display:none; }          /* the group headings have no room in the wrapping row */
   .nav .wp-rail-foot { display:contents; }   /* Tour + Feedback just join the wrapping row; .nav outranks the base rule declared below */
   .nav { flex-direction:row; flex-wrap:wrap; align-items:center; }
   .nav button { text-align:center; }
@@ -18481,6 +19132,18 @@ tr:hover td { background:#1f242c }
 .nav button.active { background:#1f6feb; border-color:#1f6feb; color:#fff }
 /* Tour + Feedback at the foot of the rail (the guild lead, 2026-09-23). Dim, so
    they don't read as two more tabs. */
+/* "On this PC" (the guild lead, 2026-10-21): the pages that are built from THIS PC's own files and never
+   leave it. Its own labelled group in the rail, apart from the tabs above (those are this dashboard's own
+   panes). Items are not data-tab buttons, so the tab switcher ignores them. */
+.wp-rail-grp { margin-top:10px; padding-top:8px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:4px; }
+.wp-rail-grp .wp-lbl { padding:0 2px 2px; }
+.nav button:disabled { opacity:.45; cursor:default; }
+.nav button:disabled:hover { background:#21262d; }
+.wp-rail-grp .wp-soon { font-size:9px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin-left:4px; }
+@media (max-width: 700px) {
+  .nav .wp-rail-grp { display:contents; }
+  .wp-rail-grp .wp-lbl { display:none; }
+}
 .wp-rail-foot { margin-top:auto; padding-top:8px; display:flex; flex-direction:column; gap:4px; }
 .wp-rail-foot button { color:var(--dim); }
 .wp-rail-foot button:hover { color:var(--text); }
@@ -18698,6 +19361,7 @@ body.wp-overlay-mode { background:transparent !important; padding:0 !important; 
 body.wp-overlay-mode h1,
 body.wp-overlay-mode .nav,
 body.wp-overlay-mode .wp-quicklinks,
+body.wp-overlay-mode #wpActiveChar,
 body.wp-overlay-mode #header,
 body.wp-overlay-mode .wp-gear,
 body.wp-overlay-mode .wp-menu,
@@ -18742,6 +19406,11 @@ body.wp-overlay-mode .wp-overlay-target table td {
 }
 body.wp-overlay-mode .wp-overlay-target table td:nth-child(2),
 body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right !important; }
+/* Feedback mode — Mimic's Feedback window loads the dashboard as ?feedback=1 and
+   shows ONLY the feedback card (the card is created straight under <body>; every
+   other child, the whole dashboard shell included, is hidden and never rendered). */
+body.wp-feedback-mode { padding:12px !important; }
+body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(style) { display:none !important; }
 </style></head><body>
 <div id="wpTopBar">
 <h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAYF0lEQVR42sWaeZRdVZ3vP3ufc+481FypSk1JJZWkQhIghBCGkMjgc4iAmBJERbAZhOfwsFtb7e5KtQvFfoK2UwtPjKAIVoVBRJExBBAICSSQpDJWpea56t5bdz7D3u+PSmTSfmv1eu951rrrnnXWOfd+f8P+7d/v+z3wnkOLP5/pt87/1kd7e7t8Cxd/FZcAGNr7fIsw5i50dnYaf0vgc06cc2T/nheWv/nmY6V/0bm6XUuAh7776/afXfsr995vbX1E6zdL56zfbv4totHe3m4CIOGhn93zDz+9/h593zfu26317pDWWmithTgZno6ODtXb+1hj562Hj86UW5bfsYjpzL6Lr2m5ftWqS145GY22tjbv/0u6dEAHHUrrqdgvvtv1vd7DuWuzpaYbTnrmmrPKrv3IZz+zdXv7dvNkXkmAVx8ZvajoE1bFkhI3tKzEG7GtFV0/6N6x7e6tt2p9JNbW1uZ1bv5/m1KdnZ1GR0eH6jA71LO/7/z4d75w784jvfa1JasbvOqWEtKmq4Z60lcLA57reE6ZAN3dyzXA5ET2oqLP0k3RCv706uvGaRtXqvRwxvfqzrGv9+977GPP/e7Bf9yw6fKHQQutBUKg/2+Db2tr847P/nHpsz86/m9Pdh3bpCtLqVtV73Xv32esOX25lkuFGDs8eKpy91YJceqEBERXV5untTZSGfsUI2yJ1iULZOuyFl59+XVpxExdcWa9O235WrY/1PtQ50+23mZYUm8R7eI/WxcnclTq9nbZ2dlpvL2K/Gfgn3/y/gs6v3Hghb5xsal63RKvaXWD2rt7t2HbRRY1N4tYeVQ7SsRf2zm4BMDUWiOEAPqimVShvGFFE6Zfirq6eRzs6WPXzj1iyeLFZnxRqSqWB/UbO6e/+ovbfhr79D/ccFPtDaPW9vPb9XMnQHTv6NYArXRpIYSC90RIbmazANgMHDi/VQAsr0K2tbXZT2y7d9PT9/Zsy5REfHUry13XLppHDvYhhObcs9fiOA6RkohWjhTjB1JxAHPLli0C0GNjA6VYMh6OR8kXHNCK01Ys4fVdexnq7yccCsvS6phuuGiZM7x77HMP/fL+/suuuvI77ynCYm5FpZ101Stbn2zMzKRVMBwymta1TC4987TjXW4XaOjSwI63Hh2YeWnFw//zwP0lq1t94Uje6z181BSGSXJ2mrPWriEaDYPyiEejyrQsmcvYVQDmyR+YmSmayvMMw2fieZpcOkchU6S6poaDBw9RUlVKf89RMXhwjynSqLEu99af/nN7s5zyZ1xHW07Ok9rw4mg3aITs4C+u+qczyFGZc4tEAz56n34pe8cnbnlF2P6ERDqm37KlEBlDm66KaufH/33rJROzKly7qsobP5gwKpqWcfTQYRrqa7ELOZKJBEHLwgoGkKZBsWD73mFAOKxdKfAMISy76JDJ5Fi7dgXHe/uwApLupx8l3bePllWNQtoZkeidwLNOu85nRPAZElC4joPWCl/CZkKkueaOT4GXJxDx6c4fPRWefnn0gvr5tWjPwHQkUgsc2yOTcJjt78aIpHU0vcwYOnSc/ft3s+i897N40WIaGuqZzWXIZnPEI0GkJZAB0waQW7Zs0QCNjctnpavTmZkMpmWglUPYb7Bh/RqCmUHUyF7+44F/5ru3X01dSLDujAa9aJl2Kxel3MrmhFvZPOPOX5R0GxbPevH5Cc+s8uuYOYYvsYtgoU+UzvPritq017Q4481bOO2WN064pfXjbsXCKbe5Ne1e1bZMnd1UKq746GrufPTbtNT5mHhjJ+vPOZOWlkXkMmkMQ1AsFIVEEI2bswDm3AIGmJ8yLTGTmSlUZnIZrRxPDAxN0nOwmwd/fie/efhr1C+SPHDLD9ETM4Qb54venkHTNASmBGkYGIaJJSGXtZHRIPbYAZzRPly3QDwcECPZvDE+PE22UEADQoJhSECQSifxBYL8ov3n3Pw9ze2/+gJXXbiFB+/8AZs+exPp2TQl0SjpRFoW01kq5teNARgAmzd3GmzupvhU4X2OsJaalVLV1tTKZc11fOfvP8/nrlvHulMdnrv3KV5+9jhNC2tJZvIUXUXBURRtje1B0VYUXcVkMosM+zj77CocxyMQDDI47rDnlX78AT9FW6E8gesq7IIiX1AkU3mUEBQck6EjR1mxLM+6jWdx5/e30bp6DaevO5fhkQk9NZ4Ss8eHs5dce+a3AoGatATo6mpTbaLNi7SqfUMTA1ja0kXX4dH77qWlzuDyzU1Mv3mUh7ftw4yVYSuN3zKI+E0iQYtgyMIyDdAaRykkgmDARAYsDNPCkC5usUjaFZiWQJoSw29i+PwI08QyDCLBAD4hqJwXZf+bkxx+oZe6hgxXXLWOh+76DyaGhsjbtj56qB9Z7kzNb1o70NHRoSQgXnzkkchT93R+vnf/zDXDqQSJZMFws2m6fnkPV31yJSQH6D1UxLAtogGD0Zk80xmHgitwPcF0apbBqSRp28VnGUgBAVOj3SwOLlp4BAMgtIdyBQofidkio9MpZm0XJS3ytks276Jsj7JoCbt2JikODnDpBXEmRo7wx0cfwQr4ZbqQ1GOp3Py7v3vXfX/a9uhSA+DLl37urJ4ddmePyMWaTm1gNpMTA92vUR0Y51OXVTDbP8LDD/aihY9AyMS2HTBM9h6b4Lm9x0h7IQaSmiO9g8RM8PtDhGKSlSsCFGwXnz9AMqEY6J7GBf7wp4P0pDwmCj72HhlhcmKaunllaK1QnkYELA4eHmdJY5zaBZC3Q3TvG2d+cyvKMIQtw2R3qpX1sdJFsr29XUY/bu0qVI8/6GRS+sjhPmUYBq+9sINLP7AEw3IZGMixc/8ok5k0qUyWeDjIwMAoxzOC//GDe7l7+24e3XOQ2x98klH/fP7wcg8ahSkMTNPCQyCRDI2n2b5/iMu/citdL+/n/ud38ZPfPkP56o08/sphCp5gLJlhYibF8EyBN96cBiXY9KEl5GcG6T3czdj4uJ7oPy6Czbmh8Kl8SwI0iLPz137zss+U1dpjlvKJTHpKhUSO5YtDqJRNX49HPBilPB7H1QajYykGEoJ7fv8EbVd8gnA4yMHu/SxqXc7/evwFwk0toFzwLOyMwMnZ+A3BnsEUf/+jX3HDF7/E8NAAEs2pp6/mrvsfZt7q83nxjR5C4TB+v4/6eTHGhvIUEy6V/llqqi0O7dtHMBz2Kist1t4Yv/WsCze9IJcvXy4Adj7+4in+0bJ5sUhEdL/6qmxp9FMms+RG0/T2TROKBlBao7B49ego5155Nc0trYyM9PPA/b/h9tu+w7LGJn7zy1/wr//+fY6M2eRzmkK2gJtTHDg0yPs2f4LT157JT378I/7xi1/gvNNO43cPdwLwlfYtpByTQqGIVJpI0E//SJ7RngwqleKsVeUkB/vwm5YRnCkXg/fJU9vb2+VbHeK0z1ocacoG8wnXLMzoU+qjZDMpJhMe+49OU3RsbNdDCLACPtaeuxbPdbn7rrtYfcYarvm7z6ITKb5+03Wk8g6BkkYmx5JoB7Rj0D9mc/5/ez8/+eEPueFzN7B+w/kM9PTxza99mcnJQZa1trKweSnFTA7tSZRyGZuYZXAggWM7tC6tpirskRvpyzaLqmKFW+Hv6OhQ5skJ66xPbXrhjTceXPbhlR+uvm3zwO/qytI1xaKnnWBcNK9cTH/fNFOZPCqZx3Y8qqpKMEyT3gN7uPm3D1LMZSmtCJPJ59m793Xqa+uZnXqTcDyOXbDxqwCxaJxnH32I7Y89ysxIPy1NJUxNTzEy0kdl5XmEw2GO75vCKoVoJMDSlQspbV5AOpPCyCRUc6xerv1g8+fXn7niuZ7cYIJvvq0Xam9vl6tWXT60u6cnXZ6JBMr8M+QTRSQe13xsGRktmUllmJ4s8NSLfex8eTeu8lNMzNC3/zAlpT4aaytIpnxU+qa48OIKnFQzrilQpuT88yNU1U4T92n6Du3FCEWwfEFKA/DGK7vwXA0iz1U3X0BZbYCquI+SkA8vkyU74xA2taqWpXL4aS1LL1nXd5KAeItCaW+XbNmid9z/9Kn773no9fXv71VlJUIWizau4+IpjTQhWhnj2FiUV3f1E4ho8DSelkwnkvQdnWL5qYs47aIzeGbXIKliGMOy8LSH8NKsX1VJ0Fbcc+dvqa+NU18dpjwWp+AKZrJFSqIhPvrBanRmkkK2iON4WJj4TD9Wmc957tFqMx9f/a3+8sl/qR2tNW646wbnHRyQEILdL7xQf+SuP73Rc+yJknykTy9oiokF1WHKoiaxoDHXdSoI+SRaC7SWKCkpIihgkA5X8rWtfdQ1tdJQV4vP8lFwHaZmE+zb2811H4hzXnURZ2KaeMxCILGEAO2RKzhoT2H5/DhKULA1g+MZ9h6b0olBS6xccDkNF6y5cuNNlz6gOzsN0dbm/TmFhBD6hBEDL+58YuP4XanbX3txeOOTew7qklBQ1JQHqAxblEX9NFQHaagKEw1LAj4DwxDkiy7VC0uZSk0zNp4mW9zHoe7X8QeCOLaN1i6zRYOhoSILTi/nUH+egvZQQNHR2K4gm/c4dHya/f050kVFsVBkMpnXUgY5Z+2Hh0ouWvy1jTdf+sAJnN475oGTRmzfvt08d+3GvQ89ftedy0cWvi/kn1H9yawwKxZy9uUf5vVX9vLS8Ci/23WMaMhHxC+IhWHBvBLOLQ+woirCh1YFuPuZXkrKSqiPREilcvQeH2TdkhquWNtAOlVgNC1587URxqfzJPMST7soz2TxylNZ8/EVDA+N8Mi9v6a5JqoWVdQZTevrd11y42d+1bm50zgJ/s90ytvXwcaNG91DPc+vPPy9N39a5U7qRdVhYSjB8d7jnLJ6ObduvYMFSxqZzGk2f+mLrL/q05StuoDf70nxencSN1Hk8xeV8q8fbaAu4DI9NopVyHHN2bXccUUd5TrB+ECGe54+xkx8IadfdiWf3fJVqluXMzRb5JM3tnHtLdeRnBhBakXINI2ldaje+/Zd1nn73V9q62rz3k4QGO+YaHdsEM/pB0L33LjtEaOwd+Hi06T6/c4JmVYGqZkEExNJYpFSfvRv32c6keXiTe/jI9dcSy41yRN/eIaJyQwRKQloj9Yqi41L4qTHJ7j2nBquXBNH55P09mf47Y5h9vZO0dK6mFs6vkBFVRW//ul9HOoeJFwSYvD4AA/9/JeEozEGZiVVNTFOaUZPHlAXf+OOf3rx09ff2NvZudno6urW5ttoDdnW1uatu3vFRcHCzOr3fW6h6zc889vrTmFgOMt373iU/S+9xIFXXkUKk/JyP11bt7H+g5dx36/+wOhIiosu3MRrs2me2d9LPCDJFR1Gpgo8u+s4ew75yRU1WRXktPMuYN7UEzzc9QSf+fzNvLHzNY4e7mFxSxmPP/gIjjawi/CpT57DhosW4yRnxLymgPfkVts89Nujn0XwLF1/IYUA8ukijp3UqX1viqldr5F5/RUWFHu57kMrUEqSyRb5yrf/iUs/cSW7X3qNr/7dTfTt348hIJHO8q2tP2bdRy5hx75hXjmWZjhRZFdfmsd39TNrhPjhtp+xYNkSRgenqAmG+fev38adt/2Yyvl1fP/+rSxeuhQ7k2P9mhYuqLPhwMu4xw8ytOM1kc1M6YJhMzfDvMuAzQc2a4DSBaX9OVuTyzhGMOrD0RaDw1kqgzk+vG4pFeWltK5cxJqzTyUcNNn11HPMm1fJVTdezTN/3M6fnnqJnp4hPMfD7zMQGnyepqWiBiOV4+Wde3js14+wIBCh7cw1nBUJs6GlmfmRGD5lU1PfwJqWRVxyTiNH+0Y5NuYhpEFZPKb9riF8UX8fGlrbW9+1kc2VJp3Wo1Xf29hxcNXyPWWrz4rqbQ8Pi8O9SWRA0txQTXV1JY+/eoxFa1ZzYMeLFNKzbLl3K7VNTXzynA3EY1GKriaTTeMzDSplhNaa+ZzeWIuHx2NHurliw0YyeYcj3YfZcMoSapoaGLQdfrbtYZRPs2bZfI4e6sEzLbKZHNdvXkAobHrbn240qjZcdF3bLZ/52fb2dnNjR4cr31ZCAYgwb5qQf8xVIYIRU4dLLErLS1hQX0s2VySZmGTjqnom9+0lb+coqa2hPGZQVao5a8OZTE+kcAsepvBRIcNcuLiFdY3zkZkC1abFl9avZ4HfYk3LAjZedAG7j/UzMTLKivoavnL11YRdQd/AMLGyUipLwiypL6GmoYx0UcrJpCZeGzkCMLl8js+V76AzQUi/9CJl4XGUhS8kdUmZgdIuQcsjHPaRKbikZ2e4+MyFXHXxWVSH/Xzt+i/zzS/9C8WCg/bP3V/i83NG40IqI3HGUikOJqfZOzrO7GwODAONpqk8QmvrUoYSKdLTU1THo3zgwvdTzBQx/YLRRBpbSkrKgzrgj4tgMGTPX71gBODAgQPvMYCuzZ1S25pIONKDDmGFpS6viuHYHoaQoBUBw0BoiyM9QyQTk5yxtIpN61ooLSYosTOsaamjtjJKKGxwdHaCR3v2sWN0gAOZKZ7v7+W1gXESySx2JstsMsGixvkIDelcgdTUJCsb6olHqvFLQSQaBUvgCyidSgtkKDC+fNHpYwBbtnTo9+zEla0HBIC/JNQz3eNHGyb1jQGC/hGKnovtKaTWIBRCmszmXGZyY/gtk9JYhHlllYR8Bi4K1wPHdVGIE6EVjEykOXpwlOaqMmJlcUx8KLtIY2Mjji0wlItPZagrn8/gTDdBv8nyxSVYcb9OTGUpqsCoFbYyJzL+vQacZJlDpdHe6UIQW9qirNakKE0yRYUhJFpINAKURmmN0Ca5nEdyNkk6NYhpSsKxEH6fRcA0saREComrFGMzWSYKORKZLDrvoE0/ds4mZJoox8W1i0i7QFgIZjIulusxrz4KsYBWnkcwFDrm5l02s1l20fXeXmjLFlRHB1S2Vh4//KzQM8NFo7ZG4WibgZEUFbEgUkg0Eg8NQmJKiSkFAVPiL43RPznL4dEJfIYg5DcxjDmNznE90raNKkgUJp7r4hWzuEWNYVho5eDkc6hAAFMoUrNp7KxBIODDyzjknSDltZE+NNzU3iq6Ov7CRrZly9z3KZtOG/U8MzfTbyNtdEO1n5DfhyMNMo4iVfDIFjS2o7E9h6LnkXE90o5HeVmYJXWl1JRG8FkmBWfuurJ8VFVWUFISJlnMMpvO4uWKuK7DbHKGxMwMxVweCYxPTlIRD1EeDxEJmSQnsmJiXBEsDx97e6a8JwIdHXMLo5y6iVAsPDQz6i5RnqFrq8JieKCAp3wooTAtScAwMKQGXDwNSkm01qA14YCPgC9IyIMSpUBq/OYc4TXgFDgyNsqKefMwUlnKGuvIBHLkZnOE8RidmOTQyAix+RGqI5qSkMnMRFYk02Gaa6uGAZafKKHvMQDQ7bRLYQr7jsu+cTQ1aSyxs2ktDB99w7PEKlxAIYUgwxyVqNBzwIUCOTfkoDVKaUwhMA0DA01OKfKOR8p2KdgOuwdGOGdZC1Pj44R8fkKWj7HkLL/btYfhYp6xEYfWRTEsQ+n0pJLS8uvqM2om5rjcA3/VADgfyQ5UpCrcU0z5GRua0HXVfm7+yvsJhsw50Uh7KOWh0WgpMIQxRzULgdIKpefadVMbCDlXLpRSaK1JZYsUsy4D+0d55JWXmRcrA6VI5QtkyXLex5ZyWVM5dsFGZmaZHEwyOSKIRINTS5evGDyR7Bo6/rIBGzZAxw4Ixcv7U8ekdpRW5UFbWcaE1rZAaoFAo7WH1voEbgnCEAKhxZxZeEqDRmittJRgSIk0JcWoFAk7T/lSg6ESi3RiEkMKYkGLhQ0V1FR72lCTmAEoeAVhCumNDdpSF6MjMWIzJwevd7xa8C51UQoh1NP3/fHM4W3P77T8u5FWfk7tF6DlnBAmEAihQZwEK0DPVQV5gm46aYw+ofUpDQoQWuAoDyE1SIllGfgNA6/oUXBcNAIpJKYPhAZ7fCnWytXfu+K262/p3NxptHW9JbaLvyaRCin0Mz/u/FT/rv6bpjPjfkMLG41wxdz4bEip5ZyyhKOUEEjDUygphBBoTxpaYiC1h9JKCOWCVkpLA0OaQghLoJXGcbTWas4vpmloaWk8T6EKGoI6EDHDsrqm4fnzbzv/q+UsTv8fI/Cetz8CAtMw8VwPxJzvT3r0zyKqECeaQX3SAXNREmIuzd72T39WhN4lwOqT3djbkLk5V8w9ItR/TTmfe61AvEtE/Wsf/sK973aS+K/i+Gui+v8GlRj1P1QhM0QAAAAASUVORK5CYII=" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${(/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' ' + (String(process.env.WOLFPACK_APP_VERSION || '').indexOf('-alpha.') >= 0 ? '<span title="Running an alpha build: the Mimic 3.0 overlay builder, tried first" style="font-size:10px;font-weight:600;color:#1a0f2e;background:#a371f7;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">ALPHA</span>' : '<span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>') + ' <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpJoinBeta" title="Get beta builds of Mimic — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">⤴ beta</button>' : '')) + (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpAlpha" title="Try the Mimic 3.0 alpha — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">α alpha</button>' : '')}<span id="wpTopRight">
@@ -18749,6 +19418,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
        title="Notices from the Wolf Pack team">✉<span id="wpMailDot" style="display:none;position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--red,#f87171)"></span></button>
     <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
   </span></h1>
+<div id="wpActiveChar"></div>
 <div class="subtle" id="header"></div>
 <div class="wp-quicklinks" id="wpQuickLinks" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
   <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
@@ -18774,24 +19444,32 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 </div>
 <div class="shell">
 <div class="nav">
+  <!-- The rail is grouped by WHEN you reach for a tab (Layout A, the guild lead, 2026-10-21). The headings are
+       plain divs: no data-tab, not buttons, so nothing that binds '.nav button[data-tab]' ever sees them. -->
+  <div class="wp-rail-h">Live &mdash; raid night</div>
   <button class="active" data-tab="dash">Dashboard</button>
-  <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="raid">⚔ Raid</button>
-  <button data-tab="buffs">✨ Buffs</button>
-  <button data-tab="buffblocks">🔇 Buff blocks</button>
   <button data-tab="fights">⚔️ Fights</button>
+  <div class="wp-rail-h">After the raid</div>
   <!-- 📈 My parses (2026-10-06): your own fights from the guild's record, charted over a window you pick.
        The tray's "📈 My parses" opens this tab through the #myparses hash. -->
   <button data-tab="myparses">📈 My parses</button>
+  <button data-tab="stats">📊 Stats</button>
+  <button data-tab="loot">💰 Loot</button>
   <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (the guild lead
        2026-08-13 — "having to scroll in our dashboard is somewhat annoying to
        navigate"). Info had grown to 16 cards and Triggers to 12 by mixing three
        unrelated jobs: what your log SAW (session stats), whether the machinery
        WORKS (diagnostics), and the thing the tab is actually named for. The
        sidebar rail is what made room for more destinations. -->
-  <button data-tab="loot">💰 Loot</button>
-  <button data-tab="stats">📊 Stats</button>
+  <div class="wp-rail-h">Set up</div>
+  <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="triggers">⚡ Triggers</button>
+  <!-- 🗣 Voice (the guild lead, 2026-10-17): every card about how Mimic speaks, carved out of Triggers. -->
+  <button data-tab="voice">🗣 Voice</button>
+  <!-- The Buff blocks picker now lives at the foot of this tab (the guild lead, 2026-10-17). -->
+  <button data-tab="buffs">✨ Buffs (and blocking)</button>
+  <div class="wp-rail-h">Machine</div>
   <button data-tab="diag">🩺 Diagnostics</button>
   <button data-tab="info">Info</button>
   <button data-tab="optin">Logsync</button>
@@ -18800,6 +19478,20 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
        officer-gated card DATA is served only to officers, so this is a real
        gate, not a CSS hide. -->
   <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
+  <!-- 🖥 On this PC (the guild lead, 2026-10-21, option B: the website's own pages bundled into Mimic and
+       served by this agent under /local/). Built from your own logs and inventory files; nothing leaves
+       the PC. Inventory and My replay open in their own Mimic window (the tray's "Inventory (on this PC)"
+       and "My replay (on this PC)" are the same window); in a plain browser they open a new tab. "My fights
+       (this PC)" is the local site's My parses page, named differently here so it is not mistaken for the
+       📈 My parses tab above it. No data-tab, so the tab switcher ignores them. -->
+  <div class="wp-rail-grp" id="wpLocalGrp">
+    <div class="wp-lbl">On this PC</div>
+    <button id="wpLocalInv" type="button" onclick="wpOpenLocalSite('inventory')" title="Every item across your characters, from the inventory files on this PC (opens in its own window). Nothing leaves the PC.">🎒 Inventory</button>
+    <button id="wpLocalFights" type="button" onclick="wpOpenLocalSite('parses')" title="Your own fights as this PC recorded them, every player it saw, and how they differ from the guild's record when you are a member (opens in its own window). Not the 📈 My parses tab above: that one graphs your numbers over time. Nothing leaves the PC.">📊 My fights (this PC)</button>
+    <button id="wpLocalReplay" type="button" onclick="wpOpenLocalSite('replay')" title="Play back where you and your raid stood, from the recording Mimic keeps on this PC (opens in its own window). Nothing leaves the PC.">🎬 My replay</button>
+    <button id="wpLocalRebuild" type="button" onclick="wpRebuildOpen()" title="Build your fights, raids, deaths and loot from the log files on this PC. Nothing is uploaded.">🔁 Rebuild from my logs</button>
+    <button id="wpLocalRaid" type="button" onclick="wpRaidCodeOpen()" title="In someone else's raid? Enter their raid code: this PC keeps the raid's data to itself, tagged with the code, for six hours. The tray's Open menu has the same item.">🎟 Join a raid with a code</button>
+  </div>
   <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
        2026-09-23: "We're running out of horizontal real estate"). They went up to
        the top bar on 2026-09-02 so a long page never meant scrolling back for
@@ -18807,7 +19499,9 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
        tab switcher ignores them. The ids are unchanged, so their handlers bind. -->
   <div class="wp-rail-foot">
     <button id="wpTourBtn" class="wp-gear" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
-    <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpOpenFeedback()">💬 Feedback</button>
+    <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpFeedbackClick()">💬 Feedback</button>
+    <!-- ☕ Tip (the guild lead, 2026-10-17): the maintainer's Ko-fi, same link as the README and /about. -->
+    <a id="wpTipLink" class="wp-gear" href="https://ko-fi.com/davehess" target="_blank" rel="noreferrer" style="text-decoration:none;text-align:center" title="Buy the maintainer a coffee on Ko-fi (opens in your browser)">☕ Tip</a>
     <!-- ⏻ Quit (2026-09-26): the tray's Quit, here too — tray ↔ dashboard parity, and the way out when
          the tray menu will not open (a raider then ended Mimic from Task Manager and lost settings).
          Mimic only; shown by wpShowQuit below. -->
@@ -18820,24 +19514,38 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
      its data-tab buttons, so the switcher, the Panels popover and the guided
      tour all keep working untouched - this is a layout change, not a rewrite. -->
 <div class="panes">
+<!-- The pinned section index: chips naming the open tab's cards, filled by wpIndexSync. Its id starts "wp" so a
+     section repaint never touches it. -->
+<div id="wpIndex" class="wp-index" hidden></div>
 <div id="wpMailPanel" style="display:none;margin:8px 0;border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:rgba(88,166,255,0.04)"></div>
 <div id="dash" class="section active"></div>
 <div id="overlays" class="section"></div>
 <div id="raid" class="section"></div>
-<div id="buffs" class="section"></div>
-<div id="buffblocks" class="section"></div>
+<!-- Buffs (and blocking): #buffsMain is renderBuffsTab's render-target; #buffblocks is the #blockbuff
+     picker, which builds and polls its own card (not a .section of its own any more). -->
+<div id="buffs" class="section">
+  <div id="buffsMain"></div>
+  <div id="buffblocks"></div>
+</div>
 <!-- Fights = Tanks/Healers + DPS combined. #tanks and #deeps are inner
      render-targets (renderTanks/renderDeeps still setSectionHTML into them),
-     not independent .section tabs, so both show whenever Fights is active. -->
+     not independent .section tabs, so both show whenever Fights is active.
+     #fightsReplay holds the ⏪ Replay card (renderReplayCard), folded at the TOP; #fightsMore holds the three
+     cards that start folded below everything else (pets, damage shields, weapon loadouts: renderFightsMore).
+     Layout A order, most important first: Replay (folded) · threat · deaths · incoming · healers · DPS breakdown
+     · top abilities · the folded three. -->
 <div id="fights" class="section">
+  <div id="fightsReplay"></div>
   <div id="tanks"></div>
   <div id="deeps"></div>
+  <div id="fightsMore"></div>
 </div>
 <div id="myparses" class="section"></div>
 <div id="loot" class="section"></div>
 <div id="stats" class="section"></div>
 <div id="info" class="section"></div>
 <div id="triggers" class="section"></div>
+<div id="voice" class="section"></div>
 <div id="diag" class="section"></div>
 <div id="optin" class="section"></div>
 <div id="admin" class="section"></div>
@@ -18928,6 +19636,117 @@ function wpKeep(key, defaultOpen) {
   var _seen = (key in _wpOpenDetails) ? _wpOpenDetails[key] : !!defaultOpen;
   return 'data-keep="' + esc(String(key)) + '"' + (_seen ? ' open' : '');
 }
+// ── wpMoreList: cap a list that grows with characters / fights / rows ─────────────────────────────
+// (the guild lead, 2026-10-21: "anywhere that could run off with the vertical estate of an area… collapse
+// it down and say 'X more' and a pulsing highlight under that".) Shows the first \`show\` rows and a
+// "▾ N more" toggle; the rest are emitted HIDDEN (not omitted), so expanding is a DOM flip with no
+// repaint. Expanded state lives in _wpMoreOpen — JS-side, fed only by the click handler and never read
+// back from the DOM, the same contract as wpKeep's store — so a 2s repaint renders the rows already
+// open instead of collapsing them again. Built from <button>/<tr>/<div>, not <details>, because a table
+// cannot hold a <details> between its rows; the <details> wpKeep rule does not apply.
+//   rowsHtml: array of row strings, each starting with ONE opening tag (<tr …>, <div …>).
+//   opts: show (default 6), noun ('more'), cols (table rows: the toggle becomes <tr><td colspan=cols>).
+// Byte-stable: output depends only on the rows, the opts and the store.
+var _wpMoreOpen = {};
+function wpMoreLabel(open, hidden, noun) {
+  return open ? '▴ show fewer' : '▾ ' + hidden + ' ' + (noun || 'more');
+}
+function wpMoreList(key, rowsHtml, opts) {
+  opts = opts || {};
+  var rows = rowsHtml || [];
+  var show = opts.show > 0 ? opts.show : 6;
+  // Never hide exactly one row behind a "1 more" — the toggle would be as tall as the row.
+  if (rows.length <= show + 1) return rows.join('');
+  var hidden = rows.length - show;
+  var open = !!_wpMoreOpen[key];
+  var k = esc(String(key));
+  var noun = opts.noun || 'more';
+  var out = rows.slice(0, show).join('');
+  for (var i = show; i < rows.length; i++) {
+    out += String(rows[i]).replace(/^(\\s*<\\w+)/, function (m) { return m + ' data-more-row="' + k + '"' + (open ? '' : ' hidden'); });
+  }
+  var btn = '<button type="button" class="wp-more-btn' + (open ? ' wp-more-open' : '') + '" data-more="' + k
+    + '" data-n="' + hidden + '" data-noun="' + esc(noun) + '" aria-expanded="' + (open ? 'true' : 'false')
+    + '" onclick="wpMoreToggle(this)">' + wpMoreLabel(open, hidden, noun) + '</button>';
+  return out + (opts.cols
+    ? '<tr><td colspan="' + (opts.cols | 0) + '" style="padding:0">' + btn + '</td></tr>'
+    : '<div>' + btn + '</div>');
+}
+function wpMoreToggle(btn) {
+  var key = btn.getAttribute('data-more');
+  var open = !_wpMoreOpen[key];
+  _wpMoreOpen[key] = open;
+  var els = document.querySelectorAll('[data-more-row]');
+  for (var i = 0; i < els.length; i++) {
+    if (els[i].getAttribute('data-more-row') === key) els[i].hidden = !open;
+  }
+  btn.classList.toggle('wp-more-open', open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  btn.textContent = wpMoreLabel(open, btn.getAttribute('data-n'), btn.getAttribute('data-noun'));
+}
+// A card that starts FOLDED (Layout A - Triage, the guild lead, 2026-10-21): the h2 sits inside the <summary>, so the
+// panel key, the overlay matcher and the hide button (all of which read the card's h2) behave as for any card.
+// Open state lives in wpKeep's store, so a repaint keeps what the person opened. \`index\` is the short name the
+// pinned section index shows for it.
+function wpFoldCard(key, titleHtml, bodyHtml, opts) {
+  opts = opts || {};
+  return '<div class="card' + (opts.wide === false ? '' : ' wide') + ' wp-fold"' + (opts.index ? ' data-index="' + esc(opts.index) + '"' : '') + '>'
+    + '<details ' + wpKeep(key, opts.open) + '><summary><h2>' + titleHtml + '</h2></summary>' + bodyHtml + '</details></div>';
+}
+// ── The pinned section index (Layout A - Triage, the guild lead, 2026-10-21) ──────────────────────────────────────
+// A sticky row of chips under the top bar, one per card on the open tab; a click scrolls to that card. Each chip's
+// name is the card's data-index when it has one, else its title (the h2's own text up to the first "(" / "—" / "·",
+// the same cut the Panels menu makes). A card the Panels menu hid, or one that is not on screen, is not listed.
+// BYTE-STABLE: the chips are rewritten only when the tab or the list of names changes, never on a plain poll, so
+// a horizontal scroll position inside the row (and a keyboard focus on a chip) survives. Fewer than two cards: no row.
+function wpCardLabel(card) {
+  var ix = card.getAttribute('data-index');
+  if (ix) return ix;
+  var h = card.querySelector('h2');
+  if (!h) return '';
+  var t = '';
+  for (var i = 0; i < h.childNodes.length; i++) if (h.childNodes[i].nodeType === 3) t += h.childNodes[i].nodeValue;
+  if (!t) t = h.textContent || '';
+  return t.split('(')[0].split('—')[0].split('·')[0].replace(/\\s+/g, ' ').trim();
+}
+function wpIndexCards() {
+  var sec = document.querySelector('.section.active');
+  var out = [], seen = {};
+  if (!sec) return out;
+  var cards = sec.querySelectorAll('.card');
+  for (var i = 0; i < cards.length; i++) {
+    var c = cards[i];
+    if (c.classList.contains('wp-hidden') || !c.getClientRects().length) continue;
+    var label = wpCardLabel(c);
+    if (!label || seen[label]) continue;
+    seen[label] = true;
+    out.push({ label: label, card: c });
+  }
+  return out;
+}
+var _wpIndexSig = null;
+function wpIndexSync() {
+  var el = document.getElementById('wpIndex');
+  if (!el) return;
+  var sec = document.querySelector('.section.active');
+  var list = wpIndexCards();
+  var sig = list.length < 2 ? 'none' : (sec ? sec.id : '') + '|' + list.map(function (x) { return x.label; }).join('|');
+  if (sig === _wpIndexSig) return;
+  _wpIndexSig = sig;
+  if (list.length < 2) { el.hidden = true; el.innerHTML = ''; return; }
+  var h = '<span class="wp-ixl">On this tab</span>';
+  for (var i = 0; i < list.length; i++) h += '<button type="button" data-ix="' + esc(list[i].label) + '" title="Jump to ' + esc(list[i].label) + '">' + esc(list[i].label) + '</button>';
+  el.innerHTML = h;
+  el.hidden = false;
+}
+// Scroll so the card's top sits just under the top bar AND the index row, which together cover the top of the page.
+function wpIndexGo(card) {
+  var bar = document.getElementById('wpTopBar'), ix = document.getElementById('wpIndex');
+  var off = (bar ? bar.getBoundingClientRect().height : 0) + (ix && !ix.hidden ? ix.getBoundingClientRect().height : 0) + 10;
+  var reduce = false;
+  try { reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { void e; }
+  window.scrollTo({ top: Math.max(0, card.getBoundingClientRect().top + window.pageYOffset - off), behavior: reduce ? 'auto' : 'smooth' });
+}
 // Publish the sticky top bar's REAL height so the tab rail can sit below it.
 // The bar changes height when the links wrap, when the update/beta pills appear,
 // and at the short-window breakpoint, so this is measured rather than assumed —
@@ -18945,6 +19764,76 @@ var _wpLastTopBarH = 0;
 // Resize changes wrapping and can cross the short-window breakpoint, and the
 // first paint happens before any poll has run.
 window.addEventListener('resize', function () { try { _wpSyncTopBarHeight(); } catch (e) { void e; } });
+
+// The pinned index's listeners (functions above). Top level on purpose: the wpMoreList/wpKeep helpers are sliced
+// out and evaluated by tests with no \`document\`, so nothing that touches it may sit among them.
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  var b = t && t.closest ? t.closest('#wpIndex button[data-ix]') : null;
+  if (b) {
+    var want = b.getAttribute('data-ix'), list = wpIndexCards();
+    for (var i = 0; i < list.length; i++) if (list[i].label === want) { wpIndexGo(list[i].card); break; }
+    return;
+  }
+  // Hiding or re-showing a panel changes the list: look again once the Panels code has applied it.
+  if (t && t.closest && (t.closest('.wp-hide-btn') || t.closest('#wpPanelMenu'))) setTimeout(wpIndexSync, 80);
+}, true);   // capture: the hide button's own handler stops the event before it could bubble to here
+document.addEventListener('change', function (e) {
+  if (e.target && e.target.closest && e.target.closest('#wpPanelMenu')) setTimeout(wpIndexSync, 80);
+});
+
+// Feedback mode — the page loaded as /?feedback=1 inside Mimic's own Feedback window
+// (the guild lead, 2026-10-15: the in-page form was wiped whenever Mimic reloaded the
+// dashboard — agent restart, hot-swap, port drift, self-heal — so the form got its own
+// window, which none of those reloads touch). Same card, same code; this mode only
+// decides what ELSE is on the page: nothing. refresh() renders just the feedback
+// section, and the card's host is created here because renderDash (which normally emits
+// it) never runs.
+function _wpFbModeFromSearch(search) {
+  return /[?&]feedback=1(&|$)/.test(String(search || ''));
+}
+var WP_FEEDBACK_MODE = false;
+try { WP_FEEDBACK_MODE = _wpFbModeFromSearch(location.search); } catch (e) { void e; }
+if (WP_FEEDBACK_MODE) {
+  document.body.classList.add('wp-feedback-mode');
+  document.title = 'Wolf Pack miMIC — Feedback';
+  // renderFeedback opens the card when the URL hash is #feedback (the tray's old route), so
+  // reuse that rather than a second "open" switch inside the card builder.
+  try { history.replaceState(null, '', location.pathname + location.search + '#feedback'); } catch (e) { void e; }
+  var _wpFbHost = document.createElement('div');
+  _wpFbHost.id = 'wpFeedback';
+  document.body.appendChild(_wpFbHost);
+}
+
+// The 💬 Feedback button: inside Mimic it opens the Feedback window; a plain browser
+// (or a Mimic that predates the window, or one that answers false) keeps the in-page card.
+function wpFeedbackClick() {
+  if (window.mimic && window.mimic.openFeedback) {
+    try {
+      Promise.resolve(window.mimic.openFeedback()).then(
+        function (ok) { if (ok === false) wpOpenFeedback(); },
+        function () { wpOpenFeedback(); });
+      return;
+    } catch (e) { void e; }
+  }
+  wpOpenFeedback();
+}
+// The rail's "On this PC" items: a page of the local site (/local/<page>/, served by this agent). Mimic opens
+// it in its own window (the same one the tray item opens); with no Mimic bridge, or while the agent has no
+// port yet, a new browser tab does the job.
+function wpOpenLocalSite(page) {
+  var url = '/local/' + page + '/';
+  var fallback = function () { try { window.open(url, '_blank'); } catch (e) { void e; } };
+  if (window.mimic && window.mimic.openLocalSite) {
+    try {
+      Promise.resolve(window.mimic.openLocalSite(page)).then(
+        function (ok) { if (ok === false) fallback(); },
+        fallback);
+      return;
+    } catch (e) { void e; }
+  }
+  fallback();
+}
 window.addEventListener('load',   function () { try { _wpSyncTopBarHeight(); } catch (e) { void e; } });
 // ⚠ And once RIGHT NOW, not only from events. This script's scope runs at an
 // unclear point relative to \`load\` in the packaged artifact, and a measurement
@@ -19058,6 +19947,25 @@ var _wpFbMin  = 30;
 // The words typed so far, so a rebuilt card gets them back (FB-47: "This send
 // feedback section refreshes and we lose what we were ready to submit").
 var _wpFbDraft = '';
+// The same draft (words + kind) also goes to localStorage as it is typed, so a reload of the
+// page itself (a popup reload, a closed-and-reopened window) keeps it too. Cleared on a
+// successful send. Browser storage can be missing or throw (private window, blocked site
+// data), so every touch is try/catch and the card works without it.
+var WP_FB_DRAFT_KEY = 'wpFeedbackDraft';
+function _wpFbDraftLoad() {
+  try {
+    var o = JSON.parse(localStorage.getItem(WP_FB_DRAFT_KEY) || 'null');
+    if (!o || typeof o !== 'object') return;
+    if (typeof o.text === 'string') _wpFbDraft = o.text.slice(0, 4000);
+    if (o.kind === 'bug' || o.kind === 'idea') _wpFbKind = o.kind;
+  } catch (e) { void e; }
+}
+function _wpFbDraftSave() {
+  try {
+    if (!_wpFbDraft) localStorage.removeItem(WP_FB_DRAFT_KEY);
+    else localStorage.setItem(WP_FB_DRAFT_KEY, JSON.stringify({ text: _wpFbDraft, kind: _wpFbKind }));
+  } catch (e) { void e; }
+}
 // Screenshots chosen for this report (JPEG data URLs, ≤1920 px) and, with more
 // than one monitor, the captured screens still waiting to be picked.
 var _wpFbShots = [];
@@ -19139,6 +20047,7 @@ async function _wpFbSnap() {
 }
 function _wpFbSetKind(k) {
   _wpFbKind = (k === 'idea') ? 'idea' : 'bug';
+  _wpFbDraftSave();
   var b = document.getElementById('wpFbBug'), i = document.getElementById('wpFbIdea');
   if (b) b.style.opacity = _wpFbKind === 'bug'  ? '1' : '0.55';
   if (i) i.style.opacity = _wpFbKind === 'idea' ? '1' : '0.55';
@@ -19192,7 +20101,9 @@ async function _wpFbPreviewNow() {
 function _wpFbWire() {
   var root = document.getElementById('wpFeedback');
   if (!root) return;
-  // A rebuilt card comes back as it was: kind, words and pictures (FB-47).
+  // A rebuilt card comes back as it was: kind, words and pictures (FB-47). A draft saved
+  // by an earlier page load (localStorage) fills in only when nothing is held in memory.
+  if (!_wpFbDraft) _wpFbDraftLoad();
   _wpFbSetKind(_wpFbKind);
   _wpFbSetMin(_wpFbMin);
   _wpFbRenderShots();
@@ -19209,7 +20120,10 @@ function _wpFbWire() {
   if (fbText) {
     fbText.value = _wpFbDraft;
     fbText.addEventListener('input', function () { _wpFbDraft = fbText.value; });
+    fbText.addEventListener('input', _wpFbDraftSave);
   }
+  // The Feedback window exists to type into: land the cursor in the box.
+  if (fbText && WP_FEEDBACK_MODE) { try { fbText.focus(); } catch (e) { void e; } }
   if (fbText) fbText.addEventListener('paste', async function (e) {
     var files = [];
     var items = (e.clipboardData && e.clipboardData.files) || [];
@@ -19314,6 +20228,7 @@ async function _wpFbSend() {
     if (j && j.ok) {
       if (ta) ta.value = '';
       _wpFbDraft = '';
+      _wpFbDraftSave();
       if (cb) { cb.checked = false; }
       _wpFbRenderPreview(null);
       _wpFbShots = []; _wpFbCands = []; _wpFbRenderShots();
@@ -19323,6 +20238,15 @@ async function _wpFbSend() {
       if (j.attached_lines) extras.push(j.attached_lines + ' log lines');
       if (j.attached_shots) extras.push(j.attached_shots + ' screenshot' + (j.attached_shots === 1 ? '' : 's'));
       if (msg) msg.textContent = '✓ sent' + (extras.length ? ' with ' + extras.join(' and ') : '') + ' — thank you';
+      // In the Feedback window the result stays up and offers a way out.
+      if (WP_FEEDBACK_MODE && msg && msg.parentNode && !document.getElementById('wpFbClose')) {
+        var closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.id = 'wpFbClose';
+        closeBtn.textContent = 'Close';
+        closeBtn.addEventListener('click', function () { try { window.close(); } catch (e) { void e; } });
+        msg.parentNode.appendChild(closeBtn);
+      }
     } else if (msg) {
       msg.textContent = '✕ ' + ((j && j.reason) || 'could not send');
     }
@@ -19430,7 +20354,7 @@ function _wpBuffSummary(list) {
 }
 // ── Buffs tab ───────────────────────────────────────────────────────────────
 function renderBuffsTab(s) {
-  var root = document.getElementById('buffs');
+  var root = document.getElementById('buffsMain');
   if (!root) return;
   var active = (s && s.buffsActive) || [];
   var durs   = (s && s.buffDurations) || [];
@@ -19560,7 +20484,7 @@ function renderBuffsTab(s) {
   h += '</div>';
 
   h += '</div>';
-  setSectionHTML('buffs', h);
+  setSectionHTML('buffsMain', h);
 }
 
 // ── The DOM write path ──────────────────────────────────────────────────────
@@ -19668,7 +20592,26 @@ function _bindOnce(el, ev, fn) {
   el.addEventListener(ev, fn);
 }
 
+// The character you are playing now, big at the top (the guild lead, 2026-10-18). Its own wp* placeholder, outside #header,
+// so a character switch repaints only this line and the header's byte-stable HTML never changes. Zeal's live character
+// first; with no Zeal, the watched log written to in the last 10 minutes; otherwise a quiet "nobody yet" line, not a gap.
+function renderActiveChar(s) {
+  const n = document.getElementById('wpActiveChar');
+  if (!n) return;
+  let name = s && s.activeCharacter ? String(s.activeCharacter) : '', via = name ? 'zeal' : '';
+  if (!name) {
+    let best = null;
+    for (const w of ((s && s.watchedLogs) || [])) if (w && w.character && w.lastSeen && (Date.now() - w.lastSeen) < 600000 && (!best || w.lastSeen > best.lastSeen)) best = w;
+    if (best) { name = String(best.character); via = 'log'; }
+  }
+  const cls = name && via === 'zeal' && s.activeCharacterClass ? String(s.activeCharacterClass) : '';
+  const html = name
+    ? '<span class="dim" style="font-size:11px;text-transform:uppercase;letter-spacing:0.6px">Playing</span> <span style="font-size:24px;font-weight:700;color:var(--text);line-height:1.2">' + esc(name) + '</span>' + (cls ? ' <span class="dim" style="font-size:13px">' + esc(cls) + '</span>' : '')
+    : '<span class="dim" style="font-size:12px">No character playing right now. Log in to EverQuest and it shows up here.</span>';
+  if (n.innerHTML !== html) n.innerHTML = html;
+}
 function renderHeader(s) {
+  try { renderActiveChar(s); } catch (eAc) { void eAc; }
   const sessionMin = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
   const hasNewer = s.updateAvailable && s.latestAgentVersion
                 && s.latestAgentVersion !== s.version
@@ -20637,10 +21580,11 @@ function renderSetupChecks(s) {
      + '<button class="wp-clock-fix" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🕐 Fix Windows clock sync</button>'
      + '<button class="wp-import-dir" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Old EverQuest logs kept outside your EQ folder — read once for backfill, never tailed">🗂 Add old log folder…</button>'
      + '<button class="wp-import-files" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Pick eqlog_*_pq.proj.txt files from anywhere on this PC">📄 Add old log files…</button>'
-     // ✨ The setup walkthrough, both layouts until one is picked (DECISIONS §93). Mimic-only;
+     // ✨ The setup walkthrough: the trail (picked, DECISIONS §383). Mimic-only;
      // the tray's ✨ Setup walkthrough opens the same page.
-     + '<button class="wp-welcome" data-v="a" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Setup, one step at a time">✨ Walkthrough A</button>'
-     + '<button class="wp-welcome" data-v="b" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Setup: three essentials, then everything else as cards">✨ Walkthrough B</button>'
+     + '<button class="wp-welcome" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Setup, one step at a time">✨ Setup walkthrough</button>'
+     // 🧭 The tour of the overlays, any time (the guild lead, 2026-10-21). Mimic-only; the tray's Help › item is the same call.
+     + '<button class="wp-tour" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Look through the overlays again and switch on the ones you want. Nothing you already chose changes.">🧭 Take the tour again</button>'
      + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
      + '</div>'
      + '<div class="wp-fixer-note dim" style="display:none;font-size:11px;margin-top:6px"></div>';
@@ -20740,13 +21684,20 @@ function wpWireFixerButtons(s) {
       }).then(function () { iBtn.disabled = false; iBtn.textContent = orig; });
     });
   });
-  // The walkthrough's two unpicked layouts show on beta and alpha builds only, as in the tray.
+  // The walkthrough button shows on every Mimic build, as the tray item does.
   document.querySelectorAll('.wp-welcome').forEach(function (wBtn) {
-    if (!(window.mimic && window.mimic.openWelcome) || !${JSON.stringify(/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')))}) return;
+    if (!(window.mimic && window.mimic.openWelcome)) return;
     wBtn.style.display = '';
     if (wBtn.dataset.wired) return;
     wBtn.dataset.wired = '1';
-    wBtn.addEventListener('click', function () { window.mimic.openWelcome(wBtn.dataset.v); });
+    wBtn.addEventListener('click', function () { window.mimic.openWelcome(); });
+  });
+  document.querySelectorAll('.wp-tour').forEach(function (tBtn) {
+    if (!(window.mimic && window.mimic.openTour)) return;
+    tBtn.style.display = '';
+    if (tBtn.dataset.wired) return;
+    tBtn.dataset.wired = '1';
+    tBtn.addEventListener('click', function () { window.mimic.openTour(); });
   });
   var cBtn = document.querySelector('.wp-clock-fix');
   if (cBtn && window.mimic && window.mimic.clockResync) {
@@ -20877,11 +21828,12 @@ function renderWatchedLogsCard(s) {
   }
   const _uniqueChars = _byChar.size;
   let h = '<h2>Watched Logs (' + _uniqueChars + (_wls.length > _uniqueChars ? ' chars · ' + _wls.length + ' files' : '') + ')</h2><table>';
-  const recent = [..._byChar.values()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).slice(0, 15);
-  for (const w of recent) {
+  // Most recently seen first; the old hard cap of 15 is gone — every character is reachable behind "N more".
+  const recent = [..._byChar.values()].sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  h += wpMoreList('dash|watched-logs', recent.map(function (w) {
     const hot = w.lastSeen && (Date.now() - w.lastSeen) < 3600000;
-    h += '<tr><td>' + (hot ? '<span class="dot">●</span> ' : '&nbsp;&nbsp;') + '<span class="name">' + esc(w.character) + '</span></td><td class="dim">' + fmtAgo(w.lastSeen) + '</td></tr>';
-  }
+    return '<tr><td>' + (hot ? '<span class="dot">●</span> ' : '&nbsp;&nbsp;') + '<span class="name">' + esc(w.character) + '</span></td><td class="dim">' + fmtAgo(w.lastSeen) + '</td></tr>';
+  }), { show: 8, cols: 2, noun: 'more characters' });
   h += '</table>';
   morphInto(el, h);
 }
@@ -20894,7 +21846,7 @@ function renderRecentTellsCard(s) {
   let h = '<h2>📬 Recent Tells <span class="dim" style="font-size:11px;font-weight:normal">(local, this machine only)</span></h2>';
   h += '<table style="font-size:11px"><tr><th>Who</th><th>Message</th><th>When</th></tr>';
   const _rtVisible = _rt.slice(-15).reverse();
-  for (const t of _rtVisible) {
+  const _rtRows = _rtVisible.map(function (t) {
     const outgoing = t.direction === 'outgoing';
     // SPEAKER → LISTENER in both directions — the left name is who spoke.
     const otherLink = '<a href="https://wolfpack.quest/me/tells" target="_blank" rel="noreferrer" class="tell-other" style="color:var(--blue);text-decoration:none">' + esc(t.other) + '</a>';
@@ -20902,8 +21854,9 @@ function renderRecentTellsCard(s) {
       ? '<span class="dim">' + esc(t.character) + '</span> → ' + otherLink
       : otherLink + ' → <span class="dim">' + esc(t.character) + '</span>';
     const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : Date.now());
-    h += '<tr><td style="white-space:nowrap">' + who + '</td><td>' + esc(t.text) + '</td><td class="dim" style="white-space:nowrap">' + fmtAgo(tsMs) + '</td></tr>';
-  }
+    return '<tr><td style="white-space:nowrap">' + who + '</td><td>' + esc(t.text) + '</td><td class="dim" style="white-space:nowrap">' + fmtAgo(tsMs) + '</td></tr>';
+  });
+  h += wpMoreList('dash|recent-tells', _rtRows, { show: 6, cols: 3, noun: 'older tells' });
   h += '</table>';
   morphInto(el, h);
 }
@@ -20961,85 +21914,122 @@ function renderTanks(s) {
   if (et && et.perPlayer && Object.keys(et.perPlayer).length > 0) {
     const ranked = Object.entries(et.perPlayer).sort((a, b) => b[1].total - a[1].total);
     const staleLabel2 = et.flushedAt ? ' <span style="color:var(--dim);font-size:12px;font-weight:normal">(ended ' + fmtAgo(et.flushedAt) + ')</span>' : '';
-    h += '<div class="card wide"><h2>⚔️ Threat Detail — ' + esc(et.bossName || 'current fight') + staleLabel2 + '</h2>';
+    h += '<div class="card wide" data-index="Threat"><h2>⚔️ Threat Detail — ' + esc(et.bossName || 'current fight') + staleLabel2 + '</h2>';
     h += '<div class="subtle">Per-source breakdown. Phase-2 will add Quarmy build links + theoretical TPS from weapon procs/haste.</div>';
     h += '<table style="margin-top:6px">' +
          '<tr><th>Player</th><th>Total</th><th>Swing</th><th>Proc</th><th>Spell</th><th>Heal</th><th>Threat procs detected</th></tr>';
-    for (const [name, t] of ranked) {
+    // Layout A: the top 5 show; the rest sit behind "N more".
+    h += wpMoreList('fights|threat', ranked.map(function ([name, t]) {
       const procs = Object.entries(t.procDetail || {})
         .sort((a, b) => b[1] - a[1])
         .map(([n, c]) => esc(n) + ' ×' + c)
         .join(' · ') || '<span class="dim">—</span>';
-      h += '<tr><td class="name">' + esc(name) + '</td>' +
+      return '<tr><td class="name">' + esc(name) + '</td>' +
            '<td class="num"><b>' + fmtK(t.total) + '</b></td>' +
            '<td class="num">' + (t.swing ? fmtK(t.swing) : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (t.proc  ? fmtK(t.proc)  : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (t.spell ? fmtK(t.spell) : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (t.heal  ? fmtK(t.heal)  : '<span class="dim">—</span>') + '</td>' +
            '<td class="dim" style="font-size:11px">' + procs + '</td></tr>';
-    }
+    }), { show: 5, cols: 7, noun: 'more players' });
     h += '</table></div>';
   }
 
-  // (Weapon Loadouts moved to Info / Stats — buildLoadoutsHtml.)
+  // (Weapon Loadouts moved to Info / Stats — buildLoadoutsHtml; since Layout A they, the pets and the damage
+  // shields sit folded at the foot of this tab — renderFightsMore.)
+
+  // Layout A order (the guild lead, 2026-10-21): Threat, Deaths, Incoming, then Healers (below), DPS breakdown
+  // (renderDeeps). Deaths and Incoming are ordinary half-width cards, so the pair share a row.
+  const deaths = Object.entries(s.sessionDeaths||{}).sort((a,b)=>b[1]-a[1]);
+  h += '<div class="card" data-index="Deaths"><h2>Deaths This Session</h2>';
+  if (!deaths.length) h += '<div class="dim">Nobody died. Very respectable.</div>';
+  else {
+    h += '<table>' + wpMoreList('fights|deaths', deaths.map(function ([n, c]) {
+      return '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>';
+    }), { show: 5, cols: 2, noun: 'more players' }) + '</table>';
+  }
+  h += wpDeathRecapsHtml(s);
+  h += '</div>';
 
   const defs = Object.entries(s.sessionDefenders||{}).sort((a,b)=>b[1].damageTaken-a[1].damageTaken);
-  h += '<div class="card wide"><h2>Incoming Damage</h2>';
+  h += '<div class="card" data-index="Incoming"><h2>Incoming Damage</h2>';
   if (!defs.length) h += '<div class="dim">No tanking data yet — join a fight first.</div>';
   else {
     h += '<table><tr><th>Tank</th><th>Dmg Taken</th><th>Hits</th><th>Ramp Hits</th><th>Ramp Dmg</th><th>Invuln Avoided</th><th>Riposted For</th></tr>';
-    for (const [n, d] of defs.slice(0,12)) {
-      h += '<tr><td class="name">' + esc(n) + '</td>' +
+    h += wpMoreList('fights|incoming', defs.slice(0,12).map(function ([n, d]) {
+      return '<tr><td class="name">' + esc(n) + '</td>' +
            '<td class="num">' + fmtK(d.damageTaken) + '</td>' +
            '<td class="num">' + (d.hits||0) + '</td>' +
            '<td class="num">' + (d.rampageHits ? '<span class="tag ramp">'+d.rampageHits+'</span>' : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (d.rampageDmg ? fmtK(d.rampageDmg) : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + (d.invulnAvoidedDmg ? '<span class="tag invuln">'+fmtK(d.invulnAvoidedDmg)+'</span>' : '<span class="dim">—</span>') + '</td>' +
            '<td class="num">' + fmtK(d.ripostedFor||0) + '</td></tr>';
-    }
+    }), { show: 5, cols: 7, noun: 'more tanks' });
     h += '</table>';
   }
-  h += '</div>';
-  // 🛡️ Damage Shield card — per-tank DS output, grouped by source spell/song.
-  // Detected at parse time via the DS allow-list (parseEvent → ds:true). Sorted
-  // by total damage descending so heavy DS wearers float to the top; expand a
-  // row to see the spell/song breakdown that's feeding it.
-  const ds = s.damageShield || {};
-  const dsTotals = Object.entries(ds).map(function(kv){
-    const name = kv[0];
-    const sources = kv[1] || {};
-    var total = 0, hits = 0;
-    for (const k in sources) { total += sources[k].total; hits += sources[k].count; }
-    return { name: name, total: total, hits: hits, sources: sources };
-  }).filter(function(r){ return r.total > 0; }).sort(function(a, b){ return b.total - a.total; });
-  h += '<div class="card wide"><h2>🛡️ Damage Shields <span class="dim" style="font-size:11px;font-weight:normal">(DS damage by tank, grouped by spell/song)</span></h2>';
-  if (dsTotals.length === 0) {
-    h += '<div class="dim" style="font-size:12px">No damage-shield procs observed yet this session. The agent recognizes the druid/ranger thorn lines (thorns, thistles, brambles, spikes, barbs, the -coat selfs, Legacy of Thorn/Spike), the magician fire shields (Shield of Fire/Flame/Lava, Inferno Shield, Barrier of Combustion, Boon of Immolation, Cadeau of Flame), enchanter Feedback, the bard Psalms, and DS clickies casting those lines. Missing one? Let an officer know.</div>';
-  } else {
-    h += '<table style="font-size:12px"><tr><th>Tank</th><th>Total DS</th><th>Hits</th><th>Spells / songs feeding it</th></tr>';
-    for (const t of dsTotals.slice(0, 12)) {
-      const srcEntries = Object.entries(t.sources).sort(function(a, b){ return b[1].total - a[1].total; });
-      const srcSummary = srcEntries.map(function(kv){
-        return '<span style="color:var(--gold)">' + esc(kv[0]) + '</span> <span class="dim">(' + fmtK(kv[1].total) + ' · ' + kv[1].count + 'h)</span>';
-      }).join(' · ');
-      h += '<tr><td class="name">' + esc(t.name) + '</td>' +
-           '<td class="num">' + fmtK(t.total) + '</td>' +
-           '<td class="num">' + t.hits + '</td>' +
-           '<td style="font-size:11px">' + srcSummary + '</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
-  // Deaths
-  const deaths = Object.entries(s.sessionDeaths||{}).sort((a,b)=>b[1]-a[1]);
-  h += '<div class="card"><h2>Deaths This Session</h2>';
-  if (!deaths.length) h += '<div class="dim">Nobody died. Very respectable.</div>';
-  else { h += '<table>'; for (const [n,c] of deaths) h += '<tr><td class="name">' + esc(n) + '</td><td class="num" style="color:var(--red)">' + c + '</td></tr>'; h += '</table>'; }
   h += '</div>';
   h += '</div>';
   // Healers fold in below the tank cards — one combat-support tab.
   h += buildHealersHtml(s);
-  if (!setSectionHTML('tanks', h)) return;
+  setSectionHTML('tanks', h);
+  wpDeathFocusScroll(s);
+}
+
+// ── Death recap (FB-84) — one line per death, newest first, with the last 20 s behind a fold. Built from the
+// agent's local recaps (s.deathRecaps); nothing here is relative to now, so the HTML is byte-stable between polls.
+function wpDeathRecapLine(r) {
+  var d = new Date(r.ts), p = function (n) { return (n < 10 ? '0' : '') + n; };
+  var t = isNaN(d.getTime()) ? '' : (' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()));
+  var parts = [];
+  parts.push(r.lastChOffMs != null ? ((r.lastChOffMs / 1000).toFixed(1) + ' s after the last CH landed') : 'no CH landed in the last 20 s');
+  if (r.beatMs) parts.push('chain beat ' + Math.round(r.beatMs / 1000) + ' s');
+  parts.push('took ' + fmtK(r.dmg6) + ' in the last 6 s');
+  if (r.killer) parts.push('killed by ' + r.killer);
+  return '💀 ' + r.name + ' died' + t + ' · ' + parts.join(' · ');
+}
+function wpDeathRecapsHtml(s) {
+  var list = s.deathRecaps || [];
+  if (!list.length) return '';
+  var h = '<div class="subtle" style="margin-top:8px">Death recaps · the last 20 s before each death, newest first. Target a corpse to jump to that player’s latest.</div>';
+  // Layout A: the three newest recaps show, the older ones sit behind "N older recaps". A recap the person just
+  // targeted a corpse for is never left behind the fold (it is the one they came for).
+  var recaps = [];
+  for (var i = 0; i < list.length; i++) {
+    if (s.deathRecapFocus === list[i].id && i >= 3) _wpMoreOpen['fights|recaps'] = true;
+    var d = '';
+    var r = list[i], focus = (s.deathRecapFocus === r.id);
+    var rows = [];
+    for (var a = 0; a < (r.hits || []).length; a++) {
+      var x = r.hits[a];
+      rows.push({ off: x.offMs, txt: fmtK(x.amount) + ' from ' + (x.attacker || '?') + (x.ability ? (' (' + x.ability + ')') : ''), cls: 'var(--red)' });
+    }
+    for (var b = 0; b < (r.heals || []).length; b++) {
+      var y = r.heals[b];
+      rows.push({ off: y.offMs, txt: y.ch ? 'Complete Heal landed' : 'heal landed', cls: y.ch ? 'var(--green)' : 'var(--blue)' });
+    }
+    rows.sort(function (m, n) { return n.off - m.off; });
+    d += '<details ' + wpKeep('deathrecap|' + r.id, focus) + ' id="deathrecap-' + r.id + '" style="margin-top:4px;padding-left:6px;border-left:3px solid '
+       + (focus ? 'var(--gold)' : 'transparent') + '"><summary style="cursor:pointer;font-size:12px">' + esc(wpDeathRecapLine(r))
+       + (focus ? ' <span class="dim">· corpse targeted</span>' : '') + '</summary>';
+    if (!rows.length) d += '<div class="dim" style="font-size:11px">Nothing in this log for the last 20 s.</div>';
+    else {
+      d += '<table style="font-size:11px">';
+      for (var k = 0; k < rows.length; k++) d += '<tr><td class="num dim">−' + (rows[k].off / 1000).toFixed(1) + ' s</td><td style="color:' + rows[k].cls + '">' + esc(rows[k].txt) + '</td></tr>';
+      d += '</table>';
+    }
+    d += '</details>';
+    recaps.push(d);
+  }
+  return h + wpMoreList('fights|recaps', recaps, { show: 3, noun: 'older recaps' });
+}
+// Targeting a corpse opens that player's latest recap; bring it into view once per change of target.
+var _wpDeathFocusSeen = null;
+function wpDeathFocusScroll(s) {
+  var f = s.deathRecapFocus == null ? null : s.deathRecapFocus;
+  if (f === _wpDeathFocusSeen) return;
+  _wpDeathFocusSeen = f;
+  if (f == null) return;
+  try { var el = document.getElementById('deathrecap-' + f); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' }); } catch (e) { void e; }
 }
 
 function buildLoadoutsHtml(s) {
@@ -21052,7 +22042,8 @@ function buildLoadoutsHtml(s) {
   const invs       = invsAll.filter(([c]) => !hidden.has(c.toLowerCase()));
   const hiddenList = invsAll.filter(([c]) =>  hidden.has(c.toLowerCase()));
   if (invsAll.length > 0) {
-    h += '<div class="card wide"><h2>🗡️ Weapon Loadouts</h2>';
+    // Folded by default (Layout A): wpKeep remembers it open. The count stays out of the panel key (split on "(").
+    h += '<div class="card wp-fold" data-index="Loadouts"><details ' + wpKeep('fights|loadouts') + '><summary><h2>🗡️ Weapon Loadouts <span class="dim" style="font-size:11px;font-weight:normal">(' + invs.length + ')</span></h2></summary>';
     h += '<div class="subtle">Parsed from <code>/output inventory</code> files in the EQ directory. ' +
          'Phase 2: cross-reference item IDs with proc DB for theoretical TPS. ' +
          'Click ⊘ to hide alts you do not care about.</div>';
@@ -21139,7 +22130,7 @@ function buildLoadoutsHtml(s) {
     }
     h += '<div class="subtle" style="margin-top:6px">Tip: run <code>/output inventory</code> in-game to refresh. ' +
          'Files are auto-detected from <code>' + esc(invsAll[0][1]._path?.split(/[/\\\\]/).slice(0, -1).join('\\\\') || '') + '</code></div>';
-    h += '</div>';
+    h += '</details></div>';
   }
 
   return h;
@@ -21188,7 +22179,7 @@ function wireLoadoutControls() {
 }
 
 function buildHealersHtml(s) {
-  let h = '<div class="grid"><div class="card wide">' +
+  let h = '<div class="grid"><div class="card wide" data-index="Healers">' +
           '<h2>Healers This Session ' +
           '<span style="background:#7c4a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">BETA</span>' +
           '</h2>' +
@@ -21197,39 +22188,36 @@ function buildHealersHtml(s) {
   if (!healers.length) h += '<div class="dim">No healing parsed yet.</div>';
   else {
     h += '<table><tr><th>Healer</th><th>Healed</th><th>Ticks</th><th>Targets</th></tr>';
-    for (const [n, st] of healers.slice(0,15)) {
-      h += '<tr><td class="name">' + esc(n) + '</td>' +
+    h += wpMoreList('fights|healers', healers.slice(0,15).map(function ([n, st]) {
+      return '<tr><td class="name">' + esc(n) + '</td>' +
            '<td class="num">' + fmtK(st.healed) + '</td>' +
            '<td class="num">' + (st.ticks||0) + '</td>' +
            '<td class="dim">' + (st.targets||[]).map(esc).slice(0,6).join(', ') + '</td></tr>';
-    }
+    }), { show: 5, cols: 4, noun: 'more healers' });
     h += '</table>';
   }
   h += '</div></div>';
   // Exceptional Heals leaderboard — populated by the bystander-visible
   // "<X> performs an exceptional heal! (N)" line, so a single parser
-  // anywhere in the raid sees every cleric's crit heals.
+  // anywhere in the raid sees every cleric's crit heals. Layout A: folded under the healers.
   const crits = Object.entries(s.sessionCritHeals||{})
     .sort((a, b) => (b[1].total||0) - (a[1].total||0));
   if (crits.length > 0) {
-    let ch = '<div class="grid"><div class="card wide">' +
-             '<h2>💚 Exceptional Heals This Session</h2>' +
-             '<div class="subtle" style="font-size:11px;margin-bottom:6px">Crit heals are public — any parser in the raid sees them, no healer adoption required.</div>' +
-             '<table><tr><th>Healer</th><th>Crits</th><th>Total</th><th>Biggest</th></tr>';
-    for (const [n, st] of crits.slice(0, 15)) {
-      ch += '<tr><td class="name">' + esc(n) + '</td>' +
-            '<td class="num">' + (st.count||0) + '</td>' +
-            '<td class="num">' + fmtK(st.total||0) + '</td>' +
-            '<td class="num">' + fmtK(st.max||0) + '</td></tr>';
-    }
-    ch += '</table></div></div>';
-    h += ch;
+    let cb = '<div class="subtle" style="font-size:11px;margin-bottom:6px">Crit heals are public — any parser in the raid sees them, no healer adoption required.</div>' +
+             '<table><tr><th>Healer</th><th>Crits</th><th>Total</th><th>Biggest</th></tr>' +
+             wpMoreList('fights|crits', crits.slice(0, 15).map(function ([n, st]) {
+               return '<tr><td class="name">' + esc(n) + '</td>' +
+                 '<td class="num">' + (st.count||0) + '</td>' +
+                 '<td class="num">' + fmtK(st.total||0) + '</td>' +
+                 '<td class="num">' + fmtK(st.max||0) + '</td></tr>';
+             }), { show: 5, cols: 4, noun: 'more healers' }) + '</table>';
+    h += '<div class="grid">' + wpFoldCard('fights|exceptional', '💚 Exceptional Heals This Session <span class="dim" style="font-size:11px;font-weight:normal">(' + crits.length + ')</span>', cb, { index: 'Exceptional heals' }) + '</div>';
   }
   return h;
 }
 
 function renderDeeps(s) {
-  let h = '<div class="grid"><div class="card wide"><h2>💥 DEEPS — Damage Breakdown (this session)</h2>';
+  let h = '<div class="grid"><div class="card wide" data-index="DPS"><h2>💥 DEEPS — Damage Breakdown (this session)</h2>';
   h += '<div class="subtle">Per-attacker melee / spell / proc / DoT damage and crit stats. Names with spaces (NPCs) are filtered out.</div>';
   const entries = Object.entries(s.sessionDeeps || {})
     .map(([n, d]) => {
@@ -21242,7 +22230,8 @@ function renderDeeps(s) {
   } else {
     h += '<table style="margin-top:6px">' +
          '<tr><th>Player</th><th>Total</th><th>Melee</th><th>Spell</th><th>Proc</th><th>DoT</th><th>Crits</th><th>Crit dmg</th></tr>';
-    for (const [name, d, total] of entries) {
+    // Layout A: the top 5 show; the rest sit behind "N more players".
+    h += wpMoreList('fights|deeps', entries.map(function ([name, d, total]) {
       const fmtCat = (b) => {
         if (!b || !b.count) return '<span class="dim">—</span>';
         const avg = Math.round(b.total / b.count);
@@ -21252,7 +22241,7 @@ function renderDeeps(s) {
       const critPct = ((d.melee?.count||0) + (d.spell?.count||0)) > 0
         ? Math.round((d.crits?.count||0) / ((d.melee?.count||0) + (d.spell?.count||0)) * 100)
         : 0;
-      h += '<tr>' +
+      return '<tr>' +
            '<td class="name">' + esc(name) + '</td>' +
            '<td class="num"><b>' + fmtK(total) + '</b></td>' +
            '<td>' + fmtCat(d.melee) + '</td>' +
@@ -21266,7 +22255,7 @@ function renderDeeps(s) {
                                    ? '<span style="color:var(--gold)">+' + fmtK(d.crits.bonusDmg) + '</span> <span class="dim" style="font-size:11px">max +' + fmtK(d.crits.maxBonus) + '</span>'
                                    : '<span class="dim">—</span>') + '</td>' +
            '</tr>';
-    }
+    }), { show: 5, cols: 8, noun: 'more players' });
     h += '</table>';
   }
   h += '</div>';
@@ -21274,20 +22263,24 @@ function renderDeeps(s) {
   // Per-player top abilities (rolled up by ability name)
   const withAbilities = entries.filter(([, d]) => d.topAbilities && Object.keys(d.topAbilities).length > 0);
   if (withAbilities.length > 0) {
-    h += '<div class="card wide"><h2>🎯 Top Abilities per Player</h2>';
+    h += '<div class="card wide" data-index="Abilities"><h2>🎯 Top Abilities per Player</h2>';
     h += '<div class="subtle">Aggregated by named ability across the session. Hits, total damage, average.</div>';
-    for (const [name, d] of withAbilities.slice(0, 10)) {
+    // Each player is one block (heading + a fixed-layout table, see table.wp-abtbl), so every player's
+    // columns line up; the first 3 players show, the rest sit behind "N more players", and inside a block
+    // the top 5 abilities show with the remaining ones behind "N more".
+    const playerBlocks = withAbilities.slice(0, 10).map(function ([name, d]) {
       const abs = Object.entries(d.topAbilities).sort((a, b) => b[1].total - a[1].total).slice(0, 8);
-      h += '<h3 style="color:var(--orange);margin-top:14px">' + esc(name) + '</h3>';
-      h += '<table><tr><th>Ability</th><th>Total</th><th>Hits</th><th>Avg</th></tr>';
-      for (const [ab, st] of abs) {
+      const abRows = abs.map(function ([ab, st]) {
         const avg = st.count > 0 ? Math.round(st.total / st.count) : 0;
         const label = ab === 'non-melee' ? ab + ' (DS / DoT / procs)' : ab;
-        h += '<tr><td>' + esc(label) + '</td><td class="num"><b>' + fmtK(st.total) + '</b></td>' +
-             '<td class="num">' + st.count + '</td><td class="num">' + fmtK(avg) + '</td></tr>';
-      }
-      h += '</table>';
-    }
+        return '<tr><td title="' + esc(label) + '">' + esc(label) + '</td><td class="num wp-r"><b>' + fmtK(st.total) + '</b></td>' +
+               '<td class="num wp-r">' + st.count + '</td><td class="num wp-r">' + fmtK(avg) + '</td></tr>';
+      });
+      return '<div><h3 style="color:var(--orange);margin-top:14px">' + esc(name) + '</h3>' +
+             '<table class="wp-abtbl"><tr><th>Ability</th><th class="wp-r">Total</th><th class="wp-r">Hits</th><th class="wp-r">Avg</th></tr>' +
+             wpMoreList('deeps|abil|' + name, abRows, { show: 5, cols: 4 }) + '</table></div>';
+    });
+    h += wpMoreList('deeps|players', playerBlocks, { show: 3, noun: 'more players' });
     h += '</div>';
   }
 
@@ -21296,12 +22289,52 @@ function renderDeeps(s) {
 }
 
 function buildPetsHtml(s) {
-  let h = '<div class="card"><h2>Known Pets This Session</h2>';
+  // Folded by default (Layout A): the count rides in the title so a closed card still says what is in it.
   const pets = (s.knownPets||[]);
-  if (!pets.length) h += '<div class="dim">No pets observed yet.</div>';
-  else { h += '<table><tr><th>Pet</th><th>Owner(s)</th></tr>'; for (const p of pets) h += '<tr><td class="pet">' + esc(p.pet) + '</td><td class="name">' + p.owners.map(esc).join(', ') + '</td></tr>'; h += '</table>'; }
-  h += '</div>';
-  return h;
+  let b = '';
+  if (!pets.length) b += '<div class="dim">No pets observed yet.</div>';
+  else { b += '<table><tr><th>Pet</th><th>Owner(s)</th></tr>' + wpMoreList('pets|known', pets.map(function (p) { return '<tr><td class="pet">' + esc(p.pet) + '</td><td class="name">' + p.owners.map(esc).join(', ') + '</td></tr>'; }), { show: 8, cols: 2, noun: 'more pets' }) + '</table>'; }
+  return wpFoldCard('fights|pets', 'Known Pets This Session <span class="dim" style="font-size:11px;font-weight:normal">(' + pets.length + ')</span>', b, { wide: false, index: 'Pets' });
+}
+
+// 🛡️ Damage Shield card — per-tank DS output, grouped by source spell/song.
+// Detected at parse time via the DS allow-list (parseEvent → ds:true). Sorted
+// by total damage descending so heavy DS wearers float to the top; expand a
+// row to see the spell/song breakdown that's feeding it. (Moved here from renderTanks by Layout A: folded.)
+function buildDamageShieldsHtml(s) {
+  const ds = s.damageShield || {};
+  const dsTotals = Object.entries(ds).map(function(kv){
+    const name = kv[0];
+    const sources = kv[1] || {};
+    var total = 0, hits = 0;
+    for (const k in sources) { total += sources[k].total; hits += sources[k].count; }
+    return { name: name, total: total, hits: hits, sources: sources };
+  }).filter(function(r){ return r.total > 0; }).sort(function(a, b){ return b.total - a.total; });
+  let b = '';
+  if (dsTotals.length === 0) {
+    b += '<div class="dim" style="font-size:12px">No damage-shield procs observed yet this session. The agent recognizes the druid/ranger thorn lines (thorns, thistles, brambles, spikes, barbs, the -coat selfs, Legacy of Thorn/Spike), the magician fire shields (Shield of Fire/Flame/Lava, Inferno Shield, Barrier of Combustion, Boon of Immolation, Cadeau of Flame), enchanter Feedback, the bard Psalms, and DS clickies casting those lines. Missing one? Let an officer know.</div>';
+  } else {
+    b += '<table style="font-size:12px"><tr><th>Tank</th><th>Total DS</th><th>Hits</th><th>Spells / songs feeding it</th></tr>';
+    b += wpMoreList('fights|ds', dsTotals.slice(0, 12).map(function (t) {
+      const srcEntries = Object.entries(t.sources).sort(function(a, b){ return b[1].total - a[1].total; });
+      const srcSummary = srcEntries.map(function(kv){
+        return '<span style="color:var(--gold)">' + esc(kv[0]) + '</span> <span class="dim">(' + fmtK(kv[1].total) + ' · ' + kv[1].count + 'h)</span>';
+      }).join(' · ');
+      return '<tr><td class="name">' + esc(t.name) + '</td>' +
+           '<td class="num">' + fmtK(t.total) + '</td>' +
+           '<td class="num">' + t.hits + '</td>' +
+           '<td style="font-size:11px">' + srcSummary + '</td></tr>';
+    }), { show: 5, cols: 4, noun: 'more tanks' });
+    b += '</table>';
+  }
+  return wpFoldCard('fights|damage-shields', '🛡️ Damage Shields <span class="dim" style="font-size:11px;font-weight:normal">(' + dsTotals.length + ')</span>', '<div class="subtle" style="margin-top:0">DS damage by tank, grouped by spell/song.</div>' + b, { wide: false, index: 'Shields' });
+}
+
+// The three cards that start folded at the foot of ⚔️ Fights (Layout A, the guild lead, 2026-10-21): pets, damage
+// shields, weapon loadouts. They sit side by side while closed; opening one gives it the whole row.
+function renderFightsMore(s) {
+  setSectionHTML('fightsMore', '<div class="grid">' + buildPetsHtml(s) + buildDamageShieldsHtml(s) + buildLoadoutsHtml(s) + '</div>');
+  wireLoadoutControls();
 }
 
 // ── Triggers tab ───────────────────────────────────────────────────────────
@@ -21381,7 +22414,10 @@ function renderZealClients(s) {
   }
   if (el.style.display === 'none') el.style.display = '';
   let h = '<h2>🧪 Buffs &amp; Zone <span class="dim" style="font-size:11px;font-weight:normal">· what each character has buffwise and where they are (via Zeal)</span></h2>';
-  for (const c of clients) {
+  // One entry per character, each several lines tall; 33 characters used to be the whole page. The body
+  // below builds into its own local \`h\`, so the per-character markup is untouched.
+  const _zRows = clients.map(function (c) {
+    let h = '';
     const dot   = c.live ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--dim)">○</span>';
     const where = c.zone_name ? esc(c.zone_name) : (c.zone != null ? 'zone ' + esc(String(c.zone)) : 'unknown zone');
     const meta  = [];
@@ -21459,7 +22495,9 @@ function renderZealClients(s) {
       h += '</table></details>';
     }
     h += '</div>';   // .wp-zeal-row
-  }
+    return h;
+  });
+  h += wpMoreList('dash|zeal-clients', _zRows, { show: 5, noun: 'more characters' });
   if (_hiddenCount > 0) {
     h += '<div style="margin-top:8px;font-size:11px" class="dim">' + _hiddenCount + ' character'
        + (_hiddenCount === 1 ? '' : 's') + ' hidden · '
@@ -21970,7 +23008,12 @@ function renderMechanics(s) {
 function renderRecentFires(s) {
   var el = document.getElementById('wpRecentFires');
   if (!el) return;   // Triggers tab not painted yet
-  var overlays = (s.activeOverlays || []).slice(0, 6);
+  // Typing a better wording in a row's "Say" box: leave the card alone until the box loses focus (the draft is
+  // kept in _wpVfDraft, so the next paint shows it again).
+  var ae = document.activeElement;
+  if (ae && ae.tagName === 'INPUT' && el.contains(ae)) return;
+  // Layout A: the newest 5 show and the last 30 are kept behind "N more fires" (it was the newest 6, no more).
+  var overlays = (s.activeOverlays || []).slice(0, 30);
   var h = '<h2>⚡ Recent fires';
   h += '<span style="float:right;font-size:11px;font-weight:normal">';
   h += '<button id="trigClearTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px" title="Remove only TEST-flagged overlays">🧪 Clear test fires</button>';
@@ -21979,7 +23022,8 @@ function renderRecentFires(s) {
   if (overlays.length === 0) {
     h += '<div class="dim" style="font-size:12px">No triggers have fired this session yet. Tune a pattern below and try again on the next log line — or click <b>Rehearse</b> on a row to drive a synthesized line through the real pipeline (pattern + cooldown + suppression) and hear the actual TTS.</div>';
   } else {
-    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th></tr>';
+    h += '<table style="font-size:12px"><tr><th>When</th><th>Trigger</th><th>Scope</th><th>Text</th><th></th></tr>';
+    var _fireRows = [];
     for (var i = 0; i < overlays.length; i++) {
       var o = overlays[i];
       var ago = fmtAgo(o.shownAt || 0);
@@ -21989,14 +23033,131 @@ function renderRecentFires(s) {
       // character-link delegation slices a .name cell to its first word and
       // opens /character/<token> (404 for a trigger name). Same trap the guild
       // table avoids; it used to bite here (#120).
-      h += '<tr><td class="dim">' + esc(ago) + '</td>' +
+      _fireRows.push('<tr><td class="dim">' + esc(ago) + '</td>' +
            '<td style="color:var(--text)">' + esc(o.trigger || '?') + '</td>' +
            '<td class="dim" style="' + scColor + '">' + esc(sc) + '</td>' +
-           '<td>' + esc(o.text || '') + '</td></tr>';
+           '<td>' + esc(o.text || '') + voiceFireCell(o) + '</td>' +
+           '<td>' + enrageMuteCell(o) + '</td></tr>');
     }
+    h += wpMoreList('trig|fires', _fireRows, { show: 5, cols: 5, noun: 'more fires' });
+    h += '</table>';
+  }
+  h += enrageMutedList(s.enrageMutes);
+  morphInto(el, h);
+}
+// 🔊 on a row that was SPOKEN (the guild lead, 2026-10-19: "B for voice"). The trigger window tells the agent what it
+// said and in which voice (o.voice, set by POST /api/voice-spoken), so this opens to: what was spoken, the engine /
+// voice / speed, ▶ to hear it again exactly so, a "Say" line to type a better wording (▶ plays it in the CURRENT
+// voice), and Suggest, which sends the report with that wording to the officers. The draft and the last answer live
+// in JS-side stores so a repaint (this card repaints as the "when" column ticks) never loses them.
+var _wpVfDraft = {}, _wpVfMsg = {};
+function wpVfKey(o) { return String((o && (o.firedAt || o.shownAt)) || 0); }
+function voiceFireCell(o) {
+  var v = o && o.voice;
+  if (!v || !v.spoken) return '';
+  var k = wpVfKey(o), say = _wpVfDraft[k] !== undefined ? _wpVfDraft[k] : v.spoken;
+  var b = 'background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px';
+  var how = (v.engine || 'windows') + (v.voice ? ' / ' + v.voice : '') + (v.rate ? ' · ' + v.rate + '×' : '');
+  return '<details ' + wpKeep('vfire|' + k) + ' style="margin-top:4px"><summary style="cursor:pointer" title="What was spoken, and the voice it was spoken in">🔊</summary>'
+    + '<div class="dim" style="font-size:11px;margin-top:4px">spoke: <span style="color:var(--text)">' + esc(v.spoken) + '</span> · ' + esc(how)
+    + ' <button type="button" data-vf-play="' + esc(k) + '" style="' + b + '" title="Hear it again with the same voice, speed and pitch">▶</button></div>'
+    + '<div style="font-size:11px;margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;align-items:center"><span class="dim">Say:</span>'
+    + '<input type="text" data-vf-draft="' + esc(k) + '" maxlength="300" value="' + esc(say) + '" style="flex:1;min-width:160px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-family:inherit;font-size:11px">'
+    + '<button type="button" data-vf-say="' + esc(k) + '" style="' + b + '" title="Hear this wording in your current voice">▶</button>'
+    + '<button type="button" data-vf-suggest="' + esc(k) + '" style="' + b + '" title="Send this report, with this wording, to the officers">Suggest</button></div>'
+    + (_wpVfMsg[k] ? '<div class="dim" style="font-size:11px;margin-top:4px">' + esc(_wpVfMsg[k]) + '</div>' : '')
+    + '</details>';
+}
+function wpVfFind(k) {
+  var list = (window.__wpLastState && window.__wpLastState.activeOverlays) || [];
+  for (var i = 0; i < list.length; i++) if (wpVfKey(list[i]) === k && list[i].voice) return list[i];
+  return null;
+}
+// ▶ replay, ▶ say, Suggest. A report the server cannot take yet says so and keeps the typed wording.
+function wpVfAct(kind, k) {
+  var o = wpVfFind(k);
+  if (!o) return;
+  var v = o.voice, draft = _wpVfDraft[k] !== undefined ? _wpVfDraft[k] : v.spoken;
+  if (kind === 'play') {
+    if (window._wpVoiceNames && window._wpVoiceNames.replay) window._wpVoiceNames.replay({ text: v.spoken, engine: v.engine, voice: v.voice, rate: v.rate, pitch: v.pitch });
+    return;
+  }
+  if (kind === 'say') { if (window._wpVoiceNames && window._wpVoiceNames.say) window._wpVoiceNames.say(draft); return; }
+  if (!String(draft).trim() || String(draft).trim() === String(v.spoken).trim()) { _wpVfMsg[k] = 'Change the wording first, then Suggest.'; if (window.__wpLastState) renderRecentFires(window.__wpLastState); return; }
+  _wpVfMsg[k] = 'Sending…'; if (window.__wpLastState) renderRecentFires(window.__wpLastState);
+  fetch('/api/voice-report', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ spoken: v.spoken, original: v.original, engine: v.engine, voice: v.voice, rate: v.rate, pitch: v.pitch,
+      trigger_id: o.trigger_id || null, trigger_name: o.trigger || o.text || '', suggested_say: String(draft).trim() }) })
+    .then(function(r) { return r.json().catch(function() { return {}; }).then(function(j) { return { status: r.status, j: j || {} }; }); },
+      function() { return { status: 0, j: {} }; })
+    .then(function(x) {
+      _wpVfMsg[k] = x.status === 200 && x.j.ok ? 'Sent. Thank you.'
+        : x.status === 503 ? 'Voice reports aren\\'t switched on yet. Your wording stays here.'
+        : x.status === 429 ? 'Too many reports just now. Try again in a minute.'
+        : (x.j.error || 'Could not send it.');
+      if (window.__wpLastState) renderRecentFires(window.__wpLastState);
+    });
+}
+document.addEventListener('input', function(e) {
+  var t = e.target;
+  if (t && t.getAttribute && t.hasAttribute('data-vf-draft')) _wpVfDraft[t.getAttribute('data-vf-draft')] = t.value;
+});
+// 🔇 on an enrage callout's row: the same three choices the trigger overlay offers (the guild lead,
+// 2026-10-19). Plain buttons with data attributes; the section-root click delegation routes them.
+function enrageMuteCell(o) {
+  if (!o || !o.enrage_mob) return '';
+  var m = esc(o.enrage_mob);
+  var b = 'background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 6px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:4px';
+  return '<button type="button" data-enrage-mute="mob" data-mob="' + m + '" style="' + b + '" title="Stop this mob\\'s enrage callouts (text and speech) until the agent restarts">🔇 this mob</button>'
+       + '<button type="button" data-enrage-mute="all" data-mob="' + m + '" style="' + b + '" title="Stop every enrage callout until the agent restarts">🔇 all</button>'
+       + '<button type="button" data-enrage-mute="always" data-mob="' + m + '" style="' + b + '" title="Stop this mob\\'s enrage callouts for good">🔇 always</button>';
+}
+// What is muted, each with a ✕ that unmutes it. Empty when nothing is, so the card stays as it was.
+function enrageMutedList(em) {
+  if (!em) return '';
+  var chips = [];
+  var chip = function(label, scope, mob) {
+    chips.push('<span style="display:inline-block;margin:4px 6px 0 0;padding:2px 6px;border:1px solid var(--border);border-radius:4px">' + esc(label)
+      + ' <button type="button" data-enrage-unmute="' + scope + '" data-mob="' + esc(mob || '') + '" title="Unmute" style="background:none;border:0;color:var(--text);cursor:pointer;font-family:inherit;font-size:11px">✕</button></span>');
+  };
+  if (em.all) chip('all enrage callouts · this session', 'all', '');
+  (em.session || []).forEach(function(m) { chip(m + ' · this session', 'mob', m); });
+  (em.always || []).forEach(function(m) { chip(m + ' · always', 'always', m); });
+  if (!chips.length) return '';
+  return '<div style="margin-top:8px;font-size:12px"><span class="dim">🔇 Muted enrage callouts</span> ' + chips.join('') + '</div>';
+}
+function enrageMutePost(action, scope, mob) {
+  return fetch('/api/enrage-mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: action, scope: scope, mob: mob }) }).catch(function() { return null; });
+}
+// 🔇 Muted timers (the guild lead, 2026-10-19: "permanently mute and review those lines somewhere"): every timer row the
+// ⋮ menu has muted, for good and for this session, with a ✕ that unmutes it. Fills its own #wpMutedTimers placeholder.
+function renderMutedTimers(s) {
+  var el = document.getElementById('wpMutedTimers');
+  if (!el) return;   // Triggers tab not painted yet
+  var tm = (s && s.timerMutes) || {};
+  var rows = [];
+  (tm.always || []).forEach(function(e) { rows.push({ e: e, scope: 'always', when: 'always' }); });
+  (tm.session || []).forEach(function(e) { rows.push({ e: e, scope: 'session', when: 'this session' }); });
+  var h = '<h2>🔇 Muted timers</h2>';
+  if (!rows.length) {
+    h += '<div class="dim" style="font-size:12px">Nothing is muted. The <b>⋮</b> beside a timer row\\'s ✕ mutes that timer for this session or for good, and it lands here so you can bring it back. A mute hides the row only; a trigger\\'s spoken callout follows its <b>What you hear</b> setting.</div>';
+  } else {
+    h += '<table style="font-size:12px"><tr><th>Timer</th><th>What</th><th>Muted</th><th></th></tr>';
+    rows.forEach(function(r) {
+      // Not class="name": the character-link delegation would open /character/<first word> for a timer name.
+      h += '<tr><td style="color:var(--text)">' + esc(r.e.label || r.e.key) + '</td>'
+        + '<td class="dim">' + esc(r.e.detail || '') + '</td>'
+        + '<td class="dim">' + r.when + '</td>'
+        + '<td><button type="button" data-timer-unmute="' + esc(r.e.key) + '" data-scope="' + r.scope + '" title="Show this timer again" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:2px 8px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">✕ Unmute</button></td></tr>';
+    });
     h += '</table>';
   }
   morphInto(el, h);
+}
+function timerMutePost(body) {
+  return fetch('/api/timer-mute', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body) }).catch(function() { return null; });
 }
 // ⏪ Replay status (#101) — the volatile counterpart to the byte-stable Replay
 // FORM. Fills its own #wpReplayStatus placeholder every poll: progress + a STOP
@@ -22004,7 +23165,7 @@ function renderRecentFires(s) {
 // Byte-stable when idle (empty + hidden) so it never flickers the section.
 function renderReplayStatus(s) {
   var el = document.getElementById('wpReplayStatus');
-  if (!el) return;   // Triggers tab not painted yet
+  if (!el) return;   // Replay card (Fights tab) not painted yet
   var r = (s && s.replay) || {};
   if (!r.running && !r.done) {
     if (el.style.display !== 'none') el.style.display = 'none';
@@ -22019,7 +23180,7 @@ function renderReplayStatus(s) {
     h += '<span style="color:var(--gold)">⏪ Replaying ' + esc(r.logLabel || 'log') + ' <span class="dim">· ' + esc(r.pace === 'fast' ? 'fast' : 'real-time') + '</span></span>';
     h += '<button type="button" id="replayStopBtn" style="background:#3d1418;color:#ff7b72;border:1px solid #6e2a2f;padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">■ Stop</button>';
     h += '</div>';
-    h += '<div style="margin-top:5px">' + (r.played || 0) + ' / ' + (r.total || 0) + ' lines · ' + (r.fired || 0) + ' fired</div>';
+    h += '<div style="margin-top:5px">' + (r.played || 0) + ' / ' + (r.total || 0) + ' lines · ' + (r.fired || 0) + ' fired · <a href="' + esc(wpReplayWebHref(r.fromMs, r.toMs)) + '" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="color:var(--blue);text-decoration:none" title="Open the raid replay on wolfpack.quest for this window">🎬 raid replay ↗</a></div>';
     h += '<div style="width:100%;background:var(--bg);border-radius:3px;height:6px;overflow:hidden;margin-top:4px"><div style="background:var(--gold);height:100%;width:' + pct + '%"></div></div>';
   } else {
     var label, color;
@@ -22289,6 +23450,292 @@ function renderNetMeter(s) {
   if (sec && sec.classList.contains('active') && !_wpNet.busy && Date.now() - _wpNet.at >= 5000) _wpNetFetch();
   wpNetRepaint();
 }
+
+// ── 🔁 Rebuild from my logs (Logsync tab; the rail's "On this PC" group opens it) ───────────────────────
+// The guild lead, 2026-10-21: people bring their big log files, and the backfill should build out their local
+// parses and work out which raids they were in. Everything here is answered by the agent from THIS PC's files
+// (POST /api/local/backfill/start, /stop, GET /api/local/backfill/status, /api/local/raids) and nothing is
+// uploaded; uploading old logs stays the separate opt-in backfill below. The card paints into its own #wpRebuild
+// placeholder (renderOptin emits it) in three children, so progress ticking does not rebuild the controls.
+var _wpRb = { status: null, raids: null, at: 0, raidsAt: 0, busy: false, file: '', since: '', note: '', files: [], lastState: '' };
+function wpRebuildSetFiles(o) {
+  var out = [];
+  var list = (o && o.files) || [];
+  for (var i = 0; i < list.length; i++) out.push({ path: list[i].path, character: list[i].character, sizeBytes: list[i].sizeBytes || 0 });
+  _wpRb.files = out;
+}
+function wpRbNum(n) { return Number(n || 0).toLocaleString(); }
+function wpRbSize(b) { return !b ? '0' : b < 1048576 ? Math.round(b / 1024) + 'KB' : b < 1073741824 ? (b / 1048576).toFixed(1) + 'MB' : (b / 1073741824).toFixed(2) + 'GB'; }
+function wpRbCtlHtml() {
+  var st = _wpRb.status;
+  var running = !!(st && st.running);
+  var dis = running ? ' disabled' : '';
+  var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">';
+  h += '<label class="dim" style="font-size:11px">Log <select id="wpRbFile"' + dis + ' onchange="_wpRb.file=this.value">';
+  h += '<option value="">All my logs (' + _wpRb.files.length + ')</option>';
+  for (var i = 0; i < _wpRb.files.length; i++) {
+    var f = _wpRb.files[i];
+    h += '<option value="' + esc(f.path) + '"' + (f.path === _wpRb.file ? ' selected' : '') + '>' + esc(f.character) + ' — ' + esc(f.path.split(/[/\\\\]/).pop()) + ' (' + wpRbSize(f.sizeBytes) + ')</option>';
+  }
+  h += '</select></label>';
+  h += '<label class="dim" style="font-size:11px">From <input type="date" id="wpRbSince" value="' + esc(_wpRb.since) + '"' + dis + ' onchange="_wpRb.since=this.value"></label>';
+  if (running) h += '<button type="button" class="wp-btn" onclick="wpRebuildStop()">⏸ Pause</button>';
+  else h += '<button type="button" class="wp-btn" style="background:#1a7f37;border-color:#1a7f37;color:#fff" onclick="wpRebuildStart(false)">▶ Rebuild</button>'
+         + ' <button type="button" class="wp-btn" onclick="wpRebuildStart(true)" title="Ignore where it stopped last time and read the log again from the start date">↻ Start over</button>';
+  h += '</div>';
+  if (_wpRb.note) h += '<div style="color:var(--orange);font-size:12px;margin-bottom:6px">' + esc(_wpRb.note) + '</div>';
+  return h;
+}
+function wpRbProgHtml() {
+  var st = _wpRb.status;
+  if (!st) return '<div class="dim">Loading…</div>';
+  if (st.error === true && !st.state) return '<div class="dim">The agent did not answer.</div>';
+  if (st.state === 'idle') return '<div class="dim">Nothing rebuilt yet. Pick a log and a start date, or leave both alone to rebuild every log you have.</div>';
+  var t = st.totals || {};
+  var files = st.files || [];
+  var tot = 0, done = 0;
+  for (var i = 0; i < files.length; i++) { tot += files[i].total || 0; done += files[i].state === 'done' ? (files[i].total || 0) : (files[i].bytePos || 0); }
+  var pct = tot ? Math.min(100, Math.floor(done / tot * 100)) : (st.state === 'done' ? 100 : 0);
+  var label;
+  if (st.state === 'running') label = st.waiting ? '⏳ Waiting for ' + esc(st.waiting) + ' to end, then carrying on' : '⏳ Reading ' + esc(st.current ? st.current.character : '') + '… ' + pct + '%';
+  else if (st.state === 'paused') label = '⏸ Paused at ' + pct + ' percent. Rebuild picks up where it stopped.';
+  else if (st.state === 'error') label = '⚠ Stopped: ' + esc(st.error || 'an error');
+  else label = '✓ Done';
+  var h = '<div style="font-size:12px"><b>' + label + '</b></div>';
+  h += '<div style="height:6px;background:var(--bg);border:1px solid var(--border);border-radius:3px;margin:6px 0;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:var(--green)"></div></div>';
+  h += '<div class="dim" style="font-size:11px">' + wpRbNum(t.lines) + ' lines · ' + wpRbNum(t.fights) + ' fights · ' + wpRbNum(t.sessions) + ' raids · '
+     + wpRbNum(t.deaths) + ' deaths · ' + wpRbNum(t.loot) + ' loot · ' + wpRbNum(t.zones) + ' zones'
+     + (st.state === 'running' && st.linesPerSec ? ' · ' + wpRbNum(st.linesPerSec) + ' lines a second' : '') + '</div>';
+  if (files.length > 1) {
+    var rows = files.map(function (f) {
+      return '<tr><td>' + esc(f.character) + '</td><td class="dim">' + esc(f.path.split(/[/\\\\]/).pop()) + '</td><td>'
+        + (f.state === 'done' ? '✓' : f.state === 'skipped' ? 'kept out' : f.state === 'queued' ? 'waiting' : f.state === 'error' ? '⚠ ' + esc(f.error || '') : f.pct + '%')
+        + '</td><td class="num">' + wpRbNum(f.fights) + ' fights</td></tr>';
+    });
+    h += '<table style="margin-top:6px">' + wpMoreList('rebuild|files', rows, { show: 4, cols: 4, noun: 'more logs' }) + '</table>';
+  }
+  var d = st.dkp;
+  if (d) {
+    h += '<div class="dim" style="font-size:11px;margin-top:6px">' + (d.mode === 'schedule'
+      ? '📅 Raid nights: ' + wpRbNum(d.matched) + ' of ' + wpRbNum(d.checked) + ' raids fall in the guild raid window (Sun, Wed, Thu 8 pm to midnight Eastern).'
+      : 'Raid-night matching is off: it needs a linked Wolf Pack account.') + '</div>';
+  }
+  return h;
+}
+function wpRbRaidsHtml() {
+  var r = _wpRb.raids;
+  if (!r || !r.raids || !r.raids.length) return '';
+  var rows = r.raids.map(function (x) {
+    var when = new Date(x.start);
+    var bosses = (x.bosses || []).map(function (b) { return esc(b.name) + (b.killed ? ' ✓' : ' ✗'); }).join(', ') || '<span class="dim">no boss fights</span>';
+    var names = (x.who || []).slice(0, 30).map(function (m) { return m.name; }).join(', ');
+    return '<tr><td>' + esc(when.toLocaleDateString()) + ' ' + esc(when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) + (x.open ? ' <span class="dim">(open)</span>' : '') + '</td>'
+      + '<td>' + esc(x.zone || '?') + '</td>'
+      + '<td title="' + esc(names) + '">' + wpRbNum(x.members) + ' raiders</td>'
+      + '<td>' + bosses + '</td>'
+      + '<td class="num">' + wpRbNum(x.deaths) + ' deaths · ' + wpRbNum(x.lootCount) + ' loot</td>'
+      + '<td>' + (x.dkpMatch === 'schedule' ? '<span title="Overlaps the guild raid window (Sun, Wed, Thu 8 pm to midnight Eastern)">📅 raid night</span>' : '') + '</td></tr>';
+  });
+  return '<div style="font-size:12px;margin-top:10px"><b>Raids rebuilt from your logs (' + wpRbNum(r.total) + ')</b></div>'
+    + '<table><tr><th>When</th><th>Where</th><th>Who</th><th>Bosses</th><th></th><th></th></tr>'
+    + wpMoreList('rebuild|raids', rows, { show: 6, cols: 6, noun: 'older raids' }) + '</table>';
+}
+function wpRbRepaint() {
+  var el = document.getElementById('wpRebuild');
+  if (!el) return;
+  if (!document.getElementById('wpRbCtl')) {
+    el.innerHTML = '<h2>🔁 Rebuild from my logs</h2>'
+      + '<div class="subtle">Build your fights, raids, deaths, loot and zones from the log files on this PC. It runs here, in the background, and waits while a fight is on. '
+      + 'Nothing is uploaded, and officer chat, tells and private channels are never read into it. Uploading old logs is the separate backfill below.</div>'
+      + '<div id="wpRbCtl"></div><div id="wpRbProg"></div><div id="wpRbRaids"></div>';
+    el._wpLastHtml = null;
+  }
+  morphInto(document.getElementById('wpRbCtl'), wpRbCtlHtml());
+  morphInto(document.getElementById('wpRbProg'), wpRbProgHtml());
+  morphInto(document.getElementById('wpRbRaids'), wpRbRaidsHtml());
+}
+function wpRbPoll(force) {
+  if (_wpRb.busy) return;
+  var sec = document.getElementById('optin');
+  if (!force && !(sec && sec.classList.contains('active'))) return;
+  var running = !!(_wpRb.status && _wpRb.status.running);
+  if (!force && Date.now() - _wpRb.at < (running ? 1900 : 10000)) return;
+  _wpRb.busy = true; _wpRb.at = Date.now();
+  var asJson = function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); };
+  fetch('/api/local/backfill/status', { cache: 'no-store' }).then(asJson).then(function (j) {
+    var changed = _wpRb.lastState !== j.state;
+    _wpRb.lastState = j.state;
+    _wpRb.status = j;
+    if (!_wpRb.raids || changed || (j.running && Date.now() - _wpRb.raidsAt > 8000)) {
+      _wpRb.raidsAt = Date.now();
+      return fetch('/api/local/raids?limit=200', { cache: 'no-store' }).then(asJson).then(function (rs) { _wpRb.raids = rs; });
+    }
+  }).catch(function () { _wpRb.status = _wpRb.status || { error: true }; }).then(function () { _wpRb.busy = false; wpRbRepaint(); });
+}
+function renderRebuildCard(s) { void s; wpRbPoll(false); wpRbRepaint(); }
+function wpRebuildStart(fresh) {
+  var body = { fresh: !!fresh };
+  if (_wpRb.file) body.file = _wpRb.file;
+  if (_wpRb.since) body.since = _wpRb.since;
+  _wpRb.note = '';
+  fetch('/api/local/backfill/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (x) { if (!x.ok) _wpRb.note = (x.j && x.j.error) || 'Could not start.'; wpRbPoll(true); },
+          function () { _wpRb.note = 'The agent did not answer.'; wpRbRepaint(); });
+}
+function wpRebuildStop() {
+  fetch('/api/local/backfill/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    .then(function () { wpRbPoll(true); }, function () { wpRbPoll(true); });
+}
+// The rail's "Rebuild from my logs": the Logsync tab, scrolled to the card.
+function wpRebuildOpen() {
+  var tab = document.querySelector('.nav button[data-tab="optin"]');
+  if (tab && !tab.classList.contains('active')) tab.click();
+  var go = function (n) {
+    var card = document.getElementById('wpRebuild');
+    if (!card) { if (n < 12) setTimeout(function () { go(n + 1); }, 200); return; }
+    wpRbPoll(true);
+    var bar = document.getElementById('wpTopBar');
+    var pad = (bar ? bar.getBoundingClientRect().height : 0) + 10;
+    window.scrollTo({ top: Math.max(0, card.getBoundingClientRect().top + window.scrollY - pad), behavior: 'smooth' });
+  };
+  go(0);
+}
+
+// ── 🎟 Join a raid with a code (Logsync tab, above Rebuild; the rail's "On this PC" group and the tray open it) ──
+// The guild lead, 2026-10-21: a guest in someone else's raid keeps their data on their own PC. The code is a
+// label: while it is on, this PC tags what it records with the code and HOLDS the record uploads (fights,
+// kills, loot, rolls, chat, PvP), so none of it reaches the Wolf Pack record or DKP. The live overlay streams
+// (target info, buff queue, Command Center, callouts) keep flowing. A pass lasts six hours and then ends on its own. The state lives in the agent (GET/POST /api/raid-code,
+// and \`s.raidCode\` on /api/state); the card reads it from the poll, so it asks for nothing of its own. The
+// minutes shown change once a minute, so the card rewrites once a minute at most. A raid pack (.rmpack) is the
+// way to share a raid with another PC: Save writes one, Merge reads someone else's into this PC's records.
+var _wpRc = { note: '', tone: '', busy: false };
+function wpRcDur(ms) {
+  var m = Math.max(0, Math.floor(ms / 60000)), h = Math.floor(m / 60);
+  return h > 0 ? h + 'h ' + (m % 60) + 'm' : m + 'm';
+}
+function wpRcHtml(s) {
+  var r = s && s.raidCode;
+  var h = '';
+  if (r) {
+    var now = Date.now();
+    var guest = r.role === 'guest';
+    h += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0">'
+       + '<span id="wpRcActive" style="font-size:20px;font-weight:700;letter-spacing:1px;border:1px solid var(--blue);border-radius:6px;padding:2px 12px">' + esc(r.code) + '</span>'
+       + '<span class="dim" style="font-size:12px">running ' + esc(wpRcDur(now - r.since)) + ' · ends in ' + esc(wpRcDur(r.expires - now)) + ' (a pass lasts ' + Math.round(r.ttl_ms / 3600000) + ' hours)</span>'
+       + '<button type="button" class="wp-btn" onclick="wpRcLeave()">✕ Leave this raid code</button></div>';
+    h += '<div style="font-size:12px;margin-bottom:6px">' + (guest
+      ? '<b>GUEST</b> · this PC is not signed in to Wolf Pack, so everything it records stays here and is marked GUEST.'
+      : '<b>Away raid</b> · you are in someone else\\'s raid. Your own characters still sync and the live overlays work; the record of the raid (fights, loot, rolls, chat) stays on this PC.')
+      + ' <span class="dim">' + (r.held_total > 0 ? r.held_total.toLocaleString() + ' record uploads held back so far.' : 'Parses, kills, loot, rolls, chat and PvP stay on this PC while the code is on; live overlay data still flows.') + '</span></div>';
+  } else {
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">'
+       + '<input id="wpRcCode" type="text" maxlength="12" placeholder="BC-7KQ2" autocomplete="off" spellcheck="false" style="width:120px;text-transform:uppercase;font-size:14px;letter-spacing:1px" onkeydown="if (event.key === \\'Enter\\') wpRcJoin()">'
+       + '<button type="button" class="wp-btn pri" onclick="wpRcJoin()">🎟 Join</button></div>';
+  }
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">'
+     + '<button type="button" class="wp-btn" onclick="wpRcExport()" title="Save everything this PC holds under ' + (r ? 'this code' : 'the code typed above') + ' as a raid pack (.rmpack) to hand to another raider. No Discord id and no account name goes in it.">⬇ Save raid pack</button>'
+     + '<button type="button" class="wp-btn" onclick="document.getElementById(\\'wpRcFile\\').click()" title="Merge a raid pack someone else saved into this PC\\'s records. The same fight is not counted twice.">⬆ Merge a raid pack</button></div>';
+  if (_wpRc.note) h += '<div id="wpRcNote" style="color:' + (_wpRc.tone === 'ok' ? 'var(--green)' : 'var(--orange)') + ';font-size:12px;margin-bottom:6px">' + esc(_wpRc.note) + '</div>';
+  return h;
+}
+function wpRcRepaint(s) {
+  var el = document.getElementById('wpRaidCode');
+  if (!el) return;
+  if (!document.getElementById('wpRcBody')) {
+    el.innerHTML = '<h2>🎟 Join a raid with a code</h2>'
+      + '<div class="subtle">In someone else\\'s raid? Enter the code they gave you. While it is on, what this PC records of the raid (fights, kills, loot, rolls, chat) is kept here, tagged with the code, '
+      + 'and none of it is sent to the Wolf Pack record or DKP. Your overlays keep working, target info, buff queue and callouts included. The pass ends by itself after 6 hours. '
+      + 'Parses made under a code show a code badge, and GUEST on a PC that is not signed in.</div>'
+      + '<div id="wpRcBody"></div><input type="file" id="wpRcFile" accept=".rmpack,application/gzip" style="display:none" onchange="wpRcMerge(this)">';
+    el._wpLastHtml = null;
+  }
+  morphInto(document.getElementById('wpRcBody'), wpRcHtml(s));
+}
+function renderRaidCodeCard(s) {
+  wpRcRepaint(s);
+  var b = document.getElementById('wpLocalRaid');   // the rail button says so while a pass is on
+  if (b) {
+    var t = s && s.raidCode ? '🎟 Raid code · ' + s.raidCode.code : '🎟 Join a raid with a code';
+    if (b.textContent !== t) b.textContent = t;
+  }
+}
+function wpRcPost(body) {
+  return fetch('/api/raid-code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
+}
+function wpRcRefresh() {
+  fetch('/api/state', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (s) { wpRcRepaint(s); }, function () { });
+}
+function wpRcJoin() {
+  var inp = document.getElementById('wpRcCode');
+  var v = inp ? inp.value : '';
+  wpRcPost({ code: v }).then(function (x) {
+    _wpRc.note = x.ok ? '' : ((x.j && x.j.error) || 'Could not join.'); _wpRc.tone = x.ok ? 'ok' : '';
+    wpRcRefresh();
+  }, function () { _wpRc.note = 'The agent did not answer.'; _wpRc.tone = ''; wpRcRefresh(); });
+}
+function wpRcLeave() {
+  wpRcPost({ clear: true }).then(function () { _wpRc.note = 'Left the raid code. Fights, loot and chat are being recorded to Wolf Pack again.'; _wpRc.tone = 'ok'; wpRcRefresh(); },
+    function () { _wpRc.note = 'The agent did not answer.'; _wpRc.tone = ''; wpRcRefresh(); });
+}
+function wpRcExport() {
+  var act = document.getElementById('wpRcActive');
+  var inp = document.getElementById('wpRcCode');
+  var code = act ? act.textContent : (inp ? inp.value : '');
+  fetch('/api/local/raid-code/export?code=' + encodeURIComponent(code), { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) return r.json().then(function (j) { throw new Error((j && j.error) || 'Could not save the pack.'); });
+    var cd = r.headers.get('Content-Disposition') || '';
+    var m = /filename="([^"]+)"/.exec(cd);
+    return r.blob().then(function (b) { return { b: b, name: m ? m[1] : 'raid.rmpack' }; });
+  }).then(function (x) {
+    var a = document.createElement('a');
+    var u = URL.createObjectURL(x.b);
+    a.href = u; a.download = x.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(u); }, 10000);
+    _wpRc.note = 'Saved ' + x.name + '.'; _wpRc.tone = 'ok'; wpRcRefresh();
+  }).catch(function (e) { _wpRc.note = String((e && e.message) || e); _wpRc.tone = ''; wpRcRefresh(); });
+}
+function wpRcMerge(inp) {
+  var f = inp && inp.files && inp.files[0];
+  if (!f) return;
+  fetch('/api/local/raid-code/import', { method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body: f })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (x) {
+      if (!x.ok) { _wpRc.note = (x.j && x.j.error) || 'Could not merge that pack.'; _wpRc.tone = ''; return; }
+      var j = x.j;
+      _wpRc.note = 'Merged ' + j.code + ': ' + j.fights.added + ' new fights, ' + j.fights.merged + ' already here, '
+        + (j.minutes.added + j.minutes.merged) + ' minutes of positions. Look under My fights and My replay.';
+      _wpRc.tone = 'ok';
+    }, function () { _wpRc.note = 'The agent did not answer.'; _wpRc.tone = ''; })
+    .then(function () { inp.value = ''; wpRcRefresh(); });
+}
+// The rail's "Join a raid with a code" and the tray's: the Logsync tab, scrolled to the card.
+function wpRaidCodeOpen() {
+  var tab = document.querySelector('.nav button[data-tab="optin"]');
+  if (tab && !tab.classList.contains('active')) tab.click();
+  var go = function (n) {
+    var card = document.getElementById('wpRaidCode');
+    if (!card) { if (n < 12) setTimeout(function () { go(n + 1); }, 200); return; }
+    var bar = document.getElementById('wpTopBar');
+    var pad = (bar ? bar.getBoundingClientRect().height : 0) + 10;
+    window.scrollTo({ top: Math.max(0, card.getBoundingClientRect().top + window.scrollY - pad), behavior: 'smooth' });
+    var inp = document.getElementById('wpRcCode');
+    if (inp) { try { inp.focus(); } catch (e) { void e; } }
+  };
+  go(0);
+}
+// #raidcode opens the card — the tray's "Join a raid with a code" item loads the dashboard with that hash, as #myparses does.
+(function () {
+  function go() {
+    if ((location.hash || '').toLowerCase() !== '#raidcode') return;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { void e; }
+    wpRaidCodeOpen();
+  }
+  go();
+  window.addEventListener('hashchange', go);
+})();
 
 // ── 📈 My parses ────────────────────────────────────────────────────────────
 // A member asked (2026-10-06) for "a page in Mimic that graphs my parses over a variable time window"; the
@@ -22741,33 +24188,39 @@ function wpMpLink(a) {
   return true;
 }
 
-function renderTriggers(s) {
-  let h = '';
-  h += '<div class="grid">';
-
-  // (The Zeal pipe / charm / pet-buff / trigger-journal / boss-mechanics
-  // diagnostic cards moved to the 🩺 Diagnostics tab — see renderDiag. Their
-  // render fns are unchanged; only the placeholder location moved.)
-
-  // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
-  // that tick every poll, so it MUST live in its own wp* placeholder filled by
-  // renderRecentFires() each poll. Rendered inline it made this whole section's
-  // HTML differ every 2s, forcing setSectionHTML to rewrite the guild-trigger
-  // table + remount the trigger editor and suggested list on every poll — the
-  // Triggers-tab "flash" the guild lead reported (#120). Isolating it keeps the
-  // section byte-stable when triggers don't change, so only this small card
-  // repaints (same pattern as wpZealCard / wpTriggerJournal). Clear buttons keep
-  // their ids; the section-root click delegation still routes them.
-  h += '<div id="wpRecentFires" class="card wide"></div>';
-
-  // ⏪ Replay (#101) — walk a slice of a watched log back through the real
-  // trigger pipeline (rehearsal-flagged; nothing uploads/relays). The FORM is
-  // byte-stable — its picker uses only stable watchedLog fields (character +
-  // logPath, plus level + hidden, which change once when /who or the prefs poll
-  // learns them, never per poll), so idle polls don't rewrite it and the user's
-  // from/to typing + datetime focus survive. The volatile progress/results live in the nested
-  // #wpReplayStatus placeholder filled by renderReplayStatus() every poll.
-  h += '<div class="card wide"><h2>⏪ Replay <span class="dim" style="font-size:11px;font-weight:normal">· walk part of a log back through the real trigger pipeline — hear the TTS, nothing uploads</span></h2>';
+// ⏪ Replay card — on the ⚔️ Fights tab since 2026-10-17 (the guild lead: "Replay should be on the fights
+// tab"); it was a Triggers card. Fills #fightsReplay. The replay start/stop buttons are routed by the
+// delegated click handler the trigger editor binds to #fights as well as #triggers.
+// ⏪ Replay (#101) — walk a slice of a watched log back through the real
+// trigger pipeline (rehearsal-flagged; nothing uploads/relays). The FORM is
+// byte-stable — its picker uses only stable watchedLog fields (character +
+// logPath, plus level + hidden, which change once when /who or the prefs poll
+// learns them, never per poll), so idle polls don't rewrite it and the user's
+// from/to typing + datetime focus survive. The volatile progress/results live in the nested
+// #wpReplayStatus placeholder filled by renderReplayStatus() every poll.
+// The website's raid replay for a window: /raid/session?from=<iso>&to=<iso> (web/app/raid/session/page.tsx).
+// It wants both ends and a window under 24h (makeWindow); anything else it answers with its session picker,
+// so that is what a missing or unusable window links to. Opens via wpMpLink (Mimic's open-external).
+function wpReplayWebHref(fromMs, toMs) {
+  var base = 'https://wolfpack.quest/raid/session';
+  if (!isFinite(fromMs) || !isFinite(toMs) || !(toMs > fromMs) || toMs - fromMs > 24 * 3600 * 1000) return base;
+  return base + '?from=' + encodeURIComponent(new Date(fromMs).toISOString()) + '&to=' + encodeURIComponent(new Date(toMs).toISOString());
+}
+// Keeps the form's link in step with the From/To inputs. The link is static markup in the byte-stable form;
+// only its href is touched, from the inputs' LOCAL wall-clock values (same basis the Start button reads).
+function wpReplayLinkSync() {
+  var a = document.getElementById('replayWebLink');
+  if (!a) return;
+  var f = document.getElementById('replayFrom'), t = document.getElementById('replayTo');
+  var href = wpReplayWebHref(f && f.value ? new Date(f.value).getTime() : NaN, t && t.value ? new Date(t.value).getTime() : NaN);
+  if (a.getAttribute('href') !== href) a.setAttribute('href', href);
+}
+function renderReplayCard(s) {
+  var h = '<div class="grid">';
+  // Layout A (the guild lead, 2026-10-21): a compact entry at the TOP of Fights, folded until opened. It leaves
+  // this tab for a Rehearse tab of its own later (a separate job); until then the form lives here. A #replay
+  // deep link opens it (see the hash handler).
+  h += '<div class="card wide wp-fold" data-index="Replay"><details ' + wpKeep('fights|replay') + '><summary><h2>⏪ Replay <span class="dim" style="font-size:11px;font-weight:normal">· walk part of a log back through the real trigger pipeline — hear the TTS, nothing uploads · Rehearse tab coming</span></h2></summary>';
   var _rls = (s.watchedLogs || []).filter(function(w){ return w && w.logPath; });
   // Characters known to be under 46, or hidden by their owner, sit behind the same toggle as the Me card's
   // list, and ones with no known level close up in a trailing "no known level" group (a <select> cannot hold
@@ -22793,17 +24246,53 @@ function renderTriggers(s) {
     }
     h += '</select></label>';
     if (_rlsHasLow) h += '<span class="dim" style="font-size:11px;padding-bottom:5px">' + wpLowToggleHtml(_rlsLow) + '</span>';
-    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">From</span><input type="datetime-local" step="1" id="replayFrom" style="' + _inStyle + '"></label>';
-    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">To</span><input type="datetime-local" step="1" id="replayTo" style="' + _inStyle + '"></label>';
+    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">From</span><input type="datetime-local" step="1" id="replayFrom" oninput="wpReplayLinkSync()" style="' + _inStyle + '"></label>';
+    h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">To</span><input type="datetime-local" step="1" id="replayTo" oninput="wpReplayLinkSync()" style="' + _inStyle + '"></label>';
     h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">Pace</span><span style="display:flex;gap:10px;padding-top:4px">'
        + '<label style="cursor:pointer"><input type="radio" name="replayPace" value="real" checked> real-time</label>'
        + '<label style="cursor:pointer"><input type="radio" name="replayPace" value="fast"> fast</label></span></label>';
     h += '<button type="button" id="replayStartBtn" style="background:#1c2733;color:var(--gold);border:1px solid var(--border);padding:5px 14px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px">▶ Start</button>';
     h += '</div>';
+    h += '<div style="font-size:11px;margin-top:6px"><a id="replayWebLink" href="https://wolfpack.quest/raid/session" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="color:var(--blue);text-decoration:none" title="Open the raid replay on wolfpack.quest for the From/To window above (sign-in required; windows over 24 hours open the session picker)">🎬 Raid replay on wolfpack.quest ↗</a></div>';
     h += '<div id="replayMsg" class="dim" style="font-size:11px;margin-top:6px;min-height:14px"></div>';
     h += '<div id="wpReplayStatus"></div>';
     h += '<div class="dim" style="font-size:11px;margin-top:6px">Replay fires are rehearsals — they speak + flash with a ⏪ tag but never upload, relay, or touch your live cooldowns. One replay at a time; blocked during a live fight. Real-time hears the fight as it happened; fast pauses briefly on each fire for a quick audit.</div>';
   }
+  h += '</details></div>';
+  h += '</div>';
+  setSectionHTML('fightsReplay', h);
+}
+
+// 🗣 Voice tab (the guild lead, 2026-10-17: "All of the voice things are getting to be that they need their
+// own tab"). Every card about how Mimic speaks, carved out of Triggers: the voice engine + names, "What you
+// hear" (speak / overlay only / off), the raid callout allow-list, loot-post speech, and the sound library.
+// Each of the wp* placeholders is filled by the same mount fn it always had; only the section moved. The
+// loot and allow-list toggles keep their ids and are saved by the change handler the trigger editor
+// binds to #voice as well as #triggers.
+function renderVoice(s) {
+  let h = '';
+  h += '<div class="grid">';
+
+  // 🗣 Voice & names: engine (Windows / Piper / Kokoro), voice pack, speed and pitch, how names are said.
+  // Its own wp* placeholder, filled by setupVoiceNames, so this section's HTML stays byte-stable.
+  h += '<div id="wpVoice" class="card wide"></div>';
+
+  // 🔊 What you hear (the guild lead, 2026-10-12) — speak / overlay only / off for every callout,
+  // by group and per trigger. Its own wp* placeholder, filled by setupTriggerRules.
+  h += '<div id="wpTrigRules" class="card wide"></div>';
+
+  // #136 Raid callout allow-list — mutes guild-pushed + cross-client RELAYED
+  // voice fires outside the critical categories (slow, deaths, tank swaps,
+  // discs, deathtouches, charms + the curated boss-mechanic countdowns).
+  // Personal triggers the user made themselves always speak. No <details> here,
+  // so no wpKeep; the checked bit tracks server state and only flips on user
+  // action, keeping this HTML byte-stable across polls.
+  h += '<div class="card wide"><h2>&#128266; Raid callout allow-list <span class="dim" style="font-size:11px;font-weight:normal">(voice only the critical categories)</span></h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="calloutAllow"' + (s.calloutAllowlist !== false ? ' checked' : '') + '>';
+  h += '<span>Speak only high-value guild callouts &mdash; slow, deaths, tank swaps, discs, deathtouches, charms (plus the boss-mechanic countdowns)</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Guild-pushed and cross-client <b>relayed</b> trigger fires are the raid-wide firehose &mdash; every raider hears every other raider. With this on, those fires only <b>speak</b> when they match a critical category; the rest still <b>flash</b> on the trigger overlay, just silently. <b>Personal triggers you created yourself always speak.</b> The curated built-ins (rampage, buster, AoE dance, slow land/drop, CH GO, loot) are always audible.</div>';
+  h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
 
   // #107/#149 Loot auction announce — dashboard toggle + default-duration knob.
@@ -22821,23 +24310,52 @@ function renderTriggers(s) {
   h += '<span id="lootAucMsg" class="dim" style="font-size:11px;margin-left:8px"></span>';
   h += '</div>';
 
-  // #136 Raid callout allow-list — mutes guild-pushed + cross-client RELAYED
-  // voice fires outside the critical categories (slow, deaths, tank swaps,
-  // discs, deathtouches, charms + the curated boss-mechanic countdowns).
-  // Personal triggers the user made themselves always speak. No <details> here,
-  // so no wpKeep; the checked bit tracks server state and only flips on user
-  // action, keeping this HTML byte-stable across polls.
-  h += '<div class="card wide"><h2>&#128266; Raid callout allow-list <span class="dim" style="font-size:11px;font-weight:normal">(voice only the critical categories)</span></h2>';
-  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
-  h += '<input type="checkbox" id="calloutAllow"' + (s.calloutAllowlist !== false ? ' checked' : '') + '>';
-  h += '<span>Speak only high-value guild callouts &mdash; slow, deaths, tank swaps, discs, deathtouches, charms (plus the boss-mechanic countdowns)</span></label>';
-  h += '<div class="dim" style="font-size:11px;margin-top:5px">Guild-pushed and cross-client <b>relayed</b> trigger fires are the raid-wide firehose &mdash; every raider hears every other raider. With this on, those fires only <b>speak</b> when they match a critical category; the rest still <b>flash</b> on the trigger overlay, just silently. <b>Personal triggers you created yourself always speak.</b> The curated built-ins (rampage, buster, AoE dance, slow land/drop, CH GO, loot) are always audible.</div>';
-  h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
+  // 🔊 Sounds (the guild lead, 2026-10-14) — the sound library, a wp* placeholder filled by setupSounds.
+  h += '<div id="wpSounds" class="card wide"></div>';
+
   h += '</div>';
+  if (!setSectionHTML('voice', h)) return;
+  if (window._wpVoiceNames && window._wpVoiceNames.mount) {
+    window._wpVoiceNames.mount();
+  }
+  if (window._wpTrigRules && window._wpTrigRules.mount) {
+    window._wpTrigRules.mount();
+  }
+  if (window._wpSounds && window._wpSounds.mount) {
+    window._wpSounds.mount();
+  }
+}
+
+function renderTriggers(s) {
+  let h = '';
+  h += '<div class="grid">';
+
+  // (The Zeal pipe / charm / pet-buff / trigger-journal / boss-mechanics
+  // diagnostic cards moved to the 🩺 Diagnostics tab — see renderDiag. Their
+  // render fns are unchanged; only the placeholder location moved.)
+
+  // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
+  // that tick every poll, so it MUST live in its own wp* placeholder filled by
+  // renderRecentFires() each poll. Rendered inline it made this whole section's
+  // HTML differ every 2s, forcing setSectionHTML to rewrite the guild-trigger
+  // table + remount the trigger editor and suggested list on every poll — the
+  // Triggers-tab "flash" the guild lead reported (#120). Isolating it keeps the
+  // section byte-stable when triggers don't change, so only this small card
+  // repaints (same pattern as wpZealCard / wpTriggerJournal). Clear buttons keep
+  // their ids; the section-root click delegation still routes them.
+  h += '<div id="wpRecentFires" class="card wide"></div>';
+  // 🔇 Muted timers — what the ⋮ on a timer row has muted, for good and this session, each with an unmute. Its own
+  // placeholder (renderMutedTimers), so this section stays byte-stable.
+  h += '<div id="wpMutedTimers" class="card wide"></div>';
+
+  // (The ⏪ Replay card moved to the ⚔️ Fights tab — renderReplayCard. The voice cards — voice & names,
+  // What you hear, the raid callout allow-list, loot-post speech and the sound library — moved to the
+  // 🗣 Voice tab — renderVoice. 2026-10-17.)
 
   // Timing votes (the guild lead, 2026-10-01: "Need to be able to opt out for tts timing
   // feedback"). Off: no « Earlier / ✓ Good! / » Too early row after a fire, and no callout
-  // timing (votes, ✕, age-outs) leaves this machine. Same byte-stable rule as the card above.
+  // timing (votes, ✕, age-outs) leaves this machine. Byte-stable across polls: the checked bit
+  // only flips on user action.
   h += '<div class="card wide"><h2>&#128499; Timing votes <span class="dim" style="font-size:11px;font-weight:normal">(after each callout)</span></h2>';
   h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
   h += '<input type="checkbox" id="timingVotes"' + (s.timingFeedback !== false ? ' checked' : '') + '>';
@@ -22845,16 +24363,6 @@ function renderTriggers(s) {
   h += '<div class="dim" style="font-size:11px;margin-top:5px">Your votes, and which callouts you clear with &#10005; or leave to run out, help the officers fix trigger timing. Untick to hide the buttons and send none of it. The &#128277; on the buttons does the same.</div>';
   h += '<span id="timingVotesMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
-
-  // 🔊 What you hear (the guild lead, 2026-10-12) — speak / overlay only / off for every callout,
-  // by group and per trigger. Its own wp* placeholder, filled by setupTriggerRules below, so the
-  // section HTML here stays byte-stable and the card is not rewritten by a Triggers repaint.
-  h += '<div id="wpTrigRules" class="card wide"></div>';
-
-  // 🔊 Sounds and 🗣 Voice & names (the guild lead, 2026-10-14) — each its own wp* placeholder, filled by
-  // setupSounds / setupVoiceNames below, so this section's HTML stays byte-stable.
-  h += '<div id="wpSounds" class="card wide"></div>';
-  h += '<div id="wpVoice" class="card wide"></div>';
 
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
@@ -22881,8 +24389,8 @@ function renderTriggers(s) {
 
   // Guild triggers — read-only (managed in wolfpack.quest/admin/triggers). Its own wp* placeholder,
   // filled by renderGuildTriggersCard: opening a row repaints just this card, so the Add form's
-  // half-typed text and the Replay inputs above are not wiped by it (FB-30).
-  h += '<div id="wpGuildTriggers" class="card wide"></div>';
+  // half-typed text is not wiped by it (FB-30).
+  h += '<div id="wpGuildTriggers" class="card wide wp-fold" data-index="Guild triggers"></div>';
 
   h += '</div>';
   if (!setSectionHTML('triggers', h)) return;
@@ -22894,20 +24402,33 @@ function renderTriggers(s) {
   if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.mount) {
     window._wpSuggestedTriggers.mount();
   }
-  if (window._wpTrigRules && window._wpTrigRules.mount) {
-    window._wpTrigRules.mount();
-  }
-  if (window._wpSounds && window._wpSounds.mount) {
-    window._wpSounds.mount();
-  }
-  if (window._wpVoiceNames && window._wpVoiceNames.mount) {
-    window._wpVoiceNames.mount();
-  }
   if (window._wpTrigSync && window._wpTrigSync.mount) {
     window._wpTrigSync.mount();
   }
 }
 
+// The guild trigger list, held here: rows (null until the first answer), the revision they are (rev), the
+// state revision already asked about (asked) and whether an ask is out (busy).
+var _wpGt = { rows: null, rev: '', asked: '', busy: false };
+// Fetch the list from /api/guild-triggers — only while the card is on screen (the Triggers tab is open) and
+// only when /api/state's \`guildTriggersRev\` is not the one held. Hidden → nothing is asked; the poll that
+// finds the tab open asks then. The answer is {rev, unchanged:true} or {rev, triggers:[...]}.
+function wpGuildTriggersSync(s, el) {
+  var rev = s && s.guildTriggersRev;
+  if (!rev || rev === _wpGt.rev || rev === _wpGt.asked || _wpGt.busy) return;
+  if (!el || !el.getClientRects || el.getClientRects().length === 0) return;
+  _wpGt.busy = true;
+  fetch('/api/guild-triggers' + (_wpGt.rev ? '?rev=' + encodeURIComponent(_wpGt.rev) : ''), { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j && Array.isArray(j.triggers)) _wpGt.rows = j.triggers;
+      if (j && j.rev) _wpGt.rev = j.rev;
+      _wpGt.asked = rev;
+      _wpGt.busy = false;
+      if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState);
+    })
+    .catch(function () { _wpGt.busy = false; });   // the next poll asks again
+}
 // 🛡️ Guild triggers (FB-30) — read-only list, filled into the #wpGuildTriggers placeholder renderTriggers
 // emits. A name (or any plain cell of its row) opens the trigger's settings beneath it, with a link to
 // edit it on the site. Which rows are open is kept in _wpTrigOpen, so a repaint puts them back.
@@ -22916,13 +24437,22 @@ function renderGuildTriggersCard(s) {
   if (!el) return;   // Triggers tab not painted yet
   // The sound list a row's "My sound" box needs arrives once, a moment after the first paint: draw again then.
   if (!window._wpSndAsked) { window._wpSndAsked = true; WPSounds.load().then(function () { if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState); }); }
-  var gt = s.guildTriggers || [];
-  var h = '<h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2>';
-  if (gt.length === 0) {
+  wpGuildTriggersSync(s, el);
+  // The rows are not on /api/state (the overlays poll that ~10x/s): they are fetched below, once, and held.
+  // Until the first answer the card says so; a state that already counts none is an empty list, not a wait.
+  var gt = _wpGt.rows || (s && s.guildTriggerCount === 0 ? [] : null);
+  // Layout A (the guild lead, 2026-10-21): the whole list starts folded - it is reference, not something to watch. The
+  // card (#wpGuildTriggers) carries class wp-fold; wpKeep remembers it open, and each group inside keeps its own fold.
+  var h = '<details ' + wpKeep('trig|guild') + '><summary><h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(' + (gt ? gt.length + ' loaded · ' : '') + 'read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2></summary>';
+  if (gt === null) {
+    h += '<div class="dim" style="font-size:12px">Loading the guild triggers…</div>';
+  } else if (gt.length === 0) {
     h += '<div class="dim" style="font-size:12px">No guild triggers loaded. Officers can add them at <a href="https://wolfpack.quest/admin/triggers" target="_blank" rel="noreferrer" style="color:var(--blue)">/admin/triggers</a>.</div>';
   } else {
     h += '<div class="dim" style="font-size:11px;margin-bottom:4px">' + gt.length + ' trigger' + (gt.length === 1 ? '' : 's') + ' loaded</div>';
-    h += '<table style="font-size:12px"><tr><th>Name</th><th>Category</th><th>Pattern</th><th>Cooldown</th><th></th></tr>';
+    // Grouped (see wpGuildGroupOf): one collapsible section per group, each with its own table. The rows
+    // are built in the loop below and filed under their group; the sections are written after it.
+    var _groups = {}, _gorder = [];
     // Render all of them — guild trigger sets are small enough (~100 rows max)
     // that pagination is overkill. NOTE: deliberately NOT using class="name"
     // on the trigger-name cells; the wolfpack.quest character-link click
@@ -22943,6 +24473,8 @@ function renderGuildTriggersCard(s) {
         pattern: t.pattern || '',
         cooldown_seconds: t.cooldown_seconds || 0,
         overlay: _act.text || (t.name || ''),
+        tts: _act.tts || '',
+        voice_pack: _act.voice_pack || t.voice_pack || '',
         color: _act.color || 'red',
         duration_ms: _act.duration_ms || 5000,
         timer_duration_sec: t.timer_duration_sec || 0,
@@ -22967,17 +24499,40 @@ function renderGuildTriggersCard(s) {
       // 🔊 this PC's own sound for the row, if the member picked one (kept off-guild, see Sounds)
       var _ov = (s.soundOverrides || {})[t.id];
       if (_ov && _ov.sound) _rbadge += '<span class="rbadge" title="Your own sound for this guild trigger, on this PC only">🔊 ' + esc(String(_ov.sound).replace(/^custom:/i, '').replace(/^https?:.*/i, 'web sound')) + '</span>';
-      h += '<tr data-trig-key="' + esc(key) + '" style="cursor:pointer"><td>'
+      // ▶ Preview: what a live fire would say and play, with this PC's own sound for the row if it has one.
+      var _prev = {
+        text: _act.text || (t.name || ''), tts: _act.tts || '',
+        sound: _ov && _ov.sound ? _ov.sound : (_act.sound || ''),
+        sound_volume: _ov && _ov.sound ? (_ov.sound_volume != null ? _ov.sound_volume : null) : (_act.sound_volume != null ? _act.sound_volume : null),
+        sound_mode: _ov && _ov.sound ? (_ov.sound_mode || '') : (_act.sound_mode || ''),
+        voice_pack: _act.voice_pack || t.voice_pack || '',
+      };
+      var _g = wpGuildGroupOf(t);
+      if (!_groups[_g.id]) { _groups[_g.id] = { g: _g, rows: '', n: 0 }; _gorder.push(_g.id); }
+      _groups[_g.id].n++;
+      _groups[_g.id].rows += '<tr data-trig-key="' + esc(key) + '" style="cursor:pointer"><td>'
         + '<button type="button" class="trigname" data-trig-view="' + esc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '" style="color:var(--orange)" title="Show this trigger\\'s settings">'
         + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button>' + _rbadge + '</td>' +
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
-           '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger to your own list so you can customize it without changing the guild\\'s version">⎘ Copy to personal</button></td></tr>';
-      if (open) h += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + wpSoundOverrideHtml(t, _ov) + '</td></tr>';
+           '<td style="white-space:nowrap"><button type="button" data-trig-prev="' + esc(JSON.stringify(_prev)) + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Hear this callout: it speaks and plays as it would live, here on this PC only. Nothing is sent.">▶ Preview</button>'
+           + '<button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Configure: open a copy of this guild trigger in the Personal triggers form, filled in, to tweak and add as your own. The guild\\'s version is not changed.">✎ Configure</button></td></tr>';
+      if (open) _groups[_g.id].rows += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + wpSoundOverrideHtml(t, _ov) + '</td></tr>';
     }
-    h += '</table>';
+    _gorder.sort(function (a, b) {
+      var ga = _groups[a].g, gb = _groups[b].g;
+      return ga.order !== gb.order ? ga.order - gb.order : (ga.label < gb.label ? -1 : ga.label > gb.label ? 1 : 0);
+    });
+    // A short list opens flat; a long one starts folded (each section remembers what you opened).
+    for (var gi = 0; gi < _gorder.length; gi++) {
+      var _gr = _groups[_gorder[gi]];
+      h += '<details ' + wpKeep('gtrig|' + _gorder[gi], gt.length <= 12) + ' style="margin-top:6px"><summary style="cursor:pointer;font-size:12px">'
+        + wpGuildCatBadge(_gr.g.cat) + ' <b>' + esc(_gr.g.label) + '</b> <span class="dim">(' + _gr.n + ')</span></summary>'
+        + '<table style="font-size:12px"><tr><th>Name</th><th>Category</th><th>Pattern</th><th>Cooldown</th><th></th></tr>' + _gr.rows + '</table></details>';
+    }
   }
+  h += '</details>';
   morphInto(el, h);
 }
 function wpGuildTrigToggle(key) {
@@ -23099,9 +24654,30 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act wp-btn" data-act="lock" id="wpOvLockBtn">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="arrange" title="Arranging only ever runs when you click it — never automatically.">✨ Auto-arrange now</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="rescue" title="Lost an overlay off the edge of a screen? Brings back only the overlays you cannot reach, each to a free spot on the screen this window is on; nothing else moves. Overlays sitting on another screen come too only if you say yes. That screen becomes the overlays\\' home for future arranges.">🧲 Rescue to this screen</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="canvasSpan" id="wpOvSpanBtn" style="display:none" title="One Canvas across every screen, so its panels can sit on any of them. Needs every screen at the same Windows display scaling. The same switch as the tray and the Canvas&rsquo;s own toolbar.">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="mapMode" id="wpOvMapModeBtn" title="The Map as a window you place, or laid over EverQuest and click-through so you play straight through it (it keeps clear of your UI windows). The same switch as the Map&rsquo;s own toolbar button and the tray.">…</button>'
     + '</span>'
     + '</div>';
+  // 📤📥 A layout as a file — tray parity for "Export the Canvas layout to a file…" and "Import a layout from a
+  // file…" (Keepers of the (Overlay) Arts, the guild lead, 2026-10-19). Mimic runs the same two functions the
+  // tray does (_exportLayoutFile / _importLayoutFile); the file holds Canvas pieces only, no names, and the
+  // byline goes on it only if typed here. Static HTML: the message is painted by the click handler.
+  h += '<div class="wp-strip" style="margin:0 0 10px"><span class="wp-lbl">Share a layout</span>'
+    + '<input id="wpShareTitle" type="text" maxlength="60" placeholder="Layout name" style="width:150px" />'
+    + '<input id="wpShareBy" type="text" maxlength="32" placeholder="Your name on it (optional)" style="width:190px" />'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="layoutExport" title="Saves the Canvas layout on screen now to a .mimic-layout.json file. Positions are pinned to EverQuest&rsquo;s window so it fits other screens; no character names or filters go in it.">📤 Export…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="layoutImport" title="Opens a layout file someone sent you. You see what is in it first; it is added as a new set and your setup is saved first, with one Undo.">📥 Import…</button>'
+    + '<span id="wpShareMsg" class="dim"></span></div>';
+  // 📦🔗 A WHOLE setup — tray parity for "Export my whole setup…", "Get a share code…", "Import a whole setup…" and "Enter a
+  // share code…" (the guild lead, 2026-10-19, DECISIONS §383). Mimic runs the same four functions the tray does; the name and
+  // byline typed above go on it. Layouts, HUD, overlay options, personal triggers and rules travel; never a sign-in, token,
+  // path or bid, and characters as "Character 1…". Static HTML: the message is painted by the click handler.
+  h += '<div class="wp-strip" style="margin:0 0 10px"><span class="wp-lbl">Share your whole setup</span>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupExport" title="Saves your overlay layouts, HUD, overlay options, personal triggers and &ldquo;What you hear&rdquo; settings to a .mimic-setup.json file. You see what goes in it first. Never included: sign-in, tokens, EverQuest paths, bids or character names.">📦 Export…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupCode" title="A six-character code for the same thing, good for 24 hours. You see what goes in it first. Needs you to be signed in.">🔗 Get a code</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupImport" title="Opens a setup file someone sent you. You preview it with a tick on every part, and pick which of your characters get the per-character parts, before anything changes.">📥 Import…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setupEnter" title="Type a code someone gave you. You preview it before anything changes. Needs you to be signed in.">🔢 Enter a code…</button>'
+    + '<span id="wpSetupMsg" class="dim"></span></div>';
   // On screen now | Add. Every overlay is written into BOTH — a row in the list
   // and a card in the drawer — and the painter shows exactly one of the two, so
   // switching an overlay on or off never changes the section HTML.
@@ -24021,6 +25597,16 @@ function wpRefreshOverlayToggles() {
         arBtn.textContent = st.canvasArrange ? '✓ Done arranging' : '✏ Arrange on screen';
         arBtn.className = 'wp-ov-act wp-btn pri' + (st.canvasArrange ? ' on' : '');
       }
+      // ⇔ Span all screens: as the tray item and the Canvas's own button. Greyed with the reason when the screens do
+      // not share one scaling (or there is one); an older Mimic does not report it: no button.
+      var spBtn = document.getElementById('wpOvSpanBtn');
+      if (spBtn) {
+        var spKnown = typeof st.canvasSpan === 'boolean';
+        spBtn.style.display = spKnown ? '' : 'none';
+        spBtn.disabled = !st.canvasSpan && !!st.canvasSpanWhy;
+        spBtn.className = 'wp-ov-act wp-btn' + (st.canvasSpan ? ' on' : '');
+        spBtn.textContent = spBtn.disabled ? '⇔ Span all screens — ' + st.canvasSpanWhy : '⇔ Span all screens: ' + (st.canvasSpan ? 'ON — back to one screen' : 'off');
+      }
       // 🗺 Map: Window ↔ Full, as the tray item and the Map's own button. An older Mimic does not report it: no button.
       var mmBtn = document.getElementById('wpOvMapModeBtn');
       if (mmBtn) {
@@ -24162,6 +25748,35 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
         }).catch(function(){});
       }
       if (a === 'setup' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      // A layout as a file — the tray's export / import items; the result (or the Gallery nudge) shows beside the buttons.
+      if ((a === 'layoutExport' && window.mimic.overlayLayoutExport) || (a === 'layoutImport' && window.mimic.overlayLayoutImport)) {
+        var sv = function(id){ var el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+        var msgEl = document.getElementById('wpShareMsg');
+        var run = a === 'layoutExport'
+          ? window.mimic.overlayLayoutExport({ title: sv('wpShareTitle'), author: sv('wpShareBy') })
+          : window.mimic.overlayLayoutImport();
+        Promise.resolve(run).then(function(r){
+          if (!msgEl || !r || r.canceled) return;
+          msgEl.style.color = r.ok ? 'var(--green)' : 'var(--red)';
+          msgEl.textContent = (r.ok ? '✓ ' : '✕ ') + r.message + (r.nudge ? ' ' + r.nudge : '');
+        }).catch(function(){});
+      }
+      // A whole setup as a file or a code — the tray's four items (main.js _exportSetupFile / _getSetupCode / _importSetupFile /
+      // _enterSetupCode). A window that opens says everything itself, so an empty message is not painted.
+      var setupCalls = { setupExport: 'overlaySetupExport', setupCode: 'overlaySetupCode', setupImport: 'overlaySetupImport', setupEnter: 'overlaySetupEnterCode' };
+      if (setupCalls[a]) {
+        var setupMsg = document.getElementById('wpSetupMsg');
+        var setupSay = function(ok, text){ if (setupMsg) { setupMsg.style.color = ok ? 'var(--green)' : 'var(--red)'; setupMsg.textContent = (ok ? '✓ ' : '✕ ') + text; } };
+        if (!window.mimic[setupCalls[a]]) setupSay(false, 'This Mimic is too old to share a whole setup. Update it first.');
+        else {
+          var sv2 = function(id){ var el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+          var wantsOpts = a === 'setupExport' || a === 'setupCode';
+          Promise.resolve(window.mimic[setupCalls[a]](wantsOpts ? { title: sv2('wpShareTitle'), author: sv2('wpShareBy') } : undefined)).then(function(r){
+            if (!r || r.canceled || (r.ok && !r.message)) return;
+            setupSay(!!r.ok, r.message);
+          }).catch(function(){});
+        }
+      }
       // Same internals as the tray's "Arrange the canvas…" (turns it on too),
       // and like that item a second press is "Done". A Mimic without the
       // Canvas falls back to setup mode, which places every overlay.
@@ -24170,6 +25785,12 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
         }).catch(function(){});
       } else if (a === 'canvasArrange' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      // Same setter as the tray item and the Canvas's own button.
+      if (a === 'canvasSpan' && window.mimic.canvasSpan) {
+        window.mimic.canvasSpan(!act.classList.contains('on')).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
       // Same setter as the tray item and the Map's own button.
       if (a === 'mapMode' && window.mimic.setMapMode) {
         window.mimic.getStatus().then(function(st){
@@ -24339,7 +25960,10 @@ function renderZealExplorer(s) {
     return { rows: r, n: n };
   }
   let h = '<h2>🔌 Zeal Pipe <span class="dim" style="font-size:11px;font-weight:normal">· everything the pipe carries, decoded — field names from Zeal named_pipe.cpp; gauges are per-mille</span></h2>';
-  for (const c of clients) {
+  // One block per character; the per-character markup builds into its own local \`h\` (a wrapper <div>
+  // gives wpMoreList the single opening tag it hides).
+  const _zpRows = clients.map(function (c) {
+    let h = '<div>';
     var m = ciMap(c);
     var k = 'zx|' + c.character;
     var dot = c.live ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--dim)">○</span>';
@@ -24452,7 +26076,9 @@ function renderZealExplorer(s) {
         + '<td class="num">' + esc(String(aci.value)) + '</td></tr>';
     }
     if (allRows) h += grp(k + '|raw', 'All labels (raw)', (c.char_info || []).length, tbl(allRows, ['Id', 'Field', 'Value']));
-  }
+    return h + '</div>';
+  });
+  h += wpMoreList('dash|zeal-pipe-clients', _zpRows, { show: 4, noun: 'more characters' });
   // Raid (type 5) — the raid-window roster Zeal broadcasts on composition
   // change (the same sample that feeds raid_roster uploads + the /buffs
   // grid). Raid-wide, not per-character, so it renders once after the
@@ -24464,19 +26090,20 @@ function renderZealExplorer(s) {
       var ga = parseInt(a.group, 10) || 99, gb = parseInt(b.group, 10) || 99;
       return (ga - gb) || String(a.name).localeCompare(String(b.name));
     });
-    var rpRows = '';
+    // Layout A: the first 5 raid members show, the rest sit behind "N more members" (a raid is up to 72 rows).
+    var rpRows = [];
     for (var rpi = 0; rpi < rpSorted.length; rpi++) {
       var rm = rpSorted[rpi];
       var rhp = rm.hp_pct != null ? (rm.hp_current != null && rm.hp_max != null ? rm.hp_current + '/' + rm.hp_max + ' - ' + rm.hp_pct + '%' : rm.hp_pct + '%') : '';
-      rpRows += '<tr><td class="num">' + esc(String(rm.group || '')) + '</td>'
+      rpRows.push('<tr><td class="num">' + esc(String(rm.group || '')) + '</td>'
         + '<td>' + esc(String(rm.name)) + '</td>'
         + '<td class="dim">' + esc(String(rm.class || '')) + '</td>'
         + '<td class="num">' + esc(String(rm.level || '')) + '</td>'
         + '<td class="dim">' + esc(String(rm.rank || '')) + '</td>'
-        + '<td class="num">' + esc(rhp) + '</td></tr>';
+        + '<td class="num">' + esc(rhp) + '</td></tr>');
     }
     h += grp('zx|raid', '5 - raid (last sample ' + fmtAgo(rp.at) + ')', rp.members.length,
-      tbl(rpRows, ['Grp', 'Name', 'Class', 'Lvl', 'Rank', 'HP']));
+      tbl(wpMoreList('diag|zeal-raid', rpRows, { show: 5, cols: 6, noun: 'more members' }), ['Grp', 'Name', 'Class', 'Lvl', 'Rank', 'HP']));
   }
   morphInto(el, h);
 }
@@ -24966,7 +26593,17 @@ function renderKillSwitches(s) {
       if (onLoc === onTun) delete _wpKill.local[lkk];
     }
   }
-  var h = '<h2>🛑 Kill switches <span class="dim" style="font-size:11px;font-weight:normal">— control-plane flags · officer · ~60s fleet-wide</span></h2>';
+  // Closed by default (the guild lead, 2026-10-17: "Minimize the kill switches so people don't
+  // accidentally hit them"). The title stays an h2 inside the summary so the card keeps its panel key;
+  // a count on the summary says when something is switched on while it is folded away.
+  var nKillOn = 0;
+  for (var kci = 0; kci < WP_KILL_FLAGS.length; kci++) {
+    var kcf = WP_KILL_FLAGS[kci], kcOn = _wpFlagIsOn(kcf, tuning);
+    if (kcf.defaultOn ? !kcOn : kcOn) nKillOn++;
+  }
+  var h = '<details ' + wpKeep('admin-killswitches') + '><summary style="cursor:pointer"><h2 style="display:inline;border:0;padding:0;margin:0">🛑 Kill switches (emergency only) <span class="dim" style="font-size:11px;font-weight:normal">— control-plane flags · officer · ~60s fleet-wide</span></h2>'
+    + (nKillOn ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,81,73,0.18);color:var(--red);border:1px solid rgba(248,81,73,0.4)">' + nKillOn + ' switched on</span>' : '')
+    + '</summary><div style="margin-top:12px">';
   h += '<div class="dim" style="font-size:11px;margin-bottom:7px">Live values from the tuning this agent polls. One click writes to the bot immediately (officer-authed + whitelisted); the fleet honors it within ~60s. Leave everything off in normal operation. The free-form numeric knobs stay on /admin/overlays.</div>';
   for (var i = 0; i < WP_KILL_FLAGS.length; i++) {
     var fl = WP_KILL_FLAGS[i];
@@ -24986,6 +26623,7 @@ function renderKillSwitches(s) {
   }
   h += _wpKillVersionFloorRow(tuning);
   h += '<div id="wpKillMsg" class="dim" style="font-size:11px;min-height:14px;margin-top:2px"></div>';
+  h += '</div></details>';
   morphInto(sec, h);
 }
 function _wpKillAgentKillRow(fl, tuning) {
@@ -25037,7 +26675,14 @@ function _wpKillVersionFloorRow(tuning) {
 document.addEventListener('click', function (ev) {
   var t = ev.target; if (!t || !t.closest) return;
   var tog = t.closest('.wpKillToggle');
-  if (tog) { _wpFlagOverride(tog.getAttribute('data-key'), (Number(tog.getAttribute('data-next')) >= 1 ? 1 : 0)); return; }
+  if (tog) {
+    // Every flip asks first: the card is emergency-only and a stray click should cost nothing.
+    var tkey = tog.getAttribute('data-key'), tfl = _wpKillFlagFor(tkey), tnext = Number(tog.getAttribute('data-next')) >= 1 ? 1 : 0;
+    var tmsg = (tnext === 1 ? 'Turn ON' : 'Turn OFF') + ' "' + (tfl ? tfl.label : tkey) + '" for the whole fleet?\\n\\nThe guild honors it within about a minute.';
+    if (!confirm(tmsg)) return;
+    _wpFlagOverride(tkey, tnext);
+    return;
+  }
   if (t.closest('.wpKillArm'))    { _wpKill.arm = true;  var mA = document.getElementById('wpKillMsg'); if (mA) mA.textContent = ''; return; }
   if (t.closest('.wpKillCancel')) { _wpKill.arm = false; return; }
   if (t.closest('.wpKillConfirm')) {
@@ -25303,32 +26948,37 @@ function renderLootTab(s) {
   if (_rollSets.length > 0) {
     h += '<div class="card wide"><h2>🎲 Rolls (this session)</h2>';
     h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Every /random heard in the zone, grouped by roll range. Link loot in raid chat as <code>Item Name (qty)NNN | ...</code> and each set picks up its item name — (3) means the top three rolls win one each. First roll per player counts; re-rolls are listed struck through.</div>';
+    // Layout A: the first 5 sets show, the rest sit behind "N more roll sets" (one row per set, each its own <details>).
+    var _rollRows = [];
     for (var rsi = 0; rsi < _rollSets.length; rsi++) {
       var rset = _rollSets[rsi];
-      if (rset.kind === 'deathroll') { h += _wpDeathrollHtml(rset); continue; }
+      if (rset.kind === 'deathroll') { _rollRows.push(_wpDeathrollHtml(rset)); continue; }
+      var rh = '';   // this set's markup
       var rWinners = _wpRollWhoHtml(rset);
       var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
       // 📦 Only when the looter is NOT a winner drawn here (a re-roll or a pass).
       var rLooted = wpNightLootedBy(rset, _wpNightLoot && _wpNightLoot.sessions);
-      h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
-      h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
+      rh += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
+      rh += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
          + (rset.item ? ' (' + esc(rset.item) + (rset.qty ? ' ×' + rset.qty : '') + ')' : '')
          + ' — <span style="color:var(' + (rset.tie && rset.tie.state !== 'done' ? '--orange' : '--gold,#f0c419') + ')">' + (rWinners || '—') + '</span>'
          + (rLooted.length ? ' <span style="color:var(--blue)">· 📦 looted by ' + rLooted.map(esc).join(', ') + '</span>' : '')
          + ' <span class="dim">· ' + rset.players + ' roller' + (rset.players === 1 ? '' : 's')
          + ' · ' + rTime + (rset.open ? ' · open' : '') + '</span></summary>';
-      h += _wpRollTiePrompt(rset);
-      h += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
+      rh += _wpRollTiePrompt(rset);
+      rh += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
       var rRows = (rset.rolls || []).slice().sort(function (a, b) { return b.value - a.value; });
       for (var rri = 0; rri < rRows.length; rri++) {
         var rr = rRows[rri];
-        h += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
+        rh += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
            + '<td class="num">' + rr.value + '</td>'
            + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + _wpRollRowMark(rset, rr) + '</td>'
            + '<td class="dim">' + new Date(rr.at_ms).toLocaleTimeString() + '</td></tr>';
       }
-      h += '</table></details>';
+      rh += '</table></details>';
+      _rollRows.push(rh);
     }
+    h += wpMoreList('loot|rolls', _rollRows, { show: 5, noun: 'more roll sets' });
     h += '</div>';
   }
 
@@ -25372,12 +27022,12 @@ function renderStats(s) {
   h += '<div class="card wide"><h2>Top Abilities (uploader)</h2>';
   if (!abs.length) h += '<div class="dim">(no damage events parsed yet)</div>';
   else {
-    h += '<table><tr><th>Ability</th><th>Total</th><th>Hits</th><th>Avg</th></tr>';
-    for (const [ab, st] of abs) {
+    h += '<table class="wp-abtbl"><tr><th>Ability</th><th class="wp-r">Total</th><th class="wp-r">Hits</th><th class="wp-r">Avg</th></tr>';
+    h += wpMoreList('deeps|uploader-abil', abs.map(function ([ab, st]) {
       const label = ab === 'non-melee' ? ab + ' (DS / DoT / procs)' : ab;
       const avg = st.count > 0 ? Math.round(st.total / st.count) : 0;
-      h += '<tr><td>' + esc(label) + '</td><td class="num">' + fmtK(st.total) + '</td><td class="num">' + st.count + '</td><td class="num">' + fmtK(avg) + '</td></tr>';
-    }
+      return '<tr><td title="' + esc(label) + '">' + esc(label) + '</td><td class="num wp-r">' + fmtK(st.total) + '</td><td class="num wp-r">' + st.count + '</td><td class="num wp-r">' + fmtK(avg) + '</td></tr>';
+    }), { show: 8, cols: 4 });
     h += '</table>';
   }
   h += '</div>';
@@ -25464,28 +27114,31 @@ function renderStats(s) {
   if (_rsNames.length > 0) {
     h += '<div class="card wide"><h2>🛡 Spells Resisted (incoming)</h2>';
     h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Spells mobs cast at you that you resisted — this names what their "a spell" casts actually were. Expand a row to see which mobs cast it + how many times.</div>';
-    _rsNames.map(function (n) { return [n, _rs[n]]; })
+    // Layout A: the top 5 spells show, the rest sit behind "N more spells".
+    h += wpMoreList('stats|resisted', _rsNames.map(function (n) { return [n, _rs[n]]; })
       .sort(function (a, b) { return (b[1].count || 0) - (a[1].count || 0); })
-      .forEach(function (e) {
+      .map(function (e) {
+        var d = '';
         var rec = e[1] || {};
         var byMob = rec.byMob || {};
         var mobs = Object.keys(byMob).map(function (m) { return [m, byMob[m]]; })
           .sort(function (a, b) { return (b[1] || 0) - (a[1] || 0); }).slice(0, 20);
-        h += '<details ' + wpKeep('rs|' + e[0]) + '>';
-        h += '<summary><span class="name">' + spellLink(e[0]) + '</span> '
+        d += '<details ' + wpKeep('rs|' + e[0]) + '>';
+        d += '<summary><span class="name">' + spellLink(e[0]) + '</span> '
            + '<span class="dim">— ' + (rec.count || 0) + ' resisted'
            + (rec.lastMob ? ', last from ' + esc(rec.lastMob) : '') + '</span></summary>';
         if (mobs.length > 0) {
-          h += '<table><tr><th>Cast by</th><th class="num">Resisted</th></tr>';
+          d += '<table><tr><th>Cast by</th><th class="num">Resisted</th></tr>';
           for (var mi = 0; mi < mobs.length; mi++) {
-            h += '<tr><td>' + esc(mobs[mi][0]) + '</td><td class="num">' + (mobs[mi][1] || 0) + '</td></tr>';
+            d += '<tr><td>' + esc(mobs[mi][0]) + '</td><td class="num">' + (mobs[mi][1] || 0) + '</td></tr>';
           }
-          h += '</table>';
+          d += '</table>';
         } else {
-          h += '<div class="dim" style="font-size:11px;padding:2px 0">No mob attribution yet — resisted outside a tracked fight.</div>';
+          d += '<div class="dim" style="font-size:11px;padding:2px 0">No mob attribution yet — resisted outside a tracked fight.</div>';
         }
-        h += '</details>';
-      });
+        d += '</details>';
+        return d;
+      }), { show: 5, noun: 'more spells' });
     h += '</div>';
   }
 
@@ -25504,29 +27157,29 @@ function renderStats(s) {
     var _isdOrdered = _isdCasters.map(function (name) {
       return { name: name, rec: _isd[name] || { total: 0, count: 0, spells: {} } };
     }).sort(function (a, b) { return (b.rec.total || 0) - (a.rec.total || 0); });
-    _isdOrdered.slice(0, 12).forEach(function (c) {
+    // Layout A: the top 5 casters show, the rest sit behind "N more casters".
+    h += wpMoreList('stats|inbound', _isdOrdered.slice(0, 12).map(function (c) {
       var spells = Object.entries(c.rec.spells || {})
         .sort(function (a, b) { return (b[1].total || 0) - (a[1].total || 0); })
         .slice(0, 12);
-      h += '<details ' + wpKeep('isd|' + c.name) + '>';
-      h += '<summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + fmtK(c.rec.total || 0) + ' over ' + (c.rec.count || 0) + ' hit' + ((c.rec.count === 1) ? '' : 's') + '</span></summary>';
-      h += '<table><tr><th>Spell</th><th class="num">Total</th><th class="num">Hits</th><th class="num">Max</th></tr>';
+      var d = '<details ' + wpKeep('isd|' + c.name) + '>';
+      d += '<summary><span class="name">' + esc(c.name) + '</span> <span class="dim">— ' + fmtK(c.rec.total || 0) + ' over ' + (c.rec.count || 0) + ' hit' + ((c.rec.count === 1) ? '' : 's') + '</span></summary>';
+      d += '<table><tr><th>Spell</th><th class="num">Total</th><th class="num">Hits</th><th class="num">Max</th></tr>';
       for (var k = 0; k < spells.length; k++) {
-        h += '<tr><td>' + spellLink(spells[k][0]) + '</td>' +
+        d += '<tr><td>' + spellLink(spells[k][0]) + '</td>' +
              '<td class="num">' + fmtK(spells[k][1].total || 0) + '</td>' +
              '<td class="num">' + (spells[k][1].count || 0) + '</td>' +
              '<td class="num">' + fmtK(spells[k][1].max || 0) + '</td></tr>';
       }
-      h += '</table></details>';
-    });
+      return d + '</table></details>';
+    }), { show: 5, noun: 'more casters' });
     h += '</div>';
   }
 
   h += '</div>';
-  // Weapon Loadouts + Known Pets live here now (moved off the combat tabs).
-  h += '<div class="grid">' + buildLoadoutsHtml(s) + buildPetsHtml(s) + '</div>';
+  // (Weapon Loadouts + Known Pets sat here until Layout A, 2026-10-21: they are folded cards at the foot of the
+  // ⚔️ Fights tab now - renderFightsMore.)
   setSectionHTML('stats', h);
-  wireLoadoutControls();
 }
 
 function renderInfo(s) {
@@ -25547,9 +27200,9 @@ function renderInfo(s) {
   // client running" is a fact about the install, not a health check.)
   // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
   // restore controls survive #info repaints).
-  h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
+  // (Layout A: below the grid now, so Parser info and Log archiving are the first things on the tab.)
   h += '<div class="grid">';
-  h += '<div class="card"><h2>Parser Info</h2>';
+  h += '<div class="card" data-index="Parser info"><h2>Parser Info</h2>';
   h += '<div>Agent v' + esc(s.version) + '</div>';
   h += '<div>Watching ' + (s.watchedLogs?.length||0) + ' log(s)</div>';
   h += '<div>Uploads this session: ' + (s.uploadCount||0) + ' (' + (s.uploadErrors||0) + ' errors)</div>';
@@ -25568,22 +27221,24 @@ function renderInfo(s) {
   // runs the command, so no wp* placeholder is needed. Rendering a relative
   // "2m ago" here instead of the fixed stamp would repaint #info every 2s and
   // reset anything the user had open (dashboard rendering rules).
+  // Layout A (the guild lead, 2026-10-21): Parser info and Log archiving lead the tab; this card is built here and
+  // appended after the log-archiving card below.
   const _cv = s.clientVersions || [];
-  h += '<div class="card"><h2>🧩 Client versions</h2>';
+  let _cvH = '<div class="card"><h2>🧩 Client versions</h2>';
   if (!_cv.length) {
-    h += '<div class="dim">Nothing captured yet. Type <b>/zeal version</b> in game and it appears here — Zeal, eqw.dll and eqgame.dll builds, per character. We never send the command for you.</div>';
+    _cvH += '<div class="dim">Nothing captured yet. Type <b>/zeal version</b> in game and it appears here — Zeal, eqw.dll and eqgame.dll builds, per character. We never send the command for you.</div>';
   } else {
-    h += '<table>';
+    _cvH += '<table>';
     for (const c of _cv) {
-      h += '<tr><td colspan="2" style="padding-top:6px"><b>' + esc(c.character) + '</b></td></tr>';
-      if (c.zeal)   h += '<tr><td>Zeal</td><td class="num">' + esc(c.zeal) + (c.zeal_hash ? ' <span class="dim">(' + esc(c.zeal_hash) + ')</span>' : '') + '</td></tr>';
-      if (c.eqw)    h += '<tr><td>eqw.dll</td><td class="num">' + esc(c.eqw) + '</td></tr>';
-      if (c.eqgame) h += '<tr><td>eqgame.dll</td><td class="num">' + esc(c.eqgame) + '</td></tr>';
-      if (c.at)     h += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
+      _cvH += '<tr><td colspan="2" style="padding-top:6px"><b>' + esc(c.character) + '</b></td></tr>';
+      if (c.zeal)   _cvH += '<tr><td>Zeal</td><td class="num">' + esc(c.zeal) + (c.zeal_hash ? ' <span class="dim">(' + esc(c.zeal_hash) + ')</span>' : '') + '</td></tr>';
+      if (c.eqw)    _cvH += '<tr><td>eqw.dll</td><td class="num">' + esc(c.eqw) + '</td></tr>';
+      if (c.eqgame) _cvH += '<tr><td>eqgame.dll</td><td class="num">' + esc(c.eqgame) + '</td></tr>';
+      if (c.at)     _cvH += '<tr><td class="dim">read</td><td class="dim num">' + esc(String(c.at).replace('T', ' ').slice(0, 19)) + '</td></tr>';
     }
-    h += '</table>';
+    _cvH += '</table>';
   }
-  h += '</div>';
+  _cvH += '</div>';
   // 🏷 Zeal tag capture readiness (#194). Byte-stable: zeal.ini values change
   // rarely and the fresh-tag count only moves while tags are actually flowing
   // (an acceptable repaint — the Info tab is not a form surface mid-raid).
@@ -25630,13 +27285,15 @@ function renderInfo(s) {
     });
     if (_archChars.length) {
       h += '<div style="margin-top:8px;font-size:11px" class="dim">Want a clean start? Move a log into <code>LogArchive</code> now. Nothing is deleted.</div>';
-      _archChars.forEach(function (c) {
-        h += '<div style="margin-top:4px"><button class="btn" data-char="' + esc(c) + '" onclick="wpLogArchive(this)">🗄 Archive log &amp; start fresh</button> '
+      // 33 watched characters used to be 33 rows down the page; show 5, the rest behind "N more characters".
+      h += wpMoreList('info|archive-chars', _archChars.map(function (c) {
+        return '<div style="margin-top:4px"><button class="btn" data-char="' + esc(c) + '" onclick="wpLogArchive(this)">🗄 Archive log &amp; start fresh</button> '
           + '<span class="dim" style="font-size:11px">' + esc(c) + '</span></div>';
-      });
+      }), { show: 5, noun: 'more characters' });
     }
     h += '</div>';
   }
+  h += _cvH;
   h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
   if (s.zealTagRateLimit) {
     h += '<div style="margin-bottom:4px;color:#f2b632;font-size:11px">⚠️ The server rate limited your chat around <code>'
@@ -25687,6 +27344,7 @@ function renderInfo(s) {
   }
   h += '</div>';
   h += '</div>';
+  h += '<div id="wpBackupsCard" class="card wide" style="display:none"></div>';
   // GINA/EQLP scan placeholder card — populated by wpScanLocalTriggers() on
   // dashboard load via /api/triggers/local-scan. (the guild lead, 2026-06-26 — v1.1.1
   // foundation; parse + import land in 1.1.2+.) Empty placeholder so the
@@ -26268,6 +27926,12 @@ function renderOptin(o) {
          '</ol></div>';
   }
 
+  // 🔁 Rebuild from my logs (the guild lead, 2026-10-21): its own placeholder, filled by renderRebuildCard, so the
+  // progress it shows does not rewrite this whole tab every poll.
+  wpRebuildSetFiles(o);
+  h += '<div id="wpRaidCode" class="card wide"></div>';   // 🎟 Join a raid with a code: filled by renderRaidCodeCard
+  h += '<div id="wpRebuild" class="card wide"></div>';
+
   // Imported log backups (the guild lead, 2026-09-13). Inside Mimic: native pickers plus
   // a drop zone that reads real paths through the bridge. A browser tab has
   // neither, so it only lists what is already imported.
@@ -26436,6 +28100,7 @@ function renderOptin(o) {
   h += '</table></div>';
   const root = document.getElementById('optin');
   if (!setSectionHTML('optin', h)) return;   // morph in place; skip if unchanged
+  try { wpRbRepaint(); } catch (e) { void e; }   // the section was rewritten, so the Rebuild card's placeholder is empty again
 
   // Wire interactions — idempotent under morph (nodes persist across polls).
   root.querySelectorAll('input[type=checkbox][data-path]').forEach(cb => {
@@ -26624,18 +28289,20 @@ async function refresh() {
                      ['damagedone', renderDamageDoneCard],
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
-                     ['tanks', renderTanks], ['deeps', renderDeeps],
+                     ['tanks', renderTanks], ['deeps', renderDeeps], ['fightsMore', renderFightsMore], ['fightsReplay', renderReplayCard],
                      ['triggers', renderTriggers], ['guildtriggers', renderGuildTriggersCard],
+                     ['voice', renderVoice],
                      // 🩺 Diagnostics owns the pipe/charm/pet/journal/mechanics/
                      // explorer placeholders — it MUST run before their fillers
                      // below, same rule as renderDash → renderMeCard.
                      ['diag', renderDiag],
                      ['netmeter', renderNetMeter],
+                     ['rebuild', renderRebuildCard], ['raidcode', renderRaidCodeCard],
                      ['zealcard', renderZealCard],
-                     ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
+                     ['recentfires', renderRecentFires], ['mutedtimers', renderMutedTimers], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
-                     ['buffs', renderBuffsTab], ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
+                     ['buffsMain', renderBuffsTab], ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
                      ['loottab', renderLootTab],
                      // After info: fill the placeholders renderInfo/renderDiag
                      // just (re)painted, so they show same-tick. renderCrashReview
@@ -26653,6 +28320,8 @@ async function refresh() {
                      ['reporters', renderReporters],
                      ['killswitches', renderKillSwitches],
                      ['backupscard', renderBackupsCard]];
+    // Feedback window: the card is the whole page, so nothing else is rendered.
+    if (WP_FEEDBACK_MODE) _sections = [['feedback', renderFeedback]];
     for (var _si = 0; _si < _sections.length; _si++) {
       var _sid = _sections[_si][0], _sfn = _sections[_si][1];
       try { _sfn(s); }
@@ -26671,6 +28340,7 @@ async function refresh() {
       }
     }
     if (window.scrollX !== _sx || window.scrollY !== _sy) window.scrollTo(_sx, _sy);
+    try { wpIndexSync(); } catch (e) { void e; }   // the pinned section index (rewrites itself only when the card list changes)
     // The bar's height can change on any render — the update pill appears, the
     // links wrap, a beta badge shows up — and the rail's sticky offset is
     // derived from it. Cheap: it only writes the custom property on a real
@@ -26699,7 +28369,7 @@ async function refresh() {
     // the stall. Once per 60s (sessionStorage so the throttle survives the
     // reload itself); the banner still shows so a truly-dead agent stays
     // visible.
-    if (_refreshFailures >= 15) {
+    if (_refreshFailures >= 15 && !WP_FEEDBACK_MODE) {
       var _lastAuto = 0;
       try { _lastAuto = parseInt(sessionStorage.getItem('wpAutoRescueAt') || '0', 10) || 0; } catch (e) {}
       if (Date.now() - _lastAuto > 60000) {
@@ -26723,7 +28393,7 @@ async function refresh() {
         '⚠ <b>Can’t reach the parser engine</b> at <code>' + (location.origin || '?') + '</code>.<br>' +
         'The engine is busy or restarting (updates and big log rescans can take a minute) — this usually clears on its own. If it moved ports, Mimic reconnects automatically.' +
         '<div style="margin-top:8px"><button id="wpConnReload" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:6px 14px;cursor:pointer;font-family:inherit;font-size:12px">🔄 Reload to the live engine</button> <span style="color:#c98">— or fully restart Mimic.</span></div>';
-      var host = document.querySelector('.section.active') || document.body;
+      var host = WP_FEEDBACK_MODE ? document.body : (document.querySelector('.section.active') || document.body);
       host.insertBefore(d, host.firstChild);
       var rb = document.getElementById('wpConnReload');
       if (rb) rb.onclick = function () {
@@ -26863,6 +28533,7 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   if (b.dataset.tab === 'optin') refreshOptin();
   if (b.dataset.tab === 'raid') refreshRaidTab();
   if (b.dataset.tab === 'myparses') wpMpOpenTab();
+  try { wpIndexSync(); } catch (e) { void e; }   // the pinned index follows the tab at once, not on the next poll
 }));
 // #myparses opens the 📈 My parses tab — the tray's "📈 My parses" item loads the dashboard with that hash, the
 // same way its "Send feedback" item loads #feedback. Read on load and on every change, then dropped from the URL
@@ -26877,9 +28548,22 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   go();
   window.addEventListener('hashchange', go);
 })();
+// #buffblocks opens the blocking half of ✨ Buffs (and blocking): the picker was a tab of its own until
+// 2026-10-17, so an old link or shortcut to that tab lands on the Buffs tab, scrolled to the picker.
+(function () {
+  function go() {
+    if ((location.hash || '').toLowerCase() !== '#buffblocks') return;
+    var btn = document.querySelector('.nav button[data-tab="buffs"]');
+    if (btn) btn.click();
+    setTimeout(function () { var c = document.getElementById('wpBuffBlocks'); if (c && c.scrollIntoView) c.scrollIntoView({ block: 'start' }); }, 250);
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { void e; }
+  }
+  go();
+  window.addEventListener('hashchange', go);
+})();
 // ⏪ Replay deep-link (#101) — a link like #replay&from=<iso>&to=<iso> (built
 // by wolfpack.quest/parses on the "Replay this fight locally" link) opens the
-// Triggers tab with the Replay form prefilled. It never auto-starts — the user
+// Fights tab (where the Replay card lives since 2026-10-17) with the form prefilled. It never auto-starts — the user
 // still clicks Start. from/to arrive as ISO instants; we render them into the
 // datetime-local inputs as LOCAL wall-clock (the basis the agent parses EQ log
 // timestamps on this machine).
@@ -26899,6 +28583,7 @@ function _wpApplyReplayPrefill(attempt) {
   if (!f || !t) { if (attempt < 40) setTimeout(function () { _wpApplyReplayPrefill(attempt + 1); }, 150); return; }
   if (pf.from) f.value = _wpToLocalInput(pf.from);
   if (pf.to)   t.value = _wpToLocalInput(pf.to);
+  wpReplayLinkSync();
   window._wpReplayPrefill = null;   // one-shot
 }
 (function () {
@@ -26910,7 +28595,8 @@ function _wpApplyReplayPrefill(attempt) {
     if (i > 0) { try { params[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); } catch (e) { void e; } }
   });
   window._wpReplayPrefill = { from: params.from || '', to: params.to || '' };
-  var btn = document.querySelector('.nav button[data-tab="triggers"]');
+  _wpOpenDetails['fights|replay'] = true;   // the card starts folded; a link that prefills it wants it open
+  var btn = document.querySelector('.nav button[data-tab="fights"]');
   if (btn) btn.click();
   _wpApplyReplayPrefill(0);
 })();
@@ -27033,7 +28719,7 @@ document.addEventListener('click', function (ev) {
       body: JSON.stringify({ slot: slot, players: players, points: points, dry_run: true }) })
       .then(function (r) { return r.json(); }).then(function (j) {
         if (!msg) return;
-        if (!j.ok) { _dkpTickPending = null; msg.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || 'cannot submit') + '</span>'; return; }
+        if (!j.ok) { _dkpTickPending = null; msg.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || j.error || 'cannot submit') + '</span>'; return; }
         var verb = j.action === 'would-overwrite' ? 'OVERWRITE' : (j.action === 'create-separate' ? 'create a separate raid for' : 'add');
         // Prefer the OpenDKP-matched count when present (only matched raiders
         // get credited); fall back to the raw attendee count.
@@ -27062,7 +28748,7 @@ document.addEventListener('click', function (ev) {
           var unm2 = Array.isArray(j.unmatched) ? j.unmatched : [];
           msg2.innerHTML = '<span style="color:#3fb950">✓ ' + esc(_slotLabel(p.slot)) + ' submitted — ' + j.count + ' credited to ' + esc(j.raidName || ('#' + j.raidId)) + '</span>'
             + (unm2.length ? '<br><span style="color:#f6c365;font-size:11px">⚠ not on OpenDKP: ' + esc(unm2.slice(0, 12).join(', ')) + (unm2.length > 12 ? '…' : '') + '</span>' : '');
-        } else msg2.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || 'submit failed') + '</span>';
+        } else msg2.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || j.error || 'submit failed') + '</span>';
       }).catch(function () { _dkpTickPending = null; if (msg2) msg2.innerHTML = '<span style="color:#f85149">✕ submit failed</span>'; });
     return;
   }
@@ -27487,7 +29173,7 @@ async function dismissTopDamage(key) {
     });
   }
   var obs = new MutationObserver(function(){ applyHidden(); });
-  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -27656,7 +29342,7 @@ async function dismissTopDamage(key) {
     try { if (window.mimic) window.mimic.createPanelOverlay(pk); } catch (err) {}
   }, true);
   var obs = new MutationObserver(decorateButtons);
-  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -27696,7 +29382,7 @@ async function dismissTopDamage(key) {
       return matched;
     }
     var obs2 = new MutationObserver(applyOverlayTarget);
-    ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+    ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
       var el = document.getElementById(id);
       if (el) obs2.observe(el, { childList: true, subtree: true });
     });
@@ -27772,7 +29458,7 @@ async function dismissTopDamage(key) {
     if (serverKey === "damage" && data.rows){
       html += "<table><tr><th>#</th><th>Character</th><th class=num>Total</th><th class=num>Peak DPS</th><th class=num>Enc</th></tr>";
       data.rows.slice(0,12).forEach(function(r, i){
-        html += "<tr><td class=dim>" + (i+1) + "</td><td class=name>" + r.character + "</td><td class=num>" + fmt(r.totalDamage) + "</td><td class=num>" + fmt(r.peakDps) + "</td><td class=num>" + r.encounters + "</td></tr>";
+        html += "<tr><td class=dim>" + (i+1) + "</td><td class=name>" + esc(r.character) + "</td><td class=num>" + fmt(r.totalDamage) + "</td><td class=num>" + fmt(r.peakDps) + "</td><td class=num>" + esc(r.encounters) + "</td></tr>";   // names come from other members' uploads: escape (2026-10-17)
       });
       html += "</table>";
     } else if (serverKey === "pvp"){
@@ -27785,7 +29471,7 @@ async function dismissTopDamage(key) {
         recent.forEach(function(r){
           var boss = (r.boss || "?").replace(/_/g, " ");
           var when = r.snapshot_at ? new Date(r.snapshot_at).toLocaleString() : "";
-          html += "<tr><td class=name>" + boss + "</td><td class=dim>" + when + "</td><td class=num>" + r.rank + " of " + r.of + "</td></tr>";
+          html += "<tr><td class=name>" + esc(boss) + "</td><td class=dim>" + when + "</td><td class=num>" + esc(r.rank) + " of " + esc(r.of) + "</td></tr>";
         });
         html += "</table>";
       }
@@ -27861,7 +29547,7 @@ async function dismissTopDamage(key) {
     }
   }
   var obs = new MutationObserver(decorate);
-  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -29148,8 +30834,10 @@ async function dismissTopDamage(key) {
 })();
 
 // ── 🔇 Buff blocks: the #blockbuff picker (the guild lead, 2026-10-04) ───────
+// (2026-10-17: no tab of its own now. It is the "blocking" half of ✨ Buffs (and blocking),
+// below the buffs cards.)
 // Quarm's #blockbuff / #blockbuffif / #allowbuff commands keep other players'
-// buffs off you. This tab is the picker: a set list per character, bard-song
+// buffs off you. This is the picker: a set list per character, bard-song
 // starters, and two ways to use a set. Copy its lines (EQ's chat box takes one
 // line per paste), or have Mimic write them into social macros in the
 // character's ini: right away when the character is logged out, queued until
@@ -29163,6 +30851,8 @@ async function dismissTopDamage(key) {
 (function(){
   var sec = document.getElementById("buffblocks");
   if (!sec) return;
+  // The picker sits at the foot of the Buffs tab, so "the tab is showing" means #buffs is active.
+  var tab = document.getElementById("buffs") || sec;
   var data = null;          // the last /api/buffblocks answer
   var character = "";       // the picked character ("" = whichever the agent lists first)
   var ui = { lines: {}, msg: {}, q: {}, cond: {} };
@@ -29219,7 +30909,7 @@ async function dismissTopDamage(key) {
     });
   }
   function poll(){
-    if (!sec.classList.contains("active") || document.hidden) return;
+    if (!tab.classList.contains("active") || document.hidden) return;
     api("/api/buffblocks?character=" + encodeURIComponent(character)).catch(function(){});
   }
   function saveSets(sets){ return api("/api/buffblocks/sets", { character: character, sets: sets }).catch(function(){}); }
@@ -29303,7 +30993,8 @@ async function dismissTopDamage(key) {
       + (data.starters || []).map(function(st){ return '<div class="wp-bb-note"><b>' + esc(st.name) + '</b> (' + st.entries.length + ' blocks): ' + esc(st.note || "") + '</div>'; }).join("")
       + '</details>';
     var ss = data.sets || [];
-    h += ss.length ? ss.map(setHtml).join("") : '<div class="dim" style="padding:6px 0">No sets for ' + esc(data.character) + ' yet. Add a starter set above and make it yours.</div>';
+    // Layout A: the first 3 sets show, the rest sit behind "N more sets" (each set is one <div class="wp-bb-set">).
+    h += ss.length ? wpMoreList("bb|sets|" + String(data.character || "").toLowerCase(), ss.map(function(s){ return setHtml(s); }), { show: 3, noun: "more sets" }) : '<div class="dim" style="padding:6px 0">No sets for ' + esc(data.character) + ' yet. Add a starter set above and make it yours.</div>';
     return h;
   }
 
@@ -29580,7 +31271,7 @@ async function dismissTopDamage(key) {
     fillRes(id);
   });
 
-  var navBtn = document.querySelector('.nav button[data-tab="buffblocks"]');
+  var navBtn = document.querySelector('.nav button[data-tab="buffs"]');
   if (navBtn) navBtn.addEventListener("click", function(){ setTimeout(poll, 0); });
   setInterval(poll, 5000);
 })();
@@ -29669,21 +31360,97 @@ var WPSounds = (function () {
     for (var i = 0; i < packs.length; i++) h += '<option value="' + esc(packs[i].id) + '"' + (packs[i].id === selected ? ' selected' : '') + '>' + esc(packs[i].label) + '</option>';
     return h;
   }
-  function play(name, vol) {
+  // onFail (optional): called once if the file cannot be played. A callout set to play the sound INSTEAD of
+  // speaking uses it to speak after all, as the live overlay does, so a missing sound never costs the callout.
+  function play(name, vol, onFail) {
     name = String(name || '');
     if (!name) return;
     try { if (cur) { cur.pause(); cur = null; } } catch (e) { void e; }
     var url = /^https?:\\/\\//i.test(name) ? name : '/sounds/' + encodeURIComponent(name);
+    var failed = false;
+    function fail() { if (failed) return; failed = true; if (onFail) { try { onFail(); } catch (e) { void e; } } }
     try {
       var a = new Audio(url), v = Number(vol);
       a.volume = (vol != null && vol !== '' && isFinite(v) && v >= 0 && v <= 1) ? v : 0.9;
       cur = a;
-      var p = a.play(); if (p && p.catch) p.catch(function () { void 0; });
-    } catch (e) { void e; }
+      if (onFail) a.addEventListener('error', fail);
+      var p = a.play(); if (p && p.catch) p.catch(function () { fail(); });
+    } catch (e) { fail(); }
   }
   return { load: load, loadPacks: loadPacks, optionsHtml: optionsHtml, packOptionsHtml: packOptionsHtml, fill: fill, play: play, labelOf: labelOf,
     list: function () { return list; }, userDir: function () { return userDir; }, packs: function () { return packs; } };
 })();
+
+// ── ▶ Hear a callout without a log line (the guild lead, 2026-10-18) ───────────
+// "Preview doesn't speak the callout", and the Suggested and Guild rows had no way to hear one before
+// switching it on. One function does it for all three: the editor's ▶ Preview, a Suggested row's ▶ and a
+// Guild row's ▶. It speaks the way a live callout does: the Spoken text, else the Overlay text (cleaned of
+// emoji and " - " separators, the same cleaning triggers.html applies), through the voice card's own
+// speak path (Mimic's downloaded voice, else the Windows one) in this callout's voice pack. A sound plays
+// with it, or INSTEAD of it ("Play the sound instead of speaking"), and a sound that cannot play falls back
+// to speaking. Capped at 300 characters, which is what Mimic's voice engine takes. a = { text, tts, sound,
+// sound_volume, sound_mode, voice_pack }. Returns what it said, for the caller's message line.
+function wpTrigSpeakable(txt) {
+  // Character by character, not a regex of symbol ranges: arrows, dingbats and emoji (and the two halves of a
+  // surrogate pair) become a space, as triggers.html does; a long dash between words becomes a plain one so the
+  // " - " separator rule below sees it. A character name or a number is never touched.
+  var s = String(txt == null ? '' : txt), out = '';
+  for (var k = 0; k < s.length; k++) {
+    var c = s.charCodeAt(k);
+    if ((c >= 0x2190 && c <= 0x2BFF) || (c >= 0x2600 && c <= 0x27BF) || c === 0xFE0F || c === 0x2028 || c === 0x2029 || (c >= 0xD800 && c <= 0xDFFF)) out += ' ';
+    else out += (c === 0x2013 || c === 0x2014) ? '-' : s.charAt(k);
+  }
+  return out.replace(/\\s+-+\\s+/g, ' ').replace(/\\s{2,}/g, ' ').trim();
+}
+// {target}, {s1} and the like have no capture to fill them here: read the word, not the braces.
+function wpTrigPreviewText(a) {
+  a = a || {};
+  var unbrace = function (s) { return String(s == null ? '' : s).replace(/\\{([^{}]*)\\}/g, function (m, n) { return n.replace(/_/g, ' '); }); };
+  var said = String(a.tts || '').trim() ? unbrace(a.tts) : wpTrigSpeakable(unbrace(a.text));
+  return said.trim().slice(0, 300);
+}
+function wpTrigPreviewAudio(a) {
+  a = a || {};
+  var said = wpTrigPreviewText(a);
+  var replaced = !!(a.sound && a.sound_mode === 'replace');
+  var speakIt = function () {
+    if (said && window._wpVoiceNames && window._wpVoiceNames.say) window._wpVoiceNames.say(said, a.voice_pack || '');
+  };
+  if (a.sound) WPSounds.play(a.sound, a.sound_volume, replaced ? speakIt : null);
+  if (!replaced) speakIt();
+  return { said: said, sound: a.sound || '', replaced: replaced };
+}
+
+// ── Guild triggers, grouped (the guild lead, 2026-10-18) ────────────────────
+// "Guild triggers broken out by abilities / expansions / zones / bosses / fight timers / etc." The table
+// has a real \`category\` (callout / mechanic / class / personal / heal) but it is coarse: 241 of ~490 are
+// just "callout", 226 "mechanic". The finer split already exists in the folder \`tags\` the import kept
+// (a zone short name, "Debuffs", "Cooldown Timers") and in the agent's "What you hear" grouping, which the
+// agent now sends on each row as rule_group / rule_group_label (stat cards, one group per zone, class).
+// TODO: a proper \`group\`/\`expansion\` column on guild_triggers, set by the officers in /admin/triggers,
+// is the real fix (bot + web side). Until then this is display-only and derived; nothing is written.
+function wpGuildGroupOf(t) {
+  t = t || {};
+  var cat = String(t.category || '').toLowerCase();
+  var rg = String(t.rule_group || '');
+  var tags = Array.isArray(t.tags) ? t.tags.map(function (x) { return String(x).toLowerCase(); }) : [];
+  var has = function (k) { return tags.indexOf(k) >= 0; };
+  if (rg === 'statcards') return { id: 'statcards', label: 'Stat cards', cat: 'stat card', order: 60 };
+  if (rg.indexOf('zone:') === 0) return { id: rg, label: String(t.rule_group_label || rg.slice(5)), cat: 'zone', order: 40 };
+  if (cat === 'class' || rg === 'class') return { id: 'class', label: 'Class abilities', cat: 'class', order: 20 };
+  if (has('cooldown timers') || has('zone-timer')) return { id: 'timers', label: 'Fight timers', cat: 'timer', order: 10 };
+  if (has('debuffs') || has('buffs')) return { id: 'abilities', label: 'Buffs and debuffs', cat: 'ability', order: 30 };
+  if (cat === 'personal') return { id: 'personal', label: 'Meant for your own list', cat: 'personal', order: 70 };
+  if (cat === 'mechanic') return { id: 'cat:mechanic', label: 'Boss mechanics', cat: 'mechanic', order: 80 };
+  if (cat === 'heal') return { id: 'cat:heal', label: 'Heals', cat: 'heal', order: 82 };
+  if (cat === 'callout' || !cat) return { id: 'cat:callout', label: 'General callouts', cat: 'callout', order: 90 };
+  return { id: 'cat:' + cat, label: cat.charAt(0).toUpperCase() + cat.slice(1), cat: cat, order: 95 };
+}
+function wpGuildCatBadge(cat) {
+  var color = ({ zone: '#f0883e', mechanic: '#f0883e', 'stat card': '#d2a8ff', class: '#79c0ff', timer: '#a371f7',
+                 ability: '#ff7b72', heal: '#7ee787', personal: '#8b949e', callout: '#8b949e' })[cat] || '#8b949e';
+  return '<span style="font-size:9px;color:' + color + ';background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px">' + esc(cat) + '</span>';
+}
 
 // ── Trigger settings: what a trigger is set to do ───────────────────────────
 // FB-23 / FB-30: a trigger's name and pattern were all the list showed. A personal row's name was
@@ -29921,7 +31688,7 @@ function wpTrigApplyForm(base, f) {
       + '    <button id="trigCancelBtn" type="button" style="display:none;background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Cancel edit</button>'
       + '    <button id="trigPreviewBtn" type="button" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Fire the overlay with the current form text (no save, no DB)">▶ Preview</button>'
       + '    <button id="trigTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Test pattern…</button>'
-      + '    <button id="trigImportBtn" type="button" style="background:#21262d;color:var(--blue);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Paste a GINA or EQLogParser trigger XML to bulk-import">⬇ Import GINA / EQLP</button>'
+      + '    <button id="trigImportBtn" type="button" style="background:#21262d;color:var(--blue);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Bulk-import a GINA, EQLogParser or PQ Companion trigger file">⬇ Import GINA / EQLP / PQ Companion</button>'
       + '    <span id="trigAddMsg" class="dim" style="font-size:11px"></span>'
       + '  </div>'
       + '  <div id="trigTestPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
@@ -29931,7 +31698,7 @@ function wpTrigApplyForm(base, f) {
       + '    <div id="trigTestResult" class="dim" style="font-size:11px;margin-top:6px"></div>'
       + '  </div>'
       + '  <div id="trigImportPanel" style="display:none;margin-top:10px;padding:8px;background:#0d1117;border:1px solid var(--border);border-radius:6px">'
-+ '    <div class="dim" style="font-size:11px;margin-bottom:6px">Import from <b>EQLogParser</b> (.tgf / .tgf.gz — the .gz is read directly, no need to unzip) or <b>GINA</b> (.gtp / XML). Pick a file or paste the text. Every trigger in the file is added; duplicates by name are skipped and existing triggers are preserved. Display, Speak (TTS), countdown timer + the "N seconds before" warning, and capture placeholders ({s1}, {n1}) all carry over.</div>'
++ '    <div class="dim" style="font-size:11px;margin-bottom:6px">Import from <b>EQLogParser</b> (.tgf / .tgf.gz — the .gz is read directly, no need to unzip) or <b>GINA</b> (.gtp / XML) or <b>PQ Companion</b> (its exported .json trigger pack). Pick a file or paste the text. Every trigger in the file is added; duplicates by name are skipped and existing triggers are preserved. Display, Speak (TTS), countdown timer + the "N seconds before" warning, and capture placeholders ({s1}, {n1}) all carry over.</div>'
       + '    <input id="trigImportFile" type="file" accept=".tgf,.gz,.gtp,.xml,.json,application/gzip,application/json,text/xml" style="display:block;margin-bottom:6px;font-size:11px;color:var(--text)">'
       + '    <textarea id="trigImportXml" placeholder="…or paste the .tgf JSON / SharedTriggers XML here" style="width:100%;height:120px;background:#161b22;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;margin-bottom:6px"></textarea>'
       + '    <button id="trigImportRun" type="button" style="background:#1f6feb;color:#fff;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px">Import pasted text</button>'
@@ -30249,32 +32016,50 @@ function wpTrigApplyForm(base, f) {
     var color = (document.getElementById('trigNewColor') || {}).value || 'red';
     var duration = parseInt((document.getElementById('trigNewDuration') || {}).value || '5000', 10) || 5000;
     var msg = document.getElementById('trigAddMsg');
+    // Only a spoken line: it is also what the overlay flashes.
+    if (!overlayText && ttsText) overlayText = ttsText;
     if (!overlayText) {
-      if (msg) { msg.textContent = 'Need overlay text to preview.'; msg.style.color = 'var(--orange)'; }
+      if (msg) { msg.textContent = 'Need overlay text (or spoken text) to preview.'; msg.style.color = 'var(--orange)'; }
       return;
     }
+    // The sound, its volume, "instead of speaking" and this callout's voice, as the form has them now.
+    var snd = (document.getElementById('trigNewSound') || {}).value || '';
+    var pack = (document.getElementById('trigNewVoicePack') || {}).value || '';
+    var audio = { text: overlayText, tts: ttsText, voice_pack: pack };
+    if (snd) { audio.sound = snd; audio.sound_volume = soundVolume(); audio.sound_mode = (document.getElementById('trigNewSoundReplace') || {}).checked ? 'replace' : 'add'; }
+    // HEAR IT HERE (2026-10-18: "Preview does not speak the callout"). The flash below goes to the trigger overlay,
+    // a separate window that only exists in Mimic and only speaks while "Trigger alerts (TTS)" is on, so the
+    // preview could flash and say nothing. The dashboard speaks and plays it itself, through the same voice path as
+    // the voice card's Test, and asks the agent to flash it silently (silent: true) so Mimic's overlay does not say
+    // it a second time. The sound is left off the flash for the same reason.
+    var heard = wpTrigPreviewAudio(audio);
     // Fire ad-hoc — no captures available since we did not match a real line.
-    // Named-group references in the text stay literal so the user sees the
+    // Named-group references in the text stay literal on the flash so the user sees the
     // raw template (a good "this is what it will look like with placeholders"
-    // signal). To preview with substitution, run a Test below first.
-    await fetch('/api/triggers/fire', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        trigger: {
-          name: name,
-          // tts only when the user typed one: absent means the overlay falls back
-          // to the display text (cleaned of emoji by triggers.html), which is the
-          // sane default for the many triggers that read fine as written.
-          actions: [Object.assign({ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }, ttsText ? { tts: ttsText } : {},
-            // the sound, its volume, "instead of speaking" and this callout's voice pack play in the preview too
-            (document.getElementById('trigNewSound') || {}).value ? { sound: document.getElementById('trigNewSound').value, sound_volume: soundVolume(),
-              sound_mode: (document.getElementById('trigNewSoundReplace') || {}).checked ? 'replace' : 'add' } : {},
-            (document.getElementById('trigNewVoicePack') || {}).value ? { voice_pack: document.getElementById('trigNewVoicePack').value } : {})],
-        },
-      }),
-    });
-    if (msg) { msg.textContent = 'Previewed.'; msg.style.color = 'var(--green)'; }
+    // signal); the voice reads the word without its braces. To preview with substitution,
+    // run a Test below first.
+    var flashed = true;
+    try {
+      var r = await fetch('/api/triggers/fire', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          silent: true,
+          trigger: {
+            name: name,
+            // tts only when the user typed one: absent means the overlay falls back
+            // to the display text (cleaned of emoji by triggers.html), which is the
+            // sane default for the many triggers that read fine as written.
+            actions: [Object.assign({ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }, ttsText ? { tts: ttsText } : {})],
+          },
+        }),
+      });
+      flashed = !!(r && r.ok);
+    } catch (e) { flashed = false; }
+    if (msg) {
+      msg.textContent = (heard.replaced ? 'Played the sound' : 'Said “' + heard.said + '”' + (heard.sound ? ' and played the sound' : '')) + (flashed ? '.' : ' (the overlay flash did not reach the agent).');
+      msg.style.color = 'var(--green)';
+    }
   }
   async function onClearAll() {
     await fetch('/api/triggers/clear', { method: 'POST' });
@@ -30536,7 +32321,8 @@ function wpTrigApplyForm(base, f) {
     set('trigNewPattern',  cfg.pattern || '');
     set('trigNewCooldown', cfg.cooldown_seconds || 0);
     set('trigNewOverlay',  cfg.overlay || '');
-    set('trigNewColor',    cfg.color || 'red');
+    set('trigNewTts',      cfg.tts || '');   // the form is reused between copies: clear the last one's spoken text
+    setVal('trigNewColor', cfg.color || 'red');   // setVal gives a colour the dropdown lacks (cyan, yellow) an option
     set('trigNewDuration', cfg.duration_ms || 5000);
     set('trigNewTimerSec', cfg.timer_duration_sec || 0);
     set('trigNewEndEarly', cfg.end_early_pattern || '');
@@ -30550,9 +32336,9 @@ function wpTrigApplyForm(base, f) {
     var wt = document.getElementById('trigNewWarnTts'); if (wt) wt.checked = cfg.warn_tts !== false;
     var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = cfg.timer_loop === true;
     set('trigNewLoopMax',  cfg.timer_loop_max || '');
-    setSoundFields(cfg.sound, cfg.sound_volume, cfg.sound_mode === 'replace', '');
+    setSoundFields(cfg.sound, cfg.sound_volume, cfg.sound_mode === 'replace', cfg.voice_pack || '');
     var msg = document.getElementById('trigAddMsg');
-    if (msg) { msg.textContent = 'Copied from guild trigger — review and click "Add trigger" to save your personal copy.'; msg.style.color = 'var(--blue)'; }
+    if (msg) { msg.textContent = 'Copied from ' + (cfg.from === 'suggested' ? 'a suggested alert' : 'guild trigger') + ' — review, hear it with Preview, and click "Add trigger" to save your personal copy.'; msg.style.color = 'var(--blue)'; }
     var panel = document.getElementById('trigEditorPanel');
     if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
     var nameEl = document.getElementById('trigNewName');
@@ -30621,6 +32407,12 @@ function wpTrigApplyForm(base, f) {
       if (Array.isArray(j.sound_notes) && j.sound_notes.length > 0) {
         summary += '<br><span class="dim" style="font-size:11px">' + j.sound_notes.length + ' trigger' + (j.sound_notes.length === 1 ? '' : 's') + ' played a sound that could not come along, so ' + (j.sound_notes.length === 1 ? 'it keeps' : 'they keep') + ' the spoken callout: '
           + j.sound_notes.slice(0, 4).map(function(n){ return esc(n.name) + (n.file ? ' (' + esc(n.file) + ')' : '') + ' &mdash; ' + esc(n.why); }).join('; ') + (j.sound_notes.length > 4 ? '; and ' + (j.sound_notes.length - 4) + ' more' : '') + '. Drop the file in your sounds folder and pick it in the trigger.</span>';
+      }
+      // PQ Companion packs: what a personal trigger has no place for.
+      if (Array.isArray(j.not_carried) && j.not_carried.length > 0) {
+        summary += '<br><span class="dim" style="font-size:11px">Not carried over: '
+          + j.not_carried.slice(0, 6).map(function(n){ return esc(n.name) + ' (' + n.what.map(esc).join('; ') + ')'; }).join('; ')
+          + (j.not_carried.length > 6 ? '; and ' + (j.not_carried.length - 6) + ' more' : '') + '.</span>';
       }
       if (Array.isArray(j.errors) && j.errors.length > 0) {
         summary += '<br><span class="dim" style="font-size:10px">' + j.errors.length + ' bad pattern' + (j.errors.length === 1 ? '' : 's') + ': ' + j.errors.slice(0, 3).map(function(e){ return esc(e.name) + ' (' + esc(e.error) + ')'; }).join('; ') + (j.errors.length > 3 ? '; …' : '') + '</span>';
@@ -30730,9 +32522,9 @@ function wpTrigApplyForm(base, f) {
     // Clear-overlay buttons get re-rendered by renderTriggers every 2s poll,
     // so direct addEventListener would die on the first refresh. Use event
     // delegation on the section root — it survives every inner morph and
-    // routes clicks by element id.
-    if (!section._wpTrigClickBound) {
-      section.addEventListener('click', function(e){
+    // routes clicks by element id. The same handler is bound to #fights too: the ⏪ Replay
+    // card (Start / Stop / journal link) lives there since 2026-10-17.
+    var onSectionClick = function(e){
         var t = e.target;
         if (!t) return;
         // "Copy to personal" on a guild-trigger row — the data-attr may live on
@@ -30740,6 +32532,13 @@ function wpTrigApplyForm(base, f) {
         var cp = t.closest ? t.closest('[data-trig-copy]') : null;
         if (cp) {
           try { prefill(JSON.parse(cp.getAttribute('data-trig-copy'))); } catch (err) { void err; }
+          return;
+        }
+        // ▶ Preview on a Suggested or Guild row: speak and play it here. Before the row test below, which
+        // would otherwise open the row.
+        var pv = t.closest ? t.closest('[data-trig-prev]') : null;
+        if (pv) {
+          try { wpTrigPreviewAudio(JSON.parse(pv.getAttribute('data-trig-prev'))); } catch (err) { void err; }
           return;
         }
         // A guild trigger's name, or a plain cell of its row, opens its settings (FB-30). Dragging across
@@ -30750,6 +32549,21 @@ function wpTrigApplyForm(base, f) {
           wpGuildTrigToggle(gr.getAttribute('data-trig-key'));
           return;
         }
+        // 🔇 on an enrage fire (Recent fires) and ✕ on the muted list under it.
+        var em = t.closest ? t.closest('[data-enrage-mute]') : null;
+        if (em) { enrageMutePost('mute', em.getAttribute('data-enrage-mute'), em.getAttribute('data-mob')); return; }
+        var eu = t.closest ? t.closest('[data-enrage-unmute]') : null;
+        if (eu) { enrageMutePost('unmute', eu.getAttribute('data-enrage-unmute'), eu.getAttribute('data-mob')); return; }
+        // ✕ Unmute on the Muted timers card.
+        var tu = t.closest ? t.closest('[data-timer-unmute]') : null;
+        if (tu) { timerMutePost({ action: 'unmute', key: tu.getAttribute('data-timer-unmute'), scope: tu.getAttribute('data-scope') }); return; }
+        // 🔊 on a spoken fire (Recent fires): replay it, hear a new wording, or send the suggestion.
+        var vf = t.closest ? t.closest('[data-vf-play],[data-vf-say],[data-vf-suggest]') : null;
+        if (vf) {
+          var vk = vf.hasAttribute('data-vf-play') ? 'play' : (vf.hasAttribute('data-vf-say') ? 'say' : 'suggest');
+          wpVfAct(vk, vf.getAttribute('data-vf-' + vk));
+          return;
+        }
         if (!t.id) return;
         if (t.id === 'trigClearAllBtn')  onClearAll();
         else if (t.id === 'trigClearTestBtn') onClearTests();
@@ -30757,16 +32571,20 @@ function wpTrigApplyForm(base, f) {
         else if (t.id === 'replayStopBtn')    onReplayStop();
         else if (t.id === 'replayJournalLink') {
           if (e && e.preventDefault) e.preventDefault();
+          // The checkpoint journal is a 🩺 Diagnostics card, so open that tab first.
+          var dgBtn = document.querySelector('.nav button[data-tab="diag"]');
+          if (dgBtn) dgBtn.click();
           var j = document.getElementById('wpTriggerJournal');
           if (j) j.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
-      });
-      section._wpTrigClickBound = true;
-    }
+    };
+    [section, document.getElementById('fights')].forEach(function(host){
+      if (host && !host._wpTrigClickBound) { host.addEventListener('click', onSectionClick); host._wpTrigClickBound = true; }
+    });
     // Delegated change handler (survives the 2s section morph) for the loot
-    // auction announce toggle + default-duration knob (#107).
-    if (!section._wpTrigChangeBound) {
-      section.addEventListener('change', function(e){
+    // auction announce toggle + default-duration knob (#107). Bound to #voice as well as
+    // #triggers: the loot and raid-callout cards live on the 🗣 Voice tab since 2026-10-17.
+    var onSectionChange = function(e){
         var t = e.target;
         if (!t || !t.id) return;
         if (t.id === 'lootAucTts') {
@@ -30781,9 +32599,10 @@ function wpTrigApplyForm(base, f) {
         } else if (t.id === 'timingVotes') {
           saveCalloutPref({ timingFeedback: !!t.checked }, 'timingVotesMsg');
         }
-      });
-      section._wpTrigChangeBound = true;
-    }
+    };
+    [section, document.getElementById('voice')].forEach(function(host){
+      if (host && !host._wpTrigChangeBound) { host.addEventListener('change', onSectionChange); host._wpTrigChangeBound = true; }
+    });
     fetchAndRenderList();
     mounted = true;
   }
@@ -30839,7 +32658,26 @@ function wpTrigApplyForm(base, f) {
          + (t.no_tts
            ? '<td style="padding:4px 6px;text-align:center;color:var(--dim)">—</td>'
            : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS) — for every character it is on for" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
+         + '<td style="padding:4px 6px;white-space:nowrap">' + actionsHtml(t) + '</td>'
          + '</tr>';
+  }
+  // ▶ Preview and ✎ Configure (the guild lead, 2026-10-18: "none of the suggestions have the ability to preview or
+  // configure"). Static markup; the section's delegated click handler (the Triggers editor) does the work, the same
+  // one the guild rows use: Preview speaks and plays the callout here (wpTrigPreviewAudio), Configure opens a COPY
+  // in the Personal triggers form, filled in (prefill), so the suggested template itself is never changed. A timer
+  // bar says nothing, so it has neither. A row matched by the spell catalog has no pattern to put in a form, so it
+  // gets Preview only; switching it on is still the tick box.
+  function actionsHtml(t){
+    if (t.no_tts) return '<span class="dim">—</span>';
+    // What it says: the filled-in words when the panel has them ("RESISTED: Tashanian — a gnoll warlord").
+    var prev = { text: t.overlay_preview || t.overlay_text || t.label || '', tts: '', sound: t.sound || '',
+                 sound_volume: t.sound_volume != null ? t.sound_volume : null, sound_mode: t.sound_mode || '', voice_pack: '' };
+    var copy = { name: (t.label || 'trigger') + ' (copy)', pattern: t.pattern || '', cooldown_seconds: t.cooldown_seconds || 0,
+                 overlay: t.overlay_text || '', tts: '', color: t.overlay_color || 'red', duration_ms: t.overlay_ms || 4000,
+                 zeal_condition: t.zeal_condition || null, sound: t.sound || '', sound_volume: t.sound_volume != null ? t.sound_volume : null,
+                 sound_mode: t.sound_mode || '', from: 'suggested' };
+    return '<button type="button" data-trig-prev="' + esc(JSON.stringify(prev)) + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Hear this alert before you switch it on: it speaks and plays as it would live, here on this PC only.">▶ Preview</button>'
+      + (t.catalog ? '' : '<button type="button" data-trig-copy="' + esc(JSON.stringify(copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px" title="Configure: open a copy of this alert in the Personal triggers form, filled in, to change its words, sound or voice and add it as your own. The suggested alert itself is not changed.">✎ Configure</button>' );
   }
   function pickerHtml(chars){
     var opts = '<option value="">Every character</option>';
@@ -30863,6 +32701,7 @@ function wpTrigApplyForm(base, f) {
          + '<th style="padding:3px 6px;text-align:left">cat</th>'
          + '<th style="padding:3px 6px;text-align:left">trigger</th>'
          + '<th style="padding:3px 6px;text-align:center;width:60px">TTS</th>'
+         + '<th style="padding:3px 6px;text-align:left"></th>'
          + '</tr>' + rows + '</table></div>';
   }
   async function fetchAndRender(){
@@ -31314,15 +33153,137 @@ function wpSoundOverrideHtml(t, ov) {
       var frag = String(p.voices[f]).toLowerCase();
       for (var j = 0; j < vs.length; j++) if (vs[j].name.toLowerCase().indexOf(frag) >= 0) { voice = vs[j]; break; }
     }
-    return { voice: voice, rate: rate, pitch: pitch };
+    return { voice: voice, rate: rate, pitch: pitch, volume: volumeNow() };
   }
-  function speak(text, packId){
+  // VOLUME (the guild lead, 2026-10-19): cfgVoice.volume is 0-1, absent = full. Not part of a voice, so a forced pack
+  // does not change it. The same rule as Mimic's voice.js.
+  function volumeNow(){ var n = cfgVoice.volume; return (typeof n === 'number' && isFinite(n) && n >= 0 && n <= 1) ? n : 1; }
+  // over (optional): a past line's own { voice (name), rate, pitch }, which outrank the pack's (REPLAY, below).
+  function speakWin(text, packId, over){
     if (!window.speechSynthesis) return;
     var v = pick(packId), u = new SpeechSynthesisUtterance(text);
+    if (over) {
+      if (over.rate > 0) v.rate = over.rate;
+      if (over.pitch > 0) v.pitch = over.pitch;
+      var vs0 = voices();
+      for (var vi = 0; vi < vs0.length; vi++) if (vs0[vi].name === over.voice) { v.voice = vs0[vi]; break; }
+    }
     if (v.voice) u.voice = v.voice;
     u.rate = v.rate; u.pitch = v.pitch;
+    if (v.volume >= 0 && v.volume <= 1) u.volume = v.volume;
     try { window.speechSynthesis.cancel(); } catch (e) { void e; }
     window.speechSynthesis.speak(u);
+  }
+  // ENGINE (2026-10-17): the same rules as Mimic's voice.js chooseEngine — auto takes Piper first (the default), Kokoro
+  // only when Piper is not installed or picked; an explicit pick takes that engine only, anything not installed is Windows.
+  function chooseEngine(cfg, status) {
+    cfg = cfg || {};
+    var want = cfg.engine || 'auto';
+    var order = want === 'windows' ? [] : (want === 'auto' ? ['piper', 'kokoro'] : [want]);
+    for (var i = 0; i < order.length; i++) {
+      var e = order[i], s = status && status[e];
+      if (s && s.ready && Array.isArray(s.voices) && s.voices.length) {
+        var asked = cfg[e + 'Voice'];
+        return { engine: e, voice: s.voices.indexOf(asked) >= 0 ? asked : s.voices[0] };
+      }
+    }
+    return { engine: 'windows', voice: null };
+  }
+  // acc: the accept panel that is open for a non-free voice ({ id, terms, research }), or null.
+  var eng = { st: null, note: '', busy: false, acc: null }, curAudio = null;
+  // TEST PHRASE (the guild lead, 2026-10-18): every ▶ Test speaks the line chosen or typed at the top of the engine card.
+  // The picker and the box live in ONE element built once (phraseEl) and moved back in after each paint, so a repaint never
+  // resets what is typed, the caret or the choice; the choice is also kept in this browser (localStorage) across reloads.
+  // Mimic caps a spoken line at 300 characters (neuralVoice.js MAX_TEXT_CHARS), so the box does too.
+  var PHRASES = [
+    'Slow is OFF the boss.',
+    'Enrage soon. Back off.',
+    'Rampage is on YOU.',
+    'Clerics, chain heal now.',
+    'Adds incoming from behind.',
+    'Mez is broken. Pick it up before it wakes the camp. Healers, top off the tank, then everybody stack on the cleric for the next wave. Damage, hold until the slow lands.'
+  ];
+  var PHRASE_KEY = 'wpVoiceTestPhrase', LIVE_LIMIT_S = 2.5;   // 2.5 s: how long Mimic waits on a live callout before the Windows voice speaks it
+  var phrase = { preset: -1, text: '' }, phraseEl = null, pc = null;
+  try { var _ps = JSON.parse(localStorage.getItem(PHRASE_KEY) || 'null'); if (_ps) { phrase.preset = (_ps.preset >= 0 && _ps.preset < PHRASES.length) ? _ps.preset | 0 : -1; phrase.text = String(_ps.text || '').slice(0, 300); } } catch (e) { void e; }
+  function savePhrase(){ try { localStorage.setItem(PHRASE_KEY, JSON.stringify(phrase)); } catch (e) { void e; } }
+  // What ▶ Test says: the typed line if there is one, else the chosen preset, else the old heal-up line.
+  function testLine(){ var t = phrase.text.trim(); return t || (phrase.preset >= 0 ? PHRASES[phrase.preset] : sampleLine()); }
+  function buildPhraseEl(){
+    var d = document.createElement('div');
+    d.id = 'wpVoicePhrase';
+    d.style.cssText = 'margin-bottom:8px;font-size:12px;display:flex;flex-direction:column;gap:4px';
+    var o = '<option value=""' + (phrase.preset < 0 ? ' selected' : '') + '>Heal-up callout (the usual test line)</option>';
+    for (var i = 0; i < PHRASES.length; i++) o += '<option value="' + i + '"' + (phrase.preset === i ? ' selected' : '') + '>' + esc(PHRASES[i].length > 48 ? PHRASES[i].slice(0, 45) + '…' : PHRASES[i]) + '</option>';
+    d.innerHTML = '<label style="display:flex;flex-wrap:wrap;align-items:center;gap:6px"><b>Test line</b>'
+      + '<select id="wpVoicePreset" style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px;max-width:100%">' + o + '</select></label>'
+      + '<textarea id="wpVoicePhraseText" rows="2" maxlength="300" placeholder="…or type your own sentence or paragraph (up to 300 characters). It is used instead of the line above." style="width:100%;box-sizing:border-box;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-family:inherit;font-size:12px;resize:vertical"></textarea>'
+      + '<div class="dim" style="font-size:11px">Every &#9654; Test below says this line.</div>'
+      + '<div id="wpVoiceTiming" style="font-size:11px"></div>';
+    d.querySelector('#wpVoicePhraseText').value = phrase.text;
+    return d;
+  }
+  // The measured speed of the last downloaded-voice Test. It lives inside phraseEl, so a repaint never blanks it.
+  function setTiming(text, level){
+    var n = phraseEl && phraseEl.querySelector('#wpVoiceTiming');
+    if (!n) return;
+    n.textContent = text || '';
+    n.style.color = level === 'bad' ? 'var(--red)' : level === 'ok' ? 'var(--green)' : '';
+  }
+  // This PC's size, from the agent. Asked when the card opens and after a download or a Test — never on a timer.
+  async function loadPc(){
+    try { var r = await fetch('/api/pc-specs'); if (r.ok) pc = await r.json(); } catch (e) { void e; }
+  }
+  function gb(b){ return (Math.round(b / 107374182.4) / 10) + ' GB'; }
+  function pcLine(){
+    if (!pc) return '';
+    var bits = [];
+    if (pc.cores > 0) bits.push(pc.cores + ' processor core' + (pc.cores === 1 ? '' : 's'));
+    if (pc.ram_bytes > 0) bits.push(gb(pc.ram_bytes) + ' memory');
+    if (typeof pc.disk_free_bytes === 'number') bits.push(gb(pc.disk_free_bytes) + ' free disk space');
+    return bits.length ? 'This PC: ' + bits.join(' &middot; ') + '.' : '';
+  }
+  // Kokoro unpacks to about 177 MB and peaks near 525 MB of memory while it does. → { block: reason|'', hint: text|'' }
+  function kokoroFit(k){
+    var need = (k && k.totalBytes) || 177 * 1048576, out = { block: '', hint: '' };
+    if (!pc) return out;
+    if (typeof pc.disk_free_bytes === 'number') {
+      if (pc.disk_free_bytes < need * 2.5) out.block = 'Only ' + mb(pc.disk_free_bytes) + ' free on this PC\\'s disk. Kokoro needs about ' + mb(need) + ' plus room to unpack, so free some space first.';
+      else if (pc.disk_free_bytes < 1073741824) out.hint = 'Disk space is getting tight (' + mb(pc.disk_free_bytes) + ' free), but there is room for Kokoro.';
+    }
+    if (!out.block && ((pc.ram_bytes > 0 && pc.ram_bytes < 4 * 1073741824) || (pc.cores > 0 && pc.cores < 4)))
+      out.hint = (out.hint ? out.hint + ' ' : '') + 'Kokoro may be slow on this PC (' + (pc.cores || '?') + ' cores, ' + (pc.ram_bytes ? gb(pc.ram_bytes) : '?') + ' memory). Piper is lighter.';
+    return out;
+  }
+  // A phrase from a downloaded voice, made by Mimic. Resolves true once it is playing, false on ANY trouble.
+  // test true is a person pressing ▶ Test: Mimic and this wait longer, because Kokoro can take several seconds.
+  function playNeural(ch, text, packId, test, rate){
+    var m = window.mimic;
+    if (!m || !m.voiceSynth) return Promise.resolve(false);
+    return new Promise(function(done){
+      var late = false, t = setTimeout(function(){ late = true; done(false); }, test ? 12900 : 2900);
+      var spec = { engine: ch.engine, voice: ch.voice, rate: rate > 0 ? rate : pick(packId).rate };
+      if (test) spec.test = true;
+      Promise.resolve(m.voiceSynth(text, spec)).then(function(buf){
+        if (late) return;
+        clearTimeout(t);
+        if (!buf || !buf.byteLength) { done(false); return; }
+        try {
+          var url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })), a = new Audio(url);
+          a.onended = a.onerror = function(){ try { URL.revokeObjectURL(url); } catch (e) { void e; } };
+          if (curAudio) { try { curAudio.pause(); } catch (e) { void e; } }
+          curAudio = a;
+          a.volume = volumeNow();
+          a.play().then(function(){ done(true); }, function(){ done(false); });
+        } catch (e) { done(false); }
+      }, function(){ if (!late) { clearTimeout(t); done(false); } });
+    });
+  }
+  // Any trouble with a downloaded voice speaks the line with the Windows one instead.
+  function speak(text, packId){
+    var ch = chooseEngine(cfgVoice, eng.st);
+    if (ch.engine !== 'windows' && inMimic()) { playNeural(ch, text, packId, true).then(function(ok){ if (!ok) speakWin(text, packId); }); return; }
+    speakWin(text, packId);
   }
   function save(){ if (inMimic()) { try { window.mimic.saveConfig({ voice: cfgVoice }); } catch (e) { void e; } } }
   function pct(n){ return Math.round(n * 100) / 100; }
@@ -31351,11 +33312,141 @@ function wpSoundOverrideHtml(t, ov) {
     h += '</select></label>'
       + '<label>Speed <input type="range" id="wpVoiceRate" min="50" max="200" value="' + Math.round((cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoiceRateV" class="dim">' + pct(cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) + '&times;</span></label>'
       + '<label>Pitch <input type="range" id="wpVoicePitch" min="0" max="200" value="' + Math.round((cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoicePitchV" class="dim">' + pct(cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) + '</span></label>'
+      + '<label>Volume <input type="range" id="wpVoiceVolume" min="10" max="100" step="5" value="' + Math.round(volumeNow() * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoiceVolumeV" class="dim">' + Math.round(volumeNow() * 100) + '%</span></label>'
       + '<button type="button" id="wpVoiceHear" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>'
       + '<button type="button" id="wpVoiceReset" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;font-family:inherit;font-size:12px"' + (inMimic() ? '' : ' disabled') + '>Back to the pack\\'s own</button>'
       + '</div>';
-    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor.</div>';
+    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor. Speed and volume apply to every voice engine; pitch and the installed-voice pick apply to the Windows voice only. Volume is how loud callouts play inside Mimic; trigger sounds have their own volume.</div>';
     return h;
+  }
+  // 🗣 Voice engine (the guild lead, 2026-10-17): Windows voices, Piper (free, open source, downloaded on demand),
+  // Kokoro (the upgrade: sherpa-onnx + Kokoro-82M, one download). Mimic downloads and plays them; see
+  // apps/mimic/neuralVoice.js. Non-free Piper voices sit behind an accept screen (acceptHtml).
+  function mb(b){ var m = b / 1048576; return (m >= 10 ? Math.round(m) : Math.round(m * 10) / 10) + ' MB'; }
+  function btn(attrs, label, blue, off){
+    return '<button type="button" ' + attrs + ' style="background:' + (blue ? '#1f6feb;color:#fff;border:0' : 'var(--panel);color:var(--text);border:1px solid var(--border)') + ';border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (eng.busy || off ? ' disabled' : '') + '>' + label + '</button>';
+  }
+  // The accept screen for a non-commercial or research-only voice: licence, the publisher's model card, the credit,
+  // and the box(es) that must be ticked before Download turns on. Research voices add the warning and a second box.
+  function acceptHtml(v){
+    var a = eng.acc, research = v.tier === 'research', ok = a.terms && (!research || a.research);
+    var h = '<div data-vn-accept="' + esc(v.id) + '" style="width:100%;margin:2px 0 4px 22px;padding:8px 10px;border:1px solid ' + (research ? 'var(--red)' : 'var(--border)') + ';border-radius:5px;font-size:12px;display:flex;flex-direction:column;gap:6px">';
+    if (research) h += '<div style="border:2px solid var(--red);border-radius:4px;padding:6px 8px;color:var(--red)"><b>Research only and experimental.</b> This voice is built from data licensed for research use only. Using it for game callouts may fall outside that licence; you take that on yourself by downloading it. It may also sound or behave unexpectedly.</div>';
+    h += '<div>Licence: <b>' + esc(v.licence) + '</b> &middot; <a href="' + esc(v.modelCardUrl) + '" target="_blank" rel="noopener noreferrer">Model card</a></div>'
+      + '<div class="dim">' + esc(v.credit) + '</div>';
+    if (!research) h += '<div>For personal, non-commercial use. Mimic downloads it from its publisher for you; we don\\'t share it.</div>';
+    h += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-acc="terms"' + (a.terms ? ' checked' : '') + '> I accept these terms</label>';
+    if (research) h += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-acc="research"' + (a.research ? ' checked' : '') + '> I understand this voice is for research use only and is experimental</label>';
+    h += '<div style="display:flex;gap:8px"><button type="button" data-vn-dl-gated="' + esc(v.id) + '" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (ok && !eng.busy ? '' : ' disabled') + '>Download &middot; ' + mb(v.downloadBytes) + '</button>'
+      + btn('data-vn-acc-cancel', 'Cancel') + '</div></div>';
+    return h;
+  }
+  function engineHtml(){
+    var st = eng.st, ch = chooseEngine(cfgVoice, st), mi = inMimic();
+    var box = function(on){ return 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;padding:4px 6px;border:1px solid ' + (on ? 'var(--blue)' : 'var(--border)') + ';border-radius:5px'; };
+    var h = '<h3 style="font-size:13px;margin:8px 0 4px">Voice engine</h3>'
+      + '<div class="dim" style="font-size:11px;margin-bottom:6px">' + (mi ? 'Downloads are free and open source, kept on this PC, and never part of the installer. ' : 'Mimic downloads and plays these voices; open this dashboard from Mimic to change them. ')
+      + 'If a downloaded voice is slow or fails, that callout is spoken with the Windows voice instead, so none is lost.'
+      + (pcLine() ? '<br>' + pcLine() + ' The voices run on this PC, not on a server.' : '') + '</div>'
+      + '<div id="wpVoicePhraseSlot"></div>'
+      + '<div style="display:flex;flex-direction:column;gap:4px">';
+    h += '<div style="' + box(ch.engine === 'windows') + '"><label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer"><input type="radio" name="wpVoiceEngine" value="windows"' + (ch.engine === 'windows' ? ' checked' : '') + (mi ? '' : ' disabled') + '><b>Windows voices</b><span class="dim">Built in to Windows. Always works, and is the fallback.</span></label>'
+      + '<button type="button" data-vn-engtest="windows" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654; Test</button></div>';
+    var p = st && st.piper;
+    h += '<div style="' + box(ch.engine === 'piper') + ';align-items:flex-start;flex-direction:column"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%"><label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer"><input type="radio" name="wpVoiceEngine" value="piper"' + (ch.engine === 'piper' ? ' checked' : '') + (mi && p && p.ready ? '' : ' disabled') + '><b>Piper</b><span class="dim">' + esc((p && p.blurb) || 'Free and open source. Natural, quick, and light on older PCs.') + '</span></label>'
+      + (p && p.ready ? btn('data-vn-rm="piper"', 'Remove') : '') + '</div>';
+    if (!st) h += '<div class="dim" style="font-size:11px">' + (mi ? 'Checking what is installed…' : 'Not available outside Mimic.') + '</div>';
+    else if (!p.available) h += '<div class="dim" style="font-size:11px">' + esc(p.reason) + '</div>';
+    else {
+      // Three groups (the guild lead, 2026-10-17): free ones download on a click; the other two make you read
+      // the terms and tick a box first. Neither is hosted or shipped by us: Mimic fetches it from its publisher.
+      var groups = [['free', 'Free', ''], ['nc', 'Non-commercial &mdash; accept to download', 'Personal, non-commercial use only. You read the terms and accept them before it downloads.'],
+        ['research', 'Research only &mdash; experimental', 'Built on research-only data. Experimental, and you take the licence risk yourself.']];
+      for (var g = 0; g < groups.length; g++) {
+        var inGroup = p.catalog.filter(function(c){ return (c.tier || 'free') === groups[g][0]; });
+        if (!inGroup.length) continue;
+        var research = groups[g][0] === 'research';
+        h += '<div style="width:100%;padding-left:22px;margin-top:4px;font-size:11px;' + (research ? 'color:var(--red);border-left:3px solid var(--red);padding-left:8px;margin-left:14px' : '') + '"><b>' + groups[g][1] + '</b>' + (groups[g][2] ? ' <span class="dim">' + groups[g][2] + '</span>' : '') + '</div>';
+        for (var i = 0; i < inGroup.length; i++) {
+          var v = inGroup[i], sel = ch.engine === 'piper' && ch.voice === v.id, gated = (v.tier || 'free') !== 'free';
+          h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">'
+            + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="wpPiperVoice" value="' + esc(v.id) + '"' + (sel ? ' checked' : '') + (v.installed && mi ? '' : ' disabled') + '>' + esc(v.label) + '</label>'
+            + '<span class="dim" title="' + esc(v.credit) + '">' + esc(v.licence) + ' &mdash; ' + esc(v.credit) + '</span>'
+            + (v.installed ? '<button type="button" data-vn-engtest="piper:' + esc(v.id) + '" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654; Test</button><span class="dim">Installed</span>' + (gated ? btn('data-vn-rm="piper:' + esc(v.id) + '"', 'Remove') : '')
+              : (!mi ? '' : (gated ? btn('data-vn-acc-open="' + esc(v.id) + '"', 'Read terms &amp; download') : btn('data-vn-dl="piper:' + esc(v.id) + '"', 'Download &middot; ' + mb(v.downloadBytes), true)))) + '</div>';
+          if (gated && !v.installed && eng.acc && eng.acc.id === v.id) h += acceptHtml(v);
+        }
+      }
+      h += '<div class="dim" style="font-size:11px;padding-left:22px">Piper itself is MIT-licensed (rhasspy/piper). Speed applies to it; it has no pitch.</div>';
+    }
+    h += '</div>';
+    var k = st && st.kokoro;
+    h += '<div style="' + box(ch.engine === 'kokoro') + ';align-items:flex-start;flex-direction:column"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%"><label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer"><input type="radio" name="wpVoiceEngine" value="kokoro"' + (ch.engine === 'kokoro' ? ' checked' : '') + (mi && k && k.ready ? '' : ' disabled') + '><b>Kokoro</b><span class="dim">' + esc((k && k.blurb) || 'Sounds better, slower on older PCs.') + '</span></label>'
+      + (k && k.ready ? btn('data-vn-rm="kokoro"', 'Remove') : '') + '</div>';
+    if (!st) h += '<div class="dim" style="font-size:11px">' + (mi ? 'Checking what is installed…' : 'Not available outside Mimic.') + '</div>';
+    else if (!k.available) h += '<div class="dim" style="font-size:11px">' + esc(k.reason) + '</div>';
+    else {
+      var fit = kokoroFit(k);
+      if (!k.ready) h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">' + (mi ? btn('data-vn-dl="kokoro:all"' + (fit.block ? ' title="' + esc(fit.block) + '"' : ''), 'Download &middot; ' + mb(k.downloadBytes || k.totalBytes), true, !!fit.block) : '')
+        + '<span class="dim">About ' + mb((k.totalBytes || 0) + 60 * 1048576) + ' of disk once unpacked, and it needs roughly 525 MB of free memory while it does. Pick a voice after it installs.</span></div>'
+        + (fit.block ? '<div style="font-size:11px;padding-left:22px;color:var(--red)">' + esc(fit.block) + '</div>' : '');
+      if (fit.hint) h += '<div class="dim" style="font-size:11px;padding-left:22px">' + esc(fit.hint) + '</div>';
+      else for (var q = 0; q < k.catalog.length; q++) {
+        var kv = k.catalog[q], ksel = ch.engine === 'kokoro' && ch.voice === kv.id;
+        h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">'
+          + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="wpKokoroVoice" value="' + esc(kv.id) + '"' + (ksel ? ' checked' : '') + (mi ? '' : ' disabled') + '>' + esc(kv.label) + '</label>'
+          + '<button type="button" data-vn-engtest="kokoro:' + esc(kv.id) + '" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654; Test</button></div>';
+      }
+      if (k.problem) h += '<div style="font-size:11px;padding-left:22px;color:var(--red)">' + esc(k.problem) + '</div>';
+      h += '<div class="dim" style="font-size:11px;padding-left:22px">' + esc(k.licence || 'Apache-2.0') + ' &mdash; ' + esc(k.credit || '') + ' Slower than Piper: on an older PC a quick callout may be spoken by the Windows voice instead.</div>';
+    }
+    h += '</div>';
+    h += '</div><div id="wpVoiceProg" class="dim" style="font-size:11px;margin-top:4px"></div><div id="wpVoiceNote" style="font-size:11px;margin-top:2px">' + esc(eng.note) + '</div>';
+    return h;
+  }
+  function setNote(t){ eng.note = t; var n = document.getElementById('wpVoiceNote'); if (n) n.textContent = t; }
+  async function refreshEngines(){
+    if (!inMimic() || !window.mimic.voiceStatus) return;
+    try { eng.st = await window.mimic.voiceStatus(); } catch (e) { void e; }
+  }
+  async function download(engine, voice, accept){
+    if (eng.busy) return;
+    eng.busy = true; eng.note = ''; eng.acc = null; paint();
+    var poll = setInterval(function(){
+      window.mimic.voiceStatus().then(function(s){ var pr = s && s.progress, n = document.getElementById('wpVoiceProg'); if (n) n.textContent = pr ? pr.text + ' ' + pr.pct + '%' : ''; }, function(){});
+    }, 600);
+    try {
+      var r = await window.mimic.voiceInstall(engine, voice, accept);
+      if (r && r.ok) { eng.st = r.status; eng.note = 'Installed. Callouts now use it' + ((cfgVoice.engine || 'auto') === 'auto' ? '.' : ' once you pick it above.') + (engine === 'kokoro' ? ' Mimic is warming it up in the background, so the first ▶ Test may still take a moment.' : ''); }
+      else eng.note = (r && r.error) || 'The download did not finish. Nothing was changed.';
+    } catch (e) { eng.note = 'Could not reach Mimic to download.'; }
+    clearInterval(poll); eng.busy = false;
+    await loadPc();   // the disk just changed
+    paint();
+  }
+  async function removeEngine(engine, voice){
+    if (eng.busy) return;
+    try {
+      var r = await window.mimic.voiceRemove(engine, voice);
+      if (r && r.ok) { eng.st = r.status; eng.note = 'Removed. Callouts use the Windows voice.'; } else eng.note = (r && r.error) || 'Could not remove it.';
+    } catch (e) { eng.note = 'Could not reach Mimic.'; }
+    paint();
+  }
+  async function engineTest(spec){
+    var parts = spec.split(':'), line = testLine();
+    if (parts[0] === 'windows') { setTiming(''); speakWin(line, null); return; }
+    setNote(parts[0] === 'kokoro' ? 'Making it… Kokoro can take several seconds.' : 'Making it…');
+    setTiming('');
+    // Mimic's voice bridge does not report how long it took, so this times the whole ask (making the audio and handing
+    // it over) until it starts playing — close to what a live callout waits for.
+    var t0 = performance.now();
+    var ok = await playNeural({ engine: parts[0], voice: parts[1] }, line, null, true);
+    var secs = Math.round((performance.now() - t0) / 100) / 10, who = parts[0] === 'kokoro' ? 'Kokoro' : 'Piper';
+    if (ok) setNote('');
+    else { setNote('That voice did not answer in time, so the Windows voice spoke instead. Callouts do the same.'); speakWin(line, null); }
+    if (ok && secs <= LIVE_LIMIT_S) setTiming(who + ' spoke in ' + secs + ' s — fine for live callouts.', 'ok');
+    else setTiming('⚠ ' + (ok ? who + ' took ' + secs + ' s' : who + ' gave up after ' + secs + ' s') + ' — too slow for live callouts on this PC; the Windows voice would speak mid-raid instead.'
+      + (secs > LIVE_LIMIT_S ? ' Try ▶ Test once more: the first run after starting Mimic is slower.' : ''), 'bad');
   }
   function namesHtml(){
     var h = '<h3 style="font-size:13px;margin:14px 0 4px">Say your name</h3>';
@@ -31397,11 +33488,24 @@ function wpSoundOverrideHtml(t, ov) {
   }
   function paint(){
     if (!el) return;
-    el.innerHTML = '<h2>🗣 Voice &amp; names <span class="dim" style="font-size:11px;font-weight:normal">(how callouts sound, and how your characters are said)</span></h2>' + voiceHtml() + namesHtml();
+    if (!phraseEl) phraseEl = buildPhraseEl();
+    // The test-line picker and box are not rebuilt: they are lifted out with the old HTML and put back, so what is typed
+    // survives. Taking an element out of the page drops its focus, so the caret is handed back too.
+    var ae = document.activeElement, had = ae && phraseEl.contains(ae) ? { id: ae.id, s: ae.selectionStart, e: ae.selectionEnd, top: ae.scrollTop } : null;
+    el.innerHTML = '<h2>🗣 Voice &amp; names <span class="dim" style="font-size:11px;font-weight:normal">(how callouts sound, and how your characters are said)</span></h2>'
+      + '<div class="dim" style="font-size:11px;margin-bottom:4px"><a href="https://wolfpack.quest/me/voice" target="_blank" rel="noreferrer" title="Open wolfpack.quest in a new tab">Say your name and pronunciations on wolfpack.quest &#8599;</a></div>'
+      + engineHtml() + voiceHtml() + namesHtml();
+    var slot = el.querySelector('#wpVoicePhraseSlot');
+    if (slot) slot.appendChild(phraseEl);
+    if (had) {
+      var f = phraseEl.querySelector('#' + had.id);
+      if (f) { try { f.focus(); if (had.s != null && f.setSelectionRange) f.setSelectionRange(had.s, had.e); f.scrollTop = had.top; } catch (e) { void e; } }
+    }
   }
   async function loadAll(){
     await WPSounds.loadPacks();
     if (inMimic()) { try { var c = await window.mimic.getConfig(); if (c && c.voice) cfgVoice = Object.assign({ pack: 'default', voiceName: '', rate: null, pitch: null }, c.voice); } catch (e) { void e; } }
+    await Promise.all([refreshEngines(), loadPc()]);
     paint();
     try { var r = await fetch('/api/pronunciations'); pron = r.ok ? await r.json() : { characters: [], feature: 'off', signed_in: false }; } catch (e) { pron = { characters: [], feature: 'off', signed_in: false }; }
     paint();
@@ -31430,6 +33534,12 @@ function wpSoundOverrideHtml(t, ov) {
     if (!t) return;
     var b;
     if ((b = t.closest('[data-vn-sample]'))) { speak(sampleLine(), b.getAttribute('data-vn-sample')); return; }
+    if ((b = t.closest('[data-vn-engtest]'))) { engineTest(b.getAttribute('data-vn-engtest')); return; }
+    if ((b = t.closest('[data-vn-dl]'))) { var dl = b.getAttribute('data-vn-dl').split(':'); download(dl[0], dl[1]); return; }
+    if ((b = t.closest('[data-vn-acc-open]'))) { eng.acc = { id: b.getAttribute('data-vn-acc-open'), terms: false, research: false }; paint(); return; }
+    if (t.closest('[data-vn-acc-cancel]')) { eng.acc = null; paint(); return; }
+    if ((b = t.closest('[data-vn-dl-gated]'))) { if (eng.acc && eng.acc.terms) download('piper', b.getAttribute('data-vn-dl-gated'), { terms: !!eng.acc.terms, research: !!eng.acc.research }); return; }
+    if ((b = t.closest('[data-vn-rm]'))) { var rm = b.getAttribute('data-vn-rm').split(':'); removeEngine(rm[0], rm[1]); return; }
     if (t.closest('#wpVoiceHear')) { speak(sampleLine()); return; }
     if (t.closest('#wpVoiceReset')) { cfgVoice.voiceName = ''; cfgVoice.rate = null; cfgVoice.pitch = null; save(); paint(); return; }
     var nm = charOf(t);
@@ -31445,13 +33555,22 @@ function wpSoundOverrideHtml(t, ov) {
   }
   function onChange(e){
     var t = e.target; if (!t) return;
+    // Picking a ready-made line uses it: it clears anything typed, which would otherwise win.
+    if (t.id === 'wpVoicePreset') { phrase.preset = t.value === '' ? -1 : Number(t.value); phrase.text = ''; var pt = document.getElementById('wpVoicePhraseText'); if (pt) pt.value = ''; savePhrase(); return; }
     if (t.name === 'wpVoicePack') { cfgVoice.pack = t.value; save(); paint(); return; }
+    if (t.name === 'wpVoiceEngine') { cfgVoice.engine = t.value; save(); paint(); return; }
+    if (t.name === 'wpPiperVoice') { cfgVoice.piperVoice = t.value; cfgVoice.engine = 'piper'; save(); paint(); return; }
+    if (t.name === 'wpKokoroVoice') { cfgVoice.kokoroVoice = t.value; cfgVoice.engine = 'kokoro'; save(); paint(); return; }
+    if (t.hasAttribute && t.hasAttribute('data-vn-acc') && eng.acc) { eng.acc[t.getAttribute('data-vn-acc')] = !!t.checked; paint(); return; }
     if (t.id === 'wpVoiceName') { cfgVoice.voiceName = t.value; save(); return; }
   }
   function onInput(e){
     var t = e.target; if (!t) return;
+    if (t.id === 'wpVoicePhraseText') { phrase.text = t.value.slice(0, 300); savePhrase(); return; }
     if (t.id === 'wpVoiceRate') { cfgVoice.rate = Number(t.value) / 100; var rv = document.getElementById('wpVoiceRateV'); if (rv) rv.innerHTML = pct(cfgVoice.rate) + '&times;'; save(); return; }
     if (t.id === 'wpVoicePitch') { cfgVoice.pitch = Number(t.value) / 100; var pv = document.getElementById('wpVoicePitchV'); if (pv) pv.textContent = pct(cfgVoice.pitch); save(); return; }
+    // Volume moves a sample that is playing right now too; the next ▶ Hear it / ▶ Test plays at the new level.
+    if (t.id === 'wpVoiceVolume') { cfgVoice.volume = Number(t.value) / 100; var vv = document.getElementById('wpVoiceVolumeV'); if (vv) vv.textContent = Math.round(cfgVoice.volume * 100) + '%'; if (curAudio) { try { curAudio.volume = volumeNow(); } catch (e) { void e; } } save(); return; }
     if (t.hasAttribute && t.hasAttribute('data-vn-say')) { var nm = charOf(t); if (nm) drafts[nm] = t.value; }
   }
   function mount(){
@@ -31467,7 +33586,29 @@ function wpSoundOverrideHtml(t, ov) {
     if (window.speechSynthesis && !vcBound) { vcBound = true; window.speechSynthesis.addEventListener('voiceschanged', function(){ if (el && document.body.contains(el)) paint(); }); }
   }
   var vcBound = false;
-  window._wpVoiceNames = { mount: mount };
+  // SAY (2026-10-18): speak a line the way a live callout is spoken (the chosen voice engine, else the Windows
+  // voice), from anywhere on the page: the trigger editor's and the Suggested/Guild rows' ▶ Preview use it. The
+  // voice settings and the downloaded-voice status are normally read when the Voice tab is drawn, so the first
+  // call reads them here, quietly (paint() does nothing while that tab is not on screen). Capped like Mimic's
+  // voice engine (300 characters). packId: this callout's own voice pack, '' for the player's own.
+  var warm = null;
+  async function say(text, packId){
+    text = String(text || '').trim().slice(0, 300);
+    if (!text) return;
+    if (!warm) warm = loadAll().catch(function(){ warm = null; });
+    await warm;
+    speak(text, packId || null);
+  }
+  // REPLAY (2026-10-19): a line that was spoken, again, with the engine, voice, speed and pitch it was spoken with
+  // (the 🔊 on a Recent fires row). s = { text, engine, voice, rate, pitch }. A downloaded voice is asked for by name;
+  // any trouble, or a voice that is gone, speaks it with the Windows voice that was named (else the default).
+  async function replay(s){
+    var text = String((s && s.text) || '').trim().slice(0, 300);
+    if (!text) return;
+    if (s.engine && s.engine !== 'windows' && await playNeural({ engine: s.engine, voice: s.voice }, text, null, true, s.rate)) return;
+    speakWin(text, null, s);
+  }
+  window._wpVoiceNames = { mount: mount, say: say, replay: replay };
 })();
 
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
@@ -31750,6 +33891,21 @@ const COMMAND_HTML = `<!doctype html>
     .rez-row.incoming .nm { animation: none; }
   }
 
+  /* 💀 Last deaths — same shape as the cure card: extra right padding keeps "clear all" and the row ✕ clear of
+     the fixed ✕-hide gutter. The NAME never shrinks (a flex:1 name with a long unshrinkable detail beside it was
+     squeezed to zero width at a narrow overlay and the row read as nobody having died); the detail is what
+     ellipsizes, with the full line on hover. */
+  .card.death-card{padding-right:28px}
+  .head.death-head{display:flex;align-items:center;gap:6px}
+  .deathClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
+    letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
+  .deathClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  .list .row.death-row .nm{flex:0 0 auto;max-width:55%;font-weight:600}
+  .death-row .death-det{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9aa4ad}
+  .death-row .deathDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
+    flex-shrink:0;opacity:0.6}
+  .death-row .deathDismiss:hover{opacity:1;color:#f87171}
+
   /* #153 collapsible sections — the caret+label in a section header is the
      click target that collapses/expands it. Collapse state lives in a JS store
      consulted at render time (localStorage-backed), NOT DOM state, so repaints
@@ -31936,6 +34092,74 @@ const COMMAND_HTML = `<!doctype html>
   // the 15 minutes it stays in the payload.
   function _rollId(r){ return r ? (r.from + '-' + r.to + '@' + (r.started_at_ms || 0)) : null; }
 
+  // 💀 Last deaths — local dismiss (the guild lead, 2026-10-21: "it can't be minimized or ignored"). Keyed by
+  // WHO + WHEN (the recap's own timestamp), so a death stays gone on every later poll. The agent keeps one recap
+  // per player per 5 s and may swap in the fuller one with a slightly different stamp, hence the tolerance.
+  // Nothing is uploaded; localStorage keeps it across an overlay reload because the agent holds the recaps for
+  // the whole session and a reload would otherwise bring them all back.
+  var DEATH_SAME_MS = 5000, DEATH_DISMISS_KEEP = 100;
+  var _dismissedDeaths = [];
+  try { _dismissedDeaths = JSON.parse(localStorage.getItem('wp_cmd_dead_dismissed') || '[]'); } catch (e) { _dismissedDeaths = []; }
+  if (!Array.isArray(_dismissedDeaths)) _dismissedDeaths = [];
+  // Who died, always a name: the agent writes "You" when it did not know the character, so that (or nothing)
+  // reads as the active character, else "You".
+  function deathWho(rc, me){
+    var n = rc && rc.name != null ? String(rc.name).trim() : '';
+    if (n && !/^you$/i.test(n)) return n;
+    return (me && String(me).trim()) || 'You';
+  }
+  function _deathMs(rc){ var t = Date.parse(rc && rc.ts); return isNaN(t) ? 0 : t; }
+  function isDeathDismissed(rc, me){
+    var who = deathWho(rc, me).toLowerCase(), t = _deathMs(rc);
+    for (var i = 0; i < _dismissedDeaths.length; i++) {
+      var d = _dismissedDeaths[i];
+      if (d && d.n === who && Math.abs(d.t - t) <= DEATH_SAME_MS) return true;
+    }
+    return false;
+  }
+  function dismissDeath(rc, me){
+    if (!rc || isDeathDismissed(rc, me)) return;
+    _dismissedDeaths.push({ n: deathWho(rc, me).toLowerCase(), t: _deathMs(rc) });
+    if (_dismissedDeaths.length > DEATH_DISMISS_KEEP) _dismissedDeaths = _dismissedDeaths.slice(-DEATH_DISMISS_KEEP);
+    try { localStorage.setItem('wp_cmd_dead_dismissed', JSON.stringify(_dismissedDeaths)); } catch (e) {}
+  }
+  function dismissAllDeaths(list, me){
+    for (var i = 0; list && i < list.length; i++) dismissDeath(list[i], me);
+  }
+  function deathDetail(rc){
+    var dd = new Date(rc.ts), pad2 = function (n) { return (n < 10 ? '0' : '') + n; };
+    var when = isNaN(dd.getTime()) ? '' : (' ' + pad2(dd.getHours()) + ':' + pad2(dd.getMinutes()) + ':' + pad2(dd.getSeconds()));
+    var bits = [];
+    bits.push(rc.lastChOffMs != null ? ((rc.lastChOffMs / 1000).toFixed(1) + ' s after the last CH') : 'no CH in 20 s');
+    if (rc.beatMs) bits.push('beat ' + Math.round(rc.beatMs / 1000) + ' s');
+    bits.push('took ' + (rc.dmg6 >= 1000 ? (rc.dmg6 / 1000).toFixed(1) + 'k' : rc.dmg6) + ' in 6 s');
+    if (rc.killer) bits.push('by ' + rc.killer);
+    return 'died' + when + ' · ' + bits.join(' · ');
+  }
+  // The whole card ('' when every death is dismissed or there are none). The name is its own never-shrinking
+  // cell and the detail is the part that gives way (ellipsis, full text on hover): at a narrow width the old
+  // row gave the name zero width and read as "died 14:46:50 · ..." with nobody in front of it.
+  function deathRecapsHtml(list, me){
+    var vis = [];
+    for (var i = 0; list && i < list.length; i++) if (!isDeathDismissed(list[i], me)) vis.push(list[i]);
+    if (!vis.length) return '';
+    var col = _isCollapsed('deathrecaps');
+    var html = '<div class="card death-card"><div class="head death-head">' + secToggle('deathrecaps', '💀 Last deaths', vis.length)
+             + (col ? '' : '<span class="deathClearAll" data-wp-interact title="Dismiss all of these deaths (this client)">clear all</span>')
+             + '</div>';
+    if (!col) {
+      html += '<div class="list">';
+      for (var j = 0; j < vis.length; j++) {
+        var rc = vis[j], who = deathWho(rc, me), det = deathDetail(rc);
+        html += '<div class="row death-row"><span class="nm" title="' + esc(who) + '">' + esc(who) + '</span>'
+             +    '<span class="death-det" title="' + esc(who + ' ' + det) + '">' + esc(det) + '</span>'
+             +    '<span class="deathDismiss" data-wp-interact data-death-who="' + esc(who) + '" data-death-ts="' + esc(rc.ts) + '" title="Dismiss this death (this client)">✕</span></div>';
+      }
+      html += '</div>';
+    }
+    return html + '</div>';
+  }
+
   // 📋 on a deathroll (the guild lead, 2026-09-29: "add in a copy button for deathrolls"): the whole
   // game as ONE chat line to paste in game, e.g. "Deathroll 32,000: A 26189 > B 24160 > ... > B 0.
   // B loses." Plain ASCII (EQ's chat font has no dash or arrow glyphs) and at most 250 characters:
@@ -32027,7 +34251,7 @@ const COMMAND_HTML = `<!doctype html>
   function secToggle(key, label, count){
     var col = _isCollapsed(key);
     var cnt = (col && count != null) ? ' (' + count + ')' : '';
-    return '<span class="sec-toggle" data-collapse-key="' + esc(key) + '" title="'
+    return '<span class="sec-toggle" data-wp-interact data-collapse-key="' + esc(key) + '" title="'
          + (col ? 'Expand' : 'Collapse') + ' this section">'
          + (col ? '▸' : '▾') + ' ' + esc(label) + cnt + '</span>';
   }
@@ -32116,7 +34340,7 @@ const COMMAND_HTML = `<!doctype html>
     var used = Math.max(0, Number(w.flags_granted) || 0);
     var left = w.flags_left == null ? Math.max(0, cap - used) : Math.max(0, Number(w.flags_left) || 0);
     var tight = stillCount > 0 && left <= stillCount;
-    return '<div class="hail-cap" title="Counts only the flags we saw granted. A raider without Mimic, or a hail outside our data, is not counted, so more may be gone.">'
+    return '<div class="hail-cap" title="Counts every raider we saw hail or get the flag. A hail we never saw, or by someone outside the raid, is not counted, so more may be gone.">'
          + 'Flags: <b>' + used + ' / ' + cap + '</b> used<span class="note">seen only</span></div>'
          + (tight ? '<div class="hail-cap warn">' + (left === 0 ? '⚠ No flags left, ' : '⚠ Only ' + left + ' flag' + (left === 1 ? '' : 's') + ' left, ')
          + stillCount + ' still to hail</div>' : '');
@@ -32185,6 +34409,21 @@ const COMMAND_HTML = `<!doctype html>
     return h;
   }
 
+  function rampHtml(r, multi){
+    var rhp = r.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(r.hp_pct)));
+    var rda = r.da || null;
+    var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
+    var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
+    var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
+    var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
+    var lead = multi ? ('💀 ' + esc(r.attacker || 'Boss') + ': rampage on ') : '💀 Rampage on ';
+    return '<div class="ramp">'
+         +    '<div class="row">' + lead + '<span class="who">' + esc(r.target) + '</span></div>'
+         +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'
+         +      daTags
+         +      '<div class="val">' + valText + '</div></div>'
+         +  '</div>';
+  }
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -32236,20 +34475,10 @@ const COMMAND_HTML = `<!doctype html>
 
     // Rampage target + invuln (DA/Harmshield/etc) highlight — identical to
     // the Tank overlay's card.
-    if (s.rampage && s.rampage.target) {
-      var rhp = s.rampage.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(s.rampage.hp_pct)));
-      var rda = s.rampage.da || null;
-      var barCls  = rda ? (rda.critical ? 'inv-soon' : 'gold') : hpClass(rhp);
-      var barW    = rda ? 100 : (rhp == null ? 0 : rhp);
-      var daTags  = rda ? '<span class="inv-tag l">INV</span><span class="inv-tag r">INV</span>' : '';
-      var valText = rda ? ('INV ' + fmtSec(rda.seconds)) : (rhp == null ? 'HP not visible' : rhp + '%');
-      html += '<div class="ramp">'
-           +    '<div class="row">💀 Rampage on <span class="who">' + esc(s.rampage.target) + '</span></div>'
-           +    '<div class="hpwrap"><div class="hpbar ' + barCls + '" style="width:' + barW + '%"></div>'
-           +      daTags
-           +      '<div class="val">' + valText + '</div></div>'
-           +  '</div>';
-    }
+    // Several bosses rampaging at once (rampages has 2+): one row per attacker. With 0-1 it is the single
+    // card above, byte for byte, and an older agent that sends no rampages array lands here too.
+    var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
+    for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
     // above the long lists: after a kill there is no fight to push it down, and a fight that starts while
@@ -32384,7 +34613,7 @@ const COMMAND_HTML = `<!doctype html>
         var rollsCollapsed = _isCollapsed('rolls');
         html += '<div class="card rolls-card"><div class="head rolls-head">'
              +    secToggle('rolls', '🎲 Rolls', visRolls.length)
-             +    (rollsCollapsed ? '' : '<span class="rollClearAll" title="Dismiss every roll set (this client, until new ones land)">clear all</span>')
+             +    (rollsCollapsed ? '' : '<span class="rollClearAll" data-wp-interact title="Dismiss every roll set (this client, until new ones land)">clear all</span>')
              +  '</div>';
         if (!rollsCollapsed) {
           html += '<div class="list">';
@@ -32407,13 +34636,13 @@ const COMMAND_HTML = `<!doctype html>
                 : '<span style="opacity:.6">stopped</span>');
               html += '<div class="row roll-row"><span class="nm">☠️ <b>' + Number(rs.to).toLocaleString('en-US') + '</b> — '
                    +    (dn.length === 2 ? dn[0] + ' vs ' + dn[1] : dn.join(', ')) + ' · ' + dState + '</span>'
-                   +    '<span class="rollCopy" data-roll-id="' + esc(rid) + '" title="Copy this deathroll as one line to paste in game">'
+                   +    '<span class="rollCopy" data-wp-interact data-roll-id="' + esc(rid) + '" title="Copy this deathroll as one line to paste in game">'
                    +      (rid === _copiedRoll && Date.now() < _copiedUntil ? '✓' : '📋') + '</span>'
-                   +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
+                   +    '<span class="rollMore" data-wp-interact data-roll-key="' + esc(rid) + '" title="'
                    +      (expanded ? 'Hide' : 'Show') + ' every roll in this deathroll">'
                    +      (expanded ? '▾' : '▸') + ' ' + (dg.steps || []).length + ' rolls</span>'
                    +    '<span class="cls">' + (rs.open ? 'live' : '') + '</span>'
-                   +    '<span class="rollDismiss" data-roll-id="' + esc(rid) + '" title="Dismiss this deathroll (this client)">✕</span></div>';
+                   +    '<span class="rollDismiss" data-wp-interact data-roll-id="' + esc(rid) + '" title="Dismiss this deathroll (this client)">✕</span></div>';
               if (expanded) {
                 html += '<div class="roll-detail">';
                 for (var dk = 0; dk < (dg.steps || []).length; dk++) {
@@ -32431,13 +34660,13 @@ const COMMAND_HTML = `<!doctype html>
             html += '<div class="row roll-row"><span class="nm"><b>' + (rs.from ? rs.from + '–' : '') + rs.to + '</b>'
                  +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
                  +    ' — ' + (rs.tie ? rollTieWhoHtml(rs) : '<span style="color:#f0c419">' + (winners || '—') + '</span>') + '</span>'
-                 +    (rs.tie ? '<span class="rollCopy" data-roll-id="' + esc(rid) + '" title="Copy a raid-say line announcing this tie and its deathroll">'
+                 +    (rs.tie ? '<span class="rollCopy" data-wp-interact data-roll-id="' + esc(rid) + '" title="Copy a raid-say line announcing this tie and its deathroll">'
                  +      (rid === _copiedRoll && Date.now() < _copiedUntil ? '✓' : '📋') + '</span>' : '')
-                 +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
+                 +    '<span class="rollMore" data-wp-interact data-roll-key="' + esc(rid) + '" title="'
                  +      (expanded ? 'Hide' : 'Show') + ' every roll in this set">'
                  +      (expanded ? '▾' : '▸') + ' ' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + '</span>'
                  +    '<span class="cls">' + (rs.open ? 'open' : '') + '</span>'
-                 +    '<span class="rollDismiss" data-roll-id="' + esc(rid) + '" title="Dismiss this roll set (this client)">✕</span></div>';
+                 +    '<span class="rollDismiss" data-wp-interact data-roll-id="' + esc(rid) + '" title="Dismiss this roll set (this client)">✕</span></div>';
             if (expanded) {
               // Highest first, so the losing rolls read straight down from the
               // winner. Re-rolls are shown but flagged — they never win, and
@@ -32495,7 +34724,7 @@ const COMMAND_HTML = `<!doctype html>
         var cureCollapsed = _isCollapsed('cures');
         html += '<div class="card cure-card"><div class="head cure-head">'
              +    secToggle('cures', 'Curse / Cure', visibleCures.length)
-             +    (cureCollapsed ? '' : '<span class="cureClearAll" title="Dismiss all cure/curse alerts (this client, until they change)">clear all</span>')
+             +    (cureCollapsed ? '' : '<span class="cureClearAll" data-wp-interact title="Dismiss all cure/curse alerts (this client, until they change)">clear all</span>')
              +  '</div>';
         if (!cureCollapsed) {
           html += '<div class="list">';
@@ -32507,7 +34736,7 @@ const COMMAND_HTML = `<!doctype html>
               return '<span class="cure-chip' + (cc.being_cured ? ' being-cured' : '') + '">' + esc(cc.cure) + (cc.counters ? ' ×' + cc.counters : '') + (cc.being_cured ? ' (curing)' : '') + '</span>';
             }).join(' ');
             html += '<div class="row cure-row"><span class="nm">' + esc(c.name) + '</span>' + chips
-                 +    '<span class="cureDismiss" data-cure-id="' + esc(cId) + '" title="Dismiss this alert (this client)">✕</span></div>';
+                 +    '<span class="cureDismiss" data-wp-interact data-cure-id="' + esc(cId) + '" title="Dismiss this alert (this client)">✕</span></div>';
           }
           html += '</div>';
         }
@@ -32539,13 +34768,18 @@ const COMMAND_HTML = `<!doctype html>
                +    '<span class="nm">' + esc(r.name) + '</span>'
                +    (tag ? '<span class="rez-tag">' + tag + '</span>' : '')
                +    (age ? '<span class="rez-age">dead ' + age + '</span>' : '<span class="rez-age"></span>')
-               +    '<span class="rezDismiss" data-rez-name="' + esc(r.name) + '" title="Clear this row for the WHOLE raid — use when they are up and we missed it.">✕</span>'
+               +    '<span class="rezDismiss" data-wp-interact data-rez-name="' + esc(r.name) + '" title="Clear this row for the WHOLE raid — use when they are up and we missed it.">✕</span>'
                +  '</div>';
         }
         html += '</div>';
       }
       html += '</div>';
     }
+
+    // ── Last deaths (FB-84) ───────────────────────────────────────────────
+    // One line per recent death from this machine's own log, next to the rez board it explains.
+    // Local only: /api/command-center is this machine's agent; nothing here is uploaded.
+    if (s.death_recaps && s.death_recaps.length) html += deathRecapsHtml(s.death_recaps, s.character);
 
     if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, rolls, or curses seen yet.</div>';
 
@@ -32591,7 +34825,7 @@ const COMMAND_HTML = `<!doctype html>
   if (contentEl) {
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle') || t.closest('.deathDismiss') || t.closest('.deathClearAll')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy')
                              || t.closest('[data-wp-interact]'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
@@ -32599,7 +34833,7 @@ const COMMAND_HTML = `<!doctype html>
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle') || t.closest('.deathDismiss') || t.closest('.deathClearAll')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy')
                              || t.closest('[data-wp-interact]'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
@@ -32677,6 +34911,20 @@ const COMMAND_HTML = `<!doctype html>
         }
         return;
       }
+      // 💀 Last deaths — dismiss one / dismiss all. Local only: flip the store, re-render from the last state.
+      var dthX = e.target && e.target.closest ? e.target.closest('.deathDismiss') : null;
+      if (dthX) {
+        e.preventDefault(); e.stopPropagation();
+        dismissDeath({ name: dthX.getAttribute('data-death-who'), ts: dthX.getAttribute('data-death-ts') }, _lastState && _lastState.character);
+        if (_lastState) render(_lastState);
+        return;
+      }
+      var dthAll = e.target && e.target.closest ? e.target.closest('.deathClearAll') : null;
+      if (dthAll) {
+        e.preventDefault(); e.stopPropagation();
+        if (_lastState) { dismissAllDeaths(_lastState.death_recaps, _lastState.character); render(_lastState); }
+        return;
+      }
       var rezX = e.target && e.target.closest ? e.target.closest('.rezDismiss') : null;
       if (rezX) {
         e.preventDefault(); e.stopPropagation();
@@ -32732,6 +34980,9 @@ const COMMAND_HTML = `<!doctype html>
 function startWebDashboard(port) {
   const server = http.createServer(async (req, res) => {
     try {
+      // ONE guard for every route (the guild lead, 2026-10-17): any web page the member visits can fire
+      // "simple" cross-site POSTs at this port, and a rebound DNS name can read it. Must stay ABOVE the first route.
+      if (_localGuardBlock(req, res)) return;
       if (req.url === '/' || req.url === '/index.html' || (req.url && req.url.indexOf('/?') === 0)) {
         // no-store so Electron's BrowserWindow (and browsers) never serve a
         // stale dashboard after a hot-swap — caching the old HTML was a prime
@@ -32758,6 +35009,10 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, must-revalidate' });
         return res.end(OVERLAYS[name]);
       }
+      // The local site (web/local, bundled into Mimic): static pages under /local/, answered from this PC's
+      // files by /api/local/*. Read-only, never uploads.
+      if (req.url && (req.url === '/local' || req.url.indexOf('/local/') === 0 || req.url.indexOf('/local?') === 0)) return _serveLocalSite(req, res);
+      if (req.url && req.url.split('?')[0] === '/api/local/inventory') return _handleLocalInventory(req, res);
       if (req.url === '/api/state') {
         // Serve every poller the SAME serialized snapshot for 400ms. The
         // dashboard (2s) + CH chain (600ms) + tank/command/who/mobinfo
@@ -32794,6 +35049,21 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_fightHistoryPayload(have)));
       }
+      // The Guild triggers card's list, read only while the Triggers tab is on screen and only when the
+      // `guildTriggersRev` on /api/state moved. Out of /api/state so the overlays do not parse it ~10x/s.
+      if (req.url && (req.url === '/api/guild-triggers' || req.url.indexOf('/api/guild-triggers?') === 0)) {
+        let have = '';
+        try { have = new URL(req.url, 'http://x').searchParams.get('rev') || ''; } catch { /* */ }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(_guildTriggersBody(have));
+      }
+      // Target Info's pager and Recent tab: the mobs this PC targeted, newest first; `key` adds that entry's mob.
+      if (req.url && (req.url === '/api/target-history' || req.url.indexOf('/api/target-history?') === 0)) {
+        let have = '', key = '';
+        try { const q = new URL(req.url, 'http://x').searchParams; have = q.get('rev') || ''; key = q.get('key') || ''; } catch { /* */ }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(_targetHistoryPayload(have, key)));
+      }
       // The dashboard's 📈 My parses tab: the guild's record of THIS raider's fights, proxied from the bot and
       // cached 5 minutes per (window, scope, character, zone, search). Always 200 with an `error` field on a
       // miss — the dashboard reads the body without checking the status. Local mode answers signed_out with no
@@ -32804,6 +35074,12 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         return res.end(JSON.stringify(out));
       }
+      // This PC's own recorded positions (local-first; the store block above module.exports). Answered from disk, never uploaded.
+      if (_localTrackRoute(req, res)) return;
+      // Rebuild from my logs (the block above module.exports): start / stop / status, and the raids it found. Local only.
+      if (await _localBackfillRoute(req, res)) return;
+      if (_localParsesRoute(req, res)) return;
+      if (await _raidCodeRoute(req, res)) return;
       // Tank overlay snapshot (the guild lead, 2026-06-25). Aggregates everything the
       // tank.html overlay needs from the active character's live state:
       //   • self HP %, target name + HP %, current buffs (with ticks remaining)
@@ -33119,11 +35395,25 @@ function startWebDashboard(port) {
         return res.end(JSON.stringify(_cb));
       }
       if (req.url === '/api/map-mark' && req.method === 'POST') return _handleMapMark(req, res);
+      if (req.url === '/api/map-kill' && req.method === 'POST') return _handleMapKill(req, res);
+      if (req.url === '/api/map-watch' && req.method === 'POST') return _handleMapWatch(req, res);
       if (req.url === '/api/map-leg' && req.method === 'POST') return _handleMapLeg(req, res);
+      // Kite coach (map.html): one loop summary out, the guild's loops for the zone in.
+      if (req.url === '/api/kite-loop' && req.method === 'POST') return _handleKiteLoopPost(req, res);
+      if (req.url && req.url.split('?')[0] === '/api/kite-loops' && req.method === 'GET') return _handleKiteLoopsGet(req, res);
       // "What you hear" — per-person rules for every callout (the guild lead, 2026-10-12).
       if (req.url && req.url.split('?')[0] === '/api/trigger-rules' && (req.method === 'GET' || req.method === 'POST')) return _handleTriggerRules(req, res);
+      // Enrage callout mutes: this mob / all, this session / this mob always (2026-10-19).
+      if (req.url && req.url.split('?')[0] === '/api/enrage-mute' && (req.method === 'GET' || req.method === 'POST')) return _handleEnrageMute(req, res);
+      // Timer-row mutes: the ⋮ on a countdown row, and the Muted timers card (2026-10-19).
+      if (req.url && req.url.split('?')[0] === '/api/timer-mute' && (req.method === 'GET' || req.method === 'POST')) return _handleTimerMute(req, res);
+      // "Voice unclear": what the trigger window spoke, and the report that goes to the officers (2026-10-19).
+      if (req.url && req.url.split('?')[0] === '/api/voice-spoken' && req.method === 'POST') return _handleVoiceSpoken(req, res);
+      if (req.url && req.url.split('?')[0] === '/api/voice-report' && req.method === 'POST') return _handleVoiceReport(req, res);
       // Personal trigger sync — Push / Pull between this household's PCs (2026-10-12).
       if (req.url && req.url.startsWith('/api/trigger-sync/')) return _handleTriggerSync(req, res);
+      // Share a whole setup: Mimic reads and applies the personal triggers + rules of a bundle here (2026-10-19).
+      if (req.url && /^\/api\/setup-share\/triggers(?:\/restore)?(?:\?|$)/.test(req.url)) return _handleSetupShareTriggers(req, res);
       // Sounds, voice packs, this PC's sound overrides, how names are pronounced (2026-10-14).
       if (req.url && /^\/(?:sounds\/[^?#]|api\/(?:sounds(?:\/open-folder)?|trigger-sound-overrides|voice-packs|pronunciations(?:\/local)?|pronunciation-suggest|pronunciation)(?:[?#]|$))/.test(req.url)) return _handleSoundsVoices(req, res);
       // Command Center ✕ on a needs-rez row — clears it for the WHOLE raid.
@@ -33226,6 +35516,16 @@ function startWebDashboard(port) {
             }
           }
         } catch { /* */ }
+        // Self scope (FB-88): your own tab-through list, answered from this agent alone — no bot call.
+        if (/[?&]scope=self(?:&|$)/.test(req.url)) {
+          const km = /[?&]keep=(\d+)/.exec(req.url);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          let selfPayload = selfTargetPayload(selfCharacter, km ? km[1] : null, Date.now());
+          // A targeted player's timers ride their row (the overlay asks with timers=1).
+          try { if (/[?&]timers=1(?:&|$)/.test(req.url)) selfPayload = _attachExtRowTimers(selfPayload, Date.now(), fetchCharacterLiveState); }
+          catch { /* the chips are extra: never break the list */ }
+          return res.end(JSON.stringify(selfPayload));
+        }
         fetchExtendedTarget(selfCharacter);
         const cached = _extTargetCache.get(String(selfCharacter || '').toLowerCase());
         const payload = (cached && cached.payload)
@@ -33292,6 +35592,10 @@ function startWebDashboard(port) {
             wantScope, _lastRaidPipe && _lastRaidPipe.members);
         }
         catch { /* scoping must never break the proxy — fall back to the zone view */ }
+        // A targeted player's timers ride their row (the overlay asks with timers=1). After the scoping,
+        // so only the rows that will be shown are looked up.
+        try { if (/[?&]timers=1(?:&|$)/.test(req.url)) outPayload = _attachExtRowTimers(outPayload, Date.now(), fetchCharacterLiveState); }
+        catch { /* the chips are extra: never break the proxy */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
       }
@@ -34052,6 +36356,17 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, total: _zeal.total }));
       }
+      // Zeal's chat colour per line, from Mimic (same machine; the router's local guard applies). Body:
+      // { lines: [{ c: character, k: colour index, x: text }] }. Kept as short-lived hints for the Chat overlay's channels and
+      // only while it is asking; see "Zeal's own channel for a line". Never stored, queued or uploaded.
+      if (req.url === '/api/zeal-chat' && req.method === 'POST') {
+        const body = await _readBody(req, 256 * 1024);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, kept: zealChatTake(payload) }));
+      }
       // Throttled live-state snapshot from Mimic (≈3-4/sec, not the raw event
       // stream). Drives gauge-condition triggers. Body:
       // { character, state: { self_hp_pct, target_name, target_hp_pct, zone,
@@ -34132,6 +36447,7 @@ function startWebDashboard(port) {
           const prevCasting = (prevState.casting || '').trim();
           const newCasting  = (st.casting || '').trim();
           _zealState[character] = { ...st, updatedAt: Date.now() };
+          try { _meRegenFrame(character, _zealState[character], Date.now()); } catch (e) { void e; }   // FB-90: observed regen per tick
           // First sight of this character on this PC: fetch any stored pet timers (once per run; no-op when the
           // log already gave us local history).
           try { _ownRestoreOnFirstSight(character, _lastLineMs.has(String(character).toLowerCase()), null); } catch (e) { void e; }
@@ -34149,12 +36465,15 @@ function startWebDashboard(port) {
           noteSpawnIdSeen(st.spawn_id);
           noteSpawnIdSeen(st.target_id);
           noteSpawnIdSeen(st.pet_id);
+          try { _noteSelfTarget(character, st, Date.now()); } catch (e) { void e; }   // Extended Target "Self" list
           try { _noteOwnPetForLoot(character, st, Date.now()); } catch (e) { void e; }   // own-pet loot flag: remember the pet's id while it lives
           // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
           // target across frames → a mob_heal timeline tick on the live fight.
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
           // The fight's mob seen dead in the target window: split the DPS/Tank Meter's fight there.
           try { _noteMobDeathFromState(character, prevState, st); } catch (e) { void e; }
+          // Target Info's pager and Recent tab: the mobs this PC has targeted, and whether each died.
+          try { _tgtHistNoteFromState(character, prevState, _zealState[character], Date.now()); } catch (e) { void e; }
           // Spawn map: first sightings off target_loc, and a mob seen dead starts its respawn window.
           try { _mapNoteState(character, prevState, _zealState[character], Date.now()); } catch (e) { void e; }
           // #205 — group member HP hitting (and holding) zero is death evidence
@@ -34211,6 +36530,7 @@ function startWebDashboard(port) {
         try { payload = JSON.parse(body); }
         catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
         const token = String(payload?.token || '').trim();
+        chatCacheOnSessionPush(token, payload?.identity);   // a different identity empties the Chat cache BEFORE its token is taken
         _mimicSessionToken = token || '';
         // Track the signed-out grace window (#120): clear it the instant a token
         // arrives, start it the instant one goes away.
@@ -34415,6 +36735,11 @@ function startWebDashboard(port) {
             zeal_condition: tpl.zeal_condition || null,
             cooldown_seconds: tpl.cooldown_seconds || 0,
             no_tts:    !!tpl.no_tts,   // timer bars: the dashboard draws no 🔊 box
+            // What ▶ Preview plays and ✎ Configure copies into the form; a catalog-matched alert has no pattern to copy.
+            sound:        tpl.sound || '',
+            sound_mode:   tpl.sound ? (tpl.sound_mode || 'add') : '',
+            sound_volume: tpl.sound_volume != null ? tpl.sound_volume : null,
+            catalog:      !!tpl.catalog_match,
             // User-state slice
             enabled:    !!(row && row.enabled),
             tts:        _suggestedHasTts(row),
@@ -34542,6 +36867,10 @@ function startWebDashboard(port) {
         const before = _activeOverlays.length;
         const outcome = _rehearseTrigger(trig, { captures, line });
         const fired = _activeOverlays.length - before;
+        // silent: the dashboard's ▶ Preview speaks and plays the callout itself, so the trigger overlay
+        // flashes this one and stays quiet (the same `mute` a muted guild fire carries) rather than say it twice.
+        // The new overlays are at the front (_pushOverlay unshifts), and nothing has read them yet.
+        if (payload && payload.silent === true) for (let i = 0; i < fired; i++) _activeOverlays[i].mute = true;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, rehearsal: true, fired,
           pattern_exercised: !!outcome.patternExercised,
@@ -34647,6 +36976,9 @@ function startWebDashboard(port) {
           activeTimers:       _activeTimersSnapshot(),
           recentTriggerFires: _activeOverlays.map(_fireForWeb),
           blindEvents:        _blindEvents.slice(-20),
+          recentDeaths:       _recentDeathsSnapshot(),
+          replayDeaths:       _replayDeathsSnapshot(),
+          replayClock:        _replayClockForWeb(),
         }));
       }
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
@@ -34703,7 +37035,8 @@ function startWebDashboard(port) {
       }
 
       // POST /api/personal-triggers/import — accepts a GINA / EQLogParser
-      // XML blob (both export the same SharedTriggers shape) and APPENDS
+      // XML blob (both export the same SharedTriggers shape), an EQLogParser
+      // .tgf tree or a PQ Companion JSON pack (_parseTriggerImport) and APPENDS
       // parsed entries to the personal triggers list. Existing personal
       // triggers are preserved; duplicates by name are skipped (caller can
       // delete + re-import to overwrite). Returns { imported, skipped,
@@ -34776,15 +37109,23 @@ function startWebDashboard(port) {
         if (!raw.trim()) {
           res.writeHead(400); return res.end(JSON.stringify({ error: 'import body required' }));
         }
-        const isJson = /^\s*[\[{]/.test(raw);
-        const parsed = isJson ? (_parseTriggerTgfJson(raw) || []) : _parseTriggerXml(raw);
+        const parsed = _parseTriggerImport(raw);
+        if (!parsed.length) {
+          res.writeHead(400); return res.end(JSON.stringify({ error: 'no triggers found in that file (GINA, EQLogParser and PQ Companion exports are supported)' }));
+        }
         const existingNames = new Set(_personalTriggers.map(t => String(t.name || '').toLowerCase()));
         const compiled = [];
         const errors = [];
         let imported = 0, skipped = 0, soundsCopied = 0;
         const soundNotes = [];   // triggers whose sound file could not come along
+        const notCarried = [];   // pieces of a trigger a personal trigger has no place for (PQ Companion packs)
+        const noteNotCarried = (t) => {
+          if (Array.isArray(t.not_carried) && t.not_carried.length) {
+            notCarried.push({ name: String(t.name || '').slice(0, 100), what: t.not_carried.slice(0, 8).map(s => String(s).slice(0, 120)) });
+          }
+        };
         for (const t of parsed) {
-          if (!t.name || !t.pattern) { skipped++; continue; }
+          if (!t.name || !t.pattern) { noteNotCarried(t); skipped++; continue; }
           if (existingNames.has(t.name.toLowerCase())) { skipped++; continue; }
           const ttsText = String(t.tts_text || '').slice(0, 200);
           // Only create an on-match alert when EQLP actually had display OR speak
@@ -34829,8 +37170,13 @@ function startWebDashboard(port) {
             actions,
           };
           if (t.timer_duration_sec > 0) row.timer_duration_sec = Math.max(1, Math.min(3600, t.timer_duration_sec));
+          // PQ Companion pack fields the parser already cleaned (timer warnings, excludes, capture-timed
+          // timers, bar colour, loop); other formats never set them.
+          for (const k of _PQC_ROW_FIELDS) if (t[k] !== undefined) row[k] = t[k];
+          if (t.enabled === false) row.enabled = false;
           // Nothing to do (no alert, no timer) → skip rather than store a no-op.
-          if (actions.length === 0 && !(row.timer_duration_sec > 0)) { skipped++; continue; }
+          if (actions.length === 0 && !(row.timer_duration_sec > 0) && !row.timer_duration_capture) { noteNotCarried(t); skipped++; continue; }
+          noteNotCarried(t);
           if (t.warning_seconds > 0 && t.warning_text) {
             row.warning_seconds = Math.max(1, Math.min(3600, t.warning_seconds));
             row.warning_text    = String(t.warning_text).slice(0, 200);
@@ -34857,7 +37203,7 @@ function startWebDashboard(port) {
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, imported, skipped, total_in_xml: parsed.length, errors,
-          sounds_copied: soundsCopied, sound_notes: soundNotes.slice(0, 50) }));
+          not_carried: notCarried.slice(0, 100), sounds_copied: soundsCopied, sound_notes: soundNotes.slice(0, 50) }));
       }
 
       // Live regex tester — paste a sample log line, see which patterns match
@@ -36719,6 +39065,127 @@ function scanInventoryUploads() {
   }
 }
 
+// ── The local site: the website's own pages, bundled into Mimic (the guild lead, 2026-10-21) ────────────
+// web/local is a small Next.js app exported static (`out/`) and shipped inside Mimic. This serves that
+// folder under /local/ on the dashboard port, and /api/local/* answers it from THIS PC's files. Both are
+// GET-only, read-only, behind the same local-request guard as every route, and NOTHING here uploads.
+//
+// Where the bundle is: Mimic passes WOLFPACK_LOCAL_SITE_DIR (resources/local-site when packaged). A dev run
+// from the repo finds web/local/out beside this file's package. With neither, /local/ answers 404 with a
+// message saying so, and the rest of the agent is unaffected.
+const _LOCAL_SITE_MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
+  '.map': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+};
+function _localSiteDir() {
+  const fromEnv = String(process.env.WOLFPACK_LOCAL_SITE_DIR || '').trim();
+  return fromEnv || path.join(__dirname, '..', '..', 'web', 'local', 'out');
+}
+// `rel` = the URL path after "/local/" (query already cut). Returns an absolute FILE inside `root`, or null.
+// A directory serves its index.html, and an extension-less route does too (Next exports /inventory/ as
+// inventory/index.html). Refused outright: "..", a backslash, a NUL, a bad percent-escape.
+function _localSiteResolve(root, rel) {
+  let p;
+  try { p = decodeURIComponent(String(rel || '')); } catch { return null; }
+  if (p.indexOf('\0') >= 0 || p.indexOf('\\') >= 0) return null;
+  const segs = p.split('/').filter(Boolean);
+  if (segs.some(s => s === '..')) return null;
+  const base = path.resolve(root);
+  let target = path.join(base, ...segs);
+  if (target !== base && target.indexOf(base + path.sep) !== 0) return null;
+  try {
+    let st = fs.statSync(target);
+    if (st.isDirectory()) { target = path.join(target, 'index.html'); st = fs.statSync(target); }
+    return st.isFile() ? target : null;
+  } catch { /* fall through to the route form */ }
+  if (path.extname(target)) return null;
+  try { const alt = path.join(target, 'index.html'); return fs.statSync(alt).isFile() ? alt : null; } catch { return null; }
+}
+function _serveLocalSite(req, res) {
+  const send = (code, type, body, extra) => {
+    res.writeHead(code, Object.assign({ 'Content-Type': type, 'Cache-Control': 'no-store' }, extra || {}));
+    res.end(req.method === 'HEAD' ? undefined : body);
+  };
+  if (req.method !== 'GET' && req.method !== 'HEAD') return send(405, 'text/plain; charset=utf-8', 'method not allowed', { 'Allow': 'GET, HEAD' });
+  const urlPath = String(req.url || '').split('?')[0].split('#')[0];
+  if (urlPath === '/local') return send(302, 'text/plain; charset=utf-8', 'redirecting', { 'Location': '/local/' });
+  const root = _localSiteDir();
+  let rootOk = false;
+  try { rootOk = fs.statSync(root).isDirectory(); } catch { rootOk = false; }
+  if (!rootOk) {
+    return send(404, 'text/plain; charset=utf-8',
+      'The local site is not installed in this build: Mimic ships it as a folder (WOLFPACK_LOCAL_SITE_DIR), and a repo run needs `cd web/local && npx next build` first.');
+  }
+  const file = _localSiteResolve(root, urlPath.slice('/local/'.length));
+  if (!file) return send(404, 'text/plain; charset=utf-8', 'not found');
+  const type = _LOCAL_SITE_MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+  // _next/static files carry a content hash in their name; everything else (the HTML) must follow a new bundle.
+  const hashed = /[\\/]_next[\\/]static[\\/]/.test(file);
+  res.writeHead(200, { 'Content-Type': type, 'Cache-Control': hashed ? 'public, max-age=31536000, immutable' : 'no-store' });
+  if (req.method === 'HEAD') return res.end();
+  const stream = fs.createReadStream(file);
+  stream.on('error', () => { try { res.destroy(); } catch { void 0; } });
+  stream.pipe(res);
+}
+// Every folder an <Char>-Inventory.txt can sit in: the EQ folders Mimic knows, plus each watched log's folder.
+function _localInventoryDirs() {
+  const dirs = new Set();
+  try { for (const d of _eqSetupDirs()) dirs.add(d); } catch { void 0; }
+  for (const w of (stats.watchedLogs || [])) { if (w && w.logPath) dirs.add(path.dirname(w.logPath)); }
+  return [...dirs];
+}
+// The rows the local inventory page aggregates: one set per character, from the newest file when a
+// character has more than one. The shape is the website's own (character_name, slot_label, item_id,
+// item_name, quantity, observed_at), so web/lib/inventoryAggregate.ts runs on it unchanged. `meta` (the
+// damage / ac / nodrop / itemtype / slots the type chips read) is EMPTY: the agent's item catalog holds
+// [id, name, era] only, so the chips other than Spell stay empty until a catalog that carries those fields lands.
+function _localInventorySnapshot(dirs) {
+  const byChar = new Map();
+  for (const dir of dirs) {
+    let entries;
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    for (const name of entries) {
+      const m = name.match(INVENTORY_FILENAME_RX);
+      if (!m) continue;
+      const character = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+      const full = path.join(dir, name);
+      try {
+        const st = fs.statSync(full);
+        const cur = byChar.get(character.toLowerCase());
+        if (cur && cur.mtimeMs >= st.mtimeMs) continue;
+        byChar.set(character.toLowerCase(), {
+          name: character, mtimeMs: st.mtimeMs, observed_at: st.mtime.toISOString(),
+          rows: parseInventoryFileForUpload(fs.readFileSync(full, 'utf8')),
+        });
+      } catch { /* unreadable file: that character is skipped this time */ }
+    }
+  }
+  const chars = [...byChar.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const rows = [];
+  for (const c of chars) {
+    for (const r of c.rows) {
+      rows.push({ character_name: c.name, slot_label: r.slot_label, item_id: r.item_id, item_name: r.item_name,
+        quantity: r.quantity, observed_at: c.observed_at });
+    }
+  }
+  return {
+    ok: true, generated_at: new Date().toISOString(),
+    characters: chars.map(c => ({ name: c.name, observed_at: c.observed_at, rows: c.rows.length })),
+    rows, meta: [], meta_available: false,
+  };
+}
+function _handleLocalInventory(req, res) {
+  if (req.method !== 'GET') { res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': 'GET' }); return res.end('{"error":"method not allowed"}'); }
+  let body;
+  try { body = JSON.stringify(_localInventorySnapshot(_localInventoryDirs())); }
+  catch (e) { console.error('[api/local/inventory] failed:', e && (e.stack || e.message || e)); res.writeHead(500, { 'Content-Type': 'application/json' }); return res.end('{"error":"could not read the inventory files"}'); }
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(body);
+}
+
 function _scanOptInFiles() {
   _loadOptInState();
   _optinState.files   = [];
@@ -37937,6 +40404,15 @@ function _dkpTickSnapshot() {
 // NOTE: "Druzzil Ro" has a space so it never matches the single-word (\w+) guild chat pattern above.
 const DRUZZIL_KILL_RX = /^\[(.+?)\]\s+Druzzil Ro tells the guild,\s*['"](\w+) of <(.+?)> has killed (.+?) in (.+?)!['"]/;
 
+// Guild-wide "slow mode" announcement — same speaker and channel as the kill line above, so it
+// rides the same pre-filter path. Only the OFF wording has ever been captured ("... has asked the
+// Timekeeper of Druzzil Ro to set its weave right. Beware! Time has returned to its natural pace
+// ..."); the ON wording is unknown, so ANY guild line from Druzzil Ro that mentions the thread of
+// time without the natural pace is read as ON. The private "Druzzil Ro's voice fills your mind"
+// line is not a "tells the guild" line and never matches.
+const SLOW_MODE_RX = /^\[(.+?)\]\s+Druzzil Ro tells the guild,\s*['"](.*?)['"]\s*$/;
+const SLOW_MODE_MAX_AGE_MS = 12 * 3600 * 1000;   // older lines (log replay) are not reported
+
 // ── PVP Druzzil Ro broadcast announcements ─────────────────────────────────
 // Server god broadcasts player deaths: "PVP Druzzil Ro BROADCASTS, 'text'"
 // Two phrasing styles must be covered or we silently lose kills:
@@ -38130,6 +40606,26 @@ function parseDruzzilKill(line) {
     boss:      m[4],
     zone:      m[5],
     ts:        ts ? ts.toISOString() : new Date().toISOString(),
+  };
+}
+
+// Slow-mode on/off announcement → { state, at, by, line } or null. Lines whose log timestamp is
+// older than SLOW_MODE_MAX_AGE_MS return null (the bot ignores stale ones anyway; don't spam).
+function parseSlowModeLine(line) {
+  if (line.indexOf('Druzzil Ro') === -1) return null;   // cheap gate
+  const m = SLOW_MODE_RX.exec(line);
+  if (!m) return null;
+  const text = m[2];
+  if (!/thread of time/i.test(text)) return null;
+  const state = /natural pace/i.test(text) ? 'off' : 'on';
+  const ts = parseEqTimestamp(line);
+  if (ts && Date.now() - ts.getTime() > SLOW_MODE_MAX_AGE_MS) return null;
+  const by = /(\w+) has asked the Timekeeper/.exec(text);
+  return {
+    state,
+    at:   (ts || new Date()).toISOString(),
+    by:   by ? by[1] : null,
+    line: text.slice(0, 400),
   };
 }
 
@@ -38528,7 +41024,8 @@ function _pushRecentTell(tellEvt, character) {
 //
 // PRIVACY, the whole point of this block: these lines are kept on THIS PC for the user's own chat
 // window and never sent anywhere.
-//   • The ring is in memory only, capped, and gone on restart. No file, no queue.
+//   • The ring is capped and held in memory. THIS block names no file and no queue; the only copy that reaches a disk is
+//     the encrypted Chat cache (below, the guild lead 2026-10-17), which needs a key Mimic hands over and is never plaintext.
 //   • Nothing here touches the guild-chat upload batch, the tell upload buffer, the feedback excerpt
 //     or any POST. DEFAULT_DROP_PATTERNS / shouldKeep are untouched: they still gate everything that
 //     leaves the machine, and a line this feed shows is still dropped there.
@@ -38560,6 +41057,18 @@ const CHAT_CHANNELS = {
   melee:   { label: 'Melee',   color: '#d0847a', tag: 'M' },
   spell:   { label: 'Spells',  color: '#b392f0', tag: 'SP' },
   skill:   { label: 'Skills',  color: '#e3b341', tag: 'SK' },
+  loot:    { label: 'Loot',    color: '#f778ba', tag: 'LT' },
+  random:  { label: 'Random',  color: '#2fb8c9', tag: 'RND' },
+  other:   { label: 'Other',   color: '#a0a8b8', tag: 'OT' },
+  // Split out of Other by Zeal's own chat channels (the guild lead, 2026-10-19: "A LOT of items currently end up in
+  // Other"). Same gate and same ring as Other; see ZEAL_CHAT_COLOR below for where each one comes from.
+  money:   { label: 'Money',     color: '#a3be5a', tag: 'MN' },
+  emote:   { label: 'Emotes',    color: '#e08fd0', tag: 'EM' },
+  pet:     { label: 'Pets',      color: '#8fb98f', tag: 'PET' },
+  who:     { label: 'Who',       color: '#79c0ff', tag: 'WHO' },
+  death:   { label: 'Deaths',    color: '#e5534b', tag: 'DTH' },
+  bcast:   { label: 'Broadcast', color: '#ffc857', tag: 'B' },
+  zeal:    { label: 'Zeal',      color: '#9cc2b5', tag: 'ZL' },
 };
 // One chip each. `gate` names the policy switch that must be on for these channels to be captured,
 // served and shown; no gate = public, shown by default. A tab is a group plus a filter, so this list
@@ -38586,8 +41095,31 @@ const CHAT_GROUPS = [
   // Skills = skill-ups and what a skill did (taunt, forage, mend, feign, hide...), tradeskill combines, disciplines.
   { id: 'spells',  label: 'Spells',    channels: ['spell'],   gate: 'spells' },
   { id: 'skills',  label: 'Skills',    channels: ['skill'],   gate: 'skills' },
+  // Loot, Random and Other (the guild lead, 2026-10-15: "chat overlay needs the rest of the channels available, loot,
+  // money, other, etc"). The game's own filter menu names them Loot / Random (Zeal) and Other (ChannelMap 22; see
+  // ui-studio.html). Built like Skills: gated off until the ⚙ switches them on, a small ring each. Loot = your own
+  // "--You have looted ...--" line; Random = the /random pair; Other = a game or system line no other group claims
+  // (experience, faction and the like), never anything that looks like speech. Money, Emotes, Pets, Who, Deaths,
+  // Broadcast and Zeal were split out of it on 2026-10-19 (below); Zeal's channel for the line decides, the log text only
+  // when Zeal said nothing.
+  { id: 'loot',    label: 'Loot',      channels: ['loot'],    gate: 'loot' },
+  { id: 'random',  label: 'Random',    channels: ['random'],  gate: 'random' },
+  { id: 'other',   label: 'Other',     channels: ['other'],   gate: 'other' },
+  // Splits of Other (the guild lead, 2026-10-19; DECISIONS §383: "the differentiation ... based on the Zeal options ...
+  // A LOT of items currently end up in Other"). One chip per Zeal chat filter that has no group of its own. They ride
+  // Other's switch and Other's ring (turning Other on is what asks for them; each chip then shows or hides its own
+  // lines), so no new switch, pref or ring exists and nothing is captured that Other was not already allowed to take.
+  { id: 'money',   label: 'Money',     channels: ['money'],   gate: 'other' },
+  { id: 'emotes',  label: 'Emotes',    channels: ['emote'],   gate: 'other' },
+  { id: 'pets',    label: 'Pets',      channels: ['pet'],     gate: 'other' },
+  { id: 'who',     label: 'Who',       channels: ['who'],     gate: 'other' },
+  { id: 'deaths',  label: 'Deaths',    channels: ['death'],   gate: 'other' },
+  { id: 'bcast',   label: 'Broadcast', channels: ['bcast'],   gate: 'other' },
+  { id: 'zeal',    label: 'Zeal',      channels: ['zeal'],    gate: 'other' },
 ];
-const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom', 'melee', 'spells', 'skills'];
+// `away` is not a group gate: it asks for the guild feed (see "Guild feed while you are out of game" below) and
+// gates no channel, so no CHAT_GROUPS entry names it.
+const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom', 'melee', 'spells', 'skills', 'loot', 'random', 'other', 'away'];
 
 // First-person lines ("You say, ..."). Group 1 is the text, except the custom-channel and told forms.
 const CHAT_SELF_PATTERNS = [
@@ -38929,6 +41461,256 @@ function _classifyExtraLine(line, character, ch) {
 function classifySpellLine(line, character) { return _classifyExtraLine(line, character, 'spell'); }
 function classifySkillLine(line) { return _classifyExtraLine(line, '', 'skill'); }
 
+// ── Loot, Random and Other rows (the guild lead, 2026-10-15: "chat overlay needs the rest of the channels available,
+// loot, money, other, etc"). Same promise as the groups above: no grammar of their own for what the agent already reads.
+//   · Loot   = trackLootedLine's own _LOOTED_RX, the self-only "--You have looted a <Item>.--" (no other player's loot
+//              echoes into this log; trackLootedLine's header says so).
+//   · Random = the /random pair rollTracker reads: _ROLL_DIE_RX ("**A Magic Die is rolled by <Name>.") and
+//              _ROLL_RESULT_RX ("**It could have been any number from 0 to 333, but this time it turned up a 116."). Both
+//              are heard by everyone in the zone, so two of your characters log the same line.
+//   · Other  = what is left: a game or system line that no group claims (experience, faction standing, bandolier,
+//              "You are hungry.", ...). It is a FALLBACK, and the rules that keep it safe are the point:
+//                1. it never takes a line another group owns, whether or not that group's switch is on (those
+//                   classifiers are asked first; a Melee swing with Melee off is NOT Other);
+//                2. it never takes anything that looks like speech: a quoted sentence (`<Name> tells you, '...'`, a pet's
+//                   or merchant's line that chat deliberately dropped), a Zeal `[Tag] [Name]:` line, a /tag broadcast.
+//                   Tells, group and officer chat stay behind their own switches and are not reachable from here;
+//                3. combat damage and misses are not Other (they are Melee's, Spells' or nobody's, never "system").
+//            Money (coin received, split) has no row: the repo has no coin line in a parser or a fixture to build on.
+const CHAT_OTHER_SPEECH_RX = /,\s*['"].*['"]\s*$/;
+const CHAT_OTHER_COMBAT_RX = /points? of (?:non-melee )?damage|, but /;
+const CHAT_OTHER_NOISE_RX = /^LOADING, PLEASE WAIT/i;
+function _chatLogBody(line) {
+  if (typeof line !== 'string' || line.charCodeAt(0) !== 91 /* [ */) return null;
+  const at = line.indexOf('] ');
+  if (at < 1) return null;
+  const body = line.slice(at + 2).replace(/\s+$/, '');
+  return body || null;
+}
+// Someone else's loot (the guild lead, 2026-10-15: "Loot filter should be my loot AND others"). The server sends
+// "--<Name> has looted a <item>--" (its string 466, next to 467 "--You have looted a <item>--") to the looter's
+// group, or to the whole raid when the looter has no group; never for a player corpse. Same strictness as the
+// self line: the dashes, a one-word name, the line starts with it. The period is optional because the server's
+// table omits it while the self line we read carries one.
+const _OTHER_LOOTED_RX = /^--([A-Za-z]+) has looted (.+?)\.?--$/;
+function classifyLootLine(line) {
+  const body = _chatLogBody(line);
+  if (!body || body.charCodeAt(0) !== 45 /* - */) return null;
+  const self = body.startsWith('--You have looted ') && _LOOTED_RX.test(body);
+  if (!self && !_OTHER_LOOTED_RX.test(body)) return null;
+  const ts = parseEqTimestamp(line);
+  const text = _chatCleanText(body);
+  if (!ts || !text) return null;
+  return { ch: 'loot', who: '', text, t: ts.getTime(), self, npc: false };
+}
+function classifyRandomLine(line) {
+  const body = _chatLogBody(line);
+  if (!body || !body.startsWith('**') || !(_ROLL_DIE_RX.test(line) || _ROLL_RESULT_RX.test(line))) return null;
+  const ts = parseEqTimestamp(line);
+  const text = _chatCleanText(body);
+  if (!ts || !text) return null;
+  return { ch: 'random', who: '', text, t: ts.getTime(), self: false, npc: false };
+}
+// `ran` = the classifiers noteLocalChatLine has already asked and got null from ({ melee, skills, spells }), so a
+// line is not classified twice; anything not listed is asked here.
+function classifyOtherLine(line, character, ran) {
+  const body = _chatLogBody(line);
+  if (!body) return null;
+  if (body.charCodeAt(0) === 91 /* [ */) return null;                                  // Zeal "[Tag] [Name]: text" chat, /who rows
+  if (line.indexOf('ZEALTAG | ') !== -1 || line.indexOf('ZT | ') !== -1) return null;   // /tag broadcasts
+  if (CHAT_OTHER_SPEECH_RX.test(body) || CHAT_OTHER_COMBAT_RX.test(body) || CHAT_OTHER_NOISE_RX.test(body)) return null;
+  const ts = parseEqTimestamp(line);
+  if (!ts) return null;
+  if (classifyChatLine(line, character)) return null;                                // chat (any channel, gated or not) is never Other
+  if (classifyLootLine(line) || classifyRandomLine(line)) return null;
+  const r = ran || {};
+  if (!r.melee && classifyMeleeLine(line, character)) return null;
+  if (!r.skills && _classifyExtraLine(line, '', 'skill')) return null;
+  if (!r.spells && _classifyExtraLine(line, character, 'spell')) return null;
+  const text = _chatCleanText(body);
+  if (!text) return null;
+  return { ch: 'other', who: '', text, t: ts.getTime(), self: /^Your?\b/.test(body), npc: false };
+}
+
+// ── Zeal's own channel for a line (the guild lead, 2026-10-19; DECISIONS §383: "I need the differentiation to be present
+// based on the Zeal options, not just what's in the logs ... A LOT of items currently end up in Other") ──
+// WHAT ZEAL SENDS. Zeal prints every line through one function and, for each, hands the pipe `{ type: <colour index>, text }`
+// as a message of pipe type 0 (Zeal/named_pipe.cpp NamedPipe::chat_msg; docs/zeal-pipe-protocol.md). The index is the
+// client's chat colour: the USERCOLOR_* ids (256 + n, Zeal/game_structures.h) and Zeal's own channels (1000+,
+// Zeal/chatfilter.h), which are exactly what its Filters menu offers (ChannelMap, apps/mimic/ui-studio.html). The game LOG
+// has none of this: a coin split, an emote, a pet's reply and a Bandolier swap are all just a sentence there.
+// HOW IT ARRIVES. Mimic reads the pipe (apps/mimic/zealPipe.js `chatLineOf`) and POSTs the lines to /api/zeal-chat. They are
+// HINTS, keyed by character + the line's text: the log tail still reads the line itself (it carries the timestamp), and
+// asks the hint what channel it was. Local only (127.0.0.1), memory only, never uploaded, never a trigger or a parse input.
+// PRIVACY. The pipe carries EVERYTHING, tells, group and officer included, which is why docs/zeal-pipe-protocol.md says the
+// pipe log is not relayed. This keeps to that: (1) Mimic sends lines only while the Chat overlay is open and the agent keeps
+// them only while the overlay is asking (CHAT_POLICY_TTL_MS); (2) a hint only ever NAMES a channel, it never shows a line:
+// the line is the log's own, and every channel it can resolve to goes through chatChannelAllowed like any other; (3) a chat
+// colour resolves to `null`: never Other, never re-homed. So a tell the log parser could not read stays invisible instead of
+// falling into Other, which is a gain over text alone.
+// WHAT IT CHANGES. Only a line the log-text parsers left unclaimed. Chat, loot, random, melee, spells and skills keep their
+// own richer parsers (speaker, category); Zeal's colour decides the rest, and a line with no hint (no Zeal, the pipe
+// switched off, a hint that lost the race) takes the log-text fallback below.
+// value: { ch, cat?, miss? }  — cat '?' = mine when the sentence opens with You/Your, else others.
+//        null                 — chat, owned by classifyChatLine and its gates: never Other.
+//        absent               — a colour no table covers (Default 273, unused ids, anything new): the log-text path decides.
+const ZEAL_CHAT_COLOR = (() => {
+  const m = {};
+  const to = (ch, cat, miss) => { const r = { ch }; if (cat) r.cat = cat; if (miss) r.miss = true; return r; };
+  for (const k of [256, 257, 258, 259, 260, 261, 262, 275, 276, 327]) m[k] = null;      // say tell group guild ooc auction shout, merchant, raid say
+  for (let k = 290; k <= 300; k++) m[k] = null;                                          // chat channel, channels 1-10
+  for (let k = 307; k <= 313; k++) m[k] = null;                                          // echoes of what you typed
+  for (let k = 315; k <= 324; k++) m[k] = null;                                          // channel echoes
+  m[263] = m[314] = to('emote');                                                     // emote, emote echo
+  m[264] = to('spell', '?'); m[284] = to('spell', 'mine'); m[289] = to('spell', 'mine'); // spells, worn off, failures
+  m[283] = to('spell', '?'); m[288] = to('spell', 'others'); m[302] = to('spell', '?');  // non-melee damage, others' spells, spell crit
+  m[270] = to('skill', '?'); m[271] = to('skill', '?');                                  // skills, disciplines
+  m[265] = to('melee', 'mine'); m[266] = to('melee', 'on_me'); m[267] = to('melee', 'mine', true); m[268] = to('melee', 'on_me', true);
+  m[279] = to('melee', 'others'); m[280] = to('melee', 'others', true);
+  m[301] = to('melee', '?'); m[303] = to('melee', 'mine');                                // crits, "too far away"
+  m[304] = m[305] = m[306] = to('melee', 'others');                                      // NPC rampage, flurry, enrage
+  m[269] = to('bcast'); m[282] = to('bcast');                                            // broadcasts (duels), yell for help
+  m[277] = to('death'); m[278] = to('death');                                            // your death, others' deaths
+  m[281] = to('who');
+  m[285] = to('money'); m[328] = to('money');                                            // money split, auto-split echo
+  m[286] = to('loot'); m[287] = to('random');
+  m[1000] = to('melee', 'mine'); m[1001] = to('melee', 'others');                        // my / other pet damage (melee's own, as the text path has them)
+  m[1002] = to('pet'); m[1003] = to('pet');                                              // my / other pet say
+  m[1004] = to('melee', 'mine'); m[1005] = to('melee', 'others');                        // my / other melee special
+  m[1008] = to('melee', 'others'); m[1009] = to('melee', 'others');                      // other melee critical, other damage shield
+  for (const k of [1006, 1007, 1010, 1011, 1012]) m[k] = to('zeal');                      // /mystats, item speech, Zeal spam, Bandolier (status, failure)
+  return m;
+})();
+const ZEAL_CHAT_HINT_TTL_MS = 30_000;      // a hint is for the line that follows it; older than this it is a different line
+const ZEAL_CHAT_HINT_MAX = 800;
+const ZEAL_CHAT_LIVE_MS = 15_000;          // the pipe's tick (every 6 s) keeps a character "live"; a line may wait for its hint only while live
+const ZEAL_CHAT_DEFER_MS = 300;            // how long an unclaimed line waits for its hint (the pipe speaks first, but the tail can beat the POST)
+const _zealChatHints = new Map();          // "<character>|<text>" -> { k, at }
+const _zealChatSeen = new Map();           // lower-case character -> when its pipe last spoke
+const _zealChatDeferred = [];              // { line, character, due }
+let _zealChatTimer = null;
+// The same reduction on both sides of the match: the pipe strips non-printing characters (an item link's \x12) and the log keeps them.
+function _zealChatNorm(s) { return String(s == null ? '' : s).replace(/[^\x20-\x7e]/g, '').replace(/\s+/g, ' ').trim(); }
+// Take Mimic's batch `{ lines: [{ c: character, k: colour, x: text }] }`. Returns how many hints were kept. Nothing is kept
+// unless the Chat overlay is asking right now, for an excluded character, or for a colour no table knows.
+function zealChatTake(payload, now) {
+  const t = now == null ? Date.now() : now;
+  if (!(_chatPolicy && t - _chatPolicyAt <= CHAT_POLICY_TTL_MS)) return 0;
+  const lines = payload && Array.isArray(payload.lines) ? payload.lines : [];
+  let n = 0;
+  for (const r of lines.slice(0, 400)) {
+    if (!r || typeof r.c !== 'string' || !r.c || r.c.length > 40) continue;
+    if (!shouldUploadForCharacter(r.c)) continue;
+    const lc = r.c.toLowerCase();
+    _zealChatSeen.set(lc, t);
+    const k = Number(r.k);
+    if (!Number.isInteger(k) || !(k in ZEAL_CHAT_COLOR) || typeof r.x !== 'string') continue;
+    const x = _zealChatNorm(r.x.slice(0, 700));
+    if (!x) continue;
+    const key = lc + '|' + x;
+    _zealChatHints.delete(key);
+    _zealChatHints.set(key, { k, at: t });
+    n++;
+  }
+  for (const [key, h] of _zealChatHints) {
+    if (_zealChatHints.size <= ZEAL_CHAT_HINT_MAX && t - h.at <= ZEAL_CHAT_HINT_TTL_MS) break;   // oldest first: stop at the first keeper
+    _zealChatHints.delete(key);
+  }
+  return n;
+}
+// The Zeal colour of this log line, or null (no hint: no Zeal, or it has not arrived).
+function zealChannelHint(character, line, now) {
+  const body = _chatLogBody(line);
+  if (!body || !character) return null;
+  const h = _zealChatHints.get(String(character).toLowerCase() + '|' + _zealChatNorm(body));
+  const t = now == null ? Date.now() : now;
+  return h && t - h.at <= ZEAL_CHAT_HINT_TTL_MS ? h : null;
+}
+// A routed line: the log's own sentence, whole, in the channel Zeal named.
+function classifyZealLine(line, route) {
+  const body = _chatLogBody(line);
+  const ts = parseEqTimestamp(line);
+  if (!route || !body || !ts) return null;
+  const text = _chatCleanText(body);
+  if (!text) return null;
+  const self = /^Your?\b/.test(body);
+  const evt = { ch: route.ch, who: '', text, t: ts.getTime(), self, npc: false };
+  if (route.cat) evt.cat = route.cat === '?' ? (self ? 'mine' : 'others') : route.cat;
+  if (route.miss) evt.miss = true;
+  return evt;
+}
+// The fallback when Zeal gave no channel: the sentences each split owns, read off the log text. Only these have a shape the
+// repo has seen: a slain line (golden raid log), a server broadcast (PvP fixtures), the /who list and count (golden raid log) and
+// Bandolier (docs/zeal-bandolier-filter-request.md). ⚠ The two coin lines are EQEmu's string table from memory and have not
+// been seen in a Quarm log: if Money never fills without Zeal, check the real line before widening it, and do not "fix"
+// the pattern into a guess. Emotes, a pet's reply and /who rows have no shape the log gives away: they need Zeal's channel.
+const CHAT_ZEAL_TEXT_RXS = [
+  ['death', /^(?:You have been slain by [^,"]+|[^,"]+ has been slain by [^,"]+)!$/],
+  ['bcast', /^[^,'"]+ BROADCASTS, ['"].*['"]$/],
+  ['who',   /^There (?:are|is) \d+ players? in .+\.$/],
+  ['who',   /^(?:Players on EverQuest:|-{20,})$/],
+  ['who',   /^(?:(?:AFK|LFG|LD) )*\[(?:\d{1,2} [^\]]+|ANONYMOUS|GM)\] [A-Za-z`' ]+(?: \([^)]+\))?(?: <[^>]*>)?(?: ZONE: \w+)?$/],
+  ['zeal',  /^(?:Loading bandolier set \[|Bandolier set \[)/],
+  ['money', /^You receive .+ (?:from the corpse|as your split)\.$/],
+];
+function classifyZealTextLine(line) {
+  const body = _chatLogBody(line);
+  if (!body) return null;
+  for (const [ch, rx] of CHAT_ZEAL_TEXT_RXS) if (rx.test(body)) return classifyZealLine(line, { ch });
+  return null;
+}
+// A line nothing claimed may wait a moment for its hint, but only when it could use one (a switch that takes Zeal's channels
+// is on), the pipe is talking for this character, and it is not combat (Mimic does not send those colours).
+function _zealChatShouldDefer(line, character, policy, t) {
+  if (!character || !(policy.other || policy.melee || policy.spells || policy.skills || policy.loot || policy.random)) return false;
+  const seen = _zealChatSeen.get(String(character).toLowerCase());
+  if (!seen || t - seen > ZEAL_CHAT_LIVE_MS || _zealChatDeferred.length >= 300) return false;
+  const body = _chatLogBody(line);
+  return !!body && !CHAT_OTHER_COMBAT_RX.test(body);
+}
+function _zealChatDefer(line, character, t) {
+  _zealChatDeferred.push({ line, character, due: t + ZEAL_CHAT_DEFER_MS });
+  if (!_zealChatTimer) {
+    _zealChatTimer = setTimeout(() => { _zealChatTimer = null; zealChatFlushDeferred(); }, ZEAL_CHAT_DEFER_MS + 20);
+    if (_zealChatTimer.unref) _zealChatTimer.unref();
+  }
+}
+// Re-ask every waiting line whose time is up, once more and without waiting again. Returns how many landed.
+function zealChatFlushDeferred(now) {
+  const t = now == null ? Date.now() : now;
+  let n = 0;
+  for (let i = 0; i < _zealChatDeferred.length;) {
+    const d = _zealChatDeferred[i];
+    if (d.due > t) { i++; continue; }
+    _zealChatDeferred.splice(i, 1);
+    try { if (noteLocalChatLine(d.line, d.character, t, { late: true })) n++; } catch (e) { void e; }
+  }
+  if (_zealChatDeferred.length && !_zealChatTimer) {
+    _zealChatTimer = setTimeout(() => { _zealChatTimer = null; zealChatFlushDeferred(); }, ZEAL_CHAT_DEFER_MS);
+    if (_zealChatTimer.unref) _zealChatTimer.unref();
+  }
+  return n;
+}
+function _zealChatReset() { _zealChatHints.clear(); _zealChatSeen.clear(); _zealChatDeferred.length = 0; if (_zealChatTimer) { clearTimeout(_zealChatTimer); _zealChatTimer = null; } _chatSlotNames.clear(); }
+// A joined channel's slot number is the only thing Zeal's /abc lines carry ("[5] [Name]: text"), so which channel a number is
+// can only be learned from a line that names it ("tells Wolfpackofficer:5"). Learned per character, in memory, names only
+// (never a message). An abbreviated line on a slot known to be an officer channel is Officer's; an unknown slot stays
+// Custom, as before.
+const _chatSlotNames = new Map();          // "<character>|<slot>" -> channel name
+function _chatLearnSlot(evt, character) {
+  if (!evt || !character || !evt.cnum || (evt.ch !== 'custom' && evt.ch !== 'officer')) return;
+  const key = String(character).toLowerCase() + '|' + evt.cnum;
+  if (evt.cn) {
+    if (_chatSlotNames.size >= 200 && !_chatSlotNames.has(key)) _chatSlotNames.clear();
+    _chatSlotNames.set(key, evt.cn);
+    return;
+  }
+  const name = _chatSlotNames.get(key);
+  if (!name) return;
+  evt.cn = name;
+  if (/officer/i.test(name)) evt.ch = 'officer';
+}
+
 // The overlay's switches, handed over on every poll. Default (nothing asked for, or the overlay went
 // quiet for CHAT_POLICY_TTL_MS) is public channels only.
 let _chatPolicy = null;
@@ -38939,10 +41721,16 @@ function setChatPolicy(p, now) {
   _chatPolicy = next;
   _chatPolicyAt = now == null ? Date.now() : now;
 }
+// The switches the Chat cache honours when it saves: the overlay's last ask however long ago (a closed overlay must
+// not make a cached tell vanish or come back), else the ones the cache itself was saved under, else public channels.
+let _chatPolicyRestored = null;
+function chatCachePolicy(now) {
+  return _chatPolicy || _chatPolicyRestored || chatPolicyNow(now);
+}
 function chatPolicyNow(now) {
   const t = now == null ? Date.now() : now;
   if (_chatPolicy && t - _chatPolicyAt <= CHAT_POLICY_TTL_MS) return _chatPolicy;
-  return { tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false };
+  return { tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false, away: false };
 }
 function chatChannelAllowed(ch, policy) {
   const g = CHAT_GROUPS.find(x => x.channels.indexOf(ch) !== -1);
@@ -38953,7 +41741,7 @@ function chatChannelAllowed(ch, policy) {
 // The ring. Memory only: never written to disk, never queued, never uploaded.
 const _chatRing = [];
 let _chatSeq = 0;
-const CHAT_BOOT = crypto.randomBytes(4).toString('hex');   // a new value after a restart tells the overlay to start over
+let CHAT_BOOT = crypto.randomBytes(4).toString('hex');   // a new value after a restart (or a Chat cache wipe) tells the overlay to start over
 // One person's main + alt logs both hear the same guild line: one key, one copy. A zone line is per
 // character (two characters zoning together each did), so it carries the character too. The overlay
 // builds the same key to drop a history line it already holds (chat.html chatKey).
@@ -38990,20 +41778,93 @@ const CHAT_SPELL_RING_MAX = 300;
 const CHAT_SKILL_RING_MAX = 300;
 const _spellRing = [];
 const _skillRing = [];
+// Loot, Random and Other: a ring each, for the same reason (a roll night or an experience-heavy pull must not push chat out).
+const CHAT_LOOT_RING_MAX = 300;
+const CHAT_RANDOM_RING_MAX = 300;
+const CHAT_OTHER_RING_MAX = 300;
+const _lootRing = [];
+const _randomRing = [];
+const _otherRing = [];
 // channel → its ring, its cap and the policy switch that gates it (the same name the group carries).
 const _chatExtraRings = {
   melee: { ring: _meleeRing, max: CHAT_MELEE_RING_MAX, gate: 'melee' },
   spell: { ring: _spellRing, max: CHAT_SPELL_RING_MAX, gate: 'spells' },
   skill: { ring: _skillRing, max: CHAT_SKILL_RING_MAX, gate: 'skills' },
+  loot:   { ring: _lootRing,   max: CHAT_LOOT_RING_MAX,   gate: 'loot' },
+  random: { ring: _randomRing, max: CHAT_RANDOM_RING_MAX, gate: 'random' },
+  other:  { ring: _otherRing,  max: CHAT_OTHER_RING_MAX,  gate: 'other' },
 };
-function noteLocalChatLine(line, character, now) {
+// The splits of Other share its ring and its gate (see CHAT_GROUPS): the channel id on each line tells them apart.
+for (const ch of ['money', 'emote', 'pet', 'who', 'death', 'bcast', 'zeal']) _chatExtraRings[ch] = _chatExtraRings.other;
+// The guild feed ring (the guild lead, 2026-10-15: guild and raid chat from other members' Mimics while this player is
+// out of game). DISPLAY ONLY: its lines come from the poller block below (a GET to the bot), land here with the
+// channel ids the local lines use ('guild' / 'raid', so they colour and filter alike) plus via: 'guild', and are served
+// by /api/chat to the overlay and nowhere else. Not the chat ring (a local log line and a relayed one never share
+// a buffer, so clearing one cannot touch the other), never a history source, never a trigger, tell or parse input.
+const CHAT_GUILD_RING_MAX = 300;
+const _guildFeedRing = [];
+const GUILD_FEED_LIVE_MS = 30_000;       // the title-bar hint holds while the last good poll is this recent
+let _guildFeedOkAt = 0;
+let _guildFeedIngame = null;             // members in game WITH MIMIC RUNNING per the bot's last answer; null = unknown
+// The agent does NOT match a relayed line against its own log's copy (the guild lead, 2026-10-20: "my messages should
+// always be displayed"). It used to, and dropped the relayed copy of a line whenever the local ring held one, while
+// the overlay might not be showing that local copy (a character search, a channel switched off, a window that
+// holds the group). Only the overlay knows what is on screen, so it alone merges a local and a relayed copy of
+// one line (chat.html sameSaid): the local copy wins, and a relayed line is dropped only against a copy it shows.
+// Take the bot's lines ({ seq, t, ch, who, text }); returns how many landed. Anything that is not a plain guild or
+// raid line from a named speaker is dropped, and a line already held (same speaker, text and second) is not added twice
+// (a bot restart replays from 0 and must not repeat what the overlay shows).
+// `ingame` is the bot's count of guild members in game with Mimic feeding (others may be online without Mimic and
+// cannot be seen): a whole number, 0 = nobody, anything else = unknown (null).
+function guildFeedTake(lines, now, ingame) {
+  const t = now == null ? Date.now() : now;
+  _guildFeedOkAt = t;
+  const n_ = ingame == null || ingame === '' ? NaN : Number(ingame);
+  _guildFeedIngame = Number.isFinite(n_) && n_ >= 0 ? Math.floor(n_) : null;
+  let n = 0;
+  for (const r of (Array.isArray(lines) ? lines : [])) {
+    if (!r || (r.ch !== 'guild' && r.ch !== 'raid')) continue;
+    const who = String(r.who == null ? '' : r.who).trim().slice(0, 40);
+    const text = _chatCleanText(r.text);
+    if (!who || !text) continue;
+    const at = Number.isFinite(Number(r.t)) && Number(r.t) > 0 ? Number(r.t) : t;
+    const key = chatLineKey({ ch: r.ch, who, text, t: at }, '');
+    if (_guildFeedRing.some(x => x.k === key)) continue;
+    _guildFeedRing.push({ seq: ++_chatSeq, k: key, t: at, ch: r.ch, who, to: null, text, self: false, npc: false, on: '', via: 'guild' });
+    n++;
+  }
+  const over = _guildFeedRing.length - CHAT_GUILD_RING_MAX;
+  if (over > 0) _guildFeedRing.splice(0, over);
+  if (n) _chatCacheMarkDirty();
+  return n;
+}
+// The game is running again: local lines take over, so nothing relayed stays to double them.
+function guildFeedClear() { _guildFeedRing.length = 0; _guildFeedOkAt = 0; _guildFeedIngame = null; _chatCacheMarkDirty(); }
+function noteLocalChatLine(line, character, now, opts) {
   const policy = chatPolicyNow(now);
   let evt = classifyChatLine(line, character);
+  _chatLearnSlot(evt, character);
   // Only looked for while the overlay has asked for melee, skills or spells: an overlay that did not leaves nothing
   // accumulating. Melee first, then Skills, then Spells, so a line is only ever one of them.
+  // Loot and Random have exact shapes of their own, so they are asked first; Other is asked LAST and only for a line
+  // nothing else claimed (classifyOtherLine re-asks the groups whose switch is off, so it never takes their lines).
+  if (!evt && policy.loot) evt = classifyLootLine(line);
+  if (!evt && policy.random) evt = classifyRandomLine(line);
   if (!evt && policy.melee) evt = classifyMeleeLine(line, character);
   if (!evt && policy.skills) evt = classifySkillLine(line);
   if (!evt && policy.spells) evt = classifySpellLine(line, character);
+  // What is left asks Zeal which channel it was (see "Zeal's own channel for a line"): the hint is a colour index from the
+  // game's own print function. A chat colour means "not Other" (null route); a known colour routes the line to its channel
+  // (the gates below still apply); no hint and no colour fall back to the log text. A line may wait ~300 ms for its hint.
+  if (!evt) {
+    const t = now == null ? Date.now() : now;
+    const hint = zealChannelHint(character, line, t);
+    if (!hint && !(opts && opts.late) && _zealChatShouldDefer(line, character, policy, t)) { _zealChatDefer(line, character, t); return false; }
+    const route = hint ? ZEAL_CHAT_COLOR[hint.k] : undefined;
+    if (route === null) return false;                                                   // chat the log parser could not read: never Other
+    if (route) evt = classifyZealLine(line, route);
+    else if (policy.other) evt = classifyZealTextLine(line) || classifyOtherLine(line, character, { melee: policy.melee, skills: policy.skills, spells: policy.spells });
+  }
   if (!evt) return false;
   if (!chatChannelAllowed(evt.ch, policy)) return false;
   const extra = _chatExtraRings[evt.ch];
@@ -39014,12 +41875,15 @@ function noteLocalChatLine(line, character, now) {
     // Skills line in the first person ("You begin casting…", "You have become better at…") is that character's
     // own event, never a second sighting, so only what a bystander sees is de-duplicated.
     const mk = evt.text + '|' + Math.floor(evt.t / 1000);
-    if (evt.ch === 'melee' || !/^Your?\b/.test(evt.text)) {
+    // (Loot is the exception to "first person": "--You have looted ...--" opens with dashes but is just as much that
+    // character's own event.)
+    if (evt.ch === 'melee' || !/^(?:--)?Your?\b/.test(evt.text)) {
       for (let i = ring.length - 1, n = 0; i >= 0 && n < 40; i--, n++) if (ring[i].k === mk && ring[i].on !== (character || '')) return false;
     }
     ring.push({ seq: ++_chatSeq, k: mk, t: evt.t, ch: evt.ch, who: '', to: null, text: evt.text, self: !!evt.self, npc: false, on: character || '', cat: evt.cat || null, miss: !!evt.miss });
     const spill = ring.length - extra.max;
     if (spill > 0) ring.splice(0, spill);
+    _chatCacheMarkDirty();
     return true;
   }
   const key = chatLineKey(evt, character);
@@ -39031,6 +41895,7 @@ function noteLocalChatLine(line, character, now) {
   _chatRing.push({ seq: ++_chatSeq, k: key, t: evt.t, ch: evt.ch, who: evt.who, to: evt.to || null, text: evt.text, self: !!evt.self, npc: !!evt.npc, on: character || '', cn: evt.cn || null, cnum: evt.cnum || null });
   const over = _chatRing.length - CHAT_RING_MAX;
   if (over > 0) _chatRing.splice(0, over);
+  _chatCacheMarkDirty();
   return true;
 }
 
@@ -39048,7 +41913,8 @@ function serializeLocalChat(q, now) {
   // Chat, melee, spell and skill rows page together, newest first, by their shared sequence number. A side ring is
   // only read while its switch is on, so the common case is the chat ring alone.
   const feeds = [_chatRing];
-  for (const x of Object.values(_chatExtraRings)) if (policy[x.gate]) feeds.push(x.ring);
+  for (const x of Object.values(_chatExtraRings)) if (policy[x.gate] && feeds.indexOf(x.ring) === -1) feeds.push(x.ring);   // Other's splits share its ring: once
+  if (policy.away) feeds.push(_guildFeedRing);   // relayed guild/raid lines: only while the overlay asked for them
   const at = feeds.map(r => r.length - 1);
   while (lines.length < CHAT_PAGE_MAX) {
     let best = -1, bestSeq = -1;
@@ -39067,10 +41933,15 @@ function serializeLocalChat(q, now) {
     if (l.cnum) o.cnum = l.cnum;
     if (l.cat) o.cat = l.cat;
     if (l.miss) o.miss = true;
+    if (l.via) o.via = l.via;
     lines.push(o);
   }
   lines.reverse();
-  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, lines };
+  // away: the guild feed is live right now (asked for, and the bot answered a moment ago), for the title-bar hint and the
+  // "nobody is in game" note. ingame = members in game with Mimic running (0 = nobody, null = unknown); null while the feed is not live.
+  const away = (policy.away && _guildFeedOkAt > 0 && t - _guildFeedOkAt <= GUILD_FEED_LIVE_MS)
+    ? { on: true, ingame: _guildFeedIngame, at: _guildFeedOkAt } : null;
+  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, wiped: _chatWipeAt, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, away, lines };
 }
 function _handleLocalChat(req, res) {
   const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(body); };
@@ -39086,7 +41957,92 @@ function _handleLocalChat(req, res) {
   return send(200, body);
 }
 function _resetLocalChatForTest() {
-  _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
+  _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _lootRing.length = 0; _randomRing.length = 0; _otherRing.length = 0; guildFeedClear(); _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
+  _chatPolicyRestored = null; _chatWipeAt = 0; _zealChatReset();
+}
+
+// ── Chat cache seam ──
+// The "Chat cache" block further down owns the file, the key and the timer. THIS block only copies the rings out as plain
+// objects and takes them back, so the rings stay named in one place and nothing here touches a file.
+function _chatCacheRings() {
+  return { chat: _chatRing, melee: _meleeRing, spell: _spellRing, skill: _skillRing, loot: _lootRing, random: _randomRing, other: _otherRing, guild: _guildFeedRing };
+}
+const _CHAT_CACHE_RING_MAX = { chat: CHAT_RING_MAX, melee: CHAT_MELEE_RING_MAX, spell: CHAT_SPELL_RING_MAX, skill: CHAT_SKILL_RING_MAX, loot: CHAT_LOOT_RING_MAX, random: CHAT_RANDOM_RING_MAX, other: CHAT_OTHER_RING_MAX, guild: CHAT_GUILD_RING_MAX };
+let _chatWipeAt = 0;   // when the rings were last emptied by a revoke; the overlay clears what it holds when this changes
+// What may be saved, newest `o.perRingMax` per ring and nothing older than `o.maxAgeMs`. A line is kept only if the
+// switches in force NOW would still let the overlay show it: officer chat while Officer is off, tells while Tells is off,
+// the relayed guild feed while Away is off, never reach the file.
+function chatCacheSnapshot(now, o) {
+  const t = now == null ? Date.now() : now;
+  const policy = chatCachePolicy(t);
+  const rings = {};
+  for (const [name, ring] of Object.entries(_chatCacheRings())) {
+    const keep = [];
+    if (name !== 'guild' || policy.away) {
+      for (let i = ring.length - 1; i >= 0 && keep.length < o.perRingMax; i--) {
+        const l = ring[i];
+        if (!(t - l.t <= o.maxAgeMs)) continue;
+        if (!l.swap && !chatChannelAllowed(l.ch, policy)) continue;
+        keep.push(l);
+      }
+    }
+    rings[name] = keep.reverse();
+  }
+  const pol = {};
+  for (const k of CHAT_POLICY_KEYS) pol[k] = !!policy[k];
+  return { seq: _chatSeq, policy: pol, rings };
+}
+function _chatCacheStr(v, n) { return String(v == null ? '' : v).slice(0, n); }
+// One saved line back into the shape the rings hold, or null. A saved file is trusted no further than its shape.
+function _chatCacheLine(l, now, maxAgeMs) {
+  if (!l || typeof l !== 'object') return null;
+  const seq = Number(l.seq), t = Number(l.t);
+  if (!(seq > 0) || !Number.isFinite(t) || !(now - t <= maxAgeMs)) return null;
+  const text = _chatCacheStr(l.text, CHAT_TEXT_MAX);
+  if (l.swap) return { seq, k: 'swap|' + seq, swap: true, t, from: _chatCacheStr(l.from, 40), to: _chatCacheStr(l.to, 40), text };
+  if (!CHAT_CHANNELS[l.ch] || !text) return null;
+  const e = { seq, k: _chatCacheStr(l.k, 600), t, ch: l.ch, who: _chatCacheStr(l.who, 60), to: l.to ? _chatCacheStr(l.to, 60) : null, text,
+    self: !!l.self, npc: !!l.npc, on: _chatCacheStr(l.on, 40) };
+  if (l.cn) e.cn = _chatCacheStr(l.cn, 40);
+  if (Number.isFinite(Number(l.cnum)) && l.cnum) e.cnum = Number(l.cnum);
+  if (l.cat) e.cat = _chatCacheStr(l.cat, 20);
+  if (l.miss) e.miss = true;
+  if (l.via === 'guild') e.via = 'guild';
+  return e;
+}
+// Put saved lines back at startup (the rings are empty then). Returns how many landed. The sequence counter resumes
+// past the highest saved number so the merged paging order holds; the overlay starts over on the new boot value anyway.
+function chatCacheRestore(snap, now, o) {
+  if (!snap || typeof snap !== 'object' || !snap.rings || typeof snap.rings !== 'object') return 0;
+  const t = now == null ? Date.now() : now;
+  const rings = _chatCacheRings();
+  let n = 0, top = 0;
+  for (const name of Object.keys(rings)) {
+    const src = Array.isArray(snap.rings[name]) ? snap.rings[name] : [];
+    const lines = [];
+    for (const l of src) { const e = _chatCacheLine(l, t, o.maxAgeMs); if (e) lines.push(e); }
+    lines.sort((a, b) => a.seq - b.seq);
+    const take = lines.slice(Math.max(0, lines.length - Math.min(_CHAT_CACHE_RING_MAX[name], o.perRingMax)));
+    rings[name].length = 0;
+    for (const e of take) rings[name].push(e);
+    if (take.length) top = Math.max(top, take[take.length - 1].seq);
+    n += take.length;
+  }
+  if (top > _chatSeq) _chatSeq = top;
+  if (snap.policy && typeof snap.policy === 'object') {
+    const p = {};
+    for (const k of CHAT_POLICY_KEYS) p[k] = !!snap.policy[k];
+    _chatPolicyRestored = p;
+  }
+  return n;
+}
+// Empty every ring (and the relayed feed), and give the overlay a new boot value + a wipe stamp so it empties what IT holds.
+function chatCacheClearRings() {
+  for (const ring of Object.values(_chatCacheRings())) ring.length = 0;
+  guildFeedClear();
+  CHAT_BOOT = crypto.randomBytes(4).toString('hex');
+  _chatWipeAt = Date.now();
+  _chatPolicyRestored = null;
 }
 // ── end Local chat window ──
 
@@ -39252,7 +42208,306 @@ async function _handleLocalChatHistory(req, res) {
   return send(200, body);
 }
 function _resetChatHistoryForTest() { _chatHistCache = null; }
+function chatHistoryForget() { _chatHistCache = null; }   // a revoke drops the short history cache too
 // ── end Chat history ──
+
+// ── Guild feed while you are out of game ──────────────────────────────────────
+// The guild lead, 2026-10-15 (options A + X): the Chat overlay shows the guild's /gu and /rs chat, relayed from OTHER
+// members' Mimics, while this player is not in EverQuest. The bot half is GET <api base>/guild-chat?since=<seq>&boot=<boot>
+// -> { ok, boot, seq, ingame: <n|null>, lines: [{ seq, t, ch: 'guild'|'raid', who, text }] }. `ingame` is how many guild
+// members are in game WITH MIMIC RUNNING (0 = nobody, null = unknown); it rides /api/chat as away.ingame for the overlay.
+//
+// WHEN IT RUNS, all of these at once, otherwise NO call is made:
+//   • not local mode, a token is held, not a dry run, and the control plane has not stood this agent down (fleet kill or
+//     version floor: the same gates as the other polls);
+//   • the overlay is polling /api/chat right now (the switches lapse CHAT_POLICY_TTL_MS after it stops) and has `away` on;
+//   • EverQuest is not running for this player.
+// "NOT RUNNING" is this agent's own existing notion, the one the Set-up-for-me guard and the idle gate already use, and
+// no new process scan: EverQuest counts as running while EITHER a Zeal client has pushed live state within the last
+// minute (Mimic's pipe bridge only has state while the game and Zeal are up; the same cut-off the log-silent check uses)
+// OR a watched log has had a line within 90 s (the Set-up-for-me guard's cut-off). Zeal covers a quiet log and a
+// player standing still; the log covers a player without Zeal or a standalone agent with no bridge. Either one alone
+// would mistake a running game for an absent one; the union errs toward "in game", which costs a missed feed, never a
+// doubled line. The game starting again stops the poll and clears the relayed lines, so the local log takes over.
+//
+// DISPLAY ONLY: a GET. Nothing here is enqueued, uploaded, written to disk or handed to the trigger, tell or parse
+// code, and the lines live in guildFeedTake's ring (memory) until the game starts or Mimic restarts.
+const GUILD_FEED_POLL_MS = 5_000;
+const GUILD_FEED_BACKOFF_MS = 10 * 60_000;     // an old bot with no such route: ask again every 10 minutes
+const GUILD_FEED_ERROR_BACKOFF_MS = 30_000;    // any other failure: be patient, say nothing
+const GUILD_FEED_ZEAL_FRESH_MS = 60_000;
+const GUILD_FEED_LOG_FRESH_MS = 90_000;
+// A camp is announced ("It will take you about 30 seconds to prepare your camp.") and finishes about 30 s later. Lines inside
+// this window are the camp's own tail; a line past it means the camp was cancelled without a word or a new session began.
+const GUILD_FEED_CAMP_TAIL_MS = 60_000;
+const _guildFeed = { cursor: 0, boot: '', nextAt: 0, inflight: false };
+// "In game" means LOGGED IN ON A CHARACTER (the guild lead, 2026-10-15: "the chat should show guild chat when you aren't
+// logged in on a character, you can be at character select or earlier in the login process"). Not "EverQuest is running":
+//   • a log (watchedLogs[].campAt, set by the tail callback) that announced a camp and has not been cancelled or logged
+//     back in is out, however recent its last line (the camp's tail lines are not play);
+//   • a Zeal entry counts only when it is fresh, its character is not one whose log camped, and it looks in-world: a zone
+//     or a position. The pipe stays open at character select, and the camped character's entry lingers up to a minute
+//     (Mimic retires it after 2 idle minutes), so freshness alone is not enough. What Zeal itself pushes at character select
+//     is not captured anywhere in this repo, so a zoneless, positionless entry is simply not taken as proof of a login;
+//   • a log line within 90 s counts for a log that has not camped (no Zeal, or a standing-still player).
+// Per raw log line, on the watched-log record: campAt is set on the camp announcement, cleared by the cancel line, by the
+// next login ("Welcome to EverQuest!"), or by any line past the camp's own tail. The same patterns the reporter's `_camping`
+// flag reads (that flag is never cleared by a camp that completes, so it cannot answer "logged in now").
+function _guildFeedNoteCampLine(watched, line, now) {
+  if (!watched || !line) return;
+  if (watched.campAt && now - watched.campAt > GUILD_FEED_CAMP_TAIL_MS) watched.campAt = 0;
+  if (/prepare your camp/i.test(line)) watched.campAt = now;
+  else if (/abandon your preparations to camp/i.test(line) || _WELCOME_RX.test(line)) watched.campAt = 0;
+}
+function _zealInWorld(st) {
+  if (!st || typeof st !== 'object') return false;
+  if (_lootZoneKnown(st.zone)) return true;
+  const l = st.loc;
+  return !!l && Number.isFinite(Number(l.x)) && Number.isFinite(Number(l.y)) && (Number(l.x) !== 0 || Number(l.y) !== 0);
+}
+function _eqInGameFrom(zealState, watchedLogs, now) {
+  const camped = new Set();
+  for (const w of (watchedLogs || [])) {
+    if (w && w.campAt && w.character) camped.add(String(w.character).toLowerCase());
+  }
+  for (const ch of Object.keys(zealState || {})) {
+    const st = zealState[ch];
+    if (camped.has(String(ch).toLowerCase())) continue;
+    if (now - ((st && st.updatedAt) || 0) <= GUILD_FEED_ZEAL_FRESH_MS && _zealInWorld(st)) return true;
+  }
+  for (const w of (watchedLogs || [])) {
+    if (w && w.lastSeen && !w.campAt && now - w.lastSeen <= GUILD_FEED_LOG_FRESH_MS) return true;
+  }
+  return false;
+}
+function _eqInGame(now) { return _eqInGameFrom(_zealState, stats.watchedLogs, now); }
+function _guildFeedReset() { _guildFeed.cursor = 0; _guildFeed.boot = ''; _guildFeed.nextAt = 0; }
+// The poll's place in the bot's feed, for the Chat cache: after a restart the poll asks for what is NEW, not the whole backlog again.
+function _guildFeedCursorGet() { return { cursor: _guildFeed.cursor, boot: _guildFeed.boot }; }
+function _guildFeedCursorSet(c) {
+  if (!c || !(Number(c.cursor) >= 0) || typeof c.boot !== 'string') return;
+  _guildFeed.cursor = Math.floor(Number(c.cursor)); _guildFeed.boot = c.boot.slice(0, 64);
+}
+// One tick. Resolves a short word for what happened (the tests read it; nothing else does). `fetchImpl` is the test seam.
+async function _pollGuildFeed(now, fetchImpl) {
+  const t = now == null ? Date.now() : now;
+  if (_eqInGame(t)) {
+    if (_guildFeed.cursor || _guildFeed.boot || _guildFeedRing.length) { guildFeedClear(); _guildFeedReset(); }
+    return 'in-game';
+  }
+  if (_uploadOpts && _uploadOpts.dryRun) return 'dry-run';
+  if (_localOnly()) return 'local';
+  const base = _getApiBase();
+  const token = _getAgentToken();
+  if (!base || !token) return 'no-token';
+  if (_controlStandDown().down) return 'dormant';
+  if (!chatPolicyNow(t).away) return 'quiet';
+  if (t < _guildFeed.nextAt) return 'backoff';
+  if (_guildFeed.inflight) return 'busy';
+  _guildFeed.inflight = true;
+  try {
+    const url = base.replace(/\/+$/, '') + '/guild-chat?since=' + _guildFeed.cursor + '&boot=' + encodeURIComponent(_guildFeed.boot);
+    const res = await (fetchImpl || fetch)(url, {
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json', 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (res.status === 404) { _guildFeed.nextAt = t + GUILD_FEED_BACKOFF_MS; return 'unavailable'; }
+    // Only a definite 401 (the bot's "session token invalid or revoked", which a member lockout also answers) is a revoke;
+    // a 5xx, a 429 or a dead network is not, and falls through to the error back-off below.
+    if (res.status === 401) { chatCacheRevoke('guild-chat answered 401'); _guildFeed.nextAt = t + GUILD_FEED_ERROR_BACKOFF_MS; return 'unauthorized'; }
+    if (!res.ok) { _guildFeed.nextAt = t + GUILD_FEED_ERROR_BACKOFF_MS; return 'error'; }
+    const data = await res.json();
+    if (!data || data.ok === false || !Array.isArray(data.lines)) { _guildFeed.nextAt = t + GUILD_FEED_ERROR_BACKOFF_MS; return 'error'; }
+    // The game may have started while we waited: do not put a relayed line back after the ring was cleared.
+    if (_eqInGame(now == null ? Date.now() : t)) return 'in-game';
+    const boot = data.boot == null ? '' : String(data.boot);
+    if (_guildFeed.boot && boot && boot !== _guildFeed.boot) {
+      // The bot restarted: its sequence numbers start over. Ask again from 0 and drop this answer (it was built from our old
+      // cursor). Lines asked for again are matched against the ring by guildFeedTake, so none show twice.
+      _guildFeed.boot = boot; _guildFeed.cursor = 0;
+      return 'boot-reset';
+    }
+    if (boot) _guildFeed.boot = boot;
+    const lines = data.lines.slice().sort((a, b) => (Number(a && a.seq) || 0) - (Number(b && b.seq) || 0));
+    guildFeedTake(lines, t, data.ingame);
+    // The cursor is the LAST RETURNED LINE's seq, never the response's `seq` (the bot's ring head): a page is capped at 200,
+    // so the head would skip the lines the page left out. An empty page (nothing new, or a shed) keeps the cursor.
+    let top = _guildFeed.cursor;
+    for (const r of lines) if (r && Number(r.seq) > top) top = Number(r.seq);
+    _guildFeed.cursor = top;
+    return 'ok';
+  } catch {
+    _guildFeed.nextAt = t + GUILD_FEED_ERROR_BACKOFF_MS;
+    return 'error';
+  } finally {
+    _guildFeed.inflight = false;
+  }
+}
+setInterval(() => { _pollGuildFeed().catch(() => {}); }, GUILD_FEED_POLL_MS).unref();
+// ── end Guild feed ──
+
+// ── Chat cache: the Chat overlay's feed, kept across a restart ───────────────────────────────────────────
+// The guild lead, 2026-10-17: "cache the filled in chat overlay data encrypted locally and invalidate it on logout if a
+// fresh session isn't established within a reasonable timeframe, and wipe before revoking access".
+//
+// WHAT: the chat, melee, spell, skill, loot, random, other and relayed-guild rings (the Local chat window block owns them and
+// hands over a snapshot), plus the guild feed's cursor, so a restart shows the feed at once and asks the bot for what is
+// new instead of the whole backlog. Nothing is fetched from the bot for this; the only remote part of the feed is the
+// guild-chat poll, and the cursor saves its re-fetch.
+//
+// KEY: Mimic generates a random 32-byte key once, keeps it under the OS keychain (safeStorage) and hands it over in
+// WOLFPACK_CHAT_CACHE_KEY, with WOLFPACK_CHAT_CACHE_ID = the Discord identity the session belongs to. With either missing
+// (standalone agent, an old shell, no keychain, signed out) NOTHING is written: there is no plaintext mode. AES-256-GCM, a
+// fresh random 96-bit IV per write, the magic as AAD. A wrong key, a torn or tampered file, or a different identity
+// inside it: the file is deleted and the feed starts empty.
+//
+// WHAT IS KEPT: only what the overlay could show now (the Local chat window's switches: Officer/Custom/Group, Tells per
+// Settings, Away), the newest CHAT_CACHE_PER_RING_MAX per ring, nothing older than CHAT_CACHE_MAX_AGE_MS, and at most
+// CHAT_CACHE_MAX_BYTES of plain JSON (oldest lines go first). Written atomically (.tmp + rename), coalesced to one write per
+// CHAT_CACHE_WRITE_MS however fast lines arrive, and again at a clean exit (a hard kill loses at most that window).
+//
+// WHEN IT GOES (Mimic owns the logout side: it decides, it holds the key; see main.js "Chat cache"):
+//   • a definite 401 (a revoked session, a /token revoke, a member lockout) on the 20 s reporter heartbeat, an upload or the
+//     guild-chat poll: chatCacheRevoke. A 5xx, a 429 or a dead network is NOT a revoke (the bot answers a store blip with 503);
+//   • the fleet kill switch or a version floor standing this agent down: chatCacheWipeFileOnly, BEFORE the reading is adopted.
+//     Stand-down keeps overlays running on LOCAL data, so this deletes the on-disk copy and holds writes but LEAVES the live
+//     rings and guild feed alone — the on-screen chat must not blank (the guild lead, 2026-10-17);
+//   • a session push from a DIFFERENT Discord identity: chatCacheWipe BEFORE the new token is taken.
+// A full chatCacheWipe (revoke, identity change) deletes the file first, then what the overlay holds (the rings, the guild feed,
+// the history cache, and a new boot value so the overlay empties its own copy); chatCacheWipeFileOnly deletes only the file.
+// Plain unlink + the key being dropped by Mimic is the whole story; no overwrite pass.
+const CHAT_CACHE_FILE = path.join(__dirname, 'logsync.chat-cache.bin');
+const CHAT_CACHE_MAGIC = Buffer.from('WPCC1');
+const CHAT_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const CHAT_CACHE_PER_RING_MAX = 200;
+const CHAT_CACHE_MAX_BYTES = 256 * 1024;
+const CHAT_CACHE_WRITE_MS = 8_000;
+const CHAT_CACHE_FILE_MAX_BYTES = 2 * 1024 * 1024;   // a file past this is not one of ours
+const _chatCache = { key: null, id: '', file: CHAT_CACHE_FILE, dirty: false, timer: null, revoked: false };
+
+function chatCacheConfigure(o) {
+  if (_chatCache.timer) { clearTimeout(_chatCache.timer); _chatCache.timer = null; }
+  const hex = o && typeof o.key === 'string' && /^[0-9a-f]{64}$/i.test(o.key) ? o.key : '';
+  _chatCache.key = hex ? Buffer.from(hex, 'hex') : null;
+  _chatCache.id = o && typeof o.id === 'string' ? o.id.slice(0, 64) : '';
+  _chatCache.file = (o && o.file) || CHAT_CACHE_FILE;
+  _chatCache.dirty = false;
+  _chatCache.revoked = false;
+}
+function chatCacheEnabled() { return !!(_chatCache.key && _chatCache.id && !_chatCache.revoked); }
+// magic | iv (12) | auth tag (16) | ciphertext
+function chatCacheSeal(obj, key) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+  c.setAAD(CHAT_CACHE_MAGIC);
+  const ct = Buffer.concat([c.update(JSON.stringify(obj), 'utf8'), c.final()]);
+  return Buffer.concat([CHAT_CACHE_MAGIC, iv, c.getAuthTag(), ct]);
+}
+// The object, or null for anything that is not an untouched file sealed under this key.
+function chatCacheOpen(buf, key) {
+  try {
+    const m = CHAT_CACHE_MAGIC.length;
+    if (!Buffer.isBuffer(buf) || !key || buf.length < m + 12 + 16 || !buf.subarray(0, m).equals(CHAT_CACHE_MAGIC)) return null;
+    const d = crypto.createDecipheriv('aes-256-gcm', key, buf.subarray(m, m + 12));
+    d.setAAD(CHAT_CACHE_MAGIC);
+    d.setAuthTag(buf.subarray(m + 12, m + 28));
+    return JSON.parse(Buffer.concat([d.update(buf.subarray(m + 28)), d.final()]).toString('utf8'));
+  } catch { return null; }
+}
+function chatCacheUnlink() {
+  for (const f of [_chatCache.file, _chatCache.file + '.tmp']) { try { fs.unlinkSync(f); } catch (e) { void e; } }
+}
+// Drop the oldest lines (lowest sequence number, across every ring) until the plain JSON fits.
+function _chatCacheTrim(snap, maxBytes) {
+  let total = JSON.stringify(snap).length;
+  if (total <= maxBytes) return snap;
+  const all = [];
+  for (const arr of Object.values(snap.rings)) for (const l of arr) all.push(l);
+  all.sort((a, b) => a.seq - b.seq);
+  const drop = new Set();
+  for (const l of all) { if (total <= maxBytes) break; total -= JSON.stringify(l).length + 1; drop.add(l); }
+  for (const name of Object.keys(snap.rings)) snap.rings[name] = snap.rings[name].filter(l => !drop.has(l));
+  return snap;
+}
+function chatCacheSave(now) {
+  // No key or identity: no file. A stood-down agent writes nothing either (the wipe already emptied it).
+  if (!chatCacheEnabled() || _controlStandDown().down) return false;
+  const t = now == null ? Date.now() : now;
+  const snap = _chatCacheTrim(chatCacheSnapshot(t, { maxAgeMs: CHAT_CACHE_MAX_AGE_MS, perRingMax: CHAT_CACHE_PER_RING_MAX }), CHAT_CACHE_MAX_BYTES);
+  const tmp = _chatCache.file + '.tmp';
+  try {
+    const buf = chatCacheSeal({ v: 1, id: _chatCache.id, savedAt: t, guild: _guildFeedCursorGet(), snap }, _chatCache.key);
+    fs.writeFileSync(tmp, buf, { mode: 0o600 });
+    fs.renameSync(tmp, _chatCache.file);
+    _chatCache.dirty = false;
+    return true;
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) { void e2; }
+    return false;
+  }
+}
+// Called by the rings when a line lands: one write per CHAT_CACHE_WRITE_MS, however many lines arrive.
+function _chatCacheMarkDirty() {
+  if (!chatCacheEnabled()) return;
+  _chatCache.dirty = true;
+  if (_chatCache.timer) return;
+  _chatCache.timer = setTimeout(() => { _chatCache.timer = null; if (_chatCache.dirty) chatCacheSave(); }, CHAT_CACHE_WRITE_MS);
+  if (_chatCache.timer.unref) _chatCache.timer.unref();
+}
+function chatCacheLoad(now) {
+  if (!chatCacheEnabled()) return false;
+  let buf;
+  try {
+    if (fs.statSync(_chatCache.file).size > CHAT_CACHE_FILE_MAX_BYTES) { chatCacheUnlink(); return false; }
+    buf = fs.readFileSync(_chatCache.file);
+  } catch { return false; }                       // no file yet: the first start
+  const p = chatCacheOpen(buf, _chatCache.key);
+  if (!p || p.v !== 1 || p.id !== _chatCache.id) { chatCacheUnlink(); return false; }
+  chatCacheRestore(p.snap, now, { maxAgeMs: CHAT_CACHE_MAX_AGE_MS, perRingMax: CHAT_CACHE_PER_RING_MAX });
+  _guildFeedCursorSet(p.guild);
+  return true;
+}
+// File first, then what the overlay is holding. Does not stop later writes by itself (the stand-down gate and a revoke do).
+function chatCacheWipe(reason) {
+  if (_chatCache.timer) { clearTimeout(_chatCache.timer); _chatCache.timer = null; }
+  _chatCache.dirty = false;
+  chatCacheUnlink();
+  chatCacheClearRings();
+  _guildFeedReset();
+  chatHistoryForget();
+  console.log('[chat-cache] wiped (' + reason + ')');
+}
+// The fleet kill switch / version floor stands the agent down but overlays keep working on LOCAL data (the control
+// plane's own rule), so the on-screen chat must NOT go blank (the guild lead, 2026-10-17). This wipes the on-disk
+// copy and holds writes while stood down, but leaves the live rings and the guild feed alone.
+function chatCacheWipeFileOnly(reason) {
+  if (_chatCache.timer) { clearTimeout(_chatCache.timer); _chatCache.timer = null; }
+  _chatCache.dirty = false;
+  chatCacheUnlink();
+  console.log('[chat-cache] file wiped (' + reason + ')');
+}
+// A definite "this session is no longer valid". Wipes, then refuses every write for the life of this process; the
+// printed line is what Mimic reads to drop the key from its config (so a leftover file is unreadable) before it launches again.
+function chatCacheRevoke(reason) {
+  if (_chatCache.revoked) return false;
+  _chatCache.revoked = true;
+  chatCacheWipe(reason);
+  console.log('[chat-cache] revoked (' + reason + ')');
+  return true;
+}
+// Mimic pushing a session. Called BEFORE the token is taken: a different Discord identity than the cache belongs to
+// empties it first and turns the cache off, so one person's chat is never carried to another.
+function chatCacheOnSessionPush(token, identity) {
+  if (!_chatCache.key || !token) return;
+  const did = identity && identity.discord_id != null ? String(identity.discord_id) : '';
+  if (did && did !== _chatCache.id) { chatCacheWipe('a different identity signed in'); _chatCache.key = null; }
+}
+(function _chatCacheBoot() {
+  chatCacheConfigure({ key: process.env.WOLFPACK_CHAT_CACHE_KEY, id: process.env.WOLFPACK_CHAT_CACHE_ID });
+  if (chatCacheEnabled()) { try { chatCacheLoad(); } catch (e) { void e; } }
+  process.on('exit', () => { try { if (_chatCache.dirty) chatCacheSave(); } catch (e) { void e; } });
+})();
+// ── end Chat cache ──
 
 // ── /sll lockout parser ────────────────────────────────────────────────────
 // EQ /sll output in the log:
@@ -39493,6 +42748,8 @@ function _applyControlPlane(obj, source) {
   const rawFloor = Number(obj.min_agent_ver_num);
   const minVerNum = Number.isFinite(rawFloor) && rawFloor > 0 ? Math.floor(rawFloor) : 0;
   const prevKill = _controlPlane.kill, prevFloor = _controlPlane.minVerNum;
+  // Standing down withdraws access: empty the Chat cache BEFORE the reading is adopted (the guild lead, 2026-10-17).
+  if ((kill || (minVerNum > 0 && _verNum(AGENT_VERSION) < minVerNum)) && !_controlStandDown().down) chatCacheWipeFileOnly(kill ? 'fleet kill switch' : 'version floor');
   _controlPlane = { kill, minVerNum, at: Date.now() };
   if (kill !== prevKill)
     console.log(`[control] flag_agent_kill → ${kill ? 'DORMANT (paused by guild control plane)' : 'resumed'} (${source})`);
@@ -39616,6 +42873,8 @@ function _reporterHeartbeatOnce() {
       },
       timeout: 5000,
     }, (res) => {
+      // A definite 401 (session revoked, or the member locked out) wipes the Chat cache; anything else is not a revoke.
+      if (res.statusCode === 401) chatCacheRevoke('reporter-poll answered 401');
       if (res.statusCode !== 200) { res.resume(); _reporterFailOpen(); return; }  // old/erroring bot → fail-open
       let buf = '';
       res.on('data', (d) => { buf += d; if (buf.length > 8192) req.destroy(); });
@@ -40055,7 +43314,8 @@ function _recordFightHistory(et, character) {
     // board altogether (the guild lead, 2026-10-04: History "correctly attributes pet data to owners
     // and DS hits from tanks").
     const dmg = Number(p.dmg) || 0;
-    if (dmg <= 0) continue;
+    // A tank who dealt nothing but ate the fight still gets a row: Tank History reads damage TAKEN.
+    if (dmg <= 0 && !(p.took > 0)) continue;
     const row = { character: name, dmg, pet_owner: p.pet_owner || null };
     // What the live row said about a pet, so the History merge can fold an owned pet into its owner
     // and label an unowned one "(pet)" / "(charmed)" instead of passing it off as a raider.
@@ -40065,9 +43325,13 @@ function _recordFightHistory(et, character) {
     // Their own first and last damage time, for the row's Sec and DPS (an older entry has none).
     const span = et.spans && et.spans[name];
     if (span && span[0] > 0 && span[1] >= span[0]) { row.first_ms = span[0]; row.last_ms = span[1]; }
-    // Damage taken, kept for a Tank History to come — stored, not rendered.
+    // Damage taken, biggest single hit and damage shield: the Tank side of History (the meter's DPS and Tank
+    // buttons both read the fight picked there).
     if (p.took > 0) row.took = p.took;
     if (p.tookMax > 0) row.tookMax = p.tookMax;
+    if (p.healRaw > 0) row.heal = p.healRaw;          // healing done, for the local site's parse detail
+    const ds = Math.round(Number(et.dsBy && et.dsBy[String(name).toLowerCase()]) || 0);
+    if (ds > 0) row.ds = ds;
     local.push(row);
   }
   local.sort((a, b) => b.dmg - a.dmg);
@@ -40082,6 +43346,19 @@ function _recordFightHistory(et, character) {
     settled: false,
     upload: sends ? 'sent' : 'local',
   };
+  // Who died in this fight and when (seconds in), for the local site's parse detail. this.deaths is the builder's own list.
+  if (startedMs && Array.isArray(et.deaths)) {
+    const deaths = et.deaths.map(d => ({ name: String((d && d.name) || '').slice(0, 40), at: Math.round(((Date.parse(d && d.ts) || 0) - startedMs) / 1000) }))
+      .filter(d => d.name && d.at >= -5 && d.at <= entry.durationSec + 5).slice(0, 40);
+    if (deaths.length) entry.deaths = deaths;
+  }
+  // Made under a raid code: the entry says so, and the whole local view is kept in the local store (the ring
+  // forgets after 7 days; a code raid is something to export).
+  const raidTag = _raidTag();
+  if (raidTag) {
+    entry.raidCode = raidTag.code; entry.raidRole = raidTag.role;
+    try { _raidCodeSaveFight(entry, raidTag, character); } catch { void 0; }
+  }
   stats.fightHistory.unshift(entry);
   _trimFightHistory();
   // Me overlay: tonight's damage per character (the dupe guard above keeps a
@@ -40166,6 +43443,44 @@ function _fightHistoryPayload(haveRev) {
   if (haveRev && haveRev === rev) return { rev, unchanged: true };
   return { rev, max: FIGHT_HISTORY_MAX, fights: stats.fightHistory || [] };
 }
+// The guild trigger list the Guild triggers card shows, built ONCE per change to `stats.guildTriggers` (a new
+// array every time _applyGuildTriggersResponse recompiles it), never per poll. It used to ride every
+// /api/state body: 487 enabled rows were ~675 KB of a ~0.8 MB body that every overlay re-reads ~10 times a
+// second, and the dashboard's card was the only reader. Now /api/state carries only `guildTriggersRev` and
+// the dashboard asks GET /api/guild-triggers?rev=<rev it holds> while the Triggers tab is on screen.
+// A row drops the compiled internals (_regex, _scope, _conditions, ... a RegExp does not survive JSON) and
+// every empty column (null, '' and []), none of which the card reads. The revision is the row count plus a
+// hash of the serialized rows, so a recompile that changed nothing (an older bot sends no version) keeps it.
+let _gtView = { src: null, rev: '0.empty', json: '[]' };
+function _guildTriggerRow(t) {
+  const row = {};
+  for (const k of Object.keys(t)) {
+    if (k.charAt(0) === '_') continue;
+    const v = t[k];
+    if (v == null || v === '' || (Array.isArray(v) && v.length === 0)) continue;
+    row[k] = v;
+  }
+  // The grouping "What you hear" already uses (stat cards, a zone, class), so the card can fold its rows
+  // into the same sections without a second copy of the zone list.
+  const rg = _ruleGroupOfGuild(t);
+  row.rule_group = rg;
+  if (rg.startsWith('zone:')) row.rule_group_label = RULE_ZONE_NAMES[rg.slice(5)] || '';
+  return row;
+}
+function _guildTriggersView() {
+  const src = stats.guildTriggers;
+  if (_gtView.src === src && src) return _gtView;
+  const list = Array.isArray(src) ? src.filter(Boolean) : [];
+  const json = JSON.stringify(list.map(_guildTriggerRow));
+  _gtView = { src, json, rev: list.length + '.' + crypto.createHash('sha1').update(json).digest('hex').slice(0, 10) };
+  return _gtView;
+}
+// GET /api/guild-triggers[?rev=…] — answers `{rev, unchanged:true}` to the revision it already holds, else the rows.
+function _guildTriggersBody(haveRev) {
+  const v = _guildTriggersView();
+  if (haveRev && haveRev === v.rev) return JSON.stringify({ rev: v.rev, unchanged: true });
+  return '{"rev":' + JSON.stringify(v.rev) + ',"triggers":' + v.json + '}';
+}
 function _loadFightHistory(file = _fightsFile, now = Date.now()) {
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -40190,6 +43505,194 @@ function _startFightHistoryPersistence() {
   _loadFightHistory();
   _resettleRestoredFights();
   _fightsPersist = true;
+}
+
+// ── Target history (Target Info's pager and Recent tab) ─────────────────────
+// The guild lead, 2026-10-04: "Target Info would be good to have a history (and filter for if we killed
+// it or not) forward/back button ... so we could scroll back through these mobs and see the drops"
+// (picked as the Pager, Decision Desk 2026-10-19; docs/DESIGN-history-and-quest-nav.md §1).
+// The last 50 mobs this PC targeted, newest first: zone, spawn id, name, first and last seen, lowest HP
+// and whether it was seen to die. Local only (nothing here is uploaded), about 12 KB, and kept for 24 hours
+// across a restart in a file of its own. Spawn ids restart with every zone visit, so an entry restored from
+// disk is marked `restored` and never joined to a live frame.
+// "Killed" comes from, best first: the target turned into a corpse that carries the same spawn id; into a
+// same-name corpse; its bar went from above zero to 0; a "slain" line named it. Whether an NPC corpse keeps
+// the mob's spawn id is unmeasured on Quarm, so both corpse readings are kept and the entry says which.
+const TGT_HIST_MAX = 50;
+const TGT_HIST_KEEP_MS = 24 * 60 * 60 * 1000;
+const TGT_HIST_TOUCH_MS = 30_000;          // how often a steady target's "last seen" is rewritten (and the file saved)
+const TGT_HIST_NOID_GAP_MS = 2 * 60_000;   // a frame with no spawn id joins a same-name entry seen this recently
+const TGT_FILE = path.join(__dirname, 'logsync.targets.json');
+const _TGT_CORPSE_RX = /[`'’]s\s+corpse\d*$/i;
+let _tgtHist = [];                         // newest first (by lastMs)
+let _tgtFile = TGT_FILE;                   // a test points this at a temp file
+let _tgtPersist = false;
+let _tgtSaveTimer = null;
+let _tgtRev = 0;
+const _TGT_BOOT = Date.now().toString(36);
+const _tgtCur = new Map();                 // character (lower) → key of the entry its target window is on now
+function _tgtRevision() { return _TGT_BOOT + '.' + _tgtRev; }
+function _tgtChanged() {
+  _tgtRev++;
+  if (!_tgtPersist || _tgtSaveTimer) return;
+  _tgtSaveTimer = setTimeout(() => { _tgtSaveTimer = null; _saveTargetHistory(); }, 5_000);
+  if (_tgtSaveTimer.unref) _tgtSaveTimer.unref();
+}
+function _saveTargetHistory(file = _tgtFile) {
+  try {
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ savedAt: Date.now(), targets: _tgtHist }));
+    fs.renameSync(file + '.tmp', file);
+  } catch { /* non-fatal */ }
+}
+function _trimTargetHistory(now = Date.now()) {
+  const keep = _tgtHist.filter(e => e && now - (e.lastMs || 0) <= TGT_HIST_KEEP_MS);
+  keep.sort((a, b) => b.lastMs - a.lastMs);
+  if (keep.length > TGT_HIST_MAX) keep.length = TGT_HIST_MAX;
+  _tgtHist = keep;
+}
+function _loadTargetHistory(file = _tgtFile, now = Date.now()) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!raw || !Array.isArray(raw.targets)) return;
+    _tgtHist = raw.targets.filter(e => e && e.name && e.key && Number(e.lastMs) > 0).map(e => ({ ...e, restored: true }));
+    _trimTargetHistory(now);
+    _tgtCur.clear();
+    _tgtRev++;
+  } catch { /* no file yet, or unreadable: start empty */ }
+}
+function _startTargetHistoryPersistence() {
+  _loadTargetHistory();
+  _tgtPersist = true;
+}
+// The entry a target frame belongs to, or null. A spawn id is exact; with no id (an older Zeal, or 0) a
+// same-name entry seen in the last 2 minutes stands in. Restored entries are never joined.
+function _tgtFind(zone, id, nameLower, now) {
+  for (const e of _tgtHist) {
+    if (e.restored || e.zone !== zone || String(e.name).toLowerCase() !== nameLower) continue;
+    if (id > 0 && e.id > 0) { if (e.id === id) return e; continue; }
+    if (now - e.lastMs <= TGT_HIST_NOID_GAP_MS) return e;
+  }
+  return null;
+}
+// A corpse frame's mob: the open (not yet killed) entry of that name in the zone, the same spawn id first.
+function _tgtOpenByName(zone, nameLower, id) {
+  let byName = null;
+  for (const e of _tgtHist) {
+    if (e.restored || e.killedMs || e.zone !== zone || String(e.name).toLowerCase() !== nameLower) continue;
+    if (id > 0 && e.id === id) return e;
+    if (!byName) byName = e;
+  }
+  return byName;
+}
+function _tgtMarkKilled(e, now, how) {
+  if (!e || e.killedMs) return false;
+  e.killedMs = now;
+  e.killedHow = how;
+  return true;
+}
+// Every Zeal frame for a character (prev = the one before it). Cheap: one list walk of at most 50.
+function _tgtHistNoteFromState(character, prev, next, now = Date.now()) {
+  if (!character) return;
+  const cl = String(character).toLowerCase();
+  const raw = next && next.target_name ? String(next.target_name).replace(/^#/, '').trim() : '';
+  let changed = false;
+  let e = null;
+  if (raw) {
+    const zone = Number.isFinite(Number(next.zone)) ? Number(next.zone) : null;
+    const id = Number(next.target_id) > 0 ? Number(next.target_id) : 0;
+    const hp = (typeof next.target_hp_pct === 'number' && Number.isFinite(next.target_hp_pct)) ? Math.round(next.target_hp_pct) : null;
+    const base = raw.replace(_TGT_CORPSE_RX, '');
+    if (base !== raw) {
+      // The target became "<mob>'s corpse": the mob is dead. (A player's corpse finds no open entry: players are never recorded.)
+      const c = _tgtOpenByName(zone, base.toLowerCase(), id);
+      if (c && _tgtMarkKilled(c, now, id > 0 && c.id === id ? 'corpse-id' : 'corpse-name')) changed = true;
+    } else if (next.target_type == null ? /\s/.test(raw) : Number(next.target_type) === 1) {
+      // An NPC. (A frame with no type is taken for one only when the name has a space: "a gnoll" is a mob, "Aldenmar" may be a raider.)
+      e = _tgtFind(zone, id, raw.toLowerCase(), now);
+      if (e && e.killedMs && hp != null && hp > 0) e = null;   // a killed spawn standing up again is a new one
+      if (!e) {
+        e = { key: (zone == null ? 'x' : zone) + '#' + id + '#' + now.toString(36) + '#' + raw.toLowerCase(), zone, zoneName: _zoneName(zone), id: id || null,
+              name: raw, ch: character, firstMs: now, lastMs: now, minHp: hp, hp, killedMs: null, killedHow: null };
+        _tgtHist.unshift(e);
+        changed = true;
+      } else if (hp != null) {
+        e.hp = hp;
+        if (e.minHp == null || hp < e.minHp) { e.minHp = hp; changed = true; }
+      }
+      // Its bar went from above zero to 0 under the same name (and id, when both frames carry one): it died in the target window.
+      if (hp === 0 && !e.killedMs && prev && typeof prev.target_hp_pct === 'number' && prev.target_hp_pct > 0
+          && String(prev.target_name || '').replace(/^#/, '').trim().toLowerCase() === raw.toLowerCase()
+          && !(Number(prev.target_id) > 0 && id > 0 && Number(prev.target_id) !== id)) {
+        if (_tgtMarkKilled(e, now, 'hp0')) changed = true;
+      }
+    }
+  }
+  // "Last seen": stamped when the window moves onto or off a mob, and every 30 s while it stays on one.
+  const curKey = _tgtCur.get(cl);
+  if (e) {
+    if (curKey !== e.key) { e.lastMs = now; changed = true; }
+    else if (now - e.lastMs >= TGT_HIST_TOUCH_MS) { e.lastMs = now; changed = true; }
+    _tgtCur.set(cl, e.key);
+  } else {
+    _tgtCur.delete(cl);
+  }
+  if (curKey && (!e || e.key !== curKey)) {
+    const old = _tgtHist.find(x => x.key === curKey);
+    if (old && old.lastMs < now) { old.lastMs = now; changed = true; }
+  }
+  if (changed) { _trimTargetHistory(now); _tgtChanged(); }
+}
+// "<Mob> has been slain by …" / "You have slain <Mob>!" from a live log line: the newest open entry of that
+// name seen in the last 3 minutes died. The target-window readings above usually got there first.
+function _tgtHistNoteSlain(deadName, now = Date.now()) {
+  const want = String(deadName || '').replace(/^#/, '').trim().toLowerCase();
+  if (!want || want === 'you') return;
+  const e = _tgtHist.find(x => !x.restored && !x.killedMs && String(x.name).toLowerCase() === want && now - x.lastMs <= 3 * 60_000);
+  if (e && _tgtMarkKilled(e, now, 'slain')) { _trimTargetHistory(now); _tgtChanged(); }
+}
+// Which entry the live target is, for the overlay to skip it while paging (null when it has none).
+function _tgtLiveKey(st, now = Date.now()) {
+  if (!st || !st.target_name) return null;
+  const zone = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
+  const e = _tgtFind(zone, Number(st.target_id) > 0 ? Number(st.target_id) : 0, String(st.target_name).replace(/^#/, '').trim().toLowerCase(), now);
+  return e ? e.key : null;
+}
+// A past mob in the shape buildMobInfo gives a live one, so the overlay paints it with the same code: the
+// catalog row for its name in its zone (the one Target Info reads, fetched if it is not cached), HP at the
+// lowest it was seen (0 when it died), and nothing for what only a live target has (buffs, casts, mana, slow).
+function _pastMobInfo(e, now = Date.now()) {
+  if (!e) return null;
+  const zone = e.zone != null ? e.zone : null;
+  const mobKey = _mobInfoCacheKey(e.name, zone);
+  let cached = _mobInfoByName.get(mobKey);
+  if (!cached || (now - cached.at) >= MOB_INFO_TTL_MS) {
+    fetchMobInfo(e.name, e.ch || '', zone);
+    cached = _mobInfoByName.get(mobKey) || cached;
+  }
+  return {
+    target_name: e.name,
+    target_hp_pct: e.killedMs ? 0 : (e.minHp != null ? e.minHp : null),
+    target_hp_cur: null, target_hp_max: null,
+    mob: cached ? cached.mob : null,
+    loading: !cached,
+    target_buffs: [], target_is_pc: false, target_slots: null, target_casting: [], target_slow: null,
+    target_mana: null, target_lastcast: null, target_player: null, target_npc_ht: null, target_timers: null,
+    target_lull: lullVerdictFor(e.name, zone),
+    target_hits: mobHitTypesFor(e.name),
+    target_invis: seeInvisObsFor(e.name, null),
+    target_hist_key: e.key,
+    past: { key: e.key, firstMs: e.firstMs, lastMs: e.lastMs, minHp: e.minHp, killedMs: e.killedMs || null, killedHow: e.killedHow || null, restored: !!e.restored },
+  };
+}
+// GET /api/target-history[?rev=…][&key=…] — the list the pager and the Recent tab read. An unchanged list
+// answers in a few bytes; `key` asks for that entry's mob too (only while the overlay is showing a past one).
+function _targetHistoryPayload(haveRev, key, now = Date.now()) {
+  const rev = _tgtRevision();
+  const out = { rev, max: TGT_HIST_MAX };
+  if (haveRev && haveRev === rev) out.unchanged = true;
+  else out.targets = _tgtHist.map(e => { const { ch, ...rest } = e; void ch; return rest; });
+  if (key) out.mi = _pastMobInfo(_tgtHist.find(x => x.key === key), now);
+  return out;
 }
 
 // ── Fun-event detection ─────────────────────────────────────────────────────
@@ -40658,7 +44161,14 @@ function uploadChat(messages, { botUrl, token, dryRun }) {
   // only the elected chat reporter uploads. Non-reporters drop it (the reporter
   // sees the same lines). Fail-open default keeps every agent uploading until
   // the bot says otherwise, so this can never make chat go dark.
-  if (!_reporterRoles.chat) return Promise.resolve();
+  // The player's OWN lines (self-form: "You say to your guild") are the one thing a stood-down agent still sends
+  // (the guild lead, 2026-10-20: "missing my own messages to guild on /camp"). A /camp demotes the agent at once,
+  // so a batch still waiting for the 5 s flush, its own last words included, was dropped here whole. The bot's
+  // dedup collapses the copy a reporter also sends.
+  if (!_reporterRoles.chat) {
+    messages = messages.filter(m => m && (m.speaker_source === 'log_name' || m.speaker_source === 'zeal'));
+    if (!messages.length) return Promise.resolve();
+  }
   enqueueUpload('chat', { agent_version: AGENT_VERSION, messages });
   return Promise.resolve();
 }
@@ -40718,6 +44228,18 @@ function uploadDruzzilKills(kills, { botUrl, token, dryRun }) {
     return Promise.resolve();
   }
   enqueueUpload('bosskill', { agent_version: AGENT_VERSION, kills });
+  return Promise.resolve();
+}
+
+// One slow-mode on/off event → POST /api/agent/slow-mode. The bot is idempotent (every raider's
+// agent hears the same line), so a plain durable-queue enqueue is enough.
+function uploadSlowMode(evt, { botUrl, token, dryRun } = {}) {
+  void botUrl; void token;
+  if (dryRun) {
+    console.log(`[slow-mode] ${evt.state}${evt.by ? ' (asked by ' + evt.by + ')' : ''}`);
+    return Promise.resolve();
+  }
+  enqueueUpload('slow_mode', { agent_version: AGENT_VERSION, ...evt });
   return Promise.resolve();
 }
 
@@ -41722,6 +45244,8 @@ function pollCharacterPrefs({ botUrl, token }) {
 // poll pending), so we don't accidentally drop anything during startup.
 function shouldUploadForCharacter(character) {
   if (!character) return true;
+  // A character on a server that is not the guild's (Project 1999, live EQ...) feeds nothing to the guild bot.
+  if (_offGuildServerChar(character)) return false;
   const p = stats.characterPrefs && stats.characterPrefs[String(character).toLowerCase()];
   return !p || !p.exclude_from_stats;
 }
@@ -42557,7 +46081,15 @@ function noteTagChannelLine(line, selfCharacter) {
   const parts = _tagLineParts(line, selfCharacter);
   if (!parts || !_isZealTagPayload(parts.payload)) return false;
   const ts = parseEqTimestamp(line);
-  return _applyZealTagMessage(parts.payload, parts.tagger, ts ? ts.getTime() : Date.now());
+  const applied = _applyZealTagMessage(parts.payload, parts.tagger, ts ? ts.getTime() : Date.now());
+  if (applied && typeof _mapNoteTagDead === 'function') {
+    // A tag reading "dead" on a spawn id is the same proof as its corpse in your target window (the Map's respawn timer).
+    try {
+      const sid = parseInt(parts.payload.split(' | ').pop(), 10);
+      _mapNoteTagDead(selfCharacter, _zealTags.get(sid), Date.now());
+    } catch { /* the Map is a nicety: never break log ingest */ }
+  }
+  return applied;
 }
 // zeal.ini readiness check — "people already autojoin the channel and seeing
 // the channel once persists it for that user. my zeal ini should contain
@@ -43970,27 +47502,43 @@ function _addMyTarget(t, captures, character) {
 }
 const SUGGESTED_TRIGGERS = [
   // ── Buff drops on YOU — the most-requested alert class. The pattern matches
-  //    the EQ "Your <buff> spell has worn off." line; we cover common Clarity /
-  //    KEI / Aego / POTG / Symbol / Virtue lines individually so each shows
-  //    a category-specific overlay text.
+  //    each spell's OWN spell_fades text (eqemu_spells, checked 2026-10-19). The old
+  //    "Your <buff> spell has worn off." is only what the server prints to a CASTER
+  //    about a spell on someone else (SPELL_WORN_OFF, string 437), so a buff
+  //    dropping off you never read that way and these five were dead. Every rank
+  //    that shares a fade line shares a pattern. Lines are shared across a whole
+  //    kind of buff (all the skins, all the hastes), so the alert says which kind.
+  //      Clarity: The cool breeze fades. (Clarity 174) / The soft breeze fades. (Clarity II 1693) /
+  //        Your mind returns to normal. (Voice of Quellious 3360, Koadic's Endless Intellect 2570) /
+  //        Your gift of insight fades. (1409) / Your gift of brilliance fades. (1410)
+  //      Aego: Your aegolism fades. (1447, 2510) / Your virtue fades. (3467, 3479) / The mystic symbol fades. (485-488, 1535)
+  //      POTG: Your skin returns to normal. (Glades 1442, Cabbage 2188, Nine 3234). The same line ends
+  //        Spikecoat / Bramblecoat / Thistlecoat (515-518), which are damage shields: it is POTG's alert only,
+  //        or one drop would raise both.
+  //      Haste: Your speed returns to normal. (39, 171, 172, 1708) / The pulsing energy fades. (Augmentation 10, Augment 1729)
+  //      Damage shield: The brambles fall away. (129, 356, 432, 1727, 1975) / The blades fall away. (1560) /
+  //        The maelstrom fades away. (Shield of the Eighth 1963)
+  //    Left out because they have no fade text to match, or never were what the old name said: Augment
+  //    Death / Augmentation of Death (null), Pack Regeneration (a regen buff, not POTG), Shield of the Magi
+  //    (an armour buff), and names the Quarm spell list does not have (Conviction, Symbol of Tnarg, Shield of the Pellarus).
   { id: 'buff_clarity_drop', category: 'buff', label: 'Clarity / C2 / VoQ dropped',
-    pattern: '^Your (?:Clarity(?: II)?|Voice of Quellious|Gift of (?:Insight|Brilliance)|Koadic\'s Endless Intellect) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:The cool breeze fades|The soft breeze fades|Your mind returns to normal|Your gift of (?:insight|brilliance) fades)\\.\\s*$',
     overlay_text: 'CLARITY DROPPED', overlay_color: 'cyan',  overlay_ms: 5000,
     tts_default: true,  cooldown_seconds: 3 },
   { id: 'buff_aego_drop', category: 'buff', label: 'Aego / Virtue / Symbol dropped',
-    pattern: '^Your (?:Aegolism|Virtue|Symbol of (?:Marzin|Ryltan|Naltron|Tnarg|Pinzarn|Transal)|Hand of Virtue|Conviction|Blessing of Aegolism) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:Your aegolism fades|Your virtue fades|The mystic symbol fades)\\.\\s*$',
     overlay_text: 'AEGO/SYMBOL DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
     tts_default: true,  cooldown_seconds: 3 },
   { id: 'buff_potg_drop', category: 'buff', label: 'POTG / POTC dropped',
-    pattern: '^Your (?:Protection of the (?:Glades|Cabbage|Nine)|Pack Regen) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+Your skin returns to normal\\.\\s*$',
     overlay_text: 'POTG DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
     tts_default: true,  cooldown_seconds: 3 },
   { id: 'buff_haste_drop', category: 'buff', label: 'Haste dropped',
-    pattern: '^Your (?:Augment(?:ation)?(?: of Death)?|Aanya\'s Quickening|Celerity|Quickness|Swift Like the Wind) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:Your speed returns to normal|The pulsing energy fades)\\.\\s*$',
     overlay_text: 'HASTE DROPPED', overlay_color: 'cyan', overlay_ms: 5000,
     tts_default: false, cooldown_seconds: 3 },
   { id: 'buff_dmg_shield_drop', category: 'buff', label: 'Damage shield dropped',
-    pattern: '^Your (?:Shield of (?:Thorns|Spikes|Blades|Brambles|the Eighth|the Magi|the Pellarus)|Thorny Shield|Thistlecoat|Bramblecoat|Spikecoat|Legacy of Spike) (?:spell )?has worn off\\.',
+    pattern: '^\\[.+?\\]\\s+(?:The brambles fall away|The blades fall away|The maelstrom fades away)\\.\\s*$',
     overlay_text: 'DAMAGE SHIELD DROPPED', overlay_color: 'cyan', overlay_ms: 4000,
     tts_default: false, cooldown_seconds: 3 },
 
@@ -44161,6 +47709,9 @@ const SUGGESTED_TRIGGERS = [
     pattern: 'Insufficient Mana to cast this spell!',
     overlay_text: 'NOT ENOUGH MANA', overlay_color: 'yellow', overlay_ms: 2500,
     tts_default: false, cooldown_seconds: 3 },
+  // INVIS_BEGIN_BREAK (string 275), sent one tick (6 s) before an invisibility ends — not for bard songs
+  // (EQMacEmu zone/spell_effects.cpp, SE_Invisibility). The server sends no such warning for levitation or run
+  // speed, so there is no "about to drop" trigger for those two: only the fade text, after the fact.
   { id: 'self_invis_fading', category: 'utility', label: 'Your invisibility is about to drop',
     pattern: 'You feel yourself starting to appear\\.',
     overlay_text: 'INVIS FADING', overlay_color: 'yellow', overlay_ms: 4000,
@@ -44217,6 +47768,13 @@ const SUGGESTED_RETIRED_PATTERNS = {
   self_mezzed:      ['^You feel (?:calm|charmed)\\.'],
   self_feared:      ['^You are afraid\\.'],
   cast_interrupted: ['^Your (?:spell|target) (?:was )?interrupted'],
+  // 2026-10-19: "Your <buff> spell has worn off." is what a CASTER is told about a spell on someone else;
+  // a buff ending on you prints the spell's own fade text. These five never fired.
+  buff_clarity_drop: ['^Your (?:Clarity(?: II)?|Voice of Quellious|Gift of (?:Insight|Brilliance)|Koadic\'s Endless Intellect) (?:spell )?has worn off\\.'],
+  buff_aego_drop: ['^Your (?:Aegolism|Virtue|Symbol of (?:Marzin|Ryltan|Naltron|Tnarg|Pinzarn|Transal)|Hand of Virtue|Conviction|Blessing of Aegolism) (?:spell )?has worn off\\.'],
+  buff_potg_drop: ['^Your (?:Protection of the (?:Glades|Cabbage|Nine)|Pack Regen) (?:spell )?has worn off\\.'],
+  buff_haste_drop: ['^Your (?:Augment(?:ation)?(?: of Death)?|Aanya\'s Quickening|Celerity|Quickness|Swift Like the Wind) (?:spell )?has worn off\\.'],
+  buff_dmg_shield_drop: ['^Your (?:Shield of (?:Thorns|Spikes|Blades|Brambles|the Eighth|the Magi|the Pellarus)|Thorny Shield|Thistlecoat|Bramblecoat|Spikecoat|Legacy of Spike) (?:spell )?has worn off\\.'],
 };
 // The same for a template's alert text: a saved row still saying exactly this
 // gets the current text (cast_resisted_self now names the mob, 2026-10-02).
@@ -44473,6 +48031,121 @@ function _parseTriggerTgfJson(text) {
   return out;
 }
 
+// PQ Companion's trigger pack (2026-10-20): plain JSON, {pack_name, description, triggers:[…]}, written by
+// its Triggers page "Export" (a whole list or one category). Read from its published trigger model; the
+// code here is our own. A trigger is one record: `pattern` (Go regex, run on the message with the timestamp
+// already stripped, so a leading ^ is normal — compileTriggerPattern handles that and the (?P<name>…) groups,
+// and {C}/{S}/{N} are the same tokens GINA uses), a list of `actions` (overlay_text / text_to_speech /
+// play_sound / clipboard / discord_webhook), and timer fields (timer_type, timer_duration_secs,
+// worn_off_pattern, timer_alerts, …). Same output shape as the other two parsers, plus `not_carried`: plain
+// sentences for whatever has no home in a personal trigger, which the import result lists. A trigger with
+// nothing to match on comes back with no pattern, so the endpoint reports it without storing it.
+// `characters` is deliberately never carried — it names the exporter's own characters.
+// Returns null when the text is not a PQ Companion pack, so the caller can try the next format.
+const _PQC_ROW_FIELDS = ['timer_warnings', 'exclude_patterns', 'timer_duration_capture', 'timer_key_capture',
+  'bar_color', 'pinned', 'display_threshold_sec', 'timer_loop', 'timer_loop_max'];
+function _parsePqCompanionPack(text) {
+  const src = String(text || '').replace(/^﻿/, '');
+  if (src.indexOf('"pack_name"') < 0) return null;
+  let root;
+  try { root = JSON.parse(src); } catch { return null; }
+  if (!root || typeof root !== 'object' || Array.isArray(root) || typeof root.pack_name !== 'string' || !Array.isArray(root.triggers)) return null;
+  const out = [];
+  for (const raw of root.triggers.slice(0, 2000)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const name = String(raw.name || '').trim();
+    if (!name) continue;
+    if (raw.source === 'pipe') {
+      out.push({ name, pattern: '', not_carried: ['the whole trigger: it watches Zeal (target health, buffs, /pipe), not the log'] });
+      continue;
+    }
+    const notCarried = [];
+    const patterns = [String(raw.pattern || '').trim()];
+    if (!patterns[0] && !(Array.isArray(raw.extra_patterns) && raw.extra_patterns.some(e => e && e.enabled !== false && String(e.pattern || '').trim()))) {
+      out.push({ name, pattern: '', not_carried: ['the whole trigger: it has no log pattern to match'] });
+      continue;
+    }
+    let extraTimers = false;
+    for (const ep of (Array.isArray(raw.extra_patterns) ? raw.extra_patterns : [])) {
+      if (!ep || ep.enabled === false || !String(ep.pattern || '').trim()) continue;
+      patterns.push(String(ep.pattern).trim());
+      if (Number(ep.timer_duration_secs) > 0 || Number(ep.spell_id) > 0) extraTimers = true;
+    }
+    if (extraTimers) notCarried.push('a different timer length on an extra pattern');
+    const pattern = patterns.filter(Boolean).join('|');
+    const hasTargetGroup = /\(\?P?<target>/.test(pattern);
+    const tokens = (s) => String(s || '').replace(/\{(?:target|t)\}/gi, hasTargetGroup ? '{target}' : '{mytarget}');
+    let display = '', speak = '', soundFile = '', playsSound = false, moreText = 0, clip = false, hook = false;
+    for (const a of (Array.isArray(raw.actions) ? raw.actions : [])) {
+      if (!a || typeof a !== 'object') continue;
+      const txt = tokens(String(a.text || '').trim());
+      if (a.type === 'overlay_text') { if (!display) display = txt; else if (txt !== display) moreText++; }
+      else if (a.type === 'text_to_speech') { if (!speak) speak = txt; else if (txt !== speak) moreText++; }
+      else if (a.type === 'play_sound') {
+        const f = String(a.sound_path || '').trim();
+        if (f && !soundFile) { soundFile = f; playsSound = true; }
+      }
+      else if (a.type === 'clipboard') clip = true;
+      else if (a.type === 'discord_webhook') hook = true;
+    }
+    if (moreText) notCarried.push(moreText + ' more on-screen or spoken line' + (moreText === 1 ? '' : 's') + ' (one of each is kept)');
+    if (clip) notCarried.push('the copy-to-clipboard action');
+    if (hook) notCarried.push('the Discord post action');
+
+    const timerOn = String(raw.timer_type || 'none') !== 'none';
+    const durCapture = timerOn ? String(raw.timer_duration_capture || '').trim() : '';
+    const dur = timerOn ? Math.max(0, Math.round(Number(raw.timer_duration_secs) || 0)) : 0;
+    const warnings = [];
+    let soundWarn = 0;
+    if (timerOn) {
+      for (const ta of (Array.isArray(raw.timer_alerts) ? raw.timer_alerts : [])) {
+        if (!ta || !(Number(ta.seconds) > 0)) continue;
+        if (ta.type === 'text_to_speech' || ta.type === 'overlay_text') {
+          const t = String(ta.type === 'overlay_text' ? ta.text : ta.tts_template || '').replace(/\{spell\}/gi, name).trim();
+          if (t) warnings.push({ seconds: Math.round(Number(ta.seconds) * 10) / 10, text: t.slice(0, 200), tts: ta.type === 'text_to_speech' });
+        } else soundWarn++;
+      }
+      if (soundWarn) notCarried.push(soundWarn + ' sound-only warning' + (soundWarn === 1 ? '' : 's') + ' before the timer ends');
+      if (raw.timer_stack) notCarried.push('a separate timer row for every match');
+      const tgt = String(raw.timer_target_capture || '').trim();
+      if (tgt && tgt !== 'target') notCarried.push('the timer\'s target label (name the capture "target" to get one)');
+      if (Number(raw.cooldown_secs) > 0) notCarried.push('the reuse-cooldown timer');
+    }
+    if (Number(raw.repeat_reset_secs) > 0) notCarried.push('repeat counting');
+    const bar = String(raw.bar_color || '').trim();
+    const row = {
+      name,
+      pattern,
+      ...(playsSound ? { sound_file: soundFile, plays_sound: true } : {}),
+      use_regex:          true,
+      display_text:       display,
+      tts_text:           speak,
+      cooldown_seconds:   Math.max(0, Math.ceil(Number(raw.refire_cooldown_secs) || 0)),
+      timer_duration_sec: dur,
+      ...(String(raw.worn_off_pattern || '').trim() ? { end_early_pattern: String(raw.worn_off_pattern).trim(), end_use_regex: true } : {}),
+      ...(raw.enabled === false ? { enabled: false } : {}),
+      ...(warnings.length ? { timer_warnings: warnings.slice(0, 10) } : {}),
+      ...(durCapture ? { timer_duration_capture: durCapture.slice(0, 60) } : {}),
+      ...(timerOn && String(raw.timer_key_capture || '').trim() ? { timer_key_capture: String(raw.timer_key_capture).trim().slice(0, 60) } : {}),
+      ...(/^#[0-9a-f]{3,8}$/i.test(bar) && timerOn ? { bar_color: bar } : {}),
+      ...(raw.pinned === true && timerOn ? { pinned: true } : {}),
+      ...(timerOn && Number(raw.display_threshold_secs) > 0 ? { display_threshold_sec: Math.round(Number(raw.display_threshold_secs)) } : {}),
+      ...(timerOn && raw.timer_repeat === true && !raw.timer_stack ? { timer_loop: true, timer_loop_max: Math.max(0, Math.min(1000, Math.floor(Number(raw.timer_repeat_max)) || 0)) } : {}),
+      ...(Array.isArray(raw.exclude_patterns) && raw.exclude_patterns.some(p => String(p || '').trim())
+        ? { exclude_patterns: raw.exclude_patterns.map(p => String(p || '').trim()).filter(Boolean).slice(0, 20).map(p => p.slice(0, 1000)) } : {}),
+    };
+    if (notCarried.length) row.not_carried = notCarried;
+    out.push(row);
+  }
+  return out;
+}
+// One door for the import endpoint: XML (GINA / EQLogParser share-data), a PQ Companion pack, or an
+// EQLogParser .tgf tree — told apart by what the text is, never by file name.
+function _parseTriggerImport(raw) {
+  if (!/^\s*[[{]/.test(raw)) return _parseTriggerXml(raw);
+  return _parsePqCompanionPack(raw) || _parseTriggerTgfJson(raw) || [];
+}
+
 // (_translateGinaPlaceholders removed 2026-08-07 — imports now store the RAW
 // pattern and compileTriggerPattern expands tokens at compile time with
 // digit-true naming. Pre-translating at import was one half of the two-table
@@ -44520,6 +48193,10 @@ const BUILTIN_CALLOUTS = [
   { key: 'loot_post',      label: 'Loot posted' },
   { key: 'blind',          label: 'Blind alerts' },
 ];
+// Built-ins that start MUTED until someone switches them on (the guild lead, 2026-10-19: "Mute Charm aging by default, make
+// this configurable to turn off"). The last step of _resolveRule, below every rule a person has set: anyone who already set
+// Charm aging (or its group) keeps what they chose, because that rule is a file entry and wins over this.
+const BUILTIN_DEFAULT_MODES = { 'builtin:charm_aging': 'off' };
 // Zone short names that appear in guild_triggers.tags, with a readable group label. The second
 // Plane of Earth tag folds into the first so the two share one group.
 const RULE_ZONE_NAMES = {
@@ -44636,10 +48313,10 @@ function _resolveRule(key, groupId, charLc) {
     if (charLc && (m = one('group:' + groupId, charLc))) return { mode: m, from: 'group' };
     if ((m = one('group:' + groupId, '*')))              return { mode: m, from: charLc ? 'group_all' : 'group' };
   }
-  return { mode: 'speak', from: 'default' };
+  return { mode: BUILTIN_DEFAULT_MODES[key] || 'speak', from: 'default' };
 }
 function _ruleModeNow(key, charLc) {
-  if (!key || !Object.keys(_triggerRules).length) return 'speak';
+  if (!key || (!Object.keys(_triggerRules).length && !BUILTIN_DEFAULT_MODES[key])) return 'speak';
   return _resolveRule(key, _ruleGroupOfKey(key), String(charLc || _ruleActiveChar() || '').toLowerCase()).mode;
 }
 // false = drop the fire; true = push it (with mute:true when the rule says overlay-only).
@@ -44654,7 +48331,7 @@ function _applyTriggerRule(o) {
 // built-in map rides /api/state so charm.html, which speaks its own lines, can honour the same rules.
 function _builtinRuleModes() {
   const out = {};
-  if (!Object.keys(_triggerRules).length) return out;
+  if (!Object.keys(_triggerRules).length && !Object.keys(BUILTIN_DEFAULT_MODES).length) return out;
   const c = _ruleActiveChar();
   for (const b of BUILTIN_CALLOUTS) {
     const m = _resolveRule('builtin:' + b.key, 'builtin', c).mode;
@@ -44718,8 +48395,9 @@ function _triggerRulesPayload(charLc) {
 // POST { key, char?: '*' | name, mode } — mode null clears the rule.
 function _setTriggerRule(b) {
   const key = b && typeof b.key === 'string' ? b.key.trim() : '';
-  if (!/^(group|guild|personal|builtin):.{1,200}$/.test(key)) return { ok: false, error: 'bad key' };
-  if (key.startsWith('builtin:') && !BUILTIN_CALLOUTS.some(x => 'builtin:' + x.key === key)) return { ok: false, error: 'unknown built-in' };
+  if (!/^(group|guild|personal|builtin|timer):.{1,200}$/.test(key)) return { ok: false, error: 'bad key' };
+  if (key.startsWith('timer:') && !/^timer:(trigger|spell|spellmob|bar):.+$/.test(key)) return { ok: false, error: 'bad timer key' };
+  if (key.startsWith('builtin:') && !key.startsWith(ENRAGE_ALWAYS_PREFIX) && !BUILTIN_CALLOUTS.some(x => 'builtin:' + x.key === key)) return { ok: false, error: 'unknown built-in' };
   const mode = b.mode == null ? null : b.mode;
   if (mode !== null && !TRIGGER_RULE_MODES.includes(mode)) return { ok: false, error: 'bad mode' };
   const ch = b.char == null || b.char === '' ? '*' : String(b.char).trim().toLowerCase();
@@ -44748,6 +48426,226 @@ async function _handleTriggerRules(req, res) {
   const out = _setTriggerRule(b);
   scheduleRender();
   send(out.ok ? 200 : 400, out);
+}
+
+// Enrage mutes (2026-10-19). What is muted right now: every enrage callout this session, mobs muted this
+// session, and mobs muted for good (the 'builtin:enrage_soon:<mob>' rules in trigger_rules.json).
+function _enrageMutesView() {
+  const always = [];
+  for (const [k, r] of Object.entries(_triggerRules)) {
+    if (k.startsWith(ENRAGE_ALWAYS_PREFIX) && r && r['*'] === 'off') always.push(k.slice(ENRAGE_ALWAYS_PREFIX.length));
+  }
+  return { all: _enrageMuteSession.all, session: [..._enrageMuteSession.mobs].sort(), always: always.sort() };
+}
+// POST { action: 'mute' | 'unmute', scope: 'mob' | 'all' | 'always', mob? }. 'mob' and 'all' last until
+// the agent restarts; 'always' is written to the rules file.
+function _setEnrageMute(b) {
+  const on = !(b && b.action === 'unmute');
+  const scope = b && b.scope;
+  if (scope !== 'mob' && scope !== 'all' && scope !== 'always') return { ok: false, error: 'bad scope' };
+  if (scope === 'all') {
+    _enrageMuteSession.all = on;
+  } else {
+    const mob = _enrageMobKey(b.mob);
+    if (!mob) return { ok: false, error: 'mob needed' };
+    if (scope === 'mob') {
+      if (on && _enrageMuteSession.mobs.size >= 500) return { ok: false, error: 'too many muted' };
+      if (on) _enrageMuteSession.mobs.add(mob); else _enrageMuteSession.mobs.delete(mob);
+    } else {
+      const out = _setTriggerRule({ key: ENRAGE_ALWAYS_PREFIX + mob, char: '*', mode: on ? 'off' : null });
+      if (!out.ok) return out;
+    }
+  }
+  _stateJsonCache = { at: 0, body: null };   // /api/state carries the list
+  return { ok: true, ..._enrageMutesView() };
+}
+async function _handleEnrageMute(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (req.method === 'GET') return send(200, { ok: true, ..._enrageMutesView() });
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  const out = _setEnrageMute(b);
+  scheduleRender();
+  send(out.ok ? 200 : 400, out);
+}
+
+// ── Timer-row mutes (the guild lead, 2026-10-19: "Need to be able to click on a line and move it to a new timer, not just X it
+// out. Should be able to permanently mute and review those lines somewhere.") ─────────────────────────────────────────────
+// The ⋮ beside a countdown row's ✕ mutes it for the session (memory) or for good (a 'timer:<kind>:<name>' rule = off in
+// trigger_rules.json, the "What you hear" file). A muted row is dropped HERE, where the rows are built (_activeTimersSnapshot for
+// trigger countdowns, _builtinTimerRows for the bt| bars), so the standalone window, the Canvas panels, the pieces and the Death
+// Touch tank bar all agree. It hides the ROW only: a trigger's spoken callout still follows its own rule mode. (The pre-end warning
+// a countdown speaks is spoken by the overlay FROM the row, so it goes quiet with the row.) Loot chips, auctions and watched
+// spots cannot be muted: ✕ is the only thing they take.
+//   timer:trigger:<rule key, else the effect>   a trigger's countdown, whatever it is counting on
+//   timer:spell:<spell>                         a spell bar of yours, on any mob
+//   timer:spellmob:<mob lower>|<spell>          that spell bar on that mob only (the bare name, no " #<spawn id>")
+//   timer:bar:<effect>                          any other derived bar (Recharm tick, Server tick, Boastful Bellow)
+const _timerMuteSession = new Set();   // full keys; gone at restart
+function _timerMuteMob(target) {
+  return String(target == null ? '' : target).replace(/\s+#\d+\s*$/, '').trim().toLowerCase().slice(0, 60);
+}
+function _timerMuteSpell(row) {
+  return String(row.spell || row.effect || row.name || '').replace(/\s*⏱\s*$/, '').replace(/\?+$/, '').trim().slice(0, 100);
+}
+// What a row is for muting: { kind, key, mobKey } or null when it cannot be muted.
+function _timerMuteKeys(row) {
+  if (!row) return null;
+  const id = String(row.id || '');
+  if (row.kind === 'loot' || /^(loot|auction|named|sample)\|/.test(id)) return null;
+  if (id.startsWith('bt|spell|')) {
+    const spell = _timerMuteSpell(row), mob = _timerMuteMob(row.target);
+    if (!spell) return null;
+    return { kind: 'spell', key: 'timer:spell:' + spell, mobKey: mob ? 'timer:spellmob:' + mob + '|' + spell : null };
+  }
+  if (id.startsWith('bt|')) {
+    const eff = String(row.effect || row.name || '').trim().slice(0, 150);
+    return eff ? { kind: 'bar', key: 'timer:bar:' + eff, mobKey: null } : null;
+  }
+  const name = String(row.rule_key || row.effect || row.name || '').trim().slice(0, 150);
+  return name ? { kind: 'trigger', key: 'timer:trigger:' + name, mobKey: null } : null;
+}
+function _timerKeyMuted(key) {
+  if (_timerMuteSession.has(key)) return true;
+  const r = _triggerRules[key];
+  return !!(r && r['*'] === 'off');
+}
+function _timerRowMuted(row) {
+  const k = _timerMuteKeys(row);
+  return !!(k && (_timerKeyMuted(k.key) || (k.mobKey && _timerKeyMuted(k.mobKey))));
+}
+function _timerMuteEntry(key) {
+  const m = /^timer:(trigger|spell|spellmob|bar):(.*)$/.exec(key);
+  if (!m) return { key, kind: 'other', label: key, detail: '' };
+  const kind = m[1], name = m[2];
+  if (kind === 'spell') return { key, kind, label: name, detail: 'spell bar, every mob' };
+  if (kind === 'bar') return { key, kind, label: name, detail: 'timer bar' };
+  if (kind === 'spellmob') { const i = name.indexOf('|'); return { key, kind, label: name.slice(i + 1), detail: 'spell bar on ' + name.slice(0, i) }; }
+  let label = name;
+  try {
+    let t = null;
+    if (name.startsWith('guild:')) t = (stats.guildTriggers || []).find(g => g && 'guild:' + g.id === name);
+    else if (name.startsWith('personal:')) t = (_personalTriggers || []).find(p => p && 'personal:' + (p.id || p.name) === name);
+    else if (name.startsWith('builtin:')) t = BUILTIN_CALLOUTS.find(x => 'builtin:' + x.key === name);
+    if (t) label = t.name || t.label || name;
+  } catch { /* the key is a fine label */ }
+  return { key, kind, label, detail: 'trigger countdown' };
+}
+// What is muted right now, for the Muted timers card: [{ key, kind, label, detail }] for this session and for good.
+function _timerMutesView() {
+  const byLabel = (a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key);
+  const always = [];
+  for (const [k, r] of Object.entries(_triggerRules)) {
+    if (k.startsWith('timer:') && r && r['*'] === 'off') always.push(_timerMuteEntry(k));
+  }
+  return { session: [..._timerMuteSession].map(_timerMuteEntry).sort(byLabel), always: always.sort(byLabel) };
+}
+// POST { action: 'mute', scope: 'session' | 'always', id, only_mob? } mutes the row with that id as it is now;
+//      { action: 'unmute', key, scope? } lifts one mute (both kinds when scope is left out).
+function _setTimerMute(b) {
+  const on = !(b && b.action === 'unmute');
+  if (on) {
+    const scope = b && b.scope;
+    if (scope !== 'session' && scope !== 'always') return { ok: false, error: 'bad scope' };
+    const id = String((b && b.id) || '');
+    const row = id ? _activeTimersSnapshot().find(r => r.id === id) : null;
+    if (!row) return { ok: false, error: 'that row is gone' };
+    const k = _timerMuteKeys(row);
+    if (!k) return { ok: false, error: 'this row cannot be muted' };
+    const key = b.only_mob ? k.mobKey : k.key;
+    if (!key) return { ok: false, error: 'no mob to mute it on' };
+    if (scope === 'session') {
+      if (_timerMuteSession.size >= 500) return { ok: false, error: 'too many muted' };
+      _timerMuteSession.add(key);
+    } else {
+      const out = _setTriggerRule({ key, char: '*', mode: 'off' });
+      if (!out.ok) return out;
+    }
+  } else {
+    const key = String((b && b.key) || '');
+    if (!key.startsWith('timer:')) return { ok: false, error: 'bad key' };
+    const scope = b && b.scope;
+    if (scope !== 'always') _timerMuteSession.delete(key);
+    if (scope !== 'session' && _triggerRules[key]) {
+      const out = _setTriggerRule({ key, char: '*', mode: null });
+      if (!out.ok) return out;
+    }
+  }
+  _stateJsonCache = { at: 0, body: null };   // /api/state carries the list
+  return { ok: true, ..._timerMutesView() };
+}
+async function _handleTimerMute(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (req.method === 'GET') return send(200, { ok: true, ..._timerMutesView() });
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  const out = _setTimerMute(b);
+  scheduleRender();
+  send(out.ok ? 200 : 400, out);
+}
+
+// ── Voice reports (the guild lead, 2026-10-19: "B for voice") ───────────────────────────────────────────────────
+// "Voice unclear": a callout nobody could understand, reported with the exact text, engine, voice, speed and pitch
+// that said it. Two local routes, both from Mimic's own pages:
+//   POST /api/voice-spoken  the trigger window says what it just played. It is kept on the matching Recent fires
+//                           entry (o.voice), which /api/state already carries to the dashboard: no second store.
+//   POST /api/voice-report  the 🔊 Voice unclear button, and the dashboard's Suggest. Relayed to the bot's
+//                           POST /api/agent/voice-report with the agent's token and Mimic session; this adds the
+//                           version and the character. No Discord id is sent: the server knows who the token is.
+// A 503 (or 404, an older bot) from the server is "not switched on yet": the caller is told so and keeps its text.
+function _voiceClip(v, n) { return String(v == null ? '' : v).trim().slice(0, n); }
+function _voiceNum(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
+// The one place that decides what a report carries (a whitelist; length caps are the server contract's).
+function _voiceReportBody(b, character) {
+  b = b || {};
+  const spoken = _voiceClip(b.spoken, 300);
+  if (!spoken) return null;
+  const out = {
+    spoken, original: _voiceClip(b.original, 300), engine: _voiceClip(b.engine, 20), voice: _voiceClip(b.voice, 80),
+    rate: _voiceNum(b.rate), pitch: _voiceNum(b.pitch), agent_version: AGENT_VERSION,
+    trigger_id: b.trigger_id == null ? null : _voiceClip(b.trigger_id, 80), trigger_name: _voiceClip(b.trigger_name, 200),
+    character: _voiceClip(character, 40),
+  };
+  const say = _voiceClip(b.suggested_say, 300), note = _voiceClip(b.note, 280);
+  if (say) out.suggested_say = say;
+  if (note) out.note = note;
+  return out;
+}
+// The overlay's account of a line it just spoke → the Recent fires entry it came from. ts is the fire's own
+// timestamp; fires pushed in the same millisecond are told apart by the text shown.
+function _noteVoiceSpoken(b) {
+  const ts = Number(b && b.ts);
+  if (!(ts > 0) || !_voiceClip(b.spoken, 300)) return false;
+  const same = _activeOverlays.filter(o => (o.firedAt || o.shownAt || 0) === ts);
+  const o = same.find(x => (x.text || '') === String(b.original || '')) || same[0];
+  if (!o) return false;
+  o.voice = { spoken: _voiceClip(b.spoken, 300), original: _voiceClip(b.original, 300), engine: _voiceClip(b.engine, 20) || 'windows',
+    voice: _voiceClip(b.voice, 80), rate: _voiceNum(b.rate), pitch: _voiceNum(b.pitch) };
+  _stateJsonCache = { at: 0, body: null };   // /api/state carries activeOverlays
+  return true;
+}
+async function _handleVoiceSpoken(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  send(200, { ok: true, matched: _noteVoiceSpoken(b) });
+}
+async function _handleVoiceReport(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  const body = _voiceReportBody(b, _primaryCharacter());
+  if (!body) return send(400, { ok: false, error: 'nothing to report' });
+  const r = await _pronBotCall('POST', '/voice-report', body);
+  if (r.ok) return send(200, { ok: true, id: r.data && r.data.id != null ? r.data.id : null });
+  if (r.local) return send(409, { ok: false, error: r.error });
+  if (r.status === 503 || r.status === 404) return send(503, { ok: false, unavailable: true, error: "Voice reports aren't switched on yet." });
+  if (r.status === 429) return send(429, { ok: false, error: 'Too many reports just now. Try again in a minute.' });
+  send(r.status === 400 ? 400 : 502, { ok: false, error: r.error });
 }
 
 // ── Personal trigger sync — the agent half (the guild lead, 2026-10-12: "Push and Pull buttons, like UI
@@ -44931,6 +48829,76 @@ async function _handleTriggerSync(req, res) {
   const o = route === 'push' ? await _triggerSyncPush() : await _triggerSyncPull(b);
   send(o.ok ? 200 : 400, o);
 }
+// ── Share a whole setup — the trigger half (the guild lead, 2026-10-19, DECISIONS §383: "file + share code") ──────────
+// Mimic builds the shareable bundle (apps/mimic/setupBundle.js) and holds the HTML windows; the personal triggers and the
+// "What you hear" rules live HERE, so these three local routes are how it reads them and puts a bundle's back. They reuse the
+// sync's own machinery above: an applied bundle is a merge that backs both files up first, switches Discord posts off, and
+// compiles every row through the code a dashboard save runs. Nothing here touches the network.
+//   GET  /api/setup-share/triggers          → { ok, triggers: [plain rows], rules, chars: [the characters this PC watches] }
+//   POST /api/setup-share/triggers          { triggers, rules } → the merge's report, with `backups` (the files it saved)
+//   POST /api/setup-share/triggers/restore  { backups: [names from the report] } → puts those files back (the import's Undo)
+const SETUP_SHARE_MAX_TRIGGERS = 1000;
+const _SETUP_BACKUP_RX = /^(?:personal_triggers|trigger_rules)\.json\.bak-[0-9A-Za-z-]{10,40}$/;
+function _setupShareExport() {
+  return {
+    ok: true,
+    triggers: JSON.parse(JSON.stringify(_personalTriggers.map(_tsPlain))),
+    rules: JSON.parse(JSON.stringify(_triggerRules)),
+    chars: _watchedCharacters(),
+  };
+}
+function _setupShareApply(b, dir = path.dirname(STATS_FILE || '')) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return { ok: false, error: 'bad body' };
+  const triggers = Array.isArray(b.triggers) ? b.triggers : [];
+  const rules = (b.rules && typeof b.rules === 'object' && !Array.isArray(b.rules)) ? b.rules : {};
+  if (triggers.length > SETUP_SHARE_MAX_TRIGGERS) return { ok: false, error: 'too many triggers' };
+  // A sound that is a file on the SENDER's PC is not here: the same drop Mimic makes, in case a bundle came another way.
+  const clean = triggers.filter(t => t && typeof t === 'object' && !Array.isArray(t)).map(t => {
+    const dropCustom = (x) => { if (x && typeof x.sound === 'string' && /^custom:/i.test(x.sound.trim())) { delete x.sound; delete x.sound_volume; delete x.sound_mode; } };
+    const c = { ...t, actions: Array.isArray(t.actions) ? t.actions.map(a => (a && typeof a === 'object') ? { ...a } : a) : t.actions };
+    dropCustom(c);
+    if (Array.isArray(c.actions)) c.actions.forEach(dropCustom);
+    return c;
+  });
+  return _applyTriggerPull({ triggers: clean, rules }, 'merge', dir);
+}
+// Undo of an import: the files the merge saved come back. A file with no copy in `backups` did not exist before the
+// import, so it goes back to empty. Both files are backed up again first, so an Undo can itself be undone by hand.
+function _setupShareRestore(b, dir = path.dirname(STATS_FILE || '')) {
+  const names = Array.isArray(b && b.backups) ? b.backups : null;
+  if (!names || names.length > 2 || names.some(n => typeof n !== 'string' || n !== path.basename(n) || !_SETUP_BACKUP_RX.test(n))) return { ok: false, error: 'bad backup name' };
+  const pick = (base) => names.find(n => n.startsWith(base + '.bak-')) || null;
+  const read = (n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'));
+  let trigRaw = [], rulesRaw = {};
+  try {
+    const t = pick('personal_triggers.json'), r = pick('trigger_rules.json');
+    if (t) { const j = read(t); trigRaw = Array.isArray(j) ? j : (Array.isArray(j && j.triggers) ? j.triggers : []); }
+    if (r) rulesRaw = read(r);
+  } catch (err) { return { ok: false, error: 'could not read the saved copy: ' + String(err && err.message || err) }; }
+  const bk = _tsBackupLocal(dir);
+  if (!bk.ok) return { ok: false, error: 'could not back up your files first: ' + bk.error };
+  _personalTriggers = _normalizeIncomingPersonal(trigRaw).compiled;
+  if (!savePersonalTriggers()) return { ok: false, error: 'could not save your triggers' };
+  for (const k of Object.keys(_triggerRules)) delete _triggerRules[k];
+  Object.assign(_triggerRules, _cleanRules(rulesRaw));
+  const rulesSaved = saveTriggerRules();
+  _stateJsonCache = { at: 0, body: null };
+  scheduleRender();
+  return { ok: true, triggers: _personalTriggers.length, rules_saved: rulesSaved };
+}
+async function _handleSetupShareTriggers(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  const route = String(req.url || '').split('?')[0].slice('/api/setup-share/triggers'.length);
+  if (route !== '' && route !== '/restore') return send(404, { ok: false, error: 'not found' });
+  if (req.method === 'GET' && route === '') return send(200, _setupShareExport());
+  if (req.method !== 'POST') return send(405, { ok: false, error: 'method not allowed' });
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 1536 * 1024)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  const out = route === '' ? _setupShareApply(b) : _setupShareRestore(b);
+  send(out.ok ? 200 : 400, out);
+}
+// ── end share a whole setup (trigger half) ──
 // ── end personal trigger sync (agent half) ──
 
 // ── Sounds, voices and pronunciations (the guild lead, 2026-10-14) ───────────────────────────────
@@ -45271,6 +49239,16 @@ async function _handleSoundsVoices(req, res) {
     }
   }
   if (p === '/api/voice-packs' && req.method === 'GET') return send(200, { packs: VOICE_PACKS });
+  // This PC's size, for the Voice card's "will it keep up here" hint. Read once when the card opens (and after a download
+  // or a Test), never polled. Free disk is read where the agent keeps its files, which sits beside Mimic's downloaded voices.
+  if (p === '/api/pc-specs' && req.method === 'GET') {
+    const out = { cores: (os.cpus() || []).length, ram_bytes: os.totalmem(), ram_free_bytes: os.freemem(), disk_free_bytes: null };
+    try {
+      const st = fs.statfsSync(_vsDir() || os.homedir());
+      out.disk_free_bytes = Number(st.bavail) * Number(st.bsize);
+    } catch { /* an older Node, or an odd drive: the card just skips the disk line */ }
+    return send(200, out);
+  }
   if (p === '/api/pronunciations' && req.method === 'GET') return send(200, _pronStatePayload());
   if (p === '/api/pronunciations/local' && req.method === 'POST') {
     if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
@@ -45395,6 +49373,8 @@ function _fireForWeb(o) {
     mute:    !!o.mute,
     // "What you hear" — the key its rule is stored under, so the overlay's 🔇 can mute it.
     rule_key: o.rule_key || null,
+    // An enrage callout names its mob, so the overlay's 🔇 can mute that mob (_setEnrageMute).
+    enrage_mob: o.enrage_mob || null,
     // The inverse: speak it but do NOT flash it or ask for a timing vote.
     // Set by the damage-taken alert, whose cadence would otherwise camp the
     // shared centre flash and clobber other callouts on it.
@@ -45505,24 +49485,55 @@ function _rampageOnMainTarget(attacker) {
   if (!mainName) return true;   // unresolved → fail open (never lose the boss rampage)
   return a === _normMobNameAgent(mainName);
 }
-function _announceRampage(target, tsMs) {
+// Is this attacker a named raid mob — the catalog's raid_target flag (a Mob Info row or zone pack this
+// machine already holds), or the encounter's own boss? Adds and trash are not (#155 stays).
+function _rampageAttackerIsRaidMob(attacker, bossName) {
+  if (!attacker) return false;
+  const a = _normMobNameAgent(attacker);
+  if (bossName && a === _normMobNameAgent(bossName)) return true;
+  const et = stats.currentEncounterThreat;
+  if (et && ((et.bossName && a === _normMobNameAgent(et.bossName)) || (et.targetName && a === _normMobNameAgent(et.targetName)))) return true;
+  return _myFightIsBoss(attacker, null);
+}
+// The name the announcement carries: the boss's first name ("Joran") when it is not the main target,
+// or when two or more attackers are rampaging at once; null for the one-boss fight, which reads as today.
+function _rampageBossLabel(attacker, nowMs, force) {
+  if (!attacker) return null;
+  if (!force) {
+    let live = 0;
+    for (const r of Object.values(stats.currentRampages || {})) if (r && (nowMs - r.at) <= RAMPAGE_IDLE_RESET_MS) live++;
+    if (live < 2) return null;
+  }
+  const words = String(attacker).replace(/\s+the\s+.*$/i, '').trim().split(/\s+/);
+  return words[words.length - 1];
+}
+const _rampageByBoss = new Map();   // boss label (lower) → { key, seen } — the labelled path's own dedupe
+function _announceRampage(target, tsMs, bossLabel) {
   if (!target) return;
   const key = target.toLowerCase();
   const now = tsMs || Date.now();
-  // Idle reset — if the previous rampage went quiet for 60s, the next
-  // line (even on the same name) counts as a fresh rampage. Without this,
-  // a re-pull or quick re-engage would never re-announce.
-  if (_rampageLastSeenMs && (now - _rampageLastSeenMs) > RAMPAGE_IDLE_RESET_MS) {
-    _rampageCurrentTarget = null;
+  if (bossLabel) {
+    // Each boss is deduped on its own: the same victim stays silent, a switch speaks, 60s idle re-arms.
+    const bk = bossLabel.toLowerCase();
+    const prev = _rampageByBoss.get(bk);
+    _rampageByBoss.set(bk, { key, seen: now });
+    if (prev && prev.key === key && (now - prev.seen) <= RAMPAGE_IDLE_RESET_MS) return;
+  } else {
+    // Idle reset — if the previous rampage went quiet for 60s, the next
+    // line (even on the same name) counts as a fresh rampage. Without this,
+    // a re-pull or quick re-engage would never re-announce.
+    if (_rampageLastSeenMs && (now - _rampageLastSeenMs) > RAMPAGE_IDLE_RESET_MS) {
+      _rampageCurrentTarget = null;
+    }
+    _rampageLastSeenMs = now;
+    // Same target as current rampage → suppress. The user already heard the
+    // initial "New rampage: Rethlan"; subsequent hits on Rethlan are noise until
+    // the boss switches.
+    if (_rampageCurrentTarget === key) return;
+    _rampageCurrentTarget = key;
   }
-  _rampageLastSeenMs = now;
-  // Same target as current rampage → suppress. The user already heard the
-  // initial "New rampage: Rethlan"; subsequent hits on Rethlan are noise until
-  // the boss switches.
-  if (_rampageCurrentTarget === key) return;
-  _rampageCurrentTarget = key;
-  const displayText = '🔥 NEW RAMPAGE: ' + target;
-  const ttsText     = 'New rampage: ' + target;
+  const displayText = bossLabel ? '🔥 ' + bossLabel + ' RAMPAGE: ' + target : '🔥 NEW RAMPAGE: ' + target;
+  const ttsText     = bossLabel ? bossLabel + ' rampage on ' + target : 'New rampage: ' + target;
   _pushOverlay({
     text:    displayText,
     tts:     ttsText,
@@ -45538,7 +49549,7 @@ function _announceRampage(target, tsMs) {
   _broadcastTriggerToDiscord({
     name:    'rampage',
     message: '🔥 **NEW RAMPAGE**: ' + target,
-    key:     'rampage:' + key,
+    key:     'rampage:' + (bossLabel ? bossLabel.toLowerCase() + ':' : '') + key,
     tsMs:    now,
     mode:    'post',
   });
@@ -45548,7 +49559,7 @@ function _announceRampage(target, tsMs) {
   // _markFireSeen is wired into _relayLocalFire's downstream check on
   // each receiver so a raider who detected AND received the fire
   // doesn't double-play.
-  const fireKey = 'rampage:' + JSON.stringify({ target });
+  const fireKey = 'rampage:' + JSON.stringify(bossLabel ? { target, boss: bossLabel } : { target });
   _markFireSeen(fireKey, now);
   _relayLocalFire(
     { name: 'New Rampage', _scope: 'guild', timer_duration_sec: 0 },
@@ -46404,7 +50415,7 @@ const ZEAL_STALE_MS = 45_000;
 // Classic→PoP). Kept module-side (not in WEB_HTML) so the big literal never
 // trips the dashboard escape check.
 const ZONE_NAMES = {
-  1:'South Qeynos',2:'North Qeynos',3:'Surefall Glade',4:'Qeynos Hills',5:'Highpass Hold',6:'High Keep',8:'North Freeport',9:'West Freeport',10:'East Freeport',11:'Runnyeye',12:'Western Plains of Karana',13:'Northern Plains of Karana',14:'Southern Plains of Karana',15:'Eastern Plains of Karana',16:'Gorge of King Xorbb',17:'Blackburrow',18:'Lair of the Splitpaw',19:'Rivervale',20:'Kithicor Forest',21:'West Commonlands',22:'East Commonlands',23:'Erudin Palace',24:'Erudin',25:'Nektulos Forest',26:'Sunset Home',27:'Lavastorm Mountains',28:'Nektropos',29:'Halas',30:'Everfrost Peaks',31:"Solusek's Eye",32:"Nagafen's Lair",33:'Misty Thicket',34:'Northern Desert of Ro',35:'Southern Desert of Ro',36:'Befallen',37:'Oasis of Marr',38:'Toxxulia Forest',39:'The Hole',40:'Neriak - Foreign Quarter',41:'Neriak - Commons',42:'Neriak - 3rd Gate',43:'Neriak Palace',44:'Najena',45:'Qeynos Aqueduct System',46:'Innothule Swamp',47:'The Feerrott',48:'Accursed Temple of Cazic Thule',49:'Oggok',50:'Rathe Mountains',51:'Lake Rathetear',52:'Grobb',53:'Aviak Village',54:'Greater Faydark',55:"Ak'Anon",56:'Steamfont Mountains',57:'Lesser Faydark',58:'Crushbone',59:'Castle of Mistmoore',60:'South Kaladim',61:'Northern Felwithe',62:'Southern Felwithe',63:'The Estate of Unrest',64:'Kedge Keep',65:'Guk',66:'Ruins of Old Guk',67:'North Kaladim',68:'Butcherblock Mountains',69:'Ocean of Tears',70:"Dagnor's Cauldron",71:'Plane of Sky',72:'Plane of Fear',73:'Permafrost Caverns',74:'Kerra Isle',75:'Paineel',76:'Plane of Hate',77:'The Arena',78:'Field of Bone',79:'Warsliks Woods',80:'Temple of Solusek Ro',81:'Mines of Droga',82:'Cabilis West',83:'Swamp of No Hope',84:'Firiona Vie',85:'Lake of Ill Omen',86:'The Dreadlands',87:'The Burning Wood',88:'Kaesora',89:'Ruins of Sebilis',90:'The City of Mist',91:'Skyfire Mountains',92:'Frontier Mountains',93:'The Overthere',94:'The Emerald Jungle',95:"Trakanon's Teeth",96:'Timorous Deep',97:"Kurn's Tower",98:"Erud's Crossing",100:'Stonebrunt Mountains',101:'The Warrens',102:"Karnor's Castle",103:'Chardok',104:'The Crypt of Dalnir',105:'The Howling Stones',106:'Cabilis East',107:'Mines of Nurga',108:"Veeshan's Peak",109:'Veksar',110:'Iceclad Ocean',111:'Tower of Frozen Shadow',112:"Velketor's Labyrinth",113:'Kael Drakkel',114:'Skyshrine',115:'The City of Thurgadin',116:'Eastern Wastes',117:'Cobaltscar',118:'The Great Divide',119:'The Wakening Land',120:'Western Wastes',121:'Crystal Caverns',123:'Dragon Necropolis',124:'Temple of Veeshan',125:"Siren's Grotto",126:'Plane of Mischief',127:'Plane of Growth',128:"Sleeper's Tomb",129:'Icewell Keep',130:'Marauders Mire',150:'Shadow Haven',151:'The Bazaar',152:'Nexus',153:'Echo Caverns',154:'Acrylia Caverns',155:'The City of Shar Vahl',156:'The Paludal Caverns',157:'The Fungus Grove',158:'Vex Thal',159:'Sanctus Seru',160:'Katta Castellum',161:'Netherbian Lair',162:'Ssraeshza Temple',163:"Grieg's End",164:'The Deep',165:"Shadeweaver's Thicket",166:'Hollowshade Moor',167:'Grimling Forest',168:'Marus Seru',169:'Mons Letalis',170:'Twilight',171:'The Grey',172:'The Tenebrous Mountains',173:"The Maiden's Eye",174:'The Dawnshroud Peaks',175:'Scarlet Desert',176:'The Umbral Plains',179:'Akheva Ruins',180:'The Arena Two',181:'Jaggedpine Forest',183:'EverQuest Tutorial',200:'The Crypt of Decay',201:'Plane of Justice',202:'Plane of Knowledge',203:'Plane of Tranquility',204:'Plane of Nightmares',205:'Plane of Disease',206:'Plane of Innovation',207:'Torment, the Plane of Pain',208:'Plane of Valor',209:'Bastion of Thunder',210:'Plane of Storms',211:'Halls of Honor',212:'Tower of Solusek Ro',213:'Plane of War',214:'Drunder, the Fortress of Zek',215:'Plane of Air',216:'Plane of Water',217:'Plane of Fire',218:'Plane of Earth',219:'Plane of Time',220:'Temple of Marr',221:'The Lair of Terris Thule',1039:'The Hole (Instanced)',1048:'Lost Temple of CazicThule',1071:'Plane of Sky (Instanced)',1072:'Plane of Fear (Instanced)',1076:'Plane of Hate (Instanced)',1078:'Field of Bone (Alt)',1097:"Kurn's Tower (Alternate)",
+  1:'South Qeynos',2:'North Qeynos',3:'Surefall Glade',4:'Qeynos Hills',5:'Highpass Hold',6:'High Keep',8:'North Freeport',9:'West Freeport',10:'East Freeport',11:'Runnyeye',12:'Western Plains of Karana',13:'Northern Plains of Karana',14:'Southern Plains of Karana',15:'Eastern Plains of Karana',16:'Gorge of King Xorbb',17:'Blackburrow',18:'Lair of the Splitpaw',19:'Rivervale',20:'Kithicor Forest',21:'West Commonlands',22:'East Commonlands',23:'Erudin Palace',24:'Erudin',25:'Nektulos Forest',26:'Sunset Home',27:'Lavastorm Mountains',28:'Nektropos',29:'Halas',30:'Everfrost Peaks',31:"Solusek's Eye",32:"Nagafen's Lair",33:'Misty Thicket',34:'Northern Desert of Ro',35:'Southern Desert of Ro',36:'Befallen',37:'Oasis of Marr',38:'Toxxulia Forest',39:'The Hole',40:'Neriak - Foreign Quarter',41:'Neriak - Commons',42:'Neriak - 3rd Gate',43:'Neriak Palace',44:'Najena',45:'Qeynos Aqueduct System',46:'Innothule Swamp',47:'The Feerrott',48:'Accursed Temple of Cazic Thule',49:'Oggok',50:'Rathe Mountains',51:'Lake Rathetear',52:'Grobb',53:'Aviak Village',54:'Greater Faydark',55:"Ak'Anon",56:'Steamfont Mountains',57:'Lesser Faydark',58:'Crushbone',59:'Castle of Mistmoore',60:'South Kaladim',61:'Northern Felwithe',62:'Southern Felwithe',63:'The Estate of Unrest',64:'Kedge Keep',65:'Guk',66:'Ruins of Old Guk',67:'North Kaladim',68:'Butcherblock Mountains',69:'Ocean of Tears',70:"Dagnor's Cauldron",71:'Plane of Sky',72:'Plane of Fear',73:'Permafrost Caverns',74:'Kerra Isle',75:'Paineel',76:'Plane of Hate',77:'The Arena',78:'Field of Bone',79:'Warsliks Woods',80:'Temple of Solusek Ro',81:'Mines of Droga',82:'Cabilis West',83:'Swamp of No Hope',84:'Firiona Vie',85:'Lake of Ill Omen',86:'The Dreadlands',87:'The Burning Wood',88:'Kaesora',89:'Ruins of Sebilis',90:'The City of Mist',91:'Skyfire Mountains',92:'Frontier Mountains',93:'The Overthere',94:'The Emerald Jungle',95:"Trakanon's Teeth",96:'Timorous Deep',97:"Kurn's Tower",98:"Erud's Crossing",100:'Stonebrunt Mountains',101:'The Warrens',102:"Karnor's Castle",103:'Chardok',104:'The Crypt of Dalnir',105:'The Howling Stones',106:'Cabilis East',107:'Mines of Nurga',108:"Veeshan's Peak",109:'Veksar',110:'Iceclad Ocean',111:'Tower of Frozen Shadow',112:"Velketor's Labyrinth",113:'Kael Drakkel',114:'Skyshrine',115:'The City of Thurgadin',116:'Eastern Wastes',117:'Cobaltscar',118:'The Great Divide',119:'The Wakening Land',120:'Western Wastes',121:'Crystal Caverns',123:'Dragon Necropolis',124:'Temple of Veeshan',125:"Siren's Grotto",126:'Plane of Mischief',127:'Plane of Growth',128:"Sleeper's Tomb",129:'Icewell Keep',130:'Marauders Mire',150:'Shadow Haven',151:'The Bazaar',152:'Nexus',153:'Echo Caverns',154:'Acrylia Caverns',155:'The City of Shar Vahl',156:'The Paludal Caverns',157:'The Fungus Grove',158:'Vex Thal',159:'Sanctus Seru',160:'Katta Castellum',161:'Netherbian Lair',162:'Ssraeshza Temple',163:"Grieg's End",164:'The Deep',165:"Shadeweaver's Thicket",166:'Hollowshade Moor',167:'Grimling Forest',168:'Marus Seru',169:'Mons Letalis',170:'Twilight',171:'The Grey',172:'The Tenebrous Mountains',173:"The Maiden's Eye",174:'The Dawnshroud Peaks',175:'Scarlet Desert',176:'The Umbral Plains',179:'Akheva Ruins',180:'The Arena Two',181:'Jaggedpine Forest',183:'EverQuest Tutorial',200:'The Crypt of Decay',201:'Plane of Justice',202:'Plane of Knowledge',203:'Plane of Tranquility',204:'Plane of Nightmares',205:'Plane of Disease',206:'Plane of Innovation',207:'Torment, the Plane of Pain',208:'Plane of Valor',209:'Bastion of Thunder',210:'Plane of Storms',211:'Halls of Honor',212:'Tower of Solusek Ro',213:'Plane of War',214:'Drunder, the Fortress of Zek',215:'Plane of Air',216:'Plane of Water',217:'Plane of Fire',218:'Plane of Earth',219:'Plane of Time',220:'Temple of Marr',221:'The Lair of Terris Thule',222:'Plane of Earth',223:'Plane of Time',1039:'The Hole (Instanced)',1048:'Lost Temple of CazicThule',1071:'Plane of Sky (Instanced)',1072:'Plane of Fear (Instanced)',1076:'Plane of Hate (Instanced)',1078:'Field of Bone (Alt)',1097:"Kurn's Tower (Alternate)",
 };
 function _zoneName(id) {
   if (id == null) return null;
@@ -46661,6 +50672,12 @@ function fetchMobInfo(name, selfChar, zoneId) {
   const norm = _normMobNameAgent(name);
   if (!norm) return;
   const key = _mobInfoCacheKey(name, zoneId);
+  // The catalog (stats, resists, rampage, zone packs) is Project Quarm's data: off Quarm it would state numbers the
+  // mob does not have. Cache "no row" so Mob Info shows log-only data instead of waiting on a lookup.
+  if (!eqServerCaps(eqServerForCharacter(selfChar || _primaryCharacter())).catalog) {
+    _mobInfoByName.set(key, { at: Date.now(), mob: null });
+    return;
+  }
   if (_mobInfoInflight.has(key)) return;
   const cached = _mobInfoByName.get(key);
   if (cached && (Date.now() - cached.at) < MOB_INFO_TTL_MS) return;
@@ -47758,8 +51775,10 @@ function _mapCopyInfo(zone, now) {
 // The same pull also brings the raid's shared targets and the escort trails (bot 3.1.263, DECISIONS 299), kept here per
 // zone: `targets[zone]` = { rows, botNow, pulledAt }, `trails[zone][<name>]` = { name, at, live, pulledAt, pts, tmax }.
 // Memory only; the bot is where they persist. An older bot sends neither and nothing here changes.
+// `watches[zone][<point_id>]` = { point_id, named, inst, by, at, seenAt, synced }: the spots marked "watch for <named>"
+// (see "Watched spots" below). Memory only, like targets and trails: the bot is where they persist.
 const _mapSync = { q: [], flushTimer: null, backoffUntil: 0, pulling: false, pullAt: 0, pullZone: null, since: {}, keys: new Set(),
-  targets: {}, trails: {} };
+  targets: {}, trails: {}, watches: {}, watchOff: {}, watchBackoffUntil: 0 };
 const _mapSyncKey = (zone, e) => zone + '|' + e.point_id + '|' + e.kind + '|' + (e.spawn_id == null ? '' : e.spawn_id) + '|' + e.at;
 function _mapSyncRemember(key) { if (_mapSync.keys.size > 4000) _mapSync.keys.clear(); _mapSync.keys.add(key); }
 function _mapSyncStop() {
@@ -47788,12 +51807,12 @@ function _mapLocalEvent(zone, zd, character, ev, now) {
   _mapSync.q.push({ zone, character: String(ch), ev: e });
   _mapSyncSchedule();
 }
-function _mapSyncRequest(method, query, bodyObj, done) {
+function _mapSyncRequest(method, query, bodyObj, done, endpoint) {
   let finished = false;
   const fin = (err, status, buf) => { if (finished) return; finished = true; done(err, status, buf); };
   try {
     const opts = _uploadOpts;
-    const u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/map-sync') + query);
+    const u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, endpoint || '/map-sync') + query);
     const mod = u.protocol === 'https:' ? https : http;
     const headers = { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` };
     let payload = null;
@@ -47839,12 +51858,377 @@ function _mapSyncPull(zone, now) {
     if (status !== 200) return;
     try {
       const j = JSON.parse(buf.toString('utf8'));
+      if (j) _mapWatchApplyBot(zone, j, Date.now());   // first: a spot just watched takes its events from this same answer
       if (j && Array.isArray(j.events)) _mapApplyRemote(zone, j.events, Date.now());
       if (j) _mapApplyShared(zone, j, Date.now());
+      if (j) _mapCorpseApplyBot(zone, j, Date.now());   // the guild's corpses (see "Guild corpses"); an older bot sends none
     } catch { /* an unreadable answer is ignored; the next pull asks again */ }
   });
   return true;
 }
+// ── Watched spots (the guild lead, 2026-10-16: "when we snipe a single mob we should be able to mark it and create a
+// timer for everyone with the named PH spot and map loc") ─────────────────────────────────────────────────────────────
+// A watch is "this spawn point is where <named> shows up": the click menu sets it, the bot shares it with the guild
+// (POST /api/agent/map-watch, answered 404 by an older bot and then asked again in 10 minutes, quietly; the watch just
+// stays on this machine), and the pull brings everyone else's back as `watches`. What a watch changes:
+//   * a death / empty at the spot is taken from anyone in the same copy of the zone, not only your raid (_mapApplyRemote);
+//   * the Map stars it (`watched` in /api/map-state);
+//   * its respawn window shows in the Mimic Timers window (_mapWatchTimerRows).
+// A watch for another copy of the zone (inst set on both sides and different) is ignored; null on either side is taken.
+const MAP_WATCH_MAX     = 40;                  // per zone
+const MAP_WATCH_KEEP_MS = 12 * 60 * 60 * 1000; // a watch nobody has refreshed for this long is dropped (a raid night)
+const MAP_WATCH_GRACE_MS = 30 * 1000;          // a toggle the bot has not echoed yet is not undone by a pull that raced it
+// The watches that apply to the copy of the zone you are in now: { <point_id>: watch }.
+function _mapWatchFor(zone, now) {
+  const out = {}, zw = _mapSync.watches[zone];
+  if (!zw) return out;
+  const mine = _mapCurrentCopy(zone, now);
+  for (const [pid, w] of Object.entries(zw)) {
+    if (!w || !(now - w.seenAt <= MAP_WATCH_KEEP_MS)) { delete zw[pid]; continue; }
+    if (w.inst && mine && w.inst !== mine.token) continue;
+    out[pid] = w;
+  }
+  return out;
+}
+// The bot's answer: `watches: [{ point_id, named, inst, by, at }]` for the zone. No such field (an older bot) changes
+// nothing. The bot is the truth for what it holds: a watch it no longer lists is dropped once it has been in sync for a
+// while, but one it never heard of (the POST failed) stays, and one turned off here moments ago is not brought back.
+function _mapWatchApplyBot(zone, j, now) {
+  if (!j || !Array.isArray(j.watches)) return;
+  const zw = _mapSync.watches[zone] || (_mapSync.watches[zone] = {});
+  const off = _mapSync.watchOff[zone] || {};
+  const listed = new Set();
+  for (const w of j.watches.slice(0, MAP_WATCH_MAX)) {
+    if (!w || w.point_id == null || typeof w.named !== 'string' || !w.named) continue;
+    const pid = String(w.point_id);
+    if (off[pid] && now - off[pid] < MAP_WATCH_GRACE_MS) continue;
+    listed.add(pid);
+    zw[pid] = { point_id: w.point_id, named: _mapPrettyName(w.named).slice(0, 80), inst: typeof w.inst === 'string' ? w.inst : null,
+      by: w.by ? String(w.by).slice(0, 40) : null, at: Number.isFinite(Number(w.at)) ? Number(w.at) : now, seenAt: now, synced: true };
+  }
+  for (const [pid, w] of Object.entries(zw)) {
+    if (w.synced && !listed.has(pid) && now - w.seenAt > MAP_WATCH_GRACE_MS) delete zw[pid];
+  }
+}
+// Turn a watch on or off here (the click menu, via POST /api/map-watch), then tell the bot. Returns { ok, watched, named }.
+function _mapWatchSet(zone, mark, now, character) {
+  const rec = _mapZones.get(zone);
+  if (!rec || !rec.body) return { ok: false, error: 'no spawn data for this zone' };
+  const pid = String(mark && mark.point_id), point = rec.byId.get(pid);
+  if (!point) return { ok: false, error: 'unknown spawn point' };
+  const on = !!(mark && mark.on);
+  const zw = _mapSync.watches[zone] || (_mapSync.watches[zone] = {});
+  const copy = _mapCurrentCopy(zone, now);
+  let named = _mapPrettyName(mark && mark.named).slice(0, 80);
+  if (on && !named) named = _mapBestName(point) || '';
+  if (on && !named) return { ok: false, error: 'a name to watch for is required' };
+  if (on) {
+    if (!zw[pid] && Object.keys(zw).length >= MAP_WATCH_MAX) return { ok: false, error: 'too many watched spots in this zone' };
+    zw[pid] = { point_id: point.id, named, inst: copy ? copy.token : null, by: character ? String(character).slice(0, 40) : null,
+      at: now, seenAt: now, synced: false };
+    if (_mapSync.watchOff[zone]) delete _mapSync.watchOff[zone][pid];
+  } else {
+    if (zw[pid]) named = named || zw[pid].named;
+    delete zw[pid];
+    (_mapSync.watchOff[zone] || (_mapSync.watchOff[zone] = {}))[pid] = now;
+  }
+  if (_mapFetchAllowed() && character && now >= _mapSync.watchBackoffUntil) {
+    const body = { zone, point_id: point.id, named, on, inst: copy ? copy.token : null, character: String(character) };
+    _mapSyncRequest('POST', '', body, (err, status, buf) => {
+      if (err) return;
+      if (status === 404) { _mapSync.watchBackoffUntil = now + MAP_SYNC_BACKOFF_MS; return; }   // an older bot: the watch stays here
+      if (status !== 200) return;
+      const w = _mapSync.watches[zone] && _mapSync.watches[zone][pid];
+      if (on && w) w.synced = true;
+      try { const j = JSON.parse(buf.toString('utf8')); if (j) _mapWatchApplyBot(zone, j, Date.now()); } catch { /* the answer is not needed */ }
+    }, '/map-watch');
+  }
+  return { ok: true, watched: on, named };
+}
+// Timers-window rows for the watched spots that have a running respawn window, rebuilt on every snapshot (nothing to
+// arm or expire here, like _builtinTimerRows). Before the window opens it counts to the EARLIEST time; once open it says
+// "up now" and counts to the latest time, then to the end of the MAP_TIMER_KEEP_MS tail (the same moment _mapPrune
+// drops the timer). The spot's /loc: the spawn point is in the SERVER frame (see FRAMES above) and EverQuest's /loc
+// prints Y first, then X - the numbers the Map's own readout shows (map.html locText) - so "/loc <point.y>, <point.x>".
+function _mapWatchTimerRows(now) {
+  const rows = [];
+  for (const zone of Object.keys(_mapSync.watches)) {
+    const rec = _mapZones.get(zone);
+    if (!rec || !rec.body) continue;
+    const watched = _mapWatchFor(zone, now);
+    const timers = _mapZoneDoc(zone).timers;
+    for (const [pid, w] of Object.entries(watched)) {
+      const t = timers[pid], point = rec.byId.get(pid);
+      if (!t || !point || !(now <= t.latest + MAP_TIMER_KEEP_MS)) continue;
+      const phase = now < t.earliest ? 'wait' : now < t.latest ? 'window' : 'tail';
+      const endMs = phase === 'wait' ? t.earliest : phase === 'window' ? t.latest : t.latest + MAP_TIMER_KEEP_MS;
+      const fromMs = phase === 'wait' ? t.died_at : phase === 'window' ? t.earliest : t.latest;
+      const label = '★ ' + w.named + ' PH' + (phase === 'wait' ? '' : ' · up now') + ' · spot #' + point.id
+        + ' · /loc ' + Math.round(point.y) + ', ' + Math.round(point.x);
+      rows.push({ rule_key: null, rule_mode: 'speak', id: 'named|' + zone + '|' + pid + '|' + t.died_at, name: label, target: null, effect: label,
+        remaining_ms: endMs - now, duration_sec: Math.max(1, Math.round((endMs - fromMs) / 1000)), color: null, end_text: null,
+        warning_ms: 0, warn_text: null, warnings: [], bar_color: phase === 'wait' ? '#d29922' : '#3fb950', pinned: false,
+        scope: 'personal', kind: 'named', dismissible: true, test: false, group: 'trigger' });
+    }
+  }
+  return rows;
+}
+// ── end Watched spots ──
+// ── Guild corpses (the guild lead, 2026-10-17: "add the corpses on to the map and give a link to someone that is dragging
+// that corpse and if their machine says that they start dragging the corpse or stop dragging the corpse that's where it
+// ends up landing near that player's location; there's also a one-off summoning corpse that would have the player
+// targeting that corpse so we should be able to tell where that corpse landed if it changes") ──────────────────────────
+// Only PLAYER corpses, only the ones this machine can vouch for. Events go to the bot as POST <bot>/map-corpse (an older bot
+// answers 404: nothing is asked of it for 10 minutes, quietly, like the ★ watch POST) and the pull brings the guild's back as
+// `corpses`. Everything is also kept here, so the Map shows what THIS machine knows when the bot is old or local mode is on.
+//   died        this character died (the same confirmed death that drives the corpse DM), at its position then
+//   seen        a Mimic targeted "<Name>'s corpse" and Zeal gave target_loc (covers a summoned corpse and any later move)
+//   drag_start  "You begin to drag <corpse>."            drag_move  the dragger's own position, at most every 5 s while dragging
+//   drag_stop   "You stop dragging the corpse(s)."       summoned   "Summoning <Name>'s corpse." / "Summoning your corpse."
+//   gone        "You regain some experience from resurrection." (own corpse rezzed)
+// The log lines are the EQMacEmu server's own strings (zone/string_ids.h: CORPSEDRAG_BEGIN 4064, CORPSEDRAG_STOP 4066,
+// CORPSEDRAG_STOPALL 4065, SUMMONING_CORPSE 429 and _OTHER 430, REZ_REGAIN 289); a corpse is moved to the summoner's or
+// dragger's position (Corpse::Summon, GMMove to client->GetX/Y/Z), so those positions ARE the corpse's. x, y, z are the SERVER
+// frame (see FRAMES above); the bot's `corpse` field is the owner's name ("Aldenmar"), not "Aldenmar's corpse".
+const MAP_CORPSE_BATCH        = 20;                  // events per POST
+const MAP_CORPSE_SEEN_UNITS   = 5;                   // a corpse already reported is re-reported only when it moved further than this...
+const MAP_CORPSE_SEEN_MS      = 60 * 1000;           // ...or this long has passed
+const MAP_CORPSE_MOVE_MS      = 5000;                // drag_move: at most one per this
+const MAP_CORPSE_MOVE_UNITS   = 3;                   // ...and only when the dragger moved this far since the last
+const MAP_CORPSE_DRAG_STALE_MS = 2 * 60 * 1000;      // a "being dragged" nobody has refreshed for this long is shown as not dragged
+const MAP_CORPSE_KEEP_MS      = 12 * 60 * 60 * 1000; // a corpse nobody has refreshed for this long is dropped here (the bot ages its own)
+const MAP_CORPSE_MAX          = 60;                  // per zone
+const MAP_CORPSE_GONE_GRACE_MS = 15 * 1000;          // a pull that raced our own `gone` does not bring the corpse back
+const MAP_CORPSE_DRAG_BEGIN_RE = /\]\s+You begin to drag (.+?)\.\s*$/;
+const MAP_CORPSE_DRAG_STOP_RE  = /\]\s+You stop dragging the corpse(s)?\.\s*$/;
+const MAP_CORPSE_SUMMON_RE     = /\]\s+Summoning (?:your|([A-Za-z]{3,20})[`'’]s) corpse\.\s*$/;
+const MAP_CORPSE_REZ_RE        = /\]\s+You regain some experience from resurrection\./;
+// local[zone][owner lower] = { name, x, y, z, died, upd, dragger, dupd, by, inst } (this machine's own events, ms on its clock;
+// dupd = when `dragger` was last SAID, null if never: a plain look at the corpse moves it and leaves who drags it alone)
+// shared[zone] = { rows: [same shape, from the bot], pulledAt }   gone[zone][owner lower] = ms   seenLast: 'zone|owner' -> { x, y, at }
+// drags: 'character|owner' -> { character, owner, zone, startedAt, lastAt, last, sentStart }
+const _mapCorpse = { q: [], flushTimer: null, backoffUntil: 0, local: {}, shared: {}, gone: {}, seenLast: new Map(), drags: new Map() };
+const _mapCorpseKey = (owner) => String(owner).toLowerCase();
+// The owner of a PLAYER corpse named "<Owner>'s corpse" (underscore or space, optional trailing duplicate number), or null.
+// Zeal's target_type says it outright (3 player corpse, 2 NPC corpse); an older Zeal sends none, and then only a one-word
+// capitalised owner passes ("a gnoll's corpse" and "Lord Nagafen's corpse" do not). A named one-word NPC would still pass
+// without a type: the type is the real test, the name shape is the fallback.
+function _mapPlayerCorpseOwner(name, type) {
+  const m = /^#?([A-Za-z]{3,20})[`'’]s[ _]corpse\d*$/.exec(String(name == null ? '' : name).trim());
+  if (!m) return null;
+  if (type != null && Number(type) !== 3) return null;
+  if (type == null && !/^[A-Z][a-z]+$/.test(m[1])) return null;
+  return m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+}
+// The bot's `corpse` field: the bare owner name, or the full "<Owner>'s corpse".
+function _mapCorpseOwnerOf(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (/^[A-Za-z]{3,20}$/.test(s)) return s[0].toUpperCase() + s.slice(1).toLowerCase();
+  return _mapPlayerCorpseOwner(s, 3);
+}
+// A time from the bot: epoch ms, epoch seconds, or an ISO string. null when it is none of them.
+function _mapCorpseMs(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number' || /^\d+(\.\d+)?$/.test(String(v))) { const n = Number(v); return n > 0 ? (n < 1e11 ? n * 1000 : n) : null; }
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? t : null;
+}
+const _mapCorpseRound = (n) => Math.round(Number(n) * 10) / 10;
+// This character's own spot from the pipe, in the server frame, when it is fresh: { zone, loc } or null.
+function _mapCorpseSelf(character, now) {
+  const cl = String(character || '').toLowerCase();
+  let st = null;
+  for (const ch of Object.keys(_zealState || {})) if (ch.toLowerCase() === cl) { st = _zealState[ch]; break; }
+  if (!st || !(now - (st.updatedAt || 0) <= 30000)) return null;
+  const zone = _mapZoneShort(st.zone), loc = _mapServerXY(st.loc);
+  return zone && loc ? { zone, loc } : null;
+}
+function _mapCorpseMayPost(character) {
+  if (!_mapFetchAllowed()) return false;
+  if (_uploadOpts && _uploadOpts.dryRun) return false;
+  return typeof shouldUploadForCharacter !== 'function' || shouldUploadForCharacter(character);   // exclude_from_stats sends nothing
+}
+// One event: kept here at once (the Map shows it even with an older bot) and queued for the guild when this machine may talk to
+// the bot and the bot has not answered 404 lately. ev = { kind, corpse (the owner), x, y, z, at, dragger? }.
+function _mapCorpseEvent(zone, character, ev, now) {
+  if (!zone || !character || !ev || !ev.corpse || !Number.isFinite(Number(ev.x)) || !Number.isFinite(Number(ev.y))) return;
+  const e = { kind: ev.kind, corpse: String(ev.corpse), x: _mapCorpseRound(ev.x), y: _mapCorpseRound(ev.y),
+    z: Number.isFinite(Number(ev.z)) ? _mapCorpseRound(ev.z) : 0, at: Math.min(Number.isFinite(Number(ev.at)) ? Number(ev.at) : now, now) };
+  if (ev.dragger) e.dragger = String(ev.dragger).slice(0, 40);
+  const copy = _mapCurrentCopy(zone, now), inst = copy ? copy.token : null;
+  _mapCorpseApplyLocal(zone, character, e, inst, now);
+  if (!_mapCorpseMayPost(character) || now < _mapCorpse.backoffUntil) return;
+  if (_mapCorpse.q.length >= 200) _mapCorpse.q.shift();
+  _mapCorpse.q.push({ zone, character: String(character), inst, ev: e });
+  if (!_mapCorpse.flushTimer) {
+    _mapCorpse.flushTimer = setTimeout(() => { _mapCorpse.flushTimer = null; _mapCorpseFlush(Date.now()); }, MAP_SYNC_FLUSH_MS);
+    if (_mapCorpse.flushTimer.unref) _mapCorpse.flushTimer.unref();
+  }
+}
+function _mapCorpseApplyLocal(zone, character, e, inst, now) {
+  const key = _mapCorpseKey(e.corpse);
+  const zl = _mapCorpse.local[zone] || (_mapCorpse.local[zone] = {});
+  if (e.kind === 'gone') {
+    delete zl[key];
+    (_mapCorpse.gone[zone] || (_mapCorpse.gone[zone] = {}))[key] = now;
+    return;
+  }
+  if (_mapCorpse.gone[zone]) delete _mapCorpse.gone[zone][key];   // it is back (died again)
+  const old = zl[key];
+  const row = { name: e.corpse, x: e.x, y: e.y, z: e.z, died: old ? old.died : null, upd: e.at,
+    dragger: old ? old.dragger : null, dupd: old ? old.dupd : null, by: String(character), inst };
+  if (e.kind === 'died') { row.died = e.at; row.dragger = null; row.dupd = e.at; }
+  else if (e.kind === 'seen') { /* position only */ }
+  else if (e.kind === 'drag_start' || e.kind === 'drag_move') { row.dragger = e.dragger || String(character); row.dupd = e.at; }
+  else if (e.kind === 'drag_stop' || e.kind === 'summoned') { row.dragger = null; row.dupd = e.at; }
+  else return;
+  if (!old && Object.keys(zl).length >= MAP_CORPSE_MAX) delete zl[Object.keys(zl)[0]];
+  zl[key] = row;
+}
+// Send the oldest batch (one zone + character + copy, up to 20). Returns true when a POST went out.
+function _mapCorpseFlush(now) {
+  const q = _mapCorpse.q;
+  if (!q.length) return false;
+  if (!_mapFetchAllowed() || now < _mapCorpse.backoffUntil) { q.length = 0; return false; }
+  const first = q[0], batch = [];
+  for (let i = 0; i < q.length && batch.length < MAP_CORPSE_BATCH;) {
+    if (q[i].zone === first.zone && q[i].character === first.character && q[i].inst === first.inst) batch.push(q.splice(i, 1)[0].ev); else i++;
+  }
+  if (q.length && !_mapCorpse.flushTimer) {
+    _mapCorpse.flushTimer = setTimeout(() => { _mapCorpse.flushTimer = null; _mapCorpseFlush(Date.now()); }, MAP_SYNC_FLUSH_MS);
+    if (_mapCorpse.flushTimer.unref) _mapCorpse.flushTimer.unref();
+  }
+  _mapSyncRequest('POST', '', { zone: first.zone, inst: first.inst, character: first.character, events: batch }, (err, status) => {
+    if (!err && status === 404) _mapCorpse.backoffUntil = now + MAP_SYNC_BACKOFF_MS;   // an older bot: the corpses stay on this machine
+  }, '/map-corpse');
+  return true;
+}
+function _mapCorpseStop() {
+  if (_mapCorpse.flushTimer) { clearTimeout(_mapCorpse.flushTimer); _mapCorpse.flushTimer = null; }
+  _mapCorpse.q.length = 0;
+}
+// The bot's answer: `corpses: [{ corpse, inst, x, y, z, died_at, updated_at, dragger, by }]` for the zone. No such field (an
+// older bot) changes nothing. Ages are kept on this machine's clock (the bot's `now` against its own times), like targets.
+function _mapCorpseApplyBot(zone, j, now) {
+  if (!j || !Array.isArray(j.corpses)) return;
+  const botNow = _mapCorpseMs(j.now) || now;
+  const rows = [];
+  for (const c of j.corpses.slice(0, MAP_CORPSE_MAX)) {
+    const name = c ? _mapCorpseOwnerOf(c.corpse) : null, x = Number(c && c.x), y = Number(c && c.y);
+    if (!name || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const local = (ms) => (ms == null ? null : now - Math.max(0, botNow - ms));
+    const died = local(_mapCorpseMs(c.died_at)), upd = local(_mapCorpseMs(c.updated_at));
+    rows.push({ name, x, y, z: Number.isFinite(Number(c.z)) ? Number(c.z) : 0, died, upd: upd != null ? upd : (died != null ? died : now),
+      dragger: typeof c.dragger === 'string' && c.dragger.trim() ? c.dragger.trim().slice(0, 40) : null, dupd: upd != null ? upd : (died != null ? died : now),
+      by: c.by ? String(c.by).slice(0, 40) : null, inst: typeof c.inst === 'string' && c.inst ? c.inst : null });
+  }
+  _mapCorpse.shared[zone] = { rows, pulledAt: now };
+}
+// The corpses to draw in the copy of the zone you are in: this machine's own and the guild's, newest word per owner. A look
+// ("seen") moves a corpse but keeps who was dragging it; a dragger nobody has refreshed for two minutes is shown as not dragging.
+// Another copy of the zone (inst set on both sides and different) is ignored; null on either side is taken.
+function _mapCorpseList(zone, now) {
+  const mine = _mapCurrentCopy(zone, now), by = new Map();
+  const gone = _mapCorpse.gone[zone] || {};
+  const consider = (r, shared) => {
+    if (!r || (r.inst && mine && r.inst !== mine.token) || !(now - r.upd <= MAP_CORPSE_KEEP_MS)) return;
+    const k = _mapCorpseKey(r.name);
+    if (shared && gone[k] != null && r.upd <= gone[k] + MAP_CORPSE_GONE_GRACE_MS) return;
+    (by.get(k) || by.set(k, []).get(k)).push(r);
+  };
+  const zl = _mapCorpse.local[zone] || {};
+  for (const [k, r] of Object.entries(zl)) { if (now - r.upd > MAP_CORPSE_KEEP_MS) delete zl[k]; else consider(r, false); }
+  const sh = _mapCorpse.shared[zone];
+  if (sh) for (const r of sh.rows) consider(r, true);
+  const out = [];
+  for (const cs of by.values()) {
+    cs.sort((a, b) => b.upd - a.upd);
+    const w = cs[0], dead = cs.find(c => c.died != null);
+    const drag = cs.filter(c => c.dupd != null).sort((a, b) => b.dupd - a.dupd)[0];
+    out.push({ name: w.name, x: w.x, y: w.y, z: w.z, age: Math.max(0, Math.round(now - w.upd)),
+      died_age: dead ? Math.max(0, Math.round(now - dead.died)) : null,
+      dragger: drag && drag.dragger && now - drag.dupd <= MAP_CORPSE_DRAG_STALE_MS ? drag.dragger : null, by: w.by || null });
+  }
+  return out.sort((a, b) => a.age - b.age).slice(0, MAP_CORPSE_MAX);
+}
+// A target frame: a player corpse with a position. Reported when it is new here, moved more than 5 units, or 60 s have passed.
+function _mapCorpseNoteTarget(zone, character, next, now) {
+  const owner = _mapPlayerCorpseOwner(next && next.target_name, next && next.target_type);
+  const loc = owner ? _mapServerXY(next.target_loc) : null;
+  if (!loc) return;
+  const k = zone + '|' + _mapCorpseKey(owner), last = _mapCorpse.seenLast.get(k);
+  if (last && now - last.at < MAP_CORPSE_SEEN_MS && _mapDist2(last, loc) <= MAP_CORPSE_SEEN_UNITS) return;
+  if (_mapCorpse.seenLast.size > 200) _mapCorpse.seenLast.clear();
+  _mapCorpse.seenLast.set(k, { x: loc.x, y: loc.y, at: now });
+  _mapCorpseEvent(zone, character, { kind: 'seen', corpse: owner, x: loc.x, y: loc.y, z: loc.z, at: now }, now);
+}
+// This character died (the confirmed death behind the corpse DM: `p` is _corpsePending, its loc in Zeal's pipe order).
+function _mapCorpseNoteDied(p, character, now) {
+  if (!p || !character) return;
+  const zone = _mapZoneShort(p.zone_id), loc = _mapServerXY(p.loc);
+  if (!zone || !loc) return;
+  const at = Date.parse(p.died_at);
+  _mapCorpseEvent(zone, character, { kind: 'died', corpse: String(character), x: loc.x, y: loc.y, z: loc.z, at: Number.isFinite(at) ? at : now }, now);
+}
+// Every log line of the live tail. Cheap gate first: only four strings matter.
+function _mapCorpseNoteLine(line, character, lineMs, now) {
+  if (!character || typeof line !== 'string') return;
+  if (line.indexOf('drag') < 0 && line.indexOf('Summoning') < 0 && line.indexOf('resurrection') < 0) return;
+  if (Number.isFinite(lineMs) && now - lineMs > 60000) return;           // a backfill replays old log text
+  let m;
+  if ((m = MAP_CORPSE_DRAG_BEGIN_RE.exec(line))) {
+    const owner = _mapPlayerCorpseOwner(m[1], 3);                         // the server only lets you drag a player corpse
+    if (!owner) return;
+    const me = _mapCorpseSelf(character, now);
+    _mapCorpse.drags.set(_mapCorpseKey(character) + '|' + _mapCorpseKey(owner),
+      { character: String(character), owner, zone: me ? me.zone : null, startedAt: now, lastAt: 0, last: null, sentStart: false });
+    _mapCorpseTickDrag(character, now);                                   // the start goes out now when the pipe has a spot
+    return;
+  }
+  if ((m = MAP_CORPSE_DRAG_STOP_RE.exec(line))) {
+    // "the corpses" ends them all. "the corpse" does not say which one when you drag two (the server loops over them): the
+    // oldest drag is the one ended, which is right for the usual single corpse.
+    const mine = [..._mapCorpse.drags.values()].filter(d => _mapCorpseKey(d.character) === _mapCorpseKey(character)).sort((a, b) => a.startedAt - b.startedAt);
+    for (const d of m[1] ? mine : mine.slice(0, 1)) _mapCorpseEndDrag(d, now);
+    return;
+  }
+  if ((m = MAP_CORPSE_SUMMON_RE.exec(line))) {                            // the caster's spot is where the corpse lands
+    const me = _mapCorpseSelf(character, now);
+    if (!me) return;
+    const owner = m[1] ? _mapPlayerCorpseOwner(m[1] + "'s corpse", 3) : String(character);
+    if (owner) _mapCorpseEvent(me.zone, character, { kind: 'summoned', corpse: owner, x: me.loc.x, y: me.loc.y, z: me.loc.z, at: lineMs || now }, now);
+    return;
+  }
+  if (MAP_CORPSE_REZ_RE.test(line)) {                                     // own corpse rezzed
+    const me = _mapCorpseSelf(character, now);
+    if (me) _mapCorpseEvent(me.zone, character, { kind: 'gone', corpse: String(character), x: me.loc.x, y: me.loc.y, z: me.loc.z, at: lineMs || now }, now);
+  }
+}
+// drag_stop at the dragger's spot (the corpse stays where it was last moved to, within a few units of it), then forget the drag.
+function _mapCorpseEndDrag(d, now) {
+  _mapCorpse.drags.delete(_mapCorpseKey(d.character) + '|' + _mapCorpseKey(d.owner));
+  const me = _mapCorpseSelf(d.character, now);
+  const at = me && me.zone === d.zone ? me.loc : d.last;                  // zoned away: where it was left
+  if (d.zone && at) _mapCorpseEvent(d.zone, d.character, { kind: 'drag_stop', corpse: d.owner, x: at.x, y: at.y, z: at.z, at: now, dragger: d.character }, now);
+}
+// Each Zeal frame while this character drags: the first spot sends drag_start, then drag_move every 5 s the dragger has moved.
+// Zoning ends a drag on the server without a word (ClearDraggedCorpses), so a changed zone ends it here.
+function _mapCorpseTickDrag(character, now) {
+  if (!_mapCorpse.drags.size) return;
+  const cl = _mapCorpseKey(character);
+  const me = _mapCorpseSelf(character, now);
+  for (const d of [..._mapCorpse.drags.values()]) {
+    if (_mapCorpseKey(d.character) !== cl) continue;
+    if (!me) continue;
+    if (d.zone && me.zone !== d.zone) { _mapCorpseEndDrag(d, now); continue; }
+    if (!d.zone) d.zone = me.zone;
+    const kind = d.sentStart ? 'drag_move' : 'drag_start';
+    if (d.sentStart && (now - d.lastAt < MAP_CORPSE_MOVE_MS || _mapDist2(d.last, me.loc) <= MAP_CORPSE_MOVE_UNITS)) continue;
+    d.sentStart = true; d.lastAt = now; d.last = { x: me.loc.x, y: me.loc.y, z: me.loc.z };
+    _mapCorpseEvent(d.zone, d.character, { kind, corpse: d.owner, x: me.loc.x, y: me.loc.y, z: me.loc.z, at: now, dragger: d.character }, now);
+  }
+}
+// ── end Guild corpses ──
 // Whose map events you take (the guild lead, 2026-10-13, option C: "A now, B later"): your raid, or your group when
 // you are not in a raid, plus yourself. Zeal sends the zone id but no instance id, so the open world, our guild copy
 // and the PvP copy of a zone all looked like one; a raid or group is nearly always in one copy. B (the zone
@@ -47876,6 +52260,7 @@ function _mapApplyRemote(zone, events, now) {
     .slice(0, 500).sort((a, b) => Number(a.at) - Number(b.at));
   const party = _mapPartyNames(now);
   const mine = _mapCurrentCopy(zone, now);
+  const watched = _mapWatchFor(zone, now);
   let applied = 0, maxAt = _mapSync.since[zone] || 0;
   for (const raw of list) {
     const at = Number(raw.at);
@@ -47883,9 +52268,12 @@ function _mapApplyRemote(zone, events, now) {
     if (at > maxAt) maxAt = at;
     // Same copy of the zone (both sides read dbg.txt): take it from anyone. A different copy: never, even from your
     // raid. Either side not knowing: your raid / group, as before (see _mapPartyNames).
+    // A WATCHED spot's death / empty is heard from anyone (the guild lead, 2026-10-16: the watch is the invitation);
+    // the copy check above still applies when both sides know it, and every other event keeps the party filter.
     const inst = typeof raw.inst === 'string' ? raw.inst : null;
     if (inst && mine) { if (inst !== mine.token) continue; }
-    else if (!raw.by || !party.has(String(raw.by).toLowerCase())) continue;
+    else if ((!raw.by || !party.has(String(raw.by).toLowerCase()))
+      && !((raw.kind === 'died' || raw.kind === 'empty') && watched[String(raw.point_id)])) continue;
     const e = { point_id: raw.point_id, kind: String(raw.kind), spawn_id: Number(raw.spawn_id) > 0 ? Number(raw.spawn_id) : null,
       name: raw.name ? String(raw.name).slice(0, 80) : null, at };
     const key = _mapSyncKey(zone, e);
@@ -47966,6 +52354,10 @@ function _mapNoteSighting(zone, spawnId, name, loc, now) {
 }
 // The same death reaches us twice (the target window and the log line, from every log on the machine).
 const _mapRecentDeaths = [];   // { name, at, spawn_id, src }
+// '<zone>|<normalised name>' → epoch ms of the newest "died." / "has been slain by" / "You have slain" line for it
+// (_mapNoteLogDeath). Read by _mapKillNow, so the button can start a timer from a death the Map could not place.
+const _mapLastDeathLine = new Map();
+const MAP_DEATH_LINE_KEEP_MS = 30 * 60 * 1000;
 function _mapDeathIsDup(name, spawnId, src, now) {
   for (let i = _mapRecentDeaths.length - 1; i >= 0; i--) {
     const e = _mapRecentDeaths[i];
@@ -47981,11 +52373,21 @@ function _mapDeathIsDup(name, spawnId, src, now) {
 // else where its target window last placed it, else where YOU stood (loc_source says which).
 // Returns { kind: 'assigned'|'unassigned'|'none'|'dup'|'nodata', ... }.
 function _mapNoteDeath(zone, ev, now) {
+  if (ev.spawn_id != null && _mapHpMem.zone === zone) _mapHpMem.m.delete(Number(ev.spawn_id));   // dead: no health to remember
+  if (ev.spawn_id != null && _mapPosMem.zone === zone) _mapPosMem.m.delete(Number(ev.spawn_id));   // …and no ring to carry
+  if (ev.spawn_id != null) {   // named: one of the "killed?" deaths is explained, and this spawn is no longer a candidate for the rest
+    for (const [k, g] of _mapKilledQ) {
+      if (g.zone !== zone || !g.ids.has(Number(ev.spawn_id))) continue;
+      g.ids.delete(Number(ev.spawn_id)); g.n -= 1;
+      if (g.n <= 0 || g.ids.size === 0) _mapKilledQ.delete(k);
+      else if (g.ids.size <= g.n) _mapKilledQResolve(g, now);
+    }
+  }
   const rec = _mapZones.get(zone);
   if (!rec || !rec.body) return { kind: 'nodata' };
   const name = _mapNormName(ev.name);
   if (!name) return { kind: 'none' };
-  if (_mapDeathIsDup(name, ev.spawn_id == null ? null : ev.spawn_id, ev.src || 'zeal', now)) return { kind: 'dup' };
+  if (!ev.force && _mapDeathIsDup(name, ev.spawn_id == null ? null : ev.spawn_id, ev.src || 'zeal', now)) return { kind: 'dup' };
   const zd = _mapZoneDoc(zone);
   let loc = null, locSource = null;
   const sight = ev.spawn_id != null ? zd.sightings[String(ev.spawn_id)] : null;
@@ -47995,15 +52397,19 @@ function _mapNoteDeath(zone, ev, now) {
   // A pinned mob dies on its own point wherever it was pulled to. The pin is spent either way (ids get reused).
   const pin = ev.spawn_id != null ? _mapPinGet(zone, ev.spawn_id, ev.name) : null;
   if (ev.spawn_id != null && _mapPins.zone === zone) { _mapPins.m.delete(ev.spawn_id); _mapPins.tried.delete(ev.spawn_id); }
-  const att = pin && rec.byId.get(String(pin.point_id))
-    ? { kind: 'assigned', point_id: pin.point_id, dist: null, pinned: true }
-    : _mapAttribute(rec.body.points, ev.name, loc, rec.body.grids);
+  // `ev.point_id` (the sidebar's ☠ killed button, see _mapKillNow) names the spot outright.
+  const forced = ev.point_id != null ? rec.byId.get(String(ev.point_id)) : null;
+  const att = forced
+    ? { kind: 'assigned', point_id: forced.id, dist: null, pinned: true }
+    : pin && rec.byId.get(String(pin.point_id))
+      ? { kind: 'assigned', point_id: pin.point_id, dist: null, pinned: true }
+      : _mapAttribute(rec.body.points, ev.name, loc, rec.body.grids);
   if (att.kind === 'none') return att;
   _mapRecentDeaths.push({ name, at: now, spawn_id: ev.spawn_id == null ? null : ev.spawn_id, src: ev.src || 'zeal' });
   const at = Number.isFinite(ev.at) ? ev.at : now;
   if (att.kind === 'assigned') {
     const point = rec.byId.get(String(att.point_id));
-    const timer = _mapMakeTimer(point, at, 'seen', _mapPrettyName(ev.name));
+    const timer = _mapMakeTimer(point, at, ev.marked ? 'marked' : 'seen', _mapPrettyName(ev.name));   // a button press is a mark, not a sighting
     if (timer) zd.timers[String(att.point_id)] = timer;          // an observed death overrides a mark
     delete zd.seen[String(att.point_id)];                         // dead now, no longer "seen alive"
     if (timer) _mapLocalEvent(zone, zd, ev.character, { point_id: att.point_id, kind: 'died', spawn_id: ev.spawn_id, name: _mapPrettyName(ev.name), at }, now);
@@ -48064,6 +52470,37 @@ function _mapApplyMark(zone, mark, now, character) {
   send(kind === 'killed' ? 'died' : 'empty', spawnId, name, diedAt);
   _mapSaveSoon();
   return { ok: true, timer, settled };
+}
+// The sidebar's "☠ killed" button on an alive row (Up · seen, ★ Watched, ⚔ Engaged): start that mob's respawn timer from
+// its newest death line in your log, else from now. It goes down the same road as an observed death (_mapNoteDeath), so the
+// timer, the "seen alive" removal and the guild share are the ones a log line makes. The spot is the row's own point_id,
+// else the one a pin or a seen-alive mob of that name holds; an Engaged row with neither is placed by name alone, and may
+// land under "Not pinned down". A death line from before the mob was last seen alive belongs to an earlier spawn: skipped.
+function _mapKillNow(zone, b, now, character) {
+  const rec = _mapZones.get(zone);
+  if (!rec || !rec.body) return { ok: false, error: 'no spawn data for this zone' };
+  const name = _mapPrettyName(b && b.name).slice(0, 80);
+  if (!name) return { ok: false, error: 'name is required' };
+  const want = _mapNormName(name);
+  const spawnId = Number(b.spawn_id) > 0 ? Math.trunc(Number(b.spawn_id)) : null;
+  const zd = _mapZoneDoc(zone);
+  let pid = b.point_id != null && rec.byId.get(String(b.point_id)) ? String(b.point_id) : null;
+  if (pid == null) {
+    const pin = spawnId != null ? _mapPinGet(zone, spawnId, name) : null;
+    const alive = Object.values(zd.seen).filter(s => s && _mapNormName(s.name) === want);
+    const hit = pin ? { point_id: pin.point_id }
+      : (spawnId != null && alive.find(s => s.spawn_id === spawnId)) || (alive.length === 1 ? alive[0] : null);
+    if (hit && rec.byId.get(String(hit.point_id))) pid = String(hit.point_id);
+  }
+  const seenAt = pid != null && zd.seen[pid] ? Number(zd.seen[pid].at) || 0 : 0;
+  const line = _mapLastDeathLine.get(zone + '|' + want);
+  const fromLine = line != null && now - line <= MAP_DEATH_LINE_KEEP_MS && line >= seenAt;
+  const at = fromLine ? line : now;
+  const r = _mapNoteDeath(zone, { name, spawn_id: spawnId, loc: null, at, src: 'button', character, point_id: pid, force: true, marked: true }, now);
+  if (r.kind === 'none') return { ok: false, error: 'no spawn point here makes that mob' };
+  if (r.kind === 'nodata') return { ok: false, error: 'no spawn data for this zone' };
+  if (r.kind === 'assigned' && !r.timer) return { ok: false, error: 'this spawn point has no respawn time' };
+  return { ok: true, kind: r.kind, timer: r.timer || null, at, from_line: fromLine };
 }
 
 // A random wanderer seen walking from waypoint `a` to waypoint `b` of route `grid` (the Map works the leg out from its
@@ -48306,11 +52743,299 @@ function _mapFocusTarget(character) {
   } catch { void 0; }
   return null;
 }
+// Health on the Map's alive rows (FB-87, a raider: "if we already have health of each mob engaged, we could be putting
+// this into the timers page of maps as well"). Sets `hp_pct` (0-100, or null = unknown) on each `seen` row from what
+// the agent already holds: your own target when its pin is that spawn point, else the Extended Target rows (`rows`)
+// matched by spawn id, else by normalized name ONLY when exactly one fresh NPC row carries that name, it does not
+// name a different spawn id, AND exactly one seen row carries the name (else one figure is copied onto a whole pack of
+// pinned spawns). Stale rows never count; a duplicate name is left blank rather than guessed.
+// Tabbing through a pack (the guild lead, 2026-10-20: "tab target through them quickly and get all of their healths out"):
+// your own target also counts by SPAWN ID (a roamer has no pin), and a spawn you tabbed off keeps the last health read
+// in `mem` (_mapHpMem: spawn id -> { hp_pct, at }), by spawn id only, never by name. Each row gets hp_at (when that
+// health was read) and hp_live (true = read this poll; false = remembered, so the Map shows its age).
+function _mapSeenHp(seen, rows, own, mem, now) {
+  const pct = (v) => (typeof v === 'number' && Number.isFinite(v)) ? Math.max(0, Math.min(100, Math.round(v))) : null;
+  const live = (Array.isArray(rows) ? rows : []).filter(t => t && !t.stale && (t.kind == null || t.kind === 'npc'));
+  const byId = new Map(), byName = new Map();
+  for (const t of live) {
+    const id = Number(t.spawn_id);
+    if (id > 0 && !byId.has(id)) byId.set(id, t);
+    const k = _mapNormName(t.name);
+    byName.set(k, byName.has(k) ? null : t);   // null = two or more rows share the name: no guess
+  }
+  // The name fallback is a claim that the ONE Extended Target row of a name is THE one seen row of that name. Two or more seen
+  // rows of the name (a pinned pack: every Guardian of Marr in a hall) make it a copy of one figure onto all of them (the guild
+  // lead, 2026-10-21: "seeing some mobs repeated", eleven rows at exactly 45%), so it needs the seen side to be unique too.
+  const seenCount = new Map();
+  for (const s of seen) seenCount.set(_mapNormName(s.name), (seenCount.get(_mapNormName(s.name)) || 0) + 1);
+  for (const s of seen) {
+    let hp = null;
+    if (own && own.point_id != null && String(own.point_id) === String(s.point_id)) hp = pct(own.hp_pct);
+    if (hp == null && s.spawn_id != null && own && Number(own.id) > 0 && Number(own.id) === Number(s.spawn_id)
+        && (own.type == null || own.type === 1)) hp = pct(own.hp_pct);
+    let ext = null;   // the Extended Target row for this mob: its raider count rides along ("N on it")
+    if (s.spawn_id != null && byId.has(Number(s.spawn_id))) ext = byId.get(Number(s.spawn_id));
+    if (hp == null && ext) hp = pct(ext.hp_pct);
+    if ((hp == null || !ext) && seenCount.get(_mapNormName(s.name)) === 1) {
+      const t = byName.get(_mapNormName(s.name));
+      const tid = t ? Number(t.spawn_id) : 0;
+      if (t && !(tid > 0 && s.spawn_id != null && tid !== Number(s.spawn_id))) { if (hp == null) hp = pct(t.hp_pct); if (!ext) ext = t; }
+    }
+    if (ext && Number(ext.raider_count) >= 1) s.n = Number(ext.raider_count);
+    let readAt = now, liveNow = true;
+    if (hp == null && mem && s.spawn_id != null) {
+      const m = mem.get(Number(s.spawn_id));
+      if (m && Number.isFinite(m.at) && !(now - m.at > MAP_SEEN_KEEP_MS)) { hp = pct(m.hp_pct); readAt = m.at; liveNow = false; }
+    }
+    s.hp_pct = hp;
+    if (hp != null) { s.hp_at = readAt; s.hp_live = liveNow; }   // a row without a health carries neither
+  }
+}
+// The per-spawn health memory behind that: zone-scoped (spawn ids are reused between zones), fed every Map poll from your
+// own target (Zeal's spawn id + health) and from every live NPC Extended Target row that carries a spawn id. A read of 0
+// is a corpse and forgets the spawn; so does _mapNoteDeath, and anything older than MAP_SEEN_KEEP_MS.
+const _mapHpMem = { zone: null, m: new Map() };
+function _mapHpNote(mem, own, rows, now) {
+  const put = (id, hp, name) => {
+    id = Number(id);
+    if (!(id > 0) || typeof hp !== 'number' || !Number.isFinite(hp)) return;
+    if (hp <= 0) { mem.delete(id); return; }
+    mem.delete(id);   // re-insert so the oldest read is first for the cap
+    mem.set(id, { hp_pct: Math.min(100, hp), at: now, name: name ? String(name) : null });
+  };
+  if (own && (own.type == null || own.type === 1) && !/[`'’]s\s+corpse\d*$/i.test(String(own.name || ''))) put(own.id, own.hp_pct, own.name);
+  for (const t of (Array.isArray(rows) ? rows : [])) {
+    if (t && !t.stale && (t.kind == null || t.kind === 'npc')) put(t.spawn_id, t.hp_pct, t.name);
+  }
+  for (const [id, m] of mem) if (now - m.at > MAP_SEEN_KEEP_MS) mem.delete(id);
+  while (mem.size > MAP_PIN_MAX) mem.delete(mem.keys().next().value);
+}
+function _mapHpMemFor(zone) {
+  if (_mapHpMem.zone !== zone) { _mapHpMem.zone = zone; _mapHpMem.m.clear(); }   // spawn ids are only good within a zone
+  return _mapHpMem.m;
+}
+// Where a mob was last seen standing (the guild lead, 2026-10-21: a pulled mob's aggro ring follows the mob, not its spawn
+// point). Spawn id -> { x, y, z, at }, zone-scoped like _mapHpMem, fed every Zeal frame from your own target. `_mapSeenPos`
+// puts the freshest of that, your target now and the raid's shared targets on each seen row as `pos` { x, y, z, at }; the
+// Map decides whether the mob is away from home and draws the ring there. Older than MAP_POS_KEEP_MS is no position.
+const MAP_POS_KEEP_MS = 60000;
+const _mapPosMem = { zone: null, m: new Map() };
+function _mapPosNote(zone, id, loc, now) {
+  id = Number(id);
+  if (!(id > 0) || !loc) return;
+  if (_mapPosMem.zone !== zone) { _mapPosMem.zone = zone; _mapPosMem.m.clear(); }
+  _mapPosMem.m.delete(id);
+  _mapPosMem.m.set(id, { x: loc.x, y: loc.y, z: loc.z, at: now });
+  for (const [k, v] of _mapPosMem.m) if (now - v.at > MAP_POS_KEEP_MS) _mapPosMem.m.delete(k); else break;
+  while (_mapPosMem.m.size > MAP_PIN_MAX) _mapPosMem.m.delete(_mapPosMem.m.keys().next().value);
+}
+function _mapSeenPos(seen, own, shared, zone, now) {
+  const mem = _mapPosMem.zone === zone ? _mapPosMem.m : new Map();
+  for (const s of seen) {
+    const id = Number(s.spawn_id);
+    if (!(id > 0)) continue;
+    let best = mem.get(id) || null;
+    if (shared && Array.isArray(shared.rows)) {
+      const r = shared.rows.find(t => t.id === id);
+      const at = r ? shared.pulledAt - r.age : 0;
+      if (r && (!best || at > best.at)) best = { x: r.x, y: r.y, z: r.z, at };
+    }
+    if (own && Number(own.id) === id && own.x != null && (own.type == null || own.type === 1)) best = { x: own.x, y: own.y, z: own.z, at: now };
+    if (best && now - best.at <= MAP_POS_KEEP_MS) s.pos = { x: best.x, y: best.y, z: best.z, at: best.at };
+  }
+}
+// "killed?" (the guild lead, 2026-10-20: "i want each of these to get a question mark on 'killed?' if we cant make the
+// assumption that it died from the AOE songs"). A death LINE names a mob, not a spawn. When nothing says which spawn died (no
+// spawn id, not your target) and more than one live spawn of that name is on the list (a seen row, or a health read), the
+// Map does not pick one: every candidate is queued here and shown "killed?", and NO respawn timer starts. A candidate you
+// tab onto and read alive (_mapKilledQAlive) leaves the queue; once no more candidates remain than unexplained deaths (n)
+// the rest are the dead ones and take the normal kill path. A death that names its spawn (_mapNoteDeath with a spawn id:
+// the target window, or the ☠ button) explains the line and drops the queue.
+// zone|name -> { zone, name, at (the death line), queuedAt, n (deaths), ids:Set, character }
+const _mapKilledQ = new Map();
+function _mapAliveOf(zone, want, zd, now) {
+  const ids = new Set();
+  for (const s of Object.values(zd.seen)) if (s && s.spawn_id != null && _mapNormName(s.name) === want && now - s.at <= MAP_SEEN_KEEP_MS) ids.add(Number(s.spawn_id));
+  if (_mapHpMem.zone === zone) for (const [id, m] of _mapHpMem.m) if (m.name && _mapNormName(m.name) === want && now - m.at <= MAP_SEEN_KEEP_MS) ids.add(id);
+  return [...ids];
+}
+function _mapKilledQResolve(g, now) {
+  _mapKilledQ.delete(g.zone + '|' + _mapNormName(g.name));
+  const seen = Object.values(_mapZoneDoc(g.zone).seen);
+  for (const id of g.ids) {
+    const row = seen.find(s => s && s.spawn_id != null && Number(s.spawn_id) === id);   // its own spawn point, when it is a seen row
+    _mapNoteDeath(g.zone, { name: g.name, spawn_id: id, loc: null, loc_source: 'self', at: g.at, src: 'log', character: g.character, force: true,
+      point_id: row ? row.point_id : undefined }, now);
+  }
+}
+function _mapKilledQAdd(zone, name, ids, at, now, character) {
+  for (const [k, q] of _mapKilledQ) if (now - q.queuedAt > MAP_SEEN_KEEP_MS) _mapKilledQ.delete(k);
+  const key = zone + '|' + _mapNormName(name);
+  let g = _mapKilledQ.get(key);
+  if (g && now - g.queuedAt <= 2000) return;   // the same line from a second log on this machine
+  if (g) { g.n += 1; g.queuedAt = now; }
+  else { g = { zone, name: _mapPrettyName(name), at, queuedAt: now, n: 1, ids: new Set(ids), character }; _mapKilledQ.set(key, g); }
+  if (g.ids.size <= g.n) _mapKilledQResolve(g, now);
+}
+function _mapKilledQAlive(zone, id, now) {
+  for (const g of [..._mapKilledQ.values()]) {
+    if (g.zone !== zone || !g.ids.has(id) || !(now > g.queuedAt)) continue;
+    g.ids.delete(id);
+    if (g.ids.size <= g.n) _mapKilledQResolve(g, now);
+  }
+}
+// Every death line heard, per zone|name (epoch ms, newest last, 30 minutes): _mapLastDeathLine keeps only the newest.
+const _mapDeathLineLog = new Map();
+function _mapNoteDeathLineTime(zone, want, t, now) {
+  const key = zone + '|' + want, a = (_mapDeathLineLog.get(key) || []).filter(x => now - x <= MAP_SEEN_KEEP_MS);
+  if (!a.includes(t)) a.push(t);
+  _mapDeathLineLog.set(key, a.slice(-20));
+  while (_mapDeathLineLog.size > 200) _mapDeathLineLog.delete(_mapDeathLineLog.keys().next().value);
+}
+// A corpse is proof of death (the guild lead, 2026-10-20: "targetted this corpse, even tagged it with 'dead' but didn't see
+// it update on the respawns"): your target "<name>'s corpse" (or `s, the game uses the backtick) keeps the spawn id of the
+// mob it was, and a Zeal /tag "dead" on a spawn id says the same. When that spawn is still listed alive (a seen row, a
+// health read, or a "killed?" candidate) it is the dead one: the normal kill path, on its own spawn point, with the "killed?"
+// group losing it. The death time is the EARLIEST death line for that name after the spawn's last health reading
+// (why 'line'), else that reading (why 'read'), else now (why 'now'). Not listed alive = already counted (the kill removed
+// it) or never seen: nothing happens, so it can never count twice. → { why } or null.
+const MAP_CORPSE_NAME_RE = /^(.*?)[`'’]s\s+corpse\d*$/i;
+function _mapProveDead(zone, character, id, base, loc, now) {
+  id = Number(id);
+  const want = _mapNormName(base);
+  if (!(id > 0) || !want) return null;
+  const zd = _mapZoneDoc(zone);
+  const row = Object.values(zd.seen).find(s => s && s.spawn_id != null && Number(s.spawn_id) === id && _mapNormName(s.name) === want);
+  const m = _mapHpMem.zone === zone ? _mapHpMem.m.get(id) : null;
+  const memOk = !!(m && m.name && _mapNormName(m.name) === want);
+  let inGroup = false;
+  for (const g of _mapKilledQ.values()) if (g.zone === zone && g.ids.has(id) && _mapNormName(g.name) === want) inGroup = true;
+  if (!row && !memOk && !inGroup) return null;
+  const lastRead = memOk ? m.at : null;
+  const floor = lastRead != null ? lastRead : (row ? Number(row.at) || 0 : 0);
+  const lines = (_mapDeathLineLog.get(zone + '|' + want) || []).filter(t => t >= floor && now - t <= MAP_SEEN_KEEP_MS);
+  let at, why;
+  if (lines.length) { at = Math.min(...lines); why = 'line'; }
+  else if (lastRead != null) { at = lastRead; why = 'read'; }
+  else { at = now; why = 'now'; }
+  _mapNoteDeath(zone, { name: row ? row.name : base, spawn_id: id, loc: loc || null, loc_source: 'target', at, src: 'zeal', character, force: true,
+    point_id: row ? row.point_id : undefined }, now);
+  return { why, at };
+}
+// A Zeal tag "dead" (case-insensitive, trimmed) on a spawn id, heard on the tag channel (noteTagChannelLine).
+function _mapNoteTagDead(character, tag, now) {
+  if (!tag || String(tag.text || '').trim().toLowerCase() !== 'dead') return null;
+  if (!(now - tag.tsMs <= 60000)) return null;   // a --since backfill replays old tags
+  const cl = String(character || '').toLowerCase();
+  let st = null;
+  for (const ch of Object.keys(_zealState || {})) if (ch.toLowerCase() === cl) { st = _zealState[ch]; break; }
+  const zone = st ? _mapZoneShort(st.zone) : null;
+  if (!zone) return null;
+  return _mapProveDead(zone, character, tag.spawn_id, tag.mob, null, now);
+}
+// The kite's totals line over the Engaged rows (the guild lead, 2026-10-20: "Kite: 10 mobs · avg 61% · ~41k HP left · 3
+// unread"). `maxHpOf(name)` is the catalog's max HP or null; the HP total is shown only when EVERY mob with a health has
+// one (a partial sum would read as the whole pack). unread = engaged mobs whose health is unknown or older than 30 s: the
+// ones still to tab onto. A row without hp_live (an Extended Target row) was read this poll. Null under two mobs.
+const MAP_KITE_UNREAD_MS = 30000;
+function _mapKite(engaged, maxHpOf, now) {
+  const rows = Array.isArray(engaged) ? engaged : [];
+  if (rows.length < 2) return null;
+  const known = rows.filter(g => typeof g.hp_pct === 'number');
+  let left = 0, all = known.length > 0;
+  for (const g of known) { const mx = maxHpOf(g.name); if (mx > 0) left += g.hp_pct / 100 * mx; else all = false; }
+  const unread = rows.filter(g => typeof g.hp_pct !== 'number' || (g.hp_live === false && !(now - g.hp_at <= MAP_KITE_UNREAD_MS))).length;
+  return { n: rows.length, avg: known.length ? Math.round(known.reduce((a, g) => a + g.hp_pct, 0) / known.length) : null,
+    hp_left: all ? Math.round(left) : null, unread };
+}
+// The "Engaged" section at the top of the Map's timers list (FB-89, a raider: "add a section in the timers tab for
+// 'Engaged' mobs. put their HP there and how many are targetting them, similar to the Extended target overlay"). Reads the
+// same Extended Target rows as _mapSeenHp: live NPC rows (not stale) with at least one raider on them. Most-targeted first,
+// the more hurt mob ahead on a tie, then name and spawn id so the order never wobbles between polls. → [{ name, spawn_id,
+// hp_pct, n }], at most MAP_ENGAGED_MAX; spawn_id null and hp_pct null when the row had none.
+// ENGAGED = HURT (the guild lead, 2026-10-20: "engaged mobs should be the ones with lower health"; before that: "all of these
+// with less health than 100 are engaged"): every live mob whose known health is 1-99%, whether or not anyone targets it.
+// A mob at 100%, or with no health read, is NOT engaged because a raider has it targeted; `n` (the raiders on it) is only
+// information on the row, and a seen row carries it too. Lowest health first (nearest to dying on top); ties: the older
+// reading first (it needs a tab), then name, then spawn id, so the order never wobbles between polls.
+// The bot's own cache of hurt-but-untargeted mobs comes back `stale` and only for a UNIQUE name (index.js: "if (t.kind !==
+// 'npc' || t.ambiguous) continue"), so an AE-kited pack of one name never arrives here; _mapPromoteHurt below covers it.
+const MAP_ENGAGED_MAX = 24;
+function _mapEngagedOrder(a, b) {
+  const at = (g) => (g.hp_at == null ? Number.MAX_SAFE_INTEGER : g.hp_at);   // an Extended Target row was read this poll
+  return (a.hp_pct - b.hp_pct) || (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0)
+    || a.name.localeCompare(b.name) || (a.spawn_id || 0) - (b.spawn_id || 0);
+}
+function _mapEngaged(rows) {
+  const pct = (v) => (typeof v === 'number' && Number.isFinite(v)) ? Math.max(0, Math.min(100, Math.round(v))) : null;
+  return (Array.isArray(rows) ? rows : [])
+    .filter(t => t && t.kind === 'npc' && !t.stale && t.name && pct(t.hp_pct) > 0 && pct(t.hp_pct) < 100)
+    .map(t => ({ name: String(t.name), spawn_id: Number(t.spawn_id) > 0 ? Number(t.spawn_id) : null, hp_pct: pct(t.hp_pct), n: Number(t.raider_count) || 0 }))
+    .sort(_mapEngagedOrder)
+    .slice(0, MAP_ENGAGED_MAX);
+}
+// Seen rows join Engaged when their health is 1-99, read live this poll or within MAP_HURT_FRESH_MS, and they are not
+// dead (a death removes the seen row and forgets the health, _mapNoteDeath). Unknown health stays in Up · seen. They are
+// flagged `engaged` rather than removed, because the Map also reads `seen` for watched spots and dots; the sidebar lists
+// a flagged row once, under Engaged. A mob already engaged from an Extended Target row (same spawn id, or, with no ids,
+// the only mob of that name on both sides) is not added twice. `mem` (the per-spawn health memory) also adds the hurt
+// mobs that are not a seen row at all (a roamer you tabbed onto), by spawn id.
+const MAP_HURT_FRESH_MS = 3 * 60 * 1000;
+function _mapPromoteHurt(seen, engaged, now, mem) {
+  const list = Array.isArray(engaged) ? engaged.slice() : [];
+  const ids = new Set(list.filter(g => g.spawn_id != null).map(g => Number(g.spawn_id)));
+  const idlessByName = new Map(), seenByName = new Map();
+  for (const g of list) if (g.spawn_id == null) idlessByName.set(_mapNormName(g.name), (idlessByName.get(_mapNormName(g.name)) || 0) + 1);
+  for (const s of seen) seenByName.set(_mapNormName(s.name), (seenByName.get(_mapNormName(s.name)) || 0) + 1);
+  const dupOf = (s) => (s.spawn_id != null && ids.has(Number(s.spawn_id)))
+    || (idlessByName.get(_mapNormName(s.name)) === 1 && seenByName.get(_mapNormName(s.name)) === 1);
+  const add = [], dups = [], addedIds = new Set();
+  for (const s of seen) {
+    if (!s || !s.name) continue;
+    const hurt = typeof s.hp_pct === 'number' && s.hp_pct > 0 && s.hp_pct < 100
+      && (s.hp_live || (Number.isFinite(s.hp_at) && now - s.hp_at <= MAP_HURT_FRESH_MS));
+    if (dupOf(s)) { dups.push(s); continue; }
+    // One mob, one row: a spawn id already added through another seen row (a synced sighting on a second point) is that mob.
+    if (hurt && s.spawn_id != null && addedIds.has(Number(s.spawn_id))) { dups.push(s); continue; }
+    if (hurt && s.spawn_id != null) addedIds.add(Number(s.spawn_id));
+    if (hurt) add.push({ s, g: { name: String(s.name), spawn_id: s.spawn_id == null ? null : s.spawn_id, hp_pct: s.hp_pct, n: 0,
+      point_id: s.point_id, hp_at: s.hp_at, hp_live: !!s.hp_live } });
+  }
+  const known = new Set([...ids, ...seen.filter(s => s && s.spawn_id != null).map(s => Number(s.spawn_id))]);
+  const extra = [];
+  if (mem) for (const [id, m] of mem) {
+    const hp = typeof m.hp_pct === 'number' ? Math.round(m.hp_pct) : null;
+    if (known.has(id) || !m.name || !(hp > 0 && hp < 100) || !(now - m.at <= MAP_HURT_FRESH_MS)) continue;
+    extra.push({ name: String(m.name), spawn_id: id, hp_pct: hp, n: 0, point_id: null, hp_at: m.at, hp_live: now - m.at <= 1000 });
+  }
+  const all = list.concat(add.map(a => a.g), extra).sort(_mapEngagedOrder).slice(0, MAP_ENGAGED_MAX);
+  for (const a of add) if (all.includes(a.g)) a.s.engaged = true;
+  for (const s of dups) s.engaged = true;
+  return all;
+}
+// How far the target's Area Rampage reaches ({ radius_still, radius_moving, chance, targets, damage_pct }, game units) and
+// its regular Rampage reaches ({ range, chance, damage_pct }), off the same cached mob-info row Target Info reads (a zone
+// pack on disk, else the bot's lookup, started here when nothing else has). Returns { ae, rampage }; either is null when
+// the mob has none, or the bot predates the field (so older caches simply draw no ring).
+// The Mob Info block sits outside this one, so it is guarded the way _npcMobInfoFor guards it.
+function _mapAeRampage(name, zoneId, character, now) {
+  const none = { ae: null, rampage: null };
+  if (typeof _mobInfoByName === 'undefined' || typeof _mobInfoCacheKey !== 'function') return none;
+  const key = _mobInfoCacheKey(name, zoneId);
+  let hit = _mobInfoByName.get(key);
+  if (!hit || (now - hit.at) >= MOB_INFO_TTL_MS) { fetchMobInfo(name, character, zoneId); hit = _mobInfoByName.get(key) || hit; }
+  const mob = hit && hit.mob ? hit.mob : null;
+  const ae = mob ? mob.ae_rampage : null, rp = mob ? mob.rampage : null;
+  return {
+    ae: ae && Number(ae.radius_still) > 0 ? ae : null,
+    rampage: rp && Number(rp.range) > 0 ? rp : null,
+  };
+}
 function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], paths: {}, now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
@@ -48362,6 +53087,12 @@ function _mapStatePayload(have, now, haveLocal) {
     // Pinned (see "Pins"): the spawn point this live target is tied to, for the overlay's line and "→ pinned".
     const pin = zone ? _mapPinGet(zone, out.target.id, st.target_name) : null;
     if (pin) out.target.point_id = pin.point_id;
+    // Only an NPC target carries it (a corpse or a player never rampages).
+    if (out.target.type == null || out.target.type === 1) {
+      const reach = _mapAeRampage(st.target_name, out.zone_id, character, now);
+      if (reach.ae) out.target.ae_rampage = reach.ae;
+      if (reach.rampage) out.target.rampage = reach.rampage;
+    }
   }
   // The raid's focus mob (_mapFocusTarget), placed only where we truly know it: your own target when it is that mob.
   out.focus = _mapFocusTarget(character);
@@ -48386,6 +53117,8 @@ function _mapStatePayload(have, now, haveLocal) {
     const lLive = lOk && now - r.at <= MAP_PATH_LIVE_MS, sLive = sOk && h.live && now - h.pulledAt <= MAP_SYNC_PULL_MS + 2000;
     out.paths[k] = { name: lOk ? r.name : h.name, at: Math.max(lOk ? r.at : 0, sOk ? h.at : 0), live: lLive || sLive, pts };
   }
+  // Guild corpses (see "Guild corpses"): { name, x, y, z, age, died_age, dragger, by }, before the spawn data like the paths.
+  try { out.corpses = _mapCorpseList(zone, now); } catch { out.corpses = []; }
   try {   // before the spawn data: the walls draw even in a zone we hold no points for
     _mapBrewallEnsure(zone, now);   // first visit to a zone: fetch Brewall's map for it (see "Brewall maps")
     const lm = _mapLocalFor(zone, now);
@@ -48407,14 +53140,57 @@ function _mapStatePayload(have, now, haveLocal) {
   }
   try { out.me = _mapMe(character, st); } catch { out.me = null; }
   const zd = _mapZoneDoc(zone);
+  try {   // a corpse in the Extended Target rows (if the bot ever sends one) is proof of death too, same as your own target
+    const ecc = typeof _extTargetCache === 'undefined' ? null : _extTargetCache.get(String(character).trim().toLowerCase());
+    for (const t of (ecc && ecc.payload && Array.isArray(ecc.payload.targets) ? ecc.payload.targets : [])) {
+      const cm = t && !t.stale && Number(t.spawn_id) > 0 ? MAP_CORPSE_NAME_RE.exec(String(t.name || '').trim()) : null;
+      if (cm) _mapProveDead(zone, character, t.spawn_id, cm[1], null, now);
+    }
+  } catch { /* a nicety */ }
   if (_mapPrune(zd, rec.body.points, now)) _mapSaveSoon();
   out.timers = Object.values(zd.timers).map(t => Object.assign({}, t, { state: _mapTimerState(t, now) })).sort((a, b) => a.earliest - b.earliest);
   out.unassigned = zd.unassigned.map(u => ({ id: u.id, name: u.name, died_at: u.died_at, candidates: u.candidates || [] }));
+  // Spots marked "watch for <named>" (see "Watched spots"): { <point_id>: { named, by } } for the Map's star.
+  for (const w of Object.values(_mapWatchFor(zone, now))) out.watched[String(w.point_id)] = { named: w.named, by: w.by || null };
   // Seen alive in the last 30 minutes with no later death on that point (yours or the guild's).
   out.seen = Object.values(zd.seen)
     .filter(s => s && now - s.at <= MAP_SEEN_KEEP_MS && !(zd.timers[String(s.point_id)] && zd.timers[String(s.point_id)].died_at >= s.at))
     .map(s => ({ point_id: s.point_id, spawn_id: s.spawn_id == null ? null : s.spawn_id, name: s.name, at: s.at, by: s.by || null }))
     .sort((a, b) => b.at - a.at);
+  try {   // health on the alive rows (FB-87): your target, else the Extended Target cache; blank when it is not certain
+    const ec = typeof _extTargetCache === 'undefined' ? null : _extTargetCache.get(String(character).trim().toLowerCase());
+    const ecRows = ec && ec.payload && ec.payload.targets;
+    const hpMem = _mapHpMemFor(zone);
+    _mapHpNote(hpMem, out.target, ecRows, now);   // your own target is also read on every Zeal frame (_mapNoteState)
+    _mapSeenHp(out.seen, ecRows, out.target, hpMem, now);
+  } catch { for (const s of out.seen) s.hp_pct = null; }
+  try { _mapSeenPos(out.seen, out.target, _mapSync.targets[zone], zone, now); } catch { for (const s of out.seen) delete s.pos; }   // where a seen mob stood last: its aggro ring rides it
+  try {   // the Engaged section (FB-89): the mobs raiders are on right now, plus hurt ones nobody has targeted
+    const ec2 = typeof _extTargetCache === 'undefined' ? null : _extTargetCache.get(String(character).trim().toLowerCase());
+    out.engaged = _mapPromoteHurt(out.seen, _mapEngaged(ec2 && ec2.payload && ec2.payload.targets), now, _mapHpMemFor(zone));
+  } catch { out.engaged = []; }
+  try {   // the kite's totals line over those rows; max HP from the cached Mob Info row (a lookup is started when missing)
+    const maxHp = new Map();
+    out.kite = _mapKite(out.engaged, (name) => {
+      const k = _mapNormName(name);
+      if (!maxHp.has(k)) {
+        let v = null;
+        if (typeof _mobInfoByName !== 'undefined' && typeof _mobInfoCacheKey === 'function') {
+          const key = _mobInfoCacheKey(name, out.zone_id);
+          let hit = _mobInfoByName.get(key);
+          if (!hit || (now - hit.at) >= MOB_INFO_TTL_MS) { fetchMobInfo(name, character, out.zone_id); hit = _mobInfoByName.get(key) || hit; }
+          v = hit && hit.mob && Number(hit.mob.hp) > 0 ? Number(hit.mob.hp) : null;
+        }
+        maxHp.set(k, v);
+      }
+      return maxHp.get(k);
+    }, now);
+  } catch { out.kite = null; }
+  for (const [k, g] of _mapKilledQ) if (now - g.queuedAt > MAP_SEEN_KEEP_MS) _mapKilledQ.delete(k);
+  for (const g of _mapKilledQ.values()) {   // "killed?": the spawns a death line could have meant (see _mapKilledQ)
+    if (g.zone !== zone) continue;
+    for (const r of out.seen.concat(out.engaged)) if (r.spawn_id != null && g.ids.has(Number(r.spawn_id))) r.killed_q = true;
+  }
   // Not your target: where the raid's shared targets (the bot, _mapApplyShared) put a mob of that name. The most-targeted
   // row when several share the name and no spawn id was given; a row older than two minutes is not a position.
   if (out.focus && out.focus.x == null) {
@@ -48441,13 +53217,28 @@ function _mapStatePayload(have, now, haveLocal) {
 
 // Zeal state hooks. Called with every /api/zeal-state frame (prev = the last one for that character).
 function _mapNoteState(character, prev, next, now) {
+  try { _mapCorpseTickDrag(character, now); } catch { /* corpses are a nicety: never break the frame */ }   // before the zone check: zoning ends a drag
   const zone = _mapZoneShort(next && next.zone);
   if (!zone) return;
   _mapEnsureZone(zone, next.zone, now);
+  try { _mapCorpseNoteTarget(zone, character, next, now); } catch { /* same */ }
   const tl = _mapServerXY(next.target_loc);
   const isNpc = next.target_type == null || next.target_type === 1;
+  // Every frame (Mimic flushes one about every 300 ms), not only when the Map is polled: tabbing through a pack leaves a
+  // health for each spawn it landed on, and a candidate read alive leaves a "killed?" group.
+  try {
+    // BEFORE the health note, which would forget this spawn: a corpse in your target window is proof that spawn died.
+    const cm = MAP_CORPSE_NAME_RE.exec(String(next.target_name || '').replace(/^#/, '').trim());
+    // (Not when you watched it die: the target was that same spawn a frame ago, and the death below stamps that moment itself.)
+    const wasAlive = cm && prev && prev.target_name && Number(prev.target_id) === Number(next.target_id)
+      && String(prev.target_name).replace(/^#/, '').trim().toLowerCase() === cm[1].trim().toLowerCase();
+    if (cm && !wasAlive && next.target_id > 0) _mapProveDead(zone, character, next.target_id, cm[1], _mapServerXY(next.target_loc), now);
+    _mapHpNote(_mapHpMemFor(zone), { id: next.target_id, name: next.target_name, type: next.target_type, hp_pct: next.target_hp_pct }, null, now);
+    if (isNpc && next.target_id > 0 && Number(next.target_hp_pct) > 0 && !MAP_CORPSE_RE.test(String(next.target_name || ''))) _mapKilledQAlive(zone, Number(next.target_id), now);
+  } catch { /* health memory is a nicety: never break the frame */ }
   if (isNpc && tl && next.target_id > 0 && next.target_name && !MAP_CORPSE_RE.test(String(next.target_name))) {
     _mapNoteSighting(zone, next.target_id, next.target_name, tl, now);
+    if (Number(next.target_hp_pct) > 0) _mapPosNote(zone, next.target_id, tl, now);
     _mapNotePath(zone, next.target_name, tl, now);   // a tracked NPC (Thelin): one more point on his trail
     // A LIVE, UNPULLED mob standing at exactly one point is pinned there (and synced as "seen"); see "Pins".
     if (Number(next.target_hp_pct) > 0) {
@@ -48468,6 +53259,7 @@ function _mapNoteState(character, prev, next, now) {
   if (prev.target_type != null && prev.target_type !== 1) return;   // a player (or a pet corpse) going down is not a spawn
   const id = next.target_id > 0 ? next.target_id : (prev.target_id > 0 ? prev.target_id : null);
   const loc = _mapServerXY(next.target_loc) || _mapServerXY(prev.target_loc) || _mapServerXY(next.loc);
+  try { _dropDebuffTimersOnDeath(base, id, now, 'zeal'); } catch { /* the timers are a nicety: never break the frame */ }
   _mapNoteDeath(zone, { name: base, spawn_id: id, loc, loc_source: _mapServerXY(next.target_loc) || _mapServerXY(prev.target_loc) ? 'target' : 'self', at: now, src: 'zeal', character }, now);
 }
 // "<Mob> has been slain by <killer>!" / "You have slain <Mob>!" from a log the agent is tailing right now.
@@ -48482,11 +53274,24 @@ function _mapNoteLogDeath(deadName, character, lineMs, now) {
   const zone = _mapZoneShort(st.zone);
   if (!zone) return;
   const want = _mapNormName(deadName);
+  // The sidebar's ☠ killed button starts from this time when the mob has no timer yet (see _mapKillNow).
+  _mapLastDeathLine.delete(zone + '|' + want);
+  _mapLastDeathLine.set(zone + '|' + want, Number.isFinite(lineMs) ? Math.min(lineMs, now) : now);
+  while (_mapLastDeathLine.size > 200) _mapLastDeathLine.delete(_mapLastDeathLine.keys().next().value);
+  _mapNoteDeathLineTime(zone, want, Number.isFinite(lineMs) ? Math.min(lineMs, now) : now, now);   // every line, for a corpse's death time
   // The mob in this character's target window, when it is the one named: its id and position are exact.
   let id = null, loc = null, src = 'self';
   if (st.target_name && _mapNormName(st.target_name) === want && st.target_id > 0) {
     id = st.target_id;
     loc = _mapServerXY(st.target_loc); if (loc) src = 'target';
+  }
+  if (id == null) {
+    // Nothing says WHICH spawn died and several of that name are up: queue them all as "killed?" (see _mapKilledQ).
+    const alive = _mapAliveOf(zone, want, _mapZoneDoc(zone), now);
+    if (alive.length > 1) {
+      if (!_mapDeathIsDup(want, null, 'log', now)) _mapKilledQAdd(zone, deadName, alive, Number.isFinite(lineMs) ? Math.min(lineMs, now) : now, now, character);
+      return;
+    }
   }
   if (!loc) {
     // Else the only mob of that name we have seen and not seen die; else where you stand (approximate).
@@ -48524,6 +53329,38 @@ async function _handleMapMark(req, res) {
   const r = _mapApplyMark(zone, { point_id: b.point_id, kind: b.kind }, now, ch);
   send(r.ok ? 200 : 400, r);
 }
+// POST /api/map-kill { zone?, name, point_id?, spawn_id? } - the sidebar's "☠ killed" button (see _mapKillNow).
+async function _handleMapKill(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 2048)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { error: 'bad body' }); }
+  const now = Date.now();
+  const ch = _mapActiveCharacter(now);
+  const live = ch ? _mapZoneShort(_zealState[ch].zone) : null;
+  const zone = b && b.zone ? String(b.zone).slice(0, 40) : live;
+  if (!zone) return send(400, { error: 'no zone' });
+  if (live && zone !== live) return send(409, { error: 'that is not the zone you are in' });
+  if (!b || !b.name) return send(400, { error: 'name is required' });
+  const r = _mapKillNow(zone, b, now, ch);
+  send(r.ok ? 200 : 400, r);
+}
+// POST /api/map-watch { zone?, point_id, named, on } - the click menu's "Watch for <named>" (see "Watched spots").
+async function _handleMapWatch(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 2048)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { error: 'bad body' }); }
+  const now = Date.now();
+  const ch = _mapActiveCharacter(now);
+  const live = ch ? _mapZoneShort(_zealState[ch].zone) : null;
+  const zone = b && b.zone ? String(b.zone).slice(0, 40) : live;
+  if (!zone) return send(400, { error: 'no zone' });
+  if (live && zone !== live) return send(409, { error: 'that is not the zone you are in' });
+  if (!b || b.point_id == null) return send(400, { error: 'point_id is required' });
+  const r = _mapWatchSet(zone, { point_id: b.point_id, named: b.named, on: b.on === true }, now, ch);
+  send(r.ok ? 200 : 400, r);
+}
 // POST /api/map-leg { zone, grid, a, b } - a wander leg the overlay saw its target walk (_mapNoteLeg).
 async function _handleMapLeg(req, res) {
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
@@ -48539,6 +53376,112 @@ async function _handleMapLeg(req, res) {
   const r = _mapNoteLeg(zone, b && b.grid, b && b.a, b && b.b, now);
   send(r.ok ? 200 : 400, r);
 }
+// ── Kite loops ──────────────────────────────────────────────────────────────────────────────────
+// The guild lead, 2026-10-15: kiters run circles, and "common non-drifting circles and speeds are worth us hanging
+// onto". map.html's kite coach (apps/mimic/kiteCoach.js) finds the circles in YOUR OWN position, locally; this is the
+// only part that talks to the guild, and it is deliberately narrow:
+//   * OUT: POST /api/kite-loop (from the Map) -> ONE summary of a run of 3+ clean laps -> enqueueUpload('kite_loop') ->
+//     POST <bot>/api/agent/kite-loop with EXACTLY { zone, cx, cy, cz, r, lap_s, speed_pct, drift_u, wobble_u, laps,
+//     dir, at, agent_version }. Never the raw path, never a character name (_BARE_KINDS keeps enqueueUpload from
+//     stamping one), and the agent re-checks the loop is clean before it queues it.
+//   * IN: GET /api/kite-loops?zone=<short> (from the Map) -> the guild's loops for the zone, fetched from
+//     GET <bot>/api/agent/kite-loops?zone=<short> at most every 10 minutes per zone and cached. A 404 (an older bot)
+//     is "none", retried in 10 minutes.
+// Both ride the same gate as the own-timers sync (_ownTimersAllowed): local mode (no token), a dry run, the guild's
+// kill switch / version floor (_mapFetchAllowed), and a character set to exclude_from_stats send and fetch nothing.
+const KITE_LOOP_MIN_LAPS = 3, KITE_R_MIN = 20, KITE_R_MAX = 500, KITE_CLEAN_DRIFT = 0.08, KITE_CLEAN_WOBBLE = 0.10;
+const KITE_LOOPS_TTL_MS = 10 * 60 * 1000, KITE_LOOPS_RETRY_MS = 10 * 60 * 1000, KITE_LOOPS_ERR_MS = 2 * 60 * 1000, KITE_LOOPS_MAX = 60;
+const _kiteLoopCache = new Map();      // zone short -> { loops, at, retryAt, inflight }
+function _kiteNum(v, lo, hi) { const n = typeof v === 'number' ? v : NaN; return Number.isFinite(n) && n >= lo && n <= hi ? n : null; }
+const _kiteRound = (n, dp) => { const m = Math.pow(10, dp); return Math.round(n * m) / m; };
+// The Map's summary -> the body the bot is written against, or null when it is not a clean, plausible loop.
+function _kiteLoopBody(b, zone, now) {
+  if (!b || typeof b !== 'object' || !zone) return null;
+  const cx = _kiteNum(b.cx, -1e5, 1e5), cy = _kiteNum(b.cy, -1e5, 1e5), cz = _kiteNum(b.cz, -1e5, 1e5);
+  const r = _kiteNum(b.r, KITE_R_MIN, KITE_R_MAX), lap = _kiteNum(b.lap_s, 1, 600), sp = _kiteNum(b.speed_pct, 1, 1000);
+  const laps = _kiteNum(b.laps, KITE_LOOP_MIN_LAPS, 10000);
+  const dir = b.dir === 'cw' || b.dir === 'ccw' ? b.dir : null;
+  if (cx == null || cy == null || cz == null || r == null || lap == null || sp == null || laps == null || !dir) return null;
+  // (+0.05 u: the Map rounds these to a tenth of a unit, which can tip a loop exactly on the line over it)
+  const drift = _kiteNum(b.drift_u, 0, r * KITE_CLEAN_DRIFT + 0.05), wob = _kiteNum(b.wobble_u, 0, r * KITE_CLEAN_WOBBLE + 0.05);
+  if (drift == null || wob == null) return null;
+  return {
+    zone: String(zone), cx: _kiteRound(cx, 1), cy: _kiteRound(cy, 1), cz: _kiteRound(cz, 1), r: _kiteRound(r, 1), lap_s: _kiteRound(lap, 2),
+    speed_pct: _kiteRound(sp, 1), drift_u: _kiteRound(drift, 1), wobble_u: _kiteRound(wob, 1), laps: Math.floor(laps), dir,
+    at: new Date(now).toISOString(), agent_version: AGENT_VERSION,
+  };
+}
+// The bot's list -> only the fields the Map draws, numbers only, capped.
+function _kiteLoopsClean(list) {
+  const out = [];
+  for (const l of Array.isArray(list) ? list : []) {
+    if (!l || typeof l !== 'object') continue;
+    const cx = _kiteNum(l.cx, -1e5, 1e5), cy = _kiteNum(l.cy, -1e5, 1e5), cz = _kiteNum(l.cz, -1e5, 1e5), r = _kiteNum(l.r, KITE_R_MIN, KITE_R_MAX);
+    const lap = _kiteNum(l.lap_s, 1, 600), sp = _kiteNum(l.speed_pct, 0, 1000);
+    if (cx == null || cy == null || r == null || lap == null || sp == null || !(l.dir === 'cw' || l.dir === 'ccw')) continue;
+    out.push({ id: typeof l.id === 'number' || typeof l.id === 'string' ? l.id : out.length, cx, cy, cz: cz == null ? 0 : cz, r, lap_s: lap, speed_pct: sp, dir: l.dir,
+      drift_u: _kiteNum(l.drift_u, 0, 1e4) || 0, wobble_u: _kiteNum(l.wobble_u, 0, 1e4) || 0, laps: _kiteNum(l.laps, 0, 1e6) || 0,
+      seen: _kiteNum(l.seen, 0, 1e6) || 1, last_at: typeof l.last_at === 'string' ? l.last_at.slice(0, 40) : null });
+    if (out.length >= KITE_LOOPS_MAX) break;
+  }
+  return out;
+}
+// The Map's POST: gate, then queue. Pure of HTTP so a test can drive it. -> { status, body }
+function _kiteLoopSubmit(b, now) {
+  const ch = _mapActiveCharacter(now);
+  const live = ch ? _mapZoneShort(_zealState[ch].zone) : null;
+  if (!live) return { status: 409, body: { error: 'no zone' } };
+  if (b && b.zone && String(b.zone) !== live) return { status: 409, body: { error: 'that is not the zone you are in' } };
+  if (!_ownTimersAllowed(ch)) return { status: 200, body: { ok: true, sent: false } };   // local mode / paused / opted out: nothing leaves
+  const body = _kiteLoopBody(b, live, now);
+  if (!body) return { status: 400, body: { error: 'not a clean loop' } };
+  enqueueUpload('kite_loop', body);
+  return { status: 200, body: { ok: true, sent: true } };
+}
+function _kiteLoopsFetch(zone, rec, now) {
+  rec.inflight = true;
+  const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+  fetch(base + '/kite-loops?zone=' + encodeURIComponent(zone), { headers: _ownTimersHeaders(), signal: AbortSignal.timeout(8_000) })
+    .then(async (r) => {
+      if (r.status === 404) { rec.loops = []; rec.at = now; rec.retryAt = now + KITE_LOOPS_RETRY_MS; return; }   // an older bot: none
+      if (!r.ok) { rec.retryAt = now + KITE_LOOPS_ERR_MS; return; }
+      const j = await r.json();
+      rec.loops = _kiteLoopsClean(j && j.loops); rec.at = now; rec.retryAt = now + KITE_LOOPS_TTL_MS;
+    })
+    .catch(() => { rec.retryAt = now + KITE_LOOPS_ERR_MS; })       // keep what we had
+    .finally(() => { rec.inflight = false; });
+}
+// What the Map gets: the cached loops for the zone (empty while the first fetch is out), refreshed when stale.
+function _kiteLoopsFor(zone, character, now) {
+  if (!_ownTimersAllowed(character)) return [];
+  let rec = _kiteLoopCache.get(zone);
+  if (!rec) {
+    if (_kiteLoopCache.size >= 20) _kiteLoopCache.delete(_kiteLoopCache.keys().next().value);
+    rec = { loops: [], at: 0, retryAt: 0, inflight: false };
+    _kiteLoopCache.set(zone, rec);
+  }
+  if (!rec.inflight && now >= rec.retryAt) _kiteLoopsFetch(zone, rec, now);
+  return rec.loops;
+}
+async function _handleKiteLoopPost(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 2048)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { error: 'bad body' }); }
+  const r = _kiteLoopSubmit(b, Date.now());
+  send(r.status, r.body);
+}
+function _handleKiteLoopsGet(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let zone = '';
+  try { zone = new URL(req.url, 'http://127.0.0.1').searchParams.get('zone') || ''; } catch { void 0; }
+  if (!/^[a-z0-9_]{1,40}$/i.test(zone)) return send(400, { error: 'zone is required' });
+  const now = Date.now(), ch = _mapActiveCharacter(now);
+  send(200, { loops: _kiteLoopsFor(zone, ch, now) });
+}
+// ── end Kite loops ──
+
 // A timer written in the last two seconds is flushed on the way out.
 process.on('exit', () => { try { if (_mapSaveTimer) _mapSaveNow(); } catch { void 0; } });
 
@@ -49097,6 +54040,52 @@ function fetchExtendedTarget(character) {
   } catch { _extTargetInflight.delete(key); }
 }
 
+// Extended Target "Self" scope (FB-88, the guild lead's option A, "Local roster"): the mobs YOU tabbed
+// through, kept by this agent and answered locally, so it works with no bot and no raid. charLower →
+// Map(key → { name, spawn_id, hp_pct, seen_at }). Fed from every Zeal report of the character's target
+// (the live-state POST handler). Keyed by spawn id when Zeal sent one (Zeal 1.4.6+); 0 means NO target,
+// never an id, so it is never recorded as one. A mob with no id is keyed by lowercased name instead.
+const SELF_TARGET_MAX_KEEP_S = 300;
+const SELF_TARGET_DEFAULT_KEEP_S = 60;
+const SELF_TARGET_CAP = 200;
+const _selfTargets = new Map();
+function _noteSelfTarget(character, st, nowMs) {
+  const cl = String(character || '').trim().toLowerCase();
+  const name = st && st.target_name ? String(st.target_name).replace(/^#/, '').replace(/_/g, ' ').trim() : '';
+  if (!cl || !name) return;
+  let hp = Number(st.target_hp_pct);
+  if (st.target_hp_pct == null || !Number.isFinite(hp)) {
+    const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot === 6) : null;
+    hp = g && g.hp_pct != null ? Number(g.hp_pct) : NaN;
+  }
+  const id = Number.isFinite(st.target_id) && st.target_id > 0 ? st.target_id : null;
+  let m = _selfTargets.get(cl);
+  if (!m) { m = new Map(); _selfTargets.set(cl, m); }
+  const key = id != null ? 'id:' + id : 'n:' + name.toLowerCase();
+  m.delete(key);   // re-insert so Map order stays oldest-first
+  m.set(key, { name, spawn_id: id, hp_pct: Number.isFinite(hp) ? hp : null, seen_at: nowMs });
+  for (const [k, e] of m) {
+    if (nowMs - e.seen_at > SELF_TARGET_MAX_KEEP_S * 1000 || m.size > SELF_TARGET_CAP) m.delete(k);
+    else break;
+  }
+}
+function selfTargetPayload(character, keepSecRaw, nowMs) {
+  let keep = parseInt(keepSecRaw, 10);
+  if (!(keep > 0)) keep = SELF_TARGET_DEFAULT_KEEP_S;
+  keep = Math.min(keep, SELF_TARGET_MAX_KEEP_S);
+  let m = _selfTargets.get(String(character || '').trim().toLowerCase());
+  if (!m) {   // the "active" character may not be the one Zeal streams: use whichever list moved last
+    let newest = -1;
+    for (const mm of _selfTargets.values()) for (const e of mm.values()) if (e.seen_at > newest) { newest = e.seen_at; m = mm; }
+  }
+  const targets = [];
+  if (m) for (const e of [...m.values()].sort((a, b) => b.seen_at - a.seen_at)) {
+    const age = Math.max(0, Math.round((nowMs - e.seen_at) / 1000));
+    if (age <= keep) targets.push({ name: e.name, kind: 'npc', spawn_id: e.spawn_id, hp_pct: e.hp_pct, seen_secs: age });
+  }
+  return { scope: 'self', keep_secs: keep, targets };
+}
+
 // ── "My parses" proxy — the dashboard's 📈 My parses tab ────────────────────
 // A member asked (2026-10-06) for a graph of their own parses over a window they pick; the guild lead
 // chose a Mimic tab plus a wolfpack.quest page. The numbers live in Supabase, so this proxies the bot's
@@ -49238,11 +54227,14 @@ function _myFightCredit(perPlayer, character) {
   }
   return dmg;
 }
-function _myFightRow(startMs, endMs, mob, zone, char, dmg, dur, boss) {
-  return {
+// `tag` ({ code, role }, optional) marks a fight made under a raid code; a row without one is byte-for-byte what it was.
+function _myFightRow(startMs, endMs, mob, zone, char, dmg, dur, boss, tag) {
+  const row = {
     t: new Date(startMs).toISOString(), end: new Date(endMs).toISOString(), mob: String(mob), zone: zone || null,
     char: String(char), dmg: Math.round(dmg), dur, dps: Math.round(dmg / dur * 10) / 10, boss: !!boss,
   };
+  if (tag && tag.code) { row.code = tag.code; row.role = tag.role; }
+  return row;
 }
 // Age and cap, wherever the log grows or is read back from disk.
 function _trimMyFights(now = Date.now()) {
@@ -49266,7 +54258,7 @@ function _myFightsNote(et, character) {
     if (r.char.toLowerCase() === cl && r.mob.toLowerCase() === ml && Math.abs(Date.parse(r.t) - startMs) < MYFIGHTS_DEDUPE_MS) return null;
   }
   const z = _myFightZone(character);
-  const row = _myFightRow(startMs, endMs, mob, z.name, character, dmg, dur, _myFightIsBoss(mob, z.id));
+  const row = _myFightRow(startMs, endMs, mob, z.name, character, dmg, dur, _myFightIsBoss(mob, z.id), _raidTag());
   _myFights.push(row);
   _trimMyFights();
   _saveMyFightsSoon();
@@ -49278,7 +54270,9 @@ function _cleanMyFightRow(r) {
   const t = Date.parse(r.t), end = Date.parse(r.end), dmg = Number(r.dmg), dur = Math.max(1, Math.round(Number(r.dur) || 0));
   const mob = String(r.mob || '').trim().slice(0, 120), char = String(r.char || '').trim().slice(0, 40);
   if (!(t > 0) || !(end > 0) || !mob || !char || !(dmg > 0) || !(Number(r.dur) > 0)) return null;
-  return _myFightRow(t, end, mob, r.zone ? String(r.zone).slice(0, 64) : null, char, dmg, dur, r.boss === true);
+  const code = _raidCodeNormalize(r.code);
+  return _myFightRow(t, end, mob, r.zone ? String(r.zone).slice(0, 64) : null, char, dmg, dur, r.boss === true,
+    code ? { code, role: r.role === 'away' ? 'away' : 'guest' } : null);
 }
 function _saveMyFights(file = _myFightsFile) {
   try {
@@ -50202,7 +55196,8 @@ function buildMobInfo() {
     // #130 — best ACTIVE slow on the current target (strongest still-live,
     // observed-landing + catalog-duration derived; the only path for mobs, which
     // have no authoritative buff readout on the Zeal pipe). null when unslowed.
-    target_slow:    _bestSlowForTarget(tnameLower, Date.now()),
+    // FB-83: scoped to the spawn when Zeal sends its id; `uncertain` when only an id-less landing backs it.
+    target_slow:    _bestSlowForTarget(tnameLower, Date.now(), _curIdForRelay),
     // ── Target Info: mana + last cast (the guild lead, 2026-09-22) ──────────
     // Both null for the ~79% of the catalog with no mana pool and for any mob
     // we have not yet named a cast for. The overlay draws NOTHING in that case
@@ -50233,6 +55228,10 @@ function buildMobInfo() {
     // How this mob hits, from the melee verbs seen: { seen, slash, pierce, blunt, max, verbs } or
     // null until one was seen (noteMobMelee). Local only; the overlay draws nothing for null.
     target_hits:    mobHitTypesFor(st.target_name),
+    // Whether a /consider made while invisible showed it seeing you: { saw, firm, at_ms, exact } or null (noteSightCon).
+    target_invis:   seeInvisObsFor(st.target_name, _curIdForRelay),
+    // Which Target Info history entry this target is, so the pager steps past it (null when none).
+    target_hist_key: _tgtLiveKey(st),
   };
 }
 
@@ -51695,6 +56694,107 @@ function _deadMobNameFromLine(line) {
   if (m) return m[1].trim().replace(/[!.]+$/, '');
   return null;
 }
+// ── Death timeline (the guild lead, 2026-10-21: "the death timers between mobs ... easily and clearly displayed
+// versus having to say it out loud ... a timeline view ... on the bottom of the TTS") ──────────────────────────
+// A small ring of recent boss / Tactics-brother deaths read off the lines THIS PC's logs see (a kill out of this
+// character's range never prints, so it never lands here). The trigger overlay draws it as a bottom strip; the
+// agent only records and ships the facts. Display only: nothing here speaks, uploads or arms a timer.
+// There is NO pair window (the guild lead, 2026-10-21: go off the scripts and the database, not the guides). The
+// Plane of Tactics encounter script has no timer between the two Decorins (both only need to be dead at once; a
+// guard that respawns loses its kill) and none between Tallon and Vallon (each brother has its own out-of-combat
+// allowance, 20 minutes or 150 in a guild instance). So these four names are only RECORDED: the catalog may not
+// flag them as bosses, but the strip should show when each one died and the gap between deaths.
+const DEATH_ALWAYS_RECORD = ['Decorin Berik', 'Decorin Grunhork', 'Tallon Zek', 'Vallon Zek'];
+const RECENT_DEATHS_MAX = 20;
+const RECENT_DEATHS_DEDUPE_MS = 10000;        // several lines can report one death
+const RECENT_DEATHS_SHOW_MS = 30 * 60 * 1000; // what the API carries
+const _recentMobDeaths = [];
+// The comparison key for a mob name: same cleanup as _normMobName plus the backtick-for-apostrophe spelling.
+function _deathNameKey(n) {
+  return String(n || '').trim().replace(/^#/, '').replace(/_/g, ' ').replace(/`/g, "'").replace(/\s+/g, ' ').toLowerCase();
+}
+function _deathAlwaysRecorded(n) {
+  const k = _deathNameKey(n);
+  return DEATH_ALWAYS_RECORD.some(x => _deathNameKey(x) === k);
+}
+// Add one death to `ring` (mutated). Kept when the catalog says boss OR the name is in DEATH_ALWAYS_RECORD; a repeat of
+// the same name within RECENT_DEATHS_DEDUPE_MS is the same death. Returns the entry added, or null.
+function _ringAddMobDeath(ring, name, zone, atMs, isBoss) {
+  const clean = String(name || '').trim().replace(/^#/, '').replace(/_/g, ' ').replace(/`/g, "'").replace(/\s+/g, ' ');
+  if (!clean || !Number.isFinite(atMs) || /^you$/i.test(clean)) return null;
+  if (!isBoss && !_deathAlwaysRecorded(clean)) return null;
+  const key = _deathNameKey(clean);
+  for (const e of ring) if (_deathNameKey(e.name) === key && Math.abs(e.atMs - atMs) < RECENT_DEATHS_DEDUPE_MS) return null;
+  const entry = { name: clean, zone: zone || null, atMs, boss: true };
+  ring.push(entry);
+  ring.sort((a, b) => a.atMs - b.atMs);
+  if (ring.length > RECENT_DEATHS_MAX) ring.splice(0, ring.length - RECENT_DEATHS_MAX);
+  return entry;
+}
+// Tail hook: one raw log line. Live lines only (a --since backfill replays old deaths).
+function _noteRecentMobDeath(line, character) {
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return null;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  if (Date.now() - atMs > 60000) return null;
+  const z = _myFightZone(character);
+  return _ringAddMobDeath(_recentMobDeaths, dead, z.name, atMs, _myFightIsBoss(dead, z.id));
+}
+function _recentDeathsSnapshot(nowMs) {
+  const cut = (nowMs || Date.now()) - RECENT_DEATHS_SHOW_MS;
+  return _recentMobDeaths.filter(e => e.atMs >= cut).map(e => ({ name: e.name, zone: e.zone, atMs: e.atMs, boss: e.boss }));
+}
+// ── ⏪ Replay → death timeline (the guild lead, 2026-10-21: "i need a way to test these things before our raid
+// nights") ──────────────────────────────────────────────────────────────────────────────────────────────────────
+// A replay walks old log lines, so the live ring (60 s gate, wall clock) cannot take them. They go into a SEPARATE
+// ring that is cleared when a replay starts, shipped as `replayDeaths` beside `recentDeaths`, and dropped REPLAY_TAIL_MS
+// after the replay ends. The page runs the strip on `replayClock` (the replay's own log time) while one is present.
+const REPLAY_TAIL_MS = 2 * 60 * 1000;
+const _replayMobDeaths = [];
+// Does this log line report a death the strip would keep (catalog boss or an always-recorded name)? { name, zone, boss } or null.
+function _replayDeathCandidate(line, character) {
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return null;
+  const z = _myFightZone(character);
+  const boss = _myFightIsBoss(dead, z.id);
+  if (!boss && !_deathAlwaysRecorded(dead)) return null;
+  return { name: dead, zone: z.name, boss };
+}
+function _noteReplayMobDeath(cand, atMs) {
+  if (!cand) return null;
+  return _ringAddMobDeath(_replayMobDeaths, cand.name, cand.zone, atMs, cand.boss);
+}
+// True while a replay is running or inside its tail; drops the ring the first time it finds neither.
+function _replayDeathsLive() {
+  const st = _replayState;
+  if (st && (st.running || (st.tailUntil && Date.now() < st.tailUntil))) return true;
+  if (_replayMobDeaths.length) _replayMobDeaths.length = 0;
+  return false;
+}
+// The replay's log time right now. During the walk it moves through st.clk, a segment from the previous played
+// line's time to the next one's across the wait the worker sleeps: real pace is 1x while the gap is under
+// REPLAY_MAX_GAP_MS and faster across a compressed lull; fast pace holds still on the last line (rate 0) and
+// jumps when the next plays. After the walk (done or stopped) it runs 1x through the tail. `untilMs` bounds the
+// page's extrapolation so a poll never overshoots a segment.
+function _replayClockForWeb() {
+  if (!_replayDeathsLive()) return null;
+  const st = _replayState, wall = Date.now();
+  if (!st.running) {
+    return { nowMs: st.tailFromMs + (wall - st.tailWall), rate: 1, untilMs: null, pace: st.pace || 'real', tail: true };
+  }
+  const c = st.clk || { fromMs: st.fromMs, toMs: st.fromMs, wallStart: wall, wallMs: 0 };
+  if (!(c.wallMs > 0)) return { nowMs: c.toMs, rate: 0, untilMs: c.toMs, pace: st.pace || 'real', tail: false };
+  const f = Math.max(0, Math.min(1, (wall - c.wallStart) / c.wallMs));
+  return { nowMs: c.fromMs + (c.toMs - c.fromMs) * f, rate: (c.toMs - c.fromMs) / c.wallMs, untilMs: c.toMs,
+           pace: st.pace || 'real', tail: false };
+}
+function _replayDeathsSnapshot() {
+  const clock = _replayClockForWeb();
+  if (!clock) return null;
+  const cut = clock.nowMs - RECENT_DEATHS_SHOW_MS;
+  return _replayMobDeaths.filter(e => e.atMs >= cut).map(e => ({ name: e.name, zone: e.zone, atMs: e.atMs, boss: e.boss, replay: true }));
+}
 function _cancelTimersOnMobDeath(line) {
   const dead = _deadMobNameFromLine(line);
   if (!dead) return 0;
@@ -51707,6 +56807,54 @@ function _cancelTimersOnMobDeath(line) {
   }
   if (cancelled) console.log('[timers] ' + dead + ' died — cleared ' + cancelled + ' countdown' + (cancelled === 1 ? '' : 's'));
   return cancelled;
+}
+
+// A mob died: its debuff countdowns (the "<mob> - <spell>" rows _builtinTimerRows builds from _buffLandingsByTarget)
+// go with it (the guild lead, 2026-10-19: "when a mob dies it should remove those triggers for debuffs"). Deleted from
+// the map, so the very next snapshot omits the rows and the overlay drops them instead of sitting at 00:00.
+// The map is keyed by NAME, so two same-name mobs share one bucket and the only proof of WHICH mob an entry sits on
+// is its target_id (null when unprovable, which is most landings). The rule, in order:
+//   • the dead name is a player, a pet or an active charm → nothing (buffs on players and charm pets are never touched);
+//   • the death carries a spawn id → drop the entries stamped with THAT id; entries with no id go too, but only while
+//     the bucket is provably one mob (no entry stamped with another id, and the name is not seen at K>=2);
+//   • the death has no id → drop only when the bucket is provably one mob (at most one distinct id, K<2). With two
+//     or more same-name mobs and no id we cannot say whose timers are whose, so nothing is removed — they expire.
+// Charm spells and friendly buffs stay (a beneficial spell is not a debuff; Pacify/Harmony count as ours to clear).
+function _dropDebuffTimersOnDeath(deadName, spawnId, atMs, src) {
+  if (!deadName) return 0;
+  const lower = String(deadName).trim().toLowerCase();
+  if (!lower || lower === 'you') return 0;
+  if (whoData.has(lower) || _petOwnerByName(lower)) return 0;
+  if (_watchedCharacters().some(c => String(c).toLowerCase() === lower)) return 0;
+  const mp = _buffLandingsByTarget.get(lower);
+  if (!mp || !mp.size) return 0;
+  const nowMs = Date.now();
+  const id = Number(spawnId) > 0 ? Number(spawnId) : null;
+  const at = Number.isFinite(atMs) ? atMs : nowMs;
+  const cand = [];
+  for (const [k, b] of mp) {
+    if (!b || b.is_charm_spell || CHARM_SPELLS.has(String(b.name || '').toLowerCase())) continue;
+    if (_spellGood(b.name) === 1 && !_isPacifySpell(b.name)) continue;
+    if ((Number(b.landed_at) || 0) > at + 1500) continue;   // landed after the death: a new mob of the same name
+    cand.push(k);
+  }
+  const ids = new Set();
+  for (const k of cand) { const i = Number(mp.get(k).target_id); if (i > 0) ids.add(i); }
+  const several = (typeof _mobTrackK === 'function' ? _mobTrackK(lower, nowMs) : 0) >= 2;
+  let drop;
+  if (id != null) {
+    const other = [...ids].some(i => i !== id);
+    drop = cand.filter(k => { const i = Number(mp.get(k).target_id); return i > 0 ? i === id : (!other && !several); });
+  } else {
+    drop = (ids.size <= 1 && !several) ? cand : [];
+  }
+  for (const k of drop) mp.delete(k);
+  if (mp.size === 0) _buffLandingsByTarget.delete(lower);
+  if (drop.length) {
+    _savePetStateSoon();
+    console.log('[timers] ' + deadName + (id ? ' #' + id : '') + ' died (' + (src || 'log') + ') — cleared ' + drop.length + ' debuff timer' + (drop.length === 1 ? '' : 's'));
+  }
+  return drop.length;
 }
 
 // ── #142 boss spawn-chain + tank-buster detection ───────────────────────────
@@ -52151,6 +57299,25 @@ function noteMyMezWornOff(line, character) {
   }
   if (best) best.worn_off_at = Date.now();
 }
+// The bar colour of a spell row, by what it is (FB-92: "Red for mobs, Orange for affects on friendlies, green for
+// buffs, blue for other. Purple for Avatar and Ferocity lines"). The first rule that fits wins:
+//   purple — the name carries "Avatar" or "Ferocity" (a buff you watch for; beats green),
+//   red    — a crowd-control line (charm, mez, lull) or anything not a beneficial buff, landing on a mob,
+//   green  — a beneficial spell (good_effect 1),
+//   orange — a detrimental spell (good_effect 0) landing on a known player or one of our pets,
+//   blue   — the rest (a spell the catalog has not classified, landing on a friendly).
+// "A friendly" is _knownPlayerName: who data, our own characters, our group, our pets. A name nobody knows is a mob.
+const BUILTIN_BAR_COLORS = { mob: '#da3633', friendly_bad: '#db6d28', buff: '#2ea043', special: '#a371f7', other: '#1f6feb' };
+function _builtinSpellBarColor(spellName, targetName, group) {
+  const spell = String(spellName || '');
+  if (/avatar|ferocity/i.test(spell)) return BUILTIN_BAR_COLORS.special;
+  if (group === 'charm' || group === 'mez' || group === 'lull') return BUILTIN_BAR_COLORS.mob;
+  const good = _spellGood(spell);
+  if (good === 1) return BUILTIN_BAR_COLORS.buff;
+  const friendly = _knownPlayerName(String(targetName || '').trim().toLowerCase());
+  if (!friendly) return BUILTIN_BAR_COLORS.mob;
+  return good === 0 ? BUILTIN_BAR_COLORS.friendly_bad : BUILTIN_BAR_COLORS.other;
+}
 function _builtinTimerRows(now) {
   const on = _builtinTimerKindsOn();
   if (on.size === 0) { _builtinTimerHidden.clear(); return []; }
@@ -52160,6 +57327,7 @@ function _builtinTimerRows(now) {
   const push = (row) => {
     live.add(row.id);
     if (_builtinTimerHidden.has(row.id)) return;
+    if (_timerRowMuted(row)) return;   // muted from the row's ⋮ (see "Timer-row mutes")
     rows.push(Object.assign({ color: null, end_text: null, warning_ms: 0, warn_text: null,
       warnings: [], pinned: false, scope: 'personal', kind: 'builtin', dismissible: true, test: false }, row));
   };
@@ -52226,9 +57394,13 @@ function _builtinTimerRows(now) {
         // group: which Timers-canvas panel claims the row (a charm spell sits
         // with the recharm tick, a lull with the lulls, a mez with the mezzes, the rest are spells).
         const group = isCharm ? 'charm' : isMez ? 'mez' : _isPacifySpell(b.name) ? 'lull' : 'spell';
-        push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mob + ' - ' + b.name,
-               target: mob, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
-               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb', tick_snapped: fade.snapped, group });
+        // The mob's spawn id, when the landing proved one (the guild lead, 2026-10-19: "mention the mob's spawn id in
+        // the timer"): "A scrounging rat #4182 - Turgur's Insects". Unknown id → the label stays as it was.
+        const sid = Number(b.target_id) > 0 ? Number(b.target_id) : null;
+        const mobLabel = sid ? mob + ' #' + sid : mob;
+        push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mobLabel + ' - ' + b.name,
+               target: mobLabel, target_id: sid, spell: b.name, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
+               remaining_ms: remMs, duration_sec: totalSec, bar_color: _builtinSpellBarColor(b.name, mob, group), tick_snapped: fade.snapped, group });
       }
     }
   }
@@ -52275,7 +57447,7 @@ function _activeTimersSnapshot() {
     if (t.show_at_ms > 0 && (t.ends_at_ms - now) > t.show_at_ms) continue;
     // Test timers bypass the rules, like every other test fire.
     const _rm = (t.rule_key && !t.test) ? _ruleModeNow(t.rule_key) : 'speak';
-    out.push({
+    const _row = {
       rule_key:     t.rule_key || null,
       rule_mode:    _rm,
       id:           t.id,
@@ -52298,10 +57470,15 @@ function _activeTimersSnapshot() {
       dismissible:  !!t.dismissible,
       test:         t.test,
       group:        t.kind === 'loot' ? 'loot' : 'trigger',   // Timers-canvas panel routing
-    });
+    };
+    // Muted from the row's ⋮ (see "Timer-row mutes"): the countdown keeps running, the row is not handed out. A test timer is never muted.
+    if (!t.test && _timerRowMuted(_row)) continue;
+    out.push(_row);
   }
   try { for (const r of _builtinTimerRows(now)) out.push(r); }
   catch { /* a derived bar must never cost the trigger countdowns */ }
+  try { for (const r of _mapWatchTimerRows(now)) out.push(r); }   // watched Map spots (see "Watched spots"), same rule
+  catch { /* ditto */ }
   // Soonest-to-expire first — that's the most useful default for a stack of bars.
   // Pinned rows float as a GROUP above unpinned, then soonest-first within
   // each — so a 3-minute boss-cadence bar stays on top instead of sinking
@@ -52501,15 +57678,54 @@ function _hailNpcWanted(npc) {
   const k = _hailNpcKey(npc);
   return !!k && _hailBoard.windows.some(w => _hailNpcKey(w.npc_name) === k);
 }
-// The local port answers a browser that is not one of ours with 403: a web page can POST to 127.0.0.1.
-// Mimic's own pages send this origin, "null" (the file:// fallback) or none at all.
-function _localOriginOk(req) {
-  const o = req && req.headers && req.headers.origin;
-  if (!o || o === 'null') return true;
+// The local port answers a browser that is not one of ours with 403: a web page can POST to 127.0.0.1
+// (the guild lead, 2026-10-17). `_localRequestGuard` is the one rule, applied to EVERY route by the router
+// (`_localGuardBlock`, top of startWebDashboard); `_localOriginOk` below asks the same question.
+//   Host      absent or loopback, else 403 (DNS rebinding).
+//   Origin    absent -> ok (Mimic main, zealPipe, the agent's own takeover call, curl).
+//             loopback / file:// -> ok. Anything else -> 403.
+//             "null" (Mimic's file:// pages; also a sandboxed iframe on ANY site) -> ok only with the per-launch
+//             secret in `x-wolfpack-local` when Mimic handed us one (WOLFPACK_LOCAL_SECRET); with no secret
+//             (a new agent under an older Mimic shell) the legacy allowance stands.
+// Returns null when the request may proceed, else the reason.
+const _LOCAL_SECRET = String(process.env.WOLFPACK_LOCAL_SECRET || '');
+const _LOCAL_HOST_RX = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+function _localSecretEq(a, b) {
+  a = String(a == null ? '' : a); b = String(b == null ? '' : b);
+  let d = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) d |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return d === 0;
+}
+function _localRequestGuard(req, secret) {
+  const h = (req && req.headers) || {};
+  if (h.host !== undefined && !_LOCAL_HOST_RX.test(String(h.host))) return 'host';
+  const o = h.origin;
+  if (!o) return null;
+  if (o === 'null') {
+    if (!secret) return null;
+    return _localSecretEq(h['x-wolfpack-local'], secret) ? null : 'null-origin';
+  }
   try {
     const u = new URL(o);
-    return u.protocol === 'file:' || u.hostname === '127.0.0.1' || u.hostname === 'localhost';
-  } catch { return false; }
+    if (u.protocol === 'file:') return null;
+    if ((u.protocol === 'http:' || u.protocol === 'https:') && (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]')) return null;
+  } catch { void 0; }
+  return 'origin';
+}
+function _localOriginOk(req) { return _localRequestGuard(req, _LOCAL_SECRET) === null; }
+// The router's use of the guard: 403 + log each reason at most once a minute (a hostile page can loop).
+const _localGuardLoggedAt = {};
+function _localGuardBlock(req, res) {
+  const why = _localRequestGuard(req, _LOCAL_SECRET);
+  if (!why) return false;
+  const now = Date.now();
+  if (!_localGuardLoggedAt[why] || now - _localGuardLoggedAt[why] > 60000) {
+    _localGuardLoggedAt[why] = now;
+    try { console.warn(`[web-dashboard] refused a request (${why}) ${req.method} ${String(req.url).slice(0, 80)}`); } catch { void 0; }
+  }
+  res.writeHead(403, { 'Content-Type': 'application/json' });
+  res.end('{"error":"forbidden"}');
+  return true;
 }
 // Every 30 s, every 5 s while a window is open, ten minutes after a 404. Nothing without a token, and
 // nothing while the guild has paused the fleet.
@@ -53312,6 +58528,28 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
     for (const a of (t.actions || [])) {
       if (!a || !a.require_raid_member) continue;
       const val = captures && captures[String(a.require_raid_member)];
+      // A Death Touch COUNTDOWN is a claim that a RAIDER was death-touched (the guild lead,
+      // 2026-10-21: a purple "Death Touch — <pet>" card appeared when a cleric's pet destroyed
+      // itself: "this was not a Deathtouch"). The pattern ("<X> hit <target> for 15000+ points of
+      // non-melee damage") also matches a pet's self-destruct, so the countdown never arms, and
+      // nothing speaks, for a pet, for a self-inflicted hit (hitter == target, capture 1 vs the
+      // target) or for a non-raider. This outranks the arm-on-suppression rule below (2026-08-19).
+      if (t.timer_duration_sec > 0 && /death\s*touch/i.test(t.name || '') && val) {
+        const _v = String(val).trim().toLowerCase();
+        const _hitter = captures && captures['1'] != null ? String(captures['1']).replace(/^#/, '').trim().toLowerCase() : '';
+        const _selfHit = !!_hitter && _hitter === _v;
+        const _petTarget = _isOurPetName(_v);
+        const _notRaider = inRaid ? !_raidRosterHas(val) : _knownNpcNotPlayer(val);
+        if (_selfHit || _petTarget || _notRaider) {
+          if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' suppressed — ' + a.require_raid_member + '=' + val + (_selfHit ? ' hit itself' : _petTarget ? ' is a pet' : ' not a raider'));
+          if (!t._noJournal) {
+            _journalTrigger({ trigger: t.name, scope: t._scope || (test ? 'test' : 'personal'), checkpoint: TJ.GATES,
+                              stopped: true, rehearsal: !!t._rehearsal,
+                              reason: 'suppressed — ' + a.require_raid_member + '=' + val + (_selfHit ? ' hit itself' : _petTarget ? ' is a pet' : ' not a raider') });
+          }
+          return;
+        }
+      }
       // Pass when the captured name is a raid member OR one of our pets (#150);
       // only a genuinely-unknown non-pet non-member suppresses.
       const notMember = inRaid
@@ -53634,6 +58872,8 @@ function _replayStateForWeb() {
     stopped:   !!st.stop,
     pace:      st.pace || 'real',
     logLabel:  st.logLabel || null,
+    fromMs:    st.fromMs || 0,
+    toMs:      st.toMs || 0,
     scanned:   st.scanned || 0,
     total:     st.total || 0,
     played:    st.played || 0,
@@ -53717,8 +58957,14 @@ async function _replayWorker(st) {
       if (tsMs < st.fromMs) return;
       if (tsMs > st.toMs) { past = true; return; }
       scanned++;
+      let death = null;
+      if (lines.length < REPLAY_LINE_CAP) { try { death = _replayDeathCandidate(raw, st.character); } catch { death = null; } }
       if ((triggerVisibleLine(raw) || npcSpeechLine(raw)) && lines.length < REPLAY_LINE_CAP) {
-        lines.push({ raw, tsMs });
+        lines.push({ raw, tsMs, vis: true, death });
+      } else if (death) {
+        // A boss / pair-mob death rides along even when no trigger can see it: the death timeline needs it. Such a
+        // line (vis false) feeds only the replay death ring, never the trigger evaluator.
+        lines.push({ raw, tsMs, vis: false, death });
       }
     },
     null,
@@ -53733,15 +58979,21 @@ async function _replayWorker(st) {
   let prevTs = null;
   for (let i = 0; i < lines.length; i++) {
     if (st.stop) break;
-    const { raw, tsMs } = lines[i];
+    const { raw, tsMs, vis, death } = lines[i];
     // Real-time: wait the true gap since the previous PLAYED line (capped so a
     // long lull compresses). Fast: no pre-gap — the pause rides AFTER a fire.
     if (i > 0 && st.pace === 'real') {
       const gap = Math.max(0, Math.min(REPLAY_MAX_GAP_MS, tsMs - (prevTs != null ? prevTs : tsMs)));
-      if (gap > 0) await _sleep(gap);
+      if (gap > 0) {
+        // The replay clock crosses prevTs → tsMs over this wait (1x for a gap under the cap, faster across a lull).
+        st.clk = { fromMs: prevTs != null ? prevTs : tsMs, toMs: tsMs, wallStart: Date.now(), wallMs: gap };
+        await _sleep(gap);
+      }
       if (st.stop) break;
     }
-    const fired = _replayEvaluateLine(raw, tsMs, ctx);
+    st.clk = { fromMs: tsMs, toMs: tsMs, wallStart: Date.now(), wallMs: 0 };
+    if (death) _noteReplayMobDeath(death, tsMs);
+    const fired = vis ? _replayEvaluateLine(raw, tsMs, ctx) : false;
     st.played = i + 1;
     if (fired) {
       st.fired++;
@@ -53750,6 +59002,11 @@ async function _replayWorker(st) {
     }
     prevTs = tsMs;
   }
+  // The rehearsal timeline stays readable for REPLAY_TAIL_MS: a finished walk continues from the window's end, a
+  // stopped one from the last line played, both at 1x (so a pair window still runs out and shows its result).
+  st.tailFromMs = st.stop ? (prevTs != null ? prevTs : st.fromMs) : st.toMs;
+  st.tailWall   = Date.now();
+  st.tailUntil  = st.tailWall + REPLAY_TAIL_MS;
   st.done    = true;
   st.running = false;
   // Now that replayed timers arm on the wall clock (see _startTimer), a long
@@ -53791,8 +59048,10 @@ function startReplay(opts) {
     running: true, stop: false, done: false, error: null,
     logPath, logLabel: known.character || logPath, fromMs, toMs, pace,
     startedAt: Date.now(), scanned: 0, total: 0, played: 0, fired: 0,
+    character: known.character || null,
   };
   _replayState = st;
+  _replayMobDeaths.length = 0;   // a new rehearsal starts from an empty timeline (the previous one's tail ends here)
   st._done = _replayWorker(st).catch((err) => {
     st.error = String((err && err.message) || err);
     st.running = false;
@@ -54295,26 +59554,111 @@ function _logRotateCandidates() {
   return out;
 }
 
-async function _logRotateSweep() {
-  if (!_logRotateEnabled()) return;
-  const now = Date.now();
-  for (const w of (stats.watchedLogs || [])) {
-    if (!w || !w.logPath) continue;
-    try {
-      const st = await fs.promises.stat(w.logPath);
-      if (!_shouldRotateLog(st.size, st.mtimeMs, now, LOG_ROTATE_MB, LOG_ROTATE_IDLE_MS)) continue;
-      const dir = path.join(path.dirname(w.logPath), 'LogArchive');
-      try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
-      const dest = path.join(dir, _rotateArchiveName(w.logPath, now));
-      fs.renameSync(w.logPath, dest);              // EQ holding it open → throws → skip
-      try { fs.writeFileSync(w.logPath, '', { flag: 'wx' }); } catch { /* recreated by EQ */ }
-      const mb = Math.round(st.size / (1024 * 1024));
-      if (!Array.isArray(stats.logRotations)) stats.logRotations = [];
-      stats.logRotations.unshift({ file: path.basename(w.logPath), dest, mb, at: new Date(now).toISOString() });
-      if (stats.logRotations.length > 10) stats.logRotations.length = 10;
-      console.log('[log-rotate] ' + path.basename(w.logPath) + ' (' + mb + 'MB) → ' + dest);
-    } catch { /* stat failed or rename refused (EQ has it open) — next sweep */ }
+// ── The sweep, in WATCH mode too (FB-51, DECISIONS §162/§383, the guild lead's pick 2026-10-19) ──
+// The sweep's timers used to live only inside the `--once` branch (which exits seconds later), so Mimic's
+// normal watch mode never ran it while the dashboard card said archiving was ON, and a log reached 540 MB.
+// Renaming a member's file is new for watch mode, so every move is gated, in this order:
+//   - archiving is on (WP_LOG_ROTATE_MB > 0 and the dashboard switch not off);
+//   - the file is over the cap AND its mtime is >= LOG_ROTATE_IDLE_MS old (_shouldRotateLog);
+//   - the agent itself read no line from it inside that window (watched.lastSeen);
+//   - Zeal has not heard from that character recently (they are in game: EverQuest is writing it, or
+//     holding it open, even when the log is quiet);
+//   - one more stat right before the rename: size and mtime unchanged, still idle;
+//   - the archive name is free (a rename onto an existing file silently replaces it on Windows).
+// Nothing is deleted. A refused or failed move is logged (at most once an hour per file) and simply
+// tried again at the next sweep, 10 minutes later; one sweep never overlaps another.
+const LOG_ROTATE_SWEEP_MS      = 10 * 60_000;
+const LOG_ROTATE_FIRST_MS      = 2 * 60_000;    // first pass, so an oversized log from last session is handled promptly
+const LOG_ROTATE_ZEAL_FRESH_MS = 5 * 60_000;    // Zeal heard from the character this recently = in game
+const LOG_ROTATE_FAIL_LOG_MS   = 60 * 60_000;
+let _logRotateBusy = false;
+const _logRotateFailAt = new Map();   // logPath → last time a failure was logged
+
+// Pure decision, null = safe to move. Exercised by test/log-rotate-watch.test.js.
+function _logRotateSkipReason({ sizeBytes, mtimeMs, nowMs, thresholdMb, idleMs, lastLineAt, zealUpdatedAt }) {
+  if (!_shouldRotateLog(sizeBytes, mtimeMs, nowMs, thresholdMb, idleMs)) {
+    return (thresholdMb > 0 && sizeBytes > thresholdMb * 1024 * 1024) ? 'recent_write' : 'under_cap';
   }
+  if (lastLineAt && nowMs - lastLineAt < idleMs) return 'agent_read_line';
+  if (zealUpdatedAt && nowMs - zealUpdatedAt < LOG_ROTATE_ZEAL_FRESH_MS) return 'in_game';
+  return null;
+}
+
+function _zealUpdatedAtFor(character) {
+  const lc = String(character || '').toLowerCase();
+  let t = 0;
+  for (const k of Object.keys(_zealState)) {
+    if (k.toLowerCase() === lc) t = Math.max(t, (_zealState[k] && _zealState[k].updatedAt) || 0);
+  }
+  return t;
+}
+
+// `d` is for tests only: a fake fs / clock / on-off / cap, so the real gates run with no 500 MB file.
+async function _logRotateSweep(d = {}) {
+  const moved = [];
+  if (!(d.enabled === undefined ? _logRotateEnabled() : d.enabled)) return moved;
+  if (_logRotateBusy) return moved;
+  _logRotateBusy = true;
+  const F = d.fs || fs;
+  const clock = d.now || Date.now;
+  const thresholdMb = d.thresholdMb === undefined ? LOG_ROTATE_MB : d.thresholdMb;
+  const idleMs = d.idleMs === undefined ? LOG_ROTATE_IDLE_MS : d.idleMs;
+  try {
+    for (const w of [...(stats.watchedLogs || [])]) {
+      if (!w || !w.logPath) continue;
+      try {
+        const now = clock();
+        const st = await F.promises.stat(w.logPath);
+        const probe = (s, at) => _logRotateSkipReason({
+          sizeBytes: s.size, mtimeMs: s.mtimeMs, nowMs: at, thresholdMb, idleMs,
+          lastLineAt: w.lastSeen, zealUpdatedAt: _zealUpdatedAtFor(w.character),
+        });
+        if (probe(st, now)) continue;
+        // Re-check right before the move: EverQuest may have started writing since the first stat.
+        const st2 = F.statSync(w.logPath);
+        const now2 = clock();
+        if (st2.size !== st.size || st2.mtimeMs !== st.mtimeMs || probe(st2, now2)) continue;
+        const dir = path.join(path.dirname(w.logPath), 'LogArchive');
+        try { F.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+        let dest = path.join(dir, _rotateArchiveName(w.logPath, now2));
+        if (F.existsSync(dest)) dest = path.join(dir, _rotateArchiveNameSeconds(w.logPath, now2));
+        if (F.existsSync(dest)) {
+          console.warn('[log-archive] ' + path.basename(w.logPath) + ': the archive name ' + path.basename(dest) + ' is taken — not moved, trying again next sweep');
+          continue;
+        }
+        F.renameSync(w.logPath, dest);              // EQ holding it open → throws → skip
+        try { F.writeFileSync(w.logPath, '', { flag: 'wx' }); } catch { /* recreated by EQ */ }
+        _logRotateFailAt.delete(w.logPath);
+        const mb = Math.round(st.size / (1024 * 1024));
+        const rec = { file: path.basename(w.logPath), dest, mb, at: new Date(now2).toISOString() };
+        if (!Array.isArray(stats.logRotations)) stats.logRotations = [];
+        stats.logRotations.unshift(rec);
+        if (stats.logRotations.length > 10) stats.logRotations.length = 10;
+        moved.push(rec);
+        console.log('[log-archive] ' + rec.file + ' (' + mb + 'MB) → ' + dest + ' (quiet ' + Math.round((now2 - st2.mtimeMs) / 60_000) + ' min, ' + w.character + ' not in game)');
+      } catch (err) {
+        // Stat failed, or the rename was refused (EQ has it open): leave the file alone, retry next sweep.
+        const at = clock();
+        if (at - (_logRotateFailAt.get(w.logPath) || 0) >= LOG_ROTATE_FAIL_LOG_MS) {
+          _logRotateFailAt.set(w.logPath, at);
+          const busy = err && (err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES');
+          console.warn('[log-archive] ' + path.basename(w.logPath) + (busy ? ' is in use by EverQuest' : ' could not be moved (' + ((err && err.message) || err) + ')') + ' — not archived, trying again at the next sweep');
+        }
+      }
+    }
+  } finally {
+    _logRotateBusy = false;
+  }
+  return moved;
+}
+
+// First pass shortly after start, then every 10 minutes. Unref'd: the sweep never keeps the agent alive.
+function _logRotateStartTimers(sweep = _logRotateSweep) {
+  const first = setTimeout(() => { Promise.resolve(sweep()).catch(() => {}); }, LOG_ROTATE_FIRST_MS);
+  const every = setInterval(() => { Promise.resolve(sweep()).catch(() => {}); }, LOG_ROTATE_SWEEP_MS);
+  if (first.unref) first.unref();
+  if (every.unref) every.unref();
+  return { first, every };
 }
 
 // ── 📶 Connection meter — a local-only lag meter (2026-10-05) ───────────────
@@ -54968,10 +60312,13 @@ async function main() {
   }
 
   const botUrl = args.flags.botUrl || DEFAULT_BOT_URL;
-  const token  = args.flags.token  || process.env.WOLFPACK_TOKEN || null;
+  // Every log is on a server that is not the guild's: behave exactly like local mode (no token, nothing leaves).
+  const _tokenWithheld = !!(args.flags.token || process.env.WOLFPACK_TOKEN) && eqLogsAllOffGuild(args.logs);
+  const token  = _tokenWithheld ? null : (args.flags.token || process.env.WOLFPACK_TOKEN || null);
   const dryRun = args.flags.dryRun;
+  if (_tokenWithheld) console.log('[server] these logs are not Project Quarm - guild uploads are off, running local-only');
 
-  if (!dryRun && !token) {
+  if (!dryRun && !token && !_tokenWithheld) {
     console.warn('⚠️  No --token / WOLFPACK_TOKEN set. Uploads will likely fail auth.');
   }
 
@@ -54983,9 +60330,12 @@ async function main() {
   // dashboard render has spell names + PQDI ids, then fire a background fetch
   // to refresh from the bot. We don't await — a slow fetch must not delay
   // boot, and the resisted-spell card just shows plain names until it lands.
-  _loadSpellCatalogFromDisk();
-  _loadItemClickiesFromDisk();
-  loadItemCatalogFromDisk();
+  // The shipped catalogs are Project Quarm's; with only off-Quarm logs they stay unloaded (log-only behaviour).
+  if (!eqLogsAllOffGuild(args.logs)) {
+    _loadSpellCatalogFromDisk();
+    _loadItemClickiesFromDisk();
+    loadItemCatalogFromDisk();
+  }
   // Restore the Pet tracker's in-memory state (last /pet health, observed buff
   // landings, running combat stats) so a Mimic restart or LD reconnect brings
   // the existing pet timers + stats back instead of starting blank. TTLs in
@@ -55028,6 +60378,7 @@ async function main() {
   // The DPS meter's History: its own file, 7 days, loaded here and NOT consumed (the session snapshot
   // below is deleted when read and expires after 10 minutes). After _uploadOpts is set above, so a
   // restored fight the guild never answered for can be asked about again.
+  _startTargetHistoryPersistence();   // Target Info's pager list (logsync.targets.json, 24 h), beside the fight ring
   _startFightHistoryPersistence();
   // Restore in-flight session state if the previous run snapshotted within the
   // last 10 minutes (typical for [U] update-and-restart, or quick Ctrl+C).
@@ -55233,6 +60584,7 @@ async function main() {
     const character = fromName
       || (args.logs.length === 1 ? args.flags.character : null)
       || 'unknown';
+    noteLogServer(logPath);
     // Register this log in the dashboard's watched list. Seed lastSeen from
     // file mtime so the dashboard shows useful "ago" times immediately —
     // without this seed, every log shows '?' until a fresh line arrives,
@@ -55551,6 +60903,8 @@ async function main() {
         // Machine-level (one client = one camp) and NOT gated on exclusion — the
         // handoff is about liveness, not data. Patterns kept loose to survive
         // the guild-hall / "5 seconds" variants.
+        // The guild feed's "logged in on a character" test (_eqInGameFrom) reads the same lines per LOG.
+        _guildFeedNoteCampLine(watched, line, Date.now());
         if (/prepare your camp/i.test(line)) {
           if (!_camping) {
             _camping = true;
@@ -55625,6 +60979,16 @@ async function main() {
           return;
         }
 
+        // Druzzil Ro slow-mode on/off announcement → bot (shared status banner). Same pre-filter
+        // position, exclusion gate and cross-log dedup as the kill line above; the bot is
+        // idempotent, so the dedup only saves a request.
+        const slowMode = parseSlowModeLine(line);
+        if (slowMode) {
+          const _smFp = 'slowmode|' + line.replace(/^\[.+?\]\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
+          if (!_sourceExcluded && !_crossLogDupe(_smFp)) uploadSlowMode(slowMode, _uploadOpts || {}).catch(() => {});
+          return;
+        }
+
         // PVP Druzzil Ro broadcast → PVP channel (with howl/backup logic in bot).
         // Same cross-log dedup — this is the "a member killed Qados posted
         // twice" fix at the source.
@@ -55693,6 +61057,7 @@ async function main() {
         // …and its level phrase (Target Info's player level / range).
         try { noteConsiderLevel(line, b.character); } catch (e) { void e; }
         try { _mapNoteCon(line, b.character); } catch (e) { void e; }   // …and its faction tier (the Map's aggro-ring colour)
+        try { noteSightCon(line, b.character); } catch (e) { void e; }   // …and, while you are invisible, whether it saw you
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
         // A hail, yours or one you witnessed: the Command Center's hail board (the guild lead,
@@ -55768,9 +61133,11 @@ async function main() {
                    || parseBuffLanding(line, b.character);
         if (bcEvt && !_sourceExcluded) {
           // Which spawn did this land on? Provable only when this observer was
-          // targeting it (see _provableTargetId). Stamped BEFORE the upload push
-          // below so the local map and buff_casts carry the same answer.
-          bcEvt.target_id = _provableTargetId(b.character, bcEvt.target);
+          // targeting it (see _provableTargetId), and never for a generic name a
+          // bystander line cannot pin to one spawn (FB-83, _landingTargetId).
+          // Stamped BEFORE the upload push below so the local map and buff_casts
+          // carry the same answer.
+          bcEvt.target_id = _landingTargetId(b.character, bcEvt);
           // Me HUD: a stun or an aggro spell of YOURS that landed counts toward the target's tally.
           try { _meNoteMyLanding(b.character, bcEvt); } catch (e) { void e; }
           const _bcFp = `buffcast|${bcEvt.target}|${bcEvt.spell_id}|${bcEvt.landing_text}|${bcEvt.cast_at}`;
@@ -55812,12 +61179,12 @@ async function main() {
             const _sm = line.match(/\]\s+(.+?)\s+(?:yawns|slows down)\.\s*$/);
             if (_sm && _sm[1]) {
               const _slowTs = parseEqTimestamp(line);   // tsMs is not in this callback's scope — derive from the line
-              try { _refreshSlowFromAmbiguousLand(_sm[1], line, _slowTs ? _slowTs.getTime() : Date.now()); } catch (e) { void e; }
+              try { _refreshSlowFromAmbiguousLand(_sm[1], line, _slowTs ? _slowTs.getTime() : Date.now(), _landingTargetId(b.character, { target: _sm[1] })); } catch (e) { void e; }
             }
           }
           const dbEvt = parseDebuffLanding(line, b.character);
           if (dbEvt && dbEvt.spell_name) {
-            dbEvt.target_id = _provableTargetId(b.character, dbEvt.target);
+            dbEvt.target_id = _landingTargetId(b.character, dbEvt);
             // Local Target Info — show the debuff on whatever's targeted (mob or
             // player), timed from the land. This is the emote-based path, so it
             // does NOT depend on a Zeal target-name match (the caster-self-cast
@@ -55914,11 +61281,24 @@ async function main() {
         // Ssraeshza dies → 2:10 cycle, "Paladin DA NOW" at 2:00). Both key off the
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
+        // The slain mob's debuff countdowns go too (2026-10-19). Live lines only: a --since backfill replays old ones.
+        try {
+          const _dbDead = _deadMobNameFromLine(line);
+          if (_dbDead) {
+            const _dbTs = parseEqTimestamp(line), _dbAt = _dbTs ? _dbTs.getTime() : Date.now();
+            if (Date.now() - _dbAt <= 60000) _dropDebuffTimersOnDeath(_dbDead, _provableTargetId(b.character, _dbDead), _dbAt, 'log');
+          }
+        } catch { /* never let a bad line break the tail */ }
         // Spawn map: the same slain/died line starts that spawn point's respawn window. Live lines only
         // (a --since backfill replays old ones; _mapNoteLogDeath drops anything over a minute old).
         try {
           const _mapDead = _deadMobNameFromLine(line);
-          if (_mapDead) { const _ts = parseEqTimestamp(line); _mapNoteLogDeath(_mapDead, b.character, _ts ? _ts.getTime() : NaN, Date.now()); }
+          if (_mapDead) {
+            const _ts = parseEqTimestamp(line);
+            _mapNoteLogDeath(_mapDead, b.character, _ts ? _ts.getTime() : NaN, Date.now());
+            // Target Info's history: the same line settles a mob whose death the target window never showed (live lines only).
+            if (!_ts || Date.now() - _ts.getTime() <= 60000) _tgtHistNoteSlain(_mapDead, Date.now());
+          }
         } catch { /* never let a bad line break the tail */ }
         // #205 — "<Name> dies." is the FEIGN emote (never a death; see
         // test/feign-death-not-a-death.test.js). Nothing else in the agent
@@ -55927,6 +61307,8 @@ async function main() {
         // gauge reading zero. Raw-line hook, substring-gated like the two below.
         try { const _dfd = parseEqTimestamp(line); noteFeignEmoteLine(line, _dfd ? _dfd.getTime() : Date.now()); } catch { void 0; }
         try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
+        // Death timeline strip on the trigger overlay (2026-10-21): boss / paired-mob deaths this PC sees. Display only.
+        try { _noteRecentMobDeath(line, b.character); } catch { void 0; }
         // `/zeal version` output → what's actually LOADED in this client. Runs
         // on the raw line before any filter because none of the keep patterns
         // describe it, and it gates on a substring first so the cost on a
@@ -56027,6 +61409,8 @@ async function main() {
         // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
         // log never DMs anyone).
         try { _corpseNoteLine(line, b.character); } catch { void 0; }
+        // Map corpses: drag begin / stop, a Summon Corpse landing, your own corpse rezzed (live tail only).
+        try { _mapCorpseNoteLine(line, b.character, ts ? ts.getTime() : null, Date.now()); } catch { void 0; }
 
         // ── Normal combat filter (gates parse + upload only) ────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
@@ -56057,8 +61441,14 @@ async function main() {
     // FB-51: say so when the primary character's log goes quiet while Zeal has them in game.
     const _silentTimer = setInterval(() => { try { _logSilentSweep(); } catch { void 0; } }, LOG_SILENT_SWEEP_MS);
     if (_silentTimer.unref) _silentTimer.unref();
+    // FB-51 (§383): log archiving runs in normal use, not just --once (every 10 min; see the gates at _logRotateSweep).
+    _logRotateStartTimers();
     // 📶 Connection meter: ping the router and the game host from this PC (Windows; local only).
     try { _netStart(); } catch { void 0; }
+    // This PC's own position recorder: a minute row every minute into the local store, never uploaded.
+    try { _localRecorderStart(); } catch { void 0; }
+    // The random key this install signs its raid-code packs with (made once, on the first run; no name, no Discord id).
+    try { _raidPersonKey(_localTrackStore()); } catch { void 0; }
     // Run forever; intervals keep us alive
     return;
   }
@@ -56079,8 +61469,7 @@ async function main() {
     // Log-size sweep (a member's feedback): every 10 min, archive any watched
     // log over the size cap that has been idle long enough. First pass after
     // 2 min so an oversized log from a previous session is handled promptly.
-    setTimeout(() => { _logRotateSweep().catch(() => {}); }, 2 * 60_000);
-    setInterval(() => { _logRotateSweep().catch(() => {}); }, 10 * 60_000);
+    _logRotateStartTimers();
     setInterval(() => {
       idleCount++;
       if (idleCount > 10) {  // ~5s idle
@@ -56091,9 +61480,2297 @@ async function main() {
   }
 }
 
+// ── Local store + own position recorder (local-first, 2026-10-21) ─────────────────────────────────────────
+// Two things, both PC-local. NOTHING in this block reaches enqueueUpload, http or https: a record put here is
+// read back by this agent's own dashboard routes and by nothing else (test/local-recorder.test.js asserts it).
+//
+// 1. _localStore: zero-dependency, append-only NDJSON segments behind put / get / scan / cursor.
+//    Mimic pins Electron 31 (Node 20), so node:sqlite (Node 22.5+) is not there, and the agent ships as ONE
+//    index.js (Mimic copies only index.js, supervisor.js and package.json), so this lives here rather than in a
+//    module. Layout, beside logsync.queue.json:
+//        local/<kind>/<UTC day>.ndjson     one line per put: {"s":seq,"id":id,"ts":ms,"r":record}
+//        local/index.json                  per kind: seq, lastTs, per segment {n, bytes}. A CACHE: a missing or
+//                                          stale index is rebuilt from the segments, never trusted over them.
+//        local/config.json                 optional: {"retain_days":{"track_minute":90},"max_mb":{"track_minute":400}}
+//    A later put with the same (kind, id) supersedes the earlier one (scan and get keep the highest seq).
+//    CRASH SAFETY: a put is one appendFileSync of one whole line. A crash can leave the last line torn; the next
+//    append into that segment starts with a newline, and a reader skips any line that does not parse.
+//    SIZE: each kind has a byte cap (oldest segment dropped first) and a retention in days; prune() applies both.
+const _LSTORE_KIND_RX = /^[a-z][a-z0-9_]{0,39}$/;
+const _LSTORE_SEG_RX = /^\d{4}-\d{2}-\d{2}\.ndjson$/;
+const _LSTORE_MB = 1024 * 1024;
+const _LSTORE_RECORD_MAX = _LSTORE_MB;
+const _LSTORE_SEG_READ_MAX = 256 * _LSTORE_MB;
+const _LSTORE_INDEX_WRITE_MS = 5000;
+const _LSTORE_POLICY = {
+  track_minute:   { retainDays: 90, maxBytes: 400 * _LSTORE_MB },
+  track_presence: { retainDays: 90, maxBytes: 25 * _LSTORE_MB },
+  hub_encounter:  { retainDays: 120, maxBytes: 64 * _LSTORE_MB },   // the guild's merged encounters, for My parses' difference
+  hub_state:      { retainDays: 30, maxBytes: 4 * _LSTORE_MB },
+};
+const _LSTORE_POLICY_DEFAULT = { retainDays: 0, maxBytes: 256 * _LSTORE_MB };   // 0 days = no age limit, the byte cap still applies
+
+function _localStoreOpen(dir, opts = {}) {
+  const clock = typeof opts.now === 'function' ? opts.now : Date.now;
+  const policy = {};
+  const kinds = new Map();         // kind -> { seq, lastTs, segments: { day: { n, bytes } } }
+  const tailChecked = new Set();   // "kind/day" segments whose last byte was checked this run
+  let dirty = false;
+  let timer = null;
+  let saved = null;
+  try { saved = JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')); } catch { saved = null; }
+  if (!saved || saved.v !== 1 || !saved.kinds || typeof saved.kinds !== 'object') saved = null;
+  const dayOf = (ts) => new Date(ts).toISOString().slice(0, 10);
+  const segFile = (kind, day) => path.join(dir, kind, day + '.ndjson');
+  const polOf = (kind) => Object.assign({}, _LSTORE_POLICY[kind] || _LSTORE_POLICY_DEFAULT, policy[kind] || {});
+
+  function configure(c) {
+    const cfg = c && typeof c === 'object' ? c : {};
+    for (const [kind, n] of Object.entries(cfg.retainDays || {})) {
+      if (!_LSTORE_KIND_RX.test(kind)) continue;
+      const d = Math.trunc(Number(n));
+      if (Number.isFinite(d) && d >= 0 && d <= 3650) policy[kind] = Object.assign({}, policy[kind], { retainDays: d });
+    }
+    for (const [kind, n] of Object.entries(cfg.maxBytes || {})) {
+      if (!_LSTORE_KIND_RX.test(kind)) continue;
+      const b = Math.trunc(Number(n));
+      if (Number.isFinite(b) && b >= _LSTORE_MB) policy[kind] = Object.assign({}, policy[kind], { maxBytes: b });
+    }
+  }
+  try {
+    const f = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
+    const mb = {};
+    for (const [kind, n] of Object.entries((f && f.max_mb) || {})) mb[kind] = Number(n) * _LSTORE_MB;
+    configure({ retainDays: f && f.retain_days, maxBytes: mb });
+  } catch { void 0; }
+  if (opts.policy) configure(opts.policy);
+
+  // One line per record; a line that does not parse (a torn last line) is skipped.
+  function readSegment(kind, day) {
+    let text = '';
+    try {
+      const file = segFile(kind, day);
+      if (fs.statSync(file).size > _LSTORE_SEG_READ_MAX) return [];
+      text = fs.readFileSync(file, 'utf8');
+    } catch { return []; }
+    const out = [];
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      let o;
+      try { o = JSON.parse(line); } catch { continue; }
+      if (!o || typeof o.id !== 'string' || !Number.isFinite(o.ts) || !Number.isFinite(o.s) || !('r' in o)) continue;
+      out.push({ id: o.id, ts: o.ts, seq: o.s, rec: o.r });
+    }
+    return out;
+  }
+
+  // The state of one kind: the saved index, checked against what is on disk. A segment whose size differs
+  // from the index (or that the index never heard of) is counted again from the file.
+  function kindState(kind) {
+    let k = kinds.get(kind);
+    if (k) return k;
+    const s = saved && saved.kinds[kind];
+    k = { seq: s && Number.isFinite(s.seq) ? s.seq : 0, lastTs: s && Number.isFinite(s.lastTs) ? s.lastTs : 0, segments: {} };
+    let files = [];
+    try { files = fs.readdirSync(path.join(dir, kind)); } catch { files = []; }
+    for (const f of files) {
+      if (!_LSTORE_SEG_RX.test(f)) continue;
+      const day = f.slice(0, 10);
+      let size = 0;
+      try { size = fs.statSync(path.join(dir, kind, f)).size; } catch { continue; }
+      const have = s && s.segments && s.segments[day];
+      if (have && have.bytes === size && Number.isFinite(have.n)) { k.segments[day] = { n: have.n, bytes: size }; continue; }
+      const rows = readSegment(kind, day);
+      k.segments[day] = { n: rows.length, bytes: size };
+      for (const r of rows) { if (r.seq > k.seq) k.seq = r.seq; if (r.ts > k.lastTs) k.lastTs = r.ts; }
+      dirty = true;
+    }
+    kinds.set(kind, k);
+    return k;
+  }
+
+  function writeIndex() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (!dirty) return;
+    try {
+      const out = { v: 1, kinds: {} };
+      for (const [kind, k] of kinds) out.kinds[kind] = { seq: k.seq, lastTs: k.lastTs, segments: k.segments };
+      fs.mkdirSync(dir, { recursive: true });
+      const tmp = path.join(dir, 'index.json.tmp');
+      fs.writeFileSync(tmp, JSON.stringify(out));
+      fs.renameSync(tmp, path.join(dir, 'index.json'));
+      dirty = false;
+    } catch { void 0; }   // the index is a cache: a failed write costs a recount on the next open
+  }
+  function markDirty() {
+    dirty = true;
+    if (timer) return;
+    timer = setTimeout(writeIndex, _LSTORE_INDEX_WRITE_MS);
+    if (timer.unref) timer.unref();
+  }
+
+  // Does the segment end without a newline (a crash mid-append)? Then the next line must start on a fresh one.
+  function endsTorn(file) {
+    let fd = null;
+    try {
+      fd = fs.openSync(file, 'r');
+      const size = fs.fstatSync(fd).size;
+      if (size === 0) return false;
+      const b = Buffer.alloc(1);
+      fs.readSync(fd, b, 0, 1, size - 1);
+      return b[0] !== 10;
+    } catch { return false; } finally { if (fd !== null) { try { fs.closeSync(fd); } catch { void 0; } } }
+  }
+
+  // put(kind, id, record, { ts }) -> true when the line is on disk. ts (ms) picks the day segment and orders scans;
+  // default now. A record over 1 MB, a bad kind or id, or a full disk returns false and changes nothing.
+  function put(kind, id, record, o = {}) {
+    try {
+      if (!_LSTORE_KIND_RX.test(String(kind)) || typeof id !== 'string' || !id || id.length > 200 || record === undefined) return false;
+      const ts = Number.isFinite(o.ts) ? o.ts : clock();
+      const k = kindState(kind);
+      const seq = k.seq + 1;
+      const line = JSON.stringify({ s: seq, id, ts, r: record }) + '\n';
+      let bytes = Buffer.byteLength(line);
+      if (bytes > _LSTORE_RECORD_MAX) return false;
+      const day = dayOf(ts);
+      const file = segFile(kind, day);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const key = kind + '/' + day;
+      let prefix = '';
+      if (!tailChecked.has(key)) { if (endsTorn(file)) { prefix = '\n'; bytes += 1; } tailChecked.add(key); }
+      fs.appendFileSync(file, prefix + line);
+      k.seq = seq;
+      if (ts > k.lastTs) k.lastTs = ts;
+      const seg = k.segments[day] || (k.segments[day] = { n: 0, bytes: 0 });
+      seg.n++;
+      seg.bytes += bytes;
+      markDirty();
+      return true;
+    } catch { return false; }
+  }
+
+  // scan(kind, { since, until, afterSeq, limit }) -> [{ id, ts, seq, rec }] with since <= ts < until, oldest first.
+  // The newest put of an id wins. afterSeq is the cursor: only records put after it.
+  function scan(kind, o = {}) {
+    if (!_LSTORE_KIND_RX.test(String(kind))) return [];
+    const k = kindState(kind);
+    const lo = Number.isFinite(o.since) ? dayOf(o.since) : '';
+    const hi = Number.isFinite(o.until) ? dayOf(o.until) : '9999-99-99';
+    const byId = new Map();
+    for (const day of Object.keys(k.segments).sort()) {
+      if (day < lo || day > hi) continue;
+      for (const e of readSegment(kind, day)) { const p = byId.get(e.id); if (!p || e.seq > p.seq) byId.set(e.id, e); }
+    }
+    const since = Number.isFinite(o.since) ? o.since : -Infinity;
+    const until = Number.isFinite(o.until) ? o.until : Infinity;
+    const after = Number.isFinite(o.afterSeq) ? o.afterSeq : -1;
+    const out = [...byId.values()].filter(e => e.ts >= since && e.ts < until && e.seq > after)
+      .sort((a, b) => a.ts - b.ts || a.seq - b.seq);
+    return Number.isFinite(o.limit) && o.limit > 0 ? out.slice(0, o.limit) : out;
+  }
+
+  // get(kind, id, { ts }) -> the newest record put under id, or null. ts (the one given to put) names the day to
+  // read; without it every segment is read, newest first.
+  function get(kind, id, o = {}) {
+    if (!_LSTORE_KIND_RX.test(String(kind)) || typeof id !== 'string') return null;
+    const k = kindState(kind);
+    const days = Number.isFinite(o.ts) ? [dayOf(o.ts)] : Object.keys(k.segments).sort().reverse();
+    for (const day of days) {
+      if (!k.segments[day]) continue;
+      let best = null;
+      for (const e of readSegment(kind, day)) if (e.id === id && (!best || e.seq > best.seq)) best = e;
+      if (best) return best.rec;
+    }
+    return null;
+  }
+
+  // cursor(kind) -> where the kind stands: the highest seq, newest ts, lines on disk (superseded ones included), bytes.
+  function cursor(kind) {
+    const k = kindState(kind);
+    const days = Object.keys(k.segments).sort();
+    let count = 0, bytes = 0;
+    for (const d of days) { count += k.segments[d].n; bytes += k.segments[d].bytes; }
+    return { seq: k.seq, lastTs: k.lastTs, count, bytes, segments: days.length, firstDay: days[0] || null, lastDay: days[days.length - 1] || null };
+  }
+
+  function kindNames() {
+    const names = new Set(kinds.keys());
+    try { for (const d of fs.readdirSync(dir, { withFileTypes: true })) if (d.isDirectory() && _LSTORE_KIND_RX.test(d.name)) names.add(d.name); } catch { void 0; }
+    return [...names].sort();
+  }
+
+  // prune() drops whole segments: older than the kind's retention, then the oldest while the kind is over its byte
+  // cap (the newest segment always stays). Returns what it removed.
+  function prune(o = {}) {
+    const now = Number.isFinite(o.now) ? o.now : clock();
+    const removed = [];
+    let freed = 0;
+    for (const kind of kindNames()) {
+      const k = kindState(kind);
+      const p = polOf(kind);
+      const drop = (day) => {
+        try { fs.unlinkSync(segFile(kind, day)); } catch (e) { if (!e || e.code !== 'ENOENT') return false; }
+        freed += k.segments[day].bytes;
+        delete k.segments[day];
+        tailChecked.delete(kind + '/' + day);
+        removed.push(kind + '/' + day);
+        dirty = true;
+        return true;
+      };
+      const cutoff = p.retainDays > 0 ? dayOf(now - p.retainDays * 86400000) : null;
+      if (cutoff) for (const day of Object.keys(k.segments).sort()) if (day < cutoff) drop(day);
+      const days = Object.keys(k.segments).sort();
+      let total = days.reduce((a, d) => a + k.segments[d].bytes, 0);
+      for (let i = 0; i < days.length - 1 && total > p.maxBytes; i++) {
+        const b = k.segments[days[i]].bytes;
+        if (drop(days[i])) total -= b;
+      }
+    }
+    writeIndex();
+    return { removed, freedBytes: freed };
+  }
+
+  function stats() { const out = {}; for (const kind of kindNames()) out[kind] = cursor(kind); return out; }
+  return { dir, put, get, scan, cursor, prune, stats, configure, flush: writeIndex, policyOf: polOf };
+}
+
+// The agent's own store, opened on first use (requiring the module touches no disk). WP_LOCAL_DIR moves it.
+let _localStoreInst = null;
+function _localStoreDefault() {
+  if (_localStoreInst) return _localStoreInst;
+  const st = _localStoreOpen(process.env.WP_LOCAL_DIR || path.join(__dirname, 'local'));
+  const days = parseInt(process.env.WP_LOCAL_TRACK_DAYS, 10);
+  if (Number.isFinite(days) && days > 0) st.configure({ retainDays: { track_minute: days, track_presence: days } });
+  _localStoreInst = st;
+  return st;
+}
+const _localStore = {
+  open: _localStoreOpen,
+  put:    (...a) => _localStoreDefault().put(...a),
+  get:    (...a) => _localStoreDefault().get(...a),
+  scan:   (...a) => _localStoreDefault().scan(...a),
+  cursor: (...a) => _localStoreDefault().cursor(...a),
+  prune:  (...a) => _localStoreDefault().prune(...a),
+  stats:  (...a) => _localStoreDefault().stats(...a),
+  flush:  () => { if (_localStoreInst) _localStoreInst.flush(); },
+};
+
+// ── Own position recorder ──────────────────────────────────────────────────────────────────────────────
+// Every 3 s this PC cuts a frame of where it stands, and a finished UTC minute becomes ONE row in exactly the
+// shape of utils/raidTrack.js buildMinuteRow (the raid_track_minutes row web/lib/raidReplay.ts decodes):
+//   { v:1, step_s, who:[[name,cls,group,level],...], zones:['short',...],
+//     f:[[dt, i,x,y,z,heading,hp%,zi, ...], ...], mobs:[[name, spawn_id|null],...], mf:[[dt, mi,x,y,z,n,zi], ...] }
+// Source: Zeal's raid snapshot (_lastRaidPipe, the positions of the raid members in THIS zone) plus this PC's own
+// character from its live state. In a group or alone there is no raid snapshot and who is just [self].
+// _localTrackNightKey and _localTrackMinuteRow are PORTS of the hub's pure code: keep them in step with
+// utils/raidNight.js and utils/raidTrack.js (the parity test feeds both the same frames and compares the rows).
+// Positions are the pipe's x/y as received, no swap. A target is stored swapped back (mf x = server y), as the hub does.
+// PRIVACY: a character this PC knows is exclude_from_stats (stats.characterPrefs, which holds THIS PC's own
+// characters only) is never written, and when the active character is one of them nothing is recorded. The agent has
+// no list of OTHER raiders' flags, so raiders seen on the raid snapshot are recorded; the hub recorder filters those
+// server-side. Nothing recorded here is uploaded, queued or relayed.
+const LOCAL_TRACK_STEP_S_DEFAULT = 3;
+const LOCAL_TRACK_FRESH_MS = 10_000;        // a raid snapshot or a live state older than this is not in a frame
+const LOCAL_TRACK_SAFETY_MS = 30_000;       // closes a minute nothing else closed (zoned out, camped, Zeal gone)
+const LOCAL_TRACK_PRUNE_MS = 6 * 3600_000;
+
+function _localTrackStepS() {
+  const n = parseInt(process.env.WP_LOCAL_TRACK_STEP_S, 10);
+  return Number.isFinite(n) ? Math.min(30, Math.max(1, n)) : LOCAL_TRACK_STEP_S_DEFAULT;
+}
+// Port of utils/raidNight.js nightKey: MM/DD/YYYY in the guild timezone, the night rolling over at 06:00 so a raid
+// past midnight keeps the date it started on.
+function _localTrackNightKey(ts) {
+  const h = parseInt(process.env.RAID_NIGHT_ROLLOVER_HOUR, 10);
+  const roll = Number.isInteger(h) && h >= 0 && h <= 12 ? h : 6;
+  const at = (Number.isFinite(ts) ? ts : Date.now()) - roll * 3600_000;
+  try {
+    return new Date(at).toLocaleDateString('en-US', { timeZone: process.env.DEFAULT_TIMEZONE || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
+  } catch {
+    return new Date(at).toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
+  }
+}
+// Port of utils/raidTrack.js buildMinuteRow. frames: [{ t, rows:[{name,cls,group,level,hp,x,y,z,h,src}],
+// mobs:[{name,id,zone,x,y,z,n}] }]. opts: { guildId, excluded:Set<lowercase name>, srcZone:Map<src, short|null>, stepS }.
+function _localTrackMinuteRow(minuteStartMs, frames, opts = {}) {
+  const excluded = opts.excluded instanceof Set ? opts.excluded : null;
+  const srcZone = opts.srcZone instanceof Map ? opts.srcZone : new Map();
+  const who = [];
+  const whoIdx = new Map();
+  const zones = [];
+  const zoneIdx = new Map();
+  const f = [];
+  const mobs = [];
+  const mobIdx = new Map();
+  const mf = [];
+  const rnd = (n) => Math.round(n);
+  const zoneOf = (zs) => {
+    if (!zs) return -1;
+    let zi = zoneIdx.get(zs);
+    if (zi === undefined) { zi = zones.length; zoneIdx.set(zs, zi); zones.push(zs); }
+    return zi;
+  };
+  for (const fr of frames) {
+    const arr = [Math.min(59, Math.max(0, Math.floor((fr.t - minuteStartMs) / 1000)))];
+    let placed = 0;
+    for (const r of fr.rows) {
+      const k = r.name.toLowerCase();
+      if (excluded && excluded.has(k)) continue;
+      let i = whoIdx.get(k);
+      if (i === undefined) {
+        i = who.length;
+        whoIdx.set(k, i);
+        who.push([r.name, r.cls, r.group, r.level]);
+      } else {   // last seen in the minute wins, but a missing value never erases a known one
+        const w = who[i];
+        who[i] = [r.name, r.cls ?? w[1], r.group ?? w[2], r.level ?? w[3]];
+      }
+      const zi = zoneOf(srcZone.get(r.src) || null);
+      arr.push(i, rnd(r.x), rnd(r.y), rnd(r.z), r.h == null ? -1 : rnd(r.h), r.hp == null ? -1 : rnd(r.hp), zi);
+      placed++;
+    }
+    if (!placed) continue;
+    f.push(arr);
+    for (const m of fr.mobs || []) {
+      const mk = m.name + '\u0000' + (m.id ?? '');
+      let mi = mobIdx.get(mk);
+      if (mi === undefined) { mi = mobs.length; mobIdx.set(mk, mi); mobs.push([m.name, Number.isFinite(m.id) ? m.id : null]); }
+      mf.push([arr[0], mi, rnd(m.y), rnd(m.x), rnd(m.z || 0), m.n, zoneOf(m.zone || null)]);
+    }
+  }
+  if (!f.length) return null;
+  return {
+    guild_id: opts.guildId || 'local',
+    minute_at: new Date(minuteStartMs).toISOString(),
+    night_key: _localTrackNightKey(minuteStartMs),
+    raiders: who.length,
+    frames: f.length,
+    zones: zones.slice(),
+    data: JSON.stringify({ v: 1, step_s: opts.stepS || LOCAL_TRACK_STEP_S_DEFAULT, who, zones, f, ...(mf.length ? { mobs, mf } : {}) }),
+  };
+}
+
+// One frame from what this PC knows right now, or null when there is nothing to place. Pure: everything comes in as c.
+//   c = { raid:{at,members}|null, active:'Name'|null, state:<_zealState entry>|null, selfInfo:{cls,level}|null,
+//         excluded:Set<lowercase name>|null, targetPos:{id,x,y,z,zone}|null }
+function _localTrackFrame(nowMs, c) {
+  const st = c.state;
+  const active = c.active ? String(c.active) : '';
+  const ex = c.excluded instanceof Set ? c.excluded : new Set();
+  if (!active || !st || ex.has(active.toLowerCase())) return null;
+  const zone = _mapZoneShort(st.zone);
+  const src = zone || '';
+  const num = (v) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
+  const rows = [];
+  const seen = new Set();
+  const raid = c.raid && Array.isArray(c.raid.members) && nowMs - c.raid.at <= LOCAL_TRACK_FRESH_MS ? c.raid : null;
+  const meLower = active.toLowerCase();
+  let raidMe = null;
+  for (const m of raid ? raid.members : []) {
+    if (!m || typeof m.name !== 'string' || !m.name) continue;
+    const k = m.name.toLowerCase();
+    if (seen.has(k) || ex.has(k)) continue;
+    if (!Number.isFinite(m.loc_x) || !Number.isFinite(m.loc_y)) continue;
+    const z = Number.isFinite(m.loc_z) ? m.loc_z : 0;
+    if (m.loc_x === 0 && m.loc_y === 0 && z === 0) continue;   // not in this PC's zone
+    seen.add(k);
+    const row = { name: m.name, cls: m.class || null, group: num(m.group), level: num(m.level), hp: Number.isFinite(m.hp_pct) ? m.hp_pct : null,
+      x: m.loc_x, y: m.loc_y, z, h: Number.isFinite(m.heading) ? m.heading : null, src };
+    if (k === meLower) raidMe = row;
+    rows.push(row);
+  }
+  // This PC's own character from its live state (about 3 a second, fresher than the raid snapshot).
+  const lx = st.loc && Number(st.loc.x), ly = st.loc && Number(st.loc.y), lz = st.loc && Number(st.loc.z);
+  const fresh = Number.isFinite(st.updatedAt) && nowMs - st.updatedAt <= LOCAL_TRACK_FRESH_MS;
+  if (fresh && Number.isFinite(lx) && Number.isFinite(ly) && !(lx === 0 && ly === 0 && (lz || 0) === 0)) {
+    const info = c.selfInfo || {};
+    const hd = st.heading != null && Number.isFinite(Number(st.heading)) ? Number(st.heading) : (raidMe ? raidMe.h : null);
+    const me = { name: active, cls: (raidMe && raidMe.cls) || info.cls || null, group: raidMe ? raidMe.group : null,
+      level: (raidMe && raidMe.level) || info.level || null,
+      hp: Number.isFinite(st.self_hp_pct) ? st.self_hp_pct : (raidMe ? raidMe.hp : null),
+      x: lx, y: ly, z: Number.isFinite(lz) ? lz : 0, h: hd, src };
+    const at = raidMe ? rows.indexOf(raidMe) : -1;
+    if (at >= 0) rows[at] = me; else rows.unshift(me);
+  }
+  if (!rows.length) return null;
+  const mobs = [];
+  const tp = c.targetPos;
+  if (tp && st.target_name && Number.isFinite(tp.x) && Number.isFinite(tp.y)) {
+    mobs.push({ name: String(st.target_name), id: Number.isFinite(tp.id) ? tp.id : null, zone: tp.zone || null, x: tp.x, y: tp.y, z: tp.z || 0, n: 1 });
+  }
+  return { t: nowMs, rows, mobs };
+}
+
+// The recorder: frames of the minute being filled; a frame in a new minute (or the safety timer) closes the one before.
+const _localTrack = { cur: null, frameTimer: null, safetyTimer: null, pruneTimer: null, store: null, exitHooked: false };
+function _localTrackStore() { return _localTrack.store || _localStoreDefault(); }
+
+function _localTrackSave(row, minuteStartMs) {
+  const st = _localTrackStore();
+  const tag = _raidTag();                          // a minute recorded under a raid code carries it
+  if (tag) { row.raid_code = tag.code; row.raid_role = tag.role; }
+  st.put('track_minute', row.minute_at, row, { ts: minuteStartMs });
+  const presence = { night_key: row.night_key, minute_at: row.minute_at, zones: row.zones, raiders: row.raiders };
+  if (tag) presence.raid_code = tag.code;
+  st.put('track_presence', row.minute_at, presence, { ts: minuteStartMs });
+}
+function _localTrackClose() {
+  const cur = _localTrack.cur;
+  _localTrack.cur = null;
+  if (!cur || !cur.frames.length) return null;
+  const srcZone = new Map();
+  for (const fr of cur.frames) for (const r of fr.rows) if (!srcZone.has(r.src)) srcZone.set(r.src, r.src || null);
+  const start = cur.minute * 60_000;
+  const row = _localTrackMinuteRow(start, cur.frames, { srcZone, stepS: _localTrackStepS() });
+  if (row) _localTrackSave(row, start);
+  return row;
+}
+function _localTrackPush(frame) {
+  const minute = Math.floor(frame.t / 60_000);
+  if (_localTrack.cur && _localTrack.cur.minute !== minute) _localTrackClose();
+  if (!_localTrack.cur) _localTrack.cur = { minute, frames: [] };
+  _localTrack.cur.frames.push(frame);
+}
+function _localTrackCloseFinished(nowMs) {
+  if (_localTrack.cur && _localTrack.cur.minute < Math.floor(nowMs / 60_000)) _localTrackClose();
+}
+
+// What this PC knows right now, gathered for _localTrackFrame. Never throws.
+function _localTrackContext(nowMs) {
+  const active = _mapActiveCharacter(nowMs);
+  const st = active ? _zealState[active] : null;
+  const excluded = new Set();
+  for (const [name, p] of Object.entries((stats && stats.characterPrefs) || {})) if (p && p.exclude_from_stats) excluded.add(String(name).toLowerCase());
+  let selfInfo = null;
+  try { selfInfo = st ? { cls: normalizeClass(_meLabel(st, 3) || '') || _raidClassByName.get(active.toLowerCase()) || null, level: _zealLevelFor(active) } : null; } catch { selfInfo = null; }
+  let targetPos = null;
+  try { const p = st ? _liveTargetPosOf(st) : null; targetPos = p ? { id: p.id, x: p.x, y: p.y, z: p.z, zone: p.zone } : null; } catch { targetPos = null; }
+  return { raid: _lastRaidPipe, active, state: st, selfInfo, excluded, targetPos };
+}
+function _localTrackTick(nowMs = Date.now()) {
+  if (!_isUploaderInstance) return null;   // another instance on this machine owns the folder
+  try {
+    const frame = _localTrackFrame(nowMs, _localTrackContext(nowMs));
+    if (frame) _localTrackPush(frame);
+    return frame;
+  } catch { return null; }
+}
+
+function _localRecorderStart() {
+  if (_localTrack.frameTimer || process.env.WP_LOCAL_TRACK === '0') return false;
+  if (_uploadOpts && _uploadOpts.dryRun) return false;
+  _localTrack.frameTimer = setInterval(() => { _localTrackTick(); }, _localTrackStepS() * 1000);
+  _localTrack.safetyTimer = setInterval(() => { try { _localTrackCloseFinished(Date.now()); } catch { void 0; } }, LOCAL_TRACK_SAFETY_MS);
+  _localTrack.pruneTimer = setInterval(() => { try { _localTrackStore().prune(); } catch { void 0; } }, LOCAL_TRACK_PRUNE_MS);
+  for (const t of [_localTrack.frameTimer, _localTrack.safetyTimer, _localTrack.pruneTimer]) if (t.unref) t.unref();
+  const first = setTimeout(() => { try { _localTrackStore().prune(); } catch { void 0; } }, 20_000);
+  if (first.unref) first.unref();
+  if (!_localTrack.exitHooked) {
+    _localTrack.exitHooked = true;
+    process.on('exit', () => { try { _localTrackClose(); _localStore.flush(); } catch { void 0; } });
+  }
+  return true;
+}
+function _localRecorderStop() {
+  for (const k of ['frameTimer', 'safetyTimer', 'pruneTimer']) { if (_localTrack[k]) clearInterval(_localTrack[k]); _localTrack[k] = null; }
+}
+
+// ── Local track routes (same origin as the dashboard; nothing here leaves the PC) ───────────────────────────
+//   GET /api/local/track/nights[?days=60]  -> { nights:[{night_key,first,last,minutes,zones}], rows:[{night_key,minute_at,zones,raiders}] }
+//        newest night first; `rows` is the minute presence web/lib/raidReplay.ts summarizeNights takes.
+//   GET /api/local/track?from=<iso>&to=<iso>[&night=<key>] -> { night, from, to, rows:[{minute_at,zones,data}] }
+//        at most 15 minutes, the shape /api/spectator/replay returns, for ReplayBoard's bounded.urls.window.
+const LOCAL_TRACK_WINDOW_MS = 15 * 60_000;
+function _localTrackNights(store, o = {}) {
+  const now = Number.isFinite(o.now) ? o.now : Date.now();
+  const days = Math.min(365, Math.max(1, Math.trunc(Number(o.days)) || 60));
+  const rows = store.scan('track_presence', { since: now - days * 86400_000 }).map(e => e.rec)
+    .filter(r => r && typeof r.minute_at === 'string' && r.night_key);
+  const by = new Map();
+  for (const r of rows) {
+    let n = by.get(r.night_key);
+    if (!n) by.set(r.night_key, n = { night_key: r.night_key, first: r.minute_at, last: r.minute_at, minutes: 0, zones: [] });
+    n.minutes++;
+    if (r.minute_at < n.first) n.first = r.minute_at;
+    if (r.minute_at > n.last) n.last = r.minute_at;
+    if (r.raid_code) { if (!n.codes) n.codes = []; if (!n.codes.includes(r.raid_code)) n.codes.push(r.raid_code); }
+    for (const z of Array.isArray(r.zones) ? r.zones : []) if (typeof z === 'string' && z && !n.zones.includes(z)) n.zones.push(z);
+  }
+  return { nights: [...by.values()].sort((a, b) => (a.first < b.first ? 1 : -1)), rows };
+}
+function _localTrackWindow(store, o = {}) {
+  const fromMs = Date.parse(o.from || ''), toMs = Date.parse(o.to || '');
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return { status: 400, body: { error: 'bad request' } };
+  const end = Math.min(toMs, fromMs + LOCAL_TRACK_WINDOW_MS);
+  const night = o.night ? String(o.night) : '';
+  if (night && !/^\d{2}\/\d{2}\/\d{4}$/.test(night)) return { status: 400, body: { error: 'bad request' } };
+  const rows = store.scan('track_minute', { since: fromMs, until: end, limit: LOCAL_TRACK_WINDOW_MS / 60_000 })
+    .map(e => e.rec).filter(r => r && (!night || r.night_key === night))
+    .map(r => ({ minute_at: r.minute_at, zones: r.zones, data: r.data }));
+  return { status: 200, body: { night: night || _localTrackNightKey(fromMs), from: new Date(fromMs).toISOString(), to: new Date(end).toISOString(), rows } };
+}
+//   GET /api/local/track/bosses?night=<key> -> { night, bosses:[{npc_id,name,from,to,points:[{zone,x,y,z}]}] }
+//        the boss kills this PC's own fight records hold for that night (logsync.myfights.json + the History ring),
+//        the shape /api/spectator/replay/bosses returns. `points` is where a raider was seen targeting the boss
+//        (the recorder's own samples, server frame); empty when none was. times are epoch ms.
+//   GET /api/local/track/map?zone=<short> -> { zone, frame:'server', eqemu:null, brewall:{lines,labels}, ... }
+//        the zone's Brewall map files this PC already reads for the Mimic map (_mapLocalFor), in the shape
+//        /api/spectator/map returns. 404 when there is no map for the zone.
+const _localBossKey = (s) => String(s || '').replace(/^[#!~]+/, '').replace(/[_`]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+const _localBossShow = (s) => String(s || '').replace(/^[#!~]+/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+// Boss fights this PC knows: its own fight log's boss rows and the History ring (boss-only). [{ name, from, to }] in ms.
+function _localBossFights() {
+  const out = [];
+  for (const r of _myFights) if (r && r.boss) out.push({ name: r.mob, from: Date.parse(r.t), to: Date.parse(r.end) });
+  for (const h of stats.fightHistory || []) {
+    if (!h || !h.boss || !(h.endedMs > 0) || !(h.durationSec > 0)) continue;
+    out.push({ name: h.boss, from: h.startedMs > 0 ? h.startedMs : h.endedMs - h.durationSec * 1000, to: h.endedMs });
+  }
+  return out;
+}
+function _localBossNpcId(name) {
+  try { const m = _npcMobInfoFor(name); const id = m && Number(m.id); return id > 0 ? id : 0; } catch { return 0; }
+}
+// The first place a recorded minute saw `name` targeted inside [from - 1 min, to + 1 min], or null.
+function _localBossPoint(store, name, from, to) {
+  const want = _localBossKey(name);
+  for (const e of store.scan('track_minute', { since: from - 60_000, until: to + 60_000, limit: 120 })) {
+    let d;
+    try { d = JSON.parse(e.rec && e.rec.data); } catch { continue; }
+    if (!d || !Array.isArray(d.mobs) || !Array.isArray(d.mf)) continue;
+    for (const m of d.mf) {
+      const mob = d.mobs[m[1]];
+      if (!mob || _localBossKey(mob[0]) !== want || !Number.isFinite(m[2]) || !Number.isFinite(m[3])) continue;
+      const zone = Array.isArray(d.zones) ? d.zones[m[6]] : null;
+      // mf is written swapped back (slot 2 = server y, slot 3 = server x), as web/lib/raidReplay.ts decodeTargets reads it.
+      if (typeof zone === 'string' && zone) return { zone, x: m[3], y: m[2], z: Number.isFinite(m[4]) ? m[4] : 0 };
+    }
+  }
+  return null;
+}
+function _localTrackBosses(store, o = {}) {
+  const night = o.night ? String(o.night) : '';
+  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(night)) return { status: 400, body: { error: 'bad request' } };
+  const fights = (Array.isArray(o.fights) ? o.fights : _localBossFights())
+    .filter(f => f && f.name && f.from > 0 && f.to >= f.from && _localTrackNightKey(f.to) === night)
+    .sort((a, b) => a.from - b.from);
+  // One kill is seen by every character on this PC and by both records: fights of one mob within a minute are one.
+  const kills = [];
+  for (const f of fights) {
+    const k = _localBossKey(f.name);
+    const cur = kills.find(x => x.key === k && f.from <= x.to + 60_000 && f.to >= x.from - 60_000);
+    if (cur) { cur.from = Math.min(cur.from, f.from); cur.to = Math.max(cur.to, f.to); } else kills.push({ key: k, name: _localBossShow(f.name), from: f.from, to: f.to });
+  }
+  const bosses = kills.map(k => {
+    const p = _localBossPoint(store, k.name, k.from, k.to);
+    return { npc_id: _localBossNpcId(k.name), name: k.name, from: k.from, to: k.to, points: p ? [p] : [] };
+  });
+  return { status: 200, body: { night, bosses } };
+}
+const _localHexRgb = (h) => [parseInt(String(h).slice(1, 3), 16) || 0, parseInt(String(h).slice(3, 5), 16) || 0, parseInt(String(h).slice(5, 7), 16) || 0];
+async function _localTrackMap(zone) {
+  const short = String(zone || '').toLowerCase();
+  if (!/^[a-z0-9_]{1,32}$/.test(short)) return { status: 400, body: { error: 'bad zone' } };
+  // Start the one-time fetch of Zeal's map files when they are not on disk yet, and give it a moment to land.
+  _mapBrewallEnsure(short, Date.now());
+  for (let i = 0; i < 32 && _mapBrewall.get(short) && _mapBrewall.get(short).inflight; i++) await new Promise(r => setTimeout(r, 250));
+  const m = _mapLocalFor(short, Date.now());
+  if (!m || !m.lines.length) return { status: 404, body: { error: 'no map for this zone' } };
+  return { status: 200, body: {
+    zone: short, frame: 'server', eqemu: null,
+    brewall: { lines: m.lines.map(l => [l[0], l[1], l[2], l[3], l[4], l[5], ..._localHexRgb(l[6])]), labels: m.labels.map(l => [l[0], l[1], l[2], l[3]]) },
+    sources: { eqemu: '', brewall: "Brewall's EverQuest maps, read from this PC" }, generated_at: new Date().toISOString(),
+  } };
+}
+// Returns true when it answered. Called from the dashboard router, after the local guard.
+function _localTrackRoute(req, res) {
+  if (!req || req.method !== 'GET' || !req.url || req.url.indexOf('/api/local/track') !== 0) return false;
+  let u;
+  try { u = new URL(req.url, 'http://x'); } catch { return false; }
+  const send = (out) => { res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(out.body)); };
+  if (u.pathname === '/api/local/track/map') {
+    _localTrackMap(u.searchParams.get('zone')).then(send, () => send({ status: 500, body: { error: 'local map unavailable' } }));
+    return true;
+  }
+  if (u.pathname !== '/api/local/track' && u.pathname !== '/api/local/track/nights' && u.pathname !== '/api/local/track/bosses') return false;
+  let out;
+  try {
+    out = u.pathname === '/api/local/track/nights'
+      ? { status: 200, body: _localTrackNights(_localTrackStore(), { days: u.searchParams.get('days') }) }
+      : u.pathname === '/api/local/track/bosses'
+        ? _localTrackBosses(_localTrackStore(), { night: u.searchParams.get('night') })
+        : _localTrackWindow(_localTrackStore(), { from: u.searchParams.get('from'), to: u.searchParams.get('to'), night: u.searchParams.get('night') });
+  } catch { out = { status: 500, body: { error: 'local track unavailable' } }; }
+  res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(out.body));
+  return true;
+}
+function _localTrackSetStoreForTest(st) { _localTrack.store = st; }
+
+// ── Rebuild from my logs (local-first, 2026-10-21) ─────────────────────────────────────────────────────────
+// The guild lead, 2026-10-21: people coming into the tool will bring their large log files, and the backfill
+// "could try to build out all of their local parses and figure out what raids they were in based on the log
+// files contents. Who was in it, where were they, what bosses were fought, what they saw."
+//
+// This walks a log file (or every known log) from a start date and writes what it finds into _localStore, on
+// THIS PC, and sends nothing anywhere: no enqueueUpload, no http, no fetch. The opt-in upload backfill
+// (runOptinBackfill) is a separate path and is untouched; this never calls it. The privacy filters are the live
+// tail's own: every line that is read for a raid, a zone, a loot or a death goes through triggerVisibleLine (the
+// drop list: officer chat, tells, group chat, custom channels, public says), and fights go through shouldKeep.
+// A raid-say line is used only for WHO spoke; the text is never read into a record.
+//
+// Kinds written (ids are stable, so re-running or resuming a file supersedes rather than duplicates):
+//   fight         one boss/named fight: players + damage as the agent computes its own fights (a SILENT
+//                 EncounterBuilder, the same one the opt-in backfill uses), kill, deaths, top healers.
+//   raid_session  a contiguous raid membership span: "X has joined the raid", raid say speakers, fight
+//                 participants and /who rows (enrich only), the zone of each span, the fights and loot in it.
+//   death         a player death (a name this log has proof is a player).
+//   loot          "--You have looted ...--" and "--X has looted ...--".
+//   zone_visit    "You have entered <zone>." to the next one.
+// Resumable: local/rebuild.json holds a byte cursor and a snapshot per file, taken only where no fight was open
+// (a fight is never cut in half by a pause). Throttled: a work budget then a rest per chunk, and it waits while
+// a live fight is on (_liveFightActive).
+//
+// DKP nights: no agent-facing route serves the guild's OpenDKP raid list (checked 2026-10-21: the agent routes
+// are latest-version, guild-triggers, mob-*, my-parses, raid-live, and so on; dkp-tick is a write). So for a
+// linked member a rebuilt session is marked dkpMatch:'schedule' when it overlaps the guild's raid window
+// (Sun/Wed/Thu 8 pm to midnight Eastern); with no linked account (local-only) the step is skipped entirely.
+const REBUILD_CHUNK_BYTES = 128 * 1024;
+const REBUILD_GAP_MS = 30 * 60_000;                  // a log quiet this long ends a raid session and a zone visit
+const REBUILD_IDLE_MS = 2 * 3600_000;                // a session with no raid evidence this long is over
+const REBUILD_BUDGET_MS = 20;                        // work this long per chunk batch, then rest
+const REBUILD_REST_MS = 5;
+const REBUILD_MEMBERS_MAX = 400;
+const REBUILD_FIGHTS_MAX = 300;
+const REBUILD_IMPLICIT_RAID_MIN = 7;                 // a fight with this many players and no join line is a raid
+const REBUILD_SCHEDULE_MIN_OVERLAP_MS = 15 * 60_000;
+const REBUILD_PLAYER_RX = /^[A-Z][a-z]{2,15}$/;
+const REBUILD_COMBAT_TYPES = new Set(['damage', 'death', 'death_confirm', 'heal', 'crit_heal', 'avoid', 'critical', 'rampage', 'ds_flavor']);
+// A rebuilt history is the point of the feature: keep it (the default 256 MB per kind would drop old days).
+Object.assign(_LSTORE_POLICY, {
+  fight:        { retainDays: 0, maxBytes: 1024 * _LSTORE_MB },
+  raid_session: { retainDays: 0, maxBytes: 512 * _LSTORE_MB },
+  death:        { retainDays: 0, maxBytes: 256 * _LSTORE_MB },
+  loot:         { retainDays: 0, maxBytes: 512 * _LSTORE_MB },
+  zone_visit:   { retainDays: 0, maxBytes: 512 * _LSTORE_MB },
+});
+const _RB_JOIN_RX = /^(You|[A-Z][a-z]+) (?:has|have) joined the raid\.?$/;
+const _RB_LEAVE_RX = /^(You|[A-Z][a-z]+) (?:has|have) left the raid\.?$/;
+const _RB_RAIDEND_RX = /^(?:You have been removed from the raid|The raid has been disbanded|Your raid has been disbanded)\.?$/;
+const _RB_RAIDSAY_RX = /^([A-Z][a-z]+) tells the raid, ['"]/;
+const _RB_SELFRAIDSAY_RX = /^You (?:tell|say to) your raid, ['"]/;
+const _RB_LOOT_SELF_RX = /^--You have looted (.+?)\.?--$/;
+const _RB_LOOT_OTHER_RX = /^--([A-Za-z]+) has looted (.+?)\.?--$/;
+const _RB_SLAIN_RX = /^([A-Z][a-z]+) has been slain by (.+?)!$/;
+const _RB_SLAIN_SELF_RX = /^You have been slain by (.+?)!$/;
+const _RB_WHO_FOOT_RX = /^There (?:are|is) \d+ players? in (.+)\.$/;
+
+// ── Eastern time, for the raid schedule ──
+let _rbEtFmt = null;
+function _rbEtParts(ms) {
+  if (!_rbEtFmt) {
+    _rbEtFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', weekday: 'short',
+      year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+  }
+  const o = {};
+  for (const x of _rbEtFmt.formatToParts(new Date(ms))) o[x.type] = x.value;
+  return o;
+}
+function _rbEtOffset(ms) {
+  const o = _rbEtParts(ms);
+  return Date.UTC(+o.year, +o.month - 1, +o.day, (+o.hour) % 24, +o.minute, +o.second) - Math.floor(ms / 1000) * 1000;
+}
+// Eastern wall clock y-mo-d h:00 as a UTC ms (mo is 1-based; d may overflow into the next month).
+function _rbEtWallToMs(y, mo, d, h) {
+  const guess = Date.UTC(y, mo - 1, d, h, 0, 0);
+  let t = guess - _rbEtOffset(guess);
+  t = guess - _rbEtOffset(t);
+  return t;
+}
+// The guild's raid window nearest a session: {night:'YYYY-MM-DD', overlapMin, from, to} or null.
+function _rebuildScheduleMatch(startMs, endMs) {
+  const s = Number(startMs);
+  if (!Number.isFinite(s)) return null;
+  const e = Math.max(Number(endMs) || s, s);
+  const seen = new Set();
+  let best = null;
+  for (let t = s - 86400_000, n = 0; t <= e + 86400_000 && n < 12; t += 20 * 3600_000, n++) {
+    const p = _rbEtParts(t);
+    const key = p.year + '-' + p.month + '-' + p.day;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (p.weekday !== 'Sun' && p.weekday !== 'Wed' && p.weekday !== 'Thu') continue;
+    const from = _rbEtWallToMs(+p.year, +p.month, +p.day, 20);
+    const to = _rbEtWallToMs(+p.year, +p.month, +p.day + 1, 0);
+    const overlap = Math.min(e, to) - Math.max(s, from);
+    // 15 minutes inside the window, or the whole of a session shorter than that.
+    const need = Math.min(REBUILD_SCHEDULE_MIN_OVERLAP_MS, Math.max(60_000, e - s));
+    if (overlap >= need && (!best || overlap > best.overlapMs)) {
+      best = { night: p.year + '-' + String(p.month).padStart(2, '0') + '-' + String(p.day).padStart(2, '0'), overlapMs: overlap, from, to };
+    }
+  }
+  return best ? { night: best.night, overlapMin: Math.round(best.overlapMs / 60_000), from: best.from, to: best.to } : null;
+}
+// The DKP step for this install. Local-only (no linked account) skips it entirely.
+function _rebuildDkpMode() {
+  if (!_uploadOpts || !_uploadOpts.token || _localOnly()) return { mode: 'skipped', reason: 'local-only: no linked account, so there is no guild schedule to match' };
+  return { mode: 'schedule', reason: 'matched against the guild raid window (Sun/Wed/Thu 8 pm to midnight Eastern); no agent route serves the OpenDKP raid list' };
+}
+// Mark every stored session that overlaps the guild window. Returns { checked, matched, changed }.
+function _rebuildDkpPass(store, mode) {
+  if (!mode || mode.mode !== 'schedule') return { skipped: true, checked: 0, matched: 0, changed: 0 };
+  let checked = 0, matched = 0, changed = 0;
+  for (const e of store.scan('raid_session')) {
+    const r = e.rec;
+    if (!r || !Number.isFinite(r.start)) continue;
+    checked++;
+    const m = _rebuildScheduleMatch(r.start, r.end);
+    if (m) matched++;
+    const want = m ? 'schedule' : null;
+    const wantNight = m ? m.night : null;
+    if ((r.dkpMatch || null) === want && (r.dkpNight || null) === wantNight) continue;
+    const next = Object.assign({}, r, { dkpMatch: want, dkpNight: wantNight });
+    if (store.put('raid_session', e.id, next, { ts: e.ts })) changed++;
+  }
+  return { checked, matched, changed };
+}
+
+// ── One log, one line at a time ──
+function _rebuildNewJob(o) {
+  const job = {
+    path: o.path, character: o.character, sinceMs: o.sinceMs || 0, store: o.store,
+    bytePos: 0, lines: 0, lastMs: 0, tickMs: 0, bodyAt: 0, stamp: '', stampMs: NaN,
+    zone: null, visit: null, session: null, players: new Set(), deathCands: [], checkpoint: null,
+    counts: { fights: 0, trash: 0, sessions: 0, deaths: 0, loot: 0, zones: 0 },
+    builder: null,
+  };
+  job.builder = new EncounterBuilder({ character: o.character, silent: true, onFlush: (payload) => _rbOnFight(job, payload) });
+  return job;
+}
+// The time of a log line in ms, cached per second (consecutive lines share one). NaN for a line with no stamp.
+function _rbLineMs(job, line) {
+  if (line.charCodeAt(0) !== 91) return NaN;
+  const end = line.indexOf(']');
+  if (end < 20 || end > 32) return NaN;
+  job.bodyAt = end + 2;
+  const stamp = line.slice(1, end);
+  if (stamp === job.stamp) return job.stampMs;
+  let ms;
+  if (stamp.length === 24 && stamp.charCodeAt(3) === 32) ms = new Date(stamp).getTime();
+  else { const d = parseEqTimestamp(line); ms = d ? d.getTime() : NaN; }
+  if (!Number.isFinite(ms)) return NaN;
+  job.stamp = stamp; job.stampMs = ms;
+  return ms;
+}
+function _rbMember(s, name, ms, ev) {
+  let m = s.members.get(name);
+  if (!m) {
+    if (s.members.size >= REBUILD_MEMBERS_MAX) return null;
+    m = { name, first: ms, last: ms, joined: null, left: null, ev: [] };
+    s.members.set(name, m);
+  }
+  if (ms > m.last) m.last = ms;
+  if (ms < m.first) m.first = ms;
+  if (ev && m.ev.indexOf(ev) < 0) m.ev.push(ev);
+  return m;
+}
+function _rbSessionOpen(job, ms, why) {
+  const s = { id: job.character.toLowerCase() + '|' + ms, character: job.character, start: ms, end: ms, evidence: ms, why,
+    members: new Map(), speakers: new Set(), zones: [], fights: [], fightN: 0, loot: [], lootN: 0, whoSeen: 0 };
+  if (job.zone) s.zones.push({ zone: job.zone, from: ms, to: null });
+  _rbMember(s, job.character, ms, 'self');
+  job.players.add(job.character);
+  job.session = s;
+  job.counts.sessions++;
+  return s;
+}
+function _rbSessionRecord(job, s, open) {
+  const members = [...s.members.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).map(m => {
+    const o = { name: m.name, first: m.first, last: m.last, joined: m.joined, left: m.left, ev: m.ev };
+    if (m.cls) o.cls = m.cls;
+    if (m.level) o.level = m.level;
+    if (m.guild) o.guild = m.guild;
+    return o;
+  });
+  const zoneMs = new Map();
+  const zones = s.zones.map(z => ({ zone: z.zone, from: z.from, to: z.to == null ? s.end : z.to }));
+  for (const z of zones) zoneMs.set(z.zone, (zoneMs.get(z.zone) || 0) + Math.max(0, z.to - z.from));
+  let zone = null, zbest = -1;
+  for (const [k, v] of zoneMs) if (v > zbest) { zone = k; zbest = v; }
+  const guilds = new Map();
+  for (const m of members) if (m.guild) guilds.set(m.guild, (guilds.get(m.guild) || 0) + 1);
+  let guild = null, gbest = 0;
+  for (const [k, v] of guilds) if (v > gbest) { guild = k; gbest = v; }
+  const lootBy = new Map();
+  for (const l of s.loot) lootBy.set(l.item, (lootBy.get(l.item) || 0) + 1);
+  const loot = [...lootBy].sort((a, b) => b[1] - a[1]).slice(0, 25).map(([item, count]) => ({ item, count }));
+  const deaths = job.deathCands.filter(c => c.at >= s.start - 1000 && c.at <= s.end + 1000 && (c.name === job.character || job.players.has(c.name)))
+    .slice(0, 100).map(c => ({ name: c.name, killer: c.killer, at: c.at }));
+  const bosses = s.fights.filter(f => f.boss || f.named).map(f => ({ name: f.boss_name, at: f.at, killed: f.killed, dmg: f.dmg, players: f.n }));
+  return {
+    v: 1, id: s.id, character: s.character, start: s.start, end: s.end, open: !!open, why: s.why,
+    nightKey: _myNightKey(s.start), durationMin: Math.round((s.end - s.start) / 60_000),
+    zone, zones, guild, memberCount: members.length, members, speakers: s.speakers.size, whoSeen: s.whoSeen,
+    fightCount: s.fightN, fights: s.fights, bosses, deaths, lootCount: s.lootN, loot,
+    dkpMatch: null, dkpNight: null,
+  };
+}
+function _rbSessionClose(job, endMs, open) {
+  const s = job.session;
+  if (!s) return;
+  if (Number.isFinite(endMs) && endMs > s.end) s.end = endMs;
+  if (!open) for (const z of s.zones) if (z.to == null) z.to = s.end;
+  job.store.put('raid_session', s.id, _rbSessionRecord(job, s, open), { ts: s.start });
+  _rbDeathsFlush(job, s.end + 1000);          // after the record, which lists the session's deaths from the same candidates
+  if (!open) job.session = null;
+}
+// Deaths up to uptoMs that this log has proof are players become records; the rest are dropped.
+function _rbDeathsFlush(job, uptoMs) {
+  const keep = [];
+  for (const c of job.deathCands) {
+    if (c.at > uptoMs) { keep.push(c); continue; }
+    if (c.name !== job.character && !job.players.has(c.name)) continue;
+    if (job.store.put('death', c.name + '|' + c.at, { v: 1, name: c.name, killer: c.killer, at: c.at, zone: c.zone, character: job.character, own: c.name === job.character }, { ts: c.at })) job.counts.deaths++;
+  }
+  job.deathCands = keep;
+}
+function _rbVisitClose(job, toMs, open) {
+  const v = job.visit;
+  if (!v) return;
+  job.store.put('zone_visit', job.character.toLowerCase() + '|' + v.from, { v: 1, character: job.character, zone: v.zone, from: v.from, to: toMs, open: !!open }, { ts: v.from });
+  if (!open) job.visit = null;
+}
+function _rbZoneEnter(job, zone, ms) {
+  zone = String(zone || '').trim();
+  if (!zone) return;
+  _rbVisitClose(job, ms, false);
+  job.zone = zone;
+  job.visit = { zone, from: ms };
+  job.counts.zones++;
+  const s = job.session;
+  if (s) {
+    const last = s.zones[s.zones.length - 1];
+    if (last && last.to == null) last.to = ms;
+    s.zones.push({ zone, from: ms, to: null });
+    if (ms > s.end) s.end = ms;
+  }
+}
+// The log went quiet (camped, crashed, logged off): nothing carries across it.
+function _rbGap(job) {
+  const at = job.lastMs;
+  job.builder.flush();
+  if (job.session) _rbSessionClose(job, at, false);
+  _rbVisitClose(job, at, false);
+  job.zone = null;
+}
+function _rbLoot(job, body, ms) {
+  let who, item;
+  let m = _RB_LOOT_SELF_RX.exec(body);
+  if (m) { who = job.character; item = m[1]; }
+  else if ((m = _RB_LOOT_OTHER_RX.exec(body))) { who = m[1]; item = m[2]; }
+  else return;
+  item = item.replace(/^an?\s+/i, '').trim().slice(0, 80);
+  if (item.length < 2) return;
+  if (job.store.put('loot', who + '|' + ms + '|' + item.toLowerCase(), { v: 1, who, item, at: ms, zone: job.zone, character: job.character, self: who === job.character }, { ts: ms })) job.counts.loot++;
+  const s = job.session;
+  if (s) { s.lootN++; if (s.loot.length < 500) s.loot.push({ item, who, at: ms }); }
+}
+function _rbDeathLine(job, body, ms) {
+  let name, killer = null, m;
+  if (body === 'You died.') name = job.character;
+  else if ((m = _RB_SLAIN_SELF_RX.exec(body))) { name = job.character; killer = m[1]; }
+  else if ((m = _RB_SLAIN_RX.exec(body))) { name = m[1]; killer = m[2]; }
+  else return;
+  if (!REBUILD_PLAYER_RX.test(name)) return;
+  if (job.deathCands.length >= 5000) job.deathCands.shift();
+  job.deathCands.push({ name, killer: killer ? killer.slice(0, 60) : null, at: ms, zone: job.zone });
+}
+// A raid line. Returns true when the line was one (and so is done with).
+function _rbRaidLine(job, body, ms) {
+  let m = _RB_JOIN_RX.exec(body);
+  if (m) {
+    const self = m[1] === 'You';
+    const who = self ? job.character : m[1];
+    let s = job.session;
+    if (self) { if (s) _rbSessionClose(job, s.evidence, false); s = _rbSessionOpen(job, ms, 'join'); }
+    else if (!s) s = _rbSessionOpen(job, ms, 'join');
+    const mem = _rbMember(s, who, ms, 'join');
+    if (mem) { if (mem.joined == null) mem.joined = ms; mem.left = null; }
+    job.players.add(who);
+    s.evidence = ms; if (ms > s.end) s.end = ms;
+    return true;
+  }
+  m = _RB_LEAVE_RX.exec(body);
+  if (m) {
+    const s = job.session;
+    if (m[1] === 'You') { if (s) _rbSessionClose(job, ms, false); }
+    else if (s) { const mem = _rbMember(s, m[1], ms, 'join'); if (mem) mem.left = ms; s.evidence = ms; if (ms > s.end) s.end = ms; }
+    return true;
+  }
+  if (_RB_RAIDEND_RX.test(body)) { if (job.session) _rbSessionClose(job, ms, false); return true; }
+  m = _RB_RAIDSAY_RX.exec(body);
+  const sayer = m ? m[1] : (_RB_SELFRAIDSAY_RX.test(body) ? job.character : null);
+  if (sayer) {
+    // WHO spoke, and nothing else: the text of a raid say is never read into a record.
+    const s = job.session || _rbSessionOpen(job, ms, 'say');
+    _rbMember(s, sayer, ms, 'say');
+    s.speakers.add(sayer);
+    job.players.add(sayer);
+    s.evidence = ms; if (ms > s.end) s.end = ms;
+    return true;
+  }
+  return false;
+}
+// One fight out of the silent builder: a record in the store and a reference in the open raid session.
+function _rbOnFight(job, payload) {
+  try {
+    const enc = payload && payload.encounter;
+    const boss = enc && enc.boss_name ? String(enc.boss_name) : '';
+    const start = enc ? Date.parse(enc.started_at) : NaN;
+    if (!boss || !(start > 0)) return;
+    const end = Date.parse(enc.ended_at) || start;
+    const bl = boss.toLowerCase();
+    const by = (enc.rollup && enc.rollup.by_char) || {};
+    const players = [];
+    for (const name of Object.keys(by)) {
+      if (!REBUILD_PLAYER_RX.test(name) || name.toLowerCase() === bl) continue;
+      const dmg = Math.round(Number(by[name] && by[name].total_damage) || 0);
+      if (dmg > 0) players.push({ name, dmg, hits: Number(by[name].total_hits) || 0 });
+    }
+    players.sort((a, b) => b.dmg - a.dmg);
+    const durationS = Math.max(1, Math.round(Number(enc.active_duration_s) || (end - start) / 1000));
+    const total = players.reduce((a, p) => a + p.dmg, 0);
+    const top = players.slice(0, 60).map(p => ({ name: p.name, dmg: p.dmg, hits: p.hits, dps: Math.round(p.dmg / durationS) }));
+    for (const p of players) job.players.add(p.name);
+    const deaths = [];
+    const seenDeath = new Set();
+    for (const d of Array.isArray(enc.deaths) ? enc.deaths : []) {
+      const t = Date.parse(d && d.ts);
+      if (d && d.name && !seenDeath.has(d.name)) { seenDeath.add(d.name); deaths.push({ name: String(d.name), at: t || null }); }
+    }
+    for (const c of job.deathCands) {
+      if (c.at >= start - 3000 && c.at <= end + 3000 && (c.name === job.character || job.players.has(c.name)) && !seenDeath.has(c.name)) { seenDeath.add(c.name); deaths.push({ name: c.name, at: c.at }); }
+    }
+    const healers = (Array.isArray(enc.healers) ? enc.healers : []).filter(h => h && REBUILD_PLAYER_RX.test(String(h.name || '')))
+      .sort((a, b) => (b.healed || 0) - (a.healed || 0)).slice(0, 8).map(h => ({ name: h.name, healed: Math.round(h.healed || 0) }));
+    let catalogBoss = false;
+    try { catalogBoss = _myFightIsBoss(boss, null); } catch { catalogBoss = false; }
+    const rec = {
+      v: 1, id: job.character.toLowerCase() + '|' + start + '|' + bl, character: job.character, boss: boss.slice(0, 120),
+      catalogBoss, named: /^[A-Z#]/.test(boss), zone: job.zone, start, end, durationS,
+      killed: enc.confirmed_kill === true, killer: enc.kill_credit || enc.kill_slayer || null,
+      dmg: total, dps: Math.round(total / durationS), playerCount: players.length, players: top, deaths: deaths.slice(0, 40), healers,
+    };
+    const stored = catalogBoss || rec.named;
+    if (stored && job.store.put('fight', rec.id, rec, { ts: start })) job.counts.fights++; else if (!stored) job.counts.trash++;
+    let s = job.session;
+    const raidish = players.length >= REBUILD_IMPLICIT_RAID_MIN;
+    if (!s && raidish) s = _rbSessionOpen(job, start, 'fight');
+    if (s) {
+      for (const p of players) _rbMember(s, p.name, end, 'fight');
+      s.fightN++;
+      if (s.fights.length < REBUILD_FIGHTS_MAX && stored) {
+        s.fights.push({ id: rec.id, boss_name: rec.boss, boss: catalogBoss, named: rec.named, at: start, end, killed: rec.killed, durationS, dmg: total, n: players.length, zone: job.zone });
+      }
+      if (end > s.end) s.end = end;
+      if (raidish && end > s.evidence) s.evidence = end;
+    }
+  } catch { void 0; }
+}
+// One log line. The caller wraps this in try/catch: a bad line is skipped, never fatal.
+function _rbLine(job, line) {
+  const ms = _rbLineMs(job, line);
+  if (!(ms > 0)) return;
+  job.lines++;
+  if (ms < job.sinceMs) return;
+  if (job.lastMs && ms - job.lastMs > REBUILD_GAP_MS) _rbGap(job);
+  if (ms > job.lastMs) job.lastMs = ms;
+  if (ms - job.tickMs >= 10_000) {
+    job.tickMs = ms;
+    job.builder.tickIdle(ms);
+    const s = job.session;
+    if (s && ms - s.evidence > REBUILD_IDLE_MS) _rbSessionClose(job, s.evidence, false);
+  }
+  const body = line.slice(job.bodyAt);
+  const c = body.charCodeAt(0);
+  let m;
+  if (c === 45 && body.charCodeAt(1) === 45) {                       // "--You have looted a Thing.--"
+    if (triggerVisibleLine(line)) _rbLoot(job, body, ms);
+    return;
+  }
+  if (c === 89 && (m = CHAT_ZONE_RX.exec(line))) {                    // the zone line, parsed by the chat classifier's own pattern
+    if (triggerVisibleLine(line)) _rbZoneEnter(job, m[1], ms);
+    return;
+  }
+  if (body.indexOf(' raid') !== -1 && triggerVisibleLine(line) && _rbRaidLine(job, body, ms)) return;
+  if (body.indexOf(' slain by ') !== -1 || body === 'You died.') {
+    if (triggerVisibleLine(line)) _rbDeathLine(job, body, ms);
+  } else if (c === 84 && !job.zone && (m = _RB_WHO_FOOT_RX.exec(body))) {   // a /who footer names the zone when no entry line was seen
+    _rbZoneEnter(job, m[1], ms);
+  }
+  if (!shouldKeep(line)) return;
+  const ev = parseEvent(line, new Date(ms));
+  if (!ev) return;
+  if (ev.type === 'who') {
+    // Players, definitively. Evidence only: a /who row enriches a member the raid lines already named.
+    if (ev.name) {
+      job.players.add(ev.name);
+      const s = job.session;
+      const mem = s && s.members.get(ev.name);
+      if (mem) { if (ev.class) mem.cls = ev.class; if (ev.level) mem.level = ev.level; if (ev.guild) mem.guild = ev.guild; if (mem.ev.indexOf('who') < 0) mem.ev.push('who'); s.whoSeen++; }
+    }
+  } else if (ev.type === 'pet_leader') {
+    // Pet ownership for THIS builder only: the shared registries the live tail writes are not touched by a replay.
+    const owner = ev.owner === '__SELF__' ? job.character : ev.owner;
+    if (owner && ev.pet && !_isVisionEyePet(ev.pet)) job.builder.petLeaders[String(ev.pet).toLowerCase()] = owner;
+  } else if (REBUILD_COMBAT_TYPES.has(ev.type)) {
+    job.builder.add(ev);
+  }
+}
+
+// ── A job's state, frozen at a quiet point (no fight open) and thawed on resume ──
+// Copies, not references: the job keeps mutating its session after the snapshot is taken.
+function _rbSnapshot(job) {
+  const s = job.session;
+  return {
+    bytePos: job.bytePos, lines: job.lines, lastMs: job.lastMs, tickMs: job.tickMs, zone: job.zone, visit: job.visit ? Object.assign({}, job.visit) : null,
+    counts: Object.assign({}, job.counts), players: [...job.players].slice(-3000), deathCands: job.deathCands.slice(-2000),
+    petLeaders: Object.assign({}, job.builder.petLeaders),
+    session: s ? Object.assign({}, s, {
+      members: [...s.members.values()].map(m => Object.assign({}, m, { ev: m.ev.slice() })), speakers: [...s.speakers],
+      zones: s.zones.map(z => Object.assign({}, z)), fights: s.fights.slice(), loot: s.loot.slice(),
+    }) : null,
+  };
+}
+function _rbRestore(job, snap) {
+  job.bytePos = snap.bytePos; job.lines = snap.lines; job.lastMs = snap.lastMs; job.tickMs = snap.tickMs;
+  job.zone = snap.zone || null; job.visit = snap.visit || null;
+  Object.assign(job.counts, snap.counts || {});
+  job.players = new Set(snap.players || []);
+  job.deathCands = Array.isArray(snap.deathCands) ? snap.deathCands : [];
+  Object.assign(job.builder.petLeaders, snap.petLeaders || {});
+  const s = snap.session;
+  if (s) {
+    job.session = Object.assign({}, s, { members: new Map((s.members || []).map(m => [m.name, m])), speakers: new Set(s.speakers || []) });
+  }
+}
+function _rbCursorFile(store) { return path.join(store.dir, 'rebuild.json'); }
+function _rbCursorRead(store) {
+  try {
+    const j = JSON.parse(fs.readFileSync(_rbCursorFile(store), 'utf8'));
+    if (j && j.v === 1 && j.files && typeof j.files === 'object') return j;
+  } catch { void 0; }
+  return { v: 1, files: {} };
+}
+function _rbCursorWrite(store, all) {
+  try {
+    fs.mkdirSync(store.dir, { recursive: true });
+    const tmp = _rbCursorFile(store) + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(all));
+    fs.renameSync(tmp, _rbCursorFile(store));
+  } catch { void 0; }
+}
+function _rbSleep(ms) { return new Promise((r) => setTimeout(r, Math.max(0, ms | 0))); }
+// The byte to start reading from so the first line at/after sinceMs is near: a bisection over the file, trusting
+// that a log is in time order. Starts from a spot that may be mid-line; the reader drops the partial line.
+async function _rbSeek(fh, size, sinceMs) {
+  const buf = Buffer.allocUnsafe(8192);
+  const tsAt = async (off) => {
+    const { bytesRead } = await fh.read(buf, 0, buf.length, off);
+    if (bytesRead <= 0) return NaN;
+    const s = buf.toString('latin1', 0, bytesRead);
+    const nl = s.indexOf('\n');
+    if (nl < 0) return NaN;
+    const m = TS_RX.exec(s.slice(nl + 1, nl + 48));
+    return m ? new Date(m[1]).getTime() : NaN;
+  };
+  let lo = 0, hi = size;
+  for (let i = 0; i < 60 && hi - lo > 256 * 1024; i++) {
+    const mid = lo + Math.floor((hi - lo) / 2);
+    const t = await tsAt(mid);
+    if (!Number.isFinite(t)) return lo;
+    if (t < sinceMs) lo = mid; else hi = mid;
+  }
+  return lo;
+}
+
+// ── The run: files one after another, status for the dashboard ──
+const _rb = { state: 'idle', running: false, stop: false, startedAt: 0, finishedAt: 0, sinceMs: 0, files: [], error: null, waiting: null,
+  waitedMs: 0, dkp: null, promise: null, candidates: null, linesDone: 0 };
+
+async function _rebuildFile(f, st, o) {
+  const store = o.store;
+  const sinceMs = o.sinceMs || 0;
+  let size = 0;
+  try { size = fs.statSync(f.path).size; } catch { st.state = 'error'; st.error = 'could not read the file'; return; }
+  st.total = size;
+  let fh;
+  try { fh = await fs.promises.open(f.path, 'r'); } catch { st.state = 'error'; st.error = 'could not open the file'; return; }
+  try {
+    const hb = Buffer.alloc(64);
+    const { bytesRead: hn } = await fh.read(hb, 0, 64, 0);
+    // A fingerprint of the file's first bytes, never the bytes: those can be any line, a tell included.
+    const head = crypto.createHash('sha1').update(hb.subarray(0, hn)).digest('hex');
+    const job = _rebuildNewJob({ path: f.path, character: f.character, sinceMs, store });
+    const all = o.cursors;
+    const cur = o.fresh ? null : all.files[f.path];
+    let pos = 0, align = false;
+    if (cur && cur.sinceMs === sinceMs && cur.head === head && cur.size <= size && cur.snapshot && cur.snapshot.bytePos <= size) {
+      _rbRestore(job, cur.snapshot);
+      pos = job.bytePos;
+      st.resumedFrom = pos;
+    } else if (sinceMs && size > 512 * 1024) {
+      pos = await _rbSeek(fh, size, sinceMs);
+      align = pos > 0;
+    }
+    job.bytePos = pos;
+    job.checkpoint = cur && st.resumedFrom != null ? cur.snapshot : null;
+    st.state = 'running';
+    const chunk = Buffer.allocUnsafe(o.chunkBytes);
+    let carry = null;
+    let workStart = Date.now();
+    let lastSave = 0;
+    const save = (snap, done) => {
+      if (!snap) { delete all.files[f.path]; }
+      else all.files[f.path] = { path: f.path, character: f.character, sinceMs, head, size, updatedAt: new Date().toISOString(), done: !!done, snapshot: snap };
+      _rbCursorWrite(store, all);
+      lastSave = Date.now();
+    };
+    while (!_rb.stop) {
+      if (o.pauseOnFight !== false && o.liveFight()) {
+        _rb.waiting = 'a live fight';
+        _rb.waitedMs += o.waitMs;
+        await _rbSleep(o.waitMs);
+        continue;
+      }
+      _rb.waiting = null;
+      const { bytesRead } = await fh.read(chunk, 0, chunk.length, pos);
+      if (bytesRead === 0) break;
+      pos += bytesRead;
+      const data = carry ? Buffer.concat([carry, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
+      const nl = data.lastIndexOf(10);
+      if (nl < 0) { carry = data.length > (1 << 20) ? null : Buffer.from(data); continue; }
+      let text = data.toString('utf8', 0, nl);
+      carry = nl + 1 < data.length ? Buffer.from(data.subarray(nl + 1)) : null;
+      if (align) { const first = text.indexOf('\n'); text = first < 0 ? '' : text.slice(first + 1); align = false; }
+      let from = 0;
+      while (from <= text.length) {
+        let to = text.indexOf('\n', from);
+        if (to < 0) to = text.length;
+        let line = text.slice(from, to);
+        if (line.charCodeAt(line.length - 1) === 13) line = line.slice(0, -1);
+        if (line) { try { _rbLine(job, line); } catch { void 0; } }
+        from = to + 1;
+      }
+      job.bytePos = pos - (carry ? carry.length : 0);
+      st.bytePos = job.bytePos; st.lines = job.lines;
+      st.fights = job.counts.fights; st.sessions = job.counts.sessions; st.deaths = job.counts.deaths; st.loot = job.counts.loot; st.zones = job.counts.zones;
+      if (job.builder.events.length === 0) job.checkpoint = _rbSnapshot(job);
+      if (Date.now() - lastSave > 1000) save(job.checkpoint, false);
+      if (Date.now() - workStart >= o.budgetMs) { await _rbSleep(o.restMs); workStart = Date.now(); }
+      else await new Promise((r) => setImmediate(r));
+    }
+    if (_rb.stop) {
+      // Paused: the cursor stays at the last quiet point, so no fight is cut in half and resuming re-reads a little.
+      save(job.checkpoint, false);
+      try { store.flush(); } catch { void 0; }
+      st.state = 'paused';
+      return;
+    }
+    // End of the file. A fight still open at EOF is closed for the records, but the cursor keeps the quiet point
+    // before it, so the next run re-reads that fight whole (same ids, so it replaces the partial one).
+    const quiet = job.builder.events.length === 0;
+    job.builder.flush();
+    _rbVisitClose(job, job.lastMs, true);
+    if (job.session) _rbSessionClose(job, job.lastMs, true);
+    _rbDeathsFlush(job, Infinity);
+    job.bytePos = pos - (carry ? carry.length : 0);
+    st.bytePos = job.bytePos; st.lines = job.lines;
+    st.fights = job.counts.fights; st.sessions = job.counts.sessions; st.deaths = job.counts.deaths; st.loot = job.counts.loot; st.zones = job.counts.zones;
+    save(quiet ? _rbSnapshot(job) : job.checkpoint, true);
+    try { store.flush(); } catch { void 0; }
+    st.state = 'done';
+  } catch (e) {
+    st.state = 'error';
+    st.error = String((e && e.message) || e).slice(0, 200);
+  } finally {
+    try { await fh.close(); } catch { void 0; }
+  }
+}
+async function _rebuildRun(o) {
+  try {
+    o.cursors = _rbCursorRead(o.store);
+    for (const st of _rb.files) {
+      if (_rb.stop) break;
+      if (st.state !== 'queued') continue;
+      await _rebuildFile(st.file, st, o);
+    }
+    _rb.dkp = _rebuildDkpMode();
+    const pass = _rebuildDkpPass(o.store, _rb.dkp);
+    _rb.dkp = Object.assign({}, _rb.dkp, { checked: pass.checked || 0, matched: pass.matched || 0 });
+    try { o.store.flush(); } catch { void 0; }
+  } catch (e) {
+    _rb.error = String((e && e.message) || e).slice(0, 200);
+  }
+  _rb.state = _rb.error ? 'error' : (_rb.stop ? 'paused' : 'done');
+  _rb.running = false;
+  _rb.finishedAt = Date.now();
+  _rb.waiting = null;
+}
+// files: [{ path, character, sizeBytes?, skipped? }]. Returns the promise of the whole run (the route does not wait on it).
+function _rebuildStart(o) {
+  if (_rb.running) return null;
+  const store = o.store || _localTrackStore();
+  Object.assign(_rb, { state: 'running', running: true, stop: false, startedAt: Date.now(), finishedAt: 0, sinceMs: o.sinceMs || 0, error: null,
+    waiting: null, waitedMs: 0, dkp: _rebuildDkpMode(), files: (o.files || []).map(f => ({
+      file: f, path: f.path, character: f.character, state: f.skipped ? 'skipped' : 'queued', reason: f.skipped || null,
+      bytePos: 0, total: f.sizeBytes || 0, lines: 0, fights: 0, sessions: 0, deaths: 0, loot: 0, zones: 0 })) });
+  const run = {
+    store, sinceMs: o.sinceMs || 0, fresh: !!o.fresh, pauseOnFight: o.pauseOnFight,
+    chunkBytes: o.chunkBytes > 0 ? o.chunkBytes : REBUILD_CHUNK_BYTES,
+    budgetMs: Number.isFinite(o.budgetMs) ? o.budgetMs : REBUILD_BUDGET_MS,
+    restMs: Number.isFinite(o.restMs) ? o.restMs : REBUILD_REST_MS,
+    liveFight: typeof o.liveFight === 'function' ? o.liveFight : _liveFightActive,
+    waitMs: o.waitMs > 0 ? o.waitMs : 1500,
+  };
+  _rb.promise = _rebuildRun(run);
+  return _rb.promise;
+}
+function _rebuildStop() { if (_rb.running) { _rb.stop = true; return true; } return false; }
+function _rebuildStatus() {
+  const files = _rb.files.map(f => ({
+    path: f.path, character: f.character, state: f.state, reason: f.reason || undefined, error: f.error || undefined,
+    bytePos: f.bytePos, total: f.total, pct: f.total ? Math.min(100, Math.floor(f.bytePos / f.total * 100)) : (f.state === 'done' ? 100 : 0),
+    lines: f.lines, fights: f.fights, sessions: f.sessions, deaths: f.deaths, loot: f.loot, zones: f.zones,
+    resumedFrom: f.resumedFrom != null ? f.resumedFrom : undefined,
+  }));
+  const sum = (k) => files.reduce((a, f) => a + (f[k] || 0), 0);
+  const lines = sum('lines');
+  const elapsed = (( _rb.finishedAt || Date.now()) - _rb.startedAt - _rb.waitedMs) / 1000;
+  const cur = files.find(f => f.state === 'running') || null;
+  let stored = {};
+  try { const st = _localTrackStore(); for (const k of ['fight', 'raid_session', 'death', 'loot', 'zone_visit']) stored[k] = st.cursor(k).count; } catch { stored = {}; }
+  return {
+    ok: true, mode: 'local', uploads: 0, state: _rb.state, running: _rb.running,
+    since: _rb.sinceMs ? new Date(_rb.sinceMs).toISOString() : null,
+    startedAt: _rb.startedAt || null, finishedAt: _rb.finishedAt || null, waiting: _rb.waiting, error: _rb.error,
+    current: cur ? { path: cur.path, character: cur.character, pct: cur.pct } : null,
+    totals: { lines, fights: sum('fights'), sessions: sum('sessions'), deaths: sum('deaths'), loot: sum('loot'), zones: sum('zones') },
+    linesPerSec: _rb.startedAt && elapsed > 0.2 ? Math.round(lines / elapsed) : 0,
+    dkp: _rb.dkp, stored, files,
+  };
+}
+// Every EQ log this PC knows: the Logsync tab's list (watched logs, alts, imported backups) plus the watched logs.
+function _rebuildCandidates() {
+  if (_rb.candidates) return _rb.candidates();
+  const out = new Map();
+  try {
+    if (!_optinState.scanned) _scanOptInFiles();
+    for (const f of _optinState.files) out.set(f.path, { path: f.path, character: f.character, sizeBytes: f.sizeBytes || 0 });
+    for (const f of _optinState.ignored) if (!out.has(f.path)) out.set(f.path, { path: f.path, character: f.character, sizeBytes: f.sizeBytes || 0, ignored: true });
+  } catch { void 0; }
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath || out.has(w.logPath)) continue;
+    let sizeBytes = 0;
+    try { sizeBytes = fs.statSync(w.logPath).size; } catch { void 0; }
+    out.set(w.logPath, { path: w.logPath, character: w.character, sizeBytes });
+  }
+  return [...out.values()];
+}
+// A character the owner keeps out: this PC's own recorder skips it, and so does this.
+function _rebuildExcluded(character) {
+  const lc = String(character || '').toLowerCase();
+  if (!lc) return true;
+  const listed = String(process.env.WOLFPACK_EXCLUDED_CHARS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (listed.indexOf(lc) >= 0) return true;
+  const p = stats.characterPrefs && stats.characterPrefs[lc];
+  if (p && p.exclude_from_stats) return true;
+  const m = _optinState.characterModes && _optinState.characterModes[lc];
+  return !!(m && modeStopsLog(m.mode));
+}
+function _rebuildStartRequest(body) {
+  if (_rb.running) return { status: 409, body: { error: 'a rebuild is already running' } };
+  if (!_isUploaderInstance) return { status: 409, body: { error: 'another Mimic or Parser on this PC owns the local folder' } };
+  const b = body && typeof body === 'object' ? body : {};
+  let sinceMs = 0;
+  if (b.since != null && b.since !== '') {
+    sinceMs = Date.parse(String(b.since));
+    if (!Number.isFinite(sinceMs) || sinceMs < 0 || sinceMs > Date.now() + 86400_000) return { status: 400, body: { error: 'since must be a date such as 2026-01-31' } };
+  }
+  const cand = _rebuildCandidates();
+  let files;
+  if (b.file != null && b.file !== '') {
+    const hit = cand.find(c => c.path === String(b.file));
+    if (!hit) return { status: 404, body: { error: 'that is not one of your EverQuest log files' } };
+    files = [hit];
+  } else {
+    files = cand.filter(c => !c.ignored);
+  }
+  if (!files.length) return { status: 400, body: { error: 'no EverQuest log files found' } };
+  files = files.map(c => (_rebuildExcluded(c.character) ? Object.assign({}, c, { skipped: 'kept out of stats' }) : c));
+  if (files.every(c => c.skipped)) return { status: 400, body: { error: 'every log is for a character you keep out of stats' } };
+  _rebuildStart({ files, sinceMs, fresh: b.fresh === true });
+  return { status: 202, body: { ok: true, started: true, files: files.length, since: sinceMs ? new Date(sinceMs).toISOString() : null, dkp: _rb.dkp } };
+}
+
+// ── Raids, as the dashboard and the local site read them ──
+// Sessions from different characters on this PC that overlap (or sit within the gap of each other) are ONE raid.
+function _rebuildRaids(store, o = {}) {
+  const limit = Math.min(500, Math.max(1, Math.trunc(Number(o.limit)) || 100));
+  const since = Number.isFinite(o.sinceMs) ? o.sinceMs : undefined;
+  const recs = store.scan('raid_session', since ? { since } : {}).map(e => e.rec).filter(r => r && Number.isFinite(r.start) && Number.isFinite(r.end));
+  recs.sort((a, b) => a.start - b.start);
+  const groups = [];
+  for (const r of recs) {
+    const g = groups[groups.length - 1];
+    if (g && r.start <= g.end + REBUILD_GAP_MS) { g.list.push(r); if (r.end > g.end) g.end = r.end; }
+    else groups.push({ start: r.start, end: r.end, list: [r] });
+  }
+  const raids = groups.map(g => {
+    const members = new Map();
+    const fights = new Map();
+    const deaths = new Map();
+    const loot = new Map();
+    const zones = [];
+    let lootCount = 0, open = false, dkpMatch = null, dkpNight = null;
+    const characters = [];
+    for (const r of g.list) {
+      if (characters.indexOf(r.character) < 0) characters.push(r.character);
+      if (r.open) open = true;
+      if (r.dkpMatch) { dkpMatch = r.dkpMatch; dkpNight = r.dkpNight || dkpNight; }
+      for (const m of r.members || []) {
+        const p = members.get(m.name);
+        if (!p) members.set(m.name, Object.assign({}, m));
+        else {
+          p.first = Math.min(p.first, m.first); p.last = Math.max(p.last, m.last);
+          p.ev = [...new Set([...(p.ev || []), ...(m.ev || [])])];
+          for (const k of ['cls', 'level', 'guild']) if (!p[k] && m[k]) p[k] = m[k];
+        }
+      }
+      for (const f of r.fights || []) { const k = String(f.boss_name).toLowerCase() + '|' + Math.round(f.at / 90_000); const p = fights.get(k); if (!p || f.dmg > p.dmg) fights.set(k, f); }
+      for (const d of r.deaths || []) deaths.set(d.name + '|' + d.at, d);
+      for (const z of r.zones || []) if (zones.indexOf(z.zone) < 0) zones.push(z.zone);
+      lootCount += r.lootCount || 0;
+      for (const l of r.loot || []) loot.set(l.item, (loot.get(l.item) || 0) + l.count);
+    }
+    const list = [...fights.values()].sort((a, b) => a.at - b.at);
+    const main = g.list.slice().sort((a, b) => (b.end - b.start) - (a.end - a.start))[0];
+    return {
+      id: g.list[0].id, start: g.start, end: g.end, open, nightKey: g.list[0].nightKey, characters,
+      zone: main && main.zone, zones, guild: main && main.guild || null,
+      members: members.size, who: [...members.values()].sort((a, b) => (a.name < b.name ? -1 : 1)).slice(0, 80)
+        .map(m => ({ name: m.name, cls: m.cls || null, level: m.level || null, ev: m.ev })),
+      bosses: list.filter(f => f.boss || f.named).map(f => ({ name: f.boss_name, at: f.at, killed: f.killed, dmg: f.dmg, players: f.n, zone: f.zone || null })),
+      fights: list.length, deaths: deaths.size, lootCount,
+      loot: [...loot].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([item, count]) => ({ item, count })),
+      dkpMatch, dkpNight, source: 'rebuild',
+    };
+  });
+  raids.sort((a, b) => b.start - a.start);
+  return { ok: true, total: raids.length, raids: raids.slice(0, limit), dkp: _rb.dkp || _rebuildDkpMode(), generatedAt: Date.now() };
+}
+
+// ── Routes (same origin as the dashboard, behind the same local guard; nothing here leaves the PC) ──
+//   POST /api/local/backfill/start   { file?, since?, fresh? } -> 202 { ok, started, files, since, dkp }
+//        file = one of the EverQuest logs this PC knows (else every one); since = a date (else the whole file);
+//        fresh = ignore the saved cursor. 409 while a run is on.
+//   POST /api/local/backfill/stop    -> { ok, stopping }       (the cursor stays; Start again resumes)
+//   GET  /api/local/backfill/status  -> the run's progress, per file, what is stored, and the DKP step
+//   GET  /api/local/raids[?limit=&since=<date>] -> rebuilt raids, newest first
+// Returns a promise of true when it answered.
+async function _localBackfillRoute(req, res) {
+  const url = req && req.url;
+  if (!url || (url.indexOf('/api/local/backfill/') !== 0 && url.indexOf('/api/local/raids') !== 0)) return false;
+  let u;
+  try { u = new URL(url, 'http://x'); } catch { return false; }
+  const p = u.pathname;
+  const GET = { '/api/local/backfill/status': 1, '/api/local/raids': 1 };
+  const POST = { '/api/local/backfill/start': 1, '/api/local/backfill/stop': 1 };
+  if (!GET[p] && !POST[p]) return false;
+  const send = (status, body, extra) => {
+    res.writeHead(status, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, extra || {}));
+    res.end(JSON.stringify(body));
+    return true;
+  };
+  if (GET[p] && req.method !== 'GET') return send(405, { error: 'method not allowed' }, { Allow: 'GET' });
+  if (POST[p] && req.method !== 'POST') return send(405, { error: 'method not allowed' }, { Allow: 'POST' });
+  try {
+    if (p === '/api/local/backfill/status') return send(200, _rebuildStatus());
+    if (p === '/api/local/raids') {
+      const since = Date.parse(u.searchParams.get('since') || '');
+      return send(200, _rebuildRaids(_localTrackStore(), { limit: u.searchParams.get('limit'), sinceMs: Number.isFinite(since) ? since : undefined }));
+    }
+    if (p === '/api/local/backfill/stop') return send(200, { ok: true, stopping: _rebuildStop() });
+    let body = {};
+    const raw = await _readBody(req, 8 * 1024);
+    if (raw && raw.trim()) {
+      try { body = JSON.parse(raw); } catch { return send(400, { error: 'invalid json' }); }
+    }
+    const out = _rebuildStartRequest(body);
+    return send(out.status, out.body);
+  } catch {
+    return send(500, { error: 'rebuild unavailable' });
+  }
+}
+function _rebuildSetCandidatesForTest(fn) { _rb.candidates = fn; }
+function _rebuildResetForTest() { Object.assign(_rb, { state: 'idle', running: false, stop: false, startedAt: 0, finishedAt: 0, sinceMs: 0, files: [], error: null, waiting: null, waitedMs: 0, dkp: null, promise: null, candidates: null }); }
+// ── My parses on the local site, and the difference from the guild's record (local-first, 2026-10-21) ──────
+// The local site's /local/parses/ page (web/local/app/parses) reads two routes, both answered from this PC:
+//   GET /api/local/parses?since=<iso>&limit=<n>&scope=all|bosses
+//        -> { ok, generated_at, total, truncated, hub:{...}, fights:[{ id, t, end, name, zone, boss, dur, mine:[{char,dmg,dps}],
+//             dmg, dps, detail, players_n, seen_total, guild:null | { damage, seen_pct, others, classification } }] }  newest first
+//   GET /api/local/parses/<id> -> { ok, fight:{ ..., players, healers, deaths }, hub, guild, diff }
+// A fight is what THIS PC recorded: logsync.myfights.json (one row per own character, kept 365 days: the own character's
+// damage only), the History ring in logsync.fights.json (the whole local view of a fight: every player's damage, damage
+// taken, healing, deaths; 7 days / 100 fights), and `fight` records in the local store when the backfill writes them.
+// The three are merged by (mob, start within 8 s). Older than the ring, a fight has only the own row, and says so.
+//
+// THE DIFFERENCE. The guild's merged record (hub GET /api/agent/local-sync, whole encounters paged by a change cursor, plus
+// tombstones for deleted ones) is kept in the store as kind `hub_encounter` and matched to a local fight by the same mob
+// and a start within 10 minutes. The route is FEATURE-DETECTED: a 404 (not deployed yet), 503, 401/403, or a PC that is
+// local-only (no token) simply has no guild record, and the page says so. The hub already scrubs characters who opted out
+// to "<Class> <n>"; this block stores only the fields listed in _localHubClean, never a Discord id, a tell or chat.
+// Nothing here is uploaded: the one outbound call is that GET, and it carries the same bearer the other guild GETs do.
+const LOCAL_FIGHT_MERGE_MS = 8_000;           // the History ring's own window for "the same fight flushed twice"
+const LOCAL_HUB_MATCH_MS = 10 * 60_000;
+const LOCAL_HUB_KIND = 'hub_encounter';
+const LOCAL_HUB_STATE_KIND = 'hub_state';
+const LOCAL_HUB_FIRST_DAYS = 60;              // the first sync starts here, not at the beginning of the guild's history
+const LOCAL_HUB_PAGE_LIMIT = 200;
+const LOCAL_HUB_PAGES_MAX = 10;               // per sync; a long backlog finishes over the next few
+const LOCAL_HUB_EVERY_MS = 5 * 60_000;
+const LOCAL_HUB_MISSING_MS = 30 * 60_000;     // after a 404: the route is not deployed, asking again is cheap but pointless
+const LOCAL_HUB_RETRY_MS = 2 * 60_000;
+const LOCAL_HUB_WAIT_MS = 6_000;              // a list request waits this long for a sync, then answers with what it holds
+const LOCAL_HUB_REASONS = {
+  ok: '',
+  pending: 'Asking the guild server…',
+  local_only: 'This PC runs Mimic without a Wolf Pack sign-in, so there is no guild record here.',
+  signed_out: 'Mimic is not signed in to Wolf Pack right now.',
+  not_member: 'The guild server did not accept this sign-in for the guild record.',
+  not_deployed: 'The guild server does not offer the guild record yet.',
+  unavailable: 'The guild server did not answer. Mimic tries again in a couple of minutes.',
+};
+const _localHub = { status: 'pending', syncedAt: 0, nextAt: 0, inflight: null, cache: null };
+function _localHubResetForTest() { _localHub.status = 'pending'; _localHub.syncedAt = 0; _localHub.nextAt = 0; _localHub.inflight = null; _localHub.cache = null; }
+
+// ---- the guild's record, kept on this PC ----
+const _hubStr = (v, n) => (typeof v === 'string' ? v.slice(0, n) : null);
+const _hubNum = (v) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
+// ONLY these fields are kept (an allow-list, so a field the hub adds later is not stored by accident).
+function _localHubClean(e) {
+  if (!e || typeof e !== 'object' || typeof e.id !== 'string' || !e.id || e.id.length > 80) return null;
+  const started = Date.parse(e.started_at);
+  if (!(started > 0)) return null;
+  const players = (Array.isArray(e.players) ? e.players : []).slice(0, 150).map(p => {
+    if (!p || typeof p.name !== 'string' || !p.name) return null;
+    const o = { name: p.name.slice(0, 40), class: _hubStr(p.class, 24), damage: _hubNum(p.damage), dps: _hubNum(p.dps), duration: _hubNum(p.duration), pets: !!p.pets, rank: _hubNum(p.rank) };
+    if (p.anon) o.anon = true;
+    return o;
+  }).filter(Boolean);
+  const loot = (Array.isArray(e.loot) ? e.loot : []).slice(0, 80).map(l => {
+    if (!l || typeof l.item !== 'string') return null;
+    const o = { id: _hubNum(l.id), looter: _hubStr(l.looter, 40), item: l.item.slice(0, 80), at: _hubStr(l.at, 40) };
+    if (l.pet) o.pet = true;
+    if (l.anon) o.anon = true;
+    return o;
+  }).filter(Boolean);
+  return {
+    id: e.id, npc_id: _hubNum(e.npc_id), name: _hubStr(e.name, 120) || '', zone: _hubStr(e.zone, 40),
+    started_at: new Date(started).toISOString(), ended_at: _hubStr(e.ended_at, 40), duration_sec: _hubNum(e.duration_sec),
+    total_damage: _hubNum(e.total_damage), total_dps: _hubNum(e.total_dps), classification: _hubStr(e.classification, 24),
+    incomplete: !!e.incomplete, updated_at: _hubStr(e.updated_at, 40), players, loot,
+  };
+}
+// Apply one page: encounters replace by id, tombstones remove (a `deleted` marker put in the same day segment as the
+// record it replaces, so pruning drops both together). Returns { put, removed }.
+function _localHubApply(store, page) {
+  let put = 0, removed = 0;
+  for (const e of Array.isArray(page && page.encounters) ? page.encounters : []) {
+    const rec = _localHubClean(e);
+    if (rec && store.put(LOCAL_HUB_KIND, rec.id, rec, { ts: Date.parse(rec.started_at) })) put++;
+  }
+  for (const t of Array.isArray(page && page.tombstones) ? page.tombstones : []) {
+    if (!t || typeof t.id !== 'string' || !t.id) continue;
+    const old = store.get(LOCAL_HUB_KIND, t.id);
+    if (!old || old.deleted) continue;
+    if (store.put(LOCAL_HUB_KIND, t.id, { id: t.id, deleted: true, merged_into: _hubStr(t.merged_into, 80) }, { ts: Date.parse(old.started_at) || Date.now() })) removed++;
+  }
+  return { put, removed };
+}
+// The kept encounters, oldest first, deleted ones gone. Held until the store's change counter moves.
+function _localHubEncounters(store) {
+  const seq = store.cursor(LOCAL_HUB_KIND).seq;
+  if (_localHub.cache && _localHub.cache.store === store && _localHub.cache.seq === seq) return _localHub.cache.list;
+  const list = store.scan(LOCAL_HUB_KIND).map(e => e.rec).filter(r => r && !r.deleted && r.started_at);
+  _localHub.cache = { store, seq, list };
+  return list;
+}
+// Is the guild's record on offer on this PC? Local-only (no token), dry run, or no bot address: no, and nothing is asked.
+function _localHubCanAsk(opts) { return !!(opts && opts.token && opts.botUrl && !opts.dryRun); }
+// What the page is told about the guild record. `available` is the one switch the page reads.
+function _localHubStatus(store, opts) {
+  let status = _localHub.status;
+  if (!_localHubCanAsk(opts)) status = 'local_only';
+  const available = status === 'ok';
+  return {
+    available, status, message: status in LOCAL_HUB_REASONS ? LOCAL_HUB_REASONS[status] : LOCAL_HUB_REASONS.unavailable,
+    synced_at: available && _localHub.syncedAt ? new Date(_localHub.syncedAt).toISOString() : null,
+    encounters: available ? _localHubEncounters(store).length : 0,
+  };
+}
+// One sync: page the hub from the stored cursor until it says there is no more (or LOCAL_HUB_PAGES_MAX pages).
+// o = { store, opts, fetch, now, force }. Never throws: the outcome is _localHub.status.
+async function _localHubSync(o = {}) {
+  const store = o.store || _localTrackStore();
+  const opts = o.opts !== undefined ? o.opts : _uploadOpts;
+  const now = Number.isFinite(o.now) ? o.now : Date.now();
+  if (!_localHubCanAsk(opts)) return _localHubStatus(store, opts);
+  if (_localHub.inflight) return _localHub.inflight;
+  if (!o.force && now < _localHub.nextAt) return _localHubStatus(store, opts);
+  const run = (async () => {
+    const doFetch = o.fetch || fetch;
+    const done = (status, wait) => { _localHub.status = status; _localHub.nextAt = now + wait; if (status === 'ok') _localHub.syncedAt = now; return _localHubStatus(store, opts); };
+    try {
+      const base = String(opts.botUrl).replace(/\/encounter(\?.*)?$/, '');
+      const headers = { Authorization: 'Bearer ' + opts.token, 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION };
+      if (_mimicSessionToken) headers['X-Wolfpack-Mimic-Session'] = _mimicSessionToken;
+      const saved = store.get(LOCAL_HUB_STATE_KIND, 'cursor');
+      let since = saved && typeof saved.cursor === 'string' && saved.cursor ? saved.cursor : new Date(now - LOCAL_HUB_FIRST_DAYS * 86400_000).toISOString();
+      for (let page = 0; page < LOCAL_HUB_PAGES_MAX; page++) {
+        const r = await doFetch(base + '/local-sync?since=' + encodeURIComponent(since) + '&limit=' + LOCAL_HUB_PAGE_LIMIT, { headers, signal: AbortSignal.timeout(15_000) });
+        if (r.status === 404) return done('not_deployed', LOCAL_HUB_MISSING_MS);
+        if (r.status === 401) return done('signed_out', LOCAL_HUB_RETRY_MS);
+        if (r.status === 403) return done('not_member', LOCAL_HUB_MISSING_MS);
+        if (r.status === 400 && saved) { store.put(LOCAL_HUB_STATE_KIND, 'cursor', { cursor: '' }); return done('unavailable', LOCAL_HUB_RETRY_MS); }   // a cursor the hub refuses: start over next time
+        if (!r.ok) return done('unavailable', LOCAL_HUB_RETRY_MS);
+        const j = await r.json();
+        if (!j || j.ok === false || !Array.isArray(j.encounters)) return done('unavailable', LOCAL_HUB_RETRY_MS);
+        _localHubApply(store, j);
+        if (typeof j.cursor === 'string' && j.cursor && j.cursor !== since) { since = j.cursor; store.put(LOCAL_HUB_STATE_KIND, 'cursor', { cursor: since }); }
+        if (!j.more) break;
+      }
+      return done('ok', LOCAL_HUB_EVERY_MS);
+    } catch { return done('unavailable', LOCAL_HUB_RETRY_MS); }
+  })();
+  _localHub.inflight = run;
+  run.then(() => { _localHub.inflight = null; }, () => { _localHub.inflight = null; });
+  return run;
+}
+
+// ---- this PC's own fights ----
+const _fightMobKey = (s) => _localBossKey(s);
+function _localFightId(start, key) { return Math.round(start).toString(36) + '-' + crypto.createHash('sha1').update(key).digest('hex').slice(0, 6); }
+// Players of one fight as this PC saw them, pets folded into their owners (the meter's own rule). Rows are the
+// History ring's `local` rows: { character, dmg, pet_owner, pet_charm, pet_summoned, first_ms, last_ms, took, tookMax, ds, heal }.
+function _localFoldPlayers(rows, durSec) {
+  const by = new Map();
+  const slot = (name, pet) => {
+    const k = String(name).toLowerCase();
+    let p = by.get(k);
+    if (!p) by.set(k, p = { name: String(name), dmg: 0, pet_dmg: 0, took: 0, tookMax: 0, ds: 0, heal: 0, sec: 0, pet: !!pet, own: false });
+    return p;
+  };
+  for (const r of rows || []) {
+    const name = r && (r.character || r.name);
+    if (!name) continue;
+    const dmg = Number(r.dmg != null ? r.dmg : r.damage) || 0;
+    if (r.pet_owner) { const o = slot(r.pet_owner); o.dmg += dmg; o.pet_dmg += dmg; continue; }
+    const p = slot(name, r.pet_charm || r.pet_summoned);
+    p.dmg += dmg;
+    p.took += Number(r.took) || 0;
+    p.tookMax = Math.max(p.tookMax, Number(r.tookMax) || 0);
+    p.ds += Number(r.ds) || 0;
+    p.heal += Number(r.heal) || 0;
+    if (r.first_ms > 0 && r.last_ms >= r.first_ms) p.sec = Math.max(p.sec, Math.max(1, Math.round((r.last_ms - r.first_ms) / 1000)));
+  }
+  const out = [...by.values()].map(p => {
+    const sec = p.sec > 0 ? p.sec : Math.max(1, durSec || 1);
+    let own = false;
+    try { own = _isOwnCharacterName(p.name); } catch { own = false; }
+    return { ...p, own, sec, dps: Math.round(p.dmg / sec * 10) / 10 };
+  });
+  return out.sort((a, b) => b.dmg - a.dmg || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+// Every fight this PC recorded, merged, oldest first. Internal shape; _localFightListRow / _localFightDetail shape the answers.
+function _localFights(store) {
+  const items = [];
+  for (const r of _myFights) {
+    const s = Date.parse(r && r.t), e = Date.parse(r && r.end);
+    if (!r || !r.mob || !(s > 0)) continue;
+    items.push({ rank: 1, mob: r.mob, start: s, end: e > 0 ? e : s + (r.dur || 1) * 1000, dur: r.dur || 1, zone: r.zone || null, boss: !!r.boss, mine: { char: r.char, dmg: r.dmg },
+      code: r.code || null, role: r.role || null, obs: ['@self'] });
+  }
+  for (const h of stats.fightHistory || []) {
+    if (!h || !h.boss || !(h.endedMs > 0)) continue;
+    const dur = h.durationSec > 0 ? h.durationSec : 1;
+    items.push({ rank: 3, mob: h.boss, start: h.startedMs > 0 ? h.startedMs : h.endedMs - dur * 1000, end: h.endedMs, dur, zone: null, boss: null, rows: h.local, deaths: h.deaths,
+      code: h.raidCode || null, role: h.raidRole || null, obs: ['@self'] });
+  }
+  try {
+    for (const e of store.scan('fight')) {          // written by the "Rebuild from my logs" backfill, when it has run
+      const r = e.rec;
+      if (!r || typeof r !== 'object') continue;
+      const mob = r.mob || r.name || (typeof r.boss === 'string' ? r.boss : '');
+      const s = Number(r.startedMs) > 0 ? Number(r.startedMs) : Date.parse(r.t || r.started_at);
+      const en = Number(r.endedMs) > 0 ? Number(r.endedMs) : Date.parse(r.end || r.ended_at);
+      if (!mob || !(s > 0)) continue;
+      const dur = Number(r.durationSec || r.dur) > 0 ? Number(r.durationSec || r.dur) : (en > s ? Math.round((en - s) / 1000) : 1);
+      items.push({ rank: 2, mob, start: s, end: en > 0 ? en : s + dur * 1000, dur, zone: r.zone || null, boss: typeof r.boss === 'boolean' ? r.boss : null,
+        rows: r.local || r.players_seen, deaths: r.deaths, mine: r.char && r.dmg > 0 ? { char: r.char, dmg: r.dmg } : null,
+        code: _raidCodeNormalize(r.raidCode), role: r.raidRole || null, obs: Array.isArray(r.observedBy) && r.observedBy.length ? r.observedBy : ['@self'], imported: r.imported === true });
+    }
+  } catch { void 0; }
+  items.sort((a, b) => a.start - b.start || a.rank - b.rank);
+  const fights = [];
+  const lastByMob = new Map();                      // mob key -> fights of that mob, to find "the same fight" quickly
+  for (const it of items) {
+    const key = _fightMobKey(it.mob);
+    const list = lastByMob.get(key) || [];
+    let f = list.find(x => Math.abs(x.start - it.start) < LOCAL_FIGHT_MERGE_MS);
+    if (!f) {
+      f = { key, name: _localBossShow(it.mob), start: it.start, end: it.end, dur: it.dur, zone: null, boss: null, mineRows: [], rows: null, deaths: null, sources: [] };
+      list.push(f); lastByMob.set(key, list); fights.push(f);
+    }
+    f.end = Math.max(f.end, it.end); f.dur = Math.max(f.dur, it.dur);
+    if (!f.zone && it.zone) f.zone = it.zone;
+    if (it.boss != null) f.boss = !!(f.boss || it.boss);
+    if (it.code) {                                  // made under a raid code: the code, whose side this PC was on, who saw it
+      if (!f.code) { f.code = it.code; f.role = it.role === 'away' ? 'away' : 'guest'; }
+      f.observers = f.observers || new Set();
+      for (const o of it.obs || ['@self']) f.observers.add(o);
+      if (it.imported) f.imported = true;
+    }
+    if (it.mine && !f.mineRows.some(m => m.char.toLowerCase() === String(it.mine.char).toLowerCase())) f.mineRows.push({ char: String(it.mine.char), dmg: Number(it.mine.dmg) || 0 });
+    if (Array.isArray(it.rows) && it.rows.length && !f.rows) f.rows = it.rows;
+    if (Array.isArray(it.deaths) && it.deaths.length && !f.deaths) f.deaths = it.deaths;
+    f.sources.push(it.rank === 1 ? 'myfights' : it.rank === 2 ? 'store' : 'ring');
+  }
+  for (const f of fights) {
+    f.players = f.rows ? _localFoldPlayers(f.rows, f.dur) : null;
+    if (f.boss == null) { try { f.boss = !!_myFightIsBoss(f.name, null); } catch { f.boss = false; } }
+    // The own row: the fight log's (pets credited, whole fight) when it has one, else the own characters among the players.
+    const mine = f.mineRows.length ? f.mineRows : (f.players || []).filter(p => p.own && p.dmg > 0).map(p => ({ char: p.name, dmg: p.dmg }));
+    f.mine = mine.map(m => ({ char: m.char, dmg: m.dmg, dps: Math.round(m.dmg / Math.max(1, f.dur) * 10) / 10 })).sort((a, b) => b.dmg - a.dmg);
+    f.id = _localFightId(f.start, f.key);
+    delete f.rows; delete f.mineRows;
+  }
+  return fights;
+}
+// Healers and deaths, as far as the record has them. A healer who dealt nothing and took nothing is not in the ring at all.
+function _localFightHealers(f) { return (f.players || []).filter(p => p.heal > 0).map(p => ({ name: p.name, heal: p.heal, hps: Math.round(p.heal / Math.max(1, p.sec) * 10) / 10 })).sort((a, b) => b.heal - a.heal); }
+function _localFightDeaths(f) { return (Array.isArray(f.deaths) ? f.deaths : []).filter(d => d && d.name).map(d => ({ name: String(d.name).slice(0, 40), at_sec: Math.max(0, Math.round(Number(d.at) || 0)) })); }
+
+// ---- the difference ----
+const _gKey = (n) => String(n || '').trim().toLowerCase();
+// The nearest guild encounter of the same mob that began within 10 minutes of this fight, or null.
+function _localHubMatch(fight, encounters) {
+  let best = null, bestGap = Infinity;
+  for (const e of encounters) {
+    if (_fightMobKey(e.name) !== fight.key) continue;
+    const gap = Math.abs(Date.parse(e.started_at) - fight.start);
+    if (gap <= LOCAL_HUB_MATCH_MS && gap < bestGap) { best = e; bestGap = gap; }
+  }
+  return best;
+}
+// What the guild's merged record says that this PC's own view does not. `fight.players` null (a fight older than the
+// History ring) compares the own row only. Pure: the fixture test feeds it plain objects.
+function _localParseDiff(fight, enc) {
+  const gp = Array.isArray(enc.players) ? enc.players : [];
+  const ranked = gp.slice().sort((a, b) => (b.damage || 0) - (a.damage || 0));
+  const gBy = new Map();
+  ranked.forEach((p, i) => gBy.set(_gKey(p.name), { ...p, place: i + 1 }));
+  const guildDamage = Number.isFinite(enc.total_damage) ? enc.total_damage : gp.reduce((a, p) => a + (p.damage || 0), 0);
+  const here = fight.players ? new Map(fight.players.filter(p => p.dmg > 0).map(p => [_gKey(p.name), p])) : null;
+  const seenDamage = here ? [...here.values()].reduce((a, p) => a + p.dmg, 0) : null;
+  const pct = (a, b) => (b > 0 ? Math.round(a / b * 1000) / 10 : null);
+  const others = here ? ranked.filter(p => !here.has(_gKey(p.name)) && (p.damage || 0) > 0) : [];
+  const onlyHere = here ? [...here.values()].filter(p => !gBy.has(_gKey(p.name))) : [];
+  const shared = here ? [...here.values()].filter(p => gBy.has(_gKey(p.name))).map(p => {
+    const g = gBy.get(_gKey(p.name));
+    return { name: p.name, here: p.dmg, guild: g.damage || 0, delta: p.dmg - (g.damage || 0) };
+  }).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || (a.name < b.name ? -1 : 1)).slice(0, 40) : [];
+  return {
+    matched: true,
+    hub: { id: enc.id, name: enc.name, started_at: enc.started_at, duration_sec: enc.duration_sec, total_damage: guildDamage, total_dps: enc.total_dps,
+      players: gp.length, classification: enc.classification || null, incomplete: !!enc.incomplete },
+    start_offset_sec: Math.round((Date.parse(enc.started_at) - fight.start) / 1000),
+    raid: {
+      guild_damage: guildDamage, seen_damage: seenDamage,
+      missing_damage: seenDamage == null ? null : guildDamage - seenDamage,
+      seen_pct: seenDamage == null ? null : pct(seenDamage, guildDamage),
+    },
+    players_only_others: { count: others.length, damage: others.reduce((a, p) => a + (p.damage || 0), 0), hidden: others.filter(p => p.anon).length,
+      names: others.filter(p => !p.anon).slice(0, 12).map(p => p.name) },
+    players_only_here: { count: onlyHere.length, names: onlyHere.slice(0, 12).map(p => p.name) },
+    mine: fight.mine.map(m => {
+      const g = gBy.get(_gKey(m.char));
+      return { char: m.char, here: m.dmg, guild: g ? g.damage || 0 : null, delta: g ? m.dmg - (g.damage || 0) : null,
+        delta_pct: g && g.damage > 0 ? Math.round((m.dmg - g.damage) / g.damage * 1000) / 10 : null, guild_place: g ? g.place : null, guild_n: gp.length };
+    }),
+    shared,
+    duration: { here: fight.dur, guild: enc.duration_sec, delta: Number.isFinite(enc.duration_sec) ? fight.dur - enc.duration_sec : null },
+  };
+}
+
+// ---- the answers ----
+function _localFightListRow(f, enc) {
+  const best = f.mine[0] || null;
+  const row = {
+    id: f.id, t: new Date(f.start).toISOString(), end: new Date(f.end).toISOString(), name: f.name, zone: f.zone, boss: !!f.boss, dur: f.dur,
+    mine: f.mine, dmg: best ? best.dmg : 0, dps: best ? best.dps : 0,
+    detail: !!f.players, players_n: f.players ? f.players.length : null,
+    seen_total: f.players ? f.players.reduce((a, p) => a + p.dmg, 0) : null, guild: null,
+  };
+  if (f.code) { row.code = f.code; row.role = f.role; if (f.imported) row.imported = true; }
+  if (enc) {
+    const d = _localParseDiff(f, enc);
+    row.guild = { damage: d.raid.guild_damage, seen_pct: d.raid.seen_pct, others: d.players_only_others.count, classification: d.hub.classification,
+      mine_delta_pct: d.mine.length ? d.mine[0].delta_pct : null };
+  }
+  return row;
+}
+function _localFightDetail(f) {
+  const tag = f.code ? { code: f.code, role: f.role, imported: !!f.imported } : {};
+  return { ...tag, id: f.id, t: new Date(f.start).toISOString(), end: new Date(f.end).toISOString(), name: f.name, zone: f.zone, boss: !!f.boss, dur: f.dur,
+    mine: f.mine, detail: !!f.players, players: f.players, healers: _localFightHealers(f), deaths: _localFightDeaths(f), deaths_kept: Array.isArray(f.deaths),
+    sources: [...new Set(f.sources)] };
+}
+// url: '/api/local/parses[/<id>][?since&limit&scope]'. Returns { status, body }. A list request first gives the guild
+// sync a few seconds (it keeps going in the background if it needs longer); a detail request never waits on it.
+async function _localParsesAnswer(urlStr, o = {}) {
+  let u;
+  try { u = new URL(String(urlStr || ''), 'http://x'); } catch { return { status: 400, body: { error: 'bad request' } }; }
+  const m = u.pathname.match(/^\/api\/local\/parses(?:\/([0-9a-z]{1,12}-[0-9a-f]{6}))?\/?$/);
+  if (!m) return { status: 404, body: { error: 'not found' } };
+  const store = o.store || _localTrackStore();
+  const opts = o.opts !== undefined ? o.opts : _uploadOpts;
+  const sync = _localHubSync({ store, opts, fetch: o.fetch, now: o.now, force: o.force });
+  if (!m[1] || _localHub.status === 'pending') {
+    let t;
+    await Promise.race([sync, new Promise(r => { t = setTimeout(r, o.waitMs != null ? o.waitMs : LOCAL_HUB_WAIT_MS); if (t.unref) t.unref(); })]);
+    clearTimeout(t);
+  }
+  const hub = _localHubStatus(store, opts);
+  const encounters = hub.available ? _localHubEncounters(store) : [];
+  const fights = _localFights(store);
+  if (m[1]) {
+    const at = parseInt(m[1].split('-')[0], 36), hash = m[1].split('-')[1];
+    const f = fights.filter(x => x.id.endsWith('-' + hash) && Math.abs(x.start - at) < LOCAL_FIGHT_MERGE_MS)
+      .sort((a, b) => Math.abs(a.start - at) - Math.abs(b.start - at))[0];
+    if (!f) return { status: 404, body: { error: 'no such fight on this PC' } };
+    const enc = hub.available ? _localHubMatch(f, encounters) : null;
+    return { status: 200, body: { ok: true, fight: _localFightDetail(f), hub, guild: enc, diff: enc ? _localParseDiff(f, enc) : null } };
+  }
+  const since = Date.parse(u.searchParams.get('since') || '');
+  let limit = parseInt(u.searchParams.get('limit'), 10);
+  limit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 400) : 200;
+  const bossOnly = u.searchParams.get('scope') === 'bosses';
+  const sel = fights.filter(f => (!(since > 0) || f.start >= since) && (!bossOnly || f.boss));
+  const newest = sel.slice(-limit).reverse();
+  return { status: 200, body: { ok: true, generated_at: new Date().toISOString(), total: sel.length, truncated: sel.length > limit, hub,
+    fights: newest.map(f => _localFightListRow(f, hub.available ? _localHubMatch(f, encounters) : null)) } };
+}
+// Returns true when it answered. Called from the dashboard router, after the local guard.
+function _localParsesRoute(req, res) {
+  if (!req || req.method !== 'GET' || !req.url || req.url.indexOf('/api/local/parses') !== 0) return false;
+  if (!/^\/api\/local\/parses(?:\/[0-9a-z-]+)?\/?(?:\?|$)/.test(req.url)) return false;
+  const send = (out) => { res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(out.body)); };
+  _localParsesAnswer(req.url).then(send, () => send({ status: 500, body: { error: 'local parses unavailable' } }));
+  return true;
+}
+
+// ── Raid codes: a pass into someone else's raid, kept on this PC (local-first, 2026-10-21) ──────────────────
+// The guild lead, 2026-10-21: a guest's data stays on their PC; a code is a LABEL that tags local records and
+// HOLDS the raid-wide uploads. Nothing here talks to a hub. Plan: the guest/plan.md "Local code raid" slice.
+//
+//   * State: logsync.raidcode.json beside the other agent files ({ code, since, expires }). A pass lasts six hours
+//     (the guild lead picked 6 h) and then clears itself, wherever it is read. No code, no change at all.
+//   * The HOLD (enqueueUpload): while a code is active the RECORD / DKP kinds in RAID_HOLD_KINDS (parses, kills,
+//     lockouts, loot, rolls, chat, PvP) are not queued, so they never reach the guild's permanent record. The LIVE
+//     overlay streams (casting, buff_cast, raid_roster, threat_snapshot, trigger_relay, slow_mode) and the streams about
+//     the member's own character (corpse, xp_events, faction, tells, inventory, spellbook, quarmy, trigger,
+//     crash_report, kite_loop, rez_dismiss, pop_flag, quake, live state) continue as before, so Target info, the
+//     Command Center, the buff queue and the callouts keep working.
+//     Not held on purpose: historical_chat and an opt-in backfill's encounters (old nights of the member's own, not
+//     this raid). A local-only install already sends nothing, so for it the code only tags local records.
+//   * Tagging: a fight (the fight log, the History ring and a `fight` record in the store), a recorded minute and a
+//     loot line made under a code carry `code` and `role` ('guest' on a local-only PC, 'away' for a member).
+//     Chat text, tells and officer chat are never written anywhere by this block.
+//   * Export / import (.rmpack): gzipped NDJSON. Header { format:'rmpack', v:1, person_key, game:'eq', server, code,
+//     created }; records fight, player, loot, death, track_minute, each with observed_by and a stable id. person_key
+//     is random per install (logsync local/person.json): no Discord id, no character name.
+//     Import merges: minute rows are unioned by (minute, name), fights are deduped on mob + start within 30 minutes
+//     (players unioned, the larger damage wins, as the hub's merge does).
+//   Routes: GET/POST /api/raid-code, GET /api/local/raid-code/export?code=, POST /api/local/raid-code/import.
+const RAID_CODE_FILE = path.join(__dirname, 'logsync.raidcode.json');
+const RAID_CODE_TTL_MS = 6 * 3600_000;
+const RAID_CODE_RX = /^([A-Z]{2,4})[- ]([A-Z0-9]{4,6})$/;
+const RAID_CODE_HELP = 'A raid code looks like BC-7KQ2: two to four letters, a dash, then four to six letters or numbers.';
+// The enqueue kinds that write the guild's permanent RECORD (parses, kills, lockouts, loot and rolls for DKP, chat
+// history, PvP, fun events, the Ari lead) (grepped from every enqueueUpload call site). The LIVE overlay streams are
+// deliberately NOT here (the guild lead, 2026-10-21: "can we get the stream through on target info please"): casting and
+// buff_cast feed Target info / Mob Info, raid_roster the buff queue and Command Center, threat_snapshot the threat
+// overlays, trigger_relay the callouts and TTS, slow_mode the slow tracker. Live state is posted outside the queue.
+const RAID_HOLD_KINDS = new Set([
+  'encounter', 'bosskill', 'hatekill', 'lockout', 'chat', 'pvp', 'pvp_assists', 'looted', 'rolls', 'fun_event', 'ari_lead',
+]);
+const RMPACK_MAX_GZ = 5 * 1024 * 1024;
+const RMPACK_MAX_RAW = 64 * 1024 * 1024;
+const RMPACK_MAX_RECORDS = 200_000;
+const RMPACK_FIGHT_MATCH_MS = 30 * 60_000;
+const RMPACK_EXPORT_DAYS = 30;
+const RAID_PERSON_RX = /^pk_[0-9a-f]{32}$/;
+const RMPACK_NAME_RX = /^[\p{L}][\p{L}`' _-]{0,39}$/u;
+const _raidCode = { file: RAID_CODE_FILE, loaded: false, code: null, since: 0, expires: 0, held: {} };
+const _raidPersonCache = new Map();
+
+// "bc 7kq2" and "BC-7KQ2" are one code. Returns the canonical form, or null.
+function _raidCodeNormalize(raw) {
+  const s = String(raw == null ? '' : raw).trim().toUpperCase().replace(/\s+/g, ' ');
+  const m = s.length <= 12 ? RAID_CODE_RX.exec(s) : null;
+  return m ? m[1] + '-' + m[2] : null;
+}
+function _raidCodeRole() { return _localOnly() ? 'guest' : 'away'; }
+function _raidCodeLoad() {
+  _raidCode.loaded = true;
+  try {
+    const j = JSON.parse(fs.readFileSync(_raidCode.file, 'utf8'));
+    const code = _raidCodeNormalize(j && j.code);
+    const since = Number(j && j.since), expires = Number(j && j.expires);
+    if (code && since > 0 && expires > since && expires - since <= RAID_CODE_TTL_MS + 1000) Object.assign(_raidCode, { code, since, expires });
+  } catch { void 0; }
+}
+function _raidCodeSaveFile() {
+  try {
+    if (!_raidCode.code) {
+      try { fs.unlinkSync(_raidCode.file); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+      return;
+    }
+    fs.writeFileSync(_raidCode.file + '.tmp', JSON.stringify({ v: 1, code: _raidCode.code, since: _raidCode.since, expires: _raidCode.expires }));
+    fs.renameSync(_raidCode.file + '.tmp', _raidCode.file);
+  } catch { void 0; }   // a pass that cannot be saved still holds for this run
+}
+// The pass in force right now, or null. An expired pass clears itself here, so every reader sees it end on time.
+function _raidCodeActive(now = Date.now()) {
+  if (!_raidCode.loaded) _raidCodeLoad();
+  if (!_raidCode.code) return null;
+  if (!(now < _raidCode.expires)) { _raidCodeClear(); return null; }
+  return { code: _raidCode.code, since: _raidCode.since, expires: _raidCode.expires };
+}
+function _raidCodeSet(raw, now = Date.now()) {
+  const code = _raidCodeNormalize(raw);
+  if (!code) return { ok: false, error: RAID_CODE_HELP };
+  Object.assign(_raidCode, { loaded: true, code, since: now, expires: now + RAID_CODE_TTL_MS, held: {} });
+  _raidCodeSaveFile();
+  return { ok: true, raid: _raidCodeStatus(now) };
+}
+function _raidCodeClear() {
+  const had = !!_raidCode.code;
+  Object.assign(_raidCode, { loaded: true, code: null, since: 0, expires: 0, held: {} });
+  _raidCodeSaveFile();
+  return had;
+}
+// What the dashboard and the tray show: null with no code. `since`/`expires` are epoch ms; the page works out "how long".
+function _raidCodeStatus(now = Date.now()) {
+  const a = _raidCodeActive(now);
+  if (!a) return null;
+  const held = Object.assign({}, _raidCode.held);
+  return { code: a.code, since: a.since, expires: a.expires, ttl_ms: RAID_CODE_TTL_MS, role: _raidCodeRole(), held, held_total: Object.values(held).reduce((x, n) => x + n, 0) };
+}
+// { code, role } while a pass is active, else null: what a record made now is tagged with.
+function _raidTag() {
+  const a = _raidCodeActive();
+  return a ? { code: a.code, role: _raidCodeRole() } : null;
+}
+// enqueueUpload's question: is this upload held on this PC? Counts what it holds, so the card can say so.
+function _raidCodeHolds(kind, payload) {
+  if (!RAID_HOLD_KINDS.has(kind)) return false;
+  if (payload && payload.backfill === true) return false;
+  if (!_raidCodeActive()) return false;
+  _raidCode.held[kind] = (_raidCode.held[kind] || 0) + 1;
+  return true;
+}
+function _raidCodeSetFileForTest(file) { _raidCode.file = file || RAID_CODE_FILE; Object.assign(_raidCode, { loaded: false, code: null, since: 0, expires: 0, held: {} }); }
+
+// The random key this install signs its packs with: made once, kept beside the local store. No name, no Discord id.
+function _raidPersonKey(store) {
+  const dir = store && store.dir;
+  if (!dir) return null;
+  if (_raidPersonCache.has(dir)) return _raidPersonCache.get(dir);
+  const file = path.join(dir, 'person.json');
+  let key = null;
+  try { const j = JSON.parse(fs.readFileSync(file, 'utf8')); if (j && RAID_PERSON_RX.test(String(j.person_key))) key = j.person_key; } catch { void 0; }
+  if (!key) {
+    key = 'pk_' + crypto.randomBytes(16).toString('hex');
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(file + '.tmp', JSON.stringify({ v: 1, person_key: key, created: new Date().toISOString() }));
+      fs.renameSync(file + '.tmp', file);
+    } catch { void 0; }
+  }
+  _raidPersonCache.set(dir, key);
+  return key;
+}
+
+// A fight made under a code: the whole local view, kept in the store (the History ring forgets after a week).
+function _raidCodeSaveFight(entry, tag, character, store) {
+  if (!entry || !tag || !(entry.startedMs > 0) || !entry.boss) return false;
+  const st = store || _localTrackStore();
+  let boss = false;
+  try { boss = !!_myFightIsBoss(entry.boss, null); } catch { boss = false; }
+  const z = _myFightZone(character);
+  return st.put('fight', 'rc|' + _fightMobKey(entry.boss) + '|' + entry.startedMs, {
+    v: 1, mob: entry.boss, startedMs: entry.startedMs, endedMs: entry.endedMs, durationSec: entry.durationSec, zone: z.name, boss,
+    local: entry.local || [], deaths: entry.deaths || [], raidCode: tag.code, raidRole: tag.role,
+  }, { ts: entry.startedMs });
+}
+// "--You have looted X--" made under a code. Only a line this minute: a --since replay's old lines are not this raid.
+function _raidCodeNoteLoot(e, character, store) {
+  if (!e || !e.item || !e.looter || !(e.atMs > 0) || Math.abs(Date.now() - e.atMs) > 30 * 60_000) return false;
+  const tag = _raidTag();
+  if (!tag) return false;
+  return (store || _localTrackStore()).put('loot', e.looter + '|' + e.atMs + '|' + String(e.item).toLowerCase(), {
+    v: 1, who: e.looter, item: e.item, at: e.atMs, zone: e.zone || null, character: character || e.looter, self: true,
+    raidCode: tag.code, raidRole: tag.role,
+  }, { ts: e.atMs });
+}
+
+// ---- minute rows: merge by (minute, name) ----
+const _rmNum = (v) => (v != null && v !== '' && typeof v !== 'object' && Number.isFinite(Number(v)) ? Number(v) : null);
+const _rmIdx = (v, lo, hi) => { const n = _rmNum(v); return n != null && Number.isInteger(n) && n >= lo && n < hi ? n : null; };
+// The parsed `data` of a minute row (the shape web/lib/raidReplay.ts decodes), checked and rebuilt, or null. An
+// imported row is untrusted: every index, count and string is bounded, so a hostile pack cannot reach past an array.
+function _rmCleanMinute(d) {
+  if (!d || typeof d !== 'object' || d.v !== 1 || !Array.isArray(d.who) || !Array.isArray(d.f) || !Array.isArray(d.zones)) return null;
+  if (d.who.length > 400 || d.f.length > 60 || d.zones.length > 16) return null;
+  const who = [];
+  for (const w of d.who) {
+    if (!Array.isArray(w) || typeof w[0] !== 'string' || !RMPACK_NAME_RX.test(w[0])) return null;
+    who.push([w[0], typeof w[1] === 'string' ? w[1].slice(0, 24) : null, _rmNum(w[2]), _rmNum(w[3])]);
+  }
+  const zones = [];
+  for (const z of d.zones) { if (typeof z !== 'string' || !/^[A-Za-z0-9_]{1,32}$/.test(z)) return null; zones.push(z); }
+  const f = [];
+  for (const fr of d.f) {
+    if (!Array.isArray(fr) || fr.length < 1 || (fr.length - 1) % 7 !== 0 || fr.length > 1 + 7 * 400) return null;
+    const dt = _rmIdx(fr[0], 0, 60);
+    if (dt == null) return null;
+    const out = [dt];
+    for (let j = 1; j < fr.length; j += 7) {
+      const i = _rmIdx(fr[j], 0, who.length), zi = _rmIdx(fr[j + 6], -1, zones.length);
+      const nums = [fr[j + 1], fr[j + 2], fr[j + 3], fr[j + 4], fr[j + 5]].map(_rmNum);
+      if (i == null || zi == null || nums.some(n => n == null)) return null;
+      out.push(i, ...nums, zi);
+    }
+    f.push(out);
+  }
+  const res = { v: 1, step_s: Math.min(30, Math.max(1, _rmNum(d.step_s) || 3)), who, zones, f };
+  if (Array.isArray(d.mobs) && Array.isArray(d.mf)) {
+    if (d.mobs.length > 64 || d.mf.length > 3600) return null;
+    const mobs = [];
+    for (const m of d.mobs) {
+      if (!Array.isArray(m) || typeof m[0] !== 'string' || m[0].length > 80) return null;
+      mobs.push([m[0], _rmNum(m[1])]);
+    }
+    const mf = [];
+    for (const r of d.mf) {
+      if (!Array.isArray(r) || r.length !== 7) return null;
+      const dt = _rmIdx(r[0], 0, 60), mi = _rmIdx(r[1], 0, mobs.length), zi = _rmIdx(r[6], -1, zones.length);
+      const nums = [r[2], r[3], r[4], r[5]].map(_rmNum);
+      if (dt == null || mi == null || zi == null || nums.some(n => n == null)) return null;
+      mf.push([dt, mi, ...nums, zi]);
+    }
+    if (mf.length) { res.mobs = mobs; res.mf = mf; }
+  }
+  return res;
+}
+// Union of two parsed minute rows (both already clean). A name both saw keeps `a`'s frames; a name only `b` saw is added.
+function _rmMergeMinute(a, b) {
+  const who = a.who.map(w => w.slice());
+  const whoAt = new Map(who.map((w, i) => [w[0].toLowerCase(), i]));
+  const had = new Set(whoAt.keys());
+  const zones = a.zones.slice();
+  const zoneAt = (z) => { if (z == null) return -1; let i = zones.indexOf(z); if (i < 0) { if (zones.length >= 16) return -1; i = zones.length; zones.push(z); } return i; };
+  const frames = new Map(a.f.map(fr => [fr[0], fr.slice()]));
+  for (const fr of b.f) {
+    for (let j = 1; j < fr.length; j += 7) {
+      const w = b.who[fr[j]];
+      const k = w[0].toLowerCase();
+      if (had.has(k)) continue;
+      let i = whoAt.get(k);
+      if (i === undefined) { if (who.length >= 400) continue; i = who.length; who.push(w.slice()); whoAt.set(k, i); }
+      if (!frames.has(fr[0])) frames.set(fr[0], [fr[0]]);
+      frames.get(fr[0]).push(i, fr[j + 1], fr[j + 2], fr[j + 3], fr[j + 4], fr[j + 5], zoneAt(fr[j + 6] < 0 ? null : b.zones[fr[j + 6]]));
+    }
+  }
+  const f = [...frames.values()].sort((x, y) => x[0] - y[0]);
+  const mobs = (a.mobs || []).map(m => m.slice());
+  const mf = (a.mf || []).map(r => r.slice());
+  if (b.mobs && b.mf) {
+    const mobAt = new Map(mobs.map((m, i) => [m[0].toLowerCase() + '\u0000' + (m[1] ?? ''), i]));
+    const seen = new Set(mf.map(r => r[0] + '|' + r[1]));
+    for (const r of b.mf) {
+      const m = b.mobs[r[1]];
+      const mk = m[0].toLowerCase() + '\u0000' + (m[1] ?? '');
+      let mi = mobAt.get(mk);
+      if (mi === undefined) { if (mobs.length >= 64) continue; mi = mobs.length; mobs.push(m.slice()); mobAt.set(mk, mi); }
+      if (seen.has(r[0] + '|' + mi)) continue;
+      seen.add(r[0] + '|' + mi);
+      mf.push([r[0], mi, r[2], r[3], r[4], r[5], zoneAt(r[6] < 0 ? null : b.zones[r[6]])]);
+    }
+  }
+  return { v: 1, step_s: a.step_s, who, zones, f, ...(mf.length ? { mobs, mf } : {}) };
+}
+
+// ---- the pack ----
+function _rmError(msg) { const e = new Error(msg); e.status = 400; return e; }
+// Everything this PC holds under `code`, as a gzipped NDJSON buffer. Throws a 400-status Error for a bad code.
+function _rmpackBuild(rawCode, store, o = {}) {
+  const code = _raidCodeNormalize(rawCode);
+  if (!code) throw _rmError(RAID_CODE_HELP);
+  const st = store || _localTrackStore();
+  const now = Number.isFinite(o.now) ? o.now : Date.now();
+  const pk = _raidPersonKey(st);
+  const obsOf = (set) => [...new Set([...(set && set.size !== 0 ? set : ['@self'])].map(k => (k === '@self' ? pk : k)))];
+  const lines = [{ format: 'rmpack', v: 1, person_key: pk, game: 'eq', server: EQ_SERVER_QUARM, code, created: new Date(now).toISOString() }];
+  const counts = { fights: 0, players: 0, loot: 0, deaths: 0, track_minutes: 0 };
+  for (const f of _localFights(st)) {
+    if (f.code !== code) continue;
+    const fid = 'f:' + f.id;
+    const obs = obsOf(f.observers);
+    lines.push({ t: 'fight', id: fid, observed_by: obs, mob: f.name, zone: f.zone, start: f.start, end: f.end, dur: f.dur, boss: !!f.boss });
+    counts.fights++;
+    for (const p of f.players || []) {
+      lines.push({ t: 'player', id: fid + ':' + String(p.name).toLowerCase(), fight: fid, observed_by: obs, name: p.name, dmg: p.dmg, pet_dmg: p.pet_dmg,
+        took: p.took, tookMax: p.tookMax, ds: p.ds, heal: p.heal, sec: p.sec });
+      counts.players++;
+    }
+    for (const d of Array.isArray(f.deaths) ? f.deaths : []) {
+      if (!d || !d.name) continue;
+      const at = Math.max(0, Math.round(Number(d.at) || 0));
+      lines.push({ t: 'death', id: fid + ':' + String(d.name).toLowerCase() + ':' + at, fight: fid, observed_by: obs, name: String(d.name).slice(0, 40), at_sec: at });
+      counts.deaths++;
+    }
+  }
+  for (const e of st.scan('loot', { since: now - RMPACK_EXPORT_DAYS * 86400_000 })) {
+    const r = e.rec;
+    if (!r || _raidCodeNormalize(r.raidCode) !== code) continue;
+    lines.push({ t: 'loot', id: 'l:' + e.id, observed_by: obsOf(new Set(Array.isArray(r.observedBy) ? r.observedBy : [])), who: r.who, item: r.item, at: r.at, zone: r.zone || null });
+    counts.loot++;
+  }
+  for (const e of st.scan('track_minute', { since: now - RMPACK_EXPORT_DAYS * 86400_000 })) {
+    const r = e.rec;
+    if (!r || r.raid_code !== code || typeof r.data !== 'string') continue;
+    lines.push({ t: 'track_minute', id: r.minute_at, observed_by: obsOf(new Set(Array.isArray(r.observed_by) ? r.observed_by : [])),
+      row: { minute_at: r.minute_at, night_key: r.night_key, raiders: r.raiders, frames: r.frames, zones: r.zones, data: r.data } });
+    counts.track_minutes++;
+  }
+  const buffer = zlib.gzipSync(Buffer.from(lines.map(l => JSON.stringify(l)).join('\n') + '\n', 'utf8'));
+  return { buffer, counts, code, person_key: pk, filename: 'raid-' + code + '.rmpack' };
+}
+// Gunzip (bounded) and split a pack into { header, records }. Throws a 400-status Error naming what is wrong.
+function _rmpackParse(buf) {
+  if (!Buffer.isBuffer(buf) || !buf.length) throw _rmError('That file is empty.');
+  if (buf.length > RMPACK_MAX_GZ) throw _rmError('That file is too large for a raid pack (5 MB at most).');
+  let text;
+  try { text = zlib.gunzipSync(buf, { maxOutputLength: RMPACK_MAX_RAW }).toString('utf8'); }
+  catch { throw _rmError('That is not a raid pack (.rmpack): it would not unzip, or it is far larger than a pack can be.'); }
+  const lines = text.split('\n');
+  let header;
+  try { header = JSON.parse(lines[0]); } catch { header = null; }
+  const code = header && _raidCodeNormalize(header.code);
+  if (!header || header.format !== 'rmpack') throw _rmError('That is not a raid pack (.rmpack).');
+  if (header.v !== 1) throw _rmError('That raid pack is a newer version than this Mimic reads. Update Mimic and try again.');
+  if (!RAID_PERSON_RX.test(String(header.person_key)) || !code || header.game !== 'eq') throw _rmError('That raid pack has a bad header.');
+  const records = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i]) continue;
+    if (records.length >= RMPACK_MAX_RECORDS) throw _rmError('That raid pack holds too many records.');
+    let r;
+    try { r = JSON.parse(lines[i]); } catch { continue; }
+    if (r && typeof r === 'object' && typeof r.t === 'string') records.push(r);
+  }
+  return { header: Object.assign({}, header, { code }), records };
+}
+const _rmStr = (v, n) => (typeof v === 'string' ? v.slice(0, n) : null);
+const _rmCount = (v) => { const n = _rmNum(v); return n != null && n >= 0 ? Math.min(n, 1e10) : 0; };
+const _rmKeys = (a, fallback) => {
+  const out = (Array.isArray(a) ? a : []).filter(k => RAID_PERSON_RX.test(String(k)));
+  return out.length ? [...new Set(out)] : [fallback];
+};
+// One player as the History ring's rows keep it (a pet becomes its own row again). `total` is the figure the larger-wins rule compares.
+function _rmPlayerEntry(name, p, startMs) {
+  const sec = Math.round(p.sec || 0);
+  const row = { character: name, dmg: Math.max(0, p.dmg - p.pet), took: p.took, tookMax: p.tookMax, ds: p.ds, heal: p.heal };
+  if (sec > 0) { row.first_ms = startMs; row.last_ms = startMs + sec * 1000; }
+  return { total: p.dmg, rows: p.pet > 0 ? [row, { character: name + '_pet', dmg: p.pet, pet_owner: name }] : [row] };
+}
+// Merge another person's pack into this PC's store. Returns what it added and what it merged into what was there.
+function _rmpackImport(buf, store, o = {}) {
+  const pack = _rmpackParse(buf);
+  const st = store || _localTrackStore();
+  const code = pack.header.code, from = pack.header.person_key;
+  const me = _raidPersonKey(st);
+  const role = o.role || _raidCodeRole();
+  const out = { ok: true, code, from_self: from === me, fights: { added: 0, merged: 0 }, players: 0, loot: { added: 0, merged: 0 }, minutes: { added: 0, merged: 0 }, skipped: 0 };
+  const playersOf = new Map(), deathsOf = new Map();
+  for (const r of pack.records) {
+    const m = r.t === 'player' ? playersOf : r.t === 'death' ? deathsOf : null;
+    if (m && typeof r.fight === 'string') { if (!m.has(r.fight)) m.set(r.fight, []); m.get(r.fight).push(r); }
+  }
+  const existing = _localFights(st);
+  for (const r of pack.records) {
+    if (r.t !== 'fight') continue;
+    const mob = _rmStr(r.mob, 120);
+    const start = _rmNum(r.start), end = _rmNum(r.end);
+    if (!mob || !(start > 0) || !(end >= start) || typeof r.id !== 'string') { out.skipped++; continue; }
+    const key = _fightMobKey(mob);
+    let match = null, gap = Infinity;
+    for (const x of existing) {
+      const g = Math.abs(x.start - start);
+      if (x.key === key && g <= RMPACK_FIGHT_MATCH_MS && (!x.code || x.code === code) && g < gap) { match = x; gap = g; }
+    }
+    const startMs = match ? match.start : start;
+    const byName = new Map();   // lowercase name -> _rmPlayerEntry
+    for (const p of match ? match.players || [] : []) {
+      byName.set(String(p.name).toLowerCase(), _rmPlayerEntry(p.name, { dmg: p.dmg, pet: p.pet_dmg || 0, took: p.took || 0, tookMax: p.tookMax || 0, ds: p.ds || 0, heal: p.heal || 0, sec: p.sec }, startMs));
+    }
+    let added = 0;
+    for (const p of playersOf.get(r.id) || []) {
+      const name = _rmStr(p.name, 40);
+      if (!name || !RMPACK_NAME_RX.test(name)) continue;
+      const k = name.toLowerCase();
+      const dmg = _rmCount(p.dmg);
+      const entry = _rmPlayerEntry(name, { dmg, pet: Math.min(dmg, _rmCount(p.pet_dmg)), took: _rmCount(p.took), tookMax: _rmCount(p.tookMax), ds: _rmCount(p.ds), heal: _rmCount(p.heal), sec: _rmCount(p.sec) }, startMs);
+      const cur = byName.get(k);
+      if (!cur) { byName.set(k, entry); added++; }
+      else if (dmg > cur.total) byName.set(k, entry);          // both saw this player: the larger damage wins, as the hub's merge does
+    }
+    const rows = [];
+    for (const e of byName.values()) rows.push(...e.rows);
+    const deaths = (match && Array.isArray(match.deaths) ? match.deaths.map(d => ({ name: String(d.name), at: Math.round(Number(d.at) || 0) })) : []);
+    for (const d of deathsOf.get(r.id) || []) {
+      const name = _rmStr(d.name, 40), at = Math.round(_rmCount(d.at_sec));
+      if (name && RMPACK_NAME_RX.test(name) && !deaths.some(x => x.name.toLowerCase() === name.toLowerCase() && x.at === at) && deaths.length < 60) deaths.push({ name, at });
+    }
+    const obs = new Set(match && match.observers ? match.observers : (match ? ['@self'] : []));
+    for (const k of _rmKeys(r.observed_by, from)) obs.add(k);
+    const dur = Math.max(1, Math.round((Math.max(end, match ? match.end : 0) - startMs) / 1000));
+    const rec = {
+      v: 1, mob: match ? match.name : mob.replace(/_/g, ' '), startedMs: startMs, endedMs: Math.max(end, match ? match.end : 0), durationSec: dur,
+      zone: (match && match.zone) || _rmStr(r.zone, 64), boss: !!(r.boss || (match && match.boss)),
+      local: rows, deaths, raidCode: code, raidRole: match && match.code ? match.role : role, observedBy: [...obs],
+      imported: match ? !!match.imported : true,
+    };
+    if (!st.put('fight', 'rc|' + key + '|' + startMs, rec, { ts: startMs })) { out.skipped++; continue; }
+    if (match) out.fights.merged++; else out.fights.added++;
+    out.players += added;
+    // A later fight in the same pack can match this one.
+    const folded = _localFoldPlayers(rows, dur);
+    existing.push({ key, name: rec.mob, start: startMs, end: rec.endedMs, dur, zone: rec.zone, boss: rec.boss, players: folded, deaths, code, role: rec.raidRole, observers: obs, imported: rec.imported });
+  }
+  for (const r of pack.records) {
+    if (r.t === 'loot') {
+      const who = _rmStr(r.who, 40), item = _rmStr(r.item, 80), at = _rmNum(r.at);
+      if (!who || !RMPACK_NAME_RX.test(who) || !item || item.length < 2 || !(at > 0)) { out.skipped++; continue; }
+      const id = who + '|' + at + '|' + item.toLowerCase();
+      if (st.get('loot', id, { ts: at })) { out.loot.merged++; continue; }
+      if (st.put('loot', id, { v: 1, who, item, at, zone: _rmStr(r.zone, 64), character: null, self: false, raidCode: code, raidRole: role, observedBy: _rmKeys(r.observed_by, from), imported: true }, { ts: at })) out.loot.added++;
+    } else if (r.t === 'track_minute') {
+      const row = r.row;
+      const minuteMs = row && typeof row.minute_at === 'string' ? Date.parse(row.minute_at) : NaN;
+      let inc = null;
+      try { inc = _rmCleanMinute(JSON.parse(row && row.data)); } catch { inc = null; }
+      if (!inc || !Number.isFinite(minuteMs) || minuteMs % 60_000 !== 0 || new Date(minuteMs).toISOString() !== row.minute_at) { out.skipped++; continue; }
+      const have = st.get('track_minute', row.minute_at, { ts: minuteMs });
+      let cur = null;
+      try { cur = have && typeof have.data === 'string' ? _rmCleanMinute(JSON.parse(have.data)) : null; } catch { cur = null; }
+      const data = cur ? _rmMergeMinute(cur, inc) : inc;
+      const obs = new Set(have ? (Array.isArray(have.observed_by) && have.observed_by.length ? have.observed_by : ['@self']) : []);
+      for (const k of _rmKeys(r.observed_by, from)) obs.add(k);
+      const next = {
+        guild_id: 'local', minute_at: row.minute_at, night_key: _localTrackNightKey(minuteMs), raiders: data.who.length, frames: data.f.length,
+        zones: data.zones.slice(), data: JSON.stringify(data), raid_code: code, raid_role: have && have.raid_code ? have.raid_role : role, observed_by: [...obs],
+      };
+      if (!data.f.length) { out.skipped++; continue; }
+      st.put('track_minute', row.minute_at, next, { ts: minuteMs });
+      st.put('track_presence', row.minute_at, { night_key: next.night_key, minute_at: next.minute_at, zones: next.zones, raiders: next.raiders, raid_code: code }, { ts: minuteMs });
+      if (cur) out.minutes.merged++; else out.minutes.added++;
+    }
+  }
+  st.flush && st.flush();
+  return out;
+}
+
+// ---- routes ----
+async function _readBodyBuf(req, max) {
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > max) throw new Error('payload too large');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+// Returns a promise of true when it answered. Called from the dashboard router, after the local guard.
+async function _raidCodeRoute(req, res) {
+  const url = req && req.url;
+  if (!url || (url.indexOf('/api/raid-code') !== 0 && url.indexOf('/api/local/raid-code/') !== 0)) return false;
+  let u;
+  try { u = new URL(url, 'http://x'); } catch { return false; }
+  const p = u.pathname;
+  const send = (status, body, extra) => {
+    res.writeHead(status, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, extra || {}));
+    res.end(JSON.stringify(body));
+    return true;
+  };
+  const known = { '/api/raid-code': ['GET', 'POST'], '/api/local/raid-code/export': ['GET'], '/api/local/raid-code/import': ['POST'] };
+  if (!known[p]) return false;
+  if (!known[p].includes(req.method)) return send(405, { error: 'method not allowed' }, { Allow: known[p].join(', ') });
+  try {
+    if (p === '/api/raid-code' && req.method === 'GET') return send(200, { ok: true, raid: _raidCodeStatus(), role: _raidCodeRole() });
+    if (p === '/api/raid-code') {
+      let body = {};
+      const raw = await _readBody(req, 2 * 1024);
+      if (raw && raw.trim()) { try { body = JSON.parse(raw); } catch { return send(400, { error: 'invalid json' }); } }
+      if (body && body.clear) { _raidCodeClear(); return send(200, { ok: true, raid: null }); }
+      const out = _raidCodeSet(body && body.code);
+      return send(out.ok ? 200 : 400, out);
+    }
+    if (p === '/api/local/raid-code/export') {
+      const a = _raidCodeActive();
+      const out = _rmpackBuild(u.searchParams.get('code') || (a && a.code) || '', _localTrackStore());
+      res.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Disposition': 'attachment; filename="' + out.filename + '"', 'Content-Length': out.buffer.length, 'Cache-Control': 'no-store' });
+      res.end(out.buffer);
+      return true;
+    }
+    let buf;
+    try { buf = await _readBodyBuf(req, RMPACK_MAX_GZ); } catch { return send(413, { error: 'That file is too large for a raid pack (5 MB at most).' }); }
+    return send(200, _rmpackImport(buf, _localTrackStore()));
+  } catch (e) {
+    return send(e && e.status === 400 ? 400 : 500, { error: e && e.status === 400 ? e.message : 'raid code unavailable' });
+  }
+}
+
 // Export internals for tests; only run main() when invoked directly as CLI.
 module.exports = {
+  // Rebuild from my logs (2026-10-21): see the block above module.exports.
+  _rebuildStart, _rebuildStop, _rebuildStatus, _rebuildRaids, _rebuildScheduleMatch, _rebuildDkpPass, _rebuildDkpMode, _localBackfillRoute,
+  _rebuildStartRequest, _rebuildSetCandidatesForTest, _rebuildResetForTest, _rebuildWait: () => _rb.promise,
+  _uploadQueueLenForTest: () => _uploadQueue.length,
   AGENT_VERSION,
+  // Local store + own position recorder (2026-10-21): see the block above module.exports.
+  _localStore, _localStoreOpen, _localTrackFrame, _localTrackMinuteRow, _localTrackNightKey, _localTrackTick, _localTrackClose, _localTrackPush,
+  _localTrackNights, _localTrackWindow, _localTrackBosses, _localTrackMap, _mapPaths, _localTrackRoute, _localTrackSetStoreForTest, _localRecorderStart, _localRecorderStop,
+  // My parses on the local site + the guild's record kept beside it (2026-10-21): see the block above module.exports.
+  _localParsesAnswer, _localParsesRoute, _localFights, _localFoldPlayers, _localParseDiff, _localHubMatch, _localHubClean, _localHubApply, _localHubEncounters, _localHubSync,
+  _localHubStatus, _localHubResetForTest, LOCAL_HUB_KIND, LOCAL_HUB_STATE_KIND, LOCAL_HUB_MATCH_MS,
+  // Raid codes (2026-10-21): see the block above module.exports.
+  _raidCodeNormalize, _raidCodeSet, _raidCodeClear, _raidCodeActive, _raidCodeStatus, _raidCodeHolds, _raidTag, _raidCodeSaveFight, _raidCodeNoteLoot,
+  _raidPersonKey, _rmpackBuild, _rmpackParse, _rmpackImport, _rmCleanMinute, _rmMergeMinute, _raidCodeRoute, _raidCodeSetFileForTest,
+  RAID_HOLD_KINDS, RAID_CODE_TTL_MS, enqueueUpload,
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   buildFeedbackLogSlice, _feedbackLineAllowed,
@@ -56103,8 +63780,18 @@ module.exports = {
   _uploadBuffersForTest: () => ({ chatBuffer, tellBuffer, recentTells: stats.recentTells }),
   _chatRingForTest: () => _chatRing, _meleeRingForTest: () => _meleeRing, CHAT_MELEE_RING_MAX, _handleLocalChatForTest: _handleLocalChat,
   classifySpellLine, classifySkillLine, noteSelfCast, _rebuildLandingIndexesForTest: () => { _rebuildBuffMatchers(); _rebuildMechanicMatchers(); }, _spellRingForTest: () => _spellRing, _skillRingForTest: () => _skillRing, CHAT_SPELL_RING_MAX, CHAT_SKILL_RING_MAX,
+  ZEAL_CHAT_COLOR, zealChatTake, zealChannelHint, zealChatFlushDeferred, classifyZealLine, classifyZealTextLine, CHAT_ZEAL_TEXT_RXS,
+  classifyLootLine, classifyRandomLine, classifyOtherLine, _lootRingForTest: () => _lootRing, _randomRingForTest: () => _randomRing, _otherRingForTest: () => _otherRing, CHAT_LOOT_RING_MAX, CHAT_RANDOM_RING_MAX, CHAT_OTHER_RING_MAX,
+  // Guild feed while out of game (2026-10-15): the poller, its in-game test, the ring and the control-plane setter its gate reads.
+  _pollGuildFeed, _eqInGameFrom, guildFeedTake, guildFeedClear, _guildFeedNoteCampLine, _guildFeedRingForTest: () => _guildFeedRing, _guildFeedStateForTest: () => _guildFeed,
+  _guildFeedResetForTest: _guildFeedReset, _applyControlPlane, CHAT_GUILD_RING_MAX,
+  uploadChat, _setReporterRolesForTest: (r) => { _reporterRoles = { chat: true, buffs: true, roster: true, ...r }; },
   chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
   _handleLocalChatHistoryForTest: _handleLocalChatHistory, _resetChatHistoryForTest, CHAT_HISTORY_MAX, CHAT_SWAP_MIN_MS,
+  // Chat cache (2026-10-17): the encrypted on-disk copy of the Chat overlay's feed. See the "Chat cache" block.
+  chatCacheConfigure, chatCacheEnabled, chatCacheSeal, chatCacheOpen, chatCacheSave, chatCacheLoad, chatCacheWipe, chatCacheWipeFileOnly, chatCacheRevoke, chatCacheOnSessionPush,
+  chatCacheSnapshot, chatCacheRestore, _chatCacheMarkDirty, _chatCacheTrim, _chatCacheForTest: () => _chatCache,
+  CHAT_CACHE_FILE, CHAT_CACHE_MAX_AGE_MS, CHAT_CACHE_PER_RING_MAX, CHAT_CACHE_MAX_BYTES, CHAT_CACHE_WRITE_MS,
   _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,
   buffDurationFactorFor,
   SOURCELESS_SPELLS, BARD_SONGS,
@@ -56118,6 +63805,13 @@ module.exports = {
   // Meter History on disk + its own endpoint (2026-10-04).
   FIGHT_HISTORY_MAX, FIGHT_HISTORY_KEEP_MS, _saveFightHistory, _loadFightHistory, _resettleRestoredFights,
   _fightHistoryPayload, _setUploadOptsForTest: (o) => { _uploadOpts = o; },
+  // Target Info history (2026-10-19): the last 50 targets, the frame hook, the slain-line hook, the past-mob shape and its endpoint.
+  TGT_HIST_MAX, TGT_HIST_KEEP_MS, _tgtHistNoteFromState, _tgtHistNoteSlain, _targetHistoryPayload, _pastMobInfo,
+  _saveTargetHistory, _loadTargetHistory, _trimTargetHistory,
+  _tgtHistForTest: () => _tgtHist, _tgtHistResetForTest: () => { _tgtHist = []; _tgtCur.clear(); },
+  // Kite loops (2026-10-15): the Map's summary gate + queue, the guild's loops in, and the queue the summary lands in.
+  _kiteLoopSubmit, _kiteLoopBody, _kiteLoopsClean, _kiteLoopsFor, _kiteLoopCache, _handleKiteLoopPost, _handleKiteLoopsGet,
+  _uploadQueueForTest: () => _uploadQueue, _applyCharacterPrefsResponse, _applyControlPlane,
   // The 📈 My parses proxy (2026-10-06): the param whitelist, the fetch with its 5-minute cache.
   _myParsesParams, fetchMyParses, MY_PARSES_TTL_MS, MY_PARSES_FRESH_MIN_MS,
   _resetMyParsesForTest: () => { _myParsesCache.clear(); _myParsesInflight.clear(); },
@@ -56172,12 +63866,15 @@ module.exports = {
   startReplay, stopReplay, _replayEvaluateLine, _liveFightActive,
   _fireLog, _triggerJournal, _triggerLastFire,
   // #142 buster/spawn-chain timers — exported for the scratchpad fixture.
-  _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine,
+  _startTimer, _activeTimersSnapshot, _cancelTimersOnMobDeath, _deadMobNameFromLine, _dropDebuffTimersOnDeath,
   // #207 callout dismissals — exported for the scratchpad fixture.
   _recordCalloutFeedback, _calloutFeedbackSnapshot, _flushCalloutVotes,
   // Age + liveness (2026-08-10) — exported so the wrapper is tested against
   // the shipped code rather than a copy.
   _noteDeath, _clearDeath, _isDead, _deadNamesSnapshot, _ageOfServerStamp,
+  // FB-84 death recap: exported so the tests exercise the shipped code. noteHealLandLine feeds the landings; stats is the session store.
+  buildDeathRecap, deathRecapSnapshot, deathRecapFocusId, corpseTargetOwner, noteHealLandLine, _recentHealLandsForTest: () => _recentHealLands,
+  _deathRecapsForTest: () => stats.deathRecaps, _zealStateForTest: () => _zealState, confirmPlayer,
   // #205 group-HP death watcher — the independent death source feeding that
   // registry. Exported so the tests exercise the shipped code, not a copy.
   _noteGroupHpFromState, _groupHpObservations, _groupDeathWatchSnapshot,
@@ -56194,7 +63891,11 @@ module.exports = {
   // #136 raid callout allow-list — exported for the scratchpad fixture.
   _fireTriggerActions, _calloutAllowedToSpeak, _calloutScopeGated, _CALLOUT_ALLOW_CATEGORIES,
   _setCurrentBossForTest: (name) => { stats.currentEncounterThreat = name ? { bossName: name } : null; },
+  // Several bosses rampaging at once: the tank-state object, the fires it spoke, a clean slate.
+  _serializeTankState, _activeOverlaysForTest: () => _activeOverlays,
+  _resetRampagesForTest: () => { stats.currentRampage = null; stats.currentRampages = {}; _rampageByBoss.clear(); _rampageCurrentTarget = null; _rampageLastSeenMs = 0; _activeOverlays.length = 0; },
   _getReplayStateForTest: () => _replayStateForWeb(),
+  _getReplayDeathsForTest: () => ({ ring: _replayMobDeaths.slice(), live: _recentMobDeaths.slice(), snapshot: _replayDeathsSnapshot(), clock: _replayClockForWeb() }),
   _setPersonalTriggersForTest: (arr) => { _personalTriggers = arr; },
   _getPersonalTriggersForTest: () => _personalTriggers,
   _setWatchedLogsForTest: (arr) => { stats.watchedLogs = arr; },
@@ -56203,9 +63904,10 @@ module.exports = {
   SUGGESTED_TRIGGERS, SUGGESTED_RETIRED_PATTERNS, PERSONAL_CARRY_FIELDS,
   _templateToPersonalRow, _compilePersonalTrigger, _migrateRetiredSuggestedPattern,
   _catalogTriggerMatch, _normCatalogMatch, _addMyTarget, _buildCaptureBag, _expandTemplate, _meNoteRawLine,
+  _meRegenFrame, _meRegenFor, _meRegenStep, _meRegenTaint, _meRegen, _meRegenInCombat, _serializeMeState, _meNoteHit,   // FB-90 — test/me-regen.test.js
   _setSpellCatalogForTest: (entries) => { _spellByNameLower = new Map((entries || []).map(e => [String(e.name).toLowerCase(), e])); },
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
-  _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
+  _builtinTimerRows, _builtinSpellBarColor, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
   _isMezSpell, noteMyMezWornOff,
   _bumpCharmTick, _reconcileGaugeCharms, _classOf,
   _petBuffLandings, _npcCasterLevelFor, _npcCastStarts, _charmMobId,
@@ -56221,6 +63923,10 @@ module.exports = {
   tailFile, _tailStalled, _tailStatus,
   _logSilentCheck, _logSilentSweep, _logSilentForTest: () => _logSilent,
   _archiveLogNow, _rotateArchiveName, _rotateArchiveNameSeconds, _logRotationsForTest: () => stats.logRotations,
+  // FB-51 (§383) watch-mode archive sweep — the shipped sweep, driven with a fake fs / clock by test/log-rotate-watch.test.js.
+  _logRotateSweep, _logRotateSkipReason, _logRotateStartTimers,
+  _setAgentPrefsForTest: (o) => { _agentPrefsCache = o; },
+  _resetLogRotateForTest: () => { _logRotateBusy = false; _logRotateFailAt.clear(); stats.logRotations = []; },
   // 📶 Connection meter — pure parts + the stdout feed, exported so the tests drive the shipped code.
   _netParsePingLine, _netParseEqHost, _netParseGateway, _netStats, _netVerdict, _netSeries, _netFightSpan,
   _netNewTarget, _netOnData, _netPush, _netPayload, _netTargetsForTest: () => _net,
@@ -56236,8 +63942,14 @@ module.exports = {
   // "What you hear" (2026-10-12) — exported for test/trigger-rules.test.js.
   _triggerRules, _resolveRule, _computeRuleGroups, _triggerRulesPayload, _setTriggerRule, _cleanRules,
   _ruleKeyOf, _ruleGroupOfGuild, _applyTriggerRule, _builtinRuleModes, _guildRuleModes,
+  // Enrage mutes (2026-10-19) — exported for test/enrage-callouts.test.js.
+  _handleVoiceSpoken, _handleVoiceReport, _voiceReportBody,
+  _setTimerMute, _timerMutesView, _timerMuteSession, _timerMuteKeys, _timerRowMuted,
+  _setEnrageMute, _enrageMutesView, _enrageMuteSession, loadTriggerRules, _tickEnrageWarn, _mobInfoCacheKey, _enrageWarned,
   // Personal trigger sync (agent half) — exported for test/personal-trigger-sync-agent.test.js.
   _applyTriggerPull, _triggerSyncPush, _triggerSyncList, _triggerSyncPull, _tsBackupLocal,
+  // Share a whole setup (2026-10-19) — exported for test/setup-share-agent.test.js.
+  _setupShareExport, _setupShareApply, _setupShareRestore, _handleSetupShareTriggers,
   _runRelayedFire, _pushBlindEvent, _blindEvents, _maybeAnnounceDamageTaken,
   _applyGuildTriggersResponse,
   // Sounds, voices, pronunciations, after_my_melee_ms (2026-10-14) — exported for test/sounds-voices.test.js.
@@ -56247,6 +63959,8 @@ module.exports = {
   _setPronunciationsForTest: (synced, local) => { _pronSynced = new Map(_pronPairs(synced)); _pronLocal = { ...(local || {}) }; _pronMerged = null; },
   _noteOwnMelee, _afterMyMeleeOk, _ownMeleeAt,
   _importSoundFile, _parseTriggerXml, _parseTriggerTgfJson,
+  // PQ Companion pack import (2026-10-20) — exported for test/pqc-import.test.js.
+  _parsePqCompanionPack, _parseTriggerImport, _PQC_ROW_FIELDS, compileTriggerPattern,
   _setVoiceStateDirForTest: (d) => { _voiceStateDir = d || null; },
   _setGuildTriggersForTest: (arr) => { stats.guildTriggers = arr; stats.guildTriggersVersion = null; },
 };

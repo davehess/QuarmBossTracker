@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body { background: #0d1117; color: #c9d1d9; }
+  a { color: #58a6ff; }
+  a:hover { text-decoration: underline; }
+}

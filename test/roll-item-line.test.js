@@ -27,6 +27,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { parseRollItemLine } from '../packages/wolfpack-logsync/index.js';
+import { readSource, sliceBlock, evalBlock, AGENT_INDEX } from './_source-slice.js';
 
 const byNum = (text) => {
   const out = {};
@@ -244,5 +245,76 @@ describe('the number-first form', () => {
     const got = byNum('Palace Key 911 pullers kiters, 922 for key fetishes');
     expect(got[911]).toBe('Palace Key');
     expect(Object.values(got)).not.toContain('key fetishes');
+  });
+});
+
+// The guild lead, 2026-10-21: "accept this format too" — the roll caller's
+// "item xN - range". The N is a QUANTITY (same as "(N)": top-N rolls win one each),
+// never a roll range, and the dash / colon between item and range is a separator.
+describe('quantity as xN, and a dash or colon before the range', () => {
+  const rows = (t) => parseRollItemLine(t);
+
+  it('reads "Ethereal Parchment x6 - 555"', () => {
+    expect(rows('Ethereal Parchment x6 - 555')).toEqual([{ num: 555, item: 'Ethereal Parchment', qty: 6 }]);
+  });
+
+  it('reads "Spectral Parchment x1 - 666"', () => {
+    expect(rows('Spectral Parchment x1 - 666')).toEqual([{ num: 666, item: 'Spectral Parchment', qty: 1 }]);
+  });
+
+  it('reads two items on one line', () => {
+    expect(rows('Ethereal Parchment x6 - 555 | Spectral Parchment x1 - 666')).toEqual([
+      { num: 555, item: 'Ethereal Parchment', qty: 6 },
+      { num: 666, item: 'Spectral Parchment', qty: 1 },
+    ]);
+  });
+
+  it('accepts ×N, a two-digit quantity, N x before the name, en dash and colon', () => {
+    expect(rows('Black Tear ×12 – 111')).toEqual([{ num: 111, item: 'Black Tear', qty: 12 }]);
+    expect(rows('3x Black Tear - 222')).toEqual([{ num: 222, item: 'Black Tear', qty: 3 }]);
+    expect(rows('Black Tear x2: 333')).toEqual([{ num: 333, item: 'Black Tear', qty: 2 }]);
+    expect(rows('Black Tear: 444')).toEqual([{ num: 444, item: 'Black Tear', qty: null }]);
+    expect(rows('Black Tear (3) - 555')).toEqual([{ num: 555, item: 'Black Tear', qty: 3 }]);
+  });
+
+  it('never turns xN alone into a roll range', () => {
+    expect(rows('Ethereal Parchment x6')).toEqual([]);
+    expect(rows('Ethereal Parchment x12')).toEqual([]);
+  });
+
+  it('keeps the existing shapes: pipe, comma, (qty), tiers', () => {
+    expect(rows('Black Tear 111 , Platinum Tear (2) 222')).toEqual([
+      { num: 111, item: 'Black Tear', qty: null },
+      { num: 222, item: 'Platinum Tear', qty: 2 },
+    ]);
+    expect(byNum('Helmet of Shadow 311 pick, 322 upgrade')).toEqual({ 311: 'Helmet of Shadow', 322: 'Helmet of Shadow' });
+  });
+});
+
+describe('Zeal abbreviated chat in the log ("[R] [Name]: text")', () => {
+  // AbbreviatedChat rewrites the log line itself (see _tagLineParts), so the caller's
+  // raid chat can arrive without "tells the raid" or quotes.
+  const src = readSource(AGENT_INDEX);
+  const tracker = sliceBlock(src, 'const _ROLL_DIE_RX', '\n// ── Deathrolls (the guild lead');
+  const pre = sliceBlock(src, 'const TS_RX', '\n') + '\n'
+    + sliceBlock(src, 'function parseEqTimestamp(line) {', '\n}') + '\n'
+    + sliceBlock(src, 'const _CH_SPEAKER_RX', '\n') + '\nconst funEventBuffer = [];\n';
+  const load = () => evalBlock(pre + tracker, ['trackRollItemLine', '_rollItemByNumber']);
+  const T = '[Wed Oct 21 21:10:01 2026]';
+
+  it('labels both ranges from the bracket form', () => {
+    const m = load();
+    m.trackRollItemLine(`${T} [R] [Aldenmar]: Ethereal Parchment x6 - 555`);
+    m.trackRollItemLine(`${T} [R] [Aldenmar]: Spectral Parchment x1 - 666`);
+    expect(m._rollItemByNumber.get(555)).toMatchObject({ item: 'Ethereal Parchment', qty: 6 });
+    expect(m._rollItemByNumber.get(666)).toMatchObject({ item: 'Spectral Parchment', qty: 1 });
+  });
+
+  it('still reads the quoted form, and ignores a tell', () => {
+    const m = load();
+    m.trackRollItemLine(`${T} Aldenmar tells the raid, 'Ethereal Parchment x6 - 555'`);
+    m.trackRollItemLine(`${T} [Fr] [Brackwyn]: Spectral Parchment x1 - 666`);
+    expect(m._rollItemByNumber.get(555)).toMatchObject({ item: 'Ethereal Parchment', qty: 6 });
+    expect(m._rollItemByNumber.has(666)).toBe(false);
   });
 });

@@ -24,6 +24,7 @@ import path from 'node:path';
 import { ROOT, stripJs, stripSql } from './_source-slice.js';
 import { fakeDb, PGRST_CAP } from './_fake-supabase-me.js';
 import * as R from '../web/lib/capSafeReads.ts';
+import { GUILD_TAG } from '../web/lib/guild.ts';
 
 const rowsOf = (n, make) => Array.from({ length: n }, (_, i) => make(i));
 // Letters-only names (the page strips everything else): aaa, aab, …
@@ -59,7 +60,7 @@ describe('item 1 — live state is asked for by NAME, not by guild', () => {
   // 1,508 characters ever reported; the member's three active ones sit past
   // row 1,000 in heap order, one stored in a different case.
   const live = rowsOf(1508, i => ({
-    guild_id: 'wolfpack', character: nm(i), zone_name: 'z', buff_count: 0, buffs: [], self_hp_pct: 100,
+    guild_id: GUILD_TAG, character: nm(i), zone_name: 'z', buff_count: 0, buffs: [], self_hp_pct: 100,
     updated_at: '2026-10-01T00:00:00Z',
   }));
   live[1300] = { ...live[1300], character: 'ALDENMAR', updated_at: '2026-10-04T06:00:00Z' };
@@ -69,7 +70,7 @@ describe('item 1 — live state is asked for by NAME, not by guild', () => {
 
   it('the OLD read (every guild row) misses the active characters', async () => {
     const db = fakeDb({ tables: { character_live_state: live } });
-    const { data } = await db.from('character_live_state').select('character').eq('guild_id', 'wolfpack');
+    const { data } = await db.from('character_live_state').select('character').eq('guild_id', GUILD_TAG);
     expect(data).toHaveLength(PGRST_CAP);
     expect(data.some(r => ['aldenmar', 'brackwyn', 'corvale'].includes(r.character.toLowerCase()))).toBe(false);
   });
@@ -349,8 +350,8 @@ describe('item 7 — faction reads are drained past the cap', () => {
 // ── 8. /character/<name>/quests ────────────────────────────────────────────
 describe('item 8 — the quests page reads the whole family inventory and every turn-in', () => {
   it('family inventory: 8,302 rows, the viewed character\'s own rows included, other guilds\' rows not', async () => {
-    const own = rowsOf(499, i => ({ id: i, guild_id: 'wolfpack', character_name: 'Zarrin', slot_label: 'Bank' + i, item_id: i, item_name: 'i' + i, quantity: 1 }));
-    const alts = rowsOf(7803, i => ({ id: 1000 + i, guild_id: 'wolfpack', character_name: nm(i % 14), slot_label: 'S' + i, item_id: i, item_name: 'j' + i, quantity: 1 }));
+    const own = rowsOf(499, i => ({ id: i, guild_id: GUILD_TAG, character_name: 'Zarrin', slot_label: 'Bank' + i, item_id: i, item_name: 'i' + i, quantity: 1 }));
+    const alts = rowsOf(7803, i => ({ id: 1000 + i, guild_id: GUILD_TAG, character_name: nm(i % 14), slot_label: 'S' + i, item_id: i, item_name: 'j' + i, quantity: 1 }));
     const strangers = rowsOf(300, i => ({ id: 90000 + i, guild_id: 'other', character_name: 'Zarrin', slot_label: 'X' + i, item_id: i, item_name: 'k', quantity: 1 }));
     // heap order puts the viewed character LAST — the old read dropped her
     const table = [...alts, ...strangers, ...own];
@@ -362,7 +363,7 @@ describe('item 8 — the quests page reads the whole family inventory and every 
     expect(uniq(got.map(r => r.character_name + '|' + r.slot_label))).toBe(8302);
     expect(Object.keys(got[0]).sort()).toEqual(['character_name', 'item_id', 'item_name', 'quantity', 'slot_label']);
     // the OLD read
-    const old = (await fakeDb({ tables: { character_inventory: table } }).from('character_inventory').select('*').eq('guild_id', 'wolfpack').or(family.map(n => `character_name.ilike.${n}`).join(',')).limit(10000)).data;
+    const old = (await fakeDb({ tables: { character_inventory: table } }).from('character_inventory').select('*').eq('guild_id', GUILD_TAG).or(family.map(n => `character_name.ilike.${n}`).join(',')).limit(10000)).data;
     expect(old).toHaveLength(1000);
     expect(old.filter(r => r.character_name === 'Zarrin')).toHaveLength(0);
   });
@@ -445,7 +446,10 @@ describe('item 10 — the who delete reports the real count', () => {
   });
   it('keeps the officer gate and the case-insensitive, guild-scoped match', () => {
     expect(del).toMatch(/officerIdentity\(\)/);
-    expect(del).toMatch(/\.ilike\('character', name\)\s*\.eq\('guild_id', 'wolfpack'\)/);
+    // The guild tag is GUILD_TAG (web/lib/guild.ts). Anchored to the counted delete, and to the overrides
+    // delete, so a stray .eq on some other chain cannot satisfy it.
+    expect(del).toMatch(/\.from\('who_observations'\)\s*\.delete\(\{ count: 'exact' \}\)\s*\.ilike\('character', name\)\s*\.eq\('guild_id', GUILD_TAG\)/);
+    expect(del).toMatch(/\.from\('who_overrides'\)\s*\.delete\(\)\s*\.ilike\('character', name\)\s*\.eq\('guild_id', GUILD_TAG\)/);
   });
 });
 

@@ -18,6 +18,7 @@ import crypto from 'crypto';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 
 const INVITE_TTL_DAYS = 7;
 
@@ -48,7 +49,7 @@ export async function createSiteAccessInvite(formData: FormData) {
   const token = crypto.randomBytes(32).toString('hex');
   const { error } = await admin.from('site_access_invites').insert({
     token,
-    guild_id:              'wolfpack',
+    guild_id:              GUILD_TAG,
     member_discord_id:     target.discord_id,
     created_by_discord_id: officer?.discord_id ?? null,
     expires_at:            new Date(Date.now() + INVITE_TTL_DAYS * 86400000).toISOString(),

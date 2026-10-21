@@ -33,7 +33,7 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     const win = share.win;
     const bosses = await unstable_cache(
       async () => (await loadSpawnBosses(supabaseAdmin(), from, to)).filter(b => inWindow(win, b.to)),
-      ['raid-share', share.row.id, 'bosses'],
+      ['raid-share', share.row.id, 'bosses', String(win.fromMs), String(win.toMs)],   // the window's end is in the key: an extended share never serves the old one
       { revalidate: SHARE_CACHE_S, tags: [shareTag(share.row.id)] },
     )();
     return NextResponse.json({ bosses }, { headers: HEADERS });

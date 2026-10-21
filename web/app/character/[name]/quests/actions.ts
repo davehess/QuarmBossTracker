@@ -9,6 +9,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 
 async function ownsOrOfficer(characterName: string): Promise<{ ok: boolean; error?: string }> {
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -17,7 +18,7 @@ async function ownsOrOfficer(characterName: string): Promise<{ ok: boolean; erro
   const admin = supabaseAdmin();
   const [{ data: me }, { data: ch }] = await Promise.all([
     admin.from('wolfpack_members').select('discord_id').eq('user_id', user.id).maybeSingle(),
-    admin.from('characters').select('discord_id').eq('guild_id', 'wolfpack').ilike('name', characterName).maybeSingle(),
+    admin.from('characters').select('discord_id').eq('guild_id', GUILD_TAG).ilike('name', characterName).maybeSingle(),
   ]);
   if (me?.discord_id && ch?.discord_id && me.discord_id === ch.discord_id) return { ok: true };
   return { ok: false, error: 'not your character' };
@@ -32,12 +33,12 @@ async function upsertPref(characterName: string, questId: number, patch: { hidde
   const { data: existing } = await admin
     .from('character_quest_prefs')
     .select('id, display_order, hidden, dismissed')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('character_name', characterName)
     .eq('quest_id', questId)
     .maybeSingle();
   const row = {
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     character_name: characterName,
     quest_id: questId,
     hidden: patch.hidden ?? existing?.hidden ?? false,
@@ -85,9 +86,9 @@ export async function moveQuest(characterName: string, questId: number, directio
   if (!gate.ok) return { ok: false, error: gate.error };
   const admin = supabaseAdmin();
   const [{ data: quests }, { data: prefs }] = await Promise.all([
-    admin.from('quest_catalog').select('id, display_order, name').eq('guild_id', 'wolfpack').eq('active', true),
+    admin.from('quest_catalog').select('id, display_order, name').eq('guild_id', GUILD_TAG).eq('active', true),
     admin.from('character_quest_prefs').select('quest_id, display_order, hidden, dismissed')
-      .eq('guild_id', 'wolfpack').ilike('character_name', characterName),
+      .eq('guild_id', GUILD_TAG).ilike('character_name', characterName),
   ]);
   const prefByQ = new Map<number, { display_order: number | null; hidden: boolean; dismissed: boolean }>();
   for (const p of (prefs ?? []) as { quest_id: number; display_order: number | null; hidden: boolean; dismissed: boolean }[]) {
@@ -121,7 +122,7 @@ async function setTurninStatus(characterName: string, turninId: number, status: 
   if (!gate.ok) return { ok: false, error: gate.error };
   const admin = supabaseAdmin();
   const { error } = await admin.from('character_active_turnins').upsert(
-    { guild_id: 'wolfpack', character_name: characterName, turnin_id: turninId, status },
+    { guild_id: GUILD_TAG, character_name: characterName, turnin_id: turninId, status },
     { onConflict: 'guild_id,character_name,turnin_id' },
   );
   if (error) return { ok: false, error: error.message };
@@ -136,7 +137,7 @@ async function clearTurnin(characterName: string, turninId: number) {
   const admin = supabaseAdmin();
   await admin.from('character_active_turnins')
     .delete()
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('character_name', characterName)
     .eq('turnin_id', turninId);
   revalidatePath(`/character/${encodeURIComponent(characterName)}/quests`);
@@ -163,7 +164,7 @@ export async function resetQuestLayout(characterName: string) {
   const admin = supabaseAdmin();
   await admin.from('character_quest_prefs')
     .delete()
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('character_name', characterName);
   revalidatePath(`/character/${encodeURIComponent(characterName)}/quests`);
   return { ok: true };

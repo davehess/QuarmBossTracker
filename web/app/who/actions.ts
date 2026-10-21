@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { BASE_CLASSES } from './classes';
+import { GUILD_TAG } from '@/lib/guild';
 
 async function officerIdentity(): Promise<{ id: string; name: string } | null> {
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -45,12 +46,12 @@ async function upsertOverride(
   const { data: existing } = await admin
     .from('who_overrides')
     .select('class, is_zek, note')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('character', name)
     .maybeSingle();
 
   const row = {
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     character: name,
     class: 'class' in patch ? patch.class : (existing?.class ?? null),
     is_zek: 'is_zek' in patch ? patch.is_zek : (existing?.is_zek ?? null),
@@ -110,13 +111,13 @@ export async function deleteWhoCharacter(
     .from('who_observations')
     .delete({ count: 'exact' })
     .ilike('character', name)
-    .eq('guild_id', 'wolfpack');
+    .eq('guild_id', GUILD_TAG);
   if (obsErr) return { ok: false, error: obsErr.message };
   await admin
     .from('who_overrides')
     .delete()
     .ilike('character', name)
-    .eq('guild_id', 'wolfpack');
+    .eq('guild_id', GUILD_TAG);
   revalidatePath('/who');
   return { ok: true, deleted: obsCount ?? 0 };
 }

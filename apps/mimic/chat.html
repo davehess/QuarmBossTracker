@@ -86,14 +86,26 @@
   #feed::-webkit-scrollbar{width:6px}
   #feed::-webkit-scrollbar-thumb{background:rgba(126,231,199,0.35);border-radius:3px}
   #feed::-webkit-scrollbar-track{background:transparent}
-  .ln{display:flex;align-items:baseline;gap:6px;padding:0 0 0 5px;border-left:3px solid var(--lc,#6e7681);
+  /* one line of chat flows like EQ's own window: inline pieces, and a wrap runs back under the line (14px hanging
+     indent) instead of down a narrow column beside the name (the guild lead, 2026-10-14: "some weird spacing") */
+  .ln{display:block;padding:0 0 0 19px;text-indent:-14px;border-left:3px solid var(--lc,#6e7681);
     text-shadow:0 1px 2px #000;overflow-wrap:anywhere}
+  .ln > *{margin-right:6px}
+  .ln > .tx{margin-right:0}
   /* the timestamp is a button: click it to copy the line */
   .ln .tm{flex:0 0 auto;color:#6e7681;font-size:0.82em;font-variant-numeric:tabular-nums;font-family:inherit;
-    background:none;border:0;padding:0;margin:0;cursor:copy;text-shadow:inherit;line-height:inherit}
+    background:none;border:0;padding:0;margin:0 6px 0 0;cursor:copy;text-shadow:inherit;line-height:inherit;text-indent:0}
   .ln .tm:hover{color:#7ee7c7;text-decoration:underline}
   .ln .tm.copied{color:#56d364;text-decoration:none}
   .ln .tx{flex:1 1 auto;min-width:0;color:var(--lc,#c9d1d9)}
+  /* a line relayed from another member's Mimic while you are out of game: a small dim mark after the text, nothing louder */
+  .ln .via{margin-left:6px;font-size:0.75em;font-style:italic;color:#6e7681;white-space:nowrap}
+  /* the title bar's hint while that feed is live */
+  .awayhint{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#6e7681}
+  .awayhint[hidden]{display:none}
+  /* nobody with Mimic is in game, so there is nothing to relay: said once, dim, not an alarm */
+  .awaynote{flex:0 0 auto;font-size:10px;color:#6e7681;text-shadow:0 1px 2px #000;padding:0 2px}
+  .awaynote[hidden]{display:none}
   .ln .who{flex:0 0 auto;font-weight:bold;color:var(--lc,#c9d1d9)}
   .ln .who.you{opacity:0.75}
   .ln .who.npc{font-weight:normal;font-style:italic}
@@ -170,7 +182,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span id="ttl">💬 Chat</span><input id="find" type="text" maxlength="24" spellcheck="false" autocomplete="off" placeholder="character…" title="Show only one character: what they said, or what was heard on that character of yours. Enter or Esc leaves the box."><button id="fpick" class="fbtn" title="Pick one of your characters">▾</button><span class="sp"></span><button id="histbtn" class="fbtn" title="Show the chat from before this window opened, read from the game's own log files on this PC">⏱</button><button id="linkbtn" class="fbtn" aria-pressed="false" title="Link this window to the chat windows touching it, so they move together">🔗</button><button id="gear" class="fbtn" aria-pressed="false" title="Text size, and the channels that are off until you switch them on">⚙</button></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span id="ttl">💬 Chat</span><span id="awayhint" class="awayhint" hidden title="You are out of game: the guild's /gu and /rs chat is coming from other members' Mimics. It stops when EverQuest starts.">away · guild feed</span><input id="find" type="text" maxlength="24" spellcheck="false" autocomplete="off" placeholder="character…" title="Show only one character: what they said, or what was heard on that character of yours. Enter or Esc leaves the box."><button id="fpick" class="fbtn" title="Pick one of your characters">▾</button><span class="sp"></span><button id="histbtn" class="fbtn" title="Show the chat from before this window opened, read from the game's own log files on this PC">⏱</button><button id="linkbtn" class="fbtn" aria-pressed="false" title="Link this window to the chat windows touching it, so they move together">🔗</button><button id="gear" class="fbtn" aria-pressed="false" title="Text size, and the channels that are off until you switch them on">⚙</button></div>
     <div id="cpick"></div>
     <div id="spanel">
       <div class="row"><span>Text size</span><button id="fsm" class="fbtn" title="Smaller">A−</button><span id="fsz">12</span><button id="fsp" class="fbtn" title="Larger">A+</button><button id="lsp" class="fbtn" title="Line spacing">compact</button></div>
@@ -184,10 +196,11 @@
         <div class="row" id="skillopts"></div>
         <div class="row nobrk" id="chans"></div>
         <div class="hint nobrk" id="tellhint"></div>
-        <div class="hint nobrk">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
+        <div class="hint nobrk">These lines stay on this PC and nothing here is uploaded. Mimic keeps an encrypted copy for the last day so a restart shows the feed again; signing out for a day, or losing access, deletes it. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
       </div></details>
     </div>
     <div id="chips"></div>
+    <div id="awaynote" class="awaynote" hidden>Nobody is in game with Mimic running right now — no guild or raid chat to relay.</div>
     <div id="onlypill"><span id="onlytxt"></span><button type="button" id="onlyx" title="Show all channels again">✕</button></div>
     <div id="feedbox">
       <div id="feed"></div>
@@ -268,7 +281,7 @@
   var _lines = [];             // every line we hold, oldest first (the filter decides what shows)
   var _seq = 0, _lastN = 0, _boot = '';
   var _char = '';              // the character the chip choices are remembered for
-  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, off: [], offChannels: [], only: '' };
+  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false, away: true, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, off: [], offChannels: [], only: '' };
   var _chanNames = {};         // "<character>|<slot number>" -> channel name, learned from lines that carry both (Zeal's /abc shows only the number)
   var _unread = 0;
   var _out = [];               // group ids broken out into their own windows (the Chat window leaves them out)
@@ -283,6 +296,7 @@
   var _histInfo = null;          // { loading } | { failed } | { truncated }
   var _histSig = '';             // the switch set the history on screen was read under
   var _histSeq = 0;
+  var _wipedAt = 0;              // the agent's last wipe stamp seen (a change = the session was revoked: forget everything held)
   var _connectedOnce = false;    // the agent has answered at least once (so PORT is the real one)
   var _lastOn = null;            // the character the last painted line was heard on (the "heard on" tag shows on a change)
 
@@ -409,14 +423,21 @@
     // "Swapped to X": display only. No timestamp button, so there is nothing to copy; it is not a chat line.
     if (l.sep) return '<div class="sep" data-n="' + l.n + '"><span>' + esc(l.text) + '</span></div>';
     var you = !!l.self, who;
-    if (l.ch === 'zone' || l.ch === 'melee' || l.ch === 'spell' || l.ch === 'skill') who = '';
+    // A tell names YOUR character on every line, both ways — "Aldenmar → Brackwyn", "Brackwyn → Aldenmar" — so a
+    // conversation read across alts says which one sent or took each line (the guild lead, 2026-10-15: "know which
+    // character i sent it from"). No character known (an old line) falls back to "You".
+    var tellOn = l.ch === 'tell' && !l.npc && l.on ? String(l.on) : '';
+    if (l.ch === 'zone' || /^(?:melee|spell|skill|loot|random|other|money|emote|pet|who|death|bcast|zeal)$/.test(l.ch)) who = '';   // the log's own sentence: no speaker
     else if (l.npc) who = '<span class="who npc">' + esc(l.who) + '</span>';
+    else if (you && tellOn) who = '<span class="who you" title="sent from ' + esc(tellOn) + '">' + esc(tellOn) + '</span>';
     else if (you) who = '<span class="who you">You</span>';
     else who = '<span class="who name">' + esc(l.who) + '</span>';
     if (l.to) who += '<span class="arrow">→</span><span class="who name">' + esc(l.to) + '</span>';
+    else if (tellOn && !you) who += '<span class="arrow">→</span><span class="who you" title="received on ' + esc(tellOn) + '">' + esc(tellOn) + '</span>';
     var copied = l.n === _copiedN;
-    var otag = tag && l.on ? '<span class="otag" title="heard on ' + esc(l.on) + '">' + esc(l.on) + '</span>' : '';
-    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc(lineColor(l)) + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + tagHtml(l) + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span></div>';
+    var viaMark = l.via === 'guild' ? '<span class="via" title="Relayed from another member\'s Mimic while you are out of game">via guild</span>' : '';
+    var otag = tag && l.on && !tellOn ? '<span class="otag" title="heard on ' + esc(l.on) + '">' + esc(l.on) + '</span>' : '';
+    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc(lineColor(l)) + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + tagHtml(l) + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span>' + viaMark + '</div>';
   }
   // One row, with the "heard on" tag where the character changed from the row before it (a swap line resets
   // it: that line already says so). Rows the filter hides do not count, so a one-speaker search tags the
@@ -429,12 +450,13 @@
   }
   // The search box. A name matches a line when it starts the SPEAKER's name, or the name of the character of
   // yours the line was heard on (case does not matter). A zone line has no speaker: it belongs to the
-  // character whose log it came from. A swap line is shown only with no search.
+  // character whose log it came from. A swap line is shown only with no search. A tell YOU sent matches the
+  // name it went to, so a search for one person shows the whole conversation, both sides.
   function startsWithCI(s, q){ return String(s == null ? '' : s).toLowerCase().indexOf(q) === 0; }
   function matchesFind(l, q){
     if (!q) return true;
     if (l.sep) return false;
-    return startsWithCI(l.on, q) || (!l.self && l.ch !== 'zone' && startsWithCI(l.who, q));
+    return startsWithCI(l.on, q) || (!l.self && l.ch !== 'zone' && startsWithCI(l.who, q)) || (l.ch === 'tell' && startsWithCI(l.to, q));
   }
   function lineVisible(f, l){ return l.sep ? (_findQ === '' && !onlyActive()) : (f(l) && chanShown(l) && matchesFind(l, _findQ)); }
   // The same key the agent de-duplicates its ring with, so a history line already in the live feed is not shown twice.
@@ -448,9 +470,11 @@
   function copyLineText(l){
     // a zone change copies as the plain log line, not as something a character said
     if (l.ch === 'zone') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + 'You have entered ' + l.text + '.';
-    if (l.ch === 'melee' || l.ch === 'spell' || l.ch === 'skill') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
-    var who = l.npc ? l.who : (l.self ? 'You' : l.who);
+    if (/^(?:melee|spell|skill|loot|random|other|money|emote|pet|who|death|bcast|zeal)$/.test(l.ch)) return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
+    var tellOn = l.ch === 'tell' && !l.npc && l.on ? String(l.on) : '';
+    var who = l.npc ? l.who : (l.self ? (tellOn || 'You') : l.who);
     if (l.to) who += ' → ' + l.to;
+    else if (tellOn && !l.self) who += ' → ' + tellOn;
     var t = hhmm(l.t);
     return (t ? '[' + t + '] ' : '') + who + ': ' + l.text;
   }
@@ -517,7 +541,7 @@
     return t ? '<div class="hdiv">— ' + esc(t) + ' —</div>' : '';
   }
   function repaint(){
-    var f = makeFilter(shownGroupIds()), h = '', i;
+    var f = makeFilter(shownGroupIds()), h = '', i, histShown = [];
     _lastOn = null;
     if (_histHours) {
       var have = {}, hh = '', shownH = 0;
@@ -525,18 +549,40 @@
       for (i = 0; i < _histLines.length; i++) {
         var hl = _histLines[i];
         if (!hl.sep && have[chatKey(hl)]) continue;
-        if (lineVisible(f, hl)) { hh += rowHtml(hl); if (!hl.sep) shownH++; }
+        if (lineVisible(f, hl)) { hh += rowHtml(hl); if (!hl.sep) { shownH++; histShown.push(hl); } }
       }
       h += hh + histDividerHtml(shownH);
     }
-    for (i = 0; i < _lines.length; i++) if (lineVisible(f, _lines[i])) h += rowHtml(_lines[i]);
+    var liveShown = shownCopies(_lines);   // a relayed line is hidden only behind a local copy that is on screen too
+    for (i = 0; i < _lines.length; i++) if (lineVisible(f, _lines[i]) && !(_lines[i].via && (heardLocally(_lines[i], liveShown) || (_histHours && heardLocally(_lines[i], histShown))))) h += rowHtml(_lines[i]);
     var stick = pinned();
     feedEl.innerHTML = h;
     if (stick) toBottom();
     paintEmpty();
   }
+  // FB-91: a relayed ("via guild") line whose own copy is in this PC's log is the same line. The local copy wins and keeps
+  // its label, whichever arrived first and whatever the capitalisation or spacing (v = the relayed line, l = a local one).
+  function normText(s){ var lower = String(s == null ? '' : s).toLowerCase(); return lower.replace(/[^a-z0-9]+/g, ' ').trim() || lower.replace(/\s+/g, ' ').trim(); }
+  function sameSaid(v, l){
+    if (!l || l.via || l.sep || v.ch !== l.ch || Math.abs(v.t - l.t) > 5000 || normText(v.text) !== normText(l.text)) return false;
+    var w = String(v.who == null ? '' : v.who).toLowerCase();
+    return String(l.who == null ? '' : l.who).toLowerCase() === w || (!!l.self && String(l.on == null ? '' : l.on).toLowerCase() === w);
+  }
+  function heardLocally(v, pool){ for (var i = 0; i < pool.length; i++) if (sameSaid(v, pool[i])) return true; return false; }
+  // Only a local copy this window actually SHOWS stands in for a relayed one: a copy hidden by a character search, a
+  // channel switched off, or a group held by another window must not take the relayed line down with it (the guild
+  // lead, 2026-10-20: "my messages should always be displayed"). History counts only while it is on.
+  function shownCopies(pool){
+    var f = makeFilter(shownGroupIds()), out = [];
+    for (var i = 0; i < pool.length; i++) if (!pool[i].via && !pool[i].sep && lineVisible(f, pool[i])) out.push(pool[i]);
+    return out;
+  }
   function addLines(fresh){
-    if (!fresh.length) return;
+    var gone = false, pool = shownCopies(fresh.concat(_lines, _histHours ? _histLines : [])), k;
+    var freshShown = shownCopies(fresh);
+    for (k = _lines.length - 1; k >= 0; k--) if (_lines[k].via && heardLocally(_lines[k], freshShown)) { _lines.splice(k, 1); gone = true; }
+    fresh = fresh.filter(function(l){ return !(l.via && heardLocally(l, pool)); });
+    if (!fresh.length) { if (gone) repaint(); return; }
     // A first sight of a channel, or of a slot's name, changes what the ⚙ lists (and may resolve older "#n" rows).
     var learned = false, anyChan = false;
     for (var j = 0; j < fresh.length; j++) {
@@ -544,7 +590,7 @@
       if (fresh[j].ch === 'custom') anyChan = true;
     }
     if (anyChan) paintChans();
-    if (learned) { for (var q = 0; q < fresh.length; q++) _lines.push(fresh[q]); if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX); repaint(); return; }
+    if (learned || gone) { for (var q = 0; q < fresh.length; q++) _lines.push(fresh[q]); if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX); repaint(); return; }
     var f = makeFilter(shownGroupIds()), h = '', shown = 0, stick = pinned();
     for (var i = 0; i < fresh.length; i++) { _lines.push(fresh[i]); if (lineVisible(f, fresh[i])) { h += rowHtml(fresh[i]); if (!fresh[i].sep) shown++; } }
     if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX);
@@ -563,7 +609,7 @@
   // Lines the current switches no longer allow are dropped, not just hidden: turning Officer off should
   // leave nothing of it behind in this window.
   function purgeGated(){
-    _lines = _lines.filter(function(l){ if (l.sep) return true; var g = groupOf(l.ch); return !!g && gateOn(g); });
+    _lines = _lines.filter(function(l){ if (l.sep) return true; if (l.via && !_prefs.away) return false; var g = groupOf(l.ch); return !!g && gateOn(g); });
   }
 
   // The chips that are always on the row, in this order (the guild lead, 2026-10-14: "Guild/Raid/Party/Say/Tells/ooc/shout").
@@ -854,12 +900,16 @@
   var spanelEl = document.getElementById('spanel'), gearEl = document.getElementById('gear');
   // A fourth field of 1 puts the switch under "More settings" instead of on the drawer itself.
   var OPTINS = [
+    ['away',    'Guild and raid chat from the guild while I\'m out of game', 'When EverQuest is not running, show the guild\'s /gu and /rs chat relayed from other members\' Mimics. It stops when the game starts and is never sent anywhere. Needs a linked Wolf Pack account.'],
     ['group',   'Group chat',     'Your group\'s private chat'],
     ['officer', 'Officer chat',   'The officer channel'],
     ['custom',  'Custom channels','Other chat channels you have joined'],
     ['melee',   'Melee',          'Combined melee from the log: your hits and misses, theirs, and pets\'. Off keeps chat readable; right-click the Melee chip to give it a window of its own.', 1],
     ['spells',  'Spells',         'Your casts, spells landing on you and others, spell damage, resists, fizzles and fades. Right-click the Spells chip to give it a window of its own.', 1],
-    ['skills',  'Skills',         'Skill-ups, what your skills did (taunt, forage, mend, feign death, hide...), tradeskill combines and disciplines. Right-click the Skills chip to give it a window of its own.', 1]
+    ['skills',  'Skills',         'Skill-ups, what your skills did (taunt, forage, mend, feign death, hide...), tradeskill combines and disciplines. Right-click the Skills chip to give it a window of its own.', 1],
+    ['loot',    'Loot',           'Your own "You have looted ..." lines. Right-click the Loot chip to give it a window of its own.', 1],
+    ['random',  'Random',         'Everyone\'s /random rolls heard in the zone: who rolled, and the range and number that turned up.', 1],
+    ['other',   'Other',          'Game and system messages, split into their own chips by the channel Zeal says they came on: Money, Emotes, Pets, Who, Deaths, Broadcast and Zeal (item speech, /mystats, Bandolier), with Other keeping what has no channel (experience, faction and the like). Without Zeal, Deaths, Broadcast, the /who list and Bandolier are still found from the log; the rest wait for Zeal. Never chat, tells or any channel you have switched off.', 1]
   ];
   // ── this window's text settings ──────────────────────────────────────────
   // Every Chat window (the main one, and each breakout) keeps its own: win[<id>] in the prefs, id being 'main' or
@@ -1132,10 +1182,10 @@
   function takePrefs(p){
     if (!p) return;
     var tellsWas = _prefs.tells;
-    var meleeWas = _prefs.melee, spellsWas = _prefs.spells, skillsWas = _prefs.skills, showWas = JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow]);
+    var meleeWas = _prefs.melee, spellsWas = _prefs.spells, skillsWas = _prefs.skills, extraWas = [_prefs.loot, _prefs.random, _prefs.other, _prefs.away].join(), showWas = JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow]);
     _prefs = {
       fontSize: p.fontSize || 12, group: !!p.group, officer: !!p.officer, custom: !!p.custom,
-      tells: !!p.tells, melee: !!p.melee, spells: !!p.spells, skills: !!p.skills,
+      tells: !!p.tells, melee: !!p.melee, spells: !!p.spells, skills: !!p.skills, loot: !!p.loot, random: !!p.random, other: !!p.other, away: p.away !== false,
       meleeShow: { mine: !p.meleeShow || p.meleeShow.mine !== false, on_me: !p.meleeShow || p.meleeShow.on_me !== false, others: !p.meleeShow || p.meleeShow.others !== false, misses: !p.meleeShow || p.meleeShow.misses !== false },
       spellShow: { mine: !p.spellShow || p.spellShow.mine !== false, on_me: !p.spellShow || p.spellShow.on_me !== false, others: !p.spellShow || p.spellShow.others !== false },
       skillShow: { mine: !p.skillShow || p.skillShow.mine !== false, others: !p.skillShow || p.skillShow.others !== false },
@@ -1145,7 +1195,7 @@
       win: (p.win && typeof p.win === 'object') ? p.win : {}
     };
     paintSettings();
-    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee || spellsWas !== _prefs.spells || skillsWas !== _prefs.skills || showWas !== JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow])) { purgeGated(); paintChips(); repaint(); }
+    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee || spellsWas !== _prefs.spells || skillsWas !== _prefs.skills || extraWas !== [_prefs.loot, _prefs.random, _prefs.other, _prefs.away].join() || showWas !== JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow])) { purgeGated(); paintChips(); repaint(); }
     // The history was read under one set of switches; a change (Tells, Group, Officer, Custom) re-reads it.
     if (_histHours && _connectedOnce && histQuery() !== _histSig) loadHistory();
   }
@@ -1181,7 +1231,9 @@
     return 'since=' + _seq + '&boot=' + encodeURIComponent(_boot) +
       '&tells=' + (_prefs.tells ? 1 : 0) + '&group=' + (_prefs.group ? 1 : 0) +
       '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0) + '&melee=' + (_prefs.melee ? 1 : 0) +
-      '&spells=' + (_prefs.spells ? 1 : 0) + '&skills=' + (_prefs.skills ? 1 : 0);
+      '&spells=' + (_prefs.spells ? 1 : 0) + '&skills=' + (_prefs.skills ? 1 : 0) +
+      '&loot=' + (_prefs.loot ? 1 : 0) + '&random=' + (_prefs.random ? 1 : 0) + '&other=' + (_prefs.other ? 1 : 0) +
+      '&away=' + (_prefs.away ? 1 : 0);
   }
   // Channel colours come from the agent's list, so a new channel needs no change here; the chips are
   // repainted when that list changes.
@@ -1191,6 +1243,16 @@
     return bits;
   }
   var _lastStyle = '';
+  // The agent's `away` answer ({ on, ingame, at } while the guild feed is live, else null): the title-bar hint, with the
+  // count of members in game WITH MIMIC RUNNING when the bot knows it (others may be online without Mimic and cannot be
+  // seen), and one dim line when that count is 0 so an empty feed is explained. null = unknown = no count.
+  function paintAway(a){
+    var on = !!(a && a.on), n = on && typeof a.ingame === 'number' && a.ingame >= 0 ? Math.floor(a.ingame) : null;
+    var hint = document.getElementById('awayhint'), note = document.getElementById('awaynote');
+    hint.hidden = !on;
+    hint.textContent = 'away · guild feed' + (n === null ? '' : ' · ' + n + ' in game with Mimic');
+    note.hidden = !(on && n === 0);
+  }
   async function tick(){
     // Not before the first prefs: the agent keeps the LAST switches it was handed, and a window that has not
     // read them yet would hand it "everything off" under the others.
@@ -1200,11 +1262,14 @@
       var s = await r.json();
       var c = document.getElementById('conn'); c.className = 'conn ok'; c.textContent = '●';
       if (!s || !s.ok) return;
+      paintAway(_prefs.away ? s.away : null);
       var firstGroups = !_groups.length;
       _groups = s.groups || _groups; _channels = s.channels || _channels;
       var st = takeStyle();
       if (firstGroups || st !== _lastStyle) { _lastStyle = st; paintChips(); paintBrkTitle(); paintEmpty(); }      if (s.reset || (s.boot && s.boot !== _boot)) { _lines = []; feedEl.innerHTML = ''; _boot = s.boot || ''; _lastN = 0; _unread = 0; paintNew(); }
       _seq = s.seq || 0;
+      // The agent emptied its chat cache and rings (the session was revoked): drop the history read back from the logs too.
+      if (s.wiped && s.wiped !== _wipedAt) { _wipedAt = s.wiped; _histLines = []; _histInfo = null; _histSig = ''; repaint(); }
       // First good answer from the agent: the port and the groups are known, so a remembered history window can be read now.
       if (!_connectedOnce) { _connectedOnce = true; if (_histHours) loadHistory(); }
       // Only lines newer than the last one taken: a replayed body (the agent serves its last good one if a
@@ -1213,6 +1278,7 @@
       if (fresh.length) { _lastN = fresh[fresh.length - 1].n; addLines(fresh); } else paintEmpty();
     } catch (e) {
       var c2 = document.getElementById('conn'); c2.className = 'conn bad'; c2.textContent = '○';
+      paintAway(null);
     }
   }
   paintSettings(); paintEmpty(); loadPrefs();

@@ -66,16 +66,23 @@
      Rides the same row as the timing votes: it shows only for a callout that was SPOKEN and carries a
      rule key, and when timing votes are off the row shows it alone (mute-only). After a click the same
      button becomes "Muted — undo". It is a real <button>, so the preload's hover handshake covers it. */
-  .mute-btn{
+  .mute-btn, .enrage-opt, .voice-btn{
     display:none; font:600 12px ui-monospace,Menlo,Consolas,monospace;
     color:#fff; background:rgba(14,17,22,0.85); border:1px solid rgba(255,255,255,0.25);
     border-radius:4px; padding:5px 10px; cursor:pointer; text-shadow:0 1px 2px #000;
     transition: background .15s, border-color .15s;
   }
   #feedback.canmute .mute-btn{display:inline-block}
+  /* 🔊 Voice unclear (the guild lead, 2026-10-19): beside the 🔇 under any callout that was spoken. */
+  #feedback.canvoice .voice-btn{display:inline-block}
+  #feedback.enragemenu .voice-btn{display:none}
   #feedback.mute-only .fb-btn, #feedback.mute-only #fbThanks{display:none}
-  .mute-btn:hover{ background:rgba(110,118,129,0.55); border-color:#6e7681 }
-  .mute-btn.done{ border-color:#56d364; color:#56d364 }
+  /* An enrage callout's 🔇 opens three choices in the same row (the guild lead, 2026-10-19: "muteable per
+     mob / this session / permanently"); while they are open they take the place of the timing votes. */
+  #feedback.enragemenu .enrage-opt{ display:inline-block }
+  #feedback.enragemenu .fb-btn, #feedback.enragemenu #fbThanks{ display:none }
+  .mute-btn:hover, .enrage-opt:hover, .voice-btn:hover{ background:rgba(110,118,129,0.55); border-color:#6e7681 }
+  .mute-btn.done, .voice-btn.done{ border-color:#56d364; color:#56d364 }
   /* Sticky critical callouts (#76). A trigger flagged `sticky` pins here and
      stays until the user clicks it away (or a generous ~5min timeout) instead
      of fading with the normal 3.5s flash. Loud red so a life-or-death callout
@@ -221,6 +228,22 @@
      the press too, without moving the row's layout. */
   .timer-row .timer-x{position:relative}
   .timer-row .timer-x::before{content:'';position:absolute;inset:-5px}
+  /* ⋮ beside the ✕: Move to another panel / Mute (the guild lead, 2026-10-19). Same size, handshake and
+     press target as the ✕; the row itself stays click-through. */
+  .timer-row .timer-menu{flex-shrink:0;width:16px;height:16px;display:flex;position:relative;
+    align-items:center;justify-content:center;border-radius:3px;margin-left:2px;
+    background:rgba(0,0,0,0.35);color:#c9d1d9;border:1px solid rgba(255,255,255,0.18);
+    font-size:12px;line-height:1;cursor:pointer;pointer-events:auto}
+  .timer-row .timer-menu:hover{color:#fff;background:rgba(88,166,255,0.55);border-color:#58a6ff}
+  .timer-row .timer-menu::before{content:'';position:absolute;inset:-5px}
+  /* The row's menu when there is no Canvas page to draw it (the standalone Timers window). */
+  #row-menu{position:fixed;z-index:80;min-width:190px;max-width:260px;box-sizing:border-box;pointer-events:auto;
+    background:rgba(14,17,22,0.96);border:1px solid rgba(110,118,129,0.5);border-radius:6px;padding:4px;
+    color:#e6edf3;font:12px/1.3 system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,0.5)}
+  #row-menu .rm-h{padding:3px 6px 4px;color:#8b949e;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #row-menu button{display:block;width:100%;text-align:left;background:none;border:0;color:inherit;
+    font:inherit;padding:5px 8px;border-radius:4px;cursor:pointer}
+  #row-menu button:hover{background:rgba(88,166,255,0.22)}
   /* (The stack is bottom-anchored now, so the setup bar at the top of the
      window no longer sits on it — the old `body.setup #timers{top:58px}`
      nudge is gone. measureWanted() still reserves the taller top gutter in
@@ -278,6 +301,59 @@
   body.part-callouts #alertcol{transform-origin:50% 100%}
   body.part-callouts #sticky:empty{display:none}
   body.part-callouts.part-edit #placeholder{display:block}
+
+  /* ── Death timeline strip (the guild lead, 2026-10-21) ─────────────────────
+     Bottom-of-window strip: the boss / Tactics-brother deaths of the last 30 minutes as a chain
+     (newest at the right), the gaps between them and the since-last clock. No pair countdown: the
+     encounter script has no window between the Decorins or between Tallon and Vallon.
+     Present only while there is something to show — no empty chrome.
+     The timers stack rides above it (--tline-h, set from JS). Display only: it never speaks,
+     and canvas panels (body.part) never draw it. Click-through like the stack. */
+  #tline{position:fixed;bottom:8px;left:8px;right:8px;z-index:41;display:none;
+    pointer-events:none;font-family:ui-monospace,Menlo,Consolas,monospace;
+    background:rgb(0 0 0 / var(--bg-alpha));border-radius:4px;border-left:3px solid #58a6ff;
+    padding:4px 8px 5px;text-shadow:0 1px 2px #000;color:#fff;--tl-s:1}
+  body.has-tline #tline{display:flex;align-items:flex-start;gap:6px}
+  body.part #tline{display:none !important}
+  body.has-tline:not(.part):not(.timers-topdown) #timers{bottom:calc(12px + var(--tline-h,0px))}
+  /* ⇅ Timers at the TOP (the guild lead, 2026-10-21: "if the timers start at the top the timeline should start at
+     the top too"): the strip hangs off the top edge, below the ✥ / 🗑 / ✕ gutter (34px, 58px in setup), and the
+     stack starts under it. The class is the same one the setting already toggles, so the swap is live. */
+  body.timers-topdown #tline{top:34px;bottom:auto}
+  body.setup.timers-topdown #tline{top:58px}
+  body.has-tline:not(.part).timers-topdown #timers{top:calc(38px + var(--tline-h,0px))}
+  body.has-tline:not(.part).setup.timers-topdown #timers{top:calc(62px + var(--tline-h,0px))}
+  #tline .tl-chain{display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 7px;font-size:calc(13px * var(--tl-s));line-height:1.3;color:#e6edf3}
+  #tline .tl-link{white-space:nowrap}
+  #tline .tl-d b{font-weight:700;color:#fff}
+  #tline .tl-d span{color:#9fb3c8;margin-left:4px;font-variant-numeric:tabular-nums}
+  #tline .tl-gap{color:#f6c365;font-weight:700;font-variant-numeric:tabular-nums}
+  #tline .tl-more{color:#9fb3c8}
+  #tline .tl-since{margin-left:auto;color:#58a6ff;font-weight:700;font-variant-numeric:tabular-nums}
+  /* Controls (the guild lead, 2026-10-21: "minimizable, text size scalable"): ▾/▸ at the left edge, A−/A+ at the
+     right. Real <button>s, so the preload's hover handshake arms them; the strip itself stays click-through. */
+  #tline #tl-body{flex:1;min-width:0}
+  #tline .tl-reh{flex-shrink:0;white-space:nowrap;color:#f0c040;font-size:calc(11px * var(--tl-s));font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin-right:8px}
+  #tline #tl-body > .tl-reh{display:block;margin:0 0 2px}
+  #tline .tl-btn{pointer-events:auto;cursor:pointer;flex-shrink:0;font:700 12px ui-monospace,Menlo,Consolas,monospace;
+    color:#cfe3ff;background:rgba(88,166,255,0.18);border:1px solid rgba(88,166,255,0.45);border-radius:3px;
+    padding:0;width:22px;height:20px;line-height:18px;text-align:center}
+  #tline .tl-btn:hover{background:rgba(88,166,255,0.38)}
+  #tline .tl-btn[disabled]{opacity:.35;cursor:default}
+  #tline #tl-size{display:flex;gap:3px;flex-shrink:0}
+  #tline .tl-up{margin-top:4px;padding-top:3px;border-top:1px solid rgba(255,255,255,0.14)}
+  #tline .tl-up-h{font-size:calc(11px * var(--tl-s));letter-spacing:.08em;text-transform:uppercase;color:#9fb3c8;margin-bottom:1px}
+  #tline .tl-up-row{display:flex;align-items:baseline;gap:10px;font-size:calc(15px * var(--tl-s));line-height:1.3;color:#e6edf3}
+  #tline .tl-up-lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #tline .tl-up-clk{flex-shrink:0;font-weight:800;font-variant-numeric:tabular-nums;color:#ffc14d}
+  #tline .tl-up-row.plan .tl-up-lbl{color:#9fd0ff;white-space:normal}
+  #tline .tl-one{display:flex;align-items:baseline;gap:8px;font-size:calc(16px * var(--tl-s));font-weight:700;line-height:1.3;min-height:20px;white-space:nowrap;overflow:hidden}
+  #tline .tl-one-main{color:#ffc14d;flex-shrink:0}
+  #tline .tl-one-main.since{color:#58a6ff}
+  #tline .tl-one-sep{color:#9fb3c8}
+  #tline .tl-one-next{color:#e6edf3;font-weight:600;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  #tline .tl-one-next i{font-style:normal;font-variant-numeric:tabular-nums;font-weight:800;color:#ffc14d;margin-left:10px}
+  #tline .tl-one b{font-weight:800}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -301,12 +377,17 @@
       <button class="fb-btn good" data-dir="good" title="Timing was right.">✓ Good!</button>
       <button class="fb-btn late" data-dir="too_early" title="The trigger fired BEFORE the actual event — delay the trigger next time.">» Too early</button>
       <button class="fb-btn off" data-dir="off" title="Stop asking — no timing votes after callouts, and nothing about callout timing is sent. Turn it back on in the dashboard, Triggers tab, Timing votes.">🔕</button>
-      <button id="muteBtn" class="mute-btn" title="Stop saying this callout out loud. It still shows on screen. Undo it from here right after, or any time in the dashboard, Triggers tab, What you hear.">🔇 Mute</button>
+      <button id="muteBtn" class="mute-btn" title="Stop saying this callout out loud. It still shows on screen. Undo it from here right after, or any time in the dashboard, Voice tab, What you hear.">🔇 Mute</button>
+      <button id="voiceBtn" class="voice-btn" title="Say this callout was hard to understand. It sends what was spoken, the voice it was spoken in and your character to the officers; no audio leaves your PC. You can suggest a better wording from the dashboard, Triggers tab, Recent fires.">🔊 Voice unclear</button>
+      <button class="enrage-opt" data-scope="mob" title="Stop this mob's enrage callouts (text and speech) until Mimic restarts.">This mob · session</button>
+      <button class="enrage-opt" data-scope="all" title="Stop every enrage callout (text and speech) until Mimic restarts.">All enrage · session</button>
+      <button class="enrage-opt" data-scope="always" title="Stop this mob's enrage callouts for good. Undo it any time in the dashboard, Triggers tab, Recent fires.">This mob · always</button>
       <span id="fbThanks">thanks — recorded.</span>
     </div>
     <div id="sticky"></div>
   </div>
   <div id="timers"></div>
+  <div id="tline"><button id="tl-toggle" class="tl-btn" type="button" title="Minimize the timeline">▾</button><div id="tl-body"></div><div id="tl-size"><button id="tl-sm" class="tl-btn" type="button" title="Smaller text">A−</button><button id="tl-lg" class="tl-btn" type="button" title="Bigger text">A+</button></div></div>
 <script src="voice.js"></script>
 <script>
   // ── Timers canvas part ─────────────────────────────────────────────────────
@@ -523,10 +604,12 @@
   var SPEAK_QUEUE_MAX = 3;      // a raid can out-talk the engine; bound the backlog
   // The voice: the player's pick (cfg.voice in Mimic's config) over the agent's voice packs; see voice.js.
   // Re-read every few seconds so a change in Settings reaches the next callout without a restart.
-  var _voiceCfg = null, _voicePacks = [];
+  var _voiceCfg = null, _voicePacks = [], _voiceStatus = null;
   function _refreshVoice(){
     if (PART) return;   // a canvas panel never speaks
     try { if (window.mimic && window.mimic.getConfig) window.mimic.getConfig().then(function(c){ _voiceCfg = (c && c.voice) || null; }, function(){}); } catch (e) {}
+    // Which downloaded voices (Piper) are installed; null until Mimic answers = the Windows voice.
+    try { if (window.mimic && window.mimic.voiceStatus) window.mimic.voiceStatus().then(function(s){ _voiceStatus = s || null; }, function(){}); } catch (e) {}
     try {
       fetch('http://127.0.0.1:' + PORT + '/api/voice-packs').then(function(r){ return r.ok ? r.json() : null; })
         .then(function(j){ if (j && Array.isArray(j.packs)) _voicePacks = j.packs; }, function(){});
@@ -536,6 +619,49 @@
   setInterval(_refreshVoice, 5000);
   var _speakQ = [];
   var _speakingUtt = null, _speakingPrio = -1, _speakWatchdog = null;
+  var _speakingAudio = null;   // the <audio> of a downloaded voice that is talking now (see _speakNeural)
+
+  // The downloaded voice (Piper) this callout should use, or null for the Windows voice.
+  function _neuralChoice(){
+    try {
+      if (!window.WPVoice || !window.WPVoice.chooseEngine) return null;
+      var c = window.WPVoice.chooseEngine(_voiceCfg, _voiceStatus);
+      return c.engine === 'windows' ? null : c;
+    } catch (e) { return null; }
+  }
+  function _stopSpeech(){
+    try { window.speechSynthesis.cancel(); } catch (e) {}
+    if (_speakingAudio){ try { _speakingAudio.pause(); } catch (e) {} _speakingAudio = null; }
+  }
+
+  // What was ACTUALLY said (the guild lead, 2026-10-19: "B for voice"): the last 20 spoken lines with the engine and
+  // voice that played them, so a callout nobody could understand can be reported with the voice that mangled it, and
+  // replayed from the dashboard. The engine is the one that played: a downloaded voice that fell back to the Windows
+  // voice is recorded as Windows (it is only noted when the line starts, in _speakNeural / _speakWindows). Each entry
+  // is also handed to the agent, which keeps it on the matching Recent fires row (POST /api/voice-spoken).
+  var SPOKEN_KEEP = 20, _spokenLog = [];
+  function _noteSpoken(item, engine, voice, rate, pitch){
+    var m = (item && item.meta) || {};
+    var e = {
+      spoken: String((item && item.text) || '').slice(0, 300), original: String(m.original || '').slice(0, 300),
+      engine: String(engine || 'windows').slice(0, 20), voice: String(voice || 'default').slice(0, 80),
+      rate: rate, pitch: pitch, trigger_id: m.trigger_id || null, trigger_name: String(m.trigger || '').slice(0, 200),
+      ts: m.ts || 0, at: Date.now(),
+    };
+    _spokenLog.push(e);
+    while (_spokenLog.length > SPOKEN_KEEP) _spokenLog.shift();
+    try {
+      fetch('http://127.0.0.1:' + PORT + '/api/voice-spoken', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(e),
+      }).catch(function(){});
+    } catch (err) {}
+    return e;
+  }
+  // The newest spoken line that came from this fire, or null (nothing has played yet, or it was muted).
+  function _spokenFor(f){
+    for (var i = _spokenLog.length - 1; i >= 0; i--) if (f && _spokenLog[i].ts === f.ts) return _spokenLog[i];
+    return null;
+  }
 
   function _speakPriority(meta){
     var t = String((meta && meta.trigger) || '');
@@ -551,13 +677,18 @@
   function speak(text, meta){
     if (PART) return;   // a canvas panel shows; the trigger window speaks
     if (_wpMutedNow()) return;
-    if (!window.speechSynthesis){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
-    var item = { text: text, meta: meta, prio: _speakPriority(meta), at: Date.now() };
+    if (!window.speechSynthesis && !_neuralChoice()){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
+    // The one place spoken text is handed to a voice: respelled for the ear and stripped of symbols (voice.js
+    // speakable). `text` stays what the flash shows; item.text is what is SAID and what the spoken log records.
+    var said = text;
+    try { if (window.WPVoice && window.WPVoice.speakable) said = window.WPVoice.speakable(text); } catch (e) {}
+    if (!said) return;   // nothing but symbols: there is nothing to say
+    var item = { text: said, meta: meta, prio: _speakPriority(meta), at: Date.now() };
     if (!_speakingUtt){ _speakNow(item); return; }
     if (item.prio > _speakingPrio){
       // Preempt. The interrupted one is DROPPED, not requeued — by the time the
       // higher-priority line finishes it would be stale anyway.
-      try { window.speechSynthesis.cancel(); } catch (e) {}
+      _stopSpeech();
       _speakingUtt = null;
       _speakNow(item);
       return;
@@ -584,6 +715,42 @@
   }
 
   function _speakNow(item){
+    var choice = _neuralChoice();
+    if (choice){ _speakNeural(item, choice); return; }
+    _speakWindows(item);
+  }
+
+  // A downloaded voice (Piper): Mimic makes the WAV, this plays it. ANY failure — no audio in time, a play error,
+  // a clip that will not start — speaks the same line with the Windows voice (_fallbackToWindows), so a callout
+  // is never lost to a download that broke. `tok` is this line's place in the queue, as `u` is for the Windows path.
+  function _speakNeural(item, choice){
+    var tok = { neural: true };
+    _speakingUtt = tok; _speakingPrio = item.prio;
+    var rate = 1.05, volume = 1;
+    try { var vp = window.WPVoice.pick(_voicePacks, _voiceCfg, item.meta && item.meta.voice_pack, []); rate = vp.rate; volume = vp.volume; } catch (e) {}
+    // Same watchdog as the Windows path: the queue drains on a timer even if nothing ever finishes.
+    var est = Math.min(20000, 3500 + String(item.text || '').length * 110);
+    _speakWatchdog = setTimeout(function(){
+      if (_speakingUtt === tok){ _stopSpeech(); _speakingUtt = null; _speakingPrio = -1; _speakPump(); }
+    }, est);
+    window.WPVoice.neuralAudio(item.text, rate, choice).then(function(a){
+      if (_speakingUtt !== tok) return;            // preempted, or the watchdog already moved on
+      if (!a){ _fallbackToWindows(item); return; }
+      _speakingAudio = a;
+      a.volume = volume;                           // the player's Voice volume (0-1)
+      a.addEventListener('ended', function(){ if (_speakingUtt === tok){ _speakingAudio = null; _speakPump(); } });
+      a.addEventListener('error', function(){ if (_speakingUtt === tok){ _speakingAudio = null; _fallbackToWindows(item); } });
+      a.play().then(function(){ reportPlayback('started', choice.engine, item.meta); _noteSpoken(item, choice.engine, choice.voice, rate, 1); },
+        function(){ if (_speakingUtt === tok){ _speakingAudio = null; _fallbackToWindows(item); } });
+    }, function(){ if (_speakingUtt === tok) _fallbackToWindows(item); });
+  }
+  function _fallbackToWindows(item){
+    if (_speakWatchdog){ clearTimeout(_speakWatchdog); _speakWatchdog = null; }
+    _speakingUtt = null; _speakingPrio = -1;
+    _speakWindows(item);
+  }
+
+  function _speakWindows(item){
     try{
       const u = new SpeechSynthesisUtterance(item.text);
       u.rate = 1.05; u.volume = 1;
@@ -594,6 +761,7 @@
           const vp = window.WPVoice.pick(_voicePacks, _voiceCfg, item.meta && item.meta.voice_pack, window.speechSynthesis.getVoices());
           if (vp.voice) u.voice = vp.voice;
           u.rate = vp.rate; u.pitch = vp.pitch;
+          if (vp.volume >= 0 && vp.volume <= 1) u.volume = vp.volume;
         }
       } catch (e) {}
       var settled = false;
@@ -614,6 +782,7 @@
       _speakWatchdog = setTimeout(function(){
         if (_speakingUtt === u){ _speakingUtt = null; _speakingPrio = -1; _speakPump(); }
       }, est);
+      _noteSpoken(item, 'windows', u.voice && u.voice.name, u.rate, u.pitch);
       window.speechSynthesis.speak(u);
     }catch(e){
       reportPlayback('error', String((e && e.message) || e), item.meta);
@@ -740,6 +909,7 @@
   // handshake covers it, and it asks for the handshake itself like the vote buttons do.
   let _muteFire = null;           // the fire the button is currently offered for
   let _muteUndoKey = null;        // set once muted: the key the undo clears
+  let _enrageUndo = null;         // an enrage callout muted from the three choices: { scope, mob }
   const muteBtn = document.getElementById('muteBtn');
   function postRule(key, mode){
     return fetch('http://127.0.0.1:' + PORT + '/api/trigger-rules', {
@@ -748,10 +918,12 @@
     }).then(function(r){ return r.ok; }).catch(function(){ return false; });
   }
   function setMuteIdle(t){
-    _muteFire = t || null; _muteUndoKey = null;
+    _muteFire = t || null; _muteUndoKey = null; _enrageUndo = null;
     if (!muteBtn) return;
-    muteBtn.textContent = '🔇 Mute';
+    // An enrage callout (it names its mob) opens three choices instead of muting in one click.
+    muteBtn.textContent = (t && t.enrage_mob) ? '🔇 Mute…' : '🔇 Mute';
     muteBtn.classList.remove('done');
+    fbWrap.classList.remove('enragemenu');
     fbWrap.classList.toggle('canmute', !!t);
   }
   // Called after showFeedback for a fire drawn on this page. Only a fire that was actually spoken
@@ -767,6 +939,13 @@
     offerMute._t = setTimeout(function(){ if (!_muteUndoKey) fbWrap.classList.remove('show'); }, 8000);
   }
   function muteClick(){
+    if (_enrageUndo){
+      const u = _enrageUndo;
+      postEnrageMute('unmute', u.scope, u.mob).then(function(ok){ if (ok) fbWrap.classList.remove('show'); });
+      setMuteIdle(null);
+      return;
+    }
+    if (_muteFire && _muteFire.enrage_mob && !_muteUndoKey){ toggleEnrageMenu(); return; }
     if (_muteUndoKey){
       const k = _muteUndoKey;
       postRule(k, null).then(function(ok){ if (ok) fbWrap.classList.remove('show'); });
@@ -790,6 +969,97 @@
     muteBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
     muteBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
     muteBtn.addEventListener('click', muteClick);
+  }
+
+  // The three choices behind an enrage callout's 🔇 (the guild lead, 2026-10-19). The agent owns the mutes
+  // (POST /api/enrage-mute): this mob or every enrage callout until Mimic restarts, or this mob for good.
+  // A muted callout shows nothing and says nothing. Real <button>s, so the hover handshake covers them.
+  function postEnrageMute(action, scope, mob){
+    return fetch('http://127.0.0.1:' + PORT + '/api/enrage-mute', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action, scope: scope, mob: mob }),
+    }).then(function(r){ return r.ok; }).catch(function(){ return false; });
+  }
+  function toggleEnrageMenu(){
+    fbWrap.classList.toggle('enragemenu');
+    // Keep the row up while the choices are open.
+    clearTimeout(offerMute._t); clearTimeout(showFeedback._t);
+    offerMute._t = setTimeout(function(){ fbWrap.classList.remove('enragemenu'); fbWrap.classList.remove('show'); }, 12000);
+  }
+  function pickEnrageMute(scope){
+    const f = _muteFire;
+    if (!f || !f.enrage_mob) return;
+    postEnrageMute('mute', scope, f.enrage_mob).then(function(ok){
+      if (!ok) return;
+      _enrageUndo = { scope: scope, mob: f.enrage_mob };
+      fbWrap.classList.remove('enragemenu');
+      muteBtn.textContent = 'Muted — undo';
+      muteBtn.classList.add('done');
+      clearTimeout(offerMute._t); clearTimeout(showFeedback._t);
+      offerMute._t = setTimeout(function(){ fbWrap.classList.remove('show'); }, 8000);
+    });
+  }
+  fbWrap.querySelectorAll('.enrage-opt').forEach(function(b){
+    b.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
+    b.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
+    b.addEventListener('click', function(){ pickEnrageMute(b.getAttribute('data-scope')); });
+  });
+
+  // 🔊 Voice unclear (the guild lead, 2026-10-19: "B for voice"). One click reports what was SPOKEN for the fire
+  // under the banner (the ring above), with the engine and voice that said it. The agent adds the version and the
+  // character and passes it to the server; the officers read it at /admin/voice-reports. A real <button>, so the
+  // hover handshake covers it. If the server is not set up for reports yet the button says so and stays
+  // clickable; nothing is queued behind the person's back.
+  let _voiceFire = null;
+  const voiceBtn = document.getElementById('voiceBtn');
+  function setVoiceIdle(t){
+    _voiceFire = t || null;
+    if (!voiceBtn) return;
+    voiceBtn.textContent = '🔊 Voice unclear';
+    voiceBtn.classList.remove('done');
+    fbWrap.classList.toggle('canvoice', !!t);
+  }
+  // Called after offerMute for a fire drawn on this page. Any callout that was spoken offers it, with or without a
+  // rule key. Not on a canvas panel: it never speaks, so it has no record of what was said (the trigger window
+  // does, and the dashboard's Recent fires reaches the same line). When no other button made the row, this one
+  // shows it alone, as the 🔇 does when timing votes are off. One timer slot (offerMute._t) serves all the buttons.
+  function offerVoice(t){
+    const can = !!(t && !PART && !t.mute && !t.test && !t.rehearsal && !t.replay);
+    setVoiceIdle(can ? t : null);
+    if (!can) return;
+    fbWrap.classList.toggle('mute-only', !_votesOn);
+    fbWrap.classList.add('show');
+    if (!_muteFire){ clearTimeout(offerMute._t); offerMute._t = setTimeout(function(){ fbWrap.classList.remove('show'); }, 8000); }
+  }
+  function postVoiceReport(e){
+    return fetch('http://127.0.0.1:' + PORT + '/api/voice-report', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spoken: e.spoken, original: e.original, engine: e.engine, voice: e.voice, rate: e.rate, pitch: e.pitch,
+        trigger_id: e.trigger_id, trigger_name: e.trigger_name }),
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(j){
+        return { ok: r.ok && !(j && j.ok === false), unavailable: r.status === 503, limited: r.status === 429 };
+      });
+    }, function(){ return { ok: false }; });
+  }
+  function voiceClick(){
+    const f = _voiceFire;
+    if (!f || voiceBtn.classList.contains('done')) return;
+    const e = _spokenFor(f);
+    if (!e){ voiceBtn.textContent = 'Nothing was spoken'; return; }
+    voiceBtn.textContent = 'Sending…';
+    postVoiceReport(e).then(function(r){
+      voiceBtn.textContent = r.ok ? 'Reported' : r.unavailable ? 'Voice reports are not switched on yet' : r.limited ? 'Too many reports, try again soon' : 'Could not send';
+      if (r.ok) voiceBtn.classList.add('done');
+    });
+    // Keep the row up long enough to read the answer.
+    clearTimeout(offerMute._t); clearTimeout(showFeedback._t);
+    offerMute._t = setTimeout(function(){ fbWrap.classList.remove('show'); }, 8000);
+  }
+  if (voiceBtn) {
+    voiceBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
+    voiceBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
+    voiceBtn.addEventListener('click', voiceClick);
   }
 
   // Sticky critical callouts (#76). A fire flagged `sticky` pins a row that
@@ -906,13 +1176,15 @@
     // sound_mode 'replace' (the guild lead, 2026-10-14: "allow them to use the sound effects instead of
     // callouts tts"): the sound plays INSTEAD of the spoken line. If it cannot play (no such file on this
     // PC) the line is spoken after all, so a missing sound never costs the callout.
-    const speakMeta = { trigger: t.trigger || t.text || t.label || spoken, rehearsal: !!t.rehearsal, voice_pack: t.voice_pack || null };
+    const speakMeta = { trigger: t.trigger || t.text || t.label || spoken, rehearsal: !!t.rehearsal, voice_pack: t.voice_pack || null,
+      original: t.text || '', trigger_id: t.trigger_id || null, ts: t.ts || 0 };
     const replaced = !!(t.sound && t.sound_mode === 'replace');
     if (!t.mute && !replaced) speak(spoken, speakMeta);
     const played = playSound(t.sound, t.sound_volume);
     if (replaced && !t.mute && played && played.then) played.then(function(ok){ if (!ok) speak(spoken, speakMeta); });
     if (visual) showFeedback(t);
     if (visual) offerMute(t);   // "What you hear": 🔇 under a callout that was actually spoken
+    if (visual) offerVoice(t);  // 🔊 Voice unclear beside it
     if (t.sticky && !_visualElsewhere) pinSticky(t);
   }
 
@@ -1039,15 +1311,26 @@
     const row = x && x.closest ? x.closest('.timer-row') : null;
     return row && row.dataset ? row.dataset.timerId : null;
   }
+  // The ⋮ beside the ✕ takes the same hover handshake and the same press.
+  function _timerMenuOf(ev){
+    const t = ev && ev.target;
+    return (t && t.closest) ? t.closest('.timer-menu') : null;
+  }
   function onTimerXOver(ev){
-    if (_timerXOf(ev)) { try { window.mimic.overlayHoverInteractive(true); } catch(e){} }
+    if (_timerXOf(ev) || _timerMenuOf(ev)) { try { window.mimic.overlayHoverInteractive(true); } catch(e){} }
   }
   function onTimerXOut(ev){
-    const x = _timerXOf(ev);
+    const x = _timerXOf(ev) || _timerMenuOf(ev);
     if (x && !(ev.relatedTarget && x.contains(ev.relatedTarget))) { try { window.mimic.overlayHoverInteractive(false); } catch(e){} }
   }
   function onTimerXPress(ev){
     if (ev.button != null && ev.button !== 0) return;
+    const m = _timerMenuOf(ev);
+    if (m){
+      const mid = _timerIdOf(m);
+      if (mid){ if (ev.preventDefault) ev.preventDefault(); openRowMenu(mid, m); }
+      return;
+    }
     const x = _timerXOf(ev);
     const id = _timerIdOf(x);
     if (!id) return;
@@ -1057,6 +1340,103 @@
   timersEl.addEventListener('mouseover', onTimerXOver);
   timersEl.addEventListener('mouseout', onTimerXOut);
   timersEl.addEventListener('mousedown', onTimerXPress);
+
+  // ── ⋮ on a row: Move to another panel, Mute (the guild lead, 2026-10-19: "click on a line and move it to a new timer, not
+  // just X it out … permanently mute and review those lines somewhere") ──────────────────────────────────────────────────
+  // In a Canvas panel the menu is drawn by the Canvas page (parent.wpCanvasRowMenu): this iframe is only as big as its
+  // panel, so a menu drawn here would be clipped by it. The standalone Timers window has no such page and draws the Mute
+  // choices itself (Move needs panels). A mute is the agent's (POST /api/timer-mute): the row is dropped there, so every
+  // surface agrees; this page only hides it at once instead of waiting for the next poll.
+  var _rowMenuEl = null, _rowMenuTimer = null;
+  const NO_MUTE_ID = /^(loot|auction|named|sample)\|/;
+  function _rowMutable(id, kind){ return kind !== 'loot' && !NO_MUTE_ID.test(String(id)); }
+  function _canvasMenuFn(){
+    if (PART !== 'timers') return null;
+    try { const f = window.parent && window.parent.wpCanvasRowMenu; return (typeof f === 'function') ? f : null; } catch(e){ return null; }
+  }
+  // Does this row get a ⋮ at all: something to move (Canvas, not a loot chip) or something to mute.
+  function _rowHasMenu(t){
+    if (t.test || t.kind === 'loot') return false;
+    return !!_canvasMenuFn() || _rowMutable(t.id, t.kind);
+  }
+  function _rowMenuInfo(id){
+    const n = timerNodes.get(id);
+    if (!n) return null;
+    const isSpell = String(id).indexOf('bt|spell|') === 0;
+    return {
+      id: id, effect: n.effect, target: n.target, group: n.group || null, kind: n.kind || null,
+      spell: isSpell ? String(n.effect).replace(/\s*⏱\s*$/, '').replace(/\?+$/, '').trim() : null,
+      mob: isSpell ? String(n.target || '').replace(/\s+#\d+\s*$/, '').trim() : null,
+      mutable: _rowMutable(id, n.kind),
+    };
+  }
+  // Gone from the screen now, and kept from a poll already in flight (the same 4 s as the ✕); nothing is sent.
+  function hideRowLocal(id){
+    _dismissedIds.set(id, Date.now() + 4000);
+    const n = timerNodes.get(id);
+    if (n){ n.row.remove(); timerNodes.delete(id); }
+    try { requestAutoHeight(); } catch(e){}
+    try { refreshClearButton(); } catch(e){}
+  }
+  window.wpPartHide = hideRowLocal;
+  function openRowMenu(id, handle){
+    const info = _rowMenuInfo(id);
+    if (!info) return;
+    const row = (handle && handle.closest) ? handle.closest('.timer-row') : null;
+    const r = (row || handle).getBoundingClientRect();
+    const rect = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    const canvas = _canvasMenuFn();
+    if (canvas){ try { canvas(info, rect, PANEL); return; } catch(e){} }
+    localRowMenu(info, rect);
+  }
+  function closeRowMenu(){
+    if (_rowMenuTimer){ clearTimeout(_rowMenuTimer); _rowMenuTimer = null; }
+    if (_rowMenuEl){ _rowMenuEl.remove(); _rowMenuEl = null; }
+    try { requestAutoHeight(); } catch(e){}
+  }
+  function postTimerMute(info, scope, onlyMob){
+    hideRowLocal(info.id);
+    try {
+      fetch('http://127.0.0.1:'+PORT+'/api/timer-mute', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ action:'mute', scope: scope, id: info.id, only_mob: !!onlyMob }),
+      }).catch(function(){});
+    } catch(e){}
+  }
+  function localRowMenu(info, rect){
+    const same = !!(_rowMenuEl && _rowMenuEl.getAttribute('data-id') === info.id);
+    closeRowMenu();
+    if (same || !info.mutable) return;
+    const items = [['session', 'Mute this session', false], ['always', 'Mute always', false]];
+    if (info.spell && info.mob) items.push(['always', 'Mute ' + info.spell + ' on this mob only', true]);
+    const el = document.createElement('div');
+    el.id = 'row-menu';
+    el.setAttribute('data-wp-interact', '');
+    el.setAttribute('data-id', info.id);
+    let h = '<div class="rm-h">' + _esc(info.effect) + '</div>';
+    items.forEach(function(it, i){ h += '<button type="button" data-i="' + i + '">' + _esc(it[1]) + '</button>'; });
+    el.innerHTML = h;
+    el.addEventListener('mouseenter', function(){ if (_rowMenuTimer){ clearTimeout(_rowMenuTimer); _rowMenuTimer = null; } try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
+    el.addEventListener('mouseleave', function(){ closeRowMenu(); try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
+    el.addEventListener('click', function(ev){
+      const b = ev.target && ev.target.closest ? ev.target.closest('button') : null;
+      const it = b ? items[Number(b.getAttribute('data-i'))] : null;
+      if (!it) return;
+      closeRowMenu();
+      postTimerMute(info, it[0], it[2]);
+      try { window.mimic.overlayHoverInteractive(false); } catch(e){}
+    });
+    document.body.appendChild(el);
+    _rowMenuEl = el;
+    const w = el.offsetWidth, hh = el.offsetHeight, W = window.innerWidth, H = window.innerHeight;
+    el.style.left = Math.max(4, Math.min(rect.right - w, W - w - 4)) + 'px';
+    let top = rect.bottom + 2;
+    if (top + hh > H - 4) top = rect.top - hh - 2;
+    el.style.top = Math.max(4, top) + 'px';
+    // Never entered: it goes away by itself (a locked window cannot see a click elsewhere).
+    _rowMenuTimer = setTimeout(closeRowMenu, 5000);
+    try { requestAutoHeight(); } catch(e){}
+  }
   // 🗑 title-bar clear-all — countdowns AND pinned callouts in one click.
   // "this is annoying and no way to clear it" (Rethlan, live on Ssra): before
   // this the only escape was hiding the whole overlay.
@@ -1139,6 +1519,9 @@
   }
   // Rows that fit the panel: its height in unscaled px over one row plus the 3px gap.
   function _partRowCap(){
+    // A panel that fits its height to its rows grows with them, so its height cannot be what caps them
+    // (canvas.html wpCanvasRowCap answers 0 for a panel that keeps a height set by hand).
+    try { var fc = window.parent && window.parent.wpCanvasRowCap, fitRows = (typeof fc === 'function') ? fc(PANEL) : 0; if (fitRows > 0) return fitRows; } catch (e) {}
     var first = timersEl.querySelector('.timer-row:not(.timer-more)');
     var rowH = (first && first.offsetHeight) || 24;
     return Math.max(1, Math.floor(((window.innerHeight - 8) / _partScale() + 3) / (rowH + 3)));
@@ -1219,6 +1602,15 @@
           + '<span class="timer-effect">' + _esc(effect) + '</span>'
           + '</span>'
           + '<div class="timer-bar"></div>';
+        // ⋮ before the ✕: Move to another panel (Canvas) / Mute. Not on a loot chip, a test row, or a row with nothing to offer.
+        if (_rowHasMenu(t)){
+          const mn = document.createElement('span');
+          mn.className = 'timer-menu';
+          mn.setAttribute('data-wp-interact', '');   // a clickable <span>, like the ✕
+          mn.textContent = '⋮';
+          mn.title = _canvasMenuFn() ? 'Move this to another panel, or mute it' : 'Mute this timer';
+          row.appendChild(mn);
+        }
         // #207: EVERY countdown gets a ✕, not just the #107 loot chips.
         {
           const x = document.createElement('span');
@@ -1258,7 +1650,8 @@
         n.target = target;
         n.effect = effect;
       }
-      n.ends_at_local = Date.now() + t.remaining_ms;
+      n.ends_at_local = t.cycle_ms > 0 ? smoothAnchor(n.ends_at_local, Date.now() + t.remaining_ms, t.cycle_ms)
+                                       : Date.now() + t.remaining_ms;
       n.duration_sec  = t.duration_sec || n.duration_sec;
       // Warning callout config (EQLP "N seconds before the timer ends"). Fired
       // once by paintTimers when the countdown crosses the threshold.
@@ -1280,6 +1673,8 @@
       // expiring and popping back in on the next poll.
       n.cycle_ms = t.cycle_ms > 0 ? t.cycle_ms : 0;
       n.pinned = !!t.pinned;
+      n.group  = t.group || null;   // what the ⋮ menu hands the Canvas to route/move the row
+      n.kind   = t.kind || null;
       // "What you hear": the agent's rule for this countdown's trigger. The pre-end warnings are
       // fired from here, not from the agent, so the rule has to be honoured here too.
       n.rule_key  = t.rule_key || null;
@@ -1311,6 +1706,21 @@
     }
     while (timersEl.children.length > want.length) timersEl.lastChild.remove();
     refreshClearButton();
+  }
+  // A cyclic row's boundary (the 6 s server / recharm tick) is an ESTIMATE that arrives with 0-300 ms of flush-delay noise
+  // each poll, so re-anchoring on it jumped the countdown (FB-85, a raider: "very jumpy instead of not a smooth
+  // countdown"). Keep the anchor and move it only as far as the real drift: the error is taken modulo the cycle (a
+  // boundary one cycle off is the same boundary); under 250 ms it is noise and ignored; up to 1.5 s it is closed a
+  // quarter at a time per poll; past 1.5 s, or with no anchor yet (a new row), the estimate is taken as it comes.
+  // The same function sits in zealhealth.html (separate window, no shared script).
+  function smoothAnchor(prev, next, cycle){
+    if (prev == null || !(cycle > 0)) return next;
+    var err = (((next - prev) % cycle) + cycle) % cycle;
+    if (err > cycle / 2) err -= cycle;
+    var a = Math.abs(err);
+    if (a < 250) return prev;
+    if (a > 1500) return next;
+    return prev + err * 0.25;
   }
   function paintTimers(){
     const now = Date.now();
@@ -1379,11 +1789,18 @@
   // the 50 px baseline is the floor, ~60% of the work area is the ceiling.
   const _alertColEl = document.getElementById('alertcol');
   var _lastTimersSpace = -1;
+  var tlineEl = document.getElementById('tline');   // the death timeline strip (below)
+  var _tlLastH = -1;
   function measureWanted(){
     var baseline = 50;
     var timersBottom = 0;
     // Height the bottom-anchored stack occupies, including its 8px bottom gap.
     var timersContent = (timersEl && timersEl.children.length) ? (timersEl.scrollHeight + 8) : 0;
+    // The death timeline strip sits under the stack on the window's bottom edge: its height (+ the 4px gap
+    // above it) is added, plus the 8px bottom gap when the stack is not there to carry it. Top-down (⇅) puts the
+    // strip under the top gutter with the stack below it: the same pieces in the other order, so the same total.
+    var tlH = (tlineEl && document.body.classList.contains('has-tline') && tlineEl.offsetHeight) ? tlineEl.offsetHeight + 4 : 0;
+    if (tlH) timersContent += tlH + (timersContent ? 0 : 8);
     if (timersContent){
       // #timers is bottom-anchored now (v2 §3) and grows UPWARD, so the height
       // it needs is its own content plus the top gutter that keeps the topmost
@@ -1412,7 +1829,9 @@
       var ch = _alertColEl.scrollHeight;
       if (ch > 0) colNeeded = ch + 24 + space;
     }
-    var wanted = Math.max(baseline, timersBottom, colNeeded);
+    // The row ⋮ menu (standalone window) must fit inside the window it is drawn in.
+    var menuNeed = _rowMenuEl ? _rowMenuEl.offsetHeight + 16 : 0;
+    var wanted = Math.max(baseline, timersBottom, colNeeded, menuNeed);
     var avail = (window.screen && window.screen.availHeight) ? window.screen.availHeight : 1000;
     // #129: loot-auction (dismissible) chips are ACTIONABLE — a raider must see
     // every open bid window to bid on it. #timers is click-through, so any chip
@@ -1462,6 +1881,304 @@
     }
   } catch(e){}
 
+  // ── Death timeline strip (the guild lead, 2026-10-21) ───────────────────────
+  // The agent ships recentDeaths (boss / Tactics-brother deaths this PC saw, last 30 min). There is no pair window:
+  // the Plane of Tactics encounter script has no timer between the two Decorins (both need only be dead at once) or
+  // between Tallon and Vallon (each has its own out-of-combat allowance), so the strip shows deaths, the gaps
+  // between them and the since-last clock, and nothing counts down. The render rebuilds the strip's HTML only
+  // when its content changes and otherwise touches just the clock text nodes. Display only — nothing is spoken.
+  // ── death timeline: pure state ──
+  var TL_SHOW_MS = 30 * 60 * 1000;
+  function tlKey(n){
+    return String(n == null ? '' : n).replace(/^#/, '').replace(/_/g, ' ').replace(/`/g, "'").replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+  // ⏪ Replay → the strip as a rehearsal (the guild lead, 2026-10-21: "i need a way to test these things before our raid
+  // nights"). While an agent replay runs, /api/state and /api/timers carry replayDeaths (the replay's own ring, never mixed
+  // with the live one) and replayClock { nowMs, rate, untilMs }: the replay's LOG time. The strip then runs on that clock
+  // instead of Date.now(). nowMs is the clock at the poll; the page advances it at `rate` since the poll arrived and never
+  // past untilMs (the end of the segment the agent is in), so a lull the replay compresses cannot overshoot between polls.
+  function tlReplayNow(rp, wallMs){
+    if (!rp) return wallMs;
+    var n = rp.nowMs + (wallMs - rp.recv) * (rp.rate || 0);
+    if (rp.untilMs != null && n > rp.untilMs) n = rp.untilMs;
+    return n;
+  }
+  // Which feed the strip draws: the replay's when the agent sent both a clock and a ring, else the live ring.
+  function tlPickFeed(live, replayDeaths, replayClock, wallMs){
+    if (replayClock && Number.isFinite(replayClock.nowMs) && Array.isArray(replayDeaths)){
+      return { deaths: replayDeaths, replay: { nowMs: replayClock.nowMs, rate: Number(replayClock.rate) || 0,
+        untilMs: replayClock.untilMs == null ? null : Number(replayClock.untilMs), recv: wallMs } };
+    }
+    return { deaths: Array.isArray(live) ? live : [], replay: null };
+  }
+  // ── /death timeline: pure state ──
+  // ── death timeline: plan + queue ──
+  // The guild lead, 2026-10-21: "Timeline on TTS minimizable, text size scalable, next event due for next fight. Next
+  // major event in fights queued." Pure again (no DOM, no clock): which raid-plan phase is next, the "Up next" merge,
+  // the text-size clamp and the stored preferences. The plan wording is pop-raids.js's own (the rallos-event callouts).
+  var TL_SCALE_MIN = 0.8, TL_SCALE_MAX = 1.8, TL_UPNEXT_MAX = 3, TL_MAJOR_MS = 20000;
+  // Which deaths finish a plan phase, per zone. A phase with no entry (P3, the Fake Rallos despawn) has no death to
+  // see: it counts as done only once a later phase is.
+  var TL_PLAN_KILLS = {
+    'plane of tactics': { 1: ['Decorin Berik', 'Decorin Grunhork'], 2: ['Tallon Zek', 'Vallon Zek'], 4: ['Rallos Zek the Warlord'] }
+  };
+  function tlClampScale(v){
+    if (v == null || v === '') return 1;
+    v = Number(v);
+    if (!isFinite(v)) return 1;
+    return Math.max(TL_SCALE_MIN, Math.min(TL_SCALE_MAX, Math.round(v * 10) / 10));
+  }
+  function tlStepScale(cur, dir){ return tlClampScale(tlClampScale(cur) + (dir < 0 ? -0.1 : 0.1)); }
+  function tlLoadPrefs(store){
+    var out = { collapsed: false, scale: 1 };
+    try {
+      if (store){
+        out.collapsed = store.getItem('wp.tline.collapsed') === '1';
+        out.scale = tlClampScale(store.getItem('wp.tline.scale'));
+      }
+    } catch(e){}
+    return out;
+  }
+  function tlSavePref(store, key, val){ try { if (store) store.setItem('wp.tline.' + key, String(val)); } catch(e){} }
+  // The plan phases of a zone, read from pop-raids.js: the encounter callouts that start "P<n>". head = the label
+  // between "Pn" and the colon ('Fake Rallos'), text = the callout cut down to a line (first clause, plus the
+  // clause that carries a time or a consequence).
+  function tlPlanFor(zone, pop){
+    var z = tlKey(zone), out = [];
+    if (!z || !pop || !pop.sections) return out;
+    pop.sections.forEach(function(sec){
+      (sec.encounters || []).forEach(function(enc){
+        if (tlKey(enc.zone) !== z) return;
+        (enc.callouts || []).forEach(function(c){
+          var m = /^P(\d)\s*([^:]*):\s*(.+)$/.exec(String(c));
+          if (!m) return;
+          var body = m[3].replace(/\s*\([^)]*\)/g, '').split(/\.\s/)[0].replace(/\.\s*$/, '');
+          var segs = body.split(';').map(function(x){ return x.trim(); }).filter(Boolean);
+          var first = (segs[0] || '').split(',')[0].trim();
+          var extra = segs.slice(1).filter(function(x){ return /→|\d+\s*(?:s|sec|min)\b|despawn/i.test(x); })[0];
+          var head = m[2].trim();
+          out.push({ n: Number(m[1]), head: head, text: (head ? head + ': ' : '') + first + (extra ? '; ' + extra : '') });
+        });
+      });
+    });
+    return out.sort(function(a, b){ return a.n - b.n; });
+  }
+  // The zone the plan is read for: the newest death that names one; else the plan zone one of the deaths belongs to.
+  function tlPlanZone(deaths){
+    var z = null;
+    (deaths || []).forEach(function(d){ if (d && d.zone) z = d.zone; });
+    if (z) return z;
+    var seen = Object.create(null);
+    (deaths || []).forEach(function(d){ if (d) seen[tlKey(d.name)] = true; });
+    for (var zk in TL_PLAN_KILLS){
+      var kills = TL_PLAN_KILLS[zk];
+      for (var n in kills){ if (kills[n].some(function(k){ return seen[tlKey(k)]; })) return zk; }
+    }
+    return null;
+  }
+  // The next phase for the next fight: every phase up to the last one whose deaths were all seen is done; the first of
+  // the rest is "next" (in the plan's own wording). null = no plan / all done.
+  function tlPlanNext(zone, phases, deaths){
+    var kills = TL_PLAN_KILLS[tlKey(zone)];
+    if (!kills || !phases || !phases.length) return null;
+    var seen = Object.create(null), lastDone = 0;
+    (deaths || []).forEach(function(d){ if (d) seen[tlKey(d.name)] = true; });
+    phases.forEach(function(ph){
+      var ks = kills[ph.n];
+      if (ks && ks.every(function(k){ return seen[tlKey(k)]; })) lastDone = Math.max(lastDone, ph.n);
+    });
+    for (var i = 0; i < phases.length; i++){
+      var ph = phases[i];
+      if (ph.n <= lastDone) continue;
+      return { n: ph.n, text: ph.text };
+    }
+    return null;
+  }
+  // A "major" countdown: it carries a pre-end warning (the trigger's author wanted a callout) or has 20 s or more left.
+  // Loot chips and cyclic rows (the 6 s tick) never are.
+  function tlTimerMajor(t, nowMs){
+    if (!t || t.loot || t.cycle) return false;
+    var rem = t.endsMs - nowMs;
+    return rem > 0 && (t.warns > 0 || rem >= TL_MAJOR_MS);
+  }
+  // The "Up next" merge: major countdowns, soonest first, deduped by key and by label; the plan phase has no clock,
+  // so it holds the LAST slot.
+  function tlQueue(plan, timers, nowMs, max){
+    var timed = [], seenKey = Object.create(null), seenLbl = Object.create(null);
+    function add(it){
+      var lk = tlKey(it.label);
+      if (seenKey[it.key] || seenLbl[lk]) return;
+      seenKey[it.key] = seenLbl[lk] = true;
+      timed.push(it);
+    }
+    (timers || []).forEach(function(t){
+      if (tlTimerMajor(t, nowMs)) add({ kind: 'timer', key: 'timer:' + t.key, label: t.label, dueMs: t.endsMs });
+    });
+    timed.sort(function(a, b){ return a.dueMs - b.dueMs; });
+    max = max || TL_UPNEXT_MAX;
+    var out = timed.slice(0, plan ? max - 1 : max);
+    if (plan) out.push({ kind: 'plan', key: 'plan:' + plan.n, label: plan.text, dueMs: null });
+    return out;
+  }
+  // ── /death timeline: plan + queue ──
+  var _tlDeaths = [], _tlSig = '', _tlNodes = [], _tlReplay = null;
+  var tlBodyEl = document.getElementById('tl-body');
+  var _tlPlanCache = null, _tlPopLoading = false;
+  var _tlStore = null;
+  try { _tlStore = window.localStorage; } catch(e){}   // the accessor itself can throw (private window, blocked site data)
+  var _tlPrefs = tlLoadPrefs(_tlStore), _tlColl = _tlPrefs.collapsed, _tlScale = _tlPrefs.scale;
+  // pop-raids.js is browser-safe (it only sets window.POP_RAIDS) and already ships in the Mimic bundle for popraid.html.
+  // It is ~43 KB, so it is fetched lazily — the first time the strip has a death to show, never in a canvas panel.
+  function tlPop(){
+    if (window.POP_RAIDS) return window.POP_RAIDS;
+    if (!_tlPopLoading){
+      _tlPopLoading = true;
+      try {
+        var sc = document.createElement('script');
+        sc.src = 'pop-raids.js';
+        sc.onload = function(){ tlineUpdate(); };
+        document.head.appendChild(sc);
+      } catch(e){}
+    }
+    return null;
+  }
+  // The overlay's own live countdowns (timerNodes), shaped for tlQueue.
+  function tlTimersNow(off){
+    var out = [];
+    timerNodes.forEach(function(n, id){
+      out.push({ key: id, label: (n.target ? n.target + ' - ' : '') + n.effect, endsMs: n.ends_at_local + (off || 0),
+        warns: (n.warnings && n.warnings.length) || 0, loot: n.kind === 'loot', cycle: n.cycle_ms > 0 });
+    });
+    return out;
+  }
+  function tlApplyPrefs(){
+    var tg = document.getElementById('tl-toggle'), sm = document.getElementById('tl-sm'), lg = document.getElementById('tl-lg');
+    if (tlineEl) tlineEl.style.setProperty('--tl-s', String(_tlScale));
+    if (tg){ tg.textContent = _tlColl ? '▸' : '▾'; tg.title = _tlColl ? 'Expand the timeline' : 'Minimize the timeline'; }
+    if (sm){ sm.disabled = _tlScale <= TL_SCALE_MIN + 0.001; sm.title = 'Smaller text (' + Math.round(_tlScale * 100) + '%)'; }
+    if (lg){ lg.disabled = _tlScale >= TL_SCALE_MAX - 0.001; lg.title = 'Bigger text (' + Math.round(_tlScale * 100) + '%)'; }
+  }
+  (function(){
+    var tg = document.getElementById('tl-toggle'), sm = document.getElementById('tl-sm'), lg = document.getElementById('tl-lg');
+    if (PART || !tg || !sm || !lg) return;
+    tg.addEventListener('click', function(){
+      _tlColl = !_tlColl;
+      tlSavePref(_tlStore, 'collapsed', _tlColl ? '1' : '0');
+      tlApplyPrefs(); tlineUpdate(); syncTlineH();
+    });
+    function step(dir){
+      _tlScale = tlStepScale(_tlScale, dir);
+      tlSavePref(_tlStore, 'scale', _tlScale);
+      tlApplyPrefs(); syncTlineH();   // the font change is a layout change: re-measure now, not at the next resize callback
+    }
+    sm.addEventListener('click', function(){ step(-1); });
+    lg.addEventListener('click', function(){ step(1); });
+    tlApplyPrefs();
+  })();
+  // The ⏪ tag a replay-driven strip wears (the replay fires carry the same ⏪, gold, on the agent dashboard).
+  var TL_REHEARSAL_TAG = '<span class="tl-reh" title="An agent replay is driving this timeline. Nothing here is live.">⏪ rehearsal</span>';
+  // data-t / data-w for a queue row. A rehearsal's timer rows were shifted into replay time to sort together;
+  // they are drawn against the wall clock, so shift back and mark them.
+  function tlDueAttr(q, off){
+    var wall = q.kind === 'timer' && off;
+    return ' data-t="' + (wall ? q.dueMs - off : q.dueMs) + '"' + (wall ? ' data-w="1"' : '');
+  }
+  function tlFmt(sec){
+    sec = Math.max(0, Math.floor(sec));
+    var h = Math.floor(sec / 3600), m = Math.floor((sec - h * 3600) / 60), s = sec - h * 3600 - m * 60;
+    return h ? (h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0')) : (m + ':' + String(s).padStart(2, '0'));
+  }
+  function tlHHMM(ms){
+    var d = new Date(ms);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+  function syncTlineH(){
+    var on = !!_tlSig;
+    document.body.classList.toggle('has-tline', on);
+    var h = on && tlineEl ? tlineEl.offsetHeight : 0;
+    if (h !== _tlLastH){
+      _tlLastH = h;
+      try { document.documentElement.style.setProperty('--tline-h', h + 'px'); } catch(e){}
+      requestAutoHeight();
+    }
+  }
+  function tlineSet(deaths, replayDeaths, replayClock){
+    var feed = tlPickFeed(deaths, replayDeaths, replayClock, Date.now());
+    _tlDeaths = feed.deaths;
+    _tlReplay = feed.replay;
+    tlineUpdate();
+  }
+  // The strip's "now": the replay's log time while a replay drives it, else the wall clock.
+  function tlNow(){ return tlReplayNow(_tlReplay, Date.now()); }
+  function tlineUpdate(){
+    if (PART || !tlineEl) return;
+    var now = tlNow(), rehearsal = !!_tlReplay;
+    // A rehearsal timer (a replayed fire) runs on the wall clock: shift it into the strip's time so it queues, and
+    // draw it from the wall clock (data-w) so the shift never has to be kept in step.
+    var off = rehearsal ? now - Date.now() : 0;
+    var ds = _tlDeaths.filter(function(d){ return d && Number.isFinite(d.atMs) && now - d.atMs <= TL_SHOW_MS; })
+      .sort(function(a, b){ return a.atMs - b.atMs; });
+    var shown = ds.slice(-5);
+    // Plan phase + the Up next queue (the plan phase in the last slot, behind any major countdowns).
+    var plan = null, queue = [];
+    if (ds.length){
+      var zone = tlPlanZone(ds), pop = tlPop();
+      if (zone && pop){
+        if (!_tlPlanCache || _tlPlanCache.zone !== tlKey(zone)) _tlPlanCache = { zone: tlKey(zone), phases: tlPlanFor(zone, pop) };
+        plan = tlPlanNext(zone, _tlPlanCache.phases, ds);
+      }
+      queue = tlQueue(plan, tlTimersNow(off), now, TL_UPNEXT_MAX);
+    }
+    var sig = ds.length ? (rehearsal ? 'R' : '') + (_tlColl ? 'c' : 'e') + '|' + (ds.length - shown.length) + '|' + shown.map(function(d){ return d.atMs + d.name; }).join('|') + '#' +
+      queue.map(function(q){ return q.key + q.label; }).join('|') : '';
+    if (sig !== _tlSig){
+      _tlSig = sig;
+      if (!sig){ tlBodyEl.innerHTML = ''; _tlNodes = []; }
+      else if (_tlColl){
+        // One line: the since-last clock + the next queued item.
+        var nx = queue[0];
+        var h1 = '<div class="tl-one">' + (rehearsal ? TL_REHEARSAL_TAG : '');
+        h1 += '<span class="tl-one-main since">since last <span data-tl="since" data-t="' + shown[shown.length - 1].atMs + '"></span></span>';
+        if (nx){
+          h1 += '<span class="tl-one-sep">·</span><span class="tl-one-next">' +
+            (nx.kind === 'plan' ? 'Next: ' + _esc(nx.label) : _esc(nx.label) + '<i data-tl="due"' + tlDueAttr(nx, off) + '></i>') + '</span>';
+        }
+        tlBodyEl.innerHTML = h1 + '</div>';
+        _tlNodes = Array.prototype.slice.call(tlBodyEl.querySelectorAll('[data-tl]'));
+      }
+      else {
+        var h = rehearsal ? TL_REHEARSAL_TAG : '';
+        h += '<div class="tl-chain">';
+        if (ds.length > shown.length) h += '<span class="tl-more">+' + (ds.length - shown.length) + ' earlier</span>';
+        shown.forEach(function(d, i){
+          h += '<span class="tl-link">';   // gap + the death it leads to wrap together, never leaving a dangling dash
+          if (i) h += '<span class="tl-gap">─ +' + tlFmt((d.atMs - shown[i - 1].atMs) / 1000) + ' ─</span> ';
+          h += '<span class="tl-d"><b>' + _esc(d.name) + '</b><span>' + tlHHMM(d.atMs) + '</span></span></span>';
+        });
+        h += '<span class="tl-since">since last <span data-tl="since" data-t="' + shown[shown.length - 1].atMs + '"></span></span></div>';
+        if (queue.length){
+          h += '<div class="tl-up"><div class="tl-up-h">Up next</div>';
+          queue.forEach(function(q){
+            if (q.kind === 'plan') h += '<div class="tl-up-row plan"><span class="tl-up-lbl">Next: ' + _esc(q.label) + '</span></div>';
+            else h += '<div class="tl-up-row"><span class="tl-up-lbl">' + _esc(q.label) + '</span><span class="tl-up-clk" data-tl="due"' + tlDueAttr(q, off) + '></span></div>';
+          });
+          h += '</div>';
+        }
+        tlBodyEl.innerHTML = h;
+        _tlNodes = Array.prototype.slice.call(tlBodyEl.querySelectorAll('[data-tl]'));
+      }
+      syncTlineH();
+    }
+    for (var i = 0; i < _tlNodes.length; i++){
+      var n = _tlNodes[i], t = Number(n.getAttribute('data-t')), kind = n.getAttribute('data-tl');
+      var nw = n.hasAttribute('data-w') ? Date.now() : now;   // data-w: a wall-clock timer row (see off above)
+      var txt = kind === 'due' ? tlFmt(Math.ceil((t - nw) / 1000)) : tlFmt((nw - t) / 1000);
+      if (n.textContent !== txt) n.textContent = txt;
+    }
+  }
+  try { if (window.ResizeObserver && tlineEl) new ResizeObserver(function(){ syncTlineH(); }).observe(tlineEl); } catch(e){}
+  setInterval(tlineUpdate, 250);
+
   // A canvas part reads the slim /api/timers (the same three fields) — one
   // page per panel must not each parse the whole state. An agent without it
   // answers 404, and the part falls back to /api/state for good.
@@ -1475,7 +2192,8 @@
       }
       const s = await r.json();
       renderTimers((PART === 'timers' && _partSample) ? (s.activeTimers || []).concat(_sampleTimers()) : s.activeTimers);
-      if (PART === 'timers') return;   // display only: fires belong to the other pages
+      if (!PART) tlineSet(s.recentDeaths, s.replayDeaths, s.replayClock);   // the death timeline strip (not in canvas panels); a replay drives it when the agent sends its clock
+      if (PART === 'timers') return;  // display only: fires belong to the other pages
       const fires = (s.recentTriggerFires || []).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
       if (!primed){
         // On first poll, don't replay the existing backlog — just set the cursor.

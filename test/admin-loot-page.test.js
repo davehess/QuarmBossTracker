@@ -182,8 +182,9 @@ describe('/admin/loot page', () => {
     const flat = page.replace(/\s+/g, ' ');
     expect(page).toMatch(/supabaseAdmin\(\)/);
     expect(page).toMatch(/const PAGE_SIZE = 50;/);
-    expect(flat).toMatch(/\.rpc\('loot_value_grouped', \{ p_guild_id: 'wolfpack', p_since: since, p_sort: sort, p_limit: PAGE_SIZE, p_offset: \(pageNo - 1\) \* PAGE_SIZE, \}\)\.range\(0, PAGE_SIZE - 1\)/);
-    expect(page).toMatch(/\.rpc\('loot_value_by_looter_v3', \{ p_guild_id: 'wolfpack', p_since: since \}\)\.range\(0, LOOTER_LIMIT - 1\)/);
+    expect(flat).toMatch(/\.rpc\('loot_value_grouped', \{ p_guild_id: GUILD_TAG, p_since: since, p_sort: sort, p_limit: PAGE_SIZE, p_offset: \(pageNo - 1\) \* PAGE_SIZE, \}\)\.range\(0, PAGE_SIZE - 1\)/);
+    expect(page).toMatch(/\.rpc\('loot_value_by_looter_v3', \{ p_guild_id: GUILD_TAG, p_since: since \}\)\.range\(0, LOOTER_LIMIT - 1\)/);
+    expect(page).toMatch(/import \{ GUILD_TAG \} from '@\/lib\/guild';/);
     expect(page).toMatch(/const LOOTER_LIMIT = 1000;/);
     // The old single-loot list (up to 1,000 rows into the browser) is gone.
     expect(page).not.toMatch(/loot_value_items/);

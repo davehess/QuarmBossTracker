@@ -67,3 +67,41 @@ describe("the agent's allow-lists cover every opening the bot knows", () => {
     for (const [prefix] of S.RECITAL_STAGES) expect(_POP_RECITAL_RX.test(prefix), prefix).toBe(true);
   });
 });
+
+// The Halls of Honor trial credit (the guild lead, 2026-10-18: "we did not get credit on the command center
+// for this trial hailing"). The two lines are the guild lead's own log; the second names no NPC, so the agent
+// sends the one the character last hailed. The bot's resolveTrial names the trial from what the agent sends.
+describe('Halls of Honor trial credit lines', () => {
+  const MIST = 'An ethereal mist descends from the air and surrounds your very being. Your body begins to emanate with the power of Trydan Faye.';
+  const HELD = 'You have already received credit for completing this trial.';
+  let clock = Date.parse('2026-10-18T21:59:11Z');
+  // eslint-disable-next-line no-new-func
+  const { parsePopFlagLine: p } = new Function('_zealState', 'stats', 'parseEqTimestamp',
+    `${block}\nreturn { parsePopFlagLine };`)({}, { currentEncounterThreatByChar: {} }, () => new Date(clock));
+  const S = createRequire(import.meta.url)(path.join(ROOT, 'utils', 'popFlagStages.js'));
+
+  it('the mist line is a trial event naming the NPC, in the Halls even with no Zeal zone', () => {
+    const e = p(L(MIST), 'Aldenmar');
+    expect(e).toMatchObject({ kind: 'trial', npc: 'Trydan Faye', zone: 'hohonora', prev: null });
+    expect(S.resolveStage(e, '')).toMatchObject({ stage: 'hoh_trial_1', fresh: true });
+  });
+
+  it('the already-held line carries the NPC the character just hailed, and the bot reads it as held', () => {
+    p(L("You say, 'Hail, Trydan Faye'"), 'Brackwyn');
+    clock += 1_000;
+    const e = p(L(HELD), 'Brackwyn');
+    expect(e).toMatchObject({ kind: 'trial', npc: 'Trydan Faye', text: HELD });
+    expect(S.resolveStage(e, '')).toMatchObject({ stage: 'hoh_trial_1', fresh: false });
+  });
+
+  it('the already-held line with no recent hail of the character is not sent', () => {
+    clock += 120_000;                                       // the hail above is two minutes old now
+    expect(p(L(HELD), 'Brackwyn')).toBe(null);
+    expect(p(L(HELD), 'Corvale')).toBe(null);               // never hailed anyone
+  });
+
+  it('other lines and a look-alike are not trial events', () => {
+    expect(p(L('An ethereal mist rolls in off the sea.'), 'Aldenmar')).toBe(null);
+    expect(p(L('You have already received credit for completing this quest.'), 'Aldenmar')).toBe(null);
+  });
+});

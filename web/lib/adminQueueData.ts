@@ -10,8 +10,9 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { rpcJson } from './rpcJson';
+import { GUILD_TAG } from './guild';
 
-export const QUEUE_GUILD = 'wolfpack';
+export const QUEUE_GUILD = GUILD_TAG;
 
 const MIN = 60_000;
 const HOUR = 3_600_000;

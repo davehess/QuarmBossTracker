@@ -15,6 +15,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { GUILD_TAG } from '@/lib/guild';
 import {
   buildPositions, POSITION_FRESH_S, ZONE_LIVE_MS, type RosterPosRow,
 } from '@/lib/spectator';
@@ -35,7 +36,7 @@ export async function GET() {
     // One row per raider, freshest first, from SQL (migration 20261005003000): raid_roster holds one row
     // per uploader × raider, ~1,100 inside 30 s on a full night, so a raw read would cut raiders off.
     const { data: rosterRows, error: rosterErr } = await admin
-      .rpc('spectator_positions', { p_guild_id: 'wolfpack', p_fresh_s: POSITION_FRESH_S })
+      .rpc('spectator_positions', { p_guild_id: GUILD_TAG, p_fresh_s: POSITION_FRESH_S })
       .range(0, 299);
     if (rosterErr) return fail(502, 'positions unavailable');
     const rows = (rosterRows ?? []) as RosterPosRow[];
@@ -44,7 +45,7 @@ export async function GET() {
     const names = [...new Set(rows.map(r => r.name).filter((n): n is string => !!n))];
     const { data: liveRows, error: liveErr } = await admin.from('character_live_state')
       .select('character, zone_id, zone_name')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('character', names)
       .gte('updated_at', new Date(now - ZONE_LIVE_MS).toISOString())
       .range(0, 199);

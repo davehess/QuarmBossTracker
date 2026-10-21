@@ -20,12 +20,12 @@ const require = createRequire(import.meta.url);
 const agent = require('../packages/wolfpack-logsync/index.js');
 const overlay = readSource(path.join(ROOT, 'apps', 'mimic', 'overlay.html'));
 
-const { pnum, pnumK, _rowSecs, _rowTiming, _foldPetsIntoOwners, _histRows, _rsLine, _liveRsRows } = evalBlock(
+const { pnum, pnumK, _rowSecs, _rowTiming, _fightEndMs, _foldPetsIntoOwners, _histRows, _rsLine, _liveRsRows } = evalBlock(
   sliceBlock(overlay, '  function pnum(n){', 'return String(n); }') + '\n'
   + sliceBlock(overlay, '  function pnumK(n){', "return (n/1e3).toFixed(2)+'K'; }") + '\n'
-  + sliceBlock(overlay, '  function _rowSecs(row, fightSecs) {', '  // One mini row: rank, name') + '\n'
+  + sliceBlock(overlay, '  var DPS_IDLE_MS = 6000;', '  // One mini row: rank, name') + '\n'
   + sliceBlock(overlay, '  function _foldPetsIntoOwners(allRows){', '\n  // ── Poll loop '),
-  ['pnum', 'pnumK', '_rowSecs', '_rowTiming', '_foldPetsIntoOwners', '_histRows', '_rsLine', '_liveRsRows'],
+  ['pnum', 'pnumK', '_rowSecs', '_rowTiming', '_fightEndMs', '_foldPetsIntoOwners', '_histRows', '_rsLine', '_liveRsRows'],
 );
 
 const MOB = 'a Diaku Oracle';
@@ -53,7 +53,7 @@ function fight() {
 const timing = (rows, name, secs = FIGHT_SECS) => {
   const row = rows.find(r => r[0] === name);
   if (!row) throw new Error('no row for ' + name);
-  return _rowTiming(row, secs, false);
+  return _rowTiming(row, secs, false, _fightEndMs(rows));
 };
 
 beforeEach(() => {
@@ -63,13 +63,16 @@ beforeEach(() => {
   agent._setUploadOptsForTest(null);
 });
 
-describe('each row is timed by its own first and last damage', () => {
-  it('live: the full-fight player 35 s, the late joiner 5 s, the pet 10 s', () => {
+// The clock runs from a row's first damage to the fight's end, or one tick (6 s) after its last damage when it
+// stopped attacking earlier (the guild lead, 2026-10-18: "not counting enough time on sec", "if someone stops
+// attacking ... we stop their DPS Sec counter").
+describe('each row is timed from its first damage to the fight end, or one tick past its last', () => {
+  it('live: the full-fight player 35 s, the late joiner 5 s, the pet that stopped at 20 s 16 s', () => {
     const { et } = fight();
     const rows = _liveRsRows(et.perPlayer, et.spans);
     expect(timing(rows, 'Corvale')).toEqual({ secs: 35, dps: 23 });      // 800 / 35
-    expect(timing(rows, 'Nyssara')).toEqual({ secs: 5, dps: 24 });       // 122 / 5, not 122 / 35 = 3
-    expect(timing(rows, 'Kebantik')).toEqual({ secs: 10, dps: 20 });     // 200 / 10
+    expect(timing(rows, 'Nyssara')).toEqual({ secs: 5, dps: 24 });       // 30 → the end at 35
+    expect(timing(rows, 'Kebantik')).toEqual({ secs: 16, dps: 13 });     // 10 → 20 + one tick, 200 / 16
   });
 
   it('History: the same seconds from the saved entry', () => {
@@ -77,15 +80,23 @@ describe('each row is timed by its own first and last damage', () => {
     const rows = _histRows(entry);
     expect(timing(rows, 'Corvale').secs).toBe(35);
     expect(timing(rows, 'Nyssara')).toEqual({ secs: 5, dps: 24 });
-    expect(timing(rows, 'Kebantik').secs).toBe(10);
+    expect(timing(rows, 'Kebantik').secs).toBe(16);
   });
 
-  it('a single hit is one second, never zero', () => {
+  it('a single hit that stops counts one tick, not one second', () => {
     const b = builder('Brackwyn');
     hit(b, 0, 'Corvale', 100); hit(b, 35, 'Corvale', 100); hit(b, 12, 'Zarrin', 90);
     b._publishLiveThreat();
     const et = agent._liveThreatForTest();
-    expect(timing(_liveRsRows(et.perPlayer, et.spans), 'Zarrin')).toEqual({ secs: 1, dps: 90 });
+    expect(timing(_liveRsRows(et.perPlayer, et.spans), 'Zarrin')).toEqual({ secs: 6, dps: 15 });
+  });
+
+  it('a single hit near the end counts only to the fight end', () => {
+    const b = builder('Brackwyn');
+    hit(b, 0, 'Corvale', 100); hit(b, 35, 'Corvale', 100); hit(b, 33, 'Zarrin', 90);
+    b._publishLiveThreat();
+    const et = agent._liveThreatForTest();
+    expect(timing(_liveRsRows(et.perPlayer, et.spans), 'Zarrin')).toEqual({ secs: 2, dps: 45 });
   });
 
   it('an owner and the pet it brought are timed from the first swing of either to the last of either', () => {
@@ -151,8 +162,10 @@ describe('the guild\'s numbers over this machine\'s spans', () => {
 describe('and the board is wired through it', () => {
   const clean = stripJs(overlay);
   it('the DPS rows and the mini rows time themselves with _rowTiming', () => {
-    expect(clean).toMatch(/var rt = _rowTiming\(row, secs, TAB_MODE === 'tank'\);/);
-    expect(clean).toMatch(/var rt = _rowTiming\(row, secs, tank\);/);
+    // isTank: the Tank tab, or History with its Tank button lit (test/meter-tank-history.test.js).
+    expect(clean).toMatch(/var rt = _rowTiming\(row, secs, isTank, _fightEndMs\(allRows\)\);/);
+    expect(clean).toMatch(/var rt = _rowTiming\(row, secs, tank, endMs\);/);
+    expect(clean).toMatch(/miniRowsHtml\(miniWindow\(miniRows, me\), me, totalDmg, secs, isTank, _fightEndMs\(allRows\)\)/);
   });
   it('the live board and the live copy hand the snapshot\'s spans to the rows', () => {
     expect(clean).toMatch(/_liveRsRows\(et\.perPlayer, et\.spans\)/);

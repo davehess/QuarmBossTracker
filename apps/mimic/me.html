@@ -215,7 +215,31 @@
   body.hud.wp-backdrop #wrap{background:transparent !important}
   body.hud.wp-backdrop #hudsvg,body.hud.wp-backdrop #hudlanes{
     filter:drop-shadow(0 0 2px rgb(0 0 0 / var(--bg-alpha,0.92))) drop-shadow(0 0 7px rgb(8 10 14 / var(--bg-alpha,0.92)))}
-  @media (prefers-reduced-motion: reduce){ .bar > i{transition:none} }
+  @media (prefers-reduced-motion: reduce){ .bar > i{transition:none} .bar.rgp > i,.rgp-edge.on{animation:none} }
+  /* FB-90, regen per tick: green "+N / tick" at the right of the bar, and in the last second before the
+     server tick a white glow at the fill's edge. The pulse is a class (rgp / on) that is there only for
+     that second; the markup does not change otherwise. */
+  .bar > span .rg{position:absolute;right:4px;top:0;color:var(--green);font-style:normal;font-weight:700;font-size:10px}
+  .bar.rgp > i{animation:rgbar 1s ease-in-out}
+  .rgp-edge{opacity:0;filter:drop-shadow(0 0 3px #fff)}
+  .rgp-edge.on{opacity:1;animation:rgedge 1s ease-in-out}
+  @keyframes rgbar{0%{box-shadow:0 0 0 0 rgb(255 255 255 / 0)}60%{box-shadow:0 0 7px 2px #fff}100%{box-shadow:0 0 0 0 rgb(255 255 255 / 0)}}
+  @keyframes rgedge{0%{opacity:.25}60%{opacity:1}100%{opacity:.25}}
+
+  /* On the Timers canvas (Mimic 3.0 alpha; the guild lead, 2026-10-03: "the margins around the actual data
+     is too large … when I look at an overlay outside of the canvas or choose it as a preset within the canvas
+     they should be extremely close to being identical"): the panel owns ✥ and ✕ (the preload hides this
+     page's own, and sets body.wp-in-canvas), so the gutters kept for them and the frame round the card go —
+     the data sits at the panel's edge. The ring already fills its panel and needs none of it. */
+  body.wp-in-canvas #wrap{padding:2px 3px}
+  body.wp-in-canvas.hud #wrap{padding:0}
+  body.wp-in-canvas .card{padding:0}
+  body.wp-in-canvas .title{padding-left:0;padding-right:0}
+  /* A page pinned to one look (?wpstyle=hud|a — the canvas's Ring and Box panels) has no Box | HUD switch:
+     the box shows no picker at all, the ring keeps only its ⚙ (the row is as wide as that button). */
+  body.pinstyle #picker button[data-v]{display:none}
+  body.pinstyle:not(.hud) #picker{display:none}
+  body.hud.pinstyle{--pk-w:26px}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -309,6 +333,12 @@
   var doneBtn = document.getElementById('exitSetupBtn');
   if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
 
+  // Docked as a panel on the Timers canvas (Mimic 3.0 alpha): the canvas loads this page in a frame marked
+  // ?wpcanvas=1. There is no window to size or move there — setBounds does nothing — so the parts that
+  // would (the builder opening beside the ring, the numbers moving outside it) ask the canvas instead.
+  var IN_CANVAS = false;
+  try { IN_CANVAS = /[?&]wpcanvas=1(&|$)/.test(String(window.location.search || '')) && window.parent !== window; } catch (e) {}
+
   // ── the Box / HUD picker (remembered on this machine) ─────────────────────
   // The guild lead, 2026-09-24: "We can remove version C, default the HUD to
   // version, rename A into Box." A keeps its stored key ('a'), so a saved pick
@@ -324,6 +354,12 @@
     if (saved === 'b' || saved === 'c' || saved === 'h1' || saved === 'h2' || saved === 'h3') saved = 'hud';
     if (saved === 'a' || isHud(saved)) style = saved;
   } catch (e) {}
+  // ?wpstyle=hud|a pins the look (the guild lead, 2026-10-03: the canvas's "HUD (ring)" and "HUD (box)"
+  // presets are this one page twice): the pinned page ignores the saved pick and never writes it, so the
+  // HUD's own window and each panel keep their own. It has no Box | HUD switch either (CSS: body.pinstyle).
+  var _pinStyle = null;
+  try { var _q = new URLSearchParams(window.location.search).get('wpstyle'); if (_q === 'hud' || _q === 'a') _pinStyle = _q; } catch (e) {}
+  if (_pinStyle) { style = _pinStyle; _firstRun = false; document.body.classList.add('pinstyle'); }
   var picker = document.getElementById('picker');
   function paintPicker(){
     var bs = picker.querySelectorAll('button');
@@ -339,7 +375,7 @@
   function setBounds(b){ try { if (window.mimic && window.mimic.overlaySetBounds) window.mimic.overlaySetBounds(b); } catch (e) {} }
   picker.addEventListener('click', function(e){
     var b = e.target && e.target.closest ? e.target.closest('button[data-v]') : null;
-    if (!b) return;
+    if (!b || _pinStyle) return;
     var next = b.getAttribute('data-v');
     if (next === style) return;
     if (builderEl && !builderEl.hidden) closeBuilder(false);   // leaving the HUD: the card's bounds follow
@@ -369,6 +405,13 @@
   // ones closing it restores) change the same way.
   function reshapeForHits(was, now){
     if (!isHud(style) || was === now) return;
+    if (IN_CANVAS) {
+      // The panel is the window: the canvas fits it again (wpFitSize below says how wide the ring now is). With
+      // the builder open the panel is wider than the ring by the builder's width, which --ring-w leaves out.
+      try { window.parent.wpCanvasFit(window); } catch (e) {}
+      if (!builderEl.hidden) document.documentElement.style.setProperty('--ring-w', (document.documentElement.clientWidth - PANEL_W) + 'px');
+      return;
+    }
     var f = (400 + 2 * LANE_EXT) / 400, k = now === 'outside' ? f : 1 / f;
     if (builderEl && !builderEl.hidden) {
       var pre = null;
@@ -409,8 +452,9 @@
     return '<div class="bar' + (cls ? ' ' + cls : '') + '"><i style="width:' + w.toFixed(1) + '%;background:' + color + '"></i><span>' + (text || '') + '</span></div>';
   }
   // `counts`: words that take the percentage's place (a bard's mana slot, below) and the room they need.
-  function brow(p, color, text, counts){
-    return '<div class="brow' + (counts ? ' counts' : '') + '">' + bar(p, color, text) + '<div class="pct" style="color:' + color + '">'
+  function brow(p, color, text, counts, regen){
+    if (regen) text = (text || '') + '<em class="rg" title="' + esc(regen.tip) + '">' + regen.w + '</em>';
+    return '<div class="brow' + (counts ? ' counts' : '') + '">' + bar(p, color, text, regen && regen.pulse ? 'rgp' : '') + '<div class="pct" style="color:' + color + '">'
       + (counts ? esc(counts) : (p == null ? '' : Math.round(p) + '%')) + '</div></div>';
   }
   function curMax(o){ return (o && o.cur != null && o.max != null) ? n0(o.cur) + ' / ' + n0(o.max) : ''; }
@@ -431,6 +475,31 @@
     return out.length ? out : null;
   }
   function bardText(counts){ return counts.map(function(c){ return c[0] + ' ' + c[1]; }).join(' · '); }
+  // ── Regen per tick (FB-90: "Add per tick hp and mana regen to HUD and highlight the regen on the bars when
+  // its about to come back up"). The agent measures it (s.regen = { hp, mana, n_ticks, quiet }, or null until
+  // two quiet ticks and while in combat); this draws it. A stat with no regen (full, or a class with no mana)
+  // is left out. The pulse is on for the last REGEN_PULSE_MS before the server tick, from the tick the agent
+  // sent aged to now, so it is a pure function of the clock and flips twice a tick.
+  var REGEN_PULSE_MS = 1000;
+  function regenPulse(msLeft){ return msLeft != null && msLeft > 0 && msLeft <= REGEN_PULSE_MS; }
+  function regenWord(n){ return typeof n === 'number' && isFinite(n) && n > 0 ? '+' + n0(n) + ' / tick' : null; }
+  function regenInfo(s){
+    var r = s && s.regen;
+    if (!r || r.quiet === false) return null;
+    var hp = regenWord(r.hp), mana = s.no_mana === true ? null : regenWord(r.mana);
+    if (!hp && !mana) return null;
+    var left = null;
+    if (s.tick && s.tick.ms_left != null) left = (((s.tick.ms_left - Math.max(0, Date.now() - _lastAt)) % 6000) + 6000) % 6000;
+    return { hp: hp, mana: mana, pulse: regenPulse(left), tip: 'observed over ' + (r.n_ticks || 0) + ' quiet ticks' };
+  }
+  // The glow at the fill's edge (angle `ang` on radius r): always drawn while there is a regen to show,
+  // lit (class "on") only for the last second.
+  function regenEdge(r, ang, W, on){
+    return '<path class="rgp-edge' + (on ? ' on' : '') + '" d="' + arcD(r, ang - 1.2, ang + 1.2) + '" stroke="#fff" stroke-width="' + f1(6 * W + 1.5) + '" fill="none" stroke-linecap="round"/>';
+  }
+  function regenTspan(word, tip){ return '<tspan fill="var(--green)" font-weight="700"> ' + word + '<title>' + esc(tip) + '</title></tspan>'; }
+  // The label's length as drawn: tags and the tooltip's words do not take room on the ring.
+  function plainLen(h){ return h.replace(/<title>[^<]*<\/title>/g, '').replace(/<[^>]*>/g, '').length; }
   // Time left on a cast, as a DEPLETING bar — countdowns run right to left
   // across the platform (the CH cast bar).
   function castHtml(c){
@@ -519,32 +588,35 @@
   }
 
   // ── A · Classic ───────────────────────────────────────────────────────────
+  // Each block of the Box is marked with data-wp-sect, so the Canvas can cut the Box into its parts
+  // (apps/mimic/sections.js, "me"): an inert attribute on a plain block, so the Box lays out as before.
+  function sectOf(id, html){ return html ? '<div data-wp-sect="' + id + '">' + html + '</div>' : ''; }
   function renderA(s){
     var hpP = pctOf(s.hp), mnP = pctOf(s.mana);
-    var h = '';
-    h += brow(hpP, hpColor(hpP), curMax(s.hp));
+    var h = '', rg = regenInfo(s);
+    h += sectOf('hp', brow(hpP, hpColor(hpP), curMax(s.hp), null, rg && rg.hp ? { w: rg.hp, tip: rg.tip, pulse: rg.pulse } : null));
     // No mana row for a warrior, rogue or monk — the HUD's rule (it had
     // shown an empty 0% bar for a monk).
-    if (mnP != null && !s.no_mana) { var bc = bardCounts(s); h += brow(mnP, 'var(--blue)', curMax(s.mana), bc ? bardText(bc) : null); }
+    if (mnP != null && !s.no_mana) { var bc = bardCounts(s); h += sectOf('mana', brow(mnP, 'var(--blue)', curMax(s.mana), bc ? bardText(bc) : null, rg && rg.mana ? { w: rg.mana, tip: rg.tip, pulse: rg.pulse } : null)); }
     // "Endurance can be small": a thin bar, its % beside it.
-    if (s.end && s.end.pct != null) h += '<div class="brow small">' + bar(s.end.pct, 'var(--orange)', '', 'thin')
-      + '<div class="pct" style="color:var(--orange)">' + Math.round(s.end.pct) + '%</div></div>';
-    if (s.xp && s.xp.pct != null) h += brow(s.xp.pct, 'var(--gold)', 'XP/hr ' + (s.xp.per_hr == null ? '…' : s.xp.per_hr.toFixed(1) + '%'));
-    if (s.aa && s.aa.pct != null) h += brow(s.aa.pct, 'var(--purple)', 'AA/hr ' + (s.aa.per_hr == null ? '…' : s.aa.per_hr.toFixed(1) + '%') + (s.aa.banked ? ' · ' + s.aa.banked + ' banked' : ''));
+    if (s.end && s.end.pct != null) h += sectOf('end', '<div class="brow small">' + bar(s.end.pct, 'var(--orange)', '', 'thin')
+      + '<div class="pct" style="color:var(--orange)">' + Math.round(s.end.pct) + '%</div></div>');
+    if (s.xp && s.xp.pct != null) h += sectOf('xp', brow(s.xp.pct, 'var(--gold)', 'XP/hr ' + (s.xp.per_hr == null ? '…' : s.xp.per_hr.toFixed(1) + '%')));
+    if (s.aa && s.aa.pct != null) h += sectOf('aa', brow(s.aa.pct, 'var(--purple)', 'AA/hr ' + (s.aa.per_hr == null ? '…' : s.aa.per_hr.toFixed(1) + '%') + (s.aa.banked ? ' · ' + s.aa.banked + ' banked' : '')));
     var meta = [];
     if (s.level != null) meta.push('Level <b>' + s.level + '</b>');
     if (s.weight && s.weight.cur != null) meta.push('Wt <b>' + s.weight.cur + '</b>/' + (s.weight.max != null ? s.weight.max : '?'));
     if (s.pet) meta.push('🐾 ' + esc(s.pet.name) + ' <b style="color:' + hpColor(s.pet.hp_pct) + '">' + Math.round(s.pet.hp_pct || 0) + '%</b>');
-    if (meta.length) h += '<div class="kv">' + meta.join('') + '</div>';
-    h += castHtml(s.casting);
-    h += targetHtml(s.target);
-    h += mineHtml(s);
+    if (meta.length) h += sectOf('meta', '<div class="kv">' + meta.join('') + '</div>');
+    h += sectOf('cast', castHtml(s.casting));
+    h += sectOf('target', targetHtml(s.target));
+    h += sectOf('mine', mineHtml(s));
     if (s.focus && s.focus.length) {
-      h += '<div class="kv">' + s.focus.map(function(f){ return esc(f.label) + ' <b>' + focusValue(f) + '</b>' + (f.sub ? ' <span class="dim">' + esc(f.sub) + '</span>' : ''); }).join('') + '</div>';
+      h += sectOf('focus', '<div class="kv">' + s.focus.map(function(f){ return esc(f.label) + ' <b>' + focusValue(f) + '</b>' + (f.sub ? ' <span class="dim">' + esc(f.sub) + '</span>' : ''); }).join('') + '</div>');
     }
-    var d = dpsLine(s.dps); if (d) h += '<div class="lbl">damage</div>' + d;
-    if (s.group && s.group.length) h += '<div class="lbl">group</div>' + groupHtml(s.group);
-    if (s.gems && s.gems.length) h += '<div class="lbl">spells <span class="dim">(casts left at current mana)</span></div>' + gemsHtml(s.gems);
+    var d = dpsLine(s.dps); if (d) h += sectOf('damage', '<div class="lbl">damage</div>' + d);
+    if (s.group && s.group.length) h += sectOf('group', '<div class="lbl">group</div>' + groupHtml(s.group));
+    if (s.gems && s.gems.length) h += sectOf('gems', '<div class="lbl">spells <span class="dim">(casts left at current mana)</span></div>' + gemsHtml(s.gems));
     return h;
   }
 
@@ -656,6 +728,8 @@
     if (!t || t.corpse) return null;
     // FB-54: a slow on it hastes it, and that beats Unslowable — red, ahead of every slow state.
     if (t.reverse_slow) return { s: 'reverse slow', c: 'var(--red)', size: 9.5 };
+    // FB-83: seen landing on a mob of this name but not proven to be THIS one — a question mark, dimmed.
+    if (t.slow && t.slow.uncertain) return { s: 'slowed?' + (t.slow.remaining_secs != null ? ' · ' + mmss(t.slow.remaining_secs * 1000) : ''), c: 'var(--dim)', size: 9.5 };
     if (t.slow) return { s: 'slowed' + (t.slow.pct ? ' ' + t.slow.pct + '%' : '') + (t.slow.remaining_secs != null ? ' · ' + mmss(t.slow.remaining_secs * 1000) : ''), c: 'var(--green)', size: 9.5 };
     if (t.unslowable) return { s: 'unslowable', c: 'var(--dim)', size: 8 };
     if (t.enrage != null) return { s: 'not slowed', c: 'var(--orange)', size: 9.5 };   // a mob we have the catalog row for
@@ -805,13 +879,14 @@
   // Damage IN sits with your health, OUT on the right with your hits (the guild
   // lead, round seven: "IN and Out should be side-swapped. Damage in should be
   // next to health and out should be on the right").
-  function hpLabel(d, withDps){ return lbl('HP', pctTxt(d.hp), hpColor(d.hp)) + (withDps && d.inn != null ? '<tspan fill="#8b949e">  · in ' + big(d.inn) + '</tspan>' : ''); }
+  function hpLabel(d, withDps, rg){ return lbl('HP', pctTxt(d.hp), hpColor(d.hp)) + (rg && rg.hp ? regenTspan(rg.hp, rg.tip) : '') + (withDps && d.inn != null ? '<tspan fill="#8b949e">  · in ' + big(d.inn) + '</tspan>' : ''); }
   // A bard's counts take the place of "MANA nn%": DIRGE 4 · FM 5 · CHARM 12, in the arc's own colour.
   function bardLabel(counts, color){
     return counts.map(function(c){ return lbl(c[0], c[1], color); }).join('<tspan fill="#8b949e"> · </tspan>');
   }
-  function rightLabel(d, withDps, withFocus){
+  function rightLabel(d, withDps, withFocus, rg){
     return (d.bard ? bardLabel(d.bard, d.right.color) : lbl(d.noMana ? 'END' : 'MANA', pctTxt(d.right.pct), d.right.color))
+      + (rg && rg.mana && d.right.part === 'mana' ? regenTspan(rg.mana, rg.tip) : '')
       + (withDps && d.out != null ? '<tspan fill="#8b949e">  · out ' + big(d.out) + '</tspan>' : '')
       + (withFocus && d.focus ? '<tspan fill="#e6edf3">  · ' + d.focus + '</tspan>' : '');
   }
@@ -844,7 +919,7 @@
   // leaves a gap rather than moving the others under the player's eye.
   var HUD_PARTS = [
     ['Target', [['target', 'Name, health, level, class'], ['tot', 'Its target (on top)'], ['tres', 'Its resists'], ['status', 'Slow · F/R · summon · enrage']]],
-    ['You', [['hp', 'Health'], ['mana', 'Mana (right arc)'], ['end', 'Endurance (thin arc; right arc with no mana)'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
+    ['You', [['hp', 'Health'], ['mana', 'Mana (right arc)'], ['end', 'Endurance (thin arc; right arc with no mana)'], ['regen', 'Regen per tick (+N, glows before the tick)'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
     ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick'], ['swing', 'Swing timer'], ['cast', 'Cast bar (in the swing\'s place)']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
       ['procs', 'Procs and stuns/aggro on target'],
@@ -860,7 +935,7 @@
   // round-three look. It scales every arc and the text's dark edge, and takes
   // the numbers off bold.
   var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
-  var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
+  var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, regen: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
     track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyRows: 1, clickyPick: [], sizes: {} };
   // Text size per part, from the small slider beside it in the builder (the
@@ -1412,6 +1487,7 @@
   function renderHud(s){
     var d = hudData(s), p = hudParts, h = '', R = 172;
     var W = HUD_WEIGHTS[p.weight] || HUD_WEIGHTS.thin;
+    var rg = p.regen ? regenInfo(s) : null;   // FB-90
     if (p.target && d.t) {
       // The enrage zone: a red outline round the last 10% of the health bar
       // (its low end — the bar empties toward the left), solid while it IS
@@ -1494,7 +1570,9 @@
     }
     if (p.hp) {
       h += gauge(R, 236, 304, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 6 * W);
-      h += ringLabel('hhp', R + 10, 236, 304, hpLabel(d, p.dps), 11 * sz('hp'));
+      var hl = hpLabel(d, p.dps, rg), hs = 11 * sz('hp');
+      if (rg && rg.hp) { h += regenEdge(R, 236 + 68 * Math.max(0, Math.min(1, (d.hp || 0) / 100)), W, rg.pulse); hs = fitSize(hs, plainLen(hl), 68, R + 10); }
+      h += ringLabel('hhp', R + 10, 236, 304, hl, hs);
     }
     // The right arc belongs to Mana, or to Endurance for a class with none (d.right.part); each part
     // switches only its own drawing (FB-12). Endurance on a class WITH mana is the thin arc under health.
@@ -1502,8 +1580,9 @@
       h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6 * W, true);
       // Fitted to the arc (68°): a bard's three counts with the damage out beside them is longer than
       // "MANA 45%" ever was, and a label the arc cuts off reads as a different number.
-      var rl = rightLabel(d, p.dps, p.focus);
-      h += ringLabel('hrt', R + 10, 56, 124, rl, fitSize(11 * sz(d.right.part), rl.replace(/<[^>]*>/g, '').length, 68, R + 10));
+      var rl = rightLabel(d, p.dps, p.focus, rg);
+      if (rg && rg.mana && d.right.part === 'mana') h += regenEdge(R, 124 - 68 * Math.max(0, Math.min(1, d.right.pct / 100)), W, rg.pulse);
+      h += ringLabel('hrt', R + 10, 56, 124, rl, fitSize(11 * sz(d.right.part), plainLen(rl), 68, R + 10));
     }
     if (p.end && !d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2 * W);
     // Cooldowns: an inner arc across the bottom (at most 80°, centred on 6
@@ -1778,7 +1857,28 @@
   // bounds from before are kept on this computer until the panel closes, so
   // quitting with it open does not leave the ring off-centre next time.
   var PANEL_W = 300, BUILD_KEY = 'wpHudPreBuild';   // matches --panel-w
+  // The same builder on the Timers canvas (the guild lead, 2026-10-03: "we need the ability to craft the
+  // circular HUD" there too). The canvas widens this page's panel (window.parent.wpCanvasWiden) toward the side
+  // with room and says which; the ring keeps the width it had, measured on this frame's own viewport, and
+  // nothing is written to BUILD_KEY — that is the HUD window's saved size, not a panel's. What the builder
+  // edits is the same per-character hudParts as the HUD's own window (localStorage is shared), so a ring built
+  // here is the one the window draws, and the other way round.
+  function canvasWiden(on){
+    try { return window.parent.wpCanvasWiden(window, PANEL_W, on); } catch (e) { return false; }
+  }
   function openBuilder(){
+    if (IN_CANVAS) {
+      var cw = document.documentElement.clientWidth, ch = document.documentElement.clientHeight;
+      var side = canvasWiden(true);
+      if (!side) return;
+      document.documentElement.style.setProperty('--ring-w', cw + 'px');
+      document.documentElement.style.setProperty('--ring-h', ch + 'px');
+      document.body.classList.add('building');
+      document.body.classList.toggle('build-left', side === 'left');
+      renderBuilder();
+      builderEl.hidden = false;
+      return;
+    }
     var x = window.screenX, y = window.screenY, w = window.outerWidth, hgt = window.outerHeight;
     var sl = screen.availLeft || 0;
     var toLeft = x + w + PANEL_W > sl + screen.availWidth && x - PANEL_W >= sl;
@@ -1805,13 +1905,15 @@
   // so the stored bounds are all there is; any other close reads the live window.
   function closeBuilder(restore, atLoad){
     var pre = null;
-    try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); localStorage.removeItem(BUILD_KEY); } catch (e) {}
+    if (IN_CANVAS) canvasWiden(false);   // the panel gives the builder's width back (nothing is stored for it)
+    else try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); localStorage.removeItem(BUILD_KEY); } catch (e) {}
     var left = document.body.classList.contains('build-left');
     builderEl.hidden = true;
     document.body.classList.remove('building', 'build-left');
     document.documentElement.style.removeProperty('--ring-w');
     document.documentElement.style.removeProperty('--ring-h');
-    if (restore !== false) {
+    // A Canvas panel never sets window bounds: its window is the whole Canvas.
+    if (restore !== false && !IN_CANVAS) {
       var back = atLoad ? pre : ringBoundsOf({ x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight }, PANEL_W, left);
       if (!(back && back.width >= 100)) back = pre;
       if (back && back.width) setBounds(back);
@@ -1821,12 +1923,25 @@
   // Quit with the panel open → the window comes back at the ring's size.
   (function(){
     var pre = null;
-    try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); } catch (e) {}
+    // (A panel never reads it: that key is the HUD window's saved size.)
+    try { if (!IN_CANVAS) pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); } catch (e) {}
     if (pre) closeBuilder(isHud(style), true);
   })();
   document.getElementById('build-btn').addEventListener('click', function(){
     if (builderEl.hidden) openBuilder(); else closeBuilder();
   });
+  // The canvas's "⚙ Build the ring" (a panel's settings) and its drag, which closes the builder first.
+  window.wpToggleBuilder = function(){ if (isHud(style)) { if (builderEl.hidden) openBuilder(); else closeBuilder(); } };
+  window.wpCloseBuilder = function(){ if (!builderEl.hidden) closeBuilder(); };
+  // What this page wants in the canvas — its "Fit to content" and the first fit of a preset just added: the
+  // ring is a square (wider only as far as the numbers outside it need, as its window was) at the height the
+  // panel already has; the canvas gave a new one the window's own size, half the screen's short side. The
+  // box is measured by the canvas like any other page (null here).
+  window.wpFitSize = function(){
+    if (!isHud(style)) return null;
+    var side = document.documentElement.clientHeight;
+    return side > 0 ? [Math.round(side * hudWidthFactor()), side] : null;
+  };
   document.getElementById('builder-close').addEventListener('click', function(){ closeBuilder(); });
   document.getElementById('builder-reset').addEventListener('click', function(){
     var was = hudParts.hitsSide;

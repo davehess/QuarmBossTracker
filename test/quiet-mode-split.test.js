@@ -47,7 +47,7 @@ describe('triggers.html: Mute silences, it does not hide (run, not read)', () =>
     function _wpMutedNow(){ return muted; }
     function speak(x){ if (_wpMutedNow()) return; calls.push('speak'); }
     function playSound(u){ if (!u || _wpMutedNow()) return; calls.push('sound'); }
-    function showFeedback(){} function offerMute(){} function pinSticky(){} function _speakable(s){ return s; }
+    function showFeedback(){} function offerMute(){} function offerVoice(){} function pinSticky(){} function _speakable(s){ return s; }
     ${cut('  let alertsEnabled = true;')}
     ${cut('  function fire(t){')}
     ${cut('  function fireBlind(e){')}
@@ -115,7 +115,7 @@ describe('hideOverlays owns visibility; quietMode no longer does', () => {
 
   it('_overlayWanted: overlays-off frees a window, mute alone does not, the trigger window survives both', () => {
     const src = fnSource(main, 'function _overlayWanted(cfg, e) {');
-    const wanted = new Function('_overlayForcedOn', '_eqGateOk', '_agentOnly', src + '\nreturn _overlayWanted;')(() => false, () => true, () => false);
+    const wanted = new Function('_overlayForcedOn', '_eqGateOk', '_canvasHostedKeys', '_agentOnly', src + '\nreturn _overlayWanted;')(() => false, () => true, () => [], () => false);
     const hud = { key: 'hud', flag: 'showHud' }, trig = { key: 'trigger', flag: 'enableTriggerTts' };
     expect(wanted({ showHud: true }, hud)).toBe(true);
     expect(wanted({ showHud: true, hideOverlays: true }, hud)).toBe(false);

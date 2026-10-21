@@ -124,15 +124,29 @@ describe('the Planes of Power stop (stop 10)', () => {
   });
 });
 
-describe('the Tour is the only layout', () => {
-  it('page.tsx renders the Tour with no ?v= switch and no searchParams', () => {
-    expect(page).toContain('<AboutTour s={await getStats()} />');
-    expect(page).not.toMatch(/searchParams|\bv === /);
-    expect(page).not.toMatch(/AboutIllustrated|AboutByTheRecord|AboutAsAHome/);
+describe('the Tour is the default, and the guild previews stay on beta', () => {
+  const guildRaw = fs.readFileSync(path.join(WEB, 'app', 'about', 'GuildAbout.tsx'), 'utf8');
+  it('with no ?v= the page renders the Tour; ?v=b and ?v=c render the two guild layouts', () => {
+    expect(page).toContain("if (v === 'b') return <AboutByTheRecord s={s} />;");
+    expect(page).toContain("if (v === 'c') return <AboutAsAHome s={s} />;");
+    // the Tour is the fall-through, after both switches, and nothing else is
+    const b = page.indexOf("v === 'b'");
+    const c = page.indexOf("v === 'c'");
+    const t = page.indexOf('return <AboutTour s={s} />;');
+    expect(b).toBeGreaterThan(0);
+    expect(c).toBeGreaterThan(b);
+    expect(t).toBeGreaterThan(c);
+    expect([...page.matchAll(/\bv === '/g)]).toHaveLength(2);
+    expect(page).toContain("from './GuildAbout'");
   });
-  it('the other layouts are gone', () => {
+  it('the guild layouts are real exports of GuildAbout.tsx', () => {
+    expect(stripJs(guildRaw)).toContain('export function AboutByTheRecord(');
+    expect(stripJs(guildRaw)).toContain('export function AboutAsAHome(');
+    expect(guildRaw).toContain("from './Tour'");    // the stats type; GuildAbout does not import the old Story.tsx
+  });
+  it('the platform Illustrated layout is gone', () => {
     expect(fs.existsSync(path.join(WEB, 'app', 'about', 'Story.tsx'))).toBe(false);
-    expect(fs.existsSync(path.join(WEB, 'app', 'about', 'GuildAbout.tsx'))).toBe(false);
+    expect(page).not.toMatch(/AboutIllustrated|\bv === 'p/);
     expect(tour).not.toMatch(/AboutIllustrated/);
   });
   it('has ten stops, the last two being the earlier expansions and Planes of Power, and says so', () => {

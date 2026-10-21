@@ -47,7 +47,7 @@ import {
 } from '@/lib/replayCamera';
 
 export type Placed3D = { name: string; cls: string | null; hp: number | null; x: number; y: number; z: number };   // server frame
-export type PlacedTarget3D = { name: string; n: number; x: number; y: number; z: number };
+export type PlacedTarget3D = { name: string; n: number; x: number; y: number; z: number; boss?: boolean };
 export type PlacedSpawn3D = { name: string; x: number; y: number; z: number };
 export type Feed3D = {
   hl: ReadonlySet<string>;              // lower-case names of the highlighted raiders
@@ -89,7 +89,7 @@ const REACH = { mouse: 12, touch: 22 };
 const PALETTE = 64;
 const FOLLOW_SPAN = 700;          // how much ground a fresh fit on a followed raider shows
 const TARGET_RED = 0xef4444;
-const SPAWN_AMBER = 0xb7791f;
+const BOSS_SCALE = 3.2;           // a killed boss (or its spawn point) is a big red sphere, × a raider dot
 const EDGE_NDC = 0.94;            // a raider past this (of the -1..1 screen) counts as outside the picture
 const MIN_ORBIT = 25;
 const MAX_ORBIT = 8000;           // until a mesh says how big the zone is
@@ -98,7 +98,7 @@ type Status = 'idle' | 'loading' | 'ready' | 'none' | 'error';
 type Kind = 'pick' | 'hover' | 'target' | 'spawn';
 type Ctx = {
   renderer: WebGLRenderer; scene: Scene; camera: PerspectiveCamera; controls: OrbitControls;
-  inst: InstancedMesh; halo: InstancedMesh; tgt: InstancedMesh; spawn: InstancedMesh;
+  inst: InstancedMesh; halo: InstancedMesh; tgt: InstancedMesh; bossDot: InstancedMesh; spawn: InstancedMesh;
   wall: Mesh | null; floor: Mesh | null; tags: HTMLDivElement[];
   raiders: Placed3D[]; targets: PlacedTarget3D[]; spawns: PlacedSpawn3D[]; hl: ReadonlySet<string>;
   followName: string | null; kick: boolean; off: Vector3; lastDraw: number;
@@ -131,7 +131,7 @@ const TAG_LOOK: Record<Kind, string> = {
   pick: 'color:#f0f6fc;background:#161b22;border:1px solid #f0f6fc',
   hover: 'color:#c9d1d9;background:#161b22;border:1px solid #30363d',
   target: 'color:#fecaca;background:#2a1215;border:1px solid #ef4444',
-  spawn: 'color:#a8884a;background:#161b22;border:1px dashed #6b5a2e;opacity:0.85',
+  spawn: 'color:#fecaca;background:#161b22;border:1px dashed #ef4444;opacity:0.9',
 };
 
 /** The walls of an unpacked mesh as a flat-shaded, height-tinted, see-through mesh. */
@@ -263,7 +263,8 @@ export default function Replay3D({ zone, floors, meshUrl, bridgeRef, onReady, on
     halo.renderOrder = 2;
     scene.add(halo);
 
-    // Targets: solid red diamonds. Spawn points: amber wireframe diamonds, dimmer, so they read as "here is where it spawns".
+    // Targets: solid red diamonds; a killed boss is a big solid red sphere. Spawn points: big red WIREFRAME spheres,
+    // dimmer, so they read as "here is where it spawns", not where the raid fought it.
     const diaGeo = new OctahedronGeometry(1);
     const tgtMat = new MeshBasicMaterial({ color: TARGET_RED, transparent: true, depthTest: false });
     const tgt = new InstancedMesh(diaGeo, tgtMat, MAX_MARKS);
@@ -271,15 +272,20 @@ export default function Replay3D({ zone, floors, meshUrl, bridgeRef, onReady, on
     tgt.frustumCulled = false;
     tgt.renderOrder = 4;
     scene.add(tgt);
-    const spawnMat = new MeshBasicMaterial({ color: SPAWN_AMBER, wireframe: true, transparent: true, opacity: 0.7, depthTest: false });
-    const spawn = new InstancedMesh(diaGeo, spawnMat, MAX_MARKS);
+    const bossDot = new InstancedMesh(dotGeo, tgtMat, MAX_MARKS);
+    bossDot.count = 0;
+    bossDot.frustumCulled = false;
+    bossDot.renderOrder = 4;
+    scene.add(bossDot);
+    const spawnMat = new MeshBasicMaterial({ color: TARGET_RED, wireframe: true, transparent: true, opacity: 0.6, depthTest: false });
+    const spawn = new InstancedMesh(dotGeo, spawnMat, MAX_MARKS);
     spawn.count = 0;
     spawn.frustumCulled = false;
     spawn.renderOrder = 3;
     scene.add(spawn);
 
     const c: Ctx = {
-      renderer, scene, camera, controls, inst, halo, tgt, spawn, wall: null, floor: null, tags: [],
+      renderer, scene, camera, controls, inst, halo, tgt, bossDot, spawn, wall: null, floor: null, tags: [],
       raiders: [], targets: [], spawns: [], hl: new Set(), followName: null, kick: false, off: new Vector3(), lastDraw: 0,
       feedZone: null, fitted: 'none', moved: false, hover: null, box: null,
       bounds: null, wallGrid: null, floorGrid: null, snap: false, goal: null,
@@ -441,23 +447,29 @@ export default function Replay3D({ zone, floors, meshUrl, bridgeRef, onReady, on
       halo.count = halos;
       halo.instanceMatrix.needsUpdate = true;
 
-      const nt = Math.min(c.targets.length, MAX_MARKS);
-      for (let i = 0; i < nt; i++) {
-        const t = c.targets[i];
+      let nt = 0, nb = 0;
+      for (const t of c.targets.slice(0, MAX_MARKS)) {
         const [X, Y, Z] = serverToThree(t.x, t.y, t.z + LIFT);
         tmpV.set(X, Y, Z);
+        if (t.boss) {
+          const r = radiusAt(tmpV) * BOSS_SCALE;
+          bossDot.setMatrixAt(nb++, tmpM.compose(tmpV, tmpQ, tmpS.set(r, r, r)));
+          continue;
+        }
         const r = radiusAt(tmpV) * 1.8 * (1 + Math.min(t.n, 8) * 0.18);
-        tgt.setMatrixAt(i, tmpM.compose(tmpV, tmpQ, tmpS.set(r, r * 1.5, r)));
+        tgt.setMatrixAt(nt++, tmpM.compose(tmpV, tmpQ, tmpS.set(r, r * 1.5, r)));
       }
       tgt.count = nt;
       tgt.instanceMatrix.needsUpdate = true;
+      bossDot.count = nb;
+      bossDot.instanceMatrix.needsUpdate = true;
       const ns = Math.min(c.spawns.length, MAX_MARKS);
       for (let i = 0; i < ns; i++) {
         const s = c.spawns[i];
         const [X, Y, Z] = serverToThree(s.x, s.y, s.z + LIFT);
         tmpV.set(X, Y, Z);
-        const r = radiusAt(tmpV) * 1.8;
-        spawn.setMatrixAt(i, tmpM.compose(tmpV, tmpQ, tmpS.set(r, r * 1.5, r)));
+        const r = radiusAt(tmpV) * BOSS_SCALE;
+        spawn.setMatrixAt(i, tmpM.compose(tmpV, tmpQ, tmpS.set(r, r, r)));
       }
       spawn.count = ns;
       spawn.instanceMatrix.needsUpdate = true;
@@ -582,6 +594,7 @@ export default function Replay3D({ zone, floors, meshUrl, bridgeRef, onReady, on
       inst.dispose();
       halo.dispose();
       tgt.dispose();
+      bossDot.dispose();
       spawn.dispose();
       dotGeo.dispose();
       diaGeo.dispose();

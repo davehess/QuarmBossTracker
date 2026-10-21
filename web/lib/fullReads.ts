@@ -30,6 +30,7 @@
 // The SQL these RPCs call is supabase/migrations/20261004140700_cap_safe_raid.sql.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { selectAll } from './selectAll';
+import { GUILD_TAG } from './guild';
 
 // ── OpenDKP ──────────────────────────────────────────────────────────────────
 
@@ -139,7 +140,7 @@ export async function loadNightSlows(
   sb: SupabaseClient, win: { startIso: string; endIso: string }, spells: string[],
 ): Promise<NightSlowRow[]> {
   return selectAll<NightSlowRow>((from, to) => sb
-    .rpc('raid_night_slows', { p_guild_id: 'wolfpack', p_start: win.startIso, p_end: win.endIso, p_spells: spells })
+    .rpc('raid_night_slows', { p_guild_id: GUILD_TAG, p_start: win.startIso, p_end: win.endIso, p_spells: spells })
     .range(from, to));
 }
 
@@ -149,7 +150,7 @@ export async function loadNightFires(
   sb: SupabaseClient, win: { startIso: string; endIso: string }, noise: string[],
 ): Promise<NightFireRow[]> {
   return selectAll<NightFireRow>((from, to) => sb
-    .rpc('raid_night_fires', { p_guild_id: 'wolfpack', p_start: win.startIso, p_end: win.endIso, p_noise: noise })
+    .rpc('raid_night_fires', { p_guild_id: GUILD_TAG, p_start: win.startIso, p_end: win.endIso, p_noise: noise })
     .range(from, to));
 }
 
@@ -174,7 +175,7 @@ export type ActiveCastRow = { target: string; spell_name: string; dur_ticks: num
  *  so the RPC does the `distinct on` and the expiry test. */
 export async function loadActiveBuffCasts(sb: SupabaseClient, sinceIso: string): Promise<ActiveCastRow[]> {
   return selectAll<ActiveCastRow>((from, to) => sb
-    .rpc('raid_active_buff_casts', { p_guild_id: 'wolfpack', p_since: sinceIso })
+    .rpc('raid_active_buff_casts', { p_guild_id: GUILD_TAG, p_since: sinceIso })
     .range(from, to));
 }
 
@@ -278,7 +279,7 @@ export async function loadPvpBossKills<T>(sb: SupabaseClient, sinceIso: string):
   return selectAll<T>((from, to) => sb
     .from('pvp_boss_kills')
     .select('boss_id, boss_name, zone, timer_hours, killed_at, killed_by, killed_by_guild, spawn_earliest, spawn_latest, spawn_earliest_override')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .gte('killed_at', sinceIso)
     .order('killed_at', { ascending: false })
     .order('id')

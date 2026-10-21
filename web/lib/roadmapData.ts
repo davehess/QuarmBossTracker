@@ -199,6 +199,23 @@ export const releases: Release[] = [
     fixes: [],
   },
   {
+    key: 'web-1-8-171-2026-10-15',
+    title: 'Full parses in the raid session review',
+    version: 'Web 1.8.172 · Bot 3.1.276',
+    date: '2026-10-15',
+    channel: 'beta',
+    headline: 'Every fight in a raid session review now opens into its full parse, not just the top five.',
+    features: [
+      { name: 'Full parse for every fight [beta]', blurb: 'On the raid session review, tap a fight to see everyone who did damage: their class, damage, DPS, share of the fight and time, with a total at the bottom. Tap a column heading to sort. Anyone who opted out of stats is left out, and the shares are worked out from who is shown.' },
+      { name: 'Open the parse page [beta]', blurb: 'Signed-in members get a link on each fight to its full parse page. Shared session links show the table only.' },
+      { name: 'Bosses as big red dots [beta]', blurb: 'On the replay map (2D and 3D), a boss the raid was fighting is a big red dot where it actually stood. Nights recorded before we kept boss positions show a red dashed ring at the boss\'s spawn point instead.' },
+      { name: 'Session review link after the raid', blurb: 'The raid review posted in Discord after midnight now has a "Full session review" button that opens the map replay, fights, loot and attendance for that night.' },
+    ],
+    fixes: [
+      'A long raid night used to show top damage for only the first 60 fights. It now covers the whole night.',
+    ],
+  },
+  {
     key: 'web-1-8-170-2026-10-15',
     title: 'Raid replay in 3D, and shareable raid sessions',
     version: 'Web 1.8.170 · Bot 3.1.275',
@@ -286,6 +303,19 @@ export const releases: Release[] = [
       'The same Seer recital no longer shows up twice a few minutes apart, and each step shows its own plane, not the plane where the Seer happened to be standing.',
       'Clicking a plane on the chart or the planner keeps whichever group you were looking at.',
     ],
+  },
+  {
+    key: 'web-1-8-151-2026-10-14',
+    title: 'Say my name right',
+    version: 'Web 1.8.151',
+    date: '2026-10-14',
+    channel: 'beta',
+    headline: 'Tell the voice how your name sounds, so callouts stop mangling it.',
+    features: [
+      { name: 'How to say this name', blurb: 'Every character page now has a line showing how the name should sound, with a Listen button.' },
+      { name: 'Set your own', blurb: 'On your own characters, type how the name sounds, hear it as you type, and pick from other ways to say it. A few tips help with the tricky letters.' },
+    ],
+    fixes: [],
   },
   {
     key: 'web-1-8-148-2026-10-14',

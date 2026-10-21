@@ -48,6 +48,7 @@ function agent() {
     const _activeTimers = new Map();
     const _optinState = { timingFeedback: true };
     function enqueueUpload(kind, payload) { uploads.push({ kind, payload }); }
+    const _timerRowMuted = () => false;   // the ⋮ mutes have their own tests (timer-row-menu.test.js)
     ${recorderBlock}
     return { uploads, _activeTimers, _optinState, _recordCalloutFeedback, _calloutFeedbackSnapshot,
              _flushCalloutVotes, _activeTimersSnapshot };

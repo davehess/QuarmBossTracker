@@ -18,45 +18,18 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { ownedCharacters } from '@/lib/ownedCharacters';
-import InventoryExplorer, { type InvItem, type LocGroup } from './InventoryExplorer';
+import InventoryExplorer, { type InvItem } from './InventoryExplorer';
 import { selectAll } from '@/lib/selectAll';
+import { aggregateInventory, type InvRow, type ItemMeta } from '@/lib/inventoryAggregate';
+import { loadAccountPlacements } from '@/lib/accountPlacements';
+import { GUILD_TAG } from '@/lib/guild';
 import MoreInfo from '@/components/MoreInfo';
-import { clusterSharedBanks } from '@/lib/sharedBank';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
   title: 'My inventory — Wolf Pack',
   description: 'Every item across your characters and where it sits, in one searchable list. Private to you.',
 };
-
-type InvRow = { character_name: string; slot_label: string; item_id: number | null; item_name: string; quantity: number | null; observed_at: string | null };
-type ItemMeta = { id: number; damage: number | null; ac: number | null; nodrop: boolean | null; itemtype: number | null; slots: number | null };
-
-function locGroup(slot: string): LocGroup {
-  const s = slot || '';
-  if (/^SharedBank/i.test(s)) return 'shared';
-  if (/^Bank/i.test(s)) return 'bank';
-  if (/^(General|Cursor)/i.test(s) || /-Slot/i.test(s)) return 'bags';
-  return 'equipped';
-}
-
-const CONSUMABLE_TYPES = new Set([14, 15, 20, 21, 38]); // food/drink/scroll/potion/alcohol
-
-function tagsFor(m: ItemMeta | undefined, name: string): string[] {
-  const t: string[] = [];
-  const isSpell = /^(Spell|Song|Tome|Ancient):\s/i.test(name) || m?.itemtype === 20;
-  if (isSpell) t.push('spell');
-  if (m) {
-    if ((m.damage ?? 0) > 0) t.push('weapon');
-    if ((m.ac ?? 0) > 0 && (m.damage ?? 0) === 0) t.push('armor');
-    if (m.nodrop === false) t.push('nodrop');           // mirror stores NODROP as false
-    // Tradeskill/components: best-effort — not equippable, not a weapon/armor,
-    // not a spell, not a consumable. Catches ore/gems/pages/parts.
-    if (!isSpell && (m.damage ?? 0) === 0 && (m.ac ?? 0) === 0 && (m.slots ?? 0) === 0
-        && !CONSUMABLE_TYPES.has(m.itemtype ?? -1)) t.push('tradeskill');
-  }
-  return t;
-}
 
 export default async function MyInventoryPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -77,42 +50,16 @@ export default async function MyInventoryPage() {
     const rows = await selectAll<InvRow>((from, to) => admin
       .from('character_inventory')
       .select('character_name, slot_label, item_id, item_name, quantity, observed_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('character_name', charNames)
       .order('character_name').order('slot_label')
       .range(from, to));
     rowCount = rows.length;
 
-    // Shared-bank dedup (the guild lead, 2026-08-20). The shared bank is ACCOUNT-level:
-    // every character on a game account reads the SAME physical bank, so
-    // summing their rows counted one stack once per character (ten characters
-    // each reporting SharedBank6-Slot9 = Words of the Spectre x3).
-    //
-    // Grouping is by SLOT AGREEMENT, not by hashing the whole bank. The first
-    // cut hashed every SharedBank row and grouped exact matches — useless in
-    // practice, because each character's inventory file is written whenever
-    // THAT character last ran /outputfile inventory. Snapshots sit minutes or
-    // hours apart, stacks move, row counts drift (107 / 104 / 108 on one real
-    // account), and one differing row broke the whole hash. Slot addresses are
-    // account-scoped and stable, so a 4-rows-stale snapshot still agrees on
-    // the other 100. See web/lib/sharedBank.ts.
-    const sharedRows = rows.filter(r => locGroup(r.slot_label) === 'shared');
-    const clusters = clusterSharedBanks(sharedRows.map(r => ({
-      character: r.character_name,
-      slot:      r.slot_label,
-      itemKey:   (r.item_id ? `id:${r.item_id}` : `nm:${r.item_name.toLowerCase()}`)
-                 + '|' + String(r.quantity ?? 1),
-      observedAt: r.observed_at,
-    })));
-    // Only the freshest snapshot of each account contributes its shared bank.
-    const skipShared = clusters.skip;
-    sharedAccountCount = clusters.accountCount;
-    // A cluster too large to be one account means the scoring misfired; those
-    // are left un-deduped (visible duplicates beat hidden losses) and logged
-    // so it is noticed rather than silently absorbed.
-    for (const grp of clusters.oversized) {
-      console.warn('[shared-bank] refusing to dedup an implausible account cluster:', grp.join(', '));
-    }
+    // Shared-bank dedup, grouping and tags live in lib/inventoryAggregate.ts, shared with the local page
+    // that ships inside Mimic. Owner-placed game accounts beat inference (the guild lead, 2026-10-13); if
+    // the tables are not there yet the loader returns nothing and this is the inference-only page.
+    const placements = await loadAccountPlacements(admin, GUILD_TAG, charNames);
 
     const ids = [...new Set(rows.map(r => r.item_id).filter((n): n is number => !!n))];
     const metaById = new Map<number, ItemMeta>();
@@ -124,30 +71,15 @@ export default async function MyInventoryPage() {
       for (const m of (meta ?? []) as ItemMeta[]) metaById.set(m.id, m);
     }
 
-    // Aggregate by item (by id when present, else by name).
-    const byKey = new Map<string, InvItem>();
-    for (const r of rows) {
-      // Shared-bank rows count once per ACCOUNT — skip every copy except the
-      // group representative's (see the dedup block above).
-      if (locGroup(r.slot_label) === 'shared' && skipShared.has(r.character_name)) continue;
-      const key = r.item_id ? `id:${r.item_id}` : `nm:${r.item_name.toLowerCase()}`;
-      let it = byKey.get(key);
-      if (!it) {
-        it = {
-          key, item_id: r.item_id ?? null, name: r.item_name,
-          total: 0, tags: tagsFor(r.item_id ? metaById.get(r.item_id) : undefined, r.item_name),
-          holdings: [],
-        };
-        byKey.set(key, it);
-      }
-      const qty = Math.max(1, r.quantity ?? 1);
-      it.total += qty;
-      const grp = locGroup(r.slot_label);
-      const h = it.holdings.find(x => x.character === r.character_name && x.location === grp);
-      if (h) h.qty += qty;
-      else it.holdings.push({ character: r.character_name, location: grp, qty });
+    const agg = aggregateInventory(rows, placements, metaById);
+    // A cluster too large to be one account means the scoring misfired; those
+    // are left un-deduped (visible duplicates beat hidden losses) and logged
+    // so it is noticed rather than silently absorbed.
+    for (const grp of agg.oversized) {
+      console.warn('[shared-bank] refusing to dedup an implausible account cluster:', grp.join(', '));
     }
-    items = [...byKey.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+    sharedAccountCount = agg.sharedAccountCount;
+    items = agg.items;
   }
 
   return (
@@ -162,7 +94,8 @@ export default async function MyInventoryPage() {
           <MoreInfo>
           Items in the <b className="text-purple">shared bank</b> are tagged, since any
           of your characters can pull those — and they count <b className="text-text">once per game account</b>, not
-          once per character (characters whose shared-bank contents match are grouped as one account automatically).
+          once per character (characters placed on a game account are grouped by that account; the
+          rest are grouped as &quot;same account?&quot; when their shared-bank contents match).
           Filter by type, and toggle which characters or which places (equipped /
           bags / bank / shared) to include. Data comes from your <code>/outputfile inventory</code> uploads
           (📖 on <Link href="/me" className="text-blue hover:underline">/me</Link>) — only your own characters, private to you.

@@ -17,6 +17,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 
 type ParsedKey = { key_name: string };
 
@@ -57,7 +58,7 @@ async function ownsOrOfficer(characterName: string): Promise<{ ok: boolean; offi
   const admin = supabaseAdmin();
   const [{ data: me }, { data: ch }] = await Promise.all([
     admin.from('wolfpack_members').select('discord_id').eq('user_id', user.id).maybeSingle(),
-    admin.from('characters').select('discord_id').eq('guild_id', 'wolfpack').ilike('name', characterName).maybeSingle(),
+    admin.from('characters').select('discord_id').eq('guild_id', GUILD_TAG).ilike('name', characterName).maybeSingle(),
   ]);
   if (me?.discord_id && ch?.discord_id && me.discord_id === ch.discord_id) return { ok: true, officer: false };
   return { ok: false, officer: false, error: 'not your character' };
@@ -74,7 +75,7 @@ export async function uploadKeys(characterName: string, rawText: string): Promis
 
   const admin = supabaseAdmin();
   const { data: ch } = await admin
-    .from('characters').select('name').eq('guild_id', 'wolfpack').ilike('name', name).maybeSingle();
+    .from('characters').select('name').eq('guild_id', GUILD_TAG).ilike('name', name).maybeSingle();
   const canonical = ch?.name || name;
 
   // Best-effort match each key to eqemu_items.id by exact name (case-
@@ -91,11 +92,11 @@ export async function uploadKeys(characterName: string, rawText: string): Promis
 
   // Replace snapshot — keyring is a current state, not a history log.
   await admin.from('character_keys')
-    .delete().eq('guild_id', 'wolfpack').ilike('character_name', canonical);
+    .delete().eq('guild_id', GUILD_TAG).ilike('character_name', canonical);
 
   const now = new Date().toISOString();
   const rows = keys.map(k => ({
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     character_name: canonical,
     key_name: k.key_name,
     item_id: idByLowerName.get(k.key_name.toLowerCase()) ?? null,

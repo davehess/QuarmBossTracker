@@ -1,7 +1,8 @@
 // /about: the Tour (Tour.tsx). Pictures first, one line per stop, the long text folded under each.
 //
 // The guild lead picked this layout on 2026-10-19 (DECISIONS §383, from the §47 previews). The earlier
-// one-column story page and the Illustrated variant were deleted in the same change.
+// one-column story page and the Illustrated variant were deleted in the same change. On beta the two
+// guild-first previews (?v=b, ?v=c) stay until one is picked; main's page.tsx has no ?v= switch.
 //
 // Stats are live from Supabase, cached for an hour: this page gets shared, and hammering the DB for a
 // marketing page would be silly. `force-dynamic` is deliberately NOT used.
@@ -9,6 +10,7 @@
 import type { Metadata } from 'next';
 import { supabaseAdmin } from '@/lib/supabase';
 import { AboutTour, type AboutStats } from './Tour';
+import { AboutByTheRecord, AboutAsAHome } from './GuildAbout';
 
 export const revalidate = 3600;
 
@@ -40,6 +42,12 @@ async function getStats(): Promise<AboutStats> {
   }
 }
 
-export default async function AboutPage() {
-  return <AboutTour s={await getStats()} />;
+export default async function AboutPage({ searchParams }: { searchParams: Promise<{ v?: string }> }) {
+  const s = await getStats();
+  // Beta only (the guild lead has not picked yet): ?v=b and ?v=c are the two guild-first layouts of
+  // 2026-10-18 (GuildAbout.tsx). No ?v= is the Tour, as production has it.
+  const { v } = await searchParams;
+  if (v === 'b') return <AboutByTheRecord s={s} />;
+  if (v === 'c') return <AboutAsAHome s={s} />;
+  return <AboutTour s={s} />;
 }

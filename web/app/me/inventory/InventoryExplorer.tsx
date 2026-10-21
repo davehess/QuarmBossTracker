@@ -8,9 +8,18 @@
 
 import { useMemo, useState } from 'react';
 import WpDbLink from '@/components/WpDbLink';
+import { holdingVisible } from '@/lib/sharedBank';
 
 export type LocGroup = 'equipped' | 'bags' | 'bank' | 'shared';
-export type Holding = { character: string; location: LocGroup; qty: number };
+// A shared-bank holding of a multi-character account carries `account`: it is
+// ONE holding for the whole account, labelled with its characters, and its
+// chip rule is "hidden only when every character of the account is off".
+export type Holding = {
+  character: string;
+  location: LocGroup;
+  qty: number;
+  account?: { id: string; label: string; members: string[]; placed: boolean };
+};
 export type InvItem = {
   key: string;
   item_id: number | null;
@@ -58,7 +67,7 @@ export default function InventoryExplorer(
     for (const it of items) {
       if (cats.size > 0 && !it.tags.some(t => cats.has(t))) continue;
       if (needle && !it.name.toLowerCase().includes(needle)) continue;
-      const holds = it.holdings.filter(h => !offChars.has(h.character) && !offLocs.has(h.location));
+      const holds = it.holdings.filter(h => holdingVisible(h, offChars, offLocs));
       if (holds.length === 0) continue;
       const shownTotal = holds.reduce((n, h) => n + h.qty, 0);
       out.push({ it, shownTotal, holds, hasShared: holds.some(h => h.location === 'shared') });
@@ -136,9 +145,12 @@ export default function InventoryExplorer(
                   {holds
                     .sort((a, b) => b.qty - a.qty || a.character.localeCompare(b.character))
                     .map((h, i) => (
-                      <span key={h.character + h.location}>
+                      <span key={(h.account?.id ?? h.character) + h.location}>
                         {i > 0 && <span className="text-dim"> · </span>}
-                        <span className="text-text">{h.character}</span>
+                        <span className="text-text"
+                          title={h.account && !h.account.placed ? 'Grouped by matching shared-bank contents — not confirmed as one game account' : undefined}>
+                          {h.character}
+                        </span>
                         <span className="text-dim"> ×{h.qty} </span>
                         <span className={LOC_TAG[h.location].cls}>({LOC_TAG[h.location].short})</span>
                       </span>

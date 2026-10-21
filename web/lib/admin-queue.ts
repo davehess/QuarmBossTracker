@@ -13,6 +13,7 @@ import { unstable_cache } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
 import { rankIndex } from '@/lib/eras';
 import { selectAll } from './selectAll';
+import { GUILD_TAG } from './guild';
 import {
   chatEvidenceWindows, combatWindows, foldTimesByFamily, newestUploadPerName,
   readChatSpeakers, readChatTimes, readCombatTimes, readWhoClassKnown, readWhoLatest,
@@ -119,7 +120,7 @@ async function loadUnenrichableChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeak
   const [speakers, chars] = await Promise.all([
     speakersP,
     selectAll<{ name: string; class: string | null }>((from, to) => sb
-      .from('characters').select('name, class').eq('guild_id', 'wolfpack')
+      .from('characters').select('name, class').eq('guild_id', GUILD_TAG)
       .order('name').range(from, to)),
   ]);
 
@@ -176,7 +177,7 @@ async function loadUnregisteredOpenDKP(sb: Sb): Promise<QueueCategory> {
     selectAll<{ name: string }>((from, to) => sb
       .from('characters')
       .select('name')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('name').range(from, to)),
   ]);
 
@@ -235,7 +236,7 @@ async function loadAwaitingOpenDKPClaim(sb: Sb): Promise<QueueCategory> {
   const { data: rows } = await sb
     .from('characters')
     .select('name, registered_via_web_at, registered_via_web_by_discord_id, discord_id, main_name, rank, opendkp_id')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .is('discord_id', null)
     .gt('registered_via_web_at', since)
     .order('registered_via_web_at', { ascending: false });
@@ -285,7 +286,7 @@ async function loadFamilyIndex(sb: Sb): Promise<FamilyIndex> {
   // Paged: truncating this at 1,000 characters would split families, and every family judgement
   // below (who "missed" a tick) is made against the whole family.
   const rows = await selectAll<{ name: string; main_name: string | null; discord_id: string | null; rank: string | null }>((from, to) => sb
-    .from('characters').select('name, main_name, discord_id, rank').eq('guild_id', 'wolfpack')
+    .from('characters').select('name, main_name, discord_id, rank').eq('guild_id', GUILD_TAG)
     .order('name').range(from, to));
   const lc = (s: string) => s.toLowerCase();
   const parent = new Map<string, string>();

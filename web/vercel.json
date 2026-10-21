@@ -4,7 +4,7 @@
   "buildCommand": "next build",
   "installCommand": "npm install",
   "outputDirectory": ".next",
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- .",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ':(exclude)local'",
   "git": {
     "deploymentEnabled": { "**": false, "main": true, "beta": true }
   },

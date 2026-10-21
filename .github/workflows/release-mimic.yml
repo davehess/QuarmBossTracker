@@ -44,7 +44,7 @@ on:
     # Mimic bundles the agent, so agent-only fixes must also cut a beta
     # build. On main, pushes that don't change the version still no-op in
     # the resolve step below.
-    paths:    ['apps/mimic/**', 'packages/wolfpack-logsync/**']
+    paths:    ['apps/mimic/**', 'packages/wolfpack-logsync/**', 'web/local/**']
   workflow_dispatch:
     inputs:
       tag:
@@ -180,6 +180,26 @@ jobs:
         run: npm install
         # postinstall (scripts/stage-agent.js) copies the agent into
         # apps/mimic/staged-agent so electron-builder's extraResources bundles it.
+
+      # The local site (the guild lead, 2026-10-21): the website's own pages, exported static from web/local and
+      # bundled as resources/local-site (apps/mimic extraResources reads web/local/out). It is built HERE, before
+      # electron-builder, and the check below fails the release if the export is missing: electron-builder
+      # only warns about an extraResources source that does not exist, and a Mimic with a dead "On this PC"
+      # rail item is worse than a red build. web/ itself is not installed in this job, which web/local's
+      # next.config.js and tsconfig are written for.
+      - name: Build the local site (web/local)
+        if: steps.tag.outputs.build == 'true'
+        working-directory: web/local
+        shell: bash
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npx next build
+          test -f out/inventory/index.html || { echo "::error::web/local did not export out/inventory/index.html"; exit 1; }
+          test -f out/replay/index.html || { echo "::error::web/local did not export out/replay/index.html"; exit 1; }
+          test -f out/parses/index.html || { echo "::error::web/local did not export out/parses/index.html"; exit 1; }
 
       - name: Build Windows installer
         if: steps.tag.outputs.build == 'true'

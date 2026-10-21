@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
-import { readSource, sliceBlock, evalBlock, ROOT } from './_source-slice.js';
+import { readSource, sliceBlock, evalBlock, ROOT, WpPetSheet } from './_source-slice.js';
 
 const charmHtml = readSource(path.join(ROOT, 'apps', 'mimic', 'charm.html'));
 const NOW = Date.UTC(2026, 9, 8, 1, 0, 0);
@@ -95,9 +95,9 @@ async function bootCharm(getState, { mini = false, store = {} } = {}) {
     speechSynthesis: { cancel() {}, speak: (u) => spoken.push(u.text) },
   };
   const localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
-  const run = new Function('window', 'document', 'fetch', 'localStorage', 'setInterval', 'setTimeout',
+  const run = new Function('window', 'document', 'fetch', 'localStorage', 'setInterval', 'setTimeout', 'WpPetSheet',
     'var SpeechSynthesisUtterance = function (t) { this.text = t; };\n' + script + '\nreturn { tick };');
-  const api = run(window, document, async () => ({ json: async () => getState() }), localStorage, () => 0, () => 0);
+  const api = run(window, document, async () => ({ json: async () => getState() }), localStorage, () => 0, () => 0, WpPetSheet);
   await flush();
   return { spoken, list: () => byId.list.innerHTML, poll: async () => { await api.tick(); await flush(); } };
 }

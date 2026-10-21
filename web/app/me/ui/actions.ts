@@ -13,6 +13,7 @@
 import { revalidatePath } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { GUILD_TAG } from '@/lib/guild';
 
 async function _ownedCharacterSet(userId: string): Promise<{ discordId: string | null; owned: Set<string> }> {
   const admin = supabaseAdmin();
@@ -33,7 +34,7 @@ async function _ownedCharacterSet(userId: string): Promise<{ discordId: string |
   const { data: allChars } = await admin
     .from('characters')
     .select('name, main_name, discord_id')
-    .eq('guild_id', 'wolfpack');
+    .eq('guild_id', GUILD_TAG);
   const all = (allChars ?? []) as { name: string; main_name: string | null; discord_id: string | null }[];
   const anchored = all.filter(c => c.discord_id && householdIds.has(c.discord_id));
   const familyRoots = new Set(anchored.map(c => (c.main_name || c.name).toLowerCase()));
@@ -75,7 +76,7 @@ export async function stageMacroEdit(input: StageMacroInput): Promise<{ ok: bool
   const { data: curRows } = await admin
     .from('ui_socials_index')
     .select('name, color, lines')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('character', character)
     .eq('page', page)
     .eq('button', button)
@@ -98,7 +99,7 @@ export async function stageMacroEdit(input: StageMacroInput): Promise<{ ok: bool
 
   const summary = `${name || '(unnamed)'} → Page ${page} · Button ${button}`;
   const { error } = await admin.from('ui_pending_edits').insert({
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     character,
     owner_discord_id: discordId,
     target_file: null,   // agent resolves <char>_pq.proj.ini
@@ -143,7 +144,7 @@ export async function stageMacroMove(input: StageMoveInput): Promise<{ ok: boole
   const { data: cells } = await admin
     .from('ui_socials_index')
     .select('page, button, name, color, lines')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('character', character)
     .or(`and(page.eq.${fp},button.eq.${fb}),and(page.eq.${tp},button.eq.${tb})`);
   type Cell = { page: number; button: number; name: string | null; color: number | null; lines: string[] };
@@ -172,7 +173,7 @@ export async function stageMacroMove(input: StageMoveInput): Promise<{ ok: boole
     ? `swap ${label} P${fp}B${fb} ⇄ ${dst.name || '(unnamed)'} P${tp}B${tb}`
     : `move ${label} P${fp}B${fb} → P${tp}B${tb}`;
   const { error } = await admin.from('ui_pending_edits').insert({
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     character,
     owner_discord_id: discordId,
     target_file: null,

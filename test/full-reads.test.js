@@ -24,6 +24,7 @@ import {
   loadGuideKillRollup, loadDropperCounts, loadAwardsForItems, loadEncounterEvents,
   loadAgentVersionsAround, loadItemDrops, loadSpawn2, loadPvpBossKills,
 } from '../web/lib/fullReads.ts';
+import { GUILD_TAG } from '../web/lib/guild.ts';
 
 const iso = (ms) => new Date(ms).toISOString();
 const T0 = Date.UTC(2026, 8, 27, 20, 0, 0);
@@ -245,7 +246,7 @@ describe('loadNightSlows / loadNightFires', () => {
     const out = await loadNightSlows(sb, win, spells);
     expect(out).toHaveLength(2350);
     expect(out[2349]).toEqual(slowRows[2349]);
-    expect(sb.requests[0].args).toEqual({ p_guild_id: 'wolfpack', p_start: win.startIso, p_end: win.endIso, p_spells: spells });
+    expect(sb.requests[0].args).toEqual({ p_guild_id: GUILD_TAG, p_start: win.startIso, p_end: win.endIso, p_spells: spells });
     expect(sb.requests).toHaveLength(3);                       // 1,000 + 1,000 + 350
   });
 
@@ -254,7 +255,7 @@ describe('loadNightSlows / loadNightFires', () => {
     const noise = ['too far', 'invis'];
     const out = await loadNightFires(sb, win, noise);
     expect(out).toHaveLength(1700);
-    expect(sb.requests[0].args).toEqual({ p_guild_id: 'wolfpack', p_start: win.startIso, p_end: win.endIso, p_noise: noise });
+    expect(sb.requests[0].args).toEqual({ p_guild_id: GUILD_TAG, p_start: win.startIso, p_end: win.endIso, p_noise: noise });
   });
 
   it('is the old read that returns the first 1,000: one unpaged request over the same RPC', async () => {
@@ -310,7 +311,7 @@ describe('loadActiveBuffCasts', () => {
     const sb = fakeSupabase({ rpcs: { raid_active_buff_casts: () => pairs } });
     const out = await loadActiveBuffCasts(sb, '2026-09-27T17:00:00.000Z');
     expect(out).toHaveLength(1450);
-    expect(sb.requests[0].args).toEqual({ p_guild_id: 'wolfpack', p_since: '2026-09-27T17:00:00.000Z' });
+    expect(sb.requests[0].args).toEqual({ p_guild_id: GUILD_TAG, p_since: '2026-09-27T17:00:00.000Z' });
   });
 });
 
@@ -418,7 +419,7 @@ describe('loadSpawn2', () => {
 describe('loadPvpBossKills', () => {
   // killed_at ties are real (one broadcast mirrored per observer); id breaks them. Runs of 37, so the page
   // boundary at 1,000 falls in the middle of one.
-  const kills = Array.from({ length: 1300 }, (_, i) => ({ id: i + 1, guild_id: 'wolfpack', boss_id: 'b' + (i % 60), killed_at: iso(T0 + Math.floor(i / 37) * 3600000) }));
+  const kills = Array.from({ length: 1300 }, (_, i) => ({ id: i + 1, guild_id: GUILD_TAG, boss_id: 'b' + (i % 60), killed_at: iso(T0 + Math.floor(i / 37) * 3600000) }));
   it('returns every kill since the window start, newest first, once each', async () => {
     const sb = fakeSupabase({ tables: { pvp_boss_kills: [...kills, { id: 9999, guild_id: 'other', boss_id: 'x', killed_at: iso(T0) }] } });
     const out = await loadPvpBossKills(sb, iso(T0));

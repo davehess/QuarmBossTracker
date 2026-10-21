@@ -5,10 +5,13 @@
      local agent's /api/extended-target (which proxies the bot's aggregation of
      every online raider's current target, Zeal slot 6). One row per target,
      SORTED BY how many raiders are on it, with HP%, the debuffs landed on it,
-     a ★ on named/unique mobs, and a * caveat on non-unique names (the pipe has
-     no spawn id, so same-name mobs are only told apart when their HP differs).
+     a ★ on named/unique mobs, and a * caveat on non-unique names (Zeal 1.4.6+
+     sends the spawn id; a row without one is only told apart from a same-name
+     mob when their HP differs).
      Players/pets missing >15% HP for >10s fold in as "needs attention" rows.
-     (a member, 2026-06-29.) */
+     (a member, 2026-06-29.)
+     Self scope (FB-88): your OWN tab-through list, kept by the local agent
+     (/api/extended-target?scope=self&keep=<sec>) — no bot involved. */
   /* --bg-alpha: card-surface alpha, driven by slider via main → preload
      'bg-alpha' IPC. 1.0 = opaque (EQ hidden). Text stays bright at every value. */
   :root{ --bg-alpha:0.5; }
@@ -138,6 +141,19 @@
     background:rgba(95,208,201,0.12);color:#5fd0c9;border:0;cursor:pointer}
   .head .scope-sw button+button{border-left:1px solid rgba(95,208,201,0.35)}
   .head .scope-sw button.on{background:rgba(95,208,201,0.9);color:#08231f;font-weight:700}
+  /* Self scope (FB-88): "keep for" bar under the title, and the tab-through rows —
+     name + #id, how long ago, HP. Older rows fade in four steps (not a continuous
+     opacity) so a poll that changes nothing else rewrites nothing. */
+  .keepbar{display:flex;align-items:center;gap:6px;font-size:9px;color:#9aa4ad;
+    padding:0 22px 4px;text-shadow:0 1px 2px #000}
+  .keepbar select{font-family:inherit;font-size:9px;background:rgba(95,208,201,0.12);
+    color:#5fd0c9;border:1px solid rgba(95,208,201,0.35);border-radius:3px;padding:0 2px;cursor:pointer}
+  body.wp-in-canvas .keepbar{padding-left:0;padding-right:0}
+  .row.selfrow{grid-template-columns:minmax(0,1fr) auto auto}
+  .row.selfrow .ago{color:#9aa4ad;font-size:9px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .row.selfrow.now .ago{color:#5fd0c9;font-weight:700}
+  .row.selfrow .noid{color:#6e7681;font-size:9px;margin-left:4px;font-style:italic}
+  .row.fade-1{opacity:.8} .row.fade-2{opacity:.6} .row.fade-3{opacity:.45}
   /* #3 Extended Target V2 — the mob-stats sub-line: → who the mob is meleeing
      (from the local combat log's "<mob> hits <player>"; the pipe carries no
      ToT), the raid DPS landing on it, and an HP-trend time-to-live. Dim,
@@ -163,6 +179,13 @@
     opacity:0.55;transition:opacity .1s,color .1s;text-shadow:0 1px 2px #000}
   .row:hover .rowhide{opacity:0.9}
   .row .rowhide:hover{color:#f87171;opacity:1}
+  /* A targeted player's known timers (disc, Mend, Lay on Hands, AAs) — Target Info's chips, on ONE
+     compact line: the first few, then "+N" with the rest in its tooltip. */
+  .row .cds{grid-column:1 / -1;display:flex;flex-wrap:nowrap;gap:3px;overflow:hidden;margin-top:2px;min-width:0}
+  .row .cd{font-size:9px;line-height:1.35;padding:0 3px;border:1px solid currentColor;border-radius:3px;
+    white-space:nowrap;font-variant-numeric:tabular-nums;color:#f85149;flex-shrink:0;cursor:help}
+  .row .cd.ok{color:#56d364}
+  .row .cd.more{color:#9aa4ad}
   /* Who's targeting this — the raiders on each target, dim full-width line
      under the row (a member, 2026-07-15: "Extended Target should show who is
      targeting which target"). */
@@ -222,6 +245,10 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#5fd0c9;border-color:#5fd0c9}
   body.setup #move-btn{top:30px}
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the window's padding and the title's gutters go. */
+  body.wp-in-canvas #wrap{padding:2px 3px}
+  body.wp-in-canvas .head{padding-left:0;padding-right:0}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (right-click for resize + Setup)">✥</button>
@@ -240,11 +267,12 @@
       <span id="conn" class="conn bad">○</span>
       <span class="icon">🎯</span>
       <span class="ttl">Extended Target</span>
-      <span class="scope-sw" id="scopeSw" title="Raid: everything your raid is on. Group: only mobs your group is on (your raid group in a raid, your Zeal group outside one). Outside a raid both show your group."><button type="button" id="scopeRaid" data-scope="raid">Raid</button><button type="button" id="scopeGroup" data-scope="group">Group</button></span>
+      <span class="scope-sw" id="scopeSw" title="Raid: everything your raid is on. Group: only mobs your group is on (your raid group in a raid, your Zeal group outside one). Outside a raid both show your group. Self: the mobs you yourself have targeted lately, newest first."><button type="button" id="scopeRaid" data-scope="raid">Raid</button><button type="button" id="scopeGroup" data-scope="group">Group</button><button type="button" id="scopeSelf" data-scope="self">Self</button></span>
       <button type="button" class="offtank-btn" id="offtankBtn" title="Show mobs held by an off-tank at full health that nobody's targeting (Emperor-style adds)">🛡<span class="bl"> off-tanks</span></button>
       <button type="button" class="offtank-btn" id="playersBtn" title="Show players/pets that raiders are targeting or that folded in as hurt (off by default — they clutter the mob list)">👥<span class="bl"> players</span></button>
       <span class="cnt" id="cnt"></span>
     </div>
+    <div class="keepbar wp-mini-hide" id="keepBar" style="display:none"><label for="keepSel">keep for</label><select id="keepSel" title="How long a mob you targeted stays on your Self list after you tab off it"><option value="30">30s</option><option value="60">60s</option><option value="120">2m</option><option value="300">5m</option></select></div>
     <div id="rows" class="rows"></div>
     <div id="empty">waiting for raid targets…</div>
     <div class="foot" id="foot" style="display:none"><b>*</b> non-unique name — buffs/debuffs may be inaccurate (same-name mobs share a name on the pipe).</div>
@@ -330,6 +358,31 @@
     if (secs < 60) return secs + 's';
     var m = Math.floor(secs / 60), s = secs % 60;
     return m + 'm' + (s ? s + 's' : '');
+  }
+  // A targeted player's known timers — the same chips Target Info shows (mobinfo.html timersLine; the
+  // agent builds both from _targetPlayerTimers): ✓ when ready, else the time left, "~" for an estimate,
+  // and the tooltip names where it came from. Compact for a list: at most EXT_CD_SHOW chips, then
+  // "+N" whose tooltip lists the rest. Rows with no timers emit nothing (byte-stable).
+  var EXT_CD_SHOW = 3;
+  var _CD_FROM = { own: 'from your own character', mimic: 'from their Mimic', seen: 'you saw them start it' };
+  function fmtCd(s){ s = Math.max(0, Math.round(s)); if (s >= 3600) return Math.floor(s/3600)+'h'+String(Math.floor((s%3600)/60)).padStart(2,'0'); var m = Math.floor(s/60); return m+':'+String(s-m*60).padStart(2,'0'); }
+  function cdText(c){ return esc(c.label) + ' ' + (!(c.ms_left > 0) ? '✓' : (c.est ? '~' : '') + fmtCd(c.ms_left / 1000)); }
+  function timersLine(list){
+    if (!Array.isArray(list)) return '';
+    var rows = list.filter(function(c){ return c && c.label; });
+    if (!rows.length) return '';
+    var h = '';
+    for (var i = 0; i < rows.length && i < EXT_CD_SHOW; i++) {
+      var c = rows[i];
+      var tip = esc(c.label) + ' — ' + (_CD_FROM[c.source] || 'from a Mimic');
+      if (c.source === 'seen') tip += c.level_known ? '; the time is estimated from their level' : '; their level is unknown, so this is the longest it can take';
+      else if (c.est) tip += '; the time is an estimate';
+      h += '<span class="cd' + (!(c.ms_left > 0) ? ' ok' : '') + '" title="' + tip + '">' + cdText(c) + '</span>';
+    }
+    if (rows.length > EXT_CD_SHOW) {
+      h += '<span class="cd more" title="' + rows.slice(EXT_CD_SHOW).map(function(c){ return cdText(c); }).join(', ') + '">+' + (rows.length - EXT_CD_SHOW) + '</span>';
+    }
+    return '<div class="cds" data-wp-sect="timers">' + h + '</div>';
   }
   // Build the mob-stats sub-line from the agent-attached V2 fields. NPC rows
   // only; each field is independently optional, so player/pet "needs
@@ -569,11 +622,12 @@
     return '<div class="' + rowCls + '" data-k="' + esc(key) + '" title="' + ctTitle + '">'
       +    '<span class="' + ctCls + '">' + ctHtml + '</span>'
       +    '<span class="nm-wrap"><span class="nm">' + nm + '</span>'
-      +      '<span class="rowhide" data-hk="' + esc(key) + '" title="Hide this entry (restore from the footer)">✕</span></span>'
+      +      '<span class="rowhide" data-wp-interact data-hk="' + esc(key) + '" title="Hide this entry (restore from the footer)">✕</span></span>'
       +    '<span class="hp ' + tier + '">' + hpTxt + hpAbs + '</span>'
       +    '<div class="bar"><div class="fill ' + tier + '" style="width:' + bw + '%"></div></div>'
       +    mobxLine(t)
       +    whoLine
+      +    timersLine(t.timers)
       +    deb
       +  '</div>';
   }
@@ -678,19 +732,35 @@
   // default stays the raid-wide board.
   var _scope = 'raid';
   try { if (localStorage.getItem('wp_ext_scope') === 'group') _scope = 'group'; } catch (e) {}
+  // Self (FB-88): your own tab-through list. The "keep for" choice only applies there.
+  try { if (localStorage.getItem('wp_ext_scope') === 'self') _scope = 'self'; } catch (e) {}
+  var _keep = 60;
+  try { var _k0 = parseInt(localStorage.getItem('wp_ext_self_keep'), 10); if (_k0 === 30 || _k0 === 60 || _k0 === 120 || _k0 === 300) _keep = _k0; } catch (e) {}
   function _paintScope(){
-    var r = document.getElementById('scopeRaid'), g = document.getElementById('scopeGroup');
+    var r = document.getElementById('scopeRaid'), g = document.getElementById('scopeGroup'), s = document.getElementById('scopeSelf');
     if (r) r.className = _scope === 'raid' ? 'on' : '';
     if (g) g.className = _scope === 'group' ? 'on' : '';
+    if (s) s.className = _scope === 'self' ? 'on' : '';
+    var kb = document.getElementById('keepBar'), ks = document.getElementById('keepSel');
+    if (kb) kb.style.display = _scope === 'self' ? 'flex' : 'none';
+    if (ks) ks.value = String(_keep);
   }
   _paintScope();
   var scopeSw = document.getElementById('scopeSw');
   if (scopeSw) scopeSw.addEventListener('click', function(ev){
     var b = ev.target && ev.target.closest ? ev.target.closest('button[data-scope]') : null;
     if (!b) return;
-    _scope = b.getAttribute('data-scope') === 'group' ? 'group' : 'raid';
+    var sc = b.getAttribute('data-scope');
+    _scope = (sc === 'group' || sc === 'self') ? sc : 'raid';
     try { localStorage.setItem('wp_ext_scope', _scope); } catch (e) {}
     _paintScope();
+    tick();
+  });
+  var keepSel = document.getElementById('keepSel');
+  if (keepSel) keepSel.addEventListener('change', function(){
+    var v = parseInt(keepSel.value, 10);
+    _keep = (v === 30 || v === 120 || v === 300) ? v : 60;
+    try { localStorage.setItem('wp_ext_self_keep', String(_keep)); } catch (e) {}
     tick();
   });
 
@@ -714,9 +784,46 @@
     });
   }
 
+  // Self scope rows (FB-88): name + #spawn_id (or "no id"), how long ago, HP% + bar. Older rows fade in
+  // four steps by age/keep; the "ago" text rounds to 5s past the first five, so a quiet poll is byte-stable.
+  function selfAgo(s){ s = Math.max(0, Math.round(Number(s) || 0)); return s < 5 ? 'now' : Math.floor(s / 5) * 5 + 's ago'; }
+  function selfRowHtml(t, keep){
+    var age = Math.max(0, Number(t.seen_secs) || 0);
+    var fade = Math.min(3, Math.floor((age / (keep || 60)) * 4));
+    var tier = hpTier(t.hp_pct);
+    var bw = (t.hp_pct != null ? Math.max(0, Math.min(100, t.hp_pct)) : 0);
+    var id = (t.spawn_id != null && t.spawn_id > 0)
+      ? '<span class="known" title="Spawn id from the game client">#' + esc(t.spawn_id) + '</span>'
+      : '<span class="noid" title="Zeal gave no spawn id for this one, so it is listed by name">no id</span>';
+    return '<div class="row selfrow' + (age < 5 ? ' now' : '') + (fade ? ' fade-' + fade : '') + '" data-k="' + esc('self:' + (t.spawn_id > 0 ? t.spawn_id : t.name)) + '">'
+      +    '<span class="nm-wrap"><span class="nm">' + esc(t.name) + '</span>' + id + '</span>'
+      +    '<span class="ago">' + selfAgo(age) + '</span>'
+      +    '<span class="hp ' + tier + '">' + (t.hp_pct != null ? Math.round(t.hp_pct) + '%' : '—') + '</span>'
+      +    '<div class="bar"><div class="fill ' + tier + '" style="width:' + bw + '%"></div></div>'
+      +    timersLine(t.timers)
+      +  '</div>';
+  }
+  function renderSelf(payload){
+    var rowsEl = document.getElementById('rows'), emptyEl = document.getElementById('empty');
+    var cntEl = document.getElementById('cnt'), footEl = document.getElementById('foot');
+    var list = Array.isArray(payload.targets) ? payload.targets : [];
+    var html = '';
+    for (var i = 0; i < list.length; i++) html += selfRowHtml(list[i], payload.keep_secs);
+    cntEl.innerHTML = '<span>' + list.length + ' kept</span>';
+    footEl.style.display = 'none';
+    emptyEl.style.display = list.length ? 'none' : 'block';
+    if (!list.length) emptyEl.textContent = 'target a mob and it lands here — your own tab-through list';
+    if (rowsEl.__wpHtml !== html || (html && !rowsEl.firstChild)) {
+      rowsEl.innerHTML = html;
+      rowsEl.__wpHtml = html;
+      try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+    }
+  }
+
   var _lastPayload = null;
   function render(payload){
     _lastPayload = payload;
+    if (payload && payload.scope === 'self') return renderSelf(payload);
     var rowsEl  = document.getElementById('rows');
     var emptyEl = document.getElementById('empty');
     var cntEl   = document.getElementById('cnt');
@@ -848,7 +955,7 @@
     }
     var footParts = [];
     if (anyAmb) footParts.push('<span><b>*</b> non-unique name — buffs/debuffs may be inaccurate (same-name mobs share a name on the pipe).</span>');
-    if (hiddenNow > 0) footParts.push('<span>' + hiddenNow + ' hidden<span class="unhide" data-unhide="1">show all</span></span>');
+    if (hiddenNow > 0) footParts.push('<span>' + hiddenNow + ' hidden<span class="unhide" data-wp-interact data-unhide="1">show all</span></span>');
     if (footParts.length) { footEl.innerHTML = footParts.join(' · '); footEl.style.display = 'block'; }
     else footEl.style.display = 'none';
   }
@@ -876,7 +983,7 @@
   async function tick(){
     try {
       var asked = _scope;
-      var r = await fetch('http://127.0.0.1:'+PORT+'/api/extended-target?scope='+asked, { cache: 'no-store' });
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/extended-target?scope='+asked+(asked === 'self' ? '&keep='+_keep : '')+((asked === 'self' || _showPlayers) ? '&timers=1' : ''), { cache: 'no-store' });
       var p = await r.json();
       if (asked !== _scope) return;   // the switch flipped mid-request; the next tick is the right answer
       document.getElementById('conn').className = 'conn ok';

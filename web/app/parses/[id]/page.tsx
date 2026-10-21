@@ -23,6 +23,7 @@ import { buildFightCurve, observedHpSeries } from '@/lib/fightCurve';
 import { selectAll } from '@/lib/selectAll';
 import { loadAgentVersionsAround, loadEncounterEvents } from '@/lib/fullReads';
 import { classifyEncounter, clearClassification, markDeathIntentional, unmarkDeathIntentional } from '../actions';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -323,7 +324,7 @@ async function load(id: string) {
     // in the by-class roll-up instead of inflating "Unknown".
     const petSet = new Set<string>();
     {
-      const { data: pets } = await sb.from('pet_names').select('name').eq('guild_id', 'wolfpack');
+      const { data: pets } = await sb.from('pet_names').select('name').eq('guild_id', GUILD_TAG);
       for (const p of (pets ?? []) as { name: string }[]) petSet.add(p.name.toLowerCase());
     }
 
@@ -351,7 +352,7 @@ async function load(id: string) {
       const { data: rules } = await sb
         .from('intentional_death_rules')
         .select('character_name')
-        .eq('guild_id', 'wolfpack')
+        .eq('guild_id', GUILD_TAG)
         .eq('npc_id', encTyped.npc_id)
         .eq('active', true);
       for (const r of (rules ?? []) as { character_name: string }[]) {

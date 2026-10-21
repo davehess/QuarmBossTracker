@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { readSource, sliceBlock, evalBlock, stripJs, ROOT } from './_source-slice.js';
+import { readSource, sliceBlock, evalBlock, stripJs, stripCss, ROOT } from './_source-slice.js';
 
 const canvas   = readSource(path.join(ROOT, 'apps', 'mimic', 'canvas.html'));
 const triggers = readSource(path.join(ROOT, 'apps', 'mimic', 'triggers.html'));
@@ -97,7 +97,7 @@ describe('layout: always one callouts panel and one catch-all', () => {
     const s = r.sanitize({ panels: [{ id: 'x', kind: 'timers', groups: ['charm', 'nonsense'], x: 7, y: -3, w: 5, h: 99999, scale: 9 }] });
     const p = s.panels.find(q => q.id === 'x');
     expect(p.groups).toEqual(['charm']);
-    expect([p.x, p.y, p.w, p.h, p.scale]).toEqual([1, 0, 120, 3000, 2.5]);
+    expect([p.x, p.y, p.w, p.h, p.scale]).toEqual([1, -3, 120, 3000, 2.5]);   // y may now be negative (a box hanging off the top), down to POS_MIN
   });
 
   it('a garbage file is no layout at all, not a crash', () => {
@@ -143,7 +143,7 @@ describe('triggers.html as a canvas part', () => {
     const h = new Function(`
       const calls = []; var PART = null, _visualElsewhere = false;
       function flash(){ calls.push('flash'); } function speak(){ calls.push('speak'); }
-      function playSound(){} function showFeedback(){ calls.push('votes'); } function offerMute(){} function pinSticky(){ calls.push('pin'); }
+      function playSound(){} function showFeedback(){ calls.push('votes'); } function offerMute(){} function offerVoice(){} function pinSticky(){ calls.push('pin'); }
       function _speakable(s){ return s; }
       ${cut('  let alertsEnabled = true;')}
       ${cut('  function fire(t){')}
@@ -211,8 +211,8 @@ describe('Mimic wiring (the overlay checklist)', () => {
     expect(sliceBlock(m, 'function createCanvasWindow() {', '\n}')).toContain('nodeIntegrationInSubFrames: true');
     const save = sliceBlock(m, "ipcMain.handle('canvas-save', (e, layout) => {", '\n});');
     expect(save).toMatch(/BrowserWindow\.fromWebContents\(e\.sender\) !== canvasWindow\) return false;/);
-    expect(save).toMatch(/layout\.panels\.length > 16\) return false;/);
-    expect(save).toMatch(/json\.length > 32_000\) return false;/);
+    expect(save).toMatch(/layout\.panels\.length > 160\) return false;/);
+    expect(save).toMatch(/json\.length > 256_000\) return false;/);
   });
   // The guild lead, 2026-09-29: "they do not have a move button on them which
   // should be there at all times". The ✥ is the one part of a locked panel
@@ -221,12 +221,12 @@ describe('Mimic wiring (the overlay checklist)', () => {
     const c = stripJs(canvas);
     expect(c).toMatch(/mv\.className = 'mvbtn';\s*mv\.textContent = '✥';\s*mv\.setAttribute\('data-wp-interact', ''\);/);
     expect(c).toMatch(/if \(ev\.target === mv\) \{ startDrag\(ev, p\.id, 'move', true\); return; \}/);
-    expect(c).toMatch(/if \(\(!_edit && !anyTime\) \|\| ev\.button !== 0\) return;/);
-    expect(c).toMatch(/if \(_edit\) e\.root\.setAttribute\('data-wp-interact', ''\); else e\.root\.removeAttribute\('data-wp-interact'\);/);
+    expect(c).toMatch(/if \(\(!isEd\(id\) && !anyTime && !\(playCorner && isCorner\(panelById\(id\)\)\)\) \|\| ev\.button !== 0\) return;/);
+    expect(c).toMatch(/if \(isEd\(p\.id\)\) e\.root\.setAttribute\('data-wp-interact', ''\); else e\.root\.removeAttribute\('data-wp-interact'\);/);
     expect(c).toMatch(/\.mvbtn\{position:absolute;/);
     expect(c).toContain('.tab,.grip{display:none}');
     expect(c).toContain('body.edit .mvbtn{display:none}');
-    expect(c).toMatch(/if \(_edit \|\| ev\.target === mv\) openMenu\(p\.id, ev\.target === mv \? mv : root\);/);
+    expect(c).toMatch(/if \(isEd\(p\.id\) \|\| ev\.target === mv\) openMenu\(p\.id, ev\.target === mv \? mv : root\);/);
     expect(c).toMatch(/menuEl\.addEventListener\('mouseleave', function \(\) \{ if \(!_edit\) closeMenu\(\); \}\);/);
   });
   it('the canvas page counts as an overlay for the hover handshake', () => {
@@ -260,33 +260,123 @@ describe('🧪 test rows, and a settings view that stays on screen', () => {
 
   it('the button turns one panel\'s samples on, locked or not, for 30 seconds; a callouts panel shows one callout', () => {
     const c = stripJs(canvas);
-    expect(c).toContain("if (w && typeof w.wpPartSample === 'function') w.wpPartSample(_edit || _isTesting(p.id));");
+    expect(c).toContain("if (w && typeof w.wpPartSample === 'function') w.wpPartSample(sampleOn(p, isEd(p.id), _isTesting(p.id)));");
     expect(c).toContain('var TEST_MS = 30000;');
-    expect(c).toMatch(/setTesting\(p\.id, !_isTesting\(p\.id\)\);/);
+    expect(c).toMatch(/setTesting\(p\.id, toggleSample\(p, isEd\(p\.id\), _isTesting\(p\.id\)\)\);/);
     expect(c).toMatch(/cw\.wpPartFlash\('TEST — Death Touch on the main tank'\)/);
     expect(c).toContain("window.wpCanvasPanelNames = function (id) { var p = panelById(id); return p ? p.names.slice() : []; };");
   });
 
+  // The guild lead, 2026-10-19: "No way to turn off the sample lines." Root cause: arranging forced the
+  // samples on (wpPartSample(_edit || testing)) while the button read only the 30-second test, so it said
+  // "Show test rows" with TEST rows on screen and pressing it could never take them off.
+  describe('the button speaks for what is on screen, and turns it off', () => {
+    const rows = () => evalBlock(sliceBlock(canvas, '  // ── Test rows ──', '  // ── end Test rows ──'), ['sampleOn', 'toggleSample']);
+    const R = rows();
+
+    it('samples are on while testing, or while arranging unless the panel hid them', () => {
+      expect(R.sampleOn({}, true, false)).toBe(true);                    // arranging shows the shape of an empty panel
+      expect(R.sampleOn({}, false, false)).toBe(false);                  // out in play: only a test
+      expect(R.sampleOn({}, false, true)).toBe(true);
+      expect(R.sampleOn({ noSample: true }, true, false)).toBe(false);   // hidden while arranging
+      expect(R.sampleOn({ noSample: true }, true, true)).toBe(true);     // a test still shows them
+    });
+
+    it('arranging, rows showing: the button hides them and keeps them hidden', () => {
+      const p = {};
+      expect(R.toggleSample(p, true, false)).toBe(false);                // no timed test to start
+      expect(p.noSample).toBe(true);
+      expect(R.sampleOn(p, true, false)).toBe(false);
+    });
+
+    it('arranging, rows hidden: the button brings them back', () => {
+      const p = { noSample: true };
+      expect(R.toggleSample(p, true, false)).toBe(false);
+      expect('noSample' in p).toBe(false);
+      expect(R.sampleOn(p, true, false)).toBe(true);
+    });
+
+    it('arranging while a 30-second test runs: one press clears both', () => {
+      const p = {};
+      expect(R.toggleSample(p, true, true)).toBe(false);
+      expect(R.sampleOn(p, true, false)).toBe(false);
+    });
+
+    it('out in play: a press starts the timed test, the next ends it, and neither writes noSample', () => {
+      const p = {};
+      expect(R.toggleSample(p, false, false)).toBe(true);
+      expect(R.toggleSample(p, false, true)).toBe(false);
+      expect('noSample' in p).toBe(false);
+    });
+
+    it('the label follows sampleOn, so it is Hide whenever rows are showing', () => {
+      const c = stripJs(canvas);
+      expect(c).toContain("(sampleOn(p, isEd(p.id), _isTesting(p.id)) ? '🧪 Hide test rows' : '🧪 Show test rows')");
+    });
+
+    it('the choice survives a reload: sanitize keeps noSample on a timers panel, and writes nothing when unset', () => {
+      const r = canvasRules();
+      const s = r.sanitize({ panels: [
+        { id: 'a', kind: 'timers', groups: ['charm'], noSample: true },
+        { id: 'b', kind: 'timers', groups: ['lull'] },
+        { id: 'c', kind: 'timers', groups: ['mez'], noSample: 'yes' },
+        { id: 'd', kind: 'callouts', noSample: true },
+      ] });
+      const by = (id) => s.panels.find(q => q.id === id);
+      expect(by('a').noSample).toBe(true);
+      expect('noSample' in by('b')).toBe(false);
+      expect('noSample' in by('c')).toBe(false);
+      expect('noSample' in by('d')).toBe(false);
+    });
+
+    it('pressing the button saves the layout', () => {
+      const c = stripJs(canvas);
+      expect(c).toMatch(/setTesting\(p\.id, toggleSample\(p, isEd\(p\.id\), _isTesting\(p\.id\)\)\);\s*save\(\); render\(\);/);
+    });
+  });
+
+  // placeMenu with its two helpers; the box to keep clear is the anchor's (the panel's) own.
   const placeMenu = ({ W = 1920, H = 1080, anchor, menuH, menuW = 280 }) => {
     const style = {};
     const menuEl = { classList: { contains: () => true }, style, getBoundingClientRect: () => ({ width: menuW, height: Math.min(menuH, parseInt(style.maxHeight || '99999', 10)) }) };
-    const fn = new Function('_menuAnchor', 'menuEl', 'window', sliceBlock(canvas, '  function placeMenu() {', '\n  }') + '\nreturn placeMenu;');
+    const fn = new Function('_menuAnchor', 'menuEl', 'window', sliceBlock(canvas, '  function placeMenu() {', '\n  }')
+      + '\n' + sliceBlock(canvas, '  function menuSpot(W, H, box, mw, mh) {', '\n  }\n')
+      + '\nfunction menuAvoid() { var r = _menuAnchor.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; }'
+      + '\nreturn placeMenu;');
     fn({ getBoundingClientRect: () => anchor }, menuEl, { innerWidth: W, innerHeight: H })();
-    return { top: parseInt(style.top, 10), left: parseInt(style.left, 10), height: menuEl.getBoundingClientRect().height, maxHeight: parseInt(style.maxHeight, 10) };
+    return { top: parseInt(style.top, 10), left: parseInt(style.left, 10), width: menuW, height: menuEl.getBoundingClientRect().height, maxHeight: parseInt(style.maxHeight, 10) };
   };
+  const covers = (m, a) => m.left < a.right && m.left + m.width > a.left && m.top < a.bottom && m.top + m.height > a.top;
   const whole = (m, H = 1080) => m.top >= 8 && m.top + m.height <= H - 8;
 
-  it('opens under the ✥ when it fits, above it when it does not, and is always whole on the screen', () => {
-    const under = placeMenu({ anchor: { left: 0, top: 0, right: 16, bottom: 16 }, menuH: 400 });
-    expect(under.top).toBe(22);
-    const above = placeMenu({ anchor: { left: 900, top: 900, right: 916, bottom: 916 }, menuH: 400 });
-    expect(above.top).toBe(900 - 400 - 6);
-    const tall = placeMenu({ anchor: { left: 1900, top: 500, right: 1916, bottom: 516 }, menuH: 900 });
-    expect(whole(tall), JSON.stringify(tall)).toBe(true);
-    expect(tall.left).toBe(1920 - 280 - 8);
+  // The guild lead, 2026-09-29: "The right click in the corner of an element completely covers the
+  // overlay. We need to adaptively find a spot where we can put it above or to the side depending on how
+  // far from the edge of the screen it is."
+  it('opens beside the panel — right, else left, else below, else above — never on it, always whole', () => {
+    const tl = { left: 0, top: 0, right: 16, bottom: 16 };
+    const a = placeMenu({ anchor: tl, menuH: 400 });
+    expect([a.left, a.top]).toEqual([24, 8]);                        // right of it
+    expect(covers(a, tl)).toBe(false);
+    const edge = { left: 1700, top: 500, right: 1916, bottom: 700 };
+    const b = placeMenu({ anchor: edge, menuH: 400 });
+    expect(b.left).toBe(1700 - 8 - 280);                             // no room right: left of it
+    expect(covers(b, edge)).toBe(false);
+    const wide = { left: 8, top: 100, right: 1900, bottom: 300 };
+    const c = placeMenu({ anchor: wide, menuH: 400 });
+    expect(c.top).toBe(308);                                         // no room either side: below
+    expect(covers(c, wide)).toBe(false);
+    const low = { left: 8, top: 600, right: 1900, bottom: 1000 };
+    const d = placeMenu({ anchor: low, menuH: 400 });
+    expect(d.top).toBe(600 - 8 - 400);                               // nor below: above
+    expect(covers(d, low)).toBe(false);
+    const huge = { left: 8, top: 8, right: 1900, bottom: 1060 };
+    const e = placeMenu({ anchor: huge, menuH: 400 });
+    expect(whole(e), JSON.stringify(e)).toBe(true);                  // nowhere clear: still whole on the screen
     const taller = placeMenu({ anchor: { left: 100, top: 500, right: 116, bottom: 516 }, menuH: 5000 });
     expect(taller.maxHeight).toBe(1080 - 16);
     expect(whole(taller)).toBe(true);
+    // The box it keeps clear is the panel's whole group, not only the ✥.
+    expect(stripJs(canvas)).toMatch(/var ids = _menuFor \? togetherWith\(_menuFor\)\.filter/);
   });
 
   it('is placed again once the live list fills in, and opened from ✥ it anchors to the ✥', () => {
@@ -299,7 +389,7 @@ describe('🧪 test rows, and a settings view that stays on screen', () => {
 describe('tray ↔ dashboard parity', () => {
   it('the tray has the switch and Arrange; the dashboard has the row and Arrange, on the same internals', () => {
     const m = stripJs(main);
-    expect(m).toMatch(/label: 'Canvas \(place callouts \+ timer panels anywhere\)'[\s\S]{0,200}_toggleOverlay\('canvas'\);/);
+    expect(m).toMatch(/label: 'Canvas \(callouts, timers, pieces and any overlay, placed anywhere\)'[\s\S]{0,200}_toggleOverlay\('canvas'\);/);
     expect(m).toMatch(/'  ↳ Arrange the canvas…'[\s\S]{0,160}_setCanvasArrange\(!_canvasArrange\);/);
     // The dashboard calls it "Canvas" (the guild lead, 2026-09-29: "change the name of the Timer
     // Canvas to Canvas"); its Arrange is the Overlays tab's "✏ Arrange on screen", which toggles like
@@ -316,14 +406,36 @@ describe('tray ↔ dashboard parity', () => {
 describe('Background on the Timers canvas', () => {
   const pre = readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js'));
   const cv = readSource(path.join(ROOT, 'apps', 'mimic', 'canvas.html'));
-  it('plates each panel, never the screen-sized body', () => {
+  it('plates each panel on its own say-so, never the screen-sized body and never off one body class', () => {
+    // 2026-10-19: the preload no longer plates every panel at once; canvas.html's `.panel.back` is each item's own.
     expect(pre).toMatch(/body\.wp-backdrop:not\(:has\(#wrap\)\):not\(:has\(#screenBtn\)\)\{background:/);
-    expect(pre).toMatch(/body\.wp-backdrop:has\(#screenBtn\) #panels > \.panel:not\(\.off\)\{background:/);
+    expect(stripJs(pre)).not.toMatch(/#panels > \.panel:not\(\.off\)\{background/);
+    expect(stripCss(cv)).toMatch(/\.panel\.back:not\(\.part\)\{background:rgb\(8 10 14 \/ max\(var\(--bg-alpha,0\.92\), 0\.92\)\);border-radius:6px\}/);
     // The marker is the canvas's alone.
     expect(cv).toMatch(/id="screenBtn"/);
     const fs = require('node:fs');
     const others = fs.readdirSync(path.join(ROOT, 'apps', 'mimic')).filter(f => f.endsWith('.html') && f !== 'canvas.html')
       .filter(f => /id="screenBtn"/.test(fs.readFileSync(path.join(ROOT, 'apps', 'mimic', f), 'utf8')));
     expect(others).toEqual([]);
+  });
+
+  it('the panel menu has its own Background row; the shared toggle is the toolbar\'s default; panel frames never self-plate', () => {
+    const c = stripJs(cv), p = stripJs(pre);
+    expect(c).toMatch(/<div class="sec">Background<\/div>[\s\S]{0,300}data-back="0"[\s\S]{0,200}data-back="1"/);
+    expect(c).not.toMatch(/data-bg\b/);
+    expect(c).toMatch(/bgBtn\.addEventListener\('click'[\s\S]{0,80}M\.toggleBackdropThis\(\)/);
+    expect(p).toMatch(/toggleBackdropThis:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('wp-backdrop-toggle'\)/);
+    // Both the load-time pull and the push skip a canvas panel frame.
+    expect(p).toMatch(/s\.backdrop && _wpOverlayDoc\(\) && !_wpCanvasPart\(\)/);
+    expect(p).toMatch(/_wpOverlayDoc\(\) && !_wpCanvasPart\(\)\) document\.body\.classList\.toggle\('wp-backdrop'/);
+    // The detector is true only for an iframe carrying ?part=timers|callouts (the dock's panes, the Map pop-out
+    // window and ordinary overlays all stay plated).
+    const block = sliceBlock(pre, 'function _wpCanvasPart()', '\n}\n');
+    const fn = new Function('WP_IS_DOCKED', 'window', block + '\nreturn _wpCanvasPart();');
+    const run = (docked, search) => fn(docked, { location: { search } });
+    expect(run(true, '?part=timers&panel=p1')).toBe(true);
+    expect(run(true, '?part=callouts&panel=p2')).toBe(true);
+    expect(run(true, '')).toBe(false);          // a dock pane
+    expect(run(false, '?part=timers')).toBe(false);   // map.html?part=timers, a top-level window
   });
 });

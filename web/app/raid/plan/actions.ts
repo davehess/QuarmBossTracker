@@ -9,6 +9,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 
 async function assertOfficer() {
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -48,7 +49,7 @@ export async function createFightCard(formData: FormData) {
   const f = cardFields(formData);
   if (!f.boss_npc_id) return;
   await supabaseAdmin().from('fight_cards').insert({
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     ...f,
     updated_by: u!.email || u!.id,
   });

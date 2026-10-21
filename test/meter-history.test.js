@@ -144,7 +144,7 @@ describe('History is the damage dealt, not the threat built', () => {
 
 // ── DS from tanks ───────────────────────────────────────────────────────────
 describe('a damage shield is credited to the tank who wears it — in the live board and in History', () => {
-  it('one wearer, flavor line: 500 of swings + 9 of thorns on the tank, 210 taken kept for later', () => {
+  it('one wearer, flavor line: 500 of swings + 9 of thorns on the tank, 210 taken and the 9 of shield kept for Tank History', () => {
     const b = builder('Brackwyn'); const feed = feeder(b);
     feed(`Corvale slashes ${MOB} for 500 points of damage.`);         // first, so the log knows the mob is one
     feed(`${MOB} hits Corvale for 210 points of damage.`);
@@ -152,7 +152,7 @@ describe('a damage shield is credited to the tank who wears it — in the live b
     feed(`${MOB} was pierced by thorns.`);
     const { et, entry } = record(b, 'Brackwyn');
     expect(et.perPlayer.Corvale.dmg).toBe(509);
-    expect(entry.local).toEqual([{ character: 'Corvale', dmg: 509, pet_owner: null, took: 210, tookMax: 210,
+    expect(entry.local).toEqual([{ character: 'Corvale', dmg: 509, pet_owner: null, took: 210, tookMax: 210, ds: 9,
                                   first_ms: expect.any(Number), last_ms: expect.any(Number) }]);
     expect(rowOf(_histRows(entry), 'Corvale')[1]).toBe(509);
   });
@@ -603,7 +603,9 @@ describe('the overlay reads it only while History or Trend is open, and every co
         if (/fightHistory/.test(stripJs(readSource(path.join(d, f))))) hits.push(f);
       }
     }
-    expect(hits).toEqual(['overlay.html']);                                      // and only as the old-agent fallback above
+    // alpha: the Canvas's meter-history piece (parts.js) reproduces the overlay's History list, so it
+    // reads the same field; it is the one other reader allowed.
+    expect(hits).toEqual(['overlay.html', 'parts.js']);                          // and only as the old-agent fallback above
     // (booleans, not not.toMatch: a failure there would print the whole 45k-line agent)
     // nothing in the agent's embedded pages reads it off a state object — only stats.* and the legacy session file
     expect(/(?<!stats|raw)\.fightHistory/.test(stripJs(agentSrc))).toBe(false);

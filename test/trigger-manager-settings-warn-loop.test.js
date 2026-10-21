@@ -437,7 +437,8 @@ describe('the Triggers tab wiring', () => {
 
   it('the guild list is its own card, repainted without touching the form above it', () => {
     const triggers = sliceBlock(code, 'function renderTriggers(s) {', '\n}\n');
-    expect(triggers).toContain('<div id="wpGuildTriggers" class="card wide"></div>');
+    // (Layout A: the card starts folded — wp-fold, and its title lives in a <summary>.)
+    expect(triggers).toContain('<div id="wpGuildTriggers" class="card wide wp-fold" data-index="Guild triggers"></div>');
     expect(triggers).not.toContain('data-trig-copy');   // the rows moved with the card
     const card = sliceBlock(code, 'function renderGuildTriggersCard(s) {', '\n}\n');
     expect(card).toMatch(/data-trig-view=/);
@@ -486,20 +487,41 @@ describe('renderGuildTriggersCard — an open row shows its settings and survive
       // the sound list and the "My sound" control the opened row carries (2026-10-14)
       sliceBlock(dash, 'var WPSounds = (function () {', '\n})();\n'),
       sliceBlock(dash, 'function wpSoundOverrideHtml(t, ov) {', '\n}\n'),
+      // the rows are filed into groups (2026-10-18), each a <details> that remembers its open state
+      'var _wpOpenDetails = {};',
+      sliceBlock(dash, 'function wpKeep(key, defaultOpen) {', '\n}\n'),
+      sliceBlock(dash, 'function wpGuildGroupOf(t) {', '\n}\n'),
+      sliceBlock(dash, 'function wpGuildCatBadge(cat) {', '\n}\n'),
+      // the rows are fetched from /api/guild-triggers and held here, not read off the state (2026-10-20)
+      sliceBlock(dash, 'var _wpGt = {', ';\n'),
+      sliceBlock(dash, 'function wpGuildTriggersSync(s, el) {', '\n}\n'),
       sliceBlock(dash, 'function renderGuildTriggersCard(s) {', '\n}\n'),
       sliceBlock(dash, 'function wpGuildTrigToggle(key) {', '\n}\n'),
       'function html() { return out; }',
-    ].join('\n'), ['renderGuildTriggersCard', 'wpGuildTrigToggle', 'html', 'window']);
+    ].join('\n'), ['renderGuildTriggersCard', 'wpGuildTrigToggle', 'html', 'window', '_wpGt']);
   }
-  const STATE = { guildTriggers: [
+  const ROWS = [
     { id: 'g-1', name: 'Rampage on me', category: 'rampage', pattern: 'rampages', cooldown_seconds: 3,
       timer_duration_sec: 60, timer_loop: true, warning_seconds: 10, warning_text: 'soon',
       actions: [{ type: 'text_overlay', text: 'RAMPAGE', color: 'red' }] },
     { id: 'g-2', name: 'Other', pattern: 'x', actions: [] },
-  ] };
+  ];
+  // /api/state carries the count and a revision; the card holds the rows (fetched from /api/guild-triggers)
+  const STATE = { guildTriggerCount: 2, guildTriggersRev: '2.abc' };
+  const loaded = () => { const h = build(); h._wpGt.rows = ROWS; return h; };
+
+  it('says it is loading until the rows arrive; a state that counts none is an empty list, not a wait', () => {
+    const h = build();
+    h.renderGuildTriggersCard(STATE);
+    expect(h.html()).toContain('Loading the guild triggers');
+    expect(h.html()).not.toContain('No guild triggers loaded');
+    h.renderGuildTriggersCard({ guildTriggerCount: 0, guildTriggersRev: '0.x' });
+    expect(h.html()).toContain('No guild triggers loaded');
+    expect(h.html()).not.toContain('Loading the guild triggers');
+  });
 
   it('is closed by default, with a name that is a button, not a character link', () => {
-    const h = build();
+    const h = loaded();
     h.renderGuildTriggersCard(STATE);
     const out = h.html();
     expect(out).toContain('data-trig-view="g-1"');
@@ -509,7 +531,7 @@ describe('renderGuildTriggersCard — an open row shows its settings and survive
   });
 
   it('opens one row on a click and shows its settings, including the new warning and repeat rows', () => {
-    const h = build();
+    const h = loaded();
     h.window.__wpLastState = STATE;
     h.wpGuildTrigToggle('g-1');
     const out = h.html();
@@ -522,10 +544,10 @@ describe('renderGuildTriggersCard — an open row shows its settings and survive
   });
 
   it('a repaint with fresh data keeps it open; a second click closes it', () => {
-    const h = build();
+    const h = loaded();
     h.window.__wpLastState = STATE;
     h.wpGuildTrigToggle('g-1');
-    h.renderGuildTriggersCard({ guildTriggers: STATE.guildTriggers.slice() });   // the 2-second poll
+    h.renderGuildTriggersCard({ ...STATE });   // the 2-second poll
     expect(h.html()).toContain('class="trigdetail"');
     h.wpGuildTrigToggle('g-1');
     expect(h.html()).not.toContain('trigdetail');

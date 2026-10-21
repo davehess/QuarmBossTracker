@@ -43,6 +43,11 @@ module.exports = {
   reactStrictMode: true,
   env: {
     NEXT_PUBLIC_IS_BETA: IS_BETA ? '1' : '',
+    // The guild kit's tag (web/lib/guild.ts). SUPABASE_GUILD_ID is server-only, so a deployment that sets only
+    // that would send the browser bundle to the default tag while the server used the real one. Inlining it
+    // here, at build time, makes both bundles agree. An explicit NEXT_PUBLIC_GUILD_TAG wins; '' means unset.
+    NEXT_PUBLIC_GUILD_TAG:
+      (process.env.NEXT_PUBLIC_GUILD_TAG || process.env.SUPABASE_GUILD_ID || '').trim(),
   },
   // Feedback screenshots (2026-09-26): up to three ~0.5 MB JPEGs ride a server
   // action as base64. Next's default is 1 MB; Vercel's own request cap is about

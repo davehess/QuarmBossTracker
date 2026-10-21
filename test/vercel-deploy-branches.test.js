@@ -25,6 +25,8 @@ describe('web/vercel.json deploys', () => {
   it('a push that changes nothing under web/ skips the build', () => {
     // Vercel builds on exit 1 and skips on 0; `git diff --quiet` exits 1 when something changed. The command
     // runs in the project root (web/), so "." is web/ — the site imports nothing from outside it.
-    expect(cfg.ignoreCommand).toBe('git diff --quiet HEAD^ HEAD -- .');
+    // web/local is the exception inside it: the local site that ships in Mimic (2026-10-21). The website
+    // imports nothing from it, so a push that changes only web/local must not spend a deployment.
+    expect(cfg.ignoreCommand).toBe("git diff --quiet HEAD^ HEAD -- . ':(exclude)local'");
   });
 });

@@ -14,6 +14,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const metadata = {
   title: 'Mimic Mail · Admin',
@@ -50,7 +51,7 @@ async function createNotice(formData: FormData) {
   if (!title || !body) return;
   const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
   await supabaseAdmin().from('mimic_notices').insert({
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     title,
     body,
     severity,
@@ -75,7 +76,7 @@ export default async function NoticesAdminPage() {
   const { data } = await supabaseAdmin()
     .from('mimic_notices')
     .select('*')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .order('id', { ascending: false })
     .limit(30);
   const rows = (data ?? []) as NoticeRow[];

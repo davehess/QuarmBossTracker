@@ -94,6 +94,10 @@
   .legend .pr i{background:#58a6ff}
   .legend .sp i{background:#a371f7}
   .legend .hl i{background:#f0b429}
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the window's padding and the title's gutters go. */
+  body.wp-in-canvas #wrap{padding:2px 3px}
+  body.wp-in-canvas .head{padding-left:0;padding-right:0}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (right-click for resize + Setup)">✥</button>

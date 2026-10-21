@@ -16,6 +16,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 
 type Key = { from: number; to: number; startedAt: string };
 
@@ -42,7 +43,7 @@ async function upsert(k: Key, patch: Record<string, unknown>) {
   const { error } = await supabaseAdmin()
     .from('roll_set_overrides')
     .upsert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       roll_from: k.from,
       roll_to: k.to,
       started_at: k.startedAt,

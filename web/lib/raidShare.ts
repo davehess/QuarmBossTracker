@@ -70,9 +70,77 @@ export function shareStatus(row: Pick<ShareRow, 'expires_at' | 'revoked_at'>, no
   return 'ok';
 }
 
-/** The row's window as a ShareWindow, or null when the stored times are unusable. */
-export function windowOfShare(row: Pick<ShareRow, 'from_at' | 'to_at'>): ShareWindow | null {
-  return makeWindow(Date.parse(row.from_at), Date.parse(row.to_at));
+/**
+ * The row's window as a ShareWindow, or null when the stored times are unusable. An OPEN share ("follow until the
+ * raid ends", isOpenShare) reads as [from, min(now, from + 24 h)): the end moves with the clock until an officer
+ * closes it. `now` defaults to the real clock.
+ */
+export function windowOfShare(row: Pick<ShareRow, 'from_at' | 'to_at'>, now = Date.now()): ShareWindow | null {
+  const from = Date.parse(row.from_at);
+  if (isOpenShare(row)) {
+    // At least a minute long, so a share made the instant its window starts is not empty.
+    return makeWindow(from, Math.max(Math.min(now, from + MAX_WINDOW_MS), from + MINUTE_MS));
+  }
+  return makeWindow(from, Date.parse(row.to_at));
+}
+
+// ── Open shares (no migration) ───────────────────────────────────────────────
+
+/**
+ * An open share is stored as `to_at = from_at + 24 h - 1 s`. Every window an officer makes is whole-minute
+ * (makeWindow rounds), so a row that is 1 s short of a day cannot be anything else. The table's check
+ * (to_at - from_at <= 24 h) accepts it, so no column is needed.
+ */
+export const OPEN_SPAN_MS = 24 * 60 * MINUTE_MS - 1000;   // MAX_WINDOW_MS - 1 s; spelled out because that const is declared further down
+
+/** The stored window of a new open share: from rounded down to the minute, the end at the marker. */
+export function openWindow(fromMs: number): ShareWindow {
+  const f = Math.floor(fromMs / MINUTE_MS) * MINUTE_MS;
+  return { fromMs: f, toMs: f + OPEN_SPAN_MS };
+}
+
+export function isOpenShare(row: Pick<ShareRow, 'from_at' | 'to_at'>): boolean {
+  const f = Date.parse(row.from_at);
+  const t = Date.parse(row.to_at);
+  return Number.isFinite(f) && Number.isFinite(t) && t - f === OPEN_SPAN_MS;
+}
+
+/** The latest end an officer may set: a little ahead of the clock (a raid being planned), not a year out. */
+export const MAX_END_AHEAD_MS = 12 * 60 * MINUTE_MS;
+
+export type ShareChange = { to_at: string } | { error: string };
+
+/**
+ * What an officer's PATCH does to a share's end. `body.to` sets a fixed end (after `from`, window <= 24 h, not past
+ * now + 12 h); `body.open === true` makes it follow the raid; `body.open === false` alone closes it at the
+ * moment (or at `from + 24 h`, whichever is first). Returns the new `to_at` or the reason it is refused.
+ */
+export function planShareChange(
+  row: Pick<ShareRow, 'from_at' | 'to_at'>,
+  body: { to?: unknown; open?: unknown },
+  now = Date.now(),
+): ShareChange {
+  const from = Date.parse(row.from_at);
+  if (!Number.isFinite(from)) return { error: 'bad window' };
+  if (body.open === true) {
+    if (body.to !== undefined) return { error: 'send either to or open' };
+    return { to_at: new Date(openWindow(from).toMs).toISOString() };
+  }
+  let toMs: number;
+  if (body.to !== undefined && body.to !== null) {
+    if (typeof body.to !== 'string') return { error: 'bad end time' };
+    toMs = Date.parse(body.to);
+    if (!Number.isFinite(toMs)) return { error: 'bad end time' };
+    if (toMs > now + MAX_END_AHEAD_MS) return { error: 'end is too far ahead' };
+  } else if (body.open === false) {
+    toMs = Math.min(now, from + MAX_WINDOW_MS);   // Close: fix the end at this moment
+  } else {
+    return { error: 'nothing to change' };
+  }
+  if (toMs <= from) return { error: 'end must be after the start' };
+  const win = makeWindow(from, toMs);
+  if (!win) return { error: 'a share covers at most 24 hours' };
+  return { to_at: new Date(win.toMs).toISOString() };
 }
 
 // ── The window ───────────────────────────────────────────────────────────────

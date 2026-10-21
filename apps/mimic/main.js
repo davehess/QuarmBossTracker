@@ -27,13 +27,14 @@ const fs    = require('fs');
 const net   = require('net');
 const http  = require('http');
 const { spawn } = require('child_process');
-const { startZealWatch } = require('./zealPipe');
+const { startZealWatch, chatLineOf } = require('./zealPipe');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
 const { applyIniKeyEdits } = require('./iniKeyEdits');
 const { visibleUiRects, zealAreas, applyPicks, cleanPicks } = require('./uiClearRects');
 const uiLayouts = require('./uiLayouts');
 const soundLib = require('./sounds');
+const neuralVoice = require('./neuralVoice');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -113,6 +114,13 @@ const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
 // folders through env so its dashboard can list and play them too (see _soundDirs in the agent).
 const SOUNDS_SHIPPED_DIR = () => (app.isPackaged ? path.join(process.resourcesPath, 'sounds') : path.join(__dirname, 'sounds'));
 const SOUNDS_USER_DIR    = () => path.join(app.getPath('userData'), 'sounds');
+// The local site (the guild lead, 2026-10-21): the website's own pages, exported static from web/local and
+// shipped as resources/local-site (extraResources; the repo's web/local/out in dev). The agent serves it
+// under /local/ on the dashboard port, so it is handed the folder through env (a hot-swapped agent in userData
+// cannot find resources/ on its own).
+const LOCAL_SITE_DIR = () => (app.isPackaged ? path.join(process.resourcesPath, 'local-site') : path.join(__dirname, '..', '..', 'web', 'local', 'out'));
+// Downloaded callout voices (Piper), under the user's data folder, never in the installer. See neuralVoice.js.
+const VOICES_DIR         = () => path.join(app.getPath('userData'), 'voices');
 function _ensureSoundsDir() { try { fs.mkdirSync(SOUNDS_USER_DIR(), { recursive: true }); } catch { /* read-only profile: the library is just the shipped set */ } }
 function _openSoundsFolder() { _ensureSoundsDir(); return shell.openPath(SOUNDS_USER_DIR()); }
 
@@ -221,6 +229,11 @@ const PANEL_OVERLAYS = [
 let tray = null;
 let agentProc = null;
 let agentPort = BASE_PORT;
+// Per-launch secret for the agent's local port (the guild lead, 2026-10-17). Our file:// pages send
+// "Origin: null", which a sandboxed iframe on any website can send too; the agent only lets "null" through
+// with this value in `x-wolfpack-local`. It goes to the agent in its env (launchAgent) and onto our own windows'
+// requests to that one port (_wireLocalSecretHeader) - nowhere else.
+const _LOCAL_SECRET = require('crypto').randomBytes(32).toString('hex');
 let restartBackoff = 1000;
 let quitting = false;
 let updatePending = null; // { version } once an update is downloaded and ready
@@ -265,6 +278,13 @@ function defaultConfig() {
     // installs keep whatever they had: loadConfig does Object.assign over the
     // saved config, and onboarded users have these persisted already.)
     showHud: false,          // DPS HUD overlay user pref
+    // The Timers canvas is a CHOICE, never a default (the guild lead, 2026-10-21: "don't automatically open up
+    // canvas on new users. it should be a choice, include it in the tour"). Written out so the answer for a fresh
+    // install is on the page, not "absent, therefore false". A saved config keeps whatever it stored.
+    showCanvas: false,
+    // Set when the tour (welcome.html) is finished or skipped. Nothing reads it to force the tour on anyone;
+    // "Take the tour again" (tray + dashboard) always opens it.
+    tourSeen: false,
     enableTriggerTts: true,  // Trigger TTS/callouts MASTER switch — default ON
                              // so fresh installs see countdown timer rows
                              // during a raid without an extra opt-in.
@@ -307,7 +327,7 @@ function defaultConfig() {
     // group/officer/custom switch those lines (group and custom default ON since 2026-10-14, officer stays opt-in),
     // byChar remembers which channel chips each character has switched off. offChannels = [lower-case joined
     // channel NAMES] switched off, shared by every character; absent = every channel shows. melee = opt-in for
-    // the combined-melee group (default off); spells and skills are the same kind of opt-in (default off). meleeShow = { mine, on_me, others, misses }, which
+    // the combined-melee group (default off); spells, skills, loot, random and other are the same kind of opt-in (default off). meleeShow = { mine, on_me, others, misses }, which
     // melee lines show (all true unless switched off); spellShow = { mine, on_me, others } and skillShow = { mine, others } likewise. only = the "show only" view toggle ('' = off). win = { <window
     // id: 'main' or a breakout window id (b1, b2...)>: { fontSize, lineGap, times, tags } }, each window's own text settings.
     showChat: false,
@@ -390,6 +410,9 @@ function defaultConfig() {
     runMode: 'full',
     // Spoken-callout voice (the guild lead, 2026-10-14): a voice pack id (the agent's VOICE_PACKS), optionally an installed
     // voice by name, and a speed / pitch that override the pack's own (null = the pack's). Read by triggers.html; see voice.js.
+    // Absent keys on it (2026-10-17): engine ('auto' = the best downloaded voice, else Windows; or 'windows' /
+    // 'piper' / 'kokoro') and piperVoice / kokoroVoice (the voice in each). Downloaded voices ignore voiceName
+    // and pitch. They are written only when the player picks, and read as auto when missing: voice.js chooseEngine.
     voice: { pack: 'default', voiceName: '', rate: null, pitch: null },
   };
 }
@@ -566,6 +589,7 @@ function configForRenderer(cfg) {
     delete safe.session.token;
   }
   delete safe.token;
+  delete safe.chatCache;   // holds the Chat cache key box
   // Derived booleans the UI actually wants.
   safe.connected   = !!resolveUploadToken(cfg);
   safe.connectedAs = cfg.session?.identity?.display_name || null;
@@ -761,6 +785,10 @@ const EQ_LOG_CANONICAL_RX = /^eqlog_.+_pq\.proj\.txt$/i;
 // " BACKUP.txt", ".txt.old", etc. We still want these so a rotated history
 // isn't silently dropped. Lazy capture stops at "_pq.proj".
 const EQ_LOG_STEM_RX = /^eqlog_(.+?)_pq\.proj/i;
+// Other EverQuest servers (Project 1999, live EQ, Lazarus...; the guild lead, 2026-10-19) write eqlog_<Name>_<server>.txt.
+// They only ever pass through the welcome-line check below (never on the filename alone), so a stray eqlog_-ish file
+// is not tailed. The agent (index.js, eqServerForLog) decides what each server may do; Mimic only has to find them.
+const EQ_LOG_OTHER_STEM_RX = /^eqlog_([^_]+)_.+?\.txt/i;
 // Every EQ log opens with "[<timestamp>] Welcome to EverQuest!". We use that
 // signature to confirm a NON-canonical filename really is an EQ log (vs some
 // unrelated eqlog_-ish file) before we tail it.
@@ -768,7 +796,7 @@ const EQ_WELCOME_RX = /^\[[^\]]+\]\s+Welcome to EverQuest!/;
 
 // Character name from an EQ log filename, tolerant of rotation/backup suffixes.
 function _characterFromLogName(filename) {
-  const m = filename.match(EQ_LOG_STEM_RX);
+  const m = filename.match(EQ_LOG_STEM_RX) || filename.match(EQ_LOG_OTHER_STEM_RX);
   return m ? m[1] : null;
 }
 
@@ -838,7 +866,7 @@ function _flushEqVerdicts() {
 
 function _isEqLogFile(dir, filename) {
   if (EQ_LOG_CANONICAL_RX.test(filename)) return true;   // filename alone — no I/O
-  if (!EQ_LOG_STEM_RX.test(filename)) return false;      // not even a candidate
+  if (!EQ_LOG_STEM_RX.test(filename) && !EQ_LOG_OTHER_STEM_RX.test(filename)) return false;      // not even a candidate
   const full = path.join(dir, filename);
   const key  = full.toLowerCase();
   const map  = _loadEqVerdicts();
@@ -1329,6 +1357,55 @@ function _findEqInstallsUncached(hint) {
 // at ~60fps and applies setBounds. 1:1 cursor-to-window motion, no Chromium
 // hit-test path involved.
 let _dragSession = null;  // { win, offsetX, offsetY, width, height, interval }
+
+// ── A window the OS is moving is not ours to place (the guild lead, 2026-10-21: "when dragging the electron mimic
+// dashboard it will jump back and forth as i'm dragging it") ──────────────────────────────────────────────────
+// The dashboard is the one framed window: Windows drags it from its title bar, in a modal loop that owns the
+// window's position until the button comes up. Electron reports that loop as 'will-move' (every step) and 'moved'
+// (the end); a programmatic setBounds only fires 'move'. Any code that writes bounds to that window meanwhile is a
+// second hand on the wheel, and each write lands one step behind the cursor: back and forth. Nothing in main.js
+// targets the dashboard on purpose, but the one writer that runs on a 16 ms timer (_startWindowDrag, which the
+// resize grips ride on) resolves its window from the IPC sender, so it asks here first. The mark goes stale after
+// 1.5 s in case 'moved' never arrives.
+const NATIVE_MOVE_STALE_MS = 1500;
+function _nativeMoving(win, now) {
+  const at = win && win.__wpMoveAt;
+  return !!at && ((now == null ? Date.now() : now) - at) < NATIVE_MOVE_STALE_MS;
+}
+// Direction changes along a drag's x positions (steps of 2 px or less are rounding, not a direction). A hand
+// dragging one way has a handful at most; a window fighting itself has one every other step.
+function _moveReversals(xs) {
+  let last = 0, n = 0;
+  for (let i = 1; i < xs.length; i++) {
+    const d = xs[i] - xs[i - 1];
+    if (Math.abs(d) <= 2) continue;
+    const s = d > 0 ? 1 : -1;
+    if (last && s !== last) n++;
+    last = s;
+  }
+  return n;
+}
+const MOVE_JITTER_MIN_REVERSALS = 6;
+function _noteNativeMove(win, bounds) {
+  win.__wpMoveAt = Date.now();
+  const t = win.__wpMoveTrace || (win.__wpMoveTrace = []);
+  if (t.length < 400) t.push(bounds.x);
+}
+function _endNativeMove(win) {
+  const t = win.__wpMoveTrace || [];
+  win.__wpMoveAt = 0;
+  win.__wpMoveTrace = [];
+  const rev = _moveReversals(t);
+  if (rev < MOVE_JITTER_MIN_REVERSALS) return;
+  // The evidence a Windows repro needs: how many screens and at what scaling, and the size floor.
+  let where = '';
+  try {
+    const b = win.getBounds(), min = win.getMinimumSize ? win.getMinimumSize() : [0, 0];
+    where = ` size=${b.width}x${b.height} min=${min[0]}x${min[1]} scale=${screen.getDisplayMatching(b).scaleFactor}`
+      + ` displays=${screen.getAllDisplays().map(d => d.scaleFactor).join('/')}`;
+  } catch { /* the window went with the drag */ }
+  appendAgentLog(`[window] drag jitter: ${rev} direction changes over ${t.length} steps${where}\n`);
+}
 // Map an overlay window to its config bounds key, so a manual ✥-drag persists
 // to the SAME key the window restores from (_resolveBounds). Without this the
 // drag end persisted to `undefined`, so position never saved → every launch
@@ -1363,7 +1440,7 @@ function _boundsKeyForWindow(win) {
   return null;
 }
 function _startWindowDrag(win, persistKey) {
-  if (!win || win.isDestroyed()) return;
+  if (!win || win.isDestroyed() || _nativeMoving(win)) return;
   _stopWindowDrag();
   try {
     const c = screen.getCursorScreenPoint();
@@ -1394,6 +1471,10 @@ function _startWindowDrag(win, persistKey) {
       // along; null for every other overlay, which is untouched.
       chat: (() => { try { return _chatDragBegin(win); } catch { return null; } })(),
     };
+    // A fit must not run under a drag (the guild lead, 2026-10-19: overlays fit their content, but a fit
+    // that lands mid-drag is overwritten by the drag's next step, which writes the height it began with).
+    // overlay-auto-height holds its fit while this is set and _stopWindowDrag asks the page for one.
+    win.__wpDragging = true;
     _dragSession.interval = setInterval(() => {
       if (!_dragSession) return;
       if (_dragSession.win.isDestroyed()) { _stopWindowDrag(); return; }
@@ -1794,6 +1875,13 @@ function _stopWindowDrag() {
     if (_dragSession.restoreFocusable && _dragSession.win && !_dragSession.win.isDestroyed()) {
       try { _dragSession.win.setFocusable(false); } catch {}
     }
+    // The drag is over: a fit that was held back while it ran is asked for now, from the page, so it
+    // measures what the content is at this moment rather than replaying a stale height.
+    const w = _dragSession.win;
+    try { w.__wpDragging = false; } catch { /* window gone */ }
+    try {
+      if (w.__wpFitPending && !w.isDestroyed()) { w.__wpFitPending = false; w.webContents.send('wp-refit'); }
+    } catch { /* window gone */ }
     _dragSession = null;
   }
 }
@@ -1827,6 +1915,36 @@ function _flushZealToAgent() {
   }, (res) => { res.resume(); });
   req.on('error', () => {}); req.on('timeout', () => req.destroy());
   req.write(body); req.end();
+}
+
+// Zeal's chat colour per printed line, for the Chat overlay's channels (the guild lead, 2026-10-19: "the differentiation ...
+// based on the Zeal options"; DECISIONS §383). Sent to the agent on this PC only, and ONLY while the Chat overlay exists:
+// the pipe's log stream carries every line (tells and officer chat too), so with the overlay closed nothing is read from it
+// here. The agent keeps a line's colour as a short hint and shows nothing from it (see the agent's "Zeal's own channel").
+let _zealChatPending = [];
+let _zealChatTimer = null;
+function _flushZealChat() {
+  _zealChatTimer = null;
+  if (!agentPort || !_zealChatPending.length) return;
+  const lines = _zealChatPending.splice(0, 200);
+  if (_zealChatPending.length) _zealChatTimer = setTimeout(_flushZealChat, 50);
+  const body = JSON.stringify({ lines });
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: '/api/zeal-chat', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    timeout: 3000,
+  }, (res) => { res.resume(); });
+  req.on('error', () => {}); req.on('timeout', () => req.destroy());
+  req.write(body); req.end();
+}
+function _zealChatNote(obj) {
+  if (!chatWindow || chatWindow.isDestroyed()) { _zealChatPending = []; return; }
+  const l = chatLineOf(obj);
+  if (!l) return;
+  _zealChatPending.push(l);
+  if (_zealChatPending.length > 1000) _zealChatPending.splice(0, 500);
+  if (_zealChatPending.length >= 100) { if (_zealChatTimer) clearTimeout(_zealChatTimer); _flushZealChat(); }
+  else if (!_zealChatTimer) _zealChatTimer = setTimeout(_flushZealChat, 100);
 }
 
 // Live Zeal state per character, parsed from the gauge(2)/player(3) stream.
@@ -2535,6 +2653,8 @@ function cancelMimicLink() {
 // Sign out. Best-effort revoke on the bot; clear cfg.session locally regardless
 // so the user is signed out even if the network is down.
 async function signOutMimic() {
+  // A logout (the guild lead, 2026-10-17): start the Chat cache's grace window BEFORE the session is cleared below.
+  try { _chatCacheOnLogout(); } catch (e) { void e; }
   const cfg = loadConfig();
   const token = resolveUploadToken(cfg) || '';
   delete cfg.session;
@@ -2549,6 +2669,100 @@ async function signOutMimic() {
     try { await _httpsJsonPost(_botBaseUrl(cfg), '/api/mimic-link/revoke', {}, { 'X-Wolfpack-Mimic-Session': token }); } catch (e) { void e; }
   }
 }
+// ── Chat cache: the Chat overlay's feed, kept across a restart ───────────────────────────────────────────
+// The guild lead, 2026-10-17: "cache the filled in chat overlay data encrypted locally and invalidate it on logout if a
+// fresh session isn't established within a reasonable timeframe, and wipe before revoking access". The agent owns the file
+// and the encryption (packages/wolfpack-logsync/index.js, "Chat cache"). Mimic owns the KEY and the SESSION, so Mimic decides
+// when the cache may live:
+//   • KEY: 32 random bytes, made once, kept under safeStorage (DPAPI / Keychain) in cfg.chatCache.keyBox and handed to the
+//     agent in WOLFPACK_CHAT_CACHE_KEY. No keychain means no key means no cache: _encryptSecret's plaintext fallback is
+//     deliberately NOT used here. The key is handed over only while a session is live, so a signed-out agent cannot read or write.
+//   • IDENTITY: WOLFPACK_CHAT_CACHE_ID is the session's Discord id ('local' for a local-only install). The agent refuses a
+//     file saved for another id, and a different id here wipes the cache before the agent starts: never one person's chat to another.
+//   • LOGOUT: Sign out records outAt. The cache stays on disk, sealed and unread, for CHAT_CACHE_GRACE_MS. The same id signing in
+//     inside the window finds it again; a different id wipes it; no session by the end of the window deletes it (checked at every
+//     agent launch and every CHAT_CACHE_CHECK_MS). 24 h because the cache only keeps 24 h of lines anyway: a longer grace would
+//     keep nothing worth keeping, and a shorter one would lose it on the commonest reason to sign back in (next raid night).
+//   • REVOKE: the agent prints "[chat-cache] revoked" after a definite 401 (see the agent); Mimic then deletes the file again and
+//     drops the key from the config, so any leftover file is unreadable. Uninstalling does the same.
+const CHAT_CACHE_GRACE_MS = 24 * 60 * 60 * 1000;
+const CHAT_CACHE_CHECK_MS = 15 * 60 * 1000;
+const CHAT_CACHE_FILE = () => path.join(AGENT_DIR(), 'logsync.chat-cache.bin');
+let _chatCacheTimer = null;
+// Pure. st = cfg.chatCache ({ id: the identity the cache belongs to, outAt: when it was logged out of, 0 = not }); id = the
+// identity of the session Mimic is running with now ('' = none). Returns { wipe, state }.
+function _chatCacheDecide(st, id, now) {
+  const cur = st && typeof st === 'object' ? st : {};
+  const owner = typeof cur.id === 'string' ? cur.id : '';
+  const outAt = Number(cur.outAt) > 0 ? Number(cur.outAt) : 0;
+  const expired = outAt > 0 && now - outAt > CHAT_CACHE_GRACE_MS;
+  if (id) {
+    if ((owner && owner !== id) || expired) return { wipe: true, state: { id, outAt: 0 } };
+    return { wipe: false, state: { id, outAt: 0 } };
+  }
+  if (!owner) return { wipe: false, state: { id: '', outAt: 0 } };
+  if (!outAt) return { wipe: false, state: { id: owner, outAt: now } };
+  if (expired) return { wipe: true, state: { id: '', outAt: 0 } };
+  return { wipe: false, state: { id: owner, outAt } };
+}
+function _chatCacheIdentity(cfg) {
+  if (resolveUploadToken(cfg)) { const d = cfg.session && cfg.session.identity && cfg.session.identity.discord_id; return d ? String(d) : ''; }
+  return cfg.localOnly === true ? 'local' : '';
+}
+function _chatCacheDrop(c) {
+  for (const f of [CHAT_CACHE_FILE(), CHAT_CACHE_FILE() + '.tmp']) { try { fs.unlinkSync(f); } catch (e) { void e; } }
+  if (c.chatCache) delete c.chatCache.keyBox;
+}
+// Run the decision, delete the file (and the key) when it says wipe, save the new state. c is a freshly loaded config.
+function _chatCacheApply(c, id, now) {
+  if (!c.chatCache && !id) return { wipe: false };
+  const before = JSON.stringify(c.chatCache || null);
+  const d = _chatCacheDecide(c.chatCache, id, now);
+  if (d.wipe) _chatCacheDrop(c);
+  c.chatCache = Object.assign({}, c.chatCache, d.state);
+  if (JSON.stringify(c.chatCache) !== before) saveConfig(c);
+  return d;
+}
+function _chatCacheKeyBox(hex) {
+  try { if (safeStorage.isEncryptionAvailable()) return { enc: safeStorage.encryptString(hex).toString('base64') }; } catch (e) { void e; }
+  return null;
+}
+function _chatCacheKeyUnbox(box) {
+  if (!box || !box.enc) return null;
+  try { const k = safeStorage.decryptString(Buffer.from(box.enc, 'base64')); return /^[0-9a-f]{64}$/.test(k) ? k : null; } catch (e) { void e; return null; }
+}
+// The two env vars for the agent about to launch ({} = no cache). Applies the decision first, so a different identity or an
+// expired grace window is wiped before the agent can read anything.
+function _chatCacheEnv() {
+  const out = {};
+  try {
+    const c = loadConfig();
+    const id = _chatCacheIdentity(c);
+    _chatCacheApply(c, id, Date.now());
+    if (id) {
+      let key = _chatCacheKeyUnbox(c.chatCache.keyBox);
+      if (!key) {
+        try { fs.unlinkSync(CHAT_CACHE_FILE()); } catch (e) { void e; }   // a file no key opens is dead weight
+        key = require('crypto').randomBytes(32).toString('hex');
+        const box = _chatCacheKeyBox(key);
+        if (box) { c.chatCache.keyBox = box; saveConfig(c); } else key = null;
+      }
+      if (key) { out.WOLFPACK_CHAT_CACHE_KEY = key; out.WOLFPACK_CHAT_CACHE_ID = id; }
+    }
+  } catch (e) { void e; }
+  return out;
+}
+function _chatCacheOnLogout() { const c = loadConfig(); _chatCacheApply(c, '', Date.now()); }
+function _chatCacheMaintain() { const c = loadConfig(); _chatCacheApply(c, _chatCacheIdentity(c), Date.now()); }
+// Revoked (or uninstalling): the file and the key go, and the cache belongs to no one.
+function _chatCacheWipeAll(why) {
+  const c = loadConfig();
+  _chatCacheDrop(c);
+  c.chatCache = { id: '', outAt: 0 };
+  saveConfig(c);
+  appendAgentLog(`[mimic] chat cache deleted and its key dropped (${why})\n`);
+}
+// ── end Chat cache ──
 // Short "resumes at" clock for the tray label, e.g. "3:45 PM".
 function _fmtPauseClock(ms) {
   try {
@@ -2620,6 +2834,7 @@ function startZealCapture() {
         // the previous character's state (see _zealAbsorb/_retireZealChar).
         try { _zealAbsorb(obj, pid); } catch (e) { void e; }
         try { _mapDirect.note(obj); } catch (e) { void e; }   // the Map's direct position path (a no-op unless it is up)
+        try { _zealChatNote(obj); } catch (e) { void e; }     // the Chat overlay's channels (a no-op unless it is open)
       },
     });
     setInterval(_flushZealToAgent, 2000);
@@ -2745,6 +2960,8 @@ function _pollBlindState() {
         applyPetsVisibility();
         applyTriggerVisibility();
         applyMeVisibility();
+        // One that lives on the Timers canvas shows there, not twice.
+        _reapDisabledOverlays();
       } else if (!nowOn && _blindActive) {
         _blindActive = false;
         appendAgentLog(`[blind] leaving blind mode (was ${_blindSource})\n`);
@@ -2984,6 +3201,8 @@ function _charProfileTrayItems() {
 // alt-tab, and the screen must not rearrange itself under you. The
 // per-character layouts above stay until sets replace them.
 const overlaySets = require('./overlaySets');
+// The XS … XL width presets: one table for the window's right-click menu (overlay-resize-preset) and the Canvas's Width row.
+const overlaySizes = require('./overlaySizes');
 const _SETS_FILE = () => path.join(app.getPath('userData'), 'overlay-sets.json');
 // Every overlay's saved spot, by the config key its window persists under.
 const _SET_BOUNDS_KEYS = [
@@ -3092,7 +3311,7 @@ function _setsSay(r, quiet) {
   return r;
 }
 // The one way in for /pipe, the tray and Settings.
-// cmd: { verb: 'save'|'load'|'next'|'prev'|'delete'|'lock', name?, on? } → { ok, message }
+// cmd: { verb: 'save'|'load'|'next'|'prev'|'delete'|'lock'|'edit'|'group', name?, on? } → { ok, message }
 function _overlaySetCommand(cmd, char, quiet) {
   const file = _SETS_FILE();
   const store = overlaySets.load(file);
@@ -3140,14 +3359,599 @@ function _overlaySetCommand(cmd, char, quiet) {
     try { buildTrayMenu(); } catch { /* */ }
     return _setsSay({ ok: true, message: locked ? 'Overlays locked' : 'Overlays unlocked — drag to move' }, quiet);
   }
-  // `/pipe mimic edit` — arrange the Canvas without reaching for the tray.
+  // `/pipe mimic edit` — arrange the Timers canvas without reaching for the tray.
   if (cmd.verb === 'edit') {
     const on = cmd.on == null ? !_canvasArrange : !!cmd.on;
     _setCanvasArrange(on);
     return _setsSay({ ok: true, message: on ? 'Arranging the canvas' : 'Done arranging' }, quiet);
   }
+  // `/pipe mimic group <name>` — show or hide a saved Canvas group, the same toggle as its hotkey.
+  if (cmd.verb === 'group') {
+    const g = _canvasGroupList(loadConfig()).find(x => x.name.toLowerCase() === String(cmd.name).toLowerCase());
+    if (!g) return _setsSay({ ok: false, message: `No Canvas group called "${cmd.name}"` }, quiet);
+    _toggleCanvasGroup(g.id);
+    return _setsSay({ ok: true, message: `Canvas group: ${g.name}` }, quiet);
+  }
   return { ok: false, message: 'Unknown overlay set command' };
 }
+
+// ── Share a layout as a file (Keepers of the (Overlay) Arts; the guild lead, 2026-10-19) ─────────────
+// "make it so overlays are exportable into file and importable if people want to share privately but also
+// encourage people to share publicly". The Canvas layout of a set (or of the screen as it is now) is
+// written by portableLayout.js: positions pinned to EverQuest's window, sizes by screen height, nothing
+// private. File only — no token, no network — so the local edition (eqmimic.quest) has it exactly as the
+// guild edition does. An import is untrusted: portableLayout.parse() rebuilds it from a whitelist, the
+// person sees what it holds first, and it becomes a NEW set after the current setup is saved as "Before …".
+// Standalone overlay windows are not in the file (their rects are this computer's); only Canvas pieces are.
+const portableLayout = require('./portableLayout');
+const _LAYOUT_NUDGE = 'Share it in the Gallery and your name goes on it. The Gallery is coming soon.';
+let _layoutFileBusy = false;
+// The Canvas layout a set holds for this screen, the display it was made on, and where EverQuest sat there.
+function _layoutOfSet(set) {
+  const cfg = loadConfig();
+  const d = _canvasDisplay();
+  const all = (set && set.canvas && typeof set.canvas === 'object') ? set.canvas : {};
+  const res = d.bounds.width + 'x' + d.bounds.height;
+  const key = all[res] ? res : (all[cfg.canvasLastRes] ? cfg.canvasLastRes : Object.keys(all)[0]);
+  const m = /^(\d+)x(\d+)$/.exec(String(key || ''));
+  if (!m || !all[key]) return null;
+  // EverQuest's rect counts only for the screen setup it was captured on.
+  const eq = (key === res && set.eq && (!set.sig || set.sig === _screenSignature()))
+    ? { x: set.eq.x - d.bounds.x, y: set.eq.y - d.bounds.y, width: set.eq.width, height: set.eq.height } : null;
+  // A file is for ONE screen: a piece that sat on another screen of a spanning Canvas (`scr` is not the home
+  // screen's) has no place on it, so it stays out of the file and the caller says how many.
+  const homeSig = _canvasScreenSig(d);
+  const panels = Array.isArray(all[key].panels) ? all[key].panels : [];
+  const kept = panels.filter(p => !(p && typeof p.scr === 'string' && p.scr !== homeSig));
+  const layout = kept.length === panels.length ? all[key] : Object.assign({}, all[key], { panels: kept });
+  return { layout, screen: { width: +m[1], height: +m[2] }, eq, offScreen: panels.length - kept.length };
+}
+// opts: { setName? (a saved set; none = the screen as it is now), title?, description?, author?, mode? }
+// → { ok, message, nudge? } or { ok:false, canceled:true }.
+async function _exportLayoutFile(opts) {
+  opts = (opts && typeof opts === 'object') ? opts : {};
+  if (_layoutFileBusy) return { ok: false, message: 'A layout file window is already open.' };
+  _layoutFileBusy = true;
+  try {
+    let set;
+    if (opts.setName) {
+      const n = overlaySets.cleanName(opts.setName);
+      set = n && overlaySets.load(_SETS_FILE()).sets[overlaySets.keyOf(n)];
+      if (!set) return { ok: false, message: `No overlay set called "${opts.setName}"` };
+    } else {
+      set = _captureOverlaySet();
+    }
+    const src = _layoutOfSet(set);
+    if (!src) return { ok: false, message: 'The Canvas has no layout to export yet. Arrange something on it first.' };
+    const text = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+    const made = portableLayout.toPortable(src.layout, src.screen, src.eq, {
+      title: text(opts.title, 60) || set.name || 'My layout',
+      description: text(opts.description, 280), author: text(opts.author, 32),
+      modes: portableLayout.MODES.includes(opts.mode) ? [opts.mode] : [],
+    });
+    if (!made.ok) return { ok: false, message: made.error };
+    const win = BrowserWindow.getFocusedWindow();
+    const pick = await dialog.showSaveDialog(win || null, {
+      title: 'Export layout',
+      defaultPath: path.join(app.getPath('documents'), portableLayout.fileStem(made.doc.meta.title) + '.mimic-layout.json'),
+      filters: [{ name: 'Mimic layout', extensions: ['json'] }],
+    });
+    if (pick.canceled || !pick.filePath) return { ok: false, canceled: true, message: '' };
+    const file = /\.json$/i.test(pick.filePath) ? pick.filePath : pick.filePath + '.mimic-layout.json';
+    try {
+      fs.writeFileSync(file + '.tmp', JSON.stringify(made.doc, null, 2));
+      fs.renameSync(file + '.tmp', file);
+    } catch (e) { return { ok: false, message: `Could not write the file: ${e.message}` }; }
+    const left = src.offScreen ? ` (${src.offScreen} piece${src.offScreen === 1 ? '' : 's'} on your other screens left out: a file fits one screen)` : '';
+    return { ok: true, message: `Exported "${made.doc.meta.title}" to ${path.basename(file)}${left}`, nudge: _LAYOUT_NUDGE };
+  } catch (e) {
+    return { ok: false, message: `Could not export: ${e && e.message || e}` };
+  } finally { _layoutFileBusy = false; }
+}
+// Pick a file, show what it holds, and add it as a NEW set (the current setup saved first, one Undo).
+// → { ok, message, told? } (told: the person already saw the outcome in a window) or { ok:false, canceled:true }.
+async function _importLayoutFile() {
+  if (_layoutFileBusy) return { ok: false, message: 'A layout file window is already open.' };
+  _layoutFileBusy = true;
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const pick = await dialog.showOpenDialog(win || null, {
+      title: 'Import a layout', properties: ['openFile'],
+      filters: [{ name: 'Mimic layout', extensions: ['json'] }],
+    });
+    if (pick.canceled || !pick.filePaths || !pick.filePaths[0]) return { ok: false, canceled: true, message: '' };
+    let text;
+    try {
+      if (fs.statSync(pick.filePaths[0]).size > portableLayout.MAX_BYTES) return { ok: false, message: 'That file is too big to be a Mimic layout.' };
+      text = fs.readFileSync(pick.filePaths[0], 'utf8');
+    } catch (e) { return { ok: false, message: `Could not read that file: ${e.message}` }; }
+    const parsed = portableLayout.parse(text);
+    if (!parsed.ok) return { ok: false, message: parsed.error };
+    const doc = parsed.doc;
+    const d = _canvasDisplay();
+    const eqw = _eqMainWindow(10 * 60 * 1000);
+    const made = portableLayout.fromPortable(doc, { width: d.bounds.width, height: d.bounds.height },
+      eqw ? { x: eqw.client.x - d.bounds.x, y: eqw.client.y - d.bounds.y, width: eqw.client.width, height: eqw.client.height } : null);
+    if (!made.ok) return { ok: false, message: made.error };
+
+    const file = _SETS_FILE();
+    const store = overlaySets.load(file);
+    if (Object.keys(store.sets).length + 2 > overlaySets.MAX_SETS) {
+      return { ok: false, message: `You have ${Object.keys(store.sets).length} sets. Delete a couple first, so the new set and the "Before" copy of your setup both fit.` };
+    }
+    const info = portableLayout.describe(doc);
+    const newName = overlaySets.uniqueName(store, info.title);
+    const beforeName = overlaySets.uniqueName(store, 'Before ' + newName);
+    if (!newName || !beforeName) return { ok: false, message: 'Could not find a free name for the new set.' };
+    const bits = [`${info.pieces} piece${info.pieces === 1 ? '' : 's'}`];
+    if (info.classes.length) bits.push(info.classes.join(', '));
+    if (info.modes.length) bits.push(info.modes.join(', '));
+    const ask = await dialog.showMessageBox(win || null, {
+      type: 'question', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Add as a new set', 'Cancel'], defaultId: 0, cancelId: 1,
+      message: `Add "${info.title}" as a new set?`,
+      detail: [info.author ? `By ${info.author}` : 'No author name on it', info.description, bits.join(' · '),
+        `Your setup now is saved first as "${beforeName}", then this layout is loaded as "${newName}". You can undo it right after.`]
+        .filter(Boolean).join('\n\n'),
+    });
+    if (ask.response !== 0) return { ok: false, canceled: true, message: '' };
+
+    const who = _activeCharName || null;
+    const prevKey = overlaySets.current(store, who);
+    overlaySets.put(store, beforeName, _captureOverlaySet(), who);
+    const snap = _captureOverlaySet();
+    snap.canvas = Object.assign({}, snap.canvas || {}, { [`${d.bounds.width}x${d.bounds.height}`]: made.layout });
+    // A layout on the Canvas needs the Canvas on, and each overlay page it hosts has its own switch on.
+    snap.show.showCanvas = true;
+    for (const k of doc.needs.overlays) { const spec = _canvasSpec(k); if (spec) snap.show[spec.flag] = true; }
+    overlaySets.put(store, newName, snap, who);
+    try { overlaySets.save(file, store); }
+    catch (e) { return { ok: false, message: `Could not save the set: ${e.message}` }; }
+    _overlaySetCommand({ verb: 'load', name: newName }, who, true);
+    appendAgentLog(`[sets] imported layout "${newName}" (${info.pieces} pieces); previous setup saved as "${beforeName}"\n`);
+
+    const done = await dialog.showMessageBox(win || null, {
+      type: 'info', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Keep it', 'Undo'], defaultId: 0, cancelId: 0,
+      message: `Added "${newName}" and switched to it.`,
+      detail: `Your setup from before is saved as "${beforeName}". Undo puts it back and removes "${newName}".`,
+    });
+    if (done.response === 1) {
+      _overlaySetCommand({ verb: 'load', name: beforeName }, who, true);
+      const s2 = overlaySets.load(file);
+      overlaySets.remove(s2, newName);
+      overlaySets.remove(s2, beforeName);
+      if (prevKey && s2.sets[prevKey]) overlaySets.use(s2, s2.sets[prevKey].name, who);
+      try { overlaySets.save(file, s2); } catch { /* the sets stay; Settings can delete them */ }
+      try { buildTrayMenu(); } catch { /* */ }
+      return { ok: true, told: true, message: `Undone: your earlier setup is back and "${newName}" is removed.` };
+    }
+    return { ok: true, told: true, message: `Added "${newName}" and switched to it. Your earlier setup is saved as "${beforeName}".` };
+  } catch (e) {
+    return { ok: false, message: `Could not import: ${e && e.message || e}` };
+  } finally { _layoutFileBusy = false; }
+}
+// The tray has no status line: a result that nothing has told the person yet gets a window.
+async function _layoutFileFromTray(run) {
+  let r;
+  try { r = await run(); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
+  if (!r || r.canceled || (r.ok && r.told)) return;
+  try {
+    await dialog.showMessageBox({ type: r.ok ? 'info' : 'warning', title: 'Wolf Pack miMIC', noLink: true, message: r.message, detail: r.nudge || '' });
+  } catch { /* no dialog */ }
+}
+// ── Share a WHOLE setup: a file, or a six-character code (the guild lead, 2026-10-19, DECISIONS §383) ─────────────
+// "Share a whole setup = A, file + share code" (§91). setupBundle.js builds and checks the document and plans an import;
+// everything that touches this PC is here: the Canvas layouts of every saved set (portableLayout, as above), the HUD
+// builder and overlay options (Mimic's own localStorage, read through a hidden page of the same origin), and the personal
+// triggers and "What you hear" rules (the engine's /api/setup-share/triggers routes, which merge and back up first).
+// A file needs no sign-in and no network, so the local edition has Export and Import-from-file; a CODE is the bot
+// (/api/agent/setup-share, the Mimic session as the bearer) and needs a signed-in member. The sign-in and token are used
+// by _botSetupShare below and go nowhere else: they are not in the bundle, a window or a log line.
+// Import is the layout import's shape, whole: a preview with a tick on every part, the sharer's characters as "Character 1…"
+// with YOUR characters picked for them, a "Before …" copy of your layouts, and one Undo for all of it.
+const setupBundle = require('./setupBundle');
+let _setupBusy = false;
+let _setupWin = null;
+let _setupFlow = null;   // { stage: 'code'|'preview'|'done', setup, source, mine, result, undo }
+const _SETUP_NEVER = 'Never included: your sign-in, tokens, EverQuest and log paths, bids, or your character names.';
+
+function _setupShareAuth() {
+  const cfg = loadConfig();
+  const token = resolveUploadToken(cfg);
+  return token ? { base: _botBaseUrl(cfg), token } : null;
+}
+// One call to the bot. → { status, body, retry } (status 0 = unreachable), or { signedOut:true }. Never rejects.
+function _botSetupShare(method, route, body) {
+  return new Promise((resolve) => {
+    const auth = _setupShareAuth();
+    if (!auth) return resolve({ status: 0, signedOut: true });
+    let u;
+    try { u = new URL(auth.base + '/api/agent/setup-share' + route); } catch { return resolve({ status: 0 }); }
+    const lib = u.protocol === 'http:' ? require('http') : require('https');
+    const data = body == null ? null : JSON.stringify(body);
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    const req = lib.request(u, {
+      method, timeout: 20000,
+      headers: Object.assign({ Authorization: 'Bearer ' + auth.token, Accept: 'application/json' },
+        data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {}),
+    }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (c) => { size += c.length; if (size > 2 * 1024 * 1024) { finish({ status: 0 }); res.destroy(); } else chunks.push(c); });
+      res.on('end', () => {
+        let j = null;
+        try { j = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* not JSON */ }
+        finish({ status: res.statusCode || 0, body: j, retry: Number(res.headers['retry-after']) || 0 });
+      });
+      res.on('error', () => finish({ status: 0 }));
+    });
+    req.on('error', () => finish({ status: 0 }));
+    req.on('timeout', () => { req.destroy(); finish({ status: 0 }); });
+    req.end(data || undefined);
+  });
+}
+
+// Mimic's overlay pages are file:// pages and share one localStorage; this hidden page is another of them, so it can read and
+// write what the HUD builder and the overlays keep there. It runs nothing of its own (storage.html is empty).
+async function _withStorage(fn) {
+  const win = new BrowserWindow({ show: false, width: 200, height: 120, skipTaskbar: true, webPreferences: _wpPrefs('Setup storage') });
+  try {
+    await win.loadFile('storage.html');
+    return await fn(win.webContents);
+  } finally { try { win.destroy(); } catch { /* gone */ } }
+}
+// → { key: string } for the keys setupBundle marks readable (shared options and the HUD builder), nothing else.
+async function _lsRead() {
+  const raw = await _withStorage((wc) => wc.executeJavaScript(
+    '(function(){var o={};try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(/^(wp|chchain_)/.test(k))o[k]=localStorage.getItem(k);}}catch(e){}return JSON.stringify(o);})()'));
+  const all = JSON.parse(raw);
+  const out = {};
+  for (const [k, v] of Object.entries(all)) if (setupBundle.readableKey(k) && typeof v === 'string') out[k] = v;
+  return out;
+}
+// writes: { key: string | null }  (null removes the key). Only readable keys, only short strings: the page is not trusted
+// with a key of its own choosing, and neither is a bundle.
+async function _lsWrite(writes) {
+  const clean = {};
+  for (const [k, v] of Object.entries(writes || {})) {
+    if (!setupBundle.readableKey(k)) continue;
+    if (v === null || (typeof v === 'string' && v.length <= 8192)) clean[k] = v;
+  }
+  if (!Object.keys(clean).length) return true;
+  const json = JSON.stringify(clean).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+  return _withStorage((wc) => wc.executeJavaScript(
+    '(function(w){try{for(var k in w){if(w[k]===null)localStorage.removeItem(k);else localStorage.setItem(k,w[k]);}return true;}catch(e){return false;}})(' + json + ')'));
+}
+function _reloadOverlayWindows(storageKeys) {
+  const want = new Set(setupBundle.windowsToReload(storageKeys));
+  for (const [key, win] of _overlayEntries()) {
+    if (want.has(key) && _live(win)) { try { win.webContents.reload(); } catch { /* mid-close */ } }
+  }
+}
+
+// The characters this PC watches (the engine's logs), the active one first. Names only ever come from the engine.
+async function _setupMyChars() {
+  const r = await _agentCall('GET', '/api/setup-share/triggers');
+  const out = (r && r.ok && Array.isArray(r.chars) ? r.chars : []).filter(c => typeof c === 'string' && /^[A-Za-z]{1,24}$/.test(c));
+  if (_activeCharName && /^[A-Za-z]{1,24}$/.test(_activeCharName)) {
+    const i = out.findIndex(c => c.toLowerCase() === _activeCharName.toLowerCase());
+    if (i > 0) out.splice(i, 1);
+    if (i !== 0) out.unshift(_activeCharName);
+  }
+  return out;
+}
+
+// Everything shareable from this PC, as a validated bundle. → { ok, setup, bytes, report } | { ok:false, message }.
+async function _collectSetup(opts) {
+  const o = (opts && typeof opts === 'object') ? opts : {};
+  const text = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const eng = await _agentCall('GET', '/api/setup-share/triggers');
+  if (!eng || !eng.ok) return { ok: false, message: 'The parser engine is not running yet, so Mimic cannot read your triggers. Open the dashboard once, then try again.' };
+
+  const layouts = [];
+  const skipped = [];
+  const add = (set, name, active) => {
+    const src = _layoutOfSet(set);
+    if (!src) return;
+    const made = portableLayout.toPortable(src.layout, src.screen, src.eq, { title: name });
+    if (made.ok) layouts.push({ name, active, doc: made.doc }); else skipped.push(name);
+  };
+  add(_captureOverlaySet(), 'Current layout', true);
+  const store = overlaySets.load(_SETS_FILE());
+  for (const key of Object.keys(store.sets).sort()) { if (layouts.length >= 40) break; add(store.sets[key], store.sets[key].name, false); }
+
+  let ls = {};
+  try { ls = await _lsRead(); } catch (e) { appendAgentLog(`[setup] could not read the overlay options: ${e && e.message || e}\n`); }
+
+  const made = setupBundle.build({
+    meta: { title: text(o.title, 60) || 'My Mimic setup', byline: text(o.author, 32), note: text(o.description, 280) },
+    layouts, hud: setupBundle.hudFromStorage(ls), options: setupBundle.optionsFromStorage(ls),
+    triggers: eng.triggers, rules: eng.rules, ownChars: await _setupMyChars(),
+  });
+  if (!made.ok) return { ok: false, message: made.error };
+  for (const n of skipped) made.report.left.push({ what: `layout "${n}"`, why: 'it would not export' });
+  return made;
+}
+function _collectSummary(made) {
+  const s = made.report.summary;
+  const bits = [];
+  if (s.layouts) bits.push(`${s.layouts} overlay layout${s.layouts === 1 ? '' : 's'}`);
+  if (s.options) bits.push(`options for ${s.options} overlay${s.options === 1 ? '' : 's'}`);
+  if (s.hud) bits.push(`the HUD builder for ${s.hud} character${s.hud === 1 ? '' : 's'}`);
+  if (s.triggers) bits.push(`${s.triggers} personal trigger${s.triggers === 1 ? '' : 's'}`);
+  if (s.rules) bits.push(`${s.rules} "What you hear" rule${s.rules === 1 ? '' : 's'}`);
+  const left = made.report.left.length ? 'Left out: ' + made.report.left.slice(0, 6).map(x => `${x.what} (${x.why})`).join('; ') + (made.report.left.length > 6 ? `; and ${made.report.left.length - 6} more` : '') + '.' : '';
+  return [bits.join(', ') + '.', s.characters ? 'Your characters go in as "Character 1", "Character 2"… and the person who opens it picks which of theirs get those parts.' : '', left, _SETUP_NEVER].filter(Boolean).join('\n\n');
+}
+
+// opts: { title?, author?, description? } → { ok, message, nudge? } or { ok:false, canceled:true }.
+async function _exportSetupFile(opts) {
+  if (_setupBusy) return { ok: false, message: 'A setup window is already open.' };
+  _setupBusy = true;
+  try {
+    const made = await _collectSetup(opts);
+    if (!made.ok) return made;
+    const win = BrowserWindow.getFocusedWindow();
+    const ask = await dialog.showMessageBox(win || null, {
+      type: 'question', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Choose where to save', 'Cancel'], defaultId: 0, cancelId: 1,
+      message: `Export "${made.setup.meta.title}"?`, detail: _collectSummary(made),
+    });
+    if (ask.response !== 0) return { ok: false, canceled: true, message: '' };
+    const pick = await dialog.showSaveDialog(win || null, {
+      title: 'Export my setup',
+      defaultPath: path.join(app.getPath('documents'), portableLayout.fileStem(made.setup.meta.title) + '.mimic-setup.json'),
+      filters: [{ name: 'Mimic setup', extensions: ['json'] }],
+    });
+    if (pick.canceled || !pick.filePath) return { ok: false, canceled: true, message: '' };
+    const file = /\.json$/i.test(pick.filePath) ? pick.filePath : pick.filePath + '.mimic-setup.json';
+    try {
+      fs.writeFileSync(file + '.tmp', JSON.stringify(made.setup, null, 2));
+      fs.renameSync(file + '.tmp', file);
+    } catch (e) { return { ok: false, message: `Could not write the file: ${e.message}` }; }
+    appendAgentLog(`[setup] exported a setup to ${path.basename(file)} (${made.bytes} bytes)\n`);
+    return { ok: true, message: `Exported "${made.setup.meta.title}" to ${path.basename(file)}.` };
+  } catch (e) {
+    return { ok: false, message: `Could not export: ${e && e.message || e}` };
+  } finally { _setupBusy = false; }
+}
+
+// "Get a code": the same bundle, held by the bot for 24 hours. → { ok, told, message, code? } | { ok:false, canceled:true }.
+async function _getSetupCode(opts) {
+  if (_setupBusy) return { ok: false, message: 'A setup window is already open.' };
+  if (!_setupShareAuth()) return { ok: false, message: setupBundle.botMessage({ signedOut: true }, 'make') };
+  _setupBusy = true;
+  try {
+    const made = await _collectSetup(opts);
+    if (!made.ok) return made;
+    const win = BrowserWindow.getFocusedWindow();
+    const ask = await dialog.showMessageBox(win || null, {
+      type: 'question', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Get a code', 'Cancel'], defaultId: 0, cancelId: 1,
+      message: `Get a share code for "${made.setup.meta.title}"?`,
+      detail: _collectSummary(made) + '\n\nThe code works for 24 hours. Anyone signed in to Wolf Pack Mimic who has it can preview this and import a copy.',
+    });
+    if (ask.response !== 0) return { ok: false, canceled: true, message: '' };
+    const r = await _botSetupShare('POST', '', { setup: made.setup });
+    if (!(r.status === 201 && r.body && r.body.ok && typeof r.body.code === 'string')) return { ok: false, message: setupBundle.botMessage(r, 'make') };
+    const code = r.body.code;
+    appendAgentLog(`[setup] made a share code for a setup (${made.bytes} bytes), good until ${r.body.expires_at}\n`);
+    const shown = await dialog.showMessageBox(win || null, {
+      type: 'info', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Copy the code', 'Close', 'End this code now'], defaultId: 0, cancelId: 1,
+      message: `Your code is ${setupBundle.showCode(code)}`,
+      detail: 'It works for 24 hours, on as many installs as you like. On the other install: Overlays, "Enter a code", then preview before anything is changed.',
+    });
+    if (shown.response === 0) { try { require('electron').clipboard.writeText(code); } catch { /* no clipboard */ } return { ok: true, told: true, message: `Code ${setupBundle.showCode(code)} copied.`, code }; }
+    if (shown.response === 2) {
+      const gone = await _botSetupShare('DELETE', '/' + code);
+      return { ok: gone.status === 200, message: gone.status === 200 ? 'That code no longer works.' : setupBundle.botMessage(gone, 'make') };
+    }
+    return { ok: true, told: true, message: `Code ${setupBundle.showCode(code)} is good for 24 hours.`, code };
+  } catch (e) {
+    return { ok: false, message: `Could not get a code: ${e && e.message || e}` };
+  } finally { _setupBusy = false; }
+}
+
+// ── The import window: enter a code or look at a file, tick what to take, pick which of YOUR characters get Character 1… ──
+function _openSetupWindow() {
+  if (_setupWin && !_setupWin.isDestroyed()) { try { _setupWin.show(); _setupWin.focus(); } catch { /* mid-close */ } return _setupWin; }
+  _setupWin = new BrowserWindow({
+    width: 660, height: 740, minWidth: 460, minHeight: 420, title: 'Wolf Pack miMIC — Import a setup', backgroundColor: '#0e1116',
+    skipTaskbar: true,   // only the dashboard and Feedback take a taskbar slot
+    webPreferences: _wpPrefs('Setup import'),
+  });
+  _setupWin.setMenu(null);
+  _setupWin.loadFile('setup-share.html');
+  _setupWin.on('closed', () => { _setupWin = null; _setupFlow = null; });
+  return _setupWin;
+}
+const _fromSetupWindow = (e) => !!(_setupWin && !_setupWin.isDestroyed() && e && e.sender === _setupWin.webContents);
+
+// A file → the preview. → { ok, told } | { ok:false, canceled } | { ok:false, message }.
+async function _importSetupFile() {
+  const win = BrowserWindow.getFocusedWindow();
+  const pick = await dialog.showOpenDialog(win || null, { title: 'Import a setup', properties: ['openFile'], filters: [{ name: 'Mimic setup', extensions: ['json'] }] });
+  if (pick.canceled || !pick.filePaths || !pick.filePaths[0]) return { ok: false, canceled: true, message: '' };
+  let text;
+  try {
+    if (fs.statSync(pick.filePaths[0]).size > setupBundle.MAX_BYTES) return { ok: false, message: 'That file is too big to be a Mimic setup.' };
+    text = fs.readFileSync(pick.filePaths[0], 'utf8');
+  } catch (e) { return { ok: false, message: `Could not read that file: ${e.message}` }; }
+  const parsed = setupBundle.parseText(text);
+  if (!parsed.ok) return { ok: false, message: parsed.error };
+  _setupFlow = { stage: 'preview', setup: parsed.setup, source: 'file', mine: await _setupMyChars(), result: null, undo: null };
+  _openSetupWindow();
+  return { ok: true, told: true, message: '' };
+}
+// "Enter a code": the window opens at the code box.
+async function _enterSetupCode() {
+  if (!_setupShareAuth()) return { ok: false, message: setupBundle.botMessage({ signedOut: true }, 'get') };
+  _setupFlow = { stage: 'code', setup: null, source: 'code', mine: [], result: null, undo: null };
+  _openSetupWindow();
+  return { ok: true, told: true, message: '' };
+}
+function _setupState() {
+  const f = _setupFlow;
+  if (!f) return { stage: 'code', model: null, result: null };
+  return { stage: f.stage, source: f.source, result: f.result,
+    model: f.stage === 'preview' && f.setup ? setupBundle.describe(f.setup, f.mine) : null };
+}
+
+// Apply a plan. Each step is its own try: a failure says what did and did not happen, and Undo covers what did.
+async function _applySetup(selection, assign) {
+  const f = _setupFlow;
+  if (!f || f.stage !== 'preview' || !f.setup) return { ok: false, message: 'There is nothing to import.' };
+  const plan = setupBundle.plan(f.setup, selection, assign, f.mine);
+  const lines = [];
+  const undo = { triggers: null, storage: null, layouts: null };
+  let failed = null;
+
+  // 1. Triggers and rules: the engine merges them in and backs both files up first.
+  if (plan.triggers.length || Object.keys(plan.rules).length) {
+    const r = await _agentCall('POST', '/api/setup-share/triggers', { triggers: plan.triggers, rules: plan.rules });
+    if (r && r.ok) {
+      undo.triggers = { backups: Array.isArray(r.backups) ? r.backups : [] };
+      lines.push(`${plan.triggers.length} trigger${plan.triggers.length === 1 ? '' : 's'}: ${r.added || 0} new, ${r.updated || 0} replaced one of yours` + (r.discord_off ? `; ${r.discord_off} Discord post${r.discord_off === 1 ? '' : 's'} switched off` : '') + '.');
+      if (Object.keys(plan.rules).length) lines.push(`${r.rules_changed || 0} "What you hear" setting${r.rules_changed === 1 ? '' : 's'} changed.`);
+    } else { failed = 'The triggers could not be added: ' + ((r && r.error) || 'the parser engine did not answer') + '.'; }
+  }
+
+  // 2. The HUD builder and the overlay options (localStorage).
+  const keys = Object.keys(plan.storage);
+  if (!failed && keys.length) {
+    try {
+      const prior = await _lsRead();
+      const before = {};
+      for (const k of keys) before[k] = Object.prototype.hasOwnProperty.call(prior, k) ? prior[k] : null;
+      if (await _lsWrite(plan.storage)) {
+        undo.storage = before;
+        _reloadOverlayWindows(keys);
+        lines.push(`HUD and overlay options: ${keys.length} setting${keys.length === 1 ? '' : 's'} written; the overlays reloaded.`);
+      } else { failed = 'The HUD and overlay options could not be saved.'; }
+    } catch (e) { failed = 'The HUD and overlay options could not be saved: ' + (e && e.message || e); }
+  }
+
+  // 3. The Canvas layouts, as new sets (the way a layout file is imported), the sender's own on screen loaded.
+  if (!failed && plan.layouts.length) {
+    const r = _addSetupLayouts(f.setup, plan.layouts);
+    if (r.ok) { undo.layouts = r.undo; lines.push(r.message); } else failed = r.message;
+  }
+
+  for (const s of plan.report.skipped) lines.push('Skipped ' + s + '.');
+  const did = !!(undo.triggers || undo.storage || undo.layouts);
+  f.undo = did ? undo : null;
+  f.stage = 'done';
+  f.result = { ok: !failed, message: failed || (did ? 'Imported.' : 'Nothing was ticked, so nothing changed.'), lines, canUndo: did };
+  appendAgentLog(`[setup] import ${failed ? 'stopped: ' + failed : 'done'}: ${lines.join(' | ')}\n`);
+  return f.result;
+}
+// The sender's layouts → new sets on this screen. The current setup is saved first as "Before <title>".
+function _addSetupLayouts(setup, layouts) {
+  const d = _canvasDisplay();
+  const eqw = _eqMainWindow(10 * 60 * 1000);
+  const eqRect = eqw ? { x: eqw.client.x - d.bounds.x, y: eqw.client.y - d.bounds.y, width: eqw.client.width, height: eqw.client.height } : null;
+  const screenSize = { width: d.bounds.width, height: d.bounds.height };
+  const made = [];
+  for (const l of layouts) {
+    const r = portableLayout.fromPortable(l.doc, screenSize, eqRect);
+    if (r.ok) made.push({ l, layout: r.layout });
+  }
+  if (!made.length) return { ok: false, message: 'None of the layouts would fit this screen.' };
+  const file = _SETS_FILE();
+  const store = overlaySets.load(file);
+  if (Object.keys(store.sets).length + made.length + 1 > overlaySets.MAX_SETS) {
+    return { ok: false, message: `You have ${Object.keys(store.sets).length} sets and this needs room for ${made.length + 1} more. Delete a few first.` };
+  }
+  const title = overlaySets.cleanName(setup.meta.title) || 'setup';
+  const beforeName = overlaySets.uniqueName(store, 'Before ' + title);
+  if (!beforeName) return { ok: false, message: 'Could not find a free name for the saved copy of your setup.' };
+  const who = _activeCharName || null;
+  const prevKey = overlaySets.current(store, who);
+  overlaySets.put(store, beforeName, _captureOverlaySet(), who);
+  const baseJson = JSON.stringify(_captureOverlaySet());
+  const res = `${d.bounds.width}x${d.bounds.height}`;
+  const added = [];
+  let loadName = null;
+  for (const m of made) {
+    const snap = JSON.parse(baseJson);
+    snap.canvas = Object.assign({}, snap.canvas || {}, { [res]: m.layout });
+    snap.show.showCanvas = true;
+    for (const k of m.l.doc.needs.overlays) { const spec = _canvasSpec(k); if (spec) snap.show[spec.flag] = true; }
+    const name = overlaySets.uniqueName(store, m.l.name);
+    if (!name) continue;
+    overlaySets.put(store, name, snap, who);
+    added.push(name);
+    if (!loadName && m.l.active) loadName = name;
+  }
+  if (!added.length) return { ok: false, message: 'Could not find free names for the new sets.' };
+  if (!loadName) loadName = added[0];
+  try { overlaySets.save(file, store); } catch (e) { return { ok: false, message: `Could not save the sets: ${e.message}` }; }
+  _overlaySetCommand({ verb: 'load', name: loadName }, who, true);
+  return { ok: true, undo: { beforeName, added, prevKey, who },
+    message: `${added.length} layout${added.length === 1 ? '' : 's'} added as new sets, and "${loadName}" is on screen. Your earlier setup is saved as "${beforeName}".` };
+}
+async function _undoSetup() {
+  const f = _setupFlow;
+  if (!f || !f.undo) return { ok: false, message: 'There is nothing to undo.' };
+  const u = f.undo;
+  const lines = [];
+  let ok = true;
+  if (u.layouts) {
+    try {
+      const file = _SETS_FILE();
+      _overlaySetCommand({ verb: 'load', name: u.layouts.beforeName }, u.layouts.who, true);
+      const s2 = overlaySets.load(file);
+      for (const n of u.layouts.added) overlaySets.remove(s2, n);
+      overlaySets.remove(s2, u.layouts.beforeName);
+      if (u.layouts.prevKey && s2.sets[u.layouts.prevKey]) overlaySets.use(s2, s2.sets[u.layouts.prevKey].name, u.layouts.who);
+      overlaySets.save(file, s2);
+      try { buildTrayMenu(); } catch { /* */ }
+      lines.push('Your earlier layouts are back and the new sets are removed.');
+    } catch (e) { ok = false; lines.push('Could not put the layouts back: ' + (e && e.message || e)); }
+  }
+  if (u.storage) {
+    try {
+      if (await _lsWrite(u.storage)) { _reloadOverlayWindows(Object.keys(u.storage)); lines.push('Your HUD and overlay options are back.'); }
+      else { ok = false; lines.push('Could not put the HUD and overlay options back.'); }
+    } catch (e) { ok = false; lines.push('Could not put the HUD and overlay options back: ' + (e && e.message || e)); }
+  }
+  if (u.triggers) {
+    const r = await _agentCall('POST', '/api/setup-share/triggers/restore', { backups: u.triggers.backups });
+    if (r && r.ok) lines.push('Your triggers and "What you hear" settings are back.');
+    else { ok = false; lines.push('Could not put the triggers back: ' + ((r && r.error) || 'the parser engine did not answer')); }
+  }
+  f.undo = null;
+  f.result = { ok, message: ok ? 'Undone.' : 'Undone, except for what is listed.', lines, canUndo: false };
+  appendAgentLog(`[setup] undo: ${lines.join(' | ')}\n`);
+  return f.result;
+}
+ipcMain.handle('setup-share-state', (e) => (_fromSetupWindow(e) ? _setupState() : { stage: 'code', model: null, result: null }));
+ipcMain.handle('setup-share-lookup', async (e, code) => {
+  if (!_fromSetupWindow(e) || !_setupFlow) return { ok: false, message: 'Close this window and open it again.' };
+  const c = setupBundle.normalizeCode(code);
+  if (!c) return { ok: false, message: setupBundle.botMessage({ status: 400, body: { error: 'bad_code' } }, 'get') };
+  const r = await _botSetupShare('GET', '/' + c);
+  if (!(r.status === 200 && r.body && r.body.ok)) return { ok: false, message: setupBundle.botMessage(r, 'get') };
+  const v = setupBundle.validate(r.body.setup);     // the bot checked it; so does Mimic: a code is only as good as who made it
+  if (!v.ok) return { ok: false, message: v.error };
+  _setupFlow = Object.assign(_setupFlow, { stage: 'preview', setup: v.setup, source: 'code', mine: await _setupMyChars(), result: null, undo: null });
+  appendAgentLog('[setup] looked up a share code\n');
+  return { ok: true, state: _setupState() };
+});
+ipcMain.handle('setup-share-apply', async (e, selection, assign) => {
+  if (!_fromSetupWindow(e)) return { ok: false, message: 'Close this window and open it again.' };
+  const list = (v) => (Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(0, 500) : []);
+  const sel = selection && typeof selection === 'object' ? selection : {};
+  const asg = {};
+  if (assign && typeof assign === 'object') for (const [slot, names] of Object.entries(assign)) if (/^c\d{1,2}$/.test(slot)) asg[slot] = list(names).slice(0, 12);
+  const out = await _applySetup({ layouts: list(sel.layouts), options: list(sel.options), hud: list(sel.hud), triggers: list(sel.triggers), rules: sel.rules === true }, asg);
+  return Object.assign({}, out, { state: _setupState() });
+});
+ipcMain.handle('setup-share-undo', async (e) => {
+  if (!_fromSetupWindow(e)) return { ok: false, message: 'Close this window and open it again.' };
+  const out = await _undoSetup();
+  return Object.assign({}, out, { state: _setupState() });
+});
+ipcMain.handle('setup-share-close', (e) => { if (_fromSetupWindow(e)) { try { _setupWin.close(); } catch { /* gone */ } } return true; });
+
 // Tray: the sets by name (the active character's current one ticked), next,
 // save over the current one, save as a new one. Delete lives in Settings,
 // which can also take a name.
@@ -3170,6 +3974,15 @@ function _overlaySetTrayItems() {
       while (store.sets[overlaySets.keyOf('Set ' + n)]) n++;
       _overlaySetCommand({ verb: 'save', name: 'Set ' + n }, who);
     } },
+    { type: 'separator' },
+    { label: '📤 Export the Canvas layout to a file…', click: () => { _layoutFileFromTray(() => _exportLayoutFile({})); } },
+    { label: '📥 Import a layout from a file…', click: () => { _layoutFileFromTray(() => _importLayoutFile()); } },
+    { type: 'separator' },
+    { label: '📦 Export my whole setup to a file…', click: () => { _layoutFileFromTray(() => _exportSetupFile({})); } },
+    { label: '🔗 Get a share code for my whole setup…', click: () => { _layoutFileFromTray(() => _getSetupCode({})); } },
+    { label: '📥 Import a whole setup from a file…', click: () => { _layoutFileFromTray(() => _importSetupFile()); } },
+    { label: '🔢 Enter a share code…', click: () => { _layoutFileFromTray(() => _enterSetupCode()); } },
+    { type: 'separator' },
     { label: 'Name, delete, and the /pipe commands… (Settings)', click: () => { try { openSettings(); } catch { /* */ } } },
   );
   return items;
@@ -3267,12 +4080,14 @@ async function launchAgent() {
     ELECTRON_RUN_AS_NODE:   '1',
     WOLFPACK_CLIENT:        'mimic',
     WOLFPACK_APP_VERSION:   app.getVersion(),
+    WOLFPACK_LOCAL_SECRET:  _LOCAL_SECRET,
   };
   if (primaryEqDir) env.WOLFPACK_EQ_DIR = primaryEqDir;
   // The sound library's two folders, so the agent's dashboard lists and plays the same sounds Mimic does.
   _ensureSoundsDir();
   env.WOLFPACK_SOUNDS_DIR = SOUNDS_SHIPPED_DIR();
   env.WOLFPACK_SOUNDS_USER_DIR = SOUNDS_USER_DIR();
+  env.WOLFPACK_LOCAL_SITE_DIR = LOCAL_SITE_DIR();
   // Plural, path-delimited. The agent prefers this over its own watched-log
   // inference, which cannot see a folder that has never produced a log.
   if (knownDirs && knownDirs.length) env.WOLFPACK_EQ_DIRS = knownDirs.join(path.delimiter);
@@ -3285,6 +4100,11 @@ async function launchAgent() {
   // when we have a token + upload URL — local-only installs leave it unset so
   // the agent never tries to upload.
   if (uploadToken && cfg.botUrl) env.WOLFPACK_TOKEN = uploadToken;
+  // The Chat cache key + the identity it belongs to (see "Chat cache"). Anything inherited from our own environment is
+  // dropped first: only Mimic's decision counts, and no decision means no cache.
+  delete env.WOLFPACK_CHAT_CACHE_KEY; delete env.WOLFPACK_CHAT_CACHE_ID;
+  Object.assign(env, _chatCacheEnv());
+  if (!_chatCacheTimer) { _chatCacheTimer = setInterval(() => { try { _chatCacheMaintain(); } catch (e) { void e; } }, CHAT_CACHE_CHECK_MS); if (_chatCacheTimer.unref) _chatCacheTimer.unref(); }
   // Per-character "do not transmit" list — for friends' characters that play in
   // other guilds, or any toon the user wants kept out of our DB entirely. The
   // agent honors this at the outermost boundary (excluded logs aren't tailed),
@@ -3303,7 +4123,11 @@ async function launchAgent() {
     cwd: AGENT_DIR(),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  agentProc.stdout.on('data', d => { const s = `[agent] ${d}`; process.stdout.write(s); appendAgentLog(s); });
+  agentProc.stdout.on('data', d => {
+    const s = `[agent] ${d}`; process.stdout.write(s); appendAgentLog(s);
+    // The agent saw a definite 401 and has already deleted the cache: drop the key too, so a leftover file is unreadable.
+    if (/(?:^\[agent\] |\n)\[chat-cache\] revoked \(/.test(s)) { try { _chatCacheWipeAll('the bot refused this session'); } catch (e) { void e; } }
+  });
   agentProc.stderr.on('data', d => { const s = `[agent] ${d}`; process.stderr.write(s); appendAgentLog(s); });
   agentProc.on('exit', (code, signal) => {
     agentProc = null;
@@ -3611,6 +4435,10 @@ function createMainWindow() {
   // (loading.html → the agent dashboard) overwrite it — so this process stays
   // identifiable as the main window rather than "Mimic — getting ready" etc.
   mainWindow.on('page-title-updated', (e) => e.preventDefault());
+  // The dashboard is the one framed window, so the OS moves it from the title bar: see _nativeMoving. These two only
+  // observe - they never touch the bounds.
+  mainWindow.on('will-move', (_ev, newBounds) => { try { _noteNativeMove(mainWindow, newBounds); } catch (e) { void e; } });
+  mainWindow.on('moved', () => { try { _endNativeMove(mainWindow); } catch (e) { void e; } });
   if (_firstRunAfterUpdate && !_autoStarted) {
     _checkEqRunning().then((eqUp) => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -3899,19 +4727,22 @@ function _displayChangePlan(o) {
     const from = oldDisplays.find(d => inside(d, cx, cy));
     if (from && stillThere(from)) continue;   // its screen is unchanged: leave it where the raider put it
     const wasWithEq = !oldEq || !from || same(from, oldEq);
+    // A Canvas panel ('canvas:<id>', on a screen that went away) follows the same sides, and is counted on its own.
+    const cv = k.startsWith('canvas:');
     if (wasWithEq || !sideDest) {
       moves[k] = _projectRect(was, from || o.target.bounds, o.target.workArea);
-      if (wasWithEq) withEq++; else { side++; sideOntoEq++; }
+      if (cv) { /* counted on its own, in _displayPlanText */ } else if (wasWithEq) withEq++; else { side++; sideOntoEq++; }
     } else {
       moves[k] = _projectRect(was, from, sideDest);
-      side++;
+      if (!cv) side++;
     }
   }
   return Object.keys(moves).length ? { kind: 'bring', moves, withEq, side, sideOntoEq } : { kind: 'none', moves: {} };
 }
 // The question, in words that say where each overlay is going.
 function _displayPlanText(plan, eqKnown) {
-  const n = Object.keys(plan.moves).length;
+  const cv = Object.keys(plan.moves).filter(k => k.startsWith('canvas:')).length;   // Canvas panels, counted apart from the windows
+  const n = Object.keys(plan.moves).length - cv;
   const count = (k) => (k === 1 ? '1 overlay' : k + ' overlays');
   if (plan.kind === 'restore') {
     return { message: 'Your screens are back the way they were.',
@@ -3924,6 +4755,7 @@ function _displayPlanText(plan, eqKnown) {
   if (withEq) parts.push(count(withEq) + ' that sat with EverQuest onto ' + eqScreen);
   if (side - sideOntoEq) parts.push(count(side - sideOntoEq) + ' from your other screen onto the other screen you still have');
   if (sideOntoEq) parts.push(count(sideOntoEq) + ' from your other screen onto ' + eqScreen + ' (the only screen left)');
+  if (cv) parts.push((cv === 1 ? '1 Canvas panel' : cv + ' Canvas panels') + ' that sat on the screen that went away');
   const detail = (parts.length ? 'Move ' + parts.join(', and ') : 'Move ' + count(n) + ' onto ' + eqScreen)
     + ', each at the same spot it had? They sat on a screen that went away or changed shape.';
   return { message: 'Your screen setup changed.', detail, buttons: ['Move them', 'Leave them'] };
@@ -4002,7 +4834,8 @@ async function _askAboutDisplays() {
   catch { target = screen.getPrimaryDisplay(); }
   const cfg = loadConfig();
   const plan = _displayChangePlan({
-    prevSig, curSig, memory: cfg.overlayLayoutBySig || {}, currentRects: _overlayRectsNow(),
+    prevSig, curSig, memory: cfg.overlayLayoutBySig || {},
+    currentRects: Object.assign(_overlayRectsNow(), _canvasAwayRects(cfg, prevSig)),   // + Canvas panels left on a screen that went away
     curDisplays: screen.getAllDisplays().map(d => ({ bounds: d.bounds, workArea: d.workArea })),
     target: { bounds: target.bounds, workArea: target.workArea },
   });
@@ -4027,6 +4860,7 @@ async function _askAboutDisplays() {
       if (bk && plan.moves[bk]) { try { win.setBounds(plan.moves[bk]); } catch { /* mid-close */ } }
     }
     if (plan.kind === 'bring') { const c = loadConfig(); c.canvasDisplayId = target.id; saveConfig(c); }
+    _applyCanvasMoves(plan.moves);
     _fitCanvasToDisplay();
   } else {
     _rescueOffscreenOverlays();
@@ -4209,7 +5043,7 @@ async function _rescueOverlays() {
 // A locked window takes XS anyway — Electron pins a non-resizable window's
 // minimum to whatever it is set to — so 200 was saved; the next launch built
 // the window with its own minimum and it came back wider. One number now.
-const _OVERLAY_MIN_W = 200;
+const _OVERLAY_MIN_W = overlaySizes.MIN_W;
 // `legacySigKey` is a name an older build READ the signature under; it is consulted only when
 // `sigKey` holds nothing, so a save made under the old name is not thrown away.
 function _resolveBounds(boundsKey, sigKey, def, legacySigKey) {
@@ -5337,6 +6171,104 @@ function openResources() {
   });
 }
 
+// Feedback — its own window as of 2026-10-15 (the guild lead picked it over the in-page card).
+// The dashboard form was wiped whenever Mimic reloaded the dashboard window (agent restart or
+// hot-swap -> navigateToDashboard, port drift, the self-heal reload), so a half-typed report was
+// lost to things the reporter never did. This window loads the same dashboard page in its
+// "feedback only" mode (/?feedback=1: the one card, nothing else rendered) and no dashboard
+// navigation ever touches it. Same form, same agent routes (/api/feedback-preview, -send), so the
+// screenshot capture IPC works unchanged: it fades whichever window asked.
+//
+// A plain window, NOT an overlay (frameless/always-on-top/click-through do not apply), so the
+// overlay feature-parity checklist, _overlayEntries and _HIDEALL_FLAGS stay out of it. Returns
+// false when the agent has no port yet, so the caller can fall back to the browser route.
+let feedbackWindow = null;
+function openFeedback() {
+  if (!agentPort) return false;
+  const url = `http://127.0.0.1:${agentPort}/?feedback=1`;
+  if (feedbackWindow && !feedbackWindow.isDestroyed()) {
+    try { if (feedbackWindow.isMinimized()) feedbackWindow.restore(); } catch (e) { void e; }
+    feedbackWindow.show();
+    feedbackWindow.focus();
+    // The agent came back on another port: this window is pointed at nothing, so follow it.
+    if (!feedbackWindow.webContents.getURL().startsWith(`http://127.0.0.1:${agentPort}/`)) {
+      feedbackWindow.loadURL(url).catch((err) => appendAgentLog(`[mimic] feedback window reload REJECTED — ${err && err.message}\n`));
+    }
+    return true;
+  }
+  feedbackWindow = new BrowserWindow({
+    width: 560, height: 720, minWidth: 400, minHeight: 420, resizable: true,
+    title: 'Wolf Pack miMIC — Feedback', backgroundColor: '#0d1117',
+    // On the taskbar, unlike every window but the dashboard (FB-61): a report is written over minutes, often while
+    // tabbing back to EQ, and a window with no taskbar item could not be found again (FB-86, the guild lead picked A).
+    webPreferences: _wpPrefs('Feedback'),
+  });
+  feedbackWindow.setMenu(null);
+  feedbackWindow.loadURL(url)
+    .catch((err) => appendAgentLog(`[mimic] feedback window load REJECTED — ${err && err.message}\n`));
+  feedbackWindow.on('closed', () => { feedbackWindow = null; });
+  return true;
+}
+
+// "On this PC" (the guild lead, 2026-10-21): the local site's pages (web/local, served by the agent under
+// /local/) in a window of their own, the same way Feedback has one. A separate window, not a navigation of the
+// dashboard: the dashboard's hot-swap, port-drift and self-heal reloads never touch it, and the dashboard keeps
+// its place. The preload skips its injected ⚙ on /local/ pages (it would sit on the page's own header).
+// A link out of it (an item's pqdi page) opens in the browser. False = no agent port yet, so the caller falls back.
+let localSiteWindow = null;
+function openLocalSite(page) {
+  if (!agentPort) return false;
+  const slug = String(page || 'inventory').replace(/[^a-z-]/g, '') || 'inventory';
+  const url = `http://127.0.0.1:${agentPort}/local/${slug}/`;
+  if (localSiteWindow && !localSiteWindow.isDestroyed()) {
+    try { if (localSiteWindow.isMinimized()) localSiteWindow.restore(); } catch (e) { void e; }
+    localSiteWindow.show();
+    localSiteWindow.focus();
+    if (localSiteWindow.webContents.getURL() !== url) {
+      localSiteWindow.loadURL(url).catch((err) => appendAgentLog(`[mimic] local site window load REJECTED — ${err && err.message}\n`));
+    }
+    return true;
+  }
+  localSiteWindow = new BrowserWindow({
+    width: 1100, height: 760, minWidth: 640, minHeight: 420, resizable: true,
+    title: 'Wolf Pack miMIC — On this PC', backgroundColor: '#0d1117',
+    // Off the taskbar like every window but the dashboard (FB-61): it is a reference page, reopened from the
+    // dashboard rail or the tray, not something written over minutes like a feedback report.
+    skipTaskbar: true,
+    webPreferences: _wpPrefs('On this PC'),
+  });
+  localSiteWindow.setMenu(null);
+  localSiteWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (/^https?:\/\//i.test(target)) shell.openExternal(target).catch(() => {});
+    return { action: 'deny' };
+  });
+  // Back / forward (the guild lead, 2026-10-21: "no navigation buttons at all"): the mouse side buttons and
+  // Alt+Left / Alt+Right, on top of the ← → buttons in the page's own nav. Electron 31 has
+  // webContents.navigationHistory (30+); the old webContents.goBack() is the fallback.
+  const _localNav = (dir) => {
+    try {
+      const wc = localSiteWindow && !localSiteWindow.isDestroyed() ? localSiteWindow.webContents : null;
+      if (!wc) return;
+      const h = wc.navigationHistory;
+      if (dir < 0) { if (h ? h.canGoBack() : wc.canGoBack()) { if (h) h.goBack(); else wc.goBack(); } }
+      else if (h ? h.canGoForward() : wc.canGoForward()) { if (h) h.goForward(); else wc.goForward(); }
+    } catch (e) { void e; }
+  };
+  localSiteWindow.on('app-command', (_e, cmd) => {
+    if (cmd === 'browser-backward') _localNav(-1);
+    else if (cmd === 'browser-forward') _localNav(1);
+  });
+  localSiteWindow.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown' || !input.alt || input.control || input.meta || input.shift) return;
+    if (input.key === 'ArrowLeft') { e.preventDefault(); _localNav(-1); }
+    else if (input.key === 'ArrowRight') { e.preventDefault(); _localNav(1); }
+  });
+  localSiteWindow.loadURL(url)
+    .catch((err) => appendAgentLog(`[mimic] local site window load REJECTED — ${err && err.message}\n`));
+  localSiteWindow.on('closed', () => { localSiteWindow = null; });
+  return true;
+}
+
 // UI Studio — graphical EQ-window editor. Loads per-character ini files
 // from the user's EQ folder, parses XPos/YPos/Size.cx/Size.cy from each
 // section, rescales 1440 → 1080 (or any source→target res), lets the user
@@ -5581,10 +6513,19 @@ ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
 // per-character INI's Width/Height can desync (resized at a different
 // resolution, partially saved, etc.) so the XML size is the right cap.
 // Returns { skin, sizes: { windowName: { cx, cy, file } }, scanned: <count> }.
-ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => {
+// ONE function for both callers (UI Studio's IPC below and the Map's keep-clear outlines, _mapClearUiRects): the Map
+// asks with { withDefault: true } so a window the raider's skin does not redefine takes uifiles/default's size, as EQ does.
+// Cached per (eqDir, skin, which dirs, newest XML mtime), and re-checked at most every 20s, so the Map's polling does not
+// re-read the XML.
+const _skinSizesCache = new Map();
+function _scanSkinWindowSizes(eqDir, opts) {
   try {
     const d = String(eqDir || '').trim();
     if (!d || !fs.existsSync(d)) return { ok: false, error: 'eqDir does not exist' };
+    const withDefault = !!(opts && opts.withDefault);
+    const cacheId = d + '|' + (withDefault ? 'def' : 'skin');
+    const hit = _skinSizesCache.get(cacheId);
+    if (hit && !(opts && opts.fresh) && Date.now() - hit.at < 20000) return hit.result;
     // Resolve the active skin from eqclient.ini. Falls back to 'default' when
     // missing — that's what EQ uses too. Case-insensitive UISkin lookup
     // because some clients write USkin / UI_SKIN variants.
@@ -5598,14 +6539,30 @@ ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => {
       } catch {}
     }
     const skinDir = path.join(d, 'uifiles', skin);
-    if (!fs.existsSync(skinDir) || !fs.statSync(skinDir).isDirectory()) {
+    const isDir = (p) => { try { return fs.existsSync(p) && fs.statSync(p).isDirectory(); } catch { return false; } };
+    const dirs = [skinDir];
+    if (withDefault && skin.toLowerCase() !== 'default') dirs.push(path.join(d, 'uifiles', 'default'));
+    const liveDirs = dirs.filter(isDir);
+    if (!liveDirs.length) {
       return { ok: true, skin, sizes: {}, scanned: 0, note: 'skin dir missing: ' + skinDir };
     }
+    const entries = [];   // skin dir first, so its definition of a window beats the default's
+    let newest = 0;
+    for (const dir of liveDirs) {
+      for (const f of fs.readdirSync(dir)) {
+        if (!/\.xml$/i.test(f)) continue;
+        const fp = path.join(dir, f);
+        let mt = 0;
+        try { mt = fs.statSync(fp).mtimeMs || 0; } catch { /* read below decides */ }
+        if (mt > newest) newest = mt;
+        entries.push({ f, fp });
+      }
+    }
+    const sig = skin + '|' + liveDirs.length + '|' + entries.length + '|' + newest;
+    if (hit && hit.sig === sig) { hit.at = Date.now(); return hit.result; }
     const sizes = {};
     let scanned = 0;
-    const files = fs.readdirSync(skinDir).filter(f => /\.xml$/i.test(f));
-    for (const f of files) {
-      const fp = path.join(skinDir, f);
+    for (const { f, fp } of entries) {
       let xml;
       try { xml = fs.readFileSync(fp, 'utf8'); } catch { continue; }
       scanned++;
@@ -5644,11 +6601,14 @@ ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => {
         }
       }
     }
-    return { ok: true, skin, sizes, scanned };
+    const result = { ok: true, skin, sizes, scanned };
+    _skinSizesCache.set(cacheId, { at: Date.now(), sig, result });
+    return result;
   } catch (err) {
     return { ok: false, error: err && err.message };
   }
-});
+}
+ipcMain.handle('ui-studio-scan-window-defaults', (_e, eqDir) => _scanSkinWindowSizes(eqDir, { fresh: true }));
 
 ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
   try {
@@ -6662,9 +7622,147 @@ function _canvasDisplay() {
   }
   return screen.getPrimaryDisplay();
 }
+// ── Span all screens (the guild lead picked option A, 2026-10-19: "canvas should be able to span multiple
+// screens, not just be on one") ──
+// ONE Canvas window over the union of every display, behind cfg.canvasSpan (off by default), and only while all
+// the displays share one scaleFactor: a window across two scalings is drawn at one of them and blurs or
+// mis-sizes on the other, so the switch is refused with a reason instead. cfg.canvasDisplayId stays the HOME
+// display: the layout is still keyed by the home display's WxH, and a panel with no `scr` is on it. A panel
+// MAY carry `scr` (a display's _canvasScreenSig) with its x/y as fractions of THAT display. Screens that are
+// not here (or span switched off) leave those panels hidden, never moved or deleted.
+let _canvasLayoutRev = 0;   // bumped when main rewrites a saved layout, so the Canvas re-reads it
+function _canvasScreenSig(d) { const b = d.bounds; return b.x + ',' + b.y + ',' + b.width + 'x' + b.height; }
+// null = span can be on; else the one-line reason the switch is off.
+function _canvasSpanWhy(all) {
+  if (!all || all.length < 2) return 'Only one screen is connected.';
+  if (all.some(d => d.scaleFactor !== all[0].scaleFactor)) return 'Your screens use different display scaling, so one Canvas cannot cover them evenly. Set the same scaling on each in Windows display settings.';
+  return null;
+}
+function _canvasSpanOn(cfg) {
+  try { return !!(cfg || loadConfig()).canvasSpan && !_canvasSpanWhy(screen.getAllDisplays()); } catch { return false; }
+}
+function _canvasUnionBounds(all) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const d of all) {
+    const b = d.bounds;
+    x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+    x1 = Math.max(x1, b.x + b.width); y1 = Math.max(y1, b.y + b.height);
+  }
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+// What the window covers: every screen while spanning, else the home screen.
+function _canvasBounds() { return _canvasSpanOn() ? _canvasUnionBounds(screen.getAllDisplays()) : _canvasDisplay().bounds; }
+// The home screen: the layout's key. Not "the display the window mostly covers", which is arbitrary once it spans.
+function _canvasHomeDisplay() {
+  try {
+    const id = loadConfig().canvasDisplayId;
+    const pinned = screen.getAllDisplays().some(d => String(d.id) === String(id));
+    if (!pinned && !_canvasSpanOn() && canvasWindow && !canvasWindow.isDestroyed()) return screen.getDisplayMatching(canvasWindow.getBounds());
+    return _canvasDisplay();
+  } catch { return screen.getPrimaryDisplay(); }
+}
+// The screens as the Canvas sees them, relative to the window's own corner.
+function _canvasScreens(all, home, span) {
+  const o = span ? _canvasUnionBounds(all) : home.bounds;
+  return (span ? all : [home]).map(d => ({ sig: _canvasScreenSig(d), x: d.bounds.x - o.x, y: d.bounds.y - o.y,
+    w: d.bounds.width, h: d.bounds.height, home: d.id === home.id, scale: d.scaleFactor }));
+}
+function _canvasSetSpan(on) {
+  const cfg = loadConfig();
+  const why = _canvasSpanWhy(screen.getAllDisplays());
+  if (on && why) return { ok: false, span: !!cfg.canvasSpan, why };
+  const home = _canvasHomeDisplay();   // before the switch flips: the screen the Canvas is on now
+  cfg.canvasSpan = !!on;
+  // Home is pinned to it, so it does not wander with EverQuest's window once the layout is keyed by it and
+  // the panels on it carry no `scr`.
+  if (on && !screen.getAllDisplays().some(d => String(d.id) === String(cfg.canvasDisplayId))) cfg.canvasDisplayId = home.id;
+  saveConfig(cfg);
+  _fitCanvasToDisplay();
+  _canvasLayoutRev++;
+  try { if (canvasWindow && !canvasWindow.isDestroyed()) canvasWindow.webContents.send('canvas-group-ops'); } catch { /* mid-close */ }
+  try { buildTrayMenu(); } catch { /* */ }
+  pushStatus();
+  return { ok: true, span: !!on, why: '' };
+}
+// The layout the Canvas is using now: { res: home display's WxH, key: the saved layout's key, layout }.
+function _canvasLayoutNow(cfg) {
+  const all = (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {};
+  const b = _canvasHomeDisplay().bounds;
+  const res = b.width + 'x' + b.height;
+  const key = all[res] ? res : (all[cfg.canvasLastRes] ? cfg.canvasLastRes : null);
+  return { res, key, layout: key ? all[key] : null };
+}
+// Panels that sat on a screen that was there before this change and is not now, as screen rects keyed
+// 'canvas:<id>' for _displayChangePlan. A panel on a screen that is merely not shown (span off) is not "away".
+function _canvasAwayRects(cfg, prevSig) {
+  const out = {};
+  const { layout } = _canvasLayoutNow(cfg);
+  const was = _parseSigDisplays(prevSig).map(d => d.x + ',' + d.y + ',' + d.width + 'x' + d.height);
+  let here;
+  try { here = screen.getAllDisplays().map(_canvasScreenSig); } catch { return out; }
+  for (const p of (layout && Array.isArray(layout.panels)) ? layout.panels : []) {
+    if (!p || typeof p.scr !== 'string' || here.includes(p.scr) || !was.includes(p.scr)) continue;
+    const f = _parseSigDisplays(p.scr)[0];
+    if (!f) continue;
+    out['canvas:' + p.id] = { x: Math.round(f.x + (+p.x || 0) * f.width), y: Math.round(f.y + (+p.y || 0) * f.height),
+      width: Math.round(+p.w || 200), height: Math.round(+p.h || 100) };
+  }
+  return out;
+}
+// "Move them": each away panel goes where the plan put it, as fractions of the screen it lands on. With span off
+// the only screen shown is home, so they land there at the same relative spot.
+function _applyCanvasMoves(moves) {
+  const ids = Object.keys(moves || {}).filter(k => k.startsWith('canvas:'));
+  if (!ids.length) return 0;
+  const cfg = loadConfig();
+  const cur = _canvasLayoutNow(cfg);
+  if (!cur.layout || !Array.isArray(cur.layout.panels)) return 0;
+  const all = screen.getAllDisplays(), home = _canvasHomeDisplay(), span = _canvasSpanOn(cfg);
+  const frac = (v) => Math.max(0, Math.min(1, v));
+  let n = 0;
+  for (const p of cur.layout.panels) {
+    const r = p && moves['canvas:' + p.id];
+    if (!r) continue;
+    const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+    const at = all.find(d => cx >= d.bounds.x && cx < d.bounds.x + d.bounds.width && cy >= d.bounds.y && cy < d.bounds.y + d.bounds.height) || home;
+    p.x = frac((r.x - at.bounds.x) / at.bounds.width);
+    p.y = frac((r.y - at.bounds.y) / at.bounds.height);
+    const dest = span ? at : home;
+    if (dest.id === home.id) delete p.scr; else p.scr = _canvasScreenSig(dest);
+    n++;
+  }
+  cfg.canvasLayouts = Object.assign({}, cfg.canvasLayouts, { [cur.key]: cur.layout });
+  saveConfig(cfg);
+  _canvasLayoutRev++;
+  try { if (canvasWindow && !canvasWindow.isDestroyed()) canvasWindow.webContents.send('canvas-group-ops'); } catch { /* mid-close */ }
+  return n;
+}
+// ── Where the cursor is, told to the Canvas (the guild lead, 2026-10-21: "canvas needs to be able to click on these
+// dropdowns and its not working with EQ in focus") ──
+// The Canvas is click-through, and a control inside a panel's frame is clickable only once the Canvas page has armed the
+// window over it. It learns the pointer is there from mouse moves Windows forwards into the window, and nothing proves
+// those reach a panel's frame (three arms from inside the pages failed). The cursor's own position does not depend on
+// them, so main reads it (cheap, and only while the Canvas is up) and the Canvas hit-tests that point itself.
+function _canvasCursorRel(b, p, zoom) {
+  if (!b || !p) return null;
+  if (!(p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height)) return null;
+  const z = (Number.isFinite(zoom) && zoom > 0) ? zoom : 1;
+  return { x: (p.x - b.x) / z, y: (p.y - b.y) / z };
+}
+let _canvasCursorTimer = null, _canvasCursorLast = '';
+function _canvasCursorTick() {
+  if (!_live(canvasWindow)) { if (_canvasCursorTimer) { clearInterval(_canvasCursorTimer); _canvasCursorTimer = null; } return; }
+  if (!canvasWindow.isVisible()) return;
+  let rel = null;
+  try { rel = _canvasCursorRel(canvasWindow.getBounds(), screen.getCursorScreenPoint(), canvasWindow.webContents.getZoomFactor()); } catch { return; }
+  const key = rel ? rel.x + ',' + rel.y : 'out';
+  if (key === _canvasCursorLast) return;   // a still cursor costs nothing
+  _canvasCursorLast = key;
+  try { canvasWindow.webContents.send('canvas-cursor', rel); } catch { /* mid-close */ }
+}
 function createCanvasWindow() {
   if (_agentOnly()) return;
-  const d = _canvasDisplay();
+  const d = { bounds: _canvasBounds() };
   canvasWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Canvas',
     x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
@@ -6676,6 +7774,9 @@ function createCanvasWindow() {
   canvasWindow.setVisibleOnAllWorkspaces(true);
   canvasWindow.setIgnoreMouseEvents(true, { forward: true });
   canvasWindow.loadFile('canvas.html');
+  if (_canvasCursorTimer) clearInterval(_canvasCursorTimer);
+  _canvasCursorLast = '';
+  _canvasCursorTimer = setInterval(_canvasCursorTick, 50);
   canvasWindow.once('ready-to-show', () => {
     canvasWindow.webContents.send('agent-port', agentPort);
     applyCanvasVisibility();
@@ -6693,19 +7794,24 @@ function applyCanvasVisibility() {
 // A monitor added, removed or re-sized: the canvas re-covers its screen.
 function _fitCanvasToDisplay() {
   if (!canvasWindow || canvasWindow.isDestroyed()) return;
-  try { canvasWindow.setBounds(_canvasDisplay().bounds); } catch { /* mid-close */ }
+  try { canvasWindow.setBounds(_canvasBounds()); } catch { /* mid-close */ }
 }
 function _canvasStatePayload() {
   const cfg = loadConfig();
-  let d;
-  try { d = (canvasWindow && !canvasWindow.isDestroyed()) ? screen.getDisplayMatching(canvasWindow.getBounds()) : _canvasDisplay(); }
-  catch { d = screen.getPrimaryDisplay(); }
+  const d = _canvasHomeDisplay();
   const res = d.bounds.width + 'x' + d.bounds.height;
   const all = (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {};
   // Per resolution, like EQ's own ini; a new resolution starts from the last
   // one used (positions are fractions, so the shape carries over).
   const layout = all[res] || all[cfg.canvasLastRes] || null;
-  return { res, layout, edit: _canvasArrange, displays: screen.getAllDisplays().length };
+  // backdrop: the Canvas's default Background (cfg.overlayBackdrop.canvas). Each item has its own now; this is
+  // what an item that never chose follows, and what a layout saved before that is stamped with, once.
+  // screens: the displays this window covers, relative to its corner (one while not spanning); span / spanWhy:
+  // the switch and, when it cannot be on, why; rev: bumped when main rewrote the layout under the Canvas.
+  const scrs = screen.getAllDisplays(), span = _canvasSpanOn(cfg);
+  return { res, layout, edit: _canvasArrange, displays: scrs.length,
+    screens: _canvasScreens(scrs, d, span), span, spanWhy: _canvasSpanWhy(scrs) || '', rev: _canvasLayoutRev,
+    backdrop: !!((cfg.overlayBackdrop && typeof cfg.overlayBackdrop === 'object') ? cfg.overlayBackdrop : {}).canvas };
 }
 // Arrange from the tray or the dashboard. Turning it on turns the canvas on.
 function _setCanvasArrange(on) {
@@ -7009,7 +8115,13 @@ function _mapClearUiRects(char) {
     let phys = eq ? eq.client : null;
     try { if (eq && process.platform === 'win32') phys = screen.dipToScreenRect(null, eq.client); } catch { /* DIPs it is */ }
     const client = phys && phys.width > 0 && phys.height > 0 ? { w: Math.round(phys.width), h: Math.round(phys.height) } : null;
-    const r = visibleUiRects(fs.readFileSync(file, 'utf8'), { skip: _UI_PHANTOM_RX, client });
+    // A window the ini gives no Width/Height takes the skin's design size (the same scan UI Studio uses), not a flat stand-in.
+    const skinSizes = {};
+    try {
+      const scan = _scanSkinWindowSizes(path.dirname(file), { withDefault: true });
+      for (const k of Object.keys((scan && scan.ok && scan.sizes) || {})) skinSizes[k] = { w: scan.sizes[k].cx, h: scan.sizes[k].cy };
+    } catch { /* no skin sizes: the stand-in stays */ }
+    const r = visibleUiRects(fs.readFileSync(file, 'utf8'), { skip: _UI_PHANTOM_RX, client, skinSizes });
     const res = r.res || client;
     let rects = r.rects.slice();
     try {
@@ -7687,6 +8799,10 @@ function _chatPrefsPayload(cfg, char) {
     melee: p.melee === true,     // combined melee floods the feed: opt-in, like officer
     spells: p.spells === true,   // spells and skills are floods too (2026-10-14): opt-in, default off
     skills: p.skills === true,
+    loot: p.loot === true,       // Loot, Random and Other (2026-10-15): the same kind of opt-in, default off
+    random: p.random === true,
+    other: p.other === true,
+    away: p.away !== false,      // guild and raid chat relayed from other members' Mimics while you are out of game (2026-10-15): ON unless switched off
     meleeShow: _chatMeleeShow(p.meleeShow),
     spellShow: _chatShowMap(p.spellShow, _SPELL_SHOW_KEYS),
     skillShow: _chatShowMap(p.skillShow, _SKILL_SHOW_KEYS),
@@ -7707,7 +8823,7 @@ ipcMain.handle('chat-prefs-set', (_e, char, patch) => {
   const p = (cfg.chatPrefs && typeof cfg.chatPrefs === 'object') ? cfg.chatPrefs : {};
   const inc = (patch && typeof patch === 'object') ? patch : {};
   if (inc.fontSize != null) { const n = Math.round(Number(inc.fontSize)); if (n >= 9 && n <= 24) p.fontSize = n; }
-  for (const k of ['group', 'officer', 'custom', 'melee', 'spells', 'skills']) if (typeof inc[k] === 'boolean') p[k] = inc[k];
+  for (const k of ['group', 'officer', 'custom', 'melee', 'spells', 'skills', 'loot', 'random', 'other', 'away']) if (typeof inc[k] === 'boolean') p[k] = inc[k];
   if (inc.meleeShow && typeof inc.meleeShow === 'object') {
     // Only the keys sent change, and only to a boolean: the other switches keep what they had.
     const cur = _chatMeleeShow(p.meleeShow);
@@ -8210,6 +9326,47 @@ const _DOCK_CATALOG = [
 // resolves the same way the window does (see _dockStatePayload), so a docked
 // Command Center is never a silently stale copy.
 
+// ── Overlays on the Timers canvas (Mimic 3.0 alpha) ──────────────────────────
+// The guild lead, 2026-09-29: "the next version of alpha [should] have all of the
+// data elements from the current overlays. each current overlay's data
+// elements can come in as they are today". Each overlay's own page becomes a
+// canvas panel exactly as the dock hosts it (the builder plan's "compat part"),
+// plus the HUD ring, which a grid cell could not hold but a free screen can.
+// w/h are the overlay windows' own default sizes.
+const _CANVAS_CATALOG = _DOCK_CATALOG.map(c => Object.assign({}, c)).concat([
+  { key: 'me', label: 'HUD', file: 'me.html', flag: 'showMe' },
+]);
+const _CANVAS_SIZES = { hud: [320, 220], chchain: [280, 240], tank: [300, 280], buffQueue: [330, 260],
+  mobinfo: [320, 200], charm: [300, 180], pets: [300, 160], who: [320, 280], melody: [280, 180],
+  threat: [320, 200], exttarget: [320, 240], zeal: [280, 220], popraid: [440, 540], command: [320, 360],
+  me: [330, 300] };
+function _canvasSpec(key) { return _CANVAS_CATALOG.find(c => c.key === key) || null; }
+// Which overlays live on the canvas right now. Like a docked overlay, a hosted
+// one has no window of its own — its page runs in the canvas instead — so
+// _overlayWanted() says no and the reaper frees any window it had. A hidden
+// panel still hosts (hiding it on the canvas must not pop its window back);
+// "Remove" hands the overlay back. Only while the canvas is on: turn the
+// canvas off and every overlay's own switch decides again.
+function _canvasHostedKeys(cfg) {
+  if (!cfg || !cfg.showCanvas) return [];
+  const all = (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {};
+  let res = null;
+  try {
+    if (canvasWindow && !canvasWindow.isDestroyed()) {
+      const b = _canvasHomeDisplay().bounds;   // the home screen, which keys the layout (not the screen a spanning window mostly covers)
+      res = b.width + 'x' + b.height;
+    }
+  } catch { /* mid-close */ }
+  const layout = (res && all[res]) || all[cfg.canvasLastRes];
+  const out = [];
+  // A piece cut from an overlay (kind 'sect', canvas sections.js) is that overlay's page too, so its
+  // window steps aside the same way: the canvas is where it lives now.
+  for (const p of (layout && Array.isArray(layout.panels)) ? layout.panels : []) {
+    if (p && (p.kind === 'overlay' || p.kind === 'sect') && _canvasSpec(p.key) && !out.includes(p.key)) out.push(p.key);
+  }
+  return out;
+}
+
 // Accepts a catalog key OR a page filename, because a pane's own ✕ knows only
 // the file it was loaded from (see _wpDockKey in preload.js) while the dock's
 // picker sends keys.
@@ -8316,6 +9473,8 @@ function _overlayWanted(cfg, e) {
     return !!cfg.showCanvas && (setupMode || cfg.overlaysLocked === false || _canvasArrange
       || (!cfg.hideOverlays && _eqGateOk(cfg)));
   }
+  // An overlay living on the canvas shows there, never also as its own window.
+  if (_canvasHostedKeys(cfg).includes(e.key)) return false;
   // The Map in Full mode covers the screen, so setup / unlock do not conjure it for placement: its own switch decides.
   if (e.key === 'map' && _mapFull) {
     return !!cfg.showMap && (setupMode || cfg.overlaysLocked === false || (!cfg.hideOverlays && _eqGateOk(cfg)));
@@ -8581,8 +9740,10 @@ let _registeredMiniAccel = null;
 // own hotkey config as well. so if i want to pull one up i can do it without
 // much effort"). cfg.overlayHotkeys = { <toggle-overlay key>: accelerator },
 // set from the dashboard's Overlays tab. A press runs the SAME _toggleOverlay
-// the dashboard's ON/OFF button does. No defaults: a global shortcut takes its
-// key away from EverQuest, so nobody gets one they did not ask for.
+// the dashboard's ON/OFF button does — and, for an overlay that is also on the
+// Canvas as a whole, its Canvas panel too (_overlayHotkeyPress, below). No
+// defaults: a global shortcut takes its key away from EverQuest, so nobody gets
+// one they did not ask for.
 const _OVERLAY_HOTKEY_KEYS = ['dock', 'hud', 'trigger', 'charm', 'pet', 'mobinfo', 'buffQueue', 'who', 'melody',
   'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'maptimers', 'chat', 'canvas'];
 let _registeredOverlayAccels = {};   // overlay key → accelerator bound right now
@@ -8597,7 +9758,7 @@ function _registerOverlayHotkeys(globalShortcut, cfg) {
     const accel = typeof map[key] === 'string' ? map[key].trim() : '';
     if (!accel) continue;
     let ok = false;
-    try { ok = globalShortcut.register(accel, () => { try { _toggleOverlay(key); } catch (e) { appendAgentLog(`[mimic] ${key} overlay hotkey: ${e.message}\n`); } }); }
+    try { ok = globalShortcut.register(accel, () => { try { _overlayHotkeyPress(key); } catch (e) { appendAgentLog(`[mimic] ${key} overlay hotkey: ${e.message}\n`); } }); }
     catch { ok = false; }   // a malformed accelerator throws rather than returning false
     if (ok) _registeredOverlayAccels[key] = accel;
     else {
@@ -8605,6 +9766,123 @@ function _registerOverlayHotkeys(globalShortcut, cfg) {
       if (!_hotkeyQuiet) appendAgentLog(`[mimic] failed to register the ${key} overlay hotkey "${accel}" (in use by another app or another Mimic hotkey?)\n`);
     }
   }
+}
+// ⌨ A hotkey per Canvas group (Mimic 3.0 alpha; the guild lead, 2026-10-07: "we should be able to
+// assign hotkeys to show or hide canvas groups as well"). "A group" is a SAVED group, the named ones in
+// the Canvas's ★ Groups list; cfg.canvasGroupHotkeys = { <saved group id>: accelerator } is keyed by
+// that id, so a rename keeps the key, and a deleted group drops it. A press toggles the group: every
+// piece placed from it is hidden, or shown again, in the Canvas layout (canvas.html toggleSavedGroup;
+// positions and sizes are kept and the choice is saved with the layout). The Canvas does the toggling
+// because it owns the layout; main queues the press and the Canvas reads it (canvas-state, or a ping).
+// No defaults: a global shortcut takes its key away from EverQuest. Registered after the overlay keys.
+let _registeredGroupAccels = {};   // saved group id → accelerator bound right now
+let _blockedGroupAccels = {};      // saved group id → accelerator the OS refused
+let _canvasGroupOps = [];          // presses the Canvas has not read yet: { id, show } for a group, { overlay, show } for an overlay's panels
+function _canvasGroupList(cfg) {
+  return (Array.isArray(cfg && cfg.canvasGroups) ? cfg.canvasGroups : [])
+    .filter(g => g && typeof g.id === 'string' && g.id)
+    .map(g => ({ id: g.id, name: String(g.name || 'Group') }));
+}
+// id → accelerator, for the groups that exist.
+function _canvasGroupKeys(cfg) {
+  const map = (cfg && cfg.canvasGroupHotkeys && typeof cfg.canvasGroupHotkeys === 'object') ? cfg.canvasGroupHotkeys : {};
+  const out = {};
+  for (const g of _canvasGroupList(cfg)) if (typeof map[g.id] === 'string' && map[g.id].trim()) out[g.id] = map[g.id].trim();
+  return out;
+}
+function _registerCanvasGroupHotkeys(globalShortcut, cfg) {
+  for (const a of Object.values(_registeredGroupAccels)) { try { globalShortcut.unregister(a); } catch {} }
+  _registeredGroupAccels = {};
+  _blockedGroupAccels = {};
+  const map = (cfg && cfg.canvasGroupHotkeys && typeof cfg.canvasGroupHotkeys === 'object') ? cfg.canvasGroupHotkeys : {};
+  const names = {};
+  for (const g of _canvasGroupList(cfg)) names[g.id] = g.name;
+  let dropped = false;
+  for (const id of Object.keys(map)) {
+    if (!names[id]) {
+      // The group was deleted (or never saved): a key for nothing is dropped, not kept.
+      appendAgentLog(`[mimic] dropped the Canvas group hotkey for "${id}": that saved group no longer exists\n`);
+      delete map[id]; dropped = true;
+      continue;
+    }
+    const accel = typeof map[id] === 'string' ? map[id].trim() : '';
+    if (!accel) continue;
+    let ok = false;
+    try { ok = globalShortcut.register(accel, () => { try { _toggleCanvasGroup(id); } catch (e) { appendAgentLog(`[mimic] Canvas group hotkey: ${e.message}\n`); } }); }
+    catch { ok = false; }   // a malformed accelerator throws rather than returning false
+    if (ok) _registeredGroupAccels[id] = accel;
+    else {
+      _blockedGroupAccels[id] = accel;
+      appendAgentLog(`[mimic] failed to register the Canvas group hotkey "${accel}" for "${names[id]}" (in use by another app or another Mimic hotkey?)\n`);
+    }
+  }
+  if (dropped) { try { saveConfig(cfg); } catch {} }
+}
+// The press: show or hide the group's pieces. The Canvas is the group's home, so a press while it is
+// switched off turns it on and the group is SHOWN (a toggle could hide what you came to see). While a
+// hide-all is in force the press changes the group's saved state like any overlay hotkey does and does
+// not lift the hide-all: that is the member's call, made on purpose.
+function _toggleCanvasGroup(id) {
+  const cfg = loadConfig();
+  if (!_canvasGroupList(cfg).some(g => g.id === id)) {
+    appendAgentLog(`[mimic] Canvas group "${id}": no such saved group\n`);
+    return false;
+  }
+  const closed = !cfg.showCanvas;
+  if (closed) _toggleOverlay('canvas');
+  _canvasGroupOps.push({ id, show: closed });
+  if (_canvasGroupOps.length > 40) _canvasGroupOps.shift();
+  // A window that is up reads the press now; one still loading finds it in its first canvas-state.
+  if (_live(canvasWindow)) { try { canvasWindow.webContents.send('canvas-group-ops'); } catch { /* mid-close */ } }
+  return true;
+}
+function _drainCanvasGroupOps() { const ops = _canvasGroupOps; _canvasGroupOps = []; return ops; }
+// ⌨ An overlay's own key also shows / hides it on the Canvas (the guild lead, 2026-10-07: "if you're using an
+// overlay as whole it should let you use that overlay's same hide key combo"). No new key: the overlay
+// keeps the one it has (cfg.overlayHotkeys), so there is no extra conflict entry. It reaches the overlay's
+// "as is" panels — kind 'overlay', one per look (the HUD's ring and box are both) — and NOT a piece taken
+// apart from it ('sect') or any other piece ('part'): those belong to groups. One press sets one state
+// everywhere the overlay lives so they stay in step: the Canvas panels (queued as { overlay, show }, an
+// explicit state, kept in the layout like a group's) and its own switch (window). The Canvas is what is
+// seen while it is on, so its panels say what a press does; with the Canvas off the window does. An overlay
+// with no such panel is exactly what it was: _toggleOverlay. The Canvas calls the pet tracker 'pets'.
+function _overlayHotkeyPress(key) {
+  const ckey = key === 'pet' ? 'pets' : key;
+  const spec = _canvasSpec(ckey);
+  const layout = spec ? _canvasStatePayload().layout : null;
+  const panels = ((layout && Array.isArray(layout.panels)) ? layout.panels : []).filter(p => p && p.kind === 'overlay' && p.key === ckey);
+  if (!panels.length) return _toggleOverlay(key);
+  const cfg = loadConfig();
+  const queued = _canvasGroupOps.find(o => o.overlay === ckey);       // a press the Canvas has not read yet
+  const shown = cfg.showCanvas ? (queued ? !!queued.show : panels.some(p => !p.off)) : !!cfg[spec.flag];
+  const next = !shown;
+  _canvasGroupOps = _canvasGroupOps.filter(o => o.overlay !== ckey);
+  _canvasGroupOps.push({ overlay: ckey, show: next });
+  if (_canvasGroupOps.length > 40) _canvasGroupOps.shift();
+  if (_live(canvasWindow)) { try { canvasWindow.webContents.send('canvas-group-ops'); } catch { /* mid-close */ } }
+  // Its own switch follows. With the Canvas on the overlay has no window (it is hosted), so only the switch
+  // moves, which keeps "Remove · own window" handing back what the key last chose; with it off the switch is
+  // the window, and the usual toggle opens or closes it.
+  if (!!cfg[spec.flag] !== next) {
+    if (cfg.showCanvas) {
+      cfg[spec.flag] = next; saveConfig(cfg);
+      try { buildTrayMenu(); } catch { /* */ }
+      pushStatus();
+    } else _toggleOverlay(key);
+  }
+  return true;
+}
+// Tray ↔ dashboard parity (CLAUDE.md): the groups under the Canvas entry, each with its key, driving
+// the same toggle as the key. Only when there is a saved group to list.
+function _canvasGroupTrayItems(s) {
+  const groups = (s && s.canvasGroups) || [];
+  if (!groups.length) return [];
+  const keys = s.canvasGroupHotkeys || {}, blocked = s.canvasGroupHotkeysBlocked || {};
+  return [{ label: '  ↳ Canvas groups — show / hide', enabled: !s.hideOverlays,
+    submenu: groups.map(g => ({
+      label: g.name.replace(/&/g, '&&') + ' (' + (blocked[g.id] ? '⚠ ' + _fmtAccel(keys[g.id]) + ' blocked by another app' : keys[g.id] ? _fmtAccel(keys[g.id]) : 'no hotkey') + ')',
+      click: () => { _toggleCanvasGroup(g.id); },
+    })) }];
 }
 // ⌨ Setting a key that is already in use (the guild lead, 2026-09-24: "When
 // setting hotkeys it should tell you when you're trying to use one that's
@@ -8631,6 +9909,13 @@ function _mimicHotkeyUses(cfg) {
   const map = (c.overlayHotkeys && typeof c.overlayHotkeys === 'object') ? c.overlayHotkeys : {};
   for (const key of _OVERLAY_HOTKEY_KEYS) {
     if (typeof map[key] === 'string' && map[key].trim()) uses.push({ id: 'overlay:' + key, accel: map[key].trim() });
+  }
+  // …and each saved Canvas group's key (only for a group that still exists), named by its group.
+  const gmap = (c.canvasGroupHotkeys && typeof c.canvasGroupHotkeys === 'object') ? c.canvasGroupHotkeys : {};
+  for (const g of (Array.isArray(c.canvasGroups) ? c.canvasGroups : [])) {
+    if (g && typeof g.id === 'string' && typeof gmap[g.id] === 'string' && gmap[g.id].trim()) {
+      uses.push({ id: 'canvasGroup:' + g.id, accel: gmap[g.id].trim(), label: 'the “' + String(g.name || 'Group') + '” Canvas group’s key' });
+    }
   }
   return uses;
 }
@@ -8777,6 +10062,8 @@ function registerHideAllHotkey() {
     }
     // ⌨ One per overlay, registered last so the four above keep their keys.
     _registerOverlayHotkeys(globalShortcut, cfg);
+    // …and one per saved Canvas group, after those (an overlay key is never taken by a group).
+    _registerCanvasGroupHotkeys(globalShortcut, cfg);
   } catch (e) { appendAgentLog('[mimic] hide-all hotkey error: ' + e.message + '\n'); }
 }
 
@@ -8866,6 +10153,11 @@ function currentStatus() {
     // Overlay hotkeys the OS refused (key → accelerator), so the dashboard can
     // say "taken by another app" instead of showing a key that does nothing.
     overlayHotkeysBlocked: Object.assign({}, _blockedOverlayAccels),
+    // ⌨ The saved Canvas groups and the key each has (saved group id → accelerator), and the ones the
+    // OS refused — for a UI that lists them (the tray does; the dashboard's Overlays tab can).
+    canvasGroups: _canvasGroupList(cfg),
+    canvasGroupHotkeys: _canvasGroupKeys(cfg),
+    canvasGroupHotkeysBlocked: Object.assign({}, _blockedGroupAccels),
     // …and the same for the four all-overlay keys (hide-all, backgrounds,
     // damage alert, minimize-all), by their cfg key.
     hotkeysBlocked: Object.assign({}, _blockedHotkeys),
@@ -8918,6 +10210,9 @@ function currentStatus() {
     showCanvas: !!cfg.showCanvas,
     canvasOwnsTriggers: !!cfg.showCanvas,
     canvasArrange: !!_canvasArrange,
+    // "Span all screens": the switch, and why it cannot be on (blank = it can) — the tray and the dashboard read these.
+    canvasSpan: !!cfg.canvasSpan,
+    canvasSpanWhy: (() => { try { return _canvasSpanWhy(screen.getAllDisplays()) || ''; } catch { return ''; } })(),
     // 💥 Damage-taken audio alert — drives the tray checkbox (and is available
     // to any renderer that wants to show the state). Default off.
     damageAlert: !!cfg.damageAlert,
@@ -9062,6 +10357,9 @@ async function runUninstaller() {
   // detached uninstaller. unref() lets it outlive us.
   quitting = true;
   try { if (agentProc) agentProc.kill(); } catch (e) { void e; }
+  // Uninstalling takes the login with it, so the Chat cache and its key go too, before the uninstaller starts. (The agent
+  // is stopped first: on Windows a kill is hard and runs no exit handler, so it cannot write the file back.)
+  try { _chatCacheWipeAll('uninstall'); } catch (e) { void e; }
   try {
     spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
   } catch (e) {
@@ -9180,6 +10478,32 @@ function _sortOverlayMenuItems(menu) {
   return menu;
 }
 
+// 🎟 Raid code (the guild lead, 2026-10-21): the agent owns the pass (GET/POST /api/raid-code); the tray keeps the
+// last answer for at most 20 s and rebuilds its menu when the code changes. A pass lasts six hours and ends by itself.
+let _raidCodeTray = null;
+let _raidCodeTrayAt = 0;
+function _raidCodeTrayRefresh() {
+  const now = Date.now();
+  if (!agentPort || now - _raidCodeTrayAt < 20000) return;
+  _raidCodeTrayAt = now;
+  _agentCall('GET', '/api/raid-code').then((r) => {
+    const next = r && r.ok && r.raid && r.raid.code ? r.raid : null;
+    const was = _raidCodeTray && _raidCodeTray.code;
+    _raidCodeTray = next;
+    if ((next && next.code) !== was) { try { buildTrayMenu(); } catch (e) { void e; } }
+  });
+}
+function _raidCodeTrayItems() {
+  _raidCodeTrayRefresh();
+  const r = _raidCodeTray;
+  if (!r || !(r.expires > Date.now())) return [{ label: '🎟 Join a raid with a code…', click: () => showDashboardTab('raidcode') }];
+  const min = Math.max(0, Math.floor((r.expires - Date.now()) / 60000));
+  const left = min >= 60 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${min}m`;
+  return [
+    { label: `🎟 Raid code ${r.code} · ${left} left`, click: () => showDashboardTab('raidcode') },
+    { label: '✕ Leave raid code', click: () => { _agentCall('POST', '/api/raid-code', { clear: true }).then(() => { _raidCodeTray = null; _raidCodeTrayAt = 0; try { buildTrayMenu(); } catch (e) { void e; } }); } },
+  ];
+}
 function buildTrayMenu() {
   if (!tray) return;
   const s = currentStatus();
@@ -9312,13 +10636,19 @@ function buildTrayMenu() {
       } },
     // Timers canvas — same internals as the dashboard row (_toggleOverlay /
     // _setCanvasArrange), per the tray ↔ dashboard parity rule.
-    { label: 'Canvas (place callouts + timer panels anywhere)', type: 'checkbox', checked: !!s.showCanvas, enabled: !s.hideOverlays, click: () => {
+    { label: 'Canvas (callouts, timers, pieces and any overlay, placed anywhere)', type: 'checkbox', checked: !!s.showCanvas, enabled: !s.hideOverlays, click: () => {
         _toggleOverlay('canvas');
         buildTrayMenu();
+      } },
+    // Same setter as the Canvas's own button and the dashboard's. Greyed, with the reason, when it cannot be on.
+    { label: s.canvasSpanWhy ? '  ↳ Span all screens — ' + s.canvasSpanWhy : '  ↳ Span all screens', type: 'checkbox', checked: !!s.canvasSpan,
+      enabled: !s.hideOverlays && (!s.canvasSpanWhy || !!s.canvasSpan), click: (mi) => {
+        _canvasSetSpan(mi.checked);
       } },
     { label: _canvasArrange ? '  ↳ ✓ Done arranging the canvas' : '  ↳ Arrange the canvas…', enabled: !s.hideOverlays, click: () => {
         _setCanvasArrange(!_canvasArrange);
       } },
+    ..._canvasGroupTrayItems(s),
     { type: 'separator' },
     // Panel-overlay tray toggles removed per user feedback — the per-card
     // "🪟 overlay" buttons on the dashboard cover ad-hoc pop-outs without a
@@ -9558,6 +10888,13 @@ function buildTrayMenu() {
     // Tray ↔ dashboard parity: the dashboard's 📈 My parses tab is the other half of this item (a member,
     // 2026-10-06: "is there a page in mimic that'll graph out my parses over a variable time window").
     { label: '📈 My parses', click: () => showDashboardTab('myparses') },
+    // Tray ↔ dashboard parity: the dashboard rail's "On this PC › Inventory" opens this same window (openLocalSite).
+    { label: '🎒 Inventory (on this PC)', click: () => { if (!openLocalSite('inventory')) shell.openExternal(`http://127.0.0.1:${agentPort}/local/inventory/`); } },
+    { label: '📊 My fights (on this PC)', click: () => { if (!openLocalSite('parses')) shell.openExternal(`http://127.0.0.1:${agentPort}/local/parses/`); } },
+    { label: '🎬 My replay (on this PC)', click: () => { if (!openLocalSite('replay')) shell.openExternal(`http://127.0.0.1:${agentPort}/local/replay/`); } },
+    // Tray ↔ dashboard parity: the dashboard rail's "On this PC › Join a raid with a code" is the other half. A code is
+    // typed on the dashboard card (the tray has no text box); the tray shows the pass while it runs and can end it.
+    ..._raidCodeTrayItems(),
     { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     // Same folder as the dashboard's Sounds card button: drop .wav / .mp3 / .ogg files here to use them in triggers.
@@ -9569,20 +10906,18 @@ function buildTrayMenu() {
 
   // Help › — the walkthrough, feedback, and the agent restart.
   const helpSubmenu = [
-    // ✨ The setup walkthrough, both layouts until the guild lead picks one (§93). Same IPC
-    // as the dashboard Setup card's two buttons. Beta and alpha builds only: two unpicked
-    // layouts do not ship to the stable fleet (the UI-options rule), so a stable cut can still
-    // be the beta byte for byte.
-    ...(/-/.test(String(app.getVersion() || '')) ? [{ label: '✨ Setup walkthrough', submenu: [
-        { label: 'A · one step at a time', click: () => openWelcome('a') },
-        { label: 'B · essentials, then unlocks', click: () => openWelcome('b') },
-      ] }] : []),
+    // ✨ The setup walkthrough: the trail, one step at a time (picked 2026-10-19, §383). Same IPC
+    // as the dashboard Setup card's button. On every build: the pick lifted the beta-only hold (§93, §111).
+    { label: '✨ Setup walkthrough', click: () => openWelcome() },
+    // 🧭 The tour of the overlays, any time (the guild lead, 2026-10-21). Same function as the dashboard's button.
+    { label: '🧭 Take the tour again', click: () => openTour() },
     // Tray ↔ dashboard parity (CLAUDE.md): the feedback card lives on the
     // dashboard, so it needs a tray route too. Same destination, same internals
-    // — this opens the dashboard with the card expanded rather than duplicating
-    // the form in a second window that would then drift.
+    // — Mimic's Feedback window (the dashboard page in feedback-only mode), the very
+    // window the dashboard's 💬 button opens. With no agent port yet there is no page
+    // to load, so the old browser route stays as the fallback.
     { label: 'Send feedback — bug or idea',
-      click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/#feedback`) },
+      click: () => { if (!openFeedback()) shell.openExternal(`http://127.0.0.1:${agentPort}/#feedback`); } },
     { label: 'Restart agent', click: async () => {
         appendAgentLog('[mimic] tray "Restart agent" clicked\n');
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
@@ -10096,6 +11431,9 @@ function scheduleAgentUpdates() {
 ipcMain.handle('overlay-drag-start', (e) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
+    // An overlay page on the Timers canvas moves its panel, never the
+    // screen-sized canvas window (its own ✥ is hidden there; this is the backstop).
+    if (win && win === canvasWindow) return false;
     if (win) win.__wpPreMenuBounds = null;   // drag supersedes the menu-grow stash
     _startWindowDrag(win, _boundsKeyForWindow(win));
   } catch {}
@@ -10168,6 +11506,8 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
     win.__wpHeightMode = 'fit';   // this page fits its window: a drag can set a height floor
+    // Not under a drag: the drag writes its own bounds every 16 ms. Held, and asked for again when it ends.
+    if (win.__wpDragging) { win.__wpFitPending = true; return true; }
     // ↕ Fit height to content asks for an exact fit, once (see overlay-fit-height).
     const fitNow = (Date.now() - (win.__wpFitNowAt || 0)) < 3000;
     win.__wpFitNowAt = 0;
@@ -10305,6 +11645,10 @@ function _miniPinSetting(cfg, key) {
 function _sendOverlayMini(key, win, on) {
   try { win.webContents.send('wp-mini', { key, mini: !!on }); } catch { /* window mid-close */ }
 }
+// An overlay hosted on the Canvas has no window to push to; the Canvas reads the flag back (canvas-state) on this ping.
+function _pingCanvasMini() {
+  try { if (_live(canvasWindow)) canvasWindow.webContents.send('canvas-mini'); } catch { /* mid-close */ }
+}
 function applyOverlayMini(win, key, cfg) {
   if (!win || win.isDestroyed() || !key) return;
   const c = cfg || loadConfig();
@@ -10316,6 +11660,7 @@ function applyAllOverlayMini() {
     if (!_MINI_KEYS.includes(k)) continue;
     applyOverlayMini(w, k, cfg);
   }
+  _pingCanvasMini();
 }
 // Ctrl+Shift+M. First press takes every mini-capable overlay to mini and
 // remembers what each one was. Second press restores that snapshot — EXCEPT
@@ -10450,11 +11795,8 @@ ipcMain.handle('overlay-resize-preset', (e, preset) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
-    // L is 420, not 400: at 400 the DPS HUD's title row (−/+, DPS, Tank,
-    // History) ran under the ✕ (a member, 2026-09-24: "the large 400px preset
-    // cuts off a bit on the dps window. and the xl is just a bit too wide").
-    const widths = { xs: _OVERLAY_MIN_W, sm: 260, md: 320, lg: 420, xl: 500 };
-    const w = widths[String(preset || '').toLowerCase()];
+    // The widths (and why L is 420) live in overlaySizes.js, shared with the Canvas's Width row.
+    const w = overlaySizes.widthOf(preset);
     if (!w) return false;
     const b = win.getBounds();
     win.setBounds({ x: b.x, y: b.y, width: w, height: b.height });
@@ -10933,6 +12275,7 @@ function _setOverlayMini(key, next) {
   }
   saveConfig(cfg);
   for (const [k, w] of _overlayEntries()) if (k === key) applyOverlayMini(w, k, cfg);
+  _pingCanvasMini();
   pushStatus();
   return !!map[key];
 }
@@ -10974,6 +12317,7 @@ ipcMain.handle('wp-mini-pin-set', (_e, name, on) => {
   map[name] = !!on;
   cfg.overlayMiniPinned = map;
   saveConfig(cfg);
+  _pingCanvasMini();
   pushStatus();
   return !!map[name];
 });
@@ -10985,27 +12329,141 @@ ipcMain.handle('wp-mini-all', () => { try { toggleMinimizeAllOverlays(); return 
 // overlay we just close the window. The user re-enables named overlays from
 // the tray "Overlays" submenu.
 // ── Timers canvas IPC ───────────────────────────────────────────────────────
-ipcMain.handle('canvas-state', () => _canvasStatePayload());
+// Every overlay the canvas can host, and where its own window is right now —
+// as fractions of the canvas's screen, with its size and zoom — so "bring in
+// what's on screen" puts each panel where the window was. A window on another
+// screen, or a docked pane, has no spot here (at.x null) and is placed in a row.
+function _canvasOverlayList() {
+  const cfg = loadConfig();
+  let B;
+  // B is what the Canvas's fractions are of: the window, which is every screen's union while it spans.
+  try { B = (canvasWindow && !canvasWindow.isDestroyed()) ? canvasWindow.getBounds() : _canvasBounds(); }
+  catch { B = screen.getPrimaryDisplay().bounds; }
+  const docked = _dockedKeys(cfg);
+  return _CANVAS_CATALOG.map(c => {
+    const e = _OVERLAY_WINDOWS.find(o => o.key === c.key);
+    const win = e && e.get();
+    let at = null;
+    try {
+      if (win && !win.isDestroyed() && win.isVisible()) {
+        const b = win.getBounds();
+        const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+        const here = cx >= B.x && cx < B.x + B.width && cy >= B.y && cy < B.y + B.height;
+        at = { x: here ? (b.x - B.x) / B.width : null, y: here ? (b.y - B.y) / B.height : null,
+          w: b.width, h: b.height, zoom: win.webContents.getZoomFactor() || 1 };
+      }
+    } catch { /* mid-close */ }
+    const size = _CANVAS_SIZES[c.key] || [320, 240];
+    // The Canvas always loads the bundled page, never the agent-served copy the Dock and the window prefer
+    // (#65): that one is another origin (http://127.0.0.1 inside this file:// page), so the Canvas can neither
+    // read its size nor cut it into pieces, and there is no probe-and-fall-back here, so an agent that is not
+    // answering yet leaves a panel that never loads (the guild lead, 2026-10-19: "Command center is blank").
+    // The bundled page is byte-identical to the served one (check:dashboard) and reads its data from the
+    // agent's port the same way.
+    // mini: the overlay's own ▭ Mini mode and 📌 pin (null for an overlay with no mini rendition), so a frame can offer
+    // and show the same setting its window's right-click menu does.
+    return { key: c.key, label: c.label,
+      src: c.file,
+      showing: !!at, docked: docked.includes(c.key), at, w: size[0], h: size[1],
+      mini: _MINI_KEYS.includes(c.key) ? { on: _miniSetting(cfg, c.key), pin: _miniPinSetting(cfg, c.key) } : null };
+  });
+}
+// groupOps: the group-hotkey presses made since the Canvas last asked (read once, then gone);
+// groupKeys / groupKeysBlocked: what each saved group's chip shows.
+ipcMain.handle('canvas-state', (e) => {
+  const cfg = loadConfig();
+  const mine = !!canvasWindow && !canvasWindow.isDestroyed() && BrowserWindow.fromWebContents(e.sender) === canvasWindow;
+  return Object.assign(_canvasStatePayload(), {
+    overlays: _canvasOverlayList(),
+    groupOps: mine ? _drainCanvasGroupOps() : [],
+    groupKeys: _canvasGroupKeys(cfg),
+    groupKeysBlocked: Object.assign({}, _blockedGroupAccels),
+  });
+});
 // Only the canvas itself saves its layout, keyed by the resolution it is on.
-// Bounded: a layout is a dozen small panels, never a blob.
+// Bounded: a layout is a few dozen small panels, never a blob.
 ipcMain.handle('canvas-save', (e, layout) => {
   if (!canvasWindow || canvasWindow.isDestroyed() || BrowserWindow.fromWebContents(e.sender) !== canvasWindow) return false;
-  if (!layout || !Array.isArray(layout.panels) || layout.panels.length > 16) return false;
+  if (!layout || !Array.isArray(layout.panels) || layout.panels.length > 160) return false;
   let json;
   try { json = JSON.stringify(layout); } catch { return false; }
-  if (json.length > 32_000) return false;
+  if (json.length > 256_000) return false;
   const res = _canvasStatePayload().res;
   const cfg = loadConfig();
+  const before = _canvasHostedKeys(cfg);
   cfg.canvasLayouts = Object.assign({}, (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {}, { [res]: JSON.parse(json) });
   cfg.canvasLastRes = res;
+  const after = _canvasHostedKeys(cfg);
+  // An overlay newly on the canvas: its own switch goes on, so removing the
+  // panel later gives it its window back visible (undocking's rule), and it
+  // leaves the Dock — one copy of each page.
+  const added = after.filter(k => !before.includes(k));
+  if (added.length) {
+    const docked = _dockedKeys(cfg);
+    cfg.dockedPrev = (cfg.dockedPrev && typeof cfg.dockedPrev === 'object') ? cfg.dockedPrev : {};
+    for (const k of added) {
+      const spec = _canvasSpec(k);
+      if (spec) cfg[spec.flag] = true;
+      if (docked.includes(k)) { cfg.dockedOverlays = _dockedKeys(cfg).filter(d => d !== k); delete cfg.dockedPrev[k]; }
+    }
+  }
   saveConfig(cfg);
+  if (added.length || before.some(k => !after.includes(k))) {
+    try { applyAllVisibility(); } catch { /* */ }
+    try { buildTrayMenu(); } catch { /* */ }
+    pushStatus();
+  }
   return true;
 });
+// Saved groups of pieces (the guild lead, 2026-09-29: "be able to save groups").
+// One list for every resolution and screen — a group's pieces are placed
+// relative to where it is dropped. Only the canvas writes it; bounded.
+ipcMain.handle('canvas-groups', () => {
+  const cfg = loadConfig();
+  return Array.isArray(cfg.canvasGroups) ? cfg.canvasGroups : [];
+});
+ipcMain.handle('canvas-groups-save', (e, groups) => {
+  if (!canvasWindow || canvasWindow.isDestroyed() || BrowserWindow.fromWebContents(e.sender) !== canvasWindow) return false;
+  if (!Array.isArray(groups) || groups.length > 60) return false;
+  let json;
+  try { json = JSON.stringify(groups); } catch { return false; }
+  if (json.length > 128_000) return false;
+  const cfg = loadConfig();
+  cfg.canvasGroups = JSON.parse(json);
+  // A group deleted here takes its hotkey with it (registering again lets the key go and logs the drop).
+  const hadKeys = Object.keys(cfg.canvasGroupHotkeys || {}).length;
+  saveConfig(cfg);
+  if (hadKeys) { try { registerHideAllHotkey(); } catch { /* */ } }
+  try { buildTrayMenu(); } catch { /* */ }
+  pushStatus();
+  return true;
+});
+// A saved group's hotkey, set (accel) or cleared (blank) — from the Canvas's Hotkey… / Clear hotkey.
+// The capture UI has already refused a key Mimic uses (hotkey-capture); the OS refusing one (another
+// program holds it) is reported back as `blocked`. Keyed by the group's id.
+ipcMain.handle('canvas-group-hotkey', (_e, id, accel) => {
+  const cfg = loadConfig();
+  if (!_canvasGroupList(cfg).some(g => g.id === id)) return { ok: false, error: 'no such group' };
+  const a = typeof accel === 'string' ? accel.trim() : '';
+  if (a && !/^[\x21-\x7e]{1,40}$/.test(a)) return { ok: false, error: 'not a key combination' };
+  const map = Object.assign({}, (cfg.canvasGroupHotkeys && typeof cfg.canvasGroupHotkeys === 'object') ? cfg.canvasGroupHotkeys : {});
+  if (a) map[id] = a; else delete map[id];
+  cfg.canvasGroupHotkeys = map;
+  saveConfig(cfg);
+  try { registerHideAllHotkey(); } catch { /* */ }
+  try { buildTrayMenu(); } catch { /* */ }
+  pushStatus();
+  return { ok: true, keys: _canvasGroupKeys(cfg), blocked: Object.assign({}, _blockedGroupAccels) };
+});
+// Show or hide a saved group: the key's own toggle, for any UI that lists the groups.
+ipcMain.handle('canvas-group-toggle', (_e, id) => _toggleCanvasGroup(String(id)));
 ipcMain.handle('canvas-edit', (_e, on) => _setCanvasArrange(!!on));
+// "Span all screens": the Canvas's own toolbar, the tray and the dashboard all land here. → { ok, span, why }
+ipcMain.handle('canvas-span', (_e, on) => _canvasSetSpan(!!on));
 ipcMain.handle('canvas-next-display', () => {
   if (!canvasWindow || canvasWindow.isDestroyed()) return _canvasStatePayload();
   const all = screen.getAllDisplays();
-  if (all.length < 2) return _canvasStatePayload();
+  if (all.length < 2 || _canvasSpanOn()) return _canvasStatePayload();   // spanning covers them all: nothing to move to
   const cur = screen.getDisplayMatching(canvasWindow.getBounds());
   const next = all[(Math.max(0, all.findIndex(d => d.id === cur.id)) + 1) % all.length];
   const cfg = loadConfig();
@@ -11426,6 +12884,11 @@ ipcMain.handle('ui-studio-layout-list', (_e, character, eqDir) => {
   const a = _layoutArgs(character, eqDir);
   return _layoutCall(s => s.list(a.c, a.d, { pendingId: a.pendingId }));
 });
+// When EQ last wrote the character's UI_*.ini files (a stat on the live files, never a saved layout).
+ipcMain.handle('ui-studio-live-info', (_e, character, eqDir) => {
+  try { return { ok: true, ...uiLayouts.liveUiFileInfo(String(eqDir || '').trim(), String(character || '').trim()) }; }
+  catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+});
 ipcMain.handle('ui-studio-layout-save', (_e, params) => {
   const a = _layoutArgs(params && params.character, params && params.eqDir);
   return _layoutCall(s => s.save(a.c, a.d, params && params.name, { id: params && params.id ? String(params.id) : undefined }));
@@ -11776,6 +13239,32 @@ ipcMain.handle('get-config', () => configForRenderer(loadConfig()));
 ipcMain.handle('sounds:list', () => soundLib.listSounds(SOUNDS_SHIPPED_DIR(), SOUNDS_USER_DIR()));
 ipcMain.handle('sounds:resolve', (_e, name) => soundLib.resolveSoundUrl(name, SOUNDS_SHIPPED_DIR(), SOUNDS_USER_DIR()));
 ipcMain.handle('sounds:open-folder', () => _openSoundsFolder().then(() => SOUNDS_USER_DIR()));
+// Downloaded callout voices (neuralVoice.js; the guild lead, 2026-10-17). The engine pick itself is cfg.voice
+// (voice.js chooseEngine) and is saved with save-config like the rest. Failures come back as { ok:false, error }
+// in plain words; voice:synth returns the WAV or null, and null means "speak it with the Windows voice".
+ipcMain.handle('voice:status', () => neuralVoice.status(VOICES_DIR()));
+// A non-commercial or research-only Piper voice downloads only with the user's ticked boxes in `accept`
+// ({ terms, research }); neuralVoice.install refuses without them, and writes the acceptance record next to the
+// download (this PC only). Kokoro installs as a whole (the voice argument is ignored).
+ipcMain.handle('voice:install', async (_e, engine, voice, accept) => {
+  try {
+    const a = accept && typeof accept === 'object' ? { terms: accept.terms === true, research: accept.research === true } : {};
+    const st = await neuralVoice.install(VOICES_DIR(), String(engine || ''), String(voice || ''), process.platform, { accept: a });
+    appendAgentLog(`[voice] installed ${engine} ${voice || ''}\n`);
+    return { ok: true, status: st };
+  } catch (e) {
+    appendAgentLog(`[voice] install failed: ${e && e.message}\n`);
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('voice:remove', (_e, engine, voice) => {
+  try { return { ok: true, status: neuralVoice.remove(VOICES_DIR(), String(engine || ''), process.platform, String(voice || '')) }; }
+  catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
+});
+ipcMain.handle('voice:synth', (_e, text, spec) => {
+  const s = spec && typeof spec === 'object' ? spec : {};
+  return neuralVoice.synthesize(VOICES_DIR(), { engine: s.engine, voice: s.voice, rate: s.rate, test: s.test === true, text });
+});
 // Mute (cfg.quietMode) reaches every overlay renderer as one boolean, so the
 // three places that speak or play a sound (triggers.html, chchain.html,
 // charm.html) check window.mimic.isMuted() with no config round-trip. Sent on
@@ -11827,7 +13316,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   // flag (2026-07-12: backdropHotkey saves were ignored until restart —
   // only hideAllHotkey was in this condition).
   const HOTKEY_KEYS = ['hideAllHotkey', 'backdropHotkey', 'hideAllHotkeyEnabled', 'backdropHotkeyEnabled',
-    'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'overlayHotkeys', 'miniHotkey', 'miniHotkeyEnabled'];
+    'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'overlayHotkeys', 'miniHotkey', 'miniHotkeyEnabled', 'canvasGroupHotkeys'];
   if (incoming && HOTKEY_KEYS.some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
     try { registerHideAllHotkey(); } catch {}
   }
@@ -11876,6 +13365,8 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   applyMapVisibility();
   applyMapTimersVisibility();
   applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyChatVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyMeVisibility(); applyOverlayInteractivity();
+  // An overlay living on the Timers canvas must not also open as a window.
+  try { _reapDisabledOverlays(); } catch { /* never break a save */ }
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
@@ -11911,6 +13402,14 @@ ipcMain.handle('overlay-sets-command', (_e, cmd) => {
   if (!['save', 'load', 'next', 'prev', 'delete'].includes(verb)) return { ok: false, message: 'Unknown overlay set command' };
   return _overlaySetCommand({ verb, name: overlaySets.cleanName(cmd.name) }, null, true);
 });
+// Share a layout as a file — Settings and the dashboard's Overlays tab; the tray runs the same two functions.
+ipcMain.handle('overlay-layout-export', (_e, opts) => _exportLayoutFile(opts));
+ipcMain.handle('overlay-layout-import', () => _importLayoutFile());
+// Share a WHOLE setup (file or code) — the same four functions as the tray's items.
+ipcMain.handle('overlay-setup-export', (_e, opts) => _exportSetupFile(opts));
+ipcMain.handle('overlay-setup-code', (_e, opts) => _getSetupCode(opts));
+ipcMain.handle('overlay-setup-import', () => _importSetupFile());
+ipcMain.handle('overlay-setup-enter-code', () => _enterSetupCode());
 ipcMain.handle('get-agent-port', () => agentPort);
 // "Set up for me" from Settings — bridge to the agent's single writer
 // (POST /api/eq-setup → _applyEqSetup). Routed through main (Node, no CORS) so
@@ -11934,17 +13433,17 @@ ipcMain.handle('eq-setup-for-me', () => new Promise((resolve) => {
   req.on('timeout', () => { req.destroy(); resolve({ ok: false, message: 'The engine did not respond in time.' }); });
   req.end();
 }));
-// The setup walkthrough (welcome.html, DECISIONS §93): open it in the main window as layout
-// a or b, and relay its two agent POSTs — a file:// page cannot read the agent's reply to a
+// The setup walkthrough (welcome.html, DECISIONS §93, §383): open it in the main window, and
+// relay its two agent POSTs — a file:// page cannot read the agent's reply to a
 // POST, the same reason eq-setup-for-me exists. Only the two actions the page needs pass:
 // `import` (old logs, exactly the dashboard's importer) and `backfill` (the main's log).
-function openWelcome(v) {
+function openWelcome() {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
-  mainWindow.loadFile('welcome.html', { query: { v: v === 'b' ? 'b' : 'a' } });
+  mainWindow.loadFile('welcome.html');
   try { mainWindow.show(); mainWindow.focus(); } catch { /* */ }
   return true;
 }
-ipcMain.handle('open-welcome', (_e, v) => openWelcome(v));
+ipcMain.handle('open-welcome', () => openWelcome());
 ipcMain.handle('welcome-optin', (_e, action, paths) => new Promise((resolve) => {
   if (action !== 'import' && action !== 'backfill') return resolve({ ok: false, error: 'unsupported action' });
   const list = (Array.isArray(paths) ? paths : []).filter(p => typeof p === 'string' && p && p.length <= 1024).slice(0, 200);
@@ -11967,6 +13466,16 @@ ipcMain.handle('welcome-optin', (_e, action, paths) => new Promise((resolve) => 
   appendAgentLog(`[welcome] ${action} ${list.length} path(s)\n`);
   req.end(body);
 }));
+// 🧭 Take the tour again (the guild lead, 2026-10-21: "let users rejoin the tour later"): the tour is the overlay
+// steps of the same walkthrough page, opened at the first of them. Tray and dashboard both land here.
+// It never writes a setting: what is on or off stays as the person left it.
+function openTour() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  mainWindow.loadFile('welcome.html', { hash: 'tour' });
+  try { mainWindow.show(); mainWindow.focus(); } catch { /* */ }
+  return true;
+}
+ipcMain.handle('open-tour', () => openTour());
 // A JSON POST to one of the engine's local routes, for the setup walkthrough's "Say your name" (a file://
 // page cannot read the reply to a POST). Only the routes listed here, only JSON, only 127.0.0.1.
 const _AGENT_POST_OK = new Set(['/api/pronunciation', '/api/pronunciations/local']);
@@ -12139,6 +13648,10 @@ ipcMain.handle('open-settings', (_e, section) => { openSettings(section); return
 // Dashboard ⏻ Quit — the tray's Quit, same internals (tray ↔ dashboard parity).
 ipcMain.handle('quit-app', () => { setImmediate(_quitMimic); return true; });
 ipcMain.handle('open-resources', () => { openResources(); return true; });
+// 💬 Feedback in its own window (the dashboard button and the tray item). False = no agent port yet.
+ipcMain.handle('open-feedback', () => openFeedback());
+// 🎒 "On this PC" pages (the dashboard rail group and the tray item). False = no agent port yet.
+ipcMain.handle('open-local-site', (_e, page) => openLocalSite(page));
 // "Send this panel to its own overlay window" — increment 2d of the
 // customizable-dashboard work. Renderer passes a normalized panel key
 // (stable <h2> prefix); spawns a transparent always-on-top window that
@@ -13327,6 +14840,23 @@ ipcMain.handle('get-agent-log-tail', (_e, lines) => {
   return logTail.slice(-n).join('');
 });
 
+// Our windows' requests to the agent's port carry the per-launch secret (see _LOCAL_SECRET). Electron allows ONE
+// onBeforeSendHeaders listener per session and every window uses defaultSession (no partitions), so this is the
+// only one. '<all_urls>' + the check below rather than a port-wildcard pattern: the header goes to the agent's
+// own http://127.0.0.1:<agentPort> / http://localhost:<agentPort> and to nothing else, and the check is ours.
+function _wireLocalSecretHeader() {
+  require('electron').session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, (details, cb) => {
+    const headers = details.requestHeaders;
+    try {
+      const u = new URL(details.url);
+      if (u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost')) {
+        headers['x-wolfpack-local'] = _LOCAL_SECRET;
+      }
+    } catch { void 0; }
+    cb({ requestHeaders: headers });
+  });
+}
+
 // ── Boot ────────────────────────────────────────────────────────────────────
 // Guard the entire boot on the single-instance lock. A second launch already
 // called app.quit() above, but app.quit() is async — without this guard the
@@ -13334,6 +14864,7 @@ ipcMain.handle('get-agent-log-tail', (_e, lines) => {
 // "Service already running"), and flash a blank dashboard before quitting.
 app.whenReady().then(async () => {
   if (!_gotSingleInstanceLock) return;
+  _wireLocalSecretHeader();
   appendAgentLog(`[mimic] boot — Mimic v${app.getVersion()}, single-instance lock acquired, userData=${app.getPath('userData')}\n`);
   // Zeal auto-updater: notify-only check ~25s after boot (let the EQ folder +
   // agent settle), then every 12h. Install stays a one-click user action; this
@@ -13355,6 +14886,9 @@ app.whenReady().then(async () => {
   _materializeEnabledOverlays();
   pushStatus();
   startZealCapture();
+  // Kokoro loads a 130 MB model per phrase: if it is the voice that will speak, say one word in the background a
+  // few seconds after boot so the first real callout is not the one that pays for the cold disk. Never awaited.
+  setTimeout(() => { try { neuralVoice.warmUp(VOICES_DIR(), (loadConfig() || {}).voice).catch(() => {}); } catch { /* optional */ } }, 15000);
 
   // UI Studio deferred saves — load any pending from a prior session and start
   // the background watcher that applies them once the character logs out.

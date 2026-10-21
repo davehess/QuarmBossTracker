@@ -97,6 +97,58 @@ describe('rule resolution order', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
+describe('Charm aging starts muted (the guild lead, 2026-10-19: "Mute Charm aging by default, make this configurable")', () => {
+  // Mutation-checked: drop the BUILTIN_DEFAULT_MODES lookup in _resolveRule; drop either early-out change (_ruleModeNow,
+  // _builtinRuleModes); make an explicit rule lose to the default; drop the key from BUILTIN_DEFAULT_MODES.
+  const KEY = 'builtin:charm_aging';
+  const row = () => agent._triggerRulesPayload('').groups.find(g => g.id === 'builtin').members.find(m => m.key === KEY);
+
+  it('with no rules at all it is off, from the default; every other built-in still speaks', () => {
+    expect(agent._resolveRule(KEY, 'builtin', 'fenrisk')).toEqual({ mode: 'off', from: 'default' });
+    expect(agent._resolveRule(KEY, 'builtin', '')).toEqual({ mode: 'off', from: 'default' });
+    for (const k of ['charm_break', 'charm_breaking', 'recharm', 'enrage_soon']) {
+      expect(agent._resolveRule('builtin:' + k, 'builtin', 'fenrisk')).toEqual({ mode: 'speak', from: 'default' });
+    }
+  });
+  it('charm.html is told (the map of non-speak built-ins), so the Charm tracker stays quiet too', () => {
+    expect(agent._builtinRuleModes()).toEqual({ charm_aging: 'off' });
+  });
+  it('the callout is dropped at the one checkpoint; a test or rehearsal fire still plays', () => {
+    expect(agent._applyTriggerRule({ rule_key: KEY })).toBe(false);
+    expect(agent._applyTriggerRule({ rule_key: KEY, test: true })).toBe(true);
+    expect(agent._applyTriggerRule({ rule_key: 'builtin:charm_break' })).toBe(true);
+  });
+  it('someone who switched it on keeps it on: an explicit Speak (everyone, or just them) beats the default', () => {
+    setRules({ [KEY]: { '*': 'speak' } });
+    expect(agent._resolveRule(KEY, 'builtin', 'fenrisk')).toEqual({ mode: 'speak', from: 'trigger_all' });
+    expect(agent._builtinRuleModes()).toEqual({});
+    expect(agent._applyTriggerRule({ rule_key: KEY })).toBe(true);
+    setRules({ [KEY]: { fenrisk: 'speak' } });
+    expect(agent._resolveRule(KEY, 'builtin', 'fenrisk')).toEqual({ mode: 'speak', from: 'trigger' });
+    expect(agent._resolveRule(KEY, 'builtin', 'brackwyn').mode).toBe('off');   // another character has not
+  });
+  it('rules saved for other callouts, or a group switch, leave it muted unless the group is set', () => {
+    setRules({ 'builtin:recharm': { '*': 'overlay' } });
+    expect(agent._builtinRuleModes()).toEqual({ charm_aging: 'off', recharm: 'overlay' });
+    setRules({ 'group:builtin': { '*': 'speak' } });
+    expect(agent._resolveRule(KEY, 'builtin', 'fenrisk')).toEqual({ mode: 'speak', from: 'group_all' });   // they switched the whole group on
+  });
+  it('it is switchable on the dashboard list: a row in Built-in callouts, off and inherited until someone sets it', () => {
+    expect(row()).toMatchObject({ key: KEY, name: 'Charm aging (25 seconds up)', mode: null, effective: 'off', from: 'default' });
+    setRules({ [KEY]: { '*': 'speak' } });
+    expect(row()).toMatchObject({ mode: 'speak', effective: 'speak' });
+    setRules({ [KEY]: { '*': 'overlay' } });
+    expect(row()).toMatchObject({ mode: 'overlay', effective: 'overlay' });
+  });
+  it('the dashboard has the switch markup for it (speak / overlay / off buttons in the What you hear card)', () => {
+    const dash = stripJs(readSource(path.join(ROOT, 'packages/wolfpack-logsync/dashboard.html')));
+    expect(dash).toMatch(/\['speak',\s+'🔊 Speak'/);
+    expect(dash).toMatch(/\['off',\s+'⛔ Off'/);
+    expect(dash).toMatch(/<span class="rsw" data-rkey="/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
 describe('grouping', () => {
   const groupOf = (row) => agent._ruleGroupOfGuild(row);
 
@@ -357,7 +409,7 @@ describe('triggers.html: a muted countdown does not speak its warning', () => {
     const prelude = `
       let alertsEnabled = true, _visualElsewhere = false; const PART = null;
       function flash(t){ calls.flash.push(t); } function speak(t){ calls.speak.push(t); }
-      function playSound(){} function showFeedback(){} function offerMute(){} function pinSticky(){} function requestAutoHeight(){}
+      function playSound(){} function showFeedback(){} function offerMute(){} function offerVoice(){} function pinSticky(){} function requestAutoHeight(){}
       function fmtRemain(){ return ''; }
       const timerNodes = new Map();
     `;

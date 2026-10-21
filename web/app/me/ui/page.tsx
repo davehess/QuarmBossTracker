@@ -19,6 +19,7 @@ import MoreInfo from '@/components/MoreInfo';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { MACRO_SUGGESTIONS } from '@/lib/macroSuggestions';
+import { GUILD_TAG } from '@/lib/guild';
 import UiStudioClient, { type CharUiData, type PendingRow, type CommonMacroRow } from './UiStudioClient';
 
 export const dynamic = 'force-dynamic';
@@ -53,7 +54,7 @@ export default async function MeUiPage() {
     const { data: allChars } = await admin
       .from('characters')
       .select('name, main_name, discord_id, active')
-      .eq('guild_id', 'wolfpack');
+      .eq('guild_id', GUILD_TAG);
     const all = (allChars ?? []) as { name: string; main_name: string | null; discord_id: string | null; active: boolean | null }[];
     const anchored = all.filter(c => c.discord_id && householdIds.has(c.discord_id));
     const familyRoots = new Set(anchored.map(c => (c.main_name || c.name).toLowerCase()));
@@ -78,7 +79,7 @@ export default async function MeUiPage() {
         .limit(200),
       admin.from('ui_socials_index')
         .select('character, page, button, name, color, lines')
-        .eq('guild_id', 'wolfpack')
+        .eq('guild_id', GUILD_TAG)
         .in('character', chars),
       admin.from('ui_pending_edits')
         .select('id, character, note, status, error, created_at, applied_at')
@@ -101,7 +102,7 @@ export default async function MeUiPage() {
   const { data: common } = await admin
     .from('common_macros')
     .select('name, lines, char_count, classes')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .order('char_count', { ascending: false })
     .limit(40);
 
@@ -112,7 +113,7 @@ export default async function MeUiPage() {
     const { data: classRows } = await admin
       .from('characters')
       .select('name, class')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('name', chars);
     for (const r of (classRows ?? []) as { name: string; class: string | null }[]) {
       if (r.class) classByChar.set(r.name.toLowerCase(), r.class);

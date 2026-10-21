@@ -85,15 +85,17 @@ describe('who is on the night', () => {
 
 describe('the page', () => {
   const page = read('web/app/pop/raid/page.tsx');
+  // Who is going and who holds each flag moved to lib/raidPreflags.ts (shared with the /screen Overview).
+  const preflags = read('web/lib/raidPreflags.ts');
   it('reads the sign-ups and expands flags with stepsHeld', () => {
-    expect(page).toMatch(/from\('rh_signups'\)/);
-    expect(page).toMatch(/from\('rh_events'\)/);
-    expect(page).toMatch(/stepsHeld\(/);
-    expect(page).toMatch(/selfFlagsFromTicks\(/);
-    expect(page).toMatch(/pop_who_sightings/);
+    expect(preflags).toMatch(/from\('rh_signups'\)/);
+    expect(preflags).toMatch(/from\('rh_events'\)/);
+    expect(preflags).toMatch(/stepsHeld\(/);
+    expect(preflags).toMatch(/selfFlagsFromTicks\(/);
+    expect(preflags).toMatch(/pop_who_sightings/);
   });
   it('counts as going anyone whose status is not absent, declined, bench or tentative', () => {
-    expect(page).toContain('/absen|declin|bench|tentat/i');
+    expect(preflags).toContain('/absen|declin|bench|tentat/i');
   });
   it('is members only and carries the beta tag', () => {
     expect(page).toMatch(/redirect\('\/auth\/signin\?next=\/pop\/raid'\)/);
@@ -103,11 +105,11 @@ describe('the page', () => {
   it('asks characters only for columns it has, and keeps a main whose main_name is its own name (2026-10-13)', () => {
     // The live page died with "column characters.level does not exist"; then, with no level, every signed-up
     // player still dropped out, because a main's main_name is its own name, not null.
-    const sel = [...page.matchAll(/from\('characters'\)\s*\.select\('([^']+)'\)/g)].map(m => m[1]);
+    const sel = [...preflags.matchAll(/from\('characters'\)\s*\.select\('([^']+)'\)/g)].map(m => m[1]);
     expect(sel.length).toBeGreaterThan(0);
     for (const s of sel) expect(s.split(/,\s*/)).not.toContain('level');
-    expect(page).not.toMatch(/\.is\('main_name', null\)/);
-    expect(page).toMatch(/c\.main_name\.toLowerCase\(\) === c\.name\.toLowerCase\(\)/);
+    expect(preflags).not.toMatch(/\.is\('main_name', null\)/);
+    expect(preflags).toMatch(/c\.main_name\.toLowerCase\(\) === c\.name\.toLowerCase\(\)/);
   });
   it('links the overview to each target and boss, the bosses to PQDI, and the loot to item cards', () => {
     expect(page).toMatch(/href=\{`#\$\{bossAnchor\(s\.id, b\.npc\)\}`\}/);

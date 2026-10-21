@@ -481,3 +481,93 @@ export function nextSpanStart(spans: readonly Span[], t: number): { inside: bool
 export function windowIndex(nightStartMs: number, t: number): number {
   return Math.max(0, Math.floor((t - nightStartMs) / REPLAY_WINDOW_MS));
 }
+
+// ── Live: following a raid that is still being recorded ─────────────────────────────────────────────────────
+// The guild lead, 2026-10-17: "spectator should continuously pull fresh raid days so it can be used live data".
+// The recorder (utils/raidTrack.js) cuts a frame every 3 s but writes ONE row per UTC minute, when the next minute's
+// first frame arrives, so a minute is readable about a minute after it began (its frames span the 60 s before that).
+
+export const NIGHTS_POLL_MS = 60_000;          // the night list is asked again this often while the page is visible
+export const TAIL_REFRESH_MS = 15_000;         // Live asks for the tail window this often (the API serves it for 15 s)
+export const STALE_RETRY_MS = 2_000;           // a window that fell behind is not re-asked more often than this
+export const LIVE_WITHIN_MS = 10 * MINUTE_MS;  // Live is offered while the session's last minute is this recent
+export const LIVE_LAG_MS = 30_000;             // Live sits this far before the newest recorded instant, so frames exist
+export const LIVE_MAX_LAG_MS = 3 * MINUTE_MS;  // a Live playhead further behind than this (a hidden tab) jumps back to the tail
+
+const sameNight = (a: NightSummary, b: NightSummary) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Fold a fresh night list into the one on screen. A night with the same key is replaced by its fresh summary (a
+ * later `last`, more sessions), a new key is added, and a night the fresh list does not carry is kept (the poll asks
+ * only for the last two days). A fresh summary that STARTS later than the known one is a night the poll cut short at
+ * its edge, so it is ignored. Returns `prev` itself when nothing changed, so a poll that learns nothing renders
+ * nothing and resets nothing. Newest first.
+ */
+export function mergeNights(prev: NightSummary[] | null, fresh: NightSummary[]): NightSummary[] {
+  if (!prev) return fresh;
+  const by = new Map(prev.map(n => [n.night_key, n]));
+  let changed = false;
+  for (const f of fresh) {
+    const old = by.get(f.night_key);
+    if (old && (Date.parse(f.first) > Date.parse(old.first) || sameNight(old, f))) continue;
+    by.set(f.night_key, f);
+    changed = true;
+  }
+  return changed ? [...by.values()].sort((a, b) => Date.parse(b.last) - Date.parse(a.last)) : prev;
+}
+
+/** The newest session of the newest night (the list is newest first), or null with none. */
+export function newestSession(nights: readonly NightSummary[]): ReplaySession | null {
+  const n = nights[0];
+  return n ? n.sessions[n.sessions.length - 1] ?? null : null;
+}
+
+/**
+ * Should a poll move the viewer to a night that just appeared? Only a viewer who is Live AND is on the previous
+ * newest night: someone browsing an older night, or watching a night without Live, keeps what they have.
+ * Returns the new night, or null.
+ */
+export function newNightToFollow(
+  prev: readonly NightSummary[], next: readonly NightSummary[], viewing: string | null, live: boolean,
+): NightSummary | null {
+  const top = next[0];
+  if (!live || !top || !prev.length || viewing !== prev[0].night_key) return null;
+  return prev.some(n => n.night_key === top.night_key) ? null : top;
+}
+
+/**
+ * A session grown by a minute the tail window has seen but the night list has not yet: its `to` moves out, its last
+ * span stretches (or a new one opens past a break), and nothing else changes. A minute that is not past the session
+ * or is 20 minutes beyond it (another session) leaves it alone.
+ */
+export function growSession(s: ReplaySession, tailMinute: number | null): ReplaySession {
+  if (tailMinute == null || tailMinute < s.to || tailMinute - s.to > SESSION_GAP_MS) return s;
+  const spans = s.spans.map(x => ({ ...x }));
+  const last = spans[spans.length - 1];
+  if (last && tailMinute - (last.to - MINUTE_MS) <= SPAN_GAP_MS) last.to = tailMinute + MINUTE_MS;
+  else spans.push({ from: tailMinute, to: tailMinute + MINUTE_MS });
+  return { ...s, to: tailMinute + MINUTE_MS, minutes: s.minutes + 1, spans };
+}
+
+/** How far a window of a night should reach right now: a full 15 minutes, or up to the night's end if that is sooner. */
+export const windowTarget = (from: number, end: number) => Math.min(from + REPLAY_WINDOW_MS, end);
+
+/**
+ * Must a LOADED window be asked for again? Yes when it was loaded short and the night has grown past what it holds
+ * (the stale tail), and, while Live, when it is the window still being recorded and TAIL_REFRESH_MS has passed.
+ * `loadedTo` is how far the window reached, `loadedAt` when it came in. A full window that is over never refetches.
+ */
+export function windowNeedsRefetch(loadedTo: number, loadedAt: number, from: number, end: number, now: number, live: boolean): boolean {
+  if (now - loadedAt < (live ? TAIL_REFRESH_MS : STALE_RETRY_MS)) return false;
+  if (loadedTo < windowTarget(from, end)) return true;
+  return live && end <= from + REPLAY_WINDOW_MS;
+}
+
+/** Is the session being recorded right now? Its last minute ended within LIVE_WITHIN_MS. */
+export const liveAvailable = (sessionEnd: number, now: number) => now - sessionEnd <= LIVE_WITHIN_MS;
+
+/** Where a Live playhead sits: LIVE_LAG_MS before the newest recorded instant, never before the session's start. */
+export const livePlayhead = (start: number, end: number) => Math.max(start, end - LIVE_LAG_MS);
+
+/** Has a Live playhead fallen so far behind the tail that it should jump back? */
+export const liveLagging = (t: number, end: number) => end - t > LIVE_MAX_LAG_MS;

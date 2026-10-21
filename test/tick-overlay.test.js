@@ -83,10 +83,69 @@ describe('overlay: rows, countdown, clock chip', () => {
   });
 });
 
+// The guild lead picked Bars (a number plus a bar that drains, one shared grid) over Dials, 2026-10-19 (DECISIONS §383):
+// the dials layout, its ◯ / ▭ switch and the saved choice are gone.
+describe('overlay: Bars is the only layout', () => {
+  const src = sliceBlock(html, '  var _rows = [], _rowsSig = null, _haveZeal = false;', '  setInterval(renderTicks, 100);');
+  const NOW = 1_000_000;
+  // The slice, run for real with a stub element that parses the data-i rows out of what the overlay drew.
+  function draw(rows, { haveZeal = true, saved } = {}) {
+    const ticksEl = { innerHTML: '' };
+    ticksEl.querySelectorAll = () => [...ticksEl.innerHTML.matchAll(/data-i="(\d+)"/g)].map((m) => {
+      const tv = { textContent: '' }, bar = { style: {} };
+      return { tv, bar, getAttribute: () => m[1], querySelector: (q) => (q === '.tv' ? tv : q === '.bar i' ? bar : null) };
+    });
+    const nodes = [];
+    const origQ = ticksEl.querySelectorAll;
+    ticksEl.querySelectorAll = (q) => { const l = origQ(q); nodes.splice(0, nodes.length, ...l); return l; };
+    const env = {
+      document: { getElementById: () => ticksEl },
+      localStorage: { getItem: () => saved ?? null, setItem() {} },   // an old saved layout is on the machine
+      esc: (s) => String(s), TICK_MS: 6000, Date: { now: () => NOW },
+      tickLeft: (at, now) => (at == null ? null : ((at - now) % 6000 + 6000) % 6000 || 6000),
+      _requestAutoHeight() {},
+    };
+    // eslint-disable-next-line no-new-func
+    const fn = new Function(...Object.keys(env), src + '\nreturn { setRows: function (r, z) { _rows = r; _haveZeal = z; }, renderTicks: renderTicks };');
+    const o = fn(...Object.values(env));
+    o.setRows(rows, haveZeal); o.renderTicks();
+    return { html: ticksEl.innerHTML, nodes };
+  }
+  const ROWS = [
+    { key: 'srv:Brackwyn', kind: 'srv', label: 'Server tick', at: NOW + 1500 },
+    { key: 'mob:grimling', kind: 'mob', label: 'a grimling', at: NOW + 4500, rough: true },
+  ];
+
+  it('draws one grid of rows: a number and a draining bar, server tick blue and the mob tick purple', () => {
+    const { html: out, nodes } = draw(ROWS);
+    expect(out).toContain('<div class="bars">');
+    expect(out).toMatch(/class="tk srv"[\s\S]*class="tk mob"/);
+    expect(nodes.map((n) => n.tv.textContent)).toEqual(['1.5', '~4.5']);          // the mob tick is rough: marked with ~
+    expect(nodes.map((n) => n.bar.style.width)).toEqual(['25.0%', '75.0%']);      // time left as a share of the 6 s tick
+    expect(html).toMatch(/--srv:#58a6ff; --mob:#a371f7/);
+  });
+  it('draws no dials, whatever layout an earlier version saved on this machine', () => {
+    for (const saved of [null, 'bars', 'dials']) {
+      const { html: out } = draw(ROWS, { saved });
+      expect(out).not.toMatch(/dials|<svg|class="dl|ring/);
+      expect(out).toContain('class="bars"');
+    }
+  });
+  it('no switch, no style, no saved choice is left in the overlay', () => {
+    const js = stripJs(html);
+    expect(js).not.toMatch(/layoutBtn|wp:tick:layout|_paintLayoutBtn/);
+    expect(html).not.toMatch(/id="layoutBtn"|\.dials|\.dl\b|ring-bg/);
+    expect(html).not.toMatch(/Show as dials|Show as bars/);
+  });
+  it('says what it is waiting for when there are no rows', () => {
+    expect(draw([], { haveZeal: false }).html).toContain('needs Zeal');
+    expect(draw([], { haveZeal: true }).html).toContain('waiting for the server tick from Zeal');
+  });
+});
+
 describe('overlay: still an overlay, and the Zeal check is still there', () => {
   const js = stripJs(html);
-  it('the layout switch and the status line both hand the mouse over on hover', () => {
-    expect(js).toMatch(/_hoverInteract\(layoutBtn\);/);
+  it('the status line hands the mouse over on hover', () => {
     expect(js).toMatch(/_hoverInteract\(statusEl\);/);
     expect(js).toMatch(/function _hoverInteract\(el\)\{[\s\S]*overlayHoverInteractive\(true\)[\s\S]*overlayHoverInteractive\(false\)/);
   });

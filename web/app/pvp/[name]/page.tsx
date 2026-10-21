@@ -22,6 +22,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { fmtTime, dayKey, dayLabel } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
+import { GUILD_TAG } from '@/lib/guild';
 
 import { pageMetadata } from '@/lib/pageMetaData';
 
@@ -43,7 +44,7 @@ async function deletePvpKill(formData: FormData) {
   const id = String(formData.get('id') || '');
   const back = String(formData.get('back') || '/pvp');
   if (!id) return;
-  await supabaseAdmin().from('pvp_kills').delete().eq('guild_id', 'wolfpack').eq('id', id);
+  await supabaseAdmin().from('pvp_kills').delete().eq('guild_id', GUILD_TAG).eq('id', id);
   revalidatePath(back);
 }
 
@@ -91,7 +92,7 @@ async function ownedNames(): Promise<Set<string>> {
     const { data: linked } = await sb
       .from('characters')
       .select('name, main_name')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .eq('discord_id', String(discordId));
     // 2. Exact nickname / global_name match (covers mains before the
     //    char<->discord link is populated).
@@ -111,7 +112,7 @@ async function ownedNames(): Promise<Set<string>> {
       const { data: byNick } = await sb
         .from('characters')
         .select('name, main_name')
-        .eq('guild_id', 'wolfpack')
+        .eq('guild_id', GUILD_TAG)
         .in('name', nickNames);
       for (const c of (byNick ?? []) as { name: string; main_name: string | null }[]) {
         owned.add(c.name.toLowerCase());
@@ -123,7 +124,7 @@ async function ownedNames(): Promise<Set<string>> {
       const { data: fam } = await sb
         .from('characters')
         .select('name, main_name')
-        .eq('guild_id', 'wolfpack')
+        .eq('guild_id', GUILD_TAG)
         .in('main_name', [...roots]);
       for (const c of (fam ?? []) as { name: string; main_name: string | null }[]) {
         owned.add(c.name.toLowerCase());
@@ -145,7 +146,7 @@ async function load(name: string) {
   const { data: famRows } = await sb
     .from('characters')
     .select('name, main_name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .or(`name.ilike.${decoded},main_name.ilike.${decoded}`);
   const familyNames = new Set<string>([decoded]);
   for (const r of (famRows ?? []) as { name: string; main_name: string | null }[]) {
@@ -165,7 +166,7 @@ async function load(name: string) {
     const { data: more } = await sb
       .from('characters')
       .select('name')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('main_name', mains);
     for (const r of (more ?? []) as { name: string }[]) familyNames.add(r.name);
   }
@@ -174,13 +175,13 @@ async function load(name: string) {
   const [{ data: kills }, { data: deaths }, { data: assistData }] = await Promise.all([
     sb.from('pvp_kills')
       .select('id, killer, victim, victim_guild, zone, via_pet, pet_name, killed_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('killer', family)
       .order('killed_at', { ascending: false })
       .limit(10000),
     sb.from('pvp_kills')
       .select('killer, killer_guild, victim, zone, killed_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('victim', family)
       .order('killed_at', { ascending: false })
       .limit(10000),
@@ -188,7 +189,7 @@ async function load(name: string) {
     // this character was on the damage). Co-assisters are resolved below.
     sb.from('pvp_assists')
       .select('pvp_kill_id, killer, killer_is_npc, victim, victim_guild, zone, killed_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('assister', family)
       .order('killed_at', { ascending: false })
       .limit(5000),
@@ -209,7 +210,7 @@ async function load(name: string) {
     const { data } = await sb
       .from('pvp_assists')
       .select('assister, killer, victim, killed_at, pvp_kill_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('killer', killers)
       .in('victim', victims)
       .limit(20000);

@@ -57,6 +57,12 @@
   #locBar{position:absolute;top:28px;left:30px;z-index:4;font-size:10px;line-height:1.35;color:#e6edf3;pointer-events:none;
     text-shadow:0 0 3px #000,0 0 2px #000;font-variant-numeric:tabular-nums}
   #locBar .cur{color:#f2cc60}
+  /* The kite coach's readout (the guild lead, 2026-10-15): one line under the position readout while you circle. The drift
+     number is coloured by how far the centre moved from the lap before, as a share of the radius. */
+  #kiteChip{position:absolute;left:30px;z-index:4;font-size:11px;line-height:1.35;color:#e6edf3;pointer-events:none;white-space:nowrap;
+    text-shadow:0 0 3px #000,0 0 2px #000;font-variant-numeric:tabular-nums}
+  #kiteChip[hidden]{display:none}
+  #kiteChip .g{color:#56d364}#kiteChip .a{color:#f0b429}#kiteChip .r{color:#ff6b5e}#kiteChip .gd{color:#d4f542}
   /* The timers list slides in and out (the guild lead, 2026-10-12: "slide the spawn timers in and out. So that it could
      take up less space if we weren't focused on that"): a top-right button on the map; slid in, the map takes the width. */
   #sideBtn{position:absolute;top:6px;right:6px;z-index:6}
@@ -73,9 +79,15 @@
   .lv span{min-width:64px}
   #msg{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
     color:rgba(255,255,255,0.65);font-size:12px;text-shadow:0 1px 2px #000;padding:0 16px;pointer-events:none}
-  #card,#menu{position:absolute;z-index:8;background:rgba(14,17,22,0.96);border:1px solid rgba(110,118,129,0.6);
+  #card,#menu,#ccard{position:absolute;z-index:8;background:rgba(14,17,22,0.96);border:1px solid rgba(110,118,129,0.6);
     border-radius:5px;padding:5px 7px;font-size:10px;line-height:1.35;max-width:260px;display:none}
   #card{pointer-events:none}
+  /* The corpse card is the one hover card you can move into: its dragger is a link that centres the map on them. */
+  #ccard{pointer-events:auto}
+  #ccard .h{font-weight:bold;font-size:11px;color:#e6edf3}
+  #ccard .s{color:#8b949e}
+  #ccard .lnk{display:inline;padding:0;border:0;background:none;color:#79c0ff;font:inherit;text-decoration:underline;cursor:pointer}
+  #ccard .lnk:hover{color:#a5d6ff}
   #card .h,#menu .h{font-weight:bold;font-size:11px;color:#e6edf3}
   #card .s{color:#8b949e}
   #card .n{display:flex;justify-content:space-between;gap:10px}
@@ -86,26 +98,46 @@
     background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.18);color:#e6edf3;font:inherit;font-size:11px;cursor:pointer}
   #menu button:hover{border-color:#58a6ff;background:rgba(88,166,255,0.2)}
   #menu .x{color:#8b949e;margin-top:4px}
-  #side{flex:0 0 210px;display:flex;flex-direction:column;min-height:0;background:rgb(var(--map-bg, 19 26 38) / var(--map-bg-a, var(--bg-alpha)));
+  /* The list is text read over EverQuest's nameplates: its background never goes below 0.94, whatever the opacity slider says
+     for the map pane (the guild lead, 2026-10-16: nameplates showed through the respawn list). The colour is still --map-bg. */
+  #side{flex:0 0 210px;display:flex;flex-direction:column;min-height:0;background:rgb(var(--map-bg, 19 26 38) / max(0.94, var(--map-bg-a, var(--bg-alpha))));
     border-radius:6px;padding:6px 8px;text-shadow:0 1px 2px #000}
   #zone{font-size:12px;color:#79c0ff;padding-right:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #posage{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap}
   #wallsrc{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #setupbar select{font:inherit;font-size:10px;max-width:90px}
   #tgt{font-size:10px;color:#f0883e;min-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #lists{flex:1 1 auto;overflow:auto;min-height:0;margin-top:3px}
+  /* The header lines (zone, position age, walls, target) and the foot never shrink: they are overflow:hidden flex items, so in a
+     short window they were squeezed to nothing and their text drew over the first rows (the guild lead, 2026-10-21: "Cutting off
+     the top of this timer window"). Only the list gives way, from a zero basis, and scrolls inside its own box under them. */
+  #side > :not(#lists){flex:0 0 auto}
+  #lists{flex:1 1 0;overflow:auto;min-height:0;margin-top:3px}
   .sec{font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;margin:5px 0 2px}
   .trow{display:grid;grid-template-columns:1fr auto;column-gap:6px;padding:2px 4px;margin-bottom:2px;
     border-left:3px solid #6e7681;background:rgba(255,255,255,0.05);border-radius:3px;cursor:pointer;font-size:10px}
   .trow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
-  .trow .tm{font-variant-numeric:tabular-nums;text-align:right}
-  .trow .src{grid-column:1 / span 2;color:#6e7681;font-size:9px}
+  /* the time sits in its own right-aligned column, 2px bigger than the name; the source line is small and dim under the name */
+  .trow .tm{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:12px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  .trow .src{grid-column:1;color:#586069;font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* "☠ killed" on an alive row: its own third column, so rows without one keep their two */
+  .trow .kill{grid-column:3;grid-row:1 / span 2;align-self:center;background:rgba(22,27,34,.9);color:#c9d1d9;border:1px solid rgba(110,118,129,0.5);
+    border-radius:4px;font:inherit;font-size:9px;padding:0 5px;cursor:pointer;white-space:nowrap}
+  .trow .kill:hover{color:#ffd866;border-color:#f0b429}
+  .sec.watch{color:#f0b429}
+  .sec.engaged{color:#f0883e}
+  .kite{font-size:11px;color:#8b949e;padding:0 2px 4px}
+  .trow.engaged{border-left-color:#f0883e;cursor:default} .trow.engaged .tm{color:#f0883e}
+  .trow.watch .nm{font-weight:bold}
+  .trow.corpse{border-left-color:#8b949e} .trow.corpse .tm{color:#8b949e}
+  .trow.corpse.drag{border-left-color:#f0b429} .trow.corpse.drag .tm{color:#f0b429}
   .trow.wait{border-left-color:#f85149} .trow.wait .tm{color:#f85149}
   .trow.window{border-left-color:#f0b429} .trow.window .tm{color:#f0b429}
   .trow.flash{border-left-color:#f0b429;background:rgba(240,180,41,0.22)} .trow.flash .tm{color:#ffd866;font-weight:bold}
   .trow.up{border-left-color:#56d364} .trow.up .tm{color:#56d364;font-weight:bold}
   .trow.q{border-left-color:#d2a8ff} .trow.q .tm{color:#d2a8ff}
   .trow.seen{border-left-color:#56d364;background:rgba(86,211,100,0.12)} .trow.seen .tm{color:#56d364}
+  .trow .tm .hp{font-size:10px;font-weight:bold;margin-right:5px}
+  .trow .tm .hp.hi{color:#56d364} .trow .tm .hp.mid{color:#f0b429} .trow .tm .hp.lo{color:#f87171}
   #empty{color:rgba(255,255,255,0.45);font-size:10px;padding:2px 4px}
   #foot{font-size:9px;color:#6e7681;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* drag/lock/setup - same pattern as the other overlays. */
@@ -207,6 +239,7 @@
         <div id="hits"></div>
         <div id="msg">waiting for the agent…</div>
         <div id="locBar"></div>
+        <div id="kiteChip" hidden></div>
       </div>
       <div id="tools">
         <button class="tb grip" id="toolsGrip" type="button" title="Drag the buttons anywhere on the map; let go near an edge and they lock to it (on the left or right edge they stand upright).">⠿</button>
@@ -222,6 +255,7 @@
       </div>
       <button class="tb" id="sideBtn" type="button" title="Slide the respawn timers list in or out. Slid in, the map takes the whole width.">Timers ▸</button>
       <div id="card"></div>
+      <div id="ccard" data-wp-interact></div>
       <div id="menu"></div>
       <!-- Edit clear areas: drag a box on the map to keep it clear of drawing. Interactive only while editing (data-wp-interact). -->
       <div id="clearEdit" hidden data-wp-interact>
@@ -252,6 +286,7 @@
         <div class="row"><span class="bl">Colour</span><input type="color" id="cfgBg"><button class="rs" type="button" id="cfgBgRs" title="Back to the scheme's colour">↺</button></div>
         <div class="grp">Text</div>
         <label class="row"><span class="bl">Label size</span><input type="range" id="cfgText" min="0.7" max="1.8" step="0.1"><span class="val" id="cfgTextVal"></span></label>
+        <label class="row" title="How much of your target's walked path stays drawn, by time; the older part fades out. Off hides it. A kited mob's path piles up fast: shorten this. Your kite coach's ghost ring (the lap before) follows it too."><span class="bl">Tail</span><input type="range" id="cfgTail" min="0" max="7" step="1"><span class="val" id="cfgTailVal"></span></label>
         <div class="grp">Keep clear</div>
         <label class="row" title="Nothing is drawn on the map inside the windows EverQuest has open (read from your character's UI file), nor inside your own clear areas, so a see-through map never sits over your UI. On by default in Full screen."><input type="checkbox" id="cfgAvoid"><span class="bl">Avoid EQ windows</span></label>
         <div class="row"><button type="button" id="clearEditBtn" title="Drag boxes on the map for areas to keep clear. Saved for this character on this screen setup.">Edit clear areas</button><button type="button" id="clearReread" title="Read EverQuest's window again (where it is and which windows are open)">⟳</button></div>
@@ -272,6 +307,7 @@
       <div id="foot"></div>
     </div>
   </div>
+<script src="kiteCoach.js"></script>
 <script>
   let PORT = 7779;
   try { const q = new URLSearchParams(location.search).get('port'); if (q) PORT = parseInt(q, 10) || PORT; } catch (e) {}
@@ -373,6 +409,79 @@
   function seenText(s, now) {
     return 'seen alive ' + fmtDur(now - s.at) + ' ago' + (s.spawn_id != null ? ' · spawn #' + s.spawn_id : '') + (s.by ? ' · by ' + s.by : '');
   }
+  // Respawns, side list (the guild lead, 2026-10-16: "right now the spawn list is a little hard to read"): timers with the same
+  // name AND the same state fold into one row - "A blood raven ×4" - spoken for by the soonest of them. Order: soonest first.
+  function mergeTimers(timers, now) {
+    var groups = [], byKey = {};
+    (timers || []).forEach(function (t) {
+      var name = t.name || 'spawn', st = timerState(t, now), key = name + '|' + st, g = byKey[key];
+      if (!g) { g = byKey[key] = { name: name, state: st, n: 0, soonest: t }; groups.push(g); }
+      g.n++;
+      if (t.earliest < g.soonest.earliest) g.soonest = t;
+    });
+    return groups.sort(function (a, b) { return a.soonest.earliest - b.soonest.earliest; });
+  }
+  function prettyNpc(n) { return String(n && n.name || '').replace(/_/g, ' ').replace(/^[#!~]+/, ''); }
+  // The mob a spot can be watched for: its named / raid-target npc, or null (a spot of ordinary mobs has nothing to snipe).
+  function watchNpc(p) { var n = namedNpc(p); return n && (n.named || n.raid_target) ? n : null; }
+  // The placeholder of a watched spot: what actually died there when a timer says so, else the commonest ordinary mob.
+  function placeholderName(p, named, t) {
+    var nk = String(named || '').toLowerCase();
+    if (t && t.name && String(t.name).toLowerCase() !== nk) return String(t.name);
+    var best = null;
+    ((p && p.npcs) || []).forEach(function (n) {
+      if (!n || !n.name || n.named || n.raid_target || prettyNpc(n).toLowerCase() === nk) return;
+      if (!best || (Number(n.chance) || 0) > (Number(best.chance) || 0)) best = n;
+    });
+    return best ? prettyNpc(best) : null;
+  }
+  // The health chip on an alive row (FB-87): "NN%", tiered like Extended Target (60+ hi, 30+ mid, below lo). null when the
+  // agent sent no health, so the row stays as it was. The text changes only when the number does.
+  // ageMs: only for a health that is remembered rather than read this poll ("93% · 12s"), so tabbing through a pack
+  // visibly refreshes each row; null/absent = live, no age.
+  function hpTag(hp, ageMs) {
+    if (hp == null || !isFinite(Number(hp))) return null;
+    var n = Math.round(Number(hp));
+    return { text: n + '%' + (ageMs != null && isFinite(ageMs) ? ' · ' + fmtDur(ageMs) : ''), cls: 'hp ' + (n >= 60 ? 'hi' : n >= 30 ? 'mid' : 'lo') };
+  }
+  // The kite's totals line (agent _mapKite): "Kite: 10 mobs · avg 61% · ~41k HP left · 3 unread". No HP total when the
+  // agent did not know every mob's max HP (null); same input, same text, so the list does not repaint for nothing.
+  function kiteLine(k) {
+    if (!k || !(k.n >= 2)) return '';
+    var hp = k.hp_left;
+    return 'Kite: ' + k.n + ' mobs' + (k.avg != null ? ' · avg ' + k.avg + '%' : '')
+      + (hp != null ? ' · ~' + (hp >= 1000 ? Math.round(hp / 1000) + 'k' : hp) + ' HP left' : '')
+      + (k.unread ? ' · ' + k.unread + ' unread' : '');
+  }
+  // The age of a row's health when it is not live (the agent sends hp_live false + hp_at); null when live or unknown.
+  function hpAge(row, now) {
+    return row && row.hp_live === false && row.hp_at != null && isFinite(Number(row.hp_at)) ? Math.max(0, now - Number(row.hp_at)) : null;
+  }
+  // The "★ Watched" section: one row per watched spot that the zone data knows, soonest timer first, spots with no timer after.
+  function watchedRows(watched, byId, timerBy, seenBy) {
+    var rows = [];
+    Object.keys(watched || {}).forEach(function (pid) {
+      var p = byId && byId[pid];
+      if (!p) return;
+      var w = watched[pid] || {}, t = (timerBy && timerBy[pid]) || null;
+      rows.push({ pid: pid, p: p, named: w.named || bestName(p), by: w.by || null, t: t, up: !!(seenBy && seenBy[pid]), hp: seenBy && seenBy[pid] ? seenBy[pid].hp_pct : null, ph: placeholderName(p, w.named, t) });
+    });
+    return rows.sort(function (a, b) {
+      return (a.t ? a.t.earliest : Infinity) - (b.t ? b.t.earliest : Infinity) || Number(a.pid) - Number(b.pid);
+    });
+  }
+  // ☠ Guild corpses (the guild lead, 2026-10-17: "add the corpses on to the map and give a link to someone that is dragging
+  // that corpse"). The agent's `corpses`: [{ name, x, y, z, age, died_age, dragger, by }], ages in ms as of the poll (p.now).
+  // corpseWords: the hover card's words, "☠ Aldenmar's corpse · died 12m ago · being dragged by Brackwyn", in parts so the dragger
+  // can be a link. A corpse nobody saw die says "seen 3m ago" instead of "died".
+  function corpseWords(c, p, now) {
+    var since = Math.max(0, now - (Number(p && p.now) || now));
+    var died = c.died_age == null ? null : Number(c.died_age) + since;
+    var ago = fmtDur(died != null ? died : (Number(c.age) || 0) + since);
+    return { head: '☠ ' + c.name + '\'s corpse', when: (died != null ? 'died ' : 'seen ') + ago + ' ago', ago: ago,
+      dragger: c.dragger ? String(c.dragger) : null };
+  }
+  function corpseLine(w) { return [w.head, w.when, w.dragger ? 'being dragged by ' + w.dragger : ''].filter(Boolean).join(' · '); }
   // A badge from the bot -> a tiny glyph. Unknown ones still show (first letter), so a new badge is never silent.
   function badgeGlyph(b) {
     var k = String(b || '').toLowerCase();
@@ -408,6 +517,36 @@
     var k = npcKey(up.name), npcs = (p && p.npcs) || [];
     for (var i = 0; i < npcs.length; i++) if (npcs[i] && npcKey(npcs[i].name) === k) return npcs[i];
     return null;
+  }
+  // A pulled mob's aggro ring follows the mob, not its spawn point (the guild lead, 2026-10-21: "When this mob was pulled,
+  // its initial aggro radius should not be displayed at its spawnpoint, it should follow the mob"). For the mob up on point
+  // `p` (`up` = upOn, `sn` = the point's seen row) this is its latest known position { x, y, age (ms), target } when it is
+  // known to be away from home: hurt (health 1-99, or an Engaged row), chasing someone (your target's ToT), or more than
+  // MOVE_AWAY units from the spawn point. Positions: your live target; else the agent's `sn.pos` (the raid's shared targets
+  // and targets you tabbed off, with `at` on the map's clock `now`); else the last crumb of its trail (`trails`, crumbs
+  // stamped on the local clock `rt`). Older than MOVE_DROP_MS, dead (health 0, a trail marked dead) or an idle mob close
+  // to home = null: the ring stays at the spawn point (or is dropped with the respawn timer, as before).
+  var MOVE_FRESH_MS = 10000, MOVE_DROP_MS = 60000, MOVE_AWAY = 30;
+  function movedMob(p, up, sn, P, trails, now, rt) {
+    if (!p || !up) return null;
+    var T = P && P.target, pos = null, age = 0, hurt = false, chasing = false, byTarget = false;
+    if (T && T.x != null && (T.type == null || T.type === 1) && ((T.point_id != null && String(T.point_id) === String(p.id)) || (up.spawn_id != null && T.id === up.spawn_id))) {
+      if (T.hp_pct === 0) return null;
+      pos = T; byTarget = true; hurt = T.hp_pct > 0 && T.hp_pct < 100; chasing = !!T.tot;
+    } else {
+      if (sn && sn.pos && sn.pos.x != null && isFinite(Number(sn.pos.at))) { pos = sn.pos; age = Math.max(0, now - Number(sn.pos.at)); }
+      var tr = trails && up.spawn_id != null ? trails['t:' + up.spawn_id] : null;
+      var lc = tr && tr.dead == null && tr.pts && tr.pts.length ? tr.pts[tr.pts.length - 1] : null;
+      if (lc && (!pos || rt - lc.t < age)) { pos = lc; age = Math.max(0, rt - lc.t); }
+      hurt = !!sn && (!!sn.engaged || (sn.hp_pct > 0 && sn.hp_pct < 100));
+    }
+    if (!pos || age > MOVE_DROP_MS) return null;
+    if (!(hurt || chasing || Math.hypot(pos.x - p.x, pos.y - p.y) > MOVE_AWAY)) return null;
+    return { x: pos.x, y: pos.y, age: age, target: byTarget };
+  }
+  // How strongly a moved ring is drawn: full while the position is fresh, fading to a third by MOVE_DROP_MS.
+  function movedFade(ageMs) {
+    return ageMs <= MOVE_FRESH_MS ? 1 : Math.max(0.35, 1 - 0.65 * (ageMs - MOVE_FRESH_MS) / (MOVE_DROP_MS - MOVE_FRESH_MS));
   }
   // A point's aggro radius (game units, from the bot's zone data): the known mob's own when it is up there, else the
   // widest of those that can spawn there (the cautious reading). 0 = unknown. Values past AGGRO_MAX are the database's
@@ -497,6 +636,33 @@
       for (var j = 0; j < npcs.length; j++) if (npcs[j] && npcKey(npcs[j].name) === k) return npcs[j];
     }
     return null;
+  }
+  // Your target's Area Rampage ring (the guild lead, 2026-10-15: "how wide is area rampage for this mob? ... can we mark
+  // that area rampage on the map"). The agent puts ae_rampage on the target when its mob info has one (the bot works the
+  // reach out from the mob's race, size and ability): radius_still is how far from the mob a player is hit while it stands
+  // (the tank does stand), in the same game units as the aggro rings. Players and corpses never get one; null when there is
+  // nothing to draw. The label and tooltip are what the ring says.
+  function aeRampageRing(t) {
+    var a = t && t.ae_rampage, r = a ? Number(a.radius_still) : 0;
+    if (!(r > 0) || r > AGGRO_MAX) return null;
+    if (t.type != null && t.type !== 1) return null;
+    if (t.hp_pct === 0 || /'s corpse\d*$/i.test(String(t.name))) return null;
+    var ch = Number(a.chance) > 0 ? Number(a.chance) : 20, n = Number(a.targets) > 0 ? Number(a.targets) : 0;
+    return { r: r, label: 'AE rampage · ' + (Math.round(r * 10) / 10),
+      tip: 'Hits everyone on its hate list inside this ring except the tank · ' + ch + '% per round' + (n ? ' · up to ' + n + ' people' : '') };
+  }
+  // Your target's regular Rampage ring (the guild lead, 2026-10-15: "show regular rampage range too"). Different from the AE
+  // one: a rampage hits ONE person per round, the first on the mob's rampage list who is not its current target, not feigned
+  // and inside `range` of the mob (plain distance, game units). The agent puts rampage { range, chance, damage_pct } on the
+  // target when its mob info has one; the range is 75 when the mob's ability leaves it blank. Same guards as the AE ring.
+  function rampageRing(t) {
+    var a = t && t.rampage, r = a ? Number(a.range) : 0;
+    if (!(r > 0) || r > AGGRO_MAX) return null;
+    if (t.type != null && t.type !== 1) return null;
+    if (t.hp_pct === 0 || /'s corpse\d*$/i.test(String(t.name))) return null;
+    var ch = Number(a.chance) > 0 ? Number(a.chance) : 20;
+    return { r: r, label: 'Rampage · ' + (Math.round(r * 10) / 10),
+      tip: 'Hits ONE person: the first on its rampage list who isn\'t the tank, inside this ring · ' + ch + '% per round' };
   }
   // Mezzes and lulls on the rings (the guild lead, 2026-10-13: "add zzz's if it's mezzed" · "if it's truly pacified make
   // the circle light pink and have it fill in the outside like a clock wipe more red until the pacify wears off. bard
@@ -718,12 +884,31 @@
     while (tr.pts.length > TRAIL_MAX) { tr.pts.shift(); if (tr.cls) tr.cls--; }
     return tr;
   }
+  // ⚙ → Tail (the guild lead, 2026-10-15, a kited mob's trail piled into a scribble: "we need a slider for tail history"):
+  // how long a stretch of your target's crumb trail stays drawn, BY TIME (every crumb has the time it was laid, `t`), the
+  // older part fading out. Off (0) draws none. TRAIL_MAX above is still the cap on what is remembered at all. The kite
+  // coach's ghost ring (the lap before) follows the same setting.
+  var TAIL_STEPS = [0, 10, 20, 30, 60, 120, 180, 300], TAIL_DEFAULT = 60;   // seconds; the slider is the index into this
+  var TAIL_FADES = [1, 0.75, 0.5, 0.3];                                     // strength by age quarter: newest quarter .. oldest
+  function tailLabel(sec) { return sec > 0 ? (sec < 60 ? sec + ' s' : (sec / 60) + ' min') : 'Off'; }
+  // The index of the first crumb (oldest first, each with `t` in ms) laid within the last `sec` seconds; pts.length for none.
+  function tailFrom(pts, now, sec) {
+    var cut = now - (sec > 0 ? sec : 0) * 1000, i = pts.length;
+    while (i > 0 && pts[i - 1].t >= cut) i--;
+    return i;
+  }
+  // How strongly something `ageMs` old is drawn inside a `sec`-second tail.
+  function tailFade(ageMs, sec) {
+    var q = Math.floor(Math.max(0, ageMs) / (sec * 1000) * TAIL_FADES.length);
+    return TAIL_FADES[Math.min(TAIL_FADES.length - 1, q)];
+  }
   // What the mob is doing at each crumb (the guild lead, 2026-10-13: "The point that the mob leaves its spawn or its
   // path it should be glowing RED, then when it appears to be walking back towards its home base it should be
   // redish-orange. Pathing can be yellow"): 'path' within OFF_PATH of its route (or HOME_R of its spawn point when it
   // walks none), 'away' off it and getting further, 'back' off it and closing in. The crumb where it first stepped off
   // is marked `leave`. `home` = homeOf(...); null = nothing known, everything reads as pathing.
   var FOCUS_COL = '#ff3df2';   // the raid's focus mob (MA's target / most targeted): magenta, used nowhere else on the map
+  var CORPSE_DRAG_COL = '#f0b429';   // a corpse someone is dragging (the rest use ⚙ → Corpses, muted)
   var TRAIL_COL = { path: '#ffd23f', away: '#ff3b30', back: '#ff7a33' };
   // Random wanderers (EQEmu grid types 1 Random10, 2 Random, 5 Rand5LoS, 7 CenterPoint, 8 RandomCenterPoint) walk
   // straight to a random waypoint, not along the list, so a line through the list in order is a path nobody walks:
@@ -1094,10 +1279,12 @@
     ['walls', 'Walls'], ['rooms', 'Room names'], ['bosses', 'Boss names'], ['upLabel', 'Known mob: name + spawn id'],
     ['dots', 'Spawn points'], ['abilities', 'Ability icons'], ['pather', 'Walker mark ↻'], ['routes', 'Walker routes'],
     ['timers', 'Respawn timer rings'], ['candidates', '"?" maybe-died rings'], ['aggro', 'Aggro rings (◯)'],
+    ['aeRampage', 'AE rampage ring (target)'], ['rampage', 'Rampage ring (target)'],
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
     ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
     ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['conNames', 'Mob names in con colour'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
-    ['focus', 'Raid focus target (MA / most targeted)'],
+    ['focus', 'Raid focus target (MA / most targeted)'], ['corpses', 'Guild corpses (☠)'],
+    ['kite', 'Kite coach (your circling: lap, drift)'], ['kiteLoops', 'Guild kite loops'],
   ];
   var CFG_GLYPHS = [
     ['👁', 'Sees invisible'], ['👁ᵤ', 'Sees invisible to undead'], ['🥷', 'Sees through hide'], ['↯', 'Summons'],
@@ -1107,25 +1294,25 @@
     ['wall', 'Walls (one colour)'], ['oursWall', 'Walls (Wolf Pack)'], ['route', 'Walker routes'], ['routeTarget', 'Targeted walker route'],
     ['dot', 'Spawn point'], ['named', 'Named spawn'], ['raidTarget', 'Raid target'], ['up', 'Up / seen'],
     ['ringWait', 'Timer: not yet'], ['ringWindow', 'Timer: window open'], ['ringUp', 'Timer: up'], ['candidate', '"?" ring'], ['aggro', 'Aggro: KOS to you / unknown'],
-    ['aggroSafe', 'Aggro: not to you'], ['aggroNone', 'Aggro: nobody'],
+    ['aggroSafe', 'Aggro: not to you'], ['aggroNone', 'Aggro: nobody'], ['aeRamp', 'AE rampage ring'], ['ramp', 'Rampage ring'],
     ['glyph', 'Ability icons'], ['pather', 'Walker mark'], ['bossLabel', 'Boss name'], ['raidLabel', 'Raid target name'],
     ['upLabel', 'Known mob name'], ['room', 'Room names'], ['you', 'You'], ['target', 'Target'], ['tot', 'Target\'s target'], ['pinLine', 'Target → spawn line'],
-    ['group', 'Group'], ['raid', 'Raid'],
+    ['group', 'Group'], ['raid', 'Raid'], ['corpse', 'Corpses'],
   ];
   var MAP_SCHEMES = {
     default: { wall: '#c8d6ea', oursWall: '#d6e6ff', route: '#39c5cf', routeTarget: '#7ee787', dot: '#c9d1d9', named: '#f2cc60',
-      raidTarget: '#ff7b72', up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff', aggro: '#e5534b', aggroSafe: '#e3b341', aggroNone: '#56d364',
+      raidTarget: '#ff7b72', up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff', aggro: '#e5534b', aggroSafe: '#e3b341', aggroNone: '#56d364', aeRamp: '#ff5c5c', ramp: '#ff79c6',
       glyph: '#e6edf3', pather: '#9ecbff', bossLabel: '#f2cc60', raidLabel: '#ffa198', upLabel: '#7ee787', room: '#c9d9ee',
-      you: '#58a6ff', target: '#f0883e', tot: '#f778ba', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', bg: '#131a26' },
+      you: '#58a6ff', target: '#f0883e', tot: '#f778ba', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', corpse: '#9aa4b2', bg: '#131a26' },
     contrast: { wall: '#ffffff', oursWall: '#ffffff', route: '#00e5ff', routeTarget: '#00ff66', dot: '#ffffff', named: '#ffd700',
-      raidTarget: '#ff3b30', up: '#00ff66', ringWait: '#ff3b30', ringWindow: '#ffcc00', ringUp: '#00ff66', candidate: '#e040fb', aggro: '#ff3b30', aggroSafe: '#ffcc00', aggroNone: '#00ff66',
+      raidTarget: '#ff3b30', up: '#00ff66', ringWait: '#ff3b30', ringWindow: '#ffcc00', ringUp: '#00ff66', candidate: '#e040fb', aggro: '#ff3b30', aggroSafe: '#ffcc00', aggroNone: '#00ff66', aeRamp: '#ff3b30', ramp: '#ff80ab',
       glyph: '#ffffff', pather: '#00e5ff', bossLabel: '#ffd700', raidLabel: '#ff6b6b', upLabel: '#00ff66', room: '#ffffff',
-      you: '#00b0ff', target: '#ff9100', tot: '#ff4fd8', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', bg: '#000000' },
+      you: '#00b0ff', target: '#ff9100', tot: '#ff4fd8', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', corpse: '#c9d1d9', bg: '#000000' },
     // Okabe–Ito: no red/green pair carries a meaning (up is sky blue, "not yet" vermillion, the window yellow).
     cb: { wall: '#d9d9d9', oursWall: '#e0e0e0', route: '#56b4e9', routeTarget: '#f0e442', dot: '#d9d9d9', named: '#e69f00',
-      raidTarget: '#d55e00', up: '#56b4e9', ringWait: '#d55e00', ringWindow: '#f0e442', ringUp: '#56b4e9', candidate: '#cc79a7', aggro: '#d55e00', aggroSafe: '#f0e442', aggroNone: '#56b4e9',
+      raidTarget: '#d55e00', up: '#56b4e9', ringWait: '#d55e00', ringWindow: '#f0e442', ringUp: '#56b4e9', candidate: '#cc79a7', aggro: '#d55e00', aggroSafe: '#f0e442', aggroNone: '#56b4e9', aeRamp: '#d55e00', ramp: '#f0e442',
       glyph: '#ffffff', pather: '#56b4e9', bossLabel: '#e69f00', raidLabel: '#d55e00', upLabel: '#56b4e9', room: '#d9d9d9',
-      you: '#009e73', target: '#e69f00', tot: '#cc79a7', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', bg: '#14171c' },
+      you: '#009e73', target: '#e69f00', tot: '#cc79a7', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', corpse: '#999999', bg: '#14171c' },
   };
   var HEX_RE = /^#[0-9a-f]{6}$/i;
   function mapCfgDefaults() {
@@ -1136,7 +1323,7 @@
     for (k in MAP_SCHEMES.default) col[k] = MAP_SCHEMES.default[k];
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
-    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false };
+    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false, tail: TAIL_DEFAULT };
   }
   // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
   // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
@@ -1169,6 +1356,7 @@
     if (typeof saved.text === 'number' && saved.text >= 0.7 && saved.text <= 1.8) c.text = Math.round(saved.text * 10) / 10;
     if (typeof saved.ink === 'number' && saved.ink >= INK_MIN && saved.ink <= INK_MAX) c.ink = Math.round(saved.ink * 4) / 4;
     if (typeof saved.avoidEq === 'boolean') c.avoidEq = saved.avoidEq;   // null (unset) follows the mode
+    if (TAIL_STEPS.indexOf(saved.tail) >= 0) c.tail = saved.tail;   // seconds of target trail drawn; anything off the slider's steps is ignored
     if (saved.showClear === true) c.showClear = true;   // outlines always on; off shows them only while ⚙ is open or editing
     return c;
   }
@@ -1285,7 +1473,7 @@
     view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, levels: LEVEL_DEFAULT, fit: 'zone', hoverGrid: null,
     spawnLevels: LEVEL_STEPS.length - 1, sideOpen: true,   // spawns: all by default; the timers list starts slid out
     sideMode: 'grow',   // Timers button: 'grow' widens the window by the list (map keeps its size), 'share' shrinks the map
-    timerBy: {}, candBy: {}, seenBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
+    timerBy: {}, candBy: {}, seenBy: {}, watchBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
     local: null, localVer: null, walls: 'auto', labels: 'all',   // the player's own map files (prepLocal), the version held, Walls: Auto|Ours only, Labels all|targets|off
     followOff: { x: 0, y: 0 }, followLock: false, followWho: 'me', pointTrails: {}, kills: 0, killSeen: {},   // Follow me's screen spot + lock; killed mobs' paths (see noteKills)
@@ -1330,6 +1518,7 @@
   var ctx = cv.getContext('2d');
   var hitsEl = document.getElementById('hits');
   var card = document.getElementById('card');
+  var ccard = document.getElementById('ccard');
   var menu = document.getElementById('menu');
   var msgEl = document.getElementById('msg');
   var levelsEl = document.getElementById('levels');
@@ -1401,6 +1590,8 @@
     }
     if (p.zone !== S.zone) {
       S.zone = p.zone; S.fitted = false; S.follow = true; S.followOff = { x: 0, y: 0 }; S.trk = {}; S.trails = {}; S.pointTrails = {}; S.kills = 0; S.killSeen = {}; S.killPrimed = false; zoned = true;
+      if (S.kite) { S.kite.reset(); S.kiteView = null; }   // a new zone: the kite coach starts over, and so do the guild's loops
+      S.guild = { zone: null, loops: [], asked: 0, retried: false };
       if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; S.sgs = null; }
       S.local = null; S.localVer = null;
       document.getElementById('followBtn').classList.add('on');
@@ -1414,6 +1605,7 @@
     syncWallNote();
     noteClearKey();   // a new zone or character: read the keep-clear areas again
     S.timerBy = {}; S.candBy = {}; S.seenBy = {};
+    S.watchBy = p.watched && typeof p.watched === 'object' ? p.watched : {};   // spots marked "watch for <named>": { <point_id>: { named, by } }
     (p.timers || []).forEach(function (t) { S.timerBy[String(t.point_id)] = t; });
     noteKills(p, S.trails, S);
     (p.seen || []).forEach(function (s) { if (!S.timerBy[String(s.point_id)]) S.seenBy[String(s.point_id)] = s; });   // a timer on the point is newer
@@ -1421,6 +1613,7 @@
     if (S.follow && (p.self || p.target)) followTo(followSubject(Date.now()));
     else if (!S.follow && !S.fitted && S.points.length) fitNow();
     noteTracks(p, Date.now());
+    guildLoopsMaybe(Date.now());
     // The side list is rebuilt from scratch, so at the poll rate it would eat a click between mousedown and mouseup;
     // it only needs the clock to tick once a second, plus whenever the zone or the data changed shape.
     var rt = Date.now();
@@ -1441,6 +1634,7 @@
       keep[key] = 1; S.trk[key] = trackStep(S.trk[key], m, now, sm);
     };
     put('self', p.self);
+    kiteFeed(dm ? (S.direct.p.at || now) : (Number(p.pos_at) > 0 ? Number(p.pos_at) : now));   // the kite coach hears YOUR spot, when it was taken
     (p.group || []).forEach(function (m) { put('g:' + m.name, m); });
     (p.raid || []).forEach(function (m) { put('r:' + m.name, m); });
     if (p.target) put(targetKey(p.target), p.target);
@@ -1487,8 +1681,15 @@
     var inside = e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom;
     cursorLoc = inside && S.view ? screenToServer(e.clientX - r.left, e.clientY - r.top, S.view, S.w, S.h) : null;
     updateLocBar(Date.now());
+    if (S.guild && (S.guild.loops.length || S.hoverLoop)) kiteHover(cursorLoc);   // a guild loop's label shows while the cursor is on its ring
+    // The target's AE rampage ring and its regular rampage ring say what they are when the cursor is on an edge (within 9 px).
+    var tip = '';
+    [S.aeRing, S.rampRing].forEach(function (g) {
+      if (!tip && g && cursorLoc && S.view && Math.abs(Math.hypot(cursorLoc.x - g.x, cursorLoc.y - g.y) - g.r) <= 9 / S.view.scale) tip = g.tip;
+    });
+    if (cv.title !== tip) cv.title = tip;
   }, { passive: true });
-  document.addEventListener('mouseout', function (e) { if (!e.relatedTarget) { cursorLoc = null; updateLocBar(Date.now()); } });
+  document.addEventListener('mouseout', function (e) { if (!e.relatedTarget) { cursorLoc = null; updateLocBar(Date.now()); if (S.hoverLoop) kiteHover(null); } });
   function frame() {
     raf = 0;
     var now = Date.now();
@@ -1523,6 +1724,21 @@
     fetch('http://127.0.0.1:' + PORT + '/api/map-mark', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ zone: zone, point_id: pid, kind: kind }) }).then(function () { S.sideAt = 0; poll(); }).catch(function () {});
   }
+  function postKill(name, pid, spawnId) {
+    var zone = S.p && S.p.zone;
+    if (!zone || !name) return;
+    fetch('http://127.0.0.1:' + PORT + '/api/map-kill', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone: zone, name: name, point_id: pid == null ? null : pid, spawn_id: spawnId == null ? null : spawnId }) })
+      .then(function () { S.sideAt = 0; poll(); }).catch(function () {});
+  }
+  // "Watch for <named>" / "Stop watching" in the click menu: the agent keeps the watch, shares it with the guild, and
+  // sends it back in the next poll as `watched`.
+  function postWatch(pid, named, on) {
+    var zone = S.p && S.p.zone;
+    if (!zone) return;
+    fetch('http://127.0.0.1:' + PORT + '/api/map-watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone: zone, point_id: pid, named: named, on: on }) }).then(function () { S.sideAt = 0; poll(); }).catch(function () {});
+  }
   // A wander leg your target was seen walking end to end: the agent keeps it with a count (_mapNoteLeg).
   function postLeg(gid, leg) {
     var zone = S.p && S.p.zone;
@@ -1530,6 +1746,130 @@
     fetch('http://127.0.0.1:' + PORT + '/api/map-leg', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ zone: zone, grid: gid, a: leg.prev, b: leg.next }) }).catch(function () {});
   }
+
+  // ── Kite coach (the guild lead, 2026-10-15: "common non-drifting circles and speeds are worth us hanging onto") ──
+  // Your own position, at the rate it arrives, goes through kiteCoach.js (the math; pure, tested): it finds a circle, counts
+  // laps, and says how far the centre drifts lap to lap. Everything is local until a run of 3+ CLEAN laps happens: then ONE
+  // summary goes to the agent (/api/kite-loop), which decides whether it may leave the machine (local mode, opted out,
+  // paused: nothing does). The guild's loops for this zone come back the other way (/api/kite-loops). ⚙ → Kite coach /
+  // Guild kite loops switch each half off; off, the Map neither listens, sends, nor asks.
+  var KC = window.WPKite || null;
+  S.kite = KC && !PART_TIMERS ? KC.create() : null;   // the Timers pop-out hears the same positions: only the Map coaches (and uploads)
+  S.kiteView = null; S.hoverLoop = null;
+  S.guild = { zone: null, loops: [], asked: 0, retried: false };
+  var GUILD_POLL_MS = 60000;      // the agent refreshes from the bot every 10 min; asking it is local and cheap
+  var KITE_GUILD_COL = '#d4f542', KITE_DRIFT_COL = { g: '#56d364', a: '#f0b429', r: '#ff6b5e', n: '#ffffff' };
+  function kiteOn() { return !!S.kite && S.cfg.show.kite !== false; }
+  function guildOn() { return !!S.kite && S.cfg.show.kiteLoops !== false; }
+  // A new sample of your own spot (called by noteTracks with the spot it just took, and when it was taken).
+  function kiteFeed(t) {
+    if (!S.kite) return;
+    if (!kiteOn()) { if (S.kiteView) { S.kite.reset(); S.kiteView = null; } return; }
+    var tr = S.trk.self;
+    if (!tr) return;
+    var ev = S.kite.push(t, tr.to.x, tr.to.y, tr.to.z);
+    for (var i = 0; i < ev.length; i++) if (ev[i].type === 'report') postKiteLoop(ev[i].body);
+    S.kiteView = S.kite.view();
+  }
+  function postKiteLoop(b) {
+    var zone = S.p && S.p.zone;
+    if (!zone) return;
+    fetch('http://127.0.0.1:' + PORT + '/api/kite-loop', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone: zone, cx: b.cx, cy: b.cy, cz: b.cz, r: b.r, lap_s: b.lap_s, speed_pct: b.speed_pct, drift_u: b.drift_u,
+        wobble_u: b.wobble_u, laps: b.laps, dir: b.dir }) }).catch(function () {});
+  }
+  function goodLoop(l) {
+    return !!l && isFinite(l.cx) && isFinite(l.cy) && l.r > 0 && l.lap_s > 0 && isFinite(l.speed_pct) && (l.dir === 'cw' || l.dir === 'ccw');
+  }
+  // The guild's loops for the zone you are in: asked on a new zone (again 4 s later, once: the agent's first answer is
+  // empty while it fetches), then once a minute. Nothing when the Map is off the zone or the switch is off.
+  function guildLoopsMaybe(now) {
+    if (!guildOn() || !S.zone) return;
+    var g = S.guild;
+    if (g.zone === S.zone && now - g.asked < GUILD_POLL_MS) return;
+    if (g.zone !== S.zone) { g.zone = S.zone; g.loops = []; g.retried = false; }
+    g.asked = now;
+    var z = S.zone;
+    fetch('http://127.0.0.1:' + PORT + '/api/kite-loops?zone=' + encodeURIComponent(z)).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (S.zone !== z || !j || !Array.isArray(j.loops)) return;
+      g.loops = j.loops.filter(goodLoop);
+      if (!g.retried) { g.retried = true; g.asked = Date.now() - GUILD_POLL_MS + 4000; }
+    }).catch(function () {});
+  }
+  function loopAt(loc) {
+    if (!loc || !guildOn()) return null;
+    var best = null, bd = 9 / S.view.scale;
+    for (var i = 0; i < S.guild.loops.length; i++) {
+      var L = S.guild.loops[i], d = Math.abs(Math.hypot(loc.x - L.cx, loc.y - L.cy) - L.r);
+      if (d <= bd) { best = L; bd = d; }
+    }
+    return best;
+  }
+  function kiteHover(loc) {
+    var L = loopAt(loc), id = L ? String(L.id) : null;
+    if (id !== S.hoverLoop) { S.hoverLoop = id; renderMap(true); }
+  }
+  // The coach's rings and the guild's loops. Returns true when a guild loop is on screen (its pace dot needs a repaint timer).
+  function drawKite(rt, SH, w, h) {
+    var v = S.kiteView, sc = S.view.scale, live = false;
+    var ring = function (cx, cy, r) { var q = wpt(cx, cy); ctx.beginPath(); ctx.arc(q[0], q[1], r * sc, 0, 6.2832); return q; };
+    ctx.lineCap = 'round';
+    if (S.kite && SH.kite !== false && v) {
+      // The ghost (the lap before) is the coach's history: it follows ⚙ → Tail, fading as it ages and gone past it (or at Off).
+      var tail = S.cfg.tail, gAge = v.ghost ? rt - v.ghost.t1 : 0, ghost = v.ghost && tail > 0 && gAge <= tail * 1000 ? v.ghost : null;
+      if (ghost) { ring(ghost.cx, ghost.cy, ghost.r); ctx.globalAlpha = 0.35 * tailFade(gAge, tail); ctx.lineWidth = 1.5; ctx.strokeStyle = '#ffffff'; ctx.stroke(); }
+      var col = KITE_DRIFT_COL[v.cls] || KITE_DRIFT_COL.n, cq = ring(v.cur.cx, v.cur.cy, v.cur.r);
+      ctx.globalAlpha = 0.9; ctx.lineWidth = 2; ctx.strokeStyle = col; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cq[0] - 4, cq[1]); ctx.lineTo(cq[0] + 4, cq[1]); ctx.moveTo(cq[0], cq[1] - 4); ctx.lineTo(cq[0], cq[1] + 4); ctx.stroke();
+      if (v.showArrow && ghost) {
+        var gq = wpt(ghost.cx, ghost.cy), dx = cq[0] - gq[0], dy = cq[1] - gq[1], dl = Math.hypot(dx, dy) || 1, vl = Math.max(dl, 14);   // never shorter than 14 px: the label says how far
+        var ux = dx / dl, uy = dy / dl, ex = gq[0] + ux * vl, ey = gq[1] + uy * vl;
+        ctx.beginPath(); ctx.moveTo(gq[0], gq[1]); ctx.lineTo(ex, ey); ctx.lineWidth = 2; ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex - ux * 6 - uy * 3.5, ey - uy * 6 + ux * 3.5); ctx.lineTo(ex - ux * 6 + uy * 3.5, ey - uy * 6 - ux * 3.5);
+        ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+        halo(Math.round(v.cur.drift) + ' u', ex + ux * 6, ey + uy * 6 - 4, labelFont('dist'), col);
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (S.kite && SH.kiteLoops !== false) {
+      var now = Date.now();
+      for (var i = 0; i < S.guild.loops.length; i++) {
+        var L = S.guild.loops[i], q = wpt(L.cx, L.cy), rp = L.r * sc;
+        if (q[0] + rp < 0 || q[0] - rp > w || q[1] + rp < 0 || q[1] - rp > h) continue;
+        var hot = S.hoverLoop === String(L.id);
+        ring(L.cx, L.cy, L.r); ctx.setLineDash([6, 5]); ctx.globalAlpha = hot ? 1 : 0.75; ctx.lineWidth = hot ? 2.6 : 1.6; ctx.strokeStyle = KITE_GUILD_COL; ctx.stroke(); ctx.setLineDash([]);
+        var d = KC.guildDot(L, now), dq = wpt(d.x, d.y);
+        ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(dq[0], dq[1], 3.5, 0, 6.2832); ctx.fillStyle = KITE_GUILD_COL; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = '#0d1117'; ctx.stroke();
+        if (hot) halo(KC.guildLabel(L), q[0], q[1] - rp - 8, labelFont('dist'), KITE_GUILD_COL, 'center');
+        live = true;
+      }
+      ctx.globalAlpha = 1;
+    }
+    return live;
+  }
+  // The readout chip under the position readout: `Lap 12.4 s · r 118 · drift 6 u NE · wobble 4 · 104%`, the drift in green /
+  // amber / red by its share of the radius, and `vs guild: +0.8 s/lap, centre 9 u off` when you are on a guild loop.
+  var kiteChipEl = document.getElementById('kiteChip'), kiteChipKey = '', lastKiteChip = 0;
+  function updateKiteChip() {
+    if (!kiteChipEl) return;
+    var v = kiteOn() ? S.kiteView : null, key = '';
+    var gl = v && guildOn() ? KC.matchGuild(v.cur, S.guild.loops) : null;
+    if (v) key = v.chip + '|' + v.cls + '|' + (gl ? KC.guildText(v.cur, gl) : '');
+    if (key === kiteChipKey) return;
+    kiteChipKey = key;
+    kiteChipEl.textContent = '';
+    kiteChipEl.hidden = !v;
+    if (!v) return;
+    v.chip.split(' · ').forEach(function (part, i) {
+      if (i) kiteChipEl.appendChild(document.createTextNode(' · '));
+      kiteChipEl.appendChild(part.indexOf('drift') === 0 ? el('span', v.cls, part) : document.createTextNode(part));
+    });
+    if (gl) { kiteChipEl.appendChild(document.createTextNode(' · ')); kiteChipEl.appendChild(el('span', 'gd', KC.guildText(v.cur, gl))); }
+    kiteChipEl.style.fontSize = Math.round(11 * (S.cfg.text || 1)) + 'px';
+    kiteChipEl.style.top = ((parseFloat(locBarEl.style.top) || 28) + Math.round(30 * (S.cfg.text || 1))) + 'px';
+  }
+  var kiteDotTimer = null;
+  // ── end Kite coach ──
 
   // ── drawing ──
   function resize() {
@@ -1704,11 +2044,32 @@
     }
     ctx.globalAlpha = ga;
   }
+  // The target's Area Rampage ring (aeRampageRing) at (x, y) px: red and dashed, whatever the mob's aggro colour is, so it
+  // never reads as an aggro ring, with "AE rampage · <r>" on top of it. A speck of a ring (zoomed far out) is not drawn.
+  function aeRampageDraw(x, y, ring) {
+    var R = ring.r * S.view.scale;
+    if (R < 4) return;
+    var c = S.cfg.col.aeRamp || '#ff5c5c', I = inkStyle(S.cfg.ink);
+    ctx.beginPath(); ctx.setLineDash([7, 5]); ctx.arc(x, y, R, 0, 6.2832);
+    ctx.lineWidth = I.ringW; ctx.strokeStyle = hexA(c, Math.max(0.85, I.ringLine)); ctx.stroke(); ctx.setLineDash([]);
+    halo(ring.label, x, y - R - 7, labelFont('small'), c, 'center');
+  }
+  // The target's regular Rampage ring (rampageRing) at (x, y) px: dotted, in its own colour (the AE ring is dashed red), with
+  // "Rampage · <r>" under it so the two labels never sit on top of each other. A speck of a ring is not drawn.
+  function rampageDraw(x, y, ring) {
+    var R = ring.r * S.view.scale;
+    if (R < 4) return;
+    var c = S.cfg.col.ramp || '#ff79c6', I = inkStyle(S.cfg.ink);
+    ctx.beginPath(); ctx.setLineDash([2, 5]); ctx.arc(x, y, R, 0, 6.2832);
+    ctx.lineWidth = I.ringW; ctx.strokeStyle = hexA(c, Math.max(0.85, I.ringLine)); ctx.stroke(); ctx.setLineDash([]);
+    halo(ring.label, x, y + R + 12, labelFont('small'), c, 'center');
+  }
   // The trail (trailStep): each stretch in the colour of what the mob was doing (classifyTrail: yellow pathing, red off
   // its home, reddish-orange walking back), a glowing red spot where it stepped off, the waypoint legs it was seen
   // walking (dashed, in the targeted-route colour), and an arrowhead the way its last few breadcrumbs went.
   // head = where the mob is drawn now (null for a killed mob's path: its last crumb); alpha < 1 = a faded path.
-  function drawTrail(tr, head, grid, legColour, alpha) {
+  // `tailSec` (the target's own trail only): draw just the last that-many seconds of crumbs, the older part fading (⚙ → Tail).
+  function drawTrail(tr, head, grid, legColour, alpha, tailSec) {
     if (!tr || tr.pts.length < 2) return;
     var A = alpha == null ? 1 : alpha, last = tr.pts[tr.pts.length - 1];
     if (!head) head = wpt(last.x, last.y);
@@ -1727,17 +2088,24 @@
     // nothing, i want to see it"): a dark casing under every stretch first, then the colour at full strength, so a light
     // floor never swallows any of it.
     var n = tr.pts.length - 1, segs = [], leaves = [];
+    var tNow = Date.now(), first = tailSec > 0 ? tailFrom(tr.pts, tNow, tailSec) : 0;
     for (var i = 1; i < tr.pts.length; i++) {
+      if (i < first) continue;   // laid before the Tail window
       if (tr.pts[i].leave) leaves.push(wpt(tr.pts[i].x, tr.pts[i].y));
       if (tr.pts[i].brk) continue;   // a gap: never bridged with a straight line
-      segs.push([wpt(tr.pts[i - 1].x, tr.pts[i - 1].y), i === n ? head : wpt(tr.pts[i].x, tr.pts[i].y), TRAIL_COL[tr.pts[i].st] || TRAIL_COL.path]);
+      segs.push([wpt(tr.pts[i - 1].x, tr.pts[i - 1].y), i === n ? head : wpt(tr.pts[i].x, tr.pts[i].y), TRAIL_COL[tr.pts[i].st] || TRAIL_COL.path,
+        tailSec > 0 ? tailFade(tNow - tr.pts[i].t, tailSec) : 1]);
     }
-    ctx.lineCap = 'round'; ctx.globalAlpha = A; ctx.lineWidth = 4.5; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.beginPath();
-    segs.forEach(function (s) { ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); });
-    ctx.stroke();
+    ctx.lineCap = 'round'; ctx.lineWidth = 4.5; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    TAIL_FADES.forEach(function (fa) {   // the casing, one pass per strength
+      var any = false;
+      ctx.beginPath();
+      segs.forEach(function (s) { if (s[3] === fa) { any = true; ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); } });
+      if (any) { ctx.globalAlpha = A * fa; ctx.stroke(); }
+    });
     ctx.lineWidth = 2.4;
-    segs.forEach(function (s) { ctx.beginPath(); ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); ctx.strokeStyle = s[2]; ctx.stroke(); });
+    segs.forEach(function (s) { ctx.globalAlpha = A * s[3]; ctx.beginPath(); ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); ctx.strokeStyle = s[2]; ctx.stroke(); });
+    ctx.globalAlpha = A;
     leaves.forEach(function (q) {   // where it left its home: a red glow
       var gl = ctx.createRadialGradient(q[0], q[1], 0, q[0], q[1], 11);
       gl.addColorStop(0, 'rgba(255,59,48,0.95)'); gl.addColorStop(0.45, 'rgba(255,59,48,0.45)'); gl.addColorStop(1, 'rgba(255,59,48,0)');
@@ -1938,8 +2306,8 @@
       }
     }
     // Spawn dots, and first the pather routes (under the dots; every route in range, not only visible points').
-    var bossC = [];
-    var vis = [], flashOn =Math.floor(now / 450) % 2 === 0, anyFlash = false, srange = spawnRange();
+    var bossC = [], corpseVis = [];
+    var vis = [], flashOn =Math.floor(now / 450) % 2 === 0, anyFlash = false, kiteDots = false, srange = spawnRange();
     // Your target's own spawn point shows at any height (the guild lead, 2026-10-13: "Going above a spawn point should
     // still show you the spawn point of the creature that's targetted").
     var tgtPid = S.p && S.p.target && S.p.target.point_id != null ? String(S.p.target.point_id) : null;
@@ -1960,13 +2328,32 @@
     // Aggro rings (◯), under the dots: each point's aggro radius in game units, scaled with the map. Not drawn while
     // the point is on a "not yet" timer (nothing there to aggro), nor when the ring would be a speck.
     if (SH.aggro) {
+      // A pulled mob's ring rides the mob (movedMob), so its spawn point gets none. Looked up through the seen rows and
+      // your target's point, not `vis`: the mob can be on screen while its spawn point is far off it.
+      var movedBy = {}, movedPids = Object.keys(S.seenBy);
+      if (S.p && S.p.target && S.p.target.point_id != null) movedPids.push(String(S.p.target.point_id));
+      for (var mi = 0; mi < movedPids.length; mi++) {
+        var mp = S.byId[movedPids[mi]], mt = mp ? S.timerBy[String(mp.id)] : null;
+        if (!mp || movedBy[movedPids[mi]] || (mt && timerState(mt, now) === 'wait')) continue;
+        var mup = upOn(mp.id, S.p, S.seenBy), mv = movedMob(mp, mup, S.seenBy[movedPids[mi]], S.p, S.trails, now, rt);
+        if (mv) movedBy[movedPids[mi]] = { p: mp, up: mup, mv: mv };
+      }
       for (var ai = 0; ai < vis.length; ai++) {
         var ap = vis[ai].p, at = S.timerBy[String(ap.id)];
         if (at && timerState(at, now) === 'wait') continue;
+        if (movedBy[String(ap.id)]) continue;
         var aup = upOn(ap.id, S.p, S.seenBy), aun = upNpc(ap, aup);
         var acc = aup && S.p ? ccFor(S.p.cc, aup.name, aup.spawn_id, !!(S.p.target && (String(S.p.target.point_id) === String(ap.id) || (aup.spawn_id != null && aup.spawn_id === S.p.target.id)))) : null;
         ctx.globalAlpha = inLevelRange(ap.z, sz, range) ? 1 : 0.4;
         aggroRing(vis[ai].x, vis[ai].y, aggroRadius(ap, aun), assistRadius(ap, aun), aggroKind(ap, aun, S.p && S.p.cons, S.facs, S.p && S.p.me), acc, now);
+      }
+      for (var mk in movedBy) {
+        var mb = movedBy[mk];
+        if (mb.mv.target) continue;   // your target carries its own rings, at its live position (below)
+        var mun = upNpc(mb.p, mb.up), mq = wpt(mb.mv.x, mb.mv.y);
+        if (mq[0] < -200 || mq[0] > w + 200 || mq[1] < -200 || mq[1] > h + 200) continue;
+        ctx.globalAlpha = (inLevelRange(mb.p.z, sz, range) ? 1 : 0.4) * movedFade(mb.mv.age);
+        aggroRing(mq[0], mq[1], aggroRadius(mb.p, mun), assistRadius(mb.p, mun), aggroKind(mb.p, mun, S.p && S.p.cons, S.facs, S.p && S.p.me), mb.up ? ccFor(S.p && S.p.cc, mb.up.name, mb.up.spawn_id, false) : null, now);
       }
       ctx.globalAlpha = 1;
     }
@@ -1996,6 +2383,7 @@
         var bd = SH.abilities ? pointBadges(un ? { npcs: [un] } : p, C.glyphsOff) : '';   // a known mob: its own symbols only
         if (bd) halo(bd, px + r + 3, py - r, fontSmall, CO.glyph);
         if (p.grid != null && SH.pather) halo('↻', px - r - 3, py - r, fontSmall, CO.pather, 'right');   // a pather: it walks a route
+        if (S.watchBy[String(p.id)]) halo('★', px - r - 3, py + r + 2, fontBoss, '#ffd866', 'right');   // watched: "watch for <named>"
       }
       // Named and raid-target names are drawn after the loop, at any zoom, through the label placer (bosses first).
       // A known mob's name + spawn id goes ahead of everything (tier -1).
@@ -2018,6 +2406,20 @@
       };
       if (SH.raid) dotsOf(P.raid, CO.raid, 3 * I.dot, 'r:', SH.raidNames);
       if (SH.group) dotsOf(P.group, CO.group, 4 * I.dot, 'g:', SH.groupNames);
+      // ☠ Guild corpses: muted, and amber with a dashed ring while someone is dragging it. The name is drawn from the same zoom as
+      // raider names; each marker also gets a hover button below (layoutCorpseHits), so the card and its dragger link can be reached.
+      if (SH.corpses) (P.corpses || []).forEach(function (c) {
+        var cq = wpt(c.x, c.y);
+        if (cq[0] < -20 || cq[0] > w + 20 || cq[1] < -20 || cq[1] > h + 20) return;
+        if (S.clearPx.length && inClearArea(cq[0], cq[1], S.clearPx)) return;   // nothing is drawn (or clickable) inside a keep-clear area
+        corpseVis.push({ c: c, x: cq[0], y: cq[1] });
+        ctx.globalAlpha = inLevelRange(c.z, sz, range) ? 1 : 0.4;
+        var cCol = c.dragger ? CORPSE_DRAG_COL : CO.corpse;
+        if (c.dragger) { ctx.beginPath(); ctx.setLineDash([3, 3]); ctx.arc(cq[0], cq[1], 10 * I.dot, 0, 6.2832); ctx.lineWidth = 1.6; ctx.strokeStyle = cCol; ctx.stroke(); ctx.setLineDash([]); }
+        halo('☠', cq[0], cq[1], 'bold ' + Math.round(13 * (S.cfg.text || 1) * I.dot) + 'px ui-monospace,Consolas,monospace', cCol, 'center');
+        if (S.labels !== 'off' && v.scale >= 0.4) halo(c.name, cq[0] + 9 * I.dot, cq[1], fontSmall, cCol);
+        ctx.globalAlpha = 1;
+      });
       // Tracked NPCs' walks (the agent's MAP_TRACKED_PATHS: Thelin in the hedge maze), recorded whenever anyone on this
       // machine had them targeted, whether or not you do now: the same trail, solid while they are being watched, faded after.
       if (SH.trail && P.paths) for (var pk in P.paths) {
@@ -2047,6 +2449,7 @@
         }
       }
       // Target: a ring and a dotted line from you.
+      S.aeRing = null; S.rampRing = null;
       if (P.target && P.target.x != null) {
         var td = drawn(targetKey(P.target), P.target, rt), tq = wpt(td.x, td.y);
         if (P.self && SH.targetLine) {
@@ -2074,7 +2477,7 @@
         // The last path seen from this spawn point, faded under the mob you have now.
         var arch = tTrail && tTrail.pid ? S.pointTrails[tTrail.pid] : null;
         if (SH.trail && arch && arch !== tTrail) drawTrail(arch, null, null, null, 0.3);
-        if (SH.trail) drawTrail(tTrail, tq, tGrid, CO.routeTarget, tTrail && tTrail.dead != null ? 0.35 : 1);
+        if (SH.trail && C.tail > 0) drawTrail(tTrail, tq, tGrid, CO.routeTarget, tTrail && tTrail.dead != null ? 0.35 : 1, C.tail);   // ⚙ → Tail: Off draws none
         // The leg it is on now, drawn whole and bright from the waypoint it left to the one ahead, with how long it
         // has to go at its pace (the guild lead, 2026-10-13: "I expected to see the whole extrapolated dashed line and
         // the pace of the mob going towards that point").
@@ -2105,6 +2508,13 @@
           var tnpc = targetNpc(P.target, S.points, S.byId);
           if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons, S.facs, P.me), ccFor(P.cc, P.target.name, P.target.id, true), now);
         }
+        // Its Area Rampage reach, on the mob's live position, only while it is your target. S.aeRing remembers the ring
+        // for the hover tooltip (mousemove below).
+        var aer = SH.aeRampage ? aeRampageRing(P.target) : null;
+        if (aer) { aeRampageDraw(tq[0], tq[1], aer); S.aeRing = { x: td.x, y: td.y, r: aer.r, tip: aer.tip }; }
+        // And its regular Rampage reach, the same way (S.rampRing is its hover tooltip).
+        var rr = SH.rampage ? rampageRing(P.target) : null;
+        if (rr) { rampageDraw(tq[0], tq[1], rr); S.rampRing = { x: td.x, y: td.y, r: rr.r, tip: rr.tip }; }
         // Pinned: a thin line from the target to the spawn point it is tied to. A point that shares its route with
         // others (route twins, e.g. Plane of Valor's five golem roamers) is a guess between them: faint dashed lines
         // to every one of them instead of one confident line (the guild lead, 2026-10-13: "Why is this non-pathing mob
@@ -2154,6 +2564,7 @@
           .filter(Boolean).join(' · ');
         if (subTxt) halo(subTxt, tq[0] + 9, tq[1] + 6, labelFont('small'), CO.target);
       }
+      kiteDots = drawKite(rt, SH, w, h);
       // You: an arrow by heading.
       if (P.self && SH.you) {
         var md = drawn('self', P.self, rt), me = wpt(md.x, md.y);
@@ -2167,12 +2578,16 @@
         ctx.closePath(); ctx.fillStyle = CO.you; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#ffffff'; ctx.stroke();
       }
     }
-    if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : []); }   // hidden points take no clicks
+    if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : []); layoutCorpseHits(corpseVis); }   // hidden points take no clicks
     if (posAgeEl && rt - lastAge >= 200) { lastAge = rt; posAgeEl.textContent = S.sampleAt ? posAgeText(rt - S.sampleAt, S.sampleSrc) : ''; }
     if (rt - lastLoc >= 200) { lastLoc = rt; updateLocBar(rt); }
+    if (rt - lastKiteChip >= 250) { lastKiteChip = rt; updateKiteChip(); }   // ~4 a second, not once a frame
     // Flashing rings need a faster repaint than the one-second poll.
     if (anyFlash && !flashTimer) flashTimer = setInterval(function () { if (!document.hidden) renderMap(); }, 450);
     if (!anyFlash && flashTimer) { clearInterval(flashTimer); flashTimer = null; }
+    // A guild loop on screen has a pace dot going round it: repaint five times a second while one is in view.
+    if (kiteDots && !kiteDotTimer) kiteDotTimer = setInterval(function () { if (!document.hidden) renderMap(true); }, 200);
+    if (!kiteDots && kiteDotTimer) { clearInterval(kiteDotTimer); kiteDotTimer = null; }
   }
   var flashTimer = null;
 
@@ -2206,6 +2621,50 @@
   hitsEl.addEventListener('mouseout', function (e) { if (hitFor(e)) { card.style.display = 'none'; setHoverGrid(null); } });
   hitsEl.addEventListener('click', function (e) { var pid = hitFor(e); if (pid) { card.style.display = 'none'; openMenu(pid, e); } });
 
+  // ☠ Corpse markers: one real button per drawn corpse (so the hover handshake arms the click-through window), and a card you
+  // can move into - its dragger is a link that centres the map on them when the Map can place them (you, group, raid), plain
+  // text when it cannot. The card stays 350 ms after the pointer leaves the marker, long enough to reach it.
+  var corpseHitEls = {}, corpseHideT = 0;
+  function layoutCorpseHits(list) {
+    var used = {};
+    for (var i = 0; i < list.length && i < 60; i++) {
+      var k = String(list[i].c.name).toLowerCase();
+      used[k] = 1;
+      var b = corpseHitEls[k];
+      if (!b) {
+        b = corpseHitEls[k] = el('button', 'hit');
+        b.type = 'button'; b.setAttribute('data-wp-interact', ''); b.setAttribute('data-cname', k);
+        hitsEl.appendChild(b);
+      }
+      b.hidden = false; b.style.left = list[i].x + 'px'; b.style.top = list[i].y + 'px';
+    }
+    for (var u in corpseHitEls) if (!used[u]) corpseHitEls[u].hidden = true;
+  }
+  function cnameOf(e) { var t = e.target; return t && t.getAttribute && t.getAttribute('data-cname'); }
+  function corpseHideSoon() { clearTimeout(corpseHideT); corpseHideT = setTimeout(function () { ccard.style.display = 'none'; }, 350); }
+  function showCorpseCard(k, anchor) {
+    var list = (S.p && S.p.corpses) || [], c = null;
+    for (var i = 0; i < list.length; i++) if (String(list[i].name).toLowerCase() === k) c = list[i];
+    if (!c) return;
+    var w = corpseWords(c, S.p, nowMs()), line = el('div', 'h', w.head + ' · ' + w.when + (w.dragger ? ' · being dragged by ' : ''));
+    if (w.dragger) {
+      var mv = totMember(S.p, w.dragger);
+      if (mv) {
+        var a = el('button', 'lnk', w.dragger); a.type = 'button'; a.setAttribute('data-wp-interact', ''); a.title = 'Centre the map on ' + w.dragger;
+        a.addEventListener('click', function () { ccard.style.display = 'none'; centreOn(drawn(mv.key, mv.m, Date.now())); });
+        line.appendChild(a);
+      } else line.appendChild(el('span', null, w.dragger));   // not in your group or raid: no dot to go to
+    }
+    ccard.innerHTML = '';
+    ccard.appendChild(line);
+    var r = anchor.getBoundingClientRect();
+    placeBox(ccard, { clientX: r.left + r.width - 10, clientY: r.top + r.height - 10 });   // 2 px off the marker, so the pointer can cross
+  }
+  hitsEl.addEventListener('mouseover', function (e) { var k = cnameOf(e); if (!k) return; clearTimeout(corpseHideT); showCorpseCard(k, e.target); });
+  hitsEl.addEventListener('mouseout', function (e) { if (cnameOf(e)) corpseHideSoon(); });
+  ccard.addEventListener('mouseenter', function () { clearTimeout(corpseHideT); });
+  ccard.addEventListener('mouseleave', corpseHideSoon);
+
   function placeBox(box, e) {
     var pane = document.getElementById('mapPane').getBoundingClientRect();
     box.style.display = 'block';
@@ -2221,6 +2680,8 @@
     card.innerHTML = '';
     var up = upOn(pid, S.p, S.seenBy), un = upNpc(p, up);
     card.appendChild(el('div', 'h', up ? upLabel(up) : bestName(p)));
+    var wch = S.watchBy[String(pid)];
+    if (wch) card.appendChild(el('div', 't', '★ watched' + (wch.by ? ' by ' + wch.by : '') + (wch.named ? ' · for ' + wch.named : '')));
     var rs = Number(p.respawn_s) || 0, vr = Number(p.variance_s) || 0;
     card.appendChild(el('div', 's', rs && rs < 1000000 ? 'respawn ' + fmtDur(rs * 1000) + (vr ? ' ±' + fmtDur(vr * 1000) : '') : 'no respawn time'));
     if (p.grid != null) card.appendChild(el('div', 's', '↻ walks a route'));
@@ -2265,11 +2726,30 @@
     mk('Empty since now', 'empty');
     mk('Up', 'up');
     if (S.timerBy[pid] || S.seenBy[pid]) mk('Clear timer', 'clear');
+    // A spot with a named in its spawn list can be watched: everyone with the Map then gets its timer, its PH and its /loc.
+    var wn = watchNpc(p), wOn = S.watchBy[String(pid)];
+    if (wn || wOn) {
+      var nmW = wOn && wOn.named ? wOn.named : prettyNpc(wn);
+      var wb = el('button', null, wOn ? '☆ Stop watching ' + nmW : '★ Watch for ' + nmW); wb.type = 'button'; wb.setAttribute('data-wp-interact', '');
+      wb.addEventListener('click', function () { closeMenu(); postWatch(p.id, nmW, !wOn); });
+      menu.appendChild(wb);
+    }
     var x =el('button', 'x', 'Close'); x.type = 'button'; x.setAttribute('data-wp-interact', '');
     x.addEventListener('click', closeMenu); menu.appendChild(x);
     placeBox(menu, e);
   }
   function closeMenu() { S.menuPid = null; menu.style.display = 'none'; }
+  // "☠ killed" on an alive row (the guild lead, 2026-10-19: "put a button on the timers sidebar to kill that mob"): the agent starts
+  // the respawn timer from that mob's newest death message in your log, else from now. data-wp-interact arms the click-through window.
+  // q = "killed?": a death message named this mob but several of that name are up, so the agent has not picked one. Tab onto
+  // the ones that are alive, or press this to say it was this one.
+  function addKillBtn(row, name, pid, spawnId, q) {
+    var b = el('button', 'kill', q ? '☠ killed?' : '☠ killed'); b.type = 'button'; b.setAttribute('data-wp-interact', '');
+    b.title = q ? 'A death message named this mob but several of that name are up. Target the ones that are alive; the last one left is the dead one. Press to say it was this one.'
+      : 'Start the respawn timer from its last death message, or from now if none was seen';
+    b.addEventListener('click', function (e) { e.stopPropagation(); postKill(name, pid, spawnId); });
+    row.appendChild(b);
+  }
 
   // Which copy of the zone you are in (agent "Zone copies": the zone server's port from dbg.txt, and a /who check).
   // open = /who listed someone outside the guild and raid: the live zone or PvP. closed = only guild and raid so far.
@@ -2293,24 +2773,84 @@
     else tg.textContent = '';
     var box = document.getElementById('lists');
     box.innerHTML = '';
-    var timers = (P && P.timers) || [];
+    // ⚔ Engaged on top (FB-89): the mobs raiders are on right now, with their health and how many are on each. From the
+    // agent's Extended Target rows; nothing on it changes between polls unless a number does.
+    var engaged = (P && P.engaged) || [];
+    if (engaged.length) {
+      box.appendChild(el('div', 'sec engaged', '⚔ Engaged (' + engaged.length + ')'));
+      var kl = kiteLine(P && P.kite);
+      if (kl) box.appendChild(el('div', 'kite', kl));
+      engaged.forEach(function (g) {
+        var r = el('div', 'trow engaged');
+        // n 0 = nobody targets it but it is hurt and alive (an AE-kited pack): "93% hurt" instead of "0 on it".
+        var etm = el('span', 'tm', g.n >= 1 ? g.n + ' on it' : 'hurt');
+        var ehp = hpTag(g.hp_pct, hpAge(g, now));
+        if (ehp) etm.insertBefore(el('span', ehp.cls, ehp.text), etm.firstChild);
+        r.appendChild(el('span', 'nm', g.name)); r.appendChild(etm);
+        r.appendChild(el('span', 'src', (g.spawn_id != null ? 'spawn #' + g.spawn_id : 'engaged') + (g.killed_q ? ' · killed?' : '')));
+        addKillBtn(r, g.name, g.point_id != null ? g.point_id : null, g.spawn_id, g.killed_q);
+        // a row promoted from Up · seen still centres on its spawn point
+        if (g.point_id != null) { r.setAttribute('data-wp-interact', ''); r.addEventListener('click', function () { centreOn(S.byId[String(g.point_id)]); }); }
+        box.appendChild(r);
+      });
+    }
+    // ★ Watched first (the guild lead, 2026-10-16): the named, its placeholder and spot, and the time. A watched spot is
+    // listed here only, not again under Respawns / Up · seen.
+    var wrows = watchedRows(S.watchBy, S.byId, S.timerBy, S.seenBy);
+    if (wrows.length) {
+      box.appendChild(el('div', 'sec watch', '★ Watched (' + wrows.length + ')'));
+      wrows.forEach(function (w) {
+        var r = el('div', 'trow watch ' + (w.t ? timerState(w.t, now) : w.up ? 'seen' : '')); r.setAttribute('data-wp-interact', '');
+        if (w.by) r.title = 'watched by ' + w.by;
+        var wtm = el('span', 'tm', w.t ? timerText(w.t, now) : w.up ? 'up' : 'watching');
+        var whp = !w.t && w.up ? hpTag(w.hp, hpAge(S.seenBy[w.pid], now)) : null;
+        if (whp) wtm.insertBefore(el('span', whp.cls, whp.text), wtm.firstChild);
+        r.appendChild(el('span', 'nm', w.named)); r.appendChild(wtm);
+        r.appendChild(el('span', 'src', 'PH: ' + (w.ph || '—') + ' · spot #' + w.pid));
+        var wsn = S.seenBy[w.pid];   // set only for a spot with no timer and a mob seen alive: the one to mark dead
+        if (wsn && wsn.name) addKillBtn(r, wsn.name, w.pid, wsn.spawn_id, wsn.killed_q);
+        r.addEventListener('click', function () { centreOn(w.p); });
+        box.appendChild(r);
+      });
+    }
+    var timers = ((P && P.timers) || []).filter(function (t) { return !S.watchBy[String(t.point_id)]; });
     box.appendChild(el('div', 'sec', 'Respawns (' + timers.length + ')'));
-    timers.forEach(function (t) {
-      var r = el('div', 'trow ' + timerState(t, now)); r.setAttribute('data-wp-interact', '');
-      r.appendChild(el('span', 'nm', t.name || 'spawn')); r.appendChild(el('span', 'tm', timerText(t, now)));
-      r.appendChild(el('span', 'src', (t.source === 'marked' ? 'marked' : 'seen') + (t.by ? ' · by ' + t.by : '')));
+    // Same name and same state fold into one row, spoken for by the soonest ("A blood raven ×4"); a click centres on that one.
+    mergeTimers(timers, now).forEach(function (g) {
+      var t = g.soonest;
+      var r = el('div', 'trow ' + g.state); r.setAttribute('data-wp-interact', '');
+      r.appendChild(el('span', 'nm', g.name + (g.n > 1 ? ' ×' + g.n : ''))); r.appendChild(el('span', 'tm', timerText(t, now)));
+      r.appendChild(el('span', 'src', (g.n > 1 ? 'next of ' + g.n + ' · ' : '') + (t.source === 'marked' ? 'marked' : 'seen') + (t.by ? ' · by ' + t.by : '')));
       r.addEventListener('click', function () { centreOn(S.byId[String(t.point_id)]); });
       box.appendChild(r);
     });
-    if (!timers.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot')).id = 'empty';
-    var seenList = ((P && P.seen) || []).filter(function (s) { return !S.timerBy[String(s.point_id)]; });
+    if (!timers.length && !wrows.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot')).id = 'empty';
+    // a seen mob already listed under Engaged (the agent flags it) is not listed twice
+    var seenList = ((P && P.seen) || []).filter(function (s) { return !s.engaged && !S.timerBy[String(s.point_id)] && !S.watchBy[String(s.point_id)]; });
     if (seenList.length) {
       box.appendChild(el('div', 'sec', 'Up · seen (' + seenList.length + ')'));
       seenList.forEach(function (s) {
         var r = el('div', 'trow seen'); r.setAttribute('data-wp-interact', '');
-        r.appendChild(el('span', 'nm', s.name || 'a mob')); r.appendChild(el('span', 'tm', fmtDur(now - s.at) + ' ago'));
-        r.appendChild(el('span', 'src', (s.spawn_id != null ? 'spawn #' + s.spawn_id : 'pinned') + (s.by ? ' · by ' + s.by : '')));
+        var stm = el('span', 'tm', fmtDur(now - s.at) + ' ago' + (s.n >= 1 ? ' · ' + s.n + ' on it' : ''));
+        var shp = hpTag(s.hp_pct, hpAge(s, now));
+        if (shp) stm.insertBefore(el('span', shp.cls, shp.text), stm.firstChild);
+        r.appendChild(el('span', 'nm', s.name || 'a mob')); r.appendChild(stm);
+        r.appendChild(el('span', 'src', (s.spawn_id != null ? 'spawn #' + s.spawn_id : 'pinned') + (s.by ? ' · by ' + s.by : '') + (s.killed_q ? ' · killed?' : '')));
+        if (s.name) addKillBtn(r, s.name, s.point_id, s.spawn_id, s.killed_q);
         r.addEventListener('click', function () { centreOn(S.byId[String(s.point_id)]); });
+        box.appendChild(r);
+      });
+    }
+    // ☠ Corpses: newest word first; a click centres the map on it. Not in the pop-out (it has no map to centre).
+    var corpseList = !PART_TIMERS && P && S.cfg.show.corpses ? (P.corpses || []) : [];
+    if (corpseList.length) {
+      box.appendChild(el('div', 'sec', '☠ Corpses (' + corpseList.length + ')'));
+      corpseList.forEach(function (c) {
+        var w = corpseWords(c, P, now);
+        var r = el('div', 'trow corpse' + (c.dragger ? ' drag' : '')); r.setAttribute('data-wp-interact', ''); r.title = corpseLine(w);
+        r.appendChild(el('span', 'nm', c.name)); r.appendChild(el('span', 'tm', w.ago));
+        r.appendChild(el('span', 'src', c.dragger ? 'being dragged by ' + c.dragger : c.died_age != null ? 'died' : 'seen'));
+        r.addEventListener('click', function () { centreOn({ x: c.x, y: c.y }); });
         box.appendChild(r);
       });
     }
@@ -2552,6 +3092,8 @@
     tx.value = String(C.text); txv.textContent = Math.round(C.text * 100) + '%';
     document.getElementById('cfgInk').value = String(C.ink);
     document.getElementById('cfgInkVal').textContent = inkWord(C.ink);
+    document.getElementById('cfgTail').value = String(Math.max(0, TAIL_STEPS.indexOf(C.tail)));
+    document.getElementById('cfgTailVal').textContent = tailLabel(C.tail);
   }
   function inkWord(k) { return k <= 1 ? 'Normal' : k >= INK_MAX ? 'Max' : k >= 1.75 ? 'Strong' : 'Medium'; }
   // The fixed controls are wired once; buildCfg only refreshes their values.
@@ -2574,6 +3116,12 @@
   document.getElementById('cfgText').addEventListener('input', function (e) {
     S.cfg.text = Math.round(parseFloat(e.target.value) * 10) / 10;
     document.getElementById('cfgTextVal').textContent = Math.round(S.cfg.text * 100) + '%';
+    cfgCommit();
+  });
+  document.getElementById('cfgTail').addEventListener('input', function (e) {
+    var i = parseInt(e.target.value, 10);
+    S.cfg.tail = TAIL_STEPS[i >= 0 && i < TAIL_STEPS.length ? i : TAIL_STEPS.indexOf(TAIL_DEFAULT)];
+    document.getElementById('cfgTailVal').textContent = tailLabel(S.cfg.tail);
     cfgCommit();
   });
   document.getElementById('cfgInk').addEventListener('input', function (e) {

@@ -175,6 +175,8 @@ export const SLOW_SPELLS = new Set<string>([
   'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "turgur's insects", 'cripple',
   // Enchanter
   'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
+  // Bard (Requiem of Time: a 55% slow, the guild lead 2026-10-13)
+  'requiem of time',
   // Boss tank-buster that is also an attack-speed slow (#142)
   'rage of ssraeshza',
 ]);

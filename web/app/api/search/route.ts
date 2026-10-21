@@ -22,6 +22,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,7 +64,7 @@ export async function GET(req: Request) {
     // Guild roster characters — the most authoritative "who is this".
     admin.from('characters')
       .select('name, class, main_name, opendkp_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('name', like)
       .limit(PER),
     admin.from('eqemu_items')

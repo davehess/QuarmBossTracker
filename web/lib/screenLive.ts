@@ -39,11 +39,46 @@ export const WRITE_TRUST_MS = 8_000;                // the leader's own click ou
 
 export type LiveAuction = { item: string; endsAt: string | null };
 export type PositionsFeed = { data: Positions; rxAt: number };
-/** `positions` is null when the bot could not say where the raid is (a part that failed, as the Vercel route's 502 would). */
-export type ParsedLive = { positions: Positions | null; state: ScreenState | null; auctions: LiveAuction[] | null };
+/**
+ * The "Last kill" recap the bot attaches for about half an hour after a raid-boss kill: how the kill compared
+ * with last time (`lines`), stellar performances (`stars`) and fun events from the fight (`fun`).
+ */
+export type LiveRecap = { boss: string; npcId: number; killedAt: string; lines: string[]; fun: string[]; stars: string[] };
+/**
+ * `positions` is null when the bot could not say where the raid is (a part that failed, as the Vercel route's 502 would).
+ * `recap` is null when there is none (an older bot sends no such key, or the half hour is up).
+ */
+export type ParsedLive = { positions: Positions | null; state: ScreenState | null; auctions: LiveAuction[] | null; recap: LiveRecap | null };
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+
+export const RECAP_MAX_ITEMS = 6;
+export const RECAP_MAX_LINE = 160;
+const RECAP_MAX_BOSS = 80;
+
+const recapList = (v: unknown): string[] => {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const s of v) {
+    if (typeof s !== 'string') continue;
+    const t = s.trim().slice(0, RECAP_MAX_LINE);
+    if (t) out.push(t);
+    if (out.length >= RECAP_MAX_ITEMS) break;
+  }
+  return out;
+};
+
+/** The bot's `recap` -> what the card shows, or null when it is absent or not that shape (needs a boss name and a real kill time). */
+export function parseRecap(r: unknown): LiveRecap | null {
+  if (!isRecord(r)) return null;
+  const boss = typeof r.boss === 'string' ? r.boss.trim().slice(0, RECAP_MAX_BOSS) : '';
+  if (!boss || typeof r.killedAt !== 'string' || !Number.isFinite(Date.parse(r.killedAt))) return null;
+  return {
+    boss, npcId: finite(r.npcId) ? r.npcId : 0, killedAt: r.killedAt,
+    lines: recapList(r.lines), fun: recapList(r.fun), stars: recapList(r.stars),
+  };
+}
 
 /**
  * The bot's /api/screen/live answer -> what the page uses, or null when it is not that shape.
@@ -82,7 +117,7 @@ export function parseLive(j: unknown): ParsedLive | null {
       if (isRecord(a) && typeof a.item === 'string' && a.item) auctions.push({ item: a.item, endsAt: typeof a.endsAt === 'string' ? a.endsAt : null });
     }
   }
-  return { positions, state, auctions };
+  return { positions, state, auctions, recap: parseRecap(j.recap) };
 }
 
 /** What to do after a failed read of the bot. `failures` counts this one. */
@@ -135,6 +170,8 @@ export type LiveSinks = {
   onState?: (s: ScreenState) => void;
   /** The live open-auction list, or null when there is none (Vercel fallback, or the bot holds none fresh). */
   onAuctions?: (a: LiveAuction[] | null) => void;
+  /** The last-kill recap, or null when there is none (Vercel fallback, an older bot, or the half hour is up). */
+  onRecap?: (r: LiveRecap | null) => void;
   /** Called only when the status changed. */
   onStatus?: (s: LiveStatus) => void;
 };
@@ -223,6 +260,7 @@ export function createScreenLive(opts: LiveOptions) {
     if (p.positions) sinks.onPositions({ data: p.positions, rxAt: now() });
     if (opts.wantState && p.state) sinks.onState?.(p.state);
     sinks.onAuctions?.(p.auctions);
+    sinks.onRecap?.(p.recap);
     setStatus({ transport: 'bot', netErr: !p.positions, stateErr: opts.wantState ? !p.state : false });
   }
 
@@ -268,6 +306,7 @@ export function createScreenLive(opts: LiveOptions) {
   async function pollVercel(): Promise<boolean> {
     setStatus({ transport: 'vercel' });
     sinks.onAuctions?.(null);
+    sinks.onRecap?.(null);   // the Vercel routes carry no recap
     const [p, s] = await Promise.all([
       getJson('/api/spectator/positions'),
       opts.wantState ? getJson('/api/screen/state') : Promise.resolve({ status: 200 } as Json),

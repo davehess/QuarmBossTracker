@@ -675,8 +675,8 @@ describe('the walkthrough\'s characters step', () => {
 
 // The whole page, booted for real against a tiny stub DOM (the preview bridge answers, as in a browser preview).
 // Nothing else in the suite boots welcome.html: this is what catches a typo in a path the slices above skip.
-describe('the walkthrough boots and opens the characters step, in both layouts', () => {
-  function boot(v) {
+describe('the walkthrough boots and opens the characters step', () => {
+  function boot() {
     const els = {}, clicks = {};
     const mk = (sel) => els[sel] || (els[sel] = { innerHTML: '', dataset: {}, style: {}, querySelector: mk, querySelectorAll: (s) => fromHtml(s), addEventListener() {}, setAttribute() {}, focus() {}, closest: () => null });
     function fromHtml(sel) {   // the elements carrying a data attribute, parsed out of what the page drew
@@ -694,15 +694,15 @@ describe('the walkthrough boots and opens the characters step, in both layouts',
     const window = { scrollTo() {} };
     // eslint-disable-next-line no-new-func
     new Function('window', 'document', 'location', 'fetch', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'navigator', script.slice(script.indexOf('<script>') + 8))(
-      window, document, { search: v === 'b' ? '?v=b' : '?v=a' }, () => Promise.reject(new Error('no engine')), () => 1, () => {}, () => 1, () => {}, {});
+      window, document, { search: '' }, () => Promise.reject(new Error('no engine')), () => 1, () => {}, () => 1, () => {}, {});
     return { els, clicks };
   }
-  it.each(['a', 'b'])('layout %s draws every character on the three choices, preselected from the preview\'s website state', async (v) => {
-    const { els, clicks } = boot(v);
+  it('draws every character on the three choices, preselected from the preview\'s website state', async () => {
+    const { els, clicks } = boot();
     await tick(); await tick(); await tick();
-    clicks[v === 'a' ? 'data-go=chars' : 'data-ess=chars']();
+    clicks['data-go=chars']();
     await tick();
-    const body = (els['#body'] || els['#essBody']).innerHTML;
+    const body = els['#body'].innerHTML;
     const radios = [...body.matchAll(/data-mode-char="(\w+)" data-mode="(\w+)"( checked)?/g)].map(m => m[1] + ':' + m[2] + (m[3] ? '*' : ''));
     expect(radios).toEqual([
       'Aldenmar:show*', 'Aldenmar:inventory', 'Aldenmar:hidden',

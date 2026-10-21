@@ -20,6 +20,7 @@
 // exclude_inventory, which stop data being collected.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { GUILD_TAG } from './guild';
 
 export const LIST_MIN_LEVEL = 46;
 
@@ -82,7 +83,7 @@ export async function loadLevels(admin: SupabaseClient, names: string[]): Promis
 // carry a name and a level but no rank). ~36 rows, so one read is cheaper than looking names up.
 export async function loadTraderNames(admin: SupabaseClient): Promise<Set<string>> {
   const { data } = await admin.from('characters').select('name')
-    .eq('guild_id', 'wolfpack').ilike('rank', 'trader').limit(1000);
+    .eq('guild_id', GUILD_TAG).ilike('rank', 'trader').limit(1000);
   return new Set(((data ?? []) as { name: string }[]).map(r => r.name.toLowerCase()));
 }
 
@@ -90,6 +91,6 @@ export async function loadTraderNames(admin: SupabaseClient): Promise<Set<string
 // name-only callers: the /pop spell-needs rows belong to other members, so the flag is looked up here.
 export async function loadHiddenNames(admin: SupabaseClient): Promise<Set<string>> {
   const { data } = await admin.from('characters').select('name')
-    .eq('guild_id', 'wolfpack').eq('hidden_from_lists', true).limit(1000);
+    .eq('guild_id', GUILD_TAG).eq('hidden_from_lists', true).limit(1000);
   return new Set(((data ?? []) as { name: string }[]).map(r => r.name.toLowerCase()));
 }

@@ -132,6 +132,10 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#2da68a;border-color:#2da68a}
   body.setup #move-btn{top:30px}
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the window's padding and the title's gutter go. */
+  body.wp-in-canvas #wrap{padding:2px 3px}
+  body.wp-in-canvas .title{padding-right:0}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -563,8 +567,8 @@
       for (var j=0;j<shown;j++) h += safeRow(gone[j], true);
       if (total > GONE_CAP) {
         h += collapsed
-          ? '<div class="gone-toggle" data-gone-toggle="1" title="Show all recently-gone rows">+ ' + (total - GONE_CAP) + ' more</div>'
-          : '<div class="gone-toggle" data-gone-toggle="1" title="Collapse the recently-gone list">− show fewer</div>';
+          ? '<div class="gone-toggle" data-wp-interact data-gone-toggle="1" title="Show all recently-gone rows">+ ' + (total - GONE_CAP) + ' more</div>'
+          : '<div class="gone-toggle" data-wp-interact data-gone-toggle="1" title="Collapse the recently-gone list">− show fewer</div>';
       }
       h += '</div></div>';
     }

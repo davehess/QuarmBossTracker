@@ -38,6 +38,8 @@ const castChain = [
   agent.match(/const SELF_CAST_WINDOW_MS = [^\n]+/)[0],
   sliceBlock(agent, 'function _normMobName(v) {', '\n}'),
   sliceBlock(agent, 'function _provableTargetId(observer, targetName) {', '\n}'),
+  agent.match(/const _GENERIC_MOB_RX = [^\n]+/)[0],
+  sliceBlock(agent, 'function _landingTargetId(observer, evt) {', '\n}'),
   sliceBlock(agent, 'function _zealTargetForChar(charLower) {', '\n}'),
   sliceBlock(agent, 'function noteSelfCast(line, character) {', '\n}'),
   sliceBlock(agent, 'function resolveSelfCastLanding(line, observer) {', '\n}'),
@@ -51,7 +53,7 @@ const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingStat
   '_meNoteHit', '_meMobTallies', '_npcHtFor', '_meNoteCastFailed', '_tickEnrageWarn', '_meNoteMobDeath', '_dsKindOf', '_meClickies', '_noteClickyUse',
   '_noteClickyRecharged', '_noteClickyOutcomeLine',
   '_xpNoteRawLine', '_xpPending', '_xpFlush',
-  'noteSelfCast', 'resolveSelfCastLanding', '_meNoteMyLanding', '_provableTargetId'];
+  'noteSelfCast', 'resolveSelfCastLanding', '_meNoteMyLanding', '_provableTargetId', '_landingTargetId'];
 
 function load({ zeal = {}, victim = null, dsKnown = 0, player = null, spells = [] } = {}) {
   const pre = `
@@ -94,6 +96,8 @@ function load({ zeal = {}, victim = null, dsKnown = 0, player = null, spells = [
     function _currentTargetState() { return globalThis.__enrageTgt || null; }
     function _pushOverlay(o) { (globalThis.__enragePushed = globalThis.__enragePushed || []).push(o); }
     function _isEnrageBoss() { return false; }
+    function _myFightIsBoss(n, z) { const c = _mobInfoByName.get(_mobInfoCacheKey(n, z)); return !!(c && c.mob && c.mob.raid_target); }
+    const _triggerRules = {};
     const RAMPAGE_FRESH_MS = 8000;
     function _currentRampageForDisplay() { return globalThis.__ramp || null; }
     function _resolveHpForName(n) { const m = globalThis.__hpByName || {}; return n in m ? m[n] : null; }
@@ -338,9 +342,9 @@ describe('target read-outs', () => {
   // The guild lead, 2026-10-02: "Enrage timer and TTS should go off at 10%, not 8%, because it's
   // going off too late and I'm getting hit. And then when it ends, it should no longer be red
   // underneath the name."
-  it('says "Enrage soon" once as the target crosses 12%, re-arms for a fresh mob, and an ended enrage clears', () => {
+  it('says "Enrage soon" once as a BOSS crosses 12%, re-arms for a fresh mob, and an ended enrage clears', () => {
     const h = load();
-    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage'] } });
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage'], raid_target: true } });
     globalThis.__enragePushed = [];
     const at = (hp, id = 7) => { globalThis.__enrageTgt = st({ target_hp_pct: hp, target_id: id }); h._tickEnrageWarn(clock); };
     at(40); at(13);
@@ -352,8 +356,8 @@ describe('target read-outs', () => {
     expect(globalThis.__enragePushed).toHaveLength(2);
     at(100, 7); at(12, 7);                                          // a respawn under the old id re-arms
     expect(globalThis.__enragePushed).toHaveLength(3);
-    // A mob that cannot enrage says nothing.
-    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: [] } });
+    // A mob that cannot enrage says nothing. (Non-boss mobs: test/enrage-callouts.test.js.)
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: [], raid_target: true } });
     at(100, 9); at(5, 9);
     expect(globalThis.__enragePushed).toHaveLength(3);
 
@@ -1137,7 +1141,7 @@ describe('procs and stuns/aggro put into the target', () => {
     const line = eqts(clock) + msg;
     h.noteSelfCast(line, 'Aldenmar');
     const ev = h.resolveSelfCastLanding(line, 'Aldenmar');
-    if (ev) { ev.target_id = h._provableTargetId('Aldenmar', ev.target); h._meNoteMyLanding('Aldenmar', ev); }
+    if (ev) { ev.target_id = h._landingTargetId('Aldenmar', ev); h._meNoteMyLanding('Aldenmar', ev); }
     h._meNoteRawLine(line, 'Aldenmar');
   };
   const cast = (h, spell, landing, who = MOB) => { tail(h, 'You begin casting ' + spell + '.'); clock += 2000; if (landing) tail(h, who + ' ' + landing); };
@@ -1253,7 +1257,7 @@ describe('procs and stuns/aggro put into the target', () => {
 
   it('the tail hands every landing of yours to the counter, after its spawn id is known', () => {
     const tailBody = stripJs(sliceBlock(agent, 'const bcEvt = (!_sourceExcluded ? resolveSelfCastLanding', 'if (!_shouldSuppressBuffLanding(bcEvt)'));
-    expect(tailBody).toMatch(/bcEvt\.target_id = _provableTargetId\(b\.character, bcEvt\.target\);\s*try \{ _meNoteMyLanding\(b\.character, bcEvt\); \}/);
+    expect(tailBody).toMatch(/bcEvt\.target_id = _landingTargetId\(b\.character, bcEvt\);\s*try \{ _meNoteMyLanding\(b\.character, bcEvt\); \}/);
   });
 });
 

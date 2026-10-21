@@ -91,6 +91,19 @@ function put(store, name, snapshot, char, now) {
   return { ok: true, key, name: n, created };
 }
 
+// A name no set has yet: "Raid", then "Raid 2", "Raid 3"… An imported layout takes one of these, so it can
+// never land on top of a set the person already has. (The store holds at most MAX_SETS, so 100 tries is plenty.)
+function uniqueName(store, base) {
+  const n = cleanName(base) || 'Imported layout';
+  if (!store.sets[keyOf(n)]) return n;
+  for (let i = 2; i < 100; i++) {
+    const suffix = ' ' + i;
+    const c = cleanName(n.slice(0, NAME_MAX - suffix.length) + suffix);
+    if (c && !store.sets[keyOf(c)]) return c;
+  }
+  return null;
+}
+
 // Mark a set in use by a character. → the set or null.
 function use(store, name, char) {
   const n = cleanName(name);
@@ -143,7 +156,7 @@ function list(store, char) {
 
 // `/pipe mimic <verb> [name]` → { verb, name?, on? } or null for anything that is not ours.
 //   load <set> · save [set] (no name = over the current one) · next · prev
-//   lock (flips) · lock on|off · unlock
+//   lock (flips) · lock on|off · unlock · group <canvas group name> (show / hide it)
 // No delete from the game: one typo on a hotbar would lose a set. Settings deletes.
 function parsePipeCommand(text) {
   const m = String(text == null ? '' : text).trim().match(/^mimic\s+([a-z]+)\b\s*(.*)$/i);
@@ -154,20 +167,22 @@ function parsePipeCommand(text) {
   if (verb === 'save') return { verb, name: cleanName(arg) };
   if (verb === 'next' || verb === 'prev') return { verb };
   if (verb === 'unlock') return { verb: 'lock', on: false };
-  if (verb === 'lock') {
-    if (!arg) return { verb, on: null };
-    if (/^(on|yes|1)$/i.test(arg)) return { verb, on: true };
-    if (/^(off|no|0)$/i.test(arg)) return { verb, on: false };
-    return null;
-  }
-  // Arrange the Canvas: the fast way in from the game.
+  // Show or hide a saved Canvas group by name: the same toggle as its hotkey.
+  if (verb === 'group') { const name = cleanName(arg); return name ? { verb, name } : null; }
+  // Arrange the Timers canvas (the pieces chooser opens with it): the fast way in from the game.
   if (verb === 'edit' || verb === 'arrange') {
     if (!arg) return { verb: 'edit', on: null };
     if (/^(on|yes|1)$/i.test(arg)) return { verb: 'edit', on: true };
     if (/^(off|no|0|done)$/i.test(arg)) return { verb: 'edit', on: false };
     return null;
   }
+  if (verb === 'lock') {
+    if (!arg) return { verb, on: null };
+    if (/^(on|yes|1)$/i.test(arg)) return { verb, on: true };
+    if (/^(off|no|0)$/i.test(arg)) return { verb, on: false };
+    return null;
+  }
   return null;
 }
 
-module.exports = { MAX_SETS, NAME_MAX, cleanName, keyOf, empty, normalize, load, save, put, use, step, remove, current, list, parsePipeCommand };
+module.exports = { MAX_SETS, NAME_MAX, cleanName, keyOf, empty, normalize, load, save, put, uniqueName, use, step, remove, current, list, parsePipeCommand };

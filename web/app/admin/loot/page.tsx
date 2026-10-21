@@ -22,6 +22,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { userTz } from '@/lib/timezone';
 import { fmtPp } from '@/lib/lootValue';
+import { GUILD_TAG } from '@/lib/guild';
 import LootTable, { SORTS, type Sort, type LootGroupRow } from './LootTable';
 
 export const dynamic = 'force-dynamic';
@@ -79,9 +80,9 @@ export default async function AdminLootPage({ searchParams }: { searchParams: Pr
     // DKP items are listed but left out of every total (the guild lead, 2026-10-08: "If something has a DKP
     // bid associated with it, don't count that in the totals").
     sb.rpc('loot_value_grouped', {
-      p_guild_id: 'wolfpack', p_since: since, p_sort: sort, p_limit: PAGE_SIZE, p_offset: (pageNo - 1) * PAGE_SIZE,
+      p_guild_id: GUILD_TAG, p_since: since, p_sort: sort, p_limit: PAGE_SIZE, p_offset: (pageNo - 1) * PAGE_SIZE,
     }).range(0, PAGE_SIZE - 1),
-    sb.rpc('loot_value_by_looter_v3', { p_guild_id: 'wolfpack', p_since: since }).range(0, LOOTER_LIMIT - 1),
+    sb.rpc('loot_value_by_looter_v3', { p_guild_id: GUILD_TAG, p_since: since }).range(0, LOOTER_LIMIT - 1),
   ]);
   const items = (itemsRes.data ?? []) as LootGroupRow[];
   const looters = (looterRes.data ?? []) as LooterRow[];
