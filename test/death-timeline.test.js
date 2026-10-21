@@ -202,3 +202,165 @@ describe('wiring (comments stripped)', () => {
     expect(block).not.toMatch(/\b(speak|fire|fireBlind|speechSynthesis|Audio)\s*\(/);
   });
 });
+
+// ── 4  the plan phase, the Up next queue, the strip's preferences (the guild lead, 2026-10-21: "Timeline on TTS
+//      minimizable, text size scalable, next event due for next fight. Next major event in fights queued.") ────────
+// The shipped pure code between the plan + queue markers, run together with the pair block it builds on, and the real
+// pop-raids.js (browser-safe: it only sets window.POP_RAIDS) for the wording.
+const planBlock = sliceBlock(TRIGGERS, '// ── death timeline: plan + queue ──', '// ── /death timeline: plan + queue ──');
+const P = evalBlock(pageBlock + '\n' + planBlock, [
+  'deathPairStates', 'tlPlanFor', 'tlPlanNext', 'tlPlanZone', 'tlQueue', 'tlTimerMajor',
+  'tlClampScale', 'tlStepScale', 'tlLoadPrefs', 'tlSavePref', 'TL_SCALE_MIN', 'TL_SCALE_MAX',
+]);
+const POP = (() => { const w = {}; new Function('window', readSource(path.join(ROOT, 'apps', 'mimic', 'pop-raids.js')))(w); return w.POP_RAIDS; })();
+const dz = (name, atSec) => ({ name, zone: 'Plane of Tactics', atMs: T0 + S(atSec), boss: true });
+function nextFor(deaths, nowSec, zone = 'Plane of Tactics') {
+  const now = T0 + S(nowSec);
+  const pairs = P.deathPairStates(deaths, RULES, now);
+  return P.tlPlanNext(zone, P.tlPlanFor(zone, POP), deaths, RULES, pairs);
+}
+
+describe('plan phases are read from pop-raids.js', () => {
+  const phases = P.tlPlanFor('Plane of Tactics', POP);
+  it('finds the four Rallos phases of Plane of Tactics, in order, and no other encounter', () => {
+    expect(phases.map((p) => p.n)).toEqual([1, 2, 3, 4]);
+    expect(P.tlPlanFor('Plane of Hate', POP)).toEqual([]);
+    expect(P.tlPlanFor('', POP)).toEqual([]);
+    expect(P.tlPlanFor('Plane of Tactics', null)).toEqual([]);
+  });
+  it('shortens the callouts to one line that keeps the time / consequence', () => {
+    expect(phases[2].text).toBe('Fake Rallos: corner tank; despawns ~50% → real spawns in arena');
+    expect(phases[3].text).toBe('Rallos (arena): DPS check; adds every 54s');
+    expect(phases.every((p) => p.text.length <= 80)).toBe(true);
+  });
+});
+
+describe('plan phase from the deaths seen', () => {
+  it('nothing of the plan seen yet: next is the Decorins, window starts on the first death', () => {
+    expect(nextFor([dz('Glykus', 0)], 10).text).toBe('Decorins — 6 min window starts on the first death');
+  });
+  it('a Decorin window running: that is the big countdown, so next is Tallon + Vallon', () => {
+    const n = nextFor([dz('Decorin Berik', 0)], 60);
+    expect(n).toMatchObject({ n: 2, text: 'Tallon + Vallon — 20 min window starts on the first death' });
+  });
+  it('both Decorins made (P1 done): next is still P2', () => {
+    expect(nextFor([dz('Decorin Berik', 0), dz('Decorin Grunhork', 100)], 110).n).toBe(2);
+  });
+  it('the Tallon window running: next is the Fake Rallos phase, in the plan\'s own wording', () => {
+    const n = nextFor([dz('Decorin Berik', 0), dz('Decorin Grunhork', 100), dz('Tallon Zek', 400)], 450);
+    expect(n.n).toBe(3);
+    expect(n.text).toMatch(/^Fake Rallos: .*real spawns in arena$/);
+  });
+  it('both of Tallon + Vallon down: next is P3 until Rallos himself dies, then nothing', () => {
+    const ds = [dz('Decorin Berik', 0), dz('Decorin Grunhork', 100), dz('Tallon Zek', 400), dz('Vallon Zek', 700)];
+    expect(nextFor(ds, 710).n).toBe(3);
+    expect(nextFor(ds.concat(dz('Rallos Zek the Warlord', 1500)), 1510)).toBeNull();
+  });
+  it('a later phase done implies the earlier ones (the first deaths scrolled out of the 30 minutes)', () => {
+    expect(nextFor([dz('Tallon Zek', 0), dz('Vallon Zek', 300)], 310).n).toBe(3);
+  });
+  it('a missed window is not progress: the same phase is next again', () => {
+    expect(nextFor([dz('Decorin Berik', 0)], 400).n).toBe(1);
+  });
+  it('no plan for a zone without one; the zone falls back to what the deaths name', () => {
+    expect(nextFor([dz('Glykus', 0)], 10, 'Plane of Hate')).toBeNull();
+    expect(P.tlPlanZone([{ name: 'a', zone: 'Plane of Tactics', atMs: 1 }, { name: 'b', zone: null, atMs: 2 }])).toBe('Plane of Tactics');
+    expect(P.tlPlanZone([{ name: 'Decorin_Berik', zone: null, atMs: 1 }])).toBe('plane of tactics');
+    expect(P.tlPlanZone([{ name: 'Glykus', zone: null, atMs: 1 }])).toBeNull();
+  });
+});
+
+describe('the Up next queue', () => {
+  const NOW = T0;
+  const tm = (key, label, remSec, extra = {}) => ({ key, label, endsMs: NOW + S(remSec), warns: 0, loot: false, cycle: false, ...extra });
+  const plan = { n: 2, text: 'Tallon + Vallon — 20 min window starts on the first death' };
+  const open = (label, dueName, remSec) => ({ kind: 'open', label, dueName, deadlineMs: NOW + S(remSec) });
+
+  it('major rule: a warning set or 20 s+ left; never loot, a cyclic row or an expired one', () => {
+    expect(P.tlTimerMajor(tm('a', 'x', 19), NOW)).toBe(false);
+    expect(P.tlTimerMajor(tm('a', 'x', 20), NOW)).toBe(true);
+    expect(P.tlTimerMajor(tm('a', 'x', 8, { warns: 1 }), NOW)).toBe(true);
+    expect(P.tlTimerMajor(tm('a', 'x', 90, { loot: true }), NOW)).toBe(false);
+    expect(P.tlTimerMajor(tm('a', 'x', 90, { cycle: true }), NOW)).toBe(false);
+    expect(P.tlTimerMajor(tm('a', 'x', -1, { warns: 1 }), NOW)).toBe(false);
+  });
+  it('merges pair deadlines and major timers, soonest first, plan in the last slot, at most 3', () => {
+    const q = P.tlQueue([], plan,
+      [tm('d1', 'Tagrin - Slow', 61), tm('d2', 'Tagrin - Malo', 38), tm('d3', 'Tagrin - Rampage', 12), tm('d5', 'Tagrin - Rune', 50)], NOW, [], 3);
+    expect(q.map((x) => x.label)).toEqual(['Tagrin - Malo', 'Tagrin - Rune', plan.text]);   // the 12 s row is not major; the plan holds slot 3
+    const q2 = P.tlQueue([open('Decorins', 'Decorin Grunhork', 30)], null, [tm('d1', 'Slow', 61), tm('d2', 'Malo', 38), tm('d4', 'Rune', 45)], NOW, [], 3);
+    expect(q2.map((x) => x.label)).toEqual(['Decorin Grunhork due', 'Malo', 'Rune']);   // no plan: three timed rows, soonest first
+    expect(q2.map((x) => x.dueMs)).toEqual([NOW + S(30), NOW + S(38), NOW + S(45)]);
+  });
+  it('leaves out the pair rows the strip already shows big (skipKeys) and dedupes by key and label', () => {
+    const q = P.tlQueue([open('Decorins', 'Decorin Grunhork', 30)], null,
+      [tm('d1', 'Tagrin - Slow', 61), tm('d1', 'Tagrin - Slow', 61), tm('d9', 'tagrin - slow', 70)], NOW, ['pair:Decorins'], 3);
+    expect(q.map((x) => x.label)).toEqual(['Tagrin - Slow']);
+  });
+  it('closed pairs (made / missed) never queue', () => {
+    const q = P.tlQueue([{ kind: 'made', label: 'Decorins' }, { kind: 'missed', label: 'Tallon + Vallon', dueName: 'Vallon Zek', deadlineMs: NOW - 1 }], null, [], NOW, [], 3);
+    expect(q).toEqual([]);
+  });
+});
+
+describe('minimize + text size preferences', () => {
+  const mem = () => { const m = {}; return { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, m }; };
+  it('scale clamps to 0.8..1.8 in 0.1 steps and reads garbage as 1', () => {
+    expect(P.TL_SCALE_MIN).toBe(0.8);
+    expect(P.TL_SCALE_MAX).toBe(1.8);
+    expect(P.tlClampScale(0.1)).toBe(0.8);
+    expect(P.tlClampScale(9)).toBe(1.8);
+    expect(P.tlClampScale('1.46')).toBe(1.5);
+    for (const bad of [null, undefined, '', 'big', NaN]) expect(P.tlClampScale(bad)).toBe(1);
+    let v = 1; for (let i = 0; i < 20; i++) v = P.tlStepScale(v, 1);
+    expect(v).toBe(1.8);
+    for (let i = 0; i < 20; i++) v = P.tlStepScale(v, -1);
+    expect(v).toBe(0.8);
+    expect(P.tlStepScale(1, 1)).toBe(1.1);
+    expect(P.tlStepScale(1.1, -1)).toBe(1);
+  });
+  it('collapse and scale persist across a reload (same store), and default to expanded at 1.0', () => {
+    const store = mem();
+    expect(P.tlLoadPrefs(store)).toEqual({ collapsed: false, scale: 1 });
+    P.tlSavePref(store, 'collapsed', '1');
+    P.tlSavePref(store, 'scale', 1.4);
+    expect(P.tlLoadPrefs(store)).toEqual({ collapsed: true, scale: 1.4 });
+    P.tlSavePref(store, 'collapsed', '0');
+    expect(P.tlLoadPrefs(store).collapsed).toBe(false);
+    store.setItem('wp.tline.scale', '40');
+    expect(P.tlLoadPrefs(store).scale).toBe(1.8);   // a hand-edited value is clamped on the way in
+  });
+  it('a store that throws (private window, blocked site data) or is missing never breaks the page', () => {
+    const boom = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
+    expect(P.tlLoadPrefs(boom)).toEqual({ collapsed: false, scale: 1 });
+    expect(() => P.tlSavePref(boom, 'collapsed', '1')).not.toThrow();
+    expect(P.tlLoadPrefs(null)).toEqual({ collapsed: false, scale: 1 });
+    expect(() => P.tlSavePref(null, 'scale', 1.2)).not.toThrow();
+  });
+});
+
+describe('strip wiring: controls, plan source, hover handshake (comments stripped)', () => {
+  const t = stripJs(TRIGGERS);
+  const css = stripCss(TRIGGERS.slice(0, TRIGGERS.indexOf('</style>')));
+  it('the toggle and A-/A+ are real buttons in the strip, outside the rebuilt body', () => {
+    expect(TRIGGERS).toMatch(/<div id="tline"><button id="tl-toggle"[^>]*type="button"[^>]*>▾<\/button><div id="tl-body"><\/div><div id="tl-size"><button id="tl-sm"[^>]*>A−<\/button><button id="tl-lg"[^>]*>A\+<\/button>/);
+    expect(css).toMatch(/#tline \.tl-btn\{pointer-events:auto/);          // the strip is click-through; only the buttons take the mouse
+    expect(t).not.toMatch(/tlineEl\.innerHTML\s*=/);                       // the controls survive a rebuild
+  });
+  it('the text size is a CSS variable on the strip only, and the strip re-measures after a change', () => {
+    expect(t).toMatch(/tlineEl\.style\.setProperty\('--tl-s'/);
+    expect(t).not.toMatch(/documentElement\.style\.setProperty\('--tl-s'/);
+    expect(css).toMatch(/font-size:calc\(22px \* var\(--tl-s\)\)/);
+    const step = sliceBlock(t, 'function step(dir){', "sm.addEventListener('click'");
+    expect(step).toMatch(/syncTlineH\(\)/);
+    expect(t).toMatch(/tg\.addEventListener\('click', function\(\)\{[\s\S]*?syncTlineH\(\)/);
+  });
+  it('pop-raids.js is loaded lazily and never in a canvas panel', () => {
+    expect(t).toMatch(/sc\.src = 'pop-raids\.js'/);
+    expect(t).not.toMatch(/<script src="pop-raids\.js">/);
+    expect(t).toMatch(/if \(PART \|\| !tlineEl\) return;/);                // tlineUpdate (the only caller of tlPop) bails in a panel
+  });
+  it('the controls are not wired in a canvas panel', () => {
+    expect(t).toMatch(/if \(PART \|\| !tg \|\| !sm \|\| !lg\) return;/);
+  });
+});
