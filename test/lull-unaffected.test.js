@@ -225,6 +225,6 @@ describe('and it is actually wired in', () => {
     expect(agent).toMatch(/target_lull:\s+lullVerdictFor\(st\.target_name, myZoneId\)/);
   });
   it('draws the chip in the Stats chip row', () => {
-    expect(page).toMatch(/sightChips\(mob\) \+ lullChip\(mi\.target_lull\)/);
+    expect(page).toMatch(/sightChips\(mob, mi\.target_invis\) \+ lullChip\(mi\.target_lull\)/);
   });
 });

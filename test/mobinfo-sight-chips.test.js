@@ -29,7 +29,7 @@ const { sightChips } = evalBlock(
   // of sightChips' own body — a slice closed on the code under test turns every
   // mutation into "suite failed to load", which reads like a kill and proves
   // nothing. It also must stop before the DOM handles, which do not exist here.
-  + sliceBlock(src, '  function sightChips(mob){', '\n  // ── DOM handles + tab state '),
+  + sliceBlock(src, '  function sightChips(mob, obs){', '\n  // ── DOM handles + tab state '),
   ['sightChips'],
 );
 
@@ -41,7 +41,7 @@ const undeadSees  = { undead: true,  see_invis: true,  see_invis_undead: true  }
 
 describe('which sight fact is worth saying', () => {
   it('warns on a living mob that sees invis', () => {
-    expect(sightChips(livingSees)).toContain('Sees Invis');
+    expect(sightChips(livingSees)).toContain('Can see invis');
   });
 
   it('says nothing about a living mob that does not', () => {
@@ -52,7 +52,7 @@ describe('which sight fact is worth saying', () => {
 
   it('warns on the rare undead that sees Invis vs Undead', () => {
     const html = sightChips(undeadSees);
-    expect(html).toContain('Sees Invis vs Undead');
+    expect(html).toContain('Can see invis vs undead');
   });
 
   it('stays quiet on the ordinary undead that IVU still works on', () => {
@@ -65,7 +65,7 @@ describe('which sight fact is worth saying', () => {
   it('never tells an undead mob it sees plain invis', () => {
     // True for 98% of them and useless; the raider is casting IVU, not invis.
     for (const m of [undeadNorm, undeadSees]) {
-      expect(sightChips(m)).not.toMatch(/Sees Invis(?!\s+vs)/);
+      expect(sightChips(m)).not.toMatch(/Can see invis(?!\s+vs)/);
     }
   });
 
@@ -108,7 +108,7 @@ describe('and it is actually wired into the card', () => {
   const clean = stripJs(fs.readFileSync(path.join(ROOT, 'apps', 'mimic', 'mobinfo.html'), 'utf8'));
 
   it('calls sightChips when building the stats card', () => {
-    expect(clean).toMatch(/var chips = sightChips\(mob\)/);
+    expect(clean).toMatch(/var chips = sightChips\(mob, mi\.target_invis\)/);
   });
 
   it('renders the chip row when sight chips exist even with no specials', () => {
