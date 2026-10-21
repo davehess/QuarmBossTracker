@@ -19372,6 +19372,7 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
     <button id="wpLocalInv" type="button" onclick="wpOpenLocalSite('inventory')" title="Every item across your characters, from the inventory files on this PC (opens in its own window). Nothing leaves the PC.">🎒 Inventory</button>
     <button type="button" disabled title="Coming soon: your own parses, built from your own logs">📈 My parses<span class="wp-soon">soon</span></button>
     <button id="wpLocalReplay" type="button" onclick="wpOpenLocalSite('replay')" title="Play back where you and your raid stood, from the recording Mimic keeps on this PC (opens in its own window). Nothing leaves the PC.">🎬 My replay</button>
+    <button id="wpLocalRebuild" type="button" onclick="wpRebuildOpen()" title="Build your fights, raids, deaths and loot from the log files on this PC. Nothing is uploaded.">🔁 Rebuild from my logs</button>
   </div>
   <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
        2026-09-23: "We're running out of horizontal real estate"). They went up to
@@ -23321,6 +23322,157 @@ function renderNetMeter(s) {
   var sec = document.getElementById('diag');
   if (sec && sec.classList.contains('active') && !_wpNet.busy && Date.now() - _wpNet.at >= 5000) _wpNetFetch();
   wpNetRepaint();
+}
+
+// ── 🔁 Rebuild from my logs (Logsync tab; the rail's "On this PC" group opens it) ───────────────────────
+// The guild lead, 2026-10-21: people bring their big log files, and the backfill should build out their local
+// parses and work out which raids they were in. Everything here is answered by the agent from THIS PC's files
+// (POST /api/local/backfill/start, /stop, GET /api/local/backfill/status, /api/local/raids) and nothing is
+// uploaded; uploading old logs stays the separate opt-in backfill below. The card paints into its own #wpRebuild
+// placeholder (renderOptin emits it) in three children, so progress ticking does not rebuild the controls.
+var _wpRb = { status: null, raids: null, at: 0, raidsAt: 0, busy: false, file: '', since: '', note: '', files: [], lastState: '' };
+function wpRebuildSetFiles(o) {
+  var out = [];
+  var list = (o && o.files) || [];
+  for (var i = 0; i < list.length; i++) out.push({ path: list[i].path, character: list[i].character, sizeBytes: list[i].sizeBytes || 0 });
+  _wpRb.files = out;
+}
+function wpRbNum(n) { return Number(n || 0).toLocaleString(); }
+function wpRbSize(b) { return !b ? '0' : b < 1048576 ? Math.round(b / 1024) + 'KB' : b < 1073741824 ? (b / 1048576).toFixed(1) + 'MB' : (b / 1073741824).toFixed(2) + 'GB'; }
+function wpRbCtlHtml() {
+  var st = _wpRb.status;
+  var running = !!(st && st.running);
+  var dis = running ? ' disabled' : '';
+  var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">';
+  h += '<label class="dim" style="font-size:11px">Log <select id="wpRbFile"' + dis + ' onchange="_wpRb.file=this.value">';
+  h += '<option value="">All my logs (' + _wpRb.files.length + ')</option>';
+  for (var i = 0; i < _wpRb.files.length; i++) {
+    var f = _wpRb.files[i];
+    h += '<option value="' + esc(f.path) + '"' + (f.path === _wpRb.file ? ' selected' : '') + '>' + esc(f.character) + ' — ' + esc(f.path.split(/[/\\\\]/).pop()) + ' (' + wpRbSize(f.sizeBytes) + ')</option>';
+  }
+  h += '</select></label>';
+  h += '<label class="dim" style="font-size:11px">From <input type="date" id="wpRbSince" value="' + esc(_wpRb.since) + '"' + dis + ' onchange="_wpRb.since=this.value"></label>';
+  if (running) h += '<button type="button" class="wp-btn" onclick="wpRebuildStop()">⏸ Pause</button>';
+  else h += '<button type="button" class="wp-btn" style="background:#1a7f37;border-color:#1a7f37;color:#fff" onclick="wpRebuildStart(false)">▶ Rebuild</button>'
+         + ' <button type="button" class="wp-btn" onclick="wpRebuildStart(true)" title="Ignore where it stopped last time and read the log again from the start date">↻ Start over</button>';
+  h += '</div>';
+  if (_wpRb.note) h += '<div style="color:var(--orange);font-size:12px;margin-bottom:6px">' + esc(_wpRb.note) + '</div>';
+  return h;
+}
+function wpRbProgHtml() {
+  var st = _wpRb.status;
+  if (!st) return '<div class="dim">Loading…</div>';
+  if (st.error === true && !st.state) return '<div class="dim">The agent did not answer.</div>';
+  if (st.state === 'idle') return '<div class="dim">Nothing rebuilt yet. Pick a log and a start date, or leave both alone to rebuild every log you have.</div>';
+  var t = st.totals || {};
+  var files = st.files || [];
+  var tot = 0, done = 0;
+  for (var i = 0; i < files.length; i++) { tot += files[i].total || 0; done += files[i].state === 'done' ? (files[i].total || 0) : (files[i].bytePos || 0); }
+  var pct = tot ? Math.min(100, Math.floor(done / tot * 100)) : (st.state === 'done' ? 100 : 0);
+  var label;
+  if (st.state === 'running') label = st.waiting ? '⏳ Waiting for ' + esc(st.waiting) + ' to end, then carrying on' : '⏳ Reading ' + esc(st.current ? st.current.character : '') + '… ' + pct + '%';
+  else if (st.state === 'paused') label = '⏸ Paused at ' + pct + ' percent. Rebuild picks up where it stopped.';
+  else if (st.state === 'error') label = '⚠ Stopped: ' + esc(st.error || 'an error');
+  else label = '✓ Done';
+  var h = '<div style="font-size:12px"><b>' + label + '</b></div>';
+  h += '<div style="height:6px;background:var(--bg);border:1px solid var(--border);border-radius:3px;margin:6px 0;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:var(--green)"></div></div>';
+  h += '<div class="dim" style="font-size:11px">' + wpRbNum(t.lines) + ' lines · ' + wpRbNum(t.fights) + ' fights · ' + wpRbNum(t.sessions) + ' raids · '
+     + wpRbNum(t.deaths) + ' deaths · ' + wpRbNum(t.loot) + ' loot · ' + wpRbNum(t.zones) + ' zones'
+     + (st.state === 'running' && st.linesPerSec ? ' · ' + wpRbNum(st.linesPerSec) + ' lines a second' : '') + '</div>';
+  if (files.length > 1) {
+    var rows = files.map(function (f) {
+      return '<tr><td>' + esc(f.character) + '</td><td class="dim">' + esc(f.path.split(/[/\\\\]/).pop()) + '</td><td>'
+        + (f.state === 'done' ? '✓' : f.state === 'skipped' ? 'kept out' : f.state === 'queued' ? 'waiting' : f.state === 'error' ? '⚠ ' + esc(f.error || '') : f.pct + '%')
+        + '</td><td class="num">' + wpRbNum(f.fights) + ' fights</td></tr>';
+    });
+    h += '<table style="margin-top:6px">' + wpMoreList('rebuild|files', rows, { show: 4, cols: 4, noun: 'more logs' }) + '</table>';
+  }
+  var d = st.dkp;
+  if (d) {
+    h += '<div class="dim" style="font-size:11px;margin-top:6px">' + (d.mode === 'schedule'
+      ? '📅 Raid nights: ' + wpRbNum(d.matched) + ' of ' + wpRbNum(d.checked) + ' raids fall in the guild raid window (Sun, Wed, Thu 8 pm to midnight Eastern).'
+      : 'Raid-night matching is off: it needs a linked Wolf Pack account.') + '</div>';
+  }
+  return h;
+}
+function wpRbRaidsHtml() {
+  var r = _wpRb.raids;
+  if (!r || !r.raids || !r.raids.length) return '';
+  var rows = r.raids.map(function (x) {
+    var when = new Date(x.start);
+    var bosses = (x.bosses || []).map(function (b) { return esc(b.name) + (b.killed ? ' ✓' : ' ✗'); }).join(', ') || '<span class="dim">no boss fights</span>';
+    var names = (x.who || []).slice(0, 30).map(function (m) { return m.name; }).join(', ');
+    return '<tr><td>' + esc(when.toLocaleDateString()) + ' ' + esc(when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) + (x.open ? ' <span class="dim">(open)</span>' : '') + '</td>'
+      + '<td>' + esc(x.zone || '?') + '</td>'
+      + '<td title="' + esc(names) + '">' + wpRbNum(x.members) + ' raiders</td>'
+      + '<td>' + bosses + '</td>'
+      + '<td class="num">' + wpRbNum(x.deaths) + ' deaths · ' + wpRbNum(x.lootCount) + ' loot</td>'
+      + '<td>' + (x.dkpMatch === 'schedule' ? '<span title="Overlaps the guild raid window (Sun, Wed, Thu 8 pm to midnight Eastern)">📅 raid night</span>' : '') + '</td></tr>';
+  });
+  return '<div style="font-size:12px;margin-top:10px"><b>Raids rebuilt from your logs (' + wpRbNum(r.total) + ')</b></div>'
+    + '<table><tr><th>When</th><th>Where</th><th>Who</th><th>Bosses</th><th></th><th></th></tr>'
+    + wpMoreList('rebuild|raids', rows, { show: 6, cols: 6, noun: 'older raids' }) + '</table>';
+}
+function wpRbRepaint() {
+  var el = document.getElementById('wpRebuild');
+  if (!el) return;
+  if (!document.getElementById('wpRbCtl')) {
+    el.innerHTML = '<h2>🔁 Rebuild from my logs</h2>'
+      + '<div class="subtle">Build your fights, raids, deaths, loot and zones from the log files on this PC. It runs here, in the background, and waits while a fight is on. '
+      + 'Nothing is uploaded, and officer chat, tells and private channels are never read into it. Uploading old logs is the separate backfill below.</div>'
+      + '<div id="wpRbCtl"></div><div id="wpRbProg"></div><div id="wpRbRaids"></div>';
+    el._wpLastHtml = null;
+  }
+  morphInto(document.getElementById('wpRbCtl'), wpRbCtlHtml());
+  morphInto(document.getElementById('wpRbProg'), wpRbProgHtml());
+  morphInto(document.getElementById('wpRbRaids'), wpRbRaidsHtml());
+}
+function wpRbPoll(force) {
+  if (_wpRb.busy) return;
+  var sec = document.getElementById('optin');
+  if (!force && !(sec && sec.classList.contains('active'))) return;
+  var running = !!(_wpRb.status && _wpRb.status.running);
+  if (!force && Date.now() - _wpRb.at < (running ? 1900 : 10000)) return;
+  _wpRb.busy = true; _wpRb.at = Date.now();
+  var asJson = function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); };
+  fetch('/api/local/backfill/status', { cache: 'no-store' }).then(asJson).then(function (j) {
+    var changed = _wpRb.lastState !== j.state;
+    _wpRb.lastState = j.state;
+    _wpRb.status = j;
+    if (!_wpRb.raids || changed || (j.running && Date.now() - _wpRb.raidsAt > 8000)) {
+      _wpRb.raidsAt = Date.now();
+      return fetch('/api/local/raids?limit=200', { cache: 'no-store' }).then(asJson).then(function (rs) { _wpRb.raids = rs; });
+    }
+  }).catch(function () { _wpRb.status = _wpRb.status || { error: true }; }).then(function () { _wpRb.busy = false; wpRbRepaint(); });
+}
+function renderRebuildCard(s) { void s; wpRbPoll(false); wpRbRepaint(); }
+function wpRebuildStart(fresh) {
+  var body = { fresh: !!fresh };
+  if (_wpRb.file) body.file = _wpRb.file;
+  if (_wpRb.since) body.since = _wpRb.since;
+  _wpRb.note = '';
+  fetch('/api/local/backfill/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (x) { if (!x.ok) _wpRb.note = (x.j && x.j.error) || 'Could not start.'; wpRbPoll(true); },
+          function () { _wpRb.note = 'The agent did not answer.'; wpRbRepaint(); });
+}
+function wpRebuildStop() {
+  fetch('/api/local/backfill/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    .then(function () { wpRbPoll(true); }, function () { wpRbPoll(true); });
+}
+// The rail's "Rebuild from my logs": the Logsync tab, scrolled to the card.
+function wpRebuildOpen() {
+  var tab = document.querySelector('.nav button[data-tab="optin"]');
+  if (tab && !tab.classList.contains('active')) tab.click();
+  var go = function (n) {
+    var card = document.getElementById('wpRebuild');
+    if (!card) { if (n < 12) setTimeout(function () { go(n + 1); }, 200); return; }
+    wpRbPoll(true);
+    var bar = document.getElementById('wpTopBar');
+    var pad = (bar ? bar.getBoundingClientRect().height : 0) + 10;
+    window.scrollTo({ top: Math.max(0, card.getBoundingClientRect().top + window.scrollY - pad), behavior: 'smooth' });
+  };
+  go(0);
 }
 
 // ── 📈 My parses ────────────────────────────────────────────────────────────
@@ -27512,6 +27664,11 @@ function renderOptin(o) {
          '</ol></div>';
   }
 
+  // 🔁 Rebuild from my logs (the guild lead, 2026-10-21): its own placeholder, filled by renderRebuildCard, so the
+  // progress it shows does not rewrite this whole tab every poll.
+  wpRebuildSetFiles(o);
+  h += '<div id="wpRebuild" class="card wide"></div>';
+
   // Imported log backups (the guild lead, 2026-09-13). Inside Mimic: native pickers plus
   // a drop zone that reads real paths through the bridge. A browser tab has
   // neither, so it only lists what is already imported.
@@ -27680,6 +27837,7 @@ function renderOptin(o) {
   h += '</table></div>';
   const root = document.getElementById('optin');
   if (!setSectionHTML('optin', h)) return;   // morph in place; skip if unchanged
+  try { wpRbRepaint(); } catch (e) { void e; }   // the section was rewritten, so the Rebuild card's placeholder is empty again
 
   // Wire interactions — idempotent under morph (nodes persist across polls).
   root.querySelectorAll('input[type=checkbox][data-path]').forEach(cb => {
@@ -27876,6 +28034,7 @@ async function refresh() {
                      // below, same rule as renderDash → renderMeCard.
                      ['diag', renderDiag],
                      ['netmeter', renderNetMeter],
+                     ['rebuild', renderRebuildCard],
                      ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['mutedtimers', renderMutedTimers], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
@@ -34576,6 +34735,8 @@ function startWebDashboard(port) {
       }
       // This PC's own recorded positions (local-first; the store block above module.exports). Answered from disk, never uploaded.
       if (_localTrackRoute(req, res)) return;
+      // Rebuild from my logs (the block above module.exports): start / stop / status, and the raids it found. Local only.
+      if (await _localBackfillRoute(req, res)) return;
       // Tank overlay snapshot (the guild lead, 2026-06-25). Aggregates everything the
       // tank.html overlay needs from the active character's live state:
       //   • self HP %, target name + HP %, current buffs (with ticks remaining)
@@ -61510,8 +61671,820 @@ function _localTrackRoute(req, res) {
 }
 function _localTrackSetStoreForTest(st) { _localTrack.store = st; }
 
+// ── Rebuild from my logs (local-first, 2026-10-21) ─────────────────────────────────────────────────────────
+// The guild lead, 2026-10-21: people coming into the tool will bring their large log files, and the backfill
+// "could try to build out all of their local parses and figure out what raids they were in based on the log
+// files contents. Who was in it, where were they, what bosses were fought, what they saw."
+//
+// This walks a log file (or every known log) from a start date and writes what it finds into _localStore, on
+// THIS PC, and sends nothing anywhere: no enqueueUpload, no http, no fetch. The opt-in upload backfill
+// (runOptinBackfill) is a separate path and is untouched; this never calls it. The privacy filters are the live
+// tail's own: every line that is read for a raid, a zone, a loot or a death goes through triggerVisibleLine (the
+// drop list: officer chat, tells, group chat, custom channels, public says), and fights go through shouldKeep.
+// A raid-say line is used only for WHO spoke; the text is never read into a record.
+//
+// Kinds written (ids are stable, so re-running or resuming a file supersedes rather than duplicates):
+//   fight         one boss/named fight: players + damage as the agent computes its own fights (a SILENT
+//                 EncounterBuilder, the same one the opt-in backfill uses), kill, deaths, top healers.
+//   raid_session  a contiguous raid membership span: "X has joined the raid", raid say speakers, fight
+//                 participants and /who rows (enrich only), the zone of each span, the fights and loot in it.
+//   death         a player death (a name this log has proof is a player).
+//   loot          "--You have looted ...--" and "--X has looted ...--".
+//   zone_visit    "You have entered <zone>." to the next one.
+// Resumable: local/rebuild.json holds a byte cursor and a snapshot per file, taken only where no fight was open
+// (a fight is never cut in half by a pause). Throttled: a work budget then a rest per chunk, and it waits while
+// a live fight is on (_liveFightActive).
+//
+// DKP nights: no agent-facing route serves the guild's OpenDKP raid list (checked 2026-10-21: the agent routes
+// are latest-version, guild-triggers, mob-*, my-parses, raid-live, and so on; dkp-tick is a write). So for a
+// linked member a rebuilt session is marked dkpMatch:'schedule' when it overlaps the guild's raid window
+// (Sun/Wed/Thu 8 pm to midnight Eastern); with no linked account (local-only) the step is skipped entirely.
+const REBUILD_CHUNK_BYTES = 128 * 1024;
+const REBUILD_GAP_MS = 30 * 60_000;                  // a log quiet this long ends a raid session and a zone visit
+const REBUILD_IDLE_MS = 2 * 3600_000;                // a session with no raid evidence this long is over
+const REBUILD_BUDGET_MS = 20;                        // work this long per chunk batch, then rest
+const REBUILD_REST_MS = 5;
+const REBUILD_MEMBERS_MAX = 400;
+const REBUILD_FIGHTS_MAX = 300;
+const REBUILD_IMPLICIT_RAID_MIN = 7;                 // a fight with this many players and no join line is a raid
+const REBUILD_SCHEDULE_MIN_OVERLAP_MS = 15 * 60_000;
+const REBUILD_PLAYER_RX = /^[A-Z][a-z]{2,15}$/;
+const REBUILD_COMBAT_TYPES = new Set(['damage', 'death', 'death_confirm', 'heal', 'crit_heal', 'avoid', 'critical', 'rampage', 'ds_flavor']);
+// A rebuilt history is the point of the feature: keep it (the default 256 MB per kind would drop old days).
+Object.assign(_LSTORE_POLICY, {
+  fight:        { retainDays: 0, maxBytes: 1024 * _LSTORE_MB },
+  raid_session: { retainDays: 0, maxBytes: 512 * _LSTORE_MB },
+  death:        { retainDays: 0, maxBytes: 256 * _LSTORE_MB },
+  loot:         { retainDays: 0, maxBytes: 512 * _LSTORE_MB },
+  zone_visit:   { retainDays: 0, maxBytes: 512 * _LSTORE_MB },
+});
+const _RB_JOIN_RX = /^(You|[A-Z][a-z]+) (?:has|have) joined the raid\.?$/;
+const _RB_LEAVE_RX = /^(You|[A-Z][a-z]+) (?:has|have) left the raid\.?$/;
+const _RB_RAIDEND_RX = /^(?:You have been removed from the raid|The raid has been disbanded|Your raid has been disbanded)\.?$/;
+const _RB_RAIDSAY_RX = /^([A-Z][a-z]+) tells the raid, ['"]/;
+const _RB_SELFRAIDSAY_RX = /^You (?:tell|say to) your raid, ['"]/;
+const _RB_LOOT_SELF_RX = /^--You have looted (.+?)\.?--$/;
+const _RB_LOOT_OTHER_RX = /^--([A-Za-z]+) has looted (.+?)\.?--$/;
+const _RB_SLAIN_RX = /^([A-Z][a-z]+) has been slain by (.+?)!$/;
+const _RB_SLAIN_SELF_RX = /^You have been slain by (.+?)!$/;
+const _RB_WHO_FOOT_RX = /^There (?:are|is) \d+ players? in (.+)\.$/;
+
+// ── Eastern time, for the raid schedule ──
+let _rbEtFmt = null;
+function _rbEtParts(ms) {
+  if (!_rbEtFmt) {
+    _rbEtFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', weekday: 'short',
+      year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+  }
+  const o = {};
+  for (const x of _rbEtFmt.formatToParts(new Date(ms))) o[x.type] = x.value;
+  return o;
+}
+function _rbEtOffset(ms) {
+  const o = _rbEtParts(ms);
+  return Date.UTC(+o.year, +o.month - 1, +o.day, (+o.hour) % 24, +o.minute, +o.second) - Math.floor(ms / 1000) * 1000;
+}
+// Eastern wall clock y-mo-d h:00 as a UTC ms (mo is 1-based; d may overflow into the next month).
+function _rbEtWallToMs(y, mo, d, h) {
+  const guess = Date.UTC(y, mo - 1, d, h, 0, 0);
+  let t = guess - _rbEtOffset(guess);
+  t = guess - _rbEtOffset(t);
+  return t;
+}
+// The guild's raid window nearest a session: {night:'YYYY-MM-DD', overlapMin, from, to} or null.
+function _rebuildScheduleMatch(startMs, endMs) {
+  const s = Number(startMs);
+  if (!Number.isFinite(s)) return null;
+  const e = Math.max(Number(endMs) || s, s);
+  const seen = new Set();
+  let best = null;
+  for (let t = s - 86400_000, n = 0; t <= e + 86400_000 && n < 12; t += 20 * 3600_000, n++) {
+    const p = _rbEtParts(t);
+    const key = p.year + '-' + p.month + '-' + p.day;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (p.weekday !== 'Sun' && p.weekday !== 'Wed' && p.weekday !== 'Thu') continue;
+    const from = _rbEtWallToMs(+p.year, +p.month, +p.day, 20);
+    const to = _rbEtWallToMs(+p.year, +p.month, +p.day + 1, 0);
+    const overlap = Math.min(e, to) - Math.max(s, from);
+    // 15 minutes inside the window, or the whole of a session shorter than that.
+    const need = Math.min(REBUILD_SCHEDULE_MIN_OVERLAP_MS, Math.max(60_000, e - s));
+    if (overlap >= need && (!best || overlap > best.overlapMs)) {
+      best = { night: p.year + '-' + String(p.month).padStart(2, '0') + '-' + String(p.day).padStart(2, '0'), overlapMs: overlap, from, to };
+    }
+  }
+  return best ? { night: best.night, overlapMin: Math.round(best.overlapMs / 60_000), from: best.from, to: best.to } : null;
+}
+// The DKP step for this install. Local-only (no linked account) skips it entirely.
+function _rebuildDkpMode() {
+  if (!_uploadOpts || !_uploadOpts.token || _localOnly()) return { mode: 'skipped', reason: 'local-only: no linked account, so there is no guild schedule to match' };
+  return { mode: 'schedule', reason: 'matched against the guild raid window (Sun/Wed/Thu 8 pm to midnight Eastern); no agent route serves the OpenDKP raid list' };
+}
+// Mark every stored session that overlaps the guild window. Returns { checked, matched, changed }.
+function _rebuildDkpPass(store, mode) {
+  if (!mode || mode.mode !== 'schedule') return { skipped: true, checked: 0, matched: 0, changed: 0 };
+  let checked = 0, matched = 0, changed = 0;
+  for (const e of store.scan('raid_session')) {
+    const r = e.rec;
+    if (!r || !Number.isFinite(r.start)) continue;
+    checked++;
+    const m = _rebuildScheduleMatch(r.start, r.end);
+    if (m) matched++;
+    const want = m ? 'schedule' : null;
+    const wantNight = m ? m.night : null;
+    if ((r.dkpMatch || null) === want && (r.dkpNight || null) === wantNight) continue;
+    const next = Object.assign({}, r, { dkpMatch: want, dkpNight: wantNight });
+    if (store.put('raid_session', e.id, next, { ts: e.ts })) changed++;
+  }
+  return { checked, matched, changed };
+}
+
+// ── One log, one line at a time ──
+function _rebuildNewJob(o) {
+  const job = {
+    path: o.path, character: o.character, sinceMs: o.sinceMs || 0, store: o.store,
+    bytePos: 0, lines: 0, lastMs: 0, tickMs: 0, bodyAt: 0, stamp: '', stampMs: NaN,
+    zone: null, visit: null, session: null, players: new Set(), deathCands: [], checkpoint: null,
+    counts: { fights: 0, trash: 0, sessions: 0, deaths: 0, loot: 0, zones: 0 },
+    builder: null,
+  };
+  job.builder = new EncounterBuilder({ character: o.character, silent: true, onFlush: (payload) => _rbOnFight(job, payload) });
+  return job;
+}
+// The time of a log line in ms, cached per second (consecutive lines share one). NaN for a line with no stamp.
+function _rbLineMs(job, line) {
+  if (line.charCodeAt(0) !== 91) return NaN;
+  const end = line.indexOf(']');
+  if (end < 20 || end > 32) return NaN;
+  job.bodyAt = end + 2;
+  const stamp = line.slice(1, end);
+  if (stamp === job.stamp) return job.stampMs;
+  let ms;
+  if (stamp.length === 24 && stamp.charCodeAt(3) === 32) ms = new Date(stamp).getTime();
+  else { const d = parseEqTimestamp(line); ms = d ? d.getTime() : NaN; }
+  if (!Number.isFinite(ms)) return NaN;
+  job.stamp = stamp; job.stampMs = ms;
+  return ms;
+}
+function _rbMember(s, name, ms, ev) {
+  let m = s.members.get(name);
+  if (!m) {
+    if (s.members.size >= REBUILD_MEMBERS_MAX) return null;
+    m = { name, first: ms, last: ms, joined: null, left: null, ev: [] };
+    s.members.set(name, m);
+  }
+  if (ms > m.last) m.last = ms;
+  if (ms < m.first) m.first = ms;
+  if (ev && m.ev.indexOf(ev) < 0) m.ev.push(ev);
+  return m;
+}
+function _rbSessionOpen(job, ms, why) {
+  const s = { id: job.character.toLowerCase() + '|' + ms, character: job.character, start: ms, end: ms, evidence: ms, why,
+    members: new Map(), speakers: new Set(), zones: [], fights: [], fightN: 0, loot: [], lootN: 0, whoSeen: 0 };
+  if (job.zone) s.zones.push({ zone: job.zone, from: ms, to: null });
+  _rbMember(s, job.character, ms, 'self');
+  job.players.add(job.character);
+  job.session = s;
+  job.counts.sessions++;
+  return s;
+}
+function _rbSessionRecord(job, s, open) {
+  const members = [...s.members.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).map(m => {
+    const o = { name: m.name, first: m.first, last: m.last, joined: m.joined, left: m.left, ev: m.ev };
+    if (m.cls) o.cls = m.cls;
+    if (m.level) o.level = m.level;
+    if (m.guild) o.guild = m.guild;
+    return o;
+  });
+  const zoneMs = new Map();
+  const zones = s.zones.map(z => ({ zone: z.zone, from: z.from, to: z.to == null ? s.end : z.to }));
+  for (const z of zones) zoneMs.set(z.zone, (zoneMs.get(z.zone) || 0) + Math.max(0, z.to - z.from));
+  let zone = null, zbest = -1;
+  for (const [k, v] of zoneMs) if (v > zbest) { zone = k; zbest = v; }
+  const guilds = new Map();
+  for (const m of members) if (m.guild) guilds.set(m.guild, (guilds.get(m.guild) || 0) + 1);
+  let guild = null, gbest = 0;
+  for (const [k, v] of guilds) if (v > gbest) { guild = k; gbest = v; }
+  const lootBy = new Map();
+  for (const l of s.loot) lootBy.set(l.item, (lootBy.get(l.item) || 0) + 1);
+  const loot = [...lootBy].sort((a, b) => b[1] - a[1]).slice(0, 25).map(([item, count]) => ({ item, count }));
+  const deaths = job.deathCands.filter(c => c.at >= s.start - 1000 && c.at <= s.end + 1000 && (c.name === job.character || job.players.has(c.name)))
+    .slice(0, 100).map(c => ({ name: c.name, killer: c.killer, at: c.at }));
+  const bosses = s.fights.filter(f => f.boss || f.named).map(f => ({ name: f.boss_name, at: f.at, killed: f.killed, dmg: f.dmg, players: f.n }));
+  return {
+    v: 1, id: s.id, character: s.character, start: s.start, end: s.end, open: !!open, why: s.why,
+    nightKey: _myNightKey(s.start), durationMin: Math.round((s.end - s.start) / 60_000),
+    zone, zones, guild, memberCount: members.length, members, speakers: s.speakers.size, whoSeen: s.whoSeen,
+    fightCount: s.fightN, fights: s.fights, bosses, deaths, lootCount: s.lootN, loot,
+    dkpMatch: null, dkpNight: null,
+  };
+}
+function _rbSessionClose(job, endMs, open) {
+  const s = job.session;
+  if (!s) return;
+  if (Number.isFinite(endMs) && endMs > s.end) s.end = endMs;
+  if (!open) for (const z of s.zones) if (z.to == null) z.to = s.end;
+  job.store.put('raid_session', s.id, _rbSessionRecord(job, s, open), { ts: s.start });
+  _rbDeathsFlush(job, s.end + 1000);          // after the record, which lists the session's deaths from the same candidates
+  if (!open) job.session = null;
+}
+// Deaths up to uptoMs that this log has proof are players become records; the rest are dropped.
+function _rbDeathsFlush(job, uptoMs) {
+  const keep = [];
+  for (const c of job.deathCands) {
+    if (c.at > uptoMs) { keep.push(c); continue; }
+    if (c.name !== job.character && !job.players.has(c.name)) continue;
+    if (job.store.put('death', c.name + '|' + c.at, { v: 1, name: c.name, killer: c.killer, at: c.at, zone: c.zone, character: job.character, own: c.name === job.character }, { ts: c.at })) job.counts.deaths++;
+  }
+  job.deathCands = keep;
+}
+function _rbVisitClose(job, toMs, open) {
+  const v = job.visit;
+  if (!v) return;
+  job.store.put('zone_visit', job.character.toLowerCase() + '|' + v.from, { v: 1, character: job.character, zone: v.zone, from: v.from, to: toMs, open: !!open }, { ts: v.from });
+  if (!open) job.visit = null;
+}
+function _rbZoneEnter(job, zone, ms) {
+  zone = String(zone || '').trim();
+  if (!zone) return;
+  _rbVisitClose(job, ms, false);
+  job.zone = zone;
+  job.visit = { zone, from: ms };
+  job.counts.zones++;
+  const s = job.session;
+  if (s) {
+    const last = s.zones[s.zones.length - 1];
+    if (last && last.to == null) last.to = ms;
+    s.zones.push({ zone, from: ms, to: null });
+    if (ms > s.end) s.end = ms;
+  }
+}
+// The log went quiet (camped, crashed, logged off): nothing carries across it.
+function _rbGap(job) {
+  const at = job.lastMs;
+  job.builder.flush();
+  if (job.session) _rbSessionClose(job, at, false);
+  _rbVisitClose(job, at, false);
+  job.zone = null;
+}
+function _rbLoot(job, body, ms) {
+  let who, item;
+  let m = _RB_LOOT_SELF_RX.exec(body);
+  if (m) { who = job.character; item = m[1]; }
+  else if ((m = _RB_LOOT_OTHER_RX.exec(body))) { who = m[1]; item = m[2]; }
+  else return;
+  item = item.replace(/^an?\s+/i, '').trim().slice(0, 80);
+  if (item.length < 2) return;
+  if (job.store.put('loot', who + '|' + ms + '|' + item.toLowerCase(), { v: 1, who, item, at: ms, zone: job.zone, character: job.character, self: who === job.character }, { ts: ms })) job.counts.loot++;
+  const s = job.session;
+  if (s) { s.lootN++; if (s.loot.length < 500) s.loot.push({ item, who, at: ms }); }
+}
+function _rbDeathLine(job, body, ms) {
+  let name, killer = null, m;
+  if (body === 'You died.') name = job.character;
+  else if ((m = _RB_SLAIN_SELF_RX.exec(body))) { name = job.character; killer = m[1]; }
+  else if ((m = _RB_SLAIN_RX.exec(body))) { name = m[1]; killer = m[2]; }
+  else return;
+  if (!REBUILD_PLAYER_RX.test(name)) return;
+  if (job.deathCands.length >= 5000) job.deathCands.shift();
+  job.deathCands.push({ name, killer: killer ? killer.slice(0, 60) : null, at: ms, zone: job.zone });
+}
+// A raid line. Returns true when the line was one (and so is done with).
+function _rbRaidLine(job, body, ms) {
+  let m = _RB_JOIN_RX.exec(body);
+  if (m) {
+    const self = m[1] === 'You';
+    const who = self ? job.character : m[1];
+    let s = job.session;
+    if (self) { if (s) _rbSessionClose(job, s.evidence, false); s = _rbSessionOpen(job, ms, 'join'); }
+    else if (!s) s = _rbSessionOpen(job, ms, 'join');
+    const mem = _rbMember(s, who, ms, 'join');
+    if (mem) { if (mem.joined == null) mem.joined = ms; mem.left = null; }
+    job.players.add(who);
+    s.evidence = ms; if (ms > s.end) s.end = ms;
+    return true;
+  }
+  m = _RB_LEAVE_RX.exec(body);
+  if (m) {
+    const s = job.session;
+    if (m[1] === 'You') { if (s) _rbSessionClose(job, ms, false); }
+    else if (s) { const mem = _rbMember(s, m[1], ms, 'join'); if (mem) mem.left = ms; s.evidence = ms; if (ms > s.end) s.end = ms; }
+    return true;
+  }
+  if (_RB_RAIDEND_RX.test(body)) { if (job.session) _rbSessionClose(job, ms, false); return true; }
+  m = _RB_RAIDSAY_RX.exec(body);
+  const sayer = m ? m[1] : (_RB_SELFRAIDSAY_RX.test(body) ? job.character : null);
+  if (sayer) {
+    // WHO spoke, and nothing else: the text of a raid say is never read into a record.
+    const s = job.session || _rbSessionOpen(job, ms, 'say');
+    _rbMember(s, sayer, ms, 'say');
+    s.speakers.add(sayer);
+    job.players.add(sayer);
+    s.evidence = ms; if (ms > s.end) s.end = ms;
+    return true;
+  }
+  return false;
+}
+// One fight out of the silent builder: a record in the store and a reference in the open raid session.
+function _rbOnFight(job, payload) {
+  try {
+    const enc = payload && payload.encounter;
+    const boss = enc && enc.boss_name ? String(enc.boss_name) : '';
+    const start = enc ? Date.parse(enc.started_at) : NaN;
+    if (!boss || !(start > 0)) return;
+    const end = Date.parse(enc.ended_at) || start;
+    const bl = boss.toLowerCase();
+    const by = (enc.rollup && enc.rollup.by_char) || {};
+    const players = [];
+    for (const name of Object.keys(by)) {
+      if (!REBUILD_PLAYER_RX.test(name) || name.toLowerCase() === bl) continue;
+      const dmg = Math.round(Number(by[name] && by[name].total_damage) || 0);
+      if (dmg > 0) players.push({ name, dmg, hits: Number(by[name].total_hits) || 0 });
+    }
+    players.sort((a, b) => b.dmg - a.dmg);
+    const durationS = Math.max(1, Math.round(Number(enc.active_duration_s) || (end - start) / 1000));
+    const total = players.reduce((a, p) => a + p.dmg, 0);
+    const top = players.slice(0, 60).map(p => ({ name: p.name, dmg: p.dmg, hits: p.hits, dps: Math.round(p.dmg / durationS) }));
+    for (const p of players) job.players.add(p.name);
+    const deaths = [];
+    const seenDeath = new Set();
+    for (const d of Array.isArray(enc.deaths) ? enc.deaths : []) {
+      const t = Date.parse(d && d.ts);
+      if (d && d.name && !seenDeath.has(d.name)) { seenDeath.add(d.name); deaths.push({ name: String(d.name), at: t || null }); }
+    }
+    for (const c of job.deathCands) {
+      if (c.at >= start - 3000 && c.at <= end + 3000 && (c.name === job.character || job.players.has(c.name)) && !seenDeath.has(c.name)) { seenDeath.add(c.name); deaths.push({ name: c.name, at: c.at }); }
+    }
+    const healers = (Array.isArray(enc.healers) ? enc.healers : []).filter(h => h && REBUILD_PLAYER_RX.test(String(h.name || '')))
+      .sort((a, b) => (b.healed || 0) - (a.healed || 0)).slice(0, 8).map(h => ({ name: h.name, healed: Math.round(h.healed || 0) }));
+    let catalogBoss = false;
+    try { catalogBoss = _myFightIsBoss(boss, null); } catch { catalogBoss = false; }
+    const rec = {
+      v: 1, id: job.character.toLowerCase() + '|' + start + '|' + bl, character: job.character, boss: boss.slice(0, 120),
+      catalogBoss, named: /^[A-Z#]/.test(boss), zone: job.zone, start, end, durationS,
+      killed: enc.confirmed_kill === true, killer: enc.kill_credit || enc.kill_slayer || null,
+      dmg: total, dps: Math.round(total / durationS), playerCount: players.length, players: top, deaths: deaths.slice(0, 40), healers,
+    };
+    const stored = catalogBoss || rec.named;
+    if (stored && job.store.put('fight', rec.id, rec, { ts: start })) job.counts.fights++; else if (!stored) job.counts.trash++;
+    let s = job.session;
+    const raidish = players.length >= REBUILD_IMPLICIT_RAID_MIN;
+    if (!s && raidish) s = _rbSessionOpen(job, start, 'fight');
+    if (s) {
+      for (const p of players) _rbMember(s, p.name, end, 'fight');
+      s.fightN++;
+      if (s.fights.length < REBUILD_FIGHTS_MAX && stored) {
+        s.fights.push({ id: rec.id, boss_name: rec.boss, boss: catalogBoss, named: rec.named, at: start, end, killed: rec.killed, durationS, dmg: total, n: players.length, zone: job.zone });
+      }
+      if (end > s.end) s.end = end;
+      if (raidish && end > s.evidence) s.evidence = end;
+    }
+  } catch { void 0; }
+}
+// One log line. The caller wraps this in try/catch: a bad line is skipped, never fatal.
+function _rbLine(job, line) {
+  const ms = _rbLineMs(job, line);
+  if (!(ms > 0)) return;
+  job.lines++;
+  if (ms < job.sinceMs) return;
+  if (job.lastMs && ms - job.lastMs > REBUILD_GAP_MS) _rbGap(job);
+  if (ms > job.lastMs) job.lastMs = ms;
+  if (ms - job.tickMs >= 10_000) {
+    job.tickMs = ms;
+    job.builder.tickIdle(ms);
+    const s = job.session;
+    if (s && ms - s.evidence > REBUILD_IDLE_MS) _rbSessionClose(job, s.evidence, false);
+  }
+  const body = line.slice(job.bodyAt);
+  const c = body.charCodeAt(0);
+  let m;
+  if (c === 45 && body.charCodeAt(1) === 45) {                       // "--You have looted a Thing.--"
+    if (triggerVisibleLine(line)) _rbLoot(job, body, ms);
+    return;
+  }
+  if (c === 89 && (m = CHAT_ZONE_RX.exec(line))) {                    // the zone line, parsed by the chat classifier's own pattern
+    if (triggerVisibleLine(line)) _rbZoneEnter(job, m[1], ms);
+    return;
+  }
+  if (body.indexOf(' raid') !== -1 && triggerVisibleLine(line) && _rbRaidLine(job, body, ms)) return;
+  if (body.indexOf(' slain by ') !== -1 || body === 'You died.') {
+    if (triggerVisibleLine(line)) _rbDeathLine(job, body, ms);
+  } else if (c === 84 && !job.zone && (m = _RB_WHO_FOOT_RX.exec(body))) {   // a /who footer names the zone when no entry line was seen
+    _rbZoneEnter(job, m[1], ms);
+  }
+  if (!shouldKeep(line)) return;
+  const ev = parseEvent(line, new Date(ms));
+  if (!ev) return;
+  if (ev.type === 'who') {
+    // Players, definitively. Evidence only: a /who row enriches a member the raid lines already named.
+    if (ev.name) {
+      job.players.add(ev.name);
+      const s = job.session;
+      const mem = s && s.members.get(ev.name);
+      if (mem) { if (ev.class) mem.cls = ev.class; if (ev.level) mem.level = ev.level; if (ev.guild) mem.guild = ev.guild; if (mem.ev.indexOf('who') < 0) mem.ev.push('who'); s.whoSeen++; }
+    }
+  } else if (ev.type === 'pet_leader') {
+    // Pet ownership for THIS builder only: the shared registries the live tail writes are not touched by a replay.
+    const owner = ev.owner === '__SELF__' ? job.character : ev.owner;
+    if (owner && ev.pet && !_isVisionEyePet(ev.pet)) job.builder.petLeaders[String(ev.pet).toLowerCase()] = owner;
+  } else if (REBUILD_COMBAT_TYPES.has(ev.type)) {
+    job.builder.add(ev);
+  }
+}
+
+// ── A job's state, frozen at a quiet point (no fight open) and thawed on resume ──
+// Copies, not references: the job keeps mutating its session after the snapshot is taken.
+function _rbSnapshot(job) {
+  const s = job.session;
+  return {
+    bytePos: job.bytePos, lines: job.lines, lastMs: job.lastMs, tickMs: job.tickMs, zone: job.zone, visit: job.visit ? Object.assign({}, job.visit) : null,
+    counts: Object.assign({}, job.counts), players: [...job.players].slice(-3000), deathCands: job.deathCands.slice(-2000),
+    petLeaders: Object.assign({}, job.builder.petLeaders),
+    session: s ? Object.assign({}, s, {
+      members: [...s.members.values()].map(m => Object.assign({}, m, { ev: m.ev.slice() })), speakers: [...s.speakers],
+      zones: s.zones.map(z => Object.assign({}, z)), fights: s.fights.slice(), loot: s.loot.slice(),
+    }) : null,
+  };
+}
+function _rbRestore(job, snap) {
+  job.bytePos = snap.bytePos; job.lines = snap.lines; job.lastMs = snap.lastMs; job.tickMs = snap.tickMs;
+  job.zone = snap.zone || null; job.visit = snap.visit || null;
+  Object.assign(job.counts, snap.counts || {});
+  job.players = new Set(snap.players || []);
+  job.deathCands = Array.isArray(snap.deathCands) ? snap.deathCands : [];
+  Object.assign(job.builder.petLeaders, snap.petLeaders || {});
+  const s = snap.session;
+  if (s) {
+    job.session = Object.assign({}, s, { members: new Map((s.members || []).map(m => [m.name, m])), speakers: new Set(s.speakers || []) });
+  }
+}
+function _rbCursorFile(store) { return path.join(store.dir, 'rebuild.json'); }
+function _rbCursorRead(store) {
+  try {
+    const j = JSON.parse(fs.readFileSync(_rbCursorFile(store), 'utf8'));
+    if (j && j.v === 1 && j.files && typeof j.files === 'object') return j;
+  } catch { void 0; }
+  return { v: 1, files: {} };
+}
+function _rbCursorWrite(store, all) {
+  try {
+    fs.mkdirSync(store.dir, { recursive: true });
+    const tmp = _rbCursorFile(store) + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(all));
+    fs.renameSync(tmp, _rbCursorFile(store));
+  } catch { void 0; }
+}
+function _rbSleep(ms) { return new Promise((r) => setTimeout(r, Math.max(0, ms | 0))); }
+// The byte to start reading from so the first line at/after sinceMs is near: a bisection over the file, trusting
+// that a log is in time order. Starts from a spot that may be mid-line; the reader drops the partial line.
+async function _rbSeek(fh, size, sinceMs) {
+  const buf = Buffer.allocUnsafe(8192);
+  const tsAt = async (off) => {
+    const { bytesRead } = await fh.read(buf, 0, buf.length, off);
+    if (bytesRead <= 0) return NaN;
+    const s = buf.toString('latin1', 0, bytesRead);
+    const nl = s.indexOf('\n');
+    if (nl < 0) return NaN;
+    const m = TS_RX.exec(s.slice(nl + 1, nl + 48));
+    return m ? new Date(m[1]).getTime() : NaN;
+  };
+  let lo = 0, hi = size;
+  for (let i = 0; i < 60 && hi - lo > 256 * 1024; i++) {
+    const mid = lo + Math.floor((hi - lo) / 2);
+    const t = await tsAt(mid);
+    if (!Number.isFinite(t)) return lo;
+    if (t < sinceMs) lo = mid; else hi = mid;
+  }
+  return lo;
+}
+
+// ── The run: files one after another, status for the dashboard ──
+const _rb = { state: 'idle', running: false, stop: false, startedAt: 0, finishedAt: 0, sinceMs: 0, files: [], error: null, waiting: null,
+  waitedMs: 0, dkp: null, promise: null, candidates: null, linesDone: 0 };
+
+async function _rebuildFile(f, st, o) {
+  const store = o.store;
+  const sinceMs = o.sinceMs || 0;
+  let size = 0;
+  try { size = fs.statSync(f.path).size; } catch { st.state = 'error'; st.error = 'could not read the file'; return; }
+  st.total = size;
+  let fh;
+  try { fh = await fs.promises.open(f.path, 'r'); } catch { st.state = 'error'; st.error = 'could not open the file'; return; }
+  try {
+    const hb = Buffer.alloc(64);
+    const { bytesRead: hn } = await fh.read(hb, 0, 64, 0);
+    // A fingerprint of the file's first bytes, never the bytes: those can be any line, a tell included.
+    const head = crypto.createHash('sha1').update(hb.subarray(0, hn)).digest('hex');
+    const job = _rebuildNewJob({ path: f.path, character: f.character, sinceMs, store });
+    const all = o.cursors;
+    const cur = o.fresh ? null : all.files[f.path];
+    let pos = 0, align = false;
+    if (cur && cur.sinceMs === sinceMs && cur.head === head && cur.size <= size && cur.snapshot && cur.snapshot.bytePos <= size) {
+      _rbRestore(job, cur.snapshot);
+      pos = job.bytePos;
+      st.resumedFrom = pos;
+    } else if (sinceMs && size > 512 * 1024) {
+      pos = await _rbSeek(fh, size, sinceMs);
+      align = pos > 0;
+    }
+    job.bytePos = pos;
+    job.checkpoint = cur && st.resumedFrom != null ? cur.snapshot : null;
+    st.state = 'running';
+    const chunk = Buffer.allocUnsafe(o.chunkBytes);
+    let carry = null;
+    let workStart = Date.now();
+    let lastSave = 0;
+    const save = (snap, done) => {
+      if (!snap) { delete all.files[f.path]; }
+      else all.files[f.path] = { path: f.path, character: f.character, sinceMs, head, size, updatedAt: new Date().toISOString(), done: !!done, snapshot: snap };
+      _rbCursorWrite(store, all);
+      lastSave = Date.now();
+    };
+    while (!_rb.stop) {
+      if (o.pauseOnFight !== false && o.liveFight()) {
+        _rb.waiting = 'a live fight';
+        _rb.waitedMs += o.waitMs;
+        await _rbSleep(o.waitMs);
+        continue;
+      }
+      _rb.waiting = null;
+      const { bytesRead } = await fh.read(chunk, 0, chunk.length, pos);
+      if (bytesRead === 0) break;
+      pos += bytesRead;
+      const data = carry ? Buffer.concat([carry, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
+      const nl = data.lastIndexOf(10);
+      if (nl < 0) { carry = data.length > (1 << 20) ? null : Buffer.from(data); continue; }
+      let text = data.toString('utf8', 0, nl);
+      carry = nl + 1 < data.length ? Buffer.from(data.subarray(nl + 1)) : null;
+      if (align) { const first = text.indexOf('\n'); text = first < 0 ? '' : text.slice(first + 1); align = false; }
+      let from = 0;
+      while (from <= text.length) {
+        let to = text.indexOf('\n', from);
+        if (to < 0) to = text.length;
+        let line = text.slice(from, to);
+        if (line.charCodeAt(line.length - 1) === 13) line = line.slice(0, -1);
+        if (line) { try { _rbLine(job, line); } catch { void 0; } }
+        from = to + 1;
+      }
+      job.bytePos = pos - (carry ? carry.length : 0);
+      st.bytePos = job.bytePos; st.lines = job.lines;
+      st.fights = job.counts.fights; st.sessions = job.counts.sessions; st.deaths = job.counts.deaths; st.loot = job.counts.loot; st.zones = job.counts.zones;
+      if (job.builder.events.length === 0) job.checkpoint = _rbSnapshot(job);
+      if (Date.now() - lastSave > 1000) save(job.checkpoint, false);
+      if (Date.now() - workStart >= o.budgetMs) { await _rbSleep(o.restMs); workStart = Date.now(); }
+      else await new Promise((r) => setImmediate(r));
+    }
+    if (_rb.stop) {
+      // Paused: the cursor stays at the last quiet point, so no fight is cut in half and resuming re-reads a little.
+      save(job.checkpoint, false);
+      try { store.flush(); } catch { void 0; }
+      st.state = 'paused';
+      return;
+    }
+    // End of the file. A fight still open at EOF is closed for the records, but the cursor keeps the quiet point
+    // before it, so the next run re-reads that fight whole (same ids, so it replaces the partial one).
+    const quiet = job.builder.events.length === 0;
+    job.builder.flush();
+    _rbVisitClose(job, job.lastMs, true);
+    if (job.session) _rbSessionClose(job, job.lastMs, true);
+    _rbDeathsFlush(job, Infinity);
+    job.bytePos = pos - (carry ? carry.length : 0);
+    st.bytePos = job.bytePos; st.lines = job.lines;
+    st.fights = job.counts.fights; st.sessions = job.counts.sessions; st.deaths = job.counts.deaths; st.loot = job.counts.loot; st.zones = job.counts.zones;
+    save(quiet ? _rbSnapshot(job) : job.checkpoint, true);
+    try { store.flush(); } catch { void 0; }
+    st.state = 'done';
+  } catch (e) {
+    st.state = 'error';
+    st.error = String((e && e.message) || e).slice(0, 200);
+  } finally {
+    try { await fh.close(); } catch { void 0; }
+  }
+}
+async function _rebuildRun(o) {
+  try {
+    o.cursors = _rbCursorRead(o.store);
+    for (const st of _rb.files) {
+      if (_rb.stop) break;
+      if (st.state !== 'queued') continue;
+      await _rebuildFile(st.file, st, o);
+    }
+    _rb.dkp = _rebuildDkpMode();
+    const pass = _rebuildDkpPass(o.store, _rb.dkp);
+    _rb.dkp = Object.assign({}, _rb.dkp, { checked: pass.checked || 0, matched: pass.matched || 0 });
+    try { o.store.flush(); } catch { void 0; }
+  } catch (e) {
+    _rb.error = String((e && e.message) || e).slice(0, 200);
+  }
+  _rb.state = _rb.error ? 'error' : (_rb.stop ? 'paused' : 'done');
+  _rb.running = false;
+  _rb.finishedAt = Date.now();
+  _rb.waiting = null;
+}
+// files: [{ path, character, sizeBytes?, skipped? }]. Returns the promise of the whole run (the route does not wait on it).
+function _rebuildStart(o) {
+  if (_rb.running) return null;
+  const store = o.store || _localTrackStore();
+  Object.assign(_rb, { state: 'running', running: true, stop: false, startedAt: Date.now(), finishedAt: 0, sinceMs: o.sinceMs || 0, error: null,
+    waiting: null, waitedMs: 0, dkp: _rebuildDkpMode(), files: (o.files || []).map(f => ({
+      file: f, path: f.path, character: f.character, state: f.skipped ? 'skipped' : 'queued', reason: f.skipped || null,
+      bytePos: 0, total: f.sizeBytes || 0, lines: 0, fights: 0, sessions: 0, deaths: 0, loot: 0, zones: 0 })) });
+  const run = {
+    store, sinceMs: o.sinceMs || 0, fresh: !!o.fresh, pauseOnFight: o.pauseOnFight,
+    chunkBytes: o.chunkBytes > 0 ? o.chunkBytes : REBUILD_CHUNK_BYTES,
+    budgetMs: Number.isFinite(o.budgetMs) ? o.budgetMs : REBUILD_BUDGET_MS,
+    restMs: Number.isFinite(o.restMs) ? o.restMs : REBUILD_REST_MS,
+    liveFight: typeof o.liveFight === 'function' ? o.liveFight : _liveFightActive,
+    waitMs: o.waitMs > 0 ? o.waitMs : 1500,
+  };
+  _rb.promise = _rebuildRun(run);
+  return _rb.promise;
+}
+function _rebuildStop() { if (_rb.running) { _rb.stop = true; return true; } return false; }
+function _rebuildStatus() {
+  const files = _rb.files.map(f => ({
+    path: f.path, character: f.character, state: f.state, reason: f.reason || undefined, error: f.error || undefined,
+    bytePos: f.bytePos, total: f.total, pct: f.total ? Math.min(100, Math.floor(f.bytePos / f.total * 100)) : (f.state === 'done' ? 100 : 0),
+    lines: f.lines, fights: f.fights, sessions: f.sessions, deaths: f.deaths, loot: f.loot, zones: f.zones,
+    resumedFrom: f.resumedFrom != null ? f.resumedFrom : undefined,
+  }));
+  const sum = (k) => files.reduce((a, f) => a + (f[k] || 0), 0);
+  const lines = sum('lines');
+  const elapsed = (( _rb.finishedAt || Date.now()) - _rb.startedAt - _rb.waitedMs) / 1000;
+  const cur = files.find(f => f.state === 'running') || null;
+  let stored = {};
+  try { const st = _localTrackStore(); for (const k of ['fight', 'raid_session', 'death', 'loot', 'zone_visit']) stored[k] = st.cursor(k).count; } catch { stored = {}; }
+  return {
+    ok: true, mode: 'local', uploads: 0, state: _rb.state, running: _rb.running,
+    since: _rb.sinceMs ? new Date(_rb.sinceMs).toISOString() : null,
+    startedAt: _rb.startedAt || null, finishedAt: _rb.finishedAt || null, waiting: _rb.waiting, error: _rb.error,
+    current: cur ? { path: cur.path, character: cur.character, pct: cur.pct } : null,
+    totals: { lines, fights: sum('fights'), sessions: sum('sessions'), deaths: sum('deaths'), loot: sum('loot'), zones: sum('zones') },
+    linesPerSec: _rb.startedAt && elapsed > 0.2 ? Math.round(lines / elapsed) : 0,
+    dkp: _rb.dkp, stored, files,
+  };
+}
+// Every EQ log this PC knows: the Logsync tab's list (watched logs, alts, imported backups) plus the watched logs.
+function _rebuildCandidates() {
+  if (_rb.candidates) return _rb.candidates();
+  const out = new Map();
+  try {
+    if (!_optinState.scanned) _scanOptInFiles();
+    for (const f of _optinState.files) out.set(f.path, { path: f.path, character: f.character, sizeBytes: f.sizeBytes || 0 });
+    for (const f of _optinState.ignored) if (!out.has(f.path)) out.set(f.path, { path: f.path, character: f.character, sizeBytes: f.sizeBytes || 0, ignored: true });
+  } catch { void 0; }
+  for (const w of (stats.watchedLogs || [])) {
+    if (!w || !w.logPath || out.has(w.logPath)) continue;
+    let sizeBytes = 0;
+    try { sizeBytes = fs.statSync(w.logPath).size; } catch { void 0; }
+    out.set(w.logPath, { path: w.logPath, character: w.character, sizeBytes });
+  }
+  return [...out.values()];
+}
+// A character the owner keeps out: this PC's own recorder skips it, and so does this.
+function _rebuildExcluded(character) {
+  const lc = String(character || '').toLowerCase();
+  if (!lc) return true;
+  const listed = String(process.env.WOLFPACK_EXCLUDED_CHARS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (listed.indexOf(lc) >= 0) return true;
+  const p = stats.characterPrefs && stats.characterPrefs[lc];
+  if (p && p.exclude_from_stats) return true;
+  const m = _optinState.characterModes && _optinState.characterModes[lc];
+  return !!(m && modeStopsLog(m.mode));
+}
+function _rebuildStartRequest(body) {
+  if (_rb.running) return { status: 409, body: { error: 'a rebuild is already running' } };
+  if (!_isUploaderInstance) return { status: 409, body: { error: 'another Mimic or Parser on this PC owns the local folder' } };
+  const b = body && typeof body === 'object' ? body : {};
+  let sinceMs = 0;
+  if (b.since != null && b.since !== '') {
+    sinceMs = Date.parse(String(b.since));
+    if (!Number.isFinite(sinceMs) || sinceMs < 0 || sinceMs > Date.now() + 86400_000) return { status: 400, body: { error: 'since must be a date such as 2026-01-31' } };
+  }
+  const cand = _rebuildCandidates();
+  let files;
+  if (b.file != null && b.file !== '') {
+    const hit = cand.find(c => c.path === String(b.file));
+    if (!hit) return { status: 404, body: { error: 'that is not one of your EverQuest log files' } };
+    files = [hit];
+  } else {
+    files = cand.filter(c => !c.ignored);
+  }
+  if (!files.length) return { status: 400, body: { error: 'no EverQuest log files found' } };
+  files = files.map(c => (_rebuildExcluded(c.character) ? Object.assign({}, c, { skipped: 'kept out of stats' }) : c));
+  if (files.every(c => c.skipped)) return { status: 400, body: { error: 'every log is for a character you keep out of stats' } };
+  _rebuildStart({ files, sinceMs, fresh: b.fresh === true });
+  return { status: 202, body: { ok: true, started: true, files: files.length, since: sinceMs ? new Date(sinceMs).toISOString() : null, dkp: _rb.dkp } };
+}
+
+// ── Raids, as the dashboard and the local site read them ──
+// Sessions from different characters on this PC that overlap (or sit within the gap of each other) are ONE raid.
+function _rebuildRaids(store, o = {}) {
+  const limit = Math.min(500, Math.max(1, Math.trunc(Number(o.limit)) || 100));
+  const since = Number.isFinite(o.sinceMs) ? o.sinceMs : undefined;
+  const recs = store.scan('raid_session', since ? { since } : {}).map(e => e.rec).filter(r => r && Number.isFinite(r.start) && Number.isFinite(r.end));
+  recs.sort((a, b) => a.start - b.start);
+  const groups = [];
+  for (const r of recs) {
+    const g = groups[groups.length - 1];
+    if (g && r.start <= g.end + REBUILD_GAP_MS) { g.list.push(r); if (r.end > g.end) g.end = r.end; }
+    else groups.push({ start: r.start, end: r.end, list: [r] });
+  }
+  const raids = groups.map(g => {
+    const members = new Map();
+    const fights = new Map();
+    const deaths = new Map();
+    const loot = new Map();
+    const zones = [];
+    let lootCount = 0, open = false, dkpMatch = null, dkpNight = null;
+    const characters = [];
+    for (const r of g.list) {
+      if (characters.indexOf(r.character) < 0) characters.push(r.character);
+      if (r.open) open = true;
+      if (r.dkpMatch) { dkpMatch = r.dkpMatch; dkpNight = r.dkpNight || dkpNight; }
+      for (const m of r.members || []) {
+        const p = members.get(m.name);
+        if (!p) members.set(m.name, Object.assign({}, m));
+        else {
+          p.first = Math.min(p.first, m.first); p.last = Math.max(p.last, m.last);
+          p.ev = [...new Set([...(p.ev || []), ...(m.ev || [])])];
+          for (const k of ['cls', 'level', 'guild']) if (!p[k] && m[k]) p[k] = m[k];
+        }
+      }
+      for (const f of r.fights || []) { const k = String(f.boss_name).toLowerCase() + '|' + Math.round(f.at / 90_000); const p = fights.get(k); if (!p || f.dmg > p.dmg) fights.set(k, f); }
+      for (const d of r.deaths || []) deaths.set(d.name + '|' + d.at, d);
+      for (const z of r.zones || []) if (zones.indexOf(z.zone) < 0) zones.push(z.zone);
+      lootCount += r.lootCount || 0;
+      for (const l of r.loot || []) loot.set(l.item, (loot.get(l.item) || 0) + l.count);
+    }
+    const list = [...fights.values()].sort((a, b) => a.at - b.at);
+    const main = g.list.slice().sort((a, b) => (b.end - b.start) - (a.end - a.start))[0];
+    return {
+      id: g.list[0].id, start: g.start, end: g.end, open, nightKey: g.list[0].nightKey, characters,
+      zone: main && main.zone, zones, guild: main && main.guild || null,
+      members: members.size, who: [...members.values()].sort((a, b) => (a.name < b.name ? -1 : 1)).slice(0, 80)
+        .map(m => ({ name: m.name, cls: m.cls || null, level: m.level || null, ev: m.ev })),
+      bosses: list.filter(f => f.boss || f.named).map(f => ({ name: f.boss_name, at: f.at, killed: f.killed, dmg: f.dmg, players: f.n, zone: f.zone || null })),
+      fights: list.length, deaths: deaths.size, lootCount,
+      loot: [...loot].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([item, count]) => ({ item, count })),
+      dkpMatch, dkpNight, source: 'rebuild',
+    };
+  });
+  raids.sort((a, b) => b.start - a.start);
+  return { ok: true, total: raids.length, raids: raids.slice(0, limit), dkp: _rb.dkp || _rebuildDkpMode(), generatedAt: Date.now() };
+}
+
+// ── Routes (same origin as the dashboard, behind the same local guard; nothing here leaves the PC) ──
+//   POST /api/local/backfill/start   { file?, since?, fresh? } -> 202 { ok, started, files, since, dkp }
+//        file = one of the EverQuest logs this PC knows (else every one); since = a date (else the whole file);
+//        fresh = ignore the saved cursor. 409 while a run is on.
+//   POST /api/local/backfill/stop    -> { ok, stopping }       (the cursor stays; Start again resumes)
+//   GET  /api/local/backfill/status  -> the run's progress, per file, what is stored, and the DKP step
+//   GET  /api/local/raids[?limit=&since=<date>] -> rebuilt raids, newest first
+// Returns a promise of true when it answered.
+async function _localBackfillRoute(req, res) {
+  const url = req && req.url;
+  if (!url || (url.indexOf('/api/local/backfill/') !== 0 && url.indexOf('/api/local/raids') !== 0)) return false;
+  let u;
+  try { u = new URL(url, 'http://x'); } catch { return false; }
+  const p = u.pathname;
+  const GET = { '/api/local/backfill/status': 1, '/api/local/raids': 1 };
+  const POST = { '/api/local/backfill/start': 1, '/api/local/backfill/stop': 1 };
+  if (!GET[p] && !POST[p]) return false;
+  const send = (status, body, extra) => {
+    res.writeHead(status, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, extra || {}));
+    res.end(JSON.stringify(body));
+    return true;
+  };
+  if (GET[p] && req.method !== 'GET') return send(405, { error: 'method not allowed' }, { Allow: 'GET' });
+  if (POST[p] && req.method !== 'POST') return send(405, { error: 'method not allowed' }, { Allow: 'POST' });
+  try {
+    if (p === '/api/local/backfill/status') return send(200, _rebuildStatus());
+    if (p === '/api/local/raids') {
+      const since = Date.parse(u.searchParams.get('since') || '');
+      return send(200, _rebuildRaids(_localTrackStore(), { limit: u.searchParams.get('limit'), sinceMs: Number.isFinite(since) ? since : undefined }));
+    }
+    if (p === '/api/local/backfill/stop') return send(200, { ok: true, stopping: _rebuildStop() });
+    let body = {};
+    const raw = await _readBody(req, 8 * 1024);
+    if (raw && raw.trim()) {
+      try { body = JSON.parse(raw); } catch { return send(400, { error: 'invalid json' }); }
+    }
+    const out = _rebuildStartRequest(body);
+    return send(out.status, out.body);
+  } catch {
+    return send(500, { error: 'rebuild unavailable' });
+  }
+}
+function _rebuildSetCandidatesForTest(fn) { _rb.candidates = fn; }
+function _rebuildResetForTest() { Object.assign(_rb, { state: 'idle', running: false, stop: false, startedAt: 0, finishedAt: 0, sinceMs: 0, files: [], error: null, waiting: null, waitedMs: 0, dkp: null, promise: null, candidates: null }); }
+
 // Export internals for tests; only run main() when invoked directly as CLI.
 module.exports = {
+  // Rebuild from my logs (2026-10-21): see the block above module.exports.
+  _rebuildStart, _rebuildStop, _rebuildStatus, _rebuildRaids, _rebuildScheduleMatch, _rebuildDkpPass, _rebuildDkpMode, _localBackfillRoute,
+  _rebuildStartRequest, _rebuildSetCandidatesForTest, _rebuildResetForTest, _rebuildWait: () => _rb.promise,
+  _uploadQueueLenForTest: () => _uploadQueue.length,
   AGENT_VERSION,
   // Local store + own position recorder (2026-10-21): see the block above module.exports.
   _localStore, _localStoreOpen, _localTrackFrame, _localTrackMinuteRow, _localTrackNightKey, _localTrackTick, _localTrackClose, _localTrackPush,

@@ -480,6 +480,7 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
     <button id="wpLocalInv" type="button" onclick="wpOpenLocalSite('inventory')" title="Every item across your characters, from the inventory files on this PC (opens in its own window). Nothing leaves the PC.">🎒 Inventory</button>
     <button type="button" disabled title="Coming soon: your own parses, built from your own logs">📈 My parses<span class="wp-soon">soon</span></button>
     <button id="wpLocalReplay" type="button" onclick="wpOpenLocalSite('replay')" title="Play back where you and your raid stood, from the recording Mimic keeps on this PC (opens in its own window). Nothing leaves the PC.">🎬 My replay</button>
+    <button id="wpLocalRebuild" type="button" onclick="wpRebuildOpen()" title="Build your fights, raids, deaths and loot from the log files on this PC. Nothing is uploaded.">🔁 Rebuild from my logs</button>
   </div>
   <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
        2026-09-23: "We're running out of horizontal real estate"). They went up to
@@ -4429,6 +4430,157 @@ function renderNetMeter(s) {
   var sec = document.getElementById('diag');
   if (sec && sec.classList.contains('active') && !_wpNet.busy && Date.now() - _wpNet.at >= 5000) _wpNetFetch();
   wpNetRepaint();
+}
+
+// ── 🔁 Rebuild from my logs (Logsync tab; the rail's "On this PC" group opens it) ───────────────────────
+// The guild lead, 2026-10-21: people bring their big log files, and the backfill should build out their local
+// parses and work out which raids they were in. Everything here is answered by the agent from THIS PC's files
+// (POST /api/local/backfill/start, /stop, GET /api/local/backfill/status, /api/local/raids) and nothing is
+// uploaded; uploading old logs stays the separate opt-in backfill below. The card paints into its own #wpRebuild
+// placeholder (renderOptin emits it) in three children, so progress ticking does not rebuild the controls.
+var _wpRb = { status: null, raids: null, at: 0, raidsAt: 0, busy: false, file: '', since: '', note: '', files: [], lastState: '' };
+function wpRebuildSetFiles(o) {
+  var out = [];
+  var list = (o && o.files) || [];
+  for (var i = 0; i < list.length; i++) out.push({ path: list[i].path, character: list[i].character, sizeBytes: list[i].sizeBytes || 0 });
+  _wpRb.files = out;
+}
+function wpRbNum(n) { return Number(n || 0).toLocaleString(); }
+function wpRbSize(b) { return !b ? '0' : b < 1048576 ? Math.round(b / 1024) + 'KB' : b < 1073741824 ? (b / 1048576).toFixed(1) + 'MB' : (b / 1073741824).toFixed(2) + 'GB'; }
+function wpRbCtlHtml() {
+  var st = _wpRb.status;
+  var running = !!(st && st.running);
+  var dis = running ? ' disabled' : '';
+  var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">';
+  h += '<label class="dim" style="font-size:11px">Log <select id="wpRbFile"' + dis + ' onchange="_wpRb.file=this.value">';
+  h += '<option value="">All my logs (' + _wpRb.files.length + ')</option>';
+  for (var i = 0; i < _wpRb.files.length; i++) {
+    var f = _wpRb.files[i];
+    h += '<option value="' + esc(f.path) + '"' + (f.path === _wpRb.file ? ' selected' : '') + '>' + esc(f.character) + ' — ' + esc(f.path.split(/[/\\]/).pop()) + ' (' + wpRbSize(f.sizeBytes) + ')</option>';
+  }
+  h += '</select></label>';
+  h += '<label class="dim" style="font-size:11px">From <input type="date" id="wpRbSince" value="' + esc(_wpRb.since) + '"' + dis + ' onchange="_wpRb.since=this.value"></label>';
+  if (running) h += '<button type="button" class="wp-btn" onclick="wpRebuildStop()">⏸ Pause</button>';
+  else h += '<button type="button" class="wp-btn" style="background:#1a7f37;border-color:#1a7f37;color:#fff" onclick="wpRebuildStart(false)">▶ Rebuild</button>'
+         + ' <button type="button" class="wp-btn" onclick="wpRebuildStart(true)" title="Ignore where it stopped last time and read the log again from the start date">↻ Start over</button>';
+  h += '</div>';
+  if (_wpRb.note) h += '<div style="color:var(--orange);font-size:12px;margin-bottom:6px">' + esc(_wpRb.note) + '</div>';
+  return h;
+}
+function wpRbProgHtml() {
+  var st = _wpRb.status;
+  if (!st) return '<div class="dim">Loading…</div>';
+  if (st.error === true && !st.state) return '<div class="dim">The agent did not answer.</div>';
+  if (st.state === 'idle') return '<div class="dim">Nothing rebuilt yet. Pick a log and a start date, or leave both alone to rebuild every log you have.</div>';
+  var t = st.totals || {};
+  var files = st.files || [];
+  var tot = 0, done = 0;
+  for (var i = 0; i < files.length; i++) { tot += files[i].total || 0; done += files[i].state === 'done' ? (files[i].total || 0) : (files[i].bytePos || 0); }
+  var pct = tot ? Math.min(100, Math.floor(done / tot * 100)) : (st.state === 'done' ? 100 : 0);
+  var label;
+  if (st.state === 'running') label = st.waiting ? '⏳ Waiting for ' + esc(st.waiting) + ' to end, then carrying on' : '⏳ Reading ' + esc(st.current ? st.current.character : '') + '… ' + pct + '%';
+  else if (st.state === 'paused') label = '⏸ Paused at ' + pct + ' percent. Rebuild picks up where it stopped.';
+  else if (st.state === 'error') label = '⚠ Stopped: ' + esc(st.error || 'an error');
+  else label = '✓ Done';
+  var h = '<div style="font-size:12px"><b>' + label + '</b></div>';
+  h += '<div style="height:6px;background:var(--bg);border:1px solid var(--border);border-radius:3px;margin:6px 0;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:var(--green)"></div></div>';
+  h += '<div class="dim" style="font-size:11px">' + wpRbNum(t.lines) + ' lines · ' + wpRbNum(t.fights) + ' fights · ' + wpRbNum(t.sessions) + ' raids · '
+     + wpRbNum(t.deaths) + ' deaths · ' + wpRbNum(t.loot) + ' loot · ' + wpRbNum(t.zones) + ' zones'
+     + (st.state === 'running' && st.linesPerSec ? ' · ' + wpRbNum(st.linesPerSec) + ' lines a second' : '') + '</div>';
+  if (files.length > 1) {
+    var rows = files.map(function (f) {
+      return '<tr><td>' + esc(f.character) + '</td><td class="dim">' + esc(f.path.split(/[/\\]/).pop()) + '</td><td>'
+        + (f.state === 'done' ? '✓' : f.state === 'skipped' ? 'kept out' : f.state === 'queued' ? 'waiting' : f.state === 'error' ? '⚠ ' + esc(f.error || '') : f.pct + '%')
+        + '</td><td class="num">' + wpRbNum(f.fights) + ' fights</td></tr>';
+    });
+    h += '<table style="margin-top:6px">' + wpMoreList('rebuild|files', rows, { show: 4, cols: 4, noun: 'more logs' }) + '</table>';
+  }
+  var d = st.dkp;
+  if (d) {
+    h += '<div class="dim" style="font-size:11px;margin-top:6px">' + (d.mode === 'schedule'
+      ? '📅 Raid nights: ' + wpRbNum(d.matched) + ' of ' + wpRbNum(d.checked) + ' raids fall in the guild raid window (Sun, Wed, Thu 8 pm to midnight Eastern).'
+      : 'Raid-night matching is off: it needs a linked Wolf Pack account.') + '</div>';
+  }
+  return h;
+}
+function wpRbRaidsHtml() {
+  var r = _wpRb.raids;
+  if (!r || !r.raids || !r.raids.length) return '';
+  var rows = r.raids.map(function (x) {
+    var when = new Date(x.start);
+    var bosses = (x.bosses || []).map(function (b) { return esc(b.name) + (b.killed ? ' ✓' : ' ✗'); }).join(', ') || '<span class="dim">no boss fights</span>';
+    var names = (x.who || []).slice(0, 30).map(function (m) { return m.name; }).join(', ');
+    return '<tr><td>' + esc(when.toLocaleDateString()) + ' ' + esc(when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) + (x.open ? ' <span class="dim">(open)</span>' : '') + '</td>'
+      + '<td>' + esc(x.zone || '?') + '</td>'
+      + '<td title="' + esc(names) + '">' + wpRbNum(x.members) + ' raiders</td>'
+      + '<td>' + bosses + '</td>'
+      + '<td class="num">' + wpRbNum(x.deaths) + ' deaths · ' + wpRbNum(x.lootCount) + ' loot</td>'
+      + '<td>' + (x.dkpMatch === 'schedule' ? '<span title="Overlaps the guild raid window (Sun, Wed, Thu 8 pm to midnight Eastern)">📅 raid night</span>' : '') + '</td></tr>';
+  });
+  return '<div style="font-size:12px;margin-top:10px"><b>Raids rebuilt from your logs (' + wpRbNum(r.total) + ')</b></div>'
+    + '<table><tr><th>When</th><th>Where</th><th>Who</th><th>Bosses</th><th></th><th></th></tr>'
+    + wpMoreList('rebuild|raids', rows, { show: 6, cols: 6, noun: 'older raids' }) + '</table>';
+}
+function wpRbRepaint() {
+  var el = document.getElementById('wpRebuild');
+  if (!el) return;
+  if (!document.getElementById('wpRbCtl')) {
+    el.innerHTML = '<h2>🔁 Rebuild from my logs</h2>'
+      + '<div class="subtle">Build your fights, raids, deaths, loot and zones from the log files on this PC. It runs here, in the background, and waits while a fight is on. '
+      + 'Nothing is uploaded, and officer chat, tells and private channels are never read into it. Uploading old logs is the separate backfill below.</div>'
+      + '<div id="wpRbCtl"></div><div id="wpRbProg"></div><div id="wpRbRaids"></div>';
+    el._wpLastHtml = null;
+  }
+  morphInto(document.getElementById('wpRbCtl'), wpRbCtlHtml());
+  morphInto(document.getElementById('wpRbProg'), wpRbProgHtml());
+  morphInto(document.getElementById('wpRbRaids'), wpRbRaidsHtml());
+}
+function wpRbPoll(force) {
+  if (_wpRb.busy) return;
+  var sec = document.getElementById('optin');
+  if (!force && !(sec && sec.classList.contains('active'))) return;
+  var running = !!(_wpRb.status && _wpRb.status.running);
+  if (!force && Date.now() - _wpRb.at < (running ? 1900 : 10000)) return;
+  _wpRb.busy = true; _wpRb.at = Date.now();
+  var asJson = function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); };
+  fetch('/api/local/backfill/status', { cache: 'no-store' }).then(asJson).then(function (j) {
+    var changed = _wpRb.lastState !== j.state;
+    _wpRb.lastState = j.state;
+    _wpRb.status = j;
+    if (!_wpRb.raids || changed || (j.running && Date.now() - _wpRb.raidsAt > 8000)) {
+      _wpRb.raidsAt = Date.now();
+      return fetch('/api/local/raids?limit=200', { cache: 'no-store' }).then(asJson).then(function (rs) { _wpRb.raids = rs; });
+    }
+  }).catch(function () { _wpRb.status = _wpRb.status || { error: true }; }).then(function () { _wpRb.busy = false; wpRbRepaint(); });
+}
+function renderRebuildCard(s) { void s; wpRbPoll(false); wpRbRepaint(); }
+function wpRebuildStart(fresh) {
+  var body = { fresh: !!fresh };
+  if (_wpRb.file) body.file = _wpRb.file;
+  if (_wpRb.since) body.since = _wpRb.since;
+  _wpRb.note = '';
+  fetch('/api/local/backfill/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (x) { if (!x.ok) _wpRb.note = (x.j && x.j.error) || 'Could not start.'; wpRbPoll(true); },
+          function () { _wpRb.note = 'The agent did not answer.'; wpRbRepaint(); });
+}
+function wpRebuildStop() {
+  fetch('/api/local/backfill/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    .then(function () { wpRbPoll(true); }, function () { wpRbPoll(true); });
+}
+// The rail's "Rebuild from my logs": the Logsync tab, scrolled to the card.
+function wpRebuildOpen() {
+  var tab = document.querySelector('.nav button[data-tab="optin"]');
+  if (tab && !tab.classList.contains('active')) tab.click();
+  var go = function (n) {
+    var card = document.getElementById('wpRebuild');
+    if (!card) { if (n < 12) setTimeout(function () { go(n + 1); }, 200); return; }
+    wpRbPoll(true);
+    var bar = document.getElementById('wpTopBar');
+    var pad = (bar ? bar.getBoundingClientRect().height : 0) + 10;
+    window.scrollTo({ top: Math.max(0, card.getBoundingClientRect().top + window.scrollY - pad), behavior: 'smooth' });
+  };
+  go(0);
 }
 
 // ── 📈 My parses ────────────────────────────────────────────────────────────
@@ -8620,6 +8772,11 @@ function renderOptin(o) {
          '</ol></div>';
   }
 
+  // 🔁 Rebuild from my logs (the guild lead, 2026-10-21): its own placeholder, filled by renderRebuildCard, so the
+  // progress it shows does not rewrite this whole tab every poll.
+  wpRebuildSetFiles(o);
+  h += '<div id="wpRebuild" class="card wide"></div>';
+
   // Imported log backups (the guild lead, 2026-09-13). Inside Mimic: native pickers plus
   // a drop zone that reads real paths through the bridge. A browser tab has
   // neither, so it only lists what is already imported.
@@ -8788,6 +8945,7 @@ function renderOptin(o) {
   h += '</table></div>';
   const root = document.getElementById('optin');
   if (!setSectionHTML('optin', h)) return;   // morph in place; skip if unchanged
+  try { wpRbRepaint(); } catch (e) { void e; }   // the section was rewritten, so the Rebuild card's placeholder is empty again
 
   // Wire interactions — idempotent under morph (nodes persist across polls).
   root.querySelectorAll('input[type=checkbox][data-path]').forEach(cb => {
@@ -8984,6 +9142,7 @@ async function refresh() {
                      // below, same rule as renderDash → renderMeCard.
                      ['diag', renderDiag],
                      ['netmeter', renderNetMeter],
+                     ['rebuild', renderRebuildCard],
                      ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['mutedtimers', renderMutedTimers], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
