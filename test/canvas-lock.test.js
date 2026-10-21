@@ -107,6 +107,7 @@ function makeWorld(specs, opts = {}) {
   const doc = { addEventListener: (t, f) => { handlers[t] = f; }, getElementById: () => gbox, querySelector: () => ({ addEventListener() {} }) };
   const sel = Object.assign({}, opts.sel || {});
   const block = slice('  function isLocked(q)', 'return members.every(function (m) { return !!m.lock; });\n  }\n')
+    + '\n' + slice('  function growsUp(p) {', '\n') + '\n' + slice('  var TALL_GRAB = 120;', '\n') + '\n' + slice('  function yBounds(rTop, rH, h, up) {')
     + '\n' + slice('  var SNAP = 8;', "document.addEventListener('mouseup', endDrag);\n");
   const env = new Function('window', 'document', '_layout', '_els', '_sel', 'notes', 'saves', 'screenList', 'M', 'shield',
     'var _widen = {}; var _fitAdd = {}; var _edit = true; var _one = null; function isEd(id) { return _edit || (_one != null && _one === id); }\n'

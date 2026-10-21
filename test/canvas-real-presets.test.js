@@ -461,6 +461,7 @@ describe('the HUD builder, docked: it widens the panel, never the window', () =>
       new Function('_widen', 'sizeFrame', 'e', 'p', 'window',
         'var num = function (v, lo, hi, d) { v = Number(v); return isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d; };\n'
         + sliceBlock(canvas, '  var _screens = null, _conv', '  // ── Routing: which panel shows a countdown') + '\n'   // place() keeps a panel on its screen: with one, the window
+        + sliceBlock(canvas, '  function growsUp(p) {', '\n') + '\n'
         + sliceBlock(canvas, '  function place(e, p) {', '\n  }\n') + '\nplace(e, p);')(wd ? { o1: wd } : {}, () => {},
         { root: { style, classList: { toggle() {} } } }, p, { innerWidth: 1920, innerHeight: 1080 });
       return [style.left, style.width];
