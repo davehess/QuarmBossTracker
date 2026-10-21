@@ -109,7 +109,7 @@ function makeWorld(specs, opts = {}) {
   const block = slice('  function isLocked(q)', 'return members.every(function (m) { return !!m.lock; });\n  }\n')
     + '\n' + slice('  var SNAP = 8;', "document.addEventListener('mouseup', endDrag);\n");
   const env = new Function('window', 'document', '_layout', '_els', '_sel', 'notes', 'saves', 'screenList', 'M', 'shield',
-    'var _widen = {}; var _fitAdd = {}; var _edit = true;\n'
+    'var _widen = {}; var _fitAdd = {}; var _edit = true; var _one = null; function isEd(id) { return _edit || (_one != null && _one === id); }\n'
     + 'function panelById(id) { return _layout.panels.filter(function (q) { return q.id === id; })[0] || null; }\n'
     + 'function selIds() { return Object.keys(_sel).filter(function (id) { return panelById(id); }); }\n'
     + 'function place() {} function sizeFrame() {} function closeMenu() {} function openMenu() {} function render() {}\n'
@@ -407,9 +407,9 @@ describe('the buttons: ⚙ for one item, the selection bar for all selected', ()
   it('a locked item wears a 🔒 badge on its arranging tab, and its ◢ looks off', () => {
     expect(c).toMatch(/e\.root\.classList\.toggle\('plock', isLocked\(p\)\);/);
     const css = stripCss(canvas);
-    expect(css).toMatch(/body\.edit \.panel\.plock \.tab \.lkb\{display:inline\}/);
+    expect(css).toMatch(/:is\(body\.edit \.panel, \.panel\.one\)\.plock \.tab \.lkb\{display:inline\}/);
     expect(css).toMatch(/\.tab \.lkb\{display:none\}/);
-    expect(css).toMatch(/body\.edit \.panel\.plock \.grip\{opacity:0\.35;cursor:not-allowed\}/);
+    expect(css).toMatch(/:is\(body\.edit \.panel, \.panel\.one\)\.plock \.grip\{opacity:0\.35;cursor:not-allowed\}/);
     expect(canvas).toContain('<span class="lkb"');
   });
 });

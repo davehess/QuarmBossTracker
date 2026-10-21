@@ -261,7 +261,7 @@ describe('on the screen (applyWhen)', () => {
     for (const p of panels) if (p.off) els[p.id].root.set.add('off');       // render() puts it there
     const w = { me: data.me || null, state: data.state || null, edit: false, now: NOW };
     const f = new Function('liveData', 'esc', '_layout', '_els', 'Date_now',
-      'var Date = { now: Date_now };\nvar _edit = false;\n' + ENGINE + '\n' + DOM
+      'var Date = { now: Date_now };\nvar _edit = false; var _one = null; function isEd(id) { return _edit || (_one != null && _one === id); }\n' + ENGINE + '\n' + DOM
       + '\nreturn { applyWhen, whenMenuHtml, setEdit: function (v) { _edit = v; } };');
     const api = f((k) => w[k], (s) => String(s), { panels }, els, () => w.now);
     return { els, w, api, hidden: (id) => els[id].root.set.has('wh'), badge: (id) => els[id].whb.textContent };
@@ -459,7 +459,7 @@ describe('hidden the way off hides, without touching off', () => {
     expect(css).toMatch(/\.panel\.off\{visibility:hidden\}/);
     expect(css).toMatch(/\.panel\.wh\{visibility:hidden\}/);
     expect(css).not.toMatch(/body\.edit \.panel\.wh/);
-    expect(css).toMatch(/body\.edit \.whb\.on\{display:block/);
+    expect(css).toMatch(/:is\(body\.edit, \.panel\.one\) \.whb\.on\{display:block/);
   });
   it('applyWhen never writes off', () => {
     const dom = sliceBlock(canvas, '  function applyWhen() {', "e.whb.classList.toggle('on', !!badge);");

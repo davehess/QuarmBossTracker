@@ -221,12 +221,12 @@ describe('Mimic wiring (the overlay checklist)', () => {
     const c = stripJs(canvas);
     expect(c).toMatch(/mv\.className = 'mvbtn';\s*mv\.textContent = '✥';\s*mv\.setAttribute\('data-wp-interact', ''\);/);
     expect(c).toMatch(/if \(ev\.target === mv\) \{ startDrag\(ev, p\.id, 'move', true\); return; \}/);
-    expect(c).toMatch(/if \(\(!_edit && !anyTime\) \|\| ev\.button !== 0\) return;/);
-    expect(c).toMatch(/if \(_edit\) e\.root\.setAttribute\('data-wp-interact', ''\); else e\.root\.removeAttribute\('data-wp-interact'\);/);
+    expect(c).toMatch(/if \(\(!isEd\(id\) && !anyTime\) \|\| ev\.button !== 0\) return;/);
+    expect(c).toMatch(/if \(isEd\(p\.id\)\) e\.root\.setAttribute\('data-wp-interact', ''\); else e\.root\.removeAttribute\('data-wp-interact'\);/);
     expect(c).toMatch(/\.mvbtn\{position:absolute;/);
     expect(c).toContain('.tab,.grip{display:none}');
     expect(c).toContain('body.edit .mvbtn{display:none}');
-    expect(c).toMatch(/if \(_edit \|\| ev\.target === mv\) openMenu\(p\.id, ev\.target === mv \? mv : root\);/);
+    expect(c).toMatch(/if \(isEd\(p\.id\) \|\| ev\.target === mv\) openMenu\(p\.id, ev\.target === mv \? mv : root\);/);
     expect(c).toMatch(/menuEl\.addEventListener\('mouseleave', function \(\) \{ if \(!_edit\) closeMenu\(\); \}\);/);
   });
   it('the canvas page counts as an overlay for the hover handshake', () => {
@@ -260,9 +260,9 @@ describe('🧪 test rows, and a settings view that stays on screen', () => {
 
   it('the button turns one panel\'s samples on, locked or not, for 30 seconds; a callouts panel shows one callout', () => {
     const c = stripJs(canvas);
-    expect(c).toContain("if (w && typeof w.wpPartSample === 'function') w.wpPartSample(sampleOn(p, _edit, _isTesting(p.id)));");
+    expect(c).toContain("if (w && typeof w.wpPartSample === 'function') w.wpPartSample(sampleOn(p, isEd(p.id), _isTesting(p.id)));");
     expect(c).toContain('var TEST_MS = 30000;');
-    expect(c).toMatch(/setTesting\(p\.id, toggleSample\(p, _edit, _isTesting\(p\.id\)\)\);/);
+    expect(c).toMatch(/setTesting\(p\.id, toggleSample\(p, isEd\(p\.id\), _isTesting\(p\.id\)\)\);/);
     expect(c).toMatch(/cw\.wpPartFlash\('TEST — Death Touch on the main tank'\)/);
     expect(c).toContain("window.wpCanvasPanelNames = function (id) { var p = panelById(id); return p ? p.names.slice() : []; };");
   });
@@ -311,7 +311,7 @@ describe('🧪 test rows, and a settings view that stays on screen', () => {
 
     it('the label follows sampleOn, so it is Hide whenever rows are showing', () => {
       const c = stripJs(canvas);
-      expect(c).toContain("(sampleOn(p, _edit, _isTesting(p.id)) ? '🧪 Hide test rows' : '🧪 Show test rows')");
+      expect(c).toContain("(sampleOn(p, isEd(p.id), _isTesting(p.id)) ? '🧪 Hide test rows' : '🧪 Show test rows')");
     });
 
     it('the choice survives a reload: sanitize keeps noSample on a timers panel, and writes nothing when unset', () => {
@@ -331,7 +331,7 @@ describe('🧪 test rows, and a settings view that stays on screen', () => {
 
     it('pressing the button saves the layout', () => {
       const c = stripJs(canvas);
-      expect(c).toMatch(/setTesting\(p\.id, toggleSample\(p, _edit, _isTesting\(p\.id\)\)\);\s*save\(\); render\(\);/);
+      expect(c).toMatch(/setTesting\(p\.id, toggleSample\(p, isEd\(p\.id\), _isTesting\(p\.id\)\)\);\s*save\(\); render\(\);/);
     });
   });
 

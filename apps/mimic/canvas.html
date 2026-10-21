@@ -59,15 +59,15 @@
   .panel > iframe,.panel > .pbody{opacity:var(--pa,1)}
   .panel.pfade.back:not(.part){background:rgb(8 10 14 / calc(max(var(--bg-alpha,0.92), 0.92) * var(--pa,1)))}
   .panel.pfade.back.fitempty:not(.part){background:transparent}
-  body.edit .panel.pfade.back.fitempty:not(.part){background:rgb(8 10 14 / 0.35)}
+  :is(body.edit .panel, .panel.one).pfade.back.fitempty:not(.part){background:rgb(8 10 14 / 0.35)}
   .panel.back.fitempty:not(.part){background:transparent}
-  body.edit .panel.back.fitempty:not(.part){background:rgb(8 10 14 / 0.35)}
+  :is(body.edit .panel, .panel.one).back.fitempty:not(.part){background:rgb(8 10 14 / 0.35)}
   .panel.part.back.fitempty > .pbody{background:transparent;box-shadow:none}
-  body.edit .panel.part.back.fitempty > .pbody{background:rgba(13,17,23,0.35)}
+  :is(body.edit .panel, .panel.one).part.back.fitempty > .pbody{background:rgba(13,17,23,0.35)}
   /* A page with its own builder open (the HUD ring's ⚙) takes the mouse even while arranging. */
-  body.edit .panel.building > iframe{pointer-events:auto}
+  :is(body.edit .panel, .panel.one).building > iframe{pointer-events:auto}
   /* ...and so does one whose own options (⚙ → Page options) are showing. */
-  body.edit .panel.opts > iframe{pointer-events:auto}
+  :is(body.edit .panel, .panel.one).opts > iframe{pointer-events:auto}
   /* A piece cut from an overlay's page: a window onto one section of the page (cropSections()
      moves the page under the panel and clips it to the section). With nothing to show it steps
      aside. */
@@ -82,45 +82,51 @@
   .tab,.grip{display:none}
 
   /* ── Arranging ─────────────────────────────────────────────────────────── */
-  body.edit .panel{outline:1px dashed rgba(88,166,255,0.85);outline-offset:0;
+  /* Arranging the whole canvas puts body.edit on the page; editing ONE item (its ✥, ⚙ → Edit this one) puts .one on
+     that panel alone. Every arranging rule below is written for both with :is(), which keeps its specificity. */
+  :is(body.edit .panel, .panel.one){outline:1px dashed rgba(88,166,255,0.85);outline-offset:0;
     background:rgba(31,111,235,0.07);cursor:move}
-  body.edit .panel > iframe{pointer-events:none}
-  body.edit .panel.sect.nodata{visibility:visible;opacity:0.45;min-width:90px;min-height:18px}
+  .panel.one{z-index:50}
+  :is(body.edit .panel, .panel.one) > iframe{pointer-events:none}
+  :is(body.edit .panel, .panel.one).sect.nodata{visibility:visible;opacity:0.45;min-width:90px;min-height:18px}
   /* Its size is its section's; A−/A+ and the page width in ⚙ change it, not a drag. */
   .panel.sect > .grip{display:none!important}
-  body.edit .panel.off{visibility:visible;opacity:0.4}
-  body.edit .whb.on{display:block;position:absolute;left:2px;bottom:2px;z-index:3;max-width:calc(100% - 22px);
+  :is(body.edit .panel, .panel.one).off{visibility:visible;opacity:0.4}
+  :is(body.edit, .panel.one) .whb.on{display:block;position:absolute;left:2px;bottom:2px;z-index:3;max-width:calc(100% - 22px);
     padding:0 5px;font-size:10px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     pointer-events:none;color:#0d1117;background:rgba(210,153,34,0.92);border-radius:3px}
-  body.edit .panel.lift{z-index:50;outline-style:solid}
-  body.edit .tab{display:flex;align-items:center;gap:6px;position:absolute;left:-1px;
+  :is(body.edit .panel, .panel.one).lift{z-index:50;outline-style:solid}
+  :is(body.edit, .panel.one) .tab{display:flex;align-items:center;gap:6px;position:absolute;left:-1px;
     bottom:100%;max-width:calc(100% + 2px);box-sizing:border-box;
     padding:2px 6px;font-size:11px;line-height:16px;white-space:nowrap;
     background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-bottom:0;
     border-radius:4px 4px 0 0}
   /* No room above (a panel at the top edge): the tab sits inside. */
-  body.edit .panel.tabin .tab{bottom:auto;top:0;left:0;border-radius:0 0 4px 0;
+  :is(body.edit .panel, .panel.one).tabin .tab{bottom:auto;top:0;left:0;border-radius:0 0 4px 0;
     border:0;border-right:1px solid #30363d;border-bottom:1px solid #30363d}
   .tab .mv{color:#58a6ff}
   .tab .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis}
   .tab .what{color:#6e7681;overflow:hidden;text-overflow:ellipsis}
   /* 🔒 Locked in place: a badge on the tab while arranging, and a ◢ that is plainly not a handle. */
   .tab .lkb{display:none}
-  body.edit .panel.plock .tab .lkb{display:inline}
-  body.edit .panel.plock .grip{opacity:0.35;cursor:not-allowed}
+  :is(body.edit .panel, .panel.one).plock .tab .lkb{display:inline}
+  :is(body.edit .panel, .panel.one).plock .grip{opacity:0.35;cursor:not-allowed}
+  /* ✓ Done: only on the tab of the one item being edited (the whole canvas has its own Done in the bar). */
+  .tab .done{display:none}
+  .panel.one .tab .done{display:inline;color:#56d364}
   .tab .ctl{cursor:pointer;color:#6e7681;padding:0 3px;border-radius:3px}
   .tab .ctl:hover{color:#e6edf3;background:rgba(88,166,255,0.18)}
   .tab .ctl.x:hover{color:#f85149;background:rgba(248,81,73,0.18)}
-  body.edit .grip{display:block;position:absolute;right:0;bottom:0;width:16px;height:16px;
+  :is(body.edit, .panel.one) .grip{display:block;position:absolute;right:0;bottom:0;width:16px;height:16px;
     line-height:16px;text-align:center;font-size:11px;color:#58a6ff;cursor:nwse-resize}
   /* The right and bottom EDGES size one direction (width alone, height alone), like an overlay window's edges
      (the guild lead, 2026-10-21: "◢ grip and edge drags"). Page frames only: a piece has its ◢, and a cut piece
      follows its section. The ◢ sits over the corner where the two meet. */
   .edge{display:none}
-  body.edit .panel:not(.part):not(.sect) > .edge{display:block;position:absolute;z-index:2}
-  body.edit .edge.er{top:0;right:-3px;width:7px;height:calc(100% - 16px);cursor:ew-resize}
-  body.edit .edge.eb{left:0;bottom:-3px;height:7px;width:calc(100% - 16px);cursor:ns-resize}
-  body.edit .panel.plock > .edge{cursor:not-allowed}
+  :is(body.edit .panel, .panel.one):not(.part):not(.sect) > .edge{display:block;position:absolute;z-index:2}
+  :is(body.edit, .panel.one) .edge.er{top:0;right:-3px;width:7px;height:calc(100% - 16px);cursor:ew-resize}
+  :is(body.edit, .panel.one) .edge.eb{left:0;bottom:-3px;height:7px;width:calc(100% - 16px);cursor:ns-resize}
+  :is(body.edit .panel, .panel.one).plock > .edge{cursor:not-allowed}
 
   /* ✥ on every panel, all the time (the guild lead, 2026-09-29: "they do not
      have a move button on them which should be there at all times"). Locked,
@@ -191,7 +197,7 @@
      border, so it takes no room; it used to add 1px border + 3px 6px padding, which shrank the piece's
      content box by 8 x 6 px and made Fit (+4) come up short. */
   .panel.part.back > .pbody{background:rgba(13,17,23,var(--bg-alpha,0.72));box-shadow:inset 0 0 0 1px #30363d;border-radius:5px}
-  body.edit .panel.part.sample > .pbody{opacity:0.7}
+  :is(body.edit .panel, .panel.one).part.sample > .pbody{opacity:0.7}
   /* A Ring arc is drawn into its panel's whole box, so the arcs of one ring line up: no padding, no outline. */
   .panel.part.seg > .pbody{padding:0}
   .panel.part.seg.back > .pbody{box-shadow:none}
@@ -861,6 +867,11 @@
   // has loaded (id → true, then 'run').
   var _widen = {}, _fitAdd = {};
   var _edit = false, _locked = true, _setup = false, _arrange = false;
+  // Editing ONE item in place while playing (the guild lead, 2026-10-21: "need to be able to edit just the single canvas
+  // element ... without every one of them coming up"): the id of the item whose arranging chrome is showing, or null.
+  // Never saved. isEd(id) is the question every arranging path asks, so the whole-canvas mode and this one share them.
+  var _one = null;
+  function isEd(id) { return _edit || (_one != null && _one === id); }
   var _bgAlpha = null;
   // The Canvas default for Background (toolbar switch / backdrop hotkey): main's push toggles the body class.
   function canvasDefaultBack() { return document.body.classList.contains('wp-backdrop'); }
@@ -902,6 +913,7 @@
     var tab = document.createElement('div');
     tab.className = 'tab';
     tab.innerHTML = '<span class="mv">✥</span><span class="lkb" title="Locked in place — its ⚙ unlocks it">🔒</span><span class="nm"></span><span class="what"></span>'
+      + '<span class="ctl done" role="button" title="Finish editing this one (Esc does the same)">✓ Done</span>'
       + '<span class="ctl gear" role="button" title="What this panel shows, its text size">⚙</span>'
       + '<span class="ctl x" role="button"></span>';
     // A piece is drawn right here (parts.js); every other panel is a page.
@@ -963,8 +975,9 @@
       if (q.kind === 'part' || q.kind === 'sect') { removePanels([q.id]); return; }
       q.off = !q.off; save(); render();
     });
-    root.addEventListener('contextmenu', function (ev) { ev.preventDefault(); if (_edit || ev.target === mv) openMenu(p.id, ev.target === mv ? mv : root); });
-    root.addEventListener('dblclick', function (ev) { if (_edit && !ev.target.closest('.ctl')) openMenu(p.id, root); });
+    tab.querySelector('.done').addEventListener('click', function (ev) { ev.stopPropagation(); endOne(); });
+    root.addEventListener('contextmenu', function (ev) { ev.preventDefault(); if (isEd(p.id) || ev.target === mv) openMenu(p.id, ev.target === mv ? mv : root); });
+    root.addEventListener('dblclick', function (ev) { if (isEd(p.id) && !ev.target.closest('.ctl')) openMenu(p.id, root); });
     panelsEl.appendChild(root);
     return e;
   }
@@ -997,9 +1010,9 @@
       if (p.kind === 'sect') { isolateFrame(e, p); return; }
       doc.documentElement.style.setProperty('--part-scale', String(p.scale || 1));
       doc.body.classList.toggle('timers-topdown', p.anchor === 'top');
-      doc.body.classList.toggle('part-edit', _edit);
+      doc.body.classList.toggle('part-edit', isEd(p.id));
       var w = e.frame.contentWindow;
-      if (w && typeof w.wpPartSample === 'function') w.wpPartSample(sampleOn(p, _edit, _isTesting(p.id)));
+      if (w && typeof w.wpPartSample === 'function') w.wpPartSample(sampleOn(p, isEd(p.id), _isTesting(p.id)));
     } catch (err) { /* page mid-load — its load handler re-applies */ }
   }
 
@@ -1202,9 +1215,10 @@
       e.root.classList.toggle('pfade', alphaOf(p) < 1);
       e.root.classList.toggle('fitempty', !!_fitEmpty[p.id]);
       e.root.classList.toggle('sel', !!_sel[p.id]);
+      e.root.classList.toggle('one', _one === p.id);
       place(e, p);
       e.root.classList.toggle('off', !!p.off);
-      if (_edit) e.root.setAttribute('data-wp-interact', ''); else e.root.removeAttribute('data-wp-interact');
+      if (isEd(p.id)) e.root.setAttribute('data-wp-interact', ''); else e.root.removeAttribute('data-wp-interact');
       e.tab.querySelector('.nm').textContent = p.name || (partDef(p) ? partDef(p).label : p.part || '');
       e.tab.querySelector('.what').textContent = '· ' + claimText(p);
       var x = e.tab.querySelector('.x');
@@ -1215,6 +1229,7 @@
     Object.keys(_els).forEach(function (id) {
       if (!keep[id]) { _els[id].root.remove(); delete _els[id]; delete _widen[id]; delete _fitAdd[id]; }
     });
+    if (_one != null && !_els[_one]) _one = null;   // the item being edited was deleted
     applyWhen();
     markGroupMovers();
     paintParts();
@@ -1259,9 +1274,43 @@
     if (e === _edit) return;
     _edit = e;
     document.body.classList.toggle('edit', e);
+    if (e) _one = null;   // the whole canvas is being arranged: nothing is "the one" any more
     if (!e) { closeMenu(); _sel = {}; }
     render();
   }
+  // ── Edit one item, in place ─────────────────────────────────────────────────
+  // The same chrome as arranging (tab, ◢, edges, ⚙), on one item, while the rest of the canvas plays. The item takes the
+  // mouse the way every arranging panel does (data-wp-interact on its root); every other item is untouched and click-through.
+  // Leaving: Esc, the ✥ again, ✓ Done, or a click anywhere else. That click is never intercepted: nothing covers the
+  // screen, so it lands in EverQuest, which then takes the keyboard focus from this window, and the blur ends the edit. (A
+  // click on another item's ✥ moves the edit there; a click on any other part of this page ends it on the press.)
+  function editOne(id) {
+    if (_edit || !panelById(id) || !_els[id]) return;
+    if (_one !== null && _one !== id) endOne(true);
+    _one = id;
+    render();
+  }
+  // keepMenu: the caller is about to open the menu again (editing moved to another item).
+  function endOne(keepMenu) {
+    if (_one == null) return;
+    _one = null;
+    if (!keepMenu) closeMenu();
+    // One write when the edit ends: a drag's own save waits 250 ms, and this one should not be left behind.
+    if (_saveT) { clearTimeout(_saveT); doSave(); }
+    render();
+  }
+  window.addEventListener('blur', function () { if (_one != null) endOne(); });
+  document.addEventListener('keydown', function (ev) {
+    if (_one == null || ev.key !== 'Escape' || (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName))) return;
+    endOne();
+  });
+  document.addEventListener('mousedown', function (ev) {
+    if (_one == null || !_els[_one]) return;
+    var t = ev.target;
+    // Its own chrome, the settings panel, the toast and the drag shield are "inside"; another item's ✥ is a hand-over, below.
+    if (_els[_one].root.contains(t) || menuEl.contains(t) || (t.closest && t.closest('#toast, #shield, .mvbtn'))) return;
+    endOne();
+  }, true);
   try { if (M.onOverlayLocked) M.onOverlayLocked(function (l) { _locked = !!l; setEdit(); }); } catch (e) {}
   try { if (M.onSetupMode) M.onSetupMode(function (p) { _setup = !!(p && (p === true || p.active)); setEdit(); }); } catch (e) {}
   try { if (M.onCanvasEdit) M.onCanvasEdit(function (on) { _arrange = !!on; setEdit(); }); } catch (e) {}
@@ -1279,7 +1328,7 @@
   // anyTime: the always-on ✥, which moves a panel even while locked.
   // axis: an edge drag sizes one direction only ('x' = width, 'y' = height); the ◢ corner sizes both.
   function startDrag(ev, id, mode, anyTime, axis) {
-    if ((!_edit && !anyTime) || ev.button !== 0) return;
+    if ((!isEd(id) && !anyTime) || ev.button !== 0) return;
     ev.preventDefault(); ev.stopPropagation();
     var e = _els[id];
     // A panel whose page has its builder open goes back to its own size before it is moved or sized.
@@ -1295,7 +1344,7 @@
     // ◢ on a grouped or selected piece sizes them all (the guild lead, 2026-09-29: "when a group is
     // selected … you should be able to resize the entire group"); Alt sizes just this one.
     var ids = [];
-    if (!ev.altKey) ids = togetherWith(id);
+    if (!ev.altKey && _one !== id) ids = togetherWith(id);   // the one item being edited moves and sizes alone
     if (ids.length > 1) {
       _drag.members = [];
       _drag.skip = {};
@@ -1443,10 +1492,14 @@
     var p = panelById(d.id);
     if (_els[d.id]) _els[d.id].root.classList.remove('lift');
     try { M.overlayHoverInteractive(false); } catch (err) {}
-    // A click, no drag. On the always-on ✥ while playing: that panel's settings,
-    // straight away. While arranging: select it (Shift or Ctrl adds / removes).
+    // A click, no drag. On the always-on ✥ while playing: that panel is edited in place and its settings open,
+    // straight away; the ✥ of the one being edited ends it. While arranging: select it (Shift or Ctrl adds / removes).
     if (!d.moved && p) {
-      if (d.fromMv && !_edit) { render(); if (_els[p.id]) openMenu(p.id, _els[p.id].mv); return; }
+      if (d.fromMv && !_edit) {
+        if (_one === p.id) { endOne(); return; }
+        editOne(p.id);
+        render(); if (_els[p.id]) openMenu(p.id, _els[p.id].mv); return;
+      }
       if (_edit) {
         // Two clicks on one piece: its settings. The browser's own dblclick never reaches the piece —
         // the drag shield is up between the press and the release — so the canvas counts the clicks.
@@ -1555,6 +1608,9 @@
     // something that i can get to from the right click menu in the top corner of the overlay panel").
     h += '<div class="row">'
       + (_edit ? '<button class="btn go" data-arrange="0">✓ Done arranging</button>' : '<button class="btn go" data-arrange="1" title="Arrange every panel and piece on the canvas">✏ Arrange the canvas</button>')
+      + (_edit ? '' : _one === p.id
+        ? '<button class="btn go" data-one="0" title="Finish editing this one (Esc, or its ✥ again, does the same)">✓ Done with this one</button>'
+        : '<button class="btn" data-one="1" title="Resize, move and adjust just this one, in place; everything else keeps playing and taking no clicks">✎ Edit this one</button>')
       + '<button class="btn" data-pieces title="Open the chooser of every piece">🧩 Pieces</button></div>';
     h += '<div class="row"><input type="text" id="mName" maxlength="24" value="' + esc(title) + '" placeholder="panel name"></div>';
     if (p.kind === 'part') {
@@ -1671,8 +1727,8 @@
       h += '<div class="row" style="margin-top:8px">'
         + (p.kind === 'callouts'
           ? '<button class="btn" data-test title="One sample callout, shown and not spoken">🧪 Show a test callout</button>'
-          : '<button class="btn' + (sampleOn(p, _edit, _isTesting(p.id)) ? ' on' : '') + '" data-test title="A sample of every kind of countdown this panel shows. Out in play they stay 30 seconds; while arranging they stay until you hide them">'
-            + (sampleOn(p, _edit, _isTesting(p.id)) ? '🧪 Hide test rows' : '🧪 Show test rows') + '</button>')
+          : '<button class="btn' + (sampleOn(p, isEd(p.id), _isTesting(p.id)) ? ' on' : '') + '" data-test title="A sample of every kind of countdown this panel shows. Out in play they stay 30 seconds; while arranging they stay until you hide them">'
+            + (sampleOn(p, isEd(p.id), _isTesting(p.id)) ? '🧪 Hide test rows' : '🧪 Show test rows') + '</button>')
         + '</div>';
     }
     h += whenMenuHtml(p);
@@ -1944,6 +2000,11 @@
       else finishArranging();
       return;
     }
+    if (t.hasAttribute('data-one')) {
+      if (t.getAttribute('data-one') === '1') { editOne(p.id); if (_els[p.id]) openMenu(p.id, _menuAnchor || _els[p.id].root); }
+      else endOne();
+      return;
+    }
     if (t.hasAttribute('data-pieces')) {
       closeMenu();
       chooserState().open = true; save();
@@ -1955,7 +2016,7 @@
         try { var cw = _els[p.id].frame.contentWindow; if (cw && cw.wpPartFlash) cw.wpPartFlash('TEST — Death Touch on the main tank'); } catch (err) { /* page mid-load */ }
         return;
       }
-      setTesting(p.id, toggleSample(p, _edit, _isTesting(p.id)));
+      setTesting(p.id, toggleSample(p, isEd(p.id), _isTesting(p.id)));
       save(); render(); openMenu(p.id, _menuAnchor || _els[p.id].root);
       return;
     }
@@ -2179,9 +2240,9 @@
       if (!e) return;
       var ruled = !!(p.when || (p.cls && p.cls.length));
       var hide = false;
-      if (ruled && !_edit) { sig = sig || currentWhen(); hide = !whenHolds(p, sig); }
+      if (ruled && !isEd(p.id)) { sig = sig || currentWhen(); hide = !whenHolds(p, sig); }
       e.root.classList.toggle('wh', hide);
-      var badge = ruled && _edit ? whenBadge(p) : '';
+      var badge = ruled && isEd(p.id) ? whenBadge(p) : '';
       if (e.whb._t !== badge) { e.whb._t = badge; e.whb.textContent = badge; }
       e.whb.classList.toggle('on', !!badge);
     });
@@ -2211,7 +2272,7 @@
       if (!d) { setBody(e, '<div class="pt pt-none"><span class="pt-l">unknown piece</span></div>'); return; }
       if (onlySrc && d.src !== onlySrc && d.kind !== 'countdown' && !d.repaint) return;
       var v = viewFor(d), sample = false;
-      if (!v && _edit) { v = sampleFor(d, now); sample = !!v; }
+      if (!v && isEd(p.id)) { v = sampleFor(d, now); sample = !!v; }
       e.root.classList.toggle('sample', sample);
       setBody(e, WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align, arc: p.arc, uid: p.id }));
     });
