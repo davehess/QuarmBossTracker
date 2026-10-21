@@ -107,7 +107,11 @@
   #wallsrc{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #setupbar select{font:inherit;font-size:10px;max-width:90px}
   #tgt{font-size:10px;color:#f0883e;min-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #lists{flex:1 1 auto;overflow:auto;min-height:0;margin-top:3px}
+  /* The header lines (zone, position age, walls, target) and the foot never shrink: they are overflow:hidden flex items, so in a
+     short window they were squeezed to nothing and their text drew over the first rows (the guild lead, 2026-10-21: "Cutting off
+     the top of this timer window"). Only the list gives way, from a zero basis, and scrolls inside its own box under them. */
+  #side > :not(#lists){flex:0 0 auto}
+  #lists{flex:1 1 0;overflow:auto;min-height:0;margin-top:3px}
   .sec{font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;margin:5px 0 2px}
   .trow{display:grid;grid-template-columns:1fr auto;column-gap:6px;padding:2px 4px;margin-bottom:2px;
     border-left:3px solid #6e7681;background:rgba(255,255,255,0.05);border-radius:3px;cursor:pointer;font-size:10px}
