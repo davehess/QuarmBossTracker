@@ -528,8 +528,8 @@ describe('agent: tabbing across same-name spawns keeps each one\'s own health', 
     const js = stripJs(AGENT);
     const fn = sliceBlock(js, 'function _mapNoteDeath(', 'const rec = _mapZones.get(zone);');
     expect(fn).toMatch(/_mapHpMem\.zone === zone\) _mapHpMem\.m\.delete\(Number\(ev\.spawn_id\)\)/);
-    const ctx = { _mapHpMem: { zone: 'thedeep', m: new Map([[101, { hp_pct: 50, at: 1 }], [102, { hp_pct: 60, at: 1 }]]) }, _mapZones: new Map(), _mapKilledQ: new Map() };
-    const run = new Function('ctx', 'const { _mapHpMem, _mapZones, _mapKilledQ } = ctx; ' + fn.replace('function _mapNoteDeath(zone, ev, now) {', 'return function (zone, ev, now) {') + ' return { kind: "x" }; }')(ctx);
+    const ctx = { _mapPosMem: { zone: null, m: new Map() }, _mapHpMem: { zone: 'thedeep', m: new Map([[101, { hp_pct: 50, at: 1 }], [102, { hp_pct: 60, at: 1 }]]) }, _mapZones: new Map(), _mapKilledQ: new Map() };
+    const run = new Function('ctx', 'const { _mapHpMem, _mapPosMem, _mapZones, _mapKilledQ } = ctx; ' + fn.replace('function _mapNoteDeath(zone, ev, now) {', 'return function (zone, ev, now) {') + ' return { kind: "x" }; }')(ctx);
     run('otherzone', { spawn_id: 102 }, 5); expect([...ctx._mapHpMem.m.keys()]).toEqual([101, 102]);
     run('thedeep', { spawn_id: 101 }, 5); expect([...ctx._mapHpMem.m.keys()]).toEqual([102]);
     run('thedeep', { name: 'x' }, 5); expect([...ctx._mapHpMem.m.keys()]).toEqual([102]);

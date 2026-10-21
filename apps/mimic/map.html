@@ -514,6 +514,36 @@
     for (var i = 0; i < npcs.length; i++) if (npcs[i] && npcKey(npcs[i].name) === k) return npcs[i];
     return null;
   }
+  // A pulled mob's aggro ring follows the mob, not its spawn point (the guild lead, 2026-10-21: "When this mob was pulled,
+  // its initial aggro radius should not be displayed at its spawnpoint, it should follow the mob"). For the mob up on point
+  // `p` (`up` = upOn, `sn` = the point's seen row) this is its latest known position { x, y, age (ms), target } when it is
+  // known to be away from home: hurt (health 1-99, or an Engaged row), chasing someone (your target's ToT), or more than
+  // MOVE_AWAY units from the spawn point. Positions: your live target; else the agent's `sn.pos` (the raid's shared targets
+  // and targets you tabbed off, with `at` on the map's clock `now`); else the last crumb of its trail (`trails`, crumbs
+  // stamped on the local clock `rt`). Older than MOVE_DROP_MS, dead (health 0, a trail marked dead) or an idle mob close
+  // to home = null: the ring stays at the spawn point (or is dropped with the respawn timer, as before).
+  var MOVE_FRESH_MS = 10000, MOVE_DROP_MS = 60000, MOVE_AWAY = 30;
+  function movedMob(p, up, sn, P, trails, now, rt) {
+    if (!p || !up) return null;
+    var T = P && P.target, pos = null, age = 0, hurt = false, chasing = false, byTarget = false;
+    if (T && T.x != null && (T.type == null || T.type === 1) && ((T.point_id != null && String(T.point_id) === String(p.id)) || (up.spawn_id != null && T.id === up.spawn_id))) {
+      if (T.hp_pct === 0) return null;
+      pos = T; byTarget = true; hurt = T.hp_pct > 0 && T.hp_pct < 100; chasing = !!T.tot;
+    } else {
+      if (sn && sn.pos && sn.pos.x != null && isFinite(Number(sn.pos.at))) { pos = sn.pos; age = Math.max(0, now - Number(sn.pos.at)); }
+      var tr = trails && up.spawn_id != null ? trails['t:' + up.spawn_id] : null;
+      var lc = tr && tr.dead == null && tr.pts && tr.pts.length ? tr.pts[tr.pts.length - 1] : null;
+      if (lc && (!pos || rt - lc.t < age)) { pos = lc; age = Math.max(0, rt - lc.t); }
+      hurt = !!sn && (!!sn.engaged || (sn.hp_pct > 0 && sn.hp_pct < 100));
+    }
+    if (!pos || age > MOVE_DROP_MS) return null;
+    if (!(hurt || chasing || Math.hypot(pos.x - p.x, pos.y - p.y) > MOVE_AWAY)) return null;
+    return { x: pos.x, y: pos.y, age: age, target: byTarget };
+  }
+  // How strongly a moved ring is drawn: full while the position is fresh, fading to a third by MOVE_DROP_MS.
+  function movedFade(ageMs) {
+    return ageMs <= MOVE_FRESH_MS ? 1 : Math.max(0.35, 1 - 0.65 * (ageMs - MOVE_FRESH_MS) / (MOVE_DROP_MS - MOVE_FRESH_MS));
+  }
   // A point's aggro radius (game units, from the bot's zone data): the known mob's own when it is up there, else the
   // widest of those that can spawn there (the cautious reading). 0 = unknown. Values past AGGRO_MAX are the database's
   // "whole zone" sentinels (up to 10000), not a ring anyone could use.
@@ -2294,13 +2324,32 @@
     // Aggro rings (◯), under the dots: each point's aggro radius in game units, scaled with the map. Not drawn while
     // the point is on a "not yet" timer (nothing there to aggro), nor when the ring would be a speck.
     if (SH.aggro) {
+      // A pulled mob's ring rides the mob (movedMob), so its spawn point gets none. Looked up through the seen rows and
+      // your target's point, not `vis`: the mob can be on screen while its spawn point is far off it.
+      var movedBy = {}, movedPids = Object.keys(S.seenBy);
+      if (S.p && S.p.target && S.p.target.point_id != null) movedPids.push(String(S.p.target.point_id));
+      for (var mi = 0; mi < movedPids.length; mi++) {
+        var mp = S.byId[movedPids[mi]], mt = mp ? S.timerBy[String(mp.id)] : null;
+        if (!mp || movedBy[movedPids[mi]] || (mt && timerState(mt, now) === 'wait')) continue;
+        var mup = upOn(mp.id, S.p, S.seenBy), mv = movedMob(mp, mup, S.seenBy[movedPids[mi]], S.p, S.trails, now, rt);
+        if (mv) movedBy[movedPids[mi]] = { p: mp, up: mup, mv: mv };
+      }
       for (var ai = 0; ai < vis.length; ai++) {
         var ap = vis[ai].p, at = S.timerBy[String(ap.id)];
         if (at && timerState(at, now) === 'wait') continue;
+        if (movedBy[String(ap.id)]) continue;
         var aup = upOn(ap.id, S.p, S.seenBy), aun = upNpc(ap, aup);
         var acc = aup && S.p ? ccFor(S.p.cc, aup.name, aup.spawn_id, !!(S.p.target && (String(S.p.target.point_id) === String(ap.id) || (aup.spawn_id != null && aup.spawn_id === S.p.target.id)))) : null;
         ctx.globalAlpha = inLevelRange(ap.z, sz, range) ? 1 : 0.4;
         aggroRing(vis[ai].x, vis[ai].y, aggroRadius(ap, aun), assistRadius(ap, aun), aggroKind(ap, aun, S.p && S.p.cons, S.facs, S.p && S.p.me), acc, now);
+      }
+      for (var mk in movedBy) {
+        var mb = movedBy[mk];
+        if (mb.mv.target) continue;   // your target carries its own rings, at its live position (below)
+        var mun = upNpc(mb.p, mb.up), mq = wpt(mb.mv.x, mb.mv.y);
+        if (mq[0] < -200 || mq[0] > w + 200 || mq[1] < -200 || mq[1] > h + 200) continue;
+        ctx.globalAlpha = (inLevelRange(mb.p.z, sz, range) ? 1 : 0.4) * movedFade(mb.mv.age);
+        aggroRing(mq[0], mq[1], aggroRadius(mb.p, mun), assistRadius(mb.p, mun), aggroKind(mb.p, mun, S.p && S.p.cons, S.facs, S.p && S.p.me), mb.up ? ccFor(S.p && S.p.cc, mb.up.name, mb.up.spawn_id, false) : null, now);
       }
       ctx.globalAlpha = 1;
     }

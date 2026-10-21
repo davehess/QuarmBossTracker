@@ -52192,6 +52192,7 @@ function _mapDeathIsDup(name, spawnId, src, now) {
 // Returns { kind: 'assigned'|'unassigned'|'none'|'dup'|'nodata', ... }.
 function _mapNoteDeath(zone, ev, now) {
   if (ev.spawn_id != null && _mapHpMem.zone === zone) _mapHpMem.m.delete(Number(ev.spawn_id));   // dead: no health to remember
+  if (ev.spawn_id != null && _mapPosMem.zone === zone) _mapPosMem.m.delete(Number(ev.spawn_id));   // …and no ring to carry
   if (ev.spawn_id != null) {   // named: one of the "killed?" deaths is explained, and this spawn is no longer a candidate for the rest
     for (const [k, g] of _mapKilledQ) {
       if (g.zone !== zone || !g.ids.has(Number(ev.spawn_id))) continue;
@@ -52625,6 +52626,36 @@ function _mapHpMemFor(zone) {
   if (_mapHpMem.zone !== zone) { _mapHpMem.zone = zone; _mapHpMem.m.clear(); }   // spawn ids are only good within a zone
   return _mapHpMem.m;
 }
+// Where a mob was last seen standing (the guild lead, 2026-10-21: a pulled mob's aggro ring follows the mob, not its spawn
+// point). Spawn id -> { x, y, z, at }, zone-scoped like _mapHpMem, fed every Zeal frame from your own target. `_mapSeenPos`
+// puts the freshest of that, your target now and the raid's shared targets on each seen row as `pos` { x, y, z, at }; the
+// Map decides whether the mob is away from home and draws the ring there. Older than MAP_POS_KEEP_MS is no position.
+const MAP_POS_KEEP_MS = 60000;
+const _mapPosMem = { zone: null, m: new Map() };
+function _mapPosNote(zone, id, loc, now) {
+  id = Number(id);
+  if (!(id > 0) || !loc) return;
+  if (_mapPosMem.zone !== zone) { _mapPosMem.zone = zone; _mapPosMem.m.clear(); }
+  _mapPosMem.m.delete(id);
+  _mapPosMem.m.set(id, { x: loc.x, y: loc.y, z: loc.z, at: now });
+  for (const [k, v] of _mapPosMem.m) if (now - v.at > MAP_POS_KEEP_MS) _mapPosMem.m.delete(k); else break;
+  while (_mapPosMem.m.size > MAP_PIN_MAX) _mapPosMem.m.delete(_mapPosMem.m.keys().next().value);
+}
+function _mapSeenPos(seen, own, shared, zone, now) {
+  const mem = _mapPosMem.zone === zone ? _mapPosMem.m : new Map();
+  for (const s of seen) {
+    const id = Number(s.spawn_id);
+    if (!(id > 0)) continue;
+    let best = mem.get(id) || null;
+    if (shared && Array.isArray(shared.rows)) {
+      const r = shared.rows.find(t => t.id === id);
+      const at = r ? shared.pulledAt - r.age : 0;
+      if (r && (!best || at > best.at)) best = { x: r.x, y: r.y, z: r.z, at };
+    }
+    if (own && Number(own.id) === id && own.x != null && (own.type == null || own.type === 1)) best = { x: own.x, y: own.y, z: own.z, at: now };
+    if (best && now - best.at <= MAP_POS_KEEP_MS) s.pos = { x: best.x, y: best.y, z: best.z, at: best.at };
+  }
+}
 // "killed?" (the guild lead, 2026-10-20: "i want each of these to get a question mark on 'killed?' if we cant make the
 // assumption that it died from the AOE songs"). A death LINE names a mob, not a spawn. When nothing says which spawn died (no
 // spawn id, not your target) and more than one live spawn of that name is on the list (a seen row, or a health read), the
@@ -52942,6 +52973,7 @@ function _mapStatePayload(have, now, haveLocal) {
     _mapHpNote(hpMem, out.target, ecRows, now);   // your own target is also read on every Zeal frame (_mapNoteState)
     _mapSeenHp(out.seen, ecRows, out.target, hpMem, now);
   } catch { for (const s of out.seen) s.hp_pct = null; }
+  try { _mapSeenPos(out.seen, out.target, _mapSync.targets[zone], zone, now); } catch { for (const s of out.seen) delete s.pos; }   // where a seen mob stood last: its aggro ring rides it
   try {   // the Engaged section (FB-89): the mobs raiders are on right now, plus hurt ones nobody has targeted
     const ec2 = typeof _extTargetCache === 'undefined' ? null : _extTargetCache.get(String(character).trim().toLowerCase());
     out.engaged = _mapPromoteHurt(out.seen, _mapEngaged(ec2 && ec2.payload && ec2.payload.targets), now, _mapHpMemFor(zone));
@@ -53015,6 +53047,7 @@ function _mapNoteState(character, prev, next, now) {
   } catch { /* health memory is a nicety: never break the frame */ }
   if (isNpc && tl && next.target_id > 0 && next.target_name && !MAP_CORPSE_RE.test(String(next.target_name))) {
     _mapNoteSighting(zone, next.target_id, next.target_name, tl, now);
+    if (Number(next.target_hp_pct) > 0) _mapPosNote(zone, next.target_id, tl, now);
     _mapNotePath(zone, next.target_name, tl, now);   // a tracked NPC (Thelin): one more point on his trail
     // A LIVE, UNPULLED mob standing at exactly one point is pinned there (and synced as "seen"); see "Pins".
     if (Number(next.target_hp_pct) > 0) {
