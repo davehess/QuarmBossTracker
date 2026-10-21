@@ -52737,8 +52737,9 @@ function _mapFocusTarget(character) {
 // Health on the Map's alive rows (FB-87, a raider: "if we already have health of each mob engaged, we could be putting
 // this into the timers page of maps as well"). Sets `hp_pct` (0-100, or null = unknown) on each `seen` row from what
 // the agent already holds: your own target when its pin is that spawn point, else the Extended Target rows (`rows`)
-// matched by spawn id, else by normalized name ONLY when exactly one fresh NPC row carries that name and it does not
-// name a different spawn id. Stale rows never count; a duplicate name is left blank rather than guessed.
+// matched by spawn id, else by normalized name ONLY when exactly one fresh NPC row carries that name, it does not
+// name a different spawn id, AND exactly one seen row carries the name (else one figure is copied onto a whole pack of
+// pinned spawns). Stale rows never count; a duplicate name is left blank rather than guessed.
 // Tabbing through a pack (the guild lead, 2026-10-20: "tab target through them quickly and get all of their healths out"):
 // your own target also counts by SPAWN ID (a roamer has no pin), and a spawn you tabbed off keeps the last health read
 // in `mem` (_mapHpMem: spawn id -> { hp_pct, at }), by spawn id only, never by name. Each row gets hp_at (when that
@@ -52753,6 +52754,11 @@ function _mapSeenHp(seen, rows, own, mem, now) {
     const k = _mapNormName(t.name);
     byName.set(k, byName.has(k) ? null : t);   // null = two or more rows share the name: no guess
   }
+  // The name fallback is a claim that the ONE Extended Target row of a name is THE one seen row of that name. Two or more seen
+  // rows of the name (a pinned pack: every Guardian of Marr in a hall) make it a copy of one figure onto all of them (the guild
+  // lead, 2026-10-21: "seeing some mobs repeated", eleven rows at exactly 45%), so it needs the seen side to be unique too.
+  const seenCount = new Map();
+  for (const s of seen) seenCount.set(_mapNormName(s.name), (seenCount.get(_mapNormName(s.name)) || 0) + 1);
   for (const s of seen) {
     let hp = null;
     if (own && own.point_id != null && String(own.point_id) === String(s.point_id)) hp = pct(own.hp_pct);
@@ -52761,7 +52767,7 @@ function _mapSeenHp(seen, rows, own, mem, now) {
     let ext = null;   // the Extended Target row for this mob: its raider count rides along ("N on it")
     if (s.spawn_id != null && byId.has(Number(s.spawn_id))) ext = byId.get(Number(s.spawn_id));
     if (hp == null && ext) hp = pct(ext.hp_pct);
-    if (hp == null || !ext) {
+    if ((hp == null || !ext) && seenCount.get(_mapNormName(s.name)) === 1) {
       const t = byName.get(_mapNormName(s.name));
       const tid = t ? Number(t.spawn_id) : 0;
       if (t && !(tid > 0 && s.spawn_id != null && tid !== Number(s.spawn_id))) { if (hp == null) hp = pct(t.hp_pct); if (!ext) ext = t; }
@@ -52974,12 +52980,15 @@ function _mapPromoteHurt(seen, engaged, now, mem) {
   for (const s of seen) seenByName.set(_mapNormName(s.name), (seenByName.get(_mapNormName(s.name)) || 0) + 1);
   const dupOf = (s) => (s.spawn_id != null && ids.has(Number(s.spawn_id)))
     || (idlessByName.get(_mapNormName(s.name)) === 1 && seenByName.get(_mapNormName(s.name)) === 1);
-  const add = [], dups = [];
+  const add = [], dups = [], addedIds = new Set();
   for (const s of seen) {
     if (!s || !s.name) continue;
     const hurt = typeof s.hp_pct === 'number' && s.hp_pct > 0 && s.hp_pct < 100
       && (s.hp_live || (Number.isFinite(s.hp_at) && now - s.hp_at <= MAP_HURT_FRESH_MS));
     if (dupOf(s)) { dups.push(s); continue; }
+    // One mob, one row: a spawn id already added through another seen row (a synced sighting on a second point) is that mob.
+    if (hurt && s.spawn_id != null && addedIds.has(Number(s.spawn_id))) { dups.push(s); continue; }
+    if (hurt && s.spawn_id != null) addedIds.add(Number(s.spawn_id));
     if (hurt) add.push({ s, g: { name: String(s.name), spawn_id: s.spawn_id == null ? null : s.spawn_id, hp_pct: s.hp_pct, n: 0,
       point_id: s.point_id, hp_at: s.hp_at, hp_live: !!s.hp_live } });
   }

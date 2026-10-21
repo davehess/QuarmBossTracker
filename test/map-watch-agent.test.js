@@ -439,6 +439,21 @@ describe('agent: hp_pct on the seen rows (_mapSeenHp)', () => {
     expect(hpOf([seenRow(1, 7, 'a bat')], [], null)).toEqual([null]);
     expect(hpOf([seenRow(1, 7, 'a bat')], undefined, null)).toEqual([null]);
   });
+  // The guild lead, 2026-10-21 ("seeing some mobs repeated"): one Extended Target row with no spawn id was copied onto every
+  // pinned seen row of the name. Mutation-checked: drop the `seenCount ... === 1` clause and these go red.
+  it('a name-only row is not copied onto a pack: with two or more seen rows of the name, none of them takes its health or its raider count', () => {
+    const rows = [npcRow('A Guardian of Marr', null, 45, 1)];
+    const seen = [seenRow(1, 14, 'A Guardian of Marr'), seenRow(2, 219, 'A Guardian of Marr'), seenRow(3, 220, 'A Guardian of Marr')];
+    SEEN_HP.f(seen, rows, null, null, 5);
+    expect(seen.map(s => [s.hp_pct, s.n])).toEqual([[null, undefined], [null, undefined], [null, undefined]]);
+  });
+  it('...but each pinned spawn still gets its OWN health by spawn id (Extended Target row, your target, or the memory)', () => {
+    const rows = [npcRow('A Guardian of Marr', 219, 30, 2), npcRow('A Guardian of Marr', null, 45, 1)];
+    const seen = [seenRow(1, 14, 'A Guardian of Marr'), seenRow(2, 219, 'A Guardian of Marr'), seenRow(3, 220, 'A Guardian of Marr')];
+    const mem = new Map([[220, { hp_pct: 12, at: 4_000_000 }]]);
+    SEEN_HP.f(seen, rows, { id: 14, type: 1, hp_pct: 77 }, mem, 4_001_000);
+    expect(seen.map(s => [s.hp_pct, s.hp_live])).toEqual([[77, true], [30, true], [12, false]]);
+  });
   it('skips stale rows, and rows that are not NPCs', () => {
     expect(hpOf([seenRow(1, 5, 'a bat')], [{ name: 'a bat', spawn_id: 5, hp_pct: 50, stale: true, kind: 'npc' }], null)).toEqual([null]);
     expect(hpOf([seenRow(1, null, 'Aldenmar')], [{ name: 'Aldenmar', hp_pct: 50, kind: 'player' }], null)).toEqual([null]);
@@ -586,6 +601,20 @@ describe('agent: hurt seen rows join Engaged (_mapPromoteHurt)', () => {
     expect(ENGAGED.promote(one, eng, T1)).toHaveLength(1); expect(one[0].engaged).toBe(true);
     const two = [sr(1, null, 'The Avatar', 50), sr(2, null, 'The Avatar', 40)];
     expect(ENGAGED.promote(two, eng, T1)).toHaveLength(3);
+  });
+  it('one mob, one row: the same spawn id seen on two points (a synced sighting) is added once; the second is flagged, not listed', () => {
+    const seen = [sr(1, 11, 'a golem', 60), sr(2, 11, 'a golem', 60)];
+    const out = ENGAGED.promote(seen, [], T1);
+    expect(out.map(g => g.spawn_id)).toEqual([11]);
+    expect(seen.map(s => !!s.engaged)).toEqual([true, true]);
+  });
+  it('the kite in Halls of Honor: eleven pinned Guardians + one name-only row at 45% list ONE engaged mob, not twelve', () => {
+    const seen = Array.from({ length: 11 }, (_v, i) => seenRow(i + 1, 200 + i, 'A Guardian of Marr'));
+    const ext = [npcRow('A Guardian of Marr', null, 45, 1), npcRow('Jared Skies', 211, 50, 1)];
+    SEEN_HP.f(seen, ext, null, null, T1);
+    const out = ENGAGED.promote(seen, ENGAGED.f(ext), T1);
+    expect(out.map(g => [g.name, g.spawn_id, g.hp_pct])).toEqual([['A Guardian of Marr', null, 45], ['Jared Skies', 211, 50]]);
+    expect(seen.some(s => s.engaged)).toBe(false);   // they stay under Up · seen, health unknown
   });
   it('the cap holds and only the rows that made it are flagged', () => {
     const seen = Array.from({ length: ENGAGED.max + 3 }, (_v, i) => sr(i + 1, i + 100, 'a golem', 50 + i % 40));
