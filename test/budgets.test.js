@@ -27,7 +27,7 @@ const harness = `
   return { _overBudget, _BUDGET_DEFAULTS, _budgetBuckets, __setTune };
 `;
 // eslint-disable-next-line no-new-func
-const { _overBudget, _budgetBuckets, __setTune } = new Function(harness)();
+const { _overBudget, _BUDGET_DEFAULTS, _budgetBuckets, __setTune } = new Function(harness)();
 
 const req = (token = 'wpms_default') => ({ headers: { authorization: 'Bearer ' + token } });
 function mockRes() {
@@ -122,6 +122,15 @@ describe('_overBudget (real index.js)', () => {
     expect(await _overBudget('live_state', r, res)).toBe(true);
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body).budget_dropped).toBe('live_state');
+  });
+
+  it('replay_window (Rehearse tab GET) is a 30/min ephemeral kind and answers over-budget with a 429, not a drop', async () => {
+    expect(_BUDGET_DEFAULTS.replay_window).toEqual({ perMin: 30, durable: false, get: true });
+    const r = req('wpms_rehearse');
+    for (let i = 0; i < 30; i++) expect(await _overBudget('replay_window', r, mockRes())).toBe(false);
+    const res = mockRes();
+    expect(await _overBudget('replay_window', r, res)).toBe(true);
+    expect(res.statusCode).toBe(429);
   });
 
   it('keys uploaders independently — one over-budget client does not limit another', async () => {

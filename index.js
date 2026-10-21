@@ -12270,6 +12270,7 @@ const _SHED_KINDS = new Set([
   'xp_events',                                                 // XP board telemetry (FB-37)
   'kite_loop',                                                 // the kite-loop library's uploads (a nicety, never the raid's record)
   'guild_chat',                                                // the GET feed for Mimic's out-of-game Chat overlay (a read of an in-memory ring)
+  'replay_window',                                             // the GET behind the agent's Rehearse tab (a read of past nights)
 ]);
 const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
 async function _isShedded(kind, res, ackBody) {
@@ -12370,6 +12371,8 @@ const _BUDGET_DEFAULTS = {
   kite_loops:      { perMin: 30,  durable: false, get: true },
   // Mimic's out-of-game Chat overlay polls the guild-chat ring every few seconds (~12-20/min); 120 only trips a runaway client.
   guild_chat:      { perMin: 120, durable: false, get: true },
+  // Rehearse tab: one 15-minute slice (~450 KB raw) per page of the scrubber, cached at the bot; over budget is a 429 the agent backs off.
+  replay_window:   { perMin: 30,  durable: false, get: true },
   // Mimic Spawn map sync (GET poll + POST push share it). A poll every few seconds per open map is ~20/min;
   // over budget is a 429 the agent backs off on (get:true applies to both verbs).
   map_sync:        { perMin: 60,  durable: false, get: true },
@@ -17689,6 +17692,23 @@ async function _handleAgentKiteLoopsGet(req, res) {
   if (r.status === 400) return _ptsJson(res, 400, { error: 'unknown or invalid zone' });
   if (r.status !== 200) return _ptsJson(res, 503, { error: 'try again shortly' });
   return _ptsJson(res, 200, { loops: r.loops });
+}
+
+// GET /api/agent/replay-window?from=<iso>&to=<iso>[&index=1] — up to 15 minutes of the recorded raid (or, with
+// index=1, a night's minute presence + curated kills) for the agent's Rehearse tab. utils/raidReplayWindow.js
+// builds it, scrubs opted-out raiders to class labels and caches it.
+async function _handleAgentReplayWindowGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+  const rw = require('./utils/raidReplayWindow');
+  const q = new URL(req.url, 'http://x').searchParams;
+  const r = await rw.serve(supabase, q.get('from'), q.get('to'), q.get('index') === '1', Date.now());
+  if (r.status !== 200) return _ptsJson(res, r.status, { error: r.error });
+  const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, gzip ? { 'Content-Encoding': 'gzip' } : {}));
+  return res.end(gzip ? rw.gzipOf(r.entry) : r.entry.body);
 }
 
 // GET /api/agent/guild-chat?since=<seq>&boot=<boot> — the guild's recent /gu and /rs chat from an in-memory ring
@@ -24293,6 +24313,17 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentKiteLoopsGet(req, res); }
     catch (err) {
       console.error('[kite-loops] handler error:', err);
+      if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
+      return;
+    }
+  }
+
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/agent/replay-window') {
+    if (await _isShedded('replay_window', res, { ok: true, shed: true, rows: [], kills: [], callouts: [] })) return;
+    if (await _overBudget('replay_window', req, res)) return;
+    try { return await _handleAgentReplayWindowGet(req, res); }
+    catch (err) {
+      console.error('[replay-window] handler error:', err);
       if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
       return;
     }
