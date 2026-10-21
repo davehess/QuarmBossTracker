@@ -16,6 +16,7 @@ import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
 import type { Ctx } from './_landing/Parts';
 import TourLayout from './_landing/TourLayout';
+import OutputLayout from './_landing/OutputLayout';
 
 const TITLE = '[beta] raidmimic · raid orchestration as a service';
 const DESCRIPTION =
@@ -29,7 +30,7 @@ export const metadata: Metadata = {
   twitter: { card: 'summary' },
 };
 
-export default function RaidmimicPage() {
+export default function RaidmimicPage({ searchParams }: { searchParams?: { v?: string | string[] } }) {
   // On a raidmimic host the form lives on eqmimic.quest and the page is `/`. On the Wolf Pack hosts the form is
   // reached by its real path, so the site header stays above it.
   const onHost = isRaidmimicHost(headers().get('host'));
@@ -37,5 +38,9 @@ export default function RaidmimicPage() {
     ? { onHost, interest: interestUrl(`${EQMIMIC_ORIGIN}/feedback`) }
     : { onHost, interest: interestUrl(EQMIMIC_FEEDBACK_PATH) };
 
+  // `?v=b` is a PREVIEW of "Output first" (the guild lead, 2026-10-21), read at b.wolfpack.quest/raidmimic?v=b. The
+  // default stays the tour. On a raidmimic host the middleware drops every query parameter, and this refuses the
+  // variant there as well, so a stale link can never change the public page.
+  if (!onHost && searchParams?.v === 'b') return <OutputLayout ctx={ctx} />;
   return <TourLayout ctx={ctx} />;
 }

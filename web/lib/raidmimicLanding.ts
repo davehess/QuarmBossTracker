@@ -147,6 +147,51 @@ export const MOMENTS: Moment[] = [
 
 export const ILLUSTRATIVE_NOTE = 'Drawn for this page, not screenshots. Labels are placeholders.';
 
+// ─── Output first: the gallery (the `?v=b` layout, the guild lead, 2026-10-21) ──────────────────────
+// "The raidmimic about page is lacking. We still want to show the output first. Anonymize names." So the preview
+// layout opens on the real thing: captures of the running Mimic overlays, drawn from fixtures with invented
+// player names (scripts/raidmimic-shots). Every one of these runs today for one guild, which is why the note
+// below says so and no status chip is needed; the cross-guild board stays in MOMENTS, marked Coming.
+//
+// ⚠ PUBLIC. The captures hold game data (mobs, items, zones, spells) and invented raider names, never a member's
+// character. test/raidmimic-landing.test.js checks each file exists, is small, and is the size given here.
+export interface Shot {
+  id: string;
+  file: string;      // under web/public/raidmimic/shots
+  w: number;         // the file's own pixel size (2x), for the width/height attributes
+  h: number;
+  title: string;     // the caption's name for the overlay
+  line: string;      // one plain sentence: what it does for a raid
+  alt: string;
+}
+export const SHOTS_DIR = '/raidmimic/shots';
+export const SHOTS: Shot[] = [
+  { id: 'cc', file: 'cc.webp', w: 960, h: 1358, title: 'Command Center',
+    line: 'Who still needs to hail before the projection leaves, who the boss is rampaging, who needs a cure and which healer is low on mana.',
+    alt: 'The Command Center overlay: the target’s health, a rampage warning, a hail board listing who still has to hail before the projection leaves in 18:50, a defensive cooldown, healer mana bars, curse and disease cure requests and the last two deaths.' },
+  { id: 'target-stats', file: 'target-stats.webp', w: 1208, h: 688, title: 'Target Info, stats',
+    line: 'Which debuffs are on the mob and who cast them, whether it is slowed, its resists, and how it hits.',
+    alt: 'The Target Info overlay on a nightstalker: a slow timer, six observed debuffs with the caster and a draining bar each, armour class and resists, and chips for its special abilities.' },
+  { id: 'target-quest', file: 'target-quest.webp', w: 1208, h: 802, title: 'Target Info, quests',
+    line: 'For any quest NPC you target: what to say, what to hand in, and who to talk to next.',
+    alt: 'The Target Info overlay on a quest NPC: the words to say with a copy button each, one answer opened, the item to hand in and what comes back, and the next NPC to find with a map line to copy.' },
+  { id: 'dps', file: 'dps.webp', w: 1712, h: 800, title: 'Damage meters',
+    line: 'The fight as bars or as a table, with each pet counted under its owner and your own row always on screen.',
+    alt: 'Two damage overlays side by side: a ranked list of bars split into swings, procs and spells, and a table of damage, share, damage per second and seconds for each raider, with pets folded into their owners.' },
+  { id: 'rolls', file: 'rolls.webp', w: 960, h: 852, title: 'Rolls',
+    line: 'Every roll for every item, highest first, so a loot call is settled by the numbers.',
+    alt: 'The Rolls card: six items being rolled for, each with its winner, and the first item opened to show all fifteen rolls ranked.' },
+  { id: 'timeline', file: 'timeline.webp', w: 1520, h: 528, title: 'Boss timeline',
+    line: 'When the next boss in a linked pair is due, counted from the last kill, with the timers that matter in between.',
+    alt: 'The trigger overlay: three countdown timers and a timeline strip of recent boss deaths with the gap between them and a countdown to the next boss in the pair.' },
+];
+export const SHOTS_HEAD = {
+  title: 'What the raid sees',
+  note: 'These are the real Mimic overlays, running today for one guild, drawn here on made-up data: every raider name is invented.',
+};
+export const SETUP_LINK = { label: 'Set it up yourself', href: '/raidmimic/setup' };
+export const FACTS_TITLE = 'The small print';
+
 // ─── Rights and footer ──────────────────────────────────────────────────────────────────────────────
 export { RIGHTS_NOTICE, FAN_PROJECT_LINE } from './eqmimicLanding';
 

@@ -150,9 +150,11 @@ describe('the page', () => {
     expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
     expect(page).not.toMatch(/getSessionUser|supabase/i);
   });
-  it('renders the tour, always: no ?v= switch, no second layout left behind', () => {
+  it('renders the tour by default; the only switch is the ?v=b "Output first" PREVIEW, never on a raidmimic host', () => {
     expect(page).toMatch(/return <TourLayout ctx=\{ctx\} \/>;/);
-    expect(page).not.toMatch(/searchParams|raidmimicVariant|PitchLayout/);
+    expect(page).toMatch(/if \(!onHost && searchParams\?\.v === 'b'\) return <OutputLayout ctx=\{ctx\} \/>;/);
+    expect((page.match(/searchParams/g) || []).length).toBe(3);   // the prop's name, its type and the one read
+    expect(page).not.toMatch(/raidmimicVariant|PitchLayout/);
     expect(fs.existsSync(path.join(ROOT, L + 'PitchLayout.tsx'))).toBe(false);
     expect(C).not.toHaveProperty('raidmimicVariant');
     expect(C).not.toHaveProperty('BLOCKS');
@@ -362,5 +364,108 @@ describe('the content is public-safe', () => {
     expect(labels.length).toBeGreaterThan(6);
     expect(fig).toMatch(/Raider \{r \+ 1\}/);
     expect(fig).not.toMatch(/Lantern Watch|Wolf Pack/);
+  });
+});
+
+// ─── "Output first" (?v=b), the guild lead, 2026-10-21 ────────────────────────────────────────────────────
+// A preview beside the tour: a gallery of captures of the real Mimic overlays, on invented names, then the tour's text.
+describe('the "Output first" preview (?v=b)', () => {
+  const out = code(L + 'OutputLayout.tsx');
+  const tour = code(L + 'TourLayout.tsx');
+  const SHOTS_DIR = path.join(ROOT, 'web/public/raidmimic/shots');
+
+  // Pixel size of a WebP file, from its header (lossy "VP8 ", lossless "VP8L", or extended "VP8X").
+  function webpSize(file) {
+    const b = fs.readFileSync(file);
+    expect(b.toString('ascii', 0, 4)).toBe('RIFF');
+    expect(b.toString('ascii', 8, 12)).toBe('WEBP');
+    const kind = b.toString('ascii', 12, 16);
+    if (kind === 'VP8 ') return { w: b.readUInt16LE(26) & 0x3fff, h: b.readUInt16LE(28) & 0x3fff };
+    if (kind === 'VP8X') return { w: 1 + b.readUIntLE(24, 3), h: 1 + b.readUIntLE(27, 3) };
+    const bits = b.readUInt32LE(21);   // VP8L
+    return { w: (bits & 0x3fff) + 1, h: ((bits >> 14) & 0x3fff) + 1 };
+  }
+
+  it('the page switches to it on ?v=b only, and the default is still the tour, untouched', () => {
+    const page = code('web/app/raidmimic/page.tsx');
+    expect(page).toMatch(/import OutputLayout from '\.\/_landing\/OutputLayout'/);
+    expect(page.match(/<OutputLayout /g)).toHaveLength(1);
+    expect(page.indexOf('<OutputLayout')).toBeLessThan(page.indexOf('return <TourLayout'));
+    // the tour file only gained an export (Fold, shared with the preview); its order and its words are as before
+    expect(tour).toMatch(/export function Fold\(/);
+    expect(tour).toMatch(/<Hero ctx=\{ctx\} compact \/>/);
+    expect(tour).not.toMatch(/SHOTS|OutputLayout/);
+  });
+
+  it('renders the gallery: every capture, in the order of the content module, from the one shots folder', () => {
+    expect(C.SHOTS.map(s => s.id)).toEqual(['cc', 'target-stats', 'target-quest', 'dps', 'rolls', 'timeline']);
+    for (const s of C.SHOTS) expect(out, s.id).toContain(`byId('${s.id}')`);
+    const order = C.SHOTS.map(s => out.indexOf(`byId('${s.id}')`));
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(out).toMatch(/\$\{SHOTS_DIR\}\/\$\{s\.file\}/);
+    expect(C.SHOTS_DIR).toBe('/raidmimic/shots');
+    // output first: the gallery comes before the moments, the folded facts, the ask, and ends on "Set it up yourself"
+    const marks = ['SHOTS_HEAD.title', 'MOMENTS.map', 'id="works-with"', '<ComingList', '<CtaBand', 'id="setup"', '<Footer'].map(m => out.indexOf(m));
+    expect(marks.every(i => i > -1)).toBe(true);
+    expect([...marks].sort((a, b) => a - b)).toEqual(marks);
+    expect(C.SETUP_LINK).toEqual({ label: 'Set it up yourself', href: '/raidmimic/setup' });
+    expect(out).toMatch(/\{SETUP_LINK\.label\} →/);
+  });
+
+  it('each image is lazy-loaded, sized, has alt text, and carries a one-sentence caption', () => {
+    expect(out).toMatch(/<img src=\{src\} width=\{s\.w\} height=\{s\.h\} alt=\{s\.alt\} loading="lazy" decoding="async"/);
+    expect(out).toMatch(/<figcaption[^>]*>[\s\S]*\{s\.title\}[\s\S]*\{s\.line\}/);
+    for (const s of C.SHOTS) {
+      expect(s.alt.length, s.id).toBeGreaterThan(40);
+      expect(s.line.length, s.id).toBeGreaterThan(30);
+      expect(s.line.length, s.id).toBeLessThan(180);
+      expect((s.line.match(/\./g) || []).length, `${s.id} is one sentence`).toBe(1);
+    }
+  });
+
+  it('is responsive: single column until lg, no fixed pixel widths, no horizontal overflow', () => {
+    expect(out).toMatch(/lg:grid-cols-12/);
+    expect(out).not.toMatch(/\bw-\[\d+px\]|min-w-\[|style=\{\{/);
+    expect(out).toMatch(/className="block h-auto w-full"/);
+  });
+
+  it('is server-rendered text and images only: no client JS, no fetch, no form, no external address, no mailto', () => {
+    expect(read(L + 'OutputLayout.tsx')).not.toMatch(/['"]use client['"]/);
+    expect(out).not.toMatch(/mailto:|<form\b|fetch\(|action=|https?:\/\//);
+  });
+
+  it('the capture files exist, are WebP, are under 200 KB and are the size the module says', () => {
+    for (const s of C.SHOTS) {
+      const f = path.join(SHOTS_DIR, s.file);
+      expect(fs.existsSync(f), s.file).toBe(true);
+      expect(s.file).toMatch(/^[a-z-]+\.webp$/);
+      expect(fs.statSync(f).size, s.file).toBeLessThan(200 * 1024);
+      expect(webpSize(f), s.file).toEqual({ w: s.w, h: s.h });
+    }
+    expect(fs.readdirSync(SHOTS_DIR).sort()).toEqual(C.SHOTS.map(s => s.file).sort());
+  });
+
+  it('no player name on the page, in the captions or in the capture files is a real one: the fixtures use the invented list only', async () => {
+    const F = await import('../scripts/raidmimic-shots/fixtures.mjs');
+    expect(new Set(F.PLAYERS).size).toBe(F.PLAYERS.length);
+    // Every field of every fixture that names a PLAYER, gathered the way the overlays read them.
+    const cc = F.commandCenter(), rl = F.rollsState(), ts = F.targetStats(), tq = F.targetQuest(), th = F.threat(), dp = F.dps();
+    const names = [
+      cc.character, cc.rampage.target, ...cc.hail.flatMap(w => [...w.still, ...w.hailed].map(x => x.name).concat(w.already_flagged)),
+      ...cc.da_broadcasts.map(x => x.name), ...cc.healer_mana.map(x => x.name), ...cc.cures.map(x => x.name), ...cc.death_recaps.map(x => x.name),
+      rl.character, ...rl.rolls.flatMap(r => [...r.winners.map(w => w.name), ...r.rolls.map(x => x.name)]),
+      ts.activeCharacter, ...ts.mobInfo.target_buffs.map(b => b.owner).filter(Boolean), tq.activeCharacter,
+      th.activeCharacter, th.currentEncounterThreat.uploader, ...Object.keys(th.currentEncounterThreat.perPlayer),
+      dp.activeCharacter, ...Object.keys(dp.currentEncounterThreat.perPlayer), ...Object.keys(dp.currentEncounterThreat.spans),
+      ...Object.values(dp.currentEncounterThreat.perPlayer).map(p => p.pet_owner).filter(Boolean),
+    ];
+    expect(names.length).toBeGreaterThan(60);
+    const allowed = new Set([...F.PLAYERS, ...F.PETS]);
+    for (const n of names) expect(allowed.has(n), n).toBe(true);
+    // …and the page's own words name no person at all
+    const words = JSON.stringify([C.SHOTS, C.SHOTS_HEAD, C.SETUP_LINK]) + out;
+    for (const n of F.PLAYERS) expect(words, n).not.toContain(n);
+    // the fixture folder is scripts only: no capture metadata names a player either (a WebP carries none)
+    for (const s of C.SHOTS) expect(fs.readFileSync(path.join(SHOTS_DIR, s.file)).includes(Buffer.from('Exif'))).toBe(false);
   });
 });
