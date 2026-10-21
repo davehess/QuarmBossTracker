@@ -8317,7 +8317,7 @@ const _ROLL_TIER_WORDS = new Set([
 function _cleanRollItemCandidate(seg) {
   let t = String(seg || '')
     .replace(/[\x00-\x1f]/g, ' ')        // EQ item-link control bytes
-    .replace(/\(\s*\d{1,2}\s*\)\s*$/, ' ');  // trailing (qty) belongs to the NUMBER
+    .replace(/\(\s*\d{1,2}\s*\)[\s:\-–]*$/, ' ');  // trailing (qty) belongs to the NUMBER
   // A separator ENDS the previous item, so only the text after the LAST one is
   // this number's name. Collapsing separators to spaces instead would glue a
   // numberless item onto the next one — "Golden Ember Powder | Unadorned Plate
@@ -8325,7 +8325,8 @@ function _cleanRollItemCandidate(seg) {
   // is actually for.
   const cut = Math.max(t.lastIndexOf('|'), t.lastIndexOf(','), t.lastIndexOf(';'));
   if (cut >= 0) t = t.slice(cut + 1);
-  t = t.replace(/\s+/g, ' ').trim();
+  // "Ethereal Parchment: 555" / "… – 555": a dangling : or dash is the separator, not the name.
+  t = t.replace(/\s+/g, ' ').replace(/[\s:\-–—]+$/, '').trim();
   if (!t) return null;
   const bare = (w) => w.toLowerCase().replace(/[^a-z]/g, '');
   // Drop tokens that are pure punctuation — "Shadow Tendril - 111" is a real
@@ -8375,13 +8376,23 @@ const _ITEM_NAME_STOPWORDS = new Set(['of', 'the', 'a', 'an', 'in', 'on', 'and',
  */
 function parseRollItemLine(text) {
   const out = [];
-  const s = String(text || '').replace(/[\x00-\x1f]/g, ' ');
+  let s = String(text || '').replace(/[\x00-\x1f]/g, ' ');
   if (!s) return out;
+  // Quantity written as "xN" / "×N" after the name, or "Nx" before it (the guild lead, 2026-10-21:
+  // "Ethereal Parchment x6 - 555"), is the same thing as "(N)": rewrite it to that shape, which also
+  // swallows the " - " / ":" between the item and its range, so the walk below never sees the N as
+  // a roll range or leaves "x6" glued to the item name.
+  s = s.replace(/(^|[\s|,;])(\d{1,2})\s*[x×]\s+([^|,;\d]*?[A-Za-z][^|,;\d]*?)\s*[-–:]?\s*(?=\d{3,4}(?!\d))/g,
+    (_m, pre, n, name) => `${pre}${name} (${n}) `);
+  s = s.replace(/(\S)\s+[x×]\s*(\d{1,2})(?![\dA-Za-z])\s*[-–:]?\s*/g, '$1 ($2) ');
 
-  const RX = /(?<!\d)(\d{2,4})(?!\d)/g;
+  // A "(N)" quantity is matched only to be stepped over, so a two-digit one — "(12)" — never
+  // ends the segment and strands the item name before it.
+  const RX = /\(\s*\d{1,2}\s*\)|(?<!\d)(\d{2,4})(?!\d)/g;
   let m, prevEnd = 0, carried = null, first = true;
   const pending = [];
   while ((m = RX.exec(s)) !== null) {
+    if (m[1] === undefined) continue;
     const num = parseInt(m[1], 10);
     const start = m.index;
     const end = start + m[1].length;
@@ -8400,7 +8411,7 @@ function parseRollItemLine(text) {
     if (after === '.' && /\d/.test(s.charAt(end + 1))) { first = false; continue; }
     if (!Number.isFinite(num) || num < 100) { first = false; continue; }
 
-    const qm = segRaw.match(/\(\s*(\d{1,2})\s*\)\s*$/);
+    const qm = segRaw.match(/\(\s*(\d{1,2})\s*\)[\s:\-–]*$/);
     const cand = _cleanRollItemCandidate(segRaw);
     if (cand) carried = { item: cand, qty: qm ? parseInt(qm[1], 10) : null };
     if (carried) {
@@ -8420,13 +8431,18 @@ function parseRollItemLine(text) {
   return out;
 }
 
+// "[timestamp] [R] [Name]: text" — raid / guild / group / say / shout only (never a tell).
+const _ROLL_ABBR_RX = /^\[[^\]]+\]\s+\[(?:R|G|P|S|Sh)\]\s+\[([^\]]+)\]:\s+(.+?)\s*$/;
 function trackRollItemLine(line) {
   if (!line) return;
   // Cheap gate — this runs on every kept log line, and only player chat can
   // carry a roll call.
-  if (line.indexOf(' tells ') === -1 && line.indexOf(' shouts') === -1
+  const abbr = line.indexOf(']: ') !== -1;
+  if (!abbr && line.indexOf(' tells ') === -1 && line.indexOf(' shouts') === -1
       && line.indexOf(' says') === -1) return;
-  const m = line.match(_CH_SPEAKER_RX);
+  // Zeal's AbbreviatedChat rewrites the LOG line to "[R] [Name]: text" (no quotes; see _tagLineParts),
+  // so the roll caller's chat arrives in either shape.
+  const m = line.match(_CH_SPEAKER_RX) || line.match(_ROLL_ABBR_RX);
   if (!m) return;
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
