@@ -79,9 +79,9 @@ describe('RIP gate outside a raid', () => {
   });
 
   it('a timer-bearing trigger still arms on the suppressed fire, like the in-raid rule', () => {
-    const DT = { ...RIP, name: 'Death touch — countdown', timer_duration_sec: 120 };
+    const CD = { ...RIP, name: 'Stampede — countdown', timer_duration_sec: 120 };
     const { fire, env } = build({ zeal: { Aldenmar: BOT }, pack: WOLF_PACK });
-    expect(fire(DT, { victim: 'Gaukr' })).toBeUndefined();
+    expect(fire(CD, { victim: 'Gaukr' })).toBeUndefined();
     expect(env.timers).toBe(1);
   });
 });
@@ -95,6 +95,52 @@ describe('RIP gate inside a raid is unchanged', () => {
   });
 
   it('our pet passes in a raid', () => {
+    const { fire } = build({ roster: ['nyssara'], pets: ['rethlan'] });
+    expect(fire(RIP, { victim: 'Rethlan' })).toBe('fired');
+  });
+});
+
+// A Death Touch COUNTDOWN is a claim that a raider was death-touched (the guild lead, 2026-10-21: a
+// purple "Death Touch — <pet>" card appeared when a cleric's pet destroyed itself). The shipped
+// pattern is "<X> hit <target> for 15000+ points of non-melee damage".
+const DT_CD = { name: 'Death touch — countdown', _scope: 'guild', _noJournal: false, timer_duration_sec: 120,
+  actions: [{ type: 'text_overlay', text: 'DEATH TOUCH on {target}', require_raid_member: 'target' }] };
+const dt = (hitter, target) => ({ '1': hitter, target });
+
+describe('Death Touch countdown is for raiders only', () => {
+  it('a real Death Touch on a raider still arms and fires', () => {
+    const { fire, env } = build({ roster: ['nyssara'] });
+    expect(fire(DT_CD, dt('Va Dyn Khar', 'Nyssara'))).toBe('fired');
+    expect(env.journal).toEqual([]);
+  });
+
+  it('a pet destroying itself never arms or fires (several log shapes)', () => {
+    for (const [hitter, target] of [['Zekn', 'Zekn'], ['#Zekn', 'Zekn'], ['zekn', 'ZEKN']]) {
+      const { fire, env } = build({ roster: ['nyssara'] });
+      expect(fire(DT_CD, dt(hitter, target))).toBeUndefined();
+      expect(env.timers).toBe(0);
+    }
+  });
+
+  it('another raider\'s pet (not in the roster) arms nothing, whoever hit it', () => {
+    const { fire, env } = build({ roster: ['nyssara'] });
+    expect(fire(DT_CD, dt('A Hobgoblin Shaman', 'Zekn'))).toBeUndefined();
+    expect(env.timers).toBe(0);
+  });
+
+  it('our own pet arms nothing, even in a raid or with an empty roster', () => {
+    expect(build({ roster: ['nyssara'], pets: ['zekn'] }).fire(DT_CD, dt('A Hobgoblin', 'Zekn'))).toBeUndefined();
+    const { fire, env } = build({ pets: ['zekn'] });
+    expect(fire(DT_CD, dt('Zekn', 'Zekn'))).toBeUndefined();
+    expect(env.timers).toBe(0);
+  });
+
+  it('a self-hit by a raider-named capture is also dropped', () => {
+    const { fire } = build({ roster: ['nyssara'] });
+    expect(fire(DT_CD, dt('Nyssara', 'Nyssara'))).toBeUndefined();
+  });
+
+  it('the RIP callout (no timer) keeps its own rules', () => {
     const { fire } = build({ roster: ['nyssara'], pets: ['rethlan'] });
     expect(fire(RIP, { victim: 'Rethlan' })).toBe('fired');
   });
