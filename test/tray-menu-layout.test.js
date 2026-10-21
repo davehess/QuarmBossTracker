@@ -35,6 +35,9 @@ const REMOVED = [
   '{"label":"✨ Setup walkthrough","submenu":true}',
 ];
 const isContainer = (label) => CONTAINERS.includes(label) || UPDATES_LABEL.test(label);
+// The product was renamed from "Wolf Pack Mimic" to "Raid Mimic" on 2026-10-21 (the guild lead). The snapshot predates
+// it and is left as it was taken; a label that carried the old name is compared under the new one.
+const RENAMED = (s) => s.replace(/Wolf Pack Mimic/g, 'Raid Mimic');
 
 const shown = (items) => items.filter((i) => i.type !== 'separator' && i.visible !== false);
 const labelsOf = (items) => shown(items).map((i) => i.label);
@@ -56,7 +59,7 @@ describe('top level is layout B', () => {
   it('full Mimic', () => {
     const t = top('win32 full, stable, flags on');
     expect(labelsOf(t)).toEqual([
-      '🐺 Wolf Pack Mimic v2.7.7 — Connected · :7777',
+      '🐺 Raid Mimic v2.7.7 — Connected · :7777',
       'Show dashboard',
       'Overlays',
       '🗂 Overlay sets',
@@ -71,7 +74,7 @@ describe('top level is layout B', () => {
   });
   it('agent only keeps the spoken-callouts toggle where Overlays would be, and drops Rescue', () => {
     expect(labelsOf(top('win32 agent only'))).toEqual([
-      '🐺 Wolf Pack Mimic v2.7.7 — Connected · :7777',
+      '🐺 Raid Mimic v2.7.7 — Connected · :7777',
       'Show dashboard',
       'Spoken trigger callouts (TTS)',
       '🔇 Quiet mode — no TTS audio or sounds (overlays still show)',
@@ -84,7 +87,7 @@ describe('top level is layout B', () => {
   });
   it('local mode changes only the status line (and the Updates label while an update is pending)', () => {
     const l = labelsOf(top('win32 beta build, local only, update pending, no uninstaller'));
-    expect(l[0]).toBe('🐺 Wolf Pack Mimic v3.0.0-beta.4 — Local only · :7777');
+    expect(l[0]).toBe('🐺 Raid Mimic v3.0.0-beta.4 — Local only · :7777');
     const rest = labelsOf(top('win32 full, stable, flags on')).slice(1);
     expect(l.slice(1)).toEqual(rest.map((x) => (x === 'Updates' ? 'Updates — v9.9.9 ready' : x)));
   });
@@ -135,7 +138,7 @@ describe('the groups behind the submenus', () => {
       { header: null, items: ['Share crash reports with the guild (opt-in)'] },
       { header: 'Account', items: [
         'Disconnect (revert to local only)',
-        'Uninstall Wolf Pack Mimic…',
+        'Uninstall Raid Mimic…',
       ] },
       { header: null, items: ['Settings…'] },
     ]);
@@ -200,7 +203,7 @@ describe('the groups behind the submenus', () => {
     const pend = sub(top('win32 beta build, local only, update pending, no uninstaller'), 'Settings');
     const names = labelsOf(pend);
     expect(names).toContain('Connect to Wolf Pack…');
-    expect(names).not.toContain('Uninstall Wolf Pack Mimic…');
+    expect(names).not.toContain('Uninstall Raid Mimic…');
     // agent only hides the overlay-only items; Linux drops the Windows-only block
     const agent = labelsOf(sub(top('win32 agent only'), 'Settings'));
     expect(agent).toContain('🪟 Switch to full Mimic (overlays)…');
@@ -216,7 +219,7 @@ describe('nothing lost, nothing changed, nothing sneaked in', () => {
   for (const name of Object.keys(SCENARIOS)) {
     it(name, () => {
       const now = flatten(top(name));
-      const before = BEFORE[name].items;
+      const before = BEFORE[name].items.map(RENAMED);
       // every old item (same type / checked / enabled / visible / handler) is still there ...
       const missing = before.filter((x) => !now.includes(x) && !REMOVED.includes(x));
       expect(missing).toEqual([]);

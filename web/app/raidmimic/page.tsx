@@ -12,7 +12,7 @@
 // that people review, nothing acts on it automatically (CLAUDE.md, AFB).
 import { headers } from 'next/headers';
 import type { Metadata } from 'next';
-import { isRaidmimicHost } from '@/lib/raidmimicHost';
+import { isRaidmimicHost, RAIDMIMIC_SETUP_PATH } from '@/lib/raidmimicHost';
 import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
 import type { Ctx } from './_landing/Parts';
 import TourLayout from './_landing/TourLayout';
@@ -35,8 +35,8 @@ export default function RaidmimicPage({ searchParams }: { searchParams?: { v?: s
   // reached by its real path, so the site header stays above it.
   const onHost = isRaidmimicHost(headers().get('host'));
   const ctx: Ctx = onHost
-    ? { onHost, interest: interestUrl(`${EQMIMIC_ORIGIN}/feedback`) }
-    : { onHost, interest: interestUrl(EQMIMIC_FEEDBACK_PATH) };
+    ? { onHost, interest: interestUrl(`${EQMIMIC_ORIGIN}/feedback`), setup: '/setup' }
+    : { onHost, interest: interestUrl(EQMIMIC_FEEDBACK_PATH), setup: RAIDMIMIC_SETUP_PATH };
 
   // `?v=b` is a PREVIEW of "Output first" (the guild lead, 2026-10-21), read at b.wolfpack.quest/raidmimic?v=b. The
   // default stays the tour. On a raidmimic host the middleware drops every query parameter, and this refuses the

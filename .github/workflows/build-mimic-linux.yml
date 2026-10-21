@@ -111,7 +111,7 @@ jobs:
       - name: Upload AppImage artifact (fallback download)
         uses: actions/upload-artifact@v4
         with:
-          name: wolf-pack-mimic-linux-appimage
+          name: raid-mimic-linux-appimage
           path: apps/mimic/dist/*.AppImage
           if-no-files-found: error
 

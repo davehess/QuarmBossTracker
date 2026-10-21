@@ -1,5 +1,6 @@
 // /mimic/linux — redirect to the latest Linux / SteamOS (Steam Deck) build of
-// Wolf Pack Mimic (#156).
+// Raid Mimic (#156). Its AppImage is Raid-Mimic-*.AppImage, or Wolf-Pack-Mimic-*.AppImage for a
+// Deck build cut before the 2026-10-21 rename; lib/linuxRelease.ts accepts both.
 //
 // Counterpart to /mimic (Windows stable) and /mimic/beta (Windows beta). The
 // Linux AppImage is published by build-mimic-linux.yml to its own `linux`

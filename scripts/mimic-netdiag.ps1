@@ -52,11 +52,11 @@ if (-not $OutDir) { $OutDir = Join-Path $desktop ("mimic-netdiag-" + (Get-Date -
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 function Find-MimicData {
-  foreach ($n in @('Wolf Pack Mimic', 'wolfpack-mimic')) {
+  foreach ($n in @('Raid Mimic', 'Wolf Pack Mimic', 'wolfpack-mimic')) {
     $p = Join-Path $env:APPDATA $n
     if (Test-Path (Join-Path $p 'mimic.config.json')) { return $p }
   }
-  foreach ($n in @('Wolf Pack Mimic', 'wolfpack-mimic')) {
+  foreach ($n in @('Raid Mimic', 'Wolf Pack Mimic', 'wolfpack-mimic')) {
     $p = Join-Path $env:APPDATA $n
     if (Test-Path $p) { return $p }
   }
@@ -127,7 +127,7 @@ if ($Watch) {
       $topName = ''; try { $topName = (Get-Process -Id $top.Name -ErrorAction Stop).ProcessName } catch {}
       $procs = Get-Process -ErrorAction SilentlyContinue
       $pick = { param($rx) $procs | Where-Object { $_.ProcessName -match $rx } }
-      $mimic = & $pick '^Wolf Pack Mimic|^wolfpack-mimic'
+      $mimic = & $pick '^Raid Mimic|^Wolf Pack Mimic|^wolfpack-mimic'
       $agent = & $pick '^node$'
       $eq    = & $pick '^eqgame'
       $disc  = & $pick '^Discord'
@@ -173,7 +173,7 @@ Section "1. System" {
   W ("  last boot:  " + (Fmt $os.LastBootUpTime) + "   ← a boot inside the window = the restart")
   W ("  PowerShell: " + $PSVersionTable.PSVersion)
   try {
-    $ps = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^Wolf Pack Mimic|^wolfpack-mimic|^node$|^eqgame|^Discord$|^electron' } |
+    $ps = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^Raid Mimic|^Wolf Pack Mimic|^wolfpack-mimic|^node$|^eqgame|^Discord$|^electron' } |
       Select-Object ProcessName, Id, StartTime, CPU, @{n='WS_MB';e={[math]::Round($_.WorkingSet64/1MB)}}, HandleCount, @{n='Threads';e={$_.Threads.Count}}
     W "  relevant processes now:"
     $ps | Format-Table -AutoSize | Out-String -Width 200 | ForEach-Object { W $_ }
@@ -193,7 +193,7 @@ if (-not $NoPrompt) {
 }
 
 Section "3. Mimic" {
-  if (-not $dataDir) { W "  Mimic data folder NOT found under %APPDATA% (looked for 'Wolf Pack Mimic' and 'wolfpack-mimic')"; return }
+  if (-not $dataDir) { W "  Mimic data folder NOT found under %APPDATA% (looked for 'Raid Mimic', 'Wolf Pack Mimic' and 'wolfpack-mimic')"; return }
   W ("  data folder: " + $dataDir)
   $exe = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Programs') -Filter '*.exe' -Recurse -Depth 2 -ErrorAction SilentlyContinue |
          Where-Object { $_.Name -match 'Mimic' } | Select-Object -First 1
@@ -250,7 +250,7 @@ Section "4. EverQuest + Zeal" {
     $k = "$hive\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"
     try {
       $v = Get-ItemProperty -Path $k -ErrorAction Stop
-      foreach ($p in $v.PSObject.Properties) { if ($p.Name -match 'eqgame|Wolf Pack Mimic') { W ("  compat flags (" + $hive + "): " + $p.Name + " = " + $p.Value) } }
+      foreach ($p in $v.PSObject.Properties) { if ($p.Name -match 'eqgame|Raid Mimic|Wolf Pack Mimic') { W ("  compat flags (" + $hive + "): " + $p.Name + " = " + $p.Value) } }
     } catch {}
   }
   # Crash bundles Zeal wrote inside the window.

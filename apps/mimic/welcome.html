@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Wolf Pack miMIC — set up</title>
+<title>Raid Mimic — set up</title>
 <!--
   The setup walkthrough (the guild lead, 2026-09-29, reviewing another companion app's onboarding:
   "i like the clickthrough. Build out a version of this for mimic instead of the single setup view.
@@ -244,8 +244,8 @@
         + (session ? ' as <b class="ok">' + esc(session.display_name || session.discord_id) + '</b>' : '')
         + ' <button data-a="signout" style="margin-left:10px">Sign out</button></div>';
     } else {
-      h += '<div class="row"><button class="discord" data-a="signin">Sign in with Discord</button>'
-        + '<button class="link" data-a="local">Run local-only for now</button></div>'
+      h += '<div class="row"><button class="discord" data-a="signin">Join a guild — sign in with Discord</button>'
+        + '<button class="link" data-a="local">Just me — stays on this PC</button></div>'
         + (S.localOnly ? '<div class="note ok">✓ Local-only. Overlays and triggers work; nothing uploads. Sign in later from the tray.</div>' : '');
     }
     h += turnsOn([
@@ -986,7 +986,7 @@
     var reqLeft = !!(s.kind === 'req' && stepState(s.id) === 'need');
     var last = i === aSteps.length - 1;
     $('#app').innerHTML =
-        '<div class="a-shell"><nav class="rail" aria-label="Setup steps"><div class="brand">🐺 Wolf Pack miMIC<span>setup</span></div><ol>'
+        '<div class="a-shell"><nav class="rail" aria-label="Setup steps"><div class="brand">🐺 Raid Mimic<span>setup</span></div><ol>'
       + aSteps.map(function (x, j) {
           var st = x.id === 'welcome' ? 'done' : stepState(x.id);
           return '<li class="' + st + (x.id === cur ? ' cur' : '') + '"><button data-go="' + x.id + '"' + (x.id === cur ? ' aria-current="step"' : '') + '>'

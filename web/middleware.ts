@@ -102,12 +102,12 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
   }
 
   // raidmimic.com / .net / .quest (the guild lead, 2026-10-18): the same shape as the branch above, for the
-  // game-agnostic guild-leader page. One page, so every path rewrites to it with the whole query dropped.
-  // Also before any session work, for the same reasons.
+  // game-agnostic guild-leader page. /setup rewrites to the set-up guide (2026-10-21), every other path to the
+  // landing page, the whole query dropped either way. Also before any session work, for the same reasons.
   if (isRaidmimicHost(request.headers.get('host'))) {
     if (request.nextUrl.pathname.startsWith('/_next/')) return NextResponse.next();
     const url = request.nextUrl.clone();
-    const to = raidmimicLandingTarget();
+    const to = raidmimicLandingTarget(request.nextUrl.pathname);
     url.pathname = to.pathname;
     url.search = to.search;
     return NextResponse.rewrite(url);

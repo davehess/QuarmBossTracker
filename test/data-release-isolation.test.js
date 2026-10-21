@@ -166,11 +166,12 @@ describe('the bot ignores data-latest', () => {
 describe('the site ignores data-latest', () => {
   // These filters are TypeScript in a Next route; the rules they share are asserted on the source, and each
   // is mutation-checked against the removal of its guard.
-  const setupExe = /r\.assets\.some\(a => \/\^wolf-pack-mimic-setup-\.\*\\\.exe\$\/i\.test\(a\.name\)\)/;
+  // (the installer is Raid-Mimic-Setup-* since the 2026-10-21 rename; every earlier release is Wolf-Pack-Mimic-Setup-*, so both)
+  const setupExe = /r\.assets\.some\(a => \/\^\(\?:raid\|wolf-pack\)-mimic-setup-\.\*\\\.exe\$\/i\.test\(a\.name\)\)/;
 
   it('/mimic needs a non-prerelease with the Mimic installer attached', () => {
     const route = stripJs(read('web', 'app', 'mimic', 'route.ts'));
-    expect(route).toMatch(/&& !r\.prerelease\s*\n\s*&& r\.assets\.some\(a => \/\^wolf-pack-mimic-setup-\.\*\\\.exe\$\/i\.test\(a\.name\)\)/);
+    expect(route).toMatch(/&& !r\.prerelease\s*\n\s*&& r\.assets\.some\(a => \/\^\(\?:raid\|wolf-pack\)-mimic-setup-\.\*\\\.exe\$\/i\.test\(a\.name\)\)/);
   });
   it('/mimic/beta needs the installer asset, and a -beta.N tag for the beta', () => {
     const route = stripJs(read('web', 'app', 'mimic', 'beta', 'route.ts'));
@@ -185,7 +186,7 @@ describe('the site ignores data-latest', () => {
   it('/mimic/linux takes only a release with an AppImage', () => {
     const lib = stripJs(read('web', 'lib', 'linuxRelease.ts'));
     expect(lib).toMatch(/r\.assets\.some\(a => APPIMAGE_RX\.test\(a\.name\)\)/);
-    expect(lib).toMatch(/APPIMAGE_RX = \/wolf-pack-mimic-\.\*\\\.appimage\$\/i/);
+    expect(lib).toMatch(/APPIMAGE_RX = \/\(\?:raid\|wolf-pack\)-mimic-\.\*\\\.appimage\$\/i/);
   });
 });
 

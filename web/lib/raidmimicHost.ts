@@ -21,11 +21,19 @@ export function isRaidmimicHost(host: string | null | undefined): boolean {
   return RAIDMIMIC_HOSTS.includes(host.toLowerCase().replace(/:\d+$/, ''));
 }
 
+// The set-up guide for someone who is not in a guild (the guild lead, 2026-10-21): raidmimic.com/setup.
+export const RAIDMIMIC_SETUP_PATH = '/raidmimic/setup';
+
 /**
- * Where a request on a raidmimic host is rewritten to: the landing page, whatever the path, and with every
- * query parameter dropped so nothing a caller tacked on rides further. Unlike eqmimic there is no second page
- * (no form of its own): the "Register interest" link points at the anonymous form on eqmimic.quest.
+ * Where a request on a raidmimic host is rewritten to, with every query parameter dropped so nothing a caller
+ * tacked on rides further:
+ *   /setup               -> the set-up guide (a trailing slash and any capitals are fine)
+ *   / , anything else    -> the landing page
+ * Unlike eqmimic there is no form of its own: the "Register interest" link points at the anonymous form on
+ * eqmimic.quest. `pathname` is optional so the old no-argument call still means "the landing page".
  */
-export function raidmimicLandingTarget(): { pathname: string; search: string } {
+export function raidmimicLandingTarget(pathname = '/'): { pathname: string; search: string } {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, '').toLowerCase() : pathname;
+  if (path === '/setup') return { pathname: RAIDMIMIC_SETUP_PATH, search: '' };
   return { pathname: RAIDMIMIC_LANDING_PATH, search: '' };
 }

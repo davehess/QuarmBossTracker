@@ -126,7 +126,7 @@ describe('the middleware, run', () => {
     expect(at).toBeGreaterThan(-1);
     expect(at).toBeLessThan(mw.indexOf('PREVIEW_BOT_RX.test'));
     expect(at).toBeLessThan(mw.indexOf('createServerClient('));
-    expect(mw).toMatch(/raidmimicLandingTarget\(\)/);
+    expect(mw).toMatch(/raidmimicLandingTarget\(request\.nextUrl\.pathname\)/);
   });
 });
 

@@ -226,7 +226,7 @@
     <select id="srcSel"><option value="direct">Direct</option><option value="agent">Agent</option></select>
     <span title="How much the dots are smoothed between position updates. More smoothing looks calmer and lags a little more.">smoothing</span>
     <select id="smoothSel"></select>
-    <span title="Where the walls come from. Auto: Brewall's maps, the ones Zeal draws in game (fetched from Zeal's repo the first time you enter a zone and kept on this computer), then the map files in your own EverQuest folder, otherwise ours. Ours only: always draw the Wolf Pack walls. Map files are never sent anywhere.">walls</span>
+    <span title="Where the walls come from. Auto: Brewall's maps, the ones Zeal draws in game (fetched from Zeal's repo the first time you enter a zone and kept on this computer), then the map files in your own EverQuest folder, otherwise the built-in walls. Ours only: always draw the built-in walls. Map files are never sent anywhere.">walls</span>
     <select id="wallsSel"><option value="auto">Auto</option><option value="ours">Ours only</option></select>
     <span title="What the Timers button does. Widen window: the window grows to the side by the list's width, so the map keeps its size. Share space: the window stays put and the map shrinks to make room.">timers</span>
     <select id="sideModeSel"><option value="grow">Widen window</option><option value="share">Share space</option></select>
@@ -1218,7 +1218,7 @@
   function useLocalWalls(mode, local) { return mode !== 'ours' && !!local && local.count > 0; }
   // `local` is the prepped local map in use (or anything truthy for "a local map"), falsy for ours.
   function wallsNote(local) {
-    if (!local) return 'walls: Wolf Pack';
+    if (!local) return 'walls: built-in';
     return local.source === 'brewall' ? "walls: Brewall (Zeal's maps)" : 'walls: your map files';
   }
   // The agent's local_map -> lines grouped by colour into typed arrays in the SCREEN frame (the same trick as
@@ -1291,7 +1291,7 @@
     ['☮', 'Cannot be lulled'], ['⚔', 'Rampage'], ['💢', 'Enrage'], ['≋', 'Flurry'], ['⇅', 'Reverse slow'],
   ];
   var CFG_COLS = [
-    ['wall', 'Walls (one colour)'], ['oursWall', 'Walls (Wolf Pack)'], ['route', 'Walker routes'], ['routeTarget', 'Targeted walker route'],
+    ['wall', 'Walls (one colour)'], ['oursWall', 'Walls (built-in)'], ['route', 'Walker routes'], ['routeTarget', 'Targeted walker route'],
     ['dot', 'Spawn point'], ['named', 'Named spawn'], ['raidTarget', 'Raid target'], ['up', 'Up / seen'],
     ['ringWait', 'Timer: not yet'], ['ringWindow', 'Timer: window open'], ['ringUp', 'Timer: up'], ['candidate', '"?" ring'], ['aggro', 'Aggro: KOS to you / unknown'],
     ['aggroSafe', 'Aggro: not to you'], ['aggroNone', 'Aggro: nobody'], ['aeRamp', 'AE rampage ring'], ['ramp', 'Rampage ring'],

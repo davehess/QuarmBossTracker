@@ -1,4 +1,4 @@
-// /mimic/beta — redirect to the latest BETA-channel Wolf Pack Mimic release.
+// /mimic/beta — redirect to the latest BETA-channel Raid Mimic release.
 //
 // Counterpart to /mimic (which serves stable). Filters to releases marked
 // `prerelease: true` on GitHub — that flag is set by the release-mimic.yml
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
     if (res.ok) {
       const releases = (await res.json()) as Release[];
       const allMimicReleases = releases
-        .filter(r => !r.draft && r.assets.some(a => /^wolf-pack-mimic-setup-.*\.exe$/i.test(a.name)))
+        .filter(r => !r.draft && r.assets.some(a => /^(?:raid|wolf-pack)-mimic-setup-.*\.exe$/i.test(a.name)))
         .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
 
       // Prefer the latest prerelease; if none, fall through to the latest
