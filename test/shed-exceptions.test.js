@@ -76,6 +76,16 @@ describe('_isShedded exception list (real index.js)', () => {
     }
   });
 
+  it('replay_window (the Rehearse tab GET) is sheddable, never durable, and its flag acks the body it is handed', async () => {
+    expect(_SHED_KINDS.has('replay_window')).toBe(true);
+    expect(_SHED_NEVER.has('replay_window')).toBe(false);
+    __setTune({ flag_shed_replay_window: 1 });
+    const res = mockRes();
+    const ack = { ok: true, shed: true, rows: [], kills: [], callouts: [] };
+    expect(await _isShedded('replay_window', res, ack)).toBe(true);
+    expect(JSON.parse(res.body)).toEqual(ack);
+  });
+
   it('an unrecognized kind is never shed even if a stray flag is set', async () => {
     __setTune({ flag_shed_place_bid: 1 });
     const res = mockRes();
