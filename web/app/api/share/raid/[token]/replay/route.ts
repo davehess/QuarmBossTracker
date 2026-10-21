@@ -57,7 +57,7 @@ export async function GET(req: Request, { params }: { params: { token: string } 
       return (data ?? []).map((r: { minute_at: string; zones: string[] | null; data: string }) => ({
         minute_at: r.minute_at, zones: r.zones, data: scrubMinuteData(r.data, anon),
       }));
-    }, ['raid-share', share.row.id, 'replay', String(slice.fromMs)], { revalidate: SHARE_CACHE_S, tags: [shareTag(share.row.id)] })();
+    }, ['raid-share', share.row.id, 'replay', String(slice.fromMs), String(slice.toMs), String(win.toMs)], { revalidate: SHARE_CACHE_S, tags: [shareTag(share.row.id)] })();
     return NextResponse.json({ rows }, { headers: HEADERS });
   } catch {
     return NextResponse.json({ error: 'replay unavailable' }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
