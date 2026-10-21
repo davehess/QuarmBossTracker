@@ -1,4 +1,4 @@
-# Wolf Pack Mimic — Electron desktop client (BETA, codename *mimic*)
+# Raid Mimic (formerly Wolf Pack Mimic) — Electron desktop client (BETA, codename *mimic*)
 
 > 4th component alongside bot / agent / web. Wraps the existing
 > `wolfpack-logsync` agent in a native shell with a real window + an
@@ -30,7 +30,7 @@
 cd apps/mimic
 npm install                 # also stages the agent via postinstall
 npm start                   # dev run against the repo's agent
-npm run dist                # build Wolf-Pack-Mimic-Setup-<version>.exe (Windows NSIS)
+npm run dist                # build Raid-Mimic-Setup-<version>.exe (Windows NSIS)
 ```
 `npm run dist` emits the installer to `apps/mimic/dist/`. First launch opens
 **Settings** — paste the `/token` value, optionally set the EQ folder, Save.

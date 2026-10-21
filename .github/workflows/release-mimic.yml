@@ -1,9 +1,15 @@
 name: Release Mimic (Electron)
 
-# Builds the Wolf Pack Mimic desktop installer on a real Windows runner and
+# Builds the Raid Mimic (formerly Wolf Pack Mimic) desktop installer on a real Windows runner and
 # attaches the .exe + latest.yml (electron-updater manifest for the stable
 # `latest` channel) to a GitHub release. The release tag is auto-derived from
 # apps/mimic/package.json's version field.
+#
+# FILE NAMES (the guild lead, 2026-10-21 rename): this build's installer is Raid-Mimic-Setup-<ver>.exe
+# (apps/mimic/package.json build.nsis.artifactName). Releases cut before the rename keep their
+# Wolf-Pack-Mimic-Setup-<ver>.exe names, and everything that FINDS a release by its installer
+# (the bot announcer, /mimic, /mimic/beta, /admin/agents, /mimic/linux) accepts both. The globs
+# below name only the new files because the build produces only those.
 #
 # TAG FORMAT — plain semver `v<version>` (e.g. v1.0.0, v1.1.0, or
 # v1.1.0-rc.1 for prereleases). electron-updater on the stable channel picks
@@ -279,8 +285,8 @@ jobs:
           target_commitish: ${{ github.sha }}
           body_path:        ${{ github.workspace }}/release-notes.md
           files: |
-            apps/mimic/dist/Wolf-Pack-Mimic-Setup-*.exe
-            apps/mimic/dist/Wolf-Pack-Mimic-*.zip
+            apps/mimic/dist/Raid-Mimic-Setup-*.exe
+            apps/mimic/dist/Raid-Mimic-*.zip
             apps/mimic/dist/*.yml
             apps/mimic/dist/*.blockmap
 
@@ -323,7 +329,7 @@ jobs:
           prerelease: true
           body_path:  ${{ github.workspace }}/release-notes.md
           files: |
-            apps/mimic/dist/Wolf-Pack-Mimic-Setup-*.exe
+            apps/mimic/dist/Raid-Mimic-Setup-*.exe
             apps/mimic/dist/alpha.yml
             apps/mimic/dist/*.blockmap
 
@@ -337,7 +343,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          keep=" $( (cd apps/mimic/dist && ls -1 Wolf-Pack-Mimic-Setup-*.exe alpha.yml *.blockmap 2>/dev/null || true) | tr "\n" " ") "
+          keep=" $( (cd apps/mimic/dist && ls -1 Raid-Mimic-Setup-*.exe alpha.yml *.blockmap 2>/dev/null || true) | tr "\n" " ") "
           echo "keeping:$keep"
           # Never empty the release: without this build's alpha.yml in hand, delete nothing.
           case "$keep" in *" alpha.yml "*) ;; *) echo "alpha.yml not found locally; leaving every file in place"; exit 0;; esac

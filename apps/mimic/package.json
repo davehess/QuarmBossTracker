@@ -2,7 +2,7 @@
   "name": "wolfpack-mimic",
   "version": "3.0.0",
   "private": true,
-  "description": "Wolf Pack Mimic — Electron desktop client. Wraps the wolfpack-logsync agent in a native shell with a real window + always-on-top overlay. Bundles its own Node runtime, so no separate Node install.",
+  "description": "Raid Mimic — Electron desktop client. Wraps the wolfpack-logsync agent in a native shell with a real window + always-on-top overlay. Bundles its own Node runtime, so no separate Node install.",
   "license": "AGPL-3.0-or-later",
   "author": "Wolf Pack EQ",
   "repository": {
@@ -26,7 +26,7 @@
   },
   "build": {
     "appId": "quest.wolfpack.mimic",
-    "productName": "Wolf Pack Mimic",
+    "productName": "Raid Mimic",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -78,7 +78,7 @@
           ]
         }
       ],
-      "artifactName": "Wolf-Pack-Mimic-${version}.${ext}"
+      "artifactName": "Raid-Mimic-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -92,7 +92,7 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "include": "build/installer.nsh",
-      "artifactName": "Wolf-Pack-Mimic-Setup-${version}.${ext}"
+      "artifactName": "Raid-Mimic-Setup-${version}.${ext}"
     }
   }
 }
