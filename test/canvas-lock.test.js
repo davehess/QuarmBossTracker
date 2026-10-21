@@ -109,6 +109,7 @@ function makeWorld(specs, opts = {}) {
   const block = slice('  function isLocked(q)', 'return members.every(function (m) { return !!m.lock; });\n  }\n')
     + '\n' + slice('  function growsUp(p) {', '\n') + '\n' + slice('  var TALL_GRAB = 120,', '\n') + '\n' + slice('  function yBounds(rTop, rH, h, up, free) {')
     + '\n' + slice('  function xBounds(rLeft, rW, w, free) {') + '\n' + slice('  function isFree(q) {', '\n')
+    + '\n' + slice('  function sizeMax(p, cap, avail) {', '\n')
     + '\n' + slice('  var SNAP = 8;', "document.addEventListener('mouseup', endDrag);\n");
   const env = new Function('window', 'document', '_layout', '_els', '_sel', 'notes', 'saves', 'screenList', 'M', 'shield',
     'var _widen = {}; var _fitAdd = {}; var _edit = true; var _one = null; function isEd(id) { return _edit || (_one != null && _one === id); }\n'

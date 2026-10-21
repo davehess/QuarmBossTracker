@@ -16,8 +16,8 @@ import { readSource, sliceBlock, evalBlock, stripJs, ROOT } from './_source-slic
 
 const canvas = readSource(path.join(ROOT, 'apps', 'mimic', 'canvas.html'));
 const block = sliceBlock(canvas, '  var GROUPS = [', '  // ── Panels ──');
-const R = evalBlock('var window = {};\n' + block + '\nfunction __scr(s) { _screens = s; }',
-  ['sanitize', 'screenList', 'fitRect', 'yBounds', 'xBounds', 'toWindow', 'toDisk']);
+const R = evalBlock('var window = {};\nfunction pdefOf() { return null; }\n' + block + '\nfunction __scr(s) { _screens = s; }',
+  ['sanitize', 'screenList', 'fitRect', 'yBounds', 'xBounds', 'toWindow', 'toDisk', 'sizeMax', 'widthRange', 'setWidth', 'setHeight']);
 
 const one = [{ sig: '', x: 0, y: 0, w: 1920, h: 1080, home: true }];
 const san = (panels) => { const l = R.sanitize({ panels }); return panels.map(q => l.panels.find(x => x.id === q.id)); };
@@ -76,6 +76,43 @@ describe('Keep inside the screen: OFF', () => {
   it('off is stored only when chosen', () => {
     const out = san([part({ free: true }), part({ id: 'p2' }), part({ id: 'p3', free: 'yes' })]);
     expect(out.map(p => p.free)).toEqual([true, undefined, undefined]);
+  });
+});
+
+describe('Keep inside the screen also governs RESIZING', () => {
+  const ov = (o) => Object.assign({ id: 'o1', kind: 'overlay', key: 'dps', x: 0.5, y: 0.5, w: 300, h: 200 }, o);
+  it('ON: width and height are cut to the screen; OFF: only the saved caps (4000 / 3000) apply', () => {
+    expect(R.widthRange(ov(), 1920)).toEqual([80, 1920]);
+    expect(R.widthRange(ov({ free: true }), 1920)).toEqual([80, 4000]);
+    expect(R.sizeMax(ov(), 3000, 1080)).toBe(1080);
+    expect(R.sizeMax(ov({ free: true }), 3000, 1080)).toBe(3000);
+  });
+  it('the width stepper / presets: past the screen only when off, never under the minimum', () => {
+    const on = ov(), off = ov({ free: true });
+    R.setWidth(on, 9000, 1920); R.setWidth(off, 9000, 1920);
+    expect([on.w, off.w]).toEqual([1920, 4000]);
+    R.setWidth(off, 5, 1920);
+    expect(off.w).toBe(80);
+  });
+  it('the height stepper: same, and a grows-up piece keeps its bottom edge, off the top when off', () => {
+    const on = ov({ anchor: 'bottom', y: 0.1 }), off = ov({ anchor: 'bottom', y: 0.1, free: true });
+    R.setHeight(on, 2500, 1080); R.setHeight(off, 2500, 1080);
+    expect([on.h, off.h]).toEqual([1080, 2500]);
+    expect(on.y).toBe(0);
+    expect(off.y).toBeLessThan(0);
+    R.setHeight(off, 1, 1080);
+    expect(off.h).toBe(36);
+  });
+  it('the drags, fits and Take apart read the flag (source)', () => {
+    const c = stripJs(canvas);
+    expect(c).toMatch(/Math\.min\(sizeMax\(dp, 4000, W - d\.x0\)/);
+    expect(c).toMatch(/Math\.min\(sizeMax\(dp, 3000, H - d\.y0\)/);
+    expect(c).toMatch(/gfree \? 4000 : W - d\.box\.x/);
+    expect(c).toMatch(/Math\.min\(sizeMax\(p, 3000, H - top\), need\)/);
+    expect(c).toMatch(/pfree \? -Infinity : sr\.y/);
+    expect(c).toMatch(/lock: p\.lock, free: p\.free, back: p\.back/);
+    expect(c).toMatch(/free: o\.free === true \? true : undefined/);
+    expect(c).toMatch(/Resizing follows/);
   });
 });
 
