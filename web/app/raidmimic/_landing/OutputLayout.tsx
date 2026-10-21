@@ -36,14 +36,13 @@ function ShotFigure({ s }: { s: Shot }) {
   );
 }
 
-// `hero` is the mascot preview: 'howl' (?v=b) puts the clip beside the headline, 'layered' (?v=c) puts the mascot
-// and the captures around it under it. Neither set: the page as it was.
-export default function OutputLayout({ ctx, hero }: { ctx: Ctx; hero?: 'howl' | 'layered' }) {
+// The hero is the mascot with the captures around it, under the headline (MascotHero).
+export default function OutputLayout({ ctx }: { ctx: Ctx }) {
   return (
     <div className="mx-auto max-w-6xl pb-12">
       <BetaTag ctx={ctx} />
 
-      <header className={hero === 'howl' ? 'mb-6 grid items-center gap-4 lg:grid-cols-2' : 'mb-6'}>
+      <header className="mb-6">
         <div>
           <p className="text-xs uppercase tracking-widest text-gold">{HERO.kicker}</p>
           <h1 className="mt-1 text-3xl leading-tight text-[#f2ede1]">{HERO.name}</h1>
@@ -53,9 +52,8 @@ export default function OutputLayout({ ctx, hero }: { ctx: Ctx; hero?: 'howl' | 
             <a href={SETUP_LINK.href} className="inline-flex min-h-11 items-center text-sm">{SETUP_LINK.label} →</a>
           </div>
         </div>
-        {hero === 'howl' && <MascotHero variant="howl" />}
       </header>
-      {hero === 'layered' && <MascotHero variant="layered" />}
+      <MascotHero />
 
       <section aria-label={SHOTS_HEAD.title} className="space-y-6">
         <div className="grid gap-6 lg:grid-cols-12 lg:items-start">

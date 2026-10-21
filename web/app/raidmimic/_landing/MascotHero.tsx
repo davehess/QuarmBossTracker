@@ -1,8 +1,7 @@
-// Two hero PREVIEWS for the raidmimic landing, both built on the mascot the guild lead supplied (2026-10-21: "None, that's
-// not enough UI. we should have more on there. more of the mimic."). Read at b.wolfpack.quest/raidmimic?v=b and ?v=c.
-//   howl    (?v=b) — the clip itself: the mascot hops, then howls and seven real overlays fan out around it. It plays once
-//                    and HOLDS the last frame (a loop would tear the fanned-out overlays away every eight seconds).
-//   layered (?v=c) — the mascot hops in a loop in the middle and the real captures sit around it as cards you can read.
+// The hero of the raidmimic "Output first" preview, built on the mascot the guild lead supplied (2026-10-21: "None, that's
+// not enough UI. we should have more on there. more of the mimic."; picked: "i like B for the hero"). Read at
+// b.wolfpack.quest/raidmimic?v=b. The mascot hops in a loop in the middle and the real captures sit around it as
+// cards you can read. (The other candidate, a howl clip that played once, was dropped when this one was picked.)
 // Server component; the only script is MascotVideo (reduced motion). Cards animate transform + opacity only.
 import { SHOTS, SHOTS_DIR, type Shot } from '@/lib/raidmimicLanding';
 import MascotVideo from './MascotVideo';
@@ -30,16 +29,7 @@ const shotById = (id: string): Shot => {
 
 const FADE = 'rm-fade block h-auto w-full';
 
-function Howl() {
-  return (
-    <div className="mx-auto w-full max-w-[560px] lg:justify-self-end">
-      <MascotVideo src={`${DIR}/howl.mp4`} poster={`${DIR}/howl-poster.jpg`} className={FADE}
-        alt="The raidmimic mascot, a wooden treasure chest with wolf ears and a long tongue, howling while seven of the real Mimic overlays fan out around it." />
-    </div>
-  );
-}
-
-function Layered() {
+export default function MascotHero() {
   return (
     <section aria-label="The mascot and the overlays it shows" className="relative mb-4 lg:mb-10 lg:aspect-[1152/860]">
       {/* The clip is wider than the gap between the cards on purpose: its edges are dark and faded, the cards sit above. */}
@@ -70,8 +60,4 @@ function Layered() {
       </ul>
     </section>
   );
-}
-
-export default function MascotHero({ variant }: { variant: 'howl' | 'layered' }) {
-  return variant === 'howl' ? <Howl /> : <Layered />;
 }
