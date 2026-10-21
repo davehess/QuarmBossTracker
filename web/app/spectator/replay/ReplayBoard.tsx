@@ -51,6 +51,8 @@ import { bandColor, prepare, type Prepared } from '../SpectatorBoard';
 import { BGS, bgSearch, inkColor, parseBg, type Bg } from '@/lib/mapBackdrop';
 import { ParchmentStore, drawParchmentLayer, paintPaper } from '@/lib/parchmentStore';
 import type { Bridge3D } from './Replay3D';
+import RaidTimeline, { type TimelineVariant } from '@/components/RaidTimeline';
+import type { Kill } from '@/lib/raidTimeline';
 
 // three.js is only fetched when the 3D view is first shown.
 const Replay3D = dynamic(() => import('./Replay3D'), {
@@ -464,7 +466,8 @@ export type BoundedReplay = {
   seek?: { t: number; n: number } | null;
 };
 
-export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {}) {
+export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedReplay; timeline?: TimelineVariant | null } = {}) {
+  const [killList, setKillList] = useState<Kill[]>([]);   // the night's boss deaths, for the timeline strip (?v=b|c)
   const urlsRef = useRef(bounded?.urls ?? null);
   urlsRef.current = bounded?.urls ?? null;
   const [nights, setNights] = useState<NightSummary[] | null>(bounded ? [bounded.night] : null);
@@ -770,6 +773,7 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
   useEffect(() => {
     bossesRef.current = [];
     bossNamesRef.current = new Set();
+    setKillList([]);
     const key = night?.night_key;
     if (!key) return;
     const u = urlsRef.current;
@@ -780,6 +784,7 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
         if (!res.ok) return;
         bossesRef.current = parseBosses(await res.json());
         bossNamesRef.current = new Set(bossesRef.current.map(b => normMobName(b.name)));
+        setKillList(bossesRef.current.map(b => ({ npcId: b.npc_id, name: b.name, atMs: b.to })));
         schedule();
       })
       .catch(() => {});
@@ -1243,6 +1248,7 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
 
   return (
     <div className="min-w-0">
+      {timeline && <RaidTimeline variant={timeline} kills={killList} nowMs={uiT} />}
       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-dim">
         {!bounded && (<>
         <label className="flex items-center gap-1.5">
