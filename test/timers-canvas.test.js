@@ -221,7 +221,7 @@ describe('Mimic wiring (the overlay checklist)', () => {
     const c = stripJs(canvas);
     expect(c).toMatch(/mv\.className = 'mvbtn';\s*mv\.textContent = '✥';\s*mv\.setAttribute\('data-wp-interact', ''\);/);
     expect(c).toMatch(/if \(ev\.target === mv\) \{ startDrag\(ev, p\.id, 'move', true\); return; \}/);
-    expect(c).toMatch(/if \(\(!isEd\(id\) && !anyTime\) \|\| ev\.button !== 0\) return;/);
+    expect(c).toMatch(/if \(\(!isEd\(id\) && !anyTime && !\(playCorner && isCorner\(panelById\(id\)\)\)\) \|\| ev\.button !== 0\) return;/);
     expect(c).toMatch(/if \(isEd\(p\.id\)\) e\.root\.setAttribute\('data-wp-interact', ''\); else e\.root\.removeAttribute\('data-wp-interact'\);/);
     expect(c).toMatch(/\.mvbtn\{position:absolute;/);
     expect(c).toContain('.tab,.grip{display:none}');

@@ -472,7 +472,7 @@ describe('the HUD builder, docked: it widens the panel, never the window', () =>
     expect(run({ add: 300, left: true }, p)).toEqual(['660px', '643px']);
   });
   it('moving or sizing a panel closes its builder first; a page that loads again comes back closed; the menu opens it', () => {
-    const start = c.indexOf('function startDrag(ev, id, mode, anyTime, axis) {');
+    const start = c.indexOf('function startDrag(ev, id, mode, anyTime, axis, playCorner) {');
     const body = c.slice(start, c.indexOf('\n  }\n', start));
     expect(body.indexOf('e.frame.contentWindow.wpCloseBuilder()')).toBeGreaterThan(0);
     expect(body.indexOf('e.frame.contentWindow.wpCloseBuilder()')).toBeLessThan(body.indexOf('_drag = {'));

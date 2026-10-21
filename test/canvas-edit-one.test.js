@@ -264,7 +264,7 @@ describe('the canvas page wires it', () => {
     expect(CODE).toMatch(/if \(t\.hasAttribute\('data-one'\)\)/);
   });
   it('the arranging paths ask isEd(id), not the whole-canvas flag', () => {
-    expect(CODE).toMatch(/if \(\(!isEd\(id\) && !anyTime\)/);
+    expect(CODE).toMatch(/if \(\(!isEd\(id\) && !anyTime && !\(playCorner && isCorner\(panelById\(id\)\)\)\)/);
     expect(CODE).toMatch(/isEd\(p\.id\) \|\| ev\.target === mv/);
     expect(CODE).toMatch(/sampleOn\(p, isEd\(p\.id\), _isTesting/);
     expect(CODE).toMatch(/ruled && !isEd\(p\.id\)/);
