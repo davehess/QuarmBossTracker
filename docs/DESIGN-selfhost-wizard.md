@@ -377,9 +377,14 @@ and the same never-refetch guarantee.
   migration creates plus the roles/extensions/publication a hosted project has.
   The wizard runs `selfhost-bootstrap-db.sh` and must check the ROLE LIST, not
   the healthcheck — a Postgres with no bootstrap still reports healthy.
-- **The `eqemu_*` catalog (~97 MB) has no self-serve import.** Still the largest
-  unsolved gap for a new guild; the standing recommendation is to publish it as
-  a shared read-only resource rather than have each guild rebuild it.
+- **The `eqemu_*` catalog (~97 MB) loads through `scripts/selfhost-load-game-data.js`**
+  (the guild lead, 2026-10-21, DECISIONS §392 option C). A wizard step after
+  `selfhost-bootstrap-db.sh`: it runs the same weekly importer against the guild's
+  own project, then counts every catalog table and fails if any is empty or
+  differs, so green means the data is there. A guild on its own EQEmu server sets
+  `DUMP_URL` (EQMacEmu schema only; others untested). A standalone raider with no
+  database needs none of this: Mimic will use the weekly data pack (option A, same
+  decision). Wolf Pack itself stays on the live database.
 - **Migrations can stall silently.** The hosted GitHub integration applied
   nothing for three days and nobody noticed until a feature failed. The wizard
   (and ideally CI) should compare the newest file in `supabase/migrations/`
