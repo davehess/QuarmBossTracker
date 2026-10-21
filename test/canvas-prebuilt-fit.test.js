@@ -302,6 +302,7 @@ describe('Command Center on the Canvas', () => {
       + 'var _CANVAS_SIZES = {}; var agentPort = 7779; var screen = { getPrimaryDisplay() { return { bounds: { x: 0, y: 0, width: 1920, height: 1080 } }; } };\n'
       + 'var canvasWindow = null; function _canvasDisplay() { return { bounds: { x: 0, y: 0, width: 1920, height: 1080 } }; } function loadConfig() { return {}; }\n'
       + 'function _dockedKeys() { return []; } var _OVERLAY_WINDOWS = [];\n'
+      + 'var _MINI_KEYS = []; function _miniSetting() { return false; } function _miniPinSetting() { return false; }\n'
       + sliceBlock(main, 'function _canvasOverlayList() {', '\n}\n') + '\nreturn { _canvasOverlayList };';
     const list = new Function(block)()._canvasOverlayList();
     expect(list.find(o => o.key === 'command').src).toBe('command.html');

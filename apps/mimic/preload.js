@@ -37,6 +37,11 @@ if (WP_IN_CANVAS) {
     try {
       const st = document.createElement('style');
       st.textContent = '#move-btn,#hide-btn,#drag-controls,#setupbar{display:none!important}';
+      // The page's OWN options live in its setup bar (Charm's "recharm warn at"), marked data-wp-opt. The panel's
+      // ⚙ → Page options puts body.wp-opts on this page, and then the bar shows in the page's flow with ONLY those
+      // controls: the page's own inputs and handlers, reachable on the canvas (the guild lead, 2026-10-21).
+      st.textContent += 'body.wp-in-canvas.wp-opts #setupbar{display:flex!important;position:static;margin:0;flex-wrap:wrap}'
+        + 'body.wp-in-canvas.wp-opts #setupbar > :not([data-wp-opt]){display:none!important}';
       document.head.appendChild(st);
       document.body.classList.add('wp-in-canvas');
     } catch (e) { /* page without a head — nothing to hide */ }
@@ -1202,6 +1207,8 @@ contextBridge.exposeInMainWorld('mimic', {
   canvasGroupHotkey: (id, accel) => ipcRenderer.invoke('canvas-group-hotkey', id, accel || ''),
   toggleCanvasGroup: (id)     => ipcRenderer.invoke('canvas-group-toggle', id),
   onCanvasGroupOps:  (cb)     => ipcRenderer.on('canvas-group-ops', () => cb()),
+  // ▭ An overlay's Mini mode (or its 📌) changed from anywhere: a frame has no window to be pushed to, so the Canvas reads it again.
+  onCanvasMini:      (cb)     => ipcRenderer.on('canvas-mini', () => cb()),
 
   // ── Dock ──────────────────────────────────────────────────────────────────
   // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()

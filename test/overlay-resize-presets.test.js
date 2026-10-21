@@ -1,24 +1,28 @@
-// The move-icon menu's size presets: the width main.js applies and the label
-// preload.js prints are two literals in two files, so they are checked
-// against each other. L is 420 (a member, 2026-09-24: "the large 400px preset
+// The move-icon menu's size presets: the widths live in overlaySizes.js (the one table main.js's handler and the
+// Canvas's Width row both read) and the label preload.js prints is a literal in another file (a preload cannot
+// require), so they are checked against each other. L is 420 (a member, 2026-09-24: "the large 400px preset
 // cuts off a bit on the dps window. and the xl is just a bit too wide. Is
 // there a way to make the L preset like 420px").
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { readSource, ROOT, stripJs } from './_source-slice.js';
 
 const main = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'main.js')));
 const preload = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js')));
+const sizes = createRequire(import.meta.url)(path.join(ROOT, 'apps', 'mimic', 'overlaySizes.js'));
 
-const MIN_W = +(main.match(/const _OVERLAY_MIN_W = (\d+);/) || [])[1];
+const MIN_W = sizes.MIN_W;
 const num = (v) => (v === '_OVERLAY_MIN_W' ? MIN_W : +v);
-const widths = (() => {
-  const m = main.match(/const widths = \{ ([^}]+) \};/);
-  return Object.fromEntries(m[1].split(',').map(kv => kv.trim().split(/:\s*/)).map(([k, v]) => [k, num(v)]));
-})();
+const widths = Object.fromEntries(sizes.PRESETS.map(p => [p[0], p[2]]));
 const labels = Object.fromEntries([...preload.matchAll(/\['(xs|sm|md|lg|xl)','[A-Z]+ · (\d+)px/g)].map(m => [m[1], +m[2]]));
 
 describe('overlay size presets', () => {
+  it('main.js takes the overlay minimum and the preset widths from the shared table, not from literals of its own', () => {
+    expect(main).toMatch(/const _OVERLAY_MIN_W = overlaySizes\.MIN_W;/);
+    expect(main).toMatch(/const w = overlaySizes\.widthOf\(preset\);/);
+    expect(main).not.toMatch(/const widths = \{/);
+  });
   it('L is 420 px — wide enough for the DPS HUD\'s title row, narrower than XL', () => {
     expect(widths.lg).toBe(420);
     expect(widths.lg).toBeLessThan(widths.xl);

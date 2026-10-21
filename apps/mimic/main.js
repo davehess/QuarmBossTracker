@@ -3140,6 +3140,8 @@ function _charProfileTrayItems() {
 // alt-tab, and the screen must not rearrange itself under you. The
 // per-character layouts above stay until sets replace them.
 const overlaySets = require('./overlaySets');
+// The XS … XL width presets: one table for the window's right-click menu (overlay-resize-preset) and the Canvas's Width row.
+const overlaySizes = require('./overlaySizes');
 const _SETS_FILE = () => path.join(app.getPath('userData'), 'overlay-sets.json');
 // Every overlay's saved spot, by the config key its window persists under.
 const _SET_BOUNDS_KEYS = [
@@ -4975,7 +4977,7 @@ async function _rescueOverlays() {
 // A locked window takes XS anyway — Electron pins a non-resizable window's
 // minimum to whatever it is set to — so 200 was saved; the next launch built
 // the window with its own minimum and it came back wider. One number now.
-const _OVERLAY_MIN_W = 200;
+const _OVERLAY_MIN_W = overlaySizes.MIN_W;
 // `legacySigKey` is a name an older build READ the signature under; it is consulted only when
 // `sigKey` holds nothing, so a save made under the old name is not thrown away.
 function _resolveBounds(boundsKey, sigKey, def, legacySigKey) {
@@ -11457,6 +11459,10 @@ function _miniPinSetting(cfg, key) {
 function _sendOverlayMini(key, win, on) {
   try { win.webContents.send('wp-mini', { key, mini: !!on }); } catch { /* window mid-close */ }
 }
+// An overlay hosted on the Canvas has no window to push to; the Canvas reads the flag back (canvas-state) on this ping.
+function _pingCanvasMini() {
+  try { if (_live(canvasWindow)) canvasWindow.webContents.send('canvas-mini'); } catch { /* mid-close */ }
+}
 function applyOverlayMini(win, key, cfg) {
   if (!win || win.isDestroyed() || !key) return;
   const c = cfg || loadConfig();
@@ -11468,6 +11474,7 @@ function applyAllOverlayMini() {
     if (!_MINI_KEYS.includes(k)) continue;
     applyOverlayMini(w, k, cfg);
   }
+  _pingCanvasMini();
 }
 // Ctrl+Shift+M. First press takes every mini-capable overlay to mini and
 // remembers what each one was. Second press restores that snapshot — EXCEPT
@@ -11602,11 +11609,8 @@ ipcMain.handle('overlay-resize-preset', (e, preset) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
-    // L is 420, not 400: at 400 the DPS HUD's title row (−/+, DPS, Tank,
-    // History) ran under the ✕ (a member, 2026-09-24: "the large 400px preset
-    // cuts off a bit on the dps window. and the xl is just a bit too wide").
-    const widths = { xs: _OVERLAY_MIN_W, sm: 260, md: 320, lg: 420, xl: 500 };
-    const w = widths[String(preset || '').toLowerCase()];
+    // The widths (and why L is 420) live in overlaySizes.js, shared with the Canvas's Width row.
+    const w = overlaySizes.widthOf(preset);
     if (!w) return false;
     const b = win.getBounds();
     win.setBounds({ x: b.x, y: b.y, width: w, height: b.height });
@@ -12085,6 +12089,7 @@ function _setOverlayMini(key, next) {
   }
   saveConfig(cfg);
   for (const [k, w] of _overlayEntries()) if (k === key) applyOverlayMini(w, k, cfg);
+  _pingCanvasMini();
   pushStatus();
   return !!map[key];
 }
@@ -12126,6 +12131,7 @@ ipcMain.handle('wp-mini-pin-set', (_e, name, on) => {
   map[name] = !!on;
   cfg.overlayMiniPinned = map;
   saveConfig(cfg);
+  _pingCanvasMini();
   pushStatus();
   return !!map[name];
 });
@@ -12168,9 +12174,12 @@ function _canvasOverlayList() {
     // answering yet leaves a panel that never loads (the guild lead, 2026-10-19: "Command center is blank").
     // The bundled page is byte-identical to the served one (check:dashboard) and reads its data from the
     // agent's port the same way.
+    // mini: the overlay's own ▭ Mini mode and 📌 pin (null for an overlay with no mini rendition), so a frame can offer
+    // and show the same setting its window's right-click menu does.
     return { key: c.key, label: c.label,
       src: c.file,
-      showing: !!at, docked: docked.includes(c.key), at, w: size[0], h: size[1] };
+      showing: !!at, docked: docked.includes(c.key), at, w: size[0], h: size[1],
+      mini: _MINI_KEYS.includes(c.key) ? { on: _miniSetting(cfg, c.key), pin: _miniPinSetting(cfg, c.key) } : null };
   });
 }
 // groupOps: the group-hotkey presses made since the Canvas last asked (read once, then gone);
