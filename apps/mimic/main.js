@@ -6182,6 +6182,27 @@ function openLocalSite(page) {
     if (/^https?:\/\//i.test(target)) shell.openExternal(target).catch(() => {});
     return { action: 'deny' };
   });
+  // Back / forward (the guild lead, 2026-10-21: "no navigation buttons at all"): the mouse side buttons and
+  // Alt+Left / Alt+Right, on top of the ← → buttons in the page's own nav. Electron 31 has
+  // webContents.navigationHistory (30+); the old webContents.goBack() is the fallback.
+  const _localNav = (dir) => {
+    try {
+      const wc = localSiteWindow && !localSiteWindow.isDestroyed() ? localSiteWindow.webContents : null;
+      if (!wc) return;
+      const h = wc.navigationHistory;
+      if (dir < 0) { if (h ? h.canGoBack() : wc.canGoBack()) { if (h) h.goBack(); else wc.goBack(); } }
+      else if (h ? h.canGoForward() : wc.canGoForward()) { if (h) h.goForward(); else wc.goForward(); }
+    } catch (e) { void e; }
+  };
+  localSiteWindow.on('app-command', (_e, cmd) => {
+    if (cmd === 'browser-backward') _localNav(-1);
+    else if (cmd === 'browser-forward') _localNav(1);
+  });
+  localSiteWindow.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown' || !input.alt || input.control || input.meta || input.shift) return;
+    if (input.key === 'ArrowLeft') { e.preventDefault(); _localNav(-1); }
+    else if (input.key === 'ArrowRight') { e.preventDefault(); _localNav(1); }
+  });
   localSiteWindow.loadURL(url)
     .catch((err) => appendAgentLog(`[mimic] local site window load REJECTED — ${err && err.message}\n`));
   localSiteWindow.on('closed', () => { localSiteWindow = null; });
