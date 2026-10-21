@@ -184,7 +184,7 @@ describe('place() and the snap lines follow the screens', () => {
   const placeAt = (list, p) => {
     const style = {};
     new Function('_widen', 'sizeFrame', 'e', 'p', 'window', 'num', sliceBlock(canvasRaw, '  var _screens = null, _conv', '  // ── Routing: which panel shows a countdown') + '\n'
-      + sliceBlock(canvasRaw, '  function growsUp(p) {', '\n') + '\n'
+      + sliceBlock(canvasRaw, '  function growsUp(p) {', '\n') + '\n' + sliceBlock(canvasRaw, '  function isFree(q) {', '\n') + '\n'
       + 'function __s(l) { _screens = l; } __s(' + JSON.stringify(list.length > 1 ? list : null) + ');\n'
       + sliceBlock(canvasRaw, '  function place(e, p) {', '\n  }\n') + '\nplace(e, p);')({}, () => {}, { root: { style, classList: { toggle() {} } } }, p,
       { innerWidth: 3840, innerHeight: 1080 }, null);

@@ -66,8 +66,10 @@ function world(panels) {
     function selIds() { return []; }
     function screenList(W, H) { return [{ x: 0, y: 0, w: W, h: H }]; }
     ${sliceBlock(SRC, '  function growsUp(p) {', '\n')}
-    ${sliceBlock(SRC, '  var TALL_GRAB = 120;', '\n')}
-    ${sliceBlock(SRC, '  function yBounds(rTop, rH, h, up) {', '\n  }\n')}
+    ${sliceBlock(SRC, '  var TALL_GRAB = 120,', '\n')}
+    ${sliceBlock(SRC, '  function yBounds(rTop, rH, h, up, free) {', '\n  }\n')}
+    ${sliceBlock(SRC, '  function xBounds(rLeft, rW, w, free) {', '\n  }\n')}
+    ${sliceBlock(SRC, '  function isFree(q) {', '\n')}
     ${LOCK}
     ${IS_ED}
     ${DRAG}
