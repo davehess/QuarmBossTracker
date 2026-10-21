@@ -188,7 +188,7 @@ describe('wiring (comments stripped)', () => {
     expect(css).toMatch(/body\.part #tline\s*\{\s*display:\s*none\s*!important/);
     expect(css).toMatch(/#tline\s*\{[^}]*display:\s*none/);                      // absent by default: no empty chrome
     expect(t).toMatch(/if \(PART \|\| !tlineEl\) return;/);                     // tlineUpdate bails in a panel
-    expect(t).toMatch(/if \(!PART\) tlineSet\(s\.recentDeaths, s\.deathPairRules\)/);
+    expect(t).toMatch(/if \(!PART\) tlineSet\(s\.recentDeaths, s\.deathPairRules, s\.replayDeaths, s\.replayClock\)/);
   });
   it('the stack rides above the strip and the window height counts it', () => {
     const css = stripCss(TRIGGERS.slice(0, TRIGGERS.indexOf('</style>')));

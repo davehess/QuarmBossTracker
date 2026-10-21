@@ -335,6 +335,8 @@
   /* Controls (the guild lead, 2026-10-21: "minimizable, text size scalable"): ▾/▸ at the left edge, A−/A+ at the
      right. Real <button>s, so the preload's hover handshake arms them; the strip itself stays click-through. */
   #tline #tl-body{flex:1;min-width:0}
+  #tline .tl-reh{flex-shrink:0;white-space:nowrap;color:#f0c040;font-size:calc(11px * var(--tl-s));font-weight:800;letter-spacing:.06em;text-transform:uppercase;margin-right:8px}
+  #tline #tl-body > .tl-reh{display:block;margin:0 0 2px}
   #tline .tl-btn{pointer-events:auto;cursor:pointer;flex-shrink:0;font:700 12px ui-monospace,Menlo,Consolas,monospace;
     color:#cfe3ff;background:rgba(88,166,255,0.18);border:1px solid rgba(88,166,255,0.45);border-radius:3px;
     padding:0;width:22px;height:20px;line-height:18px;text-align:center}
@@ -1923,6 +1925,25 @@
     });
     return out;
   }
+  // ⏪ Replay → the strip as a rehearsal (the guild lead, 2026-10-21: "i need a way to test these things before our raid
+  // nights"). While an agent replay runs, /api/state and /api/timers carry replayDeaths (the replay's own ring, never mixed
+  // with the live one) and replayClock { nowMs, rate, untilMs }: the replay's LOG time. The strip then runs on that clock
+  // instead of Date.now(). nowMs is the clock at the poll; the page advances it at `rate` since the poll arrived and never
+  // past untilMs (the end of the segment the agent is in), so a lull the replay compresses cannot overshoot between polls.
+  function tlReplayNow(rp, wallMs){
+    if (!rp) return wallMs;
+    var n = rp.nowMs + (wallMs - rp.recv) * (rp.rate || 0);
+    if (rp.untilMs != null && n > rp.untilMs) n = rp.untilMs;
+    return n;
+  }
+  // Which feed the strip draws: the replay's when the agent sent both a clock and a ring, else the live ring.
+  function tlPickFeed(live, replayDeaths, replayClock, wallMs){
+    if (replayClock && Number.isFinite(replayClock.nowMs) && Array.isArray(replayDeaths)){
+      return { deaths: replayDeaths, replay: { nowMs: replayClock.nowMs, rate: Number(replayClock.rate) || 0,
+        untilMs: replayClock.untilMs == null ? null : Number(replayClock.untilMs), recv: wallMs } };
+    }
+    return { deaths: Array.isArray(live) ? live : [], replay: null };
+  }
   // ── /death timeline: pure state ──
   // ── death timeline: plan + queue ──
   // The guild lead, 2026-10-21: "Timeline on TTS minimizable, text size scalable, next event due for next fight. Next
@@ -2045,7 +2066,7 @@
     return out;
   }
   // ── /death timeline: plan + queue ──
-  var _tlDeaths = [], _tlRules = [], _tlSig = '', _tlNodes = [];
+  var _tlDeaths = [], _tlRules = [], _tlSig = '', _tlNodes = [], _tlReplay = null;
   var tlBodyEl = document.getElementById('tl-body');
   var _tlPlanCache = null, _tlPopLoading = false;
   var _tlStore = null;
@@ -2067,10 +2088,10 @@
     return null;
   }
   // The overlay's own live countdowns (timerNodes), shaped for tlQueue.
-  function tlTimersNow(){
+  function tlTimersNow(off){
     var out = [];
     timerNodes.forEach(function(n, id){
-      out.push({ key: id, label: (n.target ? n.target + ' - ' : '') + n.effect, endsMs: n.ends_at_local,
+      out.push({ key: id, label: (n.target ? n.target + ' - ' : '') + n.effect, endsMs: n.ends_at_local + (off || 0),
         warns: (n.warnings && n.warnings.length) || 0, loot: n.kind === 'loot', cycle: n.cycle_ms > 0 });
     });
     return out;
@@ -2099,6 +2120,14 @@
     lg.addEventListener('click', function(){ step(1); });
     tlApplyPrefs();
   })();
+  // The ⏪ tag a replay-driven strip wears (the replay fires carry the same ⏪, gold, on the agent dashboard).
+  var TL_REHEARSAL_TAG = '<span class="tl-reh" title="An agent replay is driving this timeline. Nothing here is live.">⏪ rehearsal</span>';
+  // data-t / data-w for a queue row. A rehearsal's timer rows were shifted into replay time to sort with the pair
+  // deadlines; they are drawn against the wall clock, so shift back and mark them.
+  function tlDueAttr(q, off){
+    var wall = q.kind === 'timer' && off;
+    return ' data-t="' + (wall ? q.dueMs - off : q.dueMs) + '"' + (wall ? ' data-w="1"' : '');
+  }
   function tlFmt(sec){
     sec = Math.max(0, Math.floor(sec));
     var h = Math.floor(sec / 3600), m = Math.floor((sec - h * 3600) / 60), s = sec - h * 3600 - m * 60;
@@ -2118,14 +2147,21 @@
       requestAutoHeight();
     }
   }
-  function tlineSet(deaths, rules){
-    _tlDeaths = Array.isArray(deaths) ? deaths : [];
+  function tlineSet(deaths, rules, replayDeaths, replayClock){
+    var feed = tlPickFeed(deaths, replayDeaths, replayClock, Date.now());
+    _tlDeaths = feed.deaths;
+    _tlReplay = feed.replay;
     if (Array.isArray(rules)) _tlRules = rules;
     tlineUpdate();
   }
+  // The strip's "now": the replay's log time while a replay drives it, else the wall clock.
+  function tlNow(){ return tlReplayNow(_tlReplay, Date.now()); }
   function tlineUpdate(){
     if (PART || !tlineEl) return;
-    var now = Date.now();
+    var now = tlNow(), rehearsal = !!_tlReplay;
+    // A rehearsal timer (a replayed fire) runs on the wall clock: shift it into the strip's time so it queues, and
+    // draw it from the wall clock (data-w) so the shift never has to be kept in step.
+    var off = rehearsal ? now - Date.now() : 0;
     var ds = _tlDeaths.filter(function(d){ return d && Number.isFinite(d.atMs) && now - d.atMs <= TL_SHOW_MS; })
       .sort(function(a, b){ return a.atMs - b.atMs; });
     var pairs = ds.length ? deathPairStates(ds, _tlRules, now) : [];
@@ -2142,9 +2178,9 @@
       pairs.forEach(function(p){ if (p.kind === 'open' && (!headPair || p.deadlineMs < headPair.deadlineMs)) headPair = p; });
       var skip = _tlColl ? (headPair ? ['pair:' + headPair.label] : [])
         : pairs.filter(function(p){ return p.kind === 'open'; }).map(function(p){ return 'pair:' + p.label; });
-      queue = tlQueue(pairs, plan, tlTimersNow(), now, skip, TL_UPNEXT_MAX);
+      queue = tlQueue(pairs, plan, tlTimersNow(off), now, skip, TL_UPNEXT_MAX);
     }
-    var sig = ds.length ? (_tlColl ? 'c' : 'e') + '|' + (ds.length - shown.length) + '|' + shown.map(function(d){ return d.atMs + d.name; }).join('|') + '#' +
+    var sig = ds.length ? (rehearsal ? 'R' : '') + (_tlColl ? 'c' : 'e') + '|' + (ds.length - shown.length) + '|' + shown.map(function(d){ return d.atMs + d.name; }).join('|') + '#' +
       pairs.map(function(p){ return p.label + p.kind + (p.dueName || '') + p.firstAtMs; }).join('|') + '#' +
       queue.map(function(q){ return q.key + q.label; }).join('|') : '';
     if (sig !== _tlSig){
@@ -2153,18 +2189,18 @@
       else if (_tlColl){
         // One line: the most urgent thing (an open pair countdown, else the since-last clock) + the next queued item.
         var nx = queue[0];
-        var h1 = '<div class="tl-one">';
+        var h1 = '<div class="tl-one">' + (rehearsal ? TL_REHEARSAL_TAG : '');
         if (headPair) h1 += '<span class="tl-one-main" data-tl-pair><b>' + _esc(headPair.dueName) + ' due</b> <span data-tl="due" data-t="' + headPair.deadlineMs + '"></span></span>';
         else h1 += '<span class="tl-one-main since">since last <span data-tl="since" data-t="' + shown[shown.length - 1].atMs + '"></span></span>';
         if (nx){
           h1 += '<span class="tl-one-sep">·</span><span class="tl-one-next">' +
-            (nx.kind === 'plan' ? 'Next: ' + _esc(nx.label) : _esc(nx.label) + '<i data-tl="due" data-t="' + nx.dueMs + '"></i>') + '</span>';
+            (nx.kind === 'plan' ? 'Next: ' + _esc(nx.label) : _esc(nx.label) + '<i data-tl="due"' + tlDueAttr(nx, off) + '></i>') + '</span>';
         }
         tlBodyEl.innerHTML = h1 + '</div>';
         _tlNodes = Array.prototype.slice.call(tlBodyEl.querySelectorAll('[data-tl]'));
       }
       else {
-        var h = '';
+        var h = rehearsal ? TL_REHEARSAL_TAG : '';
         pairs.forEach(function(p){
           var cls = 'tl-pair ' + p.kind;
           if (p.kind === 'open'){
@@ -2190,7 +2226,7 @@
           h += '<div class="tl-up"><div class="tl-up-h">Up next</div>';
           queue.forEach(function(q){
             if (q.kind === 'plan') h += '<div class="tl-up-row plan"><span class="tl-up-lbl">Next: ' + _esc(q.label) + '</span></div>';
-            else h += '<div class="tl-up-row"><span class="tl-up-lbl">' + _esc(q.label) + '</span><span class="tl-up-clk" data-tl="due" data-t="' + q.dueMs + '"></span></div>';
+            else h += '<div class="tl-up-row"><span class="tl-up-lbl">' + _esc(q.label) + '</span><span class="tl-up-clk" data-tl="due"' + tlDueAttr(q, off) + '></span></div>';
           });
           h += '</div>';
         }
@@ -2201,16 +2237,17 @@
     }
     for (var i = 0; i < _tlNodes.length; i++){
       var n = _tlNodes[i], t = Number(n.getAttribute('data-t')), kind = n.getAttribute('data-tl');
+      var nw = n.hasAttribute('data-w') ? Date.now() : now;   // data-w: a wall-clock timer row (see off above)
       if (kind === 'bar'){
-        var f = Math.max(0, Math.min(1, (t - now) / Number(n.getAttribute('data-d'))));
+        var f = Math.max(0, Math.min(1, (t - nw) / Number(n.getAttribute('data-d'))));
         var tf = 'scaleX(' + f.toFixed(3) + ')';
         if (n.style.transform !== tf) n.style.transform = tf;
       } else {
-        var txt = kind === 'due' ? tlFmt(Math.ceil((t - now) / 1000)) : tlFmt((now - t) / 1000);
+        var txt = kind === 'due' ? tlFmt(Math.ceil((t - nw) / 1000)) : tlFmt((nw - t) / 1000);
         if (n.textContent !== txt) n.textContent = txt;
         if (kind === 'due'){
           var pairEl = n.closest('[data-tl-pair]');
-          if (pairEl) pairEl.classList.toggle('urgent', t - now < 60000);
+          if (pairEl) pairEl.classList.toggle('urgent', t - nw < 60000);
         }
       }
     }
@@ -2231,7 +2268,7 @@
       }
       const s = await r.json();
       renderTimers((PART === 'timers' && _partSample) ? (s.activeTimers || []).concat(_sampleTimers()) : s.activeTimers);
-      if (!PART) tlineSet(s.recentDeaths, s.deathPairRules);   // the death timeline strip (not in canvas panels)
+      if (!PART) tlineSet(s.recentDeaths, s.deathPairRules, s.replayDeaths, s.replayClock);   // the death timeline strip (not in canvas panels); a replay drives it when the agent sends its clock
       if (PART === 'timers') return;  // display only: fires belong to the other pages
       const fires = (s.recentTriggerFires || []).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
       if (!primed){
