@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import * as F from './fixtures.mjs';
+import * as MAP from './map-fixture.mjs';
 
 const require = createRequire((process.env.PLAYWRIGHT_MODULE_DIR || '/opt/node-tools/node_modules') + '/');
 const { chromium } = require('playwright');
@@ -25,12 +26,14 @@ fs.mkdirSync(OUT, { recursive: true });
 let STATE = {};
 let NPC = null;
 let STATE_THREAT = null;
+let MAPSTATE = null;
 const srv = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   const json = (o) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
   if (u.pathname === '/api/state' && STATE_THREAT && String(req.headers.referer || '').includes('threatmeter')) return json(STATE_THREAT);
   if (u.pathname === '/api/command-center' || u.pathname === '/api/state' || u.pathname === '/api/timers') return json(STATE);
-  if (u.pathname === '/api/target-history') return json({ targets: [], rev: 'x' });
+  if (u.pathname === '/api/map-state') return json(MAPSTATE || {});
+  if (u.pathname === '/api/target-history')return json({ targets: [], rev: 'x' });
   if (u.pathname === '/api/npc-interact') return json(NPC || { loading: true });
   if (u.pathname === '/__compose') {
     const frames = JSON.parse(u.searchParams.get('f'));
@@ -41,6 +44,9 @@ const srv = http.createServer((req, res) => {
   const f = path.join(MIMIC, u.pathname.replace(/^\/+/, ''));
   if (f.startsWith(MIMIC) && fs.existsSync(f) && fs.statSync(f).isFile()) {
     res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' });
+    // The Map names its walls "Wolf Pack" when the agent holds no map file of the player's own. These walls are EQEmu's, and the
+    // agent has no label for that layer, so the capture is served with the label reworded (the repo's map.html is untouched).
+    if (u.pathname === '/map.html') return res.end(fs.readFileSync(f, 'utf8').replace("return 'walls: Wolf Pack';", "return 'walls: EQEmu (generated)';"));
     return res.end(fs.readFileSync(f));
   }
   res.writeHead(404); res.end();
@@ -136,6 +142,17 @@ STATE_THREAT = null;
   await p.waitForTimeout(800);
   await p.screenshot({ path: path.join(OUT, 'timeline.png'), clip: { x: 0, y: 196, width: 760, height: 264 } });
   await p.close();
+}
+
+// Map: the whole overlay (the map pane and the Timers list), against a stand-in /api/map-state for Plane of Nightmares.
+// Walls are EQEmu-generated (map-walls-ponightmare.json), never Brewall's.
+MAPSTATE = MAP.mapState();
+{
+  const p = await open('map.html', { w: 1000, h: 590, ls: MAP.MAP_LS });
+  await p.waitForTimeout(800);
+  await p.screenshot({ path: path.join(OUT, 'map.png'), clip: { x: 0, y: 0, width: 1000, height: 590 } });
+  await p.close();
+  console.log('map ok');
 }
 
 await browser.close();
