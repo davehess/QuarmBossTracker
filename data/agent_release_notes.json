@@ -2,6 +2,13 @@
   "_comment": "Brief release notes per agent version. The bot's release-announcement hook reads this when an agent version differs from the last one announced. Plain text, 2-4 short lines per version — the announcement is supposed to be a heads-up, not a full changelog. Unknown versions fall through to the generic 'is out' message.",
   "_updated_at": "2026-05-29",
   "versions": {
+    "4.0.0": [
+      "Part of Raid Mimic 3.0: your own data on your own PC. Inventory, a replay of the raids you were in, and your old fights rebuilt from your log files stay on your computer and are never uploaded.",
+      "Raid codes: join another group's raid and nothing raid-wide goes to the guild's server while the code is on.",
+      "The dashboard is easier to find your way around: grouped menu, section buttons on each tab, long lists fold to \"N more\".",
+      "Death timeline on the trigger overlay (the night's deaths, the gaps and a clock since the last one), and a rehearsal mode that replays an old log.",
+      "Includes the Canvas, Pieces and setup sharing from Mimic 3.0."
+    ],
     "2.4.19": [
       "Exceptional Heals leaderboard on the Healers tab — public crit-heal data, populates from a single parser anywhere in the raid.",
       "Quarm-confirmed heal-line regexes: 'You have been healed for N points of damage' (self target) and '<X> performs an exceptional heal! (N)' (bystander).",

@@ -185,7 +185,7 @@ describe('Mimic main process', () => {
   it('is a singleton plain window: normal frame, resizable, titled, own prefs', () => {
     expect(fn).toContain('if (feedbackWindow && !feedbackWindow.isDestroyed()) {');
     expect(fn).toContain('resizable: true');
-    expect(fn).toContain("title: 'Wolf Pack miMIC — Feedback'");
+    expect(fn).toContain("title: 'Raid Mimic — Feedback'");
     expect(fn).toContain("webPreferences: _wpPrefs('Feedback')");
     expect(fn).not.toMatch(/frame:\s*false|transparent|alwaysOnTop|setIgnoreMouseEvents/);
   });

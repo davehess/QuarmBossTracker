@@ -6311,3 +6311,11 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   + Export / Import in the tray, Settings → Overlay sets and the dashboard's Overlays tab; import adds a NEW set after a
   "Before" copy, with one Undo; works in the local edition. ⏳ Not stable yet: graduates to `main` with the 3.0 line
   (roadmap entry then). ⏳ Gallery (public half) not built.
+- ✅ **3.0 release prepared (bot 4.0.0 · web 2.0.0 · agent 4.0.0 · Mimic 3.0.0 "Raid Mimic", §403–§404).** Rebuilt on the
+  2026-10-21 `main` as a local `release-3.0b` branch (beta `e382b151`, agent 3.8.57): the Canvas and Pieces (Keepers of the
+  (Overlay) Arts line), the Canvas as a choice in the setup tour, dashboard layout A, the local store and recorder, the local
+  site (Inventory, My replay, My parses), Rebuild from my logs, raid codes, the death timeline and Rehearse replay, the Raid
+  Mimic rename (same app id), the hub `local-sync` route, the privacy page's on-PC paragraph and `/raidmimic/setup` [beta].
+  ⏳ Not pushed. ⏳ Apply `20261021120000_encounters_change_cursor.sql` by hand (SQL Editor) for My parses' difference.
+  ⏳ HELD on beta: the raidmimic landing previews and the PoP Flags sticky bar. ⏳ Item icons from the game's files; guest slice
+  2; the Gallery (Overlay Gallery slice 1, still gating per §374).

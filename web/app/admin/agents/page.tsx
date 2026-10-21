@@ -137,13 +137,14 @@ async function loadMimicReleases(): Promise<MimicRelease[]> {
     if (!res.ok) return [];
     const all = (await res.json()) as MimicRelease[];
     // Detect Mimic releases channel-agnostically by their installer asset
-    // name (Wolf-Pack-Mimic-Setup-*.exe). The pre-1.0.0 betas used a custom
+    // name (Raid-Mimic-Setup-*.exe, or Wolf-Pack-Mimic-Setup-*.exe before the
+    // 2026-10-21 rename — both count). The pre-1.0.0 betas used a custom
     // mimic-beta.yml channel manifest, but 1.0.0 graduated to the stable
     // latest.yml channel. The Setup .exe asset is the stable signal across
     // both eras — every Mimic release ever cut has one, no other release
     // type in this repo does.
     return all
-      .filter(r => r.assets.some(a => /^wolf-pack-mimic-setup-.*\.exe$/i.test(a.name)))
+      .filter(r => r.assets.some(a => /^(?:raid|wolf-pack)-mimic-setup-.*\.exe$/i.test(a.name)))
       .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
   } catch {
     return [];

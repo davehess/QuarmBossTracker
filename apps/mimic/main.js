@@ -1,4 +1,6 @@
-// Wolf Pack Mimic — Electron main process.
+// Raid Mimic — Electron main process. (Renamed from "Wolf Pack Mimic" 2026-10-21; the install's identity
+// is unchanged: package `name` wolfpack-mimic -> userData, appId quest.wolfpack.mimic -> uninstall key and
+// update feed. Only the product name, exe and file names changed. See test/raid-mimic-rename.test.js.)
 //
 // Responsibilities:
 //   1. Locate the wolfpack-logsync agent (dev: repo; packaged: resources/agent),
@@ -153,7 +155,7 @@ function _agentOnly() { return _runModeAtStart === 'agent'; }
 //
 // "Can these expose their names in Task manager as well?" (Bellwick 2026-08-04)
 // — partly. The Name column cannot change: every renderer is the same
-// Wolf Pack Mimic.exe and Task Manager reads that column from the exe's version
+// Raid Mimic.exe and Task Manager reads that column from the exe's version
 // resource. (The Dashboard row is named only because it owns a visible taskbar
 // window, whose title Task Manager appends. Overlays are skipTaskbar so they
 // have no such window — deliberately, or they would flood alt-tab.)
@@ -2871,7 +2873,7 @@ function startZealCapture() {
       try {
         if (Notification.isSupported()) {
           const n = new Notification({
-            title: 'Wolf Pack miMIC — Zeal pipes look off',
+            title: 'Raid Mimic — Zeal pipes look off',
             // Lead with the admin-mismatch fix: EQ-running-but-no-Zeal-data is
             // the classic signature of it. If EQ runs elevated and Mimic
             // doesn't, Windows' pipe ACL blocks the connection (it connects
@@ -3487,7 +3489,7 @@ async function _importLayoutFile() {
     if (info.classes.length) bits.push(info.classes.join(', '));
     if (info.modes.length) bits.push(info.modes.join(', '));
     const ask = await dialog.showMessageBox(win || null, {
-      type: 'question', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Add as a new set', 'Cancel'], defaultId: 0, cancelId: 1,
+      type: 'question', title: 'Raid Mimic', noLink: true, buttons: ['Add as a new set', 'Cancel'], defaultId: 0, cancelId: 1,
       message: `Add "${info.title}" as a new set?`,
       detail: [info.author ? `By ${info.author}` : 'No author name on it', info.description, bits.join(' · '),
         `Your setup now is saved first as "${beforeName}", then this layout is loaded as "${newName}". You can undo it right after.`]
@@ -3510,7 +3512,7 @@ async function _importLayoutFile() {
     appendAgentLog(`[sets] imported layout "${newName}" (${info.pieces} pieces); previous setup saved as "${beforeName}"\n`);
 
     const done = await dialog.showMessageBox(win || null, {
-      type: 'info', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Keep it', 'Undo'], defaultId: 0, cancelId: 0,
+      type: 'info', title: 'Raid Mimic', noLink: true, buttons: ['Keep it', 'Undo'], defaultId: 0, cancelId: 0,
       message: `Added "${newName}" and switched to it.`,
       detail: `Your setup from before is saved as "${beforeName}". Undo puts it back and removes "${newName}".`,
     });
@@ -3535,7 +3537,7 @@ async function _layoutFileFromTray(run) {
   try { r = await run(); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
   if (!r || r.canceled || (r.ok && r.told)) return;
   try {
-    await dialog.showMessageBox({ type: r.ok ? 'info' : 'warning', title: 'Wolf Pack miMIC', noLink: true, message: r.message, detail: r.nudge || '' });
+    await dialog.showMessageBox({ type: r.ok ? 'info' : 'warning', title: 'Raid Mimic', noLink: true, message: r.message, detail: r.nudge || '' });
   } catch { /* no dialog */ }
 }
 // ── Share a WHOLE setup: a file, or a six-character code (the guild lead, 2026-10-19, DECISIONS §383) ─────────────
@@ -3693,7 +3695,7 @@ async function _exportSetupFile(opts) {
     if (!made.ok) return made;
     const win = BrowserWindow.getFocusedWindow();
     const ask = await dialog.showMessageBox(win || null, {
-      type: 'question', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Choose where to save', 'Cancel'], defaultId: 0, cancelId: 1,
+      type: 'question', title: 'Raid Mimic', noLink: true, buttons: ['Choose where to save', 'Cancel'], defaultId: 0, cancelId: 1,
       message: `Export "${made.setup.meta.title}"?`, detail: _collectSummary(made),
     });
     if (ask.response !== 0) return { ok: false, canceled: true, message: '' };
@@ -3725,9 +3727,9 @@ async function _getSetupCode(opts) {
     if (!made.ok) return made;
     const win = BrowserWindow.getFocusedWindow();
     const ask = await dialog.showMessageBox(win || null, {
-      type: 'question', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Get a code', 'Cancel'], defaultId: 0, cancelId: 1,
+      type: 'question', title: 'Raid Mimic', noLink: true, buttons: ['Get a code', 'Cancel'], defaultId: 0, cancelId: 1,
       message: `Get a share code for "${made.setup.meta.title}"?`,
-      detail: _collectSummary(made) + '\n\nThe code works for 24 hours. Anyone signed in to Wolf Pack Mimic who has it can preview this and import a copy.',
+      detail: _collectSummary(made) + '\n\nThe code works for 24 hours. Anyone signed in to Raid Mimic who has it can preview this and import a copy.',
     });
     if (ask.response !== 0) return { ok: false, canceled: true, message: '' };
     const r = await _botSetupShare('POST', '', { setup: made.setup });
@@ -3735,7 +3737,7 @@ async function _getSetupCode(opts) {
     const code = r.body.code;
     appendAgentLog(`[setup] made a share code for a setup (${made.bytes} bytes), good until ${r.body.expires_at}\n`);
     const shown = await dialog.showMessageBox(win || null, {
-      type: 'info', title: 'Wolf Pack miMIC', noLink: true, buttons: ['Copy the code', 'Close', 'End this code now'], defaultId: 0, cancelId: 1,
+      type: 'info', title: 'Raid Mimic', noLink: true, buttons: ['Copy the code', 'Close', 'End this code now'], defaultId: 0, cancelId: 1,
       message: `Your code is ${setupBundle.showCode(code)}`,
       detail: 'It works for 24 hours, on as many installs as you like. On the other install: Overlays, "Enter a code", then preview before anything is changed.',
     });
@@ -3754,7 +3756,7 @@ async function _getSetupCode(opts) {
 function _openSetupWindow() {
   if (_setupWin && !_setupWin.isDestroyed()) { try { _setupWin.show(); _setupWin.focus(); } catch { /* mid-close */ } return _setupWin; }
   _setupWin = new BrowserWindow({
-    width: 660, height: 740, minWidth: 460, minHeight: 420, title: 'Wolf Pack miMIC — Import a setup', backgroundColor: '#0e1116',
+    width: 660, height: 740, minWidth: 460, minHeight: 420, title: 'Raid Mimic — Import a setup', backgroundColor: '#0e1116',
     skipTaskbar: true,   // only the dashboard and Feedback take a taskbar slot
     webPreferences: _wpPrefs('Setup import'),
   });
@@ -4423,7 +4425,7 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, minWidth: 800, minHeight: 600,
     backgroundColor: '#0e1116',
-    title: 'Wolf Pack miMIC — Main window (Dashboard)',
+    title: 'Raid Mimic — Main window (Dashboard)',
     show: !_autoStarted && !_firstRunAfterUpdate,
     // Window + taskbar icon while running. build/icon.ico is buildResources
     // (not shipped), so use the packaged assets PNG. The Start-menu/.exe icon
@@ -4507,7 +4509,7 @@ function createMainWindow() {
       try {
         if (Notification.isSupported()) {
           new Notification({
-            title: '⚠ Wolf Pack miMIC — setup needed',
+            title: '⚠ Raid Mimic — setup needed',
             body:  issue + ' — Mimic is staying visible until setup is complete. Click "Open Settings" in the banner.',
             silent: false,
           }).show();
@@ -4850,7 +4852,7 @@ async function _askAboutDisplays() {
   _displayPromptOpen = true;
   let choice = 1;
   try {
-    const r = await dialog.showMessageBox(Object.assign({ type: 'question', title: 'Wolf Pack miMIC', defaultId: 0, cancelId: 1, noLink: true }, opts));
+    const r = await dialog.showMessageBox(Object.assign({ type: 'question', title: 'Raid Mimic', defaultId: 0, cancelId: 1, noLink: true }, opts));
     choice = r.response;
   } catch { /* no dialog → leave them */ }
   _displayPromptOpen = false;
@@ -5000,7 +5002,7 @@ async function _rescueOverlays() {
     let choice = 0;
     try {
       const r = await dialog.showMessageBox({
-        type: 'question', title: 'Wolf Pack miMIC', noLink: true, defaultId: 0, cancelId: 0,
+        type: 'question', title: 'Raid Mimic', noLink: true, defaultId: 0, cancelId: 0,
         message: sorted.lost.length ? 'Brought back ' + count(sorted.lost.length) + ' that could not be reached: ' + names(sorted.lost) + '.' : 'No overlay was lost.',
         detail: count(sorted.away.length) + ' on your other screen: ' + names(sorted.away) + '. Bring ' + (sorted.away.length === 1 ? 'it' : 'them') + ' to this screen too, each at the same spot?',
         buttons: ['Leave them there', 'Bring them here'],
@@ -5017,7 +5019,7 @@ async function _rescueOverlays() {
     const detail = sorted.nudge.length
       ? 'Nothing else moved. ' + names(sorted.nudge) + (one ? ' had its' : ' had their') + ' ✥ past the edge of the screen, so ' + (one ? 'it' : 'they') + ' moved just far enough to grab.'
       : 'Every overlay can be reached where it is, so nothing moved.';
-    try { await dialog.showMessageBox({ type: 'info', title: 'Wolf Pack miMIC', noLink: true, message: 'No overlay was lost.', detail }); } catch { /* no dialog */ }
+    try { await dialog.showMessageBox({ type: 'info', title: 'Raid Mimic', noLink: true, message: 'No overlay was lost.', detail }); } catch { /* no dialog */ }
   }
   // Overlays with NO window at all (disabled via ✕/tray, or gated off) can't
   // be rescued — name them in the log so "still missing X" has an answer:
@@ -6032,9 +6034,9 @@ function createPanelOverlay(panelKey) {
   const b = _resolveBounds(boundsKey, sigKey, { x: 100, y: 100, width: 360, height: 220 }, 'panelBoundsSig_' + panelKey);
   const win = new BrowserWindow({
     // Descriptive title so this process is identifiable in Task Manager /
-    // Alt-Tab (e.g. "Wolf Pack Mimic — DEEPS panel overlay") instead of a
-    // wall of identical "Wolf Pack Mimic" entries.
-    title: `Wolf Pack miMIC — ${panelKey} panel overlay`,
+    // Alt-Tab (e.g. "Raid Mimic — DEEPS panel overlay") instead of a
+    // wall of identical "Raid Mimic" entries.
+    title: `Raid Mimic — ${panelKey} panel overlay`,
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -6064,7 +6066,7 @@ function createOverlayWindow() {
   if (_agentOnly()) return;   // agent only: no overlay windows (see _runModeAtStart)
   const b = _resolveBounds('hudBounds', 'hudBoundsSig', { x: 40, y: 40, width: 320, height: 220 });
   overlayWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — HUD overlay',
+    title: 'Raid Mimic — HUD overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 180, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -6089,7 +6091,7 @@ function createOverlayWindow() {
 function createTriggerOverlay() {
   const b = _resolveBounds('triggerBounds', 'triggerBoundsSig', { x: 700, y: 200, width: 600, height: 200 });
   triggerWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Triggers overlay',
+    title: 'Raid Mimic — Triggers overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -6198,7 +6200,7 @@ function openFeedback() {
   }
   feedbackWindow = new BrowserWindow({
     width: 560, height: 720, minWidth: 400, minHeight: 420, resizable: true,
-    title: 'Wolf Pack miMIC — Feedback', backgroundColor: '#0d1117',
+    title: 'Raid Mimic — Feedback', backgroundColor: '#0d1117',
     // On the taskbar, unlike every window but the dashboard (FB-61): a report is written over minutes, often while
     // tabbing back to EQ, and a window with no taskbar item could not be found again (FB-86, the guild lead picked A).
     webPreferences: _wpPrefs('Feedback'),
@@ -6231,7 +6233,7 @@ function openLocalSite(page) {
   }
   localSiteWindow = new BrowserWindow({
     width: 1100, height: 760, minWidth: 640, minHeight: 420, resizable: true,
-    title: 'Wolf Pack miMIC — On this PC', backgroundColor: '#0d1117',
+    title: 'Raid Mimic — On this PC', backgroundColor: '#0d1117',
     // Off the taskbar like every window but the dashboard (FB-61): it is a reference page, reopened from the
     // dashboard rail or the tray, not something written over minutes like a feedback report.
     skipTaskbar: true,
@@ -6277,7 +6279,7 @@ function openLocalSite(page) {
 function openUiStudio() {
   if (uiStudioWindow) { uiStudioWindow.focus(); return; }
   uiStudioWindow = new BrowserWindow({
-    width: 1200, height: 780, title: 'Wolf Pack miMIC — UI Studio',
+    width: 1200, height: 780, title: 'Raid Mimic — UI Studio',
     backgroundColor: '#0d1117',
     skipTaskbar: true,
     webPreferences: _wpPrefs('UI Studio'),
@@ -6480,7 +6482,7 @@ ipcMain.handle('ui-studio-import-pvp-set', (_e, params) => {
       }
       md += '\n';
     }
-    md += '---\n*Generated by Wolf Pack Mimic — UI Studio*\n';
+    md += '---\n*Generated by Raid Mimic — UI Studio*\n';
 
     const safeId   = id.replace(/[^\w.-]/g, '_');
     const safeChar = character ? character.replace(/[^\w]/g, '') : 'all';
@@ -7764,7 +7766,7 @@ function createCanvasWindow() {
   if (_agentOnly()) return;
   const d = { bounds: _canvasBounds() };
   canvasWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Canvas',
+    title: 'Raid Mimic — Canvas',
     x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
     frame: false, transparent: true, resizable: false, movable: false,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
@@ -7830,7 +7832,7 @@ function createCharmOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('charmBounds', 'charmBoundsSig', { x: 700, y: 420, width: 300, height: 180 });
   charmWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Charm tracker overlay',
+    title: 'Raid Mimic — Charm tracker overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -7865,7 +7867,7 @@ function createPetsOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('petsBounds', 'petsBoundsSig', { x: 700, y: 620, width: 300, height: 160 });
   petsWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Pet tracker overlay',
+    title: 'Raid Mimic — Pet tracker overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 70,
     frame: false, transparent: true, resizable: true,
@@ -7900,7 +7902,7 @@ function createBuffQueueOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('buffQueueBounds', 'buffQueueBoundsSig', { x: 1020, y: 60, width: 330, height: 260 });
   buffQueueWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Buff queue overlay',
+    title: 'Raid Mimic — Buff queue overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -7937,7 +7939,7 @@ function createPopRaidOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('popRaidBounds', 'popRaidBoundsSig', { x: 880, y: 80, width: 440, height: 540 });
   popRaidWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — PoP raids overlay',
+    title: 'Raid Mimic — PoP raids overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 160,
     frame: false, transparent: true, resizable: true,
@@ -7973,7 +7975,7 @@ function createMeOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('meBounds', 'meBoundsSig', { x: 40, y: 620, width: 330, height: 300 });
   meWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — HUD overlay',
+    title: 'Raid Mimic — HUD overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -8010,7 +8012,7 @@ function createMapOverlay() {
   const wb = _resolveBounds('mapBounds', 'mapBoundsSig', { x: 60, y: 120, width: 760, height: 480 });
   const b = _mapFull ? _mapFullRect(wb) : wb;   // Full: EverQuest's client area (refined by a fresh read once the page is up)
   mapWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Map overlay',
+    title: 'Raid Mimic — Map overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 140,   // narrow: map.html drops its timer list below ~420px
     frame: false, transparent: true, resizable: !_mapFull,
@@ -8224,7 +8226,7 @@ function createMapTimersOverlay() {
   }
   const b = _resolveBounds('mapTimersBounds', 'mapTimersBoundsSig', def);
   mapTimersWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Map timers overlay',
+    title: 'Raid Mimic — Map timers overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -8282,7 +8284,7 @@ function createMobInfoOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('mobInfoBounds', 'mobInfoBoundsSig', { x: 700, y: 60, width: 320, height: 200 });
   mobInfoWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Target Info overlay',
+    title: 'Raid Mimic — Target Info overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -8314,7 +8316,7 @@ function createWhoOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('whoBounds', 'whoBoundsSig', { x: 40, y: 300, width: 320, height: 280 });
   whoWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — /who overlay',
+    title: 'Raid Mimic — /who overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -8349,7 +8351,7 @@ function createChatOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('chatBounds', 'chatBoundsSig', { x: 40, y: 620, width: 440, height: 260 });
   chatWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Chat overlay',
+    title: 'Raid Mimic — Chat overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 120,
     frame: false, transparent: true, resizable: true,
@@ -8472,7 +8474,7 @@ function createChatBreakout(wid, groups) {
   const n = chatBreakouts.size;
   const b = _resolveBounds(boundsKey, boundsKey + 'Sig', { x: 60 + 28 * n, y: 560 - 28 * n, width: 340, height: 200 });
   const win = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Chat overlay (' + wid + ')',
+    title: 'Raid Mimic — Chat overlay (' + wid + ')',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -8864,7 +8866,7 @@ function createMelodyOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('melodyBounds', 'melodyBoundsSig', { x: 40, y: 600, width: 280, height: 180 });
   melodyWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Melody overlay',
+    title: 'Raid Mimic — Melody overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 200, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -8901,7 +8903,7 @@ function createZealHealthOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('zealBounds', 'zealBoundsSig', { x: 40, y: 800, width: 280, height: 220 });
   zealWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Tick overlay',
+    title: 'Raid Mimic — Tick overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 100,
     frame: false, transparent: true, resizable: true,
@@ -8939,7 +8941,7 @@ function createTankOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('tankBounds', 'tankBoundsSig', { x: 40, y: 480, width: 300, height: 280 });
   tankWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Tank overlay',
+    title: 'Raid Mimic — Tank overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 120,
     frame: false, transparent: true, resizable: true,
@@ -8975,7 +8977,7 @@ function createThreatMeterOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('threatBounds', 'threatBoundsSig', { x: 40, y: 320, width: 320, height: 200 });
   threatWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Threat meter overlay',
+    title: 'Raid Mimic — Threat meter overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -9011,7 +9013,7 @@ function createExtTargetOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('extTargetBounds', 'extTargetBoundsSig', { x: 40, y: 360, width: 320, height: 240 });
   extTargetWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Extended Target overlay',
+    title: 'Raid Mimic — Extended Target overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 80,
     frame: false, transparent: true, resizable: true,
@@ -9093,7 +9095,7 @@ function createCommandOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('commandBounds', 'commandBoundsSig', { x: 40, y: 40, width: 320, height: 360 });
   commandWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Command Center',
+    title: 'Raid Mimic — Command Center',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 160,
     frame: false, transparent: true, resizable: true,
@@ -9132,7 +9134,7 @@ function createChChainOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('chChainBounds', 'chChainBoundsSig', { x: 40, y: 540, width: 280, height: 240 });
   chChainWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — CH chain overlay',
+    title: 'Raid Mimic — CH chain overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -9179,7 +9181,7 @@ function createDockWindow() {
   if (_agentOnly()) return;
   const b = _resolveBounds('dockBounds', 'dockBoundsSig', { x: 40, y: 40, width: 360, height: 620 });
   dockWindow = new BrowserWindow({
-    title: 'Wolf Pack Mimic — Dock',
+    title: 'Raid Mimic — Dock',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 140,
     frame: false, transparent: true, resizable: true,
@@ -10073,8 +10075,9 @@ function registerHideAllHotkey() {
 // config.
 //
 // CRITICAL: pass the explicit `name` matching what the NSIS installer writes
-// ("WolfPackMimic"). Without this, Electron uses the app's executable-name
-// default ("Wolf Pack Mimic" or "wolfpack-mimic" depending on packaging),
+// ("WolfPackMimic" — kept across the Raid Mimic rename so an existing install's Startup entry is
+// overwritten in place, never doubled; the installer rewrites its value to the new exe path). Without this, Electron uses the app's executable-name
+// default ("Raid Mimic" or "wolfpack-mimic" depending on packaging),
 // which is DIFFERENT from the installer's key — so Windows ends up with TWO
 // Run keys for the same app, and the Startup apps page shows two entries.
 // _AUTOSTART_REG_NAME is the canonical key name; cleanupDuplicateAutostart
@@ -10117,7 +10120,8 @@ function cleanupDuplicateAutostartEntries() {
       (err, stdout) => {
         if (err || !stdout) return;
         const exeHint = (app.getPath('exe') || '').toLowerCase();
-        const myExeName = 'wolf pack mimic.exe';   // also covers older builds
+        // Both exe names: the build before the Raid Mimic rename was "Wolf Pack Mimic.exe".
+        const myExeNames = ['raid mimic.exe', 'wolf pack mimic.exe'];
         const lines = stdout.split(/\r?\n/);
         const toDelete = [];
         for (const line of lines) {
@@ -10129,7 +10133,7 @@ function cleanupDuplicateAutostartEntries() {
           if (name === _AUTOSTART_REG_NAME) continue;        // canonical — keep
           // Only touch entries that actually point at Mimic (don't go
           // wiping unrelated apps the user has in their Run key).
-          if (data.includes(myExeName) || (exeHint && data.includes(exeHint))) {
+          if (myExeNames.some((n) => data.includes(n)) || (exeHint && data.includes(exeHint))) {
             toDelete.push(name);
           }
         }
@@ -10289,33 +10293,34 @@ function pushStatus() {
 }
 function tooltipFor(s) {
   const v = `v${app.getVersion()}`;
-  if (!s.agentRunning) return `Wolf Pack miMIC ${v} — agent starting…`;
+  if (!s.agentRunning) return `Raid Mimic ${v} — agent starting…`;
   // Setup state wins the tooltip when something's wrong — the tray icon is the
   // last visible Mimic surface for users who hide the window, so the tooltip
   // should call out what to fix when they finally hover.
   const issue = _setupIssue();
-  if (issue) return `⚠ Wolf Pack miMIC ${v} — SETUP NEEDED: ${issue}`;
+  if (issue) return `⚠ Raid Mimic ${v} — SETUP NEEDED: ${issue}`;
   // Overlays hidden outranks the normal tooltip: when every overlay is gone
   // the tray icon is the ONLY Mimic surface left, and "nothing is showing" is
   // indistinguishable from "Mimic is broken" without this line.
   if (_hideAllActive) {
-    return `⚠ Wolf Pack miMIC ${v} — OVERLAYS HIDDEN · right-click → Show overlays`
+    return `⚠ Raid Mimic ${v} — OVERLAYS HIDDEN · right-click → Show overlays`
       + (_hideAllHotkeyBound() ? '' : ' (hotkey blocked by another app)');
   }
   const mode = s.localOnly ? 'Local only' : 'Uploading';
   const quiet = (s.quietMode ? ' · Muted' : '') + (s.hideOverlays ? ' · Overlays off' : '') + (s.runModeNow === 'agent' ? ' · Agent only' : '');
   const upd = s.updatePending ? ` · update ${s.updatePending} ready` : '';
-  return `Wolf Pack miMIC ${v} — ${mode} · port ${s.agentPort}${quiet}${upd}`;
+  return `Raid Mimic ${v} — ${mode} · port ${s.agentPort}${quiet}${upd}`;
 }
 
 // ── Self-uninstall ──────────────────────────────────────────────────────────
 // electron-builder always generates an uninstaller (Add/Remove Programs entry +
 // Uninstall <App>.exe in the install dir) — but a tray app gives no obvious way
 // to FIND it, which testers hit. Surface it directly from the tray. The exe
-// lives next to our own (process.execPath = <INSTDIR>\Wolf Pack Mimic.exe), so
-// the uninstaller is <INSTDIR>\Uninstall Wolf Pack Mimic.exe. Returns null in
-// dev mode / non-Windows / if the file isn't there, so the tray item hides
-// rather than offering a dead action.
+// lives next to our own (process.execPath = <INSTDIR>\Raid Mimic.exe), so
+// the uninstaller is <INSTDIR>\Uninstall Raid Mimic.exe. (An install that predates the
+// rename keeps its old "Uninstall Wolf Pack Mimic.exe" until the update replaces it;
+// the installer sweeps it then.) Returns null in dev mode / non-Windows / if the file
+// isn't there, so the tray item hides rather than offering a dead action.
 function _uninstallerPath() {
   if (process.platform !== 'win32') return null;
   try {
@@ -10324,8 +10329,10 @@ function _uninstallerPath() {
     // the exact casing/name has drifted (install dir is "wolfpack-mimic" but the
     // exe may be productName-cased), so glob rather than hardcode. Take the
     // first "Uninstall*.exe" sitting next to our own exe.
-    const exact = path.join(dir, 'Uninstall Wolf Pack Mimic.exe');
-    if (fs.existsSync(exact)) return exact;
+    for (const name of ['Uninstall Raid Mimic.exe', 'Uninstall Wolf Pack Mimic.exe']) {
+      const exact = path.join(dir, name);
+      if (fs.existsSync(exact)) return exact;
+    }
     const hit = fs.readdirSync(dir).find(f => /^uninstall.*\.exe$/i.test(f));
     return hit ? path.join(dir, hit) : null;
   } catch { return null; }
@@ -10336,9 +10343,9 @@ async function runUninstaller() {
     try {
       await dialog.showMessageBox({
         type: 'info',
-        title: 'Uninstall Wolf Pack Mimic',
+        title: 'Uninstall Raid Mimic',
         message: 'Uninstall from Windows Settings',
-        detail: 'Open Windows Settings → Apps → Installed apps → Wolf Pack Mimic → Uninstall. (The in-app uninstaller is only available on packaged installs.)',
+        detail: 'Open Windows Settings → Apps → Installed apps → Raid Mimic → Uninstall. (The in-app uninstaller is only available on packaged installs.)',
       });
     } catch (e) { void e; }
     return;
@@ -10348,8 +10355,8 @@ async function runUninstaller() {
     buttons: ['Uninstall', 'Cancel'],
     defaultId: 1,
     cancelId: 1,
-    title: 'Uninstall Wolf Pack Mimic',
-    message: 'Uninstall Wolf Pack Mimic?',
+    title: 'Uninstall Raid Mimic',
+    message: 'Uninstall Raid Mimic?',
     detail: 'This closes Mimic and launches the uninstaller. Your saved Wolf Pack login, agent token, and settings on this machine will be removed.',
   });
   if (res.response !== 0) return;
@@ -10446,7 +10453,7 @@ function _setRunMode(mode, ask) {
 }
 function _trayFallbackMenu() {
   return Menu.buildFromTemplate([
-    { label: 'Open Wolf Pack Mimic', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
+    { label: 'Open Raid Mimic', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
     { label: 'Settings…', click: () => { try { openSettings(); } catch {} } },
     { label: 'Restart agent', click: () => { if (agentProc) { try { agentProc.kill(); } catch {} } } },
     { type: 'separator' },
@@ -10510,8 +10517,8 @@ function buildTrayMenu() {
   const v = `v${app.getVersion()}`;
   const agentOnly = _agentOnly();   // this run has no overlay windows: hide the overlay-only items below
   const headerLabel = s.localOnly
-    ? `🐺 Wolf Pack Mimic ${v} — Local only · :${s.agentPort}`
-    : `🐺 Wolf Pack Mimic ${v} — Connected · :${s.agentPort}`;
+    ? `🐺 Raid Mimic ${v} — Local only · :${s.agentPort}`
+    : `🐺 Raid Mimic ${v} — Connected · :${s.agentPort}`;
 
   // Overlays — the actual on-screen overlays + their placement controls. Renamed
   // from the old "Live alerts" (misleading: these are overlays, not alerts).
@@ -10781,7 +10788,7 @@ function buildTrayMenu() {
         buttons: ['Revert to stable', 'Cancel'],
         defaultId: 0,
         cancelId: 1,
-        title: 'Wolf Pack miMIC — revert to stable',
+        title: 'Raid Mimic — revert to stable',
         message: 'Switch back to the stable release?',
         detail: 'Mimic will download the current stable build and install it on your next restart. Your settings, overlays, and login are untouched. You can rejoin the beta any time from this menu.',
       });
@@ -10866,7 +10873,7 @@ function buildTrayMenu() {
     // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
     // The tray menu opens upward with the cursor resting at the BOTTOM, so a
     // bottom-adjacent uninstall was far too easy to mis-click (tester feedback).
-    ...(_uninstallerPath() ? [{ label: 'Uninstall Wolf Pack Mimic…', click: () => { runUninstaller(); } }] : []),
+    ...(_uninstallerPath() ? [{ label: 'Uninstall Raid Mimic…', click: () => { runUninstaller(); } }] : []),
     { type: 'separator' },
     { label: 'Settings…', click: openSettings },
   ];
@@ -11079,7 +11086,7 @@ function _notifyLkgRevert(badVer, lkgVer) {
   try {
     if (tray && typeof tray.displayBalloon === 'function') {
       tray.displayBalloon({
-        title: 'Wolf Pack Mimic — agent reverted',
+        title: 'Raid Mimic — agent reverted',
         content: `The v${badVer || '?'} agent crash-looped; reverted to last-known-good v${lkgVer}. It won't be re-offered until a newer build ships.`,
       });
     }
@@ -11089,7 +11096,7 @@ function _notifyAgentCrashLoop() {
   try {
     if (tray && typeof tray.displayBalloon === 'function') {
       tray.displayBalloon({
-        title: 'Wolf Pack Mimic — agent unstable',
+        title: 'Raid Mimic — agent unstable',
         content: 'The agent is restarting repeatedly. Open the dashboard → Zeal health / diagnostics. Restarts are backing off automatically.',
       });
     }
@@ -11392,7 +11399,7 @@ function wireAutoUpdater() {
         buttons: ['Restart now', 'Later'],
         defaultId: 0,
         cancelId: 1,
-        title: 'Wolf Pack miMIC — update ready',
+        title: 'Raid Mimic — update ready',
         message: `Mimic v${updatePending.version} is ready to install.`,
         detail: 'Restart now to apply the update. Your settings and agent state are preserved.',
       }).then(({ response }) => {
@@ -14575,7 +14582,7 @@ ipcMain.handle('revert-to-stable', async () => {
     buttons: ['Revert to stable', 'Cancel'],
     defaultId: 0,
     cancelId: 1,
-    title: 'Wolf Pack miMIC — revert to stable',
+    title: 'Raid Mimic — revert to stable',
     message: 'Switch back to the stable release?',
     detail: 'Mimic will download the current stable build and install it on your next restart. Your settings, overlays, and login are untouched. You can rejoin the beta any time from the tray menu.',
   });
@@ -14596,7 +14603,7 @@ ipcMain.handle('set-beta-channel', async (_e, on) => {
     buttons: [join ? 'Join the beta' : 'Leave the beta', 'Cancel'],
     defaultId: 0,
     cancelId: 1,
-    title: 'Wolf Pack miMIC — beta updates',
+    title: 'Raid Mimic — beta updates',
     message: join ? 'Get beta builds of Mimic?' : 'Go back to stable updates only?',
     detail: join
       ? 'Mimic will download the newest beta and install it on your next restart. Betas get fixes and new features first, and now and then a new bug. Your settings, overlays, and login are untouched. You can go back any time with ↩ stable at the top of the dashboard.'
@@ -14625,7 +14632,7 @@ ipcMain.handle('set-alpha-channel', async (_e, on) => {
     buttons: [join ? 'Join the alpha' : 'Leave the alpha', 'Cancel'],
     defaultId: 0,
     cancelId: 1,
-    title: 'Wolf Pack miMIC — alpha updates',
+    title: 'Raid Mimic — alpha updates',
     message: join ? 'Try the Mimic 3.0 alpha?' : 'Leave the alpha?',
     detail: join
       ? 'Mimic will download the newest alpha and install it on your next restart. The alpha is where the 3.0 overlay builder is tried first: expect rough edges, and now and then something that does not work. Your settings, overlays, and login are untouched. You can leave any time from the same button.'
@@ -14908,7 +14915,7 @@ app.whenReady().then(async () => {
     try {
       if (Notification.isSupported()) {
         new Notification({
-          title: '⚠ Wolf Pack miMIC — setup needed',
+          title: '⚠ Raid Mimic — setup needed',
           body:  issue + ' — open Mimic to finish.',
           silent: false,
         }).show();

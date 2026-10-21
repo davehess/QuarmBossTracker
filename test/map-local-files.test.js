@@ -471,7 +471,7 @@ describe('the overlay: pure helpers', () => {
     expect(H.wallsNote(true)).toBe('walls: your map files');
     expect(H.wallsNote({ source: 'map_files' })).toBe('walls: your map files');
     expect(H.wallsNote({ source: 'brewall' })).toBe("walls: Brewall (Zeal's maps)");
-    expect(H.wallsNote(false)).toBe('walls: Wolf Pack');
+    expect(H.wallsNote(false)).toBe('walls: built-in');
   });
   it('prepLocal groups lines by colour into the screen frame, with the middle z of each and the server-frame bounds', () => {
     const lm = H.prepLocal({ source: 'map_files', lines: [[10, 20, 0, 30, 40, 10, '#000000'], [1, 2, 50, 3, 4, 70, '#ff0000'], [-5, -6, 0, 0, 0, 0, '#000000'], ['x']], labels: [[1, 2, 3, 'Hall', '#000000'], [NaN, 2, 3, 'Bad', '#000000'], [1, 2, 3, '', '#000000']] });
@@ -596,10 +596,10 @@ describe('the overlay (apps/mimic/map.html) drawing', () => {
     const a = await boot({ store: wide() });
     expect(a.all.wallsrc.textContent).toBe('walls: your map files');
     a.all.wallsSel.value = 'ours'; change(a.all.wallsSel);
-    expect(a.all.wallsrc.textContent).toBe('walls: Wolf Pack');
-    expect(a.all.labelsBtn.title).toMatch(/walls: Wolf Pack/);
+    expect(a.all.wallsrc.textContent).toBe('walls: built-in');
+    expect(a.all.labelsBtn.title).toMatch(/walls: built-in/);
     const b = await boot({ store: wide(), payload: Object.assign({}, PAYLOAD, { local_map: null, local_version: null }) });
-    expect(b.all.wallsrc.textContent).toBe('walls: Wolf Pack');
+    expect(b.all.wallsrc.textContent).toBe('walls: built-in');
   });
   it('draws room names from the map files, skipping one that would sit on another (closest to you first)', async () => {
     const a = await boot({ store: wide() });

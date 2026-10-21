@@ -1,10 +1,20 @@
-; Custom NSIS hooks for Wolf Pack Mimic. electron-builder includes this via
-; build.nsis.include and invokes the customUnInstall macro from the generated
+; Custom NSIS hooks for Raid Mimic (formerly "Wolf Pack Mimic"; renamed 2026-10-21). electron-builder
+; includes this via build.nsis.include and invokes the customUnInstall macro from the generated
 ; uninstaller.
+;
+; THE RENAME KEEPS THE INSTALL'S IDENTITY (the guild lead, 2026-10-21: one installer, same appId):
+;   - appId (quest.wolfpack.mimic) is unchanged, so APP_GUID, the Uninstall registry key and the
+;     InstallLocation key are unchanged. An existing install is found, its old uninstaller is run
+;     silently (--updated, so customUnInstall below keeps data and the Run key), and the new files go
+;     into the SAME folder. Only the exe and the shortcut names change (Wolf Pack Mimic -> Raid Mimic).
+;   - package `name` (wolfpack-mimic) is unchanged, so userData and the updater cache are untouched.
+;   - The old uninstaller deletes the OLD shortcuts itself: electron-builder passes --keep-shortcuts only
+;     when the NEW exe name already exists in the install dir, and "Raid Mimic.exe" does not on the first
+;     update. customInstall below sweeps the old names again anyway, in case that ever changes.
 ;
 ; Goal: a *complete* uninstall. The standard uninstaller removes the installed
 ; program files but leaves the per-user data directory Electron created at
-;   %APPDATA%\Wolf Pack Mimic
+;   %APPDATA%\wolfpack-mimic
 ; which holds mimic.config.json (the saved Discord login + agent token + EQ
 ; folder list), agent.log, the staged agent copy, and the upload-queue state.
 ; Testers reported "it doesn't fully uninstall" — this is that leftover folder.
@@ -77,12 +87,28 @@
 ; setLoginItemSettings, so the user can flip it later without re-running the
 ; installer. The --autostart arg signals createMainWindow() to start
 ; hidden-to-tray so login sessions don't ambush them with the dashboard.
+;
+; The Run value keeps its old NAME ("WolfPackMimic"): the in-app autostart toggle
+; (_AUTOSTART_REG_NAME in main.js) uses the same name, so keeping it means the rename
+; OVERWRITES an existing install's Startup entry with the new exe path instead of leaving
+; a dead pointer at "Wolf Pack Mimic.exe" or adding a second entry.
+;
+; Leftovers from before the rename (Wolf Pack Mimic -> Raid Mimic). Normally the old uninstaller already
+; removed all of these; deleting a file that is not there is a no-op, so this is belt and braces.
+; The old exe can only be present if that uninstall was skipped.
 !macro customInstall
-  CreateShortCut "$SMPROGRAMS\Uninstall Wolf Pack Mimic.lnk" "$INSTDIR\${UNINSTALL_FILENAME}"
+  Delete "$DESKTOP\Wolf Pack Mimic.lnk"
+  Delete "$SMPROGRAMS\Wolf Pack Mimic.lnk"
+  Delete "$SMPROGRAMS\Uninstall Wolf Pack Mimic.lnk"
+  Delete "$INSTDIR\Wolf Pack Mimic.exe"
+  Delete "$INSTDIR\Uninstall Wolf Pack Mimic.exe"
+  CreateShortCut "$SMPROGRAMS\Uninstall Raid Mimic.lnk" "$INSTDIR\${UNINSTALL_FILENAME}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "WolfPackMimic" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --autostart'
 !macroend
 
 !macro customUnInstall
+  Delete "$SMPROGRAMS\Uninstall Raid Mimic.lnk"
+  ; The shortcut name an install made before the rename wrote (a no-op when it is already gone).
   Delete "$SMPROGRAMS\Uninstall Wolf Pack Mimic.lnk"
   ; Real uninstall (NOT an electron-updater silent in-place re-install) — drop
   ; the autostart Run key so we don't try to relaunch from a deleted path next
@@ -90,6 +116,7 @@
   ${ifNot} ${isUpdated}
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "WolfPackMimic"
     RMDir /r "$APPDATA\wolfpack-mimic"
+    RMDir /r "$APPDATA\Raid Mimic"
     RMDir /r "$APPDATA\Wolf Pack Mimic"
   ${endIf}
 !macroend

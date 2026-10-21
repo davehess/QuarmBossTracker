@@ -4,7 +4,7 @@
 //
 // Partly, and the limit is worth writing down so nobody tries again: Task
 // Manager's Name column reads the executable's version resource, and every
-// Mimic renderer IS the same Wolf Pack Mimic.exe — that column cannot be
+// Mimic renderer IS the same Raid Mimic.exe — that column cannot be
 // changed. The Dashboard row is named only because it owns a visible taskbar
 // window whose title Task Manager appends; overlays are skipTaskbar on purpose
 // (they would otherwise flood alt-tab), so they have no such window.

@@ -12,7 +12,7 @@
 > editing this file: **describe what the software does today, not what we
 > intend.** A promise goes in only once the code keeps it.
 
-*Last updated: 2026-10-15*
+*Last updated: 2026-10-21*
 
 ## The spirit
 
@@ -102,6 +102,33 @@ keyboard hook.
 - It stops another program only when you click *retire the old Parser*.
 - Uninstalling removes Mimic, not the changes above that you made in your EQ
   folder.
+
+**What Mimic keeps on your PC for you ("On this PC", Mimic 3.0).** None of this is
+uploaded, queued or relayed; it is read back by Mimic's own windows and nothing else.
+- **A recording of the raids you are in.** Every few seconds Mimic notes where the
+  raid-mates **your own client sees** stand and their health (from Zeal), and keeps
+  one row per minute **for 90 days on your PC**, then deletes it. A character you
+  have excluded from stats is never recorded, and nothing is recorded while one of
+  them is the character you are playing. It powers *My replay*.
+- **Rebuild from my logs.** Reads your old EverQuest log files, only when you start it,
+  and keeps your fights and bosses, raid sessions (who joined and left), zones,
+  deaths and loot on your PC. It uses the same filters as the live reader, so **tells,
+  group chat, officer chat and custom channels are never read into it**; a raid-say
+  line is used only to know who spoke, never its words. It has no age limit, only a
+  size cap per kind, and goes when you delete Mimic's `local` data folder.
+- **Your own fight history and the guild's record.** *My parses* lists the fights your
+  PC saw. When you are signed in, Mimic may also fetch the guild's merged record of the
+  same fights to show you the difference, and keeps a copy of those fields (no Discord
+  ids, no tells, no chat) for 120 days. Characters who opted out already arrive as
+  "Class number". With no sign-in, no such request is made.
+- **Raid codes.** If you join another group's raid with a code, the code is a six-hour
+  label on what your PC records meanwhile. **While it is active, Mimic holds back the
+  raid-wide uploads** (rosters, fights, kills, chat relay, trigger relay and similar)
+  so they reach no guild's server; the uploads about your own character carry on.
+  A code export is a file you save yourself: it holds fights, loot, deaths and
+  position rows for the last 30 days, keyed by a random per-install number, never your
+  Discord id or a character name as a key. Importing someone else's file merges it
+  into your own local copy.
 
 **Who Mimic talks to:** our guild's server; GitHub (updates for Mimic, and for
 Zeal and UI packs); public internet time servers (Microsoft, the NTP Pool and

@@ -4,7 +4,8 @@
 // The /parsehelp buttons used to point at wolfpack.quest/mimic (a landing
 // page); the owner wants one-tap downloads like the dashboard header's
 // "Download Mimic / Beta" pair. Asset filenames are versioned
-// (Wolf-Pack-Mimic-Setup-<ver>.exe) so the links must be resolved live from
+// (Raid-Mimic-Setup-<ver>.exe; releases before the 2026-10-21 rename carry
+// Wolf-Pack-Mimic-Setup-<ver>.exe) so the links must be resolved live from
 // the GitHub releases API. Detection is channel-agnostic: any release whose
 // assets include the Setup exe is a Mimic release; `prerelease` splits
 // stable vs beta. Cached 5 min — Discord interactions shouldn't block on
@@ -17,7 +18,7 @@ const TTL_MS = 5 * 60 * 1000;
 
 let _cache = { at: 0, stable: null, beta: null };
 
-const _SETUP_RX = /^wolf-pack-mimic-setup-.*\.exe$/i;
+const _SETUP_RX = /^(?:raid|wolf-pack)-mimic-setup-.*\.exe$/i;
 
 async function getMimicDownloadUrls() {
   if ((Date.now() - _cache.at) < TTL_MS) return _cache;

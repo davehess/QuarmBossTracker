@@ -29,6 +29,15 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.0': [
+    '**Version 3.0 is out.** The website, the bot and Mimic all move to a new major version together (Mimic 3.0), and the app is now called Raid Mimic. It updates in place and keeps your settings.',
+    '**The Canvas.** Arrange your overlays on one full-screen layer instead of a pile of windows, pull an overlay apart into pieces (bars, rings, numbers), group them, lock them in place, resize them with a corner, and share a whole setup with a friend as a file or a six-character code. It is your choice: the setup tour offers it, and "Take the tour again" is in the tray and the dashboard.',
+    '**Your own data on your own PC.** Mimic now has an "On this PC" group: every character\'s inventory in one place, a replay of the raids you were in, and your fights from old log files rebuilt. Nothing from it is uploaded.',
+    '**Raid codes.** Join another group\'s raid with a code and your PC keeps that raid\'s data for you; nothing raid-wide goes to the guild\'s server while the code is on.',
+    '**Death timeline.** The trigger overlay and the spectator pages show the night\'s boss deaths, the time between them and a clock since the last one. The new Raid routes page averages our recorded raids in a zone into one route.',
+    '**An easier dashboard.** The menu is grouped, each tab has buttons that jump to its sections, and long lists fold to "N more".',
+    '**Smaller fixes.** Command Center\'s Last deaths always names who died and each death can be dismissed; the Map no longer repeats one mob\'s health across a pack; Target Info says "Can see invis"; roll calls in the "Item x6 - 555" form are read; raid share links can run until the raid ends.',
+  ],
   '3.2.12': [
     '**Quarm\'s timer follows the new Plane of Time cycle.** Since the October 18 patch the Plane of Time runs one fixed 6 day 18 hour cycle from the guild\'s first entry, and kills no longer extend it. The board now counts to the end of that cycle, and says whether the time is an estimate or came from the game.',
   ],

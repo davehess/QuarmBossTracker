@@ -1,8 +1,9 @@
-// /mimic — stable redirect to whatever the latest Wolf Pack Mimic release is.
+// /mimic — stable redirect to whatever the latest Raid Mimic release is.
 //
 // Queries GitHub's releases API and 302s to the most recent NON-PRERELEASE
 // Mimic release. Mimic releases are identified channel-agnostically by their
-// installer asset name (Wolf-Pack-Mimic-Setup-*.exe). For the beta channel
+// installer asset name (Raid-Mimic-Setup-*.exe; every release before the
+// 2026-10-21 rename is Wolf-Pack-Mimic-Setup-*.exe, and both count). For the beta channel
 // (prereleases like v1.0.58-beta.1), use /mimic/beta — same shape, different
 // filter. Splitting the two URLs keeps the public "install Mimic" link on
 // stable even when a beta is sitting at the top of the releases list.
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest) {
       const mimicReleases = releases
         .filter(r => !r.draft
                   && !r.prerelease
-                  && r.assets.some(a => /^wolf-pack-mimic-setup-.*\.exe$/i.test(a.name)))
+                  && r.assets.some(a => /^(?:raid|wolf-pack)-mimic-setup-.*\.exe$/i.test(a.name)))
         .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
 
       const latest = mimicReleases[0];
