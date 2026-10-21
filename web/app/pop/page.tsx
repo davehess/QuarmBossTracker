@@ -639,6 +639,8 @@ export default async function PopFlagsPage(
     const n = nextSort(spellView, key);
     return spellsHref({ psort: n.key, pdir: n.dir });
   };
+  // A matrix header cell that stays at the top of its scroller (py-1 comes with it; the caller adds the side padding).
+  const stickyTh = 'sticky top-0 z-10 bg-panel py-1 shadow-[0_1px_0_0_rgba(110,118,129,0.4)]';
   const navCls = (active: boolean) =>
     `px-2 py-0.5 rounded border ${active ? 'border-gold text-gold' : 'border-border hover:text-text'}`;
 
@@ -819,15 +821,17 @@ export default async function PopFlagsPage(
     // Every row here is the viewer's own character, so every gate cell is theirs to tick (SelfFlagCells.tsx).
     return (
       <SelfFlagsProvider initial={ownTicks(rows.map(flagsOf))}>
-        <div className="overflow-x-auto">
+        {/* The scroller is bounded in height as well as width, so the header row (sticky inside it) stays put while
+            the rows scroll under it: a sticky header cannot stick to the page through an overflow-x scroller. */}
+        <div className="overflow-x-auto overflow-y-auto max-h-[75vh]">
           <table className="text-sm min-w-full">
             <thead>
               <tr className="text-dim text-xs text-left">
-                <th className="py-1 pr-3">Character</th>
-                <th className="py-1 pr-3">Class</th>
-                {gatedZones.map(z => <th key={z.key} className="py-1 px-2 text-center" title={z.name}>{z.short}</th>)}
-                <th className="py-1 px-2" title="Justice trial marks held">Marks</th>
-                <th className="py-1 pl-2 text-right">Flags</th>
+                <th className={`${stickyTh} pr-3`}>Character</th>
+                <th className={`${stickyTh} pr-3`}>Class</th>
+                {gatedZones.map(z => <th key={z.key} className={`${stickyTh} px-2 text-center`} title={z.name}>{z.short}</th>)}
+                <th className={`${stickyTh} px-2`} title="Justice trial marks held">Marks</th>
+                <th className={`${stickyTh} pl-2 text-right`}>Flags</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -1055,30 +1059,40 @@ export default async function PopFlagsPage(
               </Link>
             </span>
           )}
-          {/* ?v=b moves these buttons into its navigation sidebar. */}
-          {side !== 'b' && (
-          <span className="ml-auto flex flex-wrap gap-2 items-center">
-            <span className="flex flex-wrap gap-1 mr-1" role="group" aria-label="Whose characters"
-                  title={`Whose flags the chart, matrix and planner count. My Characters is every character on your account, alts included (traders, hidden characters and characters under ${LIST_MIN_LEVEL} sit behind Show all; ones with no known level are folded away). The spell-needs table at the bottom lists mains, or every character on All characters.`}>
-              {POP_SCOPES.map(s => (
-                <Link key={s.key} href={hrefFor(s.key === 'all' ? { scope: 'all', alts: null } : { scope: s.key })}
-                      aria-current={scope === s.key ? 'true' : undefined} title={s.title} className={navCls(scope === s.key)}>
-                  {s.label}
-                </Link>
-              ))}
-            </span>
-            <span className="flex flex-wrap gap-1 mr-1" role="group" aria-label="How to draw them">
-              <Link href={hrefFor({ view: 'chart', zone: null, alts: null, sort: null, open: null })} aria-current={!selected && !matrixView && !mineView ? 'true' : undefined}
-                    className={navCls(!selected && !matrixView && !mineView)}>Chart</Link>
-              <Link href={hrefFor({ view: 'matrix', zone: null })} aria-current={matrixView || mineView ? 'true' : undefined}
-                    className={navCls(matrixView || mineView)}>Matrix</Link>
-            </span>
-            <Link href="/pop/guide" className={navCls(false)}>☑ My checklist</Link>
-            <Link href="/pop/latest" className={navCls(false)}>Latest flags (try the new view)</Link>
-          </span>
-          )}
         </div>
       </section>
+
+      {/* The control bar: whose characters the page counts, and how to draw them. It sticks under the site header
+          while the page scrolls, so "whose column is whose" stays in view (the guild lead, 2026-10-21: "Top nav bar
+          for the pop page should come down when scrolling so we can see who needs what steps instead of having to
+          scroll up"). One line, scrolling sideways inside itself, so it stays short on a phone. top-20 clears the
+          site header and the beta banner. The ?v=b / ?v=c previews already pin their own panel at the same offset
+          (PopShell), so there the bar stays in the flow rather than stacking a second stuck bar on top of it;
+          ?v=b moves these buttons into its navigation sidebar and drops the bar. */}
+      {side !== 'b' && (
+      <div data-pop-bar
+           className={side ? '' : 'sticky top-20 z-30 before:content-[\'\'] before:absolute before:inset-x-0 before:-top-9 before:h-9 before:bg-bg'}>
+      <div className="bg-panel border border-border rounded-lg px-3 py-2 shadow-md shadow-black/30 relative flex flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap">
+        <span className="flex gap-1 shrink-0" role="group" aria-label="Whose characters"
+              title={`Whose flags the chart, matrix and planner count. My Characters is every character on your account, alts included (traders, hidden characters and characters under ${LIST_MIN_LEVEL} sit behind Show all; ones with no known level are folded away). The spell-needs table at the bottom lists mains, or every character on All characters.`}>
+          {POP_SCOPES.map(s => (
+            <Link key={s.key} href={hrefFor(s.key === 'all' ? { scope: 'all', alts: null } : { scope: s.key })}
+                  aria-current={scope === s.key ? 'true' : undefined} title={s.title} className={navCls(scope === s.key)}>
+              {s.label}
+            </Link>
+          ))}
+        </span>
+        <span className="flex gap-1 shrink-0" role="group" aria-label="How to draw them">
+          <Link href={hrefFor({ view: 'chart', zone: null, alts: null, sort: null, open: null })} aria-current={!selected && !matrixView && !mineView ? 'true' : undefined}
+                className={navCls(!selected && !matrixView && !mineView)}>Chart</Link>
+          <Link href={hrefFor({ view: 'matrix', zone: null })} aria-current={matrixView || mineView ? 'true' : undefined}
+                className={navCls(matrixView || mineView)}>Matrix</Link>
+        </span>
+        <Link href="/pop/guide" className={`${navCls(false)} shrink-0`}>☑ My checklist</Link>
+        <Link href="/pop/latest" className={`${navCls(false)} shrink-0`}>Latest flags (try the new view)</Link>
+      </div>
+      </div>
+      )}
 
       <PopShell side={side} label={side === 'c' ? 'Your PoP progress' : 'PoP flags navigation'}
                 panel={side === 'c' ? minePanel : navPanel}
@@ -1198,7 +1212,7 @@ export default async function PopFlagsPage(
         </section>
       ) : matrixView ? (
         // ── Roster × zone matrix (secondary view) ─────────────────────────────
-        <section className="bg-panel border border-border rounded-lg p-4 overflow-x-auto">
+        <section className="bg-panel border border-border rounded-lg p-4 overflow-x-auto overflow-y-auto max-h-[80vh]">
           {scopedChars.length === 0 ? (
             <p className="text-sm text-dim">No flags recorded yet — the matrix fills in as grants land.</p>
           ) : (
@@ -1209,9 +1223,9 @@ export default async function PopFlagsPage(
               <table className="text-sm min-w-full">
                 <thead>
                   <tr className="text-dim text-xs text-left">
-                    <th className="py-1 pr-3">Character</th>
-                    {gatedZones.map(z => <th key={z.key} className="py-1 px-2 text-center" title={z.name}>{z.short}</th>)}
-                    <th className="py-1 pl-2 text-right">Flags</th>
+                    <th className={`${stickyTh} pr-3`}>Character</th>
+                    {gatedZones.map(z => <th key={z.key} className={`${stickyTh} px-2 text-center`} title={z.name}>{z.short}</th>)}
+                    <th className={`${stickyTh} pl-2 text-right`}>Flags</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/50">
