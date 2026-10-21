@@ -163,9 +163,17 @@ export interface Shot {
   title: string;     // the caption's name for the overlay
   line: string;      // one plain sentence: what it does for a raid
   alt: string;
+  credit?: string;   // a rights line shown under the caption (the Map's walls come from a GPL project)
 }
 export const SHOTS_DIR = '/raidmimic/shots';
+// Plane of Nightmares as the Map draws it. The wall lines are EQEmu-generated and credited as the spectator page credits
+// them; Brewall's map lines (no stated licence, members only) are never used in a capture.
+export const MAP_CREDIT = 'Generated walls: EQEmu maps (GPLv2+, © EQEmulator.NET, AX-Classic and ProjectEQ).';
 export const SHOTS: Shot[] = [
+  { id: 'map', file: 'map.webp', w: 2000, h: 1180, title: 'Map',
+    line: 'Spawn timers on the map, where each mob walks and when it is back up, with your raid on it.',
+    credit: MAP_CREDIT,
+    alt: 'The Map overlay in Plane of Nightmares: spawn points with red aggro circles, a pulled mob whose circle has followed it away from its spawn point, the paths two mobs have walked, the player arrow and five raiders as dots, and a Timers list of engaged mobs, respawns that are up or due, mobs seen alive and a kill that is not pinned down yet.' },
   { id: 'cc', file: 'cc.webp', w: 960, h: 1358, title: 'Command Center',
     line: 'Who still needs to hail before the projection leaves, who the boss is rampaging, who needs a cure and which healer is low on mana.',
     alt: 'The Command Center overlay: the target’s health, a rampage warning, a hail board listing who still has to hail before the projection leaves in 18:50, a defensive cooldown, healer mana bars, curse and disease cure requests and the last two deaths.' },

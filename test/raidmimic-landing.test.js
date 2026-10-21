@@ -398,7 +398,7 @@ describe('the "Output first" preview (?v=b)', () => {
   });
 
   it('renders the gallery: every capture, in the order of the content module, from the one shots folder', () => {
-    expect(C.SHOTS.map(s => s.id)).toEqual(['cc', 'target-stats', 'target-quest', 'dps', 'rolls', 'timeline']);
+    expect(C.SHOTS.map(s => s.id)).toEqual(['map', 'cc', 'target-stats', 'target-quest', 'dps', 'rolls', 'timeline']);
     for (const s of C.SHOTS) expect(out, s.id).toContain(`byId('${s.id}')`);
     const order = C.SHOTS.map(s => out.indexOf(`byId('${s.id}')`));
     expect([...order].sort((a, b) => a - b)).toEqual(order);
@@ -421,6 +421,24 @@ describe('the "Output first" preview (?v=b)', () => {
       expect(s.line.length, s.id).toBeLessThan(180);
       expect((s.line.match(/\./g) || []).length, `${s.id} is one sentence`).toBe(1);
     }
+  });
+
+  it('the Map capture is near the top, sized and described, and credits its walls to EQEmu (never Brewall)', () => {
+    const m = C.SHOTS.find(s => s.id === 'map');
+    expect(C.SHOTS.indexOf(m)).toBeLessThan(2);
+    expect(m).toMatchObject({ file: 'map.webp', w: 2000, h: 1180, title: 'Map' });
+    expect(m.alt).toMatch(/aggro circle/);
+    expect(m.alt.length).toBeGreaterThan(40);
+    expect(m.credit).toBe(C.MAP_CREDIT);
+    expect(C.MAP_CREDIT).toBe('Generated walls: EQEmu maps (GPLv2+, © EQEmulator.NET, AX-Classic and ProjectEQ).');
+    expect(out).toMatch(/\{s\.credit && /);
+    // the page and the fixture name no Brewall map line: its lines have no stated licence and are members-only
+    expect(JSON.stringify([C.SHOTS, C.SHOTS_HEAD])).not.toMatch(/Brewall/i);
+    const walls = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/raidmimic-shots/map-walls-ponightmare.json'), 'utf8'));
+    expect(walls._about).toMatch(/EQEmu\/maps/);
+    expect(walls._about).toMatch(/GPLv2-or-later/);
+    expect(walls.segs.length).toBeGreaterThan(300);
+    for (const g of walls.segs) expect(g[4]).toBeLessThan(walls.bands.length);
   });
 
   it('is responsive: single column until lg, no fixed pixel widths, no horizontal overflow', () => {
@@ -459,6 +477,12 @@ describe('the "Output first" preview (?v=b)', () => {
       dp.activeCharacter, ...Object.keys(dp.currentEncounterThreat.perPlayer), ...Object.keys(dp.currentEncounterThreat.spans),
       ...Object.values(dp.currentEncounterThreat.perPlayer).map(p => p.pet_owner).filter(Boolean),
     ];
+    // the Map's stand-in payload: every raider, the target's target and every "by" on a timer or seen row
+    const MF = await import('../scripts/raidmimic-shots/map-fixture.mjs');
+    const mp = MF.mapState();
+    names.push(mp.me.name, mp.self.name, ...mp.raid.map(r => r.name), ...mp.group.map(r => r.name), mp.target.tot.name,
+      ...mp.timers.map(t => t.by), ...mp.seen.map(t => t.by));
+    expect(mp.raid.length).toBeGreaterThanOrEqual(4);
     expect(names.length).toBeGreaterThan(60);
     const allowed = new Set([...F.PLAYERS, ...F.PETS]);
     for (const n of names) expect(allowed.has(n), n).toBe(true);

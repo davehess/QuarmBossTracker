@@ -29,6 +29,7 @@ function ShotFigure({ s }: { s: Shot }) {
       </a>
       <figcaption className="mt-2 text-sm leading-6 text-text">
         <b className="font-semibold text-[#f2ede1]">{s.title}.</b> {s.line}
+        {s.credit && <span className="mt-1 block text-xs leading-5 text-dim">{s.credit}</span>}
       </figcaption>
     </figure>
   );
@@ -51,11 +52,12 @@ export default function OutputLayout({ ctx }: { ctx: Ctx }) {
 
       <section aria-label={SHOTS_HEAD.title} className="space-y-6">
         <div className="grid gap-6 lg:grid-cols-12 lg:items-start">
-          <div className="lg:col-span-5"><ShotFigure s={byId('cc')} /></div>
-          <div className="grid gap-6 lg:col-span-7">
-            <ShotFigure s={byId('target-stats')} />
-            <ShotFigure s={byId('target-quest')} />
-          </div>
+          <div className="lg:col-span-8"><ShotFigure s={byId('map')} /></div>
+          <div className="lg:col-span-4"><ShotFigure s={byId('cc')} /></div>
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+          <ShotFigure s={byId('target-stats')} />
+          <ShotFigure s={byId('target-quest')} />
         </div>
         <div className="grid gap-6 lg:grid-cols-12 lg:items-start">
           <div className="lg:col-span-7"><ShotFigure s={byId('dps')} /></div>
