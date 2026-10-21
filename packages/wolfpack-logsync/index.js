@@ -33882,6 +33882,21 @@ const COMMAND_HTML = `<!doctype html>
     .rez-row.incoming .nm { animation: none; }
   }
 
+  /* 💀 Last deaths — same shape as the cure card: extra right padding keeps "clear all" and the row ✕ clear of
+     the fixed ✕-hide gutter. The NAME never shrinks (a flex:1 name with a long unshrinkable detail beside it was
+     squeezed to zero width at a narrow overlay and the row read as nobody having died); the detail is what
+     ellipsizes, with the full line on hover. */
+  .card.death-card{padding-right:28px}
+  .head.death-head{display:flex;align-items:center;gap:6px}
+  .deathClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
+    letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
+  .deathClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  .list .row.death-row .nm{flex:0 0 auto;max-width:55%;font-weight:600}
+  .death-row .death-det{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9aa4ad}
+  .death-row .deathDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
+    flex-shrink:0;opacity:0.6}
+  .death-row .deathDismiss:hover{opacity:1;color:#f87171}
+
   /* #153 collapsible sections — the caret+label in a section header is the
      click target that collapses/expands it. Collapse state lives in a JS store
      consulted at render time (localStorage-backed), NOT DOM state, so repaints
@@ -34067,6 +34082,74 @@ const COMMAND_HTML = `<!doctype html>
   // Stable across polls: a set keeps its range and its first-roll timestamp for
   // the 15 minutes it stays in the payload.
   function _rollId(r){ return r ? (r.from + '-' + r.to + '@' + (r.started_at_ms || 0)) : null; }
+
+  // 💀 Last deaths — local dismiss (the guild lead, 2026-10-21: "it can't be minimized or ignored"). Keyed by
+  // WHO + WHEN (the recap's own timestamp), so a death stays gone on every later poll. The agent keeps one recap
+  // per player per 5 s and may swap in the fuller one with a slightly different stamp, hence the tolerance.
+  // Nothing is uploaded; localStorage keeps it across an overlay reload because the agent holds the recaps for
+  // the whole session and a reload would otherwise bring them all back.
+  var DEATH_SAME_MS = 5000, DEATH_DISMISS_KEEP = 100;
+  var _dismissedDeaths = [];
+  try { _dismissedDeaths = JSON.parse(localStorage.getItem('wp_cmd_dead_dismissed') || '[]'); } catch (e) { _dismissedDeaths = []; }
+  if (!Array.isArray(_dismissedDeaths)) _dismissedDeaths = [];
+  // Who died, always a name: the agent writes "You" when it did not know the character, so that (or nothing)
+  // reads as the active character, else "You".
+  function deathWho(rc, me){
+    var n = rc && rc.name != null ? String(rc.name).trim() : '';
+    if (n && !/^you$/i.test(n)) return n;
+    return (me && String(me).trim()) || 'You';
+  }
+  function _deathMs(rc){ var t = Date.parse(rc && rc.ts); return isNaN(t) ? 0 : t; }
+  function isDeathDismissed(rc, me){
+    var who = deathWho(rc, me).toLowerCase(), t = _deathMs(rc);
+    for (var i = 0; i < _dismissedDeaths.length; i++) {
+      var d = _dismissedDeaths[i];
+      if (d && d.n === who && Math.abs(d.t - t) <= DEATH_SAME_MS) return true;
+    }
+    return false;
+  }
+  function dismissDeath(rc, me){
+    if (!rc || isDeathDismissed(rc, me)) return;
+    _dismissedDeaths.push({ n: deathWho(rc, me).toLowerCase(), t: _deathMs(rc) });
+    if (_dismissedDeaths.length > DEATH_DISMISS_KEEP) _dismissedDeaths = _dismissedDeaths.slice(-DEATH_DISMISS_KEEP);
+    try { localStorage.setItem('wp_cmd_dead_dismissed', JSON.stringify(_dismissedDeaths)); } catch (e) {}
+  }
+  function dismissAllDeaths(list, me){
+    for (var i = 0; list && i < list.length; i++) dismissDeath(list[i], me);
+  }
+  function deathDetail(rc){
+    var dd = new Date(rc.ts), pad2 = function (n) { return (n < 10 ? '0' : '') + n; };
+    var when = isNaN(dd.getTime()) ? '' : (' ' + pad2(dd.getHours()) + ':' + pad2(dd.getMinutes()) + ':' + pad2(dd.getSeconds()));
+    var bits = [];
+    bits.push(rc.lastChOffMs != null ? ((rc.lastChOffMs / 1000).toFixed(1) + ' s after the last CH') : 'no CH in 20 s');
+    if (rc.beatMs) bits.push('beat ' + Math.round(rc.beatMs / 1000) + ' s');
+    bits.push('took ' + (rc.dmg6 >= 1000 ? (rc.dmg6 / 1000).toFixed(1) + 'k' : rc.dmg6) + ' in 6 s');
+    if (rc.killer) bits.push('by ' + rc.killer);
+    return 'died' + when + ' · ' + bits.join(' · ');
+  }
+  // The whole card ('' when every death is dismissed or there are none). The name is its own never-shrinking
+  // cell and the detail is the part that gives way (ellipsis, full text on hover): at a narrow width the old
+  // row gave the name zero width and read as "died 14:46:50 · ..." with nobody in front of it.
+  function deathRecapsHtml(list, me){
+    var vis = [];
+    for (var i = 0; list && i < list.length; i++) if (!isDeathDismissed(list[i], me)) vis.push(list[i]);
+    if (!vis.length) return '';
+    var col = _isCollapsed('deathrecaps');
+    var html = '<div class="card death-card"><div class="head death-head">' + secToggle('deathrecaps', '💀 Last deaths', vis.length)
+             + (col ? '' : '<span class="deathClearAll" data-wp-interact title="Dismiss all of these deaths (this client)">clear all</span>')
+             + '</div>';
+    if (!col) {
+      html += '<div class="list">';
+      for (var j = 0; j < vis.length; j++) {
+        var rc = vis[j], who = deathWho(rc, me), det = deathDetail(rc);
+        html += '<div class="row death-row"><span class="nm" title="' + esc(who) + '">' + esc(who) + '</span>'
+             +    '<span class="death-det" title="' + esc(who + ' ' + det) + '">' + esc(det) + '</span>'
+             +    '<span class="deathDismiss" data-wp-interact data-death-who="' + esc(who) + '" data-death-ts="' + esc(rc.ts) + '" title="Dismiss this death (this client)">✕</span></div>';
+      }
+      html += '</div>';
+    }
+    return html + '</div>';
+  }
 
   // 📋 on a deathroll (the guild lead, 2026-09-29: "add in a copy button for deathrolls"): the whole
   // game as ONE chat line to paste in game, e.g. "Deathroll 32,000: A 26189 > B 24160 > ... > B 0.
@@ -34687,26 +34770,7 @@ const COMMAND_HTML = `<!doctype html>
     // ── Last deaths (FB-84) ───────────────────────────────────────────────
     // One line per recent death from this machine's own log, next to the rez board it explains.
     // Local only: /api/command-center is this machine's agent; nothing here is uploaded.
-    if (s.death_recaps && s.death_recaps.length) {
-      var drCollapsed = _isCollapsed('deathrecaps');
-      html += '<div class="card"><div class="head">' + secToggle('deathrecaps', '💀 Last deaths', s.death_recaps.length) + '</div>';
-      if (!drCollapsed) {
-        html += '<div class="list">';
-        for (var dr = 0; dr < s.death_recaps.length; dr++) {
-          var rc = s.death_recaps[dr];
-          var dd = new Date(rc.ts), pad2 = function (n) { return (n < 10 ? '0' : '') + n; };
-          var when = isNaN(dd.getTime()) ? '' : (' ' + pad2(dd.getHours()) + ':' + pad2(dd.getMinutes()) + ':' + pad2(dd.getSeconds()));
-          var bits = [];
-          bits.push(rc.lastChOffMs != null ? ((rc.lastChOffMs / 1000).toFixed(1) + ' s after the last CH') : 'no CH in 20 s');
-          if (rc.beatMs) bits.push('beat ' + Math.round(rc.beatMs / 1000) + ' s');
-          bits.push('took ' + (rc.dmg6 >= 1000 ? (rc.dmg6 / 1000).toFixed(1) + 'k' : rc.dmg6) + ' in 6 s');
-          if (rc.killer) bits.push('by ' + rc.killer);
-          html += '<div class="row"><span class="nm">' + esc(rc.name) + '</span><span class="dim">' + esc('died' + when + ' · ' + bits.join(' · ')) + '</span></div>';
-        }
-        html += '</div>';
-      }
-      html += '</div>';
-    }
+    if (s.death_recaps && s.death_recaps.length) html += deathRecapsHtml(s.death_recaps, s.character);
 
     if (!html) html = '<div id="empty">Nothing to report — no active target, DA/mana call-outs, rolls, or curses seen yet.</div>';
 
@@ -34752,7 +34816,7 @@ const COMMAND_HTML = `<!doctype html>
   if (contentEl) {
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle') || t.closest('.deathDismiss') || t.closest('.deathClearAll')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy')
                              || t.closest('[data-wp-interact]'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
@@ -34760,7 +34824,7 @@ const COMMAND_HTML = `<!doctype html>
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
-      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
+      if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle') || t.closest('.deathDismiss') || t.closest('.deathClearAll')
                              || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy')
                              || t.closest('[data-wp-interact]'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
@@ -34836,6 +34900,20 @@ const COMMAND_HTML = `<!doctype html>
           }
           render(_lastState);
         }
+        return;
+      }
+      // 💀 Last deaths — dismiss one / dismiss all. Local only: flip the store, re-render from the last state.
+      var dthX = e.target && e.target.closest ? e.target.closest('.deathDismiss') : null;
+      if (dthX) {
+        e.preventDefault(); e.stopPropagation();
+        dismissDeath({ name: dthX.getAttribute('data-death-who'), ts: dthX.getAttribute('data-death-ts') }, _lastState && _lastState.character);
+        if (_lastState) render(_lastState);
+        return;
+      }
+      var dthAll = e.target && e.target.closest ? e.target.closest('.deathClearAll') : null;
+      if (dthAll) {
+        e.preventDefault(); e.stopPropagation();
+        if (_lastState) { dismissAllDeaths(_lastState.death_recaps, _lastState.character); render(_lastState); }
         return;
       }
       var rezX = e.target && e.target.closest ? e.target.closest('.rezDismiss') : null;
