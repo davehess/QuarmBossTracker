@@ -7792,7 +7792,9 @@ function _announceSlowLand(best, mob) {
   const casterTxt = best.caster ? ' · ' + best.caster : '';
   _pushOverlay({
     text:        '🐌 Slowed ' + (mob ? mob + ' ' : '') + '— ' + (alias || best.name) + magTxt + casterTxt,
-    tts:         'Slowed. ' + _slowShortName(best.name),
+    // "Slowed." opened the utterance and the neural voice heard "DONT TURRIS" (the guild lead, 2026-10-21): a longer
+    // opener, and the name respelled for the ear in Mimic's voice.js. The on-screen text keeps "Slowed".
+    tts:         'Slow landed. ' + _slowShortName(best.name),
     color:       'amber',
     duration_ms: 5000,
     shownAt:     Date.now(),

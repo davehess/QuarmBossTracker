@@ -34,6 +34,36 @@ const SYNTH_TIMEOUT_MS = 2500;
 // A ▶ Test is a person waiting on purpose, and Kokoro loads a 130 MB model per phrase: give it room.
 const TEST_TIMEOUT_MS = 12000;
 const MAX_TEXT_CHARS = 300;
+// Silence put in front of every downloaded-voice phrase (the guild lead, 2026-10-21: "Slowed. Turgur's" was heard as
+// "DONT TURRIS"). Piper and Kokoro write the first sample of speech at sample 0 and the player starts the <audio> cold,
+// so the first syllable can be clipped while the output device wakes up. Windows voices are untouched. 0 turns it off.
+const NEURAL_LEAD_IN_MS = 80;
+
+// → a copy of a 16-bit PCM WAV with `ms` of silence before the speech, or the SAME buffer when it is not one we can
+// pad safely (another format, a data chunk that is not last, a damaged header). Never throws.
+function leadInWav(buf, ms = NEURAL_LEAD_IN_MS) {
+  try {
+    if (!Buffer.isBuffer(buf) || !(ms > 0) || buf.length < 44) return buf;
+    if (buf.toString('latin1', 0, 4) !== 'RIFF' || buf.toString('latin1', 8, 12) !== 'WAVE') return buf;
+    let fmt = null;
+    for (let o = 12; o + 8 <= buf.length;) {
+      const id = buf.toString('latin1', o, o + 4), size = buf.readUInt32LE(o + 4);
+      if (id === 'fmt ' && size >= 16 && o + 8 + size <= buf.length) {
+        fmt = { tag: buf.readUInt16LE(o + 8), ch: buf.readUInt16LE(o + 10), rate: buf.readUInt32LE(o + 12), bits: buf.readUInt16LE(o + 22) };
+      } else if (id === 'data') {
+        const start = o + 8;
+        if (!fmt || fmt.tag !== 1 || fmt.bits !== 16 || !fmt.ch || !fmt.rate || start + size !== buf.length) return buf;
+        const pad = Buffer.alloc(Math.round(fmt.rate * ms / 1000) * fmt.ch * 2);
+        const out = Buffer.concat([buf.subarray(0, start), pad, buf.subarray(start)]);
+        out.writeUInt32LE(out.length - 8, 4);
+        out.writeUInt32LE(size + pad.length, o + 4);
+        return out;
+      }
+      o += 8 + size + (size & 1);
+    }
+    return buf;
+  } catch { return buf; }
+}
 
 // ── What we download, pinned ────────────────────────────────────────────────────────────────────────
 // Every URL is immutable (a release tag, or a Hugging Face COMMIT, never `main`); every file has its exact byte
@@ -721,7 +751,8 @@ async function synthesize(root, spec, platform = process.platform) {
     const key = cacheKey(engine, v.id, spec.rate, text);
     const hit = _cache.get(key);
     if (hit) return hit;
-    const buf = await synthOrNull(run, spec.test === true ? TEST_TIMEOUT_MS : SYNTH_TIMEOUT_MS);
+    const raw = await synthOrNull(run, spec.test === true ? TEST_TIMEOUT_MS : SYNTH_TIMEOUT_MS);
+    const buf = raw && leadInWav(raw);   // padded once, then cached padded
     if (buf) _cache.set(key, buf);
     return buf;
   } catch { return null; }
@@ -750,7 +781,7 @@ function warmUp(root, cfgVoice, platform = process.platform, { force = false } =
 }
 
 module.exports = {
-  MANIFEST, SYNTH_TIMEOUT_MS, TEST_TIMEOUT_MS, PIPER_VOICES_REV, NO_VCRT, WARM_PHRASE,
+  MANIFEST, SYNTH_TIMEOUT_MS, TEST_TIMEOUT_MS, NEURAL_LEAD_IN_MS, leadInWav, PIPER_VOICES_REV, NO_VCRT, WARM_PHRASE,
   status, install, remove, synthesize, warmUp,
   // pure, for tests
   lengthScale, cacheKey, createLru, synthOrNull, downloadPlan, safeZipTarget, verifyFile, findVoice, piperPaths,
