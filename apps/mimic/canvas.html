@@ -182,6 +182,7 @@
   #menu input[type=text]{flex:1;min-width:0;font:inherit;font-size:11px;padding:2px 6px;
     background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
   #menu input[type=text]:focus{outline:none;border-color:#58a6ff}
+  #menu input[type=range]{flex:1;min-width:0;accent-color:#1f6feb}
   #menu label.chk{display:flex;align-items:baseline;gap:6px;padding:2px 0;cursor:pointer}
   #menu label.chk input{accent-color:#1f6feb;cursor:pointer}
   #menu label.chk .dim{color:#6e7681}
@@ -1629,6 +1630,10 @@
   var LOCK_TIP = 'Locked in place: its size is held too. Position, below, unlocks it';
   // ⚙ → Width: the XS … XL of an overlay's right-click menu (the same table), a −/+ in 20 px steps, and ↔ Fit width.
   // Locked, they show and do nothing (a hand change to size); text size and opacity stay open.
+  // The text-size range, one answer for A−/A+ and the slider.
+  function scaleRange(p) {
+    return [(p.kind === 'overlay' || p.kind === 'part' || p.kind === 'sect') ? 0.5 : 0.6, p.kind === 'part' ? 3 : 2.5];
+  }
   function widthMenuHtml(p) {
     var lk = isLocked(p), dis = lk ? ' disabled title="' + LOCK_TIP + '"' : '', now = widthOf(p);
     var h = '<div class="sec">' + (p.kind === 'sect' ? 'Page width' : 'Width') + '</div><div class="row" style="flex-wrap:wrap">';
@@ -1754,8 +1759,11 @@
       }
     }
     h += '<div class="sec">' + ((p.kind === 'overlay' || p.kind === 'sect') ? 'Size' : 'Text size') + '</div><div class="row">'
-      + '<button class="btn" data-sc="-1">A−</button><span style="min-width:3em;text-align:center">' + Math.round((p.scale || 1) * 100) + '%</span>'
-      + '<button class="btn" data-sc="1">A+</button></div>';
+      + '<button class="btn" data-sc="-1">A−</button><span id="mScPct" style="min-width:3em;text-align:center">' + Math.round((p.scale || 1) * 100) + '%</span>'
+      + '<button class="btn" data-sc="1">A+</button></div>'
+      // The same range and 10% step as A−/A+ (scaleRange), live while dragged, saved once on release.
+      + '<div class="row"><input type="range" id="mScale" data-wp-interact aria-label="Text size" min="' + scaleRange(p)[0] * 100
+      + '" max="' + scaleRange(p)[1] * 100 + '" step="10" value="' + Math.round((p.scale || 1) * 100) + '" title="Drag, or use the arrow keys"></div>';
     if (sizable(p)) h += widthMenuHtml(p);
     h += '<div class="note">Resizing follows “Keep inside the screen” (Position, below).</div>';
     h += '<div class="sec">Opacity</div><div class="row">'
@@ -2126,7 +2134,7 @@
       // On again: the item takes its content's height at the next look; off: it keeps the height it has now.
       if (fitOn(p, pdefOf(p))) p.fit = false; else delete p.fit;
     }
-    else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), (p.kind === 'overlay' || p.kind === 'part' || p.kind === 'sect') ? 0.5 : 0.6, p.kind === 'part' ? 3 : 2.5, 1) * 10) / 10; }
+    else if (t.hasAttribute('data-sc')) { var scr = scaleRange(p); p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), scr[0], scr[1], 1) * 10) / 10; }
     // Size by hand: refused (with the reason) while locked; a new width lets a fit that gave up try again.
     else if (t.hasAttribute('data-wpre') || t.hasAttribute('data-wd') || t.hasAttribute('data-ht') || t.hasAttribute('data-fitw')) {
       var sized = false, SW = window.innerWidth, SH = window.innerHeight;
@@ -2173,10 +2181,23 @@
     else return;
     save(); render(); openMenu(p.id, _menuAnchor || _els[p.id].root);
   });
+  // Text-size slider: `input` previews live (render only, no write); `change` fires on release (or after an
+  // arrow key) and is the one save, as the A−/A+ buttons do.
+  menuEl.addEventListener('input', function (ev) {
+    var t = ev.target, p = panelById(_menuFor);
+    if (!p || t.id !== 'mScale') return;
+    var scr = scaleRange(p);
+    p.scale = Math.round(num(Number(t.value) / 100, scr[0], scr[1], 1) * 10) / 10;
+    var pct = document.getElementById('mScPct');
+    if (pct) pct.textContent = Math.round(p.scale * 100) + '%';
+    render();
+  });
   menuEl.addEventListener('change', function (ev) {
     var p = panelById(_menuFor);
     if (!p) return;
     var t = ev.target;
+    // The menu is not rebuilt here: that would drop the slider's keyboard focus between arrow presses.
+    if (t.id === 'mScale') { save(); render(); return; }
     // A piece left blank goes back to its own label.
     if (t.id === 'mName') { p.name = String(t.value || '').trim().slice(0, 24) || (p.kind === 'part' ? '' : p.name); }
     else if (t.hasAttribute('data-g')) {
