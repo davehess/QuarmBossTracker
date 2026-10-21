@@ -65,7 +65,7 @@ describe('the copied deathroll line', () => {
 describe('the button', () => {
   const code = stripJs(cmd);
   it('sits on every deathroll row and copies that row\'s own game', () => {
-    expect(code).toMatch(/'<span class="rollCopy" data-roll-id="' \+ esc\(rid\) \+ '"/);
+    expect(code).toMatch(/'<span class="rollCopy" data-wp-interact data-roll-id="' \+ esc\(rid\) \+ '"/);
     expect(code).toMatch(/if \(_rollId\(_lastState\.rolls\[rc\]\) === rcid\) \{ rset = _lastState\.rolls\[rc\]; break; \}/);
     expect(code).toMatch(/_copyText\(rset\.kind === 'deathroll' \? deathrollCopyLine\(rset\) : /);
   });

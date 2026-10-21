@@ -537,7 +537,7 @@ describe('overlay rules for the new markup', () => {
   it('the "+N more" toggle is a <div>, so it asks for the hover handshake the preload looks for', async () => {
     const preload = readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js'));
     const { _wpIsInteractive } = evalBlock(
-      'const document = { body: null };\n' + sliceBlock(preload, 'function _wpIsInteractive(el) {', '\n}'),
+      'const document = { body: null };\nconst getComputedStyle = () => ({ cursor: \'auto\' });\n' + sliceBlock(preload, 'const WP_INTERACT_SEL =', '\n}'),
       ['_wpIsInteractive'],
     );
     const asEl = (tag) => {

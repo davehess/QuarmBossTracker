@@ -271,7 +271,7 @@ describe('wiring', () => {
   it('Recent rows are <button>s, which the preload arms on its own (they are rebuilt every minute)', () => {
     expect(H.recentRowsHtml(ring(), 'all', null, null, NOW)).toMatch(/<button type="button" class="rcrow /);
     const preload = fs.readFileSync(path.join(ROOT, 'apps', 'mimic', 'preload.js'), 'utf8');
-    expect(preload).toContain("el.matches('button, a, input, select, textarea, [role=\"button\"], [data-wp-interact]')");
+    expect(preload).toContain("const WP_INTERACT_SEL = 'button, a, input, select, textarea, summary, [role=\"button\"], [data-wp-interact]'");
   });
   it('a Recent row opens that target in the pager and goes back to the Stats tab', () => {
     expect(js).toMatch(/t\.closest\('\.rcrow'\)[\s\S]{0,260}_pgPin\(rk\);[\s\S]{0,40}_setTab\('stats'\)/);

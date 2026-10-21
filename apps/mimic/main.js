@@ -7612,6 +7612,29 @@ function _applyCanvasMoves(moves) {
   try { if (canvasWindow && !canvasWindow.isDestroyed()) canvasWindow.webContents.send('canvas-group-ops'); } catch { /* mid-close */ }
   return n;
 }
+// ── Where the cursor is, told to the Canvas (the guild lead, 2026-10-21: "canvas needs to be able to click on these
+// dropdowns and its not working with EQ in focus") ──
+// The Canvas is click-through, and a control inside a panel's frame is clickable only once the Canvas page has armed the
+// window over it. It learns the pointer is there from mouse moves Windows forwards into the window, and nothing proves
+// those reach a panel's frame (three arms from inside the pages failed). The cursor's own position does not depend on
+// them, so main reads it (cheap, and only while the Canvas is up) and the Canvas hit-tests that point itself.
+function _canvasCursorRel(b, p, zoom) {
+  if (!b || !p) return null;
+  if (!(p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height)) return null;
+  const z = (Number.isFinite(zoom) && zoom > 0) ? zoom : 1;
+  return { x: (p.x - b.x) / z, y: (p.y - b.y) / z };
+}
+let _canvasCursorTimer = null, _canvasCursorLast = '';
+function _canvasCursorTick() {
+  if (!_live(canvasWindow)) { if (_canvasCursorTimer) { clearInterval(_canvasCursorTimer); _canvasCursorTimer = null; } return; }
+  if (!canvasWindow.isVisible()) return;
+  let rel = null;
+  try { rel = _canvasCursorRel(canvasWindow.getBounds(), screen.getCursorScreenPoint(), canvasWindow.webContents.getZoomFactor()); } catch { return; }
+  const key = rel ? rel.x + ',' + rel.y : 'out';
+  if (key === _canvasCursorLast) return;   // a still cursor costs nothing
+  _canvasCursorLast = key;
+  try { canvasWindow.webContents.send('canvas-cursor', rel); } catch { /* mid-close */ }
+}
 function createCanvasWindow() {
   if (_agentOnly()) return;
   const d = { bounds: _canvasBounds() };
@@ -7626,6 +7649,9 @@ function createCanvasWindow() {
   canvasWindow.setVisibleOnAllWorkspaces(true);
   canvasWindow.setIgnoreMouseEvents(true, { forward: true });
   canvasWindow.loadFile('canvas.html');
+  if (_canvasCursorTimer) clearInterval(_canvasCursorTimer);
+  _canvasCursorLast = '';
+  _canvasCursorTimer = setInterval(_canvasCursorTick, 50);
   canvasWindow.once('ready-to-show', () => {
     canvasWindow.webContents.send('agent-port', agentPort);
     applyCanvasVisibility();
