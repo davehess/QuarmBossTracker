@@ -12488,7 +12488,7 @@ function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
 function enqueueUpload(kind, payload) {
   // Local mode: nothing is queued, so nothing can be sent.
   if (_localOnly()) return null;
-  // A raid code is active (this PC is in someone else's raid): the raid-wide streams stay on this PC.
+  // A raid code is active (this PC is in someone else's raid): the record / DKP streams stay on this PC.
   if (_raidCodeHolds(kind, payload)) return null;
   // A payload that names a character on a server that is not the guild's never leaves (eqServerForLog).
   if (payload && _offGuildServerChar(payload.character)) return null;
@@ -23500,9 +23500,9 @@ function wpRebuildOpen() {
 
 // ── 🎟 Join a raid with a code (Logsync tab, above Rebuild; the rail's "On this PC" group and the tray open it) ──
 // The guild lead, 2026-10-21: a guest in someone else's raid keeps their data on their own PC. The code is a
-// label: while it is on, this PC tags what it records with the code and HOLDS the raid-wide uploads (roster,
-// fights, chat relay, loot, threat, trigger relays and the rest), so nothing raid-wide reaches the Wolf Pack
-// server. A pass lasts six hours and then ends on its own. The state lives in the agent (GET/POST /api/raid-code,
+// label: while it is on, this PC tags what it records with the code and HOLDS the record uploads (fights,
+// kills, loot, rolls, chat, PvP), so none of it reaches the Wolf Pack record or DKP. The live overlay streams
+// (target info, buff queue, Command Center, callouts) keep flowing. A pass lasts six hours and then ends on its own. The state lives in the agent (GET/POST /api/raid-code,
 // and \`s.raidCode\` on /api/state); the card reads it from the poll, so it asks for nothing of its own. The
 // minutes shown change once a minute, so the card rewrites once a minute at most. A raid pack (.rmpack) is the
 // way to share a raid with another PC: Save writes one, Merge reads someone else's into this PC's records.
@@ -23523,8 +23523,8 @@ function wpRcHtml(s) {
        + '<button type="button" class="wp-btn" onclick="wpRcLeave()">✕ Leave this raid code</button></div>';
     h += '<div style="font-size:12px;margin-bottom:6px">' + (guest
       ? '<b>GUEST</b> · this PC is not signed in to Wolf Pack, so everything it records stays here and is marked GUEST.'
-      : '<b>Away raid</b> · you are in someone else\\'s raid. Your own characters still sync; the raid itself stays on this PC.')
-      + ' <span class="dim">' + (r.held_total > 0 ? r.held_total.toLocaleString() + ' raid uploads held back so far.' : 'Nothing raid-wide leaves this PC while the code is on.') + '</span></div>';
+      : '<b>Away raid</b> · you are in someone else\\'s raid. Your own characters still sync and the live overlays work; the record of the raid (fights, loot, rolls, chat) stays on this PC.')
+      + ' <span class="dim">' + (r.held_total > 0 ? r.held_total.toLocaleString() + ' record uploads held back so far.' : 'Parses, kills, loot, rolls, chat and PvP stay on this PC while the code is on; live overlay data still flows.') + '</span></div>';
   } else {
     h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">'
        + '<input id="wpRcCode" type="text" maxlength="12" placeholder="BC-7KQ2" autocomplete="off" spellcheck="false" style="width:120px;text-transform:uppercase;font-size:14px;letter-spacing:1px" onkeydown="if (event.key === \\'Enter\\') wpRcJoin()">'
@@ -23541,8 +23541,8 @@ function wpRcRepaint(s) {
   if (!el) return;
   if (!document.getElementById('wpRcBody')) {
     el.innerHTML = '<h2>🎟 Join a raid with a code</h2>'
-      + '<div class="subtle">In someone else\\'s raid? Enter the code they gave you. While it is on, what this PC records of the raid (fights, roster, loot) is kept here, tagged with the code, '
-      + 'and nothing raid-wide is sent to the Wolf Pack server. Your overlays keep working. The pass ends by itself after 6 hours. '
+      + '<div class="subtle">In someone else\\'s raid? Enter the code they gave you. While it is on, what this PC records of the raid (fights, kills, loot, rolls, chat) is kept here, tagged with the code, '
+      + 'and none of it is sent to the Wolf Pack record or DKP. Your overlays keep working, target info, buff queue and callouts included. The pass ends by itself after 6 hours. '
       + 'Parses made under a code show a code badge, and GUEST on a PC that is not signed in.</div>'
       + '<div id="wpRcBody"></div><input type="file" id="wpRcFile" accept=".rmpack,application/gzip" style="display:none" onchange="wpRcMerge(this)">';
     el._wpLastHtml = null;
@@ -23573,7 +23573,7 @@ function wpRcJoin() {
   }, function () { _wpRc.note = 'The agent did not answer.'; _wpRc.tone = ''; wpRcRefresh(); });
 }
 function wpRcLeave() {
-  wpRcPost({ clear: true }).then(function () { _wpRc.note = 'Left the raid code. The raid-wide streams are back to normal.'; _wpRc.tone = 'ok'; wpRcRefresh(); },
+  wpRcPost({ clear: true }).then(function () { _wpRc.note = 'Left the raid code. Fights, loot and chat are being recorded to Wolf Pack again.'; _wpRc.tone = 'ok'; wpRcRefresh(); },
     function () { _wpRc.note = 'The agent did not answer.'; _wpRc.tone = ''; wpRcRefresh(); });
 }
 function wpRcExport() {
@@ -63039,10 +63039,12 @@ function _localParsesRoute(req, res) {
 //
 //   * State: logsync.raidcode.json beside the other agent files ({ code, since, expires }). A pass lasts six hours
 //     (the guild lead picked 6 h) and then clears itself, wherever it is read. No code, no change at all.
-//   * The HOLD (enqueueUpload): while a code is active the raid-wide kinds in RAID_HOLD_KINDS are not queued, so they
-//     never reach the guild hub. A Wolf Pack member standing in another guild's raid is therefore in NEITHER hub's
-//     raid tables. The streams about the member's own character (corpse, xp_events, faction, tells, inventory,
-//     spellbook, quarmy, trigger, crash_report, kite_loop, rez_dismiss, pop_flag, quake, live state) continue as before.
+//   * The HOLD (enqueueUpload): while a code is active the RECORD / DKP kinds in RAID_HOLD_KINDS (parses, kills,
+//     lockouts, loot, rolls, chat, PvP) are not queued, so they never reach the guild's permanent record. The LIVE
+//     overlay streams (casting, buff_cast, raid_roster, threat_snapshot, trigger_relay, slow_mode) and the streams about
+//     the member's own character (corpse, xp_events, faction, tells, inventory, spellbook, quarmy, trigger,
+//     crash_report, kite_loop, rez_dismiss, pop_flag, quake, live state) continue as before, so Target info, the
+//     Command Center, the buff queue and the callouts keep working.
 //     Not held on purpose: historical_chat and an opt-in backfill's encounters (old nights of the member's own, not
 //     this raid). A local-only install already sends nothing, so for it the code only tags local records.
 //   * Tagging: a fight (the fight log, the History ring and a `fight` record in the store), a recorded minute and a
@@ -63058,10 +63060,13 @@ const RAID_CODE_FILE = path.join(__dirname, 'logsync.raidcode.json');
 const RAID_CODE_TTL_MS = 6 * 3600_000;
 const RAID_CODE_RX = /^([A-Z]{2,4})[- ]([A-Z0-9]{4,6})$/;
 const RAID_CODE_HELP = 'A raid code looks like BC-7KQ2: two to four letters, a dash, then four to six letters or numbers.';
-// The real enqueue kinds that are about the RAID rather than this player (grepped from every enqueueUpload call site).
+// The enqueue kinds that write the guild's permanent RECORD (parses, kills, lockouts, loot and rolls for DKP, chat
+// history, PvP, fun events, the Ari lead) (grepped from every enqueueUpload call site). The LIVE overlay streams are
+// deliberately NOT here (the guild lead, 2026-10-21: "can we get the stream through on target info please"): casting and
+// buff_cast feed Target info / Mob Info, raid_roster the buff queue and Command Center, threat_snapshot the threat
+// overlays, trigger_relay the callouts and TTS, slow_mode the slow tracker. Live state is posted outside the queue.
 const RAID_HOLD_KINDS = new Set([
-  'raid_roster', 'encounter', 'bosskill', 'hatekill', 'lockout', 'casting', 'chat', 'threat_snapshot',
-  'pvp', 'pvp_assists', 'trigger_relay', 'looted', 'rolls', 'buff_cast', 'slow_mode', 'fun_event', 'ari_lead',
+  'encounter', 'bosskill', 'hatekill', 'lockout', 'chat', 'pvp', 'pvp_assists', 'looted', 'rolls', 'fun_event', 'ari_lead',
 ]);
 const RMPACK_MAX_GZ = 5 * 1024 * 1024;
 const RMPACK_MAX_RAW = 64 * 1024 * 1024;

@@ -1,5 +1,5 @@
 // test/raid-code.test.js — "Join a raid with a code" (the guild lead, 2026-10-21: a guest's data stays on their PC; the
-// code is a label that tags local records and HOLDS the raid-wide uploads; merging is a file swap).
+// code is a label that tags local records and HOLDS the record uploads; merging is a file swap).
 //
 // Everything here is run for real against the agent: the state and its six-hour pass, the hold in enqueueUpload per
 // kind, the tagging of fights / minutes / loot, the .rmpack export and import (a round trip between two PCs, the merge
@@ -133,16 +133,25 @@ describe('the code and its six-hour pass', () => {
 });
 
 // ---- 2. the hold ----
-describe('the hold: raid-wide uploads stay on this PC while a code is on', () => {
+describe('the hold: the record / DKP uploads stay on this PC while a code is on; the live overlay streams go through', () => {
   const HELD = [...agent.RAID_HOLD_KINDS];
+  // The live streams behind Target info, the Command Center, the buff queue and the callouts (the guild lead, 2026-10-21).
+  const LIVE = ['casting', 'buff_cast', 'raid_roster', 'threat_snapshot', 'trigger_relay', 'slow_mode'];
   const OWN = ['corpse', 'xp_events', 'faction', 'tells', 'inventory', 'spellbook', 'quarmy', 'trigger', 'trigger_feedback', 'rez_dismiss', 'crash_report', 'pop_flag', 'quake', 'historical_chat', 'optin_summary'];
   const queued = () => agent._uploadQueueForTest().length;
   const send = (kind, extra) => agent.enqueueUpload ? agent.enqueueUpload(kind, { agent_version: 'test', ...extra }) : null;
 
-  it('holds exactly the raid-scope kinds, and none of the player\'s own', () => {
-    expect(HELD.sort()).toEqual(['ari_lead', 'bosskill', 'buff_cast', 'casting', 'chat', 'encounter', 'fun_event', 'hatekill', 'lockout', 'looted', 'pvp', 'pvp_assists',
-      'raid_roster', 'rolls', 'slow_mode', 'threat_snapshot', 'trigger_relay']);
-    for (const k of OWN) expect(HELD).not.toContain(k);
+  it('holds exactly the record / DKP kinds, and none of the live overlay streams or the player\'s own', () => {
+    expect(HELD.sort()).toEqual(['ari_lead', 'bosskill', 'chat', 'encounter', 'fun_event', 'hatekill', 'lockout', 'looted', 'pvp', 'pvp_assists', 'rolls']);
+    for (const k of [...OWN, ...LIVE]) expect(HELD).not.toContain(k);
+  });
+
+  it('the live kinds are real enqueue kinds with an endpoint (so the pass-through is a real stream, not a typo)', () => {
+    const src = stripJs(readSource(AGENT_INDEX));
+    for (const k of LIVE) {
+      expect(src, k).toMatch(new RegExp(`enqueueUpload\\('${k}'`));
+      expect(src, k).toMatch(new RegExp(`case '${k}':`));
+    }
   });
 
   it('every held kind is a real enqueue kind with an endpoint (the list was grepped, not guessed)', () => {
@@ -155,17 +164,18 @@ describe('the hold: raid-wide uploads stay on this PC while a code is on', () =>
 
   it('with a member token and NO code, every kind queues exactly as before', () => {
     agent._setUploadOptsForTest(MEMBER);
-    for (const k of [...HELD, ...OWN]) { const before = queued(); expect(send(k), k).toBeTruthy(); expect(queued(), k).toBe(before + 1); }
+    for (const k of [...HELD, ...LIVE, ...OWN]) { const before = queued(); expect(send(k), k).toBeTruthy(); expect(queued(), k).toBe(before + 1); }
   });
 
-  it('with a code on, every held kind queues NOTHING and is counted; the player\'s own kinds still queue', () => {
+  it('with a code on, every held kind queues NOTHING and is counted; the live overlay streams and the player\'s own kinds still queue', () => {
     agent._setUploadOptsForTest(MEMBER);
     agent._raidCodeSet(CODE);
     for (const k of HELD) { expect(send(k), k).toBeNull(); }
     expect(queued()).toBe(0);
     expect(agent._raidCodeStatus().held_total).toBe(HELD.length);
     expect(Object.keys(agent._raidCodeStatus().held).sort()).toEqual(HELD.slice().sort());
-    for (const k of OWN) { const before = queued(); expect(send(k), k).toBeTruthy(); expect(queued(), k).toBe(before + 1); }
+    for (const k of [...LIVE, ...OWN]) { const before = queued(); expect(send(k), k).toBeTruthy(); expect(queued(), k).toBe(before + 1); }
+    expect(agent._raidCodeStatus().held_total).toBe(HELD.length);   // the live kinds were not counted as held
   });
 
   it('an opt-in backfill\'s encounters are the member\'s own history, not this raid: they still go', () => {
@@ -178,9 +188,9 @@ describe('the hold: raid-wide uploads stay on this PC while a code is on', () =>
   it('resumes the moment the code is cleared', () => {
     agent._setUploadOptsForTest(MEMBER);
     agent._raidCodeSet(CODE);
-    expect(send('raid_roster', { members: [] })).toBeNull();
+    expect(send('looted', { items: [] })).toBeNull();
     agent._raidCodeClear();
-    expect(send('raid_roster', { members: [] })).toBeTruthy();
+    expect(send('looted', { items: [] })).toBeTruthy();
     expect(queued()).toBe(1);
   });
 
