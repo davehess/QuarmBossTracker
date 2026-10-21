@@ -1,13 +1,13 @@
 'use client';
 
-// The local site's top nav. Inventory and My replay are pages; My parses is listed so the shape of the site is
-// visible, and is not a link until it exists (it renders as a dim, titled span).
+// The local site's top nav: Inventory, My parses and My replay are pages. An entry marked `coming` would render as a
+// dim, titled span until its page exists (none is, today).
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const PAGES: { href: string; label: string; icon: string; coming?: boolean }[] = [
   { href: '/inventory/', label: 'Inventory', icon: '🎒' },
-  { href: '/parses/',    label: 'My parses', icon: '📈', coming: true },
+  { href: '/parses/',    label: 'My parses', icon: '📈' },
   { href: '/replay/',    label: 'My replay', icon: '🎬' },
 ];
 

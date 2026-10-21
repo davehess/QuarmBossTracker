@@ -11896,7 +11896,7 @@ class EncounterBuilder {
       if (stats.currentEncounterThreat) {
         stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
       }
-      if (this._liveSnap) _recordFightHistory({ ...this._liveSnap, flushedAt: Date.now() }, this.character);
+      if (this._liveSnap) _recordFightHistory({ ...this._liveSnap, flushedAt: Date.now(), deaths: this.deaths }, this.character);
       // Mirror to the per-character map so the 2-min stale window applies
       // independently per character (a player's other character can
       // still be mid-fight while this one wraps up).
@@ -19365,12 +19365,13 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
   <!-- 🖥 On this PC (the guild lead, 2026-10-21, option B: the website's own pages bundled into Mimic and
        served by this agent under /local/). Built from your own logs and inventory files; nothing leaves
        the PC. Inventory and My replay open in their own Mimic window (the tray's "Inventory (on this PC)"
-       and "My replay (on this PC)" are the same window); in a plain browser they open a new tab. My parses
-       is a placeholder until it exists. No data-tab, so the tab switcher ignores them. -->
+       and "My replay (on this PC)" are the same window); in a plain browser they open a new tab. "My fights
+       (this PC)" is the local site's My parses page, named differently here so it is not mistaken for the
+       📈 My parses tab above it. No data-tab, so the tab switcher ignores them. -->
   <div class="wp-rail-grp" id="wpLocalGrp">
     <div class="wp-lbl">On this PC</div>
     <button id="wpLocalInv" type="button" onclick="wpOpenLocalSite('inventory')" title="Every item across your characters, from the inventory files on this PC (opens in its own window). Nothing leaves the PC.">🎒 Inventory</button>
-    <button type="button" disabled title="Coming soon: your own parses, built from your own logs">📈 My parses<span class="wp-soon">soon</span></button>
+    <button id="wpLocalFights" type="button" onclick="wpOpenLocalSite('parses')" title="Your own fights as this PC recorded them, every player it saw, and how they differ from the guild's record when you are a member (opens in its own window). Not the 📈 My parses tab above: that one graphs your numbers over time. Nothing leaves the PC.">📊 My fights (this PC)</button>
     <button id="wpLocalReplay" type="button" onclick="wpOpenLocalSite('replay')" title="Play back where you and your raid stood, from the recording Mimic keeps on this PC (opens in its own window). Nothing leaves the PC.">🎬 My replay</button>
     <button id="wpLocalRebuild" type="button" onclick="wpRebuildOpen()" title="Build your fights, raids, deaths and loot from the log files on this PC. Nothing is uploaded.">🔁 Rebuild from my logs</button>
   </div>
@@ -34737,6 +34738,7 @@ function startWebDashboard(port) {
       if (_localTrackRoute(req, res)) return;
       // Rebuild from my logs (the block above module.exports): start / stop / status, and the raids it found. Local only.
       if (await _localBackfillRoute(req, res)) return;
+      if (_localParsesRoute(req, res)) return;
       // Tank overlay snapshot (the guild lead, 2026-06-25). Aggregates everything the
       // tank.html overlay needs from the active character's live state:
       //   • self HP %, target name + HP %, current buffs (with ticks remaining)
@@ -42987,6 +42989,7 @@ function _recordFightHistory(et, character) {
     // buttons both read the fight picked there).
     if (p.took > 0) row.took = p.took;
     if (p.tookMax > 0) row.tookMax = p.tookMax;
+    if (p.healRaw > 0) row.heal = p.healRaw;          // healing done, for the local site's parse detail
     const ds = Math.round(Number(et.dsBy && et.dsBy[String(name).toLowerCase()]) || 0);
     if (ds > 0) row.ds = ds;
     local.push(row);
@@ -43003,6 +43006,12 @@ function _recordFightHistory(et, character) {
     settled: false,
     upload: sends ? 'sent' : 'local',
   };
+  // Who died in this fight and when (seconds in), for the local site's parse detail. this.deaths is the builder's own list.
+  if (startedMs && Array.isArray(et.deaths)) {
+    const deaths = et.deaths.map(d => ({ name: String((d && d.name) || '').slice(0, 40), at: Math.round(((Date.parse(d && d.ts) || 0) - startedMs) / 1000) }))
+      .filter(d => d.name && d.at >= -5 && d.at <= entry.durationSec + 5).slice(0, 40);
+    if (deaths.length) entry.deaths = deaths;
+  }
   stats.fightHistory.unshift(entry);
   _trimFightHistory();
   // Me overlay: tonight's damage per character (the dupe guard above keeps a
@@ -61075,6 +61084,8 @@ const _LSTORE_INDEX_WRITE_MS = 5000;
 const _LSTORE_POLICY = {
   track_minute:   { retainDays: 90, maxBytes: 400 * _LSTORE_MB },
   track_presence: { retainDays: 90, maxBytes: 25 * _LSTORE_MB },
+  hub_encounter:  { retainDays: 120, maxBytes: 64 * _LSTORE_MB },   // the guild's merged encounters, for My parses' difference
+  hub_state:      { retainDays: 30, maxBytes: 4 * _LSTORE_MB },
 };
 const _LSTORE_POLICY_DEFAULT = { retainDays: 0, maxBytes: 256 * _LSTORE_MB };   // 0 days = no age limit, the byte cap still applies
 
@@ -62478,6 +62489,360 @@ async function _localBackfillRoute(req, res) {
 }
 function _rebuildSetCandidatesForTest(fn) { _rb.candidates = fn; }
 function _rebuildResetForTest() { Object.assign(_rb, { state: 'idle', running: false, stop: false, startedAt: 0, finishedAt: 0, sinceMs: 0, files: [], error: null, waiting: null, waitedMs: 0, dkp: null, promise: null, candidates: null }); }
+// ── My parses on the local site, and the difference from the guild's record (local-first, 2026-10-21) ──────
+// The local site's /local/parses/ page (web/local/app/parses) reads two routes, both answered from this PC:
+//   GET /api/local/parses?since=<iso>&limit=<n>&scope=all|bosses
+//        -> { ok, generated_at, total, truncated, hub:{...}, fights:[{ id, t, end, name, zone, boss, dur, mine:[{char,dmg,dps}],
+//             dmg, dps, detail, players_n, seen_total, guild:null | { damage, seen_pct, others, classification } }] }  newest first
+//   GET /api/local/parses/<id> -> { ok, fight:{ ..., players, healers, deaths }, hub, guild, diff }
+// A fight is what THIS PC recorded: logsync.myfights.json (one row per own character, kept 365 days: the own character's
+// damage only), the History ring in logsync.fights.json (the whole local view of a fight: every player's damage, damage
+// taken, healing, deaths; 7 days / 100 fights), and `fight` records in the local store when the backfill writes them.
+// The three are merged by (mob, start within 8 s). Older than the ring, a fight has only the own row, and says so.
+//
+// THE DIFFERENCE. The guild's merged record (hub GET /api/agent/local-sync, whole encounters paged by a change cursor, plus
+// tombstones for deleted ones) is kept in the store as kind `hub_encounter` and matched to a local fight by the same mob
+// and a start within 10 minutes. The route is FEATURE-DETECTED: a 404 (not deployed yet), 503, 401/403, or a PC that is
+// local-only (no token) simply has no guild record, and the page says so. The hub already scrubs characters who opted out
+// to "<Class> <n>"; this block stores only the fields listed in _localHubClean, never a Discord id, a tell or chat.
+// Nothing here is uploaded: the one outbound call is that GET, and it carries the same bearer the other guild GETs do.
+const LOCAL_FIGHT_MERGE_MS = 8_000;           // the History ring's own window for "the same fight flushed twice"
+const LOCAL_HUB_MATCH_MS = 10 * 60_000;
+const LOCAL_HUB_KIND = 'hub_encounter';
+const LOCAL_HUB_STATE_KIND = 'hub_state';
+const LOCAL_HUB_FIRST_DAYS = 60;              // the first sync starts here, not at the beginning of the guild's history
+const LOCAL_HUB_PAGE_LIMIT = 200;
+const LOCAL_HUB_PAGES_MAX = 10;               // per sync; a long backlog finishes over the next few
+const LOCAL_HUB_EVERY_MS = 5 * 60_000;
+const LOCAL_HUB_MISSING_MS = 30 * 60_000;     // after a 404: the route is not deployed, asking again is cheap but pointless
+const LOCAL_HUB_RETRY_MS = 2 * 60_000;
+const LOCAL_HUB_WAIT_MS = 6_000;              // a list request waits this long for a sync, then answers with what it holds
+const LOCAL_HUB_REASONS = {
+  ok: '',
+  pending: 'Asking the guild server…',
+  local_only: 'This PC runs Mimic without a Wolf Pack sign-in, so there is no guild record here.',
+  signed_out: 'Mimic is not signed in to Wolf Pack right now.',
+  not_member: 'The guild server did not accept this sign-in for the guild record.',
+  not_deployed: 'The guild server does not offer the guild record yet.',
+  unavailable: 'The guild server did not answer. Mimic tries again in a couple of minutes.',
+};
+const _localHub = { status: 'pending', syncedAt: 0, nextAt: 0, inflight: null, cache: null };
+function _localHubResetForTest() { _localHub.status = 'pending'; _localHub.syncedAt = 0; _localHub.nextAt = 0; _localHub.inflight = null; _localHub.cache = null; }
+
+// ---- the guild's record, kept on this PC ----
+const _hubStr = (v, n) => (typeof v === 'string' ? v.slice(0, n) : null);
+const _hubNum = (v) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
+// ONLY these fields are kept (an allow-list, so a field the hub adds later is not stored by accident).
+function _localHubClean(e) {
+  if (!e || typeof e !== 'object' || typeof e.id !== 'string' || !e.id || e.id.length > 80) return null;
+  const started = Date.parse(e.started_at);
+  if (!(started > 0)) return null;
+  const players = (Array.isArray(e.players) ? e.players : []).slice(0, 150).map(p => {
+    if (!p || typeof p.name !== 'string' || !p.name) return null;
+    const o = { name: p.name.slice(0, 40), class: _hubStr(p.class, 24), damage: _hubNum(p.damage), dps: _hubNum(p.dps), duration: _hubNum(p.duration), pets: !!p.pets, rank: _hubNum(p.rank) };
+    if (p.anon) o.anon = true;
+    return o;
+  }).filter(Boolean);
+  const loot = (Array.isArray(e.loot) ? e.loot : []).slice(0, 80).map(l => {
+    if (!l || typeof l.item !== 'string') return null;
+    const o = { id: _hubNum(l.id), looter: _hubStr(l.looter, 40), item: l.item.slice(0, 80), at: _hubStr(l.at, 40) };
+    if (l.pet) o.pet = true;
+    if (l.anon) o.anon = true;
+    return o;
+  }).filter(Boolean);
+  return {
+    id: e.id, npc_id: _hubNum(e.npc_id), name: _hubStr(e.name, 120) || '', zone: _hubStr(e.zone, 40),
+    started_at: new Date(started).toISOString(), ended_at: _hubStr(e.ended_at, 40), duration_sec: _hubNum(e.duration_sec),
+    total_damage: _hubNum(e.total_damage), total_dps: _hubNum(e.total_dps), classification: _hubStr(e.classification, 24),
+    incomplete: !!e.incomplete, updated_at: _hubStr(e.updated_at, 40), players, loot,
+  };
+}
+// Apply one page: encounters replace by id, tombstones remove (a `deleted` marker put in the same day segment as the
+// record it replaces, so pruning drops both together). Returns { put, removed }.
+function _localHubApply(store, page) {
+  let put = 0, removed = 0;
+  for (const e of Array.isArray(page && page.encounters) ? page.encounters : []) {
+    const rec = _localHubClean(e);
+    if (rec && store.put(LOCAL_HUB_KIND, rec.id, rec, { ts: Date.parse(rec.started_at) })) put++;
+  }
+  for (const t of Array.isArray(page && page.tombstones) ? page.tombstones : []) {
+    if (!t || typeof t.id !== 'string' || !t.id) continue;
+    const old = store.get(LOCAL_HUB_KIND, t.id);
+    if (!old || old.deleted) continue;
+    if (store.put(LOCAL_HUB_KIND, t.id, { id: t.id, deleted: true, merged_into: _hubStr(t.merged_into, 80) }, { ts: Date.parse(old.started_at) || Date.now() })) removed++;
+  }
+  return { put, removed };
+}
+// The kept encounters, oldest first, deleted ones gone. Held until the store's change counter moves.
+function _localHubEncounters(store) {
+  const seq = store.cursor(LOCAL_HUB_KIND).seq;
+  if (_localHub.cache && _localHub.cache.store === store && _localHub.cache.seq === seq) return _localHub.cache.list;
+  const list = store.scan(LOCAL_HUB_KIND).map(e => e.rec).filter(r => r && !r.deleted && r.started_at);
+  _localHub.cache = { store, seq, list };
+  return list;
+}
+// Is the guild's record on offer on this PC? Local-only (no token), dry run, or no bot address: no, and nothing is asked.
+function _localHubCanAsk(opts) { return !!(opts && opts.token && opts.botUrl && !opts.dryRun); }
+// What the page is told about the guild record. `available` is the one switch the page reads.
+function _localHubStatus(store, opts) {
+  let status = _localHub.status;
+  if (!_localHubCanAsk(opts)) status = 'local_only';
+  const available = status === 'ok';
+  return {
+    available, status, message: status in LOCAL_HUB_REASONS ? LOCAL_HUB_REASONS[status] : LOCAL_HUB_REASONS.unavailable,
+    synced_at: available && _localHub.syncedAt ? new Date(_localHub.syncedAt).toISOString() : null,
+    encounters: available ? _localHubEncounters(store).length : 0,
+  };
+}
+// One sync: page the hub from the stored cursor until it says there is no more (or LOCAL_HUB_PAGES_MAX pages).
+// o = { store, opts, fetch, now, force }. Never throws: the outcome is _localHub.status.
+async function _localHubSync(o = {}) {
+  const store = o.store || _localTrackStore();
+  const opts = o.opts !== undefined ? o.opts : _uploadOpts;
+  const now = Number.isFinite(o.now) ? o.now : Date.now();
+  if (!_localHubCanAsk(opts)) return _localHubStatus(store, opts);
+  if (_localHub.inflight) return _localHub.inflight;
+  if (!o.force && now < _localHub.nextAt) return _localHubStatus(store, opts);
+  const run = (async () => {
+    const doFetch = o.fetch || fetch;
+    const done = (status, wait) => { _localHub.status = status; _localHub.nextAt = now + wait; if (status === 'ok') _localHub.syncedAt = now; return _localHubStatus(store, opts); };
+    try {
+      const base = String(opts.botUrl).replace(/\/encounter(\?.*)?$/, '');
+      const headers = { Authorization: 'Bearer ' + opts.token, 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION };
+      if (_mimicSessionToken) headers['X-Wolfpack-Mimic-Session'] = _mimicSessionToken;
+      const saved = store.get(LOCAL_HUB_STATE_KIND, 'cursor');
+      let since = saved && typeof saved.cursor === 'string' && saved.cursor ? saved.cursor : new Date(now - LOCAL_HUB_FIRST_DAYS * 86400_000).toISOString();
+      for (let page = 0; page < LOCAL_HUB_PAGES_MAX; page++) {
+        const r = await doFetch(base + '/local-sync?since=' + encodeURIComponent(since) + '&limit=' + LOCAL_HUB_PAGE_LIMIT, { headers, signal: AbortSignal.timeout(15_000) });
+        if (r.status === 404) return done('not_deployed', LOCAL_HUB_MISSING_MS);
+        if (r.status === 401) return done('signed_out', LOCAL_HUB_RETRY_MS);
+        if (r.status === 403) return done('not_member', LOCAL_HUB_MISSING_MS);
+        if (r.status === 400 && saved) { store.put(LOCAL_HUB_STATE_KIND, 'cursor', { cursor: '' }); return done('unavailable', LOCAL_HUB_RETRY_MS); }   // a cursor the hub refuses: start over next time
+        if (!r.ok) return done('unavailable', LOCAL_HUB_RETRY_MS);
+        const j = await r.json();
+        if (!j || j.ok === false || !Array.isArray(j.encounters)) return done('unavailable', LOCAL_HUB_RETRY_MS);
+        _localHubApply(store, j);
+        if (typeof j.cursor === 'string' && j.cursor && j.cursor !== since) { since = j.cursor; store.put(LOCAL_HUB_STATE_KIND, 'cursor', { cursor: since }); }
+        if (!j.more) break;
+      }
+      return done('ok', LOCAL_HUB_EVERY_MS);
+    } catch { return done('unavailable', LOCAL_HUB_RETRY_MS); }
+  })();
+  _localHub.inflight = run;
+  run.then(() => { _localHub.inflight = null; }, () => { _localHub.inflight = null; });
+  return run;
+}
+
+// ---- this PC's own fights ----
+const _fightMobKey = (s) => _localBossKey(s);
+function _localFightId(start, key) { return Math.round(start).toString(36) + '-' + crypto.createHash('sha1').update(key).digest('hex').slice(0, 6); }
+// Players of one fight as this PC saw them, pets folded into their owners (the meter's own rule). Rows are the
+// History ring's `local` rows: { character, dmg, pet_owner, pet_charm, pet_summoned, first_ms, last_ms, took, tookMax, ds, heal }.
+function _localFoldPlayers(rows, durSec) {
+  const by = new Map();
+  const slot = (name, pet) => {
+    const k = String(name).toLowerCase();
+    let p = by.get(k);
+    if (!p) by.set(k, p = { name: String(name), dmg: 0, pet_dmg: 0, took: 0, tookMax: 0, ds: 0, heal: 0, sec: 0, pet: !!pet, own: false });
+    return p;
+  };
+  for (const r of rows || []) {
+    const name = r && (r.character || r.name);
+    if (!name) continue;
+    const dmg = Number(r.dmg != null ? r.dmg : r.damage) || 0;
+    if (r.pet_owner) { const o = slot(r.pet_owner); o.dmg += dmg; o.pet_dmg += dmg; continue; }
+    const p = slot(name, r.pet_charm || r.pet_summoned);
+    p.dmg += dmg;
+    p.took += Number(r.took) || 0;
+    p.tookMax = Math.max(p.tookMax, Number(r.tookMax) || 0);
+    p.ds += Number(r.ds) || 0;
+    p.heal += Number(r.heal) || 0;
+    if (r.first_ms > 0 && r.last_ms >= r.first_ms) p.sec = Math.max(p.sec, Math.max(1, Math.round((r.last_ms - r.first_ms) / 1000)));
+  }
+  const out = [...by.values()].map(p => {
+    const sec = p.sec > 0 ? p.sec : Math.max(1, durSec || 1);
+    let own = false;
+    try { own = _isOwnCharacterName(p.name); } catch { own = false; }
+    return { ...p, own, sec, dps: Math.round(p.dmg / sec * 10) / 10 };
+  });
+  return out.sort((a, b) => b.dmg - a.dmg || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+// Every fight this PC recorded, merged, oldest first. Internal shape; _localFightListRow / _localFightDetail shape the answers.
+function _localFights(store) {
+  const items = [];
+  for (const r of _myFights) {
+    const s = Date.parse(r && r.t), e = Date.parse(r && r.end);
+    if (!r || !r.mob || !(s > 0)) continue;
+    items.push({ rank: 1, mob: r.mob, start: s, end: e > 0 ? e : s + (r.dur || 1) * 1000, dur: r.dur || 1, zone: r.zone || null, boss: !!r.boss, mine: { char: r.char, dmg: r.dmg } });
+  }
+  for (const h of stats.fightHistory || []) {
+    if (!h || !h.boss || !(h.endedMs > 0)) continue;
+    const dur = h.durationSec > 0 ? h.durationSec : 1;
+    items.push({ rank: 3, mob: h.boss, start: h.startedMs > 0 ? h.startedMs : h.endedMs - dur * 1000, end: h.endedMs, dur, zone: null, boss: null, rows: h.local, deaths: h.deaths });
+  }
+  try {
+    for (const e of store.scan('fight')) {          // written by the "Rebuild from my logs" backfill, when it has run
+      const r = e.rec;
+      if (!r || typeof r !== 'object') continue;
+      const mob = r.mob || r.name || (typeof r.boss === 'string' ? r.boss : '');
+      const s = Number(r.startedMs) > 0 ? Number(r.startedMs) : Date.parse(r.t || r.started_at);
+      const en = Number(r.endedMs) > 0 ? Number(r.endedMs) : Date.parse(r.end || r.ended_at);
+      if (!mob || !(s > 0)) continue;
+      const dur = Number(r.durationSec || r.dur) > 0 ? Number(r.durationSec || r.dur) : (en > s ? Math.round((en - s) / 1000) : 1);
+      items.push({ rank: 2, mob, start: s, end: en > 0 ? en : s + dur * 1000, dur, zone: r.zone || null, boss: typeof r.boss === 'boolean' ? r.boss : null,
+        rows: r.local || r.players_seen, deaths: r.deaths, mine: r.char && r.dmg > 0 ? { char: r.char, dmg: r.dmg } : null });
+    }
+  } catch { void 0; }
+  items.sort((a, b) => a.start - b.start || a.rank - b.rank);
+  const fights = [];
+  const lastByMob = new Map();                      // mob key -> fights of that mob, to find "the same fight" quickly
+  for (const it of items) {
+    const key = _fightMobKey(it.mob);
+    const list = lastByMob.get(key) || [];
+    let f = list.find(x => Math.abs(x.start - it.start) < LOCAL_FIGHT_MERGE_MS);
+    if (!f) {
+      f = { key, name: _localBossShow(it.mob), start: it.start, end: it.end, dur: it.dur, zone: null, boss: null, mineRows: [], rows: null, deaths: null, sources: [] };
+      list.push(f); lastByMob.set(key, list); fights.push(f);
+    }
+    f.end = Math.max(f.end, it.end); f.dur = Math.max(f.dur, it.dur);
+    if (!f.zone && it.zone) f.zone = it.zone;
+    if (it.boss != null) f.boss = !!(f.boss || it.boss);
+    if (it.mine && !f.mineRows.some(m => m.char.toLowerCase() === String(it.mine.char).toLowerCase())) f.mineRows.push({ char: String(it.mine.char), dmg: Number(it.mine.dmg) || 0 });
+    if (Array.isArray(it.rows) && it.rows.length && !f.rows) f.rows = it.rows;
+    if (Array.isArray(it.deaths) && it.deaths.length && !f.deaths) f.deaths = it.deaths;
+    f.sources.push(it.rank === 1 ? 'myfights' : it.rank === 2 ? 'store' : 'ring');
+  }
+  for (const f of fights) {
+    f.players = f.rows ? _localFoldPlayers(f.rows, f.dur) : null;
+    if (f.boss == null) { try { f.boss = !!_myFightIsBoss(f.name, null); } catch { f.boss = false; } }
+    // The own row: the fight log's (pets credited, whole fight) when it has one, else the own characters among the players.
+    const mine = f.mineRows.length ? f.mineRows : (f.players || []).filter(p => p.own && p.dmg > 0).map(p => ({ char: p.name, dmg: p.dmg }));
+    f.mine = mine.map(m => ({ char: m.char, dmg: m.dmg, dps: Math.round(m.dmg / Math.max(1, f.dur) * 10) / 10 })).sort((a, b) => b.dmg - a.dmg);
+    f.id = _localFightId(f.start, f.key);
+    delete f.rows; delete f.mineRows;
+  }
+  return fights;
+}
+// Healers and deaths, as far as the record has them. A healer who dealt nothing and took nothing is not in the ring at all.
+function _localFightHealers(f) { return (f.players || []).filter(p => p.heal > 0).map(p => ({ name: p.name, heal: p.heal, hps: Math.round(p.heal / Math.max(1, p.sec) * 10) / 10 })).sort((a, b) => b.heal - a.heal); }
+function _localFightDeaths(f) { return (Array.isArray(f.deaths) ? f.deaths : []).filter(d => d && d.name).map(d => ({ name: String(d.name).slice(0, 40), at_sec: Math.max(0, Math.round(Number(d.at) || 0)) })); }
+
+// ---- the difference ----
+const _gKey = (n) => String(n || '').trim().toLowerCase();
+// The nearest guild encounter of the same mob that began within 10 minutes of this fight, or null.
+function _localHubMatch(fight, encounters) {
+  let best = null, bestGap = Infinity;
+  for (const e of encounters) {
+    if (_fightMobKey(e.name) !== fight.key) continue;
+    const gap = Math.abs(Date.parse(e.started_at) - fight.start);
+    if (gap <= LOCAL_HUB_MATCH_MS && gap < bestGap) { best = e; bestGap = gap; }
+  }
+  return best;
+}
+// What the guild's merged record says that this PC's own view does not. `fight.players` null (a fight older than the
+// History ring) compares the own row only. Pure: the fixture test feeds it plain objects.
+function _localParseDiff(fight, enc) {
+  const gp = Array.isArray(enc.players) ? enc.players : [];
+  const ranked = gp.slice().sort((a, b) => (b.damage || 0) - (a.damage || 0));
+  const gBy = new Map();
+  ranked.forEach((p, i) => gBy.set(_gKey(p.name), { ...p, place: i + 1 }));
+  const guildDamage = Number.isFinite(enc.total_damage) ? enc.total_damage : gp.reduce((a, p) => a + (p.damage || 0), 0);
+  const here = fight.players ? new Map(fight.players.filter(p => p.dmg > 0).map(p => [_gKey(p.name), p])) : null;
+  const seenDamage = here ? [...here.values()].reduce((a, p) => a + p.dmg, 0) : null;
+  const pct = (a, b) => (b > 0 ? Math.round(a / b * 1000) / 10 : null);
+  const others = here ? ranked.filter(p => !here.has(_gKey(p.name)) && (p.damage || 0) > 0) : [];
+  const onlyHere = here ? [...here.values()].filter(p => !gBy.has(_gKey(p.name))) : [];
+  const shared = here ? [...here.values()].filter(p => gBy.has(_gKey(p.name))).map(p => {
+    const g = gBy.get(_gKey(p.name));
+    return { name: p.name, here: p.dmg, guild: g.damage || 0, delta: p.dmg - (g.damage || 0) };
+  }).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || (a.name < b.name ? -1 : 1)).slice(0, 40) : [];
+  return {
+    matched: true,
+    hub: { id: enc.id, name: enc.name, started_at: enc.started_at, duration_sec: enc.duration_sec, total_damage: guildDamage, total_dps: enc.total_dps,
+      players: gp.length, classification: enc.classification || null, incomplete: !!enc.incomplete },
+    start_offset_sec: Math.round((Date.parse(enc.started_at) - fight.start) / 1000),
+    raid: {
+      guild_damage: guildDamage, seen_damage: seenDamage,
+      missing_damage: seenDamage == null ? null : guildDamage - seenDamage,
+      seen_pct: seenDamage == null ? null : pct(seenDamage, guildDamage),
+    },
+    players_only_others: { count: others.length, damage: others.reduce((a, p) => a + (p.damage || 0), 0), hidden: others.filter(p => p.anon).length,
+      names: others.filter(p => !p.anon).slice(0, 12).map(p => p.name) },
+    players_only_here: { count: onlyHere.length, names: onlyHere.slice(0, 12).map(p => p.name) },
+    mine: fight.mine.map(m => {
+      const g = gBy.get(_gKey(m.char));
+      return { char: m.char, here: m.dmg, guild: g ? g.damage || 0 : null, delta: g ? m.dmg - (g.damage || 0) : null,
+        delta_pct: g && g.damage > 0 ? Math.round((m.dmg - g.damage) / g.damage * 1000) / 10 : null, guild_place: g ? g.place : null, guild_n: gp.length };
+    }),
+    shared,
+    duration: { here: fight.dur, guild: enc.duration_sec, delta: Number.isFinite(enc.duration_sec) ? fight.dur - enc.duration_sec : null },
+  };
+}
+
+// ---- the answers ----
+function _localFightListRow(f, enc) {
+  const best = f.mine[0] || null;
+  const row = {
+    id: f.id, t: new Date(f.start).toISOString(), end: new Date(f.end).toISOString(), name: f.name, zone: f.zone, boss: !!f.boss, dur: f.dur,
+    mine: f.mine, dmg: best ? best.dmg : 0, dps: best ? best.dps : 0,
+    detail: !!f.players, players_n: f.players ? f.players.length : null,
+    seen_total: f.players ? f.players.reduce((a, p) => a + p.dmg, 0) : null, guild: null,
+  };
+  if (enc) {
+    const d = _localParseDiff(f, enc);
+    row.guild = { damage: d.raid.guild_damage, seen_pct: d.raid.seen_pct, others: d.players_only_others.count, classification: d.hub.classification,
+      mine_delta_pct: d.mine.length ? d.mine[0].delta_pct : null };
+  }
+  return row;
+}
+function _localFightDetail(f) {
+  return { id: f.id, t: new Date(f.start).toISOString(), end: new Date(f.end).toISOString(), name: f.name, zone: f.zone, boss: !!f.boss, dur: f.dur,
+    mine: f.mine, detail: !!f.players, players: f.players, healers: _localFightHealers(f), deaths: _localFightDeaths(f), deaths_kept: Array.isArray(f.deaths),
+    sources: [...new Set(f.sources)] };
+}
+// url: '/api/local/parses[/<id>][?since&limit&scope]'. Returns { status, body }. A list request first gives the guild
+// sync a few seconds (it keeps going in the background if it needs longer); a detail request never waits on it.
+async function _localParsesAnswer(urlStr, o = {}) {
+  let u;
+  try { u = new URL(String(urlStr || ''), 'http://x'); } catch { return { status: 400, body: { error: 'bad request' } }; }
+  const m = u.pathname.match(/^\/api\/local\/parses(?:\/([0-9a-z]{1,12}-[0-9a-f]{6}))?\/?$/);
+  if (!m) return { status: 404, body: { error: 'not found' } };
+  const store = o.store || _localTrackStore();
+  const opts = o.opts !== undefined ? o.opts : _uploadOpts;
+  const sync = _localHubSync({ store, opts, fetch: o.fetch, now: o.now, force: o.force });
+  if (!m[1] || _localHub.status === 'pending') {
+    let t;
+    await Promise.race([sync, new Promise(r => { t = setTimeout(r, o.waitMs != null ? o.waitMs : LOCAL_HUB_WAIT_MS); if (t.unref) t.unref(); })]);
+    clearTimeout(t);
+  }
+  const hub = _localHubStatus(store, opts);
+  const encounters = hub.available ? _localHubEncounters(store) : [];
+  const fights = _localFights(store);
+  if (m[1]) {
+    const at = parseInt(m[1].split('-')[0], 36), hash = m[1].split('-')[1];
+    const f = fights.filter(x => x.id.endsWith('-' + hash) && Math.abs(x.start - at) < LOCAL_FIGHT_MERGE_MS)
+      .sort((a, b) => Math.abs(a.start - at) - Math.abs(b.start - at))[0];
+    if (!f) return { status: 404, body: { error: 'no such fight on this PC' } };
+    const enc = hub.available ? _localHubMatch(f, encounters) : null;
+    return { status: 200, body: { ok: true, fight: _localFightDetail(f), hub, guild: enc, diff: enc ? _localParseDiff(f, enc) : null } };
+  }
+  const since = Date.parse(u.searchParams.get('since') || '');
+  let limit = parseInt(u.searchParams.get('limit'), 10);
+  limit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 400) : 200;
+  const bossOnly = u.searchParams.get('scope') === 'bosses';
+  const sel = fights.filter(f => (!(since > 0) || f.start >= since) && (!bossOnly || f.boss));
+  const newest = sel.slice(-limit).reverse();
+  return { status: 200, body: { ok: true, generated_at: new Date().toISOString(), total: sel.length, truncated: sel.length > limit, hub,
+    fights: newest.map(f => _localFightListRow(f, hub.available ? _localHubMatch(f, encounters) : null)) } };
+}
+// Returns true when it answered. Called from the dashboard router, after the local guard.
+function _localParsesRoute(req, res) {
+  if (!req || req.method !== 'GET' || !req.url || req.url.indexOf('/api/local/parses') !== 0) return false;
+  if (!/^\/api\/local\/parses(?:\/[0-9a-z-]+)?\/?(?:\?|$)/.test(req.url)) return false;
+  const send = (out) => { res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(out.body)); };
+  _localParsesAnswer(req.url).then(send, () => send({ status: 500, body: { error: 'local parses unavailable' } }));
+  return true;
+}
 
 // Export internals for tests; only run main() when invoked directly as CLI.
 module.exports = {
@@ -62489,6 +62854,9 @@ module.exports = {
   // Local store + own position recorder (2026-10-21): see the block above module.exports.
   _localStore, _localStoreOpen, _localTrackFrame, _localTrackMinuteRow, _localTrackNightKey, _localTrackTick, _localTrackClose, _localTrackPush,
   _localTrackNights, _localTrackWindow, _localTrackBosses, _localTrackMap, _mapPaths, _localTrackRoute, _localTrackSetStoreForTest, _localRecorderStart, _localRecorderStop,
+  // My parses on the local site + the guild's record kept beside it (2026-10-21): see the block above module.exports.
+  _localParsesAnswer, _localParsesRoute, _localFights, _localFoldPlayers, _localParseDiff, _localHubMatch, _localHubClean, _localHubApply, _localHubEncounters, _localHubSync,
+  _localHubStatus, _localHubResetForTest, LOCAL_HUB_KIND, LOCAL_HUB_STATE_KIND, LOCAL_HUB_MATCH_MS,
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   buildFeedbackLogSlice, _feedbackLineAllowed,

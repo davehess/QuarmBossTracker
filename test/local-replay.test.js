@@ -189,10 +189,10 @@ describe('the page — ReplayBoard in bounded mode, pointed at the agent', () =>
 });
 
 describe('nav, rail, tray and release checks', () => {
-  it('the local nav links My replay (and still lists My parses as coming)', () => {
+  it('the local nav links My replay (and My parses, which test/local-parses.test.js pins)', () => {
     const nav = stripJs(read('web/local/app/LocalNav.tsx'));
     expect(nav).toMatch(/\{ href: '\/replay\/',\s+label: 'My replay', icon: '🎬' \}/);
-    expect(nav).toMatch(/\{ href: '\/parses\/',\s+label: 'My parses', icon: '📈', coming: true \}/);
+    expect(nav).toMatch(/\{ href: '\/parses\/',\s+label: 'My parses', icon: '📈' \}/);
   });
   it('the dashboard rail\'s "On this PC" group opens My replay in its own window, and the tray has the same item', () => {
     const dash = read('packages/wolfpack-logsync/dashboard.html');
