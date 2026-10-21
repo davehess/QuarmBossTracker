@@ -17,7 +17,9 @@ export type ResolvedShare = { row: ShareRow; win: ShareWindow };
 // database read a minute rather than one a hit (the guild lead, 2026-10-17). A hit lasts 60 s and a miss 30 s,
 // which is also how long a revoke can take to bite on an instance the officer's click did not reach:
 // `invalidateShare` clears the instance that served it, the TTL bounds the rest. An expiry is judged against the
-// clock on every call, never against the memo, so a share never outlives its date.
+// clock on every call, never against the memo, so a share never outlives its date. The same goes for the window of
+// an OPEN share (it ends at the clock), and `invalidateShare` is also what an officer's end-time change calls so
+// the new window shows on the instance that took the click at once.
 const HIT_TTL_MS = 60_000;
 const MISS_TTL_MS = 30_000;
 const MEMO_CAP = 1000;
@@ -39,7 +41,12 @@ export async function resolveShare(sb: SupabaseClient, token: unknown, now = Dat
   const hit = memo.get(key);
   if (hit && now - hit.at < hit.ttl) {
     if (hit.value && shareStatus(hit.value.row, now) !== 'ok') return null;
-    return hit.value;
+    // The window is rebuilt on every call: an open share's end is the clock, and a memoised win would freeze it.
+    if (hit.value) {
+      const win = windowOfShare(hit.value.row, now);
+      return win ? { row: hit.value.row, win } : null;
+    }
+    return null;
   }
   const value = await readShare(sb, key, now);
   memo.delete(key);
@@ -56,7 +63,7 @@ async function readShare(sb: SupabaseClient, tokenHash: string, now: number): Pr
   if (error || !data) return null;
   const row = data as ShareRow;
   if (shareStatus(row, now) !== 'ok') return null;
-  const win = windowOfShare(row);
+  const win = windowOfShare(row, now);
   return win ? { row, win } : null;
 }
 

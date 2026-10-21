@@ -14,7 +14,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
 import {
-  expiryDays, hashToken, makeWindow, newToken, sharePath, shareStatus, SHARE_ORIGIN, windowIso, type ShareRow,
+  expiryDays, hashToken, isOpenShare, makeWindow, newToken, openWindow, sharePath, shareStatus, SHARE_ORIGIN, windowIso,
+  type ShareRow,
 } from '@/lib/raidShare';
 
 export const dynamic = 'force-dynamic';
@@ -37,7 +38,7 @@ async function officerId(): Promise<{ id: string } | { status: number; error: st
   return { id: user.id };
 }
 
-const view = (r: ShareRow) => ({ ...r, guild_id: undefined, status: shareStatus(r) });
+const view = (r: ShareRow) => ({ ...r, guild_id: undefined, status: shareStatus(r), open: isOpenShare(r) });
 
 export async function GET(req: Request) {
   const who = await officerId();
@@ -62,9 +63,13 @@ export async function POST(req: Request) {
   const who = await officerId();
   if (!('id' in who)) return fail(who.status, who.error);
 
-  let body: { from?: unknown; to?: unknown; title?: unknown; days?: unknown };
+  let body: { from?: unknown; to?: unknown; title?: unknown; days?: unknown; open?: unknown };
   try { body = await req.json(); } catch { return fail(400, 'bad request'); }
-  const win = makeWindow(Date.parse(String(body.from ?? '')), Date.parse(String(body.to ?? '')));
+  // `open: true` = follow the raid (see isOpenShare): only the start matters; the end is stored as the open marker.
+  const fromMs = Date.parse(String(body.from ?? ''));
+  const win = body.open === true
+    ? (Number.isFinite(fromMs) ? openWindow(fromMs) : null)   // not makeWindow: it would round the marker's end up to a whole day
+    : makeWindow(fromMs, Date.parse(String(body.to ?? '')));
   if (!win) return fail(400, 'bad window');
   const title = String(body.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
   const days = expiryDays(body.days);

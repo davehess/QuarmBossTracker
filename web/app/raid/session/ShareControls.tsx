@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 type ShareView = {
   id: string; title: string; from_at: string; to_at: string; created_at: string; expires_at: string;
-  revoked_at: string | null; view_count: number; status: 'ok' | 'expired' | 'revoked';
+  revoked_at: string | null; view_count: number; status: 'ok' | 'expired' | 'revoked'; open?: boolean;
 };
 type Made = { url: string; canonical: string };
 
@@ -15,11 +15,36 @@ const chip = 'rounded border px-2.5 py-1.5 text-xs whitespace-nowrap transition-
 const chipIdle = 'border-border bg-panel text-text hover:bg-[#21262d]';
 const chipOn = 'border-accent bg-accent text-white';
 const day = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric' });
+const stamp = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+// A <input type="datetime-local"> value ("2026-10-21T22:30") is the viewer's own clock, which Date reads the same way.
+const localValue = (ms: number) => {
+  const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000);
+  return d.toISOString().slice(0, 16);
+};
+
+/** One link's end-time controls: set the end, extend to now, follow the raid, or close it. */
+function EndControls({ s, onChange }: { s: ShareView; onChange: (body: { to?: string; open?: boolean }) => void }) {
+  const [val, setVal] = useState(() => localValue(Date.parse(s.open ? s.from_at : s.to_at)));
+  return (
+    <div className="flex w-full flex-wrap items-center gap-2 pt-1">
+      <span className="text-dim">{s.open ? 'Follows the raid (up to 24 h from the start)' : `Ends ${stamp.format(Date.parse(s.to_at))} ET`}</span>
+      <input type="datetime-local" value={val} onChange={e => setVal(e.target.value)} aria-label="New end time"
+        className="rounded border border-border bg-bg px-2 py-1 text-xs text-text" />
+      <button type="button" className={`${chip} ${chipIdle}`} disabled={!val}
+        onClick={() => onChange({ to: new Date(val).toISOString() })}>Set end</button>
+      <button type="button" className={`${chip} ${chipIdle}`} onClick={() => onChange({ to: new Date().toISOString() })}>Extend to now</button>
+      {s.open
+        ? <button type="button" className={`${chip} ${chipIdle}`} onClick={() => onChange({ open: false })}>Close</button>
+        : <button type="button" className={`${chip} ${chipIdle}`} onClick={() => onChange({ open: true })}>Follow the raid</button>}
+    </div>
+  );
+}
 
 export default function ShareControls({ fromIso, toIso, defaultTitle }: { fromIso: string; toIso: string; defaultTitle: string }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState(defaultTitle);
   const [days, setDays] = useState(30);
+  const [follow, setFollow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [made, setMade] = useState<Made | null>(null);
@@ -41,7 +66,7 @@ export default function ShareControls({ fromIso, toIso, defaultTitle }: { fromIs
     try {
       const res = await fetch('/api/raid/shares', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: fromIso, to: toIso, title, days }),
+        body: JSON.stringify({ from: fromIso, to: toIso, title, days, open: follow }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j?.error || 'failed');
@@ -60,6 +85,20 @@ export default function ShareControls({ fromIso, toIso, defaultTitle }: { fromIs
       setMade(null);
       void load();
     } catch { setErr('Could not revoke that link. Try again.'); }
+  };
+
+  const change = async (id: string, body: { to?: string; open?: boolean }) => {
+    setErr(null);
+    try {
+      const res = await fetch(`/api/raid/shares/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || 'failed');
+      void load();
+    } catch (e) {
+      setErr(e instanceof Error && e.message ? `Could not change the end: ${e.message}.` : 'Could not change the end.');
+    }
   };
 
   const copy = async (text: string) => {
@@ -95,6 +134,11 @@ export default function ShareControls({ fromIso, toIso, defaultTitle }: { fromIs
             </button>
           </div>
 
+          <label className="mt-2 flex items-center gap-2 text-xs text-dim">
+            <input type="checkbox" checked={follow} onChange={e => setFollow(e.target.checked)} />
+            Follow until the raid ends (the link keeps showing new minutes, up to 24 h from the start, until you close it)
+          </label>
+
           {made && (
             <div className="mt-3 rounded border border-gold/50 bg-gold/10 p-2.5" role="status">
               <p className="text-xs text-gold">Copy it now. This address is shown once and cannot be looked up again.</p>
@@ -129,6 +173,7 @@ export default function ShareControls({ fromIso, toIso, defaultTitle }: { fromIs
                     {s.status === 'ok' && (
                       <button type="button" onClick={() => revoke(s.id)} className={`${chip} ${chipIdle}`}>Revoke</button>
                     )}
+                    {s.status === 'ok' && <EndControls key={`${s.id}|${s.to_at}`} s={s} onChange={b => change(s.id, b)} />}
                   </li>
                 ))}
               </ul>
