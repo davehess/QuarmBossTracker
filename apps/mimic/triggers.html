@@ -301,6 +301,37 @@
   body.part-callouts #alertcol{transform-origin:50% 100%}
   body.part-callouts #sticky:empty{display:none}
   body.part-callouts.part-edit #placeholder{display:block}
+
+  /* ── Death timeline strip (the guild lead, 2026-10-21) ─────────────────────
+     Bottom-of-window strip: the boss / paired-mob deaths of the last 30 minutes as a chain
+     (newest at the right), and a big countdown while a pair window is open (Decorins 6 min,
+     Tallon + Vallon 20 min). Present only while there is something to show — no empty chrome.
+     The timers stack rides above it (--tline-h, set from JS). Display only: it never speaks,
+     and canvas panels (body.part) never draw it. Click-through like the stack. */
+  #tline{position:fixed;bottom:8px;left:8px;right:8px;z-index:41;display:none;
+    pointer-events:none;font-family:ui-monospace,Menlo,Consolas,monospace;
+    background:rgb(0 0 0 / var(--bg-alpha));border-radius:4px;border-left:3px solid #58a6ff;
+    padding:4px 8px 5px;text-shadow:0 1px 2px #000;color:#fff}
+  body.has-tline #tline{display:block}
+  body.part #tline{display:none !important}
+  body.has-tline:not(.part):not(.timers-topdown) #timers{bottom:calc(12px + var(--tline-h,0px))}
+  #tline .tl-pair{margin:0 0 5px}
+  #tline .tl-pair-row{display:flex;align-items:baseline;gap:10px;font-size:22px;font-weight:800;line-height:1.15;color:#ffc14d}
+  #tline .tl-pair-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #tline .tl-pair-clock{flex-shrink:0;font-variant-numeric:tabular-nums;font-size:26px}
+  #tline .tl-bar{height:6px;margin-top:3px;background:rgba(255,255,255,0.14);border-radius:3px;overflow:hidden}
+  #tline .tl-bar i{display:block;height:100%;width:100%;background:#ffb02e;transform-origin:left;border-radius:3px}
+  #tline .tl-pair.urgent .tl-pair-row{color:#ff6b6b}
+  #tline .tl-pair.urgent .tl-bar i{background:#ff4d4d}
+  #tline .tl-pair.made .tl-pair-row{color:#5fe08a}
+  #tline .tl-pair.missed .tl-pair-row{color:#ff6b6b}
+  #tline .tl-chain{display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 7px;font-size:13px;line-height:1.3;color:#e6edf3}
+  #tline .tl-link{white-space:nowrap}
+  #tline .tl-d b{font-weight:700;color:#fff}
+  #tline .tl-d span{color:#9fb3c8;margin-left:4px;font-variant-numeric:tabular-nums}
+  #tline .tl-gap{color:#f6c365;font-weight:700;font-variant-numeric:tabular-nums}
+  #tline .tl-more{color:#9fb3c8}
+  #tline .tl-since{margin-left:auto;color:#58a6ff;font-weight:700;font-variant-numeric:tabular-nums}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -334,6 +365,7 @@
     <div id="sticky"></div>
   </div>
   <div id="timers"></div>
+  <div id="tline"></div>
 <script src="voice.js"></script>
 <script>
   // ── Timers canvas part ─────────────────────────────────────────────────────
@@ -1735,11 +1767,17 @@
   // the 50 px baseline is the floor, ~60% of the work area is the ceiling.
   const _alertColEl = document.getElementById('alertcol');
   var _lastTimersSpace = -1;
+  var tlineEl = document.getElementById('tline');   // the death timeline strip (below)
+  var _tlLastH = -1;
   function measureWanted(){
     var baseline = 50;
     var timersBottom = 0;
     // Height the bottom-anchored stack occupies, including its 8px bottom gap.
     var timersContent = (timersEl && timersEl.children.length) ? (timersEl.scrollHeight + 8) : 0;
+    // The death timeline strip sits under the stack on the window's bottom edge: its height (+ the 4px gap
+    // above it) is added, plus the 8px bottom gap when the stack is not there to carry it.
+    var tlH = (tlineEl && document.body.classList.contains('has-tline') && tlineEl.offsetHeight) ? tlineEl.offsetHeight + 4 : 0;
+    if (tlH) timersContent += tlH + (timersContent ? 0 : 8);
     if (timersContent){
       // #timers is bottom-anchored now (v2 §3) and grows UPWARD, so the height
       // it needs is its own content plus the top gutter that keeps the topmost
@@ -1820,6 +1858,133 @@
     }
   } catch(e){}
 
+  // ── Death timeline strip (the guild lead, 2026-10-21) ───────────────────────
+  // The agent ships recentDeaths (boss / paired-mob deaths this PC saw, last 30 min) and deathPairRules.
+  // The page keeps the clocks: deathPairStates is pure (no DOM), the render rebuilds the strip's HTML only
+  // when its content changes and otherwise touches just the clock text nodes. Display only — nothing is spoken.
+  // ── death timeline: pure state ──
+  var TL_SHOW_MS = 30 * 60 * 1000, TL_RESULT_MS = 2 * 60 * 1000;
+  function tlKey(n){
+    return String(n == null ? '' : n).replace(/^#/, '').replace(/_/g, ' ').replace(/`/g, "'").replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+  // One row per pair rule that has something to show: 'open' (a window is running, dueName still to die),
+  // 'made' (all of them down inside the window; shown TL_RESULT_MS after the last), 'missed' (window ran out;
+  // shown TL_RESULT_MS after the deadline). A name that dies a second time starts a new episode.
+  function deathPairStates(deaths, rules, nowMs){
+    var out = [];
+    (rules || []).forEach(function(r){
+      var keys = r.names.map(tlKey), win = (r.windowSec || 0) * 1000;
+      var ds = (deaths || []).filter(function(d){ return d && keys.indexOf(tlKey(d.name)) >= 0; })
+        .sort(function(a, b){ return a.atMs - b.atMs; });
+      var ep = null;
+      ds.forEach(function(d){
+        var k = tlKey(d.name);
+        if (ep && !ep.seen[k] && d.atMs - ep.first.atMs <= win){ ep.seen[k] = d; ep.last = d; return; }
+        ep = { first: d, last: d, seen: Object.create(null) };
+        ep.seen[k] = d;
+      });
+      if (!ep) return;
+      var missing = r.names.filter(function(n){ return !ep.seen[tlKey(n)]; });
+      var st = { label: r.label, windowSec: r.windowSec, firstName: ep.first.name, firstAtMs: ep.first.atMs,
+                 deadlineMs: ep.first.atMs + win };
+      if (!missing.length){
+        if (nowMs - ep.last.atMs <= TL_RESULT_MS){
+          st.kind = 'made'; st.doneAtMs = ep.last.atMs;
+          st.gapSec = Math.round((ep.last.atMs - ep.first.atMs) / 1000);
+          out.push(st);
+        }
+        return;
+      }
+      if (nowMs < st.deadlineMs){ st.kind = 'open'; st.dueName = missing.join(' / '); out.push(st); }
+      else if (nowMs - st.deadlineMs <= TL_RESULT_MS){ st.kind = 'missed'; st.dueName = missing.join(' / '); out.push(st); }
+    });
+    return out;
+  }
+  // ── /death timeline: pure state ──
+  var _tlDeaths = [], _tlRules = [], _tlSig = '', _tlNodes = [];
+  function tlFmt(sec){
+    sec = Math.max(0, Math.floor(sec));
+    var h = Math.floor(sec / 3600), m = Math.floor((sec - h * 3600) / 60), s = sec - h * 3600 - m * 60;
+    return h ? (h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0')) : (m + ':' + String(s).padStart(2, '0'));
+  }
+  function tlHHMM(ms){
+    var d = new Date(ms);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+  function syncTlineH(){
+    var on = !!_tlSig;
+    document.body.classList.toggle('has-tline', on);
+    var h = on && tlineEl ? tlineEl.offsetHeight : 0;
+    if (h !== _tlLastH){
+      _tlLastH = h;
+      try { document.documentElement.style.setProperty('--tline-h', h + 'px'); } catch(e){}
+      requestAutoHeight();
+    }
+  }
+  function tlineSet(deaths, rules){
+    _tlDeaths = Array.isArray(deaths) ? deaths : [];
+    if (Array.isArray(rules)) _tlRules = rules;
+    tlineUpdate();
+  }
+  function tlineUpdate(){
+    if (PART || !tlineEl) return;
+    var now = Date.now();
+    var ds = _tlDeaths.filter(function(d){ return d && Number.isFinite(d.atMs) && now - d.atMs <= TL_SHOW_MS; })
+      .sort(function(a, b){ return a.atMs - b.atMs; });
+    var pairs = ds.length ? deathPairStates(ds, _tlRules, now) : [];
+    var shown = ds.slice(-5);
+    var sig = ds.length ? (ds.length - shown.length) + '|' + shown.map(function(d){ return d.atMs + d.name; }).join('|') + '#' +
+      pairs.map(function(p){ return p.label + p.kind + (p.dueName || '') + p.firstAtMs; }).join('|') : '';
+    if (sig !== _tlSig){
+      _tlSig = sig;
+      if (!sig){ tlineEl.innerHTML = ''; _tlNodes = []; }
+      else {
+        var h = '';
+        pairs.forEach(function(p){
+          var cls = 'tl-pair ' + p.kind;
+          if (p.kind === 'open'){
+            h += '<div class="' + cls + '" data-tl-pair><div class="tl-pair-row"><span class="tl-pair-name">' + _esc(p.dueName) +
+              ' due in</span><span class="tl-pair-clock" data-tl="due" data-t="' + p.deadlineMs + '"></span></div>' +
+              '<div class="tl-bar"><i data-tl="bar" data-t="' + p.deadlineMs + '" data-d="' + (p.windowSec * 1000) + '"></i></div></div>';
+          } else if (p.kind === 'made'){
+            h += '<div class="' + cls + '"><div class="tl-pair-row"><span class="tl-pair-name">' + _esc(p.label) + ' made in ' +
+              tlFmt(p.gapSec) + ' ✓</span></div></div>';
+          } else {
+            h += '<div class="' + cls + '"><div class="tl-pair-row"><span class="tl-pair-name">' + _esc(p.label) + ' missed</span></div></div>';
+          }
+        });
+        h += '<div class="tl-chain">';
+        if (ds.length > shown.length) h += '<span class="tl-more">+' + (ds.length - shown.length) + ' earlier</span>';
+        shown.forEach(function(d, i){
+          h += '<span class="tl-link">';   // gap + the death it leads to wrap together, never leaving a dangling dash
+          if (i) h += '<span class="tl-gap">─ +' + tlFmt((d.atMs - shown[i - 1].atMs) / 1000) + ' ─</span> ';
+          h += '<span class="tl-d"><b>' + _esc(d.name) + '</b><span>' + tlHHMM(d.atMs) + '</span></span></span>';
+        });
+        h += '<span class="tl-since">since last <span data-tl="since" data-t="' + shown[shown.length - 1].atMs + '"></span></span></div>';
+        tlineEl.innerHTML = h;
+        _tlNodes = Array.prototype.slice.call(tlineEl.querySelectorAll('[data-tl]'));
+      }
+      syncTlineH();
+    }
+    for (var i = 0; i < _tlNodes.length; i++){
+      var n = _tlNodes[i], t = Number(n.getAttribute('data-t')), kind = n.getAttribute('data-tl');
+      if (kind === 'bar'){
+        var f = Math.max(0, Math.min(1, (t - now) / Number(n.getAttribute('data-d'))));
+        var tf = 'scaleX(' + f.toFixed(3) + ')';
+        if (n.style.transform !== tf) n.style.transform = tf;
+      } else {
+        var txt = kind === 'due' ? tlFmt(Math.ceil((t - now) / 1000)) : tlFmt((now - t) / 1000);
+        if (n.textContent !== txt) n.textContent = txt;
+        if (kind === 'due'){
+          var pairEl = n.closest('[data-tl-pair]');
+          if (pairEl) pairEl.classList.toggle('urgent', t - now < 60000);
+        }
+      }
+    }
+  }
+  try { if (window.ResizeObserver && tlineEl) new ResizeObserver(function(){ syncTlineH(); }).observe(tlineEl); } catch(e){}
+  setInterval(tlineUpdate, 250);
+
   // A canvas part reads the slim /api/timers (the same three fields) — one
   // page per panel must not each parse the whole state. An agent without it
   // answers 404, and the part falls back to /api/state for good.
@@ -1833,7 +1998,8 @@
       }
       const s = await r.json();
       renderTimers((PART === 'timers' && _partSample) ? (s.activeTimers || []).concat(_sampleTimers()) : s.activeTimers);
-      if (PART === 'timers') return;   // display only: fires belong to the other pages
+      if (!PART) tlineSet(s.recentDeaths, s.deathPairRules);   // the death timeline strip (not in canvas panels)
+      if (PART === 'timers') return;  // display only: fires belong to the other pages
       const fires = (s.recentTriggerFires || []).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
       if (!primed){
         // On first poll, don't replay the existing backlog — just set the cursor.

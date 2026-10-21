@@ -17773,6 +17773,9 @@ function _serializeForDashboard() {
     // Blind-event ring buffer (start / end / self-hit / target-change). The
     // trigger overlay dedupes on `ts` and speaks `tts`, same as trigger fires.
     blindEvents:        _blindEvents.slice(-20),
+    // Boss / paired-mob deaths from the last 30 min (the trigger overlay's timeline strip) + the pair windows.
+    recentDeaths:       _recentDeathsSnapshot(),
+    deathPairRules:     DEATH_PAIR_RULES,
     // Damage-taken audio alert — echoed so the dashboard row (and any
     // diagnostic) can show what the agent actually believes, independent of
     // what Mimic has saved in cfg.
@@ -36173,6 +36176,8 @@ function startWebDashboard(port) {
           activeTimers:       _activeTimersSnapshot(),
           recentTriggerFires: _activeOverlays.map(_fireForWeb),
           blindEvents:        _blindEvents.slice(-20),
+          recentDeaths:       _recentDeathsSnapshot(),
+          deathPairRules:     DEATH_PAIR_RULES,
         }));
       }
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
@@ -55703,6 +55708,58 @@ function _deadMobNameFromLine(line) {
   if (m) return m[1].trim().replace(/[!.]+$/, '');
   return null;
 }
+// ── Death timeline (the guild lead, 2026-10-21: "the death timers between mobs ... easily and clearly displayed
+// versus having to say it out loud ... a timeline view ... on the bottom of the TTS") ──────────────────────────
+// A small ring of recent boss / paired-mob deaths read off the lines THIS PC's logs see (a kill out of this
+// character's range never prints, so it never lands here). The trigger overlay draws it as a bottom strip and
+// runs the pair windows (DEATH_PAIR_RULES) in the page; the agent only records and ships the facts. Display
+// only: nothing here speaks, uploads or arms a timer.
+const DEATH_PAIR_RULES = [
+  { names: ['Decorin Berik', 'Decorin Grunhork'], windowSec: 360,  label: 'Decorins' },
+  { names: ['Tallon Zek', 'Vallon Zek'],          windowSec: 1200, label: 'Tallon + Vallon' },
+];
+const RECENT_DEATHS_MAX = 20;
+const RECENT_DEATHS_DEDUPE_MS = 10000;        // several lines can report one death
+const RECENT_DEATHS_SHOW_MS = 30 * 60 * 1000; // what the API carries
+const _recentMobDeaths = [];
+// The comparison key for a mob name: same cleanup as _normMobName plus the backtick-for-apostrophe spelling.
+function _deathNameKey(n) {
+  return String(n || '').trim().replace(/^#/, '').replace(/_/g, ' ').replace(/`/g, "'").replace(/\s+/g, ' ').toLowerCase();
+}
+function _deathPairRuleFor(n, rules) {
+  const k = _deathNameKey(n);
+  for (const r of rules || []) if (r.names.some(x => _deathNameKey(x) === k)) return r;
+  return null;
+}
+// Add one death to `ring` (mutated). Kept when the catalog says boss OR the name sits in a pair rule; a repeat of
+// the same name within RECENT_DEATHS_DEDUPE_MS is the same death. Returns the entry added, or null.
+function _ringAddMobDeath(ring, name, zone, atMs, isBoss, rules) {
+  const clean = String(name || '').trim().replace(/^#/, '').replace(/_/g, ' ').replace(/`/g, "'").replace(/\s+/g, ' ');
+  if (!clean || !Number.isFinite(atMs) || /^you$/i.test(clean)) return null;
+  const paired = !!_deathPairRuleFor(clean, rules);
+  if (!isBoss && !paired) return null;
+  const key = _deathNameKey(clean);
+  for (const e of ring) if (_deathNameKey(e.name) === key && Math.abs(e.atMs - atMs) < RECENT_DEATHS_DEDUPE_MS) return null;
+  const entry = { name: clean, zone: zone || null, atMs, boss: true };
+  ring.push(entry);
+  ring.sort((a, b) => a.atMs - b.atMs);
+  if (ring.length > RECENT_DEATHS_MAX) ring.splice(0, ring.length - RECENT_DEATHS_MAX);
+  return entry;
+}
+// Tail hook: one raw log line. Live lines only (a --since backfill replays old deaths).
+function _noteRecentMobDeath(line, character) {
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return null;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  if (Date.now() - atMs > 60000) return null;
+  const z = _myFightZone(character);
+  return _ringAddMobDeath(_recentMobDeaths, dead, z.name, atMs, _myFightIsBoss(dead, z.id), DEATH_PAIR_RULES);
+}
+function _recentDeathsSnapshot(nowMs) {
+  const cut = (nowMs || Date.now()) - RECENT_DEATHS_SHOW_MS;
+  return _recentMobDeaths.filter(e => e.atMs >= cut).map(e => ({ name: e.name, zone: e.zone, atMs: e.atMs, boss: e.boss }));
+}
 function _cancelTimersOnMobDeath(line) {
   const dead = _deadMobNameFromLine(line);
   if (!dead) return 0;
@@ -60173,6 +60230,8 @@ async function main() {
         // gauge reading zero. Raw-line hook, substring-gated like the two below.
         try { const _dfd = parseEqTimestamp(line); noteFeignEmoteLine(line, _dfd ? _dfd.getTime() : Date.now()); } catch { void 0; }
         try { const _dts = parseEqTimestamp(line); _checkBossSpawnChain(line, _dts ? _dts.getTime() : Date.now()); } catch { void 0; }
+        // Death timeline strip on the trigger overlay (2026-10-21): boss / paired-mob deaths this PC sees. Display only.
+        try { _noteRecentMobDeath(line, b.character); } catch { void 0; }
         // `/zeal version` output → what's actually LOADED in this client. Runs
         // on the raw line before any filter because none of the keep patterns
         // describe it, and it gates on a substring first so the cost on a
