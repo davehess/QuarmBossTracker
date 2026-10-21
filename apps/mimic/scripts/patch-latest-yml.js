@@ -28,9 +28,10 @@ if (!fs.existsSync(ymlPath)) {
 }
 
 // The primary installer electron-updater tracks.
-const exe = fs.readdirSync(distDir).find((f) => /^Wolf-Pack-Mimic-Setup-.*\.exe$/i.test(f));
+// Raid-Mimic-Setup-* since the 2026-10-21 rename; Wolf-Pack-Mimic-Setup-* is every earlier build.
+const exe = fs.readdirSync(distDir).find((f) => /^(?:Raid|Wolf-Pack)-Mimic-Setup-.*\.exe$/i.test(f));
 if (!exe) {
-  console.error('[patch-latest-yml] no Wolf-Pack-Mimic-Setup-*.exe in dist.');
+  console.error('[patch-latest-yml] no Raid-Mimic-Setup-*.exe (or Wolf-Pack-Mimic-Setup-*.exe) in dist.');
   process.exit(1);
 }
 

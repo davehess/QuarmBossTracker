@@ -15,7 +15,8 @@ export type Release = {
   assets: Asset[];
 };
 
-export const APPIMAGE_RX = /wolf-pack-mimic-.*\.appimage$/i;
+// Raid-Mimic-* since the 2026-10-21 rename; Wolf-Pack-Mimic-* is every Deck build before it.
+export const APPIMAGE_RX = /(?:raid|wolf-pack)-mimic-.*\.appimage$/i;
 export const PER_PAGE = 100;
 export const MAX_PAGES = 5;
 
