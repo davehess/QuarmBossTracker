@@ -8246,6 +8246,7 @@ function trackLootedLine(line, character) {
     ...(fromOwnPet ? { fromOwnPet: true } : {}),
   });
   if (lootedBuffer.length > 200) lootedBuffer.splice(0, lootedBuffer.length - 200);
+  try { _raidCodeNoteLoot(lootedBuffer[lootedBuffer.length - 1], character); } catch { void 0; }   // under a raid code: kept on this PC
 }
 
 // Upload recently-looted items. Mirrors uploadRollSets' recency discipline:
@@ -12471,6 +12472,8 @@ function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
 function enqueueUpload(kind, payload) {
   // Local mode: nothing is queued, so nothing can be sent.
   if (_localOnly()) return null;
+  // A raid code is active (this PC is in someone else's raid): the raid-wide streams stay on this PC.
+  if (_raidCodeHolds(kind, payload)) return null;
   // A payload that names a character on a server that is not the guild's never leaves (eqServerForLog).
   if (payload && _offGuildServerChar(payload.character)) return null;
   // Cross-instance guard: only the elected uploader sends. A read-only
@@ -17856,6 +17859,8 @@ function _serializeForDashboard() {
     // Local mode: started with no token, so nothing goes to the guild server. The dashboard's
     // "(local-only)" tag and its "Uploading enabled" row read this; nothing set it before.
     localOnly:          _localOnly(),
+    // The raid code this PC joined (null when none): the dashboard card and Mimic's tray read it.
+    raidCode:           _raidCodeStatus(),
     // #120 — token present (signed in) but identity may not be confirmed yet.
     // Lets the header show a soft "verifying" state instead of the hard "not
     // signed in" banner, and gate the scary banner on the no-token case only.
@@ -19374,6 +19379,7 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
     <button id="wpLocalFights" type="button" onclick="wpOpenLocalSite('parses')" title="Your own fights as this PC recorded them, every player it saw, and how they differ from the guild's record when you are a member (opens in its own window). Not the 📈 My parses tab above: that one graphs your numbers over time. Nothing leaves the PC.">📊 My fights (this PC)</button>
     <button id="wpLocalReplay" type="button" onclick="wpOpenLocalSite('replay')" title="Play back where you and your raid stood, from the recording Mimic keeps on this PC (opens in its own window). Nothing leaves the PC.">🎬 My replay</button>
     <button id="wpLocalRebuild" type="button" onclick="wpRebuildOpen()" title="Build your fights, raids, deaths and loot from the log files on this PC. Nothing is uploaded.">🔁 Rebuild from my logs</button>
+    <button id="wpLocalRaid" type="button" onclick="wpRaidCodeOpen()" title="In someone else's raid? Enter their raid code: this PC keeps the raid's data to itself, tagged with the code, for six hours. The tray's Open menu has the same item.">🎟 Join a raid with a code</button>
   </div>
   <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
        2026-09-23: "We're running out of horizontal real estate"). They went up to
@@ -23475,6 +23481,141 @@ function wpRebuildOpen() {
   };
   go(0);
 }
+
+// ── 🎟 Join a raid with a code (Logsync tab, above Rebuild; the rail's "On this PC" group and the tray open it) ──
+// The guild lead, 2026-10-21: a guest in someone else's raid keeps their data on their own PC. The code is a
+// label: while it is on, this PC tags what it records with the code and HOLDS the raid-wide uploads (roster,
+// fights, chat relay, loot, threat, trigger relays and the rest), so nothing raid-wide reaches the Wolf Pack
+// server. A pass lasts six hours and then ends on its own. The state lives in the agent (GET/POST /api/raid-code,
+// and \`s.raidCode\` on /api/state); the card reads it from the poll, so it asks for nothing of its own. The
+// minutes shown change once a minute, so the card rewrites once a minute at most. A raid pack (.rmpack) is the
+// way to share a raid with another PC: Save writes one, Merge reads someone else's into this PC's records.
+var _wpRc = { note: '', tone: '', busy: false };
+function wpRcDur(ms) {
+  var m = Math.max(0, Math.floor(ms / 60000)), h = Math.floor(m / 60);
+  return h > 0 ? h + 'h ' + (m % 60) + 'm' : m + 'm';
+}
+function wpRcHtml(s) {
+  var r = s && s.raidCode;
+  var h = '';
+  if (r) {
+    var now = Date.now();
+    var guest = r.role === 'guest';
+    h += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0">'
+       + '<span id="wpRcActive" style="font-size:20px;font-weight:700;letter-spacing:1px;border:1px solid var(--blue);border-radius:6px;padding:2px 12px">' + esc(r.code) + '</span>'
+       + '<span class="dim" style="font-size:12px">running ' + esc(wpRcDur(now - r.since)) + ' · ends in ' + esc(wpRcDur(r.expires - now)) + ' (a pass lasts ' + Math.round(r.ttl_ms / 3600000) + ' hours)</span>'
+       + '<button type="button" class="wp-btn" onclick="wpRcLeave()">✕ Leave this raid code</button></div>';
+    h += '<div style="font-size:12px;margin-bottom:6px">' + (guest
+      ? '<b>GUEST</b> · this PC is not signed in to Wolf Pack, so everything it records stays here and is marked GUEST.'
+      : '<b>Away raid</b> · you are in someone else\\'s raid. Your own characters still sync; the raid itself stays on this PC.')
+      + ' <span class="dim">' + (r.held_total > 0 ? r.held_total.toLocaleString() + ' raid uploads held back so far.' : 'Nothing raid-wide leaves this PC while the code is on.') + '</span></div>';
+  } else {
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">'
+       + '<input id="wpRcCode" type="text" maxlength="12" placeholder="BC-7KQ2" autocomplete="off" spellcheck="false" style="width:120px;text-transform:uppercase;font-size:14px;letter-spacing:1px" onkeydown="if (event.key === \\'Enter\\') wpRcJoin()">'
+       + '<button type="button" class="wp-btn pri" onclick="wpRcJoin()">🎟 Join</button></div>';
+  }
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">'
+     + '<button type="button" class="wp-btn" onclick="wpRcExport()" title="Save everything this PC holds under ' + (r ? 'this code' : 'the code typed above') + ' as a raid pack (.rmpack) to hand to another raider. No Discord id and no account name goes in it.">⬇ Save raid pack</button>'
+     + '<button type="button" class="wp-btn" onclick="document.getElementById(\\'wpRcFile\\').click()" title="Merge a raid pack someone else saved into this PC\\'s records. The same fight is not counted twice.">⬆ Merge a raid pack</button></div>';
+  if (_wpRc.note) h += '<div id="wpRcNote" style="color:' + (_wpRc.tone === 'ok' ? 'var(--green)' : 'var(--orange)') + ';font-size:12px;margin-bottom:6px">' + esc(_wpRc.note) + '</div>';
+  return h;
+}
+function wpRcRepaint(s) {
+  var el = document.getElementById('wpRaidCode');
+  if (!el) return;
+  if (!document.getElementById('wpRcBody')) {
+    el.innerHTML = '<h2>🎟 Join a raid with a code</h2>'
+      + '<div class="subtle">In someone else\\'s raid? Enter the code they gave you. While it is on, what this PC records of the raid (fights, roster, loot) is kept here, tagged with the code, '
+      + 'and nothing raid-wide is sent to the Wolf Pack server. Your overlays keep working. The pass ends by itself after 6 hours. '
+      + 'Parses made under a code show a code badge, and GUEST on a PC that is not signed in.</div>'
+      + '<div id="wpRcBody"></div><input type="file" id="wpRcFile" accept=".rmpack,application/gzip" style="display:none" onchange="wpRcMerge(this)">';
+    el._wpLastHtml = null;
+  }
+  morphInto(document.getElementById('wpRcBody'), wpRcHtml(s));
+}
+function renderRaidCodeCard(s) {
+  wpRcRepaint(s);
+  var b = document.getElementById('wpLocalRaid');   // the rail button says so while a pass is on
+  if (b) {
+    var t = s && s.raidCode ? '🎟 Raid code · ' + s.raidCode.code : '🎟 Join a raid with a code';
+    if (b.textContent !== t) b.textContent = t;
+  }
+}
+function wpRcPost(body) {
+  return fetch('/api/raid-code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
+}
+function wpRcRefresh() {
+  fetch('/api/state', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (s) { wpRcRepaint(s); }, function () { });
+}
+function wpRcJoin() {
+  var inp = document.getElementById('wpRcCode');
+  var v = inp ? inp.value : '';
+  wpRcPost({ code: v }).then(function (x) {
+    _wpRc.note = x.ok ? '' : ((x.j && x.j.error) || 'Could not join.'); _wpRc.tone = x.ok ? 'ok' : '';
+    wpRcRefresh();
+  }, function () { _wpRc.note = 'The agent did not answer.'; _wpRc.tone = ''; wpRcRefresh(); });
+}
+function wpRcLeave() {
+  wpRcPost({ clear: true }).then(function () { _wpRc.note = 'Left the raid code. The raid-wide streams are back to normal.'; _wpRc.tone = 'ok'; wpRcRefresh(); },
+    function () { _wpRc.note = 'The agent did not answer.'; _wpRc.tone = ''; wpRcRefresh(); });
+}
+function wpRcExport() {
+  var act = document.getElementById('wpRcActive');
+  var inp = document.getElementById('wpRcCode');
+  var code = act ? act.textContent : (inp ? inp.value : '');
+  fetch('/api/local/raid-code/export?code=' + encodeURIComponent(code), { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) return r.json().then(function (j) { throw new Error((j && j.error) || 'Could not save the pack.'); });
+    var cd = r.headers.get('Content-Disposition') || '';
+    var m = /filename="([^"]+)"/.exec(cd);
+    return r.blob().then(function (b) { return { b: b, name: m ? m[1] : 'raid.rmpack' }; });
+  }).then(function (x) {
+    var a = document.createElement('a');
+    var u = URL.createObjectURL(x.b);
+    a.href = u; a.download = x.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(u); }, 10000);
+    _wpRc.note = 'Saved ' + x.name + '.'; _wpRc.tone = 'ok'; wpRcRefresh();
+  }).catch(function (e) { _wpRc.note = String((e && e.message) || e); _wpRc.tone = ''; wpRcRefresh(); });
+}
+function wpRcMerge(inp) {
+  var f = inp && inp.files && inp.files[0];
+  if (!f) return;
+  fetch('/api/local/raid-code/import', { method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body: f })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (x) {
+      if (!x.ok) { _wpRc.note = (x.j && x.j.error) || 'Could not merge that pack.'; _wpRc.tone = ''; return; }
+      var j = x.j;
+      _wpRc.note = 'Merged ' + j.code + ': ' + j.fights.added + ' new fights, ' + j.fights.merged + ' already here, '
+        + (j.minutes.added + j.minutes.merged) + ' minutes of positions. Look under My fights and My replay.';
+      _wpRc.tone = 'ok';
+    }, function () { _wpRc.note = 'The agent did not answer.'; _wpRc.tone = ''; })
+    .then(function () { inp.value = ''; wpRcRefresh(); });
+}
+// The rail's "Join a raid with a code" and the tray's: the Logsync tab, scrolled to the card.
+function wpRaidCodeOpen() {
+  var tab = document.querySelector('.nav button[data-tab="optin"]');
+  if (tab && !tab.classList.contains('active')) tab.click();
+  var go = function (n) {
+    var card = document.getElementById('wpRaidCode');
+    if (!card) { if (n < 12) setTimeout(function () { go(n + 1); }, 200); return; }
+    var bar = document.getElementById('wpTopBar');
+    var pad = (bar ? bar.getBoundingClientRect().height : 0) + 10;
+    window.scrollTo({ top: Math.max(0, card.getBoundingClientRect().top + window.scrollY - pad), behavior: 'smooth' });
+    var inp = document.getElementById('wpRcCode');
+    if (inp) { try { inp.focus(); } catch (e) { void e; } }
+  };
+  go(0);
+}
+// #raidcode opens the card — the tray's "Join a raid with a code" item loads the dashboard with that hash, as #myparses does.
+(function () {
+  function go() {
+    if ((location.hash || '').toLowerCase() !== '#raidcode') return;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { void e; }
+    wpRaidCodeOpen();
+  }
+  go();
+  window.addEventListener('hashchange', go);
+})();
 
 // ── 📈 My parses ────────────────────────────────────────────────────────────
 // A member asked (2026-10-06) for "a page in Mimic that graphs my parses over a variable time window"; the
@@ -27668,6 +27809,7 @@ function renderOptin(o) {
   // 🔁 Rebuild from my logs (the guild lead, 2026-10-21): its own placeholder, filled by renderRebuildCard, so the
   // progress it shows does not rewrite this whole tab every poll.
   wpRebuildSetFiles(o);
+  h += '<div id="wpRaidCode" class="card wide"></div>';   // 🎟 Join a raid with a code: filled by renderRaidCodeCard
   h += '<div id="wpRebuild" class="card wide"></div>';
 
   // Imported log backups (the guild lead, 2026-09-13). Inside Mimic: native pickers plus
@@ -28035,7 +28177,7 @@ async function refresh() {
                      // below, same rule as renderDash → renderMeCard.
                      ['diag', renderDiag],
                      ['netmeter', renderNetMeter],
-                     ['rebuild', renderRebuildCard],
+                     ['rebuild', renderRebuildCard], ['raidcode', renderRaidCodeCard],
                      ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['mutedtimers', renderMutedTimers], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
@@ -34739,6 +34881,7 @@ function startWebDashboard(port) {
       // Rebuild from my logs (the block above module.exports): start / stop / status, and the raids it found. Local only.
       if (await _localBackfillRoute(req, res)) return;
       if (_localParsesRoute(req, res)) return;
+      if (await _raidCodeRoute(req, res)) return;
       // Tank overlay snapshot (the guild lead, 2026-06-25). Aggregates everything the
       // tank.html overlay needs from the active character's live state:
       //   • self HP %, target name + HP %, current buffs (with ticks remaining)
@@ -43011,6 +43154,13 @@ function _recordFightHistory(et, character) {
     const deaths = et.deaths.map(d => ({ name: String((d && d.name) || '').slice(0, 40), at: Math.round(((Date.parse(d && d.ts) || 0) - startedMs) / 1000) }))
       .filter(d => d.name && d.at >= -5 && d.at <= entry.durationSec + 5).slice(0, 40);
     if (deaths.length) entry.deaths = deaths;
+  }
+  // Made under a raid code: the entry says so, and the whole local view is kept in the local store (the ring
+  // forgets after 7 days; a code raid is something to export).
+  const raidTag = _raidTag();
+  if (raidTag) {
+    entry.raidCode = raidTag.code; entry.raidRole = raidTag.role;
+    try { _raidCodeSaveFight(entry, raidTag, character); } catch { void 0; }
   }
   stats.fightHistory.unshift(entry);
   _trimFightHistory();
@@ -53837,11 +53987,14 @@ function _myFightCredit(perPlayer, character) {
   }
   return dmg;
 }
-function _myFightRow(startMs, endMs, mob, zone, char, dmg, dur, boss) {
-  return {
+// `tag` ({ code, role }, optional) marks a fight made under a raid code; a row without one is byte-for-byte what it was.
+function _myFightRow(startMs, endMs, mob, zone, char, dmg, dur, boss, tag) {
+  const row = {
     t: new Date(startMs).toISOString(), end: new Date(endMs).toISOString(), mob: String(mob), zone: zone || null,
     char: String(char), dmg: Math.round(dmg), dur, dps: Math.round(dmg / dur * 10) / 10, boss: !!boss,
   };
+  if (tag && tag.code) { row.code = tag.code; row.role = tag.role; }
+  return row;
 }
 // Age and cap, wherever the log grows or is read back from disk.
 function _trimMyFights(now = Date.now()) {
@@ -53865,7 +54018,7 @@ function _myFightsNote(et, character) {
     if (r.char.toLowerCase() === cl && r.mob.toLowerCase() === ml && Math.abs(Date.parse(r.t) - startMs) < MYFIGHTS_DEDUPE_MS) return null;
   }
   const z = _myFightZone(character);
-  const row = _myFightRow(startMs, endMs, mob, z.name, character, dmg, dur, _myFightIsBoss(mob, z.id));
+  const row = _myFightRow(startMs, endMs, mob, z.name, character, dmg, dur, _myFightIsBoss(mob, z.id), _raidTag());
   _myFights.push(row);
   _trimMyFights();
   _saveMyFightsSoon();
@@ -53877,7 +54030,9 @@ function _cleanMyFightRow(r) {
   const t = Date.parse(r.t), end = Date.parse(r.end), dmg = Number(r.dmg), dur = Math.max(1, Math.round(Number(r.dur) || 0));
   const mob = String(r.mob || '').trim().slice(0, 120), char = String(r.char || '').trim().slice(0, 40);
   if (!(t > 0) || !(end > 0) || !mob || !char || !(dmg > 0) || !(Number(r.dur) > 0)) return null;
-  return _myFightRow(t, end, mob, r.zone ? String(r.zone).slice(0, 64) : null, char, dmg, dur, r.boss === true);
+  const code = _raidCodeNormalize(r.code);
+  return _myFightRow(t, end, mob, r.zone ? String(r.zone).slice(0, 64) : null, char, dmg, dur, r.boss === true,
+    code ? { code, role: r.role === 'away' ? 'away' : 'guest' } : null);
 }
 function _saveMyFights(file = _myFightsFile) {
   try {
@@ -61028,6 +61183,8 @@ async function main() {
     try { _netStart(); } catch { void 0; }
     // This PC's own position recorder: a minute row every minute into the local store, never uploaded.
     try { _localRecorderStart(); } catch { void 0; }
+    // The random key this install signs its raid-code packs with (made once, on the first run; no name, no Discord id).
+    try { _raidPersonKey(_localTrackStore()); } catch { void 0; }
     // Run forever; intervals keep us alive
     return;
   }
@@ -61487,8 +61644,12 @@ function _localTrackStore() { return _localTrack.store || _localStoreDefault(); 
 
 function _localTrackSave(row, minuteStartMs) {
   const st = _localTrackStore();
+  const tag = _raidTag();                          // a minute recorded under a raid code carries it
+  if (tag) { row.raid_code = tag.code; row.raid_role = tag.role; }
   st.put('track_minute', row.minute_at, row, { ts: minuteStartMs });
-  st.put('track_presence', row.minute_at, { night_key: row.night_key, minute_at: row.minute_at, zones: row.zones, raiders: row.raiders }, { ts: minuteStartMs });
+  const presence = { night_key: row.night_key, minute_at: row.minute_at, zones: row.zones, raiders: row.raiders };
+  if (tag) presence.raid_code = tag.code;
+  st.put('track_presence', row.minute_at, presence, { ts: minuteStartMs });
 }
 function _localTrackClose() {
   const cur = _localTrack.cur;
@@ -61569,6 +61730,7 @@ function _localTrackNights(store, o = {}) {
     n.minutes++;
     if (r.minute_at < n.first) n.first = r.minute_at;
     if (r.minute_at > n.last) n.last = r.minute_at;
+    if (r.raid_code) { if (!n.codes) n.codes = []; if (!n.codes.includes(r.raid_code)) n.codes.push(r.raid_code); }
     for (const z of Array.isArray(r.zones) ? r.zones : []) if (typeof z === 'string' && z && !n.zones.includes(z)) n.zones.push(z);
   }
   return { nights: [...by.values()].sort((a, b) => (a.first < b.first ? 1 : -1)), rows };
@@ -62673,12 +62835,14 @@ function _localFights(store) {
   for (const r of _myFights) {
     const s = Date.parse(r && r.t), e = Date.parse(r && r.end);
     if (!r || !r.mob || !(s > 0)) continue;
-    items.push({ rank: 1, mob: r.mob, start: s, end: e > 0 ? e : s + (r.dur || 1) * 1000, dur: r.dur || 1, zone: r.zone || null, boss: !!r.boss, mine: { char: r.char, dmg: r.dmg } });
+    items.push({ rank: 1, mob: r.mob, start: s, end: e > 0 ? e : s + (r.dur || 1) * 1000, dur: r.dur || 1, zone: r.zone || null, boss: !!r.boss, mine: { char: r.char, dmg: r.dmg },
+      code: r.code || null, role: r.role || null, obs: ['@self'] });
   }
   for (const h of stats.fightHistory || []) {
     if (!h || !h.boss || !(h.endedMs > 0)) continue;
     const dur = h.durationSec > 0 ? h.durationSec : 1;
-    items.push({ rank: 3, mob: h.boss, start: h.startedMs > 0 ? h.startedMs : h.endedMs - dur * 1000, end: h.endedMs, dur, zone: null, boss: null, rows: h.local, deaths: h.deaths });
+    items.push({ rank: 3, mob: h.boss, start: h.startedMs > 0 ? h.startedMs : h.endedMs - dur * 1000, end: h.endedMs, dur, zone: null, boss: null, rows: h.local, deaths: h.deaths,
+      code: h.raidCode || null, role: h.raidRole || null, obs: ['@self'] });
   }
   try {
     for (const e of store.scan('fight')) {          // written by the "Rebuild from my logs" backfill, when it has run
@@ -62690,7 +62854,8 @@ function _localFights(store) {
       if (!mob || !(s > 0)) continue;
       const dur = Number(r.durationSec || r.dur) > 0 ? Number(r.durationSec || r.dur) : (en > s ? Math.round((en - s) / 1000) : 1);
       items.push({ rank: 2, mob, start: s, end: en > 0 ? en : s + dur * 1000, dur, zone: r.zone || null, boss: typeof r.boss === 'boolean' ? r.boss : null,
-        rows: r.local || r.players_seen, deaths: r.deaths, mine: r.char && r.dmg > 0 ? { char: r.char, dmg: r.dmg } : null });
+        rows: r.local || r.players_seen, deaths: r.deaths, mine: r.char && r.dmg > 0 ? { char: r.char, dmg: r.dmg } : null,
+        code: _raidCodeNormalize(r.raidCode), role: r.raidRole || null, obs: Array.isArray(r.observedBy) && r.observedBy.length ? r.observedBy : ['@self'], imported: r.imported === true });
     }
   } catch { void 0; }
   items.sort((a, b) => a.start - b.start || a.rank - b.rank);
@@ -62707,6 +62872,12 @@ function _localFights(store) {
     f.end = Math.max(f.end, it.end); f.dur = Math.max(f.dur, it.dur);
     if (!f.zone && it.zone) f.zone = it.zone;
     if (it.boss != null) f.boss = !!(f.boss || it.boss);
+    if (it.code) {                                  // made under a raid code: the code, whose side this PC was on, who saw it
+      if (!f.code) { f.code = it.code; f.role = it.role === 'away' ? 'away' : 'guest'; }
+      f.observers = f.observers || new Set();
+      for (const o of it.obs || ['@self']) f.observers.add(o);
+      if (it.imported) f.imported = true;
+    }
     if (it.mine && !f.mineRows.some(m => m.char.toLowerCase() === String(it.mine.char).toLowerCase())) f.mineRows.push({ char: String(it.mine.char), dmg: Number(it.mine.dmg) || 0 });
     if (Array.isArray(it.rows) && it.rows.length && !f.rows) f.rows = it.rows;
     if (Array.isArray(it.deaths) && it.deaths.length && !f.deaths) f.deaths = it.deaths;
@@ -62788,6 +62959,7 @@ function _localFightListRow(f, enc) {
     detail: !!f.players, players_n: f.players ? f.players.length : null,
     seen_total: f.players ? f.players.reduce((a, p) => a + p.dmg, 0) : null, guild: null,
   };
+  if (f.code) { row.code = f.code; row.role = f.role; if (f.imported) row.imported = true; }
   if (enc) {
     const d = _localParseDiff(f, enc);
     row.guild = { damage: d.raid.guild_damage, seen_pct: d.raid.seen_pct, others: d.players_only_others.count, classification: d.hub.classification,
@@ -62796,7 +62968,8 @@ function _localFightListRow(f, enc) {
   return row;
 }
 function _localFightDetail(f) {
-  return { id: f.id, t: new Date(f.start).toISOString(), end: new Date(f.end).toISOString(), name: f.name, zone: f.zone, boss: !!f.boss, dur: f.dur,
+  const tag = f.code ? { code: f.code, role: f.role, imported: !!f.imported } : {};
+  return { ...tag, id: f.id, t: new Date(f.start).toISOString(), end: new Date(f.end).toISOString(), name: f.name, zone: f.zone, boss: !!f.boss, dur: f.dur,
     mine: f.mine, detail: !!f.players, players: f.players, healers: _localFightHealers(f), deaths: _localFightDeaths(f), deaths_kept: Array.isArray(f.deaths),
     sources: [...new Set(f.sources)] };
 }
@@ -62844,6 +63017,474 @@ function _localParsesRoute(req, res) {
   return true;
 }
 
+// ── Raid codes: a pass into someone else's raid, kept on this PC (local-first, 2026-10-21) ──────────────────
+// The guild lead, 2026-10-21: a guest's data stays on their PC; a code is a LABEL that tags local records and
+// HOLDS the raid-wide uploads. Nothing here talks to a hub. Plan: the guest/plan.md "Local code raid" slice.
+//
+//   * State: logsync.raidcode.json beside the other agent files ({ code, since, expires }). A pass lasts six hours
+//     (the guild lead picked 6 h) and then clears itself, wherever it is read. No code, no change at all.
+//   * The HOLD (enqueueUpload): while a code is active the raid-wide kinds in RAID_HOLD_KINDS are not queued, so they
+//     never reach the guild hub. A Wolf Pack member standing in another guild's raid is therefore in NEITHER hub's
+//     raid tables. The streams about the member's own character (corpse, xp_events, faction, tells, inventory,
+//     spellbook, quarmy, trigger, crash_report, kite_loop, rez_dismiss, pop_flag, quake, live state) continue as before.
+//     Not held on purpose: historical_chat and an opt-in backfill's encounters (old nights of the member's own, not
+//     this raid). A local-only install already sends nothing, so for it the code only tags local records.
+//   * Tagging: a fight (the fight log, the History ring and a `fight` record in the store), a recorded minute and a
+//     loot line made under a code carry `code` and `role` ('guest' on a local-only PC, 'away' for a member).
+//     Chat text, tells and officer chat are never written anywhere by this block.
+//   * Export / import (.rmpack): gzipped NDJSON. Header { format:'rmpack', v:1, person_key, game:'eq', server, code,
+//     created }; records fight, player, loot, death, track_minute, each with observed_by and a stable id. person_key
+//     is random per install (logsync local/person.json): no Discord id, no character name.
+//     Import merges: minute rows are unioned by (minute, name), fights are deduped on mob + start within 30 minutes
+//     (players unioned, the larger damage wins, as the hub's merge does).
+//   Routes: GET/POST /api/raid-code, GET /api/local/raid-code/export?code=, POST /api/local/raid-code/import.
+const RAID_CODE_FILE = path.join(__dirname, 'logsync.raidcode.json');
+const RAID_CODE_TTL_MS = 6 * 3600_000;
+const RAID_CODE_RX = /^([A-Z]{2,4})[- ]([A-Z0-9]{4,6})$/;
+const RAID_CODE_HELP = 'A raid code looks like BC-7KQ2: two to four letters, a dash, then four to six letters or numbers.';
+// The real enqueue kinds that are about the RAID rather than this player (grepped from every enqueueUpload call site).
+const RAID_HOLD_KINDS = new Set([
+  'raid_roster', 'encounter', 'bosskill', 'hatekill', 'lockout', 'casting', 'chat', 'threat_snapshot',
+  'pvp', 'pvp_assists', 'trigger_relay', 'looted', 'rolls', 'buff_cast', 'slow_mode', 'fun_event', 'ari_lead',
+]);
+const RMPACK_MAX_GZ = 5 * 1024 * 1024;
+const RMPACK_MAX_RAW = 64 * 1024 * 1024;
+const RMPACK_MAX_RECORDS = 200_000;
+const RMPACK_FIGHT_MATCH_MS = 30 * 60_000;
+const RMPACK_EXPORT_DAYS = 30;
+const RAID_PERSON_RX = /^pk_[0-9a-f]{32}$/;
+const RMPACK_NAME_RX = /^[\p{L}][\p{L}`' _-]{0,39}$/u;
+const _raidCode = { file: RAID_CODE_FILE, loaded: false, code: null, since: 0, expires: 0, held: {} };
+const _raidPersonCache = new Map();
+
+// "bc 7kq2" and "BC-7KQ2" are one code. Returns the canonical form, or null.
+function _raidCodeNormalize(raw) {
+  const s = String(raw == null ? '' : raw).trim().toUpperCase().replace(/\s+/g, ' ');
+  const m = s.length <= 12 ? RAID_CODE_RX.exec(s) : null;
+  return m ? m[1] + '-' + m[2] : null;
+}
+function _raidCodeRole() { return _localOnly() ? 'guest' : 'away'; }
+function _raidCodeLoad() {
+  _raidCode.loaded = true;
+  try {
+    const j = JSON.parse(fs.readFileSync(_raidCode.file, 'utf8'));
+    const code = _raidCodeNormalize(j && j.code);
+    const since = Number(j && j.since), expires = Number(j && j.expires);
+    if (code && since > 0 && expires > since && expires - since <= RAID_CODE_TTL_MS + 1000) Object.assign(_raidCode, { code, since, expires });
+  } catch { void 0; }
+}
+function _raidCodeSaveFile() {
+  try {
+    if (!_raidCode.code) {
+      try { fs.unlinkSync(_raidCode.file); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+      return;
+    }
+    fs.writeFileSync(_raidCode.file + '.tmp', JSON.stringify({ v: 1, code: _raidCode.code, since: _raidCode.since, expires: _raidCode.expires }));
+    fs.renameSync(_raidCode.file + '.tmp', _raidCode.file);
+  } catch { void 0; }   // a pass that cannot be saved still holds for this run
+}
+// The pass in force right now, or null. An expired pass clears itself here, so every reader sees it end on time.
+function _raidCodeActive(now = Date.now()) {
+  if (!_raidCode.loaded) _raidCodeLoad();
+  if (!_raidCode.code) return null;
+  if (!(now < _raidCode.expires)) { _raidCodeClear(); return null; }
+  return { code: _raidCode.code, since: _raidCode.since, expires: _raidCode.expires };
+}
+function _raidCodeSet(raw, now = Date.now()) {
+  const code = _raidCodeNormalize(raw);
+  if (!code) return { ok: false, error: RAID_CODE_HELP };
+  Object.assign(_raidCode, { loaded: true, code, since: now, expires: now + RAID_CODE_TTL_MS, held: {} });
+  _raidCodeSaveFile();
+  return { ok: true, raid: _raidCodeStatus(now) };
+}
+function _raidCodeClear() {
+  const had = !!_raidCode.code;
+  Object.assign(_raidCode, { loaded: true, code: null, since: 0, expires: 0, held: {} });
+  _raidCodeSaveFile();
+  return had;
+}
+// What the dashboard and the tray show: null with no code. `since`/`expires` are epoch ms; the page works out "how long".
+function _raidCodeStatus(now = Date.now()) {
+  const a = _raidCodeActive(now);
+  if (!a) return null;
+  const held = Object.assign({}, _raidCode.held);
+  return { code: a.code, since: a.since, expires: a.expires, ttl_ms: RAID_CODE_TTL_MS, role: _raidCodeRole(), held, held_total: Object.values(held).reduce((x, n) => x + n, 0) };
+}
+// { code, role } while a pass is active, else null: what a record made now is tagged with.
+function _raidTag() {
+  const a = _raidCodeActive();
+  return a ? { code: a.code, role: _raidCodeRole() } : null;
+}
+// enqueueUpload's question: is this upload held on this PC? Counts what it holds, so the card can say so.
+function _raidCodeHolds(kind, payload) {
+  if (!RAID_HOLD_KINDS.has(kind)) return false;
+  if (payload && payload.backfill === true) return false;
+  if (!_raidCodeActive()) return false;
+  _raidCode.held[kind] = (_raidCode.held[kind] || 0) + 1;
+  return true;
+}
+function _raidCodeSetFileForTest(file) { _raidCode.file = file || RAID_CODE_FILE; Object.assign(_raidCode, { loaded: false, code: null, since: 0, expires: 0, held: {} }); }
+
+// The random key this install signs its packs with: made once, kept beside the local store. No name, no Discord id.
+function _raidPersonKey(store) {
+  const dir = store && store.dir;
+  if (!dir) return null;
+  if (_raidPersonCache.has(dir)) return _raidPersonCache.get(dir);
+  const file = path.join(dir, 'person.json');
+  let key = null;
+  try { const j = JSON.parse(fs.readFileSync(file, 'utf8')); if (j && RAID_PERSON_RX.test(String(j.person_key))) key = j.person_key; } catch { void 0; }
+  if (!key) {
+    key = 'pk_' + crypto.randomBytes(16).toString('hex');
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(file + '.tmp', JSON.stringify({ v: 1, person_key: key, created: new Date().toISOString() }));
+      fs.renameSync(file + '.tmp', file);
+    } catch { void 0; }
+  }
+  _raidPersonCache.set(dir, key);
+  return key;
+}
+
+// A fight made under a code: the whole local view, kept in the store (the History ring forgets after a week).
+function _raidCodeSaveFight(entry, tag, character, store) {
+  if (!entry || !tag || !(entry.startedMs > 0) || !entry.boss) return false;
+  const st = store || _localTrackStore();
+  let boss = false;
+  try { boss = !!_myFightIsBoss(entry.boss, null); } catch { boss = false; }
+  const z = _myFightZone(character);
+  return st.put('fight', 'rc|' + _fightMobKey(entry.boss) + '|' + entry.startedMs, {
+    v: 1, mob: entry.boss, startedMs: entry.startedMs, endedMs: entry.endedMs, durationSec: entry.durationSec, zone: z.name, boss,
+    local: entry.local || [], deaths: entry.deaths || [], raidCode: tag.code, raidRole: tag.role,
+  }, { ts: entry.startedMs });
+}
+// "--You have looted X--" made under a code. Only a line this minute: a --since replay's old lines are not this raid.
+function _raidCodeNoteLoot(e, character, store) {
+  if (!e || !e.item || !e.looter || !(e.atMs > 0) || Math.abs(Date.now() - e.atMs) > 30 * 60_000) return false;
+  const tag = _raidTag();
+  if (!tag) return false;
+  return (store || _localTrackStore()).put('loot', e.looter + '|' + e.atMs + '|' + String(e.item).toLowerCase(), {
+    v: 1, who: e.looter, item: e.item, at: e.atMs, zone: e.zone || null, character: character || e.looter, self: true,
+    raidCode: tag.code, raidRole: tag.role,
+  }, { ts: e.atMs });
+}
+
+// ---- minute rows: merge by (minute, name) ----
+const _rmNum = (v) => (v != null && v !== '' && typeof v !== 'object' && Number.isFinite(Number(v)) ? Number(v) : null);
+const _rmIdx = (v, lo, hi) => { const n = _rmNum(v); return n != null && Number.isInteger(n) && n >= lo && n < hi ? n : null; };
+// The parsed `data` of a minute row (the shape web/lib/raidReplay.ts decodes), checked and rebuilt, or null. An
+// imported row is untrusted: every index, count and string is bounded, so a hostile pack cannot reach past an array.
+function _rmCleanMinute(d) {
+  if (!d || typeof d !== 'object' || d.v !== 1 || !Array.isArray(d.who) || !Array.isArray(d.f) || !Array.isArray(d.zones)) return null;
+  if (d.who.length > 400 || d.f.length > 60 || d.zones.length > 16) return null;
+  const who = [];
+  for (const w of d.who) {
+    if (!Array.isArray(w) || typeof w[0] !== 'string' || !RMPACK_NAME_RX.test(w[0])) return null;
+    who.push([w[0], typeof w[1] === 'string' ? w[1].slice(0, 24) : null, _rmNum(w[2]), _rmNum(w[3])]);
+  }
+  const zones = [];
+  for (const z of d.zones) { if (typeof z !== 'string' || !/^[A-Za-z0-9_]{1,32}$/.test(z)) return null; zones.push(z); }
+  const f = [];
+  for (const fr of d.f) {
+    if (!Array.isArray(fr) || fr.length < 1 || (fr.length - 1) % 7 !== 0 || fr.length > 1 + 7 * 400) return null;
+    const dt = _rmIdx(fr[0], 0, 60);
+    if (dt == null) return null;
+    const out = [dt];
+    for (let j = 1; j < fr.length; j += 7) {
+      const i = _rmIdx(fr[j], 0, who.length), zi = _rmIdx(fr[j + 6], -1, zones.length);
+      const nums = [fr[j + 1], fr[j + 2], fr[j + 3], fr[j + 4], fr[j + 5]].map(_rmNum);
+      if (i == null || zi == null || nums.some(n => n == null)) return null;
+      out.push(i, ...nums, zi);
+    }
+    f.push(out);
+  }
+  const res = { v: 1, step_s: Math.min(30, Math.max(1, _rmNum(d.step_s) || 3)), who, zones, f };
+  if (Array.isArray(d.mobs) && Array.isArray(d.mf)) {
+    if (d.mobs.length > 64 || d.mf.length > 3600) return null;
+    const mobs = [];
+    for (const m of d.mobs) {
+      if (!Array.isArray(m) || typeof m[0] !== 'string' || m[0].length > 80) return null;
+      mobs.push([m[0], _rmNum(m[1])]);
+    }
+    const mf = [];
+    for (const r of d.mf) {
+      if (!Array.isArray(r) || r.length !== 7) return null;
+      const dt = _rmIdx(r[0], 0, 60), mi = _rmIdx(r[1], 0, mobs.length), zi = _rmIdx(r[6], -1, zones.length);
+      const nums = [r[2], r[3], r[4], r[5]].map(_rmNum);
+      if (dt == null || mi == null || zi == null || nums.some(n => n == null)) return null;
+      mf.push([dt, mi, ...nums, zi]);
+    }
+    if (mf.length) { res.mobs = mobs; res.mf = mf; }
+  }
+  return res;
+}
+// Union of two parsed minute rows (both already clean). A name both saw keeps `a`'s frames; a name only `b` saw is added.
+function _rmMergeMinute(a, b) {
+  const who = a.who.map(w => w.slice());
+  const whoAt = new Map(who.map((w, i) => [w[0].toLowerCase(), i]));
+  const had = new Set(whoAt.keys());
+  const zones = a.zones.slice();
+  const zoneAt = (z) => { if (z == null) return -1; let i = zones.indexOf(z); if (i < 0) { if (zones.length >= 16) return -1; i = zones.length; zones.push(z); } return i; };
+  const frames = new Map(a.f.map(fr => [fr[0], fr.slice()]));
+  for (const fr of b.f) {
+    for (let j = 1; j < fr.length; j += 7) {
+      const w = b.who[fr[j]];
+      const k = w[0].toLowerCase();
+      if (had.has(k)) continue;
+      let i = whoAt.get(k);
+      if (i === undefined) { if (who.length >= 400) continue; i = who.length; who.push(w.slice()); whoAt.set(k, i); }
+      if (!frames.has(fr[0])) frames.set(fr[0], [fr[0]]);
+      frames.get(fr[0]).push(i, fr[j + 1], fr[j + 2], fr[j + 3], fr[j + 4], fr[j + 5], zoneAt(fr[j + 6] < 0 ? null : b.zones[fr[j + 6]]));
+    }
+  }
+  const f = [...frames.values()].sort((x, y) => x[0] - y[0]);
+  const mobs = (a.mobs || []).map(m => m.slice());
+  const mf = (a.mf || []).map(r => r.slice());
+  if (b.mobs && b.mf) {
+    const mobAt = new Map(mobs.map((m, i) => [m[0].toLowerCase() + '\u0000' + (m[1] ?? ''), i]));
+    const seen = new Set(mf.map(r => r[0] + '|' + r[1]));
+    for (const r of b.mf) {
+      const m = b.mobs[r[1]];
+      const mk = m[0].toLowerCase() + '\u0000' + (m[1] ?? '');
+      let mi = mobAt.get(mk);
+      if (mi === undefined) { if (mobs.length >= 64) continue; mi = mobs.length; mobs.push(m.slice()); mobAt.set(mk, mi); }
+      if (seen.has(r[0] + '|' + mi)) continue;
+      seen.add(r[0] + '|' + mi);
+      mf.push([r[0], mi, r[2], r[3], r[4], r[5], zoneAt(r[6] < 0 ? null : b.zones[r[6]])]);
+    }
+  }
+  return { v: 1, step_s: a.step_s, who, zones, f, ...(mf.length ? { mobs, mf } : {}) };
+}
+
+// ---- the pack ----
+function _rmError(msg) { const e = new Error(msg); e.status = 400; return e; }
+// Everything this PC holds under `code`, as a gzipped NDJSON buffer. Throws a 400-status Error for a bad code.
+function _rmpackBuild(rawCode, store, o = {}) {
+  const code = _raidCodeNormalize(rawCode);
+  if (!code) throw _rmError(RAID_CODE_HELP);
+  const st = store || _localTrackStore();
+  const now = Number.isFinite(o.now) ? o.now : Date.now();
+  const pk = _raidPersonKey(st);
+  const obsOf = (set) => [...new Set([...(set && set.size !== 0 ? set : ['@self'])].map(k => (k === '@self' ? pk : k)))];
+  const lines = [{ format: 'rmpack', v: 1, person_key: pk, game: 'eq', server: EQ_SERVER_QUARM, code, created: new Date(now).toISOString() }];
+  const counts = { fights: 0, players: 0, loot: 0, deaths: 0, track_minutes: 0 };
+  for (const f of _localFights(st)) {
+    if (f.code !== code) continue;
+    const fid = 'f:' + f.id;
+    const obs = obsOf(f.observers);
+    lines.push({ t: 'fight', id: fid, observed_by: obs, mob: f.name, zone: f.zone, start: f.start, end: f.end, dur: f.dur, boss: !!f.boss });
+    counts.fights++;
+    for (const p of f.players || []) {
+      lines.push({ t: 'player', id: fid + ':' + String(p.name).toLowerCase(), fight: fid, observed_by: obs, name: p.name, dmg: p.dmg, pet_dmg: p.pet_dmg,
+        took: p.took, tookMax: p.tookMax, ds: p.ds, heal: p.heal, sec: p.sec });
+      counts.players++;
+    }
+    for (const d of Array.isArray(f.deaths) ? f.deaths : []) {
+      if (!d || !d.name) continue;
+      const at = Math.max(0, Math.round(Number(d.at) || 0));
+      lines.push({ t: 'death', id: fid + ':' + String(d.name).toLowerCase() + ':' + at, fight: fid, observed_by: obs, name: String(d.name).slice(0, 40), at_sec: at });
+      counts.deaths++;
+    }
+  }
+  for (const e of st.scan('loot', { since: now - RMPACK_EXPORT_DAYS * 86400_000 })) {
+    const r = e.rec;
+    if (!r || _raidCodeNormalize(r.raidCode) !== code) continue;
+    lines.push({ t: 'loot', id: 'l:' + e.id, observed_by: obsOf(new Set(Array.isArray(r.observedBy) ? r.observedBy : [])), who: r.who, item: r.item, at: r.at, zone: r.zone || null });
+    counts.loot++;
+  }
+  for (const e of st.scan('track_minute', { since: now - RMPACK_EXPORT_DAYS * 86400_000 })) {
+    const r = e.rec;
+    if (!r || r.raid_code !== code || typeof r.data !== 'string') continue;
+    lines.push({ t: 'track_minute', id: r.minute_at, observed_by: obsOf(new Set(Array.isArray(r.observed_by) ? r.observed_by : [])),
+      row: { minute_at: r.minute_at, night_key: r.night_key, raiders: r.raiders, frames: r.frames, zones: r.zones, data: r.data } });
+    counts.track_minutes++;
+  }
+  const buffer = zlib.gzipSync(Buffer.from(lines.map(l => JSON.stringify(l)).join('\n') + '\n', 'utf8'));
+  return { buffer, counts, code, person_key: pk, filename: 'raid-' + code + '.rmpack' };
+}
+// Gunzip (bounded) and split a pack into { header, records }. Throws a 400-status Error naming what is wrong.
+function _rmpackParse(buf) {
+  if (!Buffer.isBuffer(buf) || !buf.length) throw _rmError('That file is empty.');
+  if (buf.length > RMPACK_MAX_GZ) throw _rmError('That file is too large for a raid pack (5 MB at most).');
+  let text;
+  try { text = zlib.gunzipSync(buf, { maxOutputLength: RMPACK_MAX_RAW }).toString('utf8'); }
+  catch { throw _rmError('That is not a raid pack (.rmpack): it would not unzip, or it is far larger than a pack can be.'); }
+  const lines = text.split('\n');
+  let header;
+  try { header = JSON.parse(lines[0]); } catch { header = null; }
+  const code = header && _raidCodeNormalize(header.code);
+  if (!header || header.format !== 'rmpack') throw _rmError('That is not a raid pack (.rmpack).');
+  if (header.v !== 1) throw _rmError('That raid pack is a newer version than this Mimic reads. Update Mimic and try again.');
+  if (!RAID_PERSON_RX.test(String(header.person_key)) || !code || header.game !== 'eq') throw _rmError('That raid pack has a bad header.');
+  const records = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i]) continue;
+    if (records.length >= RMPACK_MAX_RECORDS) throw _rmError('That raid pack holds too many records.');
+    let r;
+    try { r = JSON.parse(lines[i]); } catch { continue; }
+    if (r && typeof r === 'object' && typeof r.t === 'string') records.push(r);
+  }
+  return { header: Object.assign({}, header, { code }), records };
+}
+const _rmStr = (v, n) => (typeof v === 'string' ? v.slice(0, n) : null);
+const _rmCount = (v) => { const n = _rmNum(v); return n != null && n >= 0 ? Math.min(n, 1e10) : 0; };
+const _rmKeys = (a, fallback) => {
+  const out = (Array.isArray(a) ? a : []).filter(k => RAID_PERSON_RX.test(String(k)));
+  return out.length ? [...new Set(out)] : [fallback];
+};
+// One player as the History ring's rows keep it (a pet becomes its own row again). `total` is the figure the larger-wins rule compares.
+function _rmPlayerEntry(name, p, startMs) {
+  const sec = Math.round(p.sec || 0);
+  const row = { character: name, dmg: Math.max(0, p.dmg - p.pet), took: p.took, tookMax: p.tookMax, ds: p.ds, heal: p.heal };
+  if (sec > 0) { row.first_ms = startMs; row.last_ms = startMs + sec * 1000; }
+  return { total: p.dmg, rows: p.pet > 0 ? [row, { character: name + '_pet', dmg: p.pet, pet_owner: name }] : [row] };
+}
+// Merge another person's pack into this PC's store. Returns what it added and what it merged into what was there.
+function _rmpackImport(buf, store, o = {}) {
+  const pack = _rmpackParse(buf);
+  const st = store || _localTrackStore();
+  const code = pack.header.code, from = pack.header.person_key;
+  const me = _raidPersonKey(st);
+  const role = o.role || _raidCodeRole();
+  const out = { ok: true, code, from_self: from === me, fights: { added: 0, merged: 0 }, players: 0, loot: { added: 0, merged: 0 }, minutes: { added: 0, merged: 0 }, skipped: 0 };
+  const playersOf = new Map(), deathsOf = new Map();
+  for (const r of pack.records) {
+    const m = r.t === 'player' ? playersOf : r.t === 'death' ? deathsOf : null;
+    if (m && typeof r.fight === 'string') { if (!m.has(r.fight)) m.set(r.fight, []); m.get(r.fight).push(r); }
+  }
+  const existing = _localFights(st);
+  for (const r of pack.records) {
+    if (r.t !== 'fight') continue;
+    const mob = _rmStr(r.mob, 120);
+    const start = _rmNum(r.start), end = _rmNum(r.end);
+    if (!mob || !(start > 0) || !(end >= start) || typeof r.id !== 'string') { out.skipped++; continue; }
+    const key = _fightMobKey(mob);
+    let match = null, gap = Infinity;
+    for (const x of existing) {
+      const g = Math.abs(x.start - start);
+      if (x.key === key && g <= RMPACK_FIGHT_MATCH_MS && (!x.code || x.code === code) && g < gap) { match = x; gap = g; }
+    }
+    const startMs = match ? match.start : start;
+    const byName = new Map();   // lowercase name -> _rmPlayerEntry
+    for (const p of match ? match.players || [] : []) {
+      byName.set(String(p.name).toLowerCase(), _rmPlayerEntry(p.name, { dmg: p.dmg, pet: p.pet_dmg || 0, took: p.took || 0, tookMax: p.tookMax || 0, ds: p.ds || 0, heal: p.heal || 0, sec: p.sec }, startMs));
+    }
+    let added = 0;
+    for (const p of playersOf.get(r.id) || []) {
+      const name = _rmStr(p.name, 40);
+      if (!name || !RMPACK_NAME_RX.test(name)) continue;
+      const k = name.toLowerCase();
+      const dmg = _rmCount(p.dmg);
+      const entry = _rmPlayerEntry(name, { dmg, pet: Math.min(dmg, _rmCount(p.pet_dmg)), took: _rmCount(p.took), tookMax: _rmCount(p.tookMax), ds: _rmCount(p.ds), heal: _rmCount(p.heal), sec: _rmCount(p.sec) }, startMs);
+      const cur = byName.get(k);
+      if (!cur) { byName.set(k, entry); added++; }
+      else if (dmg > cur.total) byName.set(k, entry);          // both saw this player: the larger damage wins, as the hub's merge does
+    }
+    const rows = [];
+    for (const e of byName.values()) rows.push(...e.rows);
+    const deaths = (match && Array.isArray(match.deaths) ? match.deaths.map(d => ({ name: String(d.name), at: Math.round(Number(d.at) || 0) })) : []);
+    for (const d of deathsOf.get(r.id) || []) {
+      const name = _rmStr(d.name, 40), at = Math.round(_rmCount(d.at_sec));
+      if (name && RMPACK_NAME_RX.test(name) && !deaths.some(x => x.name.toLowerCase() === name.toLowerCase() && x.at === at) && deaths.length < 60) deaths.push({ name, at });
+    }
+    const obs = new Set(match && match.observers ? match.observers : (match ? ['@self'] : []));
+    for (const k of _rmKeys(r.observed_by, from)) obs.add(k);
+    const dur = Math.max(1, Math.round((Math.max(end, match ? match.end : 0) - startMs) / 1000));
+    const rec = {
+      v: 1, mob: match ? match.name : mob.replace(/_/g, ' '), startedMs: startMs, endedMs: Math.max(end, match ? match.end : 0), durationSec: dur,
+      zone: (match && match.zone) || _rmStr(r.zone, 64), boss: !!(r.boss || (match && match.boss)),
+      local: rows, deaths, raidCode: code, raidRole: match && match.code ? match.role : role, observedBy: [...obs],
+      imported: match ? !!match.imported : true,
+    };
+    if (!st.put('fight', 'rc|' + key + '|' + startMs, rec, { ts: startMs })) { out.skipped++; continue; }
+    if (match) out.fights.merged++; else out.fights.added++;
+    out.players += added;
+    // A later fight in the same pack can match this one.
+    const folded = _localFoldPlayers(rows, dur);
+    existing.push({ key, name: rec.mob, start: startMs, end: rec.endedMs, dur, zone: rec.zone, boss: rec.boss, players: folded, deaths, code, role: rec.raidRole, observers: obs, imported: rec.imported });
+  }
+  for (const r of pack.records) {
+    if (r.t === 'loot') {
+      const who = _rmStr(r.who, 40), item = _rmStr(r.item, 80), at = _rmNum(r.at);
+      if (!who || !RMPACK_NAME_RX.test(who) || !item || item.length < 2 || !(at > 0)) { out.skipped++; continue; }
+      const id = who + '|' + at + '|' + item.toLowerCase();
+      if (st.get('loot', id, { ts: at })) { out.loot.merged++; continue; }
+      if (st.put('loot', id, { v: 1, who, item, at, zone: _rmStr(r.zone, 64), character: null, self: false, raidCode: code, raidRole: role, observedBy: _rmKeys(r.observed_by, from), imported: true }, { ts: at })) out.loot.added++;
+    } else if (r.t === 'track_minute') {
+      const row = r.row;
+      const minuteMs = row && typeof row.minute_at === 'string' ? Date.parse(row.minute_at) : NaN;
+      let inc = null;
+      try { inc = _rmCleanMinute(JSON.parse(row && row.data)); } catch { inc = null; }
+      if (!inc || !Number.isFinite(minuteMs) || minuteMs % 60_000 !== 0 || new Date(minuteMs).toISOString() !== row.minute_at) { out.skipped++; continue; }
+      const have = st.get('track_minute', row.minute_at, { ts: minuteMs });
+      let cur = null;
+      try { cur = have && typeof have.data === 'string' ? _rmCleanMinute(JSON.parse(have.data)) : null; } catch { cur = null; }
+      const data = cur ? _rmMergeMinute(cur, inc) : inc;
+      const obs = new Set(have ? (Array.isArray(have.observed_by) && have.observed_by.length ? have.observed_by : ['@self']) : []);
+      for (const k of _rmKeys(r.observed_by, from)) obs.add(k);
+      const next = {
+        guild_id: 'local', minute_at: row.minute_at, night_key: _localTrackNightKey(minuteMs), raiders: data.who.length, frames: data.f.length,
+        zones: data.zones.slice(), data: JSON.stringify(data), raid_code: code, raid_role: have && have.raid_code ? have.raid_role : role, observed_by: [...obs],
+      };
+      if (!data.f.length) { out.skipped++; continue; }
+      st.put('track_minute', row.minute_at, next, { ts: minuteMs });
+      st.put('track_presence', row.minute_at, { night_key: next.night_key, minute_at: next.minute_at, zones: next.zones, raiders: next.raiders, raid_code: code }, { ts: minuteMs });
+      if (cur) out.minutes.merged++; else out.minutes.added++;
+    }
+  }
+  st.flush && st.flush();
+  return out;
+}
+
+// ---- routes ----
+async function _readBodyBuf(req, max) {
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > max) throw new Error('payload too large');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+// Returns a promise of true when it answered. Called from the dashboard router, after the local guard.
+async function _raidCodeRoute(req, res) {
+  const url = req && req.url;
+  if (!url || (url.indexOf('/api/raid-code') !== 0 && url.indexOf('/api/local/raid-code/') !== 0)) return false;
+  let u;
+  try { u = new URL(url, 'http://x'); } catch { return false; }
+  const p = u.pathname;
+  const send = (status, body, extra) => {
+    res.writeHead(status, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, extra || {}));
+    res.end(JSON.stringify(body));
+    return true;
+  };
+  const known = { '/api/raid-code': ['GET', 'POST'], '/api/local/raid-code/export': ['GET'], '/api/local/raid-code/import': ['POST'] };
+  if (!known[p]) return false;
+  if (!known[p].includes(req.method)) return send(405, { error: 'method not allowed' }, { Allow: known[p].join(', ') });
+  try {
+    if (p === '/api/raid-code' && req.method === 'GET') return send(200, { ok: true, raid: _raidCodeStatus(), role: _raidCodeRole() });
+    if (p === '/api/raid-code') {
+      let body = {};
+      const raw = await _readBody(req, 2 * 1024);
+      if (raw && raw.trim()) { try { body = JSON.parse(raw); } catch { return send(400, { error: 'invalid json' }); } }
+      if (body && body.clear) { _raidCodeClear(); return send(200, { ok: true, raid: null }); }
+      const out = _raidCodeSet(body && body.code);
+      return send(out.ok ? 200 : 400, out);
+    }
+    if (p === '/api/local/raid-code/export') {
+      const a = _raidCodeActive();
+      const out = _rmpackBuild(u.searchParams.get('code') || (a && a.code) || '', _localTrackStore());
+      res.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Disposition': 'attachment; filename="' + out.filename + '"', 'Content-Length': out.buffer.length, 'Cache-Control': 'no-store' });
+      res.end(out.buffer);
+      return true;
+    }
+    let buf;
+    try { buf = await _readBodyBuf(req, RMPACK_MAX_GZ); } catch { return send(413, { error: 'That file is too large for a raid pack (5 MB at most).' }); }
+    return send(200, _rmpackImport(buf, _localTrackStore()));
+  } catch (e) {
+    return send(e && e.status === 400 ? 400 : 500, { error: e && e.status === 400 ? e.message : 'raid code unavailable' });
+  }
+}
+
 // Export internals for tests; only run main() when invoked directly as CLI.
 module.exports = {
   // Rebuild from my logs (2026-10-21): see the block above module.exports.
@@ -62857,6 +63498,10 @@ module.exports = {
   // My parses on the local site + the guild's record kept beside it (2026-10-21): see the block above module.exports.
   _localParsesAnswer, _localParsesRoute, _localFights, _localFoldPlayers, _localParseDiff, _localHubMatch, _localHubClean, _localHubApply, _localHubEncounters, _localHubSync,
   _localHubStatus, _localHubResetForTest, LOCAL_HUB_KIND, LOCAL_HUB_STATE_KIND, LOCAL_HUB_MATCH_MS,
+  // Raid codes (2026-10-21): see the block above module.exports.
+  _raidCodeNormalize, _raidCodeSet, _raidCodeClear, _raidCodeActive, _raidCodeStatus, _raidCodeHolds, _raidTag, _raidCodeSaveFight, _raidCodeNoteLoot,
+  _raidPersonKey, _rmpackBuild, _rmpackParse, _rmpackImport, _rmCleanMinute, _rmMergeMinute, _raidCodeRoute, _raidCodeSetFileForTest,
+  RAID_HOLD_KINDS, RAID_CODE_TTL_MS, enqueueUpload,
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   buildFeedbackLogSlice, _feedbackLineAllowed,

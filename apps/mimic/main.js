@@ -10397,6 +10397,32 @@ function _sortOverlayMenuItems(menu) {
   return menu;
 }
 
+// 🎟 Raid code (the guild lead, 2026-10-21): the agent owns the pass (GET/POST /api/raid-code); the tray keeps the
+// last answer for at most 20 s and rebuilds its menu when the code changes. A pass lasts six hours and ends by itself.
+let _raidCodeTray = null;
+let _raidCodeTrayAt = 0;
+function _raidCodeTrayRefresh() {
+  const now = Date.now();
+  if (!agentPort || now - _raidCodeTrayAt < 20000) return;
+  _raidCodeTrayAt = now;
+  _agentCall('GET', '/api/raid-code').then((r) => {
+    const next = r && r.ok && r.raid && r.raid.code ? r.raid : null;
+    const was = _raidCodeTray && _raidCodeTray.code;
+    _raidCodeTray = next;
+    if ((next && next.code) !== was) { try { buildTrayMenu(); } catch (e) { void e; } }
+  });
+}
+function _raidCodeTrayItems() {
+  _raidCodeTrayRefresh();
+  const r = _raidCodeTray;
+  if (!r || !(r.expires > Date.now())) return [{ label: '🎟 Join a raid with a code…', click: () => showDashboardTab('raidcode') }];
+  const min = Math.max(0, Math.floor((r.expires - Date.now()) / 60000));
+  const left = min >= 60 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${min}m`;
+  return [
+    { label: `🎟 Raid code ${r.code} · ${left} left`, click: () => showDashboardTab('raidcode') },
+    { label: '✕ Leave raid code', click: () => { _agentCall('POST', '/api/raid-code', { clear: true }).then(() => { _raidCodeTray = null; _raidCodeTrayAt = 0; try { buildTrayMenu(); } catch (e) { void e; } }); } },
+  ];
+}
 function buildTrayMenu() {
   if (!tray) return;
   const s = currentStatus();
@@ -10785,6 +10811,9 @@ function buildTrayMenu() {
     { label: '🎒 Inventory (on this PC)', click: () => { if (!openLocalSite('inventory')) shell.openExternal(`http://127.0.0.1:${agentPort}/local/inventory/`); } },
     { label: '📊 My fights (on this PC)', click: () => { if (!openLocalSite('parses')) shell.openExternal(`http://127.0.0.1:${agentPort}/local/parses/`); } },
     { label: '🎬 My replay (on this PC)', click: () => { if (!openLocalSite('replay')) shell.openExternal(`http://127.0.0.1:${agentPort}/local/replay/`); } },
+    // Tray ↔ dashboard parity: the dashboard rail's "On this PC › Join a raid with a code" is the other half. A code is
+    // typed on the dashboard card (the tray has no text box); the tray shows the pass while it runs and can end it.
+    ..._raidCodeTrayItems(),
     { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     // Same folder as the dashboard's Sounds card button: drop .wav / .mp3 / .ogg files here to use them in triggers.
