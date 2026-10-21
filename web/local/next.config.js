@@ -29,6 +29,12 @@ module.exports = {
       /[\\/]components[\\/]WpDbLink$/,
       path.join(__dirname, 'stubs', 'WpDbLink.tsx'),
     ));
+    // The replay's 3D view needs a zone mesh the agent does not serve, and would ship three.js. The board is
+    // mounted `bounded.flat` (no 2D/3D switch), so the dynamic import is swapped for a component that renders nothing.
+    config.plugins.push(new webpack.NormalModuleReplacementPlugin(
+      /[\\/]Replay3D$/,
+      path.join(__dirname, 'stubs', 'Replay3D.tsx'),
+    ));
     return config;
   },
 };

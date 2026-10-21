@@ -464,6 +464,8 @@ export type BoundedReplay = {
     mesh: (zone: string, floors: '' | '1' | 'only') => string;
   };
   seek?: { t: number; n: number } | null;
+  /** The caller has no zone mesh to serve (the local site): the 2D/3D switch is left off and the map stays 2D. */
+  flat?: boolean;
 };
 
 export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedReplay; timeline?: boolean } = {}) {
@@ -1327,12 +1329,14 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
               className={`${chip} ${picks.split === m ? chipOn : chipIdle}`}>{m === 'auto' ? 'Auto' : 'Off'}</button>
           ))}
         </div>
+        {!bounded?.flat && (
         <div className="ml-auto flex gap-1.5" role="group" aria-label="Dimensions">
           {(['2d', '3d'] as const).map(m => (
             <button key={m} type="button" aria-pressed={mode === m} onClick={() => { setNo3d(false); setMode(m); }}
               className={`${chip} ${mode === m ? chipOn : chipIdle}`}>{m === '2d' ? '2D' : '3D'}</button>
           ))}
         </div>
+        )}
       </div>
 
       {pickerOpen && (

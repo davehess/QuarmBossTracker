@@ -99,7 +99,11 @@ export function chunk<T>(a: readonly T[], size: number): T[][] {
   return out;
 }
 
-/** The bosses endpoint's JSON -> SpawnBosses, dropping anything that is not the shape we wrote. */
+/**
+ * The bosses endpoint's JSON -> SpawnBosses, dropping anything that is not the shape we wrote. A boss with an empty
+ * `points` list is kept: the hosted route never sends one (buildSpawnBosses drops a boss with no place), but the local
+ * site's agent does for a kill it has no recorded position for, and the raid timeline still wants that death.
+ */
 export function parseBosses(j: unknown): SpawnBoss[] {
   const list = j && typeof j === 'object' ? (j as { bosses?: unknown }).bosses : null;
   if (!Array.isArray(list)) return [];
@@ -109,7 +113,7 @@ export function parseBosses(j: unknown): SpawnBoss[] {
     const points = (b.points as Record<string, unknown>[]).filter(
       p => p && typeof p.zone === 'string' && finite(p.x) && finite(p.y),
     ).map(p => ({ zone: p.zone as string, x: p.x as number, y: p.y as number, z: finite(p.z) ? p.z : 0 }));
-    if (points.length) out.push({ npc_id: finite(b.npc_id) ? b.npc_id : 0, name: b.name, from: b.from, to: b.to, points });
+    out.push({ npc_id: finite(b.npc_id) ? b.npc_id : 0, name: b.name, from: b.from, to: b.to, points });
   }
   return out;
 }
