@@ -90,7 +90,9 @@ describe('the page', () => {
   it('always shows the by-essence queue: no ?v= layouts, no by-person table', () => {
     expect(page).toMatch(/const essences = essDemo \? demoEssenceQueue\(\) : await loadEssenceQueue\(\);/);
     expect(page).toMatch(/<EssencesQueue demo=\{essDemo\} \{\.\.\.essences\} \/>/);
-    expect(page).not.toMatch(/essLayout|\bv\?: string|\bv === 'b'/);
+    // ?v= is the sidebar-preview switch now (web/lib/popSidebar.ts, test/pop-sidebar.test.js); it picks a sidebar and
+    // where the one by-essence card sits, never a different essences layout.
+    expect(page).not.toMatch(/essLayout|\bv === 'b'/);
     const card = stripJs(fs.readFileSync(path.join(ROOT, 'web/app/pop/EssencesQueue.tsx'), 'utf8'));
     expect(card).not.toMatch(/layout|<table/);
     expect(card).toMatch(/ESSENCES\.map\(ess => \{/);
