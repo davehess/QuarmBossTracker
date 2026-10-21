@@ -144,6 +144,9 @@ async function _request(path, opts = {}) {
       // queries can't wedge the breaker. Either way the caller still gets null
       // (contract unchanged).
       if (res.status >= 500) _breakerOnFailure(); else _breakerOnSuccess();
+      // A caller that must tell "the function is not there" from any other failure hands in errorOut
+      // (insertIgnoreDuplicates does); it gets the status and parsed body. Failures still resolve to null.
+      if (opts.errorOut) { opts.errorOut.status = res.status; opts.errorOut.body = parsed; }
       // Stringify the parsed body so Node's util.inspect doesn't truncate it
       // to "{" when an object spans multiple keys. PostgREST 4xx bodies carry
       // {code, details, hint, message} and you NEED the full hint to debug
@@ -263,16 +266,63 @@ async function upsert(table, rows, onConflict, opts = {}) {
 // Insert with silent dedup against ANY unique index/constraint that fires —
 // including PARTIAL unique indexes that PostgREST's `on_conflict=` can't
 // reference (buff_casts has two partial uniques split on spell_id, and
-// upsert(...) was 400-erroring on every call as a result). This sends
-// `Prefer: resolution=ignore-duplicates` with no on_conflict target, which
-// becomes an unqualified ON CONFLICT DO NOTHING server-side and works with
-// any unique storage. Drops `return=representation` so the response body is
-// empty (saves egress on what's typically a hot insert path).
+// upsert(...) was 400-erroring on every call as a result).
+//
+// ⚠ `Prefer: resolution=ignore-duplicates` with no on_conflict is NOT an
+// unqualified ON CONFLICT DO NOTHING. PostgREST targets the PRIMARY KEY
+// (`ON CONFLICT("id") DO NOTHING`, measured in the postgres log 2026-10-20), so
+// every other unique index still raises 23505 and the WHOLE batch is rejected:
+// 220 encounter_events batches and 3 faction_hits batches in one day.
+// So the write goes through public.insert_ignore_duplicates (migration
+// 20261020200000), which runs ON CONFLICT DO NOTHING with no target. Rows are
+// grouped by key set, because the function takes its column list from the first
+// row and a row must not get NULL for a column it omitted (that would override
+// the column's default). Until that migration is applied the function is a 404
+// (PGRST202) and this falls back to the old POST, so a deploy first changes
+// nothing; the RPC is retried every _IGNORE_RPC_RETRY_MS so applying the
+// migration needs no redeploy.
+const _IGNORE_RPC_RETRY_MS = 10 * 60 * 1000;
+let _ignoreRpcMissingUntil = 0;
+function _resetIgnoreRpc() { _ignoreRpcMissingUntil = 0; }   // test-only
+function _isRpcMissing(err) {
+  const b = err && err.body;
+  return !!err && err.status === 404 &&
+    (b?.code === 'PGRST202' || /could not find the function/i.test(String(b?.message || '')));
+}
 async function insertIgnoreDuplicates(table, rows, opts = {}) {
-  // opts.representation: return the rows PostgREST actually inserted —
-  // duplicates absorbed by a unique index are excluded from the response, so
-  // the caller gets an accurate new-row count (the loot fold's `written`).
-  // Default stays minimal for hot paths (buff_casts) where the body is waste.
+  // opts.representation: return the rows actually inserted — duplicates
+  // absorbed by a unique index are excluded from the response, so the caller
+  // gets an accurate new-row count (the loot fold's `written`). Default stays
+  // minimal for hot paths (buff_casts) where the body is waste: it resolves to
+  // null on success, exactly as it always did (null also means "failed").
+  // A `?select=…` on the table argument (raid_night_appearance) is dropped:
+  // the RPC always returns whole rows.
+  const bare = String(table).split('?')[0];
+  if (Array.isArray(rows) && rows.length > 0 && Date.now() >= _ignoreRpcMissingUntil) {
+    const groups = new Map();
+    for (const r of rows) {
+      const k = JSON.stringify(Object.keys(r || {}).sort());
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    }
+    const inserted = [];
+    let failed = false, missing = false;
+    for (const g of groups.values()) {
+      const err = {};
+      const out = await _request('/rpc/insert_ignore_duplicates', {
+        method: 'POST', body: { p_table: bare, p_rows: g, p_return_rows: !!opts.representation }, errorOut: err,
+      });
+      if (Array.isArray(out)) { inserted.push(...out); continue; }
+      if (_isRpcMissing(err)) { missing = true; break; }
+      failed = true;
+    }
+    if (!missing) {
+      if (failed) return null;
+      return opts.representation ? inserted : null;
+    }
+    _ignoreRpcMissingUntil = Date.now() + _IGNORE_RPC_RETRY_MS;
+    console.warn('[supabase] insert_ignore_duplicates RPC is not installed — falling back to PostgREST ignore-duplicates (primary-key only). Apply 20261020200000_insert_ignore_duplicates_rpc.sql.');
+  }
   const ret = opts.representation ? 'return=representation' : 'return=minimal';
   return _request(`/${table}`, {
     method: 'POST',
@@ -787,6 +837,9 @@ async function upsertCombatRollup(encounterId, agentVersion, rollupByChar) {
     self_attack_count: Number(b?.self_attack_count) || 0,
   }));
   if (rows.length === 0) return;
+  // One lock order for every writer: two uploads of the same fight take their row locks in the order the
+  // rows are sent, and opposite orders were the 40P01 deadlocks in the postgres log (4 in 24 h, 2026-10-20).
+  rows.sort((a, b) => (a.character_name < b.character_name ? -1 : a.character_name > b.character_name ? 1 : 0));
   await upsert('encounter_combat_rollup', rows, 'encounter_id,character_name');
 }
 
@@ -927,7 +980,7 @@ module.exports = {
   _resetBreaker,   // test-only
   capStats,
   _resetCapStats,  // test-only
-  select, selectAllPaged, insert, insertIgnoreDuplicates, update, upsert, del, rpc,
+  select, selectAllPaged, insert, insertIgnoreDuplicates, _resetIgnoreRpc, update, upsert, del, rpc,
   getWhoOverrides, upsertWhoOverride,
   applyQuakeToPvpBoardMirror,
   getNpcIdForInternalId,
