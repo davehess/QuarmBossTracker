@@ -975,6 +975,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // Feedback in its own window — the dashboard's 💬 Feedback button and the tray item.
   // Resolves false when the agent has no port yet (the page then opens its in-page card).
   openFeedback:        ()         => ipcRenderer.invoke('open-feedback'),
+  // A page of the local site ("On this PC", served by the agent under /local/) in its own window: the
+  // dashboard rail's Inventory item and the tray item. Resolves false when the agent has no port yet.
+  openLocalSite:       (page)     => ipcRenderer.invoke('open-local-site', page),
   createPanelOverlay:  (panelKey) => ipcRenderer.invoke('create-panel-overlay', panelKey),
   getConfig:     () => ipcRenderer.invoke('get-config'),
   isMuted:       () => _wpMuted,
@@ -1381,7 +1384,9 @@ contextBridge.exposeInMainWorld('mimic', {
 // The `?overlay=` PANEL windows below are different and still need it — they
 // are the dashboard rendered into a small floating window with no chrome of
 // its own.
-const _isAgentServedOverlay = location.pathname.startsWith('/overlay/');
+// The local site ("On this PC", /local/, 2026-10-21) is the same case: a page with its own header, where a fixed
+// ⚙ at top-right would sit on top of it.
+const _isAgentServedOverlay = location.pathname.startsWith('/overlay/') || location.pathname.startsWith('/local/');
 if (location.protocol === 'http:' && !_isAgentServedOverlay) {
   const ready = (fn) => {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);

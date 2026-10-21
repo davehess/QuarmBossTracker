@@ -19016,6 +19016,18 @@ body.wp-overlay-mode .wp-index, body.wp-feedback-mode .wp-index { display:none !
 .nav button.active { background:#1f6feb; border-color:#1f6feb; color:#fff }
 /* Tour + Feedback at the foot of the rail (the guild lead, 2026-09-23). Dim, so
    they don't read as two more tabs. */
+/* "On this PC" (the guild lead, 2026-10-21): the pages that are built from THIS PC's own files and never
+   leave it. Its own labelled group in the rail, apart from the tabs above (those are this dashboard's own
+   panes). Items are not data-tab buttons, so the tab switcher ignores them. */
+.wp-rail-grp { margin-top:10px; padding-top:8px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:4px; }
+.wp-rail-grp .wp-lbl { padding:0 2px 2px; }
+.nav button:disabled { opacity:.45; cursor:default; }
+.nav button:disabled:hover { background:#21262d; }
+.wp-rail-grp .wp-soon { font-size:9px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin-left:4px; }
+@media (max-width: 700px) {
+  .nav .wp-rail-grp { display:contents; }
+  .wp-rail-grp .wp-lbl { display:none; }
+}
 .wp-rail-foot { margin-top:auto; padding-top:8px; display:flex; flex-direction:column; gap:4px; }
 .wp-rail-foot button { color:var(--dim); }
 .wp-rail-foot button:hover { color:var(--text); }
@@ -19350,6 +19362,17 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
        officer-gated card DATA is served only to officers, so this is a real
        gate, not a CSS hide. -->
   <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
+  <!-- 🖥 On this PC (the guild lead, 2026-10-21, option B: the website's own pages bundled into Mimic and
+       served by this agent under /local/). Built from your own logs and inventory files; nothing leaves
+       the PC. Inventory opens in its own Mimic window (the tray's "Inventory (on this PC)" is the same
+       window); in a plain browser it opens a new tab. My parses and My replay are placeholders until they
+       exist. No data-tab, so the tab switcher ignores them. -->
+  <div class="wp-rail-grp" id="wpLocalGrp">
+    <div class="wp-lbl">On this PC</div>
+    <button id="wpLocalInv" type="button" onclick="wpOpenLocalSite('inventory')" title="Every item across your characters, from the inventory files on this PC (opens in its own window). Nothing leaves the PC.">🎒 Inventory</button>
+    <button type="button" disabled title="Coming soon: your own parses, built from your own logs">📈 My parses<span class="wp-soon">soon</span></button>
+    <button type="button" disabled title="Coming soon: replay your own movement through a fight">🎬 My replay<span class="wp-soon">soon</span></button>
+  </div>
   <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
        2026-09-23: "We're running out of horizontal real estate"). They went up to
        the top bar on 2026-09-02 so a long page never meant scrolling back for
@@ -19675,6 +19698,22 @@ function wpFeedbackClick() {
     } catch (e) { void e; }
   }
   wpOpenFeedback();
+}
+// The rail's "On this PC" items: a page of the local site (/local/<page>/, served by this agent). Mimic opens
+// it in its own window (the same one the tray item opens); with no Mimic bridge, or while the agent has no
+// port yet, a new browser tab does the job.
+function wpOpenLocalSite(page) {
+  var url = '/local/' + page + '/';
+  var fallback = function () { try { window.open(url, '_blank'); } catch (e) { void e; } };
+  if (window.mimic && window.mimic.openLocalSite) {
+    try {
+      Promise.resolve(window.mimic.openLocalSite(page)).then(
+        function (ok) { if (ok === false) fallback(); },
+        fallback);
+      return;
+    } catch (e) { void e; }
+  }
+  fallback();
 }
 window.addEventListener('load',   function () { try { _wpSyncTopBarHeight(); } catch (e) { void e; } });
 // ⚠ And once RIGHT NOW, not only from events. This script's scope runs at an
@@ -34470,6 +34509,10 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, must-revalidate' });
         return res.end(OVERLAYS[name]);
       }
+      // The local site (web/local, bundled into Mimic): static pages under /local/, answered from this PC's
+      // files by /api/local/*. Read-only, never uploads.
+      if (req.url && (req.url === '/local' || req.url.indexOf('/local/') === 0 || req.url.indexOf('/local?') === 0)) return _serveLocalSite(req, res);
+      if (req.url && req.url.split('?')[0] === '/api/local/inventory') return _handleLocalInventory(req, res);
       if (req.url === '/api/state') {
         // Serve every poller the SAME serialized snapshot for 400ms. The
         // dashboard (2s) + CH chain (600ms) + tank/command/who/mobinfo
@@ -38517,6 +38560,127 @@ function scanInventoryUploads() {
       console.log(`[inventory] queued inventory upload for ${character} (${rows.length} rows)`);
     } catch { /* unreadable / malformed — skip, retry next scan */ }
   }
+}
+
+// ── The local site: the website's own pages, bundled into Mimic (the guild lead, 2026-10-21) ────────────
+// web/local is a small Next.js app exported static (`out/`) and shipped inside Mimic. This serves that
+// folder under /local/ on the dashboard port, and /api/local/* answers it from THIS PC's files. Both are
+// GET-only, read-only, behind the same local-request guard as every route, and NOTHING here uploads.
+//
+// Where the bundle is: Mimic passes WOLFPACK_LOCAL_SITE_DIR (resources/local-site when packaged). A dev run
+// from the repo finds web/local/out beside this file's package. With neither, /local/ answers 404 with a
+// message saying so, and the rest of the agent is unaffected.
+const _LOCAL_SITE_MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
+  '.map': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+};
+function _localSiteDir() {
+  const fromEnv = String(process.env.WOLFPACK_LOCAL_SITE_DIR || '').trim();
+  return fromEnv || path.join(__dirname, '..', '..', 'web', 'local', 'out');
+}
+// `rel` = the URL path after "/local/" (query already cut). Returns an absolute FILE inside `root`, or null.
+// A directory serves its index.html, and an extension-less route does too (Next exports /inventory/ as
+// inventory/index.html). Refused outright: "..", a backslash, a NUL, a bad percent-escape.
+function _localSiteResolve(root, rel) {
+  let p;
+  try { p = decodeURIComponent(String(rel || '')); } catch { return null; }
+  if (p.indexOf('\0') >= 0 || p.indexOf('\\') >= 0) return null;
+  const segs = p.split('/').filter(Boolean);
+  if (segs.some(s => s === '..')) return null;
+  const base = path.resolve(root);
+  let target = path.join(base, ...segs);
+  if (target !== base && target.indexOf(base + path.sep) !== 0) return null;
+  try {
+    let st = fs.statSync(target);
+    if (st.isDirectory()) { target = path.join(target, 'index.html'); st = fs.statSync(target); }
+    return st.isFile() ? target : null;
+  } catch { /* fall through to the route form */ }
+  if (path.extname(target)) return null;
+  try { const alt = path.join(target, 'index.html'); return fs.statSync(alt).isFile() ? alt : null; } catch { return null; }
+}
+function _serveLocalSite(req, res) {
+  const send = (code, type, body, extra) => {
+    res.writeHead(code, Object.assign({ 'Content-Type': type, 'Cache-Control': 'no-store' }, extra || {}));
+    res.end(req.method === 'HEAD' ? undefined : body);
+  };
+  if (req.method !== 'GET' && req.method !== 'HEAD') return send(405, 'text/plain; charset=utf-8', 'method not allowed', { 'Allow': 'GET, HEAD' });
+  const urlPath = String(req.url || '').split('?')[0].split('#')[0];
+  if (urlPath === '/local') return send(302, 'text/plain; charset=utf-8', 'redirecting', { 'Location': '/local/' });
+  const root = _localSiteDir();
+  let rootOk = false;
+  try { rootOk = fs.statSync(root).isDirectory(); } catch { rootOk = false; }
+  if (!rootOk) {
+    return send(404, 'text/plain; charset=utf-8',
+      'The local site is not installed in this build: Mimic ships it as a folder (WOLFPACK_LOCAL_SITE_DIR), and a repo run needs `cd web/local && npx next build` first.');
+  }
+  const file = _localSiteResolve(root, urlPath.slice('/local/'.length));
+  if (!file) return send(404, 'text/plain; charset=utf-8', 'not found');
+  const type = _LOCAL_SITE_MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+  // _next/static files carry a content hash in their name; everything else (the HTML) must follow a new bundle.
+  const hashed = /[\\/]_next[\\/]static[\\/]/.test(file);
+  res.writeHead(200, { 'Content-Type': type, 'Cache-Control': hashed ? 'public, max-age=31536000, immutable' : 'no-store' });
+  if (req.method === 'HEAD') return res.end();
+  const stream = fs.createReadStream(file);
+  stream.on('error', () => { try { res.destroy(); } catch { void 0; } });
+  stream.pipe(res);
+}
+// Every folder an <Char>-Inventory.txt can sit in: the EQ folders Mimic knows, plus each watched log's folder.
+function _localInventoryDirs() {
+  const dirs = new Set();
+  try { for (const d of _eqSetupDirs()) dirs.add(d); } catch { void 0; }
+  for (const w of (stats.watchedLogs || [])) { if (w && w.logPath) dirs.add(path.dirname(w.logPath)); }
+  return [...dirs];
+}
+// The rows the local inventory page aggregates: one set per character, from the newest file when a
+// character has more than one. The shape is the website's own (character_name, slot_label, item_id,
+// item_name, quantity, observed_at), so web/lib/inventoryAggregate.ts runs on it unchanged. `meta` (the
+// damage / ac / nodrop / itemtype / slots the type chips read) is EMPTY: the agent's item catalog holds
+// [id, name, era] only, so the chips other than Spell stay empty until a catalog that carries those fields lands.
+function _localInventorySnapshot(dirs) {
+  const byChar = new Map();
+  for (const dir of dirs) {
+    let entries;
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    for (const name of entries) {
+      const m = name.match(INVENTORY_FILENAME_RX);
+      if (!m) continue;
+      const character = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+      const full = path.join(dir, name);
+      try {
+        const st = fs.statSync(full);
+        const cur = byChar.get(character.toLowerCase());
+        if (cur && cur.mtimeMs >= st.mtimeMs) continue;
+        byChar.set(character.toLowerCase(), {
+          name: character, mtimeMs: st.mtimeMs, observed_at: st.mtime.toISOString(),
+          rows: parseInventoryFileForUpload(fs.readFileSync(full, 'utf8')),
+        });
+      } catch { /* unreadable file: that character is skipped this time */ }
+    }
+  }
+  const chars = [...byChar.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const rows = [];
+  for (const c of chars) {
+    for (const r of c.rows) {
+      rows.push({ character_name: c.name, slot_label: r.slot_label, item_id: r.item_id, item_name: r.item_name,
+        quantity: r.quantity, observed_at: c.observed_at });
+    }
+  }
+  return {
+    ok: true, generated_at: new Date().toISOString(),
+    characters: chars.map(c => ({ name: c.name, observed_at: c.observed_at, rows: c.rows.length })),
+    rows, meta: [], meta_available: false,
+  };
+}
+function _handleLocalInventory(req, res) {
+  if (req.method !== 'GET') { res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': 'GET' }); return res.end('{"error":"method not allowed"}'); }
+  let body;
+  try { body = JSON.stringify(_localInventorySnapshot(_localInventoryDirs())); }
+  catch (e) { console.error('[api/local/inventory] failed:', e && (e.stack || e.message || e)); res.writeHead(500, { 'Content-Type': 'application/json' }); return res.end('{"error":"could not read the inventory files"}'); }
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(body);
 }
 
 function _scanOptInFiles() {

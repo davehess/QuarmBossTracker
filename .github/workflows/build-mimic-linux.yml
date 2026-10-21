@@ -65,6 +65,18 @@ jobs:
         working-directory: apps/mimic
         run: npm run predist
 
+      # The local site (web/local, exported static, bundled as resources/local-site): the same step the Windows
+      # release runs. Fails the build when the export is missing (electron-builder only warns about that).
+      - name: Build the local site (web/local)
+        working-directory: web/local
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npx next build
+          test -f out/inventory/index.html || { echo "::error::web/local did not export out/inventory/index.html"; exit 1; }
+
       # Version =<mimic base>-linux.<run_number>, e.g. 2.6.1-linux.19.
       #
       # The base is READ FROM package.json, not hard-coded. It used to be a

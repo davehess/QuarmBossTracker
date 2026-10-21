@@ -49,6 +49,10 @@
       {
         "from": "sounds",
         "to": "sounds"
+      },
+      {
+        "from": "../../web/local/out",
+        "to": "local-site"
       }
     ],
     "publish": [

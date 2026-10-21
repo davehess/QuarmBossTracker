@@ -114,6 +114,11 @@ const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
 // folders through env so its dashboard can list and play them too (see _soundDirs in the agent).
 const SOUNDS_SHIPPED_DIR = () => (app.isPackaged ? path.join(process.resourcesPath, 'sounds') : path.join(__dirname, 'sounds'));
 const SOUNDS_USER_DIR    = () => path.join(app.getPath('userData'), 'sounds');
+// The local site (the guild lead, 2026-10-21): the website's own pages, exported static from web/local and
+// shipped as resources/local-site (extraResources; the repo's web/local/out in dev). The agent serves it
+// under /local/ on the dashboard port, so it is handed the folder through env (a hot-swapped agent in userData
+// cannot find resources/ on its own).
+const LOCAL_SITE_DIR = () => (app.isPackaged ? path.join(process.resourcesPath, 'local-site') : path.join(__dirname, '..', '..', 'web', 'local', 'out'));
 // Downloaded callout voices (Piper), under the user's data folder, never in the installer. See neuralVoice.js.
 const VOICES_DIR         = () => path.join(app.getPath('userData'), 'voices');
 function _ensureSoundsDir() { try { fs.mkdirSync(SOUNDS_USER_DIR(), { recursive: true }); } catch { /* read-only profile: the library is just the shipped set */ } }
@@ -4026,6 +4031,7 @@ async function launchAgent() {
   _ensureSoundsDir();
   env.WOLFPACK_SOUNDS_DIR = SOUNDS_SHIPPED_DIR();
   env.WOLFPACK_SOUNDS_USER_DIR = SOUNDS_USER_DIR();
+  env.WOLFPACK_LOCAL_SITE_DIR = LOCAL_SITE_DIR();
   // Plural, path-delimited. The agent prefers this over its own watched-log
   // inference, which cannot see a folder that has never produced a log.
   if (knownDirs && knownDirs.length) env.WOLFPACK_EQ_DIRS = knownDirs.join(path.delimiter);
@@ -6141,6 +6147,44 @@ function openFeedback() {
   feedbackWindow.loadURL(url)
     .catch((err) => appendAgentLog(`[mimic] feedback window load REJECTED — ${err && err.message}\n`));
   feedbackWindow.on('closed', () => { feedbackWindow = null; });
+  return true;
+}
+
+// "On this PC" (the guild lead, 2026-10-21): the local site's pages (web/local, served by the agent under
+// /local/) in a window of their own, the same way Feedback has one. A separate window, not a navigation of the
+// dashboard: the dashboard's hot-swap, port-drift and self-heal reloads never touch it, and the dashboard keeps
+// its place. The preload skips its injected ⚙ on /local/ pages (it would sit on the page's own header).
+// A link out of it (an item's pqdi page) opens in the browser. False = no agent port yet, so the caller falls back.
+let localSiteWindow = null;
+function openLocalSite(page) {
+  if (!agentPort) return false;
+  const slug = String(page || 'inventory').replace(/[^a-z-]/g, '') || 'inventory';
+  const url = `http://127.0.0.1:${agentPort}/local/${slug}/`;
+  if (localSiteWindow && !localSiteWindow.isDestroyed()) {
+    try { if (localSiteWindow.isMinimized()) localSiteWindow.restore(); } catch (e) { void e; }
+    localSiteWindow.show();
+    localSiteWindow.focus();
+    if (localSiteWindow.webContents.getURL() !== url) {
+      localSiteWindow.loadURL(url).catch((err) => appendAgentLog(`[mimic] local site window load REJECTED — ${err && err.message}\n`));
+    }
+    return true;
+  }
+  localSiteWindow = new BrowserWindow({
+    width: 1100, height: 760, minWidth: 640, minHeight: 420, resizable: true,
+    title: 'Wolf Pack miMIC — On this PC', backgroundColor: '#0d1117',
+    // Off the taskbar like every window but the dashboard (FB-61): it is a reference page, reopened from the
+    // dashboard rail or the tray, not something written over minutes like a feedback report.
+    skipTaskbar: true,
+    webPreferences: _wpPrefs('On this PC'),
+  });
+  localSiteWindow.setMenu(null);
+  localSiteWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (/^https?:\/\//i.test(target)) shell.openExternal(target).catch(() => {});
+    return { action: 'deny' };
+  });
+  localSiteWindow.loadURL(url)
+    .catch((err) => appendAgentLog(`[mimic] local site window load REJECTED — ${err && err.message}\n`));
+  localSiteWindow.on('closed', () => { localSiteWindow = null; });
   return true;
 }
 
@@ -10737,6 +10781,8 @@ function buildTrayMenu() {
     // Tray ↔ dashboard parity: the dashboard's 📈 My parses tab is the other half of this item (a member,
     // 2026-10-06: "is there a page in mimic that'll graph out my parses over a variable time window").
     { label: '📈 My parses', click: () => showDashboardTab('myparses') },
+    // Tray ↔ dashboard parity: the dashboard rail's "On this PC › Inventory" opens this same window (openLocalSite).
+    { label: '🎒 Inventory (on this PC)', click: () => { if (!openLocalSite('inventory')) shell.openExternal(`http://127.0.0.1:${agentPort}/local/inventory/`); } },
     { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     // Same folder as the dashboard's Sounds card button: drop .wav / .mp3 / .ogg files here to use them in triggers.
@@ -13480,6 +13526,8 @@ ipcMain.handle('quit-app', () => { setImmediate(_quitMimic); return true; });
 ipcMain.handle('open-resources', () => { openResources(); return true; });
 // 💬 Feedback in its own window (the dashboard button and the tray item). False = no agent port yet.
 ipcMain.handle('open-feedback', () => openFeedback());
+// 🎒 "On this PC" pages (the dashboard rail group and the tray item). False = no agent port yet.
+ipcMain.handle('open-local-site', (_e, page) => openLocalSite(page));
 // "Send this panel to its own overlay window" — increment 2d of the
 // customizable-dashboard work. Renderer passes a normalized panel key
 // (stable <h2> prefix); spawns a transparent always-on-top window that

@@ -124,6 +124,18 @@ body.wp-overlay-mode .wp-index, body.wp-feedback-mode .wp-index { display:none !
 .nav button.active { background:#1f6feb; border-color:#1f6feb; color:#fff }
 /* Tour + Feedback at the foot of the rail (the guild lead, 2026-09-23). Dim, so
    they don't read as two more tabs. */
+/* "On this PC" (the guild lead, 2026-10-21): the pages that are built from THIS PC's own files and never
+   leave it. Its own labelled group in the rail, apart from the tabs above (those are this dashboard's own
+   panes). Items are not data-tab buttons, so the tab switcher ignores them. */
+.wp-rail-grp { margin-top:10px; padding-top:8px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:4px; }
+.wp-rail-grp .wp-lbl { padding:0 2px 2px; }
+.nav button:disabled { opacity:.45; cursor:default; }
+.nav button:disabled:hover { background:#21262d; }
+.wp-rail-grp .wp-soon { font-size:9px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin-left:4px; }
+@media (max-width: 700px) {
+  .nav .wp-rail-grp { display:contents; }
+  .wp-rail-grp .wp-lbl { display:none; }
+}
 .wp-rail-foot { margin-top:auto; padding-top:8px; display:flex; flex-direction:column; gap:4px; }
 .wp-rail-foot button { color:var(--dim); }
 .wp-rail-foot button:hover { color:var(--text); }
@@ -458,6 +470,17 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
        officer-gated card DATA is served only to officers, so this is a real
        gate, not a CSS hide. -->
   <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
+  <!-- 🖥 On this PC (the guild lead, 2026-10-21, option B: the website's own pages bundled into Mimic and
+       served by this agent under /local/). Built from your own logs and inventory files; nothing leaves
+       the PC. Inventory opens in its own Mimic window (the tray's "Inventory (on this PC)" is the same
+       window); in a plain browser it opens a new tab. My parses and My replay are placeholders until they
+       exist. No data-tab, so the tab switcher ignores them. -->
+  <div class="wp-rail-grp" id="wpLocalGrp">
+    <div class="wp-lbl">On this PC</div>
+    <button id="wpLocalInv" type="button" onclick="wpOpenLocalSite('inventory')" title="Every item across your characters, from the inventory files on this PC (opens in its own window). Nothing leaves the PC.">🎒 Inventory</button>
+    <button type="button" disabled title="Coming soon: your own parses, built from your own logs">📈 My parses<span class="wp-soon">soon</span></button>
+    <button type="button" disabled title="Coming soon: replay your own movement through a fight">🎬 My replay<span class="wp-soon">soon</span></button>
+  </div>
   <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
        2026-09-23: "We're running out of horizontal real estate"). They went up to
        the top bar on 2026-09-02 so a long page never meant scrolling back for
@@ -783,6 +806,22 @@ function wpFeedbackClick() {
     } catch (e) { void e; }
   }
   wpOpenFeedback();
+}
+// The rail's "On this PC" items: a page of the local site (/local/<page>/, served by this agent). Mimic opens
+// it in its own window (the same one the tray item opens); with no Mimic bridge, or while the agent has no
+// port yet, a new browser tab does the job.
+function wpOpenLocalSite(page) {
+  var url = '/local/' + page + '/';
+  var fallback = function () { try { window.open(url, '_blank'); } catch (e) { void e; } };
+  if (window.mimic && window.mimic.openLocalSite) {
+    try {
+      Promise.resolve(window.mimic.openLocalSite(page)).then(
+        function (ok) { if (ok === false) fallback(); },
+        fallback);
+      return;
+    } catch (e) { void e; }
+  }
+  fallback();
 }
 window.addEventListener('load',   function () { try { _wpSyncTopBarHeight(); } catch (e) { void e; } });
 // ⚠ And once RIGHT NOW, not only from events. This script's scope runs at an
