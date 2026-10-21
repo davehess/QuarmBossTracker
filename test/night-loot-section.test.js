@@ -53,6 +53,7 @@ function build() {
     function morphInto(el, html){ if(!el) return false; if (el._wpLastHtml === html) return false; el._wpLastHtml = html; el.innerHTML = html; globalThis.__nlPaints.push(el.id); return true; }
     function wpKeep(k){ return 'data-keep="' + esc(k) + '"'; }
     function _wpDeathrollHtml(){ return '<div>deathroll</div>'; }
+    function wpMoreList(key, rows){ return rows.join(''); }   // the fold is tested in dashboard-more-list; here every row shows
   `;
   const api = evalBlock(pre + tieBlock + '\n' + uiBlock + '\nfunction _peek(){ return _wpNightLoot; }',
     ['wpNightLootHtml', 'wpNightLootSet', 'wpNightLootHost', 'wpNightLootedBy', 'renderLootTab', 'wpRenderNightLoot', '_peek']);

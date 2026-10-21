@@ -536,8 +536,10 @@ function makeTab(agent, extra = {}) {
   const wpKeep = (key) => 'data-keep="' + esc(key) + '"';
   const keepStore = {};
   const nav = { clipboard: { writeText: async (t) => { clipboard.push(t); } } };
-  new Function('document', 'fetch', 'navigator', 'confirm', 'setInterval', 'setTimeout', 'esc', 'fmtAgo', 'morphInto', 'wpKeep', '_wpOpenDetails', tabScript)(
-    document, fetchStub, nav, extra.confirm || (() => true), () => 0, (fn) => fn(), esc, (ms) => Math.round((NOW - ms) / 1000) + 's ago', morphInto, wpKeep, keepStore);
+  // The tab folds a long list of sets behind the shared "N more" helper (Layout A, 2026-10-21): hand it the REAL one.
+  const wpMoreList = new Function('esc', sliceBlock(dashHtml, 'var _wpMoreOpen = {};', "btn.textContent = wpMoreLabel(open, btn.getAttribute('data-n'), btn.getAttribute('data-noun'));\n}") + '\nreturn wpMoreList;')(esc);
+  new Function('document', 'fetch', 'navigator', 'confirm', 'setInterval', 'setTimeout', 'esc', 'fmtAgo', 'morphInto', 'wpKeep', '_wpOpenDetails', 'wpMoreList', tabScript)(
+    document, fetchStub, nav, extra.confirm || (() => true), () => 0, (fn) => fn(), esc, (ms) => Math.round((NOW - ms) / 1000) + 's ago', morphInto, wpKeep, keepStore, wpMoreList);
   const node = (attrs, extraProps = {}) => ({ tagName: 'BUTTON', disabled: false, getAttribute: (n) => (n in attrs ? attrs[n] : null), closest() { return this; }, ...extraProps });
   const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); };
   return {
