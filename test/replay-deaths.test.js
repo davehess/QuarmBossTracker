@@ -45,7 +45,7 @@ function build(logLines, { bosses = ['Glykus'], liveFight = false } = {}) {
   `;
   const post = `
     return { startReplay, stopReplay, _replayDeathsSnapshot, _replayClockForWeb, _replayMobDeaths, _recentMobDeaths,
-             _noteRecentMobDeath, _recentDeathsSnapshot, state: () => _replayState, REPLAY_TAIL_MS, DEATH_PAIR_RULES };
+             _noteRecentMobDeath, _recentDeathsSnapshot, state: () => _replayState, REPLAY_TAIL_MS, DEATH_ALWAYS_RECORD };
   `;
   // eslint-disable-next-line no-new-func
   return new Function('LOG', pre + deathBlock + '\n' + shrunk + post)(logLines);
@@ -204,8 +204,7 @@ describe('wiring in the agent (comments stripped)', () => {
 
 // ── 2  the page ──────────────────────────────────────────────────────────────────────────────────────────────
 const pageBlock = sliceBlock(TRIGGERS, '// ── death timeline: pure state ──', '// ── /death timeline: pure state ──');
-const { tlReplayNow, tlPickFeed, deathPairStates } = evalBlock(pageBlock, ['tlReplayNow', 'tlPickFeed', 'deathPairStates']);
-const RULES = [{ names: ['Decorin Berik', 'Decorin Grunhork'], windowSec: 360, label: 'Decorins' }];
+const { tlReplayNow, tlPickFeed } = evalBlock(pageBlock, ['tlReplayNow', 'tlPickFeed']);
 
 describe('triggers.html runs the strip on the replay clock', () => {
   const R0 = at(21, 2, 0);
@@ -229,12 +228,10 @@ describe('triggers.html runs the strip on the replay clock', () => {
     expect(tlPickFeed(live, rd, { nowMs: 'x' }, 777).replay).toBeNull();
     expect(tlPickFeed(undefined, undefined, undefined, 1)).toEqual({ deaths: [], replay: null });   // an old agent
   });
-  it('an old-log death opens its pair window against replay time, and the same death against wall time is long missed', () => {
-    const ds = [{ name: 'Decorin Berik', atMs: R0 }];
+  it('an old-log death is "since last" against replay time, and the same death against wall time is long gone', () => {
     const rp = { nowMs: R0 + 168000, rate: 1, untilMs: null, recv: 1000 };
-    const st = deathPairStates(ds, RULES, tlReplayNow(rp, 1000));
-    expect(st[0]).toMatchObject({ kind: 'open', dueName: 'Decorin Grunhork', deadlineMs: R0 + 360000 });
-    expect(deathPairStates(ds, RULES, Date.now())).toEqual([]);                // wall time: a week past the 2-min result tail
+    expect(tlReplayNow(rp, 1000) - R0).toBe(168000);                           // 2:48 since the death, on the replay's clock
+    expect(Date.now() - R0).toBeGreaterThan(30 * 60 * 1000);                   // wall time: past the strip's 30-minute window
   });
   it('wiring: the strip\'s now, the rehearsal tag and the wall-clock timer rows (comments stripped)', () => {
     const t = stripJs(TRIGGERS);

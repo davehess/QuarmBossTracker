@@ -303,9 +303,10 @@
   body.part-callouts.part-edit #placeholder{display:block}
 
   /* ── Death timeline strip (the guild lead, 2026-10-21) ─────────────────────
-     Bottom-of-window strip: the boss / paired-mob deaths of the last 30 minutes as a chain
-     (newest at the right), and a big countdown while a pair window is open (Decorins 6 min,
-     Tallon + Vallon 20 min). Present only while there is something to show — no empty chrome.
+     Bottom-of-window strip: the boss / Tactics-brother deaths of the last 30 minutes as a chain
+     (newest at the right), the gaps between them and the since-last clock. No pair countdown: the
+     encounter script has no window between the Decorins or between Tallon and Vallon.
+     Present only while there is something to show — no empty chrome.
      The timers stack rides above it (--tline-h, set from JS). Display only: it never speaks,
      and canvas panels (body.part) never draw it. Click-through like the stack. */
   #tline{position:fixed;bottom:8px;left:8px;right:8px;z-index:41;display:none;
@@ -322,16 +323,6 @@
   body.setup.timers-topdown #tline{top:58px}
   body.has-tline:not(.part).timers-topdown #timers{top:calc(38px + var(--tline-h,0px))}
   body.has-tline:not(.part).setup.timers-topdown #timers{top:calc(62px + var(--tline-h,0px))}
-  #tline .tl-pair{margin:0 0 5px}
-  #tline .tl-pair-row{display:flex;align-items:baseline;gap:10px;font-size:calc(22px * var(--tl-s));font-weight:800;line-height:1.15;color:#ffc14d}
-  #tline .tl-pair-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #tline .tl-pair-clock{flex-shrink:0;font-variant-numeric:tabular-nums;font-size:calc(26px * var(--tl-s))}
-  #tline .tl-bar{height:calc(6px * var(--tl-s));margin-top:3px;background:rgba(255,255,255,0.14);border-radius:3px;overflow:hidden}
-  #tline .tl-bar i{display:block;height:100%;width:100%;background:#ffb02e;transform-origin:left;border-radius:3px}
-  #tline .tl-pair.urgent .tl-pair-row{color:#ff6b6b}
-  #tline .tl-pair.urgent .tl-bar i{background:#ff4d4d}
-  #tline .tl-pair.made .tl-pair-row{color:#5fe08a}
-  #tline .tl-pair.missed .tl-pair-row{color:#ff6b6b}
   #tline .tl-chain{display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 7px;font-size:calc(13px * var(--tl-s));line-height:1.3;color:#e6edf3}
   #tline .tl-link{white-space:nowrap}
   #tline .tl-d b{font-weight:700;color:#fff}
@@ -358,7 +349,6 @@
   #tline .tl-up-row.plan .tl-up-lbl{color:#9fd0ff;white-space:normal}
   #tline .tl-one{display:flex;align-items:baseline;gap:8px;font-size:calc(16px * var(--tl-s));font-weight:700;line-height:1.3;min-height:20px;white-space:nowrap;overflow:hidden}
   #tline .tl-one-main{color:#ffc14d;flex-shrink:0}
-  #tline .tl-one-main.urgent{color:#ff6b6b}
   #tline .tl-one-main.since{color:#58a6ff}
   #tline .tl-one-sep{color:#9fb3c8}
   #tline .tl-one-next{color:#e6edf3;font-weight:600;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -1892,46 +1882,15 @@
   } catch(e){}
 
   // ── Death timeline strip (the guild lead, 2026-10-21) ───────────────────────
-  // The agent ships recentDeaths (boss / paired-mob deaths this PC saw, last 30 min) and deathPairRules.
-  // The page keeps the clocks: deathPairStates is pure (no DOM), the render rebuilds the strip's HTML only
+  // The agent ships recentDeaths (boss / Tactics-brother deaths this PC saw, last 30 min). There is no pair window:
+  // the Plane of Tactics encounter script has no timer between the two Decorins (both need only be dead at once) or
+  // between Tallon and Vallon (each has its own out-of-combat allowance), so the strip shows deaths, the gaps
+  // between them and the since-last clock, and nothing counts down. The render rebuilds the strip's HTML only
   // when its content changes and otherwise touches just the clock text nodes. Display only — nothing is spoken.
   // ── death timeline: pure state ──
-  var TL_SHOW_MS = 30 * 60 * 1000, TL_RESULT_MS = 2 * 60 * 1000;
+  var TL_SHOW_MS = 30 * 60 * 1000;
   function tlKey(n){
     return String(n == null ? '' : n).replace(/^#/, '').replace(/_/g, ' ').replace(/`/g, "'").replace(/\s+/g, ' ').trim().toLowerCase();
-  }
-  // One row per pair rule that has something to show: 'open' (a window is running, dueName still to die),
-  // 'made' (all of them down inside the window; shown TL_RESULT_MS after the last), 'missed' (window ran out;
-  // shown TL_RESULT_MS after the deadline). A name that dies a second time starts a new episode.
-  function deathPairStates(deaths, rules, nowMs){
-    var out = [];
-    (rules || []).forEach(function(r){
-      var keys = r.names.map(tlKey), win = (r.windowSec || 0) * 1000;
-      var ds = (deaths || []).filter(function(d){ return d && keys.indexOf(tlKey(d.name)) >= 0; })
-        .sort(function(a, b){ return a.atMs - b.atMs; });
-      var ep = null;
-      ds.forEach(function(d){
-        var k = tlKey(d.name);
-        if (ep && !ep.seen[k] && d.atMs - ep.first.atMs <= win){ ep.seen[k] = d; ep.last = d; return; }
-        ep = { first: d, last: d, seen: Object.create(null) };
-        ep.seen[k] = d;
-      });
-      if (!ep) return;
-      var missing = r.names.filter(function(n){ return !ep.seen[tlKey(n)]; });
-      var st = { label: r.label, windowSec: r.windowSec, firstName: ep.first.name, firstAtMs: ep.first.atMs,
-                 deadlineMs: ep.first.atMs + win };
-      if (!missing.length){
-        if (nowMs - ep.last.atMs <= TL_RESULT_MS){
-          st.kind = 'made'; st.doneAtMs = ep.last.atMs;
-          st.gapSec = Math.round((ep.last.atMs - ep.first.atMs) / 1000);
-          out.push(st);
-        }
-        return;
-      }
-      if (nowMs < st.deadlineMs){ st.kind = 'open'; st.dueName = missing.join(' / '); out.push(st); }
-      else if (nowMs - st.deadlineMs <= TL_RESULT_MS){ st.kind = 'missed'; st.dueName = missing.join(' / '); out.push(st); }
-    });
-    return out;
   }
   // ⏪ Replay → the strip as a rehearsal (the guild lead, 2026-10-21: "i need a way to test these things before our raid
   // nights"). While an agent replay runs, /api/state and /api/timers carry replayDeaths (the replay's own ring, never mixed
@@ -2017,16 +1976,9 @@
     }
     return null;
   }
-  function tlRuleFor(names, rules){
-    var want = names.map(tlKey).sort().join('|');
-    for (var i = 0; i < (rules || []).length; i++){
-      if (rules[i].names.map(tlKey).sort().join('|') === want) return rules[i];
-    }
-    return null;
-  }
-  // The next phase for the next fight: every phase up to the last one whose deaths were all seen is done; a phase whose
-  // pair window is running has the big countdown; the first of the rest is "next". null = no plan / all done.
-  function tlPlanNext(zone, phases, deaths, rules, pairs){
+  // The next phase for the next fight: every phase up to the last one whose deaths were all seen is done; the first of
+  // the rest is "next" (in the plan's own wording). null = no plan / all done.
+  function tlPlanNext(zone, phases, deaths){
     var kills = TL_PLAN_KILLS[tlKey(zone)];
     if (!kills || !phases || !phases.length) return null;
     var seen = Object.create(null), lastDone = 0;
@@ -2038,9 +1990,7 @@
     for (var i = 0; i < phases.length; i++){
       var ph = phases[i];
       if (ph.n <= lastDone) continue;
-      var ks2 = kills[ph.n], rule = ks2 ? tlRuleFor(ks2, rules) : null;
-      if (rule && (pairs || []).some(function(p){ return p.kind === 'open' && p.label === rule.label; })) continue;
-      return { n: ph.n, text: rule ? rule.label + ' — ' + Math.round(rule.windowSec / 60) + ' min window starts on the first death' : ph.text };
+      return { n: ph.n, text: ph.text };
     }
     return null;
   }
@@ -2051,19 +2001,16 @@
     var rem = t.endsMs - nowMs;
     return rem > 0 && (t.warns > 0 || rem >= TL_MAJOR_MS);
   }
-  // The "Up next" merge: open pair-window deadlines + major countdowns, soonest first, deduped by key and by label,
-  // `skipKeys` left out (the rows the strip already shows big); the plan phase has no clock, so it holds the LAST slot.
-  function tlQueue(pairs, plan, timers, nowMs, skipKeys, max){
+  // The "Up next" merge: major countdowns, soonest first, deduped by key and by label; the plan phase has no clock,
+  // so it holds the LAST slot.
+  function tlQueue(plan, timers, nowMs, max){
     var timed = [], seenKey = Object.create(null), seenLbl = Object.create(null);
     function add(it){
       var lk = tlKey(it.label);
-      if (seenKey[it.key] || seenLbl[lk] || (skipKeys || []).indexOf(it.key) >= 0) return;
+      if (seenKey[it.key] || seenLbl[lk]) return;
       seenKey[it.key] = seenLbl[lk] = true;
       timed.push(it);
     }
-    (pairs || []).forEach(function(p){
-      if (p.kind === 'open') add({ kind: 'pair', key: 'pair:' + p.label, label: p.dueName + ' due', dueMs: p.deadlineMs });
-    });
     (timers || []).forEach(function(t){
       if (tlTimerMajor(t, nowMs)) add({ kind: 'timer', key: 'timer:' + t.key, label: t.label, dueMs: t.endsMs });
     });
@@ -2074,7 +2021,7 @@
     return out;
   }
   // ── /death timeline: plan + queue ──
-  var _tlDeaths = [], _tlRules = [], _tlSig = '', _tlNodes = [], _tlReplay = null;
+  var _tlDeaths = [], _tlSig = '', _tlNodes = [], _tlReplay = null;
   var tlBodyEl = document.getElementById('tl-body');
   var _tlPlanCache = null, _tlPopLoading = false;
   var _tlStore = null;
@@ -2130,8 +2077,8 @@
   })();
   // The ⏪ tag a replay-driven strip wears (the replay fires carry the same ⏪, gold, on the agent dashboard).
   var TL_REHEARSAL_TAG = '<span class="tl-reh" title="An agent replay is driving this timeline. Nothing here is live.">⏪ rehearsal</span>';
-  // data-t / data-w for a queue row. A rehearsal's timer rows were shifted into replay time to sort with the pair
-  // deadlines; they are drawn against the wall clock, so shift back and mark them.
+  // data-t / data-w for a queue row. A rehearsal's timer rows were shifted into replay time to sort together;
+  // they are drawn against the wall clock, so shift back and mark them.
   function tlDueAttr(q, off){
     var wall = q.kind === 'timer' && off;
     return ' data-t="' + (wall ? q.dueMs - off : q.dueMs) + '"' + (wall ? ' data-w="1"' : '');
@@ -2155,11 +2102,10 @@
       requestAutoHeight();
     }
   }
-  function tlineSet(deaths, rules, replayDeaths, replayClock){
+  function tlineSet(deaths, replayDeaths, replayClock){
     var feed = tlPickFeed(deaths, replayDeaths, replayClock, Date.now());
     _tlDeaths = feed.deaths;
     _tlReplay = feed.replay;
-    if (Array.isArray(rules)) _tlRules = rules;
     tlineUpdate();
   }
   // The strip's "now": the replay's log time while a replay drives it, else the wall clock.
@@ -2172,34 +2118,27 @@
     var off = rehearsal ? now - Date.now() : 0;
     var ds = _tlDeaths.filter(function(d){ return d && Number.isFinite(d.atMs) && now - d.atMs <= TL_SHOW_MS; })
       .sort(function(a, b){ return a.atMs - b.atMs; });
-    var pairs = ds.length ? deathPairStates(ds, _tlRules, now) : [];
     var shown = ds.slice(-5);
-    // Plan phase + the Up next queue. Expanded: the open pairs already have their big countdown, so the queue
-    // leaves them out; collapsed: only the headline pair is on the line, the rest may queue behind it.
-    var plan = null, queue = [], headPair = null;
+    // Plan phase + the Up next queue (the plan phase in the last slot, behind any major countdowns).
+    var plan = null, queue = [];
     if (ds.length){
       var zone = tlPlanZone(ds), pop = tlPop();
       if (zone && pop){
         if (!_tlPlanCache || _tlPlanCache.zone !== tlKey(zone)) _tlPlanCache = { zone: tlKey(zone), phases: tlPlanFor(zone, pop) };
-        plan = tlPlanNext(zone, _tlPlanCache.phases, ds, _tlRules, pairs);
+        plan = tlPlanNext(zone, _tlPlanCache.phases, ds);
       }
-      pairs.forEach(function(p){ if (p.kind === 'open' && (!headPair || p.deadlineMs < headPair.deadlineMs)) headPair = p; });
-      var skip = _tlColl ? (headPair ? ['pair:' + headPair.label] : [])
-        : pairs.filter(function(p){ return p.kind === 'open'; }).map(function(p){ return 'pair:' + p.label; });
-      queue = tlQueue(pairs, plan, tlTimersNow(off), now, skip, TL_UPNEXT_MAX);
+      queue = tlQueue(plan, tlTimersNow(off), now, TL_UPNEXT_MAX);
     }
     var sig = ds.length ? (rehearsal ? 'R' : '') + (_tlColl ? 'c' : 'e') + '|' + (ds.length - shown.length) + '|' + shown.map(function(d){ return d.atMs + d.name; }).join('|') + '#' +
-      pairs.map(function(p){ return p.label + p.kind + (p.dueName || '') + p.firstAtMs; }).join('|') + '#' +
       queue.map(function(q){ return q.key + q.label; }).join('|') : '';
     if (sig !== _tlSig){
       _tlSig = sig;
       if (!sig){ tlBodyEl.innerHTML = ''; _tlNodes = []; }
       else if (_tlColl){
-        // One line: the most urgent thing (an open pair countdown, else the since-last clock) + the next queued item.
+        // One line: the since-last clock + the next queued item.
         var nx = queue[0];
         var h1 = '<div class="tl-one">' + (rehearsal ? TL_REHEARSAL_TAG : '');
-        if (headPair) h1 += '<span class="tl-one-main" data-tl-pair><b>' + _esc(headPair.dueName) + ' due</b> <span data-tl="due" data-t="' + headPair.deadlineMs + '"></span></span>';
-        else h1 += '<span class="tl-one-main since">since last <span data-tl="since" data-t="' + shown[shown.length - 1].atMs + '"></span></span>';
+        h1 += '<span class="tl-one-main since">since last <span data-tl="since" data-t="' + shown[shown.length - 1].atMs + '"></span></span>';
         if (nx){
           h1 += '<span class="tl-one-sep">·</span><span class="tl-one-next">' +
             (nx.kind === 'plan' ? 'Next: ' + _esc(nx.label) : _esc(nx.label) + '<i data-tl="due"' + tlDueAttr(nx, off) + '></i>') + '</span>';
@@ -2209,19 +2148,6 @@
       }
       else {
         var h = rehearsal ? TL_REHEARSAL_TAG : '';
-        pairs.forEach(function(p){
-          var cls = 'tl-pair ' + p.kind;
-          if (p.kind === 'open'){
-            h += '<div class="' + cls + '" data-tl-pair><div class="tl-pair-row"><span class="tl-pair-name">' + _esc(p.dueName) +
-              ' due in</span><span class="tl-pair-clock" data-tl="due" data-t="' + p.deadlineMs + '"></span></div>' +
-              '<div class="tl-bar"><i data-tl="bar" data-t="' + p.deadlineMs + '" data-d="' + (p.windowSec * 1000) + '"></i></div></div>';
-          } else if (p.kind === 'made'){
-            h += '<div class="' + cls + '"><div class="tl-pair-row"><span class="tl-pair-name">' + _esc(p.label) + ' made in ' +
-              tlFmt(p.gapSec) + ' ✓</span></div></div>';
-          } else {
-            h += '<div class="' + cls + '"><div class="tl-pair-row"><span class="tl-pair-name">' + _esc(p.label) + ' missed</span></div></div>';
-          }
-        });
         h += '<div class="tl-chain">';
         if (ds.length > shown.length) h += '<span class="tl-more">+' + (ds.length - shown.length) + ' earlier</span>';
         shown.forEach(function(d, i){
@@ -2246,18 +2172,8 @@
     for (var i = 0; i < _tlNodes.length; i++){
       var n = _tlNodes[i], t = Number(n.getAttribute('data-t')), kind = n.getAttribute('data-tl');
       var nw = n.hasAttribute('data-w') ? Date.now() : now;   // data-w: a wall-clock timer row (see off above)
-      if (kind === 'bar'){
-        var f = Math.max(0, Math.min(1, (t - nw) / Number(n.getAttribute('data-d'))));
-        var tf = 'scaleX(' + f.toFixed(3) + ')';
-        if (n.style.transform !== tf) n.style.transform = tf;
-      } else {
-        var txt = kind === 'due' ? tlFmt(Math.ceil((t - nw) / 1000)) : tlFmt((nw - t) / 1000);
-        if (n.textContent !== txt) n.textContent = txt;
-        if (kind === 'due'){
-          var pairEl = n.closest('[data-tl-pair]');
-          if (pairEl) pairEl.classList.toggle('urgent', t - nw < 60000);
-        }
-      }
+      var txt = kind === 'due' ? tlFmt(Math.ceil((t - nw) / 1000)) : tlFmt((nw - t) / 1000);
+      if (n.textContent !== txt) n.textContent = txt;
     }
   }
   try { if (window.ResizeObserver && tlineEl) new ResizeObserver(function(){ syncTlineH(); }).observe(tlineEl); } catch(e){}
@@ -2276,7 +2192,7 @@
       }
       const s = await r.json();
       renderTimers((PART === 'timers' && _partSample) ? (s.activeTimers || []).concat(_sampleTimers()) : s.activeTimers);
-      if (!PART) tlineSet(s.recentDeaths, s.deathPairRules, s.replayDeaths, s.replayClock);   // the death timeline strip (not in canvas panels); a replay drives it when the agent sends its clock
+      if (!PART) tlineSet(s.recentDeaths, s.replayDeaths, s.replayClock);   // the death timeline strip (not in canvas panels); a replay drives it when the agent sends its clock
       if (PART === 'timers') return;  // display only: fires belong to the other pages
       const fires = (s.recentTriggerFires || []).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
       if (!primed){
