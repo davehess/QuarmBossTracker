@@ -17776,6 +17776,9 @@ function _serializeForDashboard() {
     // Boss / paired-mob deaths from the last 30 min (the trigger overlay's timeline strip) + the pair windows.
     recentDeaths:       _recentDeathsSnapshot(),
     deathPairRules:     DEATH_PAIR_RULES,
+    // ⏪ A replay's own deaths + its clock (null when none runs) — the strip runs on these, never mixed with the live ring.
+    replayDeaths:       _replayDeathsSnapshot(),
+    replayClock:        _replayClockForWeb(),
     // Damage-taken audio alert — echoed so the dashboard row (and any
     // diagnostic) can show what the agent actually believes, independent of
     // what Mimic has saved in cfg.
@@ -36178,6 +36181,8 @@ function startWebDashboard(port) {
           blindEvents:        _blindEvents.slice(-20),
           recentDeaths:       _recentDeathsSnapshot(),
           deathPairRules:     DEATH_PAIR_RULES,
+          replayDeaths:       _replayDeathsSnapshot(),
+          replayClock:        _replayClockForWeb(),
         }));
       }
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
@@ -55760,6 +55765,56 @@ function _recentDeathsSnapshot(nowMs) {
   const cut = (nowMs || Date.now()) - RECENT_DEATHS_SHOW_MS;
   return _recentMobDeaths.filter(e => e.atMs >= cut).map(e => ({ name: e.name, zone: e.zone, atMs: e.atMs, boss: e.boss }));
 }
+// ── ⏪ Replay → death timeline (the guild lead, 2026-10-21: "i need a way to test these things before our raid
+// nights") ──────────────────────────────────────────────────────────────────────────────────────────────────────
+// A replay walks old log lines, so the live ring (60 s gate, wall clock) cannot take them. They go into a SEPARATE
+// ring that is cleared when a replay starts, shipped as `replayDeaths` beside `recentDeaths`, and dropped REPLAY_TAIL_MS
+// after the replay ends. The page runs the strip on `replayClock` (the replay's own log time) while one is present.
+const REPLAY_TAIL_MS = 2 * 60 * 1000;
+const _replayMobDeaths = [];
+// Does this log line report a death the strip would keep (catalog boss or pair name)? { name, zone, boss } or null.
+function _replayDeathCandidate(line, character) {
+  const dead = _deadMobNameFromLine(line);
+  if (!dead) return null;
+  const z = _myFightZone(character);
+  const boss = _myFightIsBoss(dead, z.id);
+  if (!boss && !_deathPairRuleFor(dead, DEATH_PAIR_RULES)) return null;
+  return { name: dead, zone: z.name, boss };
+}
+function _noteReplayMobDeath(cand, atMs) {
+  if (!cand) return null;
+  return _ringAddMobDeath(_replayMobDeaths, cand.name, cand.zone, atMs, cand.boss, DEATH_PAIR_RULES);
+}
+// True while a replay is running or inside its tail; drops the ring the first time it finds neither.
+function _replayDeathsLive() {
+  const st = _replayState;
+  if (st && (st.running || (st.tailUntil && Date.now() < st.tailUntil))) return true;
+  if (_replayMobDeaths.length) _replayMobDeaths.length = 0;
+  return false;
+}
+// The replay's log time right now. During the walk it moves through st.clk, a segment from the previous played
+// line's time to the next one's across the wait the worker sleeps: real pace is 1x while the gap is under
+// REPLAY_MAX_GAP_MS and faster across a compressed lull; fast pace holds still on the last line (rate 0) and
+// jumps when the next plays. After the walk (done or stopped) it runs 1x through the tail. `untilMs` bounds the
+// page's extrapolation so a poll never overshoots a segment.
+function _replayClockForWeb() {
+  if (!_replayDeathsLive()) return null;
+  const st = _replayState, wall = Date.now();
+  if (!st.running) {
+    return { nowMs: st.tailFromMs + (wall - st.tailWall), rate: 1, untilMs: null, pace: st.pace || 'real', tail: true };
+  }
+  const c = st.clk || { fromMs: st.fromMs, toMs: st.fromMs, wallStart: wall, wallMs: 0 };
+  if (!(c.wallMs > 0)) return { nowMs: c.toMs, rate: 0, untilMs: c.toMs, pace: st.pace || 'real', tail: false };
+  const f = Math.max(0, Math.min(1, (wall - c.wallStart) / c.wallMs));
+  return { nowMs: c.fromMs + (c.toMs - c.fromMs) * f, rate: (c.toMs - c.fromMs) / c.wallMs, untilMs: c.toMs,
+           pace: st.pace || 'real', tail: false };
+}
+function _replayDeathsSnapshot() {
+  const clock = _replayClockForWeb();
+  if (!clock) return null;
+  const cut = clock.nowMs - RECENT_DEATHS_SHOW_MS;
+  return _replayMobDeaths.filter(e => e.atMs >= cut).map(e => ({ name: e.name, zone: e.zone, atMs: e.atMs, boss: e.boss, replay: true }));
+}
 function _cancelTimersOnMobDeath(line) {
   const dead = _deadMobNameFromLine(line);
   if (!dead) return 0;
@@ -57900,8 +57955,14 @@ async function _replayWorker(st) {
       if (tsMs < st.fromMs) return;
       if (tsMs > st.toMs) { past = true; return; }
       scanned++;
+      let death = null;
+      if (lines.length < REPLAY_LINE_CAP) { try { death = _replayDeathCandidate(raw, st.character); } catch { death = null; } }
       if ((triggerVisibleLine(raw) || npcSpeechLine(raw)) && lines.length < REPLAY_LINE_CAP) {
-        lines.push({ raw, tsMs });
+        lines.push({ raw, tsMs, vis: true, death });
+      } else if (death) {
+        // A boss / pair-mob death rides along even when no trigger can see it: the death timeline needs it. Such a
+        // line (vis false) feeds only the replay death ring, never the trigger evaluator.
+        lines.push({ raw, tsMs, vis: false, death });
       }
     },
     null,
@@ -57916,15 +57977,21 @@ async function _replayWorker(st) {
   let prevTs = null;
   for (let i = 0; i < lines.length; i++) {
     if (st.stop) break;
-    const { raw, tsMs } = lines[i];
+    const { raw, tsMs, vis, death } = lines[i];
     // Real-time: wait the true gap since the previous PLAYED line (capped so a
     // long lull compresses). Fast: no pre-gap — the pause rides AFTER a fire.
     if (i > 0 && st.pace === 'real') {
       const gap = Math.max(0, Math.min(REPLAY_MAX_GAP_MS, tsMs - (prevTs != null ? prevTs : tsMs)));
-      if (gap > 0) await _sleep(gap);
+      if (gap > 0) {
+        // The replay clock crosses prevTs → tsMs over this wait (1x for a gap under the cap, faster across a lull).
+        st.clk = { fromMs: prevTs != null ? prevTs : tsMs, toMs: tsMs, wallStart: Date.now(), wallMs: gap };
+        await _sleep(gap);
+      }
       if (st.stop) break;
     }
-    const fired = _replayEvaluateLine(raw, tsMs, ctx);
+    st.clk = { fromMs: tsMs, toMs: tsMs, wallStart: Date.now(), wallMs: 0 };
+    if (death) _noteReplayMobDeath(death, tsMs);
+    const fired = vis ? _replayEvaluateLine(raw, tsMs, ctx) : false;
     st.played = i + 1;
     if (fired) {
       st.fired++;
@@ -57933,6 +58000,11 @@ async function _replayWorker(st) {
     }
     prevTs = tsMs;
   }
+  // The rehearsal timeline stays readable for REPLAY_TAIL_MS: a finished walk continues from the window's end, a
+  // stopped one from the last line played, both at 1x (so a pair window still runs out and shows its result).
+  st.tailFromMs = st.stop ? (prevTs != null ? prevTs : st.fromMs) : st.toMs;
+  st.tailWall   = Date.now();
+  st.tailUntil  = st.tailWall + REPLAY_TAIL_MS;
   st.done    = true;
   st.running = false;
   // Now that replayed timers arm on the wall clock (see _startTimer), a long
@@ -57974,8 +58046,10 @@ function startReplay(opts) {
     running: true, stop: false, done: false, error: null,
     logPath, logLabel: known.character || logPath, fromMs, toMs, pace,
     startedAt: Date.now(), scanned: 0, total: 0, played: 0, fired: 0,
+    character: known.character || null,
   };
   _replayState = st;
+  _replayMobDeaths.length = 0;   // a new rehearsal starts from an empty timeline (the previous one's tail ends here)
   st._done = _replayWorker(st).catch((err) => {
     st.error = String((err && err.message) || err);
     st.running = false;
@@ -60526,6 +60600,7 @@ module.exports = {
   _serializeTankState, _activeOverlaysForTest: () => _activeOverlays,
   _resetRampagesForTest: () => { stats.currentRampage = null; stats.currentRampages = {}; _rampageByBoss.clear(); _rampageCurrentTarget = null; _rampageLastSeenMs = 0; _activeOverlays.length = 0; },
   _getReplayStateForTest: () => _replayStateForWeb(),
+  _getReplayDeathsForTest: () => ({ ring: _replayMobDeaths.slice(), live: _recentMobDeaths.slice(), snapshot: _replayDeathsSnapshot(), clock: _replayClockForWeb() }),
   _setPersonalTriggersForTest: (arr) => { _personalTriggers = arr; },
   _getPersonalTriggersForTest: () => _personalTriggers,
   _setWatchedLogsForTest: (arr) => { stats.watchedLogs = arr; },
