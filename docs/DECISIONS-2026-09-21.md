@@ -118,6 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Compress the heavy routes; read egress** (§386) | The $25 guild price only holds if `/poll`, buff-queue and live-damage are compressed (about $16/mo marginal at 60 raiders after compression). Not built. Live-damage still has a `.slice(0,60)` cap | a session: gzip those three routes, raise the live-damage cap; the guild lead: read Supabase egress in the dashboard (the MCP cannot) and say the number |
 | **Game-data pack** (§392, bot 3.2.15) | Step 1 (publish) on main: `scripts/build-data-pack.js`, `.github/workflows/build-data-pack.yml`, rolling prerelease `data-latest`. Never run yet; size estimated 11–14 MB. Step 2 (Mimic reads the pack) not built | a session: dispatch "Build game data pack" once, outside a raid window, and record the real size and counts here; then build step 2 |
 | **Self-host: load game data** (§392) | Built: `scripts/selfhost-load-game-data.js`, guide in `docs/SELFHOSTING.md`. Not yet run against a real empty project | a session or the guild lead: run it once against a throwaway project and record the table counts |
+| **Raid timeline + map explorer** (§400) | Timeline strip on `/spectator` and `/spectator/replay` (web 1.9.20, on `ship-ac`; on beta now) and at the bottom of the trigger overlay (agent 3.8.40, beta). Map explorer `/raid/routes` (B, first engage, clearing) being drafted | the guild lead: say go for main before the Wednesday 19:30 ET freeze; a raider: check the overlay strip during the Decorins |
 | **Saryrn fight filed under her add** (§399) | PoP named cards fixed (38 rows promoted; bot 3.2.16 on `ship-ac`). The Saryrn card still shows 34k: the agent names a fight after its top-damaged target, so her damage is under "a summoned servant" | the guild lead: say go for the agent fix (name the fight after a curated boss with ≥25% of the window); then a session re-points that night's servant contributions to Saryrn |
 | **Chat /camp case** (§398, agent 3.8.36) | On beta: own guild/raid lines are no longer lost; a stood-down chat reporter still uploads its own lines | a beta tester: type `/camp` (and a guild line right before) and check the line stays in the Chat overlay |
 | **Map 3.8.35 in a kite** (§398) | On beta: engaged = hurt, per-spawn health memory, kite totals, "killed?" marks, corpse/"dead" tag confirms a kill. Mimic forwards Zeal snapshots every 300 ms | a beta tester: kite a pull and read the Map; then decide whether Mimic should send each target change instead of the 300 ms snapshot |
@@ -12247,3 +12248,22 @@ every PoP named the bot met first registered as trash. The curated list the guil
   uploader saw 243k on Saryrn there) and of a long Maareq window. Cut and naming: `packages/wolfpack-logsync/index.js`
   `flush()` (~10974–10996, fallback ~11167–11173). Proposed fix (agent, beta): name the fight after a curated boss
   that took at least 25% of the window, never after an add. Waiting on the guild lead.
+
+### 400. Raid timeline for the Plane of Tactics pairs; the map explorer is kill to kill (2026-10-21)
+The guild lead, 2026-10-21, the night before the Zek fights: *"a tracked timeline view ... at the top of the
+spectator/replay pages. The death timers between mobs is something we want easily and clearly displayed versus
+having to say it out loud ... a timeline view show up on the bottom of the TTS."* Picked B (the strip) over C
+(stopwatch cards).
+- **Rules (from `apps/mimic/pop-raids.js`):** the two Decorins within 6 minutes of each other; Tallon Zek and
+  Vallon Zek within 20. Held in `web/lib/raidTimeline.ts` and the agent's `DEATH_PAIR_RULES`.
+- **Web 1.9.20:** `web/components/RaidTimeline.tsx` at the top of `/spectator` (polls the members-only
+  `/api/spectator/timeline`, curated kills by `ended_at`) and `/spectator/replay` (the board's boss list, the
+  playhead is "now"; Rallos Zek the Warlord has no spawn point, so the replay strip lacks him).
+- **Agent 3.8.40 (beta):** `_recentMobDeaths` from the slain lines this PC prints; `triggers.html` bottom strip.
+- **Data, done 2026-10-21:** Tallon Zek, Vallon Zek and both Decorins had no `bosses_local` row, and their names
+  are shared by other NPCs (Plane of Time, event bodies), so `_resolveBossForPersist` would refuse the kill as
+  ambiguous. Curated rows added: `tallon_zek` 214026, `vallon_zek` 214316, `decorin_berik` 214056,
+  `decorin_grunhork` 214057.
+- **Map explorer:** B, kill to kill (*"A already is recorded technically"* — the replay board). Timing starts at
+  the first engage, not zone-in (*"precleaning makes a difference"*), and each leg shows the clearing: *"time
+  between named and which spawns we clear."* New page `/raid/routes` drafting.
