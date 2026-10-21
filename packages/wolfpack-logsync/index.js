@@ -58303,6 +58303,28 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
     for (const a of (t.actions || [])) {
       if (!a || !a.require_raid_member) continue;
       const val = captures && captures[String(a.require_raid_member)];
+      // A Death Touch COUNTDOWN is a claim that a RAIDER was death-touched (the guild lead,
+      // 2026-10-21: a purple "Death Touch — <pet>" card appeared when a cleric's pet destroyed
+      // itself: "this was not a Deathtouch"). The pattern ("<X> hit <target> for 15000+ points of
+      // non-melee damage") also matches a pet's self-destruct, so the countdown never arms, and
+      // nothing speaks, for a pet, for a self-inflicted hit (hitter == target, capture 1 vs the
+      // target) or for a non-raider. This outranks the arm-on-suppression rule below (2026-08-19).
+      if (t.timer_duration_sec > 0 && /death\s*touch/i.test(t.name || '') && val) {
+        const _v = String(val).trim().toLowerCase();
+        const _hitter = captures && captures['1'] != null ? String(captures['1']).replace(/^#/, '').trim().toLowerCase() : '';
+        const _selfHit = !!_hitter && _hitter === _v;
+        const _petTarget = _isOurPetName(_v);
+        const _notRaider = inRaid ? !_raidRosterHas(val) : _knownNpcNotPlayer(val);
+        if (_selfHit || _petTarget || _notRaider) {
+          if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' suppressed — ' + a.require_raid_member + '=' + val + (_selfHit ? ' hit itself' : _petTarget ? ' is a pet' : ' not a raider'));
+          if (!t._noJournal) {
+            _journalTrigger({ trigger: t.name, scope: t._scope || (test ? 'test' : 'personal'), checkpoint: TJ.GATES,
+                              stopped: true, rehearsal: !!t._rehearsal,
+                              reason: 'suppressed — ' + a.require_raid_member + '=' + val + (_selfHit ? ' hit itself' : _petTarget ? ' is a pet' : ' not a raider') });
+          }
+          return;
+        }
+      }
       // Pass when the captured name is a raid member OR one of our pets (#150);
       // only a genuinely-unknown non-pet non-member suppresses.
       const notMember = inRaid
