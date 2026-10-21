@@ -11,6 +11,8 @@
 //           (corrected by the server's `now`, so a wrong PC clock does not skew the countdown).
 //   replay  `kills` and `nowMs` props: the replay board passes the night's bosses and its playhead, and a boss
 //           that dies after the playhead is not yet on the timeline.
+//   share   live, with `src` = /api/share/raid/<token>/timeline (the public share page): the same polling, and once
+//           the shared window is over (`ended`) the clock stops at its end instead of running on.
 //
 // Colour is semantic here: red is a death, orange a window running out (red under 60 s), green a window made.
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -22,58 +24,61 @@ const hms = (ms: number) => etClock.format(ms);
 const POLL_MS = 10_000;
 const URGENT_SEC = 60;
 
-type Props = { kills?: Kill[]; nowMs?: number };
+type Props = { kills?: Kill[]; nowMs?: number; src?: string };
 
-export default function RaidTimeline({ kills, nowMs }: Props) {
+export default function RaidTimeline({ kills, nowMs, src = '/api/spectator/timeline' }: Props) {
   const controlled = kills !== undefined && nowMs !== undefined;
   const [fetched, setFetched] = useState<Kill[]>([]);
   const [status, setStatus] = useState<'loading' | 'ok' | 'error' | 'signedout'>('loading');
   const [skew, setSkew] = useState(0);
+  const [endedAt, setEndedAt] = useState<number | null>(null);   // a shared window that is over: the clock stops here
   const [tick, setTick] = useState(() => Date.now());
 
   useEffect(() => {
     if (controlled) return;
     let alive = true;
+    let id: ReturnType<typeof setInterval> | undefined;
     const load = async () => {
       if (document.hidden) return;
       try {
-        const res = await fetch('/api/spectator/timeline');
+        const res = await fetch(src);
         if (!alive) return;
         if (res.status === 401) { setStatus('signedout'); return; }
         if (!res.ok) { setStatus('error'); return; }
-        const j = await res.json() as { now: number; kills: { npc_id: number; name: string; at: number }[] };
+        const j = await res.json() as { now: number; ended?: boolean; kills: { npc_id: number; name: string; at: number }[] };
         if (!alive) return;
         setSkew(j.now - Date.now());
         setFetched(j.kills.map(k => ({ npcId: k.npc_id, name: k.name, atMs: k.at })));
         setStatus('ok');
+        if (j.ended) { setEndedAt(j.now); clearInterval(id); }   // nothing more can land: stop polling
       } catch { if (alive) setStatus('error'); }
     };
     load();
-    const id = setInterval(load, POLL_MS);
+    id = setInterval(load, POLL_MS);
     return () => { alive = false; clearInterval(id); };
-  }, [controlled]);
+  }, [controlled, src]);
 
   useEffect(() => {
-    if (controlled) return;
+    if (controlled || endedAt !== null) return;
     const id = setInterval(() => setTick(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [controlled]);
+  }, [controlled, endedAt]);
 
-  const now = controlled ? nowMs : tick + skew;
+  const now = controlled ? nowMs : endedAt ?? tick + skew;
   const tl = useMemo(() => buildTimeline(controlled ? kills : fetched, now), [controlled, kills, fetched, now]);
 
   return (
     <section aria-label="Raid timeline" className="mb-4 rounded-md border border-border bg-panel p-3">
       <div className="mb-2 flex flex-wrap items-baseline gap-x-3 text-xs text-dim">
         <b className="text-sm text-text">Raid timeline</b>
-        <span>{controlled ? 'at the replay playhead' : 'live, Eastern time'}</span>
+        <span>{controlled ? 'at the replay playhead' : endedAt !== null ? 'as it stood when the shared window closed, Eastern time' : 'live, Eastern time'}</span>
       </div>
       {tl.deaths.length === 0 ? (
         <p className="text-sm text-dim">
           {!controlled && status === 'loading' ? 'Loading deaths…'
             : !controlled && status === 'signedout' ? 'Sign in to see the timeline.'
             : !controlled && status === 'error' ? 'The timeline is not answering. It will try again in a few seconds.'
-            : 'No boss has died yet. The first death starts the clock, and the Decorin and Tallon/Vallon windows start with theirs.'}
+            : 'No boss has died yet. The first death starts the clock.'}
         </p>
       ) : <Strip tl={tl} now={now} />}
       {!controlled && status === 'error' && tl.deaths.length > 0 && (
@@ -128,7 +133,7 @@ function PairLine({ p, now, bar }: { p: PairState; now: number; bar: boolean }) 
 
 function PairLines({ tl, now, bar }: { tl: Timeline; now: number; bar: boolean }) {
   const live = tl.pairs.filter(p => p.status !== 'waiting');
-  if (!live.length) return <p className="text-xs text-dim">Pair windows: the Decorins (6 min) and Tallon + Vallon (20 min) start on the first death of either.</p>;
+  if (!live.length) return null;
   return <div className="flex flex-wrap gap-x-6 gap-y-3">{live.map(p => <PairLine key={p.rule.label} p={p} now={now} bar={bar} />)}</div>;
 }
 

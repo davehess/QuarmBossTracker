@@ -1,5 +1,6 @@
 // test/raid-timeline.test.js — web/lib/raidTimeline.ts: the night's boss deaths in order, the gap between each,
-// and the Plane of Tactics "kill both within N minutes" windows (the Decorins 6 min, Tallon + Vallon 20 min).
+// and the "kill both within N minutes" pair machinery (exercised on fixture rules: the Plane of Tactics script has no
+// such window, so the shipped rule list is empty).
 //
 // Boss names and ids are the catalog's; there are no people in here. Times are built from one fixed instant, so
 // a gap in the test is a number a person can check by eye.
@@ -19,10 +20,17 @@ const k = (npcId, name, t) => ({ npcId, name, atMs: t });
 const decorin = (id, t) => k(id, id === BERIK ? 'Decorin Berik' : 'Decorin Grunhork', t);
 const tz = (id, t) => k(id, id === TALLON ? 'Tallon Zek' : 'Vallon Zek', t);
 const pairOf = (tl, label) => tl.pairs.find(p => p.rule.label === label);
+// The pair MACHINERY is tested on these fixture rules. They are the guide's old Tactics numbers, which the encounter
+// script does not carry (PAIR_RULES is empty, see the first test below); they stay here only as realistic inputs.
+const FIXTURE_RULES = [
+  { ids: [BERIK, GRUNHORK], windowSec: 360, label: 'Decorins' },
+  { ids: [TALLON, VALLON], windowSec: 1200, label: 'Tallon + Vallon' },
+];
+const bt = (kills, now) => buildTimeline(kills, now, FIXTURE_RULES);
 
 describe('deaths and gaps', () => {
   it('orders deaths by time whatever order they arrive in, and writes the gap from the one before', () => {
-    const tl = buildTimeline([
+    const tl = bt([
       k(BERIK, 'Decorin Berik', at(10, 30)),
       k(OVERSEER, 'The Diaku Overseer', at(0)),
       k(GRUNHORK, 'Decorin Grunhork', at(18, 52)),
@@ -33,10 +41,10 @@ describe('deaths and gaps', () => {
   });
 
   it('measures the clock since the last death, and has none on an empty night', () => {
-    const tl = buildTimeline([k(OVERSEER, 'The Diaku Overseer', at(0)), k(BERIK, 'Decorin Berik', at(4, 10))], at(7, 0));
+    const tl = bt([k(OVERSEER, 'The Diaku Overseer', at(0)), k(BERIK, 'Decorin Berik', at(4, 10))], at(7, 0));
     expect(tl.last.npcId).toBe(BERIK);
     expect(tl.sinceLastSec).toBe(170);
-    const empty = buildTimeline([], at(7));
+    const empty = bt([], at(7));
     expect(empty.deaths).toEqual([]);
     expect(empty.last).toBeNull();
     expect(empty.sinceLastSec).toBeNull();
@@ -45,28 +53,29 @@ describe('deaths and gaps', () => {
 
   it('leaves out a death that is after "now", which is how the replay playhead un-kills a boss', () => {
     const kills = [k(OVERSEER, 'The Diaku Overseer', at(0)), decorin(BERIK, at(5))];
-    expect(buildTimeline(kills, at(4, 59)).deaths).toHaveLength(1);
-    expect(buildTimeline(kills, at(5)).deaths).toHaveLength(2);
+    expect(bt(kills, at(4, 59)).deaths).toHaveLength(1);
+    expect(bt(kills, at(5)).deaths).toHaveLength(2);
   });
 
   it('drops a kill with no usable time instead of poisoning every gap', () => {
-    const tl = buildTimeline([k(OVERSEER, 'x', NaN), k(BERIK, 'Decorin Berik', at(1))], at(2));
+    const tl = bt([k(OVERSEER, 'x', NaN), k(BERIK, 'Decorin Berik', at(1))], at(2));
     expect(tl.deaths).toHaveLength(1);
     expect(tl.deaths[0].gapSec).toBeNull();
   });
 });
 
 describe('the Decorin 6-minute window', () => {
-  it('has the rule as the raid guide states it', () => {
-    expect(PAIR_RULES.map(r => [r.ids, r.windowSec])).toEqual([[[BERIK, GRUNHORK], 360], [[TALLON, VALLON], 1200]]);
+  it('ships NO Tactics pair rule: the encounter script has none (the guild lead, 2026-10-21: scripts over guides)', () => {
+    expect(PAIR_RULES).toEqual([]);
+    expect(buildTimeline([decorin(BERIK, at(0))], at(1)).pairs).toEqual([]);
   });
 
   it('waits until either dies', () => {
-    expect(pairOf(buildTimeline([k(OVERSEER, 'The Diaku Overseer', at(0))], at(1)), 'Decorins').status).toBe('waiting');
+    expect(pairOf(bt([k(OVERSEER, 'The Diaku Overseer', at(0))], at(1)), 'Decorins').status).toBe('waiting');
   });
 
   it('opens on the first death with the second due 6 minutes later', () => {
-    const p = pairOf(buildTimeline([decorin(BERIK, at(4, 10))], at(7, 0)), 'Decorins');
+    const p = pairOf(bt([decorin(BERIK, at(4, 10))], at(7, 0)), 'Decorins');
     expect(p.status).toBe('open');
     expect(p.first.npcId).toBe(BERIK);
     expect(p.secondId).toBe(GRUNHORK);
@@ -76,20 +85,20 @@ describe('the Decorin 6-minute window', () => {
   });
 
   it('opens either way round: Grunhork first makes Berik the one due', () => {
-    const p = pairOf(buildTimeline([decorin(GRUNHORK, at(1))], at(2)), 'Decorins');
+    const p = pairOf(bt([decorin(GRUNHORK, at(1))], at(2)), 'Decorins');
     expect([p.status, p.secondId]).toEqual(['open', BERIK]);
   });
 
   it('is made when the second dies inside the window, and reports how long it took', () => {
-    const tl = buildTimeline([decorin(BERIK, at(4, 10)), decorin(GRUNHORK, at(8, 50))], at(9));
+    const tl = bt([decorin(BERIK, at(4, 10)), decorin(GRUNHORK, at(8, 50))], at(9));
     const p = pairOf(tl, 'Decorins');
     expect(p.status).toBe('made');
     expect(p.tookSec).toBe(280);   // 4:40
   });
 
   it('is made at exactly six minutes and missed at six minutes and one second', () => {
-    expect(pairOf(buildTimeline([decorin(BERIK, at(0)), decorin(GRUNHORK, at(6, 0))], at(7)), 'Decorins').status).toBe('made');
-    const late = pairOf(buildTimeline([decorin(BERIK, at(0)), decorin(GRUNHORK, at(6, 1))], at(7)), 'Decorins');
+    expect(pairOf(bt([decorin(BERIK, at(0)), decorin(GRUNHORK, at(6, 0))], at(7)), 'Decorins').status).toBe('made');
+    const late = pairOf(bt([decorin(BERIK, at(0)), decorin(GRUNHORK, at(6, 1))], at(7)), 'Decorins');
     expect(late.status).toBe('missed');
     expect(late.tookSec).toBe(361);
     expect(late.second.npcId).toBe(GRUNHORK);
@@ -97,9 +106,9 @@ describe('the Decorin 6-minute window', () => {
 
   it('is missed when the window runs out with the second still up, and is open right up to the last second', () => {
     const kills = [decorin(BERIK, at(0))];
-    const open = pairOf(buildTimeline(kills, at(5, 59)), 'Decorins');
+    const open = pairOf(bt(kills, at(5, 59)), 'Decorins');
     expect([open.status, open.secondsLeft]).toEqual(['open', 1]);
-    const gone = pairOf(buildTimeline(kills, at(6, 0)), 'Decorins');
+    const gone = pairOf(bt(kills, at(6, 0)), 'Decorins');
     expect(gone.status).toBe('missed');
     expect(gone.second).toBeNull();
     expect(gone.tookSec).toBeNull();
@@ -107,14 +116,14 @@ describe('the Decorin 6-minute window', () => {
 
   it('follows the replay playhead: scrubbed back to before the second death it is open again', () => {
     const kills = [decorin(BERIK, at(0)), decorin(GRUNHORK, at(4))];
-    expect(pairOf(buildTimeline(kills, at(5)), 'Decorins').status).toBe('made');
-    expect(pairOf(buildTimeline(kills, at(3)), 'Decorins').status).toBe('open');
+    expect(pairOf(bt(kills, at(5)), 'Decorins').status).toBe('made');
+    expect(pairOf(bt(kills, at(3)), 'Decorins').status).toBe('open');
   });
 });
 
 describe('the Tallon + Vallon 20-minute window', () => {
   it('opens with a 20-minute clock', () => {
-    const p = pairOf(buildTimeline([tz(TALLON, at(0))], at(5)), 'Tallon + Vallon');
+    const p = pairOf(bt([tz(TALLON, at(0))], at(5)), 'Tallon + Vallon');
     expect(p.status).toBe('open');
     expect(p.secondId).toBe(VALLON);
     expect(p.secondsLeft).toBe(900);
@@ -122,23 +131,23 @@ describe('the Tallon + Vallon 20-minute window', () => {
 
   it('is made at 19:59 and missed past 20:00, independent of the Decorin rule', () => {
     const base = [decorin(BERIK, at(0)), decorin(GRUNHORK, at(5))];
-    const made = buildTimeline([...base, tz(TALLON, at(10)), tz(VALLON, at(29, 59))], at(31));
+    const made = bt([...base, tz(TALLON, at(10)), tz(VALLON, at(29, 59))], at(31));
     expect(pairOf(made, 'Tallon + Vallon').status).toBe('made');
     expect(pairOf(made, 'Tallon + Vallon').tookSec).toBe(1199);
     expect(pairOf(made, 'Decorins').status).toBe('made');
-    const missed = buildTimeline([...base, tz(TALLON, at(10)), tz(VALLON, at(30, 1))], at(31));
+    const missed = bt([...base, tz(TALLON, at(10)), tz(VALLON, at(30, 1))], at(31));
     expect(pairOf(missed, 'Tallon + Vallon').status).toBe('missed');
     expect(pairOf(missed, 'Decorins').status).toBe('made');
   });
 
   it('starts a fresh attempt when a boss dies again long after the last pair', () => {
-    const tl = buildTimeline([tz(TALLON, at(0)), tz(VALLON, at(2)), tz(TALLON, at(90))], at(91));
+    const tl = bt([tz(TALLON, at(0)), tz(VALLON, at(2)), tz(TALLON, at(90))], at(91));
     const p = pairOf(tl, 'Tallon + Vallon');
     expect([p.status, p.first.npcId, p.secondId]).toEqual(['open', TALLON, VALLON]);
   });
 
   it('calls a partner that died well past the window a late kill, not a new attempt', () => {
-    const p = pairOf(buildTimeline([tz(TALLON, at(0)), tz(VALLON, at(45))], at(46)), 'Tallon + Vallon');
+    const p = pairOf(bt([tz(TALLON, at(0)), tz(VALLON, at(45))], at(46)), 'Tallon + Vallon');
     expect([p.status, p.tookSec]).toEqual(['missed', 2700]);
   });
 });
@@ -165,5 +174,19 @@ describe('the timeline strip sits on both spectator pages (B, picked 2026-10-21)
     expect(route.indexOf('auth.getUser()')).toBeGreaterThan(-1);
     expect(route.indexOf('auth.getUser()')).toBeLessThan(route.indexOf('supabaseAdmin()'));
     expect(route).toMatch(/fail\(401/);
+  });
+
+  // The guild lead, 2026-10-21: the Tactics timeline for another guild's raid leadership, on the guest share link.
+  it('the public share page carries it, fed by the share route, which gates before it reads', () => {
+    expect(src('web/app/share/raid/[token]/page.tsx')).toMatch(/<RaidTimeline src=\{`\/api\/share\/raid\/\$\{params\.token\}\/timeline`\} \/>/);
+    const route = src('web/app/api/share/raid/[token]/timeline/route.ts');
+    const guard = route.indexOf('guardApi(req)'), lookup = route.indexOf('resolveShare(sb, params.token)');
+    const ceiling = route.indexOf('ceilingApi(share.row.id)'), read = route.indexOf('loadTimelineKills(sb,');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(lookup);
+    expect(lookup).toBeLessThan(ceiling);
+    expect(ceiling).toBeLessThan(read);
+    expect(route).toMatch(/share\.win\.fromMs[\s\S]*share\.win\.toMs[\s\S]*share\.row\.guild_id/);   // the row's window and guild, never a request parameter
+    expect(route).not.toMatch(/searchParams|nextUrl/);
   });
 });

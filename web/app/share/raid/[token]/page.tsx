@@ -23,6 +23,7 @@ import { resolveShare, noteView } from '@/lib/raidShareLookup';
 import { BUSY_MESSAGE, ceilingPage, clientIp, guardPage } from '@/lib/shareGuard';
 import { loadSessionReview } from '@/lib/raidSessionLoad';
 import SessionReview from '@/app/raid/session/SessionReview';
+import RaidTimeline from '@/components/RaidTimeline';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,6 +69,7 @@ export default async function SharedRaidSession({ params }: { params: { token: s
         {etStamp.format(share.win.fromMs)} to {etStamp.format(share.win.toMs)} ET. Tap a time in any list to see that moment on the map.
         Characters who opted out of stats appear as their class and a number, unless they won an item here.
       </p>
+      <RaidTimeline src={`/api/share/raid/${params.token}/timeline`} />
       <SessionReview bundle={review.bundle} night={review.night} mode={{ kind: 'share', token: params.token }} />
     </div>
   );

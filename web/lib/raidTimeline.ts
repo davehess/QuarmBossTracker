@@ -6,17 +6,18 @@
 // playhead on the replay page; a kill after `nowMs` has not happened yet and is left out, so scrubbing back
 // un-kills it. Times are epoch ms in, seconds out.
 //
-// The pair rules are the ones the raid guide carries (apps/mimic/pop-raids.js, Rallos Zek event): the two Decorins
-// die within 6 minutes of each other, Tallon Zek and Vallon Zek within about 20.
+// The pair rules: NONE for the Plane of Tactics, per the encounter script (the guild lead, 2026-10-21: "we should
+// always go off of the scripts and database instead of the guides"). The guide's "Decorins within 6 minutes" and
+// "Tallon + Vallon within about 20" do not exist in SecretsOTheP/quests potactics/encounters/Rallos.lua: the
+// Decorins only need both dead (L269, no time compared; a guard that RESPAWNS loses its kill, L379-389), and each
+// brother has its own out-of-combat allowance (20 min, 150 min in a guild instance; L220-247, L456), not a window
+// between the two deaths. The machinery stays for a rule a script does carry.
 
 export type Kill = { npcId: number; name: string; atMs: number };
 
 export type PairRule = { ids: [number, number]; windowSec: number; label: string };
 
-export const PAIR_RULES: PairRule[] = [
-  { ids: [214056, 214057], windowSec: 360, label: 'Decorins' },
-  { ids: [214026, 214316], windowSec: 1200, label: 'Tallon + Vallon' },
-];
+export const PAIR_RULES: PairRule[] = [];
 
 export type TimelineDeath = Kill & {
   /** Seconds since the death before this one; null for the first of the night. */
