@@ -12271,6 +12271,7 @@ const _SHED_KINDS = new Set([
   'kite_loop',                                                 // the kite-loop library's uploads (a nicety, never the raid's record)
   'guild_chat',                                                // the GET feed for Mimic's out-of-game Chat overlay (a read of an in-memory ring)
   'replay_window',                                             // the GET behind the agent's Rehearse tab (a read of past nights)
+  'local_sync',                                                // the GET that fills a player's local copy of the guild's parses (a re-readable catch-up)
 ]);
 const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
 async function _isShedded(kind, res, ackBody) {
@@ -12373,6 +12374,9 @@ const _BUDGET_DEFAULTS = {
   guild_chat:      { perMin: 120, durable: false, get: true },
   // Rehearse tab: one 15-minute slice (~450 KB raw) per page of the scrubber, cached at the bot; over budget is a 429 the agent backs off.
   replay_window:   { perMin: 30,  durable: false, get: true },
+  // Local copy of the guild's parses: pages of up to 200 whole encounters (~250 KB raw, ~40 KB gzipped). The first fill is
+  // ~185 pages for a full history, so 30/min is a fill in about six minutes; over budget is a 429 the agent backs off on.
+  local_sync:      { perMin: 30,  durable: false, get: true },
   // Mimic Spawn map sync (GET poll + POST push share it). A poll every few seconds per open map is ~20/min;
   // over budget is a 429 the agent backs off on (get:true applies to both verbs).
   map_sync:        { perMin: 60,  durable: false, get: true },
@@ -17709,6 +17713,22 @@ async function _handleAgentReplayWindowGet(req, res) {
   const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
   res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, gzip ? { 'Content-Encoding': 'gzip' } : {}));
   return res.end(gzip ? rw.gzipOf(r.entry) : r.entry.body);
+}
+
+// GET /api/agent/local-sync?since=<iso|cursor>&limit=200 — whole changed encounters (players + loot) and the ids of deleted
+// ones, oldest change first, for a player's local copy. utils/localSync.js pages it and scrubs opted-out raiders to class labels.
+async function _handleAgentLocalSyncGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+  const q = new URL(req.url, 'http://x').searchParams;
+  const r = await require('./utils/localSync').serve(supabase, { since: q.get('since'), limit: q.get('limit') }, Date.now());
+  if (r.status !== 200) return _ptsJson(res, r.status, { error: r.error });
+  const body = Buffer.from(JSON.stringify(r.body), 'utf8');
+  const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, gzip ? { 'Content-Encoding': 'gzip' } : {}));
+  return res.end(gzip ? require('zlib').gzipSync(body) : body);
 }
 
 // GET /api/agent/guild-chat?since=<seq>&boot=<boot> — the guild's recent /gu and /rs chat from an in-memory ring
@@ -24324,6 +24344,18 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentReplayWindowGet(req, res); }
     catch (err) {
       console.error('[replay-window] handler error:', err);
+      if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
+      return;
+    }
+  }
+
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/agent/local-sync') {
+    // The shed ack carries cursor:null — "nothing for you, keep the cursor you hold" — never an empty page that reads as caught up.
+    if (await _isShedded('local_sync', res, { ok: true, shed: true, cursor: null, more: false, encounters: [], tombstones: [] })) return;
+    if (await _overBudget('local_sync', req, res)) return;
+    try { return await _handleAgentLocalSyncGet(req, res); }
+    catch (err) {
+      console.error('[local-sync] handler error:', err);
       if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
       return;
     }
