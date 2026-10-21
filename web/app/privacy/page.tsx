@@ -102,7 +102,7 @@ export default function PrivacyPage() {
       <header className="border-b border-border pb-4">
         <h1 className="text-2xl text-gold">🐺 Wolf Pack — Privacy, in plain words</h1>
         <p className="text-xs text-dim mt-1">
-          Last updated: 2026-10-15 · Questions? <code>#feedback</code> or{' '}
+          Last updated: 2026-10-21 · Questions? <code>#feedback</code> or{' '}
           <Link href="/me" className="text-blue hover:underline">/me</Link>{' '}for what we have on you.
         </p>
       </header>
@@ -215,6 +215,45 @@ export default function PrivacyPage() {
           <li>Two optional buttons ask for admin through the normal Windows prompt: adding a Defender exclusion, and fixing the Windows clock.</li>
           <li>It stops another program only when you click <em>retire the old Parser</em>.</li>
           <li>Uninstalling removes Mimic, not the changes above that you made in your EQ folder.</li>
+        </Bullets>
+        <p>
+          <B>What Mimic keeps on your own PC, for you (&ldquo;On this PC&rdquo;).</B> None of this is
+          uploaded, queued or relayed. Mimic&apos;s own windows read it back and nothing else does. Mimic
+          also serves a small local site at <code>/local/</code> on its dashboard address; it is served
+          from your own PC, not from wolfpack.quest, and shows you this data.
+        </p>
+        <Bullets>
+          <li>
+            <B>A recording of the raids you are in.</B> Every few seconds Mimic notes where the raid-mates{' '}
+            <em>your own client sees</em> stand and their health (from Zeal), and keeps one row per minute{' '}
+            <B>for 90 days on your PC</B>, then deletes it. It is never uploaded. A character you have
+            excluded from stats is never recorded, and nothing is recorded while one of them is the
+            character you are playing. It powers <em>My replay</em>.
+          </li>
+          <li>
+            <B>Rebuild from my logs.</B> Reads your old EverQuest log files, only when you start it, and
+            keeps your fights and bosses, raid sessions (who joined and left), zones, deaths and loot on
+            your PC. It uses the same filters as the live reader, so <B>tells, group chat, officer chat
+            and custom channels are never read into it</B>; a raid-say line is used only to know who
+            spoke, never its words. It has no age limit, only a size cap per kind, and goes when you
+            delete Mimic&apos;s <code>local</code> data folder.
+          </li>
+          <li>
+            <B>Your own fight history, and a copy of the guild&apos;s record.</B> <em>My parses</em> lists the
+            fights your PC saw. When you are signed in, Mimic may also fetch the guild&apos;s merged record
+            of the same fights, to show you the difference, and keep a copy of those fields (no Discord
+            ids, no tells, no chat) for 120 days. Characters who opted out already arrive as a class
+            label (&ldquo;Class number&rdquo;), not a name. With no sign-in, no such request is made.
+          </li>
+          <li>
+            <B>Raid codes.</B> If you join another group&apos;s raid with a code, the code is a six-hour
+            label on what your PC records meanwhile. <B>While it is active, Mimic holds back the
+            raid-wide uploads</B> (rosters, fights, kills, chat relay, trigger relay and similar), so they
+            reach no guild&apos;s server; the uploads about your own character carry on. A code export is a
+            file you save and share yourself: it holds fights, loot, deaths and position rows for the
+            last 30 days, keyed by a random per-install number, never your Discord id or a character
+            name as a key. Importing someone else&apos;s file merges it into your own local copy.
+          </li>
         </Bullets>
         <p>
           <B>Who Mimic talks to:</B> our guild&apos;s server; GitHub (updates for Mimic, and for Zeal and
