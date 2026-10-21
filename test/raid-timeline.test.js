@@ -151,14 +151,13 @@ describe('formatting', () => {
   });
 });
 
-describe('the pages show the timeline only for ?v=b or ?v=c', () => {
+describe('the timeline strip sits on both spectator pages (B, picked 2026-10-21)', () => {
   const src = (rel) => stripJs(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
-  it('keeps the no-?v page as it was', () => {
-    for (const rel of ['web/app/spectator/page.tsx', 'web/app/spectator/replay/page.tsx']) {
-      expect(src(rel)).toMatch(/timelineVariant\(searchParams\?\.v\)/);
-    }
-    expect(src('web/app/spectator/page.tsx')).toMatch(/\{variant && <RaidTimeline variant=\{variant\} \/>\}/);
-    expect(src('web/app/spectator/replay/ReplayBoard.tsx')).toMatch(/\{timeline && <RaidTimeline /);
+  it('the live page and the replay page both carry it; the session review embed does not', () => {
+    expect(src('web/app/spectator/page.tsx')).toMatch(/<RaidTimeline \/>/);
+    expect(src('web/app/spectator/replay/page.tsx')).toMatch(/<ReplayBoard timeline \/>/);
+    expect(src('web/app/spectator/replay/ReplayBoard.tsx')).toMatch(/\{timeline && <RaidTimeline kills=\{killList\} nowMs=\{uiT\} \/>\}/);
+    expect(src('web/components/RaidTimeline.tsx')).not.toMatch(/function Cards|timelineVariant/);
   });
 
   it('puts the route behind the members-only gate', () => {

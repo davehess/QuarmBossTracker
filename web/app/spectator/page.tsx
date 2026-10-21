@@ -8,7 +8,7 @@ import type { Metadata } from 'next';
 import { supabaseServer } from '@/lib/supabase-server';
 import NewPageTag from '@/components/NewPageTag';
 import SpectatorBoard from './SpectatorBoard';
-import RaidTimeline, { timelineVariant } from '@/components/RaidTimeline';
+import RaidTimeline from '@/components/RaidTimeline';
 
 export const metadata: Metadata = {
   title: '[beta] Spectator',
@@ -17,8 +17,7 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-export default async function SpectatorPage({ searchParams }: { searchParams?: { v?: string | string[] } }) {
-  const variant = timelineVariant(searchParams?.v);
+export default async function SpectatorPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/spectator');
 
@@ -31,7 +30,7 @@ export default async function SpectatorPage({ searchParams }: { searchParams?: {
         positions older than 30 seconds drop off.{' '}
         <a href="/spectator/replay" className="underline hover:text-text">Replay a recorded night</a>.
       </p>
-      {variant && <RaidTimeline variant={variant} />}
+      <RaidTimeline />
       <SpectatorBoard />
       <p className="mt-6 text-xs text-dim">
         Map lines: Brewall&apos;s EverQuest maps (via Zeal). Generated walls: EQEmu maps (GPLv2+, © EQEmulator.NET, AX-Classic and ProjectEQ).

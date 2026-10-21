@@ -8,7 +8,6 @@ import type { Metadata } from 'next';
 import { supabaseServer } from '@/lib/supabase-server';
 import NewPageTag from '@/components/NewPageTag';
 import ReplayBoard from './ReplayBoard';
-import { timelineVariant } from '@/components/RaidTimeline';
 
 export const metadata: Metadata = {
   title: '[beta] Spectator replay',
@@ -17,7 +16,7 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-export default async function SpectatorReplayPage({ searchParams }: { searchParams?: { v?: string | string[] } }) {
+export default async function SpectatorReplayPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/spectator/replay');
 
@@ -30,7 +29,7 @@ export default async function SpectatorReplayPage({ searchParams }: { searchPara
         recorded that day are in the Session list. The map follows the zone with the most raiders;
         pick a zone to stay in it. <a href="/spectator" className="underline hover:text-text">Back to the live map</a>.
       </p>
-      <ReplayBoard timeline={timelineVariant(searchParams?.v)} />
+      <ReplayBoard timeline />
       <p className="mt-6 text-xs text-dim">
         Positions are the ones Zeal reported through the raiders running Mimic, kept every few seconds while a raid is on.
         Map lines: Brewall&apos;s EverQuest maps (via Zeal). Generated walls: EQEmu maps (GPLv2+, © EQEmulator.NET, AX-Classic and ProjectEQ).{' '}
