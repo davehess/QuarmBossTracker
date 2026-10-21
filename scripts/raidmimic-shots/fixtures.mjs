@@ -191,10 +191,6 @@ export function dps() {
 
 // ─── The death timeline strip (apps/mimic/triggers.html) ──────────────────────────────────────────────────
 // Boss names are game data. `now` is when the page is loaded, because the strip counts from the real clock.
-export const DEATH_RULES = [
-  { names: ['Decorin Berik', 'Decorin Grunhork'], windowSec: 360, label: 'Decorins' },
-  { names: ['Tallon Zek', 'Vallon Zek'], windowSec: 1200, label: 'Tallon + Vallon' },
-];
 export function timeline(now) {
   const s = (x) => now - x * 1000;
   return {
@@ -209,6 +205,5 @@ export function timeline(now) {
       { name: 'Tagrin', zone: 'Plane of Tactics', atMs: s(9 * 60 + 8), boss: true },
       { name: 'Decorin Berik', zone: 'Plane of Tactics', atMs: s(2 * 60 + 48), boss: true },
     ],
-    deathPairRules: DEATH_RULES,
   };
 }

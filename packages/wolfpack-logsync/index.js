@@ -17888,9 +17888,8 @@ function _serializeForDashboard() {
     // Blind-event ring buffer (start / end / self-hit / target-change). The
     // trigger overlay dedupes on `ts` and speaks `tts`, same as trigger fires.
     blindEvents:        _blindEvents.slice(-20),
-    // Boss / paired-mob deaths from the last 30 min (the trigger overlay's timeline strip) + the pair windows.
+    // Boss / Tactics-brother deaths from the last 30 min (the trigger overlay's timeline strip). No pair windows ship.
     recentDeaths:       _recentDeathsSnapshot(),
-    deathPairRules:     DEATH_PAIR_RULES,
     // ⏪ A replay's own deaths + its clock (null when none runs) — the strip runs on these, never mixed with the live ring.
     replayDeaths:       _replayDeathsSnapshot(),
     replayClock:        _replayClockForWeb(),
@@ -36891,7 +36890,6 @@ function startWebDashboard(port) {
           recentTriggerFires: _activeOverlays.map(_fireForWeb),
           blindEvents:        _blindEvents.slice(-20),
           recentDeaths:       _recentDeathsSnapshot(),
-          deathPairRules:     DEATH_PAIR_RULES,
           replayDeaths:       _replayDeathsSnapshot(),
           replayClock:        _replayClockForWeb(),
         }));
@@ -56602,14 +56600,15 @@ function _deadMobNameFromLine(line) {
 }
 // ── Death timeline (the guild lead, 2026-10-21: "the death timers between mobs ... easily and clearly displayed
 // versus having to say it out loud ... a timeline view ... on the bottom of the TTS") ──────────────────────────
-// A small ring of recent boss / paired-mob deaths read off the lines THIS PC's logs see (a kill out of this
-// character's range never prints, so it never lands here). The trigger overlay draws it as a bottom strip and
-// runs the pair windows (DEATH_PAIR_RULES) in the page; the agent only records and ships the facts. Display
-// only: nothing here speaks, uploads or arms a timer.
-const DEATH_PAIR_RULES = [
-  { names: ['Decorin Berik', 'Decorin Grunhork'], windowSec: 360,  label: 'Decorins' },
-  { names: ['Tallon Zek', 'Vallon Zek'],          windowSec: 1200, label: 'Tallon + Vallon' },
-];
+// A small ring of recent boss / Tactics-brother deaths read off the lines THIS PC's logs see (a kill out of this
+// character's range never prints, so it never lands here). The trigger overlay draws it as a bottom strip; the
+// agent only records and ships the facts. Display only: nothing here speaks, uploads or arms a timer.
+// There is NO pair window (the guild lead, 2026-10-21: go off the scripts and the database, not the guides). The
+// Plane of Tactics encounter script has no timer between the two Decorins (both only need to be dead at once; a
+// guard that respawns loses its kill) and none between Tallon and Vallon (each brother has its own out-of-combat
+// allowance, 20 minutes or 150 in a guild instance). So these four names are only RECORDED: the catalog may not
+// flag them as bosses, but the strip should show when each one died and the gap between deaths.
+const DEATH_ALWAYS_RECORD = ['Decorin Berik', 'Decorin Grunhork', 'Tallon Zek', 'Vallon Zek'];
 const RECENT_DEATHS_MAX = 20;
 const RECENT_DEATHS_DEDUPE_MS = 10000;        // several lines can report one death
 const RECENT_DEATHS_SHOW_MS = 30 * 60 * 1000; // what the API carries
@@ -56618,18 +56617,16 @@ const _recentMobDeaths = [];
 function _deathNameKey(n) {
   return String(n || '').trim().replace(/^#/, '').replace(/_/g, ' ').replace(/`/g, "'").replace(/\s+/g, ' ').toLowerCase();
 }
-function _deathPairRuleFor(n, rules) {
+function _deathAlwaysRecorded(n) {
   const k = _deathNameKey(n);
-  for (const r of rules || []) if (r.names.some(x => _deathNameKey(x) === k)) return r;
-  return null;
+  return DEATH_ALWAYS_RECORD.some(x => _deathNameKey(x) === k);
 }
-// Add one death to `ring` (mutated). Kept when the catalog says boss OR the name sits in a pair rule; a repeat of
+// Add one death to `ring` (mutated). Kept when the catalog says boss OR the name is in DEATH_ALWAYS_RECORD; a repeat of
 // the same name within RECENT_DEATHS_DEDUPE_MS is the same death. Returns the entry added, or null.
-function _ringAddMobDeath(ring, name, zone, atMs, isBoss, rules) {
+function _ringAddMobDeath(ring, name, zone, atMs, isBoss) {
   const clean = String(name || '').trim().replace(/^#/, '').replace(/_/g, ' ').replace(/`/g, "'").replace(/\s+/g, ' ');
   if (!clean || !Number.isFinite(atMs) || /^you$/i.test(clean)) return null;
-  const paired = !!_deathPairRuleFor(clean, rules);
-  if (!isBoss && !paired) return null;
+  if (!isBoss && !_deathAlwaysRecorded(clean)) return null;
   const key = _deathNameKey(clean);
   for (const e of ring) if (_deathNameKey(e.name) === key && Math.abs(e.atMs - atMs) < RECENT_DEATHS_DEDUPE_MS) return null;
   const entry = { name: clean, zone: zone || null, atMs, boss: true };
@@ -56646,7 +56643,7 @@ function _noteRecentMobDeath(line, character) {
   const atMs = ts ? ts.getTime() : Date.now();
   if (Date.now() - atMs > 60000) return null;
   const z = _myFightZone(character);
-  return _ringAddMobDeath(_recentMobDeaths, dead, z.name, atMs, _myFightIsBoss(dead, z.id), DEATH_PAIR_RULES);
+  return _ringAddMobDeath(_recentMobDeaths, dead, z.name, atMs, _myFightIsBoss(dead, z.id));
 }
 function _recentDeathsSnapshot(nowMs) {
   const cut = (nowMs || Date.now()) - RECENT_DEATHS_SHOW_MS;
@@ -56659,18 +56656,18 @@ function _recentDeathsSnapshot(nowMs) {
 // after the replay ends. The page runs the strip on `replayClock` (the replay's own log time) while one is present.
 const REPLAY_TAIL_MS = 2 * 60 * 1000;
 const _replayMobDeaths = [];
-// Does this log line report a death the strip would keep (catalog boss or pair name)? { name, zone, boss } or null.
+// Does this log line report a death the strip would keep (catalog boss or an always-recorded name)? { name, zone, boss } or null.
 function _replayDeathCandidate(line, character) {
   const dead = _deadMobNameFromLine(line);
   if (!dead) return null;
   const z = _myFightZone(character);
   const boss = _myFightIsBoss(dead, z.id);
-  if (!boss && !_deathPairRuleFor(dead, DEATH_PAIR_RULES)) return null;
+  if (!boss && !_deathAlwaysRecorded(dead)) return null;
   return { name: dead, zone: z.name, boss };
 }
 function _noteReplayMobDeath(cand, atMs) {
   if (!cand) return null;
-  return _ringAddMobDeath(_replayMobDeaths, cand.name, cand.zone, atMs, cand.boss, DEATH_PAIR_RULES);
+  return _ringAddMobDeath(_replayMobDeaths, cand.name, cand.zone, atMs, cand.boss);
 }
 // True while a replay is running or inside its tail; drops the ring the first time it finds neither.
 function _replayDeathsLive() {

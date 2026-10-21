@@ -2,12 +2,15 @@
 //
 // The guild lead, 2026-10-21: "The death timers between mobs is something we want easily and clearly displayed
 // versus having to say it out loud. We should try to have a timeline view show up on the bottom of the TTS."
+// And the same day: "we should always go off of the scripts and database instead of the guides." The Plane of
+// Tactics encounter script has NO window between the two Decorins and none between Tallon and Vallon (each brother
+// has his own out-of-combat allowance), so the strip shows deaths, gaps and the since-last clock and counts nothing down
+// between mobs. The 6- and 20-minute "pair windows" came from a community guide and are gone.
 //
-// What is under test, the shipped code cut out of the two files and run:
-//   1  deathPairStates (triggers.html, pure): the 6-minute and 20-minute pair windows, open / made / missed, the
-//      2-minute result tail, a repeat death starting a new episode, name spelling (case, underscore, backtick)
-//   2  the agent ring (_ringAddMobDeath / _noteRecentMobDeath): boss or pair-name deaths only, the 10 s dedupe, the
-//      cap, the live-line gate, the line's own timestamp
+// What is under test, the shipped code cut out of the two files:
+//   1  the page's pure state: name spelling, and that no pair countdown ships
+//   2  the agent ring (_ringAddMobDeath / _noteRecentMobDeath): boss or always-recorded Tactics names only, the 10 s
+//      dedupe, the cap, the live-line gate, the line's own timestamp
 //   3  wiring: both API bodies carry recentDeaths, the tail hook calls the ring, and the strip is never drawn in a
 //      canvas panel (body.part)
 // Text assertions strip comments first (test/_source-slice.js); the behaviour ones run the real functions.
@@ -21,117 +24,76 @@ import { readSource, sliceBlock, evalBlock, stripJs, stripCss, ROOT, AGENT_INDEX
 const TRIGGERS = readSource(path.join(ROOT, 'apps', 'mimic', 'triggers.html'));
 const AGENT = readSource(AGENT_INDEX);
 
-// ── 1  the page's pure pair logic ────────────────────────────────────────────────────────────────────────────
+// ── 1  the page's pure state ─────────────────────────────────────────────────────────────────────────────────
 const pageBlock = sliceBlock(TRIGGERS, '// ── death timeline: pure state ──', '// ── /death timeline: pure state ──');
-const { deathPairStates, tlKey } = evalBlock(pageBlock, ['deathPairStates', 'tlKey']);
+const { tlKey } = evalBlock(pageBlock, ['tlKey']);
 
-const RULES = [
-  { names: ['Decorin Berik', 'Decorin Grunhork'], windowSec: 360, label: 'Decorins' },
-  { names: ['Tallon Zek', 'Vallon Zek'], windowSec: 1200, label: 'Tallon + Vallon' },
-];
 const T0 = Date.UTC(2026, 9, 22, 1, 0, 0);
 const S = (n) => n * 1000;
-const d = (name, atSec) => ({ name, zone: 'Plane of Tactics', atMs: T0 + S(atSec), boss: true });
 
-describe('deathPairStates: the Decorin window (6 minutes)', () => {
-  it('opens when one dies, due name is the other, deadline is first death + 6:00', () => {
-    const st = deathPairStates([d('Decorin Berik', 0)], RULES, T0 + S(168));
-    expect(st).toHaveLength(1);
-    expect(st[0]).toMatchObject({ kind: 'open', label: 'Decorins', dueName: 'Decorin Grunhork', deadlineMs: T0 + S(360) });
-    expect((st[0].deadlineMs - (T0 + S(168))) / 1000).toBe(192);   // "due in 3:12"
-  });
-  it('works whichever dies first', () => {
-    const st = deathPairStates([d('Decorin Grunhork', 0)], RULES, T0 + S(10));
-    expect(st[0]).toMatchObject({ kind: 'open', dueName: 'Decorin Berik' });
-  });
-  it('is made when the second dies inside the window, with the gap, and shows for 2 minutes after', () => {
-    const ds = [d('Decorin Berik', 0), d('Decorin Grunhork', 280)];
-    expect(deathPairStates(ds, RULES, T0 + S(285))[0]).toMatchObject({ kind: 'made', gapSec: 280, label: 'Decorins' });
-    expect(deathPairStates(ds, RULES, T0 + S(280 + 120))).toHaveLength(1);
-    expect(deathPairStates(ds, RULES, T0 + S(280 + 121))).toHaveLength(0);
-  });
-  it('the second death exactly at 6:00 still makes it; one second later does not', () => {
-    expect(deathPairStates([d('Decorin Berik', 0), d('Decorin Grunhork', 360)], RULES, T0 + S(361))[0].kind).toBe('made');
-    const late = deathPairStates([d('Decorin Berik', 0), d('Decorin Grunhork', 361)], RULES, T0 + S(362));
-    expect(late).toHaveLength(1);
-    expect(late[0]).toMatchObject({ kind: 'open', dueName: 'Decorin Berik', firstName: 'Decorin Grunhork' });   // a new episode
-  });
-  it('is missed once the window runs out, for 2 minutes, then gone', () => {
-    const ds = [d('Decorin Berik', 0)];
-    expect(deathPairStates(ds, RULES, T0 + S(359))[0].kind).toBe('open');
-    expect(deathPairStates(ds, RULES, T0 + S(360))[0]).toMatchObject({ kind: 'missed', dueName: 'Decorin Grunhork' });
-    expect(deathPairStates(ds, RULES, T0 + S(360 + 120))).toHaveLength(1);
-    expect(deathPairStates(ds, RULES, T0 + S(360 + 121))).toHaveLength(0);
-  });
-});
-
-describe('deathPairStates: Tallon + Vallon (20 minutes) and the rest', () => {
-  it('stays open for 20 minutes, made at 19:59, a new episode at 20:01', () => {
-    expect(deathPairStates([d('Tallon Zek', 0)], RULES, T0 + S(1199))[0]).toMatchObject({ kind: 'open', label: 'Tallon + Vallon', dueName: 'Vallon Zek' });
-    expect(deathPairStates([d('Tallon Zek', 0), d('Vallon Zek', 1199)], RULES, T0 + S(1200))[0]).toMatchObject({ kind: 'made', gapSec: 1199 });
-    const next = deathPairStates([d('Tallon Zek', 0), d('Vallon Zek', 1201)], RULES, T0 + S(1202));
-    expect(next[0]).toMatchObject({ kind: 'open', dueName: 'Tallon Zek' });
-  });
-  it('the two rules run independently', () => {
-    const ds = [d('Decorin Berik', 0), d('Tallon Zek', 30)];
-    const st = deathPairStates(ds, RULES, T0 + S(60));
-    expect(st.map((s) => s.label)).toEqual(['Decorins', 'Tallon + Vallon']);
-  });
-  it('a mob that is in no rule never makes a pair row', () => {
-    expect(deathPairStates([d('Glykus', 0), d('Tagrin', 400)], RULES, T0 + S(500))).toEqual([]);
-  });
+describe('the page: names and no pair window', () => {
   it('matches names the way the log spells them (case, underscore, backtick, leading #)', () => {
     expect(tlKey('#Decorin_Berik')).toBe('decorin berik');
     expect(tlKey('Tallon`s  Zek')).toBe("tallon's zek");
-    const st = deathPairStates([{ name: 'decorin_berik', atMs: T0 }, { name: 'DECORIN GRUNHORK', atMs: T0 + S(100) }], RULES, T0 + S(101));
-    expect(st[0].kind).toBe('made');
+    expect(tlKey('DECORIN GRUNHORK')).toBe('decorin grunhork');
   });
-  it('a name that dies twice is a new episode, not a made pair', () => {
-    const st = deathPairStates([d('Decorin Berik', 0), d('Decorin Berik', 200)], RULES, T0 + S(210));
-    expect(st[0]).toMatchObject({ kind: 'open', firstName: 'Decorin Berik', deadlineMs: T0 + S(200 + 360) });
+  it('ships no pair countdown: the encounter script has no window between the Decorins or between Tallon and Vallon', () => {
+    const t = stripJs(TRIGGERS);
+    const css = stripCss(TRIGGERS.slice(0, TRIGGERS.indexOf('</style>')));
+    expect(t).not.toMatch(/deathPairStates|deathPairRules|_tlRules|tlRuleFor|windowSec|data-tl-pair|tl-pair/);
+    expect(css).not.toMatch(/tl-pair|tl-bar/);
+    expect(t).not.toMatch(/min window starts|window starts on the first death|\bdue in\b|\bmade in\b/);
+    expect(t).not.toMatch(/\b(?:6|20)[ -]min/i);
   });
 });
 
 // ── 2  the agent ring ────────────────────────────────────────────────────────────────────────────────────────
 // The constants + pure ring function, as shipped.
-const ringBlock = sliceBlock(AGENT, 'const DEATH_PAIR_RULES = [', '\n// Tail hook');
-const { DEATH_PAIR_RULES, _ringAddMobDeath, RECENT_DEATHS_MAX } = evalBlock(ringBlock, ['DEATH_PAIR_RULES', '_ringAddMobDeath', 'RECENT_DEATHS_MAX']);
+const ringBlock = sliceBlock(AGENT, 'const DEATH_ALWAYS_RECORD = [', '\n// Tail hook');
+const { DEATH_ALWAYS_RECORD, _ringAddMobDeath, RECENT_DEATHS_MAX } = evalBlock(ringBlock, ['DEATH_ALWAYS_RECORD', '_ringAddMobDeath', 'RECENT_DEATHS_MAX']);
 
 describe('agent ring: which deaths are kept', () => {
-  it('ships the two guild pair rules', () => {
-    expect(DEATH_PAIR_RULES).toEqual(RULES);
-  });
-  it('keeps a catalog boss; drops an ordinary mob; keeps a pair name even when the catalog does not call it a boss', () => {
+  it('ships no Tactics pair window, yet still records all four brothers (no catalog boss flag needed)', () => {
+    const a = stripJs(AGENT);
+    expect(a).not.toMatch(/DEATH_PAIR_RULES|deathPairRules|windowSec:\s*(?:360|1200)/);
+    expect(DEATH_ALWAYS_RECORD).toEqual(['Decorin Berik', 'Decorin Grunhork', 'Tallon Zek', 'Vallon Zek']);
     const ring = [];
-    expect(_ringAddMobDeath(ring, 'Glykus', 'Plane of Tactics', 1000, true, DEATH_PAIR_RULES)).toMatchObject({ name: 'Glykus', boss: true });
-    expect(_ringAddMobDeath(ring, 'a tactics guard', 'Plane of Tactics', 2000, false, DEATH_PAIR_RULES)).toBeNull();
-    expect(_ringAddMobDeath(ring, 'Decorin_Berik', 'Plane of Tactics', 3000, false, DEATH_PAIR_RULES)).toMatchObject({ name: 'Decorin Berik' });
+    DEATH_ALWAYS_RECORD.forEach((n, i) => _ringAddMobDeath(ring, n, 'Plane of Tactics', 100000 + i * 60000, false));
+    expect(ring.map((e) => e.name)).toEqual(DEATH_ALWAYS_RECORD);
+    // an ordinary Plane of Tactics mob that is not a boss is still dropped
+    expect(_ringAddMobDeath(ring, 'a tactics guard', 'Plane of Tactics', 900000, false)).toBeNull();
+  });
+  it('keeps a catalog boss; drops an ordinary mob; keeps a Tactics brother even when the catalog does not call it a boss', () => {
+    const ring = [];
+    expect(_ringAddMobDeath(ring, 'Glykus', 'Plane of Tactics', 1000, true)).toMatchObject({ name: 'Glykus', boss: true });
+    expect(_ringAddMobDeath(ring, 'a tactics guard', 'Plane of Tactics', 2000, false)).toBeNull();
+    expect(_ringAddMobDeath(ring, 'Decorin_Berik', 'Plane of Tactics', 3000, false)).toMatchObject({ name: 'Decorin Berik' });
     expect(ring.map((e) => e.name)).toEqual(['Glykus', 'Decorin Berik']);
   });
   it('never records "You" or a bad time', () => {
     const ring = [];
-    expect(_ringAddMobDeath(ring, 'You', null, 1000, true, DEATH_PAIR_RULES)).toBeNull();
-    expect(_ringAddMobDeath(ring, 'Glykus', null, NaN, true, DEATH_PAIR_RULES)).toBeNull();
+    expect(_ringAddMobDeath(ring, 'You', null, 1000, true)).toBeNull();
+    expect(_ringAddMobDeath(ring, 'Glykus', null, NaN, true)).toBeNull();
     expect(ring).toHaveLength(0);
   });
   it('dedupes the same name inside 10 seconds (several lines report one death), not after', () => {
     const ring = [];
-    _ringAddMobDeath(ring, 'Tagrin', null, 100000, true, DEATH_PAIR_RULES);
-    expect(_ringAddMobDeath(ring, 'tagrin', null, 109000, true, DEATH_PAIR_RULES)).toBeNull();
-    expect(_ringAddMobDeath(ring, 'Tagrin', null, 111000, true, DEATH_PAIR_RULES)).not.toBeNull();
+    _ringAddMobDeath(ring, 'Tagrin', null, 100000, true);
+    expect(_ringAddMobDeath(ring, 'tagrin', null, 109000, true)).toBeNull();
+    expect(_ringAddMobDeath(ring, 'Tagrin', null, 111000, true)).not.toBeNull();
     expect(ring).toHaveLength(2);
   });
   it('keeps at most RECENT_DEATHS_MAX, newest', () => {
     const ring = [];
-    for (let i = 0; i < RECENT_DEATHS_MAX + 7; i++) _ringAddMobDeath(ring, 'Boss ' + i, null, 100000 + i * 60000, true, DEATH_PAIR_RULES);
+    for (let i = 0; i < RECENT_DEATHS_MAX + 7; i++) _ringAddMobDeath(ring, 'Boss ' + i, null, 100000 + i * 60000, true);
     expect(ring).toHaveLength(RECENT_DEATHS_MAX);
     expect(ring[ring.length - 1].name).toBe('Boss ' + (RECENT_DEATHS_MAX + 6));
     expect(ring[0].name).toBe('Boss 7');
   });
   it('stays in time order when a late line arrives out of order', () => {
     const ring = [];
-    _ringAddMobDeath(ring, 'A', null, 200000, true, DEATH_PAIR_RULES);
-    _ringAddMobDeath(ring, 'B', null, 100000, true, DEATH_PAIR_RULES);
+    _ringAddMobDeath(ring, 'A', null, 200000, true);
+    _ringAddMobDeath(ring, 'B', null, 100000, true);
     expect(ring.map((e) => e.name)).toEqual(['B', 'A']);
   });
 });
@@ -178,9 +140,9 @@ describe('agent hook: _noteRecentMobDeath reads a log line', () => {
 describe('wiring (comments stripped)', () => {
   const a = stripJs(AGENT);
   const t = stripJs(TRIGGERS);
-  it('both API bodies carry the deaths and the pair rules, and the tail hook feeds the ring', () => {
+  it('both API bodies carry the deaths (and no pair rules), and the tail hook feeds the ring', () => {
     expect((a.match(/recentDeaths:\s+_recentDeathsSnapshot\(\)/g) || []).length).toBe(2);   // /api/timers + the state object
-    expect((a.match(/deathPairRules:\s+DEATH_PAIR_RULES/g) || []).length).toBe(2);
+    expect(a).not.toMatch(/deathPairRules/);
     expect(a).toMatch(/_noteRecentMobDeath\(line, b\.character\)/);
   });
   it('the strip is hidden in every canvas panel (body.part) and the page never draws it there', () => {
@@ -188,7 +150,7 @@ describe('wiring (comments stripped)', () => {
     expect(css).toMatch(/body\.part #tline\s*\{\s*display:\s*none\s*!important/);
     expect(css).toMatch(/#tline\s*\{[^}]*display:\s*none/);                      // absent by default: no empty chrome
     expect(t).toMatch(/if \(PART \|\| !tlineEl\) return;/);                     // tlineUpdate bails in a panel
-    expect(t).toMatch(/if \(!PART\) tlineSet\(s\.recentDeaths, s\.deathPairRules, s\.replayDeaths, s\.replayClock\)/);
+    expect(t).toMatch(/if \(!PART\) tlineSet\(s\.recentDeaths, s\.replayDeaths, s\.replayClock\)/);
   });
   it('the stack rides above the strip and the window height counts it', () => {
     const css = stripCss(TRIGGERS.slice(0, TRIGGERS.indexOf('</style>')));
@@ -222,19 +184,17 @@ describe('wiring (comments stripped)', () => {
 
 // ── 4  the plan phase, the Up next queue, the strip's preferences (the guild lead, 2026-10-21: "Timeline on TTS
 //      minimizable, text size scalable, next event due for next fight. Next major event in fights queued.") ────────
-// The shipped pure code between the plan + queue markers, run together with the pair block it builds on, and the real
+// The shipped pure code between the plan + queue markers, run together with the block it builds on, and the real
 // pop-raids.js (browser-safe: it only sets window.POP_RAIDS) for the wording.
 const planBlock = sliceBlock(TRIGGERS, '// ── death timeline: plan + queue ──', '// ── /death timeline: plan + queue ──');
 const P = evalBlock(pageBlock + '\n' + planBlock, [
-  'deathPairStates', 'tlPlanFor', 'tlPlanNext', 'tlPlanZone', 'tlQueue', 'tlTimerMajor',
+  'tlPlanFor', 'tlPlanNext', 'tlPlanZone', 'tlQueue', 'tlTimerMajor',
   'tlClampScale', 'tlStepScale', 'tlLoadPrefs', 'tlSavePref', 'TL_SCALE_MIN', 'TL_SCALE_MAX',
 ]);
 const POP = (() => { const w = {}; new Function('window', readSource(path.join(ROOT, 'apps', 'mimic', 'pop-raids.js')))(w); return w.POP_RAIDS; })();
 const dz = (name, atSec) => ({ name, zone: 'Plane of Tactics', atMs: T0 + S(atSec), boss: true });
-function nextFor(deaths, nowSec, zone = 'Plane of Tactics') {
-  const now = T0 + S(nowSec);
-  const pairs = P.deathPairStates(deaths, RULES, now);
-  return P.tlPlanNext(zone, P.tlPlanFor(zone, POP), deaths, RULES, pairs);
+function nextFor(deaths, zone = 'Plane of Tactics') {
+  return P.tlPlanNext(zone, P.tlPlanFor(zone, POP), deaths);
 }
 
 describe('plan phases are read from pop-raids.js', () => {
@@ -253,34 +213,40 @@ describe('plan phases are read from pop-raids.js', () => {
 });
 
 describe('plan phase from the deaths seen', () => {
-  it('nothing of the plan seen yet: next is the Decorins, window starts on the first death', () => {
-    expect(nextFor([dz('Glykus', 0)], 10).text).toBe('Decorins — 6 min window starts on the first death');
+  it('nothing of the plan seen yet: next is the Decorins, in the plan\'s own wording, with no window', () => {
+    const n = nextFor([dz('Glykus', 0)]);
+    expect(n).toMatchObject({ n: 1, text: 'Kill both Decorins' });
+    expect(n.text).not.toMatch(/\bmin\b|window/i);
   });
-  it('a Decorin window running: that is the big countdown, so next is Tallon + Vallon', () => {
-    const n = nextFor([dz('Decorin Berik', 0)], 60);
-    expect(n).toMatchObject({ n: 2, text: 'Tallon + Vallon — 20 min window starts on the first death' });
+  it('one Decorin down: P1 still needs the other, however long ago the first died', () => {
+    expect(nextFor([dz('Decorin Berik', 0)]).n).toBe(1);
+    expect(nextFor([dz('Decorin Grunhork', 0)]).n).toBe(1);
   });
-  it('both Decorins made (P1 done): next is still P2', () => {
-    expect(nextFor([dz('Decorin Berik', 0), dz('Decorin Grunhork', 100)], 110).n).toBe(2);
+  it('both Decorins down (any gap): next is P2, Tallon + Vallon, with no countdown wording', () => {
+    for (const gap of [100, 3000]) {
+      const n = nextFor([dz('Decorin Berik', 0), dz('Decorin Grunhork', gap)]);
+      expect(n.n).toBe(2);
+      expect(n.text).toMatch(/^Tallon \+ Vallon spawn N\/S halls/);
+      expect(n.text).not.toMatch(/\bmin\b|window/i);
+    }
   });
-  it('the Tallon window running: next is the Fake Rallos phase, in the plan\'s own wording', () => {
-    const n = nextFor([dz('Decorin Berik', 0), dz('Decorin Grunhork', 100), dz('Tallon Zek', 400)], 450);
+  it('one of Tallon + Vallon down: P2 is still next (no window runs); both down: Fake Rallos', () => {
+    const base = [dz('Decorin Berik', 0), dz('Decorin Grunhork', 100)];
+    expect(nextFor(base.concat(dz('Tallon Zek', 400))).n).toBe(2);
+    const n = nextFor(base.concat(dz('Tallon Zek', 400), dz('Vallon Zek', 3000)));
     expect(n.n).toBe(3);
     expect(n.text).toMatch(/^Fake Rallos: .*real spawns in arena$/);
   });
   it('both of Tallon + Vallon down: next is P3 until Rallos himself dies, then nothing', () => {
     const ds = [dz('Decorin Berik', 0), dz('Decorin Grunhork', 100), dz('Tallon Zek', 400), dz('Vallon Zek', 700)];
-    expect(nextFor(ds, 710).n).toBe(3);
-    expect(nextFor(ds.concat(dz('Rallos Zek the Warlord', 1500)), 1510)).toBeNull();
+    expect(nextFor(ds).n).toBe(3);
+    expect(nextFor(ds.concat(dz('Rallos Zek the Warlord', 1500)))).toBeNull();
   });
   it('a later phase done implies the earlier ones (the first deaths scrolled out of the 30 minutes)', () => {
-    expect(nextFor([dz('Tallon Zek', 0), dz('Vallon Zek', 300)], 310).n).toBe(3);
-  });
-  it('a missed window is not progress: the same phase is next again', () => {
-    expect(nextFor([dz('Decorin Berik', 0)], 400).n).toBe(1);
+    expect(nextFor([dz('Tallon Zek', 0), dz('Vallon Zek', 300)]).n).toBe(3);
   });
   it('no plan for a zone without one; the zone falls back to what the deaths name', () => {
-    expect(nextFor([dz('Glykus', 0)], 10, 'Plane of Hate')).toBeNull();
+    expect(nextFor([dz('Glykus', 0)], 'Plane of Hate')).toBeNull();
     expect(P.tlPlanZone([{ name: 'a', zone: 'Plane of Tactics', atMs: 1 }, { name: 'b', zone: null, atMs: 2 }])).toBe('Plane of Tactics');
     expect(P.tlPlanZone([{ name: 'Decorin_Berik', zone: null, atMs: 1 }])).toBe('plane of tactics');
     expect(P.tlPlanZone([{ name: 'Glykus', zone: null, atMs: 1 }])).toBeNull();
@@ -290,8 +256,7 @@ describe('plan phase from the deaths seen', () => {
 describe('the Up next queue', () => {
   const NOW = T0;
   const tm = (key, label, remSec, extra = {}) => ({ key, label, endsMs: NOW + S(remSec), warns: 0, loot: false, cycle: false, ...extra });
-  const plan = { n: 2, text: 'Tallon + Vallon — 20 min window starts on the first death' };
-  const open = (label, dueName, remSec) => ({ kind: 'open', label, dueName, deadlineMs: NOW + S(remSec) });
+  const plan = { n: 2, text: 'Tallon + Vallon spawn N/S halls' };
 
   it('major rule: a warning set or 20 s+ left; never loot, a cyclic row or an expired one', () => {
     expect(P.tlTimerMajor(tm('a', 'x', 19), NOW)).toBe(false);
@@ -301,22 +266,22 @@ describe('the Up next queue', () => {
     expect(P.tlTimerMajor(tm('a', 'x', 90, { cycle: true }), NOW)).toBe(false);
     expect(P.tlTimerMajor(tm('a', 'x', -1, { warns: 1 }), NOW)).toBe(false);
   });
-  it('merges pair deadlines and major timers, soonest first, plan in the last slot, at most 3', () => {
-    const q = P.tlQueue([], plan,
-      [tm('d1', 'Tagrin - Slow', 61), tm('d2', 'Tagrin - Malo', 38), tm('d3', 'Tagrin - Rampage', 12), tm('d5', 'Tagrin - Rune', 50)], NOW, [], 3);
+  it('merges major timers, soonest first, plan in the last slot, at most 3', () => {
+    const q = P.tlQueue(plan,
+      [tm('d1', 'Tagrin - Slow', 61), tm('d2', 'Tagrin - Malo', 38), tm('d3', 'Tagrin - Rampage', 12), tm('d5', 'Tagrin - Rune', 50)], NOW, 3);
     expect(q.map((x) => x.label)).toEqual(['Tagrin - Malo', 'Tagrin - Rune', plan.text]);   // the 12 s row is not major; the plan holds slot 3
-    const q2 = P.tlQueue([open('Decorins', 'Decorin Grunhork', 30)], null, [tm('d1', 'Slow', 61), tm('d2', 'Malo', 38), tm('d4', 'Rune', 45)], NOW, [], 3);
-    expect(q2.map((x) => x.label)).toEqual(['Decorin Grunhork due', 'Malo', 'Rune']);   // no plan: three timed rows, soonest first
-    expect(q2.map((x) => x.dueMs)).toEqual([NOW + S(30), NOW + S(38), NOW + S(45)]);
+    const q2 = P.tlQueue(null, [tm('d1', 'Slow', 61), tm('d2', 'Malo', 38), tm('d4', 'Rune', 45), tm('d6', 'Haste', 90)], NOW, 3);
+    expect(q2.map((x) => x.label)).toEqual(['Malo', 'Rune', 'Slow']);   // no plan: three timed rows, soonest first
+    expect(q2.map((x) => x.dueMs)).toEqual([NOW + S(38), NOW + S(45), NOW + S(61)]);
   });
-  it('leaves out the pair rows the strip already shows big (skipKeys) and dedupes by key and label', () => {
-    const q = P.tlQueue([open('Decorins', 'Decorin Grunhork', 30)], null,
-      [tm('d1', 'Tagrin - Slow', 61), tm('d1', 'Tagrin - Slow', 61), tm('d9', 'tagrin - slow', 70)], NOW, ['pair:Decorins'], 3);
+  it('dedupes by key and label', () => {
+    const q = P.tlQueue(null,
+      [tm('d1', 'Tagrin - Slow', 61), tm('d1', 'Tagrin - Slow', 61), tm('d9', 'tagrin - slow', 70)], NOW, 3);
     expect(q.map((x) => x.label)).toEqual(['Tagrin - Slow']);
   });
-  it('closed pairs (made / missed) never queue', () => {
-    const q = P.tlQueue([{ kind: 'made', label: 'Decorins' }, { kind: 'missed', label: 'Tallon + Vallon', dueName: 'Vallon Zek', deadlineMs: NOW - 1 }], null, [], NOW, [], 3);
-    expect(q).toEqual([]);
+  it('no queue row is ever derived from a pair rule', () => {
+    expect(P.tlQueue(null, [], NOW, 3)).toEqual([]);
+    expect(P.tlQueue.length).toBe(4);   // (plan, timers, nowMs, max): no pairs, no skipKeys
   });
 });
 
@@ -367,7 +332,7 @@ describe('strip wiring: controls, plan source, hover handshake (comments strippe
   it('the text size is a CSS variable on the strip only, and the strip re-measures after a change', () => {
     expect(t).toMatch(/tlineEl\.style\.setProperty\('--tl-s'/);
     expect(t).not.toMatch(/documentElement\.style\.setProperty\('--tl-s'/);
-    expect(css).toMatch(/font-size:calc\(22px \* var\(--tl-s\)\)/);
+    expect(css).toMatch(/font-size:calc\(13px \* var\(--tl-s\)\)/);
     const step = sliceBlock(t, 'function step(dir){', "sm.addEventListener('click'");
     expect(step).toMatch(/syncTlineH\(\)/);
     expect(t).toMatch(/tg\.addEventListener\('click', function\(\)\{[\s\S]*?syncTlineH\(\)/);
