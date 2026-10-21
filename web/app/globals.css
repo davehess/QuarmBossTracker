@@ -223,3 +223,26 @@
 .tnum { font-variant-numeric: tabular-nums; }
 /* The head has to close as a mass before any line reads as anatomy. */
 .wolf-mass { fill: #141b25; stroke: none; }
+
+/* raidmimic hero previews (web/app/raidmimic/_landing/MascotHero.tsx, `?v=b` / `?v=c`).
+   .rm-fade melts the clip's square edge into the page: both axes fade over the outer 8%.
+   .rm-card (lg and up) tilts a capture and flies it in from beside the mascot: transform + opacity only,
+   and none of it under prefers-reduced-motion. */
+@layer utilities {
+  .rm-fade {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent), linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+    -webkit-mask-composite: source-in;
+    mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent), linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+    mask-composite: intersect;
+  }
+  @keyframes rm-fan {
+    from { opacity: 0; transform: translate3d(var(--fx, 0px), 24px, 0) rotate(0deg) scale(0.9); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0) rotate(var(--r, 0deg)) scale(1); }
+  }
+  @media (min-width: 1024px) {
+    .rm-card { transform: rotate(var(--r, 0deg)); animation: rm-fan 640ms cubic-bezier(0.22, 0.61, 0.36, 1) var(--d, 0ms) both; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rm-card { animation: none; }
+  }
+}

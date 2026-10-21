@@ -41,6 +41,9 @@ export default function RaidmimicPage({ searchParams }: { searchParams?: { v?: s
   // `?v=b` is a PREVIEW of "Output first" (the guild lead, 2026-10-21), read at b.wolfpack.quest/raidmimic?v=b. The
   // default stays the tour. On a raidmimic host the middleware drops every query parameter, and this refuses the
   // variant there as well, so a stale link can never change the public page.
-  if (!onHost && searchParams?.v === 'b') return <OutputLayout ctx={ctx} />;
+  // `?v=b` / `?v=c` are the two mascot hero previews on top of it (the guild lead, 2026-10-21: "more of the mimic"):
+  // b is the howl clip beside the headline, c is the mascot with the captures fanned around it.
+  if (!onHost && searchParams?.v === 'b') return <OutputLayout ctx={ctx} hero="howl" />;
+  if (!onHost && searchParams?.v === 'c') return <OutputLayout ctx={ctx} hero="layered" />;
   return <TourLayout ctx={ctx} />;
 }
