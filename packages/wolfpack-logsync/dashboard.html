@@ -472,14 +472,14 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
   <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
   <!-- 🖥 On this PC (the guild lead, 2026-10-21, option B: the website's own pages bundled into Mimic and
        served by this agent under /local/). Built from your own logs and inventory files; nothing leaves
-       the PC. Inventory opens in its own Mimic window (the tray's "Inventory (on this PC)" is the same
-       window); in a plain browser it opens a new tab. My parses and My replay are placeholders until they
-       exist. No data-tab, so the tab switcher ignores them. -->
+       the PC. Inventory and My replay open in their own Mimic window (the tray's "Inventory (on this PC)"
+       and "My replay (on this PC)" are the same window); in a plain browser they open a new tab. My parses
+       is a placeholder until it exists. No data-tab, so the tab switcher ignores them. -->
   <div class="wp-rail-grp" id="wpLocalGrp">
     <div class="wp-lbl">On this PC</div>
     <button id="wpLocalInv" type="button" onclick="wpOpenLocalSite('inventory')" title="Every item across your characters, from the inventory files on this PC (opens in its own window). Nothing leaves the PC.">🎒 Inventory</button>
     <button type="button" disabled title="Coming soon: your own parses, built from your own logs">📈 My parses<span class="wp-soon">soon</span></button>
-    <button type="button" disabled title="Coming soon: replay your own movement through a fight">🎬 My replay<span class="wp-soon">soon</span></button>
+    <button id="wpLocalReplay" type="button" onclick="wpOpenLocalSite('replay')" title="Play back where you and your raid stood, from the recording Mimic keeps on this PC (opens in its own window). Nothing leaves the PC.">🎬 My replay</button>
   </div>
   <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
        2026-09-23: "We're running out of horizontal real estate"). They went up to

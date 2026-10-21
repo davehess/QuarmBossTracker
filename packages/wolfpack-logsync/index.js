@@ -19364,14 +19364,14 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
   <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
   <!-- 🖥 On this PC (the guild lead, 2026-10-21, option B: the website's own pages bundled into Mimic and
        served by this agent under /local/). Built from your own logs and inventory files; nothing leaves
-       the PC. Inventory opens in its own Mimic window (the tray's "Inventory (on this PC)" is the same
-       window); in a plain browser it opens a new tab. My parses and My replay are placeholders until they
-       exist. No data-tab, so the tab switcher ignores them. -->
+       the PC. Inventory and My replay open in their own Mimic window (the tray's "Inventory (on this PC)"
+       and "My replay (on this PC)" are the same window); in a plain browser they open a new tab. My parses
+       is a placeholder until it exists. No data-tab, so the tab switcher ignores them. -->
   <div class="wp-rail-grp" id="wpLocalGrp">
     <div class="wp-lbl">On this PC</div>
     <button id="wpLocalInv" type="button" onclick="wpOpenLocalSite('inventory')" title="Every item across your characters, from the inventory files on this PC (opens in its own window). Nothing leaves the PC.">🎒 Inventory</button>
     <button type="button" disabled title="Coming soon: your own parses, built from your own logs">📈 My parses<span class="wp-soon">soon</span></button>
-    <button type="button" disabled title="Coming soon: replay your own movement through a fight">🎬 My replay<span class="wp-soon">soon</span></button>
+    <button id="wpLocalReplay" type="button" onclick="wpOpenLocalSite('replay')" title="Play back where you and your raid stood, from the recording Mimic keeps on this PC (opens in its own window). Nothing leaves the PC.">🎬 My replay</button>
   </div>
   <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
        2026-09-23: "We're running out of horizontal real estate"). They went up to
@@ -61412,17 +61412,97 @@ function _localTrackWindow(store, o = {}) {
     .map(r => ({ minute_at: r.minute_at, zones: r.zones, data: r.data }));
   return { status: 200, body: { night: night || _localTrackNightKey(fromMs), from: new Date(fromMs).toISOString(), to: new Date(end).toISOString(), rows } };
 }
+//   GET /api/local/track/bosses?night=<key> -> { night, bosses:[{npc_id,name,from,to,points:[{zone,x,y,z}]}] }
+//        the boss kills this PC's own fight records hold for that night (logsync.myfights.json + the History ring),
+//        the shape /api/spectator/replay/bosses returns. `points` is where a raider was seen targeting the boss
+//        (the recorder's own samples, server frame); empty when none was. times are epoch ms.
+//   GET /api/local/track/map?zone=<short> -> { zone, frame:'server', eqemu:null, brewall:{lines,labels}, ... }
+//        the zone's Brewall map files this PC already reads for the Mimic map (_mapLocalFor), in the shape
+//        /api/spectator/map returns. 404 when there is no map for the zone.
+const _localBossKey = (s) => String(s || '').replace(/^[#!~]+/, '').replace(/[_`]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+const _localBossShow = (s) => String(s || '').replace(/^[#!~]+/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+// Boss fights this PC knows: its own fight log's boss rows and the History ring (boss-only). [{ name, from, to }] in ms.
+function _localBossFights() {
+  const out = [];
+  for (const r of _myFights) if (r && r.boss) out.push({ name: r.mob, from: Date.parse(r.t), to: Date.parse(r.end) });
+  for (const h of stats.fightHistory || []) {
+    if (!h || !h.boss || !(h.endedMs > 0) || !(h.durationSec > 0)) continue;
+    out.push({ name: h.boss, from: h.startedMs > 0 ? h.startedMs : h.endedMs - h.durationSec * 1000, to: h.endedMs });
+  }
+  return out;
+}
+function _localBossNpcId(name) {
+  try { const m = _npcMobInfoFor(name); const id = m && Number(m.id); return id > 0 ? id : 0; } catch { return 0; }
+}
+// The first place a recorded minute saw `name` targeted inside [from - 1 min, to + 1 min], or null.
+function _localBossPoint(store, name, from, to) {
+  const want = _localBossKey(name);
+  for (const e of store.scan('track_minute', { since: from - 60_000, until: to + 60_000, limit: 120 })) {
+    let d;
+    try { d = JSON.parse(e.rec && e.rec.data); } catch { continue; }
+    if (!d || !Array.isArray(d.mobs) || !Array.isArray(d.mf)) continue;
+    for (const m of d.mf) {
+      const mob = d.mobs[m[1]];
+      if (!mob || _localBossKey(mob[0]) !== want || !Number.isFinite(m[2]) || !Number.isFinite(m[3])) continue;
+      const zone = Array.isArray(d.zones) ? d.zones[m[6]] : null;
+      // mf is written swapped back (slot 2 = server y, slot 3 = server x), as web/lib/raidReplay.ts decodeTargets reads it.
+      if (typeof zone === 'string' && zone) return { zone, x: m[3], y: m[2], z: Number.isFinite(m[4]) ? m[4] : 0 };
+    }
+  }
+  return null;
+}
+function _localTrackBosses(store, o = {}) {
+  const night = o.night ? String(o.night) : '';
+  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(night)) return { status: 400, body: { error: 'bad request' } };
+  const fights = (Array.isArray(o.fights) ? o.fights : _localBossFights())
+    .filter(f => f && f.name && f.from > 0 && f.to >= f.from && _localTrackNightKey(f.to) === night)
+    .sort((a, b) => a.from - b.from);
+  // One kill is seen by every character on this PC and by both records: fights of one mob within a minute are one.
+  const kills = [];
+  for (const f of fights) {
+    const k = _localBossKey(f.name);
+    const cur = kills.find(x => x.key === k && f.from <= x.to + 60_000 && f.to >= x.from - 60_000);
+    if (cur) { cur.from = Math.min(cur.from, f.from); cur.to = Math.max(cur.to, f.to); } else kills.push({ key: k, name: _localBossShow(f.name), from: f.from, to: f.to });
+  }
+  const bosses = kills.map(k => {
+    const p = _localBossPoint(store, k.name, k.from, k.to);
+    return { npc_id: _localBossNpcId(k.name), name: k.name, from: k.from, to: k.to, points: p ? [p] : [] };
+  });
+  return { status: 200, body: { night, bosses } };
+}
+const _localHexRgb = (h) => [parseInt(String(h).slice(1, 3), 16) || 0, parseInt(String(h).slice(3, 5), 16) || 0, parseInt(String(h).slice(5, 7), 16) || 0];
+async function _localTrackMap(zone) {
+  const short = String(zone || '').toLowerCase();
+  if (!/^[a-z0-9_]{1,32}$/.test(short)) return { status: 400, body: { error: 'bad zone' } };
+  // Start the one-time fetch of Zeal's map files when they are not on disk yet, and give it a moment to land.
+  _mapBrewallEnsure(short, Date.now());
+  for (let i = 0; i < 32 && _mapBrewall.get(short) && _mapBrewall.get(short).inflight; i++) await new Promise(r => setTimeout(r, 250));
+  const m = _mapLocalFor(short, Date.now());
+  if (!m || !m.lines.length) return { status: 404, body: { error: 'no map for this zone' } };
+  return { status: 200, body: {
+    zone: short, frame: 'server', eqemu: null,
+    brewall: { lines: m.lines.map(l => [l[0], l[1], l[2], l[3], l[4], l[5], ..._localHexRgb(l[6])]), labels: m.labels.map(l => [l[0], l[1], l[2], l[3]]) },
+    sources: { eqemu: '', brewall: "Brewall's EverQuest maps, read from this PC" }, generated_at: new Date().toISOString(),
+  } };
+}
 // Returns true when it answered. Called from the dashboard router, after the local guard.
 function _localTrackRoute(req, res) {
   if (!req || req.method !== 'GET' || !req.url || req.url.indexOf('/api/local/track') !== 0) return false;
   let u;
   try { u = new URL(req.url, 'http://x'); } catch { return false; }
-  if (u.pathname !== '/api/local/track' && u.pathname !== '/api/local/track/nights') return false;
+  const send = (out) => { res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(out.body)); };
+  if (u.pathname === '/api/local/track/map') {
+    _localTrackMap(u.searchParams.get('zone')).then(send, () => send({ status: 500, body: { error: 'local map unavailable' } }));
+    return true;
+  }
+  if (u.pathname !== '/api/local/track' && u.pathname !== '/api/local/track/nights' && u.pathname !== '/api/local/track/bosses') return false;
   let out;
   try {
     out = u.pathname === '/api/local/track/nights'
       ? { status: 200, body: _localTrackNights(_localTrackStore(), { days: u.searchParams.get('days') }) }
-      : _localTrackWindow(_localTrackStore(), { from: u.searchParams.get('from'), to: u.searchParams.get('to'), night: u.searchParams.get('night') });
+      : u.pathname === '/api/local/track/bosses'
+        ? _localTrackBosses(_localTrackStore(), { night: u.searchParams.get('night') })
+        : _localTrackWindow(_localTrackStore(), { from: u.searchParams.get('from'), to: u.searchParams.get('to'), night: u.searchParams.get('night') });
   } catch { out = { status: 500, body: { error: 'local track unavailable' } }; }
   res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(out.body));
@@ -61435,7 +61515,7 @@ module.exports = {
   AGENT_VERSION,
   // Local store + own position recorder (2026-10-21): see the block above module.exports.
   _localStore, _localStoreOpen, _localTrackFrame, _localTrackMinuteRow, _localTrackNightKey, _localTrackTick, _localTrackClose, _localTrackPush,
-  _localTrackNights, _localTrackWindow, _localTrackRoute, _localTrackSetStoreForTest, _localRecorderStart, _localRecorderStop,
+  _localTrackNights, _localTrackWindow, _localTrackBosses, _localTrackMap, _mapPaths, _localTrackRoute, _localTrackSetStoreForTest, _localRecorderStart, _localRecorderStop,
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   buildFeedbackLogSlice, _feedbackLineAllowed,

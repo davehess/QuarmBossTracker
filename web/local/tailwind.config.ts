@@ -9,6 +9,8 @@ const config: Config = {
     './app/**/*.{ts,tsx}',
     '../components/**/*.{ts,tsx}',
     '../app/me/inventory/*.tsx',
+    '../app/spectator/*.tsx',
+    '../app/spectator/replay/*.tsx',
   ],
 };
 

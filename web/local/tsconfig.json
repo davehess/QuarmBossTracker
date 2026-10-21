@@ -18,7 +18,10 @@
     "paths": {
       "@/*": ["../*"],
       "react": ["./node_modules/@types/react"],
-      "next/link": ["./node_modules/next/link"]
+      "next/link": ["./node_modules/next/link"],
+      "next/dynamic": ["./node_modules/next/dynamic"],
+      "three": ["./node_modules/@types/three"],
+      "three/*": ["./node_modules/@types/three/*"]
     }
   },
   "include": ["next-env.d.ts", "app/**/*.ts", "app/**/*.tsx", "stubs/**/*.tsx", ".next/types/**/*.ts"],

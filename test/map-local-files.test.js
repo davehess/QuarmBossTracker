@@ -406,10 +406,15 @@ describe('NEVER leaves the machine (the art has no licence for us to redistribut
     expect(localJs).not.toMatch(/\b(writeFile\w*|appendFile\w*|createWriteStream|rename\w*|copyFile\w*|mkdir\w*|unlink\w*)\b/);
     expect(localJs).toMatch(/_eqSetupDirs\(\)/);   // the EQ folder the agent already knows, not a new setting
   });
-  it('nothing outside that block and the map-state payload ever mentions the local map', () => {
+  it('nothing outside that block, the map-state payload and the local site\'s own map route ever mentions the local map', () => {
     const payloadFn = sliceBlock(js, 'function _mapStatePayload(', '\n  return out;\n}\n');
-    let rest = js.replace(localJs, '').replace(payloadFn, '');
-    expect(rest.length).toBeLessThan(js.length - 500);                 // both really were cut out
+    // "My replay" (web/local) draws the same files on its own page: GET /api/local/track/map, one more localhost-only
+    // reader (the router puts _localGuardBlock before it; test/local-recorder.test.js pins that order).
+    const replayMap = sliceBlock(js, 'async function _localTrackMap(', '\n}\n');
+    expect(replayMap).toMatch(/_mapLocalFor\(/);
+    expect(replayMap).not.toMatch(/\b(https?|fetch|request|XMLHttpRequest|WebSocket|_uploadOpts|botUrl|token|enqueueUpload)\b/);
+    let rest = js.replace(localJs, '').replace(payloadFn, '').replace(replayMap, '');
+    expect(rest.length).toBeLessThan(js.length - 500);                 // all really were cut out
     expect(rest).not.toMatch(/local_map|local_version|_mapLocalFor|_mapLocal\b|_mapParseLocalFiles|_mapFileToServer|MAP_LOCAL_/);
     // the /api/map-state handler only reads the version the overlay already holds
     const handler = sliceBlock(js, 'function _handleMapState(', '\n}\n');

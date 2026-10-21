@@ -377,9 +377,10 @@ describe('activeSpawns', () => {
 describe('parseBosses', () => {
   it('keeps well-formed bosses and drops the rest', () => {
     const good = { npc_id: 1, name: 'Lord Aldenmar', from: 1, to: 2, points: [{ zone: 'z', x: 1, y: 2 }, { zone: 'z', x: 'bad', y: 2 }] };
-    const out = parseBosses({ bosses: [good, { name: 5 }, null, { ...good, points: [] }, { ...good, from: 'x' }] });
-    expect(out).toHaveLength(1);
+    const out = parseBosses({ bosses: [good, { name: 5 }, null, { ...good, points: [] }, { ...good, from: 'x' }, { ...good, points: 'x' }] });
+    expect(out).toHaveLength(2);   // the empty-points one stays: the local site's kills with no recorded position (the timeline wants them)
     expect(out[0].points).toEqual([{ zone: 'z', x: 1, y: 2, z: 0 }]);
+    expect(out[1].points).toEqual([]);
     expect(parseBosses(null)).toEqual([]);
     expect(parseBosses({ bosses: 'x' })).toEqual([]);
   });

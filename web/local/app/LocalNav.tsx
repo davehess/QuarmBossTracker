@@ -1,19 +1,20 @@
 'use client';
 
-// The local site's top nav. Inventory is the one page so far; My parses and My replay are listed so the
-// shape of the site is visible, and are not links until they exist (they render as dim, titled spans).
+// The local site's top nav. Inventory and My replay are pages; My parses is listed so the shape of the site is
+// visible, and is not a link until it exists (it renders as a dim, titled span).
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const PAGES: { href: string; label: string; icon: string; coming?: boolean }[] = [
   { href: '/inventory/', label: 'Inventory', icon: '🎒' },
   { href: '/parses/',    label: 'My parses', icon: '📈', coming: true },
-  { href: '/replay/',    label: 'My replay', icon: '🎬', coming: true },
+  { href: '/replay/',    label: 'My replay', icon: '🎬' },
 ];
 
 export default function LocalNav() {
-  const here = usePathname() || '/';
-  const onInventory = /^\/(inventory\/?)?$/.test(here.replace(/^\/local/, '') || '/');
+  const path = (usePathname() || '/').replace(/^\/local/, '') || '/';
+  // /local/ is the inventory (app/page.tsx), so the bare root lights Inventory too.
+  const isOn = (href: string) => (href === '/inventory/' ? /^\/(inventory\/?)?$/.test(path) : path.replace(/\/?$/, '/') === href);
   return (
     <nav className="flex flex-wrap items-center gap-2" aria-label="On this PC">
       {PAGES.map(p => {
@@ -25,7 +26,7 @@ export default function LocalNav() {
             </span>
           );
         }
-        const on = p.href === '/inventory/' && onInventory;
+        const on = isOn(p.href);
         return (
           <Link key={p.href} href={p.href}
             className={`${base} no-underline ${on ? 'border-gold text-gold' : 'border-border text-text hover:border-blue'}`}>
