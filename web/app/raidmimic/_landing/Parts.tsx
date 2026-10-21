@@ -14,6 +14,7 @@ import {
 export interface Ctx {
   onHost: boolean;      // served on a raidmimic host (bare shell, no query string, no Wolf Pack header)
   interest: string;     // the Register-interest address
+  setup: string;        // the set-up guide: /setup on a raidmimic host, /raidmimic/setup on the Wolf Pack hosts
 }
 
 const BTN = 'inline-flex min-h-11 items-center justify-center rounded-md border px-4 py-2 text-sm font-semibold no-underline transition-colors motion-reduce:transition-none';
@@ -54,6 +55,7 @@ export function Hero({ ctx, compact = false }: { ctx: Ctx; compact?: boolean }) 
       <p className="mt-3 max-w-[66ch] text-sm leading-6 text-text">{HERO.honest}</p>
       <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
         <InterestButton ctx={ctx} />
+        <a href={ctx.setup} className="inline-flex min-h-11 items-center text-sm">Set it up yourself →</a>
         <a href="#coming" className="inline-flex min-h-11 items-center text-sm">{COMING_TITLE}</a>
       </div>
       <p className="mt-4 max-w-[66ch] text-xs leading-5 text-dim">
