@@ -637,7 +637,7 @@ describe('⚙: the real click handler reaches every control', () => {
         setOverlayMini: (k, on) => { globalThis.__t_log.mini.push(['mini', k, on]); return Promise.resolve(on); },
         setOverlayMiniPin: (k, on) => { globalThis.__t_log.mini.push(['pin', k, on]); return Promise.resolve(on); },
       };
-      const env = evalBlock(NUM + SIZE_BLOCK + `
+      const env = evalBlock(NUM + SIZE_BLOCK + slice('  function scaleRange(p) {', '\n  }\n') + `
         var LOCK_TIP = 'Locked in place';
         var PICKER = {}, ROWMENU = {}, _menuFor = ${JSON.stringify(panel.id)}, _menuAnchor = null;
         var _fitStop = { ${panel.id}: true }, _fitCreep = { ${panel.id}: 3 }, _fitAdd = {};
