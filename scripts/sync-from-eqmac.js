@@ -49,7 +49,9 @@ if (require.main === module && (!SUPABASE_URL || !SUPABASE_KEY)) {
   process.exit(1);
 }
 
-const STATE_FILE = path.join(__dirname, '..', 'data', 'sync_state.json');
+// SYNC_STATE_FILE: a self-hosted guild's own "last dump imported" note
+// (scripts/selfhost-load-game-data.js); unset = the repo's file, as in production.
+const STATE_FILE = process.env.SYNC_STATE_FILE || path.join(__dirname, '..', 'data', 'sync_state.json');
 const TMP_DIR    = path.join(os.tmpdir(), `quarm-sync-${process.pid}`);
 
 // Tables to mirror — keys are upstream MySQL table names, values are Supabase

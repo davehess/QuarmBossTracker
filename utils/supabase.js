@@ -160,6 +160,11 @@ async function _request(path, opts = {}) {
       return null;
     }
     _breakerOnSuccess();
+    // count(): the answer is the total in Content-Range ("0-0/26972", or "*/0" for no rows), not the body.
+    if (opts.countExact) {
+      const m = /\/(\d+)\s*$/.exec(res.headers.get('content-range') || '');
+      return m ? Number(m[1]) : null;
+    }
     // A return=minimal write answers with an empty body, which reads as null, the same as a failure. A caller
     // that must tell them apart (utils/liveMemory.js retries a failed batch) asks for okValue.
     return (parsed == null && opts.okValue !== undefined) ? opts.okValue : parsed;
@@ -378,6 +383,15 @@ async function selectAllPaged(table, baseQuery, orderCol, sel) {
       return null;
     }
   }
+}
+
+// Exact row count of a table under a filter ("clickeffect=gt.0"), asked of the server rather than counted from
+// rows read. That independence is the point: scripts/build-data-pack.js compares what a paged read returned
+// against this, so a read the 1,000-row cap clipped cannot agree with itself. Null when the request failed.
+// Any select/order/limit/offset in the filter is dropped; PostgREST needs one row back to send the header.
+async function count(table, filter = '') {
+  const q = String(filter || '').split('&').filter(p => p && !/^(select|order|limit|offset)=/.test(p)).join('&');
+  return _request(`/${table}?${q ? q + '&' : ''}limit=1`, { prefer: 'count=exact', countExact: true });
 }
 
 async function del(table, queryString) {
@@ -980,7 +994,7 @@ module.exports = {
   _resetBreaker,   // test-only
   capStats,
   _resetCapStats,  // test-only
-  select, selectAllPaged, insert, insertIgnoreDuplicates, _resetIgnoreRpc, update, upsert, del, rpc,
+  select, selectAllPaged, count, insert, insertIgnoreDuplicates, _resetIgnoreRpc, update, upsert, del, rpc,
   getWhoOverrides, upsertWhoOverride,
   applyQuakeToPvpBoardMirror,
   getNpcIdForInternalId,

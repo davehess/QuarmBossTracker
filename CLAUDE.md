@@ -30,6 +30,9 @@ at the end, marked with steps."* Every end-of-task reply to the guild lead:
 3. **To-do** — numbered steps, each one an action with who does it. Omit the
    section only when nothing is left.
 
+**Always give a recommendation** (the guild lead, 2026-10-20: *"always give me recommendations"*): every set of
+options and every end-of-task reply says which option I would pick and why.
+
 **Every option offered for a pick carries a few-word "what makes it different" line** (the guild lead,
 2026-10-04: *"when you ask me a/b/c I need you to give me a few word view of the suggestion, what makes it
 different or special"*). Lead each option with its letter, a short name and that line, e.g. **A — Doorway:
@@ -1210,6 +1213,10 @@ sessions fresh without re-rendering (and visually flashing) the whole list.
 **Plan: Pro (verified 2026-09-01 via the Management API).** Not
 the free tier — several code comments and archived docs still say "free tier" and
 are stale; correct them when you touch them rather than propagating the claim.
+
+⚠ PostgREST's `resolution=ignore-duplicates` without `on_conflict` targets the PRIMARY KEY only (measured
+2026-10-20); use `insertIgnoreDuplicates`, which goes through the `insert_ignore_duplicates` RPC (ON CONFLICT DO
+NOTHING with no target).
 
 ⚠ **There is NO per-request quota on any Supabase plan.** "How many calls can we
 afford?" has no numeric answer, and designing around a call budget is designing

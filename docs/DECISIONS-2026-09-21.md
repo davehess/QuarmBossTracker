@@ -122,6 +122,17 @@ is ephemeral. It is a desktop-session job.
 | **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side LIVE on main (bot 3.2.7, `5c545c42`); `GALLERY_SALT` set on Railway. The tables are NOT created: four MCP attempts stalled at the approval step with nothing reaching the database | the guild lead: paste `supabase/migrations/20261019120000_gallery_masterpieces.sql` into the Supabase SQL Editor; then a session confirms the routes and designs the Mimic Gallery tab (samples first) — 3.0 stable waits on slice 1 |
 | **FB-84 death log before a death** (§373) | Scoped: A local recap (recommended first slice), B web per-death panel, C extend heal gaps/timeline | the guild lead: pick A/B/C (with samples) before any build |
 | **Other games** (§377) | EQ family live on beta (agent 3.8.7: any `eqlog_<Name>_<server>.txt` in the local edition, never uploads off Quarm). Classic WoW reader built on branch `claude/wow-classic-reader` (it claims bot 3.2.8 / web 1.9.9, which main has since used: renumber when it lands; migration `20261019130000_encounters_game_and_boss_key`, not applied). Monsters & Memories on hold (its policy forbids parsers) | the guild lead: approve the `encounters` migration; someone with a Classic client runs `node packages/wowlogsync/index.js --log <Logs dir> --character <name> --dry-run --from-start` and reports. Confirm real P1999/live log suffixes |
+| **Threat data cleanup, B** (§389) | Decided: raw threat snapshots deleted 30 days after the fight's graph is stored, archived or not. NOT built: the bot's nightly sweep still gates on the home-archive watermark, stuck at 2026-09-06; raw threat was 2.5 GB of the 4.1 GB database. The "top of threat" rank rollup last ran 2026-08-19 (stalled) | a session: build the 30-day-after-graph sweep (bot, main, outside a raid window) and find why the rank rollup stopped |
+| **Compress the heavy routes; read egress** (§386) | The $25 guild price only holds if `/poll`, buff-queue and live-damage are compressed (about $16/mo marginal at 60 raiders after compression). Not built. Live-damage still has a `.slice(0,60)` cap | a session: gzip those three routes, raise the live-damage cap; the guild lead: read Supabase egress in the dashboard (the MCP cannot) and say the number |
+| **Game-data pack** (§392, bot 3.2.15) | Step 1 (publish) on main: `scripts/build-data-pack.js`, `.github/workflows/build-data-pack.yml`, rolling prerelease `data-latest`. Never run yet; size estimated 11–14 MB. Step 2 (Mimic reads the pack) not built | a session: dispatch "Build game data pack" once, outside a raid window, and record the real size and counts here; then build step 2 |
+| **Self-host: load game data** (§392) | Built: `scripts/selfhost-load-game-data.js`, guide in `docs/SELFHOSTING.md`. Not yet run against a real empty project | a session or the guild lead: run it once against a throwaway project and record the table counts |
+| **Raid timeline + map explorer** (§400) | Timeline strip on `/spectator` and `/spectator/replay` (web 1.9.20, on `ship-ac`; on beta now) and at the bottom of the trigger overlay (agent 3.8.40, beta). Map explorer `/raid/routes` (B, first engage, clearing) being drafted | the guild lead: say go for main before the Wednesday 19:30 ET freeze; a raider: check the overlay strip during the Decorins |
+| **Saryrn fight filed under her add** (§399) | PoP named cards fixed (38 rows promoted; bot 3.2.16 on `ship-ac`). The Saryrn card still shows 34k: the agent names a fight after its top-damaged target, so her damage is under "a summoned servant" | the guild lead: say go for the agent fix (name the fight after a curated boss with ≥25% of the window); then a session re-points that night's servant contributions to Saryrn |
+| **Chat /camp case** (§398, agent 3.8.36) | On beta: own guild/raid lines are no longer lost; a stood-down chat reporter still uploads its own lines | a beta tester: type `/camp` (and a guild line right before) and check the line stays in the Chat overlay |
+| **Map 3.8.35 in a kite** (§398) | On beta: engaged = hurt, per-spawn health memory, kite totals, "killed?" marks, corpse/"dead" tag confirms a kill. Mimic forwards Zeal snapshots every 300 ms | a beta tester: kite a pull and read the Map; then decide whether Mimic should send each target change instead of the 300 ms snapshot |
+| **Picks decided, not built** (§390, §393, §394) | Zeal/UI release picker A (watch list; a Zeal zip can overwrite `uifiles/default` today, guard first); Raid Mimic register-interest form A; raidmimic.com "How it works" section B (draft artifact exists; committing the iso-glow kit under `.claude/skills` is an open call); mute a countdown mutes its warning A; warn BEFORE levitate/run speed drops from Zeal buff `meta.ticks` | the guild lead: say which to build first (recommendation: the release-picker guard, since it protects UI folders today). `/loadskin` vs `/load` wording is unverified in game |
+| **Raid Mimic pricing and data model** (§385–§388) | Decided on paper (managed hosting per guild, $25/mo flat up to 60 raiders, person-keyed data, eqmimic.quest as a lookup-only directory). Nothing built or billed | the guild lead: say when to start the register-interest form; a session: legal check on live-EverQuest (§391) before any non-Quarm work |
+| **Pending pastes and entries** | Gallery tables (`20261019120000_gallery_masterpieces.sql`) and the WoW migration (`20261019130000_encounters_game_and_boss_key.sql`) are still unapplied (rows below); the members-only read migration on branch `rls-tighten` is waiting to be pasted; a `roadmapData.ts` entry for tranche 2 and the privacy-page Zeal chat line are not written | the guild lead: paste the three SQL files into the SQL Editor (outside a raid window); a session: write the roadmap entry and the privacy line |
 | **Other games** (§377) | EQ family live on beta (agent 3.8.7: any `eqlog_<Name>_<server>.txt` in the local edition, never uploads off Quarm). Classic WoW reader built on branch `claude/wow-classic-reader` (it claims bot 3.2.8 / web 1.9.9, which main has since used: renumber when it lands; migration `20261019130000_encounters_game_and_boss_key`, not applied). Monsters & Memories on hold (its policy forbids parsers) | the guild lead (migration approved on the Decision Desk, §382): paste `supabase/migrations/20261019130000_encounters_game_and_boss_key.sql`; then a session lands branch `wow-land` (bot 3.2.9, web 1.9.11, EQ-safe before the paste) and re-adds its HOW-ITS-BUILT entry; someone with a Classic client runs `node packages/wowlogsync/index.js --log <Logs dir> --character <name> --dry-run --from-start` and reports. Confirm real P1999/live log suffixes |
 | **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | Window shop + most used + Hall decided; the slice-0 format was redone as file export/import (§376). Server side LIVE on main (bot 3.2.7, `5c545c42`); `GALLERY_SALT` set on Railway. The tables are NOT created: four MCP attempts stalled at the approval step, and the 2026-10-19 SQL paste created `voice_reports` only | the guild lead: paste `supabase/migrations/20261019120000_gallery_masterpieces.sql` into the Supabase SQL Editor; then a session confirms the routes and designs the Mimic Gallery tab (samples first) — 3.0 stable waits on slice 1 |
 | **FB-84 death log before a death** (§373, §379) | A (local recap) on beta, agent 3.8.14; the guild lead: *"A first then B"* | a beta tester: die once, target the corpse, check the recap; then a session scopes B (web per-death panel) with samples |
@@ -12101,3 +12112,166 @@ The guild lead: *"go on tranche 1, C for Plane of Time"*.
 - **/targetpet**: `docs/upstream/zeal-targetpet/` (uncompiled; `set_target`'s signature is the likely compile fix).
 - Process: several helpers used `sed`/python for single edits despite the Edit/Write rule; three helper changes met on
   beta and failed the share-setup key guard and the guild-tag guard until reconciled (`a9eae2b8`, web 1.9.13).
+
+### 385. Raid Mimic's business model: managed hosting, billed to the guild (2026-10-20)
+The guild lead: *"eqmimic can be a spot for self-hosted guilds to redirect their clients… raidmimic would be fully
+hosted, but cheap enough to cover costs to start"*; *"truly free can be a limited subset"*.
+- **B, managed hosting per GUILD.** The Mimic app and self-hosting stay free and AGPL. No per-player plans (the
+  $1/month idea is dropped). The bill goes to the guild, never to a player.
+- **Nothing is sold under the eqmimic name.** eqmimic.quest is the free directory (§388); anything paid goes through
+  Raid Mimic.
+- **Why:** the guild lead, on charging at all: *"feels like justifying domain names and server costs is going to be the
+  extent of this, and pqcompanion is free"*. A free per-player tool already covers the solo side, so the only thing worth
+  running as a service is the shared layer, and that bill belongs to the guild. A $1/month per-player plan was the first
+  idea (2026-10-20) and was dropped: card fees eat up to 43% of it, and it charges players of someone else's game.
+- **Next:** nothing built; pricing is §386, data model §387, the interest form is in §393.
+
+### 386. Raid Mimic's price: flat per guild, sized to about three raid nights a week (2026-10-20)
+The guild lead: *"base the $25/month around 3 raids a week"*.
+- **$25/month, or $250/year, up to 60 raiders.** Measured on a real week (10/13–10/19): 567 MB of new rows, 38–44
+  players, 3 raid nights. At 60 raiders that is about **$16/month marginal cost after compressing the heavy routes**
+  (`/poll`, buff-queue, live-damage), so the margin depends on a compression change that is **not built yet**.
+- **Trial:** 14 days. The guild lead: *"this is the last expansion on this server as far as we're aware so giving 2 free
+  months may just mean free entirely"*. The annual price is not pitched as "2 months free".
+- **Full raw fight data is a +$5/month add-on**, asked at signup: *"someone that wants full data can pay to keep it. ask
+  early"*.
+- **Revenue floor $60/month confirmed.** The guild lead notes the $100 Claude plan is part of the real cost (about $131
+  all in).
+- **Revenue mix:** hosting, plus members' cost-share meter (labelled honestly) with GitHub Sponsors as the rail, plus
+  direct designer tips. The Decision Desk "kit" option was re-asked after *"nobody will pay these options"*.
+- **Next:** compress the three routes (Open table); the guild lead reads Supabase egress in the dashboard.
+
+### 387. Data ownership: the person keeps their data (2026-10-20)
+The guild lead: *"A users data is their own. They can be associated with their guild but the individual should keep
+their data."*
+- **A, person-keyed rows.** Raid Mimic stores rows against the person, associated with a guild.
+- **When a raider leaves:** the guild keeps its records under an anonymised `<Class>-<id>` placeholder, so there are no
+  holes in fights or attendance. The raider leaves with their own logs, backups, wishlist and anything not observed in
+  game or in DKP. The DKP/loot ledger keeps the name: it is the guild's book and already lives in OpenDKP.
+- **Why:** the guild lead's own rule for it: *"if a person decides or leaves a guild, an anonymized '<class name>-<Uid>'
+  fills the data so there's no holes. the guild accounts for their actions, the person leaves with their own physical
+  logs and backups, wishlist, etc. anything not observed in the game or in DKP, which is already logged."*
+- **Next:** not built; it shapes the Raid Mimic schema when that starts.
+
+### 388. eqmimic.quest directory is lookup only (2026-10-20)
+- **A, lookup only:** a signed discovery document at `/g/<slug>`, no DNS records. Free tier = one verified name, lookup,
+  signed card, status, 24 updates a day. Paid extras only through Raid Mimic (§385).
+- **Recommendation recorded: skip the name-server move.** Proxy `/g/` from the existing site to a Worker instead.
+- **Next:** not built.
+
+### 389. Threat data: delete raw snapshots 30 days after the graph is stored (2026-10-20)
+- **B.** Raw threat snapshots are deleted after 30 days once the fight's graph is stored, **whether or not the home
+  archive has them**. Why: the home-archive watermark has been stuck at 2026-09-06, and raw threat was 2.5 GB of the
+  4.1 GB database (about 38 MB a day). Supersedes the "deletion waits on the archive" gate in §8.
+- **NOT built.** The bot's nightly sweep still gates on the archive watermark. Open: also the "top of threat" rank rollup
+  last ran 2026-08-19 and has stalled.
+- **Next:** build the sweep (bot, main, outside a raid window); find why the rank rollup stopped. Both in the Open table.
+
+### 390. Zeal / UI release picker is a watch list (2026-10-20)
+- **A, watch list.** Not built.
+- **Guard to ship first:** a Zeal zip can overwrite `uifiles/default` today. `/loadskin` vs `/load` wording is
+  unverified in game, so no copy should assert either.
+- **Next:** the guard, then the picker (Open table).
+
+### 391. Live EverQuest (log-only Mimic): yes, legal review first (2026-10-20)
+The answer is yes to a log-only Mimic for live EverQuest, after a legal review of what it may read and send. No code
+until the review is back; nothing off Quarm uploads today (§377).
+
+### 392. Game data for everyone off the Wolf Pack server (2026-10-21, bot 3.2.15)
+- **A, weekly data pack** for standalone raiders (built, step 1): `scripts/build-data-pack.js` and
+  `scripts/lib/botBuilders.js`, run by `.github/workflows/build-data-pack.yml` after "Sync EQMacEmu" into ONE rolling
+  prerelease, tag `data-latest` (files first, manifest last, stale files dropped after). Checks fail the build:
+  catalog row counts against the database, zone packs, sha256, a 60 MB budget; estimated 11–14 MB. The #mimic-releases
+  announcer now requires a `v<number>` tag so the data release can never be announced as Mimic. Step 2 (Mimic reads the
+  pack) is not built.
+- **C, a self-host "load game data" step** for self-hosted guilds (built): `scripts/selfhost-load-game-data.js`, run after
+  `selfhost-bootstrap-db.sh`; it verifies per-table counts, refuses Wolf Pack's project, takes `DUMP_URL` for a guild's
+  own server and `SYNC_STATE_FILE` so a new guild never inherits Wolf Pack's "already synced" state. Guide in
+  `docs/SELFHOSTING.md`; the old "no self-serve import" bullet in `docs/DESIGN-selfhost-wizard.md` §3 is replaced.
+- **Wolf Pack stays on the live database.**
+- **Next:** dispatch the pack workflow once and record the real size; step 2; run the self-host step on a throwaway
+  project (Open table).
+
+### 393. raidmimic.com: a "How it works" scene, and its own interest form (2026-10-21)
+- **B:** the iso-glow about scene goes in as a "How it works" section under the existing layout. Not built; a draft
+  artifact exists. The iso-glow kit (MIT) was installed for the session only; committing it under `.claude/skills` is an
+  open call.
+- **A:** Raid Mimic gets its own register-interest form instead of routing to eqmimic's anonymous feedback. Not built.
+
+### 394. Mimic picks (2026-10-21)
+- **Muting a countdown also mutes its warning (A).** Not built.
+- **Warn when levitate / run speed drops (A), and warn BEFORE it drops.** The guild lead: *"zeal exposes time left on
+  buffs. we alert based on that"*: Zeal's buff `meta.ticks` is the time remaining. The agent's suggested-trigger comment
+  saying no warning is possible is wrong for Zeal users. Not built.
+- **An empty trigger import is an error** (built, agent 3.8.34). **The Canvas lock stays as built.**
+
+### 395. Working rule: always give a recommendation (2026-10-20)
+The guild lead: *"always give me recommendations"*. Every set of options and every end-of-task reply says which option
+would be picked and why. Written into the reply-shape rule in `CLAUDE.md`.
+
+### 396. Land a shared web change once (2026-10-20)
+Website commits that exist on both `main` and `beta` must not be landed as cherry-picked COPIES on `main` after `beta`
+already merged them: it broke `sync-beta.yml` on 2026-10-20 (12 conflicts, resolved by hand keeping beta's side).
+Land a shared web change once, then let the sync carry it.
+
+### 397. PostgREST's `ignore-duplicates` targets the primary key only; one duplicate no longer costs a batch (2026-10-20, bot 3.2.14)
+- **Fact (measured in the Postgres log):** `Prefer: resolution=ignore-duplicates` without `on_conflict` compiles to
+  `ON CONFLICT("id") DO NOTHING`, so any OTHER unique index raised 23505 and rejected the whole batch: 220 a day on
+  `encounter_events_dedup`, 3 on `faction_hits_dedup_idx`.
+- **Fix:** `public.insert_ignore_duplicates(p_table, p_rows, p_return_rows default false)` (applied to production
+  2026-10-20 through the MCP; migration `20261020200000`). `insertIgnoreDuplicates` routes through it, with a PGRST202
+  fallback; it returns rows only when asked (egress).
+- **Also in bot 3.2.14:** `encounter_combat_rollup` rows are sorted before upsert (deadlock), `charm_sessions` durations
+  are rounded. Shipped to `main` 2026-10-21 01:20 UTC with web 1.9.19; Railway's builder reported "failed to fetch
+  snapshot" for a while before it took.
+
+### 398. What shipped 2026-10-20/21 (ledger)
+- **Web 1.9.17–1.9.19 on main:** `/pvp` Fight cards, `/pop` by essence, the `/zeal-icons` guild index, instruction folds
+  ("Click here for more info", `web/components/MoreInfo.tsx`), `/about` is the Tour (beta keeps `?v=b` / `?v=c`
+  guild-first previews).
+- **Mimic beta:** Canvas 🔒 lock and take-apart keeps Background; Map outlines use the skin's real window sizes
+  (`_scanSkinWindowSizes`, `uiClearRects.js` `skinSizeFor`); UI Studio "Move it in game" shows `/raidbars position L T
+  [R B]` and `/assistbar position L T` with Copy.
+- **Agent 3.8.33:** the guild trigger list moved off `/api/state` to `/api/guild-triggers?rev=` (poll about 540 KB down
+  to about 4 KB at 500 rows). **3.8.34:** PQ Companion trigger pack import beside GINA / EQLogParser. **3.8.35:** Map
+  engaged = hurt (any live mob under 100%, lowest first), per-spawn health memory fed every Zeal frame and shown with
+  its age, kite totals, "killed?" marks for ambiguous same-name deaths, targeting a corpse or a "dead" /tag (chat, rsay,
+  gsay, prettyprint off) confirms the kill and starts the respawn timer; limit: Mimic forwards Zeal snapshots every 300
+  ms. **3.8.36:** Chat overlay: own guild / raid lines are never lost (dedupe only against copies actually on screen; a
+  stood-down chat reporter still uploads its own lines).
+- **Bot 3.2.14:** §397. **Bot 3.2.15:** the data pack (§392).
+
+### 399. PoP named bosses are curated from their first kill (2026-10-21)
+The guild lead, 2026-10-21, on the 2026-10-18 night on /parses: *"This raid is missing all the parses except for
+Saryrn."* The fights were stored; the cards filter to curated `bosses_local` rows (`auto_registered = false`), and
+every PoP named the bot met first registered as trash. The curated list the guild lead set on 2026-10-18
+(`data/named-bosses.json`, served as `raid_target` by `utils/namedBosses.js`) was never applied to that flag.
+- **Data, done 2026-10-21:** 38 `bosses_local` rows on that list promoted (id match, or name inside the zone its id
+  sits in — the same rule as `isNamedBoss`). The night now shows 13 cards: the six Torment nameds, Saryrn, the four
+  Halls of Honor nameds, Halon of Marr and Lord Mithaniel Marr.
+- **Bot 3.2.16:** `_resolveBossForPersist` registers a listed boss with `auto_registered = false` on its first kill.
+  Kill lockouts are unaffected (they key on `data/bosses.json`).
+- **Still wrong: the Saryrn card (34k of an 850k boss).** The agent names a fight after its top-damaged target, so
+  most of the Saryrn damage sits in the defenders of the "a summoned servant" encounter (553k, 12 contributions; one
+  uploader saw 243k on Saryrn there) and of a long Maareq window. Cut and naming: `packages/wolfpack-logsync/index.js`
+  `flush()` (~10974–10996, fallback ~11167–11173). Proposed fix (agent, beta): name the fight after a curated boss
+  that took at least 25% of the window, never after an add. Waiting on the guild lead.
+
+### 400. Raid timeline for the Plane of Tactics pairs; the map explorer is kill to kill (2026-10-21)
+The guild lead, 2026-10-21, the night before the Zek fights: *"a tracked timeline view ... at the top of the
+spectator/replay pages. The death timers between mobs is something we want easily and clearly displayed versus
+having to say it out loud ... a timeline view show up on the bottom of the TTS."* Picked B (the strip) over C
+(stopwatch cards).
+- **Rules (from `apps/mimic/pop-raids.js`):** the two Decorins within 6 minutes of each other; Tallon Zek and
+  Vallon Zek within 20. Held in `web/lib/raidTimeline.ts` and the agent's `DEATH_PAIR_RULES`.
+- **Web 1.9.20:** `web/components/RaidTimeline.tsx` at the top of `/spectator` (polls the members-only
+  `/api/spectator/timeline`, curated kills by `ended_at`) and `/spectator/replay` (the board's boss list, the
+  playhead is "now"; Rallos Zek the Warlord has no spawn point, so the replay strip lacks him).
+- **Agent 3.8.40 (beta):** `_recentMobDeaths` from the slain lines this PC prints; `triggers.html` bottom strip.
+- **Data, done 2026-10-21:** Tallon Zek, Vallon Zek and both Decorins had no `bosses_local` row, and their names
+  are shared by other NPCs (Plane of Time, event bodies), so `_resolveBossForPersist` would refuse the kill as
+  ambiguous. Curated rows added: `tallon_zek` 214026, `vallon_zek` 214316, `decorin_berik` 214056,
+  `decorin_grunhork` 214057.
+- **Map explorer:** B, kill to kill (*"A already is recorded technically"* — the replay board). Timing starts at
+  the first engage, not zone-in (*"precleaning makes a difference"*), and each leg shows the clearing: *"time
+  between named and which spawns we clear."* New page `/raid/routes` drafting.

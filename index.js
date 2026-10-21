@@ -12616,7 +12616,9 @@ async function _announceMimicReleases() {
   // "✅ Mimic v1.9.0 — the healing release"), so the notice reads like a
   // release, not a tag (the guild lead, 2026-07-15). Falls back to the tag-only
   // title for bodies without one.
-  const rel = rels.find(r => r && !r.prerelease && !r.draft) || null;
+  // A stable Mimic tag is v<number>…; the rolling game-data release (`data-latest`) and the alpha are not,
+  // and would otherwise be announced as a Mimic stable the day one of them is not marked a prerelease.
+  const rel = rels.find(r => r && !r.prerelease && !r.draft && /^v\d/.test(r.tag_name || '')) || null;
   if (rel && rel.tag_name && rel.tag_name !== st.lastTag) {
     let stableTitle = '✅ Release — Mimic ' + rel.tag_name;
     const mTitle = String(rel.body || '').match(/^\*\*(.+?)\*\*/);
@@ -22345,7 +22347,7 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase, { track
     }
   }
   const or = eqemuForms.map(f => `name.eq.${encodeURIComponent(f)}`).join(',');
-  const npcs = await supabase.select('eqemu_npc_types', `or=(${or})&select=id&limit=3`);
+  const npcs = await supabase.select('eqemu_npc_types', `or=(${or})&select=id,name&limit=3`);
   const ids = [...new Set((Array.isArray(npcs) ? npcs : []).map(r => r.id).filter(n => Number.isFinite(n)))];
   if (ids.length !== 1) return null;   // no exact match, or ambiguous — refuse
   const npcId = ids[0];
@@ -22362,7 +22364,10 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase, { track
     // (/parses cards, landing widget) show curated rows only — without this
     // flag, one farm night put 300+ trash cards on /parses (2026-08-19).
     // Flip to false to promote a named to card status.
-    auto_registered: true,
+    // A boss on the curated PoP list (data/named-bosses.json) is curated from its
+    // first kill: the 2026-10-18 raid's Maareq, Mithaniel Marr and the rest
+    // registered as trash and /parses showed only Saryrn (the guild lead, 2026-10-21).
+    auto_registered: !namedBosses.isNamedBoss((npcs || []).find(r => r.id === npcId)),
   }]).catch(() => {});
   // Re-read rather than trusting our insert — a concurrent upload of the same
   // new mob may have won the race with a different-cased slug.
@@ -23303,6 +23308,10 @@ async function _handleAgentUpload(req, res) {
         card.setTitle(`${origTitle}  ·  ${startTimeStr}`);
 
         card.setFooter({ text: `${perspLabel}${stagingTag} · ${perspNames} · ${encounter.events.length} events (latest)` });
+
+        // Link the card to its wolfpack.quest parse page. The edit path rebuilds the whole card, so a card first
+        // posted before the encounter id existed gains the link on the next merged upload.
+        require('./commands/parse').withParseWebLink(card, _encIdForLink);
 
         // ⏱️ How we did — the kill recap rides on THIS card (utils/killRecap.js). Raid bosses only, and only
         // once a death line has confirmed the kill; any failure just leaves the card as it was.

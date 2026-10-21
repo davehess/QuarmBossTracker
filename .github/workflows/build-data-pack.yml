@@ -1,0 +1,107 @@
+name: Build game data pack
+
+# The weekly game-data pack (DECISIONS 2026-10-21, "A — Data pack: a game-data file Mimic keeps on the PC,
+# rebuilt weekly"). Step 1: build it, check it, publish it. Nothing reads it yet.
+#
+# scripts/build-data-pack.js reads the Supabase `eqemu_*` mirrors that sync-quarm.yml just refreshed and writes
+# manifest.json + the spell/item catalogs + one pack per zone + quests, in the shapes Mimic already caches. It
+# fails (exit 1) on any mismatch with the database, and then NOTHING below it runs: a bad pack is never published.
+#
+# ONE rolling release, tag `data-latest`, a prerelease. Created the first time, then only its files are replaced;
+# never a release per week. CLAUDE.md has the reason: every release lands in one releases.atom feed GitHub caps at
+# 10 entries, and Linux builds once pushed the Windows beta releases out of it. It must also never look like a
+# Mimic release to anything that reads releases: it is not a `v<number>` tag, not `-beta.N`, not `mimic-alpha`,
+# carries no installer, and as a prerelease it is invisible to /releases/latest (test/data-release-isolation.test.js).
+#
+# Publishing order matters because a consumer can arrive mid-run: every file first, manifest.json LAST, files the
+# new manifest no longer lists removed after that. A consumer trusts the manifest's sha256s, so a half-uploaded
+# run is detectable and a retry fixes it.
+
+on:
+  # After the weekly sync (Sunday 06:00 UTC) has finished, and only if it succeeded.
+  workflow_run:
+    workflows: ['Sync EQMacEmu Quarm DB']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create / edit the data-latest release and upload its files
+
+concurrency:
+  group: build-data-pack
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    # ~115k small reads at four zones in parallel; the bot's own zone-pack build runs the same lookups.
+    timeout-minutes: 150
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Build and check the pack
+        run: node scripts/build-data-pack.js --out data-pack-out
+
+      - name: Stage the release files
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          # manifest path -> flat asset name (zones/215.json.gz is published as zone-215.json.gz)
+          jq -r '.files[] | [.path, .asset] | @tsv' data-pack-out/manifest.json | while IFS=$'\t' read -r p a; do
+            cp "data-pack-out/$p" "release-assets/$a"
+          done
+          cp data-pack-out/manifest.json release-assets/manifest.json
+          {
+            echo "Game data pack, rebuilt after the weekly Quarm sync. This is not a Mimic release."
+            echo
+            jq -r '"- built: \(.built_at)", "- source dump: \(.source.dump // "unknown") (\(.source.dump_sha // "no sha"))", "- zone packs: \(.counts.zone_packs), mobs: \(.counts.mobs)", "- files: \(.files | length), format \(.format)"' data-pack-out/manifest.json
+            echo
+            echo "Read manifest.json first: it lists every file with its size and sha256."
+          } > release-notes.md
+          ls release-assets | wc -l
+          du -sh release-assets
+
+      - name: Publish to the rolling data-latest release
+        run: |
+          set -euo pipefail
+          if ! gh release view data-latest >/dev/null 2>&1; then
+            gh release create data-latest --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "Game data pack" --notes-file release-notes.md
+          fi
+          # every file but the manifest first, three tries each batch
+          ls release-assets | grep -v '^manifest\.json$' | sed 's#^#release-assets/#' > upload.txt
+          for wait in 5 15 45 0; do
+            if xargs gh release upload data-latest --clobber < upload.txt; then ok=1; break; fi
+            ok=0
+            [ "$wait" -gt 0 ] && { echo "upload failed, retrying in ${wait}s"; sleep "$wait"; }
+          done
+          [ "$ok" = 1 ] || { echo "upload failed 4 times"; exit 1; }
+          # the manifest last: it is what makes the new files current
+          gh release upload data-latest release-assets/manifest.json --clobber
+          gh release edit data-latest --prerelease --latest=false --title "Game data pack" --notes-file release-notes.md
+          # only now drop files the new manifest no longer lists
+          for a in $(gh release view data-latest --json assets --jq '.assets[].name'); do
+            [ -e "release-assets/$a" ] || gh release delete-asset data-latest "$a" -y || echo "could not delete $a (left in place)"
+          done
+
+      - name: Verify what was published
+        run: |
+          set -euo pipefail
+          mkdir -p verify
+          gh release download data-latest --pattern manifest.json --dir verify --clobber
+          test "$(jq -r .built_at verify/manifest.json)" = "$(jq -r .built_at data-pack-out/manifest.json)"
+          test "$(gh release view data-latest --json isPrerelease --jq .isPrerelease)" = "true"
+          echo "data-latest carries the pack built at $(jq -r .built_at verify/manifest.json)"
