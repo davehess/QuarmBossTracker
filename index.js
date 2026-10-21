@@ -12616,7 +12616,9 @@ async function _announceMimicReleases() {
   // "✅ Mimic v1.9.0 — the healing release"), so the notice reads like a
   // release, not a tag (the guild lead, 2026-07-15). Falls back to the tag-only
   // title for bodies without one.
-  const rel = rels.find(r => r && !r.prerelease && !r.draft) || null;
+  // A stable Mimic tag is v<number>…; the rolling game-data release (`data-latest`) and the alpha are not,
+  // and would otherwise be announced as a Mimic stable the day one of them is not marked a prerelease.
+  const rel = rels.find(r => r && !r.prerelease && !r.draft && /^v\d/.test(r.tag_name || '')) || null;
   if (rel && rel.tag_name && rel.tag_name !== st.lastTag) {
     let stableTitle = '✅ Release — Mimic ' + rel.tag_name;
     const mTitle = String(rel.body || '').match(/^\*\*(.+?)\*\*/);
