@@ -5396,3 +5396,17 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   trimmed `{ v, zone, name, saved_at, points, legs:[[start,end]], stops:[{ n, name, x, y, at }] }`. The agent fetches it at
   zone-in and every few minutes, and Mimic's Map draws it as a thin gold line with numbered stops under the live markers, behind
   a ⚙ switch and a "Raid route (saved <date>)" legend. Test: `test/raid-route.test.js` (bot), `test/map-raid-route.test.js` (agent).
+- **Window movement (Mimic beta, 2026-10-22).** `apps/mimic/main.js`: a ✥ drag is `_startWindowDrag` (16 ms `setBounds`, window
+  flag `__wpDragging`); the dashboard's title-bar drag is the OS's, observed through `will-move` / `moved` (`_noteNativeMove`,
+  `_nativeMoving`, clears 300 ms after the last step). `_beingMoved(win)` is either; `_holdForMove(win, who)` is what a writer asks
+  before touching a window's bounds or level (Dock fit, overlay fit, menu height loan, page-set bounds, `_applyOverlayZ`, rescue,
+  screen-change move) and it logs one `[window] … held off` line per move. Mimic makes no native `SetWindowPos`; stacking is
+  Electron's `moveAbove` / `setAlwaysOnTop`. Tests: `test/mimic-window-move.test.js`, `test/mimic-dashboard-drag.test.js`.
+- **Mob info cache (agent 4.0.7, 2026-10-22).** `_mobInfoByName` (key = `_mobInfoCacheKey(name, zone)`) holds `{ at, mob }`; readers
+  re-ask when `now - at >= MOB_INFO_TTL_MS` (6 h). `_mobInfoStore` is the one writer of a bot answer: a 200 with a mob lasts 6 h;
+  anything else is a miss stored with `at` set back so it expires after `MOB_INFO_MISS_TTL_MS` (60 s), keeping a row already held.
+  Zone packs (`_mobPackLookup`) and the off-Quarm "no row" are written directly and are unchanged. Test: `test/mob-pack-agent.test.js`.
+- **Overlay crash recovery (Mimic beta, 2026-10-22).** `browser-window-created` wires `render-process-gone` on every window;
+  `_overlayRendererGone` handles the ones that are `_OVERLAY_WINDOWS` entries (drop, destroy, then `applyAllVisibility` after 500 ms),
+  limited by `_crashRebuildAllowed` to 3 per overlay per 5 min. The dashboard keeps its own handler in `createWindow`. Test:
+  `test/mimic-window-move.test.js`.

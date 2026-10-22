@@ -811,6 +811,10 @@ function _attachOverlayMenu(moveBtn) {
   moveBtn._wpMenuAttached = true;
   moveBtn.addEventListener('contextmenu', function(ev) {
     ev.preventDefault();
+    // Not while the ✥ is being dragged (the left button is still down): the menu borrows window height, which a
+    // drag in progress overwrites 16 ms later - the Dock pulsing between a thin bar and a tall window with the menu
+    // open (the guild lead, 2026-10-22, screen recording).
+    if (ev.buttons & 1) return;
     // Block auto-fit BEFORE growing — a poll tick between grow and open was
     // the race that re-shrunk the window under the menu.
     _wpMenuOpen = true;
