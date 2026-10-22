@@ -4357,7 +4357,16 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
     uses), the plan at its pins' real heights, and a floor clip (hides everything above a floor's band). Phones fetch the
     floors layer only when asked.
   - Both: orbit / pan / zoom, Fit zone, pathers and doors-and-teleports toggles, a click on a pin selects it in the pin list
-    (`selectPin` on the engine's API). Editing stays in 2D. Variant choice is carried through the zone and plan links.
+    (`selectPin` on the engine's API). Variant choice is carried through the zone and plan links.
+  - **Drag a pin (web 2.0.8).** Officers only (`officer && !previewing` from the host; the engine's `movePin(id, x, y, z)` checks
+    `editable()` again and does what finishing a 2D pin drag does, plus z). The press is taken in the capture phase on the host
+    so OrbitControls never starts (and is disabled until release); under 4 px it is still a click. While dragging, the pointer
+    ray is cast at the floors mesh (else the walls; hits above the floor clip ignored; else the plane the pin is on), the view is
+    rebuilt each frame from the plan with that pin moved (`withPinMoved`, walk routes of its legs dropped), a ring marks the
+    landing, and on release the engine is told once. **c:** z = the hit's height. **b:** a slab is not a z, so the pin keeps its
+    z and floor (`dragLanding`). x and y are clamped to the zone bounds. Esc or a cancelled pointer puts the pin back. Pure
+    rules (`threeToServer`, `dragLanding`, `withPinMoved`, `movedPast`, `legTouches`) are in `view3d.ts` and
+    `test/route-planner-3d.test.js`. Bend points are not draggable in 3D. The engine has no undo, so there is none for this.
 - **One leg mode (web 2.0.5, beta preview, 2026-10-22).** `?v=leg` (or `b` / `c`) adds a **One leg** toggle to the map toolbar; no
   `?v=` is the page as it was (the skeleton emits none of it). On: only the current leg is drawn (line, bends, arrow, its two
   pins and their labels), every other pin is faint and unlabelled but still clickable, and a bar over the map reads

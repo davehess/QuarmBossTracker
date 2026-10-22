@@ -1,7 +1,7 @@
 'use client';
-// The route planner's 3D views (?v=b and ?v=c on /raid/plan/routes), both PREVIEWS awaiting the guild lead's pick. View
-// only: the plan is edited in 2D. Loaded with next/dynamic (ssr: false) from RoutePlanner, so the 2D page never downloads
-// three.js.
+// The route planner's 3D views (?v=b and ?v=c on /raid/plan/routes), both PREVIEWS awaiting the guild lead's pick. The plan
+// is edited in 2D; the one edit made here is moving a pin, by an officer (see "dragging a pin" below). Loaded with
+// next/dynamic (ssr: false) from RoutePlanner, so the 2D page never downloads three.js.
 //
 //   b  Stacked floors: each floor is its own flat slab (its 2D wall lines), the slabs spread apart in height with a slider,
 //      the route, the teleports and the pathers drawn between them. No mesh download, so it works for any zone with floors.
@@ -15,8 +15,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AmbientLight, BoxGeometry, BufferGeometry, Color, DirectionalLight, DoubleSide, Float32BufferAttribute, Group, LineBasicMaterial,
-  LineLoop, LineSegments, Material, Mesh, MeshBasicMaterial, OctahedronGeometry, PerspectiveCamera, Plane, PlaneGeometry, Scene,
-  SphereGeometry, Vector3, WebGLRenderer,
+  LineLoop, LineSegments, Material, Mesh, MeshBasicMaterial, OctahedronGeometry, PerspectiveCamera, Plane, PlaneGeometry, Raycaster, RingGeometry,
+  Scene, SphereGeometry, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
@@ -26,7 +26,8 @@ import { unpackMesh } from '@/lib/zoneMesh';
 import type { Mob, Plan, ZoneData } from '@/lib/routePlanner/types';
 import type { Routed } from '@/lib/routePlanner/navroute';
 import {
-  KIND_HEX, LINK_HEX, PATHER_HEX, baseSpacing, buildView3D, clipHeight, floorOrder, type Pt3, type View3D,
+  KIND_HEX, LINK_HEX, PATHER_HEX, baseSpacing, buildView3D, clipHeight, dragLanding, floorOrder, legTouches, movedPast, withPinMoved,
+  type Pt3, type View3D,
 } from '@/lib/routePlanner/view3d';
 import { buildFloorMesh, buildMesh } from '@/app/spectator/replay/Replay3D';
 
@@ -42,6 +43,10 @@ export type Plan3DProps = {
   routes?: ReadonlyMap<string, Routed>;
   /** A pin was clicked: select it the way the 2D map does (the host wires this to the engine). */
   onSelect: (pinId: string) => void;
+  /** Pins can be dragged: an officer, and not while a saved version is on the map (the host says so; the engine checks again). */
+  canEdit?: boolean;
+  /** A pin was let go somewhere new: x, y, z in the server's frame. True when the plan took it (the host wires this to the engine). */
+  onMovePin?: (pinId: string, x: number, y: number, z: number) => boolean;
   /** No WebGL: the host goes back to the 2D map. */
   onFail: () => void;
 };
@@ -62,7 +67,7 @@ type Box = { cx: number; cy: number; cz: number; r: number };
 type Ctx = {
   renderer: WebGLRenderer; scene: Scene; camera: PerspectiveCamera; controls: OrbitControls; clip: Plane;
   slabsG: Group; meshG: Group; dynG: Group; gPathers: Group; gLinks: Group; gPins: Group;
-  halo: Mesh; items: Item[]; slabTags: { text: string; color: string; v: Vector3 }[];
+  halo: Mesh; ring: Mesh; items: Item[]; slabTags: { text: string; color: string; v: Vector3 }[];
   lineMats: LineMaterial[]; dynFree: (() => void)[]; slabFree: (() => void)[];
   wall: Mesh | null; floor: Mesh | null;
   sel: string | null; hover: string | null; clipY: number; showPins: boolean; showLinks: boolean;
@@ -82,16 +87,23 @@ const TAG_LOOK = {
 
 const disposeMat = (m: Material | Material[]) => (Array.isArray(m) ? m : [m]).forEach(x => x.dispose());
 
-export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, focusLeg, routes, onSelect, onFail }: Plan3DProps) {
+type Dragged = { id: string; x: number; y: number; z: number };   // a pin being dragged (or just let go, until the plan has it): server frame
+
+export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, focusLeg, routes, onSelect, canEdit, onMovePin, onFail }: Plan3DProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
   const ctxRef = useRef<Ctx | null>(null);
   const selectRef = useRef(onSelect);
   const failRef = useRef(onFail);
+  const moveRef = useRef(onMovePin);
+  const canEditRef = useRef(false);
   selectRef.current = onSelect;
   failRef.current = onFail;
+  moveRef.current = onMovePin;
 
   const stack = variant === 'b';
+  const editable = !!canEdit && !!onMovePin;
+  canEditRef.current = editable;
   const [spread, setSpread] = useState(1);
   const [layers, setLayers] = useState({ pathers: true, links: true });
   const [clipKey, setClipKey] = useState('');
@@ -102,11 +114,20 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
   const [floorStatus, setFloorStatus] = useState<Status>('idle');
   const [tries, setTries] = useState(0);
   const [sel, setSel] = useState<string | null>(null);
+  const [dragged, setDragged] = useState<Dragged | null>(null);
+  // the pin is shown where the pointer has it until the plan itself has moved it (or the drag is cancelled)
+  useEffect(() => setDragged(null), [plan]);
+  const shownPlan = useMemo(() => (dragged ? withPinMoved(plan, dragged.id, dragged) : plan), [plan, dragged]);
+  // a walk route that ends at the dragged pin is no longer where the pin is: those legs fall back to a straight line meanwhile
+  const shownRoutes = useMemo(
+    () => (dragged && routes ? new Map([...routes].filter(([k]) => !legTouches(k, dragged.id))) : routes),
+    [routes, dragged],
+  );
 
   const spacing = baseSpacing(zone.bounds) * spread;
   const view = useMemo<View3D>(
-    () => buildView3D({ zone, extraMobs, plan, skipOptional, mode: stack ? 'stack' : 'mesh', spacing, focusLeg, routes }),
-    [zone, extraMobs, plan, skipOptional, stack, spacing, focusLeg, routes],
+    () => buildView3D({ zone, extraMobs, plan: shownPlan, skipOptional, mode: stack ? 'stack' : 'mesh', spacing, focusLeg, routes: shownRoutes }),
+    [zone, extraMobs, shownPlan, skipOptional, stack, spacing, focusLeg, shownRoutes],
   );
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -153,9 +174,14 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
     halo.renderOrder = 4;
     halo.visible = false;
     scene.add(halo);
+    // where a dragged pin will land: a flat ring on the surface under it
+    const ring = new Mesh(new RingGeometry(0.62, 1, 40).rotateX(-Math.PI / 2), new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, side: DoubleSide, depthTest: false, depthWrite: false }));
+    ring.renderOrder = 4;
+    ring.visible = false;
+    scene.add(ring);
 
     const c: Ctx = {
-      renderer, scene, camera, controls, clip, slabsG, meshG, dynG, gPathers, gLinks, gPins, halo,
+      renderer, scene, camera, controls, clip, slabsG, meshG, dynG, gPathers, gLinks, gPins, halo, ring,
       items: [], slabTags: [], lineMats: [], dynFree: [], slabFree: [], wall: null, floor: null,
       sel: null, hover: null, clipY: Infinity, showPins: true, showLinks: true,
       box: { cx: 0, cy: 0, cz: 0, r: 2000 }, moved: false, w: 0, h: 0, raf: 0, dead: false, tags: [],
@@ -221,6 +247,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
         c.halo.position.copy(hi.v);
         c.halo.scale.setScalar(Math.max(MIN_DOT, camera.position.distanceTo(hi.v) * DOT_PX) * hi.k * 1.9);
       }
+      if (c.ring.visible) c.ring.scale.setScalar(Math.max(MIN_DOT, camera.position.distanceTo(c.ring.position) * DOT_PX) * 3.6);
       renderer.clippingPlanes = c.clipY === Infinity ? [] : [clip];
       renderer.render(scene, camera);
       placeLabels();
@@ -256,15 +283,108 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
     };
     const local = (e: PointerEvent) => { const r = dom.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
     let down: { x: number; y: number } | null = null;
+
+    // ── dragging a pin (officers) ──
+    // A press on a pin is taken in the capture phase on the host, before OrbitControls on the canvas hears it, so it never
+    // turns the camera (and the controls are switched off until the pin is let go); a press anywhere else goes on to the controls
+    // as ever. A press that moves less than DRAG_SLOP is still a click. The pin follows the pointer on a ray cast into the
+    // scene, and the plan is told once, when the pin is let go.
+    type Drag = { id: string; pid: number; x0: number; y0: number; px: number; py: number; on: boolean; cur: { z: number; h: number }; lastH: number; raf: number; last: Dragged | null };
+    let drag: Drag | null = null;
+    const raycaster = new Raycaster();
+    const ndc = new Vector2();
+    const flat = new Plane(new Vector3(0, 1, 0), 0);
+    // the first hit on a mesh that is drawn: not on one that is switched off, and never on what the floor clip hides
+    const surface = (m: Mesh | null): Vector3 | null => {
+      if (!m || !m.visible) return null;
+      for (const h of raycaster.intersectObject(m, false)) if (h.point.y <= c.clipY + 1) return h.point;
+      return null;
+    };
+    const land = (d: Drag) => {
+      ndc.set((d.px / c.w) * 2 - 1, -(d.py / c.h) * 2 + 1);
+      raycaster.setFromCamera(ndc, camera);
+      // c: the floors, else the walls; b, or nothing under the pointer: slide on the plane the pin is at (its dot under the pointer)
+      let at = stack ? null : surface(c.floor) ?? surface(c.wall);
+      if (!at) {
+        flat.constant = -(d.lastH + LIFT);
+        at = raycaster.ray.intersectPlane(flat, new Vector3());
+        if (at) at.y = d.lastH;
+      }
+      if (!at) return;
+      const L = dragLanding(stack ? 'stack' : 'mesh', [at.x, at.y, at.z], d.cur, zone.bounds);
+      d.lastH = L.h;
+      d.last = { id: d.id, x: L.x, y: L.y, z: L.z };
+      c.ring.position.set(-L.x, L.h, -L.y);
+      c.ring.visible = true;
+      setDragged(d.last);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancelDrag(); };
+    function endDrag() {
+      const d = drag;
+      if (!d) return;
+      drag = null;
+      if (d.raf) cancelAnimationFrame(d.raf);
+      window.removeEventListener('keydown', onKey);
+      controls.enabled = true;
+      try { dom.releasePointerCapture(d.pid); } catch { /* already let go */ }
+      dom.style.cursor = c.hover ? 'pointer' : '';
+      c.ring.visible = false;
+      c.request();
+    }
+    function cancelDrag() {
+      if (!drag) return;
+      if (drag.on) setDragged(null);
+      down = null;
+      endDrag();
+    }
+    const onGrab = (e: PointerEvent) => {
+      if (e.target !== dom || drag || !canEditRef.current || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      const p = local(e), it = hit(p.x, p.y, e.pointerType === 'mouse' ? REACH.mouse : REACH.touch);
+      const pin = it && it.pin ? viewRef.current.pins.find(x => 'pin:' + x.id === it.id) : undefined;
+      if (!pin) return;
+      e.stopPropagation();
+      controls.enabled = false;
+      dom.setPointerCapture(e.pointerId);
+      down = p;
+      drag = { id: pin.id, pid: e.pointerId, x0: p.x, y0: p.y, px: p.x, py: p.y, on: false, cur: { z: pin.z, h: pin.h }, lastH: pin.h, raf: 0, last: null };
+      window.addEventListener('keydown', onKey);
+    };
+
     const onMove = (e: PointerEvent) => {
+      const d = drag;
+      if (d && e.pointerId === d.pid) {
+        const p = local(e);
+        if (!d.on && movedPast(p.x - d.x0, p.y - d.y0)) { d.on = true; dom.style.cursor = 'grabbing'; }
+        if (d.on) {
+          d.px = p.x; d.py = p.y;
+          if (!d.raf) d.raf = requestAnimationFrame(() => { d.raf = 0; land(d); });
+        }
+        return;
+      }
       if (e.pointerType !== 'mouse' || e.buttons) return;
       const p = local(e), it = hit(p.x, p.y, REACH.mouse);
       const id = it ? it.id : null;
-      if (id !== c.hover) { c.hover = id; dom.style.cursor = id ? 'pointer' : ''; c.request(); }
+      if (id !== c.hover) { c.hover = id; dom.style.cursor = id ? (canEditRef.current && it?.pin ? 'grab' : 'pointer') : ''; c.request(); }
     };
     const onDown = (e: PointerEvent) => { down = local(e); };
     const onUp = (e: PointerEvent) => {
       const p = local(e);
+      const d = drag;
+      if (d && e.pointerId === d.pid) {
+        if (d.on) {
+          // let go: land where the pointer is now, tell the plan once, and keep the pin there until the plan has it
+          if (d.raf) { cancelAnimationFrame(d.raf); d.raf = 0; }
+          d.px = p.x; d.py = p.y;
+          land(d);
+          endDrag();
+          down = null;
+          const to = d.last;
+          if (to && moveRef.current?.(to.id, to.x, to.y, to.z)) { setSel('pin:' + to.id); selectRef.current(to.id); }
+          else setDragged(null);
+          return;
+        }
+        endDrag();   // never moved: it is a click, below
+      }
       if (down && Math.abs(p.x - down.x) + Math.abs(p.y - down.y) <= 4) {
         const it = hit(p.x, p.y, e.pointerType === 'mouse' ? REACH.mouse : REACH.touch);
         setSel(it ? it.id : null);
@@ -277,12 +397,17 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
     dom.addEventListener('pointerdown', onDown);
     dom.addEventListener('pointerup', onUp);
     dom.addEventListener('pointerleave', onLeave);
+    dom.addEventListener('pointercancel', cancelDrag);
+    host.addEventListener('pointerdown', onGrab, true);
 
     return () => {
       c.dead = true;
       if (c.raf) cancelAnimationFrame(c.raf);
       ctxRef.current = null;
+      endDrag();
       ro.disconnect();
+      host.removeEventListener('pointerdown', onGrab, true);
+      dom.removeEventListener('pointercancel', cancelDrag);
       dom.removeEventListener('pointermove', onMove);
       dom.removeEventListener('pointerdown', onDown);
       dom.removeEventListener('pointerup', onUp);
@@ -293,6 +418,8 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
       for (const m of [c.wall, c.floor]) if (m) { m.geometry.dispose(); disposeMat(m.material); }
       halo.geometry.dispose();
       disposeMat(halo.material);
+      ring.geometry.dispose();
+      disposeMat(ring.material);
       renderer.dispose();
       renderer.forceContextLoss();
       dom.remove();
@@ -539,7 +666,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
     <div className="p3" ref={hostRef} role="img" aria-label={label}>
       <div className="p3-layer" ref={layerRef} />
       <div className="p3-bar">
-        <span className="p3-tag">{stack ? 'Stacked floors' : 'True 3D'} · view only</span>
+        <span className="p3-tag">{stack ? 'Stacked floors' : 'True 3D'}{editable ? '' : ' · view only'}</span>
         <button type="button" className="sm" onClick={fitZone}>Fit zone</button>
         <button type="button" className="sm" onClick={() => zoom(1.4)} aria-label="Zoom in">+</button>
         <button type="button" className="sm" onClick={() => zoom(1 / 1.4)} aria-label="Zoom out">&minus;</button>
@@ -563,7 +690,9 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
         {!stack && <label className="p3-chk"><input type="checkbox" checked={floorsOn} onChange={e => setFloorsOn(e.target.checked)} />Floors</label>}
       </div>
       <div className="p3-foot">
-        Drag to turn &middot; scroll to zoom &middot; right-drag to pan &middot; tap a pin to select it &middot; edit in 2D
+        {editable
+          ? <>Drag a pin to move it{stack ? ' along its floor' : ''} &middot; drag the space around it to turn &middot; scroll to zoom &middot; right-drag to pan &middot; Esc cancels a move &middot; everything else is edited in 2D</>
+          : <>Drag to turn &middot; scroll to zoom &middot; right-drag to pan &middot; tap a pin to select it &middot; edit in 2D</>}
         {guessed > 0 && <> &middot; {guessed} pin{guessed === 1 ? ' has' : 's have'} no height of {guessed === 1 ? 'its' : 'their'} own and stand{guessed === 1 ? 's' : ''} at the nearest mob&apos;s</>}
       </div>
       {!stack && wallStatus === 'loading' && <div className="p3-note">Loading the zone mesh…</div>}

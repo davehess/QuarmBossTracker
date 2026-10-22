@@ -176,6 +176,49 @@ export function arcPoints(a: Pt3, b: Pt3, n = 24): Pt3[] {
   return out;
 }
 
+// ── dragging a pin ───────────────────────────────────────────────────────────
+
+/** A press that moves this far (|dx| + |dy|, screen px) is a drag; less is still a click, as the 3D view has always taken it. */
+export const DRAG_SLOP = 4;
+export const movedPast = (dx: number, dy: number, slop = DRAG_SLOP) => Math.abs(dx) + Math.abs(dy) > slop;
+
+const tenth = (n: number) => Math.round(n * 10) / 10;
+
+/** A point in three.js's frame (-x, h, -y) back in the server's (x, y, z): the inverse of serverToThree in lib/zoneMesh.ts. */
+export function threeToServer(tx: number, ty: number, tz: number): Pt3 {
+  return [0 - tx, 0 - tz, ty];   // 0 - n, so a point on an axis is +0 and never -0
+}
+
+export type Landing = { x: number; y: number; z: number; h: number };
+
+/**
+ * Where a dragged pin lands, from the point under the pointer (`at`, three.js frame) and the pin as it stands (`cur`: the
+ * z it has and the height it is drawn at).
+ *   'mesh'   the picture is the real zone, so the height of the point IS the z the pin takes.
+ *   'stack'  a slab is not a z: every z on a floor draws at the same level, so there is no way back from a slab to a z.
+ *            The pin slides on its slab and keeps the z it has, so it cannot change floors here (the stack is for
+ *            looking at the climb, not for deciding it). A pin whose height was only guessed keeps the guess, which is
+ *            what stops the guess changing floors under the pointer as the nearest mob changes.
+ * x and y are kept inside the zone's bounds (a pointer past the edge of the slab, or of the mesh, plants the pin on the edge,
+ * not in the next county) and rounded to a tenth, as the 2D map does.
+ */
+export function dragLanding(
+  mode: Mode3D, at: Pt3, cur: { z: number; h: number }, bounds?: { x0: number; x1: number; y0: number; y1: number },
+): Landing {
+  const [px, py, z] = threeToServer(at[0], at[1], at[2]);
+  const x = tenth(bounds ? Math.min(bounds.x1, Math.max(bounds.x0, px)) : px), y = tenth(bounds ? Math.min(bounds.y1, Math.max(bounds.y0, py)) : py);
+  return mode === 'mesh' ? { x, y, z: tenth(z), h: tenth(z) } : { x, y, z: cur.z, h: cur.h };
+}
+
+/** The plan with one pin somewhere else (a copy: the engine's own plan is only changed when the drag is let go). */
+export function withPinMoved(plan: Plan, id: string, to: { x: number; y: number; z: number }): Plan {
+  const at = (p: Pin): Pin => (p.id === id ? { ...p, x: to.x, y: to.y, z: to.z } : p);
+  return { ...plan, pins: plan.pins.map(at), splits: plan.splits.map(s => ({ ...s, branches: s.branches.map(b => ({ ...b, pins: b.pins.map(at) })) })) };
+}
+
+/** Does the walk route of this leg end at the pin? Its key is "<from id>><to id>" (plan.ts planLegs). */
+export const legTouches = (legKey: string, pinId: string) => legKey.startsWith(pinId + '>') || legKey.endsWith('>' + pinId);
+
 // ── the whole view ───────────────────────────────────────────────────────────
 
 export type Slab3D = { key: string; label: string; short: string; color: string; z: number; h: number };

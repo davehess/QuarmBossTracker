@@ -138,6 +138,10 @@ next touch one rather than assuming a missing row means a missing doc.
   and flagged doors (dashed jump, not counted), the leg length becomes the walked length, and "Use this route" bakes it into bend
   points. The three step bridges in the Tower's data are heuristics nobody has walked. **Open: the guild lead's call, and a raid
   night's worth of looking at whether the routes are ones a raider would take.**
+  **Drag pins in 3D (web 2.0.8, preview on `beta`, draft, 2026-10-22):** the guild lead: "make dragging possible there". On
+  `&v=c` / `&v=b` an officer drags a pin in the 3D view (c: it lands on the visible floor under the pointer, its z the floor's;
+  b: it slides along its own floor, z kept); the legs follow live, one save on release, Esc cancels. Read-only viewers still only
+  orbit. Bend points still drag in 2D only. **Open: rides on the guild lead's b-or-c pick.**
 - **⏳ Flag lab: an officer sandbox for the PoP flags and the hail board (web 1.9.2, DRAFT on `claude/flag-lab`, not
   pushed, 2026-10-18).** `/admin/flag-lab` (new route, `[beta]` tag, officer only, **off unless `FLAG_LAB=1`**, which the
   officer sets in Vercel's Preview environment only). Fake members with presets and per-flag source ticks (Mimic /

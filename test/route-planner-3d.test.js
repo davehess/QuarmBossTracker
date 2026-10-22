@@ -7,7 +7,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   floorOrder, floorLevels, heightsFor, pinHeight, clipHeight, liftPolyline, arcPoints, baseSpacing, shortFloorLabel, buildView3D,
+  threeToServer, dragLanding, withPinMoved, movedPast, legTouches, DRAG_SLOP,
 } from '../web/lib/routePlanner/view3d.ts';
+import { serverToThree } from '../web/lib/zoneMesh.ts';
 import { buildPlanPins } from '../web/lib/routePlanner/build.ts';
 import { emptyPlan } from '../web/lib/routePlanner/types.ts';
 import { zoneData } from '../web/lib/routePlanner/zones/index.ts';
@@ -270,5 +272,74 @@ describe('the whole view of the tower', () => {
     expect(v.pins).toEqual([]);
     expect(v.legs).toEqual([]);
     expect(v.spacing).toBe(baseSpacing(TACTICS.bounds));
+  });
+});
+
+describe('dragging a pin in 3D', () => {
+  it('three.js back to the server frame is the inverse of serverToThree, and never -0', () => {
+    for (const [x, y, z] of [[120.5, -340.2, -1342], [0, 0, 0], [-5, 7, 250]]) {
+      const [tx, ty, tz] = serverToThree(x, y, z);
+      expect(threeToServer(tx, ty, tz)).toEqual([x, y, z]);
+    }
+    const o = threeToServer(-0, 5, -0);
+    expect(Object.is(o[0], 0) && Object.is(o[1], 0)).toBe(true);
+  });
+
+  it('c: the height of the point under the pointer is the pin\'s new z, x and y are rounded to a tenth', () => {
+    const [tx, ty, tz] = serverToThree(-410.04, 1203.96, -1288.349);
+    expect(dragLanding('mesh', [tx, ty, tz], { z: 5, h: 5 })).toEqual({ x: -410, y: 1204, z: -1288.3, h: -1288.3 });
+  });
+
+  it('b: slides along its slab and keeps its z, so a drag cannot change floors', () => {
+    const [tx, ty, tz] = serverToThree(10, 20, 9999);   // whatever height the pointer ray reaches, the stack ignores it
+    expect(dragLanding('stack', [tx, ty, tz], { z: -1100, h: 600 })).toEqual({ x: 10, y: 20, z: -1100, h: 600 });
+  });
+
+  it('x and y stop at the zone bounds, on both views', () => {
+    const B = { x0: -100, x1: 100, y0: -50, y1: 50 };
+    const far = serverToThree(5000, -9000, 7);
+    expect(dragLanding('mesh', far, { z: 0, h: 0 }, B)).toMatchObject({ x: 100, y: -50, z: 7 });
+    expect(dragLanding('stack', far, { z: 3, h: 9 }, B)).toEqual({ x: 100, y: -50, z: 3, h: 9 });
+    expect(dragLanding('mesh', serverToThree(-20.04, 10, 1), { z: 0, h: 0 }, B)).toMatchObject({ x: -20, y: 10 });
+  });
+
+  it('a press is a drag only past 4 px (|dx| + |dy|), a click up to it', () => {
+    expect(DRAG_SLOP).toBe(4);
+    expect(movedPast(2, 2)).toBe(false);
+    expect(movedPast(-4, 0)).toBe(false);
+    expect(movedPast(3, -2)).toBe(true);
+    expect(movedPast(0, 9, 10)).toBe(false);
+  });
+
+  it('shows the plan with one pin moved, on the main route or in a branch, and leaves the plan itself alone', () => {
+    const plan = planOf([pin('a', 0, 0, { z: 10 }), pin('b', 5, 5)], {
+      splits: [{ id: 's', from: 'a', to: 'b', branches: [{ id: 'br', label: 'L', color: '#fff', pins: [pin('c', 9, 9, { z: 1 })] }] }],
+    });
+    const moved = withPinMoved(plan, 'b', { x: 70, y: 80, z: -3 });
+    expect(moved.pins.map(p => [p.id, p.x, p.y, p.z])).toEqual([['a', 0, 0, 10], ['b', 70, 80, -3]]);
+    const inBranch = withPinMoved(plan, 'c', { x: 1, y: 2, z: 3 });
+    expect(inBranch.splits[0].branches[0].pins[0]).toMatchObject({ id: 'c', x: 1, y: 2, z: 3 });
+    expect(plan.pins[1]).toEqual(pin('b', 5, 5));                    // not mutated
+    expect(plan.splits[0].branches[0].pins[0].x).toBe(9);
+  });
+
+  it('the moved pin is where the view draws it: mesh at the new z, stack on its own slab', () => {
+    const base = TOWER.mobs.filter(m => typeof m.z === 'number').slice(0, 2);
+    const plan = planOf(base.map(m => pin(m.id, m.x, m.y, { z: m.z })));
+    const to = { x: base[0].x + 100, y: base[0].y - 50, z: base[0].z + 12 };
+    const after = withPinMoved(plan, base[0].id, to);
+    const mesh = buildView3D({ zone: TOWER, plan: after, skipOptional: false, mode: 'mesh' }).pins[0];
+    expect([mesh.x, mesh.y, mesh.h, mesh.z]).toEqual([to.x, to.y, to.z, to.z]);
+    const was = buildView3D({ zone: TOWER, plan, skipOptional: false, mode: 'stack', spacing: 300 }).pins[0];
+    const now = buildView3D({ zone: TOWER, plan: withPinMoved(plan, base[0].id, { ...to, z: base[0].z }), skipOptional: false, mode: 'stack', spacing: 300 }).pins[0];
+    expect([now.x, now.y, now.h, now.floor]).toEqual([to.x, to.y, was.h, was.floor]);
+  });
+
+  it('a walk route belongs to a leg that ends at the pin, by the leg key "<from>><to>"', () => {
+    expect(legTouches('p1>p2', 'p1')).toBe(true);
+    expect(legTouches('p1>p2', 'p2')).toBe(true);
+    expect(legTouches('p1>p2', 'p')).toBe(false);
+    expect(legTouches('p1>p2', '2')).toBe(false);
+    expect(legTouches('p10>p2', 'p1')).toBe(false);
   });
 });
