@@ -1,5 +1,5 @@
 'use client';
-// The mascot's clip, with `prefers-reduced-motion` honoured (raidmimic hero preview `?v=b`, the guild lead,
+// The mascot's clip, with `prefers-reduced-motion` honoured (the raidmimic hero, the guild lead,
 // 2026-10-21). Both the <video> and its poster <img> are in the markup and CSS (`motion-reduce:`) picks one before any
 // script runs, so a reduced-motion visitor never sees the clip flash; the effect then drops the clip's source so it is
 // not downloaded for nothing. Autoplay needs the muted PROPERTY, which React does not put in the server HTML.

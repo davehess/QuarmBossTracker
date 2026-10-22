@@ -1,28 +1,29 @@
-// The raidmimic layout, "Scene-first" (`?v=d`, a PREVIEW beside the tour): a short headline, then one large stage
-// that plays the three overlay recordings as a tabbed player, then the tour's moments, folds, coming list and ask.
+// The raidmimic layout, "Scene-first" (the guild lead's pick, Decision Desk 2026-10-22, with the raid-night beats of the
+// story layout folded in): the hero (the mascot with the overlay captures around it, the guild lead's pick of 2026-10-21,
+// kept), then one large stage that plays the real overlay recordings as a tabbed player
+// organised by who they are for (raiders; raid leaders and guild leaders), each with the sentence of its beat. The four
+// moments, the folded small print, the coming list and the ask follow.
 // Server component; the only client code is the player (ClipTabs). Every word is in web/lib/raidmimicLanding.ts.
-import { CLIPS, CLIPS_HEAD, CLIPS_NOTE, COST, DATA, FACTS_TITLE, HERO, MOMENTS, WORKS_WITH, WORLDS } from '@/lib/raidmimicLanding';
 import {
-  BetaTag, ComingList, CostBody, CtaBand, DataBody, Footer, InterestButton, StatusChip, WorksWithBody, WorldsBody, type Ctx,
+  CLIPS, CLIPS_HEAD, CLIPS_NOTE, COST, DATA, FACTS_TITLE, MAP_CREDIT, MOMENTS, SHOTS_HEAD, WORKS_WITH, WORLDS,
+} from '@/lib/raidmimicLanding';
+import {
+  BetaTag, ComingList, CostBody, CtaBand, DataBody, Fold, Footer, Hero, StatusChip, WorksWithBody, WorldsBody, type Ctx,
 } from './Parts';
-import { Fold } from './TourLayout';
 import ClipTabs from './ClipTabs';
+import MascotHero from './MascotHero';
 
-export default function WatchLayout({ ctx }: { ctx: Ctx }) {
+export default function SceneLayout({ ctx }: { ctx: Ctx }) {
   return (
     <div className="mx-auto max-w-5xl pb-12">
       <BetaTag ctx={ctx} />
-
-      <header className="mb-6">
-        <p className="text-xs uppercase tracking-widest text-gold">{HERO.kicker}</p>
-        <h1 className="mt-1 text-3xl leading-tight text-[#f2ede1]">{HERO.name}</h1>
-        <p className="mt-2 max-w-[62ch] text-base leading-7 text-[#f2ede1]">{HERO.line}</p>
-        <div className="mt-4"><InterestButton ctx={ctx} /></div>
-      </header>
+      <Hero ctx={ctx} compact />
+      <MascotHero />
+      <p className="mb-10 text-xs leading-5 text-dim">{SHOTS_HEAD.note} {MAP_CREDIT}</p>
 
       <section aria-label={CLIPS_HEAD.stageLabel} data-clips={CLIPS.length}>
         <h2 className="text-xl text-[#f2ede1]">{CLIPS_HEAD.title}</h2>
-        <p className="mb-3 mt-1 text-sm leading-6 text-text">{CLIPS_HEAD.lead}</p>
+        <p className="mb-3 mt-1 max-w-[62ch] text-sm leading-6 text-text">{CLIPS_HEAD.lead}</p>
         <ClipTabs />
         <p className="mt-3 text-xs text-dim">{CLIPS_NOTE}</p>
       </section>

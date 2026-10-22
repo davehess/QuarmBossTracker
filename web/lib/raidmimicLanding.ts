@@ -2,8 +2,9 @@
 // eqmimic.quest stays the free EverQuest PLAYER tool; this page is the game-agnostic "raid orchestration and
 // analytics as a service" pitch for GUILD LEADERS. It is a FIRST DRAFT: nothing here is settled copy.
 //
-// ONE content module, ONE layout (web/app/raidmimic/_landing/TourLayout.tsx, "The tour", the guild lead's pick
-// of 2026-10-19). The layout decides order and shape; it never carries a sentence of its own, so a fact is
+// ONE content module, ONE layout (web/app/raidmimic/_landing/SceneLayout.tsx, "Scene-first": a tabbed player of
+// the real overlays for raiders and for raid leaders, the guild lead's pick of 2026-10-22, which replaced the
+// earlier tour). The layout decides order and shape; it never carries a sentence of its own, so a fact is
 // corrected in exactly one place. Plain data, strings and a few pure helpers: no JSX. test/raidmimic-landing.test.js
 // reads this file as text and imports it.
 //
@@ -12,7 +13,7 @@
 // test keeps the page honest about it. No prices, customer counts or testimonials are invented here.
 //
 // ⚠ This repo is PUBLIC. Nothing here names a member, a character, a real id, a token or an address. The
-// illustrative boards and grids in the tour layout use placeholder labels (Guild One, Raider 1), not people.
+// recordings on the page are made from invented raiders (scripts/raidmimic-shots), never a member.
 
 import { REPO_URL } from './eqmimicLanding';
 
@@ -129,29 +130,23 @@ export function interestUrl(base: string): string {
   return `${base}#${new URLSearchParams({ cat: 'idea', text: INTEREST_TEXT }).toString()}`;
 }
 
-// ─── The tour: screens first ─────────────────────────────────────────────────────────────
-// `figure` names the CSS-only illustration in Figures.tsx. They are drawn, not captured: no screenshot is used, so
-// nothing here can carry a real name.
-export type FigureKey = 'boards' | 'flags' | 'parse' | 'builder';
-export interface Moment { id: string; figure: FigureKey; title: string; line: string; status: Status }
+// ─── Four moments, as words ──────────────────────────────────────────────────────────────
+export interface Moment { id: string; title: string; line: string; status: Status }
 export const MOMENTS: Moment[] = [
-  { id: 'two-guilds', figure: 'boards', status: 'coming', title: 'A raid board across two guilds',
+  { id: 'two-guilds', status: 'coming', title: 'A raid board across two guilds',
     line: 'Two guilds, one raid, one board: each sees what is up and what is down, and each keeps its own roster.' },
-  { id: 'at-a-glance', figure: 'flags', status: 'live', title: 'Flags and lockouts at a glance',
+  { id: 'at-a-glance', status: 'live', title: 'Flags and lockouts at a glance',
     line: 'Your raiders against the gates and the bosses: who can zone in, who is locked out, who still needs a step.' },
-  { id: 'a-parse', figure: 'parse', status: 'live', title: 'A parse built from every log',
+  { id: 'a-parse', status: 'live', title: 'A parse built from every log',
     line: 'One fight, merged from every raider’s view, so no single log decides the numbers.' },
-  { id: 'builder', figure: 'builder', status: 'alpha', title: 'The overlay builder',
+  { id: 'builder', status: 'alpha', title: 'The overlay builder',
     line: 'Lay out your own on-screen panels, meters, timers and queues, and put them where you want them.' },
 ];
 
-export const ILLUSTRATIVE_NOTE = 'Drawn for this page, not screenshots. Labels are placeholders.';
-
-// ─── Output first: the gallery (the `?v=b` layout, the guild lead, 2026-10-21) ──────────────────────
-// "The raidmimic about page is lacking. We still want to show the output first. Anonymize names." So the preview
-// layout opens on the real thing: captures of the running Mimic overlays, drawn from fixtures with invented
-// player names (scripts/raidmimic-shots). Every one of these runs today for one guild, which is why the note
-// below says so and no status chip is needed; the cross-guild board stays in MOMENTS, marked Coming.
+// ─── The hero's captures (the layered mascot hero, the guild lead, 2026-10-21: "i like B for the hero") ──────────────
+// Captures of the running Mimic overlays, drawn from fixtures with invented player names (scripts/raidmimic-shots),
+// fanned around the hopping mascot. Every one of these runs today for one guild, which is why the note below says so and
+// no status chip is needed; the cross-guild board stays in MOMENTS, marked Coming.
 //
 // ⚠ PUBLIC. The captures hold game data (mobs, items, zones, spells) and invented raider names, never a member's
 // character. test/raidmimic-landing.test.js checks each file exists, is small, and is the size given here.
@@ -160,10 +155,10 @@ export interface Shot {
   file: string;      // under web/public/raidmimic/shots
   w: number;         // the file's own pixel size (2x), for the width/height attributes
   h: number;
-  title: string;     // the caption's name for the overlay
+  title: string;     // the card's name for the overlay
   line: string;      // one plain sentence: what it does for a raid
   alt: string;
-  credit?: string;   // a rights line shown under the caption (the Map's walls come from a GPL project)
+  credit?: string;   // a rights line (the Map's walls come from a GPL project)
 }
 export const SHOTS_DIR = '/raidmimic/shots';
 // Plane of Nightmares as the Map draws it. The wall lines are EQEmu-generated and credited as the spectator page credits
@@ -197,53 +192,57 @@ export const SHOTS_HEAD = {
   title: 'What the raid sees',
   note: 'These are the real Mimic overlays, running today for one guild, drawn here on made-up data: every raider name is invented.',
 };
-// ─── Scene clips (the `?v=d`, `?v=e`, `?v=f` previews, the guild lead's brief, 2026-10-22) ──────────────────────────
-// Three short looping recordings of the real Mimic overlays on invented raiders, played muted. The files live under
-// web/public/raidmimic/clips and are made by scripts/raidmimic-shots. `w` and `h` are the file's pixel size and
-// only set the aspect ratio: every layout sizes by w / h, so a corrected number just works.
-export interface Clip { id: string; title: string; caption: string; alt: string; w: number; h: number }
+
+// ─── Scene-first: the player (the guild lead's pick, Decision Desk 2026-10-22, card raidmimic-layout-clips) ─────────
+// "Truly several of these are important. Individual raiders or players get quite a bit out of the overlays, Raid
+// Leaders and guild leaders get more out of the coordination and orchestration bits. It should really be a
+// combination." So the player is organised by WHO it is for, and each recording carries the sentence of its beat in
+// the raid night (the debuffs, the split, the kill and the hail).
+//
+// Short looping recordings of the real Mimic overlays on invented raiders, played muted. The files live under
+// web/public/raidmimic/clips and are made by scripts/raidmimic-shots/scenes.mjs. `w` and `h` are the file's pixel size
+// and only set the aspect ratio, so a corrected number just works. A NEW scene is one more row here: it gets its tab
+// when it has a row and files, and no empty tab exists before that (next to record: loot rolls and DKP bids, for
+// `leaders`).
+export type Audience = 'raiders' | 'leaders';
+export interface Clip {
+  id: string;
+  audience: Audience;
+  title: string;     // the tab: the overlay's name
+  step: string;      // the beat of the raid night
+  head: string;
+  line: string;      // the caption: one or two plain sentences
+  alt: string;
+  w: number;
+  h: number;
+}
 export const CLIPS_DIR = '/raidmimic/clips';
 export const clipSrc = (id: string, kind: 'video' | 'poster'): string =>
   `${CLIPS_DIR}/${id}${kind === 'video' ? '.mp4' : '-poster.webp'}`;
+export const AUDIENCES: { id: Audience; label: string; lead: string }[] = [
+  { id: 'raiders', label: 'For raiders', lead: 'On your own screen: what is on the boss, and which copy is which.' },
+  { id: 'leaders', label: 'For raid leaders and guild leaders', lead: 'Running the night: who has their flag, and who still has to hail.' },
+];
 export const CLIPS: Clip[] = [
-  { id: 'target-debuffs', title: 'Target Info', w: 948, h: 792,
-    caption: 'A raid boss and its stats, then each debuff landing in turn: a stronger slow replaces a weaker one, damage over time piles up, and every caster mid-cast shows in the casting list as the health bar falls toward the split.',
+  { id: 'target-debuffs', audience: 'raiders', title: 'Target Info', step: 'The debuffs', head: 'Every debuff, as it lands', w: 948, h: 792,
+    line: 'Slows, snares and damage over time stack on the boss and show who cast them. The health bar tells you how close the split is.',
     alt: 'The Target Info overlay on a raid boss: its stats, then debuffs landing one at a time, a 65 percent slow replaced by a 75 percent slow, a snare, damage-over-time spells stacking, a list of casts in progress, and the health bar dropping toward 60 percent.' },
-  { id: 'xtarget-split', title: 'Extended Target', w: 732, h: 746,
-    caption: 'When the boss splits into five rows with the same name, each row carries its own in-game tag, so you can tell the real one from the fakes. The fakes die first.',
+  { id: 'xtarget-split', audience: 'raiders', title: 'Extended Target', step: 'The split', head: 'Five of the same name', w: 732, h: 746,
+    line: 'The boss splits and every copy has the same name. A tag on each row says which is which, so the right ones go down first.',
     alt: 'The Extended Target overlay: five rows all carrying the boss name, each with a different tag, and the fake rows dropping off as they die before the real boss.' },
-  { id: 'grummus-hail', title: 'Hail board', w: 1488, h: 600,
-    caption: 'After the boss dies, raiders hail the Planar Projection for their flag, and the hail board moves each name from still to hail to hailed.',
+  { id: 'grummus-hail', audience: 'leaders', title: 'Hail board', step: 'The kill and the hail', head: 'Dead boss, then flags', w: 1488, h: 600,
+    line: 'Once it dies, the raid hails the projection for the flag. The board shows who has and who still has to.',
     alt: 'The Command Center overlay beside the chat window: a boss dying, then raiders hailing the Planar Projection and the hail board moving names from the still-to-hail list to the hailed list.' },
 ];
 export const CLIPS_NOTE = 'Recordings of the real overlays, running today for one guild, on invented raiders.';
 export const CLIPS_HEAD = {
   title: 'Watch a raid night',
-  lead: 'Three overlays, recorded as they run. Pick one, or let them play.',
-  screenTitle: 'What sits on your screen',
-  screenLead: 'The same overlays, laid out the way a raider has them: small windows over the game, each doing one job.',
-  storyTitle: 'A raid night, beat by beat',
+  lead: 'Raiders get the overlays; the people running the night get the coordination. Pick a side and watch it run.',
   stageLabel: 'Overlay clips',
-  tabsLabel: 'Pick an overlay',
+  audienceLabel: 'Who it is for',
+  scenesLabel: 'Pick an overlay',
 };
-// The raid-night story (`?v=e`): the beats in order, one recording each.
-export interface Beat { id: string; step: string; head: string; line: string; clip: string | null }
-export const STORY: Beat[] = [
-  { id: 'debuffs', step: 'The debuffs', head: 'Every debuff, as it lands', clip: 'target-debuffs',
-    line: 'Slows, snares and damage over time stack on the boss and show who cast them. The health bar tells you how close the split is.' },
-  { id: 'split', step: 'The split', head: 'Five of the same name', clip: 'xtarget-split',
-    line: 'The boss splits and every copy has the same name. A tag on each row says which is which, so the right ones go down first.' },
-  { id: 'hail', step: 'The kill and the hail', head: 'Dead boss, then flags', clip: 'grummus-hail',
-    line: 'Once it dies, the raid hails the projection for the flag. The board shows who has and who still has to.' },
-];
-// The monitor (`?v=f`): what each overlay is doing, one short line each.
-export const SCREEN_NOTES: { id: string; line: string }[] = [
-  { id: 'target-debuffs', line: 'Tracks the boss: stats, debuffs and who put them on, and the casts in progress.' },
-  { id: 'xtarget-split', line: 'Lists every copy of a split boss with its tag, so the fakes are easy to pick out.' },
-  { id: 'grummus-hail', line: 'Keeps the hail board: who still has to hail and who is done, beside chat.' },
-];
 
-export const SETUP_LINK = { label: 'Set it up yourself', href: '/raidmimic/setup' };
 export const FACTS_TITLE = 'The small print';
 
 // ─── Rights and footer ──────────────────────────────────────────────────────────────────────────────

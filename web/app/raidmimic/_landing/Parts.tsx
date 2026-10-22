@@ -1,8 +1,9 @@
 // The pieces the raidmimic.com landing page is assembled from. Every sentence comes from web/lib/raidmimicLanding.ts;
-// this file only decides how a block LOOKS. Server components, no client JS: the tour's small print is <details>.
+// this file only decides how a block LOOKS. Server components, no client JS: the small print is <details>.
 //
 // Colour is semantic, as everywhere (frontend-design): gold is the one action, green is "live today", purple is
 // "in alpha", and a dashed orange chip is "coming" so a promise is never dressed up as a feature.
+import type { ReactNode } from 'react';
 import NewPageTag from '@/components/NewPageTag';
 import {
   COMING, COMING_TITLE, COST, CTA, DATA, FAN_PROJECT_LINE, HERO, PRIVACY_URL, REPO_URL, RIGHTS_NOTICE,
@@ -63,6 +64,16 @@ export function Hero({ ctx, compact = false }: { ctx: Ctx; compact?: boolean }) 
         <a href={EQMIMIC_ORIGIN} {...EXT}>eqmimic.quest</a>
       </p>
     </header>
+  );
+}
+
+// ─── The small print: one-line accordions ─────────────────────────────────────────────────────────
+export function Fold({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <details id={id} className="scroll-mt-4 rounded-md border border-border bg-panel px-4">
+      <summary className="flex min-h-11 cursor-pointer items-center text-base text-[#f2ede1]">{title}</summary>
+      <div className="pb-4 pt-1">{children}</div>
+    </details>
   );
 }
 
