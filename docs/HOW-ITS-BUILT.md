@@ -4310,6 +4310,8 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
 - **Raid routes (`/raid/routes`, marked [beta]).** Members-only. Every recorded night in a zone becomes a centroid path (median
   position of placed raiders, frame by frame); the clock starts at first engage, not zone-in; legs are cut at curated named
   kills, resampled by distance and averaged across nights; each leg also lists the trash cleared in it and its spawn points.
+  Only nights that killed a named vote on the stops (a visit with none, like a scouting run, never raises the bar), so a zone
+  with one real raid draws it; ticked nights that share no named fall back to the most recent one with a note (`routeBasis`).
   Pure rules in `web/lib/raidRoutes.ts`, loader `raidRoutesLoad.ts`, board `RoutesBoard.tsx`, member-gated `/api/raid/routes`;
   officers can save a route (`actions.ts`, stored in `bot_kv` as `raid_route:<zone>`, so no migration). Server frame throughout; the page negates axes to draw north up. Test:
   `test/raid-routes.test.js`.

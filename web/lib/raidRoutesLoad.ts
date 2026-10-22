@@ -19,7 +19,7 @@ import { displayMobName } from '@/lib/replayBosses';
 import { isZoneShort } from '@/lib/zoneMap/source';
 import { loadWalls } from '@/app/pop/raid/walls';
 import {
-  MIN_NIGHT_MINUTES, MIN_RAIDERS, SESSION_GAP_MS, analyzeNight, averageRoute, canonicalStops, centroidSeries,
+  MIN_NIGHT_MINUTES, MIN_RAIDERS, SESSION_GAP_MS, analyzeNight, averageRoute, routeBasis, centroidSeries,
   nightPath, type Enc, type NightFlag, type NightTrack, type RouteResult, type SpawnPick,
 } from '@/lib/raidRoutes';
 
@@ -227,7 +227,7 @@ export async function zoneRoutes(zone: string, keys: string[] | null): Promise<Z
     const used = tracks.filter(t => inc.has(t.key));
     const spawns = await zoneSpawns(zone);
     const route = averageRoute(used, spawns);
-    const stops = canonicalStops(used);
+    const stops = routeBasis(used).stops;
     const nights: NightOut[] = list.visits.map((v, i) => {
       const t = tracks[i];
       return {

@@ -181,12 +181,19 @@ export function analyzeNight(
 export type Stop = { npc_id: number; name: string; nights: number; medianClockS: number | null };
 
 /**
- * The named kills this zone's route is made of: those killed on at least half of the included nights, in the order of
- * their median time after first engage. (A boss killed on one night in five is a visit, not a stop.)
+ * The named kills this zone's route is made of: those killed on at least half of the nights that KILLED ANY NAMED, in
+ * the order of their median time after first engage. (A boss killed on one night in five is a visit, not a stop.)
+ *
+ * Only nights with a named kill vote. A night with none (a farm run, a scouting visit, a pre-clear) is shown unticked
+ * on the page and has nothing to say about the route, so it must not raise the bar: counting it made one real night
+ * plus two empty visits need two votes, and Torment (one raid, two visits with no named) drew nothing (2026-10-22).
+ * With one voting night every boss it killed is a stop. With two or more a stop needs at least two of them, so two
+ * nights that share nothing share no route (the caller falls back to one night, see routeBasis).
  */
 export function canonicalStops(nights: readonly NightTrack[]): Stop[] {
   const by = new Map<number, { name: string; offs: number[] }>();
-  for (const n of nights) {
+  const voters = nights.filter(n => n.firstEngage != null && n.named.length > 0);
+  for (const n of voters) {
     if (n.firstEngage == null) continue;
     for (const k of n.named) {
       let e = by.get(k.npc_id);
@@ -194,7 +201,7 @@ export function canonicalStops(nights: readonly NightTrack[]): Stop[] {
       e.offs.push((k.start - n.firstEngage) / 1000);
     }
   }
-  const need = Math.max(1, Math.ceil(nights.length / 2));
+  const need = voters.length <= 1 ? 1 : Math.max(2, Math.ceil(voters.length / 2));
   const stops: Stop[] = [];
   for (const [npc_id, e] of by) if (e.offs.length >= need) stops.push({ npc_id, name: e.name, nights: e.offs.length, medianClockS: median(e.offs) });
   return stops.sort((a, b) => (a.medianClockS ?? 0) - (b.medianClockS ?? 0) || a.npc_id - b.npc_id);
@@ -278,16 +285,37 @@ export type LegResult = {
 export type ClearDot = { x: number; y: number; leg: number; name: string; nights: number; of: number; kills: number };
 export type StopResult = { n: number; npc_id: number; name: string; x: number | null; y: number | null; at: 'spawn' | 'raid' | null; nights: number; medianClockS: number | null };
 
-export type RouteResult = { stops: StopResult[]; legs: LegResult[]; clears: ClearDot[]; start: [number, number] | null };
+/** Set when the ticked nights share no named kill: the route is the most recent ticked night's own, `of` nights had a named kill. */
+export type RouteFallback = { nightKey: string; of: number };
+
+export type RouteResult = {
+  stops: StopResult[]; legs: LegResult[]; clears: ClearDot[]; start: [number, number] | null;
+  fallback: RouteFallback | null;
+};
 
 const r1 = (n: number) => Math.round(n);
+
+/**
+ * Which nights the route is built from, and its stops. Normally every ticked night. When they share no named kill
+ * (two or more nights that killed different bosses) the most recent ticked night that killed any named is the route on
+ * its own and `fallback` says so, so a zone with one or two recorded raids still draws something to evaluate.
+ * No ticked night with a named kill: no stops, no fallback.
+ */
+export function routeBasis(nights: readonly NightTrack[]): { used: readonly NightTrack[]; stops: Stop[]; fallback: RouteFallback | null } {
+  const stops = canonicalStops(nights);
+  if (stops.length) return { used: nights, stops, fallback: null };
+  const named = nights.filter(n => n.firstEngage != null && n.named.length > 0);
+  if (!named.length) return { used: nights, stops, fallback: null };
+  const latest = named.reduce((a, b) => (b.from > a.from ? b : a));
+  return { used: [latest], stops: canonicalStops([latest]), fallback: { nightKey: latest.key, of: named.length } };
+}
 
 /**
  * The included nights -> the averaged route. `spawns` is each npc's spawn points in this zone (any npc: bosses
  * and trash), used for the stop markers of bosses that have one and for the clearing dots.
  */
-export function averageRoute(nights: readonly NightTrack[], spawns: ReadonlyMap<number, readonly SpawnPick[]>): RouteResult {
-  const stops = canonicalStops(nights);
+export function averageRoute(allNights: readonly NightTrack[], spawns: ReadonlyMap<number, readonly SpawnPick[]>): RouteResult {
+  const { used: nights, stops, fallback } = routeBasis(allNights);
   const perNight = nights.map(n => ({ n, legs: nightLegs(n, stops) }));
   const legs: LegResult[] = [];
   const clears = new Map<string, { x: number; y: number; leg: number; name: string; nights: Set<string>; kills: number }>();
@@ -361,6 +389,7 @@ export function averageRoute(nights: readonly NightTrack[], spawns: ReadonlyMap<
       .sort((a, b) => b.nights - a.nights || b.kills - a.kills)
       .slice(0, 700),
     start: legs[0]?.pts[0] ?? null,
+    fallback,
   };
 }
 

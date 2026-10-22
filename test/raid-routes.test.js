@@ -19,7 +19,7 @@ import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
 import {
   median, centroidSeries, centreAt, legTrack, resampleByDistance, pathLength, analyzeNight, canonicalStops, nightLegs,
-  nearestSpawn, averageRoute, nightPath, fmtSecs, PRECLEAR_MS, LEG_POINTS, NIGHT_PATH_POINTS,
+  nearestSpawn, averageRoute, routeBasis, nightPath, fmtSecs, PRECLEAR_MS, LEG_POINTS, NIGHT_PATH_POINTS,
 } from '../web/lib/raidRoutes.ts';
 
 const S = 1000;
@@ -245,6 +245,85 @@ describe('stops, legs and the average', () => {
   it('with the nights unticked, the average follows the ticked ones only', () => {
     expect(averageRoute([A, C], new Map()).legs[0].nights).toBe(2);
     expect(averageRoute([], new Map()).stops).toEqual([]);
+  });
+});
+
+// A zone with one real raid draws its route (2026-10-22: Torment, one raid and two visits that killed nothing named,
+// said "no named kill in common"). `later` shifts the night's clock so "most recent" is decidable.
+describe('one night, and nights that share nothing', () => {
+  const OTHER = new Set([300, 400]);
+  const walkNight = (key, { named, ids = NAMED, later = 0 }) => {
+    const [b1, b2] = [300, 800];
+    const frames = [];
+    for (let s = 0; s <= b2 + 30; s += 3) {
+      const f = s <= b1 ? s / b1 : 1;
+      const g = s <= b1 ? 0 : Math.min(1, (s - b1) / (b2 - b1));
+      frames.push(frame(s + later, f * 1000, g * 1000));
+    }
+    const encs = [enc(1, 1, 'a_scout', 60 + later, 65 + later), ...named.map(([npc, name, sec], i) => enc(90 + i, npc, name, sec + later, sec + later + 30))];
+    return analyzeNight(key, { from: at(later), to: at(b2 + 100 + later) }, centroidSeries(frames, 'z'), encs, ids);
+  };
+  const quiet = (key, later = 5000) => {
+    const frames = walk(0, 400).map(f => ({ ...f, t: f.t + later * S }));
+    return analyzeNight(key, { from: at(later), to: at(later + 500) }, centroidSeries(frames, 'z'), [enc(1, 1, 'a_scout', later + 10, later + 20)], NAMED);
+  };
+
+  it('a single ticked night draws its route: every boss it killed is a stop, in kill order, with legs and tracks', () => {
+    const one = walkNight('A', { named: [[100, 'Boss_One', 300], [200, 'Boss_Two', 800]] });
+    const r = averageRoute([one], new Map());
+    expect(r.fallback).toBeNull();
+    expect(r.stops.map(s => s.npc_id)).toEqual([100, 200]);
+    expect(r.legs).toHaveLength(2);
+    expect(r.legs[0].pts).toHaveLength(LEG_POINTS);
+    expect(r.legs[1].nights).toBe(1);
+  });
+
+  it('nights that killed nothing named do not vote: one real night plus two empty visits is still that night\'s route', () => {
+    const one = walkNight('A', { named: [[100, 'Boss_One', 300], [200, 'Boss_Two', 800]] });
+    expect(quiet('Q1').named).toHaveLength(0);
+    const r = averageRoute([quiet('Q1'), one, quiet('Q2', 9000)], new Map());
+    expect(r.fallback).toBeNull();
+    expect(r.stops.map(s => s.npc_id)).toEqual([100, 200]);
+    expect(r.legs[0].pts.length).toBeGreaterThan(0);
+    expect(canonicalStops([quiet('Q1'), one, quiet('Q2', 9000)]).map(s => s.npc_id)).toEqual([100, 200]);
+  });
+
+  it('two nights with no named kill in common fall back to the most recent one, and say so', () => {
+    const early = walkNight('E', { named: [[100, 'Boss_One', 300], [200, 'Boss_Two', 800]] });
+    const late = walkNight('L', { named: [[300, 'Boss_Three', 300], [400, 'Boss_Four', 800]], ids: OTHER, later: 4000 });
+    expect(canonicalStops([early, late])).toEqual([]);
+    const r = averageRoute([early, late], new Map());
+    expect(r.fallback).toEqual({ nightKey: 'L', of: 2 });
+    expect(r.stops.map(s => s.npc_id)).toEqual([300, 400]);
+    expect(r.legs[0].pts.length).toBeGreaterThan(0);
+    expect(routeBasis([late, early]).used.map(n => n.key)).toEqual(['L']);   // the order they are ticked in does not matter
+    expect(routeBasis([late, early]).stops.map(s => s.npc_id)).toEqual([300, 400]);
+  });
+
+  it('two nights that share a boss still average over the shared one only', () => {
+    const a = walkNight('A', { named: [[100, 'Boss_One', 300], [200, 'Boss_Two', 800]] });
+    const b = walkNight('B', { named: [[100, 'Boss_One', 300]], later: 4000 });
+    const r = averageRoute([a, b], new Map());
+    expect(r.fallback).toBeNull();
+    expect(r.stops.map(s => s.npc_id)).toEqual([100]);
+    expect(r.legs[0].nights).toBe(2);
+  });
+
+  it('no ticked night with a named kill: no stops and no fallback', () => {
+    const r = averageRoute([quiet('Q1'), quiet('Q2', 9000)], new Map());
+    expect(r.stops).toEqual([]);
+    expect(r.fallback).toBeNull();
+  });
+
+  it('the Tactics-like case (three nights walking the same bosses) is unchanged: averaged, no fallback', () => {
+    const A = night('A', { engage: 60, b1: 400, b2: 900 });
+    const B = night('B', { engage: 100, b1: 500, b2: 1300, idle: 600, yShift: 30 });
+    const C = night('C', { engage: 20, b1: 300, b2: 800, yShift: -30 });
+    const r = averageRoute([A, B, C], new Map());
+    expect(r.fallback).toBeNull();
+    expect(r.stops.map(s => s.npc_id)).toEqual([100, 200]);
+    expect(r.legs[0].nights).toBe(3);
+    expect(r.legs[0].medianS).toBe(340);
   });
 });
 
