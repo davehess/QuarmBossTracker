@@ -29,10 +29,15 @@ function fakeHttps() {
             const res = {
               statusCode: r.status, headers: r.headers || {},
               _h: {}, on(ev, fn) { this._h[ev] = fn; return this; },
+              complete: !r.dropMidBody,
             };
             cb(res);
             if (r.body) res._h.data && res._h.data(r.body);
+            // Node's own sequence for a connection lost after the headers (measured on Node 22): 'close' on the
+            // response with `complete` false, and NEITHER 'end' NOR a request 'error' NOR 'timeout'.
+            if (r.dropMidBody) { res._h.close && res._h.close(); return; }
             res._h.end && res._h.end();
+            res._h.close && res._h.close();
           }, 0);
         },
       };
@@ -250,5 +255,37 @@ describe('a missed mob-info lookup', () => {
     const hit = m._mobInfoByName.get(k);
     expect(hit.mob && hit.mob.mr).toBe(25);                    // old stats beat none
     expect(leftMs(m, hit)).toBeLessThanOrEqual(m.MOB_INFO_MISS_TTL_MS);   // ...and it retries in a minute
+  });
+});
+
+// FB-94 ("My target window stopped showing resists", 2026-10-22, minutes after a bot redeploy): a connection lost AFTER
+// the headers ends the response with neither 'end' nor a request error, so the lookup stayed "in flight" for good and
+// the mob (or the zone's pack) was never asked for again until Mimic restarted.
+describe('a connection lost mid-answer', () => {
+  it('lets the mob be asked for again on the next call, instead of staying in flight forever', async () => {
+    S.respond = () => ({ status: 200, body: '{"ok":true,"mob":{"name":"a hobgoblin', dropMidBody: true });
+    const m = load();
+    m.fetchMobInfo('a hobgoblin warrior', 'Aldenmar');
+    await flush();
+    expect(S.requests).toHaveLength(1);
+    S.respond = () => ({ status: 200, body: JSON.stringify({ mob: { name: 'a hobgoblin warrior', level: 22, mr: 25 } }) });
+    m.fetchMobInfo('a hobgoblin warrior', 'Aldenmar');
+    await flush();
+    expect(S.requests).toHaveLength(2);
+    expect(m._mobInfoByName.get(m._mobInfoCacheKey('a hobgoblin warrior')).mob.mr).toBe(25);
+  });
+
+  it('lets a zone pack be fetched again, instead of leaving the zone in flight forever', async () => {
+    S.respond = () => ({ status: 200, body: Buffer.from('{"ok":true,"mobs":{"a_hob'), dropMidBody: true });
+    const m = load();
+    m._mobPackFetch('215');
+    await flush();
+    expect(S.requests).toHaveLength(1);
+    expect(m._mobPackIdx()['215'].retryAt).toBeGreaterThan(Date.now());   // backed off, like any other failed fetch
+    S.respond = () => ({ status: 200, body: Buffer.from(packBody(215, { a_hobgoblin_warrior: { name: 'a hobgoblin warrior', level: 22 } })) });
+    m._mobPackFetch('215');
+    await flush();
+    expect(S.requests).toHaveLength(2);
+    expect(m._mobPackLookup('a hobgoblin warrior', 215)).toMatchObject({ level: 22 });
   });
 });
