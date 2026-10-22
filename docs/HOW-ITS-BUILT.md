@@ -4062,6 +4062,8 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   block (muster/lead/window/loot/ticks) via `utils/raidInfoPost.js` plus
   classes still wanted — no Mimic or lockout detail. Both dedupe per night in
   `bot_kv`.
+  "Our average" (bot 4.0.2) is the last six Sun/Wed/Thu nights of OpenDKP ticks,
+  one head per PLAYER, in `utils/typicalRaid.js` — never the live `raid_roster`.
 - **`/ai` — published development methodology (web 1.1.92, 2026-08-23)** —
   public, un-gated, and written for three readers: a person, an agent with no
   repo access, and an agent with one. `web/lib/aiMethodology.ts` is the single
