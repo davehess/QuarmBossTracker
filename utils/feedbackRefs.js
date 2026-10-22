@@ -24,18 +24,20 @@ function formatReplyPost({ ref, fromSubmitter, body } = {}) {
   return `💬 Reply from ${who} on ${tag(ref) || 'a report'}: ${text}`;
 }
 
-// Every FB-n a commit message CLOSES, once each, in order: only on a line that also says fixes /
-// implements / closes / resolves ("Fixes FB-29, FB-30", "Implements: FB-31"). A mention alone ("see
-// FB-12", a docs commit quoting the report) moves nothing, or every note about a report would mark it
-// done.
-const CLOSE_RX = /\b(?:fix(?:e[sd])?|implement(?:s|ed)?|close[sd]?|resolve[sd]?)\b/i;
+// Every FB-n a commit message CLOSES, once each, in order: only the FB list that DIRECTLY follows fixes /
+// implements / closes / resolves ("Fixes FB-29, FB-30 and FB-31", "Implements: FB-31"). A mention alone ("see
+// FB-12", a docs commit quoting the report) moves nothing, and neither does a line that merely holds both a
+// verb and a number: "The bot half of the FB-80 fix" closed FB-80 and "(not closed: …)" nearly closed FB-94
+// (2026-10-22), each DMing a submitter that it was done.
+const CLOSE_LIST_RX = /\b(?:fix(?:e[sd])?|implement(?:s|ed)?|close[sd]?|resolve[sd]?)\b:?\s+(FB-\d{1,6}(?:\s*(?:,|&|\band\b)?\s*FB-\d{1,6})*)/gi;
 function refsIn(text) {
   const out = [];
   for (const line of String(text || '').split('\n')) {
-    if (!CLOSE_RX.test(line)) continue;
-    for (const m of line.matchAll(/\bFB-(\d{1,6})\b/gi)) {
-      const n = Number(m[1]);
-      if (n > 0 && !out.includes(n)) out.push(n);
+    for (const list of line.matchAll(CLOSE_LIST_RX)) {
+      for (const m of list[1].matchAll(/\bFB-(\d{1,6})\b/gi)) {
+        const n = Number(m[1]);
+        if (n > 0 && !out.includes(n)) out.push(n);
+      }
     }
   }
   return out;
