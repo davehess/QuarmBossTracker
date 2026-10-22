@@ -365,8 +365,8 @@ describe('the 3D button (live, no ?v= variants)', () => {
   it('is not gated by a variant anywhere', () => {
     expect(host).not.toMatch(/variant|v3\b/);
     expect(plan3d).not.toMatch(/variant/);
-    // the one ?v= left is the floors preview (test/route-planner-floor-follow.test.js); the 3D views are not behind it
-    expect(page.replace(/one\(searchParams\.v\) === 'floors'/g, '').replace(/&v=floors/g, '')).not.toMatch(/searchParams\.v\b|variant|&v=/);
+    // the ?v= left are the floors preview (test/route-planner-floor-follow.test.js) and the draw preview (test/route-planner-draw.test.js); the 3D views are not behind them
+    expect(page.replace(/one\(searchParams\.v\) === '(floors|draw)'/g, '').replace(/&v=(floors|draw)/g, '')).not.toMatch(/searchParams\.v\b|variant|&v=/);
   });
 
   it('keeps the page marked [beta]', () => {

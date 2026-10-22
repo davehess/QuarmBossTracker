@@ -4400,6 +4400,16 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   With One leg on and the floor on All, `renderMap` sets `autoFloors` = `legFloorKeys(Z.floors, legRuns(cur))` (`legFocus.ts`: the
   floors of the pins, of every height on the walked or baked path, and the floors between for a line with heights only at its
   ends; a teleport counts where it leaves and lands). `floorInView` is the one test the walls, leash boxes, dimming and pathers share.
+- **Draw (`?v=draw`, beta preview, web 2.1.4: `https://b.wolfpack.quest/raid/plan/routes?zone=solrotower&v=draw`).** A **Draw** button on the
+  map toolbar (officers; `host.draw`, so no `?v=` has no button) with two tools. **Points:** pick a leg (One leg's current leg, a click on
+  it, its start pin, or **Redraw** on its Legs card), click its bends in order; Backspace undoes, Enter / the end pin / a double click
+  finishes (ONE `changed()`), Esc cancels. With no leg picked, clicks on empty map drop a chain of new pins (the Add pin creation, finished
+  together). **Pen:** drag along the corridor; the stroke is thinned, simplified by the same pass as "Use this route" (`bakeRecorded` ->
+  `bakeBends`, at most 40 bends) and replaces the leg's bends, or only the stretch between where it starts and ends when both ends lie on
+  the leg (within 14 screen px; an end near a pin snaps to it, any other end joins the old line as a bend). A stroke off the leg redraws the
+  whole leg, ends snapped to the pins. `follow` is let go (as hand-bending does); a teleporter leg is refused with a toast; entering Draw
+  switches the route source to Straight. Shift-drag pans the pen; a second finger is a pinch, not a stroke. The maths is
+  `web/lib/routePlanner/drawPath.ts` (`test/route-planner-draw.test.js`); the engine only collects clicks and samples.
 - **Route source: Straight · Walk route · Recorded** (a view over the plan; default Straight).
   - **Walk route.** The server's own navmesh, Quarm's `<zone>.nav` from EQMacEmu/Maps (GPL-derived like the EQEmu walls; not
     committed): `GET /api/raid/navmesh?zone=` (members only, `app/api/raid/navmesh/route.ts`) fetches it, slims it

@@ -22,6 +22,7 @@ import { clampLeg, floorInView, legBarText, legFloorKeys, legIndexForPin, stepLe
 import { bakeBends, legSig, routeLeg, viaNames } from '@/lib/routePlanner/navroute';
 import { annotateRecorded, recText, recordedPolys, useRecordedRoutes } from '@/lib/routePlanner/recorded';
 import { floorLevels, pinHeight } from '@/lib/routePlanner/view3d';
+import { applyPen, draftAdd, draftFinish, draftLine, draftUndo, drawnLine, MAX_DRAW_BENDS, newDraft, thinStroke } from '@/lib/routePlanner/drawPath';
 import { skeletonHtml } from './skeleton';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -41,6 +42,7 @@ const FLOOR_FALLBACK = ['#a8793a', '#6b788c', '#8fb4d9', '#7fb685', '#c28bd8', '
  * host: { zone, extraMobs, onPlanNpcs, checklist, cardNote, fewest:Map<npc,row>, readOnly, initialPlan, onChange(plan),
  *         onPreview(on), onOptMode(mode), onTab(tab), legFocus (offer the "One leg" mode), onLegFocus(legKey | null),
  *         floorFollow (?v=floors: with One leg on and floor All, draw only the floors the current leg walks),
+ *         draw (?v=draw: the Draw tool: a leg's path by points or with a pen, or a stretch of it redrawn),
  *         navRoute { load(): Promise<Router> } (offer "Walk route"), onRoutes(Map<legKey, Routed>) (the 3D view's copy),
  *         recorded (offer the "Recorded" route source: legs along the average of the recorded nights), onRecorded(Map<legKey, [x,y][]>)
  *         (the 3D view's copy), onNights(keys) (the nights ticked in Layers, for the 3D view), nightsNote (a line under that list) }
@@ -58,7 +60,7 @@ export function mountPlanner(root, host) {
   const cleanups = [];
   const listen = (target, type, fn, opts) => { target.addEventListener(type, fn, opts); cleanups.push(() => target.removeEventListener(type, fn, opts)); };
 
-  root.innerHTML = skeletonHtml(Z, !!host.readOnly, !!host.legFocus);
+  root.innerHTML = skeletonHtml(Z, !!host.readOnly, !!host.legFocus, !!host.draw);
 
   /* ---------- state ---------- */
   let plan = host.initialPlan ? sanitize(host.initialPlan) : emptyPlan();
@@ -86,6 +88,10 @@ export function mountPlanner(root, host) {
   // "One leg" mode: legIdx is the current leg, legSel the pin selection it last followed, legFramed the leg
   // the map was last framed on, legTold the leg the host (the 3D view) was last told about
   let legIdx = 0, legSel, legFramed = null, legTold = null;
+  // Draw tool (?v=draw): drawKind is points or pen; drawLegKey the leg picked by a click or a card (One leg mode uses its current
+  // leg instead, curLegKey); pdraft the points clicked so far; chain the new pins dropped with no leg picked; stroke the pen
+  // stroke being dragged. A draw reaches the plan, and the save, only when it is finished; Esc drops it.
+  let drawKind = 'points', drawLegKey = null, curLegKey = null, pdraft = null, chain = null, stroke = null;
   const legOn = () => !!host.legFocus && !!ui.legOnly;
   const skip = () => ui.optMode === 'skip';
 
@@ -424,9 +430,10 @@ export function mountPlanner(root, host) {
     if (legOn() && L.length) {
       if (selPin !== legSel) { legSel = selPin; legIdx = legIndexForPin(L, selPin, legIdx); }
       legIdx = clampLeg(legIdx, L.length); cur = L[legIdx];
-      if (ui.legFollow && ui.mode !== 'addpin' && frameKey(cur) !== legFramed) frameLeg(cur);
+      if (ui.legFollow && ui.mode !== 'addpin' && !chain && frameKey(cur) !== legFramed) frameLeg(cur);
     }
     legFramed = cur ? frameKey(cur) : null;
+    curLegKey = cur ? cur.k : null;
     autoFloors = null;
     if (host.floorFollow && cur && ui.floor === 'all' && Z.floors.length > 1) { const k = legFloorKeys(Z.floors, legRuns(cur)); if (k.size) autoFloors = k; }
     const hidden = new Set(plan.hiddenTracks);
@@ -551,7 +558,7 @@ export function mountPlanner(root, host) {
         el('path', { d: c.d, fill: 'none', stroke: LINK_COLOR, 'stroke-width': 2.2, 'stroke-dasharray': '2 5', 'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none' }, gl);
       } else draw(poly);
       const d = 'M' + poly.map(p => `${-p[0]} ${-p[1]}`).join('L');
-      el('path', { d, fill: 'none', stroke: 'transparent', 'stroke-width': 14, 'vector-effect': 'non-scaling-stroke', 'data-act': 'leg', 'data-key': lg.k, style: 'cursor:' + (editable() ? 'copy' : 'default') }, gl);
+      el('path', { d, fill: 'none', stroke: 'transparent', 'stroke-width': 14, 'vector-effect': 'non-scaling-stroke', 'data-act': 'leg', 'data-key': lg.k, style: 'cursor:' + (editable() ? (ui.mode === 'draw' ? 'crosshair' : 'copy') : 'default') }, gl);
       const total = polyLen(poly); let acc = 0, ax = poly[0][0], ay = poly[0][1], ang = 0;
       for (let i = 1; i < poly.length; i++) { const sl = Math.hypot(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]); if (acc + sl >= total / 2) { const t = (total / 2 - acc) / (sl || 1); ax = poly[i - 1][0] + (poly[i][0] - poly[i - 1][0]) * t; ay = poly[i - 1][1] + (poly[i][1] - poly[i - 1][1]) * t; ang = angleOf(poly[i - 1][0], poly[i - 1][1], poly[i][0], poly[i][1]); break; } acc += sl; }
       arrowAt(ga, ax, ay, ang, colour);
@@ -580,6 +587,7 @@ export function mountPlanner(root, host) {
     applyView(); applyLayerVis();
     updateLegBar(L, cur);
     updateWalkUi();
+    renderDraw(L);
   }
 
   /** The bar over the map, the toggle's state, the current card in the Legs tab, and a word to the host (the 3D view). */
@@ -684,13 +692,243 @@ export function mountPlanner(root, host) {
   function setMode(m) {
     if (m !== 'select' && !editable()) return;
     if (m === 'follow' && !NSER.length) { toast('No nights are recorded for this zone yet, so there is nothing to follow.'); return; }
+    if (m === 'draw' && !host.draw) return;
+    if (ui.mode === 'draw' && m !== 'draw') { cancelDraw(); drawLegKey = null; }
     ui.mode = m; followFrom = null;
     $$('#modeGrp button').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
     svg.classList.toggle('addpin', m === 'addpin');
+    svg.classList.toggle('drawing', m === 'draw');
+    if (host.draw) $('#drawGrp').style.display = m === 'draw' ? '' : 'none';
     const b = $('#banner');
     b.classList.toggle('on', m !== 'select');
-    b.textContent = m === 'addpin' ? 'Add pin: click the map to drop a pin' + (ui.addTo !== 'main' ? ' in the chosen branch' : '') + '. Esc to stop.' : m === 'follow' ? 'Follow paths: click a leg, or click a leg\'s start pin then its end pin. Esc to stop.' : '';
+    b.classList.toggle('draw', m === 'draw');
+    b.textContent = m === 'addpin' ? 'Add pin: click the map to drop a pin' + (ui.addTo !== 'main' ? ' in the chosen branch' : '') + '. Esc to stop.' : m === 'follow' ? 'Follow paths: click a leg, or click a leg\'s start pin then its end pin. Esc to stop.' : m === 'draw' ? drawBanner() : '';
+    if (m === 'draw') {
+      if (document.activeElement && root.contains(document.activeElement) && document.activeElement.blur) document.activeElement.blur();   // Enter finishes a draw; on a focused button it would press it
+      // a leg is drawn along the plan's own line; a walked or recorded view would hide what was just drawn
+      if (host.legFocus && ui.src !== 'straight') { setSrc('straight'); toast('Showing each leg as the plan has it (Straight) while you draw.'); return; }
+    }
     renderMap();
+  }
+
+  /* ---------- draw tool (?v=draw) ----------
+     Lay a leg's path in one go (the guild lead, 2026-10-22: "add in draw with pins or let us redraw a path or segment entirely").
+     POINTS: with a leg picked, click its bends in order; with none, click empty map to drop a chain of new pins. PEN: drag along
+     the corridor; the stroke replaces the leg's bends, or only the stretch between where it starts and ends (drawPath.ts has the
+     maths and the tests). A draw is ONE save: nothing reaches the plan until Enter / the end pin / the end of a stroke, and Esc
+     drops it (the chain's pins are the one exception: they sit in the plan, unsaved, until it is finished or cancelled). */
+  const DRAW_PX = 14;                 // how near the leg, in screen pixels, a stroke's ends count as on it
+  const touchDown = new Set();        // fingers on the map: a second one is a pinch and ends a stroke
+  const drawing = () => !!host.draw && ui.mode === 'draw' && editable();
+  /** The leg the tool works on: One leg mode's current leg, else the one picked by a click or a card. */
+  function drawLeg(L) {
+    L = L || legs();
+    if (legOn()) return L.length ? L[clampLeg(legIdx, L.length)] : null;
+    return drawLegKey ? L.find(l => l.k === drawLegKey) || null : null;
+  }
+  /** A leg that jumps by teleporter has a walked part and a jump; drawing over it would lose the way to the teleporter. */
+  function refuseJump(lg) {
+    if (lg.jump) { toast('This leg jumps by teleporter; draw the walked part (bend it in Move, or take the teleporter off the leg first).'); return true; }
+    return false;
+  }
+  /** The leg a press lands on: a leg's line, or a pin that starts a leg. */
+  function legAt(act, t, L) {
+    if (act === 'leg') return L.find(l => l.k === t.dataset.key) || null;
+    if (act === 'pin') return L.find(l => l.a.id === t.dataset.id) || null;
+    return null;
+  }
+  function pickLeg(lg) {
+    if (refuseJump(lg)) return false;
+    drawLegKey = lg.k; renderDraw(); return true;
+  }
+  function drawBanner(lg) {
+    if (lg === undefined) lg = chain ? null : drawLeg();
+    if (chain) return 'Draw · New pins: ' + chain.ids.length + ' dropped. Click for the next one. Backspace takes the last back, Enter or a double click finishes, Esc cancels.';
+    if (!lg) return drawKind === 'pen' ? 'Draw · Pen: press on a leg (or on its start pin) and drag along the corridor. Esc to stop.'
+      : 'Draw · Points: click a leg (or its start pin) to pick it, or click empty map to drop a chain of new pins. Esc to stop.';
+    const way = lg.a.label + ' → ' + lg.b.label;
+    if (drawKind === 'pen') return 'Draw · Pen · ' + way + ': drag along the corridor. Pin to pin redraws the leg; a stroke between two bends redraws only that stretch. Shift-drag pans.';
+    const n = pdraft && pdraft.key === lg.k ? pdraft.draft.pts.length : 0;
+    return 'Draw · Points · ' + way + ': ' + (n ? n + ' point' + (n === 1 ? '' : 's') + '. Click the next bend. Backspace takes the last back, Enter or ' + lg.b.label + ' finishes, Esc cancels.' : 'click the bends in order, ending at ' + lg.b.label + '. Enter or a click on it finishes.');
+  }
+  const wpath = (pts, parent, dash) => {
+    const d = 'M' + pts.map(p => `${-p[0]} ${-p[1]}`).join('L');
+    el('path', { d, fill: 'none', stroke: 'var(--halo)', 'stroke-width': 6, opacity: .7, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke' }, parent);
+    el('path', { d, fill: 'none', stroke: '#fff', 'stroke-width': 3, 'stroke-dasharray': dash, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke' }, parent);
+  };
+  /** The tool's layer: the picked leg, its two ends, and the draw in progress (dashed, with its points). Cheap enough to run on every pointer move. */
+  function renderDraw(L) {
+    if (!host.draw) return;
+    const gd = $('#gDraw'), gdd = $('#gDrawDots'), gl = $('#gLegs');
+    gd.innerHTML = ''; gdd.innerHTML = ''; gl.style.opacity = '';
+    if (!drawing()) return;
+    if (pdraft && (legOn() ? curLegKey !== pdraft.key : drawLegKey !== pdraft.key)) pdraft = null;   // another leg was picked or stepped to: that draft was for the one before
+    const lg = chain ? null : (pdraft && pdraft.lg) || (stroke && stroke.lg) || drawLeg(L);
+    $('#banner').textContent = drawBanner(lg);
+    if (lg) {
+      if (!legOn()) legGlow(legPoly(lg), gd);
+      for (const [p, t] of [[lg.a, 'start'], [lg.b, 'end']]) {
+        const g = mk(gdd, p.x, p.y);
+        el('circle', { r: 21, fill: 'none', stroke: 'var(--blue)', 'stroke-width': 2.5 }, g);
+        const tx = el('text', { y: -26, 'text-anchor': 'middle', class: 'lbl-t', fill: 'var(--blue)' }, g); tx.textContent = t;
+      }
+    }
+    if (pdraft && lg && pdraft.key === lg.k) {
+      gl.style.opacity = '.4';
+      const A = [lg.a.x, lg.a.y], B = [lg.b.x, lg.b.y], cur = pdraft.cursor;
+      wpath(draftLine(A, B, pdraft.draft, cur), gd, '8 6');
+      if (cur) el('path', { d: `M${-cur[0]} ${-cur[1]}L${-B[0]} ${-B[1]}`, fill: 'none', stroke: '#fff', 'stroke-width': 2, 'stroke-dasharray': '2 7', opacity: .55, 'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke' }, gd);
+      pdraft.draft.pts.forEach((p, i) => {
+        const g = mk(gdd, p[0], p[1]);
+        el('circle', { r: 8, fill: '#fff', stroke: 'var(--halo)', 'stroke-width': 2 }, g);
+        const t = el('text', { y: 3.5, 'text-anchor': 'middle', class: 'pinnum', style: 'fill:#111;font-size:10px' }, g); t.textContent = i + 1;
+      });
+    }
+    if (stroke && stroke.raw.length > 1) { gl.style.opacity = '.4'; wpath(stroke.raw, gd, '7 5'); }
+  }
+  /** The picked leg, drawn under everything else as a wide soft line so it can be found among the others. */
+  function legGlow(poly, parent) {
+    el('path', { d: 'M' + poly.map(p => `${-p[0]} ${-p[1]}`).join('L'), fill: 'none', stroke: 'var(--blue)', 'stroke-width': 10, opacity: .35, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke' }, parent);
+  }
+  /** The finished draw, in one save: the leg's bends are replaced, a recorded-route snap is let go, a teleporter is kept. */
+  function commitBends(lg, bends, msg) {
+    if (!editable()) return;
+    drawnLine(lineFor(lg.k, true), bends);
+    changed();
+    toast(msg);
+  }
+  const bendText = n => n + ' bend point' + (n === 1 ? '' : 's');
+  function addPoint(lg, w, e) {
+    if (!pdraft || pdraft.key !== lg.k) pdraft = { key: lg.k, lg, draft: newDraft(), cursor: null };
+    const nd = draftAdd(pdraft.draft, [w.x, w.y]);
+    if (nd === pdraft.draft && nd.pts.length >= MAX_DRAW_BENDS) toast('That is as many bends as a leg keeps (' + MAX_DRAW_BENDS + '). Press Enter to finish.');
+    pdraft.draft = nd;
+    if (e.pointerType !== 'mouse') pdraft.cursor = null;
+    renderDraw();
+  }
+  function dropChainPin(w) {
+    const lp = chain && chain.ids.length ? pinById(chain.ids[chain.ids.length - 1]) : null;
+    if (lp && Math.hypot(lp.x - w.x, lp.y - w.y) < 0.5) return;   // a double click's second click
+    const pin = { id: uid(), label: 'Pin ' + (pins().length + 1), kind: ui.addKind, optional: false, x: r1(w.x), y: r1(w.y) };
+    pushPin(pin); selPin = pin.id;
+    (chain = chain || { ids: [] }).ids.push(pin.id);
+    renderMap(); renderPanel();
+  }
+  let lastFinish = 0;
+  function finishDraw() {
+    if (!drawing()) return;
+    lastFinish = Date.now();
+    if (chain) {
+      const n = chain.ids.length; chain = null;
+      changed();
+      toast(n + ' pin' + (n === 1 ? '' : 's') + ' dropped.');
+      return;
+    }
+    const lg = pdraft && pdraft.lg;
+    if (!lg) { toast('Nothing to finish: click the bends of a leg first.'); return; }
+    const bends = draftFinish(pdraft.draft);
+    if (!bends) { toast('Click the bends first, from ' + lg.a.label + ' to ' + lg.b.label + ', then finish.'); return; }
+    pdraft = null;
+    commitBends(lg, bends, lg.a.label + ' → ' + lg.b.label + ' redrawn with ' + bendText(bends.length) + '.');
+  }
+  function undoDraw() {
+    if (chain) {
+      const id = chain.ids.pop();
+      if (id) { removePin(plan, id); if (selPin === id) selPin = null; }
+      if (!chain.ids.length) chain = null;
+      renderMap(); renderPanel();
+    } else if (pdraft) { pdraft.draft = draftUndo(pdraft.draft); renderDraw(); }
+  }
+  /** Drop the draw in progress. True when there was one. */
+  function cancelDraw() {
+    const had = !!(pdraft || chain || stroke);
+    if (chain) for (const id of chain.ids) { removePin(plan, id); if (selPin === id) selPin = null; }
+    pdraft = null; chain = null; stroke = null;
+    if (had) { renderMap(); renderPanel(); }
+    return had;
+  }
+  function drawKey(e) {
+    if (e.key === 'Escape') {
+      if (pdraft || chain || stroke) { cancelDraw(); toast('Draw cancelled. The leg is as it was.'); return true; }
+      if (drawLegKey && !legOn()) { drawLegKey = null; renderDraw(); return true; }
+      return false;   // the next Esc leaves the tool
+    }
+    if (e.key === 'Enter' && (pdraft || chain)) { e.preventDefault(); finishDraw(); return true; }
+    if (e.key === 'Backspace' || e.key === 'Delete') { if (pdraft || chain) { e.preventDefault(); undoDraw(); } return true; }   // never the selected pin
+    return false;
+  }
+  function setDrawKind(k) {
+    if (k === drawKind) return;
+    cancelDraw();
+    drawKind = k;
+    $$('#drawGrp button').forEach(b => { const on = b.dataset.draw === k; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+    renderDraw();
+  }
+  /** A press on the map in the Draw tool: the pen starts its stroke, anything else waits to be a click (a drag pans). */
+  function drawDown(e) {
+    const t = e.target.closest('[data-act]'), act = t ? t.dataset.act : null;
+    drag = { act: null, t: null, x0: e.clientX, y0: e.clientY, moved: false, id: e.pointerId, tx: view.tx, ty: view.ty, draw: true, hit: t, hitAct: act };
+    svg.setPointerCapture(e.pointerId);
+    if (touchDown.size > 1 && stroke) { stroke = null; renderDraw(); }   // a second finger: a pinch, not a drawing
+    if (drawKind === 'pen' && !e.shiftKey && touchDown.size <= 1) {
+      const L = legs();
+      let lg = drawLeg(L);
+      if (!lg) { const hit = legAt(act, t, L); if (hit && pickLeg(hit)) lg = hit; }
+      if (lg && !refuseJump(lg)) {
+        const w = toWorld(e.clientX, e.clientY);
+        stroke = { lg, raw: [[w.x, w.y]] }; drag.pen = true;
+        renderDraw(L);
+        return;
+      }
+    }
+    svg.classList.add('panning');
+  }
+  /** A click (no drag) in the Draw tool. */
+  function drawClick(d, e) {
+    const w = toWorld(e.clientX, e.clientY), act = d.hitAct, t = d.hit;
+    closePop();
+    const L = legs(), lg = chain ? null : drawLeg(L);
+    if (drawKind === 'pen') {   // a plain click only picks a leg
+      const hit = act === 'leg' && !legOn() ? legAt(act, t, L) : null;
+      if (hit) pickLeg(hit); else if (!lg) toast('Pick a leg first: click one, or press on its start pin and draw.');
+      return;
+    }
+    if (chain) { dropChainPin(w); return; }
+    if (!lg) {
+      const hit = legAt(act, t, L);
+      if (hit) pickLeg(hit); else dropChainPin(w);   // nothing picked: a click on empty map starts a chain of new pins
+      return;
+    }
+    if (refuseJump(lg)) return;
+    if (act === 'pin' && t.dataset.id === lg.b.id) {
+      if (pdraft && pdraft.key === lg.k && pdraft.draft.pts.length) finishDraw();
+      else if (Date.now() - lastFinish > 700) toast('Click the bends first, then ' + lg.b.label + '.');   // not on a double click's second half
+      return;
+    }
+    addPoint(lg, w, e);
+  }
+  /** The end of a pen stroke: simplified, snapped, and laid over the leg (or the stretch of it the stroke covers). */
+  function finishStroke(d) {
+    const st = stroke; stroke = null;
+    if (!st) { renderDraw(); return; }
+    const lg = st.lg;
+    if (!d.moved) {   // a click, not a drawing: it picks the leg it landed on
+      renderDraw();
+      const hit = d.hitAct === 'leg' && !legOn() ? legs().find(l => l.k === d.hit.dataset.key) : null;
+      if (hit && hit.k !== lg.k) pickLeg(hit);
+      return;
+    }
+    const r = applyPen([lg.a.x, lg.a.y], [lg.b.x, lg.b.y], lg.pts, thinStroke(st.raw, 2 / view.s), { hitR: DRAW_PX / view.s, minLen: 16 / view.s });
+    if (!r.ok) { toast(r.reason === 'short' ? 'Too short to be a path: drag along the corridor from one end of the stretch to the other.' : 'That stroke starts and ends in the same place on the leg: draw across the stretch you want to redraw.'); renderDraw(); return; }
+    commitBends(lg, r.bends, r.scope === 'whole' ? lg.a.label + ' → ' + lg.b.label + ' redrawn with ' + bendText(r.bends.length) + '.' : 'Redrew a stretch of ' + lg.a.label + ' → ' + lg.b.label + ' (' + r.replaced + ' bend' + (r.replaced === 1 ? '' : 's') + ' replaced, the rest kept).');
+  }
+  /** The Legs tab's Redraw: pick that leg and open the tool on it. */
+  function startDrawOn(lg) {
+    if (!editable() || refuseJump(lg)) return;
+    if (legOn()) setLeg(lg.idx);
+    drawLegKey = lg.k;
+    if (ui.mode === 'draw') renderMap(); else setMode('draw');
+    if (!legOn()) frameLeg(lg);
   }
 
   /* ---------- pointer interaction ---------- */
@@ -704,7 +942,9 @@ export function mountPlanner(root, host) {
     return bi;
   }
   listen(svg, 'pointerdown', e => {
+    if (e.pointerType === 'touch') touchDown.add(e.pointerId);
     if (e.button === 2) return;
+    if (drawing()) { drawDown(e); return; }
     const t = e.target.closest('[data-act]'); let act = t ? t.dataset.act : null;
     if (!editable() && (act === 'bend' || act === 'leg' || act === 'track')) act = null;   // read-only: a drag there just pans
     drag = { act, t: act ? t : null, x0: e.clientX, y0: e.clientY, moved: false, id: e.pointerId, tx: view.tx, ty: view.ty };
@@ -727,18 +967,27 @@ export function mountPlanner(root, host) {
   function scheduleLoc() { if (locRaf) return; locRaf = requestAnimationFrame(() => { locRaf = 0; if (lastW) $('#loc').textContent = `/loc y, x:  ${Math.round(lastW.y)}, ${Math.round(lastW.x)}`; }); }
   listen(svg, 'pointermove', e => {
     const w = toWorld(e.clientX, e.clientY); lastW = w; scheduleLoc();
+    if (pdraft && e.pointerType === 'mouse') { pdraft.cursor = [w.x, w.y]; renderDraw(); }   // Points: the draft runs on to the pointer
     if (!drag) return;
     const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
     if (!drag.moved && Math.hypot(dx, dy) > 4) drag.moved = true;
+    if (drag.pen && stroke) {   // Pen: every couple of pixels is a sample of the stroke
+      const last = stroke.raw[stroke.raw.length - 1];
+      if (Math.hypot(w.x - last[0], w.y - last[1]) * view.s >= 2) stroke.raw.push([w.x, w.y]);
+      renderDraw();
+      return;
+    }
     if (!drag.moved) return;
     if (drag.act === 'pin' && ui.mode !== 'follow' && editable() && drag.pin) { drag.pin.x = r1(w.x); drag.pin.y = r1(w.y); drag.did = true; renderMap(); }
     else if (drag.act === 'bend' && drag.ln) { drag.ln.pts[drag.i] = [r1(w.x), r1(w.y)]; drag.ln.follow = undefined; drag.did = true; renderMap(); }
     else { view.tx = drag.tx + dx; view.ty = drag.ty + dy; applyView(); }
   });
   listen(svg, 'pointerup', e => {
-    const d = drag; drag = null; svg.classList.remove('panning');
+    const d = drag; drag = null; svg.classList.remove('panning'); touchDown.delete(e.pointerId);
     try { svg.releasePointerCapture(e.pointerId); } catch (x) { }
     if (!d) return;
+    if (d.pen) { finishStroke(d); return; }
+    if (d.draw) { if (!d.moved) drawClick(d, e); return; }
     if (d.did || d.fresh) { changed(); return; }
     if (d.moved) return;
     if (d.act === 'pin') {
@@ -758,7 +1007,8 @@ export function mountPlanner(root, host) {
       } else if (selPin) { selPin = null; renderMap(); renderPanel(); }
     }
   });
-  listen(svg, 'pointercancel', () => { drag = null; svg.classList.remove('panning'); });
+  listen(svg, 'pointercancel', e => { drag = null; svg.classList.remove('panning'); touchDown.delete(e.pointerId); if (stroke) { stroke = null; renderDraw(); } });
+  listen(svg, 'dblclick', () => { if (drawing() && (pdraft || chain)) finishDraw(); });   // Draw: a double click finishes (its two clicks already added the point once)
   listen(svg, 'contextmenu', e => {
     const t = e.target.closest('[data-act]'); if (!t) return; e.preventDefault();
     if (!editable()) return;
@@ -940,7 +1190,7 @@ export function mountPlanner(root, host) {
         ${teleports.length ? `<label class="small row" style="gap:4px">via <select data-a="via"><option value="">no teleport</option>${teleports.map(t => `<option value="${esc(t.label)}" ${lg.ln && lg.ln.via === t.label ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select></label>` : ''}</div>` : ''}
       <div class="row">${can ? `${host.recorded
         ? `<button class="sm" data-a="bakerec" ${recCan && !lg.jump ? '' : 'disabled'} title="${lg.jump ? 'A leg through a teleport keeps its walk route' : !recCan ? 'No recorded night passes both pins' : 'Keep the average of the recorded nights as the leg&#39;s own bend points: it saves with the plan and goes to the in-game map'}">Use recorded route</button>`
-        : `<button class="sm" data-a="follow" ${st.nights ? '' : 'disabled title="No recorded night passes both pins"'}>Follow recorded path</button>`}<button class="sm" data-a="straight" ${lg.pts.length ? '' : 'disabled'}>Straighten</button>${w && w.state === 'ok' ? '<button class="sm" data-a="bake" title="Keep this walking route as the leg\'s own bend points: it saves with the plan and goes to the in-game map">Use this route</button>' : ''}<button class="sm danger" data-a="off">${lg.off ? 'Restore leg' : 'Hide leg'}</button>${lg.branch ? '' : '<button class="sm" data-a="split" title="Send the raid up two or more branches at once, regroup at the end of this leg">Split this leg</button>'}` : ''}<button class="sm" data-a="zoom">Show</button></div>`;
+        : `<button class="sm" data-a="follow" ${st.nights ? '' : 'disabled title="No recorded night passes both pins"'}>Follow recorded path</button>`}<button class="sm" data-a="straight" ${lg.pts.length ? '' : 'disabled'}>Straighten</button>${host.draw ? '<button class="sm" data-a="redraw" title="Draw this leg again on the map: by points or with a pen">Redraw</button>' : ''}${w && w.state === 'ok' ? '<button class="sm" data-a="bake" title="Keep this walking route as the leg\'s own bend points: it saves with the plan and goes to the in-game map">Use this route</button>' : ''}<button class="sm danger" data-a="off">${lg.off ? 'Restore leg' : 'Hide leg'}</button>${lg.branch ? '' : '<button class="sm" data-a="split" title="Send the raid up two or more branches at once, regroup at the end of this leg">Split this leg</button>'}` : ''}<button class="sm" data-a="zoom">Show</button></div>`;
     if (can) {
       const fl = $('[data-a=follow]', d); if (fl) fl.onclick = () => followLeg(lg);
       const br = $('[data-a=bakerec]', d); if (br) br.onclick = () => bakeRecorded([lg]);
@@ -948,6 +1198,7 @@ export function mountPlanner(root, host) {
       $('[data-a=off]', d).onclick = () => { const ln = lineFor(lg.k, true); ln.off = !ln.off; changed(); };
       $('[data-a=optleg]', d).onchange = e => { const ln = lineFor(lg.k, true); if (e.target.checked) ln.opt = true; else delete ln.opt; changed(); };
       const via = $('[data-a=via]', d); if (via) via.onchange = e => { const ln = lineFor(lg.k, true); if (e.target.value) ln.via = e.target.value; else delete ln.via; changed(); };
+      const rd = $('[data-a=redraw]', d); if (rd) rd.onclick = () => startDrawOn(lg);
       const sp = $('[data-a=split]', d); if (sp) sp.onclick = () => splitPlan(lg);
       const bk = $('[data-a=bake]', d); if (bk) bk.onclick = () => bakeLeg(lg);
     }
@@ -1155,6 +1406,7 @@ export function mountPlanner(root, host) {
   listen(document, 'keydown', e => {
     if (!root.isConnected || root.classList.contains('rp-3d')) return;   // the 3D view is up: its keys are not the map's
     if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) { if (e.key === 'Escape' && root.contains(document.activeElement)) document.activeElement.blur(); return; }
+    if (drawing() && drawKey(e)) return;
     if (e.key === 'Escape') { setMode('select'); closePop(); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && selPin && editable() && lastW && root.matches(':hover')) deletePin(selPin);
   });
@@ -1176,6 +1428,11 @@ export function mountPlanner(root, host) {
 
   /* ---------- boot ---------- */
   buildStatic();
+  if (host.draw) {   // the Draw tool's two layers: the lines (in the map's frame, over the legs) and the dots (screen-sized, over the pins)
+    el('g', { id: 'gDraw', 'pointer-events': 'none' }, $('#world'));
+    el('g', { id: 'gDrawDots', 'pointer-events': 'none' }, $('#markers'));
+    listen($('#drawGrp'), 'click', e => { const b = e.target.closest('button[data-draw]'); if (b) setDrawKind(b.dataset.draw); });
+  }
   setTab(ui.tab);
   $$('#modeGrp button').forEach(b => b.classList.toggle('active', b.dataset.mode === 'select'));
   fit(false);

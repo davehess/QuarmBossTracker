@@ -67,7 +67,10 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
 
   // ?v=floors (a beta preview of an existing page): One leg draws only the floors the current leg walks; no ?v= is the page as it was
   const floorFollow = one(searchParams.v) === 'floors';
-  const vq = floorFollow ? '&v=floors' : '';
+  // ?v=draw (a beta preview of an existing page, the guild lead, 2026-10-22): a Draw tool on the map toolbar to lay a leg's path by
+  // points or with a pen, or to redraw a stretch of it. No ?v= is the page as it was.
+  const draw = one(searchParams.v) === 'draw';
+  const vq = floorFollow ? '&v=floors' : draw ? '&v=draw' : '';
 
   return (
     <div className="mx-auto max-w-7xl py-2">
@@ -90,8 +93,9 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
         </div>
       )}
       <RoutePlanner
-        key={`${zone.zone}:${planId}${floorFollow ? ':floors' : ''}`}
+        key={`${zone.zone}:${planId}${floorFollow ? ':floors' : ''}${draw ? ':draw' : ''}`}
         floorFollow={floorFollow}
+        draw={draw}
         zone={planZone}
         nightsNote={nightsNote}
         planId={planId}

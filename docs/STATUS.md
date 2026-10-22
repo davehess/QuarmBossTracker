@@ -128,6 +128,11 @@ next touch one rather than assuming a missing row means a missing doc.
   2 minutes of the kill, at least 3 raiders) and opens no window when it is inside the War Room box; no usable position
   keeps today's window. ⏳ Not fixed: the same event kill still starts the HOME Tallon / Vallon 66 h board timer (the timer
   paths in `index.js` have no position to test). Tests `test/hail-board.test.js`.
+- **🧪 Route planner: draw a leg's path by points or freehand, or redraw a stretch of it (web 2.1.4, preview on `beta`, draft, 2026-10-22).** The
+  guild lead: "add in draw with pins or let us redraw a path or segment entirely". `https://b.wolfpack.quest/raid/plan/routes?zone=solrotower&v=draw`:
+  a Draw button on the map toolbar with Points (click the bends, Backspace undoes, Enter finishes, Esc cancels; with no leg picked, a chain of
+  new pins) and Pen (drag along the corridor: pin to pin redraws the leg, a stroke between two bends redraws only that stretch). One save per
+  draw. No `?v=` is the page as it was. **Open: the guild lead's call on whether it graduates.** Tests `test/route-planner-draw.test.js`.
 - **🧪 Route planner: the map shows only the floors the current leg walks (web 2.1.2, preview on `beta`, draft, 2026-10-22).** The guild
   lead picked option A on the Decision Desk (floor-clutter). `https://b.wolfpack.quest/raid/plan/routes?zone=solrotower&v=floors`: with
   One leg on and the floor on All, only the walls of the floors the current leg touches draw (the rest dim as a picked floor does),
