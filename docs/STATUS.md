@@ -6493,3 +6493,9 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   `_materializeEnabledOverlays`) recreates it; at most 3 rebuilds per overlay per 5 minutes, after which it stays down until the
   next ordinary visibility pass. Panel overlays and chat breakouts are not covered (their owners rebuild them).
   ⏳ Not exercised against a real renderer crash; `test/mimic-window-move.test.js` holds the limiter and the wiring.
+  in this range. ✅ Web roadmap entry landed (web 2.1.1).
+- **✅ Raid Mimic 3.0.2 stable (agent 4.0.7) cut 2026-10-22** (the guild lead: "push that out a 3.0.2"). Adds over 3.0.1: Canvas HUD
+  pieces (whole group → Ring arc, Thin/Normal/Thick, Left/Center/Right, label turn), Charm "When charming", one Disc timer, warrior
+  Shield (3 min / 12 s), the Dock no longer fights a drag, Target Info retries a missed mob after 60 s instead of 6 h, overlay crash
+  recovery. The dashboard's jump to the top-left mid-drag is NOT proven fixed (DECISIONS §412): the `[window] … held off` log decides it.
+  Beta re-parked at 3.0.3.
