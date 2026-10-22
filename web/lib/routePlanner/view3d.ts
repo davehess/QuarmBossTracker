@@ -178,7 +178,7 @@ export function arcPoints(a: Pt3, b: Pt3, n = 24): Pt3[] {
 // ── the whole view ───────────────────────────────────────────────────────────
 
 export type Slab3D = { key: string; label: string; short: string; color: string; z: number; h: number };
-export type Pin3D = { id: string; num: string; label: string; kind: Kind; optional: boolean; branch: string | null; x: number; y: number; h: number; z: number; src: ZSource; floor: string | null };
+export type Pin3D = { id: string; num: string; label: string; kind: Kind; optional: boolean; branch: string | null; x: number; y: number; h: number; z: number; src: ZSource; floor: string | null; faint?: boolean };
 export type Leg3D = { key: string; color: string; dashed: boolean; walks: Pt3[][]; arc: Pt3[] | null };
 export type Link3D = { i: number; kind: ZoneLink['kind']; label: string; from: Pt3; to: Pt3 | null; arc: Pt3[] | null };
 export type Pather3D = { id: string; label: string; wander: boolean; pts: Pt3[] };
@@ -197,6 +197,8 @@ export type View3DInput = {
   mode: Mode3D;
   /** Slab spacing for 'stack'; ignored for 'mesh'. */
   spacing?: number;
+  /** "One leg" mode: the key of the one leg to draw. Every other leg is left out and every pin but its two ends is `faint`. */
+  focusLeg?: string | null;
 };
 
 export function buildView3D(inp: View3DInput): View3D {
@@ -206,6 +208,8 @@ export function buildView3D(inp: View3DInput): View3D {
   const levels = floorLevels({ floors: zone.floors, mobs, pathers: zone.pathers, links: zone.links });
   const hs = heightsFor(levels, zone.floors, mode, spacing);
 
+  const allLegs = planLegs(plan, inp.skipOptional, zone.links);
+  const focus = inp.focusLeg ? allLegs.find(l => l.k === inp.focusLeg) : undefined;
   const nums = pinNumbers(plan);
   const branchOf = new Map<string, string>();
   for (const s of plan.splits) for (const b of s.branches) for (const p of b.pins) branchOf.set(p.id, b.color);
@@ -214,13 +218,15 @@ export function buildView3D(inp: View3DInput): View3D {
     return {
       id: p.id, num: nums.get(p.id) ?? '?', label: p.label, kind: p.kind, optional: p.optional, branch: branchOf.get(p.id) ?? null,
       x: p.x, y: p.y, h: hs.snap(z), z, src, floor: floorOf(zone.floors, z)?.key ?? null,
+      ...(focus && p.id !== focus.a.id && p.id !== focus.b.id ? { faint: true } : {}),
     };
   });
   const hOf = new Map(pins.map(p => [p.id, p.h]));
 
   const legs: Leg3D[] = [];
-  for (const lg of planLegs(plan, inp.skipOptional, zone.links)) {
-    if (lg.off) continue;
+  for (const lg of allLegs) {
+    if (lg.off && lg !== focus) continue;
+    if (focus && lg !== focus) continue;
     const ha = hOf.get(lg.a.id) ?? 0, hb = hOf.get(lg.b.id) ?? 0;
     const color = lg.branch ? lg.branch.branch.color : lg.ln && lg.ln.follow ? FOLLOW_HEX : LEG_HEX;
     const out: Leg3D = { key: lg.k, color, dashed: lg.dashed, walks: [], arc: null };

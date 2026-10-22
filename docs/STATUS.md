@@ -121,6 +121,10 @@ next touch one rather than assuming a missing row means a missing doc.
   slider, the route and teleports drawn between them) and `...&v=c` (the real zone mesh with the plan at its true heights and
   a floor clip). Both add a 3D button to the map toolbar; view only, editing stays in 2D. **Open: the guild lead picks b or c**
   (graduate the pick, delete the other in the same change).
+  **One leg at a time (web 2.0.5, preview on `beta`, draft, 2026-10-22):** the guild lead, on the 26-pin tower plan: "hide all
+  segments other than the current". `https://b.wolfpack.quest/raid/plan/routes?zone=solrotower&v=leg` (also on `&v=b` / `&v=c`)
+  adds a **One leg** toggle: only the current leg is drawn, other pins go faint and unlabelled, a bar steps through the legs
+  (buttons or the arrow keys), the map frames each leg. **Open: the guild lead's call on whether it graduates to the default page.**
 - **⏳ Flag lab: an officer sandbox for the PoP flags and the hail board (web 1.9.2, DRAFT on `claude/flag-lab`, not
   pushed, 2026-10-18).** `/admin/flag-lab` (new route, `[beta]` tag, officer only, **off unless `FLAG_LAB=1`**, which the
   officer sets in Vercel's Preview environment only). Fake members with presets and per-flag source ticks (Mimic /

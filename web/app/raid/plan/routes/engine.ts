@@ -18,6 +18,7 @@ import { buildPlanPins } from '@/lib/routePlanner/build';
 import { createFollow, FOLLOW_R } from '@/lib/routePlanner/follow';
 import { pinNumbers } from '@/lib/routePlanner/compare';
 import { fewestLine } from '@/lib/routePlanner/fewest';
+import { clampLeg, legBarText, legIndexForPin, stepLeg } from '@/lib/routePlanner/legFocus';
 import { skeletonHtml } from './skeleton';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -35,7 +36,7 @@ const FLOOR_FALLBACK = ['#a8793a', '#6b788c', '#8fb4d9', '#7fb685', '#c28bd8', '
 
 /**
  * host: { zone, extraMobs, onPlanNpcs, checklist, cardNote, fewest:Map<npc,row>, readOnly, initialPlan, onChange(plan),
- *         onPreview(on), onOptMode(mode), onTab(tab) }
+ *         onPreview(on), onOptMode(mode), onTab(tab), legFocus (offer the "One leg" mode), onLegFocus(legKey | null) }
  * returns: { destroy, getPlan, setPlan, setStatus, setEdited, previewPlan, exitPreview, setTab, toast, setActual, nodes }
  */
 export function mountPlanner(root, host) {
@@ -50,7 +51,7 @@ export function mountPlanner(root, host) {
   const cleanups = [];
   const listen = (target, type, fn, opts) => { target.addEventListener(type, fn, opts); cleanups.push(() => target.removeEventListener(type, fn, opts)); };
 
-  root.innerHTML = skeletonHtml(Z, !!host.readOnly);
+  root.innerHTML = skeletonHtml(Z, !!host.readOnly, !!host.legFocus);
 
   /* ---------- state ---------- */
   let plan = host.initialPlan ? sanitize(host.initialPlan) : emptyPlan();
@@ -60,16 +61,21 @@ export function mountPlanner(root, host) {
   const LS_UI = 'rp-ui-' + Z.zone;
   const ui = Object.assign({
     mode: 'select', addKind: 'note', floor: 'all', optMode: 'include', buildOrder: 'greedy',
-    nights: {}, layers: { avg: false, leash: true, bosses: true, scripted: true, trash: false, minor: false, pathers: false, links: true, actual: true }, tab: 'plan', help: false
-  }, (() => { try { return JSON.parse(lsGet(LS_UI) || '{}'); } catch (e) { return {}; } })());
+    nights: {}, layers: { avg: false, leash: true, bosses: true, scripted: true, trash: false, minor: false, pathers: false, links: true, actual: true }, tab: 'plan', help: false,
+    legOnly: false, legFollow: true
+  },(() => { try { return JSON.parse(lsGet(LS_UI) || '{}'); } catch (e) { return {}; } })());
   ui.layers = Object.assign({ pathers: false, links: true, actual: true }, ui.layers);
   ui.mode = 'select';
   ui.addTo = 'main';
   if (ui.floor !== 'all' && !Z.floors.some(f => f.key === ui.floor)) ui.floor = 'all';
   for (const n of Z.nights) if (!(n.key in ui.nights)) ui.nights[n.key] = true;
-  const saveUi = () => lsSet(LS_UI, JSON.stringify({ addKind: ui.addKind, floor: ui.floor, optMode: ui.optMode, buildOrder: ui.buildOrder, nights: ui.nights, layers: ui.layers, tab: ui.tab, help: ui.help }));
+  const saveUi = () => lsSet(LS_UI, JSON.stringify({ addKind: ui.addKind, floor: ui.floor, optMode: ui.optMode, buildOrder: ui.buildOrder, nights: ui.nights, layers: ui.layers, tab: ui.tab, help: ui.help, legOnly: ui.legOnly, legFollow: ui.legFollow }));
   let view = { tx: 0, ty: 0, s: 0.2 };
   let selPin = null, followFrom = null, drag = null;
+  // "One leg" mode (the ?v= previews): legIdx is the current leg, legSel the pin selection it last followed, legFramed the leg
+  // the map was last framed on, legTold the leg the host (the 3D view) was last told about
+  let legIdx = 0, legSel, legFramed = null, legTold = null;
+  const legOn = () => !!host.legFocus && !!ui.legOnly;
   const skip = () => ui.optMode === 'skip';
 
   /* ---------- plan model ---------- */
@@ -179,6 +185,15 @@ export function mountPlanner(root, host) {
     view.tx = W() / 2 + x * view.s; view.ty = H() / 2 + y * view.s; applyView();
   }
 
+  /** Frame one leg (its bends and its teleport too): a quarter of its span of room around it, for the end pin's label and the bar over the map, and never closer than a 450 u box so a short leg does not fill the screen. */
+  function frameLeg(lg) {
+    const poly = legPoly(lg), xs = poly.map(p => p[0]), ys = poly.map(p => p[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const sx = Math.max(...xs) - Math.min(...xs), sy = Math.max(...ys) - Math.min(...ys);
+    const hx = Math.max(sx * 0.75 + 60, 225), hy = Math.max(sy * 0.75 + 60, 225);
+    fitBounds(cx - hx, cx + hx, cy - hy, cy + hy);
+  }
+
   /* ---------- static layers ---------- */
   function buildStatic() {
     const g = $('#gWalls'); g.innerHTML = '';
@@ -250,6 +265,15 @@ export function mountPlanner(root, host) {
     const gm = $('#gMobs'), gp = $('#gPins'), gb = $('#gBends'), ga = $('#gArrows'), gl = $('#gLegs'), gt = $('#gTracks'), gd = $('#gDots');
     const gpa = $('#gPathers'), gli = $('#gLinks'), gmk = $('#gMarks'), gac = $('#gActual'), gas = $('#gActualStops');
     for (const g of [gm, gp, gb, ga, gl, gt, gd, gpa, gli, gmk, gac, gas]) g.innerHTML = '';
+    const L = legs();
+    // One leg mode: the current leg follows the selected pin; the map is framed on it when it changes
+    let cur = null;
+    if (legOn() && L.length) {
+      if (selPin !== legSel) { legSel = selPin; legIdx = legIndexForPin(L, selPin, legIdx); }
+      legIdx = clampLeg(legIdx, L.length); cur = L[legIdx];
+      if (ui.legFollow && ui.mode !== 'addpin' && cur.k !== legFramed) frameLeg(cur);
+    }
+    legFramed = cur ? cur.k : null;
     const hidden = new Set(plan.hiddenTracks);
     for (const pc of PIECES) {
       if (!ui.nights[pc.night] || hidden.has(pc.id)) continue;
@@ -336,9 +360,9 @@ export function mountPlanner(root, host) {
       });
     }
 
-    const L = legs();
     for (const lg of L) {
-      if (lg.off) continue;
+      if (lg.off && lg !== cur) continue;
+      if (legOn() && lg !== cur) continue;
       const poly = legPoly(lg);
       const colour = lg.branch ? lg.branch.branch.color : (lg.ln && lg.ln.follow ? 'var(--green)' : 'var(--gold)');
       const dash = lg.dashed ? '8 6' : '';
@@ -370,6 +394,8 @@ export function mountPlanner(root, host) {
     plan.splits.forEach(s => s.branches.forEach(b => b.pins.forEach(p => branchOf.set(p.id, b))));
     pins().forEach(p => {
       const g = dimmed(mk(gp, p.x, p.y, { 'data-act': 'pin', 'data-id': p.id, style: 'cursor:pointer' }), offFloor(p.z));
+      const faint = !!cur && p.id !== cur.a.id && p.id !== cur.b.id;   // One leg mode: only the leg's two pins are at full strength
+      if (faint) g.setAttribute('opacity', '.3');
       const c = KINDS[p.kind][1], br = branchOf.get(p.id);
       if (p.id === selPin) el('circle', { r: 17, fill: 'none', stroke: 'var(--gold)', 'stroke-width': 2.5 }, g);
       if (followFrom === p.id) el('circle', { r: 20, fill: 'none', stroke: 'var(--green)', 'stroke-width': 2.5, 'stroke-dasharray': '4 3' }, g);
@@ -377,9 +403,33 @@ export function mountPlanner(root, host) {
       el('circle', { r: 11, fill: p.optional ? 'var(--panel)' : c, 'fill-opacity': p.optional ? .85 : 1, stroke: c, 'stroke-width': 2.2, 'stroke-dasharray': p.optional ? '3 2.5' : '' }, g);
       const t = el('text', { y: 4, 'text-anchor': 'middle', class: 'pinnum', fill: p.optional ? c : '#fff', style: p.optional ? `fill:${c}` : '' }, g); t.textContent = nums.get(p.id);
       if (p.onPlan) el('circle', { cx: 9, cy: -9, r: 4, fill: 'var(--gold)', stroke: 'var(--halo)', 'stroke-width': 1.5, 'pointer-events': 'none' }, g);
-      label(g, p.label, br ? 19 : 16, '', 'var(--text)');
+      if (!faint) label(g, p.label, br ? 19 : 16, '', 'var(--text)');
     });
     applyView(); applyLayerVis();
+    updateLegBar(L, cur);
+  }
+
+  /** The bar over the map, the toggle's state, the current card in the Legs tab, and a word to the host (the 3D view). */
+  function updateLegBar(L, cur) {
+    if (!host.legFocus) return;
+    const on = legOn();
+    $('#legBar').classList.toggle('on', on);
+    const t = $('#legOnly'); t.classList.toggle('active', on); t.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (on) {
+      $('#legText').textContent = cur ? legBarText(cur, legIdx, L.length, legStats(cur.a, cur.b).median) : 'No legs yet: a leg needs two pins.';
+      $('#legPrev').disabled = !cur || legIdx <= 0; $('#legNext').disabled = !cur || legIdx >= L.length - 1;
+    }
+    markCurLeg();
+    const key = cur ? cur.k : null;
+    if (key !== legTold) { legTold = key; if (host.onLegFocus) host.onLegFocus(key); }
+  }
+  const markCurLeg = () => $$('#legList .leg').forEach(n => n.classList.toggle('cur', legOn() && +n.dataset.leg === legIdx));
+  /** Make leg i the current one and select its start pin (the arrows, a leg card). */
+  function setLeg(i) {
+    const L = legs(); if (!L.length) return;
+    legIdx = clampLeg(i, L.length); selPin = L[legIdx].a.id; legSel = selPin;
+    closePop(); renderMap();
+    $$('#pinList .pin').forEach(n => n.classList.toggle('sel', n.dataset.pid === selPin));
   }
 
   /* ---------- popups ---------- */
@@ -591,7 +641,7 @@ export function mountPlanner(root, host) {
       ${(p.note || m && m.trigger) ? `<div class="meta">${esc(p.note || '')}${m && m.trigger ? '<br><b style="color:var(--purple)">Spawns when:</b> ' + esc(m.trigger) : ''}</div>` : ''}
       ${fw ? `<div class="meta fewest">${esc(fw)}</div>` : ''}
       ${m && m.links && m.links.length ? `<div class="meta">${m.links.map(l => `<a href="${esc(safeUrl(l.url))}" target="_blank" rel="noopener noreferrer">${esc(l.ref)}</a>`).join(' &middot; ')}</div>` : ''}`;
-    d.addEventListener('click', ev => { if (ev.target.closest('input,select,button,a,label')) return; selPin = p.id; renderMap(); $$('#pinList .pin').forEach(n => n.classList.toggle('sel', n.dataset.pid === p.id)); centerOn(p.x, p.y); });
+    d.addEventListener('click', ev => { if (ev.target.closest('input,select,button,a,label')) return; selPin = p.id; renderMap(); $$('#pinList .pin').forEach(n => n.classList.toggle('sel', n.dataset.pid === p.id)); if (!(legOn() && ui.legFollow)) centerOn(p.x, p.y); });
     $('input.lbl', d).addEventListener('focus', () => { selPin = p.id; renderMap(); $$('#pinList .pin').forEach(n => n.classList.toggle('sel', n.dataset.pid === p.id)); });
     if (can) {
       $('input.lbl', d).addEventListener('input', ev => { p.label = ev.target.value; plan.updatedAt = Date.now(); renderMap(); host.onChange(plan); });
@@ -693,6 +743,8 @@ export function mountPlanner(root, host) {
     const poly = legPoly(lg), straight = dist(lg.a, lg.b), plen = legLength(lg), st = legStats(lg.a, lg.b), fw = fewestFor(lg.b.npc);
     const teleports = Z.links.filter(t => t.kind === 'teleport' && t.to);
     const d = document.createElement('div'); d.className = 'leg' + (lg.off ? ' off' : '') + (compact ? ' compact' : '') + (lg.optLeg ? ' optleg' : '');
+    d.dataset.leg = lg.idx;
+    d.addEventListener('click', ev => { if (legOn() && !ev.target.closest('input,select,button,a,label')) setLeg(lg.idx); });   // One leg mode: a card picks the leg
     d.innerHTML = `<div class="t">${compact ? '' : (lg.idx + 1) + '. '}${esc(lg.a.label)} &rarr; ${esc(lg.b.label)} ${lg.optLeg ? '<span class="badge b-note">optional leg</span>' : lg.dashed ? '<span class="badge b-note">optional pin</span>' : ''}${lg.off ? ' <span class="badge b-note">hidden</span>' : ''}${lg.jump ? ` <span class="badge" style="color:${LINK_COLOR}">via ${esc(lg.jump.label)}</span>` : ''}${lg.ln && lg.ln.follow ? ` <span class="badge b-objective">follows ${lg.ln.follow} night${lg.ln.follow > 1 ? 's' : ''}</span>` : ''}</div>
       <div class="kv">${compact ? '' : `<b>Straight line</b><span>${fmtU(straight)}</span>`}<b>Drawn path</b><span>${fmtU(plen)}${lg.pts.length ? ' (' + lg.pts.length + ' bend' + (lg.pts.length > 1 ? 's' : '') + ')' : ''}${lg.jump ? ' <span class="muted">jump not counted</span>' : ''}</span>
       <b>Recorded time</b><span>${st.median != null ? fmtT(st.median) + (compact ? '' : ' median over ' + st.nights + ' night' + (st.nights > 1 ? 's' : '') + (st.median > 3 ? ' (' + Math.round(plen / st.median) + ' u/s on the drawn path)' : '')) : '<span class="muted">' + (NSER.length ? 'no recorded night passes both pins' : 'no nights recorded for this zone') + '</span>'}</span></div>
@@ -742,6 +794,7 @@ export function mountPlanner(root, host) {
       lines.push(`Split at ${f ? f.label : '?'}: ` + s.branches.map(b => `${b.label} ${fmtU(b.pathU)}${b.timeS != null && b.legs ? ' / ' + fmtT(b.timeS) : ''}`).join(' · ') + (s.slowest != null ? ` · the split takes ${fmtT(s.slowest)} (slowest branch)` : ''));
     }
     $('#legTotals').innerHTML = lines.map(esc).join('<br>');
+    markCurLeg();
     if (can && $('#followAll')) {
       $('#followAll').onclick = () => { let ok = 0, no = 0; for (const lg of legs()) followLeg(lg, true) ? ok++ : no++; changed(); toast(ok + ' leg' + (ok === 1 ? '' : 's') + ' now follow recorded paths' + (no ? '; ' + no + ' had no recorded night through both pins' : '')); };
       $('#straightAll').onclick = () => { plan.lines = plan.lines.filter(l => l.opt || l.via || l.off).map(l => ({ ...l, pts: [], follow: undefined })); changed(); };
@@ -909,6 +962,19 @@ export function mountPlanner(root, host) {
     if (e.key === 'Escape') { setMode('select'); closePop(); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && selPin && editable() && lastW && root.matches(':hover')) deletePin(selPin);
   });
+  if (host.legFocus) {
+    $('#legOnly').onclick = () => { ui.legOnly = !ui.legOnly; legSel = undefined; legFramed = null; saveUi(); renderMap(); };
+    $('#legPrev').onclick = () => setLeg(stepLeg(legIdx, -1, legs().length));
+    $('#legNext').onclick = () => setLeg(stepLeg(legIdx, 1, legs().length));
+    $('#legFollow').checked = ui.legFollow !== false;
+    $('#legFollow').onchange = e => { ui.legFollow = e.target.checked; legFramed = null; saveUi(); renderMap(); };
+    listen(document, 'keydown', e => {   // left / right step the leg while the pointer is over the map and no field has the keyboard
+      if (!legOn() || !root.isConnected || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) || !$('#mapwrap').matches(':hover')) return;
+      e.preventDefault(); setLeg(stepLeg(legIdx, e.key === 'ArrowLeft' ? -1 : 1, legs().length));
+    });
+  }
   let rsT; listen(window, 'resize', () => { applyView(); clearTimeout(rsT); rsT = setTimeout(() => { if (W() < 820) fit(pins().length > 1); }, 200); });
 
   /* ---------- boot ---------- */
@@ -920,7 +986,7 @@ export function mountPlanner(root, host) {
   if (pins().length) fit(true);
   // the first real size arrives after the stylesheet: fit once more when the map gets its box
   let sized = false;
-  const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (!sized && svg.clientWidth > 0) { sized = true; fit(pins().length > 1); } else applyView(); }) : null;
+  const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (!sized && svg.clientWidth > 0) { sized = true; if (legOn()) { legFramed = null; renderMap(); } else fit(pins().length > 1); } else applyView(); }) : null;
   if (ro) { ro.observe(svg); cleanups.push(() => ro.disconnect()); }
 
   return {

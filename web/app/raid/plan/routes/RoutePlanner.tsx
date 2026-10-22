@@ -48,8 +48,8 @@ export type RoutePlannerProps = {
   cardNote: string;
   seed: { label: string; pins: number } | null;
   fewest: FewestKill[];
-  /** The 3D preview asked for with ?v= ('b' stacked floors, 'c' true 3D); null on the page everyone sees. */
-  variant?: 'b' | 'c' | null;
+  /** The preview asked for with ?v= ('b' stacked floors, 'c' true 3D, 'leg' the One leg mode alone); null on the page everyone sees. */
+  variant?: 'b' | 'c' | 'leg' | null;
 };
 
 const SAVE_DELAY_MS = 1000;
@@ -71,6 +71,8 @@ export default function RoutePlanner(props: RoutePlannerProps) {
   const [skipOptional, setSkipOptional] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [view3d, setView3d] = useState(false);
+  const [legKey, setLegKey] = useState<string | null>(null);   // the leg the One leg mode is on (null when the mode is off)
+  const v3 = props.variant === 'b' || props.variant === 'c' ? props.variant : null;   // the 3D previews; 'leg' has no 3D
   const [confirm, setConfirm] = useState<null | { kind: 'publish'; text: string } | { kind: 'import'; text: string }>(null);
 
   // saving + polling state: refs, because the engine's callbacks outlive any one render
@@ -130,6 +132,8 @@ export default function RoutePlanner(props: RoutePlannerProps) {
       },
       onPreview: (on: boolean) => setPreviewing(on),
       onOptMode: (m: string) => setSkipOptional(m === 'skip'),
+      legFocus: !!props.variant,
+      onLegFocus: (k: string | null) => setLegKey(k),
     });
     apiRef.current = api;
     setNodes(api.nodes);
@@ -331,17 +335,17 @@ export default function RoutePlanner(props: RoutePlannerProps) {
         </>,
         nodes.hostBar,
       )}
-      {nodes && props.variant && createPortal(
+      {nodes && v3 && createPortal(
         <div className="grp grp-3d">
           <button type="button" className={view3d ? 'active' : ''} aria-pressed={view3d} onClick={() => setView3d(v => !v)}
-            title={view3d ? 'Back to the flat map, where you edit' : (props.variant === 'b' ? 'See the floors stacked, with the route climbing between them' : 'See the zone in 3D, with the route at its real heights')}>
+            title={view3d ? 'Back to the flat map, where you edit' : (v3 === 'b' ? 'See the floors stacked, with the route climbing between them' : 'See the zone in 3D, with the route at its real heights')}>
             {view3d ? '2D map' : '3D'}
           </button>
         </div>,
         nodes.toolbar,
       )}
-      {nodes && props.variant && view3d && createPortal(
-        <Plan3D zone={zone} extraMobs={props.extraMobs} plan={shown3d} skipOptional={skipOptional} variant={props.variant}
+      {nodes && v3 && view3d && createPortal(
+        <Plan3D zone={zone} extraMobs={props.extraMobs} plan={shown3d} skipOptional={skipOptional} variant={v3} focusLeg={legKey}
           onSelect={id => apiRef.current?.selectPin(id)}
           onFail={() => { setView3d(false); note('This browser could not start 3D, so the flat map stays.'); }} />,
         nodes.mapwrap,

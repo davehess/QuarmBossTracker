@@ -6,7 +6,7 @@ import type { ZoneData } from '@/lib/routePlanner/types';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 
-export function skeletonHtml(Z: ZoneData, readOnly: boolean): string {
+export function skeletonHtml(Z: ZoneData, readOnly: boolean, legMode = false): string {
   return `
 <div id="app">
   <aside id="side">
@@ -109,7 +109,8 @@ export function skeletonHtml(Z: ZoneData, readOnly: boolean): string {
         <button data-mode="select" class="active" title="Move pins, pan, bend legs">Move</button>
         <button data-mode="addpin" title="Click the map to drop a pin">Add pin</button>
         <button data-mode="follow" title="Click a leg to snap it to recorded paths">Follow paths</button>
-      </div>
+      </div>${legMode ? `
+      <div class="grp" id="legGrp"><button id="legOnly" aria-pressed="false" title="Draw one leg at a time: the one that starts at the selected pin. Left / right arrow keys step.">One leg</button></div>` : ''}
       <select id="addKind" title="Kind for new pins">
         <option value="note">new pin: note</option><option value="boss">new pin: boss</option><option value="named">new pin: named</option>
         <option value="scripted">new pin: scripted</option><option value="objective">new pin: objective</option><option value="door">new pin: door</option>
@@ -120,7 +121,8 @@ export function skeletonHtml(Z: ZoneData, readOnly: boolean): string {
       <div class="grp"><button id="zIn" title="Zoom in" aria-label="Zoom in">+</button><button id="zOut" title="Zoom out" aria-label="Zoom out">&minus;</button></div>
       <div class="grp"><button id="zFit">Fit zone</button><button id="zWar">${esc(Z.focus.label)}</button></div>
     </div>
-    <div class="banner" id="banner"></div>
+    <div class="banner" id="banner"></div>${legMode ? `
+    <div class="legbar" id="legBar"><button id="legPrev" aria-label="Previous leg" title="Previous leg (left arrow)">&lsaquo;</button><span id="legText" role="status"></span><button id="legNext" aria-label="Next leg" title="Next leg (right arrow)">&rsaquo;</button><label class="small" title="Pan and zoom the map to each leg"><input type="checkbox" id="legFollow" checked> follow</label></div>` : ''}
     <div class="previewbar" id="previewBar"><span id="previewText"></span><button class="sm primary" id="previewBack">Back to the current plan</button></div>
     <div id="pop"></div>
     <div id="loc">/loc y, x: -</div>

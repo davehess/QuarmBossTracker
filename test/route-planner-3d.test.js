@@ -206,6 +206,21 @@ describe('the whole view of the tower', () => {
     expect(v.pins.find(p => p.id === 'p').num).toBe('A1');
   });
 
+  it('One leg mode: draws only the focused leg and marks every pin but its two ends faint', () => {
+    const key = stack.legs[4].key;
+    const [fa, fb] = key.split('>');
+    const one = buildView3D({ zone: TOWER, plan, skipOptional: false, mode: 'stack', spacing: 300, focusLeg: key });
+    expect(one.legs.map(l => l.key)).toEqual([key]);
+    expect(one.pins.filter(p => !p.faint).map(p => p.id).sort()).toEqual([fa, fb].sort());
+    expect(one.pins.filter(p => p.faint)).toHaveLength(plan.pins.length - 2);
+    // no focus, or a key that names no leg: the whole plan, nothing faint
+    for (const f of [undefined, null, 'nope>nope']) {
+      const v = buildView3D({ zone: TOWER, plan, skipOptional: false, mode: 'stack', spacing: 300, focusLeg: f });
+      expect(v.legs).toHaveLength(stack.legs.length);
+      expect(v.pins.some(p => p.faint)).toBe(false);
+    }
+  });
+
   it('carries every pather with a few heights that climb on a ramp', () => {
     expect(stack.pathers).toHaveLength(TOWER.pathers.length);
     const g1 = stack.pathers.find(p => p.id === 'grid-1');

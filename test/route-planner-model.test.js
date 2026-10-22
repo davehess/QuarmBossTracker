@@ -21,6 +21,7 @@ import {
   pruneLines, planSame, MAX_PINS,
 } from '../web/lib/routePlanner/plan.ts';
 import { emptyPlan, MAX_BRANCHES } from '../web/lib/routePlanner/types.ts';
+import { clampLeg, stepLeg, legIndexForPin, legBarText, clockText } from '../web/lib/routePlanner/legFocus.ts';
 import { buildPlanPins } from '../web/lib/routePlanner/build.ts';
 import { createFollow } from '../web/lib/routePlanner/follow.ts';
 import { comparePlan, matchKills, pinNumbers } from '../web/lib/routePlanner/compare.ts';
@@ -495,5 +496,63 @@ describe('the committed plan from 2026-10-21', () => {
     expect(seedFor('potactics').label).toMatch(/Oct 21/);
     expect(seedFor('solrotower')).toBeNull();
     expect(seedFor('__proto__')).toBeNull();
+  });
+});
+
+// ── the "One leg" mode (?v=leg, b, c): web/lib/routePlanner/legFocus.ts ─────────────────────────────────────────────
+describe('One leg mode', () => {
+  // a -> b -> c -> d on the main route, with a split on b -> c (Team A walks via p, Team B has no pins)
+  const a = pin('a', 0, 0), b = pin('b', 300, 0), c = pin('c', 900, 0), d = pin('d', 900, 400);
+  const split = { id: 's', from: 'b', to: 'c', branches: [{ id: 'x', label: 'Team A', color: '#2dd4bf', pins: [pin('p', 600, 200)] }, { id: 'y', label: 'Team B', color: '#d946ef', pins: [] }] };
+  const straight = planLegs({ ...emptyPlan(), pins: [a, b, c, d] }, false);
+  const split3 = planLegs({ ...emptyPlan(), pins: [a, b, c, d], splits: [split] }, false);
+
+  it('clamps an index into the legs and steps without wrapping', () => {
+    expect(clampLeg(-3, 5)).toBe(0);
+    expect(clampLeg(9, 5)).toBe(4);
+    expect(clampLeg(2.7, 5)).toBe(2);
+    expect(clampLeg(NaN, 5)).toBe(0);
+    expect(clampLeg(3, 0)).toBe(0);
+    expect(stepLeg(0, -1, 5)).toBe(0);
+    expect(stepLeg(4, 1, 5)).toBe(4);
+    expect(stepLeg(2, 1, 5)).toBe(3);
+  });
+
+  it('the current leg is the one that starts at the selected pin', () => {
+    expect(straight.map(l => l.k)).toEqual(['a>b', 'b>c', 'c>d']);
+    expect(legIndexForPin(straight, 'a', 2)).toBe(0);
+    expect(legIndexForPin(straight, 'b', 0)).toBe(1);
+    expect(legIndexForPin(straight, 'c', 0)).toBe(2);
+  });
+
+  it('the last pin starts nothing, so it takes the leg that ends there; an unknown or empty selection keeps the current leg', () => {
+    expect(legIndexForPin(straight, 'd', 0)).toBe(2);
+    expect(legIndexForPin(straight, 'zzz', 1)).toBe(1);
+    expect(legIndexForPin(straight, null, 2)).toBe(2);
+    expect(legIndexForPin(straight, 'b', 99)).toBe(1);
+    expect(legIndexForPin([], 'a', 3)).toBe(0);
+  });
+
+  it('a split start pin starts several legs: it keeps the current one when that is one of them, else the first', () => {
+    expect(split3.map(l => l.k)).toEqual(['a>b', 'b>p', 'p>c', 'c>d']);   // Team B has no pins: it draws nothing
+    expect(legIndexForPin(split3, 'p', 0)).toBe(2);
+    expect(legIndexForPin(split3, 'b', 0)).toBe(1);
+    const twoBranches = planLegs({ ...emptyPlan(), pins: [a, b, c], splits: [{ ...split, branches: [split.branches[0], { ...split.branches[1], pins: [pin('q', 600, -200)] }] }] }, false);
+    expect(twoBranches.map(l => l.k)).toEqual(['a>b', 'b>p', 'p>c', 'b>q', 'q>c']);
+    expect(legIndexForPin(twoBranches, 'b', 3)).toBe(3);   // already on Team B's first leg: stay there
+    expect(legIndexForPin(twoBranches, 'b', 0)).toBe(1);   // coming from elsewhere: the first branch
+    expect(legIndexForPin(twoBranches, 'c', 0)).toBe(2);   // the regroup pin is the last pin here: the leg that ends there
+    expect(legIndexForPin(twoBranches, 'c', 4)).toBe(4);   // ... and the current leg when that already ends there
+  });
+
+  it('writes the bar: position, the two pins, the length, the recorded time, the branch', () => {
+    expect(legBarText(straight[1], 1, 3, 100)).toBe('Leg 2 of 3: b → c · 600 u · ~1:40');
+    expect(legBarText(straight[1], 1, 3, null)).toBe('Leg 2 of 3: b → c · 600 u');
+    expect(legBarText(straight[1], 1, 3, NaN)).toBe('Leg 2 of 3: b → c · 600 u');
+    expect(legBarText(split3[1], 1, 4, 65)).toMatch(/Team A$/);
+    expect(legBarText({ ...straight[0], off: true }, 0, 3, null)).toMatch(/hidden leg$/);
+    expect(clockText(59.6)).toBe('1:00');
+    expect(clockText(5)).toBe('0:05');
+    expect(legBarText({ ...straight[0], pts: [[0, 1000]] }, 0, 3, null)).toMatch(/· 2,\d{3} u$/);   // the bend counts; thousands read with a comma
   });
 });

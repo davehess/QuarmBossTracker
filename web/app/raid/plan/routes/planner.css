@@ -198,6 +198,15 @@
 .rp-root.rp-3d #scale,
 .rp-root.rp-3d #banner,
 .rp-root.rp-3d #pop{display:none !important}
+/* One leg mode (?v=leg, b, c): the bar over the map, and the current leg's card in the Legs tab */
+.rp-root .legbar{position:absolute;left:50%;top:54px;transform:translateX(-50%);z-index:4;display:none;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--gold);border-radius:8px;padding:4px 8px;font-size:13px;box-shadow:var(--shadow);max-width:min(92%,760px)}
+.rp-root .legbar.on{display:flex}
+.rp-root .legbar #legText{flex:1;min-width:0}
+.rp-root .legbar button{padding:2px 10px;font-size:16px;line-height:1.2}
+.rp-root .legbar label{display:inline-flex;align-items:center;gap:4px;color:var(--muted);white-space:nowrap}
+.rp-root.rp-3d .legbar{top:auto;bottom:36px}
+.rp-root.rp-3d .legbar label{display:none}
+.rp-root .leg.cur{box-shadow:inset 3px 0 0 var(--gold);padding-left:8px;background:var(--panel2)}
 .rp-root .p3{position:absolute;inset:0;z-index:2;background:var(--map-bg);overflow:hidden;touch-action:none}
 .rp-root .p3-layer{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:1}
 .rp-root .p3 canvas{outline:none}
