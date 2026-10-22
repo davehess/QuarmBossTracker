@@ -51653,15 +51653,25 @@ function _mapTryPin(zone, character, spawnId, name, loc, now, opts) {
 //   • Read the way eqlog is tailed: open, read only the new bytes, close, so it cannot block EverQuest.
 //     ⚠ The file also holds install paths and hardware lines. Only the three line shapes below are parsed, and only
 //     host, port, zone and time are kept. The token rides on synced map events, and nothing else leaves the machine.
-//   • Open or closed: after you zone in, a plain /who (its footer names the zone) that lists anyone who is in neither
-//     our guild (their /who tag, or the tag last seen on them, since /anon hides it) nor your raid/group means an open
-//     copy: the live zone or PvP. That sticks for the copy. A /who of only guild and raid is "closed so far": our
-//     instance, or another guild's raid instance we were brought into. A quiet live zone looks the same.
+//   • Live or instance: the PORT says (the guild lead, 2026-10-22, in the live Emerald Jungle with one guildmate, the
+//     header said "guild + raid only": "we made an assumption that this was guild/raid only, but it is not. it's live").
+//     The server gives a STATIC zone (the open world) the port its launcher lists, and starts every guild, raid or PvP
+//     instance on an idle process from a separate pool (EQMacEmu world/zonelist.cpp TriggerBootup + GetAvailableZonePort,
+//     world/zoneserver.cpp ServerOP_SetConnectInfo). Measured on our own synced events 2026-10-13..22: every zone has one
+//     port in 7100..7315 and its extra copies sit at 10001..11785 (nothing between). MAP_COPY_STATIC_PORTS and
+//     MAP_COPY_DYNAMIC_MIN are that observation, not a server constant: another server, or a different pool, reads null.
+//   • Open or closed (a /who check, now secondary): after you zone in, a plain /who (its footer names the zone) that lists
+//     anyone who is in neither our guild (their /who tag, or the tag last seen on them, since /anon hides it) nor your
+//     raid/group is "open": outsiders are in the zone. That sticks for the copy. A /who of only guild and raid proves
+//     NOTHING: a quiet live zone looks the same. The server's /who filter has no copy test either (world/clientlist.cpp
+//     WhoAllFilter), so the list may span copies. Nothing but the label reads it.
 const MAP_COPY_POLL_MS    = 2000;
 const MAP_COPY_TAIL_BYTES = 256 * 1024;        // a first look reads only the end of the file
 const MAP_COPY_READ_MAX   = 1024 * 1024;       // and no read is ever bigger than this
 const MAP_COPY_PAIR_MS    = 5 * 60 * 1000;     // a zone name further than this from its address is not paired
 const MAP_COPY_WHO_MAX    = 64;
+const MAP_COPY_STATIC_PORTS = [7000, 7999];    // the open world's zone servers (observed on Quarm; see the note above)
+const MAP_COPY_DYNAMIC_MIN  = 10000;         // an instance's zone server (observed floor 10001)
 const MAP_COPY_ADDR_RE    = /^\[([^\]]+)\]\d*:\s*Zone addr \[([A-Za-z0-9.-]{1,100}):(\d{1,5})\] received/;
 const MAP_COPY_ZONE_RE    = /^\[([^\]]+)\]\d*:\s*StartWorldDisplay: ([a-z0-9]{2,32})\s*$/;
 const MAP_COPY_CHARSEL_RE = /^\[[^\]]+\]\d*:\s*Starting char select/;
@@ -51753,12 +51763,19 @@ function _mapCopyNoteWho(run, now) {
   _mapCopy.who.set(key, { open: outsiders > 0 || !!(prev && prev.open), outsiders: Math.max(outsiders, prev ? prev.outsiders : 0),
     listed, at: now });
 }
-// What the overlay shows: { host, port, since, kind: 'open' | 'closed' | null, outsiders, who_at }.
+// 'live' (a static zone server), 'instance' (a dynamically started one: guild, raid or PvP; the port cannot say which)
+// or null (a port outside both bands: say nothing).
+function _mapCopyWhere(port) {
+  if (!(port > 0)) return null;
+  if (port >= MAP_COPY_DYNAMIC_MIN) return 'instance';
+  return port >= MAP_COPY_STATIC_PORTS[0] && port <= MAP_COPY_STATIC_PORTS[1] ? 'live' : null;
+}
+// What the overlay shows: { host, port, since, where: 'live' | 'instance' | null, kind: 'open' | 'closed' | null, outsiders, who_at }.
 function _mapCopyInfo(zone, now) {
   const c = _mapCurrentCopy(zone, now);
   if (!c) return null;
   const w = _mapCopy.who.get(_mapCopyKey(c));
-  return { host: c.host, port: c.port, since: c.at, kind: w ? (w.open ? 'open' : 'closed') : null,
+  return { host: c.host, port: c.port, since: c.at, where: _mapCopyWhere(c.port), kind: w ? (w.open ? 'open' : 'closed') : null,
     outsiders: w ? w.outsiders : 0, who_at: w ? w.at : null };
 }
 // ── end Zone copies ──

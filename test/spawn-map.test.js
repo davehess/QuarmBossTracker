@@ -27,7 +27,7 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapApplyMark', '_mapNoteDeath', '_mapNoteState', '_mapNoteLogDeath', '_mapStatePayload', '_mapSaveNow', '_mapDoc',
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
-  '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData',
+  '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', '_mapCopyWhere', 'whoData',
   '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapNotePath', '_mapFocusTarget', '_extTargetCache', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower',
   'MAP_TRACKED_PATHS', 'MAP_CORPSE_RE', '_mapDist2', '_mapMergePath', '_mapShownPath', '_mapApplyShared', '_mobInfoByName', '_mobInfoFetches'];
 // The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
@@ -2266,11 +2266,41 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       expect(c._mapSync.q.map(k => k.ev.inst)).toEqual([H + ':7312']);
       c._mapSyncStop();
     });
-    it('the overlay shows the port and the /who verdict beside the zone name', () => {
+    it('the port band says live or instance; a port outside both bands says neither', () => {
+      // Measured on the fleet's synced events 2026-10-13..22: one 7xxx port per zone, its extra copies at 10001+.
+      expect(c._mapCopyWhere(7214)).toBe('live');       // the open Emerald Jungle copy the guild lead stood in
+      expect(c._mapCopyWhere(7315)).toBe('live');
+      expect(c._mapCopyWhere(10135)).toBe('instance');
+      expect(c._mapCopyWhere(11785)).toBe('instance');
+      expect(c._mapCopyWhere(8800)).toBeNull();          // between the bands: no claim
+      expect(c._mapCopyWhere(0)).toBeNull();
+      fs.writeFileSync(file(), dbgZoneIn('Mon Oct 12 16:00:00 2026', 7214, 'emeraldjungle'));
+      expect(c._mapCopyInfo('emeraldjungle', at('16:05:00'))).toMatchObject({ port: 7214, where: 'live', kind: null });
+      fs.appendFileSync(file(), dbgZoneIn('Mon Oct 12 16:10:00 2026', 10135, 'fearplane'));
+      expect(c._mapCopyInfo('fearplane', at('16:12:00'))).toMatchObject({ port: 10135, where: 'instance' });
+    });
+    it('a quiet live zone is never labelled guild + raid only: only-us in /who is worded as what /who saw', () => {
+      const label = new Function(sliceBlock(MAP_HTML, '  function copyLabel(c, now) {', '  // ── side list ──') + '\nreturn copyLabel;')();
+      const T = 1000000;
+      // the reported case: the open Emerald Jungle, a /who that listed only our guild
+      const live = label({ port: 7214, where: 'live', kind: 'closed', outsiders: 0, who_at: T - 120000 }, T);
+      expect(live.text).toBe(':7214 live zone');
+      expect(live.title).toMatch(/listed only our guild and raid; a quiet live zone looks the same/);
+      expect(live.title).toMatch(/2 min ago/);
+      expect(label({ port: 10135, where: 'instance', kind: 'closed', outsiders: 0, who_at: T }, T).text).toBe(':10135 instance');
+      // unknown band: only what /who saw, never an assertion about the copy
+      expect(label({ port: 8800, where: null, kind: 'closed', outsiders: 0, who_at: T }, T).text).toBe(':8800 only us in /who');
+      expect(label({ port: 8800, where: null, kind: 'open', outsiders: 2, who_at: T }, T).text).toBe(':8800 others in /who');
+      expect(label({ port: 8800, where: null, kind: null, outsiders: 0, who_at: null }, T).text).toBe(':8800 /who to check');
+      for (const c2 of [{ where: 'live', kind: 'closed' }, { where: null, kind: 'closed' }, { where: 'instance', kind: 'closed' }]) {
+        expect(label({ port: 7214, outsiders: 0, who_at: T, ...c2 }, T).text).not.toMatch(/guild \+ raid only/);
+      }
+    });
+    it('the overlay shows the port and the live / instance verdict beside the zone name', () => {
       const js = stripJs(MAP_HTML);
-      expect(js).toMatch(/function copyLabel\(c\)/);
-      expect(js).toMatch(/cp = copyLabel\(P && P\.copy\)/);
-      expect(js).toMatch(/c\.kind === 'open' \? 'live \/ PvP'/);
+      expect(js).toMatch(/function copyLabel\(c, now\)/);
+      expect(js).toMatch(/cp = copyLabel\(P && P\.copy, Date\.now\(\)\)/);
+      expect(js).toMatch(/c\.where === 'instance' \? 'instance' : c\.where === 'live' \? 'live zone'/);
       // and the agent's /who footer feeds the check
       expect(stripJs(AGENT)).toMatch(/if \(zone\) \{ try \{ _mapCopyNoteWho\(_whoRun, Date\.now\(\)\); \} catch/);
     });

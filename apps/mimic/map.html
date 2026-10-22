@@ -2962,20 +2962,27 @@
   }
 
   // Which copy of the zone you are in (agent "Zone copies": the zone server's port from dbg.txt, and a /who check).
-  // open = /who listed someone outside the guild and raid: the live zone or PvP. closed = only guild and raid so far.
-  function copyLabel(c) {
+  // The label states only what is known. where = the port's band: 'live' (the open world's zone server) or 'instance' (a
+  // guild, raid or PvP copy; the port cannot say which). A /who never names the copy: a quiet live zone lists only us, so
+  // "only us in /who" is the fact, not "guild + raid only".
+  function copyLabel(c, now) {
     if (!c || !c.port) return null;
-    var kind = c.kind === 'open' ? 'live / PvP' : c.kind === 'closed' ? 'guild + raid only' : '/who to check';
-    var title = 'Zone server port ' + c.port + ' (from EverQuest\'s dbg.txt). Map events are shared only with people in the same copy. ' +
-      (c.kind === 'open' ? c.outsiders + ' in /who outside our guild and raid: the live zone or PvP.'
-        : c.kind === 'closed' ? 'Your last /who here listed only our guild and raid: our instance, or a raid instance we joined (a quiet live zone looks the same).'
-        : 'Type /who here to tell an instance from the live zone.');
+    var who = c.kind === 'open' ? c.outsiders + ' in /who outside our guild and raid.'
+      : c.kind === 'closed' ? 'Your last /who here' + (c.who_at && now ? ' (' + Math.max(0, Math.round((now - c.who_at) / 60000)) + ' min ago)' : '') +
+        ' listed only our guild and raid; a quiet live zone looks the same.'
+      : 'No /who here yet.';
+    var kind = c.where === 'instance' ? 'instance' : c.where === 'live' ? 'live zone'
+      : c.kind === 'open' ? 'others in /who' : c.kind === 'closed' ? 'only us in /who' : '/who to check';
+    var port = c.where === 'instance' ? 'A zone server started for one guild, raid or PvP copy (not the open world): the port cannot say which.'
+      : c.where === 'live' ? 'The open world\'s own zone server, shared with everyone in this zone.'
+      : 'This port is outside the ranges the Map knows, so it does not say live or instance.';
+    var title = 'Zone server port ' + c.port + ' (from EverQuest\'s dbg.txt). ' + port + ' Map events are shared only with people in the same copy. ' + who;
     return { text: ':' + c.port + ' ' + kind, title: title };
   }
   // ── side list ──
   function renderSide() {
     var P = S.p, now = nowMs();
-    var zEl = document.getElementById('zone'), cp = copyLabel(P && P.copy);
+    var zEl = document.getElementById('zone'), cp = copyLabel(P && P.copy, Date.now());   // who_at is the agent's own clock, not the skewed map clock
     zEl.textContent = ((P && (P.long_name || P.zone)) ? (P.long_name || P.zone) : 'Map') + (cp ? ' · ' + cp.text : '');
     zEl.title = cp ? cp.title : '';
     var tg = document.getElementById('tgt');
