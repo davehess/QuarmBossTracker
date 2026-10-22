@@ -26,6 +26,7 @@
 .rp-root button.primary{background:var(--gold);color:#111;border-color:var(--gold);font-weight:600}
 .rp-root button.primary:hover{filter:brightness(1.08)}
 .rp-root button.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.rp-root #floorBtns button.inview{outline:2px solid var(--gold);outline-offset:-2px}
 .rp-root button.danger:hover{background:var(--red);color:#fff;border-color:var(--red)}
 .rp-root button.sm{padding:2px 7px;font-size:12px}
 .rp-root button:disabled{opacity:.45;cursor:not-allowed}

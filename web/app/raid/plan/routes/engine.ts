@@ -18,7 +18,7 @@ import { buildPlanPins } from '@/lib/routePlanner/build';
 import { createFollow, FOLLOW_R } from '@/lib/routePlanner/follow';
 import { pinNumbers } from '@/lib/routePlanner/compare';
 import { fewestLine } from '@/lib/routePlanner/fewest';
-import { clampLeg, legBarText, legIndexForPin, stepLeg } from '@/lib/routePlanner/legFocus';
+import { clampLeg, floorInView, legBarText, legFloorKeys, legIndexForPin, stepLeg } from '@/lib/routePlanner/legFocus';
 import { bakeBends, legSig, routeLeg, viaNames } from '@/lib/routePlanner/navroute';
 import { annotateRecorded, recText, recordedPolys, useRecordedRoutes } from '@/lib/routePlanner/recorded';
 import { floorLevels, pinHeight } from '@/lib/routePlanner/view3d';
@@ -40,6 +40,7 @@ const FLOOR_FALLBACK = ['#a8793a', '#6b788c', '#8fb4d9', '#7fb685', '#c28bd8', '
 /**
  * host: { zone, extraMobs, onPlanNpcs, checklist, cardNote, fewest:Map<npc,row>, readOnly, initialPlan, onChange(plan),
  *         onPreview(on), onOptMode(mode), onTab(tab), legFocus (offer the "One leg" mode), onLegFocus(legKey | null),
+ *         floorFollow (?v=floors: with One leg on and floor All, draw only the floors the current leg walks),
  *         navRoute { load(): Promise<Router> } (offer "Walk route"), onRoutes(Map<legKey, Routed>) (the 3D view's copy),
  *         recorded (offer the "Recorded" route source: legs along the average of the recorded nights), onRecorded(Map<legKey, [x,y][]>)
  *         (the 3D view's copy), onNights(keys) (the nights ticked in Layers, for the 3D view), nightsNote (a line under that list) }
@@ -126,7 +127,20 @@ export function mountPlanner(root, host) {
   /** Floors */
   const floorOfZ = z => floorOf(Z.floors, z);
   const floorLabel = z => { const f = floorOfZ(z); return f ? f.label : ''; };
-  const offFloor = z => { if (ui.floor === 'all') return false; const f = floorOfZ(z); return !!f && f.key !== ui.floor; };
+  // the floors the current leg walks while a view is following it (host.floorFollow, One leg, floor All), else null; renderMap sets it
+  let autoFloors = null;
+  const offFloor = z => { const f = floorOfZ(z); return !!f && !floorInView(f.key, ui.floor, autoFloors); };
+  /** The heights the leg is known at, as runs (legFloorKeys): its pins, plus the walked route, the baked bends, or the teleport it jumps through. */
+  const legRuns = lg => {
+    const rp = recPolyOf(lg), rt = rp ? null : routedFor(lg), runs = [{ zs: [lg.a.z, lg.b.z] }];
+    if (rt) { for (const s of rt.segs) runs.push({ zs: s.kind === 'jump' ? [s.from[2], s.to[2]] : s.pts.map(p => p[2]) }); return runs; }
+    if (rp) { runs.push({ zs: [lg.a.z, lg.b.z], filled: true }); return runs; }   // the nights carry no height
+    const lk = lg.jump && Z.links.find(l => l.label === lg.jump.label && l.from[0] === lg.jump.from[0] && l.from[1] === lg.jump.from[1]);
+    if (lg.jump) runs.push({ zs: [lg.a.z, lk && lk.from[2]], filled: true }, { zs: [lk && lk.to && lk.to[2], lg.b.z], filled: true });
+    else if (lg.ln && lg.ln.h && lg.ln.h.length) runs.push({ zs: [lg.a.z, ...lg.ln.h.map(p => p[2]), lg.b.z] });
+    else runs.push({ zs: [lg.a.z, lg.b.z], filled: true });
+    return runs;
+  };
 
   /* ---------- build ---------- */
   function doBuild() {
@@ -357,11 +371,16 @@ export function mountPlanner(root, host) {
     for (const l of Z.avg.legs) if (l.length) el('path', { d: 'M' + l.map(p => `${-p[0]} ${-p[1]}`).join('L'), fill: 'none', stroke: 'var(--gold)', 'stroke-width': 5, opacity: .35, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none' }, av);
   }
   function applyLayerVis() {
-    for (const p of $$('#gWalls path')) p.style.display = (ui.floor === 'all' || ui.floor === p.dataset.floor) ? '' : 'none';
-    for (const r of $$('#gZones rect[data-floor]')) r.style.display = (ui.floor === 'all' || !r.dataset.floor || ui.floor === r.dataset.floor) ? '' : 'none';
+    for (const p of $$('#gWalls path')) p.style.display = floorInView(p.dataset.floor, ui.floor, autoFloors) ? '' : 'none';
+    for (const r of $$('#gZones rect[data-floor]')) r.style.display = (!r.dataset.floor || floorInView(r.dataset.floor, ui.floor, autoFloors)) ? '' : 'none';
     $('#gZones').style.display = ui.layers.leash ? '' : 'none';
     $('#gAvg').style.display = ui.layers.avg ? '' : 'none';
-    $$('#floorBtns button').forEach(b => b.classList.toggle('active', b.dataset.floor === ui.floor));
+    $$('#floorBtns button').forEach(b => {
+      b.classList.toggle('active', b.dataset.floor === ui.floor);
+      const inView = !!autoFloors && autoFloors.has(b.dataset.floor);   // ?v=floors: the floors the current leg walks
+      b.classList.toggle('inview', inView);
+      if (inView) b.title = 'The current leg walks this floor'; else b.removeAttribute('title');
+    });
   }
 
   /* ---------- dynamic map ---------- */
@@ -408,6 +427,8 @@ export function mountPlanner(root, host) {
       if (ui.legFollow && ui.mode !== 'addpin' && frameKey(cur) !== legFramed) frameLeg(cur);
     }
     legFramed = cur ? frameKey(cur) : null;
+    autoFloors = null;
+    if (host.floorFollow && cur && ui.floor === 'all' && Z.floors.length > 1) { const k = legFloorKeys(Z.floors, legRuns(cur)); if (k.size) autoFloors = k; }
     const hidden = new Set(plan.hiddenTracks);
     for (const pc of PIECES) {
       if (!ui.nights[pc.night] || hidden.has(pc.id)) continue;
@@ -423,7 +444,7 @@ export function mountPlanner(root, host) {
     // pathers: where NPCs walk
     if (ui.layers.pathers) Z.pathers.forEach((pa, pi) => {
       const pts = pa.points; if (pts.length < 2) return;
-      const off = ui.floor !== 'all' && !pts.some(q => { const f = floorOfZ(q[2]); return !f || f.key === ui.floor; });
+      const off = !pts.some(q => { const f = floorOfZ(q[2]); return !f || floorInView(f.key, ui.floor, autoFloors); });
       const d = 'M' + pts.map(q => `${-q[0]} ${-q[1]}`).join('L') + (pa.loop ? 'Z' : '');
       const grp = dimmed(el('g', {}, gpa), off);
       el('path', { d, fill: 'none', stroke: PATHER_COLOR, 'stroke-width': 1.3, 'stroke-dasharray': pa.wander ? '1 5' : '4 4', opacity: .85, 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none' }, grp);
