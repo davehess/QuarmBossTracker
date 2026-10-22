@@ -35,6 +35,8 @@ export type Plan3DProps = {
   plan: Plan;
   skipOptional: boolean;
   variant: 'b' | 'c';
+  /** "One leg" mode: the key of the leg to draw alone (its two pins at full strength, the others faint); null draws the whole plan. */
+  focusLeg?: string | null;
   /** A pin was clicked: select it the way the 2D map does (the host wires this to the engine). */
   onSelect: (pinId: string) => void;
   /** No WebGL: the host goes back to the 2D map. */
@@ -50,7 +52,7 @@ const REACH = { mouse: 14, touch: 24 };
 const MAX_TAGS = 260;
 const SPREAD = { min: 0.4, max: 3, step: 0.1 };
 
-type Item = { id: string; pin: boolean; num: string; text: string; v: Vector3; color: string; mesh: Mesh; k: number; layer: 'pin' | 'link' };
+type Item = { id: string; faint?: boolean; pin: boolean; num: string; text: string; v: Vector3; color: string; mesh: Mesh; k: number; layer: 'pin' | 'link' };
 type Status = 'idle' | 'loading' | 'ready' | 'none' | 'error';
 type Box = { cx: number; cy: number; cz: number; r: number };
 
@@ -77,7 +79,7 @@ const TAG_LOOK = {
 
 const disposeMat = (m: Material | Material[]) => (Array.isArray(m) ? m : [m]).forEach(x => x.dispose());
 
-export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, onSelect, onFail }: Plan3DProps) {
+export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, focusLeg, onSelect, onFail }: Plan3DProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
   const ctxRef = useRef<Ctx | null>(null);
@@ -100,8 +102,8 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, o
 
   const spacing = baseSpacing(zone.bounds) * spread;
   const view = useMemo<View3D>(
-    () => buildView3D({ zone, extraMobs, plan, skipOptional, mode: stack ? 'stack' : 'mesh', spacing }),
-    [zone, extraMobs, plan, skipOptional, stack, spacing],
+    () => buildView3D({ zone, extraMobs, plan, skipOptional, mode: stack ? 'stack' : 'mesh', spacing, focusLeg }),
+    [zone, extraMobs, plan, skipOptional, stack, spacing, focusLeg],
   );
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -195,7 +197,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, o
         t.style.top = `${Math.max(2, Math.min(c.h - 22, s.py + dy))}px`;
       };
       for (const s of c.slabTags) if (s.v.y <= c.clipY + 1) put(s.text, TAG_LOOK.slab + (c.w < 600 ? ';font-size:10px;padding:0 4px' : ''), s.color, s.v, 0, -10, false);
-      for (const it of c.items) if (it.pin && shown(it) && it.id !== c.sel && it.id !== c.hover) put(it.num, TAG_LOOK.num, it.color, it.v, 0, -26, true);
+      for (const it of c.items) if (it.pin && !it.faint && shown(it) && it.id !== c.sel && it.id !== c.hover) put(it.num, TAG_LOOK.num, it.color, it.v, 0, -26, true);
       for (const id of new Set([c.sel, c.hover])) {
         const it = id ? c.items.find(x => x.id === id) : undefined;
         if (it && shown(it)) put(it.text, TAG_LOOK.full, '', it.v, 12, -34, false);
@@ -453,14 +455,14 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, o
       if (!m) { m = own(new MeshBasicMaterial({ color: new Color(color), transparent: true, opacity, depthTest: false })); mats.set(k, m); }
       return m;
     };
-    const addItem = (layer: 'pin' | 'link', g: Group, id: string, num: string, text: string, p: Pt3, color: string, geo: BufferGeometry, k: number, opacity: number) => {
+    const addItem = (layer: 'pin' | 'link', g: Group, id: string, num: string, text: string, p: Pt3, color: string, geo: BufferGeometry, k: number, opacity: number, faint = false) => {
       const mesh = new Mesh(geo, matOf(color, opacity));
       mesh.renderOrder = 5;
       mesh.frustumCulled = false;
       const v = new Vector3(...toThree([p[0], p[1], p[2] + LIFT]));
       mesh.position.copy(v);
       g.add(mesh);
-      c.items.push({ id, pin: layer === 'pin', num, text, v, color, mesh, k, layer });
+      c.items.push({ id, faint, pin: layer === 'pin', num, text, v, color, mesh, k, layer });
     };
 
     for (const lk of view.links) {
@@ -479,7 +481,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, o
     for (const p of view.pins) {
       const col = KIND_HEX[p.kind];
       const guess = p.src === 'near' || p.src === 'floor' ? ' · height guessed' : '';
-      addItem('pin', c.gPins, 'pin:' + p.id, p.num, `${p.num}. ${p.label} · z ${Math.round(p.z)}${guess}`, [p.x, p.y, p.h], col, sphere, p.kind === 'boss' ? 1.35 : 1, p.optional ? 0.55 : 1);
+      addItem('pin', c.gPins, 'pin:' + p.id, p.num, `${p.num}. ${p.label} · z ${Math.round(p.z)}${guess}`, [p.x, p.y, p.h], col, sphere, p.kind === 'boss' ? 1.35 : 1, p.faint ? 0.2 : p.optional ? 0.55 : 1, !!p.faint);
     }
     c.gPathers.visible = layers.pathers;
     c.gLinks.visible = layers.links;

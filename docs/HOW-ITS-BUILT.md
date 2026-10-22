@@ -4358,6 +4358,15 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
     floors layer only when asked.
   - Both: orbit / pan / zoom, Fit zone, pathers and doors-and-teleports toggles, a click on a pin selects it in the pin list
     (`selectPin` on the engine's API). Editing stays in 2D. Variant choice is carried through the zone and plan links.
+- **One leg mode (web 2.0.5, beta preview, 2026-10-22).** `?v=leg` (or `b` / `c`) adds a **One leg** toggle to the map toolbar; no
+  `?v=` is the page as it was (the skeleton emits none of it). On: only the current leg is drawn (line, bends, arrow, its two
+  pins and their labels), every other pin is faint and unlabelled but still clickable, and a bar over the map reads
+  "Leg 5 of 25: A → B · 812 u · ~1:40" (the time is the recorded median, left out when no night passed both pins) with ‹ ›
+  buttons, a "follow" box, and ← / → while the pointer is over the map and no field has focus. The current leg is the one that
+  starts at the selected pin (selecting from the map, the pin list or the arrows all go through `selPin`; a leg card in the Legs
+  tab sets it too); the toggle and the follow box ride the engine's `ui` state (`rp-ui-<zone>`). The rules are
+  `web/lib/routePlanner/legFocus.ts` (clamp, step, leg for a pin, bar text; `test/route-planner-model.test.js`); in 3D the engine
+  tells the host the current leg's key and `buildView3D({ focusLeg })` draws only it (`test/route-planner-3d.test.js`).
 - Tests: `test/route-planner-model.test.js`, `test/route-planner-store.test.js`, `test/route-planner-3d.test.js`.
 
 ---

@@ -46,9 +46,10 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
   let readFailed = false;
   try { store = await readStore(zone.zone); } catch { readFailed = true; }
   const plans = planSummaries(store);
-  // ?v=b (stacked floors) and ?v=c (true 3D) are two previews of a 3D view, awaiting a pick; no ?v= is the page as it stands
+  // ?v=b (stacked floors) and ?v=c (true 3D) are two previews of a 3D view, awaiting a pick; ?v=leg is the "One leg" mode
+  // alone (b and c have it too); no ?v= is the page as it stands
   const v = one(searchParams.v);
-  const variant = v === 'b' || v === 'c' ? v : null;
+  const variant = v === 'b' || v === 'c' || v === 'leg' ? v : null;
   const want = one(searchParams.plan);
   const planId = want && isPlanId(want) && plans.some(p => p.id === want) ? want : MAIN_PLAN;
   const d = store?.plans[planId] ?? null;
