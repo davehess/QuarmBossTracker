@@ -50788,6 +50788,23 @@ function startMobPacks() {
   if (t.unref) t.unref();
 }
 
+// What one mob-info answer does to the cache (the guild lead, 2026-10-22: "missing resists on Hobgoblins" - a bot redeploy
+// at the moment a mob was first targeted left it with no stats for six hours). The answer was never looked at: any
+// reply, an error body or a dropped connection included, was stored as "no row" under the full 6 h TTL, and every
+// reader skips the refetch until that runs out. Now only a 200 carrying a mob lasts the full TTL. Anything else is a
+// MISS that is asked for again after MOB_INFO_MISS_TTL_MS, and a row already held is kept through it (stale while
+// error: old stats beat none). Readers compare `now - at` to MOB_INFO_TTL_MS, so a miss is stored with `at` set back
+// by the difference instead of each reader learning a second TTL.
+const MOB_INFO_MISS_TTL_MS = 60 * 1000;
+function _mobInfoStore(key, status, body) {
+  let mob = null;
+  if (status === 200) {
+    try { const j = JSON.parse(body); if (j && !j.error && j.mob) mob = j.mob; } catch { /* not JSON: a miss */ }
+  }
+  if (mob) { _mobInfoByName.set(key, { at: Date.now(), mob }); return; }
+  const prev = _mobInfoByName.get(key);
+  _mobInfoByName.set(key, { at: Date.now() - (MOB_INFO_TTL_MS - MOB_INFO_MISS_TTL_MS), mob: (prev && prev.mob) || null });
+}
 function fetchMobInfo(name, selfChar, zoneId) {
   const norm = _normMobNameAgent(name);
   if (!norm) return;
@@ -50823,8 +50840,7 @@ function fetchMobInfo(name, selfChar, zoneId) {
       res.on('data', c => body += c);
       res.on('end', () => {
         _mobInfoInflight.delete(key);
-        try { const j = JSON.parse(body); _mobInfoByName.set(key, { at: Date.now(), mob: (j && j.mob) ? j.mob : null }); }
-        catch { _mobInfoByName.set(key, { at: Date.now(), mob: null }); }
+        _mobInfoStore(key, res.statusCode, body);
       });
     });
     req.on('error',   () => { _mobInfoInflight.delete(key); });

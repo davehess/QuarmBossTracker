@@ -18,7 +18,7 @@ import { readSource, sliceBlock, evalBlock, stripJs, ROOT } from './_source-slic
 const MAIN = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
 const CODE = stripJs(MAIN);
 
-const helpers = sliceBlock(MAIN, 'const NATIVE_MOVE_STALE_MS = 1500;', 'steps${where}\\n`);\n}');
+const helpers = sliceBlock(MAIN, 'const NATIVE_MOVE_STALE_MS = 300;', 'steps${where}\\n`);\n}');
 
 function load() {
   const fns = evalBlock(`
@@ -47,8 +47,8 @@ describe('native move mark', () => {
   it('goes stale when moved never arrives, so a lost event cannot freeze the bounds writers', () => {
     const { _nativeMoving } = load();
     const win = { __wpMoveAt: 1_000 };
-    expect(_nativeMoving(win, 1_000 + 1499)).toBe(true);
-    expect(_nativeMoving(win, 1_000 + 1500)).toBe(false);
+    expect(_nativeMoving(win, 1_000 + 299)).toBe(true);
+    expect(_nativeMoving(win, 1_000 + 300)).toBe(false);
   });
 
   it('a window that was never moved by the OS (every overlay) is never marked', () => {

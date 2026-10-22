@@ -77,6 +77,7 @@ function env({ growsUp = false, work = { x: 0, y: 0, width: 1920, height: 1080 }
     function setSetup(v) { setupMode = !!v; }
     const _singleSetupWins = new Set();
     function _overlayEntries() { return []; }
+    function _holdForMove(w) { return !!(w && w.__wpDragging); }   // the real one is tested in mimic-window-move.test.js
     function appendAgentLog() {}
     function _overlayGrowsUp() { return ${growsUp ? 'true' : 'false'}; }
     function _boundsKeyForWindow(win) { return win.notAnOverlay ? null : '${KEY}'; }

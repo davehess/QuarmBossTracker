@@ -6462,3 +6462,34 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   warrior named is you), "`<warrior>` ceases protecting `<shielded>`." ends the active window early. Matches the report; no
   discrepancy. ⏳ The AA rank is not on the pipe, so a warrior with Living Shield sees the 12 s window end before the real shield does
   (the end line is exact when it comes); ⏳ the two strings are read from the comments in `zone/string_ids.h`, not seen in a live log yet.
+- 🟡 Windows jumping while dragged (the guild lead, 2026-10-22, two screen recordings at 2560x1440; a member reported the same
+  dashboard wiggle; agent 4.0.7 + Mimic beta). **Root cause NOT proven; what the code review found, and fixed:**
+  - The dashboard recording (framed window, OS title-bar drag) alternates frame by frame between "under the cursor" and a spot
+    near the screen's top-left. Nothing in Mimic writes the dashboard's bounds (`mainWindow` has no `setBounds`/`setPosition`
+    caller, `test/mimic-dashboard-drag.test.js`), and Mimic makes NO native `SetWindowPos`/`MoveWindow`/`SetWindowPlacement`
+    call at all: its user32 calls are reads (`GetWindowRect`, `GetForegroundWindow`), and overlays restack through Electron's
+    `moveAbove` / `setAlwaysOnTop` (`_tuckAboveEq`, `_applyOverlayZ`). So there was no "SetWindowPos without SWP_NOMOVE" to fix;
+    `test/mimic-window-move.test.js` now fails if one is added without NOMOVE|NOSIZE|NOACTIVATE.
+  - The Dock recording (✥ manual drag) is explained by real writers fighting the 16 ms drag step: `dock-auto-height` was the one
+    fit handler with no drag guard (its 1 s loop wrote a height and, growing up, a new top edge; the drag wrote the start height back),
+    and the ✥ right-click menu borrows window height (`overlay-ensure-min-height`) even with the left button still down, so the Dock
+    pulsed thin bar ↔ 420 px tall with the menu open.
+  - Fix: one `_holdForMove(win, who)` (a ✥ drag or the OS's title-bar move, `__wpDragging` / `_nativeMoving`, native mark clears 300 ms
+    after the last `will-move`) now gates the Dock fit, the overlay fit (also for the OS move), the menu's height loan and give-back,
+    `overlay-set-bounds`, the z-order pass (the owed change lands when the drag ends), the display-change rescue and the screen-change
+    move; each logs ONE `[window] <writer> held off while <window> is being moved` line per move. The ✥ menu will not open while
+    the left button is down (preload). ⏳ **On the next beta, if a dashboard drag still jumps, the agent log says whether any of
+    those writers ran during it (a `[window] … held off` line) and `[window] drag jitter` already records scale and displays; no
+    such line means the cause is outside Mimic's code (Windows, the capture tool or the graphics driver) and the first thing to try is
+    turning off the screen-sized Map / Canvas overlays for one drag.** Cannot be reproduced off Windows.
+- ✅ Target Info: a missed mob lookup is asked for again in a minute (the guild lead, 2026-10-22: "missing resists on Hobgoblins";
+  agent 4.0.7). `fetchMobInfo` stored any answer, errors included, as "no row" for the full 6 h TTL, so a bot redeploy or database
+  blip at the moment a mob was first targeted hid its stats and resists for six hours (the catalog and zone packs were healthy).
+  Now only a 200 carrying a mob lasts 6 h; a non-200, non-JSON, error body or `mob: null` is kept 60 s (`MOB_INFO_MISS_TTL_MS`), and a row
+  already held survives an error (stale while error). Tests beside `test/mob-pack-agent.test.js`.
+- ✅ A crashed overlay window comes back (Mimic beta, 2026-10-22). Only the dashboard listened for `render-process-gone`; an overlay
+  whose renderer died stayed up and blank until Mimic restarted. Now `_overlayRendererGone` logs `[overlay] <key> renderer gone
+  (<reason>)`, lets the entry go and destroys the window, and the normal build pass (`applyAllVisibility` →
+  `_materializeEnabledOverlays`) recreates it; at most 3 rebuilds per overlay per 5 minutes, after which it stays down until the
+  next ordinary visibility pass. Panel overlays and chat breakouts are not covered (their owners rebuild them).
+  ⏳ Not exercised against a real renderer crash; `test/mimic-window-move.test.js` holds the limiter and the wiring.

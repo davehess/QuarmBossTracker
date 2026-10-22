@@ -61,6 +61,7 @@ function env({ growsUp = false, skew = 0, work = { x: 0, y: 0, width: 1920, heig
     const setupMode = false;
     const _singleSetupWins = new Set();
     function _overlayEntries() { return []; }
+    function _holdForMove(w) { return !!(w && w.__wpDragging); }   // the real one is tested in mimic-window-move.test.js
     function appendAgentLog() {}
     function _overlayGrowsUp() { return ${growsUp ? 'true' : 'false'}; }
     function mkWin(b) {
