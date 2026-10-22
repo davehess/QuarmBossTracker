@@ -579,15 +579,26 @@ describe('the scanner reads what is new since its last look, not the newest 40 b
     expect(stored.beta).toBe('tip1');
   });
 
-  it('a first look (nothing recorded) walks the newest 40 and never asks compare', async () => {
+  it('a first look (nothing recorded) walks the newest commits and never asks compare', async () => {
     const { run, paths, stored, status } = rig({
       seen: {},
-      github: (p) => (isList(p) && p.includes('per_page=40') && p.includes('sha=beta') ? [commit('tip1', 60), commit('older1', 61)] : []),
+      github: (p) => (isList(p) && p.includes('per_page=100') && p.includes('page=1') && p.includes('sha=beta') ? [commit('tip1', 60), commit('older1', 61)] : []),
     });
     await run();
     expect(paths.some(isCompare)).toBe(false);
     expect(status()[60]).toBe('on_beta');
     expect(status()[61]).toBe('on_beta');
     expect(stored.beta).toBe('tip1');
+  });
+
+  it('a reset branch walks past the old 40: a Fixes line 45 commits down still moves its report (FB-83..93, 2026-10-22)', async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => (i === 45 ? commit('deep', 70) : { sha: 'c' + i, commit: { message: 'docs — nothing' } }));
+    const { run, status } = rig({
+      refs: [70],
+      seen: { beta: 'gone-after-reset' },
+      github: (p) => (isList(p) && p.includes('sha=beta') && p.includes('page=1') ? page1 : []),
+    });
+    await run();
+    expect(status()[70]).toBe('on_beta');
   });
 });
