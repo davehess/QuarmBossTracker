@@ -19,7 +19,7 @@ import { displayMobName } from '@/lib/replayBosses';
 import { isZoneShort } from '@/lib/zoneMap/source';
 import { loadWalls } from '@/app/pop/raid/walls';
 import {
-  MIN_NIGHT_MINUTES, MIN_RAIDERS, SESSION_GAP_MS, analyzeNight, averageRoute, routeBasis, centroidSeries,
+  MIN_NIGHT_MINUTES, MIN_RAIDERS, SESSION_GAP_MS, ZONE_EVENTS, analyzeNight, averageRoute, routeBasis, centroidSeries,
   nightPath, type CPoint, type Enc, type NightFlag, type NightTrack, type RouteResult, type SpawnPick,
 } from '@/lib/raidRoutes';
 
@@ -187,7 +187,7 @@ function visitTrack(zone: string, zoneId: number, v: VisitInfo): Promise<NightTr
       const ended = r.ended_at ? Date.parse(r.ended_at) : NaN;
       return [{ id: r.id, npc_id: r.npc_id, name: displayMobName(t?.name) || `npc ${r.npc_id}`, started, ended: Number.isFinite(ended) ? ended : null }];
     });
-    return analyzeNight(v.key, { from: v.from, to: v.to }, series, encs, named);
+    return analyzeNight(v.key, { from: v.from, to: v.to }, series, encs, named, ZONE_EVENTS[zone]);
   });
 }
 

@@ -4,9 +4,11 @@
 // for one night its route is that night's named kills in the order they died (`stops`, with the spawn point or the raid
 // centre they happened at) and the walk between them (`legs`, leg i ends at stop i; leg 0 starts at first engage).
 //
-// MATCHING a kill to a pin: by npc id or by name (a pin is "Tallon Zek (south wing)", the kill is "Tallon Zek"), and when
-// several pins fit, the one NEAREST to where the kill happened, each pin used once, kills taken in the order they died.
+// MATCHING a kill to a pin: by npc id first, then (for kills still without a pin) by name (a pin is "Tallon Zek (south wing)",
+// the kill is "Tallon Zek"), and when several pins fit, the one NEAREST to where the kill happened, each pin used once, kills
+// taken in the order they died. A pin with no kill whose spot the night's path came within FOLLOW_R of is "passed", not "never visited".
 // Only boss / named / scripted pins that carry an npc can be "visited"; the zone-in and the Projections to hail cannot.
+import { FOLLOW_R } from './follow';
 import { allPins, dist, legLength, planLegs, polyLen, type Leg } from './plan';
 import type { Pin, Plan, ZoneLink } from './types';
 
@@ -31,13 +33,14 @@ export function pinNumbers(plan: Plan): Map<string, string> {
   return out;
 }
 
-/** kill index (into actual.stops) -> pin, one pin per kill. */
+/**
+ * kill index (into actual.stops) -> pin, one pin per kill. Two passes: every kill takes a pin of its own npc id first, and only
+ * the kills still without one try by name, so "Tallon Zek" (home) cannot take the "Tallon Zek (event)" pin ahead of the event kill.
+ */
 export function matchKills(plan: Plan, stops: readonly ActualStop[]): Map<number, Pin> {
   const left = allPins(plan).filter(isKillPin);
   const out = new Map<number, Pin>();
-  stops.forEach((s, i) => {
-    const sn = norm(s.name);
-    const cand = left.filter(p => p.npc === s.npc_id || norm(p.label) === sn);
+  const take = (i: number, s: ActualStop, cand: Pin[]) => {
     if (!cand.length) return;
     let best = cand[0];
     if (s.x != null && s.y != null && cand.length > 1) {
@@ -46,8 +49,22 @@ export function matchKills(plan: Plan, stops: readonly ActualStop[]): Map<number
     }
     out.set(i, best);
     left.splice(left.indexOf(best), 1);
-  });
+  };
+  stops.forEach((s, i) => take(i, s, left.filter(p => p.npc === s.npc_id)));
+  stops.forEach((s, i) => { if (!out.has(i)) take(i, s, left.filter(p => norm(p.label) === norm(s.name))); });
   return out;
+}
+
+/** Distance from a point to a polyline (to its one point when it has one, Infinity with none). */
+function distToPath(p: { x: number; y: number }, path: readonly (readonly [number, number])[]): number {
+  let best = Infinity;
+  for (let i = 0; i < path.length; i++) {
+    const [ax, ay] = path[i], [bx, by] = path[Math.min(i + 1, path.length - 1)];
+    const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - ax) * dx + (p.y - ay) * dy) / len2)) : 0;
+    best = Math.min(best, Math.hypot(p.x - (ax + t * dx), p.y - (ay + t * dy)));
+  }
+  return best;
 }
 
 export type LegCompare = {
@@ -64,9 +81,10 @@ export type LegCompare = {
 export type Comparison = {
   label: string;
   actualOrder: { n: number; name: string; pin: string | null }[];
-  plannedOrder: { pin: string; name: string; killed: number | null; optional: boolean }[];   // the kill pins, in plan order
+  plannedOrder: { pin: string; name: string; killed: number | null; passed: boolean; optional: boolean }[];   // the kill pins, in plan order; passed: not killed, but the raid's path came within FOLLOW_R
   legs: LegCompare[];
-  neverVisited: { pin: string; name: string; optional: boolean }[];
+  passed: { pin: string; name: string; optional: boolean }[];          // not killed, the night walked past it
+  neverVisited: { pin: string; name: string; optional: boolean }[];    // not killed and the path never came near
   notInPlan: { n: number; name: string }[];
 };
 
@@ -105,13 +123,18 @@ export function comparePlan(plan: Plan, skipOptional: boolean, actual: Actual, l
     return row;
   });
 
-  const plannedOrder = allPins(plan).filter(isKillPin).map(p => ({ pin: nums.get(p.id) ?? '?', name: p.label, killed: killOf.get(p.id) ?? null, optional: p.optional }));
+  // A pin the night never killed may still have been walked past (upstairs Rallos never dies: he leaps at 50%): "passed", not "never visited".
+  const plannedOrder = allPins(plan).filter(isKillPin).map(p => {
+    const killed = killOf.get(p.id) ?? null;
+    return { pin: nums.get(p.id) ?? '?', name: p.label, killed, passed: killed === null && distToPath(p, actual.path) <= FOLLOW_R, optional: p.optional };
+  });
   return {
     label: actual.label,
     actualOrder: actual.stops.map((s, i) => ({ n: i + 1, name: s.name, pin: match.has(i) ? nums.get((match.get(i) as Pin).id) ?? null : null })),
     plannedOrder,
     legs,
-    neverVisited: plannedOrder.filter(p => p.killed === null).map(p => ({ pin: p.pin, name: p.name, optional: p.optional })),
+    passed: plannedOrder.filter(p => p.passed).map(p => ({ pin: p.pin, name: p.name, optional: p.optional })),
+    neverVisited: plannedOrder.filter(p => p.killed === null && !p.passed).map(p => ({ pin: p.pin, name: p.name, optional: p.optional })),
     notInPlan: actual.stops.flatMap((s, i) => (match.has(i) ? [] : [{ n: i + 1, name: s.name }])),
   };
 }

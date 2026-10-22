@@ -3,7 +3,7 @@
 // The Compare tab: pick a recorded night (the same nights /raid/routes lists for the zone) and lay what that night actually
 // did over the plan. The map gets the night's centre path and its named kills in the order they died; this panel gets the
 // table: planned order against actual order, planned drawn length against the actual path, the time of each leg, which
-// planned kills the night never made and which kills the plan never had.
+// planned kills the night never made (passed = the path went by it, never visited = it did not) and which kills the plan never had.
 //
 // The night comes from GET /api/raid/routes (member-gated, the one /raid/routes uses): ?zones=1 lists the visits, and
 // ?zone=<z>&nights=<visit key> answers for ONE night, whose route is exactly that night's kills and walk.
@@ -120,7 +120,7 @@ export default function ComparePanel(props: {
                 <tr key={a.n}><td>{a.n}. {a.name}</td><td>{a.pin ? '#' + a.pin : <span style={{ color: 'var(--orange)' }}>not in the plan</span>}</td></tr>
               ))}
               {cmp.plannedOrder.filter(p => p.killed === null).map(p => (
-                <tr key={'nv' + p.pin}><td className="muted">{p.name}</td><td><span style={{ color: p.optional ? 'var(--muted)' : 'var(--orange)' }}>#{p.pin} {p.optional ? 'optional, not visited' : 'never visited'}</span></td></tr>
+                <tr key={'nv' + p.pin}><td className="muted">{p.name}</td><td><span style={{ color: p.passed || p.optional ? 'var(--muted)' : 'var(--orange)' }}>#{p.pin} {p.passed ? 'passed' : p.optional ? 'optional, not visited' : 'never visited'}</span></td></tr>
               ))}
             </tbody>
           </table>
@@ -154,6 +154,11 @@ export default function ComparePanel(props: {
           {cmp.notInPlan.length > 0 && (
             <div className="small" style={{ marginTop: 6 }}>
               <b>Killed but not in the plan:</b> {cmp.notInPlan.map(k => `${k.n}. ${k.name}`).join(', ')}
+            </div>
+          )}
+          {cmp.passed.length > 0 && (
+            <div className="small" style={{ marginTop: 4 }}>
+              <b>In the plan, passed (walked by, not killed):</b> {cmp.passed.map(k => `#${k.pin} ${k.name}${k.optional ? ' (optional)' : ''}`).join(', ')}
             </div>
           )}
           {cmp.neverVisited.length > 0 && (
