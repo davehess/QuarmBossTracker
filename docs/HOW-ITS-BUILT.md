@@ -4316,6 +4316,24 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   officers can save a route (`actions.ts`, stored in `bot_kv` as `raid_route:<zone>`, so no migration). Server frame throughout; the page negates axes to draw north up. Test:
   `test/raid-routes.test.js`.
 
+### Route planner (`/raid/plan/routes`, web 2.0.2, 2026-10-22, DRAFT)
+- **Where.** `web/app/raid/plan/routes/` (`page.tsx` server, `RoutePlanner.tsx` client host, `engine.ts` the ported single-file
+  planner, `VersionsPanel.tsx`, `ComparePanel.tsx`, `actions.ts`, `planner.css`) and `web/lib/routePlanner/` (pure: `plan.ts`
+  sanitize/legs/totals/headcount/floors, `build.ts`, `follow.ts`, `store.ts`, `compare.ts`, `toRaidRoute.ts`, `fewest.ts`;
+  server: `load.ts`, `fewestKills.ts`; data: `zones/` and `seeds/`). One static route with `?zone=` and `?plan=`.
+- **Storage.** `bot_kv` `route_plan:<zone>`, version 2: `plans.<id>` = `{ name, night_type: main|off, target_headcount?, current,
+  versions[≤30] }`; the old single-plan row reads as `plans.main`. Saves are officer-only server actions (gate re-checked in each).
+  A new version on "Save version" and at most every 10 minutes of edits (the state the edit replaced); a restore keeps what it replaced.
+- **Build from checklist** lays down the named mobs, the PoP checklist objectives (`popGuide.ts` keys), the scripted event chain
+  and Projections, and the zone's fight-card bosses (`fight_cards`, marked "on the plan", laid down first).
+- **Send to in-game map** writes `raid_route:<zone>` (the key `/raid/routes` saves; the bot's `utils/raidRoute.js` serves it to
+  Mimic's Map); splits flatten into it, a teleport leg carries its two points.
+- **Adding a zone.** A `zones/<zone>.json` (walls by floor, mobs, nights, optional `floors`, `pathers`, `links`, `config`) and a
+  settings `.ts` beside it, registered in `zones/index.ts`. Recorded nights are static for now: making them live is the reduction
+  `raidRoutesLoad.ts` already does over `raid_track_minutes`, written as `nights` instead of an average.
+- **"Fewest raiders so far"**: the shape is `fewest.ts`, the data hook is `fewestKills.ts` (returns `[]` until wired).
+- Tests: `test/route-planner-model.test.js`, `test/route-planner-store.test.js`.
+
 ---
 
 ## Supabase quick map

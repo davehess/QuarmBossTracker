@@ -1,0 +1,187 @@
+/* Route planner (/raid/plan/routes). Ported as it was from the working single-file page; every selector is scoped under
+   .rp-root so none of it reaches the rest of the site, and the colours are the site's own tokens (tailwind.config.ts)
+   plus the few the map needs. Dark only: the site is dark only. */
+.rp-root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c232c; --border:#30363d; --text:#c9d1d9; --muted:#8b949e;
+  --gold:#d29922; --blue:#58a6ff; --green:#56d364; --red:#f85149; --orange:#ffa657; --purple:#a371f7;
+  --map-bg:#0a0e13; --grid:#161c24; --halo:#0a0e13; --input:#0d1117; --hover:#222a35;
+  --wall-pit:#a8793a; --wall-mid:#6b788c; --wall-up:#8fb4d9;
+  --shadow:0 6px 24px rgba(0,0,0,.45);
+  color-scheme:dark;
+  color:var(--text);
+  font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--bg);
+}
+.rp-root *{box-sizing:border-box}
+.rp-root button,
+.rp-root input,
+.rp-root select,
+.rp-root textarea{font:inherit;color:inherit}
+.rp-root button{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;cursor:pointer;line-height:1.2}
+.rp-root button:hover{background:var(--hover)}
+.rp-root button:focus-visible,
+.rp-root input:focus-visible,
+.rp-root select:focus-visible,
+.rp-root summary:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.rp-root button.primary{background:var(--gold);color:#111;border-color:var(--gold);font-weight:600}
+.rp-root button.primary:hover{filter:brightness(1.08)}
+.rp-root button.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.rp-root button.danger:hover{background:var(--red);color:#fff;border-color:var(--red)}
+.rp-root button.sm{padding:2px 7px;font-size:12px}
+.rp-root button:disabled{opacity:.45;cursor:not-allowed}
+.rp-root input[type=text],
+.rp-root input[type=number],
+.rp-root select,
+.rp-root textarea{background:var(--input);border:1px solid var(--border);border-radius:6px;padding:4px 7px}
+.rp-root a{color:var(--blue)}
+.rp-root #app{display:grid;grid-template-columns:372px 1fr;height:calc(100vh - 11rem);height:calc(100dvh - 11rem);min-height:620px}
+.rp-root #side{min-width:0;display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--border);min-height:0}
+.rp-root #head{padding:10px 12px 8px;border-bottom:1px solid var(--border)}
+.rp-root #head h1{font-size:16px;margin:0 0 2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rp-root #head .sub{color:var(--muted);font-size:12px}
+.rp-root #status{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--muted);border:1px solid var(--border);border-radius:99px;padding:1px 9px}
+.rp-root #status i{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
+.rp-root #status.ok i{background:var(--green)}
+.rp-root #status.busy i{background:var(--gold)}
+.rp-root #status.local i{background:var(--orange)}
+.rp-root #status.err i{background:var(--red)}
+.rp-root #tabs{display:flex;border-bottom:1px solid var(--border);background:var(--panel)}
+.rp-root #tabs button{flex:1;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:8px 4px;color:var(--muted)}
+.rp-root #tabs button.on{color:var(--text);border-bottom-color:var(--gold);font-weight:600}
+.rp-root #panes{flex:1;overflow:auto;min-height:0;padding:10px 12px 16px}
+.rp-root .pane{display:none}
+.rp-root .pane.on{display:block}
+.rp-root .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.rp-root .muted{color:var(--muted)}
+.rp-root .small{font-size:12px}
+.rp-root .card{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin:8px 0}
+.rp-root .card h3{margin:0 0 4px;font-size:13px}
+.rp-root .pin{border:1px solid var(--border);border-radius:8px;background:var(--panel2);margin:6px 0;padding:6px 7px}
+.rp-root .pin.sel{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+.rp-root .pin.dragover{border-top:3px solid var(--blue)}
+.rp-root .pin .top{display:flex;align-items:center;gap:5px}
+.rp-root .pin .num{min-width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:#fff;flex:none}
+.rp-root .pin .num.opt{background:transparent !important;border:2px dashed currentColor}
+.rp-root .pin input.lbl{flex:1;min-width:0}
+.rp-root .pin .handle{cursor:grab;color:var(--muted);user-select:none;padding:0 2px}
+.rp-root .pin .meta{margin:4px 0 0 27px;font-size:12px;color:var(--muted)}
+.rp-root .pin .meta label{display:inline-flex;gap:4px;align-items:center;color:var(--text)}
+.rp-root .badge{display:inline-block;border-radius:99px;padding:0 7px;font-size:11px;font-weight:600;border:1px solid currentColor;line-height:17px}
+.rp-root .b-scripted{color:var(--purple)}
+.rp-root .b-boss{color:var(--red)}
+.rp-root .b-named{color:var(--orange)}
+.rp-root .b-objective{color:var(--green)}
+.rp-root .b-door{color:var(--blue)}
+.rp-root .b-note{color:var(--muted)}
+.rp-root .leg{border-bottom:1px solid var(--border);padding:7px 0}
+.rp-root .leg:last-child{border-bottom:0}
+.rp-root .leg .t{font-weight:600}
+.rp-root .leg.off{opacity:.55}
+.rp-root .kv{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:12px;margin:4px 0}
+.rp-root .kv b{color:var(--muted);font-weight:500}
+.rp-root .chk{display:flex;gap:6px;align-items:center;margin:4px 0}
+.rp-root #legend .row{flex-wrap:nowrap;margin:2px 0}
+.rp-root #legend .dot{flex:none}
+.rp-root .swatch{width:22px;height:4px;border-radius:2px;display:inline-block}
+.rp-root .listrow{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border)}
+.rp-root .listrow .nm{flex:1;min-width:0}
+.rp-root .dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
+.rp-root #mapwrap{position:relative;min-width:0;min-height:0;background:var(--map-bg);overflow:hidden}
+.rp-root svg#map{width:100%;height:100%;display:block;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+.rp-root svg#map.addpin{cursor:crosshair}
+.rp-root svg#map.panning{cursor:grabbing}
+.rp-root .toolbar{position:absolute;left:10px;top:10px;display:flex;gap:6px;flex-wrap:wrap;max-width:calc(100% - 180px);z-index:3}
+.rp-root .toolbar .grp{display:flex;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:var(--shadow)}
+.rp-root .toolbar .grp button{border:0;border-radius:0;background:none}
+.rp-root .toolbar .grp button.active{background:var(--blue)}
+.rp-root .toolbar select{background:var(--panel);box-shadow:var(--shadow)}
+.rp-root .zoombar{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:6px;z-index:3;align-items:stretch}
+.rp-root .zoombar .grp{display:flex;background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:var(--shadow)}
+.rp-root .zoombar button{border:0;border-radius:0;background:none}
+.rp-root .banner{position:absolute;left:50%;top:54px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--gold);color:var(--text);border-radius:8px;padding:6px 12px;font-size:13px;z-index:4;box-shadow:var(--shadow);display:none;max-width:90%;text-align:center}
+.rp-root .banner.on{display:block}
+.rp-root #loc{position:absolute;left:10px;bottom:10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:3px 9px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;z-index:3;box-shadow:var(--shadow)}
+.rp-root #scale{position:absolute;right:12px;bottom:12px;z-index:3;font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.rp-root #scale i{display:block;height:6px;border:2px solid var(--muted);border-top:0}
+.rp-root #toast{position:absolute;left:50%;bottom:48px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:7px 14px;z-index:6;box-shadow:var(--shadow);display:none;max-width:90%}
+.rp-root #toast.on{display:block}
+.rp-root #pop{position:absolute;z-index:5;width:310px;max-width:calc(100% - 20px);background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow);display:none;max-height:70%;overflow:auto}
+.rp-root #pop.on{display:block}
+.rp-root #pop h4{margin:0 0 4px;font-size:14px;padding-right:22px}
+.rp-root #pop .x{position:absolute;right:6px;top:6px;border:0;background:none;font-size:16px;padding:0 6px}
+.rp-root #pop .trig{background:var(--panel2);border-left:3px solid var(--purple);border-radius:4px;padding:6px 8px;margin:6px 0;font-size:12.5px}
+.rp-root #pop .links a{display:block;font-size:12.5px;margin:2px 0}
+.rp-root dialog,
+.rp-root .modal{border:1px solid var(--border);background:var(--panel);color:var(--text);border-radius:10px;padding:14px;max-width:640px;width:92%}
+.rp-root .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:20;display:none;align-items:center;justify-content:center}
+.rp-root .modal-bg.on{display:flex}
+.rp-root .modal textarea{width:100%;height:320px;font:12px ui-monospace,Menlo,monospace}
+.rp-root details.help{margin:0 0 8px}
+.rp-root details.help summary{cursor:pointer;font-weight:600}
+.rp-root details.help ul{margin:6px 0 0;padding-left:18px}
+.rp-root details.help li{margin:3px 0}
+.rp-root .lbl-t{font:600 12px system-ui,sans-serif;paint-order:stroke;stroke:var(--halo);stroke-width:3.5px;stroke-linejoin:round;pointer-events:none}
+.rp-root .lbl-t.t2{display:var(--t2,none)}
+.rp-root .lbl-t.t3{display:var(--t3,none)}
+.rp-root .pinnum{font:700 11px system-ui,sans-serif;pointer-events:none;fill:#fff}
+@media (max-width:480px){
+.rp-root #tabs button{font-size:12px;padding:8px 0}
+}
+@media (max-width:820px){
+.rp-root #app{grid-template-columns:minmax(0,1fr);grid-template-rows:56vh auto;height:auto;min-height:0}
+.rp-root #mapwrap{order:1}
+.rp-root #side{order:2;border-right:0;border-top:1px solid var(--border)}
+.rp-root #panes{overflow:visible}
+.rp-root .toolbar{max-width:calc(100% - 20px);top:6px;left:6px}
+.rp-root .zoombar{top:auto;bottom:34px;flex-direction:row;flex-wrap:wrap;justify-content:flex-end;left:6px;right:6px}
+.rp-root .zoombar .grp{flex:none}
+.rp-root #panes{padding:10px 16px 16px}
+.rp-root #head{padding:10px 16px 8px}
+}
+@media print{
+.rp-root #side{display:none}
+}
+
+/* Tailwind's preflight strips what the page relied on the browser for */
+.rp-root h1,.rp-root h3,.rp-root h4{font-weight:700}
+.rp-root details.help ul{list-style:disc}
+.rp-root ul{margin:0}
+.rp-root code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}
+.rp-root input[type=checkbox]{accent-color:var(--blue)}
+.rp-root a:hover{text-decoration:underline}
+
+/* the pieces the site adds around the ported page: a read-only note, the saved-versions panel, the preview bar */
+.rp-root .hostbar{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.rp-root .ver{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)}
+.rp-root .ver:last-child{border-bottom:0}
+.rp-root .ver .nm{flex:1;min-width:0}
+.rp-root .ver.on{background:var(--panel2);box-shadow:inset 3px 0 0 var(--gold);padding-left:8px}
+.rp-root .previewbar{position:absolute;left:50%;top:54px;transform:translateX(-50%);z-index:5;display:none;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--blue);border-radius:8px;padding:6px 12px;font-size:13px;box-shadow:var(--shadow);max-width:92%}
+.rp-root .previewbar.on{display:flex}
+.rp-root .badge.b-plan{color:var(--gold)}
+.rp-root .confirm{border-color:var(--gold)}
+
+/* splits: the card in the pin list, and the side-by-side branches in the leg table */
+.rp-root .split{border:1px dashed var(--border);border-radius:8px;margin:6px 0 6px 14px;padding:6px 8px;background:var(--panel)}
+.rp-root .split-h{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;font-size:12px}
+.rp-root .split-act{display:inline-flex;gap:4px}
+.rp-root .branch{border-left:4px solid var(--border);margin:6px 0 0;padding:2px 0 2px 8px}
+.rp-root .branch-h{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rp-root .branch-h .blabel{flex:1;min-width:90px}
+.rp-root .branch .pin{margin:5px 0}
+.rp-root .splitblock{border:1px solid var(--border);border-radius:8px;margin:8px 0;padding:6px 8px;background:var(--panel2)}
+.rp-root .splitblock .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:6px}
+.rp-root .splitblock .col{border-top:3px solid var(--border);padding-top:4px;min-width:0}
+.rp-root .splitblock .leg.compact{padding:5px 0;font-size:12px}
+.rp-root .splitblock .leg.compact .t{font-size:12px;overflow-wrap:anywhere}
+.rp-root .leg.optleg .t{font-style:italic}
+.rp-root .fewest{color:var(--blue);font-size:12px}
+.rp-root #pop .fewest{margin:4px 0}
+.rp-root #tabs button{padding:8px 2px;font-size:13px}
+.rp-root .pin .meta input[type=number]{width:60px}
+
+/* the Compare tab */
+.rp-root .cmp-table{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0}
+.rp-root .cmp-table th{text-align:left;color:var(--muted);font-weight:500;padding:3px 4px;border-bottom:1px solid var(--border)}
+.rp-root .cmp-table td{padding:4px;border-bottom:1px solid var(--border);vertical-align:top}
+.rp-root .cmp-table tr.opt td{font-style:italic;opacity:.8}

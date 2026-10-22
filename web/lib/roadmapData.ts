@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'route-planner-2026-10-22',
+    title: 'Route planner',
+    version: 'Web 2.0.2',
+    date: '2026-10-22',
+    headline: 'A route planner on the raid planner: draw the raid\'s route on the zone map, keep old versions, and lay a recorded night over it.',
+    features: [
+      { name: 'Route planner', blurb: 'Drop pins for the named mobs and checklist objectives, bend the route around walls, snap it to the paths we recorded, and see the length and recorded time of every leg. Officers edit; everyone sees it update live. It is marked [beta] while it settles.' },
+      { name: 'See previous', blurb: 'The plan saves by itself and keeps its past versions. View an old one on the map, or restore it.' },
+      { name: 'Planned against actual', blurb: 'Pick a recorded night and it is drawn over the plan, with a table of the order, the length and the time of each leg, what the plan had that night never killed, and what was killed that the plan did not have.' },
+      { name: 'Splits and off nights', blurb: 'Send part of the raid up a different branch and regroup, with how many raiders each team needs. Off-night plans have a target headcount: how few raiders can do it.' },
+      { name: 'Send to the in-game map', blurb: 'An officer can send the plan to the Map overlay in Mimic.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'platform-3-0-2026-10-21',
     title: 'Version 3.0',
     version: 'Web 2.0.0 · Bot 4.0.0 · Agent 4.0.0 · Mimic 3.0.0',
