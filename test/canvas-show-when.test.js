@@ -104,7 +104,7 @@ describe('the rules, against fake signals', () => {
 describe('fail open: a signal the agent cannot answer leaves the piece visible', () => {
   const E = engine();
   const sig = (m, s) => E.whenSignals(m, s, NOW);
-  const every = [{ when: 'combat' }, { when: 'nocombat' }, { when: 'target' }, { when: 'npc' }, { when: 'raid' }, { cls: ['Cleric'] },
+  const every = [{ when: 'combat' }, { when: 'nocombat' }, { when: 'target' }, { when: 'npc' }, { when: 'raid' }, { when: 'charming' }, { cls: ['Cleric'] },
     { when: 'combat', cls: ['Cleric'] }];
 
   it('no data at all (agent down, stale, not asked yet)', () => {
@@ -116,11 +116,11 @@ describe('fail open: a signal the agent cannot answer leaves the piece visible',
   it('an older agent that answers without the field: shows, and says which one is missing', () => {
     const old = { ok: true, character: 'Aldenmar' };
     const s = sig(old, {});
-    expect(s.miss).toEqual({ combat: true, target: true, npc: true, cls: true, raid: true });
+    expect(s.miss).toEqual({ combat: true, target: true, npc: true, cls: true, raid: true, charming: true });
     for (const p of every) expect(E.whenHolds(p, s), JSON.stringify(p)).toBe(true);
   });
   it('a newer agent misses nothing', () => {
-    expect(sig(me(), raid()).miss).toEqual({});
+    expect(sig(me(), { ...raid(), charmSession: { charming: false } }).miss).toEqual({});
   });
   it('a class not yet known (null) is not "missing", and shows', () => {
     const s = sig(me({ class: null }), null);

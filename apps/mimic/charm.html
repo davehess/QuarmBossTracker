@@ -147,6 +147,9 @@
   body.setup #wrap{margin-top:26px}
   #setupbar input[type=range]{flex:1;cursor:pointer}
   #setupbar input[type=number]{width:48px}
+  /* Show: When charming, between charming sessions — nothing drawn (the window stays up, click-through, and keeps
+     polling so the next charm brings it back). Setup and unlock show it, so it can be arranged. */
+  body.wp-idle #wrap, body.wp-idle #move-btn, body.wp-idle #hide-btn{display:none !important}
   /* ✕ hide button — top-right. Works when locked via hover-interact. */
   #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
     display:flex;align-items:center;justify-content:center;border-radius:4px;
@@ -207,6 +210,8 @@
   <div id="setupbar">
     <span>🛠 Charm</span>
     <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <span data-wp-opt style="display:contents"><span title="When charming: the tracker appears when you charm and stays between charms (10 minutes after the last one); its ✕ then dismisses it until you charm again">· show</span>
+    <select id="showWhen"><option value="always">Always</option><option value="charming">When charming</option></select></span>
     <span data-wp-opt style="display:contents"><span>· recharm warn at</span><input id="warnAt" type="number" min="0" max="600" step="1" value="0" /><span>s (0=off)</span></span>
     <button id="exitSetupBtn">Done</button>
   </div>
@@ -236,7 +241,11 @@
   if (hideBtn) {
     hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
-    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+    // Show: When charming → the ✕ DISMISSES (hidden until the next charm lands); otherwise it hides the overlay.
+    hideBtn.addEventListener('click', function(){
+      if (showWhen === 'charming') { dismissCharming(); return; }
+      try { window.mimic.hideThisOverlay(); } catch (e) {}
+    });
   }
 
   // Manual drag (same Chromium transparent-window workaround as the others).
@@ -288,6 +297,45 @@
   var warnAtEl = document.getElementById('warnAt');
   try { var saved = localStorage.getItem('wpCharmWarnAt'); if (saved != null && warnAtEl) warnAtEl.value = saved; } catch (e) {}
   if (warnAtEl) warnAtEl.addEventListener('change', function(){ try { localStorage.setItem('wpCharmWarnAt', warnAtEl.value || '0'); } catch (e) {} });
+
+  // ── Show: Always | When charming (the guild lead, 2026-10-22) ──
+  // The agent answers on /api/state as `charmSession` { charming } (_charmSessionStep): true from the moment a
+  // charm lands, through the gaps between charms, until 10 minutes after the last one with no new one, or until
+  // a dismissal, which holds until the next charm. This page only draws it: between sessions the card is
+  // hidden (body.wp-idle) while the window keeps polling, so the next charm — and the break callouts — are not
+  // missed. Setup and unlock show it; an agent that does not send `charmSession` leaves it shown. On the Timers
+  // canvas this page option works the same way (it is in the panel's Page options), but the dismiss button
+  // belongs to a Charm piece's own "When charming" rule, not to this page.
+  var showWhen = 'always', lastActiveChar = null;
+  try { if (localStorage.getItem('wpCharmShowWhen') === 'charming') showWhen = 'charming'; } catch (e) {}
+  // @charmIdle
+  function charmIdle(mode, arranging, st) {
+    if (mode !== 'charming' || arranging) return false;
+    var cs = st && st.charmSession;
+    return !!(cs && cs.charming === false);
+  }
+  // @end charmIdle
+  function applyIdle(st) {
+    var b = document.body, cl = b.classList;
+    cl.toggle('wp-idle', charmIdle(showWhen, cl.contains('unlocked') || cl.contains('setup'), st));
+    if (hideBtn) hideBtn.title = showWhen === 'charming' ? 'Dismiss the charm tracker until you charm again' : 'Hide the charm tracker (turn back on from the tray → Overlays)';
+  }
+  function dismissCharming() {
+    document.body.classList.add('wp-idle');
+    fetch('http://127.0.0.1:' + PORT + '/api/charm-session/dismiss', {
+      method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character: lastActiveChar })
+    }).catch(function(){}).then(function(){ tick(); });
+  }
+  var showWhenEl = document.getElementById('showWhen');
+  if (showWhenEl) {
+    showWhenEl.value = showWhen;
+    showWhenEl.addEventListener('change', function(){
+      showWhen = showWhenEl.value === 'charming' ? 'charming' : 'always';
+      try { localStorage.setItem('wpCharmShowWhen', showWhen); } catch (e) {}
+      tick();
+    });
+  }
 
   function _wpMutedNow(){ try { return !!(window.mimic && window.mimic.isMuted && window.mimic.isMuted()); } catch (e) { return false; } }
   // "What you hear" (the guild lead, 2026-10-12): this overlay speaks its own lines, so speak() reads
@@ -583,6 +631,8 @@
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
       const s = await r.json();
       _ruleModes = (s && s.builtinRuleModes) || {};
+      lastActiveChar = (s && s.activeCharacter) || null;
+      applyIdle(s);
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
       const now = Date.now();

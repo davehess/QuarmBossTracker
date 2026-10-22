@@ -1283,6 +1283,16 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   level; `rankCharmPets`; local `GET /api/charm-best`; disk cache `charm-pets-cache/`); bot `utils/charmPets.js` +
   `GET /api/agent/charm-pets?zone=` (spell-independent candidates per zone, 6 h cache, ETag). 404 → section hidden; local mode makes no
   call. Tests: `test/charm-pets.test.js`, `test/charm-pets-agent.test.js`.
+- **Charm overlay "Show: When charming"** (agent 4.0.6 · Mimic beta, 2026-10-22): one state machine in the agent
+  (`_charmSessionStep` / `_charmSessionNow` / `_charmSessionDismiss`, just above `_reconcileGaugeCharms`), served as
+  `charmSession` `{ charming, active, since, hold_ms, ends_at }` on `/api/state`; `POST /api/charm-session/dismiss` `{ character }`.
+  `charming` = a charm of yours is up, or the last one was seen up / broke under `CHARM_SESSION_HOLD_MS` (10 min) ago; a dismissal
+  holds until a charm with a later `started_at` lands (a recharm counts). Per character, own charms only. Two readers: the Charm
+  window (`charm.html` setup bar → Show: Always | When charming, `localStorage` `wpCharmShowWhen`; `charmIdle` puts `body.wp-idle`,
+  which blanks the card but keeps the window polling and the break callouts speaking; its ✕ dismisses in this mode; setup and unlock
+  never idle it; shared with a setup bundle as `showWhen`, and it is a "Page option" on the Canvas, where the dismiss comes from the
+  piece's rule instead) and a Canvas piece's Show-when rule `charming` (see the Show-when paragraph below; a `.dsmbtn` ✕ on
+  the hover handshake dismisses). Test: `test/charm-when-charming.test.js`.
 - **PoP missing spells, my characters** (live, web 1.8.158; built 1.8.156, §307): `web/lib/popMissingSpells.ts` (`pqdiSpellUrl`, copy-line builder,
   one-line description from `eqemu_spells`) + `web/app/pop/MissingSpells.tsx` (closed `<details>`, `CopyChip`). Data: `pop_spell_needs`
   plus one chunked `eqemu_spells` lookup. Test: `test/pop-missing-spells.test.js`.
@@ -1485,6 +1495,11 @@ stays visible), `class`; `/api/state.raidPipe` within `RAID_FRESH_MS` 60 s. `COM
 A missing field fails open ("needs a newer agent" in the ⚙ menu). ⚠ A raid-only piece stays hidden without Zeal
 raid data (the agent cannot tell "no Zeal" from "no raid"); an agent `raid_active` / `target.is_npc` would firm
 both up. Menu row + class picker per piece; the selection bar applies to many. Test `test/canvas-show-when.test.js`.
+**`charming` rule (agent 4.0.6, 2026-10-22):** reads `/api/state.charmSession.charming` (the agent holds the session and the
+dismissal; a missing field fails open). A piece with the rule also draws a small ✕ (`.dsmbtn`, hover handshake, not while
+arranging) that POSTs `/api/charm-session/dismiss`. The portable layout format (`apps/mimic/portableLayout.js` `WHEN`) knows the
+word; the bot's read-half copy `utils/portableLayout.js` must be re-copied on `main` (`test/gallery-portable.test.js` goes red until it is).
+Test `test/charm-when-charming.test.js`.
 **A hotkey per saved Canvas group (alpha, 2026-10-07, DECISIONS §180):** "a Canvas group" is a SAVED group (★ Groups →
 My groups, `cfg.canvasGroups`). Pieces placed from it, or saved as it, are marked in the layout (`layout.named`: the
 live `grp` they share → the saved group's id; `sanitize` keeps only marks that still have pieces).
@@ -4851,6 +4866,14 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   target), all fed by one live-tail hook, `_meNoteRawLine`. `no_mana` for
   WAR/ROG/MNK. Tests: `test/me-hud-timers.test.js`. Swing-timer upstream ask:
   `docs/zeal-attack-timer-pipe-request.md`. `DECISIONS-2026-09-21.md` §13.
+  **Disc and Shield (agent 4.0.6, 2026-10-22):** the discipline cooldown is ONE row (`key: 'disc'`) labelled **"Disc"**, and
+  **"Disc: <name>"** only while it counts down (`_meDiscLabel`, `_meDisc`): the server keeps one reuse timer per character for
+  every discipline (EQMacEmu `Combat:UseDiscTimerGroups` defaults false, `Client::GetDiscTimerID` returns 0). The warrior's
+  **Shield** is its own row (`_ME_SKILL_LINES` `shield`, 180 s; in the warrior's `_ME_CLASS_CDS`), started by "`<x>` begins to
+  use `<you>` as a living shield!" (`_meNoteShield`: only when the warrior named is you), with `active_ms_left` / `active_total_ms`
+  = 12 s on the row while it is up, ended early by "`<you>` ceases protecting `<x>`.", and set exactly by the refusal "You can
+  use the ability /shield again in …" (`_meNoteAaRefusal`). Shown by `me.cooldowns` / `me.cd_shield` / `me.cd_disc` (`parts.js`)
+  and the HUD (`me.html`). Tests: `test/me-hud-timers.test.js`, `test/hud-disc-shield-parts.test.js`.
   **Round two (agent 3.7.6):** shown as "HUD" everywhere (key still `me`).
   `_ME_CLASS_CDS` lists each class's cooldowns up front (`seen: false` until
   used); `_ME_SKILL_LINES` adds Feign Death (failure line only) and Lay on
