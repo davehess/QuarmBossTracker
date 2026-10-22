@@ -82,7 +82,7 @@ describe('B: one choice for a whole group', () => {
     bulkSet(ps, bulkPatch('back', '0')); expect(ps.map(p => p.back)).toEqual([false, false, false]);
     const ids = bulkModes(ps).map(m => m[0]);
     expect(ids).toEqual(expect.arrayContaining(['bar', 'thin', 'vbar']));
-    expect(ids).not.toContain('seg');                       // a Ring arc needs the ring around it
+    expect(ids).toContain('seg');                           // Ring arc is on offer for a whole group (laid out as a ring, canvas-pieces-fixes.test.js)
     expect(bulkSet(ps, {})).toEqual({ changed: 3, skipped: 0 });
   });
 });

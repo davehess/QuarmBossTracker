@@ -1457,6 +1457,13 @@ Tests `test/canvas-pieces.test.js`, `test/timers-canvas.test.js`. Alpha only.
   `data-bulksel` selects (Show as / Thickness / Backing) and the GROUP section's `data-bulk` buttons
   (`bulkMenuHtml`). A mode a piece cannot be drawn in is skipped and counted; reflow (row for `vbar`, column for
   `bar` / `thin`) only when every piece changed.
+- **Pieces fixes (beta, 2026-10-22):** a piece's own look is `nolabel` / `thick` / `align` / `rot` / `color` on the
+  panel, read by `WpParts.render` (parts.js). `segWidth` (Ring arc stroke by Thin/Thick), `segAnchor` (label at the
+  start / middle / end of its arc), `segTurn` (which way round the circle a label reads) and `alignOf` (an unset
+  align is Center for a Ring arc, upright bar, badge and dials, Left for the rest; `l` is an explicit Left) are the
+  pure parts. `bulkSet(ps, { mode: 'seg' })` calls `bulkRing`, which keeps each piece's arc (`ringArcs(n)` gives
+  the ones without) and places the boxes with `ringBoxes`. Whole group also carries Left/Center/Right and the label
+  turn. `main.js` `_layoutOfSet` exports an `l` as the default, because `portableLayout.js` refuses it.
 - **Saved groups:** `groupPartsOf`, `putGroups`, `uniqueGroupName` (case-folded; `/pipe mimic group`, the tray and
   the dashboard find a group by name), `saveSelectionAsGroup` (new group beside an existing one, never over it),
   `updateSavedGroup` (selbar 💾 Update), `duplicateGroup` (⧉), `renameGroup` (✎, inline). Stored in

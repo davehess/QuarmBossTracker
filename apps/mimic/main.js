@@ -3405,7 +3405,10 @@ function _layoutOfSet(set) {
   const homeSig = _canvasScreenSig(d);
   const panels = Array.isArray(all[key].panels) ? all[key].panels : [];
   const kept = panels.filter(p => !(p && typeof p.scr === 'string' && p.scr !== homeSig));
-  const layout = kept.length === panels.length ? all[key] : Object.assign({}, all[key], { panels: kept });
+  // The file format has no explicit Left (portableLayout.js reads 'c' / 'r' only, and refuses any other value), so a
+  // piece that says it comes out as the plain default; a label turned with `rot` is not in the format either.
+  const noLeft = kept.map(p => (p && p.align === 'l') ? Object.assign({}, p, { align: '' }) : p);
+  const layout = (kept.length === panels.length && !noLeft.some((p, i) => p !== kept[i])) ? all[key] : Object.assign({}, all[key], { panels: noLeft });
   return { layout, screen: { width: +m[1], height: +m[2] }, eq, offScreen: panels.length - kept.length };
 }
 // opts: { setName? (a saved set; none = the screen as it is now), title?, description?, author?, mode? }
