@@ -21413,8 +21413,17 @@ async function _feedbackFreshCommits(branch, seen) {
     }
     if (gained) return { fresh: gained, head: gained.length ? gained[gained.length - 1].sha : null };
   }
-  const commits = await _githubJson(`${repo}/commits?sha=${branch}&per_page=40`);
-  if (!Array.isArray(commits) || !commits.length) return { fresh: [], head: null };
+  // The walk reads up to 500 (five pages), not the newest 40, stopping at `seen`: a reset beta took 40+ commits in two days
+  // and the old 40 skipped every "Fixes FB-n" below them for good (FB-83..93 stayed acked, found 2026-10-22). A re-read is
+  // harmless, since a report only moves forward.
+  const commits = [];
+  for (let page = 1; page <= 5; page++) {
+    const batch = await _githubJson(`${repo}/commits?sha=${branch}&per_page=100&page=${page}`);
+    if (!Array.isArray(batch) || !batch.length) break;
+    commits.push(...batch);
+    if (batch.length < 100 || (seen && batch.some(c => c.sha === seen))) break;
+  }
+  if (!commits.length) return { fresh: [], head: null };
   const fresh = [];
   for (const c of commits) { if (c.sha === seen) break; fresh.push(c); }
   return { fresh: fresh.reverse(), head: commits[0].sha };
