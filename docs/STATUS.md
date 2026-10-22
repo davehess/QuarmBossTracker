@@ -155,6 +155,13 @@ next touch one rather than assuming a missing row means a missing doc.
   nights that ran it (none: walked, else straight), **Use recorded routes** bakes them (officers); the 3D views draw those legs,
   the Compare night in white with its kills numbered, and optionally the ticked nights, draped on the floor mesh (`c`) or kept
   on the pins' floors (`b`). **Open: rides on the b-or-c pick; the 3D height of a recorded path is a draped guess, never recorded.**
+  **Compare counts the Rallos event (web 2.0.12, draft on `draft/compare-event`, beta, 2026-10-22):** the guild lead: "that shows we
+  never visited the war room". `encounters` stores event Tallon/Vallon under the HOME ids, so Compare dropped both (first kill per npc)
+  and listed the event pins and upstairs Rallos as never visited. A home-id kill whose raid centre is in the War Room box is now
+  214313 / 214320 ("(event)", `ZONE_EVENTS` in `lib/raidRoutes.ts`), the event brother keeps his last row, matching tries the npc id
+  before the name, and a pin the path came within `FOLLOW_R` of reads "passed" (upstairs Rallos never dies). **Open: the bot still
+  stores event kills under the home ids and still stamps the home brothers' 66 h board timers from an event kill (bot 4.0.5 on
+  `draft/hail-warroom` fixes only the hail window); the box test is 2D (the pit shares the War Room's x/y).**
 - **⏳ Flag lab: an officer sandbox for the PoP flags and the hail board (web 1.9.2, DRAFT on `claude/flag-lab`, not
   pushed, 2026-10-18).** `/admin/flag-lab` (new route, `[beta]` tag, officer only, **off unless `FLAG_LAB=1`**, which the
   officer sets in Vercel's Preview environment only). Fake members with presets and per-flag source ticks (Mimic /

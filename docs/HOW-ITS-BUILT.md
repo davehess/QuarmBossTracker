@@ -4368,6 +4368,10 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   no height, so `drape.ts` puts them on the floors by continuity (the hit nearest the previous sample's height, starting at the
   leg's first pin; `c` over the floor mesh's triangle grid, `b` and `c` before the floors load over the pins' own floors); the
   Compare night draws white with numbered kills, and a 3D "Recorded nights" layer draws the nights ticked in Layers.
+  - **Compare (web 2.0.12).** `compare.ts` `matchKills` takes a pin of the kill's npc id first, names only for what is left;
+    `comparePlan` marks a pin with no kill "passed" when `Actual.path` came within `FOLLOW_R`, else "never visited". The Actual
+    itself comes from `raidRoutes.ts` `analyzeNight`: `ZONE_EVENTS[zone]` re-keys a home-id kill whose raid centre (at its end) is
+    in the zone's event box to the event npc (Plane of Tactics: Tallon 214026 → 214313, Vallon 214316 → 214320), keeping the last row.
   - **Drag a pin (web 2.0.8).** Officers only (`officer && !previewing` from the host; the engine's `movePin(id, x, y, z)` checks
     `editable()` again and does what finishing a 2D pin drag does, plus z). The press is taken in the capture phase on the host
     so OrbitControls never starts (and is disabled until release); under 4 px it is still a click. While dragging, the pointer
