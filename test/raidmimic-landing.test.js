@@ -152,9 +152,10 @@ describe('the page', () => {
   });
   it('renders the tour by default; the only switch is the ?v=b "Output first" PREVIEW, never on a raidmimic host', () => {
     expect(page).toMatch(/return <TourLayout ctx=\{ctx\} \/>;/);
-    expect(page).toMatch(/if \(!onHost && searchParams\?\.v === 'b'\) return <OutputLayout ctx=\{ctx\} \/>;/);
-    expect(page).not.toMatch(/searchParams\?\.v === 'c'|hero=/);   // the howl hero and its ?v=c are gone
-    expect((page.match(/searchParams/g) || []).length).toBe(3);   // the prop's name, its type and the one read (b)
+    expect(page).toMatch(/const v = searchParams\?\.v;/);   // read once; the clip previews d/e/f share it
+    expect(page).toMatch(/if \(!onHost && v === 'b'\) return <OutputLayout ctx=\{ctx\} \/>;/);
+    expect(page).not.toMatch(/v === 'c'|hero=/);   // the howl hero and its ?v=c are gone
+    expect((page.match(/searchParams/g) || []).length).toBe(3);   // the prop's name, its type and the one read
     expect(page).not.toMatch(/raidmimicVariant|PitchLayout/);
     expect(fs.existsSync(path.join(ROOT, L + 'PitchLayout.tsx'))).toBe(false);
     expect(C).not.toHaveProperty('raidmimicVariant');
@@ -549,5 +550,107 @@ describe('the mascot hero preview', () => {
     expect(code(L + 'TourLayout.tsx')).not.toMatch(/MascotHero|MascotVideo/);
     expect(code(L + 'OutputLayout.tsx')).toMatch(/<MascotHero \/>/);
     expect(code(L + 'OutputLayout.tsx')).not.toMatch(/hero\b.*(howl|layered)|variant=/);
+  });
+});
+
+// ─── The overlay-clip previews (?v=d Scene-first, ?v=e Raid-night story, ?v=f Your screen), 2026-10-22 ─────────
+// Three looping recordings of the real overlays. The files are made by another process, so the size checks run only
+// when a file is on disk; everything else is source-text.
+describe('the overlay-clip previews (?v=d, ?v=e, ?v=f)', () => {
+  const LAYOUTS = ['WatchLayout.tsx', 'StoryLayout.tsx', 'ScreenLayout.tsx'];
+  const CLIP_DIR = path.join(ROOT, 'web/public/raidmimic/clips');
+  const scene = code(L + 'SceneClip.tsx');
+
+  it('each layout exists, is a server component, and has no address, form, fetch or mailto', () => {
+    for (const f of LAYOUTS) {
+      expect(fs.existsSync(path.join(ROOT, L + f)), f).toBe(true);
+      expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
+      expect(code(L + f), f).not.toMatch(/https?:\/\/|<form\b|fetch\(|mailto:|action=/);
+      expect(code(L + f), f).toMatch(/<BetaTag/);
+      expect(code(L + f), f).toMatch(/<CtaBand/);
+      expect(code(L + f), f).toMatch(/<Footer/);
+    }
+  });
+
+  it('each layout draws its clips from the content module (CLIPS), never from a file name of its own', () => {
+    for (const f of LAYOUTS) {
+      const src = code(L + f);
+      expect(src, f).toMatch(/\bCLIPS\b/);
+      expect(src, f).not.toMatch(/\.mp4|-poster|\/raidmimic\/clips/);
+    }
+  });
+
+  it('page.tsx switches on d, e and f behind !onHost, before the untouched tour', () => {
+    const page = code('web/app/raidmimic/page.tsx');
+    for (const [k, name] of [['d', 'WatchLayout'], ['e', 'StoryLayout'], ['f', 'ScreenLayout']]) {
+      expect(page).toContain(`if (!onHost && v === '${k}') return <${name} ctx={ctx} />;`);
+      expect(page.indexOf(`<${name}`)).toBeLessThan(page.indexOf('return <TourLayout'));
+    }
+    expect(page).toMatch(/return <TourLayout ctx=\{ctx\} \/>;\s*\}\s*$/);
+  });
+
+  it('only SceneClip and ClipTabs are client files, and the tour and the gallery are untouched by them', () => {
+    expect(read(L + 'SceneClip.tsx')).toMatch(/^'use client';/);
+    expect(read(L + 'ClipTabs.tsx')).toMatch(/^'use client';/);
+    for (const f of ['TourLayout.tsx', 'OutputLayout.tsx']) expect(code(L + f), f).not.toMatch(/SceneClip|ClipTabs|CLIPS/);
+  });
+
+  it('SceneClip: muted looping inline video with a poster, sized from the clip, swapped for the poster under reduced motion, paused off screen', () => {
+    expect(scene).toMatch(/autoPlay muted loop playsInline preload="metadata"/);
+    expect(scene).toMatch(/poster=\{clipSrc\(clip\.id, 'poster'\)\}/);
+    expect(scene).toMatch(/width=\{clip\.w\} height=\{clip\.h\}/);
+    expect(scene).toMatch(/className=\{`block h-auto w-full motion-reduce:hidden/);
+    expect(scene).toMatch(/hidden h-auto w-full motion-reduce:block/);
+    expect(scene).toMatch(/prefers-reduced-motion: reduce/);
+    expect(scene).toMatch(/IntersectionObserver/);
+    expect(scene).not.toMatch(/https?:\/\/|\.mp4|-poster\.webp/);
+  });
+
+  it('every layout sizes by aspect ratio: no fixed pixel widths', () => {
+    for (const f of [...LAYOUTS, 'SceneClip.tsx', 'ClipTabs.tsx']) {
+      expect(code(L + f), f).not.toMatch(/\bw-\[\d+px\]|\bmin-w-\[\d+px|\bh-\[\d+px\]|width: \d+px/);
+    }
+  });
+
+  it('CLIPS: the three clips, each with a title, caption and alt, and a plausible size', () => {
+    expect(C.CLIPS.map(c => c.id)).toEqual(['target-debuffs', 'xtarget-split', 'grummus-hail']);
+    for (const c of C.CLIPS) {
+      expect(c.id).toMatch(/^[a-z-]+$/);
+      expect(c.title.length, c.id).toBeGreaterThan(3);
+      expect(c.caption.length, c.id).toBeGreaterThan(40);
+      expect(c.alt.length, c.id).toBeGreaterThan(40);
+      expect(c.w, c.id).toBeGreaterThan(100);
+      expect(c.h, c.id).toBeGreaterThan(100);
+    }
+    expect(C.CLIPS_NOTE).toMatch(/invented/);
+  });
+
+  it('every clip id has an mp4 and a -poster.webp, both named by the one path builder', () => {
+    for (const c of C.CLIPS) {
+      expect(C.clipSrc(c.id, 'video')).toBe(`/raidmimic/clips/${c.id}.mp4`);
+      expect(C.clipSrc(c.id, 'poster')).toBe(`/raidmimic/clips/${c.id}-poster.webp`);
+    }
+    const mod = code('web/lib/raidmimicLanding.ts');
+    expect(mod).toMatch(/\.mp4/);
+    expect(mod.match(/-poster\.webp/g)).toHaveLength(1);
+    expect(mod.match(/\.mp4/g)).toHaveLength(1);
+    expect(C.CLIPS_DIR).toBe('/raidmimic/clips');
+  });
+
+  it('the clip copy names no person and breaks none of the page rules', () => {
+    const t = JSON.stringify([C.CLIPS, C.CLIPS_NOTE, C.CLIPS_HEAD, C.STORY, C.SCREEN_NOTES]);
+    expect(t).not.toMatch(/\$\s?\d|per (?:month|year|seat|user|raider)|free trial|testimonial|trusted by|“|”|\bsaid\b/i);
+    expect(t).not.toMatch(/\b\d[\d,]*\+? (?:guilds|customers|raiders|users|teams)\b/i);
+    expect(t).not.toMatch(/https?:\/\/|mailto:/);
+    expect(C.STORY.map(b => b.clip).filter(Boolean)).toEqual(C.CLIPS.map(c => c.id));
+    for (const n of C.SCREEN_NOTES) expect(C.CLIPS.some(c => c.id === n.id), n.id).toBe(true);
+  });
+
+  it('when the clip files exist: each mp4 is at most 1.5 MB and each poster at most 200 KB (absent files are skipped)', () => {
+    for (const c of C.CLIPS) {
+      const v = path.join(CLIP_DIR, `${c.id}.mp4`), p = path.join(CLIP_DIR, `${c.id}-poster.webp`);
+      if (fs.existsSync(v)) expect(fs.statSync(v).size, `${c.id}.mp4`).toBeLessThanOrEqual(1.5 * 1024 * 1024);
+      if (fs.existsSync(p)) expect(fs.statSync(p).size, `${c.id}-poster.webp`).toBeLessThanOrEqual(200 * 1024);
+    }
   });
 });

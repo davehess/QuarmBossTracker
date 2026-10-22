@@ -17,6 +17,9 @@ import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmi
 import type { Ctx } from './_landing/Parts';
 import TourLayout from './_landing/TourLayout';
 import OutputLayout from './_landing/OutputLayout';
+import WatchLayout from './_landing/WatchLayout';
+import StoryLayout from './_landing/StoryLayout';
+import ScreenLayout from './_landing/ScreenLayout';
 
 const TITLE = '[beta] raidmimic · raid orchestration as a service';
 const DESCRIPTION =
@@ -43,6 +46,12 @@ export default function RaidmimicPage({ searchParams }: { searchParams?: { v?: s
   // variant there as well, so a stale link can never change the public page.
   // Its hero is the mascot hopping with the captures fanned around it (the guild lead, 2026-10-21: "i like B for the
   // hero", the layered one; the howl-clip hero was dropped).
-  if (!onHost && searchParams?.v === 'b') return <OutputLayout ctx={ctx} />;
+  // `?v=d`, `?v=e` and `?v=f` are three more PREVIEWS (the guild lead, 2026-10-22), built on the looping overlay clips:
+  // a tabbed "Scene-first" player, a "Raid-night story" of beats, and "Your screen", all three on one monitor.
+  const v = searchParams?.v;
+  if (!onHost && v === 'b') return <OutputLayout ctx={ctx} />;
+  if (!onHost && v === 'd') return <WatchLayout ctx={ctx} />;
+  if (!onHost && v === 'e') return <StoryLayout ctx={ctx} />;
+  if (!onHost && v === 'f') return <ScreenLayout ctx={ctx} />;
   return <TourLayout ctx={ctx} />;
 }
