@@ -24,7 +24,7 @@ import { emptyPlan, MAX_BRANCHES } from '../web/lib/routePlanner/types.ts';
 import { buildPlanPins } from '../web/lib/routePlanner/build.ts';
 import { createFollow } from '../web/lib/routePlanner/follow.ts';
 import { comparePlan, matchKills, pinNumbers } from '../web/lib/routePlanner/compare.ts';
-import { fewestLine, fewestByNpc, shortDate } from '../web/lib/routePlanner/fewest.ts';
+import { fewestLine, fewestByNpc, shortDate, toPlannerRows } from '../web/lib/routePlanner/fewest.ts';
 import { ZONES, zoneData, DEFAULT_ZONE } from '../web/lib/routePlanner/zones/index.ts';
 import { makeZone, DEFAULT_FLOORS } from '../web/lib/routePlanner/zones/make.ts';
 import { seedFor } from '../web/lib/routePlanner/seeds/index.ts';
@@ -461,10 +461,16 @@ describe('fewest raiders so far', () => {
     expect(m.get(1).raiders).toBe(12);
     expect(m.get(2).raiders).toBe(30);
   });
-  it('the server hook answers nothing until the real data is wired in', async () => {
-    const src = fs.readFileSync(path.join(ROOT, 'web/lib/routePlanner/fewestKills.ts'), 'utf8');
-    expect(src).toMatch(/export async function fewestKills\(/);
-    expect(src).toMatch(/return \[\];/);
+  it('the server hook turns each boss kill into one planner row: players as raiders, the class mix biggest first', async () => {
+    const kill = (players, killed_at, classes) => ({ encounter_id: 'e', killed_at, players, characters: players + 2, fought_players: players, unmatched: 0, classes, night_type: 'off', source: 'parse' });
+    const rows = toPlannerRows([
+      { npc_id: 214054, boss: 'Tallon Zek', total_kills: 9, kills: [kill(18, '2026-10-09T03:00:00Z', { Warrior: 2, Cleric: 3, Bard: 1 }), kill(24, '2026-10-12T03:00:00Z', {})] },
+      { npc_id: 214055, boss: 'Vallon Zek', total_kills: 1, kills: [] },
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({ npc_id: 214054, raiders: 18, night: '2026-10-09T03:00:00Z', classes: [{ cls: 'Cleric', n: 3 }, { cls: 'Warrior', n: 2 }, { cls: 'Bard', n: 1 }] });
+    expect(fewestByNpc(rows).get(214054).raiders).toBe(18);
+    expect(fewestLine(rows[0])).toBe('fewest: 18 raiders, Oct 9 — 3 clerics, 2 warriors, 1 bard');
   });
 });
 

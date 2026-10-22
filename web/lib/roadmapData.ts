@@ -48,6 +48,8 @@ export const releases: Release[] = [
       { name: 'Planned against actual', blurb: 'Pick a recorded night and it is drawn over the plan, with a table of the order, the length and the time of each leg, what the plan had that night never killed, and what was killed that the plan did not have.' },
       { name: 'Splits and off nights', blurb: 'Send part of the raid up a different branch and regroup, with how many raiders each team needs. Off-night plans have a target headcount: how few raiders can do it.' },
       { name: 'Send to the in-game map', blurb: 'An officer can send the plan to the Map overlay in Mimic.' },
+      { name: 'Tower of Solusek Ro', blurb: 'The next zone is ready to plan: every floor, the wing bosses and their cauldrons, the mobs that walk paths, and the doors and teleporters, with Solusek Ro at the end.' },
+      { name: 'Fewest raiders so far', blurb: 'Each boss shows the smallest group we have killed it with, and that group\'s classes.' },
     ],
     fixes: [],
   },

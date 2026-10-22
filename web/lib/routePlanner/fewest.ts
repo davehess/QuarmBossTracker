@@ -5,6 +5,8 @@
 // first. The page shows the first row per boss on the pin, on the leg and in the compare table, so an off-night plan can be
 // drawn against the smallest group that has actually done it.
 
+import type { FewestBoss } from '../fewestKills';
+
 /** One past kill. `night` is an ISO date (YYYY-MM-DD) or a full ISO timestamp. */
 export type FewestKill = {
   npc_id: number;
@@ -34,6 +36,16 @@ export function fewestLine(f: FewestKill, maxClasses = 6): string {
   const mix = f.classes.slice(0, maxClasses).map(c => `${c.n} ${plural(c.cls, c.n)}`).join(', ');
   const more = f.classes.length > maxClasses ? ', ...' : '';
   return `fewest: ${f.raiders} raider${f.raiders === 1 ? '' : 's'}${when ? ', ' + when : ''}${mix ? ' — ' + mix + more : ''}`;
+}
+
+/** web/lib/fewestKills.ts's answer as planner rows: players (not characters) as raiders, the class mix biggest first. */
+export function toPlannerRows(bosses: readonly FewestBoss[]): FewestKill[] {
+  return bosses.flatMap(b => b.kills.map(k => ({
+    npc_id: b.npc_id,
+    raiders: k.players,
+    night: k.killed_at,
+    classes: Object.entries(k.classes).map(([cls, n]) => ({ cls, n })).sort((a, c) => c.n - a.n || a.cls.localeCompare(c.cls)),
+  })));
 }
 
 /** The smallest group per boss, from rows in any order. */
