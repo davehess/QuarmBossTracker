@@ -6388,3 +6388,15 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   Turn direction checked against Zeal's own marker code and the server. ⏳ In-game look at a full raid cluster; ⏳ the out-of-zone
   cause is read from Zeal's source and the agent's maths, not yet seen on a live raid; ⏳ group members show the role colour until
   the pipe sends their class (verbose pipe only).
+- ✅ Map: the zone label no longer guesses "guild + raid only" from a /who (the guild lead, 2026-10-22, in the open Emerald
+  Jungle with one guildmate: the header said guild + raid only; "it's live"; agent 4.0.5 + Mimic beta). The header now reads
+  the zone server's port: **:7214 live zone** (a static zone server) or **:10135 instance** (a server started for one guild,
+  raid or PvP copy; the port cannot say which); a port outside both bands, or no port, says only what /who saw ("only us in
+  /who", "others in /who"). Only the label read `kind`; map events, watches and corpses already key on the port alone, so no
+  sharing or trust behaviour was wrong. Evidence: the server hands a static zone its launcher port and starts every guild or
+  PvP instance on an idle process from a separate pool (`world/zonelist.cpp` TriggerBootup, `world/zoneserver.cpp`
+  ServerOP_SetConnectInfo), and our synced events 2026-10-13..22 show each zone on one port in 7105..7315 with its extra copies
+  at 10001..11785, nothing between. ⏳ The two bands are measured on Quarm, not a server constant (a different pool reads
+  null); ⏳ the port cannot tell a guild instance from a PvP one; ⏳ the server's /who filter has no copy test
+  (`world/clientlist.cpp` WhoAllFilter), so "others in /who" may include people in another copy of the zone: unverified how the
+  client scopes a plain /who. Zeal's pipe carries a zone id and no instance field.

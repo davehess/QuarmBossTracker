@@ -5306,6 +5306,13 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   Mimic's pipe handler now also carries `target_loc` / `target_type` (Zeal 1.4.8).
 - Test: `test/spawn-map.test.js`. Design: `docs/DESIGN-mimic-2.9-spawn-map.md`. Every refinement since (asks, what
   shipped, what is open): `docs/MAP-REFINEMENTS.md`.
+- **Zone copies** (the "Zone copies" block in the agent; header label in `map.html` `copyLabel`): the copy you are in is
+  `host:port` from EverQuest's `dbg.txt`; synced events, watches and corpses match on that token alone. The label's
+  live-or-instance verdict is the PORT's band (`_mapCopyWhere`, agent 4.0.5): 7000..7999 = a static zone server = the open
+  world, 10000+ = a dynamic one = a guild, raid or PvP instance (measured on Quarm 2026-10-13..22 from `map_spawn_events.inst`;
+  not a server constant). The /who check (`kind`: open/closed) proves only that outsiders were listed; "closed" never means
+  "our instance". There is no reliable way to tell a guild instance from a PvP one: the client gets no message on entering
+  either (EQMacEmu `NewZone_Struct` has no instance field; Zeal's pipe has the zone id only).
 - **Facing: arrow or slice** (2026-10-22, agent 4.0.4 + Mimic beta): ⚙ Map settings → **Facing** = Arrow (default) / Slice / Off,
   saved as `cfg.facing` (a saved first-beta `show.wedges === false` migrates to Off). Every raider and group member the Map can
   place is a class-coloured (the website's palette) marker turned by the glide's interpolated heading: **Arrow** is a small
