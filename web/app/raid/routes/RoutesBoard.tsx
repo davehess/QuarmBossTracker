@@ -288,9 +288,17 @@ export default function RoutesBoard({ officer }: { officer: boolean }) {
               </div>
               {a.route.stops.length === 0
                 ? <p className="rounded border border-border bg-panel p-3 text-sm text-dim">
-                    None of the ticked nights has a named kill in common, so there is no route to average. Tick more nights, or pick a zone with a named boss.
+                    None of the ticked nights killed a named boss, so there is no route to draw. Tick a night that did, or pick a zone with a named boss.
                   </p>
-                : <RouteMap answer={a} map={map} showNights={showNights} showClears={showClears} showBand={showBand} />}
+                : <>
+                    {a.route.fallback && (
+                      <p role="note" className="mb-2 rounded border border-orange/50 bg-orange/10 p-2 text-xs text-text">
+                        The ticked nights ({a.route.fallback.of}) share no named kill, so there is nothing to average. This is the route of the most recent
+                        one, {etDate.format(a.nights.find(n => n.key === a.route.fallback?.nightKey)?.from ?? 0)}. Tick a single night to read another.
+                      </p>
+                    )}
+                    <RouteMap answer={a} map={map} showNights={showNights} showClears={showClears} showBand={showBand} />
+                  </>}
               <p className="mt-1 text-xs text-dim">
                 {map ? 'Walls: ' + (map.eqemu ? 'EQEmu maps (GPLv2+).' : "Brewall's EverQuest maps (via Zeal).") : 'No wall map cached for this zone; the route is drawn on its own.'}
               </p>
