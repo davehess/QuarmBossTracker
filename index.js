@@ -12272,6 +12272,7 @@ const _SHED_KINDS = new Set([
   'guild_chat',                                                // the GET feed for Mimic's out-of-game Chat overlay (a read of an in-memory ring)
   'replay_window',                                             // the GET behind the agent's Rehearse tab (a read of past nights)
   'local_sync',                                                // the GET that fills a player's local copy of the guild's parses (a re-readable catch-up)
+  'raid_route',                                                // the GET behind the Map's saved raid route line (a decoration, re-asked at the next zone-in)
 ]);
 const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
 async function _isShedded(kind, res, ackBody) {
@@ -12380,6 +12381,8 @@ const _BUDGET_DEFAULTS = {
   // Mimic Spawn map sync (GET poll + POST push share it). A poll every few seconds per open map is ~20/min;
   // over budget is a 429 the agent backs off on (get:true applies to both verbs).
   map_sync:        { perMin: 60,  durable: false, get: true },
+  // The Map's saved raid route (2026-10-21): one GET per zone-in, then at most every few minutes, 5 min cached at the bot.
+  raid_route:      { perMin: 30,  durable: false, get: true },
   // #106 multiplexed GET poll — one request carries recent_fires + tuning +
   // (at their own cadence) triggers/prefs/backfill/ui_edits. A healthy agent
   // polls ~40/min active, far slower idle/dormant; the generous cap only trips a
@@ -14352,6 +14355,23 @@ function _extBindInstances(hpClusters, posInstances) {
   return out;
 }
 
+// A pos-split row gets the health of ITS OWN raiders, and nothing when none of them reported one: the siblings of a
+// split share the merged cluster's median, so leaving it on a row with no report of its own copied one mob's health
+// onto all of them (the guild lead, 2026-10-21, a boss's split: four rows of one name, every row at 85% while the
+// game's own window said 78%). Mutates the rows, like the loop it replaced.
+function _extPosSplitOwnHp(rows, hpOfRaider) {
+  // Same median as the handler's (round-half-up on an even count), duplicated so this stays a pure function.
+  const median = (arr) => {
+    const a = [...arr].sort((x, y) => x - y); const m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2);
+  };
+  for (const c of rows) {
+    if (!c.pos_split) continue;
+    const hps = c.raiders.map(r2 => hpOfRaider.get(String(r2).toLowerCase())).filter(h => h != null);
+    c.hp = hps.length ? median(hps) : null;
+  }
+}
+
 // Spawn ids overrule the position and HP guesses in BOTH directions.
 // _extIdInstances only ever used them to SPLIT (≥2 distinct ids). When the
 // targeters of a name all report ONE id, that is proof of one mob — and the
@@ -15373,11 +15393,7 @@ async function _handleAgentExtendedTarget(req, res) {
       // A pos-split row inherits the merged cluster's median — recompute from
       // the raiders that actually landed on it so the two rows don't show one HP.
       const hpOfRaider = new Map(g.obs.filter(o => o.hp != null).map(o => [String(o.raider).toLowerCase(), o.hp]));
-      for (const c of rows) {
-        if (!c.pos_split) continue;
-        const hps = c.raiders.map(r2 => hpOfRaider.get(String(r2).toLowerCase())).filter(h => h != null);
-        if (hps.length) c.hp = median(hps);
-      }
+      _extPosSplitOwnHp(rows, hpOfRaider);
       // Ids overrule the position/HP guesses in the MERGE direction too.
       const idOfRaider = new Map(g.obs.filter(o => o.id != null).map(o => [String(o.raider).toLowerCase(), o.id]));
       rows = _extMergeByAgreedId(rows, idOfRaider, hpOfRaider);
@@ -17696,6 +17712,21 @@ async function _handleAgentKiteLoopsGet(req, res) {
   if (r.status === 400) return _ptsJson(res, 400, { error: 'unknown or invalid zone' });
   if (r.status !== 200) return _ptsJson(res, 503, { error: 'try again shortly' });
   return _ptsJson(res, 200, { loops: r.loops });
+}
+
+// GET /api/agent/raid-route?zone=<short_name> — the raid route an officer saved for the zone on /raid/routes (the guild
+// lead, 2026-10-21), for Mimic's Map to draw. utils/raidRoute.js reads bot_kv `raid_route:<zone>`, trims it to what the
+// Map draws and caches it 5 minutes. `route` is null when none is saved (200, not 404: a zone without one is the norm).
+async function _handleAgentRaidRouteGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+  const zone = new URL(req.url, 'http://x').searchParams.get('zone');
+  const r = await require('./utils/raidRoute').getRoute(supabase, zone);
+  if (r.status === 400) return _ptsJson(res, 400, { error: 'unknown or invalid zone' });
+  if (r.status !== 200) return _ptsJson(res, 503, { error: 'try again shortly' });
+  return _ptsJson(res, 200, { ok: true, zone, route: r.route });
 }
 
 // GET /api/agent/replay-window?from=<iso>&to=<iso>[&index=1] — up to 15 minutes of the recorded raid (or, with
@@ -24333,6 +24364,17 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentKiteLoopsGet(req, res); }
     catch (err) {
       console.error('[kite-loops] handler error:', err);
+      if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
+      return;
+    }
+  }
+
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/agent/raid-route') {
+    if (await _isShedded('raid_route', res, { ok: true, shed: true, route: null })) return;
+    if (await _overBudget('raid_route', req, res)) return;
+    try { return await _handleAgentRaidRouteGet(req, res); }
+    catch (err) {
+      console.error('[raid-route] handler error:', err);
       if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
       return;
     }

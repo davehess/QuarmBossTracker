@@ -311,7 +311,7 @@ describe('Extended Target', () => {
       ? { ...sb, selectAllPaged: (t, ...a) => (t === 'raid_roster' ? Promise.reject(new Error('down')) : sb.selectAllPaged(t, ...a)) }
       : sb;
     const fns = loadBotMany([
-      '_extAttributeDebuffs', '_extBindInstances', '_extDebuffInstances', '_extIdInstances', '_extMergeByAgreedId',
+      '_extAttributeDebuffs', '_extBindInstances', '_extDebuffInstances', '_extIdInstances', '_extMergeByAgreedId', '_extPosSplitOwnHp',
       '_extPlaceTags', '_extPosCluster', '_extHeadingPoint', '_mainAssistPin', '_isJunkSpellName', '_liveRaidSplit',
       '_groupNamesFor', '_handleAgentExtendedTarget',
     ], {

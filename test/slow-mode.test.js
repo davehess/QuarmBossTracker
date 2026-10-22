@@ -148,6 +148,32 @@ describe('an agent reporting a state change', () => {
     expect(again).toMatchObject({ changed: false, reason: 'no-open-window' });
   });
 
+  // 2026-10-21: "Slow mode ended" posted twice in one minute. Every agent reports the stamp on its OWN log
+  // line, and the same server message can read a second apart on two machines: the later-stamped report
+  // ended the window, the earlier-stamped one then landed INSIDE the ended window and counted as a new OFF.
+  it('a skewed duplicate OFF (stamped a second EARLIER than the one that landed) changes nothing', async () => {
+    expect((await slowMode.applyDetectedSlowMode('off', T0 + 2 * H + 1000, 'Aldenmar')).changed).toBe(true);
+    const dup = await slowMode.applyDetectedSlowMode('off', T0 + 2 * H, 'Brackwyn');
+    expect(dup).toMatchObject({ changed: false, reason: 'already-off' });
+    expect(Date.parse(slowMode.getSlowMode().off_at)).toBe(T0 + 2 * H + 1000);   // window end not dragged earlier
+  });
+
+  it('N concurrent OFF reports, stamped a few seconds apart in either order, announce exactly once', async () => {
+    const stamps = [3, 0, 2, 1, 4, 0, 5].map((s) => T0 + 2 * H + s * 1000);
+    const results = await Promise.all(stamps.map((at, i) => slowMode.applyDetectedSlowMode('off', at, 'P' + i)));
+    expect(results.filter((r) => r.changed)).toHaveLength(1);
+  });
+
+  it('a skewed duplicate ON changes nothing, and a later genuine ON-then-OFF still lands both', async () => {
+    const at = Date.now() - 10 * 60000;
+    await slowMode.setSlowMode(false, 'x', at - H);
+    expect((await slowMode.applyDetectedSlowMode('on', at, 'Aldenmar')).changed).toBe(true);
+    expect(await slowMode.applyDetectedSlowMode('on', at - 1000, 'Brackwyn')).toMatchObject({ changed: false, reason: 'already-on' });
+    expect((await slowMode.applyDetectedSlowMode('off', at + 5 * 60000, 'Aldenmar')).changed).toBe(true);
+    expect((await slowMode.applyDetectedSlowMode('on', at + 6 * 60000, 'Aldenmar')).changed).toBe(true);
+    expect((await slowMode.applyDetectedSlowMode('off', at + 7 * 60000, 'Aldenmar')).changed).toBe(true);
+  });
+
   it('ignores an old OFF line replayed from before the window opened', async () => {
     const r = await slowMode.applyDetectedSlowMode('off', T0 - 24 * H, 'Aldenmar');
     expect(r.changed).toBe(false);

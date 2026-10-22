@@ -176,13 +176,22 @@ function parseSlowModeLine(line, parseStamp = Date.parse) {
 // The entry point for the agent's report. Idempotent, because every raider's agent hears the same line:
 // an OFF only lands if a window was open at `at`, an ON only if none was. A stale replay (an old OFF line
 // read from a backfill) falls outside the open window and changes nothing.
+// The check-then-set below has no await between them, so two requests cannot interleave; the double
+// "Slow mode ended" post (2026-10-21) was the CLOCKS instead: each agent reports the stamp on its own
+// log line, and the same server message can read one second apart on two machines. The first report
+// ends the window at :01; the second, stamped :00, lands INSIDE that window (atMs < off_at), looks like
+// a fresh OFF, and was announced again. So a report that finds the flag already in the state it asks
+// for is a duplicate, whatever its stamp.
+const DUP_WINDOW_MS = 2 * 60000;
 async function applyDetectedSlowMode(state, atMs, by, line = null) {
   if (state !== 'on' && state !== 'off') return { changed: false, reason: 'bad-state' };
   if (!Number.isFinite(atMs)) return { changed: false, reason: 'bad-time' };
   if (atMs > Date.now() + 10 * 60000) return { changed: false, reason: 'in-the-future' };
   const open = slowModeOnAt(atMs);
   if (state === 'off' && !open) return { changed: false, reason: 'no-open-window' };
+  if (state === 'off' && _flag && !_flag.on) return { changed: false, reason: 'already-off' };
   if (state === 'on' && open) return { changed: false, reason: 'already-on' };
+  if (state === 'on' && _flag && _flag.on && Math.abs(atMs - _ms(_flag.set_at)) < DUP_WINDOW_MS) return { changed: false, reason: 'already-on' };
   const res = await setSlowMode(state === 'on', by ? `auto:${by}` : 'auto', atMs, line);
   return { changed: true, ...res };
 }

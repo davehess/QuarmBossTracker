@@ -589,13 +589,15 @@ describe('8b · character_lockouts and raid_roster are paged on their whole key'
     return { lockouts, roster, characters };
   }
 
-  it('/preraid gather: every lockout and every roster row arrives once', async () => {
+  it('/preraid gather: every lockout and every character arrives once, and raid_roster is not read', async () => {
     const f = fixture();
     fake = installFakePostgrest({ tables: { character_lockouts: f.lockouts, raid_roster: f.roster, characters: f.characters } });
     const got = spyPaged();
     await nodeRequire('../commands/preraid.js').gather({});
     expectComplete(got.character_lockouts, keys(f.lockouts, 'character', 'boss_key'), 'character', 'boss_key');
-    expectComplete(got.raid_roster, keys(f.roster, 'uploaded_by_discord_id', 'name'), 'uploaded_by_discord_id', 'name');
+    expectComplete(got.characters, f.characters.map(c => c.name), 'name');
+    // 'our average' comes from the OpenDKP ticks now; the live roster (half a day deep) is no longer read at all
+    expect(got.raid_roster).toBeUndefined();
   });
 
   it('/lockoutcheck: every lockout arrives once', async () => {
