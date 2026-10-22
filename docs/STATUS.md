@@ -6503,6 +6503,17 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   blip at the moment a mob was first targeted hid its stats and resists for six hours (the catalog and zone packs were healthy).
   Now only a 200 carrying a mob lasts 6 h; a non-200, non-JSON, error body or `mob: null` is kept 60 s (`MOB_INFO_MISS_TTL_MS`), and a row
   already held survives an error (stale while error). Tests beside `test/mob-pack-agent.test.js`.
+- 🧪 Target Info: a lookup cut off mid-answer is asked for again (a member, 2026-10-22, FB-94: "My target window stopped showing
+  resists", 23:28 UTC, 35 minutes after the bot 4.0.8 redeploy; agent 4.0.9 on beta). **Cause NOT proven.** The 3.0.2 changes were
+  read in full against the symptom (the window-move guard, `parts.js`, `canvas.html`, `preload.js`, the charm/Disc/Shield agent
+  changes): none touches how Target Info gets or draws the resist grid, and the move guard cannot stick for an overlay (only a ✥ drag
+  marks one, capped at 30 s; the OS-move mark exists only on the dashboard and lapses 300 ms after the last step). **Two real holes
+  found and closed:** a connection lost AFTER the headers fires no `end`, no request `error` and no `timeout` (measured on Node 22), so
+  `_mobInfoInflight` (and the zone-pack equivalent) kept the key forever and the mob was never asked for again until Mimic
+  restarted; and, by timeline, the likeliest cause is agents still on 4.0.5 or older (a Mimic update installs on the next quit), which
+  cache any reply taken during a bot redeploy as "no row" for 6 h, the bug 4.0.7 fixed. ⏳ Ask the reporter: Mimic version, does
+  restarting Mimic bring the resists back, which tab, standalone window or Canvas piece, and the text under the name ("looking up
+  stats…" or "no catalog stats for this target"). Report stays open until answered.
 - ✅ A crashed overlay window comes back (Mimic beta, 2026-10-22). Only the dashboard listened for `render-process-gone`; an overlay
   whose renderer died stayed up and blank until Mimic restarted. Now `_overlayRendererGone` logs `[overlay] <key> renderer gone
   (<reason>)`, lets the entry go and destroys the window, and the normal build pass (`applyAllVisibility` →
