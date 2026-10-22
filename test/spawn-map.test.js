@@ -1286,7 +1286,7 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(31);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring + Guild corpses + Saved raid route
+    expect(showRows).toHaveLength(32);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring + Guild corpses + Saved raid route + Facing wedges (2026-10-22)
     expect(glyphRows).toHaveLength(9);
     expect(colRows).toHaveLength(31);                                          // ...and the Corpses and Saved raid route colours
     const walls = showRows[0].children[0];                                     // Walls
