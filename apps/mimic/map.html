@@ -281,6 +281,7 @@
         <label class="row" title="Walls this far above or below you stay bright; the rest fade. Height is in game units: you are about 6 tall, one floor is roughly 30 to 60, so ±100 is about your floor and the ones next to it."><span class="bl" id="levelsVal">Levels</span><input id="levels" type="range" min="0" max="7" step="1"></label>
         <label class="row" title="Spawn points this far above or below you are shown; the rest are hidden. Same height units as Levels: ±25 is about your own floor, ±100 a floor or two either way."><span class="bl" id="spawnVal">Spawn height</span><input id="spawnLevels" type="range" min="0" max="7" step="1"></label>
         <div class="grp">Show</div>
+        <label class="row" title="Which way each raider faces. Arrow: a small arrowhead in their class colour, the point is the way they look. Slice: a pizza slice of a circle opening the way they look. Off: plain dots. Yours is the same, a little bigger, with a white rim."><span class="bl">Facing</span><select id="cfgFacing"><option value="arrow">Arrow</option><option value="slice">Slice</option><option value="off">Off</option></select></label>
         <div id="cfgShow"></div>
         <div class="grp">Ability icons on spawn points</div>
         <div id="cfgGlyphs"></div>
@@ -393,12 +394,50 @@
     var a = HEADING_CCW ? turn : -turn;
     return { dx: -Math.sin(a), dy: -Math.cos(a) };
   }
-  // Facing wedges (the guild lead, 2026-10-22, beside Zeal's map: "maps overlay should show 'pizza slices' for which way
-  // people are facing and see them easier"). A raider is a slice of a circle opening the way they face, in their class
-  // colour (the website's palette, web/lib/spectator.ts CLASS_COLORS: one palette, two copies, test/map-facing-wedges.test.js).
+  // Facing (the guild lead, 2026-10-22, beside Zeal's map: "maps overlay should show 'pizza slices' for which way
+  // people are facing and see them easier"; then, on the first beta: "the Viewpoint is too large and covers up other
+  // things. The Arrow view instead, where the point of your arrow is the direction you're looking, works better for me.
+  // Make both available as choices"). One setting, three choices: an ARROW per raider (the default), a SLICE of a circle
+  // opening the way they face, or OFF (plain dots). Both are in the raider's class colour (the website's palette,
+  // web/lib/spectator.ts CLASS_COLORS: one palette, two copies, test/map-facing-wedges.test.js).
+  var FACING_MODES = ['arrow', 'slice', 'off'];
+  var FACING_DEFAULT = 'arrow';
   var WEDGE_HALF = 28 * Math.PI / 180;   // a 56 degree slice
   var WEDGE_UNITS = 80;                  // its reach in world units, before the clamp
-  var WEDGE_MIN = 14, WEDGE_MAX = 26;   // on-screen px: readable zoomed out, never a floodlight zoomed in
+  var WEDGE_MIN = 11, WEDGE_MAX = 18;   // on-screen px: readable zoomed out, never a floodlight zoomed in
+  var WEDGE_SELF = 1.15;                 // you, a little bigger than a raider (the first beta's 1.35x covered the neighbours)
+  var ARROW_LEN = 8, ARROW_HALF = 4.2;   // a raider's arrowhead in px (before the line-strength scale): tip to tail, and half its width
+  var ARROW_SELF = 1.3;                  // you, a little bigger
+  // A saved Facing choice -> one of FACING_MODES. The first beta had a Facing wedges on/off box (show.wedges): a saved
+  // off keeps meaning off; anything else (on, never set) takes the default arrow.
+  function facingFrom(saved) {
+    if (!saved || typeof saved !== 'object') return FACING_DEFAULT;
+    if (FACING_MODES.indexOf(saved.facing) >= 0) return saved.facing;
+    if (saved.show && saved.show.wedges === false) return 'off';
+    return FACING_DEFAULT;
+  }
+  // The arrowhead for a heading: four corners as screen px [tipX, tipY, rightX, rightY, notchX, notchY, leftX, leftY], the
+  // tip pointing the way they face, the shape centred on (cx, cy) so the spot is the middle of the arrow. Null with no heading.
+  function arrowPoints(heading, cx, cy, len, half) {
+    if (heading == null || !isFinite(heading)) return null;
+    var v = headingVec(heading), nx = -v.dy, ny = v.dx;
+    var tip = len * 0.6, tail = -len * 0.4, notch = -len * 0.14;
+    return [cx + v.dx * tip, cy + v.dy * tip,
+      cx + v.dx * tail + nx * half, cy + v.dy * tail + ny * half,
+      cx + v.dx * notch, cy + v.dy * notch,
+      cx + v.dx * tail - nx * half, cy + v.dy * tail - ny * half];
+  }
+  // How big an arrowhead is, in px; `dot` is the line-strength dot scale (inkStyle().dot) so it grows with the dots, `big` is you.
+  function arrowSize(dot, big) {
+    var k = (Number(dot) || 1) * (big ? ARROW_SELF : 1);
+    return { len: ARROW_LEN * k, half: ARROW_HALF * k };
+  }
+  // A member the Map may draw. One in another zone has no spot in YOUR client, so the pipe sends no position for them and
+  // the old agent turned that into (0, 0, 0); a position that is missing or exactly that is "not here", never "at the origin".
+  function placedHere(m) {
+    if (!m || typeof m.x !== 'number' || typeof m.y !== 'number' || !isFinite(m.x) || !isFinite(m.y)) return false;
+    return !(m.x === 0 && m.y === 0 && !m.z);
+  }
   var CLASS_HEX = {
     warrior: '#e07a3f', druid: '#f0a53a', paladin: '#f2e04b', rogue: '#b8d63a', ranger: '#56d364', shaman: '#2fc9a0',
     monk: '#3fd0d9', magician: '#4fa8ff', wizard: '#7585f0', enchanter: '#a371f7', necromancer: '#d36bf0', bard: '#f08ad2',
@@ -416,7 +455,7 @@
   function wedgeRadius(scale, text, big) {
     var k = Math.min(1.3, Math.max(0.8, Number(text) || 1));
     var r = Math.min(WEDGE_MAX, Math.max(WEDGE_MIN, WEDGE_UNITS * (Number(scale) || 0))) * k;
-    return big ? r * 1.35 : r;
+    return big ? r * WEDGE_SELF : r;
   }
   // The two canvas angles (clockwise from +x, y down: what ctx.arc takes) a heading's slice runs between, or null when
   // the heading is unknown.
@@ -1352,7 +1391,6 @@
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
     ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
     ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['conNames', 'Mob names in con colour'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
-    ['wedges', 'Facing wedges (which way each raider faces)'],
     ['focus', 'Raid focus target (MA / most targeted)'], ['corpses', 'Guild corpses (☠)'], ['raidRoute', 'Saved raid route (gold line, numbered stops)'],
     ['kite', 'Kite coach (your circling: lap, drift)'], ['kiteLoops', 'Guild kite loops'],
   ];
@@ -1393,7 +1431,7 @@
     for (k in MAP_SCHEMES.default) col[k] = MAP_SCHEMES.default[k];
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
-    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false, tail: TAIL_DEFAULT };
+    return { show: show, facing: FACING_DEFAULT, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false, tail: TAIL_DEFAULT };
   }
   // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
   // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
@@ -1418,6 +1456,7 @@
     var c = mapCfgDefaults(), k, i;
     if (!saved || typeof saved !== 'object') return c;
     if (saved.show) for (k in c.show) if (typeof saved.show[k] === 'boolean') c.show[k] = saved.show[k];
+    c.facing = facingFrom(saved);
     if (saved.glyphsOff) for (i = 0; i < CFG_GLYPHS.length; i++) if (saved.glyphsOff[CFG_GLYPHS[i][0]] === true) c.glyphsOff[CFG_GLYPHS[i][0]] = true;
     if (saved.col) for (k in c.col) if (HEX_RE.test(String(saved.col[k]))) c.col[k] = String(saved.col[k]).toLowerCase();
     if (MAP_SCHEMES[saved.scheme] || saved.scheme === 'custom') c.scheme = saved.scheme;
@@ -1675,6 +1714,8 @@
     else if (!p.route_ver) { S.route = null; S.routeVer = null; }
     S.ver = p.version || null;
     S.skew = (p.now || Date.now()) - Date.now();
+    // Nobody from another zone: they have no spot in your client, and a raider the agent could not place is not drawn at 0, 0.
+    p.group = (p.group || []).filter(placedHere); p.raid = (p.raid || []).filter(placedHere);
     S.p = p;
     syncWallNote();
     syncRouteNote();
@@ -1722,6 +1763,7 @@
   function onDirect(d) {
     if (!d || typeof d !== 'object') return;
     var now = Date.now();
+    d.group = (d.group || []).filter(placedHere); d.raid = (d.raid || []).filter(placedHere);   // none in another zone
     S.direct = { at: now, p: d };
     if (!S.p || !useDirect(S.src, S.direct, now, S.p)) return;
     noteTracks(S.p, now);
@@ -2515,10 +2557,12 @@
     // Group and raid.
     var P = S.p;
     if (P) {
-      // Three passes so nothing sits on top of a name: every slice, then every dot, then the labels. A raider with a
-      // heading is a facing wedge (the DRAWN heading, so it turns with the glide) in their class colour with a dot at the
-      // apex; one without a heading is a slightly bigger dot with a darker rim. Facing wedges off draws the plain dots.
-      var wedgesOn = SH.wedges !== false, wedgeR = wedgeRadius(v.scale, C.text, false);
+      // Three passes so nothing sits on top of a name: every slice, then every marker, then the labels. Facing (⚙ → Facing)
+      // is Arrow (the default: a small arrowhead in their class colour, the tip is the way they look), Slice (a facing
+      // wedge in their class colour with a dot at the apex) or Off (the plain dots). Either way it is the DRAWN heading,
+      // so it turns with the glide; a raider with no heading yet is a slightly bigger dot with a darker rim.
+      var facingOn = C.facing !== 'off', wedgesOn = C.facing === 'slice', arrowsOn = C.facing === 'arrow';
+      var wedgeR = wedgeRadius(v.scale, C.text, false), arrowSz = arrowSize(I.dot, false);
       var dotsOf = function (list, color, rad, pre, names) {
         var vis = [];   // m, drawn heading, x, y - four to a raider
         for (var i = 0; i < (list || []).length; i++) {
@@ -2526,7 +2570,7 @@
           if (q[0] < -20 || q[0] > w + 20 || q[1] < -20 || q[1] > h + 20) continue;
           vis.push(m, dm.heading, q[0], q[1]);
         }
-        var j, arc, col;
+        var j, arc, pts, col;
         if (wedgesOn) {
           ctx.lineWidth = 1.25; ctx.strokeStyle = 'rgba(8,11,16,0.9)'; ctx.lineJoin = 'round';
           for (j = 0; j < vis.length; j += 4) {
@@ -2538,12 +2582,19 @@
           ctx.lineJoin = 'miter';
         }
         for (j = 0; j < vis.length; j += 4) {
-          col = wedgesOn ? (classHex(vis[j].class) || color) : color;
-          ctx.beginPath(); ctx.arc(vis[j + 2], vis[j + 3], wedgesOn ? rad * 1.2 : rad, 0, 6.2832); ctx.fillStyle = col; ctx.fill();
-          ctx.lineWidth = wedgesOn ? 1.5 : 1; ctx.strokeStyle = wedgesOn ? 'rgba(8,11,16,0.95)' : '#0d1117'; ctx.stroke();
+          col = facingOn ? (classHex(vis[j].class) || color) : color;
+          pts = arrowsOn ? arrowPoints(vis[j + 1], vis[j + 2], vis[j + 3], arrowSz.len, arrowSz.half) : null;
+          if (pts) {
+            ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); ctx.lineTo(pts[2], pts[3]); ctx.lineTo(pts[4], pts[5]); ctx.lineTo(pts[6], pts[7]); ctx.closePath();
+            ctx.fillStyle = col; ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(8,11,16,0.95)'; ctx.lineJoin = 'round'; ctx.fill(); ctx.stroke(); ctx.lineJoin = 'miter';
+            continue;
+          }
+          ctx.beginPath(); ctx.arc(vis[j + 2], vis[j + 3], facingOn ? rad * 1.2 : rad, 0, 6.2832); ctx.fillStyle = col; ctx.fill();
+          ctx.lineWidth = facingOn ? 1.5 : 1; ctx.strokeStyle = facingOn ? 'rgba(8,11,16,0.95)' : '#0d1117'; ctx.stroke();
         }
         if (names && v.scale >= 0.4) {
-          for (j = 0; j < vis.length; j += 4) halo(vis[j].name, vis[j + 2] + rad + 3, vis[j + 3], fontSmall, color);
+          var nameGap = (arrowsOn ? Math.max(rad, arrowSz.len * 0.6) : rad) + 3;   // clear of an arrow's tip when it points at the name
+          for (j = 0; j < vis.length; j += 4) halo(vis[j].name, vis[j + 2] + nameGap, vis[j + 3], fontSmall, color);
         }
       };
       if (SH.raid) dotsOf(P.raid, CO.raid, 3 * I.dot, 'r:', SH.raidNames);
@@ -2707,17 +2758,24 @@
         if (subTxt) halo(subTxt, tq[0] + 9, tq[1] + 6, labelFont('small'), CO.target);
       }
       kiteDots = drawKite(rt, SH, w, h);
-      // You: the same wedge as everyone else, bigger and brighter with a white rim, so you stand out in a crowd of
-      // them. No heading yet: just the dot with its white rim. (Facing wedges off keeps the old arrow below.)
-      if (P.self && SH.you && SH.wedges !== false) {
+      // You: the same arrow or slice as everyone else, a little bigger with a white rim, so you stand out in a crowd of
+      // them. No heading yet: just the dot with its white rim. (Facing off keeps the old arrow below.)
+      if (P.self && SH.you && C.facing !== 'off') {
         var wd = drawn('self', P.self, rt), wq = wpt(wd.x, wd.y), warc = wedgeArc(wd.heading);
-        if (warc) {
-          ctx.beginPath(); ctx.moveTo(wq[0], wq[1]); ctx.arc(wq[0], wq[1], wedgeRadius(v.scale, C.text, true), warc.a0, warc.a1); ctx.closePath();
-          ctx.fillStyle = CO.you; ctx.globalAlpha = 0.7; ctx.fill(); ctx.globalAlpha = 1;
+        var selfSz = arrowSize(I.dot, true), apts = arrowsOn ? arrowPoints(wd.heading, wq[0], wq[1], selfSz.len, selfSz.half) : null;
+        if (apts) {
+          ctx.beginPath(); ctx.moveTo(apts[0], apts[1]); ctx.lineTo(apts[2], apts[3]); ctx.lineTo(apts[4], apts[5]); ctx.lineTo(apts[6], apts[7]); ctx.closePath();
+          ctx.fillStyle = CO.you; ctx.fill();
           ctx.lineWidth = 1.75; ctx.lineJoin = 'round'; ctx.strokeStyle = '#ffffff'; ctx.stroke(); ctx.lineJoin = 'miter';
+        } else {
+          if (warc && wedgesOn) {
+            ctx.beginPath(); ctx.moveTo(wq[0], wq[1]); ctx.arc(wq[0], wq[1], wedgeRadius(v.scale, C.text, true), warc.a0, warc.a1); ctx.closePath();
+            ctx.fillStyle = CO.you; ctx.globalAlpha = 0.7; ctx.fill(); ctx.globalAlpha = 1;
+            ctx.lineWidth = 1.75; ctx.lineJoin = 'round'; ctx.strokeStyle = '#ffffff'; ctx.stroke(); ctx.lineJoin = 'miter';
+          }
+          ctx.beginPath(); ctx.arc(wq[0], wq[1], 4.5 * I.dot, 0, 6.2832); ctx.fillStyle = CO.you; ctx.fill();
+          ctx.lineWidth = 1.75; ctx.strokeStyle = '#ffffff'; ctx.stroke();
         }
-        ctx.beginPath(); ctx.arc(wq[0], wq[1], 4.5 * I.dot, 0, 6.2832); ctx.fillStyle = CO.you; ctx.fill();
-        ctx.lineWidth = 1.75; ctx.strokeStyle = '#ffffff'; ctx.stroke();
       } else if (P.self && SH.you) {
         var md = drawn('self', P.self, rt), me = wpt(md.x, md.y);
         var hv = md.heading != null ? headingVec(md.heading) : { dx: 0, dy: -1 };
@@ -3257,6 +3315,7 @@
       return inp;
     };
     CFG_COLS.forEach(function (it) { colorRow(colEl, it[0], it[1]); });
+    document.getElementById('cfgFacing').value = C.facing;
     var wm = document.getElementById('cfgWallMode'); wm.value = C.wallMode;
     var bg = document.getElementById('cfgBg'); bg.value = C.col.bg;
     var bgOwn = document.getElementById('cfgBgOwn'), bgA = document.getElementById('cfgBgA');
@@ -3273,6 +3332,9 @@
   document.getElementById('cfgScheme').addEventListener('change', function (e) {
     if (MAP_SCHEMES[e.target.value]) { applyScheme(S.cfg, e.target.value); buildCfg(); cfgCommit(); }
     else { S.cfg.scheme = 'custom'; saveCfg(); }
+  });
+  document.getElementById('cfgFacing').addEventListener('change', function (e) {
+    S.cfg.facing = FACING_MODES.indexOf(e.target.value) >= 0 ? e.target.value : FACING_DEFAULT; cfgCommit();
   });
   document.getElementById('cfgWallMode').addEventListener('change', function (e) {
     var v = e.target.value; S.cfg.wallMode = v === 'one' || v === 'layers' ? v : 'map'; cfgCommit();

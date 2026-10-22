@@ -53118,6 +53118,12 @@ function _mapStatePayload(have, now, haveLocal, haveRoute) {
     // 2026-10-13: "fit raid or fit group just zooms out to the whole zone"). "0" = ungrouped.
     if (String(m.name).toLowerCase() === me && m.group != null && String(m.group) !== '0') out.my_grp = String(m.group);
     if (seen.has(String(m.name).toLowerCase())) continue;
+    // A raider in another zone has no entity in YOUR client, so Zeal's raid loop (named_pipe.cpp, `if (entity)`) sends no
+    // loc for them and the roster above stores loc_x/y/z as null. Number(null) is 0, so _mapPos would turn that null
+    // into (0, 0, 0) and draw them at the zone's origin (the guild lead, 2026-10-22: a member in another zone showed on
+    // his map). Skip a member with no real position, and the (0, 0, 0) the local track already treats as "not in this zone".
+    if (!Number.isFinite(m.loc_x) || !Number.isFinite(m.loc_y)) continue;
+    if (m.loc_x === 0 && m.loc_y === 0 && !m.loc_z) continue;
     const p = _mapPos({ x: m.loc_x, y: m.loc_y, z: m.loc_z }, m.heading);
     if (!p) continue;
     seen.add(String(m.name).toLowerCase());

@@ -185,6 +185,19 @@ describe('the coordinate swap', () => {
     expect(p.target).toMatchObject({ name: 'a decaying skeleton', id: 77, x: 9, y: 7 });
     expect(p.target.dist).toBe(Math.round(Math.hypot(9 - 20, 7 - 10)));
   });
+  it('a raider in another zone is not on the map: Zeal sends no position for them, which must not become (0, 0)', () => {
+    // the guild lead, 2026-10-22: a member in another zone showed on his map. Zeal's raid loop (named_pipe.cpp) sends loc only
+    // when the raider's entity is in YOUR client; the agent stores the rest as null, and Number(null) is 0.
+    const { c } = localCore();
+    c._zealState.Aldenmar = { zone: 164, updatedAt: T0, loc: { x: 10, y: 20, z: 5 }, heading: 128 };
+    c._setRaid({ at: T0, members: [
+      { name: 'Corvale', class: 'Wizard', loc_x: 30, loc_y: 40, loc_z: 1, heading: 12 },
+      { name: 'Nolocman', class: 'Cleric', loc_x: null, loc_y: null, loc_z: null, heading: null },
+      { name: 'Zeroman', loc_x: 0, loc_y: 0, loc_z: 0, heading: 0 },
+      { name: 'Halfman', loc_x: 5, loc_y: null, loc_z: null },
+    ] });
+    expect(c._mapStatePayload('', T0 + 1000).raid.map(m => m.name)).toEqual(['Corvale']);
+  });
   it('knows every zone id the eqemu_zone table has, and nothing it does not', () => {
     const { c } = localCore();
     expect(c._mapZoneShort(164)).toBe('thedeep');
@@ -1286,7 +1299,7 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(32);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring + Guild corpses + Saved raid route + Facing wedges (2026-10-22)
+    expect(showRows).toHaveLength(31);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring + Guild corpses + Saved raid route (Facing is a choice above the list, not a tick box: test/map-facing-wedges.test.js)
     expect(glyphRows).toHaveLength(9);
     expect(colRows).toHaveLength(31);                                          // ...and the Corpses and Saved raid route colours
     const walls = showRows[0].children[0];                                     // Walls
@@ -1308,6 +1321,33 @@ describe('pather routes', () => {
     expect(again.S.cfg.col.route).toBe('#39c5cf');
     again.all.cfgClose.listeners.click.forEach(f => f());
     expect(again.all.cfg.hidden).toBe(true);
+  });
+  it('⚙ → Facing is Arrow by default, a choice of Arrow / Slice / Off is saved and survives a restart, and Reset puts the arrow back', async () => {
+    const base = await bootOverlay();
+    expect(base.S.cfg.facing).toBe('arrow');
+    base.all.cfgBtn.listeners.click.forEach(f => f());                         // the select is filled from the saved choice when ⚙ opens
+    expect(base.all.cfgFacing.value).toBe('arrow');
+    base.all.cfgFacing.listeners.change.forEach(f => f({ target: { value: 'slice' } }));
+    expect(JSON.parse(base.store['wp-map-cfg']).facing).toBe('slice');
+    const again = await bootOverlay({ store: base.store });
+    expect(again.S.cfg.facing).toBe('slice');
+    again.all.cfgFacing.listeners.change.forEach(f => f({ target: { value: 'sideways' } }));   // a junk value falls back to the default
+    expect(again.S.cfg.facing).toBe('arrow');
+    again.all.cfgFacing.listeners.change.forEach(f => f({ target: { value: 'off' } }));
+    expect(again.S.cfg.facing).toBe('off');
+    again.all.cfgReset.listeners.click.forEach(f => f());
+    expect(again.S.cfg.facing).toBe('arrow');
+  });
+  it('a raider the agent could not place (another zone) is not on the map: not drawn, not fitted to, not tracked', async () => {
+    const { payload } = await bootOverlay();
+    const given = Object.assign({}, payload, {
+      group: [{ name: 'Brackwyn', x: 100, y: 180, z: 0 }, { name: 'Nolocman', x: null, y: null, z: null }],
+      raid: [{ name: 'Corvale', x: 40, y: 30, z: 1, heading: 12 }, { name: 'Faraway', x: 0, y: 0, z: 0, heading: 0 }, { name: 'Nopos', x: null, y: undefined }],
+    });
+    const { S } = await bootOverlay({ payload: given });
+    expect(S.p.group.map(m => m.name)).toEqual(['Brackwyn']);
+    expect(S.p.raid.map(m => m.name)).toEqual(['Corvale']);
+    expect(Object.keys(S.trk).filter(k => /^[gr]:/.test(k)).sort()).toEqual(['g:Brackwyn', 'r:Corvale']);
   });
   it('◯ on the toolbar turns the aggro rings on and off, saved, the same switch as ⚙ → Aggro rings', async () => {
     const base = await bootOverlay();
