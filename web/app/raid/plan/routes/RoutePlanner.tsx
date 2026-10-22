@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import type { FewestKill } from '@/lib/routePlanner/fewest';
 import { fewestByNpc } from '@/lib/routePlanner/fewest';
@@ -18,16 +19,23 @@ import type { ChecklistStep } from '@/lib/routePlanner/build';
 import { plannedHeadcount } from '@/lib/routePlanner/plan';
 import type { PlanSummary } from '@/lib/routePlanner/store';
 import type { Mob, Plan, ZoneData } from '@/lib/routePlanner/types';
+import type { Routed } from '@/lib/routePlanner/navroute';
+import { sanitize } from '@/lib/routePlanner/plan';
 import {
   createRoutePlan, deleteRoutePlan, importSeedPlan, pollRoutePlan, publishRoutePlan, saveRoutePlan, updateRoutePlanMeta,
   type PlanDocOut,
 } from './actions';
 import { mountPlanner } from './engine';
 import VersionsPanel from './VersionsPanel';
-import ComparePanel from './ComparePanel';
+import ComparePanel, { type CompareNight } from './ComparePanel';
+import type { Mode3D } from './Plan3D';
 import './planner.css';
 
 type Api = ReturnType<typeof mountPlanner>;
+
+// The 3D view (Real walls and floors, or Floors stacked) is loaded only when the 3D button is pressed, so the 2D page
+// never downloads three.js.
+const Plan3D = dynamic(() => import('./Plan3D'), { ssr: false, loading: () => <div className="p3-note">Loading the 3D view…</div> });
 
 export type RoutePlannerProps = {
   zone: ZoneData;
@@ -42,6 +50,8 @@ export type RoutePlannerProps = {
   cardNote: string;
   seed: { label: string; pins: number } | null;
   fewest: FewestKill[];
+  /** The line under the Recorded nights list (the recorder's live raid nights are merged into the zone's): what it is made of and that it is capped. */
+  nightsNote?: string;
 };
 
 const SAVE_DELAY_MS = 1000;
@@ -62,6 +72,13 @@ export default function RoutePlanner(props: RoutePlannerProps) {
   const [previewing, setPreviewing] = useState(false);
   const [skipOptional, setSkipOptional] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [view3d, setView3d] = useState(false);
+  const [legKey, setLegKey] = useState<string | null>(null);   // the leg the One leg mode is on (null when the mode is off)
+  const [routes, setRoutes] = useState<Map<string, Routed>>(() => new Map());   // the walk routes by leg, for the 3D view
+  const [recorded, setRecorded] = useState<Map<string, [number, number][]>>(() => new Map());   // the Recorded source's legs, pin to pin, for the 3D view
+  const [nightKeys, setNightKeys] = useState<string[]>([]);                      // the nights ticked in Layers, for the 3D view's own layer
+  const [night, setNight] = useState<CompareNight | null>(null);                 // the Compare tab's night, for the 3D view
+  const [mode3d, setMode3d] = useState<Mode3D>('real');                       // the 3D view's two looks: the zone's real walls and floors, or the floors stacked
   const [confirm, setConfirm] = useState<null | { kind: 'publish'; text: string } | { kind: 'import'; text: string }>(null);
 
   // saving + polling state: refs, because the engine's callbacks outlive any one render
@@ -121,6 +138,16 @@ export default function RoutePlanner(props: RoutePlannerProps) {
       },
       onPreview: (on: boolean) => setPreviewing(on),
       onOptMode: (m: string) => setSkipOptional(m === 'skip'),
+      legFocus: true,
+      onLegFocus: (k: string | null) => setLegKey(k),
+      // "Walk route": the navigation library and the zone's walkable map are fetched when it is first turned on
+      navRoute: { load: () => import('@/lib/routePlanner/navLoad').then(m => m.loadNavRouter(zone)) },
+      onRoutes: (m: Map<string, Routed>) => setRoutes(m),
+      // the "Recorded" route source: legs along the average of the recorded nights
+      recorded: true,
+      onRecorded: (m: Map<string, [number, number][]>) => setRecorded(m),
+      onNights: (keys: string[]) => setNightKeys(keys),
+      nightsNote: props.nightsNote || '',
     });
     apiRef.current = api;
     setNodes(api.nodes);
@@ -229,6 +256,9 @@ export default function RoutePlanner(props: RoutePlannerProps) {
     router.push(href('main'));
   };
 
+  // what the 3D view draws is what the map shows: while a saved version is on the map, that version
+  const shown3d = useMemo(() => sanitize(previewing && apiRef.current ? apiRef.current.getPlan() : livePlan), [livePlan, previewing]);
+
   const isOff = planId !== 'main';
   const target = meta.target;
   const peak = planned?.peak ?? null;
@@ -292,7 +322,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
         {!officer && target != null && <span className="text-dim">target {target} raiders</span>}
       </div>
 
-      <div ref={rootRef} className="rp-root" />
+      <div ref={rootRef} className={view3d ? 'rp-root rp-3d' : 'rp-root'} />
 
       {msg && <p className="text-xs text-dim" role="status">{msg}</p>}
 
@@ -320,6 +350,32 @@ export default function RoutePlanner(props: RoutePlannerProps) {
         nodes.hostBar,
       )}
       {nodes && createPortal(
+        <div className="grp grp-3d">
+          <button type="button" className={view3d ? 'active' : ''} aria-pressed={view3d} onClick={() => setView3d(v => !v)}
+            title={view3d ? 'Back to the flat map, where you edit' : 'See the zone in 3D, with the route at its real heights'}>
+            {view3d ? '2D map' : '3D'}
+          </button>
+          {view3d && (
+            <>
+              <button type="button" className={mode3d === 'real' ? 'active' : ''} aria-pressed={mode3d === 'real'} onClick={() => setMode3d('real')}
+                title="The zone's real walls and floors, with the route at its real heights">Real</button>
+              <button type="button" className={mode3d === 'floors' ? 'active' : ''} aria-pressed={mode3d === 'floors'} onClick={() => setMode3d('floors')}
+                title="The floors stacked, with the route climbing between them">Floors</button>
+            </>
+          )}
+        </div>,
+        nodes.toolbar,
+      )}
+      {nodes && view3d && createPortal(
+        <Plan3D key={mode3d} zone={zone} extraMobs={props.extraMobs} plan={shown3d} skipOptional={skipOptional} mode={mode3d} focusLeg={legKey} routes={routes}
+          recorded={recorded} night={night} nightKeys={nightKeys}
+          onSelect={id => apiRef.current?.selectPin(id)}
+          canEdit={officer && !previewing}
+          onMovePin={(id, x, y, z) => apiRef.current?.movePin(id, x, y, z) ?? false}
+          onFail={() => { setView3d(false); note('This browser could not start 3D, so the flat map stays.'); }} />,
+        nodes.mapwrap,
+      )}
+      {nodes && createPortal(
         <VersionsPanel zone={zone.zone} planId={planId} officer={officer} tick={versionsTick} previewing={previewing}
           onView={(plan, text) => apiRef.current?.previewPlan(plan, text)}
           onRestored={(r) => {
@@ -333,7 +389,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
       )}
       {nodes && createPortal(
         <ComparePanel zone={zone} plan={livePlan} skipOptional={skipOptional} fewest={props.fewest}
-          onOverlay={o => apiRef.current?.setActual(o)} />,
+          onOverlay={o => { apiRef.current?.setActual(o); setNight(o); }} />,
         nodes.comparePane,
       )}
     </div>

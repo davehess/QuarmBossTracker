@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'route-planner-3d-2026-10-22',
+    title: 'Web 2.1.0',
+    version: 'Web 2.1.0',
+    date: '2026-10-22',
+    headline: 'The route planner goes 3D, shows one leg at a time, walks through doors and teleporters, and the raid\'s whole-night path is on the replay.',
+    features: [
+      { name: '3D view of the zone', blurb: 'A 3D button on the route planner shows the zone with its real walls and floors, or with the floors stacked and the route climbing between them. Officers can drag a pin to a new spot right in 3D.' },
+      { name: 'One leg at a time', blurb: 'With 26 pins the map is a tangle, so the planner can show a single leg, with its two pins in full strength, and step to the next.' },
+      { name: 'Legs that walk or follow the raid', blurb: 'Switch how legs are drawn: straight, along the server\'s own walkable map (round walls, through doors and teleporters), or along where our recorded raids actually went. An officer can keep a path as the leg\'s route.' },
+      { name: 'Compare a recorded night', blurb: 'The event Tallon and Vallon count as the event when a recorded night is compared with the plan, and a pin the raid walked past reads as passed.' },
+      { name: 'The raid\'s path on the replay', blurb: 'The spectator replay and shared raids draw the raid\'s whole-night path, solid up to where you are, with the kills numbered along it. A Path button turns it off.' },
+    ],
+    fixes: [
+      'Tower of Solusek Ro: Miak\'s preflag is noted on the plan.',
+      'The Planes of Power Tactics script links point at the right lines again.',
+    ],
+  },
+  {
     key: 'route-planner-2026-10-22',
     title: 'Route planner',
     version: 'Web 2.0.2',

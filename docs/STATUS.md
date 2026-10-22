@@ -110,6 +110,29 @@ next touch one rather than assuming a missing row means a missing doc.
   2 minutes of the kill, at least 3 raiders) and opens no window when it is inside the War Room box; no usable position
   keeps today's window. ⏳ Not fixed: the same event kill still starts the HOME Tallon / Vallon 66 h board timer (the timer
   paths in `index.js` have no position to test). Tests `test/hail-board.test.js`.
+- **✅ Route planner: 3D, one leg at a time, walked and recorded routes, compare fixes; the raid path on replays (web 2.1.0, live
+  on `main`, 2026-10-22).** The guild lead picked these off the Decision Desk after they ran as `?v=` previews on `beta`
+  (web 2.0.4 to 2.0.12); all are now on the default page, no `?v=` anywhere, the page keeps its [beta] tag.
+  - **3D button** on the map toolbar with two modes, **Real** (default: the zone's mesh, walls and floors, the plan at its pins'
+    real heights, a floor clip) and **Floors** (each floor a slab, spread by a slider). Officers drag a pin in 3D (Real: it lands on
+    the floor under the pointer; Floors: it slides along its own floor). View-only for members.
+  - **One leg** toggle: only the current leg is drawn, a bar steps through the legs (buttons or ← / →).
+  - **Straight · Walk route · Recorded** (default Straight): Walk route draws each leg along the server's own navmesh
+    (`GET /api/raid/navmesh`, `@recast-navigation` 0.43.1 loaded only when first used), through teleporters and flagged doors;
+    Recorded draws it along the average of the recorded nights that passed both pins; "Use this route" (officers) bakes either into
+    the leg's bend points. The planner now merges the recorder's live raid nights into the zone's (newest first, 12 at most).
+  - **Compare**: the event Tallon and Vallon count as the event (not the home brothers), and a pin the raid walked past reads
+    "passed". ⏳ The bot still stores event kills under the home ids and stamps the home brothers' 66 h board timers from an event
+    kill (bot 4.0.5 fixes only the hail window); the War Room box test is 2D.
+  - **Server patch 2026-10-22** (web part): Tactics script links pinned to quests `ea0c766` (Rallos.lua anchors +8), the
+    Tallon/Vallon reset note, Solusek Ro's flag needs Miak's preflag. The Mimic part (`apps/mimic/pop-raids.js`) stays on `beta`.
+  - **Raid path on the spectator replay and shared raids**: the whole night's raid-centre path, faint, solid up to the playhead,
+    numbered kills, Fit path, a **Path** toggle (on by default), in 2D and 3D. The fading-trail alternative was dropped. Computed in
+    the browser from the frames the board already loads (`web/lib/replayPath.ts`); the board also reads the rest of the night's
+    windows one at a time.
+  - ⏳ A raid night's worth of looking at whether the walked routes are ones a raider would take; the Tower's three step bridges
+    are heuristics nobody has walked; the 3D height of a recorded path is a draped guess, never recorded.
+  Docs: `docs/HOW-ITS-BUILT.md` "Route planner".
 - **✅ Route planner page (`/raid/plan/routes`, marked [beta], web 2.0.2, live on `main`, 2026-10-22).**
   The officers' single-file Tactics route planner, ported as it was into the raid planner area and extended. Members view,
   officers edit; plans live in `bot_kv` `route_plan:<zone>` (no migration): several plans per zone (the main night + named

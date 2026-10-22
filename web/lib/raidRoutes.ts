@@ -143,21 +143,57 @@ export type NightTrack = {
   flags: NightFlag[];
 };
 
-/** Encounters + the centroid series -> everything the page needs to judge one night. */
+/**
+ * A zone whose ENCOUNTER ROWS name one fight by another's id. `encounters` is written by name, so a brother killed at the
+ * event is stored under his HOME id; the raid's position at the kill tells the two apart. A kill of `from` whose raid
+ * centre is inside `box` is the event one: it becomes `to` / `name`, is always named, and keeps its LAST row (the event
+ * brothers reset and re-engage, so an early short row is not the death). Data, not code: a zone with no entry is untouched.
+ *
+ * Plane of Tactics (zone 214): home Tallon 214026 and Vallon 214316 stand in the wings (|y| about 2000); the Rallos event
+ * spawns Tallon 214313 and Vallon 214320 (potactics/encounters/Rallos.lua:287-289 @ SecretsOTheP/quests ea0c766) and the
+ * raid fights them in the War Room, x 180..1290, |y| < 700 (the planner's `focus` box in routePlanner/zones/potactics.ts).
+ */
+export type EventRekey = { from: number; to: number; name: string };
+export type ZoneEvents = { box: Box; rekey: readonly EventRekey[] };
+export const ZONE_EVENTS: Readonly<Record<string, ZoneEvents>> = {
+  potactics: {
+    box: { minX: 180, maxX: 1290, minY: -700, maxY: 700 },
+    rekey: [
+      { from: 214026, to: 214313, name: 'Tallon Zek (event)' },
+      { from: 214316, to: 214320, name: 'Vallon Zek (event)' },
+    ],
+  },
+};
+
+const inBox = (p: Pt, b: Box) => p.x >= b.minX && p.x <= b.maxX && p.y >= b.minY && p.y <= b.maxY;
+
+/** Encounters + the centroid series -> everything the page needs to judge one night. `events`: see ZoneEvents. */
 export function analyzeNight(
   key: string, span: { from: number; to: number }, series: CPoint[], encs: readonly Enc[], namedIds: ReadonlySet<number>,
+  events?: ZoneEvents,
 ): NightTrack {
   const inSpan = encs.filter(e => e.started >= span.from && e.started < span.to).sort((a, b) => a.started - b.started || a.id - b.id);
   const firstEngage = inSpan.length ? inSpan[0].started : null;
   const named: Kill[] = [];
   const trash: Kill[] = [];
   const seen = new Set<number>();
+  const eventIds = new Set<number>();
   for (const e of inSpan) {
     if (e.ended == null || e.ended < e.started) continue;
-    const k: Kill = { npc_id: e.npc_id, name: e.name, start: e.started, end: e.ended };
-    if (namedIds.has(e.npc_id)) {
-      if (seen.has(e.npc_id)) continue;     // a retry or a duplicate card: the first kill is the one that counts
-      seen.add(e.npc_id);
+    let k: Kill = { npc_id: e.npc_id, name: e.name, start: e.started, end: e.ended };
+    const rk = events?.rekey.find(r => r.from === e.npc_id);
+    if (events && rk) {
+      const c = centreAt(series, e.ended) ?? centreAt(series, e.started);   // no track here: stays the home one
+      if (c && inBox(c, events.box)) { k = { npc_id: rk.to, name: rk.name, start: e.started, end: e.ended }; eventIds.add(rk.to); }
+    }
+    if (eventIds.has(k.npc_id) || namedIds.has(k.npc_id)) {
+      if (seen.has(k.npc_id)) {
+        // one card, two rows (same death): the earlier start is the fight. An event brother's later row replaces the earlier one.
+        const idx = named.findIndex(x => x.npc_id === k.npc_id);
+        if (!eventIds.has(k.npc_id) || named[idx].end === k.end) continue;
+        named.splice(idx, 1);
+      }
+      seen.add(k.npc_id);       // a retry or a duplicate card: for everything else the first kill is the one that counts
       named.push(k);
     } else trash.push(k);
   }

@@ -8,9 +8,9 @@
 //
 // The pair rules: NONE for the Plane of Tactics, per the encounter script (the guild lead, 2026-10-21: "we should
 // always go off of the scripts and database instead of the guides"). The guide's "Decorins within 6 minutes" and
-// "Tallon + Vallon within about 20" do not exist in SecretsOTheP/quests potactics/encounters/Rallos.lua: the
-// Decorins only need both dead (L269, no time compared; a guard that RESPAWNS loses its kill, L379-389), and each
-// brother has its own out-of-combat allowance (20 min, 150 min in a guild instance; L220-247, L456), not a window
+// "Tallon + Vallon within about 20" do not exist in SecretsOTheP/quests (ea0c766) potactics/encounters/Rallos.lua: the
+// Decorins only need both dead (L277, no time compared; a guard that RESPAWNS loses its kill, L387-397), and each
+// brother has its own out-of-combat allowance (20 min, 150 min in a guild instance; L228-255, L464), not a window
 // between the two deaths. The machinery stays for a rule a script does carry.
 
 export type Kill = { npcId: number; name: string; atMs: number };

@@ -7,6 +7,9 @@
 //   eqemu_npc_types / spawnentry / spawn2
 //                                    only for a fight-card boss the static zone data does not have: its name and its
 //                                    first spawn point, at most 100 npc ids
+//   raid_track_minutes / encounters  NOT read here: the zone's recent raid nights come from raidRoutesLoad.ts zoneNightSeries,
+//                                    the per-visit analysis /api/raid/routes already reads (bounded and paged there), at most
+//                                    NIGHT_CAP visits, kept five minutes in this process
 // The browser never gets a row it did not ask for: the page passes the plan and the card bosses as props, the actions
 // return one plan at a time.
 import { supabaseAdmin } from '@/lib/supabase';
@@ -14,8 +17,10 @@ import { GUILD_TAG } from '@/lib/guild';
 import { selectAll } from '@/lib/selectAll';
 import { cleanBossName } from '@/lib/format';
 import { GUIDE_ITEMS } from '@/lib/popGuide';
+import { zoneNightSeries } from '@/lib/raidRoutesLoad';
 import { parseStore, storeKey, type PlanStore } from './store';
-import type { Mob, ZoneData } from './types';
+import { NIGHT_CAP, liveNights, mergeNights, nightsNote } from './nights';
+import type { Mob, Night, ZoneData } from './types';
 import type { ChecklistStep } from './build';
 
 export async function readStore(zone: string): Promise<PlanStore | null> {
@@ -108,4 +113,41 @@ export async function cardBosses(zone: ZoneData): Promise<CardBosses> {
     extra.push(m);
   }
   return { onPlanNpcs, extra, unplaced };
+}
+
+// ── the zone's recorded nights, live ──────────────────────────────────────────
+const NIGHTS_TTL = 5 * 60 * 1000;       // "a few minutes": a night in progress is a few minutes old at worst
+const NIGHTS_WAIT = 8000;               // the page does not wait longer; the work goes on and the next load has it
+const nightsHeld = new Map<string, { at: number; p: Promise<Night[]> }>();
+
+async function readLiveNights(zone: ZoneData): Promise<Night[]> {
+  const got = await zoneNightSeries(zone.zone, NIGHT_CAP);
+  return got ? liveNights(got.map(g => ({ night_key: g.visit.night_key, from: g.visit.from, minutes: g.visit.minutes, series: g.series, kills: g.kills })), zone.nights) : [];
+}
+
+/**
+ * The zone's nights for the planner: the file's saved ones with the recorder's raid nights merged over them (same night key =
+ * one night, the live copy wins), newest first, at most NIGHT_CAP. `note` is what the Layers tab says about the list. Any
+ * failure, or a recorder slower than NIGHTS_WAIT, gives the file's own nights, as the page has always had.
+ */
+export async function plannerNights(zone: ZoneData): Promise<{ nights: Night[]; note: string }> {
+  const plain = { nights: zone.nights, note: '' };
+  let h = nightsHeld.get(zone.zone);
+  if (!h || Date.now() - h.at > NIGHTS_TTL) {
+    const mine = { at: Date.now(), p: readLiveNights(zone) };
+    h = mine;
+    nightsHeld.set(zone.zone, mine);
+    mine.p.catch(() => { if (nightsHeld.get(zone.zone) === mine) nightsHeld.delete(zone.zone); });   // a failure is not remembered
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const live = await Promise.race([h.p, new Promise<never>((_, no) => { timer = setTimeout(() => no(new Error('recorder slow')), NIGHTS_WAIT); })]);
+    if (!live.length) return plain;
+    const m = mergeNights(zone.nights, live, NIGHT_CAP);
+    return { nights: m.nights, note: nightsNote(m, NIGHT_CAP) };
+  } catch {
+    return plain;
+  } finally {
+    clearTimeout(timer);
+  }
 }

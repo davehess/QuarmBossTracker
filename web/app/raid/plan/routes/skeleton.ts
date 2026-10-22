@@ -6,7 +6,7 @@ import type { ZoneData } from '@/lib/routePlanner/types';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 
-export function skeletonHtml(Z: ZoneData, readOnly: boolean): string {
+export function skeletonHtml(Z: ZoneData, readOnly: boolean, legMode = false): string {
   return `
 <div id="app">
   <aside id="side">
@@ -64,7 +64,9 @@ export function skeletonHtml(Z: ZoneData, readOnly: boolean): string {
             <li><b>Bend a leg:</b> click the line to add a bend point, drag it to pull the line off a wall. Right-click a bend to remove it, right-click a leg to hide it.</li>
             <li><b>Follow paths:</b> pick that tool, click a leg (or its start pin then end pin). The leg becomes the average of the recorded nights that ran between the two pins.</li>
             <li><b>Split:</b> on the Legs tab, <i>Split this leg</i> sends the raid up two or more branches at once (Team A, Team B) and regroups at the leg's end. Pick the branch in the map toolbar to drop its pins. The split's time is its slowest branch.</li>
-            <li><b>Teleports:</b> a leg can go <i>via</i> a teleport (Legs tab); the jump is drawn but not counted.</li>
+            <li><b>Teleports:</b> a leg can go <i>via</i> a teleport (Legs tab); the jump is drawn but not counted.</li>${legMode ? `
+            <li><b>Straight · Walk route · Recorded</b> (map toolbar) is how legs are drawn. <i>Walk route</i> goes along the server's own walkable map, round walls and through teleporters and flagged doors; the jump is dashed and not counted. <i>Use this route</i> on a leg's card keeps that path as the leg's bend points.</li>
+            <li><b>Recorded</b> draws every leg along where the raid actually went: the average of every recorded night that passed both of its pins. A leg no night covers is walked (or straight), and its card says so. <i>Use recorded routes</i> (Legs tab) keeps the averages as bend points, so they reach the in-game map.</li>` : ''}
             <li><b>Tracks:</b> turn nights on in Layers. Click a piece of a track to hide it; Layers has Show all again.</li>
             <li><b>/loc:</b> bottom-left shows the cursor as <code>/loc y, x</code>, exactly as the game prints it.</li>
             <li><b>Versions:</b> the plan saves by itself; Save version keeps a copy you can come back to. <b>Compare</b> lays a recorded night over the plan.</li>
@@ -109,7 +111,10 @@ export function skeletonHtml(Z: ZoneData, readOnly: boolean): string {
         <button data-mode="select" class="active" title="Move pins, pan, bend legs">Move</button>
         <button data-mode="addpin" title="Click the map to drop a pin">Add pin</button>
         <button data-mode="follow" title="Click a leg to snap it to recorded paths">Follow paths</button>
-      </div>
+      </div>${legMode ? `
+      <div class="grp" id="legGrp"><button id="legOnly" aria-pressed="false" title="Draw one leg at a time: the one that starts at the selected pin. Left / right arrow keys step.">One leg</button></div>
+      <div class="grp" id="srcGrp" role="group" aria-label="How legs are drawn"><button data-src="straight" aria-pressed="true" title="Each leg as the plan has it: straight, or bent where an officer bent it">Straight</button><button data-src="walk" aria-pressed="false" title="Draw each leg along the server's own walkable map: round walls, through teleporters and flagged doors. The straight or bent line stays the plan; this is a view.">Walk route</button><button data-src="rec" aria-pressed="false" title="Draw each leg along where the raid actually went: the average of every recorded night that passed both pins. A leg no night covers is walked, or straight when the walkable map is not there. The plan keeps its own line; this is a view.">Recorded</button></div>
+      <span class="walknote" id="walkNote" role="status"></span>` : ''}
       <select id="addKind" title="Kind for new pins">
         <option value="note">new pin: note</option><option value="boss">new pin: boss</option><option value="named">new pin: named</option>
         <option value="scripted">new pin: scripted</option><option value="objective">new pin: objective</option><option value="door">new pin: door</option>
@@ -120,7 +125,8 @@ export function skeletonHtml(Z: ZoneData, readOnly: boolean): string {
       <div class="grp"><button id="zIn" title="Zoom in" aria-label="Zoom in">+</button><button id="zOut" title="Zoom out" aria-label="Zoom out">&minus;</button></div>
       <div class="grp"><button id="zFit">Fit zone</button><button id="zWar">${esc(Z.focus.label)}</button></div>
     </div>
-    <div class="banner" id="banner"></div>
+    <div class="banner" id="banner"></div>${legMode ? `
+    <div class="legbar" id="legBar"><button id="legPrev" aria-label="Previous leg" title="Previous leg (left arrow)">&lsaquo;</button><span id="legText" role="status"></span><button id="legNext" aria-label="Next leg" title="Next leg (right arrow)">&rsaquo;</button><label class="small" title="Pan and zoom the map to each leg"><input type="checkbox" id="legFollow" checked> follow</label></div>` : ''}
     <div class="previewbar" id="previewBar"><span id="previewText"></span><button class="sm primary" id="previewBack">Back to the current plan</button></div>
     <div id="pop"></div>
     <div id="loc">/loc y, x: -</div>
