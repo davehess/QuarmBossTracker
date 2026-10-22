@@ -1,7 +1,7 @@
 // Route planner: the recorded nights the planner is given. Pure (no database, no DOM), so the root vitest suite real-imports it.
 //
 // A zone file carries a few STATIC nights (the ones the recorder had when the file was made). The recorder keeps going, so
-// the page (the ?v= previews) asks it for the zone's raid nights again (web/lib/raidRoutesLoad.ts zoneNightSeries, the very
+// the page asks it for the zone's raid nights again (web/lib/raidRoutesLoad.ts zoneNightSeries, the very
 // reduction /api/raid/routes draws from) and merges them over the file's: the same night key is ONE night, and the live copy
 // wins (it is the longer, later reduction of the same minutes); newest first; at most NIGHT_CAP, because every night rides to
 // the browser as a [seconds, x, y] row every 3 s.

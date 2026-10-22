@@ -9,7 +9,7 @@
 //                                    first spawn point, at most 100 npc ids
 //   raid_track_minutes / encounters  NOT read here: the zone's recent raid nights come from raidRoutesLoad.ts zoneNightSeries,
 //                                    the per-visit analysis /api/raid/routes already reads (bounded and paged there), at most
-//                                    NIGHT_CAP visits, kept five minutes in this process (the ?v= previews only)
+//                                    NIGHT_CAP visits, kept five minutes in this process
 // The browser never gets a row it did not ask for: the page passes the plan and the card bosses as props, the actions
 // return one plan at a time.
 import { supabaseAdmin } from '@/lib/supabase';

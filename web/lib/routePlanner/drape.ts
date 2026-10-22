@@ -1,6 +1,6 @@
 // Route planner: putting a flat path on the ground. Pure (no three.js, no DOM), so the root vitest suite real-imports it.
 //
-// A recorded night is [x, y] only: the recorder never kept a height. To draw one in the true-3D view (?v=c) each sample is
+// A recorded night is [x, y] only: the recorder never kept a height. To draw one in the Real 3D view each sample is
 // DRAPED onto the zone's floors: a vertical ray at (x, y) meets every floor above or below that point (a tower has eleven), and
 // the one to pick is the one the raid was on. That is decided by CONTINUITY, not by a guess at the floor: the path starts at a
 // reference height (the pin or kill it starts at), and every next sample takes the hit nearest the height of the one before it.

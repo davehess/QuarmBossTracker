@@ -1,15 +1,15 @@
 // Route planner: the rules behind the 3D views (no React, no three.js, no DOM, so the root vitest suite real-imports this).
 //
 // The planner's map is a top-down picture, which cannot show a tower: eleven floors lie on top of each other. The 3D views
-// (?v=b, ?v=c on /raid/plan/routes) lay the same plan out in height. Everything that decides WHERE a thing goes is here;
+// (on /raid/plan/routes) lay the same plan out in height. Everything that decides WHERE a thing goes is here;
 // Plan3D.tsx only draws what this returns.
 //
-// FRAMES. x and y are the server's (the plan's own); h is a HEIGHT in the view, and it is the only thing the two variants
+// FRAMES. x and y are the server's (the plan's own); h is a HEIGHT in the view, and it is the only thing the two modes
 // disagree on:
-//   'stack' (v=b)  h is the floor's slab: floor n of the zone sits at n * spacing, whatever its real z. A thing on a floor
+//   'stack' (Floors)  h is the floor's slab: floor n of the zone sits at n * spacing, whatever its real z. A thing on a floor
 //                  snaps to that slab; a path that climbs (a pather on a ramp, a leg between floors) is drawn along the
 //                  way, through the floors' own levels, so the climb is visible.
-//   'mesh'  (v=c)  h is the real z, because the picture is the real collision mesh.
+//   'mesh'  (Real)  h is the real z, because the picture is the real collision mesh.
 // The drawing then maps (x, y, h) to three.js as (-x, h, -y), the same frame lib/zoneMesh.ts serverToThree gives.
 import type { Floor, Kind, Mob, Pather, Pin, Plan, ZoneData, ZoneLink } from './types';
 import { allPins, floorOf, planLegs } from './plan';

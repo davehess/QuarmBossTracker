@@ -1,4 +1,4 @@
-// test/route-planner-3d.test.js: the rules behind the route planner's 3D previews (web/lib/routePlanner/view3d.ts), pinned
+// test/route-planner-3d.test.js: the rules behind the route planner's 3D view (web/lib/routePlanner/view3d.ts), pinned
 // without a browser or three.js. What is worth testing is where things GO: which slab a floor is, where a pin with no z
 // stands, how a leg between floors climbs, where a floor clip cuts. Drawing them is Plan3D.tsx.
 //
@@ -13,6 +13,9 @@ import { serverToThree } from '../web/lib/zoneMesh.ts';
 import { buildPlanPins } from '../web/lib/routePlanner/build.ts';
 import { emptyPlan } from '../web/lib/routePlanner/types.ts';
 import { zoneData } from '../web/lib/routePlanner/zones/index.ts';
+import fs from 'node:fs';
+import path from 'node:path';
+import { ROOT, stripJs } from './_source-slice.js';
 
 const pin = (id, x, y, extra = {}) => ({ id, label: id, kind: 'note', optional: false, x, y, ...extra });
 const TOWER = zoneData('solrotower');
@@ -341,5 +344,32 @@ describe('dragging a pin in 3D', () => {
     expect(legTouches('p1>p2', 'p')).toBe(false);
     expect(legTouches('p1>p2', '2')).toBe(false);
     expect(legTouches('p10>p2', 'p1')).toBe(false);
+  });
+});
+
+describe('the 3D button (live, no ?v= variants)', () => {
+  const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+  const host = stripJs(read('web/app/raid/plan/routes/RoutePlanner.tsx'));
+  const plan3d = stripJs(read('web/app/raid/plan/routes/Plan3D.tsx'));
+  const page = stripJs(read('web/app/raid/plan/routes/page.tsx'));
+
+  it('is always shown, with Real (the default) and Floors as its two modes', () => {
+    expect(host).toMatch(/useState<Mode3D>\('real'\)/);
+    expect(host).toMatch(/\{view3d \? '2D map' : '3D'\}/);
+    expect(host).toMatch(/setMode3d\('real'\)/);
+    expect(host).toMatch(/setMode3d\('floors'\)/);
+    expect(host).toMatch(/<Plan3D key=\{mode3d\}[^>]*mode=\{mode3d\}/);      // a mode change rebuilds the scene
+    expect(plan3d).toMatch(/const stack = mode === 'floors';/);
+  });
+
+  it('is not gated by a variant anywhere', () => {
+    expect(host).not.toMatch(/variant|v3\b/);
+    expect(plan3d).not.toMatch(/variant/);
+    expect(page).not.toMatch(/searchParams\.v\b|variant|&v=/);
+  });
+
+  it('keeps the page marked [beta]', () => {
+    expect(read('web/app/raid/plan/routes/page.tsx')).toMatch(/title: '\[beta\] Route planner'/);
+    expect(page).toMatch(/<NewPageTag /);
   });
 });
