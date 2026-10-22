@@ -4393,6 +4393,10 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   list, arrows and a Legs-tab card all go through `selPin`); the toggle rides the engine's `ui` state (`rp-ui-<zone>`). Rules:
   `web/lib/routePlanner/legFocus.ts` (`test/route-planner-model.test.js`); in 3D the engine tells the host the current leg's key and
   `buildView3D({ focusLeg })` draws only it.
+- **Floors follow the leg (`?v=floors`, beta preview, web 2.1.2: `https://b.wolfpack.quest/raid/plan/routes?zone=solrotower&v=floors`).**
+  With One leg on and the floor on All, `renderMap` sets `autoFloors` = `legFloorKeys(Z.floors, legRuns(cur))` (`legFocus.ts`: the
+  floors of the pins, of every height on the walked or baked path, and the floors between for a line with heights only at its
+  ends; a teleport counts where it leaves and lands). `floorInView` is the one test the walls, leash boxes, dimming and pathers share.
 - **Route source: Straight · Walk route · Recorded** (a view over the plan; default Straight).
   - **Walk route.** The server's own navmesh, Quarm's `<zone>.nav` from EQMacEmu/Maps (GPL-derived like the EQEmu walls; not
     committed): `GET /api/raid/navmesh?zone=` (members only, `app/api/raid/navmesh/route.ts`) fetches it, slims it

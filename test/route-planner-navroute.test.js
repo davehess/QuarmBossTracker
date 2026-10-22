@@ -562,7 +562,9 @@ describe('the page everyone sees is unchanged', () => {
     const host = stripJs(read('web/app/raid/plan/routes/RoutePlanner.tsx'));
     expect(host).toMatch(/navRoute: \{ load:/);
     expect(host).not.toMatch(/props\.variant/);
-    expect(stripJs(read('web/app/raid/plan/routes/page.tsx'))).not.toMatch(/searchParams\.v\b|variant/);
+    const pageSrc = stripJs(read('web/app/raid/plan/routes/page.tsx'));
+    expect(pageSrc).not.toMatch(/variant/);
+    expect(pageSrc.replace(/one\(searchParams\.v\) === 'floors'/g, '')).not.toMatch(/searchParams\.v\b/);   // the one ?v= left is the floors preview
     expect(host).toMatch(/import\('@\/lib\/routePlanner\/navLoad'\)/);          // lazy: nothing of it is in the page's own chunk
     const engine = stripJs(read('web/app/raid/plan/routes/engine.ts'));
     expect(engine).toMatch(/const walkOn = \(\) => !!host\.navRoute && \(ui\.src === 'walk' \|\| ui\.src === 'rec'\);/);
