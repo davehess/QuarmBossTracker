@@ -50686,6 +50686,9 @@ function _mobPackGet(query, etag, done) {
         done(null, res.statusCode, buf, res.headers.etag || null);
       } catch (e) { done(e); }
     });
+    // Dropped mid-body: no 'end' and no request 'error' (see fetchMobInfo), so without this the zone stayed in
+    // flight for good and its pack was never fetched or revalidated again until Mimic restarted.
+    res.on('close', () => { if (!res.complete) done(new Error('aborted')); });
   });
   req.on('error',   (e) => done(e));
   req.on('timeout', () => { req.destroy(); done(new Error('timeout')); });
@@ -50848,6 +50851,10 @@ function fetchMobInfo(name, selfChar, zoneId, npcId) {
         _mobInfoInflight.delete(key);
         _mobInfoStore(key, res.statusCode, body);
       });
+      // A connection that drops AFTER the headers (the bot restarting mid-answer) emits neither 'end' nor a request
+      // 'error' nor 'timeout' - only 'close' on the response, with `complete` false. Without this the in-flight mark
+      // stayed forever and the mob was never asked for again until Mimic restarted (FB-94, measured on Node 22).
+      res.on('close', () => { if (!res.complete) _mobInfoInflight.delete(key); });
     });
     req.on('error',   () => { _mobInfoInflight.delete(key); });
     req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(key); });

@@ -5413,6 +5413,9 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   re-ask when `now - at >= MOB_INFO_TTL_MS` (6 h). `_mobInfoStore` is the one writer of a bot answer: a 200 with a mob lasts 6 h;
   anything else is a miss stored with `at` set back so it expires after `MOB_INFO_MISS_TTL_MS` (60 s), keeping a row already held.
   Zone packs (`_mobPackLookup`) and the off-Quarm "no row" are written directly and are unchanged. Test: `test/mob-pack-agent.test.js`.
+  Agent 4.0.9 (FB-94): `fetchMobInfo` and `_mobPackGet` also listen for `close` on the response and, when `res.complete` is false
+  (connection lost after the headers, which fires no `end`, no request `error`, no `timeout`), release the in-flight mark
+  (`_mobInfoInflight` / `_mobPackInflight` via `done`); before, that mob or zone was never asked for again until Mimic restarted.
 - **Overlay crash recovery (Mimic beta, 2026-10-22).** `browser-window-created` wires `render-process-gone` on every window;
   `_overlayRendererGone` handles the ones that are `_OVERLAY_WINDOWS` entries (drop, destroy, then `applyAllVisibility` after 500 ms),
   limited by `_crashRebuildAllowed` to 3 per overlay per 5 min. The dashboard keeps its own handler in `createWindow`. Test:
