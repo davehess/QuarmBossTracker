@@ -381,12 +381,49 @@
   // ── pure helpers (the map's own maths; test/spawn-map.test.js runs these as written) ──────────────────────
   // FRAMES: the agent already hands every position over in the SERVER frame (it swaps Zeal's pipe x/y once, at
   // its edge). The picture is north up: screen_x = -x, screen_y = -y (web/lib/spectator.ts toScreen).
-  var HEADING_CCW = true;   // heading 0-512, 0 = north; the turn direction is the spectator's unchecked assumption
+  // Heading is 0-512 with 0 = north, turning COUNTER-clockwise on the north-up picture (128 = west, 256 = south, 384 =
+  // east). Checked 2026-10-22 against two sources: Zeal's own map marker (zone_map.cpp, add_position_marker_vertices:
+  // "0 = N = -y, 128 = W = -x, 256 = S = +y, 384 = E = +x ... screen x tracks -sin(heading) and y tracks -cos(heading)")
+  // and the server's CalculateHeadingAngleBetweenPositions (EQMacEmu zone/position.cpp, 256-scale: a target on +y is
+  // heading 0, on +x is 64, on -y is 128), which with screen = (-x, -y) is the same left-hand turn.
+  var HEADING_CCW = true;
   function toScreen(x, y) { return { sx: -x, sy: -y }; }
   function headingVec(heading) {
     var turn = ((heading % 512) + 512) % 512 / 512 * Math.PI * 2;
     var a = HEADING_CCW ? turn : -turn;
     return { dx: -Math.sin(a), dy: -Math.cos(a) };
+  }
+  // Facing wedges (the guild lead, 2026-10-22, beside Zeal's map: "maps overlay should show 'pizza slices' for which way
+  // people are facing and see them easier"). A raider is a slice of a circle opening the way they face, in their class
+  // colour (the website's palette, web/lib/spectator.ts CLASS_COLORS: one palette, two copies, test/map-facing-wedges.test.js).
+  var WEDGE_HALF = 28 * Math.PI / 180;   // a 56 degree slice
+  var WEDGE_UNITS = 80;                  // its reach in world units, before the clamp
+  var WEDGE_MIN = 14, WEDGE_MAX = 26;   // on-screen px: readable zoomed out, never a floodlight zoomed in
+  var CLASS_HEX = {
+    warrior: '#e07a3f', druid: '#f0a53a', paladin: '#f2e04b', rogue: '#b8d63a', ranger: '#56d364', shaman: '#2fc9a0',
+    monk: '#3fd0d9', magician: '#4fa8ff', wizard: '#7585f0', enchanter: '#a371f7', necromancer: '#d36bf0', bard: '#f08ad2',
+    shadowknight: '#d6456b', beastlord: '#b98563', cleric: '#e6edf3',
+  };
+  var CLASS_ABBR = { war: 'warrior', pal: 'paladin', rng: 'ranger', shd: 'shadowknight', sk: 'shadowknight', dru: 'druid', mnk: 'monk',
+    brd: 'bard', rog: 'rogue', shm: 'shaman', nec: 'necromancer', necro: 'necromancer', wiz: 'wizard', mag: 'magician',
+    mage: 'magician', enc: 'enchanter', bst: 'beastlord', clr: 'cleric' };
+  // Any spelling the pipe or the agent sends ("Shadow Knight", "shadowknight", "SHD") -> its colour, or null when unknown.
+  function classHex(raw) {
+    var k = String(raw == null ? '' : raw).toLowerCase().replace(/[^a-z]/g, '');
+    return CLASS_HEX[CLASS_ABBR[k] || k] || null;
+  }
+  // The slice's reach in px at this zoom; `text` is the Map's text-size setting (nudges it a little), `big` is you.
+  function wedgeRadius(scale, text, big) {
+    var k = Math.min(1.3, Math.max(0.8, Number(text) || 1));
+    var r = Math.min(WEDGE_MAX, Math.max(WEDGE_MIN, WEDGE_UNITS * (Number(scale) || 0))) * k;
+    return big ? r * 1.35 : r;
+  }
+  // The two canvas angles (clockwise from +x, y down: what ctx.arc takes) a heading's slice runs between, or null when
+  // the heading is unknown.
+  function wedgeArc(heading) {
+    if (heading == null || !isFinite(heading)) return null;
+    var v = headingVec(heading), a = Math.atan2(v.dy, v.dx);
+    return { a0: a - WEDGE_HALF, a1: a + WEDGE_HALF };
   }
   var FLASH_MS = 15000;   // keep equal to MAP_FLASH_MS in the agent
   // wait = not yet (red) | flash = it just became possible | window = inside the window (yellow) | up = past it (green)
@@ -1315,6 +1352,7 @@
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
     ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
     ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['conNames', 'Mob names in con colour'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
+    ['wedges', 'Facing wedges (which way each raider faces)'],
     ['focus', 'Raid focus target (MA / most targeted)'], ['corpses', 'Guild corpses (☠)'], ['raidRoute', 'Saved raid route (gold line, numbered stops)'],
     ['kite', 'Kite coach (your circling: lap, drift)'], ['kiteLoops', 'Guild kite loops'],
   ];
@@ -2477,12 +2515,35 @@
     // Group and raid.
     var P = S.p;
     if (P) {
+      // Three passes so nothing sits on top of a name: every slice, then every dot, then the labels. A raider with a
+      // heading is a facing wedge (the DRAWN heading, so it turns with the glide) in their class colour with a dot at the
+      // apex; one without a heading is a slightly bigger dot with a darker rim. Facing wedges off draws the plain dots.
+      var wedgesOn = SH.wedges !== false, wedgeR = wedgeRadius(v.scale, C.text, false);
       var dotsOf = function (list, color, rad, pre, names) {
+        var vis = [];   // m, drawn heading, x, y - four to a raider
         for (var i = 0; i < (list || []).length; i++) {
           var m = list[i], dm = drawn(pre + m.name, m, rt), q = wpt(dm.x, dm.y);
           if (q[0] < -20 || q[0] > w + 20 || q[1] < -20 || q[1] > h + 20) continue;
-          ctx.beginPath(); ctx.arc(q[0], q[1], rad, 0, 6.2832); ctx.fillStyle = color; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = '#0d1117'; ctx.stroke();
-          if (names && v.scale >= 0.4) halo(m.name, q[0] + rad + 3, q[1], fontSmall, color);
+          vis.push(m, dm.heading, q[0], q[1]);
+        }
+        var j, arc, col;
+        if (wedgesOn) {
+          ctx.lineWidth = 1.25; ctx.strokeStyle = 'rgba(8,11,16,0.9)'; ctx.lineJoin = 'round';
+          for (j = 0; j < vis.length; j += 4) {
+            arc = wedgeArc(vis[j + 1]);
+            if (!arc) continue;
+            ctx.beginPath(); ctx.moveTo(vis[j + 2], vis[j + 3]); ctx.arc(vis[j + 2], vis[j + 3], wedgeR, arc.a0, arc.a1); ctx.closePath();
+            ctx.fillStyle = classHex(vis[j].class) || color; ctx.globalAlpha = 0.65; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
+          }
+          ctx.lineJoin = 'miter';
+        }
+        for (j = 0; j < vis.length; j += 4) {
+          col = wedgesOn ? (classHex(vis[j].class) || color) : color;
+          ctx.beginPath(); ctx.arc(vis[j + 2], vis[j + 3], wedgesOn ? rad * 1.2 : rad, 0, 6.2832); ctx.fillStyle = col; ctx.fill();
+          ctx.lineWidth = wedgesOn ? 1.5 : 1; ctx.strokeStyle = wedgesOn ? 'rgba(8,11,16,0.95)' : '#0d1117'; ctx.stroke();
+        }
+        if (names && v.scale >= 0.4) {
+          for (j = 0; j < vis.length; j += 4) halo(vis[j].name, vis[j + 2] + rad + 3, vis[j + 3], fontSmall, color);
         }
       };
       if (SH.raid) dotsOf(P.raid, CO.raid, 3 * I.dot, 'r:', SH.raidNames);
@@ -2646,8 +2707,18 @@
         if (subTxt) halo(subTxt, tq[0] + 9, tq[1] + 6, labelFont('small'), CO.target);
       }
       kiteDots = drawKite(rt, SH, w, h);
-      // You: an arrow by heading.
-      if (P.self && SH.you) {
+      // You: the same wedge as everyone else, bigger and brighter with a white rim, so you stand out in a crowd of
+      // them. No heading yet: just the dot with its white rim. (Facing wedges off keeps the old arrow below.)
+      if (P.self && SH.you && SH.wedges !== false) {
+        var wd = drawn('self', P.self, rt), wq = wpt(wd.x, wd.y), warc = wedgeArc(wd.heading);
+        if (warc) {
+          ctx.beginPath(); ctx.moveTo(wq[0], wq[1]); ctx.arc(wq[0], wq[1], wedgeRadius(v.scale, C.text, true), warc.a0, warc.a1); ctx.closePath();
+          ctx.fillStyle = CO.you; ctx.globalAlpha = 0.7; ctx.fill(); ctx.globalAlpha = 1;
+          ctx.lineWidth = 1.75; ctx.lineJoin = 'round'; ctx.strokeStyle = '#ffffff'; ctx.stroke(); ctx.lineJoin = 'miter';
+        }
+        ctx.beginPath(); ctx.arc(wq[0], wq[1], 4.5 * I.dot, 0, 6.2832); ctx.fillStyle = CO.you; ctx.fill();
+        ctx.lineWidth = 1.75; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+      } else if (P.self && SH.you) {
         var md = drawn('self', P.self, rt), me = wpt(md.x, md.y);
         var hv = md.heading != null ? headingVec(md.heading) : { dx: 0, dy: -1 };
         var nx = -hv.dy, ny = hv.dx;

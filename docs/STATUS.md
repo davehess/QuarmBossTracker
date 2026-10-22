@@ -6378,3 +6378,8 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   ⏳ Not pushed. ⏳ Apply `20261021120000_encounters_change_cursor.sql` by hand (SQL Editor) for My parses' difference.
   ⏳ HELD on beta: the raidmimic landing previews and the PoP Flags sticky bar. ⏳ Item icons from the game's files; guest slice
   2; the Gallery (Overlay Gallery slice 1, still gating per §374).
+- ✅ Map: facing wedges (the guild lead, 2026-10-22: "pizza slices for which way people are facing"; Mimic beta, map.html only,
+  no agent change): every raider is a class-coloured slice opening the way they face, you the same one bigger with a white rim,
+  names drawn on top; ⚙ Map settings → Facing wedges (default on). Turn direction checked against Zeal's own marker code and
+  the server. ⏳ In-game look at a full raid cluster; ⏳ group members show the role colour until the pipe sends their class
+  (verbose pipe only).
