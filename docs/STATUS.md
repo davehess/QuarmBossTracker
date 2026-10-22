@@ -6378,8 +6378,13 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   ⏳ Not pushed. ⏳ Apply `20261021120000_encounters_change_cursor.sql` by hand (SQL Editor) for My parses' difference.
   ⏳ HELD on beta: the raidmimic landing previews and the PoP Flags sticky bar. ⏳ Item icons from the game's files; guest slice
   2; the Gallery (Overlay Gallery slice 1, still gating per §374).
-- ✅ Map: facing wedges (the guild lead, 2026-10-22: "pizza slices for which way people are facing"; Mimic beta, map.html only,
-  no agent change): every raider is a class-coloured slice opening the way they face, you the same one bigger with a white rim,
-  names drawn on top; ⚙ Map settings → Facing wedges (default on). Turn direction checked against Zeal's own marker code and
-  the server. ⏳ In-game look at a full raid cluster; ⏳ group members show the role colour until the pipe sends their class
-  (verbose pipe only).
+- ✅ Map: facing as an arrow or a slice, and raiders in another zone stay off the map (the guild lead, 2026-10-22: "pizza slices
+  for which way people are facing", then "the Viewpoint is too large … the Arrow view works better for me, make both available";
+  agent 4.0.4 + Mimic beta): ⚙ Map settings → **Facing: Arrow (default) / Slice / Off**. Arrow = a small class-coloured
+  arrowhead per raider, tip the way they look, you the same a little bigger with a white rim; Slice = the first beta's wedge, now
+  capped at 18 px (yours 1.15x, was 26 px and 1.35x); a saved "Facing wedges off" becomes Off. Out-of-zone fix: Zeal sends no
+  position for a raider not in YOUR zone, the agent stored null and `_mapStatePayload` turned it into (0, 0, 0), so that raider was
+  drawn at the zone origin; the agent now skips them and `map.html` drops any member with no real position as a second guard.
+  Turn direction checked against Zeal's own marker code and the server. ⏳ In-game look at a full raid cluster; ⏳ the out-of-zone
+  cause is read from Zeal's source and the agent's maths, not yet seen on a live raid; ⏳ group members show the role colour until
+  the pipe sends their class (verbose pipe only).

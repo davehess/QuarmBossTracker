@@ -5306,14 +5306,20 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   Mimic's pipe handler now also carries `target_loc` / `target_type` (Zeal 1.4.8).
 - Test: `test/spawn-map.test.js`. Design: `docs/DESIGN-mimic-2.9-spawn-map.md`. Every refinement since (asks, what
   shipped, what is open): `docs/MAP-REFINEMENTS.md`.
-- **Facing wedges** (2026-10-22, Mimic beta, no agent change): every raider and group member the Map can place is a "pizza slice"
-  opening the way they face (56 degrees, 14-26 px reach scaled by zoom, class colour from the website's palette, dark rim, a dot
-  at the apex); you are the same slice, bigger, with a white rim; no heading yet = a slightly bigger dot. Pure helpers in
-  `map.html` (`wedgeArc`, `wedgeRadius`, `classHex`), drawn in three passes in `renderMap`'s `dotsOf` (slices, dots, names) from
-  the glide's interpolated heading. ⚙ Map settings → "Facing wedges" (default on, saved with the rest; off = the old dots and
-  your arrow). Heading already rode the `/api/map-state` `self` / `group` / `raid` rows and Mimic's direct push, so only
-  `map.html` changed. Turn direction verified against Zeal's `zone_map.cpp` marker and the server's heading maths (counter-clockwise,
-  128 = west). The Canvas does not embed the Map, so it has no wedges to inherit. Test: `test/map-facing-wedges.test.js`.
+- **Facing: arrow or slice** (2026-10-22, agent 4.0.4 + Mimic beta): ⚙ Map settings → **Facing** = Arrow (default) / Slice / Off,
+  saved as `cfg.facing` (a saved first-beta `show.wedges === false` migrates to Off). Every raider and group member the Map can
+  place is a class-coloured (the website's palette) marker turned by the glide's interpolated heading: **Arrow** is a small
+  arrowhead (`arrowPoints` / `arrowSize`, about 10 px long, tip = the way they look, dark rim); **Slice** is the "pizza slice"
+  (`wedgeArc` / `wedgeRadius`: 56 degrees, 11-18 px reach scaled by zoom, a dot at the apex). You are the same shape 1.3x (arrow)
+  or 1.15x (slice) with a white rim; no heading yet = a slightly bigger dot. Drawn in three passes in `renderMap`'s `dotsOf`
+  (slices, markers, names; a name is held clear of an arrow's tip). Heading already rode the `/api/map-state` `self` / `group` /
+  `raid` rows and Mimic's direct push. Turn direction verified against Zeal's `zone_map.cpp` marker and the server's heading maths
+  (counter-clockwise, 128 = west). The Canvas does not embed the Map, so it has no markers to inherit.
+  **Nobody from another zone**: Zeal's raid loop (`named_pipe.cpp`, `if (entity)`) sends `loc` only for a member who is in YOUR
+  client, so the agent stores `loc_x/y/z` null for the rest; `_mapStatePayload` skips a raid member with no real position (it used
+  to run null through `_mapPos`, where `Number(null)` is 0, and draw them at the zone origin), and `map.html`'s `placedHere`
+  drops any member with no position or exactly (0, 0, 0) from both the poll and Mimic's direct push. Tests:
+  `test/map-facing-wedges.test.js`, `test/spawn-map.test.js`.
 - **Full mode + keep-clear areas** (2026-10-14, agent 3.7.162 · Mimic beta): `cfg.mapMode` (`window` default | `full`), one setter `_setMapMode` in `main.js`
   behind the Map toolbar ▣/▢, ⚙ → Mode, the tray item and the dashboard Overlays button. Full resizes the window to EverQuest's client
   rectangle (`_eqWindowGeometry`, cached; fallback the display the Map was on) and is click-through always — `_coversScreen(key)` is the
