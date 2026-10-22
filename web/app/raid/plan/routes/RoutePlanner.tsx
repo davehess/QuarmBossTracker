@@ -352,6 +352,8 @@ export default function RoutePlanner(props: RoutePlannerProps) {
       {nodes && v3 && view3d && createPortal(
         <Plan3D zone={zone} extraMobs={props.extraMobs} plan={shown3d} skipOptional={skipOptional} variant={v3} focusLeg={legKey} routes={routes}
           onSelect={id => apiRef.current?.selectPin(id)}
+          canEdit={officer && !previewing}
+          onMovePin={(id, x, y, z) => apiRef.current?.movePin(id, x, y, z) ?? false}
           onFail={() => { setView3d(false); note('This browser could not start 3D, so the flat map stays.'); }} />,
         nodes.mapwrap,
       )}

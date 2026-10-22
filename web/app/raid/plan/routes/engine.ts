@@ -40,7 +40,7 @@ const FLOOR_FALLBACK = ['#a8793a', '#6b788c', '#8fb4d9', '#7fb685', '#c28bd8', '
  * host: { zone, extraMobs, onPlanNpcs, checklist, cardNote, fewest:Map<npc,row>, readOnly, initialPlan, onChange(plan),
  *         onPreview(on), onOptMode(mode), onTab(tab), legFocus (offer the "One leg" mode), onLegFocus(legKey | null),
  *         navRoute { load(): Promise<Router> } (offer "Walk route"), onRoutes(Map<legKey, Routed>) (the 3D view's copy) }
- * returns: { destroy, getPlan, setPlan, setStatus, setEdited, previewPlan, exitPreview, setTab, toast, setActual, nodes }
+ * returns: { destroy, getPlan, setPlan, setStatus, setEdited, previewPlan, exitPreview, setTab, toast, setActual, nodes, selectPin, movePin }
  */
 export function mountPlanner(root, host) {
   const Z = host.zone;
@@ -1119,6 +1119,18 @@ export function mountPlanner(root, host) {
     isPreviewing: () => !!preview,
     /** Select a pin as a click on it does (the 3D previews call this): the pin list scrolls to it, the map marks it. */
     selectPin: id => { if (pinById(id)) { selPin = id; renderMap(); renderPanel(); scrollPinIntoView(id); } },
+    /**
+     * Let go of a pin dragged in the 3D view: what finishing a 2D pin drag does (x, y; the pin keeps its mob and the legs keep
+     * their bends, as in 2D), plus the height when the 3D view knows it. False, and nothing changed, when the plan is not editable.
+     */
+    movePin: (id, x, y, z) => {
+      const p = pinById(id);
+      if (!p || !editable() || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+      p.x = r1(x); p.y = r1(y);
+      if (Number.isFinite(z)) p.z = r1(z);
+      changed();
+      return true;
+    },
     destroy() { destroyed = true; clearTimeout(routeTimer); cleanups.forEach(f => f()); cancelAnimationFrame(locRaf); clearTimeout(toastT); clearTimeout(rsT); root.innerHTML = ''; },
   };
 }
