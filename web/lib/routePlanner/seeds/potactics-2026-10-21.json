@@ -1,0 +1,517 @@
+{
+ "built": {
+  "at": 1792634340076,
+  "order": "checklist"
+ },
+ "hiddenTracks": [],
+ "lines": [
+  {
+   "k": "pioilho9bg>p20v3jd9bg",
+   "off": false,
+   "pts": [
+    [
+     -638.8,
+     1924.7
+    ],
+    [
+     -529.3,
+     1791.5
+    ],
+    [
+     -510,
+     1571.7
+    ],
+    [
+     -346,
+     1566.8
+    ],
+    [
+     -344.3,
+     1146.1
+    ],
+    [
+     -309.4,
+     879.7
+    ],
+    [
+     -186.8,
+     862.7
+    ],
+    [
+     -185.2,
+     335
+    ],
+    [
+     38,
+     322.4
+    ],
+    [
+     144.1,
+     -23
+    ],
+    [
+     91,
+     -239.3
+    ],
+    [
+     -193.9,
+     -383.3
+    ],
+    [
+     -216.6,
+     -869.4
+    ],
+    [
+     -296.6,
+     -866.2
+    ],
+    [
+     -347.8,
+     -1378.2
+    ],
+    [
+     -352.1,
+     -1549
+    ],
+    [
+     -503.1,
+     -1592.3
+    ],
+    [
+     -514.4,
+     -1862.2
+    ]
+   ]
+  },
+  {
+   "k": "pf3ynd09bg>pioilho9bg",
+   "off": false,
+   "pts": [
+    [
+     116.6,
+     -15.3
+    ],
+    [
+     29,
+     326
+    ],
+    [
+     -168,
+     340.5
+    ],
+    [
+     -191.6,
+     864.3
+    ],
+    [
+     -304.5,
+     921.1
+    ],
+    [
+     -341.9,
+     1140.4
+    ],
+    [
+     -335.4,
+     1560.3
+    ],
+    [
+     -500.3,
+     1596
+    ],
+    [
+     -509.6,
+     1800
+    ],
+    [
+     -466.3,
+     2154.9
+    ]
+   ]
+  },
+  {
+   "k": "p20v3jd9bg>pwwmdwx9bg",
+   "off": false,
+   "pts": [
+    [
+     -514.4,
+     -1810.8
+    ],
+    [
+     -517.6,
+     -1577.9
+    ],
+    [
+     -363.9,
+     -1531.7
+    ],
+    [
+     -351,
+     -1221.4
+    ],
+    [
+     -309.4,
+     -933.4
+    ],
+    [
+     -194.2,
+     -837.3
+    ],
+    [
+     -168.3,
+     -562.6
+    ],
+    [
+     -187.5,
+     -296.9
+    ],
+    [
+     46.2,
+     -287.3
+    ],
+    [
+     113.9,
+     30.6
+    ],
+    [
+     322.7,
+     37.8
+    ],
+    [
+     365.6,
+     -556
+    ],
+    [
+     1009.4,
+     -553.3
+    ],
+    [
+     992.8,
+     19.8
+    ],
+    [
+     1183.8,
+     8.8
+    ],
+    [
+     1172.7,
+     -193.3
+    ],
+    [
+     1262.7,
+     -204.4
+    ],
+    [
+     1257.2,
+     72.5
+    ],
+    [
+     1003.8,
+     89.1
+    ],
+    [
+     1026.7,
+     595.5
+    ],
+    [
+     379,
+     576.7
+    ],
+    [
+     329.3,
+     573.2
+    ]
+   ]
+  },
+  {
+   "k": "pwwmdwx9bg>pspzxj69bg",
+   "off": false,
+   "pts": [
+    [
+     361.9,
+     547.5
+    ],
+    [
+     1009.6,
+     530.4
+    ],
+    [
+     978.8,
+     -542.3
+    ],
+    [
+     325.9,
+     -545.7
+    ]
+   ]
+  },
+  {
+   "k": "pksg1ri9bg>pnoe3om9bg",
+   "off": false,
+   "pts": [
+    [
+     356.7,
+     38.6
+    ]
+   ]
+  },
+  {
+   "k": "pnoe3om9bg>pvemn9n9bg",
+   "off": false,
+   "pts": [
+    [
+     702.9,
+     2.6
+    ]
+   ]
+  },
+  {
+   "k": "pdc0rgu9bg>p53ysn79bg",
+   "off": false,
+   "pts": [
+    [
+     914,
+     -270.4
+    ],
+    [
+     1177.1,
+     -276.1
+    ],
+    [
+     1167.6,
+     143.3
+    ],
+    [
+     1390.6,
+     135.7
+    ]
+   ]
+  },
+  {
+   "k": "p53ysn79bg>pifp12x9bg",
+   "off": false,
+   "pts": [
+    [
+     1429.8,
+     151.5
+    ],
+    [
+     1420.6,
+     664
+    ],
+    [
+     1191.1,
+     640.6
+    ],
+    [
+     1208.1,
+     1010.3
+    ],
+    [
+     1392.9,
+     1033.4
+    ]
+   ]
+  },
+  {
+   "k": "pdwsegg9bg>pd3hh4o9bg",
+   "off": false,
+   "pts": [
+    [
+     1348.7,
+     2069.9
+    ],
+    [
+     1392.6,
+     1213.9
+    ],
+    [
+     1381.1,
+     1063.3
+    ],
+    [
+     1194.3,
+     1053.7
+    ],
+    [
+     1188.6,
+     661
+    ],
+    [
+     1202,
+     -824.5
+    ]
+   ]
+  }
+ ],
+ "pins": [
+  {
+   "id": "pf3ynd09bg",
+   "kind": "door",
+   "label": "Zone-in",
+   "mob": "zonein",
+   "optional": false,
+   "x": -411.5,
+   "y": 0.7,
+   "z": -35
+  },
+  {
+   "id": "pioilho9bg",
+   "kind": "boss",
+   "label": "Vallon Zek (north wing)",
+   "mob": "vallon_home",
+   "note": "Checklist: Kill Vallon Zek. Splits at 50%; hail the Projection after.",
+   "npc": 214316,
+   "optional": false,
+   "x": -812,
+   "y": 2156.9,
+   "z": 217.6
+  },
+  {
+   "id": "p20v3jd9bg",
+   "kind": "boss",
+   "label": "Tallon Zek (south wing)",
+   "mob": "tallon_home",
+   "note": "Checklist: Kill Tallon Zek. Hail the Projection after.",
+   "npc": 214026,
+   "optional": false,
+   "x": -619,
+   "y": -1958,
+   "z": 207.6
+  },
+  {
+   "id": "pwwmdwx9bg",
+   "kind": "boss",
+   "label": "Decorin Berik",
+   "mob": "berik",
+   "note": "Rallos event P1: both Decorins must die",
+   "npc": 214056,
+   "optional": false,
+   "x": 319,
+   "y": 300.8,
+   "z": 168.3
+  },
+  {
+   "id": "pspzxj69bg",
+   "kind": "boss",
+   "label": "Decorin Grunhork",
+   "mob": "grunhork",
+   "note": "Rallos event P1: both Decorins must die",
+   "npc": 214057,
+   "optional": false,
+   "x": 320,
+   "y": -286,
+   "z": 168.3
+  },
+  {
+   "id": "psj5ifz9bg",
+   "kind": "scripted",
+   "label": "Tallon Zek (event)",
+   "mob": "tallon_ev",
+   "note": "P2: spawns at this point when both Decorins die, walks to the council room",
+   "npc": 214313,
+   "optional": false,
+   "x": 317.3,
+   "y": -127.6,
+   "z": 158
+  },
+  {
+   "id": "pksg1ri9bg",
+   "kind": "scripted",
+   "label": "Vallon Zek (event)",
+   "mob": "vallon_ev",
+   "note": "P2: spawns with Tallon, splits at 50%",
+   "npc": 214320,
+   "optional": false,
+   "x": 313.9,
+   "y": 148.3,
+   "z": 158
+  },
+  {
+   "id": "pnoe3om9bg",
+   "kind": "scripted",
+   "label": "Rallos Zek (upstairs, War Room)",
+   "mob": "rallos_up",
+   "note": "P3: spawns when both brothers are dead",
+   "npc": 214311,
+   "optional": false,
+   "x": 500,
+   "y": 20,
+   "z": 194.1
+  },
+  {
+   "id": "pvemn9n9bg",
+   "kind": "scripted",
+   "label": "Rallos Zek the Warlord (pit)",
+   "mob": "warlord",
+   "note": "P4: spawns at upstairs Rallos 50%; pit adds",
+   "npc": 214312,
+   "optional": false,
+   "x": 576.1,
+   "y": -252.7,
+   "z": -290
+  },
+  {
+   "id": "pdc0rgu9bg",
+   "kind": "objective",
+   "label": "Hail Planar Projection (Rallos)",
+   "mob": "proj_rallos",
+   "note": "Spawns where the Warlord dies (approximate point)",
+   "npc": 214322,
+   "optional": false,
+   "x": 648,
+   "y": -264.7,
+   "z": -290
+  },
+  {
+   "id": "p53ysn79bg",
+   "kind": "boss",
+   "label": "The Diaku Overseer",
+   "mob": "overseer",
+   "note": "Recorded route stop 2",
+   "npc": 214092,
+   "optional": false,
+   "x": 1375,
+   "y": 23,
+   "z": -297.4
+  },
+  {
+   "id": "pifp12x9bg",
+   "kind": "boss",
+   "label": "Tagrin Maldric",
+   "mob": "tagrin",
+   "note": "Recorded route stop 1",
+   "npc": 214054,
+   "optional": false,
+   "x": 1357,
+   "y": 2141,
+   "z": -319.4
+  },
+  {
+   "id": "pdwsegg9bg",
+   "kind": "named",
+   "label": "Eriak",
+   "mob": "eriak",
+   "note": "Named next to Tagrin (optional)",
+   "npc": 214073,
+   "optional": true,
+   "x": 1275,
+   "y": 2078,
+   "z": -319.4
+  },
+  {
+   "id": "pd3hh4o9bg",
+   "kind": "boss",
+   "label": "Glykus Helmir",
+   "mob": "glykus",
+   "note": "Recorded route stop 3",
+   "npc": 214053,
+   "optional": false,
+   "x": 1600,
+   "y": -849,
+   "z": -279.3
+  }
+ ],
+ "updatedAt": 1792645372042,
+ "splits": []
+}

@@ -205,7 +205,7 @@ export default async function RaidPlanPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-2xl text-gold">Fight cards</h2>
+        <h2 className="text-2xl text-gold">Fight cards <Link href="/raid/plan/routes" className="ml-2 text-xs font-normal text-blue hover:underline">Route planner &rarr;</Link></h2>
         <p className="text-xs text-dim mt-1 leading-5 max-w-3xl">
           The pre-raid checklist, one card per fight: the composition it needs, the kit to bring,
           the tactics that keep us from wasting time and wiping — and the callouts, read live from

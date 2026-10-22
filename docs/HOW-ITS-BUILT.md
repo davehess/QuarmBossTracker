@@ -4315,6 +4315,32 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   Pure rules in `web/lib/raidRoutes.ts`, loader `raidRoutesLoad.ts`, board `RoutesBoard.tsx`, member-gated `/api/raid/routes`;
   officers can save a route (`actions.ts`, stored in `bot_kv` as `raid_route:<zone>`, so no migration). Server frame throughout; the page negates axes to draw north up. Test:
   `test/raid-routes.test.js`.
+- **Fewest raiders per boss (`GET /api/raid/fewest?zone=&npc=`, for the route planner's off-night targets).** Members-only; per boss, the
+  five smallest past confirmed kills with players, characters, class mix and main/off night, counts only. Headcount is the union of the
+  parse's damage dealers (guild characters only) and the raiders the raid recorder placed in the zone around the kill; players join
+  characters by family and Discord owner. The recorder is read only for kills that can reach the five smallest. Pure rules + loader
+  `web/lib/fewestKills.ts`, route `web/app/api/raid/fewest/route.ts` (5 min cache). Test: `test/fewest-kills.test.js`.
+
+### Route planner (`/raid/plan/routes`, web 2.0.2, 2026-10-22, DRAFT)
+- **Where.** `web/app/raid/plan/routes/` (`page.tsx` server, `RoutePlanner.tsx` client host, `engine.ts` the ported single-file
+  planner, `VersionsPanel.tsx`, `ComparePanel.tsx`, `actions.ts`, `planner.css`) and `web/lib/routePlanner/` (pure: `plan.ts`
+  sanitize/legs/totals/headcount/floors, `build.ts`, `follow.ts`, `store.ts`, `compare.ts`, `toRaidRoute.ts`, `fewest.ts`;
+  server: `load.ts`, `fewestKills.ts`; data: `zones/` and `seeds/`). One static route with `?zone=` and `?plan=`.
+- **Storage.** `bot_kv` `route_plan:<zone>`, version 2: `plans.<id>` = `{ name, night_type: main|off, target_headcount?, current,
+  versions[≤30] }`; the old single-plan row reads as `plans.main`. Saves are officer-only server actions (gate re-checked in each).
+  A new version on "Save version" and at most every 10 minutes of edits (the state the edit replaced); a restore keeps what it replaced.
+- **Build from checklist** lays down the named mobs, the PoP checklist objectives (`popGuide.ts` keys), the scripted event chain
+  and Projections, and the zone's fight-card bosses (`fight_cards`, marked "on the plan", laid down first).
+- **Send to in-game map** writes `raid_route:<zone>` (the key `/raid/routes` saves; the bot's `utils/raidRoute.js` serves it to
+  Mimic's Map); splits flatten into it, a teleport leg carries its two points.
+- **Adding a zone.** A `zones/<zone>.json` (walls by floor, mobs, nights, optional `floors`, `pathers`, `links`, `config`) and a
+  settings `.ts` beside it, registered in `zones/index.ts`. Recorded nights are static for now: making them live is the reduction
+  `raidRoutesLoad.ts` already does over `raid_track_minutes`, written as `nights` instead of an average.
+- **"Fewest raiders so far"**: the shape is `fewest.ts` (`toPlannerRows` reshapes `web/lib/fewestKills.ts`'s answer), the server
+  hook is `fewestKills.ts` (5 min in-process cache; the page waits at most 5 s, a cold read fills the cache for the next load).
+- **Build groups** may be `lead` (right after the start) or `last` (after everything: Solusek Ro, who needs the five wings
+  done). A zone's `buildNotes` says what the build did, per order.
+- Tests: `test/route-planner-model.test.js`, `test/route-planner-store.test.js`.
 
 ---
 

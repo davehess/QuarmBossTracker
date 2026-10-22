@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Route planner + off-night plans + Sol Ro tower** (§407) | Live on main (web 2.0.2): `/raid/plan/routes` [beta], Tactics + the tower, versions, compare, splits, fewest raiders per boss | the guild lead: press "Import tonight's planner" once as an officer; pick the off-night bosses and the fewest headline (A everyone present, default) |
+| **Guest raids stored as ours** (§408) | Not fixed | the guild lead: A tag them (recommended) or B don't send |
 | **Canvas Pieces round** (§360–366) | Built + gated on `alpha` (park 3.0.0): backing plate-only, whole-group look choices, copy/rename/update a saved group, live-data palette previews, locate line + pulse, delete-with-pieces + Undo | the guild lead, on the next alpha build: (1) list-mode preview crop at 42px (D), (2) single-piece Show as → Upright bar stub (B), (3) the hover line reaches the canvas while arranging (E) |
 | **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: say whether to build a zone gate for guild triggers (agent change on beta) so the bars fire only in the named's zone |
 | **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | All recommendations taken; slice-0 draft lost (never pushed) | a session: redo slice 0 (portable layout + set fork-on-save) on beta, then slice 1 (publish → Gallery tab → add as a new set) — 3.0 stable waits on slice 1 |
@@ -12381,3 +12383,41 @@ The guild lead, 2026-10-21: *"these numbers are so skewed"* — the post said "t
 - **Why OpenDKP and not `raid_attendance_ticks`:** officer-curated, leaves the small alt-raid nights out by itself, and is not
   fed from `raid_roster`. Its weakness is a night nobody entered (the 1 to 11 October 2026 nights were never entered), which only shortens the history.
 - **Open:** the six-night window currently spans the PoP unlock (about 47 players before, about 61 after).
+
+### 406. Encounter mechanics come from the server's scripts and our database, not guides (2026-10-21)
+The guild lead: *"we should always go off of the scripts and database instead of the guides."*
+- **The rule:** timers, windows, add cadences, emote text, leashes and NPC facts are read from the server's quest scripts
+  (`SecretsOTheP/quests`, cited by file and line at a pinned commit) and our `eqemu_*` mirror. Community guides
+  (eqprogression, quarm.guide, PQDI write-ups) are leads to check, never the source; a guide-only claim is marked unverified.
+- **What triggered it:** the Tactics timeline carried guide rules (both Decorins within 6 minutes, Tallon and Vallon within
+  about 20) that `potactics/encounters/Rallos.lua` does not have: no window between the Decorins or the brothers, a leash
+  past x 820, a 150-minute idle clock per boss paused while fighting.
+- **Where it landed:** web 1.9.26 (`PAIR_RULES = []`), agent 3.8.54 (pair countdowns removed, `pop-raids.js` reworded), the
+  Rallos guild triggers re-sourced from the script (`source_pack potactics-rallos-script`), and a paragraph in CLAUDE.md's
+  Domain policies. The Tower of Solusek Ro planner data (§407) was built the same way: every rule cites its `.lua` lines.
+- **Sweep still to do:** re-source the rest of `apps/mimic/pop-raids.js` from the scripts.
+
+### 407. The route planner on the website, off-night plans by fewest raiders, and the Sol Ro tower (2026-10-22, web 2.0.2)
+The guild lead, 2026-10-21/22: *"put the route planner into the site as is in the tactics route artifact.. put it into the
+planner where we can see previous and build in the named and ones in the plan"*; *"Add optional legs. Splits where we divide
+for specific tasks"*; *"set us up to do this with the next progression in tower of solusek ro. include mobs and pathers"*;
+*"we will want to establish these for off night targets as well. the goal with those is how few raiders we can accomplish
+those events with"*. Map editor calls, *"all recommended"*: officers edit; v1 is pins + doors / teleports + following our
+recorded paths (navmesh routing later); Quarm's own EQMacEmu maps are the truth for walls; a saved route belongs to the
+zone, with dated versions.
+- **Where:** `https://wolfpack.quest/raid/plan/routes` (new page, `[beta]`), `?zone=` and `?plan=`. Stored in `bot_kv`
+  `route_plan:<zone>` (no migration): a main plan plus up to 12 off-night plans per zone, 30 versions each. "Send to
+  in-game map" writes `raid_route:<zone>`, which the bot serves to Mimic's Map (bot 4.0.2, agent 4.0.1).
+- **Off nights:** a plan has a night type and a target headcount; splits carry their own headcount. Every boss shows the
+  smallest group we have killed it with (PLAYERS, not characters; the damage dealers united with the raid recorder) and
+  that group's classes (`web/lib/fewestKills.ts`, also `GET /api/raid/fewest`).
+- **Tower of Solusek Ro:** 11 floors, 33 bosses / named / scripted spawns, 375 trash points, 12 pathers, 10 real
+  teleporters plus doors and zone lines. The lava rune doors need all five wing flags (`sol_room` 11111) and the Zek flag;
+  the Lava Well zone line's spot is approximate. No recorded nights yet, so Follow paths and Compare wait for the first raid.
+- **Open:** which bosses are the off-night targets (default: the Tallon and Vallon home wings); the fewest headline counts
+  everyone present (A, the default) unless the guild lead picks B, damage dealers only.
+
+### 408. Guest raids are being stored as ours (2026-10-22, open)
+`raid_roster` rows from a raid run by another group, uploaded by our members' agents, read as a Wolf Pack raid (this is part
+of why the pre-raid average read about 82, §405). Not fixed. Pick open: **A** tag those rows as a guest raid (recommended:
+the data is still useful for the raider, and it is what guest pass A, §402, needs anyway) or **B** do not send them.
