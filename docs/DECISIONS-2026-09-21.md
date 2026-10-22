@@ -116,6 +116,9 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Route planner + off-night plans + Sol Ro tower** (§407) | Live on main (web 2.0.2): `/raid/plan/routes` [beta], Tactics + the tower, versions, compare, splits, fewest raiders per boss | the guild lead: press "Import tonight's planner" once as an officer; pick the off-night bosses and the fewest headline (A everyone present, default) |
 | **Guest raids stored as ours** (§408) | Not fixed | the guild lead: A tag them (recommended) or B don't send |
+| **Route planner + off-night plans + Sol Ro tower** (§407, §410) | Live on main (web 2.1.0): 3D Real/Floors with drag, One leg, Straight/Walk/Recorded, compare with event kills; off-night A picked | the guild lead: press "Import tonight's planner" once as an officer; a session: build floor clutter A (floors follow the current leg) |
+| **Guest raids stored as ours** (§408, §410) | Picked A (tag them); not built | a session: tag guest-raid roster rows and keep them out of our numbers |
+| **Windows jump to the top-left mid-drag** (§412) | Fix being built on beta (window writers + SetWindowPos flags), plus Target Info 60 s miss retry and overlay crash recovery | the guild lead: on the next beta, drag the dashboard and the Dock; if it still jumps, send the `[window]` lines from agent.log |
 | **raidmimic.com overlay clips + three more layouts** (§409) | Built on beta (web 2.0.3): three looping recordings of the real overlays (`web/public/raidmimic/clips/`, made by `scripts/raidmimic-shots/scenes.mjs`) and previews `?v=d` Scene-first, `?v=e` Raid-night story, `?v=f` Your screen, beside the tour and `?v=b` | the guild lead: pick one on the Decision Desk (card `raidmimic-layout-clips`); then graduate it and delete the others in the same change |
 | **Canvas Pieces round** (§360–366) | Built + gated on `alpha` (park 3.0.0): backing plate-only, whole-group look choices, copy/rename/update a saved group, live-data palette previews, locate line + pulse, delete-with-pieces + Undo | the guild lead, on the next alpha build: (1) list-mode preview crop at 42px (D), (2) single-piece Show as → Upright bar stub (B), (3) the hover line reaches the canvas while arranging (E) |
 | **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: say whether to build a zone gate for guild triggers (agent change on beta) so the bars fire only in the named's zone |
@@ -12445,3 +12448,45 @@ all of the nukers casting on it."*
   `?v=f` Your screen (all three at once on one dark "monitor"), beside the tour (default) and `?v=b` Output first, still
   unpicked from §404. Posted on the Decision Desk as card `raidmimic-layout-clips`. When one is picked, graduate it and delete
   the others in the same change.
+
+### 410. The 2026-10-22 Decision Desk picks, and what shipped on them (2026-10-22)
+The guild lead picked on the Decision Desk (cards are the record; picks are the page's `picks` collection):
+- **Planner 3D: C (true 3D), keep both as buttons** → live on main, web 2.1.0: a 3D button with **Real** (default, the EQEmu
+  collision mesh) and **Floors** (stacked slabs). Officers drag pins in 3D. *"the 3d format looks really good and helpful for
+  guidance. can we make dragging possible there"*.
+- **Replay path: B (whole-night path, numbered kills)** → live on main (spectator replay and shared raids); the trail preview deleted.
+- **Walk route: A (a switch)** → live: Straight · Walk route · Recorded; routes reach the saved plan only through Use this route.
+  Walk route reads Quarm's own navmesh (EQMacEmu/Maps `<zone>.nav`, GPL-derived like the walls) through `/api/raid/navmesh`.
+  Recorded (our live nights, averaged) beats walked where both exist. *"we should be able to take from that and average out the
+  actual path rather than these straight lines"*.
+- **Floor clutter: A (follow the current leg's floors)** → not built yet.
+- **Brother-reset callout: A** → two guild triggers on the server's own line ("<brother> withdraws from battle and waits for you in
+  the War Room", Rallos.lua:788 @ quests ea0c766), live in the guild set 2026-10-22.
+- **Guest raids: A (tag them)** → not built yet (§408).
+- **Off-night targets: A (Tallon and Vallon home wings), headline counts everyone present** → the planner's default already.
+- **Next feedback batch: A (FB-92, FB-85, FB-80)** → queued.
+- **raidmimic.com: D (Scene-first) with E's beats folded in**, next scene "Loot rolls + DKP bids"; note: *"Individual raiders or
+  players get quite a bit out of the overlays, Raid Leaders and guild leaders get more out of the coordination and orchestration
+  bits. It should really be a combination of these. Add in the items from E into D"* → not built yet.
+Also shipped 2026-10-22: **Raid Mimic 3.0.1 stable** (agent 4.0.5: Map facing arrows by default with Slice/Off, raiders in another
+zone kept off the Map — Zeal sends no loc for them and the agent had turned that into (0,0,0) — live/instance from the zone server
+port, the saved raid route on the Map, Extended Target same-name rows, patch-corrected raid cards); **bot 4.0.5** (no Planar
+Projection hail window when the raid stands in the War Room: the event Tallon/Vallon spawn none); **bot 4.0.6** (gallery accepts
+"When charming"); **web 2.1.0** (the above). Beta re-parked at 3.0.2 with: HUD pieces (whole group → Ring arc, Thin/Normal/Thick,
+Left/Center/Right, label turn), Charm "When charming", one Disc timer ("Disc: <name>" while running; all disciplines share one
+reuse timer, `GetDiscTimerID`), warrior Shield (3 min reuse, 12 s, `Mob::StartShield`).
+
+### 411. Live zone or instance comes from the zone server's port, never from /who (2026-10-22, agent 4.0.5)
+The guild lead, in a quiet live Emerald Jungle: *"we made an assumption that this was guild/raid only, but it is not. it's live"*.
+A /who listing only guild and raid proves nothing (a quiet live zone looks the same, and the server's /who has no copy filter).
+The server gives static zones their own ports and starts guild/raid/PvP instances on a separate dynamic pool (EQMacEmu
+world/zonelist.cpp TriggerBootup / GetAvailableZonePort); measured on our events: every zone 7100..7315, extra copies 10001..11785.
+The Map reads "live zone" or "instance" from that; the bands are an observation on Quarm, not a server constant. Nothing the
+client receives says guild vs raid vs PvP instance.
+
+### 412. Windows jumping to the top-left while dragged (2026-10-22, open)
+The guild lead's screen recordings (and a member's report): the dashboard, dragged by its own title bar, snaps several times a
+second to about (0,0); the Dock overlay jumps and collapses during its ✥ drag. The pattern is a native `SetWindowPos` restack
+without `SWP_NOMOVE`, or another periodic writer moving a window mid-drag; a fix is being built on beta with a log line that
+proves it on the next report. Same batch: Target Info cached a failed mob lookup for 6 h (a bot redeploy at the first target hid
+a mob's stats and resists, e.g. hobgoblins) → a miss now retries within a minute; overlay windows get crash recovery.
