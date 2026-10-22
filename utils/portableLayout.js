@@ -20,7 +20,7 @@ const BASE_H = 1080;            // the height text scale is normalised to
 const MODES = ['raid', 'group', 'pvp', 'charm', 'leveling', 'solo', 'other'];
 const CLASSES = ['Warrior', 'Cleric', 'Paladin', 'Ranger', 'Shadow Knight', 'Druid', 'Monk', 'Bard', 'Rogue',
   'Shaman', 'Necromancer', 'Wizard', 'Magician', 'Enchanter', 'Beastlord'];
-const WHEN = ['combat', 'nocombat', 'target', 'npc', 'raid'];
+const WHEN = ['combat', 'nocombat', 'target', 'npc', 'raid', 'charming'];
 // A timers panel's claim by group (canvas.html GROUPS), with the label the Canvas calls the panel.
 const TIMER_LABELS = { charm: 'Charm', trigger: 'Trigger countdowns', lull: 'Lulls', mez: 'Mezzes',
   spell: 'My spells on mobs', tick: 'Server tick', loot: 'Loot bids' };
