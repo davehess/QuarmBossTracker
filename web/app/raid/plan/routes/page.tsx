@@ -32,7 +32,7 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-type SP = { zone?: string | string[]; plan?: string | string[] };
+type SP = { zone?: string | string[]; plan?: string | string[]; v?: string | string[] };
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 export default async function RoutePlannerPage({ searchParams }: { searchParams: SP }) {
@@ -46,6 +46,9 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
   let readFailed = false;
   try { store = await readStore(zone.zone); } catch { readFailed = true; }
   const plans = planSummaries(store);
+  // ?v=b (stacked floors) and ?v=c (true 3D) are two previews of a 3D view, awaiting a pick; no ?v= is the page as it stands
+  const v = one(searchParams.v);
+  const variant = v === 'b' || v === 'c' ? v : null;
   const want = one(searchParams.plan);
   const planId = want && isPlanId(want) && plans.some(p => p.id === want) ? want : MAIN_PLAN;
   const d = store?.plans[planId] ?? null;
@@ -69,7 +72,7 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
       </div>
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs" aria-label="Zone">
         {zoneList().map(z => (
-          <Link key={z.zone} href={`/raid/plan/routes?zone=${z.zone}`}
+          <Link key={z.zone} href={`/raid/plan/routes?zone=${z.zone}${variant ? '&v=' + variant : ''}`}
             className={`rounded-md border px-2 py-1 ${z.zone === zone.zone ? 'border-gold bg-gold/10 text-gold' : 'border-border text-dim hover:text-text'}`}>
             {z.name}{z.stub ? ' (data pending)' : ''}
           </Link>
@@ -81,7 +84,7 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
         </div>
       )}
       <RoutePlanner
-        key={`${zone.zone}:${planId}`}
+        key={`${zone.zone}:${planId}:${variant ?? ''}`}
         zone={zone}
         planId={planId}
         plans={plans}
@@ -94,6 +97,7 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
         cardNote={cards.unplaced ? `${cards.unplaced} fight-card boss${cards.unplaced === 1 ? '' : 'es'} in this zone ${cards.unplaced === 1 ? 'has' : 'have'} no spawn point on record and ${cards.unplaced === 1 ? 'was' : 'were'} left out.` : ''}
         seed={seed ? { label: seed.label, pins: allPins(seed.plan).length } : null}
         fewest={fewest}
+        variant={variant}
       />
       <p className="mt-6 text-xs text-dim">
         Walls are the EQEmu maps; spawn points are the server&apos;s spawn table; recorded nights are the raid&apos;s centre every 3 seconds, with no names.

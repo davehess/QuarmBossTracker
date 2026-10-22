@@ -116,6 +116,11 @@ next touch one rather than assuming a missing row means a missing doc.
   the script leash boxes; build = each wing's boss then its cauldron, Solusek Ro + his Projection last). The tower has no
   recorded nights yet, so Follow paths and Compare light up after the first raid there.
   Waiting on: the guild lead to press "Import tonight's planner" once as an officer. Doc: `docs/HOW-ITS-BUILT.md` "Route planner".
+  **3D view (web 2.0.4, two previews on `beta`, draft, 2026-10-22):** the guild lead asked for a 3D view of the tower's floors.
+  `https://b.wolfpack.quest/raid/plan/routes?zone=solrotower&v=b` (stacked floors: each floor a flat slab, spread by a
+  slider, the route and teleports drawn between them) and `...&v=c` (the real zone mesh with the plan at its true heights and
+  a floor clip). Both add a 3D button to the map toolbar; view only, editing stays in 2D. **Open: the guild lead picks b or c**
+  (graduate the pick, delete the other in the same change).
 - **⏳ Flag lab: an officer sandbox for the PoP flags and the hail board (web 1.9.2, DRAFT on `claude/flag-lab`, not
   pushed, 2026-10-18).** `/admin/flag-lab` (new route, `[beta]` tag, officer only, **off unless `FLAG_LAB=1`**, which the
   officer sets in Vercel's Preview environment only). Fake members with presets and per-flag source ticks (Mimic /

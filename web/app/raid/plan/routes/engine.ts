@@ -904,7 +904,7 @@ export function mountPlanner(root, host) {
   $('#previewBack').onclick = exitPreview;
   $('#helpcard').open = ui.help; listen($('#helpcard'), 'toggle', () => { ui.help = $('#helpcard').open; saveUi(); });
   listen(document, 'keydown', e => {
-    if (!root.isConnected) return;
+    if (!root.isConnected || root.classList.contains('rp-3d')) return;   // the 3D view is up: its keys are not the map's
     if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) { if (e.key === 'Escape' && root.contains(document.activeElement)) document.activeElement.blur(); return; }
     if (e.key === 'Escape') { setMode('select'); closePop(); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && selPin && editable() && lastW && root.matches(':hover')) deletePin(selPin);
@@ -924,11 +924,13 @@ export function mountPlanner(root, host) {
   if (ro) { ro.observe(svg); cleanups.push(() => ro.disconnect()); }
 
   return {
-    nodes: { hostBar: $('#hostBar'), versionsPane: $('#pane-versions'), comparePane: $('#pane-compare') },
+    nodes: { hostBar: $('#hostBar'), versionsPane: $('#pane-versions'), comparePane: $('#pane-compare'), toolbar: $('.toolbar'), mapwrap: $('#mapwrap') },
     getPlan: () => plan,
     getSkipOptional: skip,
     setPlan, setStatus, setEdited, previewPlan, exitPreview, setTab, toast, setActual,
     isPreviewing: () => !!preview,
+    /** Select a pin as a click on it does (the 3D previews call this): the pin list scrolls to it, the map marks it. */
+    selectPin: id => { if (pinById(id)) { selPin = id; renderMap(); renderPanel(); scrollPinIntoView(id); } },
     destroy() { cleanups.forEach(f => f()); cancelAnimationFrame(locRaf); clearTimeout(toastT); clearTimeout(rsT); root.innerHTML = ''; },
   };
 }
