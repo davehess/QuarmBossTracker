@@ -90,7 +90,8 @@ export function buildPlanPins(input: BuildInput): BuildResult {
   };
 
   const lead = groups.filter(g => g.spec.lead);
-  const rest = groups.filter(g => !g.spec.lead);
+  const final = groups.filter(g => g.spec.last && !g.spec.lead);
+  const rest = groups.filter(g => !g.spec.lead && !g.spec.last);
   const first = rest.filter(g => g.onPlan), later = rest.filter(g => !g.onPlan);
 
   const seq: Group[] = [...lead];
@@ -118,11 +119,13 @@ export function buildPlanPins(input: BuildInput): BuildResult {
     }
   }
 
+  seq.push(...[...final].sort((a, b) => rankOf(a) - rankOf(b)));
+
   const pins = [startPin, ...seq.flatMap(g => g.pins)];
   const onPlanPins = pins.filter(p => p.onPlan).length;
-  const base = order === 'greedy'
-    ? 'Built with nearest-next from the zone-in (straight-line distance); the Rallos event stays one chain: Decorins, then Tallon and Vallon, upstairs Rallos, the Warlord, his Projection.'
-    : 'Built in PoP checklist order (Vallon, Tallon, Rallos event) then the west-wing bosses in the recorded night order (Tagrin, Overseer, Glykus). Zone-in first.';
+  const base = zone.buildNotes?.[order] ?? (order === 'greedy'
+    ? 'Built with nearest-next from the zone-in (straight-line distance); each event stays one chain.'
+    : 'Built in PoP checklist order, then the other bosses and named. Zone-in first.');
   const note = onPlanPins
     ? `${base} ${onPlanPins} pin${onPlanPins === 1 ? '' : 's'} from the fight cards on /raid/plan ${onPlanPins === 1 ? 'is' : 'are'} marked "on the plan" and laid down first.`
     : base;

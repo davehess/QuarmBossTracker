@@ -233,10 +233,25 @@ describe('zones', () => {
     expect(zoneData('__proto__')).toBeNull();
   });
 
-  it('a zone with no recorded nights, no pathers and no links is still a whole zone', () => {
+  it('the Sol Ro tower carries its floors, pathers and doors, and no recorded nights yet', () => {
     const z = zoneData('solrotower');
     expect(z.zoneId).toBe(212);
+    expect(z.stub).toBe(false);
     expect(z.nights).toEqual([]);
+    expect(z.floors.length).toBeGreaterThanOrEqual(8);
+    for (const f of z.floors) expect(Array.isArray(z.walls[f.key])).toBe(true);   // every floor has its own walls
+    expect(z.pathers.length).toBeGreaterThan(0);
+    for (const p of z.pathers) expect(p.points.length).toBeGreaterThan(1);
+    expect(z.links.some(l => l.kind === 'flag')).toBe(true);        // the lava runes need the wing flags
+    expect(z.links.every(l => ['teleport', 'locked', 'flag', 'zoneline'].includes(l.kind))).toBe(true);
+    expect(z.mobs.some(m => m.kind === 'boss' && m.name === 'Solusek Ro')).toBe(true);
+    expect(z.mobs.some(m => m.id === z.start.mob)).toBe(true);     // the build always has its start
+    const fol = createFollow(z.nights);
+    expect(fol.legStats({ x: 0, y: 0 }, { x: 900, y: 0 })).toMatchObject({ nights: 0, median: null });
+  });
+
+  it('a zone with no recorded nights, no pathers and no links is still a whole zone', () => {
+    const z = makeZone({ zone: 'zz', zoneId: 2, name: 'Z' }, { walls: {}, nights: [], mobs: [] });
     expect(z.pathers).toEqual([]);
     expect(z.links).toEqual([]);
     expect(z.floors.length).toBeGreaterThan(0);
@@ -348,9 +363,23 @@ describe('build from the checklist', () => {
   });
 
   it('an empty zone builds just its start and does not throw', () => {
-    const z = zoneData('solrotower');
+    const z = makeZone({ zone: 'zz', zoneId: 2, name: 'Z' }, { walls: {}, nights: [], mobs: [] });
     const r = buildPlanPins({ zone: z, mobs: z.mobs, order: 'greedy', onPlanNpcs: [], checklist: [], uid });
     expect(r.pins).toHaveLength(1);
+  });
+
+  it('the Sol Ro tower: each wing is boss then cauldron, and Solusek Ro + his Projection come last in both orders', () => {
+    const z = zoneData('solrotower');
+    for (const order of ['greedy', 'checklist']) {
+      const r = buildPlanPins({ zone: z, mobs: z.mobs, order, onPlanNpcs: [], checklist: z.popKeys.map(k => ({ key: k, title: k })), uid });
+      const mobs = r.pins.map(p => p.mob);
+      expect(mobs[0]).toBe(z.start.mob);
+      expect(mobs.slice(-2)).toEqual(['solro', 'proj']);             // a mob sits close on the flat map yet is the final fight
+      expect(r.pins.find(p => p.mob === 'solro').optional).toBe(false);
+      for (const w of ['xuzl', 'arlyxir', 'jiva', 'rizlona']) expect(mobs.indexOf('caul_' + w)).toBeGreaterThan(mobs.indexOf(w));
+      expect(mobs.indexOf('caul_dresolik')).toBeGreaterThan(mobs.indexOf('protector'));
+      expect(r.note).not.toMatch(/Rallos/);
+    }
   });
 });
 

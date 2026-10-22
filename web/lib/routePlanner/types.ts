@@ -57,7 +57,11 @@ export type ZoneJson = {
   mobs: Mob[];
   minor?: { n: string; x: number; y: number }[];
   trash?: { g: string; n: string; x: number; y: number }[];
-  marks?: { leashX: number; warlordBox: { x0: number; x1: number; y0: number; y1: number }; arena?: string };
+  // Tactics: one leash line + the Warlord's box. Other zones: `boxes`, each a band with open (null) sides, from the script.
+  marks?: {
+    leashX?: number; warlordBox?: { x0: number; x1: number; y0: number; y1: number }; arena?: string;
+    boxes?: { id: string; label: string; x0: number | null; x1: number | null; y0: number | null; y1: number | null; f?: string }[];
+  };
   zonein?: { x: number; y: number };
   floors?: Floor[];
   pathers?: Pather[];
@@ -82,6 +86,7 @@ export type BuildGroup = {
   mimicRaid?: string;             // the apps/mimic/pop-raids.js raid card it is the same fight as
   lead?: boolean;                 // sits right after the start in every order (a hail on the way in)
   swapFirstTwo?: boolean;         // the first two pins are interchangeable: nearest one first
+  last?: boolean;                 // laid down after everything else in every order (a final boss that needs the rest done)
   pins: BuildPinSpec[];
 };
 
@@ -102,6 +107,7 @@ export type ZoneConfig = {
   popKeys: string[];              // popGuide steps whose objectives are in this zone
   start: { mob: string; label: string; kind: Kind };
   groups: BuildGroup[];
+  buildNotes?: Partial<Record<BuildOrder, string>>;   // what "Build plan" says it did, per order (a default when absent)
 };
 
 /** What the page and engine use: every optional part of the json is filled in (zones/make.ts). */

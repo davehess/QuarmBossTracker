@@ -39,6 +39,10 @@ const settings: ZoneSettings = {
 
   // The PoP checklist steps (web/lib/popGuide.ts) that happen in this zone, in the guide's own order.
   popKeys: ['flag_vallon', 'flag_tallon', 'flag_rallos'],
+  buildNotes: {
+    greedy: 'Built with nearest-next from the zone-in (straight-line distance); the Rallos event stays one chain: Decorins, then Tallon and Vallon, upstairs Rallos, the Warlord, his Projection.',
+    checklist: 'Built in PoP checklist order (Vallon, Tallon, Rallos event) then the west-wing bosses in the recorded night order (Tagrin, Overseer, Glykus). Zone-in first.',
+  },
 
   start: { mob: 'zonein', label: 'Zone-in', kind: 'door' },
   groups: [

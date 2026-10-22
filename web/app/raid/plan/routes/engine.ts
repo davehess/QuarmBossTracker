@@ -193,7 +193,11 @@ export function mountPlanner(root, host) {
     for (let y = G.y0; y <= G.y1; y += 500) el('line', { x1: -G.x1, y1: -y, x2: -G.x0, y2: -y, stroke: 'var(--grid)', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }, gg);
     const z = $('#gZones'); z.innerHTML = '';
     const M = Z.marks;
-    if (M) {
+    if (M && M.boxes) for (const b of M.boxes) {   // a leash band: the side the script leaves open runs to the zone's edge
+      const B = Z.bounds, x0 = b.x0 ?? B.x0, x1 = b.x1 ?? B.x1, y0 = b.y0 ?? B.y0, y1 = b.y1 ?? B.y1;
+      el('rect', { x: -x1, y: -y1, width: x1 - x0, height: y1 - y0, 'data-floor': b.f || '', fill: 'var(--orange)', 'fill-opacity': .04, stroke: 'var(--orange)', 'stroke-width': 1.4, 'stroke-dasharray': '4 6', 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none' }, z);
+    }
+    if (M && M.leashX != null && M.warlordBox) {
       const edge = Z.bounds.x1 - 20, ly = Z.grid.y1 - 200;
       el('rect', { x: -edge, y: -ly, width: edge - M.leashX, height: 2 * ly, fill: 'var(--orange)', 'fill-opacity': .05, 'pointer-events': 'none' }, z);
       el('line', { x1: -M.leashX, y1: -ly, x2: -M.leashX, y2: ly, stroke: 'var(--orange)', 'stroke-width': 1.6, 'stroke-dasharray': '4 6', 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none' }, z);
@@ -205,6 +209,7 @@ export function mountPlanner(root, host) {
   }
   function applyLayerVis() {
     for (const p of $$('#gWalls path')) p.style.display = (ui.floor === 'all' || ui.floor === p.dataset.floor) ? '' : 'none';
+    for (const r of $$('#gZones rect[data-floor]')) r.style.display = (ui.floor === 'all' || !r.dataset.floor || ui.floor === r.dataset.floor) ? '' : 'none';
     $('#gZones').style.display = ui.layers.leash ? '' : 'none';
     $('#gAvg').style.display = ui.layers.avg ? '' : 'none';
     $$('#floorBtns button').forEach(b => b.classList.toggle('active', b.dataset.floor === ui.floor));
