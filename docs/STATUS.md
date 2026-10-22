@@ -103,6 +103,17 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 raidmimic.com landing: Scene-first is the page, [beta] (web 2.1.3 on `beta`, 2026-10-22; the guild lead's pick, Decision
+  Desk card raidmimic-layout-clips; DECISIONS §409).** *"Truly several of these are important … It should really be a
+  combination. Add in the items from E into D."* The default page at `https://b.wolfpack.quest/raidmimic` is now D's tabbed
+  player organised by who it is for, **For raiders** (Target Info, Extended Target) and **For raid leaders and guild
+  leaders** (the hail board), each scene carrying E's beat sentence as its caption. **The layered mascot hero (the guild
+  lead, 2026-10-21, "i like B for the hero") is kept above the player**, with its seven captures and the mascot clip. The old
+  tour (with its drawn pictures), the Output-first gallery, Raid-night story, Your screen and every `?v=` switch are deleted
+  (`page-shots.mjs` too; `shoot.mjs` stays as a stills generator). A stale `?v=` link just shows the page. ⏳ **Next scene to record: loot rolls + DKP bids** (the guild lead's pick;
+  `scripts/raidmimic-shots/scenes.mjs`, then one row in `CLIPS` with `audience: 'leaders'` and the two files; the tab appears
+  with the row, no empty tab is shipped before it). ⏳ Graduation to `main` waits on the guild lead. Test:
+  `test/raidmimic-landing.test.js`.
 - **🧾 2026-10-22 server patch reflected (beta, web 2.0.7).** Rathe Council has no round limit and the Avatar of Earth
   idles 50 min (refills on aggro loss); Tallon/Vallon reset on aggro loss once in the War Room; Solusek Ro's flag needs
   Miak's preflag. Plane of Air ring retries (15 min) and the self-found Crab Cracker / ground spawns have no surface of
@@ -927,7 +938,7 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ raidmimic.com live (2026-10-19; DECISIONS §370).** https://raidmimic.com serves the guild leaders' page.
 - **✅ Voice reports, server half (bot 3.2.8 · web 1.9.9, 2026-10-19; DECISIONS §379).** `POST /api/agent/voice-report`
   and `/admin/voice-reports` [beta]; the `voice_reports` table was created 2026-10-19. `test/voice-reports.test.js`.
-- **🧪 raidmimic.com landing, [beta] (web 1.9.5, 2026-10-18; DECISIONS §370).** The guild leaders' door, live at
+- **🧪 raidmimic.com landing, [beta] (web 1.9.5, 2026-10-18; DECISIONS §370; layouts since replaced, see the Scene-first entry at the top).** The guild leaders' door, live at
   `wolfpack.quest/raidmimic` with layouts A (default) and B (`?v=b`). Waiting on: the guild lead's A/B pick, Porkbun DNS for
   the three domains, then removing the six Vercel redirects to eqmimic.quest. `test/raidmimic-landing.test.js`.
 - **🧪 eqmimic.quest demo with sample data (hesstastic `e2d2f62`).** `hesstastic.com/eqmimic/demo/` (tour)

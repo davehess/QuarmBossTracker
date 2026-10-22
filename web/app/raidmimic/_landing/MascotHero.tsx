@@ -1,7 +1,7 @@
-// The hero of the raidmimic "Output first" preview, built on the mascot the guild lead supplied (2026-10-21: "None, that's
-// not enough UI. we should have more on there. more of the mimic."; picked: "i like B for the hero"). Read at
-// b.wolfpack.quest/raidmimic?v=b. The mascot hops in a loop in the middle and the real captures sit around it as
-// cards you can read. (The other candidate, a howl clip that played once, was dropped when this one was picked.)
+// The hero of the raidmimic page, built on the mascot the guild lead supplied (2026-10-21: "None, that's not enough UI.
+// we should have more on there. more of the mimic."; picked: "i like B for the hero", and the Scene-first pick of
+// 2026-10-22 kept it). It sits above the scene player. The mascot hops in a loop in the middle and the real captures
+// sit around it as cards you can read. (The other candidate, a howl clip that played once, was dropped.)
 // Server component; the only script is MascotVideo (reduced motion). Cards animate transform + opacity only.
 import { SHOTS, SHOTS_DIR, type Shot } from '@/lib/raidmimicLanding';
 import MascotVideo from './MascotVideo';

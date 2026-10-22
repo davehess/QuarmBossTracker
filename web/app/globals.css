@@ -224,7 +224,7 @@
 /* The head has to close as a mass before any line reads as anatomy. */
 .wolf-mass { fill: #141b25; stroke: none; }
 
-/* raidmimic hero previews (web/app/raidmimic/_landing/MascotHero.tsx, `?v=b`).
+/* The raidmimic hero (web/app/raidmimic/_landing/MascotHero.tsx).
    .rm-fade melts the clip's square edge into the page: both axes fade over the outer 8%.
    .rm-card (lg and up) tilts a capture and flies it in from beside the mascot: transform + opacity only,
    and none of it under prefers-reduced-motion. */
