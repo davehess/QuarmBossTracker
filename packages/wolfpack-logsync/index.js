@@ -35552,12 +35552,8 @@ function startWebDashboard(port) {
             const locName = g && g.text ? String(g.text).toLowerCase() : null;
             const locHp   = g && g.hp_pct != null ? g.hp_pct : null;
             if (locName && locHp != null) {
-              outPayload = { ...outPayload, targets: outPayload.targets.map(t => {
-                if (t && t.name && !t.stale && String(t.name).toLowerCase() === locName) {
-                  return { ...t, hp_pct: locHp, hp_source: 'local_live' };
-                }
-                return t;
-              }) };
+              outPayload = { ...outPayload, targets: _overrideExtLocalHp(outPayload.targets, locName, locHp,
+                (Number.isFinite(selfSt.target_id) && selfSt.target_id > 0) ? selfSt.target_id : null) };
             }
           }
         } catch { /* leave the aggregate HP as-is on any error */ }
@@ -54702,9 +54698,11 @@ function _mobTracksObserveExtPayload(payload, nowMs) {
 // ── Extended Target overlay V2 enrichment (#3) ──────────────────────────────
 // Three agent-side signals attached per NPC row at the /api/extended-target
 // proxy, computed from the LOCAL combat log / gauge stream (the bot aggregate
-// carries none of them). Everything is keyed by MOB NAME — same-name
-// simultaneous mobs are indistinguishable on the Zeal pipe (#56 owns that), so
-// a mob's per-name history is CLEARED when its row leaves the aggregate or its
+// carries none of them). Everything is keyed by MOB NAME, so it is shown only on
+// a name's ONLY row (2026-10-21: four Vallon Zek rows each showed one damage
+// line); with two or more rows of a name the log cannot say which spawn took the
+// hit, and the row shows nothing. A mob's per-name history is CLEARED when its
+// row leaves the aggregate or its
 // HP jumps UP > 15 points (a re-pull, a heal, or a same-name swap). Every
 // signal is fail-soft: no data → field absent → the overlay omits it.
 const EXT_VICTIM_STALE_MS = 10_000;   // victim shown only if a connect landed this recently
@@ -54780,9 +54778,13 @@ function _ttlForMob(mobLower, curHp, nowMs) {
 function _sampleExtMobHp(payload, nowMs) {
   const present = new Set();
   if (payload && Array.isArray(payload.targets)) {
+    const counts = _extNpcNameCounts(payload.targets);
     for (const t of payload.targets) {
       if (!t || t.kind !== 'npc' || !t.name || t.hp_pct == null) continue;
       const k = String(t.name).toLowerCase();
+      // Several rows of one name would feed one history with several mobs' health: no trend, and left out of
+      // `present` so the history is dropped rather than carried into the next single-row moment.
+      if ((counts.get(k) || 0) > 1) continue;
       present.add(k);
       let hist = _extMobHpHist.get(k);
       if (!hist) { hist = []; _extMobHpHist.set(k, hist); }
@@ -54914,6 +54916,35 @@ function _pipeTotObservedTank(st, nowMs) {
   return { mob: String(st.target_name), tank: tot.name, since: new Date(st.updatedAt || nowMs).toISOString(), authoritative: tot.authoritative };
 }
 
+// Same-name rows (the guild lead, 2026-10-21, Vallon Zek's split: four rows, one health, one damage line). A
+// value this agent knows only BY NAME (its own target's name, the combat log's mob names) is true of a row only
+// when that row is the one mob of its name on the board, or when a spawn id on both sides proves it. Counts live
+// NPC rows per lowercased name; stale (restored) rows never coexist with a fresh row of their name.
+function _extNpcNameCounts(targets) {
+  const counts = new Map();
+  for (const t of (Array.isArray(targets) ? targets : [])) {
+    if (!t || t.stale || (t.kind || 'npc') !== 'npc' || !t.name) continue;
+    const k = String(t.name).toLowerCase();
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  return counts;
+}
+// Is this row THE mob my client has targeted? Spawn id on both sides decides (0 is no target, never an id, so the
+// callers pass null for it); without ids the name decides only while it is unambiguous.
+function _extRowIsMyTarget(t, myNameLower, myId, counts) {
+  if (!t || t.stale || (t.kind || 'npc') !== 'npc' || !myNameLower) return false;
+  if (String(t.name || '').toLowerCase() !== myNameLower) return false;
+  if (myId != null && t.spawn_id != null && Number(t.spawn_id) > 0) return Number(t.spawn_id) === myId;
+  return (counts.get(myNameLower) || 0) === 1;
+}
+// #128 — my own gauge is near-live, so the row that IS my target takes it. Only that row; a pack of same-name
+// rows with no id to tell them apart keeps the aggregate's per-row numbers.
+function _overrideExtLocalHp(targets, locNameLower, locHp, myId) {
+  const counts = _extNpcNameCounts(targets);
+  return targets.map(t => (_extRowIsMyTarget(t, locNameLower, myId, counts)
+    ? { ...t, hp_pct: locHp, hp_source: 'local_live' } : t));
+}
+
 // Local and immediate: the Extended Target row that IS my current target gets
 // my own client's answer. mob_victim keeps its meaning (who this mob is
 // meleeing) and the pipe overrides the log inference for that one row;
@@ -54928,11 +54959,10 @@ function _attachPipeTotToExtRows(targets, selfSt, nowMs) {
   const myName = String(selfSt.target_name || '').toLowerCase();
   if (!myName) return targets;
   const myId = (Number.isFinite(selfSt.target_id) && selfSt.target_id > 0) ? selfSt.target_id : null;
+  const counts = _extNpcNameCounts(targets);
   return targets.map(t => {
-    if (!t || t.stale || (t.kind || 'npc') !== 'npc') return t;
-    if (String(t.name || '').toLowerCase() !== myName) return t;
-    // With a spawn id on both sides only the exact instance; otherwise the name.
-    if (myId != null && t.spawn_id != null && Number(t.spawn_id) !== myId) return t;
+    // With a spawn id on both sides only the exact instance; otherwise the name, while it names one row.
+    if (!_extRowIsMyTarget(t, myName, myId, counts)) return t;
     const patch = {};
     if (tot)   { patch.mob_victim = tot.name;   patch.mob_victim_source = tot.authoritative ? 'zeal_assist' : 'zeal_damage'; }
     if (hitBy) { patch.mob_hit_by = hitBy.name; patch.mob_hit_by_source = hitBy.authoritative ? 'zeal_assist' : 'zeal_damage'; }
@@ -54943,9 +54973,13 @@ function _attachPipeTotToExtRows(targets, selfSt, nowMs) {
 function _enrichExtTargetV2(payload, nowMs) {
   if (!payload || !Array.isArray(payload.targets) || !payload.targets.length) return payload;
   _sampleExtMobHp(payload, nowMs);
+  const counts = _extNpcNameCounts(payload.targets);
   return { ...payload, targets: payload.targets.map(t => {
     if (!t || t.kind !== 'npc' || !t.name) return t;
     const k = String(t.name).toLowerCase();
+    // The combat log names a mob, never a spawn: with two or more rows of this name, who it is meleeing, the
+    // damage on it and its health trend cannot be told apart, so none of them is shown on any of the rows.
+    if ((counts.get(k) || 0) > 1) return t;
     const patch = {};
     const victim = _victimForMob(k, nowMs);
     if (victim) patch.mob_victim = victim;
