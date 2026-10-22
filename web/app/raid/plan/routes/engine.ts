@@ -20,6 +20,7 @@ import { pinNumbers } from '@/lib/routePlanner/compare';
 import { fewestLine } from '@/lib/routePlanner/fewest';
 import { clampLeg, legBarText, legIndexForPin, stepLeg } from '@/lib/routePlanner/legFocus';
 import { bakeBends, legSig, routeLeg, viaNames } from '@/lib/routePlanner/navroute';
+import { annotateRecorded, recText, recordedPolys, useRecordedRoutes } from '@/lib/routePlanner/recorded';
 import { floorLevels, pinHeight } from '@/lib/routePlanner/view3d';
 import { skeletonHtml } from './skeleton';
 
@@ -39,7 +40,9 @@ const FLOOR_FALLBACK = ['#a8793a', '#6b788c', '#8fb4d9', '#7fb685', '#c28bd8', '
 /**
  * host: { zone, extraMobs, onPlanNpcs, checklist, cardNote, fewest:Map<npc,row>, readOnly, initialPlan, onChange(plan),
  *         onPreview(on), onOptMode(mode), onTab(tab), legFocus (offer the "One leg" mode), onLegFocus(legKey | null),
- *         navRoute { load(): Promise<Router> } (offer "Walk route"), onRoutes(Map<legKey, Routed>) (the 3D view's copy) }
+ *         navRoute { load(): Promise<Router> } (offer "Walk route"), onRoutes(Map<legKey, Routed>) (the 3D view's copy),
+ *         recorded (offer the "Recorded" route source: legs along the average of the recorded nights), onRecorded(Map<legKey, [x,y][]>)
+ *         (the 3D view's copy), onNights(keys) (the nights ticked in Layers, for the 3D view), nightsNote (a line under that list) }
  * returns: { destroy, getPlan, setPlan, setStatus, setEdited, previewPlan, exitPreview, setTab, toast, setActual, nodes, selectPin, movePin }
  */
 export function mountPlanner(root, host) {
@@ -65,14 +68,18 @@ export function mountPlanner(root, host) {
   const ui = Object.assign({
     mode: 'select', addKind: 'note', floor: 'all', optMode: 'include', buildOrder: 'greedy',
     nights: {}, layers: { avg: false, leash: true, bosses: true, scripted: true, trash: false, minor: false, pathers: false, links: true, actual: true }, tab: 'plan', help: false,
-    legOnly: false, legFollow: true, walk: false
+    legOnly: false, legFollow: true, walk: false, src: ''
   },(() => { try { return JSON.parse(lsGet(LS_UI) || '{}'); } catch (e) { return {}; } })());
+  // how legs are drawn (the ?v= previews): straight (the plan's own line), walk (the walkable map), rec (the recorded nights);
+  // an earlier visit that only had the Walk route toggle left walk: true
+  if (!['straight', 'walk', 'rec'].includes(ui.src)) ui.src = ui.walk ? 'walk' : 'straight';
   ui.layers = Object.assign({ pathers: false, links: true, actual: true }, ui.layers);
   ui.mode = 'select';
   ui.addTo = 'main';
   if (ui.floor !== 'all' && !Z.floors.some(f => f.key === ui.floor)) ui.floor = 'all';
-  for (const n of Z.nights) if (!(n.key in ui.nights)) ui.nights[n.key] = true;
-  const saveUi = () => lsSet(LS_UI, JSON.stringify({ addKind: ui.addKind, floor: ui.floor, optMode: ui.optMode, buildOrder: ui.buildOrder, nights: ui.nights, layers: ui.layers, tab: ui.tab, help: ui.help, legOnly: ui.legOnly, legFollow: ui.legFollow, walk: ui.walk }));
+  // a night never ticked before is drawn, except with the live list (a dozen nights at once is a tangle): then the newest three
+  Z.nights.forEach((n, i) => { if (!(n.key in ui.nights)) ui.nights[n.key] = host.nightsNote ? i < 3 : true; });
+  const saveUi = () => lsSet(LS_UI, JSON.stringify({ addKind: ui.addKind, floor: ui.floor, optMode: ui.optMode, buildOrder: ui.buildOrder, nights: ui.nights, layers: ui.layers, tab: ui.tab, help: ui.help, legOnly: ui.legOnly, legFollow: ui.legFollow, walk: ui.src === 'walk', src: ui.src }));
   let view = { tx: 0, ty: 0, s: 0.2 };
   let selPin = null, followFrom = null, drag = null;
   // "One leg" mode (the ?v= previews): legIdx is the current leg, legSel the pin selection it last followed, legFramed the leg
@@ -84,7 +91,14 @@ export function mountPlanner(root, host) {
   /* ---------- plan model ---------- */
   const pinById = id => { const h = findPin(plan, id); return h ? h.pin : undefined; };
   const lineFor = (k, create) => { let l = plan.lines.find(x => x.k === k); if (!l && create) { l = { k, pts: [], off: false }; plan.lines.push(l); } return l; };
-  const legs = () => { const L = planLegs(plan, skip(), Z.links); if (walkOn()) for (const lg of L) annotateWalk(lg); return L; };
+  // the legs, each annotated with the route source in force: Recorded first (where the nights ran), the walk route for a leg no
+  // night covers (or all of them in Walk), else the plan's own line
+  const legs = () => {
+    const L = planLegs(plan, skip(), Z.links);
+    if (recOn()) annotateRecorded(L, follow);
+    if (walkOn()) for (const lg of L) if (!(lg.rec && lg.rec.state === 'ok')) annotateWalk(lg);
+    return L;
+  };
   const pins = () => allPins(plan);
   const numbers = () => pinNumbers(plan);
 
@@ -142,6 +156,9 @@ export function mountPlanner(root, host) {
     flush();
   }
 
+  /** The nights ticked in Layers, for the 3D view's own "Recorded nights" layer. */
+  const tellNights = () => { if (host.onNights) host.onNights(NSER.filter(n => ui.nights[n.key]).map(n => n.key)); };
+
   /* ---------- follow recorded paths ---------- */
   const legStats = (A, B) => follow.legStats(A, B);
   function followLeg(L, silent) {
@@ -151,6 +168,15 @@ export function mountPlanner(root, host) {
     const ln = lineFor(L.k, true); ln.pts = r.pts; ln.off = false; ln.follow = r.nights;
     if (!silent) { changed(); toast('Leg follows the average of ' + r.nights + ' recorded night' + (r.nights > 1 ? 's' : '')); }
     return true;
+  }
+
+  /** "Use recorded routes" / "Use recorded route" (the ?v= previews): the legs' recorded average becomes their bend points, in one save. */
+  function bakeRecorded(lgs) {
+    if (!editable()) return;
+    const r = useRecordedRoutes(plan, lgs, follow, 40);
+    if (!r.baked) { toast(NSER.length ? 'No recorded night passes both pins' + (lgs.length === 1 ? '' : ' of any leg') + '.' : 'No nights are recorded for this zone yet.'); return; }
+    changed();
+    toast(r.baked + ' leg' + (r.baked === 1 ? '' : 's') + ' now keep the recorded route as bend points' + (r.skipped ? '; ' + r.skipped + ' had no recorded night through both pins' : '') + '.');
   }
 
   /* ---------- view ---------- */
@@ -189,10 +215,10 @@ export function mountPlanner(root, host) {
   }
 
   /** What the map was framed on: the leg, and whether that was its walked route (framed again when the route arrives). */
-  const frameKey = lg => lg.k + (routedFor(lg) ? '|walk' : '');
+  const frameKey = lg => lg.k + (recPolyOf(lg) ? '|rec' : routedFor(lg) ? '|walk' : '');
   /** Frame one leg (its bends and its teleport too): a quarter of its span of room around it, for the end pin's label and the bar over the map, and never closer than a 450 u box so a short leg does not fill the screen. */
   function frameLeg(lg) {
-    const rt = routedFor(lg), poly = rt ? routedPoly(rt) : legPoly(lg), xs = poly.map(p => p[0]), ys = poly.map(p => p[1]);   // the walked route when there is one
+    const rp = recPolyOf(lg), rt = rp ? null : routedFor(lg), poly = rp || (rt ? routedPoly(rt) : legPoly(lg)), xs = poly.map(p => p[0]), ys = poly.map(p => p[1]);   // the recorded route, else the walked one, when there is one
     const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
     const sx = Math.max(...xs) - Math.min(...xs), sy = Math.max(...ys) - Math.min(...ys);
     const hx = Math.max(sx * 0.75 + 60, 225), hy = Math.max(sy * 0.75 + 60, 225);
@@ -207,8 +233,10 @@ export function mountPlanner(root, host) {
   let walkState = 'idle', walkErr = '', router = null, destroyed = false;      // idle | loading | ready | failed
   const routes = new Map();               // leg key -> { sig, routed: Routed | null }
   const routeQueue = new Map();           // leg key -> { sig, spec } still to work out
-  let routeTimer = 0, lastRoutePaint = 0, routesTold = '';
-  const walkOn = () => !!host.navRoute && !!ui.walk;
+  let routeTimer = 0, lastRoutePaint = 0, routesTold = '', recTold = '';
+  // walk routes are wanted in Walk (every leg) and in Recorded (only for a leg no night covers: legs() annotates just those)
+  const walkOn = () => !!host.navRoute && (ui.src === 'walk' || ui.src === 'rec');
+  const recOn = () => !!host.recorded && ui.src === 'rec';
   const REAL_LINKS = Z.links.filter(l => l.kind !== 'step').length;   // the step bridges are for the router only
   const LEVELS = floorLevels({ floors: Z.floors, mobs: MOBS, pathers: Z.pathers, links: Z.links });
   const pinPt = p => [p.x, p.y, pinHeight(p, MOBS, LEVELS).z];
@@ -225,9 +253,12 @@ export function mountPlanner(root, host) {
     }
     lg.walk = { state: 'pending' };
     if (walkState === 'ready') { routeQueue.set(lg.k, { sig, spec }); kickRoutes(); }
+    else if (walkState === 'idle' && ui.src === 'rec') Promise.resolve().then(loadWalk);   // Recorded needs the walkable map only for a leg no night covers
   }
   /** The computed route of a leg, only when it is current for the leg as it stands. */
   const routedFor = lg => (walkOn() && lg.walk && lg.walk.state === 'ok' && routes.get(lg.k) ? routes.get(lg.k).routed : null);
+  /** The polyline of a leg the Recorded source draws along the nights (pin to pin), or null when it is not one. */
+  const recPolyOf = lg => { if (!lg.rec || lg.rec.state !== 'ok') return null; const r = follow.recorded(lg.a, lg.b); return r ? r.poly : null; };
   const routedPoly = rt => { const o = []; for (const s of rt.segs) { if (s.kind === 'walk') for (const p of s.pts) o.push([p[0], p[1]]); else o.push([s.from[0], s.from[1]], [s.to[0], s.to[1]]); } return o; };
   function kickRoutes() { if (!routeTimer && walkState === 'ready' && routeQueue.size) routeTimer = setTimeout(runRoutes, 30); }
   function runRoutes() {
@@ -251,14 +282,22 @@ export function mountPlanner(root, host) {
   function tellRoutes() {
     if (!host.onRoutes) return;
     const m = new Map();
-    if (walkOn()) for (const lg of planLegs(plan, skip(), Z.links)) { const e = routes.get(lg.k); if (e && e.routed && e.sig === legSig(specOf(lg))) m.set(lg.k, e.routed); }
+    const L = planLegs(plan, skip(), Z.links);
+    if (recOn()) annotateRecorded(L, follow);
+    if (walkOn()) for (const lg of L) { const e = routes.get(lg.k); if (!(lg.rec && lg.rec.state === 'ok') && e && e.routed && e.sig === legSig(specOf(lg))) m.set(lg.k, e.routed); }
     const tag = [...m].map(([k, r]) => k + ':' + r.walkLen.toFixed(1)).join('|');
     if (tag !== routesTold) { routesTold = tag; host.onRoutes(m); }
+    // and the recorded legs, for the same view
+    if (host.onRecorded) {
+      const rec = recOn() ? recordedPolys(L, follow) : new Map();
+      const rtag = [...rec].map(([k, p]) => k + ':' + p.length + ':' + p[p.length >> 1].join(',')).join('|');
+      if (rtag !== recTold) { recTold = rtag; host.onRecorded(rec); }
+    }
   }
   function updateWalkUi() {
     if (!host.legFocus) return;
-    const b = $('#walkOn'), n = $('#walkNote');
-    b.classList.toggle('active', walkOn()); b.setAttribute('aria-pressed', walkOn() ? 'true' : 'false');
+    for (const b of $$('#srcGrp button')) { const on = b.dataset.src === ui.src; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+    const n = $('#walkNote');
     const left = walkOn() && walkState === 'ready' && !legOn() ? routeQueue.size : 0;
     const msg = !walkOn() ? '' : walkState === 'loading' ? 'Loading walkable map…' : walkState === 'failed' ? walkErr + ' Legs keep their own line.' : left > 1 ? 'Finding walking routes… ' + left + ' to go' : '';
     n.textContent = msg; n.classList.toggle('on', !!msg); n.classList.toggle('err', walkOn() && walkState === 'failed');
@@ -272,9 +311,11 @@ export function mountPlanner(root, host) {
     if (destroyed) return;
     renderMap(); renderLegs();
   }
-  function setWalk(on) {
-    ui.walk = on; saveUi();
-    if (on && (walkState === 'idle' || walkState === 'failed')) loadWalk();
+  /** Straight / Walk / Recorded. Walk loads the walkable map when first picked; Recorded only when a leg turns out to need it. */
+  function setSrc(src) {
+    ui.src = src; saveUi();
+    legFramed = null;   // the leg is framed on its drawn route, which just changed
+    if (src === 'walk' && (walkState === 'idle' || walkState === 'failed')) loadWalk();
     renderMap(); renderLegs();
   }
   /** "Use this route": the computed path becomes the leg's own bend points (a jump is kept as a straight line between its ends). */
@@ -457,16 +498,17 @@ export function mountPlanner(root, host) {
     for (const lg of L) {
       if (lg.off && lg !== cur) continue;
       if (legOn() && lg !== cur) continue;
-      const rt = routedFor(lg);
-      const poly = rt ? routedPoly(rt) : legPoly(lg);
-      const colour = lg.branch ? lg.branch.branch.color : (lg.ln && lg.ln.follow ? 'var(--green)' : 'var(--gold)');
+      const rp = recPolyOf(lg), rt = rp ? null : routedFor(lg);
+      const poly = rp || (rt ? routedPoly(rt) : legPoly(lg));
+      const colour = lg.branch ? lg.branch.branch.color : (rp || (lg.ln && lg.ln.follow) ? 'var(--green)' : 'var(--gold)');
       const dash = lg.dashed ? '8 6' : (walkOn() && lg.walk && lg.walk.state === 'none' ? '2 7' : '');   // dotted: asked for a walking route and there is none
       const draw = (pts, parent) => {
         const d = 'M' + pts.map(p => `${-p[0]} ${-p[1]}`).join('L');
         el('path', { d, fill: 'none', stroke: 'var(--halo)', 'stroke-width': 6, opacity: .7, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none' }, parent || gl);
         el('path', { d, fill: 'none', stroke: colour, 'stroke-width': 3, 'stroke-dasharray': dash, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none' }, parent || gl);
       };
-      if (rt) {
+      if (rp) draw(poly);
+      else if (rt) {
         // the walked route: each walk drawn in runs, a run on another floor than the one picked dims like everything else there
         for (const sg of rt.segs) {
           if (sg.kind === 'jump') {
@@ -651,8 +693,8 @@ export function mountPlanner(root, host) {
     else if (act === 'leg' && ui.mode === 'select') {
       const lg = legs().find(l => l.k === t.dataset.key); if (lg) {
         const w = toWorld(e.clientX, e.clientY), poly = legPoly(lg), rt = routedFor(lg);
-        // on a walked route the new bend goes after the bends that come before the click along the route, not along the plain line
-        const rp = rt ? routedPoly(rt) : null, at = rp ? nearestSeg(rp, w.x, w.y) : 0;
+        // on a walked (or recorded) route the new bend goes after the bends that come before the click along the route, not along the plain line
+        const rp = recPolyOf(lg) || (rt ? routedPoly(rt) : null), at = rp ? nearestSeg(rp, w.x, w.y) : 0;
         const si = rp ? lg.pts.filter(p => nearestSeg(rp, p[0], p[1]) <= at).length : Math.min(nearestSeg(poly, w.x, w.y), lg.pts.length);
         const ln = lineFor(lg.k, true); ln.pts.splice(si, 0, [r1(w.x), r1(w.y)]); ln.follow = undefined; drag.act = 'bend'; drag.ln = ln; drag.i = si; drag.fresh = true; drag.moved = true;
         renderMap();
@@ -860,18 +902,27 @@ export function mountPlanner(root, host) {
     const walkRow = !w ? drawnRow
       : w.state === 'ok' ? `<b>Walk route</b><span>${fmtU(plen)}${w.via.length ? ' <span class="walk">via ' + w.via.map(esc).join(', then ') + '</span> <span class="muted">jump not counted</span>' : ''}${w.steps ? ` · ${w.steps} step bridge${w.steps > 1 ? 's' : ''} <span class="muted">(found by a gap search in the map, not walked)</span>` : ''}${w.ignoredBends ? ' <span class="muted">· your bend points could not be walked, so they are left out</span>' : ''}</span>`
       : drawnRow + (w.state === 'none' ? '<b>Walk route</b><span class="walk none">no walkable route found</span>' : `<b>Walk route</b><span class="muted">${legOn() && lg.idx !== legIdx ? 'step to this leg to find it' : 'finding it…'}</span>`);
+    // the Recorded source (the ?v= previews): the recorded route's row, or which of walk / straight a leg no night covers falls back to
+    const rc = lg.rec, recOk = !!rc && rc.state === 'ok';
+    const routeRows = recOk
+      ? `<b>Recorded route</b><span>${fmtU(plen)} <span class="walk rec">${esc(recText(lg))}</span></span>`
+      : walkRow + (rc ? `<b>Recorded route</b><span class="walk none">${esc(recText(lg))}</span>` : '');
+    const recCan = host.recorded ? follow.recorded(lg.a, lg.b) : null;   // a night passed both pins (whatever the source in force)
     const d = document.createElement('div'); d.className = 'leg' + (lg.off ? ' off' : '') + (compact ? ' compact' : '') + (lg.optLeg ? ' optleg' : '');
     d.dataset.leg = lg.idx;
     d.addEventListener('click', ev => { if (legOn() && !ev.target.closest('input,select,button,a,label')) setLeg(lg.idx); });   // One leg mode: a card picks the leg
     d.innerHTML = `<div class="t">${compact ? '' : (lg.idx + 1) + '. '}${esc(lg.a.label)} &rarr; ${esc(lg.b.label)} ${lg.optLeg ? '<span class="badge b-note">optional leg</span>' : lg.dashed ? '<span class="badge b-note">optional pin</span>' : ''}${lg.off ? ' <span class="badge b-note">hidden</span>' : ''}${lg.jump ? ` <span class="badge" style="color:${LINK_COLOR}">via ${esc(lg.jump.label)}</span>` : ''}${lg.ln && lg.ln.follow ? ` <span class="badge b-objective">follows ${lg.ln.follow} night${lg.ln.follow > 1 ? 's' : ''}</span>` : ''}</div>
-      <div class="kv">${compact ? '' : `<b>Straight line</b><span>${fmtU(straight)}</span>`}${walkRow}
+      <div class="kv">${compact ? '' : `<b>Straight line</b><span>${fmtU(straight)}</span>`}${routeRows}
       <b>Recorded time</b><span>${st.median != null ? fmtT(st.median) + (compact ? '' : ' median over ' + st.nights + ' night' + (st.nights > 1 ? 's' : '') + (st.median > 3 ? ' (' + Math.round(plen / st.median) + ' u/s on the drawn path)' : '')) : '<span class="muted">' + (NSER.length ? 'no recorded night passes both pins' : 'no nights recorded for this zone') + '</span>'}</span></div>
       ${fw ? `<div class="fewest small">${esc(fw)}</div>` : ''}
       ${can ? `<div class="row" style="margin:3px 0"><label class="small row" style="gap:4px"><input type="checkbox" data-a="optleg" ${lg.optLeg ? 'checked' : ''}> optional leg</label>
         ${teleports.length ? `<label class="small row" style="gap:4px">via <select data-a="via"><option value="">no teleport</option>${teleports.map(t => `<option value="${esc(t.label)}" ${lg.ln && lg.ln.via === t.label ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select></label>` : ''}</div>` : ''}
-      <div class="row">${can ? `<button class="sm" data-a="follow" ${st.nights ? '' : 'disabled title="No recorded night passes both pins"'}>Follow recorded path</button><button class="sm" data-a="straight" ${lg.pts.length ? '' : 'disabled'}>Straighten</button>${w && w.state === 'ok' ? '<button class="sm" data-a="bake" title="Keep this walking route as the leg\'s own bend points: it saves with the plan and goes to the in-game map">Use this route</button>' : ''}<button class="sm danger" data-a="off">${lg.off ? 'Restore leg' : 'Hide leg'}</button>${lg.branch ? '' : '<button class="sm" data-a="split" title="Send the raid up two or more branches at once, regroup at the end of this leg">Split this leg</button>'}` : ''}<button class="sm" data-a="zoom">Show</button></div>`;
+      <div class="row">${can ? `${host.recorded
+        ? `<button class="sm" data-a="bakerec" ${recCan && !lg.jump ? '' : 'disabled'} title="${lg.jump ? 'A leg through a teleport keeps its walk route' : !recCan ? 'No recorded night passes both pins' : 'Keep the average of the recorded nights as the leg&#39;s own bend points: it saves with the plan and goes to the in-game map'}">Use recorded route</button>`
+        : `<button class="sm" data-a="follow" ${st.nights ? '' : 'disabled title="No recorded night passes both pins"'}>Follow recorded path</button>`}<button class="sm" data-a="straight" ${lg.pts.length ? '' : 'disabled'}>Straighten</button>${w && w.state === 'ok' ? '<button class="sm" data-a="bake" title="Keep this walking route as the leg\'s own bend points: it saves with the plan and goes to the in-game map">Use this route</button>' : ''}<button class="sm danger" data-a="off">${lg.off ? 'Restore leg' : 'Hide leg'}</button>${lg.branch ? '' : '<button class="sm" data-a="split" title="Send the raid up two or more branches at once, regroup at the end of this leg">Split this leg</button>'}` : ''}<button class="sm" data-a="zoom">Show</button></div>`;
     if (can) {
-      $('[data-a=follow]', d).onclick = () => followLeg(lg);
+      const fl = $('[data-a=follow]', d); if (fl) fl.onclick = () => followLeg(lg);
+      const br = $('[data-a=bakerec]', d); if (br) br.onclick = () => bakeRecorded([lg]);
       $('[data-a=straight]', d).onclick = () => { const ln = lineFor(lg.k, false); if (ln) { ln.pts = []; ln.follow = undefined; } changed(); };
       $('[data-a=off]', d).onclick = () => { const ln = lineFor(lg.k, true); ln.off = !ln.off; changed(); };
       $('[data-a=optleg]', d).onchange = e => { const ln = lineFor(lg.k, true); if (e.target.checked) ln.opt = true; else delete ln.opt; changed(); };
@@ -885,7 +936,7 @@ export function mountPlanner(root, host) {
   function renderLegs() {
     const box = $('#legList'); const L = legs(); const can = editable();
     if (!L.length) { box.innerHTML = '<div class="card muted">Legs appear once the plan has two or more pins.</div>'; return; }
-    box.innerHTML = `${can ? `<div class="row" style="margin-bottom:6px"><button id="followAll" ${NSER.length ? '' : 'disabled title="No nights are recorded for this zone yet"'}>Follow recorded paths on every leg</button><button id="straightAll" class="sm">Straighten all</button></div>` : ''}${NSER.length ? '' : '<div class="small muted" style="margin-bottom:6px">No nights are recorded for this zone yet, so legs have no recorded time and cannot follow a path.</div>'}<div id="legTotals" class="small muted"></div>`;
+    box.innerHTML = `${can ? `<div class="row" style="margin-bottom:6px"><button id="followAll" ${NSER.length ? '' : 'disabled title="No nights are recorded for this zone yet"'}${host.recorded ? ' title="Keep the average of the recorded nights as the bend points of every leg a night covered: one save, and it goes to the in-game map"' : ''}>${host.recorded ? 'Use recorded routes' : 'Follow recorded paths on every leg'}</button><button id="straightAll" class="sm">Straighten all</button></div>` : ''}${NSER.length ? '' : '<div class="small muted" style="margin-bottom:6px">No nights are recorded for this zone yet, so legs have no recorded time and cannot follow a path.</div>'}<div id="legTotals" class="small muted"></div>`;
     // consecutive legs of one split are drawn together, branch by branch, side by side
     for (let i = 0; i < L.length;) {
       const lg = L[i];
@@ -915,7 +966,9 @@ export function mountPlanner(root, host) {
     $('#legTotals').innerHTML = lines.map(esc).join('<br>');
     markCurLeg();
     if (can && $('#followAll')) {
-      $('#followAll').onclick = () => { let ok = 0, no = 0; for (const lg of legs()) followLeg(lg, true) ? ok++ : no++; changed(); toast(ok + ' leg' + (ok === 1 ? '' : 's') + ' now follow recorded paths' + (no ? '; ' + no + ' had no recorded night through both pins' : '')); };
+      $('#followAll').onclick = host.recorded
+        ? () => bakeRecorded(legs())
+        : () => { let ok = 0, no = 0; for (const lg of legs()) followLeg(lg, true) ? ok++ : no++; changed(); toast(ok + ' leg' + (ok === 1 ? '' : 's') + ' now follow recorded paths' + (no ? '; ' + no + ' had no recorded night through both pins' : '')); };
       $('#straightAll').onclick = () => { plan.lines = plan.lines.filter(l => l.opt || l.via || l.off).map(l => ({ ...l, pts: [], follow: undefined })); changed(); };
     }
   }
@@ -926,9 +979,10 @@ export function mountPlanner(root, host) {
     for (const n of NSER) {
       const d = document.createElement('label'); d.className = 'chk';
       d.innerHTML = `<input type="checkbox" ${ui.nights[n.key] ? 'checked' : ''}><span class="swatch" style="background:${n.color}"></span><span><b>${esc(n.key.slice(0, 5))}</b> <span class="muted small">kill order ${esc(n.kill)}</span></span>`;
-      $('input', d).onchange = e => { ui.nights[n.key] = e.target.checked; saveUi(); renderMap(); };
+      $('input', d).onchange = e => { ui.nights[n.key] = e.target.checked; saveUi(); renderMap(); tellNights(); };
       nl.appendChild(d);
     }
+    if (host.nightsNote) { const t = document.createElement('div'); t.className = 'small muted'; t.style.marginTop = '4px'; t.textContent = host.nightsNote; nl.appendChild(t); }
     $('#hiddenCount').textContent = plan.hiddenTracks.length ? plan.hiddenTracks.length + ' hidden' : '';
     $('#btnShowAll').disabled = !plan.hiddenTracks.length || !editable();
     $('#btnShowAll').style.display = NSER.length ? '' : 'none';
@@ -952,6 +1006,7 @@ export function mountPlanner(root, host) {
       (Z.pathers.length ? `<div class="row"><span class="swatch" style="background:${PATHER_COLOR}"></span>Pather (arrows show the way it walks)</div>` : '') +
       (REAL_LINKS ? `<div class="row"><span class="swatch" style="background:${LINK_COLOR}"></span>Teleport &nbsp; padlock: locked (red) or flag (orange) door</div>` : '') +
       (host.navRoute ? `<div class="row"><span class="swatch" style="background:${LINK_COLOR}"></span>Walk route: a dashed jump is a teleporter or flagged door (not counted); a dotted leg has no walkable route</div>` : '') +
+      (host.recorded ? '<div class="row"><span class="swatch" style="background:var(--green)"></span>Recorded: the leg along the average of the nights that ran it</div>' : '') +
       (Z.floors.length > 1 ? '<div class="row"><span class="dot" style="background:var(--muted);opacity:.3"></span>Faded: on another floor than the one picked</div>' : '');
   }
   function renderMobs() {
@@ -1084,7 +1139,7 @@ export function mountPlanner(root, host) {
   });
   if (host.legFocus) {
     $('#legOnly').onclick = () => { ui.legOnly = !ui.legOnly; legSel = undefined; legFramed = null; saveUi(); renderMap(); renderLegs(); };
-    $('#walkOn').onclick = () => setWalk(!ui.walk);
+    listen($('#srcGrp'), 'click', e => { const b = e.target.closest('button[data-src]'); if (b && b.dataset.src !== ui.src) setSrc(b.dataset.src); });
     $('#legPrev').onclick = () => setLeg(stepLeg(legIdx, -1, legs().length));
     $('#legNext').onclick = () => setLeg(stepLeg(legIdx, 1, legs().length));
     $('#legFollow').checked = ui.legFollow !== false;
@@ -1103,7 +1158,8 @@ export function mountPlanner(root, host) {
   setTab(ui.tab);
   $$('#modeGrp button').forEach(b => b.classList.toggle('active', b.dataset.mode === 'select'));
   fit(false);
-  if (walkOn()) loadWalk();
+  if (ui.src === 'walk' && walkOn()) loadWalk();
+  tellNights();
   renderMap(); renderPanel(); refreshEditable();
   if (pins().length) fit(true);
   // the first real size arrives after the stylesheet: fit once more when the map gets its box

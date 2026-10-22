@@ -190,6 +190,8 @@ export type Leg = {
   idx: number;                     // 0-based position in the leg list
   branch?: LegBranch;              // set for a leg inside a split's branch
   walk?: LegWalk;
+  /** The "Recorded" route source: the leg as the recorded nights ran it (its length, how many nights), or none of them did. */
+  rec?: { state: 'ok'; len: number; nights: number } | { state: 'none' };
 };
 
 /** The splits that can be drawn: start and regroup are neighbours in the route. */
@@ -249,8 +251,9 @@ export function polyLen(poly: readonly (readonly [number, number])[]): number {
 }
 
 /** How far the leg walks: its polyline, without the teleport jump; the walked length when the walk route made one. */
-export const legLength = (L: Pick<Leg, 'a' | 'b' | 'pts'> & { jump?: Leg['jump']; walk?: Leg['walk'] }): number =>
-  L.walk && L.walk.state === 'ok' ? L.walk.len
+export const legLength = (L: Pick<Leg, 'a' | 'b' | 'pts'> & { jump?: Leg['jump']; walk?: Leg['walk']; rec?: Leg['rec'] }): number =>
+  L.rec && L.rec.state === 'ok' ? L.rec.len
+    : L.walk && L.walk.state === 'ok' ? L.walk.len
     : polyLen(legPoly(L)) - (L.jump ? Math.hypot(L.jump.to[0] - L.jump.from[0], L.jump.to[1] - L.jump.from[1]) : 0);
 
 /** A line keeps the height of a bend only while that bend is still where it was baked (same x, y). */

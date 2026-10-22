@@ -20,7 +20,7 @@ import { isZoneShort } from '@/lib/zoneMap/source';
 import { loadWalls } from '@/app/pop/raid/walls';
 import {
   MIN_NIGHT_MINUTES, MIN_RAIDERS, SESSION_GAP_MS, analyzeNight, averageRoute, routeBasis, centroidSeries,
-  nightPath, type Enc, type NightFlag, type NightTrack, type RouteResult, type SpawnPick,
+  nightPath, type CPoint, type Enc, type NightFlag, type NightTrack, type RouteResult, type SpawnPick,
 } from '@/lib/raidRoutes';
 
 const GUILD = GUILD_TAG;
@@ -243,4 +243,26 @@ export async function zoneRoutes(zone: string, keys: string[] | null): Promise<Z
     });
     return { zone, name: list.name, nights, selected, route };
   });
+}
+
+// ── the raid centre per night, for the route planner ──────────────────────────
+export type NightSeries = { visit: VisitInfo; series: CPoint[]; kills: string[] };
+
+/**
+ * A zone's RAID visits (inside the raid window, MIN_RAIDERS placed), newest first and at most `limit`, each as the raid-centre
+ * series centroidSeries gave it and the names of its named kills in the order they died. The route planner turns them into the
+ * nights it follows (web/lib/routePlanner/nights.ts). Reads nothing of its own: it is visitTrack, the cached per-visit analysis
+ * the answer above is built from, so a visit costs its reads once whoever asks first. Null when the zone has no recorded visit.
+ */
+export async function zoneNightSeries(zone: string, limit: number): Promise<NightSeries[] | null> {
+  const list = (await listZones()).find(z => z.zone === zone);
+  if (!list || list.zone_id == null) return null;
+  const zoneId = list.zone_id;
+  const visits = list.visits.filter(v => v.raid).slice(0, Math.max(0, limit));   // newest first already
+  const out: NightSeries[] = [];
+  for (let i = 0; i < visits.length; i += 3) {       // three at a time: a visit is a few MB of text
+    const tracks = await Promise.all(visits.slice(i, i + 3).map(v => visitTrack(zone, zoneId, v)));
+    tracks.forEach((t, j) => out.push({ visit: visits[i + j], series: t.series, kills: t.named.map(k => k.name) }));
+  }
+  return out;
 }

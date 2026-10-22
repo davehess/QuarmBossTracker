@@ -14,7 +14,9 @@ import { fewestByNpc, fewestLine, type FewestKill } from '@/lib/routePlanner/few
 import { allPins } from '@/lib/routePlanner/plan';
 import type { Plan, ZoneData } from '@/lib/routePlanner/types';
 
-type Overlay = { path: [number, number][]; stops: { n: number; name: string; x: number; y: number }[] } | null;
+/** The night laid over the plan: its centre path and its named kills in the order they died (the 2D map draws it in white, and so does the 3D view). */
+export type CompareNight = { label: string; path: [number, number][]; stops: { n: number; name: string; x: number; y: number }[] };
+type Overlay = CompareNight | null;
 
 const fmtU = (n: number) => Math.round(n).toLocaleString('en-US') + ' u';
 const fmtT = (s: number) => (s < 90 ? Math.round(s) + ' s' : Math.floor(s / 60) + 'm ' + String(Math.round(s % 60)).padStart(2, '0') + 's');
@@ -65,6 +67,7 @@ export default function ComparePanel(props: {
         };
         setActual(act);
         overlayRef.current({
+          label: act.label,
           path: act.path,
           stops: stops.flatMap(s => (s.x != null && s.y != null ? [{ n: s.n, name: s.name, x: s.x, y: s.y }] : [])),
         });

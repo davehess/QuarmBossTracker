@@ -27,7 +27,7 @@ import {
 } from './actions';
 import { mountPlanner } from './engine';
 import VersionsPanel from './VersionsPanel';
-import ComparePanel from './ComparePanel';
+import ComparePanel, { type CompareNight } from './ComparePanel';
 import './planner.css';
 
 type Api = ReturnType<typeof mountPlanner>;
@@ -51,6 +51,8 @@ export type RoutePlannerProps = {
   fewest: FewestKill[];
   /** The preview asked for with ?v= ('b' stacked floors, 'c' true 3D, 'leg' the One leg mode alone); null on the page everyone sees. */
   variant?: 'b' | 'c' | 'leg' | null;
+  /** The line under the Recorded nights list (the previews merge the recorder's live raid nights into the zone's): what it is made of and that it is capped. */
+  nightsNote?: string;
 };
 
 const SAVE_DELAY_MS = 1000;
@@ -74,6 +76,9 @@ export default function RoutePlanner(props: RoutePlannerProps) {
   const [view3d, setView3d] = useState(false);
   const [legKey, setLegKey] = useState<string | null>(null);   // the leg the One leg mode is on (null when the mode is off)
   const [routes, setRoutes] = useState<Map<string, Routed>>(() => new Map());   // the walk routes by leg, for the 3D view
+  const [recorded, setRecorded] = useState<Map<string, [number, number][]>>(() => new Map());   // the Recorded source's legs, pin to pin, for the 3D view
+  const [nightKeys, setNightKeys] = useState<string[]>([]);                      // the nights ticked in Layers, for the 3D view's own layer
+  const [night, setNight] = useState<CompareNight | null>(null);                 // the Compare tab's night, for the 3D view
   const v3 = props.variant === 'b' || props.variant === 'c' ? props.variant : null;   // the 3D previews; 'leg' has no 3D
   const [confirm, setConfirm] = useState<null | { kind: 'publish'; text: string } | { kind: 'import'; text: string }>(null);
 
@@ -139,6 +144,11 @@ export default function RoutePlanner(props: RoutePlannerProps) {
       // "Walk route" (any ?v=): the navigation library and the zone's walkable map are fetched when it is first turned on
       navRoute: props.variant ? { load: () => import('@/lib/routePlanner/navLoad').then(m => m.loadNavRouter(zone)) } : undefined,
       onRoutes: (m: Map<string, Routed>) => setRoutes(m),
+      // the "Recorded" route source (any ?v=): legs along the average of the recorded nights
+      recorded: !!props.variant,
+      onRecorded: (m: Map<string, [number, number][]>) => setRecorded(m),
+      onNights: (keys: string[]) => setNightKeys(keys),
+      nightsNote: props.nightsNote || '',
     });
     apiRef.current = api;
     setNodes(api.nodes);
@@ -351,6 +361,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
       )}
       {nodes && v3 && view3d && createPortal(
         <Plan3D zone={zone} extraMobs={props.extraMobs} plan={shown3d} skipOptional={skipOptional} variant={v3} focusLeg={legKey} routes={routes}
+          recorded={recorded} night={night} nightKeys={nightKeys}
           onSelect={id => apiRef.current?.selectPin(id)}
           canEdit={officer && !previewing}
           onMovePin={(id, x, y, z) => apiRef.current?.movePin(id, x, y, z) ?? false}
@@ -371,7 +382,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
       )}
       {nodes && createPortal(
         <ComparePanel zone={zone} plan={livePlan} skipOptional={skipOptional} fewest={props.fewest}
-          onOverlay={o => apiRef.current?.setActual(o)} />,
+          onOverlay={o => { apiRef.current?.setActual(o); setNight(o); }} />,
         nodes.comparePane,
       )}
     </div>

@@ -213,6 +213,7 @@
 .rp-root .walknote.err{color:var(--orange);border-color:var(--orange)}
 .rp-root .leg .walk{color:#d2a8ff}
 .rp-root .leg .walk.none{color:var(--orange)}
+.rp-root .leg .walk.rec{color:var(--green)}
 .rp-root .p3{position:absolute;inset:0;z-index:2;background:var(--map-bg);overflow:hidden;touch-action:none}
 .rp-root .p3-layer{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:1}
 .rp-root .p3 canvas{outline:none}
