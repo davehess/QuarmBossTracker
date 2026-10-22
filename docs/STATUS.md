@@ -103,6 +103,13 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧾 2026-10-22 server patch reflected (beta, web 2.0.7).** Rathe Council has no round limit and the Avatar of Earth
+  idles 50 min (refills on aggro loss); Tallon/Vallon reset on aggro loss once in the War Room; Solusek Ro's flag needs
+  Miak's preflag. Plane of Air ring retries (15 min) and the self-found Crab Cracker / ground spawns have no surface of
+  ours yet; nothing of ours parses #popflags. Script: SecretsOTheP/quests `ea0c766`. Touched: `apps/mimic/pop-raids.js`,
+  `web/lib/routePlanner/zones/potactics.json` (links pinned to the commit, Rallos.lua anchors +8),
+  `solrotower.json` / `solrotower.ts`, `web/lib/raidTimeline.ts` comment.
+
 - **✅ Route planner page (`/raid/plan/routes`, marked [beta], web 2.0.2, live on `main`, 2026-10-22).**
   The officers' single-file Tactics route planner, ported as it was into the raid planner area and extended. Members view,
   officers edit; plans live in `bot_kv` `route_plan:<zone>` (no migration): several plans per zone (the main night + named
