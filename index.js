@@ -17011,11 +17011,14 @@ async function _handleAgentMobInfo(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
 
-  let name = '', selfChar = '';
+  let name = '', selfChar = '', reqNpcId = null;
   try {
     const sp = new URL(req.url, 'http://x').searchParams;
     name = sp.get('name') || '';
     selfChar = (sp.get('character') || '').trim();   // #141 requester → zone scope
+    // FB-80: the agent names the exact body once it has told two same-name bodies apart.
+    const n = parseInt(sp.get('npc_id'), 10);
+    if (n > 0) reqNpcId = n;
   } catch { /* */ }
   const norm = _normMobName(name);
   if (!norm) { res.writeHead(400); return res.end(JSON.stringify({ error: 'name required' })); }
@@ -17031,7 +17034,8 @@ async function _handleAgentMobInfo(req, res) {
   // Keyed on the CASE-KEPT name: keyed on `norm`, whichever of two same-name
   // bodies was asked for first would be served for both for six hours.
   const caseKey = _mobCaseKey(name);
-  const cacheKey = caseKey + '|' + (reqZoneId != null ? reqZoneId : '*') + (reqGender != null ? '|g' + reqGender : '');
+  const cacheKey = caseKey + '|' + (reqZoneId != null ? reqZoneId : '*') + (reqGender != null ? '|g' + reqGender : '')
+    + (reqNpcId != null ? '|n' + reqNpcId : '');
 
   const cached = _mobInfoCache.get(cacheKey);
   if (cached && (Date.now() - cached.at) < (cached.ttl || _MOB_INFO_TTL_MS)) {
@@ -17041,7 +17045,7 @@ async function _handleAgentMobInfo(req, res) {
 
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, mob: null })); }
-  const mob = await _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGender });
+  const mob = await _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGender, npcId: reqNpcId });
   if (_mobInfoCache.size > 1000) _mobInfoCache.clear();   // cap set-only growth (efficiency review rule 4)
   // #141 zone-scoped key. A MISS is cached far shorter than a hit: the 6h TTL
   // is right for catalog rows (they never change between weekly syncs) but
@@ -17056,7 +17060,7 @@ async function _handleAgentMobInfo(req, res) {
 
 // The lookup itself, lifted out of the handler unchanged so a zone pack
 // (/api/agent/mob-pack) builds every mob exactly the way a live lookup does.
-async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGender }) {
+async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGender, npcId }) {
   let mob = null;
   try {
     // Case-insensitive exact match on the normalized (underscored) name.
@@ -17084,7 +17088,16 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
     // row instead of serving the un-killable one.
     // The ilike above is case-blind on purpose (it finds every body of the
     // name); the case filter then keeps the ones that are actually THIS mob.
-    const picked = mobSpecials.pickAndMergeMobRows(_mobRowsForCase(rows, caseKey), { zoneId: reqZoneId });
+    let picked = mobSpecials.pickAndMergeMobRows(_mobRowsForCase(rows, caseKey), { zoneId: reqZoneId });
+    // FB-80: same name, different LEVEL (the two war boars in Plane of Tactics, 55 and 63). The pick above is
+    // still the highest level; the bands are listed so the agent can choose from what the client sees (the
+    // target's level, where it stands), then asks again with npc_id for that body's whole row. An id that is
+    // not one of this name's rows is ignored: the answer is the pick above, as before.
+    const levelBodies = mobSpecials.levelBodies(picked.candidates);
+    if (npcId != null) {
+      const exact = _mobRowsForCase(rows, caseKey).filter(x => Number(x.id) === Number(npcId));
+      if (exact.length) picked = mobSpecials.pickAndMergeMobRows(exact, { zoneId: reqZoneId });
+    }
     let r = picked.row;
     // Same name, different CLASS, told apart in game only by sex (the guild lead
     // 2026-09-15, Plane of Hate's revenants). List every (class, sex) the
@@ -17389,6 +17402,8 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         // when they disagree on class — the overlay then shows the pair.
         class_variants:  classVariants,
         class_ambiguous: classAmbiguous,
+        // Two or more level bands under this name (FB-80); absent for a name with one, so its answer is unchanged.
+        ...(levelBodies.length ? { level_bodies: levelBodies } : {}),
         level:    r.level ?? null,
         maxlevel: (r.maxlevel != null && r.maxlevel !== r.level) ? r.maxlevel : null,
         hp:      r.hp ?? null,
@@ -17494,7 +17509,8 @@ const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 //   7 (2026-10-15): rampage { range, chance, damage_pct }
 //   8 (2026-10-16): "Silences" / "Silences (AoE)" in specials, from the mob's spell list
 //   9 (2026-10-19): raid_target also true for the curated PoP bosses (data/named-bosses.json)
-const _MOB_PACK_VERSION = 9;
+//  10 (2026-10-22): level_bodies, the level bands of a name that is two bodies in one zone (FB-80)
+const _MOB_PACK_VERSION = 10;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
 const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build

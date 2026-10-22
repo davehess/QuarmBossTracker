@@ -5410,3 +5410,13 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `_overlayRendererGone` handles the ones that are `_OVERLAY_WINDOWS` entries (drop, destroy, then `applyAllVisibility` after 500 ms),
   limited by `_crashRebuildAllowed` to 3 per overlay per 5 min. The dashboard keeps its own handler in `createWindow`. Test:
   `test/mimic-window-move.test.js`.
+- **Target Info: two mobs, one name, two levels (agent 4.0.8 + bot, FB-80).** Bot: `_buildMobInfo` adds `level_bodies`
+  (`[{ id, level, maxlevel, hp }]`, one per distinct level band, `mobSpecials.levelBodies`; absent for a name with one) and serves
+  any one body whole for `GET /api/agent/mob-info?…&npc_id=<id>` (cache key `…|n<id>`); the default pick is still the highest
+  level; zone packs are shape 10. Mimic `main.js` reads Zeal's `target_level` (named_pipe.cpp, 1.4.8) into the zeal state. Agent
+  `resolveMobBody` picks the band from, in order: the target's level, your `/consider` range (`conLevelFor`), where it stands
+  (`target_loc` against the Map's zone-spawn points that can make that body, a walker by its route, only when one is twice as
+  near or over 120 units nearer); `_pickMobBody` (called from `buildMobInfo`) fetches the other body by id
+  (`fetchMobInfo(…, npcId)`, own cache key, never the pack) and, while undecided, hands the overlay both bands with the
+  body-specific numbers blanked (`mob.body_pick`; `mobinfo.html` prints "(L55 or L63)"). The spawn id is not used: it names an
+  entity, not a catalog row. Test: `test/mob-same-name-bodies.test.js`.

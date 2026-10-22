@@ -103,7 +103,7 @@ describe('mob-info serves it', () => {
     expect((await ask('Hero_Shrine_Guardian')).raid_target).toBe(false);
   });
   it('the zone-pack shape is bumped so packs built without the list rebuild', () => {
-    expect(stripJs(SRC)).toMatch(/const _MOB_PACK_VERSION = 9;/);
+    expect(stripJs(SRC)).toMatch(/const _MOB_PACK_VERSION = (?:9|[1-9]\d);/);
   });
 });
 

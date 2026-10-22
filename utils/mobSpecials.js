@@ -368,6 +368,32 @@ function pickAndMergeMobRows(rows, opts) {
 }
 
 /**
+ * The same-name bodies that differ in LEVEL (FB-80: "a war boar" is a level 55 in the Plane of Tactics
+ * tunnel and a level 63 in the pit, two catalog rows, and the picker above always served the 63).
+ * Takes pickAndMergeMobRows' `candidates` (primacy order, highest level first) and returns one small
+ * descriptor per distinct level band, [{ id, level, maxlevel, hp }]: enough for the agent to choose
+ * from what the client can see (the target's level, where it stands) and then ask for that body's
+ * full row by id. [] unless there are two or more, so a single-body name is byte-identical to before.
+ * Bodies that share a level (the same-level class pairs) stay with class_variants.
+ */
+const LEVEL_BODIES_MAX = 8;
+function levelBodies(candidates) {
+  const seen = new Set();
+  const out = [];
+  for (const r of Array.isArray(candidates) ? candidates : []) {
+    if (!r || r.id == null) continue;
+    const level = Number(r.level) || 0;
+    const max = Number(r.maxlevel) > level ? Number(r.maxlevel) : null;
+    const band = level + '-' + (max || 0);
+    if (seen.has(band)) continue;
+    seen.add(band);
+    out.push({ id: r.id, level: level || null, maxlevel: max, hp: r.hp ?? null });
+    if (out.length >= LEVEL_BODIES_MAX) break;
+  }
+  return out.length > 1 ? out : [];
+}
+
+/**
  * Which same-name body the Quest tab should read when the pick above is from another zone
  * (FB-72, a member, 2026-10-10).
  *
@@ -427,6 +453,7 @@ module.exports = {
   decodeSpecialLabels,
   deriveMovement,
   pickAndMergeMobRows,
+  levelBodies,
   zoneIdOf,
   // Area Rampage reach (utils/aeRampage.js). Required lazily: that file imports parseSpecials from
   // here, and _buildMobInfo is evaluated in tests with `mobSpecials` as its only catalog helper.

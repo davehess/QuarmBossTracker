@@ -6499,3 +6499,14 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   Shield (3 min / 12 s), the Dock no longer fights a drag, Target Info retries a missed mob after 60 s instead of 6 h, overlay crash
   recovery. The dashboard's jump to the top-left mid-drag is NOT proven fixed (DECISIONS §412): the `[window] … held off` log decides it.
   Beta re-parked at 3.0.3.
+- 🧪 Target Info tells same-name mobs apart by level and place (a member, Mimic 2.9.0, 2026-10-14, FB-80: the level 55 "a war
+  boar" in the Plane of Tactics tunnel and the level 63 one in the pit; agent 4.0.8 on beta, **bot half waiting for main**).
+  Both are catalog rows (214304, 214048) and the picker always served the 63. Zeal 1.4.8 puts the target's level and (within 250
+  units) position on the pipe, so Mimic now reads `target_level` and the agent picks the band: level, then `/consider`, then the
+  nearest spawn point that can make that body (route-aware); when it still cannot tell, Target Info shows "(L55 or L63)" and both
+  HP figures and blanks level/HP/damage. Across the Planes of Power 81 names are two or more bodies of different levels in one zone
+  (15 zones; 27 differ by 3+ levels), so this is not a boar problem. **Bot files (route to `main`): `index.js`, `utils/mobSpecials.js`**
+  (`level_bodies`, `npc_id`, pack shape 10; no root version bump on this branch). Until the bot is live the agent behaves as before
+  (no `level_bodies`, nothing to pick). ⏳ Only a Zeal older than 1.4.8 lacks the level and position: those fall to `/consider` or
+  show both. ⏳ Not tried against a live Zeal; the pipe fields are read from Zeal's `named_pipe.cpp`. ⏳ Class and race are on the
+  same pipe and would settle the same-level class pairs (the Plane of Hate revenants) the same way; not done here.
