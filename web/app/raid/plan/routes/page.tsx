@@ -18,7 +18,7 @@ import { isOfficer } from '@/lib/officer';
 import NewPageTag from '@/components/NewPageTag';
 import { DEFAULT_ZONE, zoneData, zoneList } from '@/lib/routePlanner/zones';
 import { MAIN_PLAN, isPlanId, planSummaries, type PlanStore } from '@/lib/routePlanner/store';
-import { cardBosses, readStore, zoneChecklist, type CardBosses } from '@/lib/routePlanner/load';
+import { cardBosses, plannerNights, readStore, zoneChecklist, type CardBosses } from '@/lib/routePlanner/load';
 import { seedFor } from '@/lib/routePlanner/seeds';
 import { allPins } from '@/lib/routePlanner/plan';
 import { fewestKills } from '@/lib/routePlanner/fewestKills';
@@ -64,6 +64,15 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
 
   const seed = !d && !readFailed ? seedFor(zone.zone) : null;
 
+  // the previews (?v=) follow the recorder's own raid nights too, not just the few saved with the zone file; with no ?v= the
+  // page is what it was (the zone file's nights)
+  let planZone = zone, nightsNote = '';
+  if (variant) {
+    const pn = await plannerNights(zone);
+    planZone = { ...zone, nights: pn.nights };
+    nightsNote = pn.note;
+  }
+
   return (
     <div className="mx-auto max-w-7xl py-2">
       <NewPageTag note="New page: plan the raid's route on the map." />
@@ -86,7 +95,8 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
       )}
       <RoutePlanner
         key={`${zone.zone}:${planId}:${variant ?? ''}`}
-        zone={zone}
+        zone={planZone}
+        nightsNote={nightsNote}
         planId={planId}
         plans={plans}
         doc={d ? { updated_at: d.updated_at, name: d.name, night_type: d.night_type, target_headcount: d.target_headcount ?? null, current: d.current } : null}

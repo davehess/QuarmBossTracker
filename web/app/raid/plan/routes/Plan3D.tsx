@@ -26,10 +26,13 @@ import { unpackMesh } from '@/lib/zoneMesh';
 import type { Mob, Plan, ZoneData } from '@/lib/routePlanner/types';
 import type { Routed } from '@/lib/routePlanner/navroute';
 import {
-  KIND_HEX, LINK_HEX, PATHER_HEX, baseSpacing, buildView3D, clipHeight, dragLanding, floorOrder, legTouches, movedPast, withPinMoved,
+  KIND_HEX, LINK_HEX, PATHER_HEX, baseSpacing, buildView3D, clipHeight, dragLanding, floorOrder, legTouches, movedPast, recordedPath3D, withPinMoved,
   type Pt3, type View3D,
 } from '@/lib/routePlanner/view3d';
+import { floorHeightsAt, nearestZ, type HeightsAt } from '@/lib/routePlanner/drape';
+import { buildTriGrid, type TriGrid } from '@/lib/replayCamera';
 import { buildFloorMesh, buildMesh } from '@/app/spectator/replay/Replay3D';
+import type { CompareNight } from './ComparePanel';
 
 export type Plan3DProps = {
   zone: ZoneData;
@@ -41,6 +44,12 @@ export type Plan3DProps = {
   focusLeg?: string | null;
   /** The walk routes (navroute.ts) by leg key, while "Walk route" is on: those legs are drawn along their route at true heights. */
   routes?: ReadonlyMap<string, Routed>;
+  /** The Recorded route source: the legs drawn along the recorded nights, pin to pin as [x, y]; they are put on the floors here. */
+  recorded?: ReadonlyMap<string, [number, number][]>;
+  /** The Compare tab's night (white, with its kills numbered), or null. */
+  night?: CompareNight | null;
+  /** The recorded nights ticked in Layers: the "Recorded nights" layer here draws these. */
+  nightKeys?: readonly string[];
   /** A pin was clicked: select it the way the 2D map does (the host wires this to the engine). */
   onSelect: (pinId: string) => void;
   /** Pins can be dragged: an officer, and not while a saved version is on the map (the host says so; the engine checks again). */
@@ -60,15 +69,18 @@ const REACH = { mouse: 14, touch: 24 };
 const MAX_TAGS = 260;
 const SPREAD = { min: 0.4, max: 3, step: 0.1 };
 
-type Item = { id: string; faint?: boolean; pin: boolean; num: string; text: string; v: Vector3; color: string; mesh: Mesh; k: number; layer: 'pin' | 'link' };
+type Item = { id: string; faint?: boolean; pin: boolean; num: string; text: string; v: Vector3; color: string; mesh: Mesh; k: number; layer: 'pin' | 'link' | 'night' };
+const NIGHT_WHITE = '#f0f6fc';       // the Compare night, as the 2D map draws it (ACTUAL_COLOR)
+const NIGHT_GAP_S = 15;              // a recorded night with this long between samples is two pieces (the 2D map's rule)
+const NIGHT_MAX_PTS = 700;           // most samples one recorded night puts on the screen
 type Status = 'idle' | 'loading' | 'ready' | 'none' | 'error';
 type Box = { cx: number; cy: number; cz: number; r: number };
 
 type Ctx = {
   renderer: WebGLRenderer; scene: Scene; camera: PerspectiveCamera; controls: OrbitControls; clip: Plane;
-  slabsG: Group; meshG: Group; dynG: Group; gPathers: Group; gLinks: Group; gPins: Group;
+  slabsG: Group; meshG: Group; dynG: Group; gPathers: Group; gLinks: Group; gPins: Group; gNights: Group;
   halo: Mesh; ring: Mesh; items: Item[]; slabTags: { text: string; color: string; v: Vector3 }[];
-  lineMats: LineMaterial[]; dynFree: (() => void)[]; slabFree: (() => void)[];
+  lineMats: LineMaterial[]; dynFree: (() => void)[]; slabFree: (() => void)[]; nightFree: (() => void)[]; nightMats: LineMaterial[];
   wall: Mesh | null; floor: Mesh | null;
   sel: string | null; hover: string | null; clipY: number; showPins: boolean; showLinks: boolean;
   box: Box; moved: boolean; w: number; h: number; raf: number; dead: boolean; tags: HTMLDivElement[];
@@ -89,7 +101,7 @@ const disposeMat = (m: Material | Material[]) => (Array.isArray(m) ? m : [m]).fo
 
 type Dragged = { id: string; x: number; y: number; z: number };   // a pin being dragged (or just let go, until the plan has it): server frame
 
-export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, focusLeg, routes, onSelect, canEdit, onMovePin, onFail }: Plan3DProps) {
+export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, focusLeg, routes, recorded, night, nightKeys, onSelect, canEdit, onMovePin, onFail }: Plan3DProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
   const ctxRef = useRef<Ctx | null>(null);
@@ -124,10 +136,20 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
     [routes, dragged],
   );
 
+  // the floors, as a triangle grid: what a recorded path (which has no height) is put on (true 3D, once the floors have loaded)
+  const [floorGrid, setFloorGrid] = useState<TriGrid | null>(null);
+  const heightsAt = useMemo<HeightsAt | undefined>(() => (floorGrid ? (x, y) => floorHeightsAt(floorGrid, x, y) : undefined), [floorGrid]);
+  const [nightsOn, setNightsOn] = useState(false);
+  // a recorded leg that ends at the dragged pin is no longer where the pin is: it falls back to a straight line meanwhile
+  const shownRecorded = useMemo(
+    () => (dragged && recorded ? new Map([...recorded].filter(([k]) => !legTouches(k, dragged.id))) : recorded),
+    [recorded, dragged],
+  );
+
   const spacing = baseSpacing(zone.bounds) * spread;
   const view = useMemo<View3D>(
-    () => buildView3D({ zone, extraMobs, plan: shownPlan, skipOptional, mode: stack ? 'stack' : 'mesh', spacing, focusLeg, routes: shownRoutes }),
-    [zone, extraMobs, shownPlan, skipOptional, stack, spacing, focusLeg, shownRoutes],
+    () => buildView3D({ zone, extraMobs, plan: shownPlan, skipOptional, mode: stack ? 'stack' : 'mesh', spacing, focusLeg, routes: shownRoutes, recorded: shownRecorded, heightsAt }),
+    [zone, extraMobs, shownPlan, skipOptional, stack, spacing, focusLeg, shownRoutes, shownRecorded, heightsAt],
   );
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -167,8 +189,8 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
 
     const clip = new Plane(new Vector3(0, -1, 0), 0);   // keeps y <= constant: a floor clip hides what is above
     const slabsG = new Group(), meshG = new Group(), dynG = new Group();
-    const gPathers = new Group(), gLinks = new Group(), gPins = new Group();
-    dynG.add(gPathers, gLinks, gPins);
+    const gPathers = new Group(), gLinks = new Group(), gPins = new Group(), gNights = new Group();
+    dynG.add(gPathers, gLinks, gNights, gPins);
     scene.add(slabsG, meshG, dynG);
     const halo = new Mesh(new SphereGeometry(1, 12, 8), new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false }));
     halo.renderOrder = 4;
@@ -181,8 +203,8 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
     scene.add(ring);
 
     const c: Ctx = {
-      renderer, scene, camera, controls, clip, slabsG, meshG, dynG, gPathers, gLinks, gPins, halo, ring,
-      items: [], slabTags: [], lineMats: [], dynFree: [], slabFree: [], wall: null, floor: null,
+      renderer, scene, camera, controls, clip, slabsG, meshG, dynG, gPathers, gLinks, gPins, gNights, halo, ring,
+      items: [], slabTags: [], lineMats: [], dynFree: [], slabFree: [], nightFree: [], nightMats: [], wall: null, floor: null,
       sel: null, hover: null, clipY: Infinity, showPins: true, showLinks: true,
       box: { cx: 0, cy: 0, cz: 0, r: 2000 }, moved: false, w: 0, h: 0, raf: 0, dead: false, tags: [],
       request: () => {
@@ -211,7 +233,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
       if (tmpV.z > 1) return null;
       return { px: (tmpV.x * 0.5 + 0.5) * c.w, py: (-tmpV.y * 0.5 + 0.5) * c.h };
     };
-    const shown = (it: Item) => (it.layer === 'pin' ? c.showPins : c.showLinks) && it.v.y <= c.clipY + LIFT + 1;
+    const shown = (it: Item) => (it.layer === 'pin' ? c.showPins : it.layer === 'night' ? true : c.showLinks) && it.v.y <= c.clipY + LIFT + 1;
     const placeLabels = () => {
       let used = 0;
       const put = (text: string, look: string, color: string, v: Vector3, dx: number, dy: number, centre: boolean) => {
@@ -226,7 +248,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
         t.style.top = `${Math.max(2, Math.min(c.h - 22, s.py + dy))}px`;
       };
       for (const s of c.slabTags) if (s.v.y <= c.clipY + 1) put(s.text, TAG_LOOK.slab + (c.w < 600 ? ';font-size:10px;padding:0 4px' : ''), s.color, s.v, 0, -10, false);
-      for (const it of c.items) if (it.pin && !it.faint && shown(it) && it.id !== c.sel && it.id !== c.hover) put(it.num, TAG_LOOK.num, it.color, it.v, 0, -26, true);
+      for (const it of c.items) if ((it.pin || it.layer === 'night') && !it.faint && shown(it) && it.id !== c.sel && it.id !== c.hover) put(it.num, TAG_LOOK.num, it.color, it.v, 0, -26, true);
       for (const id of new Set([c.sel, c.hover])) {
         const it = id ? c.items.find(x => x.id === id) : undefined;
         if (it && shown(it)) put(it.text, TAG_LOOK.full, '', it.v, 12, -34, false);
@@ -261,6 +283,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
       camera.aspect = c.w / c.h;
       camera.updateProjectionMatrix();
       for (const m of c.lineMats) m.resolution.set(c.w, c.h);
+      for (const m of c.nightMats) m.resolution.set(c.w, c.h);
       if (!c.moved) c.fit(); else c.request();
     };
     size();
@@ -415,6 +438,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
       controls.dispose();
       c.dynFree.forEach(f => f());
       c.slabFree.forEach(f => f());
+      c.nightFree.forEach(f => f());
       for (const m of [c.wall, c.floor]) if (m) { m.geometry.dispose(); disposeMat(m.material); }
       halo.geometry.dispose();
       disposeMat(halo.material);
@@ -514,6 +538,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
       ac.abort();
       if (c.wall) { c.meshG.remove(c.wall); c.wall.geometry.dispose(); disposeMat(c.wall.material); c.wall = null; }
       if (c.floor) { c.meshG.remove(c.floor); c.floor.geometry.dispose(); disposeMat(c.floor.material); c.floor = null; }
+      setFloorGrid(null);
       setFloorStatus('idle');
     };
   }, [zone, stack, tries]);
@@ -534,6 +559,8 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
         if (!built) { setFloorStatus('none'); return; }
         c.meshG.add(built);
         c.floor = built;
+        // the floor-facing triangles only (no roofs): what a recorded path is put on
+        setFloorGrid(buildTriGrid(built.geometry.getAttribute('position').array as Float32Array));
         setFloorStatus('ready');
         c.request();
       })
@@ -621,6 +648,70 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, zone]);
 
+  // ── recorded nights: the Compare tab's night (white, its kills numbered) and, when ticked, the nights ticked in Layers ──
+  // A recorded sample is [x, y] only, so each path is put on the floors (view3d.ts recordedPath3D: draped on the floor mesh once
+  // it has loaded, else on the floor of the nearest pin or mob). This runs after the plan effect above, which empties c.items.
+  useEffect(() => {
+    const c = ctxRef.current;
+    if (!c) return;
+    c.nightFree.forEach(f => f());
+    c.nightFree = [];
+    c.nightMats = [];
+    c.gNights.clear();
+    c.items = c.items.filter(it => it.layer !== 'night');
+    const own = <T extends { dispose(): void }>(o: T) => { c.nightFree.push(() => o.dispose()); return o; };
+    const mid = view.slabs.length ? view.slabs[view.slabs.length >> 1].h : 0;
+    const place = (pts: readonly (readonly [number, number])[], startZ: number | null) =>
+      recordedPath3D(pts, { mode: view.mode, heightsAt, refs: view.refs, snap: view.snap, startZ, fallback: mid });
+    const line = (pts: Pt3[], color: string, width: number, opacity: number, order: number) => {
+      if (pts.length < 2) return;
+      const geo = own(new LineGeometry());
+      geo.setPositions(pts.flatMap(toThree));
+      const mat = own(new LineMaterial({ color: new Color(color).getHex(), linewidth: width, transparent: true, opacity, depthTest: false, depthWrite: false }));
+      mat.resolution.set(c.w || 1, c.h || 1);
+      c.nightMats.push(mat);
+      const l = new Line2(geo, mat);
+      l.renderOrder = order;
+      l.frustumCulled = false;
+      c.gNights.add(l);
+    };
+
+    if (night && night.path.length > 1) {
+      const first = night.stops[0];
+      line(place(night.path, first ? nearestZ(first.x, first.y, view.refs) : null), NIGHT_WHITE, 3.2, 1, 4);
+      const octa = own(new OctahedronGeometry(1));
+      const mat = own(new MeshBasicMaterial({ color: new Color(NIGHT_WHITE), transparent: true, opacity: 0.95, depthTest: false }));
+      for (const s of night.stops) {
+        const z = nearestZ(s.x, s.y, view.refs);
+        const mesh = new Mesh(octa, mat);
+        mesh.renderOrder = 5;
+        mesh.frustumCulled = false;
+        const v = new Vector3(...toThree([s.x, s.y, (z === null ? mid : view.snap(z)) + LIFT]));
+        mesh.position.copy(v);
+        c.gNights.add(mesh);
+        c.items.push({ id: 'kill:' + s.n, pin: false, num: String(s.n), text: `${s.n}. ${s.name} (${night.label})`, v, color: NIGHT_WHITE, mesh, k: 1.1, layer: 'night' });
+      }
+    }
+
+    if (nightsOn && nightKeys?.length) {
+      for (const n of zone.nights) {
+        if (!nightKeys.includes(n.key) || n.pts.length < 2) continue;
+        const stride = Math.max(1, Math.ceil(n.pts.length / NIGHT_MAX_PTS));
+        let piece: [number, number][] = [], z = null as number | null;
+        const flush = () => {
+          if (piece.length > 1) { const p = place(piece, z); if (p.length) z = p[p.length - 1][2]; line(p, n.color, 2, 0.9, 3); }
+          piece = [];
+        };
+        n.pts.forEach((p, i) => {
+          if (i > 0 && p[0] - n.pts[i - 1][0] > NIGHT_GAP_S) flush();
+          if (i % stride === 0 || i === n.pts.length - 1) piece.push([p[1], p[2]]);
+        });
+        flush();
+      }
+    }
+    c.request();
+  }, [night, nightsOn, nightKeys, zone.nights, heightsAt, view]);
+
   useEffect(() => {
     const c = ctxRef.current;
     if (!c) return;
@@ -686,6 +777,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
         )}
         <label className="p3-chk"><input type="checkbox" checked={layers.pathers} onChange={e => setLayers(l => ({ ...l, pathers: e.target.checked }))} />Pathers</label>
         <label className="p3-chk"><input type="checkbox" checked={layers.links} onChange={e => setLayers(l => ({ ...l, links: e.target.checked }))} />Doors &amp; teleports</label>
+        {zone.nights.length > 0 && <label className="p3-chk" title="The recorded nights ticked in Layers, as the raid walked them"><input type="checkbox" checked={nightsOn} onChange={e => setNightsOn(e.target.checked)} />Recorded nights</label>}
         {!stack && <label className="p3-chk"><input type="checkbox" checked={wallsOn} onChange={e => setWallsOn(e.target.checked)} />Walls</label>}
         {!stack && <label className="p3-chk"><input type="checkbox" checked={floorsOn} onChange={e => setFloorsOn(e.target.checked)} />Floors</label>}
       </div>
@@ -694,6 +786,8 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
           ? <>Drag a pin to move it{stack ? ' along its floor' : ''} &middot; drag the space around it to turn &middot; scroll to zoom &middot; right-drag to pan &middot; Esc cancels a move &middot; everything else is edited in 2D</>
           : <>Drag to turn &middot; scroll to zoom &middot; right-drag to pan &middot; tap a pin to select it &middot; edit in 2D</>}
         {guessed > 0 && <> &middot; {guessed} pin{guessed === 1 ? ' has' : 's have'} no height of {guessed === 1 ? 'its' : 'their'} own and stand{guessed === 1 ? 's' : ''} at the nearest mob&apos;s</>}
+        {(night || nightsOn || (recorded && recorded.size > 0)) && <> &middot; recorded paths have no height of their own: {heightsAt ? 'each sample is put on the floor the raid was on' : stack ? 'each sample stays on the floor of the pins around it' : 'until the floors load, each sample stays at the height of the pins around it'}</>}
+        {night && <> &middot; white: {night.label}, its kills numbered</>}
       </div>
       {!stack && wallStatus === 'loading' && <div className="p3-note">Loading the zone mesh…</div>}
       {!stack && wallStatus === 'none' && <div className="p3-note">No wall mesh for this zone yet. The plan is drawn without walls.</div>}

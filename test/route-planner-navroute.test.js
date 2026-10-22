@@ -553,7 +553,8 @@ describe('the page everyone sees is unchanged', () => {
   const z = zoneData('solrotower');
   it('the markup has the Walk route toggle only in a preview', () => {
     expect(skeletonHtml(z, false, false)).not.toMatch(/walkOn|walkNote|Walk route/);
-    expect(skeletonHtml(z, false, true)).toMatch(/id="walkOn"/);
+    expect(skeletonHtml(z, false, true)).toMatch(/data-src="walk"/);      // Walk route is one of the route sources (Straight · Walk route · Recorded)
+    expect(skeletonHtml(z, false, false)).not.toMatch(/data-src=/);
     expect(skeletonHtml(z, true, true)).toMatch(/id="walkNote"/);
   });
 
@@ -562,7 +563,9 @@ describe('the page everyone sees is unchanged', () => {
     expect(host).toMatch(/navRoute: props\.variant \? \{ load:/);
     expect(host).toMatch(/import\('@\/lib\/routePlanner\/navLoad'\)/);          // lazy: nothing of it is in the page's own chunk
     const engine = stripJs(read('web/app/raid/plan/routes/engine.ts'));
-    expect(engine).toMatch(/const walkOn = \(\) => !!host\.navRoute && !!ui\.walk;/);
+    expect(engine).toMatch(/const walkOn = \(\) => !!host\.navRoute && \(ui\.src === 'walk' \|\| ui\.src === 'rec'\);/);
+    expect(engine).toMatch(/const recOn = \(\) => !!host\.recorded && ui\.src === 'rec';/);
+    expect(host).toMatch(/recorded: !!props\.variant,/);                            // the Recorded source is a preview only too
     const load = stripJs(read('web/lib/routePlanner/navLoad.ts'));
     expect(load).toMatch(/await import\('@recast-navigation\/core'\)|import\('@recast-navigation\/core'\)/);
     expect(load).not.toMatch(/^import .* from '@recast-navigation/m);          // never a top-level import

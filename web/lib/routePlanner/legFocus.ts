@@ -40,7 +40,9 @@ export function legBarText(leg: Leg, index: number, count: number, timeS: number
   const bits = [Math.round(legLength(leg)).toLocaleString('en-US') + ' u'];
   if (timeS != null && Number.isFinite(timeS)) bits.push('~' + clockText(timeS));
   const w = leg.walk;
-  if (w && w.state === 'ok') { if (w.via.length) bits.push('via ' + w.via.join(', then ')); }
+  if (leg.rec && leg.rec.state === 'ok') bits.push(`recorded: ${leg.rec.nights} night${leg.rec.nights === 1 ? '' : 's'}`);   // the Recorded source
+  else if (leg.rec && w && w.state === 'ok') bits.push('no recorded night: walked' + (w.via.length ? ' via ' + w.via.join(', then ') : ''));
+  else if (w && w.state === 'ok') { if (w.via.length) bits.push('via ' + w.via.join(', then ')); }
   else if (w && w.state === 'none') bits.push('no walkable route found');
   else if (w) bits.push('finding the walking route…');
   if (leg.branch) bits.push(leg.branch.branch.label);

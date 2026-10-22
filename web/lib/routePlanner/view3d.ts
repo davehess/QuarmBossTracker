@@ -14,6 +14,7 @@
 import type { Floor, Kind, Mob, Pather, Pin, Plan, ZoneData, ZoneLink } from './types';
 import { allPins, floorOf, planLegs } from './plan';
 import { pinNumbers } from './compare';
+import { drapeHeights, drapePath, nearestZ, refHeightsAt, type HeightsAt, type Ref, type XY } from './drape';
 import type { Routed } from './navroute';
 
 export type Mode3D = 'stack' | 'mesh';
@@ -231,6 +232,9 @@ export type View3D = {
   slabs: Slab3D[];
   pins: Pin3D[]; legs: Leg3D[]; links: Link3D[]; pathers: Pather3D[];
   bounds: { x0: number; x1: number; y0: number; y1: number; h0: number; h1: number };
+  /** What a recorded path with no height of its own is judged against: every pin and every mob that has a z, and how a z becomes a height here. */
+  refs: Ref[];
+  snap: (z: number) => number;
 };
 
 export type View3DInput = {
@@ -245,7 +249,42 @@ export type View3DInput = {
   focusLeg?: string | null;
   /** Walk routes by leg key (navroute.ts): a leg that has one is drawn along it at its true heights, with an arc per jump. */
   routes?: ReadonlyMap<string, Routed>;
+  /**
+   * The "Recorded" route source: legs drawn along where the recorded nights went, by leg key, pin to pin as [x, y] (no heights:
+   * the recorder never kept one). Wins over a walk route for the same leg. In 'mesh' they are draped on `heightsAt`'s floors,
+   * starting from the leg's first pin; without it (the floors are not loaded, or 'stack') they rise from one pin's height to the
+   * other's in proportion to the way walked, as every leg without a route does.
+   */
+  recorded?: ReadonlyMap<string, readonly XY[]>;
+  heightsAt?: HeightsAt;
 };
+
+/** Pins and mobs with a z, as the places a path with no height is judged against. */
+export function pathRefs(pins: readonly { x: number; y: number; z: number }[], mobs: readonly Mob[]): Ref[] {
+  const out: Ref[] = pins.map(p => ({ x: p.x, y: p.y, z: p.z }));
+  for (const m of mobs) if (typeof m.z === 'number' && Number.isFinite(m.z)) out.push({ x: m.x, y: m.y, z: m.z });
+  return out;
+}
+
+/**
+ * A recorded path ([x, y] only) as points in the view: 'mesh' with floors to drape on puts every sample on the floor the raid was
+ * on (drape.ts: continuity from `startZ`, which the caller takes from the pin or kill the path starts at); otherwise each sample
+ * stays on the floor of the pins and mobs around it (drape.ts refHeightsAt, by the same continuity), on its slab ('stack') or at
+ * its z ('mesh' with no floors loaded).
+ */
+export function recordedPath3D(
+  pts: readonly XY[],
+  o: { mode: Mode3D; heightsAt?: HeightsAt; refs: readonly Ref[]; snap: (z: number) => number; startZ: number | null; fallback: number },
+): Pt3[] {
+  if (o.mode === 'mesh' && o.heightsAt) {
+    const start = o.startZ ?? (pts.length ? nearestZ(pts[0][0], pts[0][1], o.refs) : null) ?? o.fallback;
+    return drapePath(pts, o.heightsAt, start);
+  }
+  const start = o.startZ ?? (pts.length ? nearestZ(pts[0][0], pts[0][1], o.refs) : null);
+  if (start === null) return pts.map(p => [p[0], p[1], o.fallback] as Pt3);
+  const zs = drapeHeights(pts, refHeightsAt(o.refs), start);
+  return pts.map((p, i) => [p[0], p[1], o.snap(zs[i])] as Pt3);
+}
 
 export function buildView3D(inp: View3DInput): View3D {
   const { zone, plan, mode } = inp;
@@ -274,10 +313,21 @@ export function buildView3D(inp: View3DInput): View3D {
     if (lg.off && lg !== focus) continue;
     if (focus && lg !== focus) continue;
     const ha = hOf.get(lg.a.id) ?? 0, hb = hOf.get(lg.b.id) ?? 0;
-    const color = lg.branch ? lg.branch.branch.color : lg.ln && lg.ln.follow ? FOLLOW_HEX : LEG_HEX;
+    const recorded = !!inp.recorded?.get(lg.k) && !lg.jump;
+    const color = lg.branch ? lg.branch.branch.color : recorded || (lg.ln && lg.ln.follow) ? FOLLOW_HEX : LEG_HEX;
     const out: Leg3D = { key: lg.k, color, dashed: lg.dashed, walks: [], arc: null, arcs: [] };
     const rt = inp.routes?.get(lg.k);
-    if (rt) {
+    const rec = inp.recorded?.get(lg.k);
+    if (rec && rec.length >= 2 && !lg.jump) {
+      // along where the nights went: draped on the floors ('mesh' with them), else a climb from pin to pin
+      let walk: Pt3[];
+      if (mode === 'mesh' && inp.heightsAt) {
+        walk = drapePath(rec, inp.heightsAt, pinHeight(lg.a, mobs, levels).z);
+        walk[0] = [lg.a.x, lg.a.y, ha];
+        walk[walk.length - 1] = [lg.b.x, lg.b.y, hb];
+      } else walk = liftPolyline(rec, ha, hb);
+      out.walks.push(walk);
+    } else if (rt) {
       for (const s of rt.segs) {
         if (s.kind === 'walk') out.walks.push(s.pts.map(p => [p[0], p[1], hs.ramp(p[2])] as Pt3));
         else out.arcs.push(arcPoints([s.from[0], s.from[1], hs.ramp(s.from[2])], [s.to[0], s.to[1], hs.ramp(s.to[2])]));
@@ -313,5 +363,7 @@ export function buildView3D(inp: View3DInput): View3D {
     slabs: hs.levels.map(l => ({ key: l.key, label: l.label, short: shortFloorLabel(l.label), color: l.color, z: l.z, h: l.h })),
     pins, legs, links, pathers,
     bounds: { ...zone.bounds, h0, h1 },
+    refs: pathRefs(pins, mobs),
+    snap: z => hs.snap(z),
   };
 }

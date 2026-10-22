@@ -148,6 +148,13 @@ next touch one rather than assuming a missing row means a missing doc.
   optional faint tail per raider); both in 2D and 3D, no `?v=` unchanged. Computed in the browser from the frames the board
   already loads (`web/lib/replayPath.ts`), no new query or route. **Open: the guild lead's pick:**
   `https://b.wolfpack.quest/spectator/replay?v=b` / `?v=c`, and on a share `https://b.wolfpack.quest/share/raid/<token>?v=b` / `?v=c`.
+  **Legs follow our recorded nights (web 2.0.9, preview on `beta`, draft, 2026-10-22):** the guild lead: "3d map doesn't include
+  our actual recording of the night ... average out the actual path rather than these straight lines". Any `?v=` merges the
+  recorder's live raid nights (newest 12, same key = one night, live wins) over the zone file's, so Follow paths, Compare and
+  the Recorded-nights layer see 10/21; a **Straight · Walk route · Recorded** control draws each leg along the average of the
+  nights that ran it (none: walked, else straight), **Use recorded routes** bakes them (officers); the 3D views draw those legs,
+  the Compare night in white with its kills numbered, and optionally the ticked nights, draped on the floor mesh (`c`) or kept
+  on the pins' floors (`b`). **Open: rides on the b-or-c pick; the 3D height of a recorded path is a draped guess, never recorded.**
 - **⏳ Flag lab: an officer sandbox for the PoP flags and the hail board (web 1.9.2, DRAFT on `claude/flag-lab`, not
   pushed, 2026-10-18).** `/admin/flag-lab` (new route, `[beta]` tag, officer only, **off unless `FLAG_LAB=1`**, which the
   officer sets in Vercel's Preview environment only). Fake members with presets and per-flag source ticks (Mimic /

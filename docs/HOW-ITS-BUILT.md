@@ -4358,6 +4358,16 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
     floors layer only when asked.
   - Both: orbit / pan / zoom, Fit zone, pathers and doors-and-teleports toggles, a click on a pin selects it in the pin list
     (`selectPin` on the engine's API). Variant choice is carried through the zone and plan links.
+- **Recorded legs and live nights (web 2.0.9, any `?v=`, 2026-10-22; `test/route-planner-recorded.test.js`).** `page.tsx` merges
+  the recorder's raid nights into the zone's `nights` (`load.ts` `plannerNights` over `raidRoutesLoad.ts` `zoneNightSeries`, the
+  per-visit reduction `/api/raid/routes` uses; 5 min in-process, 8 s wait, any failure = the file's nights; `nights.ts` merges:
+  same key one night, live wins, newest first, cap 12). The toolbar's **Straight · Walk route · Recorded** is a view over the
+  plan: Recorded draws each leg along `follow.ts` `recorded()` (distance-resampled average of every night that passed both pins),
+  a leg no night covers falls back to Walk, then straight (`recorded.ts` `legSource`/`recText`); "Use recorded routes" and the
+  per-leg button bake it into bend points with navroute's simplifier (`useRecordedRoutes`, ≤ 40 bends). 3D: recorded samples have
+  no height, so `drape.ts` puts them on the floors by continuity (the hit nearest the previous sample's height, starting at the
+  leg's first pin; `c` over the floor mesh's triangle grid, `b` and `c` before the floors load over the pins' own floors); the
+  Compare night draws white with numbered kills, and a 3D "Recorded nights" layer draws the nights ticked in Layers.
   - **Drag a pin (web 2.0.8).** Officers only (`officer && !previewing` from the host; the engine's `movePin(id, x, y, z)` checks
     `editable()` again and does what finishing a 2D pin drag does, plus z). The press is taken in the capture phase on the host
     so OrbitControls never starts (and is disabled until release); under 4 px it is still a click. While dragging, the pointer
