@@ -142,6 +142,12 @@ next touch one rather than assuming a missing row means a missing doc.
   `&v=c` / `&v=b` an officer drags a pin in the 3D view (c: it lands on the visible floor under the pointer, its z the floor's;
   b: it slides along its own floor, z kept); the legs follow live, one save on release, Esc cancels. Read-only viewers still only
   orbit. Bend points still drag in 2D only. **Open: rides on the guild lead's b-or-c pick.**
+  **Raid path on the spectator replay and shared raids (web 2.0.10, two previews on `beta`, draft, 2026-10-22):** the guild lead:
+  "add the path view for spectator and shared raids as well". `?v=b` draws the whole night's raid-centre path (faint, solid up
+  to the playhead, numbered kills, Fit path); `?v=c` draws a fading trail behind the centre (slider 2 to 30 min, Fit trail, an
+  optional faint tail per raider); both in 2D and 3D, no `?v=` unchanged. Computed in the browser from the frames the board
+  already loads (`web/lib/replayPath.ts`), no new query or route. **Open: the guild lead's pick:**
+  `https://b.wolfpack.quest/spectator/replay?v=b` / `?v=c`, and on a share `https://b.wolfpack.quest/share/raid/<token>?v=b` / `?v=c`.
 - **⏳ Flag lab: an officer sandbox for the PoP flags and the hail board (web 1.9.2, DRAFT on `claude/flag-lab`, not
   pushed, 2026-10-18).** `/admin/flag-lab` (new route, `[beta]` tag, officer only, **off unless `FLAG_LAB=1`**, which the
   officer sets in Vercel's Preview environment only). Fake members with presets and per-flag source ticks (Mimic /

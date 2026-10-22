@@ -25,6 +25,8 @@
 // roofs left out), fetched as 'floors=only', which the Floors toggle hides without a refetch. Raiders and marks
 // draw last with the depth test OFF, so one standing under a roof, on a lower storey or behind a wall is still seen.
 // Sphere size follows camera distance so a dot stays about as big on screen as the 2D board's, wherever the camera is.
+// The raid's path previews (?v=b / ?v=c) arrive in the feed as `route` and are drawn by RouteLayer3D.ts, which this file
+// only asks to update before each render and to place its kill badges after; absent, nothing of it exists on screen.
 //
 // Following a raider moves the orbit TARGET and the camera by the same step, so the angle and the zoom the viewer
 // chose are kept. Only the offset between the camera's target and the raider decays (the glide to a newly picked
@@ -45,6 +47,8 @@ import {
   boundsFromServer, buildTriGrid, constrainCamera, desiredRig, easeRig, raidFocus,
   type Bounds3, type TriGrid, type V3,
 } from '@/lib/replayCamera';
+import type { RouteFeed } from '@/lib/replayPath';
+import { RouteLayer3D } from './RouteLayer3D';
 
 export type Placed3D = { name: string; cls: string | null; hp: number | null; x: number; y: number; z: number };   // server frame
 export type PlacedTarget3D = { name: string; n: number; x: number; y: number; z: number; boss?: boolean };
@@ -55,12 +59,15 @@ export type Feed3D = {
   targets: PlacedTarget3D[];
   spawns: PlacedSpawn3D[];
   snap: boolean;                        // the playhead jumped (a scrub or a new session): frame the raid at once
+  route?: RouteFeed | null;             // the raid's path preview (?v=b / ?v=c); null or absent: nothing drawn
 };
 export type Bridge3D = {
   feed: (zone: string | null, raiders: Placed3D[], extra: Feed3D) => void;
   zoom: (factor: number) => void;
   fitRaid: () => void;
   fitZone: () => void;
+  /** A deliberate view of a server-frame box (the path preview's "Fit path"): the viewer has the camera until Fit raid. */
+  fitBox: (box: { minX: number; maxX: number; minY: number; maxY: number; z: number }) => void;
 };
 type Props = {
   zone: string | null;
@@ -101,6 +108,7 @@ type Ctx = {
   inst: InstancedMesh; halo: InstancedMesh; tgt: InstancedMesh; bossDot: InstancedMesh; spawn: InstancedMesh;
   wall: Mesh | null; floor: Mesh | null; tags: HTMLDivElement[];
   raiders: Placed3D[]; targets: PlacedTarget3D[]; spawns: PlacedSpawn3D[]; hl: ReadonlySet<string>;
+  route: RouteFeed | null; routes: RouteLayer3D;
   followName: string | null; kick: boolean; off: Vector3; lastDraw: number;
   feedZone: string | null; fitted: 'none' | 'mesh' | 'raid'; moved: boolean; hover: string | null;
   box: { cx: number; cy: number; cz: number; span: number } | null;     // the wall mesh, three frame
@@ -286,7 +294,7 @@ export default function Replay3D({ zone, floors, meshUrl, bridgeRef, onReady, on
 
     const c: Ctx = {
       renderer, scene, camera, controls, inst, halo, tgt, bossDot, spawn, wall: null, floor: null, tags: [],
-      raiders: [], targets: [], spawns: [], hl: new Set(), followName: null, kick: false, off: new Vector3(), lastDraw: 0,
+      raiders: [], targets: [], spawns: [], hl: new Set(), route: null, routes: new RouteLayer3D(scene, camera, host), followName: null, kick: false, off: new Vector3(), lastDraw: 0,
       feedZone: null, fitted: 'none', moved: false, hover: null, box: null,
       bounds: null, wallGrid: null, floorGrid: null, snap: false, goal: null,
       w: 0, h: 0, raf: 0, dead: false,
@@ -474,8 +482,10 @@ export default function Replay3D({ zone, floors, meshUrl, bridgeRef, onReady, on
       spawn.count = ns;
       spawn.instanceMatrix.needsUpdate = true;
 
+      c.routes.update(c.route);
       renderer.render(scene, camera);
       placeLabels();
+      c.routes.place(project, c.w, c.h);
     }
 
     const size = () => {
@@ -483,6 +493,7 @@ export default function Replay3D({ zone, floors, meshUrl, bridgeRef, onReady, on
       c.w = Math.max(1, Math.floor(r.width));
       c.h = Math.max(1, Math.floor(r.height));
       renderer.setSize(c.w, c.h, false);
+      c.routes.setSize(c.w, c.h);
       camera.aspect = c.w / c.h;
       camera.updateProjectionMatrix();
       c.request();
@@ -561,6 +572,7 @@ export default function Replay3D({ zone, floors, meshUrl, bridgeRef, onReady, on
         c.targets = extra.targets;
         c.spawns = extra.spawns;
         c.hl = extra.hl;
+        c.route = extra.route ?? null;
         if (extra.snap) { c.snap = true; c.goal = null; }
         if (extra.follow !== c.followName) { c.followName = extra.follow; c.kick = !!extra.follow; }
         c.request();
@@ -575,6 +587,12 @@ export default function Replay3D({ zone, floors, meshUrl, bridgeRef, onReady, on
       },
       fitRaid: () => { c.moved = false; c.goal = null; fitRaid(); },
       fitZone: () => { if (c.box) { c.moved = true; c.goal = null; c.fitTo(c.box.cx, c.box.cz, c.box.cy, c.box.span); } },
+      fitBox: b => {
+        const [cx, cy, cz] = serverToThree((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, b.z);
+        c.moved = true;
+        c.goal = null;
+        c.fitTo(cx, cz, cy, Math.max(b.maxX - b.minX, b.maxY - b.minY));
+      },
     };
     readyRef.current();
 
@@ -591,6 +609,7 @@ export default function Replay3D({ zone, floors, meshUrl, bridgeRef, onReady, on
       controls.dispose();
       disposeMesh(c, c.wall);
       disposeMesh(c, c.floor);
+      c.routes.dispose();
       inst.dispose();
       halo.dispose();
       tgt.dispose();
