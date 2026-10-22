@@ -1316,6 +1316,12 @@ RLS: Tier 1 readable by `anon`+`authenticated`; guild tables
 
 ## Domain policies (load-bearing — don't re-derive)
 
+**Mechanics come from the server's scripts and our database, never from guides (the guild lead, 2026-10-21).**
+*"we should always go off of the scripts and database instead of the guides."* Timers, windows, add cadences, emote text,
+leashes and NPC facts are read from the quest scripts (`SecretsOTheP/quests`, cited as `<file>.lua:<lines>` at a pinned
+commit) and the `eqemu_*` mirror. A guide is a lead to verify; a claim only a guide makes is marked unverified. The Tactics
+timeline shipped guide-only pair windows the script does not have (DECISIONS §406).
+
 **Harmony is NOT Pacify — the lull line splits on behaviour, not just duration
 (guild lead, 2026-09-02).** Both are SPA 30 "aggro reduction" and it is tempting to
 treat the family as one thing. Two facts make that wrong, and one of them is a

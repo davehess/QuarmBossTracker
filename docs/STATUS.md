@@ -103,16 +103,19 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
-- **⏳ Route planner page (`/raid/plan/routes`, marked [beta], web 2.0.2, DRAFT on `draft/route-planner-page`, not pushed, 2026-10-22).**
+- **✅ Route planner page (`/raid/plan/routes`, marked [beta], web 2.0.2, live on `main`, 2026-10-22).**
   The officers' single-file Tactics route planner, ported as it was into the raid planner area and extended. Members view,
   officers edit; plans live in `bot_kv` `route_plan:<zone>` (no migration): several plans per zone (the main night + named
   off-night plans with a target headcount), 30 versions each, newest wins, a 10 s poll. Added over the artifact: Versions
   tab (view / restore), "Send to in-game map" (writes `raid_route:<zone>`, the shape `/raid/routes` saves, so Mimic's Map
   draws it), "Import tonight's planner" (the committed 2026-10-21 plan as the first saved version), Compare to a recorded
   night, optional legs, splits with per-branch headcounts, floors / pathers / doors / teleports from the zone data, and the
-  "fewest raiders so far" hook (`web/lib/routePlanner/fewestKills.ts`, answers `[]` until the real data is wired).
-  Zones: `potactics` (static data) and a `solrotower` stub waiting for its data file. Waiting on: review, then push after
-  00:30 ET (raid freeze). Doc: `docs/HOW-ITS-BUILT.md` "Route planner".
+  "fewest raiders so far" line on every boss (`web/lib/routePlanner/fewestKills.ts` over `web/lib/fewestKills.ts`: players,
+  not characters, with the class mix; the page waits at most 5 s for it).
+  Zones: `potactics` and `solrotower` (11 floors from Quarm's EQMacEmu map, 12 pathers, 15 doors / teleports / zone lines,
+  the script leash boxes; build = each wing's boss then its cauldron, Solusek Ro + his Projection last). The tower has no
+  recorded nights yet, so Follow paths and Compare light up after the first raid there.
+  Waiting on: the guild lead to press "Import tonight's planner" once as an officer. Doc: `docs/HOW-ITS-BUILT.md` "Route planner".
 - **⏳ Flag lab: an officer sandbox for the PoP flags and the hail board (web 1.9.2, DRAFT on `claude/flag-lab`, not
   pushed, 2026-10-18).** `/admin/flag-lab` (new route, `[beta]` tag, officer only, **off unless `FLAG_LAB=1`**, which the
   officer sets in Vercel's Preview environment only). Fake members with presets and per-flag source ticks (Mimic /

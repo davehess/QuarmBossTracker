@@ -4336,7 +4336,10 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
 - **Adding a zone.** A `zones/<zone>.json` (walls by floor, mobs, nights, optional `floors`, `pathers`, `links`, `config`) and a
   settings `.ts` beside it, registered in `zones/index.ts`. Recorded nights are static for now: making them live is the reduction
   `raidRoutesLoad.ts` already does over `raid_track_minutes`, written as `nights` instead of an average.
-- **"Fewest raiders so far"**: the shape is `fewest.ts`, the data hook is `fewestKills.ts` (returns `[]` until wired).
+- **"Fewest raiders so far"**: the shape is `fewest.ts` (`toPlannerRows` reshapes `web/lib/fewestKills.ts`'s answer), the server
+  hook is `fewestKills.ts` (5 min in-process cache; the page waits at most 5 s, a cold read fills the cache for the next load).
+- **Build groups** may be `lead` (right after the start) or `last` (after everything: Solusek Ro, who needs the five wings
+  done). A zone's `buildNotes` says what the build did, per order.
 - Tests: `test/route-planner-model.test.js`, `test/route-planner-store.test.js`.
 
 ---
