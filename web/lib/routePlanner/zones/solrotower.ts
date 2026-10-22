@@ -14,7 +14,7 @@ const settings: ZoneSettings = {
   blurb: 'Tower of Solusek Ro. Plan the five minis and Solusek Ro, bend the route around walls, send some of the raid up a different staircase.',
   popKeys: ['flag_solro_minis', 'flag_solro'],
   // From the zone's scripts (solrotower/*.lua): each wing boss leaves a cauldron everyone clicks for their own wing flag
-  // (one digit of sol_room); Solusek Ro is only worth killing with all five digits, so he goes last.
+  // (one digit of sol_room); Solusek Ro is only worth killing with all five digits (plus Miak's preflag and the Rallos Zek flag), so he goes last.
   buildNotes: {
     greedy: 'Built with nearest-next from the zone-in (straight-line distance, so check the floors); each wing is boss then cauldron click, Solusek Ro and his Projection last.',
     checklist: 'Built in checklist order: the five wings (boss, then everyone clicks the cauldron), then Solusek Ro and his Projection.',
@@ -44,7 +44,7 @@ const settings: ZoneSettings = {
       pins: [
         { mob: 'guardians_fire', optional: true, note: 'The six Guardians of Fire in his corridor' },
         { mob: 'solro' },
-        { mob: 'proj', label: 'Hail Planar Projection (Solusek Ro)', kind: 'objective', note: 'Hail with all five wing flags' },
+        { mob: 'proj', label: 'Hail Planar Projection (Solusek Ro)', kind: 'objective', note: 'Hail with all five wing flags, Miak\'s preflag and the Rallos Zek flag' },
       ],
     },
   ],
