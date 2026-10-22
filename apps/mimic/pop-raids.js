@@ -333,7 +333,7 @@ window.POP_RAIDS = {
           id: 'rallos-event', name: 'Rallos Zek the Warlord (event, 4 phases)', zone: 'Plane of Tactics', npcName: 'Rallos Zek the Warlord',
           callouts: [
             'P1: Kill both Decorins (no time limit between them; a respawned Decorin\'s kill no longer counts). Clear both halls; don\'t kill on Tallon/Vallon spawn points.',
-            'P2: Tallon + Vallon spawn N/S halls; pull before they roam into the Fake Rallos room; split one out. Kill both, any order, no window between them; each has its own 20-minute out-of-combat clock (150 minutes in a guild instance). Tallon harder — lev + hide from AE; Vallon splits, kill real first.',
+            'P2: Tallon + Vallon spawn N/S halls; pull before they roam into the Fake Rallos room; split one out. Kill both, any order, no window between them; each has its own 20-minute out-of-combat clock (150 minutes in a guild instance). Once a brother has reached the War Room, losing all aggro resets him: he goes back to his spot at full health with his buffs and debuffs cleared. Tallon harder — lev + hide from AE; Vallon splits, kill real first.',
             'P3 Fake Rallos: corner tank, raid in the adjacent corner; AE ramps + hall adds; despawns ~50% → real spawns in arena.',
             'P4 Rallos (arena): DPS check; corner tank; adds every 54s (kite team); melee at max range (AE ramp). Hail Projection center.',
           ],
@@ -408,7 +408,8 @@ window.POP_RAIDS = {
             '3 teams: MEZ (drop-down tunnel) · TANK (outside temple across water) · PULL.',
             'Pull mezzables 1 at a time → DPS to 5-10% → enchanters hold. Pull team roots/debuffs the 6 rootables.',
             'Earthen Vengeance (AE DoT/−atk speed/1000 DD) = REMOVE GREATER CURSE.',
-            'Don\'t let a councilman exit combat (regens). KILL ALL 12 WITHIN ~6-7 MIN → Avatar of Earth spawns.',
+            'Don\'t let a councilman exit combat (regens). Kill all 12; the Council round has no time limit → Avatar of Earth spawns.',
+            'Avatar of Earth: 50 minutes of idle time, paused while it is fighting; if it loses all aggro the clock refills to the full 50. Warnings at 20, 10 and 5 minutes left.',
             'Avatar: Ashen Form drops MT aggro −95% — AGGRO DISCIPLINE. Essence of Earth → Mound of Living Stone.',
           ],
           stats: { hp: 'Avatar 550K (MoTM)', hits: 'council ~3000 · Avatar 2400+', slow: 'Avatar slowable', ramp: null },
@@ -420,7 +421,7 @@ window.POP_RAIDS = {
           tracker: [
             { id: 'mez6', label: '6 mezzables → 5-10%' },
             { id: 'root6', label: '6 rootables → 5-10%' },
-            { id: 'all12', label: 'All 12 dead (window)' },
+            { id: 'all12', label: 'All 12 dead' },
             { id: 'avatar', label: 'Avatar down' },
             { id: 'hail', label: 'Essence hailed' },
           ],

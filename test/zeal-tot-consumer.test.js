@@ -104,10 +104,15 @@ describe('agent: the row that IS my target gets my own answer', () => {
     expect(out[2]).toEqual(rows[2]);   // stale → untouched
     expect(out[3]).toEqual(rows[3]);   // not an npc → untouched
   });
-  it('falls back to the name when either side has no spawn id', () => {
-    const out = _attachPipeTotToExtRows(rows, { ...self, target_id: null }, NOW);
-    expect(out[0].mob_victim).toBe('Currygoat');
-    expect(out[1].mob_victim).toBe('Currygoat');   // name-only: both instances, honestly
+  it('falls back to the name only while the name is one row (2026-10-21: never onto a pack)', () => {
+    // Two live rows of the name and no id on my side: the name cannot pick one, so neither takes the answer.
+    const pack = _attachPipeTotToExtRows(rows, { ...self, target_id: null }, NOW);
+    expect(pack[0].mob_victim).toBe('Hoden');   // log inference kept
+    expect(pack[1]).toEqual(rows[1]);
+    // One live row of the name: the fallback is fine, with or without an id on the row.
+    const one = [{ name: 'a cliff golem', kind: 'npc' }, rows[3]];
+    expect(_attachPipeTotToExtRows(one, { ...self, target_id: null }, NOW)[0].mob_victim).toBe('Currygoat');
+    expect(_attachPipeTotToExtRows(one, self, NOW)[0].mob_victim).toBe('Currygoat');
   });
   it('is a no-op without candidates, without a target name, or when my state is stale', () => {
     expect(_attachPipeTotToExtRows(rows, { ...self, target_of_target: null, target_hit_by: null }, NOW)).toBe(rows);

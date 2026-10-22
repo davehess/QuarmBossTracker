@@ -6362,3 +6362,10 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   ⏳ Not pushed. ⏳ Apply `20261021120000_encounters_change_cursor.sql` by hand (SQL Editor) for My parses' difference.
   ⏳ HELD on beta: the raidmimic landing previews and the PoP Flags sticky bar. ⏳ Item icons from the game's files; guest slice
   2; the Gallery (Overlay Gallery slice 1, still gating per §374).
+- ✅ **Raid Mimic 3.0.1 stable (agent 4.0.5) cut 2026-10-22.** File-level promotion from beta (`apps/mimic/` + `packages/wolfpack-logsync/`
+  whole, plus the six tests that cover them): the Map shows which way raiders face (arrow by default, slice or off in the gear), raiders
+  in another zone stay off your Map, the zone label reads live zone or instance from the server port, the officers' saved raid route is
+  drawn on the Map (needs bot 4.0.2+, already on `main`), Extended Target no longer copies one health and damage line onto every
+  same-name row, item icons cut from the player's own EQ files (agent endpoint only, no overlay uses it yet), and the 2026-10-22
+  server-patch guide corrections (Rathe Council, Tallon and Vallon reset, Avatar of Earth clock). No bot change needed; no FB numbers
+  in this range. ⏳ Web roadmap entry lands as its own commit.

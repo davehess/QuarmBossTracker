@@ -27,7 +27,7 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapApplyMark', '_mapNoteDeath', '_mapNoteState', '_mapNoteLogDeath', '_mapStatePayload', '_mapSaveNow', '_mapDoc',
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
-  '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData',
+  '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', '_mapCopyWhere', 'whoData',
   '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapNotePath', '_mapFocusTarget', '_extTargetCache', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower',
   'MAP_TRACKED_PATHS', 'MAP_CORPSE_RE', '_mapDist2', '_mapMergePath', '_mapShownPath', '_mapApplyShared', '_mobInfoByName', '_mobInfoFetches'];
 // The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
@@ -84,13 +84,16 @@ function fakeNet(responder) {
   const calls = [];
   const mod = {
     request(o, cb) {
-      calls.push(o);
+      // The saved raid route's read (test/map-raid-route.test.js owns it) rides the first poll in a zone; it is answered
+      // "no route" here and kept out of `calls`, which these tests use to count the zone-data and guild-sync traffic.
+      const routeRead = /\/raid-route/.test(o.path);
+      if (!routeRead) calls.push(o);
       const req = {
         on() { return req; }, destroy() {},
         end(body) {
           o.__body = body ? Buffer.from(body).toString('utf8') : null;   // what a POST sent
           setImmediate(() => {
-            const r = responder ? responder(o) : { status: 500 };
+            const r = routeRead ? { status: 404 } : responder ? responder(o) : { status: 500 };
             const res = new EventEmitter();
             res.statusCode = r.status; res.headers = r.etag ? { etag: r.etag } : {};
             cb(res);
@@ -181,6 +184,19 @@ describe('the coordinate swap', () => {
     expect(p.raid).toEqual([expect.objectContaining({ name: 'Corvale', x: 40, y: 30 })]);   // Brackwyn is already in the group
     expect(p.target).toMatchObject({ name: 'a decaying skeleton', id: 77, x: 9, y: 7 });
     expect(p.target.dist).toBe(Math.round(Math.hypot(9 - 20, 7 - 10)));
+  });
+  it('a raider in another zone is not on the map: Zeal sends no position for them, which must not become (0, 0)', () => {
+    // the guild lead, 2026-10-22: a member in another zone showed on his map. Zeal's raid loop (named_pipe.cpp) sends loc only
+    // when the raider's entity is in YOUR client; the agent stores the rest as null, and Number(null) is 0.
+    const { c } = localCore();
+    c._zealState.Aldenmar = { zone: 164, updatedAt: T0, loc: { x: 10, y: 20, z: 5 }, heading: 128 };
+    c._setRaid({ at: T0, members: [
+      { name: 'Corvale', class: 'Wizard', loc_x: 30, loc_y: 40, loc_z: 1, heading: 12 },
+      { name: 'Nolocman', class: 'Cleric', loc_x: null, loc_y: null, loc_z: null, heading: null },
+      { name: 'Zeroman', loc_x: 0, loc_y: 0, loc_z: 0, heading: 0 },
+      { name: 'Halfman', loc_x: 5, loc_y: null, loc_z: null },
+    ] });
+    expect(c._mapStatePayload('', T0 + 1000).raid.map(m => m.name)).toEqual(['Corvale']);
   });
   it('knows every zone id the eqemu_zone table has, and nothing it does not', () => {
     const { c } = localCore();
@@ -1283,9 +1299,9 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(30);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring + Guild corpses
+    expect(showRows).toHaveLength(31);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring + Guild corpses + Saved raid route (Facing is a choice above the list, not a tick box: test/map-facing-wedges.test.js)
     expect(glyphRows).toHaveLength(9);
-    expect(colRows).toHaveLength(30);                                          // ...and the Corpses colour
+    expect(colRows).toHaveLength(31);                                          // ...and the Corpses and Saved raid route colours
     const walls = showRows[0].children[0];                                     // Walls
     walls.checked = false; walls.listeners.change.forEach(f => f());
     const eye = glyphRows[0].children[0];                                      // 👁
@@ -1305,6 +1321,33 @@ describe('pather routes', () => {
     expect(again.S.cfg.col.route).toBe('#39c5cf');
     again.all.cfgClose.listeners.click.forEach(f => f());
     expect(again.all.cfg.hidden).toBe(true);
+  });
+  it('⚙ → Facing is Arrow by default, a choice of Arrow / Slice / Off is saved and survives a restart, and Reset puts the arrow back', async () => {
+    const base = await bootOverlay();
+    expect(base.S.cfg.facing).toBe('arrow');
+    base.all.cfgBtn.listeners.click.forEach(f => f());                         // the select is filled from the saved choice when ⚙ opens
+    expect(base.all.cfgFacing.value).toBe('arrow');
+    base.all.cfgFacing.listeners.change.forEach(f => f({ target: { value: 'slice' } }));
+    expect(JSON.parse(base.store['wp-map-cfg']).facing).toBe('slice');
+    const again = await bootOverlay({ store: base.store });
+    expect(again.S.cfg.facing).toBe('slice');
+    again.all.cfgFacing.listeners.change.forEach(f => f({ target: { value: 'sideways' } }));   // a junk value falls back to the default
+    expect(again.S.cfg.facing).toBe('arrow');
+    again.all.cfgFacing.listeners.change.forEach(f => f({ target: { value: 'off' } }));
+    expect(again.S.cfg.facing).toBe('off');
+    again.all.cfgReset.listeners.click.forEach(f => f());
+    expect(again.S.cfg.facing).toBe('arrow');
+  });
+  it('a raider the agent could not place (another zone) is not on the map: not drawn, not fitted to, not tracked', async () => {
+    const { payload } = await bootOverlay();
+    const given = Object.assign({}, payload, {
+      group: [{ name: 'Brackwyn', x: 100, y: 180, z: 0 }, { name: 'Nolocman', x: null, y: null, z: null }],
+      raid: [{ name: 'Corvale', x: 40, y: 30, z: 1, heading: 12 }, { name: 'Faraway', x: 0, y: 0, z: 0, heading: 0 }, { name: 'Nopos', x: null, y: undefined }],
+    });
+    const { S } = await bootOverlay({ payload: given });
+    expect(S.p.group.map(m => m.name)).toEqual(['Brackwyn']);
+    expect(S.p.raid.map(m => m.name)).toEqual(['Corvale']);
+    expect(Object.keys(S.trk).filter(k => /^[gr]:/.test(k)).sort()).toEqual(['g:Brackwyn', 'r:Corvale']);
   });
   it('◯ on the toolbar turns the aggro rings on and off, saved, the same switch as ⚙ → Aggro rings', async () => {
     const base = await bootOverlay();
@@ -2223,11 +2266,41 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       expect(c._mapSync.q.map(k => k.ev.inst)).toEqual([H + ':7312']);
       c._mapSyncStop();
     });
-    it('the overlay shows the port and the /who verdict beside the zone name', () => {
+    it('the port band says live or instance; a port outside both bands says neither', () => {
+      // Measured on the fleet's synced events 2026-10-13..22: one 7xxx port per zone, its extra copies at 10001+.
+      expect(c._mapCopyWhere(7214)).toBe('live');       // the open Emerald Jungle copy the guild lead stood in
+      expect(c._mapCopyWhere(7315)).toBe('live');
+      expect(c._mapCopyWhere(10135)).toBe('instance');
+      expect(c._mapCopyWhere(11785)).toBe('instance');
+      expect(c._mapCopyWhere(8800)).toBeNull();          // between the bands: no claim
+      expect(c._mapCopyWhere(0)).toBeNull();
+      fs.writeFileSync(file(), dbgZoneIn('Mon Oct 12 16:00:00 2026', 7214, 'emeraldjungle'));
+      expect(c._mapCopyInfo('emeraldjungle', at('16:05:00'))).toMatchObject({ port: 7214, where: 'live', kind: null });
+      fs.appendFileSync(file(), dbgZoneIn('Mon Oct 12 16:10:00 2026', 10135, 'fearplane'));
+      expect(c._mapCopyInfo('fearplane', at('16:12:00'))).toMatchObject({ port: 10135, where: 'instance' });
+    });
+    it('a quiet live zone is never labelled guild + raid only: only-us in /who is worded as what /who saw', () => {
+      const label = new Function(sliceBlock(MAP_HTML, '  function copyLabel(c, now) {', '  // ── side list ──') + '\nreturn copyLabel;')();
+      const T = 1000000;
+      // the reported case: the open Emerald Jungle, a /who that listed only our guild
+      const live = label({ port: 7214, where: 'live', kind: 'closed', outsiders: 0, who_at: T - 120000 }, T);
+      expect(live.text).toBe(':7214 live zone');
+      expect(live.title).toMatch(/listed only our guild and raid; a quiet live zone looks the same/);
+      expect(live.title).toMatch(/2 min ago/);
+      expect(label({ port: 10135, where: 'instance', kind: 'closed', outsiders: 0, who_at: T }, T).text).toBe(':10135 instance');
+      // unknown band: only what /who saw, never an assertion about the copy
+      expect(label({ port: 8800, where: null, kind: 'closed', outsiders: 0, who_at: T }, T).text).toBe(':8800 only us in /who');
+      expect(label({ port: 8800, where: null, kind: 'open', outsiders: 2, who_at: T }, T).text).toBe(':8800 others in /who');
+      expect(label({ port: 8800, where: null, kind: null, outsiders: 0, who_at: null }, T).text).toBe(':8800 /who to check');
+      for (const c2 of [{ where: 'live', kind: 'closed' }, { where: null, kind: 'closed' }, { where: 'instance', kind: 'closed' }]) {
+        expect(label({ port: 7214, outsiders: 0, who_at: T, ...c2 }, T).text).not.toMatch(/guild \+ raid only/);
+      }
+    });
+    it('the overlay shows the port and the live / instance verdict beside the zone name', () => {
       const js = stripJs(MAP_HTML);
-      expect(js).toMatch(/function copyLabel\(c\)/);
-      expect(js).toMatch(/cp = copyLabel\(P && P\.copy\)/);
-      expect(js).toMatch(/c\.kind === 'open' \? 'live \/ PvP'/);
+      expect(js).toMatch(/function copyLabel\(c, now\)/);
+      expect(js).toMatch(/cp = copyLabel\(P && P\.copy, Date\.now\(\)\)/);
+      expect(js).toMatch(/c\.where === 'instance' \? 'instance' : c\.where === 'live' \? 'live zone'/);
       // and the agent's /who footer feeds the check
       expect(stripJs(AGENT)).toMatch(/if \(zone\) \{ try \{ _mapCopyNoteWho\(_whoRun, Date\.now\(\)\); \} catch/);
     });

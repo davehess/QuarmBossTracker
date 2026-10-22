@@ -35080,6 +35080,8 @@ function startWebDashboard(port) {
       if (await _localBackfillRoute(req, res)) return;
       if (_localParsesRoute(req, res)) return;
       if (await _raidCodeRoute(req, res)) return;
+      // Item icons cut from this PC's own EQ files (local-first slice 2). Never uploaded.
+      if (_localIconRoute(req, res)) return;
       // Tank overlay snapshot (the guild lead, 2026-06-25). Aggregates everything the
       // tank.html overlay needs from the active character's live state:
       //   • self HP %, target name + HP %, current buffs (with ticks remaining)
@@ -35552,12 +35554,8 @@ function startWebDashboard(port) {
             const locName = g && g.text ? String(g.text).toLowerCase() : null;
             const locHp   = g && g.hp_pct != null ? g.hp_pct : null;
             if (locName && locHp != null) {
-              outPayload = { ...outPayload, targets: outPayload.targets.map(t => {
-                if (t && t.name && !t.stale && String(t.name).toLowerCase() === locName) {
-                  return { ...t, hp_pct: locHp, hp_source: 'local_live' };
-                }
-                return t;
-              }) };
+              outPayload = { ...outPayload, targets: _overrideExtLocalHp(outPayload.targets, locName, locHp,
+                (Number.isFinite(selfSt.target_id) && selfSt.target_id > 0) ? selfSt.target_id : null) };
             }
           }
         } catch { /* leave the aggregate HP as-is on any error */ }
@@ -51655,15 +51653,25 @@ function _mapTryPin(zone, character, spawnId, name, loc, now, opts) {
 //   • Read the way eqlog is tailed: open, read only the new bytes, close, so it cannot block EverQuest.
 //     ⚠ The file also holds install paths and hardware lines. Only the three line shapes below are parsed, and only
 //     host, port, zone and time are kept. The token rides on synced map events, and nothing else leaves the machine.
-//   • Open or closed: after you zone in, a plain /who (its footer names the zone) that lists anyone who is in neither
-//     our guild (their /who tag, or the tag last seen on them, since /anon hides it) nor your raid/group means an open
-//     copy: the live zone or PvP. That sticks for the copy. A /who of only guild and raid is "closed so far": our
-//     instance, or another guild's raid instance we were brought into. A quiet live zone looks the same.
+//   • Live or instance: the PORT says (the guild lead, 2026-10-22, in the live Emerald Jungle with one guildmate, the
+//     header said "guild + raid only": "we made an assumption that this was guild/raid only, but it is not. it's live").
+//     The server gives a STATIC zone (the open world) the port its launcher lists, and starts every guild, raid or PvP
+//     instance on an idle process from a separate pool (EQMacEmu world/zonelist.cpp TriggerBootup + GetAvailableZonePort,
+//     world/zoneserver.cpp ServerOP_SetConnectInfo). Measured on our own synced events 2026-10-13..22: every zone has one
+//     port in 7100..7315 and its extra copies sit at 10001..11785 (nothing between). MAP_COPY_STATIC_PORTS and
+//     MAP_COPY_DYNAMIC_MIN are that observation, not a server constant: another server, or a different pool, reads null.
+//   • Open or closed (a /who check, now secondary): after you zone in, a plain /who (its footer names the zone) that lists
+//     anyone who is in neither our guild (their /who tag, or the tag last seen on them, since /anon hides it) nor your
+//     raid/group is "open": outsiders are in the zone. That sticks for the copy. A /who of only guild and raid proves
+//     NOTHING: a quiet live zone looks the same. The server's /who filter has no copy test either (world/clientlist.cpp
+//     WhoAllFilter), so the list may span copies. Nothing but the label reads it.
 const MAP_COPY_POLL_MS    = 2000;
 const MAP_COPY_TAIL_BYTES = 256 * 1024;        // a first look reads only the end of the file
 const MAP_COPY_READ_MAX   = 1024 * 1024;       // and no read is ever bigger than this
 const MAP_COPY_PAIR_MS    = 5 * 60 * 1000;     // a zone name further than this from its address is not paired
 const MAP_COPY_WHO_MAX    = 64;
+const MAP_COPY_STATIC_PORTS = [7000, 7999];    // the open world's zone servers (observed on Quarm; see the note above)
+const MAP_COPY_DYNAMIC_MIN  = 10000;         // an instance's zone server (observed floor 10001)
 const MAP_COPY_ADDR_RE    = /^\[([^\]]+)\]\d*:\s*Zone addr \[([A-Za-z0-9.-]{1,100}):(\d{1,5})\] received/;
 const MAP_COPY_ZONE_RE    = /^\[([^\]]+)\]\d*:\s*StartWorldDisplay: ([a-z0-9]{2,32})\s*$/;
 const MAP_COPY_CHARSEL_RE = /^\[[^\]]+\]\d*:\s*Starting char select/;
@@ -51755,12 +51763,19 @@ function _mapCopyNoteWho(run, now) {
   _mapCopy.who.set(key, { open: outsiders > 0 || !!(prev && prev.open), outsiders: Math.max(outsiders, prev ? prev.outsiders : 0),
     listed, at: now });
 }
-// What the overlay shows: { host, port, since, kind: 'open' | 'closed' | null, outsiders, who_at }.
+// 'live' (a static zone server), 'instance' (a dynamically started one: guild, raid or PvP; the port cannot say which)
+// or null (a port outside both bands: say nothing).
+function _mapCopyWhere(port) {
+  if (!(port > 0)) return null;
+  if (port >= MAP_COPY_DYNAMIC_MIN) return 'instance';
+  return port >= MAP_COPY_STATIC_PORTS[0] && port <= MAP_COPY_STATIC_PORTS[1] ? 'live' : null;
+}
+// What the overlay shows: { host, port, since, where: 'live' | 'instance' | null, kind: 'open' | 'closed' | null, outsiders, who_at }.
 function _mapCopyInfo(zone, now) {
   const c = _mapCurrentCopy(zone, now);
   if (!c) return null;
   const w = _mapCopy.who.get(_mapCopyKey(c));
-  return { host: c.host, port: c.port, since: c.at, kind: w ? (w.open ? 'open' : 'closed') : null,
+  return { host: c.host, port: c.port, since: c.at, where: _mapCopyWhere(c.port), kind: w ? (w.open ? 'open' : 'closed') : null,
     outsiders: w ? w.outsiders : 0, who_at: w ? w.at : null };
 }
 // ── end Zone copies ──
@@ -51865,6 +51880,64 @@ function _mapSyncPull(zone, now) {
     } catch { /* an unreadable answer is ignored; the next pull asks again */ }
   });
   return true;
+}
+// ── Saved raid route (the guild lead, 2026-10-21: "make the route that gets displayed on the maps overlay") ─────────────
+// An officer saves a zone's averaged raid route on the website; the bot serves it as GET /api/agent/raid-route?zone=
+// (utils/raidRoute.js there: `{ route: null }` when none is saved, else `{ v, zone, name, saved_at, points:[[x,y]], legs:[[a,b]],
+// stops:[{ n, name, x, y, at }] }`, server frame). It is asked for on the first Map poll in a zone and again at most every
+// 5 minutes, and the answer rides /api/map-state as `route_ver` always and `route` only when the overlay does not hold that
+// version (the Map polls four times a second; a few thousand points must not). A local-only install, a paused agent, an
+// older bot (404) and a shed bot ({ shed: true }) all leave the route as it was, quietly: it is a decoration, never a reason
+// to fail a poll.
+const MAP_ROUTE_REFRESH_MS = 5 * 60 * 1000;
+const MAP_ROUTE_RETRY_MS = 5 * 60 * 1000;
+const MAP_ROUTE_ZONES_MAX = 8;
+const MAP_ROUTE_POINTS_MAX = 4000;
+const _mapRoutes = new Map();   // zone → { route, fetchedAt, retryAt, inflight }
+// The bot's route, re-checked: nothing in an answer is trusted to be the shape it should be. null when it is not a route.
+function _mapRouteClean(r) {
+  if (!r || typeof r !== 'object' || !Array.isArray(r.points) || r.points.length > MAP_ROUTE_POINTS_MAX) return null;
+  const num = (v) => typeof v === 'number' && Number.isFinite(v);
+  const points = [];
+  for (const p of r.points) {
+    if (!Array.isArray(p) || !num(p[0]) || !num(p[1])) return null;   // legs index into points: one bad point and the indexes lie
+    points.push([p[0], p[1]]);
+  }
+  const legs = [];
+  for (const l of (Array.isArray(r.legs) ? r.legs : [])) {
+    if (Array.isArray(l) && Number.isInteger(l[0]) && Number.isInteger(l[1]) && l[0] >= 0 && l[1] > l[0] && l[1] < points.length) legs.push([l[0], l[1]]);
+  }
+  if (!legs.length) return null;
+  const stops = [];
+  for (const s of (Array.isArray(r.stops) ? r.stops : []).slice(0, 60)) {
+    if (!s || typeof s !== 'object' || !num(s.x) || !num(s.y) || !Number.isInteger(s.n) || s.n < 1 || typeof s.name !== 'string' || !s.name) continue;
+    stops.push({ n: s.n, name: s.name.slice(0, 64), x: s.x, y: s.y, at: s.at === 'spawn' ? 'spawn' : 'raid' });
+  }
+  const saved = typeof r.saved_at === 'string' && Number.isFinite(Date.parse(r.saved_at)) ? r.saved_at : null;
+  return { name: typeof r.name === 'string' ? r.name.slice(0, 64) : null, saved_at: saved, points, legs, stops };
+}
+// The zone's saved route (or null), starting a read when one is due and allowed.
+function _mapRouteFor(zone, now) {
+  let rec = _mapRoutes.get(zone);
+  if (!rec) {
+    if (_mapRoutes.size >= MAP_ROUTE_ZONES_MAX) _mapRoutes.delete(_mapRoutes.keys().next().value);
+    rec = { route: null, fetchedAt: 0, retryAt: 0, inflight: false };
+    _mapRoutes.set(zone, rec);
+  }
+  if (!rec.inflight && now >= rec.retryAt && now - rec.fetchedAt >= MAP_ROUTE_REFRESH_MS && _mapFetchAllowed()) {
+    rec.inflight = true;
+    _mapSyncRequest('GET', '?zone=' + encodeURIComponent(zone), null, (err, status, buf) => {
+      rec.inflight = false;
+      if (err || status !== 200) { rec.retryAt = now + MAP_ROUTE_RETRY_MS; return; }
+      try {
+        const j = JSON.parse(buf.toString('utf8'));
+        if (!j || j.shed) { rec.retryAt = now + MAP_ROUTE_RETRY_MS; return; }
+        rec.route = j.route ? _mapRouteClean(j.route) : null;
+        rec.fetchedAt = now;
+      } catch { rec.retryAt = now + MAP_ROUTE_RETRY_MS; }
+    }, '/raid-route');
+  }
+  return rec.route;
 }
 // ── Watched spots (the guild lead, 2026-10-16: "when we snipe a single mob we should be able to mark it and create a
 // timer for everyone with the named PH spot and map loc") ─────────────────────────────────────────────────────────────
@@ -53031,11 +53104,11 @@ function _mapAeRampage(name, zoneId, character, now) {
     rampage: rp && Number(rp.range) > 0 ? rp : null,
   };
 }
-function _mapStatePayload(have, now, haveLocal) {
+function _mapStatePayload(have, now, haveLocal, haveRoute) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], route_ver: null, now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
@@ -53062,6 +53135,12 @@ function _mapStatePayload(have, now, haveLocal) {
     // 2026-10-13: "fit raid or fit group just zooms out to the whole zone"). "0" = ungrouped.
     if (String(m.name).toLowerCase() === me && m.group != null && String(m.group) !== '0') out.my_grp = String(m.group);
     if (seen.has(String(m.name).toLowerCase())) continue;
+    // A raider in another zone has no entity in YOUR client, so Zeal's raid loop (named_pipe.cpp, `if (entity)`) sends no
+    // loc for them and the roster above stores loc_x/y/z as null. Number(null) is 0, so _mapPos would turn that null
+    // into (0, 0, 0) and draw them at the zone's origin (the guild lead, 2026-10-22: a member in another zone showed on
+    // his map). Skip a member with no real position, and the (0, 0, 0) the local track already treats as "not in this zone".
+    if (!Number.isFinite(m.loc_x) || !Number.isFinite(m.loc_y)) continue;
+    if (m.loc_x === 0 && m.loc_y === 0 && !m.loc_z) continue;
     const p = _mapPos({ x: m.loc_x, y: m.loc_y, z: m.loc_z }, m.heading);
     if (!p) continue;
     seen.add(String(m.name).toLowerCase());
@@ -53119,6 +53198,11 @@ function _mapStatePayload(have, now, haveLocal) {
   }
   // Guild corpses (see "Guild corpses"): { name, x, y, z, age, died_age, dragger, by }, before the spawn data like the paths.
   try { out.corpses = _mapCorpseList(zone, now); } catch { out.corpses = []; }
+  // The saved raid route (see "Saved raid route"): its version always, the route itself only when the overlay lacks that version.
+  try {
+    const route = _mapRouteFor(zone, now);
+    if (route) { out.route_ver = zone + '@' + (route.saved_at || '0'); if (haveRoute !== out.route_ver) out.route = route; }
+  } catch { /* a decoration: never a failed poll */ }
   try {   // before the spawn data: the walls draw even in a zone we hold no points for
     _mapBrewallEnsure(zone, now);   // first visit to a zone: fetch Brewall's map for it (see "Brewall maps")
     const lm = _mapLocalFor(zone, now);
@@ -53308,9 +53392,9 @@ function _mapNoteLogDeath(deadName, character, lineMs, now) {
 function _handleMapState(req, res) {
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
-  let have = '', haveLocal = '';
-  try { const q = new URL(req.url, 'http://127.0.0.1').searchParams; have = q.get('have') || ''; haveLocal = q.get('have_local') || ''; } catch { void 0; }
-  try { send(200, _mapStatePayload(have, Date.now(), haveLocal)); }
+  let have = '', haveLocal = '', haveRoute = '';
+  try { const q = new URL(req.url, 'http://127.0.0.1').searchParams; have = q.get('have') || ''; haveLocal = q.get('have_local') || ''; haveRoute = q.get('have_route') || ''; } catch { void 0; }
+  try { send(200, _mapStatePayload(have, Date.now(), haveLocal, haveRoute)); }
   catch (e) { console.error('[api/map-state]', e && (e.stack || e.message || e)); send(500, { error: 'map state failed' }); }
 }
 // POST /api/map-mark { zone?, point_id, kind: 'killed'|'empty'|'up'|'clear' } - the overlay's click menu.
@@ -54639,9 +54723,11 @@ function _mobTracksObserveExtPayload(payload, nowMs) {
 // ── Extended Target overlay V2 enrichment (#3) ──────────────────────────────
 // Three agent-side signals attached per NPC row at the /api/extended-target
 // proxy, computed from the LOCAL combat log / gauge stream (the bot aggregate
-// carries none of them). Everything is keyed by MOB NAME — same-name
-// simultaneous mobs are indistinguishable on the Zeal pipe (#56 owns that), so
-// a mob's per-name history is CLEARED when its row leaves the aggregate or its
+// carries none of them). Everything is keyed by MOB NAME, so it is shown only on
+// a name's ONLY row (2026-10-21: four Vallon Zek rows each showed one damage
+// line); with two or more rows of a name the log cannot say which spawn took the
+// hit, and the row shows nothing. A mob's per-name history is CLEARED when its
+// row leaves the aggregate or its
 // HP jumps UP > 15 points (a re-pull, a heal, or a same-name swap). Every
 // signal is fail-soft: no data → field absent → the overlay omits it.
 const EXT_VICTIM_STALE_MS = 10_000;   // victim shown only if a connect landed this recently
@@ -54717,9 +54803,13 @@ function _ttlForMob(mobLower, curHp, nowMs) {
 function _sampleExtMobHp(payload, nowMs) {
   const present = new Set();
   if (payload && Array.isArray(payload.targets)) {
+    const counts = _extNpcNameCounts(payload.targets);
     for (const t of payload.targets) {
       if (!t || t.kind !== 'npc' || !t.name || t.hp_pct == null) continue;
       const k = String(t.name).toLowerCase();
+      // Several rows of one name would feed one history with several mobs' health: no trend, and left out of
+      // `present` so the history is dropped rather than carried into the next single-row moment.
+      if ((counts.get(k) || 0) > 1) continue;
       present.add(k);
       let hist = _extMobHpHist.get(k);
       if (!hist) { hist = []; _extMobHpHist.set(k, hist); }
@@ -54851,6 +54941,35 @@ function _pipeTotObservedTank(st, nowMs) {
   return { mob: String(st.target_name), tank: tot.name, since: new Date(st.updatedAt || nowMs).toISOString(), authoritative: tot.authoritative };
 }
 
+// Same-name rows (the guild lead, 2026-10-21, Vallon Zek's split: four rows, one health, one damage line). A
+// value this agent knows only BY NAME (its own target's name, the combat log's mob names) is true of a row only
+// when that row is the one mob of its name on the board, or when a spawn id on both sides proves it. Counts live
+// NPC rows per lowercased name; stale (restored) rows never coexist with a fresh row of their name.
+function _extNpcNameCounts(targets) {
+  const counts = new Map();
+  for (const t of (Array.isArray(targets) ? targets : [])) {
+    if (!t || t.stale || (t.kind || 'npc') !== 'npc' || !t.name) continue;
+    const k = String(t.name).toLowerCase();
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  return counts;
+}
+// Is this row THE mob my client has targeted? Spawn id on both sides decides (0 is no target, never an id, so the
+// callers pass null for it); without ids the name decides only while it is unambiguous.
+function _extRowIsMyTarget(t, myNameLower, myId, counts) {
+  if (!t || t.stale || (t.kind || 'npc') !== 'npc' || !myNameLower) return false;
+  if (String(t.name || '').toLowerCase() !== myNameLower) return false;
+  if (myId != null && t.spawn_id != null && Number(t.spawn_id) > 0) return Number(t.spawn_id) === myId;
+  return (counts.get(myNameLower) || 0) === 1;
+}
+// #128 — my own gauge is near-live, so the row that IS my target takes it. Only that row; a pack of same-name
+// rows with no id to tell them apart keeps the aggregate's per-row numbers.
+function _overrideExtLocalHp(targets, locNameLower, locHp, myId) {
+  const counts = _extNpcNameCounts(targets);
+  return targets.map(t => (_extRowIsMyTarget(t, locNameLower, myId, counts)
+    ? { ...t, hp_pct: locHp, hp_source: 'local_live' } : t));
+}
+
 // Local and immediate: the Extended Target row that IS my current target gets
 // my own client's answer. mob_victim keeps its meaning (who this mob is
 // meleeing) and the pipe overrides the log inference for that one row;
@@ -54865,11 +54984,10 @@ function _attachPipeTotToExtRows(targets, selfSt, nowMs) {
   const myName = String(selfSt.target_name || '').toLowerCase();
   if (!myName) return targets;
   const myId = (Number.isFinite(selfSt.target_id) && selfSt.target_id > 0) ? selfSt.target_id : null;
+  const counts = _extNpcNameCounts(targets);
   return targets.map(t => {
-    if (!t || t.stale || (t.kind || 'npc') !== 'npc') return t;
-    if (String(t.name || '').toLowerCase() !== myName) return t;
-    // With a spawn id on both sides only the exact instance; otherwise the name.
-    if (myId != null && t.spawn_id != null && Number(t.spawn_id) !== myId) return t;
+    // With a spawn id on both sides only the exact instance; otherwise the name, while it names one row.
+    if (!_extRowIsMyTarget(t, myName, myId, counts)) return t;
     const patch = {};
     if (tot)   { patch.mob_victim = tot.name;   patch.mob_victim_source = tot.authoritative ? 'zeal_assist' : 'zeal_damage'; }
     if (hitBy) { patch.mob_hit_by = hitBy.name; patch.mob_hit_by_source = hitBy.authoritative ? 'zeal_assist' : 'zeal_damage'; }
@@ -54880,9 +54998,13 @@ function _attachPipeTotToExtRows(targets, selfSt, nowMs) {
 function _enrichExtTargetV2(payload, nowMs) {
   if (!payload || !Array.isArray(payload.targets) || !payload.targets.length) return payload;
   _sampleExtMobHp(payload, nowMs);
+  const counts = _extNpcNameCounts(payload.targets);
   return { ...payload, targets: payload.targets.map(t => {
     if (!t || t.kind !== 'npc' || !t.name) return t;
     const k = String(t.name).toLowerCase();
+    // The combat log names a mob, never a spawn: with two or more rows of this name, who it is meleeing, the
+    // damage on it and its health trend cannot be told apart, so none of them is shown on any of the rows.
+    if ((counts.get(k) || 0) > 1) return t;
     const patch = {};
     const victim = _victimForMob(k, nowMs);
     if (victim) patch.mob_victim = victim;
@@ -63754,6 +63876,216 @@ async function _raidCodeRoute(req, res) {
   }
 }
 
+// ── Local item icons (local-first slice 2, 2026-10-21) ─────────────────────────────────────────────────────
+// Item art drawn from the player's OWN EverQuest files, never ours: we do not redistribute EQ art, nothing here is
+// committed or uploaded. eqemu_items.icon is the number. The client keeps the art in uifiles/default/dragitem<N>.tga
+// (or .dds), 256x256 sheets holding a 6x6 grid of 40px cells (the last 16px column and row are padding).
+//   idx = icon - 500;  sheet = floor(idx / 36) + 1;  cell = idx % 36;  col = floor(cell / 6);  row = cell % 6
+// ⚠ COLUMN-MAJOR: a sheet fills DOWN each column first. Read row-major and icon 633 (183 items, all boots) draws a
+// shovel, which is exactly the wrong art the website's atlas shipped (web/lib/itemIcon.ts ICON_ATLAS_DISABLED). The
+// mapping was checked by eye against the catalog on 41 icons, recorded in test/local-icons.test.js.
+//   GET /api/local/icon/<n>.png[?item=<itemId>] -> the 40x40 cell as PNG; 404 when no EQ folder, no sheet, or a blank cell.
+// local/icons-custom/<itemId>.png, when ?item= names it, wins over the extracted icon. Extracted cells are cached in
+// local/icons/<n>.png and re-cut when the sheet is newer than the cached file (a UI skin swap).
+const ICON_FIRST = 500, ICON_CELL = 40, ICON_GRID = 6, ICON_PER_SHEET = 36;
+function _iconCellOf(icon) {
+  const n = Math.trunc(Number(icon));
+  if (!Number.isFinite(n) || n < ICON_FIRST || n > 99999) return null;
+  const idx = n - ICON_FIRST, cell = idx % ICON_PER_SHEET;
+  return { sheet: Math.floor(idx / ICON_PER_SHEET) + 1, cell, col: Math.floor(cell / ICON_GRID), row: cell % ICON_GRID };
+}
+// TGA types 1/2/3 (raw colour-mapped, truecolor, grey) and 9/10/11 (the same, RLE). -> { w, h, data: RGBA top-down }
+function _iconDecodeTga(buf) {
+  if (!buf || buf.length < 18) throw new Error('tga: short');
+  const idLen = buf[0], cmapType = buf[1], type = buf[2];
+  const cmapFirst = buf.readUInt16LE(3), cmapLen = buf.readUInt16LE(5), cmapBits = buf[7];
+  const w = buf.readUInt16LE(12), h = buf.readUInt16LE(14), bits = buf[16], desc = buf[17];
+  const base = type & ~8;
+  if (![1, 2, 3].includes(base) || !w || !h || w > 4096 || h > 4096) throw new Error('tga: unsupported');
+  const Bpp = bits >> 3, cmapBpp = cmapBits >> 3;
+  if (Bpp < 1 || Bpp > 4) throw new Error('tga: unsupported depth');
+  let p = 18 + idLen;
+  const cmapAt = p;
+  if (cmapType) p += cmapLen * cmapBpp;
+  const out = Buffer.alloc(w * h * 4), n = w * h;
+  const colour = (src, depth, o) => {
+    if (src < 0 || src + depth > buf.length) throw new Error('tga: truncated');
+    if (depth === 1) { out[o] = out[o + 1] = out[o + 2] = buf[src]; out[o + 3] = 255; return; }
+    if (depth === 2) {
+      const v = buf.readUInt16LE(src);
+      out[o] = ((v >> 10) & 31) * 255 / 31 | 0; out[o + 1] = ((v >> 5) & 31) * 255 / 31 | 0; out[o + 2] = (v & 31) * 255 / 31 | 0; out[o + 3] = 255;
+      return;
+    }
+    out[o] = buf[src + 2]; out[o + 1] = buf[src + 1]; out[o + 2] = buf[src]; out[o + 3] = depth === 4 ? buf[src + 3] : 255;
+  };
+  const px = (src, i) => {
+    if (src + Bpp > buf.length) throw new Error('tga: truncated');
+    if (base === 1) colour(cmapAt + ((Bpp === 2 ? buf.readUInt16LE(src) : buf[src]) - cmapFirst) * cmapBpp, cmapBpp, i * 4);
+    else colour(src, base === 3 ? 1 : Bpp, i * 4);
+  };
+  let i = 0;
+  if (type & 8) {
+    while (i < n) {
+      if (p >= buf.length) throw new Error('tga: truncated');
+      const hdr = buf[p++], cnt = (hdr & 0x7f) + 1;
+      if (hdr & 0x80) { for (let k = 0; k < cnt && i < n; k++) px(p, i++); p += Bpp; }
+      else { for (let k = 0; k < cnt && i < n; k++) { px(p, i++); p += Bpp; } }
+    }
+  } else { for (; i < n; i++, p += Bpp) px(p, i); }
+  if (!(desc & 0x20)) {   // origin bottom-left: flip to top-down
+    const row = w * 4, tmp = Buffer.alloc(row);
+    for (let y = 0; y < (h >> 1); y++) {
+      const a = y * row, b = (h - 1 - y) * row;
+      out.copy(tmp, 0, a, a + row); out.copy(out, a, b, b + row); tmp.copy(out, b);
+    }
+  }
+  return { w, h, data: out };
+}
+// DDS: DXT1/DXT3/DXT5, or uncompressed 32/24-bit by its channel masks. -> { w, h, data: RGBA top-down }
+function _iconDecodeDds(buf) {
+  if (!buf || buf.length < 128 || buf.readUInt32LE(0) !== 0x20534444) throw new Error('dds: bad magic');
+  const h = buf.readUInt32LE(12), w = buf.readUInt32LE(16);
+  if (!w || !h || w > 4096 || h > 4096) throw new Error('dds: unsupported');
+  const pfFlags = buf.readUInt32LE(80), four = buf.toString('latin1', 84, 88);
+  const out = Buffer.alloc(w * h * 4);
+  let p = 128;
+  if (pfFlags & 4) {
+    if (four !== 'DXT1' && four !== 'DXT3' && four !== 'DXT5') throw new Error('dds: unsupported ' + four);
+    const bsz = four === 'DXT1' ? 8 : 16;
+    const c565 = (v) => [((v >> 11) & 31) * 255 / 31 | 0, ((v >> 5) & 63) * 255 / 63 | 0, (v & 31) * 255 / 31 | 0];
+    for (let by = 0; by < h; by += 4) for (let bx = 0; bx < w; bx += 4) {
+      if (p + bsz > buf.length) throw new Error('dds: truncated');
+      const alpha = new Array(16).fill(255);
+      if (four === 'DXT3') { for (let k = 0; k < 16; k++) alpha[k] = ((buf[p + (k >> 1)] >> ((k & 1) * 4)) & 15) * 17; }
+      else if (four === 'DXT5') {
+        const a0 = buf[p], a1 = buf[p + 1], pal = [a0, a1];
+        for (let k = 1; k < 7; k++) pal.push(a0 > a1 ? ((7 - k) * a0 + k * a1) / 7 | 0 : k < 5 ? ((5 - k) * a0 + k * a1) / 5 | 0 : (k === 5 ? 0 : 255));
+        const bitsLo = buf.readUInt32LE(p + 2), bitsHi = buf.readUInt16LE(p + 6);
+        for (let k = 0; k < 16; k++) {
+          const v = k < 10 ? (bitsLo >>> (k * 3)) & 7 : k === 10 ? ((bitsLo >>> 30) | (bitsHi << 2)) & 7 : (bitsHi >> (k * 3 - 32)) & 7;
+          alpha[k] = pal[v];
+        }
+      }
+      const cp = p + bsz - 8, v0 = buf.readUInt16LE(cp), v1 = buf.readUInt16LE(cp + 2), bits = buf.readUInt32LE(cp + 4);
+      const a = c565(v0), b = c565(v1), pal = [a.concat(255), b.concat(255)];
+      if (v0 > v1 || four !== 'DXT1') {
+        pal.push([0, 1, 2].map(k => (2 * a[k] + b[k]) / 3 | 0).concat(255), [0, 1, 2].map(k => (a[k] + 2 * b[k]) / 3 | 0).concat(255));
+      } else pal.push([0, 1, 2].map(k => (a[k] + b[k]) >> 1).concat(255), [0, 0, 0, 0]);
+      for (let k = 0; k < 16; k++) {
+        const x = bx + (k & 3), y = by + (k >> 2);
+        if (x >= w || y >= h) continue;
+        const c = pal[(bits >>> (k * 2)) & 3], o = (y * w + x) * 4;
+        out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2]; out[o + 3] = four === 'DXT1' ? c[3] : alpha[k];
+      }
+      p += bsz;
+    }
+    return { w, h, data: out };
+  }
+  const bits = buf.readUInt32LE(88), Bpp = bits >> 3;
+  if ((pfFlags & 0x40) === 0 || (Bpp !== 3 && Bpp !== 4)) throw new Error('dds: unsupported');
+  const masks = [92, 96, 100, 104].map(o => buf.readUInt32LE(o));
+  if (!(pfFlags & 1)) masks[3] = 0;
+  const shiftOf = (m) => { if (!m) return -1; let s = 0; while (!((m >>> s) & 1)) s++; return s; };
+  const shifts = masks.map(shiftOf);
+  for (let i = 0; i < w * h; i++, p += Bpp) {
+    if (p + Bpp > buf.length) throw new Error('dds: truncated');
+    const v = Bpp === 4 ? buf.readUInt32LE(p) : buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16);
+    for (let c = 0; c < 4; c++) {
+      const m = masks[c];
+      out[i * 4 + c] = m ? Math.round(((v & m) >>> shifts[c]) * 255 / (m >>> shifts[c])) : 255;
+    }
+  }
+  return { w, h, data: out };
+}
+const _ICON_CRC = (() => { const t = new Int32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c; } return t; })();
+function _iconPngChunk(type, data) {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+  const td = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  let c = -1; for (let i = 0; i < td.length; i++) c = _ICON_CRC[(c ^ td[i]) & 255] ^ (c >>> 8);
+  const crc = Buffer.alloc(4); crc.writeUInt32BE((c ^ -1) >>> 0);
+  return Buffer.concat([len, td, crc]);
+}
+// RGBA -> PNG (8-bit RGBA, filter 0), zlib from Node.
+function _iconPng(w, h, rgba) {
+  const raw = Buffer.alloc((w * 4 + 1) * h);
+  for (let y = 0; y < h; y++) rgba.copy(raw, y * (w * 4 + 1) + 1, y * w * 4, (y + 1) * w * 4);
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 6;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), _iconPngChunk('IHDR', ihdr), _iconPngChunk('IDAT', zlib.deflateSync(raw)), _iconPngChunk('IEND', Buffer.alloc(0))]);
+}
+// One 40x40 cell out of a decoded sheet, or null when the cell is fully transparent (no art in this client).
+function _iconCut(img, col, row) {
+  const x0 = col * ICON_CELL, y0 = row * ICON_CELL;
+  if (x0 + ICON_CELL > img.w || y0 + ICON_CELL > img.h) return null;
+  const out = Buffer.alloc(ICON_CELL * ICON_CELL * 4);
+  for (let y = 0; y < ICON_CELL; y++) {
+    const s = ((y0 + y) * img.w + x0) * 4;
+    img.data.copy(out, y * ICON_CELL * 4, s, s + ICON_CELL * 4);
+  }
+  for (let i = 3; i < out.length; i += 4) if (out[i]) return out;
+  return null;
+}
+// The folders that can hold the dragitem sheets in an EQ install: uifiles/default first, then the install root.
+function _iconSheetDirs(eqDirs) {
+  const out = [];
+  for (const d of eqDirs || []) { if (d) out.push(path.join(d, 'uifiles', 'default'), d); }
+  return out;
+}
+function _iconFindSheet(dirs, sheet) {
+  const names = ['dragitem' + sheet, 'dragitem' + String(sheet).padStart(2, '0')];
+  for (const d of dirs) for (const nm of names) for (const ext of ['.tga', '.dds']) {
+    const f = path.join(d, nm + ext);
+    try { const st = fs.statSync(f); if (st.isFile()) return { file: f, mtimeMs: st.mtimeMs, ext }; } catch { /* next */ }
+  }
+  return null;
+}
+const _iconSheetMemo = new Map();   // file -> { mtimeMs, img }, the last few sheets decoded
+function _iconSheetImage(found) {
+  const hit = _iconSheetMemo.get(found.file);
+  if (hit && hit.mtimeMs === found.mtimeMs) return hit.img;
+  const buf = fs.readFileSync(found.file);
+  const img = found.ext === '.dds' ? _iconDecodeDds(buf) : _iconDecodeTga(buf);
+  _iconSheetMemo.delete(found.file);
+  _iconSheetMemo.set(found.file, { mtimeMs: found.mtimeMs, img });
+  while (_iconSheetMemo.size > 4) _iconSheetMemo.delete(_iconSheetMemo.keys().next().value);
+  return img;
+}
+// -> PNG Buffer, or null. o: { eqDirs, localDir, item }.
+function _localIconPng(icon, o = {}) {
+  const localDir = o.localDir || process.env.WP_LOCAL_DIR || path.join(__dirname, 'local');
+  if (o.item != null && /^[1-9][0-9]{0,6}$/.test(String(o.item))) {
+    try { return fs.readFileSync(path.join(localDir, 'icons-custom', String(o.item) + '.png')); } catch { /* no override */ }
+  }
+  const at = _iconCellOf(icon);
+  if (!at) return null;
+  const found = _iconFindSheet(_iconSheetDirs(o.eqDirs || _eqSetupDirs()), at.sheet);
+  if (!found) return null;
+  const cacheFile = path.join(localDir, 'icons', Math.trunc(Number(icon)) + '.png');
+  try { if (fs.statSync(cacheFile).mtimeMs >= found.mtimeMs) return fs.readFileSync(cacheFile); } catch { /* not cached */ }
+  const rgba = _iconCut(_iconSheetImage(found), at.col, at.row);
+  if (!rgba) return null;
+  const png = _iconPng(ICON_CELL, ICON_CELL, rgba);
+  try { fs.mkdirSync(path.dirname(cacheFile), { recursive: true }); fs.writeFileSync(cacheFile, png); } catch { /* serve uncached */ }
+  return png;
+}
+// Returns true when it answered. Called from the dashboard router, after the local guard.
+function _localIconRoute(req, res, o) {
+  if (!req || req.method !== 'GET' || !req.url || req.url.indexOf('/api/local/icon/') !== 0) return false;
+  let u;
+  try { u = new URL(req.url, 'http://x'); } catch { return false; }
+  const m = /^\/api\/local\/icon\/([0-9]{1,5})\.png$/.exec(u.pathname);
+  if (!m) return false;
+  let png = null;
+  try { png = _localIconPng(Number(m[1]), { ...(o || {}), item: u.searchParams.get('item') }); } catch { png = null; }
+  if (!png) {
+    res.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ error: 'no icon' }));
+    return true;
+  }
+  res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=3600', 'Content-Length': png.length });
+  res.end(png);
+  return true;
+}
+
 // Export internals for tests; only run main() when invoked directly as CLI.
 module.exports = {
   // Rebuild from my logs (2026-10-21): see the block above module.exports.
@@ -63771,6 +64103,8 @@ module.exports = {
   _raidCodeNormalize, _raidCodeSet, _raidCodeClear, _raidCodeActive, _raidCodeStatus, _raidCodeHolds, _raidTag, _raidCodeSaveFight, _raidCodeNoteLoot,
   _raidPersonKey, _rmpackBuild, _rmpackParse, _rmpackImport, _rmCleanMinute, _rmMergeMinute, _raidCodeRoute, _raidCodeSetFileForTest,
   RAID_HOLD_KINDS, RAID_CODE_TTL_MS, enqueueUpload,
+  // Local item icons (2026-10-21): cut from the player's own dragitem sheets. See the block above module.exports.
+  _iconCellOf, _iconDecodeTga, _iconDecodeDds, _iconPng, _iconCut, _localIconPng, _localIconRoute,
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   buildFeedbackLogSlice, _feedbackLineAllowed,
