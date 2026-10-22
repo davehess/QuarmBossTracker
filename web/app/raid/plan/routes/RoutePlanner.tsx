@@ -19,6 +19,7 @@ import type { ChecklistStep } from '@/lib/routePlanner/build';
 import { plannedHeadcount } from '@/lib/routePlanner/plan';
 import type { PlanSummary } from '@/lib/routePlanner/store';
 import type { Mob, Plan, ZoneData } from '@/lib/routePlanner/types';
+import type { Routed } from '@/lib/routePlanner/navroute';
 import { sanitize } from '@/lib/routePlanner/plan';
 import {
   createRoutePlan, deleteRoutePlan, importSeedPlan, pollRoutePlan, publishRoutePlan, saveRoutePlan, updateRoutePlanMeta,
@@ -72,6 +73,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
   const [msg, setMsg] = useState<string | null>(null);
   const [view3d, setView3d] = useState(false);
   const [legKey, setLegKey] = useState<string | null>(null);   // the leg the One leg mode is on (null when the mode is off)
+  const [routes, setRoutes] = useState<Map<string, Routed>>(() => new Map());   // the walk routes by leg, for the 3D view
   const v3 = props.variant === 'b' || props.variant === 'c' ? props.variant : null;   // the 3D previews; 'leg' has no 3D
   const [confirm, setConfirm] = useState<null | { kind: 'publish'; text: string } | { kind: 'import'; text: string }>(null);
 
@@ -134,6 +136,9 @@ export default function RoutePlanner(props: RoutePlannerProps) {
       onOptMode: (m: string) => setSkipOptional(m === 'skip'),
       legFocus: !!props.variant,
       onLegFocus: (k: string | null) => setLegKey(k),
+      // "Walk route" (any ?v=): the navigation library and the zone's walkable map are fetched when it is first turned on
+      navRoute: props.variant ? { load: () => import('@/lib/routePlanner/navLoad').then(m => m.loadNavRouter(zone)) } : undefined,
+      onRoutes: (m: Map<string, Routed>) => setRoutes(m),
     });
     apiRef.current = api;
     setNodes(api.nodes);
@@ -345,7 +350,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
         nodes.toolbar,
       )}
       {nodes && v3 && view3d && createPortal(
-        <Plan3D zone={zone} extraMobs={props.extraMobs} plan={shown3d} skipOptional={skipOptional} variant={v3} focusLeg={legKey}
+        <Plan3D zone={zone} extraMobs={props.extraMobs} plan={shown3d} skipOptional={skipOptional} variant={v3} focusLeg={legKey} routes={routes}
           onSelect={id => apiRef.current?.selectPin(id)}
           onFail={() => { setView3d(false); note('This browser could not start 3D, so the flat map stays.'); }} />,
         nodes.mapwrap,

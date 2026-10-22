@@ -40,9 +40,11 @@ export type Pather = { id: string; npc_names: string[]; points: [number, number,
 /**
  * A door, a teleport or a zone line. `from`/`to` are [x, y, z]; `to` is null for a thing that goes nowhere on this map
  * (a zone line, a door that only opens). `key` is the key item or the flag that opens a locked / flag door.
+ * A 'step' is not a thing in the zone: it is a small vertical gap the walkable map has between two of its pieces, found
+ * offline and bridged for the walk route (navroute.ts). A HEURISTIC, never verified in game; the map does not draw it.
  */
 export type ZoneLink = {
-  kind: 'teleport' | 'locked' | 'flag' | 'zoneline';
+  kind: 'teleport' | 'locked' | 'flag' | 'zoneline' | 'step';
   from: [number, number, number];
   to: [number, number, number] | null;
   label: string;
@@ -137,8 +139,8 @@ export type Pin = {
   onPlan?: boolean;               // came from a fight card on /raid/plan
 };
 
-/** The bends of one leg, keyed 'pinA>pinB'. `opt`: the whole leg is optional (drawn dashed, left out of the totals). `via`: the label of a teleport (ZoneLink) the leg goes through; the jump is drawn but not counted. */
-export type Line = { k: string; pts: [number, number][]; off: boolean; follow?: number; opt?: boolean; via?: string };
+/** The bends of one leg, keyed 'pinA>pinB'. `opt`: the whole leg is optional (drawn dashed, left out of the totals). `via`: the label of a teleport (ZoneLink) the leg goes through; the jump is drawn but not counted. `h`: the heights [x, y, z] of bends that came from "Use this route" on the walk route, matched to a bend by its x, y (a bend moved since has none and the walk route guesses its height from its neighbours). */
+export type Line = { k: string; pts: [number, number][]; off: boolean; follow?: number; opt?: boolean; via?: string; h?: [number, number, number][] };
 
 /**
  * A SPLIT: the raid divides into parallel branches where it does several things at once, then regroups. It sits on the

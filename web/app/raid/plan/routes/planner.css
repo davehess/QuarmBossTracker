@@ -207,6 +207,12 @@
 .rp-root.rp-3d .legbar{top:auto;bottom:36px}
 .rp-root.rp-3d .legbar label{display:none}
 .rp-root .leg.cur{box-shadow:inset 3px 0 0 var(--gold);padding-left:8px;background:var(--panel2)}
+/* Walk route (?v=): the status beside the toggle, and the walk line of a leg's card */
+.rp-root .walknote{display:none;align-self:center;font-size:12px;color:var(--muted);background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:3px 8px;box-shadow:var(--shadow)}
+.rp-root .walknote.on{display:inline-block}
+.rp-root .walknote.err{color:var(--orange);border-color:var(--orange)}
+.rp-root .leg .walk{color:#d2a8ff}
+.rp-root .leg .walk.none{color:var(--orange)}
 .rp-root .p3{position:absolute;inset:0;z-index:2;background:var(--map-bg);overflow:hidden;touch-action:none}
 .rp-root .p3-layer{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:1}
 .rp-root .p3 canvas{outline:none}

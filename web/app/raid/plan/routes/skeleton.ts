@@ -64,7 +64,8 @@ export function skeletonHtml(Z: ZoneData, readOnly: boolean, legMode = false): s
             <li><b>Bend a leg:</b> click the line to add a bend point, drag it to pull the line off a wall. Right-click a bend to remove it, right-click a leg to hide it.</li>
             <li><b>Follow paths:</b> pick that tool, click a leg (or its start pin then end pin). The leg becomes the average of the recorded nights that ran between the two pins.</li>
             <li><b>Split:</b> on the Legs tab, <i>Split this leg</i> sends the raid up two or more branches at once (Team A, Team B) and regroups at the leg's end. Pick the branch in the map toolbar to drop its pins. The split's time is its slowest branch.</li>
-            <li><b>Teleports:</b> a leg can go <i>via</i> a teleport (Legs tab); the jump is drawn but not counted.</li>
+            <li><b>Teleports:</b> a leg can go <i>via</i> a teleport (Legs tab); the jump is drawn but not counted.</li>${legMode ? `
+            <li><b>Walk route</b> (map toolbar) draws every leg along the server's own walkable map, round walls and through teleporters and flagged doors; the jump is dashed and not counted. <i>Use this route</i> on a leg's card keeps that path as the leg's bend points.</li>` : ''}
             <li><b>Tracks:</b> turn nights on in Layers. Click a piece of a track to hide it; Layers has Show all again.</li>
             <li><b>/loc:</b> bottom-left shows the cursor as <code>/loc y, x</code>, exactly as the game prints it.</li>
             <li><b>Versions:</b> the plan saves by itself; Save version keeps a copy you can come back to. <b>Compare</b> lays a recorded night over the plan.</li>
@@ -110,7 +111,8 @@ export function skeletonHtml(Z: ZoneData, readOnly: boolean, legMode = false): s
         <button data-mode="addpin" title="Click the map to drop a pin">Add pin</button>
         <button data-mode="follow" title="Click a leg to snap it to recorded paths">Follow paths</button>
       </div>${legMode ? `
-      <div class="grp" id="legGrp"><button id="legOnly" aria-pressed="false" title="Draw one leg at a time: the one that starts at the selected pin. Left / right arrow keys step.">One leg</button></div>` : ''}
+      <div class="grp" id="legGrp"><button id="legOnly" aria-pressed="false" title="Draw one leg at a time: the one that starts at the selected pin. Left / right arrow keys step.">One leg</button><button id="walkOn" aria-pressed="false" title="Draw each leg along the server's own walkable map: round walls, through teleporters and flagged doors. The straight or bent line stays the plan; this is a view.">Walk route</button></div>
+      <span class="walknote" id="walkNote" role="status"></span>` : ''}
       <select id="addKind" title="Kind for new pins">
         <option value="note">new pin: note</option><option value="boss">new pin: boss</option><option value="named">new pin: named</option>
         <option value="scripted">new pin: scripted</option><option value="objective">new pin: objective</option><option value="door">new pin: door</option>

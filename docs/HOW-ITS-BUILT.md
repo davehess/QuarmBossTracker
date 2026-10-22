@@ -4367,7 +4367,26 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   tab sets it too); the toggle and the follow box ride the engine's `ui` state (`rp-ui-<zone>`). The rules are
   `web/lib/routePlanner/legFocus.ts` (clamp, step, leg for a pin, bar text; `test/route-planner-model.test.js`); in 3D the engine
   tells the host the current leg's key and `buildView3D({ focusLeg })` draws only it (`test/route-planner-3d.test.js`).
-- Tests: `test/route-planner-model.test.js`, `test/route-planner-store.test.js`, `test/route-planner-3d.test.js`.
+- **Walk route (web 2.0.6, beta preview, 2026-10-22).** Any `?v=` adds a **Walk route** toggle beside One leg; no `?v=` is the
+  page as it was. **Data:** the server's own navmesh, Quarm's `<zone>.nav` from EQMacEmu/Maps (repo root; GPL-derived like the EQEmu
+  walls the planner draws; Quarm's file, not EQEmu's, which differs for Tactics). Nothing is committed: `GET /api/raid/navmesh?zone=`
+  (members only, `app/api/raid/navmesh/route.ts`) fetches it (Next caches the download a day), slims it (`lib/routePlanner/navmesh.ts`:
+  drops the link table, the detail mesh; the browser regenerates the triangle fan Detour needs), compresses it (brotli q9, or gzip
+  / plain by `Accept-Encoding`) and keeps a few zones in memory. On the wire: Tower about 0.7 MB (3.5 MB slim, 2.0 MB source),
+  Tactics about 0.12 MB. **Router:** `lib/routePlanner/navroute.ts` (pure, tested with a fake walk): Dijkstra over the leg's two ends
+  and both ends of every teleport, flagged door and step bridge; a walk edge exists only when the navmesh finds a COMPLETE path
+  (an end more than 2 u short is a failure: Detour reports success on partial ones); a jump is one way and costs next to nothing;
+  a hand-bent leg is routed through its bends in order, and a bend that cannot be walked is left out and said so. **Browser:**
+  `navLoad.ts` loads `@recast-navigation/core` + `wasm` 0.43.1 (MIT) only when the toggle is first turned on (about 260 KB
+  gzipped, the wasm inlined), builds the Detour navmesh and answers walk queries (frame: Detour (x, y-up, z) = server (x, z, y), no
+  negation). The engine works legs out one per tick, the current leg first, and falls back to the leg's own line, drawn dotted and
+  marked "no walkable route found", when there is no route or the map did not load. **Step bridges** (`kind: 'step'` in
+  `zones/solrotower.json`, three) are small vertical gaps the mesh has between its pieces, found offline and bridged: HEURISTICS, never
+  walked in game, said so on the leg's card, and never drawn. **Use this route** (officers, Legs card) writes the path as bend points
+  (`Line.pts`, at most 40, a jump kept as a straight line between its two ends) plus their heights (`Line.h`, matched by x, y) so a
+  re-route through them lands on the same floor. In 3D the routed leg is drawn at its true heights with an arc per jump
+  (`buildView3D({ routes })`).
+- Tests: `test/route-planner-model.test.js`, `test/route-planner-store.test.js`, `test/route-planner-3d.test.js`, `test/route-planner-navroute.test.js`.
 
 ---
 

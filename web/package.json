@@ -1,6 +1,6 @@
 {
   "name": "wolfpack-tracker-web",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "private": true,
   "description": "Wolf Pack EQ \u2014 guild-wide tracker dashboard (Vercel-hosted, reads from the same Supabase as the Discord bot).",
   "license": "AGPL-3.0-or-later",
@@ -16,7 +16,9 @@
     "react-dom": "18.3.1",
     "@supabase/supabase-js": "2.45.4",
     "@supabase/ssr": "0.5.1",
-    "three": "0.169.0"
+    "three": "0.169.0",
+    "@recast-navigation/core": "0.43.1",
+    "@recast-navigation/wasm": "0.43.1"
   },
   "devDependencies": {
     "typescript": "5.5.4",

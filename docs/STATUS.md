@@ -125,6 +125,12 @@ next touch one rather than assuming a missing row means a missing doc.
   segments other than the current". `https://b.wolfpack.quest/raid/plan/routes?zone=solrotower&v=leg` (also on `&v=b` / `&v=c`)
   adds a **One leg** toggle: only the current leg is drawn, other pins go faint and unlabelled, a bar steps through the legs
   (buttons or the arrow keys), the map frames each leg. **Open: the guild lead's call on whether it graduates to the default page.**
+  **Walk route (web 2.0.6, preview on `beta`, draft, 2026-10-22):** the guild lead: "we need to route players through the game and
+  account for walls". Any `?v=` adds a **Walk route** toggle beside One leg: each leg is drawn along the server's own navmesh
+  (Quarm's `.nav` from EQMacEmu/Maps, fetched at run time by `GET /api/raid/navmesh`, no binary committed), through teleporters
+  and flagged doors (dashed jump, not counted), the leg length becomes the walked length, and "Use this route" bakes it into bend
+  points. The three step bridges in the Tower's data are heuristics nobody has walked. **Open: the guild lead's call, and a raid
+  night's worth of looking at whether the routes are ones a raider would take.**
 - **⏳ Flag lab: an officer sandbox for the PoP flags and the hail board (web 1.9.2, DRAFT on `claude/flag-lab`, not
   pushed, 2026-10-18).** `/admin/flag-lab` (new route, `[beta]` tag, officer only, **off unless `FLAG_LAB=1`**, which the
   officer sets in Vercel's Preview environment only). Fake members with presets and per-flag source ticks (Mimic /

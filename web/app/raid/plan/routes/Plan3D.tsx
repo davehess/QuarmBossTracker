@@ -24,6 +24,7 @@ import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { unpackMesh } from '@/lib/zoneMesh';
 import type { Mob, Plan, ZoneData } from '@/lib/routePlanner/types';
+import type { Routed } from '@/lib/routePlanner/navroute';
 import {
   KIND_HEX, LINK_HEX, PATHER_HEX, baseSpacing, buildView3D, clipHeight, floorOrder, type Pt3, type View3D,
 } from '@/lib/routePlanner/view3d';
@@ -37,6 +38,8 @@ export type Plan3DProps = {
   variant: 'b' | 'c';
   /** "One leg" mode: the key of the leg to draw alone (its two pins at full strength, the others faint); null draws the whole plan. */
   focusLeg?: string | null;
+  /** The walk routes (navroute.ts) by leg key, while "Walk route" is on: those legs are drawn along their route at true heights. */
+  routes?: ReadonlyMap<string, Routed>;
   /** A pin was clicked: select it the way the 2D map does (the host wires this to the engine). */
   onSelect: (pinId: string) => void;
   /** No WebGL: the host goes back to the 2D map. */
@@ -79,7 +82,7 @@ const TAG_LOOK = {
 
 const disposeMat = (m: Material | Material[]) => (Array.isArray(m) ? m : [m]).forEach(x => x.dispose());
 
-export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, focusLeg, onSelect, onFail }: Plan3DProps) {
+export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, focusLeg, routes, onSelect, onFail }: Plan3DProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
   const ctxRef = useRef<Ctx | null>(null);
@@ -102,8 +105,8 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
 
   const spacing = baseSpacing(zone.bounds) * spread;
   const view = useMemo<View3D>(
-    () => buildView3D({ zone, extraMobs, plan, skipOptional, mode: stack ? 'stack' : 'mesh', spacing, focusLeg }),
-    [zone, extraMobs, plan, skipOptional, stack, spacing, focusLeg],
+    () => buildView3D({ zone, extraMobs, plan, skipOptional, mode: stack ? 'stack' : 'mesh', spacing, focusLeg, routes }),
+    [zone, extraMobs, plan, skipOptional, stack, spacing, focusLeg, routes],
   );
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -476,7 +479,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
     for (const lg of view.legs) {
       for (const w of lg.walks) line(c.gPins, w, '#0a0e13', 6, { opacity: 0.6, order: 2 });
       for (const w of lg.walks) line(c.gPins, w, lg.color, 3, { dashed: lg.dashed, order: 3 });
-      if (lg.arc) line(c.gPins, lg.arc, LINK_HEX, 2.2, { dashed: true, order: 3 });
+      for (const a of lg.arcs) line(c.gPins, a, LINK_HEX, 2.2, { dashed: true, order: 3 });
     }
     for (const p of view.pins) {
       const col = KIND_HEX[p.kind];
