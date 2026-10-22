@@ -89,6 +89,7 @@ const SHARED = [
   ['wpTargetMana', 'mobinfo', 'mana', ENUM(['on', 'off'])],
   ['wpTargetFqv', 'mobinfo', 'sub', WORD],
   ['wpCharmWarnAt', 'charm', 'warnAt', INT(0, 600)],
+  ['wpCharmShowWhen', 'charm', 'showWhen', ENUM(['always', 'charming'])],
   ['wp:pop:framed', 'popraid', 'framed', FLAG],
   ['wp:pop:fs', 'popraid', 'fontSize', INT(6, 40)],
   ['wp:pop:height', 'popraid', 'height', HEIGHT],

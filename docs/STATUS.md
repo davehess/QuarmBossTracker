@@ -6438,3 +6438,27 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   same-name row, item icons cut from the player's own EQ files (agent endpoint only, no overlay uses it yet), and the 2026-10-22
   server-patch guide corrections (Rathe Council, Tallon and Vallon reset, Avatar of Earth clock). No bot change needed; no FB numbers
   in this range. ⏳ Web roadmap entry lands as its own commit.
+- ✅ Charm overlay + Canvas Charm piece: **Show when: When charming** (the guild lead, 2026-10-22: "show up when the user
+  charms, and remain between having a charm pet. Dismiss gets rid of it until they charm again"; agent 4.0.6 + Mimic beta).
+  Charm window: setup bar → Show: Always | **When charming**; Canvas: a piece's Show-when list gains **When charming**. It
+  appears the moment a charm lands, stays through the gaps between charms, and goes 10 minutes after the last charm was seen
+  (my default: the ask named no number); the ✕ (window) or the small ✕ beside the piece (Canvas) hides it until a LATER charm
+  lands. The agent keeps the one answer (`/api/state.charmSession`, `POST /api/charm-session/dismiss`). ⏳ The hold counts
+  from the last `/api/state` poll that saw a charm up, so it is accurate to a poll or two; ⏳ a Mimic restart mid-session
+  forgets a dismissal (the agent restarts with it); ⏳ the break callout still speaks while dismissed (dismiss hides the card
+  only); ⏳ the shared-layout format knows the new word on beta, but the bot's copy `utils/portableLayout.js` has to be
+  re-copied on `main` (`test/gallery-portable.test.js` goes red until it is), or the bot's gallery would refuse a shared layout that uses the rule.
+- ✅ Cooldowns: **one Disc timer** (the guild lead, 2026-10-22: "Disc in canvas shows on my monk as Innerflame, but it's a shared
+  timer among all disciplines"; agent 4.0.6). The row is "Disc", "Disc: Innerflame" while that discipline counts down, "Disc"
+  again when ready. Evidence: EQMacEmu `Client::GetDiscTimerID` returns 0 unless `Combat:UseDiscTimerGroups` (default false,
+  `common/ruletypes.h`), so every discipline starts and is refused by the same `pTimerDisciplineReuseStart`; `eqemu_spells` has
+  no timer-group column (only `recast_time`). ⏳ Quarm's own rule_values row is not mirrored; the member's report agrees with the default.
+- ✅ Cooldowns: **warrior Shield** (the guild lead, 2026-10-22: "Warriors need to have Shield timer (it's 3 minutes) and it
+  can't be activated with disciplines. Shield lasts for 12 seconds without AA"; agent 4.0.6). A Shield row (own timer, not Disc)
+  with a 3-minute reuse and a 12 s "active" window. Server: `Mob::StartShield` starts `shield_timer` 12000 ms (+12 s a rank of the
+  Living Shield AA) and `pTimerShield` 180 s in the same call; `Handle_OP_Shielding` refuses with SHIELD_NO_DISC while either person has
+  an active discipline, and with "You can use the ability /shield again in %u minute(s) %u seconds." on reuse; it needs a warrior of
+  level 30+. Lines (string_ids.h 3281/3282): "`<shielded>` begins to use `<warrior>` as a living shield!" starts it (only when the
+  warrior named is you), "`<warrior>` ceases protecting `<shielded>`." ends the active window early. Matches the report; no
+  discrepancy. ⏳ The AA rank is not on the pipe, so a warrior with Living Shield sees the 12 s window end before the real shield does
+  (the end line is exact when it comes); ⏳ the two strings are read from the comments in `zone/string_ids.h`, not seen in a live log yet.

@@ -558,6 +558,9 @@
   function cdView(c, at) {
     if (!c || c.seen === false) return null;
     if (c.failed) return { endAt: at, total: 1, text: '✗ failed', color: C.red, label: c.label };
+    // A shield being held up counts its own 12 s first (the agent sends active_ms_left on the Shield row only).
+    var on = num(c.active_ms_left);
+    if (on != null && on > 0) return { endAt: at + on, total: num(c.active_total_ms) || on, doneText: 'ready', label: c.label + ': active', color: C.green };
     var ms = num(c.ms_left);
     if (ms == null || ms <= 0) return { endAt: at, total: 1, doneText: 'ready', label: c.label };
     return { endAt: at + ms, total: num(c.total_ms) || ms, doneText: 'ready', label: c.label };
@@ -567,7 +570,7 @@
   // The HUD's short names for its cooldowns (me.html CD_SHORT), for the ring's cooldown arc.
   var CD_SHORT = { 'Flying Kick': 'FK', 'Round Kick': 'RK', 'Dragon Punch': 'DP', 'Eagle Strike': 'ES', 'Tiger Claw': 'TC',
     'Kick': 'KICK', 'Bash': 'BASH', 'Backstab': 'BS', 'Mend': 'MEND', 'Taunt': 'TNT', 'Harm Touch': 'HT',
-    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB' };
+    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB', 'Shield': 'SHLD' };
 
   var PARTS = [];
   function P(id, cat, label, src, kind, get, sample, extra) {
@@ -651,14 +654,20 @@
       return { items: d.cooldowns.filter(function (c) { return c.seen !== false; }).map(function (c) {
         var ms = num(c.ms_left); if (ms != null) ms -= Date.now() - at;
         var ready = !c.failed && (ms == null || ms <= 0), tot = num(c.total_ms);
-        return { name: c.label, short: CD_SHORT[c.label] || String(c.label || '').slice(0, 4).toUpperCase(), ready: ready,
+        // The shield's own 12 s while it is up: green, counting down, over the 3-minute reuse.
+        var on = num(c.active_ms_left); if (on != null) on -= Date.now() - at;
+        if (on != null && on > 0) {
+          return { name: c.label, short: 'SHLD', ready: false, frac: Math.max(0, Math.min(1, on / (num(c.active_total_ms) || on))),
+            text: 'on ' + mmss(on), color: C.green };
+        }
+        return { name: c.label, short: c.key === 'disc' ? 'DISC' : (CD_SHORT[c.label] || String(c.label || '').slice(0, 4).toUpperCase()), ready: ready,
           frac: !ready && ms != null && tot ? Math.max(0, Math.min(1, ms / tot)) : 0,
           text: c.failed ? '✗' : (ms == null || ms <= 0) ? 'ready' : mmss(ms),
           color: c.failed ? C.red : (ms == null || ms <= 0) ? C.green : C.orange }; }) };
     },
     { items: [{ name: 'Mend', short: 'MEND', ready: true, text: 'ready', color: C.green },
       { name: 'Feign Death', short: 'FD', frac: 0.7, text: '0:07', color: C.orange }] }, { short: 'Cooldowns' });
-  [['ability', 'Combat ability'], ['mend', 'Mend'], ['taunt', 'Taunt'], ['fd', 'Feign Death'], ['loh', 'Lay on Hands'], ['ht', 'Harm Touch'], ['disc', 'Discipline']]
+  [['ability', 'Combat ability'], ['mend', 'Mend'], ['taunt', 'Taunt'], ['shield', 'Shield'], ['fd', 'Feign Death'], ['loh', 'Lay on Hands'], ['ht', 'Harm Touch'], ['disc', 'Discipline']]
     .forEach(function (k) {
       P('me.cd_' + k[0], 'me', k[1] + ' cooldown', 'me', 'countdown',
         function (d, at) { return cdView(cd(d, k[0]), at); }, cdSample(k[1], 23000, 60000), { short: k[1] });

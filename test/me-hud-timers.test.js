@@ -290,7 +290,7 @@ describe('disciplines', () => {
     const h = load({ zeal: { Aldenmar: { charInfo: [{ id: 2, value: '60' }, { id: 3, value: 'Monk' }], updatedAt: clock } } });
     say(h, 'Aldenmar', 'Your fists begin to blur.');
     const d = h._meDisc('aldenmar', clock);
-    expect(d.label).toBe('Hundred Fists');
+    expect(d.label).toBe('Disc: Hundred Fists');
     expect(d.total_ms).toBe((1800 - 3 * 54) * 1000);
     expect(d.est).toBe(true);
   });
@@ -302,7 +302,7 @@ describe('disciplines', () => {
     const d = h._meDisc('aldenmar', clock);
     expect(d.ms_left).toBe(600_000);
     expect(d.est).toBe(false);
-    expect(d.label).toBe('Hundred Fists');
+    expect(d.label).toBe('Disc: Hundred Fists');
   });
 });
 
@@ -412,7 +412,7 @@ describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () =>
   it('each class always sees its own set — unknown (seen: false) until first used', () => {
     const keys = (cls) => load({ zeal: zeal(cls) })._serializeMeState().cooldowns.map(c => [c.key, c.seen]);
     expect(keys('Monk')).toEqual([['ability', false], ['mend', false], ['fd', false], ['disc', false]]);
-    expect(keys('Warrior')).toEqual([['ability', false], ['taunt', false], ['disc', false]]);
+    expect(keys('Warrior')).toEqual([['ability', false], ['taunt', false], ['shield', false], ['disc', false]]);
     expect(keys('Paladin')).toEqual([['loh', false], ['disc', false]]);
     expect(keys('Shadow Knight')).toEqual([['ht', false], ['disc', false]]);
     expect(keys('Rogue')).toEqual([['disc', false]]);
@@ -433,7 +433,7 @@ describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () =>
     clock += 2 * 3600_000;
     h._zealState.Aldenmar.updatedAt = clock;          // still logged in two hours later
     const d = cd(h, 'disc');
-    expect(d).toMatchObject({ label: 'Hundred Fists', ms_left: 0, seen: true });
+    expect(d).toMatchObject({ label: 'Disc', ms_left: 0, seen: true });   // ready: the name goes, the timer stays
   });
 
   it('long timers survive an agent restart (a Mimic update) — read back from disk', async () => {
@@ -447,7 +447,7 @@ describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () =>
       expect(Object.keys(globalThis.__hudDisk)).toEqual(['/agent/logsync.hud-timers.json']);
       clock += 60_000;
       const second = load({ zeal: monk60() });          // a fresh agent, same disk
-      expect(cd(second, 'disc')).toMatchObject({ label: 'Hundred Fists', ms_left: (1800 - 3 * 54) * 1000 - 60_000, seen: true });
+      expect(cd(second, 'disc')).toMatchObject({ label: 'Disc: Hundred Fists', ms_left: (1800 - 3 * 54) * 1000 - 60_000, seen: true });
       expect(cd(second, 'mend')).toMatchObject({ ms_left: 289_000 - 60_000, seen: true });
     } finally {
       vi.useRealTimers();
@@ -1756,5 +1756,143 @@ describe('FB-58: the shield badge reads what the shield did', () => {
     const h = load({ zeal: Z.zeal, dsKnown: 10 });
     landed(h, 18);
     expect(Object.keys(h._serializeMeState().combat.ds)).not.toContain('seen');
+  });
+});
+
+// The guild lead, 2026-10-22: "Disc in canvas shows on my monk as Innerflame, but it's a shared timer among all
+// disciplines. It should say Disc, then be responsive to what type of disc was used."
+// The server keeps ONE reuse timer per character for every discipline (Combat:UseDiscTimerGroups defaults to
+// false, so GetDiscTimerID returns 0 — zone/client.cpp), so there is one row, and the name rides it only
+// while it counts down.
+describe('one Disc timer, named for the discipline that is running', () => {
+  const monk60 = () => ({ Aldenmar: { charInfo: [{ id: 2, value: '60' }, { id: 3, value: 'Monk' }], gauges: [], updatedAt: clock } });
+  const discRows = (h) => h._serializeMeState().cooldowns.filter(c => c.key === 'disc');
+
+  it('reads "Disc" before any discipline has been seen', () => {
+    const rows = discRows(load({ zeal: monk60() }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ label: 'Disc', seen: false });
+  });
+
+  it('becomes "Disc: Innerflame" for that run, then "Disc" again when ready', () => {
+    const h = load({ zeal: monk60() });
+    say(h, 'Aldenmar', 'Your muscles bulge with the force of will.');   // Innerflame: 1800 − 4×54 s at 60 (unlocks 56)
+    expect(discRows(h)).toHaveLength(1);
+    expect(discRows(h)[0]).toMatchObject({ label: 'Disc: Innerflame', total_ms: (1800 - 4 * 54) * 1000 });
+    clock += (1800 - 4 * 54) * 1000 - 1000;
+    h._zealState.Aldenmar.updatedAt = clock;
+    expect(discRows(h)[0].label).toBe('Disc: Innerflame');   // one second left
+    clock += 1000;
+    h._zealState.Aldenmar.updatedAt = clock;
+    expect(discRows(h)[0]).toMatchObject({ label: 'Disc', ms_left: 0 });
+  });
+
+  it('a second discipline relabels the SAME row — there is never a row per discipline', () => {
+    const h = load({ zeal: monk60() });
+    say(h, 'Aldenmar', 'Your muscles bulge with the force of will.');
+    clock += 60_000;
+    h._zealState.Aldenmar.updatedAt = clock;
+    say(h, 'Aldenmar', 'Your fists begin to blur.');
+    const rows = discRows(h);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Disc: Hundred Fists');
+  });
+
+  it('the server\'s refusal line keeps the one row too, named by the disc that was seen', () => {
+    const h = load({ zeal: monk60() });
+    say(h, 'Aldenmar', 'Your muscles bulge with the force of will.');
+    h._discReadyAt.set('aldenmar', { at: clock + 600_000, name: 'Aldenmar' });
+    expect(discRows(h)).toHaveLength(1);
+    expect(discRows(h)[0]).toMatchObject({ label: 'Disc: Innerflame', ms_left: 600_000, est: false });
+    // A refusal with no activation ever seen (the agent started after it): just "Disc".
+    const fresh = load({ zeal: monk60() });
+    fresh._discReadyAt.set('aldenmar', { at: clock + 600_000, name: 'Aldenmar' });
+    expect(discRows(fresh)[0].label).toBe('Disc');
+  });
+});
+
+// The guild lead, 2026-10-22: "Warriors need to have Shield timer (it's 3 minutes) and it can't be activated
+// with disciplines. Shield lasts for 12 seconds without AA." From the server (EQMacEmu): Mob::StartShield sends
+// START_SHIELDING "%1 begins to use %2 as a living shield!" (%1 the shielded player, %2 the warrior), arms a
+// 12 000 ms shield_timer (+12 s a rank of the Living Shield AA) and starts pTimerShield for 180 s;
+// Mob::EndShield sends END_SHIELDING "%1 ceases protecting %2." (%1 the warrior); Handle_OP_Shielding refuses
+// with "You can use the ability /shield again in %u minute(s) %u seconds." and, while a discipline is active,
+// with SHIELD_NO_DISC (neither person may be using one).
+describe('the warrior Shield timer', () => {
+  const war = () => ({ Aldenmar: { charInfo: [{ id: 2, value: '60' }, { id: 3, value: 'Warrior' }], gauges: [], updatedAt: clock } });
+  const row = (h, key) => h._serializeMeState().cooldowns.find(c => c.key === key);
+  const START = 'Brackwyn begins to use Aldenmar as a living shield!';
+  const advance = (h, ms) => { clock += ms; h._zealState.Aldenmar.updatedAt = clock; };
+
+  it('is on a warrior\'s HUD from the start, unknown until used', () => {
+    expect(row(load({ zeal: war() }), 'shield')).toMatchObject({ label: 'Shield', seen: false });
+  });
+
+  it('your own start line: a 3-minute reuse, and 12 seconds of being up', () => {
+    const h = load({ zeal: war() });
+    say(h, 'Aldenmar', START);
+    expect(row(h, 'shield')).toMatchObject({ label: 'Shield', seen: true, ms_left: 180_000, total_ms: 180_000, active_ms_left: 12_000, active_total_ms: 12_000 });
+    advance(h, 5_000);
+    expect(row(h, 'shield')).toMatchObject({ ms_left: 175_000, active_ms_left: 7_000 });
+    advance(h, 8_000);   // 13 s in: the shield is down, the reuse runs on
+    const r = row(h, 'shield');
+    expect(r.ms_left).toBe(167_000);
+    expect(r.active_ms_left).toBeUndefined();
+    advance(h, 167_000);
+    expect(row(h, 'shield')).toMatchObject({ ms_left: 0, seen: true });
+  });
+
+  it('someone ELSE\'s shield, or you being the one shielded, starts nothing of yours', () => {
+    const h = load({ zeal: war() });
+    say(h, 'Aldenmar', 'Aldenmar begins to use Brackwyn as a living shield!');   // you are the shielded one
+    say(h, 'Aldenmar', 'Corvale begins to use Brackwyn as a living shield!');    // two strangers
+    expect(row(h, 'shield').seen).toBe(false);
+  });
+
+  it('"<you> ceases protecting <x>." ends the 12 s early and leaves the reuse alone; another warrior\'s end does nothing', () => {
+    const h = load({ zeal: war() });
+    say(h, 'Aldenmar', START);
+    advance(h, 3_000);
+    say(h, 'Aldenmar', 'Corvale ceases protecting Brackwyn.');
+    expect(row(h, 'shield').active_ms_left).toBe(9_000);
+    say(h, 'Aldenmar', 'Aldenmar ceases protecting Brackwyn.');
+    const r = row(h, 'shield');
+    expect(r.active_ms_left).toBeUndefined();
+    expect(r.ms_left).toBe(177_000);
+  });
+
+  it('the server\'s refusal line puts the timer right and is not mistaken for an AA', () => {
+    const h = load({ zeal: war() });
+    say(h, 'Aldenmar', 'You can use the ability /shield again in 2 minute(s) 30 seconds.');
+    expect(row(h, 'shield')).toMatchObject({ seen: true, ms_left: 150_000, total_ms: 180_000 });
+    expect(h._serializeMeState().cooldowns.map(c => c.key).filter(k => k.startsWith('aa:'))).toEqual([]);
+  });
+
+  it('is separate from the Disc timer, both ways', () => {
+    const h = load({ zeal: war() });
+    say(h, 'Aldenmar', START);
+    expect(row(h, 'disc')).toMatchObject({ label: 'Disc', seen: false });          // a shield is not a discipline
+    say(h, 'Aldenmar', 'You assume an aggressive fighting style.');                  // Aggressive, a warrior disc
+    const shield = row(h, 'shield');
+    expect(shield).toMatchObject({ ms_left: 180_000, active_ms_left: 12_000 });      // and a discipline is not a shield
+    expect(row(h, 'disc')).toMatchObject({ label: 'Disc: Aggressive', seen: true });
+    expect(row(h, 'disc').total_ms).not.toBe(180_000);
+  });
+
+  it('survives an agent restart like the other long timers (read back from disk)', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      globalThis.__hudDisk = {};
+      const first = load({ zeal: war() });
+      say(first, 'Aldenmar', START);
+      vi.advanceTimersByTime(2100);
+      clock += 60_000;
+      const second = load({ zeal: war() });
+      expect(row(second, 'shield')).toMatchObject({ seen: true, ms_left: 120_000 });
+      expect(row(second, 'shield').active_ms_left).toBeUndefined();   // the 12 s is long over
+    } finally {
+      vi.useRealTimers();
+      delete globalThis.__hudDisk;
+    }
   });
 });

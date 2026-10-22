@@ -713,14 +713,14 @@
   }
   var CD_SHORT = { 'Flying Kick': 'FK', 'Round Kick': 'RK', 'Dragon Punch': 'DP', 'Eagle Strike': 'ES', 'Tiger Claw': 'TC',
     'Kick': 'KICK', 'Bash': 'BASH', 'Backstab': 'BS', 'Mend': 'MEND', 'Taunt': 'TNT', 'Harm Touch': 'HT',
-    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB' };
+    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB', 'Shield': 'SHLD' };
   function cdShort(c){ return c.key === 'disc' ? 'DISC' : (CD_SHORT[c.label] || String(c.label || '').slice(0, 4).toUpperCase()); }
   // A class cooldown not used yet this session is UNKNOWN — dim, never green:
   // we cannot tell ready from used-before-Mimic-started.
   // A failed Feign Death is red with a ✗ (round seven: "FD cooldown in the Hud
   // should show an X on it"); the agent keeps `failed` until 5 s after it is back.
-  function cdColor(c){ return !c.seen ? 'var(--dim)' : (c.failed ? 'var(--red)' : (c.left <= 0 ? 'var(--green)' : (c.key === 'disc' ? 'var(--purple)' : '#c9d1d9'))); }
-  function cdValue(c){ return !c.seen ? '—' : (c.failed ? '✗' + (c.left > 0 ? ' ' + tfmt(c.left) : '') : (c.left > 0 ? tfmt(c.left) : 'ready')); }
+  function cdColor(c){ return !c.seen ? 'var(--dim)' : (c.failed ? 'var(--red)' : (c.on > 0 || c.left <= 0 ? 'var(--green)' : (c.key === 'disc' ? 'var(--purple)' : '#c9d1d9'))); }
+  function cdValue(c){ return !c.seen ? '—' : (c.failed ? '✗' + (c.left > 0 ? ' ' + tfmt(c.left) : '') : (c.on > 0 ? 'on ' + tfmt(c.on) : (c.left > 0 ? tfmt(c.left) : 'ready'))); }
   // Round six (the guild lead, 2026-09-24): "Corpses shouldn't ever say 'not
   // slowed'" · "If a mob is unslowable it should say that in its place, but
   // also smaller text."
@@ -770,7 +770,10 @@
     d.cds = (s.cooldowns || []).map(function(c){
       var seen = c.seen !== false && c.ms_left != null;
       var l = seen ? Math.max(0, c.ms_left - dt) : null;
-      return { key: c.key, label: c.label, left: l, frac: seen && c.total_ms ? l / c.total_ms : 0, est: c.est, seen: seen, failed: c.failed === true };
+      // A shield being held up counts its own 12 s (active_ms_left, the Shield row only) over the 3-minute reuse.
+      var on = seen && c.active_ms_left > 0 ? Math.max(0, c.active_ms_left - dt) : 0;
+      return { key: c.key, label: c.label, left: l, frac: on ? on / (c.active_total_ms || on) : (seen && c.total_ms ? l / c.total_ms : 0),
+        est: c.est, seen: seen, failed: c.failed === true, on: on };
     });
     var t = s.target;
     if (t) {
@@ -902,7 +905,7 @@
     return null;
   }
   function cdItems(d, p){
-    return p.cooldowns ? d.cds.map(function(c){ return { label: cdShort(c), value: cdValue(c), frac: c.frac, color: cdColor(c), ready: c.seen && c.left <= 0 && !c.failed }; }) : [];
+    return p.cooldowns ? d.cds.map(function(c){ return { label: cdShort(c), value: cdValue(c), frac: c.frac, color: cdColor(c), ready: c.seen && c.left <= 0 && !c.failed && !(c.on > 0) }; }) : [];
   }
 
   // ── The builder: which parts the HUD draws ─────────────────────────────────

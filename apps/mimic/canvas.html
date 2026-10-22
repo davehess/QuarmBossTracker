@@ -146,6 +146,15 @@
     border-radius:3px 0 0 3px;opacity:0.6;cursor:move}
   .mvbtn:hover{opacity:1}
   .panel.mvin .mvbtn{right:auto;left:0;border-radius:0 0 3px 0}
+  /* Dismiss, on a piece set to show When charming: hides it until the next charm lands (the guild lead, 2026-10-22:
+     "Dismiss gets rid of it until they charm again"). On the hover handshake like the ✥, so the rest of the piece
+     stays click-through; just outside the top-right corner; only that rule's pieces have one, and not while arranging. */
+  .dsmbtn{display:none;position:absolute;top:0;left:100%;width:16px;height:16px;line-height:16px;
+    text-align:center;font-size:11px;color:#8b949e;background:rgba(13,17,23,0.6);
+    border-radius:0 3px 3px 0;opacity:0.6;cursor:pointer}
+  .dsmbtn:hover{opacity:1;color:#f85149}
+  .panel.chm .dsmbtn{display:block}
+  :is(body.edit, .panel.one) .dsmbtn{display:none}
   body.edit .mvbtn{display:none}
   /* One ✥ per group: the top-left piece carries it and moves them all. */
   .panel.mvtail .mvbtn{display:none}
@@ -354,6 +363,7 @@
     ['target',   'Have a target'],
     ['npc',      'NPC target'],
     ['raid',     'In a raid'],
+    ['charming', 'When charming'],
   ];
   var WHEN_CLASSES = [['Warrior', 'WAR'], ['Cleric', 'CLR'], ['Paladin', 'PAL'], ['Ranger', 'RNG'], ['Shadow Knight', 'SHD'],
     ['Druid', 'DRU'], ['Monk', 'MNK'], ['Bard', 'BRD'], ['Rogue', 'ROG'], ['Shaman', 'SHM'], ['Necromancer', 'NEC'],
@@ -377,7 +387,7 @@
   // The agent's sources a rule reads (the canvas polls a source only while something needs it).
   function whenSources(p) {
     var k = [];
-    if (p.when === 'raid') k.push('state');
+    if (p.when === 'raid' || p.when === 'charming') k.push('state');
     else if (p.when) k.push('me');
     if (p.cls && p.cls.length && k.indexOf('me') < 0) k.push('me');
     return k;
@@ -397,7 +407,7 @@
   // What the agent says right now, from /api/me and /api/state: true / false, or null when unknown. `miss`
   // names a signal the agent answered without (an older agent), so the menu can say so.
   function whenSignals(me, state, now) {
-    var s = { combat: null, target: null, npc: null, raid: null, cls: null, miss: {} };
+    var s = { combat: null, target: null, npc: null, raid: null, charming: null, cls: null, miss: {} };
     if (me && me.character) {
       if (me.combat && typeof me.combat.live === 'boolean') s.combat = me.combat.live; else s.miss.combat = true;
       if ('target' in me) { s.target = !!me.target; s.npc = targetIsNpc(me.target); } else { s.miss.target = true; s.miss.npc = true; }
@@ -410,6 +420,11 @@
         var rp = state.raidPipe;
         s.raid = !!(rp && Array.isArray(rp.members) && rp.members.length && now - rp.at < RAID_FRESH_MS);
       }
+      // "When charming": the agent keeps the session (a charm lands → shown through the gaps between charms →
+      // 10 minutes after the last, or a dismissal until the next charm); the canvas only reads it.
+      var cs = state.charmSession;
+      if (!cs || typeof cs.charming !== 'boolean') s.miss.charming = true;
+      else s.charming = cs.charming;
     }
     return s;
   }
@@ -427,6 +442,7 @@
     else if (p.when === 'target') v = sig.target;
     else if (p.when === 'npc') v = sig.npc;
     else if (p.when === 'raid') v = sig.raid;
+    else if (p.when === 'charming') v = sig.charming;
     if (v === false) return false;
     if (p.cls && p.cls.length && sig.cls !== null) {
       var mine = sig.cls.toLowerCase();
@@ -983,6 +999,11 @@
     mv.textContent = '✥';
     mv.setAttribute('data-wp-interact', '');
     mv.title = 'Drag to move this panel · right-click for what it shows';
+    var dsm = document.createElement('span');
+    dsm.className = 'dsmbtn';
+    dsm.textContent = '✕';
+    dsm.setAttribute('data-wp-interact', '');
+    dsm.title = 'Dismiss until you charm again';
     var whb = document.createElement('span');
     whb.className = 'whb';
     // The right and bottom edges, each sizing one direction (CSS shows them while arranging, page frames only).
@@ -990,7 +1011,7 @@
     er.className = 'edge er'; eb.className = 'edge eb';
     er.setAttribute('data-wp-interact', ''); eb.setAttribute('data-wp-interact', '');
     er.title = 'Drag to set the width'; eb.title = 'Drag to set the height';
-    root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(er); root.appendChild(eb); root.appendChild(mv); root.appendChild(whb);
+    root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(er); root.appendChild(eb); root.appendChild(mv); root.appendChild(dsm); root.appendChild(whb);
     var e = { root: root, tab: tab, frame: fr, body: body, grip: grip, mv: mv, whb: whb };
     if (fr) fr.addEventListener('load', function () {
       var q = panelById(p.id);
@@ -1004,6 +1025,7 @@
     });
     root.addEventListener('mousedown', function (ev) {
       if (ev.target.closest('.ctl')) return;
+      if (ev.target === dsm) { ev.stopPropagation(); dismissCharming(); return; }
       if (ev.target === mv) { startDrag(ev, p.id, 'move', true); return; }
       if (ev.target === grip) { startDrag(ev, p.id, 'size', false, '', true); return; }
       if (ev.target === er) { startDrag(ev, p.id, 'size', false, 'x'); return; }
@@ -1257,6 +1279,7 @@
       e.root.classList.toggle('back', backOf(p, canvasDefaultBack()));
       e.root.classList.toggle('plock', isLocked(p));
       e.root.classList.toggle('rc', isCorner(p));
+      e.root.classList.toggle('chm', p.when === 'charming');
       e.root.style.setProperty('--pa', String(alphaOf(p)));
       e.root.classList.toggle('pfade', alphaOf(p) < 1);
       e.root.classList.toggle('fitempty', !!_fitEmpty[p.id]);
@@ -2324,6 +2347,20 @@
       ? 'This agent does not report what the rule needs: needs a newer agent. The panel stays visible until it does.'
       : 'Out in play it hides while the rule is false and comes back on its own. Arranging shows everything.') + '</div>';
     return h;
+  }
+  // The ✕ on a "When charming" piece: the agent holds the dismissal (until a charm newer than the newest so far
+  // lands), so every piece with the rule goes together; the answer is asked for again at once instead of
+  // waiting out the next poll.
+  function dismissCharming() {
+    var st = liveData('state');
+    fetch('http://127.0.0.1:' + PORT + '/api/charm-session/dismiss', {
+      method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character: (st && st.activeCharacter) || null })
+    }).catch(function () {}).then(function () {
+      var s = _src.state;
+      if (s && s.data && s.data.charmSession) s.data.charmSession.charming = false;
+      applyWhen();
+    });
   }
   function applyWhen() {
     var sig = null;
