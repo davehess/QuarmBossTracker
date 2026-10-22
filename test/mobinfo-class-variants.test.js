@@ -57,7 +57,7 @@ describe('mob-info reports the pair, not the winner as fact', () => {
   it('a gender hint picks the exact body and is part of the cache key', () => {
     expect(handler).toMatch(/const reqGender = _parseGender\(new URL\(req\.url, 'http:\/\/x'\)\.searchParams\.get\('gender'\)\);/);
     expect(handler).toMatch(/if \(classAmbiguous && reqGender != null\) \{/);
-    expect(handler).toMatch(/\+ \(reqGender != null \? '\|g' \+ reqGender : ''\);/);
+    expect(handler).toMatch(/\+ \(reqGender != null \? '\|g' \+ reqGender : ''\)/);
   });
 });
 
