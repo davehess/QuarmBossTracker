@@ -14355,6 +14355,23 @@ function _extBindInstances(hpClusters, posInstances) {
   return out;
 }
 
+// A pos-split row gets the health of ITS OWN raiders, and nothing when none of them reported one: the siblings of a
+// split share the merged cluster's median, so leaving it on a row with no report of its own copied one mob's health
+// onto all of them (the guild lead, 2026-10-21, a boss's split: four rows of one name, every row at 85% while the
+// game's own window said 78%). Mutates the rows, like the loop it replaced.
+function _extPosSplitOwnHp(rows, hpOfRaider) {
+  // Same median as the handler's (round-half-up on an even count), duplicated so this stays a pure function.
+  const median = (arr) => {
+    const a = [...arr].sort((x, y) => x - y); const m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2);
+  };
+  for (const c of rows) {
+    if (!c.pos_split) continue;
+    const hps = c.raiders.map(r2 => hpOfRaider.get(String(r2).toLowerCase())).filter(h => h != null);
+    c.hp = hps.length ? median(hps) : null;
+  }
+}
+
 // Spawn ids overrule the position and HP guesses in BOTH directions.
 // _extIdInstances only ever used them to SPLIT (≥2 distinct ids). When the
 // targeters of a name all report ONE id, that is proof of one mob — and the
@@ -15376,11 +15393,7 @@ async function _handleAgentExtendedTarget(req, res) {
       // A pos-split row inherits the merged cluster's median — recompute from
       // the raiders that actually landed on it so the two rows don't show one HP.
       const hpOfRaider = new Map(g.obs.filter(o => o.hp != null).map(o => [String(o.raider).toLowerCase(), o.hp]));
-      for (const c of rows) {
-        if (!c.pos_split) continue;
-        const hps = c.raiders.map(r2 => hpOfRaider.get(String(r2).toLowerCase())).filter(h => h != null);
-        if (hps.length) c.hp = median(hps);
-      }
+      _extPosSplitOwnHp(rows, hpOfRaider);
       // Ids overrule the position/HP guesses in the MERGE direction too.
       const idOfRaider = new Map(g.obs.filter(o => o.id != null).map(o => [String(o.raider).toLowerCase(), o.id]));
       rows = _extMergeByAgreedId(rows, idOfRaider, hpOfRaider);
