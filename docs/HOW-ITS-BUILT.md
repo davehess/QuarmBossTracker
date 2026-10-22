@@ -4458,6 +4458,12 @@ The raid on the zone map, live, for signed-in members.
   decodes a row (`decodeMinute`, applies the same axis swap), picks the zone to show, and finds the frame at a
   time; `test/raid-replay-decode.test.js` builds rows with the bot's real `buildMinuteRow`. The map layers come
   from the live board (`prepare`, `bandColor` exported from `SpectatorBoard.tsx`).
+- **Raid path previews (web 2.0.10, two previews awaiting the guild lead's pick, `?v=b` whole-night path with numbered kills /
+  `?v=c` fading trail; `https://b.wolfpack.quest/spectator/replay?v=b`, `?v=c`, and the same on `/share/raid/<token>`):** the raid
+  centre per frame (median of the raiders placed in the zone, median z kept; the route pages' rule) is computed in the browser by
+  `web/lib/replayPath.ts` from the frames `ReplayBoard.tsx` already decodes; drawn in 2D by `drawRoute*` there and in 3D by
+  `RouteLayer3D.ts`. Variant b also reads the other 15-minute windows through the board's own window route, one at a time. No new
+  query. Test: `test/replay-path.test.js`.
 - **Tests:** `test/spectator-positions.test.js`, `test/zone-map-slice.test.js`, `test/zone-map-brewall.test.js`,
   `test/raid-track.test.js`.
 
