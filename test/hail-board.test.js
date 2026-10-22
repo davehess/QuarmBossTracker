@@ -179,6 +179,67 @@ describe('a hail boss kill opens a window', () => {
     expect(e.upserts).toHaveLength(0);
   });
 
+  // The event Tallon/Vallon (the War Room) die without a projection; the wing brothers' deaths spawn one, and the
+  // kill log names both alike. A roster row's loc_x / loc_y are the pipe frame (server y, server x).
+  // Positions below are server-frame places, put into the rows swapped.
+  const placed = (names, serverX, serverY, locAtMin = 0, uploader = 'u1') => names.map((n, i) => ({
+    guild_id: 'g', name: n, uploaded_by_discord_id: uploader, captured_at: at(0),
+    loc_x: serverY + i, loc_y: serverX + i, loc_z: 160, loc_at: at(locAtMin),
+  }));
+  const BROTHERS = [['tallon_zek', 'Tallon Zek'], ['vallon_zek', 'Vallon Zek']];
+
+  it('a Tallon or Vallon kill with the raid in the War Room opens no window (the event brothers spawn no projection)', async () => {
+    for (const [bossId, bossName] of BROTHERS) {
+      const e = env({ raid_roster: placed(RAID, 600, 0) });
+      expect(await e.hb.openWindow({ bossId, killedAtMs: KILL })).toBeNull();
+      expect(await e.hb.openWindow({ bossName, killedAtMs: KILL })).toBeNull();
+      expect(e.hb._windows()).toHaveLength(0);
+      expect(e.upserts.filter(u => u.table === 'bot_kv')).toHaveLength(0);
+    }
+  });
+
+  it('the same kill with the raid in a wing opens the window, on either wing', async () => {
+    for (const [bossId, bossName, y] of [['tallon_zek', 'Tallon Zek', -1958], ['vallon_zek', 'Vallon Zek', 1980]]) {
+      const e = env({ raid_roster: placed(RAID, -650, y) });
+      const w = await e.hb.openWindow({ bossName, killedAtMs: KILL });
+      expect(w).toMatchObject({ boss_id: bossId, npc_name: 'A Planar Projection', expires_at: at(20) });
+      expect([...w.roster].sort()).toEqual([...RAID].sort());
+    }
+  });
+
+  it('opens when there is no usable position: none stored, too few raiders, another zone (0, 0), or a stale position', async () => {
+    const noLoc = RAID.map(n => ({ guild_id: 'g', name: n, uploaded_by_discord_id: 'u1', captured_at: at(0), loc_x: null, loc_y: null, loc_at: null }));
+    const cases = {
+      'no position': noLoc,
+      'two raiders': placed(RAID.slice(0, 2), 600, 0),
+      'other zone': placed(RAID, 0, 0).map(r => ({ ...r, loc_x: 0, loc_y: 0 })),
+      'stale position': placed(RAID, 600, 0, -5),
+    };
+    for (const [why, rows] of Object.entries(cases)) {
+      const e = env({ raid_roster: rows });
+      expect(await e.hb.openWindow({ bossName: 'Tallon Zek', killedAtMs: KILL }), why).toMatchObject({ boss_id: 'tallon_zek' });
+    }
+  });
+
+  it('judges the raid by its median: a few stragglers in the War Room do not hide a wing kill, and a few outside do not open an event one', async () => {
+    const wing = env({ raid_roster: [...placed(RAID.slice(0, 7), -650, -1958), ...placed(RAID.slice(7), 600, 0, 0, 'u2')] });
+    expect(await wing.hb.openWindow({ bossName: 'Tallon Zek', killedAtMs: KILL })).toMatchObject({ boss_id: 'tallon_zek' });
+    const room = env({ raid_roster: [...placed(RAID.slice(0, 7), 600, 0), ...placed(RAID.slice(7), -650, -1958, 0, 'u2')] });
+    expect(await room.hb.openWindow({ bossName: 'Vallon Zek', killedAtMs: KILL })).toBeNull();
+  });
+
+  it('only the brothers are position-checked: any other boss opens in the War Room, and the box is the event brothers\' room', async () => {
+    const e = env({ raid_roster: placed(RAID, 600, 0) });
+    expect(await e.hb.openWindow({ bossName: 'Rallos Zek the Warlord', killedAtMs: KILL })).toMatchObject({ boss_id: 'rallos_zek_warlord' });
+    expect(e.calls('raid_roster', /loc_x/)).toBe(0);
+    // server (x, y) → roster (loc_x = y, loc_y = x)
+    expect(hailBoard.inWarRoom(-560, 621)).toBe(true);     // the event Tallon
+    expect(hailBoard.inWarRoom(581, 594)).toBe(true);      // the event Vallon
+    expect(hailBoard.inWarRoom(-1958, -619)).toBe(false);  // the south wing
+    expect(hailBoard.inWarRoom(1980, -821)).toBe(false);   // the north wing
+    expect(hailBoard.inWarRoom(0, 0)).toBe(false);
+  });
+
   it('uses the fight\'s participants when no roster is fresh, and still opens (pending) when there is nobody at all', async () => {
     const none = env();
     const empty = await none.hb.openWindow({ bossId: 'saryrn', killedAtMs: KILL });

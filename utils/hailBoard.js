@@ -63,6 +63,29 @@ const SAME_KILL_MS   = 30 * MIN;   // two relays of one death land this close to
 
 const PROJECTION = ['planar projection', 'projection'];
 
+// Plane of Tactics has TWO Tallon Zeks and TWO Vallon Zeks, and the kill log names them alike. The wing brothers
+// die with the projection hail; the event brothers (the War Room, spawned by the Rallos script) do not: their
+// death prints a zone emote and spawns nothing (the guild lead, 2026-10-22: "when we killed either of the event
+// versions it gave us a timer for the planar projection ... when it shouldn't have"). Only where the raid stood
+// at the kill tells them apart. The roster's loc_x / loc_y are the Zeal pipe's frame, the server frame swapped
+// (verified 2026-10-22 against a night's recorded raid positions in this zone), so server x = loc_y and
+// server y = loc_x. The War Room spans server x 180..1290 and |y| < 700 (the event brothers stand at about
+// (621, -560) and (594, 581), the wing brothers at |y| ~ 2000). No usable position keeps the window: a missed
+// hail is worse than one extra timer.
+const EVENT_TWIN_IDS = new Set(['tallon_zek', 'vallon_zek']);
+const WAR_ROOM_X_MIN = 180, WAR_ROOM_X_MAX = 1290, WAR_ROOM_Y_ABS_MAX = 700;   // server frame
+const LOC_FRESH_MS = 2 * MIN;      // a position older (or later) than this at the kill is not where the raid fought
+const LOC_MIN_RAIDERS = 3;         // fewer placed raiders than this is not a raid position
+
+function inWarRoom(locX, locY) {
+  const sx = locY, sy = locX;
+  return sx >= WAR_ROOM_X_MIN && sx <= WAR_ROOM_X_MAX && Math.abs(sy) < WAR_ROOM_Y_ABS_MAX;
+}
+function median(a) {
+  const s = a.slice().sort((p, q) => p - q), h = s.length >> 1;
+  return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
+}
+
 // One row per boss. `done` = flag keys (stage names and the catalog keys STAGE_IMPLIES derives) that prove
 // this hail's step, or a LATER step of the same series, is held — a series only shows its latest value.
 // `checklist` = the cl_ key a hail gives when the step before it is missing. `prior` = requirements, each a
@@ -385,19 +408,31 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
 
   // `ok` is false when the read itself failed — a failed read is not an empty raid. `untilMs` bounds a retry's
   // read to the window's own span.
-  async function snapshotRoster(killedAtMs, untilMs) {
+  // `withLoc` also reads the rows' positions → `pos` = the raid's median { x, y } in the roster's own frame at the
+  // kill (rows whose loc_at is within LOC_FRESH_MS of it, one per raider), or null when too few raiders were placed.
+  async function snapshotRoster(killedAtMs, untilMs, withLoc = false) {
     const rows = await supabase.selectAllPaged('raid_roster',
       `guild_id=eq.${enc(gid())}&captured_at=gte.${enc(iso(killedAtMs - ROSTER_FRESH_MS))}` +
       (untilMs ? `&captured_at=lte.${enc(iso(untilMs))}` : '') +
-      '&select=name,uploaded_by_discord_id', 'uploaded_by_discord_id.asc,name').catch(() => null);
-    const names = new Map(), uploaders = new Set();
+      `&select=name,uploaded_by_discord_id${withLoc ? ',loc_x,loc_y,loc_at' : ''}`, 'uploaded_by_discord_id.asc,name').catch(() => null);
+    const names = new Map(), uploaders = new Set(), placed = new Map();
     for (const r of rows || []) {
       if (!isCharName(r.name)) continue;
       const nm = String(r.name).trim();
       if (!names.has(lc(nm))) names.set(lc(nm), nm);
       if (r.uploaded_by_discord_id) uploaders.add(String(r.uploaded_by_discord_id));
+      if (withLoc) {
+        const x = Number(r.loc_x), y = Number(r.loc_y), at = Date.parse(r.loc_at);
+        // (0, 0) is a raider in another zone from the uploader, not a place.
+        if (r.loc_x == null || r.loc_y == null || !Number.isFinite(x) || !Number.isFinite(y) || (x === 0 && y === 0)) continue;
+        if (!Number.isFinite(at) || Math.abs(at - killedAtMs) > LOC_FRESH_MS) continue;
+        const k = lc(nm);
+        if (!placed.has(k) || at > placed.get(k).at) placed.set(k, { x, y, at });
+      }
     }
-    return { names: [...names.values()].slice(0, MAX_NAMES), uploaders: [...uploaders], ok: Array.isArray(rows) };
+    const pts = [...placed.values()];
+    const pos = pts.length >= LOC_MIN_RAIDERS ? { x: median(pts.map(p => p.x)), y: median(pts.map(p => p.y)), n: pts.length } : null;
+    return { names: [...names.values()].slice(0, MAX_NAMES), uploaders: [...uploaders], ok: Array.isArray(rows), pos };
   }
 
   // The fight's player list is every name that dealt damage, and a summoned pet whose owner the parse could not
@@ -461,7 +496,11 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
       // The raid snapshot and the fight's own player list are BOTH the roster. A snapshot read that failed
       // (the post-kill upload burst times Supabase out) or came back empty does not freeze a thin roster: the
       // window opens `roster_pending` and getBoard re-reads it (FB-71: 47 of 48 hailers were invisible).
-      const snap = await snapshotRoster(killed);
+      const snap = await snapshotRoster(killed, undefined, EVENT_TWIN_IDS.has(cfg.id));
+      if (snap.pos && inWarRoom(snap.pos.x, snap.pos.y)) {
+        if (log && log.info) log.info(`[hail-board] ${cfg.name} died in the War Room (${snap.pos.n} raiders placed): the event brother spawns no projection, no window`);
+        return null;
+      }
       const inRaid = new Set(snap.names.map(lc));
       const fighters = await guildOnly((participants || []).filter(n => !inRaid.has(lc(n))));
       const w = {
@@ -713,5 +752,5 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
 
 module.exports = {
   create, hailFor, buildViews, bossKey, HAIL_BOSSES, HAIL_FLAGGERS, HAIL_TRIALS,
-  WINDOW_MS, KEEP_AFTER_MS, FLAG_SLACK_MS, ROSTER_FRESH_MS, KV_KEY,
+  WINDOW_MS, KEEP_AFTER_MS, FLAG_SLACK_MS, ROSTER_FRESH_MS, KV_KEY, inWarRoom,
 };

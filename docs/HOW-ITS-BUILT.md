@@ -2752,6 +2752,11 @@ first `opensOn` grant (`thelin_2` event / `cl_maze` checklist) whose zone resolv
 only grants in state 4, after the last construct, the shard and Terris-Thule's talk — and runs `minutes: 10` (his
 state-4 depop) from that grant; roster = the current raid. Hails open nothing (the 3.1.258 two-groups-hail opener
 fired at the maze's START). One window per NPC at a time. No Mimic change: `hailBoardHtml` draws it.
+**Event brothers (bot 4.0.5, 2026-10-22):** Tactics has two Tallon Zeks and two Vallon Zeks. Only the wing pair's death spawns the
+Projection; the War Room pair (spawned by the Rallos script) spawns nothing, and the kill log names both alike. For the `tallon_zek` /
+`vallon_zek` rows `openWindow` takes the median `raid_roster` position at the kill (`snapshotRoster(…, withLoc)`; `loc_at` within
+`LOC_FRESH_MS`, at least `LOC_MIN_RAIDERS`; roster x/y = server y/x) and opens nothing when `inWarRoom` (server x 180..1290, |y| < 700).
+No usable position opens the window as before.
 **More proof (bot 3.1.271, 2026-10-15, §334):** "already flagged" also counts a member's own PoP-guide tick (`pop_guide_ticks`) and a
 /who sighting inside a plane that flag opens (`pop_who_sightings` RPC) — `readProof` in `utils/hailBoard.js`, tables in
 `utils/popSelfProof.js` (copies of `web/lib/popWho.ts` / `popGuide.ts`, drift-tested in `test/hail-board.test.js`). A failed read
