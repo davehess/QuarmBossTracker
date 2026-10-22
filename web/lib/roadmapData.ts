@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-1-2026-10-22',
+    title: 'Raid Mimic 3.0.1',
+    version: 'Mimic 3.0.1 · Agent 4.0.5 · Bot 4.0.6',
+    date: '2026-10-22',
+    headline: 'The Map shows which way everyone faces and only the raiders in your zone, and the raid cards follow the October 22 server patch.',
+    features: [
+      { name: 'Facing on the Map', blurb: 'A small arrow in each raider\'s class colour points where they are looking. Prefer slices? Pick Facing: Arrow, Slice or Off in the Map\'s settings.' },
+      { name: 'Live zone or instance', blurb: 'The Map header says whether you are in the live zone or an instance, read from the zone server, instead of guessing from /who.' },
+      { name: 'The raid route on the Map', blurb: 'The route your officers save on the website is drawn on the Map with numbered stops.' },
+      { name: 'Raid cards follow the server patch', blurb: 'The Rathe Council has no time limit; the Avatar of Earth waits 50 idle minutes and refills if it loses aggro; Tallon and Vallon reset if they lose aggro in the War Room. A new callout says when a brother resets.' },
+    ],
+    fixes: [
+      'A raider in another zone showed up on your Map. They stay off it now.',
+      'When a boss splits into rows with the same name, Extended Target no longer copies one health and damage line onto every row.',
+      'Killing the event Tallon or Vallon in the War Room opened a Planar Projection hail window. Only the wing brothers spawn a Projection, so only they open one now.',
+    ],
+  },
+  {
     key: 'route-planner-3d-2026-10-22',
     title: 'Web 2.1.0',
     version: 'Web 2.1.0',
