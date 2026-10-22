@@ -135,7 +135,7 @@ const TAG_LOOK: Record<Kind, string> = {
 };
 
 /** The walls of an unpacked mesh as a flat-shaded, height-tinted, see-through mesh. */
-function buildMesh(u: UnpackedMesh): Mesh {
+export function buildMesh(u: UnpackedMesh): Mesh {
   const pos = positionsToThree(u.pos);
   const lo = u.min[2], span = Math.max(1, u.max[2] - u.min[2]);
   const ramp = Array.from({ length: PALETTE }, (_, i) =>
@@ -163,7 +163,7 @@ function buildMesh(u: UnpackedMesh): Mesh {
  * (lib/zoneFloor.ts): height ramp x slope x a north-west light. Roofs are left out (a cave roof would hide the
  * cave from above); the camera still treats them as solid through `grid`, which is built from every triangle.
  */
-function buildFloorMesh(u: UnpackedMesh): { mesh: Mesh | null; grid: TriGrid | null } {
+export function buildFloorMesh(u: UnpackedMesh): { mesh: Mesh | null; grid: TriGrid | null } {
   const all = positionsToThree(u.pos);
   const grid = buildTriGrid(all);
   const fs = shadeFloors(u.pos);

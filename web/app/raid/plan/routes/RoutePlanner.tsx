@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import type { FewestKill } from '@/lib/routePlanner/fewest';
 import { fewestByNpc } from '@/lib/routePlanner/fewest';
@@ -18,6 +19,7 @@ import type { ChecklistStep } from '@/lib/routePlanner/build';
 import { plannedHeadcount } from '@/lib/routePlanner/plan';
 import type { PlanSummary } from '@/lib/routePlanner/store';
 import type { Mob, Plan, ZoneData } from '@/lib/routePlanner/types';
+import { sanitize } from '@/lib/routePlanner/plan';
 import {
   createRoutePlan, deleteRoutePlan, importSeedPlan, pollRoutePlan, publishRoutePlan, saveRoutePlan, updateRoutePlanMeta,
   type PlanDocOut,
@@ -28,6 +30,10 @@ import ComparePanel from './ComparePanel';
 import './planner.css';
 
 type Api = ReturnType<typeof mountPlanner>;
+
+// The 3D previews (?v=b stacked floors, ?v=c true 3D) are loaded only when the 3D button is pressed, so the 2D page
+// never downloads three.js.
+const Plan3D = dynamic(() => import('./Plan3D'), { ssr: false, loading: () => <div className="p3-note">Loading the 3D view…</div> });
 
 export type RoutePlannerProps = {
   zone: ZoneData;
@@ -42,6 +48,8 @@ export type RoutePlannerProps = {
   cardNote: string;
   seed: { label: string; pins: number } | null;
   fewest: FewestKill[];
+  /** The 3D preview asked for with ?v= ('b' stacked floors, 'c' true 3D); null on the page everyone sees. */
+  variant?: 'b' | 'c' | null;
 };
 
 const SAVE_DELAY_MS = 1000;
@@ -62,6 +70,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
   const [previewing, setPreviewing] = useState(false);
   const [skipOptional, setSkipOptional] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [view3d, setView3d] = useState(false);
   const [confirm, setConfirm] = useState<null | { kind: 'publish'; text: string } | { kind: 'import'; text: string }>(null);
 
   // saving + polling state: refs, because the engine's callbacks outlive any one render
@@ -209,7 +218,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
   const [delArm, setDelArm] = useState(false);
   useEffect(() => { setNameDraft(meta.name); setTargetDraft(meta.target == null ? '' : String(meta.target)); }, [meta.name, meta.target]);
 
-  const href = (id: string) => `/raid/plan/routes?zone=${zone.zone}${id === 'main' ? '' : '&plan=' + id}`;
+  const href = (id: string) => `/raid/plan/routes?zone=${zone.zone}${id === 'main' ? '' : '&plan=' + id}${props.variant ? '&v=' + props.variant : ''}`;
   const addPlan = async () => {
     if (st.current.dirty) await flush(false);
     const r = await createRoutePlan(zone.zone, newName || 'Off-night plan', copyFrom || null);
@@ -228,6 +237,9 @@ export default function RoutePlanner(props: RoutePlannerProps) {
     if (!r.ok) return note(r.error);
     router.push(href('main'));
   };
+
+  // what the 3D view draws is what the map shows: while a saved version is on the map, that version
+  const shown3d = useMemo(() => sanitize(previewing && apiRef.current ? apiRef.current.getPlan() : livePlan), [livePlan, previewing]);
 
   const isOff = planId !== 'main';
   const target = meta.target;
@@ -292,7 +304,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
         {!officer && target != null && <span className="text-dim">target {target} raiders</span>}
       </div>
 
-      <div ref={rootRef} className="rp-root" />
+      <div ref={rootRef} className={view3d ? 'rp-root rp-3d' : 'rp-root'} />
 
       {msg && <p className="text-xs text-dim" role="status">{msg}</p>}
 
@@ -318,6 +330,21 @@ export default function RoutePlanner(props: RoutePlannerProps) {
           )}
         </>,
         nodes.hostBar,
+      )}
+      {nodes && props.variant && createPortal(
+        <div className="grp grp-3d">
+          <button type="button" className={view3d ? 'active' : ''} aria-pressed={view3d} onClick={() => setView3d(v => !v)}
+            title={view3d ? 'Back to the flat map, where you edit' : (props.variant === 'b' ? 'See the floors stacked, with the route climbing between them' : 'See the zone in 3D, with the route at its real heights')}>
+            {view3d ? '2D map' : '3D'}
+          </button>
+        </div>,
+        nodes.toolbar,
+      )}
+      {nodes && props.variant && view3d && createPortal(
+        <Plan3D zone={zone} extraMobs={props.extraMobs} plan={shown3d} skipOptional={skipOptional} variant={props.variant}
+          onSelect={id => apiRef.current?.selectPin(id)}
+          onFail={() => { setView3d(false); note('This browser could not start 3D, so the flat map stays.'); }} />,
+        nodes.mapwrap,
       )}
       {nodes && createPortal(
         <VersionsPanel zone={zone.zone} planId={planId} officer={officer} tick={versionsTick} previewing={previewing}

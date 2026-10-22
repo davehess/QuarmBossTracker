@@ -4345,7 +4345,20 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   hook is `fewestKills.ts` (5 min in-process cache; the page waits at most 5 s, a cold read fills the cache for the next load).
 - **Build groups** may be `lead` (right after the start) or `last` (after everything: Solusek Ro, who needs the five wings
   done). A zone's `buildNotes` says what the build did, per order.
-- Tests: `test/route-planner-model.test.js`, `test/route-planner-store.test.js`.
+- **3D previews (web 2.0.4, beta only, 2026-10-22; two variants awaiting the guild lead's pick).** `?v=b` or `?v=c` on the page
+  adds a **3D** button to the map toolbar (no `?v=` is the page as it was); it swaps the SVG map for a view-only three.js
+  scene and back (`Plan3D.tsx`, loaded with `next/dynamic`, so the 2D page never downloads three.js). The rules for where
+  things go are `web/lib/routePlanner/view3d.ts` (pure, `test/route-planner-3d.test.js`): floor order and levels, the slab
+  heights, a pin's height (own z, else its mob, else the nearest mob with a z, else the middle floor), legs lifted between
+  their pins, teleport arcs, the floor clip height.
+  - **b, Stacked floors:** each floor is a flat slab of its own wall lines, spread by a slider; pins sit on their slab, legs
+    climb between slabs, teleports are arcs, pathers follow their ramps. No mesh download; works for any zone with floors.
+  - **c, True 3D:** the real collision mesh (`/api/spectator/mesh`, walls then `floors=only`, the same builders the replay
+    uses), the plan at its pins' real heights, and a floor clip (hides everything above a floor's band). Phones fetch the
+    floors layer only when asked.
+  - Both: orbit / pan / zoom, Fit zone, pathers and doors-and-teleports toggles, a click on a pin selects it in the pin list
+    (`selectPin` on the engine's API). Editing stays in 2D. Variant choice is carried through the zone and plan links.
+- Tests: `test/route-planner-model.test.js`, `test/route-planner-store.test.js`, `test/route-planner-3d.test.js`.
 
 ---
 
