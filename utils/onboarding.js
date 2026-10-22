@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.5': [
+    '**No Planar Projection timer for the War Room brothers.** Killing the event Tallon Zek or Vallon Zek in the War Room no longer puts a Planar Projection to hail on the Command Center; only the two in the wings do.',
+  ],
   '4.0.0': [
     '**Version 3.0 is out.** The website, the bot and Mimic all move to a new major version together (Mimic 3.0), and the app is now called Raid Mimic. It updates in place and keeps your settings.',
     '**The Canvas.** Arrange your overlays on one full-screen layer instead of a pile of windows, pull an overlay apart into pieces (bars, rings, numbers), group them, lock them in place, resize them with a corner, and share a whole setup with a friend as a file or a six-character code. It is your choice: the setup tour offers it, and "Take the tour again" is in the tray and the dashboard.',

@@ -110,6 +110,13 @@ next touch one rather than assuming a missing row means a missing doc.
   `web/lib/routePlanner/zones/potactics.json` (links pinned to the commit, Rallos.lua anchors +8),
   `solrotower.json` / `solrotower.ts`, `web/lib/raidTimeline.ts` comment.
 
+- **✅ Hail board: the War Room's Tallon and Vallon no longer open a Planar Projection window (bot 4.0.5, on `main` once
+  merged, 2026-10-22).** Plane of Tactics has a wing pair (their deaths spawn the Projection) and an event pair in the War
+  Room (their death spawns nothing, only a zone emote), and every kill path names both alike. `openWindow` now reads the
+  raid's median position at the kill (`raid_roster` `loc_x`/`loc_y`, the pipe frame = the server frame swapped, fresh within
+  2 minutes of the kill, at least 3 raiders) and opens no window when it is inside the War Room box; no usable position
+  keeps today's window. ⏳ Not fixed: the same event kill still starts the HOME Tallon / Vallon 66 h board timer (the timer
+  paths in `index.js` have no position to test). Tests `test/hail-board.test.js`.
 - **✅ Route planner page (`/raid/plan/routes`, marked [beta], web 2.0.2, live on `main`, 2026-10-22).**
   The officers' single-file Tactics route planner, ported as it was into the raid planner area and extended. Members view,
   officers edit; plans live in `bot_kv` `route_plan:<zone>` (no migration): several plans per zone (the main night + named
