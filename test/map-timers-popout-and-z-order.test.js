@@ -262,6 +262,7 @@ function world({ platform = 'win32', cfg = {}, setup = false, single = [], eqPid
     const _live = (w) => !!w && !w.destroyed;
     const loadConfig = () => h.cfg;
     const _overlayEntries = () => h.wins;
+    const _holdForMove = (w) => !!(w && w.__wpDragging);   // the real one is tested in mimic-window-move.test.js
     const _inSingleSetup = (w) => h.single.includes(w.name);
     const _eqWindowGeometry = () => { h.calls.push('geometry'); return Promise.resolve([]); };
     ${Z_APPLY}

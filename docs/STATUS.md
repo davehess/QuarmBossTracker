@@ -6368,4 +6368,9 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   drawn on the Map (needs bot 4.0.2+, already on `main`), Extended Target no longer copies one health and damage line onto every
   same-name row, item icons cut from the player's own EQ files (agent endpoint only, no overlay uses it yet), and the 2026-10-22
   server-patch guide corrections (Rathe Council, Tallon and Vallon reset, Avatar of Earth clock). No bot change needed; no FB numbers
-  in this range. ⏳ Web roadmap entry lands as its own commit.
+  in this range. ✅ Web roadmap entry landed (web 2.1.1).
+- **✅ Raid Mimic 3.0.2 stable (agent 4.0.7) cut 2026-10-22** (the guild lead: "push that out a 3.0.2"). Adds over 3.0.1: Canvas HUD
+  pieces (whole group → Ring arc, Thin/Normal/Thick, Left/Center/Right, label turn), Charm "When charming", one Disc timer, warrior
+  Shield (3 min / 12 s), the Dock no longer fights a drag, Target Info retries a missed mob after 60 s instead of 6 h, overlay crash
+  recovery. The dashboard's jump to the top-left mid-drag is NOT proven fixed (DECISIONS §412): the `[window] … held off` log decides it.
+  Beta re-parked at 3.0.3.

@@ -52,6 +52,7 @@ function rig({ hideGate = false } = {}) {
     const _live = (w) => !!w && !w.destroyed;
     const loadConfig = () => h.cfg;
     const _overlayEntries = () => h.wins.map(w => [w.name, w]);
+    const _holdForMove = (w) => !!w && w.__wpDragging === true;   // the real one is tested in mimic-window-move.test.js
     const _inSingleSetup = () => false;
     const _eqWindowGeometry = () => Promise.resolve([]);
     // The hide option's pass: show or hide each window by the gate, as applyAllVisibility does for the real ones.

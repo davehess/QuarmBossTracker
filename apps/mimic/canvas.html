@@ -146,6 +146,15 @@
     border-radius:3px 0 0 3px;opacity:0.6;cursor:move}
   .mvbtn:hover{opacity:1}
   .panel.mvin .mvbtn{right:auto;left:0;border-radius:0 0 3px 0}
+  /* Dismiss, on a piece set to show When charming: hides it until the next charm lands (the guild lead, 2026-10-22:
+     "Dismiss gets rid of it until they charm again"). On the hover handshake like the ✥, so the rest of the piece
+     stays click-through; just outside the top-right corner; only that rule's pieces have one, and not while arranging. */
+  .dsmbtn{display:none;position:absolute;top:0;left:100%;width:16px;height:16px;line-height:16px;
+    text-align:center;font-size:11px;color:#8b949e;background:rgba(13,17,23,0.6);
+    border-radius:0 3px 3px 0;opacity:0.6;cursor:pointer}
+  .dsmbtn:hover{opacity:1;color:#f85149}
+  .panel.chm .dsmbtn{display:block}
+  :is(body.edit, .panel.one) .dsmbtn{display:none}
   body.edit .mvbtn{display:none}
   /* One ✥ per group: the top-left piece carries it and moves them all. */
   .panel.mvtail .mvbtn{display:none}
@@ -354,6 +363,7 @@
     ['target',   'Have a target'],
     ['npc',      'NPC target'],
     ['raid',     'In a raid'],
+    ['charming', 'When charming'],
   ];
   var WHEN_CLASSES = [['Warrior', 'WAR'], ['Cleric', 'CLR'], ['Paladin', 'PAL'], ['Ranger', 'RNG'], ['Shadow Knight', 'SHD'],
     ['Druid', 'DRU'], ['Monk', 'MNK'], ['Bard', 'BRD'], ['Rogue', 'ROG'], ['Shaman', 'SHM'], ['Necromancer', 'NEC'],
@@ -377,7 +387,7 @@
   // The agent's sources a rule reads (the canvas polls a source only while something needs it).
   function whenSources(p) {
     var k = [];
-    if (p.when === 'raid') k.push('state');
+    if (p.when === 'raid' || p.when === 'charming') k.push('state');
     else if (p.when) k.push('me');
     if (p.cls && p.cls.length && k.indexOf('me') < 0) k.push('me');
     return k;
@@ -397,7 +407,7 @@
   // What the agent says right now, from /api/me and /api/state: true / false, or null when unknown. `miss`
   // names a signal the agent answered without (an older agent), so the menu can say so.
   function whenSignals(me, state, now) {
-    var s = { combat: null, target: null, npc: null, raid: null, cls: null, miss: {} };
+    var s = { combat: null, target: null, npc: null, raid: null, charming: null, cls: null, miss: {} };
     if (me && me.character) {
       if (me.combat && typeof me.combat.live === 'boolean') s.combat = me.combat.live; else s.miss.combat = true;
       if ('target' in me) { s.target = !!me.target; s.npc = targetIsNpc(me.target); } else { s.miss.target = true; s.miss.npc = true; }
@@ -410,6 +420,11 @@
         var rp = state.raidPipe;
         s.raid = !!(rp && Array.isArray(rp.members) && rp.members.length && now - rp.at < RAID_FRESH_MS);
       }
+      // "When charming": the agent keeps the session (a charm lands → shown through the gaps between charms →
+      // 10 minutes after the last, or a dismissal until the next charm); the canvas only reads it.
+      var cs = state.charmSession;
+      if (!cs || typeof cs.charming !== 'boolean') s.miss.charming = true;
+      else s.charming = cs.charming;
     }
     return s;
   }
@@ -427,6 +442,7 @@
     else if (p.when === 'target') v = sig.target;
     else if (p.when === 'npc') v = sig.npc;
     else if (p.when === 'raid') v = sig.raid;
+    else if (p.when === 'charming') v = sig.charming;
     if (v === false) return false;
     if (p.cls && p.cls.length && sig.cls !== null) {
       var mine = sig.cls.toLowerCase();
@@ -694,7 +710,9 @@
           nolabel: !!p.nolabel,
           thick: (p.thick === 'thin' || p.thick === 'thick') ? p.thick : '',
           color: /^#[0-9a-fA-F]{6}$/.test(String(p.color || '')) ? p.color : '',
-          align: (p.align === 'c' || p.align === 'r') ? p.align : '',
+          align: (p.align === 'l' || p.align === 'c' || p.align === 'r') ? p.align : '',
+          // Which way an upright bar's label (or a Ring arc's) is turned: '' as drawn, 'cw' or 'ccw'.
+          rot: (p.rot === 'cw' || p.rot === 'ccw') ? p.rot : '',
           // A Ring arc's place on the HUD's circle (parts.js cleanArc); null for any other mode.
           arc: (window.WpParts && p.arc) ? WpParts.cleanArc(p.arc) : null,
           grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
@@ -981,6 +999,11 @@
     mv.textContent = '✥';
     mv.setAttribute('data-wp-interact', '');
     mv.title = 'Drag to move this panel · right-click for what it shows';
+    var dsm = document.createElement('span');
+    dsm.className = 'dsmbtn';
+    dsm.textContent = '✕';
+    dsm.setAttribute('data-wp-interact', '');
+    dsm.title = 'Dismiss until you charm again';
     var whb = document.createElement('span');
     whb.className = 'whb';
     // The right and bottom edges, each sizing one direction (CSS shows them while arranging, page frames only).
@@ -988,7 +1011,7 @@
     er.className = 'edge er'; eb.className = 'edge eb';
     er.setAttribute('data-wp-interact', ''); eb.setAttribute('data-wp-interact', '');
     er.title = 'Drag to set the width'; eb.title = 'Drag to set the height';
-    root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(er); root.appendChild(eb); root.appendChild(mv); root.appendChild(whb);
+    root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(er); root.appendChild(eb); root.appendChild(mv); root.appendChild(dsm); root.appendChild(whb);
     var e = { root: root, tab: tab, frame: fr, body: body, grip: grip, mv: mv, whb: whb };
     if (fr) fr.addEventListener('load', function () {
       var q = panelById(p.id);
@@ -1002,6 +1025,7 @@
     });
     root.addEventListener('mousedown', function (ev) {
       if (ev.target.closest('.ctl')) return;
+      if (ev.target === dsm) { ev.stopPropagation(); dismissCharming(); return; }
       if (ev.target === mv) { startDrag(ev, p.id, 'move', true); return; }
       if (ev.target === grip) { startDrag(ev, p.id, 'size', false, '', true); return; }
       if (ev.target === er) { startDrag(ev, p.id, 'size', false, 'x'); return; }
@@ -1255,6 +1279,7 @@
       e.root.classList.toggle('back', backOf(p, canvasDefaultBack()));
       e.root.classList.toggle('plock', isLocked(p));
       e.root.classList.toggle('rc', isCorner(p));
+      e.root.classList.toggle('chm', p.when === 'charming');
       e.root.style.setProperty('--pa', String(alphaOf(p)));
       e.root.classList.toggle('pfade', alphaOf(p) < 1);
       e.root.classList.toggle('fitempty', !!_fitEmpty[p.id]);
@@ -1687,8 +1712,16 @@
       h += '<div class="sec">Bar or ring</div><div class="row">';
       WpParts.THICK.forEach(function (t) { h += '<button class="btn' + ((p.thick || '') === t[0] ? ' on' : '') + '" data-thick="' + t[0] + '">' + esc(t[1]) + '</button>'; });
       h += '</div><div class="sec">Text</div><div class="row">';
-      WpParts.ALIGN.forEach(function (a) { h += '<button class="btn' + ((p.align || '') === a[0] ? ' on' : '') + '" data-align="' + a[0] + '">' + esc(a[1]) + '</button>'; });
-      h += '</div><div class="sec">Colour</div><div class="row" style="flex-wrap:wrap">'
+      var palign = WpParts.alignOf(p.mode, p.align);
+      WpParts.ALIGN.forEach(function (a) { h += '<button class="btn' + (palign === a[0] ? ' on' : '') + '" data-align="' + a[0] + '">' + esc(a[1]) + '</button>'; });
+      h += '</div>';
+      // Which way the label is turned: beside an upright bar, or the other way round a Ring arc.
+      if (WpParts.turnable(p.mode)) {
+        h += '<div class="sec">Label turn</div><div class="row" style="flex-wrap:wrap">';
+        WpParts.ROT.forEach(function (r) { h += '<button class="btn' + ((p.rot || '') === r[0] ? ' on' : '') + '" data-rot="' + r[0] + '">' + esc(r[1]) + '</button>'; });
+        h += '</div>';
+      }
+      h += '<div class="sec">Colour</div><div class="row" style="flex-wrap:wrap">'
         + '<button class="btn' + (!p.color ? ' on' : '') + '" data-color="" title="The data\'s own colour (health goes green → red)">Auto</button>';
       WpParts.PALETTE.forEach(function (c) {
         h += '<button class="btn sw' + (p.color === c ? ' on' : '') + '" data-color="' + c + '" title="' + c + '" style="background:' + c + '"></button>';
@@ -2113,6 +2146,7 @@
     else if (t.hasAttribute('data-nolabel')) { p.nolabel = t.getAttribute('data-nolabel') === '1'; }
     else if (t.hasAttribute('data-thick')) { p.thick = t.getAttribute('data-thick'); }
     else if (t.hasAttribute('data-align')) { p.align = t.getAttribute('data-align'); }
+    else if (t.hasAttribute('data-rot')) { p.rot = WpParts.cleanRot(t.getAttribute('data-rot')); }
     else if (t.hasAttribute('data-color')) { p.color = t.getAttribute('data-color'); }
     else if (t.hasAttribute('data-back')) { p.back = t.getAttribute('data-back') === '1'; }
     else if (t.hasAttribute('data-lock')) { setLock([p], !isLocked(p)); }
@@ -2314,6 +2348,20 @@
       : 'Out in play it hides while the rule is false and comes back on its own. Arranging shows everything.') + '</div>';
     return h;
   }
+  // The ✕ on a "When charming" piece: the agent holds the dismissal (until a charm newer than the newest so far
+  // lands), so every piece with the rule goes together; the answer is asked for again at once instead of
+  // waiting out the next poll.
+  function dismissCharming() {
+    var st = liveData('state');
+    fetch('http://127.0.0.1:' + PORT + '/api/charm-session/dismiss', {
+      method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character: (st && st.activeCharacter) || null })
+    }).catch(function () {}).then(function () {
+      var s = _src.state;
+      if (s && s.data && s.data.charmSession) s.data.charmSession.charming = false;
+      applyWhen();
+    });
+  }
   function applyWhen() {
     var sig = null;
     _layout.panels.forEach(function (p) {
@@ -2355,7 +2403,7 @@
       var v = viewFor(d), sample = false;
       if (!v && isEd(p.id)) { v = sampleFor(d, now); sample = !!v; }
       e.root.classList.toggle('sample', sample);
-      setBody(e, WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align, arc: p.arc, uid: p.id }));
+      setBody(e, WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align, rot: p.rot, arc: p.arc, uid: p.id }));
     });
   }
   // A piece's height to what it shows right now (chips wrap onto however many lines they need),
@@ -2771,7 +2819,8 @@
       p.nolabel = !!o.nolabel;
       p.thick = (o.thick === 'thin' || o.thick === 'thick') ? o.thick : '';
       p.color = /^#[0-9a-fA-F]{6}$/.test(String(o.color || '')) ? o.color : '';
-      p.align = (o.align === 'c' || o.align === 'r') ? o.align : '';
+      p.align = (o.align === 'l' || o.align === 'c' || o.align === 'r') ? o.align : '';
+      p.rot = (o.rot === 'cw' || o.rot === 'ccw') ? o.rot : '';
     }
     _layout.panels.push(p);
     return p;
@@ -3039,7 +3088,7 @@
     var minY = Math.min.apply(null, ps.map(function (p) { return p.y * H; }));
     return ps.map(function (p) {
       return { part: p.part, mode: p.mode, dx: Math.round(p.x * W - minX), dy: Math.round(p.y * H - minY),
-        w: p.w, h: p.h, scale: p.scale, back: p.back, nolabel: !!p.nolabel, thick: p.thick || '', color: p.color || '', align: p.align || '',
+        w: p.w, h: p.h, scale: p.scale, back: p.back, nolabel: !!p.nolabel, thick: p.thick || '', color: p.color || '', align: p.align || '', rot: p.rot || '',
         arc: p.arc || null };
     });
   }
@@ -3608,20 +3657,49 @@
     if (kind === 'mode') return { mode: v };
     if (kind === 'thick') return { thick: v === 'normal' ? '' : v };
     if (kind === 'back') return { back: v === '1' };
-    if (kind === 'align') return { align: v === 'left' ? '' : v };
+    if (kind === 'align') return { align: v === 'left' ? 'l' : v };
+    if (kind === 'rot') return { rot: WpParts.cleanRot(v) };
     return {};
   }
-  // The modes any of these pieces can be drawn in, first seen first: [id, label].
+  // The modes any of these pieces can be drawn in, first seen first: [id, label]. Ring arc is among them: a whole
+  // group can be laid out as the ring (bulkRing), the way the HUD's own ring comes in.
   function bulkModes(ps) {
     var seen = {}, out = [];
     ps.forEach(function (q) {
       var d = partDef(q);
-      (d ? (WpParts.MODES[d.kind] || []) : []).forEach(function (m) { if (!seen[m[0]] && m[0] !== 'seg') { seen[m[0]] = true; out.push(m); } });
+      (d ? (WpParts.MODES[d.kind] || []) : []).forEach(function (m) { if (!seen[m[0]]) { seen[m[0]] = true; out.push(m); } });
     });
     return out;
   }
+  // Pieces made Ring arcs together are laid out as ONE ring: each keeps the arc it has (a group that came in as
+  // the HUD ring gets its own ring back), the ones without get a share of the circle (parts.js ringArcs), and
+  // every box is its arc's place in the ring's space at one size, centred where the group was. The ring is the
+  // size the group's existing arcs have, else the HUD ring's own (half the screen's short side). 🔒 A locked
+  // piece takes its arc but keeps its box.
+  function bulkRing(ps, wasSeg) {
+    var W = window.innerWidth, H = window.innerHeight;
+    var had = ps.filter(function (q) { return q.arc; });
+    var side = Math.round(Math.min(W, H) * 0.5);
+    // (only a piece that was already an arc has a box that says how big its ring is)
+    if (wasSeg.length && wasSeg[0].w > 0) side = Math.round(wasSeg[0].w / WpParts.segBox(wasSeg[0].arc)[2] * WpParts.RING);
+    side = num(side, 120, Math.min(W, H), Math.round(Math.min(W, H) * 0.5));
+    var fresh = WpParts.ringArcs(ps.length - had.length), n = 0;
+    ps.forEach(function (q) { if (!q.arc) q.arc = fresh[n++]; });
+    var free = ps.filter(function (q) { return q.lock !== true; });
+    if (!free.length) return;
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    ps.forEach(function (q) { x0 = Math.min(x0, q.x * W); y0 = Math.min(y0, q.y * H); x1 = Math.max(x1, q.x * W + q.w); y1 = Math.max(y1, q.y * H + q.h); });
+    var left = (x0 + x1) / 2 - side / 2, top = (y0 + y1) / 2 - side / 2;
+    // A ring that is already drawn stays where it is.
+    if (wasSeg.length) { var o0 = WpParts.ringBoxes([wasSeg[0].arc], side)[0]; left = wasSeg[0].x * W - o0[0]; top = wasSeg[0].y * H - o0[1]; }
+    var boxes = WpParts.ringBoxes(free.map(function (q) { return q.arc; }), side);
+    free.forEach(function (q, i) {
+      q.x = num((left + boxes[i][0]) / W, 0, 1, q.x); q.y = num((top + boxes[i][1]) / H, 0, 1, q.y);
+      q.w = num(boxes[i][2], 40, 4000, q.w); q.h = num(boxes[i][3], 16, 3000, q.h);
+    });
+  }
   function bulkSet(ps, patch) {
-    var W = window.innerWidth, H = window.innerHeight, res = { changed: 0, skipped: 0 }, flowed = [];
+    var W = window.innerWidth, H = window.innerHeight, res = { changed: 0, skipped: 0 }, flowed = [], ringed = [], wasSeg = [];
     ps.forEach(function (q) {
       var d = q.kind === 'part' ? partDef(q) : null;
       if (!d) {
@@ -3633,25 +3711,32 @@
       if (patch.mode !== undefined) {
         var modes = WpParts.MODES[d.kind] || [], was = q.mode || (modes[0] ? modes[0][0] : '');
         if (!modes.some(function (m) { return m[0] === patch.mode; })) { res.skipped++; return; }
-        if (was !== patch.mode) {
+        if (patch.mode === 'seg') {
+          // A Ring arc has no size of its own: it is its arc's place on the circle, set for all of them together below.
+          if (was === 'seg' && q.arc) wasSeg.push(q);
+          q.mode = 'seg'; ringed.push(q);
+        } else if (was !== patch.mode) {
           // The size the new shape wants, as the single piece's Show as takes it (data-mode): its height
-          // always; an upright bar its width too (it is narrow), and a bar coming back from upright gets a bar's width.
+          // always; an upright bar its width too (it is narrow), and a bar coming back from upright (or from an arc
+          // of the ring, which is as narrow as its arc) gets a bar's width.
           // 🔒 A locked piece changes its shape inside the box it has, and the re-flow below leaves it where it is.
           var sz = (d.size && d.size[patch.mode]) || WpParts.DEFAULT_SIZE[patch.mode];
           if (sz && q.lock !== true) {
             if (patch.mode === 'vbar' || patch.mode === 'ring' || patch.mode === 'arc') q.w = sz[0];
-            else if (was === 'vbar') q.w = Math.max(q.w, WpParts.DEFAULT_SIZE.bar[0]);
+            else if (was === 'vbar' || was === 'seg') q.w = Math.max(q.w, WpParts.DEFAULT_SIZE.bar[0]);
             q.h = sz[1];
           }
           q.mode = patch.mode;
         }
-        if (q.lock !== true) flowed.push(q);
+        if (q.lock !== true && patch.mode !== 'seg') flowed.push(q);
       }
       if (patch.thick !== undefined) q.thick = patch.thick;
       if (patch.back !== undefined) q.back = !!patch.back;
       if (patch.align !== undefined) q.align = patch.align;
+      if (patch.rot !== undefined && WpParts.turnable(q.mode)) q.rot = patch.rot;
       res.changed++;
     });
+    if (ringed.length) bulkRing(ringed, wasSeg);
     // Every piece changed shape, so the old stack no longer fits: upright bars stand in a row, bars and slim
     // bars stack in a column, from the set's top-left corner. Anything else keeps its place.
     if (flowed.length > 1 && !res.skipped && (patch.mode === 'vbar' || patch.mode === 'bar' || patch.mode === 'thin')) {
@@ -3685,6 +3770,15 @@
     h += '</div><div class="row">';
     BULK_THICK.forEach(function (t) { h += '<button class="btn" data-bulk="thick" data-v="' + t[0] + '">' + t[1] + '</button>'; });
     h += '<button class="btn" data-bulk="back" data-v="0">Clear</button><button class="btn" data-bulk="back" data-v="1">Panel</button></div>';
+    // Text alignment and (where a piece can turn its label) the turn, for all of them, as on one piece.
+    h += '<div class="row">';
+    WpParts.ALIGN.forEach(function (a) { h += '<button class="btn" data-bulk="align" data-v="' + a[0] + '">' + esc(a[1]) + '</button>'; });
+    h += '</div>';
+    if (ps.some(function (q) { return WpParts.turnable(q.mode); })) {
+      h += '<div class="row" style="flex-wrap:wrap">';
+      WpParts.ROT.forEach(function (r) { h += '<button class="btn" data-bulk="rot" data-v="' + r[0] + '" title="Turn the label of every upright bar or Ring arc in the group">Label: ' + esc(r[1]) + '</button>'; });
+      h += '</div>';
+    }
     return h;
   }
 

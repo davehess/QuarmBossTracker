@@ -348,7 +348,7 @@ describe('pieces, round three', () => {
     const c = stripJs(canvas);
     expect(c).toMatch(/var path = typeof S\.path === 'function' \? S\.path\(liveData\) : S\.path;/);
     expect(c).toMatch(/\(S && S\.needs \|\| \[\]\)\.forEach\(function \(n\) \{ need\[n\] = true; \}\);/);
-    expect(c).toContain('WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align, arc: p.arc, uid: p.id })');
+    expect(c).toContain('WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align, rot: p.rot, arc: p.arc, uid: p.id })');
     const r = evalBlock('var window = {};\n' + sliceBlock(canvas, '  var GROUPS = [', '  // ── Panels ──'), ['sanitize']);
     const s = r.sanitize({ panels: [{ id: 'a', kind: 'part', part: 'me.hp', mode: 'arc', x: 0, y: 0, w: 140, h: 90, nolabel: 1, thick: 'thick', color: '#58a6ff', align: 'c' },
       { id: 'b', kind: 'part', part: 'me.hp', mode: 'bar', x: 0, y: 0, w: 99, h: 30, thick: 'x', color: 'red;background:url(x)', align: 'z' }] });
@@ -356,7 +356,7 @@ describe('pieces, round three', () => {
     expect([a.mode, a.nolabel, a.thick, a.color, a.align]).toEqual(['arc', true, 'thick', '#58a6ff', 'c']);
     expect([b.nolabel, b.thick, b.color, b.align]).toEqual([false, '', '', '']);
     // A saved group brings each piece's look along.
-    expect(c).toContain("nolabel: !!p.nolabel, thick: p.thick || '', color: p.color || '', align: p.align || ''");
+    expect(c).toContain("nolabel: !!p.nolabel, thick: p.thick || '', color: p.color || '', align: p.align || '', rot: p.rot || ''");
   });
   it('a piece keeps its width and takes the height it needs when its mode changes; ↕ Fit does it on demand', () => {
     const c = stripJs(canvas);

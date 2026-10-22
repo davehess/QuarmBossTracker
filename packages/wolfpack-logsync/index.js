@@ -2129,6 +2129,62 @@ function _bardCharmSongFor(owner) {
   const ci = CHARM_SPELLS.get(String(song).toLowerCase());
   return ci ? { charm_class: ci.cls, duration_sec: ci.dur, charm_spell_name: song } : null;
 }
+// ── "When charming" (the guild lead, 2026-10-22: "Charm overlay should be able to show 'When Charming' so
+// show up when the user charms, and remain between having a charm pet. Dismiss gets rid of it until they
+// charm again") ──────────────────────────────────────────────────────────────────────────────────────────
+// One answer for the Charm overlay window and a Canvas piece, served on /api/state as `charmSession`:
+//   charming — true from the moment a charm lands, through the gaps between charms, until
+//              CHARM_SESSION_HOLD_MS after the last charm was last seen (broke, or was still up) with no new
+//              one; or until a dismissal, which holds until a charm LATER than the one dismissed lands.
+// Read from the tracker when /api/state is polled, so the hold counts from the last poll that saw a charm up
+// (or its broke_at), a poll or two of slack. Per owner ('*' = no active character known).
+const CHARM_SESSION_HOLD_MS = 10 * 60 * 1000;
+const _charmSessions = new Map();   // ownerLower → { start, seenAt, dismissedStart }
+function _charmSessionSlot(key) {
+  let s = _charmSessions.get(key);
+  if (!s) { s = { start: 0, seenAt: 0, dismissedStart: -1 }; _charmSessions.set(key, s); }
+  return s;
+}
+// pets: tracker entries { is_active, started_at, last_tick_at, broke_at } of this owner.
+function _charmSessionStep(key, pets, now) {
+  const s = _charmSessionSlot(key);
+  let active = false;
+  for (const p of pets) {
+    if (!p) continue;
+    if (p.is_active) {
+      active = true;
+      s.start = Math.max(s.start, p.started_at || p.last_tick_at || now);
+      s.seenAt = now;
+    } else if (p.broke_at) s.seenAt = Math.max(s.seenAt, p.broke_at);
+  }
+  const dismissed = s.dismissedStart >= 0 && s.start <= s.dismissedStart;
+  const holding = s.seenAt > 0 && now - s.seenAt < CHARM_SESSION_HOLD_MS;
+  return {
+    charming: !dismissed && (active || holding),
+    active,
+    since: s.start || null,
+    hold_ms: CHARM_SESSION_HOLD_MS,
+    ends_at: !dismissed && !active && holding ? s.seenAt + CHARM_SESSION_HOLD_MS : null,
+  };
+}
+// Dismiss: hidden until a charm newer than the newest one so far lands.
+function _charmSessionDismiss(character) {
+  const s = _charmSessionSlot(character ? String(character).toLowerCase() : '*');
+  s.dismissedStart = s.start;
+}
+function _charmSessionNow(activeChar, now) {
+  const act = activeChar ? String(activeChar).toLowerCase() : null;
+  const mine = new Set((stats.watchedLogs || []).map(w => w && w.character && String(w.character).toLowerCase()).filter(Boolean));
+  const pets = [];
+  for (const info of _charmTickTracker.values()) {
+    const o = info && info.owner ? String(info.owner).toLowerCase() : null;
+    if (!o) continue;
+    // Your own charms only: a bystander's pet (damage attribution) is not a charm session of yours.
+    if (act ? o !== act : (mine.size > 0 && !mine.has(o))) continue;
+    pets.push(info);
+  }
+  return _charmSessionStep(act || '*', pets, now);
+}
 function _reconcileGaugeCharms() {
   const now = Date.now();
   const gaugeOwners = new Set();              // ownerLower currently streaming a gauge
@@ -15238,6 +15294,16 @@ const _ME_SKILL_LINES = [
   // paired with your own damage on that mob (_meNoteBellow). Not in _ME_CLASS_CDS: the slot
   // appears once a bard has used it, which is how we know they have the AA.
   { key: 'bellow', label: 'Boastful Bellow', secs: 18, est: false, aa: true, rx: /^Your target resisted the Boastful Bellow spell\./ },
+  // The warrior's /shield (the guild lead, 2026-10-22: "Warriors need to have Shield timer (it's 3
+  // minutes) and it can't be activated with disciplines"). Reuse 180 s: zone/mob.cpp StartShield starts
+  // pTimerShield at 180 on the shield-giver, in the same call that starts the shield, so the reuse
+  // counts from the moment it begins. Its own timer, not the discipline one: nothing here touches
+  // _meDiscs, and the server only REFUSES a /shield while a discipline is active
+  // (zone/client_packet.cpp Handle_OP_Shielding, SHIELD_NO_DISC). No `rx`: the start line is the
+  // third-person "<target> begins to use <you> as a living shield!" (string 3281), which names
+  // you and so needs your name — _meNoteShield matches it. The refusal ("You can use the ability
+  // /shield again in …") is read by _meNoteAaRefusal.
+  { key: 'shield', label: 'Shield', secs: 180, est: false, rx: null },
 ];
 const _ME_SKILL_BY_KEY = new Map(_ME_SKILL_LINES.map(s => [s.key, s]));
 // The cooldowns each class always sees, even before the first use this
@@ -15249,7 +15315,7 @@ const _ME_SKILL_BY_KEY = new Map(_ME_SKILL_LINES.map(s => [s.key, s]));
 // on every agent restart).
 const _ME_CLASS_CDS = {
   Monk: ['ability', 'mend', 'fd', 'disc'],
-  Warrior: ['ability', 'taunt', 'disc'],
+  Warrior: ['ability', 'taunt', 'shield', 'disc'],
   Paladin: ['loh', 'disc'],
   'Shadow Knight': ['ht', 'disc'],
   Rogue: ['disc'], Ranger: ['disc'], Bard: ['disc'], Beastlord: ['disc'],
@@ -15290,6 +15356,32 @@ function _meNoteBellow(cl, kind, mob, atMs) {
     _meBellowSeen.delete(cl);
     _meStartSkill(cl, 'bellow', Math.min(o.at, atMs));
   }
+}
+// The warrior's /shield, from the server's own lines (zone/string_ids.h): START_SHIELDING (3281)
+// "%1 begins to use %2 as a living shield!" is sent by StartShield with %1 the one being shielded and
+// %2 the warrior, and END_SHIELDING (3282) "%1 ceases protecting %2." by EndShield with %1 the warrior.
+// Both go to everyone within 100 units, you included, with the names spelled out (never "You"), so a
+// line starts YOUR timer only when the warrior named in it is you. The shield lasts 12 s (zone/mob.cpp
+// StartShield: 12000 ms; the Living Shield AA adds 12 s a rank, and the AA ranks are not on the pipe,
+// so the 12 s is the no-AA reading and the end line, when it comes, is exact). The 180 s reuse starts
+// with it (pTimerShield) and is its own _meSkillCds entry — never the discipline timer.
+const _ME_SHIELD_ACTIVE_MS = 12_000;
+const _ME_SHIELD_START_RX = /^(\S+) begins to use (\S+) as a living shield!$/;
+const _ME_SHIELD_END_RX = /^(\S+) ceases protecting (\S+)\.$/;
+const _meShieldOn = new Map();   // charLower → { at, until }
+// True when the line was your own shield starting or ending.
+function _meNoteShield(cl, msg, atMs) {
+  if (msg.indexOf('living shield') === -1 && msg.indexOf('ceases protecting') === -1) return false;
+  let m = _ME_SHIELD_START_RX.exec(msg);
+  if (m) {
+    if (m[2].toLowerCase() !== cl) return false;
+    _meStartSkill(cl, 'shield', atMs);
+    _meShieldOn.set(cl, { at: atMs, until: atMs + _ME_SHIELD_ACTIVE_MS });
+    return true;
+  }
+  m = _ME_SHIELD_END_RX.exec(msg);
+  if (m && m[1].toLowerCase() === cl) { _meShieldOn.delete(cl); return true; }
+  return false;
 }
 // A Feign Death that FAILED (the guild lead, 2026-09-24: "I did not get an 'FD
 // Failure' message when this happened - FD cooldown in the Hud should show an
@@ -15355,8 +15447,12 @@ function _meCooldowns(cl, now, cls) {
   if (m) {
     for (const [k, c] of m) {
       const endAt = c.at + c.secs * 1000;
-      out.push({ key: k, label: c.label, ms_left: Math.max(0, endAt - now), total_ms: c.secs * 1000, est: c.est, seen: true,
-        failed: !!(c.failed && c.failed >= c.at && now - endAt <= _ME_FD_FAIL_SHOW_MS) });
+      const row = { key: k, label: c.label, ms_left: Math.max(0, endAt - now), total_ms: c.secs * 1000, est: c.est, seen: true,
+        failed: !!(c.failed && c.failed >= c.at && now - endAt <= _ME_FD_FAIL_SHOW_MS) };
+      // A shield you are holding up: its own 12 s, over the 3-minute reuse (est: the AA can lengthen it).
+      const on = k === 'shield' ? _meShieldOn.get(cl) : null;
+      if (on && on.until > now) { row.active_ms_left = on.until - now; row.active_total_ms = _ME_SHIELD_ACTIVE_MS; }
+      out.push(row);
     }
   }
   const disc = _meDisc(cl, now);
@@ -15366,7 +15462,7 @@ function _meCooldowns(cl, now, cls) {
   const want = _ME_CLASS_CDS[cls] || [];
   const byKey = new Map(out.map(c => [c.key, c]));
   const lead = want.map(k => byKey.get(k) || {
-    key: k, label: k === 'ability' ? 'Kick' : (k === 'disc' ? 'Discipline' : _ME_SKILL_BY_KEY.get(k).label),
+    key: k, label: k === 'ability' ? 'Kick' : (k === 'disc' ? 'Disc' : _ME_SKILL_BY_KEY.get(k).label),
     ms_left: null, total_ms: null, est: true, seen: false,
   });
   return lead.concat(out.filter(c => !want.includes(c.key)));
@@ -15438,19 +15534,28 @@ function _meNoteDisc(cl, def, atMs) {
   _meDiscs.set(cl, { name: def[0], at: atMs, total_ms: _meDiscReuseSecs(def[1], unlock, level) * 1000 });
   _meTimersSave();
 }
+// ONE "Disc" timer, labelled with the discipline while it counts down (the guild lead, 2026-10-22: "Disc in
+// canvas shows on my monk as Innerflame, but it's a shared timer among all disciplines. It should say Disc,
+// then be responsive to what type of disc was used"). The server keeps one reuse timer per character for
+// every discipline: Quarm's rule Combat:UseDiscTimerGroups defaults to false (common/ruletypes.h), and with
+// it off GetDiscTimerID returns 0 for every disc (zone/client.cpp), so using any discipline starts and is
+// refused by pTimerDisciplineReuseStart + 0. (The code default; Quarm's own rule_values row is not mirrored,
+// and the guild lead's report agrees with it.) A name on a timer that every other disc waits on too would
+// read as that disc's own, so the name rides only while it runs: "Disc: Innerflame", then "Disc".
+function _meDiscLabel(name, running) { return running && name ? 'Disc: ' + name : 'Disc'; }
 function _meDisc(cl, now) {
   _meTimersLoad();
   const act = _meDiscs.get(cl) || null;
   const ref = _discReadyAt.get(cl) || null;
   if (ref && ref.at > now) {
     const left = ref.at - now;
-    return { key: 'disc', label: act ? act.name : 'Discipline', ms_left: left, total_ms: Math.max(left, act ? act.total_ms : left), est: false, seen: true };
+    return { key: 'disc', label: _meDiscLabel(act && act.name, true), ms_left: left, total_ms: Math.max(left, act ? act.total_ms : left), est: false, seen: true };
   }
   if (!act) return null;
   // Kept once ready — it reads "ready" instead of vanishing (it used to be
   // dropped a minute after coming ready).
   const left = act.at + act.total_ms - now;
-  return { key: 'disc', label: act.name, ms_left: Math.max(0, left), total_ms: act.total_ms, est: true, seen: true };
+  return { key: 'disc', label: _meDiscLabel(act.name, left > 0), ms_left: Math.max(0, left), total_ms: act.total_ms, est: true, seen: true };
 }
 
 // ── A targeted player's known timers, on Target Info (the guild lead, 2026-10-02:
@@ -15490,7 +15595,10 @@ function _meNoteAaRefusal(cl, msg, atMs) {
   const left = ((m[2] ? parseInt(m[2], 10) : 0) * 3600 + parseInt(m[3], 10) * 60 + parseInt(m[4], 10)) * 1000;
   // An AA whose reuse we know (Boastful Bellow) keeps its one HUD timer: the
   // refusal just puts it right.
-  const known = _ME_SKILL_LINES.find(s => s.aa && s.label.toLowerCase() === m[1].toLowerCase());
+  // /shield is no AA, but the server words its refusal the same way ("You can use the ability /shield
+  // again in %u minute(s) %u seconds.", client_packet.cpp Handle_OP_Shielding) — it sets the Shield timer.
+  const known = m[1].toLowerCase() === '/shield' ? _ME_SKILL_BY_KEY.get('shield')
+    : _ME_SKILL_LINES.find(s => s.aa && s.label.toLowerCase() === m[1].toLowerCase());
   if (known) { _meStartSkill(cl, known.key, atMs + left - known.secs * 1000); return true; }
   const e = _meAaSlot(cl, m[1]);
   e.name = m[1];   // the server's spelling over a /pipe line's
@@ -15950,11 +16058,12 @@ function _meNoteRawLine(line, character) {
     m = _ME_ABILITY_RX.exec(msg);
     if (m) { _meNoteAbility(cl, m[1].toLowerCase(), now); return; }
     for (const s of _ME_SKILL_LINES) {
-      if (!s.rx.test(msg)) continue;
+      if (!s.rx || !s.rx.test(msg)) continue;
       _meStartSkill(cl, s.key, now);
       return;
     }
   }
+  if (_meNoteShield(cl, msg, now)) return;
   if (msg.endsWith(' is shaken by a loud bellow.')) {
     _meNoteBellow(cl, 'land', msg.slice(0, -' is shaken by a loud bellow.'.length), now);
     return;
@@ -18195,6 +18304,8 @@ function _serializeForDashboard() {
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
       return arr.slice(0, 12);
     })(),
+    // "When charming" for the Charm overlay and a Canvas piece (_charmSessionStep).
+    charmSession: _charmSessionNow(_activeCharacter, Date.now()),
     // How many Zeal crash bundles sit on this machine. Just a count — cheap
     // (one readdir per folder, cached 60s) and enough for the dashboard to
     // decide whether to auto-open the crash review. Reading the DUMPS is the
@@ -36582,6 +36693,17 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, removed: !!removed }));
       }
+      // "Dismiss" on a Charm piece set to show When charming: hidden until the next charm lands
+      // (_charmSessionDismiss). Body: { character } — the activeCharacter the page last saw.
+      if (req.url === '/api/charm-session/dismiss' && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        _charmSessionDismiss(payload && payload.character);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true }));
+      }
       // CH chain "0X GO" TTS toggle (#103). The button on the CH chain overlay
       // POSTs { enabled: bool } here (and re-POSTs on load to re-sync after an
       // agent restart, since the overlay persists the choice in localStorage).
@@ -50666,6 +50788,23 @@ function startMobPacks() {
   if (t.unref) t.unref();
 }
 
+// What one mob-info answer does to the cache (the guild lead, 2026-10-22: "missing resists on Hobgoblins" - a bot redeploy
+// at the moment a mob was first targeted left it with no stats for six hours). The answer was never looked at: any
+// reply, an error body or a dropped connection included, was stored as "no row" under the full 6 h TTL, and every
+// reader skips the refetch until that runs out. Now only a 200 carrying a mob lasts the full TTL. Anything else is a
+// MISS that is asked for again after MOB_INFO_MISS_TTL_MS, and a row already held is kept through it (stale while
+// error: old stats beat none). Readers compare `now - at` to MOB_INFO_TTL_MS, so a miss is stored with `at` set back
+// by the difference instead of each reader learning a second TTL.
+const MOB_INFO_MISS_TTL_MS = 60 * 1000;
+function _mobInfoStore(key, status, body) {
+  let mob = null;
+  if (status === 200) {
+    try { const j = JSON.parse(body); if (j && !j.error && j.mob) mob = j.mob; } catch { /* not JSON: a miss */ }
+  }
+  if (mob) { _mobInfoByName.set(key, { at: Date.now(), mob }); return; }
+  const prev = _mobInfoByName.get(key);
+  _mobInfoByName.set(key, { at: Date.now() - (MOB_INFO_TTL_MS - MOB_INFO_MISS_TTL_MS), mob: (prev && prev.mob) || null });
+}
 function fetchMobInfo(name, selfChar, zoneId) {
   const norm = _normMobNameAgent(name);
   if (!norm) return;
@@ -50701,8 +50840,7 @@ function fetchMobInfo(name, selfChar, zoneId) {
       res.on('data', c => body += c);
       res.on('end', () => {
         _mobInfoInflight.delete(key);
-        try { const j = JSON.parse(body); _mobInfoByName.set(key, { at: Date.now(), mob: (j && j.mob) ? j.mob : null }); }
-        catch { _mobInfoByName.set(key, { at: Date.now(), mob: null }); }
+        _mobInfoStore(key, res.statusCode, body);
       });
     });
     req.on('error',   () => { _mobInfoInflight.delete(key); });

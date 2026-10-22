@@ -1367,9 +1367,12 @@ let _dragSession = null;  // { win, offsetX, offsetY, width, height, interval }
 // (the end); a programmatic setBounds only fires 'move'. Any code that writes bounds to that window meanwhile is a
 // second hand on the wheel, and each write lands one step behind the cursor: back and forth. Nothing in main.js
 // targets the dashboard on purpose, but the one writer that runs on a 16 ms timer (_startWindowDrag, which the
-// resize grips ride on) resolves its window from the IPC sender, so it asks here first. The mark goes stale after
-// 1.5 s in case 'moved' never arrives.
-const NATIVE_MOVE_STALE_MS = 1500;
+// resize grips ride on) resolves its window from the IPC sender, so it asks here first. The mark clears 300 ms after
+// the last 'will-move' step (and at once on 'moved'), so a lost 'moved' cannot freeze the writers.
+// The second half of the rule (the guild lead, 2026-10-22, two screen recordings): an overlay a ✥ drag is moving is
+// no more ours to place than the dashboard under the OS's hand. _beingMoved covers both, and every writer that can
+// fire while a window is held (a fit, a menu's height loan, a z-order pass, a rescue) asks _holdForMove first.
+const NATIVE_MOVE_STALE_MS = 300;
 function _nativeMoving(win, now) {
   const at = win && win.__wpMoveAt;
   return !!at && ((now == null ? Date.now() : now) - at) < NATIVE_MOVE_STALE_MS;
@@ -1389,6 +1392,7 @@ function _moveReversals(xs) {
 }
 const MOVE_JITTER_MIN_REVERSALS = 6;
 function _noteNativeMove(win, bounds) {
+  if (!_nativeMoving(win)) win.__wpHeldLogged = false;   // a fresh move: one more "held off" line is allowed
   win.__wpMoveAt = Date.now();
   const t = win.__wpMoveTrace || (win.__wpMoveTrace = []);
   if (t.length < 400) t.push(bounds.x);
@@ -1396,7 +1400,10 @@ function _noteNativeMove(win, bounds) {
 function _endNativeMove(win) {
   const t = win.__wpMoveTrace || [];
   win.__wpMoveAt = 0;
+  win.__wpHeldLogged = false;
   win.__wpMoveTrace = [];
+  // A fit held back while the OS had the window is asked for now, as a ✥ drag's end does (_stopWindowDrag).
+  try { if (win.__wpFitPending && !win.isDestroyed()) { win.__wpFitPending = false; win.webContents.send('wp-refit'); } } catch { /* window gone */ }
   const rev = _moveReversals(t);
   if (rev < MOVE_JITTER_MIN_REVERSALS) return;
   // The evidence a Windows repro needs: how many screens and at what scaling, and the size floor.
@@ -1407,6 +1414,26 @@ function _endNativeMove(win) {
       + ` displays=${screen.getAllDisplays().map(d => d.scaleFactor).join('/')}`;
   } catch { /* the window went with the drag */ }
   appendAgentLog(`[window] drag jitter: ${rev} direction changes over ${t.length} steps${where}\n`);
+}
+// Is somebody moving this window right now - the OS (the dashboard's title bar) or a ✥ drag (_startWindowDrag)?
+function _beingMoved(win, now) {
+  return !!win && (win.__wpDragging === true || _nativeMoving(win, now));
+}
+// A bounds or z-order writer asks before it touches `win`: true = leave it, the mover owns it. Logs ONE line per move
+// naming the writer, so the next report shows which writer would have fought the drag (the cause is not provable
+// from the recordings alone: no writer in main.js targets the dashboard, see test/mimic-window-move.test.js).
+function _holdForMove(win, who) {
+  if (!_beingMoved(win)) return false;
+  if (!win.__wpHeldLogged) {
+    win.__wpHeldLogged = true;
+    let label = 'a window';
+    try {
+      if (win === mainWindow) label = 'the dashboard';
+      else { const hit = _overlayEntries().find(([, w]) => w === win); if (hit) label = 'the ' + hit[0] + ' overlay'; }
+    } catch { /* a label is never worth the guard */ }
+    appendAgentLog(`[window] ${who} held off while ${label} is being moved\n`);
+  }
+  return true;
 }
 // Map an overlay window to its config bounds key, so a manual ✥-drag persists
 // to the SAME key the window restores from (_resolveBounds). Without this the
@@ -1476,6 +1503,7 @@ function _startWindowDrag(win, persistKey) {
     // A fit must not run under a drag (the guild lead, 2026-10-19: overlays fit their content, but a fit
     // that lands mid-drag is overwritten by the drag's next step, which writes the height it began with).
     // overlay-auto-height holds its fit while this is set and _stopWindowDrag asks the page for one.
+    win.__wpHeldLogged = false;
     win.__wpDragging = true;
     _dragSession.interval = setInterval(() => {
       if (!_dragSession) return;
@@ -1880,10 +1908,12 @@ function _stopWindowDrag() {
     // The drag is over: a fit that was held back while it ran is asked for now, from the page, so it
     // measures what the content is at this moment rather than replaying a stale height.
     const w = _dragSession.win;
-    try { w.__wpDragging = false; } catch { /* window gone */ }
+    try { w.__wpDragging = false; w.__wpHeldLogged = false; } catch { /* window gone */ }
     try {
       if (w.__wpFitPending && !w.isDestroyed()) { w.__wpFitPending = false; w.webContents.send('wp-refit'); }
     } catch { /* window gone */ }
+    // A z-order change held back while the window was in hand (_applyOverlayZ) lands now.
+    try { if (!w.isDestroyed()) _applyOverlayZ(w); } catch { /* window gone */ }
     _dragSession = null;
   }
 }
@@ -3405,7 +3435,10 @@ function _layoutOfSet(set) {
   const homeSig = _canvasScreenSig(d);
   const panels = Array.isArray(all[key].panels) ? all[key].panels : [];
   const kept = panels.filter(p => !(p && typeof p.scr === 'string' && p.scr !== homeSig));
-  const layout = kept.length === panels.length ? all[key] : Object.assign({}, all[key], { panels: kept });
+  // The file format has no explicit Left (portableLayout.js reads 'c' / 'r' only, and refuses any other value), so a
+  // piece that says it comes out as the plain default; a label turned with `rot` is not in the format either.
+  const noLeft = kept.map(p => (p && p.align === 'l') ? Object.assign({}, p, { align: '' }) : p);
+  const layout = (kept.length === panels.length && !noLeft.some((p, i) => p !== kept[i])) ? all[key] : Object.assign({}, all[key], { panels: noLeft });
   return { layout, screen: { width: +m[1], height: +m[2] }, eq, offScreen: panels.length - kept.length };
 }
 // opts: { setName? (a saved set; none = the screen as it is now), title?, description?, author?, mode? }
@@ -4805,6 +4838,7 @@ function _snapshotLayout() {
 function _rescueOffscreenOverlays() {
   for (const [key, win] of _overlayEntries()) {
     if (_coversScreen(key) || !win || win.isDestroyed()) continue;
+    if (_holdForMove(win, 'off-screen rescue')) continue;
     try {
       const b = win.getBounds();
       if (!_boundsOnScreen(b)) {
@@ -4859,7 +4893,7 @@ async function _askAboutDisplays() {
   if (choice === 0) {
     for (const [key, win] of _overlayEntries()) {
       const bk = _boundsKeyForEntry(key, win);
-      if (bk && plan.moves[bk]) { try { win.setBounds(plan.moves[bk]); } catch { /* mid-close */ } }
+      if (bk && plan.moves[bk] && !_holdForMove(win, 'screen-change move')) { try { win.setBounds(plan.moves[bk]); } catch { /* mid-close */ } }
     }
     if (plan.kind === 'bring') { const c = loadConfig(); c.canvasDisplayId = target.id; saveConfig(c); }
     _applyCanvasMoves(plan.moves);
@@ -7476,6 +7510,9 @@ function _applyOverlayZ(onlyWin) {
     const want = _overlayWantsTop(cfg, key, process.platform, inSetup, _focusOk);
     const have = _zApplied.has(win) ? _zApplied.get(win) : true;
     if (want === have) continue;
+    // A window in hand keeps its level until it is let go: _stopWindowDrag calls back in, and _zApplied is untouched
+    // here, so the change is still owed.
+    if (_holdForMove(win, 'z-order pass')) continue;
     _zApplied.set(win, want);
     try {
       if (want) { win.setAlwaysOnTop(true, 'screen-saver'); continue; }
@@ -9531,6 +9568,36 @@ function _forgetClosedOverlay(win) {
   }
 }
 
+// A renderer that dies leaves its window up and blank, and nothing brought it back: only the dashboard listened for
+// 'render-process-gone' (the guild lead, 2026-10-22: an overlay that crashed stayed gone until Mimic restarted). Now the
+// overlay is let go and destroyed like any freed one, and the normal build pass (_materializeEnabledOverlays, via
+// applyAllVisibility - the same one the show pass uses) makes it again. A page that crashes as it loads would loop
+// forever, so a rebuild is allowed OVERLAY_CRASH_MAX times per overlay per OVERLAY_CRASH_WINDOW_MS; past that the
+// window stays down and the next ordinary visibility pass (a toggle, EverQuest starting) builds it as usual.
+const OVERLAY_CRASH_MAX = 3;
+const OVERLAY_CRASH_WINDOW_MS = 5 * 60 * 1000;
+// Pure: `stamps` = the times this overlay's renderer went; returns whether to rebuild now and the list to keep.
+function _crashRebuildAllowed(stamps, now) {
+  const keep = (stamps || []).filter(t => now - t < OVERLAY_CRASH_WINDOW_MS);
+  if (keep.length >= OVERLAY_CRASH_MAX) return { ok: false, stamps: keep };
+  keep.push(now);
+  return { ok: true, stamps: keep };
+}
+const _overlayCrashes = new Map();   // key → [timestamps]
+function _overlayRendererGone(win, reason) {
+  if (reason === 'clean-exit') return;   // the page closed itself; the 'closed' path owns that
+  const e = _OVERLAY_WINDOWS.find(x => x.get() === win);
+  if (!e) return;                         // the dashboard has its own handler; panels and breakouts are rebuilt by their owners
+  const r = _crashRebuildAllowed(_overlayCrashes.get(e.key), Date.now());
+  _overlayCrashes.set(e.key, r.stamps);
+  appendAgentLog(`[overlay] ${e.key} renderer gone (${reason})${r.ok ? ' — rebuilding' : ` — ${OVERLAY_CRASH_MAX} crashes in ${OVERLAY_CRASH_WINDOW_MS / 60000} min, not rebuilding it now`}\n`);
+  try { _flushBounds(_boundsKeyForEntry(e.key, win), win); } catch { /* best effort */ }
+  e.drop();                               // before destroy(), so _forgetClosedOverlay does not log it as an outside close
+  try { if (!win.isDestroyed()) win.destroy(); } catch { /* already gone */ }
+  if (!r.ok) return;
+  setTimeout(() => { try { applyAllVisibility(); } catch (err) { appendAgentLog(`[overlay] rebuild of ${e.key} failed: ${err && err.message}\n`); } }, 500);
+}
+
 // Free the renderer behind an overlay the user has switched off. Deliberately
 // conservative: _overlayForcedOn() covers every mode that shows an overlay past
 // its own pref, and a window the user is actively placing ("Setup THIS") is
@@ -9596,6 +9663,9 @@ function applyAllVisibility() {
 // creator has to remember to wire its own 'closed' (none of the eighteen did).
 app.on('browser-window-created', (_e, win) => {
   try { win.once('closed', () => _forgetClosedOverlay(win)); } catch (e) { void e; }
+  // A crashed overlay renderer is rebuilt (see _overlayRendererGone). The window's own entry is looked up when it
+  // fires: the creator has not assigned its reference yet at this point.
+  try { win.webContents.on('render-process-gone', (_ev, details) => { try { _overlayRendererGone(win, details && details.reason); } catch (e) { void e; } }); } catch (e) { void e; }
   // A hand-dragged height becomes that overlay's floor (see "Height floor" above).
   // Windows that are not overlays resolve no bounds key and fall straight through.
   try { win.on('will-resize', (_ev, newBounds) => _noteUserResize(win, newBounds)); } catch (e) { void e; }
@@ -11472,6 +11542,7 @@ ipcMain.handle('overlay-set-bounds', (e, b) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed() || !b) return false;
+    if (_holdForMove(win, 'page-set bounds')) return false;
     win.__wpHeightMode = 'page';   // the page sizes its own window now: a drag is not a height floor
     const wa = screen.getDisplayMatching(win.getBounds()).workArea;
     const width  = Math.max(200, Math.min(wa.width,  Math.round(+b.width  || 0)));
@@ -11514,7 +11585,7 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     if (!win || win.isDestroyed()) return false;
     win.__wpHeightMode = 'fit';   // this page fits its window: a drag can set a height floor
     // Not under a drag: the drag writes its own bounds every 16 ms. Held, and asked for again when it ends.
-    if (win.__wpDragging) { win.__wpFitPending = true; return true; }
+    if (_holdForMove(win, 'fit')) { win.__wpFitPending = true; return true; }
     // ↕ Fit height to content asks for an exact fit, once (see overlay-fit-height).
     const fitNow = (Date.now() - (win.__wpFitNowAt || 0)) < 3000;
     win.__wpFitNowAt = 0;
@@ -11715,6 +11786,10 @@ ipcMain.handle('overlay-ensure-min-height', (e, h) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
+    // The menu borrows height by writing the window's bounds (and, growing upward, its top edge). Under a ✥ drag that
+    // write is overwritten 16 ms later by the drag's stale height, then handed back by overlay-menu-closed: the window
+    // pulses between thin and tall. The preload does not open the menu mid-drag either; this is the backstop.
+    if (_holdForMove(win, 'menu height loan')) return false;
     let wanted = Math.max(50, Math.round(+h || 0));
     // Same CSS-px → painted-px conversion as overlay-auto-height above: the
     // chrome menu is rendered inside the zoomed page, so its measured height
@@ -11762,6 +11837,7 @@ ipcMain.handle('overlay-menu-closed', (e, keepRoom) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
+    if (_holdForMove(win, 'menu height give-back')) return false;
     const s = win.__wpPreMenuBounds;
     if (!s || s.grownH == null || keepRoom) return false;
     const b = win.getBounds();
@@ -12660,6 +12736,11 @@ ipcMain.handle('dock-auto-height', (_e, h) => {
   if (!dockWindow || dockWindow.isDestroyed()) return false;
   const cfg = loadConfig();
   if (cfg.dockAutoFit === false) return false;
+  // Not under a drag. This was the one fit handler without the guard (overlay-auto-height has had it since 2026-10-19):
+  // the Dock's 1 s fit loop landed mid-drag, wrote a new height (and, growing upward, a new top edge), and the drag's
+  // next 16 ms step wrote the height it began with back - the Dock flipping between sizes, a thin bar and a tall one,
+  // under the cursor. Held, and the loop asks again a second later.
+  if (_holdForMove(dockWindow, 'dock fit')) return true;
   // Same CSS-px → painted-px conversion as overlay-auto-height: the dock page
   // measures #shell in CSS px, and with an overlay scale the painted height is
   // that × zoom. Sizing the window in the unconverted unit made the dock's

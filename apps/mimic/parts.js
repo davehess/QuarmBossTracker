@@ -61,7 +61,17 @@
   // What any piece can also set, whatever its mode: its label shown or not, how thick its bar or
   // ring is, its own colour, and where its text sits. Offered in the piece's menu.
   var THICK = [['thin', 'Thin'], ['', 'Normal'], ['thick', 'Thick']];
-  var ALIGN = [['', 'Left'], ['c', 'Centre'], ['r', 'Right']];
+  // The saved value for Left is 'l', and an unset value is Left only for the modes that read from the left:
+  // a Ring arc's label, an upright bar, a badge and the round dials are centred until told otherwise (alignOf).
+  // Saved layouts written before Left was a value of its own keep reading the way they were drawn.
+  var ALIGN = [['l', 'Left'], ['c', 'Center'], ['r', 'Right']];
+  var CENTRED = { seg: 1, vbar: 1, badge: 1, ring: 1, arc: 1 };
+  function alignOf(mode, align) { return align === 'l' || align === 'c' || align === 'r' ? align : (CENTRED[mode] ? 'c' : 'l'); }
+  // Which way a label is turned, where it can be: under an upright bar (turned beside it) and along a Ring arc
+  // (read the other way round the circle). '' is how the piece is drawn without it.
+  var ROT = [['', 'Upright'], ['cw', 'Rotated 90°'], ['ccw', 'Rotated −90°']];
+  function cleanRot(v) { return v === 'cw' || v === 'ccw' ? v : ''; }
+  function turnable(mode) { return mode === 'vbar' || mode === 'seg'; }
   var PALETTE = ['#c9d1d9', '#58a6ff', '#56d364', '#d29922', '#ffa657', '#f85149', '#a371f7', '#39c5cf'];
 
   function esc(s) {
@@ -153,10 +163,12 @@
       + '<div class="pt-vt"><div class="pt-vf" style="height:' + (p == null ? 0 : p.toFixed(1)) + '%;background:' + fillCol(part, v, o) + '"></div></div>'
       + '<span class="pt-l">' + esc(lbl(part, v)) + '</span></div>';
   }
+  // A dial sits in the middle of its panel; Left and Right move it to that side.
+  function parOf(o) { var a = alignOf('ring', o && o.align); return a === 'l' ? 'xMinYMid' : a === 'r' ? 'xMaxYMid' : 'xMidYMid'; }
   function rRing(part, v, o) {
     var p = pct(v.pct), R = 42, CIRC = 2 * Math.PI * R;
     var dash = p == null ? 0 : CIRC * p / 100;
-    return '<div class="pt pt-ring"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">'
+    return '<div class="pt pt-ring"><svg viewBox="0 0 100 100" preserveAspectRatio="' + parOf(o) + ' meet">'
       + '<circle cx="50" cy="50" r="42" class="pt-rt"/>'
       + '<circle cx="50" cy="50" r="42" class="pt-rf" style="stroke:' + fillCol(part, v, o) + '" stroke-dasharray="' + dash.toFixed(1) + ' ' + CIRC.toFixed(1) + '" transform="rotate(-90 50 50)"/>'
       + '<text x="50" y="52" class="pt-rv">' + esc(headline(part, v)) + '</text>'
@@ -166,7 +178,7 @@
   var ARC_LEN = Math.PI * 42;
   function rArc(part, v, o) {
     var p = pct(v.pct), dash = p == null ? 0 : ARC_LEN * p / 100;
-    return '<div class="pt pt-arc"><svg viewBox="0 0 100 62" preserveAspectRatio="xMidYMid meet">'
+    return '<div class="pt pt-arc"><svg viewBox="0 0 100 62" preserveAspectRatio="' + parOf(o) + ' meet">'
       + '<path d="M 8 54 A 42 42 0 0 1 92 54" class="pt-rt"/>'
       + '<path d="M 8 54 A 42 42 0 0 1 92 54" class="pt-rf" style="stroke:' + fillCol(part, v, o) + '" stroke-dasharray="' + dash.toFixed(1) + ' ' + ARC_LEN.toFixed(1) + '"/>'
       + '<text x="50" y="46" class="pt-rv">' + esc(headline(part, v)) + '</text>'
@@ -291,6 +303,25 @@
     x0 = Math.floor((x0 - SEG_PAD) * 10) / 10; y0 = Math.floor((y0 - SEG_PAD) * 10) / 10;
     return [x0, y0, Math.ceil((x1 + SEG_PAD - x0) * 10) / 10, Math.ceil((y1 + SEG_PAD - y0) * 10) / 10];
   }
+  // A whole group asked to be Ring arcs (the Whole group row of a piece's menu): the pieces that have an arc
+  // of their own (they came in as the HUD ring) keep it, and any without one get a share of the circle here —
+  // n equal sectors from 12 o'clock clockwise, a gap between, on the ring's bar radius. A sector whose middle
+  // is in the bottom half reads the other way round (`below`) so its label stays left to right.
+  function ringArcs(n) {
+    n = Math.max(1, Math.min(60, Math.floor(num(n) || 1)));
+    var step = 360 / n, gap = n > 1 ? Math.min(4, step * 0.1) : 0, out = [];
+    for (var i = 0; i < n; i++) {
+      var a0 = i * step + gap / 2, a1 = (i + 1) * step - gap / 2, mid = (a0 + a1) / 2;
+      out.push(cleanArc({ r: DEFAULT_ARC.r, a0: a0, a1: a1, w: DEFAULT_ARC.w, ls: DEFAULT_ARC.ls, below: mid > 90 && mid < 270 }));
+    }
+    return out;
+  }
+  // Where each arc's piece goes for a ring `side` pixels across: [dx, dy, w, h] from the ring's top-left corner,
+  // to a tenth of a pixel (what the canvas does for the ring preset, ringPiece).
+  function ringBoxes(arcs, side) {
+    var k = side / RING;
+    return arcs.map(function (a) { return segBox(a).map(function (n) { return Math.round(n * k * 10) / 10; }); });
+  }
   // The largest size (up to `size`) at which `chars` monospace characters fit an arc of `spanDeg` at radius
   // r, never under 70% of it (me.html's fitSize).
   function fitSize(size, chars, spanDeg, r) {
@@ -298,11 +329,30 @@
     return Math.max(size * 0.7, Math.min(size, room / (Math.max(1, chars) * 0.6)));
   }
   var SEG_DIM = '#8b949e';
-  // A label written along the ring: an invisible path to follow and the text on it, centred.
-  function segLabel(id, a, from, to, spans, chars) {
-    var size = fitSize(a.ls, chars, to - from, a.lr);
-    return '<path id="' + id + '" d="' + arcD(a.lr, from, to, a.below) + '" fill="none" stroke="none"/>'
-      + '<text font-size="' + f1(size) + '"><textPath href="#' + id + '" startOffset="50%" text-anchor="middle">' + spans + '</textPath></text>';
+  // The bar's stroke at a thickness. Relative to the arc's own width, with a floor and a step the eye can see:
+  // the ring's hairline arcs are 1 to 3.3 units in a 400-unit ring, so a plain multiplier moved a 1-unit
+  // arc by less than a pixel and Thin / Thick looked like they did nothing.
+  function segWidth(w, thick) {
+    return thick === 'thin' ? Math.max(0.5, w * 0.5) : thick === 'thick' ? Math.max(w * 2, w + 3.5) : w;
+  }
+  // Where on its arc a label sits: the start of the arc, the middle, or the end (reading direction).
+  function segAnchor(align) {
+    var a = alignOf('seg', align);
+    return a === 'l' ? ['1%', 'start'] : a === 'r' ? ['99%', 'end'] : ['50%', 'middle'];
+  }
+  // Which way round the circle a label reads. The ring draws the labels along its bottom the other way round
+  // (`below`) so they read left to right; Rotated 90° reads clockwise whatever the arc, Rotated −90° counter-
+  // clockwise. The glyphs grow to the left of the way the path runs, so turning a label over moves its baseline
+  // across the text's own height to keep the words on the same side of the bar.
+  function segTurn(a, size, rot) {
+    var ccw = rot === 'cw' ? false : rot === 'ccw' ? true : !!a.below;
+    return { ccw: ccw, lr: a.lr + (ccw === !!a.below ? 0 : (ccw ? 1 : -1) * 0.72 * size) };
+  }
+  // A label written along the ring: an invisible path to follow and the text on it, centred unless told otherwise.
+  function segLabel(id, a, from, to, spans, chars, o) {
+    var size = fitSize(a.ls, chars, to - from, a.lr), t = segTurn(a, size, o && o.rot), an = segAnchor(o && o.align);
+    return '<path id="' + id + '" d="' + arcD(t.lr, from, to, t.ccw) + '" fill="none" stroke="none"/>'
+      + '<text font-size="' + f1(size) + '"><textPath href="#' + id + '" startOffset="' + an[0] + '" text-anchor="' + an[1] + '">' + spans + '</textPath></text>';
   }
   function segStroke(d, color, w) { return d ? '<path d="' + d + '" stroke="' + color + '" stroke-width="' + f1(w) + '" fill="none" stroke-linecap="round"/>' : ''; }
   // Track and fill; rev fills from the far end back (the right arc fills from the bottom up).
@@ -315,7 +365,7 @@
   function rSeg(part, v, o) {
     var a = cleanArc(o && o.arc) || cleanArc(DEFAULT_ARC), box = segBox(a), nl = !!(o && o.nolabel);
     var id = 'sg' + String((o && o.uid) || part.id).replace(/[^A-Za-z0-9_-]/g, '');
-    var w = a.w * (o && o.thick === 'thin' ? 0.6 : o && o.thick === 'thick' ? 1.8 : 1), h = '';
+    var w = segWidth(a.w, o && o.thick), h = '';   // the viewBox (box) stays the arc's own: a thicker bar never rescales the piece
     if (part.kind === 'list') {
       // The HUD's cooldowns: up to five short segments side by side, centred on the arc, each labelled.
       var items = (v.items || []).slice(0, 5), n = items.length, gap = 2, span = a.a1 - a.a0;
@@ -327,14 +377,14 @@
         var f = it.frac != null ? it.frac : (pct(it.pct) != null ? pct(it.pct) / 100 : 1);
         h += ready ? segStroke(arcD(a.r, c0, c1), C.green, w) : segGauge(a, f, col, w, c0, c1, false);
         var txt = (it.short || it.name) + ' ' + (ready ? '✓' : itemText(it));
-        if (!nl) h += segLabel(id + i, a, c0, c1, '<tspan fill="' + col + '">' + esc(txt) + '</tspan>', txt.length);
+        if (!nl) h += segLabel(id + i, a, c0, c1, '<tspan fill="' + col + '">' + esc(txt) + '</tspan>', txt.length, o);
         c1 = c0 - gap;
       });
     } else if (part.kind === 'value') {
       // Words only (the target's target, its slow state), written along the ring.
       var vt = valueText(v), vs = v.sub ? ' ' + v.sub : '';
       h += segLabel(id, a, a.a0, a.a1, '<tspan fill="' + textCol(part, v, o, C.text) + '">' + esc(vt) + '</tspan>'
-        + (vs ? '<tspan fill="' + SEG_DIM + '">' + esc(vs) + '</tspan>' : ''), vt.length + vs.length);
+        + (vs ? '<tspan fill="' + SEG_DIM + '">' + esc(vs) + '</tspan>' : ''), vt.length + vs.length, o);
     } else {
       var col2 = fillCol(part, v, o), p = pct(v.pct), txt2 = lbl(part, v) + ' ' + headline(part, v);
       var rgv = v.regen || null, f2 = p == null ? 0 : p / 100, span2 = a.a1 - a.a0;
@@ -347,7 +397,7 @@
       if (!nl) h += segLabel(id, a, a.a0, a.a1, '<tspan fill="' + SEG_DIM + '">' + esc(lbl(part, v)) + ' </tspan>'
         + '<tspan fill="' + col2 + '" font-weight="500">' + esc(headline(part, v)) + '</tspan>'
         + (rgv ? '<tspan fill="' + C.green + '" font-weight="700"> ' + esc(rgv.text) + '<title>' + esc(rgv.tip) + '</title></tspan>' : ''),
-        txt2.length + (rgv ? 1 + rgv.text.length : 0));
+        txt2.length + (rgv ? 1 + rgv.text.length : 0), o);
     }
     return '<div class="pt pt-seg"><svg viewBox="' + box.map(f1).join(' ') + '" preserveAspectRatio="xMidYMid meet">' + h + '</svg></div>';
   }
@@ -365,7 +415,8 @@
     // An arc of the ring with nothing to show draws nothing (the HUD leaves its swing arc bare out of combat).
     if (!v) return mode === 'seg' ? '<div class="pt pt-none pt-seg"></div>' : '<div class="pt pt-none"><span class="pt-l">' + esc(part.short || part.label) + '</span> <span class="pt-sub">—</span></div>';
     var cls = (o.nolabel ? ' nl' : '') + (o.thick === 'thin' || o.thick === 'thick' ? ' tk-' + o.thick : '')
-      + (o.align === 'c' || o.align === 'r' ? ' al-' + o.align : '');
+      + (o.align === 'l' || o.align === 'c' || o.align === 'r' ? ' al-' + o.align : '')
+      + (mode === 'vbar' && cleanRot(o.rot) ? ' rot-' + o.rot : '');
     var html = RENDER[mode](part, v, o);
     return cls ? html.replace('<div class="pt ', '<div class="pt' + cls + ' ') : html;
   }
@@ -432,7 +483,18 @@
     + '.pt.tk-thin .pt-rt,.pt.tk-thin .pt-rf{stroke-width:5}.pt.tk-thick .pt-rt,.pt.tk-thick .pt-rf{stroke-width:15}'
     + '.pt.tk-thin .pt-vt{width:calc(7px * var(--ps,1))}.pt.tk-thick .pt-vt{width:calc(22px * var(--ps,1))}'
     + '.pt.al-c{text-align:center}.pt.al-c .pt-lr{justify-content:center}.pt.al-c.pt-chips,.pt.al-c.pt-thin{justify-content:center}'
-    + '.pt.al-r{text-align:right}.pt.al-r .pt-lr{justify-content:flex-end}.pt.al-r.pt-chips{justify-content:flex-end}';
+    + '.pt.al-r{text-align:right}.pt.al-r .pt-lr{justify-content:flex-end}.pt.al-r.pt-chips{justify-content:flex-end}'
+    // The shapes that sit in the middle of their panel unless told otherwise (alignOf): Left and Right move them.
+    + '.pt-vbar.al-l{align-items:flex-start}.pt-vbar.al-r{align-items:flex-end}'
+    + '.pt-badge.al-l{justify-content:flex-start}.pt-badge.al-r{justify-content:flex-end}'
+    // A label turned beside an upright bar instead of under it (Rotated 90° reads downward, on the bar's right;
+    // Rotated −90° reads upward, on its left). The value stays over the bar.
+    + '.pt-vbar.rot-cw,.pt-vbar.rot-ccw{display:grid;grid-template-columns:auto auto;grid-template-rows:auto minmax(0,1fr);align-items:stretch;justify-content:center;column-gap:4px;row-gap:2px}'
+    + '.pt-vbar.rot-cw.al-l,.pt-vbar.rot-ccw.al-l{justify-content:start}.pt-vbar.rot-cw.al-r,.pt-vbar.rot-ccw.al-r{justify-content:end}'
+    + '.pt-vbar.rot-cw .pt-v,.pt-vbar.rot-ccw .pt-v{justify-self:center}'
+    + '.pt-vbar.rot-cw .pt-v{grid-area:1/1}.pt-vbar.rot-cw .pt-vt{grid-area:2/1}.pt-vbar.rot-cw .pt-l{grid-area:1/2/3/3}'
+    + '.pt-vbar.rot-ccw .pt-v{grid-area:1/2}.pt-vbar.rot-ccw .pt-vt{grid-area:2/2}.pt-vbar.rot-ccw .pt-l{grid-area:1/1/3/2;transform:rotate(180deg)}'
+    + '.pt-vbar.rot-cw .pt-l,.pt-vbar.rot-ccw .pt-l{writing-mode:vertical-rl;white-space:nowrap;max-width:none;max-height:100%;align-self:center;font-size:0.85em}';
 
   // ── Sources ────────────────────────────────────────────────────────────────
   // The agent's own endpoints (docs/DESIGN-overlay-catalog.md §4 has the
@@ -496,6 +558,9 @@
   function cdView(c, at) {
     if (!c || c.seen === false) return null;
     if (c.failed) return { endAt: at, total: 1, text: '✗ failed', color: C.red, label: c.label };
+    // A shield being held up counts its own 12 s first (the agent sends active_ms_left on the Shield row only).
+    var on = num(c.active_ms_left);
+    if (on != null && on > 0) return { endAt: at + on, total: num(c.active_total_ms) || on, doneText: 'ready', label: c.label + ': active', color: C.green };
     var ms = num(c.ms_left);
     if (ms == null || ms <= 0) return { endAt: at, total: 1, doneText: 'ready', label: c.label };
     return { endAt: at + ms, total: num(c.total_ms) || ms, doneText: 'ready', label: c.label };
@@ -505,7 +570,7 @@
   // The HUD's short names for its cooldowns (me.html CD_SHORT), for the ring's cooldown arc.
   var CD_SHORT = { 'Flying Kick': 'FK', 'Round Kick': 'RK', 'Dragon Punch': 'DP', 'Eagle Strike': 'ES', 'Tiger Claw': 'TC',
     'Kick': 'KICK', 'Bash': 'BASH', 'Backstab': 'BS', 'Mend': 'MEND', 'Taunt': 'TNT', 'Harm Touch': 'HT',
-    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB' };
+    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB', 'Shield': 'SHLD' };
 
   var PARTS = [];
   function P(id, cat, label, src, kind, get, sample, extra) {
@@ -589,14 +654,20 @@
       return { items: d.cooldowns.filter(function (c) { return c.seen !== false; }).map(function (c) {
         var ms = num(c.ms_left); if (ms != null) ms -= Date.now() - at;
         var ready = !c.failed && (ms == null || ms <= 0), tot = num(c.total_ms);
-        return { name: c.label, short: CD_SHORT[c.label] || String(c.label || '').slice(0, 4).toUpperCase(), ready: ready,
+        // The shield's own 12 s while it is up: green, counting down, over the 3-minute reuse.
+        var on = num(c.active_ms_left); if (on != null) on -= Date.now() - at;
+        if (on != null && on > 0) {
+          return { name: c.label, short: 'SHLD', ready: false, frac: Math.max(0, Math.min(1, on / (num(c.active_total_ms) || on))),
+            text: 'on ' + mmss(on), color: C.green };
+        }
+        return { name: c.label, short: c.key === 'disc' ? 'DISC' : (CD_SHORT[c.label] || String(c.label || '').slice(0, 4).toUpperCase()), ready: ready,
           frac: !ready && ms != null && tot ? Math.max(0, Math.min(1, ms / tot)) : 0,
           text: c.failed ? '✗' : (ms == null || ms <= 0) ? 'ready' : mmss(ms),
           color: c.failed ? C.red : (ms == null || ms <= 0) ? C.green : C.orange }; }) };
     },
     { items: [{ name: 'Mend', short: 'MEND', ready: true, text: 'ready', color: C.green },
       { name: 'Feign Death', short: 'FD', frac: 0.7, text: '0:07', color: C.orange }] }, { short: 'Cooldowns' });
-  [['ability', 'Combat ability'], ['mend', 'Mend'], ['taunt', 'Taunt'], ['fd', 'Feign Death'], ['loh', 'Lay on Hands'], ['ht', 'Harm Touch'], ['disc', 'Discipline']]
+  [['ability', 'Combat ability'], ['mend', 'Mend'], ['taunt', 'Taunt'], ['shield', 'Shield'], ['fd', 'Feign Death'], ['loh', 'Lay on Hands'], ['ht', 'Harm Touch'], ['disc', 'Discipline']]
     .forEach(function (k) {
       P('me.cd_' + k[0], 'me', k[1] + ' cooldown', 'me', 'countdown',
         function (d, at) { return cdView(cd(d, k[0]), at); }, cdSample(k[1], 23000, 60000), { short: k[1] });
@@ -1178,6 +1249,8 @@
 
   root.WpParts = {
     C: C, CATS: CATS, MODES: MODES, DEFAULT_SIZE: DEFAULT_SIZE, CSS: CSS, THICK: THICK, ALIGN: ALIGN, PALETTE: PALETTE,
+    alignOf: alignOf, ROT: ROT, cleanRot: cleanRot, turnable: turnable, segWidth: segWidth, segAnchor: segAnchor, segTurn: segTurn,
+    ringArcs: ringArcs, ringBoxes: ringBoxes,
     RING: RING, cleanArc: cleanArc, segBox: segBox, regenPulse: regenPulse, fitRows: fitRows, rowsBox: rowsBox,
     render: render, resolve: resolve,
     util: { esc: esc, num: num, pct: pct, hpColor: hpColor, mmss: mmss, fmtNum: fmtNum, pctOf: pctOf, at: at },

@@ -56,6 +56,7 @@ function load() {
   return evalBlock(prefix + block, [
     '_mobInfoByName', '_mobInfoCacheKey', 'fetchMobInfo', '_mobPackLookup', '_mobPackFetch',
     '_mobPackTick', '_mobPackEvict', '_mobPackIdx', 'MOB_PACK_DIR', 'MOB_PACK_UNVISITED_MS', 'MOB_PACK_MAX_BYTES',
+    'MOB_INFO_TTL_MS', 'MOB_INFO_MISS_TTL_MS',
   ]);
 }
 const flush = () => new Promise(r => setTimeout(r, 10));
@@ -187,5 +188,67 @@ describe('eviction', () => {
     expect(fs.existsSync(path.join(m.MOB_PACK_DIR, '96.json'))).toBe(false);
     expect(fs.existsSync(path.join(m.MOB_PACK_DIR, '167.json'))).toBe(false);
     expect(fs.existsSync(path.join(m.MOB_PACK_DIR, '200.json'))).toBe(true);
+  });
+});
+
+// A bot redeploy or database blip at the moment a mob is first targeted used to hide its stats and resists for the
+// whole 6 h TTL (a member: "missing resists on Hobgoblins"): every answer, errors included, was cached as "no row".
+// Only a 200 carrying a mob lasts the full TTL; any other answer is a miss asked for again in a minute, and a row we
+// already hold survives it.
+describe('a missed mob-info lookup', () => {
+  const key = (m, n) => m._mobInfoCacheKey(n);
+  const leftMs = (m, hit) => m.MOB_INFO_TTL_MS - (Date.now() - hit.at);   // how long until a reader asks again
+  const GOOD = { name: 'a hobgoblin warrior', level: 22, mr: 25 };
+
+  it.each([
+    ['a 503 from a redeploying bot', { status: 503, body: 'upstream unavailable' }],
+    ['a 200 that is not JSON', { status: 200, body: '<html>proxy error</html>' }],
+    ['a 200 error body', { status: 200, body: '{"error":"db timeout"}' }],
+    ['a 200 with no mob', { status: 200, body: '{"mob":null}' }],
+  ])('%s is kept for a minute, not six hours', async (_label, reply) => {
+    S.respond = () => reply;
+    const m = load();
+    m.fetchMobInfo('a hobgoblin warrior', 'Aldenmar');
+    await flush();
+    const hit = m._mobInfoByName.get(key(m, 'a hobgoblin warrior'));
+    expect(hit.mob).toBeNull();
+    expect(leftMs(m, hit)).toBeLessThanOrEqual(m.MOB_INFO_MISS_TTL_MS);
+    expect(leftMs(m, hit)).toBeGreaterThan(m.MOB_INFO_MISS_TTL_MS - 5000);
+    expect(m.MOB_INFO_MISS_TTL_MS).toBe(60 * 1000);
+  });
+
+  it('is asked for again once the minute is up, and the answer then sticks for the full TTL', async () => {
+    S.respond = () => ({ status: 503, body: '' });
+    const m = load();
+    m.fetchMobInfo('a hobgoblin warrior', 'Aldenmar');
+    await flush();
+    m.fetchMobInfo('a hobgoblin warrior', 'Aldenmar');          // inside the minute: no second request
+    await flush();
+    expect(S.requests).toHaveLength(1);
+
+    const hit = m._mobInfoByName.get(key(m, 'a hobgoblin warrior'));
+    hit.at -= 61 * 1000;                                       // the minute passes
+    S.respond = () => ({ status: 200, body: JSON.stringify({ mob: GOOD }) });
+    m.fetchMobInfo('a hobgoblin warrior', 'Aldenmar');
+    await flush();
+    expect(S.requests).toHaveLength(2);
+    const got = m._mobInfoByName.get(key(m, 'a hobgoblin warrior'));
+    expect(got.mob.mr).toBe(25);
+    expect(leftMs(m, got)).toBeGreaterThan(m.MOB_INFO_TTL_MS - 5000);
+  });
+
+  it('keeps the row it already holds through an error (stale while error)', async () => {
+    S.respond = () => ({ status: 200, body: JSON.stringify({ mob: GOOD }) });
+    const m = load();
+    m.fetchMobInfo('a hobgoblin warrior', 'Aldenmar');
+    await flush();
+    const k = key(m, 'a hobgoblin warrior');
+    m._mobInfoByName.get(k).at -= m.MOB_INFO_TTL_MS + 1000;    // the 6 h are up
+    S.respond = () => ({ status: 500, body: '{"error":"internal error"}' });
+    m.fetchMobInfo('a hobgoblin warrior', 'Aldenmar');
+    await flush();
+    const hit = m._mobInfoByName.get(k);
+    expect(hit.mob && hit.mob.mr).toBe(25);                    // old stats beat none
+    expect(leftMs(m, hit)).toBeLessThanOrEqual(m.MOB_INFO_MISS_TTL_MS);   // ...and it retries in a minute
   });
 });
