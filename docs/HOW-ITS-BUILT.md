@@ -4315,6 +4315,11 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   Pure rules in `web/lib/raidRoutes.ts`, loader `raidRoutesLoad.ts`, board `RoutesBoard.tsx`, member-gated `/api/raid/routes`;
   officers can save a route (`actions.ts`, stored in `bot_kv` as `raid_route:<zone>`, so no migration). Server frame throughout; the page negates axes to draw north up. Test:
   `test/raid-routes.test.js`.
+- **Fewest raiders per boss (`GET /api/raid/fewest?zone=&npc=`, for the route planner's off-night targets).** Members-only; per boss, the
+  five smallest past confirmed kills with players, characters, class mix and main/off night, counts only. Headcount is the union of the
+  parse's damage dealers (guild characters only) and the raiders the raid recorder placed in the zone around the kill; players join
+  characters by family and Discord owner. The recorder is read only for kills that can reach the five smallest. Pure rules + loader
+  `web/lib/fewestKills.ts`, route `web/app/api/raid/fewest/route.ts` (5 min cache). Test: `test/fewest-kills.test.js`.
 
 ### Route planner (`/raid/plan/routes`, web 2.0.2, 2026-10-22, DRAFT)
 - **Where.** `web/app/raid/plan/routes/` (`page.tsx` server, `RoutePlanner.tsx` client host, `engine.ts` the ported single-file
