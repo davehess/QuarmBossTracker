@@ -1,7 +1,6 @@
 // The raid's PATH on the spectator replay and the shared raid (the guild lead, 2026-10-22: "add the path view for
-// spectator and shared raids as well"). Two previews, awaiting a pick: `?v=b` draws the whole night's path with the
-// part up to the playhead solid and numbered kill markers; `?v=c` draws a fading trail behind the raid's centre for
-// the last N minutes. No `?v=` leaves the board as it was. Pure: no React, no DOM, no network.
+// spectator and shared raids as well"; picked: the whole night's path, always on, with a Path toggle). The whole night's
+// path is drawn faint, the part up to the playhead solid, with numbered kill markers. Pure: no React, no DOM, no network.
 //
 // DATA: nothing new is asked for. The path is the same centre the route pages draw (lib/raidRoutes.ts centroidSeries:
 // the median position of the raiders the recorder placed in the zone, frame by frame), computed here from the frames
@@ -18,24 +17,8 @@ import type { ReplayFrame } from './raidReplay';
 export const PATH_MIN_RAIDERS = 4;        // a frame with fewer raiders placed in the zone is not "the raid"
 export const PATH_BREAK_MS = 60_000;      // two samples further apart than this are not joined
 export const PATH_HOP = 200;              // a centre that moved further than this between two samples did not walk it
-export const TRAIL_MIN_MIN = 2;
-export const TRAIL_MAX_MIN = 30;
-export const TRAIL_DEFAULT_MIN = 10;
-export const RAIDER_TRAIL_MS = 60_000;    // each raider's own tail (the optional layer of the trail variant)
-export const RAIDER_TRAIL_STEP_MS = 6_000;
 
-export type RouteVariant = 'b' | 'c';
 export type PathPt = { t: number; x: number; y: number; z: number; n: number };
-
-/** `?v=b` or `?v=c`; anything else (including no `v`) is the board as it stands. */
-export function parseRouteVariant(search: string): RouteVariant | null {
-  const v = new URLSearchParams(search).get('v');
-  return v === 'b' || v === 'c' ? v : null;
-}
-
-export function clampTrailMin(n: number): number {
-  return Number.isFinite(n) ? Math.min(TRAIL_MAX_MIN, Math.max(TRAIL_MIN_MIN, Math.round(n))) : TRAIL_DEFAULT_MIN;
-}
 
 const fin = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
@@ -159,49 +142,6 @@ export function headAt(series: readonly PathPt[], t: number, maxGap = PATH_BREAK
   return { t, x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, z: a.z + (b.z - a.z) * f, n: a.n };
 }
 
-// ── the trail ─────────────────────────────────────────────────────────────────
-
-export type TrailSeg = { a: PathPt; b: PathPt; f: number };   // f: 0 (oldest, gone) .. 1 (the centre now)
-
-/**
- * The last `ms` of the path up to `t`, as segments that fade toward the past: f is the segment's end age as a share
- * of the window. The last segment runs on to the interpolated head so the tail touches the centre. Breaks (a hole, a
- * jump) are not bridged.
- */
-export function trailSegments(series: readonly PathPt[], t: number, ms: number): TrailSeg[] {
-  const hi = lastAtOrBefore(series, t);
-  if (hi < 0 || ms <= 0) return [];
-  const since = t - ms;
-  let lo = hi;
-  while (lo > 0 && series[lo - 1].t >= since) lo--;
-  const out: TrailSeg[] = [];
-  for (let i = Math.max(0, lo - 1); i < hi; i++) {
-    if (!linked(series, i)) continue;
-    const b = series[i + 1];
-    if (b.t < since) continue;
-    out.push({ a: series[i], b, f: Math.min(1, Math.max(0, (b.t - since) / ms)) });
-  }
-  const head = headAt(series, t);
-  const last = series[hi];
-  if (head && head !== last && head.t > last.t && t - last.t <= PATH_BREAK_MS) out.push({ a: last, b: head, f: 1 });
-  return out;
-}
-
-/** The box (server frame) around a set of segments, and the middle sample's z. Null with none. The "Fit trail" view. */
-export function trailBox(segs: readonly TrailSeg[]): { minX: number; maxX: number; minY: number; maxY: number; z: number } | null {
-  if (!segs.length) return null;
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const s of segs) {
-    for (const p of [s.a, s.b]) {
-      if (p.x < minX) minX = p.x;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.y > maxY) maxY = p.y;
-    }
-  }
-  return { minX, maxX, minY, maxY, z: segs[segs.length >> 1].b.z };
-}
-
 // ── kill markers ──────────────────────────────────────────────────────────────
 
 export type KillIn = { name: string; to: number; zones?: readonly string[] };
@@ -228,51 +168,10 @@ export function killMarks(kills: readonly KillIn[], series: readonly PathPt[], z
   return out;
 }
 
-// ── each raider's own tail (the trail variant's optional layer) ───────────────
-
-export type RaiderTrail = { name: string; cls: string | null; pts: { x: number; y: number; z: number; f: number }[] };
-
-/**
- * Each raider's last `ms` in `zone`, sampled every `stepMs`, from the frames the board holds. A raider who jumped
- * further than `hop` between two samples starts a new tail there. Bounded by `maxRaiders`.
- */
-export function raiderTrails(
-  frames: readonly ReplayFrame[], idx: number, t: number, zone: string, ms = RAIDER_TRAIL_MS, stepMs = RAIDER_TRAIL_STEP_MS,
-  hop = PATH_HOP, maxRaiders = 160,
-): RaiderTrail[] {
-  if (idx < 0 || idx >= frames.length) return [];
-  const since = t - ms;
-  const by = new Map<string, RaiderTrail>();
-  let lastTaken = Infinity;
-  for (let k = idx; k >= 0; k--) {
-    const fr = frames[k];
-    if (fr.t < since) break;
-    if (lastTaken - fr.t < stepMs && k !== idx) continue;
-    lastTaken = fr.t;
-    const f = Math.min(1, Math.max(0, (fr.t - since) / ms));
-    for (const r of fr.raiders) {
-      if (r.zone !== zone || !fin(r.x) || !fin(r.y)) continue;
-      let tr = by.get(r.name);
-      if (!tr) {
-        if (by.size >= maxRaiders) continue;
-        by.set(r.name, tr = { name: r.name, cls: r.cls, pts: [] });
-      }
-      const prev = tr.pts[tr.pts.length - 1];
-      // Walking back in time: a point past a jump is not joined, and `prev` stays on this side, so nothing older joins either.
-      if (prev && Math.hypot(prev.x - r.x, prev.y - r.y) > hop) continue;
-      tr.pts.push({ x: r.x, y: r.y, z: fin(r.z) ? r.z : 0, f });
-    }
-  }
-  return [...by.values()].filter(tr => tr.pts.length >= 2);
-}
-
 // ── what the board hands the 3D view ──────────────────────────────────────────
 
 export type RouteFeed = {
-  variant: RouteVariant;
   series: readonly PathPt[];     // the zone's centre path; the same array until the path changes
   t: number;                     // the playhead
-  trailMs: number;               // variant c: the length of the trail
-  marks: KillMark[];             // variant b
-  raiderTrails: RaiderTrail[] | null;   // variant c, when the toggle is on
+  marks: KillMark[];             // the numbered kills along the path
 };

@@ -1,13 +1,12 @@
 // test/replay-path.test.js: the raid's path on the spectator replay and the shared raid (web/lib/replayPath.ts).
 //
-// Two previews are open for the guild lead's pick, `?v=b` (the whole night's path, solid up to the playhead, numbered
-// kills) and `?v=c` (a fading trail behind the raid's centre). Both draw from these pure rules, so a wrong one draws a
+// The raid's path is always on (the guild lead's pick, 2026-10-22: the whole night's path, solid up to the playhead,
+// numbered kills; the fading-trail alternative was dropped). It draws from these pure rules, so a wrong one draws a
 // plausible blue line that is not where the raid went:
 //   • the centre is the SAME maths as the route pages (lib/raidRoutes.ts centroidSeries), with the median z kept;
 //   • the path is kept window by window and a window asked for again replaces itself;
 //   • a hole in the recording or a jump is a break, never a bridge;
 //   • the solid part is exactly the segments the playhead has passed;
-//   • the trail is the last N minutes and fades toward the past;
 //   • kill markers are numbered in the order the bosses died and sit where the raid centre was at that moment.
 //
 // Run: npx vitest run test/replay-path.test.js
@@ -18,9 +17,9 @@ import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
 import { centroidSeries } from '../web/lib/raidRoutes.ts';
 import {
-  PATH_MIN_RAIDERS, PATH_BREAK_MS, PATH_HOP, TRAIL_MIN_MIN, TRAIL_MAX_MIN, TRAIL_DEFAULT_MIN,
-  parseRouteVariant, clampTrailMin, pathSeries, pathSeriesByZone, PathStore, linked, buildSegments, segmentsDone,
-  headAt, trailSegments, trailBox, rankKills, killMarks, raiderTrails,
+  PATH_MIN_RAIDERS, PATH_BREAK_MS, PATH_HOP,
+  pathSeries, pathSeriesByZone, PathStore, linked, buildSegments, segmentsDone,
+  headAt, rankKills, killMarks,
 } from '../web/lib/replayPath.ts';
 
 const S = 1000;
@@ -197,61 +196,6 @@ describe('the head', () => {
   });
 });
 
-describe('the trail', () => {
-  const series = pathSeries(walk(0, 1800), 'z');   // 30 minutes, a sample every 3 s
-
-  it('is the last N minutes up to the playhead and nothing older', () => {
-    const t = at(1200);
-    const segs = trailSegments(series, t, 2 * 60 * S);
-    expect(segs.length).toBeGreaterThan(30);
-    for (const s of segs) {
-      expect(s.b.t).toBeGreaterThanOrEqual(t - 2 * 60 * S);
-      expect(s.b.t).toBeLessThanOrEqual(t);
-    }
-    const ten = trailSegments(series, t, 10 * 60 * S);
-    expect(ten.length).toBeGreaterThan(segs.length * 4);   // five times the minutes, about five times the segments
-  });
-
-  it('fades toward the past: the newest segment is 1 and f never falls going forward', () => {
-    const segs = trailSegments(series, at(1200), 5 * 60 * S);
-    expect(segs[segs.length - 1].f).toBe(1);
-    expect(segs[0].f).toBeLessThan(0.05);
-    segs.forEach((s, i) => { if (i) expect(s.f).toBeGreaterThanOrEqual(segs[i - 1].f); });
-  });
-
-  it('reaches the head between samples and does not run ahead of the playhead', () => {
-    const segs = trailSegments(series, at(1201), 60 * S);
-    const last = segs[segs.length - 1];
-    expect(last.b.t).toBe(at(1201));
-    expect(last.a.t).toBe(at(1200));
-  });
-
-  it('does not bridge a hole, and is empty before the path starts or for a zero length', () => {
-    const holey = pathSeries([...walk(0, 60), ...walk(600, 660, 300)], 'z');
-    const segs = trailSegments(holey, at(660), 20 * 60 * S);
-    expect(segs.some(s => s.a.t < at(100) && s.b.t > at(500))).toBe(false);
-    expect(trailSegments(series, at(-100), 60 * S)).toEqual([]);
-    expect(trailSegments(series, at(1200), 0)).toEqual([]);
-  });
-});
-
-describe('the "Fit trail" box', () => {
-  const series = pathSeries(walk(0, 1800), 'z');   // x = 10 * seconds
-
-  it('is the box around the last N minutes and no more', () => {
-    const box = trailBox(trailSegments(series, at(1200), 2 * 60 * S));
-    expect(box.maxX).toBeCloseTo(12000, -1);
-    expect(box.minX).toBeGreaterThan(10700);   // two minutes back is 10800, give or take the first sample in
-    expect(box.minX).toBeLessThan(10900);
-    expect(box.z).toBeGreaterThan(0);
-  });
-
-  it('is null with nothing to fit', () => {
-    expect(trailBox([])).toBeNull();
-    expect(trailBox(trailSegments(series, at(-100), 60 * S))).toBeNull();
-  });
-});
-
 describe('kill markers', () => {
   const series = pathSeries(walk(0, 600), 'z');   // x = 10 * seconds
   const kills = [
@@ -284,66 +228,29 @@ describe('kill markers', () => {
   });
 });
 
-describe('each raider\'s own tail', () => {
-  const frames = walk(0, 300, 0, 0, 10, 5);
-
-  it('is the last 60 seconds, sampled, only for raiders in the zone', () => {
-    const idx = frames.findIndex(f => f.t === at(150));
-    const extra = frames.map(f => ({ ...f, raiders: [...f.raiders, { i: 77, name: 'visitor', cls: 'CLR', x: 5, y: 5, z: 0, zone: 'other' }] }));
-    const tr = raiderTrails(extra, idx, at(150), 'z');
-    expect(tr).toHaveLength(5);
-    expect(tr.find(x => x.name === 'visitor')).toBeUndefined();
-    for (const t of tr) {
-      expect(t.pts.length).toBeGreaterThanOrEqual(8);
-      expect(t.pts.length).toBeLessThanOrEqual(12);   // every 6 s over a minute, not every 3
-      expect(t.pts[0].f).toBe(1);
-      expect(t.pts[t.pts.length - 1].f).toBeLessThan(0.15);
-    }
-  });
-
-  it('stops at a jump: nothing from before a teleport joins the tail after it', () => {
-    const jump = [...walk(0, 60, 0, 0, 10, 5), ...walk(63, 120, 5000, 0, 10, 5)];
-    const idx = jump.length - 1;
-    const tr = raiderTrails(jump, idx, jump[idx].t, 'z');
-    expect(tr.length).toBe(5);
-    for (const t of tr) expect(t.pts.every(p => p.x > 4000)).toBe(true);
-  });
-
-  it('is empty with no frame under the playhead', () => {
-    expect(raiderTrails(frames, -1, at(0), 'z')).toEqual([]);
-    expect(raiderTrails(frames, 9999, at(0), 'z')).toEqual([]);
-  });
-});
-
-describe('the variant and the slider', () => {
-  it('reads ?v=b and ?v=c and nothing else', () => {
-    expect(parseRouteVariant('?v=b')).toBe('b');
-    expect(parseRouteVariant('?bg=lines&v=c&hl=Aldenmar')).toBe('c');
-    expect(parseRouteVariant('')).toBeNull();
-    expect(parseRouteVariant('?v=leg')).toBeNull();
-    expect(parseRouteVariant('?v=B')).toBeNull();
-  });
-
-  it('keeps the trail slider between 2 and 30 minutes', () => {
-    expect([TRAIL_MIN_MIN, TRAIL_MAX_MIN, TRAIL_DEFAULT_MIN]).toEqual([2, 30, 10]);
-    expect(clampTrailMin(0)).toBe(2);
-    expect(clampTrailMin(500)).toBe(30);
-    expect(clampTrailMin(12.4)).toBe(12);
-    expect(clampTrailMin(NaN)).toBe(10);
-  });
-});
-
-describe('the default board is left alone', () => {
+describe('the path is always on, with its toggle, and the trail is gone', () => {
   const board = stripJs(fs.readFileSync(path.join(ROOT, 'web/app/spectator/replay/ReplayBoard.tsx'), 'utf8'));
-  it('builds no route unless a variant was named in the URL', () => {
-    expect(board).toMatch(/setVariant\(parseRouteVariant\(window\.location\.search\)\)/);
-    expect(board).toMatch(/let route: RouteFeed \| null = null;\s*if \(rc\.variant && /);   // paint: null without a variant
+  const lib = stripJs(fs.readFileSync(path.join(ROOT, 'web/lib/replayPath.ts'), 'utf8'));
+  const layer = stripJs(fs.readFileSync(path.join(ROOT, 'web/app/spectator/replay/RouteLayer3D.ts'), 'utf8'));
+  it('builds the route whenever the Path toggle is on, with no variant in the URL', () => {
+    expect(board).toMatch(/let route: RouteFeed \| null = null;\s*if \(routeRef\.current\.path\) \{/);
+    expect(board).toMatch(/const \[showPath, setShowPath\] = useState\(true\)/);   // on by default
+    expect(board).not.toMatch(/setVariant|\bvariant\b/);   // nothing in the board reads a ?v= any more
   });
-  it('keeps no path, and reads no extra window, without a variant', () => {
-    expect(board).toMatch(/if \(routeRef\.current\.variant\) \{ pathStore\.current\.addWindow\(w, decoded\)/);
-    expect(board).toMatch(/if \(variant !== 'b' \|\| !showPath \|\| !night\) return;/);
+  it('keeps every window\'s path and reads the rest of the night while the toggle is on', () => {
+    expect(board).toMatch(/pathStore\.current\.addWindow\(w, decoded\)/);
+    expect(board).not.toMatch(/routeRef\.current\.variant/);
+    expect(board).toMatch(/if \(!showPath \|\| !night\) return;/);
   });
-  it('shows no path controls without a variant', () => {
-    expect(board).toMatch(/\{variant && \(\s*<div[^>]*aria-label="Raid path"/);
+  it('shows the path controls to everyone, without a preview tag', () => {
+    expect(board).toMatch(/<div[^>]*aria-label="Raid path"/);
+    expect(board).not.toMatch(/\{variant && \(/);
+    expect(board).not.toMatch(/preview \{/);
+  });
+  it('has no trail, raider trails, trail slider or variant left anywhere', () => {
+    for (const src of [board, lib, layer]) {
+      expect(src).not.toMatch(/trailSegments|trailBox|raiderTrails|RaiderTrail|clampTrailMin|TRAIL_|trailMs|showRtrails|RouteVariant|parseRouteVariant/);
+    }
+    expect(layer).not.toMatch(/MAX_TRAIL|MAX_RT|updateTrail/);
   });
 });

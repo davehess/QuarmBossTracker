@@ -551,21 +551,24 @@ describe('the 3D view with walk routes', () => {
 
 describe('the page everyone sees is unchanged', () => {
   const z = zoneData('solrotower');
-  it('the markup has the Walk route toggle only in a preview', () => {
+  it('the markup has the Walk route toggle only when the host offers the walkable map', () => {
     expect(skeletonHtml(z, false, false)).not.toMatch(/walkOn|walkNote|Walk route/);
     expect(skeletonHtml(z, false, true)).toMatch(/data-src="walk"/);      // Walk route is one of the route sources (Straight · Walk route · Recorded)
     expect(skeletonHtml(z, false, false)).not.toMatch(/data-src=/);
     expect(skeletonHtml(z, true, true)).toMatch(/id="walkNote"/);
   });
 
-  it('the host offers the walkable map only when a ?v= preview is set', () => {
+  it('the host always offers the walkable map, loaded lazily, with no ?v= gate', () => {
     const host = stripJs(read('web/app/raid/plan/routes/RoutePlanner.tsx'));
-    expect(host).toMatch(/navRoute: props\.variant \? \{ load:/);
+    expect(host).toMatch(/navRoute: \{ load:/);
+    expect(host).not.toMatch(/props\.variant/);
+    expect(stripJs(read('web/app/raid/plan/routes/page.tsx'))).not.toMatch(/searchParams\.v\b|variant/);
     expect(host).toMatch(/import\('@\/lib\/routePlanner\/navLoad'\)/);          // lazy: nothing of it is in the page's own chunk
     const engine = stripJs(read('web/app/raid/plan/routes/engine.ts'));
     expect(engine).toMatch(/const walkOn = \(\) => !!host\.navRoute && \(ui\.src === 'walk' \|\| ui\.src === 'rec'\);/);
     expect(engine).toMatch(/const recOn = \(\) => !!host\.recorded && ui\.src === 'rec';/);
-    expect(host).toMatch(/recorded: !!props\.variant,/);                            // the Recorded source is a preview only too
+    expect(host).toMatch(/legFocus: true,/);                                         // One leg is always available
+    expect(host).toMatch(/recorded: true,/);                                         // so is the Recorded source
     const load = stripJs(read('web/lib/routePlanner/navLoad.ts'));
     expect(load).toMatch(/await import\('@recast-navigation\/core'\)|import\('@recast-navigation\/core'\)/);
     expect(load).not.toMatch(/^import .* from '@recast-navigation/m);          // never a top-level import

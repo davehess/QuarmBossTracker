@@ -1,4 +1,4 @@
-// Route planner: the rules behind the "One leg" mode (?v=leg, ?v=b, ?v=c on /raid/plan/routes). With 26 pins the map is a
+// Route planner: the rules behind the "One leg" mode (on /raid/plan/routes). With 26 pins the map is a
 // tangle of crossing legs, so the mode draws one leg at a time. No DOM here, so the root vitest suite real-imports this; the
 // engine only decides what to draw from what this returns.
 import type { Leg } from './plan';

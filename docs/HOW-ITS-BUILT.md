@@ -1457,6 +1457,13 @@ Tests `test/canvas-pieces.test.js`, `test/timers-canvas.test.js`. Alpha only.
   `data-bulksel` selects (Show as / Thickness / Backing) and the GROUP section's `data-bulk` buttons
   (`bulkMenuHtml`). A mode a piece cannot be drawn in is skipped and counted; reflow (row for `vbar`, column for
   `bar` / `thin`) only when every piece changed.
+- **Pieces fixes (beta, 2026-10-22):** a piece's own look is `nolabel` / `thick` / `align` / `rot` / `color` on the
+  panel, read by `WpParts.render` (parts.js). `segWidth` (Ring arc stroke by Thin/Thick), `segAnchor` (label at the
+  start / middle / end of its arc), `segTurn` (which way round the circle a label reads) and `alignOf` (an unset
+  align is Center for a Ring arc, upright bar, badge and dials, Left for the rest; `l` is an explicit Left) are the
+  pure parts. `bulkSet(ps, { mode: 'seg' })` calls `bulkRing`, which keeps each piece's arc (`ringArcs(n)` gives
+  the ones without) and places the boxes with `ringBoxes`. Whole group also carries Left/Center/Right and the label
+  turn. `main.js` `_layoutOfSet` exports an `l` as the default, because `portableLayout.js` refuses it.
 - **Saved groups:** `groupPartsOf`, `putGroups`, `uniqueGroupName` (case-folded; `/pipe mimic group`, the tray and
   the dashboard find a group by name), `saveSelectionAsGroup` (new group beside an existing one, never over it),
   `updateSavedGroup` (selbar 💾 Update), `duplicateGroup` (⧉), `renameGroup` (✎, inline). Stored in
@@ -4331,7 +4338,7 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   characters by family and Discord owner. The recorder is read only for kills that can reach the five smallest. Pure rules + loader
   `web/lib/fewestKills.ts`, route `web/app/api/raid/fewest/route.ts` (5 min cache). Test: `test/fewest-kills.test.js`.
 
-### Route planner (`/raid/plan/routes`, web 2.0.2, 2026-10-22, DRAFT)
+### Route planner (`/raid/plan/routes`, web 2.1.0, 2026-10-22, live, marked [beta])
 - **Where.** `web/app/raid/plan/routes/` (`page.tsx` server, `RoutePlanner.tsx` client host, `engine.ts` the ported single-file
   planner, `VersionsPanel.tsx`, `ComparePanel.tsx`, `actions.ts`, `planner.css`) and `web/lib/routePlanner/` (pure: `plan.ts`
   sanitize/legs/totals/headcount/floors, `build.ts`, `follow.ts`, `store.ts`, `compare.ts`, `toRaidRoute.ts`, `fewest.ts`;
@@ -4350,71 +4357,64 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   hook is `fewestKills.ts` (5 min in-process cache; the page waits at most 5 s, a cold read fills the cache for the next load).
 - **Build groups** may be `lead` (right after the start) or `last` (after everything: Solusek Ro, who needs the five wings
   done). A zone's `buildNotes` says what the build did, per order.
-- **3D previews (web 2.0.4, beta only, 2026-10-22; two variants awaiting the guild lead's pick).** `?v=b` or `?v=c` on the page
-  adds a **3D** button to the map toolbar (no `?v=` is the page as it was); it swaps the SVG map for a view-only three.js
-  scene and back (`Plan3D.tsx`, loaded with `next/dynamic`, so the 2D page never downloads three.js). The rules for where
-  things go are `web/lib/routePlanner/view3d.ts` (pure, `test/route-planner-3d.test.js`): floor order and levels, the slab
-  heights, a pin's height (own z, else its mob, else the nearest mob with a z, else the middle floor), legs lifted between
-  their pins, teleport arcs, the floor clip height.
-  - **b, Stacked floors:** each floor is a flat slab of its own wall lines, spread by a slider; pins sit on their slab, legs
-    climb between slabs, teleports are arcs, pathers follow their ramps. No mesh download; works for any zone with floors.
-  - **c, True 3D:** the real collision mesh (`/api/spectator/mesh`, walls then `floors=only`, the same builders the replay
-    uses), the plan at its pins' real heights, and a floor clip (hides everything above a floor's band). Phones fetch the
-    floors layer only when asked.
-  - Both: orbit / pan / zoom, Fit zone, pathers and doors-and-teleports toggles, a click on a pin selects it in the pin list
-    (`selectPin` on the engine's API). Variant choice is carried through the zone and plan links.
-- **Recorded legs and live nights (web 2.0.9, any `?v=`, 2026-10-22; `test/route-planner-recorded.test.js`).** `page.tsx` merges
-  the recorder's raid nights into the zone's `nights` (`load.ts` `plannerNights` over `raidRoutesLoad.ts` `zoneNightSeries`, the
-  per-visit reduction `/api/raid/routes` uses; 5 min in-process, 8 s wait, any failure = the file's nights; `nights.ts` merges:
-  same key one night, live wins, newest first, cap 12). The toolbar's **Straight · Walk route · Recorded** is a view over the
-  plan: Recorded draws each leg along `follow.ts` `recorded()` (distance-resampled average of every night that passed both pins),
-  a leg no night covers falls back to Walk, then straight (`recorded.ts` `legSource`/`recText`); "Use recorded routes" and the
-  per-leg button bake it into bend points with navroute's simplifier (`useRecordedRoutes`, ≤ 40 bends). 3D: recorded samples have
-  no height, so `drape.ts` puts them on the floors by continuity (the hit nearest the previous sample's height, starting at the
-  leg's first pin; `c` over the floor mesh's triangle grid, `b` and `c` before the floors load over the pins' own floors); the
-  Compare night draws white with numbered kills, and a 3D "Recorded nights" layer draws the nights ticked in Layers.
-  - **Compare (web 2.0.12).** `compare.ts` `matchKills` takes a pin of the kill's npc id first, names only for what is left;
-    `comparePlan` marks a pin with no kill "passed" when `Actual.path` came within `FOLLOW_R`, else "never visited". The Actual
-    itself comes from `raidRoutes.ts` `analyzeNight`: `ZONE_EVENTS[zone]` re-keys a home-id kill whose raid centre (at its end) is
-    in the zone's event box to the event npc (Plane of Tactics: Tallon 214026 → 214313, Vallon 214316 → 214320), keeping the last row.
-  - **Drag a pin (web 2.0.8).** Officers only (`officer && !previewing` from the host; the engine's `movePin(id, x, y, z)` checks
-    `editable()` again and does what finishing a 2D pin drag does, plus z). The press is taken in the capture phase on the host
-    so OrbitControls never starts (and is disabled until release); under 4 px it is still a click. While dragging, the pointer
-    ray is cast at the floors mesh (else the walls; hits above the floor clip ignored; else the plane the pin is on), the view is
-    rebuilt each frame from the plan with that pin moved (`withPinMoved`, walk routes of its legs dropped), a ring marks the
-    landing, and on release the engine is told once. **c:** z = the hit's height. **b:** a slab is not a z, so the pin keeps its
-    z and floor (`dragLanding`). x and y are clamped to the zone bounds. Esc or a cancelled pointer puts the pin back. Pure
-    rules (`threeToServer`, `dragLanding`, `withPinMoved`, `movedPast`, `legTouches`) are in `view3d.ts` and
-    `test/route-planner-3d.test.js`. Bend points are not draggable in 3D. The engine has no undo, so there is none for this.
-- **One leg mode (web 2.0.5, beta preview, 2026-10-22).** `?v=leg` (or `b` / `c`) adds a **One leg** toggle to the map toolbar; no
-  `?v=` is the page as it was (the skeleton emits none of it). On: only the current leg is drawn (line, bends, arrow, its two
-  pins and their labels), every other pin is faint and unlabelled but still clickable, and a bar over the map reads
-  "Leg 5 of 25: A → B · 812 u · ~1:40" (the time is the recorded median, left out when no night passed both pins) with ‹ ›
-  buttons, a "follow" box, and ← / → while the pointer is over the map and no field has focus. The current leg is the one that
-  starts at the selected pin (selecting from the map, the pin list or the arrows all go through `selPin`; a leg card in the Legs
-  tab sets it too); the toggle and the follow box ride the engine's `ui` state (`rp-ui-<zone>`). The rules are
-  `web/lib/routePlanner/legFocus.ts` (clamp, step, leg for a pin, bar text; `test/route-planner-model.test.js`); in 3D the engine
-  tells the host the current leg's key and `buildView3D({ focusLeg })` draws only it (`test/route-planner-3d.test.js`).
-- **Walk route (web 2.0.6, beta preview, 2026-10-22).** Any `?v=` adds a **Walk route** toggle beside One leg; no `?v=` is the
-  page as it was. **Data:** the server's own navmesh, Quarm's `<zone>.nav` from EQMacEmu/Maps (repo root; GPL-derived like the EQEmu
-  walls the planner draws; Quarm's file, not EQEmu's, which differs for Tactics). Nothing is committed: `GET /api/raid/navmesh?zone=`
-  (members only, `app/api/raid/navmesh/route.ts`) fetches it (Next caches the download a day), slims it (`lib/routePlanner/navmesh.ts`:
-  drops the link table, the detail mesh; the browser regenerates the triangle fan Detour needs), compresses it (brotli q9, or gzip
-  / plain by `Accept-Encoding`) and keeps a few zones in memory. On the wire: Tower about 0.7 MB (3.5 MB slim, 2.0 MB source),
-  Tactics about 0.12 MB. **Router:** `lib/routePlanner/navroute.ts` (pure, tested with a fake walk): Dijkstra over the leg's two ends
-  and both ends of every teleport, flagged door and step bridge; a walk edge exists only when the navmesh finds a COMPLETE path
-  (an end more than 2 u short is a failure: Detour reports success on partial ones); a jump is one way and costs next to nothing;
-  a hand-bent leg is routed through its bends in order, and a bend that cannot be walked is left out and said so. **Browser:**
-  `navLoad.ts` loads `@recast-navigation/core` + `wasm` 0.43.1 (MIT) only when the toggle is first turned on (about 260 KB
-  gzipped, the wasm inlined), builds the Detour navmesh and answers walk queries (frame: Detour (x, y-up, z) = server (x, z, y), no
-  negation). The engine works legs out one per tick, the current leg first, and falls back to the leg's own line, drawn dotted and
-  marked "no walkable route found", when there is no route or the map did not load. **Step bridges** (`kind: 'step'` in
-  `zones/solrotower.json`, three) are small vertical gaps the mesh has between its pieces, found offline and bridged: HEURISTICS, never
-  walked in game, said so on the leg's card, and never drawn. **Use this route** (officers, Legs card) writes the path as bend points
-  (`Line.pts`, at most 40, a jump kept as a straight line between its two ends) plus their heights (`Line.h`, matched by x, y) so a
-  re-route through them lands on the same floor. In 3D the routed leg is drawn at its true heights with an arc per jump
-  (`buildView3D({ routes })`).
-- Tests: `test/route-planner-model.test.js`, `test/route-planner-store.test.js`, `test/route-planner-3d.test.js`, `test/route-planner-navroute.test.js`.
+- **3D view (web 2.1.0; ran as `?v=b` / `?v=c` previews in 2.0.4).** A **3D** button on the map toolbar swaps the SVG map for a
+  three.js scene and back (`Plan3D.tsx`, loaded with `next/dynamic`, so the 2D page never downloads three.js); with 3D up, two more
+  buttons pick the look: **Real** (default; the real collision mesh from `/api/spectator/mesh`, walls then `floors=only`, the
+  builders the replay uses, the plan at its pins' real heights, a floor clip) or **Floors** (each floor a flat slab of its own wall
+  lines, spread by a slider, legs climbing between slabs, teleports as arcs; no mesh download). The mode is host state
+  (`RoutePlanner.tsx` `mode3d`, passed as `Plan3D`'s `mode`, `key={mode3d}` rebuilds the scene). Where things go is
+  `web/lib/routePlanner/view3d.ts` (pure, `test/route-planner-3d.test.js`): floor order and levels, slab heights, a pin's height,
+  legs lifted between their pins, teleport arcs, the floor clip. A click on a pin selects it in the pin list (`selectPin`).
+  - **Drag a pin.** Officers only (`officer && !previewing` from the host; the engine's `movePin(id, x, y, z)` checks `editable()`
+    again and does what finishing a 2D pin drag does, plus z). The press is taken in the capture phase on the host so
+    OrbitControls never starts; under 4 px it is still a click. While dragging, the pointer ray is cast at the floors mesh (else
+    the walls; else the plane the pin is on), the view is rebuilt each frame with that pin moved (`withPinMoved`, walk routes of
+    its legs dropped), and on release the engine is told once. **Real:** z = the hit's height. **Floors:** a slab is not a z, so the
+    pin keeps its z and floor (`dragLanding`). x and y are clamped to the zone bounds. Esc puts the pin back. Bend points are not
+    draggable in 3D. The engine has no undo, so there is none for this.
+- **One leg mode.** A **One leg** toggle: only the current leg is drawn (line, bends, arrow, its two pins and labels), every other
+  pin is faint and unlabelled but still clickable, and a bar over the map reads "Leg 5 of 25: A → B · 812 u · ~1:40" with ‹ › buttons,
+  a "follow" box and ← / → while the pointer is over the map. The current leg is the one that starts at the selected pin (map, pin
+  list, arrows and a Legs-tab card all go through `selPin`); the toggle rides the engine's `ui` state (`rp-ui-<zone>`). Rules:
+  `web/lib/routePlanner/legFocus.ts` (`test/route-planner-model.test.js`); in 3D the engine tells the host the current leg's key and
+  `buildView3D({ focusLeg })` draws only it.
+- **Route source: Straight · Walk route · Recorded** (a view over the plan; default Straight).
+  - **Walk route.** The server's own navmesh, Quarm's `<zone>.nav` from EQMacEmu/Maps (GPL-derived like the EQEmu walls; not
+    committed): `GET /api/raid/navmesh?zone=` (members only, `app/api/raid/navmesh/route.ts`) fetches it, slims it
+    (`lib/routePlanner/navmesh.ts`), compresses it (brotli, or gzip / plain by `Accept-Encoding`) and keeps a few zones in memory
+    (Tower about 0.7 MB on the wire, Tactics about 0.12 MB). **Router:** `navroute.ts` (pure, tested with a fake walk): Dijkstra over
+    the leg's two ends and both ends of every teleport, flagged door and step bridge; a walk edge exists only when the navmesh finds
+    a COMPLETE path (Detour reports success on partial ones); a jump is one way and costs next to nothing; a hand-bent leg is
+    routed through its bends in order. **Browser:** `navLoad.ts` loads `@recast-navigation/core` + `wasm` 0.43.1 (MIT, pinned in
+    `web/package.json`) only when the source is first turned to Walk or Recorded, builds the Detour navmesh and answers walk queries
+    (Detour (x, y-up, z) = server (x, z, y)). The engine works legs out one per tick, the current leg first, and falls back to the
+    leg's own line (dotted, "no walkable route found") when there is no route. **Step bridges** (`kind: 'step'` in
+    `zones/solrotower.json`, three) are heuristics nobody has walked, said so on the leg's card, never drawn. **Use this route**
+    (officers) writes the path as bend points (`Line.pts`, at most 40) plus heights (`Line.h`). In 3D a routed leg is drawn at its true
+    heights with an arc per jump (`buildView3D({ routes })`). Tests: `test/route-planner-navroute.test.js`.
+  - **Recorded.** `page.tsx` merges the recorder's raid nights into the zone's `nights` (`load.ts` `plannerNights` over
+    `raidRoutesLoad.ts` `zoneNightSeries`, the per-visit reduction `/api/raid/routes` uses; 5 min in-process, 8 s wait, any failure =
+    the file's nights; `nights.ts` merges: same key one night, live wins, newest first, cap 12). Recorded draws each leg along
+    `follow.ts` `recorded()` (distance-resampled average of every night that passed both pins); a leg no night covers falls back to
+    Walk, then straight (`recorded.ts` `legSource` / `recText`). "Use recorded routes" and the per-leg button bake it into bend
+    points (`useRecordedRoutes`, at most 40 bends). In 3D, recorded samples have no height, so `drape.ts` puts them on the floors by
+    continuity (Real: over the floor mesh's triangle grid; Floors, and Real before the floors load: over the pins' own floors); the
+    Compare night draws white with numbered kills, and a 3D "Recorded nights" layer draws the nights ticked in Layers. Test:
+    `test/route-planner-recorded.test.js`.
+- **Compare**: `compare.ts` `matchKills` takes a pin of the kill's npc id first, names only for what is left; `comparePlan` marks a
+  pin with no kill "passed" when `Actual.path` came within `FOLLOW_R`, else "never visited". The Actual comes from
+  `raidRoutes.ts` `analyzeNight`: `ZONE_EVENTS[zone]` re-keys a home-id kill whose raid centre (at its end) is in the zone's event box
+  to the event npc (Plane of Tactics: Tallon 214026 to 214313, Vallon 214316 to 214320), keeping the last row. Test:
+  `test/route-compare-event.test.js`.
+- **Raid path on the spectator replay and shared raids** (`/spectator/replay`, `/share/raid/<token>`): the raid centre per frame
+  (median of the raiders placed in the zone, median z kept; the route pages' rule) is computed in the browser by
+  `web/lib/replayPath.ts` from the frames `ReplayBoard.tsx` already decodes; drawn in 2D by `drawRoute*` there and in 3D by
+  `RouteLayer3D.ts`: the whole night faint, solid up to the playhead, a head dot, numbered kills, a **Path** toggle (on by default)
+  and Fit path. The board also reads the other 15-minute windows through its own window route, one at a time. No new query. The
+  fading-trail alternative was dropped. Test: `test/replay-path.test.js`.
+- Tests: `test/route-planner-model.test.js`, `test/route-planner-store.test.js`, `test/route-planner-3d.test.js`,
+  `test/route-planner-navroute.test.js`, `test/route-planner-recorded.test.js`, `test/route-compare-event.test.js`,
+  `test/replay-path.test.js`.
 
 ---
 
@@ -4477,12 +4477,7 @@ The raid on the zone map, live, for signed-in members.
   decodes a row (`decodeMinute`, applies the same axis swap), picks the zone to show, and finds the frame at a
   time; `test/raid-replay-decode.test.js` builds rows with the bot's real `buildMinuteRow`. The map layers come
   from the live board (`prepare`, `bandColor` exported from `SpectatorBoard.tsx`).
-- **Raid path previews (web 2.0.10, two previews awaiting the guild lead's pick, `?v=b` whole-night path with numbered kills /
-  `?v=c` fading trail; `https://b.wolfpack.quest/spectator/replay?v=b`, `?v=c`, and the same on `/share/raid/<token>`):** the raid
-  centre per frame (median of the raiders placed in the zone, median z kept; the route pages' rule) is computed in the browser by
-  `web/lib/replayPath.ts` from the frames `ReplayBoard.tsx` already decodes; drawn in 2D by `drawRoute*` there and in 3D by
-  `RouteLayer3D.ts`. Variant b also reads the other 15-minute windows through the board's own window route, one at a time. No new
-  query. Test: `test/replay-path.test.js`.
+  The raid's whole-night path (web 2.1.0) is drawn on it, see "Route planner" above (`lib/replayPath.ts`, `RouteLayer3D.ts`).
 - **Tests:** `test/spectator-positions.test.js`, `test/zone-map-slice.test.js`, `test/zone-map-brewall.test.js`,
   `test/raid-track.test.js`.
 

@@ -21,12 +21,11 @@
 //     other groups as options. The slider and coverage track span only that session. `?session=` is in the URL.
 //   * Auto-framing holds the view still while the nearest 80% of the raid is in it and glides when it is not,
 //     snapping only on a scrub, a zone change or a session change (lib/replayFraming.ts).
-//   * Two PREVIEWS of the raid's path (the guild lead, 2026-10-22, awaiting a pick), only with `?v=b` or `?v=c` in the
-//     URL; no `?v=` is the board exactly as it was. b: the night's path faint, solid up to the playhead, numbered kills.
-//     c: a fading trail behind the raid's centre for the last N minutes, optional trails behind each raider. The path
-//     is computed here from the frames this board already decodes (lib/replayPath.ts): no new query, and the share
-//     page needs no new route. It is kept per window for the whole night (a point per frame), and variant b also
-//     reads the windows the playhead has not reached, one at a time, so the whole night is drawn without playing it.
+//   * The raid's PATH (the guild lead, 2026-10-22; picked: the whole night's path, always on, with a Path toggle): the
+//     night's path faint, solid up to the playhead, numbered kills. The path is computed here from the frames this board
+//     already decodes (lib/replayPath.ts): no new query, and the share page needs no new route. It is kept per window
+//     for the whole night (a point per frame), and the board also reads the windows the playhead has not reached, one
+//     at a time, so the whole night is drawn without playing it.
 //   * The 2D background is None / Lines / Parchment (`?bg=`, one choice for both panes, default Parchment). The
 //     parchment is paper plus a floor wash generated from the EQEmu floors mesh (lib/zoneFloor.ts), painted once per
 //     zone and size bucket in idle time by lib/parchmentStore.ts and only blitted per frame; the wall lines go on
@@ -54,9 +53,8 @@ import {
 } from '@/lib/replayFollow';
 import { activeSpawns, normMobName, parseBosses, type ActiveSpawn, type SpawnBoss } from '@/lib/replayBosses';
 import {
-  PathStore, TRAIL_DEFAULT_MIN, TRAIL_MAX_MIN, TRAIL_MIN_MIN, buildSegments, clampTrailMin, headAt, killMarks, parseRouteVariant,
-  rankKills, raiderTrails, segmentsDone, trailBox, trailSegments,
-  type PathPt, type RouteFeed, type RouteVariant, type Segments,
+  PathStore, buildSegments, headAt, killMarks, rankKills, segmentsDone,
+  type PathPt, type RouteFeed, type Segments,
 } from '@/lib/replayPath';
 import { bandColor, prepare, type Prepared } from '../SpectatorBoard';
 import { BGS, bgSearch, inkColor, parseBg, type Bg } from '@/lib/mapBackdrop';
@@ -137,7 +135,7 @@ type PaneArgs = {
   snap: boolean;                 // the playhead jumped (a scrub, a new session): frame the raid at once, no glide
   bg: Bg;                        // none: raiders only; lines: the wall lines on the dark page; parchment: lines in ink on paper
   store: ParchmentStore;
-  route: RouteFeed | null;       // a path preview (?v=b / ?v=c), null for the board as it was
+  route: RouteFeed | null;       // the raid's path, null with the Path toggle off
 };
 type PaintInfo = {
   zones: [string | null, string | null];
@@ -187,90 +185,58 @@ function tag(ctx: CanvasRenderingContext2D, w: number, h: number, text: string, 
 }
 
 /**
- * The path preview, UNDER the dots (?v=b / ?v=c, lib/replayPath.ts). b: the whole night's path faint and the part the
- * playhead has passed solid. c: a tail behind the raid's centre that fades toward the past, and optionally each
- * raider's own faint tail. Screen positions come from `sx` / `sy`; nothing here is hit-tested.
+ * The raid's path, UNDER the dots (lib/replayPath.ts): the whole night's path faint and the part the playhead has
+ * passed solid. Screen positions come from `sx` / `sy`; nothing here is hit-tested.
  */
 function drawRouteUnder(ctx: CanvasRenderingContext2D, w: number, h: number, p: Pane, r: RouteFeed, ink: boolean, sx: (x: number) => number, sy: (y: number) => number) {
   const col = ink ? PATH_PAPER : PATH_DARK;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  if (r.variant === 'b') {
-    const ser = r.series;
-    if (ser.length < 2) return;
-    if (!p.pathSeg || p.pathSeg.series !== ser) p.pathSeg = { series: ser, seg: buildSegments(ser) };
-    const seg = p.pathSeg.seg;
-    const done = segmentsDone(seg, r.t);
-    const run = (from: number, to: number) => {
-      ctx.beginPath();
-      for (let k = from; k < to; k++) {
-        const i = seg.from[k];
-        if (k === from || i !== seg.from[k - 1] + 1) ctx.moveTo(sx(ser[i].x), sy(ser[i].y));
-        ctx.lineTo(sx(ser[i + 1].x), sy(ser[i + 1].y));
-      }
-      ctx.stroke();
-    };
+  const ser = r.series;
+  if (ser.length < 2) return;
+  if (!p.pathSeg || p.pathSeg.series !== ser) p.pathSeg = { series: ser, seg: buildSegments(ser) };
+  const seg = p.pathSeg.seg;
+  const done = segmentsDone(seg, r.t);
+  const run = (from: number, to: number) => {
+    ctx.beginPath();
+    for (let k = from; k < to; k++) {
+      const i = seg.from[k];
+      if (k === from || i !== seg.from[k - 1] + 1) ctx.moveTo(sx(ser[i].x), sy(ser[i].y));
+      ctx.lineTo(sx(ser[i + 1].x), sy(ser[i + 1].y));
+    }
+    ctx.stroke();
+  };
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 2.5;
+  ctx.globalAlpha = ink ? 0.42 : 0.35;
+  run(0, seg.count);                                    // the night, faint
+  if (done > 0) {
+    ctx.strokeStyle = ink ? 'rgba(245,238,220,0.85)' : BG;   // a halo, so the solid part reads over map lines
+    ctx.lineWidth = 6;
+    ctx.globalAlpha = 0.9;
+    run(0, done);
     ctx.strokeStyle = col;
-    ctx.lineWidth = 2.5;
-    ctx.globalAlpha = ink ? 0.42 : 0.35;
-    run(0, seg.count);                                    // the night, faint
-    if (done > 0) {
-      ctx.strokeStyle = ink ? 'rgba(245,238,220,0.85)' : BG;   // a halo, so the solid part reads over map lines
-      ctx.lineWidth = 6;
-      ctx.globalAlpha = 0.9;
-      run(0, done);
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 3.5;
-      ctx.globalAlpha = 1;
-      run(0, done);
-    }
-    // On to the playhead, inside the segment it is in (when that one is joined to the last finished).
-    const lastI = done > 0 ? seg.from[done - 1] + 1 : -1;
-    const head = lastI >= 0 && done < seg.count && seg.from[done] === lastI ? headAt(ser, r.t) : null;
-    if (head) {
-      ctx.beginPath();
-      ctx.moveTo(sx(ser[lastI].x), sy(ser[lastI].y));
-      ctx.lineTo(sx(head.x), sy(head.y));
-      ctx.stroke();
-    }
+    ctx.lineWidth = 3.5;
     ctx.globalAlpha = 1;
-    drawRouteMarks(ctx, w, h, r, ink, sx, sy);
-    return;
+    run(0, done);
   }
-  // c: each raider's own tail, faint and thin, then the raid centre's tail on top.
-  if (r.raiderTrails) {
-    ctx.lineWidth = 1.2;
-    for (const tr of r.raiderTrails) {
-      ctx.strokeStyle = classColor(tr.cls);
-      for (let i = 1; i < tr.pts.length; i++) {
-        ctx.globalAlpha = 0.5 * tr.pts[i - 1].f;
-        ctx.beginPath();
-        ctx.moveTo(sx(tr.pts[i].x), sy(tr.pts[i].y));
-        ctx.lineTo(sx(tr.pts[i - 1].x), sy(tr.pts[i - 1].y));
-        ctx.stroke();
-      }
-    }
-  }
-  const segs = trailSegments(r.series, r.t, r.trailMs);
-  for (const s of segs) {
-    const x1 = sx(s.a.x), y1 = sy(s.a.y), x2 = sx(s.b.x), y2 = sy(s.b.y);
-    ctx.strokeStyle = ink ? 'rgba(245,238,220,0.85)' : BG;
-    ctx.globalAlpha = 0.7 * s.f;
-    ctx.lineWidth = 2 + 6 * s.f;
-    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-    ctx.strokeStyle = col;
-    ctx.globalAlpha = 0.12 + 0.88 * s.f;
-    ctx.lineWidth = 1 + 4 * s.f;
-    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  // On to the playhead, inside the segment it is in (when that one is joined to the last finished).
+  const lastI = done > 0 ? seg.from[done - 1] + 1 : -1;
+  const head = lastI >= 0 && done < seg.count && seg.from[done] === lastI ? headAt(ser, r.t) : null;
+  if (head) {
+    ctx.beginPath();
+    ctx.moveTo(sx(ser[lastI].x), sy(ser[lastI].y));
+    ctx.lineTo(sx(head.x), sy(head.y));
+    ctx.stroke();
   }
   ctx.globalAlpha = 1;
   drawRouteMarks(ctx, w, h, r, ink, sx, sy);
 }
 
-/** The path preview's marks, still UNDER the raiders (they are what the page is about): the raid centre as a ring, and (b) the numbered kills. */
+/** The path's marks, still UNDER the raiders (they are what the page is about): the raid centre as a ring, and the numbered kills. */
 function drawRouteMarks(ctx: CanvasRenderingContext2D, w: number, h: number, r: RouteFeed, ink: boolean, sx: (x: number) => number, sy: (y: number) => number) {
   const col = ink ? PATH_PAPER : PATH_DARK;
-  const head = (r.variant === 'c' ? r.trailMs > 0 : true) ? headAt(r.series, r.t) : null;
+  const head = headAt(r.series, r.t);
   if (head) {
     const px = sx(head.x), py = sy(head.y);
     ctx.fillStyle = BG;
@@ -285,7 +251,6 @@ function drawRouteMarks(ctx: CanvasRenderingContext2D, w: number, h: number, r: 
     ctx.fillStyle = col;
     ctx.fill();
   }
-  if (r.variant !== 'b') return;
   ctx.font = FONT;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -311,7 +276,6 @@ function drawRouteMarks(ctx: CanvasRenderingContext2D, w: number, h: number, r: 
 
 /** The name of the kill that just happened, beside its number: over the raiders, so it can be read. */
 function drawRouteLabel(ctx: CanvasRenderingContext2D, w: number, h: number, r: RouteFeed, sx: (x: number) => number, sy: (y: number) => number) {
-  if (r.variant !== 'b') return;
   let latest: (typeof r.marks)[number] | null = null;
   for (const m of r.marks) if (m.done && m.t <= r.t && r.t - m.t <= KILL_LABEL_MS && (!latest || m.t > latest.t)) latest = m;
   if (!latest) return;
@@ -494,7 +458,7 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
     ctx.globalAlpha = 1;
   }
 
-  // The raid's path preview (?v=b / ?v=c), under the dots.
+  // The raid's path, under the dots.
   if (o.route) drawRouteUnder(ctx, w, h, p, o.route, ink, sx, sy);
 
   // Dots, the picked ones last (on top), everyone else dimmed while anyone is picked.
@@ -665,12 +629,8 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
   const [live, setLive] = useState(false);                  // following the newest recorded minute, at 1x
   const [nowMs, setNowMs] = useState(() => Date.now());     // refreshed with each poll: whether Live is still on offer
   const [tailLast, setTailLast] = useState<number | null>(null);   // newest minute the tail window has seen past the list
-  // The path previews (?v=b / ?v=c). Without a variant in the URL none of this is used and nothing is drawn.
-  const [variant, setVariant] = useState<RouteVariant | null>(null);
-  const [showPath, setShowPath] = useState(true);          // b: the Path toggle (on by default in this variant)
-  const [showTrail, setShowTrail] = useState(true);        // c: the Trail toggle
-  const [trailMin, setTrailMin] = useState(TRAIL_DEFAULT_MIN);
-  const [showRtrails, setShowRtrails] = useState(false);   // c: each raider's own faint tail (off by default)
+  // The raid's path (lib/replayPath.ts).
+  const [showPath, setShowPath] = useState(true);          // the Path toggle (on by default)
   const [pathVer, setPathVer] = useState(0);               // the path grew: the "so far" note re-reads it
 
   // The session being replayed (`?session=` names it, and so its night, in a shared link). A night is a whole
@@ -732,8 +692,7 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
   const bossNamesRef = useRef<ReadonlySet<string>>(new Set());
   const showBossesRef = useRef(true);
   const pathStore = useRef(new PathStore());
-  const routeRef = useRef<{ variant: RouteVariant | null; path: boolean; trail: boolean; trailMs: number; rtrails: boolean }>(
-    { variant: null, path: true, trail: true, trailMs: TRAIL_DEFAULT_MIN * 60_000, rtrails: false });
+  const routeRef = useRef<{ path: boolean }>({ path: true });
   const killsRef = useRef<{ name: string; to: number; zones: string[] }[]>([]);   // the night's boss deaths, for the numbered markers
   // 3D: while it is showing, paint() hands each pane's raiders to its 3D view instead of drawing the canvas.
   const modeRef = useRef<'2d' | '3d'>('2d');
@@ -840,7 +799,7 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
         const rows: { minute_at: string }[] = Array.isArray(j.rows) ? j.rows : [];
         const decoded = decodeRows(rows as Parameters<typeof decodeRows>[0]);
         winFrames.current.set(w, decoded);
-        if (routeRef.current.variant) { pathStore.current.addWindow(w, decoded); setPathVer(v => v + 1); }   // a path preview keeps the window's centre path for the night
+        pathStore.current.addWindow(w, decoded); setPathVer(v => v + 1);   // the path keeps the window's centre for the night
         // The newest minute that came back, which a tail request can find past the end the list knew.
         const newest = rows.reduce((m, r) => Math.max(m, Date.parse(r.minute_at) || 0), 0);
         wins.current.set(w, { state: 'ok', at: Date.now(), to: tail ? Math.min(from + REPLAY_WINDOW_MS, Math.max(end, newest + MINUTE_MS)) : to });
@@ -1074,17 +1033,12 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
       const targets = targetsAll.filter(x => x.zone === zone);
       const spawns = spawnsAll.filter(x => x.zone === zone);
 
-      // The path preview for this zone, or null (the board as it was). b: the Path toggle. c: the Trail toggle and/or the
-      // raiders' own tails. The series is the zone's centre path from every window loaded so far.
-      const rc = routeRef.current;
+      // The raid's path for this zone, or null with the Path toggle off. The series is the zone's centre path from every
+      // window loaded so far.
       let route: RouteFeed | null = null;
-      if (rc.variant && (rc.variant === 'b' ? rc.path : rc.trail || rc.rtrails)) {
+      if (routeRef.current.path) {
         const series = pathStore.current.seriesFor(zone);
-        route = {
-          variant: rc.variant, series, t, trailMs: rc.variant === 'c' && rc.trail ? rc.trailMs : 0,
-          marks: rc.variant === 'b' ? killMarks(killsRef.current, series, zone, t) : [],
-          raiderTrails: rc.variant === 'c' && rc.rtrails ? raiderTrails(frames, idx, t, zone) : null,
-        };
+        route = { series, t, marks: killMarks(killsRef.current, series, zone, t) };
       }
 
       if (modeRef.current === '3d') {
@@ -1210,9 +1164,7 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
       setPicks(parsePicks(window.location.search));
       urlSessionRef.current = parseSessionParam(window.location.search);
       setSessionFrom(urlSessionRef.current);
-      setBg(parseBg(window.location.search));
-      setVariant(parseRouteVariant(window.location.search));
-    } catch { /* no URL to read */ }
+      setBg(parseBg(window.location.search));    } catch { /* no URL to read */ }
     setUrlReady(true);
   }, []);
   // The session in the URL (so a link opens the same one). Always written once there is one: the default is not
@@ -1245,22 +1197,20 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
       if (s !== window.location.search) window.history.replaceState(null, '', window.location.pathname + s + window.location.hash);
     } catch { /* a blocked history API only costs the shareable link */ }
   }, [bg, urlReady, schedule]);
-  // The path previews: the choices the drawing reads, and (once a variant is known) the windows already decoded.
+  // The path: the choice the drawing reads, and the windows already decoded.
   useEffect(() => {
-    routeRef.current = { variant, path: showPath, trail: showTrail, trailMs: clampTrailMin(trailMin) * 60_000, rtrails: showRtrails };
-    if (variant) {
-      let grew = false;
-      for (const [w, fr] of winFrames.current) if (!pathStore.current.has(w)) { pathStore.current.addWindow(w, fr); grew = true; }
-      if (grew) setPathVer(v => v + 1);
-    }
+    routeRef.current = { path: showPath };
+    let grew = false;
+    for (const [w, fr] of winFrames.current) if (!pathStore.current.has(w)) { pathStore.current.addWindow(w, fr); grew = true; }
+    if (grew) setPathVer(v => v + 1);
     schedule();
-  }, [variant, showPath, showTrail, trailMin, showRtrails, schedule]);
+  }, [showPath, schedule]);
 
-  // Variant b draws the whole night, so it reads the windows the playhead has not reached: one at a time, after the
+  // The path draws the whole night, so it reads the windows the playhead has not reached: one at a time, after the
   // playhead's own window, through the same route the board plays from, and keeps only each window's centre path (the
   // frames are dropped). Windows the board already holds are skipped, and a live tail the board refreshes replaces its own.
   useEffect(() => {
-    if (variant !== 'b' || !showPath || !night) return;
+    if (!showPath || !night) return;
     let dead = false;
     const g = gen.current;
     const pause = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
@@ -1290,7 +1240,7 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
       }
     })();
     return () => { dead = true; };
-  }, [variant, showPath, night?.night_key, night?.first, schedule]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [showPath, night?.night_key, night?.first, schedule]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // A new follow glides in from where the view was, and takes the zone pin off so the zone can follow the raider.
   useEffect(() => {
@@ -1385,14 +1335,12 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
     schedule();
   }, [panes, schedule]);
 
-  // The path previews' deliberate views, like Fit zone: Fit raid takes the camera back to the raid. b: the whole night's
-  // path. c: the trail as long as the slider says, up to the playhead.
-  const fitRoute = useCallback((what: 'path' | 'trail') => {
+  // The path's deliberate view, like Fit zone: Fit raid takes the camera back to the raid. It frames the whole night's path.
+  const fitPath = useCallback(() => {
     panes.forEach((p, i) => {
       const ser = p.zone ? pathStore.current.seriesFor(p.zone) : [];
       let box: { minX: number; maxX: number; minY: number; maxY: number; z: number } | null = null;
-      if (what === 'trail') box = trailBox(trailSegments(ser, tRef.current, routeRef.current.trailMs));
-      else if (ser.length >= 2) {
+      if (ser.length >= 2) {
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
         for (const q of ser) { minX = Math.min(minX, q.x); maxX = Math.max(maxX, q.x); minY = Math.min(minY, q.y); maxY = Math.max(maxY, q.y); }
         box = { minX, maxX, minY, maxY, z: ser[Math.floor(ser.length / 2)].z };
@@ -1408,10 +1356,9 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
     schedule();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panes, schedule]);
-  const fitPath = useCallback(() => fitRoute('path'), [fitRoute]);
   // Once the whole night has been read, the first view of it is the whole path (once per night; Fit raid goes back).
   const fitDoneRef = useRef<string | null>(null);
-  const pathReady = variant === 'b' && showPath && !!night && pathVer >= 0 && pathStore.current.size >= Math.max(1, Math.ceil((Date.parse(night.last) + MINUTE_MS - Date.parse(night.first)) / REPLAY_WINDOW_MS));
+  const pathReady = showPath && !!night && pathVer >= 0 && pathStore.current.size >= Math.max(1, Math.ceil((Date.parse(night.last) + MINUTE_MS - Date.parse(night.first)) / REPLAY_WINDOW_MS));
   useEffect(() => {
     if (!pathReady || !night || fitDoneRef.current === night.night_key + night.first) return;
     fitDoneRef.current = night.night_key + night.first;
@@ -1513,10 +1460,10 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
   const pos = Math.min(total, Math.max(0, Math.round((uiT - start) / 1000)));
   const dur = Math.round((end - start) / 60_000);
   const hereTotal = info.here[0] + info.here[1];
-  // Variant b: how much of the night's path has been read, and the kills in the order they died (the numbers on the map).
+  // How much of the night's path has been read, and the kills in the order they died (the numbers on the map).
   const pathTotal = Math.max(1, Math.ceil((end - start) / REPLAY_WINDOW_MS));
   const pathParts = pathVer >= 0 ? Math.min(pathTotal, pathStore.current.size) : 0;
-  const ranked = variant === 'b' ? rankKills(killList.map(k => ({ ...k, to: k.atMs }))) : [];
+  const ranked = rankKills(killList.map(k => ({ ...k, to: k.atMs })));
   const liveOn = !bounded && liveAvailable(end, nowMs);   // the session is being recorded: Live can follow it
   const where = split ? `${info.zones[0]} and ${info.zones[1]}` : (info.zones[0] ?? 'the raid');
   const aria = (mode === '3d' ? '3D replay' : 'Replay') + ` of ${night.night_key}: ${where} with ${hereTotal} raiders. `
@@ -1613,52 +1560,26 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
         )}
       </div>
 
-      {variant && (
-        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-dim" role="group" aria-label="Raid path">
-          <span className="rounded border border-orange/50 px-1.5 py-0.5 text-orange">preview {variant.toUpperCase()}</span>
-          {variant === 'b' ? (<>
-            <button type="button" aria-pressed={showPath} className={`${chip} ${showPath ? chipOn : chipIdle}`} onClick={() => setShowPath(s => !s)}>
-              Path
-            </button>
-            {showPath && <button type="button" className={`${chip} ${chipIdle}`} onClick={fitPath}>Fit path</button>}
-            {showPath && pathParts < pathTotal && <span>Reading the rest of the night: {pathParts} of {pathTotal} parts</span>}
-            {showPath && ranked.length > 0 && (
-              <ol className="flex flex-wrap items-center gap-1" aria-label="Kills along the path, in order">
-                {ranked.map(k => (
-                  <li key={`${k.n}-${k.name}`}>
-                    <button type="button" onClick={() => seek(k.atMs)} title={`${k.name}: go to this kill`}
-                      className="inline-flex items-center gap-1 rounded border border-border bg-panel px-1.5 py-1 text-xs text-text hover:bg-[#21262d] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue">
-                      <span className="inline-block min-w-[1.1rem] rounded-full border border-gold px-1 text-center text-[11px] leading-4 text-gold">{k.n}</span>
-                      {k.name}
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </>) : (<>
-            <button type="button" aria-pressed={showTrail} className={`${chip} ${showTrail ? chipOn : chipIdle}`} onClick={() => setShowTrail(s => !s)}>
-              Trail
-            </button>
-            <label className="flex items-center gap-2">
-              <span>Last</span>
-              <input type="range" min={TRAIL_MIN_MIN} max={TRAIL_MAX_MIN} step={1} value={trailMin} disabled={!showTrail}
-                onChange={e => {   // moving the slider also frames that much trail: the point of a longer one is to see it
-                  const m = clampTrailMin(Number(e.target.value));
-                  setTrailMin(m);
-                  routeRef.current = { ...routeRef.current, trailMs: m * 60_000 };
-                  fitRoute('trail');
-                }}
-                aria-label="Trail length in minutes" aria-valuetext={`${trailMin} minutes`}
-                className="h-6 w-32 cursor-pointer accent-white disabled:opacity-40" />
-              <span className="w-14 tabular-nums text-text">{trailMin} min</span>
-            </label>
-            <button type="button" className={`${chip} ${chipIdle}`} disabled={!showTrail} onClick={() => fitRoute('trail')}>Fit trail</button>
-            <button type="button" aria-pressed={showRtrails} className={`${chip} ${showRtrails ? chipOn : chipIdle}`} onClick={() => setShowRtrails(s => !s)}>
-              Raider trails
-            </button>
-          </>)}
-        </div>
-      )}
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-dim" role="group" aria-label="Raid path">
+        <button type="button" aria-pressed={showPath} className={`${chip} ${showPath ? chipOn : chipIdle}`} onClick={() => setShowPath(s => !s)}>
+          Path
+        </button>
+        {showPath && <button type="button" className={`${chip} ${chipIdle}`} onClick={fitPath}>Fit path</button>}
+        {showPath && pathParts < pathTotal && <span>Reading the rest of the night: {pathParts} of {pathTotal} parts</span>}
+        {showPath && ranked.length > 0 && (
+          <ol className="flex flex-wrap items-center gap-1" aria-label="Kills along the path, in order">
+            {ranked.map(k => (
+              <li key={`${k.n}-${k.name}`}>
+                <button type="button" onClick={() => seek(k.atMs)} title={`${k.name}: go to this kill`}
+                  className="inline-flex items-center gap-1 rounded border border-border bg-panel px-1.5 py-1 text-xs text-text hover:bg-[#21262d] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue">
+                  <span className="inline-block min-w-[1.1rem] rounded-full border border-gold px-1 text-center text-[11px] leading-4 text-gold">{k.n}</span>
+                  {k.name}
+                </button>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
 
       {pickerOpen && (
         <div className="mb-2 rounded-md border border-border bg-panel p-2 text-xs">

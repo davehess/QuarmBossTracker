@@ -117,6 +117,29 @@ next touch one rather than assuming a missing row means a missing doc.
   2 minutes of the kill, at least 3 raiders) and opens no window when it is inside the War Room box; no usable position
   keeps today's window. ⏳ Not fixed: the same event kill still starts the HOME Tallon / Vallon 66 h board timer (the timer
   paths in `index.js` have no position to test). Tests `test/hail-board.test.js`.
+- **✅ Route planner: 3D, one leg at a time, walked and recorded routes, compare fixes; the raid path on replays (web 2.1.0, live
+  on `main`, 2026-10-22).** The guild lead picked these off the Decision Desk after they ran as `?v=` previews on `beta`
+  (web 2.0.4 to 2.0.12); all are now on the default page, no `?v=` anywhere, the page keeps its [beta] tag.
+  - **3D button** on the map toolbar with two modes, **Real** (default: the zone's mesh, walls and floors, the plan at its pins'
+    real heights, a floor clip) and **Floors** (each floor a slab, spread by a slider). Officers drag a pin in 3D (Real: it lands on
+    the floor under the pointer; Floors: it slides along its own floor). View-only for members.
+  - **One leg** toggle: only the current leg is drawn, a bar steps through the legs (buttons or ← / →).
+  - **Straight · Walk route · Recorded** (default Straight): Walk route draws each leg along the server's own navmesh
+    (`GET /api/raid/navmesh`, `@recast-navigation` 0.43.1 loaded only when first used), through teleporters and flagged doors;
+    Recorded draws it along the average of the recorded nights that passed both pins; "Use this route" (officers) bakes either into
+    the leg's bend points. The planner now merges the recorder's live raid nights into the zone's (newest first, 12 at most).
+  - **Compare**: the event Tallon and Vallon count as the event (not the home brothers), and a pin the raid walked past reads
+    "passed". ⏳ The bot still stores event kills under the home ids and stamps the home brothers' 66 h board timers from an event
+    kill (bot 4.0.5 fixes only the hail window); the War Room box test is 2D.
+  - **Server patch 2026-10-22** (web part): Tactics script links pinned to quests `ea0c766` (Rallos.lua anchors +8), the
+    Tallon/Vallon reset note, Solusek Ro's flag needs Miak's preflag. The Mimic part (`apps/mimic/pop-raids.js`) stays on `beta`.
+  - **Raid path on the spectator replay and shared raids**: the whole night's raid-centre path, faint, solid up to the playhead,
+    numbered kills, Fit path, a **Path** toggle (on by default), in 2D and 3D. The fading-trail alternative was dropped. Computed in
+    the browser from the frames the board already loads (`web/lib/replayPath.ts`); the board also reads the rest of the night's
+    windows one at a time.
+  - ⏳ A raid night's worth of looking at whether the walked routes are ones a raider would take; the Tower's three step bridges
+    are heuristics nobody has walked; the 3D height of a recorded path is a draped guess, never recorded.
+  Docs: `docs/HOW-ITS-BUILT.md` "Route planner".
 - **✅ Route planner page (`/raid/plan/routes`, marked [beta], web 2.0.2, live on `main`, 2026-10-22).**
   The officers' single-file Tactics route planner, ported as it was into the raid planner area and extended. Members view,
   officers edit; plans live in `bot_kv` `route_plan:<zone>` (no migration): several plans per zone (the main night + named
@@ -745,6 +768,7 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ Agent dashboard: the Zeal card's Position line reads in `/loc` order (agent 3.7.23 on beta `0e024805`, 2026-09-26).** It showed `Y <y>, X <x>, Z <z>`, which swapped the first two numbers against the in-game `/loc`; Zeal's pipe `loc {x, y, z}` is already in `/loc` order (§43), so it now shows `/loc x, y, z` untransposed, the same numbers as the corpse DM. Waiting on a side-by-side with `/loc` in game. `DECISIONS-2026-09-21.md` §43.
 - **⏳ Mimic: "Background: ON" is a real plate again, and Melody's bard strip reads over bright ground (beta `08d4e892`, 2026-09-26).** The backdrop took the card's own alpha, so on any overlay turning it on only changed the tint (measured: 0.45 before and after). It is now at least 0.92; a higher card alpha still wins. This reaches every overlay with a Background toggle. Melody also gets a dark text edge and lighter labels on the Amplification…Nature's Melody strip. Waiting on a look over grass in game. `DECISIONS-2026-09-21.md` §44.
 - **⏳ Canvas: right-click Background toggle + stale plate fixed (beta `80261d50`, carried to alpha `477ba9bb`, 2026-10-18).** The Canvas was the one overlay whose panel menu had no Background row, and turning the backdrop off (via Ctrl+Shift+B or the dashboard) left the old plate stuck behind panels after a reload. Fixed both: the panel menu now has a `🌫 Background: ON|off (whole Canvas)` row on the same shared writer as every other overlay (`wp-backdrop-toggle`), and the panel iframes (`triggers.html?part=…`) no longer self-plate so the Canvas owns and clears the plate. `main.js` untouched; `test/timers-canvas.test.js` (31, +1). Open: an in-game check (toggle on/off, reload-then-off, locked click-through), and the guild lead's bigger alpha ask — per-section background that's configurable and lockable, which is the next Pieces round (not this fix). `DECISIONS-2026-09-21.md` §44.
+- **⏳ Canvas pieces: the HUD ring converts as a group, labels turn, thickness and text alignment reach Ring arcs (Mimic beta, branch `draft/pieces-fixes`, 2026-10-22).** Four reports from the guild lead on the HUD ring brought in as pieces. (1) Whole group now offers **Ring arc**: pieces that keep their own arc (a ring that came in as pieces) go back exactly where the ring had them, pieces without one share the circle in equal sectors, locked pieces take the arc and keep their box. (2) **Label turn** (Upright / Rotated 90° / Rotated −90°) on an upright bar (label turns beside it) and on a Ring arc (label reads the other way round the circle), per piece and for the whole group. (3) **Thin / Normal / Thick** did reach a Ring arc but as ×0.6 / ×1.8 of a 1 to 3.3 unit hairline in a 400-unit ring, so it looked dead; it now steps by a visible amount. (4) **Left / Center / Right** only wrote CSS classes the SVG ring arcs never read; a Ring arc label now sits at the start, middle or end of its arc, and the upright bar, badge and dials move inside their box. "Centre" is "Center" (saved `c` unchanged); Left is a new saved value `l` (an unset Ring arc stays centred, as drawn). Not in a shared layout file: the file format has no Left or label turn, so `main.js` exports a Left as the default and the turn is left out (a format change would need the bot's copy of the validator re-synced). `apps/mimic/canvas.html`, `parts.js`, `main.js`; test `test/canvas-pieces-fixes.test.js`.
 - **⏳ Canvas Pieces round: backing is only a plate, whole-group choices, copy/rename/update a group, live previews, "where is it", delete with its pieces (Mimic alpha, branch `claude/pieces-round`, 2026-10-18; `DECISIONS-2026-09-21.md` §360–366).** All in `apps/mimic/canvas.html` (no `main.js`, preload or agent change; alpha park stays 3.0.0). Seven asks from the guild lead:
   - **A. Backing no longer changes spacing.** Panel used to add a border and `3px 6px` padding, which shrank the piece's content box and made ↕ Fit come up 4px short; it is now a background plus an inset shadow, so Clear and Panel occupy the same box. The 🌫 Background row (whole Canvas) is a separate switch and is untouched.
   - **B. Whole-group choices.** The selection bar (a click on a grouped piece selects its whole group) and the GROUP section of a piece's ⚙ both take Show as (every mode any piece in the set can be drawn in), Thickness and Backing for every piece at once (`bulkSet`). Upright bars stand in a row, Bar / Slim bar stack in a column, only when every piece changed shape; a piece that cannot be drawn that way keeps its look and is counted.
@@ -6407,3 +6431,10 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   null); ⏳ the port cannot tell a guild instance from a PvP one; ⏳ the server's /who filter has no copy test
   (`world/clientlist.cpp` WhoAllFilter), so "others in /who" may include people in another copy of the zone: unverified how the
   client scopes a plain /who. Zeal's pipe carries a zone id and no instance field.
+- ✅ **Raid Mimic 3.0.1 stable (agent 4.0.5) cut 2026-10-22.** File-level promotion from beta (`apps/mimic/` + `packages/wolfpack-logsync/`
+  whole, plus the six tests that cover them): the Map shows which way raiders face (arrow by default, slice or off in the gear), raiders
+  in another zone stay off your Map, the zone label reads live zone or instance from the server port, the officers' saved raid route is
+  drawn on the Map (needs bot 4.0.2+, already on `main`), Extended Target no longer copies one health and damage line onto every
+  same-name row, item icons cut from the player's own EQ files (agent endpoint only, no overlay uses it yet), and the 2026-10-22
+  server-patch guide corrections (Rathe Council, Tallon and Vallon reset, Avatar of Earth clock). No bot change needed; no FB numbers
+  in this range. ⏳ Web roadmap entry lands as its own commit.

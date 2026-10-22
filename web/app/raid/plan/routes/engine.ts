@@ -70,7 +70,7 @@ export function mountPlanner(root, host) {
     nights: {}, layers: { avg: false, leash: true, bosses: true, scripted: true, trash: false, minor: false, pathers: false, links: true, actual: true }, tab: 'plan', help: false,
     legOnly: false, legFollow: true, walk: false, src: ''
   },(() => { try { return JSON.parse(lsGet(LS_UI) || '{}'); } catch (e) { return {}; } })());
-  // how legs are drawn (the ?v= previews): straight (the plan's own line), walk (the walkable map), rec (the recorded nights);
+  // how legs are drawn: straight (the plan's own line), walk (the walkable map), rec (the recorded nights);
   // an earlier visit that only had the Walk route toggle left walk: true
   if (!['straight', 'walk', 'rec'].includes(ui.src)) ui.src = ui.walk ? 'walk' : 'straight';
   ui.layers = Object.assign({ pathers: false, links: true, actual: true }, ui.layers);
@@ -82,7 +82,7 @@ export function mountPlanner(root, host) {
   const saveUi = () => lsSet(LS_UI, JSON.stringify({ addKind: ui.addKind, floor: ui.floor, optMode: ui.optMode, buildOrder: ui.buildOrder, nights: ui.nights, layers: ui.layers, tab: ui.tab, help: ui.help, legOnly: ui.legOnly, legFollow: ui.legFollow, walk: ui.src === 'walk', src: ui.src }));
   let view = { tx: 0, ty: 0, s: 0.2 };
   let selPin = null, followFrom = null, drag = null;
-  // "One leg" mode (the ?v= previews): legIdx is the current leg, legSel the pin selection it last followed, legFramed the leg
+  // "One leg" mode: legIdx is the current leg, legSel the pin selection it last followed, legFramed the leg
   // the map was last framed on, legTold the leg the host (the 3D view) was last told about
   let legIdx = 0, legSel, legFramed = null, legTold = null;
   const legOn = () => !!host.legFocus && !!ui.legOnly;
@@ -170,7 +170,7 @@ export function mountPlanner(root, host) {
     return true;
   }
 
-  /** "Use recorded routes" / "Use recorded route" (the ?v= previews): the legs' recorded average becomes their bend points, in one save. */
+  /** "Use recorded routes" / "Use recorded route": the legs' recorded average becomes their bend points, in one save. */
   function bakeRecorded(lgs) {
     if (!editable()) return;
     const r = useRecordedRoutes(plan, lgs, follow, 40);
@@ -225,7 +225,7 @@ export function mountPlanner(root, host) {
     fitBounds(cx - hx, cx + hx, cy - hy, cy + hy);
   }
 
-  /* ---------- walk route (the ?v= previews) ----------
+  /* ---------- walk route ----------
      A VIEW, not the plan: with it on, each leg is drawn along the server's own walkable map (lib/routePlanner/navroute.ts), and
      its length is the walked length; the plan keeps the straight or bent line. The map downloads only when the toggle is first
      turned on. Routes are worked out one leg per tick (the current leg first) so the page never stalls, and a leg that has no
@@ -902,7 +902,7 @@ export function mountPlanner(root, host) {
     const walkRow = !w ? drawnRow
       : w.state === 'ok' ? `<b>Walk route</b><span>${fmtU(plen)}${w.via.length ? ' <span class="walk">via ' + w.via.map(esc).join(', then ') + '</span> <span class="muted">jump not counted</span>' : ''}${w.steps ? ` · ${w.steps} step bridge${w.steps > 1 ? 's' : ''} <span class="muted">(found by a gap search in the map, not walked)</span>` : ''}${w.ignoredBends ? ' <span class="muted">· your bend points could not be walked, so they are left out</span>' : ''}</span>`
       : drawnRow + (w.state === 'none' ? '<b>Walk route</b><span class="walk none">no walkable route found</span>' : `<b>Walk route</b><span class="muted">${legOn() && lg.idx !== legIdx ? 'step to this leg to find it' : 'finding it…'}</span>`);
-    // the Recorded source (the ?v= previews): the recorded route's row, or which of walk / straight a leg no night covers falls back to
+    // the Recorded source: the recorded route's row, or which of walk / straight a leg no night covers falls back to
     const rc = lg.rec, recOk = !!rc && rc.state === 'ok';
     const routeRows = recOk
       ? `<b>Recorded route</b><span>${fmtU(plen)} <span class="walk rec">${esc(recText(lg))}</span></span>`

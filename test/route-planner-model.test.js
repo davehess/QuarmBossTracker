@@ -500,7 +500,7 @@ describe('the committed plan from 2026-10-21', () => {
   });
 });
 
-// ── the "One leg" mode (?v=leg, b, c): web/lib/routePlanner/legFocus.ts ─────────────────────────────────────────────
+// ── the "One leg" mode: web/lib/routePlanner/legFocus.ts ─────────────────────────────────────────────
 describe('One leg mode', () => {
   // a -> b -> c -> d on the main route, with a split on b -> c (Team A walks via p, Team B has no pins)
   const a = pin('a', 0, 0), b = pin('b', 300, 0), c = pin('c', 900, 0), d = pin('d', 900, 400);

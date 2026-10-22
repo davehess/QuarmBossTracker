@@ -1,11 +1,11 @@
 'use client';
-// The route planner's 3D views (?v=b and ?v=c on /raid/plan/routes), both PREVIEWS awaiting the guild lead's pick. The plan
-// is edited in 2D; the one edit made here is moving a pin, by an officer (see "dragging a pin" below). Loaded with
-// next/dynamic (ssr: false) from RoutePlanner, so the 2D page never downloads three.js.
+// The route planner's 3D view on /raid/plan/routes, in two looks the 3D button switches between (the guild lead picked both,
+// 2026-10-22, "Real" the default). The plan is edited in 2D; the one edit made here is moving a pin, by an officer (see
+// "dragging a pin" below). Loaded with next/dynamic (ssr: false) from RoutePlanner, so the 2D page never downloads three.js.
 //
-//   b  Stacked floors: each floor is its own flat slab (its 2D wall lines), the slabs spread apart in height with a slider,
+//   floors  Stacked floors: each floor is its own flat slab (its 2D wall lines), the slabs spread apart in height with a slider,
 //      the route, the teleports and the pathers drawn between them. No mesh download, so it works for any zone with floors.
-//   c  True 3D: the zone's real collision mesh (GET /api/spectator/mesh, the same packed walls and floors the replay
+//   real  True 3D: the zone's real collision mesh (GET /api/spectator/mesh, the same packed walls and floors the replay
 //      draws), the plan at its pins' real heights, and a floor clip that hides everything above a chosen floor.
 //
 // WHERE things go is lib/routePlanner/view3d.ts (pure, tested); this file only draws what it returns. The drawing follows
@@ -34,12 +34,15 @@ import { buildTriGrid, type TriGrid } from '@/lib/replayCamera';
 import { buildFloorMesh, buildMesh } from '@/app/spectator/replay/Replay3D';
 import type { CompareNight } from './ComparePanel';
 
+/** The two looks of the 3D view: 'real' is the zone's own mesh (walls, then floors), 'floors' is the floors stacked as slabs. */
+export type Mode3D = 'real' | 'floors';
+
 export type Plan3DProps = {
   zone: ZoneData;
   extraMobs: Mob[];
   plan: Plan;
   skipOptional: boolean;
-  variant: 'b' | 'c';
+  mode: Mode3D;
   /** "One leg" mode: the key of the leg to draw alone (its two pins at full strength, the others faint); null draws the whole plan. */
   focusLeg?: string | null;
   /** The walk routes (navroute.ts) by leg key, while "Walk route" is on: those legs are drawn along their route at true heights. */
@@ -101,7 +104,7 @@ const disposeMat = (m: Material | Material[]) => (Array.isArray(m) ? m : [m]).fo
 
 type Dragged = { id: string; x: number; y: number; z: number };   // a pin being dragged (or just let go, until the plan has it): server frame
 
-export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, focusLeg, routes, recorded, night, nightKeys, onSelect, canEdit, onMovePin, onFail }: Plan3DProps) {
+export default function Plan3D({ zone, extraMobs, plan, skipOptional, mode, focusLeg, routes, recorded, night, nightKeys, onSelect, canEdit, onMovePin, onFail }: Plan3DProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
   const ctxRef = useRef<Ctx | null>(null);
@@ -113,7 +116,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
   failRef.current = onFail;
   moveRef.current = onMovePin;
 
-  const stack = variant === 'b';
+  const stack = mode === 'floors';
   const editable = !!canEdit && !!onMovePin;
   canEditRef.current = editable;
   const [spread, setSpread] = useState(1);
@@ -451,7 +454,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
     };
   }, []);
 
-  // ── 'b': the slabs and the zone's own wall lines on them (again when the spread moves) ──
+  // ── floors: the slabs and the zone's own wall lines on them (again when the spread moves) ──
   useEffect(() => {
     const c = ctxRef.current;
     if (!c || !stack) return;
@@ -504,7 +507,7 @@ export default function Plan3D({ zone, extraMobs, plan, skipOptional, variant, f
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stack, zone, spacing]);
 
-  // ── 'c': the zone's mesh (walls, then floors) ──
+  // ── real: the zone's mesh (walls, then floors) ──
   useEffect(() => {
     const c = ctxRef.current;
     if (!c || stack) return;

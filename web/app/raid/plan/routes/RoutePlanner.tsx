@@ -28,11 +28,12 @@ import {
 import { mountPlanner } from './engine';
 import VersionsPanel from './VersionsPanel';
 import ComparePanel, { type CompareNight } from './ComparePanel';
+import type { Mode3D } from './Plan3D';
 import './planner.css';
 
 type Api = ReturnType<typeof mountPlanner>;
 
-// The 3D previews (?v=b stacked floors, ?v=c true 3D) are loaded only when the 3D button is pressed, so the 2D page
+// The 3D view (Real walls and floors, or Floors stacked) is loaded only when the 3D button is pressed, so the 2D page
 // never downloads three.js.
 const Plan3D = dynamic(() => import('./Plan3D'), { ssr: false, loading: () => <div className="p3-note">Loading the 3D view…</div> });
 
@@ -49,9 +50,7 @@ export type RoutePlannerProps = {
   cardNote: string;
   seed: { label: string; pins: number } | null;
   fewest: FewestKill[];
-  /** The preview asked for with ?v= ('b' stacked floors, 'c' true 3D, 'leg' the One leg mode alone); null on the page everyone sees. */
-  variant?: 'b' | 'c' | 'leg' | null;
-  /** The line under the Recorded nights list (the previews merge the recorder's live raid nights into the zone's): what it is made of and that it is capped. */
+  /** The line under the Recorded nights list (the recorder's live raid nights are merged into the zone's): what it is made of and that it is capped. */
   nightsNote?: string;
 };
 
@@ -79,7 +78,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
   const [recorded, setRecorded] = useState<Map<string, [number, number][]>>(() => new Map());   // the Recorded source's legs, pin to pin, for the 3D view
   const [nightKeys, setNightKeys] = useState<string[]>([]);                      // the nights ticked in Layers, for the 3D view's own layer
   const [night, setNight] = useState<CompareNight | null>(null);                 // the Compare tab's night, for the 3D view
-  const v3 = props.variant === 'b' || props.variant === 'c' ? props.variant : null;   // the 3D previews; 'leg' has no 3D
+  const [mode3d, setMode3d] = useState<Mode3D>('real');                       // the 3D view's two looks: the zone's real walls and floors, or the floors stacked
   const [confirm, setConfirm] = useState<null | { kind: 'publish'; text: string } | { kind: 'import'; text: string }>(null);
 
   // saving + polling state: refs, because the engine's callbacks outlive any one render
@@ -139,13 +138,13 @@ export default function RoutePlanner(props: RoutePlannerProps) {
       },
       onPreview: (on: boolean) => setPreviewing(on),
       onOptMode: (m: string) => setSkipOptional(m === 'skip'),
-      legFocus: !!props.variant,
+      legFocus: true,
       onLegFocus: (k: string | null) => setLegKey(k),
-      // "Walk route" (any ?v=): the navigation library and the zone's walkable map are fetched when it is first turned on
-      navRoute: props.variant ? { load: () => import('@/lib/routePlanner/navLoad').then(m => m.loadNavRouter(zone)) } : undefined,
+      // "Walk route": the navigation library and the zone's walkable map are fetched when it is first turned on
+      navRoute: { load: () => import('@/lib/routePlanner/navLoad').then(m => m.loadNavRouter(zone)) },
       onRoutes: (m: Map<string, Routed>) => setRoutes(m),
-      // the "Recorded" route source (any ?v=): legs along the average of the recorded nights
-      recorded: !!props.variant,
+      // the "Recorded" route source: legs along the average of the recorded nights
+      recorded: true,
       onRecorded: (m: Map<string, [number, number][]>) => setRecorded(m),
       onNights: (keys: string[]) => setNightKeys(keys),
       nightsNote: props.nightsNote || '',
@@ -237,7 +236,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
   const [delArm, setDelArm] = useState(false);
   useEffect(() => { setNameDraft(meta.name); setTargetDraft(meta.target == null ? '' : String(meta.target)); }, [meta.name, meta.target]);
 
-  const href = (id: string) => `/raid/plan/routes?zone=${zone.zone}${id === 'main' ? '' : '&plan=' + id}${props.variant ? '&v=' + props.variant : ''}`;
+  const href = (id: string) => `/raid/plan/routes?zone=${zone.zone}${id === 'main' ? '' : '&plan=' + id}`;
   const addPlan = async () => {
     if (st.current.dirty) await flush(false);
     const r = await createRoutePlan(zone.zone, newName || 'Off-night plan', copyFrom || null);
@@ -350,17 +349,25 @@ export default function RoutePlanner(props: RoutePlannerProps) {
         </>,
         nodes.hostBar,
       )}
-      {nodes && v3 && createPortal(
+      {nodes && createPortal(
         <div className="grp grp-3d">
           <button type="button" className={view3d ? 'active' : ''} aria-pressed={view3d} onClick={() => setView3d(v => !v)}
-            title={view3d ? 'Back to the flat map, where you edit' : (v3 === 'b' ? 'See the floors stacked, with the route climbing between them' : 'See the zone in 3D, with the route at its real heights')}>
+            title={view3d ? 'Back to the flat map, where you edit' : 'See the zone in 3D, with the route at its real heights'}>
             {view3d ? '2D map' : '3D'}
           </button>
+          {view3d && (
+            <>
+              <button type="button" className={mode3d === 'real' ? 'active' : ''} aria-pressed={mode3d === 'real'} onClick={() => setMode3d('real')}
+                title="The zone's real walls and floors, with the route at its real heights">Real</button>
+              <button type="button" className={mode3d === 'floors' ? 'active' : ''} aria-pressed={mode3d === 'floors'} onClick={() => setMode3d('floors')}
+                title="The floors stacked, with the route climbing between them">Floors</button>
+            </>
+          )}
         </div>,
         nodes.toolbar,
       )}
-      {nodes && v3 && view3d && createPortal(
-        <Plan3D zone={zone} extraMobs={props.extraMobs} plan={shown3d} skipOptional={skipOptional} variant={v3} focusLeg={legKey} routes={routes}
+      {nodes && view3d && createPortal(
+        <Plan3D key={mode3d} zone={zone} extraMobs={props.extraMobs} plan={shown3d} skipOptional={skipOptional} mode={mode3d} focusLeg={legKey} routes={routes}
           recorded={recorded} night={night} nightKeys={nightKeys}
           onSelect={id => apiRef.current?.selectPin(id)}
           canEdit={officer && !previewing}

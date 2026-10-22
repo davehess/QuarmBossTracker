@@ -32,7 +32,7 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-type SP = { zone?: string | string[]; plan?: string | string[]; v?: string | string[] };
+type SP = { zone?: string | string[]; plan?: string | string[] };
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 export default async function RoutePlannerPage({ searchParams }: { searchParams: SP }) {
@@ -46,10 +46,6 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
   let readFailed = false;
   try { store = await readStore(zone.zone); } catch { readFailed = true; }
   const plans = planSummaries(store);
-  // ?v=b (stacked floors) and ?v=c (true 3D) are two previews of a 3D view, awaiting a pick; ?v=leg is the "One leg" mode
-  // alone (b and c have it too); no ?v= is the page as it stands
-  const v = one(searchParams.v);
-  const variant = v === 'b' || v === 'c' || v === 'leg' ? v : null;
   const want = one(searchParams.plan);
   const planId = want && isPlanId(want) && plans.some(p => p.id === want) ? want : MAIN_PLAN;
   const d = store?.plans[planId] ?? null;
@@ -64,14 +60,10 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
 
   const seed = !d && !readFailed ? seedFor(zone.zone) : null;
 
-  // the previews (?v=) follow the recorder's own raid nights too, not just the few saved with the zone file; with no ?v= the
-  // page is what it was (the zone file's nights)
-  let planZone = zone, nightsNote = '';
-  if (variant) {
-    const pn = await plannerNights(zone);
-    planZone = { ...zone, nights: pn.nights };
-    nightsNote = pn.note;
-  }
+  // the planner follows the recorder's own raid nights too, not just the few saved with the zone file
+  const pn = await plannerNights(zone);
+  const planZone = { ...zone, nights: pn.nights };
+  const nightsNote = pn.note;
 
   return (
     <div className="mx-auto max-w-7xl py-2">
@@ -82,7 +74,7 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
       </div>
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs" aria-label="Zone">
         {zoneList().map(z => (
-          <Link key={z.zone} href={`/raid/plan/routes?zone=${z.zone}${variant ? '&v=' + variant : ''}`}
+          <Link key={z.zone} href={`/raid/plan/routes?zone=${z.zone}`}
             className={`rounded-md border px-2 py-1 ${z.zone === zone.zone ? 'border-gold bg-gold/10 text-gold' : 'border-border text-dim hover:text-text'}`}>
             {z.name}{z.stub ? ' (data pending)' : ''}
           </Link>
@@ -94,7 +86,7 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
         </div>
       )}
       <RoutePlanner
-        key={`${zone.zone}:${planId}:${variant ?? ''}`}
+        key={`${zone.zone}:${planId}`}
         zone={planZone}
         nightsNote={nightsNote}
         planId={planId}
@@ -108,7 +100,6 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
         cardNote={cards.unplaced ? `${cards.unplaced} fight-card boss${cards.unplaced === 1 ? '' : 'es'} in this zone ${cards.unplaced === 1 ? 'has' : 'have'} no spawn point on record and ${cards.unplaced === 1 ? 'was' : 'were'} left out.` : ''}
         seed={seed ? { label: seed.label, pins: allPins(seed.plan).length } : null}
         fewest={fewest}
-        variant={variant}
       />
       <p className="mt-6 text-xs text-dim">
         Walls are the EQEmu maps; spawn points are the server&apos;s spawn table; recorded nights are the raid&apos;s centre every 3 seconds, with no names.

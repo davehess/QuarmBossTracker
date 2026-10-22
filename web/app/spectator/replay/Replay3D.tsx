@@ -25,7 +25,7 @@
 // roofs left out), fetched as 'floors=only', which the Floors toggle hides without a refetch. Raiders and marks
 // draw last with the depth test OFF, so one standing under a roof, on a lower storey or behind a wall is still seen.
 // Sphere size follows camera distance so a dot stays about as big on screen as the 2D board's, wherever the camera is.
-// The raid's path previews (?v=b / ?v=c) arrive in the feed as `route` and are drawn by RouteLayer3D.ts, which this file
+// The raid's path arrives in the feed as `route` and is drawn by RouteLayer3D.ts, which this file
 // only asks to update before each render and to place its kill badges after; absent, nothing of it exists on screen.
 //
 // Following a raider moves the orbit TARGET and the camera by the same step, so the angle and the zoom the viewer
@@ -59,14 +59,14 @@ export type Feed3D = {
   targets: PlacedTarget3D[];
   spawns: PlacedSpawn3D[];
   snap: boolean;                        // the playhead jumped (a scrub or a new session): frame the raid at once
-  route?: RouteFeed | null;             // the raid's path preview (?v=b / ?v=c); null or absent: nothing drawn
+  route?: RouteFeed | null;             // the raid's path; null or absent (the Path toggle off): nothing drawn
 };
 export type Bridge3D = {
   feed: (zone: string | null, raiders: Placed3D[], extra: Feed3D) => void;
   zoom: (factor: number) => void;
   fitRaid: () => void;
   fitZone: () => void;
-  /** A deliberate view of a server-frame box (the path preview's "Fit path"): the viewer has the camera until Fit raid. */
+  /** A deliberate view of a server-frame box (the path's "Fit path"): the viewer has the camera until Fit raid. */
   fitBox: (box: { minX: number; maxX: number; minY: number; maxY: number; z: number }) => void;
 };
 type Props = {
