@@ -1509,6 +1509,15 @@
     } else if (mob && mob.class) {
       cls = ' <span class="cls">(' + esc(mob.class) + ')</span>';
     }
+    // Two mobs share this name and differ in LEVEL (FB-80: the two war boars in Plane of Tactics). The agent picks the
+    // right one from the target's level, your /consider or where it stands; until it can, both bands are shown and the
+    // level, HP and damage of either are left blank rather than printing the other one's.
+    var bodyCands = (mob && mob.body_pick && !mob.body_pick.how && mob.body_pick.cands && mob.body_pick.cands.length > 1) ? mob.body_pick.cands : null;
+    var bodyLv = function (c) { return 'L' + c.level + (c.maxlevel && c.maxlevel > c.level ? '–' + c.maxlevel : ''); };
+    if (bodyCands) {
+      cls += ' <span class="cls" title="Two mobs share this name here. It will settle on one when it sees the level or where the mob stands: target it close up, or /consider it.">('
+           + bodyCands.map(bodyLv).join(' or ') + ')</span>';
+    }
     // A Shadow Knight mob's Harm Touch (the guild lead, 2026-09-24: "HT with a
     // checkmark or HT with a red X and a timer"). The agent (_npcHtFor) pins
     // the landing on this mob when it can; NPC reuse is 40 minutes.
@@ -1630,6 +1639,7 @@
     // through to the catalog HP below. "4382 / 5100 HP" beside the % gauge.
     if (mi.target_hp_cur != null && mi.target_hp_max != null) sub.push(fmtNum(mi.target_hp_cur) + ' / ' + fmtNum(mi.target_hp_max) + ' HP');
     else if (mob && mob.hp != null) sub.push(fmtNum(mob.hp) + ' HP');
+    else if (bodyCands) sub.push(bodyCands.map(function (c) { return c.hp != null ? fmtNum(c.hp) : '?'; }).join(' or ') + ' HP');
     if (mob && mob.mindmg != null && mob.maxdmg != null) sub.push(mob.mindmg + '–' + mob.maxdmg + ' dmg');
     // level pulled out of the sub line — surfaces in the top-right title bar
     // as its own badge below, so it stays visible regardless of which tab is
@@ -1641,6 +1651,8 @@
       if (mob && mob.level != null) {
         var max = (mob.maxlevel != null && mob.maxlevel > mob.level) ? mob.maxlevel : null;
         lvlEl.textContent = max ? ('L' + mob.level + '–' + max) : ('L' + mob.level);
+      } else if (bodyCands) {
+        lvlEl.textContent = bodyCands.map(bodyLv).join(' / ');
       } else {
         lvlEl.textContent = '';
       }

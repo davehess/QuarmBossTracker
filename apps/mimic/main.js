@@ -2155,6 +2155,10 @@ function _zealAbsorb(obj, pid) {
       // Feeds the spawn map (agent _mapNoteState); a pre-1.4.8 Zeal just leaves them null.
       s.target_loc  = _pipeLoc(inner.target_loc);
       s.target_type = (typeof inner.target_type === 'number' && Number.isFinite(inner.target_type)) ? inner.target_type : null;
+      // The target's level, from the same Zeal build (named_pipe.cpp: "same-name spawns can be backed by different
+      // database rows with different levels ... Level, class, race and position are what actually separate them").
+      // Target Info uses it to tell two same-name mobs apart (FB-80). Omitted with the target, so nulled when absent.
+      s.target_level = (typeof inner.target_level === 'number' && inner.target_level > 0 && inner.target_level < 256) ? Math.trunc(inner.target_level) : null;
       // Target of target (drafted Zeal change, docs/zeal-tot-pipe.patch):
       // {id, name, authoritative} for who my target last hit, and who last hit
       // my target. Omitted upstream when there is no fresh candidate, so both

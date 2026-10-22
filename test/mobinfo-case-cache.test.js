@@ -16,7 +16,7 @@ const { _mobInfoCacheKey, _pacifyImmuneKnown, _mobInfoByName } = evalBlock(
   'const _mobInfoByName = new Map();\n'
   + sliceBlock(src, 'function _normMobNameAgent(n) {', '\n}') + '\n'
   + sliceBlock(src, 'function _mobCaseKey(n) {', '\n}') + '\n'
-  + sliceBlock(src, 'function _mobInfoCacheKey(name, zoneId) {', '\n}') + '\n'
+  + sliceBlock(src, 'function _mobInfoCacheKey(name, zoneId, npcId) {', '\n}') + '\n'
   + sliceBlock(src, 'function _pacifyImmuneKnown(targetName) {', '\n}'),
   ['_mobInfoCacheKey', '_pacifyImmuneKnown', '_mobInfoByName'],
 );

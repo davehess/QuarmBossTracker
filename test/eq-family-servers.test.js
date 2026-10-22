@@ -166,7 +166,7 @@ describe('the upload queue and the token', () => {
 });
 
 describe('Mob Info: the Quarm catalog is only used for a Quarm character', () => {
-  const fnSrc = sliceBlock(agentSrc, 'function fetchMobInfo(name, selfChar, zoneId) {', '\n}\n');
+  const fnSrc = sliceBlock(agentSrc, 'function fetchMobInfo(name, selfChar, zoneId, npcId) {', '\n}\n');
   function run(selfChar, { registered = [] } = {}) {
     const m = loadServers();
     for (const p of registered) m.noteLogServer(p);
