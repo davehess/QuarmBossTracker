@@ -110,6 +110,10 @@ export function sanitize(raw: unknown): Plan {
     if (typeof l.follow === 'number' && l.follow > 0 && l.follow < 1000) line.follow = Math.floor(l.follow);
     if (l.opt) line.opt = true;
     if (typeof l.via === 'string' && l.via) line.via = l.via.slice(0, 80);
+    const h = (Array.isArray(l.h) ? l.h : [])
+      .filter((a): a is [number, number, number] => Array.isArray(a) && isNum(a[0]) && isNum(a[1]) && isNum(a[2]))
+      .slice(0, MAX_BENDS).map(a => [r1(a[0]), r1(a[1]), r1(a[2])] as [number, number, number]);
+    if (h.length) { line.h = h; keepHeights(line); }
     out.lines.push(line);
   }
 
@@ -173,6 +177,11 @@ export const branchPinLabel = (branchIndex: number, index: number) => `${String.
 export const routePins = (plan: Plan, skipOptional: boolean): Pin[] => (skipOptional ? plan.pins.filter(p => !p.optional) : plan.pins);
 
 export type LegBranch = { split: Split; branch: Branch; branchIndex: number };
+/** What the walk route (navroute.ts) made of a leg; set by the engine only while "Walk route" is on. */
+export type LegWalk =
+  | { state: 'ok'; len: number; via: string[]; steps: number; ignoredBends: boolean }
+  | { state: 'pending' }
+  | { state: 'none' };
 export type Leg = {
   a: Pin; b: Pin; k: string; ln: Line | undefined; pts: [number, number][]; off: boolean;
   optLeg: boolean;                 // the leg itself is marked optional (dashed, out of the totals)
@@ -180,6 +189,7 @@ export type Leg = {
   dashed: boolean;                 // optional leg, or either end is an optional pin
   idx: number;                     // 0-based position in the leg list
   branch?: LegBranch;              // set for a leg inside a split's branch
+  walk?: LegWalk;
 };
 
 /** The splits that can be drawn: start and regroup are neighbours in the route. */
@@ -238,13 +248,22 @@ export function polyLen(poly: readonly (readonly [number, number])[]): number {
   return s;
 }
 
-/** How far the leg walks: its polyline, without the teleport jump. */
-export const legLength = (L: Pick<Leg, 'a' | 'b' | 'pts'> & { jump?: Leg['jump'] }): number =>
-  polyLen(legPoly(L)) - (L.jump ? Math.hypot(L.jump.to[0] - L.jump.from[0], L.jump.to[1] - L.jump.from[1]) : 0);
+/** How far the leg walks: its polyline, without the teleport jump; the walked length when the walk route made one. */
+export const legLength = (L: Pick<Leg, 'a' | 'b' | 'pts'> & { jump?: Leg['jump']; walk?: Leg['walk'] }): number =>
+  L.walk && L.walk.state === 'ok' ? L.walk.len
+    : polyLen(legPoly(L)) - (L.jump ? Math.hypot(L.jump.to[0] - L.jump.from[0], L.jump.to[1] - L.jump.from[1]) : 0);
+
+/** A line keeps the height of a bend only while that bend is still where it was baked (same x, y). */
+export function keepHeights(l: Line): void {
+  if (!l.h) return;
+  const h = l.h.filter(q => l.pts.some(p => Math.abs(p[0] - q[0]) < 0.06 && Math.abs(p[1] - q[1]) < 0.06));
+  if (h.length) l.h = h; else delete l.h;
+}
 
 /** Lines whose pins are gone, or that say nothing, are dropped. */
 export function pruneLines(plan: Plan): void {
   const ids = new Set(allPins(plan).map(p => p.id));
+  for (const l of plan.lines) keepHeights(l);
   plan.lines = plan.lines.filter(l => {
     const [a, b] = l.k.split('>');
     return ids.has(a) && ids.has(b) && (l.pts.length || l.off || l.opt || l.via);

@@ -14,6 +14,7 @@
 import type { Floor, Kind, Mob, Pather, Pin, Plan, ZoneData, ZoneLink } from './types';
 import { allPins, floorOf, planLegs } from './plan';
 import { pinNumbers } from './compare';
+import type { Routed } from './navroute';
 
 export type Mode3D = 'stack' | 'mesh';
 export type Pt3 = [number, number, number];   // x, y (server), h (the view's height)
@@ -65,7 +66,7 @@ export function floorLevels(src: { floors: readonly Floor[]; mobs: readonly Mob[
   };
   for (const m of src.mobs) put(m.z);
   for (const p of src.pathers) for (const q of p.points) put(q[2]);
-  for (const l of src.links) { put(l.from[2]); if (l.to) put(l.to[2]); }
+  for (const l of src.links) { if (l.kind === 'step') continue; put(l.from[2]); if (l.to) put(l.to[2]); }   // a step bridge is not a thing in the zone
   const out: Level[] = [];
   const fi = (f: Floor) => src.floors.indexOf(f);
   for (const f of floorOrder(src.floors)) {
@@ -179,7 +180,7 @@ export function arcPoints(a: Pt3, b: Pt3, n = 24): Pt3[] {
 
 export type Slab3D = { key: string; label: string; short: string; color: string; z: number; h: number };
 export type Pin3D = { id: string; num: string; label: string; kind: Kind; optional: boolean; branch: string | null; x: number; y: number; h: number; z: number; src: ZSource; floor: string | null; faint?: boolean };
-export type Leg3D = { key: string; color: string; dashed: boolean; walks: Pt3[][]; arc: Pt3[] | null };
+export type Leg3D = { key: string; color: string; dashed: boolean; walks: Pt3[][]; arc: Pt3[] | null; arcs: Pt3[][] };   // arcs: every jump of a walked route, arc is the first
 export type Link3D = { i: number; kind: ZoneLink['kind']; label: string; from: Pt3; to: Pt3 | null; arc: Pt3[] | null };
 export type Pather3D = { id: string; label: string; wander: boolean; pts: Pt3[] };
 export type View3D = {
@@ -199,6 +200,8 @@ export type View3DInput = {
   spacing?: number;
   /** "One leg" mode: the key of the one leg to draw. Every other leg is left out and every pin but its two ends is `faint`. */
   focusLeg?: string | null;
+  /** Walk routes by leg key (navroute.ts): a leg that has one is drawn along it at its true heights, with an arc per jump. */
+  routes?: ReadonlyMap<string, Routed>;
 };
 
 export function buildView3D(inp: View3DInput): View3D {
@@ -229,20 +232,29 @@ export function buildView3D(inp: View3DInput): View3D {
     if (focus && lg !== focus) continue;
     const ha = hOf.get(lg.a.id) ?? 0, hb = hOf.get(lg.b.id) ?? 0;
     const color = lg.branch ? lg.branch.branch.color : lg.ln && lg.ln.follow ? FOLLOW_HEX : LEG_HEX;
-    const out: Leg3D = { key: lg.k, color, dashed: lg.dashed, walks: [], arc: null };
-    if (lg.jump) {
+    const out: Leg3D = { key: lg.k, color, dashed: lg.dashed, walks: [], arc: null, arcs: [] };
+    const rt = inp.routes?.get(lg.k);
+    if (rt) {
+      for (const s of rt.segs) {
+        if (s.kind === 'walk') out.walks.push(s.pts.map(p => [p[0], p[1], hs.ramp(p[2])] as Pt3));
+        else out.arcs.push(arcPoints([s.from[0], s.from[1], hs.ramp(s.from[2])], [s.to[0], s.to[1], hs.ramp(s.to[2])]));
+      }
+      out.arc = out.arcs[0] ?? null;
+    } else if (lg.jump) {
       const tp = zone.links.find(t => t.kind === 'teleport' && t.label === lg.jump?.label);
       const hf = tp ? hs.snap(tp.from[2]) : ha, ht = tp && tp.to ? hs.snap(tp.to[2]) : hb;
       out.walks.push(liftPolyline([[lg.a.x, lg.a.y], ...lg.pts, lg.jump.from], ha, hf), liftPolyline([lg.jump.to, [lg.b.x, lg.b.y]], ht, hb));
       out.arc = arcPoints([lg.jump.from[0], lg.jump.from[1], hf], [lg.jump.to[0], lg.jump.to[1], ht]);
+      out.arcs = [out.arc];
     } else out.walks.push(liftPolyline([[lg.a.x, lg.a.y], ...lg.pts, [lg.b.x, lg.b.y]], ha, hb));
     legs.push(out);
   }
 
-  const links: Link3D[] = zone.links.map((lk, i) => {
+  const links: Link3D[] = zone.links.flatMap((lk, i) => {
+    if (lk.kind === 'step') return [];
     const from: Pt3 = [lk.from[0], lk.from[1], hs.snap(lk.from[2])];
     const to: Pt3 | null = lk.to ? [lk.to[0], lk.to[1], hs.snap(lk.to[2])] : null;
-    return { i, kind: lk.kind, label: lk.label, from, to, arc: lk.kind === 'teleport' && to ? arcPoints(from, to) : null };
+    return [{ i, kind: lk.kind, label: lk.label, from, to, arc: lk.kind === 'teleport' && to ? arcPoints(from, to) : null }];
   });
 
   const pathers: Pather3D[] = zone.pathers.filter(pa => pa.points.length > 1).map(pa => {

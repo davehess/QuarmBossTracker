@@ -244,7 +244,8 @@ describe('zones', () => {
     expect(z.pathers.length).toBeGreaterThan(0);
     for (const p of z.pathers) expect(p.points.length).toBeGreaterThan(1);
     expect(z.links.some(l => l.kind === 'flag')).toBe(true);        // the lava runes need the wing flags
-    expect(z.links.every(l => ['teleport', 'locked', 'flag', 'zoneline'].includes(l.kind))).toBe(true);
+    expect(z.links.every(l => ['teleport', 'locked', 'flag', 'zoneline', 'step'].includes(l.kind))).toBe(true);
+    expect(z.links.filter(l => l.kind === 'step')).toHaveLength(3);   // the gaps the walk route bridges (heuristics, not drawn)
     expect(z.mobs.some(m => m.kind === 'boss' && m.name === 'Solusek Ro')).toBe(true);
     expect(z.mobs.some(m => m.id === z.start.mob)).toBe(true);     // the build always has its start
     const fol = createFollow(z.nights);

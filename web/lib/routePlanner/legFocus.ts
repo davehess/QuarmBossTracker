@@ -39,6 +39,10 @@ export function clockText(s: number): string {
 export function legBarText(leg: Leg, index: number, count: number, timeS: number | null): string {
   const bits = [Math.round(legLength(leg)).toLocaleString('en-US') + ' u'];
   if (timeS != null && Number.isFinite(timeS)) bits.push('~' + clockText(timeS));
+  const w = leg.walk;
+  if (w && w.state === 'ok') { if (w.via.length) bits.push('via ' + w.via.join(', then ')); }
+  else if (w && w.state === 'none') bits.push('no walkable route found');
+  else if (w) bits.push('finding the walking route…');
   if (leg.branch) bits.push(leg.branch.branch.label);
   if (leg.off) bits.push('hidden leg');
   return `Leg ${index + 1} of ${count}: ${leg.a.label} → ${leg.b.label} · ${bits.join(' · ')}`;
