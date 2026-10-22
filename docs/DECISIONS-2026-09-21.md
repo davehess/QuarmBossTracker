@@ -116,6 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Route planner + off-night plans + Sol Ro tower** (§407) | Live on main (web 2.0.2): `/raid/plan/routes` [beta], Tactics + the tower, versions, compare, splits, fewest raiders per boss | the guild lead: press "Import tonight's planner" once as an officer; pick the off-night bosses and the fewest headline (A everyone present, default) |
 | **Guest raids stored as ours** (§408) | Not fixed | the guild lead: A tag them (recommended) or B don't send |
+| **raidmimic.com overlay clips + three more layouts** (§409) | Built on beta (web 2.0.3): three looping recordings of the real overlays (`web/public/raidmimic/clips/`, made by `scripts/raidmimic-shots/scenes.mjs`) and previews `?v=d` Scene-first, `?v=e` Raid-night story, `?v=f` Your screen, beside the tour and `?v=b` | the guild lead: pick one on the Decision Desk (card `raidmimic-layout-clips`); then graduate it and delete the others in the same change |
 | **Canvas Pieces round** (§360–366) | Built + gated on `alpha` (park 3.0.0): backing plate-only, whole-group look choices, copy/rename/update a saved group, live-data palette previews, locate line + pulse, delete-with-pieces + Undo | the guild lead, on the next alpha build: (1) list-mode preview crop at 42px (D), (2) single-piece Show as → Upright bar stub (B), (3) the hover line reaches the canvas while arranging (E) |
 | **PoP recast timers firing off our own nukes** (§371) | Fixed as data: 20 "recast —" guild triggers now match only "you resist" / "on you" lines; old patterns kept in each row's notes | the guild lead: say whether to build a zone gate for guild triggers (agent change on beta) so the bars fire only in the named's zone |
 | **Masterpiece Gallery — decided, gates 3.0 stable** (§374) | All recommendations taken; slice-0 draft lost (never pushed) | a session: redo slice 0 (portable layout + set fork-on-save) on beta, then slice 1 (publish → Gallery tab → add as a new set) — 3.0 stable waits on slice 1 |
@@ -12421,3 +12422,26 @@ zone, with dated versions.
 `raid_roster` rows from a raid run by another group, uploaded by our members' agents, read as a Wolf Pack raid (this is part
 of why the pre-raid average read about 82, §405). Not fixed. Pick open: **A** tag those rows as a guest raid (recommended:
 the data is still useful for the raider, and it is what guest pass A, §402, needs anyway) or **B** do not send them.
+### 409. raidmimic.com: animated overlay clips and three more layouts to pick from (2026-10-22, web 2.0.3, beta)
+The guild lead: *"generate more artifacts for raid mimic.com and give me a number of options for layouts site designs on
+decision desk. animated versions of the overlays, one of us killing Grummus and then hailing the projections. the extended
+targets each with a different tag but the same name for Vallon Zek fight, Target info starting with the boss stats and
+bubbles, then getting Tash, Malo, Sha's 65% slow, then Turgur's, snare, etc etc until it's loaded up with dots, and we see
+all of the nukers casting on it."*
+- **Clips are the REAL overlays, recorded.** `scripts/raidmimic-shots/scenes.mjs` drives the shipping `apps/mimic/*.html`
+  in Chromium against a stand-in agent whose answers follow a script second by second (chat lines go through the agent's own
+  chat code), captured at ~20 fps and encoded to muted H.264 mp4 + a WebP poster (190–500 KB each), in
+  `web/public/raidmimic/clips/`. Invented raiders only (fixtures.mjs `PLAYERS`); mob stats and spell durations are the game's
+  own (eqemu_npc_types, eqemu_spells).
+- **Target Info is the Vallon Zek fight, not Grummus.** Grummus (205091) is Unslowable and Unsnareable in the game data, so
+  the overlay's own chips would contradict the slow landing on him. The Tactics Vallon Zek (214316, L73, 175,000 HP) is
+  slowable and snareable, and the real one runs, which is why a raid snares it. Order: Tashanian, Malosini, Sha's Revenge 65%
+  (BST), Turgur's Insects 75% (SHM) replacing it on the slow badge, Ensnare, DoTs, nukes in the casting list, 100% → 61%.
+- **Extended Target:** the split at ~60% into five rows named Vallon Zek, each tagged (red REAL, orange 2, yellow 3, green 4,
+  blue 5: the shapes this overlay draws today; the fork's skull/sword shapes do not render in Extended Target), fakes die first.
+- **Hail:** Command Center beside Chat: Grummus dies, the hail board moves 16 names from Still to hail to Hailed, "You have
+  received a character flag!". The projection's full reply is not in the repo, so the clip does not invent one.
+- **Layouts (previews, beta only):** `?v=d` Scene-first (a tabbed player), `?v=e` Raid-night story (a beat per clip),
+  `?v=f` Your screen (all three at once on one dark "monitor"), beside the tour (default) and `?v=b` Output first, still
+  unpicked from §404. Posted on the Decision Desk as card `raidmimic-layout-clips`. When one is picked, graduate it and delete
+  the others in the same change.

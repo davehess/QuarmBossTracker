@@ -197,6 +197,52 @@ export const SHOTS_HEAD = {
   title: 'What the raid sees',
   note: 'These are the real Mimic overlays, running today for one guild, drawn here on made-up data: every raider name is invented.',
 };
+// ─── Scene clips (the `?v=d`, `?v=e`, `?v=f` previews, the guild lead's brief, 2026-10-22) ──────────────────────────
+// Three short looping recordings of the real Mimic overlays on invented raiders, played muted. The files live under
+// web/public/raidmimic/clips and are made by scripts/raidmimic-shots. `w` and `h` are the file's pixel size and
+// only set the aspect ratio: every layout sizes by w / h, so a corrected number just works.
+export interface Clip { id: string; title: string; caption: string; alt: string; w: number; h: number }
+export const CLIPS_DIR = '/raidmimic/clips';
+export const clipSrc = (id: string, kind: 'video' | 'poster'): string =>
+  `${CLIPS_DIR}/${id}${kind === 'video' ? '.mp4' : '-poster.webp'}`;
+export const CLIPS: Clip[] = [
+  { id: 'target-debuffs', title: 'Target Info', w: 948, h: 792,
+    caption: 'A raid boss and its stats, then each debuff landing in turn: a stronger slow replaces a weaker one, damage over time piles up, and every caster mid-cast shows in the casting list as the health bar falls toward the split.',
+    alt: 'The Target Info overlay on a raid boss: its stats, then debuffs landing one at a time, a 65 percent slow replaced by a 75 percent slow, a snare, damage-over-time spells stacking, a list of casts in progress, and the health bar dropping toward 60 percent.' },
+  { id: 'xtarget-split', title: 'Extended Target', w: 732, h: 746,
+    caption: 'When the boss splits into five rows with the same name, each row carries its own in-game tag, so you can tell the real one from the fakes. The fakes die first.',
+    alt: 'The Extended Target overlay: five rows all carrying the boss name, each with a different tag, and the fake rows dropping off as they die before the real boss.' },
+  { id: 'grummus-hail', title: 'Hail board', w: 1488, h: 600,
+    caption: 'After the boss dies, raiders hail the Planar Projection for their flag, and the hail board moves each name from still to hail to hailed.',
+    alt: 'The Command Center overlay beside the chat window: a boss dying, then raiders hailing the Planar Projection and the hail board moving names from the still-to-hail list to the hailed list.' },
+];
+export const CLIPS_NOTE = 'Recordings of the real overlays, running today for one guild, on invented raiders.';
+export const CLIPS_HEAD = {
+  title: 'Watch a raid night',
+  lead: 'Three overlays, recorded as they run. Pick one, or let them play.',
+  screenTitle: 'What sits on your screen',
+  screenLead: 'The same overlays, laid out the way a raider has them: small windows over the game, each doing one job.',
+  storyTitle: 'A raid night, beat by beat',
+  stageLabel: 'Overlay clips',
+  tabsLabel: 'Pick an overlay',
+};
+// The raid-night story (`?v=e`): the beats in order, one recording each.
+export interface Beat { id: string; step: string; head: string; line: string; clip: string | null }
+export const STORY: Beat[] = [
+  { id: 'debuffs', step: 'The debuffs', head: 'Every debuff, as it lands', clip: 'target-debuffs',
+    line: 'Slows, snares and damage over time stack on the boss and show who cast them. The health bar tells you how close the split is.' },
+  { id: 'split', step: 'The split', head: 'Five of the same name', clip: 'xtarget-split',
+    line: 'The boss splits and every copy has the same name. A tag on each row says which is which, so the right ones go down first.' },
+  { id: 'hail', step: 'The kill and the hail', head: 'Dead boss, then flags', clip: 'grummus-hail',
+    line: 'Once it dies, the raid hails the projection for the flag. The board shows who has and who still has to.' },
+];
+// The monitor (`?v=f`): what each overlay is doing, one short line each.
+export const SCREEN_NOTES: { id: string; line: string }[] = [
+  { id: 'target-debuffs', line: 'Tracks the boss: stats, debuffs and who put them on, and the casts in progress.' },
+  { id: 'xtarget-split', line: 'Lists every copy of a split boss with its tag, so the fakes are easy to pick out.' },
+  { id: 'grummus-hail', line: 'Keeps the hail board: who still has to hail and who is done, beside chat.' },
+];
+
 export const SETUP_LINK = { label: 'Set it up yourself', href: '/raidmimic/setup' };
 export const FACTS_TITLE = 'The small print';
 
