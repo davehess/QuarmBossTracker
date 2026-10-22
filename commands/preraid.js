@@ -13,10 +13,12 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { hasOfficerRole, officerRolesList } = require('../utils/roles');
 const { buildPreRaidChecklist } = require('../utils/preRaidChecklist');
+const { typicalRaidNights, candidateRaidNights, canonClass, NIGHTS_BACK } = require('../utils/typicalRaid');
 const { getOfficerChannelId, setOfficerChannelId } = require('../utils/officerChannel');
 
 const MIMIC_ACTIVE_DAYS = 7;           // uploaded at all in the last week
-const CLASS_AVG_NIGHTS  = 6;           // how far back "our average" looks
+const CLASS_AVG_NIGHTS  = NIGHTS_BACK; // how many raid nights "our average" covers
+const CLASS_AVG_DAYS    = 70;          // how far back the OpenDKP raids are read to find them
 
 async function gather(client) {
   delete require.cache[require.resolve('../data/bosses.json')];
@@ -56,44 +58,26 @@ async function gather(client) {
 
   const tonightByClass = new Map();
   for (const r of going) {
-    const c = (r.class_name || '').trim();
+    const c = canonClass(r.class_name) || (r.class_name || '').trim();
     if (!c) continue;
     tonightByClass.set(c, (tonightByClass.get(c) || 0) + 1);
   }
 
-  // ── our own average, from raid_roster (what actually showed up) ───────────
-  const since = new Date(now - CLASS_AVG_NIGHTS * 8 * 24 * 3600_000).toISOString();
-  // Ordered on the key left once guild_id is pinned (uploader, name): `name` alone
-  // repeats once per uploading agent, and ties let a page boundary skip rows.
-  const rosterRows = await supabase.selectAllPaged('raid_roster',
-    `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(since)}` +
-    `&select=name,class,captured_at`, 'uploaded_by_discord_id,name').catch(() => null) || [];
-  // Bucket by raid NIGHT (ET date), then average the per-night class counts.
-  const perNight = new Map();
-  for (const r of rosterRows) {
-    if (!r.class || !r.captured_at) continue;
-    const night = new Date(r.captured_at).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-    if (!perNight.has(night)) perNight.set(night, new Map());
-    const m = perNight.get(night);
-    const key = `${r.class}|${String(r.name).toLowerCase()}`;
-    m.set(key, 1);
-  }
-  const nightCount = perNight.size || 0;
-  const avgByClass = new Map();
-  if (nightCount > 0) {
-    const totals = new Map();
-    for (const m of perNight.values()) {
-      const seen = new Map();
-      for (const k of m.keys()) {
-        const cls = k.split('|')[0];
-        seen.set(cls, (seen.get(cls) || 0) + 1);
-      }
-      for (const [cls, n] of seen) totals.set(cls, (totals.get(cls) || 0) + n);
-    }
-    for (const [cls, n] of totals) avgByClass.set(cls, n / nightCount);
-  }
-  const typicalHeadcount = nightCount > 0
-    ? [...perNight.values()].reduce((s, m) => s + m.size, 0) / nightCount : 0;
+  // ── our own average, from the OpenDKP ticks of the last real raid nights ──
+  // (utils/typicalRaid.js says why not raid_roster: it is a live view, half a day deep.)
+  // Characters are read once and shared with the lockout section below.
+  const charRows = await supabase.selectAllPaged('characters',
+    `guild_id=eq.${encodeURIComponent(guildId)}&select=name,main_name,class`, 'name').catch(() => null) || [];
+  const raidRows = await supabase.selectAllPaged('opendkp_raids',
+    `ts=gte.${encodeURIComponent(new Date(now - CLASS_AVG_DAYS * 24 * 3600_000).toISOString())}&select=raid_id,ts`,
+    'raid_id').catch(() => null) || [];
+  // A few more than needed: a night under the player floor is skipped and the next one steps in.
+  const candidates = candidateRaidNights(raidRows, now).slice(0, CLASS_AVG_NIGHTS + 4);
+  const candidateIds = candidates.flatMap(n => n.raidIds).filter(Number.isFinite);
+  const tickRows = candidateIds.length === 0 ? [] : await supabase.selectAllPaged('opendkp_ticks',
+    `raid_id=in.(${candidateIds.join(',')})&select=raid_id,tick_id,attendees`, 'tick_id').catch(() => null) || [];
+  const typical = typicalRaidNights({ nights: candidates, ticks: tickRows, characters: charRows, count: CLASS_AVG_NIGHTS });
+  const { avgByClass, typicalHeadcount, nightCount, enough: enoughHistory } = typical;
 
   // ── Mimic coverage, counted in PLAYERS (CLAUDE.md adoption rule) ──────────
   const upSince = new Date(now - MIMIC_ACTIVE_DAYS * 24 * 3600_000).toISOString();
@@ -131,8 +115,6 @@ async function gather(client) {
   const lockRows = await supabase.selectAllPaged('character_lockouts',
     `guild_id=eq.${encodeURIComponent(guildId)}&expires_at=gt.${encodeURIComponent(new Date(now).toISOString())}` +
     `&select=character,boss_key,expires_at,ours`, 'character,boss_key').catch(() => null) || [];
-  const charRows = await supabase.selectAllPaged('characters',
-    `guild_id=eq.${encodeURIComponent(guildId)}&select=name,main_name`, 'name').catch(() => null) || [];
   const kindByName = new Map();
   for (const c of charRows) {
     if (!c || !c.name) continue;
@@ -141,7 +123,7 @@ async function gather(client) {
   }
 
   return {
-    planned, nightCount, event: soon, signupRows,
+    planned, nightCount, enoughHistory, event: soon, signupRows,
     tonightByClass,
     checklist: buildPreRaidChecklist({
       signups, tonightByClass, avgByClass, typicalHeadcount, signedUpPlayers, targets,
@@ -160,7 +142,7 @@ async function gather(client) {
   };
 }
 
-function renderEmbed({ planned, nightCount, checklist: c }) {
+function renderEmbed({ planned, nightCount, enoughHistory, checklist: c }) {
   const e = new EmbedBuilder()
     .setColor(c.ok ? 0x1a7f37 : 0xf0883e)
     .setTitle('📋 Pre-raid checklist')
@@ -181,7 +163,7 @@ function renderEmbed({ planned, nightCount, checklist: c }) {
   e.addFields({
     name: '⚖️ Class coverage vs our average',
     value: c.shortages.length === 0
-      ? (nightCount ? `No class is below our ${nightCount}-night average.` : 'No history to compare against yet.')
+      ? (enoughHistory ? `No class is below our ${nightCount}-night average.` : 'Not enough history to compare against yet.')
       : c.shortages.map(s => `**${s.cls}** — ${s.have} tonight vs ~${s.avg} typical (**−${s.gap}**)`).join('\n').slice(0, 1024),
     inline: false,
   });

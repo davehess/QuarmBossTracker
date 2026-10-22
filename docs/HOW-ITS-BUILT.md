@@ -4062,6 +4062,8 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   block (muster/lead/window/loot/ticks) via `utils/raidInfoPost.js` plus
   classes still wanted — no Mimic or lockout detail. Both dedupe per night in
   `bot_kv`.
+  "Our average" (bot 4.0.2) is the last six Sun/Wed/Thu nights of OpenDKP ticks,
+  one head per PLAYER, in `utils/typicalRaid.js` — never the live `raid_roster`.
 - **`/ai` — published development methodology (web 1.1.92, 2026-08-23)** —
   public, un-gated, and written for three readers: a person, an agent with no
   repo access, and an agent with one. `web/lib/aiMethodology.ts` is the single
@@ -5240,3 +5242,10 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   "<Name>'s corpse<N>"; `isCorpse` (`utils/raidBuffs.js`, twin in `web/lib/buffs.ts`) is checked in `_trackUpload`,
   the trigger-feedback voter and live-state ingest, and /me's suspected-characters card. Test:
   `test/corpse-not-character.test.js`.
+- **Saved raid route on the Map (bot 4.0.2 main, agent 4.0.1 beta, 2026-10-21).** An officer's "Make this our route" on
+  `https://wolfpack.quest/raid/routes` saves `bot_kv` `raid_route:<zone_short>` (`web/app/raid/routes/actions.ts`: `points`,
+  `stops`, `legs`, server frame). `GET /api/agent/raid-route?zone=` (`utils/raidRoute.js`, budget/shed kind `raid_route`, 30 a
+  minute, 5 min cache) hands back `{ ok, zone, route }` where `route` is `null` when none is saved (200, not 404) or the
+  trimmed `{ v, zone, name, saved_at, points, legs:[[start,end]], stops:[{ n, name, x, y, at }] }`. The agent fetches it at
+  zone-in and every few minutes, and Mimic's Map draws it as a thin gold line with numbered stops under the live markers, behind
+  a ⚙ switch and a "Raid route (saved <date>)" legend. Test: `test/raid-route.test.js` (bot), `test/map-raid-route.test.js` (agent).

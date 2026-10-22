@@ -277,7 +277,7 @@ describe('the burst queue sums the whole 6 hours of damage', () => {
 // ── 2 + 6. Extended Target: the debuffs landed earlier, the roster positions ────────────────────────
 function loadExtTarget(sb) {
   return loadBotMany([
-    '_extAttributeDebuffs', '_extBindInstances', '_extDebuffInstances', '_extIdInstances', '_extMergeByAgreedId',
+    '_extAttributeDebuffs', '_extBindInstances', '_extDebuffInstances', '_extIdInstances', '_extMergeByAgreedId', '_extPosSplitOwnHp',
     '_extPlaceTags', '_extPosCluster', '_extHeadingPoint', '_mainAssistPin', '_isJunkSpellName', '_liveRaidSplit',
     '_handleAgentExtendedTarget',
   ], {

@@ -12367,3 +12367,17 @@ the cut was redone as `release-3.0b`: file-level promotion from beta `e382b151` 
   the screenshot scripts) and the PoP Flags sticky controls bar (web 1.9.23). They stay on beta.
 - **Versions:** bot 4.0.0, web 2.0.0, agent 4.0.0, Mimic 3.0.0, Bristlebane 1.0.0. Unnamed ("Version 3.0"). The release body
   no longer mentions the Decorin and Tallon / Vallon countdowns.
+
+### 405. The pre-raid checklist's "our average" comes from OpenDKP ticks, not the live roster (2026-10-22, bot 4.0.2)
+The guild lead, 2026-10-21: *"these numbers are so skewed"* — the post said "thin roster (52 vs ~82) · 11 class shortages".
+- **Cause:** the average was read from `raid_roster`, which the log-ingestion cut (§348) keeps to about half a day. "Typical" was
+  every distinct character logged in earlier that day (a morning raid with another group, every alt swap): 82. It also set
+  CHARACTERS against signups, which are PLAYERS.
+- **Now:** `utils/typicalRaid.js` reads the last six Sun/Wed/Thu nights (never tonight) from `opendkp_raids` + `opendkp_ticks`,
+  counts each player once per night (a character's family; the class of the character on the most ticks), and skips a night
+  under 30 players (an alt raid or a stub). Fewer than two usable nights prints "Not enough history", never a number.
+  Signup classes and character classes go through one spelling (`Shadowknight` and `Shadow Knight` were two classes, so
+  Shadow Knights always showed as short).
+- **Why OpenDKP and not `raid_attendance_ticks`:** officer-curated, leaves the small alt-raid nights out by itself, and is not
+  fed from `raid_roster`. Its weakness is a night nobody entered (the 1 to 11 October 2026 nights were never entered), which only shortens the history.
+- **Open:** the six-night window currently spans the PoP unlock (about 47 players before, about 61 after).
