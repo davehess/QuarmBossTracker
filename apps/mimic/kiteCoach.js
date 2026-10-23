@@ -30,6 +30,7 @@
   var TAU = Math.PI * 2;
   var K = {
     RUN_BASE_UPS: 30.3,       // 100% run, units a second (map.html RUN_BASE_UPS, measured)
+    PATH_STEP_MS: 400,        // samples joined for the walked distance are at least this far apart
     R_MIN: 20, R_MAX: 500,    // circle radius that counts
     ENGAGE_WOBBLE: 0.25,      // radius stddev / r to engage, and to keep a lap
     DIRECTION_PURITY: 0.85,   // |net angle| / total angle: below this it is a figure-eight or back-and-forth
@@ -107,16 +108,26 @@
     return COMPASS[((Math.round(a / (TAU / 8)) % 8) + 8) % 8];
   }
 
-  // Speed as % of a normal run: one circumference a lap. Not the length of the path walked: a few units of jitter on every
-  // sample would add up to a lot of "distance" at 20 samples a second, and a lap within 10% of a circle is a circle.
-  function speedPct(r, lapS) { return lapS > 0 ? TAU * r / lapS / K.RUN_BASE_UPS * 100 : 0; }
+  // Speed as % of a normal run, from the path actually walked (Zeal prints the speed you move at, so a lap that is a
+  // rounded square or an oval has to count its real length: 2 pi r of the fitted circle reads ~10% short on a squarish
+  // loop, 102% against Zeal's 116%, 2026-10-23). Jitter would add up at 10-20 samples a second, so only samples at least
+  // PATH_STEP_MS apart are joined (a 400 ms chord at 35-60 u/s is 14-24 u: noise of a unit or two is under 1%).
+  function pathUps(pts) {
+    if (!pts || pts.length < 2) return 0;
+    var a = pts[0], last = a, len = 0;
+    for (var i = 1; i < pts.length; i++) {
+      if (pts[i].t - a.t >= K.PATH_STEP_MS) { len += Math.hypot(pts[i].x - a.x, pts[i].y - a.y); a = pts[i]; last = a; }
+    }
+    return last.t > pts[0].t ? len / (last.t - pts[0].t) * 1000 : 0;
+  }
+  function speedPct(ups) { return ups > 0 ? ups / K.RUN_BASE_UPS * 100 : 0; }
   // One lap from the samples walked during it.
   function lapFrom(pts, t0, t1, n) {
     var f = fitCircle(subsample(pts, K.FIT_PTS));
     if (!f || pts.length < 2) return null;
     var tn = turned(pts, f.cx, f.cy), lapS = (t1 - t0) / 1000;
     return { n: n, cx: f.cx, cy: f.cy, cz: mean(pts, 'z'), r: f.r, sd: f.sd, lapS: lapS,
-      speedPct: speedPct(f.r, lapS), dir: tn.signed >= 0 ? 'cw' : 'ccw',
+      speedPct: speedPct(pathUps(pts)), dir: tn.signed >= 0 ? 'cw' : 'ccw',
       t0: t0, t1: t1, drift: null, driftDx: 0, driftDy: 0, dr: null, clean: false };
   }
   // A lap against the one before it.
@@ -203,7 +214,7 @@
         var tn = turned(pts, f.cx, f.cy);
         if (Math.abs(tn.signed) < TAU * 0.98 || Math.abs(tn.signed) < K.DIRECTION_PURITY * tn.abs) continue;   // not one full lap one way
         var laps = Math.abs(tn.signed) / TAU, dur = w[w.length - 1].t - w[0].t;
-        return { cx: f.cx, cy: f.cy, r: f.r, sd: f.sd, cz: mean(w, 'z'), lapS: dur / 1000 / laps, speedPct: speedPct(f.r, dur / 1000 / laps),
+        return { cx: f.cx, cy: f.cy, r: f.r, sd: f.sd, cz: mean(w, 'z'), lapS: dur / 1000 / laps, speedPct: speedPct(pathUps(w)),
           dir: tn.signed > 0 ? 'cw' : 'ccw', t0: w[0].t, t1: w[w.length - 1].t, n: 0, drift: null, driftDx: 0, driftDy: 0, dr: null, clean: false, provisional: true };
       }
       return null;
@@ -307,5 +318,5 @@
   }
 
   return { K: K, create: create, fitCircle: fitCircle, turned: turned, compass: compass, chipText: chipText, driftClass: driftClass,
-    cleanLap: cleanLap, matchGuild: matchGuild, guildText: guildText, guildLabel: guildLabel, guildDot: guildDot };
+    cleanLap: cleanLap, pathUps: pathUps, matchGuild: matchGuild, guildText: guildText, guildLabel: guildLabel, guildDot: guildDot };
 });

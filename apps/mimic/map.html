@@ -1273,15 +1273,22 @@
     return { x: -((px - w / 2) / view.scale + view.cx), y: -((py - h / 2) / view.scale + view.cy) };
   }
   // Your speed in game units a second, over the samples of the last ~1.5 s (null until there is a full second).
+  // The DISTANCE WALKED over the window, not the straight line between its two ends: Zeal's number is the speed you are
+  // moving at this instant (Entity.MovementSpeed, zone_map.cpp render_labels), and on a turn the chord is shorter than the
+  // path. Kiting a tight loop (r about 35 u would do it) at Zeal's 116% the chord read 104% (the guild lead, 2026-10-23); the walked path
+  // reads 116%. Two points are the same thing either way.
   var SPEED_WINDOW_MS = 1500;
   function speedOf(hist) {
     if (!hist || hist.length < 2) return null;
-    var a = hist[0], b = hist[hist.length - 1], dt = b.t - a.t;
-    return dt >= 1000 ? Math.hypot(b.x - a.x, b.y - a.y) / dt * 1000 : null;
+    var a = hist[0], b = hist[hist.length - 1], dt = b.t - a.t, len = 0;
+    for (var i = 1; i < hist.length; i++) len += Math.hypot(hist[i].x - hist[i - 1].x, hist[i].y - hist[i - 1].y);
+    return dt >= 1000 ? len / dt * 1000 : null;
   }
-  // ...shown as Zeal's map shows it: % of normal run. The base is measured, not looked up: the guild lead's
-  // screenshot, 2026-10-14, had Zeal at 277% while this read 84 u/s, so 100% ≈ 30.3 u/s. One reading; a timed
-  // unbuffed run would tighten it.
+  // ...shown as Zeal's map shows it: % of normal run. Zeal prints MovementSpeed / 0.7 * 100 (0.7 is the client's own
+  // normal run); the pipe does not carry MovementSpeed, so this base turns OUR measured u/s into that scale. It is
+  // measured, not looked up: the guild lead's screenshot, 2026-10-14, had Zeal at 277% while this read 84 u/s on a
+  // straight run, so 100% ≈ 30.3 u/s (= 0.7 x 43.3). One straight-run reading; a timed unbuffed run would tighten it.
+  // kiteCoach.js keeps the same number (K.RUN_BASE_UPS); test/run-speed.test.js fails if the two part.
   var RUN_BASE_UPS = 30.3;
   function runPct(ups) { return ups == null ? null : ups / RUN_BASE_UPS * 100; }
   // Your own map files (the agent's `local_map`, read on this computer and never sent anywhere; the guild lead,
@@ -1826,7 +1833,7 @@
       while (spdHist.length > 2 && rt - spdHist[1].t >= SPEED_WINDOW_MS) spdHist.shift();
       var sp = speedOf(spdHist);
       line = locText(d.x, d.y) + (sp != null ? ' · ' + Math.round(runPct(sp)) + '%' : '');
-      locBarEl.title = sp != null ? Math.round(sp) + ' units a second (100% = normal run, ' + RUN_BASE_UPS + ' u/s)' : '';
+      locBarEl.title = sp != null ? Math.round(sp) + ' units a second measured from your movement (100% = normal run, ' + RUN_BASE_UPS + ' u/s)' : '';
     } else spdHist = [];
     locBarEl.textContent = line;
     locBarEl.style.fontSize = Math.round(10 * (S.cfg.text || 1)) + 'px';   // follows ⚙ → Label size (the guild lead, 2026-10-13: "Location and speed should have scaling as well")
