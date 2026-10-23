@@ -1,16 +1,16 @@
-// The words and facts of the raidmimic.com landing page (the guild lead, 2026-10-18, option C, "two doors").
-// eqmimic.quest stays the free EverQuest PLAYER tool; this page is the game-agnostic "raid orchestration and
-// analytics as a service" pitch for GUILD LEADERS. It is a FIRST DRAFT: nothing here is settled copy.
+// The facts of the raidmimic.com page (the guild lead, 2026-10-18, option C, "two doors"; the story was reshaped
+// player-first on 2026-10-23 and its words live in web/lib/raidmimicPlayer.ts). eqmimic.quest stays the free
+// EverQuest PLAYER tool's own site; this module holds what both pages share: the captures and clips of the real
+// overlays, the small print (works with, data, cost, worlds) and the inventory of promises.
 //
-// ONE content module, ONE layout (web/app/raidmimic/_landing/SceneLayout.tsx, "Scene-first": a tabbed player of
-// the real overlays for raiders and for raid leaders, the guild lead's pick of 2026-10-22, which replaced the
-// earlier tour). The layout decides order and shape; it never carries a sentence of its own, so a fact is
-// corrected in exactly one place. Plain data, strings and a few pure helpers: no JSX. test/raidmimic-landing.test.js
-// reads this file as text and imports it.
+// ONE content module beside the story module, ONE layout (web/app/raidmimic/_landing/PathsLayout.tsx, "Pick your
+// path"). The layout decides order and shape; it never carries a sentence of its own, so a fact is corrected in
+// exactly one place. Plain data, strings and a few pure helpers: no JSX. test/raidmimic-landing.test.js reads this
+// file as text and imports it.
 //
-// RULE for every sentence below: say what exists, and say "coming" plainly for what does not. Each moment and
-// each world carries a `status`; the `COMING` list at the bottom is the whole inventory of promises, and a
-// test keeps the page honest about it. No prices, customer counts or testimonials are invented here.
+// RULE for every sentence below: say what exists, and say "coming" plainly for what does not. Each world carries a
+// `status`; the `COMING` list at the bottom is the whole inventory of promises, and a test keeps the page honest
+// about it. No prices, customer counts or testimonials are invented here.
 //
 // ⚠ This repo is PUBLIC. Nothing here names a member, a character, a real id, a token or an address. The
 // recordings on the page are made from invented raiders (scripts/raidmimic-shots), never a member.
@@ -35,19 +35,6 @@ export const STATUS_LABEL: Record<Status, string> = {
   live: 'Live today, for one guild',
   alpha: 'In alpha',
   coming: 'Coming',
-};
-
-// ─── Hero ───────────────────────────────────────────────────────────────────────────────────────────
-export const HERO = {
-  name: 'raidmimic',
-  kicker: 'Raid orchestration and analytics, as a service',
-  line:
-    'One shared picture of your raid, built from the logs your raiders already write. ' +
-    'For the person who has to run the night.',
-  honest:
-    'Today it runs for one guild, Wolf Pack, on Project Quarm. Running it for other guilds is coming, ' +
-    'and this page says plainly which parts are which.',
-  playerLine: 'Playing, not leading? The free player tool is Mimic, at eqmimic.quest.',
 };
 
 // ─── Works with what you already run ────────────────────────────────────────────────────────────────
@@ -129,19 +116,6 @@ export const CTA = {
 export function interestUrl(base: string): string {
   return `${base}#${new URLSearchParams({ cat: 'idea', text: INTEREST_TEXT }).toString()}`;
 }
-
-// ─── Four moments, as words ──────────────────────────────────────────────────────────────
-export interface Moment { id: string; title: string; line: string; status: Status }
-export const MOMENTS: Moment[] = [
-  { id: 'two-guilds', status: 'coming', title: 'A raid board across two guilds',
-    line: 'Two guilds, one raid, one board: each sees what is up and what is down, and each keeps its own roster.' },
-  { id: 'at-a-glance', status: 'live', title: 'Flags and lockouts at a glance',
-    line: 'Your raiders against the gates and the bosses: who can zone in, who is locked out, who still needs a step.' },
-  { id: 'a-parse', status: 'live', title: 'A parse built from every log',
-    line: 'One fight, merged from every raider’s view, so no single log decides the numbers.' },
-  { id: 'builder', status: 'alpha', title: 'The overlay builder',
-    line: 'Lay out your own on-screen panels, meters, timers and queues, and put them where you want them.' },
-];
 
 // ─── The hero's captures (the layered mascot hero, the guild lead, 2026-10-21: "i like B for the hero") ──────────────
 // Captures of the running Mimic overlays, drawn from fixtures with invented player names (scripts/raidmimic-shots),

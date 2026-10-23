@@ -1,0 +1,711 @@
+<!doctype html>
+<!--
+  Raid Mimic · How it works. One interactive isometric scene with four camera stops, embedded in the raidmimic.com page
+  (web/app/raidmimic/_landing/HowItWorks.tsx) in an iframe. Self-contained on purpose: no external fonts, scripts or
+  requests; it posts only its own height to the page that holds it. Drawn with ISO-GLOW (MIT), credited at the foot.
+  The people in it are invented; none is a member.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raid Mimic: how it works</title>
+<meta name="robots" content="noindex">
+<style>
+  /* The page's own tokens (web/tailwind.config.ts) for the ground, panel and hairline, so the frame melts into the page. */
+  :root {
+    color-scheme: dark;
+    --bg:#0d1117; --panel:#161b22; --edge:#30363d;
+    --line:#484f58; --detail:#2b3138; --body:#1a2028; --deck:#1f262e;
+    --ink:#8b949e; --ink-hi:#e6edf3; --live:#f4f5f5;
+    --glass:#0f1317; --glass-on:#1a1410; --recess:#0e1216;
+    --accent:#ff9a2e; --accent-hi:#ffc77a; --accent-dim:rgba(255,154,46,.10);
+    --mono:"Cascadia Code",Consolas,ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--mono); font-size:13px; padding:0 0 4px; }
+  .wrap { max-width:1180px; margin-inline:auto; display:grid; gap:10px; }
+  nav button { font:inherit; color:inherit; background:none; border:1px solid var(--edge); border-radius:10px; cursor:pointer; }
+  .layout { display:grid; grid-template-columns:230px minmax(0,1fr); grid-template-rows:auto 1fr; grid-template-areas:"nav fig" "credit fig"; gap:14px; align-items:start; }
+  .layout > nav { grid-area:nav; } .layout > figure { grid-area:fig; } .layout > .credit { grid-area:credit; }
+  .made-with { display:flex; justify-content:flex-end; padding:2px 6px 0; font-size:11px; letter-spacing:.12em; text-transform:uppercase; }
+  .made-with a { color:var(--line); text-decoration:none; transition:color .2s; }
+  .made-with a:hover { color:var(--ink); }
+  .credit { align-self:end; display:grid; gap:3px; padding:0 16px 22px; font-size:12px; line-height:1.5; letter-spacing:.04em; }
+  #figtext { align-self:start; padding:4px 16px 0; font-size:12.5px; line-height:1.6; color:var(--ink); }
+  #figtext b { color:var(--ink-hi); font-weight:500; }
+  #figtext i { display:block; margin-top:8px; font-style:normal; font-size:11.5px; color:var(--line); }
+  nav { display:grid; gap:4px; background:var(--panel); border:1px solid var(--edge); border-radius:22px; padding:14px; }
+  nav button { display:flex; gap:12px; align-items:center; text-align:left; padding:9px 12px; border-color:transparent; letter-spacing:.06em; }
+  nav button .n { color:var(--line); font-size:12px; transition:color .2s; }
+  nav button:hover { color:var(--ink-hi); }
+  nav button[aria-current="true"] { color:var(--ink-hi); border-color:var(--edge); background:var(--bg); }
+  nav button[aria-current="true"] .n { color:var(--accent); text-shadow:0 0 8px var(--accent); }
+  figure { margin:0; background:var(--panel); border:1px solid var(--edge); border-radius:22px; padding:22px 26px; display:grid; gap:6px; min-width:0; }
+  .cap { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 18px; text-transform:uppercase; letter-spacing:.14em; }
+  .cap .hi { color:var(--ink-hi); text-transform:none; letter-spacing:.05em; }
+  #stageHolder { aspect-ratio:4/3; border-radius:14px; transition:background .5s; background:radial-gradient(ellipse 50% 45% at 50% 52%, transparent, transparent); }
+  #stageHolder.glow { background:radial-gradient(ellipse 50% 45% at 50% 52%, var(--accent-dim), transparent 72%); }
+  #stage { width:100%; height:100%; display:block; touch-action:manipulation; user-select:none; -webkit-user-select:none; }
+  #stage:focus { outline:none; }
+  #stage:focus-visible { outline:1px dashed var(--line); outline-offset:4px; border-radius:8px; }
+  .fx { position:absolute; width:0; height:0; overflow:hidden; }
+  @media (max-width: 820px) {
+    .layout { grid-template-columns:1fr; grid-template-rows:auto; grid-template-areas:"nav" "fig" "credit"; }
+    .credit { padding:4px 8px 0; display:flex; flex-wrap:wrap; align-items:center; gap:4px 14px; }
+    .credit .soc { margin-top:0; }
+    .credit .cr { margin-top:0; flex-basis:100%; }
+    nav { position:relative; top:0; display:flex; overflow-x:auto; border-radius:16px; padding:8px; scrollbar-width:none; }
+    nav button { flex:none; padding:8px 10px; }
+    figure { padding:16px; }
+  }
+
+  /* ---------- shared figure vocabulary ---------- */
+  #stage text { font-family:var(--mono); }
+  .face { fill:var(--body); stroke:var(--line); stroke-width:1; vector-effect:non-scaling-stroke; stroke-linejoin:round; }
+  .face.top { fill:var(--deck); }
+  .face.recess { fill:var(--recess); }
+  .detail { fill:none; stroke:var(--detail); stroke-width:1; vector-effect:non-scaling-stroke; }
+  .label { fill:var(--ink); font-family:var(--mono); }
+  .glass { fill:var(--glass); transition:fill .3s, stroke .3s; }
+  .glass.hot { fill:var(--glass-on); stroke:var(--accent); }
+  .halo { fill:var(--accent); opacity:0; transition:opacity .4s; }
+  .halo.hot { opacity:.22; }
+  .scr { fill:var(--accent-hi); font-family:var(--mono); }
+  .scr-accent { fill:var(--accent); }
+  .led { fill:var(--detail); transition:fill .2s; }
+  .led.hot { fill:var(--accent); }
+  .wire { fill:none; stroke:var(--line); stroke-width:1; vector-effect:non-scaling-stroke; stroke-linecap:round; stroke-linejoin:round; transition:stroke .4s; }
+  .wire.hot { stroke:var(--accent); }
+  .wire-under { fill:none; stroke:var(--panel); stroke-width:3.5; stroke-linecap:round; stroke-linejoin:round; }
+  .pulse { fill:none; stroke:var(--accent-hi); stroke-width:2.2; stroke-linecap:round; vector-effect:non-scaling-stroke;
+           stroke-dasharray:70 1200; stroke-dashoffset:70; opacity:0; }
+  .pulse.go { animation:flow .55s linear; }
+  @keyframes flow { 0% { stroke-dashoffset:70; opacity:1; } 90% { opacity:1; } 100% { stroke-dashoffset:-1000; opacity:0; } }
+  .press { cursor:pointer; transition:transform 60ms ease-out; }
+  .press.down { transform:translateY(3px); }
+  .press .face { transition:fill .6s ease-out, stroke .6s ease-out; }
+  .press.lit .face, .press.latched .face { fill:var(--accent); stroke:var(--accent-hi); transition:none; }
+  .press.lit .face.top, .press.latched .face.top { fill:var(--accent-hi); }
+  .press.lit { filter:url(#glow); }
+  .press.latched { filter:url(#soft); }
+  .press:hover .face.top { stroke:var(--ink); }
+  .blink { animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  @media (prefers-reduced-motion:reduce) {
+    .press, .glass, .halo, .press .face, .wire { transition:none; } .blink { animation:none; } .pulse.go { animation:none; }
+  }
+</style>
+</head>
+<body>
+<svg class="fx" aria-hidden="true">
+  <defs>
+    <filter id="glow" filterUnits="userSpaceOnUse" x="-2000" y="-2000" width="6000" height="6000"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="soft" filterUnits="userSpaceOnUse" x="-2000" y="-2000" width="6000" height="6000"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="bloom" filterUnits="userSpaceOnUse" x="-2000" y="-2000" width="6000" height="6000"><feGaussianBlur stdDeviation="9"/></filter>
+  </defs>
+</svg>
+<div class="wrap">
+  <div class="layout" id="how">
+    <nav id="nav" aria-label="The four steps"></nav>
+    <aside id="figtext" aria-live="polite"></aside>
+    <figure>
+      <div class="cap"><span class="hi" id="fignum">Fig 1</span><span id="figname"></span></div>
+      <div id="stageHolder"></div>
+      <div class="cap"><span id="hint"></span><span class="hi" id="readout"></span></div>
+    </figure>
+  </div>
+  <footer class="made-with"><a href="https://iso-glow.vercel.app" target="_blank" rel="noopener">Made with ISO-GLOW ↗</a></footer>
+</div>
+<script>
+  // Gallery settings: palette 'ember' | 'city' | your own [[name, darkAccent, darkHi, lightAccent, lightHi], ...]
+  window.GALLERY = { palette: 'ember', autoDemo: true, storageKey: 'iso-glow-accent' };
+  const FIGS = [];
+</script>
+<!-- FIGURES: one <script> per figure, each calling FIGS.push({...}). Order here = Fig 1, 2, 3 ... -->
+<script>
+/* Raid Mimic: one world, four camera stops. Each "figure" is the same scene; arriving at one
+   animates the camera from where the last stop left it, so moving 1 → 2 → 3 → 4 pulls back from one
+   raider's screen to the raid, to the raid leader's review, to where it is all hosted. */
+(() => {
+  const SHARED = { cam: null };
+  const NAMES = ['Aldenmar', 'Brackwyn', 'Corvale', 'Rethlan', 'Nyssara', 'Theodric', 'Velmira', 'Zarrin'];
+  const SHARE = [1, .93, .86, .79, .71, .64, .57, .5];
+  const TIMERS = [['Boss AE', 12], ['Slow', 8], ['Rampage', 5]];
+  const BOSS = 'The Arbiter';
+
+  // ring raiders (index 0..6) + you (index 7, the big screen)
+  const RING = [
+    { x: 60,  y: 60,  wire: [[83, 94, 8], [83, 212, 8], [230, 212, 8]] },
+    { x: 230, y: 40,  wire: [[253, 74, 8], [253, 200, 8]] },
+    { x: 440, y: 120, wire: [[463, 154, 8], [463, 212, 8], [290, 212, 8]] },
+    { x: 420, y: 210, wire: [[420, 227, 8], [290, 227, 8]] },
+    { x: 400, y: 370, wire: [[423, 370, 8], [423, 250, 8], [290, 250, 8]] },
+    { x: 60,  y: 370, wire: [[83, 370, 8], [83, 254, 8], [230, 254, 8]] },
+    { x: 40,  y: 210, wire: [[86, 236, 8], [230, 236, 8]] },
+  ];
+  const YOU_WIRE = [[265, 390, 8], [265, 260, 8]];
+  const BOARD_WIRE = [[290, 206, 8], [320, 206, 8], [320, 20, 8]];
+  const UP = {
+    look: [[290, 244, 8], [575, 244, 8], [575, 22, 8], [600, 22, 8]],
+    self: [[290, 244, 8], [582, 244, 8], [582, 145, 8], [600, 145, 8]],
+    host: [[290, 244, 8], [582, 244, 8], [582, 295, 8], [600, 295, 8]],
+  };
+
+  const CSS = `
+    [data-fig^="mm"] .rv2, [data-fig^="mm"] .rv3, [data-fig^="mm"] .rv4 { opacity:0; transition:opacity .9s ease; pointer-events:none; }
+    [data-fig^="mm"].s2 .rv2, [data-fig^="mm"].s3 .rv3, [data-fig^="mm"].s4 .rv4 { opacity:1; pointer-events:auto; }
+    [data-fig^="mm"] .pc, [data-fig^="mm"] .chip, [data-fig^="mm"] #mm-glass, [data-fig^="mm"] .host { cursor:pointer; }
+    [data-fig^="mm"] .chip rect { fill:var(--recess); stroke:var(--line); stroke-width:1; vector-effect:non-scaling-stroke; transition:fill .3s; }
+    [data-fig^="mm"] .chip text { fill:var(--ink); font-family:var(--mono); }
+    [data-fig^="mm"] .chip.on rect { fill:var(--accent); stroke:var(--accent-hi); }
+    [data-fig^="mm"] .chip.on text { fill:var(--bg); }
+    [data-fig^="mm"] #mm-call { opacity:0; transition:opacity .25s; }
+    [data-fig^="mm"] #mm-call.show { opacity:1; }
+    [data-fig^="mm"] .dot { fill:var(--detail); transition:fill .3s; }
+    [data-fig^="mm"] .dot.on { fill:var(--accent); }
+    [data-fig^="mm"] .chart { fill:none; stroke:var(--accent); stroke-width:1.4; vector-effect:non-scaling-stroke; }
+  `;
+
+  function build(api) {
+    const ALL = [[0,0,0],[520,0,0],[0,500,0],[520,500,0],[705,0,0],[705,380,0],[150,6,127],[370,6,127],[660,260,107],[205,404,97]];
+    const K = api.iso.frame(ALL);
+    const { P, TOP, FRONT, SIDE, box, path } = K, slits = api.iso.slits;
+    const items = [];
+    const add = (key, svg) => items.push([key, svg]);
+
+    // plates
+    add(-1000, box(0,0,0, 520,500,7, 18) + `<g transform="${TOP(0,0,7)}"><rect class="detail" x="10" y="10" width="500" height="480" rx="14"/></g>`);
+    add(-999, `<g class="rv4">${box(565,0,0, 140,380,7, 14)}<g transform="${TOP(565,0,7)}"><rect class="detail" x="8" y="8" width="124" height="364" rx="10"/></g></g>`);
+
+    // wires
+    const wire = (pts, id, cls = '') => {
+      const d = path(pts), back = path(pts.slice().reverse());
+      return `<g class="${cls}"><path class="wire-under" d="${d}"/><path class="wire" id="${id}-w" d="${d}"/>
+        <path class="pulse" id="${id}-in" filter="url(#glow)" pathLength="1000" d="${d}"/>
+        <path class="pulse" id="${id}-out" filter="url(#glow)" pathLength="1000" d="${back}"/></g>`;
+    };
+    let w = '';
+    RING.forEach((r, i) => { w += wire(r.wire, `mm-r${i}`, 'rv2'); });
+    w += wire(YOU_WIRE, 'mm-r7', 'rv2');
+    w += wire(BOARD_WIRE, 'mm-bd', 'rv3');
+    for (const [k, pts] of Object.entries(UP)) w += wire(pts, `mm-up-${k}`, 'rv4');
+    add(-900, w);
+
+    // small raider PCs
+    RING.forEach((r, i) => {
+      const mx = r.x + 6, my = r.y + 10, mf = my + 8, mt = 43;
+      add(r.x + r.y, `<g class="rv2"><g class="press pc" id="mm-pc-${i}" data-i="${i}">
+          ${box(r.x, r.y, 7, 46, 34, 6, 4)}${box(mx + 13, my + 1, 13, 8, 6, 6, 1)}${box(mx, my, 19, 34, 8, 24, 3)}
+        </g>
+        <g transform="${FRONT(mx, mf, mt)}">
+          <rect class="halo" id="mm-h-${i}" x="3" y="3" width="28" height="15" rx="2" filter="url(#bloom)"/>
+          <rect class="face glass" id="mm-g-${i}" filter="url(#soft)" x="3" y="3" width="28" height="15" rx="2"/>
+          <rect class="face" x="6" y="12" width="22" height="2.4" rx=".8"/>
+          <rect class="scr-accent" id="mm-b-${i}" x="6" y="12" width="0" height="2.4" rx=".8"/>
+          <text class="scr" id="mm-t-${i}" x="17" y="9.5" font-size="3.6" text-anchor="middle"></text>
+          <text class="label" x="17" y="22.6" font-size="3.2" text-anchor="middle">${NAMES[i]}</text>
+        </g></g>`);
+    });
+
+    // hub
+    add(430, `<g class="rv2"><g class="press" id="mm-hub">${box(230,200,7, 60,60,64, 8)}</g>
+      <g transform="${TOP(230,200,71)}"><rect class="face recess" x="12" y="12" width="36" height="36" rx="6"/>${slits(18, 42, 4, 18, 42, false)}</g>
+      <g transform="${FRONT(230,260,71)}">
+        <rect class="halo" id="mm-hub-h" x="7" y="9" width="46" height="30" rx="4" filter="url(#bloom)"/>
+        <rect class="face glass" id="mm-hub-g" filter="url(#soft)" x="7" y="9" width="46" height="30" rx="4"/>
+        <text class="scr" x="30" y="29" font-size="13" text-anchor="middle" letter-spacing="1" filter="url(#soft)">RM</text>
+        ${slits(10, 50, 4, 44, 52)}
+        <circle class="led" id="mm-hub-led" filter="url(#soft)" cx="10" cy="57" r="1.8"/>
+        <text class="label" x="50" y="59" font-size="4.2" text-anchor="end" letter-spacing=".6">HUB</text>
+      </g>
+      <g transform="${SIDE(290,260,71)}">${slits(8, 52, 4, 10, 54)}</g></g>`);
+
+    // the raid leader's view: the guild site's raid review
+    const BW = 220, BH = 120;
+    add(160, `<g class="rv3">${box(150,6,7, BW,14,BH, 5)}
+      <g transform="${FRONT(150,20,127)}">
+        <rect class="halo" id="mm-bd-h" x="6" y="6" width="208" height="96" rx="5" filter="url(#bloom)"/>
+        <rect class="face glass" id="mm-bd-g" filter="url(#soft)" x="6" y="6" width="208" height="96" rx="5"/>
+        <text class="scr" x="12" y="15" font-size="5" letter-spacing=".6">RAID REVIEW <tspan class="label" font-size="3.6">· your guild's site</tspan></text>
+        <text class="scr" id="mm-bd-sub" x="208" y="15" font-size="4" text-anchor="end">waiting for a kill</text>
+        <text class="label" x="12" y="23" font-size="3.4">DAMAGE</text>
+        ${NAMES.map((n, i) => `
+          <text class="scr" x="12" y="${30 + i*8.4}" font-size="3.6">${n}</text>
+          <rect class="face" x="44" y="${27 + i*8.4}" width="80" height="3.6" rx="1"/>
+          <rect class="scr-accent" id="mm-bd-b-${i}" x="44" y="${27 + i*8.4}" width="0" height="3.6" rx="1"/>
+          <text class="scr" id="mm-bd-n-${i}" x="138" y="${30 + i*8.4}" font-size="3.4" text-anchor="end"></text>`).join('')}
+        <text class="label" x="148" y="23" font-size="3.4">ATTENDANCE</text>
+        ${NAMES.map((_, i) => [0,1,2,3,4,5].map(j => `<circle class="dot" id="mm-at-${i}-${j}" cx="${151 + j*9}" cy="${28.6 + i*5.4}" r="1.6"/>`).join('')).join('')}
+        <text class="label" x="148" y="76" font-size="3.4">RAID DPS</text>
+        <path class="detail" d="M148 98 L208 98 M148 98 L148 80"/>
+        <path class="chart" id="mm-bd-chart" d="M148 98" filter="url(#soft)"/>
+      </g></g>`);
+
+    // you: the big screen, with the overlays a raider actually gets
+    add(595, `<g>${box(210,390,7, 110,70,6, 6)}${box(225,436,13, 80,18,3, 2)}
+      <g class="press" id="mm-you">${box(255,394,13, 20,8,10, 2)}${box(205,404,23, 120,12,74, 5)}</g>
+      <g transform="${FRONT(205,416,97)}">
+        <defs><clipPath id="mm-clip"><rect x="4" y="4" width="112" height="62" rx="3"/></clipPath></defs>
+        <rect class="halo" id="mm-you-h" x="4" y="4" width="112" height="62" rx="3" filter="url(#bloom)"/>
+        <rect class="face glass" id="mm-glass" filter="url(#soft)" x="4" y="4" width="112" height="62" rx="3"/>
+        <g clip-path="url(#mm-clip)">
+          <path class="detail" d="M4 52 L20 42 L32 48 L50 34 L66 50 L80 44 L116 58"/>
+          <rect class="face recess" x="7" y="7" width="58" height="56" rx="2"/>
+          <text class="scr" x="10" y="12" font-size="3">Command Center</text>
+          <text class="label" x="10" y="16.4" font-size="2.3">TARGET · ${BOSS}</text>
+          <rect class="face" x="10" y="17.6" width="52" height="3.4" rx="1"/>
+          <rect class="scr-accent" id="mm-hp" x="10" y="17.6" width="52" height="3.4" rx="1"/>
+          <text class="label" id="mm-hp-t" x="36" y="20.4" font-size="2.4" text-anchor="middle">100%</text>
+          <text class="scr" x="10" y="26" font-size="2.3">HAIL · ${BOSS}</text>
+          <text class="label" id="mm-still" x="10" y="30" font-size="2.2">Still to hail (8)</text>
+          ${NAMES.map((n, i) => `<g class="chip" id="mm-chip-${i}" data-i="${i}"><rect x="${10 + (i%4)*13.2}" y="${31.6 + Math.floor(i/4)*5.6}" width="12.4" height="4.6" rx="1"/>
+            <text x="${16.2 + (i%4)*13.2}" y="${34.8 + Math.floor(i/4)*5.6}" font-size="2.2" text-anchor="middle">${n}</text></g>`).join('')}
+          <text class="scr" id="mm-hailed" x="10" y="47" font-size="2.3">Hailed ✓ (0)</text>
+          <text class="label" x="10" y="52.4" font-size="2.2">HEALER MANA (3)</text>
+          <text class="scr" x="62" y="52.4" font-size="2.2" text-anchor="end">DI: Velmira ✓</text>
+          <text class="label" id="mm-seen" x="10" y="60" font-size="1.9">seen by 1 Mimic · tap a name to mark it hailed</text>
+
+          <rect class="face recess" x="68" y="7" width="45" height="26" rx="2"/>
+          <text class="scr" x="71" y="11.6" font-size="2.6">TIMERS</text>
+          ${TIMERS.map(([n], i) => `<text class="scr" x="71" y="${16.4 + i*6}" font-size="2.3">${n}</text>
+            <text class="scr" id="mm-tt-${i}" x="110" y="${16.4 + i*6}" font-size="2.3" text-anchor="end">–</text>
+            <rect class="face" x="71" y="${17.6 + i*6}" width="39" height="1.8" rx=".6"/>
+            <rect class="scr-accent" id="mm-tb-${i}" x="71" y="${17.6 + i*6}" width="0" height="1.8" rx=".6"/>`).join('')}
+          <rect class="face recess" x="68" y="36" width="45" height="27" rx="2"/>
+          <text class="scr" x="71" y="40.6" font-size="2.6">DAMAGE</text>
+          ${[0,1,2,3].map(i => `<text class="scr" x="71" y="${45.2 + i*5}" font-size="2.2">${NAMES[i]}</text>
+            <text class="scr" id="mm-dn-${i}" x="110" y="${45.2 + i*5}" font-size="2.2" text-anchor="end"></text>
+            <rect class="face" x="71" y="${46.2 + i*5}" width="39" height="1.5" rx=".5"/>
+            <rect class="scr-accent" id="mm-db-${i}" x="71" y="${46.2 + i*5}" width="0" height="1.5" rx=".5"/>`).join('')}
+          <text class="scr" id="mm-call" x="60" y="40" font-size="6" text-anchor="middle" letter-spacing=".5" filter="url(#glow)"></text>
+        </g>
+        <circle class="led" id="mm-you-led" filter="url(#soft)" cx="9" cy="70" r="1.4"/>
+        <text class="label" x="112" y="71" font-size="3" text-anchor="end" letter-spacing=".6">YOU · ${NAMES[7]}</text>
+      </g></g>`);
+
+    // hosting: lookup, your box, our rack
+    add(610, `<g class="rv4">${box(600,10,7, 40,24,80, 4)}
+      <g transform="${FRONT(600,34,87)}">
+        <rect class="halo" id="mm-lk-h" x="4" y="8" width="32" height="30" rx="3" filter="url(#bloom)"/>
+        <rect class="face glass" id="mm-lk-g" filter="url(#soft)" x="4" y="8" width="32" height="30" rx="3"/>
+        <text class="scr" x="20" y="18" font-size="4" text-anchor="middle">LOOKUP</text>
+        <text class="scr" x="20" y="26" font-size="3.4" text-anchor="middle">coming</text>
+        <text class="scr" id="mm-lk-t" x="20" y="32" font-size="3.4" text-anchor="middle"></text>
+        ${slits(8, 32, 4, 46, 70)}
+        <text class="label" x="20" y="77" font-size="3.6" text-anchor="middle">GUILD LOOKUP</text>
+      </g></g>`);
+    add(720, `<g class="rv4"><g class="press host" id="mm-self" data-m="self">${box(600,120,7, 60,50,46, 8)}</g>
+      <g transform="${TOP(600,120,53)}">${slits(14, 46, 4, 10, 40)}</g>
+      <g transform="${FRONT(600,170,53)}">
+        <rect class="halo" id="mm-self-h" x="6" y="6" width="48" height="16" rx="3" filter="url(#bloom)"/>
+        <rect class="face glass" id="mm-self-g" filter="url(#soft)" x="6" y="6" width="48" height="16" rx="3"/>
+        <text class="scr" id="mm-self-t" x="30" y="16.5" font-size="5" text-anchor="middle"></text>
+        <text class="label" x="54" y="41" font-size="4.4" text-anchor="end" letter-spacing=".6">YOUR BOX · FREE</text>
+      </g>
+      <g transform="${SIDE(660,170,53)}">${slits(8, 42, 4, 8, 36)}</g></g>`);
+    add(860, `<g class="rv4"><g class="press host" id="mm-host" data-m="host">${box(600,260,7, 60,70,100, 6)}</g>
+      <g transform="${TOP(600,260,107)}">${slits(10, 50, 5, 8, 62)}</g>
+      <g transform="${FRONT(600,330,107)}">
+        ${[0,1,2,3,4].map(r => `<rect class="face recess" x="5" y="${6 + r*16}" width="50" height="12" rx="2"/>
+          <circle class="led" id="mm-rk-${r}" filter="url(#soft)" cx="10" cy="${12 + r*16}" r="1.5"/>${slits(16, 50, 3, 9 + r*16, 15 + r*16)}`).join('')}
+        <text class="label" x="55" y="95" font-size="4.4" text-anchor="end" letter-spacing=".6">HOSTED · COMING</text>
+      </g>
+      <g transform="${SIDE(660,330,107)}">${slits(8, 62, 6, 10, 90)}</g></g>`);
+
+    items.sort((a, b) => a[0] - b[0]);
+    const svg = items.map(i => i[1]).join('');
+
+    const cam = (pts, pad) => {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const p of pts) { const [x, y] = P(...p); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+      let w = (x1 - x0) * (1 + 2*pad), h = (y1 - y0) * (1 + 2*pad);
+      if (w / h > 4/3) h = w * 3/4; else w = h * 4/3;
+      return [(x0 + x1)/2 - w/2, (y0 + y1)/2 - h/2, w, h];
+    };
+    const CAMS = {
+      1: cam([[205,416,23],[325,416,23],[205,416,97],[325,416,97],[210,460,7],[320,460,7]], .06),
+      2: cam([[0,0,0],[520,0,0],[0,500,0],[520,500,0],[230,200,71],[205,404,97]], .03),
+      3: cam([[150,6,127],[370,6,127],[150,20,7],[370,20,7],[230,260,7],[290,200,71],[205,404,97],[60,60,7],[486,154,7]], .05),
+      4: cam(ALL, .03),
+    };
+    return { K, svg, CAMS };
+  }
+
+  function mountWorld(step, stage, api) {
+    const { svg, CAMS } = build(api);
+    stage.innerHTML = svg;
+    const q = s => stage.querySelector(s);
+    const from = SHARED.cam || CAMS[step], to = CAMS[step];
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let tween = reduce ? null : { from, to, t0: null, dur: 1400 };
+    stage.setAttribute('viewBox', (reduce ? to : from).join(' '));
+    // Start at the previous stop's reveal level, then fade in (pulling back) or out (moving in) during the move.
+    const prevStep = SHARED.step || step;
+    const setReveal = s => { for (let k = 2; k <= 4; k++) stage.classList.toggle('s' + k, s >= k); };
+    if (reduce) setReveal(step);
+    else { setReveal(prevStep); api.after(step > prevStep ? 250 : 900, () => setReveal(step)); }
+    SHARED.step = step;
+
+    const st = {
+      fightT0: null, timers: TIMERS.map(() => null), hailed: new Set(), call: '', callUntil: 0,
+      seen: step >= 2 ? 8 : 1, raidT0: null, src: null, busy: false, hubAt: 0,
+      postT0: null, mode: 'self', hostPhase: 'idle',
+    };
+    const say = (t, ms = 1500) => { st.call = t; st.callUntil = performance.now() + ms; };
+
+    // step 1: what a raider gets
+    function pull() {
+      const now = performance.now();
+      st.fightT0 = now; st.timers = TIMERS.map(() => now); say('PULL'); api.flash(q('#mm-you'));
+      return true;
+    }
+    function hail(i) {
+      if (i == null) i = NAMES.findIndex((_, k) => !st.hailed.has(k));
+      if (i < 0) { st.hailed.clear(); return true; }
+      st.hailed.add(i); say('HAILED · ' + NAMES[i].toUpperCase(), 900);
+      return true;
+    }
+    // step 2: the raid shares it
+    function send(i) {
+      if (st.busy) return true;
+      st.busy = true; st.src = i;
+      if (i < 7) api.flash(q(`#mm-pc-${i}`)); else api.flash(q('#mm-you'));
+      api.replay(q(`#mm-r${i}-in`), 'go');
+      api.after(520, () => {
+        st.hubAt = performance.now(); api.flash(q('#mm-hub'));
+        for (let j = 0; j < 8; j++) if (j !== i) api.replay(q(`#mm-r${j}-out`), 'go');
+      });
+      api.after(1080, () => { const now = performance.now(); st.raidT0 = now; st.timers = TIMERS.map(() => now); st.seen = 8; st.busy = false; say('SEEN BY 8'); });
+      return true;
+    }
+    // step 3: the raid leader's review
+    function post() {
+      if (st.busy) return true;
+      st.busy = true;
+      for (let j = 0; j < 8; j++) api.replay(q(`#mm-r${j}-in`), 'go');
+      api.after(520, () => { st.hubAt = performance.now(); api.flash(q('#mm-hub')); api.replay(q('#mm-bd-out'), 'go'); });
+      api.after(1100, () => { st.postT0 = performance.now(); st.busy = false; });
+      return true;
+    }
+    // step 4: where it runs
+    function connect(m) {
+      if (m) st.mode = m;
+      st.hostPhase = 'look'; api.replay(q('#mm-up-look-in'), 'go');
+      api.after(560, () => { st.hostPhase = 'check'; api.replay(q(`#mm-up-${st.mode}-in`), 'go'); });
+      api.after(1120, () => { st.hostPhase = 'on'; api.flash(q(st.mode === 'self' ? '#mm-self' : '#mm-host')); });
+      return true;
+    }
+
+    function render(now) {
+      // your overlays
+      // rAF timestamps can trail performance.now() by a frame; never let elapsed go negative
+      const fight = st.fightT0 != null ? Math.max(0, (now - st.fightT0) / 1000) : 0;
+      const hp = st.fightT0 != null ? Math.max(.06, 1 - fight / 45) : 1;
+      q('#mm-hp').setAttribute('width', (52 * hp).toFixed(2));
+      q('#mm-hp-t').textContent = Math.round(hp * 100) + '%';
+      let live = 0, next = null;
+      TIMERS.forEach(([n, d], i) => {
+        let left = 0;
+        if (st.timers[i] != null) { left = Math.min(d, d - (now - st.timers[i]) / 1000); if (left <= 0) { st.timers[i] = null; left = 0; say(n === 'Slow' ? 'RE-SLOW' : n.toUpperCase() + ' NOW'); } }
+        q(`#mm-tb-${i}`).setAttribute('width', (39 * left / d).toFixed(2));
+        q(`#mm-tt-${i}`).textContent = left > 0 ? left.toFixed(1) + 's' : '–';
+        if (left > 0) { live++; if (!next || left < next[1]) next = [n, left]; }
+      });
+      [0,1,2,3].forEach(i => {
+        const dps = st.fightT0 != null ? Math.round(SHARE[i] * 412 * Math.min(1, fight / 4)) : 0;
+        q(`#mm-db-${i}`).setAttribute('width', (39 * SHARE[i] * Math.min(1, fight / 4)).toFixed(2));
+        q(`#mm-dn-${i}`).textContent = dps ? String(dps) : '';
+      });
+      NAMES.forEach((_, i) => q(`#mm-chip-${i}`).classList.toggle('on', st.hailed.has(i)));
+      q('#mm-still').textContent = `Still to hail (${8 - st.hailed.size})`;
+      q('#mm-hailed').textContent = `Hailed ✓ (${st.hailed.size})`;
+      q('#mm-seen').textContent = `seen by ${st.seen} Mimic${st.seen > 1 ? 's' : ''} · tap a name to mark it hailed`;
+      const calling = now < st.callUntil;
+      q('#mm-call').textContent = st.call; q('#mm-call').classList.toggle('show', calling);
+      q('#mm-glass').classList.add('hot');
+      q('#mm-you-h').classList.toggle('hot', live > 0 || calling);
+      q('#mm-you-led').classList.toggle('hot', true);
+
+      // the raid
+      const rLeft = st.raidT0 == null ? 0 : Math.min(12, Math.max(0, 12 - (now - st.raidT0) / 1000));
+      if (st.raidT0 != null && !rLeft) st.raidT0 = null;
+      const hubLit = now - st.hubAt < 900 || rLeft > 0 || (st.postT0 != null);
+      q('#mm-hub-g').classList.toggle('hot', hubLit); q('#mm-hub-h').classList.toggle('hot', hubLit); q('#mm-hub-led').classList.toggle('hot', hubLit);
+      for (let i = 0; i < 7; i++) {
+        const on = rLeft > 0 || (st.busy && st.src === i);
+        q(`#mm-g-${i}`).classList.toggle('hot', on || st.postT0 != null);
+        q(`#mm-h-${i}`).classList.toggle('hot', rLeft > 0);
+        q(`#mm-b-${i}`).setAttribute('width', (22 * rLeft / 12).toFixed(2));
+        q(`#mm-t-${i}`).textContent = rLeft > 0 ? `AE ${rLeft.toFixed(0)}s` : '';
+      }
+      for (let j = 0; j < 8; j++) q(`#mm-r${j}-w`).classList.toggle('hot', rLeft > 0 || st.postT0 != null);
+
+      // the review
+      const pr = st.postT0 == null ? 0 : Math.min(1, Math.max(0, (now - st.postT0) / 1200));
+      q('#mm-bd-g').classList.toggle('hot', pr > 0); q('#mm-bd-h').classList.toggle('hot', pr > 0);
+      q('#mm-bd-w').classList.toggle('hot', pr > 0);
+      q('#mm-bd-sub').textContent = pr > 0 ? `${BOSS} · kill 2:41 · 8 raiders` : 'waiting for a kill';
+      NAMES.forEach((_, i) => {
+        q(`#mm-bd-b-${i}`).setAttribute('width', (80 * SHARE[i] * pr).toFixed(2));
+        q(`#mm-bd-n-${i}`).textContent = pr > 0 ? String(Math.round(SHARE[i] * 412 * pr)) : '';
+        for (let j = 0; j < 6; j++) q(`#mm-at-${i}-${j}`).classList.toggle('on', pr * 6 > j && !(i === 5 && j === 1));
+      });
+      const pts = [];
+      for (let k = 0; k <= 24 * pr; k++) { const x = 148 + k * 2.5, y = 97 - 14 * (1 - Math.exp(-k / 5)) - 3 * Math.sin(k * .9); pts.push(`${x.toFixed(1)} ${y.toFixed(1)}`); }
+      q('#mm-bd-chart').setAttribute('d', pts.length > 1 ? 'M' + pts.join(' L') : 'M148 98');
+
+      // hosting
+      const self = st.mode === 'self', hon = st.hostPhase === 'on', looking = st.hostPhase === 'look' || st.hostPhase === 'check';
+      q('#mm-lk-g').classList.toggle('hot', looking); q('#mm-lk-h').classList.toggle('hot', looking);
+      q('#mm-lk-t').textContent = looking ? (self ? '→ your box' : '→ hosted') : '';
+      q('#mm-up-look-w').classList.toggle('hot', st.hostPhase !== 'idle');
+      q('#mm-up-self-w').classList.toggle('hot', self && (hon || st.hostPhase === 'check'));
+      q('#mm-up-host-w').classList.toggle('hot', !self && (hon || st.hostPhase === 'check'));
+      q('#mm-self-g').classList.toggle('hot', self && hon); q('#mm-self-h').classList.toggle('hot', self && hon);
+      q('#mm-self-t').textContent = self ? (hon ? 'online' : 'ready') : '';
+      for (let r = 0; r < 5; r++) q(`#mm-rk-${r}`).classList.toggle('hot', !self && (hon || r % 2 === 0));
+
+      api.power(live > 0 || rLeft > 0 || pr > 0 || hon);
+      const R = {
+        1: live ? `${live} timer${live > 1 ? 's' : ''} · next ${next[0].toLowerCase()} ${next[1].toFixed(0)}s · ${st.hailed.size}/8 hailed` : `space to pull · h to hail · ${st.hailed.size}/8 hailed`,
+        2: st.busy ? 'to the hub' : rLeft ? `${NAMES[st.src].toLowerCase()} saw it · 8 screens · ${rLeft.toFixed(0)}s` : 'click a raider · 1–8',
+        3: st.busy ? 'sending the fight' : pr ? 'kill 2:41 · damage, attendance, raid dps posted' : 'space ends the fight',
+        4: hon ? (self ? 'self-hosted · free · your box, your data' : 'hosted · coming · not built yet') : looking ? 'finding the hub' : 's your box · h hosted (coming)',
+      };
+      api.readout(R[step]);
+    }
+
+    stage.addEventListener('click', e => {
+      const chip = e.target.closest('.chip'); if (chip) { hail(+chip.dataset.i); return; }
+      if (e.target.closest('#mm-glass') || e.target.closest('#mm-you')) { step === 2 ? send(7) : pull(); return; }
+      const pc = e.target.closest('.pc'); if (pc) { send(+pc.dataset.i); return; }
+      if (e.target.closest('#mm-hub') || e.target.closest('#mm-bd-g')) { post(); return; }
+      const h = e.target.closest('.host'); if (h) connect(h.dataset.m);
+    });
+
+    api.loop(now => {
+      if (tween) {
+        if (tween.t0 == null) tween.t0 = now;
+        const k = Math.min(1, (now - tween.t0) / tween.dur), e = k < .5 ? 4*k*k*k : 1 - Math.pow(-2*k + 2, 3) / 2;
+        const cur = tween.from.map((v, i) => v + (tween.to[i] - v) * e);
+        stage.setAttribute('viewBox', cur.join(' '));
+        SHARED.cam = cur;
+        if (k >= 1) tween = null;
+      }
+      render(now);
+    });
+    SHARED.cam = SHARED.cam || to;
+
+    return {
+      key: e => {
+        const k = e.key.toLowerCase();
+        if (step === 1) { if (k === ' ' || k === 'enter') return pull(); if (k === 'h') return hail(); }
+        if (step === 2) { if (/^[1-8]$/.test(k)) return send(+k - 1); if (k === ' ' || k === 'enter') return send(2); }
+        if (step === 3) { if (k === ' ' || k === 'enter') return post(); }
+        if (step === 4) { if (k === 's') return connect('self'); if (k === 'h') return connect('host'); if (k === ' ' || k === 'enter') return connect(); }
+        return false;
+      },
+      demo: () => api.after(1500, () => ({ 1: () => { pull(); api.after(700, () => hail(0)); api.after(1200, () => hail(1)); }, 2: () => send(2), 3: post, 4: () => connect('self') })[step]()),
+    };
+  }
+
+  const STEPS = [
+    ['mm-1', 'Overlays', 'Space pulls · H or click a name to hail', 'One raider\'s screen with Mimic overlays: Command Center with target and hail list, timers and a damage meter. Press space to pull, H to hail.'],
+    ['mm-2', 'The raid', 'Click any raider, or press 1–8', 'The camera pulls back to eight raiders wired to a hub. Click a raider: what their Mimic saw goes to the hub and back out to the others.'],
+    ['mm-3', 'Raid leader', 'Space ends the fight', 'The camera turns to the guild site\'s raid review. Press space to end the fight: damage, attendance and raid DPS fill in.'],
+    ['mm-4', 'Hosting', 'S your box · H hosted (coming) · space connects', 'The camera pulls back to where the hub runs: a box your guild runs, or hosting we run for you, which is coming. Press S or H.'],
+  ];
+  STEPS.forEach(([id, name, hint, aria], i) => FIGS.push({ id, name, hint, aria, css: i === 0 ? CSS : '', mount: (stage, api) => mountWorld(i + 1, stage, api) }));
+})();
+
+</script>
+<!-- CORE: kernel, api, navigation, palette picker. Keep after the figures. -->
+<script>
+/* ============================================================
+   iso gallery core: kernel, shared api, navigation.
+   Figures register with FIGS.push({...}) — see CONTRACT below.
+   ============================================================ */
+// FIGS is declared inline in the page before the figure scripts
+
+const ISO = (() => {
+  const C = Math.cos(Math.PI / 6), S = Math.sin(Math.PI / 6);
+  function kernel(OX, OY) {
+    const P = (x,y,z) => [(x-y)*C + OX, (x+y)*S - z + OY];
+    const D = (x,y,z) => [(x-y)*C, (x+y)*S - z];
+    const plane = (O,U,V) => { const o=P(...O), u=D(...U), v=D(...V);
+      return `matrix(${u[0]} ${u[1]} ${v[0]} ${v[1]} ${o[0]} ${o[1]})`; };
+    const TOP   = (x,y,z) => plane([x,y,z],[1,0,0],[0,1,0]);
+    const FRONT = (x,y,z) => plane([x,y,z],[1,0,0],[0,0,-1]);
+    const SIDE  = (x,y,z) => plane([x,y,z],[0,-1,0],[0,0,-1]);
+    const rect = (t,w,h,r=0,cls='face') => `<g transform="${t}"><rect class="${cls}" width="${w}" height="${h}" rx="${r}"/></g>`;
+    // Rounded box: one rounded top plus one continuous side wall along the visible part of the
+    // outline, so the corners meet cleanly. r = 0 keeps the classic three flat faces.
+    const rounded = (x,y,z,w,d,h,r,cls) => {
+      r = Math.min(r, w/2, d/2);
+      const n = 10, z1 = z + h, q = Math.PI/4, H = Math.PI/2, c = cls ? ' ' + cls : '';
+      const arc = (cx,cy,a0,a1) => { const o = []; for (let i = 0; i <= n; i++) { const a = a0 + (a1-a0)*i/n; o.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]); } return o; };
+      const ring = [...arc(x+w-r,y+r,-H,0), ...arc(x+w-r,y+d-r,0,H), ...arc(x+r,y+d-r,H,2*H), ...arc(x+r,y+r,2*H,3*H)];
+      const vis  = [...arc(x+w-r,y+r,-q,0), ...arc(x+w-r,y+d-r,0,H), ...arc(x+r,y+d-r,H,3*q)];
+      const d3 = pts => 'M' + pts.map(p => P(...p).map(v => v.toFixed(2)).join(' ')).join('L') + 'Z';
+      const wall = [...vis.map(([a,b]) => [a,b,z]), ...vis.slice().reverse().map(([a,b]) => [a,b,z1])];
+      return `<path class="face${c}" d="${d3(wall)}"/><path class="face top${c}" d="${d3(ring.map(([a,b]) => [a,b,z1]))}"/>`;
+    };
+    const box = (x,y,z,w,d,h,r=0) => r > 0 ? rounded(x,y,z,w,d,h,r,'') :
+      rect(SIDE(x+w,y+d,z+h), d,h) + rect(FRONT(x,y+d,z+h), w,h) + rect(TOP(x,y,z+h), w,d,0,'face top');
+    const boxc = (x,y,z,w,d,h,r,cls) => r > 0 ? rounded(x,y,z,w,d,h,r,cls) :
+      rect(SIDE(x+w,y+d,z+h), d,h,0,'face '+cls) + rect(FRONT(x,y+d,z+h), w,h,0,'face '+cls) + rect(TOP(x,y,z+h), w,d,0,'face top '+cls);
+    // 3D polyline -> SVG path "d"
+    const path = pts => 'M' + pts.map(p => P(...p).map(n => n.toFixed(2)).join(' ')).join('L');
+    return { C, S, P, D, plane, TOP, FRONT, SIDE, rect, box, boxc, path };
+  }
+  // Frame a scene: pass its extreme 3D corners. Returns kernel + viewBox padded to ~4:3.
+  function frame(points, margin = 0.09, aspect = 4 / 3) {
+    const d = points.map(([x,y,z]) => [(x-y)*C, (x+y)*S - z]);
+    let x0 = Math.min(...d.map(p => p[0])), x1 = Math.max(...d.map(p => p[0]));
+    let y0 = Math.min(...d.map(p => p[1])), y1 = Math.max(...d.map(p => p[1]));
+    const m = margin * Math.max(x1 - x0, y1 - y0);
+    let w = x1 - x0 + 2*m, h = y1 - y0 + 2*m;
+    let ox = m - x0, oy = m - y0;
+    if (w / h < aspect) { const nw = h * aspect; ox += (nw - w) / 2; w = nw; }
+    else { const nh = w / aspect; oy += (nh - h) / 2; h = nh; }
+    return { ...kernel(ox, oy), viewBox: `0 0 ${w.toFixed(1)} ${h.toFixed(1)}`, W: w, H: h };
+  }
+  // repeated detail lines in a face-local group
+  const slits = (a0, a1, step, b0, b1, vertical = true, cls = 'detail') => {
+    let s = ''; for (let a = a0; a <= a1 + 1e-6; a += step)
+      s += vertical ? `<line class="${cls}" x1="${a}" y1="${b0}" x2="${a}" y2="${b1}"/>` : `<line class="${cls}" x1="${b0}" y1="${a}" x2="${b1}" y2="${a}"/>`;
+    return s;
+  };
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return { kernel, frame, slits, esc };
+})();
+
+/* ---------- shared audio (created on first user gesture) ---------- */
+const AUDIO = (() => {
+  let ctx = null, out = null, analyser = null;
+  return () => {
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      out = ctx.createGain(); out.gain.value = 0.5;
+      analyser = ctx.createAnalyser(); analyser.fftSize = 1024;
+      out.connect(analyser); analyser.connect(ctx.destination);
+    }
+    if (ctx.state === 'suspended') ctx.resume();
+    return { ctx, out, analyser };
+  };
+})();
+
+/* ---------- app ---------- */
+(function app() {
+  const $ = id => document.getElementById(id);
+  const CFG = window.GALLERY || {};
+  const holder = $('stageHolder'), readoutEl = $('readout'), hintEl = $('hint'), numEl = $('fignum'), nameEl = $('figname');
+  const nav = $('nav');
+  let active = null, handle = null, timers = [], frames = [], idx = 0;
+
+  const api = {
+    iso: ISO,
+    readout: s => { readoutEl.textContent = s; },
+    hint: s => { hintEl.textContent = s; },
+    audio: AUDIO,
+    after: (ms, fn) => { const t = setTimeout(fn, ms); timers.push(t); return t; },
+    every: (ms, fn) => { const t = setInterval(fn, ms); timers.push(t); return t; },
+    loop: fn => { let alive = true; const f = ts => { if (!alive) return; fn(ts); requestAnimationFrame(f); };
+      requestAnimationFrame(f); const stop = () => { alive = false; }; frames.push(stop); return stop; },
+    // light a pressable briefly (orange flash + glow, then fade)
+    flash: (el, ms = 160) => { if (!el) return; el.classList.add('down', 'lit'); clearTimeout(el._f1); clearTimeout(el._f2);
+      el._f1 = setTimeout(() => el.classList.remove('down'), 110); el._f2 = setTimeout(() => el.classList.remove('lit'), ms); },
+    // restart a one-shot CSS animation class (e.g. '.pulse' -> 'go')
+    replay: (el, cls = 'go') => { if (!el) return; el.classList.remove(cls); void el.getBoundingClientRect(); el.classList.add(cls); },
+    power: on => { holder.classList.toggle('glow', !!on); },
+  };
+
+  function mount(i) {
+    if (handle && handle.unmount) handle.unmount();
+    timers.forEach(t => { clearTimeout(t); clearInterval(t); }); timers = [];
+    frames.forEach(stop => stop()); frames = [];
+    idx = (i + FIGS.length) % FIGS.length; active = FIGS[idx];
+    holder.classList.remove('glow');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('id', 'stage'); svg.setAttribute('role', 'img'); svg.setAttribute('tabindex', '0');
+    svg.setAttribute('aria-label', active.aria || active.name);
+    svg.dataset.fig = active.id;
+    holder.replaceChildren(svg);
+    numEl.textContent = `Fig ${idx + 1}`; nameEl.textContent = active.name;
+    hintEl.textContent = active.hint || ''; readoutEl.textContent = '';
+    document.title = `Fig ${idx + 1} · ${active.name}`;
+    [...nav.querySelectorAll('button[data-i]')].forEach(b => b.setAttribute('aria-current', +b.dataset.i === idx ? 'true' : 'false'));
+    const cur = nav.querySelector(`button[data-i="${idx}"]`);
+    if (cur && nav.scrollWidth > nav.clientWidth) nav.scrollTo({ left: cur.offsetLeft - nav.clientWidth / 2 + cur.offsetWidth / 2, behavior: 'smooth' });
+    if (location.hash.slice(1) !== active.id) history.replaceState(null, '', '#' + active.id);
+    handle = active.mount(svg, api) || {};
+    // demo(): with ?demo, or on every arrival when GALLERY.autoDemo is true (?still disables)
+    const runDemo = /demo/.test(location.search) || (CFG.autoDemo && !/still/.test(location.search));
+    if (runDemo && handle.demo) setTimeout(() => handle.demo(), 120);
+  }
+
+  // The glow colour is fixed (the kit's colour picker is not carried over: one colour means "lit" on this page).
+
+  // per-figure css
+  FIGS.forEach(f => { if (f.css) { const st = document.createElement('style'); st.textContent = f.css; document.head.appendChild(st); } });
+
+  // navigation markup
+  nav.innerHTML = FIGS.map((f, i) =>
+    `<button data-i="${i}"><span class="n">${String(i + 1).padStart(2, '0')}</span><span class="t">${f.name}</span></button>`).join('');
+  // after a nav click, hand keyboard focus to the figure so space/enter go to it, not the button
+  const focusStage = () => { const s = $('stage'); if (s) s.focus({ preventScroll: true }); };
+  nav.addEventListener('click', e => { const b = e.target.closest('button[data-i]'); if (b) { mount(+b.dataset.i); focusStage(); } });
+  window.addEventListener('hashchange', () => { const i = FIGS.findIndex(f => f.id === location.hash.slice(1)); if (i >= 0 && i !== idx) mount(i); });
+
+  window.addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.closest && e.target.closest('button') && (e.key === 'Enter' || e.key === ' ')) return;
+    if (handle && handle.key && handle.key(e)) { e.preventDefault(); return; }
+    if (e.key === 'PageDown') mount(idx + 1);
+    if (e.key === 'PageUp') mount(idx - 1);
+  });
+  window.addEventListener('keyup', e => { if (handle && handle.keyup) handle.keyup(e); });
+  window.addEventListener('blur', () => { if (handle && handle.blur) handle.blur(); });
+
+  if (!FIGS.length) {   // nothing registered yet (figures still being built)
+    holder.innerHTML = '<p style="display:grid;place-items:center;height:100%;margin:0;letter-spacing:.14em;text-transform:uppercase">No figures yet</p>';
+    numEl.textContent = 'Fig —'; return;
+  }
+  const start = FIGS.findIndex(f => f.id === location.hash.slice(1));
+  mount(start >= 0 ? start : 0);
+})();
+
+</script>
+<script>
+  // The words beside each step, swapped when the step changes. Every claim is one the raidmimic.com page makes elsewhere:
+  // what is "coming" says so here too.
+  (function () {
+    const TEXT = {
+      'Overlays': '<b>What every raider gets.</b> Mimic reads the log EverQuest already writes and draws what matters over the game: the Command Center with your target and the hail list, timers that speak when they run out, a damage meter. This part runs on your own PC.',
+      'The raid': '<b>What the raid shares.</b> Pull back and there are eight of you. When every raider runs Mimic, a guild hub can add up what each log saw and send it back out: the hail board, the buff and debuff queue and the extended target list work that way today. Click any raider.<i>The timers here are drawn to show the idea.</i>',
+      'Raid leader': '<b>What the raid leader gets.</b> With a hub running, a fight can land on your guild\'s own site: damage per raider, who was there for each tick and the raid\'s damage over the fight. Press space to end the fight.<i>Needs a guild hub.</i>',
+      'Hosting': '<b>Where the hub runs.</b> Pull back once more: the hub is a server. Today a guild runs its own, for free, with our help; it is not turnkey yet. A guild lookup and hosting we run for you are <b>coming</b>. Press S or H.<i>Hosting for other guilds is not built yet.</i>',
+    };
+    const name = document.getElementById('figname'), out = document.getElementById('figtext');
+    const sync = () => { out.innerHTML = TEXT[name.textContent.trim()] || ''; };
+    new MutationObserver(sync).observe(name, { childList: true, characterData: true, subtree: true });
+    sync();
+  })();
+</script>
+<script>
+  // Tell the page that holds this one how tall it is, so the frame fits and nothing scrolls inside it. Same origin only.
+  (function () {
+    if (window.parent === window) return;
+    let last = 0;
+    const send = () => {
+      const h = Math.ceil(document.documentElement.getBoundingClientRect().height);
+      if (h && h !== last) { last = h; try { window.parent.postMessage({ rmScene: 'height', h }, location.origin); } catch (e) {} }
+    };
+    new ResizeObserver(send).observe(document.body);
+    window.addEventListener('load', send);
+    send();
+  })();
+</script>
+</body>
+</html>

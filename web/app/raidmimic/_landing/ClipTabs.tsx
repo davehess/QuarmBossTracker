@@ -5,7 +5,7 @@
 // content module) and capped by the window height, so a tall clip never pushes the page off the screen. An audience
 // with no clip would show no tab (none exists today), so a scene is added by adding a row to CLIPS.
 import { useState, type KeyboardEvent } from 'react';
-import { AUDIENCES, CLIPS, CLIPS_HEAD, type Audience } from '@/lib/raidmimicLanding';
+import { AUDIENCES, CLIPS, CLIPS_HEAD } from '@/lib/raidmimicLanding';
 import SceneClip from './SceneClip';
 
 const TAB = 'min-h-11 rounded-md border px-4 text-sm';
@@ -25,16 +25,13 @@ function arrows(e: KeyboardEvent<HTMLDivElement>) {
   tabs[to].click();
 }
 
-// `only` (the layout previews, ?v=player) pins the player to ONE audience, so the page can show the raiders' scenes in one
-// place and the leaders' in another; the audience tabs are then not drawn (there is nothing to switch between). No
-// `only` is the player exactly as the page has always had it.
-export default function ClipTabs({ only }: { only?: Audience } = {}) {
-  const audiences = AUDIENCES.filter(a => CLIPS.some(c => c.audience === a.id)).filter(a => !only || a.id === only);
-  const [i, setI] = useState(only ? Math.max(0, CLIPS.findIndex(c => c.audience === only)) : 0);
+export default function ClipTabs() {
+  const audiences = AUDIENCES.filter(a => CLIPS.some(c => c.audience === a.id));
+  const [i, setI] = useState(0);
   const clip = CLIPS[i];
   const aud = audiences.find(a => a.id === clip.audience) ?? audiences[0];
   const scenes = CLIPS.map((c, n) => ({ c, n })).filter(x => x.c.audience === aud.id);
-  const stage = only ? `clip-stage-${only}` : 'clip-stage';
+  const stage = 'clip-stage';
   return (
     <div>
       {audiences.length > 1 && (

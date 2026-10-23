@@ -1175,22 +1175,28 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 ### raidmimic.com landing page (web 1.9.5, 2026-10-18, [beta]; DECISIONS §370)
 - **What:** the guild leaders' door, game-agnostic: what the platform does, each block tagged live / alpha / coming,
   works-with (PQ Companion, GINA, EQLogParser), the consent model, what it costs (no price list), "any solved world",
-  and Register interest. The one layout is **Scene-first** (`SceneLayout.tsx`, the guild lead's pick of 2026-10-22, §409): a
-  tabbed player of looping recordings of the real overlays, **For raiders** (Target Info, Extended Target) and **For raid
-  leaders and guild leaders** (the hail board), each scene captioned with its beat of the raid night. Above it sits the
-  layered mascot hero (the hopping mascot with seven captures of the overlays around it, 2026-10-21). There is no `?v=`
-  switch: the earlier tour, the Output-first gallery, Raid-night story and Your screen are deleted. Next scene to
-  record: loot rolls + DKP bids (a new row in `CLIPS`; a scene gets its tab only when it has a row and files).
-- **Where:** `web/app/raidmimic/page.tsx` (metadata, host-dependent links), `web/app/raidmimic/_landing/`
-  (`SceneLayout.tsx`, `Parts.tsx`, `MascotHero.tsx`; client pieces `ClipTabs.tsx` the player, `SceneClip.tsx` one looping
-  clip, `MascotVideo.tsx` the mascot), ALL words in `web/lib/raidmimicLanding.ts` (`COMING` is the whole list of promises;
+  and Register interest. The one layout is **Pick your path** (`PathsLayout.tsx`, the guild lead's pick of 2026-10-23, web 2.1.16;
+  it replaced Scene-first, §409): three doors (**Player**, **Guild**, **Self-host**), then **See it run** (the layered mascot hero,
+  the tabbed player of looping recordings of the real overlays, **For raiders** and **For raid leaders and guild leaders**, and the
+  gallery of more captures), then **How it works** (a four-step interactive drawing: Overlays, The raid, Raid leader, Hosting),
+  the folded small print, the coming list and the ask. There is no `?v=` switch: the Ladder preview, Scene-first, the earlier tour,
+  the Output-first gallery, Raid-night story and Your screen are deleted. Next scene to record: loot rolls + DKP bids (a new
+  row in `CLIPS`; a scene gets its tab only when it has a row and files).
+- **Where:** `web/app/raidmimic/page.tsx` (metadata from the Host header, host-dependent links), `web/app/raidmimic/_landing/`
+  (`PathsLayout.tsx`, `Parts.tsx`, `MascotHero.tsx`; client pieces `ClipTabs.tsx` the player, `SceneClip.tsx` one looping
+  clip, `MascotVideo.tsx` the mascot, `HowItWorks.tsx` the drawing's lazy frame), the words in `web/lib/raidmimicPlayer.ts` (the
+  doors, "How it works", the search card) and `web/lib/raidmimicLanding.ts` (`COMING` is the whole list of promises;
   `CLIPS` + `AUDIENCES` the player; `SHOTS` the captures: the hero's seven, and the ones flagged `more` that `MoreShots`
-  in `Parts.tsx` shows in a gallery under the player). Clips: `scripts/raidmimic-shots/scenes.mjs` (the real
+  in `Parts.tsx` shows in a gallery under the player). The drawing: `web/public/raidmimic/how/scene.html` (one file, no external
+  request, ISO-GLOW credit). Clips: `scripts/raidmimic-shots/scenes.mjs` (the real
   overlays driven by a scripted stand-in agent) → `web/public/raidmimic/clips/`; stills: `shoot.mjs` →
-  `web/public/raidmimic/shots/`; the mascot: `web/public/raidmimic/mascot/`. Hosts: `web/lib/raidmimicHost.ts`,
-  `web/middleware.ts` (rewrite to `/raidmimic`, query dropped), `web/app/layout.tsx` (bare shell). Register interest
+  `web/public/raidmimic/shots/`; the mascot: `web/public/raidmimic/mascot/`. Hosts: `web/lib/raidmimicHost.ts`
+  (`raidmimicLandingTarget`, `raidmimicSeo`, `isRaidmimicAsset`), `web/middleware.ts` (rewrite to `/raidmimic`, query dropped;
+  `/robots.txt` and `/sitemap.xml` to `web/app/raidmimic/robots.txt/route.ts` and `sitemap.xml/route.ts`; the page's own files
+  served as themselves), `web/app/layout.tsx` (bare shell). **Search engines:** indexed on the raidmimic hosts only, canonical
+  `https://raidmimic.com/` (and `/setup`); `wolfpack.quest` and `b.wolfpack.quest` stay `noindex`. Register interest
   reuses the eqmimic.quest anonymous form. Test: `test/raidmimic-landing.test.js`.
-- **Live at:** `https://wolfpack.quest/raidmimic` (Scene-first and the capture gallery graduated to `main` with web 2.1.11,
+- **Live at:** `https://wolfpack.quest/raidmimic` (Pick your path, indexing and the drawing graduated to `main` with web 2.1.16,
   2026-10-23); the same page on beta at `https://b.wolfpack.quest/raidmimic`. On raidmimic.com once DNS points at Vercel and
   the Vercel redirects to eqmimic.quest come off.
 

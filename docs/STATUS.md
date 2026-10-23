@@ -136,13 +136,26 @@ next touch one rather than assuming a missing row means a missing doc.
   refuses, the right-click row shows only while it is on; Setup ALL never shows a leftover hidden Canvas window; Esc leaves Setup
   ALL / THIS and Canvas arranging. Test: `test/canvas-stays-off.test.js`. Open: the raider's screen was never seen, so the exact
   trigger is unconfirmed; ask for the agent log's `[canvas]` line.
-- **🧪 raidmimic.com: two layout previews of the "player first, guild second" story (web 2.1.12 on `beta`, 2026-10-23, the guild lead:
-  *"less about me setting it up as a service for them and more about here's what you get as a player … use this yourself, but I can
-  help you with a self-hosted version"*).** `https://b.wolfpack.quest/raidmimic?v=player` (**Ladder**: one scroll, player, jump in now,
-  what a guild could have, then run your own or have it hosted) and `https://b.wolfpack.quest/raidmimic?v=paths` (**Pick your path**:
-  three doors, Player / Guild / Self-host). The default page is untouched and every raidmimic host ignores `?v=`. Words:
-  `web/lib/raidmimicPlayer.ts`. There is no public guild hub today (the shared trial is still Coming), so "jump in" is the free
-  download, local mode, raid codes and shared links. Waiting on the guild lead's pick; the loser is deleted. Test: `test/raidmimic-landing.test.js`.
+- **✅ raidmimic.com: "Pick your path" is the page, indexed by search engines, with "How it works" folded in (web 2.1.16, `beta` and
+  `main`, 2026-10-23, the guild lead's picks).** The guild lead had asked for the player-first story (*"less about me setting it up as a
+  service for them and more about here's what you get as a player … use this yourself, but I can help you with a self-hosted
+  version"*) and picked **B, Pick your path** (three doors, Player / Guild / Self-host, then "See it run" with the existing captures
+  and clips) from two previews. The Ladder preview, the Scene-first layout, the `?v=` switch and its bar are deleted. Three more
+  calls landed with it. **(1) Search engines are on, for the raidmimic hosts only**: `https://raidmimic.com/` and
+  `https://raidmimic.com/setup` serve `index, follow` with those canonical addresses (`.net` / `.quest` name the `.com` one);
+  `wolfpack.quest/raidmimic` and `b.wolfpack.quest/raidmimic` stay `noindex`; `raidmimic.com/robots.txt` allows all and names
+  `raidmimic.com/sitemap.xml` (the two pages). `raidmimicSeo()` in `web/lib/raidmimicHost.ts` decides per request from the Host header.
+  New title **"Raid Mimic · free EverQuest raid overlays"** and a one-sentence description (also in `web/lib/pageMeta.ts`, the Discord
+  card). **(2) "How it works"** is the about-page scene (four camera stops: Overlays, The raid, Raid leader, Hosting) as a static file,
+  `web/public/raidmimic/how/scene.html` (ISO-GLOW, MIT, credit link kept), in a lazy frame (`_landing/HowItWorks.tsx`) that sizes
+  itself from the drawing's own height message. Its copy was brought to today's facts: hosting for other guilds and the guild lookup
+  (DECISIONS §388, not built) read **coming**, the review needs a guild hub, no "under a second" or trial claims; its eight raider
+  names and its boss were checked against `characters`, `who_observations` and `eqemu_npc_types` (no hits). **(3) A fix found on the
+  way:** on a raidmimic host the middleware rewrote EVERY path to the landing page, so the clips and the mascot (`.mp4`, which the
+  matcher does not skip) came back as HTML; the page's own files under `/raidmimic/<folder>/` are now served as themselves. Still
+  open: the in-page **[beta] tag** (the guild lead drops it when the page is settled, DECISIONS §135; only the title lost it), and
+  `/raidmimic/setup` keeps its **[beta]** title. Words: `web/lib/raidmimicPlayer.ts` (+ `raidmimicLanding.ts`). Test:
+  `test/raidmimic-landing.test.js`, `test/raidmimic-setup.test.js`.
 - **✅ raidmimic.com: six more captures, in a gallery under the player (web 2.1.8 on `beta`; graduated to `main` with web 2.1.11,
   2026-10-23, the guild lead's pick; the guild lead's *"update raidmimic.com with more assets"*).** A raid pull on Bertoxxulous in Plane of Disease, drawn by
   `scripts/raidmimic-shots/shoot.mjs` from fixtures with invented raiders (no real screenshot is used): **Map on a floor plan**
