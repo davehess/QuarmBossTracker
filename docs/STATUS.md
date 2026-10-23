@@ -35,6 +35,7 @@ folly** — it's here.*
 | File | What it is | Why it stays |
 |---|---|---|
 | `DESIGN-platform-queue.md` | The post-audit wave plan + agreed execution order | **The live queue.** |
+| `DESIGN-open-hub.md` | The open "commons" hub: anyone joins, 12 active players is the line, short hub retention, history on the PC, tenant import (2026-10-23) | **Design; phase 0 built dormant.** Raid Mimic's free door |
 | `RUNBOOK-site-access.md` | Officer procedure: getting a member in when Discord sign-in won't work — site invite + Mimic code, reset-via-reinvite, troubleshooting | **The no-Discord door.** First live use 2026-08-25 |
 | `RUNBOOK-client-crash-triage.md` | How to read a Zeal "D'oh! Client crash" dialog and triage it: the field-by-field guide, ⚠ **Zone ID and Game state are HEX on Zeal ≥ 1.2.0**, how to look a signature up in `crash_reports`, the known `eqgame.exe` @ `0x004E138A` = graphics-driver-reset signature, and the step order sorted by effort for raiders who pay a real cost per step | **The screenshot-only case**, which is most of the server — a raider without Mimic, or with it but not uploading. Written 2026-09-21 |
 | `DESIGN-target-info-mana-and-factions.md` | The Target Info mana bar + Factions tab: how an NPC's spell is identified from its LANDING message (the log never names it), the measured 97.6% disambiguation once narrowed by `npc_spells_id` + level, what we cannot see, and three options with costs | **Read before building either.** Written 2026-09-22; two unknowns still gate the mana bar |
@@ -156,6 +157,21 @@ next touch one rather than assuming a missing row means a missing doc.
   open: the in-page **[beta] tag** (the guild lead drops it when the page is settled, DECISIONS §135; only the title lost it), and
   `/raidmimic/setup` keeps its **[beta]** title. Words: `web/lib/raidmimicPlayer.ts` (+ `raidmimicLanding.ts`). Test:
   `test/raidmimic-landing.test.js`, `test/raidmimic-setup.test.js`.
+- **📐 The open hub ("commons"): design + dormant rules (branch `draft/open-hub`, 2026-10-23, DECISIONS §423; NOT pushed, nothing
+  applied).** The guild lead's *"anyone can join, once a guild has 12 members they need to stand up their own or pay for the 25
+  hosting; usage logs not kept long on my storage, available in the user's Mimic; auth into a guild's tenant to load in their data"*.
+  `docs/DESIGN-open-hub.md`: a separate project and a headless bot, tenancy moved from the process env to the session token, the
+  12-active-player gate (ok, nearing, over, grace, limited), per-stream hub retention (48 h to 60 d, ~8 MB a player against ~79 MB
+  after six months), Mimic as the long-term home, and the signed tenant import. Built and dormant: `utils/openHub.js`, the
+  unapplied `20261023160000_open_hub_registry.sql` (commons project only), `test/open-hub.test.js`. Phase 1 (~15 days,
+  invite-only) waits on the guild lead's eight picks (design section 12).
+- **🧪 raidmimic.com: two layout previews of the "player first, guild second" story (web 2.1.12 on `beta`, 2026-10-23, the guild lead:
+  *"less about me setting it up as a service for them and more about here's what you get as a player … use this yourself, but I can
+  help you with a self-hosted version"*).** `https://b.wolfpack.quest/raidmimic?v=player` (**Ladder**: one scroll, player, jump in now,
+  what a guild could have, then run your own or have it hosted) and `https://b.wolfpack.quest/raidmimic?v=paths` (**Pick your path**:
+  three doors, Player / Guild / Self-host). The default page is untouched and every raidmimic host ignores `?v=`. Words:
+  `web/lib/raidmimicPlayer.ts`. There is no public guild hub today (the shared trial is still Coming), so "jump in" is the free
+  download, local mode, raid codes and shared links. Waiting on the guild lead's pick; the loser is deleted. Test: `test/raidmimic-landing.test.js`.
 - **✅ raidmimic.com: six more captures, in a gallery under the player (web 2.1.8 on `beta`; graduated to `main` with web 2.1.11,
   2026-10-23, the guild lead's pick; the guild lead's *"update raidmimic.com with more assets"*).** A raid pull on Bertoxxulous in Plane of Disease, drawn by
   `scripts/raidmimic-shots/shoot.mjs` from fixtures with invented raiders (no real screenshot is used): **Map on a floor plan**
