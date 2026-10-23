@@ -13,7 +13,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { buildFightCurve, mainTankLane, attributedName, observedHpSeries, TOP_N,
-         groupSeriesByClass }
+         groupSeriesByClass, hpScale }
   from '../web/lib/fightCurve.ts';
 
 const row = (t, name, dmg, took = 0, pet_owner = null) =>
@@ -236,5 +236,39 @@ describe('observed HP series', () => {
 
   it('returns nothing rather than throwing on a bad start time', () => {
     expect(observedHpSeries([{ at: t0, hp_pct: 50 }], 'not-a-date', 60)).toEqual([]);
+  });
+});
+
+describe('hpScale: what 100% of the Y axis means (a wipe is not a kill)', () => {
+  // A wipe at ~62% on a 600k mob: 373k dealt. Dividing by the damage dealt put the boss at 0% (the guild lead,
+  // 2026-10-23). The remaining HP of the last bucket is the number the chart draws.
+  const remaining = (dmg, s) => 100 - (dmg / s.denom) * 100;
+
+  it('a kill divides by the damage dealt, so the boss ends at 0% (unchanged)', () => {
+    const s = hpScale(373000, 600000, true);
+    expect(s).toEqual({ denom: 373000, basis: 'damage', showHp: true });
+    expect(remaining(373000, s)).toBe(0);
+  });
+
+  it('defaults to a kill, so callers that never say (the night view) keep today\'s behaviour', () => {
+    expect(hpScale(373000, 600000)).toEqual(hpScale(373000, 600000, true));
+  });
+
+  it('a wipe with a known catalog HP divides by it: the boss is NOT drawn at 0%', () => {
+    const s = hpScale(373000, 600000, false);
+    expect(s.basis).toBe('catalog');
+    expect(s.denom).toBe(600000);
+    expect(remaining(373000, s)).toBeGreaterThan(37);   // ~37.8% left
+    expect(remaining(373000, s)).toBeLessThan(38);
+  });
+
+  it('floors at the damage dealt so heals or a stale catalog HP never push the stack past the top', () => {
+    expect(hpScale(650000, 600000, false).denom).toBe(650000);
+  });
+
+  it('a wipe with no catalog HP withholds the HP line instead of drawing a wrong one', () => {
+    for (const hp of [null, undefined, 0, -5, NaN]) {
+      expect(hpScale(373000, hp, false).showHp).toBe(false);
+    }
   });
 });
