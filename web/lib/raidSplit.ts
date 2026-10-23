@@ -146,3 +146,14 @@ export function detectRaidChange(series: readonly WhoMinute[]): RaidChange | nul
   }
   return { atMs: rows[cut].t, before: a.size, after: b.size };
 }
+
+/**
+ * An end typed as a clock time on the start's date, read the way it was meant (the guild lead, 2026-10-23): a raid
+ * that starts at 7 PM and ends at 3:55 AM ends on the NEXT day, so an end at or before the start, within a day of it,
+ * moves forward one day. Anything else is returned as it is (the server still refuses a bad window). Lives here, not
+ * in raidShare.ts, because the share controls run in the browser and raidShare.ts imports node:crypto.
+ */
+export function endAfterStart(endMs: number, startMs: number): number {
+  const day = 24 * 60 * MINUTE_MS;
+  return endMs <= startMs && startMs - endMs < day ? endMs + day : endMs;
+}

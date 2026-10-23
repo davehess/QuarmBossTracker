@@ -3,6 +3,7 @@
 // already cover it, revoke one. Rendered only for officers (the page checks), and the routes check again
 // (/api/raid/shares). A link's address is shown ONCE, here, when it is made: the server keeps only a hash.
 import { useCallback, useEffect, useState } from 'react';
+import { endAfterStart } from '@/lib/raidSplit';
 
 type ShareView = {
   id: string; title: string; from_at: string; to_at: string; created_at: string; expires_at: string;
@@ -39,7 +40,7 @@ function EndControls({ s, splitAtMs, onChange }: { s: ShareView; splitAtMs?: num
         <input type="datetime-local" value={val} onChange={e => setVal(e.target.value)} aria-label="New end time"
           className="rounded border border-border bg-bg px-2 py-1 text-xs text-text" />
         <button type="button" className={`${chip} ${chipIdle}`} disabled={!val}
-          onClick={() => onChange({ to: new Date(val).toISOString() })}>Set end</button>
+          onClick={() => onChange({ to: new Date(endAfterStart(Date.parse(val), Date.parse(s.from_at))).toISOString() })}>Set end</button>
         <button type="button" className={`${chip} ${chipIdle}`} onClick={() => onChange({ to: new Date().toISOString() })}>Extend to now</button>
         {s.open
           ? <button type="button" className={`${chip} ${chipIdle}`} onClick={() => onChange({ open: false })}>Close</button>
@@ -51,10 +52,8 @@ function EndControls({ s, splitAtMs, onChange }: { s: ShareView; splitAtMs?: num
           className="rounded border border-border bg-bg px-2 py-1 text-xs text-text" />
         <button type="button" className={`${chip} ${chipIdle}`} disabled={!startVal}
           onClick={() => onChange({ from: new Date(startVal).toISOString() })}>Set start</button>
-        {!s.open && (
-          <button type="button" className={`${chip} ${chipIdle}`} disabled={!startVal || !val}
-            onClick={() => onChange({ from: new Date(startVal).toISOString(), to: new Date(val).toISOString() })}>Set start and end</button>
-        )}
+        <button type="button" className={`${chip} ${chipIdle}`} disabled={!startVal || !val}
+          onClick={() => onChange({ from: new Date(startVal).toISOString(), to: new Date(endAfterStart(Date.parse(val), Date.parse(startVal))).toISOString() })}>Set start and end</button>
         {splitInside && (
           <button type="button" className={`${chip} ${chipIdle}`} title="The raid changes here: a different group takes over"
             onClick={() => onChange({ from: new Date(splitAtMs as number).toISOString() })}>
