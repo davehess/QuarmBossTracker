@@ -18,6 +18,7 @@ import {
 import ClipTabs from './ClipTabs';
 import HowItWorks from './HowItWorks';
 import MascotHero from './MascotHero';
+import MotionStage from './MotionStage';
 
 // Colour stays semantic (frontend-design): green = free and working today, blue = needs the guild's own server, gold =
 // a choice for you; the dashed orange "Coming" chip from Parts is the only way a promise is ever drawn.
@@ -95,7 +96,9 @@ function DoorCard({ door, ctx }: { door: Door; ctx: Ctx }) {
   );
 }
 
-export default function PathsLayout({ ctx }: { ctx: Ctx }) {
+// `motion` is the `?v=motion` preview (beta only; a raidmimic host drops the query): the looping 3D mimic with the real
+// captures floating over it takes the hero's place, right under the title, and the older mascot hero leaves "See it run".
+export default function PathsLayout({ ctx, motion = false }: { ctx: Ctx; motion?: boolean }) {
   return (
     <div className="mx-auto max-w-5xl pb-12">
       <BetaTag ctx={ctx} />
@@ -107,6 +110,8 @@ export default function PathsLayout({ ctx }: { ctx: Ctx }) {
         <p className="mt-3 max-w-[66ch] text-sm leading-6 text-text">{HERO.fine}</p>
       </header>
 
+      {motion && <MotionStage />}
+
       <section aria-label={PATHS.doorsLabel}>
         <ul className="m-0 grid list-none gap-4 p-0 lg:grid-cols-3">
           {DOORS.map(d => <DoorCard key={d.id} door={d} ctx={ctx} />)}
@@ -116,7 +121,7 @@ export default function PathsLayout({ ctx }: { ctx: Ctx }) {
       <section id="see" aria-label={PATHS.seeTitle} className="mt-14 scroll-mt-4">
         <h2 className="text-xl text-[#f2ede1] sm:text-2xl">{PATHS.seeTitle}</h2>
         <p className="mb-4 mt-1 max-w-[62ch] text-sm leading-6 text-text">{PATHS.seeLead}</p>
-        <MascotHero />
+        {!motion && <MascotHero />}
         <p className="mb-8 text-xs leading-5 text-dim">{SHOTS_HEAD.note} {MAP_CREDIT}</p>
         <section aria-label={CLIPS_HEAD.stageLabel} data-paths-player>
           <h3 className="text-lg text-[#f2ede1]">{CLIPS_HEAD.title}</h3>

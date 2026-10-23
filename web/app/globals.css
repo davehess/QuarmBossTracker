@@ -245,4 +245,22 @@
   @media (prefers-reduced-motion: reduce) {
     .rm-card { animation: none; }
   }
+
+  /* The `?v=motion` stage (web/app/raidmimic/_landing/MotionStage.tsx). The box takes the aspect of the file the same media
+     query picks: 16:9 for the wide files, 9:16 for the tall ones, so object-fit: cover has nothing to crop. In portrait the
+     box is as wide as 78% of the screen's height allows, centred on the stage's own #0f1219 (the clip's background, so the
+     edges are invisible). */
+  .rm-stage-box { aspect-ratio: 16 / 9; width: 100%; }
+  @media (orientation: portrait) {
+    .rm-stage-box { aspect-ratio: 9 / 16; width: min(100%, calc(78svh * 9 / 16)); }
+  }
+  /* The captures drift a few pixels up and down: transform only, so it never touches layout. */
+  @keyframes rm-drift {
+    0%, 100% { transform: translate3d(0, 0, 0); }
+    50%      { transform: translate3d(0, -7px, 0); }
+  }
+  .rm-drift { animation: rm-drift var(--dur, 8s) ease-in-out var(--off, 0s) infinite; will-change: transform; }
+  @media (prefers-reduced-motion: reduce) {
+    .rm-drift { animation: none; will-change: auto; }
+  }
 }

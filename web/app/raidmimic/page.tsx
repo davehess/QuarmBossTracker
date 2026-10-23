@@ -34,12 +34,14 @@ export function generateMetadata(): Metadata {
   };
 }
 
-export default function RaidmimicPage() {
+export default function RaidmimicPage({ searchParams }: { searchParams?: { v?: string } }) {
   // On a raidmimic host the form lives on eqmimic.quest and the page is `/`. On the Wolf Pack hosts the form is
   // reached by its real path, so the site header stays above it.
   const onHost = isRaidmimicHost(headers().get('host'));
   const ctx: Ctx = onHost
     ? { onHost, interest: interestUrl(`${EQMIMIC_ORIGIN}/feedback`), setup: '/setup' }
     : { onHost, interest: interestUrl(EQMIMIC_FEEDBACK_PATH), setup: RAIDMIMIC_SETUP_PATH };
-  return <PathsLayout ctx={ctx} />;
+  // `?v=motion` is a beta preview of a moving hero (2026-10-23); no `v` is the page as it was. A raidmimic host drops the
+  // query in the middleware, so only the Wolf Pack hosts can ever show it.
+  return <PathsLayout ctx={ctx} motion={searchParams?.v === 'motion'} />;
 }

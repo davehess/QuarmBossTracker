@@ -81,7 +81,7 @@ describe('raidmimicLandingTarget', () => {
     for (const p of ['/robots', '/robots.txt.bak', '/sitemap', '/sitemap.xml/x', '/raidmimic/robots.txt/x']) expect(raidmimicLandingTarget(p), p).toEqual({ pathname: '/raidmimic', search: '' });
   });
   it('the page’s own files (captures, clips, mascot, the drawing) are assets; nothing else is', () => {
-    for (const p of ['/raidmimic/how/scene.html', '/raidmimic/clips/grummus-hail.mp4', '/raidmimic/mascot/hop.mp4', '/raidmimic/shots/cc.webp']) expect(isRaidmimicAsset(p), p).toBe(true);
+    for (const p of ['/raidmimic/how/scene.html', '/raidmimic/clips/grummus-hail.mp4', '/raidmimic/mascot/hop.mp4', '/raidmimic/shots/cc.webp', '/raidmimic/motion/mimic-16x9-1280.mp4']) expect(isRaidmimicAsset(p), p).toBe(true);
     for (const p of ['/', '/setup', '/raidmimic', '/raidmimic/setup', '/raidmimic/how/', '/raidmimic/a/b/c.mp4', '/other/how/scene.html', '/raidmimic/../x/y.html', '/api/agent/chat', '/raidmimic/how/%2e%2e.html']) expect(isRaidmimicAsset(p), p).toBe(false);
   });
 });
@@ -225,10 +225,12 @@ describe('the page', () => {
     expect(page).toMatch(/export function generateMetadata\(\): Metadata/);
     expect(page).not.toMatch(/getSessionUser|supabase/i);
   });
-  it('renders ONE layout, “Pick your path”: no `?v=` switch, no Ladder, no Scene-first layout, no variant bar, and nothing left of them', () => {
-    expect(page).toMatch(/return <PathsLayout ctx=\{ctx\} \/>;/);
+  it('renders ONE layout, “Pick your path”, with one preview flag: `?v=motion` and nothing else; no Ladder, no Scene-first layout, no variant bar', () => {
+    expect(page).toMatch(/return <PathsLayout ctx=\{ctx\} motion=\{searchParams\?\.v === 'motion'\} \/>;/);
     expect(page.match(/<[A-Z]\w+Layout /g)).toHaveLength(1);
-    expect(page).not.toMatch(/searchParams|variantOf|\bv === |LadderLayout|SceneLayout|PreviewBar/);
+    expect(page.match(/searchParams/g)).toHaveLength(3);                       // the destructured parameter, its type and the one read
+    expect(page.match(/\bv === /g)).toHaveLength(1);
+    expect(page).not.toMatch(/variantOf|LadderLayout|SceneLayout|PreviewBar/);
     expect(page).not.toMatch(/hero=|raidmimicVariant|PitchLayout|TourLayout|OutputLayout|WatchLayout|StoryLayout|ScreenLayout/);
     for (const gone of ['LadderLayout', 'SceneLayout', 'VariantParts', 'TourLayout', 'OutputLayout', 'WatchLayout', 'StoryLayout', 'ScreenLayout', 'PitchLayout', 'Figures']) {
       expect(fs.existsSync(path.join(ROOT, `${L}${gone}.tsx`)), gone).toBe(false);
@@ -238,8 +240,8 @@ describe('the page', () => {
     for (const gone of ['STORY', 'SCREEN_NOTES', 'SETUP_LINK', 'ILLUSTRATIVE_NOTE', 'HERO', 'MOMENTS']) expect(C, gone).not.toHaveProperty(gone);
     for (const gone of ['VARIANTS', 'VARIANT_LABEL', 'variantOf', 'PREVIEW_NOTE', 'PLAYER', 'JUMP', 'GUILD', 'RUN', 'LINUX_URL']) expect(PL, gone).not.toHaveProperty(gone);
     // the layered mascot hero (the guild lead, 2026-10-21) is kept: it opens “See it run”
-    expect(page).not.toMatch(/Mascot/);
-    expect(code(L + 'PathsLayout.tsx')).toMatch(/<MascotHero \/>/);
+    expect(page).not.toMatch(/Mascot|MotionStage/);
+    expect(code(L + 'PathsLayout.tsx')).toMatch(/\{!motion && <MascotHero \/>\}/);   // the default page still opens “See it run” with it
   });
   it('the Register-interest address is the anonymous form: absolute on a raidmimic host, its real path on Wolf Pack hosts', () => {
     expect(page).toMatch(/interest: interestUrl\(`\$\{EQMIMIC_ORIGIN\}\/feedback`\)/);
@@ -260,7 +262,7 @@ describe('the page', () => {
     expect(C.INTEREST_TEXT.length).toBeLessThan(400);   // the form keeps 4000; this is a template, not an essay
   });
   it('no mailto, no new form, no new endpoint', () => {
-    for (const f of ['page.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'HowItWorks.tsx', 'ClipTabs.tsx', 'SceneClip.tsx', 'MascotHero.tsx', 'MascotVideo.tsx']) {
+    for (const f of ['page.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'HowItWorks.tsx', 'ClipTabs.tsx', 'SceneClip.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx']) {
       const src = f === 'page.tsx' ? page : code(L + f);
       expect(src, f).not.toMatch(/mailto:|<form\b|fetch\(|action=/);
     }
@@ -316,17 +318,17 @@ describe('the layout', () => {
     expect(footer).not.toMatch(/text-\[(?:9|10|11)px\]/);
     expect(scene.indexOf('<Footer')).toBeGreaterThan(scene.lastIndexOf('</section>'));
   });
-  it('server components except the four that play: only SceneClip, ClipTabs, MascotVideo and the drawing’s frame are client files', () => {
+  it('server components except the five that play: only SceneClip, ClipTabs, MascotVideo, MotionStage and the drawing’s frame are client files', () => {
     for (const f of ['Parts.tsx', 'MascotHero.tsx', 'PathsLayout.tsx']) expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
     expect(read('web/app/raidmimic/page.tsx')).not.toMatch(/['"]use client['"]/);
-    for (const f of ['SceneClip.tsx', 'ClipTabs.tsx', 'MascotVideo.tsx', 'HowItWorks.tsx']) expect(read(L + f), f).toMatch(/^'use client';/);
+    for (const f of ['SceneClip.tsx', 'ClipTabs.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'HowItWorks.tsx']) expect(read(L + f), f).toMatch(/^'use client';/);
     expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual([
-      'ClipTabs.tsx', 'HowItWorks.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'SceneClip.tsx',
+      'ClipTabs.tsx', 'HowItWorks.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'SceneClip.tsx',
     ]);
   });
   it('fetches and embeds nothing external; every outbound link is one we name', () => {
     const urls = new Set();
-    for (const f of ['page.tsx', 'Parts.tsx', 'ClipTabs.tsx', 'SceneClip.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'PathsLayout.tsx', 'HowItWorks.tsx']) {
+    for (const f of ['page.tsx', 'Parts.tsx', 'ClipTabs.tsx', 'SceneClip.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'PathsLayout.tsx', 'HowItWorks.tsx']) {
       for (const m of (f === 'page.tsx' ? code('web/app/raidmimic/page.tsx') : code(L + f)).matchAll(/https?:\/\/[^\s'"`)<>]+/g)) urls.add(m[0]);
     }
     expect([...urls]).toEqual([]);   // every address is a constant in the content module
@@ -675,7 +677,7 @@ describe('the gallery of more captures', () => {
     expect(layout).toMatch(/<MoreShots \/>/);
     expect(layout.indexOf('<ClipTabs')).toBeLessThan(layout.indexOf('<MoreShots'));
     expect(layout.indexOf('<MoreShots')).toBeLessThan(layout.indexOf('<HowItWorks'));
-    expect(code('web/app/raidmimic/page.tsx')).toMatch(/return <PathsLayout ctx=\{ctx\} \/>;/);   // no `?v=` variant: live and beta are this page
+    expect(code('web/app/raidmimic/page.tsx')).toMatch(/return <PathsLayout ctx=\{ctx\} motion=\{searchParams\?\.v === 'motion'\} \/>;/);
   });
   it('draws only the shots flagged `more`, from the content module, as full-size links with their size and alt text', () => {
     expect(more).toHaveLength(6);
@@ -915,5 +917,108 @@ describe('How it works: the four-step drawing', () => {
     expect(isRaidmimicAsset(PL.HOW.src)).toBe(true);
     expect(fs.existsSync(path.join(ROOT, SCENE))).toBe(true);
     expect(html).toMatch(/<meta name="robots" content="noindex">/);
+  });
+});
+
+// ─── `?v=motion` (the guild lead, 2026-10-23, picked "A — Layered"): a looping 3D mimic with the real captures floating over it ─
+describe('the motion preview (?v=motion)', () => {
+  const stage = read(L + 'MotionStage.tsx');
+  const stageCode = stripJs(stage);
+  const css = read('web/app/globals.css');
+  const M = 'web/public/raidmimic/motion/';
+
+  // A file's own size, from its mp4 header (the first `tkhd` is the only video track): width and height are 16.16 numbers.
+  const mp4Size = (rel) => {
+    const b = fs.readFileSync(path.join(ROOT, rel));
+    const i = b.indexOf('tkhd');
+    return { w: b.readUInt32BE(i + 4 + 76) >>> 16, h: b.readUInt32BE(i + 4 + 80) >>> 16 };
+  };
+  // The table the component picks files from: src, w, h, media.
+  const files = [...stageCode.matchAll(/\{ src: `\$\{DIR\}\/([\w.-]+)`,\s*w: (\d+),\s*h: (\d+),\s*media: '([^']*)' \}/g)]
+    .map(m => ({ name: m[1], w: +m[2], h: +m[3], media: m[4] }));
+
+  it('only a query of exactly `motion` changes the page, and it is a preview: the default tree has no stage and keeps the mascot hero', () => {
+    const layout = code(L + 'PathsLayout.tsx');
+    expect(layout).toMatch(/motion = false/);
+    expect(layout).toMatch(/\{motion && <MotionStage \/>\}/);
+    expect(layout).toMatch(/\{!motion && <MascotHero \/>\}/);
+    expect(code('web/app/raidmimic/page.tsx')).toMatch(/motion=\{searchParams\?\.v === 'motion'\}/);
+    // a raidmimic host never sees it: the middleware drops every query (tested above), so only the Wolf Pack hosts can
+    expect(raidmimicLandingTarget('/')).toEqual({ pathname: '/raidmimic', search: '' });
+  });
+  it('ships four loops and two posters, each under 3 MB, at the sizes the table says, 50 fps ping-pong', () => {
+    expect(files.map(f => f.name).sort()).toEqual(['mimic-16x9-1280.mp4', 'mimic-16x9-1920.mp4', 'mimic-9x16-1080.mp4', 'mimic-9x16-720.mp4']);
+    for (const f of files) {
+      const rel = M + f.name;
+      expect(fs.existsSync(path.join(ROOT, rel)), f.name).toBe(true);
+      expect(fs.statSync(path.join(ROOT, rel)).size, f.name).toBeLessThan(3_000_000);
+      expect(mp4Size(rel), f.name).toEqual({ w: f.w, h: f.h });
+    }
+    for (const p of ['mimic-16x9-poster.jpg', 'mimic-9x16-poster.jpg']) expect(fs.statSync(path.join(ROOT, M + p)).size, p).toBeLessThan(100_000);
+  });
+  it('every file is one of two aspects, and the box takes the SAME aspect from the SAME media query, so nothing is stretched or cropped', () => {
+    const wide = files.filter(f => !/orientation: portrait/.test(f.media));
+    const tall = files.filter(f => /orientation: portrait/.test(f.media));
+    expect(wide).toHaveLength(2);
+    expect(tall).toHaveLength(2);
+    for (const f of wide) expect(f.w * 9, f.name).toBe(f.h * 16);
+    for (const f of tall) expect(f.w * 16, f.name).toBe(f.h * 9);
+    // the wide aspect is the box's default, the tall one is the portrait query: the same query as the <source>s and the poster
+    expect(css).toMatch(/\.rm-stage-box \{ aspect-ratio: 16 \/ 9; width: 100%; \}/);
+    expect(css).toMatch(/@media \(orientation: portrait\) \{\s*\.rm-stage-box \{ aspect-ratio: 9 \/ 16;/);
+    expect(stageCode).toMatch(/<source media="\(orientation: portrait\)" srcSet=\{MOTION_POSTERS\.portrait\.src\}/);
+    // the poster files have the aspect of the loops they stand in for
+    const poster = (n) => { const b = fs.readFileSync(path.join(ROOT, M + n)); for (let i = 2; i < b.length;) { if (b[i] === 0xff && (b[i + 1] & 0xf0) === 0xc0 && b[i + 1] !== 0xc4 && b[i + 1] !== 0xc8 && b[i + 1] !== 0xcc) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) }; i += 2 + b.readUInt16BE(i + 2); } };
+    expect(poster('mimic-16x9-poster.jpg')).toEqual({ w: 1280, h: 720 });
+    expect(poster('mimic-9x16-poster.jpg')).toEqual({ w: 720, h: 1280 });
+    expect(stageCode).toMatch(/object-cover/);
+    expect(stageCode).not.toMatch(/object-(fill|none|contain)/);
+  });
+  it('the <video> is decoration that plays muted, looped and inline; the sources are listed tall-and-small first, the plain 16:9 last', () => {
+    const v = stageCode.match(/<video [\s\S]*?>/)[0];
+    for (const a of ['autoPlay', 'muted', 'loop', 'playsInline', 'preload="metadata"', 'aria-hidden="true"', 'motion-reduce:hidden']) expect(v, a).toContain(a);
+    expect(files.map(f => f.name)).toEqual(['mimic-9x16-720.mp4', 'mimic-9x16-1080.mp4', 'mimic-16x9-1920.mp4', 'mimic-16x9-1280.mp4']);
+    expect(files[3].media).toBe('');                                        // the unconditional fallback is last
+    expect(stageCode).toMatch(/<source key=\{f\.src\} src=\{f\.src\} type="video\/mp4"/);
+  });
+  it('is a stage on the clip’s own #0f1219 so the edges vanish', () => {
+    expect(stageCode).toMatch(/backgroundColor: '#0f1219'/);
+  });
+  it('pauses off-screen and in a hidden tab, re-picks the file on a rotation, and under reduced motion plays nothing and fetches nothing', () => {
+    expect(stageCode).toMatch(/new IntersectionObserver\(/);
+    expect(stageCode).toMatch(/visibilitychange/);
+    expect(stageCode).toMatch(/matchMedia\('\(orientation: portrait\)'\)/);
+    expect(stageCode).toMatch(/portrait\.addEventListener\('change', onTurn\)[\s\S]*?v\.load\(\)|const onTurn = \(\) => \{ v\.load\(\)/);
+    expect(stageCode).toMatch(/matchMedia\('\(prefers-reduced-motion: reduce\)'\)/);
+    expect(stageCode).toMatch(/if \(reduce\.matches\) \{[\s\S]*?v\.pause\(\);[\s\S]*?querySelectorAll\('source'\)\.forEach\(s => s\.remove\(\)\);[\s\S]*?v\.load\(\);/);
+    expect(stageCode).toMatch(/motion-reduce:hidden/);                      // the poster layer under the video stays
+  });
+  it('the captures are real overlay captures from the page’s own shots, with alt text; two on a phone, four on a wide screen, none baked into the video', () => {
+    expect(stageCode).toMatch(/alt=\{s\.alt\}/);
+    const wide = [...stageCode.match(/const WIDE: Card\[\] = \[([\s\S]*?)\n\];/)[1].matchAll(/id: '([\w-]+)'/g)].map(m => m[1]);
+    const phone = [...stageCode.match(/const PHONE: Card\[\] = \[([\s\S]*?)\n\];/)[1].matchAll(/id: '([\w-]+)'/g)].map(m => m[1]);
+    expect(wide).toHaveLength(4);
+    expect(phone).toHaveLength(2);
+    for (const id of [...wide, ...phone]) {
+      const s = C.SHOTS.find(x => x.id === id);
+      expect(s, id).toBeTruthy();
+      expect(fs.existsSync(path.join(ROOT, 'web/public/raidmimic/shots', s.file)), id).toBe(true);
+      expect(s.alt.length, id).toBeGreaterThan(40);
+    }
+    expect(stageCode).toMatch(/className="hidden landscape:block"/);
+    expect(stageCode).toMatch(/className="hidden portrait:block"/);
+    expect(stageCode).toMatch(/loading="lazy"/);                            // the hidden list's images are never fetched
+    // the poster layer is a decorative first frame, not a second copy of the words
+    expect(stageCode).toMatch(/alt="" aria-hidden="true"/);
+  });
+  it('the drift is a slow, staggered transform and nothing else, and reduced motion turns it off', () => {
+    const drift = css.match(/@keyframes rm-drift \{[\s\S]*?\n  \}/)[0];
+    expect(drift.match(/transform: translate3d\(0, (-?\d+(?:px)?), 0\)/g)).toHaveLength(2);
+    expect(drift).not.toMatch(/\b(top|left|width|height|margin|opacity|scale)\b/);
+    const durs = [...stageCode.matchAll(/d: ([\d.]+),\s*o: (-?[\d.]+)/g)].map(m => [+m[1], +m[2]]);
+    expect(durs.length).toBe(6);
+    for (const [d] of durs) expect(d).toBeGreaterThanOrEqual(6);            // a full cycle takes at least six seconds
+    expect(new Set(durs.slice(0, 4).map(([d, o]) => `${d}/${o}`)).size).toBe(4);   // no two of the four move together
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.rm-drift \{ animation: none;/);
   });
 });

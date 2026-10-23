@@ -137,6 +137,15 @@ next touch one rather than assuming a missing row means a missing doc.
   refuses, the right-click row shows only while it is on; Setup ALL never shows a leftover hidden Canvas window; Esc leaves Setup
   ALL / THIS and Canvas arranging. Test: `test/canvas-stays-off.test.js`. Open: the raider's screen was never seen, so the exact
   trigger is unconfirmed; ask for the agent log's `[canvas]` line.
+- **🧪 raidmimic: `?v=motion` preview, "A — Layered" (web 2.1.17, draft branch `draft/rm-motion`, not pushed, 2026-10-23).** The
+  guild lead's pick: *"clean smooth animation. not jumpy, not stretched. Something that can scale on both mobile and desktop."* A
+  looping 3D mimic video behind, the real captures on top as images (4 wide, 2 on a phone), a slow transform-only drift, nothing baked
+  into the video. The idle is a ping-pong (forward then reversed frames, no interpolation, no speed ramp) so the loop has no seam; four
+  files (16:9 at 1920 and 1280, 9:16 at 1080 and 720, about 9.2 MB together) under `web/public/raidmimic/motion/`, picked by `<source
+  media>`, in a box that takes the file's aspect from the same media query. Reduced motion: poster only, nothing fetched, no drift.
+  The default page (no `?v=`) is unchanged; a raidmimic host drops the query, so it shows on `b.wolfpack.quest/raidmimic?v=motion` only.
+  Code: `_landing/MotionStage.tsx`; tests: `test/raidmimic-landing.test.js` ("the motion preview"). Open: the guild lead's pick, and
+  graduating it (delete the 1920 file if deploy storage is tight).
 - **✅ raidmimic.com: "Pick your path" is the page, indexed by search engines, with "How it works" folded in (web 2.1.16, `beta` and
   `main`, 2026-10-23, the guild lead's picks).** The guild lead had asked for the player-first story (*"less about me setting it up as a
   service for them and more about here's what you get as a player … use this yourself, but I can help you with a self-hosted
