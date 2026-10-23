@@ -58,13 +58,16 @@ function normalizeCharacterName(raw) {
  * @param {Array}  [a.players]      damage rows ({ name } or bare strings)
  * @param {Array}  [a.healers]      healer rows ({ name } or bare strings)
  * @param {Array}  [a.defenders]    tank rows ({ name } or bare strings)
+ * @param {Set}    [a.exclude]      lowercased names that are mobs, not raiders (utils/npcActors.js). The boss is in
+ *                                  the tank list by construction, and a one-word mob looks like a character name.
  * @returns {string[]} deduped, normalized, stable-sorted
  */
-function participantsFromUpload({ contributor, players, healers, defenders } = {}) {
+function participantsFromUpload({ contributor, players, healers, defenders, exclude } = {}) {
   const seen = new Map();     // lowercased → canonical
+  const skip = exclude instanceof Set ? exclude : null;
   const add = (v) => {
     const n = normalizeCharacterName(typeof v === 'string' ? v : v && v.name);
-    if (n && !seen.has(n.toLowerCase())) seen.set(n.toLowerCase(), n);
+    if (n && !(skip && skip.has(n.toLowerCase())) && !seen.has(n.toLowerCase())) seen.set(n.toLowerCase(), n);
   };
   add(contributor);
   for (const list of [players, healers, defenders]) {
