@@ -22,30 +22,58 @@ const localValue = (ms: number) => {
   return d.toISOString().slice(0, 16);
 };
 
-/** One link's end-time controls: set the end, extend to now, follow the raid, or close it. */
-function EndControls({ s, onChange }: { s: ShareView; onChange: (body: { to?: string; open?: boolean }) => void }) {
+type Change = { from?: string; to?: string; open?: boolean };
+
+/**
+ * One link's window controls: set the end, extend to now, follow the raid or close it; and move the START (to a time,
+ * or to the page's split suggestion). An open link keeps following the raid when only its start moves.
+ */
+function EndControls({ s, splitAtMs, onChange }: { s: ShareView; splitAtMs?: number | null; onChange: (body: Change) => void }) {
   const [val, setVal] = useState(() => localValue(Date.parse(s.open ? s.from_at : s.to_at)));
+  const [startVal, setStartVal] = useState(() => localValue(Date.parse(s.from_at)));
+  const splitInside = splitAtMs != null && splitAtMs > Date.parse(s.from_at) && (s.open || splitAtMs < Date.parse(s.to_at));
   return (
-    <div className="flex w-full flex-wrap items-center gap-2 pt-1">
-      <span className="text-dim">{s.open ? 'Follows the raid (up to 24 h from the start)' : `Ends ${stamp.format(Date.parse(s.to_at))} ET`}</span>
-      <input type="datetime-local" value={val} onChange={e => setVal(e.target.value)} aria-label="New end time"
-        className="rounded border border-border bg-bg px-2 py-1 text-xs text-text" />
-      <button type="button" className={`${chip} ${chipIdle}`} disabled={!val}
-        onClick={() => onChange({ to: new Date(val).toISOString() })}>Set end</button>
-      <button type="button" className={`${chip} ${chipIdle}`} onClick={() => onChange({ to: new Date().toISOString() })}>Extend to now</button>
-      {s.open
-        ? <button type="button" className={`${chip} ${chipIdle}`} onClick={() => onChange({ open: false })}>Close</button>
-        : <button type="button" className={`${chip} ${chipIdle}`} onClick={() => onChange({ open: true })}>Follow the raid</button>}
+    <div className="flex w-full flex-col gap-1.5 pt-1">
+      <div className="flex w-full flex-wrap items-center gap-2">
+        <span className="text-dim">{s.open ? 'Follows the raid (up to 24 h from the start)' : `Ends ${stamp.format(Date.parse(s.to_at))} ET`}</span>
+        <input type="datetime-local" value={val} onChange={e => setVal(e.target.value)} aria-label="New end time"
+          className="rounded border border-border bg-bg px-2 py-1 text-xs text-text" />
+        <button type="button" className={`${chip} ${chipIdle}`} disabled={!val}
+          onClick={() => onChange({ to: new Date(val).toISOString() })}>Set end</button>
+        <button type="button" className={`${chip} ${chipIdle}`} onClick={() => onChange({ to: new Date().toISOString() })}>Extend to now</button>
+        {s.open
+          ? <button type="button" className={`${chip} ${chipIdle}`} onClick={() => onChange({ open: false })}>Close</button>
+          : <button type="button" className={`${chip} ${chipIdle}`} onClick={() => onChange({ open: true })}>Follow the raid</button>}
+      </div>
+      <div className="flex w-full flex-wrap items-center gap-2">
+        <span className="text-dim">Starts {stamp.format(Date.parse(s.from_at))} ET</span>
+        <input type="datetime-local" value={startVal} onChange={e => setStartVal(e.target.value)} aria-label="New start time"
+          className="rounded border border-border bg-bg px-2 py-1 text-xs text-text" />
+        <button type="button" className={`${chip} ${chipIdle}`} disabled={!startVal}
+          onClick={() => onChange({ from: new Date(startVal).toISOString() })}>Set start</button>
+        {!s.open && (
+          <button type="button" className={`${chip} ${chipIdle}`} disabled={!startVal || !val}
+            onClick={() => onChange({ from: new Date(startVal).toISOString(), to: new Date(val).toISOString() })}>Set start and end</button>
+        )}
+        {splitInside && (
+          <button type="button" className={`${chip} ${chipIdle}`} title="The raid changes here: a different group takes over"
+            onClick={() => onChange({ from: new Date(splitAtMs as number).toISOString() })}>
+            Start this share at the split ({stamp.format(splitAtMs as number)} ET)
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
-export default function ShareControls({ fromIso, toIso, defaultTitle, defaultFollow = false, lead }: {
+export default function ShareControls({ fromIso, toIso, defaultTitle, defaultFollow = false, lead, splitAtMs = null }: {
   fromIso: string; toIso: string; defaultTitle: string;
   /** The split panel's still-running half: "follow the raid" starts ticked. */
   defaultFollow?: boolean;
   /** The split panel puts its Open link on the same line as the Share… button. */
   lead?: React.ReactNode;
+  /** Where the page's raid-change suggestion falls (lib/raidSplit.ts detectRaidChange), for "Start this share at the split". */
+  splitAtMs?: number | null;
 }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState(defaultTitle);
@@ -93,7 +121,7 @@ export default function ShareControls({ fromIso, toIso, defaultTitle, defaultFol
     } catch { setErr('Could not revoke that link. Try again.'); }
   };
 
-  const change = async (id: string, body: { to?: string; open?: boolean }) => {
+  const change = async (id: string, body: Change) => {
     setErr(null);
     try {
       const res = await fetch(`/api/raid/shares/${id}`, {
@@ -103,7 +131,7 @@ export default function ShareControls({ fromIso, toIso, defaultTitle, defaultFol
       if (!res.ok) throw new Error(j?.error || 'failed');
       void load();
     } catch (e) {
-      setErr(e instanceof Error && e.message ? `Could not change the end: ${e.message}.` : 'Could not change the end.');
+      setErr(e instanceof Error && e.message ? `Could not change the window: ${e.message}.` : 'Could not change the window.');
     }
   };
 
@@ -182,7 +210,7 @@ export default function ShareControls({ fromIso, toIso, defaultTitle, defaultFol
                     {s.status === 'ok' && (
                       <button type="button" onClick={() => revoke(s.id)} className={`${chip} ${chipIdle}`}>Revoke</button>
                     )}
-                    {s.status === 'ok' && <EndControls key={`${s.id}|${s.to_at}`} s={s} onChange={b => change(s.id, b)} />}
+                    {s.status === 'ok' && <EndControls key={`${s.id}|${s.from_at}|${s.to_at}`} s={s} splitAtMs={splitAtMs} onChange={b => change(s.id, b)} />}
                   </li>
                 ))}
               </ul>

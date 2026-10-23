@@ -95,7 +95,7 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
         bundle={review.bundle}
         night={review.night}
         mode={{ kind: 'member' }}
-        extras={officer ? <ShareControls fromIso={fromIso} toIso={toIso} defaultTitle={`Raid session, ${etDay.format(win.fromMs)}`} /> : undefined}
+        extras={officer ? <ShareControls fromIso={fromIso} toIso={toIso} defaultTitle={`Raid session, ${etDay.format(win.fromMs)}`} splitAtMs={review.change?.atMs ?? null} /> : undefined}
         split={split ? { change: review.change, live: liveAvailable(win.toMs, Date.now()), canShare: officer } : undefined}
       />
     </div>

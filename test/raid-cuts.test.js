@@ -246,8 +246,9 @@ describe('source', () => {
   it('the board hands the timeline the session\'s kills, and only the newest session is grown by the live tail', () => {
     const board = read('web/app/spectator/replay/ReplayBoard.tsx');
     expect(board).toMatch(/<RaidTimeline kills=\{sessionKills\} nowMs=\{uiT\}/);
-    expect(board).not.toMatch(/<RaidTimeline kills=\{killList\}/);
-    expect(board).toMatch(/killsInSession\(killList, Date\.parse\(night\.first\)/);
+    expect(board).not.toMatch(/<RaidTimeline kills=\{allBosses/);
+    // the strip's kills are the window's bosses (test/window-kills.test.js holds the filter itself)
+    expect(board).toMatch(/const sessionKills = useMemo<Kill\[\]>\(\(\) => bosses\.map/);
     expect(board).toMatch(/picked === n\.sessions\[n\.sessions\.length - 1\] \? growSession\(picked, tailLast\) : picked/);
   });
 
