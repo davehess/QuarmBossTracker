@@ -612,6 +612,12 @@ award): shown by name, linking a **Bids** section (`web/lib/raidSessionBids.ts`,
 they won and the **closed** auctions they bid on and lost (`opendkp_auction_bids`; open auctions sealed). The
 members' board reads the sign-in-gated `/api/raid/session/replay` (twin of the share's replay route) so it is
 labelled the same way. Tests: `test/raid-session-anon.test.js`.
+**Splitting a session into two raids** (web 2.1.5; the default on the members' session page since web 2.1.11, 2026-10-23, no `?v=`): `SplitPanel.tsx` cuts the window at the replay playhead, a ✂ beside any time, or the loader's roster-turnover suggestion (`web/lib/raidSplit.ts`); each half is an ordinary window with Open and the existing Share… (the still-running half follows the raid); nothing is written. `https://wolfpack.quest/raid/session?from=2026-10-22T23:02Z&to=2026-10-23T04:34Z`. Tests: `test/raid-split.test.js`.
+**The live Spectator timeline starting at the current raid** (beta preview `?v=newraid`, web 2.1.6, 2026-10-23): `RaidTimeline` polls `/api/spectator/timeline?v=newraid`, which `web/lib/liveRaidLoad.ts` answers from the last six hours of curated kills, then starts them at an officer's cut (`POST /api/spectator/newraid`, bot_kv `live_raid_cut:<guild>`, 12 h), else the latest roster hand-over (`raidSplit.ts` detector), else a zone change after a quiet spell with a different crew (`web/lib/liveRaidWindow.ts`, pure). Header: "this raid from <time>", **earlier raid** and **review this raid** links to `/raid/session`. `https://b.wolfpack.quest/spectator?v=newraid`. Tests: `test/live-raid-window.test.js`.
+**Slicing a night** (web 2.1.9; the default on the members' session page since web 2.1.11, 2026-10-23: of the two previews the guild lead picked `?v=segments`, and `?v=slices`, drawing spans by hand, was deleted with its editor): an officer marks spans of a night as raid / event / another guild's raid / downtime (`web/lib/nightSlices.ts`, pure; stored in bot_kv `night_slices:<guild>` by `PUT /api/raid/slices`, `nightSlicesLoad.ts`); `SegmentsEditor.tsx` confirms detected ones (gaps, `rosterCuts`, our-vs-other-guild fight hand-over) on `NightStrip.tsx`. `NightFights.tsx` shows the window's named fights incl. wipes and another guild's, mass-death moments (`massDeaths`: 5+ in a minute, times only), and a lazy per-fight Timeline (`/api/raid/session/fight-timeline`, `raidFightTimeline.ts`, reusing `DamageCurve`). `https://wolfpack.quest/raid/session?from=2026-10-22T23%3A02%3A00.000Z&to=2026-10-23T07%3A55%3A00.000Z`. Tests: `test/night-slices.test.js`.
+**A shared raid that follows the raid redraws itself** (web 2.1.11, 2026-10-23): `shareIsFollowing(row)` (`web/lib/raidShare.ts`: an open share short of its 24 h cap) is worked out on every render of `/share/raid/<token>` and passed to `SessionReview` as `follow`; `useFollowRefresh.ts` then calls `router.refresh()` once a minute (checked every 5 s, so a held refresh goes out soon after the hold lifts; nothing while the tab is hidden). The rule for holding still is `web/lib/shareFollow.ts` `followHeld`: a touch (click, key, wheel) in the last 30 s, or a playhead moved off where the page opened it and left more than 3 minutes short of the window's end. `ReplayBoard.tsx` takes the grown `bounded.night` in place (the reset keys on the window's start, so the playhead stays). Each refresh is a page view to `shareGuard.ts`: 60 an hour per viewer against `PAGE_PER_HOUR` 600 per share. Tests: `test/share-follow.test.js`.
+**Sessions cut where the raid changed** (web 2.1.6; on `main` since web 2.1.11, 2026-10-23, because the window-bounded kills below build on it): `summarizeNights(rows, cuts)` in `web/lib/raidReplay.ts` splits a gap-session at each cut; `web/lib/raidCuts.ts` `loadRaidCuts` finds them with `rosterCuts` (the `raidSplit.ts` detector, recursive) over the recorded rosters (`web/lib/raidWho.ts`, incremental), keeping a finished session's answer in bot_kv `raid_cuts:<guild>`. The replay route (`/api/spectator/replay?nights=1`) and the `/raid/session` list call it, so the replay's Session dropdown and the list agree. The replay board's Raid timeline takes `killsInSession`, the selected session's kills only. Tests: `test/raid-cuts.test.js`.
+**A window shows only its own kills; officers move a share's start and end** (web 2.1.7 and 2.1.8; on `main` since web 2.1.11, 2026-10-23; 2.1.8: a share's end typed as a clock time earlier than its start means the next morning, `endAfterStart` in `web/lib/raidSplit.ts`): `ReplayBoard.tsx` reads the bosses for a night (or a share's window) into `allBosses` and everything it draws (kill chips, path numbers, spawn rings, the timeline strip) uses `bossesInWindow` (`web/lib/replayBosses.ts`) of the window on screen; a session adds `trailSlackMs` (`raidReplay.ts`), never past the next session. The members' review reads `/api/raid/session/bosses?from&to` (window-bounded, sign-in gated). `PATCH /api/raid/shares/<id>` takes `{ from }` (`planShareWindow`, `web/lib/raidShare.ts`) and `ShareControls.tsx` has Set start, Set start and end and Start this share at the split. The share timeline's 10 s memo is keyed by id + the row's window. Tests: `test/window-kills.test.js`.
 Load-bearing details:
 - **Anchored on the night's FIRST ENCOUNTER**, never `Date.now()` — by the time
   the review runs the scheduled-event window has closed, so "now" can plan a
@@ -1084,6 +1090,38 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Where:** agent `ENRAGE_OTHER_PCT`, `_enrageMuteSession`, `/api/enrage-mute`; the "always" mute is a
   `builtin:enrage_soon:<mob>` rule in `trigger_rules.json`; buttons in `apps/mimic/triggers.html` and the dashboard's
   Recent fires. Test: `test/enrage-callouts.test.js`.
+- **Any trigger on the enrage line (agent 4.0.10 beta, 2026-10-23):** `_enrageMobOfLine` reads the mob from the server's
+  `<mob> has become ENRAGED.` / `<mob> is no longer enraged.` line; `evaluateTriggersAgainstLine` hands it to
+  `_fireTriggerActions` (`_enrageMobCtx`), which stamps `enrage_mob` on the fire (so the same 🔇 buttons appear) and, when
+  `_enrageMuted`, skips the text, voice and sound actions. Guild and personal triggers alike; a relayed fire is not covered.
+
+### Dispel callouts — your debuff dispelled off a mob, your buffs dispelled (agent 4.0.11 beta, 2026-10-23)
+- **What:** "Your Malosini was dispelled off Rizlona — recast" to the caster of each stripped debuff, and one "Buffs dispelled:
+  Aegolism, Clarity — rebuff" when a mob's dispel strips yours. The ask: the guild lead, mid-raid in the Tower of Solusek Ro
+  (Rizlona, Arlyxir, Xuzl and both Dresolik scripts go home and cast Annul Self, spell 2830).
+- **Where:** agent `noteDispelLine` (called from the live log path before `noteMyMezWornOff`), `_dispelNoteZealDiff` (beside
+  `_noteBuffDurationsFromState`), `flushDispelWatch` (250 ms tick), `DISPEL_OTHER_TEXTS` / `DISPEL_YOU_TEXTS`; the Triggers-tab
+  switch is `dispel_watch_off` in `logsync.prefs.json` via `/api/dispel-watch/toggle`; the callouts are `builtin:dispel_debuff` and
+  `builtin:dispel_buffs` in "What you hear". Test: `test/dispel-watch.test.js`.
+- **Server evidence** (SecretsOTheP/EQMacEmu a3b80b2; quests ea0c766). A dispel is SE_CancelMagic (`spell_effects.cpp:910`), one
+  `TryDispel` per buff slot and `BuffFadeBySlot(slot)` on a hit. In `BuffFadeBySlot` (`:3229`) the fade reaches only two people:
+  a client TARGET gets the OP_Buff fade packet (its client prints the spell's own `spell_fades`), and a client CASTER gets string
+  437 "Your %1 spell has worn off." (`:3712-3743`, `string_ids.h:175`), but only for a DETRIMENTAL spell that is not a lull or
+  harmony (`IsCrowdControlSpell` = Harmony, Lull, ChangeFrenzyRad; a mez, charm or fear do tell). A beneficial spell tells its
+  caster nothing. The worn-off line names no mob and does not say why: expiry, a dispel and a stronger spell overwriting yours all
+  print it. `BuffFadeAll()` is called with `message = false` (`spells.cpp:3643`) by the leash/evade reset (`mob_ai.cpp:1418`, `:1440`,
+  `:2603`, `mob_movement_manager.cpp:782`) and at death (`attack.cpp:2367`), so those print nothing at all.
+  Annul Self (`eqemu_spells` 2830): four SPA 27 slots, base 9, no `cast_on_you`, `cast_on_other` "has been dispelled.".
+- **How it decides:** a worn-off line for a debuff of yours (`cast_by` is you) with more than two ticks left is an early
+  removal; it is a dispel when a dispel spell's own landing line naming that mob sits within 2.5 s, or when two such removals
+  land inside a second. One early removal alone is an overwrite and is left alone. A zone change or "You died." makes the
+  character quiet for 10 s. Your buffs: the Zeal slots lose a non-song buff with more than two ticks left (not on a zone change,
+  not on an empty list), counted when the dispel's `cast_on_you` line is there or two go at once with nothing new landing; with
+  no Zeal, a beneficial spell's fade line next to the dispel line gives the generic callout. After a self callout the buff queue
+  cache is cleared, snappy mode is on and a live-state flush is sent at once.
+- **Local only today.** The cross-client half needs the bot: the other raiders' Target Info still shows a debuff another caster
+  lost, until it runs out. Each caster's own Mimic does hear their own worn-off line, so every caster IS told; what is missing is
+  the shared Target Info row (a `buff_casts` removal marker that `/api/agent/target-buffs` honours).
 
 ### Voice unclear reports (agent 3.8.15 beta · bot 3.2.8 · web 1.9.9, 2026-10-19; DECISIONS §379)
 - **What:** a raider flags a spoken callout nobody understood, with the text, the voice that really played it and the
@@ -1105,6 +1143,15 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   Test: `test/map-watch-agent.test.js`. Charm aging's default-off lives beside it in `BUILTIN_DEFAULT_MODES`
   (`test/trigger-rules.test.js`).
 
+### The Canvas is never on unless you turned it on; Esc leaves setup (Mimic, draft on beta, 2026-10-22; DECISIONS §413)
+- **What:** `cfg.showCanvas` is written `false` for a new install and put back to `false` ONCE for any saved config without
+  `cfg.canvasDefaultOffApplied` (also in `hideAllPrev` and every `charProfiles[*].show`). Arranging with it off asks first;
+  nothing else writes it on except the tray/Overlays/tour switch, a hotkey you bound, and a set or layout you load.
+- **Where:** `apps/mimic/main.js` `loadConfig` (the pass), `_setCanvasArrange(on, consented)` + `_arrangeCanvasAsked`, `canvas-edit`
+  IPC, the `/pipe mimic edit` verb, `applySetupMode` (skips a hidden Canvas), `wp-overlay-menu-state.canvasOn`;
+  `apps/mimic/preload.js` (right-click row only while on; Esc leaves Setup ALL / THIS); `apps/mimic/canvas.html` (Esc leaves
+  arranging). Test: `test/canvas-stays-off.test.js`.
+
 ### Overlays fit their height to content; Canvas items grow up/down and own their background (Mimic beta, 2026-10-19; DECISIONS §381)
 - **Where:** `apps/mimic/main.js` `overlay-auto-height` (anchor-aware, held while `__wpDragging`, `wp-refit` on drag
   end); `apps/mimic/preload.js` `_wpWatchFitContent`; `apps/mimic/canvas.html` `growsUp`/`fitKind`/`fitStep`/
@@ -1123,14 +1170,24 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 ### raidmimic.com landing page (web 1.9.5, 2026-10-18, [beta]; DECISIONS §370)
 - **What:** the guild leaders' door, game-agnostic: what the platform does, each block tagged live / alpha / coming,
   works-with (PQ Companion, GINA, EQLogParser), the consent model, what it costs (no price list), "any solved world",
-  and Register interest. Two layouts: A "The pitch" (default) and B "The tour" (`?v=b`).
+  and Register interest. The one layout is **Scene-first** (`SceneLayout.tsx`, the guild lead's pick of 2026-10-22, §409): a
+  tabbed player of looping recordings of the real overlays, **For raiders** (Target Info, Extended Target) and **For raid
+  leaders and guild leaders** (the hail board), each scene captioned with its beat of the raid night. Above it sits the
+  layered mascot hero (the hopping mascot with seven captures of the overlays around it, 2026-10-21). There is no `?v=`
+  switch: the earlier tour, the Output-first gallery, Raid-night story and Your screen are deleted. Next scene to
+  record: loot rolls + DKP bids (a new row in `CLIPS`; a scene gets its tab only when it has a row and files).
 - **Where:** `web/app/raidmimic/page.tsx` (metadata, host-dependent links), `web/app/raidmimic/_landing/`
-  (`PitchLayout.tsx`, `TourLayout.tsx`, `Parts.tsx`, `Figures.tsx` CSS-only drawings), ALL words in
-  `web/lib/raidmimicLanding.ts` (`COMING` is the whole list of promises). Hosts: `web/lib/raidmimicHost.ts`,
+  (`SceneLayout.tsx`, `Parts.tsx`, `MascotHero.tsx`; client pieces `ClipTabs.tsx` the player, `SceneClip.tsx` one looping
+  clip, `MascotVideo.tsx` the mascot), ALL words in `web/lib/raidmimicLanding.ts` (`COMING` is the whole list of promises;
+  `CLIPS` + `AUDIENCES` the player; `SHOTS` the captures: the hero's seven, and the ones flagged `more` that `MoreShots`
+  in `Parts.tsx` shows in a gallery under the player). Clips: `scripts/raidmimic-shots/scenes.mjs` (the real
+  overlays driven by a scripted stand-in agent) → `web/public/raidmimic/clips/`; stills: `shoot.mjs` →
+  `web/public/raidmimic/shots/`; the mascot: `web/public/raidmimic/mascot/`. Hosts: `web/lib/raidmimicHost.ts`,
   `web/middleware.ts` (rewrite to `/raidmimic`, query dropped), `web/app/layout.tsx` (bare shell). Register interest
   reuses the eqmimic.quest anonymous form. Test: `test/raidmimic-landing.test.js`.
-- **Live at:** `https://wolfpack.quest/raidmimic` (and `?v=b`). On raidmimic.com once DNS points at Vercel and the
-  Vercel redirects to eqmimic.quest come off.
+- **Live at:** `https://wolfpack.quest/raidmimic` (Scene-first and the capture gallery graduated to `main` with web 2.1.11,
+  2026-10-23); the same page on beta at `https://b.wolfpack.quest/raidmimic`. On raidmimic.com once DNS points at Vercel and
+  the Vercel redirects to eqmimic.quest come off.
 
 ### Set up Raid Mimic yourself: /raidmimic/setup (web, 2026-10-21, [beta]; DECISIONS §404)
 - **What:** a step-by-step guide for players outside the guild: download, run it local-only, what works on your own
@@ -1286,6 +1343,16 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   level; `rankCharmPets`; local `GET /api/charm-best`; disk cache `charm-pets-cache/`); bot `utils/charmPets.js` +
   `GET /api/agent/charm-pets?zone=` (spell-independent candidates per zone, 6 h cache, ETag). 404 → section hidden; local mode makes no
   call. Tests: `test/charm-pets.test.js`, `test/charm-pets-agent.test.js`.
+- **Charm overlay "Show: When charming"** (agent 4.0.6 · Mimic beta, 2026-10-22): one state machine in the agent
+  (`_charmSessionStep` / `_charmSessionNow` / `_charmSessionDismiss`, just above `_reconcileGaugeCharms`), served as
+  `charmSession` `{ charming, active, since, hold_ms, ends_at }` on `/api/state`; `POST /api/charm-session/dismiss` `{ character }`.
+  `charming` = a charm of yours is up, or the last one was seen up / broke under `CHARM_SESSION_HOLD_MS` (10 min) ago; a dismissal
+  holds until a charm with a later `started_at` lands (a recharm counts). Per character, own charms only. Two readers: the Charm
+  window (`charm.html` setup bar → Show: Always | When charming, `localStorage` `wpCharmShowWhen`; `charmIdle` puts `body.wp-idle`,
+  which blanks the card but keeps the window polling and the break callouts speaking; its ✕ dismisses in this mode; setup and unlock
+  never idle it; shared with a setup bundle as `showWhen`, and it is a "Page option" on the Canvas, where the dismiss comes from the
+  piece's rule instead) and a Canvas piece's Show-when rule `charming` (see the Show-when paragraph below; a `.dsmbtn` ✕ on
+  the hover handshake dismisses). Test: `test/charm-when-charming.test.js`.
 - **PoP missing spells, my characters** (live, web 1.8.158; built 1.8.156, §307): `web/lib/popMissingSpells.ts` (`pqdiSpellUrl`, copy-line builder,
   one-line description from `eqemu_spells`) + `web/app/pop/MissingSpells.tsx` (closed `<details>`, `CopyChip`). Data: `pop_spell_needs`
   plus one chunked `eqemu_spells` lookup. Test: `test/pop-missing-spells.test.js`.
@@ -1460,6 +1527,13 @@ Tests `test/canvas-pieces.test.js`, `test/timers-canvas.test.js`. Alpha only.
   `data-bulksel` selects (Show as / Thickness / Backing) and the GROUP section's `data-bulk` buttons
   (`bulkMenuHtml`). A mode a piece cannot be drawn in is skipped and counted; reflow (row for `vbar`, column for
   `bar` / `thin`) only when every piece changed.
+- **Pieces fixes (beta, 2026-10-22):** a piece's own look is `nolabel` / `thick` / `align` / `rot` / `color` on the
+  panel, read by `WpParts.render` (parts.js). `segWidth` (Ring arc stroke by Thin/Thick), `segAnchor` (label at the
+  start / middle / end of its arc), `segTurn` (which way round the circle a label reads) and `alignOf` (an unset
+  align is Center for a Ring arc, upright bar, badge and dials, Left for the rest; `l` is an explicit Left) are the
+  pure parts. `bulkSet(ps, { mode: 'seg' })` calls `bulkRing`, which keeps each piece's arc (`ringArcs(n)` gives
+  the ones without) and places the boxes with `ringBoxes`. Whole group also carries Left/Center/Right and the label
+  turn. `main.js` `_layoutOfSet` exports an `l` as the default, because `portableLayout.js` refuses it.
 - **Saved groups:** `groupPartsOf`, `putGroups`, `uniqueGroupName` (case-folded; `/pipe mimic group`, the tray and
   the dashboard find a group by name), `saveSelectionAsGroup` (new group beside an existing one, never over it),
   `updateSavedGroup` (selbar 💾 Update), `duplicateGroup` (⧉), `renameGroup` (✎, inline). Stored in
@@ -1481,6 +1555,11 @@ stays visible), `class`; `/api/state.raidPipe` within `RAID_FRESH_MS` 60 s. `COM
 A missing field fails open ("needs a newer agent" in the ⚙ menu). ⚠ A raid-only piece stays hidden without Zeal
 raid data (the agent cannot tell "no Zeal" from "no raid"); an agent `raid_active` / `target.is_npc` would firm
 both up. Menu row + class picker per piece; the selection bar applies to many. Test `test/canvas-show-when.test.js`.
+**`charming` rule (agent 4.0.6, 2026-10-22):** reads `/api/state.charmSession.charming` (the agent holds the session and the
+dismissal; a missing field fails open). A piece with the rule also draws a small ✕ (`.dsmbtn`, hover handshake, not while
+arranging) that POSTs `/api/charm-session/dismiss`. The portable layout format (`apps/mimic/portableLayout.js` `WHEN`) knows the
+word; the bot's read-half copy `utils/portableLayout.js` must be re-copied on `main` (`test/gallery-portable.test.js` goes red until it is).
+Test `test/charm-when-charming.test.js`.
 **A hotkey per saved Canvas group (alpha, 2026-10-07, DECISIONS §180):** "a Canvas group" is a SAVED group (★ Groups →
 My groups, `cfg.canvasGroups`). Pieces placed from it, or saved as it, are marked in the layout (`layout.named`: the
 live `grp` they share → the saved group's id; `sanitize` keeps only marks that still have pieces).
@@ -2148,7 +2227,10 @@ the queue is pending / backfill running / fight live (Shift+U bypass).
 
 ### Combat parsing → encounters
 `parseEvent` + `EncounterBuilder` segment fights; kills require a literal
-slain line (no silence-guessing). Pets ride the DPS meter only when provably
+slain line (no silence-guessing). A fight also ends when its top target has taken no damage for 5 minutes
+(`_splitIfTopIdle`, agent 4.0.15, 2026-10-23): trash between two pulls no longer keeps one builder open, so two
+wipes upload as two fights; the bot's `find_or_create_encounter` declines a match more than 15 min past its end
+(migration `20261023130000_find_or_create_gap_split.sql`). Pets ride the DPS meter only when provably
 OURS (`petLeaders`/`_activeCharms`/charm tracker) and carry `pet_owner`.
 `petLeaders` also adopts owners from the bot's pool of every raider's "My leader
 is" lines (poll stream `pet_owners` → `_guildPetOwners`, live fights only); a
@@ -2596,6 +2678,13 @@ enough — whoever put them there is still shouting — so it also blocks that
 still take the number, a roster call clears the block, and on a CONTESTED slot
 the row survives and passes to the remaining claimant rather than being deleted
 out from under the real cleric.
+Other guilds' macros + "Learn a CH call" (agent 4.0.13): `chParseBuiltinExtra` (tag, repeated-digit slot, `#3`/`CH3`, C.H./Complete
+Heal, mana as `61%`/`Mana 61`/`m61`, go-cues `3 GO`/`GO 3`/`next 3`) and the user's taught templates (`chLearnSave`, `ch_templates` in
+`logsync.prefs.json`) run via `_chExtraText` ONLY on a line the original parser did not claim, and translate a hit to the canonical
+Wolf Pack text before `trackChChainLine` reads it again. Overlay: setup mode → Learn a CH call in `apps/mimic/chchain.html`
+(`GET/POST /api/chchain/learn`, `POST /api/chchain/learn/remove`). Tests: `test/ch-chain-other-guilds.test.js`; the Wolf Pack
+guarantee is `test/ch-chain-wolfpack-regression.test.js`. A chain tool's `set_chain: 111 <name>, … set_delay: 3` line (agent 4.0.14):
+`chParseSetChain` / `_chSetChainLine` seat the order through the roster path and set `declaredBeatMs`, the beat until one is measured.
 
 ### Divine Intervention: readiness chips + the two-cleric callout (#204)
 Two separate things on the same overlay. **Readiness** is log-driven: a
@@ -4374,6 +4463,20 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   list, arrows and a Legs-tab card all go through `selPin`); the toggle rides the engine's `ui` state (`rp-ui-<zone>`). Rules:
   `web/lib/routePlanner/legFocus.ts` (`test/route-planner-model.test.js`); in 3D the engine tells the host the current leg's key and
   `buildView3D({ focusLeg })` draws only it.
+- **Floors follow the leg (`?v=floors`, beta preview, web 2.1.2: `https://b.wolfpack.quest/raid/plan/routes?zone=solrotower&v=floors`).**
+  With One leg on and the floor on All, `renderMap` sets `autoFloors` = `legFloorKeys(Z.floors, legRuns(cur))` (`legFocus.ts`: the
+  floors of the pins, of every height on the walked or baked path, and the floors between for a line with heights only at its
+  ends; a teleport counts where it leaves and lands). `floorInView` is the one test the walls, leash boxes, dimming and pathers share.
+- **Draw (`?v=draw`, beta preview, web 2.1.4: `https://b.wolfpack.quest/raid/plan/routes?zone=solrotower&v=draw`).** A **Draw** button on the
+  map toolbar (officers; `host.draw`, so no `?v=` has no button) with two tools. **Points:** pick a leg (One leg's current leg, a click on
+  it, its start pin, or **Redraw** on its Legs card), click its bends in order; Backspace undoes, Enter / the end pin / a double click
+  finishes (ONE `changed()`), Esc cancels. With no leg picked, clicks on empty map drop a chain of new pins (the Add pin creation, finished
+  together). **Pen:** drag along the corridor; the stroke is thinned, simplified by the same pass as "Use this route" (`bakeRecorded` ->
+  `bakeBends`, at most 40 bends) and replaces the leg's bends, or only the stretch between where it starts and ends when both ends lie on
+  the leg (within 14 screen px; an end near a pin snaps to it, any other end joins the old line as a bend). A stroke off the leg redraws the
+  whole leg, ends snapped to the pins. `follow` is let go (as hand-bending does); a teleporter leg is refused with a toast; entering Draw
+  switches the route source to Straight. Shift-drag pans the pen; a second finger is a pinch, not a stroke. The maths is
+  `web/lib/routePlanner/drawPath.ts` (`test/route-planner-draw.test.js`); the engine only collects clicks and samples.
 - **Route source: Straight · Walk route · Recorded** (a view over the plan; default Straight).
   - **Walk route.** The server's own navmesh, Quarm's `<zone>.nav` from EQMacEmu/Maps (GPL-derived like the EQEmu walls; not
     committed): `GET /api/raid/navmesh?zone=` (members only, `app/api/raid/navmesh/route.ts`) fetches it, slims it
@@ -4847,6 +4950,14 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   target), all fed by one live-tail hook, `_meNoteRawLine`. `no_mana` for
   WAR/ROG/MNK. Tests: `test/me-hud-timers.test.js`. Swing-timer upstream ask:
   `docs/zeal-attack-timer-pipe-request.md`. `DECISIONS-2026-09-21.md` §13.
+  **Disc and Shield (agent 4.0.6, 2026-10-22):** the discipline cooldown is ONE row (`key: 'disc'`) labelled **"Disc"**, and
+  **"Disc: <name>"** only while it counts down (`_meDiscLabel`, `_meDisc`): the server keeps one reuse timer per character for
+  every discipline (EQMacEmu `Combat:UseDiscTimerGroups` defaults false, `Client::GetDiscTimerID` returns 0). The warrior's
+  **Shield** is its own row (`_ME_SKILL_LINES` `shield`, 180 s; in the warrior's `_ME_CLASS_CDS`), started by "`<x>` begins to
+  use `<you>` as a living shield!" (`_meNoteShield`: only when the warrior named is you), with `active_ms_left` / `active_total_ms`
+  = 12 s on the row while it is up, ended early by "`<you>` ceases protecting `<x>`.", and set exactly by the refusal "You can
+  use the ability /shield again in …" (`_meNoteAaRefusal`). Shown by `me.cooldowns` / `me.cd_shield` / `me.cd_disc` (`parts.js`)
+  and the HUD (`me.html`). Tests: `test/me-hud-timers.test.js`, `test/hud-disc-shield-parts.test.js`.
   **Round two (agent 3.7.6):** shown as "HUD" everywhere (key still `me`).
   `_ME_CLASS_CDS` lists each class's cooldowns up front (`seen: false` until
   used); `_ME_SKILL_LINES` adds Feign Death (failure line only) and Lay on
@@ -5300,8 +5411,33 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `_mapAttribute`, `_mapApplyMark`, `_handleMapState`, `_handleMapMark`). Zone data from the bot's `zone-spawns`, disk first
   (`zone-spawns-cache/`); timers in `map_timers.json`. Zeal pipe x/y are swapped against the server frame (`_mapServerXY`).
   Mimic's pipe handler now also carries `target_loc` / `target_type` (Zeal 1.4.8).
+- **Right-click a spawn = off / on** (2026-10-23, Mimic beta, `map.html` `spawnToggle` / `toggleSpawn` / `rowToggle`): a dot or a
+  side-list row with a running timer is cleared (`/api/map-mark` kind `clear`); anything else is killed now (`/api/map-kill` by name
+  when a mob is seen alive there, else `/api/map-mark` kind `killed`). The dot's handler stops propagation so the stage's
+  right-click (centre on you) stays out of it; a toast (`#toast`) says what happened. Test: `test/map-watch-agent.test.js`.
 - Test: `test/spawn-map.test.js`. Design: `docs/DESIGN-mimic-2.9-spawn-map.md`. Every refinement since (asks, what
   shipped, what is open): `docs/MAP-REFINEMENTS.md`.
+- **Zone copies** (the "Zone copies" block in the agent; header label in `map.html` `copyLabel`): the copy you are in is
+  `host:port` from EverQuest's `dbg.txt`; synced events, watches and corpses match on that token alone. The label's
+  live-or-instance verdict is the PORT's band (`_mapCopyWhere`, agent 4.0.5): 7000..7999 = a static zone server = the open
+  world, 10000+ = a dynamic one = a guild, raid or PvP instance (measured on Quarm 2026-10-13..22 from `map_spawn_events.inst`;
+  not a server constant). The /who check (`kind`: open/closed) proves only that outsiders were listed; "closed" never means
+  "our instance". There is no reliable way to tell a guild instance from a PvP one: the client gets no message on entering
+  either (EQMacEmu `NewZone_Struct` has no instance field; Zeal's pipe has the zone id only).
+- **Facing: arrow or slice** (2026-10-22, agent 4.0.4 + Mimic beta): ⚙ Map settings → **Facing** = Arrow (default) / Slice / Off,
+  saved as `cfg.facing` (a saved first-beta `show.wedges === false` migrates to Off). Every raider and group member the Map can
+  place is a class-coloured (the website's palette) marker turned by the glide's interpolated heading: **Arrow** is a small
+  arrowhead (`arrowPoints` / `arrowSize`, about 10 px long, tip = the way they look, dark rim); **Slice** is the "pizza slice"
+  (`wedgeArc` / `wedgeRadius`: 56 degrees, 11-18 px reach scaled by zoom, a dot at the apex). You are the same shape 1.3x (arrow)
+  or 1.15x (slice) with a white rim; no heading yet = a slightly bigger dot. Drawn in three passes in `renderMap`'s `dotsOf`
+  (slices, markers, names; a name is held clear of an arrow's tip). Heading already rode the `/api/map-state` `self` / `group` /
+  `raid` rows and Mimic's direct push. Turn direction verified against Zeal's `zone_map.cpp` marker and the server's heading maths
+  (counter-clockwise, 128 = west). The Canvas does not embed the Map, so it has no markers to inherit.
+  **Nobody from another zone**: Zeal's raid loop (`named_pipe.cpp`, `if (entity)`) sends `loc` only for a member who is in YOUR
+  client, so the agent stores `loc_x/y/z` null for the rest; `_mapStatePayload` skips a raid member with no real position (it used
+  to run null through `_mapPos`, where `Number(null)` is 0, and draw them at the zone origin), and `map.html`'s `placedHere`
+  drops any member with no position or exactly (0, 0, 0) from both the poll and Mimic's direct push. Tests:
+  `test/map-facing-wedges.test.js`, `test/spawn-map.test.js`.
 - **Full mode + keep-clear areas** (2026-10-14, agent 3.7.162 · Mimic beta): `cfg.mapMode` (`window` default | `full`), one setter `_setMapMode` in `main.js`
   behind the Map toolbar ▣/▢, ⚙ → Mode, the tray item and the dashboard Overlays button. Full resizes the window to EverQuest's client
   rectangle (`_eqWindowGeometry`, cached; fallback the display the Map was on) and is click-through always — `_coversScreen(key)` is the
@@ -5348,3 +5484,30 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   trimmed `{ v, zone, name, saved_at, points, legs:[[start,end]], stops:[{ n, name, x, y, at }] }`. The agent fetches it at
   zone-in and every few minutes, and Mimic's Map draws it as a thin gold line with numbered stops under the live markers, behind
   a ⚙ switch and a "Raid route (saved <date>)" legend. Test: `test/raid-route.test.js` (bot), `test/map-raid-route.test.js` (agent).
+- **Window movement (Mimic beta, 2026-10-22).** `apps/mimic/main.js`: a ✥ drag is `_startWindowDrag` (16 ms `setBounds`, window
+  flag `__wpDragging`); the dashboard's title-bar drag is the OS's, observed through `will-move` / `moved` (`_noteNativeMove`,
+  `_nativeMoving`, clears 300 ms after the last step). `_beingMoved(win)` is either; `_holdForMove(win, who)` is what a writer asks
+  before touching a window's bounds or level (Dock fit, overlay fit, menu height loan, page-set bounds, `_applyOverlayZ`, rescue,
+  screen-change move) and it logs one `[window] … held off` line per move. Mimic makes no native `SetWindowPos`; stacking is
+  Electron's `moveAbove` / `setAlwaysOnTop`. Tests: `test/mimic-window-move.test.js`, `test/mimic-dashboard-drag.test.js`.
+- **Mob info cache (agent 4.0.7, 2026-10-22).** `_mobInfoByName` (key = `_mobInfoCacheKey(name, zone)`) holds `{ at, mob }`; readers
+  re-ask when `now - at >= MOB_INFO_TTL_MS` (6 h). `_mobInfoStore` is the one writer of a bot answer: a 200 with a mob lasts 6 h;
+  anything else is a miss stored with `at` set back so it expires after `MOB_INFO_MISS_TTL_MS` (60 s), keeping a row already held.
+  Zone packs (`_mobPackLookup`) and the off-Quarm "no row" are written directly and are unchanged. Test: `test/mob-pack-agent.test.js`.
+  Agent 4.0.9 (FB-94): `fetchMobInfo` and `_mobPackGet` also listen for `close` on the response and, when `res.complete` is false
+  (connection lost after the headers, which fires no `end`, no request `error`, no `timeout`), release the in-flight mark
+  (`_mobInfoInflight` / `_mobPackInflight` via `done`); before, that mob or zone was never asked for again until Mimic restarted.
+- **Overlay crash recovery (Mimic beta, 2026-10-22).** `browser-window-created` wires `render-process-gone` on every window;
+  `_overlayRendererGone` handles the ones that are `_OVERLAY_WINDOWS` entries (drop, destroy, then `applyAllVisibility` after 500 ms),
+  limited by `_crashRebuildAllowed` to 3 per overlay per 5 min. The dashboard keeps its own handler in `createWindow`. Test:
+  `test/mimic-window-move.test.js`.
+- **Target Info: two mobs, one name, two levels (agent 4.0.8 + bot, FB-80).** Bot: `_buildMobInfo` adds `level_bodies`
+  (`[{ id, level, maxlevel, hp }]`, one per distinct level band, `mobSpecials.levelBodies`; absent for a name with one) and serves
+  any one body whole for `GET /api/agent/mob-info?…&npc_id=<id>` (cache key `…|n<id>`); the default pick is still the highest
+  level; zone packs are shape 10. Mimic `main.js` reads Zeal's `target_level` (named_pipe.cpp, 1.4.8) into the zeal state. Agent
+  `resolveMobBody` picks the band from, in order: the target's level, your `/consider` range (`conLevelFor`), where it stands
+  (`target_loc` against the Map's zone-spawn points that can make that body, a walker by its route, only when one is twice as
+  near or over 120 units nearer); `_pickMobBody` (called from `buildMobInfo`) fetches the other body by id
+  (`fetchMobInfo(…, npcId)`, own cache key, never the pack) and, while undecided, hands the overlay both bands with the
+  body-specific numbers blanked (`mob.body_pick`; `mobinfo.html` prints "(L55 or L63)"). The spawn id is not used: it names an
+  entity, not a catalog row. Test: `test/mob-same-name-bodies.test.js`.

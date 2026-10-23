@@ -557,6 +557,7 @@ const UNIQUE_KEYS = {
   character_spellbook: [['id'], ['character_name', 'spell_id']],
   character_lockouts: [['character', 'boss_key']],
   fun_events: [['id']],
+  contributions: [['id']],   // primary key (pg_index, 2026-10-23); the night panel pages the deaths sub-array of a night's contributions (web/lib/nightSlicesLoad.ts)
   pop_flags: [['id']],
   raid_roster: [['uploaded_by_discord_id', 'name']],   // pkey (guild_id, uploaded_by_discord_id, name), 20260611210000; /pop/latest pages it
   pop_guide_ticks: [['character_name', 'item_key']],

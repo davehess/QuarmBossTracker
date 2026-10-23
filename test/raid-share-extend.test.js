@@ -123,17 +123,17 @@ describe('the routes', () => {
     expect(patchBody.indexOf('gate(req')).toBeGreaterThan(-1);
     expect(patch.slice(patch.indexOf('export async function DELETE'))).toMatch(/gate\(req/);
   });
-  it('PATCH scopes to the guild, skips revoked rows, validates with planShareChange and drops both caches', () => {
+  it('PATCH scopes to the guild, skips revoked rows, validates with planShareWindow and drops both caches', () => {
     expect(patchBody).toMatch(/\.eq\('guild_id', GUILD_TAG\)/);
     expect(patchBody).toMatch(/\.is\('revoked_at', null\)/);
-    expect(patchBody.indexOf('planShareChange(')).toBeLessThan(patchBody.indexOf('.update('));
+    expect(patchBody.indexOf('planShareWindow(')).toBeLessThan(patchBody.indexOf('.update('));
     expect(patchBody).toMatch(/invalidateShare\(params\.id\)/);
     expect(patchBody).toMatch(/revalidateTag\(shareTag\(params\.id\)\)/);
     expect(patchBody).not.toMatch(/token_hash/);   // the address does not change
   });
   it('the cached public reads carry the window end in their key', () => {
     expect(read('web', 'app', 'api', 'share', 'raid', '[token]', 'bosses', 'route.ts')).toMatch(/'bosses', String\(win\.fromMs\), String\(win\.toMs\)/);
-    expect(read('web', 'app', 'api', 'share', 'raid', '[token]', 'replay', 'route.ts')).toMatch(/String\(slice\.toMs\), String\(win\.toMs\)/);
+    expect(read('web', 'app', 'api', 'share', 'raid', '[token]', 'replay', 'route.ts')).toMatch(/String\(slice\.toMs\), String\(win\.fromMs\), String\(win\.toMs\)/);
   });
   it('creating can ask for an open share without a new column', () => {
     const post = read('web', 'app', 'api', 'raid', 'shares', 'route.ts');

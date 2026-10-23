@@ -20,6 +20,7 @@ import { headers } from 'next/headers';
 import type { Metadata } from 'next';
 import { supabaseAdmin } from '@/lib/supabase';
 import { resolveShare, noteView } from '@/lib/raidShareLookup';
+import { shareIsFollowing } from '@/lib/raidShare';
 import { BUSY_MESSAGE, ceilingPage, clientIp, guardPage } from '@/lib/shareGuard';
 import { loadSessionReview } from '@/lib/raidSessionLoad';
 import SessionReview from '@/app/raid/session/SessionReview';
@@ -54,6 +55,9 @@ export default async function SharedRaidSession({ params }: { params: { token: s
   if (!ceilingPage(share.row.id).ok) return <Busy />;
 
   const [review] = await Promise.all([loadSessionReview(sb, share.win), noteView(sb, share.row, clientIp(h))]);
+  // A link that follows the raid redraws itself about once a minute (the review does that, holding still for a viewer who
+  // is scrubbing: lib/shareFollow.ts). The flag comes from the row on every render, so it ends when the share is closed.
+  const follow = shareIsFollowing(share.row);
 
   return (
     <div className="mx-auto max-w-6xl py-2">
@@ -69,8 +73,9 @@ export default async function SharedRaidSession({ params }: { params: { token: s
         {etStamp.format(share.win.fromMs)} to {etStamp.format(share.win.toMs)} ET. Tap a time in any list to see that moment on the map.
         Characters who opted out of stats appear as their class and a number, unless they won an item here.
       </p>
+      {follow && <p className="mb-3 text-xs text-dim">This link follows the raid, so it updates by itself about once a minute.</p>}
       <RaidTimeline src={`/api/share/raid/${params.token}/timeline`} />
-      <SessionReview bundle={review.bundle} night={review.night} mode={{ kind: 'share', token: params.token }} />
+      <SessionReview bundle={review.bundle} night={review.night} mode={{ kind: 'share', token: params.token }} follow={follow} />
     </div>
   );
 }

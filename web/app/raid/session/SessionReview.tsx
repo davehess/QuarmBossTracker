@@ -14,7 +14,11 @@ import { classColor } from '@/lib/spectator';
 import { MINUTE_MS, REPLAY_WINDOW_MS, type NightSummary } from '@/lib/raidReplay';
 import { nameKey, type AttendeeRow, type BidderView, type KillRow, type LootEntry, type RollEntry, type SessionBundle, type TickRow } from '@/lib/raidSession';
 import ReplayBoard, { type BoundedReplay } from '@/app/spectator/replay/ReplayBoard';
+import { snapCut, type RaidChange } from '@/lib/raidSplit';
 import DataSources from './DataSources';
+import SplitPanel, { type SplitRequest } from './SplitPanel';
+import NightPanel, { type NightPanelData } from './NightPanel';
+import { useFollowRefresh } from './useFollowRefresh';
 
 export type ReviewMode = { kind: 'member' } | { kind: 'share'; token: string };
 
@@ -39,9 +43,12 @@ const th = 'px-2 py-1.5 text-left text-[11px] font-normal uppercase tracking-wid
 function boardUrls(mode: ReviewMode, baseMs: number, toMs: number): BoundedReplay['urls'] {
   if (mode.kind === 'share') {
     const root = `/api/share/raid/${mode.token}`;
+    // `v` is a cache-buster and nothing else (the routes read the token and the index, never a time): the share's window as
+    // this page was rendered, so a browser holding the answers of a window an officer has since moved asks again.
+    const v = `v=${baseMs}.${toMs}`;
     return {
-      window: (_night, fromIso) => `${root}/replay?w=${Math.max(0, Math.round((Date.parse(fromIso) - baseMs) / REPLAY_WINDOW_MS))}`,
-      bosses: () => `${root}/bosses`,
+      window: (_night, fromIso) => `${root}/replay?w=${Math.max(0, Math.round((Date.parse(fromIso) - baseMs) / REPLAY_WINDOW_MS))}&${v}`,
+      bosses: () => `${root}/bosses?${v}`,
       map: zone => `${root}/map?zone=${encodeURIComponent(zone)}`,
       mesh: (zone, floors) => `${root}/mesh?zone=${encodeURIComponent(zone)}${floors ? `&floors=${floors}` : ''}`,
     };
@@ -50,7 +57,7 @@ function boardUrls(mode: ReviewMode, baseMs: number, toMs: number): BoundedRepla
   const session = `from=${encodeURIComponent(new Date(baseMs).toISOString())}&to=${encodeURIComponent(new Date(toMs).toISOString())}`;
   return {
     window: (_night, fromIso) => `/api/raid/session/replay?${session}&w=${Math.max(0, Math.round((Date.parse(fromIso) - baseMs) / REPLAY_WINDOW_MS))}`,
-    bosses: night => `/api/spectator/replay/bosses?night=${encodeURIComponent(night)}`,
+    bosses: () => `/api/raid/session/bosses?${session}`,   // the window's own, not the night's: the other raid of the night is not this page's
     map: zone => `/api/spectator/map?zone=${encodeURIComponent(zone)}`,
     mesh: (zone, floors) => `/api/spectator/mesh?zone=${encodeURIComponent(zone)}${floors ? `&floors=${floors}` : ''}`,
   };
@@ -59,7 +66,11 @@ function boardUrls(mode: ReviewMode, baseMs: number, toMs: number): BoundedRepla
 type TabKey = 'attendance' | 'kills' | 'loot' | 'bids' | 'parses';
 
 /** What every name on the page needs: the session's window (for the members' parse call) and the winners to link. */
-type ReviewCtx = { fromMs: number; toMs: number; handles: ReadonlyMap<string, string>; openBids: (handle: string) => void };
+type ReviewCtx = {
+  fromMs: number; toMs: number; handles: ReadonlyMap<string, string>; openBids: (handle: string) => void;
+  /** Members' page only: a ✂ beside every time that opens the "start a new raid here" panel at that time. */
+  splitAt?: (ms: number) => void;
+};
 const ReviewContext = createContext<ReviewCtx>({ fromMs: 0, toMs: 0, handles: new Map(), openBids: () => {} });
 
 /** A name, as a link to the winner's bids when it is a bid winner's (nameKey match) and plain text when it is not. */
@@ -75,22 +86,55 @@ function Who({ name }: { name: string }) {
   );
 }
 
-export default function SessionReview({ bundle, night, mode, extras }: {
+/** Members' page only. */
+export type SplitOptions = { change: RaidChange | null; live: boolean; canShare: boolean };
+
+export default function SessionReview({ bundle, night, mode, extras, split, nightPanel, follow }: {
   bundle: SessionBundle;
   night: NightSummary | null;
   mode: ReviewMode;
+  /** A shared page whose link still follows the raid: the page redraws itself about once a minute (lib/shareFollow.ts). */
+  follow?: boolean;
   /** Members' page only: the officer's Share panel. */
   extras?: React.ReactNode;
+  /** Members' page only: "Start a new raid here" under the replay. Absent on a shared page. */
+  split?: SplitOptions;
+  /** Members' page only: the night sliced into segments, with its named fights and mass deaths, under the replay. */
+  nightPanel?: NightPanelData;
 }) {
   const [tab, setTab] = useState<TabKey>('attendance');
   const [seek, setSeek] = useState<{ t: number; n: number } | null>(null);
   const [bidder, setBidder] = useState<string | null>(null);
+  const [splitReq, setSplitReq] = useState<SplitRequest | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const playheadRef = useRef<number | null>(null);
+  // A followed share: where the page first put the playhead (the board reports 0 before it has opened), and when the
+  // viewer last touched the page. Both feed the hold in lib/shareFollow.ts.
+  const openedRef = useRef<number | null>(null);
+  const touchedRef = useRef(0);
+  const fromMsNow = useRef(bundle.fromMs);
+  fromMsNow.current = bundle.fromMs;
+  const onPlayhead = useCallback((t: number) => {
+    playheadRef.current = t;
+    if (openedRef.current == null && t >= fromMsNow.current) openedRef.current = t;
+  }, []);
+  useEffect(() => { openedRef.current = null; }, [bundle.fromMs]);   // a moved start opens the board afresh
+  const touched = useCallback(() => { touchedRef.current = Date.now(); }, []);
+  const following = !!follow && mode.kind === 'share';
+  useFollowRefresh({ on: following, endMs: bundle.toMs, playheadRef, openedRef, touchedRef });
+  const splitOn = !!split && mode.kind === 'member';
+  const nightOn = !!nightPanel && mode.kind === 'member';
   const token = mode.kind === 'share' ? mode.token : '';
   const urls = useMemo(() => boardUrls(mode.kind === 'share' ? { kind: 'share', token } : { kind: 'member' }, bundle.fromMs, bundle.toMs),
     [mode.kind, token, bundle.fromMs, bundle.toMs]);
-  const bounded = useMemo<BoundedReplay | null>(() => (night ? { night, urls, seek } : null), [night, urls, seek]);
+  const bounded = useMemo<BoundedReplay | null>(() => (night ? { night, urls, seek, onPlayhead: splitOn || nightOn || following ? onPlayhead : undefined } : null),
+    [night, urls, seek, splitOn, nightOn, following, onPlayhead]);
+  const splitAt = useCallback((ms: number) => {
+    setSplitReq(r => ({ cut: ms, n: (r?.n ?? 0) + 1 }));
+    splitRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   const handles = useMemo(() => new Map(bundle.bidders.map(b => [nameKey(b.name), b.handle] as const)), [bundle.bidders]);
   const openBids = useCallback((handle: string) => {
@@ -106,8 +150,8 @@ export default function SessionReview({ bundle, night, mode, extras }: {
       if (m && bundle.bidders.some(b => b.handle === m[1])) { setBidder(m[1]); setTab('bids'); }
     } catch { /* no hash to read */ }
   }, [bundle.bidders]);
-  const ctx = useMemo<ReviewCtx>(() => ({ fromMs: bundle.fromMs, toMs: bundle.toMs, handles, openBids }),
-    [bundle.fromMs, bundle.toMs, handles, openBids]);
+  const ctx = useMemo<ReviewCtx>(() => ({ fromMs: bundle.fromMs, toMs: bundle.toMs, handles, openBids, splitAt: splitOn ? splitAt : undefined }),
+    [bundle.fromMs, bundle.toMs, handles, openBids, splitOn, splitAt]);
 
   const go = (ms: number | null) => {
     if (ms == null) return;
@@ -126,7 +170,7 @@ export default function SessionReview({ bundle, night, mode, extras }: {
 
   return (
     <ReviewContext.Provider value={ctx}>
-    <div className="min-w-0">
+    <div className="min-w-0" onPointerDownCapture={touched} onKeyDownCapture={touched} onWheelCapture={touched}>
       {/* Above the replay, so a reader from another guild meets "where did this come from?" first (the guild lead). */}
       <DataSources />
 
@@ -136,7 +180,15 @@ export default function SessionReview({ bundle, night, mode, extras }: {
           : <p className="rounded-md border border-border bg-panel p-4 text-sm text-dim">No replay was recorded in this window. The lists below are whatever else was logged in it.</p>}
       </div>
 
+      {nightOn && nightPanel && <NightPanel data={nightPanel} go={go} playheadRef={playheadRef} />}
+
       {extras && <div className="mt-3">{extras}</div>}
+      {splitOn && split && snapCut(bundle.fromMs + (bundle.toMs - bundle.fromMs) / 2, bundle) != null && (
+        <div ref={splitRef} className="mt-3 scroll-mt-16">
+          <SplitPanel fromMs={bundle.fromMs} toMs={bundle.toMs} playheadRef={playheadRef} request={splitReq}
+            hint={split.change} live={split.live} canShare={split.canShare} />
+        </div>
+      )}
 
       <div className="mt-5 flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Session details">
         {tabs.map(t => (
@@ -164,12 +216,21 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 function Seek({ ms, go, children }: { ms: number | null; go: (ms: number | null) => void; children?: React.ReactNode }) {
+  const { splitAt } = useContext(ReviewContext);
   if (ms == null) return <span className="text-dim">—</span>;
-  return (
+  const play = (
     <button type="button" onClick={() => go(ms)} title="Show this moment on the replay"
       className="whitespace-nowrap rounded border border-border bg-panel px-1.5 py-0.5 font-mono text-xs text-blue hover:bg-[#21262d]">
       ▶ {children ?? etMin.format(ms)}
     </button>
+  );
+  if (!splitAt) return play;
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {play}
+      <button type="button" onClick={() => splitAt(ms)} title="Start a new raid at this time" aria-label={`Start a new raid at ${etMin.format(ms)}`}
+        className="rounded border border-border bg-panel px-1 py-0.5 text-xs text-dim hover:bg-[#21262d] hover:text-text">✂</button>
+    </span>
   );
 }
 

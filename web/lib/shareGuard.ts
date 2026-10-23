@@ -19,7 +19,7 @@ import { createCeiling, createLimiter, type LimitResult } from './rateLimit';
 
 export const PAGE_PER_MIN = 30;        // page loads, per IP per share
 export const API_PER_MIN = 300;        // API calls, per IP across the share routes
-export const PAGE_PER_HOUR = 600;      // page views, per share
+export const PAGE_PER_HOUR = 3000;     // page views, per share: a share that follows the raid refreshes each viewer once a minute (~50 followers)
 export const API_PER_HOUR = 20_000;    // API calls, per share
 
 const pageLimiter = createLimiter(PAGE_PER_MIN, 60_000);

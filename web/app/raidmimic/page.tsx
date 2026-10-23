@@ -3,8 +3,10 @@
 // pitch. Served at the root of raidmimic.com / .net / .quest (middleware.ts rewrites there) and, for preview, at
 // wolfpack.quest/raidmimic and b.wolfpack.quest/raidmimic. Public, no sign-in, marked [beta]: a FIRST DRAFT.
 //
-// One layout: "The tour" (TourLayout.tsx), screens first with the small print folded away. The guild lead picked
-// it over the text-led "pitch" on 2026-10-19 and the other was deleted. All words live in
+// One layout: "Scene-first" (SceneLayout.tsx), a tabbed player of the real overlays organised by who they are for
+// (raiders; raid leaders and guild leaders), the small print folded away. The guild lead picked it on 2026-10-22
+// (Decision Desk, card raidmimic-layout-clips: "It should really be a combination") from five previews, and the
+// others, with the earlier tour, were deleted. There is no `?v=` switch. All words live in
 // web/lib/raidmimicLanding.ts; "coming" means coming, and the page never says otherwise.
 //
 // ⚠ Not indexable yet, like the eqmimic landing. The Register-interest button opens the anonymous form on
@@ -15,7 +17,7 @@ import type { Metadata } from 'next';
 import { isRaidmimicHost, RAIDMIMIC_SETUP_PATH } from '@/lib/raidmimicHost';
 import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
 import type { Ctx } from './_landing/Parts';
-import TourLayout from './_landing/TourLayout';
+import SceneLayout from './_landing/SceneLayout';
 
 const TITLE = '[beta] raidmimic · raid orchestration as a service';
 const DESCRIPTION =
@@ -37,5 +39,6 @@ export default function RaidmimicPage() {
     ? { onHost, interest: interestUrl(`${EQMIMIC_ORIGIN}/feedback`), setup: '/setup' }
     : { onHost, interest: interestUrl(EQMIMIC_FEEDBACK_PATH), setup: RAIDMIMIC_SETUP_PATH };
 
-  return <TourLayout ctx={ctx} />;
+  // A stale `?v=b` .. `?v=f` link from the preview days shows this same page: nothing reads the query.
+  return <SceneLayout ctx={ctx} />;
 }

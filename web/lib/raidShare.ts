@@ -105,6 +105,14 @@ export function isOpenShare(row: Pick<ShareRow, 'from_at' | 'to_at'>): boolean {
   return Number.isFinite(f) && Number.isFinite(t) && t - f === OPEN_SPAN_MS;
 }
 
+/**
+ * An open share whose window is still moving with the clock: not closed by an officer (that makes it a fixed window) and
+ * not yet at its 24 h cap. The shared page redraws itself about once a minute while this is true (lib/shareFollow.ts).
+ */
+export function shareIsFollowing(row: Pick<ShareRow, 'from_at' | 'to_at'>, now = Date.now()): boolean {
+  return isOpenShare(row) && now < Date.parse(row.from_at) + MAX_WINDOW_MS;
+}
+
 /** The latest end an officer may set: a little ahead of the clock (a raid being planned), not a year out. */
 export const MAX_END_AHEAD_MS = 12 * 60 * MINUTE_MS;
 
@@ -141,6 +149,47 @@ export function planShareChange(
   const win = makeWindow(from, toMs);
   if (!win) return { error: 'a share covers at most 24 hours' };
   return { to_at: new Date(win.toMs).toISOString() };
+}
+
+export type ShareWindowChange = { from_at: string; to_at: string } | { error: string };
+
+/**
+ * What an officer's PATCH does to a share's START and END (the guild lead, 2026-10-23: a share of the second of two
+ * back-to-back raids had to be moved by hand in SQL). `body.from` moves the start (rounded down to the minute, not past
+ * now + 12 h). The end follows planShareChange (`to` / `open`), and with neither: an OPEN share stays open (its end is
+ * the marker again, from + 24 h - 1 s) and a fixed one keeps its end, which must still be after the new start and within
+ * 24 h of it, the table's own check (raid_shares_window_ok). Returns both columns, or the reason it is refused.
+ */
+export function planShareWindow(
+  row: Pick<ShareRow, 'from_at' | 'to_at'>,
+  body: { from?: unknown; to?: unknown; open?: unknown },
+  now = Date.now(),
+): ShareWindowChange {
+  let fromMs = Date.parse(row.from_at);
+  if (!Number.isFinite(fromMs)) return { error: 'bad window' };
+  const wasOpen = isOpenShare(row);
+  const moveStart = body.from !== undefined && body.from !== null;
+  const moveEnd = (body.to !== undefined && body.to !== null) || body.open !== undefined;
+  if (!moveStart && !moveEnd) return { error: 'nothing to change' };
+  if (moveStart) {
+    if (typeof body.from !== 'string') return { error: 'bad start time' };
+    fromMs = Date.parse(body.from);
+    if (!Number.isFinite(fromMs)) return { error: 'bad start time' };
+    if (fromMs > now + MAX_END_AHEAD_MS) return { error: 'start is too far ahead' };
+    fromMs = Math.floor(fromMs / MINUTE_MS) * MINUTE_MS;
+  }
+  const from_at = new Date(fromMs).toISOString();
+  if (moveEnd) {
+    const plan = planShareChange({ from_at, to_at: row.to_at }, { to: body.to ?? undefined, open: body.open }, now);
+    return 'error' in plan ? plan : { from_at, to_at: plan.to_at };
+  }
+  if (wasOpen) return { from_at, to_at: new Date(openWindow(fromMs).toMs).toISOString() };   // keeps its shape
+  const toMs = Date.parse(row.to_at);
+  if (!Number.isFinite(toMs)) return { error: 'bad window' };
+  if (toMs <= fromMs) return { error: 'start must be before the end' };
+  const win = makeWindow(fromMs, toMs);
+  if (!win) return { error: 'a share covers at most 24 hours' };
+  return { from_at, to_at: new Date(win.toMs).toISOString() };
 }
 
 // ── The window ───────────────────────────────────────────────────────────────

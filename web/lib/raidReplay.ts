@@ -425,8 +425,53 @@ function runsOf(minutes: readonly MinuteInfo[]): { runs: ZoneRun[]; zones: strin
   return { runs, zones };
 }
 
-/** Minute rows (night_key, minute_at, zones, raiders) -> one summary per night, newest first. */
-export function summarizeNights(rows: NightMinute[]): NightSummary[] {
+/**
+ * One recorded stretch cut where the raid changed: `cuts` are instants (lib/raidCuts.ts: the roster after it is mostly
+ * different people from the roster before it), and a cut that falls inside the stretch makes two (or more). A cut
+ * outside it, or at its very first minute, changes nothing.
+ */
+export function cutSession<T extends { t: number }>(g: readonly T[], cuts: readonly number[]): T[][] {
+  const inside = [...new Set(cuts.filter(c => c > g[0].t && c <= g[g.length - 1].t))].sort((a, b) => a - b);
+  if (!inside.length) return [g.slice()];
+  const out: T[][] = [];
+  let from = 0;
+  for (const c of inside) {
+    const i = g.findIndex(m => m.t >= c);
+    if (i > from) { out.push(g.slice(from, i)); from = i; }
+  }
+  out.push(g.slice(from));
+  return out;
+}
+
+/** The kills that belong to the session on screen: died inside it, give or take the two minutes the last row can trail. */
+export function killsInSession<T extends { atMs: number }>(kills: readonly T[], fromMs: number, toMs: number): T[] {
+  return kills.filter(k => k.atMs >= fromMs && k.atMs < toMs + 2 * MINUTE_MS);
+}
+
+/**
+ * How far past a session's end a kill still counts as its own: the two minutes the last row can trail, but never into
+ * the session that follows (a raid change cuts one session off where the next begins, so a kill there is the next
+ * raid's). `nextFromMs` is that next session's start, or null for the newest one.
+ */
+export function trailSlackMs(toMs: number, nextFromMs: number | null): number {
+  return nextFromMs == null ? 2 * MINUTE_MS : Math.max(0, Math.min(2 * MINUTE_MS, nextFromMs - toMs));
+}
+
+/**
+ * Where a window's playhead opens: its start, unless the recording only begins later in it (the minutes before a
+ * back-to-back raid's first row), in which case the first recorded minute, so the board opens on a raid and not on
+ * "no zone, 0 raiders".
+ */
+export function openingPlayhead(spans: readonly Span[], startMs: number): number {
+  const sp = nextSpanStart(spans, startMs);
+  return !sp.inside && sp.next != null ? sp.next : startMs;
+}
+
+/**
+ * Minute rows (night_key, minute_at, zones, raiders) -> one summary per night, newest first. A session is a run of
+ * minutes with no gap over SESSION_GAP_MS, then cut wherever `cuts` say the raid changed (none by default).
+ */
+export function summarizeNights(rows: NightMinute[], cuts: readonly number[] = []): NightSummary[] {
   const by = new Map<string, MinuteInfo[]>();
   for (const r of rows) {
     const t = Date.parse(r.minute_at);
@@ -443,7 +488,7 @@ export function summarizeNights(rows: NightMinute[]): NightSummary[] {
   for (const [key, minutes] of by) {
     minutes.sort((a, b) => a.t - b.t);
     const { runs, zones } = runsOf(minutes);
-    const sessions: ReplaySession[] = splitSessions(minutes).map(g => {
+    const sessions: ReplaySession[] = splitSessions(minutes).flatMap(g => cutSession(g, cuts)).map(g => {
       const from = g[0].t, to = g[g.length - 1].t + MINUTE_MS;
       const known = g.flatMap(m => (m.raiders != null ? [m.raiders] : []));
       const sr = runsOf(g);

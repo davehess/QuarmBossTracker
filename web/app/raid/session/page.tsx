@@ -9,6 +9,10 @@
 // "Share…", which makes a public link to this exact window (/share/raid/<token>, lib/raidShare.ts). The same
 // loader and the same SessionReview render the public page, so a member sees exactly what a shared link shows,
 // plus the Brewall map layer the public route may not serve.
+//
+// Under the replay: "Start a new raid here" (lib/raidSplit.ts; two back-to-back raids are one recorded session) and
+// the night sliced into segments an officer confirms (lib/nightSlices.ts), with the night's named fights and mass
+// deaths. Both were beta previews (?v=split, ?v=segments) until the guild lead picked them, 2026-10-23.
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
@@ -19,7 +23,10 @@ import { selectAll } from '@/lib/selectAll';
 import { GUILD_TAG } from '@/lib/guild';
 import { makeWindow, windowIso } from '@/lib/raidShare';
 import { loadSessionReview } from '@/lib/raidSessionLoad';
-import { sessionLabel, summarizeNights, type NightMinute } from '@/lib/raidReplay';
+import { liveAvailable, sessionLabel, summarizeNights, type NightMinute } from '@/lib/raidReplay';
+import { loadRaidCuts } from '@/lib/raidCuts';
+import { loadNightMarks, loadSlices } from '@/lib/nightSlicesLoad';
+import { slicesIn } from '@/lib/nightSlices';
 import NewPageTag from '@/components/NewPageTag';
 import SessionReview from './SessionReview';
 import ShareControls from './ShareControls';
@@ -78,7 +85,12 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
   }
 
   const admin = supabaseAdmin();
-  const [review, officer] = await Promise.all([loadSessionReview(admin, win), isOfficer(user.id)]);
+  const [review, officer, slices] = await Promise.all([
+    loadSessionReview(admin, win, { breaks: true }),
+    isOfficer(user.id),
+    loadSlices(admin),
+  ]);
+  const marks = await loadNightMarks(admin, win, review.bundle.kills).catch(() => ({ fights: [], deaths: [], mass: [] }));
   const { from: fromIso, to: toIso } = windowIso(win);
 
   return (
@@ -92,7 +104,13 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
         bundle={review.bundle}
         night={review.night}
         mode={{ kind: 'member' }}
-        extras={officer ? <ShareControls fromIso={fromIso} toIso={toIso} defaultTitle={`Raid session, ${etDay.format(win.fromMs)}`} /> : undefined}
+        extras={officer ? <ShareControls fromIso={fromIso} toIso={toIso} defaultTitle={`Raid session, ${etDay.format(win.fromMs)}`} splitAtMs={review.change?.atMs ?? null} /> : undefined}
+        split={{ change: review.change, live: liveAvailable(win.toMs, Date.now()), canShare: officer }}
+        nightPanel={{
+          fromMs: win.fromMs, toMs: win.toMs, spans: review.night?.spans ?? [],
+          fights: marks.fights, deaths: marks.deaths, mass: marks.mass,
+          slices: slicesIn(slices, win), breaks: review.breaks ?? [], canEdit: officer,
+        }}
       />
     </div>
   );
@@ -107,7 +125,8 @@ async function recentSessions() {
     .gte('minute_at', since)
     .order('minute_at')
     .range(from, to));
-  return summarizeNights(rows)
+  const cuts = await loadRaidCuts(supabaseAdmin(), rows).catch(() => []);
+  return summarizeNights(rows, cuts)
     .flatMap(n => n.sessions.map(s => ({ n, s })))
     .sort((a, b) => b.s.from - a.s.from)
     .map(({ s }) => ({

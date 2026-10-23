@@ -37,6 +37,25 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raid-session-nights-2026-10-23',
+    title: 'Web 2.1.11',
+    version: 'Web 2.1.11',
+    date: '2026-10-23',
+    headline: 'The raid session page can start a new raid partway through a night and slice a night into its parts, a shared raid keeps up with the raid, and raidmimic.com shows the overlays at work.',
+    features: [
+      { name: 'Start a new raid here', blurb: 'Two raids back to back are one recorded session. Cut the session at the replay, or at any time in the lists, and get a Before and an After, each with its own page and its own share link. The page also guesses where the crowd changed.' },
+      { name: 'The night, sliced', blurb: 'The page proposes where a night changed: quiet gaps, a different crowd, our fights giving way to another guild\'s. An officer fixes the names and the edges and confirms. Under it, every named fight of the night, wipes and another guild\'s fights included, and the moments when many people died at once, with each fight\'s damage timeline one tap away.' },
+      { name: 'Shared raids that follow the raid', blurb: 'A link that follows the raid now updates itself about once a minute. It waits while you are looking around, and it stops when an officer closes the link.' },
+      { name: 'Officers can move a share\'s start and end', blurb: 'Set the start, or the start and the end together, or start the link where the raid changed. An end time earlier than the start means the next morning.' },
+      { name: 'Raidmimic.com', blurb: 'The page opens on short recordings of the real overlays, one set for raiders and one for raid and guild leaders, with more pictures of the Map, Target Info, the CH chain and the damage meter underneath.' },
+    ],
+    fixes: [
+      'A session or a shared raid listed every kill of the night on its map. It shows only the kills inside its own window now.',
+      'A window that started before its first recorded minute opened on "no zone, 0 raiders". It opens on the first recorded minute.',
+      'The replay\'s session list showed two raids that ran back to back as one session. They are two now.',
+    ],
+  },
+  {
     key: 'mimic-3-0-1-2026-10-22',
     title: 'Raid Mimic 3.0.1',
     version: 'Mimic 3.0.1 · Agent 4.0.5 · Bot 4.0.6',
@@ -207,7 +226,7 @@ export const releases: Release[] = [
     date: '2026-10-18',
     headline: 'A new page for guild leaders shows what the platform does for a whole raid, and says plainly which parts run today and which are still coming.',
     features: [
-      { name: 'The guild leaders\' page', blurb: 'Raid boards, flags and lockouts, loot, merged parses, the night\'s review and overlays, each marked as running today, in testing or coming. It is laid out as a short tour of screens, with the small print folded away. It will live at raidmimic.com; Mimic for players stays at eqmimic.quest.' },
+      { name: 'The guild leaders\' page', blurb: 'Raid boards, flags and lockouts, loot, merged parses, the night\'s review and overlays, each marked as running today, in testing or coming. It opens on short recordings of the real overlays at work, one set for raiders and one for raid and guild leaders, with the small print folded away. It will live at raidmimic.com; Mimic for players stays at eqmimic.quest.' },
     ],
     fixes: [],
   },
