@@ -35,7 +35,7 @@
 
 import { useMemo, useState } from 'react';
 import type { Band, MTSegment } from '@/lib/fightCurve';
-import { groupSeriesByClass } from '@/lib/fightCurve';
+import { groupSeriesByClass, hpScale } from '@/lib/fightCurve';
 
 // Validated 2026-08-13 against surface #0d1117 (dataviz validator): lightness
 // band PASS, chroma floor PASS, normal-vision floor PASS (worst adjacent ΔE
@@ -84,7 +84,7 @@ type DrawBand = {
 
 export function DamageCurve({
   buckets, bands, totalDamage, mt, durationSec,
-  observedHp = [], classOf = {}, repeatPullWarning = false, series,
+  observedHp = [], classOf = {}, repeatPullWarning = false, series, bossHp = null, killed = true,
 }: {
   buckets: number[];
   bands: Band[];
@@ -98,6 +98,10 @@ export function DamageCurve({
    *  grouping falls back to the folded bands and the long tail lumps into
    *  whatever the fold called it. */
   series?: Band[];
+  /** Catalog HP of the boss. Only used when `killed` is false (see hpScale). */
+  bossHp?: number | null;
+  /** False for a wipe: the Y axis then divides by the catalog HP, not the damage dealt. */
+  killed?: boolean;
 }) {
   // View state: which class we're drilled into (null = class overview), which
   // band key the pointer is on (chip, legend row, or ribbon), pinned highlight
@@ -107,6 +111,7 @@ export function DamageCurve({
   const [pinned, setPinned] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
 
+  const { denom, basis, showHp } = hpScale(totalDamage, bossHp, killed);
   const perChar = (series && series.length ? series : bands.filter(b => !b.isOther));
   const classGroups = useMemo(
     () => groupSeriesByClass(perChar, classOf),
@@ -215,8 +220,8 @@ export function DamageCurve({
       const lower = below.slice();
       for (let i = 0; i < buckets.length; i++) below[i] += band.cum[i] || 0;
       const upper = below.slice();
-      const top = upper.map((v, i) => `${xFor(buckets[i])},${yFor((v / totalDamage) * 100)}`);
-      const bot = lower.map((v, i) => `${xFor(buckets[i])},${yFor((v / totalDamage) * 100)}`).reverse();
+      const top = upper.map((v, i) => `${xFor(buckets[i])},${yFor((v / denom) * 100)}`);
+      const bot = lower.map((v, i) => `${xFor(buckets[i])},${yFor((v / denom) * 100)}`).reverse();
       return {
         band, bi,
         points: [...top, ...bot].join(' '),
@@ -224,7 +229,7 @@ export function DamageCurve({
         hiFinal: upper[upper.length - 1] || 0,
       };
     });
-  }, [drawBands, buckets, totalDamage, dur]);
+  }, [drawBands, buckets, totalDamage, denom, dur]);
 
   // Right-edge labels (ask #3): name + % of the fight's damage, sitting beside
   // each band's final span. A simple downward collision pass keeps them 13px
@@ -235,7 +240,7 @@ export function DamageCurve({
     for (const r of ribbons) {
       const share = totalDamage > 0 ? ((r.band.total / totalDamage) * 100) : 0;
       if (share < 1.5) continue;
-      const yMid = (yFor((r.loFinal / totalDamage) * 100) + yFor((r.hiFinal / totalDamage) * 100)) / 2;
+      const yMid = (yFor((r.loFinal / denom) * 100) + yFor((r.hiFinal / denom) * 100)) / 2;
       out.push({
         key: r.band.key,
         text: `${r.band.label} ${share.toFixed(1)}%`,
@@ -260,7 +265,7 @@ export function DamageCurve({
       ceil = out[i].y + GAP;
     }
     return out;
-  }, [ribbons, totalDamage]);
+  }, [ribbons, totalDamage, denom]);
 
   // MT-lane gaps ≥10s (ask #2): nobody was taking hits — the mob was moving,
   // kited, feared, or off the raid entirely. Sub-10s holes were already
@@ -280,11 +285,11 @@ export function DamageCurve({
   const gridPcts = [0, 25, 50, 75, 100];
 
   const derivedHp = useMemo(() => {
-    if (!totalDamage || !buckets.length) return '';
+    if (!totalDamage || !buckets.length || !showHp) return '';
     const running = new Array(buckets.length).fill(0);
     for (const b of drawBands) for (let i = 0; i < buckets.length; i++) running[i] += b.cum[i] || 0;
-    return running.map((v, i) => `${xFor(buckets[i])},${yFor(100 - (v / totalDamage) * 100)}`).join(' ');
-  }, [drawBands, buckets, totalDamage, dur]);
+    return running.map((v, i) => `${xFor(buckets[i])},${yFor(100 - (v / denom) * 100)}`).join(' ');
+  }, [drawBands, buckets, totalDamage, denom, showHp, dur]);
 
   const enterDrill = (klass: string) => {
     setDrill(klass); setPinned(new Set()); setHover(null);
@@ -305,7 +310,10 @@ export function DamageCurve({
           {drilled && <span style={{ color: C.dim, fontWeight: 400 }}> · {drilled.klass}</span>}
         </b>
         <span style={{ color: C.dim, fontSize: 11 }}>
-          share of the boss&rsquo;s health bar &middot; {fmt(totalDamage)} total &middot; {mmss(dur)}
+          {basis === 'catalog'
+            ? <>share of the boss&rsquo;s {fmt(denom)} health &middot; not killed</>
+            : killed ? <>share of the boss&rsquo;s health bar</> : <>share of the damage dealt &middot; not killed</>}
+          {' '}&middot; {fmt(totalDamage)} total &middot; {mmss(dur)}
         </span>
       </div>
 
@@ -487,13 +495,17 @@ export function DamageCurve({
       </div>
 
       <div style={{ display: 'flex', gap: 14, marginTop: 8, color: C.dim, fontSize: 11, flexWrap: 'wrap' }}>
-        <span><span style={{ display: 'inline-block', width: 14, height: 2, background: C.hp,
-                              verticalAlign: 'middle', marginRight: 4 }} />boss HP (from damage dealt)</span>
+        {showHp && (
+          <span><span style={{ display: 'inline-block', width: 14, height: 2, background: C.hp,
+                                verticalAlign: 'middle', marginRight: 4 }} />{basis === 'catalog' ? 'boss HP (catalog HP minus damage dealt)' : 'boss HP (from damage dealt)'}</span>
+        )}
         {observedHp.length > 1 && (
           <span><span style={{ display: 'inline-block', width: 14, height: 2, background: C.hpObs,
                                 verticalAlign: 'middle', marginRight: 4 }} />boss HP (observed)</span>
         )}
-        <span>bands stack to 100% of damage done — the top edge is the health removed</span>
+        <span>{basis === 'catalog'
+          ? 'the top edge is the health removed; the boss was not killed, so it need not reach 100%'
+          : 'bands stack to 100% of damage done — the top edge is the health removed'}</span>
         <span>MT gaps = nobody taking hits (mob moving / kited / off the raid)</span>
       </div>
     </div>

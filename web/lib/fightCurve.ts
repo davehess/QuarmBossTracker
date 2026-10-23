@@ -275,3 +275,24 @@ export function observedHpSeries(
                  && p.pct >= 0 && p.pct <= 100)
     .sort((a, b) => a.tSec - b.tSec);
 }
+
+/**
+ * What the chart's Y axis (100% = the boss's whole health bar) divides by.
+ *
+ * A KILL removed the whole bar, so "damage dealt" IS the bar and the stack tops out at 100% (the original
+ * premise, unchanged). A fight that was NOT killed (a wipe) removed only part of it: dividing by the damage
+ * dealt drew the boss at 0% on a mob that was never dead (a wipe at ~62% read as a kill, the guild lead,
+ * 2026-10-23). So a wipe divides by the catalog HP when it is known, floored at the damage dealt so heals or
+ * a stale catalog number can never push the stack past the top. With no catalog HP the derived HP line is
+ * withheld (`showHp: false`) rather than drawn wrong.
+ */
+export function hpScale(
+  totalDamage: number,
+  bossHp: number | null | undefined,
+  killed: boolean = true,
+): { denom: number; basis: 'damage' | 'catalog'; showHp: boolean } {
+  if (killed) return { denom: totalDamage, basis: 'damage', showHp: true };
+  const hp = Number(bossHp);
+  if (Number.isFinite(hp) && hp > 0) return { denom: Math.max(hp, totalDamage), basis: 'catalog', showHp: true };
+  return { denom: totalDamage, basis: 'damage', showHp: false };
+}
