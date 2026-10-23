@@ -20,6 +20,7 @@ import { GUILD_TAG } from '@/lib/guild';
 import { makeWindow, windowIso } from '@/lib/raidShare';
 import { loadSessionReview } from '@/lib/raidSessionLoad';
 import { liveAvailable, sessionLabel, summarizeNights, type NightMinute } from '@/lib/raidReplay';
+import { loadRaidCuts } from '@/lib/raidCuts';
 import NewPageTag from '@/components/NewPageTag';
 import SessionReview from './SessionReview';
 import ShareControls from './ShareControls';
@@ -110,7 +111,8 @@ async function recentSessions() {
     .gte('minute_at', since)
     .order('minute_at')
     .range(from, to));
-  return summarizeNights(rows)
+  const cuts = await loadRaidCuts(supabaseAdmin(), rows).catch(() => []);
+  return summarizeNights(rows, cuts)
     .flatMap(n => n.sessions.map(s => ({ n, s })))
     .sort((a, b) => b.s.from - a.s.from)
     .map(({ s }) => ({

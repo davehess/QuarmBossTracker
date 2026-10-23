@@ -165,7 +165,7 @@ describe('the timeline strip sits on both spectator pages (B, picked 2026-10-21)
   it('the live page and the replay page both carry it; the session review embed does not', () => {
     expect(src('web/app/spectator/page.tsx')).toMatch(/<RaidTimeline \/>/);
     expect(src('web/app/spectator/replay/page.tsx')).toMatch(/<ReplayBoard timeline \/>/);
-    expect(src('web/app/spectator/replay/ReplayBoard.tsx')).toMatch(/\{timeline && <RaidTimeline kills=\{killList\} nowMs=\{uiT\} \/>\}/);
+    expect(src('web/app/spectator/replay/ReplayBoard.tsx')).toMatch(/\{timeline && <RaidTimeline kills=\{sessionKills\} nowMs=\{uiT\} \/>\}/);
     expect(src('web/components/RaidTimeline.tsx')).not.toMatch(/function Cards|timelineVariant/);
   });
 

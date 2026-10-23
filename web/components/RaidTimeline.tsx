@@ -24,11 +24,25 @@ const hms = (ms: number) => etClock.format(ms);
 const POLL_MS = 10_000;
 const URGENT_SEC = 60;
 
-type Props = { kills?: Kill[]; nowMs?: number; src?: string };
+const etMinute = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
 
-export default function RaidTimeline({ kills, nowMs, src = '/api/spectator/timeline' }: Props) {
+// What the live answer says about WHERE the raid starts (/spectator?v=newraid, lib/liveRaidLoad.ts); absent otherwise.
+type Where = { from: number; why: 'manual' | 'roster' | 'zone'; earlier: { from: number; to: number } | null; cut: number | null; now: number };
+const WHY = { manual: 'started by an officer', roster: 'the roster changed', zone: 'a new zone after a quiet spell' };
+const reviewHref = (from: number, to: number) => `/raid/session?from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
+
+type Props = {
+  kills?: Kill[]; nowMs?: number; src?: string;
+  /** An officer on /spectator?v=newraid: show "Start a new raid now". */
+  canCut?: boolean;
+};
+
+export default function RaidTimeline({ kills, nowMs, src = '/api/spectator/timeline', canCut = false }: Props) {
   const controlled = kills !== undefined && nowMs !== undefined;
   const [fetched, setFetched] = useState<Kill[]>([]);
+  const [where, setWhere] = useState<Where | null>(null);
+  const [cutBusy, setCutBusy] = useState(false);
+  const [reload, setReload] = useState(0);   // bumped after a cut is set or cleared: ask again now
   const [status, setStatus] = useState<'loading' | 'ok' | 'error' | 'signedout'>('loading');
   const [skew, setSkew] = useState(0);
   const [endedAt, setEndedAt] = useState<number | null>(null);   // a shared window that is over: the clock stops here
@@ -45,8 +59,12 @@ export default function RaidTimeline({ kills, nowMs, src = '/api/spectator/timel
         if (!alive) return;
         if (res.status === 401) { setStatus('signedout'); return; }
         if (!res.ok) { setStatus('error'); return; }
-        const j = await res.json() as { now: number; ended?: boolean; kills: { npc_id: number; name: string; at: number }[] };
+        const j = await res.json() as {
+          now: number; ended?: boolean; kills: { npc_id: number; name: string; at: number }[];
+          from?: number | null; why?: Where['why'] | null; earlier?: Where['earlier']; cut?: number | null;
+        };
         if (!alive) return;
+        setWhere(typeof j.from === 'number' && j.why ? { from: j.from, why: j.why, earlier: j.earlier ?? null, cut: j.cut ?? null, now: j.now } : null);
         setSkew(j.now - Date.now());
         setFetched(j.kills.map(k => ({ npcId: k.npc_id, name: k.name, atMs: k.at })));
         setStatus('ok');
@@ -56,7 +74,18 @@ export default function RaidTimeline({ kills, nowMs, src = '/api/spectator/timel
     load();
     id = setInterval(load, POLL_MS);
     return () => { alive = false; clearInterval(id); };
-  }, [controlled, src]);
+  }, [controlled, src, reload]);
+
+  // An officer's cut: POST it, then read the timeline again at once rather than waiting out the 10 s poll.
+  const sendCut = async (action: 'start' | 'clear') => {
+    if (action === 'start' && !window.confirm('Start a new raid now? The timeline will show only bosses that die from this moment. An officer can undo it.')) return;
+    setCutBusy(true);
+    try {
+      const res = await fetch('/api/spectator/newraid', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) });
+      if (res.ok) setReload(n => n + 1);
+    } catch { /* the page keeps showing what it had; try again */ }
+    setCutBusy(false);
+  };
 
   useEffect(() => {
     if (controlled || endedAt !== null) return;
@@ -72,6 +101,27 @@ export default function RaidTimeline({ kills, nowMs, src = '/api/spectator/timel
       <div className="mb-2 flex flex-wrap items-baseline gap-x-3 text-xs text-dim">
         <b className="text-sm text-text">Raid timeline</b>
         <span>{controlled ? 'at the replay playhead' : endedAt !== null ? 'as it stood when the shared window closed, Eastern time' : 'live, Eastern time'}</span>
+        {!controlled && where && (
+          <span>
+            this raid from <b className="text-text">{etMinute.format(where.from)}</b> ({WHY[where.why]})
+            {where.earlier && <> · <a href={reviewHref(where.earlier.from, where.earlier.to)} className="underline hover:text-text">earlier raid</a></>}
+            {' · '}<a href={reviewHref(where.from, where.now + 60_000)} className="underline hover:text-text">review this raid</a>
+          </span>
+        )}
+        {!controlled && canCut && (
+          <span className="ml-auto flex gap-2">
+            {where?.cut != null && (
+              <button type="button" disabled={cutBusy} onClick={() => sendCut('clear')}
+                className="rounded border border-border bg-panel px-2.5 py-1 text-xs text-text hover:bg-[#21262d] disabled:opacity-50">
+                Undo new raid
+              </button>
+            )}
+            <button type="button" disabled={cutBusy} onClick={() => sendCut('start')}
+              className="rounded border border-border bg-panel px-2.5 py-1 text-xs text-text hover:bg-[#21262d] disabled:opacity-50">
+              Start a new raid now
+            </button>
+          </span>
+        )}
       </div>
       {tl.deaths.length === 0 ? (
         <p className="text-sm text-dim">
