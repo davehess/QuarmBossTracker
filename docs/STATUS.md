@@ -272,6 +272,7 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/target-info-item-links.test.js`. ⚠ Found on the way: the chat relay's item links decode the id as HEX, but
   Quarm writes it in DECIMAL, so those PQDI links point at the wrong item (see the bot-side note, not fixed here).
   Waits on the guild lead pasting a copied link into EQ to confirm the 7-digit form.
+- **⏳ Raid session: "Start a new raid here" (web 2.1.5, beta preview `?v=split`, 2026-10-23).** The guild lead: two raids back to back are one recorded session; cut the window at the playhead (or any ✂ beside a time), get Before/After halves each with Open and Share… (the live half follows the raid), plus a one-line "looks like a different raid from 11:31 PM" hint from the roster turnover; nothing is saved. `web/lib/raidSplit.ts`, `SplitPanel.tsx`, test `test/raid-split.test.js`; read `https://b.wolfpack.quest/raid/session?from=2026-10-22T23:02Z&to=2026-10-23T04:34Z&v=split`; no `?v=` is unchanged. Waits on the guild lead's pick before main.
 - **⏳ Raid session review + share page: opt-outs show as their class; bid winners keep their name and get a Bids tab
   (web, beta only, built 2026-10-18, no version bump).** The guild lead, 2026-10-17: *"if someone opts out, just put their
   class on that spot to anonymize them. do not anonymize bid winners, but link all of those with a unique handle that

@@ -34,10 +34,12 @@ import {
   type CapturedTickIn, type DkpLootIn, type DkpTickIn, type EncounterIn, type LootedIn,
   type ObservedIn, type PlayerIn, type SessionBundle,
 } from './raidSession';
+import { detectRaidChange, whoSeries, type RaidChange } from './raidSplit';
 import type { NightSummary, NightMinute } from './raidReplay';
 import type { RollOverride, RollSetRow } from './rolls';
 
-export type SessionReview = { bundle: SessionBundle; night: NightSummary | null };
+// `change` is a time and two counts, never a name (raidSplit.ts); only the members' page uses it, behind ?v=split.
+export type SessionReview = { bundle: SessionBundle; night: NightSummary | null; change: RaidChange | null };
 
 const MINUTE_PAGE = 30;       // rows of ~25 KB each: ~750 KB a response
 // The top-five list is read for this many fights at most (curated bosses first, then the biggest). It was 60, which
@@ -171,7 +173,7 @@ export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow): P
     rolls: buildRolls(r.rollRows, r.overrides, r.looted, anon),
     bidders,
   };
-  const value: SessionReview = { bundle, night: windowNight(r.minutes, win) };
+  const value: SessionReview = { bundle, night: windowNight(r.minutes, win), change: detectRaidChange(whoSeries(r.minutes)) };
 
   if (cache.size >= 20) cache.delete(cache.keys().next().value as string);
   cache.set(key, { at: Date.now(), sig, value });

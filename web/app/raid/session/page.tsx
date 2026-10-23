@@ -19,7 +19,7 @@ import { selectAll } from '@/lib/selectAll';
 import { GUILD_TAG } from '@/lib/guild';
 import { makeWindow, windowIso } from '@/lib/raidShare';
 import { loadSessionReview } from '@/lib/raidSessionLoad';
-import { sessionLabel, summarizeNights, type NightMinute } from '@/lib/raidReplay';
+import { liveAvailable, sessionLabel, summarizeNights, type NightMinute } from '@/lib/raidReplay';
 import NewPageTag from '@/components/NewPageTag';
 import SessionReview from './SessionReview';
 import ShareControls from './ShareControls';
@@ -37,11 +37,13 @@ const etStamp = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? '';
 
-export default async function RaidSessionPage({ searchParams }: { searchParams: { from?: string | string[]; to?: string | string[] } }) {
+export default async function RaidSessionPage({ searchParams }: { searchParams: { from?: string | string[]; to?: string | string[]; v?: string | string[] } }) {
   const from = one(searchParams.from);
   const to = one(searchParams.to);
+  // ?v=split is the beta preview of "Start a new raid here" (lib/raidSplit.ts). Without it the page is as it was.
+  const split = one(searchParams.v) === 'split';
   const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect('/auth/signin?next=' + encodeURIComponent('/raid/session' + (from && to ? `?from=${from}&to=${to}` : '')));
+  if (!user) redirect('/auth/signin?next=' + encodeURIComponent('/raid/session' + (from && to ? `?from=${from}&to=${to}${split ? '&v=split' : ''}` : '')));
 
   const win = from && to ? makeWindow(Date.parse(from), Date.parse(to)) : null;
   const header = (
@@ -93,6 +95,7 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
         night={review.night}
         mode={{ kind: 'member' }}
         extras={officer ? <ShareControls fromIso={fromIso} toIso={toIso} defaultTitle={`Raid session, ${etDay.format(win.fromMs)}`} /> : undefined}
+        split={split ? { change: review.change, live: liveAvailable(win.toMs, Date.now()), canShare: officer } : undefined}
       />
     </div>
   );

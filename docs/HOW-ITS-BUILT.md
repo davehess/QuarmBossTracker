@@ -612,6 +612,7 @@ award): shown by name, linking a **Bids** section (`web/lib/raidSessionBids.ts`,
 they won and the **closed** auctions they bid on and lost (`opendkp_auction_bids`; open auctions sealed). The
 members' board reads the sign-in-gated `/api/raid/session/replay` (twin of the share's replay route) so it is
 labelled the same way. Tests: `test/raid-session-anon.test.js`.
+**Splitting a session into two raids** (beta preview `?v=split`, web 2.1.5, 2026-10-23): `SplitPanel.tsx` cuts the window at the replay playhead, a ✂ beside any time, or the loader's roster-turnover suggestion (`web/lib/raidSplit.ts`); each half is an ordinary window with Open and the existing Share… (the still-running half follows the raid); nothing is written. `https://b.wolfpack.quest/raid/session?from=2026-10-22T23:02Z&to=2026-10-23T04:34Z&v=split`. Tests: `test/raid-split.test.js`.
 Load-bearing details:
 - **Anchored on the night's FIRST ENCOUNTER**, never `Date.now()` — by the time
   the review runs the scheduled-event window has closed, so "now" can plan a
