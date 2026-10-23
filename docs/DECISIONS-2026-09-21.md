@@ -116,6 +116,10 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Route planner + off-night plans + Sol Ro tower** (§407) | Live on main (web 2.0.2): `/raid/plan/routes` [beta], Tactics + the tower, versions, compare, splits, fewest raiders per boss | the guild lead: press "Import tonight's planner" once as an officer; pick the off-night bosses and the fewest headline (A everyone present, default) |
 | **Guest raids stored as ours** (§408) | Not fixed | the guild lead: A tag them (recommended) or B don't send |
+| **Slicing a night + night timeline** (§419) | Two previews on beta (web 2.1.10): `?v=slices` draw, `?v=segments` confirm | the guild lead: pick one on the 2026-10-22 night (B recommended) |
+| **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
+| **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
+| **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
 | **Route planner + off-night plans + Sol Ro tower** (§407, §410) | Live on main (web 2.1.0): 3D Real/Floors with drag, One leg, Straight/Walk/Recorded, compare with event kills; off-night A picked | the guild lead: press "Import tonight's planner" once as an officer; a session: build floor clutter A (floors follow the current leg) |
 | **Guest raids stored as ours** (§408, §410) | Picked A (tag them); not built | a session: tag guest-raid roster rows and keep them out of our numbers |
 | **Windows jump to the top-left mid-drag** (§412) | Fix being built on beta (window writers + SetWindowPos flags), plus Target Info 60 s miss retry and overlay crash recovery | the guild lead: on the next beta, drag the dashboard and the Dock; if it still jumps, send the `[window]` lines from agent.log |
@@ -12513,3 +12517,49 @@ never the path.
 - **Left alone on purpose:** a saved overlay SET or an imported layout that carries the Canvas turns it on when the person loads it
   (they approved it in a dialog with Undo); a Canvas group hotkey turns it on (they bound it).
 - Tests: `test/canvas-stays-off.test.js`. Docs: `STATUS.md`, `HOW-ITS-BUILT.md`.
+### 413. Shared raids follow the raid, and their window is moved from the page, not by hand (2026-10-23, web 2.1.7–2.1.8 beta)
+A share that "follows the raid" is stored as `to_at = from_at + 24 h − 1 s`; moving only its start breaks that shape and freezes
+its end (a hand SQL edit did exactly that, and the slider ended at 7:02 PM). Officers now move a share's start and end on the
+session page (Set start, Set start and end, Start this share at the split), which writes both columns together and drops the
+caches. An end typed earlier than the start, within a day, means the next morning (*"consider the date"*; `endAfterStart` in
+`web/lib/raidSplit.ts`). The replay, kill chips and path marks show only the window's own bosses. Only the timeline strip polls
+(10 s); the replay needs a reload — the A/B for live refresh (self-refresh vs an "N new minutes — Update" chip, B recommended)
+is open.
+
+### 414. Officer actions are stored under the Discord name, never an email address (2026-10-23, web 2.1.2 main)
+*"Needs to remove email from this and instead do username"* (a parse page read "marked by <address>"). `web/lib/actorName.ts`:
+`actorName` writes, `shownActor` hides an address or account id left in an old row; the 33 stored fight marks were rewritten to
+names. Six other pages still write an address as the actor (attendance, encounters admin, triggers, raid plan, who, spell notes):
+the sweep is the guild lead's pick (A recommended).
+
+### 415. A fight can be a wipe AND another mark (2026-10-23, web 2.1.3 main, migration 20261023120000)
+*"be able to mark as Wipe AND another thing. This was a non-guild wipe."* `encounters.is_wipe` rides beside the one-of
+`classification`; a wipe keeps a non-null classification ('wipe' alone, or the other mark), so every `classification is null`
+"guild kill" reader is unchanged and guild-wipe counts (`classification = 'wipe'`) do not count another guild's. A CHECK keeps the
+two agreeing. Wipe is a toggle on /parses and /parses/<id>.
+
+### 416. Two wipes on one boss are two fights (2026-10-23, agent 4.0.15 beta + migration 20261023130000 main)
+*"actually there were two wipes"* — two pulls ~30 min apart uploaded as one encounter because trash between them kept the
+per-log fight builder open. Agent: a fight ends when its top target has taken no damage for 5 min (`_splitIfTopIdle`). Bot:
+`find_or_create_encounter` declines a match whose start is more than 15 min past that fight's end (15 keeps the 2026-07-13
+dispel-reset knit, re-engaged ~10.5 min after its active end). Open: the nightly reconcile stamps `ended_at` on unconfirmed rows
+and the raid review reads `ended_at` as a kill, so a wipe can read as a kill there (A: reconcile leaves wipes unstamped,
+recommended). The one merged parse stays as it is unless the guild lead asks for a split (estimated per-player numbers).
+
+### 417. The CH chain reads a chain tool's setup line (2026-10-23, agent 4.0.13–4.0.14 beta)
+Another guild's raid: `D&D 111 CH - <target> - 84%` calls (4.0.13) and the tool's `set_chain: 111 <name>, 222 <name>, … set_delay: 3`
+(4.0.14) — the order seats the slots through the original roster path, and set_delay is the declared beat until one is measured.
+Hard rule kept: *"DO NOT disrupt the shout ones for wolf pack"* — the Wolf Pack snapshot is byte-identical (golden test).
+
+### 418. raidmimic.com captures never carry a real name — and "invented" names are checked, not assumed (2026-10-23, web 2.1.9 beta)
+Screenshots from a real raid cannot go on the public page; the six new views (Map + Target Info, HUD Box, CH chain, DPS list +
+meter) are drawn by `scripts/raidmimic-shots` from fixtures. Three names in that pool turned out to be real players (one in our
+characters table, two in /who) and had been on beta's captures since web 2.0.3: replaced and every capture re-made. Any new
+invented name is checked against `characters`, `who_observations` and `eqemu_npc_types` before use. The old files remain in git
+history (not rewritten).
+
+### 419. Slicing a night: two previews (2026-10-23, web 2.1.10 beta)
+*"I need a way to slice out events and actual raids vs other times spent in raid"*, plus named fights (kills and wipes) and
+mass-death moments on the night timeline, and the fights' parse timelines on the session page. Stored in bot_kv
+`night_slices:<guild>` (no migration). Two previews: `?v=slices` (draw labelled spans) and `?v=segments` (confirm detected
+segments; recommended). Pick open.
