@@ -15,16 +15,17 @@ const main = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
 describe('agent /api/feedback-send forwards the chosen screenshots', () => {
   const handler = sliceBlock(agentSrc, "if (req.url === '/api/feedback-send' && req.method === 'POST') {",
     '\n      // Mimic pushes Zeal update status here');
+  const targetInfo = null;   // FB-95's Target Info meta has its own tests (test/mob-miss-reason.test.js)
   async function send(body, botReply) {
     const sent = [];
     const res = { writeHead() {}, end(b) { this.body = b; return b; } };
     const run = new Function('req', 'res', '_readBody', '_uploadOpts', 'buildFeedbackLogSlice', 'AGENT_VERSION',
-      '_primaryCharacter', 'fetch', 'process',
+      '_primaryCharacter', 'fetch', 'process', 'mobInfoFeedbackMeta',
       'return (async () => { ' + handler.replace(/\n      \/\/ Mimic pushes Zeal update status here$/, '') + ' })();');
     await run({ url: '/api/feedback-send', method: 'POST' }, res, async () => JSON.stringify(body),
       { botUrl: 'http://bot.test/api/agent/encounter', token: 't' }, () => ({ ok: false }), '3.7.26',
       () => 'Aldenmar', async (url, opts) => { sent.push({ url, body: JSON.parse(opts.body) }); return { ok: true, json: async () => botReply }; },
-      { env: {}, platform: 'win32' });
+      { env: {}, platform: 'win32' }, () => targetInfo);
     return { sent, out: JSON.parse(res.body) };
   }
   const jpeg = 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 7, 8]).toString('base64');

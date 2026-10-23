@@ -6602,6 +6602,21 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   cache any reply taken during a bot redeploy as "no row" for 6 h, the bug 4.0.7 fixed. ⏳ Ask the reporter: Mimic version, does
   restarting Mimic bring the resists back, which tab, standalone window or Canvas piece, and the text under the name ("looking up
   stats…" or "no catalog stats for this target"). Report stays open until answered.
+- 🧪 Target Info says WHY it has no stats, with a ↻ retry, and a report now carries the lookup (a member, 2026-10-23, FB-95:
+  "target info showing no catalog stats for this target", Mimic 3.0.3 / agent 4.0.10, a Plane of Knowledge NPC whose catalog row
+  exists; agent 4.0.20 on beta). **Cause NOT proven; the report stays open.** The bot logged no catalog query for the mob, so the
+  reporter's agent never asked it. Paths that print the line with no request in the last minute: (1) the off-catalog branch of
+  `fetchMobInfo` stored a null for the full 6 h with nothing asked, when a log of the same character name on another server
+  (an old Project 1999 log in the folder) was registered, since `_charServers` keeps the off-guild side of a name seen on both;
+  (2) a zone-pack entry that is an empty object counted as a hit and printed blank stats; (3) a request never reported back
+  (FB-94 closed one way; there is now a 30 s backstop); (4) no guild token showed "looking up stats…" forever. Fixed: the
+  catalog follows a Quarm log (`_charQuarmLogs`), an off-Quarm answer is a minute-long miss, `_mobHasStats` gates packs and
+  answers, a stalled lookup is asked again. New: every outcome is recorded (`_mobInfoLast`), `buildMobInfo` sends `mob_miss
+  { reason, text, status, detail, name_asked, zone_id }`, the overlay prints it ("not in the catalog" / "lookup failed —
+  retrying" / "off-Quarm server" / "stats need a guild connection") beside a ↻ that POSTs `/api/mob-info/retry`, and a feedback
+  report's `log_meta.target_info` (with or without the log) holds the mob's name as asked, zone id, cache state, last answer, pack
+  state and whether the catalog and a guild connection were on. A corpse's or single-word target's name is withheld.
+  ⏳ Ask the reporter again after they update; `test/mob-miss-reason.test.js`.
 - ✅ A crashed overlay window comes back (Mimic beta, 2026-10-22). Only the dashboard listened for `render-process-gone`; an overlay
   whose renderer died stayed up and blank until Mimic restarted. Now `_overlayRendererGone` logs `[overlay] <key> renderer gone
   (<reason>)`, lets the entry go and destroys the window, and the normal build pass (`applyAllVisibility` →

@@ -172,19 +172,23 @@ describe('Mob Info: the Quarm catalog is only used for a Quarm character', () =>
     for (const p of registered) m.noteLogServer(p);
     const calls = [];
     const byName = new Map();
+    const notes = [];
+    const TTL = 6 * 60 * 60 * 1000;
     const mod = { request: (o) => { calls.push(o.path); return { on() {}, end() {}, destroy() {} }; } };
     // eslint-disable-next-line no-new-func
     const fn = new Function(
       'eqServerCaps', 'eqServerForCharacter', '_primaryCharacter', '_normMobNameAgent', '_mobInfoCacheKey', '_mobInfoInflight',
       '_mobInfoByName', 'MOB_INFO_TTL_MS', '_mobPackLookup', '_uploadOpts', 'https', 'http', 'AGENT_VERSION',
+      '_mobInfoNote', '_mobInfoAsking', '_mobInfoLast', '_mobHasStats', 'MOB_INFO_MISS_TTL_MS', 'MOB_INFO_STALL_MS',
       `${fnSrc}\nreturn fetchMobInfo;`,
     )(
       m.eqServerCaps, m.eqServerForCharacter, () => 'Aldenmar', (n) => String(n).toLowerCase(), (n) => 'k:' + String(n).toLowerCase(),
-      new Set(), byName, 60_000, () => null,
+      new Set(), byName, TTL, () => null,
       { botUrl: 'https://bot.example/api/agent/encounter', token: 'abc' }, mod, mod, '0.0.0',
+      (key, reason) => { notes.push([key, reason]); }, () => {}, new Map(), () => false, 60_000, 30_000,
     );
     fn('a goblin', selfChar);
-    return { calls, byName };
+    return { calls, byName, notes, TTL };
   }
 
   it('asks the guild bot for a Quarm character', () => {
@@ -196,6 +200,22 @@ describe('Mob Info: the Quarm catalog is only used for a Quarm character', () =>
     const r = run('Corvale', { registered: ['eqlog_Corvale_P1999Green.txt'] });
     expect(r.calls.length).toBe(0);
     expect(r.byName.get('k:a goblin')).toMatchObject({ mob: null });
+    expect(r.notes).toEqual([['k:a goblin', 'off_quarm']]);
+  });
+  it('does not pin that "no row" for the full TTL: it is a minute-long miss (FB-95)', () => {
+    const r = run('Corvale', { registered: ['eqlog_Corvale_P1999Green.txt'] });
+    const left = r.TTL - (Date.now() - r.byName.get('k:a goblin').at);
+    expect(left).toBeLessThanOrEqual(60_000);   // a minute at most, not the six hours a pin would leave
+  });
+  it('a name with a Quarm log AND an old Project 1999 log is still a Quarm character for the catalog (FB-95)', () => {
+    const regs = ['eqlog_Corvale_P1999Green.txt', 'eqlog_Corvale_pq.proj.txt'];
+    expect(run('Corvale', { registered: regs }).calls.length).toBe(1);
+    expect(run('Corvale', { registered: regs.slice().reverse() }).calls.length).toBe(1);
+    // ...while the upload gate keeps its safer answer for the same name
+    const m = loadServers();
+    for (const p of regs) m.noteLogServer(p);
+    expect(m._offGuildServerChar('Corvale')).toBe(true);
+    expect(m.eqServerForCharacter('Corvale')).toBe('quarm');
   });
   it('uses the primary character when the caller names none, and Quarm when nobody is registered', () => {
     expect(run(undefined, { registered: ['eqlog_Aldenmar_P1999Green.txt'] }).calls.length).toBe(0);
