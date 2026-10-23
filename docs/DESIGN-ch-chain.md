@@ -86,6 +86,15 @@ capture of the tracker from before this change.
 A line needs CH (or Complete Heal), a slot and a name-shaped target. That is what keeps `Circled Toe Bones ran 333` and a loot call
 out. A two-digit repeat is read as the digit (`11` is 1, not 11), per the macros seen; Wolf Pack's own `011` form is the original's.
 
+### A chain tool's setup line (agent 4.0.14)
+The same raid sets its chain with a rotation tool that posts the order and the beat in raid-say:
+`Rotatonator set_chain: 111 <name>, 222 <name>, 333 <name>, set_delay: 3` (name-first pairs read too). `chParseSetChain` turns the
+order into Wolf Pack's roster call (`<Name> 001, <Name> 002, …`) and feeds it through the original roster path, so it needs what that
+path needs: 3+ clerics numbered 1..N. `set_delay` (1–30 s; also alone, `set_delay: 5`) is the raid's declared beat
+(`declaredBeatMs`): until the chain has a measured beat it stands in for the countdown, PIVOT and the timing grade, and the overlay
+reads "beat 3.0s (set)". The snapshot carries `declared_beat_ms` only when one was declared. The tool has no public docs, so any other
+command it posts is unknown until a line is seen.
+
 ### Teach it yours
 Not every macro will be one of the shapes above. In the CH Chain overlay's setup mode, **Learn a CH call**:
 1. Pick one of the recent lines the tracker could not read (it keeps the last 25 CH-looking ones, in memory), or paste a line.

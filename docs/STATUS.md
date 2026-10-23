@@ -6583,6 +6583,12 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   `test/ch-chain-other-guilds.test.js`. Design: `DESIGN-ch-chain.md` "Other guilds' macros". ⏳ Not seen against a real
   other-guild log beyond the two screenshot lines; ⏳ the overlay panel was not exercised in a running Mimic; ⏳ the hint only appears
   for a line with a standalone `CH`, a number and a capitalised name; ⏳ not on `main`.
+- 🧪 The CH chain reads a chain tool's setup line (the guild lead, 2026-10-23, same raid: "they set their chain like this"; agent
+  4.0.14 on beta): `Rotatonator set_chain: 111 <name>, 222 <name>, 333 <name>, set_delay: 3`. The order seats the slots (translated to
+  Wolf Pack's own roster call and read by the original roster path); `set_delay` is the declared beat, used for the countdown, PIVOT
+  and the timing grade until the chain has a measured beat, and shown as "beat 3.0s (set)". A lone `set_delay: 5` changes it mid-fight.
+  Wolf Pack's snapshot is byte-identical (the golden test). ⏳ The tool has no public docs, so any other command it posts (start, stop,
+  swap) is unknown; ⏳ like the original roster, it needs 3+ clerics numbered 1..N.
 - **✅ Raid Mimic 3.0.2 stable (agent 4.0.7) cut 2026-10-22** (the guild lead: "push that out a 3.0.2"). Adds over 3.0.1: Canvas HUD
   pieces (whole group → Ring arc, Thin/Normal/Thick, Left/Center/Right, label turn), Charm "When charming", one Disc timer, warrior
   Shield (3 min / 12 s), the Dock no longer fights a drag, Target Info retries a missed mob after 60 s instead of 6 h, overlay crash
