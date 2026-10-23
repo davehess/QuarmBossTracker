@@ -15899,6 +15899,16 @@ function _enrageMuted(mobKey) {
   const r = _triggerRules[ENRAGE_ALWAYS_PREFIX + mobKey];
   return !!(r && r['*'] === 'off');
 }
+// The mob named by the server's own enrage lines (NPC_ENRAGE_START / NPC_ENRAGE_END), as an enrage mute key,
+// or '' for any other line. Anchored to the whole line so chat that merely quotes the words ends in a quote
+// and never matches. A trigger that fires on one of these lines is an enrage callout whatever it is named
+// or whoever wrote it (the guild lead, 2026-10-23: the mutes offered themselves on "Enrage soon" only).
+const _ENRAGE_LINE_RX = /^\[[^\]]*\]\s+(.+?)\s+(?:has become ENRAGED|is no longer enraged)\.\s*$/i;
+function _enrageMobOfLine(line) {
+  const m = _ENRAGE_LINE_RX.exec(String(line || ''));
+  return m ? _enrageMobKey(m[1]) : '';
+}
+let _enrageMobCtx = '';   // the enrage mob of the log line being evaluated (set around a local fire, like _ruleCharCtx)
 // A boss by the curated list or by the catalog's raid_target flag (_myFightIsBoss).
 function _enrageIsBoss(name, zoneId) {
   return _isEnrageBoss(name) || _myFightIsBoss(name, zoneId);
@@ -58569,6 +58579,7 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
   if (all.length === 0) return;
   let charLc;   // whose line this is — resolved once, only when a trigger is set per character
   let lineMsg;  // the line without its timestamp — resolved once, only for a catalog_match trigger
+  let enrageMob;  // the mob on an enrage line ('' for any other line) — resolved once, at the first fire
   for (const t of all) {
     // An unticked personal trigger stays in the list (the dashboard keeps the
     // row so it can be ticked back on) and used to fire anyway — nothing on the
@@ -58670,8 +58681,10 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
     _triggerLastFire.set(t.id || t.name, tsMs);
     // Whose line fired it, for the "What you hear" rules (_fireTriggerActions reads it synchronously).
     _ruleCharCtx = String(fileChar || '').toLowerCase();
+    if (enrageMob === undefined) enrageMob = _enrageMobOfLine(line);
+    _enrageMobCtx = enrageMob;
     try { _fireTriggerActions(t, captures, tsMs, false); }
-    finally { _ruleCharCtx = ''; }
+    finally { _ruleCharCtx = ''; _enrageMobCtx = ''; }
   }
 }
 
@@ -58868,6 +58881,12 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   const _ruleKey  = _ruleKeyOf(t);
   const _ruleChar = isRelay ? '' : _ruleCharCtx;
   let _ruledOff = false;
+  // An enrage callout (the trigger fired on the server's enrage line) names its mob, so the 🔇 on its row
+  // can mute it, and a muted mob / "all" / "always" shows, says and sounds nothing — the same as the
+  // built-in "Enrage soon". Timers and the Discord post are not callouts and still run. Test, rehearsal and
+  // replay fires are never muted: the player is hearing what they set up.
+  const _enrageMob = isRelay ? '' : _enrageMobCtx;
+  const _enrageSilenced = !!_enrageMob && !test && !t._rehearsal && !t._replay && _enrageMuted(_enrageMob);
   // Trigger-level roster gate. The require_raid_member field lives on
   // individual actions (so a single trigger can have one filtered + one
   // unfiltered action), but the trigger-level countdown timer is a single
@@ -58946,6 +58965,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   for (const a of (t.actions || [])) {
     if (!a || !a.type) continue;
     _actionsBuilt++;
+    if (_enrageSilenced && (a.type === 'text_overlay' || a.type === 'voice' || a.type === 'sound')) continue;
     if (a.type === 'text_overlay') {
       // _youifyForMe: a callout about one of THIS machine's characters reads
       // "You", whether it was detected here or relayed from another raider.
@@ -58974,6 +58994,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         rule_char:   _ruleChar,
       };
       if (ttsText) overlay.tts = ttsText;
+      if (_enrageMob) overlay.enrage_mob = _enrageMob;   // the dashboard row's and the overlay's 🔇 mute by this
       // #136 — allow-list muted this guild/relay fire: it still flashes, but
       // triggers.html skips speak() when overlay.mute is set.
       if (_calloutMuted) overlay.mute = true;
@@ -59078,6 +59099,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
             mute:        _calloutMuted,
             rule_key:    _ruleKey,
             rule_char:   _ruleChar,
+            enrage_mob:  _enrageMob || null,
           });
           scheduleRender();
           console.log('[trigger:voice:' + (t._scope || '?') + '] ' + t.name + ' → ' + msg);
@@ -59181,7 +59203,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       rehearsal: !!t._rehearsal,
       checkpoint: cp,
       stopped:   cp < TJ.DISPATCHED,
-      reason:    _actionsBuilt === 0 ? 'no actions on trigger' : (_ruledOff && !_dispatched ? 'turned off in What you hear' : null),
+      reason:    _actionsBuilt === 0 ? 'no actions on trigger' : (_ruledOff && !_dispatched ? 'turned off in What you hear' : (_enrageSilenced && !_dispatched ? 'muted — enrage callout (' + _enrageMob + ')' : null)),
     });
   }
 }

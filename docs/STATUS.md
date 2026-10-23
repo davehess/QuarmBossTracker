@@ -6526,6 +6526,13 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   next ordinary visibility pass. Panel overlays and chat breakouts are not covered (their owners rebuild them).
   ⏳ Not exercised against a real renderer crash; `test/mimic-window-move.test.js` holds the limiter and the wiring.
   in this range. ✅ Web roadmap entry landed (web 2.1.1).
+- 🧪 The enrage mutes cover every enrage callout, not only "Enrage soon" (the guild lead, 2026-10-23, Recent fires: only the built-in
+  row had 🔇 this mob / all / always; "why do these mutes only have this one as an option?"; agent 4.0.10 on beta). A trigger, guild
+  or personal, that fires on the server's enrage line (`<mob> has become ENRAGED.` or `<mob> is no longer enraged.`) now carries
+  `enrage_mob` (the mob read from the line, not from the trigger's name), so its row and the trigger overlay offer the three mutes,
+  and a muted mob / all / always shows, says and sounds nothing. Timers, the Discord post and the relay to other raiders still run.
+  Test and rehearsal fires are never muted. ⏳ A fire relayed from another raider has no log line here and is not muted by this.
+  Tests: `test/enrage-callouts.test.js`.
 - **✅ Raid Mimic 3.0.2 stable (agent 4.0.7) cut 2026-10-22** (the guild lead: "push that out a 3.0.2"). Adds over 3.0.1: Canvas HUD
   pieces (whole group → Ring arc, Thin/Normal/Thick, Left/Center/Right, label turn), Charm "When charming", one Disc timer, warrior
   Shield (3 min / 12 s), the Dock no longer fights a drag, Target Info retries a missed mob after 60 s instead of 6 h, overlay crash
