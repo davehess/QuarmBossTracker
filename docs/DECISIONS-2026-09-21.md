@@ -12560,3 +12560,22 @@ Power a trap is a TRAP NPC spot, not a floor trap: `poeartha/encounters/Traps.lu
 (standing rule: *"always go off of the scripts and database instead of the guides"*). The server's classic `traps` table is now
 mirrored (`eqemu_traps`, 83 rows in 8 zones, none in PoP). The Map draws both, ⚙ Traps on by default. The web maps (Spectator,
 replay) draw walls only, so they have no traps yet.
+
+### 422. Run speed: Zeal's % is the speed you move at; ours was the chord, now the path (2026-10-23, Mimic beta, no agent change)
+Kiting a loop indoors (a bard), Zeal's map read 116% while the Map's top-left read 104% and the kite coach about 102%: *"we are
+not accurate to game"*. From Zeal's source (CoastalRedwood/Zeal `main`): `zone_map.cpp` `render_labels` prints
+`(mount ? mount : self)->MovementSpeed * (100 / 0.7)`; `Entity.MovementSpeed` (0x5C) is the speed the entity is moving at now
+(0 stood still; `game_functions.cpp` `CalcCombatRange` tests `> 0` for "is moving"). **The pipe's player message does not carry it**
+(`named_pipe.cpp`: zone, location, heading, autoattack, spawn_id, target_*, pet_id), so we still measure.
+- **Why we read low:** `speedOf` was the straight line between the first and last of the samples 1.5 s apart. On a turn that is
+  shorter than the path: at 116% on a loop of radius ~35 u the chord reads 104% (reproduced in `test/run-speed.test.js`). The kite
+  coach used `2 pi r / lap` of the fitted circle, which falls short on a squarish loop (about 5% on a rounded square in the
+  test; the reported 102% is a bigger gap than that and is not fully explained without Zeal's number beside it).
+- **The scale was right:** 116% = MovementSpeed 0.812, 277% = 1.939; with 84 u/s on a straight run the base 100% = 30.3 u/s fits
+  both once the measurement is the path walked. Kept at 30.3, still ONE straight-run reading; the guild lead is asked for a timed
+  straight run (Zeal % beside the Map's tooltip u/s) to tighten it.
+- **Change:** `map.html` `speedOf` sums the segments of the window; `kiteCoach.js` `pathUps` joins samples >= 400 ms apart over
+  the lap. Tooltip says "measured". `RUN_BASE_UPS` is guarded by `test/run-speed.test.js` (Map and coach must agree).
+- **Exact value needs the guild's Zeal fork:** one line in `named_pipe.cpp`'s player block,
+  `player_data["movement_speed"] = (mount ? mount : self)->MovementSpeed;` (mount = `self->ActorInfo->Mount`); then the Map shows
+  `movement_speed / 0.7 * 100` with no base at all. Not done here (the fork and the agent's pipe reader would both change).
