@@ -37,6 +37,28 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-4-2026-10-23',
+    title: 'Raid Mimic 3.0.4',
+    version: 'Mimic 3.0.4 · Agent 4.0.20 · Bot 4.0.12',
+    date: '2026-10-23',
+    headline: 'Target Info says why a mob has no stats and asks again, chat shows rolls and keeps its history straight, and two wipes on one boss are two fights.',
+    features: [
+      { name: 'Target Info explains itself', blurb: 'When a mob shows no stats, Target Info says why (not in the catalog, lookup failed and retrying, no guild connection) and a ↻ asks again. A report sent from Mimic carries what it looked up.' },
+      { name: 'Rolls in chat', blurb: 'Random rolls are on by default, one line each, with the item the raid called the roll for: "Aldenmar rolled 692 (0–711) for Ethereal Parchment".' },
+      { name: 'Chat history that holds together', blurb: 'A chat group moved into its own window gets its whole history. Guild chat from while you were away sits above the history line in time order, and old lines no longer pop in as if they were new.' },
+      { name: 'Two wipes are two fights', blurb: 'A fight ends when the boss has taken no damage for 5 minutes, even while the raid keeps fighting adds, so two pulls on one boss upload as two fights.' },
+      { name: 'Traps on the Map', blurb: 'Trap spots in the Planes (the mob that walks out, and the named it can bring up) and the older zones\' traps, from the zones\' own scripts. ⚙ Traps turns them off.' },
+      { name: 'The CH chain reads other guilds', blurb: 'Calls like "D&D 333 CH - name - 61%" and a chain tool\'s set_chain line seat the slots and set the beat. Wolf Pack\'s own shout chain is unchanged.' },
+      { name: 'Kiting', blurb: 'The Map and the kite coach measure speed along the path you actually run, and a drifting lap names its likely cause: speed changed, pushed, turn input or a warp.' },
+      { name: 'Dispels', blurb: 'You are told when your debuff or buff is dispelled off a mob.' },
+    ],
+    fixes: [
+      'Target Info could show "no catalog stats" for hours on a mob whose stats exist. It asks again within a minute now.',
+      'Sol Ro\'s named mobs no longer count as players in damage lists and lockouts.',
+      'The chat overlay lost a quiet channel\'s history to a busy one in a moved-out window. Each window asks for its own channels.',
+    ],
+  },
+  {
     key: 'raid-session-nights-2026-10-23',
     title: 'Web 2.1.11',
     version: 'Web 2.1.11',
