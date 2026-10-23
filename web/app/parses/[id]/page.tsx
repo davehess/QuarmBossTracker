@@ -22,8 +22,9 @@ import { DamageCurve } from '@/components/DamageCurve';
 import { buildFightCurve, observedHpSeries } from '@/lib/fightCurve';
 import { selectAll } from '@/lib/selectAll';
 import { loadAgentVersionsAround, loadEncounterEvents } from '@/lib/fullReads';
-import { classifyEncounter, clearClassification, markDeathIntentional, unmarkDeathIntentional } from '../actions';
+import { classifyEncounter, clearClassification, toggleWipe, markDeathIntentional, unmarkDeathIntentional } from '../actions';
 import { shownActor } from '@/lib/actorName';
+import { isWipe } from '@/lib/encounterMarks';
 import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
@@ -156,6 +157,7 @@ type EncounterDetail = {
   zone_short: string | null;
   npc_id: number | null;
   classification: string | null;
+  is_wipe: boolean | null;
   classification_reason: string | null;
   classification_by: string | null;
   // #83 — Discord jump link of this fight's parse card in the Parses Log thread,
@@ -184,7 +186,7 @@ async function load(id: string) {
       .from('encounters')
       .select(`
         id, started_at, duration_sec, total_damage, total_dps, zone_short, npc_id,
-        classification, classification_reason, classification_by, discord_msg_link,
+        classification, is_wipe, classification_reason, classification_by, discord_msg_link,
         eqemu_npc_types ( id, name, zone_short ),
         encounter_players ( character_name, total_damage, dps, duration_sec, rank, has_pets )
       `)
@@ -654,7 +656,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                 <WpDbLink kind="npc" id={bossId} />
               </span>
             )}
-            <ClassificationChip classification={enc.classification} />
+            <ClassificationChip classification={enc.classification} isWipe={enc.is_wipe} />
           </h2>
           <div className="text-dim text-sm">
             {dayLabel(dispDate, tz)} · {fmtTime(enc.started_at, tz)}
@@ -724,9 +726,21 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
         {officer && (
           <div className="mt-4 pt-3 border-t border-border flex flex-wrap items-center gap-2">
             <span className="text-[10px] text-dim uppercase tracking-wide mr-1">officer admin</span>
+            {/* Wipe is a toggle that combines with the one-of marks after it (2026-10-23: "Wipe AND another thing"). */}
+            <form action={toggleWipe} className="contents">
+              <input type="hidden" name="id" value={enc.id} />
+              <button
+                type="submit"
+                aria-pressed={isWipe(enc)}
+                title={isWipe(enc)
+                  ? 'Wipe is on — click to turn it off'
+                  : 'Engaged but did not kill — excluded from kill counts + stats. Can be combined with Live / PvP / Test / Non-Guild'}
+                className={`px-2 py-1 rounded text-xs border border-orange/50 text-orange ${isWipe(enc) ? 'font-semibold bg-orange/20' : 'opacity-80 hover:opacity-100'}`}
+              >
+                {isWipe(enc) ? 'Wipe ✓' : 'Mark Wipe'}
+              </button>
+            </form>
             {[
-              { val: 'wipe', label: 'Mark Wipe', cls: 'border-orange/50 text-orange',
-                desc: 'Engaged but did not kill — excluded from kill counts + stats' },
               { val: 'live', label: 'Mark Live', cls: 'border-blue/50 text-blue',
                 desc: 'Live server, not guild instance — excluded from kill counts + stats' },
               { val: 'pvp',  label: 'Mark PvP',  cls: 'border-red/50 text-red',

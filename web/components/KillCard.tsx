@@ -6,6 +6,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { fmtDmg, fmtDuration, fmtTime } from '@/lib/format';
+import { chipKeys } from '@/lib/encounterMarks';
 
 export type KillCardData = {
   id: string;
@@ -17,6 +18,7 @@ export type KillCardData = {
   player_count: number;
   top_players: { character_name: string; total_damage: number; dps: number }[];
   classification?: string | null;
+  isWipe?: boolean | null;   // encounters.is_wipe — a wipe alongside another mark
   // True ⇒ encounter is still ENGAGED (no slain line observed yet — encounters.ended_at
   // is null). Drives the "ENGAGED" badge + sort-to-top on /parses.
   inProgress?: boolean;
@@ -38,17 +40,26 @@ const CHIP: Record<string, { label: string; cls: string; title: string }> = {
           title: 'Primarily non-Wolf Pack raiders (a guildie pugging another guild) — excluded from kill counts' },
 };
 
-export function ClassificationChip({ classification }: { classification: string | null | undefined }) {
-  if (!classification) return null;
-  const c = CHIP[classification];
-  if (!c) return null;
+// `isWipe` is encounters.is_wipe: a wipe that also carries another mark draws WIPE then the other chip.
+export function ClassificationChip({ classification, isWipe }: { classification: string | null | undefined; isWipe?: boolean | null }) {
+  const keys = chipKeys({ classification: classification ?? null, is_wipe: isWipe });
+  if (keys.length === 0) return null;
   return (
-    <span
-      title={c.title}
-      className={`text-[9px] uppercase tracking-wide font-semibold px-1 py-px rounded border ${c.cls}`}
-    >
-      {c.label}
-    </span>
+    <>
+      {keys.map(k => {
+        const c = CHIP[k];
+        if (!c) return null;
+        return (
+          <span
+            key={k}
+            title={c.title}
+            className={`text-[9px] uppercase tracking-wide font-semibold px-1 py-px rounded border ${c.cls}`}
+          >
+            {c.label}
+          </span>
+        );
+      })}
+    </>
   );
 }
 
@@ -78,7 +89,7 @@ export default function KillCard({ kill, adminBar, tz }: { kill: KillCardData; a
         <div className="flex items-baseline justify-between gap-2 mb-2">
           <div className="text-gold text-sm font-medium truncate flex items-center gap-2 min-w-0" title={kill.boss_name}>
             <span className="truncate">{kill.boss_name}</span>
-            <ClassificationChip classification={kill.classification} />
+            <ClassificationChip classification={kill.classification} isWipe={kill.isWipe} />
             {kill.inProgress && (
               <span
                 className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded border bg-orange/20 text-orange border-orange/50 animate-pulse"

@@ -35,6 +35,9 @@ describe('the parse actions write a name, not the email', () => {
   it('no `.email ||` left in web/app/parses/actions.ts', () => {
     const src = stripJs(fs.readFileSync(path.join(ROOT, 'web/app/parses/actions.ts'), 'utf8'));
     expect(src).not.toMatch(/\.email\s*\|\|/);
-    expect(src.match(/actorName\(u\)/g) || []).toHaveLength(2);
+    // classification_by and created_by_name are only ever written as actorName(u)
+    const writes = (src.match(/(?:classification_by|created_by_name):\s*[^,\n}]+/g) || []).map(w => w.trim());
+    expect(writes.filter(w => !/:\s*null$/.test(w)).length).toBeGreaterThanOrEqual(2);
+    for (const w of writes) expect(w).toMatch(/:\s*(?:actorName\(u\)|null)$/);
   });
 });

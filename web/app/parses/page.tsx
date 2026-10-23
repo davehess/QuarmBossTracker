@@ -17,12 +17,13 @@ import { dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
 import { guildShare, isAutoForeign } from '@/lib/anomalies';
 import { curatedNpcIds } from '@/lib/bossFilter';
-import { classifyEncounter, clearClassification } from './actions';
+import { classifyEncounter, clearClassification, toggleWipe } from './actions';
 import WindowPicker from '@/components/WindowPicker';
 import MoreInfo from '@/components/MoreInfo';
 import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
 import { loadLootRecent, loadOffcardRollup, loadTicksForRaids } from '@/lib/fullReads';
 import { GUILD_TAG } from '@/lib/guild';
+import { isWipe } from '@/lib/encounterMarks';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -46,6 +47,7 @@ type EncounterRow = {
   total_dps: number;
   zone_short: string | null;
   classification: string | null;
+  is_wipe: boolean | null;
   eqemu_npc_types: NpcRef | null;
   encounter_players: PlayerRow[];
 };
@@ -119,7 +121,7 @@ async function loadAll(w: ResolvedWindow): Promise<{
     let encQuery = sb
       .from('encounters')
       .select(`
-        id, started_at, ended_at, duration_sec, total_damage, total_dps, zone_short, classification,
+        id, started_at, ended_at, duration_sec, total_damage, total_dps, zone_short, classification, is_wipe,
         eqemu_npc_types ( id, name, zone_short ),
         encounter_players ( character_name, total_damage, dps, rank )
       `)
@@ -252,6 +254,7 @@ function toCardData(enc: EncounterRow): KillCardData {
     boss_name: cleanBossName(enc.eqemu_npc_types?.name),
     player_count: players.length,
     classification: enc.classification,
+    isWipe: enc.is_wipe,
     // ENGAGED: encounters with no ended_at are mid-fight — agent flushed a
     // partial parse but never saw a slain line for the boss. (the guild lead
     // 2026-06-26: 'we registered vulaks death on engage instead of on
@@ -270,7 +273,7 @@ function toCardData(enc: EncounterRow): KillCardData {
 // dominate the card; uses the shared server actions so the listing + detail
 // page stay in lockstep. Sits OUTSIDE the card's <Link> so form submits don't
 // bubble into a page navigation.
-function CardAdminBar({ encId, current }: { encId: string; current: string | null }) {
+function CardAdminBar({ encId, current, wipe }: { encId: string; current: string | null; wipe: boolean }) {
   const btn = (label: string, value: string, color: string) => (
     <form action={classifyEncounter}>
       <input type="hidden" name="id" value={encId} />
@@ -288,7 +291,18 @@ function CardAdminBar({ encId, current }: { encId: string; current: string | nul
   return (
     <div className="border-t border-border/60 px-2 py-1.5 flex items-center gap-1 flex-wrap">
       <span className="text-[9px] text-dim uppercase tracking-wide mr-1">admin</span>
-      {btn('Wipe', 'wipe', 'border-orange/50 text-orange')}
+      {/* Wipe is a toggle that combines with the one-of marks after it (2026-10-23: "Wipe AND another thing"). */}
+      <form action={toggleWipe}>
+        <input type="hidden" name="id" value={encId} />
+        <button
+          type="submit"
+          aria-pressed={wipe}
+          title={wipe ? 'Wipe is on — click to turn it off' : 'Mark as wipe — can be combined with Live / PvP / Test / Non-Guild'}
+          className={`px-1.5 py-0.5 rounded text-[10px] border border-orange/50 text-orange ${wipe ? 'opacity-100 font-semibold bg-orange/20' : 'opacity-70 hover:opacity-100'}`}
+        >
+          {wipe ? 'Wipe ✓' : 'Wipe'}
+        </button>
+      </form>
       {btn('Live', 'live', 'border-blue/50   text-blue')}
       {btn('PvP',  'pvp',  'border-red/50    text-red')}
       {btn('Test', 'test', 'border-dim/50    text-dim')}
@@ -445,7 +459,7 @@ export default async function ParsesPage(
                 key={r.id}
                 kill={toCardData(r)}
                 tz={tz}
-                adminBar={officer ? <CardAdminBar encId={r.id} current={r.classification} /> : undefined}
+                adminBar={officer ? <CardAdminBar encId={r.id} current={r.classification} wipe={isWipe(r)} /> : undefined}
               />
             ))}
           </div>
@@ -551,7 +565,7 @@ export default async function ParsesPage(
                         key={enc.id}
                         kill={toCardData(enc)}
                         tz={tz}
-                        adminBar={officer ? <CardAdminBar encId={enc.id} current={enc.classification} /> : null}
+                        adminBar={officer ? <CardAdminBar encId={enc.id} current={enc.classification} wipe={isWipe(enc)} /> : null}
                       />
                     ))}
                   </div>
