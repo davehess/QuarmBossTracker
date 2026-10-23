@@ -42046,6 +42046,90 @@ function classifyRandomLine(line) {
   if (!ts || !text) return null;
   return { ch: 'random', who: '', text, t: ts.getTime(), self: false, npc: false };
 }
+// ── A /random as ONE line (the guild lead, 2026-10-23: "chat overlay is missing random rolls (and if we can link to
+// what it was for even better)"). The game prints a roll as two lines; the feed shows "<Name> rolled 692 (0–711)".
+// text is only that sentence, so the same roll heard by two of your characters keeps one dedupe key. What the roll was
+// FOR rides beside it in roll = { name, value, from, to, item?, id?, top? }: item is the label the roll tracker takes from
+// the raid's loot call (_rollItemByNumber, the same 20-minute rule trackRollLine uses), id is its eqemu_items id from the
+// item catalog when the name matches exactly (the overlay links it to PQDI), top is set when this roll beat every
+// earlier first roll of the same range. A label announced AFTER the roll cannot reach a line already shown.
+const CHAT_ROLL_PAIR_MS = 2000;
+const _chatRollDie = new Map();    // character lower → { name, t }: a die line waiting for its result line
+const _chatRollBest = new Map();   // "from|to" → { best, lastMs, names: Set }: the highest first roll so far
+const _chatItemIdCache = new Map();
+function _chatItemIdByName(name) {
+  const k = String(name || '').trim().toLowerCase();
+  if (!k) return null;
+  if (_chatItemIdCache.has(k)) return _chatItemIdCache.get(k);
+  let id = null;
+  const at = _itemCatalogLower.indexOf(k);
+  if (at >= 0) { const n = Number(_itemCatalog[at] && _itemCatalog[at][0]); if (Number.isInteger(n) && n > 0) id = n; }
+  if (_chatItemIdCache.size > 300) _chatItemIdCache.clear();
+  if (id) _chatItemIdCache.set(k, id);   // a miss is not cached: the catalog may load after the first roll
+  return id;
+}
+function chatRollItemFor(to, atMs) {
+  const linked = _rollItemByNumber.get(to);
+  if (!linked || !linked.item || !(Math.abs(atMs - linked.atMs) <= ROLL_ITEM_LINK_MS)) return null;
+  return { item: String(linked.item).slice(0, 64), id: _chatItemIdByName(linked.item) };
+}
+// true when `value` is a first roll that beats every earlier first roll of this range (a set ends after ROLL_SET_GAP_MS
+// quiet); the first roll of a set, a tie and a re-roll are never marked. `state` is the Map to keep the sets in.
+function chatRollMark(state, name, from, to, value, atMs) {
+  const key = from + '|' + to, nl = String(name).toLowerCase();
+  let s = state.get(key);
+  if (!s || atMs - s.lastMs > ROLL_SET_GAP_MS || atMs < s.lastMs - ROLL_SET_GAP_MS) { s = { best: -Infinity, lastMs: atMs, names: new Set() }; state.set(key, s); }
+  s.lastMs = Math.max(s.lastMs, atMs);
+  if (s.names.has(nl)) return false;
+  s.names.add(nl);
+  const top = s.names.size > 1 && value > s.best;
+  if (value > s.best) s.best = value;
+  if (state.size > 60) for (const k of state.keys()) { if (k !== key) { state.delete(k); break; } }
+  return top;
+}
+// The two lines of one roll → the one-line event, or null. Pure apart from `state` (the highest-so-far map) and the
+// catalog/label lookups. dieLine and resultLine are raw log lines.
+function classifyRollPair(dieLine, resultLine, state) {
+  const d = typeof dieLine === 'string' ? dieLine.match(_ROLL_DIE_RX) : null;
+  const r = typeof resultLine === 'string' ? resultLine.match(_ROLL_RESULT_RX) : null;
+  if (!d || !r) return null;
+  const tsD = parseEqTimestamp(dieLine), tsR = parseEqTimestamp(resultLine);
+  if (!tsD || !tsR || Math.abs(tsR.getTime() - tsD.getTime()) > CHAT_ROLL_PAIR_MS) return null;
+  const from = parseInt(r[1], 10), to = parseInt(r[2], 10), value = parseInt(r[3], 10);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(value)) return null;
+  const t = tsR.getTime(), roll = { name: d[1], value, from, to };
+  const it = chatRollItemFor(to, t);
+  if (it) { roll.item = it.item; if (it.id) roll.id = it.id; }
+  if (state && chatRollMark(state, d[1], from, to, value, t)) roll.top = true;
+  return { ch: 'random', who: '', text: d[1] + ' rolled ' + value + ' (' + from + '–' + to + ')', t, self: false, npc: false, roll };
+}
+// The live feed's half: a die line is held (and shows nothing) until its result line arrives; the result line then
+// emits the one-line event. A result line with no die line before it (Random was switched on between the two, or the
+// first was missed) is shown as the game printed it. Returns { evt } or { hold: true }.
+function _chatRandomLive(line, character, rl) {
+  const cl = String(character || '').toLowerCase();
+  if (_ROLL_DIE_RX.test(line)) {
+    const m = line.match(_ROLL_DIE_RX);
+    _chatRollDie.set(cl, { line, name: m[1] });
+    if (_chatRollDie.size > 50) _chatRollDie.delete(_chatRollDie.keys().next().value);
+    return { hold: true };
+  }
+  const die = _chatRollDie.get(cl);
+  _chatRollDie.delete(cl);
+  const evt = die ? classifyRollPair(die.line, line, _chatRollBest) : null;
+  return { evt: evt || rl };
+}
+// A saved or served roll, kept only in its known shape.
+function _chatRollClean(r) {
+  if (!r || typeof r !== 'object') return null;
+  const value = Number(r.value), from = Number(r.from), to = Number(r.to);
+  if (!Number.isFinite(value) || !Number.isFinite(from) || !Number.isFinite(to)) return null;
+  const o = { name: String(r.name == null ? '' : r.name).slice(0, 40), value, from, to };
+  if (r.item) o.item = String(r.item).slice(0, 64);
+  if (Number.isInteger(r.id) && r.id > 0) o.id = r.id;
+  if (r.top) o.top = true;
+  return o;
+}
 // `ran` = the classifiers noteLocalChatLine has already asked and got null from ({ melee, skills, spells }), so a
 // line is not classified twice; anything not listed is asked here.
 function classifyOtherLine(line, character, ran) {
@@ -42384,7 +42468,14 @@ function noteLocalChatLine(line, character, now, opts) {
   // Loot and Random have exact shapes of their own, so they are asked first; Other is asked LAST and only for a line
   // nothing else claimed (classifyOtherLine re-asks the groups whose switch is off, so it never takes their lines).
   if (!evt && policy.loot) evt = classifyLootLine(line);
-  if (!evt && policy.random) evt = classifyRandomLine(line);
+  if (!evt && policy.random) {
+    const rl = classifyRandomLine(line);
+    if (rl) {   // a roll is two lines in the log and ONE in the feed: the die line is held for its result line
+      const live = _chatRandomLive(line, character, rl);
+      if (live.hold) return false;
+      evt = live.evt;
+    }
+  }
   if (!evt && policy.melee) evt = classifyMeleeLine(line, character);
   if (!evt && policy.skills) evt = classifySkillLine(line);
   if (!evt && policy.spells) evt = classifySpellLine(line, character);
@@ -42415,7 +42506,7 @@ function noteLocalChatLine(line, character, now, opts) {
     if (evt.ch === 'melee' || !/^(?:--)?Your?\b/.test(evt.text)) {
       for (let i = ring.length - 1, n = 0; i >= 0 && n < 40; i--, n++) if (ring[i].k === mk && ring[i].on !== (character || '')) return false;
     }
-    ring.push({ seq: ++_chatSeq, k: mk, t: evt.t, ch: evt.ch, who: '', to: null, text: evt.text, self: !!evt.self, npc: false, on: character || '', cat: evt.cat || null, miss: !!evt.miss });
+    ring.push({ seq: ++_chatSeq, k: mk, t: evt.t, ch: evt.ch, who: '', to: null, text: evt.text, self: !!evt.self, npc: false, on: character || '', cat: evt.cat || null, miss: !!evt.miss, roll: evt.roll || null });
     const spill = ring.length - extra.max;
     if (spill > 0) ring.splice(0, spill);
     _chatCacheMarkDirty();
@@ -42468,6 +42559,7 @@ function serializeLocalChat(q, now) {
     if (l.cnum) o.cnum = l.cnum;
     if (l.cat) o.cat = l.cat;
     if (l.miss) o.miss = true;
+    if (l.roll) o.roll = l.roll;
     if (l.via) o.via = l.via;
     lines.push(o);
   }
@@ -42493,6 +42585,7 @@ function _handleLocalChat(req, res) {
 }
 function _resetLocalChatForTest() {
   _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _lootRing.length = 0; _randomRing.length = 0; _otherRing.length = 0; guildFeedClear(); _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
+  _chatRollDie.clear(); _chatRollBest.clear();
   _chatPolicyRestored = null; _chatWipeAt = 0; _zealChatReset();
 }
 
@@ -42542,6 +42635,7 @@ function _chatCacheLine(l, now, maxAgeMs) {
   if (Number.isFinite(Number(l.cnum)) && l.cnum) e.cnum = Number(l.cnum);
   if (l.cat) e.cat = _chatCacheStr(l.cat, 20);
   if (l.miss) e.miss = true;
+  if (l.ch === 'random') { const roll = _chatRollClean(l.roll); if (roll) e.roll = roll; }
   if (l.via === 'guild') e.via = 'guild';
   return e;
 }
@@ -42662,13 +42756,25 @@ function chatHistoryFiles(watched, isExcluded) {
   return out;
 }
 
-// q: { hours, tells, group, officer, custom } (booleans). opts.files overrides the watched logs (tests).
+// `groups` ("guild,raid" or a list of CHAT_GROUPS ids) → the Set of channels those groups hold, or null for "all". A broken-out
+// window asks for only its own groups (the guild lead, 2026-10-23: "sometimes when popping out a window we don't get the full
+// history"): the 3000-line cap below then counts that window's lines, not every channel's, so a quiet group is not trimmed away
+// by a busy one. Unknown ids are ignored; a list with none known means "all", never "nothing".
+function chatGroupsChannels(groups) {
+  const ids = (Array.isArray(groups) ? groups : String(groups == null ? '' : groups).split(','))
+    .map(x => String(x).trim().toLowerCase()).filter(x => /^[a-z]{1,16}$/.test(x));
+  const set = new Set();
+  for (const g of CHAT_GROUPS) if (ids.indexOf(g.id) !== -1) for (const c of g.channels) set.add(c);
+  return set.size ? set : null;
+}
+// q: { hours, tells, group, officer, custom, random } (booleans) and groups (see above). opts.files overrides the watched logs (tests).
 async function buildChatHistory(q, now, opts) {
   const t = now == null ? Date.now() : now;
   const hours = Math.min(CHAT_HISTORY_HOURS_MAX, Math.max(1, Math.round(Number(q && q.hours)) || 1));
   const cutoff = t - hours * 3_600_000;
   const policy = {};
   for (const k of CHAT_POLICY_KEYS) policy[k] = !!(q && q[k]);
+  const onlyCh = chatGroupsChannels(q && q.groups);
   const files = (opts && opts.files) || chatHistoryFiles(stats.watchedLogs, c => !shouldUploadForCharacter(c));
   const readOpts = opts && { chunk: opts.chunk, maxBytes: opts.maxBytes };
   const seen = new Set();
@@ -42681,10 +42787,16 @@ async function buildChatHistory(q, now, opts) {
     if (mtime < cutoff) continue;                       // not written inside the window: nothing to read
     chars.push(f.character);
     const mine = [];
+    let resultLine = null;   // Random is read BACKWARDS: a roll's result line comes before its die line
     const r = await chatReadLogBackwards(f.file, cutoff, (line) => {
-      const evt = classifyChatLine(line, f.character);
+      let evt = classifyChatLine(line, f.character);
+      if (!evt && policy.random && line.indexOf('**') !== -1) {
+        if (_ROLL_RESULT_RX.test(line)) { resultLine = line; return false; }
+        if (resultLine && _ROLL_DIE_RX.test(line)) { evt = classifyRollPair(line, resultLine, null); resultLine = null; }
+      }
       if (!evt || evt.t < cutoff || !parseEqTimestamp(line)) return false;
       if (!chatChannelAllowed(evt.ch, policy)) return false;
+      if (onlyCh && !onlyCh.has(evt.ch)) return false;   // before the cap below, so a busy channel cannot push a quiet one out
       const key = chatLineKey(evt, f.character);
       if (seen.has(key)) return false;
       seen.add(key);
@@ -42694,6 +42806,7 @@ async function buildChatHistory(q, now, opts) {
       if (evt.to) o.to = evt.to;
       if (evt.cn) o.cn = evt.cn;
       if (evt.cnum) o.cnum = evt.cnum;
+      if (evt.roll) o.roll = evt.roll;
       mine.push(o);
       return mine.length >= CHAT_HISTORY_MAX;
     }, readOpts);
@@ -42702,6 +42815,9 @@ async function buildChatHistory(q, now, opts) {
     for (const o of mine) all.push(o);
   }
   all.sort((a, b) => a.t - b.t);
+  // "Highest so far" needs the rolls oldest first, which only the merged list is.
+  const rollState = new Map();
+  for (const o of all) if (o.roll && chatRollMark(rollState, o.roll.name, o.roll.from, o.roll.to, o.roll.value, o.t)) o.roll.top = true;
   let kept = all;
   if (kept.length > CHAT_HISTORY_MAX) { kept = kept.slice(kept.length - CHAT_HISTORY_MAX); truncated = true; }
   // Between one character's stretch and the next: the same "swapped" line the live feed shows.
@@ -42719,7 +42835,7 @@ async function buildChatHistory(q, now, opts) {
 // A short cache (one body per switch set), so the Chat window and its breakouts asking together read once.
 let _chatHistCache = null;
 function getChatHistory(q, now, opts) {
-  const key = [Math.round(Number(q && q.hours)) || 1].concat(CHAT_POLICY_KEYS.map(k => (q && q[k] ? 1 : 0))).join('|');
+  const key = [Math.round(Number(q && q.hours)) || 1].concat(CHAT_POLICY_KEYS.map(k => (q && q[k] ? 1 : 0)), [[...(chatGroupsChannels(q && q.groups) || [])].sort().join(',')]).join('|');
   const t = now == null ? Date.now() : now;
   if (!(opts && opts.files) && _chatHistCache && _chatHistCache.key === key && t - _chatHistCache.at < CHAT_HISTORY_CACHE_MS) return _chatHistCache.p;
   const p = buildChatHistory(q, t, opts);
@@ -65136,6 +65252,9 @@ module.exports = {
   _parseSntpReply,
   // Roll-call item labels — pure parser, tested against real captured chat.
   parseRollItemLine, _cleanRollItemCandidate, ROLL_ITEM_LINK_MS,
+  // A /random as one line in the Chat overlay (2026-10-23), and the groups a breakout asks history for.
+  classifyRollPair, chatRollMark, chatRollItemFor, chatGroupsChannels, trackRollItemLine,
+  _setRollItemsForTest: (entries, catalog) => { _rollItemByNumber.clear(); for (const [n, v] of (entries || [])) _rollItemByNumber.set(n, v); _chatItemIdCache.clear(); _indexItemCatalog(catalog || []); },
   _recordFightHistory, _fightHistoryForTest: () => stats.fightHistory,
   _resetFightHistoryForTest: () => { stats.fightHistory = []; },
   // Meter History on disk + its own endpoint (2026-10-04).
