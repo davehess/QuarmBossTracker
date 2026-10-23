@@ -14,6 +14,7 @@ import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { loadTimelineKills, type TimelineKill } from '@/lib/raidTimelineLoad';
+import { loadLiveTimeline } from '@/lib/liveRaidLoad';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,11 +27,20 @@ type Body = { now: number; kills: TimelineKill[] };
 
 let memo: { at: number; body: Body } | null = null;
 
-export async function GET() {
+export async function GET(req: Request) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return fail(401, 'unauthorized');
 
   const t0 = Date.now();
+  // ?v=newraid (beta preview): the window starts at the CURRENT raid, not six hours back (lib/liveRaidWindow.ts), and the
+  // answer says where it starts. Without it the answer is exactly what it was.
+  if (new URL(req.url).searchParams.get('v') === 'newraid') {
+    try {
+      return NextResponse.json(await loadLiveTimeline(supabaseAdmin(), t0), { headers: NO_STORE });
+    } catch {
+      return fail(500, 'timeline unavailable');
+    }
+  }
   if (memo && t0 - memo.at < CACHE_MS) return NextResponse.json(memo.body, { headers: NO_STORE });
 
   try {

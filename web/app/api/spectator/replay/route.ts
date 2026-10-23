@@ -23,6 +23,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { selectAll } from '@/lib/selectAll';
 import { GUILD_TAG } from '@/lib/guild';
 import { REPLAY_WINDOW_MS, summarizeNights, type NightMinute } from '@/lib/raidReplay';
+import { loadRaidCuts } from '@/lib/raidCuts';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,7 +55,9 @@ export async function GET(req: Request) {
         .gte('minute_at', since)
         .order('minute_at')               // the primary key's second column: unique within a guild
         .range(from, to));
-      return NextResponse.json({ nights: summarizeNights(rows) }, { headers: { 'Cache-Control': 'private, max-age=60' } });
+      // A session is cut where the raid changed too, not only at a 20-minute silence (lib/raidCuts.ts).
+      const cuts = await loadRaidCuts(admin, rows).catch(() => []);
+      return NextResponse.json({ nights: summarizeNights(rows, cuts) }, { headers: { 'Cache-Control': 'private, max-age=60' } });
     }
 
     const night = q.get('night') ?? '';

@@ -41,7 +41,7 @@ import {
 } from '@/lib/spectator';
 import {
   FRAME_GAP_MS, MINUTE_MS, NIGHTS_POLL_MS, REPLAY_WINDOW_MS, SPLIT_INIT, decodeRows, defaultSessionIndex, frameIndexAt,
-  glideTargets, growSession, liveAvailable, liveLagging, livePlayhead, mergeNights, newNightToFollow, newestSession,
+  glideTargets, growSession, killsInSession, liveAvailable, liveLagging, livePlayhead, mergeNights, newNightToFollow, newestSession,
   nextSpanStart, parseSessionParam, pickReplayZone, pickSplit, recentTargetNames, sessionLabel, sessionSearch,
   windowIndex, windowNeedsRefetch, zoneCounts,
   type NightSummary, type ReplayFrame, type ReplayRaider, type ReplaySession, type ReplayTarget, type SplitState,
@@ -657,9 +657,16 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
     if (!chosen) return null;
     const { night: n, session: picked } = chosen;
     if (!picked) return n;
-    const s = growSession(picked, tailLast);   // a minute the live tail has seen before the list has
+    // a minute the live tail has seen before the list has; only the newest session can be the one being recorded
+    // (a session cut where the raid changed ends short of the one after it, and must not be stretched into it)
+    const s = picked === n.sessions[n.sessions.length - 1] ? growSession(picked, tailLast) : picked;
     return { ...n, first: new Date(s.from).toISOString(), last: new Date(s.to - MINUTE_MS).toISOString(), minutes: s.minutes, zones: s.zones, runs: s.runs, spans: s.spans };
   }, [chosen, tailLast]);
+  // The timeline strip shows the session on screen, not the whole night: a night holds the daytime groups and, after a
+  // raid change, the other raid too (the night's bosses are read once for the night, see the bosses effect below).
+  const sessionKills = useMemo(
+    () => (night ? killsInSession(killList, Date.parse(night.first), Date.parse(night.last) + MINUTE_MS) : killList),
+    [killList, night]);
   const split = info.zones[1] !== null;
 
   // ── refs: everything the drawing reads ─────────────────────────────────────
@@ -1477,7 +1484,7 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
 
   return (
     <div className="min-w-0">
-      {timeline && <RaidTimeline kills={killList} nowMs={uiT} />}
+      {timeline && <RaidTimeline kills={sessionKills} nowMs={uiT} />}
       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-dim">
         {!bounded && (<>
         <label className="flex items-center gap-1.5">

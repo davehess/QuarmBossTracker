@@ -9,6 +9,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import NewPageTag from '@/components/NewPageTag';
 import SpectatorBoard from './SpectatorBoard';
 import RaidTimeline from '@/components/RaidTimeline';
+import { isOfficer } from '@/lib/officer';
 
 export const metadata: Metadata = {
   title: '[beta] Spectator',
@@ -17,9 +18,13 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-export default async function SpectatorPage() {
+export default async function SpectatorPage({ searchParams }: { searchParams: { v?: string | string[] } }) {
+  // ?v=newraid is the beta preview of "a new raid starts the timeline over" (lib/liveRaidWindow.ts). Without it the
+  // page is as it was.
+  const newRaid = (Array.isArray(searchParams.v) ? searchParams.v[0] : searchParams.v) === 'newraid';
   const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect('/auth/signin?next=/spectator');
+  if (!user) redirect('/auth/signin?next=' + encodeURIComponent('/spectator' + (newRaid ? '?v=newraid' : '')));
+  const officer = newRaid && await isOfficer(user.id);
 
   return (
     <div className="mx-auto max-w-6xl py-2">
@@ -30,7 +35,7 @@ export default async function SpectatorPage() {
         positions older than 30 seconds drop off.{' '}
         <a href="/spectator/replay" className="underline hover:text-text">Replay a recorded night</a>.
       </p>
-      <RaidTimeline />
+      {newRaid ? <RaidTimeline src="/api/spectator/timeline?v=newraid" canCut={officer} /> : <RaidTimeline />}
       <SpectatorBoard />
       <p className="mt-6 text-xs text-dim">
         Map lines: Brewall&apos;s EverQuest maps (via Zeal). Generated walls: EQEmu maps (GPLv2+, © EQEmulator.NET, AX-Classic and ProjectEQ).
