@@ -39,7 +39,7 @@ const L = 'web/app/raidmimic/_landing/';
 
 // Every sentence the content module can put on the page, as one string (for the "no invented X" sweeps).
 const allText = () => JSON.stringify([
-  C.HERO, C.WORKS_WITH, C.DATA, C.COST, C.WORLDS, C.CTA, C.MOMENTS, C.COMING, C.CLIPS, C.AUDIENCES, C.CLIPS_HEAD, C.CLIPS_NOTE, C.SHOTS, C.SHOTS_HEAD,
+  C.HERO, C.WORKS_WITH, C.DATA, C.COST, C.WORLDS, C.CTA, C.MOMENTS, C.COMING, C.CLIPS, C.AUDIENCES, C.CLIPS_HEAD, C.CLIPS_NOTE, C.SHOTS, C.SHOTS_HEAD, C.MORE_HEAD,
 ]);
 
 describe('the host list', () => {
@@ -528,10 +528,12 @@ describe('the mascot hero', () => {
     expect(props.length).toBeGreaterThan(0);
   });
 
-  it('uses every capture once, from the one shots folder, and only the content module', () => {
-    expect(C.SHOTS.map(s => s.id)).toEqual(['map', 'cc', 'target-stats', 'target-quest', 'dps', 'rolls', 'timeline']);
+  it('uses every capture once, from the one shots folder, and only the content module: the hero fans the first seven, the gallery shows the rest', () => {
+    expect(C.SHOTS.map(s => s.id)).toEqual(['map', 'cc', 'target-stats', 'target-quest', 'dps', 'rolls', 'timeline',
+      'map-raid', 'map-target', 'target-debuffs', 'hud-box', 'ch-chain', 'dps-raid']);
     const ids = [...hero.matchAll(/\{ id: '([a-z-]+)',\s+l:/g)].map(m => m[1]);
-    expect(ids.sort()).toEqual(C.SHOTS.map(s => s.id).sort());
+    expect(ids.sort()).toEqual(C.SHOTS.filter(s => !s.more).map(s => s.id).sort());
+    expect(C.SHOTS.filter(s => s.more).map(s => s.id)).toEqual(['map-raid', 'map-target', 'target-debuffs', 'hud-box', 'ch-chain', 'dps-raid']);
     expect(hero).toMatch(/SHOTS_DIR/);
     expect(C.SHOTS_DIR).toBe('/raidmimic/shots');
     expect(hero).not.toMatch(/https?:\/\/|mailto:|<form\b|fetch\(/);
@@ -567,6 +569,32 @@ describe('the mascot hero', () => {
   });
 });
 
+// ─── More captures under the player (the guild lead, 2026-10-23: "update raidmimic.com with more assets") ───────────
+describe('the gallery of more captures', () => {
+  const parts = code(L + 'Parts.tsx');
+  const layout = code(L + 'SceneLayout.tsx');
+  const more = C.SHOTS.filter(s => s.more);
+
+  it('is on the one page both hosts render: the layout places it after the scene player and before the four moments', () => {
+    expect(layout).toMatch(/<MoreShots \/>/);
+    expect(layout.indexOf('<ClipTabs')).toBeLessThan(layout.indexOf('<MoreShots'));
+    expect(layout.indexOf('<MoreShots')).toBeLessThan(layout.indexOf('MOMENTS.map'));
+    expect(code('web/app/raidmimic/page.tsx')).toMatch(/return <SceneLayout ctx=\{ctx\} \/>;/);   // no `?v=` variant: live and beta are this page
+  });
+  it('draws only the shots flagged `more`, from the content module, as full-size links with their size and alt text', () => {
+    expect(more).toHaveLength(6);
+    expect(parts).toMatch(/SHOTS\.filter\(s => s\.more\)/);
+    expect(parts).toMatch(/<img src=\{src\} width=\{s\.w\} height=\{s\.h\} alt=\{s\.alt\}/);
+    expect(parts).toMatch(/href=\{src\} target="_blank" rel="noreferrer"/);
+    expect(C.MORE_HEAD.title).toBe('More of what the raid sees');
+    expect(C.MORE_HEAD.note).toMatch(/invented/);
+  });
+  it('the Map captures name their walls’ source, and every capture’s words name no person', () => {
+    for (const s of more.filter(s => /^map/.test(s.id))) expect(s.credit, s.id).toBe(C.MAP_CREDIT);
+    expect(JSON.stringify([more, C.MORE_HEAD])).not.toMatch(/Brewall/i);
+  });
+});
+
 // The recordings are made from fixtures with invented raider names (scripts/raidmimic-shots). The fixtures also drive
 // the stills generator, so this is where a real name slipping in would be caught.
 describe('the recordings’ fixtures name invented raiders only', () => {
@@ -590,7 +618,18 @@ describe('the recordings’ fixtures name invented raiders only', () => {
     names.push(mp.me.name, mp.self.name, ...mp.raid.map(r => r.name), ...mp.group.map(r => r.name), mp.target.tot.name,
       ...mp.timers.map(t => t.by), ...mp.seen.map(t => t.by));
     expect(mp.raid.length).toBeGreaterThanOrEqual(4);
-    expect(names.length).toBeGreaterThan(60);
+    // the second set (the raid pull in Plane of Disease): the Map, Target Info, the HUD, CH Chain and the DPS meters
+    const rm = MF.raidMapState(), td = F.targetDebuffs(), me = F.me(), ch = F.chChain().chChain, tr = F.threatRaid(), dr = F.dpsRaid();
+    names.push(rm.me.name, rm.self.name, ...rm.raid.map(r => r.name), ...rm.group.map(r => r.name), rm.target.tot.name,
+      ...rm.timers.map(t => t.by), ...rm.seen.map(t => t.by),
+      td.activeCharacter, ...td.mobInfo.target_buffs.map(b => b.owner).filter(Boolean),
+      me.character, ...me.group.map(g => g.name),
+      ch.target, ...Object.values(ch.slots).map(s => s.name),
+      tr.activeCharacter, tr.currentEncounterThreat.uploader, ...Object.keys(tr.currentEncounterThreat.perPlayer),
+      dr.activeCharacter, ...Object.keys(dr.currentEncounterThreat.perPlayer), ...Object.keys(dr.currentEncounterThreat.spans),
+      ...Object.values(dr.currentEncounterThreat.perPlayer).map(p => p.pet_owner).filter(Boolean));
+    expect(rm.raid.length + rm.group.length).toBeGreaterThanOrEqual(8);
+    expect(names.length).toBeGreaterThan(120);
     const allowed = new Set([...F.PLAYERS, ...F.PETS]);
     for (const n of names) expect(allowed.has(n), n).toBe(true);
     // …and the page's own words name no person at all
@@ -602,6 +641,15 @@ describe('the recordings’ fixtures name invented raiders only', () => {
     const walls = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/raidmimic-shots/map-walls-ponightmare.json'), 'utf8'));
     expect(walls._about).toMatch(/EQEmu\/maps/);
     expect(walls._about).toMatch(/GPLv2-or-later/);
+    expect(walls.segs.length).toBeGreaterThan(300);
+    for (const g of walls.segs) expect(g[4]).toBeLessThan(walls.bands.length);
+  });
+
+  it('so are the Plane of Disease walls: sliced from the EQEmu mesh, credited in the file, no Brewall lines', () => {
+    const walls = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/raidmimic-shots/map-walls-podisease.json'), 'utf8'));
+    expect(walls._about).toMatch(/EQEmu\/maps/);
+    expect(walls._about).toMatch(/GPLv2-or-later/);
+    expect(walls._about).toMatch(/Not Brewall/);
     expect(walls.segs.length).toBeGreaterThan(300);
     for (const g of walls.segs) expect(g[4]).toBeLessThan(walls.bands.length);
   });

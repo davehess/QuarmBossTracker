@@ -8,7 +8,7 @@ import {
   CLIPS, CLIPS_HEAD, CLIPS_NOTE, COST, DATA, FACTS_TITLE, MAP_CREDIT, MOMENTS, SHOTS_HEAD, WORKS_WITH, WORLDS,
 } from '@/lib/raidmimicLanding';
 import {
-  BetaTag, ComingList, CostBody, CtaBand, DataBody, Fold, Footer, Hero, StatusChip, WorksWithBody, WorldsBody, type Ctx,
+  BetaTag, ComingList, CostBody, CtaBand, DataBody, Fold, Footer, Hero, MoreShots, StatusChip, WorksWithBody, WorldsBody, type Ctx,
 } from './Parts';
 import ClipTabs from './ClipTabs';
 import MascotHero from './MascotHero';
@@ -27,6 +27,8 @@ export default function SceneLayout({ ctx }: { ctx: Ctx }) {
         <ClipTabs />
         <p className="mt-3 text-xs text-dim">{CLIPS_NOTE}</p>
       </section>
+
+      <MoreShots />
 
       <section aria-label="Four moments" className="mt-12">
         <ul className="m-0 grid list-none gap-3 p-0 sm:grid-cols-2">

@@ -27,19 +27,23 @@ let STATE = {};
 let NPC = null;
 let STATE_THREAT = null;
 let MAPSTATE = null;
+let ME = null;
 const srv = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   const json = (o) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
   if (u.pathname === '/api/state' && STATE_THREAT && String(req.headers.referer || '').includes('threatmeter')) return json(STATE_THREAT);
   if (u.pathname === '/api/command-center' || u.pathname === '/api/state' || u.pathname === '/api/timers') return json(STATE);
   if (u.pathname === '/api/map-state') return json(MAPSTATE || {});
+  if (u.pathname === '/api/me') return json(ME || {});
   if (u.pathname === '/api/target-history')return json({ targets: [], rev: 'x' });
   if (u.pathname === '/api/npc-interact') return json(NPC || { loading: true });
   if (u.pathname === '/__compose') {
     const frames = JSON.parse(u.searchParams.get('f'));
+    // col=1 stacks the frames one under the other (the Map over Target Info); the default lays them side by side.
+    const col = u.searchParams.get('col') === '1';
     res.writeHead(200, { 'content-type': 'text/html' });
     return res.end('<!doctype html><body style="margin:0">' + frames.map(([src, w, h]) =>
-      `<iframe src="${src}" style="border:0;width:${w}px;height:${h}px;background:transparent;vertical-align:middle;margin-right:12px"></iframe>`).join('') + '</body>');
+      `<iframe src="${src}" style="border:0;width:${w}px;height:${h}px;background:transparent;${col ? 'display:block;margin-bottom:10px' : 'vertical-align:middle;margin-right:12px'}"></iframe>`).join('') + '</body>');
   }
   const f = path.join(MIMIC, u.pathname.replace(/^\/+/, ''));
   if (f.startsWith(MIMIC) && fs.existsSync(f) && fs.statSync(f).isFile()) {
@@ -154,6 +158,72 @@ MAPSTATE = MAP.mapState();
   await p.close();
   console.log('map ok');
 }
+
+// ─── The second set: the raid on Bertoxxulous in Plane of Disease (fixtures.mjs, map-fixture.mjs) ──────────────────────────
+
+// Map, zoomed in on the building's floor plan: raiders as facing slices, the boss and his target, spawn rings, the toolbar.
+MAPSTATE = MAP.raidMapState();
+// The pages' clock is frozen at T, and the Map refreshes its top-left coordinates only when 200 ms have passed since the last
+// time it did (its first pass is before any data has arrived). Moving every frame's clock on by half a second lets that one
+// refresh happen; nothing else on the page is timed from it.
+const tickClock = async (page) => {
+  for (const f of page.frames()) await f.evaluate(() => { const t = Date.now() + 500; Date.now = () => t; }).catch(() => {});
+  await page.waitForTimeout(500);
+};
+{
+  const p = await open('map.html', { w: 1000, h: 600, ls: MAP.RAID_MAP_LS });
+  await p.waitForTimeout(800);
+  await tickClock(p);
+  await p.screenshot({ path: path.join(OUT, 'map-raid.png'), clip: { x: 0, y: 0, width: 1000, height: 600 } });
+  await p.close();
+  console.log('map-raid ok');
+}
+
+// Target Info with the observed debuffs, on its own.
+STATE = F.targetDebuffs();
+await shootWrap(await open('mobinfo.html', { w: 604 }), 'target-debuffs');
+
+// The Map with Target Info stacked under it, one column: the Map's target is the mob the card describes. Both read their own
+// route of the stand-in, so the two iframes need nothing more than their sizes (measured the way the DPS pair is).
+{
+  const W = 720;
+  const hA = 500;
+  const p0 = await open('mobinfo.html', { w: W });
+  const hB = Math.ceil(await p0.evaluate(() => document.getElementById('wrap').getBoundingClientRect().height) + 12);
+  await p0.close();
+  const p = await open('__compose?col=1&f=' + encodeURIComponent(JSON.stringify([['/map.html', W, hA], ['/mobinfo.html', W, hB]])), { w: W + 60, h: hA + hB + 80, ls: { ...MAP.RAID_MAP_LS, 'wp-map-scale': '1.05' } });
+  await p.waitForTimeout(900);
+  await tickClock(p);
+  await p.screenshot({ path: path.join(OUT, 'map-target.png'), clip: { x: 0, y: 0, width: W + 44, height: hA + hB + 10 + 44 } });
+  await p.close();
+  console.log('map-target ok');
+}
+
+// The HUD, Box view.
+ME = F.me();
+await shootWrap(await open('me.html', { w: 330, ls: { wpMeStyle: 'a' } }), 'hud-box');
+
+// CH Chain.
+STATE = F.chChain();
+await shootWrap(await open('chchain.html', { w: 340 }), 'ch-chain');
+
+// Live DPS (bars) beside the DPS table, a full raid a minute in.
+STATE = F.dpsRaid(); STATE_THREAT = F.threatRaid();
+{
+  const hOf = async (file, w, sel) => {
+    const p = await open(file, { w });
+    const h = await p.evaluate((q) => document.querySelector(q).getBoundingClientRect().height, sel);
+    await p.close();
+    return Math.ceil(h + 12);
+  };
+  const ha = await hOf('threatmeter.html', 330, '#wrap');
+  const hb = await hOf('overlay.html', 470, '.hud');
+  const p = await open('__compose?f=' + encodeURIComponent(JSON.stringify([['/threatmeter.html', 330, ha], ['/overlay.html', 470, hb]])), { w: 900, h: Math.max(ha, hb) + 60 });
+  await p.screenshot({ path: path.join(OUT, 'dps-raid.png'), clip: { x: 0, y: 0, width: 330 + 470 + 12 + 44, height: Math.max(ha, hb) + 44 } });
+  await p.close();
+  console.log('dps-raid ok');
+}
+STATE_THREAT = null;
 
 await browser.close();
 srv.close();
