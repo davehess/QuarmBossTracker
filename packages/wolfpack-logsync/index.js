@@ -10715,7 +10715,10 @@ class EncounterBuilder {
       const defenderIsMobish = dn && !/^you$/i.test(dn)
         && (/\s/.test(dn) || /^[a-z]/.test(dn) || this.targets.has(dn))
         && dn.toLowerCase() !== event.attacker.toLowerCase();
-      if (defenderIsMobish) {
+      // …unless the catalog says the name is a mob. Quarm's named bosses are one capitalised word (Jiva, Xuzl,
+      // Arlyxir, Galremos), and one that hits a charm pet or an add (multi-word) used to be "confirmed" here:
+      // from then on its own fight was skipped as "a player was the target" (the guild lead, 2026-10-23).
+      if (defenderIsMobish && !_isCatalogNpcName(event.attacker)) {
         const al = event.attacker.toLowerCase();
         confirmedPlayers.add(al);
         if (this.targets.has(event.attacker)) this.targets.delete(event.attacker);
@@ -10831,7 +10834,10 @@ class EncounterBuilder {
       // showed up on the threat list as if they were players. Second
       // filter: anyone we've been DAMAGING this encounter (this.targets)
       // is by definition an NPC, so reject them too.
-      const attackerIsKnownNpc = attacker && this.targets.has(attacker);
+      // A one-word mob nobody has hit yet (Galremos on a lava giant, 2026-10-23) is not in this.targets either;
+      // the catalog zone pack names it.
+      const attackerIsKnownNpc = attacker && (this.targets.has(attacker)
+        || (attacker !== this.character && !isConfirmedPlayer(attacker) && _isCatalogNpcName(attacker)));
       // OUR pets (charm or summoned) bypass both the multi-word anti-NPC
       // filter AND the known-NPC check — a charm pet is usually a mob we
       // damaged before charming, so it's in this.targets, and its name has
@@ -11558,7 +11564,7 @@ class EncounterBuilder {
     // parseEvent so any per-player stats accumulated. Only PvP kill
     // broadcasts (handled via /api/agent/pvp) should turn into surfaced
     // parses for player targets.
-    if (this.bossName && isConfirmedPlayer(this.bossName)) {
+    if (this.bossName && isConfirmedPlayer(this.bossName) && !_isCatalogNpcName(this.bossName)) {
       this.reset();
       return;
     }
@@ -11580,7 +11586,7 @@ class EncounterBuilder {
     // bogus parse card naming the pet as the boss.
     const _bnLower = this.bossName.toLowerCase();
     const _isPet     = !!this.petLeaders[_bnLower] || knownPetOwners.has(_bnLower);
-    const _isPlayer  = isConfirmedPlayer(this.bossName);
+    const _isPlayer  = isConfirmedPlayer(this.bossName) && !_isCatalogNpcName(this.bossName);
     const _isUploader = this.character && _bnLower === this.character.toLowerCase();
     if (_isPet || _isPlayer || _isUploader) {
       this.reset();
@@ -58780,6 +58786,25 @@ function _knownNpcNotPlayer(name) {
   const prefix = _normMobNameAgent(name) + '|';
   for (const [k, v] of _mobInfoByName) { if (v && v.mob && k.startsWith(prefix)) return true; }
   return false;
+}
+// The same answer for the per-damage-event paths, which ask it for every swing. Memoised for 30s per name:
+// _knownNpcNotPlayer walks every character's zone pack and the whole Mob Info cache.
+// The guild lead, 2026-10-23, after the Tower of Solusek Ro raid: "Jiva is a named mob but was counted as a
+// player". A one-word mob (Jiva, Xuzl, Arlyxir, Galremos ...) passes every word-count filter, and the catalog
+// zone pack is the only thing that says what it is. A /who sighting, our own characters and our pets still win:
+// _knownNpcNotPlayer is false for those.
+const _npcMemo = new Map();   // lowercase name -> { at, yes }
+function _isCatalogNpcName(name) {
+  const k = String(name || '').trim().toLowerCase();
+  if (!k) return false;
+  const now = Date.now();
+  const held = _npcMemo.get(k);
+  if (held && now - held.at < 30000) return held.yes;
+  let yes = false;
+  try { yes = !_raidRosterHas(k) && !!_knownNpcNotPlayer(name); } catch { yes = false; }
+  if (_npcMemo.size > 4000) _npcMemo.clear();
+  _npcMemo.set(k, { at: now, yes });
+  return yes;
 }
 
 // ── #136 Raid callout allow-list ─────────────────────────────────────────────
