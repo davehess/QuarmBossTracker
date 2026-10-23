@@ -6685,3 +6685,8 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   Jiva had 5 uploads against Xuzl's 19; not provable without the logs). Tests `test/npc-actors.test.js`,
   `test/agent-npc-not-player.test.js`. ⏳ Backfill SQL for tonight's rows is in the session report (not run). ⏳ `defenders` still
   lists the boss and adds (correct for tank stats); a consumer that treats that list as people owes the same filter.
+- ✅ **Map and kite-coach run speed match Zeal's % much more closely (Mimic beta, 2026-10-23, DECISIONS §422).** The guild lead: Zeal read
+  116% while ours read 104% (Map) / ~102% (kite coach). Zeal prints `MovementSpeed / 0.7 * 100` (`zone_map.cpp`); the pipe does not carry
+  it. Ours was the chord between two samples (short on a turn) and `2 pi r / lap`; both are now the path walked. Base stays 30.3 u/s
+  (one straight-run reading). `test/run-speed.test.js`. ⏳ Exact value needs one line in the guild's Zeal fork
+  (`player_data["movement_speed"]`, see §422) plus the agent's pipe reader; ⏳ a timed straight run would tighten the base.
