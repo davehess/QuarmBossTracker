@@ -300,6 +300,7 @@
   var _histInfo = null;          // { loading } | { failed } | { truncated }
   var _histSig = '';             // the switch set the history on screen was read under
   var _histSeq = 0;
+  var _backlogGen = 0;           // the agent's count of changes to the relayed backlog it holds for the history (/api/chat -> backlog)
   var _wipedAt = 0;              // the agent's last wipe stamp seen (a change = the session was revoked: forget everything held)
   var _connectedOnce = false;    // the agent has answered at least once (so PORT is the real one)
   var _lastOn = null;            // the character the last painted line was heard on (the "heard on" tag shows on a change)
@@ -566,8 +567,10 @@
     if (_histHours) {
       var have = {}, hh = '', shownH = 0;
       for (i = 0; i < _lines.length; i++) if (!_lines[i].sep) have[chatKey(_lines[i])] = true;
+      var localH = shownCopies(_histLines);   // the agent drops a relayed twin by exact key; this also covers a second of clock skew
       for (i = 0; i < _histLines.length; i++) {
         var hl = _histLines[i];
+        if (hl.via && (!_prefs.away || heardLocally(hl, localH))) continue;   // relayed history: only with Away on, and a local copy wins
         if (!hl.sep && have[chatKey(hl)]) continue;
         if (lineVisible(f, hl)) { hh += rowHtml(hl); if (!hl.sep) { shownH++; histShown.push(hl); } }
       }
@@ -776,13 +779,18 @@
   function histQuery(){
     return 'hours=' + _histHours + '&tells=' + (_prefs.tells ? 1 : 0) + '&group=' + (_prefs.group ? 1 : 0) +
       '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0) + '&random=' + (_prefs.random ? 1 : 0) +
+      '&away=' + (_prefs.away ? 1 : 0) +   // with Away on, the guild/raid lines relayed while you were out of game join the history
       // a breakout asks only for the groups it holds, so the agent's line cap counts those and not every channel's
       (_isBrk && _only.length ? '&groups=' + encodeURIComponent(_only.join(',')) : '');
   }
-  async function loadHistory(){
+  // quiet = a re-read because the agent took in more relayed lines: the history on screen stays until the new answer is in
+  // (no "loading" flash, no empty gap) and a failed re-read keeps what is shown.
+  async function loadHistory(quiet){
     var mine = ++_histSeq;
     if (!_histHours) { _histLines = []; _histInfo = null; _histSig = ''; repaint(); return; }
-    _histInfo = { loading: true }; _histSig = histQuery(); repaint();
+    var keep = quiet === true && _histInfo && !_histInfo.loading && !_histInfo.failed;
+    _histSig = histQuery();
+    if (!keep) { _histInfo = { loading: true }; repaint(); }
     var s = null;
     try {
       var r = await fetch('http://127.0.0.1:' + PORT + '/api/chat/history?' + _histSig, { cache: 'no-store' });
@@ -793,7 +801,7 @@
       _histLines = s.lines.filter(function(l){ return l && typeof l.text === 'string'; });
       for (var i = 0; i < _histLines.length; i++) { _histLines[i].n = -(i + 1); learnChannel(_histLines[i]); }
       _histInfo = { truncated: !!s.truncated };
-    } else { _histLines = []; _histInfo = { failed: true }; }
+    } else if (!keep) { _histLines = []; _histInfo = { failed: true }; }
     repaint(); paintPick(); paintChans();
   }
   function setHist(h){
@@ -1307,7 +1315,11 @@
       // The agent emptied its chat cache and rings (the session was revoked): drop the history read back from the logs too.
       if (s.wiped && s.wiped !== _wipedAt) { _wipedAt = s.wiped; _histLines = []; _histInfo = null; _histSig = ''; repaint(); }
       // First good answer from the agent: the port and the groups are known, so a remembered history window can be read now.
-      if (!_connectedOnce) { _connectedOnce = true; if (_histHours) loadHistory(); }
+      // The agent keeps the relayed lines that were old on arrival (the bot's last hour, after a camp-out or a restart) for the
+      // history, not the live feed: `backlog` moves when they change, so the history is read again to pick them up.
+      var bk = Number(s.backlog) || 0;
+      if (!_connectedOnce) { _connectedOnce = true; _backlogGen = bk; if (_histHours) loadHistory(); }
+      else if (bk !== _backlogGen) { _backlogGen = bk; if (_histHours && _prefs.away) loadHistory(true); }
       // Only lines newer than the last one taken: a replayed body (the agent serves its last good one if a
       // poll fails to build) must not put a purged line back.
       var fresh = (s.lines || []).filter(function(l){ return l && l.n > _lastN; });

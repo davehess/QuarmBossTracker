@@ -765,13 +765,20 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Guild + raid chat while out of game (bot 3.1.277 main, agent 3.7.182 beta, 2026-10-15, §342):** the Chat overlay
   relays the guild's /gu and /rs from other Mimics while you're not in game, with "N in game with Mimic" and a
   "nobody in game" note. Waiting on the guild lead's out-of-game look.
-- **⏳ Chat overlay: old guild chat no longer shows up as if it were new (agent 4.0.18 beta, 2026-10-23).**
+- **⏳ Chat overlay: old guild chat no longer shows up as if it were new, and the last hour is back as history (agent 4.0.18 + 4.0.19 beta, 2026-10-23).**
   The guild lead: *"strange these old messages just came through"* (10:00 and 10:01 "via guild" lines between 11:39 ones). Cause:
   the bot's guild-chat ring is 300 lines with no age limit, the agent asks it from cursor 0 on every camp-out, bot restart and
-  cache-less restart, and the overlay paints in arrival order. `guildFeedTake` now drops a relayed line more than 2 minutes older
-  than its arrival (cursor still advances). Tradeoff: opening the overlay out of game no longer shows the last hour of guild chat,
-  only the last two minutes. Test: `test/chat-guild-feed.test.js` "late relayed lines stay out of the live feed". Waiting on the
-  guild lead's look on beta.
+  cache-less restart, and the overlay paints in arrival order. 4.0.18: `guildFeedTake` kept a relayed line more than 2 minutes older
+  than its arrival out of the live feed (and dropped it, so opening Chat out of game lost the bot's last hour). 4.0.19, the guild
+  lead's call (*"chat is one thing that you may want to keep open"*): those late lines are KEPT in a separate agent-side ring
+  (`_guildLateRing`: the bot ring's 300, nothing older than 24 h, also saved in the encrypted Chat cache while Away is on) and
+  `/api/chat/history` merges them, in time order, with the local logs' lines (`via: 'guild'`, only with Away on, only inside the
+  chosen window, only the groups a breakout holds). Cap rule: local keeps its 3000, relayed has its own 300, so a relayed line never
+  evicts a local one. A relayed line equal to a local-log line (same key) shows once, as the local one. `/api/chat` carries a
+  `backlog` counter; the overlay re-reads its history quietly (no loading flash) when it moves. A live (≤ 2 min) line still goes to
+  the live feed. Tests: `test/chat-guild-backlog.test.js` (+ "late relayed lines stay out of the live feed" in
+  `test/chat-guild-feed.test.js`). Unverified: a real out-of-game open on Windows; the smallest history window is 1 hour, so
+  "last hour" is the shortest backlog view. Waiting on the guild lead's look on beta.
 - **⏳ Chat overlay: /random as one line with its item, Random on by default, a breakout's full history (agent 4.0.17 beta, 2026-10-23).**
   The guild lead: *"chat overlay is missing random rolls (and if we can link to what it was for even better)"* and *"sometimes when
   popping out a window we don't get the full history from that session or timeframe"*. Rolls: the pair reached the classifier all

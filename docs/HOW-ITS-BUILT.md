@@ -1270,7 +1270,10 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   `_mapAeRampage` → `/api/map-state` target; `apps/mimic/map.html` `aeRampageRing`/`rampageRing`; §343).
 - **Chat overlay — guild feed while away** (bot 3.1.277 `utils/guildChatFeed.js` + `GET /api/agent/guild-chat`; agent
   3.7.182 `_pollGuildFeed` / `_guildFeedRing`, policy key `away`; §342): other Mimics' /gu and /rs relayed while this
-  player's game is not running; `ingame` count from the bot's reporter heartbeat registry.
+  player's game is not running; `ingame` count from the bot's reporter heartbeat registry. A relayed line already old on
+  arrival (> 2 min) skips the live ring and sits in `_guildLateRing` (agent 4.0.19), which `buildChatHistory` merges into
+  `/api/chat/history` (Away on, same window/groups gates, own 300 cap); `/api/chat` `backlog` tells the overlay to re-read.
+  Tests `test/chat-guild-backlog.test.js`.
 - **Chat overlay — feed cached across a restart** (agent 3.8.0 / Mimic 2.10.0 beta, §357): the overlay's rings + the
   guild-feed cursor are written ENCRYPTED to `logsync.chat-cache.bin` (AES-256-GCM, agent `packages/wolfpack-logsync/index.js`
   "Chat cache"; key made + held by Mimic under `safeStorage` and handed over in `WOLFPACK_CHAT_CACHE_KEY`, `apps/mimic/main.js`

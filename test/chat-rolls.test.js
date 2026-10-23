@@ -321,9 +321,9 @@ describe('chat.html: the window\'s history pick and request', () => {
   });
   it('the request names the groups a breakout holds and carries the Random switch; the Chat window asks for everything', () => {
     const b = page({ brk: true, only: ['guild', 'raid'], store: { 'wpChatHistH:main': '3' } });
-    expect(b.histQuery()).toBe('hours=3&tells=0&group=1&officer=0&custom=1&random=1&groups=guild%2Craid');
+    expect(b.histQuery()).toBe('hours=3&tells=0&group=1&officer=0&custom=1&random=1&away=0&groups=guild%2Craid');
     const m = page({ store: { 'wpChatHistH:main': '3' } });
-    expect(m.histQuery()).toBe('hours=3&tells=0&group=1&officer=0&custom=1&random=1');   // no groups: it holds whatever is not broken out
+    expect(m.histQuery()).toBe('hours=3&tells=0&group=1&officer=0&custom=1&random=1&away=0');   // no groups: it holds whatever is not broken out
   });
   it('a group moved into a window re-reads its history (the request changed), but only when history is on and the agent has answered', () => {
     const takeOut = sliceBlock(stripJs(SCRIPT), 'function takeOut(list){', '\n  }');
