@@ -1076,6 +1076,10 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Where:** agent `ENRAGE_OTHER_PCT`, `_enrageMuteSession`, `/api/enrage-mute`; the "always" mute is a
   `builtin:enrage_soon:<mob>` rule in `trigger_rules.json`; buttons in `apps/mimic/triggers.html` and the dashboard's
   Recent fires. Test: `test/enrage-callouts.test.js`.
+- **Any trigger on the enrage line (agent 4.0.10 beta, 2026-10-23):** `_enrageMobOfLine` reads the mob from the server's
+  `<mob> has become ENRAGED.` / `<mob> is no longer enraged.` line; `evaluateTriggersAgainstLine` hands it to
+  `_fireTriggerActions` (`_enrageMobCtx`), which stamps `enrage_mob` on the fire (so the same 🔇 buttons appear) and, when
+  `_enrageMuted`, skips the text, voice and sound actions. Guild and personal triggers alike; a relayed fire is not covered.
 
 ### Voice unclear reports (agent 3.8.15 beta · bot 3.2.8 · web 1.9.9, 2026-10-19; DECISIONS §379)
 - **What:** a raider flags a spoken callout nobody understood, with the text, the voice that really played it and the
