@@ -23,6 +23,7 @@ import { buildFightCurve, observedHpSeries } from '@/lib/fightCurve';
 import { selectAll } from '@/lib/selectAll';
 import { loadAgentVersionsAround, loadEncounterEvents } from '@/lib/fullReads';
 import { classifyEncounter, clearClassification, markDeathIntentional, unmarkDeathIntentional } from '../actions';
+import { shownActor } from '@/lib/actorName';
 import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
@@ -663,7 +664,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
           <div className="text-xs text-dim mb-3 italic">
             Not counted as a guild kill
             {enc.classification_reason ? <> — <span className="text-text">{enc.classification_reason}</span></> : null}
-            {enc.classification_by ? <span className="opacity-70"> · marked by {enc.classification_by}</span> : null}
+            {enc.classification_by ? <span className="opacity-70"> · marked by {shownActor(enc.classification_by)}</span> : null}
           </div>
         )}
         <div className="text-sm text-dim flex flex-wrap gap-x-4 gap-y-1">

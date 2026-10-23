@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
+import { actorName } from '@/lib/actorName';
 
 async function assertOfficer() {
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -32,7 +33,7 @@ export async function classifyEncounter(formData: FormData) {
     classification,
     classification_reason: reason,
     classification_at: new Date().toISOString(),
-    classification_by: u!.email || u!.id,
+    classification_by: actorName(u),
   }).eq('id', id);
   // Both surfaces show classification chips + adjusted counts; revalidate
   // both so the admin sees the result without a hard refresh.
@@ -114,7 +115,7 @@ export async function markDeathIntentional(formData: FormData) {
       npc_id: npcId,
       note,
       active: true,
-      created_by_name: u!.email || u!.id,
+      created_by_name: actorName(u),
     });
   }
   revalidatePath(`/parses/${id}`);
