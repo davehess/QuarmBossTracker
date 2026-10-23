@@ -56,6 +56,15 @@
         ],
         "createdAt": "2026-10-15T16:27:15.057Z",
         "reason": "intentional, pre-existing (web 1.7.13): .wp-rail animates height on purpose — the comment above it says the lit rail's height IS the elapsed-time display and should visibly travel when scrubbed"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "web/public/raidmimic/how/scene.html"
+        ],
+        "createdAt": "2026-10-23T21:52:26.620Z",
+        "reason": "Embedded ISO-GLOW isometric drawing: its small mono labels are drawn text inside an illustration, not page typography; the page's own heading hierarchy lives in HowItWorks.tsx (session triage 2026-10-23)"
       }
     ]
   }
