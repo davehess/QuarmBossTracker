@@ -549,7 +549,7 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
   beforeEach(() => { globalThis.__H = {}; globalThis.__S = []; globalThis.__P = []; });
   it('defaults: 12 px, group and channels on, officer off, nothing hidden, tells off', async () => {
     const m = load({});
-    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: true, officer: false, custom: true, tells: false, off: [], melee: false, spells: false, skills: false, loot: false, random: false, other: false, away: true, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, offChannels: [], only: '', win: {} });
+    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: true, officer: false, custom: true, tells: false, off: [], melee: false, spells: false, skills: false, loot: false, random: true, other: false, away: true, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, offChannels: [], only: '', win: {} });
   });
   it('group and channels stay off once switched off', async () => {
     const m = load({ chatPrefs: { group: false, custom: false } });
@@ -611,7 +611,7 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
     const m = load({ chatPrefs: old });
     expect(await m.get('Aldenmar')).toEqual({
       fontSize: 15, group: false, officer: true, custom: true, tells: false, off: ['raid'],
-      melee: false, spells: false, skills: false, loot: false, random: false, other: false, away: true, meleeShow: { mine: true, on_me: true, others: true, misses: true },
+      melee: false, spells: false, skills: false, loot: false, random: true, other: false, away: true, meleeShow: { mine: true, on_me: true, others: true, misses: true },
       spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, offChannels: [], only: '', win: {},
     });
     await m.set('Aldenmar', { offChannels: ['general'] });
@@ -2625,7 +2625,7 @@ describe('chat.html: a breakout follows the window list main hands it', () => {
       var _groups = ${JSON.stringify(agent.CHAT_GROUPS)};
       var _prefs = ${JSON.stringify({ off: [], melee: true, spells: true, skills: true, ...(opts.prefs || {}) })};
       var _wid = ${JSON.stringify(opts.brk ? 'b1' : '')}, _only = ${JSON.stringify(opts.brk || [])}, _isBrk = ${!!opts.brk};
-      var _wins = [], _out = [], _brkOff = [];
+      var _wins = [], _out = [], _brkOff = [], _histHours = 0, _connectedOnce = true;   // history off here: takeOut's history reload is pinned in chat-history.test.js
       var CHIP_LABEL = { group: 'Party' };
       var log = { paint: 0, sent: [], title: '', doc: '', hb: '' };
       function paintChips(){ log.paint++; } function repaint(){ log.paint++; } function paintSettings(){ log.paint++; }
@@ -2881,14 +2881,15 @@ describe('Loot, Random and Other: three more opt-in groups, built the way Skills
     expect(agent.noteLocalChatLine(L(DIE), ME, 2)).toBe(false);
     expect(agent.noteLocalChatLine(L('You gain experience!!'), ME, 2)).toBe(false);
     agent.setChatPolicy({ random: true }, 3);
-    expect(agent.noteLocalChatLine(L(DIE), ME, 3)).toBe(true);
+    expect(agent.noteLocalChatLine(L(DIE), ME, 3)).toBe(false);                       // the die line is held for its result line: a roll is ONE line in the feed
+    expect(agent.noteLocalChatLine(L(RESULT), ME, 3)).toBe(true);
     expect(agent.noteLocalChatLine(L(LOOT.replace('Cloak', 'Robe')), ME, 3)).toBe(false);
     agent.setChatPolicy({ other: true }, 4);
     expect(agent.noteLocalChatLine(L('You gain experience!!'), ME, 4)).toBe(true);
     expect(agent.noteLocalChatLine(L(RESULT), ME, 4)).toBe(false);                    // Random's line is not Other's when Random is off
     expect(agent.noteLocalChatLine(L(LOOT.replace('Cloak', 'Cape')), ME, 4)).toBe(false);
     expect(agent._lootRingForTest().map(r => r.text)).toEqual([LOOT]);
-    expect(agent._randomRingForTest().map(r => r.text)).toEqual([DIE]);
+    expect(agent._randomRingForTest().map(r => r.text)).toEqual(['Corvale rolled 116 (0–333)']);
     expect(agent._otherRingForTest().map(r => r.text)).toEqual(['You gain experience!!']);
     expect(agent.serializeLocalChat({ loot: true, random: true, other: true }, 5).lines.map(l => l.ch)).toEqual(['loot', 'random', 'other']);
     expect(agent.serializeLocalChat({ random: true }, 5).lines.map(l => l.ch)).toEqual(['random']);
@@ -2896,7 +2897,7 @@ describe('Loot, Random and Other: three more opt-in groups, built the way Skills
   });
   it('/api/chat reads loot=1, random=1 and other=1 as the switches', () => {
     agent.setChatPolicy({ loot: true, random: true, other: true }, Date.now());
-    for (const t of [LOOT, DIE, 'You gain experience!!']) agent.noteLocalChatLine(L(t), ME);
+    for (const t of [LOOT, DIE, RESULT, 'You gain experience!!']) agent.noteLocalChatLine(L(t), ME);
     const get = (qs) => { const res = { code: null, body: null, writeHead(c) { this.code = c; }, end(b) { this.body = b; } };
       agent._handleLocalChatForTest({ url: '/api/chat?since=0' + qs, headers: {} }, res); return JSON.parse(res.body); };
     expect(get('&loot=1&random=1&other=1').lines.map(l => l.ch)).toEqual(['loot', 'random', 'other']);
@@ -2957,8 +2958,10 @@ describe('Loot, Random and Other: three more opt-in groups, built the way Skills
 
   it('a /random heard by two of your characters is one copy; your own loot and experience lines are each kept', () => {
     agent.setChatPolicy({ loot: true, random: true, other: true }, 1);
-    expect(agent.noteLocalChatLine(L(DIE), 'Aldenmar', 1)).toBe(true);
+    expect(agent.noteLocalChatLine(L(DIE), 'Aldenmar', 1)).toBe(false);
+    expect(agent.noteLocalChatLine(L(RESULT), 'Aldenmar', 1)).toBe(true);
     expect(agent.noteLocalChatLine(L(DIE), 'Corvale', 1)).toBe(false);
+    expect(agent.noteLocalChatLine(L(RESULT), 'Corvale', 1)).toBe(false);   // the same roll heard on the second log: one copy
     expect(agent.noteLocalChatLine(L(LOOT), 'Aldenmar', 1)).toBe(true);
     expect(agent.noteLocalChatLine(L(LOOT), 'Corvale', 1)).toBe(true);                  // two characters, two loots
     expect(agent.noteLocalChatLine(L('You gain experience!!'), 'Aldenmar', 1)).toBe(true);
@@ -3066,16 +3069,17 @@ describe('Loot, Random and Other: three more opt-in groups, built the way Skills
     const code = stripJs(CHAT_HTML);
     for (const id of ['loot', 'random', 'other']) expect(code).toMatch(new RegExp(`\\['${id}',\\s+'${id[0].toUpperCase()}${id.slice(1)}',`));
     expect(code).toMatch(/'&loot=' \+ \(_prefs\.loot \? 1 : 0\) \+ '&random=' \+ \(_prefs\.random \? 1 : 0\) \+ '&other=' \+ \(_prefs\.other \? 1 : 0\)/);
-    expect(code).toMatch(/loot: !!p\.loot, random: !!p\.random, other: !!p\.other/);
-    expect(code).toMatch(/loot: false, random: false, other: false, away: true, meleeShow/);         // off until switched on, before the first prefs arrive
+    expect(code).toMatch(/loot: !!p\.loot, random: p\.random !== false, other: !!p\.other/);
+    expect(code).toMatch(/loot: false, random: true, other: false, away: true, meleeShow/);          // Random is on until switched off (2026-10-23); the rest are off until switched on, before the first prefs arrive
     // all three are the "more" kind (they sit in the fold with Melee/Spells/Skills), not the visible row
     const optins = sliceBlock(code, 'var OPTINS = [', '\n  ];');
     for (const id of ['loot', 'random', 'other']) expect(optins).toMatch(new RegExp(`\\['${id}',[^\\n]*, 1\\]`));
   });
-  it('Mimic remembers the three switches (default off) and only as booleans', () => {
+  it('Mimic remembers the three switches (Loot and Other default off, Random default on) and only as booleans', () => {
     const code = stripJs(MAIN);
     expect(code).toMatch(/for \(const k of \['group', 'officer', 'custom', 'melee', 'spells', 'skills', 'loot', 'random', 'other', 'away'\]\) if \(typeof inc\[k\] === 'boolean'\)/);
-    for (const id of ['loot', 'random', 'other']) expect(code).toContain(`${id}: p.${id} === true,`);
+    for (const id of ['loot', 'other']) expect(code).toContain(`${id}: p.${id} === true,`);
+    expect(code).toContain('random: p.random !== false,');   // untouched (no saved value) = on; a saved false is a deliberate off and stays off
   });
 });
 

@@ -331,7 +331,7 @@ function defaultConfig() {
     // group/officer/custom switch those lines (group and custom default ON since 2026-10-14, officer stays opt-in),
     // byChar remembers which channel chips each character has switched off. offChannels = [lower-case joined
     // channel NAMES] switched off, shared by every character; absent = every channel shows. melee = opt-in for
-    // the combined-melee group (default off); spells, skills, loot, random and other are the same kind of opt-in (default off). meleeShow = { mine, on_me, others, misses }, which
+    // the combined-melee group (default off); spells, skills, loot and other are the same kind of opt-in (default off); random is ON unless switched off (2026-10-23). meleeShow = { mine, on_me, others, misses }, which
     // melee lines show (all true unless switched off); spellShow = { mine, on_me, others } and skillShow = { mine, others } likewise. only = the "show only" view toggle ('' = off). win = { <window
     // id: 'main' or a breakout window id (b1, b2...)>: { fontSize, lineGap, times, tags } }, each window's own text settings.
     showChat: false,
@@ -8890,7 +8890,10 @@ function _chatPrefsPayload(cfg, char) {
     spells: p.spells === true,   // spells and skills are floods too (2026-10-14): opt-in, default off
     skills: p.skills === true,
     loot: p.loot === true,       // Loot, Random and Other (2026-10-15): the same kind of opt-in, default off
-    random: p.random === true,
+    // Random is ON unless switched off (the guild lead, 2026-10-23: "chat overlay is missing random rolls"). Only a switch
+    // someone has touched is ever written (chat-prefs-set stores a boolean it was sent), so a saved false is a deliberate
+    // off and stays off, while an install that never touched it (no saved value) now gets the rolls.
+    random: p.random !== false,
     other: p.other === true,
     away: p.away !== false,      // guild and raid chat relayed from other members' Mimics while you are out of game (2026-10-15): ON unless switched off
     meleeShow: _chatMeleeShow(p.meleeShow),

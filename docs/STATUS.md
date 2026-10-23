@@ -765,6 +765,18 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Guild + raid chat while out of game (bot 3.1.277 main, agent 3.7.182 beta, 2026-10-15, §342):** the Chat overlay
   relays the guild's /gu and /rs from other Mimics while you're not in game, with "N in game with Mimic" and a
   "nobody in game" note. Waiting on the guild lead's out-of-game look.
+- **⏳ Chat overlay: /random as one line with its item, Random on by default, a breakout's full history (agent 4.0.17 beta, 2026-10-23).**
+  The guild lead: *"chat overlay is missing random rolls (and if we can link to what it was for even better)"* and *"sometimes when
+  popping out a window we don't get the full history from that session or timeframe"*. Rolls: the pair reached the classifier all
+  along; the Random switch defaulted OFF (in ⚙ → More settings) and history never read Random. Now `random: p.random !== false` in
+  `main.js` (new installs AND installs that never touched it get it; a saved `false` is a deliberate off and stays off — each switch
+  writes only its own key), the pair is ONE row (`classifyRollPair`: "Halvard rolled 692 (0–711)"), the item is the roll tracker's own
+  range→item label (`_rollItemByNumber`, 20-minute rule) linked to PQDI by exact name in the item catalog, `▲ high` marks a first roll
+  that beats the set, and history reads Random back. Breakout history: a new window had no pick of its own so it opened with history
+  OFF (now inherits the Chat window's pick), and its request carried every channel so the 3,000-line cap trimmed a quiet group behind a
+  busy one (now `&groups=` names the groups the window holds; the cap counts those). ⚠ Unverified: Windows run of the item link
+  (`openExternal`) and a real roll night; a label announced AFTER a roll cannot reach a row already shown; history has no item before
+  the agent's own call memory. Tests `test/chat-rolls.test.js`.
 - **✅ Chat overlay Loot / Random / Other (agent 3.7.181 beta, 2026-10-15, §340):** opt-in in the chat ⚙. Money waits on
   one real coin line from the guild lead.
 - **✅ Post-raid link + full parses (bot 3.1.276 main; web 1.8.171 beta, 2026-10-15, §338):** the final raid review

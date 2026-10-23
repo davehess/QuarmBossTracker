@@ -1278,6 +1278,11 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   Logout keeps it sealed for a 24 h grace (`_chatCacheDecide`) then deletes; a different Discord id wipes it; a definite 401
   revokes (`chatCacheRevoke`, file + key gone). The kill switch / version floor wipes only the file (`chatCacheWipeFileOnly`) so
   on-screen chat stays while overlays run on local data. Tests `test/chat-cache.test.js`.
+- **Chat overlay — a /random as one line** (agent 4.0.17 beta, 2026-10-23): `classifyRollPair` joins the die + result lines into
+  `<Name> rolled N (lo–hi)` with `roll = { name, value, from, to, item?, id?, top? }` beside it; the item is `_rollItemByNumber` (the
+  Command Center Rolls card's range→item map), `id` is an exact-name hit in the item catalog, and `chat.html` links it to PQDI through
+  `openExternal`. Random is ON unless switched off (`_chatPrefsPayload`). `GET /api/chat/history` takes `random=1` and `groups=<ids>`
+  (a breakout asks only for its own groups); a new breakout inherits the Chat window's history pick. `test/chat-rolls.test.js`.
 - **Chat overlay — Loot / Random / Other** (agent 3.7.181 beta, §340): opt-in groups beside Melee/Spells/Skills
   (`classifyLootLine`, `classifyRandomLine`, `classifyOtherLine` — Other last, re-asks the switched-off classifiers,
   never takes chat), their own 300-line rings in `_chatExtraRings`, policy keys `loot/random/other`.

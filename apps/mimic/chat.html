@@ -99,6 +99,10 @@
   .ln .tm.copied{color:#56d364;text-decoration:none}
   .ln .tx{flex:1 1 auto;min-width:0;color:var(--lc,#c9d1d9)}
   /* a line relayed from another member's Mimic while you are out of game: a small dim mark after the text, nothing louder */
+  /* a /random as one line: the item the roll was for is a link to its PQDI page; ▲ marks a roll that beat every earlier one of its range */
+  .ln .tx a.itm{color:#7ee7c7;text-decoration:underline dotted;cursor:pointer}
+  .ln .tx a.itm:hover{text-decoration:underline}
+  .ln .tx .rtop{color:#e3b341;font-size:0.85em;white-space:nowrap}
   .ln .via{margin-left:6px;font-size:0.75em;font-style:italic;color:#6e7681;white-space:nowrap}
   /* the title bar's hint while that feed is live */
   .awayhint{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#6e7681}
@@ -281,7 +285,7 @@
   var _lines = [];             // every line we hold, oldest first (the filter decides what shows)
   var _seq = 0, _lastN = 0, _boot = '';
   var _char = '';              // the character the chip choices are remembered for
-  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false, away: true, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, off: [], offChannels: [], only: '' };
+  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, loot: false, random: true, other: false, away: true, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, off: [], offChannels: [], only: '' };
   var _chanNames = {};         // "<character>|<slot number>" -> channel name, learned from lines that carry both (Zeal's /abc shows only the number)
   var _unread = 0;
   var _out = [];               // group ids broken out into their own windows (the Chat window leaves them out)
@@ -419,10 +423,26 @@
     return t ? '<span class="ctag" title="' + esc(tagTitle(l)) + '">[' + esc(t) + ']</span>' : '';
   }
 
+  // A /random is one line: "<Name> rolled 692 (0–711)", then " for <item>" when the raid's loot call told the agent what
+  // that range was for, then " ▲ high" on a roll that beat every earlier one of its range (lineHtml builds it from l.roll).
+  // The agent keeps the sentence in text, so a roll heard on two characters stays one line. The item links to PQDI when the
+  // agent matched its name to an item id (the page the Mob Info overlay opens too); the click goes through openExternal.
+  feedEl.addEventListener('click', function(e){
+    var a = e.target && e.target.closest ? e.target.closest('a.itm') : null;
+    if (!a) return;
+    e.preventDefault();
+    var url = a.getAttribute('data-url') || '';
+    if (/^https:\/\/www\.pqdi\.cc\/item\/[0-9]{1,8}$/.test(url)) { try { window.mimic.openExternal(url); } catch (er) {} }
+  });
   function lineHtml(l, tag){
     // "Swapped to X": display only. No timestamp button, so there is nothing to copy; it is not a chat line.
     if (l.sep) return '<div class="sep" data-n="' + l.n + '"><span>' + esc(l.text) + '</span></div>';
     var you = !!l.self, who;
+    var tx = esc(l.text), rl = l.ch === 'random' ? l.roll : null;
+    if (rl) {
+      if (rl.item) { var rid = Math.floor(Number(rl.id)); tx += ' for ' + (rid > 0 ? '<a class="itm" href="#" data-url="https://www.pqdi.cc/item/' + rid + '" title="Open ' + esc(rl.item) + ' on PQDI">' + esc(rl.item) + '</a>' : esc(rl.item)); }
+      if (rl.top) tx += ' <span class="rtop" title="Highest roll so far for this range">▲ high</span>';
+    }
     // A tell names YOUR character on every line, both ways — "Aldenmar → Brackwyn", "Brackwyn → Aldenmar" — so a
     // conversation read across alts says which one sent or took each line (the guild lead, 2026-10-15: "know which
     // character i sent it from"). No character known (an old line) falls back to "You".
@@ -437,7 +457,7 @@
     var copied = l.n === _copiedN;
     var viaMark = l.via === 'guild' ? '<span class="via" title="Relayed from another member\'s Mimic while you are out of game">via guild</span>' : '';
     var otag = tag && l.on && !tellOn ? '<span class="otag" title="heard on ' + esc(l.on) + '">' + esc(l.on) + '</span>' : '';
-    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc(lineColor(l)) + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + tagHtml(l) + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span>' + viaMark + '</div>';
+    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc(lineColor(l)) + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + tagHtml(l) + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + tx + '</span>' + viaMark + '</div>';
   }
   // One row, with the "heard on" tag where the character changed from the row before it (a swap line resets
   // it: that line already says so). Rows the filter hides do not count, so a one-speaker search tags the
@@ -470,7 +490,7 @@
   function copyLineText(l){
     // a zone change copies as the plain log line, not as something a character said
     if (l.ch === 'zone') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + 'You have entered ' + l.text + '.';
-    if (/^(?:melee|spell|skill|loot|random|other|money|emote|pet|who|death|bcast|zeal)$/.test(l.ch)) return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
+    if (/^(?:melee|spell|skill|loot|random|other|money|emote|pet|who|death|bcast|zeal)$/.test(l.ch)) return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text + (l.roll ? (l.roll.item ? ' for ' + l.roll.item : '') + (l.roll.top ? ' ▲ high' : '') : '');
     var tellOn = l.ch === 'tell' && !l.npc && l.on ? String(l.on) : '';
     var who = l.npc ? l.who : (l.self ? (tellOn || 'You') : l.who);
     if (l.to) who += ' → ' + l.to;
@@ -736,6 +756,18 @@
   var HIST_CHOICES = [0, 1, 2, 3, 6, 12, 24];
   function histKey(){ return 'wpChatHistH:' + winId(); }
   try { var _hv = Number(localStorage.getItem(histKey())); if (HIST_CHOICES.indexOf(_hv) > 0) _histHours = _hv; } catch (e) {}
+  // A window opened by "break out" is new: it has no pick of its own, so it used to start with history OFF and show only what
+  // arrived after it opened (the guild lead, 2026-10-23: "sometimes when popping out a window we don't get the full history
+  // from that session or timeframe"). It starts with the Chat window's pick instead. A pick this window made itself
+  // (even "History off") is stored under its own id and wins. Every Chat window shares this page's storage.
+  if (!_histHours && _isBrk) {
+    try {
+      if (localStorage.getItem(histKey()) === null) {
+        var _mv = Number(localStorage.getItem('wpChatHistH:main'));
+        if (HIST_CHOICES.indexOf(_mv) > 0) _histHours = _mv;
+      }
+    } catch (e) {}
+  }
   var histBtn = document.getElementById('histbtn');
   function paintHistBtn(){
     histBtn.textContent = _histHours ? '⏱ ' + _histHours + 'h' : '⏱';
@@ -743,7 +775,9 @@
   }
   function histQuery(){
     return 'hours=' + _histHours + '&tells=' + (_prefs.tells ? 1 : 0) + '&group=' + (_prefs.group ? 1 : 0) +
-      '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0);
+      '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0) + '&random=' + (_prefs.random ? 1 : 0) +
+      // a breakout asks only for the groups it holds, so the agent's line cap counts those and not every channel's
+      (_isBrk && _only.length ? '&groups=' + encodeURIComponent(_only.join(',')) : '');
   }
   async function loadHistory(){
     var mine = ++_histSeq;
@@ -808,6 +842,8 @@
     _wins = wins; _out = flat;
     if (_isBrk && mine) _only = mine.groups.slice();
     paintChips(); repaint(); paintBrkTitle(); paintSettings();
+    // a group moved into this window has history of its own to read (the request names the groups the window holds)
+    if (_histHours && _connectedOnce && histQuery() !== _histSig) loadHistory();
   }
   // What the groups are called on a chip: Party for the group group, else the agent's label.
   function groupLabel(id){
@@ -908,7 +944,7 @@
     ['spells',  'Spells',         'Your casts, spells landing on you and others, spell damage, resists, fizzles and fades. Right-click the Spells chip to give it a window of its own.', 1],
     ['skills',  'Skills',         'Skill-ups, what your skills did (taunt, forage, mend, feign death, hide...), tradeskill combines and disciplines. Right-click the Skills chip to give it a window of its own.', 1],
     ['loot',    'Loot',           'Your own "You have looted ..." lines. Right-click the Loot chip to give it a window of its own.', 1],
-    ['random',  'Random',         'Everyone\'s /random rolls heard in the zone: who rolled, and the range and number that turned up.', 1],
+    ['random',  'Random',         'Everyone\'s /random rolls heard in the zone, one line each: who rolled, the number and the range, with what the roll was for (a link to the item) when the raid called it. On unless you switch it off.', 1],
     ['other',   'Other',          'Game and system messages, split into their own chips by the channel Zeal says they came on: Money, Emotes, Pets, Who, Deaths, Broadcast and Zeal (item speech, /mystats, Bandolier), with Other keeping what has no channel (experience, faction and the like). Without Zeal, Deaths, Broadcast, the /who list and Bandolier are still found from the log; the rest wait for Zeal. Never chat, tells or any channel you have switched off.', 1]
   ];
   // ── this window's text settings ──────────────────────────────────────────
@@ -1185,7 +1221,7 @@
     var meleeWas = _prefs.melee, spellsWas = _prefs.spells, skillsWas = _prefs.skills, extraWas = [_prefs.loot, _prefs.random, _prefs.other, _prefs.away].join(), showWas = JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow]);
     _prefs = {
       fontSize: p.fontSize || 12, group: !!p.group, officer: !!p.officer, custom: !!p.custom,
-      tells: !!p.tells, melee: !!p.melee, spells: !!p.spells, skills: !!p.skills, loot: !!p.loot, random: !!p.random, other: !!p.other, away: p.away !== false,
+      tells: !!p.tells, melee: !!p.melee, spells: !!p.spells, skills: !!p.skills, loot: !!p.loot, random: p.random !== false, other: !!p.other, away: p.away !== false,
       meleeShow: { mine: !p.meleeShow || p.meleeShow.mine !== false, on_me: !p.meleeShow || p.meleeShow.on_me !== false, others: !p.meleeShow || p.meleeShow.others !== false, misses: !p.meleeShow || p.meleeShow.misses !== false },
       spellShow: { mine: !p.spellShow || p.spellShow.mine !== false, on_me: !p.spellShow || p.spellShow.on_me !== false, others: !p.spellShow || p.spellShow.others !== false },
       skillShow: { mine: !p.skillShow || p.skillShow.mine !== false, others: !p.skillShow || p.skillShow.others !== false },
