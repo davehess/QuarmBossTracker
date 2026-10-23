@@ -82,6 +82,8 @@
   #card,#menu,#ccard{position:absolute;z-index:8;background:rgba(14,17,22,0.96);border:1px solid rgba(110,118,129,0.6);
     border-radius:5px;padding:5px 7px;font-size:10px;line-height:1.35;max-width:260px;display:none}
   #card{pointer-events:none}
+  #toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);z-index:9;display:none;max-width:90%;pointer-events:none;
+    background:rgba(14,17,22,0.96);border:1px solid rgba(110,118,129,0.6);border-radius:5px;padding:4px 9px;color:#e6edf3;font-size:11px;white-space:nowrap}
   /* The corpse card is the one hover card you can move into: its dragger is a link that centres the map on them. */
   #ccard{pointer-events:auto}
   #ccard .h{font-weight:bold;font-size:11px;color:#e6edf3}
@@ -263,6 +265,7 @@
       <div id="card"></div>
       <div id="ccard" data-wp-interact></div>
       <div id="menu"></div>
+      <div id="toast"></div>
       <!-- Edit clear areas: drag a box on the map to keep it clear of drawing. Interactive only while editing (data-wp-interact). -->
       <div id="clearEdit" hidden data-wp-interact>
         <div id="clearBoxes"></div>
@@ -1270,15 +1273,22 @@
     return { x: -((px - w / 2) / view.scale + view.cx), y: -((py - h / 2) / view.scale + view.cy) };
   }
   // Your speed in game units a second, over the samples of the last ~1.5 s (null until there is a full second).
+  // The DISTANCE WALKED over the window, not the straight line between its two ends: Zeal's number is the speed you are
+  // moving at this instant (Entity.MovementSpeed, zone_map.cpp render_labels), and on a turn the chord is shorter than the
+  // path. Kiting a tight loop (r about 35 u would do it) at Zeal's 116% the chord read 104% (the guild lead, 2026-10-23); the walked path
+  // reads 116%. Two points are the same thing either way.
   var SPEED_WINDOW_MS = 1500;
   function speedOf(hist) {
     if (!hist || hist.length < 2) return null;
-    var a = hist[0], b = hist[hist.length - 1], dt = b.t - a.t;
-    return dt >= 1000 ? Math.hypot(b.x - a.x, b.y - a.y) / dt * 1000 : null;
+    var a = hist[0], b = hist[hist.length - 1], dt = b.t - a.t, len = 0;
+    for (var i = 1; i < hist.length; i++) len += Math.hypot(hist[i].x - hist[i - 1].x, hist[i].y - hist[i - 1].y);
+    return dt >= 1000 ? len / dt * 1000 : null;
   }
-  // ...shown as Zeal's map shows it: % of normal run. The base is measured, not looked up: the guild lead's
-  // screenshot, 2026-10-14, had Zeal at 277% while this read 84 u/s, so 100% ≈ 30.3 u/s. One reading; a timed
-  // unbuffed run would tighten it.
+  // ...shown as Zeal's map shows it: % of normal run. Zeal prints MovementSpeed / 0.7 * 100 (0.7 is the client's own
+  // normal run); the pipe does not carry MovementSpeed, so this base turns OUR measured u/s into that scale. It is
+  // measured, not looked up: the guild lead's screenshot, 2026-10-14, had Zeal at 277% while this read 84 u/s on a
+  // straight run, so 100% ≈ 30.3 u/s (= 0.7 x 43.3). One straight-run reading; a timed unbuffed run would tighten it.
+  // kiteCoach.js keeps the same number (K.RUN_BASE_UPS); test/run-speed.test.js fails if the two part.
   var RUN_BASE_UPS = 30.3;
   function runPct(ups) { return ups == null ? null : ups / RUN_BASE_UPS * 100; }
   // Your own map files (the agent's `local_map`, read on this computer and never sent anywhere; the guild lead,
@@ -1393,6 +1403,7 @@
     ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['conNames', 'Mob names in con colour'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
     ['focus', 'Raid focus target (MA / most targeted)'], ['corpses', 'Guild corpses (☠)'], ['raidRoute', 'Saved raid route (gold line, numbered stops)'],
     ['kite', 'Kite coach (your circling: lap, drift)'], ['kiteLoops', 'Guild kite loops'],
+    ['traps', 'Traps (△ spots and trap-table traps)'],
   ];
   var CFG_GLYPHS = [
     ['👁', 'Sees invisible'], ['👁ᵤ', 'Sees invisible to undead'], ['🥷', 'Sees through hide'], ['↯', 'Summons'],
@@ -1405,22 +1416,22 @@
     ['aggroSafe', 'Aggro: not to you'], ['aggroNone', 'Aggro: nobody'], ['aeRamp', 'AE rampage ring'], ['ramp', 'Rampage ring'],
     ['glyph', 'Ability icons'], ['pather', 'Walker mark'], ['bossLabel', 'Boss name'], ['raidLabel', 'Raid target name'],
     ['upLabel', 'Known mob name'], ['room', 'Room names'], ['you', 'You'], ['target', 'Target'], ['tot', 'Target\'s target'], ['pinLine', 'Target → spawn line'],
-    ['group', 'Group'], ['raid', 'Raid'], ['corpse', 'Corpses'], ['raidRoute', 'Saved raid route'],
+    ['group', 'Group'], ['raid', 'Raid'], ['corpse', 'Corpses'], ['raidRoute', 'Saved raid route'], ['trap', 'Traps (types without their own colour)'],
   ];
   var MAP_SCHEMES = {
     default: { wall: '#c8d6ea', oursWall: '#d6e6ff', route: '#39c5cf', routeTarget: '#7ee787', dot: '#c9d1d9', named: '#f2cc60',
       raidTarget: '#ff7b72', up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff', aggro: '#e5534b', aggroSafe: '#e3b341', aggroNone: '#56d364', aeRamp: '#ff5c5c', ramp: '#ff79c6',
       glyph: '#e6edf3', pather: '#9ecbff', bossLabel: '#f2cc60', raidLabel: '#ffa198', upLabel: '#7ee787', room: '#c9d9ee',
-      you: '#58a6ff', target: '#f0883e', tot: '#f778ba', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', corpse: '#9aa4b2', raidRoute: '#e8b923', bg: '#131a26' },
+      you: '#58a6ff', target: '#f0883e', tot: '#f778ba', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', corpse: '#9aa4b2', raidRoute: '#e8b923', trap: '#e8a04a', bg: '#131a26' },
     contrast: { wall: '#ffffff', oursWall: '#ffffff', route: '#00e5ff', routeTarget: '#00ff66', dot: '#ffffff', named: '#ffd700',
       raidTarget: '#ff3b30', up: '#00ff66', ringWait: '#ff3b30', ringWindow: '#ffcc00', ringUp: '#00ff66', candidate: '#e040fb', aggro: '#ff3b30', aggroSafe: '#ffcc00', aggroNone: '#00ff66', aeRamp: '#ff3b30', ramp: '#ff80ab',
       glyph: '#ffffff', pather: '#00e5ff', bossLabel: '#ffd700', raidLabel: '#ff6b6b', upLabel: '#00ff66', room: '#ffffff',
-      you: '#00b0ff', target: '#ff9100', tot: '#ff4fd8', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', corpse: '#c9d1d9', raidRoute: '#ffd700', bg: '#000000' },
+      you: '#00b0ff', target: '#ff9100', tot: '#ff4fd8', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', corpse: '#c9d1d9', raidRoute: '#ffd700', trap: '#ffb000', bg: '#000000' },
     // Okabe–Ito: no red/green pair carries a meaning (up is sky blue, "not yet" vermillion, the window yellow).
     cb: { wall: '#d9d9d9', oursWall: '#e0e0e0', route: '#56b4e9', routeTarget: '#f0e442', dot: '#d9d9d9', named: '#e69f00',
       raidTarget: '#d55e00', up: '#56b4e9', ringWait: '#d55e00', ringWindow: '#f0e442', ringUp: '#56b4e9', candidate: '#cc79a7', aggro: '#d55e00', aggroSafe: '#f0e442', aggroNone: '#56b4e9', aeRamp: '#d55e00', ramp: '#f0e442',
       glyph: '#ffffff', pather: '#56b4e9', bossLabel: '#e69f00', raidLabel: '#d55e00', upLabel: '#56b4e9', room: '#d9d9d9',
-      you: '#009e73', target: '#e69f00', tot: '#cc79a7', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', corpse: '#999999', raidRoute: '#e69f00', bg: '#14171c' },
+      you: '#009e73', target: '#e69f00', tot: '#cc79a7', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', corpse: '#999999', raidRoute: '#e69f00', trap: '#e69f00', bg: '#14171c' },
   };
   var HEX_RE = /^#[0-9a-f]{6}$/i;
   function mapCfgDefaults() {
@@ -1574,11 +1585,46 @@
     return areas.map(function (a) { return { x: a.x * k - left, y: a.y * k - top, w: a.w * k, h: a.h * k }; });
   }
   function stageToWin(r, k, left, top) { return { x: (r.x + left) / k, y: (r.y + top) / k, w: r.w / k, h: r.h / k }; }
+  // Right-click on a spawn switches it off and on (the guild lead, 2026-10-23: "right clicking on a spawn should toggle the
+  // spawn off and on in the map"). Off = a respawn timer is running: right-click clears it (back up). On = anything else: it is
+  // killed now. A mob seen alive there is killed the way the ☠ killed button does it (by name: the death line, else now);
+  // a spot with nobody seen is marked killed the way the click menu's "Killed — this one" does.
+  function spawnToggle(timer, seen) {
+    if (timer) return { act: 'clear' };
+    if (seen && seen.name) return { act: 'kill', name: seen.name, spawn_id: seen.spawn_id == null ? null : seen.spawn_id };
+    return { act: 'mark' };
+  }
+  // What the toast says once the agent has answered (r = its JSON, null when it did not).
+  function spawnToggleWords(name, act, r, now) {
+    if (!r) return name + ' — the agent did not answer';
+    if (!r.ok) return name + ' — ' + (r.error || 'nothing changed');
+    if (act === 'clear') return name + ' — back up';
+    return name + ' — killed' + (r.timer ? ' · ' + timerText(r.timer, now) : '');
+  }
+  // ── Traps (the guild lead, 2026-10-23: "maps should show traps as well") ──
+  // The bot sends `traps` = { defs: { <helper npc id>: { k, grp, ch, r, title, text } }, table: [ { id, x, y, z, r, mz, pct,
+  // lv, fx, hid, title, text } ] } and marks each spot's point with `trap` (the helper's id). A spot is a point the zone
+  // script turns into a mob when someone walks into it (Plane of Earth's thirteen trap types: each spot gets its type's
+  // colour and the first letter of the named it can bring up); the table rows are the server's own traps (necropolis,
+  // Chardok, the Ssra temple ...). `grp` > 0 numbers a type 1-12 for the colour wheel; 0 uses the scheme's trap colour.
+  function trapHex(grp, fallback) {
+    grp = Number(grp);
+    if (!(grp > 0)) return fallback;
+    var h = (((grp - 1) * 30 + 10) % 360) / 360, s = 0.72, l = 0.62, q = l + s - l * s, p2 = 2 * l - q;
+    function f(t) { if (t < 0) t += 1; if (t > 1) t -= 1; return t < 1 / 6 ? p2 + (q - p2) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? p2 + (q - p2) * (2 / 3 - t) * 6 : p2; }
+    function hx(v) { var x = Math.round(v * 255).toString(16); return x.length < 2 ? '0' + x : x; }
+    return '#' + hx(f(h + 1 / 3)) + hx(f(h)) + hx(f(h - 1 / 3));
+  }
+  // The definition of a trap-spot point, or null (not a spot, or the bot sent no traps).
+  function trapDefOf(p, traps) {
+    var d = p && p.trap != null && traps && traps.defs ? traps.defs[String(p.trap)] : null;
+    return d && typeof d === 'object' ? d : null;
+  }
   // ── end pure helpers ──
 
   // ── state ──
   var S = {
-    ver: null, zone: null, points: [], byId: {}, map: null, grids: null, prep: null, p: null, skew: 0, err: false, trails: {},
+    ver: null, zone: null, points: [], byId: {}, map: null, grids: null, traps: null, prep: null, p: null, skew: 0, err: false, trails: {},
     view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, levels: LEVEL_DEFAULT, fit: 'zone', hoverGrid: null,
     spawnLevels: LEVEL_STEPS.length - 1, sideOpen: true,   // spawns: all by default; the timers list starts slid out
     sideMode: 'grow',   // Timers button: 'grow' widens the window by the list (map keeps its size), 'share' shrinks the map
@@ -1697,12 +1743,13 @@
       S.map = p.map || null; S.prep = PART_TIMERS ? null : prepMap(S.map); S.grids = p.grids || null;   // the pop-out draws no walls
       S.facs = p.factions || null;   // the zone's primary factions, sent with the points (see aggroKind)
       S.sgs = p.spawngroups || null;   // spawn group names by id (points carry `sg`; see targetSpawnGroup)
+      S.traps = p.traps || null;   // trap types by helper npc id + the server's trap table (points carry `trap`; see trapDefOf)
     }
     if (p.zone !== S.zone) {
       S.zone = p.zone; S.fitted = false; S.follow = true; S.followOff = { x: 0, y: 0 }; S.trk = {}; S.trails = {}; S.pointTrails = {}; S.kills = 0; S.killSeen = {}; S.killPrimed = false; zoned = true;
       if (S.kite) { S.kite.reset(); S.kiteView = null; }   // a new zone: the kite coach starts over, and so do the guild's loops
       S.guild = { zone: null, loops: [], asked: 0, retried: false };
-      if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; S.sgs = null; }
+      if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; S.sgs = null; S.traps = null; }
       S.local = null; S.localVer = null; S.route = null; S.routeVer = null;
       document.getElementById('followBtn').classList.add('on');
     }
@@ -1786,7 +1833,7 @@
       while (spdHist.length > 2 && rt - spdHist[1].t >= SPEED_WINDOW_MS) spdHist.shift();
       var sp = speedOf(spdHist);
       line = locText(d.x, d.y) + (sp != null ? ' · ' + Math.round(runPct(sp)) + '%' : '');
-      locBarEl.title = sp != null ? Math.round(sp) + ' units a second (100% = normal run, ' + RUN_BASE_UPS + ' u/s)' : '';
+      locBarEl.title = sp != null ? Math.round(sp) + ' units a second measured from your movement (100% = normal run, ' + RUN_BASE_UPS + ' u/s)' : '';
     } else spdHist = [];
     locBarEl.textContent = line;
     locBarEl.style.fontSize = Math.round(10 * (S.cfg.text || 1)) + 'px';   // follows ⚙ → Label size (the guild lead, 2026-10-13: "Location and speed should have scaling as well")
@@ -1836,18 +1883,42 @@
     fetch(url).then(function (r) { return r.json(); }).then(function (p) { inflight = false; applyPayload(p); })
       .catch(function () { inflight = false; S.err = true; renderAll(); });
   }
+  // postMark / postKill hand back the agent's answer (JSON, or null) so the right-click toggle can say what happened.
+  function afterPost(r) { S.sideAt = 0; poll(); return r && r.json ? r.json().catch(function () { return null; }) : null; }
   function postMark(pid, kind) {
     var zone = S.p && S.p.zone;
-    if (!zone) return;
-    fetch('http://127.0.0.1:' + PORT + '/api/map-mark', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ zone: zone, point_id: pid, kind: kind }) }).then(function () { S.sideAt = 0; poll(); }).catch(function () {});
+    if (!zone) return Promise.resolve(null);
+    return fetch('http://127.0.0.1:' + PORT + '/api/map-mark', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone: zone, point_id: pid, kind: kind }) }).then(afterPost).catch(function () { return null; });
   }
   function postKill(name, pid, spawnId) {
     var zone = S.p && S.p.zone;
-    if (!zone || !name) return;
-    fetch('http://127.0.0.1:' + PORT + '/api/map-kill', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    if (!zone || !name) return Promise.resolve(null);
+    return fetch('http://127.0.0.1:' + PORT + '/api/map-kill', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ zone: zone, name: name, point_id: pid == null ? null : pid, spawn_id: spawnId == null ? null : spawnId }) })
-      .then(function () { S.sideAt = 0; poll(); }).catch(function () {});
+      .then(afterPost).catch(function () { return null; });
+  }
+  // A brief line over the map (and over the pop-out's list) saying what a right-click did. Never takes the mouse.
+  var toastEl = document.getElementById('toast'), toastT = 0;
+  function toast(text) {
+    toastEl.textContent = text; toastEl.style.display = 'block';
+    clearTimeout(toastT); toastT = setTimeout(function () { toastEl.style.display = 'none'; }, 3500);
+  }
+  // Right-click on a spawn (a dot or a list row): see spawnToggle for what "off" and "on" mean. `name` is the toast's label.
+  function killRow(name, pid, spawnId) {   // a row with no spot of its own: its ☠ killed button, with the toast
+    postKill(name, pid, spawnId).then(function (r) { toast(spawnToggleWords(name, 'kill', r, nowMs())); });
+  }
+  function toggleSpawn(pid, name) {
+    var p = S.byId[String(pid)];
+    if (!p) return;
+    var a = spawnToggle(S.timerBy[String(pid)], S.seenBy[String(pid)]);
+    var run = a.act === 'clear' ? postMark(p.id, 'clear') : a.act === 'kill' ? postKill(a.name, p.id, a.spawn_id) : postMark(p.id, 'killed');
+    run.then(function (r) { toast(spawnToggleWords(name || bestName(p), a.act, r, nowMs())); });
+  }
+  // A list row's right-click is the same toggle as its dot's (or, for a row with no spot, the row's own ☠ killed).
+  function rowToggle(row, fn) {
+    row.setAttribute('data-wp-interact', '');
+    row.addEventListener('contextmenu', function (e) { e.preventDefault(); e.stopPropagation(); fn(); });
   }
   // "Watch for <named>" / "Stop watching" in the click menu: the agent keeps the watch, shares it with the guild, and
   // sends it back in the next poll as `watched`.
@@ -1972,7 +2043,7 @@
     if (!kiteChipEl) return;
     var v = kiteOn() ? S.kiteView : null, key = '';
     var gl = v && guildOn() ? KC.matchGuild(v.cur, S.guild.loops) : null;
-    if (v) key = v.chip + '|' + v.cls + '|' + (gl ? KC.guildText(v.cur, gl) : '');
+    if (v) key = v.chip + '|' + v.cls + '|' + (v.why || '') + '|' + (gl ? KC.guildText(v.cur, gl) : '');
     if (key === kiteChipKey) return;
     kiteChipKey = key;
     kiteChipEl.textContent = '';
@@ -1980,7 +2051,12 @@
     if (!v) return;
     v.chip.split(' · ').forEach(function (part, i) {
       if (i) kiteChipEl.appendChild(document.createTextNode(' · '));
-      kiteChipEl.appendChild(part.indexOf('drift') === 0 ? el('span', v.cls, part) : document.createTextNode(part));
+      if (part.indexOf('drift') !== 0) { kiteChipEl.appendChild(document.createTextNode(part)); return; }
+      var dsp = el('span', v.cls, part);
+      // The likely cause (kiteCoach.js causeOf) rides the drift: `drift 4 u NE ← speed changed`, the numbers behind it on hover.
+      // The chip itself is click-through; only this span takes the pointer, for the tooltip.
+      if (v.why) { dsp.title = v.why; dsp.style.pointerEvents = 'auto'; dsp.style.cursor = 'help'; }
+      kiteChipEl.appendChild(dsp);
     });
     if (gl) { kiteChipEl.appendChild(document.createTextNode(' · ')); kiteChipEl.appendChild(el('span', 'gd', KC.guildText(v.cur, gl))); }
     kiteChipEl.style.fontSize = Math.round(11 * (S.cfg.text || 1)) + 'px';
@@ -2519,6 +2595,7 @@
     }
     for (var vi = 0; vi < vis.length; vi++) {
       var p = vis[vi].p, px = vis[vi].x, py = vis[vi].y;
+      if (SH.traps && trapDefOf(p, S.traps)) continue;   // a trap spot is drawn by the traps pass below (a △, not a dot)
       var kind = pointKind(p);
       ctx.globalAlpha = inLevelRange(p.z, sz, range) ? 1 : 0.4;
       var r = (kind.raid ? 6.5 : kind.named ? 5.5 : 4.2) * I.dot;
@@ -2552,6 +2629,50 @@
       else if (kind.named && SH.bosses) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: conCol(namedNpc(p)) || (kind.raid ? CO.raidLabel : CO.bossLabel), tier: kind.raid ? 0 : 1, align: 'left', font: fontBoss });
     }
     ctx.globalAlpha = 1;
+    // Traps (the guild lead, 2026-10-23: "maps should show traps as well"; see trapHex): the trigger circle faint underneath,
+    // then a △ in the type's colour with the first letter of the named it can bring up ("!" when there is none). Spots follow
+    // the Spawn height slider like the dots; an undetectable trap-table trap is drawn hollow with a dashed edge, because it
+    // is the one you cannot find for yourself.
+    var trapSpots = [], trapHits = [];
+    if (SH.traps && S.traps) {
+      var tmarks = [], ti, tj, tm;
+      for (ti = 0; ti < vis.length; ti++) {
+        var tdef = trapDefOf(vis[ti].p, S.traps);
+        if (!tdef) continue;
+        trapSpots.push(vis[ti]);
+        tmarks.push({ x: vis[ti].x, y: vis[ti].y, z: vis[ti].p.z, r: Number(tdef.r) || 0, col: trapHex(tdef.grp, CO.trap), ch: tdef.ch || '!', hid: false });
+      }
+      var ttab = S.traps.table || [];
+      for (tj = 0; tj < ttab.length; tj++) {
+        var trw = ttab[tj], tq = wpt(trw.x, trw.y);
+        if (tq[0] < -30 || tq[0] > w + 30 || tq[1] < -30 || tq[1] > h + 30) continue;
+        if (!inLevelRange(trw.z, sz, srange)) continue;
+        if (S.clearPx.length && inClearArea(tq[0], tq[1], S.clearPx)) continue;
+        tmarks.push({ x: tq[0], y: tq[1], z: trw.z, r: Number(trw.r) || 0, col: CO.trap, ch: '!', hid: !!trw.hid });
+        trapHits.push({ t: trw, x: tq[0], y: tq[1] });
+      }
+      for (ti = 0; ti < tmarks.length; ti++) {   // circles first, so no circle sits over a glyph
+        tm = tmarks[ti];
+        if (tm.r * v.scale < 4) continue;
+        ctx.globalAlpha = inLevelRange(tm.z, sz, range) ? 1 : 0.4;
+        ctx.beginPath(); ctx.arc(tm.x, tm.y, tm.r * v.scale, 0, 6.2832);
+        ctx.fillStyle = hexA(tm.col, Math.min(0.12, I.ringFill * 0.6)); ctx.fill();
+        ctx.setLineDash(tm.hid ? [4, 3] : []); ctx.lineWidth = I.ringW; ctx.strokeStyle = hexA(tm.col, 0.5); ctx.stroke(); ctx.setLineDash([]);
+      }
+      var tHalf = 6.5 * I.dot;
+      for (ti = 0; ti < tmarks.length; ti++) {
+        tm = tmarks[ti];
+        ctx.globalAlpha = inLevelRange(tm.z, sz, range) ? 1 : 0.4;
+        ctx.beginPath(); ctx.moveTo(tm.x, tm.y - tHalf); ctx.lineTo(tm.x + tHalf * 0.95, tm.y + tHalf * 0.75); ctx.lineTo(tm.x - tHalf * 0.95, tm.y + tHalf * 0.75); ctx.closePath();
+        ctx.fillStyle = tm.hid ? 'rgba(13,17,23,0.9)' : tm.col; ctx.fill();
+        ctx.lineJoin = 'round'; ctx.lineWidth = tm.hid ? 2 : 1.3; ctx.strokeStyle = tm.hid ? tm.col : '#0d1117';
+        if (tm.hid) ctx.setLineDash([3, 2]);
+        ctx.stroke(); ctx.setLineDash([]); ctx.lineJoin = 'miter';
+        ctx.font = 'bold ' + Math.round(7.5 * (S.cfg.text || 1) * I.dot) + 'px ui-monospace,Consolas,monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = tm.hid ? tm.col : '#0d1117'; ctx.fillText(tm.ch, tm.x, tm.y + tHalf * 0.2);
+      }
+      ctx.globalAlpha = 1;
+    }
     drawLabels(bossC, sz, range, w, h);
     if (SH.raidRoute) drawRaidRouteStops(CO);
     // Group and raid.
@@ -2788,7 +2909,7 @@
         ctx.closePath(); ctx.fillStyle = CO.you; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#ffffff'; ctx.stroke();
       }
     }
-    if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : []); layoutCorpseHits(corpseVis); }   // hidden points take no clicks
+    if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : trapSpots); layoutTrapHits(trapHits); layoutCorpseHits(corpseVis); }   // hidden points take no clicks (a trap spot is still a △ with Spawn points off)
     if (posAgeEl && rt - lastAge >= 200) { lastAge = rt; posAgeEl.textContent = S.sampleAt ? posAgeText(rt - S.sampleAt, S.sampleSrc) : ''; }
     if (rt - lastLoc >= 200) { lastLoc = rt; updateLocBar(rt); }
     if (rt - lastKiteChip >= 250) { lastKiteChip = rt; updateKiteChip(); }   // ~4 a second, not once a frame
@@ -2819,6 +2940,36 @@
     }
     for (var k in hitEls) if (!used[k]) hitEls[k].hidden = true;
   }
+  // The server's trap-table traps: one real button each (same handshake as a spawn dot), hover for what it does.
+  var trapHitEls = {};
+  function layoutTrapHits(list) {
+    if (S.clearPx.length) list = list.filter(function (v) { return !inClearArea(v.x, v.y, S.clearPx); });
+    var used = {};
+    for (var i = 0; i < list.length && i < 200; i++) {
+      var k = String(list[i].t.id);
+      used[k] = 1;
+      var b = trapHitEls[k];
+      if (!b) {
+        b = trapHitEls[k] = el('button', 'hit');
+        b.type = 'button'; b.setAttribute('data-wp-interact', ''); b.setAttribute('data-tid', k);
+        hitsEl.appendChild(b);
+      }
+      b.hidden = false; b.style.left = list[i].x + 'px'; b.style.top = list[i].y + 'px';
+    }
+    for (var u in trapHitEls) if (!used[u]) trapHitEls[u].hidden = true;
+  }
+  function tidOf(e) { var t = e.target; return t && t.getAttribute && t.getAttribute('data-tid'); }
+  function showTrapCard(tid, e) {
+    var rows = (S.traps && S.traps.table) || [], t = null;
+    for (var i = 0; i < rows.length; i++) if (String(rows[i].id) === tid) t = rows[i];
+    if (!t) return;
+    card.innerHTML = '';
+    card.appendChild(el('div', 'h', '△ ' + t.title));
+    card.appendChild(el('div', 's', t.text));
+    placeBox(card, e);
+  }
+  hitsEl.addEventListener('mouseover', function (e) { var tid = tidOf(e); if (tid) showTrapCard(tid, e); });
+  hitsEl.addEventListener('mouseout', function (e) { if (tidOf(e)) card.style.display = 'none'; });
   function hitFor(e) { var t = e.target; return t && t.getAttribute && t.getAttribute('data-pid'); }
   function setHoverGrid(g) { if (S.hoverGrid !== g) { S.hoverGrid = g; renderMap(true); } }
   hitsEl.addEventListener('mouseover', function (e) {
@@ -2829,7 +2980,16 @@
     setHoverGrid(pt && pt.grid != null && S.grids && S.grids[pt.grid] ? String(pt.grid) : null);
   });
   hitsEl.addEventListener('mouseout', function (e) { if (hitFor(e)) { card.style.display = 'none'; setHoverGrid(null); } });
-  hitsEl.addEventListener('click', function (e) { var pid = hitFor(e); if (pid) { card.style.display = 'none'; openMenu(pid, e); } });
+  // A trap spot has no kill to mark: hover reads it, click and right-click leave it alone.
+  function isTrapSpot(pid) { return !!(S.cfg.show.traps && trapDefOf(S.byId[pid], S.traps)); }
+  hitsEl.addEventListener('click', function (e) { var pid = hitFor(e); if (pid && !isTrapSpot(pid)) { card.style.display = 'none'; openMenu(pid, e); } });
+  // Right-click on a spawn dot switches it off / on (spawnToggle). It stops here: the stage's right-click (centre on you) must
+  // not also run for a dot.
+  hitsEl.addEventListener('contextmenu', function (e) {
+    e.preventDefault(); e.stopPropagation();
+    var pid = hitFor(e);
+    if (pid && !isTrapSpot(pid)) { card.style.display = 'none'; closeMenu(); toggleSpawn(pid); }
+  });
 
   // ☠ Corpse markers: one real button per drawn corpse (so the hover handshake arms the click-through window), and a card you
   // can move into - its dragger is a link that centres the map on them when the Map can place them (you, group, raid), plain
@@ -2888,6 +3048,16 @@
     var p = S.byId[pid];
     if (!p) return;
     card.innerHTML = '';
+    // A trap spot says what it does instead of listing its helper NPC ("TrapMan3").
+    var tdef = S.cfg.show.traps ? trapDefOf(p, S.traps) : null;
+    if (tdef) {
+      var trs = Number(p.respawn_s) || 0;
+      card.appendChild(el('div', 'h', '△ ' + tdef.title));
+      card.appendChild(el('div', 's', tdef.text));
+      if (trs && trs < 1000000) card.appendChild(el('div', 's', 'spot re-arms ' + fmtDur(trs * 1000) + ' after it fires'));
+      placeBox(card, e);
+      return;
+    }
     var up = upOn(pid, S.p, S.seenBy), un = upNpc(p, up);
     card.appendChild(el('div', 'h', up ? upLabel(up) : bestName(p)));
     var wch = S.watchBy[String(pid)];
@@ -3008,6 +3178,7 @@
         addKillBtn(r, g.name, g.point_id != null ? g.point_id : null, g.spawn_id, g.killed_q);
         // a row promoted from Up · seen still centres on its spawn point
         if (g.point_id != null) { r.setAttribute('data-wp-interact', ''); r.addEventListener('click', function () { centreOn(S.byId[String(g.point_id)]); }); }
+        rowToggle(r, function () { killRow(g.name, g.point_id != null ? g.point_id : null, g.spawn_id); });   // an engaged mob is alive: right-click = ☠ killed
         box.appendChild(r);
       });
     }
@@ -3027,6 +3198,7 @@
         var wsn = S.seenBy[w.pid];   // set only for a spot with no timer and a mob seen alive: the one to mark dead
         if (wsn && wsn.name) addKillBtn(r, wsn.name, w.pid, wsn.spawn_id, wsn.killed_q);
         r.addEventListener('click', function () { centreOn(w.p); });
+        rowToggle(r, function () { toggleSpawn(w.pid, w.named); });
         box.appendChild(r);
       });
     }
@@ -3039,9 +3211,10 @@
       r.appendChild(el('span', 'nm', g.name + (g.n > 1 ? ' ×' + g.n : ''))); r.appendChild(el('span', 'tm', timerText(t, now)));
       r.appendChild(el('span', 'src', (g.n > 1 ? 'next of ' + g.n + ' · ' : '') + (t.source === 'marked' ? 'marked' : 'seen') + (t.by ? ' · by ' + t.by : '')));
       r.addEventListener('click', function () { centreOn(S.byId[String(t.point_id)]); });
+      rowToggle(r, function () { toggleSpawn(t.point_id, g.name); });   // the soonest of a folded row, the one the row speaks for
       box.appendChild(r);
     });
-    if (!timers.length && !wrows.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot')).id = 'empty';
+    if (!timers.length && !wrows.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot (right-click a dot to switch it off and on)')).id = 'empty';
     // a seen mob already listed under Engaged (the agent flags it) is not listed twice
     var seenList = ((P && P.seen) || []).filter(function (s) { return !s.engaged && !S.timerBy[String(s.point_id)] && !S.watchBy[String(s.point_id)]; });
     if (seenList.length) {
@@ -3055,6 +3228,7 @@
         r.appendChild(el('span', 'src', (s.spawn_id != null ? 'spawn #' + s.spawn_id : 'pinned') + (s.by ? ' · by ' + s.by : '') + (s.killed_q ? ' · killed?' : '')));
         if (s.name) addKillBtn(r, s.name, s.point_id, s.spawn_id, s.killed_q);
         r.addEventListener('click', function () { centreOn(S.byId[String(s.point_id)]); });
+        rowToggle(r, function () { toggleSpawn(s.point_id, s.name || 'a mob'); });
         box.appendChild(r);
       });
     }

@@ -687,7 +687,7 @@ describe('chat.html: search, history and rows', () => {
     it('the pick is remembered per window in storage that may be missing, and a remembered pick loads on the first good poll', () => {
       expect(code).toMatch(/try \{ var _hv = Number\(localStorage\.getItem\(histKey\(\)\)\)/);
       expect(code).toMatch(/try \{ localStorage\.setItem\(histKey\(\), String\(_histHours\)\); \} catch \(e\) \{\}/);
-      expect(code).toMatch(/if \(!_connectedOnce\) \{ _connectedOnce = true; if \(_histHours\) loadHistory\(\); \}/);
+      expect(code).toMatch(/if \(!_connectedOnce\) \{ _connectedOnce = true; _backlogGen = bk; if \(_histHours\) loadHistory\(\); \}/);
       expect(code).toContain("'wpChatHistH:' + winId()");   // per window id (b1...), so it survives groups moving in and out
     });
     it('a newer pick wins over a slower earlier one', () => {

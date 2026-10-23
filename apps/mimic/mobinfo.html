@@ -85,6 +85,9 @@
          font-size:10px;font-family:inherit;cursor:pointer}
   .qcopy:hover{border-color:#58a6ff}
   .qcopy.ok{border-color:#56d364;color:#56d364}
+  .mretry{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:0 5px;margin-left:4px;
+          font-size:10px;font-family:inherit;cursor:pointer}
+  .mretry:hover{border-color:#58a6ff}
   .qsay{color:#c9d1d9;line-height:1.35;margin-top:1px;font-size:10px}
   .qsay.alt{color:#8b949e}
   .qtag{font-size:8.5px;border-radius:3px;padding:0 4px;border:1px solid}
@@ -979,6 +982,14 @@
         }
         return;
       }
+      // FB-95: ↻ on "no catalog stats" — the agent forgets this target's lookup and asks the bot again.
+      var mr = t.closest('.mretry');
+      if (mr) {
+        mr.textContent = '…';
+        bodyEl.__wpHtml = null;   // repaint next poll, whatever the answer
+        try { fetch('http://127.0.0.1:' + PORT + '/api/mob-info/retry', { method: 'POST', cache: 'no-store' }).catch(function(){}); } catch (e) {}
+        return;
+      }
       var chip = t.closest('.qcopy');
       if (chip) {
         _copyText(chip.getAttribute('data-copy') || '');
@@ -1001,6 +1012,13 @@
       ev.preventDefault();
       var url = a.getAttribute('data-pqdi');
       if (url) { try { window.mimic.openExternal(url); } catch (e) {} }
+    });
+    // FB-95: the ↻ on "no catalog stats" is clickable too, so it takes the same hover handshake.
+    bodyEl.addEventListener('mouseover', function(ev){
+      if (ev.target && ev.target.closest && ev.target.closest('.mretry')) { try { window.mimic.overlayHoverInteractive(true); } catch (e) {} }
+    });
+    bodyEl.addEventListener('mouseout', function(ev){
+      if (ev.target && ev.target.closest && ev.target.closest('.mretry')) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseover', function(ev){
       var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .inm, .fqvtab, .qcopy, .qtoggle, .facl') : null;
@@ -1451,6 +1469,14 @@
     return '<div class="mini">' + h + '</div>';
   }
 
+  // The line under a target with no stats (FB-95): the agent's reason, and a ↻ that asks the bot again. Retrying cannot
+  // help an off-Quarm character or a Mimic with no guild connection, so those two get the reason alone.
+  function missNote(mm){
+    if (!mm || mm.reason === 'looking_up') return '<div class="sub" style="color:#a371f7">looking up stats…</div>';
+    var canRetry = mm.reason === 'not_in_catalog' || mm.reason === 'lookup_failed';
+    return '<div class="sub">no catalog stats · ' + esc(mm.text || 'not in the catalog')
+         + (canRetry ? '<button type="button" class="mretry" title="Ask the guild bot again">&#x21BB;</button>' : '') + '</div>';
+  }
   // A corpse is named "<owner>'s corpse" — with a backtick or curly apostrophe in some names, and a
   // number after "corpse" on some builds. The owner, or null for a name that is not a corpse's.
   function corpseOwner(name){
@@ -1784,9 +1810,12 @@
       }
       chips += hitsChip(mi.target_hits);   // after the specials: seen in the fight, not catalogued
       if (chips) spec = '<div class="spec">'+chips+'</div>';
-      var loadingNote = (!mob && mi.loading) ? '<div class="sub" style="color:#a371f7">looking up stats…</div>'
+      // FB-95: "no catalog stats" used to stand for six different situations. The agent now says which
+      // (mi.mob_miss.reason/text) and the ↻ asks the bot again; an older agent sends none and keeps the bare line.
+      var loadingNote = (!mob && mi.loading) && !(mi.mob_miss && mi.mob_miss.reason !== 'looking_up') ? '<div class="sub" style="color:#a371f7">looking up stats…</div>'
                        : (!mob ? (corpseOf ? '<div class="sub">corpse of ' + esc(corpseOf) + '</div>'
-                                           : '<div class="sub">no catalog stats for this target</div>') : '');
+                                           : (mi.mob_miss ? missNote(mi.mob_miss)
+                                                          : '<div class="sub">no catalog stats for this target</div>')) : '');
       // A PLAYER target (the guild lead, 2026-09-24): class and level from /who,
       // or a level RANGE from your /consider when they are anonymous, and in
       // PvP what your drains took from them. Replaces "no catalog stats".

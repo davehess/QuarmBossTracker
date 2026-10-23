@@ -99,7 +99,7 @@ describe('a target in a cached zone', () => {
   });
 
   it('works with no bot configured at all', () => {
-    seedPack(215, { a_water_mephit: { name: 'a water mephit' } });
+    seedPack(215, { a_water_mephit: { name: 'a water mephit', level: 61 } });   // a row, not a husk (FB-95)
     S.uploadOpts = null;
     const m = load();
     m.fetchMobInfo('a water mephit', '', 215);

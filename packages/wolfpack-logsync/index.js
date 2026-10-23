@@ -1528,6 +1528,10 @@ function eqLogsAllOffGuild(paths) {
 // one resolves to the off-guild side: holding back a Quarm upload costs a night's data, sending a Project 1999
 // character's lines to the guild cannot be taken back.
 const _charServers = new Map();
+// Characters with a Quarm log registered. The upload gate above keeps the off-guild answer for a name on both, but the
+// Mob Info catalog asks the opposite question (FB-95): an old Project 1999 log of the same name lying in the logs
+// folder must not switch a Quarm raider's Target Info off, so for the catalog one Quarm log is enough.
+const _charQuarmLogs = new Set();
 function noteLogServer(filepath) {
   const c = characterFromFilename(filepath);
   if (!c) return;
@@ -1535,9 +1539,13 @@ function noteLogServer(filepath) {
   const k = c.toLowerCase();
   const prev = _charServers.get(k);
   if (prev === undefined || !eqServerCaps(server).guildUpload) _charServers.set(k, server);
+  if (eqServerCaps(server).catalog) _charQuarmLogs.add(k);
 }
+// The server whose catalog applies to this character: Quarm unless every log we hold for the name is another server's.
 function eqServerForCharacter(character) {
-  return _charServers.get(String(character || '').toLowerCase()) || EQ_SERVER_QUARM;
+  const k = String(character || '').toLowerCase();
+  if (_charQuarmLogs.has(k)) return EQ_SERVER_QUARM;
+  return _charServers.get(k) || EQ_SERVER_QUARM;
 }
 // True when a token is set (uploads are possible) and this character's server is not the guild's.
 function _offGuildServerChar(character) {
@@ -6286,7 +6294,9 @@ let _chDdrEnabled = true;
 // median of the last 10 inter-slot gaps. Returns null until CH_DDR_MIN_BEATS
 // gaps exist, so an unwarmed chain grades nothing rather than grading noise.
 function _chExpectedNextAt(c) {
-  if (!c || !c.lastCh || !c.beats || c.beats.length < CH_DDR_MIN_BEATS) return null;
+  if (!c || !c.lastCh || !c.beats) return null;
+  // A beat the raid declared (a chain tool's set_delay, see _chSetChainLine) stands in until the chain is measured.
+  if (c.beats.length < CH_DDR_MIN_BEATS) return c.declaredBeatMs ? c.lastCh.atMs + c.declaredBeatMs : null;
   const sorted = c.beats.slice().sort((a, b) => a - b);
   const beatMs = sorted[Math.floor(sorted.length / 2)];
   if (!beatMs) return null;
@@ -6356,9 +6366,9 @@ function trackChChainLine(line, character) {
   // every line of every watched log. `_CH_ROSTER_HINT` lets the chain-roster
   // announcement ("Norbray 001, Rapha 002, …") through — it has no CH/go/inc.
   if (line.indexOf('CH') === -1 && !/go\s*go/i.test(line) && !/inc\s+to/i.test(line)
-      && !_CH_ROSTER_HINT.test(line)) return;
+      && !_CH_ROSTER_HINT.test(line)) { _chExtraLine(line, character); return; }
   const m = line.match(_CH_SPEAKER_RX);
-  if (!m) return;
+  if (!m) { _chExtraLine(line, character); return; }   // not a channel the original reads (a chain-named custom channel, maybe)
   const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
   const text = m[2].trim();
   const ts = parseEqTimestamp(line);
@@ -6408,7 +6418,7 @@ function trackChChainLine(line, character) {
   const call = text.match(_CH_CALL_RX);
   if (call) {
     const num = parseInt(call[1], 10);
-    if (!num || num > 30) return;          // sanity: chains are small
+    if (!num || num > 30) { _chExtraText(text, speaker, line, character); return; }   // sanity: chains are small ("333 CH …" is another guild's slot 3)
     _chChainEnsure(atMs);
     const c = _chChain;
     // Someone was manually removed from this slot (the overlay's ✕) and is
@@ -6511,6 +6521,309 @@ function trackChChainLine(line, character) {
       _maybeAnnounceChGo(_chChain, atMs);
     }
   }
+  // Everything above is the original parser and is untouched. Only a line it did not claim reaches
+  // the additional matchers (other guilds' shapes + the user's learned templates) below.
+  if (!_CH_CALL_RX.test(text) && !_CH_GO_RX.test(text) && !_CH_PERSONAL_RX.test(text)) _chExtraText(text, speaker, line, character);
+}
+
+// ── CH chain: other guilds' call shapes + templates the user taught (2026-10-23) ──────────────────
+// The guild lead, in another guild's raid: "other people have CH chain macros, we need to define where those
+// end up in the setup mode or start looking for other patterns." Their raid-say reads
+//   "D&D 333 CH - Aldenmar - 61%"     (guild tag, slot digit repeated three times, CH, target, mana %)
+// ⚠ HARD RULE (the guild lead, same day): "DO NOT disrupt the shout ones for wolf pack." Nothing here changes how
+// Wolf Pack's own shout forms parse. These are ADDITIONAL matchers, reached only when the original parser
+// above did not claim the line, and they never touch chain state themselves: a match is TRANSLATED into the
+// canonical Wolf Pack text ("003 - CH - <target> - Mana: 61%" / "003 GO GO GO") and fed back through
+// trackChChainLine, so slots, claimants, DDR grades, beat and the GO TTS follow the one code path there is.
+// test/ch-chain-wolfpack-regression.test.js pins a whole Wolf Pack chain against a capture of the old tracker.
+const CH_SLOT_MAX = 30;
+const CH_TEMPLATES_MAX = 12;
+const CH_RECENT_MAX = 25;
+const CH_UNREAD_HINT_MS = 15 * 60 * 1000;
+// Raid / shout / group / say as the original reads them, plus a custom channel whose NAME says it is for
+// chains ("ch:1", "chain:2", "heals:3") — read locally only, like every other line this tracker sees.
+const _CH_SPEAKER_CHAN_RX = /^\[[^\]]+\]\s+(\S+)\s+tells?\s+(?:ch|chain|heal|cleric)[A-Za-z]*:\d+,\s*'(.+)'\s*$/i;
+// "333" → slot 3, "55" → 5 (a macro repeating the digit), "012" → 12; 1..CH_SLOT_MAX or null.
+function _chSlotFromToken(tok) {
+  const t = String(tok == null ? '' : tok);
+  if (!/^\d{1,3}$/.test(t)) return null;
+  const n = (t.length >= 2 && /^(\d)\1+$/.test(t)) ? parseInt(t[0], 10) : parseInt(t, 10);
+  return (n >= 1 && n <= CH_SLOT_MAX) ? n : null;
+}
+const _CH_NOT_A_NAME = new Set(['mana', 'next', 'now', 'inc', 'incoming', 'casting', 'chain', 'heal', 'complete',
+  'cleric', 'clerics', 'ready', 'done', 'down', 'oom', 'the']);
+function _chLooksLikeName(w) {
+  return /^[A-Za-z`]{3,15}$/.test(String(w || '')) && !_CH_NOT_A_NAME.has(String(w).toLowerCase());
+}
+// Mana from whatever trails the target: "61%", "Mana 61", "m61", "(61%)". Over 100 is not a mana value.
+function _chManaFromRest(rest) {
+  const s = String(rest || '');
+  const m = s.match(/(?:^|[^A-Za-z])(?:mana|mn|m)\s*[:=>\-–]*\s*(\d{1,3})(?!\d)/i)
+         || s.match(/(\d{1,3})\s*%/)
+         || s.match(/\(\s*(\d{1,3})\s*\)/);
+  const v = m ? parseInt(m[1], 10) : null;
+  return (v != null && v <= 100) ? v : null;
+}
+// "CH" is case-sensitive, as in the original; "Complete Heal" is not (spelled with classes: no inline flags).
+const _CHW = '(?:CH|C\\.H\\.|CHeal|[Cc][Oo][Mm][Pp][Ll][Ee][Tt][Ee]\\s+[Hh][Ee][Aa][Ll](?:[Ii][Nn][Gg])?)(?![A-Za-z])';
+const _CH_TAG = '(?:[^\\s\\d#]\\S{0,5}\\s+)?';                  // "D&D ", "WP ", "[CH] "
+const _CH_SEP = '[\\s:\\-—–>→|<\\[\\](){}=,.]*';
+const _CH_TGT = '(?:on\\s+)?([A-Z][a-z`]{2,14})(?![A-Za-z`])(.*)$';
+// slot, then CH:   "D&D 333 CH - Name - 61%", "#3 CH Name", "3. CH: Name (61%)"
+const _CH_CALL_SLOT_FIRST = new RegExp('^' + _CH_TAG + '#?(\\d{1,3})(?!\\d)[.):]?' + _CH_SEP + _CHW + _CH_SEP + _CH_TGT);
+// CH, then slot:   "CH3 Name 61%", "CH 3 - Name", "WP CH#3 Name"
+const _CH_CALL_CH_FIRST = new RegExp('^' + _CH_TAG + _CHW + '\\s*[#:\\-]*\\s*(\\d{1,3})(?!\\d)[.):]?' + _CH_SEP + _CH_TGT);
+// Go-cues the original (which wants "go go") does not read: "3 GO", "333 go", "GO 3", "next 3".
+const _CH_GO_SLOT_FIRST = new RegExp('^' + _CH_TAG + '#?(\\d{1,3})(?!\\d)[.):]?[\\s\\-—–:>]*go(?![a-z])(?:[\\s!.,\\-]*(?:go|now|next))*[\\s!.]*$', 'i');
+const _CH_GO_WORD_FIRST = new RegExp('^' + _CH_TAG + 'go\\s*#?(\\d{1,3})(?!\\d)[\\s!.]*$', 'i');
+const _CH_GO_NEXT       = new RegExp('^' + _CH_TAG + 'next(?:\\s+up)?(?:\\s+is)?[\\s:#\\-]*(\\d{1,3})(?!\\d)[\\s!.]*$', 'i');
+function _chCanon(kind, num, target, mana) {
+  const n = String(num).padStart(3, '0');
+  if (kind === 'go') return { kind, num, text: n + ' GO GO GO' };
+  return { kind, num, target, mana, text: n + ' - CH - ' + target + (mana != null ? ' - Mana: ' + mana + '%' : '') };
+}
+// The built-in broadened shapes. Pure: text in, canonical call/go (or null) out.
+function chParseBuiltinExtra(text) {
+  const t = String(text || '').trim();
+  if (!t || t.length > 200) return null;
+  for (const rx of [_CH_CALL_SLOT_FIRST, _CH_CALL_CH_FIRST]) {
+    const m = t.match(rx);
+    if (!m) continue;
+    const num = _chSlotFromToken(m[1]);
+    if (!num || !_chLooksLikeName(m[2])) continue;
+    return _chCanon('call', num, m[2], _chManaFromRest(m[3]));
+  }
+  for (const rx of [_CH_GO_SLOT_FIRST, _CH_GO_WORD_FIRST, _CH_GO_NEXT]) {
+    const m = t.match(rx);
+    const num = m && _chSlotFromToken(m[1]);
+    if (num) return _chCanon('go', num);
+  }
+  return null;
+}
+// ── Learned templates ──
+// One example line + a role per word: TAG (a guild tag, optional), SLOT, TARGET, MANA, skip (any one word),
+// lit (that exact word). Stored as {id, example, roles} in logsync.prefs.json (ch_templates) and recompiled
+// from those two fields, so there is one source of truth. A template with a TARGET is a CH call; with no
+// TARGET it is a go-cue.
+const CH_ROLES = ['lit', 'TAG', 'SLOT', 'TARGET', 'MANA', 'skip'];
+const _chEscRx = (s) => String(s).replace(/[.*+?^${}()|[\]\\\/-]/g, '\\$&');
+const _chTplCache = new Map();
+function _chCompileTemplate(example, roles) {
+  const words = String(example || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 20 || String(example).length > 200) return { error: 'too long or empty' };
+  if (!Array.isArray(roles) || roles.length !== words.length || roles.some(r => CH_ROLES.indexOf(r) < 0)) return { error: 'roles do not fit the line' };
+  const count = (r) => roles.filter(x => x === r).length;
+  if (count('SLOT') !== 1) return { error: 'mark exactly one word as the slot' };
+  if (count('TARGET') > 1 || count('MANA') > 1 || count('TAG') > 1) return { error: 'one target, one mana, one tag at most' };
+  if (!words.some((w, i) => roles[i] === 'lit' && /[A-Za-z]/.test(w))) return { error: 'keep at least one fixed word (like CH) so ordinary chat cannot match' };
+  let src = '^', slotIdx = 0, targetIdx = 0, manaIdx = 0, g = 0, needSep = false;
+  words.forEach((w, i) => {
+    const role = roles[i];
+    let piece;
+    if (role === 'TAG') { src += '(?:\\S{1,8}\\s+)?'; needSep = false; return; }
+    if (role === 'lit') piece = _chEscRx(w);
+    else if (role === 'skip') piece = '\\S+';
+    else if (role === 'SLOT' || role === 'MANA') {
+      const d = w.match(/^(.*?)(\d+)(.*)$/);
+      if (!d) { piece = null; }
+      else {
+        g += 1; if (role === 'SLOT') slotIdx = g; else manaIdx = g;
+        const post = d[3].replace(/%$/, '');
+        piece = _chEscRx(d[1]) + '(\\d{1,3})' + _chEscRx(post) + (/%$/.test(d[3]) ? '%?' : '');
+      }
+    } else {   // TARGET
+      const d = w.match(/^([^A-Za-z`]*)([A-Za-z`]+)(.*)$/);
+      if (!d) piece = null;
+      else { g += 1; targetIdx = g; piece = _chEscRx(d[1]) + '([A-Za-z`]{3,15})' + _chEscRx(d[3]); }
+    }
+    if (piece == null) { g = -1; return; }
+    src += (needSep ? '\\s+' : '') + piece;
+    needSep = true;
+  });
+  if (g < 0) return { error: 'the word marked as slot, target or mana has no digits or letters' };
+  if (!slotIdx) return { error: 'mark exactly one word as the slot' };
+  let rx;
+  try { rx = new RegExp(src + '(?:\\s.*)?$', 'i'); } catch { return { error: 'could not compile' }; }
+  return { rx, slotIdx, targetIdx, manaIdx, kind: targetIdx ? 'call' : 'go' };
+}
+function _chTemplateGet(t) {
+  if (!t || typeof t.example !== 'string') return null;
+  const key = t.example + '\u0001' + (Array.isArray(t.roles) ? t.roles.join(',') : '');
+  if (!_chTplCache.has(key)) _chTplCache.set(key, _chCompileTemplate(t.example, t.roles));
+  const c = _chTplCache.get(key);
+  return c && c.rx ? c : null;
+}
+function chTemplates() {
+  let list;
+  try { list = _agentPrefs().ch_templates; } catch { list = null; }
+  return Array.isArray(list) ? list.filter(t => t && typeof t.id === 'string') : [];
+}
+function _chApplyTemplate(c, text) {
+  const m = String(text || '').trim().match(c.rx);
+  if (!m) return null;
+  const num = _chSlotFromToken(m[c.slotIdx]);
+  if (!num) return null;
+  if (c.kind === 'go') return _chCanon('go', num);
+  if (!_chLooksLikeName(m[c.targetIdx])) return null;
+  const mana = c.manaIdx ? parseInt(m[c.manaIdx], 10) : null;
+  return _chCanon('call', num, m[c.targetIdx].charAt(0).toUpperCase() + m[c.targetIdx].slice(1).toLowerCase(),
+    mana != null && mana <= 100 ? mana : null);
+}
+// Learned templates first (the user's word beats a guess), then the built-in broadened shapes.
+function chTranslateExtra(text) {
+  for (const t of chTemplates()) {
+    const c = _chTemplateGet(t);
+    const hit = c && _chApplyTemplate(c, text);
+    if (hit) return Object.assign(hit, { via: 'learned' });
+  }
+  const b = chParseBuiltinExtra(text);
+  return b ? Object.assign(b, { via: 'builtin' }) : null;
+}
+// A first guess at the roles for an example, so "teach it" is mostly a confirm: the digits are the slot, a % number
+// or the number after "mana" is the mana, the capitalised word after CH is the target, a short word in front of the
+// slot is a guild tag. The user fixes whatever it got wrong.
+function chGuessRoles(example) {
+  const words = String(example || '').trim().split(/\s+/).filter(Boolean);
+  const roles = words.map(() => 'lit');
+  const core = (w) => w.replace(/^[^A-Za-z0-9`]+|[^A-Za-z0-9`%]+$/g, '');
+  const chAt = words.findIndex(w => /^(?:\W*)(?:CH|C\.H\.|CHeal)\W*$/.test(w) || /^complete$/i.test(core(w)));
+  let slot = words.findIndex((w, i) => /\d/.test(w) && !/%/.test(w) && !/^\W*m(?:ana)?\W*\d/i.test(w) && i !== -1);
+  if (slot < 0) slot = words.findIndex(w => /\d/.test(w));
+  if (slot >= 0) roles[slot] = 'SLOT';
+  const mana = words.findIndex((w, i) => i !== slot && /\d/.test(w) && (/%/.test(w) || (i > 0 && /^mana\W*$/i.test(core(words[i - 1]))) || /^\W*m(?:ana)?\W*\d/i.test(w)));
+  if (mana >= 0) roles[mana] = 'MANA';
+  const nameAt = (from) => words.findIndex((w, i) => i > from && roles[i] === 'lit' && _chLooksLikeName(core(w)) && /^[A-Z]/.test(core(w)));
+  // The name after CH; failing that the first one after the slot; failing that the first anywhere.
+  const tgt = [nameAt(chAt), nameAt(slot), nameAt(-1)].find(x => x >= 0);
+  if (tgt >= 0) roles[tgt] = 'TARGET';
+  if (slot > 0 && words[0].length <= 6 && roles[0] === 'lit' && !/^(?:CH|C\.H\.|CHeal)\W*$/.test(words[0]) && chAt > slot) roles[0] = 'TAG';
+  return roles;
+}
+// Dry-run a would-be template against its own example: what it would read.
+function chLearnPreview(example, roles) {
+  const c = _chCompileTemplate(example, roles);
+  if (!c.rx) return { ok: false, error: c.error };
+  const hit = _chApplyTemplate(c, example);
+  if (!hit) return { ok: false, error: 'the marked pattern does not read its own example back (is the slot 1-' + CH_SLOT_MAX + '?)' };
+  return { ok: true, kind: c.kind, read: { slot: hit.num, target: hit.target || null, mana: hit.mana != null ? hit.mana : null } };
+}
+function chLearnSave(example, roles) {
+  const pv = chLearnPreview(example, roles);
+  if (!pv.ok) return pv;
+  const list = chTemplates();
+  if (list.length >= CH_TEMPLATES_MAX) return { ok: false, error: 'at most ' + CH_TEMPLATES_MAX + ' templates; remove one first' };
+  const ex = String(example).trim().replace(/\s+/g, ' ');
+  if (list.some(t => t.example === ex && JSON.stringify(t.roles) === JSON.stringify(roles))) return Object.assign({ duplicate: true }, pv);
+  const t = { id: 'ct' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36), example: ex, roles: roles.slice() };
+  _saveAgentPrefs({ ch_templates: list.concat([t]) });
+  return Object.assign({ template: t }, pv);
+}
+function chLearnRemove(id) {
+  const list = chTemplates();
+  const kept = list.filter(t => t.id !== id);
+  if (kept.length !== list.length) _saveAgentPrefs({ ch_templates: kept });
+  return { ok: true, removed: kept.length !== list.length };
+}
+// Recent chain-looking chat the tracker could not read: the "pick a line" list in the CH Chain overlay's
+// Learn panel, and the source of its once-a-session "Unrecognised CH call" hint. In memory only, 25 lines, and
+// ONLY lines the original parser and the matchers above all passed on — so a taught line drops out of it.
+const _chUnread = [];
+function _chNoteUnread(text, atMs) {
+  if (!/\bCH\b|C\.H\.|complete\s+heal/i.test(text)) return;
+  const last = _chUnread[_chUnread.length - 1];
+  if (last && last.text === text) { last.atMs = atMs; return; }
+  _chUnread.push({ text: text.slice(0, 200), atMs });
+  if (_chUnread.length > CH_RECENT_MAX) _chUnread.shift();
+}
+// "Looks like a call": a real CH token, a number, and a capitalised name-shaped word that is not CH itself.
+function _chLooksLikeCall(text) {
+  return /\bCH\b|C\.H\.|CHeal|complete\s+heal/i.test(text) && /\d/.test(text)
+    && (String(text).match(/\b[A-Z][a-z`]{2,14}\b/g) || []).some(_chLooksLikeName);
+}
+function chLearnState() {
+  const now = Date.now();
+  const recent = _chUnread.filter(e => !chTranslateExtra(e.text)).slice().reverse();
+  const hint = recent.find(e => _chLooksLikeCall(e.text) && (now - e.atMs) < CH_UNREAD_HINT_MS) || null;
+  return {
+    templates: chTemplates().map(t => {
+      const c = _chTemplateGet(t);
+      return { id: t.id, example: t.example, roles: t.roles, kind: c ? c.kind : 'call' };
+    }),
+    recent: recent.map(e => ({ text: e.text, at_ms: e.atMs })),
+    unrecognised: hint ? { text: hint.text, at_ms: hint.atMs } : null,
+    max: CH_TEMPLATES_MAX,
+  };
+}
+// The speaker + quoted body, as the original reads them, plus a chain-named custom channel.
+function _chExtraLine(line, character) {
+  if (!line) return;
+  const m = line.match(_CH_SPEAKER_RX) || line.match(_CH_SPEAKER_CHAN_RX);
+  if (!m) return;
+  _chExtraText(m[2].trim(), /^you$/i.test(m[1]) ? (character || 'You') : m[1], line, character);
+}
+// ── A chain tool's own setup line (2026-10-23) ──
+// Another guild's raid sets its chain with a rotation tool that announces the order and the beat in raid-say:
+//   "Rotatonator set_chain: 111 aldenmar, 222 Brackwyn, 333 Corvale, set_delay: 3"
+//   "Rotatonator set_delay: 4"                                    (the beat alone, mid-fight)
+// The order is translated into Wolf Pack's own roster call ("Aldenmar 001, Brackwyn 002, Corvale 003") and fed
+// through the original roster path, like the calls above. The delay is the raid's declared beat: the chain's
+// measured beat still wins once it has one; until then the countdown and the PIVOT warning use the declared one.
+// ponytail: the original roster path wants 3+ clerics numbered 1..N, so a 2-cleric or gapped set_chain seats no
+// one; give the roster block its own entry point if a raid ever runs one.
+const _CH_SET_CHAIN_RX = /\bset_chain\s*[:=]\s*(.+?)(?:[\s,;]+set_delay\s*[:=]\s*(\d{1,2}(?:\.\d+)?))?\s*$/i;
+const _CH_SET_DELAY_RX = /\bset_delay\s*[:=]\s*(\d{1,2}(?:\.\d+)?)\s*$/i;
+function chParseSetChain(text) {
+  const t = String(text || '');
+  const m = t.match(_CH_SET_CHAIN_RX);
+  const d = m ? m[2] : (t.match(_CH_SET_DELAY_RX) || [])[1];
+  const delaySec = d != null && parseFloat(d) >= 1 && parseFloat(d) <= 30 ? parseFloat(d) : null;
+  const pairs = [];
+  if (m) {
+    for (const part of m[1].split(/[,;]/)) {
+      const p = part.trim().match(/^(\d{1,3})\s+([A-Za-z`]{3,15})$/) || part.trim().match(/^([A-Za-z`]{3,15})\s+(\d{1,3})$/);
+      if (!p) continue;
+      const [tok, name] = /^\d/.test(p[1]) ? [p[1], p[2]] : [p[2], p[1]];
+      const num = _chSlotFromToken(tok);
+      if (num && !pairs.some(x => x.num === num)) pairs.push({ num, name: name.charAt(0).toUpperCase() + name.slice(1) });
+    }
+  }
+  if (!pairs.length && delaySec == null) return null;
+  return { pairs: pairs.sort((a, b) => a.num - b.num), delaySec };
+}
+function _chSetChainLine(text, speaker, line, character) {
+  const sc = chParseSetChain(text);
+  if (!sc) return false;
+  const stamp = String(line).match(/^\[[^\]]+\]/);
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  if (sc.pairs.length && stamp) {
+    _chExtraBusy = true;
+    try {
+      trackChChainLine(stamp[0] + ' ' + speaker + " shouts, '"
+        + sc.pairs.map(p => p.name + ' ' + String(p.num).padStart(3, '0')).join(', ') + "'", character);
+    } finally { _chExtraBusy = false; }
+  }
+  if (sc.delaySec != null) {
+    _chChainEnsure(atMs);
+    _chChain.declaredBeatMs = Math.round(sc.delaySec * 1000);
+    _chChain.updatedAt = atMs;
+  }
+  return true;
+}
+let _chExtraBusy = false;
+function _chExtraText(text, speaker, line, character) {
+  if (_chExtraBusy || !text) return;
+  if (_chSetChainLine(text, speaker, line, character)) return;
+  const hit = chTranslateExtra(text);
+  const ts = parseEqTimestamp(line);
+  if (!hit) { _chNoteUnread(text, ts ? ts.getTime() : Date.now()); return; }
+  // A go-cue steers an EXISTING chain only (as the original does), and loose shapes like "go 3" must name a slot it has.
+  if (hit.kind === 'go' && !(_chChain && _chChain.slots && _chChain.slots[hit.num])) return;
+  const stamp = String(line).match(/^\[[^\]]+\]/);
+  if (!stamp) return;
+  _chExtraBusy = true;
+  try { trackChChainLine(stamp[0] + ' ' + speaker + " shouts, '" + hit.text + "'", character); }
+  finally { _chExtraBusy = false; }
 }
 // ── CH cast interrupted → freeze that slot's bar and put a ✕ on it ───────────
 // Bystander-visible interrupt lines, grounded in the server source Quarm runs
@@ -6753,7 +7066,7 @@ function chChainSnapshot() {
   if (!_chChain) return null;
   if ((Date.now() - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) { _chChain = null; return null; }
   const beats = _chChain.beats.slice().sort((a, b) => a - b);
-  const beatMs = beats.length ? beats[Math.floor(beats.length / 2)] : null;
+  const beatMs = beats.length ? beats[Math.floor(beats.length / 2)] : (_chChain.declaredBeatMs || null);
   // CH-chain interruption / pivot detection — v1.1.5 (the guild lead, 2026-06-26).
   // When the time elapsed since the last call exceeds 1.5× the measured beat
   // AND we know whose slot was supposed to call (next_num → slots[next_num]),
@@ -6820,6 +7133,8 @@ function chChainSnapshot() {
     last_ch:    _chChain.lastCh,
     next_num:   _chChain.nextNum,
     beat_ms:    beatMs,
+    // Only a chain tool's set_delay sets it; absent otherwise, so Wolf Pack's snapshot is unchanged (the golden pins it).
+    ...(_chChain.declaredBeatMs ? { declared_beat_ms: _chChain.declaredBeatMs } : {}),
     started_at: _chChain.startedAt,
     updated_at: _chChain.updatedAt,
     slipped,
@@ -9248,6 +9563,10 @@ const DS_UNLISTED_SLACK = 30;
 // (the guild lead: "expand the timeframe to 4 minutes").
 const PVP_ASSIST_WINDOW_MS = 240_000;
 
+// A fight whose top target has taken no damage for this long is over (EncounterBuilder._splitIfTopIdle).
+const WIPE_SPLIT_IDLE_MS  = 5 * 60_000;
+const WIPE_SPLIT_CHECK_MS = 10_000;
+
 class EncounterBuilder {
   constructor({ character, onFlush, silent = false }) {
     this.character  = character;
@@ -9354,6 +9673,10 @@ class EncounterBuilder {
     // deaths: player deaths observed in this encounter.
     // [{ name, ts, riposteDeath: bool, class: string|null }]
     this.deaths           = [];
+    // Wipe split: the log time each target last TOOK damage ({ ms, ts }), and the log time of the last
+    // idle check. See _splitIfTopIdle().
+    this._lastDmgAt       = new Map();
+    this._idleCheckMs     = 0;
     // recentRiposteDmg: name → timestamp of most recent confirmed riposte hit.
     // Used to attribute a death as a "riposte kill" if death follows within 3s.
     this.recentRiposteDmg = new Map();
@@ -10073,6 +10396,7 @@ class EncounterBuilder {
 
   add(event) {
     if (!event) return;
+    this._splitIfTopIdle(event);
 
     // ── A pet some other raider's agent has already named (FB-35) ──────────
     // Live builders only: a replay of an old log must not borrow tonight's owners.
@@ -10715,7 +11039,10 @@ class EncounterBuilder {
       const defenderIsMobish = dn && !/^you$/i.test(dn)
         && (/\s/.test(dn) || /^[a-z]/.test(dn) || this.targets.has(dn))
         && dn.toLowerCase() !== event.attacker.toLowerCase();
-      if (defenderIsMobish) {
+      // …unless the catalog says the name is a mob. Quarm's named bosses are one capitalised word (Jiva, Xuzl,
+      // Arlyxir, Galremos), and one that hits a charm pet or an add (multi-word) used to be "confirmed" here:
+      // from then on its own fight was skipped as "a player was the target" (the guild lead, 2026-10-23).
+      if (defenderIsMobish && !_isCatalogNpcName(event.attacker)) {
         const al = event.attacker.toLowerCase();
         confirmedPlayers.add(al);
         if (this.targets.has(event.attacker)) this.targets.delete(event.attacker);
@@ -10735,6 +11062,10 @@ class EncounterBuilder {
       const attackerIsTarget = rawAtk0 && this.targets.has(rawAtk0);
       if (!isSelfHit && !attackerIsTarget) {
         this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
+        if ((event.amount || 0) > 0) {
+          const _dMs = Date.parse(event.ts);
+          if (Number.isFinite(_dMs)) this._lastDmgAt.set(event.defender, { ms: _dMs, ts: event.ts });
+        }
         // #3 Extended Target V2 — rolling per-mob damage-in for the DPS-on-mob
         // readout. Same signal as this.targets, but TIMESTAMPED + windowed
         // (this.targets is cumulative). Other raiders' hits appear in our log
@@ -10831,7 +11162,10 @@ class EncounterBuilder {
       // showed up on the threat list as if they were players. Second
       // filter: anyone we've been DAMAGING this encounter (this.targets)
       // is by definition an NPC, so reject them too.
-      const attackerIsKnownNpc = attacker && this.targets.has(attacker);
+      // A one-word mob nobody has hit yet (Galremos on a lava giant, 2026-10-23) is not in this.targets either;
+      // the catalog zone pack names it.
+      const attackerIsKnownNpc = attacker && (this.targets.has(attacker)
+        || (attacker !== this.character && !isConfirmedPlayer(attacker) && _isCatalogNpcName(attacker)));
       // OUR pets (charm or summoned) bypass both the multi-word anti-NPC
       // filter AND the known-NPC check — a charm pet is usually a mob we
       // damaged before charming, so it's in this.targets, and its name has
@@ -11375,6 +11709,30 @@ class EncounterBuilder {
       }
     }
   }
+  // A fight is over when its top target has taken no damage for WIPE_SPLIT_IDLE_MS, even though other
+  // events keep arriving. tickIdle only looks at "any event", and this builder is per LOG, not per mob:
+  // trash fought between two pulls kept it open for 40 minutes, so two wipes on one boss uploaded as ONE
+  // encounter (the guild lead, 2026-10-23: "there were two wipes", one parse showed one 6m30s fight).
+  // Runs on the arrival of the next event, so the fight is closed at the moment the log shows it was over:
+  // the events after the top target's last damage are the trash that kept it open and are dropped, and
+  // ended_at is that last damage. Uploads exactly as an idle-timeout fight does (bossKillConfirmed stays
+  // false, so no timer moves). 5 min, not 2: a boss can sit untargetable for ~2 min (see the engage-gate
+  // comment in flush), and a dispel/FD reset that full-heals the mob re-engages within a minute or two.
+  // Throttled to one look per 10 log seconds. Known limit: the per-defender / per-healer counters
+  // (defenderStats, healerStats) already folded in the trimmed tail, which is at most WIPE_SPLIT_IDLE_MS.
+  _splitIfTopIdle(event) {
+    if (!this.events.length || !event.ts) return;
+    const nowMs = Date.parse(event.ts);
+    if (!Number.isFinite(nowMs) || nowMs - this._idleCheckMs < WIPE_SPLIT_CHECK_MS) return;
+    this._idleCheckMs = nowMs;
+    let top = null, topDmg = -1;
+    for (const [name, dmg] of this.targets) if (dmg > topDmg) { top = name; topDmg = dmg; }
+    const last = top && this._lastDmgAt.get(top);
+    if (!last || nowMs - last.ms <= WIPE_SPLIT_IDLE_MS) return;
+    this.events = this.events.filter(e => !(Date.parse(e.ts) > last.ms));
+    this.lastEvent = last.ts;
+    this.flush();
+  }
   tickIdle(now) {
     // If we've been silent for >120s and have events, flush
     if (this.events.length && this.lastEvent) {
@@ -11558,7 +11916,7 @@ class EncounterBuilder {
     // parseEvent so any per-player stats accumulated. Only PvP kill
     // broadcasts (handled via /api/agent/pvp) should turn into surfaced
     // parses for player targets.
-    if (this.bossName && isConfirmedPlayer(this.bossName)) {
+    if (this.bossName && isConfirmedPlayer(this.bossName) && !_isCatalogNpcName(this.bossName)) {
       this.reset();
       return;
     }
@@ -11580,7 +11938,7 @@ class EncounterBuilder {
     // bogus parse card naming the pet as the boss.
     const _bnLower = this.bossName.toLowerCase();
     const _isPet     = !!this.petLeaders[_bnLower] || knownPetOwners.has(_bnLower);
-    const _isPlayer  = isConfirmedPlayer(this.bossName);
+    const _isPlayer  = isConfirmedPlayer(this.bossName) && !_isCatalogNpcName(this.bossName);
     const _isUploader = this.character && _bnLower === this.character.toLowerCase();
     if (_isPet || _isPlayer || _isUploader) {
       this.reset();
@@ -18159,6 +18517,8 @@ function _serializeForDashboard() {
       candidates:  _logRotateCandidates(),
       recent:      Array.isArray(stats.logRotations) ? stats.logRotations.slice(0, 5) : [],
     },
+    // 🧹 Dispel callouts switch (Triggers tab), on unless the saved pref says off.
+    dispelWatch: { enabled: _dispelWatchEnabled() },
     // Backup for when zeal.ini isn't reachable: a tag we SAW arrive already
     // rewritten by prettyprint (spawn id stripped at the source).
     zealTagPretty: _tagPrettyPrintSeen,
@@ -22718,6 +23078,13 @@ function renderZealCard(s) {
 // Mirror of the tray's crash-sharing checkbox. Mimic owns cfg.crashReports and
 // passes it to the agent as an env var at spawn, so flipping it restarts the
 // engine — same path the tray item uses, not a second mechanism.
+function wpToggleDispelWatch(on) {
+  fetch('/api/dispel-watch/toggle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ on: !!on }),
+  }).catch(function () {});
+}
 async function wpToggleCrashShare(on) {
   try {
     if (window.mimic && window.mimic.toggleCrashReports) {
@@ -24468,6 +24835,18 @@ function renderTriggers(s) {
   // 🔇 Muted timers — what the ⋮ on a timer row has muted, for good and this session, each with an unmute. Its own
   // placeholder (renderMutedTimers), so this section stays byte-stable.
   h += '<div id="wpMutedTimers" class="card wide"></div>';
+  // 🧹 Dispel callouts (agent 4.0.11) — one switch, on by default, saved with the agent's other preferences. Whether the
+  // callouts speak, flash only or stay off is the Voice tab's "What you hear" (Built-in callouts). The checkbox state is
+  // the saved pref, so this stays byte-stable between polls.
+  h += '<div class="card wide"><h2>🧹 Dispel callouts</h2>'
+    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
+    +    '<input type="checkbox" id="wpDispelWatch" onchange="wpToggleDispelWatch(this.checked)"'
+    +      (s.dispelWatch && s.dispelWatch.enabled === false ? '' : ' checked') + '>'
+    +    '<span>Tell me when my debuff is dispelled off a mob, or my buffs are dispelled</span>'
+    +  '</label>'
+    +  '<div class="dim" style="font-size:11px">When a mob strips the debuffs you put on it (a boss that resets itself, a dispel), you are told '
+    +  'which of your spells to recast. When a mob dispels you, you are told which buffs to redo, and the buff queue hears about it at once. '
+    +  'Normal expiry, zoning, dying and a stronger spell replacing yours never count.</div></div>';
 
   // (The ⏪ Replay card moved to the ⚔️ Fights tab — renderReplayCard. The voice cards — voice & names,
   // What you hear, the raid callout allow-list, loot-post speech and the sound library — moved to the
@@ -35798,6 +36177,9 @@ function startWebDashboard(port) {
         const screenshots = (p && Array.isArray(p.screenshots) ? p.screenshots : [])
           .filter(s => typeof s === 'string' && /^data:image\/(?:jpeg|png|webp);base64,/.test(s) && s.length <= 7_200_000)
           .slice(0, 3);
+        // FB-95: what Target Info was doing, when it has a target. Rides in log_meta, so it arrives with or
+        // without the log; the mob's name and the zone, never another player's name (see mobInfoFeedbackMeta).
+        const targetInfo = mobInfoFeedbackMeta();
         const payload = {
           agent_version: AGENT_VERSION,
           category:      (p && p.category === 'bug') ? 'bug' : 'idea',
@@ -35812,8 +36194,9 @@ function startWebDashboard(port) {
               minutes: slice.minutes, lines: slice.lines, removed: slice.removed,
               bytes: slice.bytes, truncated: slice.truncated,
               from: slice.from, to: slice.to, character: slice.character,
+              ...(targetInfo ? { target_info: targetInfo } : {}),
             },
-          } : {}),
+          } : (targetInfo ? { log_meta: { target_info: targetInfo } } : {})),
           ...(screenshots.length ? { screenshots } : {}),
         };
         const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/feedback');
@@ -36013,6 +36396,11 @@ function startWebDashboard(port) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'proxy error', detail: err.message }));
         }
+      }
+      // Target Info's ↻ on a target with no stats (FB-95): forget this target's lookup, ask the bot again.
+      if (req.method === 'POST' && req.url.split('?')[0] === '/api/mob-info/retry') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(mobInfoRetry()));
       }
       // Boss loot for the PoP overlay's target panel — same catalog cache the
       // Mob Info overlay uses (fetchMobInfo, 6h TTL), keyed by guide npcName
@@ -36581,6 +36969,7 @@ function startWebDashboard(port) {
           // last one. Must run BEFORE _zealState is reassigned above? No — it
           // takes prevState explicitly, which is captured above.
           try { _noteBuffDurationsFromState(character, prevState, st); } catch (e) { void e; }
+          try { _dispelNoteZealDiff(character, prevState, st, Date.now()); } catch (e) { void e; }   // your buffs stripped early
           noteSpawnIdSeen(st.spawn_id);
           noteSpawnIdSeen(st.target_id);
           noteSpawnIdSeen(st.pet_id);
@@ -36770,6 +37159,28 @@ function startWebDashboard(port) {
         try { payload = JSON.parse(body); }
         catch { res.writeHead(400); return res.end('invalid json'); }
         const out = removeChChainSlot(payload && payload.num, payload && payload.name);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(out));
+      }
+      // "Learn a CH call" (2026-10-23) — the CH Chain overlay's setup-mode panel. GET lists the taught
+      // templates + recent lines the tracker could not read; POST previews (dry) or saves one; /remove drops one.
+      // Local-only: templates live in logsync.prefs.json, nothing uploads.
+      if (req.url === '/api/chchain/learn' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(chLearnState()));
+      }
+      if ((req.url === '/api/chchain/learn' || req.url === '/api/chchain/learn/remove') && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        let out;
+        if (req.url === '/api/chchain/learn/remove') out = chLearnRemove(String((payload && payload.id) || ''));
+        else {
+          const ex = String((payload && payload.example) || '');
+          if (payload && payload.guess) out = { ok: true, roles: chGuessRoles(ex) };
+          else out = (payload && payload.dry) ? chLearnPreview(ex, payload && payload.roles) : chLearnSave(ex, payload && payload.roles);
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(out));
       }
@@ -37197,6 +37608,17 @@ function startWebDashboard(port) {
         const out = _archiveLogNow(character);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(out));
+      }
+
+      // 🧹 Dispel callouts (agent 4.0.11) — the Triggers-tab switch. Persisted to logsync.prefs.json as
+      // `dispel_watch_off`, so the choice survives restarts and updates; on by default. Body { on: true|false }.
+      if (req.url === '/api/dispel-watch/toggle' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let on = true;
+        try { on = JSON.parse(body || '{}').on !== false; } catch { on = true; }
+        _saveAgentPrefs({ dispel_watch_off: !on });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, enabled: _dispelWatchEnabled() }));
       }
 
       // 📶 Connection meter (local only, nothing uploaded). GET /api/net is the whole picture the
@@ -41641,6 +42063,90 @@ function classifyRandomLine(line) {
   if (!ts || !text) return null;
   return { ch: 'random', who: '', text, t: ts.getTime(), self: false, npc: false };
 }
+// ── A /random as ONE line (the guild lead, 2026-10-23: "chat overlay is missing random rolls (and if we can link to
+// what it was for even better)"). The game prints a roll as two lines; the feed shows "<Name> rolled 692 (0–711)".
+// text is only that sentence, so the same roll heard by two of your characters keeps one dedupe key. What the roll was
+// FOR rides beside it in roll = { name, value, from, to, item?, id?, top? }: item is the label the roll tracker takes from
+// the raid's loot call (_rollItemByNumber, the same 20-minute rule trackRollLine uses), id is its eqemu_items id from the
+// item catalog when the name matches exactly (the overlay links it to PQDI), top is set when this roll beat every
+// earlier first roll of the same range. A label announced AFTER the roll cannot reach a line already shown.
+const CHAT_ROLL_PAIR_MS = 2000;
+const _chatRollDie = new Map();    // character lower → { name, t }: a die line waiting for its result line
+const _chatRollBest = new Map();   // "from|to" → { best, lastMs, names: Set }: the highest first roll so far
+const _chatItemIdCache = new Map();
+function _chatItemIdByName(name) {
+  const k = String(name || '').trim().toLowerCase();
+  if (!k) return null;
+  if (_chatItemIdCache.has(k)) return _chatItemIdCache.get(k);
+  let id = null;
+  const at = _itemCatalogLower.indexOf(k);
+  if (at >= 0) { const n = Number(_itemCatalog[at] && _itemCatalog[at][0]); if (Number.isInteger(n) && n > 0) id = n; }
+  if (_chatItemIdCache.size > 300) _chatItemIdCache.clear();
+  if (id) _chatItemIdCache.set(k, id);   // a miss is not cached: the catalog may load after the first roll
+  return id;
+}
+function chatRollItemFor(to, atMs) {
+  const linked = _rollItemByNumber.get(to);
+  if (!linked || !linked.item || !(Math.abs(atMs - linked.atMs) <= ROLL_ITEM_LINK_MS)) return null;
+  return { item: String(linked.item).slice(0, 64), id: _chatItemIdByName(linked.item) };
+}
+// true when `value` is a first roll that beats every earlier first roll of this range (a set ends after ROLL_SET_GAP_MS
+// quiet); the first roll of a set, a tie and a re-roll are never marked. `state` is the Map to keep the sets in.
+function chatRollMark(state, name, from, to, value, atMs) {
+  const key = from + '|' + to, nl = String(name).toLowerCase();
+  let s = state.get(key);
+  if (!s || atMs - s.lastMs > ROLL_SET_GAP_MS || atMs < s.lastMs - ROLL_SET_GAP_MS) { s = { best: -Infinity, lastMs: atMs, names: new Set() }; state.set(key, s); }
+  s.lastMs = Math.max(s.lastMs, atMs);
+  if (s.names.has(nl)) return false;
+  s.names.add(nl);
+  const top = s.names.size > 1 && value > s.best;
+  if (value > s.best) s.best = value;
+  if (state.size > 60) for (const k of state.keys()) { if (k !== key) { state.delete(k); break; } }
+  return top;
+}
+// The two lines of one roll → the one-line event, or null. Pure apart from `state` (the highest-so-far map) and the
+// catalog/label lookups. dieLine and resultLine are raw log lines.
+function classifyRollPair(dieLine, resultLine, state) {
+  const d = typeof dieLine === 'string' ? dieLine.match(_ROLL_DIE_RX) : null;
+  const r = typeof resultLine === 'string' ? resultLine.match(_ROLL_RESULT_RX) : null;
+  if (!d || !r) return null;
+  const tsD = parseEqTimestamp(dieLine), tsR = parseEqTimestamp(resultLine);
+  if (!tsD || !tsR || Math.abs(tsR.getTime() - tsD.getTime()) > CHAT_ROLL_PAIR_MS) return null;
+  const from = parseInt(r[1], 10), to = parseInt(r[2], 10), value = parseInt(r[3], 10);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(value)) return null;
+  const t = tsR.getTime(), roll = { name: d[1], value, from, to };
+  const it = chatRollItemFor(to, t);
+  if (it) { roll.item = it.item; if (it.id) roll.id = it.id; }
+  if (state && chatRollMark(state, d[1], from, to, value, t)) roll.top = true;
+  return { ch: 'random', who: '', text: d[1] + ' rolled ' + value + ' (' + from + '–' + to + ')', t, self: false, npc: false, roll };
+}
+// The live feed's half: a die line is held (and shows nothing) until its result line arrives; the result line then
+// emits the one-line event. A result line with no die line before it (Random was switched on between the two, or the
+// first was missed) is shown as the game printed it. Returns { evt } or { hold: true }.
+function _chatRandomLive(line, character, rl) {
+  const cl = String(character || '').toLowerCase();
+  if (_ROLL_DIE_RX.test(line)) {
+    const m = line.match(_ROLL_DIE_RX);
+    _chatRollDie.set(cl, { line, name: m[1] });
+    if (_chatRollDie.size > 50) _chatRollDie.delete(_chatRollDie.keys().next().value);
+    return { hold: true };
+  }
+  const die = _chatRollDie.get(cl);
+  _chatRollDie.delete(cl);
+  const evt = die ? classifyRollPair(die.line, line, _chatRollBest) : null;
+  return { evt: evt || rl };
+}
+// A saved or served roll, kept only in its known shape.
+function _chatRollClean(r) {
+  if (!r || typeof r !== 'object') return null;
+  const value = Number(r.value), from = Number(r.from), to = Number(r.to);
+  if (!Number.isFinite(value) || !Number.isFinite(from) || !Number.isFinite(to)) return null;
+  const o = { name: String(r.name == null ? '' : r.name).slice(0, 40), value, from, to };
+  if (r.item) o.item = String(r.item).slice(0, 64);
+  if (Number.isInteger(r.id) && r.id > 0) o.id = r.id;
+  if (r.top) o.top = true;
+  return o;
+}
 // `ran` = the classifiers noteLocalChatLine has already asked and got null from ({ melee, skills, spells }), so a
 // line is not classified twice; anything not listed is asked here.
 function classifyOtherLine(line, character, ran) {
@@ -41930,9 +42436,15 @@ for (const ch of ['money', 'emote', 'pet', 'who', 'death', 'bcast', 'zeal']) _ch
 // out of game). DISPLAY ONLY: its lines come from the poller block below (a GET to the bot), land here with the
 // channel ids the local lines use ('guild' / 'raid', so they colour and filter alike) plus via: 'guild', and are served
 // by /api/chat to the overlay and nowhere else. Not the chat ring (a local log line and a relayed one never share
-// a buffer, so clearing one cannot touch the other), never a history source, never a trigger, tell or parse input.
+// a buffer, so clearing one cannot touch the other), never a trigger, tell or parse input. Its LATE lines (below) are served
+// as chat history, merged with the local logs' by buildChatHistory, and nowhere else.
 const CHAT_GUILD_RING_MAX = 300;
 const _guildFeedRing = [];
+// The late lines: relayed guild/raid lines that were already old when they reached us (see GUILD_FEED_LATE_MS). They never enter
+// the live ring; /api/chat/history serves them in time order with the local logs' lines (the guild lead, 2026-10-23: "chat is one
+// thing that you may want to keep open"). Same bound as the bot's ring, nothing older than the longest history window, newest kept.
+const _guildLateRing = [];
+let _guildLateGen = 0;   // moves whenever the late lines change; rides /api/chat as `backlog`, so the overlay re-reads history
 const GUILD_FEED_LIVE_MS = 30_000;       // the title-bar hint holds while the last good poll is this recent
 let _guildFeedOkAt = 0;
 let _guildFeedIngame = null;             // members in game WITH MIMIC RUNNING per the bot's last answer; null = unknown
@@ -41946,30 +42458,51 @@ let _guildFeedIngame = null;             // members in game WITH MIMIC RUNNING p
 // (a bot restart replays from 0 and must not repeat what the overlay shows).
 // `ingame` is the bot's count of guild members in game with Mimic feeding (others may be online without Mimic and
 // cannot be seen): a whole number, 0 = nobody, anything else = unknown (null).
+//
+// A line that is already old when it reaches us does NOT go to the live feed (the guild lead, 2026-10-23: "strange these old messages
+// just came through": 10:00 and 10:01 lines between the 11:39 ones). The overlay paints the feed in arrival order, so an old line lands
+// at the bottom as if it were new. The bot's ring is not time-bounded (300 lines, hours deep), and this agent asks it from 0 on every
+// camp-out (guildFeedClear/_guildFeedReset when the game starts), after a bot restart (boot-reset) and after its own restart without
+// a cache cursor, so the first answer is the whole ring. Those lines go to _guildLateRing instead and show as HISTORY, above the live
+// feed, in time order (the guild lead, same day: "chat is one thing that you may want to keep open"). The cursor moves past them either way.
+const GUILD_FEED_LATE_MS = 120_000;
 function guildFeedTake(lines, now, ingame) {
   const t = now == null ? Date.now() : now;
   _guildFeedOkAt = t;
   const n_ = ingame == null || ingame === '' ? NaN : Number(ingame);
   _guildFeedIngame = Number.isFinite(n_) && n_ >= 0 ? Math.floor(n_) : null;
-  let n = 0;
+  let n = 0, late = 0;
   for (const r of (Array.isArray(lines) ? lines : [])) {
     if (!r || (r.ch !== 'guild' && r.ch !== 'raid')) continue;
     const who = String(r.who == null ? '' : r.who).trim().slice(0, 40);
     const text = _chatCleanText(r.text);
     if (!who || !text) continue;
     const at = Number.isFinite(Number(r.t)) && Number(r.t) > 0 ? Number(r.t) : t;
+    const isLate = t - at > GUILD_FEED_LATE_MS;
+    if (isLate && t - at > CHAT_HISTORY_HOURS_MAX * 3_600_000) continue;   // past the longest history window: nobody can ask for it
     const key = chatLineKey({ ch: r.ch, who, text, t: at }, '');
-    if (_guildFeedRing.some(x => x.k === key)) continue;
-    _guildFeedRing.push({ seq: ++_chatSeq, k: key, t: at, ch: r.ch, who, to: null, text, self: false, npc: false, on: '', via: 'guild' });
-    n++;
+    // a line held live is not also held as history (a bot restart replays it, by then old)
+    if (_guildFeedRing.some(x => x.k === key) || _guildLateRing.some(x => x.k === key)) continue;
+    const e = { seq: ++_chatSeq, k: key, t: at, ch: r.ch, who, to: null, text, self: false, npc: false, on: '', via: 'guild' };
+    if (isLate) { _guildLateRing.push(e); late++; } else { _guildFeedRing.push(e); n++; }
   }
   const over = _guildFeedRing.length - CHAT_GUILD_RING_MAX;
   if (over > 0) _guildFeedRing.splice(0, over);
-  if (n) _chatCacheMarkDirty();
+  if (late) {
+    _guildLateRing.sort((a, b) => a.t - b.t);
+    const overLate = _guildLateRing.length - CHAT_GUILD_RING_MAX;
+    if (overLate > 0) _guildLateRing.splice(0, overLate);
+    _guildLateGen++;
+    chatHistoryForget();   // the short history cache would not show them until it lapsed
+  }
+  if (n || late) _chatCacheMarkDirty();
   return n;
 }
 // The game is running again: local lines take over, so nothing relayed stays to double them.
-function guildFeedClear() { _guildFeedRing.length = 0; _guildFeedOkAt = 0; _guildFeedIngame = null; _chatCacheMarkDirty(); }
+function guildFeedClear() {
+  if (_guildLateRing.length) { _guildLateRing.length = 0; _guildLateGen++; chatHistoryForget(); }
+  _guildFeedRing.length = 0; _guildFeedOkAt = 0; _guildFeedIngame = null; _chatCacheMarkDirty();
+}
 function noteLocalChatLine(line, character, now, opts) {
   const policy = chatPolicyNow(now);
   let evt = classifyChatLine(line, character);
@@ -41979,7 +42512,14 @@ function noteLocalChatLine(line, character, now, opts) {
   // Loot and Random have exact shapes of their own, so they are asked first; Other is asked LAST and only for a line
   // nothing else claimed (classifyOtherLine re-asks the groups whose switch is off, so it never takes their lines).
   if (!evt && policy.loot) evt = classifyLootLine(line);
-  if (!evt && policy.random) evt = classifyRandomLine(line);
+  if (!evt && policy.random) {
+    const rl = classifyRandomLine(line);
+    if (rl) {   // a roll is two lines in the log and ONE in the feed: the die line is held for its result line
+      const live = _chatRandomLive(line, character, rl);
+      if (live.hold) return false;
+      evt = live.evt;
+    }
+  }
   if (!evt && policy.melee) evt = classifyMeleeLine(line, character);
   if (!evt && policy.skills) evt = classifySkillLine(line);
   if (!evt && policy.spells) evt = classifySpellLine(line, character);
@@ -42010,7 +42550,7 @@ function noteLocalChatLine(line, character, now, opts) {
     if (evt.ch === 'melee' || !/^(?:--)?Your?\b/.test(evt.text)) {
       for (let i = ring.length - 1, n = 0; i >= 0 && n < 40; i--, n++) if (ring[i].k === mk && ring[i].on !== (character || '')) return false;
     }
-    ring.push({ seq: ++_chatSeq, k: mk, t: evt.t, ch: evt.ch, who: '', to: null, text: evt.text, self: !!evt.self, npc: false, on: character || '', cat: evt.cat || null, miss: !!evt.miss });
+    ring.push({ seq: ++_chatSeq, k: mk, t: evt.t, ch: evt.ch, who: '', to: null, text: evt.text, self: !!evt.self, npc: false, on: character || '', cat: evt.cat || null, miss: !!evt.miss, roll: evt.roll || null });
     const spill = ring.length - extra.max;
     if (spill > 0) ring.splice(0, spill);
     _chatCacheMarkDirty();
@@ -42063,6 +42603,7 @@ function serializeLocalChat(q, now) {
     if (l.cnum) o.cnum = l.cnum;
     if (l.cat) o.cat = l.cat;
     if (l.miss) o.miss = true;
+    if (l.roll) o.roll = l.roll;
     if (l.via) o.via = l.via;
     lines.push(o);
   }
@@ -42071,7 +42612,8 @@ function serializeLocalChat(q, now) {
   // "nobody is in game" note. ingame = members in game with Mimic running (0 = nobody, null = unknown); null while the feed is not live.
   const away = (policy.away && _guildFeedOkAt > 0 && t - _guildFeedOkAt <= GUILD_FEED_LIVE_MS)
     ? { on: true, ingame: _guildFeedIngame, at: _guildFeedOkAt } : null;
-  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, wiped: _chatWipeAt, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, away, lines };
+  // backlog: moves whenever the relayed late lines change, so the overlay re-reads its history (they are served there, not here).
+  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, wiped: _chatWipeAt, backlog: _guildLateGen, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, away, lines };
 }
 function _handleLocalChat(req, res) {
   const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(body); };
@@ -42088,6 +42630,7 @@ function _handleLocalChat(req, res) {
 }
 function _resetLocalChatForTest() {
   _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _lootRing.length = 0; _randomRing.length = 0; _otherRing.length = 0; guildFeedClear(); _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
+  _chatRollDie.clear(); _chatRollBest.clear();
   _chatPolicyRestored = null; _chatWipeAt = 0; _zealChatReset();
 }
 
@@ -42095,9 +42638,9 @@ function _resetLocalChatForTest() {
 // The "Chat cache" block further down owns the file, the key and the timer. THIS block only copies the rings out as plain
 // objects and takes them back, so the rings stay named in one place and nothing here touches a file.
 function _chatCacheRings() {
-  return { chat: _chatRing, melee: _meleeRing, spell: _spellRing, skill: _skillRing, loot: _lootRing, random: _randomRing, other: _otherRing, guild: _guildFeedRing };
+  return { chat: _chatRing, melee: _meleeRing, spell: _spellRing, skill: _skillRing, loot: _lootRing, random: _randomRing, other: _otherRing, guild: _guildFeedRing, guildlate: _guildLateRing };
 }
-const _CHAT_CACHE_RING_MAX = { chat: CHAT_RING_MAX, melee: CHAT_MELEE_RING_MAX, spell: CHAT_SPELL_RING_MAX, skill: CHAT_SKILL_RING_MAX, loot: CHAT_LOOT_RING_MAX, random: CHAT_RANDOM_RING_MAX, other: CHAT_OTHER_RING_MAX, guild: CHAT_GUILD_RING_MAX };
+const _CHAT_CACHE_RING_MAX = { chat: CHAT_RING_MAX, melee: CHAT_MELEE_RING_MAX, spell: CHAT_SPELL_RING_MAX, skill: CHAT_SKILL_RING_MAX, loot: CHAT_LOOT_RING_MAX, random: CHAT_RANDOM_RING_MAX, other: CHAT_OTHER_RING_MAX, guild: CHAT_GUILD_RING_MAX, guildlate: CHAT_GUILD_RING_MAX };
 let _chatWipeAt = 0;   // when the rings were last emptied by a revoke; the overlay clears what it holds when this changes
 // What may be saved, newest `o.perRingMax` per ring and nothing older than `o.maxAgeMs`. A line is kept only if the
 // switches in force NOW would still let the overlay show it: officer chat while Officer is off, tells while Tells is off,
@@ -42108,7 +42651,7 @@ function chatCacheSnapshot(now, o) {
   const rings = {};
   for (const [name, ring] of Object.entries(_chatCacheRings())) {
     const keep = [];
-    if (name !== 'guild' || policy.away) {
+    if ((name !== 'guild' && name !== 'guildlate') || policy.away) {
       for (let i = ring.length - 1; i >= 0 && keep.length < o.perRingMax; i--) {
         const l = ring[i];
         if (!(t - l.t <= o.maxAgeMs)) continue;
@@ -42137,6 +42680,7 @@ function _chatCacheLine(l, now, maxAgeMs) {
   if (Number.isFinite(Number(l.cnum)) && l.cnum) e.cnum = Number(l.cnum);
   if (l.cat) e.cat = _chatCacheStr(l.cat, 20);
   if (l.miss) e.miss = true;
+  if (l.ch === 'random') { const roll = _chatRollClean(l.roll); if (roll) e.roll = roll; }
   if (l.via === 'guild') e.via = 'guild';
   return e;
 }
@@ -42159,6 +42703,7 @@ function chatCacheRestore(snap, now, o) {
     n += take.length;
   }
   if (top > _chatSeq) _chatSeq = top;
+  if (_guildLateRing.length) _guildLateGen++;
   if (snap.policy && typeof snap.policy === 'object') {
     const p = {};
     for (const k of CHAT_POLICY_KEYS) p[k] = !!snap.policy[k];
@@ -42257,13 +42802,25 @@ function chatHistoryFiles(watched, isExcluded) {
   return out;
 }
 
-// q: { hours, tells, group, officer, custom } (booleans). opts.files overrides the watched logs (tests).
+// `groups` ("guild,raid" or a list of CHAT_GROUPS ids) → the Set of channels those groups hold, or null for "all". A broken-out
+// window asks for only its own groups (the guild lead, 2026-10-23: "sometimes when popping out a window we don't get the full
+// history"): the 3000-line cap below then counts that window's lines, not every channel's, so a quiet group is not trimmed away
+// by a busy one. Unknown ids are ignored; a list with none known means "all", never "nothing".
+function chatGroupsChannels(groups) {
+  const ids = (Array.isArray(groups) ? groups : String(groups == null ? '' : groups).split(','))
+    .map(x => String(x).trim().toLowerCase()).filter(x => /^[a-z]{1,16}$/.test(x));
+  const set = new Set();
+  for (const g of CHAT_GROUPS) if (ids.indexOf(g.id) !== -1) for (const c of g.channels) set.add(c);
+  return set.size ? set : null;
+}
+// q: { hours, tells, group, officer, custom, random } (booleans) and groups (see above). opts.files overrides the watched logs (tests).
 async function buildChatHistory(q, now, opts) {
   const t = now == null ? Date.now() : now;
   const hours = Math.min(CHAT_HISTORY_HOURS_MAX, Math.max(1, Math.round(Number(q && q.hours)) || 1));
   const cutoff = t - hours * 3_600_000;
   const policy = {};
   for (const k of CHAT_POLICY_KEYS) policy[k] = !!(q && q[k]);
+  const onlyCh = chatGroupsChannels(q && q.groups);
   const files = (opts && opts.files) || chatHistoryFiles(stats.watchedLogs, c => !shouldUploadForCharacter(c));
   const readOpts = opts && { chunk: opts.chunk, maxBytes: opts.maxBytes };
   const seen = new Set();
@@ -42276,10 +42833,16 @@ async function buildChatHistory(q, now, opts) {
     if (mtime < cutoff) continue;                       // not written inside the window: nothing to read
     chars.push(f.character);
     const mine = [];
+    let resultLine = null;   // Random is read BACKWARDS: a roll's result line comes before its die line
     const r = await chatReadLogBackwards(f.file, cutoff, (line) => {
-      const evt = classifyChatLine(line, f.character);
+      let evt = classifyChatLine(line, f.character);
+      if (!evt && policy.random && line.indexOf('**') !== -1) {
+        if (_ROLL_RESULT_RX.test(line)) { resultLine = line; return false; }
+        if (resultLine && _ROLL_DIE_RX.test(line)) { evt = classifyRollPair(line, resultLine, null); resultLine = null; }
+      }
       if (!evt || evt.t < cutoff || !parseEqTimestamp(line)) return false;
       if (!chatChannelAllowed(evt.ch, policy)) return false;
+      if (onlyCh && !onlyCh.has(evt.ch)) return false;   // before the cap below, so a busy channel cannot push a quiet one out
       const key = chatLineKey(evt, f.character);
       if (seen.has(key)) return false;
       seen.add(key);
@@ -42289,6 +42852,7 @@ async function buildChatHistory(q, now, opts) {
       if (evt.to) o.to = evt.to;
       if (evt.cn) o.cn = evt.cn;
       if (evt.cnum) o.cnum = evt.cnum;
+      if (evt.roll) o.roll = evt.roll;
       mine.push(o);
       return mine.length >= CHAT_HISTORY_MAX;
     }, readOpts);
@@ -42297,6 +42861,9 @@ async function buildChatHistory(q, now, opts) {
     for (const o of mine) all.push(o);
   }
   all.sort((a, b) => a.t - b.t);
+  // "Highest so far" needs the rolls oldest first, which only the merged list is.
+  const rollState = new Map();
+  for (const o of all) if (o.roll && chatRollMark(rollState, o.roll.name, o.roll.from, o.roll.to, o.roll.value, o.t)) o.roll.top = true;
   let kept = all;
   if (kept.length > CHAT_HISTORY_MAX) { kept = kept.slice(kept.length - CHAT_HISTORY_MAX); truncated = true; }
   // Between one character's stretch and the next: the same "swapped" line the live feed shows.
@@ -42308,13 +42875,33 @@ async function buildChatHistory(q, now, opts) {
     lines.push(e);
     prev = e;
   }
-  return { ok: true, hours, truncated, bytes, chars, lines };
+  // The relayed late lines (guildFeedTake), when the overlay has Away on: merged in time order AFTER the swap lines are made, since a
+  // relayed line belongs to no character of this PC and must not break the "swapped" line between two local neighbours.
+  // CAP RULE: local lines keep the 3000 above, relayed lines their own 300 (the ring's bound), so a relayed line never evicts a local one.
+  // A relayed line whose local twin was read above (same key, so the same speaker, text and second) is dropped: the local copy wins.
+  let relayed = 0, out = lines;
+  if (policy.away && _guildLateRing.length) {
+    const rel = [];
+    for (const e of _guildLateRing) {
+      if (e.t < cutoff || seen.has(e.k) || !chatChannelAllowed(e.ch, policy) || (onlyCh && !onlyCh.has(e.ch))) continue;
+      rel.push({ t: e.t, ch: e.ch, who: e.who, text: e.text, on: '', via: 'guild' });
+    }
+    if (rel.length) {
+      rel.sort((a, b) => a.t - b.t);
+      relayed = rel.length;
+      out = [];
+      let i = 0;
+      for (const x of lines) { while (i < rel.length && rel[i].t < x.t) out.push(rel[i++]); out.push(x); }
+      while (i < rel.length) out.push(rel[i++]);
+    }
+  }
+  return { ok: true, hours, truncated, bytes, chars, relayed, lines: out };
 }
 
 // A short cache (one body per switch set), so the Chat window and its breakouts asking together read once.
 let _chatHistCache = null;
 function getChatHistory(q, now, opts) {
-  const key = [Math.round(Number(q && q.hours)) || 1].concat(CHAT_POLICY_KEYS.map(k => (q && q[k] ? 1 : 0))).join('|');
+  const key = [Math.round(Number(q && q.hours)) || 1].concat(CHAT_POLICY_KEYS.map(k => (q && q[k] ? 1 : 0)), [[...(chatGroupsChannels(q && q.groups) || [])].sort().join(',')]).join('|');
   const t = now == null ? Date.now() : now;
   if (!(opts && opts.files) && _chatHistCache && _chatHistCache.key === key && t - _chatHistCache.at < CHAT_HISTORY_CACHE_MS) return _chatHistCache.p;
   const p = buildChatHistory(q, t, opts);
@@ -42422,7 +43009,7 @@ function _guildFeedCursorSet(c) {
 async function _pollGuildFeed(now, fetchImpl) {
   const t = now == null ? Date.now() : now;
   if (_eqInGame(t)) {
-    if (_guildFeed.cursor || _guildFeed.boot || _guildFeedRing.length) { guildFeedClear(); _guildFeedReset(); }
+    if (_guildFeed.cursor || _guildFeed.boot || _guildFeedRing.length || _guildLateRing.length) { guildFeedClear(); _guildFeedReset(); }
     return 'in-game';
   }
   if (_uploadOpts && _uploadOpts.dryRun) return 'dry-run';
@@ -48322,6 +48909,8 @@ const BUILTIN_CALLOUTS = [
   { key: 'timer_callout',  label: 'Boss timer callouts' },
   { key: 'loot_post',      label: 'Loot posted' },
   { key: 'blind',          label: 'Blind alerts' },
+  { key: 'dispel_debuff',  label: 'Your debuff dispelled off a mob' },
+  { key: 'dispel_buffs',   label: 'Your buffs dispelled' },
 ];
 // Built-ins that start MUTED until someone switches them on (the guild lead, 2026-10-19: "Mute Charm aging by default, make
 // this configurable to turn off"). The last step of _resolveRule, below every rule a person has set: anyone who already set
@@ -50576,6 +51165,52 @@ function _livePetHpByOwner() {
 const _mobInfoByName  = new Map();   // normName → { at, mob|null }
 const _mobInfoInflight = new Set();
 const MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;
+// Why a target has no stats (FB-95, "target info showing no catalog stats for this target"). That one line stood for
+// six different situations - the mob is not in the catalog, the bot could not be reached, the character is on another
+// server, there is no guild connection, a lookup never finished - and a report could not say which. Every outcome of
+// fetchMobInfo is written here per cache key; buildMobInfo hands the newest to the overlay as `mob_miss` (which prints
+// the reason and a retry) and to a feedback report (mobInfoFeedbackMeta).
+const _mobInfoLast = new Map();   // cache key → { reason, at, status, detail, name_asked, zone_id, asking_at }
+const MOB_INFO_STALL_MS = 30 * 1000;   // a request still "in flight" past this (its 8 s timeout is long gone) is dead
+const MOB_MISS_TEXT = {
+  looking_up:     'looking up…',
+  not_in_catalog: 'not in the catalog',
+  lookup_failed:  'lookup failed — retrying',
+  off_quarm:      'off-Quarm server',
+  no_guild:       'stats need a guild connection',
+};
+function _mobInfoNote(key, reason, name, zoneId, status, detail) {
+  if (_mobInfoLast.size >= 200 && !_mobInfoLast.has(key)) _mobInfoLast.delete(_mobInfoLast.keys().next().value);
+  _mobInfoLast.set(key, {
+    reason, at: Date.now(), status: status == null ? null : status, detail: detail || null,
+    name_asked: String(name || ''), zone_id: zoneId == null ? null : zoneId, asking_at: null,
+  });
+}
+// A request has gone out for this key. Only stamps the time: the previous outcome stays what the overlay reads until
+// the answer lands, so a miss does not flicker to "looking up" every minute when it is asked again.
+function _mobInfoAsking(key, name, zoneId) {
+  const l = _mobInfoLast.get(key);
+  if (l) { l.asking_at = Date.now(); return; }
+  _mobInfoLast.set(key, { reason: null, at: 0, status: null, detail: null, name_asked: String(name || ''), zone_id: zoneId == null ? null : zoneId, asking_at: Date.now() });
+}
+// A catalog row, not a husk: the bot's rows always carry an id, a level or an HP. An empty object in a zone pack or in
+// an answer is a miss, not a hit that prints blank stats.
+function _mobHasStats(m) {
+  return !!m && typeof m === 'object' && (m.id != null || m.level != null || m.hp != null);
+}
+// What Target Info prints when there is no row to show: the newest outcome for this key, or null when there is one.
+function _mobMiss(key, cached, name, zoneId) {
+  if (cached && cached.mob) return null;
+  const l = _mobInfoLast.get(key) || null;
+  let reason;
+  if (l && l.reason && l.reason !== 'ok' && l.reason !== 'pack') reason = l.reason;
+  else reason = cached ? 'not_in_catalog' : 'looking_up';
+  return {
+    reason, text: MOB_MISS_TEXT[reason] || MOB_MISS_TEXT.not_in_catalog,
+    status: l ? l.status : null, detail: l ? l.detail : null, at: l && l.at ? l.at : null,
+    name_asked: l && l.name_asked ? l.name_asked : String(name || ''), zone_id: l ? l.zone_id : (zoneId == null ? null : zoneId),
+  };
+}
 function _normMobNameAgent(n) {
   // Strip the "'s corpse" suffix so the Mob Info cache key matches the live
   // NPC row for a freshly-killed mob you're looting from. Without this,
@@ -50812,12 +51447,18 @@ function startMobPacks() {
 // error: old stats beat none). Readers compare `now - at` to MOB_INFO_TTL_MS, so a miss is stored with `at` set back
 // by the difference instead of each reader learning a second TTL.
 const MOB_INFO_MISS_TTL_MS = 60 * 1000;
-function _mobInfoStore(key, status, body) {
-  let mob = null;
+function _mobInfoStore(key, status, body, name, zoneId) {
+  let mob = null, reason = 'lookup_failed', detail = null;
   if (status === 200) {
-    try { const j = JSON.parse(body); if (j && !j.error && j.mob) mob = j.mob; } catch { /* not JSON: a miss */ }
-  }
-  if (mob) { _mobInfoByName.set(key, { at: Date.now(), mob }); return; }
+    try {
+      const j = JSON.parse(body);
+      if (j && j.error) detail = String(j.error).slice(0, 80);
+      else if (j && _mobHasStats(j.mob)) mob = j.mob;
+      else reason = 'not_in_catalog';   // the bot answered, and there is no such row
+    } catch { detail = 'not JSON'; }   // a miss, not a verdict on the mob
+  } else detail = 'HTTP ' + status;
+  if (mob) { _mobInfoByName.set(key, { at: Date.now(), mob }); _mobInfoNote(key, 'ok', name, zoneId, status); return; }
+  _mobInfoNote(key, reason, name, zoneId, status, detail);
   const prev = _mobInfoByName.get(key);
   _mobInfoByName.set(key, { at: Date.now() - (MOB_INFO_TTL_MS - MOB_INFO_MISS_TTL_MS), mob: (prev && prev.mob) || null });
 }
@@ -50828,20 +51469,35 @@ function fetchMobInfo(name, selfChar, zoneId, npcId) {
   if (!norm) return;
   const key = _mobInfoCacheKey(name, zoneId, npcId);
   // The catalog (stats, resists, rampage, zone packs) is Project Quarm's data: off Quarm it would state numbers the
-  // mob does not have. Cache "no row" so Mob Info shows log-only data instead of waiting on a lookup.
+  // mob does not have. Cache "no row" so Mob Info shows log-only data instead of waiting on a lookup. Held as a
+  // minute-long miss, never pinned for six hours (FB-95): nothing is asked either way, and a wrong call heals itself.
   if (!eqServerCaps(eqServerForCharacter(selfChar || _primaryCharacter())).catalog) {
-    _mobInfoByName.set(key, { at: Date.now(), mob: null });
+    _mobInfoByName.set(key, { at: Date.now() - (MOB_INFO_TTL_MS - MOB_INFO_MISS_TTL_MS), mob: null });
+    _mobInfoNote(key, 'off_quarm', name, zoneId);
     return;
   }
-  if (_mobInfoInflight.has(key)) return;
+  if (_mobInfoInflight.has(key)) {
+    // FB-94 closed one way a request never reported back; this is the backstop for the next one (FB-95). Past the
+    // stall mark the in-flight mark is cleared and the mob is asked for again, with the reason on record.
+    const l = _mobInfoLast.get(key);
+    if (!(l && l.asking_at && Date.now() - l.asking_at > MOB_INFO_STALL_MS)) return;
+    _mobInfoInflight.delete(key);
+    _mobInfoNote(key, 'lookup_failed', name, zoneId, null, 'stalled');
+  }
   const cached = _mobInfoByName.get(key);
   if (cached && (Date.now() - cached.at) < MOB_INFO_TTL_MS) return;
-  // Kept on this machine (a zone pack above): no round trip, and it works offline.
+  // Kept on this machine (a zone pack above): no round trip, and it works offline. An empty entry is no hit.
   const packed = npcId != null ? null : _mobPackLookup(name, zoneId);
-  if (packed) { _mobInfoByName.set(key, { at: Date.now(), mob: packed }); return; }
+  if (_mobHasStats(packed)) { _mobInfoByName.set(key, { at: Date.now(), mob: packed }); _mobInfoNote(key, 'pack', name, zoneId); return; }
   const opts = _uploadOpts;
-  if (!opts || !opts.botUrl || !opts.token) return;          // local-only → no lookup
+  if (!opts || !opts.botUrl || !opts.token) {                // local-only → no lookup, and the overlay says why
+    const prev = _mobInfoByName.get(key);
+    _mobInfoByName.set(key, { at: Date.now() - (MOB_INFO_TTL_MS - MOB_INFO_MISS_TTL_MS), mob: (prev && prev.mob) || null });
+    _mobInfoNote(key, 'no_guild', name, zoneId);
+    return;
+  }
   _mobInfoInflight.add(key);
+  _mobInfoAsking(key, name, zoneId);
   // #141 — send the requesting character so the bot zone-scopes the catalog row
   // (id = zoneid*1000+n) to OUR zone; absent → bot falls back catalog-wide.
   let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/mob-info') + '?name=' + encodeURIComponent(name);
@@ -50859,17 +51515,17 @@ function fetchMobInfo(name, selfChar, zoneId, npcId) {
       res.on('data', c => body += c);
       res.on('end', () => {
         _mobInfoInflight.delete(key);
-        _mobInfoStore(key, res.statusCode, body);
+        _mobInfoStore(key, res.statusCode, body, name, zoneId);
       });
       // A connection that drops AFTER the headers (the bot restarting mid-answer) emits neither 'end' nor a request
       // 'error' nor 'timeout' - only 'close' on the response, with `complete` false. Without this the in-flight mark
       // stayed forever and the mob was never asked for again until Mimic restarted (FB-94, measured on Node 22).
-      res.on('close', () => { if (!res.complete) _mobInfoInflight.delete(key); });
+      res.on('close', () => { if (!res.complete) { _mobInfoInflight.delete(key); _mobInfoNote(key, 'lookup_failed', name, zoneId, res.statusCode, 'dropped'); } });
     });
-    req.on('error',   () => { _mobInfoInflight.delete(key); });
-    req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(key); });
+    req.on('error',   (e) => { _mobInfoInflight.delete(key); _mobInfoNote(key, 'lookup_failed', name, zoneId, null, String((e && e.code) || 'error').slice(0, 40)); });
+    req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(key); _mobInfoNote(key, 'lookup_failed', name, zoneId, null, 'timeout'); });
     req.end();
-  } catch { _mobInfoInflight.delete(key); }
+  } catch { _mobInfoInflight.delete(key); _mobInfoNote(key, 'lookup_failed', name, zoneId, null, 'bad request'); }
 }
 
 // ── Spawn map core (Mimic 2.9, first build: the 2D tracker overlay) ─────────────────────────────
@@ -53382,6 +54038,7 @@ function _mapStatePayload(have, now, haveLocal, haveRoute) {
     out.map = rec.body.map || null; out.points = rec.body.points; out.grids = rec.body.grids || null;
     out.factions = rec.body.factions || null;   // the zone's primary factions (bot 3.1.254): base, caps, race/class/deity mods
     out.spawngroups = rec.body.spawngroups || null;   // spawn group names by id (bot 3.1.255; points carry `sg`)
+    out.traps = rec.body.traps || null;   // trap types by helper npc id + the server's trap table (bot; points carry `trap`). The Map's traps layer
   }
   try { out.me = _mapMe(character, st); } catch { out.me = null; }
   const zd = _mapZoneDoc(zone);
@@ -55431,17 +56088,65 @@ function _pickMobBody(mob, st, selfChar, zoneId, now) {
     };
   } catch { return mob; }
 }
+// #141 — the requesting character (+ its zone id) so the bot zone-scopes the
+// cross-client merge to OUR zone: a same-name mob in ANOTHER zone (e.g. "a
+// geonid" in Crystal Caverns vs The Wakening Land) must not leak its stats,
+// debuffs, or casts into our Target Info.
+function _mobTargetCtx(st) {
+  let selfChar = '';
+  for (const ch of Object.keys(_zealState)) { if (_zealState[ch] === st) { selfChar = ch; break; } }
+  const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  return { selfChar, zoneId, key: _mobInfoCacheKey(st.target_name, zoneId) };
+}
+// ↻ on the overlay's "no catalog stats" line (FB-95): forget what this target's lookup remembered, ask again now.
+// The body chosen by npc id (FB-80) keeps its own keys beside the plain one, so those go too.
+function mobInfoRetry() {
+  const st = _currentTargetState();
+  if (!st || !st.target_name) return { ok: false, reason: 'no target' };
+  const { selfChar, zoneId, key } = _mobTargetCtx(st);
+  for (const k of [..._mobInfoByName.keys()]) if (k === key || k.startsWith(key + '|n')) _mobInfoByName.delete(k);
+  _mobInfoLast.delete(key);
+  _mobInfoInflight.delete(key);
+  fetchMobInfo(st.target_name, selfChar, zoneId);
+  return { ok: true };
+}
+// What a feedback report carries about Target Info (FB-95: the report said "no catalog stats for this target" and
+// nothing about which target, which lookup or why). The mob's name as asked, the zone, what the cache held and the last
+// answer. No other player's name: a corpse or a single word with no catalog row may be a person, so it is withheld.
+function mobInfoFeedbackMeta(now) {
+  try {
+    const st = _currentTargetState();
+    if (!st || !st.target_name) return null;
+    now = now || Date.now();
+    const { selfChar, zoneId, key } = _mobTargetCtx(st);
+    const cached = _mobInfoByName.get(key) || null;
+    const last = _mobInfoLast.get(key) || null;
+    const miss = _mobMiss(key, cached, st.target_name, zoneId);
+    const asked = String(st.target_name).trim();
+    const corpse = /[`'’]s\s+corpse\d*$/i.test(asked);
+    const maybePlayer = !corpse && !/\s/.test(asked) && !(cached && cached.mob);
+    const withheld = corpse ? 'corpse' : (maybePlayer ? 'single word, may be a player' : null);
+    const packed = zoneId != null ? _mobPackLookup(asked, zoneId) : null;
+    const opts = _uploadOpts;
+    const left = cached ? Math.max(0, Math.round((MOB_INFO_TTL_MS - (now - cached.at)) / 1000)) : null;
+    return {
+      name_asked: withheld ? null : asked.slice(0, 80),
+      name_withheld: withheld,
+      zone_id: zoneId,
+      shown: miss ? miss.reason : 'stats',
+      cache: cached ? { state: cached.mob ? 'row' : 'miss', reask_in_s: left, mob_id: cached.mob && cached.mob.id != null ? cached.mob.id : null } : { state: 'none' },
+      last: last ? { reason: last.reason, status: last.status, detail: last.detail, age_s: last.at ? Math.round((now - last.at) / 1000) : null } : null,
+      in_flight: _mobInfoInflight.has(key),
+      zone_pack: zoneId == null ? 'no zone' : (packed ? (_mobHasStats(packed) ? 'entry' : 'hollow entry') : 'no entry'),
+      catalog_allowed: !!eqServerCaps(eqServerForCharacter(selfChar || _primaryCharacter())).catalog,
+      guild_connection: !!(opts && opts.botUrl && opts.token),
+    };
+  } catch { return null; }
+}
 function buildMobInfo() {
   const st = _currentTargetState();
   if (!st || !st.target_name) return null;
-  // #141 — the requesting character (+ its zone id) so the bot zone-scopes the
-  // cross-client merge to OUR zone: a same-name mob in ANOTHER zone (e.g. "a
-  // geonid" in Crystal Caverns vs The Wakening Land) must not leak its stats,
-  // debuffs, or casts into our Target Info.
-  let selfChar = '';
-  for (const ch of Object.keys(_zealState)) { if (_zealState[ch] === st) { selfChar = ch; break; } }
-  const myZoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
-  const mobKey = _mobInfoCacheKey(st.target_name, myZoneId);
+  const { selfChar, zoneId: myZoneId, key: mobKey } = _mobTargetCtx(st);
   let cached = _mobInfoByName.get(mobKey);
   if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) {
     fetchMobInfo(st.target_name, selfChar, myZoneId);
@@ -55511,6 +56216,7 @@ function buildMobInfo() {
       if (!b || !b.name) continue;
       const k = String(b.name).toLowerCase();
       if (seen.has(k)) continue;
+      if (_dispelGoneCovers(tnameLower, k, b.observed_at_ms)) continue;   // our debuff, dispelled since (dispel watch)
       // The relay sends good=null for non-charm spells (buff_casts doesn't carry
       // good_effect). Resolve it from our own catalog so relayed DEBUFFS land in
       // the red debuff section instead of being mislabeled as buffs.
@@ -55552,6 +56258,8 @@ function buildMobInfo() {
     target_hp_max:  targetVals ? targetVals.max : null,
     mob:            cached && cached.mob ? _pickMobBody(cached.mob, st, selfChar, myZoneId, Date.now()) : null,   // null until the lookup returns (FB-80: the right one of two same-name bodies)
     loading:        !cached,
+    // FB-95: why there is no row to show (null when there is one) — the overlay prints it beside a ↻ retry.
+    mob_miss:       _mobMiss(mobKey, cached, st.target_name, myZoneId),
     target_buffs:   buffs,
     // PC = live buff data (own Zeal list OR the target's uploaded live-state)
     // — drives the "(live)" header suffix instead of "(observed)".
@@ -57664,6 +58372,322 @@ function noteMyMezWornOff(line, character) {
   }
   if (best) best.worn_off_at = Date.now();
 }
+
+// ── Dispel watch (agent 4.0.11) ─────────────────────────────────────────────────────────────────────
+// The guild lead, 2026-10-23, mid-raid in the Tower of Solusek Ro: "We should also start watching for buffs to be
+// dispelled off of mobs. When the caster's debuff was dispelled or buff, it tells them that it was dispelled."
+// Rizlona does it on purpose: out of her yard (y outside 2047..2538) she is moved home, her hate list is wiped
+// and she casts spell 2830, Annul Self (solrotower/Rizlona.lua and #Rizlona.lua, SecretsOTheP/quests ea0c766; the
+// same line is in Arlyxir, Xuzl and both Dresolik scripts).
+//
+// WHAT THE SERVER SENDS, read from SecretsOTheP/EQMacEmu a3b80b2 (zone/):
+//  • A dispel is SE_CancelMagic (spell_effects.cpp:910). Per buff slot it rolls TryDispel and, on a hit, calls
+//    BuffFadeBySlot(slot) (:935/:961) with the defaults message = true, update = true. Annul Self (eqemu_spells 2830) carries
+//    four of them (base 9) and no cast_on_you; its cast_on_other is "has been dispelled.".
+//  • BuffFadeBySlot (spell_effects.cpp:3229): for a client TARGET it sends an OP_Buff fade packet (the client then prints the
+//    spell's own spell_fades text); for a CASTER who is a client (buffs[slot].client, buffstacking.cpp:1375) it sends
+//    SPELL_WORN_OFF, string 437 "Your %1 spell has worn off." (:3712-3743, string_ids.h:175), but only when the spell is
+//    DETRIMENTAL and not a lull/harmony (IsCrowdControlSpell is Harmony, Lull and ChangeFrenzyRad only, so a mez, a charm
+//    and a fear DO tell the caster). A BENEFICIAL spell tells its caster nothing. The line names no target and does not say
+//    why: expiry, a dispel and a stronger spell overwriting yours (the detrimental_exception, :3725, update = false) all
+//    print the same words.
+//  • Silent on purpose, no worn-off line to anyone: BuffFadeAll() is called with message = false (spells.cpp:3643) by the
+//    leash/evade reset (mob_ai.cpp:1418, :1440, :2603; mob_movement_manager.cpp:782) and at death (attack.cpp:2367, :2478).
+//    So a mob going home does not tell you, and a corpse does not either. Rizlona's own leash is the script above, whose
+//    Annul Self cast is a normal dispel and DOES print the lines.
+// So the evidence is a worn-off line for a debuff of ours that still had time on it, plus either the dispel's own landing
+// line naming the mob (<mob> + a dispel spell's cast_on_other) or at least two of them inside a second.
+//
+// On YOU (a mob's dispel, or the Annul line above cast on a raider): the dispel's cast_on_you text prints, then each
+// stripped buff's spell_fades. The Zeal buff slots lose the buffs at the same moment and carry their names, so that is the
+// primary reading; the fade lines (catalog `fades` of beneficial spells) cover a character with no Zeal.
+//
+// Texts are eqemu_spells rows whose effect list carries SPA 27 with a non-zero base (Taper Enchantment, base 0, only
+// shortens a buff and is left out), minus every text a non-dispel spell also prints ("You are mesmerized.", "is immolated
+// by flame.", "'s skin freezes." ... checked against the whole table 2026-10-23). The cure spells (Balance of the Nameless,
+// Ocean's Cleansing) are left out: their text says cleansed, not dispelled.
+const DISPEL_OTHER_TEXTS = [
+  'has been dispelled.',                          // Annul Self 2830
+  'feels dispelled.',                             // Nullify Magic 49, Neutralize Magic 1775, Incinerating Spirit 2252
+  'feels a bit dispelled.',                       // Cancel Magic 48, Guide Cancel Magic 811/1211, Phobocancel 976
+  'feels very dispelled.',                        // Strip Enchantment 24, Pillage Enchantment 25, Beholder Dispel 955, Nulling Void 2098, Direption of Dreams 3150
+  'feels annulled.',                              // Annul Magic 1526
+  "'s enchantments begin to fade.",               // Recant Magic 1697/2034
+  "'s enchantments fades.",                       // Abolish Enchantment 1792
+  'is surrounded in a storm of static energy.',   // Static Pulse 1025
+  'is encased in a pulse of static energy.',      // Syvelian`s Anti-Magic Aria 726
+  'is encased in a static pulse',                 // Annulling Spirit 2262
+  'convulses in a field of static energy.',       // Static Storm 1028
+  'looks very discouraged.',                      // Druzzil's Disillusionment 3364
+  'has been Magi bolted.', 'has been Magi struck.', 'has been Magi circled.',   // Magi Bolt/Strike/Circle
+  'is shredded by ice.',                          // Frosty Death 952, Frosty Death2 1356
+  'is splashed with a wave of pure hatred.',      // Hate's Fury 3785
+  'is thrown high into the air.',                 // Lure of the Storm 1035
+  'has been cursed by the triumvirate.',          // Curse of the Triumvirate 3061
+  'has fallen to the will of the crusader.',      // Will of the Crusader 1163
+  'begins to change into a twisted shape',        // Will of the Master 2207
+  'is tangled in coils of temptation',            // Coils of Temptation 2256
+  'stammers in fear, unable to form words.',      // Speechless Fright 1341
+];
+const DISPEL_YOU_TEXTS = new Set([
+  'You feel dispelled.', 'You feel a bit dispelled.', 'You feel very dispelled.', 'You feel annulled.',
+  'You feel your enchantments being stripped away.',          // Recant Magic
+  'Your enchantments are stripped by a static pulse.',        // Static Pulse
+  'Your enchantments fade.',                                  // Abolish Enchantment
+  'You feel a pulse of static energy wash over you.',         // Anti-Magic Aria, Disenchanting Melody, Song of Highsun
+  'A static pulse slows your movements',                      // Annulling Spirit
+  'A field of energy causes you to convulse violently.',      // Static Storm
+  'Your anxiety builds as your magic fades around you.',      // Direption of Dreams
+  'Your begin to question the existence of magic.',           // Druzzil's Disillusionment (the catalog's own spelling)
+  'You have been Magi bolted.', 'You have been Magi struck.', 'You have been Magi circled.',
+  'You are shredded by ice.',                                 // Frosty Death
+  'A wave of fury crashes over you.',                         // Hate's Fury
+  'An inescapable wind throws you into the air.',             // Lure of the Storm
+  'The curse of the triumvirate consumes you.',               // Curse of the Triumvirate
+  'The will of the Crusader envelops you.',                   // Will of the Crusader
+  'You feel your body change',                                // Will of the Master
+  'You are wrapped in coils of temptation',                   // Coils of Temptation
+  'Your stammer in fear, unable to form words.',              // Speechless Fright
+  'The ground seems to fall from below your feet.',           // Striking Vertigo
+  'You are knocked backward.',                                // Avatar Power, Presence of Ssraeshza
+  'Your body freezes as the frost hits you.',                 // Frost Breath
+]);
+const DISPEL_LIVE_MS          = 15_000;   // older than this is a log being replayed: no callout, no state change
+const DISPEL_EARLY_MS         = 12_000;   // a debuff with more than two ticks left did not run its course
+const DISPEL_NATURAL_MS       = 8_000;    // a same-named debuff of ours that ended this long ago or less explains the line
+const DISPEL_BURST_MS         = 1_000;    // "several at once" is this wide
+const DISPEL_WINDOW_MS        = 2_500;    // the dispel's own line sits this close to the removals
+const DISPEL_SETTLE_MS        = 1_500;    // after the last removal, wait for the rest of the burst and the dispel line
+const DISPEL_SELF_SETTLE_MS   = 2_500;    // Zeal's buff slots lag the log by a poll
+const DISPEL_SELF_COOLDOWN_MS = 8_000;    // one callout per dispel
+const DISPEL_QUIET_MS         = 10_000;   // after zoning or dying nothing counts: buffs and mobs go away on their own
+const _dispelState = {
+  lines: new Map(),   // charLower → [{ at, arrived, mob (lower) | null, you }]  the dispel spells' own landing lines
+  mine:  new Map(),   // charLower → [{ at, arrived, spell, hits:[{ tk, sk, entry }] }]  worn-off lines for a debuff of ours
+  self:  new Map(),   // charLower → { dispelAt, names: Map<buff, arrivedMs>, replaced, lastAt }  your own buffs going
+  fades: new Map(),   // charLower → [at]  fade lines of beneficial spells
+  quiet: new Map(),   // charLower → ms until which nothing counts
+  lastSelf: new Map(),
+};
+const _dispelGone = new Map();   // "mobLower|spellLower" → ms: our debuff was dispelled then; the cross-client copy of it is hidden
+function _dispelWatchEnabled() { try { return !_agentPrefs().dispel_watch_off; } catch { return true; } }
+function _dispelNorm(s) { return String(s || '').toLowerCase().replace(/`/g, "'").trim(); }
+// A relayed target-buffs row (this raider's own landing comes back from the bot) older than the dispel stays hidden.
+function _dispelGoneCovers(mobLower, spellLower, observedMs) {
+  const at = _dispelGone.get(mobLower + '|' + spellLower);
+  const o = Number(observedMs);
+  return !!(at && Number.isFinite(o) && o <= at);
+}
+// The mob named by a dispel spell's cast_on_other line ("<mob> has been dispelled."), or null.
+function _dispelOtherMob(body) {
+  for (const suf of DISPEL_OTHER_TEXTS) {
+    if (body.length <= suf.length || !body.endsWith(suf)) continue;
+    let name = body.slice(0, body.length - suf.length);
+    if (suf[0] !== "'") { if (name[name.length - 1] !== ' ') continue; name = name.slice(0, -1); }
+    name = name.trim();
+    if (name && name.toLowerCase() !== 'you') return name;
+  }
+  return null;
+}
+// The catalog's spell_fades text of beneficial spells: what the client prints as each stripped buff goes.
+let _dispelFadeFor = null, _dispelFadeVal = null;
+function _dispelFadeTexts() {
+  if (_dispelFadeVal && _dispelFadeFor === _spellByNameLower) return _dispelFadeVal;
+  const s = new Set();
+  for (const e of _spellByNameLower.values()) if (e && Number(e.good) === 1 && e.fades) s.add(String(e.fades).trim());
+  _dispelFadeFor = _spellByNameLower; _dispelFadeVal = s;
+  return s;
+}
+// Our landings of `spell` that still had time on them when its worn-off line printed. A same-named landing of ours that
+// was due to end about now explains the line by itself (normal expiry), and then nothing here counts.
+function _dispelMyHits(cl, spell, atMs) {
+  if (_isPacifySpell(spell)) return [];
+  const want = _dispelNorm(spell), hits = [];
+  let natural = false;
+  for (const [tk, mp] of _buffLandingsByTarget) {
+    for (const [sk, b] of mp) {
+      if (!b || b.is_charm_spell || String(b.cast_by || '').toLowerCase() !== cl) continue;
+      if (_dispelNorm(b.name) !== want) continue;
+      const durMs = (Number(b.dur_ticks) || 0) * 6000, landed = Number(b.landed_at) || 0;
+      if (landed > atMs + 1500) continue;   // landed after this line: a recast, not the one that ended
+      const remMs = (durMs > 0 && landed > 0) ? landed + durMs - atMs : null;
+      if (remMs != null && remMs <= DISPEL_EARLY_MS) { if (!b.worn_off_at && remMs >= -DISPEL_NATURAL_MS) natural = true; continue; }
+      hits.push({ tk, sk, entry: b });
+    }
+  }
+  return natural ? [] : hits;
+}
+function _dispelBurstOf(times) {
+  const t = times.slice().sort((a, b) => a - b);
+  let best = 0;
+  for (let i = 0, j = 0; i < t.length; i++) {
+    while (t[i] - t[j] > DISPEL_BURST_MS) j++;
+    best = Math.max(best, i - j + 1);
+  }
+  return best;
+}
+function _dispelSelfOpen(cl, arrived) {
+  let p = _dispelState.self.get(cl);
+  if (!p) { p = { dispelAt: null, names: new Map(), replaced: false, lastAt: arrived }; _dispelState.self.set(cl, p); }
+  p.lastAt = Math.max(p.lastAt, arrived);
+  return p;
+}
+function _dispelQuiet(cl, atMs) {
+  _dispelState.quiet.set(cl, atMs + DISPEL_QUIET_MS);
+  _dispelState.mine.delete(cl); _dispelState.self.delete(cl); _dispelState.lines.delete(cl); _dispelState.fades.delete(cl);
+}
+// One log line. Live lines only; every kind of evidence is only noted here and decided in flushDispelWatch.
+function noteDispelLine(line, character, nowMs) {
+  if (!line || !character || !_dispelWatchEnabled()) return;
+  const m = /^\[[^\]]+\]\s+(.*?)\s*$/.exec(line);
+  if (!m) return;
+  const body = m[1];
+  const now = nowMs == null ? Date.now() : nowMs;
+  const ts = parseEqTimestamp(line);
+  const at = ts ? ts.getTime() : now;
+  if (Math.abs(now - at) > DISPEL_LIVE_MS) return;
+  const cl = String(character).toLowerCase();
+  // A zone change (the one zone-line parser, CHAT_ZONE_RX) or a death: buffs and mobs go away on their own after these.
+  if (/^LOADING, PLEASE WAIT|^You died\.$|^You have been slain by /.test(body) || CHAT_ZONE_RX.test(line)) { _dispelQuiet(cl, at); return; }
+  if ((_dispelState.quiet.get(cl) || 0) > at) return;
+  const keep = (map, v) => { const a = map.get(cl) || []; a.push(v); while (a.length && now - a[0].arrived > 10_000) a.shift(); map.set(cl, a); };
+  if (DISPEL_YOU_TEXTS.has(body)) {
+    keep(_dispelState.lines, { at, arrived: now, mob: null, you: true });
+    _dispelSelfOpen(cl, now).dispelAt = at;
+    return;
+  }
+  const w = /^Your (.+?) spell has worn off\.$/.exec(body);
+  if (w) {
+    const hits = _dispelMyHits(cl, w[1], at);
+    if (hits.length) { const a = _dispelState.mine.get(cl) || []; a.push({ at, arrived: now, spell: w[1], hits }); _dispelState.mine.set(cl, a); }
+    return;
+  }
+  if (_dispelFadeTexts().has(body)) {
+    const a = _dispelState.fades.get(cl) || []; a.push(at);
+    while (a.length && at - a[0] > 10_000) a.shift();
+    _dispelState.fades.set(cl, a);
+    return;
+  }
+  const mob = _dispelOtherMob(body);
+  if (mob) keep(_dispelState.lines, { at, arrived: now, mob: mob.toLowerCase(), you: false });
+}
+// Your own buffs, from the Zeal buff slots: the previous poll against this one. A buff with time left that is no longer
+// there went early. Songs rotate, so they are never counted; an empty list is a zone or a dropped pipe; a different zone is
+// a zone. A new buff in the same poll may be what pushed the old one out.
+function _dispelNoteZealDiff(character, prev, next, nowMs) {
+  if (!character || !_dispelWatchEnabled()) return;
+  const pb = prev && Array.isArray(prev.buffs) ? prev.buffs : [], nb = next && Array.isArray(next.buffs) ? next.buffs : [];
+  if (!pb.length || !nb.length) return;
+  if (prev.zone != null && next.zone != null && prev.zone !== next.zone) return;
+  const cl = String(character).toLowerCase();
+  const now = nowMs == null ? Date.now() : nowMs;
+  if ((_dispelState.quiet.get(cl) || 0) > now) return;
+  const nowNames = new Set(nb.filter(b => b && b.name).map(b => _dispelNorm(b.name)));
+  const prevNames = new Set(pb.filter(b => b && b.name).map(b => _dispelNorm(b.name)));
+  const added = nb.some(b => b && b.name && !prevNames.has(_dispelNorm(b.name)));
+  const gone = pb.filter(b => b && b.name && !b.song && Number(b.ticks) > DISPEL_EARLY_MS / 6000 && !nowNames.has(_dispelNorm(b.name)));
+  if (!gone.length) return;
+  const p = _dispelSelfOpen(cl, now);
+  for (const b of gone) p.names.set(String(b.name), now);
+  if (added) p.replaced = true;
+}
+function _dispelList(names, max) {
+  const l = names.slice(0, max).join(', ');
+  return names.length > max ? l + ' +' + (names.length - max) + ' more' : l;
+}
+function _dispelSay(o, nowMs) {
+  _pushOverlay(Object.assign({ color: 'amber', duration_ms: 6000, shownAt: nowMs, firedAt: nowMs, scope: 'dispel', test: false }, o));
+}
+// Decide what the evidence adds up to. Called on a 250 ms tick, and by the tests with a clock of their own.
+function flushDispelWatch(nowMs) {
+  const now = nowMs == null ? Date.now() : nowMs;
+  for (const cl of [..._dispelState.mine.keys()]) { try { _dispelFlushMine(cl, now); } catch (e) { void e; } }
+  for (const cl of [..._dispelState.self.keys()]) { try { _dispelFlushSelf(cl, now); } catch (e) { void e; } }
+  for (const [k, at] of _dispelGone) if (now - at > 30 * 60_000) _dispelGone.delete(k);
+  while (_dispelGone.size > 200) _dispelGone.delete(_dispelGone.keys().next().value);
+}
+// Your debuffs on a mob, dispelled: forget them, hide the relayed copy, tell their caster to recast.
+function _dispelFlushMine(cl, now) {
+  const items = _dispelState.mine.get(cl);
+  if (!items || !items.length) return;
+  if (now - Math.max(...items.map(i => i.arrived)) < DISPEL_SETTLE_MS) return;
+  _dispelState.mine.delete(cl);
+  const lines = (_dispelState.lines.get(cl) || []).filter(l => l.mob);
+  items.sort((a, b) => a.at - b.at);
+  const bursts = [];
+  for (const it of items) {
+    const cur = bursts[bursts.length - 1];
+    if (cur && it.at - cur[cur.length - 1].at <= DISPEL_BURST_MS) cur.push(it); else bursts.push([it]);
+  }
+  for (const burst of bursts) {
+    const tks = new Set();
+    for (const it of burst) for (const h of it.hits) tks.add(h.tk);
+    let tk = null;
+    for (const l of lines) {
+      if (tks.has(l.mob) && burst.some(it => Math.abs(it.at - l.at) <= DISPEL_WINDOW_MS)) { tk = l.mob; break; }
+    }
+    if (!tk) {
+      if (burst.length < 2) continue;   // one early removal and no dispel line: an overwrite or a mistimed estimate
+      const common = [...tks].filter(t => burst.every(it => it.hits.some(h => h.tk === t)));
+      tk = common.length === 1 ? common[0] : null;
+    }
+    const spells = [];
+    let mobName = null;
+    for (const it of burst) {
+      const hs = tk ? it.hits.filter(h => h.tk === tk) : it.hits;
+      if (tk && !hs.length) continue;
+      if (!spells.includes(it.spell)) spells.push(it.spell);
+      if (tk || hs.length === 1) {
+        for (const h of hs) {
+          const mp = _buffLandingsByTarget.get(h.tk);
+          if (mp && mp.get(h.sk) === h.entry) mp.delete(h.sk);
+          if (mp && mp.size === 0) _buffLandingsByTarget.delete(h.tk);
+          _dispelGone.set(h.tk + '|' + String(h.entry.name).toLowerCase(), it.at);
+          if (!mobName) mobName = h.entry.target_name || h.tk;
+        }
+      }
+    }
+    if (!spells.length) continue;
+    try { _savePetStateSoon(); } catch (e) { void e; }
+    const off = mobName ? ' off ' + mobName : '';
+    const one = spells.length === 1;
+    _dispelSay({
+      text: one ? 'Your ' + spells[0] + ' was dispelled' + off + ' — recast' : 'Dispelled' + off + ': ' + _dispelList(spells, 6) + ' — recast',
+      tts: one ? spells[0] + ' dispelled' + off + '. Recast.' : 'Dispelled' + off + '. Recast ' + _dispelList(spells, 3) + '.',
+      trigger: 'Debuff dispelled', rule_key: 'builtin:dispel_debuff', rule_char: cl,
+    }, now);
+    console.log('[dispel] ' + cl + ': ' + spells.join(', ') + (mobName ? ' dispelled off ' + mobName : ' dispelled'));
+  }
+}
+// Your own buffs, dispelled: one callout per dispel, then the buff queue is told straight away.
+function _dispelFlushSelf(cl, now) {
+  const p = _dispelState.self.get(cl);
+  if (!p || now - p.lastAt < DISPEL_SELF_SETTLE_MS) return;
+  _dispelState.self.delete(cl);
+  const names = [...p.names.keys()];
+  let ok;
+  if (p.dispelAt != null) {
+    const fadeN = (_dispelState.fades.get(cl) || []).filter(a => Math.abs(a - p.dispelAt) <= DISPEL_WINDOW_MS).length;
+    ok = names.length > 0 || fadeN > 0;
+  } else {
+    ok = !p.replaced && _dispelBurstOf([...p.names.values()]) >= 2;
+  }
+  if (!ok || now - (_dispelState.lastSelf.get(cl) || 0) < DISPEL_SELF_COOLDOWN_MS) return;
+  _dispelState.lastSelf.set(cl, now);
+  _dispelSay({
+    text: names.length ? 'Buffs dispelled: ' + _dispelList(names, 6) + ' — rebuff' : 'Buffs dispelled — rebuff',
+    tts: names.length ? 'Buffs dispelled: ' + _dispelList(names, 3) + '. Rebuff.' : 'Buffs dispelled. Rebuff.',
+    trigger: 'Buffs dispelled', rule_key: 'builtin:dispel_buffs', rule_char: cl,
+  }, now);
+  console.log('[dispel] ' + cl + ': buffs dispelled' + (names.length ? ' — ' + names.join(', ') : ''));
+  // The queue reads our buff slots from the live-state upload (every 5 s): send it now and re-read the queue sooner.
+  try {
+    _buffQueueSnappyUntil = now + SNAPPY_WINDOW; _buffQueueCache.clear();
+    if (_uploadOpts && _uploadOpts.botUrl) flushLiveStateToBot(_uploadOpts);
+  } catch (e) { void e; }
+}
+setInterval(() => { try { flushDispelWatch(Date.now()); } catch { void 0; } }, 250).unref();
+
 // The bar colour of a spell row, by what it is (FB-92: "Red for mobs, Orange for affects on friendlies, green for
 // buffs, blue for other. Purple for Avatar and Ferocity lines"). The first rule that fits wins:
 //   purple — the name carries "Avatar" or "Ferocity" (a buff you watch for; beats green),
@@ -58780,6 +59804,25 @@ function _knownNpcNotPlayer(name) {
   const prefix = _normMobNameAgent(name) + '|';
   for (const [k, v] of _mobInfoByName) { if (v && v.mob && k.startsWith(prefix)) return true; }
   return false;
+}
+// The same answer for the per-damage-event paths, which ask it for every swing. Memoised for 30s per name:
+// _knownNpcNotPlayer walks every character's zone pack and the whole Mob Info cache.
+// The guild lead, 2026-10-23, after the Tower of Solusek Ro raid: "Jiva is a named mob but was counted as a
+// player". A one-word mob (Jiva, Xuzl, Arlyxir, Galremos ...) passes every word-count filter, and the catalog
+// zone pack is the only thing that says what it is. A /who sighting, our own characters and our pets still win:
+// _knownNpcNotPlayer is false for those.
+const _npcMemo = new Map();   // lowercase name -> { at, yes }
+function _isCatalogNpcName(name) {
+  const k = String(name || '').trim().toLowerCase();
+  if (!k) return false;
+  const now = Date.now();
+  const held = _npcMemo.get(k);
+  if (held && now - held.at < 30000) return held.yes;
+  let yes = false;
+  try { yes = !_raidRosterHas(k) && !!_knownNpcNotPlayer(name); } catch { yes = false; }
+  if (_npcMemo.size > 4000) _npcMemo.clear();
+  _npcMemo.set(k, { at: now, yes });
+  return yes;
 }
 
 // ── #136 Raid callout allow-list ─────────────────────────────────────────────
@@ -61503,6 +62546,9 @@ async function main() {
         if (!_sourceExcluded) { noteNpcCastStart(line); noteNpcLanding(line); }
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
+        // Dispel watch: BEFORE the mez line below, which marks the landing this reads. Local callouts only, so it
+        // is not behind the upload opt-out.
+        try { noteDispelLine(line, b.character); } catch (e) { void e; }
         if (!_sourceExcluded) { try { noteMyMezWornOff(line, b.character); } catch (e) { void e; } }
         // Prefer the cast-correlated resolution (our own cast); fall back to the
         // tracked-buff index match for buffs we only witnessed as a bystander.
@@ -64372,7 +65418,7 @@ module.exports = {
   ZEAL_CHAT_COLOR, zealChatTake, zealChannelHint, zealChatFlushDeferred, classifyZealLine, classifyZealTextLine, CHAT_ZEAL_TEXT_RXS,
   classifyLootLine, classifyRandomLine, classifyOtherLine, _lootRingForTest: () => _lootRing, _randomRingForTest: () => _randomRing, _otherRingForTest: () => _otherRing, CHAT_LOOT_RING_MAX, CHAT_RANDOM_RING_MAX, CHAT_OTHER_RING_MAX,
   // Guild feed while out of game (2026-10-15): the poller, its in-game test, the ring and the control-plane setter its gate reads.
-  _pollGuildFeed, _eqInGameFrom, guildFeedTake, guildFeedClear, _guildFeedNoteCampLine, _guildFeedRingForTest: () => _guildFeedRing, _guildFeedStateForTest: () => _guildFeed,
+  _pollGuildFeed, _eqInGameFrom, guildFeedTake, guildFeedClear, _guildFeedNoteCampLine, _guildFeedRingForTest: () => _guildFeedRing, _guildLateRingForTest: () => _guildLateRing, _guildFeedStateForTest: () => _guildFeed,
   _guildFeedResetForTest: _guildFeedReset, _applyControlPlane, CHAT_GUILD_RING_MAX,
   uploadChat, _setReporterRolesForTest: (r) => { _reporterRoles = { chat: true, buffs: true, roster: true, ...r }; },
   chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
@@ -64389,6 +65435,9 @@ module.exports = {
   _parseSntpReply,
   // Roll-call item labels — pure parser, tested against real captured chat.
   parseRollItemLine, _cleanRollItemCandidate, ROLL_ITEM_LINK_MS,
+  // A /random as one line in the Chat overlay (2026-10-23), and the groups a breakout asks history for.
+  classifyRollPair, chatRollMark, chatRollItemFor, chatGroupsChannels, trackRollItemLine,
+  _setRollItemsForTest: (entries, catalog) => { _rollItemByNumber.clear(); for (const [n, v] of (entries || [])) _rollItemByNumber.set(n, v); _chatItemIdCache.clear(); _indexItemCatalog(catalog || []); },
   _recordFightHistory, _fightHistoryForTest: () => stats.fightHistory,
   _resetFightHistoryForTest: () => { stats.fightHistory = []; },
   // Meter History on disk + its own endpoint (2026-10-04).
@@ -64424,7 +65473,11 @@ module.exports = {
   CH_DDR_PERFECT_MS, CH_DDR_GREAT_MS, CH_DDR_GOOD_MS,
   CH_DDR_MARVELOUS_STREAK, CH_DDR_MIN_BEATS, CH_DDR_DISPLAY_MS,
   _setChDdrEnabledForTest: (v) => { _chDdrEnabled = !!v; },
-  _resetChChainForTest: () => { _chChain = null; _lastChGoNum = null; },
+  _resetChChainForTest: () => { _chChain = null; _lastChGoNum = null; _chUnread.length = 0; },
+  _setWatchedLogsForTest: (logs) => { stats.watchedLogs = logs || []; },
+  // CH chain: other guilds' call shapes + learned templates (2026-10-23).
+  chParseBuiltinExtra, chParseSetChain, chTranslateExtra, chGuessRoles, chLearnPreview, chLearnSave, chLearnRemove, chLearnState, chTemplates,
+  _chSlotFromToken, CH_TEMPLATES_MAX,
   // #204 DI two-cleric callout — exported for the scratchpad harness.
   trackDiFired, diCalloutSnapshot, diCalloutCandidates, _diRankCandidates,
   _diSlotTurnInMs, _DI_FIRED_RX, DI_CALLOUT_NAMES, DI_CALLOUT_TTL_MS,
@@ -64498,6 +65551,9 @@ module.exports = {
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
   _builtinTimerRows, _builtinSpellBarColor, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
   _isMezSpell, noteMyMezWornOff,
+  // Dispel watch (agent 4.0.11) — exported for test/dispel-watch.test.js.
+  noteDispelLine, flushDispelWatch, _dispelNoteZealDiff, _dispelState, _dispelGone, _dispelGoneCovers, _dispelWatchEnabled,
+  DISPEL_OTHER_TEXTS, DISPEL_YOU_TEXTS,
   _bumpCharmTick, _reconcileGaugeCharms, _classOf,
   _petBuffLandings, _npcCasterLevelFor, _npcCastStarts, _charmMobId,
   // Your own timers pause while you are logged out (2026-10-13) — exported for test/own-timers-pause.test.js.

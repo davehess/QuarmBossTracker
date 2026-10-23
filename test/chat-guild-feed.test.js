@@ -345,7 +345,7 @@ describe('lines land in /api/chat with the existing channel ids and via: guild',
     agent.noteLocalChatLine(`${TS} You say to your guild, 'ready'`, ME, T0);
     const local = agent._chatRingForTest().map(x => x.t);
     expect(local.length).toBe(2);
-    const n = agent.guildFeedTake([L(1, 'guild', 'Corvale', 'on my way', local[0] + 2000), L(2, 'guild', ME, 'ready', local[1]), L(3, 'guild', 'Corvale', 'new', local[0])], T0);
+    const n = agent.guildFeedTake([L(1, 'guild', 'Corvale', 'on my way', local[0] + 2000), L(2, 'guild', ME, 'ready', local[1]), L(3, 'guild', 'Corvale', 'new', local[0])], local[0]);
     expect(n).toBe(3);
   });
   it('the ring is its own, capped at 300, and never touches the chat ring', async () => {
@@ -437,7 +437,8 @@ describe('display only', () => {
     await agent._pollGuildFeed(T0, mockFetch(ok({ seq: 1, lines: [L(1, 'guild', 'Corvale', 'a')] })));
     const h = await agent.buildChatHistory({ hours: 1, away: true }, T0, { files: [] });
     expect(h.lines).toHaveLength(0);
-    expect(stripJs(HISTORY_BLOCK)).not.toMatch(/guildFeed|_guildFeedRing|via:/);
+    // (a line OLD on arrival is the exception: it goes to the late ring and history serves it, see test/chat-guild-backlog.test.js)
+    expect(stripJs(HISTORY_BLOCK)).not.toMatch(/guildFeed|_guildFeedRing/);
   });
   it('the ring is named only inside the chat block, the guild feed block and the export lines', () => {
     const outside = stripJs(AGENT_SRC.replace(CHAT_BLOCK, '').replace(FEED_BLOCK, '').replace(HISTORY_BLOCK, ''));
@@ -581,17 +582,17 @@ describe('FB-91: a line in your own log is shown once, as local', () => {
   it('relayed copy after the local one, differing only in capitalisation: both are served, local first with no via', () => {
     said('what is nimic?');
     const local = agent._chatRingForTest()[0].t;
-    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'What is Nimic?', local + 1000)], T0)).toBe(1);
+    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'What is Nimic?', local + 1000)], local)).toBe(1);
     expect(feed({ away: true }).lines.map(l => l.via)).toEqual([undefined, 'guild']);
   });
   it('relayed copy first, then the local line: neither is removed by the agent', () => {
-    agent.guildFeedTake([L(1, 'guild', 'Corvale', 'What is nimic?', LT + 1000)], T0);
+    agent.guildFeedTake([L(1, 'guild', 'Corvale', 'What is nimic?', LT + 1000)], LT);
     said('what is nimic?');
     expect(agent._guildFeedRingForTest()).toHaveLength(1);
     expect(feed({ away: true }).lines.map(l => l.via)).toEqual(['guild', undefined]);
   });
   it('your own line is kept in the relay whether or not your own log also has it ("You" locally, your name in the relay)', () => {
-    agent.guildFeedTake([L(1, 'guild', ME, 'Ready', LT)], T0);
+    agent.guildFeedTake([L(1, 'guild', ME, 'Ready', LT)], LT);
     agent.noteLocalChatLine(`${TS} You say to your guild, 'ready'`, ME, T0);
     expect(agent._guildFeedRingForTest()).toHaveLength(1);
     expect(feed({ away: true }).lines.map(l => [l.who, l.via])).toEqual([[ME, 'guild'], ['You', undefined]]);
@@ -599,7 +600,7 @@ describe('FB-91: a line in your own log is shown once, as local', () => {
   it('two genuinely different messages both stay', () => {
     said('what is nimic?');
     const local = agent._chatRingForTest()[0].t;
-    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'what is mimic?', local), L(2, 'guild', 'Rethlan', 'what is nimic?', local)], T0)).toBe(2);
+    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'what is mimic?', local), L(2, 'guild', 'Rethlan', 'what is nimic?', local)], local)).toBe(2);
     agent.noteLocalChatLine(`${TS} Brackwyn tells the guild, 'something else'`, ME, T0);
     expect(agent._guildFeedRingForTest()).toHaveLength(2);
   });
@@ -703,14 +704,14 @@ describe('own lines: in away mode, and once when a local and a relayed copy both
   it('away, with a local copy too: the agent serves BOTH (it cannot know the overlay shows the local one); the overlay merges them', () => {
     agent.noteLocalChatLine(`${TS} You say to your guild, '${SAID}'`, ME, T0);
     const at = agent._chatRingForTest()[0].t;
-    expect(agent.guildFeedTake([L(1, 'guild', ME, SAID, at + 1000)], T0)).toBe(1);
+    expect(agent.guildFeedTake([L(1, 'guild', ME, SAID, at + 1000)], at)).toBe(1);
     const r = feed({ away: true });
     expect(r.lines.map(l => [l.who, l.via])).toEqual([['You', undefined], [ME, 'guild']]);
   });
   it('another member\'s lines are unchanged: shown via guild, and a different message is never merged away', () => {
     agent.noteLocalChatLine(`${TS} Corvale tells the guild, 'pull in five'`, ME, T0);
     const at = agent._chatRingForTest()[0].t;
-    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'pull in six', at), L(2, 'guild', 'Rethlan', 'pull in five', at)], T0)).toBe(2);
+    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'pull in six', at), L(2, 'guild', 'Rethlan', 'pull in five', at)], at)).toBe(2);
   });
 });
 
@@ -745,6 +746,39 @@ describe('own lines: chat.html merges a rewritten relayed copy of a line into th
   it('different words are different lines', () => {
     merge.reset(); merge.addLines([mine]); merge.addLines([{ ...relayed, text: 'Ok camp now brb soon' }]);
     expect(merge.lines()).toHaveLength(2);
+  });
+});
+
+// ── A relayed line that is already old never shows as live (the guild lead, 2026-10-23) ──────────────
+// The bot's ring holds hours of /gu and /rs, and a fresh cursor (a camp-out, a bot restart, an agent restart) asks for all of
+// it. The overlay paints in arrival order, so 10:00 lines between 11:39 ones read as new.
+describe('late relayed lines stay out of the live feed', () => {
+  const MIN = 60_000;
+  it('a fresh agent given a ring of old lines shows none of them; a line seconds old still shows', async () => {
+    const f = mockFetch(ok({ boot: 'b1', seq: 3, lines: [
+      L(1, 'guild', 'Corvale', 'pull at ten', T0 - 100 * MIN),
+      L(2, 'guild', 'Rethlan', 'buffs up', T0 - 99 * MIN),
+      L(3, 'raid', 'Brackwyn', 'just now', T0 - 5_000),
+    ] }));
+    expect(await agent._pollGuildFeed(T0, f)).toBe('ok');
+    expect(feed({ away: true }).lines.map(l => l.text)).toEqual(['just now']);
+    expect(agent._guildFeedRingForTest().map(r => r.text)).toEqual(['just now']);
+    expect(agent._guildFeedStateForTest().cursor).toBe(3);   // moved past the dropped ones: they are not asked for again
+  });
+  it('the cut-off is two minutes behind arrival', () => {
+    expect(agent.guildFeedTake([L(1, 'guild', 'Corvale', 'inside', T0 - 119_000), L(2, 'guild', 'Corvale', 'outside', T0 - 121_000)], T0)).toBe(1);
+    expect(agent._guildFeedRingForTest().map(r => r.text)).toEqual(['inside']);
+  });
+  it('a camp-out after hours of play: the ring the bot holds from then is dropped, new talk after it is kept', async () => {
+    const T1 = T0 + 100 * MIN;
+    const f = mockFetch(
+      ok({ boot: 'b1', seq: 2, lines: [L(1, 'guild', 'Corvale', 'old a', T0), L(2, 'guild', 'Corvale', 'old b', T0 + MIN)] }),
+      ok({ boot: 'b1', seq: 3, lines: [L(3, 'guild', 'Corvale', 'fresh', T1 + 4_000)] }));
+    agent.setChatPolicy({ away: true }, T1);
+    await agent._pollGuildFeed(T1, f);
+    expect(feed({ away: true, now: T1 }).lines).toHaveLength(0);
+    await agent._pollGuildFeed(T1 + 5_000, f);
+    expect(feed({ away: true, now: T1 + 5_000 }).lines.map(l => l.text)).toEqual(['fresh']);
   });
 });
 

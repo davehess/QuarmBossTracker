@@ -136,6 +136,13 @@ next touch one rather than assuming a missing row means a missing doc.
   refuses, the right-click row shows only while it is on; Setup ALL never shows a leftover hidden Canvas window; Esc leaves Setup
   ALL / THIS and Canvas arranging. Test: `test/canvas-stays-off.test.js`. Open: the raider's screen was never seen, so the exact
   trigger is unconfirmed; ask for the agent log's `[canvas]` line.
+- **🧪 raidmimic.com: two layout previews of the "player first, guild second" story (web 2.1.12 on `beta`, 2026-10-23, the guild lead:
+  *"less about me setting it up as a service for them and more about here's what you get as a player … use this yourself, but I can
+  help you with a self-hosted version"*).** `https://b.wolfpack.quest/raidmimic?v=player` (**Ladder**: one scroll, player, jump in now,
+  what a guild could have, then run your own or have it hosted) and `https://b.wolfpack.quest/raidmimic?v=paths` (**Pick your path**:
+  three doors, Player / Guild / Self-host). The default page is untouched and every raidmimic host ignores `?v=`. Words:
+  `web/lib/raidmimicPlayer.ts`. There is no public guild hub today (the shared trial is still Coming), so "jump in" is the free
+  download, local mode, raid codes and shared links. Waiting on the guild lead's pick; the loser is deleted. Test: `test/raidmimic-landing.test.js`.
 - **✅ raidmimic.com: six more captures, in a gallery under the player (web 2.1.8 on `beta`; graduated to `main` with web 2.1.11,
   2026-10-23, the guild lead's pick; the guild lead's *"update raidmimic.com with more assets"*).** A raid pull on Bertoxxulous in Plane of Disease, drawn by
   `scripts/raidmimic-shots/shoot.mjs` from fixtures with invented raiders (no real screenshot is used): **Map on a floor plan**
@@ -765,6 +772,32 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Guild + raid chat while out of game (bot 3.1.277 main, agent 3.7.182 beta, 2026-10-15, §342):** the Chat overlay
   relays the guild's /gu and /rs from other Mimics while you're not in game, with "N in game with Mimic" and a
   "nobody in game" note. Waiting on the guild lead's out-of-game look.
+- **⏳ Chat overlay: old guild chat no longer shows up as if it were new, and the last hour is back as history (agent 4.0.18 + 4.0.19 beta, 2026-10-23).**
+  The guild lead: *"strange these old messages just came through"* (10:00 and 10:01 "via guild" lines between 11:39 ones). Cause:
+  the bot's guild-chat ring is 300 lines with no age limit, the agent asks it from cursor 0 on every camp-out, bot restart and
+  cache-less restart, and the overlay paints in arrival order. 4.0.18: `guildFeedTake` kept a relayed line more than 2 minutes older
+  than its arrival out of the live feed (and dropped it, so opening Chat out of game lost the bot's last hour). 4.0.19, the guild
+  lead's call (*"chat is one thing that you may want to keep open"*): those late lines are KEPT in a separate agent-side ring
+  (`_guildLateRing`: the bot ring's 300, nothing older than 24 h, also saved in the encrypted Chat cache while Away is on) and
+  `/api/chat/history` merges them, in time order, with the local logs' lines (`via: 'guild'`, only with Away on, only inside the
+  chosen window, only the groups a breakout holds). Cap rule: local keeps its 3000, relayed has its own 300, so a relayed line never
+  evicts a local one. A relayed line equal to a local-log line (same key) shows once, as the local one. `/api/chat` carries a
+  `backlog` counter; the overlay re-reads its history quietly (no loading flash) when it moves. A live (≤ 2 min) line still goes to
+  the live feed. Tests: `test/chat-guild-backlog.test.js` (+ "late relayed lines stay out of the live feed" in
+  `test/chat-guild-feed.test.js`). Unverified: a real out-of-game open on Windows; the smallest history window is 1 hour, so
+  "last hour" is the shortest backlog view. Waiting on the guild lead's look on beta.
+- **⏳ Chat overlay: /random as one line with its item, Random on by default, a breakout's full history (agent 4.0.17 beta, 2026-10-23).**
+  The guild lead: *"chat overlay is missing random rolls (and if we can link to what it was for even better)"* and *"sometimes when
+  popping out a window we don't get the full history from that session or timeframe"*. Rolls: the pair reached the classifier all
+  along; the Random switch defaulted OFF (in ⚙ → More settings) and history never read Random. Now `random: p.random !== false` in
+  `main.js` (new installs AND installs that never touched it get it; a saved `false` is a deliberate off and stays off — each switch
+  writes only its own key), the pair is ONE row (`classifyRollPair`: "Halvard rolled 692 (0–711)"), the item is the roll tracker's own
+  range→item label (`_rollItemByNumber`, 20-minute rule) linked to PQDI by exact name in the item catalog, `▲ high` marks a first roll
+  that beats the set, and history reads Random back. Breakout history: a new window had no pick of its own so it opened with history
+  OFF (now inherits the Chat window's pick), and its request carried every channel so the 3,000-line cap trimmed a quiet group behind a
+  busy one (now `&groups=` names the groups the window holds; the cap counts those). ⚠ Unverified: Windows run of the item link
+  (`openExternal`) and a real roll night; a label announced AFTER a roll cannot reach a row already shown; history has no item before
+  the agent's own call memory. Tests `test/chat-rolls.test.js`.
 - **✅ Chat overlay Loot / Random / Other (agent 3.7.181 beta, 2026-10-15, §340):** opt-in in the chat ⚙. Money waits on
   one real coin line from the guild lead.
 - **✅ Post-raid link + full parses (bot 3.1.276 main; web 1.8.171 beta, 2026-10-15, §338):** the final raid review
@@ -6569,6 +6602,21 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   cache any reply taken during a bot redeploy as "no row" for 6 h, the bug 4.0.7 fixed. ⏳ Ask the reporter: Mimic version, does
   restarting Mimic bring the resists back, which tab, standalone window or Canvas piece, and the text under the name ("looking up
   stats…" or "no catalog stats for this target"). Report stays open until answered.
+- 🧪 Target Info says WHY it has no stats, with a ↻ retry, and a report now carries the lookup (a member, 2026-10-23, FB-95:
+  "target info showing no catalog stats for this target", Mimic 3.0.3 / agent 4.0.10, a Plane of Knowledge NPC whose catalog row
+  exists; agent 4.0.20 on beta). **Cause NOT proven; the report stays open.** The bot logged no catalog query for the mob, so the
+  reporter's agent never asked it. Paths that print the line with no request in the last minute: (1) the off-catalog branch of
+  `fetchMobInfo` stored a null for the full 6 h with nothing asked, when a log of the same character name on another server
+  (an old Project 1999 log in the folder) was registered, since `_charServers` keeps the off-guild side of a name seen on both;
+  (2) a zone-pack entry that is an empty object counted as a hit and printed blank stats; (3) a request never reported back
+  (FB-94 closed one way; there is now a 30 s backstop); (4) no guild token showed "looking up stats…" forever. Fixed: the
+  catalog follows a Quarm log (`_charQuarmLogs`), an off-Quarm answer is a minute-long miss, `_mobHasStats` gates packs and
+  answers, a stalled lookup is asked again. New: every outcome is recorded (`_mobInfoLast`), `buildMobInfo` sends `mob_miss
+  { reason, text, status, detail, name_asked, zone_id }`, the overlay prints it ("not in the catalog" / "lookup failed —
+  retrying" / "off-Quarm server" / "stats need a guild connection") beside a ↻ that POSTs `/api/mob-info/retry`, and a feedback
+  report's `log_meta.target_info` (with or without the log) holds the mob's name as asked, zone id, cache state, last answer, pack
+  state and whether the catalog and a guild connection were on. A corpse's or single-word target's name is withheld.
+  ⏳ Ask the reporter again after they update; `test/mob-miss-reason.test.js`.
 - ✅ A crashed overlay window comes back (Mimic beta, 2026-10-22). Only the dashboard listened for `render-process-gone`; an overlay
   whose renderer died stayed up and blank until Mimic restarted. Now `_overlayRendererGone` logs `[overlay] <key> renderer gone
   (<reason>)`, lets the entry go and destroys the window, and the normal build pass (`applyAllVisibility` →
@@ -6652,3 +6700,17 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   Jiva had 5 uploads against Xuzl's 19; not provable without the logs). Tests `test/npc-actors.test.js`,
   `test/agent-npc-not-player.test.js`. ⏳ Backfill SQL for tonight's rows is in the session report (not run). ⏳ `defenders` still
   lists the boss and adds (correct for tank stats); a consumer that treats that list as people owes the same filter.
+- ✅ **Map and kite-coach run speed match Zeal's % much more closely (Mimic beta, 2026-10-23, DECISIONS §422).** The guild lead: Zeal read
+  116% while ours read 104% (Map) / ~102% (kite coach). Zeal prints `MovementSpeed / 0.7 * 100` (`zone_map.cpp`); the pipe does not carry
+  it. Ours was the chord between two samples (short on a turn) and `2 pi r / lap`; both are now the path walked. Base stays 30.3 u/s
+  (one straight-run reading). `test/run-speed.test.js`. ⏳ Exact value needs one line in the guild's Zeal fork
+  (`player_data["movement_speed"]`, see §422) plus the agent's pipe reader; ⏳ a timed straight run would tighten the base.
+- ✅ **Kite coach tags the likely cause of a drifting lap (Mimic beta, 2026-10-23; the guild lead picked option A).** From the moment the
+  drift chip leaves green (drift >= 5% of r) the lap's own steps are read: `speed changed` (fastest vs slowest quarter of the lap, or the
+  lap vs the one before, > 10%), `turn input` (heading strays > 0.10 rad from a steady turn), `pushed` (a step 4-20 u off where the one
+  before predicts, and the next one off by the opposite), `warp/lag` (the same from 20 u), `slope` (speed follows the ground rising and
+  falling in a slice). Strongest over its bar wins; nothing over a bar means no tag. Chip: `drift 4 u NE <- speed changed`, the numbers
+  on hover. `apps/mimic/kiteCoach.js` (`lapSignals`, `causeOf`, bars in `K.CAUSE_*`), `apps/mimic/map.html`, tests in
+  `test/kite-coach.test.js`. ⏳ Bars come from synthetic laps (0.5 u of position noise), NOT real kite data: tune on a real log; a drift
+  under ~10% of r usually has no cause that clears a bar (3% speed change over half a lap already drifts 5%); ⏳ `slope` rests on a guess
+  about how EverQuest slows you uphill, unverified; a jump of ~40 u mid-lap makes the lap lumpy enough that the coach lets go (no tag).

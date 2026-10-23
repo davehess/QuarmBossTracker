@@ -1154,3 +1154,100 @@ describe('agent: quick tabbing and "killed?" through the real core', () => {
     expect(p.seen.some(s => s.killed_q)).toBe(false);
   });
 });
+
+// ───────────── Right-click on a spawn switches it off and on ─────────────
+// (the guild lead, 2026-10-23: "right clicking on a spawn should toggle the spawn off and on in the map"). A running respawn
+// timer = off: the right-click clears it (/api/map-mark kind clear, back up). Anything else = on: a mob seen alive there is
+// killed by name (/api/map-kill, the ☠ killed button), a spot with nobody seen is marked killed (/api/map-mark kind killed).
+// The agent already had both halves; this is the overlay: the pure choice, the toast words, the dot and the list rows, and
+// the stage's "centre on you" staying out of it. Text assertions strip comments first. Mutation-checked: make spawnToggle
+// always kill; drop the clear branch; drop stopPropagation on the dot; send the row through postMark only.
+describe('map.html: right-click a spawn to switch it off and on', () => {
+  const TOG = new Function(helpers + '\nreturn { spawnToggle, spawnToggleWords };')();
+  const calls_ = (calls, ep) => calls.filter(([u]) => u.endsWith(ep)).map(([, o]) => JSON.parse(o.body));
+  const evt = (target) => { const e = { target: target || null, prevented: 0, stopped: 0 }; e.preventDefault = () => { e.prevented++; }; e.stopPropagation = () => { e.stopped++; }; return e; };
+  const dot = (pid) => ({ getAttribute: (k) => (k === 'data-pid' ? String(pid) : null) });
+  const fire = (el, type, e) => (el.listeners[type] || []).forEach(f => f(e));
+  const sent = async (calls, ep) => { await tick(); return calls_(calls, ep); };
+
+  it('a running timer is "off": the choice is clear, whatever else is known', () => {
+    expect(TOG.spawnToggle(T(8, 'a blood raven', 300000, 400000), null)).toEqual({ act: 'clear' });
+    expect(TOG.spawnToggle(T(8, 'a blood raven', 300000, 400000), { name: 'a blood raven', spawn_id: 4 })).toEqual({ act: 'clear' });
+  });
+  it('a mob seen alive is killed by name (the ☠ killed button); a spot with nobody seen is marked killed', () => {
+    expect(TOG.spawnToggle(null, { name: 'a blood raven', spawn_id: 4 })).toEqual({ act: 'kill', name: 'a blood raven', spawn_id: 4 });
+    expect(TOG.spawnToggle(undefined, { name: 'a blood raven' })).toEqual({ act: 'kill', name: 'a blood raven', spawn_id: null });
+    expect(TOG.spawnToggle(undefined, undefined)).toEqual({ act: 'mark' });
+    expect(TOG.spawnToggle(null, { at: T0 })).toEqual({ act: 'mark' });   // seen, but nothing says what: still just "killed"
+  });
+  it('the toast says what happened: back up, killed with the respawn window, or why nothing changed', () => {
+    const t = T(8, 'a blood raven', 400000, 500000);
+    expect(TOG.spawnToggleWords('Spot', 'clear', { ok: true, cleared: true }, T0)).toBe('Spot — back up');
+    expect(TOG.spawnToggleWords('Spot', 'mark', { ok: true, timer: t }, T0)).toBe('Spot — killed · up in 6m40s–8m20s');
+    expect(TOG.spawnToggleWords('Spot', 'kill', { ok: true, kind: 'unassigned' }, T0)).toBe('Spot — killed');
+    expect(TOG.spawnToggleWords('Spot', 'mark', { ok: false, error: 'this spawn point has no respawn time' }, T0)).toBe('Spot — this spawn point has no respawn time');
+    expect(TOG.spawnToggleWords('Spot', 'mark', null, T0)).toBe('Spot — the agent did not answer');
+  });
+
+  it('right-click on an UP dot posts the kill; the same dot with a timer posts the clear', async () => {
+    const up = await boot({});
+    const hit = up.all.hits;
+    const e1 = evt(dot(8));
+    fire(hit, 'contextmenu', e1);
+    expect(await sent(up.calls, '/api/map-mark')).toEqual([{ zone: 'thedeep', point_id: 8, kind: 'killed' }]);
+    expect(calls_(up.calls, '/api/map-kill')).toEqual([]);
+    expect(e1.prevented).toBe(1);
+
+    const timed = await boot({ timers: [T(8, 'a blood raven', 300000, 400000)] });
+    fire(timed.all.hits, 'contextmenu', evt(dot(8)));
+    expect(await sent(timed.calls, '/api/map-mark')).toEqual([{ zone: 'thedeep', point_id: 8, kind: 'clear' }]);
+  });
+  it('a dot with a mob seen alive on it is killed by name, like the ☠ killed button', async () => {
+    const b = await boot({ seen: [{ point_id: 7, spawn_id: 4, name: 'a blood raven', at: T0 - 60000, by: null }] });
+    fire(b.all.hits, 'contextmenu', evt(dot(7)));
+    expect(await sent(b.calls, '/api/map-kill')).toEqual([{ zone: 'thedeep', name: 'a blood raven', point_id: 7, spawn_id: 4 }]);
+    expect(calls_(b.calls, '/api/map-mark')).toEqual([]);
+  });
+  it('the dot\'s right-click stops at the dot: the stage\'s centre-on-you never hears it', async () => {
+    const b = await boot({});
+    const e = evt(dot(8));
+    fire(b.all.hits, 'contextmenu', e);
+    expect(e.stopped).toBe(1);
+    // and the stage still centres on you for a right-click on the empty map
+    const before = b.S.view.cx;
+    b.S.view.cx = before + 500;
+    const e2 = evt(null);
+    fire(b.all.stage, 'contextmenu', e2);
+    expect(e2.prevented).toBe(1);
+    expect(b.S.view.cx).not.toBe(before + 500);
+  });
+  it('a click on the dot still opens the menu (left click is unchanged)', async () => {
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/hitsEl\.addEventListener\('click', function \(e\) \{ var pid = hitFor\(e\); if \(pid && !isTrapSpot\(pid\)\) \{ card\.style\.display = 'none'; openMenu\(pid, e\); \} \}\);/);
+    expect(js).toMatch(/stage\.addEventListener\('contextmenu', function \(e\) \{/);
+  });
+
+  it('list rows: Respawns clears the soonest, Up · seen kills that mob, Engaged kills by name; each row is armed for the click-through window', async () => {
+    const b = await boot({
+      timers: [T(8, 'a blood raven', 300000, 400000), T(9, 'a blood raven', 100000, 200000)],
+      seen: [{ point_id: 7, spawn_id: 4, name: 'a blood raven', at: T0 - 60000, by: null }],
+      engaged: [{ name: 'a golem', spawn_id: 6, hp_pct: 70, n: 0 }],
+    });
+    const rows = b.all.lists.children.filter(c => /trow/.test(c.className));
+    const rowOf = (re) => rows.find(r => re.test(r.className));
+    for (const r of rows) { expect(r.attrs['data-wp-interact']).toBe(''); const e = evt(); fire(r, 'contextmenu', e); expect([e.prevented, e.stopped]).toEqual([1, 1]); }
+    expect(rowOf(/\bwait\b/)).toBeTruthy();
+    await tick();
+    expect(calls_(b.calls, '/api/map-mark')).toEqual([{ zone: 'thedeep', point_id: 9, kind: 'clear' }]);   // the soonest of the folded row
+    expect(calls_(b.calls, '/api/map-kill')).toEqual([
+      { zone: 'thedeep', name: 'a golem', point_id: null, spawn_id: 6 },     // Engaged first in the list
+      { zone: 'thedeep', name: 'a blood raven', point_id: 7, spawn_id: 4 },
+    ]);
+  });
+  it('the toast element exists, never takes the mouse, and the empty-list hint mentions the right-click', () => {
+    const css = stripCss(MAP_HTML), js = stripJs(MAP_HTML);
+    expect(MAP_HTML).toMatch(/<div id="toast"><\/div>/);
+    expect(css).toMatch(/#toast\{[^}]*pointer-events:none/);
+    expect(js).toMatch(/right-click a dot to switch it off and on/);
+  });
+});

@@ -557,7 +557,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, runPct, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE, inkStyle, INK_DEFAULT, aeRampageRing };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, runPct, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE, inkStyle, INK_DEFAULT, aeRampageRing, trapHex, trapDefOf };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -1192,7 +1192,7 @@ describe('pather routes', () => {
       const js = stripJs(MAP_HTML);
       expect(js).toMatch(/function kickAnim\(\)[\s\S]{0,200}?if \(anyMoving\(Date\.now\(\)\)\) raf = requestAnimationFrame\(frame\);/);
       expect(js).toMatch(/for \(var k in S\.trk\) if \(!keep\[k\]\) delete S\.trk\[k\];/);
-      expect(js).toMatch(/if \(!animating \|\| rt - lastHits >= HITS_MS\) \{ lastHits = rt; layoutHits\(SH\.dots \? vis : \[\]\); layoutCorpseHits\(corpseVis\); \}/);
+      expect(js).toMatch(/if \(!animating \|\| rt - lastHits >= HITS_MS\) \{ lastHits = rt; layoutHits\(SH\.dots \? vis : trapSpots\); layoutTrapHits\(trapHits\); layoutCorpseHits\(corpseVis\); \}/);
       expect(Number(/\bHITS_MS = (\d+)/.exec(js)[1])).toBeGreaterThanOrEqual(200);
       // Follow me rides the drawn spot of you, and the flashing ring still has its own timer
       expect(js).toMatch(/if \(S\.follow && S\.p && !S\.drag\) followTo\(followSubject\(rt\)\);/);
@@ -1261,6 +1261,74 @@ describe('pather routes', () => {
     expect(seenRow.children.map(k => k.textContent).join('|')).toMatch(/spawn #812 · by Corvale/);
   });
 
+  // Traps (the guild lead, 2026-10-23: "maps should show traps as well"). The bot marks a trap spot's point with `trap` and
+  // sends `traps` = { defs, table }; the agent passes it through.
+  it('traps: twelve colour slots round the wheel, the scheme colour for the rest, and a def only for a marked point', () => {
+    const hues = new Set();
+    for (let g = 1; g <= 12; g++) { const h = H.trapHex(g, '#000000'); expect(h, String(g)).toMatch(/^#[0-9a-f]{6}$/); hues.add(h); }
+    expect(hues.size).toBe(12);
+    expect(H.trapHex(0, '#e8a04a')).toBe('#e8a04a');
+    expect(H.trapHex(undefined, '#e8a04a')).toBe('#e8a04a');
+    expect(H.trapHex(1, '#000000')).toBe(H.trapHex(1, '#ffffff'));   // a slot never depends on the fallback
+    const traps = { defs: { 777: { title: 't' } } };
+    expect(H.trapDefOf({ trap: 777 }, traps)).toEqual({ title: 't' });
+    expect(H.trapDefOf({ trap: 778 }, traps)).toBeNull();
+    expect(H.trapDefOf({}, traps)).toBeNull();
+    expect(H.trapDefOf({ trap: 777 }, null)).toBeNull();
+    expect(H.trapDefOf(null, traps)).toBeNull();
+  });
+  it('traps: every colour scheme carries a trap colour, and the Traps switch is on by default', () => {
+    for (const [name, s] of Object.entries(H.MAP_SCHEMES)) expect(s.trap, name).toMatch(/^#[0-9a-f]{6}$/);
+    expect(H.CFG_COLS.map(c => c[0])).toContain('trap');
+    expect(H.CFG_SHOW.map(c => c[0])).toContain('traps');
+    expect(H.mapCfgDefaults().show.traps).toBe(true);
+  });
+  const trapPayload = () => ({
+    zone: 'thedeep', long_name: 'The Deep', version: 'thedeep@v', status: 'ok', now: T0, local_only: false,
+    points: POINTS.map(p => (p.id === 1 ? Object.assign({}, p, { trap: 777, npcs: [NPC('TrapMan3', { aggro: null })] }) : p)), map: ZONE_BODY.map, grids: null,
+    traps: {
+      defs: { 777: { k: 'ladder', grp: 2, ch: 'C', r: 50, title: 'Trap spot: A Tenacious Arborean → Calris Bristlebranch', text: 'Walking in spawns a mob.' } },
+      table: [{ id: 5, x: 105, y: 195, z: 0, r: 40, mz: 20, pct: 50, lv: 60, fx: 'damage', hid: true, title: 'Damage trap', text: 'Hits for 75–300. Undetectable.' }],
+    },
+    zone_id: 164, self: { x: 90, y: 190, z: 0, heading: 64, name: 'Aldenmar' }, group: [], raid: [], target: null, seen: [], timers: [], unassigned: [],
+  });
+  const lastHead = (card) => card.children.filter(c => /\bh\b/.test(c.className)).map(c => c.textContent).pop();
+  it('traps: a trap spot and a trap-table trap each get a hover button; hovering reads what they do; no kill menu on a spot', async () => {
+    const { all } = await bootOverlay({ payload: trapPayload() });
+    const spot = all.hits.children.find(h => h.attrs['data-pid'] === '1' && !h.hidden);
+    const tab = all.hits.children.find(h => h.attrs['data-tid'] === '5' && !h.hidden);
+    expect(spot, 'the spot has a button').toBeTruthy();
+    expect(tab, 'the table trap has a button').toBeTruthy();
+    expect(tab.attrs['data-wp-interact']).toBe('');
+    all.hits.listeners.mouseover.forEach(f => f({ target: spot, clientX: 0, clientY: 0 }));
+    expect(lastHead(all.card)).toBe('△ Trap spot: A Tenacious Arborean → Calris Bristlebranch');
+    all.hits.listeners.mouseover.forEach(f => f({ target: tab, clientX: 0, clientY: 0 }));
+    expect(lastHead(all.card)).toBe('△ Damage trap');
+    expect(all.card.children.map(c => c.textContent).join('|')).toMatch(/Hits for 75–300/);
+    // clicking a spot opens nothing (a trap spot has no kill to mark); an ordinary dot still does
+    all.hits.listeners.click.forEach(f => f({ target: spot, clientX: 0, clientY: 0 }));
+    expect(all.menu.children.length).toBe(0);
+    const dot = all.hits.children.find(h => h.attrs['data-pid'] === '2' && !h.hidden);
+    all.hits.listeners.click.forEach(f => f({ target: dot, clientX: 0, clientY: 0 }));
+    expect(all.menu.children.length).toBeGreaterThan(0);
+  });
+  it('traps: switched off in the settings, the spot is an ordinary dot again and the table traps have no buttons', async () => {
+    const store = { 'wp-map-cfg': JSON.stringify({ show: { traps: false } }) };
+    const { all } = await bootOverlay({ payload: trapPayload(), store });
+    expect(all.hits.children.some(h => h.attrs['data-tid'] && !h.hidden)).toBe(false);
+    const spot = all.hits.children.find(h => h.attrs['data-pid'] === '1' && !h.hidden);
+    all.hits.listeners.click.forEach(f => f({ target: spot, clientX: 0, clientY: 0 }));
+    expect(all.menu.children.length).toBeGreaterThan(0);   // switched off, it is an ordinary spawn point with the kill menu again
+  });
+  it('traps: the spot is drawn by the traps pass (not as a dot), and Spawn points off still leaves the spots hoverable', () => {
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(SH\.traps && trapDefOf\(p, S\.traps\)\) continue;/);
+    expect(js).toMatch(/layoutHits\(SH\.dots \? vis : trapSpots\)/);
+    expect(js).toMatch(/S\.traps = p\.traps \|\| null;/);
+    // the agent hands the bot's traps to the overlay with the points, on the same version gate
+    expect(stripJs(CORE)).toMatch(/out\.spawngroups = rec\.body\.spawngroups \|\| null;[^\n]*\n\s*out\.traps = rec\.body\.traps \|\| null;/);
+  });
+
   it('the Fit button cycles Fit zone -> Fit group -> Fit raid, turns Follow off, keeps the choice, and says when it fell back', async () => {
     const { S, all, store } = await bootOverlay();
     const click = () => all.fitBtn.listeners.click.forEach(f => f.call(all.fitBtn));
@@ -1299,9 +1367,9 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(31);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring + Guild corpses + Saved raid route (Facing is a choice above the list, not a tick box: test/map-facing-wedges.test.js)
+    expect(showRows).toHaveLength(32);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring + Guild corpses + Saved raid route + Traps (2026-10-23) (Facing is a choice above the list, not a tick box: test/map-facing-wedges.test.js)
     expect(glyphRows).toHaveLength(9);
-    expect(colRows).toHaveLength(31);                                          // ...and the Corpses and Saved raid route colours
+    expect(colRows).toHaveLength(32);                                          // ...and the Corpses, Saved raid route and Traps colours
     const walls = showRows[0].children[0];                                     // Walls
     walls.checked = false; walls.listeners.change.forEach(f => f());
     const eye = glyphRows[0].children[0];                                      // 👁

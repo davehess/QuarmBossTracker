@@ -83,7 +83,7 @@ own screenshots; treat each row as "shipped, needs an in-game look" until it is 
 |---|---|---|
 | *"Sometimes tooltips get stuck on the screen, we need that to fade after a few seconds (3 seconds to start)"* | Every overlay: a tooltip closes 3 s after the mouse settles; shows again next time | Mimic `de6040bb` |
 | *"could we add mouse-over for showing opacity on an overlay?"* (then EverQuest's Options → Display as the model) | Settings: Mouse-over opacity (100%), Fade delay (5 s), Fade duration (2 s); an overlay brightens under the mouse, waits, fades back to its own opacity; never dims; Canvas and setup mode left alone | Mimic `de6040bb` |
-| Zone copies (live vs PvP instance) | dbg.txt port + /who check | §251 |
+| Zone copies (live vs PvP instance) | dbg.txt port + /who check; the label now follows the port band (live 7xxx / instance 10000+), never "guild + raid only" (agent 4.0.5) | §251 |
 
 ## 2. Open — in the order they were asked
 

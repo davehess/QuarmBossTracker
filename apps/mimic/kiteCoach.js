@@ -21,7 +21,9 @@
 //    between this lap's centre and the previous lap's. The running centre is refitted over the last FIT_LAPS laps;
 //  * disengaged after LOSE_LAPS lap-times with no lap, or when the loop stops being a circle or reverses;
 //  * a lap is CLEAN (and CLEAN_LAPS clean laps in a row make a "report", once per run) when its wobble, centre drift,
-//    radius change and lap-time change against the lap before it are all small and it turned the same way.
+//    radius change and lap-time change against the lap before it are all small and it turned the same way;
+//  * a lap that drifts gets a likely CAUSE when its own steps show one (lapSignals / causeOf, bars in K.CAUSE_*): speed
+//    changed, turn input, pushed, warp/lag, slope. Nothing clears a bar: nothing is said.
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.WPKite = factory();
@@ -30,6 +32,7 @@
   var TAU = Math.PI * 2;
   var K = {
     RUN_BASE_UPS: 30.3,       // 100% run, units a second (map.html RUN_BASE_UPS, measured)
+    PATH_STEP_MS: 400,        // samples joined for the walked distance are at least this far apart
     R_MIN: 20, R_MAX: 500,    // circle radius that counts
     ENGAGE_WOBBLE: 0.25,      // radius stddev / r to engage, and to keep a lap
     DIRECTION_PURITY: 0.85,   // |net angle| / total angle: below this it is a figure-eight or back-and-forth
@@ -49,6 +52,24 @@
     DRIFT_SHOW: 0.03,         // an arrow between the centres from this much drift (fraction of r)
     DRIFT_GREEN: 0.05, DRIFT_AMBER: 0.12,       // chip colour: green below the first, amber below the second, red above
     GUILD_CENTRE: 0.35, GUILD_RADIUS: 0.25,     // "near a guild loop": centre within 0.35 r, radius within 25%
+    // The likely cause of a drifting lap (the guild lead, 2026-10-23). Holding forward + a turn key turns at a constant
+    // rate, so the lap TIME is fixed and the RADIUS is speed / turn rate: a circle drifts only when the speed or the turn
+    // changes for part of a lap, or something moves you. The lap's own steps (samples PATH_STEP_MS apart) are read for
+    // each; a tag is shown only when a signal clears its bar, and the strongest (score = signal / bar) wins.
+    CAUSE_MIN: 0.05,          // a lap is looked at from the moment its chip leaves green (drift >= DRIFT_GREEN of r)
+    CAUSE_PARTS: 4,           // speed and turn are compared between this many equal slices of the lap's time
+    CAUSE_LEAD_MS: 1200,      // samples this far before a lap are read too, so its first steps have one to be predicted from
+    CAUSE_MAX_DT: 1000,      // a step longer than this (a lag hole) tells nothing about speed or heading: left out
+    // The bars sit about twice over what a PERFECT circle reads with 0.5 u of positional noise (synthetic laps, 10 Hz: speed
+    // slices differ by <=5%, the heading strays <=0.05 rad from a steady turn, a step is off by <1 u). Not yet tuned on real
+    // kite data. A drift of 5% of r comes from a speed change of only ~3% over half a lap, so the small drifts have no cause
+    // that clears a bar: no tag.
+    CAUSE_SPEED: 0.10,        // "speed changed": the fastest and slowest slice differ by >10% of the mean (or lap vs lap before)
+    CAUSE_TURN: 0.10,         // "turn input": the heading strays this many radians (5.7 deg) from a steady turn
+    CAUSE_PUSH_U: 4,          // "pushed": a step is this far (units) off where the step before it, kept turning, predicts
+    CAUSE_WARP_U: 20,         // "warp/lag": ... and this far or more is no shove any more, it is a jump
+    CAUSE_SLOPE_Z: 4,         // "slope": the ground rose or fell this much in a slice (a step is ~6 u tall) ...
+    CAUSE_SLOPE_CORR: 0.9,    //   ... and the slices' speeds follow the slices' rise (|correlation|)
   };
 
   function wrap(a) { return a - TAU * Math.round(a / TAU); }
@@ -107,17 +128,196 @@
     return COMPASS[((Math.round(a / (TAU / 8)) % 8) + 8) % 8];
   }
 
-  // Speed as % of a normal run: one circumference a lap. Not the length of the path walked: a few units of jitter on every
-  // sample would add up to a lot of "distance" at 20 samples a second, and a lap within 10% of a circle is a circle.
-  function speedPct(r, lapS) { return lapS > 0 ? TAU * r / lapS / K.RUN_BASE_UPS * 100 : 0; }
-  // One lap from the samples walked during it.
-  function lapFrom(pts, t0, t1, n) {
+  // Speed as % of a normal run, from the path actually walked (Zeal prints the speed you move at, so a lap that is a
+  // rounded square or an oval has to count its real length: 2 pi r of the fitted circle reads ~10% short on a squarish
+  // loop, 102% against Zeal's 116%, 2026-10-23). Jitter would add up at 10-20 samples a second, so only samples at least
+  // PATH_STEP_MS apart are joined (a 400 ms chord at 35-60 u/s is 14-24 u: noise of a unit or two is under 1%).
+  function pathUps(pts) {
+    if (!pts || pts.length < 2) return 0;
+    var a = pts[0], last = a, len = 0;
+    for (var i = 1; i < pts.length; i++) {
+      if (pts[i].t - a.t >= K.PATH_STEP_MS) { len += Math.hypot(pts[i].x - a.x, pts[i].y - a.y); a = pts[i]; last = a; }
+    }
+    return last.t > pts[0].t ? len / (last.t - pts[0].t) * 1000 : 0;
+  }
+  function speedPct(ups) { return ups > 0 ? ups / K.RUN_BASE_UPS * 100 : 0; }
+
+  // ── What moved the circle: the signals a lap's own samples carry, and the classifier over them ──
+  // Steps are the samples joined PATH_STEP_MS apart (as pathUps does). Every signal is read from the STEPS (their length per
+  // time and the way they point), never from the fitted centre, which is the thing that drifted.
+  function median(a) {
+    if (!a.length) return 0;
+    var s = a.slice().sort(function (x, y) { return x - y; }), n = s.length;
+    return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+  }
+  function lapSteps(pts) {
+    var out = [], a = pts[0];
+    for (var i = 1; i < pts.length; i++) {
+      var b = pts[i], dt = b.t - a.t;
+      if (dt < K.PATH_STEP_MS) continue;
+      var d = Math.hypot(b.x - a.x, b.y - a.y);
+      out.push({ t0: a.t, t1: b.t, dt: dt, d: d, v: d / dt * 1000, cx: b.x - a.x, cy: b.y - a.y, h: Math.atan2(b.y - a.y, b.x - a.x), z0: a.z || 0, z1: b.z || 0,
+        gap: dt > K.CAUSE_MAX_DT || d < 1, bad: false });
+      a = b;
+    }
+    return out;
+  }
+  // { parts: [{ v (u/s), turn (rad/s, the lap's way), dz } | null] x CAUSE_PARTS, vSteady (u/s), jump } or null.
+  //  * a JUMP is a step that lands `u` units away from where the step before it, kept turning at the lap's usual rate,
+  //    predicts (step vector = the last one, turned by the usual turn and scaled by the time): a shove, lag that catches
+  //    up, a server correction. A displacement shows as a PAIR, the step it hit off by D and the next one off by about -D
+  //    (it is predicted from the hit one); a change of speed or of turn is off once, at the change, and then steady. The
+  //    pair is what is told apart from them. The hit step then leaves the slices' speed and turn (it would read as
+  //    "speed changed"). Under CAUSE_PUSH_U is noise (a unit or two on a 14 u step); from CAUSE_WARP_U it is a "warp/lag".
+  // `pts` may start before the lap (`lapStart`, ms): the steps that end before it are only there so the first steps of the
+  // lap have one to be predicted from (a shove in the lap's first step has no pair otherwise). They count for nothing else.
+  function lapSignals(pts, lapStart) {
+    if (!pts || pts.length < 8) return null;
+    var t0 = lapStart != null ? lapStart : pts[0].t, st = lapSteps(pts), P = K.CAUSE_PARTS, span = pts[pts.length - 1].t - t0, i, j, s;
+    st.forEach(function (x) { x.pre = x.t1 <= t0; });
+    var good = st.filter(function (x) { return !x.gap && !x.pre; });
+    if (good.length < 8 || !(span > 0)) return null;
+    var sig = { parts: [], vSteady: 0, jump: null, turnDev: null };
+    // The turn each step made from the one before (the lap's way round, so it is positive on a good circle), per ms.
+    var tr = [], sum = 0, trs = [];
+    for (i = 0; i < st.length; i++) {
+      tr.push(i && !st[i].gap && !st[i - 1].gap ? wrap(st[i].h - st[i - 1].h) : null);
+      if (tr[i] != null) sum += tr[i];
+    }
+    var sgn = sum < 0 ? -1 : 1;
+    for (i = 0; i < st.length; i++) if (tr[i] != null) { tr[i] *= sgn; trs.push(tr[i] / ((st[i].dt + st[i - 1].dt) / 2)); }
+    var medW = median(trs) * sgn;                                  // radians a ms, in the frame's own sense
+    var res = [], rot = [];
+    for (i = 0; i < st.length; i++) {
+      res.push(null); rot.push(0);
+      if (!i || st[i].gap || st[i - 1].gap) continue;
+      var an = medW * (st[i].dt + st[i - 1].dt) / 2, ca = Math.cos(an), sa = Math.sin(an), k = st[i].dt / st[i - 1].dt;
+      rot[i] = an;
+      res[i] = { x: st[i].cx - k * (ca * st[i - 1].cx - sa * st[i - 1].cy), y: st[i].cy - k * (sa * st[i - 1].cx + ca * st[i - 1].cy) };
+    }
+    for (j = 1; j + 1 < st.length; j++) {
+      if (!res[j] || !res[j + 1] || st[j].pre) continue;
+      var u = Math.hypot(res[j].x, res[j].y), c2 = Math.cos(rot[j + 1]), s2 = Math.sin(rot[j + 1]);
+      // the next step should be off by -D, turned the same way
+      var bx = res[j + 1].x + (c2 * res[j].x - s2 * res[j].y), by = res[j + 1].y + (s2 * res[j].x + c2 * res[j].y);
+      if (u < K.CAUSE_PUSH_U || Math.hypot(bx, by) > 0.5 * u) continue;
+      if (!sig.jump || u > sig.jump.u) sig.jump = { u: u, at: Math.max(0, st[j].t0 - t0) / 1000, j: j };
+    }
+    if (sig.jump) st[sig.jump.j].bad = true;
+    // Turn: the heading of the steps, unwrapped, against the straight line of a steady turn. Turn input shows as the biggest
+    // distance (radians) from that line, which is much steadier than comparing slices' rates (a rate is two noisy headings
+    // over a short stretch; this uses every step). null for fewer than 8 steps or a hole in the lap.
+    // Each heading is read over two steps joined (~0.8 s, ~28 u): the same tangent on a circle, half the noise of one step.
+    var us = [], accH = 0, lastH = null, lastT = 0, holed = false;
+    for (i = 0; i + 1 < st.length && !holed; i++) {
+      s = st[i];
+      if (s.gap || s.bad || s.pre || st[i + 1].gap || st[i + 1].bad) continue;
+      var tm = (s.t0 + st[i + 1].t1) / 2, hh = Math.atan2(s.cy + st[i + 1].cy, s.cx + st[i + 1].cx);
+      if (lastH != null) { if (tm - lastT > 1500) holed = true; accH += sgn * wrap(hh - lastH); }
+      lastH = hh; lastT = tm;
+      us.push({ x: tm - t0, y: accH });
+    }
+    if (!holed && us.length >= 8) {
+      var mx = 0, my = 0, sxx = 0, sxy = 0;
+      us.forEach(function (p) { mx += p.x; my += p.y; });
+      mx /= us.length; my /= us.length;
+      us.forEach(function (p) { sxx += (p.x - mx) * (p.x - mx); sxy += (p.x - mx) * (p.y - my); });
+      var sl = sxx > 0 ? sxy / sxx : 0, dev = 0, devAt = 0;
+      us.forEach(function (p) { var e = Math.abs(p.y - (my + sl * (p.x - mx))); if (e > dev) { dev = e; devAt = p.x; } });
+      sig.turnDev = { dev: dev, at: devAt / 1000 };
+    }
+    var acc = [], vn = 0, vd = 0;
+    for (i = 0; i < P; i++) acc.push({ vn: 0, vd: 0, tn: 0, td: 0, z0: null, z1: 0 });
+    for (i = 0; i < st.length; i++) {
+      s = st[i];
+      if (s.gap || s.pre) continue;
+      var a = acc[Math.max(0, Math.min(P - 1, Math.floor(((s.t0 + s.t1) / 2 - t0) / span * P)))];
+      if (a.z0 == null) a.z0 = s.z0;
+      a.z1 = s.z1;
+      if (s.bad) continue;
+      a.vn += s.d; a.vd += s.dt; vn += s.d; vd += s.dt;
+      if (tr[i] != null && !st[i - 1].bad) { a.tn += tr[i]; a.td += (s.dt + st[i - 1].dt) / 2; }
+    }
+    var need = 0.4 * span / P;   // a slice with less than this much good time says nothing
+    sig.parts = acc.map(function (a) {
+      return a.vd >= need ? { v: a.vn / a.vd * 1000, turn: a.td >= need ? a.tn / a.td * 1000 : null, dz: a.z1 - a.z0 } : null;
+    });
+    sig.vSteady = vd > 0 ? vn / vd * 1000 : 0;
+    return sig;
+  }
+  // The slices' spread of one signal: { rel: (highest - lowest) / mean, from, to } (from = the earlier of the two), or null.
+  function spread(parts, key) {
+    var xs = [], i, m = 0;
+    for (i = 0; i < parts.length; i++) if (parts[i] && parts[i][key] != null) { xs.push({ i: i, x: parts[i][key] }); m += parts[i][key]; }
+    if (xs.length < 3) return null;
+    m /= xs.length;
+    if (!(m > 0)) return null;
+    var lo = xs[0], hi = xs[0];
+    xs.forEach(function (p) { if (p.x < lo.x) lo = p; if (p.x > hi.x) hi = p; });
+    return { rel: (hi.x - lo.x) / m, from: lo.i < hi.i ? lo.x : hi.x, to: lo.i < hi.i ? hi.x : lo.x };
+  }
+  function correl(a, b) {
+    var n = a.length, ma = 0, mb = 0, i, saa = 0, sbb = 0, sab = 0;
+    for (i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+    ma /= n; mb /= n;
+    for (i = 0; i < n; i++) { saa += (a[i] - ma) * (a[i] - ma); sbb += (b[i] - mb) * (b[i] - mb); sab += (a[i] - ma) * (b[i] - mb); }
+    return saa > 0 && sbb > 0 ? sab / Math.sqrt(saa * sbb) : 0;
+  }
+  function nm(v, dp) { var m = Math.pow(10, dp || 0); return String(Math.round(v * m) / m); }
+  // What most likely moved this lap's centre, or null (never a guess: nothing clears its bar, nothing is said). Looked at
+  // from the moment the drift chip leaves green. { kind, why, score }: `kind` is the word on the coach line, `why` the numbers
+  // behind it for the tooltip. Each candidate scores its signal / its bar; the highest one at 1 or more is shown.
+  function causeOf(lap, prev) {
+    var sig = lap && lap.sig, c = [];
+    if (!sig || lap.drift == null || !(lap.drift >= K.CAUSE_MIN * lap.r)) return null;
+    var pg = prev && prev.sig ? prev : null;
+    // A shove moves the centre for good, so it is read twice: in its own lap (the centre of a lap that was half before it)
+    // and in the lap after (against that blended lap). The second says "in the lap before".
+    [[sig.jump, ' s into the lap'], [pg && pg.sig.jump, ' s into the lap before']].forEach(function (x) {
+      var jp = x[0];
+      if (!jp) return;
+      var big = jp.u >= K.CAUSE_WARP_U, jt = nm(jp.u) + ' u in one step, ' + nm(jp.at, 1) + x[1];
+      c.push(big ? { kind: 'warp/lag', score: jp.u / K.CAUSE_WARP_U, why: 'jumped ' + jt }
+        : { kind: 'pushed', score: jp.u / K.CAUSE_PUSH_U, why: 'shoved ' + jt });
+    });
+    var sp = spread(sig.parts, 'v'), pct = function (ups) { return nm(speedPct(ups)); };
+    var spd = sp ? { score: sp.rel / K.CAUSE_SPEED, within: true, why: 'speed ' + pct(sp.from) + '%→' + pct(sp.to) + '% within the lap' } : null;
+    if (pg && pg.sig.vSteady > 0 && sig.vSteady > 0) {   // the lap after a change: all one speed, but not the one before it
+      var dv = Math.abs(sig.vSteady - pg.sig.vSteady) / pg.sig.vSteady;
+      if (!spd || dv / K.CAUSE_SPEED > spd.score) spd = { score: dv / K.CAUSE_SPEED, within: false, why: 'speed ' + pct(pg.sig.vSteady) + '%→' + pct(sig.vSteady) + '% since the lap before' };
+    }
+    if (spd) {
+      spd.kind = 'speed changed';
+      // Slope: the slices' speeds follow the slices' rise or fall of the ground (a closed lap ends where it began, so a
+      // hill is up in one slice and down in another). Only from the within-lap read, and only on real height.
+      var ps = sig.parts.filter(function (p) { return !!p; });
+      var dz = ps.map(function (p) { return p.dz; }), maxDz = Math.max.apply(null, dz.map(Math.abs));
+      if (spd.within && ps.length >= 3 && maxDz >= K.CAUSE_SLOPE_Z
+        && Math.abs(correl(ps.map(function (p) { return p.v; }), dz)) >= K.CAUSE_SLOPE_CORR) {
+        spd.kind = 'slope'; spd.why = 'ground moved ' + nm(maxDz) + ' u in a slice; ' + spd.why;
+      }
+      c.push(spd);
+    }
+    // Turn is read within the lap only: the lap time against the lap before would be the turn rate upside down (a lap is a
+    // fixed angle), but a lap is counted around the running centre, which is the thing that just moved.
+    if (sig.turnDev) {
+      var tp = spread(sig.parts, 'turn'), deg = function (r) { return nm(r * 180 / Math.PI); };
+      c.push({ kind: 'turn input', score: sig.turnDev.dev / K.CAUSE_TURN,
+        why: 'heading ' + deg(sig.turnDev.dev) + '° off a steady turn, ' + nm(sig.turnDev.at, 1) + ' s into the lap' + (tp ? '; turn ' + deg(tp.from) + '→' + deg(tp.to) + ' °/s' : '') });
+    }
+    var best = null;
+    c.forEach(function (x) { if (x.score >= 1 && (!best || x.score > best.score)) best = x; });
+    return best;
+  }
+
+  // One lap from the samples walked during it (`lead`: the few samples just before it, for the cause signals only).
+  function lapFrom(pts, t0, t1, n, lead) {
     var f = fitCircle(subsample(pts, K.FIT_PTS));
     if (!f || pts.length < 2) return null;
     var tn = turned(pts, f.cx, f.cy), lapS = (t1 - t0) / 1000;
     return { n: n, cx: f.cx, cy: f.cy, cz: mean(pts, 'z'), r: f.r, sd: f.sd, lapS: lapS,
-      speedPct: speedPct(f.r, lapS), dir: tn.signed >= 0 ? 'cw' : 'ccw',
-      t0: t0, t1: t1, drift: null, driftDx: 0, driftDy: 0, dr: null, clean: false };
+      speedPct: speedPct(pathUps(pts)), dir: tn.signed >= 0 ? 'cw' : 'ccw',
+      t0: t0, t1: t1, drift: null, driftDx: 0, driftDy: 0, dr: null, clean: false, sig: lapSignals(lead && lead.length ? lead.concat(pts) : pts, t0), cause: null };
   }
   // A lap against the one before it.
   function cleanLap(lap, prev) {
@@ -132,10 +332,11 @@
     return f < K.DRIFT_GREEN ? 'g' : f < K.DRIFT_AMBER ? 'a' : 'r';
   }
   function num(v, dp) { var m = Math.pow(10, dp || 0); return Math.round(v * m) / m; }
-  // `Lap 12.4 s · r 118 · drift 6 u NE · wobble 4 · 104%` (drift is a dash until there is a lap to compare with).
+  // `Lap 12.4 s · r 118 · drift 6 u NE · wobble 4 · 104%` (drift is a dash until there is a lap to compare with). A lap whose
+  // drift has a likely cause says it right after the drift: `drift 6 u NE ← speed changed`.
   function chipText(lap) {
     if (!lap) return '';
-    var dr = lap.drift == null ? '-' : num(lap.drift) + ' u' + (lap.drift >= 0.5 ? ' ' + compass(lap.driftDx, lap.driftDy) : '');
+    var dr = lap.drift == null ? '-' : num(lap.drift) + ' u' + (lap.drift >= 0.5 ? ' ' + compass(lap.driftDx, lap.driftDy) : '') + (lap.cause ? ' ← ' + lap.cause.kind : '');
     return 'Lap ' + num(lap.lapS, 1) + ' s · r ' + num(lap.r) + ' · drift ' + dr + ' · wobble ' + num(lap.sd) + ' · ' + Math.round(lap.speedPct) + '%';
   }
 
@@ -185,7 +386,7 @@
       var cur = eng.last, prev = eng.prev;
       view = { cur: cur, ghost: prev && prev !== cur ? prev : null, provisional: !!cur.provisional, cls: driftClass(cur),
         showArrow: !!prev && prev !== cur && cur.drift != null && cur.drift >= K.DRIFT_SHOW * cur.r,
-        chip: chipText(cur), laps: eng.nLaps, streak: eng.streak.length, reported: eng.reported };
+        chip: chipText(cur), why: cur.cause ? cur.cause.why : '', laps: eng.nLaps, streak: eng.streak.length, reported: eng.reported };
     }
 
     function search() {
@@ -203,7 +404,7 @@
         var tn = turned(pts, f.cx, f.cy);
         if (Math.abs(tn.signed) < TAU * 0.98 || Math.abs(tn.signed) < K.DIRECTION_PURITY * tn.abs) continue;   // not one full lap one way
         var laps = Math.abs(tn.signed) / TAU, dur = w[w.length - 1].t - w[0].t;
-        return { cx: f.cx, cy: f.cy, r: f.r, sd: f.sd, cz: mean(w, 'z'), lapS: dur / 1000 / laps, speedPct: speedPct(f.r, dur / 1000 / laps),
+        return { cx: f.cx, cy: f.cy, r: f.r, sd: f.sd, cz: mean(w, 'z'), lapS: dur / 1000 / laps, speedPct: speedPct(pathUps(w)),
           dir: tn.signed > 0 ? 'cw' : 'ccw', t0: w[0].t, t1: w[w.length - 1].t, n: 0, drift: null, driftDx: 0, driftDy: 0, dr: null, clean: false, provisional: true };
       }
       return null;
@@ -215,15 +416,17 @@
     }
 
     function finishLap(tCross, out) {
-      var pts = [];
+      var pts = [], lead = [];
       for (var i = buf.length - 1; i >= 0 && buf[i].t > eng.lapT0; i--) pts.push(buf[i]);
-      pts.reverse();
-      var lap = pts.length >= 6 ? lapFrom(pts, eng.lapT0, tCross, ++eng.nLaps) : null;
+      for (; i >= 0 && buf[i].t > eng.lapT0 - K.CAUSE_LEAD_MS; i--) lead.push(buf[i]);
+      pts.reverse(); lead.reverse();
+      var lap = pts.length >= 6 ? lapFrom(pts, eng.lapT0, tCross, ++eng.nLaps, lead) : null;
       if (!lap || !isCircle(lap)) { disengage('not a circle', out); return; }
       var prev = eng.last;
       lap.drift = Math.hypot(lap.cx - prev.cx, lap.cy - prev.cy);
       lap.driftDx = lap.cx - prev.cx; lap.driftDy = lap.cy - prev.cy;
       lap.dr = lap.r - prev.r;
+      lap.cause = causeOf(lap, prev);
       lap.clean = cleanLap(lap, prev);
       // A new loop elsewhere (centre more than a radius from the one reported): a new run, a new report.
       if (eng.reported && Math.hypot(lap.cx - eng.repCx, lap.cy - eng.repCy) > eng.repR) { eng.reported = false; eng.streak = []; }
@@ -307,5 +510,5 @@
   }
 
   return { K: K, create: create, fitCircle: fitCircle, turned: turned, compass: compass, chipText: chipText, driftClass: driftClass,
-    cleanLap: cleanLap, matchGuild: matchGuild, guildText: guildText, guildLabel: guildLabel, guildDot: guildDot };
+    cleanLap: cleanLap, pathUps: pathUps, lapSignals: lapSignals, causeOf: causeOf, matchGuild: matchGuild, guildText: guildText, guildLabel: guildLabel, guildDot: guildDot };
 });

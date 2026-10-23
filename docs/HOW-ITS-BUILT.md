@@ -153,6 +153,11 @@ pages live in the separate hesstastic repo (`eqmimic/`, `vercel.json`). Tests:
 Every log off-guild = token withheld at boot (local mode); mixed = `shouldUploadForCharacter` + `enqueueUpload` refuse
 the character; `fetchMobInfo` answers "no row" off-Quarm. **Mimic:** `EQ_LOG_OTHER_STEM_RX` in `main.js` finds the
 logs. Tests: `test/eq-family-servers.test.js`.
+**Why Target Info has no stats (FB-95, agent 4.0.20):** every `fetchMobInfo` outcome is recorded per key in `_mobInfoLast`
+(`not_in_catalog` / `lookup_failed` / `off_quarm` / `no_guild` / `looking_up`); `buildMobInfo` sends it as `mob_miss`,
+`mobinfo.html` prints it with a ↻ (POST `/api/mob-info/retry` → `mobInfoRetry`), and a feedback report carries
+`log_meta.target_info` (`mobInfoFeedbackMeta`). For the catalog a name with ONE Quarm log is a Quarm character
+(`_charQuarmLogs`), unlike the upload gate. Tests: `test/mob-miss-reason.test.js`.
 
 ### Guild kit — the tenant config contract (`guild/`, 2026-09-18)
 **Slice 1a live (bot 3.1.129):** `_loadGuildDiscordJson` at the top of
@@ -1270,7 +1275,10 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   `_mapAeRampage` → `/api/map-state` target; `apps/mimic/map.html` `aeRampageRing`/`rampageRing`; §343).
 - **Chat overlay — guild feed while away** (bot 3.1.277 `utils/guildChatFeed.js` + `GET /api/agent/guild-chat`; agent
   3.7.182 `_pollGuildFeed` / `_guildFeedRing`, policy key `away`; §342): other Mimics' /gu and /rs relayed while this
-  player's game is not running; `ingame` count from the bot's reporter heartbeat registry.
+  player's game is not running; `ingame` count from the bot's reporter heartbeat registry. A relayed line already old on
+  arrival (> 2 min) skips the live ring and sits in `_guildLateRing` (agent 4.0.19), which `buildChatHistory` merges into
+  `/api/chat/history` (Away on, same window/groups gates, own 300 cap); `/api/chat` `backlog` tells the overlay to re-read.
+  Tests `test/chat-guild-backlog.test.js`.
 - **Chat overlay — feed cached across a restart** (agent 3.8.0 / Mimic 2.10.0 beta, §357): the overlay's rings + the
   guild-feed cursor are written ENCRYPTED to `logsync.chat-cache.bin` (AES-256-GCM, agent `packages/wolfpack-logsync/index.js`
   "Chat cache"; key made + held by Mimic under `safeStorage` and handed over in `WOLFPACK_CHAT_CACHE_KEY`, `apps/mimic/main.js`
@@ -1278,6 +1286,11 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   Logout keeps it sealed for a 24 h grace (`_chatCacheDecide`) then deletes; a different Discord id wipes it; a definite 401
   revokes (`chatCacheRevoke`, file + key gone). The kill switch / version floor wipes only the file (`chatCacheWipeFileOnly`) so
   on-screen chat stays while overlays run on local data. Tests `test/chat-cache.test.js`.
+- **Chat overlay — a /random as one line** (agent 4.0.17 beta, 2026-10-23): `classifyRollPair` joins the die + result lines into
+  `<Name> rolled N (lo–hi)` with `roll = { name, value, from, to, item?, id?, top? }` beside it; the item is `_rollItemByNumber` (the
+  Command Center Rolls card's range→item map), `id` is an exact-name hit in the item catalog, and `chat.html` links it to PQDI through
+  `openExternal`. Random is ON unless switched off (`_chatPrefsPayload`). `GET /api/chat/history` takes `random=1` and `groups=<ids>`
+  (a breakout asks only for its own groups); a new breakout inherits the Chat window's history pick. `test/chat-rolls.test.js`.
 - **Chat overlay — Loot / Random / Other** (agent 3.7.181 beta, §340): opt-in groups beside Melee/Spells/Skills
   (`classifyLootLine`, `classifyRandomLine`, `classifyOtherLine` — Other last, re-asks the switched-off classifiers,
   never takes chat), their own 300-line rings in `_chatExtraRings`, policy keys `loot/random/other`.
