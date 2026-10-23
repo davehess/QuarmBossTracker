@@ -103,6 +103,16 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Mimic: the Canvas stays off until you turn it on; Esc leaves setup (draft `draft/canvas-off` on `beta`, Mimic parked 3.0.3,
+  2026-10-22; DECISIONS §413). Not pushed; a 3.0.3 stable is the guild lead's call.** A raider on 3.0.2 stable, mid-raid: every overlay on
+  screen in blue boxes, "what is a canvas?", gone after a restart. Probable cause (not reproduced): the Canvas had been switched ON
+  without a choice (the right-click "Arrange the canvas" row on every overlay, the tray/`/pipe` Arrange, or a saved "on" kept by a
+  character profile / hide-all snapshot) and Setup ALL / Arrange, which live in memory only, then showed its blue outline.
+  **Fix:** a one-time pass in `loadConfig` puts the Canvas OFF for every config without `canvasDefaultOffApplied` (⚠ also for people
+  who chose it in the tour: they switch it on once more; layouts are kept); arranging with it off asks first, `/pipe mimic edit`
+  refuses, the right-click row shows only while it is on; Setup ALL never shows a leftover hidden Canvas window; Esc leaves Setup
+  ALL / THIS and Canvas arranging. Test: `test/canvas-stays-off.test.js`. Open: the raider's screen was never seen, so the exact
+  trigger is unconfirmed; ask for the agent log's `[canvas]` line.
 - **🧪 raidmimic.com landing: Scene-first is the page, [beta] (web 2.1.3 on `beta`, 2026-10-22; the guild lead's pick, Decision
   Desk card raidmimic-layout-clips; DECISIONS §409).** *"Truly several of these are important … It should really be a
   combination. Add in the items from E into D."* The default page at `https://b.wolfpack.quest/raidmimic` is now D's tabbed

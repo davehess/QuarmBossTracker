@@ -12490,3 +12490,26 @@ second to about (0,0); the Dock overlay jumps and collapses during its ✥ drag.
 without `SWP_NOMOVE`, or another periodic writer moving a window mid-drag; a fix is being built on beta with a log line that
 proves it on the next report. Same batch: Target Info cached a failed mob lookup for 6 h (a bot redeploy at the first target hid
 a mob's stats and resists, e.g. hobgoblins) → a miss now retries within a minute; overlay windows get crash recovery.
+
+### 413. The Canvas stays off until the person turns it on (2026-10-22, Mimic beta draft `draft/canvas-off`)
+A raider on 3.0.2 stable, mid-raid, by tell: *"all the overlays are on the screen and I can't turn them off"*, *"what is a canvas?"*,
+*"they go away when you exit the app"*, *"clicked on shit in the blue box and everything would not go away"*. The guild lead: *"Canvas needs
+to not turn on by default."* 3.8.57 already wrote the Canvas OFF in `defaultConfig()` and made it a tour choice, so a new install was
+never the path.
+- **Root cause (probable, not reproduced; the raider's screen was not seen).** Two things are in memory only, which is exactly what a
+  restart clears: Setup ALL (`setupMode`) and Arrange (`_canvasArrange`). The blue boxes are the Canvas's arrange outline
+  (`body.edit .panel`), which only draws while the Canvas is ON. Three code paths could have put the Canvas on without a choice:
+  (1) `_setCanvasArrange(true)` turned it on and SAVED it, and was reached from the third row of EVERY overlay's right-click menu
+  ("🧩 Arrange the canvas (pieces)", right under "Setup ALL overlays"), from the tray's Arrange item (live while the Canvas is off) and
+  from `/pipe mimic edit`; (2) a config saved with it on by an earlier Arrange or a profile/hide-all snapshot kept it on across the
+  3.0 upgrade; (3) a saved character profile or hide-all snapshot with `showCanvas` true re-applies it on a character change or unhide.
+  Setup ALL itself was not turning it on (`_overlayWanted` gates the Canvas on its own flag), but force-showed a hidden leftover window.
+- **Calls.** (a) One-time pass in `loadConfig`: any config without `canvasDefaultOffApplied` gets the Canvas OFF (and cleared in the
+  hide-all snapshot and every character profile), logged once; we cannot tell a chosen "on" from an accidental one, so a person who
+  chose it in the tour is switched off once and turns it on again (their layouts are kept). Beta/alpha testers get the same pass.
+  (b) Arranging with the Canvas off asks first ("Turn the Canvas on and arrange it" / "Not now", default Not now); `/pipe mimic edit`
+  refuses; the overlays' right-click row appears only while the Canvas is on. (c) Setup ALL never shows a leftover hidden Canvas
+  window. (d) Esc leaves Setup ALL / Setup THIS (preload, any overlay) and leaves arranging on the Canvas.
+- **Left alone on purpose:** a saved overlay SET or an imported layout that carries the Canvas turns it on when the person loads it
+  (they approved it in a dialog with Undo); a Canvas group hotkey turns it on (they bound it).
+- Tests: `test/canvas-stays-off.test.js`. Docs: `STATUS.md`, `HOW-ITS-BUILT.md`.
