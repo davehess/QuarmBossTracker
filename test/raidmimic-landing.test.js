@@ -323,7 +323,7 @@ describe('the layout', () => {
     expect(read('web/app/raidmimic/page.tsx')).not.toMatch(/['"]use client['"]/);
     for (const f of ['SceneClip.tsx', 'ClipTabs.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'HowItWorks.tsx']) expect(read(L + f), f).toMatch(/^'use client';/);
     expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual([
-      'ClipTabs.tsx', 'HowItWorks.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'SceneClip.tsx',
+      'ClipTabs.tsx', 'FeatureIcons.tsx', 'HowItWorks.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'SceneClip.tsx',
     ]);
   });
   it('fetches and embeds nothing external; every outbound link is one we name', () => {
