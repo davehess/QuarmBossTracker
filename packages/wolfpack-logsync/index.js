@@ -42419,9 +42419,15 @@ for (const ch of ['money', 'emote', 'pet', 'who', 'death', 'bcast', 'zeal']) _ch
 // out of game). DISPLAY ONLY: its lines come from the poller block below (a GET to the bot), land here with the
 // channel ids the local lines use ('guild' / 'raid', so they colour and filter alike) plus via: 'guild', and are served
 // by /api/chat to the overlay and nowhere else. Not the chat ring (a local log line and a relayed one never share
-// a buffer, so clearing one cannot touch the other), never a history source, never a trigger, tell or parse input.
+// a buffer, so clearing one cannot touch the other), never a trigger, tell or parse input. Its LATE lines (below) are served
+// as chat history, merged with the local logs' by buildChatHistory, and nowhere else.
 const CHAT_GUILD_RING_MAX = 300;
 const _guildFeedRing = [];
+// The late lines: relayed guild/raid lines that were already old when they reached us (see GUILD_FEED_LATE_MS). They never enter
+// the live ring; /api/chat/history serves them in time order with the local logs' lines (the guild lead, 2026-10-23: "chat is one
+// thing that you may want to keep open"). Same bound as the bot's ring, nothing older than the longest history window, newest kept.
+const _guildLateRing = [];
+let _guildLateGen = 0;   // moves whenever the late lines change; rides /api/chat as `backlog`, so the overlay re-reads history
 const GUILD_FEED_LIVE_MS = 30_000;       // the title-bar hint holds while the last good poll is this recent
 let _guildFeedOkAt = 0;
 let _guildFeedIngame = null;             // members in game WITH MIMIC RUNNING per the bot's last answer; null = unknown
@@ -42436,37 +42442,50 @@ let _guildFeedIngame = null;             // members in game WITH MIMIC RUNNING p
 // `ingame` is the bot's count of guild members in game with Mimic feeding (others may be online without Mimic and
 // cannot be seen): a whole number, 0 = nobody, anything else = unknown (null).
 //
-// A line that is already old when it reaches us is NOT taken (the guild lead, 2026-10-23: "strange these old messages just came
-// through": 10:00 and 10:01 lines between the 11:39 ones). The overlay paints the feed in arrival order, so an old line lands at
-// the bottom as if it were new. The bot's ring is not time-bounded (300 lines, hours deep), and this agent asks it from 0 on every
+// A line that is already old when it reaches us does NOT go to the live feed (the guild lead, 2026-10-23: "strange these old messages
+// just came through": 10:00 and 10:01 lines between the 11:39 ones). The overlay paints the feed in arrival order, so an old line lands
+// at the bottom as if it were new. The bot's ring is not time-bounded (300 lines, hours deep), and this agent asks it from 0 on every
 // camp-out (guildFeedClear/_guildFeedReset when the game starts), after a bot restart (boot-reset) and after its own restart without
-// a cache cursor, so the first answer is the whole ring. The cursor still moves past the dropped lines, so they are not asked for again.
+// a cache cursor, so the first answer is the whole ring. Those lines go to _guildLateRing instead and show as HISTORY, above the live
+// feed, in time order (the guild lead, same day: "chat is one thing that you may want to keep open"). The cursor moves past them either way.
 const GUILD_FEED_LATE_MS = 120_000;
 function guildFeedTake(lines, now, ingame) {
   const t = now == null ? Date.now() : now;
   _guildFeedOkAt = t;
   const n_ = ingame == null || ingame === '' ? NaN : Number(ingame);
   _guildFeedIngame = Number.isFinite(n_) && n_ >= 0 ? Math.floor(n_) : null;
-  let n = 0;
+  let n = 0, late = 0;
   for (const r of (Array.isArray(lines) ? lines : [])) {
     if (!r || (r.ch !== 'guild' && r.ch !== 'raid')) continue;
     const who = String(r.who == null ? '' : r.who).trim().slice(0, 40);
     const text = _chatCleanText(r.text);
     if (!who || !text) continue;
     const at = Number.isFinite(Number(r.t)) && Number(r.t) > 0 ? Number(r.t) : t;
-    if (t - at > GUILD_FEED_LATE_MS) continue;
+    const isLate = t - at > GUILD_FEED_LATE_MS;
+    if (isLate && t - at > CHAT_HISTORY_HOURS_MAX * 3_600_000) continue;   // past the longest history window: nobody can ask for it
     const key = chatLineKey({ ch: r.ch, who, text, t: at }, '');
-    if (_guildFeedRing.some(x => x.k === key)) continue;
-    _guildFeedRing.push({ seq: ++_chatSeq, k: key, t: at, ch: r.ch, who, to: null, text, self: false, npc: false, on: '', via: 'guild' });
-    n++;
+    // a line held live is not also held as history (a bot restart replays it, by then old)
+    if (_guildFeedRing.some(x => x.k === key) || _guildLateRing.some(x => x.k === key)) continue;
+    const e = { seq: ++_chatSeq, k: key, t: at, ch: r.ch, who, to: null, text, self: false, npc: false, on: '', via: 'guild' };
+    if (isLate) { _guildLateRing.push(e); late++; } else { _guildFeedRing.push(e); n++; }
   }
   const over = _guildFeedRing.length - CHAT_GUILD_RING_MAX;
   if (over > 0) _guildFeedRing.splice(0, over);
-  if (n) _chatCacheMarkDirty();
+  if (late) {
+    _guildLateRing.sort((a, b) => a.t - b.t);
+    const overLate = _guildLateRing.length - CHAT_GUILD_RING_MAX;
+    if (overLate > 0) _guildLateRing.splice(0, overLate);
+    _guildLateGen++;
+    chatHistoryForget();   // the short history cache would not show them until it lapsed
+  }
+  if (n || late) _chatCacheMarkDirty();
   return n;
 }
 // The game is running again: local lines take over, so nothing relayed stays to double them.
-function guildFeedClear() { _guildFeedRing.length = 0; _guildFeedOkAt = 0; _guildFeedIngame = null; _chatCacheMarkDirty(); }
+function guildFeedClear() {
+  if (_guildLateRing.length) { _guildLateRing.length = 0; _guildLateGen++; chatHistoryForget(); }
+  _guildFeedRing.length = 0; _guildFeedOkAt = 0; _guildFeedIngame = null; _chatCacheMarkDirty();
+}
 function noteLocalChatLine(line, character, now, opts) {
   const policy = chatPolicyNow(now);
   let evt = classifyChatLine(line, character);
@@ -42576,7 +42595,8 @@ function serializeLocalChat(q, now) {
   // "nobody is in game" note. ingame = members in game with Mimic running (0 = nobody, null = unknown); null while the feed is not live.
   const away = (policy.away && _guildFeedOkAt > 0 && t - _guildFeedOkAt <= GUILD_FEED_LIVE_MS)
     ? { on: true, ingame: _guildFeedIngame, at: _guildFeedOkAt } : null;
-  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, wiped: _chatWipeAt, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, away, lines };
+  // backlog: moves whenever the relayed late lines change, so the overlay re-reads its history (they are served there, not here).
+  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, wiped: _chatWipeAt, backlog: _guildLateGen, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, away, lines };
 }
 function _handleLocalChat(req, res) {
   const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(body); };
@@ -42601,9 +42621,9 @@ function _resetLocalChatForTest() {
 // The "Chat cache" block further down owns the file, the key and the timer. THIS block only copies the rings out as plain
 // objects and takes them back, so the rings stay named in one place and nothing here touches a file.
 function _chatCacheRings() {
-  return { chat: _chatRing, melee: _meleeRing, spell: _spellRing, skill: _skillRing, loot: _lootRing, random: _randomRing, other: _otherRing, guild: _guildFeedRing };
+  return { chat: _chatRing, melee: _meleeRing, spell: _spellRing, skill: _skillRing, loot: _lootRing, random: _randomRing, other: _otherRing, guild: _guildFeedRing, guildlate: _guildLateRing };
 }
-const _CHAT_CACHE_RING_MAX = { chat: CHAT_RING_MAX, melee: CHAT_MELEE_RING_MAX, spell: CHAT_SPELL_RING_MAX, skill: CHAT_SKILL_RING_MAX, loot: CHAT_LOOT_RING_MAX, random: CHAT_RANDOM_RING_MAX, other: CHAT_OTHER_RING_MAX, guild: CHAT_GUILD_RING_MAX };
+const _CHAT_CACHE_RING_MAX = { chat: CHAT_RING_MAX, melee: CHAT_MELEE_RING_MAX, spell: CHAT_SPELL_RING_MAX, skill: CHAT_SKILL_RING_MAX, loot: CHAT_LOOT_RING_MAX, random: CHAT_RANDOM_RING_MAX, other: CHAT_OTHER_RING_MAX, guild: CHAT_GUILD_RING_MAX, guildlate: CHAT_GUILD_RING_MAX };
 let _chatWipeAt = 0;   // when the rings were last emptied by a revoke; the overlay clears what it holds when this changes
 // What may be saved, newest `o.perRingMax` per ring and nothing older than `o.maxAgeMs`. A line is kept only if the
 // switches in force NOW would still let the overlay show it: officer chat while Officer is off, tells while Tells is off,
@@ -42614,7 +42634,7 @@ function chatCacheSnapshot(now, o) {
   const rings = {};
   for (const [name, ring] of Object.entries(_chatCacheRings())) {
     const keep = [];
-    if (name !== 'guild' || policy.away) {
+    if ((name !== 'guild' && name !== 'guildlate') || policy.away) {
       for (let i = ring.length - 1; i >= 0 && keep.length < o.perRingMax; i--) {
         const l = ring[i];
         if (!(t - l.t <= o.maxAgeMs)) continue;
@@ -42666,6 +42686,7 @@ function chatCacheRestore(snap, now, o) {
     n += take.length;
   }
   if (top > _chatSeq) _chatSeq = top;
+  if (_guildLateRing.length) _guildLateGen++;
   if (snap.policy && typeof snap.policy === 'object') {
     const p = {};
     for (const k of CHAT_POLICY_KEYS) p[k] = !!snap.policy[k];
@@ -42837,7 +42858,27 @@ async function buildChatHistory(q, now, opts) {
     lines.push(e);
     prev = e;
   }
-  return { ok: true, hours, truncated, bytes, chars, lines };
+  // The relayed late lines (guildFeedTake), when the overlay has Away on: merged in time order AFTER the swap lines are made, since a
+  // relayed line belongs to no character of this PC and must not break the "swapped" line between two local neighbours.
+  // CAP RULE: local lines keep the 3000 above, relayed lines their own 300 (the ring's bound), so a relayed line never evicts a local one.
+  // A relayed line whose local twin was read above (same key, so the same speaker, text and second) is dropped: the local copy wins.
+  let relayed = 0, out = lines;
+  if (policy.away && _guildLateRing.length) {
+    const rel = [];
+    for (const e of _guildLateRing) {
+      if (e.t < cutoff || seen.has(e.k) || !chatChannelAllowed(e.ch, policy) || (onlyCh && !onlyCh.has(e.ch))) continue;
+      rel.push({ t: e.t, ch: e.ch, who: e.who, text: e.text, on: '', via: 'guild' });
+    }
+    if (rel.length) {
+      rel.sort((a, b) => a.t - b.t);
+      relayed = rel.length;
+      out = [];
+      let i = 0;
+      for (const x of lines) { while (i < rel.length && rel[i].t < x.t) out.push(rel[i++]); out.push(x); }
+      while (i < rel.length) out.push(rel[i++]);
+    }
+  }
+  return { ok: true, hours, truncated, bytes, chars, relayed, lines: out };
 }
 
 // A short cache (one body per switch set), so the Chat window and its breakouts asking together read once.
@@ -42951,7 +42992,7 @@ function _guildFeedCursorSet(c) {
 async function _pollGuildFeed(now, fetchImpl) {
   const t = now == null ? Date.now() : now;
   if (_eqInGame(t)) {
-    if (_guildFeed.cursor || _guildFeed.boot || _guildFeedRing.length) { guildFeedClear(); _guildFeedReset(); }
+    if (_guildFeed.cursor || _guildFeed.boot || _guildFeedRing.length || _guildLateRing.length) { guildFeedClear(); _guildFeedReset(); }
     return 'in-game';
   }
   if (_uploadOpts && _uploadOpts.dryRun) return 'dry-run';
@@ -65243,7 +65284,7 @@ module.exports = {
   ZEAL_CHAT_COLOR, zealChatTake, zealChannelHint, zealChatFlushDeferred, classifyZealLine, classifyZealTextLine, CHAT_ZEAL_TEXT_RXS,
   classifyLootLine, classifyRandomLine, classifyOtherLine, _lootRingForTest: () => _lootRing, _randomRingForTest: () => _randomRing, _otherRingForTest: () => _otherRing, CHAT_LOOT_RING_MAX, CHAT_RANDOM_RING_MAX, CHAT_OTHER_RING_MAX,
   // Guild feed while out of game (2026-10-15): the poller, its in-game test, the ring and the control-plane setter its gate reads.
-  _pollGuildFeed, _eqInGameFrom, guildFeedTake, guildFeedClear, _guildFeedNoteCampLine, _guildFeedRingForTest: () => _guildFeedRing, _guildFeedStateForTest: () => _guildFeed,
+  _pollGuildFeed, _eqInGameFrom, guildFeedTake, guildFeedClear, _guildFeedNoteCampLine, _guildFeedRingForTest: () => _guildFeedRing, _guildLateRingForTest: () => _guildLateRing, _guildFeedStateForTest: () => _guildFeed,
   _guildFeedResetForTest: _guildFeedReset, _applyControlPlane, CHAT_GUILD_RING_MAX,
   uploadChat, _setReporterRolesForTest: (r) => { _reporterRoles = { chat: true, buffs: true, roster: true, ...r }; },
   chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,

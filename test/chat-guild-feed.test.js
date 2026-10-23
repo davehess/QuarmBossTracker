@@ -437,7 +437,8 @@ describe('display only', () => {
     await agent._pollGuildFeed(T0, mockFetch(ok({ seq: 1, lines: [L(1, 'guild', 'Corvale', 'a')] })));
     const h = await agent.buildChatHistory({ hours: 1, away: true }, T0, { files: [] });
     expect(h.lines).toHaveLength(0);
-    expect(stripJs(HISTORY_BLOCK)).not.toMatch(/guildFeed|_guildFeedRing|via:/);
+    // (a line OLD on arrival is the exception: it goes to the late ring and history serves it, see test/chat-guild-backlog.test.js)
+    expect(stripJs(HISTORY_BLOCK)).not.toMatch(/guildFeed|_guildFeedRing/);
   });
   it('the ring is named only inside the chat block, the guild feed block and the export lines', () => {
     const outside = stripJs(AGENT_SRC.replace(CHAT_BLOCK, '').replace(FEED_BLOCK, '').replace(HISTORY_BLOCK, ''));
