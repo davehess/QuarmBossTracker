@@ -53789,6 +53789,7 @@ function _mapStatePayload(have, now, haveLocal, haveRoute) {
     out.map = rec.body.map || null; out.points = rec.body.points; out.grids = rec.body.grids || null;
     out.factions = rec.body.factions || null;   // the zone's primary factions (bot 3.1.254): base, caps, race/class/deity mods
     out.spawngroups = rec.body.spawngroups || null;   // spawn group names by id (bot 3.1.255; points carry `sg`)
+    out.traps = rec.body.traps || null;   // trap types by helper npc id + the server's trap table (bot; points carry `trap`). The Map's traps layer
   }
   try { out.me = _mapMe(character, st); } catch { out.me = null; }
   const zd = _mapZoneDoc(zone);

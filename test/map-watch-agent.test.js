@@ -1223,7 +1223,7 @@ describe('map.html: right-click a spawn to switch it off and on', () => {
   });
   it('a click on the dot still opens the menu (left click is unchanged)', async () => {
     const js = stripJs(MAP_HTML);
-    expect(js).toMatch(/hitsEl\.addEventListener\('click', function \(e\) \{ var pid = hitFor\(e\); if \(pid\) \{ card\.style\.display = 'none'; openMenu\(pid, e\); \} \}\);/);
+    expect(js).toMatch(/hitsEl\.addEventListener\('click', function \(e\) \{ var pid = hitFor\(e\); if \(pid && !isTrapSpot\(pid\)\) \{ card\.style\.display = 'none'; openMenu\(pid, e\); \} \}\);/);
     expect(js).toMatch(/stage\.addEventListener\('contextmenu', function \(e\) \{/);
   });
 
