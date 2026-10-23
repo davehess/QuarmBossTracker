@@ -410,7 +410,7 @@ describe('main.js: the tray lists the groups under the Canvas entry', () => {
     expect(w.mod._canvasGroupTrayItems(s())[0].enabled).toBe(true);
   });
   it('sits right under the "Arrange the canvas" item, and the status carries what the list needs', () => {
-    expect(main).toMatch(/_setCanvasArrange\(!_canvasArrange\);\s*\} \},\s*\.\.\._canvasGroupTrayItems\(s\),\s*\{ type: 'separator' \}/);
+    expect(main).toMatch(/_arrangeCanvasAsked\(!_canvasArrange\);\s*\} \},\s*\.\.\._canvasGroupTrayItems\(s\),\s*\{ type: 'separator' \}/);
     expect(main).toContain('canvasGroups: _canvasGroupList(cfg),');
     expect(main).toContain('canvasGroupHotkeys: _canvasGroupKeys(cfg),');
     expect(main).toContain('canvasGroupHotkeysBlocked: Object.assign({}, _blockedGroupAccels),');

@@ -1101,6 +1101,15 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   Test: `test/map-watch-agent.test.js`. Charm aging's default-off lives beside it in `BUILTIN_DEFAULT_MODES`
   (`test/trigger-rules.test.js`).
 
+### The Canvas is never on unless you turned it on; Esc leaves setup (Mimic, draft on beta, 2026-10-22; DECISIONS §413)
+- **What:** `cfg.showCanvas` is written `false` for a new install and put back to `false` ONCE for any saved config without
+  `cfg.canvasDefaultOffApplied` (also in `hideAllPrev` and every `charProfiles[*].show`). Arranging with it off asks first;
+  nothing else writes it on except the tray/Overlays/tour switch, a hotkey you bound, and a set or layout you load.
+- **Where:** `apps/mimic/main.js` `loadConfig` (the pass), `_setCanvasArrange(on, consented)` + `_arrangeCanvasAsked`, `canvas-edit`
+  IPC, the `/pipe mimic edit` verb, `applySetupMode` (skips a hidden Canvas), `wp-overlay-menu-state.canvasOn`;
+  `apps/mimic/preload.js` (right-click row only while on; Esc leaves Setup ALL / THIS); `apps/mimic/canvas.html` (Esc leaves
+  arranging). Test: `test/canvas-stays-off.test.js`.
+
 ### Overlays fit their height to content; Canvas items grow up/down and own their background (Mimic beta, 2026-10-19; DECISIONS §381)
 - **Where:** `apps/mimic/main.js` `overlay-auto-height` (anchor-aware, held while `__wpDragging`, `wp-refit` on drag
   end); `apps/mimic/preload.js` `_wpWatchFitContent`; `apps/mimic/canvas.html` `growsUp`/`fitKind`/`fitStep`/

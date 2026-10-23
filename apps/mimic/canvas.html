@@ -3359,7 +3359,12 @@
     if (!_edit || _capKey || (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName))) return;
     if (ev.key === 'Delete' || ev.key === 'Backspace') {
       if (Object.keys(_sel).length) removePanels(Object.keys(_sel));
-    } else if (ev.key === 'Escape') { _sel = {}; render(); }
+    } else if (ev.key === 'Escape') {
+      // Esc clears a selection first; with nothing selected it leaves arranging, the same as ✓ Done (the guild lead,
+      // 2026-10-22: a raider could not find the way out of the blue boxes). A settings panel that is open takes the key itself.
+      if (Object.keys(_sel).length) { _sel = {}; render(); }
+      else if (!menuEl.classList.contains('show')) finishArranging();
+    }
     else if ((ev.key === 'z' || ev.key === 'Z') && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); undoRemove(); }
   });
 
