@@ -390,7 +390,7 @@ describe('tray ↔ dashboard parity', () => {
   it('the tray has the switch and Arrange; the dashboard has the row and Arrange, on the same internals', () => {
     const m = stripJs(main);
     expect(m).toMatch(/label: 'Canvas \(callouts, timers, pieces and any overlay, placed anywhere\)'[\s\S]{0,200}_toggleOverlay\('canvas'\);/);
-    expect(m).toMatch(/'  ↳ Arrange the canvas…'[\s\S]{0,160}_setCanvasArrange\(!_canvasArrange\);/);
+    expect(m).toMatch(/'  ↳ Arrange the canvas…'[\s\S]{0,160}_arrangeCanvasAsked\(!_canvasArrange\);/);
     // The dashboard calls it "Canvas" (the guild lead, 2026-09-29: "change the name of the Timer
     // Canvas to Canvas"); its Arrange is the Overlays tab's "✏ Arrange on screen", which toggles like
     // the tray item (a second press is Done).

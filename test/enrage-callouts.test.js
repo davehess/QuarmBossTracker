@@ -331,3 +331,145 @@ describe('dashboard.html: Recent fires row and the muted list', () => {
     expect(idx).toContain("fetch('/api/enrage-mute'");
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// The guild lead, 2026-10-23, Recent fires: "Enrage (Begin)" (guild) and "Mob is enraged" (personal) had no
+// 🔇 buttons and ignored the mutes; only the built-in "Enrage soon" had them. A trigger that fires on the
+// server's own enrage line is an enrage callout, whatever it is named. The REAL evaluator runs here.
+describe('a trigger on the server enrage line carries enrage_mob and obeys the mutes', () => {
+  const MEPHIT = 'an inferno mephit';
+  const TS = '[Fri Oct 23 20:15:01 2026] ';
+  const BEGIN = TS + MEPHIT + ' has become ENRAGED.';
+  const END = TS + MEPHIT + ' is no longer enraged.';
+  const mute = (scope, mob, action = 'mute') => agent._setEnrageMute({ action, scope, mob });
+  const act = (extra) => [{ type: 'text_overlay', text: 'ENRAGE — {s}', duration_ms: 1000, ...extra }];
+  // The guild row's shape (see _applyGuildTriggersResponse): compiled, scope 'guild'.
+  const guild = (id, name, pattern, actions = act(), extra = {}) =>
+    ({ ...agent._compilePersonalTrigger({ id, name, pattern, enabled: true, actions, ...extra }), _scope: 'guild' });
+  const personal = (id, name, pattern, actions = act({ text: 'ENRAGED — STOP DPS' }), extra = {}) =>
+    agent._compilePersonalTrigger({ id, name, pattern, enabled: true, actions, ...extra });
+  const feed = (line) => agent.evaluateTriggersAgainstLine(line, Date.now(), ME);
+  const firesOf = (name) => agent._activeOverlays.filter(o => o.trigger === name);
+  const GUILD = () => guild('g-enrage-begin', 'Enrage (Begin)', '{s} has become ENRAGED');
+  const PERSONAL = () => personal('p-mob-enraged', 'Mob is enraged', '\\bhas become ENRAGED\\b');
+
+  beforeEach(() => {
+    agent._setGuildTriggersForTest([GUILD()]);
+    agent._setPersonalTriggersForTest([PERSONAL()]);
+    agent._activeTimers.clear();
+  });
+  afterEach(() => {
+    agent._setGuildTriggersForTest([]);
+    agent._setPersonalTriggersForTest([]);
+    agent._activeTimers.clear();
+  });
+
+  it('both fires carry the mob from the line, so the 🔇 buttons have something to mute', () => {
+    feed(BEGIN);
+    expect(firesOf('Enrage (Begin)')).toHaveLength(1);
+    expect(firesOf('Mob is enraged')).toHaveLength(1);
+    for (const n of ['Enrage (Begin)', 'Mob is enraged']) {
+      expect(agent._fireForWeb(firesOf(n)[0]).enrage_mob).toBe(MEPHIT);
+    }
+  });
+  it('the mob key matches the one "Enrage soon" uses, so one mute covers all three', () => {
+    mute('mob', 'An Inferno Mephit ');
+    feed(BEGIN);
+    expect(agent._activeOverlays).toHaveLength(0);
+  });
+  it('the "no longer enraged" line is an enrage callout too', () => {
+    agent._setPersonalTriggersForTest([personal('p-end', 'Enrage over', 'is no longer enraged')]);
+    feed(END);
+    expect(agent._fireForWeb(firesOf('Enrage over')[0]).enrage_mob).toBe(MEPHIT);
+    mute('mob', MEPHIT);
+    agent._activeOverlays.length = 0;
+    feed(END);
+    expect(firesOf('Enrage over')).toHaveLength(0);
+  });
+
+  describe.each([
+    ['this mob (session)', () => mute('mob', MEPHIT)],
+    ['all (session)', () => mute('all')],
+  ])('muted: %s', (_label, apply) => {
+    it('neither the guild nor the personal trigger shows or says anything; another mob still does', () => {
+      vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+      apply();
+      feed(BEGIN);
+      expect(agent._activeOverlays).toHaveLength(0);
+      if (_label.startsWith('this mob')) {
+        feed(TS + 'a sand giant has become ENRAGED.');
+        expect(firesOf('Enrage (Begin)')).toHaveLength(1);
+        expect(agent._fireForWeb(firesOf('Enrage (Begin)')[0]).enrage_mob).toBe('a sand giant');
+      }
+    });
+    it('unmuting brings both back', () => {
+      apply();
+      mute('mob', MEPHIT, 'unmute'); mute('all', null, 'unmute');
+      feed(BEGIN);
+      expect(agent._activeOverlays).toHaveLength(2);
+    });
+  });
+
+  it('always: a rule in trigger_rules.json silences both, for that mob only', () => {
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+    vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
+    mute('always', MEPHIT);
+    feed(BEGIN);
+    expect(agent._activeOverlays).toHaveLength(0);
+    feed(TS + 'a sand giant has become ENRAGED.');
+    expect(agent._activeOverlays).toHaveLength(2);
+  });
+
+  it('a spoken voice action is silenced too, and speaks (with the mob) when not muted', async () => {
+    agent._setPersonalTriggersForTest([personal('p-voice', 'Enrage voice', 'has become ENRAGED', [{ type: 'voice', message: 'enraged {s}' }])]);
+    feed(BEGIN);
+    await new Promise(r => setTimeout(r, 30));
+    expect(agent._fireForWeb(firesOf('Enrage voice')[0]).enrage_mob).toBe(MEPHIT);
+    agent._activeOverlays.length = 0;
+    mute('mob', MEPHIT);
+    feed(BEGIN);
+    await new Promise(r => setTimeout(r, 30));
+    expect(firesOf('Enrage voice')).toHaveLength(0);
+  });
+  it('a muted callout still arms the trigger\'s countdown (a timer is not a callout)', () => {
+    agent._setPersonalTriggersForTest([personal('p-timer', 'Enrage clock', 'has become ENRAGED', act(), { timer_duration_sec: 10 })]);
+    mute('all');
+    feed(BEGIN);
+    expect(firesOf('Enrage clock')).toHaveLength(0);
+    expect(agent._activeTimers.size).toBeGreaterThan(0);
+  });
+
+  it('detects by the line, not the name: an enrage-named trigger on another line is untouched', () => {
+    agent._setPersonalTriggersForTest([personal('p-name', 'Enrage warning', 'is rampaging')]);
+    mute('all');
+    feed(TS + 'a gnoll warlord is rampaging.');
+    expect(firesOf('Enrage warning')).toHaveLength(1);
+    expect(firesOf('Enrage warning')[0].enrage_mob).toBeUndefined();
+  });
+  it('a non-enrage trigger is untouched while everything is muted', () => {
+    agent._setPersonalTriggersForTest([personal('p-yawn', 'Yawn', 'yawns')]);
+    mute('all');
+    feed(TS + 'a gnoll warlord yawns.');
+    expect(firesOf('Yawn')).toHaveLength(1);
+    expect(firesOf('Yawn')[0].enrage_mob).toBeUndefined();
+  });
+  it('chat that merely quotes the enrage words is not an enrage line', () => {
+    agent._setPersonalTriggersForTest([personal('p-quote', 'Quoted', 'ENRAGED')]);
+    mute('all');
+    feed(TS + "Torvahk tells the guild, 'an inferno mephit has become ENRAGED.'");
+    expect(firesOf('Quoted')).toHaveLength(1);
+    expect(firesOf('Quoted')[0].enrage_mob).toBeUndefined();
+  });
+  it('a test fire is never muted', () => {
+    mute('all');
+    agent._fireTriggerActions(PERSONAL(), {}, Date.now(), true);
+    expect(firesOf('Mob is enraged')).toHaveLength(1);
+  });
+  it('the dashboard row offers the buttons for any fire that has enrage_mob', () => {
+    const dash = readSource(path.join(ROOT, 'packages/wolfpack-logsync/dashboard.html'));
+    const fn = sliceBlock(dash, 'function enrageMuteCell(o) {', '\n}');
+    const run = new Function('esc', fn + '\nreturn enrageMuteCell;')(s => String(s));
+    expect(run({ trigger: 'Enrage (Begin)', enrage_mob: MEPHIT })).toContain('data-enrage-mute="always"');
+    expect(run({ trigger: 'Yawn' })).toBe('');
+  });
+});

@@ -232,6 +232,19 @@ let _wpLocked = true, _wpGhost = null, _wpPointerOn = true;
 const _wpPointerNever = _wpDockKey() === 'me';
 ipcRenderer.on('overlay-locked', function (_e, locked) { _wpLocked = !!locked; if (!_wpLocked) _wpGhostHide(); });
 ipcRenderer.on('wp-pointer', function (_e, on) { _wpPointerOn = on !== false; if (!_wpPointerOn) _wpGhostHide(); });
+// Esc leaves setup (the guild lead, 2026-10-22, a raider mid-raid: "all the overlays are on the screen and I can't
+// turn them off"). Every overlay already has a Done button in its setup bar and the tray has Exit setup mode; this is
+// the key for anyone who does not find either. Only while main says setup is on for this window, and never when the key
+// is for a field or a page handler has used it. 'this' (Setup THIS overlay) leaves through its own call, as Done does.
+let _wpSetupOn = false, _wpSetupScope = null;
+ipcRenderer.on('setup-mode', function (_e, p) { _wpSetupOn = !!(p && p.active); _wpSetupScope = (p && p.scope) || null; });
+document.addEventListener('keydown', function (ev) {
+  if (ev.key !== 'Escape' || !_wpSetupOn || ev.defaultPrevented) return;
+  const t = ev.target;
+  if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '') || t.isContentEditable)) return;
+  _wpSetupOn = false;
+  try { ipcRenderer.invoke(_wpSetupScope === 'this' ? 'set-setup-mode-this' : 'set-setup-mode', false).catch(function () {}); } catch (e) {}
+}, false);
 function _wpGhostHide() { if (_wpGhost) _wpGhost.style.display = 'none'; }
 function _wpAlpha(bg) {
   const m = /rgba?\(([^)]+)\)/.exec(bg || '');
@@ -704,10 +717,12 @@ function _buildOverlayMenu(onClose, state) {
   menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => { _wpMenuKeepRoom = true; return ipcRenderer.invoke('set-setup-mode-this', true); }));
   // 3.0 alpha: the canvas editor from any overlay's corner (the guild lead, 2026-09-29: "I have no way of
   // bringing up the overlay editing other than the taskbar now").
-  menu.appendChild(mkItem('🧩 Arrange the canvas (pieces)', '#1f3d57', () => ipcRenderer.invoke('canvas-edit', true)));
+  // Offered only while the Canvas is ON (the guild lead, 2026-10-22: a raider mid-raid found the Canvas on with blue boxes
+  // over the game, and this row, third in every overlay's menu, was one way it could have been turned on). With it off the way in is the tray or the Overlays page, which ask first.
+  const st = state || {};
+  if (st.canvasOn) menu.appendChild(mkItem('🧩 Arrange the canvas (pieces)', '#1f3d57', () => ipcRenderer.invoke('canvas-edit', true)));
   // Visibility + layout actions (a member, 2026-07-10). `state` comes from
   // main's wp-overlay-menu-state so the toggles show their current value.
-  const st = state || {};
   // ▭ / 📌 — mini mode. Built ONLY for the nine overlays that have a mini
   // rendition (main's _MINI_KEYS sets miniCapable); offering the row on an
   // overlay whose CSS has no mini rules would be a switch that does nothing.

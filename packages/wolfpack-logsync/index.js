@@ -15899,6 +15899,16 @@ function _enrageMuted(mobKey) {
   const r = _triggerRules[ENRAGE_ALWAYS_PREFIX + mobKey];
   return !!(r && r['*'] === 'off');
 }
+// The mob named by the server's own enrage lines (NPC_ENRAGE_START / NPC_ENRAGE_END), as an enrage mute key,
+// or '' for any other line. Anchored to the whole line so chat that merely quotes the words ends in a quote
+// and never matches. A trigger that fires on one of these lines is an enrage callout whatever it is named
+// or whoever wrote it (the guild lead, 2026-10-23: the mutes offered themselves on "Enrage soon" only).
+const _ENRAGE_LINE_RX = /^\[[^\]]*\]\s+(.+?)\s+(?:has become ENRAGED|is no longer enraged)\.\s*$/i;
+function _enrageMobOfLine(line) {
+  const m = _ENRAGE_LINE_RX.exec(String(line || ''));
+  return m ? _enrageMobKey(m[1]) : '';
+}
+let _enrageMobCtx = '';   // the enrage mob of the log line being evaluated (set around a local fire, like _ruleCharCtx)
 // A boss by the curated list or by the catalog's raid_target flag (_myFightIsBoss).
 function _enrageIsBoss(name, zoneId) {
   return _isEnrageBoss(name) || _myFightIsBoss(name, zoneId);
@@ -50593,8 +50603,11 @@ function _mobCaseKey(n) {
 // The case-kept name rides LAST: keyed on the lowercased name alone, whichever
 // acolyte you targeted first was served for both for six hours. The lowercased
 // name stays FIRST because _pacifyImmuneKnown scans keys by that prefix.
-function _mobInfoCacheKey(name, zoneId) {
-  return _normMobNameAgent(name) + '|' + (zoneId != null ? zoneId : '*') + '|' + _mobCaseKey(name);
+// npcId (FB-80): the exact catalog body, once Target Info has told two same-name mobs apart; it rides after
+// everything else, so the prefix scans and every id-less reader still land on the plain name's key.
+function _mobInfoCacheKey(name, zoneId, npcId) {
+  return _normMobNameAgent(name) + '|' + (zoneId != null ? zoneId : '*') + '|' + _mobCaseKey(name)
+    + (npcId != null ? '|n' + npcId : '');
 }
 // ── Mob info kept on this machine: zone packs ────────────────────────────────
 // The guild lead, 2026-09-30, on Target Info loading slowly: "keep all of the PoP mobs
@@ -50683,6 +50696,9 @@ function _mobPackGet(query, etag, done) {
         done(null, res.statusCode, buf, res.headers.etag || null);
       } catch (e) { done(e); }
     });
+    // Dropped mid-body: no 'end' and no request 'error' (see fetchMobInfo), so without this the zone stayed in
+    // flight for good and its pack was never fetched or revalidated again until Mimic restarted.
+    res.on('close', () => { if (!res.complete) done(new Error('aborted')); });
   });
   req.on('error',   (e) => done(e));
   req.on('timeout', () => { req.destroy(); done(new Error('timeout')); });
@@ -50805,10 +50821,12 @@ function _mobInfoStore(key, status, body) {
   const prev = _mobInfoByName.get(key);
   _mobInfoByName.set(key, { at: Date.now() - (MOB_INFO_TTL_MS - MOB_INFO_MISS_TTL_MS), mob: (prev && prev.mob) || null });
 }
-function fetchMobInfo(name, selfChar, zoneId) {
+// npcId (FB-80): ask for that exact catalog body (the other one of two same-name mobs), kept under its own key.
+// The zone pack holds one body per name, so this always goes to the bot.
+function fetchMobInfo(name, selfChar, zoneId, npcId) {
   const norm = _normMobNameAgent(name);
   if (!norm) return;
-  const key = _mobInfoCacheKey(name, zoneId);
+  const key = _mobInfoCacheKey(name, zoneId, npcId);
   // The catalog (stats, resists, rampage, zone packs) is Project Quarm's data: off Quarm it would state numbers the
   // mob does not have. Cache "no row" so Mob Info shows log-only data instead of waiting on a lookup.
   if (!eqServerCaps(eqServerForCharacter(selfChar || _primaryCharacter())).catalog) {
@@ -50819,7 +50837,7 @@ function fetchMobInfo(name, selfChar, zoneId) {
   const cached = _mobInfoByName.get(key);
   if (cached && (Date.now() - cached.at) < MOB_INFO_TTL_MS) return;
   // Kept on this machine (a zone pack above): no round trip, and it works offline.
-  const packed = _mobPackLookup(name, zoneId);
+  const packed = npcId != null ? null : _mobPackLookup(name, zoneId);
   if (packed) { _mobInfoByName.set(key, { at: Date.now(), mob: packed }); return; }
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token) return;          // local-only → no lookup
@@ -50828,6 +50846,7 @@ function fetchMobInfo(name, selfChar, zoneId) {
   // (id = zoneid*1000+n) to OUR zone; absent → bot falls back catalog-wide.
   let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/mob-info') + '?name=' + encodeURIComponent(name);
   if (selfChar) url += '&character=' + encodeURIComponent(selfChar);
+  if (npcId != null) url += '&npc_id=' + encodeURIComponent(npcId);
   try {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -50842,6 +50861,10 @@ function fetchMobInfo(name, selfChar, zoneId) {
         _mobInfoInflight.delete(key);
         _mobInfoStore(key, res.statusCode, body);
       });
+      // A connection that drops AFTER the headers (the bot restarting mid-answer) emits neither 'end' nor a request
+      // 'error' nor 'timeout' - only 'close' on the response, with `complete` false. Without this the in-flight mark
+      // stayed forever and the mob was never asked for again until Mimic restarted (FB-94, measured on Node 22).
+      res.on('close', () => { if (!res.complete) _mobInfoInflight.delete(key); });
     });
     req.on('error',   () => { _mobInfoInflight.delete(key); });
     req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(key); });
@@ -55326,6 +55349,88 @@ function _targetPlayerInfo(st, selfChar, cached) {
     drained: pvpDrainState(selfChar, name),
   };
 }
+// ── Two mobs, one name (FB-80) ───────────────────────────────────────────────────────────────────────────────
+// A member: in the Plane of Tactics "a war boar" is a level 55 in the tunnel behind the pit and a level 63 in the
+// pit, two catalog rows, and Target Info always showed the 63. The bot lists a name's level bands (`level_bodies`);
+// this picks the one the client can actually see, strongest evidence first, and never guesses past it:
+//   1. level  Zeal's target_level (named_pipe.cpp, 1.4.8+): the level of the spawn itself.
+//   2. con    your own /consider (conLevelFor): the colour is a level range for YOUR level.
+//   3. place  where the target stands (Zeal target_loc, within 250) against the zone's spawn points that can make
+//             THAT body (the Map's zone data: points carry each npc's name and level), a walker by its route. Taken
+//             only when one body is clearly nearer (the Map's own rule: twice as near, or over 120 units nearer).
+// The spawn id is NOT evidence: it names a live entity, not a catalog row, and changes every repop.
+// → null when the mob has one body; else { id, how, cands }: id is the chosen body ('level' | 'con' | 'place') or
+// null while it is still ambiguous, cands what is still possible.
+const BODY_PLACE_GAP_UNITS = 120;
+function resolveMobBody(mob, ev) {
+  const bodies = mob && Array.isArray(mob.level_bodies) ? mob.level_bodies : [];
+  if (bodies.length < 2) return null;
+  const e = ev || {};
+  const hi = (b) => (Number(b.maxlevel) > Number(b.level) ? Number(b.maxlevel) : Number(b.level));
+  let cands = bodies.slice(), how = null;
+  const narrow = (keep, label) => {
+    const k = cands.filter(keep);
+    if (k.length && k.length < cands.length) { cands = k; how = label; }
+  };
+  if (Number(e.level) > 0) narrow(b => Number(e.level) >= Number(b.level) && Number(e.level) <= hi(b), 'level');
+  if (cands.length > 1 && e.con && Number(e.con.min) > 0) {
+    narrow(b => hi(b) >= Number(e.con.min) && (e.con.max == null || Number(b.level) <= Number(e.con.max)), 'con');
+  }
+  if (cands.length > 1 && e.loc && typeof e.place === 'function') {
+    const zone = e.place();
+    const want = _mapNormName(e.name);
+    if (zone && Array.isArray(zone.points) && want) {
+      const near = cands.map((b) => {
+        let d = Infinity;
+        for (const p of zone.points) {
+          if (!p || !Array.isArray(p.npcs)) continue;
+          if (!p.npcs.some(n => n && _mapNormName(n.name) === want && Number(n.level) >= Number(b.level) && Number(n.level) <= hi(b))) continue;
+          const g = p.grid != null && zone.grids ? zone.grids[p.grid] : null;
+          const dd = Math.min(_mapDist2(p, e.loc), g ? _mapRouteDist(e.loc, g) : Infinity);
+          if (dd < d) d = dd;
+        }
+        return { b, d };
+      }).sort((x, y) => x.d - y.d);
+      const best = near[0], next = near[1];
+      if (Number.isFinite(best.d) && (next.d >= 2 * best.d || next.d - best.d > BODY_PLACE_GAP_UNITS)) { cands = [best.b]; how = 'place'; }
+    }
+  }
+  return { id: cands.length === 1 ? cands[0].id : null, how: cands.length === 1 ? how : null, cands };
+}
+// What Target Info shows for a mob with several bodies: the chosen body's whole row, or while it is undecided the
+// bands side by side (the numbers that differ by body blanked, the overlay prints the candidates). Never throws.
+function _pickMobBody(mob, st, selfChar, zoneId, now) {
+  try {
+    const lv = Number(st.target_level);
+    const r = resolveMobBody(mob, {
+      name: st.target_name,
+      level: lv > 0 ? lv : null,
+      con: conLevelFor(selfChar, st.target_name),
+      loc: _mapServerXY(st.target_loc),
+      place: () => {
+        const short = _mapZoneShort(zoneId);
+        const rec = short ? _mapEnsureZone(short, zoneId, now) : null;
+        return rec && rec.body ? { points: rec.body.points, grids: rec.body.grids } : null;
+      },
+    });
+    if (!r) return mob;
+    if (r.id != null && r.id === mob.id) return { ...mob, body_pick: { how: r.how } };
+    if (r.id != null) {
+      const key = _mobInfoCacheKey(st.target_name, zoneId, r.id);
+      let hit = _mobInfoByName.get(key);
+      if (!hit || (now - hit.at) >= MOB_INFO_TTL_MS) { fetchMobInfo(st.target_name, selfChar, zoneId, r.id); hit = _mobInfoByName.get(key) || hit; }
+      if (hit && hit.mob) return { ...hit.mob, level_bodies: mob.level_bodies, body_pick: { how: r.how } };
+    }
+    // Still undecided (or the chosen body's row is on its way): say so rather than show the wrong one's numbers.
+    // A chosen body whose row has not arrived keeps the level and HP its band already told us.
+    const one = r.cands.length === 1 ? r.cands[0] : null;
+    return {
+      ...mob, level: one ? one.level : null, maxlevel: one ? one.maxlevel ?? null : null, hp: one ? one.hp ?? null : null,
+      mindmg: null, maxdmg: null,
+      body_pick: { how: null, cands: r.cands.map(b => ({ id: b.id, level: b.level, maxlevel: b.maxlevel ?? null, hp: b.hp ?? null })) },
+    };
+  } catch { return mob; }
+}
 function buildMobInfo() {
   const st = _currentTargetState();
   if (!st || !st.target_name) return null;
@@ -55445,7 +55550,7 @@ function buildMobInfo() {
     target_hp_pct:  st.target_hp_pct != null ? st.target_hp_pct : null,
     target_hp_cur:  targetVals ? targetVals.cur : null,
     target_hp_max:  targetVals ? targetVals.max : null,
-    mob:            cached ? cached.mob : null,   // null until the lookup returns
+    mob:            cached && cached.mob ? _pickMobBody(cached.mob, st, selfChar, myZoneId, Date.now()) : null,   // null until the lookup returns (FB-80: the right one of two same-name bodies)
     loading:        !cached,
     target_buffs:   buffs,
     // PC = live buff data (own Zeal list OR the target's uploaded live-state)
@@ -58474,6 +58579,7 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
   if (all.length === 0) return;
   let charLc;   // whose line this is — resolved once, only when a trigger is set per character
   let lineMsg;  // the line without its timestamp — resolved once, only for a catalog_match trigger
+  let enrageMob;  // the mob on an enrage line ('' for any other line) — resolved once, at the first fire
   for (const t of all) {
     // An unticked personal trigger stays in the list (the dashboard keeps the
     // row so it can be ticked back on) and used to fire anyway — nothing on the
@@ -58575,8 +58681,10 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
     _triggerLastFire.set(t.id || t.name, tsMs);
     // Whose line fired it, for the "What you hear" rules (_fireTriggerActions reads it synchronously).
     _ruleCharCtx = String(fileChar || '').toLowerCase();
+    if (enrageMob === undefined) enrageMob = _enrageMobOfLine(line);
+    _enrageMobCtx = enrageMob;
     try { _fireTriggerActions(t, captures, tsMs, false); }
-    finally { _ruleCharCtx = ''; }
+    finally { _ruleCharCtx = ''; _enrageMobCtx = ''; }
   }
 }
 
@@ -58773,6 +58881,12 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   const _ruleKey  = _ruleKeyOf(t);
   const _ruleChar = isRelay ? '' : _ruleCharCtx;
   let _ruledOff = false;
+  // An enrage callout (the trigger fired on the server's enrage line) names its mob, so the 🔇 on its row
+  // can mute it, and a muted mob / "all" / "always" shows, says and sounds nothing — the same as the
+  // built-in "Enrage soon". Timers and the Discord post are not callouts and still run. Test, rehearsal and
+  // replay fires are never muted: the player is hearing what they set up.
+  const _enrageMob = isRelay ? '' : _enrageMobCtx;
+  const _enrageSilenced = !!_enrageMob && !test && !t._rehearsal && !t._replay && _enrageMuted(_enrageMob);
   // Trigger-level roster gate. The require_raid_member field lives on
   // individual actions (so a single trigger can have one filtered + one
   // unfiltered action), but the trigger-level countdown timer is a single
@@ -58851,6 +58965,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   for (const a of (t.actions || [])) {
     if (!a || !a.type) continue;
     _actionsBuilt++;
+    if (_enrageSilenced && (a.type === 'text_overlay' || a.type === 'voice' || a.type === 'sound')) continue;
     if (a.type === 'text_overlay') {
       // _youifyForMe: a callout about one of THIS machine's characters reads
       // "You", whether it was detected here or relayed from another raider.
@@ -58879,6 +58994,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         rule_char:   _ruleChar,
       };
       if (ttsText) overlay.tts = ttsText;
+      if (_enrageMob) overlay.enrage_mob = _enrageMob;   // the dashboard row's and the overlay's 🔇 mute by this
       // #136 — allow-list muted this guild/relay fire: it still flashes, but
       // triggers.html skips speak() when overlay.mute is set.
       if (_calloutMuted) overlay.mute = true;
@@ -58983,6 +59099,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
             mute:        _calloutMuted,
             rule_key:    _ruleKey,
             rule_char:   _ruleChar,
+            enrage_mob:  _enrageMob || null,
           });
           scheduleRender();
           console.log('[trigger:voice:' + (t._scope || '?') + '] ' + t.name + ' → ' + msg);
@@ -59086,7 +59203,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       rehearsal: !!t._rehearsal,
       checkpoint: cp,
       stopped:   cp < TJ.DISPATCHED,
-      reason:    _actionsBuilt === 0 ? 'no actions on trigger' : (_ruledOff && !_dispatched ? 'turned off in What you hear' : null),
+      reason:    _actionsBuilt === 0 ? 'no actions on trigger' : (_ruledOff && !_dispatched ? 'turned off in What you hear' : (_enrageSilenced && !_dispatched ? 'muted — enrage callout (' + _enrageMob + ')' : null)),
     });
   }
 }

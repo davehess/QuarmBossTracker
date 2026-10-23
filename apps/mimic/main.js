@@ -284,6 +284,8 @@ function defaultConfig() {
     // canvas on new users. it should be a choice, include it in the tour"). Written out so the answer for a fresh
     // install is on the page, not "absent, therefore false". A saved config keeps whatever it stored.
     showCanvas: false,
+    // True once the one-time "Canvas back to off" pass has run (loadConfig); a fresh install has nothing to undo.
+    canvasDefaultOffApplied: true,
     // Set when the tour (welcome.html) is finished or skipped. Nothing reads it to force the tour on anyone;
     // "Take the tour again" (tray + dashboard) always opens it.
     tourSeen: false,
@@ -460,6 +462,24 @@ function loadConfig() {
     }
     // Chat breakouts used to be a list of group ids; they are windows that hold groups now.
     _chatMigrateBreakouts(raw);
+    // The Canvas goes back to OFF, once, for every config that has not had this pass (the guild lead, 2026-10-22,
+    // a raider mid-raid: "all the overlays are on the screen and I can't turn them off … what is a canvas?").
+    // A saved "on" cannot be told from one the person chose (the tour's Turn it on) and one an old arrange click
+    // wrote for them, so the safe side is off, said in the log, and the flag below keeps it from ever running
+    // again: turning it on afterwards sticks. The places that would turn it back on by themselves on the next
+    // character change or unhide are cleared with it.
+    if (raw.canvasDefaultOffApplied !== true) {
+      if (raw.showCanvas && !loadConfig._canvasOffLogged) {
+        loadConfig._canvasOffLogged = true;   // loadConfig runs hundreds of times before the first save writes the flag
+        try { appendAgentLog('[canvas] the Canvas was on in the saved settings; switched off once (it is a choice) — turn it on from the tray or the Overlays page\n'); } catch { /* the log is not up yet */ }
+      }
+      raw.showCanvas = false;
+      raw.canvasDefaultOffApplied = true;
+      if (raw.hideAllPrev && typeof raw.hideAllPrev === 'object') raw.hideAllPrev.showCanvas = false;
+      if (raw.charProfiles && typeof raw.charProfiles === 'object') {
+        for (const p of Object.values(raw.charProfiles)) { if (p && p.show && typeof p.show === 'object') p.show.showCanvas = false; }
+      }
+    }
     return Object.assign(defaultConfig(), raw);
   } catch { return defaultConfig(); }
 }
@@ -2155,6 +2175,10 @@ function _zealAbsorb(obj, pid) {
       // Feeds the spawn map (agent _mapNoteState); a pre-1.4.8 Zeal just leaves them null.
       s.target_loc  = _pipeLoc(inner.target_loc);
       s.target_type = (typeof inner.target_type === 'number' && Number.isFinite(inner.target_type)) ? inner.target_type : null;
+      // The target's level, from the same Zeal build (named_pipe.cpp: "same-name spawns can be backed by different
+      // database rows with different levels ... Level, class, race and position are what actually separate them").
+      // Target Info uses it to tell two same-name mobs apart (FB-80). Omitted with the target, so nulled when absent.
+      s.target_level = (typeof inner.target_level === 'number' && inner.target_level > 0 && inner.target_level < 256) ? Math.trunc(inner.target_level) : null;
       // Target of target (drafted Zeal change, docs/zeal-tot-pipe.patch):
       // {id, name, authoritative} for who my target last hit, and who last hit
       // my target. Omitted upstream when there is no fresh candidate, so both
@@ -3394,6 +3418,8 @@ function _overlaySetCommand(cmd, char, quiet) {
   // `/pipe mimic edit` — arrange the Timers canvas without reaching for the tray.
   if (cmd.verb === 'edit') {
     const on = cmd.on == null ? !_canvasArrange : !!cmd.on;
+    // A pipe command cannot ask a question, and it never turns the Canvas on: say so instead.
+    if (on && !loadConfig().showCanvas) return _setsSay({ ok: false, message: 'The Canvas is off. Turn it on from the tray or the Overlays page first.' }, quiet);
     _setCanvasArrange(on);
     return _setsSay({ ok: true, message: on ? 'Arranging the canvas' : 'Done arranging' }, quiet);
   }
@@ -6013,8 +6039,11 @@ function applySetupMode(on) {
     // Every overlay has to exist to be placed. _overlayForcedOn() reports true
     // for all of them while setupMode is set, so this builds the full set.
     _materializeEnabledOverlays();
-    // Force-show every overlay
-    for (const [, win] of _overlayEntries()) {
+    // Force-show every overlay — but never the Canvas unless it is switched on: a hidden one left over from a ✕ is
+    // still a live window, and "Setup ALL" must not put it (and its blue boxes) over the game.
+    const canvasOn = !!loadConfig().showCanvas;
+    for (const [key, win] of _overlayEntries()) {
+      if (key === 'canvas' && !canvasOn) continue;
       try { win.showInactive(); } catch {}
     }
   }
@@ -7852,10 +7881,16 @@ function _canvasStatePayload() {
     screens: _canvasScreens(scrs, d, span), span, spanWhy: _canvasSpanWhy(scrs) || '', rev: _canvasLayoutRev,
     backdrop: !!((cfg.overlayBackdrop && typeof cfg.overlayBackdrop === 'object') ? cfg.overlayBackdrop : {}).canvas };
 }
-// Arrange from the tray or the dashboard. Turning it on turns the canvas on.
-function _setCanvasArrange(on) {
-  _canvasArrange = !!on;
+// Arrange from the tray or the dashboard. Arranging needs the Canvas on, and the Canvas is a choice (the guild lead,
+// 2026-10-22: "Canvas needs to not turn on by default"), so this never turns it on by itself: with it off, `consented`
+// must say the person was asked and said yes (_arrangeCanvasAsked). A call without that leaves everything as it was.
+function _setCanvasArrange(on, consented) {
   const cfg = loadConfig();
+  if (on && !cfg.showCanvas && consented !== true) {
+    appendAgentLog('[canvas] arrange asked for while the Canvas is off — not turned on without a yes\n');
+    return false;
+  }
+  _canvasArrange = !!on;
   if (_canvasArrange && !cfg.showCanvas) { cfg.showCanvas = true; saveConfig(cfg); }
   if (_canvasArrange && !canvasWindow) createCanvasWindow();
   applyCanvasVisibility();
@@ -7864,6 +7899,22 @@ function _setCanvasArrange(on) {
   try { buildTrayMenu(); } catch {}
   pushStatus();
   return _canvasArrange;
+}
+// The way in for every "Arrange the canvas" the person clicks (tray, Overlays page, the canvas's own button). With the
+// Canvas on it is just the arrange switch; with it off it asks first, in plain words, and "Not now" is the default.
+async function _arrangeCanvasAsked(on) {
+  if (!on || loadConfig().showCanvas) return _setCanvasArrange(on, true);
+  let ask;
+  try {
+    ask = await dialog.showMessageBox({
+      type: 'question', title: 'Raid Mimic', noLink: true, buttons: ['Turn the Canvas on and arrange it', 'Not now'], defaultId: 1, cancelId: 1,
+      message: 'The Canvas is off.',
+      detail: 'The Canvas pulls your callouts and timers apart into pieces you can place anywhere on the screen. Arranging it turns it on. '
+        + 'You can turn it off again any time from the tray or the Overlays page.',
+    });
+  } catch { return false; }
+  if (ask.response !== 0) return false;
+  return _setCanvasArrange(true, true);
 }
 function createCharmOverlay() {
   if (_agentOnly()) return;
@@ -10723,7 +10774,7 @@ function buildTrayMenu() {
         _canvasSetSpan(mi.checked);
       } },
     { label: _canvasArrange ? '  ↳ ✓ Done arranging the canvas' : '  ↳ Arrange the canvas…', enabled: !s.hideOverlays, click: () => {
-        _setCanvasArrange(!_canvasArrange);
+        _arrangeCanvasAsked(!_canvasArrange);
       } },
     ..._canvasGroupTrayItems(s),
     { type: 'separator' },
@@ -12203,7 +12254,8 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     screens: key && !_coversScreen(key) ? _otherScreensFor(win) : [],
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
-    pointer: cfg.standInPointer !== false,   // the stand-in mouse pointer switch (preload _wpPointerOn)
+    canvasOn: !!cfg.showCanvas,   // the "Arrange the canvas" row is offered only while the Canvas is on (it is a choice)
+    pointer: cfg.standInPointer !== false,  // the stand-in mouse pointer switch (preload _wpPointerOn)
     growUp: _growUpSetting(cfg, key),
     timersTopDown: !!cfg.triggerTimersTopDown,
     theme: cfg.overlayTheme || 'default',
@@ -12540,7 +12592,7 @@ ipcMain.handle('canvas-group-hotkey', (_e, id, accel) => {
 });
 // Show or hide a saved group: the key's own toggle, for any UI that lists the groups.
 ipcMain.handle('canvas-group-toggle', (_e, id) => _toggleCanvasGroup(String(id)));
-ipcMain.handle('canvas-edit', (_e, on) => _setCanvasArrange(!!on));
+ipcMain.handle('canvas-edit', (_e, on) => _arrangeCanvasAsked(!!on));
 // "Span all screens": the Canvas's own toolbar, the tray and the dashboard all land here. → { ok, span, why }
 ipcMain.handle('canvas-span', (_e, on) => _canvasSetSpan(!!on));
 ipcMain.handle('canvas-next-display', () => {

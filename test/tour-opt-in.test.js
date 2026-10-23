@@ -41,9 +41,10 @@ describe('a new install does not open the canvas; an existing one keeps its choi
   it('a config from before the canvas existed: still off', () => {
     expect(load({ showHud: true, onboarded: true }).showCanvas).toBe(false);
   });
-  it('a saved config with the canvas on keeps it on, and one with it off keeps it off', () => {
-    expect(load({ onboarded: true, showCanvas: true }).showCanvas).toBe(true);
-    expect(load({ onboarded: true, showCanvas: false }).showCanvas).toBe(false);
+  it('a saved config keeps its choice once the one-time "back to off" pass has run (canvasDefaultOffApplied); before it, off', () => {
+    expect(load({ onboarded: true, showCanvas: true, canvasDefaultOffApplied: true }).showCanvas).toBe(true);
+    expect(load({ onboarded: true, showCanvas: false, canvasDefaultOffApplied: true }).showCanvas).toBe(false);
+    expect(load({ onboarded: true, showCanvas: true }).showCanvas).toBe(false);   // test/canvas-stays-off.test.js pins the pass
   });
   it('nothing in the first-run paths turns it on: the class seed cannot name it, and first-boot arranging only packs', () => {
     const seed = stripJs(sliceBlock(main, 'const _CLASS_SET_FLAG_BY_KEY = {', '\n};'));
