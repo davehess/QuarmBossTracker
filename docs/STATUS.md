@@ -6690,3 +6690,12 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   it. Ours was the chord between two samples (short on a turn) and `2 pi r / lap`; both are now the path walked. Base stays 30.3 u/s
   (one straight-run reading). `test/run-speed.test.js`. ⏳ Exact value needs one line in the guild's Zeal fork
   (`player_data["movement_speed"]`, see §422) plus the agent's pipe reader; ⏳ a timed straight run would tighten the base.
+- ✅ **Kite coach tags the likely cause of a drifting lap (Mimic beta, 2026-10-23; the guild lead picked option A).** From the moment the
+  drift chip leaves green (drift >= 5% of r) the lap's own steps are read: `speed changed` (fastest vs slowest quarter of the lap, or the
+  lap vs the one before, > 10%), `turn input` (heading strays > 0.10 rad from a steady turn), `pushed` (a step 4-20 u off where the one
+  before predicts, and the next one off by the opposite), `warp/lag` (the same from 20 u), `slope` (speed follows the ground rising and
+  falling in a slice). Strongest over its bar wins; nothing over a bar means no tag. Chip: `drift 4 u NE <- speed changed`, the numbers
+  on hover. `apps/mimic/kiteCoach.js` (`lapSignals`, `causeOf`, bars in `K.CAUSE_*`), `apps/mimic/map.html`, tests in
+  `test/kite-coach.test.js`. ⏳ Bars come from synthetic laps (0.5 u of position noise), NOT real kite data: tune on a real log; a drift
+  under ~10% of r usually has no cause that clears a bar (3% speed change over half a lap already drifts 5%); ⏳ `slope` rests on a guess
+  about how EverQuest slows you uphill, unverified; a jump of ~40 u mid-lap makes the lap lumpy enough that the coach lets go (no tag).

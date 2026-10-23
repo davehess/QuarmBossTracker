@@ -18,6 +18,8 @@
 // Mutation-checked (by hand, 2026-10-15): take the radius-change test out of cleanLap and "a spiral is never clean" fails;
 // take the `_ownTimersAllowed` gate out of _kiteLoopSubmit and the local-mode, excluded-character and kill-switch tests fail;
 // take `!_BARE_KINDS.has(kind)` off the character stamp in enqueueUpload and "the queued body is exactly the contract" fails.
+// Cause tags (2026-10-23): drop the "next step is off by the opposite" test from lapSignals and the 6 u shove and 40 u jump
+// tests fail; zero the turn score in causeOf and "turn input" and the by-hand ranking fail. Synthetic laps only (steer()).
 //
 // Run: npx vitest run test/kite-coach.test.js
 
@@ -167,6 +169,128 @@ describe('the drift', () => {
     expect(KC.chipText({ lapS: 12.4, r: 118, drift: 6, driftDx: 4, driftDy: 4, sd: 4, speedPct: 104 })).toBe('Lap 12.4 s · r 118 · drift 6 u NW · wobble 4 · 104%');
     expect(KC.chipText({ lapS: 12.4, r: 118, drift: null, sd: 4, speedPct: 104 })).toBe('Lap 12.4 s · r 118 · drift - · wobble 4 · 104%');
     expect(KC.chipText({ lapS: 12.4, r: 118, drift: 0.2, driftDx: 0.1, driftDy: 0.1, sd: 1, speedPct: 100 })).toMatch(/drift 0 u ·/);   // no bearing for nothing
+  });
+});
+
+// A kite the way the game makes it: a heading that turns at w(s) rad/s and a position that moves along it at v(s) u/s
+// (the lap time is fixed by w, the radius is v / w). `shoves` move the position at once (a push, lag catching up, a
+// server correction); `zf` is the ground height. Same shape as circle(): a function of seconds for run().
+function steer({ v = () => 35, w = () => 2 * Math.PI / 6.4, shoves = [], noise = 0.5, seed = 1, zf = () => 12, secs = 140 } = {}) {
+  const rand = rng(seed), dt = 0.01, xs = [], ys = [], zs = [];
+  let x = 500, y = -300, h = 0;
+  const todo = shoves.map(o => Object.assign({ done: false }, o));
+  for (let i = 0; i * dt <= secs; i++) {
+    const s = i * dt;
+    for (const sh of todo) if (!sh.done && s >= sh.at) { sh.done = true; x += sh.dx; y += sh.dy; }
+    xs.push(x); ys.push(y); zs.push(zf(s));
+    h += w(s) * dt; x += v(s) * Math.cos(h) * dt; y += v(s) * Math.sin(h) * dt;
+  }
+  return (s) => { const i = Math.round(s / dt); return { x: xs[i] + (rand() - 0.5) * 2 * noise, y: ys[i] + (rand() - 0.5) * 2 * noise, z: zs[i] }; };
+}
+const W0 = 2 * Math.PI / 6.4;
+const lapsOf = (res) => res.of('lap').map(e => e.lap);
+// The lap the disturbance hit hardest: the one with the biggest drift (the lap after it drifts a little too).
+const worst = (laps) => laps.reduce((a, b) => (b.drift > a.drift ? b : a));
+
+describe('the likely cause of a drifting lap', () => {
+  // Disturbances land in the 5th lap or so (27 s, ~4 laps of settling first), where the coach is well engaged.
+  it('a perfect circle (even a noisy one, either way round) drifts nowhere and is tagged with nothing', () => {
+    for (const [noise, w] of [[1, W0], [0.5, -W0]]) {
+      const laps = lapsOf(run(steer({ noise, w: () => w }), 80));
+      expect(laps.length).toBeGreaterThanOrEqual(8);
+      for (const l of laps) { expect(l.drift).toBeLessThan(0.05 * l.r); expect(l.cause).toBeNull(); expect(KC.chipText(l)).not.toMatch(/←/); }
+    }
+  });
+
+  it('constant turn, speed 35 -> 25 u/s for half a lap: "speed changed", with the numbers', () => {
+    const l = worst(lapsOf(run(steer({ v: (s) => (s > 27 && s < 30.2 ? 25 : 35) }), 60)));
+    expect(l.drift).toBeGreaterThan(0.12 * l.r);
+    expect(l.cause.kind).toBe('speed changed');
+    expect(l.cause.why).toMatch(/^speed \d+%→\d+% within the lap$/);
+    const [a, b] = l.cause.why.match(/\d+/g).map(Number);
+    expect(Math.abs(a - 82)).toBeLessThan(12); expect(Math.abs(b - 116)).toBeLessThan(6);   // 25 and 35 u/s are 82% and 116% of a run (the slices blur it)
+    expect(KC.chipText(l)).toMatch(/drift \d+ u [NSEW]+ ← speed changed · wobble/);
+  });
+
+  it('constant speed, the turn slowed 30% for half a lap: "turn input"', () => {
+    const l = worst(lapsOf(run(steer({ w: (s) => (s > 27 && s < 30.2 ? W0 * 0.7 : W0) }), 60)));
+    expect(l.drift).toBeGreaterThan(0.12 * l.r);
+    expect(l.cause.kind).toBe('turn input');
+    expect(l.cause.why).toMatch(/^heading \d+° off a steady turn, [\d.]+ s into the lap; turn \d+→\d+ °\/s$/);
+  });
+
+  it('a 6 u shove (along the way, across it, against it) with steady speed and turn: "pushed"', () => {
+    for (const [dx, dy, at] of [[6, 0, 28.3], [0, 6, 28.3], [-6, 0, 28.3], [0, -6, 28.3], [6, 0, 31.1], [0, 6, 31.1], [-6, 0, 33.2], [0, -6, 33.2]]) {
+      const l = worst(lapsOf(run(steer({ shoves: [{ at, dx, dy }] }), 60)));
+      expect(l.cause && l.cause.kind).toBe('pushed');
+      expect(l.cause.why).toMatch(/^shoved [4-9] u in one step, [\d.]+ s into the lap( before)?$/);   // a shove reads in its own lap and in the next one
+      expect(KC.chipText(l)).toMatch(/drift \d+ u [NSEW]+ ← pushed/);
+    }
+  });
+
+  it('a 40 u jump in one step: "warp/lag" (and it is not mistaken for a speed change)', () => {
+    // (a jump this size in the middle of a lap makes the lap lumpy enough that the coach lets go: not asserted here)
+    for (const [dx, dy, at] of [[35, 20, 28.3], [-30, 25, 28.3], [0, 40, 28.3], [0, 40, 33.2]]) {
+      const l = worst(lapsOf(run(steer({ shoves: [{ at, dx, dy }] }), 60)));
+      expect(l.cause && l.cause.kind).toBe('warp/lag');
+      expect(l.cause.why).toMatch(/^jumped \d\d u in one step/);
+    }
+  });
+
+  it('the lap AFTER a change of speed, all at the new speed, says so against the lap before', () => {
+    const laps = lapsOf(run(steer({ v: (s) => (s > 27 ? 25 : 35) }), 70));       // slows down for good
+    const after = laps.find(l => l.t0 > 1_000_000 + 28_000 && l.cause);
+    expect(after).toBeTruthy();
+    expect(after.cause.kind).toBe('speed changed');
+    expect(after.cause.why).toMatch(/since the lap before$/);
+  });
+
+  it('NEVER A GUESS: a centre sliding steadily, or a change too small to read, drifts but is tagged with nothing', () => {
+    const slide = lapsOf(run(circle({ drift: [1.5, 0], noise: 0.5, seed: 9 }), 90));
+    expect(slide.length).toBeGreaterThanOrEqual(4);
+    for (const l of slide) { expect(l.drift).toBeGreaterThan(0.12 * l.r); expect(l.cause).toBeNull(); }
+    const small = worst(lapsOf(run(steer({ v: (s) => (s > 27 && s < 30.2 ? 35 * 0.96 : 35) }), 60)));   // 4% for half a lap
+    expect(small.drift).toBeGreaterThan(0.05 * small.r);                         // a visible drift ...
+    expect(small.cause).toBeNull();                                              // ... whose cause is under the noise
+  });
+
+  it('a lap whose chip is still green is not looked at', () => {
+    const l = worst(lapsOf(run(steer({ v: (s) => (s > 27 && s < 30.2 ? 25 : 35) }), 60)));
+    expect(KC.causeOf(Object.assign({}, l, { drift: 0.049 * l.r }), null)).toBeNull();
+    expect(KC.causeOf(Object.assign({}, l, { drift: 0.05 * l.r }), null)).not.toBeNull();
+    expect(KC.causeOf(Object.assign({}, l, { sig: null }), null)).toBeNull();
+  });
+
+  it('the coach hands the Map the numbers for the tooltip', () => {
+    const coach = KC.create(), path = steer({ shoves: [{ at: 28.3, dx: 6, dy: 0 }] });
+    let seen = null;
+    for (let i = 0; i < 600; i++) {
+      const p = path(i / 10);
+      coach.push(1_000_000 + i * 100, p.x, p.y, p.z);
+      if (coach.view() && coach.view().why) seen = coach.view();
+    }
+    expect(seen).not.toBeNull();
+    expect(seen.why).toMatch(/^shoved/); expect(seen.chip).toMatch(/← pushed/);
+    expect(seen.cur.cause.kind).toBe('pushed');
+    expect(coach.view().why === '' || /^(shoved|speed|heading)/.test(coach.view().why)).toBe(true);
+  });
+
+  it('slope and the order of rank, on signals made by hand (a hill is up in one slice, down in another, and slows you where it climbs)', () => {
+    const part = (v, dz) => ({ v, turn: W0, dz });
+    const base = { drift: 12, r: 35, lapS: 6.4, sig: { vSteady: 35, jump: null, turnDev: null, parts: [part(28, 6), part(35, 0), part(41, -6), part(35, 0)] } };
+    expect(KC.causeOf(base, null).kind).toBe('slope');
+    expect(KC.causeOf(base, null).why).toMatch(/^ground moved 6 u in a slice; speed \d+%→\d+% within the lap$/);
+    // the same speeds on level ground, or a ground that moves but not with the speed, are a change of speed
+    const flat = Object.assign({}, base, { sig: Object.assign({}, base.sig, { parts: [part(28, 1), part(35, 0), part(41, -1), part(35, 0)] }) });
+    expect(KC.causeOf(flat, null).kind).toBe('speed changed');
+    const unrelated = Object.assign({}, base, { sig: Object.assign({}, base.sig, { parts: [part(28, 0), part(35, 6), part(41, 0), part(35, -6)] }) });
+    expect(KC.causeOf(unrelated, null).kind).toBe('speed changed');
+    // two fire: the one furthest over its bar wins
+    const both = (jump, dev) => ({ drift: 12, r: 35, lapS: 6.4, sig: { vSteady: 35, jump, turnDev: dev, parts: [part(35, 0), part(35, 0), part(35, 0), part(35, 0)] } });
+    expect(KC.causeOf(both({ u: 9, at: 1 }, { dev: 0.15, at: 2 }), null).kind).toBe('pushed');       // 9 / 4 u = 2.25 bars over, against 0.15 / 0.10 rad = 1.5
+    expect(KC.causeOf(both({ u: 5, at: 1 }, { dev: 0.30, at: 2 }), null).kind).toBe('turn input');   // 1.25 against 3
+    expect(KC.causeOf(both({ u: 3, at: 1 }, { dev: 0.08, at: 2 }), null)).toBeNull();                // nothing clears its bar: nothing is said
+    expect(KC.causeOf(both({ u: 25, at: 1 }, null), null).kind).toBe('warp/lag');                   // from 20 u it is a jump, not a shove
   });
 });
 
@@ -556,6 +680,26 @@ describe('map.html: the coach on the Map page', () => {
     expect(m.chip()).toMatch(/^Lap 12\.\d s · r 11\d · drift 1\d u W · wobble \d · \d+%/);
     expect(m.all.kiteChip.hidden).toBe(false);
     expect(m.all.kiteChip.children.find(c => c.className === 'r').textContent).toMatch(/^drift 1\d u W$/);
+  });
+  it('a lap with a likely cause says it on the chip, in the drift colour, with the numbers on hover', async () => {
+    const m = await boot({ kiteLoops: [GUILD] });
+    const path = steer({ shoves: [{ at: 28.3, dx: 6, dy: 0 }] });
+    for (let i = 0; i < 40 && !(m.S.kiteView && m.S.kiteView.cur.cause); i++) m.drive(path, 2);
+    expect(m.S.kiteView.cur.cause.kind).toBe('pushed');
+    m.hoverAt(500, -300 - 118);                                     // any repaint; the hover on the guild ring forces one
+    expect(m.chip()).toMatch(/drift \d+ u [NSEW]+ ← pushed · wobble/);
+    const span = m.all.kiteChip.children.find(c => c.className && c.className !== 'gd');
+    expect(span.textContent).toMatch(/^drift \d+ u [NSEW]+ ← pushed$/);
+    expect(span.title).toBe(m.S.kiteView.why); expect(span.title).toMatch(/^shoved \d u in one step/);
+    expect(span.style.pointerEvents).toBe('auto');                  // the chip is click-through; only this span takes the pointer
+  });
+  it('a lap with no cause is the chip it always was: no arrow word, no tooltip', async () => {
+    const m = await boot({ kiteLoops: [GUILD] });
+    m.drive(KITE({ drift: [1.5, 0] }), 90);
+    m.hoverAt(500, -300 - 118);
+    expect(m.chip()).toMatch(/drift 1\d u W/);                      // the chip is up (this is not an empty read) ...
+    expect(m.chip()).not.toMatch(/←/);
+    expect(m.all.kiteChip.children.every(c => !c.title)).toBe(true);
   });
   it('"vs guild" shows when the loop is on a guild loop, and the loop is drawn dashed at its radius', async () => {
     const m = await boot({ kiteLoops: [GUILD] });

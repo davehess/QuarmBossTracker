@@ -2043,7 +2043,7 @@
     if (!kiteChipEl) return;
     var v = kiteOn() ? S.kiteView : null, key = '';
     var gl = v && guildOn() ? KC.matchGuild(v.cur, S.guild.loops) : null;
-    if (v) key = v.chip + '|' + v.cls + '|' + (gl ? KC.guildText(v.cur, gl) : '');
+    if (v) key = v.chip + '|' + v.cls + '|' + (v.why || '') + '|' + (gl ? KC.guildText(v.cur, gl) : '');
     if (key === kiteChipKey) return;
     kiteChipKey = key;
     kiteChipEl.textContent = '';
@@ -2051,7 +2051,12 @@
     if (!v) return;
     v.chip.split(' · ').forEach(function (part, i) {
       if (i) kiteChipEl.appendChild(document.createTextNode(' · '));
-      kiteChipEl.appendChild(part.indexOf('drift') === 0 ? el('span', v.cls, part) : document.createTextNode(part));
+      if (part.indexOf('drift') !== 0) { kiteChipEl.appendChild(document.createTextNode(part)); return; }
+      var dsp = el('span', v.cls, part);
+      // The likely cause (kiteCoach.js causeOf) rides the drift: `drift 4 u NE ← speed changed`, the numbers behind it on hover.
+      // The chip itself is click-through; only this span takes the pointer, for the tooltip.
+      if (v.why) { dsp.title = v.why; dsp.style.pointerEvents = 'auto'; dsp.style.cursor = 'help'; }
+      kiteChipEl.appendChild(dsp);
     });
     if (gl) { kiteChipEl.appendChild(document.createTextNode(' · ')); kiteChipEl.appendChild(el('span', 'gd', KC.guildText(v.cur, gl))); }
     kiteChipEl.style.fontSize = Math.round(11 * (S.cfg.text || 1)) + 'px';
