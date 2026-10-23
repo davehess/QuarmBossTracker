@@ -486,13 +486,14 @@ function runDecision({ boss = BASTION, tables: t, enabled = true, fail = [], bos
   const decide = new Function(
     'require', 'encounter', 'matchedBoss', 'startedMs', 'duration', 'character', 'players', 'uploadedHealers',
     'uploadedDefenders', '_encIdForLink', 'isRaidWindow', 'WP_GUILD_NAME', '_recordKillLockouts', 'client',
-    'process', 'console',
+    '_npcActors', 'process', 'console',
     `${DECIDE}\nreturn _decideKillDeferred;`,
   )(
     fakeRequire,
     { ended_at: new Date(KILL).toISOString() }, boss, KILL - 100_000, 100, 'Aldenmar',
     playersIn.map(name => ({ name })), [], [], 'enc-1', false, OURS,
     (a) => { calls.lockouts.push(a); return Promise.resolve(); }, {},
+    new Set(),   // _npcActors: the mobs utils/npcActors.js found in this upload (none here)
     { env: { SUPABASE_GUILD_ID: 'wolfpack', TIMER_CHANNEL_ID: 'chan' } },
     { log: (m) => logs.push(String(m)), warn: (...a) => logs.push(a.map(String).join(' ')) },
   );

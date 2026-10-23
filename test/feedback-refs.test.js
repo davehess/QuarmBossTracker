@@ -32,6 +32,15 @@ describe('which reports a commit closes', () => {
     expect(fr.refsIn('docs — FB-29 answered by §75; see FB-30')).toEqual([]);
     expect(fr.refsIn('Fixes the drag stutter\nSee FB-40 for the report')).toEqual([]);   // Different lines.
   });
+
+  it('the verb must govern the number: a line that only holds both moves nothing (FB-80, FB-94, 2026-10-22)', () => {
+    expect(fr.refsIn('The bot half of the FB-80 fix (the agent half is on beta)')).toEqual([]);
+    expect(fr.refsIn('Related to FB-94 (not closed: the cause is unproven)')).toEqual([]);
+    expect(fr.refsIn('No Fixes line here: the report closes when FB-80 reaches stable')).toEqual([]);
+    expect(fr.refsIn('Fixes FB-83 (0d7d8d71 hail card flag count)')).toEqual([83]);
+    expect(fr.refsIn('Fixes FB-85 Fixes FB-87')).toEqual([85, 87]);
+    expect(fr.refsIn('Fixes FB-1 & FB-2, FB-3')).toEqual([1, 2, 3]);
+  });
 });
 
 describe('a report only moves forward', () => {

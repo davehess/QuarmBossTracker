@@ -6583,3 +6583,13 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   (no `level_bodies`, nothing to pick). ⏳ Only a Zeal older than 1.4.8 lacks the level and position: those fall to `/consider` or
   show both. ⏳ Not tried against a live Zeal; the pipe fields are read from Zeal's `named_pipe.cpp`. ⏳ Class and race are on the
   same pipe and would settle the same-level class pairs (the Plane of Hate revenants) the same way; not done here.
+- ✅ **One-word mobs are no longer players (bot 4.0.9 on `main`; agent 4.0.9 on `beta`; 2026-10-23, Tower of Solusek Ro).** The
+  guild lead: "Jiva is a named mob but was counted as a player … same for all the named bosses in sol ro." Measured: the kill-derived
+  lockouts held "Jiva" on Jiva, "Xuzl" on Arlyxir and Galremos on Jiva (the boss is in every upload's tank list and a one-word name
+  passed the character-name shape check), and `encounter_players` held Galremos on two fights. Bot: `utils/npcActors.js` names the
+  one-word mobs of the boss's zone block from `eqemu_npc_types` (6 h cache, roster wins a name clash) and `index.js` drops them from
+  the damage list and from the lockout / kill-context participants. Agent: `_isCatalogNpcName` (zone pack) keeps a catalog mob out
+  of `confirmedPlayers`, off the live DPS meter, and stops the flush skipping a fight whose boss was "confirmed" a player (likely why
+  Jiva had 5 uploads against Xuzl's 19; not provable without the logs). Tests `test/npc-actors.test.js`,
+  `test/agent-npc-not-player.test.js`. ⏳ Backfill SQL for tonight's rows is in the session report (not run). ⏳ `defenders` still
+  lists the boss and adds (correct for tank stats); a consumer that treats that list as people owes the same filter.
