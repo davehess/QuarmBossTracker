@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **raidmimic.com's living mimic: the storyboard cut** (§424) | Gemini stills + LTX beats built in a session scratchpad; picks recorded (strip stage B, icons V2 on beta 2.1.18, hero V1, desk V3) | the guild lead: watch the storyboard cut; a session: final pass (real captures in the monitor panels, 9:16, hero loop), to beta |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
@@ -12606,3 +12607,27 @@ user's mimic. If they auth into a guild's tenant they would be able to load in t
   `supabase/migrations/20261023160000_open_hub_registry.sql` (not applied; for the commons project, not Wolf Pack's) and
   `test/open-hub.test.js` on branch `draft/open-hub`. Nothing in a live request path.
 - **Next:** the guild lead's eight picks (design section 12); then phase 1.
+
+### 424. The Decision Desk picks of 2026-10-23 (evening), and the mimic's "coming to life" story
+Picked on the Decision Desk (its picks are the record; this is the pointer).
+- **Platform (all the recommended option):** sync circles **A**, a day pass from a raid code (the hub keeps a circle 7 days for
+  looking back); your data **A**, local copy + opt-out first, guild requests later; flag-raid board **A**, inside wolfpack.quest
+  first; leaderboard **A**, built with the hub's guild sign-up. These feed the open hub (§423); none is built yet.
+- **raidmimic.com:** the story is **B**, "Pick your path" (three doors). The stage around the animated mimic is **B**, the strip:
+  the mimic alone and big, the four real captures in a readable row below (*"The folded ears on A look weird and awful."*).
+- **Brand Kit:** hero image refined **V1** (version 2's layout and double gold rule, version 1's 3D mascot); desk scene revised
+  **V3** (corner windows); map **V3** and feature icons **V2** (framed cards) from earlier. The eight icons are on beta (web 2.1.18).
+- **The animation (the guild lead):** *"So stiff, so plain. Where's the motion? The Joy? This box has come to life and is supremely
+  interested in the user."* Then the storyboard: a plain gold-trimmed chest on a desk; a zap from the computer; the ears pop out of
+  the top sides of the lid and quickly spring upright (*"not a jack in the box"*, and not from the sides of the box); the nose pops
+  out; it gets excited, looks at the screen, crouches, jumps and howls; pulls streams of data from the computer into its mouth and
+  glows; shakes, jumps and howls again; the overlays come out one at a time, circle it, spin, and slam into the monitor with a
+  thump and shake, then show the overlays; pleased, it hops corner to corner. **No legs, ever** — the video model invents legs or
+  springs whenever it is asked to bounce.
+- **How it is made:** Gemini (`gemini-3-pro-image`, the guild lead's API key) draws a still per story moment, each edited from the
+  one before so the desk, chest and camera never drift; LTX (`ltx-2-5-pro`, async `/v2/image-to-video` with `last_frame_uri`)
+  animates between each pair; the beats are joined with the repeated seam frame dropped. Real overlay captures are laid onto the
+  monitor's four panels afterwards, never drawn by the model (§418's garbled-text finding).
+- **Where it landed:** drafts and stills in the session scratchpad and on the Decision Desk's Brand & media tab; nothing on the
+  site yet. **Next:** the guild lead watches the storyboard cut; then the final pass (captures in the panels, a 9:16 cut, a short
+  hero loop for the strip stage).
