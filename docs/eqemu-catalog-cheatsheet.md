@@ -47,6 +47,11 @@ it, so nobody re-derives them from EXPLAIN plans again. If you're about to query
   `scripts/sync-from-eqmac.js` writes it); keep it that way. Trash respawns are
   a different matter and look real — the Kael protectors' 24.4m, the Sleeper's
   Tomb 24h — but they are unverified against live behaviour.
+- **Traps are two different things (2026-10-23).** `eqemu_traps` mirrors the server's `traps` table (83 rows, 8 zones, none in PoP; same
+  frame as `spawn2`; `effect` 0 spell · 1 alarm · 2/3 spawn · 4 damage, per `zone/trap.h`). A **Planes of Power "trap" is an NPC**: an
+  invisible helper (`TrapMan1..13` in Plane of Earth, body type 67) placed by `spawn2`/`spawnentry`, whose zone script
+  (`<zone>/encounters/traps.lua` in `eqemu_quest_scripts`, `TRAP_SPAWNS = { [helper] = { trap mob, named, placeholder } }`) spawns the
+  trap mob in its place and, on the 5th pull of that type, the named or the placeholder 50/50. Never search `eqemu_traps` for a PoP trap.
 - **Useful indexes exist** on `eqemu_merchantlist(item)` and
   `eqemu_npc_drops`… but NOT a prefix index on `eqemu_items.name` (only a GIN
   tsvector) — see the spells-page perf note below.

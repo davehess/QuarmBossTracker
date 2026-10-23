@@ -103,6 +103,20 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Maps show traps (draft `draft/traps`, 2026-10-23; bot half for `main`, agent + Mimic half for `beta`). Not pushed, migration not applied.**
+  *"maps should show traps as well"* (the guild lead), then *"consume this for traps"* (the eqprogression Plane of Earth guide) with the
+  standing rule *"always go off of the scripts and database instead of the guides"*. Two kinds, one layer. **Trap spots:** a PoP trap is an
+  invisible helper NPC (`TrapMan1..13`, body type 67, aggro 50) the spawn tables place; walking in fires the zone script
+  (`poeartha/encounters/Traps.lua`, mirrored in `eqemu_quest_scripts`), which spawns the trap mob and, on the 5th pull of that type, the
+  named or its placeholder 50/50. 73 spots in Plane of Earth, no new table: `utils/trapSpawns.js` reads the script and the spawn mirrors
+  at request time. Also read from the same patterns: Griegs End and Vex Thal (`TYPES` tables, ambush spots), and trap-named helpers in
+  Necropolis, The Grey, Bastion of Thunder, Scarlet Desert, Dawnshroud, Frozen Shadow, Acrylia, The Deep. **The `traps` table:** new mirror
+  `eqemu_traps` (migration `20261023140000_eqemu_traps.sql`, sync `traps` transform; 83 rows in 8 zones, none in PoP: Necropolis, Chardok,
+  Ssra Temple, Echo, Velketor, Frozen Shadow, Paludal). `zone-spawns` gains `traps` + `point.trap`; the agent passes it through; the Map
+  draws a △ per spot (the type's colour, the named's first letter), a faint trigger circle, a hover card, and a ⚙ "Traps" switch (default on).
+  Tests: `test/trap-spawns.test.js`, additions in `test/spawn-map.test.js`. **To do:** apply the migration, run `sync-quarm` with `force=true`,
+  then deploy the bot; web maps (`/api/spectator/map` -> SpectatorBoard, ReplayBoard, SessionReview) do not draw spawn points today, so traps
+  there wait for spawn points to land.
 - **🧪 Mimic Map: right-click a spawn to switch it off and on (draft `draft/map-rightclick` on `beta`, 2026-10-23). Not pushed.**
   *"RIGHT CLICKING ON A SPawn should toggle the spawn off and on in the map"* (the guild lead). Off = a respawn timer is running: the
   right-click clears it (back up, the click menu's "Clear timer"). On = anything else: killed now, the way a left-click's "Killed — this
