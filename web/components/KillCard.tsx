@@ -22,6 +22,8 @@ export type KillCardData = {
   // True ⇒ encounter is still ENGAGED (no slain line observed yet — encounters.ended_at
   // is null). Drives the "ENGAGED" badge + sort-to-top on /parses.
   inProgress?: boolean;
+  /** No ended_at and long past: nobody saw this fight end in a kill (a wipe, or an end nobody logged). */
+  noKill?: boolean;
 };
 
 // One place that owns the chip styling so the listing card + detail page show
@@ -96,6 +98,12 @@ export default function KillCard({ kill, adminBar, tz }: { kill: KillCardData; a
                 title="Encounter is still in progress — no slain line observed yet. The boss timer is NOT set yet."
               >ENGAGED</span>
             )}
+            {kill.noKill && !kill.isWipe && kill.classification !== 'wipe' && (
+              <span
+                className="text-[9px] uppercase tracking-wide font-semibold px-1 py-px rounded border border-border text-dim"
+                title="No slain line was seen for this fight: a wipe, or a kill nobody logged the end of. The boss timer was not set."
+              >no kill seen</span>
+            )}
           </div>
           <div
             className="text-dim text-xs whitespace-nowrap"
@@ -103,7 +111,7 @@ export default function KillCard({ kill, adminBar, tz }: { kill: KillCardData; a
               ? `engaged ${fmtTime(kill.started_at, tz)} · last upload ${fmtDuration(kill.duration_sec)} in`
               : `killed ~${fmtTime(killAt, tz)} · engaged ${fmtTime(kill.started_at, tz)} (${fmtDuration(kill.duration_sec)})`}
           >
-            {kill.inProgress ? `engaged ${fmtTime(kill.started_at, tz)}` : fmtTime(killAt, tz)}
+            {kill.inProgress || kill.noKill ? `engaged ${fmtTime(kill.started_at, tz)}` : fmtTime(killAt, tz)}
           </div>
         </div>
 
