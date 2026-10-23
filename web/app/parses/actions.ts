@@ -10,6 +10,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
+import { actorName } from '@/lib/actorName';
+import { classifyPatch, wipeTogglePatch } from '@/lib/encounterMarks';
 
 async function assertOfficer() {
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -29,13 +31,37 @@ export async function classifyEncounter(formData: FormData) {
   if (!id || !ALLOWED.has(classification)) return;
   const admin = supabaseAdmin();
   await admin.from('encounters').update({
-    classification,
+    ...classifyPatch(classification),   // the wipe flag is left alone unless the mark IS 'wipe'
     classification_reason: reason,
     classification_at: new Date().toISOString(),
-    classification_by: u!.email || u!.id,
+    classification_by: actorName(u),
   }).eq('id', id);
   // Both surfaces show classification chips + adjusted counts; revalidate
   // both so the admin sees the result without a hard refresh.
+  revalidatePath('/parses');
+  revalidatePath(`/parses/${id}`);
+  revalidatePath('/admin/anomalies');
+}
+
+// Wipe is a toggle that rides alongside the one-of marks ("non-guild wipe", 2026-10-23). See lib/encounterMarks.ts.
+export async function toggleWipe(formData: FormData) {
+  const u = await assertOfficer();
+  if (!u) redirect('/?error=admin_required');
+  const id = String(formData.get('id') || '');
+  if (!id) return;
+  const admin = supabaseAdmin();
+  const { data: cur } = await admin.from('encounters').select('classification, is_wipe').eq('id', id).maybeSingle();
+  if (!cur) return;
+  const { patch, reset, stamp } = wipeTogglePatch(cur);
+  await admin.from('encounters').update({
+    ...patch,
+    ...(reset ? { classification_reason: null, classification_at: null, classification_by: null } : {}),
+    ...(stamp ? {
+      classification_reason: null,
+      classification_at: new Date().toISOString(),
+      classification_by: actorName(u),
+    } : {}),
+  }).eq('id', id);
   revalidatePath('/parses');
   revalidatePath(`/parses/${id}`);
   revalidatePath('/admin/anomalies');
@@ -49,6 +75,7 @@ export async function clearClassification(formData: FormData) {
   const admin = supabaseAdmin();
   await admin.from('encounters').update({
     classification: null,
+    is_wipe: false,
     classification_reason: null,
     classification_at: null,
     classification_by: null,
@@ -114,7 +141,7 @@ export async function markDeathIntentional(formData: FormData) {
       npc_id: npcId,
       note,
       active: true,
-      created_by_name: u!.email || u!.id,
+      created_by_name: actorName(u),
     });
   }
   revalidatePath(`/parses/${id}`);
