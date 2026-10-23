@@ -6356,9 +6356,9 @@ function trackChChainLine(line, character) {
   // every line of every watched log. `_CH_ROSTER_HINT` lets the chain-roster
   // announcement ("Norbray 001, Rapha 002, …") through — it has no CH/go/inc.
   if (line.indexOf('CH') === -1 && !/go\s*go/i.test(line) && !/inc\s+to/i.test(line)
-      && !_CH_ROSTER_HINT.test(line)) return;
+      && !_CH_ROSTER_HINT.test(line)) { _chExtraLine(line, character); return; }
   const m = line.match(_CH_SPEAKER_RX);
-  if (!m) return;
+  if (!m) { _chExtraLine(line, character); return; }   // not a channel the original reads (a chain-named custom channel, maybe)
   const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
   const text = m[2].trim();
   const ts = parseEqTimestamp(line);
@@ -6408,7 +6408,7 @@ function trackChChainLine(line, character) {
   const call = text.match(_CH_CALL_RX);
   if (call) {
     const num = parseInt(call[1], 10);
-    if (!num || num > 30) return;          // sanity: chains are small
+    if (!num || num > 30) { _chExtraText(text, speaker, line, character); return; }   // sanity: chains are small ("333 CH …" is another guild's slot 3)
     _chChainEnsure(atMs);
     const c = _chChain;
     // Someone was manually removed from this slot (the overlay's ✕) and is
@@ -6511,6 +6511,259 @@ function trackChChainLine(line, character) {
       _maybeAnnounceChGo(_chChain, atMs);
     }
   }
+  // Everything above is the original parser and is untouched. Only a line it did not claim reaches
+  // the additional matchers (other guilds' shapes + the user's learned templates) below.
+  if (!_CH_CALL_RX.test(text) && !_CH_GO_RX.test(text) && !_CH_PERSONAL_RX.test(text)) _chExtraText(text, speaker, line, character);
+}
+
+// ── CH chain: other guilds' call shapes + templates the user taught (2026-10-23) ──────────────────
+// The guild lead, in another guild's raid: "other people have CH chain macros, we need to define where those
+// end up in the setup mode or start looking for other patterns." Their raid-say reads
+//   "D&D 333 CH - Aldenmar - 61%"     (guild tag, slot digit repeated three times, CH, target, mana %)
+// ⚠ HARD RULE (the guild lead, same day): "DO NOT disrupt the shout ones for wolf pack." Nothing here changes how
+// Wolf Pack's own shout forms parse. These are ADDITIONAL matchers, reached only when the original parser
+// above did not claim the line, and they never touch chain state themselves: a match is TRANSLATED into the
+// canonical Wolf Pack text ("003 - CH - <target> - Mana: 61%" / "003 GO GO GO") and fed back through
+// trackChChainLine, so slots, claimants, DDR grades, beat and the GO TTS follow the one code path there is.
+// test/ch-chain-wolfpack-regression.test.js pins a whole Wolf Pack chain against a capture of the old tracker.
+const CH_SLOT_MAX = 30;
+const CH_TEMPLATES_MAX = 12;
+const CH_RECENT_MAX = 25;
+const CH_UNREAD_HINT_MS = 15 * 60 * 1000;
+// Raid / shout / group / say as the original reads them, plus a custom channel whose NAME says it is for
+// chains ("ch:1", "chain:2", "heals:3") — read locally only, like every other line this tracker sees.
+const _CH_SPEAKER_CHAN_RX = /^\[[^\]]+\]\s+(\S+)\s+tells?\s+(?:ch|chain|heal|cleric)[A-Za-z]*:\d+,\s*'(.+)'\s*$/i;
+// "333" → slot 3, "55" → 5 (a macro repeating the digit), "012" → 12; 1..CH_SLOT_MAX or null.
+function _chSlotFromToken(tok) {
+  const t = String(tok == null ? '' : tok);
+  if (!/^\d{1,3}$/.test(t)) return null;
+  const n = (t.length >= 2 && /^(\d)\1+$/.test(t)) ? parseInt(t[0], 10) : parseInt(t, 10);
+  return (n >= 1 && n <= CH_SLOT_MAX) ? n : null;
+}
+const _CH_NOT_A_NAME = new Set(['mana', 'next', 'now', 'inc', 'incoming', 'casting', 'chain', 'heal', 'complete',
+  'cleric', 'clerics', 'ready', 'done', 'down', 'oom', 'the']);
+function _chLooksLikeName(w) {
+  return /^[A-Za-z`]{3,15}$/.test(String(w || '')) && !_CH_NOT_A_NAME.has(String(w).toLowerCase());
+}
+// Mana from whatever trails the target: "61%", "Mana 61", "m61", "(61%)". Over 100 is not a mana value.
+function _chManaFromRest(rest) {
+  const s = String(rest || '');
+  const m = s.match(/(?:^|[^A-Za-z])(?:mana|mn|m)\s*[:=>\-–]*\s*(\d{1,3})(?!\d)/i)
+         || s.match(/(\d{1,3})\s*%/)
+         || s.match(/\(\s*(\d{1,3})\s*\)/);
+  const v = m ? parseInt(m[1], 10) : null;
+  return (v != null && v <= 100) ? v : null;
+}
+// "CH" is case-sensitive, as in the original; "Complete Heal" is not (spelled with classes: no inline flags).
+const _CHW = '(?:CH|C\\.H\\.|CHeal|[Cc][Oo][Mm][Pp][Ll][Ee][Tt][Ee]\\s+[Hh][Ee][Aa][Ll](?:[Ii][Nn][Gg])?)(?![A-Za-z])';
+const _CH_TAG = '(?:[^\\s\\d#]\\S{0,5}\\s+)?';                  // "D&D ", "WP ", "[CH] "
+const _CH_SEP = '[\\s:\\-—–>→|<\\[\\](){}=,.]*';
+const _CH_TGT = '(?:on\\s+)?([A-Z][a-z`]{2,14})(?![A-Za-z`])(.*)$';
+// slot, then CH:   "D&D 333 CH - Name - 61%", "#3 CH Name", "3. CH: Name (61%)"
+const _CH_CALL_SLOT_FIRST = new RegExp('^' + _CH_TAG + '#?(\\d{1,3})(?!\\d)[.):]?' + _CH_SEP + _CHW + _CH_SEP + _CH_TGT);
+// CH, then slot:   "CH3 Name 61%", "CH 3 - Name", "WP CH#3 Name"
+const _CH_CALL_CH_FIRST = new RegExp('^' + _CH_TAG + _CHW + '\\s*[#:\\-]*\\s*(\\d{1,3})(?!\\d)[.):]?' + _CH_SEP + _CH_TGT);
+// Go-cues the original (which wants "go go") does not read: "3 GO", "333 go", "GO 3", "next 3".
+const _CH_GO_SLOT_FIRST = new RegExp('^' + _CH_TAG + '#?(\\d{1,3})(?!\\d)[.):]?[\\s\\-—–:>]*go(?![a-z])(?:[\\s!.,\\-]*(?:go|now|next))*[\\s!.]*$', 'i');
+const _CH_GO_WORD_FIRST = new RegExp('^' + _CH_TAG + 'go\\s*#?(\\d{1,3})(?!\\d)[\\s!.]*$', 'i');
+const _CH_GO_NEXT       = new RegExp('^' + _CH_TAG + 'next(?:\\s+up)?(?:\\s+is)?[\\s:#\\-]*(\\d{1,3})(?!\\d)[\\s!.]*$', 'i');
+function _chCanon(kind, num, target, mana) {
+  const n = String(num).padStart(3, '0');
+  if (kind === 'go') return { kind, num, text: n + ' GO GO GO' };
+  return { kind, num, target, mana, text: n + ' - CH - ' + target + (mana != null ? ' - Mana: ' + mana + '%' : '') };
+}
+// The built-in broadened shapes. Pure: text in, canonical call/go (or null) out.
+function chParseBuiltinExtra(text) {
+  const t = String(text || '').trim();
+  if (!t || t.length > 200) return null;
+  for (const rx of [_CH_CALL_SLOT_FIRST, _CH_CALL_CH_FIRST]) {
+    const m = t.match(rx);
+    if (!m) continue;
+    const num = _chSlotFromToken(m[1]);
+    if (!num || !_chLooksLikeName(m[2])) continue;
+    return _chCanon('call', num, m[2], _chManaFromRest(m[3]));
+  }
+  for (const rx of [_CH_GO_SLOT_FIRST, _CH_GO_WORD_FIRST, _CH_GO_NEXT]) {
+    const m = t.match(rx);
+    const num = m && _chSlotFromToken(m[1]);
+    if (num) return _chCanon('go', num);
+  }
+  return null;
+}
+// ── Learned templates ──
+// One example line + a role per word: TAG (a guild tag, optional), SLOT, TARGET, MANA, skip (any one word),
+// lit (that exact word). Stored as {id, example, roles} in logsync.prefs.json (ch_templates) and recompiled
+// from those two fields, so there is one source of truth. A template with a TARGET is a CH call; with no
+// TARGET it is a go-cue.
+const CH_ROLES = ['lit', 'TAG', 'SLOT', 'TARGET', 'MANA', 'skip'];
+const _chEscRx = (s) => String(s).replace(/[.*+?^${}()|[\]\\\/-]/g, '\\$&');
+const _chTplCache = new Map();
+function _chCompileTemplate(example, roles) {
+  const words = String(example || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 20 || String(example).length > 200) return { error: 'too long or empty' };
+  if (!Array.isArray(roles) || roles.length !== words.length || roles.some(r => CH_ROLES.indexOf(r) < 0)) return { error: 'roles do not fit the line' };
+  const count = (r) => roles.filter(x => x === r).length;
+  if (count('SLOT') !== 1) return { error: 'mark exactly one word as the slot' };
+  if (count('TARGET') > 1 || count('MANA') > 1 || count('TAG') > 1) return { error: 'one target, one mana, one tag at most' };
+  if (!words.some((w, i) => roles[i] === 'lit' && /[A-Za-z]/.test(w))) return { error: 'keep at least one fixed word (like CH) so ordinary chat cannot match' };
+  let src = '^', slotIdx = 0, targetIdx = 0, manaIdx = 0, g = 0, needSep = false;
+  words.forEach((w, i) => {
+    const role = roles[i];
+    let piece;
+    if (role === 'TAG') { src += '(?:\\S{1,8}\\s+)?'; needSep = false; return; }
+    if (role === 'lit') piece = _chEscRx(w);
+    else if (role === 'skip') piece = '\\S+';
+    else if (role === 'SLOT' || role === 'MANA') {
+      const d = w.match(/^(.*?)(\d+)(.*)$/);
+      if (!d) { piece = null; }
+      else {
+        g += 1; if (role === 'SLOT') slotIdx = g; else manaIdx = g;
+        const post = d[3].replace(/%$/, '');
+        piece = _chEscRx(d[1]) + '(\\d{1,3})' + _chEscRx(post) + (/%$/.test(d[3]) ? '%?' : '');
+      }
+    } else {   // TARGET
+      const d = w.match(/^([^A-Za-z`]*)([A-Za-z`]+)(.*)$/);
+      if (!d) piece = null;
+      else { g += 1; targetIdx = g; piece = _chEscRx(d[1]) + '([A-Za-z`]{3,15})' + _chEscRx(d[3]); }
+    }
+    if (piece == null) { g = -1; return; }
+    src += (needSep ? '\\s+' : '') + piece;
+    needSep = true;
+  });
+  if (g < 0) return { error: 'the word marked as slot, target or mana has no digits or letters' };
+  if (!slotIdx) return { error: 'mark exactly one word as the slot' };
+  let rx;
+  try { rx = new RegExp(src + '(?:\\s.*)?$', 'i'); } catch { return { error: 'could not compile' }; }
+  return { rx, slotIdx, targetIdx, manaIdx, kind: targetIdx ? 'call' : 'go' };
+}
+function _chTemplateGet(t) {
+  if (!t || typeof t.example !== 'string') return null;
+  const key = t.example + '\u0001' + (Array.isArray(t.roles) ? t.roles.join(',') : '');
+  if (!_chTplCache.has(key)) _chTplCache.set(key, _chCompileTemplate(t.example, t.roles));
+  const c = _chTplCache.get(key);
+  return c && c.rx ? c : null;
+}
+function chTemplates() {
+  let list;
+  try { list = _agentPrefs().ch_templates; } catch { list = null; }
+  return Array.isArray(list) ? list.filter(t => t && typeof t.id === 'string') : [];
+}
+function _chApplyTemplate(c, text) {
+  const m = String(text || '').trim().match(c.rx);
+  if (!m) return null;
+  const num = _chSlotFromToken(m[c.slotIdx]);
+  if (!num) return null;
+  if (c.kind === 'go') return _chCanon('go', num);
+  if (!_chLooksLikeName(m[c.targetIdx])) return null;
+  const mana = c.manaIdx ? parseInt(m[c.manaIdx], 10) : null;
+  return _chCanon('call', num, m[c.targetIdx].charAt(0).toUpperCase() + m[c.targetIdx].slice(1).toLowerCase(),
+    mana != null && mana <= 100 ? mana : null);
+}
+// Learned templates first (the user's word beats a guess), then the built-in broadened shapes.
+function chTranslateExtra(text) {
+  for (const t of chTemplates()) {
+    const c = _chTemplateGet(t);
+    const hit = c && _chApplyTemplate(c, text);
+    if (hit) return Object.assign(hit, { via: 'learned' });
+  }
+  const b = chParseBuiltinExtra(text);
+  return b ? Object.assign(b, { via: 'builtin' }) : null;
+}
+// A first guess at the roles for an example, so "teach it" is mostly a confirm: the digits are the slot, a % number
+// or the number after "mana" is the mana, the capitalised word after CH is the target, a short word in front of the
+// slot is a guild tag. The user fixes whatever it got wrong.
+function chGuessRoles(example) {
+  const words = String(example || '').trim().split(/\s+/).filter(Boolean);
+  const roles = words.map(() => 'lit');
+  const core = (w) => w.replace(/^[^A-Za-z0-9`]+|[^A-Za-z0-9`%]+$/g, '');
+  const chAt = words.findIndex(w => /^(?:\W*)(?:CH|C\.H\.|CHeal)\W*$/.test(w) || /^complete$/i.test(core(w)));
+  let slot = words.findIndex((w, i) => /\d/.test(w) && !/%/.test(w) && !/^\W*m(?:ana)?\W*\d/i.test(w) && i !== -1);
+  if (slot < 0) slot = words.findIndex(w => /\d/.test(w));
+  if (slot >= 0) roles[slot] = 'SLOT';
+  const mana = words.findIndex((w, i) => i !== slot && /\d/.test(w) && (/%/.test(w) || (i > 0 && /^mana\W*$/i.test(core(words[i - 1]))) || /^\W*m(?:ana)?\W*\d/i.test(w)));
+  if (mana >= 0) roles[mana] = 'MANA';
+  const nameAt = (from) => words.findIndex((w, i) => i > from && roles[i] === 'lit' && _chLooksLikeName(core(w)) && /^[A-Z]/.test(core(w)));
+  // The name after CH; failing that the first one after the slot; failing that the first anywhere.
+  const tgt = [nameAt(chAt), nameAt(slot), nameAt(-1)].find(x => x >= 0);
+  if (tgt >= 0) roles[tgt] = 'TARGET';
+  if (slot > 0 && words[0].length <= 6 && roles[0] === 'lit' && !/^(?:CH|C\.H\.|CHeal)\W*$/.test(words[0]) && chAt > slot) roles[0] = 'TAG';
+  return roles;
+}
+// Dry-run a would-be template against its own example: what it would read.
+function chLearnPreview(example, roles) {
+  const c = _chCompileTemplate(example, roles);
+  if (!c.rx) return { ok: false, error: c.error };
+  const hit = _chApplyTemplate(c, example);
+  if (!hit) return { ok: false, error: 'the marked pattern does not read its own example back (is the slot 1-' + CH_SLOT_MAX + '?)' };
+  return { ok: true, kind: c.kind, read: { slot: hit.num, target: hit.target || null, mana: hit.mana != null ? hit.mana : null } };
+}
+function chLearnSave(example, roles) {
+  const pv = chLearnPreview(example, roles);
+  if (!pv.ok) return pv;
+  const list = chTemplates();
+  if (list.length >= CH_TEMPLATES_MAX) return { ok: false, error: 'at most ' + CH_TEMPLATES_MAX + ' templates; remove one first' };
+  const ex = String(example).trim().replace(/\s+/g, ' ');
+  if (list.some(t => t.example === ex && JSON.stringify(t.roles) === JSON.stringify(roles))) return Object.assign({ duplicate: true }, pv);
+  const t = { id: 'ct' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36), example: ex, roles: roles.slice() };
+  _saveAgentPrefs({ ch_templates: list.concat([t]) });
+  return Object.assign({ template: t }, pv);
+}
+function chLearnRemove(id) {
+  const list = chTemplates();
+  const kept = list.filter(t => t.id !== id);
+  if (kept.length !== list.length) _saveAgentPrefs({ ch_templates: kept });
+  return { ok: true, removed: kept.length !== list.length };
+}
+// Recent chain-looking chat the tracker could not read: the "pick a line" list in the CH Chain overlay's
+// Learn panel, and the source of its once-a-session "Unrecognised CH call" hint. In memory only, 25 lines, and
+// ONLY lines the original parser and the matchers above all passed on — so a taught line drops out of it.
+const _chUnread = [];
+function _chNoteUnread(text, atMs) {
+  if (!/\bCH\b|C\.H\.|complete\s+heal/i.test(text)) return;
+  const last = _chUnread[_chUnread.length - 1];
+  if (last && last.text === text) { last.atMs = atMs; return; }
+  _chUnread.push({ text: text.slice(0, 200), atMs });
+  if (_chUnread.length > CH_RECENT_MAX) _chUnread.shift();
+}
+// "Looks like a call": a real CH token, a number, and a capitalised name-shaped word that is not CH itself.
+function _chLooksLikeCall(text) {
+  return /\bCH\b|C\.H\.|CHeal|complete\s+heal/i.test(text) && /\d/.test(text)
+    && (String(text).match(/\b[A-Z][a-z`]{2,14}\b/g) || []).some(_chLooksLikeName);
+}
+function chLearnState() {
+  const now = Date.now();
+  const recent = _chUnread.filter(e => !chTranslateExtra(e.text)).slice().reverse();
+  const hint = recent.find(e => _chLooksLikeCall(e.text) && (now - e.atMs) < CH_UNREAD_HINT_MS) || null;
+  return {
+    templates: chTemplates().map(t => {
+      const c = _chTemplateGet(t);
+      return { id: t.id, example: t.example, roles: t.roles, kind: c ? c.kind : 'call' };
+    }),
+    recent: recent.map(e => ({ text: e.text, at_ms: e.atMs })),
+    unrecognised: hint ? { text: hint.text, at_ms: hint.atMs } : null,
+    max: CH_TEMPLATES_MAX,
+  };
+}
+// The speaker + quoted body, as the original reads them, plus a chain-named custom channel.
+function _chExtraLine(line, character) {
+  if (!line) return;
+  const m = line.match(_CH_SPEAKER_RX) || line.match(_CH_SPEAKER_CHAN_RX);
+  if (!m) return;
+  _chExtraText(m[2].trim(), /^you$/i.test(m[1]) ? (character || 'You') : m[1], line, character);
+}
+let _chExtraBusy = false;
+function _chExtraText(text, speaker, line, character) {
+  if (_chExtraBusy || !text) return;
+  const hit = chTranslateExtra(text);
+  const ts = parseEqTimestamp(line);
+  if (!hit) { _chNoteUnread(text, ts ? ts.getTime() : Date.now()); return; }
+  // A go-cue steers an EXISTING chain only (as the original does), and loose shapes like "go 3" must name a slot it has.
+  if (hit.kind === 'go' && !(_chChain && _chChain.slots && _chChain.slots[hit.num])) return;
+  const stamp = String(line).match(/^\[[^\]]+\]/);
+  if (!stamp) return;
+  _chExtraBusy = true;
+  try { trackChChainLine(stamp[0] + ' ' + speaker + " shouts, '" + hit.text + "'", character); }
+  finally { _chExtraBusy = false; }
 }
 // ── CH cast interrupted → freeze that slot's bar and put a ✕ on it ───────────
 // Bystander-visible interrupt lines, grounded in the server source Quarm runs
@@ -36801,6 +37054,28 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(out));
       }
+      // "Learn a CH call" (2026-10-23) — the CH Chain overlay's setup-mode panel. GET lists the taught
+      // templates + recent lines the tracker could not read; POST previews (dry) or saves one; /remove drops one.
+      // Local-only: templates live in logsync.prefs.json, nothing uploads.
+      if (req.url === '/api/chchain/learn' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(chLearnState()));
+      }
+      if ((req.url === '/api/chchain/learn' || req.url === '/api/chchain/learn/remove') && req.method === 'POST') {
+        const body = await _readBody(req);
+        let payload;
+        try { payload = JSON.parse(body); }
+        catch { res.writeHead(400); return res.end('invalid json'); }
+        let out;
+        if (req.url === '/api/chchain/learn/remove') out = chLearnRemove(String((payload && payload.id) || ''));
+        else {
+          const ex = String((payload && payload.example) || '');
+          if (payload && payload.guess) out = { ok: true, roles: chGuessRoles(ex) };
+          else out = (payload && payload.dry) ? chLearnPreview(ex, payload && payload.roles) : chLearnSave(ex, payload && payload.roles);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(out));
+      }
       // ✕ from a pet tracker card — drops the per-owner /pet health snapshot
       // + observed buff landings + stats so the row stops rendering. Useful
       // when switching toons leaves stale pet state (the freshness gate now
@@ -64804,7 +65079,11 @@ module.exports = {
   CH_DDR_PERFECT_MS, CH_DDR_GREAT_MS, CH_DDR_GOOD_MS,
   CH_DDR_MARVELOUS_STREAK, CH_DDR_MIN_BEATS, CH_DDR_DISPLAY_MS,
   _setChDdrEnabledForTest: (v) => { _chDdrEnabled = !!v; },
-  _resetChChainForTest: () => { _chChain = null; _lastChGoNum = null; },
+  _resetChChainForTest: () => { _chChain = null; _lastChGoNum = null; _chUnread.length = 0; },
+  _setWatchedLogsForTest: (logs) => { stats.watchedLogs = logs || []; },
+  // CH chain: other guilds' call shapes + learned templates (2026-10-23).
+  chParseBuiltinExtra, chTranslateExtra, chGuessRoles, chLearnPreview, chLearnSave, chLearnRemove, chLearnState, chTemplates,
+  _chSlotFromToken, CH_TEMPLATES_MAX,
   // #204 DI two-cleric callout — exported for the scratchpad harness.
   trackDiFired, diCalloutSnapshot, diCalloutCandidates, _diRankCandidates,
   _diSlotTurnInMs, _DI_FIRED_RX, DI_CALLOUT_NAMES, DI_CALLOUT_TTL_MS,
