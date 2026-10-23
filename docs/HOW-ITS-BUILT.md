@@ -1081,6 +1081,34 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   `_fireTriggerActions` (`_enrageMobCtx`), which stamps `enrage_mob` on the fire (so the same 🔇 buttons appear) and, when
   `_enrageMuted`, skips the text, voice and sound actions. Guild and personal triggers alike; a relayed fire is not covered.
 
+### Dispel callouts — your debuff dispelled off a mob, your buffs dispelled (agent 4.0.11 beta, 2026-10-23)
+- **What:** "Your Malosini was dispelled off Rizlona — recast" to the caster of each stripped debuff, and one "Buffs dispelled:
+  Aegolism, Clarity — rebuff" when a mob's dispel strips yours. The ask: the guild lead, mid-raid in the Tower of Solusek Ro
+  (Rizlona, Arlyxir, Xuzl and both Dresolik scripts go home and cast Annul Self, spell 2830).
+- **Where:** agent `noteDispelLine` (called from the live log path before `noteMyMezWornOff`), `_dispelNoteZealDiff` (beside
+  `_noteBuffDurationsFromState`), `flushDispelWatch` (250 ms tick), `DISPEL_OTHER_TEXTS` / `DISPEL_YOU_TEXTS`; the Triggers-tab
+  switch is `dispel_watch_off` in `logsync.prefs.json` via `/api/dispel-watch/toggle`; the callouts are `builtin:dispel_debuff` and
+  `builtin:dispel_buffs` in "What you hear". Test: `test/dispel-watch.test.js`.
+- **Server evidence** (SecretsOTheP/EQMacEmu a3b80b2; quests ea0c766). A dispel is SE_CancelMagic (`spell_effects.cpp:910`), one
+  `TryDispel` per buff slot and `BuffFadeBySlot(slot)` on a hit. In `BuffFadeBySlot` (`:3229`) the fade reaches only two people:
+  a client TARGET gets the OP_Buff fade packet (its client prints the spell's own `spell_fades`), and a client CASTER gets string
+  437 "Your %1 spell has worn off." (`:3712-3743`, `string_ids.h:175`), but only for a DETRIMENTAL spell that is not a lull or
+  harmony (`IsCrowdControlSpell` = Harmony, Lull, ChangeFrenzyRad; a mez, charm or fear do tell). A beneficial spell tells its
+  caster nothing. The worn-off line names no mob and does not say why: expiry, a dispel and a stronger spell overwriting yours all
+  print it. `BuffFadeAll()` is called with `message = false` (`spells.cpp:3643`) by the leash/evade reset (`mob_ai.cpp:1418`, `:1440`,
+  `:2603`, `mob_movement_manager.cpp:782`) and at death (`attack.cpp:2367`), so those print nothing at all.
+  Annul Self (`eqemu_spells` 2830): four SPA 27 slots, base 9, no `cast_on_you`, `cast_on_other` "has been dispelled.".
+- **How it decides:** a worn-off line for a debuff of yours (`cast_by` is you) with more than two ticks left is an early
+  removal; it is a dispel when a dispel spell's own landing line naming that mob sits within 2.5 s, or when two such removals
+  land inside a second. One early removal alone is an overwrite and is left alone. A zone change or "You died." makes the
+  character quiet for 10 s. Your buffs: the Zeal slots lose a non-song buff with more than two ticks left (not on a zone change,
+  not on an empty list), counted when the dispel's `cast_on_you` line is there or two go at once with nothing new landing; with
+  no Zeal, a beneficial spell's fade line next to the dispel line gives the generic callout. After a self callout the buff queue
+  cache is cleared, snappy mode is on and a live-state flush is sent at once.
+- **Local only today.** The cross-client half needs the bot: the other raiders' Target Info still shows a debuff another caster
+  lost, until it runs out. Each caster's own Mimic does hear their own worn-off line, so every caster IS told; what is missing is
+  the shared Target Info row (a `buff_casts` removal marker that `/api/agent/target-buffs` honours).
+
 ### Voice unclear reports (agent 3.8.15 beta · bot 3.2.8 · web 1.9.9, 2026-10-19; DECISIONS §379)
 - **What:** a raider flags a spoken callout nobody understood, with the text, the voice that really played it and the
   speed; Recent fires replays it and takes a suggested wording; officers review on the site.
