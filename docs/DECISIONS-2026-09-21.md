@@ -114,10 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Slicing a night + night timeline** (§419) | Two previews on beta (web 2.1.10): `?v=slices` draw, `?v=segments` confirm | the guild lead: pick one on the 2026-10-22 night (B recommended) |
-| **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
-| **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
-| **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
+| **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
+| **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
 | **Route planner + off-night plans + Sol Ro tower** (§407, §410) | Live on main (web 2.1.0): 3D Real/Floors with drag, One leg, Straight/Walk/Recorded, compare with event kills; off-night A picked | the guild lead: press "Import tonight's planner" once as an officer; a session: build floor clutter A (floors follow the current leg) |
 | **Guest raids stored as ours** (§408, §410) | Picked A (tag them); not built | a session: tag guest-raid roster rows and keep them out of our numbers |
 | **Windows jump to the top-left mid-drag** (§412) | Fix being built on beta (window writers + SetWindowPos flags), plus Target Info 60 s miss retry and overlay crash recovery | the guild lead: on the next beta, drag the dashboard and the Dock; if it still jumps, send the `[window]` lines from agent.log |
@@ -12539,3 +12537,26 @@ history (not rewritten).
 mass-death moments on the night timeline, and the fights' parse timelines on the session page. Stored in bot_kv
 `night_slices:<guild>` (no migration). Two previews: `?v=slices` (draw labelled spans) and `?v=segments` (confirm detected
 segments; recommended). Pick open.
+
+### 420. The guild lead's picks, 2026-10-23 (afternoon) — and where they landed
+- **Night slicing: B, `?v=segments`** (confirm detected segments) → the session page's default, with "Start a new raid here"; the
+  draw-spans variant deleted. Graduated with the window-only kills, share start/end, the end-date roll and raidmimic.com layout D +
+  its 13 captures: **web 2.1.11 on main and beta** (identical files). The unflagged session cutting where the roster turns over
+  (web 2.1.6's base) came along because the graduating files are built on it.
+- **Shares that follow the raid: A, self-refresh** every 60 s, held while the viewer has interacted in the last 30 s or parked the
+  playhead away from the end. The per-share page ceiling went 600 → 3,000 an hour, because each follower refreshes once a minute;
+  the review cache is per minute-rounded window, so followers share one read.
+- **Actor emails: A, sweep** → web 2.1.4; the 3 stored addresses (2 fight notes, 1 spell note) rewritten to names.
+- **Wipes reading as kills: A** → bot 4.0.11: the nightly reconcile no longer stamps `ended_at` on a marked wipe or on a curated
+  boss that lost under 90 % of its HP; web 2.1.5 shows such a fight as "no kill seen" after 90 min instead of ENGAGED forever.
+- **Old fights: A** → `ended_at` cleared on the 651 reconcile-stamped fights on curated bosses that lost under 50 % (2024-07-16 →
+  2026-10-23). Backup: bot_kv `backup:wipe_ended_at_2026-10-23` (id, old ended_at). The 50–90 % band (~330) left as is.
+
+### 421. Traps on the Map: the zone script is the source, a guide is a cross-check (2026-10-23, bot 4.0.12 main + agent 4.0.16 beta)
+*"maps should show traps as well"*, then *"consume this for traps"* (a third-party Plane of Earth trap guide). In the Planes of
+Power a trap is a TRAP NPC spot, not a floor trap: `poeartha/encounters/Traps.lua` maps 13 invisible helpers on 73 spots to
+{trap mob, named, placeholder}; walking in spawns the trap mob, and the 5th pull of a type spawns the named or its placeholder
+(50/50). The guide's 12 pairs are all in the script; it pairs two placeholders differently and omits one type — the script wins
+(standing rule: *"always go off of the scripts and database instead of the guides"*). The server's classic `traps` table is now
+mirrored (`eqemu_traps`, 83 rows in 8 zones, none in PoP). The Map draws both, ⚙ Traps on by default. The web maps (Spectator,
+replay) draw walls only, so they have no traps yet.
