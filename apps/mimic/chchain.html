@@ -370,6 +370,41 @@
   .dicall-chip.unk{color:#f0b429;border-color:rgba(240,180,41,0.5)}
   .dicall-or{color:#6e7681;font-size:10px;align-self:center}
   .dicall-note{font-size:9px;color:#f0b429;margin-top:2px;text-shadow:0 1px 2px #000}
+  /* Learn a CH call — SETUP MODE ONLY (2026-10-23). Other guilds' chain macros read differently from ours; the
+     built-in matchers cover the common shapes and this panel teaches the tracker the rest from one example line.
+     Hidden outside setup, and under mini, so a raid never sees it. */
+  #learnhint,#learn-panel,#learn-btn{display:none}
+  body.setup #learn-btn{display:inline-block}
+  body.setup #learnhint.show{display:flex}
+  body.setup #learn-panel.show{display:block}
+  body.wp-mini #learnhint,body.wp-mini #learn-panel{display:none !important}
+  #learnhint{align-items:center;gap:6px;background:rgba(246,195,101,0.16);border:1px solid rgba(246,195,101,0.6);
+    color:#f6c365;border-radius:4px;padding:4px 7px;font-size:10px;font-weight:600;margin-bottom:5px}
+  #learnhint span{flex:1}
+  #learn-panel{background:rgba(13,17,22,0.94);border:1px solid #30363d;border-radius:5px;padding:6px 8px;
+    margin-bottom:5px;font-size:10px;color:#c9d1d9}
+  #learn-panel .lp-hd{color:#9aa4ad;text-transform:uppercase;letter-spacing:0.5px;font-size:9px;margin:5px 0 3px}
+  #learn-panel .lp-hd:first-child{margin-top:0}
+  #learn-panel .lp-none{color:#6e7681;font-style:italic}
+  #learn-panel .lp-tpl{display:flex;align-items:center;gap:6px;line-height:1.7}
+  #learn-panel .lp-ex{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
+  #learn-panel .lp-kind{color:#6e7681}
+  #learn-panel select,#learn-panel input[type=text]{width:100%;box-sizing:border-box;background:#0d1117;color:#c9d1d9;
+    border:1px solid #30363d;border-radius:3px;font-size:10px;padding:2px 4px;margin-bottom:3px}
+  #learn-panel button,#learnhint button,#learn-btn{background:#21262d;color:#c9d1d9;border:1px solid #484f58;
+    border-radius:3px;font-size:10px;padding:1px 6px;cursor:pointer}
+  #learn-panel button:hover,#learnhint button:hover,#learn-btn:hover{border-color:#79c0ff;color:#79c0ff}
+  #lp-chips{display:flex;flex-wrap:wrap;gap:3px;margin:3px 0}
+  #lp-chips button{border-width:2px;padding:1px 5px}
+  #lp-chips .r-lit{border-color:#484f58}
+  #lp-chips .r-SLOT{border-color:#f6c365;color:#f6c365}
+  #lp-chips .r-TARGET{border-color:#7ee787;color:#7ee787}
+  #lp-chips .r-MANA{border-color:#79c0ff;color:#79c0ff}
+  #lp-chips .r-TAG{border-color:#d2a8ff;color:#d2a8ff}
+  #lp-chips .r-skip{border-color:#30363d;color:#6e7681;text-decoration:line-through}
+  #lp-read{min-height:13px;color:#7ee787}
+  #lp-read.bad{color:#f87171}
+  #learn-panel .lp-legend{color:#6e7681;font-size:9px;line-height:1.4}
   /* drag/lock/setup chrome — same pattern as every other overlay. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -474,6 +509,7 @@
   <div id="setupbar">
     <span>🛠 CH Chain</span>
     <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <span data-wp-opt style="display:contents"><button id="learn-btn" title="Teach the tracker another guild's CH call format from one example line">Learn a CH call</button></span>
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
@@ -492,6 +528,22 @@
         <span class="val" id="leadVal">1.5s</span>
       </div>
       <div class="hint"><b>Auto</b> (default) tracks this chain's own measured beat — the gap between callouts — and sets the lead to ~25% of it, so a tight 2-4s chain doesn't fire <b>CH GAP SOON</b> on nearly every single call. Drag the slider to pin a manual value instead (switches off Auto). Persists per-machine.</div>
+    </div>
+    <!-- Learn a CH call (setup mode only). Hint: a chat line looked like a CH call but matched nothing. Panel:
+         the templates already taught (✕ removes one), a list of recent unread CH lines or a paste box, then
+         the line as clickable words — click a word to mark it slot / target / mana / tag / ignore. -->
+    <div id="learnhint"><span>Unrecognised CH call — teach it?</span>
+      <button id="lh-teach">Teach it</button><button id="lh-x" title="Dismiss">✕</button></div>
+    <div id="learn-panel">
+      <div class="lp-hd">Taught calls (used alongside the built-in ones)</div>
+      <div id="lp-active"></div>
+      <div class="lp-hd">Teach a new one</div>
+      <select id="lp-recent"></select>
+      <input id="lp-paste" type="text" placeholder="…or paste a raid / shout line here" maxlength="200" />
+      <div class="lp-legend">Click a word to mark it: slot → target → mana → tag → ignore → plain.</div>
+      <div id="lp-chips"></div>
+      <div id="lp-read"></div>
+      <button id="lp-save" disabled>Save this call</button>
     </div>
     <!-- Chain-integrity banner — is the DATA FEED itself trustworthy? Sits
          above every other alert because it invalidates them: a gap/pivot
@@ -824,6 +876,126 @@
     try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {}
     _setupScope = null;
   });
+
+  // ── Learn a CH call (setup mode) ───────────────────────────────────────────────────────────────
+  // The agent owns the templates (logsync.prefs.json) and every parse; this is only the editor. One example
+  // line, split into words; each word cycles through a role. /api/chchain/learn { dry } reads the line back so
+  // the user sees "slot 3 · target Aldenmar · mana 61%" before saving.
+  var LEARN_ROLES = ['lit', 'SLOT', 'TARGET', 'MANA', 'TAG', 'skip'];
+  var _learn = null, _learnKey = '', _lpExample = '', _lpRoles = [], _hintState = 0, _lpOk = false;
+  function learnUrl(p){ return 'http://127.0.0.1:' + PORT + '/api/chchain/learn' + (p || ''); }
+  function learnPost(p, body){
+    return fetch(learnUrl(p), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function(r){ return r.json(); });
+  }
+  function learnFetch(){
+    if (!document.body.classList.contains('setup')) return;
+    fetch(learnUrl(), { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(s){
+      _learn = s; paintLearn();
+    }).catch(function(){});
+  }
+  function paintLearn(){
+    if (!_learn) return;
+    var key = JSON.stringify([_learn.templates, _learn.recent, !!_learn.unrecognised]);
+    // Once per session: the hint appears the first time something unreadable shows up and is never shown again after
+    // the user acts on it, dismisses it or leaves setup.
+    var hint = document.getElementById('learnhint');
+    if (_hintState === 0 && _learn.unrecognised) _hintState = 1;
+    if (hint) hint.classList.toggle('show', _hintState === 1 && !!_learn.unrecognised);
+    if (key === _learnKey) return;
+    _learnKey = key;
+    var act = document.getElementById('lp-active');
+    if (act) act.innerHTML = (_learn.templates || []).length ? (_learn.templates || []).map(function(t){
+      return '<div class="lp-tpl"><span class="lp-ex" title="' + esc(t.example) + '">' + esc(t.example) + '</span>'
+        + '<span class="lp-kind">' + (t.kind === 'go' ? 'go cue' : 'CH call') + '</span>'
+        + '<button class="lp-rm" data-id="' + esc(t.id) + '" title="Stop using this call">✕</button></div>';
+    }).join('') : '<div class="lp-none">none yet — only the built-in call shapes are read</div>';
+    var sel = document.getElementById('lp-recent');
+    if (sel) {
+      var cur = sel.value;
+      sel.innerHTML = '<option value="">' + ((_learn.recent || []).length ? 'Recent lines I could not read…' : 'No unread CH lines yet') + '</option>'
+        + (_learn.recent || []).map(function(e){ return '<option value="' + esc(e.text) + '">' + esc(e.text) + '</option>'; }).join('');
+      sel.value = cur;
+    }
+  }
+  function pickExample(text){
+    _lpExample = String(text || '').trim().replace(/\s+/g, ' ');
+    _lpRoles = []; _lpOk = false;
+    if (!_lpExample) { paintChips(); return; }
+    learnPost('', { guess: true, example: _lpExample }).then(function(o){
+      _lpRoles = (o && o.roles) || _lpExample.split(' ').map(function(){ return 'lit'; });
+      paintChips(); previewLearn();
+    }).catch(function(){});
+  }
+  function paintChips(){
+    var el = document.getElementById('lp-chips'); if (!el) return;
+    var words = _lpExample ? _lpExample.split(' ') : [];
+    el.innerHTML = words.map(function(w, i){
+      return '<button class="r-' + esc(_lpRoles[i] || 'lit') + '" data-i="' + i + '" title="' + esc(_lpRoles[i] || 'lit') + '">' + esc(w) + '</button>';
+    }).join('');
+    if (!words.length) { var rd = document.getElementById('lp-read'); if (rd) rd.textContent = ''; var sv = document.getElementById('lp-save'); if (sv) sv.disabled = true; }
+  }
+  function previewLearn(){
+    learnPost('', { dry: true, example: _lpExample, roles: _lpRoles }).then(function(o){
+      var rd = document.getElementById('lp-read'), sv = document.getElementById('lp-save');
+      _lpOk = !!(o && o.ok);
+      if (rd) {
+        rd.className = _lpOk ? '' : 'bad';
+        rd.textContent = _lpOk
+          ? ('Reads: slot ' + o.read.slot + (o.read.target ? ' · target ' + o.read.target : ' · go cue') + (o.read.mana != null ? ' · mana ' + o.read.mana + '%' : ''))
+          : ((o && o.error) || '');
+      }
+      if (sv) sv.disabled = !_lpOk;
+    }).catch(function(){});
+  }
+  (function wireLearn(){
+    var panel = document.getElementById('learn-panel');
+    function openPanel(text){
+      if (panel) panel.classList.add('show');
+      _hintState = 2; var h = document.getElementById('learnhint'); if (h) h.classList.remove('show');
+      learnFetch();
+      if (text) { var p = document.getElementById('lp-paste'); if (p) p.value = text; pickExample(text); }
+    }
+    var lb = document.getElementById('learn-btn');
+    if (lb) lb.addEventListener('click', function(){ if (panel && panel.classList.contains('show')) panel.classList.remove('show'); else openPanel(); });
+    var th = document.getElementById('lh-teach');
+    if (th) th.addEventListener('click', function(){ openPanel(_learn && _learn.unrecognised && _learn.unrecognised.text); });
+    var hx = document.getElementById('lh-x');
+    if (hx) hx.addEventListener('click', function(){ _hintState = 2; var h = document.getElementById('learnhint'); if (h) h.classList.remove('show'); });
+    var sel = document.getElementById('lp-recent');
+    if (sel) sel.addEventListener('change', function(){ var p = document.getElementById('lp-paste'); if (p) p.value = ''; pickExample(sel.value); });
+    var paste = document.getElementById('lp-paste');
+    if (paste) paste.addEventListener('change', function(){ if (sel) sel.value = ''; pickExample(paste.value); });
+    var chips = document.getElementById('lp-chips');
+    if (chips) chips.addEventListener('click', function(e){
+      var b = e.target && e.target.closest ? e.target.closest('button[data-i]') : null; if (!b) return;
+      var i = parseInt(b.getAttribute('data-i'), 10); if (isNaN(i)) return;
+      var next = LEARN_ROLES[(LEARN_ROLES.indexOf(_lpRoles[i] || 'lit') + 1) % LEARN_ROLES.length];
+      // One slot, one target, one mana, one tag: choosing a role again moves it rather than doubling it.
+      if (next !== 'lit' && next !== 'skip') _lpRoles = _lpRoles.map(function(r){ return r === next ? 'lit' : r; });
+      _lpRoles[i] = next;
+      paintChips(); previewLearn();
+    });
+    var act = document.getElementById('lp-active');
+    if (act) act.addEventListener('click', function(e){
+      var b = e.target && e.target.closest ? e.target.closest('button[data-id]') : null; if (!b) return;
+      learnPost('/remove', { id: b.getAttribute('data-id') }).then(learnFetch).catch(function(){});
+    });
+    var sv = document.getElementById('lp-save');
+    if (sv) sv.addEventListener('click', function(){
+      if (!_lpOk) return;
+      learnPost('', { example: _lpExample, roles: _lpRoles }).then(function(o){
+        var rd = document.getElementById('lp-read');
+        if (o && o.ok) { _lpExample = ''; _lpRoles = []; _lpOk = false; paintChips(); var p = document.getElementById('lp-paste'); if (p) p.value = ''; if (sel) sel.value = ''; learnFetch(); if (rd) { rd.className = ''; rd.textContent = 'Saved. The tracker reads this call from now on.'; } }
+        else if (rd) { rd.className = 'bad'; rd.textContent = (o && o.error) || 'Could not save'; }
+      }).catch(function(){});
+    });
+    // Poll only while in setup; leaving setup ends the hint's one showing.
+    setInterval(function(){
+      if (document.body.classList.contains('setup')) learnFetch();
+      else { if (_hintState === 1) _hintState = 2; if (panel) panel.classList.remove('show'); }
+    }, 2500);
+  })();
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
   function pad3(n){ return String(n).padStart(3, '0'); }

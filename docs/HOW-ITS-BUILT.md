@@ -2670,6 +2670,12 @@ enough — whoever put them there is still shouting — so it also blocks that
 still take the number, a roster call clears the block, and on a CONTESTED slot
 the row survives and passes to the remaining claimant rather than being deleted
 out from under the real cleric.
+Other guilds' macros + "Learn a CH call" (agent 4.0.13): `chParseBuiltinExtra` (tag, repeated-digit slot, `#3`/`CH3`, C.H./Complete
+Heal, mana as `61%`/`Mana 61`/`m61`, go-cues `3 GO`/`GO 3`/`next 3`) and the user's taught templates (`chLearnSave`, `ch_templates` in
+`logsync.prefs.json`) run via `_chExtraText` ONLY on a line the original parser did not claim, and translate a hit to the canonical
+Wolf Pack text before `trackChChainLine` reads it again. Overlay: setup mode → Learn a CH call in `apps/mimic/chchain.html`
+(`GET/POST /api/chchain/learn`, `POST /api/chchain/learn/remove`). Tests: `test/ch-chain-other-guilds.test.js`; the Wolf Pack
+guarantee is `test/ch-chain-wolfpack-regression.test.js`.
 
 ### Divine Intervention: readiness chips + the two-cleric callout (#204)
 Two separate things on the same overlay. **Readiness** is log-driven: a

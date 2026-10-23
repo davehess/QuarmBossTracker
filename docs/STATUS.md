@@ -6569,6 +6569,20 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   `buff_casts` removal marker honoured by `/api/agent/target-buffs` would share it. ⏳ A beneficial buff YOU cast on someone else
   being dispelled tells you nothing on the server, so it is not covered. ⏳ Not seen in a real Tower log yet: the spell texts and the
   worn-off string are read from the server source and the spell table.
+- 🧪 The CH chain reads other guilds' macros, and you can teach it yours (the guild lead, 2026-10-23, in another guild's raid: "other
+  people have CH chain macros, we need to define where those end up in the setup mode or start looking for other patterns"; agent
+  4.0.13 on beta). Their raid-say reads `D&D 333 CH - <target> - 61%` (guild tag, slot digit repeated, CH, target, mana % with no
+  "Mana" word). **Wolf Pack's own shout chain is untouched, by the guild lead's hard rule:** the new matchers run only on a line the
+  original parser did not claim, and a match is translated into the canonical `00N - CH - <target> - Mana: N%` / `00N GO GO GO` text and
+  fed back through the one existing code path. Built in: optional tag, slot as digits or a repeated digit (`333` is 3, `55` is 5), `#3`,
+  `3.`, `CH3`, CH / C.H. / CHeal / Complete Heal, any separator, an optional mana (`61%`, `Mana 61`, `m61`, `(61%)`), and go-cues
+  `3 GO`, `333 go`, `GO 3`, `next 3`. Taught: setup mode → Learn a CH call → pick a recent unread line (or paste one), click words to
+  mark slot / target / mana / tag / ignore, see "Reads: slot 3 · target … · mana 61%", save; up to 12 templates in `logsync.prefs.json`
+  (`ch_templates`), each with a ✕. The first unreadable CH-looking line shows a once-a-session "Unrecognised CH call — teach it?" hint.
+  Tests: `test/ch-chain-wolfpack-regression.test.js` (a full Wolf Pack chain against a capture of the old tracker),
+  `test/ch-chain-other-guilds.test.js`. Design: `DESIGN-ch-chain.md` "Other guilds' macros". ⏳ Not seen against a real
+  other-guild log beyond the two screenshot lines; ⏳ the overlay panel was not exercised in a running Mimic; ⏳ the hint only appears
+  for a line with a standalone `CH`, a number and a capitalised name; ⏳ not on `main`.
 - **✅ Raid Mimic 3.0.2 stable (agent 4.0.7) cut 2026-10-22** (the guild lead: "push that out a 3.0.2"). Adds over 3.0.1: Canvas HUD
   pieces (whole group → Ring arc, Thin/Normal/Thick, Left/Center/Right, label turn), Charm "When charming", one Disc timer, warrior
   Shield (3 min / 12 s), the Dock no longer fights a drag, Target Info retries a missed mob after 60 s instead of 6 h, overlay crash
