@@ -10,12 +10,13 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
+import { actorName } from '@/lib/actorName';
 
 async function officerActor(): Promise<string | null> {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return null;
   if (!(await isOfficer(user.id))) return null;
-  return user.email || user.id;
+  return actorName(user);
 }
 
 export async function setSpellLevel(

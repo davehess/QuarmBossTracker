@@ -35,6 +35,7 @@ import MoreInfo from '@/components/MoreInfo';
 import { supabaseServer } from '@/lib/supabase-server';
 import { getDemoMode, maybeFake } from '@/lib/obfuscate';
 import { GUILD_TAG } from '@/lib/guild';
+import { actorName } from '@/lib/actorName';
 
 export const metadata = {
   title: 'Attendance · Admin',
@@ -168,7 +169,7 @@ async function saveTargets(formData: FormData) {
   const u = await actionAssertOfficer();
   if (!u) redirect('/?error=admin_required');
   const raidSize = String(formData.get('raid_size') || '60-man').slice(0, 40);
-  const actor = u!.email || u!.id;
+  const actor = actorName(u);
   const rows: { guild_id: string; raid_size: string; class: string; target: number; updated_by: string }[] = [];
   for (const cls of [...CLASS_ORDER, FLEX_CLASS]) {
     const raw = formData.get(`target_${cls}`);

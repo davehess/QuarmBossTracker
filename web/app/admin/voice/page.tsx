@@ -22,6 +22,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { GUILD_TAG } from '@/lib/guild';
+import { actorName, shownActor } from '@/lib/actorName';
 
 export const metadata = {
   title: 'Voice triggers · Admin',
@@ -67,7 +68,7 @@ async function saveVoiceSettings(formData: FormData) {
   // Pull display name for the audit trail. Falls back to "officer" if the
   // member row isn't synced yet — rare on first install only.
   const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
-  const display = String(meta.full_name || meta.name || meta.preferred_username || meta.email || 'officer');
+  const display = actorName(user);
 
   await supabaseAdmin()
     .from('voice_settings')
@@ -227,7 +228,7 @@ export default async function VoiceAdminPage() {
         <div className="flex items-center justify-between gap-3">
           <div className="text-xs text-dim">
             {row.updated_by_name
-              ? <>Last saved by <span className="text-text">{row.updated_by_name}</span> · {new Date(row.updated_at).toLocaleString()}</>
+              ? <>Last saved by <span className="text-text">{shownActor(row.updated_by_name)}</span> · {new Date(row.updated_at).toLocaleString()}</>
               : <span>Never saved</span>}
           </div>
           <button

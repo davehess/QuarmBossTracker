@@ -12,6 +12,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { validateTemplate } from '@/lib/comp';
 import { GUILD_TAG } from '@/lib/guild';
+import { actorName } from '@/lib/actorName';
 
 export type SaveResult = { ok: true } | { ok: false; errors: string[] };
 
@@ -46,7 +47,7 @@ export async function saveCompTemplates(rawJson: string): Promise<SaveResult> {
   if (errors.length) return { ok: false, errors };
 
   const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
-  const display = String(meta.full_name || meta.name || meta.preferred_username || meta.email || 'officer');
+  const display = actorName(user);
 
   const { error } = await supabaseAdmin()
     .from('comp_templates')

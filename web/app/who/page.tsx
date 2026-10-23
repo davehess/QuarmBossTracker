@@ -12,6 +12,7 @@ import { isOfficer } from '@/lib/officer';
 import { loadRoster } from '@/lib/roster';
 import WhoTable, { type WhoRow } from './WhoTable';
 import { GUILD_TAG } from '@/lib/guild';
+import { shownActor } from '@/lib/actorName';
 
 export const metadata = {
   title: '/who directory',
@@ -163,7 +164,7 @@ async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }>
       inferredZek,
       zekOverride,
       effectiveZek: zekOverride != null ? zekOverride : autoZek,
-      setByName: o?.set_by_name ?? null,
+      setByName: shownActor(o?.set_by_name),
       // OpenDKP character link target — present only for Wolf Pack characters
       // we have a roster row for. The WhoTable wraps the name in a link when
       // this is set; otherwise it renders plain.

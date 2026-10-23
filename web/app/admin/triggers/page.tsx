@@ -22,6 +22,7 @@ import { parseTimerFields, timerInputFrom, describeTimer } from '@/lib/triggerTi
 import { foldFeedback, loadFeedbackRollup, loadGuildTriggers, type FbAgg } from '@/lib/triggerFeedback';
 import TimerFields from './TimerFields';
 import MoreInfo from '@/components/MoreInfo';
+import { actorName } from '@/lib/actorName';
 
 export const metadata = {
   title: 'Guild triggers · Admin',
@@ -108,7 +109,7 @@ async function createOrUpdate(formData: FormData) {
     cooldown_seconds: cooldown,
     applies_to_classes: classes,
     notes,
-    created_by_name: u!.email || null,
+    created_by_name: actorName(u),
     ...timer.columns,
   };
   if (id) {

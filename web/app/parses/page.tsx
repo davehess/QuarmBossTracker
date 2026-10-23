@@ -259,7 +259,10 @@ function toCardData(enc: EncounterRow): KillCardData {
     // partial parse but never saw a slain line for the boss. (the guild lead
     // 2026-06-26: 'we registered vulaks death on engage instead of on
     // death … this should say engaged and be listed at the top'.)
-    inProgress: enc.ended_at == null,
+    // Only for 90 min (the "Engaged now" window below): after that a fight with no ended_at is one nobody saw end —
+    // since bot 4.0.11 the nightly cleanup leaves a wipe unstamped on purpose — and reads "no kill seen", not ENGAGED.
+    inProgress: enc.ended_at == null && Date.now() - Date.parse(enc.started_at) < 90 * 60 * 1000,
+    noKill: enc.ended_at == null && Date.now() - Date.parse(enc.started_at) >= 90 * 60 * 1000,
     top_players: players.slice(0, 5).map(p => ({
       character_name: p.character_name,
       total_damage: p.total_damage,
