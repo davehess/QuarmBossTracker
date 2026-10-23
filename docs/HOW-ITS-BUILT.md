@@ -153,6 +153,11 @@ pages live in the separate hesstastic repo (`eqmimic/`, `vercel.json`). Tests:
 Every log off-guild = token withheld at boot (local mode); mixed = `shouldUploadForCharacter` + `enqueueUpload` refuse
 the character; `fetchMobInfo` answers "no row" off-Quarm. **Mimic:** `EQ_LOG_OTHER_STEM_RX` in `main.js` finds the
 logs. Tests: `test/eq-family-servers.test.js`.
+**Why Target Info has no stats (FB-95, agent 4.0.20):** every `fetchMobInfo` outcome is recorded per key in `_mobInfoLast`
+(`not_in_catalog` / `lookup_failed` / `off_quarm` / `no_guild` / `looking_up`); `buildMobInfo` sends it as `mob_miss`,
+`mobinfo.html` prints it with a ↻ (POST `/api/mob-info/retry` → `mobInfoRetry`), and a feedback report carries
+`log_meta.target_info` (`mobInfoFeedbackMeta`). For the catalog a name with ONE Quarm log is a Quarm character
+(`_charQuarmLogs`), unlike the upload gate. Tests: `test/mob-miss-reason.test.js`.
 
 ### Guild kit — the tenant config contract (`guild/`, 2026-09-18)
 **Slice 1a live (bot 3.1.129):** `_loadGuildDiscordJson` at the top of

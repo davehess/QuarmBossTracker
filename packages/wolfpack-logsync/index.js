@@ -1528,6 +1528,10 @@ function eqLogsAllOffGuild(paths) {
 // one resolves to the off-guild side: holding back a Quarm upload costs a night's data, sending a Project 1999
 // character's lines to the guild cannot be taken back.
 const _charServers = new Map();
+// Characters with a Quarm log registered. The upload gate above keeps the off-guild answer for a name on both, but the
+// Mob Info catalog asks the opposite question (FB-95): an old Project 1999 log of the same name lying in the logs
+// folder must not switch a Quarm raider's Target Info off, so for the catalog one Quarm log is enough.
+const _charQuarmLogs = new Set();
 function noteLogServer(filepath) {
   const c = characterFromFilename(filepath);
   if (!c) return;
@@ -1535,9 +1539,13 @@ function noteLogServer(filepath) {
   const k = c.toLowerCase();
   const prev = _charServers.get(k);
   if (prev === undefined || !eqServerCaps(server).guildUpload) _charServers.set(k, server);
+  if (eqServerCaps(server).catalog) _charQuarmLogs.add(k);
 }
+// The server whose catalog applies to this character: Quarm unless every log we hold for the name is another server's.
 function eqServerForCharacter(character) {
-  return _charServers.get(String(character || '').toLowerCase()) || EQ_SERVER_QUARM;
+  const k = String(character || '').toLowerCase();
+  if (_charQuarmLogs.has(k)) return EQ_SERVER_QUARM;
+  return _charServers.get(k) || EQ_SERVER_QUARM;
 }
 // True when a token is set (uploads are possible) and this character's server is not the guild's.
 function _offGuildServerChar(character) {
@@ -36169,6 +36177,9 @@ function startWebDashboard(port) {
         const screenshots = (p && Array.isArray(p.screenshots) ? p.screenshots : [])
           .filter(s => typeof s === 'string' && /^data:image\/(?:jpeg|png|webp);base64,/.test(s) && s.length <= 7_200_000)
           .slice(0, 3);
+        // FB-95: what Target Info was doing, when it has a target. Rides in log_meta, so it arrives with or
+        // without the log; the mob's name and the zone, never another player's name (see mobInfoFeedbackMeta).
+        const targetInfo = mobInfoFeedbackMeta();
         const payload = {
           agent_version: AGENT_VERSION,
           category:      (p && p.category === 'bug') ? 'bug' : 'idea',
@@ -36183,8 +36194,9 @@ function startWebDashboard(port) {
               minutes: slice.minutes, lines: slice.lines, removed: slice.removed,
               bytes: slice.bytes, truncated: slice.truncated,
               from: slice.from, to: slice.to, character: slice.character,
+              ...(targetInfo ? { target_info: targetInfo } : {}),
             },
-          } : {}),
+          } : (targetInfo ? { log_meta: { target_info: targetInfo } } : {})),
           ...(screenshots.length ? { screenshots } : {}),
         };
         const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/feedback');
@@ -36384,6 +36396,11 @@ function startWebDashboard(port) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'proxy error', detail: err.message }));
         }
+      }
+      // Target Info's ↻ on a target with no stats (FB-95): forget this target's lookup, ask the bot again.
+      if (req.method === 'POST' && req.url.split('?')[0] === '/api/mob-info/retry') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(mobInfoRetry()));
       }
       // Boss loot for the PoP overlay's target panel — same catalog cache the
       // Mob Info overlay uses (fetchMobInfo, 6h TTL), keyed by guide npcName
@@ -51148,6 +51165,52 @@ function _livePetHpByOwner() {
 const _mobInfoByName  = new Map();   // normName → { at, mob|null }
 const _mobInfoInflight = new Set();
 const MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;
+// Why a target has no stats (FB-95, "target info showing no catalog stats for this target"). That one line stood for
+// six different situations - the mob is not in the catalog, the bot could not be reached, the character is on another
+// server, there is no guild connection, a lookup never finished - and a report could not say which. Every outcome of
+// fetchMobInfo is written here per cache key; buildMobInfo hands the newest to the overlay as `mob_miss` (which prints
+// the reason and a retry) and to a feedback report (mobInfoFeedbackMeta).
+const _mobInfoLast = new Map();   // cache key → { reason, at, status, detail, name_asked, zone_id, asking_at }
+const MOB_INFO_STALL_MS = 30 * 1000;   // a request still "in flight" past this (its 8 s timeout is long gone) is dead
+const MOB_MISS_TEXT = {
+  looking_up:     'looking up…',
+  not_in_catalog: 'not in the catalog',
+  lookup_failed:  'lookup failed — retrying',
+  off_quarm:      'off-Quarm server',
+  no_guild:       'stats need a guild connection',
+};
+function _mobInfoNote(key, reason, name, zoneId, status, detail) {
+  if (_mobInfoLast.size >= 200 && !_mobInfoLast.has(key)) _mobInfoLast.delete(_mobInfoLast.keys().next().value);
+  _mobInfoLast.set(key, {
+    reason, at: Date.now(), status: status == null ? null : status, detail: detail || null,
+    name_asked: String(name || ''), zone_id: zoneId == null ? null : zoneId, asking_at: null,
+  });
+}
+// A request has gone out for this key. Only stamps the time: the previous outcome stays what the overlay reads until
+// the answer lands, so a miss does not flicker to "looking up" every minute when it is asked again.
+function _mobInfoAsking(key, name, zoneId) {
+  const l = _mobInfoLast.get(key);
+  if (l) { l.asking_at = Date.now(); return; }
+  _mobInfoLast.set(key, { reason: null, at: 0, status: null, detail: null, name_asked: String(name || ''), zone_id: zoneId == null ? null : zoneId, asking_at: Date.now() });
+}
+// A catalog row, not a husk: the bot's rows always carry an id, a level or an HP. An empty object in a zone pack or in
+// an answer is a miss, not a hit that prints blank stats.
+function _mobHasStats(m) {
+  return !!m && typeof m === 'object' && (m.id != null || m.level != null || m.hp != null);
+}
+// What Target Info prints when there is no row to show: the newest outcome for this key, or null when there is one.
+function _mobMiss(key, cached, name, zoneId) {
+  if (cached && cached.mob) return null;
+  const l = _mobInfoLast.get(key) || null;
+  let reason;
+  if (l && l.reason && l.reason !== 'ok' && l.reason !== 'pack') reason = l.reason;
+  else reason = cached ? 'not_in_catalog' : 'looking_up';
+  return {
+    reason, text: MOB_MISS_TEXT[reason] || MOB_MISS_TEXT.not_in_catalog,
+    status: l ? l.status : null, detail: l ? l.detail : null, at: l && l.at ? l.at : null,
+    name_asked: l && l.name_asked ? l.name_asked : String(name || ''), zone_id: l ? l.zone_id : (zoneId == null ? null : zoneId),
+  };
+}
 function _normMobNameAgent(n) {
   // Strip the "'s corpse" suffix so the Mob Info cache key matches the live
   // NPC row for a freshly-killed mob you're looting from. Without this,
@@ -51384,12 +51447,18 @@ function startMobPacks() {
 // error: old stats beat none). Readers compare `now - at` to MOB_INFO_TTL_MS, so a miss is stored with `at` set back
 // by the difference instead of each reader learning a second TTL.
 const MOB_INFO_MISS_TTL_MS = 60 * 1000;
-function _mobInfoStore(key, status, body) {
-  let mob = null;
+function _mobInfoStore(key, status, body, name, zoneId) {
+  let mob = null, reason = 'lookup_failed', detail = null;
   if (status === 200) {
-    try { const j = JSON.parse(body); if (j && !j.error && j.mob) mob = j.mob; } catch { /* not JSON: a miss */ }
-  }
-  if (mob) { _mobInfoByName.set(key, { at: Date.now(), mob }); return; }
+    try {
+      const j = JSON.parse(body);
+      if (j && j.error) detail = String(j.error).slice(0, 80);
+      else if (j && _mobHasStats(j.mob)) mob = j.mob;
+      else reason = 'not_in_catalog';   // the bot answered, and there is no such row
+    } catch { detail = 'not JSON'; }   // a miss, not a verdict on the mob
+  } else detail = 'HTTP ' + status;
+  if (mob) { _mobInfoByName.set(key, { at: Date.now(), mob }); _mobInfoNote(key, 'ok', name, zoneId, status); return; }
+  _mobInfoNote(key, reason, name, zoneId, status, detail);
   const prev = _mobInfoByName.get(key);
   _mobInfoByName.set(key, { at: Date.now() - (MOB_INFO_TTL_MS - MOB_INFO_MISS_TTL_MS), mob: (prev && prev.mob) || null });
 }
@@ -51400,20 +51469,35 @@ function fetchMobInfo(name, selfChar, zoneId, npcId) {
   if (!norm) return;
   const key = _mobInfoCacheKey(name, zoneId, npcId);
   // The catalog (stats, resists, rampage, zone packs) is Project Quarm's data: off Quarm it would state numbers the
-  // mob does not have. Cache "no row" so Mob Info shows log-only data instead of waiting on a lookup.
+  // mob does not have. Cache "no row" so Mob Info shows log-only data instead of waiting on a lookup. Held as a
+  // minute-long miss, never pinned for six hours (FB-95): nothing is asked either way, and a wrong call heals itself.
   if (!eqServerCaps(eqServerForCharacter(selfChar || _primaryCharacter())).catalog) {
-    _mobInfoByName.set(key, { at: Date.now(), mob: null });
+    _mobInfoByName.set(key, { at: Date.now() - (MOB_INFO_TTL_MS - MOB_INFO_MISS_TTL_MS), mob: null });
+    _mobInfoNote(key, 'off_quarm', name, zoneId);
     return;
   }
-  if (_mobInfoInflight.has(key)) return;
+  if (_mobInfoInflight.has(key)) {
+    // FB-94 closed one way a request never reported back; this is the backstop for the next one (FB-95). Past the
+    // stall mark the in-flight mark is cleared and the mob is asked for again, with the reason on record.
+    const l = _mobInfoLast.get(key);
+    if (!(l && l.asking_at && Date.now() - l.asking_at > MOB_INFO_STALL_MS)) return;
+    _mobInfoInflight.delete(key);
+    _mobInfoNote(key, 'lookup_failed', name, zoneId, null, 'stalled');
+  }
   const cached = _mobInfoByName.get(key);
   if (cached && (Date.now() - cached.at) < MOB_INFO_TTL_MS) return;
-  // Kept on this machine (a zone pack above): no round trip, and it works offline.
+  // Kept on this machine (a zone pack above): no round trip, and it works offline. An empty entry is no hit.
   const packed = npcId != null ? null : _mobPackLookup(name, zoneId);
-  if (packed) { _mobInfoByName.set(key, { at: Date.now(), mob: packed }); return; }
+  if (_mobHasStats(packed)) { _mobInfoByName.set(key, { at: Date.now(), mob: packed }); _mobInfoNote(key, 'pack', name, zoneId); return; }
   const opts = _uploadOpts;
-  if (!opts || !opts.botUrl || !opts.token) return;          // local-only → no lookup
+  if (!opts || !opts.botUrl || !opts.token) {                // local-only → no lookup, and the overlay says why
+    const prev = _mobInfoByName.get(key);
+    _mobInfoByName.set(key, { at: Date.now() - (MOB_INFO_TTL_MS - MOB_INFO_MISS_TTL_MS), mob: (prev && prev.mob) || null });
+    _mobInfoNote(key, 'no_guild', name, zoneId);
+    return;
+  }
   _mobInfoInflight.add(key);
+  _mobInfoAsking(key, name, zoneId);
   // #141 — send the requesting character so the bot zone-scopes the catalog row
   // (id = zoneid*1000+n) to OUR zone; absent → bot falls back catalog-wide.
   let url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/mob-info') + '?name=' + encodeURIComponent(name);
@@ -51431,17 +51515,17 @@ function fetchMobInfo(name, selfChar, zoneId, npcId) {
       res.on('data', c => body += c);
       res.on('end', () => {
         _mobInfoInflight.delete(key);
-        _mobInfoStore(key, res.statusCode, body);
+        _mobInfoStore(key, res.statusCode, body, name, zoneId);
       });
       // A connection that drops AFTER the headers (the bot restarting mid-answer) emits neither 'end' nor a request
       // 'error' nor 'timeout' - only 'close' on the response, with `complete` false. Without this the in-flight mark
       // stayed forever and the mob was never asked for again until Mimic restarted (FB-94, measured on Node 22).
-      res.on('close', () => { if (!res.complete) _mobInfoInflight.delete(key); });
+      res.on('close', () => { if (!res.complete) { _mobInfoInflight.delete(key); _mobInfoNote(key, 'lookup_failed', name, zoneId, res.statusCode, 'dropped'); } });
     });
-    req.on('error',   () => { _mobInfoInflight.delete(key); });
-    req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(key); });
+    req.on('error',   (e) => { _mobInfoInflight.delete(key); _mobInfoNote(key, 'lookup_failed', name, zoneId, null, String((e && e.code) || 'error').slice(0, 40)); });
+    req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(key); _mobInfoNote(key, 'lookup_failed', name, zoneId, null, 'timeout'); });
     req.end();
-  } catch { _mobInfoInflight.delete(key); }
+  } catch { _mobInfoInflight.delete(key); _mobInfoNote(key, 'lookup_failed', name, zoneId, null, 'bad request'); }
 }
 
 // ── Spawn map core (Mimic 2.9, first build: the 2D tracker overlay) ─────────────────────────────
@@ -56004,17 +56088,65 @@ function _pickMobBody(mob, st, selfChar, zoneId, now) {
     };
   } catch { return mob; }
 }
+// #141 — the requesting character (+ its zone id) so the bot zone-scopes the
+// cross-client merge to OUR zone: a same-name mob in ANOTHER zone (e.g. "a
+// geonid" in Crystal Caverns vs The Wakening Land) must not leak its stats,
+// debuffs, or casts into our Target Info.
+function _mobTargetCtx(st) {
+  let selfChar = '';
+  for (const ch of Object.keys(_zealState)) { if (_zealState[ch] === st) { selfChar = ch; break; } }
+  const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  return { selfChar, zoneId, key: _mobInfoCacheKey(st.target_name, zoneId) };
+}
+// ↻ on the overlay's "no catalog stats" line (FB-95): forget what this target's lookup remembered, ask again now.
+// The body chosen by npc id (FB-80) keeps its own keys beside the plain one, so those go too.
+function mobInfoRetry() {
+  const st = _currentTargetState();
+  if (!st || !st.target_name) return { ok: false, reason: 'no target' };
+  const { selfChar, zoneId, key } = _mobTargetCtx(st);
+  for (const k of [..._mobInfoByName.keys()]) if (k === key || k.startsWith(key + '|n')) _mobInfoByName.delete(k);
+  _mobInfoLast.delete(key);
+  _mobInfoInflight.delete(key);
+  fetchMobInfo(st.target_name, selfChar, zoneId);
+  return { ok: true };
+}
+// What a feedback report carries about Target Info (FB-95: the report said "no catalog stats for this target" and
+// nothing about which target, which lookup or why). The mob's name as asked, the zone, what the cache held and the last
+// answer. No other player's name: a corpse or a single word with no catalog row may be a person, so it is withheld.
+function mobInfoFeedbackMeta(now) {
+  try {
+    const st = _currentTargetState();
+    if (!st || !st.target_name) return null;
+    now = now || Date.now();
+    const { selfChar, zoneId, key } = _mobTargetCtx(st);
+    const cached = _mobInfoByName.get(key) || null;
+    const last = _mobInfoLast.get(key) || null;
+    const miss = _mobMiss(key, cached, st.target_name, zoneId);
+    const asked = String(st.target_name).trim();
+    const corpse = /[`'’]s\s+corpse\d*$/i.test(asked);
+    const maybePlayer = !corpse && !/\s/.test(asked) && !(cached && cached.mob);
+    const withheld = corpse ? 'corpse' : (maybePlayer ? 'single word, may be a player' : null);
+    const packed = zoneId != null ? _mobPackLookup(asked, zoneId) : null;
+    const opts = _uploadOpts;
+    const left = cached ? Math.max(0, Math.round((MOB_INFO_TTL_MS - (now - cached.at)) / 1000)) : null;
+    return {
+      name_asked: withheld ? null : asked.slice(0, 80),
+      name_withheld: withheld,
+      zone_id: zoneId,
+      shown: miss ? miss.reason : 'stats',
+      cache: cached ? { state: cached.mob ? 'row' : 'miss', reask_in_s: left, mob_id: cached.mob && cached.mob.id != null ? cached.mob.id : null } : { state: 'none' },
+      last: last ? { reason: last.reason, status: last.status, detail: last.detail, age_s: last.at ? Math.round((now - last.at) / 1000) : null } : null,
+      in_flight: _mobInfoInflight.has(key),
+      zone_pack: zoneId == null ? 'no zone' : (packed ? (_mobHasStats(packed) ? 'entry' : 'hollow entry') : 'no entry'),
+      catalog_allowed: !!eqServerCaps(eqServerForCharacter(selfChar || _primaryCharacter())).catalog,
+      guild_connection: !!(opts && opts.botUrl && opts.token),
+    };
+  } catch { return null; }
+}
 function buildMobInfo() {
   const st = _currentTargetState();
   if (!st || !st.target_name) return null;
-  // #141 — the requesting character (+ its zone id) so the bot zone-scopes the
-  // cross-client merge to OUR zone: a same-name mob in ANOTHER zone (e.g. "a
-  // geonid" in Crystal Caverns vs The Wakening Land) must not leak its stats,
-  // debuffs, or casts into our Target Info.
-  let selfChar = '';
-  for (const ch of Object.keys(_zealState)) { if (_zealState[ch] === st) { selfChar = ch; break; } }
-  const myZoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
-  const mobKey = _mobInfoCacheKey(st.target_name, myZoneId);
+  const { selfChar, zoneId: myZoneId, key: mobKey } = _mobTargetCtx(st);
   let cached = _mobInfoByName.get(mobKey);
   if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) {
     fetchMobInfo(st.target_name, selfChar, myZoneId);
@@ -56126,6 +56258,8 @@ function buildMobInfo() {
     target_hp_max:  targetVals ? targetVals.max : null,
     mob:            cached && cached.mob ? _pickMobBody(cached.mob, st, selfChar, myZoneId, Date.now()) : null,   // null until the lookup returns (FB-80: the right one of two same-name bodies)
     loading:        !cached,
+    // FB-95: why there is no row to show (null when there is one) — the overlay prints it beside a ↻ retry.
+    mob_miss:       _mobMiss(mobKey, cached, st.target_name, myZoneId),
     target_buffs:   buffs,
     // PC = live buff data (own Zeal list OR the target's uploaded live-state)
     // — drives the "(live)" header suffix instead of "(observed)".
