@@ -2761,6 +2761,16 @@ the website has not cached the zone). Six-hour per-zone cache, weak ETag over th
 budget kind `zone_spawns` (30/min, GET, not sheddable). Instance sentinel respawn (1,700,000 s)
 reads `respawn_s: null`. Consumer: the Mimic overlay (`docs/DESIGN-mimic-2.9-spawn-map.md`).
 
+### Traps on the Map (`traps` in the zone-spawns body) — 2026-10-23 (draft)
+Bot `utils/trapSpawns.js` (called from `zoneSpawns.build`, never throws): `point.trap` = the helper NPC id of a **trap spot**, and
+`traps.defs[<id>]` = `{ k, grp, ch, r, title, text }`. A spot is a body-type 65/66/67 helper that is a key of the zone's
+`encounters/traps.lua` table (`TRAP_SPAWNS` / `TYPES`, parsed out of `eqemu_quest_scripts`) or is named for a trap. Plane of Earth's
+ladder is `[helper] = { trap mob, named, placeholder }`; `grp` 1-12 is the colour slot (by helper id), `ch` the named's initial.
+`traps.table` = the zone's `eqemu_traps` rows in words (`effect` per `zone/trap.h`: 0 spell, 1 alarm, 2/3 spawn, 4 damage), `hid` =
+`undetectable` (drawn, hollow and dashed). Agent: `out.traps` in the map state. Overlay: `apps/mimic/map.html` traps pass (`trapHex`,
+`trapDefOf`, `layoutTrapHits`), ⚙ switch `traps`, colour `trap`. Mirror: `eqemu_traps` (migration `20261023140000`, `sync-from-eqmac.js`
+`traps`). Tests: `test/trap-spawns.test.js`, `test/spawn-map.test.js`.
+
 ### Guild trigger packs: PoP and the Ring of Fire (`guild_triggers.source_pack`) — 2026-09-30
 Imported straight into `guild_triggers`, no code: `pop-2026-10` (374 rows —
 recast bars on the server's NPC spell-list recast, boss stat cards, event

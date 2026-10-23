@@ -105,7 +105,11 @@ const WHITELIST = {
   // Merchant inventories + placed objects + mob chatter.
   merchantlist:        { dest: 'eqemu_merchantlist',         transform: 'merchantlist' },
   object:              { dest: 'eqemu_object',               transform: 'object' },
-  npc_emotes:          { dest: 'eqemu_npc_emotes',           transform: 'npc_emotes' },
+  // The server's trap table (the guild lead, 2026-10-23: "maps should show traps as well"). 83 rows in 8 zones, none
+  // in the Planes of Power (PoP traps are NPCs placed through the spawn tables). Quarm's dump only: Al'Kabor's
+  // would hand back another server's traps (NO_FALLBACK below).
+  traps:               { dest: 'eqemu_traps',                transform: 'traps' },
+  npc_emotes:         { dest: 'eqemu_npc_emotes',           transform: 'npc_emotes' },
   // Pather routes (the guild lead, 2026-10-12). These two never reach Supabase as rows: their dests are
   // staging buffers that buildZoneGrids folds into ONE eqemu_zone_grids row per zone (711k waypoints as
   // plain rows would cost database size for something read a zone at a time).
@@ -115,7 +119,7 @@ const WHITELIST = {
 
 // Tables that must come from the Quarm dump or not at all: the Al'Kabor fallback below would hand back
 // ANOTHER server's routes, which is worse than none (the validation gate fails the run instead).
-const NO_FALLBACK = new Set(['grid', 'grid_entries']);
+const NO_FALLBACK = new Set(['grid', 'grid_entries', 'traps']);
 
 // ── Supabase REST helper ────────────────────────────────────────────────────
 async function sb(p, opts = {}) {
@@ -816,6 +820,25 @@ const TRANSFORMS = {
     if (r.id == null) return null;
     return r;
   },
+  // zone/trap.cpp's table. `group` is a reserved word in Postgres, so it lands as trap_group; skill and the
+  // content-flag columns are not mirrored (nothing on a map reads them).
+  traps: (cols, row) => {
+    const r = pick(cols, row, ['id', 'zone', 'x', 'y', 'z', 'chance', 'maxzdiff', 'radius', 'effect', 'effectvalue',
+      'effectvalue2', 'message', 'level', 'respawn_time', 'respawn_var', 'triggered_number', 'group',
+      'despawn_when_triggered', 'undetectable', 'min_expansion', 'max_expansion']);
+    if (r.id == null || !r.zone) return null;
+    const n = (v) => (v == null ? 0 : v);
+    return {
+      id: r.id, zone: r.zone, x: n(r.x), y: n(r.y), z: n(r.z),
+      chance: n(r.chance), maxzdiff: n(r.maxzdiff), radius: n(r.radius),
+      effect: n(r.effect), effectvalue: n(r.effectvalue), effectvalue2: n(r.effectvalue2),
+      message: r.message ?? '', level: r.level ?? 1,
+      respawn_time: r.respawn_time ?? 60, respawn_var: n(r.respawn_var),
+      triggered_number: n(r.triggered_number), trap_group: n(r.group),
+      despawn_when_triggered: n(r.despawn_when_triggered), undetectable: n(r.undetectable),
+      min_expansion: r.min_expansion ?? null, max_expansion: r.max_expansion ?? null,
+    };
+  },
   // Upstream schema: id (auto-inc PK), emoteid (the script-key reference),
   // event_ (already suffixed in source — SQL reserved word), type, text.
   npc_emotes: (cols, row) => {
@@ -951,7 +974,8 @@ const PK_MAP = {
   eqemu_fishing:                     ['id'],
   eqemu_merchantlist:                ['merchantid', 'slot'],
   eqemu_object:                      ['id'],
-  eqemu_npc_emotes:                  ['id'],
+  eqemu_traps:                       ['id'],
+  eqemu_npc_emotes:                 ['id'],
   eqemu_zone_grids:                  ['zoneid'],
 };
 
@@ -1113,6 +1137,7 @@ if (require.main !== module) return;
     'eqemu_fishing',
     'eqemu_merchantlist',
     'eqemu_object',
+    'eqemu_traps',
     'eqemu_npc_emotes',
     'eqemu_zone_grids',
   ];
@@ -1149,6 +1174,7 @@ if (require.main !== module) return;
     eqemu_merchantlist: 20000, eqemu_tradeskill_recipe: 5000,
     eqemu_tradeskill_recipe_entries: 40000, eqemu_npc_emotes: 3000,
     eqemu_zone_points: 1000, eqemu_doors: 6000,
+    eqemu_traps: 40,   // 83 in the 2026-09-27 dump; a table that imports nothing is the silent no-op these floors exist for
   };
   const problems = [];
   for (const [table, floor] of Object.entries(MIN_ROWS)) {
