@@ -53,6 +53,7 @@ export const releases: Release[] = [
       'A session or a shared raid listed every kill of the night on its map. It shows only the kills inside its own window now.',
       'A window that started before its first recorded minute opened on "no zone, 0 raiders". It opens on the first recorded minute.',
       'The replay\'s session list showed two raids that ran back to back as one session. They are two now.',
+      'The damage chart on a wiped fight drew the boss at 0% health, as if it had died. A wipe now measures the damage against the boss\'s full health, so the line stops where the boss really was.',
     ],
   },
   {

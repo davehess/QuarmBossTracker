@@ -29,7 +29,7 @@ import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
-type NpcRef     = { id: number; name: string; zone_short: string | null };
+type NpcRef     = { id: number; name: string; zone_short: string | null; hp: number | null };
 type ZoneRow    = { short_name: string; long_name: string };
 type PlayerRow  = {
   character_name: string;
@@ -187,7 +187,7 @@ async function load(id: string) {
       .select(`
         id, started_at, duration_sec, total_damage, total_dps, zone_short, npc_id,
         classification, is_wipe, classification_reason, classification_by, discord_msg_link,
-        eqemu_npc_types ( id, name, zone_short ),
+        eqemu_npc_types ( id, name, zone_short, hp ),
         encounter_players ( character_name, total_damage, dps, duration_sec, rank, has_pets )
       `)
       .eq('id', id)
@@ -901,6 +901,8 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
           mt={curve.mt}
           durationSec={enc.duration_sec || curve.buckets[curve.buckets.length - 1] || 1}
           classOf={classOf}
+          bossHp={enc.eqemu_npc_types?.hp ?? null}
+          killed={!isWipe(enc)}
         />
       )}
 
