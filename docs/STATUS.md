@@ -136,6 +136,13 @@ next touch one rather than assuming a missing row means a missing doc.
   refuses, the right-click row shows only while it is on; Setup ALL never shows a leftover hidden Canvas window; Esc leaves Setup
   ALL / THIS and Canvas arranging. Test: `test/canvas-stays-off.test.js`. Open: the raider's screen was never seen, so the exact
   trigger is unconfirmed; ask for the agent log's `[canvas]` line.
+- **🧪 raidmimic.com: two layout previews of the "player first, guild second" story (web 2.1.12 on `beta`, 2026-10-23, the guild lead:
+  *"less about me setting it up as a service for them and more about here's what you get as a player … use this yourself, but I can
+  help you with a self-hosted version"*).** `https://b.wolfpack.quest/raidmimic?v=player` (**Ladder**: one scroll, player, jump in now,
+  what a guild could have, then run your own or have it hosted) and `https://b.wolfpack.quest/raidmimic?v=paths` (**Pick your path**:
+  three doors, Player / Guild / Self-host). The default page is untouched and every raidmimic host ignores `?v=`. Words:
+  `web/lib/raidmimicPlayer.ts`. There is no public guild hub today (the shared trial is still Coming), so "jump in" is the free
+  download, local mode, raid codes and shared links. Waiting on the guild lead's pick; the loser is deleted. Test: `test/raidmimic-landing.test.js`.
 - **✅ raidmimic.com: six more captures, in a gallery under the player (web 2.1.8 on `beta`; graduated to `main` with web 2.1.11,
   2026-10-23, the guild lead's pick; the guild lead's *"update raidmimic.com with more assets"*).** A raid pull on Bertoxxulous in Plane of Disease, drawn by
   `scripts/raidmimic-shots/shoot.mjs` from fixtures with invented raiders (no real screenshot is used): **Map on a floor plan**

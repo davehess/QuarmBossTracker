@@ -31,6 +31,7 @@ import {
 import { isEqmimicHost } from '../web/lib/eqmimicHost.ts';
 import * as C from '../web/lib/raidmimicLanding.ts';
 import * as EQ from '../web/lib/eqmimicLanding.ts';
+import * as PL from '../web/lib/raidmimicPlayer.ts';
 import { metaForPath, DEFAULT_DESCRIPTION } from '../web/lib/pageMeta.ts';
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -40,6 +41,7 @@ const L = 'web/app/raidmimic/_landing/';
 // Every sentence the content module can put on the page, as one string (for the "no invented X" sweeps).
 const allText = () => JSON.stringify([
   C.HERO, C.WORKS_WITH, C.DATA, C.COST, C.WORLDS, C.CTA, C.MOMENTS, C.COMING, C.CLIPS, C.AUDIENCES, C.CLIPS_HEAD, C.CLIPS_NOTE, C.SHOTS, C.SHOTS_HEAD, C.MORE_HEAD,
+  PL.ALL_TEXT,   // the two layout previews' words (?v=player, ?v=paths): same sweeps, same rules
 ]);
 
 describe('the host list', () => {
@@ -152,10 +154,15 @@ describe('the page', () => {
     expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
     expect(page).not.toMatch(/getSessionUser|supabase/i);
   });
-  it('renders the one layout, Scene-first, with no `?v=` switch: every earlier preview and the tour are deleted', () => {
+  it('renders Scene-first by default; only the two 2026-10-23 previews ride on `?v=` (player, paths): every earlier preview and the tour are deleted', () => {
     expect(page).toMatch(/return <SceneLayout ctx=\{ctx\} \/>;/);
-    expect(page.match(/<[A-Z]\w+Layout /g)).toHaveLength(1);
-    expect(page).not.toMatch(/searchParams|v === '|hero=/);
+    expect(page.match(/<[A-Z]\w+Layout /g)).toHaveLength(3);   // Scene-first (the default), Ladder, Pick your path
+    expect(page).toMatch(/if \(v === 'player'\) return <LadderLayout ctx=\{ctx\} \/>;/);
+    expect(page).toMatch(/if \(v === 'paths'\) return <PathsLayout ctx=\{ctx\} \/>;/);
+    expect(page.match(/v === '/g)).toHaveLength(2);
+    expect(page.match(/searchParams\??\./g)).toHaveLength(1);  // the one read, and it goes through variantOf
+    expect(page).toMatch(/variantOf\(searchParams\?\.v\)/);
+    expect(page).not.toMatch(/hero=/);
     expect(page).not.toMatch(/raidmimicVariant|PitchLayout|TourLayout|OutputLayout|WatchLayout|StoryLayout|ScreenLayout/);
     for (const gone of ['TourLayout', 'OutputLayout', 'WatchLayout', 'StoryLayout', 'ScreenLayout', 'PitchLayout', 'Figures']) {
       expect(fs.existsSync(path.join(ROOT, `${L}${gone}.tsx`)), gone).toBe(false);
@@ -239,14 +246,16 @@ describe('the layout', () => {
     expect(scene.indexOf('<Footer')).toBeGreaterThan(scene.lastIndexOf('</section>'));
   });
   it('server components except the three that play: only SceneClip, ClipTabs and MascotVideo are client files', () => {
-    for (const f of ['Parts.tsx', 'SceneLayout.tsx', 'MascotHero.tsx']) expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
+    for (const f of ['Parts.tsx', 'SceneLayout.tsx', 'MascotHero.tsx', 'LadderLayout.tsx', 'PathsLayout.tsx', 'VariantParts.tsx']) expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
     expect(read('web/app/raidmimic/page.tsx')).not.toMatch(/['"]use client['"]/);
     for (const f of ['SceneClip.tsx', 'ClipTabs.tsx', 'MascotVideo.tsx']) expect(read(L + f), f).toMatch(/^'use client';/);
-    expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual(['ClipTabs.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'Parts.tsx', 'SceneClip.tsx', 'SceneLayout.tsx']);
+    expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual([
+      'ClipTabs.tsx', 'LadderLayout.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'SceneClip.tsx', 'SceneLayout.tsx', 'VariantParts.tsx',
+    ]);
   });
   it('fetches and embeds nothing external; every outbound link is one we name', () => {
     const urls = new Set();
-    for (const f of ['page.tsx', 'Parts.tsx', 'SceneLayout.tsx', 'ClipTabs.tsx', 'SceneClip.tsx', 'MascotHero.tsx', 'MascotVideo.tsx']) {
+    for (const f of ['page.tsx', 'Parts.tsx', 'SceneLayout.tsx', 'ClipTabs.tsx', 'SceneClip.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'LadderLayout.tsx', 'PathsLayout.tsx', 'VariantParts.tsx']) {
       for (const m of (f === 'page.tsx' ? code('web/app/raidmimic/page.tsx') : code(L + f)).matchAll(/https?:\/\/[^\s'"`)<>]+/g)) urls.add(m[0]);
     }
     expect([...urls]).toEqual([]);   // every address is a constant in the content module
@@ -331,7 +340,7 @@ describe('honesty: "coming" means coming', () => {
 });
 
 function sceneSrc() {
-  return ['SceneLayout', 'ClipTabs', 'SceneClip', 'MascotHero', 'MascotVideo'].map(f => code(`${L}${f}.tsx`)).join('\n');
+  return ['SceneLayout', 'ClipTabs', 'SceneClip', 'MascotHero', 'MascotVideo', 'LadderLayout', 'PathsLayout', 'VariantParts'].map(f => code(`${L}${f}.tsx`)).join('\n');
 }
 
 describe('metadata: the tab AND the Discord card (CLAUDE.md, every page unfurls with its own name)', () => {
@@ -652,5 +661,185 @@ describe('the recordings’ fixtures name invented raiders only', () => {
     expect(walls._about).toMatch(/Not Brewall/);
     expect(walls.segs.length).toBeGreaterThan(300);
     for (const g of walls.segs) expect(g[4]).toBeLessThan(walls.bands.length);
+  });
+});
+
+// ─── The two layout previews (the guild lead, 2026-10-23): ?v=player "Ladder" and ?v=paths "Pick your path" ──────────────
+// "less about me setting it up as a service for them and more about here's what you get as a player, here's what you could
+// have as a guild ... use this yourself, but I can help you with a self-hosted version". Both read web/lib/raidmimicPlayer.ts;
+// the default page (no `?v=`) is untouched and every raidmimic host shows it whatever the query says.
+describe('the layout previews (?v=player, ?v=paths)', () => {
+  const P = PL;
+  const page = code('web/app/raidmimic/page.tsx');
+  const ladder = code(L + 'LadderLayout.tsx');
+  const paths = code(L + 'PathsLayout.tsx');
+  const vparts = code(L + 'VariantParts.tsx');
+  const mod = code('web/lib/raidmimicPlayer.ts');
+  const at = (src, s) => { const i = src.indexOf(s); expect(i, s).toBeGreaterThan(-1); return i; };
+  const inOrder = (src, list) => { const idx = list.map(s => at(src, s)); expect([...idx].sort((a, b) => a - b)).toEqual(idx); };
+
+  describe('the switch', () => {
+    it('names exactly two previews and refuses everything else, so the default is what production shows', () => {
+      expect(P.VARIANTS).toEqual(['player', 'paths']);
+      expect(P.variantOf('player')).toBe('player');
+      expect(P.variantOf('paths')).toBe('paths');
+      for (const v of ['b', 'c', 'd', 'e', 'f', 'PLAYER', 'Paths', '', ' player', 'player,paths', undefined, null, ['player'], 1, {}]) expect(P.variantOf(v), String(v)).toBeNull();
+    });
+    it('a raidmimic host always gets the default page, even if a query reached the page', () => {
+      expect(page).toMatch(/const v = onHost \? null : variantOf\(searchParams\?\.v\);/);
+      expect(page.indexOf('const onHost')).toBeLessThan(page.indexOf('const v ='));
+    });
+    it('the title, description and robots are the page’s own and are not varied: the card is the same for every layout', () => {
+      expect(page.match(/export const metadata/g)).toHaveLength(1);
+      expect(page).not.toMatch(/generateMetadata/);
+      expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
+      expect(code('web/lib/pageMeta.ts')).not.toMatch(/raidmimic[^\n]*\?v=|searchParams/);   // the card is keyed by path alone
+    });
+    it('the default layout and its parts do not know the previews exist: Scene-first is byte-for-byte what it was', () => {
+      for (const f of ['SceneLayout.tsx', 'Parts.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'SceneClip.tsx']) {
+        expect(read(L + f), f).not.toMatch(/raidmimicPlayer|VariantParts|PreviewBar|LadderLayout|PathsLayout/);
+      }
+      expect(code(L + 'SceneLayout.tsx')).toMatch(/<ClipTabs \/>/);   // no `only`: both audiences, as ever
+      expect(code(L + 'ClipTabs.tsx')).toMatch(/export default function ClipTabs\(\{ only \}: \{ only\?: Audience \} = \{\}\)/);
+    });
+    it('both previews carry a bar to flip between today’s page and each layout, and the default page has none', () => {
+      expect(vparts).toMatch(/export function PreviewBar/);
+      expect(vparts).toMatch(/href=\{RAIDMIMIC_LANDING_PATH\}/);
+      expect(vparts).toMatch(/\$\{RAIDMIMIC_LANDING_PATH\}\?v=\$\{v\}/);
+      expect(ladder).toMatch(/<PreviewBar current="player" \/>/);
+      expect(paths).toMatch(/<PreviewBar current="paths" \/>/);
+      expect(P.VARIANT_LABEL).toEqual({ player: 'Ladder', paths: 'Pick your path' });
+    });
+  });
+
+  describe('Ladder (?v=player): one scroll, in the order the guild lead said it', () => {
+    it('has four rungs: what you get as a player, jump in now, what your guild could have, when your guild is using it', () => {
+      expect([P.PLAYER, P.JUMP, P.GUILD, P.RUN].map(r => [r.n, r.title])).toEqual([
+        ['1', 'What you get as a player'], ['2', 'Jump in now'], ['3', 'What your guild could have'], ['4', 'When your guild is using it'],
+      ]);
+      expect([P.PLAYER, P.JUMP, P.GUILD, P.RUN].map(r => r.id)).toEqual(['player', 'jump-in', 'guild', 'run-it']);
+      inOrder(ladder, ['<Rung {...PLAYER}>', '<Rung {...JUMP}>', '<Rung {...GUILD}>', '<Rung {...RUN} last>']);
+    });
+    it('the page around the rungs: beta tag, preview bar, hero, the mascot and captures, then the rungs, the coming list, the ask, the footer', () => {
+      inOrder(ladder, ['<BetaTag', '<PreviewBar', '<header', '<MascotHero', '<ol className', '<ComingList', '<CtaBand', '<Footer']);
+    });
+    it('keeps the existing captures and clips: the fan of captures, the raiders’ scenes, the leaders’ scene and the gallery', () => {
+      inOrder(ladder, ['<MascotHero', '<ClipTabs only="raiders" />', '<MoreShots />', '<Rung {...JUMP}>', '<Rung {...GUILD}>', '<ClipTabs only="leaders" />']);
+      expect(ladder.match(/<ClipTabs /g)).toHaveLength(2);
+      expect(code(L + 'ClipTabs.tsx')).toMatch(/clip-stage-\$\{only\}/);   // two players on one page need two stage ids
+    });
+    it('the player-only rung has a download and the step-by-step guide; the guild rung has the five things the guild lead named', () => {
+      expect(ladder).toMatch(/href=\{DOWNLOAD_URL\} className=\{PRIMARY_BTN\}/);
+      expect(ladder).toMatch(/href=\{ctx\.setup\}/);
+      expect(P.GUILD.points.map(p => p.head)).toEqual(['Raid review', 'Parses from every log', 'CH chain', 'Command Center', 'Shared replay']);
+    });
+    it('the last rung offers both ways to get a hub: run your own (free software, you host) and have it hosted (Coming)', () => {
+      expect(P.RUN.own.head).toBe('Run your own');
+      expect(P.RUN.hosted.head).toBe('Have it hosted');
+      expect(ladder).toMatch(/aria-label=\{RUN\.own\.head\}/);
+      expect(ladder).toMatch(/aria-label=\{RUN\.hosted\.head\}[\s\S]*?<StatusChip status="coming" \/>/);
+      expect(ladder).toMatch(/\{COST\.scale\}/);   // the only dollar figure rides in from the default page’s own module
+    });
+  });
+
+  describe('Pick your path (?v=paths): three doors by who is reading', () => {
+    it('has the doors Player, Guild and Self-host, each with a story, three points and its own next step', () => {
+      expect(P.DOORS.map(d => [d.id, d.name])).toEqual([['player', 'Player'], ['guild', 'Guild'], ['selfhost', 'Self-host']]);
+      for (const d of P.DOORS) {
+        expect(d.story.length, d.id).toBeGreaterThan(40);
+        expect(d.points, d.id).toHaveLength(3);
+        expect(d.next.length, d.id).toBeGreaterThan(5);
+        expect(d.more.length, d.id).toBeGreaterThan(5);
+        expect(['free', 'hub', 'choice'], d.id).toContain(d.tone);
+      }
+      expect(paths).toMatch(/DOORS\.map\(d => <DoorCard key=\{d\.id\} door=\{d\} ctx=\{ctx\} \/>\)/);
+      expect(paths).toMatch(/lg:grid-cols-3/);   // side by side from lg, stacked on a phone
+    });
+    it('each door ends in a real address: the download, the ask, the self-hosting guide (which exists)', () => {
+      expect(paths).toMatch(/href=\{DOWNLOAD_URL\} className=\{PRIMARY_BTN\}/);
+      expect(paths).toMatch(/href=\{SELFHOST_GUIDE_URL\} \{\.\.\.EXT\}/);
+      expect(paths.match(/ctx\.interest/g)?.length).toBeGreaterThanOrEqual(1);
+      expect(P.SELFHOST_GUIDE_URL).toBe('https://github.com/davehess/QuarmBossTracker/blob/main/docs/SELFHOSTING.md');
+      expect(fs.existsSync(path.join(ROOT, 'docs/SELFHOSTING.md'))).toBe(true);
+    });
+    it('the page: beta tag, preview bar, short hero, the doors, then “See it run” (the same captures and clips), the small print, the coming list and the ask', () => {
+      inOrder(paths, ['<BetaTag', '<PreviewBar', '<header', 'DOORS.map', 'id="see"', '<MascotHero', '<ClipTabs />', '<MoreShots />', 'id="works-with"', 'id="worlds"', '<ComingList', '<CtaBand', '<Footer']);
+      expect(paths).toMatch(/<ClipTabs \/>/);   // both audiences, like the default page
+    });
+  });
+
+  describe('both: the download is real and the words are honest', () => {
+    it('the download is the same direct link eqmimic.quest uses, served by the /mimic route', () => {
+      expect(P.DOWNLOAD_URL).toBe('https://wolfpack.quest/mimic?direct=1');
+      expect(P.DOWNLOAD_URL).toBe(`${EQ.WOLFPACK_ORIGIN}${EQ.DOWNLOAD_PATH}`);
+      expect(code('web/app/mimic/route.ts')).toMatch(/searchParams\.get\('direct'\) === '1'/);
+    });
+    it('what is not built is marked Coming and named in the inventory of promises', () => {
+      const inv = C.COMING.join(' ');
+      expect(P.JUMP.comingBody).toMatch(/shared trial/);
+      expect(P.JUMP.comingBody).toMatch(/not built yet/);
+      expect(inv).toMatch(/shared trial/);
+      expect(P.GUILD.comingBody).toMatch(/Not built yet/);
+      expect(inv).toMatch(/Raid boards shared between guilds/);
+      expect(P.RUN.hosted.fine).toMatch(/not built yet/);
+      expect(inv).toMatch(/multi-guild hosting/);
+      expect(P.RUN.own.points.find(p => p.head === 'Not turnkey yet').body).toMatch(/setup wizard is designed, not built/);
+      expect(inv).toMatch(/setup wizard/);
+      // the three promises are drawn as promises: the dashed Coming card or chip, never the green "works today" tag
+      expect(ladder.match(/<StatusChip status="coming" \/>/g)).toHaveLength(3);
+      expect(ladder.match(/<ComingCard /g)).toHaveLength(2);
+    });
+    it('says only what runs today as fact: the free local mode, raid codes of six hours, a shared link with no sign-in', () => {
+      const j = JSON.stringify(P.JUMP.steps);
+      expect(j).toMatch(/Free, for Windows/);
+      expect(j).toMatch(/Just me — stays on this PC/);
+      expect(j).toMatch(/six hours/);
+      expect(j).toMatch(/with no sign-in/);
+      expect(P.JUMP.comingBody).toMatch(/only guild hub running is Wolf Pack’s/);   // there is no public hub today, and the page says so
+      expect(P.HERO.fine).toMatch(/No guild, account or password/);
+      expect(read('apps/mimic/welcome.html')).toMatch(/Just me — stays on this PC/);
+      expect(read('packages/wolfpack-logsync/index.js')).toMatch(/A pass lasts six hours/);
+    });
+    it('the guild features need a hub and say so; the player features say they run on the PC alone', () => {
+      expect(P.GUILD.lead).toMatch(/needs one shared server for the guild, called a hub/);
+      expect(P.PLAYER.lead).toMatch(/runs on your own PC, and nothing is sent anywhere/);
+      expect(P.TAG.hub).toBe('Needs your guild’s server');
+      expect(P.TAG.free).toBe('Free · works today');
+    });
+    it('invents no price, count, testimonial or guarantee; the one dollar figure is the default page’s measured one', () => {
+      const t = JSON.stringify(P.ALL_TEXT);
+      expect(t).not.toMatch(/\$|£|€|\bper (?:month|year|seat|user|raider)\b|\/\s?(?:mo|month|yr|year)\b|% off|money-back/i);
+      expect(t).not.toMatch(/\b\d[\d,]*\+? (?:guilds|customers|raiders|users|teams)\b/i);
+      expect(t).not.toMatch(/testimonial|trusted by|loved by|“[^”]*” said|\bsaid\b|uptime of|SLA\b|guaranteed/i);
+      expect(t).toMatch(/no uptime guarantee/);                     // docs/TERMS-hosted.md §2
+      expect(C.COST.scale).toMatch(/not a quote/);
+      expect(mod).not.toMatch(/\$\d/);
+    });
+    it('is about the player first, not a service: no “as a service”, no “sign up”, no “contact sales”', () => {
+      const t = JSON.stringify(P.ALL_TEXT);
+      expect(t).not.toMatch(/as a service|sign up|contact sales|book a demo|pricing page|enterprise/i);
+      expect(P.HERO.kicker).toMatch(/free for every player/);
+    });
+    it('names no member, character or address, and the layouts hold no sentence of their own beyond labels', () => {
+      const t = JSON.stringify(P.ALL_TEXT) + mod + ladder + paths + vparts;
+      expect(t).not.toMatch(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
+      expect(t).not.toMatch(/zhtoekwakucbckvatfky|1168893924329402420|service_role|SUPABASE_|WOLFPACK_AGENT_TOKEN|Bearer /);
+      expect(t).not.toMatch(/\b[a-z0-9]{32,}\b/i);
+      expect(t).not.toMatch(/mailto:|<form\b|fetch\(/);
+    });
+    it('is phone-first: no fixed pixel widths, 44px tap targets, and the rail only appears from sm up', () => {
+      for (const [n, src] of [['Ladder', ladder], ['Paths', paths], ['VariantParts', vparts]]) {
+        expect(src, n).not.toMatch(/\bw-\[\d+px\]|\bmin-w-\[\d+px|\bh-\[\d+px\]|width: \d+px|overflow-x-scroll/);
+      }
+      expect(vparts).toMatch(/min-h-11/);
+      expect(ladder).toMatch(/hidden w-px bg-border sm:block/);
+      expect(ladder).toMatch(/sm:pl-12/);
+    });
+    it('the colours are the platform’s tokens and mean something: green free, blue needs a hub, gold your call', () => {
+      expect(vparts).toMatch(/free: 'border-green\/60 text-green'/);
+      expect(vparts).toMatch(/hub: 'border-blue\/60 text-blue'/);
+      expect(vparts).toMatch(/choice: 'border-gold\/70 text-gold'/);
+      expect(ladder + paths + vparts).not.toMatch(/bg-\[#|border-\[#|text-\[#(?!f2ede1)/);   // only the page’s own cream for headings
+    });
   });
 });
