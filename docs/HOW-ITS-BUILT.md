@@ -1177,7 +1177,8 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Where:** `web/app/raidmimic/page.tsx` (metadata, host-dependent links), `web/app/raidmimic/_landing/`
   (`SceneLayout.tsx`, `Parts.tsx`, `MascotHero.tsx`; client pieces `ClipTabs.tsx` the player, `SceneClip.tsx` one looping
   clip, `MascotVideo.tsx` the mascot), ALL words in `web/lib/raidmimicLanding.ts` (`COMING` is the whole list of promises;
-  `CLIPS` + `AUDIENCES` the player; `SHOTS` the hero's captures). Clips: `scripts/raidmimic-shots/scenes.mjs` (the real
+  `CLIPS` + `AUDIENCES` the player; `SHOTS` the captures: the hero's seven, and the ones flagged `more` that `MoreShots`
+  in `Parts.tsx` shows in a gallery under the player). Clips: `scripts/raidmimic-shots/scenes.mjs` (the real
   overlays driven by a scripted stand-in agent) → `web/public/raidmimic/clips/`; stills: `shoot.mjs` →
   `web/public/raidmimic/shots/`; the mascot: `web/public/raidmimic/mascot/`. Hosts: `web/lib/raidmimicHost.ts`,
   `web/middleware.ts` (rewrite to `/raidmimic`, query dropped), `web/app/layout.tsx` (bare shell). Register interest

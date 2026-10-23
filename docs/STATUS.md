@@ -122,6 +122,17 @@ next touch one rather than assuming a missing row means a missing doc.
   refuses, the right-click row shows only while it is on; Setup ALL never shows a leftover hidden Canvas window; Esc leaves Setup
   ALL / THIS and Canvas arranging. Test: `test/canvas-stays-off.test.js`. Open: the raider's screen was never seen, so the exact
   trigger is unconfirmed; ask for the agent log's `[canvas]` line.
+- **🧪 raidmimic.com: six more captures, in a gallery under the player (web 2.1.8 on `beta`, 2026-10-23; first draft, the guild
+  lead's *"update raidmimic.com with more assets"*).** A raid pull on Bertoxxulous in Plane of Disease, drawn by
+  `scripts/raidmimic-shots/shoot.mjs` from fixtures with invented raiders (no real screenshot is used): **Map on a floor plan**
+  (raiders as facing slices, the boss with its spawn id and who it is on, the dashed line to it, spawn rings, the toolbar,
+  coordinates top left), **Map with Target Info** stacked as one capture, **Target Info with its observed debuffs**, the **HUD
+  Box view**, **CH Chain** (gap banner, a due slot, casting bars) and a **full-raid damage pair** (bars and table). They are
+  `SHOTS` rows flagged `more`, shown by `MoreShots` (in `Parts.tsx`, after the scene player in `SceneLayout.tsx`); the hero's
+  fan keeps its seven. Walls are EQEmu-generated like the Nightmare Map (`map-walls-podisease.json`, credited on the cards).
+  Bertoxxulous has no spawn point in the catalog (a script places him), so where he stands is invented. ⏳ **The live page
+  (`https://wolfpack.quest/raidmimic`, `main`) is still the old tour, which has no captures**; these reach it with Scene-first
+  when the guild lead graduates it. Test: `test/raidmimic-landing.test.js`.
 - **🧪 raidmimic.com landing: Scene-first is the page, [beta] (web 2.1.3 on `beta`, 2026-10-22; the guild lead's pick, Decision
   Desk card raidmimic-layout-clips; DECISIONS §409).** *"Truly several of these are important … It should really be a
   combination. Add in the items from E into D."* The default page at `https://b.wolfpack.quest/raidmimic` is now D's tabbed

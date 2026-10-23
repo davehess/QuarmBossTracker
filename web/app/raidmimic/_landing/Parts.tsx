@@ -7,8 +7,8 @@ import type { ReactNode } from 'react';
 import NewPageTag from '@/components/NewPageTag';
 import {
   COMING, COMING_TITLE, COST, CTA, DATA, FAN_PROJECT_LINE, HERO, PRIVACY_URL, REPO_URL, RIGHTS_NOTICE,
-  SELFHOST_NOTE_URL, STATUS_LABEL, WORKS_WITH, WORLDS, EQMIMIC_ORIGIN,
-  type Status,
+  SELFHOST_NOTE_URL, STATUS_LABEL, WORKS_WITH, WORLDS, EQMIMIC_ORIGIN, MORE_HEAD, SHOTS, SHOTS_DIR,
+  type Shot, type Status,
 } from '@/lib/raidmimicLanding';
 
 /** Links that differ between the raidmimic host and the Wolf Pack hosts (where /feedback is a different page). */
@@ -64,6 +64,47 @@ export function Hero({ ctx, compact = false }: { ctx: Ctx; compact?: boolean }) 
         <a href={EQMIMIC_ORIGIN} {...EXT}>eqmimic.quest</a>
       </p>
     </header>
+  );
+}
+
+// ─── More captures, under the player (the guild lead, 2026-10-23: "update raidmimic.com with more assets") ─────────
+// The SHOTS flagged `more` in the content module: a raid pull in Plane of Disease on invented raiders. Wide captures take
+// a full row; runs of narrow ones sit in two masonry columns (CSS columns, no script), each no wider than a step past its
+// own size so a small overlay is not blown up. Every card opens the full-size file, like the hero's.
+function ShotCard({ s }: { s: Shot }) {
+  const src = `${SHOTS_DIR}/${s.file}`;
+  return (
+    <figure className="m-0 mb-4 break-inside-avoid overflow-hidden rounded-md border border-border bg-panel shadow-lg shadow-black/30"
+      style={s.wide ? undefined : { maxWidth: Math.round(s.w * 0.625) }}>
+      <a href={src} target="_blank" rel="noreferrer" aria-label={`${s.title}: open the full-size capture`} className="block hover:no-underline">
+        <img src={src} width={s.w} height={s.h} alt={s.alt} loading="lazy" decoding="async" className="block h-auto w-full bg-bg" />
+      </a>
+      <figcaption className="px-3 py-3">
+        <h3 className="text-base text-[#f2ede1]">{s.title}</h3>
+        <p className="mt-1 text-sm leading-6 text-text">{s.line}</p>
+        {s.credit && <p className="mt-1 text-xs leading-5 text-dim">{s.credit}</p>}
+      </figcaption>
+    </figure>
+  );
+}
+
+export function MoreShots() {
+  const list = SHOTS.filter(s => s.more);
+  // Consecutive narrow captures share one two-column block; a wide one ends the block and stands alone.
+  const blocks: Shot[][] = [];
+  for (const s of list) {
+    const last = blocks[blocks.length - 1];
+    if (!s.wide && last && !last[0].wide) last.push(s); else blocks.push([s]);
+  }
+  return (
+    <section aria-label={MORE_HEAD.title} className="mt-12" data-more-shots={list.length}>
+      <h2 className="text-xl text-[#f2ede1]">{MORE_HEAD.title}</h2>
+      <p className="mb-4 mt-1 max-w-[62ch] text-sm leading-6 text-text">{MORE_HEAD.lead}</p>
+      {blocks.map(b => b[0].wide
+        ? <ShotCard key={b[0].id} s={b[0]} />
+        : <div key={b[0].id} className="sm:columns-2 sm:gap-4">{b.map(s => <ShotCard key={s.id} s={s} />)}</div>)}
+      <p className="text-xs text-dim">{MORE_HEAD.note}</p>
+    </section>
   );
 }
 

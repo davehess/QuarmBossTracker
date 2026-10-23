@@ -159,6 +159,8 @@ export interface Shot {
   line: string;      // one plain sentence: what it does for a raid
   alt: string;
   credit?: string;   // a rights line (the Map's walls come from a GPL project)
+  more?: boolean;    // shown in the gallery under the player, not in the hero's fan (the hero holds seven cards)
+  wide?: boolean;    // a wide capture: the gallery gives it a full row; the narrow ones sit two to a row
 }
 export const SHOTS_DIR = '/raidmimic/shots';
 // Plane of Nightmares as the Map draws it. The wall lines are EQEmu-generated and credited as the spectator page credits
@@ -187,10 +189,39 @@ export const SHOTS: Shot[] = [
   { id: 'timeline', file: 'timeline.webp', w: 1520, h: 528, title: 'Boss timeline',
     line: 'When the next boss in a linked pair is due, counted from the last kill, with the timers that matter in between.',
     alt: 'The trigger overlay: three countdown timers and a timeline strip of recent boss deaths with the gap between them and a countdown to the next boss in the pair.' },
+
+  // ─── More of what the raid sees (the guild lead, 2026-10-23: "update raidmimic.com with more assets") ───────────────────
+  // A raid pull in Plane of Disease, drawn from fixtures with invented raiders like every capture above. They sit in the
+  // gallery under the scene player (MoreShots), after the hero's seven.
+  { id: 'map-raid', file: 'map-raid.webp', w: 2000, h: 1200, title: 'Map, on a floor plan', more: true, wide: true,
+    line: 'Zoomed in on a dungeon floor plan: every raider with the way they face, the boss and who it is on, and the spawn points around you.',
+    credit: MAP_CREDIT,
+    alt: 'The Map overlay zoomed in on a floor plan in Plane of Disease: raiders as coloured dots, each with a slice showing which way they face, the player’s own arrow, a boss marker labelled with its name, spawn id and who it is fighting, a dashed line to it, red spawn-point rings, the coordinates at top left and a toolbar with Follow me, Fit group, Pan and zoom, label and raider switches, Full and Timers.' },
+  { id: 'map-target', file: 'map-target.webp', w: 1528, h: 1672, title: 'Map with Target Info', more: true,
+    line: 'Beside the map, the boss on your target: its health, which debuffs are on it and for how long, its resists and what it can do.',
+    credit: MAP_CREDIT,
+    alt: 'The Map overlay stacked over the Target Info overlay: the map shows the raid, the boss marker and its spawn point rings, and the card under it shows the boss’s name, level, zone and health, five observed debuffs with a draining bar and a count and time each, six resist and armour numbers and a row of special-ability chips.' },
+  { id: 'target-debuffs', file: 'target-debuffs.webp', w: 1208, h: 628, title: 'Target Info, debuffs', more: true,
+    line: 'Every debuff on the target with a bar that drains, a tick count and the time left, so a slow or a resist debuff is re-cast before it drops.',
+    alt: 'The Target Info overlay on a raid boss: a level, a zone and a health bar, an observed debuff list where each row has the caster, a draining bar, a tick count and a time, the armour class and five resists, and chips for what the boss can do and what it cannot be affected by, with how it hits.' },
+  { id: 'hud-box', file: 'hud-box.webp', w: 660, h: 908, title: 'Your HUD, the Box view', more: true,
+    line: 'Your own numbers in one panel: health, mana and endurance, experience and AA per hour, the song you are on, your target, your group and how many casts your mana buys.',
+    alt: 'The Box view of the HUD for a bard: health, mana and endurance bars with their numbers, experience and AA per hour bars, level and weight, the song being sung with a timer, the target with its health, counts of procs and stuns and a damage shield, tonight’s average damage per second, a five-member group list with health bars, and a spell list with the casts left at the current mana.' },
+  { id: 'ch-chain', file: 'ch-chain.webp', w: 680, h: 610, title: 'CH Chain', more: true,
+    line: 'The Complete Heal rotation on the tank: whose slot is up, who is mid-cast, and a gap warning the moment a heal is late.',
+    alt: 'The CH Chain overlay for a tank: a gap warning banner, four numbered cleric slots each with mana and a cast bar, the one that is due highlighted, and a footer counting down to the next slot in the rotation.' },
+  { id: 'dps-raid', file: 'dps-raid.webp', w: 1712, h: 800, title: 'Damage meters, a full raid', more: true, wide: true,
+    line: 'The same fight as ranked bars with a colour for swings, procs, spells and heals, and as a table with damage, share, damage per second and seconds, your own row picked out.',
+    alt: 'Two damage overlays side by side a minute into a boss fight: a ranked list of bars split into swings, procs, spells and heals with pets shown beside their owners, and a table of ten raiders with share, damage, damage per second and seconds, the player’s own row highlighted and a total row at the foot.' },
 ];
 export const SHOTS_HEAD = {
   title: 'What the raid sees',
   note: 'These are the real Mimic overlays, running today for one guild, drawn here on made-up data: every raider name is invented.',
+};
+export const MORE_HEAD = {
+  title: 'More of what the raid sees',
+  lead: 'A raid pull from end to end: where everyone stands, what is on the boss, how you are doing and who is healing. Tap one for the full-size capture.',
+  note: 'Made-up data, like the rest: every raider name is invented.',
 };
 
 // ─── Scene-first: the player (the guild lead's pick, Decision Desk 2026-10-22, card raidmimic-layout-clips) ─────────

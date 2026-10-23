@@ -103,3 +103,74 @@ export const MAP_LS = {
   'wp-map-walls': 'ours',
   'wp-map-levels': '7',
 };
+
+// ─── The raid pull: Plane of Disease, zoomed in on the building's floor plan (web/public/raidmimic/shots/map-raid.webp) ───
+// Walls are EQEmu-generated like the capture above (map-walls-podisease.json, cropped from base/podisease.map). Spawn points,
+// mob names, levels and respawn times are the zone's game data (the eqemu_* mirror). Bertoxxulous is placed by a script in
+// the real zone and has no spawn point, so where he stands, and every raider, is invented for this capture.
+const WALLS_DIS = JSON.parse(fs.readFileSync(path.join(HERE, 'map-walls-podisease.json'), 'utf8'));
+
+// [id, x, y, z, respawn s, npcs]
+const DIS_POINTS = [
+  [344757, 2038, -332, 327.3, 1170, [mob('Guardian_of_Pestilence', 100, { level: 61 })]],
+  [344758, 1979, -292, 327.3, 1170, [mob('Guardian_of_Pestilence', 100, { level: 61 })]],
+  [344759, 1908, -327, 327.3, 1170, [mob('Guardian_of_Pestilence', 100, { level: 61 })]],
+  [344760, 1915, -298, 327.3, 1170, [mob('Guardian_of_Pestilence', 100, { level: 61 })]],
+  [344762, 2041, -275, 333.5, 237600, [mob('#Grummus', 100, { level: 70, named: true, raid_target: true })]],
+  [344889, 1817, -237, 327.3, 1170, [mob('a_firebone_caster', 100, { level: 58 })]],
+  [344890, 1843, -245, 327.3, 1170, [mob('a_firebone_caster', 100, { level: 58 })]],
+].map(([id, x, y, z, rs, npcs]) => ({ id, x, y, z, grid: null, respawn: rs, sg: null, npcs }));
+
+const disTimer = (pointId, name, agoMin, by) => {
+  const p = DIS_POINTS.find((q) => q.id === pointId);
+  const died = T - agoMin * MIN;
+  return { point_id: pointId, name, died_at: died, earliest: died + p.respawn * 800, latest: died + p.respawn * 1200, source: 'seen', by };
+};
+
+export function raidMapState() {
+  const boss = { name: 'Bertoxxulous', id: 5871, hp_pct: 62, x: 2000, y: -330, z: 328, dist: 152, point_id: null, type: 1, tot: { id: 7003, name: 'Brackwyn' } };
+  return {
+    zone: 'podisease', long_name: 'Plane of Disease', zone_id: 205, version: 'podisease@2026-10-23', status: 'ok', local_only: false,
+    map: { bounds: { minX: 1550, maxX: 2260, minY: -460, maxY: 580 }, bands: WALLS_DIS.bands, segs: WALLS_DIS.segs },
+    local_map: null, local_version: null,
+    points: DIS_POINTS, grids: null, factions: null, spawngroups: null,
+    pos_at: T, now: T, copy: null, cons: {}, cc: [], me: { name: 'Aldenmar', level: 65, race: 1, cls: 3, deity: 201 },
+    // Headings are the game's 0..511 turn; the boss is south-east of the group, which is about 215.
+    self: { name: 'Aldenmar', x: 1935, y: -195, z: 327, heading: 216 },
+    group: [
+      { name: 'Brackwyn', class: 'Warrior', x: 1990, y: -290, z: 327, heading: 214 },
+      { name: 'Corvale', class: 'Cleric', x: 1893, y: -168, z: 327, heading: 232 },
+      { name: 'Rethlan', class: 'Wizard', x: 1912, y: -222, z: 327, heading: 205 },
+      { name: 'Nyssara', class: 'Enchanter', x: 1958, y: -165, z: 327, heading: 240 },
+      { name: 'Zarrin', class: 'Ranger', x: 1862, y: -212, z: 327, heading: 175 },
+    ],
+    raid: [
+      { name: 'Odelle', class: 'Druid', grp: '2', x: 1882, y: -250, z: 327, heading: 150 },
+      { name: 'Halric', class: 'Paladin', grp: '2', x: 1955, y: -245, z: 327, heading: 222 },
+      { name: 'Tavrin', class: 'Shaman', grp: '3', x: 1836, y: -176, z: 327, heading: 262 },
+    ],
+    target: boss, focus: null, corpses: [], watched: {}, legs: {}, kite: null,
+    paths: {},
+    timers: [
+      disTimer(344758, 'Guardian of Pestilence', 6, 'Brackwyn'),
+      disTimer(344889, 'a firebone caster', 14, 'Zarrin'),
+    ],
+    seen: [
+      { point_id: 344757, spawn_id: 4101, name: 'Guardian of Pestilence', at: T - 30000, by: 'Aldenmar', hp_pct: 100, hp_live: true },
+      { point_id: 344762, spawn_id: 4108, name: 'Grummus', at: T - 50000, by: 'Corvale', hp_pct: 100, hp_live: true },
+    ],
+    engaged: [], unassigned: [],
+  };
+}
+
+// The overlay's own settings on the capture machine: aggro rings on, raiders shown as facing slices, names on targets only is
+// the Labels button, the view fitted to the group, the Timers list slid away so the map takes the whole width.
+export const RAID_MAP_LS = {
+  'wp-map-cfg': JSON.stringify({ show: { aggro: true }, facing: 'slice', wallMode: 'layers', wallV: 2 }),
+  'wp-map-labels': 'targets',
+  'wp-map-fit': 'group',
+  'wp-map-side': '0',
+  'wp-map-scale': '1.4',
+  'wp-map-walls': 'ours',
+  'wp-map-levels': '3',
+};

@@ -32,8 +32,8 @@ const SCALE = 1.5;
 const ME = 'Vessa';
 
 for (const n of ['Aldenmar', 'Brackwyn', 'Corvale', 'Rethlan', 'Nyssara', 'Zarrin', 'Odelle', 'Halric', 'Kaelith', 'Varn',
-  'Torvald', 'Garrick', 'Mirela', 'Ysolde', 'Joska', 'Tavrin', 'Fenwick', 'Elowen', 'Dunmar', 'Perrin', 'Lorwyn', 'Osric',
-  'Sylvar', 'Wynne', 'Bramwell', 'Cassivane', 'Pell', 'Ulric', ME]) {
+  'Torvald', 'Garrick', 'Mirela', 'Quorrin', 'Joska', 'Tavrin', 'Fenwick', 'Elowen', 'Dunmar', 'Perrin', 'Lorwyn', 'Osric',
+  'Sylvar', 'Seraphel', 'Bramwell', 'Cassivane', 'Ilvesta', 'Ulric', ME]) {
   if (!PLAYERS.includes(n)) throw new Error('not an invented name: ' + n);
 }
 
@@ -76,12 +76,12 @@ const DEBUFF_CASTS = [
   [21.0, 'Halric', 'Funeral Pyre of Kelador', 5.5, { name: 'Funeral Pyre of Kelador', ticks: 9 }],
   [17.5, 'Zarrin', 'Ice Comet', 6.3, null],
   [18.4, 'Mirela', 'Sunstrike', 7.0, null],
-  [19.1, 'Ysolde', 'Inferno of Al\'Kabor', 5.0, null],
+  [19.1, 'Quorrin', 'Inferno of Al\'Kabor', 5.0, null],
   [23.0, 'Joska', 'Strike of Solusek', 8.0, null],
   [24.2, 'Zarrin', 'Ice Comet', 6.3, null],
   [25.0, 'Tavrin', 'Lure of Ice', 4.5, null],
   [25.6, 'Mirela', 'Draught of Jiva', 3.0, null],
-  [27.4, 'Ysolde', 'Sunstrike', 7.0, null],
+  [27.4, 'Quorrin', 'Sunstrike', 7.0, null],
   [28.8, 'Fenwick', 'Inferno of Al\'Kabor', 5.0, null],
 ];
 function targetDebuffs(t, T0) {
@@ -123,7 +123,7 @@ function targetDebuffs(t, T0) {
 // ── Scene: Extended Target, Vallon Zek splits into five ───────────────────────────────────────────────────────
 // At ~60% the real one splits into five of the same name (apps/mimic/pop-raids.js "vallon-a"); the raid tags each with
 // a Zeal /tag so they can be told apart, and kills the fakes first. Clones: eqemu 214318/214319 (L64, 42,000 HP).
-const XT_RAIDERS = ['Aldenmar', 'Torvald', 'Garrick', 'Halric', 'Kaelith', 'Varn', 'Zarrin', 'Mirela', 'Ysolde', 'Joska',
+const XT_RAIDERS = ['Aldenmar', 'Torvald', 'Garrick', 'Halric', 'Kaelith', 'Varn', 'Zarrin', 'Mirela', 'Quorrin', 'Joska',
   'Tavrin', 'Fenwick', 'Brackwyn', 'Rethlan', 'Corvale', 'Nyssara', 'Odelle', 'Elowen', 'Dunmar', 'Perrin'];
 const SPLIT_AT = 4;
 const CLONES = [
@@ -169,9 +169,9 @@ function xtargetSplit(t) {
 // ── Scene: Command Center + Chat, Grummus dies, then the hail ─────────────────────────────────────────────────
 const KILL_AT = 5;
 const HAIL_ORDER = ['Brackwyn', ME, 'Corvale', 'Rethlan', 'Nyssara', 'Zarrin', 'Odelle', 'Halric', 'Kaelith', 'Varn',
-  'Torvald', 'Garrick', 'Mirela', 'Ysolde', 'Joska', 'Tavrin'];
+  'Torvald', 'Garrick', 'Mirela', 'Quorrin', 'Joska', 'Tavrin'];
 const HAIL_T0 = 7.2, HAIL_STEP = 1.15;
-const ALREADY = ['Ulric', 'Pell', 'Cassivane'];
+const ALREADY = ['Ulric', 'Ilvesta', 'Cassivane'];
 function commandHail(t, T0) {
   const out = { character: ME, healer_mana: [
     { name: 'Corvale', class: 'Cleric', pct: Math.round(lerp(34, 29, t / 26)) },
