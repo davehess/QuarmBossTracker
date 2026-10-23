@@ -821,6 +821,14 @@ edited in place (`state.channelSlots.rollcard_<threadId>`). Refresh is driven
 by the `rolls`/`looted` ingest handlers post-ack and debounced 45s, never a
 timer. Parses reach the same thread as ordinary autoparse cards.
 
+### One-word mobs are not players (bot 4.0.9 · agent 4.0.9, 2026-10-23)
+Quarm's PoP named (Jiva, Xuzl, Arlyxir, Galremos) look exactly like character names. `utils/npcActors.js` asks the catalog:
+`eqemu_npc_types.id = zone*1000 + n`, so a name in the boss's zone block that is not one of our `characters` is a mob, and the
+boss itself always is. The upload handler (`_handleAgentUpload`, `index.js`) drops those from `playerTotals` and passes the set to
+`participantsFromUpload({ exclude })` for kill-derived lockouts and kill context. The agent's twin is `_isCatalogNpcName`
+(zone pack, 30 s memo) at the confirm-a-player, flush and live-meter sites. Tests: `test/npc-actors.test.js`,
+`test/agent-npc-not-player.test.js`.
+
 ### Parse-card volume filter
 `raidNight.parseCardPassesFilter` gates what reaches a night/event thread:
 known bosses always pass, everything else needs

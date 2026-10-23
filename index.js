@@ -11597,6 +11597,7 @@ async function _handleAgentItemCatalog(req, res, isPublic) {
 const mobSpecials = require('./utils/mobSpecials');const npcProcs = require('./utils/npcProcs');
 const factionAssist = require('./utils/factionAssist');
 const namedBosses = require('./utils/namedBosses');   // the PoP raid bosses the catalog's raid_target misses (data/named-bosses.json)
+const npcActorsLib = require('./utils/npcActors');    // which one-word names in a parse are mobs, from the catalog
 const _MOB_CLASS_NAMES = {
   1:'Warrior', 2:'Cleric', 3:'Paladin', 4:'Ranger', 5:'Shadow Knight', 6:'Druid',
   7:'Monk', 8:'Bard', 9:'Rogue', 10:'Shaman', 11:'Necromancer', 12:'Wizard',
@@ -22504,7 +22505,7 @@ async function _promoteLockoutBoss(bossName, supabase) {
 // utils/killLockouts.js for why the parse is the higher-coverage source, and
 // the 2026-08-22 migration for why the two share one row per (character, boss).
 async function _recordKillLockouts({
-  boss, encounterId, killedAtMs, contributor, players, healers, defenders, inRaidWindow, killVerdict,
+  boss, encounterId, killedAtMs, contributor, players, healers, defenders, inRaidWindow, killVerdict, npcActors,
 }) {
   const kl       = require('./utils/killLockouts');
   const supabase = require('./utils/supabase');
@@ -22515,7 +22516,7 @@ async function _recordKillLockouts({
   // synthesized lockout on a locked boss is a phantom on every officer surface.
   if (isPopLocked(boss)) return;
 
-  const participants = kl.participantsFromUpload({ contributor, players, healers, defenders });
+  const participants = kl.participantsFromUpload({ contributor, players, healers, defenders, exclude: npcActors });
   if (!participants.length) return;
 
   // Was this one of OUR kills? The encounter's raid_nights binding is the
@@ -22830,6 +22831,20 @@ async function _handleAgentUpload(req, res) {
       _addDmg(attacker, amount, false);
     }
   }
+  // One-word MOBS are not players (the guild lead, 2026-10-23, Tower of Solusek Ro: "Jiva is a named mob but was
+  // counted as a player"). The loop above drops multi-word attackers; a single capitalised word passes it, and so
+  // does every PoP named (Jiva, Xuzl, Arlyxir, Galremos). The catalog decides, by the zone the boss is in
+  // (utils/npcActors.js). The same set keeps them out of the lockout and kill-context participant lists below.
+  let _npcActors = new Set();
+  try {
+    _npcActors = await npcActorsLib.npcNamesAmong(
+      [...playerTotals.keys(),
+        ...(Array.isArray(encounter.defenders) ? encounter.defenders : []).map(d => d && d.name),
+        ...(Array.isArray(encounter.healers) ? encounter.healers : []).map(h => h && h.name)],
+      { supabase: require('./utils/supabase'), bossName: bossNameRaw,
+        zoneId: await _killZoneId(bossNameRaw, character).catch(() => null) });
+  } catch (e) { console.warn('[agent] npc-actor filter skipped:', e?.message); }
+  for (const n of [...playerTotals.keys()]) if (_npcActors.has(n.toLowerCase())) playerTotals.delete(n);
   const startedMs = encounter.started_at ? new Date(encounter.started_at).getTime() : Date.now();
   const endedMs   = encounter.ended_at   ? new Date(encounter.ended_at).getTime()   : startedMs;
   // Prefer active_duration_s (gap-trimmed, excludes charm-phase inactivity) when
@@ -23946,6 +23961,7 @@ async function _handleAgentUpload(req, res) {
       if (supabase.isEnabled()) {
         const participants = require('./utils/killLockouts').participantsFromUpload({
           contributor: character || null, players, healers: uploadedHealers, defenders: uploadedDefenders,
+          exclude: _npcActors,
         });
         const gathered = await kc.gatherKillSignals({
           supabase, guildId: process.env.SUPABASE_GUILD_ID || 'wolfpack', ourGuild: WP_GUILD_NAME,
@@ -23984,6 +24000,7 @@ async function _handleAgentUpload(req, res) {
         players, healers: uploadedHealers, defenders: uploadedDefenders,
         inRaidWindow: isRaidWindow,
         killVerdict:  verdict.verdict,
+        npcActors:    _npcActors,
       }).catch(err => console.warn('[lockout] kill-derived write failed:', err?.message));
     }
 
