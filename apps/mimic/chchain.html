@@ -1651,7 +1651,8 @@
     var stale = (now - (c.updated_at || 0)) > STALE_MS;
     tgtEl.textContent = c.target ? ('CH → ' + c.target) : 'CH chain';
     var beatSecs = c.beat_ms ? (c.beat_ms / 1000) : null;
-    beatEl.textContent = beatSecs ? ('beat ' + beatSecs.toFixed(1) + 's') : '';
+    beatEl.textContent = beatSecs ? ('beat ' + beatSecs.toFixed(1) + 's'
+      + (c.declared_beat_ms && c.beat_ms === c.declared_beat_ms ? ' (set)' : '')) : '';
     // Auto lead tracks the measured beat live — as the chain's actual
     // cadence firms up (or a different chain with a different beat starts),
     // the SOON threshold rescales with it instead of staying pinned to

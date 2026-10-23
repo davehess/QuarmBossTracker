@@ -6286,7 +6286,9 @@ let _chDdrEnabled = true;
 // median of the last 10 inter-slot gaps. Returns null until CH_DDR_MIN_BEATS
 // gaps exist, so an unwarmed chain grades nothing rather than grading noise.
 function _chExpectedNextAt(c) {
-  if (!c || !c.lastCh || !c.beats || c.beats.length < CH_DDR_MIN_BEATS) return null;
+  if (!c || !c.lastCh || !c.beats) return null;
+  // A beat the raid declared (a chain tool's set_delay, see _chSetChainLine) stands in until the chain is measured.
+  if (c.beats.length < CH_DDR_MIN_BEATS) return c.declaredBeatMs ? c.lastCh.atMs + c.declaredBeatMs : null;
   const sorted = c.beats.slice().sort((a, b) => a - b);
   const beatMs = sorted[Math.floor(sorted.length / 2)];
   if (!beatMs) return null;
@@ -6751,9 +6753,59 @@ function _chExtraLine(line, character) {
   if (!m) return;
   _chExtraText(m[2].trim(), /^you$/i.test(m[1]) ? (character || 'You') : m[1], line, character);
 }
+// ── A chain tool's own setup line (2026-10-23) ──
+// Another guild's raid sets its chain with a rotation tool that announces the order and the beat in raid-say:
+//   "Rotatonator set_chain: 111 aldenmar, 222 Brackwyn, 333 Corvale, set_delay: 3"
+//   "Rotatonator set_delay: 4"                                    (the beat alone, mid-fight)
+// The order is translated into Wolf Pack's own roster call ("Aldenmar 001, Brackwyn 002, Corvale 003") and fed
+// through the original roster path, like the calls above. The delay is the raid's declared beat: the chain's
+// measured beat still wins once it has one; until then the countdown and the PIVOT warning use the declared one.
+// ponytail: the original roster path wants 3+ clerics numbered 1..N, so a 2-cleric or gapped set_chain seats no
+// one; give the roster block its own entry point if a raid ever runs one.
+const _CH_SET_CHAIN_RX = /\bset_chain\s*[:=]\s*(.+?)(?:[\s,;]+set_delay\s*[:=]\s*(\d{1,2}(?:\.\d+)?))?\s*$/i;
+const _CH_SET_DELAY_RX = /\bset_delay\s*[:=]\s*(\d{1,2}(?:\.\d+)?)\s*$/i;
+function chParseSetChain(text) {
+  const t = String(text || '');
+  const m = t.match(_CH_SET_CHAIN_RX);
+  const d = m ? m[2] : (t.match(_CH_SET_DELAY_RX) || [])[1];
+  const delaySec = d != null && parseFloat(d) >= 1 && parseFloat(d) <= 30 ? parseFloat(d) : null;
+  const pairs = [];
+  if (m) {
+    for (const part of m[1].split(/[,;]/)) {
+      const p = part.trim().match(/^(\d{1,3})\s+([A-Za-z`]{3,15})$/) || part.trim().match(/^([A-Za-z`]{3,15})\s+(\d{1,3})$/);
+      if (!p) continue;
+      const [tok, name] = /^\d/.test(p[1]) ? [p[1], p[2]] : [p[2], p[1]];
+      const num = _chSlotFromToken(tok);
+      if (num && !pairs.some(x => x.num === num)) pairs.push({ num, name: name.charAt(0).toUpperCase() + name.slice(1) });
+    }
+  }
+  if (!pairs.length && delaySec == null) return null;
+  return { pairs: pairs.sort((a, b) => a.num - b.num), delaySec };
+}
+function _chSetChainLine(text, speaker, line, character) {
+  const sc = chParseSetChain(text);
+  if (!sc) return false;
+  const stamp = String(line).match(/^\[[^\]]+\]/);
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  if (sc.pairs.length && stamp) {
+    _chExtraBusy = true;
+    try {
+      trackChChainLine(stamp[0] + ' ' + speaker + " shouts, '"
+        + sc.pairs.map(p => p.name + ' ' + String(p.num).padStart(3, '0')).join(', ') + "'", character);
+    } finally { _chExtraBusy = false; }
+  }
+  if (sc.delaySec != null) {
+    _chChainEnsure(atMs);
+    _chChain.declaredBeatMs = Math.round(sc.delaySec * 1000);
+    _chChain.updatedAt = atMs;
+  }
+  return true;
+}
 let _chExtraBusy = false;
 function _chExtraText(text, speaker, line, character) {
   if (_chExtraBusy || !text) return;
+  if (_chSetChainLine(text, speaker, line, character)) return;
   const hit = chTranslateExtra(text);
   const ts = parseEqTimestamp(line);
   if (!hit) { _chNoteUnread(text, ts ? ts.getTime() : Date.now()); return; }
@@ -7006,7 +7058,7 @@ function chChainSnapshot() {
   if (!_chChain) return null;
   if ((Date.now() - _chChain.updatedAt) > CH_CHAIN_IDLE_RESET_MS) { _chChain = null; return null; }
   const beats = _chChain.beats.slice().sort((a, b) => a - b);
-  const beatMs = beats.length ? beats[Math.floor(beats.length / 2)] : null;
+  const beatMs = beats.length ? beats[Math.floor(beats.length / 2)] : (_chChain.declaredBeatMs || null);
   // CH-chain interruption / pivot detection — v1.1.5 (the guild lead, 2026-06-26).
   // When the time elapsed since the last call exceeds 1.5× the measured beat
   // AND we know whose slot was supposed to call (next_num → slots[next_num]),
@@ -7073,6 +7125,8 @@ function chChainSnapshot() {
     last_ch:    _chChain.lastCh,
     next_num:   _chChain.nextNum,
     beat_ms:    beatMs,
+    // Only a chain tool's set_delay sets it; absent otherwise, so Wolf Pack's snapshot is unchanged (the golden pins it).
+    ...(_chChain.declaredBeatMs ? { declared_beat_ms: _chChain.declaredBeatMs } : {}),
     started_at: _chChain.startedAt,
     updated_at: _chChain.updatedAt,
     slipped,
@@ -65082,7 +65136,7 @@ module.exports = {
   _resetChChainForTest: () => { _chChain = null; _lastChGoNum = null; _chUnread.length = 0; },
   _setWatchedLogsForTest: (logs) => { stats.watchedLogs = logs || []; },
   // CH chain: other guilds' call shapes + learned templates (2026-10-23).
-  chParseBuiltinExtra, chTranslateExtra, chGuessRoles, chLearnPreview, chLearnSave, chLearnRemove, chLearnState, chTemplates,
+  chParseBuiltinExtra, chParseSetChain, chTranslateExtra, chGuessRoles, chLearnPreview, chLearnSave, chLearnRemove, chLearnState, chTemplates,
   _chSlotFromToken, CH_TEMPLATES_MAX,
   // #204 DI two-cleric callout — exported for the scratchpad harness.
   trackDiFired, diCalloutSnapshot, diCalloutCandidates, _diRankCandidates,

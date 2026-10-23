@@ -334,3 +334,42 @@ describe('unrecognised CH calls', () => {
     expect(agent.chLearnState().recent).toEqual([]);
   });
 });
+
+describe('a chain tool\'s set_chain / set_delay line (2026-10-23)', () => {
+  it('reads "Rotatonator set_chain: 111 aldenmar, 222 Brackwyn, 333 Corvale, set_delay: 3" as the order and a 3 s beat', () => {
+    raid(10, 'Aldenmar', 'Rotatonator set_chain: 111 aldenmar, 222 Brackwyn, 333 Corvale, set_delay: 3');
+    const snap = agent.chChainSnapshot();
+    expect(snap.slots[1]).toMatchObject({ name: 'Aldenmar', lastAtMs: 0 });
+    expect(snap.slots[2]).toMatchObject({ name: 'Brackwyn' });
+    expect(snap.slots[3]).toMatchObject({ name: 'Corvale' });
+    expect(snap.declared_beat_ms).toBe(3000);
+    expect(snap.beat_ms).toBe(3000);      // nothing measured yet, so the declared beat stands in
+  });
+  it('the calls that follow seat on those slots, and the measured beat takes over once there is one', () => {
+    raid(20, 'Aldenmar', 'Rotatonator set_chain: 111 aldenmar, 222 Brackwyn, 333 Corvale, set_delay: 3');
+    raid(12, 'Aldenmar', 'D&D 111 CH - Rethlan - 84%');
+    raid(8, 'Brackwyn', 'D&D 222 CH - Rethlan - 70%');
+    const snap = agent.chChainSnapshot();
+    expect(snap.slots[1]).toMatchObject({ name: 'Aldenmar', mana: 84 });
+    expect(snap.slots[2]).toMatchObject({ name: 'Brackwyn', mana: 70 });
+    expect(snap.beat_ms).toBe(4000);
+  });
+  it('a set_delay on its own changes the beat of the running chain', () => {
+    raid(10, 'Aldenmar', 'Rotatonator set_chain: 111 aldenmar, 222 Brackwyn, 333 Corvale, set_delay: 3');
+    raid(5, 'Aldenmar', 'Rotatonator set_delay: 5');
+    expect(agent.chChainSnapshot().declared_beat_ms).toBe(5000);
+    expect(slotOf(3)).toMatchObject({ name: 'Corvale' });
+  });
+  it('parses the name-first order too, and ignores a delay outside 1-30 s', () => {
+    expect(agent.chParseSetChain('set_chain: Aldenmar 1, Brackwyn 2, Corvale 3')).toEqual({
+      pairs: [{ num: 1, name: 'Aldenmar' }, { num: 2, name: 'Brackwyn' }, { num: 3, name: 'Corvale' }], delaySec: null });
+    expect(agent.chParseSetChain('Rotatonator set_delay: 90')).toBeNull();
+    expect(agent.chParseSetChain('anyone set up the chain yet?')).toBeNull();
+  });
+  it('a declared beat lets the first calls be graded, where an unmeasured chain grades nothing', () => {
+    raid(20, 'Aldenmar', 'Rotatonator set_chain: 111 aldenmar, 222 Brackwyn, 333 Corvale, set_delay: 4');
+    raid(12, 'Aldenmar', 'D&D 111 CH - Rethlan - 84%');
+    raid(8, 'Brackwyn', 'D&D 222 CH - Rethlan - 70%');
+    expect(slotOf(2).grade).toBe('PERFECT');
+  });
+});
