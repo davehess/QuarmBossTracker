@@ -16,6 +16,7 @@ import {
   BetaTag, ComingList, CostBody, CtaBand, DataBody, EXT, Fold, Footer, MoreShots, PRIMARY_BTN, WorksWithBody, WorldsBody, type Ctx,
 } from './Parts';
 import ClipTabs from './ClipTabs';
+import FeatureGrid from './FeatureIcons';
 import HowItWorks from './HowItWorks';
 import MascotHero from './MascotHero';
 import MotionStage from './MotionStage';
@@ -117,6 +118,8 @@ export default function PathsLayout({ ctx, motion = false }: { ctx: Ctx; motion?
           {DOORS.map(d => <DoorCard key={d.id} door={d} ctx={ctx} />)}
         </ul>
       </section>
+
+      <FeatureGrid />
 
       <section id="see" aria-label={PATHS.seeTitle} className="mt-14 scroll-mt-4">
         <h2 className="text-xl text-[#f2ede1] sm:text-2xl">{PATHS.seeTitle}</h2>

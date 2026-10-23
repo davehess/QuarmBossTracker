@@ -1182,6 +1182,10 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   the folded small print, the coming list and the ask. There is no `?v=` switch: the Ladder preview, Scene-first, the earlier tour,
   the Output-first gallery, Raid-night story and Your screen are deleted. Next scene to record: loot rolls + DKP bids (a new
   row in `CLIPS`; a scene gets its tab only when it has a row and files).
+  **What you get** (web 2.1.17, the guild lead's icon-set pick of 2026-10-23): eight cards right under the doors, each a hand-drawn
+  inline SVG (gold line art by `currentColor`, green and red accents) with a label and one plain line; the hail board and the CH
+  chain carry the "Needs your guild's server" chip. Drawn in `_landing/FeatureIcons.tsx`, words in `web/lib/raidmimicFeatures.ts`,
+  test `test/raidmimic-feature-icons.test.js`.
 - **Where:** `web/app/raidmimic/page.tsx` (metadata from the Host header, host-dependent links), `web/app/raidmimic/_landing/`
   (`PathsLayout.tsx`, `Parts.tsx`, `MascotHero.tsx`; client pieces `ClipTabs.tsx` the player, `SceneClip.tsx` one looping
   clip, `MascotVideo.tsx` the mascot, `HowItWorks.tsx` the drawing's lazy frame), the words in `web/lib/raidmimicPlayer.ts` (the
