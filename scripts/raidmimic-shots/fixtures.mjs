@@ -16,21 +16,21 @@ export const T = Date.UTC(2026, 9, 22, 0, 14, 30);
 // Invented. None of these is anybody.
 export const PLAYERS = [
   'Aldenmar', 'Brackwyn', 'Corvale', 'Rethlan', 'Nyssara', 'Zarrin', 'Tavrin', 'Odelle', 'Halric', 'Fenwick',
-  'Ysolde', 'Mirela', 'Joska', 'Pell', 'Varn', 'Kaelith', 'Dunmar', 'Elowen', 'Garrick', 'Lorwyn', 'Osric',
-  'Perrin', 'Sylvar', 'Torvald', 'Vessa', 'Wynne', 'Bramwell', 'Cassivane', 'Ulric',
+  'Quorrin', 'Mirela', 'Joska', 'Ilvesta', 'Varn', 'Kaelith', 'Dunmar', 'Elowen', 'Garrick', 'Lorwyn', 'Osric',
+  'Perrin', 'Sylvar', 'Torvald', 'Vessa', 'Seraphel', 'Bramwell', 'Cassivane', 'Ulric',
 ];
 // Invented pet name (a warder / a charmed beast); owners are in PLAYERS.
 export const PETS = ['Grimble', 'Snarlpaw'];
 
 const STILL = ['Aldenmar', 'Brackwyn', 'Corvale', 'Rethlan', 'Nyssara', 'Zarrin', 'Tavrin', 'Odelle', 'Halric', 'Fenwick',
-  'Ysolde', 'Mirela', 'Joska', 'Pell', 'Varn', 'Kaelith'];
-const HAILED = ['Dunmar', 'Elowen', 'Garrick', 'Lorwyn', 'Osric', 'Perrin', 'Sylvar', 'Torvald', 'Vessa', 'Wynne', 'Bramwell', 'Cassivane'];
+  'Quorrin', 'Mirela', 'Joska', 'Ilvesta', 'Varn', 'Kaelith'];
+const HAILED = ['Dunmar', 'Elowen', 'Garrick', 'Lorwyn', 'Osric', 'Perrin', 'Sylvar', 'Torvald', 'Vessa', 'Seraphel', 'Bramwell', 'Cassivane'];
 
 // ─── Command Center (apps/mimic/command.html, /api/command-center) ─────────────────────────────────────
 export function commandCenter() {
   const cureRows = [
     ['Brackwyn', ['curse']], ['Aldenmar', ['curse', 'disease']], ['Joska', ['curse', 'disease']], ['Zarrin', ['curse', 'disease']],
-    ['Tavrin', ['curse', 'disease']], ['Halric', ['disease']], ['Pell', ['curse', 'disease']],
+    ['Tavrin', ['curse', 'disease']], ['Halric', ['disease']], ['Ilvesta', ['curse', 'disease']],
   ];
   const CURE = { curse: { cure: 'curse', counters: 9 }, disease: { cure: 'disease', counters: 36 } };
   return {
@@ -53,7 +53,7 @@ export function commandCenter() {
     cures: cureRows.map(([name, kinds]) => ({ id: name.toLowerCase(), name, curses: kinds.map((k) => CURE[k]) })),
     death_recaps: [
       { name: 'Joska', ts: T - 95000, lastChOffMs: 2300, dmg6: 9100 },
-      { name: 'Pell', ts: T - 41000, lastChOffMs: null, dmg6: 6400 },
+      { name: 'Ilvesta', ts: T - 41000, lastChOffMs: null, dmg6: 6400 },
     ],
   };
 }
@@ -62,7 +62,7 @@ export function commandCenter() {
 export function rollsState() {
   const first = [
     ['Kaelith', 692], ['Dunmar', 571], ['Elowen', 523], ['Garrick', 478], ['Lorwyn', 462], ['Osric', 443], ['Perrin', 217],
-    ['Sylvar', 197], ['Torvald', 136], ['Vessa', 129], ['Wynne', 125], ['Bramwell', 116], ['Cassivane', 95], ['Aldenmar', 24], ['Brackwyn', 16],
+    ['Sylvar', 197], ['Torvald', 136], ['Vessa', 129], ['Seraphel', 125], ['Bramwell', 116], ['Cassivane', 95], ['Aldenmar', 24], ['Brackwyn', 16],
   ];
   const set = (to, item, players, winner, value, started, rolls) => ({
     from: 0, to, item, started_at_ms: T - started * 1000, open: true, players,
@@ -74,8 +74,8 @@ export function rollsState() {
       set(711, 'Ethereal Parchment', 15, 'Kaelith', 692, 240, first.map(([name, value]) => ({ name, value }))),
       set(811, 'Spectral Parchment', 23, 'Elowen', 735, 200),
       set(511, 'Fetid Flesh Wristband', 8, 'Kaelith', 488, 160),
-      set(622, 'Ring of the Pox-bearer', 2, 'Wynne', 311, 120),
-      set(522, 'Fetid Flesh Wristband', 1, 'Wynne', 432, 80),
+      set(622, 'Ring of the Pox-bearer', 2, 'Seraphel', 311, 120),
+      set(522, 'Fetid Flesh Wristband', 1, 'Seraphel', 432, 80),
       set(611, 'Ring of the Pox-bearer', 9, 'Dunmar', 530, 40),
     ],
   };
@@ -276,7 +276,7 @@ export function chChain() {
         1: { name: 'Corvale', mana: 87, lastAtMs: ago(3.4) },
         2: { name: 'Odelle', mana: 64, lastAtMs: ago(12.4) },
         3: { name: 'Mirela', mana: 41, lastAtMs: ago(9.4) },
-        4: { name: 'Ysolde', mana: 23, lastAtMs: ago(6.4) },
+        4: { name: 'Quorrin', mana: 23, lastAtMs: ago(6.4) },
       },
       last_ch: { num: 1, atMs: ago(3.4) }, next_num: 2, next_expected_at: ago(0.4),
     },
