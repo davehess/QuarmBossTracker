@@ -21,6 +21,8 @@ import { makeWindow, windowIso } from '@/lib/raidShare';
 import { loadSessionReview } from '@/lib/raidSessionLoad';
 import { liveAvailable, sessionLabel, summarizeNights, type NightMinute } from '@/lib/raidReplay';
 import { loadRaidCuts } from '@/lib/raidCuts';
+import { loadNightMarks, loadSlices } from '@/lib/nightSlicesLoad';
+import { slicesIn, type Slice } from '@/lib/nightSlices';
 import NewPageTag from '@/components/NewPageTag';
 import SessionReview from './SessionReview';
 import ShareControls from './ShareControls';
@@ -42,9 +44,13 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
   const from = one(searchParams.from);
   const to = one(searchParams.to);
   // ?v=split is the beta preview of "Start a new raid here" (lib/raidSplit.ts). Without it the page is as it was.
+  const v = one(searchParams.v);
   const split = one(searchParams.v) === 'split';
+  // ?v=slices and ?v=segments are the two beta previews of slicing a night into raid / event / downtime / another guild's
+  // raid (lib/nightSlices.ts); each also shows the night's named fights and mass deaths. Without either: as it was.
+  const nightVariant = v === 'slices' || v === 'segments' ? v : null;
   const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect('/auth/signin?next=' + encodeURIComponent('/raid/session' + (from && to ? `?from=${from}&to=${to}${split ? '&v=split' : ''}` : '')));
+  if (!user) redirect('/auth/signin?next=' + encodeURIComponent('/raid/session' + (from && to ? `?from=${from}&to=${to}${split || nightVariant ? `&v=${v}` : ''}` : '')));
 
   const win = from && to ? makeWindow(Date.parse(from), Date.parse(to)) : null;
   const header = (
@@ -81,7 +87,12 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
   }
 
   const admin = supabaseAdmin();
-  const [review, officer] = await Promise.all([loadSessionReview(admin, win), isOfficer(user.id)]);
+  const [review, officer, slices] = await Promise.all([
+    loadSessionReview(admin, win, { breaks: nightVariant === 'segments' }),
+    isOfficer(user.id),
+    nightVariant ? loadSlices(admin) : Promise.resolve([] as Slice[]),
+  ]);
+  const marks = nightVariant ? await loadNightMarks(admin, win, review.bundle.kills).catch(() => ({ fights: [], deaths: [], mass: [] })) : null;
   const { from: fromIso, to: toIso } = windowIso(win);
 
   return (
@@ -97,6 +108,11 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
         mode={{ kind: 'member' }}
         extras={officer ? <ShareControls fromIso={fromIso} toIso={toIso} defaultTitle={`Raid session, ${etDay.format(win.fromMs)}`} splitAtMs={review.change?.atMs ?? null} /> : undefined}
         split={split ? { change: review.change, live: liveAvailable(win.toMs, Date.now()), canShare: officer } : undefined}
+        nightPanel={nightVariant && marks ? {
+          variant: nightVariant, fromMs: win.fromMs, toMs: win.toMs, spans: review.night?.spans ?? [],
+          fights: marks.fights, deaths: marks.deaths, mass: marks.mass,
+          slices: slicesIn(slices, win), breaks: review.breaks ?? [], canEdit: officer,
+        } : undefined}
       />
     </div>
   );
