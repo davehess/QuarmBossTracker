@@ -82,6 +82,8 @@
   #card,#menu,#ccard{position:absolute;z-index:8;background:rgba(14,17,22,0.96);border:1px solid rgba(110,118,129,0.6);
     border-radius:5px;padding:5px 7px;font-size:10px;line-height:1.35;max-width:260px;display:none}
   #card{pointer-events:none}
+  #toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);z-index:9;display:none;max-width:90%;pointer-events:none;
+    background:rgba(14,17,22,0.96);border:1px solid rgba(110,118,129,0.6);border-radius:5px;padding:4px 9px;color:#e6edf3;font-size:11px;white-space:nowrap}
   /* The corpse card is the one hover card you can move into: its dragger is a link that centres the map on them. */
   #ccard{pointer-events:auto}
   #ccard .h{font-weight:bold;font-size:11px;color:#e6edf3}
@@ -263,6 +265,7 @@
       <div id="card"></div>
       <div id="ccard" data-wp-interact></div>
       <div id="menu"></div>
+      <div id="toast"></div>
       <!-- Edit clear areas: drag a box on the map to keep it clear of drawing. Interactive only while editing (data-wp-interact). -->
       <div id="clearEdit" hidden data-wp-interact>
         <div id="clearBoxes"></div>
@@ -1574,6 +1577,22 @@
     return areas.map(function (a) { return { x: a.x * k - left, y: a.y * k - top, w: a.w * k, h: a.h * k }; });
   }
   function stageToWin(r, k, left, top) { return { x: (r.x + left) / k, y: (r.y + top) / k, w: r.w / k, h: r.h / k }; }
+  // Right-click on a spawn switches it off and on (the guild lead, 2026-10-23: "right clicking on a spawn should toggle the
+  // spawn off and on in the map"). Off = a respawn timer is running: right-click clears it (back up). On = anything else: it is
+  // killed now. A mob seen alive there is killed the way the ☠ killed button does it (by name: the death line, else now);
+  // a spot with nobody seen is marked killed the way the click menu's "Killed — this one" does.
+  function spawnToggle(timer, seen) {
+    if (timer) return { act: 'clear' };
+    if (seen && seen.name) return { act: 'kill', name: seen.name, spawn_id: seen.spawn_id == null ? null : seen.spawn_id };
+    return { act: 'mark' };
+  }
+  // What the toast says once the agent has answered (r = its JSON, null when it did not).
+  function spawnToggleWords(name, act, r, now) {
+    if (!r) return name + ' — the agent did not answer';
+    if (!r.ok) return name + ' — ' + (r.error || 'nothing changed');
+    if (act === 'clear') return name + ' — back up';
+    return name + ' — killed' + (r.timer ? ' · ' + timerText(r.timer, now) : '');
+  }
   // ── end pure helpers ──
 
   // ── state ──
@@ -1836,18 +1855,42 @@
     fetch(url).then(function (r) { return r.json(); }).then(function (p) { inflight = false; applyPayload(p); })
       .catch(function () { inflight = false; S.err = true; renderAll(); });
   }
+  // postMark / postKill hand back the agent's answer (JSON, or null) so the right-click toggle can say what happened.
+  function afterPost(r) { S.sideAt = 0; poll(); return r && r.json ? r.json().catch(function () { return null; }) : null; }
   function postMark(pid, kind) {
     var zone = S.p && S.p.zone;
-    if (!zone) return;
-    fetch('http://127.0.0.1:' + PORT + '/api/map-mark', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ zone: zone, point_id: pid, kind: kind }) }).then(function () { S.sideAt = 0; poll(); }).catch(function () {});
+    if (!zone) return Promise.resolve(null);
+    return fetch('http://127.0.0.1:' + PORT + '/api/map-mark', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone: zone, point_id: pid, kind: kind }) }).then(afterPost).catch(function () { return null; });
   }
   function postKill(name, pid, spawnId) {
     var zone = S.p && S.p.zone;
-    if (!zone || !name) return;
-    fetch('http://127.0.0.1:' + PORT + '/api/map-kill', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    if (!zone || !name) return Promise.resolve(null);
+    return fetch('http://127.0.0.1:' + PORT + '/api/map-kill', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ zone: zone, name: name, point_id: pid == null ? null : pid, spawn_id: spawnId == null ? null : spawnId }) })
-      .then(function () { S.sideAt = 0; poll(); }).catch(function () {});
+      .then(afterPost).catch(function () { return null; });
+  }
+  // A brief line over the map (and over the pop-out's list) saying what a right-click did. Never takes the mouse.
+  var toastEl = document.getElementById('toast'), toastT = 0;
+  function toast(text) {
+    toastEl.textContent = text; toastEl.style.display = 'block';
+    clearTimeout(toastT); toastT = setTimeout(function () { toastEl.style.display = 'none'; }, 3500);
+  }
+  // Right-click on a spawn (a dot or a list row): see spawnToggle for what "off" and "on" mean. `name` is the toast's label.
+  function killRow(name, pid, spawnId) {   // a row with no spot of its own: its ☠ killed button, with the toast
+    postKill(name, pid, spawnId).then(function (r) { toast(spawnToggleWords(name, 'kill', r, nowMs())); });
+  }
+  function toggleSpawn(pid, name) {
+    var p = S.byId[String(pid)];
+    if (!p) return;
+    var a = spawnToggle(S.timerBy[String(pid)], S.seenBy[String(pid)]);
+    var run = a.act === 'clear' ? postMark(p.id, 'clear') : a.act === 'kill' ? postKill(a.name, p.id, a.spawn_id) : postMark(p.id, 'killed');
+    run.then(function (r) { toast(spawnToggleWords(name || bestName(p), a.act, r, nowMs())); });
+  }
+  // A list row's right-click is the same toggle as its dot's (or, for a row with no spot, the row's own ☠ killed).
+  function rowToggle(row, fn) {
+    row.setAttribute('data-wp-interact', '');
+    row.addEventListener('contextmenu', function (e) { e.preventDefault(); e.stopPropagation(); fn(); });
   }
   // "Watch for <named>" / "Stop watching" in the click menu: the agent keeps the watch, shares it with the guild, and
   // sends it back in the next poll as `watched`.
@@ -2830,6 +2873,13 @@
   });
   hitsEl.addEventListener('mouseout', function (e) { if (hitFor(e)) { card.style.display = 'none'; setHoverGrid(null); } });
   hitsEl.addEventListener('click', function (e) { var pid = hitFor(e); if (pid) { card.style.display = 'none'; openMenu(pid, e); } });
+  // Right-click on a spawn dot switches it off / on (spawnToggle). It stops here: the stage's right-click (centre on you) must
+  // not also run for a dot.
+  hitsEl.addEventListener('contextmenu', function (e) {
+    e.preventDefault(); e.stopPropagation();
+    var pid = hitFor(e);
+    if (pid) { card.style.display = 'none'; closeMenu(); toggleSpawn(pid); }
+  });
 
   // ☠ Corpse markers: one real button per drawn corpse (so the hover handshake arms the click-through window), and a card you
   // can move into - its dragger is a link that centres the map on them when the Map can place them (you, group, raid), plain
@@ -3008,6 +3058,7 @@
         addKillBtn(r, g.name, g.point_id != null ? g.point_id : null, g.spawn_id, g.killed_q);
         // a row promoted from Up · seen still centres on its spawn point
         if (g.point_id != null) { r.setAttribute('data-wp-interact', ''); r.addEventListener('click', function () { centreOn(S.byId[String(g.point_id)]); }); }
+        rowToggle(r, function () { killRow(g.name, g.point_id != null ? g.point_id : null, g.spawn_id); });   // an engaged mob is alive: right-click = ☠ killed
         box.appendChild(r);
       });
     }
@@ -3027,6 +3078,7 @@
         var wsn = S.seenBy[w.pid];   // set only for a spot with no timer and a mob seen alive: the one to mark dead
         if (wsn && wsn.name) addKillBtn(r, wsn.name, w.pid, wsn.spawn_id, wsn.killed_q);
         r.addEventListener('click', function () { centreOn(w.p); });
+        rowToggle(r, function () { toggleSpawn(w.pid, w.named); });
         box.appendChild(r);
       });
     }
@@ -3039,9 +3091,10 @@
       r.appendChild(el('span', 'nm', g.name + (g.n > 1 ? ' ×' + g.n : ''))); r.appendChild(el('span', 'tm', timerText(t, now)));
       r.appendChild(el('span', 'src', (g.n > 1 ? 'next of ' + g.n + ' · ' : '') + (t.source === 'marked' ? 'marked' : 'seen') + (t.by ? ' · by ' + t.by : '')));
       r.addEventListener('click', function () { centreOn(S.byId[String(t.point_id)]); });
+      rowToggle(r, function () { toggleSpawn(t.point_id, g.name); });   // the soonest of a folded row, the one the row speaks for
       box.appendChild(r);
     });
-    if (!timers.length && !wrows.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot')).id = 'empty';
+    if (!timers.length && !wrows.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot (right-click a dot to switch it off and on)')).id = 'empty';
     // a seen mob already listed under Engaged (the agent flags it) is not listed twice
     var seenList = ((P && P.seen) || []).filter(function (s) { return !s.engaged && !S.timerBy[String(s.point_id)] && !S.watchBy[String(s.point_id)]; });
     if (seenList.length) {
@@ -3055,6 +3108,7 @@
         r.appendChild(el('span', 'src', (s.spawn_id != null ? 'spawn #' + s.spawn_id : 'pinned') + (s.by ? ' · by ' + s.by : '') + (s.killed_q ? ' · killed?' : '')));
         if (s.name) addKillBtn(r, s.name, s.point_id, s.spawn_id, s.killed_q);
         r.addEventListener('click', function () { centreOn(S.byId[String(s.point_id)]); });
+        rowToggle(r, function () { toggleSpawn(s.point_id, s.name || 'a mob'); });
         box.appendChild(r);
       });
     }
