@@ -5357,6 +5357,10 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `_mapAttribute`, `_mapApplyMark`, `_handleMapState`, `_handleMapMark`). Zone data from the bot's `zone-spawns`, disk first
   (`zone-spawns-cache/`); timers in `map_timers.json`. Zeal pipe x/y are swapped against the server frame (`_mapServerXY`).
   Mimic's pipe handler now also carries `target_loc` / `target_type` (Zeal 1.4.8).
+- **Right-click a spawn = off / on** (2026-10-23, Mimic beta, `map.html` `spawnToggle` / `toggleSpawn` / `rowToggle`): a dot or a
+  side-list row with a running timer is cleared (`/api/map-mark` kind `clear`); anything else is killed now (`/api/map-kill` by name
+  when a mob is seen alive there, else `/api/map-mark` kind `killed`). The dot's handler stops propagation so the stage's
+  right-click (centre on you) stays out of it; a toast (`#toast`) says what happened. Test: `test/map-watch-agent.test.js`.
 - Test: `test/spawn-map.test.js`. Design: `docs/DESIGN-mimic-2.9-spawn-map.md`. Every refinement since (asks, what
   shipped, what is open): `docs/MAP-REFINEMENTS.md`.
 - **Zone copies** (the "Zone copies" block in the agent; header label in `map.html` `copyLabel`): the copy you are in is

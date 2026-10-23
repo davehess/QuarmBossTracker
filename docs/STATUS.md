@@ -103,6 +103,15 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Mimic Map: right-click a spawn to switch it off and on (draft `draft/map-rightclick` on `beta`, 2026-10-23). Not pushed.**
+  *"RIGHT CLICKING ON A SPawn should toggle the spawn off and on in the map"* (the guild lead). Off = a respawn timer is running: the
+  right-click clears it (back up, the click menu's "Clear timer"). On = anything else: killed now, the way a left-click's "Killed — this
+  one" does it, or by name (the ☠ killed button: the death line, else now) when a mob is seen alive there. Works on the dot and on every
+  side-list row (Respawns clears the soonest of a folded row; Up · seen, Watched and Engaged kill); a toast says "killed · up in
+  6m40s–8m20s" / "back up" / why nothing changed. The dot's right-click stops there, so the stage's right-click (centre on you) does not
+  also run; rows and dots carry the hover-interact handshake, so it works locked. Map only: the agent already had `clear` and `killed`
+  marks, so no agent bump. A clear is a local override: the next death the agent sees starts a timer again. Test:
+  `test/map-watch-agent.test.js` ("right-click a spawn"). Not seen in a live window: needs a Mimic beta cut and a locked Map to confirm.
 - **🧪 Mimic: the Canvas stays off until you turn it on; Esc leaves setup (draft `draft/canvas-off` on `beta`, Mimic parked 3.0.3,
   2026-10-22; DECISIONS §413). Not pushed; a 3.0.3 stable is the guild lead's call.** A raider on 3.0.2 stable, mid-raid: every overlay on
   screen in blue boxes, "what is a canvas?", gone after a restart. Probable cause (not reproduced): the Canvas had been switched ON
