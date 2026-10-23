@@ -6584,6 +6584,14 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   `test/ch-chain-other-guilds.test.js`. Design: `DESIGN-ch-chain.md` "Other guilds' macros". ⏳ Not seen against a real
   other-guild log beyond the two screenshot lines; ⏳ the overlay panel was not exercised in a running Mimic; ⏳ the hint only appears
   for a line with a standalone `CH`, a number and a capitalised name; ⏳ not on `main`.
+- 🧪 Two wipes on one boss are two fights (the guild lead, 2026-10-23: "actually there were two wipes", one parse held both
+  pulls ~30 min apart). Agent 4.0.15 on beta: a fight ends when its top target has taken no damage for 5 minutes, even while
+  trash keeps the log busy (`_splitIfTopIdle`); the trash tail is trimmed and the fight uploads as a wipe. Bot (main, migration
+  `20261023130000_find_or_create_gap_split.sql`, applied): an upload starting more than 15 min after the matched fight's end is
+  its own fight; 15 keeps the 2026-07-13 dispel-reset knit. ⏳ A real fight where the boss takes no damage for over 5 minutes
+  (a long add phase) would now upload in two pieces, and two pieces of one fight from one uploader merge by max, not sum.
+  ⏳ Pre-existing: the nightly reconcile stamps `ended_at` on unconfirmed rows and the raid review counts `ended_at` as a kill,
+  so a wipe row can read as a kill there. ⏳ Older agents still merge until the fleet is on 4.0.15.
 - 🧪 The CH chain reads a chain tool's setup line (the guild lead, 2026-10-23, same raid: "they set their chain like this"; agent
   4.0.14 on beta): `Rotatonator set_chain: 111 <name>, 222 <name>, 333 <name>, set_delay: 3`. The order seats the slots (translated to
   Wolf Pack's own roster call and read by the original roster path); `set_delay` is the declared beat, used for the countdown, PIVOT

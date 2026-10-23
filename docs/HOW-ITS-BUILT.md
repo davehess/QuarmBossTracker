@@ -2223,7 +2223,10 @@ the queue is pending / backfill running / fight live (Shift+U bypass).
 
 ### Combat parsing → encounters
 `parseEvent` + `EncounterBuilder` segment fights; kills require a literal
-slain line (no silence-guessing). Pets ride the DPS meter only when provably
+slain line (no silence-guessing). A fight also ends when its top target has taken no damage for 5 minutes
+(`_splitIfTopIdle`, agent 4.0.15, 2026-10-23): trash between two pulls no longer keeps one builder open, so two
+wipes upload as two fights; the bot's `find_or_create_encounter` declines a match more than 15 min past its end
+(migration `20261023130000_find_or_create_gap_split.sql`). Pets ride the DPS meter only when provably
 OURS (`petLeaders`/`_activeCharms`/charm tracker) and carry `pet_owner`.
 `petLeaders` also adopts owners from the bot's pool of every raider's "My leader
 is" lines (poll stream `pet_owners` → `_guildPetOwners`, live fights only); a
