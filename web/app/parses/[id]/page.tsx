@@ -237,11 +237,15 @@ async function load(id: string) {
     // left the newest version out: uploaders on 3.7.75 read as current while peers
     // were on 3.7.78. SQL now returns just the DISTINCT versions (49 in that
     // window) and the compare below picks the highest.
+    // The window ENDS at the fight (its end plus 30 min of upload lag), never after it: a version released the next
+    // day did not exist when the fight was parsed (the guild lead, 2026-10-23: "A parse from last night should not
+    // report stale if it was up to date at the time"; the old window ran 7 days past the fight).
     let latestAtTime: string | null = null;
     if (enc?.started_at) {
-      const t = new Date((enc as { started_at: string }).started_at).getTime();
+      const e = enc as { started_at: string; duration_sec: number | null };
+      const t = new Date(e.started_at).getTime();
       const lo = new Date(t - 7 * 86400_000).toISOString();
-      const hi = new Date(t + 7 * 86400_000).toISOString();
+      const hi = new Date(t + Math.max(0, e.duration_sec ?? 0) * 1000 + 30 * 60_000).toISOString();
       for (const v of await loadAgentVersionsAround(sb, lo, hi)) {
         if (cmpVer(v, latestAtTime) > 0) latestAtTime = v;
       }
