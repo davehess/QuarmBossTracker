@@ -458,7 +458,7 @@ describe('pather routes (eqemu_zone_grids)', () => {
       const fs = nodeRequire('fs');
       const code = stripJs(fs.readFileSync(nodeRequire.resolve('./scripts/sync-from-eqmac.js'), 'utf8'));
       expect(code).toMatch(/!seenInPrimary\.has\(t\) && !NO_FALLBACK\.has\(t\)/);
-      expect(code).toMatch(/NO_FALLBACK = new Set\(\['grid', 'grid_entries'\]\)/);
+      expect(code).toMatch(/NO_FALLBACK = new Set\(\['grid', 'grid_entries', 'traps'\]\)/);
       expect(code).toMatch(/'eqemu_npc_emotes',\s*'eqemu_zone_grids',\s*\]/);
       expect(code).toMatch(/dest === 'eqemu_zone_grids' \? 10 : 500/);
       expect(code).toMatch(/if \(!\(counts\.eqemu_zone_grids > 0\)\) problems\.push/);

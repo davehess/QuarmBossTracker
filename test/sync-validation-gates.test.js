@@ -63,7 +63,7 @@ describe('row-count floors', () => {
       eqemu_npc_spells: 1349, eqemu_npc_spells_entries: 4231,
       eqemu_merchantlist: 25875, eqemu_tradeskill_recipe: 7448,
       eqemu_tradeskill_recipe_entries: 54229, eqemu_npc_emotes: 4144,
-      eqemu_zone_points: 1360, eqemu_doors: 8205,
+      eqemu_zone_points: 1360, eqemu_doors: 8205, eqemu_traps: 83,
     };
     for (const [t, floor] of Object.entries(MIN)) {
       expect(observed[t], `no observed count recorded for ${t}`).toBeDefined();

@@ -15,6 +15,8 @@
 //   · zone_map_lines   one row, bands/segs/bounds ONLY               → the cached EQEmu wall layer
 //   · eqemu_zone_grids one row, only when a point has a pathgrid     → the pather routes (null if absent)
 //   · eqemu_spawngroup by id list, chunked → the name of each spawn group a point uses (`spawngroups`, null if a read fails)
+//   · utils/trapSpawns.js: eqemu_quest_scripts (the zone's encounters/traps.lua), eqemu_traps, and the names of what
+//     they spawn → `traps` and `point.trap`, omitted when the zone has none
 //   · eqemu_npc_faction / eqemu_faction_list_full / eqemu_faction_list_mod, by id list → each NPC's primary
 //     faction and its base + race / class / deity mods (`factions`, null if a read fails)
 //
@@ -28,6 +30,7 @@ const zlib = require('zlib');
 const mobSpecials = require('./mobSpecials');
 const { kosClass } = require('./factionCon');
 const namedBosses = require('./namedBosses');
+const trapSpawns = require('./trapSpawns');
 
 const ZONE_RE = /^[a-z0-9_]{1,32}$/;
 const MAP_SELECT = 'bands,segs,bounds';
@@ -155,6 +158,9 @@ async function build(supabase, zone, bosses) {
     const h = Number(b && b.timerHours);
     if (b && b.lockout === false && b.name && h > 0) boardRespawn.set(String(b.name).toLowerCase(), Math.round(h * 3600));
   }
+  // Trap spots and the server's trap table (utils/trapSpawns.js; the guild lead, 2026-10-23: "maps should show traps
+  // as well"). Decoration like the routes: it never throws, and a failed read leaves the layer smaller.
+  const { traps, trapOf } = await trapSpawns.build(supabase, zone, spawn2, entriesByGroup, npcs);
   const points = [];
   for (const sp of [...spawn2].sort((a, b) => a.id - b.id)) {
     const entries = (entriesByGroup.get(sp.spawngroup_id) || [])
@@ -193,6 +199,7 @@ async function build(supabase, zone, bosses) {
       grid: num(sp.pathgrid) > 0 ? num(sp.pathgrid) : null,   // 0 = stands still
       sg: num(sp.spawngroup_id),   // its spawn group: a key into the body's `spawngroups`
       npcs: list,
+      ...(trapOf.has(sp.id) ? { trap: trapOf.get(sp.id) } : {}),   // a trap spot: a key into the body's `traps.defs`
     });
   }
   if (!points.length) return { status: 404 };
@@ -239,7 +246,7 @@ async function build(supabase, zone, bosses) {
   const m = mrows[0];
   const map = m ? { bands: m.bands, segs: m.segs, bounds: m.bounds } : null;
 
-  return { status: 200, degraded, payload: { zone, long_name: longName, generated_at: new Date().toISOString(), points, map, grids, factions, spawngroups } };
+  return { status: 200, degraded, payload: { zone, long_name: longName, generated_at: new Date().toISOString(), points, map, grids, factions, spawngroups, ...(traps ? { traps } : {}) } };
 }
 
 // A weak validator over the CONTENT (generated_at left out) so a rebuild of unchanged data keeps its ETag
