@@ -17,6 +17,7 @@ import ReplayBoard, { type BoundedReplay } from '@/app/spectator/replay/ReplayBo
 import { snapCut, type RaidChange } from '@/lib/raidSplit';
 import DataSources from './DataSources';
 import SplitPanel, { type SplitRequest } from './SplitPanel';
+import NightPanel, { type NightPanelData } from './NightPanel';
 
 export type ReviewMode = { kind: 'member' } | { kind: 'share'; token: string };
 
@@ -87,7 +88,7 @@ function Who({ name }: { name: string }) {
 /** Members' page, ?v=split only. */
 export type SplitOptions = { change: RaidChange | null; live: boolean; canShare: boolean };
 
-export default function SessionReview({ bundle, night, mode, extras, split }: {
+export default function SessionReview({ bundle, night, mode, extras, split, nightPanel }: {
   bundle: SessionBundle;
   night: NightSummary | null;
   mode: ReviewMode;
@@ -95,6 +96,8 @@ export default function SessionReview({ bundle, night, mode, extras, split }: {
   extras?: React.ReactNode;
   /** Members' page, ?v=split only: "Start a new raid here" under the replay. Absent: the page is as it was. */
   split?: SplitOptions;
+  /** Members' page, ?v=slices or ?v=segments only: the night sliced, with its named fights and mass deaths, under the replay. */
+  nightPanel?: NightPanelData;
 }) {
   const [tab, setTab] = useState<TabKey>('attendance');
   const [seek, setSeek] = useState<{ t: number; n: number } | null>(null);
@@ -106,11 +109,12 @@ export default function SessionReview({ bundle, night, mode, extras, split }: {
   const playheadRef = useRef<number | null>(null);
   const onPlayhead = useCallback((t: number) => { playheadRef.current = t; }, []);
   const splitOn = !!split && mode.kind === 'member';
+  const nightOn = !!nightPanel && mode.kind === 'member';
   const token = mode.kind === 'share' ? mode.token : '';
   const urls = useMemo(() => boardUrls(mode.kind === 'share' ? { kind: 'share', token } : { kind: 'member' }, bundle.fromMs, bundle.toMs),
     [mode.kind, token, bundle.fromMs, bundle.toMs]);
-  const bounded = useMemo<BoundedReplay | null>(() => (night ? { night, urls, seek, onPlayhead: splitOn ? onPlayhead : undefined } : null),
-    [night, urls, seek, splitOn, onPlayhead]);
+  const bounded = useMemo<BoundedReplay | null>(() => (night ? { night, urls, seek, onPlayhead: splitOn || nightOn ? onPlayhead : undefined } : null),
+    [night, urls, seek, splitOn, nightOn, onPlayhead]);
   const splitAt = useCallback((ms: number) => {
     setSplitReq(r => ({ cut: ms, n: (r?.n ?? 0) + 1 }));
     splitRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -159,6 +163,8 @@ export default function SessionReview({ bundle, night, mode, extras, split }: {
           ? <ReplayBoard bounded={bounded} />
           : <p className="rounded-md border border-border bg-panel p-4 text-sm text-dim">No replay was recorded in this window. The lists below are whatever else was logged in it.</p>}
       </div>
+
+      {nightOn && nightPanel && <NightPanel data={nightPanel} go={go} playheadRef={playheadRef} />}
 
       {extras && <div className="mt-3">{extras}</div>}
       {splitOn && split && snapCut(bundle.fromMs + (bundle.toMs - bundle.fromMs) / 2, bundle) != null && (

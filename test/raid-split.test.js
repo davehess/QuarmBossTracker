@@ -175,7 +175,7 @@ describe('wiring', () => {
     const board = read('web', 'app', 'spectator', 'replay', 'ReplayBoard.tsx');
     expect(board).toMatch(/onPlayheadRef\.current\?\.\(uiT\)/);
     const review = read('web', 'app', 'raid', 'session', 'SessionReview.tsx');
-    expect(review).toMatch(/onPlayhead: splitOn \? onPlayhead : undefined/);
+    expect(review).toMatch(/onPlayhead: splitOn \|\| nightOn \? onPlayhead : undefined/);
     expect(review).toMatch(/splitAt: splitOn \? splitAt : undefined/);
   });
   it('each half opens as its own session page and keeps ?v=split', () => {

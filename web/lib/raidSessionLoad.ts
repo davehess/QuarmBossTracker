@@ -35,11 +35,14 @@ import {
   type ObservedIn, type PlayerIn, type SessionBundle,
 } from './raidSession';
 import { detectRaidChange, whoSeries, type RaidChange } from './raidSplit';
+import { rosterCuts } from './liveRaidWindow';
 import type { NightSummary, NightMinute } from './raidReplay';
 import type { RollOverride, RollSetRow } from './rolls';
 
 // `change` is a time and two counts, never a name (raidSplit.ts); only the members' page uses it, behind ?v=split.
-export type SessionReview = { bundle: SessionBundle; night: NightSummary | null; change: RaidChange | null };
+// `breaks` (only with opts.breaks, ?v=segments) is the instants at which the roster turns over, found again inside each
+// side of `change`: times only, never a name (liveRaidWindow.ts rosterCuts).
+export type SessionReview = { bundle: SessionBundle; night: NightSummary | null; change: RaidChange | null; breaks?: number[] };
 
 const MINUTE_PAGE = 30;       // rows of ~25 KB each: ~750 KB a response
 // The top-five list is read for this many fights at most (curated bosses first, then the biggest). It was 60, which
@@ -111,8 +114,8 @@ async function readAll(sb: SupabaseClient, win: ShareWindow) {
   return { minutes, encounters, looted, observed, rollRows, overrides, captured, raids };
 }
 
-export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow): Promise<SessionReview> {
-  const key = `${GUILD_TAG}|${win.fromMs}|${win.toMs}`;
+export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow, opts: { breaks?: boolean } = {}): Promise<SessionReview> {
+  const key = `${GUILD_TAG}|${win.fromMs}|${win.toMs}${opts.breaks ? '|b' : ''}`;
   const anon = await loadAnon(sb, GUILD_TAG, win);
   const sig = anonSig(anon);
   const hit = cache.get(key);
@@ -173,7 +176,9 @@ export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow): P
     rolls: buildRolls(r.rollRows, r.overrides, r.looted, anon),
     bidders,
   };
-  const value: SessionReview = { bundle, night: windowNight(r.minutes, win), change: detectRaidChange(whoSeries(r.minutes)) };
+  const who = whoSeries(r.minutes);
+  const value: SessionReview = { bundle, night: windowNight(r.minutes, win), change: detectRaidChange(who) };
+  if (opts.breaks) value.breaks = rosterCuts(who);
 
   if (cache.size >= 20) cache.delete(cache.keys().next().value as string);
   cache.set(key, { at: Date.now(), sig, value });
