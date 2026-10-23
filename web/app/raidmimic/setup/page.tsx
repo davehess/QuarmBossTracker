@@ -6,11 +6,10 @@
 //
 // Same look and same bare shell as the landing page (web/app/raidmimic/page.tsx). Every sentence lives in
 // web/lib/raidmimicSetup.ts; this file only decides how a block LOOKS. Server component, no client JS.
-// Not indexable yet, like the landing page.
 import { headers } from 'next/headers';
 import type { Metadata } from 'next';
 import NewPageTag from '@/components/NewPageTag';
-import { isRaidmimicHost } from '@/lib/raidmimicHost';
+import { isRaidmimicHost, raidmimicSeo } from '@/lib/raidmimicHost';
 import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl, RIGHTS_NOTICE } from '@/lib/raidmimicLanding';
 import {
   BETA_NOTE, CREDIT, HERO, LANDING_PATH_ON_HOST, LANDING_PATH_ON_WOLFPACK, PRIVACY_URL, RELEASES_URL, REQUIREMENTS,
@@ -23,13 +22,17 @@ const TITLE = '[beta] Set up Raid Mimic';
 const DESCRIPTION =
   'A step-by-step guide to setting up Mimic on your own PC for EverQuest on Project Quarm, with no guild needed: what you need, what works on your own, and how to join a raid.';
 
-export const metadata: Metadata = {
-  title: { absolute: TITLE },
-  description: DESCRIPTION,
-  robots: { index: false, follow: false },
-  openGraph: { title: TITLE, description: DESCRIPTION, siteName: 'raidmimic', type: 'website' },
-  twitter: { card: 'summary' },
-};
+// Indexed on the raidmimic hosts with https://raidmimic.com/setup as the canonical address; noindex on the Wolf Pack
+// hosts (2026-10-23, the same rule as the landing page: web/lib/raidmimicHost.ts raidmimicSeo()).
+export function generateMetadata(): Metadata {
+  return {
+    title: { absolute: TITLE },
+    description: DESCRIPTION,
+    ...raidmimicSeo(headers().get('host'), '/setup'),
+    openGraph: { title: TITLE, description: DESCRIPTION, siteName: 'Raid Mimic', type: 'website' },
+    twitter: { card: 'summary' },
+  };
+}
 
 const EXT = { target: '_blank', rel: 'noreferrer' } as const;
 const NOTE = 'mt-3 border-l-2 border-orange/60 pl-3 text-xs leading-5 text-dim';

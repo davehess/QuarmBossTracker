@@ -1,21 +1,43 @@
-// raidmimic layout preview ?v=paths, "Pick your path" (the guild lead, 2026-10-23). The same facts as the Ladder, organised by who
-// is reading instead of in one scroll: a short hero, then three doors side by side (Player, Guild, Self-host), each with its own
-// short story and its own next step. Under the doors, "See it run" holds the existing captures and the scene player (its two
-// audience tabs are the Player and Guild doors again), then the small print, the coming list and the ask.
-// The door's arched top is the one distinctive thing here. Server component; the only client code is the player (ClipTabs).
-// Every word is in web/lib/raidmimicPlayer.ts (and raidmimicLanding.ts for the facts the default page already states).
+// The raidmimic.com page: "Pick your path" (the guild lead's pick, 2026-10-23, from two previews; the Ladder and the earlier
+// Scene-first layout are deleted). Organised by who is reading: a short hero, then three doors side by side (Player, Guild,
+// Self-host), each with its own short story and its own next step. Under the doors, "See it run" holds the captures and the
+// scene player (its two audience tabs are the Player and Guild doors again), then "How it works" (the four-step drawing, in
+// a frame), the small print, the coming list and the ask.
+// The door's arched top is the one distinctive thing here. Server component; the only client code is the player (ClipTabs)
+// and the drawing's frame (HowItWorks). Every word is in web/lib/raidmimicPlayer.ts (and raidmimicLanding.ts for the facts).
+import type { ReactNode } from 'react';
 import {
   CLIPS_HEAD, CLIPS_NOTE, COST, DATA, FACTS_TITLE, MAP_CREDIT, SHOTS_HEAD, WORKS_WITH, WORLDS,
 } from '@/lib/raidmimicLanding';
 import {
-  DOORS, DOWNLOAD_URL, HERO, PATHS, SELFHOST_GUIDE_URL, type Door,
+  DOORS, DOWNLOAD_URL, HERO, HOW, PATHS, SELFHOST_GUIDE_URL, TAG, type Door, type Tone,
 } from '@/lib/raidmimicPlayer';
 import {
-  BetaTag, ComingList, CostBody, CtaBand, DataBody, Fold, Footer, MoreShots, PRIMARY_BTN, WorksWithBody, WorldsBody, type Ctx,
+  BetaTag, ComingList, CostBody, CtaBand, DataBody, EXT, Fold, Footer, MoreShots, PRIMARY_BTN, WorksWithBody, WorldsBody, type Ctx,
 } from './Parts';
-import { EXT, OUTLINE_BTN, PreviewBar, Tag } from './VariantParts';
 import ClipTabs from './ClipTabs';
+import HowItWorks from './HowItWorks';
 import MascotHero from './MascotHero';
+
+// Colour stays semantic (frontend-design): green = free and working today, blue = needs the guild's own server, gold =
+// a choice for you; the dashed orange "Coming" chip from Parts is the only way a promise is ever drawn.
+const TONE: Record<Tone, string> = {
+  free: 'border-green/60 text-green',
+  hub: 'border-blue/60 text-blue',
+  choice: 'border-gold/70 text-gold',
+};
+
+function Tag({ tone }: { tone: Tone }): ReactNode {
+  return (
+    <span data-tone={tone} className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] leading-4 tracking-wide ${TONE[tone]}`}>
+      {TAG[tone]}
+    </span>
+  );
+}
+
+/** A quiet button for the second action on a block; the one gold button on screen stays the primary. */
+const OUTLINE_BTN =
+  'inline-flex min-h-11 items-center justify-center rounded-md border border-blue/70 px-4 py-2 text-sm font-semibold text-blue no-underline transition-colors hover:border-blue hover:bg-blue/10 hover:no-underline motion-reduce:transition-none';
 
 const ARCH: Record<Door['tone'], string> = {
   free: 'border-t-green',
@@ -77,7 +99,6 @@ export default function PathsLayout({ ctx }: { ctx: Ctx }) {
   return (
     <div className="mx-auto max-w-5xl pb-12">
       <BetaTag ctx={ctx} />
-      <PreviewBar current="paths" />
 
       <header className="mb-6">
         <p className="text-xs uppercase tracking-widest text-gold">{HERO.kicker}</p>
@@ -103,6 +124,12 @@ export default function PathsLayout({ ctx }: { ctx: Ctx }) {
           <p className="mt-3 text-xs text-dim">{CLIPS_NOTE}</p>
         </section>
         <MoreShots />
+      </section>
+
+      <section id={HOW.id} aria-label={HOW.title} className="mt-14 scroll-mt-4">
+        <h2 className="text-xl text-[#f2ede1] sm:text-2xl">{HOW.title}</h2>
+        <p className="mb-4 mt-1 max-w-[62ch] text-sm leading-6 text-text">{HOW.lead}</p>
+        <HowItWorks />
       </section>
 
       <section aria-label={FACTS_TITLE} className="mt-10 space-y-2">

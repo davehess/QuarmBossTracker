@@ -1,12 +1,12 @@
-// The pieces the raidmimic.com landing page is assembled from. Every sentence comes from web/lib/raidmimicLanding.ts;
-// this file only decides how a block LOOKS. Server components, no client JS: the small print is <details>.
+// The pieces the raidmimic.com landing page is assembled from. Every sentence comes from web/lib/raidmimicLanding.ts
+// (or raidmimicPlayer.ts for the doors); this file only decides how a block LOOKS. Server components, no client JS: the small print is <details>.
 //
 // Colour is semantic, as everywhere (frontend-design): gold is the one action, green is "live today", purple is
 // "in alpha", and a dashed orange chip is "coming" so a promise is never dressed up as a feature.
 import type { ReactNode } from 'react';
 import NewPageTag from '@/components/NewPageTag';
 import {
-  COMING, COMING_TITLE, COST, CTA, DATA, FAN_PROJECT_LINE, HERO, PRIVACY_URL, REPO_URL, RIGHTS_NOTICE,
+  COMING, COMING_TITLE, COST, CTA, DATA, FAN_PROJECT_LINE, PRIVACY_URL, REPO_URL, RIGHTS_NOTICE,
   SELFHOST_NOTE_URL, STATUS_LABEL, WORKS_WITH, WORLDS, EQMIMIC_ORIGIN, MORE_HEAD, SHOTS, SHOTS_DIR,
   type Shot, type Status,
 } from '@/lib/raidmimicLanding';
@@ -20,7 +20,7 @@ export interface Ctx {
 
 const BTN = 'inline-flex min-h-11 items-center justify-center rounded-md border px-4 py-2 text-sm font-semibold no-underline transition-colors motion-reduce:transition-none';
 export const PRIMARY_BTN = `${BTN} border-gold bg-gold text-[#1a1206] hover:bg-[#e0a92c] hover:no-underline`;
-const EXT = { target: '_blank', rel: 'noreferrer' } as const;
+export const EXT = { target: '_blank', rel: 'noreferrer' } as const;
 
 const CHIP: Record<Status, string> = {
   live: 'border-green/60 text-green',
@@ -45,26 +45,6 @@ export function BetaTag({ ctx }: { ctx: Ctx }) {
 
 export function InterestButton({ ctx, className = PRIMARY_BTN }: { ctx: Ctx; className?: string }) {
   return <a href={ctx.interest} className={className} {...(ctx.onHost ? EXT : {})}>{CTA.button}</a>;
-}
-
-export function Hero({ ctx, compact = false }: { ctx: Ctx; compact?: boolean }) {
-  return (
-    <header className="mb-8">
-      <p className="text-xs uppercase tracking-widest text-gold">{HERO.kicker}</p>
-      <h1 className={`mt-1 leading-tight text-[#f2ede1] ${compact ? 'text-3xl' : 'text-4xl sm:text-5xl'}`}>{HERO.name}</h1>
-      <p className={`mt-3 max-w-[60ch] leading-7 text-[#f2ede1] ${compact ? 'text-base' : 'text-lg sm:text-xl sm:leading-8'}`}>{HERO.line}</p>
-      <p className="mt-3 max-w-[66ch] text-sm leading-6 text-text">{HERO.honest}</p>
-      <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <InterestButton ctx={ctx} />
-        <a href={ctx.setup} className="inline-flex min-h-11 items-center text-sm">Set it up yourself →</a>
-        <a href="#coming" className="inline-flex min-h-11 items-center text-sm">{COMING_TITLE}</a>
-      </div>
-      <p className="mt-4 max-w-[66ch] text-xs leading-5 text-dim">
-        {HERO.playerLine}{' '}
-        <a href={EQMIMIC_ORIGIN} {...EXT}>eqmimic.quest</a>
-      </p>
-    </header>
-  );
 }
 
 // ─── More captures, under the player (the guild lead, 2026-10-23: "update raidmimic.com with more assets") ─────────

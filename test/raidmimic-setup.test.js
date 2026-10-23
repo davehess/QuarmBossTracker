@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
 import {
-  RAIDMIMIC_HOSTS, RAIDMIMIC_LANDING_PATH, RAIDMIMIC_SETUP_PATH, raidmimicLandingTarget,
+  RAIDMIMIC_HOSTS, RAIDMIMIC_LANDING_PATH, RAIDMIMIC_SETUP_PATH, raidmimicLandingTarget, raidmimicSeo,
 } from '../web/lib/raidmimicHost.ts';
 import * as S from '../web/lib/raidmimicSetup.ts';
 import { metaForPath, DEFAULT_DESCRIPTION } from '../web/lib/pageMeta.ts';
@@ -36,7 +36,7 @@ describe('raidmimicLandingTarget', () => {
     }
   });
   it('everything else is still the landing page, and no argument means the landing page', () => {
-    for (const p of ['/', '', '/index', '/setup/extra', '/set', '/feedback', '/admin/feedback', '/raidmimic/setup', '/me']) {
+    for (const p of ['/', '', '/index', '/setup/extra', '/set', '/feedback', '/admin/feedback', '/raidmimic/setup', '/me', '/robots.txt.bak', '/sitemap']) {
       expect(raidmimicLandingTarget(p), p).toEqual({ pathname: RAIDMIMIC_LANDING_PATH, search: '' });
     }
     expect(raidmimicLandingTarget()).toEqual({ pathname: '/raidmimic', search: '' });
@@ -94,9 +94,16 @@ describe('the middleware, run', () => {
 
 describe('the page', () => {
   const page = code(PAGE);
-  it('is [beta], not indexable, public, and a server component', () => {
+  it('is [beta], indexed on the raidmimic hosts only (canonical https://raidmimic.com/setup), public, and a server component', () => {
     expect(page).toMatch(/const TITLE = '\[beta\] Set up Raid Mimic'/);
-    expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
+    // 2026-10-23: the robots and canonical come from raidmimicSeo(), decided per request from the Host header
+    expect(page).toMatch(/\.\.\.raidmimicSeo\(headers\(\)\.get\('host'\), '\/setup'\)/);
+    expect(page).not.toMatch(/robots:/);
+    expect(raidmimicSeo('raidmimic.com', '/setup')).toEqual({
+      robots: { index: true, follow: true }, alternates: { canonical: 'https://raidmimic.com/setup' },
+    });
+    expect(raidmimicSeo('wolfpack.quest', '/setup')).toEqual({ robots: { index: false, follow: false } });
+    expect(raidmimicSeo('b.wolfpack.quest', '/setup')).toEqual({ robots: { index: false, follow: false } });
     expect(page).toMatch(/<NewPageTag\b/);
     expect(page.indexOf('<NewPageTag')).toBeLessThan(page.indexOf('<h1'));
     expect(page).not.toMatch(/['"]use client['"]|createServerClient|supabase/i);
@@ -147,9 +154,10 @@ describe('the page', () => {
     expect(fixes['compat-mode']).toMatch(/compatibility mode/);
   });
   it('the landing page links to it, on both kinds of host', () => {
-    const parts = code('web/app/raidmimic/_landing/Parts.tsx');
-    expect(parts).toMatch(/Set it up yourself/);
-    expect(parts).toMatch(/href=\{ctx\.setup\}/);
+    const layout = code('web/app/raidmimic/_landing/PathsLayout.tsx');
+    expect(layout).toMatch(/href=\{ctx\.setup\}/);
+    expect(layout).toMatch(/\{door\.more\} →/);
+    expect(read('web/lib/raidmimicPlayer.ts')).toMatch(/setup: 'Set it up yourself'/);
     const landing = code('web/app/raidmimic/page.tsx');
     expect(landing).toMatch(/setup: '\/setup'/);
     expect(landing).toMatch(/setup: RAIDMIMIC_SETUP_PATH/);
