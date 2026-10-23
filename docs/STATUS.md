@@ -765,6 +765,13 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Guild + raid chat while out of game (bot 3.1.277 main, agent 3.7.182 beta, 2026-10-15, §342):** the Chat overlay
   relays the guild's /gu and /rs from other Mimics while you're not in game, with "N in game with Mimic" and a
   "nobody in game" note. Waiting on the guild lead's out-of-game look.
+- **⏳ Chat overlay: old guild chat no longer shows up as if it were new (agent 4.0.18 beta, 2026-10-23).**
+  The guild lead: *"strange these old messages just came through"* (10:00 and 10:01 "via guild" lines between 11:39 ones). Cause:
+  the bot's guild-chat ring is 300 lines with no age limit, the agent asks it from cursor 0 on every camp-out, bot restart and
+  cache-less restart, and the overlay paints in arrival order. `guildFeedTake` now drops a relayed line more than 2 minutes older
+  than its arrival (cursor still advances). Tradeoff: opening the overlay out of game no longer shows the last hour of guild chat,
+  only the last two minutes. Test: `test/chat-guild-feed.test.js` "late relayed lines stay out of the live feed". Waiting on the
+  guild lead's look on beta.
 - **⏳ Chat overlay: /random as one line with its item, Random on by default, a breakout's full history (agent 4.0.17 beta, 2026-10-23).**
   The guild lead: *"chat overlay is missing random rolls (and if we can link to what it was for even better)"* and *"sometimes when
   popping out a window we don't get the full history from that session or timeframe"*. Rolls: the pair reached the classifier all

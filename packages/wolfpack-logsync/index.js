@@ -42435,6 +42435,13 @@ let _guildFeedIngame = null;             // members in game WITH MIMIC RUNNING p
 // (a bot restart replays from 0 and must not repeat what the overlay shows).
 // `ingame` is the bot's count of guild members in game with Mimic feeding (others may be online without Mimic and
 // cannot be seen): a whole number, 0 = nobody, anything else = unknown (null).
+//
+// A line that is already old when it reaches us is NOT taken (the guild lead, 2026-10-23: "strange these old messages just came
+// through": 10:00 and 10:01 lines between the 11:39 ones). The overlay paints the feed in arrival order, so an old line lands at
+// the bottom as if it were new. The bot's ring is not time-bounded (300 lines, hours deep), and this agent asks it from 0 on every
+// camp-out (guildFeedClear/_guildFeedReset when the game starts), after a bot restart (boot-reset) and after its own restart without
+// a cache cursor, so the first answer is the whole ring. The cursor still moves past the dropped lines, so they are not asked for again.
+const GUILD_FEED_LATE_MS = 120_000;
 function guildFeedTake(lines, now, ingame) {
   const t = now == null ? Date.now() : now;
   _guildFeedOkAt = t;
@@ -42447,6 +42454,7 @@ function guildFeedTake(lines, now, ingame) {
     const text = _chatCleanText(r.text);
     if (!who || !text) continue;
     const at = Number.isFinite(Number(r.t)) && Number(r.t) > 0 ? Number(r.t) : t;
+    if (t - at > GUILD_FEED_LATE_MS) continue;
     const key = chatLineKey({ ch: r.ch, who, text, t: at }, '');
     if (_guildFeedRing.some(x => x.k === key)) continue;
     _guildFeedRing.push({ seq: ++_chatSeq, k: key, t: at, ch: r.ch, who, to: null, text, self: false, npc: false, on: '', via: 'guild' });
