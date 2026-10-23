@@ -1,5 +1,5 @@
 'use client';
-// "Start a new raid here" on the raid session review (behind ?v=split). Two raids that ran back to back are one recorded
+// "Start a new raid here" on the raid session review. Two raids that ran back to back are one recorded
 // session, so the review shows both. This cuts the window in two at a minute and offers each half as its own page
 // (Open) and as its own public link (Share…, the officer's existing flow, for exactly that half). Nothing is saved
 // when a cut is made: a split is just two windows (lib/raidSplit.ts).
@@ -25,7 +25,7 @@ const fmtSpan = (ms: number) => {
   const m = Math.round(ms / MINUTE_MS);
   return m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}` : `${m} min`;
 };
-const sessionHref = (w: Win) => `/raid/session?from=${encodeURIComponent(new Date(w.fromMs).toISOString())}&to=${encodeURIComponent(new Date(w.toMs).toISOString())}&v=split`;
+const sessionHref = (w: Win) => `/raid/session?from=${encodeURIComponent(new Date(w.fromMs).toISOString())}&to=${encodeURIComponent(new Date(w.toMs).toISOString())}`;
 
 export type SplitRequest = { cut: number; n: number };
 

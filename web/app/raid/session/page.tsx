@@ -9,6 +9,10 @@
 // "Share…", which makes a public link to this exact window (/share/raid/<token>, lib/raidShare.ts). The same
 // loader and the same SessionReview render the public page, so a member sees exactly what a shared link shows,
 // plus the Brewall map layer the public route may not serve.
+//
+// Under the replay: "Start a new raid here" (lib/raidSplit.ts; two back-to-back raids are one recorded session) and
+// the night sliced into segments an officer confirms (lib/nightSlices.ts), with the night's named fights and mass
+// deaths. Both were beta previews (?v=split, ?v=segments) until the guild lead picked them, 2026-10-23.
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
@@ -22,7 +26,7 @@ import { loadSessionReview } from '@/lib/raidSessionLoad';
 import { liveAvailable, sessionLabel, summarizeNights, type NightMinute } from '@/lib/raidReplay';
 import { loadRaidCuts } from '@/lib/raidCuts';
 import { loadNightMarks, loadSlices } from '@/lib/nightSlicesLoad';
-import { slicesIn, type Slice } from '@/lib/nightSlices';
+import { slicesIn } from '@/lib/nightSlices';
 import NewPageTag from '@/components/NewPageTag';
 import SessionReview from './SessionReview';
 import ShareControls from './ShareControls';
@@ -40,17 +44,11 @@ const etStamp = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? '';
 
-export default async function RaidSessionPage({ searchParams }: { searchParams: { from?: string | string[]; to?: string | string[]; v?: string | string[] } }) {
+export default async function RaidSessionPage({ searchParams }: { searchParams: { from?: string | string[]; to?: string | string[] } }) {
   const from = one(searchParams.from);
   const to = one(searchParams.to);
-  // ?v=split is the beta preview of "Start a new raid here" (lib/raidSplit.ts). Without it the page is as it was.
-  const v = one(searchParams.v);
-  const split = one(searchParams.v) === 'split';
-  // ?v=slices and ?v=segments are the two beta previews of slicing a night into raid / event / downtime / another guild's
-  // raid (lib/nightSlices.ts); each also shows the night's named fights and mass deaths. Without either: as it was.
-  const nightVariant = v === 'slices' || v === 'segments' ? v : null;
   const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect('/auth/signin?next=' + encodeURIComponent('/raid/session' + (from && to ? `?from=${from}&to=${to}${split || nightVariant ? `&v=${v}` : ''}` : '')));
+  if (!user) redirect('/auth/signin?next=' + encodeURIComponent('/raid/session' + (from && to ? `?from=${from}&to=${to}` : '')));
 
   const win = from && to ? makeWindow(Date.parse(from), Date.parse(to)) : null;
   const header = (
@@ -88,11 +86,11 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
 
   const admin = supabaseAdmin();
   const [review, officer, slices] = await Promise.all([
-    loadSessionReview(admin, win, { breaks: nightVariant === 'segments' }),
+    loadSessionReview(admin, win, { breaks: true }),
     isOfficer(user.id),
-    nightVariant ? loadSlices(admin) : Promise.resolve([] as Slice[]),
+    loadSlices(admin),
   ]);
-  const marks = nightVariant ? await loadNightMarks(admin, win, review.bundle.kills).catch(() => ({ fights: [], deaths: [], mass: [] })) : null;
+  const marks = await loadNightMarks(admin, win, review.bundle.kills).catch(() => ({ fights: [], deaths: [], mass: [] }));
   const { from: fromIso, to: toIso } = windowIso(win);
 
   return (
@@ -107,12 +105,12 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
         night={review.night}
         mode={{ kind: 'member' }}
         extras={officer ? <ShareControls fromIso={fromIso} toIso={toIso} defaultTitle={`Raid session, ${etDay.format(win.fromMs)}`} splitAtMs={review.change?.atMs ?? null} /> : undefined}
-        split={split ? { change: review.change, live: liveAvailable(win.toMs, Date.now()), canShare: officer } : undefined}
-        nightPanel={nightVariant && marks ? {
-          variant: nightVariant, fromMs: win.fromMs, toMs: win.toMs, spans: review.night?.spans ?? [],
+        split={{ change: review.change, live: liveAvailable(win.toMs, Date.now()), canShare: officer }}
+        nightPanel={{
+          fromMs: win.fromMs, toMs: win.toMs, spans: review.night?.spans ?? [],
           fights: marks.fights, deaths: marks.deaths, mass: marks.mass,
           slices: slicesIn(slices, win), breaks: review.breaks ?? [], canEdit: officer,
-        } : undefined}
+        }}
       />
     </div>
   );

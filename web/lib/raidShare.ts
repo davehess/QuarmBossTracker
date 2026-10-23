@@ -105,6 +105,14 @@ export function isOpenShare(row: Pick<ShareRow, 'from_at' | 'to_at'>): boolean {
   return Number.isFinite(f) && Number.isFinite(t) && t - f === OPEN_SPAN_MS;
 }
 
+/**
+ * An open share whose window is still moving with the clock: not closed by an officer (that makes it a fixed window) and
+ * not yet at its 24 h cap. The shared page redraws itself about once a minute while this is true (lib/shareFollow.ts).
+ */
+export function shareIsFollowing(row: Pick<ShareRow, 'from_at' | 'to_at'>, now = Date.now()): boolean {
+  return isOpenShare(row) && now < Date.parse(row.from_at) + MAX_WINDOW_MS;
+}
+
 /** The latest end an officer may set: a little ahead of the clock (a raid being planned), not a year out. */
 export const MAX_END_AHEAD_MS = 12 * 60 * MINUTE_MS;
 

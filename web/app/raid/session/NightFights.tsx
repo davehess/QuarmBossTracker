@@ -1,8 +1,8 @@
 'use client';
-// The night's log (?v=slices, ?v=segments): every named fight of the window, kills AND wipes AND another guild's, in time
+// The night's log: every named fight of the window, kills AND wipes AND another guild's, in time
 // order, with the moments of mass death between them (many deaths close together, to anyone), and for each fight a
 // "Timeline" that opens the parse page's own damage curve and deaths in place (components/DamageCurve.tsx, read from
-// /api/raid/session/fight-timeline when the row is opened). Both variants show this same list.
+// /api/raid/session/fight-timeline when the row is opened).
 import { useEffect, useMemo, useState } from 'react';
 import { DamageCurve } from '@/components/DamageCurve';
 import { nightLog, type NightCtx } from '@/lib/nightSlices';

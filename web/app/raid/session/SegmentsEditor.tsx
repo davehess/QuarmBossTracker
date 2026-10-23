@@ -1,5 +1,5 @@
 'use client';
-// Variant B of the night panel (?v=segments): A LIST OF DETECTED SEGMENTS TO CONFIRM. The page reads the night and
+// The night panel's editor: A LIST OF DETECTED SEGMENTS TO CONFIRM. The page reads the night and
 // proposes where it changed: quiet gaps in the recording, the roster turning over, our fights switching to another
 // guild's (lib/nightSlices.ts detectSegments). Each segment arrives with a guessed kind and what it holds (kills, wipes,
 // another guild's fights, deaths). The officer fixes what is wrong (the kind, a name, the boundary between two segments,
@@ -61,7 +61,7 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
             const next = rows[i + 1];
             const touches = !!next && next.fromMs === r.toMs;
             const clean = savedWin.has(`${r.fromMs}|${r.toMs}`) && mode === 'saved';
-            const open = <Link href={windowHref(r.fromMs, r.toMs, 'segments')} className={`${chip} ${chipIdle}`}>Open</Link>;
+            const open = <Link href={windowHref(r.fromMs, r.toMs)} className={`${chip} ${chipIdle}`}>Open</Link>;
             return (
               <li key={`${r.fromMs}|${r.toMs}`}>
                 <div className={`rounded-md border border-border bg-panel p-3 text-sm ${r.kind === 'downtime' ? 'opacity-80' : ''}`}>

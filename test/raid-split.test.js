@@ -1,11 +1,11 @@
-// test/raid-split.test.js — "Start a new raid here" on the raid session review (?v=split; web/lib/raidSplit.ts).
+// test/raid-split.test.js — "Start a new raid here" on the raid session review (web/lib/raidSplit.ts; it was the ?v=split beta preview until the guild lead picked it, 2026-10-23).
 //
 //   1. CUT      a cut is snapped to the nearest minute and held one minute inside the window; the two halves are
 //               [from, cut) and [cut, to) and together are exactly the window.
 //   2. DETECTOR on a synthetic per-minute roster series: two raids back to back are cut on the hand-over; one raid
 //               (steady, churning, thinning out at the end, a late group arriving) is never cut.
 //   3. SERIES   minute rows -> who lists: bad rows skipped, a pet counts as its owner, names are keys not output.
-//   4. SOURCE   the page only passes `split` for ?v=split, the board reports the playhead only when asked, the share
+//   4. SOURCE   the members' page passes `split` always, the board reports the playhead only when asked, the share
 //               page never receives the suggestion.
 //
 // Names below are invented tokens (a roster is only identities here). Run: npx vitest run test/raid-split.test.js
@@ -164,10 +164,10 @@ describe('whoSeries', () => {
 });
 
 describe('wiring', () => {
-  it('passes `split` to the review only for ?v=split, and the suggestion never reaches the share page', () => {
+  it('passes `split` to the members\' review always (no ?v=), and the suggestion never reaches the share page', () => {
     const page = read('web', 'app', 'raid', 'session', 'page.tsx');
-    expect(page).toMatch(/one\(searchParams\.v\) === 'split'/);
-    expect(page).toMatch(/split=\{split \? \{/);
+    expect(page).not.toMatch(/searchParams\.v/);
+    expect(page).toMatch(/split=\{\{ change: review\.change,/);
     const share = read('web', 'app', 'share', 'raid', '[token]', 'page.tsx');
     expect(share).not.toMatch(/\.change\b|split=/);
   });
@@ -175,12 +175,13 @@ describe('wiring', () => {
     const board = read('web', 'app', 'spectator', 'replay', 'ReplayBoard.tsx');
     expect(board).toMatch(/onPlayheadRef\.current\?\.\(uiT\)/);
     const review = read('web', 'app', 'raid', 'session', 'SessionReview.tsx');
-    expect(review).toMatch(/onPlayhead: splitOn \|\| nightOn \? onPlayhead : undefined/);
+    expect(review).toMatch(/onPlayhead: splitOn \|\| nightOn \|\| following \? onPlayhead : undefined/);
     expect(review).toMatch(/splitAt: splitOn \? splitAt : undefined/);
   });
-  it('each half opens as its own session page and keeps ?v=split', () => {
+  it('each half opens as its own session page', () => {
     const panel = read('web', 'app', 'raid', 'session', 'SplitPanel.tsx');
-    expect(panel).toMatch(/&v=split/);
+    expect(panel).toMatch(/const sessionHref = \(w: Win\) => `\/raid\/session\?from=/);
+    expect(panel).not.toMatch(/v=split/);
     expect(panel).toMatch(/defaultFollow=\{isLive\}/);
   });
 });

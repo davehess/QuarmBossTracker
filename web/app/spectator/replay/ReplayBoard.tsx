@@ -606,6 +606,14 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
   const urlsRef = useRef(bounded?.urls ?? null);
   urlsRef.current = bounded?.urls ?? null;
   const [nights, setNights] = useState<NightSummary[] | null>(bounded ? [bounded.night] : null);
+  // Bounded: the same window handed over again, grown (a shared raid that follows the raid redraws itself, see
+  // lib/shareFollow.ts). It replaces the one night in place; the reset below keys on the window's start, so the playhead stays.
+  const boundedNight = bounded?.night;
+  const boundedSig = boundedNight ? `${boundedNight.first}|${boundedNight.last}|${boundedNight.minutes}` : '';
+  useEffect(() => {
+    if (boundedNight) setNights(prev => (prev && prev.length === 1 && prev[0] === boundedNight ? prev : [boundedNight]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boundedSig]);
   const [netErr, setNetErr] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   const [nightKey, setNightKey] = useState<string | null>(null);

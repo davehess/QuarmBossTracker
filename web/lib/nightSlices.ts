@@ -118,35 +118,7 @@ export function planSliceWrite(store: SliceStore, win: Win, incoming: unknown, n
   return { store: { v: 1, s: all }, saved };
 }
 
-// ── Editing a list of spans (shared by both editors) ─────────────────────────
-
 type Span2 = { fromMs: number; toMs: number };
-
-/** The room for a new slice that starts at `fromMs` and was dragged to `toMs`: cut short at the next slice, null when it starts inside one or is under a minute. */
-export function fitNew(list: readonly Span2[], win: Win, fromMs: number, toMs: number): Span2 | null {
-  let a = Math.round(Math.min(fromMs, toMs) / MINUTE_MS) * MINUTE_MS;
-  let b = Math.round(Math.max(fromMs, toMs) / MINUTE_MS) * MINUTE_MS;
-  a = Math.max(a, win.fromMs); b = Math.min(b, win.toMs);
-  for (const x of list) {
-    if (a >= x.fromMs && a < x.toMs) return null;
-    if (x.fromMs >= a && x.fromMs < b) b = x.fromMs;
-  }
-  return b - a >= MINUTE_MS ? { fromMs: a, toMs: b } : null;
-}
-
-/** One edge of `list[i]` moved by `deltaMs` (minutes): held at least a minute long, inside the window and clear of its neighbours. */
-export function moveEdge<T extends Span2>(list: readonly T[], i: number, edge: 'from' | 'to', deltaMs: number, win: Win): T[] {
-  const x = list[i];
-  if (!x) return list.slice();
-  const sorted = list.map((v, k) => ({ v, k })).sort((p, q) => p.v.fromMs - q.v.fromMs);
-  const pos = sorted.findIndex(p => p.k === i);
-  const prev = pos > 0 ? sorted[pos - 1].v : null, next = pos < sorted.length - 1 ? sorted[pos + 1].v : null;
-  const step = Math.round(deltaMs / MINUTE_MS) * MINUTE_MS;
-  let { fromMs, toMs } = x;
-  if (edge === 'from') fromMs = Math.min(toMs - MINUTE_MS, Math.max(prev ? prev.toMs : win.fromMs, fromMs + step));
-  else toMs = Math.max(fromMs + MINUTE_MS, Math.min(next ? next.fromMs : win.toMs, toMs + step));
-  return list.map((v, k) => (k === i ? { ...v, fromMs, toMs } : v));
-}
 
 // ── Named fights ─────────────────────────────────────────────────────────────
 

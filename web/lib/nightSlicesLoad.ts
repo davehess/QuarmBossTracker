@@ -8,7 +8,7 @@
 //   * the deaths: `raw_parse->deaths` of the contributions of the window's encounters, nothing else of the parse
 //     (~170 deaths for a whole night; the sub-array is a few dozen bytes a death). Ids are chunked, each page ordered
 //     on the contribution id.
-// Nothing here is read for the default page: only ?v=slices and ?v=segments call it.
+// Only the members' session page calls it (the shared page has no night panel).
 //
 // NO NAMES LEAVE THIS FILE. A death is read as a name only to deduplicate it (the same death seen by several
 // uploaders, a pet or an NPC dropped) and is returned as a time.
