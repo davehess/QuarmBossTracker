@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
+import { actorName } from '@/lib/actorName';
 
 async function assertOfficer() {
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -51,7 +52,7 @@ export async function createFightCard(formData: FormData) {
   await supabaseAdmin().from('fight_cards').insert({
     guild_id: GUILD_TAG,
     ...f,
-    updated_by: u!.email || u!.id,
+    updated_by: actorName(u),
   });
   revalidatePath('/raid/plan');
 }
@@ -65,7 +66,7 @@ export async function updateFightCard(formData: FormData) {
   await supabaseAdmin().from('fight_cards').update({
     ...f,
     active: formData.get('active') === 'on',
-    updated_by: u!.email || u!.id,
+    updated_by: actorName(u),
     updated_at: new Date().toISOString(),
   }).eq('id', id);
   revalidatePath('/raid/plan');

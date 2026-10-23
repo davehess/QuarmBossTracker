@@ -41,3 +41,39 @@ describe('the parse actions write a name, not the email', () => {
     for (const w of writes) expect(w).toMatch(/:\s*(?:actorName\(u\)|null)$/);
   });
 });
+
+// FB sweep (the guild lead, 2026-10-23, "sweep all six"): every officer action under web/app writes a Discord name.
+function appSources(dir = path.join(ROOT, 'web/app'), out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) appSources(p, out);
+    else if (/\.tsx?$/.test(e.name)) out.push(p);
+  }
+  return out;
+}
+
+describe('no officer action under web/app writes an email address', () => {
+  // auth/mimic-link shows a person THEIR OWN address back to them; it writes nothing.
+  const SHOWS_OWN = new Set(['web/app/auth/mimic-link/page.tsx']);
+  it('no `.email ||` writer remains', () => {
+    const files = appSources();
+    expect(files.length).toBeGreaterThan(100);
+    const bad = files
+      .filter(f => !SHOWS_OWN.has(path.relative(ROOT, f).split(path.sep).join('/')))
+      .filter(f => /\.email\s*\|\|/.test(stripJs(fs.readFileSync(f, 'utf8'))))
+      .map(f => path.relative(ROOT, f));
+    expect(bad).toEqual([]);
+  });
+
+  it('the pages that print a stored actor wrap it in shownActor', () => {
+    for (const [file, re] of [
+      ['web/app/admin/overlays/page.tsx', /shownActor\(data\.updated_by_name\)/],
+      ['web/app/admin/voice/page.tsx', /shownActor\(row\.updated_by_name\)/],
+      ['web/app/admin/comp/page.tsx', /shownActor\(data\.updated_by_name\)/],
+      ['web/app/admin/console/page.tsx', /shownActor\(f\.tuningUpdatedBy\)/],
+      ['web/app/who/page.tsx', /shownActor\(o\?\.set_by_name\)/],
+    ]) {
+      expect(stripJs(fs.readFileSync(path.join(ROOT, file), 'utf8')), file).toMatch(re);
+    }
+  });
+});

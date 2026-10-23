@@ -187,9 +187,33 @@ async function reconcileKillsFromSupabase(opts = {}) {
 //
 // ended_at is set-once via the ended_at=is.null filter, so a precise death time
 // from a confirmed upload is never overwritten by this estimate.
+//
+// A WIPE IS NOT A KILL (the guild lead, 2026-10-23, picked "the nightly cleanup leaves the end time
+// off a wipe"): readers take `ended_at != null` to mean "the boss died" (raid review kills, the
+// kill recap, latest_kill_per_npc timer recovery, the replay/timeline feeds), so stamping a wipe
+// turned it into a phantom kill. This sweep therefore leaves ended_at NULL on a row that is a wipe:
+//   · officer-marked — is_wipe, or classification 'wipe' (both paths below);
+//   · or, on the STALE path only and for CURATED bosses only, total_damage under 90% of the boss's
+//     catalog HP (a fight that never got the boss down). Loot posted for the boss is positive death evidence and outranks that
+//     estimate, so the loot path ignores the damage rule. HP unknown → no estimate, stamp as before.
 const ENGAGED_STALE_MIN = 12;   // fight concluded > this many min ago = not live
+const WIPE_HP_FRACTION = 0.9;   // under this share of catalog HP, an unflagged fight is a wipe
+
+/** True when the row is an officer-marked wipe (is_wipe, or classification 'wipe'). */
+function isMarkedWipe(e) {
+  return !!e && (e.is_wipe === true || e.classification === 'wipe');
+}
+
+/** True when the parsed damage is under WIPE_HP_FRACTION of the boss's catalog HP. Unknown HP → false. */
+function fellShortOfBossHp(e) {
+  const npc = Array.isArray(e && e.eqemu_npc_types) ? e.eqemu_npc_types[0] : (e && e.eqemu_npc_types);
+  const hp = Number(npc && npc.hp);
+  const dmg = Number(e && e.total_damage);
+  return hp > 0 && Number.isFinite(dmg) && dmg < WIPE_HP_FRACTION * hp;
+}
+
 async function reconcileEngagedEncounters() {
-  if (!supabase.isEnabled()) return { ok: false, promoted: 0 };
+  if (!supabase.isEnabled()) return { ok: false, promoted: 0, skippedWipes: 0 };
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const enc = encodeURIComponent;
   const now = Date.now();
@@ -200,21 +224,41 @@ async function reconcileEngagedEncounters() {
   const engaged = await supabase.select('encounters',
     `guild_id=eq.${enc(guildId)}&ended_at=is.null&total_damage=gt.0` +
     `&started_at=gte.${enc(sinceIso)}` +
-    `&select=id,npc_id,started_at,duration_sec&order=started_at.desc&limit=300`
+    `&select=id,npc_id,started_at,duration_sec,total_damage,is_wipe,classification,eqemu_npc_types(hp)` +
+    `&order=started_at.desc&limit=300`
   ).catch(err => { console.warn('[reconcile-engaged] select failed:', err?.message); return []; });
-  if (!Array.isArray(engaged) || engaged.length === 0) return { ok: true, promoted: 0 };
+  if (!Array.isArray(engaged) || engaged.length === 0) return { ok: true, promoted: 0, skippedWipes: 0 };
 
   const staleBefore = now - ENGAGED_STALE_MIN * 60 * 1000;
-  let promoted = 0;
+
+  // The damage rule is for CURATED bosses only (bosses_local.auto_registered = false): the ~790 auto-registered
+  // mobs a day are trash and uncurated nameds whose parses routinely under-count a real kill (a fifth of them
+  // sit under 90% of catalog HP while the median is 1.02), so judging them by HP would leave real kills open.
+  // One narrow read, only when some stale row is short of HP; a failed read leaves the set empty (old behaviour).
+  const shortNpcIds = [...new Set(engaged
+    .filter(e => e.npc_id && !isMarkedWipe(e) && fellShortOfBossHp(e)
+      && (Date.parse(e.started_at) || 0) + (e.duration_sec || 0) * 1000 < staleBefore)
+    .map(e => e.npc_id))];
+  let curatedNpcIds = new Set();
+  if (shortNpcIds.length) {
+    const rows = await supabase.select('bosses_local',
+      `auto_registered=eq.false&npc_id=in.(${shortNpcIds.join(',')})&select=npc_id&limit=300`
+    ).catch(err => { console.warn('[reconcile-engaged] curated read failed:', err?.message); return []; });
+    if (Array.isArray(rows)) curatedNpcIds = new Set(rows.map(r => r.npc_id));
+  }
+
+  let promoted = 0, skippedWipes = 0;
   for (const e of engaged) {
     if (!e.npc_id) continue;
     const startMs = Date.parse(e.started_at) || 0;
     if (!startMs) continue;
+    if (isMarkedWipe(e)) { skippedWipes++; continue; }     // a wipe never gets an end time
     const fightEndMs = startMs + (e.duration_sec || 0) * 1000;
     let doSet = false;
 
     if (fightEndMs < staleBefore) {
-      // (1) Concluded more than STALE_MIN ago — not currently engaged.
+      // (1) Concluded more than STALE_MIN ago — not currently engaged. Unless it never got the boss down.
+      if (curatedNpcIds.has(e.npc_id) && fellShortOfBossHp(e)) { skippedWipes++; continue; }
       doSet = true;
     } else {
       // (2) Recent — only register early with positive death evidence (loot)
@@ -243,7 +287,7 @@ async function reconcileEngagedEncounters() {
     promoted++;
   }
   if (promoted) console.log(`[reconcile-engaged] marked ${promoted} encounter(s) no-longer-engaged (stale or loot-confirmed)`);
-  return { ok: true, promoted };
+  return { ok: true, promoted, skippedWipes };
 }
 
-module.exports = { reconcileKillsFromSupabase, reconcileEngagedEncounters };
+module.exports = { reconcileKillsFromSupabase, reconcileEngagedEncounters, isMarkedWipe, fellShortOfBossHp };

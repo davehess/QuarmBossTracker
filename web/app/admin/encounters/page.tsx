@@ -33,6 +33,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { selectAll } from '@/lib/selectAll';
 import { loadEncounterGap, hasMissingDamage, GAP_HARD_CAP } from '@/lib/adminReads';
 import { GUILD_TAG } from '@/lib/guild';
+import { actorName } from '@/lib/actorName';
 
 export const metadata = {
   title: 'Encounter repair · Admin',
@@ -279,7 +280,7 @@ async function markIncomplete(formData: FormData) {
       data_incomplete: true,
       data_incomplete_reason: reason || 'flagged via admin',
       data_incomplete_at: new Date().toISOString(),
-      data_incomplete_by: u!.email || u!.id,
+      data_incomplete_by: actorName(u),
     })
     .eq('id', id);
   revalidatePath('/admin/encounters');

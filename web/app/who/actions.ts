@@ -11,13 +11,14 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { BASE_CLASSES } from './classes';
 import { GUILD_TAG } from '@/lib/guild';
+import { actorName } from '@/lib/actorName';
 
 async function officerIdentity(): Promise<{ id: string; name: string } | null> {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return null;
   if (!(await isOfficer(user.id))) return null;
   // Best-effort display name from the member cache.
-  let name = user.email || user.id;
+  let name = actorName(user);
   try {
     const admin = supabaseAdmin();
     const { data } = await admin
@@ -26,7 +27,7 @@ async function officerIdentity(): Promise<{ id: string; name: string } | null> {
       .eq('user_id', user.id)
       .maybeSingle();
     if (data?.nickname) name = data.nickname;
-  } catch { /* fall back to email/id */ }
+  } catch { /* keep the Discord name from the sign-in */ }
   return { id: user.id, name };
 }
 
