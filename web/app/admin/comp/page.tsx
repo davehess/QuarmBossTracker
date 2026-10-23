@@ -11,6 +11,7 @@ import { requireOfficer } from '@/lib/officer';
 import { ARCHETYPES } from '@/lib/comp';
 import CompEditor from './CompEditor';
 import { GUILD_TAG } from '@/lib/guild';
+import { shownActor } from '@/lib/actorName';
 import MoreInfo from '@/components/MoreInfo';
 
 export const metadata = {
@@ -77,7 +78,7 @@ export default async function AdminCompPage() {
           Edits validate as you type; Save writes the whole set.
           </MoreInfo>
           {data?.updated_by_name
-            ? <> Last saved by <span className="text-text">{data.updated_by_name}</span> · {new Date(data.updated_at).toLocaleString()}.</>
+            ? <> Last saved by <span className="text-text">{shownActor(data.updated_by_name)}</span> · {new Date(data.updated_at).toLocaleString()}.</>
             : <> Never saved — the box below is a starter you can edit.</>}
         </div>
         {seeded && (

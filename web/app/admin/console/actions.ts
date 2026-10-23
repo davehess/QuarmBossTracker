@@ -23,6 +23,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { isControlKey, setAtKey } from '@/lib/consoleHealth';
 import { GUILD_TAG } from '@/lib/guild';
+import { actorName } from '@/lib/actorName';
 
 export type ActionResult = { ok: true; message: string } | { ok: false; error: string };
 
@@ -52,9 +53,7 @@ async function _officer() {
   const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
   return {
     user,
-    display: String(
-      meta.full_name || meta.name || meta.preferred_username || meta.email || 'officer',
-    ),
+    display: actorName(user),
     discordId: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
   };
 }

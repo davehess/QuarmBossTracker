@@ -30,6 +30,7 @@ import {
 import { RUNBOOKS, type Runbook, type LeverRef } from '@/lib/runbooks';
 import { DriftList, EmergencyPanel } from './ConsoleControls';
 import { GUILD_TAG } from '@/lib/guild';
+import { shownActor } from '@/lib/actorName';
 import MoreInfo from '@/components/MoreInfo';
 
 export const metadata = {
@@ -338,7 +339,7 @@ export default async function OfficerConsolePage() {
           applied — and the failure mode is forgetting to take it off, not putting it on.
           {f.tuningUpdatedAt && (
             <> Tuning row last written {new Date(f.tuningUpdatedAt).toLocaleString()}
-              {f.tuningUpdatedBy ? <> by <span className="text-text">{f.tuningUpdatedBy}</span></> : null}.</>
+              {f.tuningUpdatedBy ? <> by <span className="text-text">{shownActor(f.tuningUpdatedBy)}</span></> : null}.</>
           )}
         </p>
         <DriftList entries={drift} ages={ages} />

@@ -19,6 +19,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { GUILD_TAG } from '@/lib/guild';
+import { actorName, shownActor } from '@/lib/actorName';
 import MoreInfo, { FoldText } from '@/components/MoreInfo';
 
 export const metadata = {
@@ -233,7 +234,7 @@ async function saveOverlayTuning(formData: FormData) {
   }
 
   const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
-  const display = String(meta.full_name || meta.name || meta.preferred_username || meta.email || 'officer');
+  const display = actorName(user);
 
   await sb
     .from('overlay_tuning')
@@ -265,7 +266,7 @@ async function saveClassSets(formData: FormData) {
   }
 
   const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
-  const display = String(meta.full_name || meta.name || meta.preferred_username || meta.email || 'officer');
+  const display = actorName(user);
 
   // Upsert touches ONLY class_sets (+ audit columns) — `tuning` stays as-is.
   await supabaseAdmin()
@@ -451,7 +452,7 @@ export default async function OverlayTuningPage() {
         <div className="flex items-center justify-between gap-3">
           <div className="text-xs text-dim">
             {data?.updated_by_name
-              ? <>Last saved by <span className="text-text">{data.updated_by_name}</span> · {new Date(data.updated_at).toLocaleString()}</>
+              ? <>Last saved by <span className="text-text">{shownActor(data.updated_by_name)}</span> · {new Date(data.updated_at).toLocaleString()}</>
               : <span>Never saved — all defaults in effect</span>}
           </div>
           <button
