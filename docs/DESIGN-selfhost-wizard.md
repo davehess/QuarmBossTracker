@@ -169,6 +169,46 @@ Management API exposes neither. Do not quote an egress figure until someone does
   permission check there, rather than editing Railway variables. Whatever lands must keep working when the
   web is down: the bot reads the stored choice, and the env var stays as an override.
 
+- **2026-10-23 — an open "commons" hub anyone can join, run as a SEPARATE project and a headless bot** (`DECISIONS-2026-09-21.md`
+  §423, `DESIGN-open-hub.md`): the guild lead's start on the free door, *"anyone can join, once a guild has 12 members they
+  need to stand up their own or pay for the 25 hosting"*. It is its own Supabase project (never Wolf Pack's, §358) and the same
+  bot code with `HUB_MODE=commons`: HTTP only, no Discord client, no boards, no midnight chain. Tenancy moves from the process
+  (`SUPABASE_GUILD_ID`, read 123 times in `index.js`) to the session token (`mimic_sessions.guild_id`) through one
+  request-scoped helper, `supabase.guildId()`; outside a request in commons mode it throws. For the wizard: it never sets
+  `HUB_MODE`, so a self-hosted deployment stays single-tenant and the new path is inert; its schema step creates the `hub_*`
+  registry only for a deployment that is itself a hub (migration `20261023160000_open_hub_registry.sql`, not applied anywhere
+  yet). Cost: one more Supabase project (about $10 a month marginal, estimated), migrations to apply in two places.
+- **2026-10-23 — 12 active players is where a free guild chooses** (`DECISIONS-2026-09-21.md` §423, `DESIGN-open-hub.md` §3): a
+  guild counts **distinct active PLAYERS** (uploads on 2 UTC days in 30, once, in their main guild; guests and characters never
+  count). Nine is the heads-up, three confirming daily counts at twelve make it real, then a 14-day grace (one 14-day extension),
+  then `limited`: raid-wide uploads and new joins stop; history, personal data and **a player's own Mimic never do**. Falling to
+  ten, not eleven, lifts it. A managed guild's cap is 60 and only reports. For the wizard: the two doors are this wizard
+  (stand up your own) and the $25 plan, so it must offer "move from the commons" before "start from nothing", and the count and
+  thresholds are rules in `utils/openHub.js`, not guild config; a self-hosted deployment is never counted.
+- **2026-10-23 — the $25 path is a plan flip, and billing is not in the first phases** (`DECISIONS-2026-09-21.md` §386, §423):
+  the managed plan is `plan='managed'` on the guild's registry row: cap 60, Wolf Pack's longer retention windows, the +$5 raw-data
+  add-on offered at signup, the 14-day trial. Until a billing rail exists the flip is the guild lead's by hand. Nothing is sold
+  to a player. For the wizard: "have it hosted" is the same engine behind the stubbed hosted path (2026-09-18, "talk to us"),
+  and a guild that later leaves for its own box takes the guild export (below) with it.
+- **2026-10-23 — the hub keeps usage logs SHORT and the player's Mimic keeps the history** (`DECISIONS-2026-09-21.md` §423,
+  `DESIGN-open-hub.md` §4–§5): the commons sweeps per stream, 6 h (live state, roster), 48 h (raw threat), 3 d (buff casts), 7 d
+  (position minutes), 14 d (events, rollup), 30 d (raw parses), 60 d (encounters and their players and threat graph); the
+  registry, the kill ledger and the gate log stay. About **8 MB per player** at steady state against about 79 MB per player after
+  six months at Wolf Pack's windows (rates measured 2026-10-23: 42 players, 14 days). The commons refuses tells, chat, PvP and
+  /who, XP, faction, inventory and spellbook outright, and takes **no nightly full dump** (the registry only). Mimic keeps
+  guild summaries (~5 MB a month) and the position recording (~40 MB a month, 90 days), raw streams only if the player turns
+  them on, and pulls down before the hub forgets (`local-sync` kinds). For the wizard: these windows are, nearly row for row, the
+  free-tier profile it should offer a guild on Supabase Free; `hub_retention` ships with the schema as that default; every window
+  still needs its index before the sweep is switched on, and the sweep must report what it removed.
+- **2026-10-23 — a tenant import loads a player's own local copy into a guild, one guild at a time** (`DECISIONS-2026-09-21.md`
+  §423, `DESIGN-open-hub.md` §6): after signing into a guild's tenant, Mimic previews what it holds for THAT guild (records
+  carry the guild stamp from when they were recorded), the player consents per guild and per kind, every character who is not the
+  player or not in that guild's roster at the time becomes `<Class>-<id>` on the PC and again on the server, the bundle is signed
+  and nonce-checked, rate-limited (one a day per guild, 20 MB, 180 days, 5,000 fights), written to an append-only audit table, and
+  revertable by import id. It can never create attendance, DKP, loot-ledger entries or timers. For the wizard: the import route
+  and `hub_import_audit` belong in the schema for any deployment that wants to accept a player's history (phase 5; not built);
+  a deployment that does not simply returns 404 and the Mimic preview says so.
+
 Append here as decisions land. Each entry: the choice, why, and what the wizard
 must therefore ask or verify.
 

@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
 | **Route planner + off-night plans + Sol Ro tower** (§407, §410) | Live on main (web 2.1.0): 3D Real/Floors with drag, One leg, Straight/Walk/Recorded, compare with event kills; off-night A picked | the guild lead: press "Import tonight's planner" once as an officer; a session: build floor clutter A (floors follow the current leg) |
@@ -12579,3 +12580,29 @@ not accurate to game"*. From Zeal's source (CoastalRedwood/Zeal `main`): `zone_m
 - **Exact value needs the guild's Zeal fork:** one line in `named_pipe.cpp`'s player block,
   `player_data["movement_speed"] = (mount ? mount : self)->MovementSpeed;` (mount = `self->ActorInfo->Mount`); then the Map shows
   `movement_speed / 0.7 * 100` with no base at all. Not done here (the fork and the agent's pipe reader would both change).
+
+### 423. The open hub: anyone can join, a guild chooses at 12, history lives on the PC (2026-10-23, design + dormant rules)
+The guild lead: *"Lets start with a buildout of the common 'anyone can join, once a guild has 12 members they need to stand up
+their own or pay for the 25 hosting'. Usage logs will not be kept for long term on my storage, but instead be available in the end
+user's mimic. If they auth into a guild's tenant they would be able to load in their data."*
+- **The call:** a free "commons" anyone can sign into with Discord (identify only). A guild is a group of players who name it; the
+  creator is the owner and promotes officers. At **12 active players** (uploads on 2 UTC days in 30, counted once per player, never
+  characters or guests) the guild gets a notice with two doors, stand up its own (the wizard) or $25 hosting (§386), then a
+  14-day grace (one extension), then `limited`: raid-wide uploads and new joins stop. A player's own Mimic never stops.
+- **Short retention:** 6 h live state, 48 h raw threat, 3 d buffs, 7 d position minutes, 14 d events and rollup, 30 d raw parses,
+  60 d encounters; about 8 MB a player held, against about 79 MB after six months at Wolf Pack's windows (measured 2026-10-23, 42
+  players). The history is in the player's Mimic, which pulls down before the hub forgets. Disk dollars are tiny ($0.125 a GB);
+  the gains are staying under 8 GB and not dumping a growing database to backup egress every night.
+- **Tenancy:** a separate Supabase project and a headless copy of the bot (`HUB_MODE=commons`); `guild_id` moves from
+  `process.env.SUPABASE_GUILD_ID` (123 identical reads in `index.js`) to the session token through one request-scoped helper that
+  throws outside a request in commons mode; a route manifest and a two-tenant test stop an unscoped route shipping.
+- **Tenant import (phase 5):** from the local copy, consent per guild and kind, only that guild's fights, other people's names
+  `<Class>-<id>` twice over, signed, rate-limited, audited, revertable.
+- **Costs:** hub about $13 / $24 / $72 a month at 10 / 50 / 200 players (estimated; storage measured); phase 1 about 15 build days,
+  all five phases about 37.
+- **Recommendation recorded:** run phase 1 as an invite-only closed beta; do not announce the commons until the gate (phase 3)
+  exists; compress `/poll`, buff-queue and live-damage first (§386).
+- **Where it landed:** `docs/DESIGN-open-hub.md`; five entries in `docs/DESIGN-selfhost-wizard.md` section 3; `utils/openHub.js`,
+  `supabase/migrations/20261023160000_open_hub_registry.sql` (not applied; for the commons project, not Wolf Pack's) and
+  `test/open-hub.test.js` on branch `draft/open-hub`. Nothing in a live request path.
+- **Next:** the guild lead's eight picks (design section 12); then phase 1.
