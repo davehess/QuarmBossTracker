@@ -18,6 +18,7 @@ import { snapCut, type RaidChange } from '@/lib/raidSplit';
 import DataSources from './DataSources';
 import SplitPanel, { type SplitRequest } from './SplitPanel';
 import NightPanel, { type NightPanelData } from './NightPanel';
+import { useFollowRefresh } from './useFollowRefresh';
 
 export type ReviewMode = { kind: 'member' } | { kind: 'share'; token: string };
 
@@ -67,7 +68,7 @@ type TabKey = 'attendance' | 'kills' | 'loot' | 'bids' | 'parses';
 /** What every name on the page needs: the session's window (for the members' parse call) and the winners to link. */
 type ReviewCtx = {
   fromMs: number; toMs: number; handles: ReadonlyMap<string, string>; openBids: (handle: string) => void;
-  /** ?v=split only: a ✂ beside every time that opens the "start a new raid here" panel at that time. */
+  /** Members' page only: a ✂ beside every time that opens the "start a new raid here" panel at that time. */
   splitAt?: (ms: number) => void;
 };
 const ReviewContext = createContext<ReviewCtx>({ fromMs: 0, toMs: 0, handles: new Map(), openBids: () => {} });
@@ -85,18 +86,20 @@ function Who({ name }: { name: string }) {
   );
 }
 
-/** Members' page, ?v=split only. */
+/** Members' page only. */
 export type SplitOptions = { change: RaidChange | null; live: boolean; canShare: boolean };
 
-export default function SessionReview({ bundle, night, mode, extras, split, nightPanel }: {
+export default function SessionReview({ bundle, night, mode, extras, split, nightPanel, follow }: {
   bundle: SessionBundle;
   night: NightSummary | null;
   mode: ReviewMode;
+  /** A shared page whose link still follows the raid: the page redraws itself about once a minute (lib/shareFollow.ts). */
+  follow?: boolean;
   /** Members' page only: the officer's Share panel. */
   extras?: React.ReactNode;
-  /** Members' page, ?v=split only: "Start a new raid here" under the replay. Absent: the page is as it was. */
+  /** Members' page only: "Start a new raid here" under the replay. Absent on a shared page. */
   split?: SplitOptions;
-  /** Members' page, ?v=slices or ?v=segments only: the night sliced, with its named fights and mass deaths, under the replay. */
+  /** Members' page only: the night sliced into segments, with its named fights and mass deaths, under the replay. */
   nightPanel?: NightPanelData;
 }) {
   const [tab, setTab] = useState<TabKey>('attendance');
@@ -107,14 +110,27 @@ export default function SessionReview({ bundle, night, mode, extras, split, nigh
   const panelRef = useRef<HTMLDivElement>(null);
   const splitRef = useRef<HTMLDivElement>(null);
   const playheadRef = useRef<number | null>(null);
-  const onPlayhead = useCallback((t: number) => { playheadRef.current = t; }, []);
+  // A followed share: where the page first put the playhead (the board reports 0 before it has opened), and when the
+  // viewer last touched the page. Both feed the hold in lib/shareFollow.ts.
+  const openedRef = useRef<number | null>(null);
+  const touchedRef = useRef(0);
+  const fromMsNow = useRef(bundle.fromMs);
+  fromMsNow.current = bundle.fromMs;
+  const onPlayhead = useCallback((t: number) => {
+    playheadRef.current = t;
+    if (openedRef.current == null && t >= fromMsNow.current) openedRef.current = t;
+  }, []);
+  useEffect(() => { openedRef.current = null; }, [bundle.fromMs]);   // a moved start opens the board afresh
+  const touched = useCallback(() => { touchedRef.current = Date.now(); }, []);
+  const following = !!follow && mode.kind === 'share';
+  useFollowRefresh({ on: following, endMs: bundle.toMs, playheadRef, openedRef, touchedRef });
   const splitOn = !!split && mode.kind === 'member';
   const nightOn = !!nightPanel && mode.kind === 'member';
   const token = mode.kind === 'share' ? mode.token : '';
   const urls = useMemo(() => boardUrls(mode.kind === 'share' ? { kind: 'share', token } : { kind: 'member' }, bundle.fromMs, bundle.toMs),
     [mode.kind, token, bundle.fromMs, bundle.toMs]);
-  const bounded = useMemo<BoundedReplay | null>(() => (night ? { night, urls, seek, onPlayhead: splitOn || nightOn ? onPlayhead : undefined } : null),
-    [night, urls, seek, splitOn, nightOn, onPlayhead]);
+  const bounded = useMemo<BoundedReplay | null>(() => (night ? { night, urls, seek, onPlayhead: splitOn || nightOn || following ? onPlayhead : undefined } : null),
+    [night, urls, seek, splitOn, nightOn, following, onPlayhead]);
   const splitAt = useCallback((ms: number) => {
     setSplitReq(r => ({ cut: ms, n: (r?.n ?? 0) + 1 }));
     splitRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -154,7 +170,7 @@ export default function SessionReview({ bundle, night, mode, extras, split, nigh
 
   return (
     <ReviewContext.Provider value={ctx}>
-    <div className="min-w-0">
+    <div className="min-w-0" onPointerDownCapture={touched} onKeyDownCapture={touched} onWheelCapture={touched}>
       {/* Above the replay, so a reader from another guild meets "where did this come from?" first (the guild lead). */}
       <DataSources />
 

@@ -1,4 +1,4 @@
-// Shared look and small formatters of the night panel (?v=slices, ?v=segments). Colour is semantic: green is our raid,
+// Shared look and small formatters of the night panel. Colour is semantic: green is our raid,
 // purple an event, orange another guild's raid (and the ring on its fights), grey is time set aside; red is a death.
 import { MINUTE_MS } from '@/lib/raidReplay';
 import type { SliceKind } from '@/lib/nightSlices';
@@ -31,8 +31,6 @@ export const fmtSpan = (ms: number) => {
 export const fmtDur = (sec: number | null) => (sec == null ? '' : sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${sec % 60 ? ` ${sec % 60}s` : ''}`);
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** The session page for one window, staying on the same preview variant. */
-export const windowHref = (fromMs: number, toMs: number, variant: string) =>
-  `/raid/session?from=${encodeURIComponent(new Date(fromMs).toISOString())}&to=${encodeURIComponent(new Date(toMs).toISOString())}&v=${variant}`;
-
-export const newSliceId = () => 'x' + Math.random().toString(36).slice(2, 9).padEnd(6, '0');
+/** The session page for one window. */
+export const windowHref = (fromMs: number, toMs: number) =>
+  `/raid/session?from=${encodeURIComponent(new Date(fromMs).toISOString())}&to=${encodeURIComponent(new Date(toMs).toISOString())}`;

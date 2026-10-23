@@ -1,5 +1,5 @@
 // GET /api/raid/session/fight-timeline?encounter=<id>&from=<iso>&to=<iso>: one fight's damage curve and deaths for the
-// night panel of the members' session review (?v=slices, ?v=segments), loaded when the fight is opened.
+// night panel of the members' session review, loaded when the fight is opened.
 //
 //   -> { timeline: FightTimeline }   lib/raidFightTimeline.ts; opted-out characters are their class and a number
 //

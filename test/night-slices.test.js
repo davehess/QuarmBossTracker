@@ -1,6 +1,7 @@
 // test/night-slices.test.js — slicing a recorded night into raid / event / downtime / another guild's raid, the night's
-// named fights and mass deaths, and the two beta previews of the editor (?v=slices, ?v=segments) on the session review
-// (the guild lead, 2026-10-23; web/lib/nightSlices.ts, nightSlicesLoad.ts, app/raid/session/Night*.tsx).
+// named fights and mass deaths, and the segments editor on the session review (the guild lead, 2026-10-23: of the two
+// beta previews, ?v=segments was picked and ?v=slices, drawing spans by hand, was deleted; web/lib/nightSlices.ts,
+// nightSlicesLoad.ts, app/raid/session/Night*.tsx).
 //
 //   1. MASS DEATH   5+ deaths of anyone within a minute are one moment; overlapping runs join; a trickle is not one.
 //   2. FIGHTS       a named fight is a kill or a wipe, tagged when it is another guild's; the log interleaves the two.
@@ -8,7 +9,7 @@
 //                   guild's; short pieces fold in; merge / split / move-boundary keep the tiling honest.
 //   4. STORE        planSliceWrite: replace what is inside the window, refuse overlaps / crossings / bad input.
 //   5. LOADER       against a fake database: no name leaves loadNightMarks, saves are guarded by updated_at.
-//   6. SOURCE       default page untouched, officer + same-origin gate on the write, members-only timeline route.
+//   6. SOURCE       the panel is the members' page's default, officer + same-origin gate on the write, members-only timeline route.
 //
 // Names are invented tokens. Source assertions run on comment-stripped text (stripJs).
 // Run: npx vitest run test/night-slices.test.js
@@ -19,8 +20,8 @@ import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
 import { MINUTE_MS } from '../web/lib/raidReplay.ts';
 import {
-  GAP_BREAK_MS, KEEP_DAYS, MAX_LABEL, MAX_PER_WRITE, MIN_SEGMENT_MS, cleanLabel, detectSegments, deathsDuring, fitNew, fightMark,
-  markFights, massDeaths, mergeSegments, moveBoundary, moveEdge, nightLog, parseSliceStore, planSliceWrite, playerDeathName,
+  GAP_BREAK_MS, KEEP_DAYS, MAX_LABEL, MAX_PER_WRITE, MIN_SEGMENT_MS, cleanLabel, detectSegments, deathsDuring, fightMark,
+  markFights, massDeaths, mergeSegments, moveBoundary, nightLog, parseSliceStore, planSliceWrite, playerDeathName,
   slicesIn, spanStats, splitSegment, suggestKind,
 } from '../web/lib/nightSlices.ts';
 import { rosterCuts } from '../web/lib/liveRaidWindow.ts';
@@ -209,24 +210,6 @@ describe('editing segments', () => {
   });
 });
 
-describe('drawing and nudging slices', () => {
-  const list = [{ fromMs: at(100), toMs: at(150) }, { fromMs: at(200), toMs: at(260) }];
-  it('a new span is held to the minute, inside the window, and cut short at the next one', () => {
-    expect(fitNew(list, WIN, at(10) + 20_000, at(40))).toEqual({ fromMs: at(10), toMs: at(40) });
-    expect(fitNew(list, WIN, at(160), at(400))).toEqual({ fromMs: at(160), toMs: at(200) });
-    expect(fitNew(list, WIN, at(130), at(180))).toBeNull();            // starts inside one
-    expect(fitNew(list, WIN, at(10), at(10) + 20_000)).toBeNull();     // under a minute
-    expect(fitNew(list, WIN, at(40), at(10))).toEqual({ fromMs: at(10), toMs: at(40) });   // dragged backwards
-  });
-  it('an edge moves by minutes, stays a minute long, and stops at its neighbour and the window', () => {
-    expect(moveEdge(list, 0, 'to', 5 * MINUTE_MS, WIN)[0].toMs).toBe(at(155));
-    expect(moveEdge(list, 0, 'to', 500 * MINUTE_MS, WIN)[0].toMs).toBe(at(200));
-    expect(moveEdge(list, 0, 'from', -500 * MINUTE_MS, WIN)[0].fromMs).toBe(WIN.fromMs);
-    expect(moveEdge(list, 1, 'from', -500 * MINUTE_MS, WIN)[1].fromMs).toBe(at(150));
-    expect(moveEdge(list, 0, 'from', 500 * MINUTE_MS, WIN)[0].fromMs).toBe(at(149));
-  });
-});
-
 // ── 4. STORE ─────────────────────────────────────────────────────────────────────────────────────────────────
 describe('the slice store', () => {
   const empty = { v: 1, s: [] };
@@ -403,13 +386,15 @@ describe('saving slices (a fake database)', () => {
 const web = (...p) => stripJs(fs.readFileSync(path.join(ROOT, 'web', ...p), 'utf8'));
 
 describe('where it is wired', () => {
-  it('the default page reads nothing new: marks and slices load only for ?v=slices / ?v=segments', () => {
+  it('the members\' page always shows the segments panel: no ?v= gate, no drawing variant left', () => {
     const page = web('app', 'raid', 'session', 'page.tsx');
-    expect(page).toMatch(/const nightVariant = v === 'slices' \|\| v === 'segments' \? v : null;/);
-    expect(page).toMatch(/nightVariant \? loadSlices\(admin\)/);
-    expect(page).toMatch(/nightVariant \? await loadNightMarks/);
-    expect(page).toMatch(/nightPanel=\{nightVariant && marks \?/);
-    expect(page).toMatch(/breaks: nightVariant === 'segments'/);
+    expect(page).toMatch(/loadSlices\(admin\)/);
+    expect(page).toMatch(/await loadNightMarks/);
+    expect(page).toMatch(/nightPanel=\{\{/);
+    expect(page).toMatch(/breaks: true/);
+    expect(page).not.toMatch(/searchParams\.v|nightVariant/);
+    expect(fs.existsSync(path.join(ROOT, 'web', 'app', 'raid', 'session', 'SlicesEditor.tsx'))).toBe(false);
+    expect(web('app', 'raid', 'session', 'NightPanel.tsx')).not.toMatch(/SlicesEditor|variant/);
   });
   it('the share page never gets the night panel', () => {
     const share = fs.readdirSync(path.join(ROOT, 'web', 'app', 'share', 'raid', '[token]')).filter(f => f.endsWith('.tsx'));
@@ -433,9 +418,8 @@ describe('where it is wired', () => {
     expect(l.indexOf('anonName(anon, n)')).toBeGreaterThan(-1);
     expect(l.indexOf('buildFightCurve(safe')).toBeGreaterThan(l.indexOf('const safe'));
   });
-  it('both editors save through the same panel hook, and both variants show the same fight list', () => {
+  it('the segments editor saves through the panel hook, and the panel shows the fight list', () => {
     expect(web('app', 'raid', 'session', 'NightPanel.tsx')).toMatch(/<NightFights ctx=\{ctx\}/);
-    expect(web('app', 'raid', 'session', 'SlicesEditor.tsx')).toMatch(/save\.run\(/);
     expect(web('app', 'raid', 'session', 'SegmentsEditor.tsx')).toMatch(/save\.run\(/);
   });
 });

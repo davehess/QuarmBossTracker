@@ -1,12 +1,10 @@
 'use client';
-// The night on one time axis (?v=slices, ?v=segments): three rows over the whole window.
-//   top      the slices an officer marked (or is drafting): a bar each, coloured by kind. With `onCreate`, dragging on this
-//            row draws a new one (to the minute); every bar is a button that selects it.
+// The night on one time axis: three rows over the whole window.
+//   top      the segments an officer confirmed (or is drafting): a bar each, coloured by kind.
 //   middle   the named fights: a green dot for a kill, a red cross for a wipe, an orange ring for another guild's fight.
 //   bottom   the recording (a grey bar where minutes were recorded, so a hole reads as a hole) and, in red, each moment
 //            of mass death with its count.
 // Everything with a time seeks the replay (`onSeek`). The axis is hourly, in Eastern time.
-import { useRef, useState } from 'react';
 import { MINUTE_MS, type Span } from '@/lib/raidReplay';
 import { KIND_LABEL, type FightMark, type MassDeath, type SliceKind } from '@/lib/nightSlices';
 import { KIND_BAR, etHour, etMin, fmtDur, plural } from './nightStyle';
@@ -14,42 +12,18 @@ import { KIND_BAR, etHour, etMin, fmtDur, plural } from './nightStyle';
 export type StripSlice = { id: string; fromMs: number; toMs: number; kind: SliceKind; label: string; draft?: boolean };
 
 const HOUR_MS = 60 * MINUTE_MS;
-const MIN_DRAG_MS = 3 * MINUTE_MS;
 
-export default function NightStrip({ fromMs, toMs, spans, fights, mass, slices, selectedId, onSelect, onCreate, onSeek, drawRule }: {
+export default function NightStrip({ fromMs, toMs, spans, fights, mass, slices, onSeek, drawRule }: {
   fromMs: number; toMs: number;
   spans: readonly Span[]; fights: readonly FightMark[]; mass: readonly MassDeath[];
   slices: readonly StripSlice[];
-  selectedId?: string | null;
-  onSelect?: (id: string) => void;
-  /** Present: dragging on the slices row draws a span (already fitted by the caller, which may refuse). */
-  onCreate?: (fromMs: number, toMs: number) => void;
   onSeek?: (ms: number) => void;
-  /** What the slices row says when it is empty. */
+  /** What the segments row says when it is empty. */
   drawRule?: string;
 }) {
   const span = Math.max(1, toMs - fromMs);
   const pct = (ms: number) => `${(Math.min(toMs, Math.max(fromMs, ms)) - fromMs) / span * 100}%`;
   const width = (a: number, b: number) => `${Math.max(0.4, (Math.min(toMs, b) - Math.max(fromMs, a)) / span * 100)}%`;
-  const laneRef = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<{ a: number; b: number } | null>(null);
-
-  const msAt = (clientX: number) => {
-    const r = laneRef.current?.getBoundingClientRect();
-    if (!r || r.width <= 0) return fromMs;
-    return fromMs + Math.min(1, Math.max(0, (clientX - r.left) / r.width)) * span;
-  };
-  const down = (e: React.PointerEvent) => {
-    if (!onCreate || e.target !== e.currentTarget) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const t = msAt(e.clientX);
-    setDrag({ a: t, b: t });
-  };
-  const move = (e: React.PointerEvent) => { if (drag) setDrag({ a: drag.a, b: msAt(e.clientX) }); };
-  const up = () => {
-    if (drag && onCreate && Math.abs(drag.b - drag.a) >= MIN_DRAG_MS) onCreate(Math.min(drag.a, drag.b), Math.max(drag.a, drag.b));
-    setDrag(null);
-  };
 
   const ticks: number[] = [];
   for (let t = Math.ceil(fromMs / HOUR_MS) * HOUR_MS; t < toMs; t += HOUR_MS) ticks.push(t);
@@ -57,25 +31,19 @@ export default function NightStrip({ fromMs, toMs, spans, fights, mass, slices, 
 
   return (
     <div className="select-none">
-      {/* slices */}
-      <div ref={laneRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => setDrag(null)}
-        className={`relative h-9 rounded border border-border bg-bg ${onCreate ? 'cursor-crosshair touch-none' : ''}`}
-        role="group" aria-label="Slices of the night">
-        {slices.length === 0 && !drag && (
-          <span className="pointer-events-none absolute inset-0 flex items-center px-2 text-xs text-dim">{drawRule ?? 'No slices marked yet.'}</span>
+      {/* segments */}
+      <div className="relative h-9 rounded border border-border bg-bg" role="group" aria-label="Segments of the night">
+        {slices.length === 0 && (
+          <span className="pointer-events-none absolute inset-0 flex items-center px-2 text-xs text-dim">{drawRule ?? 'No segments yet.'}</span>
         )}
         {slices.map(s => (
-          <button key={s.id} type="button" onClick={() => onSelect?.(s.id)} aria-pressed={selectedId === s.id}
+          <div key={s.id}
             title={`${KIND_LABEL[s.kind]}${s.label ? `: ${s.label}` : ''}, ${etMin.format(s.fromMs)} to ${etMin.format(s.toMs)} ET`}
             style={{ left: pct(s.fromMs), width: width(s.fromMs, s.toMs) }}
-            className={`absolute top-0.5 bottom-0.5 overflow-hidden whitespace-nowrap rounded border px-1.5 text-left text-[11px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue ${KIND_BAR[s.kind]} ${selectedId === s.id ? 'ring-2 ring-text' : ''} ${s.draft ? 'opacity-80' : ''}`}>
+            className={`absolute top-0.5 bottom-0.5 overflow-hidden whitespace-nowrap rounded border px-1.5 text-left text-[11px] leading-7 ${KIND_BAR[s.kind]} ${s.draft ? 'opacity-80' : ''}`}>
             {s.label || KIND_LABEL[s.kind]}
-          </button>
+          </div>
         ))}
-        {drag && (
-          <div aria-hidden="true" className="pointer-events-none absolute top-0.5 bottom-0.5 rounded border border-dashed border-text bg-text/10"
-            style={{ left: pct(Math.min(drag.a, drag.b)), width: width(Math.min(drag.a, drag.b), Math.max(drag.a, drag.b)) }} />
-        )}
       </div>
 
       {/* fights */}

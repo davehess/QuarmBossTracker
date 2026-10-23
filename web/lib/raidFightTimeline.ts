@@ -1,4 +1,4 @@
-// One fight's timeline for the night panel of the session review (?v=slices, ?v=segments): the same stacked damage curve
+// One fight's timeline for the night panel of the session review: the same stacked damage curve
 // the parse page draws (components/DamageCurve.tsx, lib/fightCurve.ts) plus the deaths of the fight, read when a fight is
 // opened. Server-side, service-role client; the members' route is /api/raid/session/fight-timeline.
 //

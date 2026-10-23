@@ -39,8 +39,8 @@ import { rosterCuts } from './liveRaidWindow';
 import type { NightSummary, NightMinute } from './raidReplay';
 import type { RollOverride, RollSetRow } from './rolls';
 
-// `change` is a time and two counts, never a name (raidSplit.ts); only the members' page uses it, behind ?v=split.
-// `breaks` (only with opts.breaks, ?v=segments) is the instants at which the roster turns over, found again inside each
+// `change` is a time and two counts, never a name (raidSplit.ts); only the members' page uses it.
+// `breaks` (only with opts.breaks, which the members' page asks for) is the instants at which the roster turns over, found again inside each
 // side of `change`: times only, never a name (liveRaidWindow.ts rosterCuts).
 export type SessionReview = { bundle: SessionBundle; night: NightSummary | null; change: RaidChange | null; breaks?: number[] };
 
