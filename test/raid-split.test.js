@@ -16,8 +16,24 @@ import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
 import { MINUTE_MS } from '../web/lib/raidReplay.ts';
 import {
-  detectRaidChange, snapCut, splitWindows, whoSeries, MIN_SIDE_MINUTES, MIN_REGULARS,
+  detectRaidChange, snapCut, splitWindows, whoSeries, MIN_SIDE_MINUTES, MIN_REGULARS, endAfterStart,
 } from '../web/lib/raidSplit.ts';
+
+describe('endAfterStart — an end clock time on the start\'s date means the next day (the guild lead, 2026-10-23)', () => {
+  const start = Date.parse('2026-10-22T23:02:00Z');            // 7:02 PM ET
+  it('3:55 AM typed on the start\'s date is 3:55 AM the next day', () => {
+    expect(endAfterStart(Date.parse('2026-10-22T07:55:00Z'), start)).toBe(Date.parse('2026-10-23T07:55:00Z'));
+  });
+  it('an end already after the start is left alone, and so is one more than a day before it', () => {
+    expect(endAfterStart(Date.parse('2026-10-23T03:30:00Z'), start)).toBe(Date.parse('2026-10-23T03:30:00Z'));
+    expect(endAfterStart(Date.parse('2026-10-20T07:55:00Z'), start)).toBe(Date.parse('2026-10-20T07:55:00Z'));
+  });
+  it('the share controls send every end through it', () => {
+    const src = stripJs(fs.readFileSync(path.join(ROOT, 'web/app/raid/session/ShareControls.tsx'), 'utf8'));
+    expect(src).not.toMatch(/to:\s*new Date\(val\)/);
+    expect(src.match(/endAfterStart\(Date\.parse\(val\)/g) || []).toHaveLength(2);
+  });
+});
 
 const read = (...p) => stripJs(fs.readFileSync(path.join(ROOT, ...p), 'utf8'));
 
