@@ -3589,6 +3589,13 @@ function renderZealCard(s) {
 // Mirror of the tray's crash-sharing checkbox. Mimic owns cfg.crashReports and
 // passes it to the agent as an env var at spawn, so flipping it restarts the
 // engine — same path the tray item uses, not a second mechanism.
+function wpToggleDispelWatch(on) {
+  fetch('/api/dispel-watch/toggle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ on: !!on }),
+  }).catch(function () {});
+}
 async function wpToggleCrashShare(on) {
   try {
     if (window.mimic && window.mimic.toggleCrashReports) {
@@ -5339,6 +5346,18 @@ function renderTriggers(s) {
   // 🔇 Muted timers — what the ⋮ on a timer row has muted, for good and this session, each with an unmute. Its own
   // placeholder (renderMutedTimers), so this section stays byte-stable.
   h += '<div id="wpMutedTimers" class="card wide"></div>';
+  // 🧹 Dispel callouts (agent 4.0.11) — one switch, on by default, saved with the agent's other preferences. Whether the
+  // callouts speak, flash only or stay off is the Voice tab's "What you hear" (Built-in callouts). The checkbox state is
+  // the saved pref, so this stays byte-stable between polls.
+  h += '<div class="card wide"><h2>🧹 Dispel callouts</h2>'
+    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
+    +    '<input type="checkbox" id="wpDispelWatch" onchange="wpToggleDispelWatch(this.checked)"'
+    +      (s.dispelWatch && s.dispelWatch.enabled === false ? '' : ' checked') + '>'
+    +    '<span>Tell me when my debuff is dispelled off a mob, or my buffs are dispelled</span>'
+    +  '</label>'
+    +  '<div class="dim" style="font-size:11px">When a mob strips the debuffs you put on it (a boss that resets itself, a dispel), you are told '
+    +  'which of your spells to recast. When a mob dispels you, you are told which buffs to redo, and the buff queue hears about it at once. '
+    +  'Normal expiry, zoning, dying and a stronger spell replacing yours never count.</div></div>';
 
   // (The ⏪ Replay card moved to the ⚔️ Fights tab — renderReplayCard. The voice cards — voice & names,
   // What you hear, the raid callout allow-list, loot-post speech and the sound library — moved to the

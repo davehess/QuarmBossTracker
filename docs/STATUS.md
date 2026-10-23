@@ -6552,6 +6552,21 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   and a muted mob / all / always shows, says and sounds nothing. Timers, the Discord post and the relay to other raiders still run.
   Test and rehearsal fires are never muted. ⏳ A fire relayed from another raider has no log line here and is not muted by this.
   Tests: `test/enrage-callouts.test.js`.
+- 🧪 Dispel callouts (the guild lead, 2026-10-23, mid-raid in the Tower of Solusek Ro: "start watching for buffs to be dispelled off of
+  mobs. When the caster's debuff was dispelled or buff, it tells them"; agent 4.0.11 on beta). Rizlona leashes herself and casts Annul
+  Self (spell 2830), which strips her debuffs. The server tells a debuff's CASTER only with "Your <spell> spell has worn off." (string
+  437), for a detrimental, non-lull spell, and prints it for expiry, a dispel and an overwrite alike; a leash reset and a death print
+  nothing (`BuffFadeAll` is silent). So the agent counts a worn-off line for a debuff of yours that still had time on it, and calls it a
+  dispel when the dispel spell's own landing line ("Rizlona has been dispelled.") names that mob, or when two go inside a second.
+  Then: the debuff leaves Target Info / Mob Info (and its relayed copy is hidden), and its caster hears "Your Malosini was dispelled off
+  Rizlona — recast". On you, a mob's dispel (the `cast_on_you` line) plus the Zeal buff slots losing buffs (or, without Zeal, a
+  beneficial spell's fade line) is one "Buffs dispelled: Aegolism, Clarity — rebuff", and the buff queue is refreshed at once. Normal
+  expiry, zoning, dying, songs and a stronger buff replacing yours never count. A Triggers-tab switch (on by default) and the two
+  `What you hear` rows (Voice tab, Built-in callouts) govern it. Tests: `test/dispel-watch.test.js`.
+  ⏳ Needs the bot: other raiders' Target Info still lists a debuff another caster lost (each caster IS told by their own Mimic); a
+  `buff_casts` removal marker honoured by `/api/agent/target-buffs` would share it. ⏳ A beneficial buff YOU cast on someone else
+  being dispelled tells you nothing on the server, so it is not covered. ⏳ Not seen in a real Tower log yet: the spell texts and the
+  worn-off string are read from the server source and the spell table.
 - **✅ Raid Mimic 3.0.2 stable (agent 4.0.7) cut 2026-10-22** (the guild lead: "push that out a 3.0.2"). Adds over 3.0.1: Canvas HUD
   pieces (whole group → Ring arc, Thin/Normal/Thick, Left/Center/Right, label turn), Charm "When charming", one Disc timer, warrior
   Shield (3 min / 12 s), the Dock no longer fights a drag, Target Info retries a missed mob after 60 s instead of 6 h, overlay crash

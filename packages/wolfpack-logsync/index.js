@@ -18165,6 +18165,8 @@ function _serializeForDashboard() {
       candidates:  _logRotateCandidates(),
       recent:      Array.isArray(stats.logRotations) ? stats.logRotations.slice(0, 5) : [],
     },
+    // 🧹 Dispel callouts switch (Triggers tab), on unless the saved pref says off.
+    dispelWatch: { enabled: _dispelWatchEnabled() },
     // Backup for when zeal.ini isn't reachable: a tag we SAW arrive already
     // rewritten by prettyprint (spawn id stripped at the source).
     zealTagPretty: _tagPrettyPrintSeen,
@@ -22724,6 +22726,13 @@ function renderZealCard(s) {
 // Mirror of the tray's crash-sharing checkbox. Mimic owns cfg.crashReports and
 // passes it to the agent as an env var at spawn, so flipping it restarts the
 // engine — same path the tray item uses, not a second mechanism.
+function wpToggleDispelWatch(on) {
+  fetch('/api/dispel-watch/toggle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ on: !!on }),
+  }).catch(function () {});
+}
 async function wpToggleCrashShare(on) {
   try {
     if (window.mimic && window.mimic.toggleCrashReports) {
@@ -24474,6 +24483,18 @@ function renderTriggers(s) {
   // 🔇 Muted timers — what the ⋮ on a timer row has muted, for good and this session, each with an unmute. Its own
   // placeholder (renderMutedTimers), so this section stays byte-stable.
   h += '<div id="wpMutedTimers" class="card wide"></div>';
+  // 🧹 Dispel callouts (agent 4.0.11) — one switch, on by default, saved with the agent's other preferences. Whether the
+  // callouts speak, flash only or stay off is the Voice tab's "What you hear" (Built-in callouts). The checkbox state is
+  // the saved pref, so this stays byte-stable between polls.
+  h += '<div class="card wide"><h2>🧹 Dispel callouts</h2>'
+    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
+    +    '<input type="checkbox" id="wpDispelWatch" onchange="wpToggleDispelWatch(this.checked)"'
+    +      (s.dispelWatch && s.dispelWatch.enabled === false ? '' : ' checked') + '>'
+    +    '<span>Tell me when my debuff is dispelled off a mob, or my buffs are dispelled</span>'
+    +  '</label>'
+    +  '<div class="dim" style="font-size:11px">When a mob strips the debuffs you put on it (a boss that resets itself, a dispel), you are told '
+    +  'which of your spells to recast. When a mob dispels you, you are told which buffs to redo, and the buff queue hears about it at once. '
+    +  'Normal expiry, zoning, dying and a stronger spell replacing yours never count.</div></div>';
 
   // (The ⏪ Replay card moved to the ⚔️ Fights tab — renderReplayCard. The voice cards — voice & names,
   // What you hear, the raid callout allow-list, loot-post speech and the sound library — moved to the
@@ -36587,6 +36608,7 @@ function startWebDashboard(port) {
           // last one. Must run BEFORE _zealState is reassigned above? No — it
           // takes prevState explicitly, which is captured above.
           try { _noteBuffDurationsFromState(character, prevState, st); } catch (e) { void e; }
+          try { _dispelNoteZealDiff(character, prevState, st, Date.now()); } catch (e) { void e; }   // your buffs stripped early
           noteSpawnIdSeen(st.spawn_id);
           noteSpawnIdSeen(st.target_id);
           noteSpawnIdSeen(st.pet_id);
@@ -37203,6 +37225,17 @@ function startWebDashboard(port) {
         const out = _archiveLogNow(character);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(out));
+      }
+
+      // 🧹 Dispel callouts (agent 4.0.11) — the Triggers-tab switch. Persisted to logsync.prefs.json as
+      // `dispel_watch_off`, so the choice survives restarts and updates; on by default. Body { on: true|false }.
+      if (req.url === '/api/dispel-watch/toggle' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let on = true;
+        try { on = JSON.parse(body || '{}').on !== false; } catch { on = true; }
+        _saveAgentPrefs({ dispel_watch_off: !on });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, enabled: _dispelWatchEnabled() }));
       }
 
       // 📶 Connection meter (local only, nothing uploaded). GET /api/net is the whole picture the
@@ -48328,6 +48361,8 @@ const BUILTIN_CALLOUTS = [
   { key: 'timer_callout',  label: 'Boss timer callouts' },
   { key: 'loot_post',      label: 'Loot posted' },
   { key: 'blind',          label: 'Blind alerts' },
+  { key: 'dispel_debuff',  label: 'Your debuff dispelled off a mob' },
+  { key: 'dispel_buffs',   label: 'Your buffs dispelled' },
 ];
 // Built-ins that start MUTED until someone switches them on (the guild lead, 2026-10-19: "Mute Charm aging by default, make
 // this configurable to turn off"). The last step of _resolveRule, below every rule a person has set: anyone who already set
@@ -55517,6 +55552,7 @@ function buildMobInfo() {
       if (!b || !b.name) continue;
       const k = String(b.name).toLowerCase();
       if (seen.has(k)) continue;
+      if (_dispelGoneCovers(tnameLower, k, b.observed_at_ms)) continue;   // our debuff, dispelled since (dispel watch)
       // The relay sends good=null for non-charm spells (buff_casts doesn't carry
       // good_effect). Resolve it from our own catalog so relayed DEBUFFS land in
       // the red debuff section instead of being mislabeled as buffs.
@@ -57670,6 +57706,322 @@ function noteMyMezWornOff(line, character) {
   }
   if (best) best.worn_off_at = Date.now();
 }
+
+// ── Dispel watch (agent 4.0.11) ─────────────────────────────────────────────────────────────────────
+// The guild lead, 2026-10-23, mid-raid in the Tower of Solusek Ro: "We should also start watching for buffs to be
+// dispelled off of mobs. When the caster's debuff was dispelled or buff, it tells them that it was dispelled."
+// Rizlona does it on purpose: out of her yard (y outside 2047..2538) she is moved home, her hate list is wiped
+// and she casts spell 2830, Annul Self (solrotower/Rizlona.lua and #Rizlona.lua, SecretsOTheP/quests ea0c766; the
+// same line is in Arlyxir, Xuzl and both Dresolik scripts).
+//
+// WHAT THE SERVER SENDS, read from SecretsOTheP/EQMacEmu a3b80b2 (zone/):
+//  • A dispel is SE_CancelMagic (spell_effects.cpp:910). Per buff slot it rolls TryDispel and, on a hit, calls
+//    BuffFadeBySlot(slot) (:935/:961) with the defaults message = true, update = true. Annul Self (eqemu_spells 2830) carries
+//    four of them (base 9) and no cast_on_you; its cast_on_other is "has been dispelled.".
+//  • BuffFadeBySlot (spell_effects.cpp:3229): for a client TARGET it sends an OP_Buff fade packet (the client then prints the
+//    spell's own spell_fades text); for a CASTER who is a client (buffs[slot].client, buffstacking.cpp:1375) it sends
+//    SPELL_WORN_OFF, string 437 "Your %1 spell has worn off." (:3712-3743, string_ids.h:175), but only when the spell is
+//    DETRIMENTAL and not a lull/harmony (IsCrowdControlSpell is Harmony, Lull and ChangeFrenzyRad only, so a mez, a charm
+//    and a fear DO tell the caster). A BENEFICIAL spell tells its caster nothing. The line names no target and does not say
+//    why: expiry, a dispel and a stronger spell overwriting yours (the detrimental_exception, :3725, update = false) all
+//    print the same words.
+//  • Silent on purpose, no worn-off line to anyone: BuffFadeAll() is called with message = false (spells.cpp:3643) by the
+//    leash/evade reset (mob_ai.cpp:1418, :1440, :2603; mob_movement_manager.cpp:782) and at death (attack.cpp:2367, :2478).
+//    So a mob going home does not tell you, and a corpse does not either. Rizlona's own leash is the script above, whose
+//    Annul Self cast is a normal dispel and DOES print the lines.
+// So the evidence is a worn-off line for a debuff of ours that still had time on it, plus either the dispel's own landing
+// line naming the mob (<mob> + a dispel spell's cast_on_other) or at least two of them inside a second.
+//
+// On YOU (a mob's dispel, or the Annul line above cast on a raider): the dispel's cast_on_you text prints, then each
+// stripped buff's spell_fades. The Zeal buff slots lose the buffs at the same moment and carry their names, so that is the
+// primary reading; the fade lines (catalog `fades` of beneficial spells) cover a character with no Zeal.
+//
+// Texts are eqemu_spells rows whose effect list carries SPA 27 with a non-zero base (Taper Enchantment, base 0, only
+// shortens a buff and is left out), minus every text a non-dispel spell also prints ("You are mesmerized.", "is immolated
+// by flame.", "'s skin freezes." ... checked against the whole table 2026-10-23). The cure spells (Balance of the Nameless,
+// Ocean's Cleansing) are left out: their text says cleansed, not dispelled.
+const DISPEL_OTHER_TEXTS = [
+  'has been dispelled.',                          // Annul Self 2830
+  'feels dispelled.',                             // Nullify Magic 49, Neutralize Magic 1775, Incinerating Spirit 2252
+  'feels a bit dispelled.',                       // Cancel Magic 48, Guide Cancel Magic 811/1211, Phobocancel 976
+  'feels very dispelled.',                        // Strip Enchantment 24, Pillage Enchantment 25, Beholder Dispel 955, Nulling Void 2098, Direption of Dreams 3150
+  'feels annulled.',                              // Annul Magic 1526
+  "'s enchantments begin to fade.",               // Recant Magic 1697/2034
+  "'s enchantments fades.",                       // Abolish Enchantment 1792
+  'is surrounded in a storm of static energy.',   // Static Pulse 1025
+  'is encased in a pulse of static energy.',      // Syvelian`s Anti-Magic Aria 726
+  'is encased in a static pulse',                 // Annulling Spirit 2262
+  'convulses in a field of static energy.',       // Static Storm 1028
+  'looks very discouraged.',                      // Druzzil's Disillusionment 3364
+  'has been Magi bolted.', 'has been Magi struck.', 'has been Magi circled.',   // Magi Bolt/Strike/Circle
+  'is shredded by ice.',                          // Frosty Death 952, Frosty Death2 1356
+  'is splashed with a wave of pure hatred.',      // Hate's Fury 3785
+  'is thrown high into the air.',                 // Lure of the Storm 1035
+  'has been cursed by the triumvirate.',          // Curse of the Triumvirate 3061
+  'has fallen to the will of the crusader.',      // Will of the Crusader 1163
+  'begins to change into a twisted shape',        // Will of the Master 2207
+  'is tangled in coils of temptation',            // Coils of Temptation 2256
+  'stammers in fear, unable to form words.',      // Speechless Fright 1341
+];
+const DISPEL_YOU_TEXTS = new Set([
+  'You feel dispelled.', 'You feel a bit dispelled.', 'You feel very dispelled.', 'You feel annulled.',
+  'You feel your enchantments being stripped away.',          // Recant Magic
+  'Your enchantments are stripped by a static pulse.',        // Static Pulse
+  'Your enchantments fade.',                                  // Abolish Enchantment
+  'You feel a pulse of static energy wash over you.',         // Anti-Magic Aria, Disenchanting Melody, Song of Highsun
+  'A static pulse slows your movements',                      // Annulling Spirit
+  'A field of energy causes you to convulse violently.',      // Static Storm
+  'Your anxiety builds as your magic fades around you.',      // Direption of Dreams
+  'Your begin to question the existence of magic.',           // Druzzil's Disillusionment (the catalog's own spelling)
+  'You have been Magi bolted.', 'You have been Magi struck.', 'You have been Magi circled.',
+  'You are shredded by ice.',                                 // Frosty Death
+  'A wave of fury crashes over you.',                         // Hate's Fury
+  'An inescapable wind throws you into the air.',             // Lure of the Storm
+  'The curse of the triumvirate consumes you.',               // Curse of the Triumvirate
+  'The will of the Crusader envelops you.',                   // Will of the Crusader
+  'You feel your body change',                                // Will of the Master
+  'You are wrapped in coils of temptation',                   // Coils of Temptation
+  'Your stammer in fear, unable to form words.',              // Speechless Fright
+  'The ground seems to fall from below your feet.',           // Striking Vertigo
+  'You are knocked backward.',                                // Avatar Power, Presence of Ssraeshza
+  'Your body freezes as the frost hits you.',                 // Frost Breath
+]);
+const DISPEL_LIVE_MS          = 15_000;   // older than this is a log being replayed: no callout, no state change
+const DISPEL_EARLY_MS         = 12_000;   // a debuff with more than two ticks left did not run its course
+const DISPEL_NATURAL_MS       = 8_000;    // a same-named debuff of ours that ended this long ago or less explains the line
+const DISPEL_BURST_MS         = 1_000;    // "several at once" is this wide
+const DISPEL_WINDOW_MS        = 2_500;    // the dispel's own line sits this close to the removals
+const DISPEL_SETTLE_MS        = 1_500;    // after the last removal, wait for the rest of the burst and the dispel line
+const DISPEL_SELF_SETTLE_MS   = 2_500;    // Zeal's buff slots lag the log by a poll
+const DISPEL_SELF_COOLDOWN_MS = 8_000;    // one callout per dispel
+const DISPEL_QUIET_MS         = 10_000;   // after zoning or dying nothing counts: buffs and mobs go away on their own
+const _dispelState = {
+  lines: new Map(),   // charLower → [{ at, arrived, mob (lower) | null, you }]  the dispel spells' own landing lines
+  mine:  new Map(),   // charLower → [{ at, arrived, spell, hits:[{ tk, sk, entry }] }]  worn-off lines for a debuff of ours
+  self:  new Map(),   // charLower → { dispelAt, names: Map<buff, arrivedMs>, replaced, lastAt }  your own buffs going
+  fades: new Map(),   // charLower → [at]  fade lines of beneficial spells
+  quiet: new Map(),   // charLower → ms until which nothing counts
+  lastSelf: new Map(),
+};
+const _dispelGone = new Map();   // "mobLower|spellLower" → ms: our debuff was dispelled then; the cross-client copy of it is hidden
+function _dispelWatchEnabled() { try { return !_agentPrefs().dispel_watch_off; } catch { return true; } }
+function _dispelNorm(s) { return String(s || '').toLowerCase().replace(/`/g, "'").trim(); }
+// A relayed target-buffs row (this raider's own landing comes back from the bot) older than the dispel stays hidden.
+function _dispelGoneCovers(mobLower, spellLower, observedMs) {
+  const at = _dispelGone.get(mobLower + '|' + spellLower);
+  const o = Number(observedMs);
+  return !!(at && Number.isFinite(o) && o <= at);
+}
+// The mob named by a dispel spell's cast_on_other line ("<mob> has been dispelled."), or null.
+function _dispelOtherMob(body) {
+  for (const suf of DISPEL_OTHER_TEXTS) {
+    if (body.length <= suf.length || !body.endsWith(suf)) continue;
+    let name = body.slice(0, body.length - suf.length);
+    if (suf[0] !== "'") { if (name[name.length - 1] !== ' ') continue; name = name.slice(0, -1); }
+    name = name.trim();
+    if (name && name.toLowerCase() !== 'you') return name;
+  }
+  return null;
+}
+// The catalog's spell_fades text of beneficial spells: what the client prints as each stripped buff goes.
+let _dispelFadeFor = null, _dispelFadeVal = null;
+function _dispelFadeTexts() {
+  if (_dispelFadeVal && _dispelFadeFor === _spellByNameLower) return _dispelFadeVal;
+  const s = new Set();
+  for (const e of _spellByNameLower.values()) if (e && Number(e.good) === 1 && e.fades) s.add(String(e.fades).trim());
+  _dispelFadeFor = _spellByNameLower; _dispelFadeVal = s;
+  return s;
+}
+// Our landings of `spell` that still had time on them when its worn-off line printed. A same-named landing of ours that
+// was due to end about now explains the line by itself (normal expiry), and then nothing here counts.
+function _dispelMyHits(cl, spell, atMs) {
+  if (_isPacifySpell(spell)) return [];
+  const want = _dispelNorm(spell), hits = [];
+  let natural = false;
+  for (const [tk, mp] of _buffLandingsByTarget) {
+    for (const [sk, b] of mp) {
+      if (!b || b.is_charm_spell || String(b.cast_by || '').toLowerCase() !== cl) continue;
+      if (_dispelNorm(b.name) !== want) continue;
+      const durMs = (Number(b.dur_ticks) || 0) * 6000, landed = Number(b.landed_at) || 0;
+      if (landed > atMs + 1500) continue;   // landed after this line: a recast, not the one that ended
+      const remMs = (durMs > 0 && landed > 0) ? landed + durMs - atMs : null;
+      if (remMs != null && remMs <= DISPEL_EARLY_MS) { if (!b.worn_off_at && remMs >= -DISPEL_NATURAL_MS) natural = true; continue; }
+      hits.push({ tk, sk, entry: b });
+    }
+  }
+  return natural ? [] : hits;
+}
+function _dispelBurstOf(times) {
+  const t = times.slice().sort((a, b) => a - b);
+  let best = 0;
+  for (let i = 0, j = 0; i < t.length; i++) {
+    while (t[i] - t[j] > DISPEL_BURST_MS) j++;
+    best = Math.max(best, i - j + 1);
+  }
+  return best;
+}
+function _dispelSelfOpen(cl, arrived) {
+  let p = _dispelState.self.get(cl);
+  if (!p) { p = { dispelAt: null, names: new Map(), replaced: false, lastAt: arrived }; _dispelState.self.set(cl, p); }
+  p.lastAt = Math.max(p.lastAt, arrived);
+  return p;
+}
+function _dispelQuiet(cl, atMs) {
+  _dispelState.quiet.set(cl, atMs + DISPEL_QUIET_MS);
+  _dispelState.mine.delete(cl); _dispelState.self.delete(cl); _dispelState.lines.delete(cl); _dispelState.fades.delete(cl);
+}
+// One log line. Live lines only; every kind of evidence is only noted here and decided in flushDispelWatch.
+function noteDispelLine(line, character, nowMs) {
+  if (!line || !character || !_dispelWatchEnabled()) return;
+  const m = /^\[[^\]]+\]\s+(.*?)\s*$/.exec(line);
+  if (!m) return;
+  const body = m[1];
+  const now = nowMs == null ? Date.now() : nowMs;
+  const ts = parseEqTimestamp(line);
+  const at = ts ? ts.getTime() : now;
+  if (Math.abs(now - at) > DISPEL_LIVE_MS) return;
+  const cl = String(character).toLowerCase();
+  // A zone change (the one zone-line parser, CHAT_ZONE_RX) or a death: buffs and mobs go away on their own after these.
+  if (/^LOADING, PLEASE WAIT|^You died\.$|^You have been slain by /.test(body) || CHAT_ZONE_RX.test(line)) { _dispelQuiet(cl, at); return; }
+  if ((_dispelState.quiet.get(cl) || 0) > at) return;
+  const keep = (map, v) => { const a = map.get(cl) || []; a.push(v); while (a.length && now - a[0].arrived > 10_000) a.shift(); map.set(cl, a); };
+  if (DISPEL_YOU_TEXTS.has(body)) {
+    keep(_dispelState.lines, { at, arrived: now, mob: null, you: true });
+    _dispelSelfOpen(cl, now).dispelAt = at;
+    return;
+  }
+  const w = /^Your (.+?) spell has worn off\.$/.exec(body);
+  if (w) {
+    const hits = _dispelMyHits(cl, w[1], at);
+    if (hits.length) { const a = _dispelState.mine.get(cl) || []; a.push({ at, arrived: now, spell: w[1], hits }); _dispelState.mine.set(cl, a); }
+    return;
+  }
+  if (_dispelFadeTexts().has(body)) {
+    const a = _dispelState.fades.get(cl) || []; a.push(at);
+    while (a.length && at - a[0] > 10_000) a.shift();
+    _dispelState.fades.set(cl, a);
+    return;
+  }
+  const mob = _dispelOtherMob(body);
+  if (mob) keep(_dispelState.lines, { at, arrived: now, mob: mob.toLowerCase(), you: false });
+}
+// Your own buffs, from the Zeal buff slots: the previous poll against this one. A buff with time left that is no longer
+// there went early. Songs rotate, so they are never counted; an empty list is a zone or a dropped pipe; a different zone is
+// a zone. A new buff in the same poll may be what pushed the old one out.
+function _dispelNoteZealDiff(character, prev, next, nowMs) {
+  if (!character || !_dispelWatchEnabled()) return;
+  const pb = prev && Array.isArray(prev.buffs) ? prev.buffs : [], nb = next && Array.isArray(next.buffs) ? next.buffs : [];
+  if (!pb.length || !nb.length) return;
+  if (prev.zone != null && next.zone != null && prev.zone !== next.zone) return;
+  const cl = String(character).toLowerCase();
+  const now = nowMs == null ? Date.now() : nowMs;
+  if ((_dispelState.quiet.get(cl) || 0) > now) return;
+  const nowNames = new Set(nb.filter(b => b && b.name).map(b => _dispelNorm(b.name)));
+  const prevNames = new Set(pb.filter(b => b && b.name).map(b => _dispelNorm(b.name)));
+  const added = nb.some(b => b && b.name && !prevNames.has(_dispelNorm(b.name)));
+  const gone = pb.filter(b => b && b.name && !b.song && Number(b.ticks) > DISPEL_EARLY_MS / 6000 && !nowNames.has(_dispelNorm(b.name)));
+  if (!gone.length) return;
+  const p = _dispelSelfOpen(cl, now);
+  for (const b of gone) p.names.set(String(b.name), now);
+  if (added) p.replaced = true;
+}
+function _dispelList(names, max) {
+  const l = names.slice(0, max).join(', ');
+  return names.length > max ? l + ' +' + (names.length - max) + ' more' : l;
+}
+function _dispelSay(o, nowMs) {
+  _pushOverlay(Object.assign({ color: 'amber', duration_ms: 6000, shownAt: nowMs, firedAt: nowMs, scope: 'dispel', test: false }, o));
+}
+// Decide what the evidence adds up to. Called on a 250 ms tick, and by the tests with a clock of their own.
+function flushDispelWatch(nowMs) {
+  const now = nowMs == null ? Date.now() : nowMs;
+  for (const cl of [..._dispelState.mine.keys()]) { try { _dispelFlushMine(cl, now); } catch (e) { void e; } }
+  for (const cl of [..._dispelState.self.keys()]) { try { _dispelFlushSelf(cl, now); } catch (e) { void e; } }
+  for (const [k, at] of _dispelGone) if (now - at > 30 * 60_000) _dispelGone.delete(k);
+  while (_dispelGone.size > 200) _dispelGone.delete(_dispelGone.keys().next().value);
+}
+// Your debuffs on a mob, dispelled: forget them, hide the relayed copy, tell their caster to recast.
+function _dispelFlushMine(cl, now) {
+  const items = _dispelState.mine.get(cl);
+  if (!items || !items.length) return;
+  if (now - Math.max(...items.map(i => i.arrived)) < DISPEL_SETTLE_MS) return;
+  _dispelState.mine.delete(cl);
+  const lines = (_dispelState.lines.get(cl) || []).filter(l => l.mob);
+  items.sort((a, b) => a.at - b.at);
+  const bursts = [];
+  for (const it of items) {
+    const cur = bursts[bursts.length - 1];
+    if (cur && it.at - cur[cur.length - 1].at <= DISPEL_BURST_MS) cur.push(it); else bursts.push([it]);
+  }
+  for (const burst of bursts) {
+    const tks = new Set();
+    for (const it of burst) for (const h of it.hits) tks.add(h.tk);
+    let tk = null;
+    for (const l of lines) {
+      if (tks.has(l.mob) && burst.some(it => Math.abs(it.at - l.at) <= DISPEL_WINDOW_MS)) { tk = l.mob; break; }
+    }
+    if (!tk) {
+      if (burst.length < 2) continue;   // one early removal and no dispel line: an overwrite or a mistimed estimate
+      const common = [...tks].filter(t => burst.every(it => it.hits.some(h => h.tk === t)));
+      tk = common.length === 1 ? common[0] : null;
+    }
+    const spells = [];
+    let mobName = null;
+    for (const it of burst) {
+      const hs = tk ? it.hits.filter(h => h.tk === tk) : it.hits;
+      if (tk && !hs.length) continue;
+      if (!spells.includes(it.spell)) spells.push(it.spell);
+      if (tk || hs.length === 1) {
+        for (const h of hs) {
+          const mp = _buffLandingsByTarget.get(h.tk);
+          if (mp && mp.get(h.sk) === h.entry) mp.delete(h.sk);
+          if (mp && mp.size === 0) _buffLandingsByTarget.delete(h.tk);
+          _dispelGone.set(h.tk + '|' + String(h.entry.name).toLowerCase(), it.at);
+          if (!mobName) mobName = h.entry.target_name || h.tk;
+        }
+      }
+    }
+    if (!spells.length) continue;
+    try { _savePetStateSoon(); } catch (e) { void e; }
+    const off = mobName ? ' off ' + mobName : '';
+    const one = spells.length === 1;
+    _dispelSay({
+      text: one ? 'Your ' + spells[0] + ' was dispelled' + off + ' — recast' : 'Dispelled' + off + ': ' + _dispelList(spells, 6) + ' — recast',
+      tts: one ? spells[0] + ' dispelled' + off + '. Recast.' : 'Dispelled' + off + '. Recast ' + _dispelList(spells, 3) + '.',
+      trigger: 'Debuff dispelled', rule_key: 'builtin:dispel_debuff', rule_char: cl,
+    }, now);
+    console.log('[dispel] ' + cl + ': ' + spells.join(', ') + (mobName ? ' dispelled off ' + mobName : ' dispelled'));
+  }
+}
+// Your own buffs, dispelled: one callout per dispel, then the buff queue is told straight away.
+function _dispelFlushSelf(cl, now) {
+  const p = _dispelState.self.get(cl);
+  if (!p || now - p.lastAt < DISPEL_SELF_SETTLE_MS) return;
+  _dispelState.self.delete(cl);
+  const names = [...p.names.keys()];
+  let ok;
+  if (p.dispelAt != null) {
+    const fadeN = (_dispelState.fades.get(cl) || []).filter(a => Math.abs(a - p.dispelAt) <= DISPEL_WINDOW_MS).length;
+    ok = names.length > 0 || fadeN > 0;
+  } else {
+    ok = !p.replaced && _dispelBurstOf([...p.names.values()]) >= 2;
+  }
+  if (!ok || now - (_dispelState.lastSelf.get(cl) || 0) < DISPEL_SELF_COOLDOWN_MS) return;
+  _dispelState.lastSelf.set(cl, now);
+  _dispelSay({
+    text: names.length ? 'Buffs dispelled: ' + _dispelList(names, 6) + ' — rebuff' : 'Buffs dispelled — rebuff',
+    tts: names.length ? 'Buffs dispelled: ' + _dispelList(names, 3) + '. Rebuff.' : 'Buffs dispelled. Rebuff.',
+    trigger: 'Buffs dispelled', rule_key: 'builtin:dispel_buffs', rule_char: cl,
+  }, now);
+  console.log('[dispel] ' + cl + ': buffs dispelled' + (names.length ? ' — ' + names.join(', ') : ''));
+  // The queue reads our buff slots from the live-state upload (every 5 s): send it now and re-read the queue sooner.
+  try {
+    _buffQueueSnappyUntil = now + SNAPPY_WINDOW; _buffQueueCache.clear();
+    if (_uploadOpts && _uploadOpts.botUrl) flushLiveStateToBot(_uploadOpts);
+  } catch (e) { void e; }
+}
+setInterval(() => { try { flushDispelWatch(Date.now()); } catch { void 0; } }, 250).unref();
+
 // The bar colour of a spell row, by what it is (FB-92: "Red for mobs, Orange for affects on friendlies, green for
 // buffs, blue for other. Purple for Avatar and Ferocity lines"). The first rule that fits wins:
 //   purple — the name carries "Avatar" or "Ferocity" (a buff you watch for; beats green),
@@ -61528,6 +61880,9 @@ async function main() {
         if (!_sourceExcluded) { noteNpcCastStart(line); noteNpcLanding(line); }
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
+        // Dispel watch: BEFORE the mez line below, which marks the landing this reads. Local callouts only, so it
+        // is not behind the upload opt-out.
+        try { noteDispelLine(line, b.character); } catch (e) { void e; }
         if (!_sourceExcluded) { try { noteMyMezWornOff(line, b.character); } catch (e) { void e; } }
         // Prefer the cast-correlated resolution (our own cast); fall back to the
         // tracked-buff index match for buffs we only witnessed as a bystander.
@@ -64523,6 +64878,9 @@ module.exports = {
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
   _builtinTimerRows, _builtinSpellBarColor, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
   _isMezSpell, noteMyMezWornOff,
+  // Dispel watch (agent 4.0.11) — exported for test/dispel-watch.test.js.
+  noteDispelLine, flushDispelWatch, _dispelNoteZealDiff, _dispelState, _dispelGone, _dispelGoneCovers, _dispelWatchEnabled,
+  DISPEL_OTHER_TEXTS, DISPEL_YOU_TEXTS,
   _bumpCharmTick, _reconcileGaugeCharms, _classOf,
   _petBuffLandings, _npcCasterLevelFor, _npcCastStarts, _charmMobId,
   // Your own timers pause while you are logged out (2026-10-13) — exported for test/own-timers-pause.test.js.
