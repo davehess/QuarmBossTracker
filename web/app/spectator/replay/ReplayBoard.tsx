@@ -587,6 +587,8 @@ export type BoundedReplay = {
   seek?: { t: number; n: number } | null;
   /** The caller has no zone mesh to serve (the local site): the 2D/3D switch is left off and the map stays 2D. */
   flat?: boolean;
+  /** Called with the playhead (epoch ms) as it moves, about five times a second while playing. Keep it a ref write. */
+  onPlayhead?: (t: number) => void;
 };
 
 /** The route one 15-minute window comes from: the caller's (bounded) or the members' replay route. */
@@ -610,6 +612,10 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
   const [pinned, setPinned] = useState<string | null>(null);
   const [tails, setTails] = useState(true);
   const [uiT, setUiT] = useState(0);
+  // Bounded mode: tell the caller where the playhead is (a ref write on its side, so playback never re-renders the page).
+  const onPlayheadRef = useRef(bounded?.onPlayhead);
+  onPlayheadRef.current = bounded?.onPlayhead;
+  useEffect(() => { onPlayheadRef.current?.(uiT); }, [uiT]);
   const [info, setInfo] = useState<{ zones: [string | null, string | null]; here: [number, number]; elsewhere: number; followAbsent: boolean }>(
     { zones: [null, null], here: [0, 0], elsewhere: 0, followAbsent: false });
   const [state, setState] = useState<'ok' | 'buffering' | 'nodata' | 'failed'>('ok');

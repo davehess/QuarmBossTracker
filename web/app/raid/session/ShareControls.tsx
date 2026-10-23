@@ -40,11 +40,17 @@ function EndControls({ s, onChange }: { s: ShareView; onChange: (body: { to?: st
   );
 }
 
-export default function ShareControls({ fromIso, toIso, defaultTitle }: { fromIso: string; toIso: string; defaultTitle: string }) {
+export default function ShareControls({ fromIso, toIso, defaultTitle, defaultFollow = false, lead }: {
+  fromIso: string; toIso: string; defaultTitle: string;
+  /** The split panel's still-running half: "follow the raid" starts ticked. */
+  defaultFollow?: boolean;
+  /** The split panel puts its Open link on the same line as the Share… button. */
+  lead?: React.ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState(defaultTitle);
   const [days, setDays] = useState(30);
-  const [follow, setFollow] = useState(false);
+  const [follow, setFollow] = useState(defaultFollow);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [made, setMade] = useState<Made | null>(null);
@@ -105,11 +111,14 @@ export default function ShareControls({ fromIso, toIso, defaultTitle }: { fromIs
     try { await navigator.clipboard.writeText(text); setCopied(true); } catch { setCopied(false); }
   };
 
+  const toggle = (
+    <button type="button" aria-expanded={open} onClick={() => setOpen(o => !o)} className={`${chip} ${open ? chipOn : chipIdle}`}>
+      Share…
+    </button>
+  );
   return (
     <div>
-      <button type="button" aria-expanded={open} onClick={() => setOpen(o => !o)} className={`${chip} ${open ? chipOn : chipIdle}`}>
-        Share…
-      </button>
+      {lead ? <div className="flex flex-wrap items-center gap-2">{lead}{toggle}</div> : toggle}
       {open && (
         <div className="mt-2 rounded-md border border-border bg-panel p-3 text-sm">
           <p className="text-xs text-dim">
