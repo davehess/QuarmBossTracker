@@ -92,6 +92,16 @@ export function activeSpawns(bosses: readonly SpawnBoss[], t: number, recorded: 
   return out;
 }
 
+/**
+ * The bosses that died inside [fromMs, toMs + slackMs). The bosses route reads a whole NIGHT (or, for a share, the
+ * share's window), and a board that plays only part of a night must not number, list or mark the rest of it: a night
+ * holds the daytime groups and, after a raid change, the other raid too. This is the Kills tab's own rule (ended_at in
+ * [from, to)) when `slackMs` is 0, which is what a fixed review window uses.
+ */
+export function bossesInWindow(bosses: readonly SpawnBoss[], fromMs: number, toMs: number, slackMs = 0): SpawnBoss[] {
+  return bosses.filter(b => b.to >= fromMs && b.to < toMs + slackMs);
+}
+
 /** Slices of at most `size`, for an `in (...)` list that must stay a short URL. */
 export function chunk<T>(a: readonly T[], size: number): T[][] {
   const out: T[][] = [];

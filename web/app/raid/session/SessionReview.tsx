@@ -41,9 +41,12 @@ const th = 'px-2 py-1.5 text-left text-[11px] font-normal uppercase tracking-wid
 function boardUrls(mode: ReviewMode, baseMs: number, toMs: number): BoundedReplay['urls'] {
   if (mode.kind === 'share') {
     const root = `/api/share/raid/${mode.token}`;
+    // `v` is a cache-buster and nothing else (the routes read the token and the index, never a time): the share's window as
+    // this page was rendered, so a browser holding the answers of a window an officer has since moved asks again.
+    const v = `v=${baseMs}.${toMs}`;
     return {
-      window: (_night, fromIso) => `${root}/replay?w=${Math.max(0, Math.round((Date.parse(fromIso) - baseMs) / REPLAY_WINDOW_MS))}`,
-      bosses: () => `${root}/bosses`,
+      window: (_night, fromIso) => `${root}/replay?w=${Math.max(0, Math.round((Date.parse(fromIso) - baseMs) / REPLAY_WINDOW_MS))}&${v}`,
+      bosses: () => `${root}/bosses?${v}`,
       map: zone => `${root}/map?zone=${encodeURIComponent(zone)}`,
       mesh: (zone, floors) => `${root}/mesh?zone=${encodeURIComponent(zone)}${floors ? `&floors=${floors}` : ''}`,
     };
@@ -52,7 +55,7 @@ function boardUrls(mode: ReviewMode, baseMs: number, toMs: number): BoundedRepla
   const session = `from=${encodeURIComponent(new Date(baseMs).toISOString())}&to=${encodeURIComponent(new Date(toMs).toISOString())}`;
   return {
     window: (_night, fromIso) => `/api/raid/session/replay?${session}&w=${Math.max(0, Math.round((Date.parse(fromIso) - baseMs) / REPLAY_WINDOW_MS))}`,
-    bosses: night => `/api/spectator/replay/bosses?night=${encodeURIComponent(night)}`,
+    bosses: () => `/api/raid/session/bosses?${session}`,   // the window's own, not the night's: the other raid of the night is not this page's
     map: zone => `/api/spectator/map?zone=${encodeURIComponent(zone)}`,
     mesh: (zone, floors) => `/api/spectator/mesh?zone=${encodeURIComponent(zone)}${floors ? `&floors=${floors}` : ''}`,
   };

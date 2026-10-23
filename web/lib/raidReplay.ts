@@ -449,6 +449,25 @@ export function killsInSession<T extends { atMs: number }>(kills: readonly T[], 
 }
 
 /**
+ * How far past a session's end a kill still counts as its own: the two minutes the last row can trail, but never into
+ * the session that follows (a raid change cuts one session off where the next begins, so a kill there is the next
+ * raid's). `nextFromMs` is that next session's start, or null for the newest one.
+ */
+export function trailSlackMs(toMs: number, nextFromMs: number | null): number {
+  return nextFromMs == null ? 2 * MINUTE_MS : Math.max(0, Math.min(2 * MINUTE_MS, nextFromMs - toMs));
+}
+
+/**
+ * Where a window's playhead opens: its start, unless the recording only begins later in it (the minutes before a
+ * back-to-back raid's first row), in which case the first recorded minute, so the board opens on a raid and not on
+ * "no zone, 0 raiders".
+ */
+export function openingPlayhead(spans: readonly Span[], startMs: number): number {
+  const sp = nextSpanStart(spans, startMs);
+  return !sp.inside && sp.next != null ? sp.next : startMs;
+}
+
+/**
  * Minute rows (night_key, minute_at, zones, raiders) -> one summary per night, newest first. A session is a run of
  * minutes with no gap over SESSION_GAP_MS, then cut wherever `cuts` say the raid changed (none by default).
  */

@@ -41,9 +41,9 @@ import {
 } from '@/lib/spectator';
 import {
   FRAME_GAP_MS, MINUTE_MS, NIGHTS_POLL_MS, REPLAY_WINDOW_MS, SPLIT_INIT, decodeRows, defaultSessionIndex, frameIndexAt,
-  glideTargets, growSession, killsInSession, liveAvailable, liveLagging, livePlayhead, mergeNights, newNightToFollow, newestSession,
-  nextSpanStart, parseSessionParam, pickReplayZone, pickSplit, recentTargetNames, sessionLabel, sessionSearch,
-  windowIndex, windowNeedsRefetch, zoneCounts,
+  glideTargets, growSession, liveAvailable, liveLagging, livePlayhead, mergeNights, newNightToFollow, newestSession,
+  nextSpanStart, openingPlayhead, parseSessionParam, pickReplayZone, pickSplit, recentTargetNames, sessionLabel, sessionSearch,
+  trailSlackMs, windowIndex, windowNeedsRefetch, zoneCounts,
   type NightSummary, type ReplayFrame, type ReplayRaider, type ReplaySession, type ReplayTarget, type SplitState,
 } from '@/lib/raidReplay';
 import { FRAME_SNAP_MS, easeScale, frameStep } from '@/lib/replayFraming';
@@ -51,7 +51,7 @@ import {
   NO_PICKS, collectRoster, decayOffset, groupRoster, isFollowed, isPicked, offsetSettled, parsePicks, pickedSet,
   picksSearch, toggleFollow, togglePick, type Offset, type Picks, type RosterEntry,
 } from '@/lib/replayFollow';
-import { activeSpawns, normMobName, parseBosses, type ActiveSpawn, type SpawnBoss } from '@/lib/replayBosses';
+import { activeSpawns, bossesInWindow, normMobName, parseBosses, type ActiveSpawn, type SpawnBoss } from '@/lib/replayBosses';
 import {
   PathStore, buildSegments, headAt, killMarks, rankKills, segmentsDone,
   type PathPt, type RouteFeed, type Segments,
@@ -600,7 +600,9 @@ function windowUrl(urls: BoundedReplay['urls'] | null, nightKey: string, from: n
 }
 
 export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedReplay; timeline?: boolean } = {}) {
-  const [killList, setKillList] = useState<Kill[]>([]);   // the night's boss deaths, for the timeline strip (/spectator/replay)
+  // The bosses the route sent: a whole NIGHT's on the Spectator and the members' review, the share's window's on a share.
+  // Nothing below reads this directly: `bosses` is the part that died inside the window on screen.
+  const [allBosses, setAllBosses] = useState<SpawnBoss[]>([]);
   const urlsRef = useRef(bounded?.urls ?? null);
   urlsRef.current = bounded?.urls ?? null;
   const [nights, setNights] = useState<NightSummary[] | null>(bounded ? [bounded.night] : null);
@@ -662,11 +664,22 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
     const s = picked === n.sessions[n.sessions.length - 1] ? growSession(picked, tailLast) : picked;
     return { ...n, first: new Date(s.from).toISOString(), last: new Date(s.to - MINUTE_MS).toISOString(), minutes: s.minutes, zones: s.zones, runs: s.runs, spans: s.spans };
   }, [chosen, tailLast]);
-  // The timeline strip shows the session on screen, not the whole night: a night holds the daytime groups and, after a
-  // raid change, the other raid too (the night's bosses are read once for the night, see the bosses effect below).
-  const sessionKills = useMemo(
-    () => (night ? killsInSession(killList, Date.parse(night.first), Date.parse(night.last) + MINUTE_MS) : killList),
-    [killList, night]);
+  // The bosses of the window on screen, and nothing else: the numbered chips, the numbers on the path, the spawn rings and
+  // the timeline strip all read these. A night holds the daytime groups and, after a raid change, the other raid too
+  // (the guild lead, 2026-10-23: the second of two back-to-back raids numbered the first one's kills), and the bosses
+  // are read for the night (or a share's window) once, see the bosses effect below. A review window ends exactly where
+  // its Kills tab does; a session may trail two minutes past its last row, but not into the session after it.
+  const nextSessionFrom = useMemo(() => {
+    const list = chosen?.night.sessions ?? [];
+    const i = chosen?.session ? list.findIndex(s => s.from === chosen.session?.from) : -1;
+    return i >= 0 && i + 1 < list.length ? list[i + 1].from : null;
+  }, [chosen]);
+  const bosses = useMemo<SpawnBoss[]>(() => {
+    if (!night) return allBosses;
+    const from = Date.parse(night.first), to = Date.parse(night.last) + MINUTE_MS;
+    return bossesInWindow(allBosses, from, to, chosen?.session ? trailSlackMs(to, nextSessionFrom) : 0);
+  }, [allBosses, night, chosen, nextSessionFrom]);
+  const sessionKills = useMemo<Kill[]>(() => bosses.map(b => ({ npcId: b.npc_id, name: b.name, atMs: b.to })), [bosses]);
   const split = info.zones[1] !== null;
 
   // ── refs: everything the drawing reads ─────────────────────────────────────
@@ -890,7 +903,7 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
     lastPaintT.current = null;   // the first picture of a new session is framed at once
     setInfo(i => (i.zones[0] === null && i.zones[1] === null ? i : { ...i, zones: [null, null] }));
     if (!night) return;
-    tRef.current = Date.parse(night.first);
+    tRef.current = openingPlayhead(night.spans, Date.parse(night.first));   // a window that starts before its first recorded minute opens on that minute
     const wantLive = pendingLiveRef.current;
     if (wantLive && wantLive.from === Date.parse(night.first)) {
       pendingLiveRef.current = null;
@@ -918,28 +931,30 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
   }, [live, night, nowMs, setLiveOff]);
 
   // The night's killed bosses with their spawn points: for nights recorded before the recorder kept targets.
+  // Read again when the address changes: a bounded caller's names its window, so a page moved to another window of the
+  // same night asks for that window's bosses, not the last one's.
+  const bossUrl = !night ? null
+    : bounded ? (bounded.urls.bosses ? bounded.urls.bosses(night.night_key) : null)   // null: bounded, and the caller serves no boss markers
+    : '/api/spectator/replay/bosses?night=' + encodeURIComponent(night.night_key);
   useEffect(() => {
-    bossesRef.current = [];
-    bossNamesRef.current = new Set();
-    killsRef.current = [];
-    setKillList([]);
-    const key = night?.night_key;
-    if (!key) return;
-    const u = urlsRef.current;
-    if (u && !u.bosses) return;   // bounded, and the caller serves no boss markers
+    setAllBosses([]);
+    if (!bossUrl) return;
     const ac = new AbortController();
-    fetch(u?.bosses ? u.bosses(key) : '/api/spectator/replay/bosses?night=' + encodeURIComponent(key), { signal: ac.signal })
+    fetch(bossUrl, { signal: ac.signal })
       .then(async res => {
         if (!res.ok) return;
-        bossesRef.current = parseBosses(await res.json());
-        bossNamesRef.current = new Set(bossesRef.current.map(b => normMobName(b.name)));
-        killsRef.current = bossesRef.current.map(b => ({ name: b.name, to: b.to, zones: [...new Set(b.points.map(p => p.zone))] }));
-        setKillList(bossesRef.current.map(b => ({ npcId: b.npc_id, name: b.name, atMs: b.to })));
-        schedule();
+        setAllBosses(parseBosses(await res.json()));
       })
       .catch(() => {});
     return () => ac.abort();
-  }, [night?.night_key, schedule]);
+  }, [bossUrl]);
+  // What the drawing reads is the window's bosses only (the memo above), set the moment the window or the read changes.
+  useEffect(() => {
+    bossesRef.current = bosses;
+    bossNamesRef.current = new Set(bosses.map(b => normMobName(b.name)));
+    killsRef.current = bosses.map(b => ({ name: b.name, to: b.to, zones: [...new Set(b.points.map(p => p.zone))] }));
+    schedule();
+  }, [bosses, schedule]);
 
   // The map for a zone on screen: once per zone, kept for the visit.
   const loadMap = useCallback((z: string) => {
@@ -1476,7 +1491,7 @@ export default function ReplayBoard({ bounded, timeline }: { bounded?: BoundedRe
   // How much of the night's path has been read, and the kills in the order they died (the numbers on the map).
   const pathTotal = Math.max(1, Math.ceil((end - start) / REPLAY_WINDOW_MS));
   const pathParts = pathVer >= 0 ? Math.min(pathTotal, pathStore.current.size) : 0;
-  const ranked = rankKills(killList.map(k => ({ ...k, to: k.atMs })));
+  const ranked = rankKills(sessionKills.map(k => ({ ...k, to: k.atMs })));
   const liveOn = !bounded && liveAvailable(end, nowMs);   // the session is being recorded: Live can follow it
   const where = split ? `${info.zones[0]} and ${info.zones[1]}` : (info.zones[0] ?? 'the raid');
   const aria = (mode === '3d' ? '3D replay' : 'Replay') + ` of ${night.night_key}: ${where} with ${hereTotal} raiders. `

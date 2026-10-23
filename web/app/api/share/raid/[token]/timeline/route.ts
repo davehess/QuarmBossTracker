@@ -34,12 +34,16 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     if (over) return over;
 
     const t0 = Date.now();
-    let hit = memo.get(share.row.id);
+    // Kept per share AND per stored window: a share whose start or end was moved (an officer's change, or a hand edit of
+    // the row) must not be answered from the old window's read for the rest of the 10 s. The row's own columns, not the
+    // computed window, because an open share's window ends at the clock and would never hit.
+    const memoKey = `${share.row.id}|${share.row.from_at}|${share.row.to_at}`;
+    let hit = memo.get(memoKey);
     if (!hit || t0 - hit.at >= CACHE_MS) {
       const kills = await loadTimelineKills(sb, new Date(share.win.fromMs).toISOString(), new Date(share.win.toMs).toISOString(), share.row.guild_id);
       hit = { at: t0, kills };
-      memo.delete(share.row.id);
-      memo.set(share.row.id, hit);
+      memo.delete(memoKey);
+      memo.set(memoKey, hit);
       if (memo.size > MEMO_MAX) memo.delete(memo.keys().next().value as string);
     }
     const now = Date.now();
