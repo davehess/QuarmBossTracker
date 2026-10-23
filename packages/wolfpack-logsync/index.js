@@ -9555,6 +9555,10 @@ const DS_UNLISTED_SLACK = 30;
 // (the guild lead: "expand the timeframe to 4 minutes").
 const PVP_ASSIST_WINDOW_MS = 240_000;
 
+// A fight whose top target has taken no damage for this long is over (EncounterBuilder._splitIfTopIdle).
+const WIPE_SPLIT_IDLE_MS  = 5 * 60_000;
+const WIPE_SPLIT_CHECK_MS = 10_000;
+
 class EncounterBuilder {
   constructor({ character, onFlush, silent = false }) {
     this.character  = character;
@@ -9661,6 +9665,10 @@ class EncounterBuilder {
     // deaths: player deaths observed in this encounter.
     // [{ name, ts, riposteDeath: bool, class: string|null }]
     this.deaths           = [];
+    // Wipe split: the log time each target last TOOK damage ({ ms, ts }), and the log time of the last
+    // idle check. See _splitIfTopIdle().
+    this._lastDmgAt       = new Map();
+    this._idleCheckMs     = 0;
     // recentRiposteDmg: name → timestamp of most recent confirmed riposte hit.
     // Used to attribute a death as a "riposte kill" if death follows within 3s.
     this.recentRiposteDmg = new Map();
@@ -10380,6 +10388,7 @@ class EncounterBuilder {
 
   add(event) {
     if (!event) return;
+    this._splitIfTopIdle(event);
 
     // ── A pet some other raider's agent has already named (FB-35) ──────────
     // Live builders only: a replay of an old log must not borrow tonight's owners.
@@ -11045,6 +11054,10 @@ class EncounterBuilder {
       const attackerIsTarget = rawAtk0 && this.targets.has(rawAtk0);
       if (!isSelfHit && !attackerIsTarget) {
         this.targets.set(event.defender, (this.targets.get(event.defender) || 0) + (event.amount || 0));
+        if ((event.amount || 0) > 0) {
+          const _dMs = Date.parse(event.ts);
+          if (Number.isFinite(_dMs)) this._lastDmgAt.set(event.defender, { ms: _dMs, ts: event.ts });
+        }
         // #3 Extended Target V2 — rolling per-mob damage-in for the DPS-on-mob
         // readout. Same signal as this.targets, but TIMESTAMPED + windowed
         // (this.targets is cumulative). Other raiders' hits appear in our log
@@ -11687,6 +11700,30 @@ class EncounterBuilder {
         this.flush();
       }
     }
+  }
+  // A fight is over when its top target has taken no damage for WIPE_SPLIT_IDLE_MS, even though other
+  // events keep arriving. tickIdle only looks at "any event", and this builder is per LOG, not per mob:
+  // trash fought between two pulls kept it open for 40 minutes, so two wipes on one boss uploaded as ONE
+  // encounter (the guild lead, 2026-10-23: "there were two wipes", one parse showed one 6m30s fight).
+  // Runs on the arrival of the next event, so the fight is closed at the moment the log shows it was over:
+  // the events after the top target's last damage are the trash that kept it open and are dropped, and
+  // ended_at is that last damage. Uploads exactly as an idle-timeout fight does (bossKillConfirmed stays
+  // false, so no timer moves). 5 min, not 2: a boss can sit untargetable for ~2 min (see the engage-gate
+  // comment in flush), and a dispel/FD reset that full-heals the mob re-engages within a minute or two.
+  // Throttled to one look per 10 log seconds. Known limit: the per-defender / per-healer counters
+  // (defenderStats, healerStats) already folded in the trimmed tail, which is at most WIPE_SPLIT_IDLE_MS.
+  _splitIfTopIdle(event) {
+    if (!this.events.length || !event.ts) return;
+    const nowMs = Date.parse(event.ts);
+    if (!Number.isFinite(nowMs) || nowMs - this._idleCheckMs < WIPE_SPLIT_CHECK_MS) return;
+    this._idleCheckMs = nowMs;
+    let top = null, topDmg = -1;
+    for (const [name, dmg] of this.targets) if (dmg > topDmg) { top = name; topDmg = dmg; }
+    const last = top && this._lastDmgAt.get(top);
+    if (!last || nowMs - last.ms <= WIPE_SPLIT_IDLE_MS) return;
+    this.events = this.events.filter(e => !(Date.parse(e.ts) > last.ms));
+    this.lastEvent = last.ts;
+    this.flush();
   }
   tickIdle(now) {
     // If we've been silent for >120s and have events, flush
