@@ -1193,7 +1193,7 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   it replaced Scene-first, §409): three doors (**Player**, **Guild**, **Self-host**), then **See it run** (the layered mascot hero,
   the tabbed player of looping recordings of the real overlays, **For raiders** and **For raid leaders and guild leaders**, and the
   gallery of more captures), then **How it works** (a four-step interactive drawing: Overlays, The raid, Raid leader, Hosting),
-  the folded small print, the coming list and the ask. There is no `?v=` switch: the Ladder preview, Scene-first, the earlier tour,
+  the folded small print, the coming list and the ask. The one switch left is the `?v=motion` story preview (below), honoured only by a beta build (`IS_BETA`); the Ladder preview, Scene-first, the earlier tour,
   the Output-first gallery, Raid-night story and Your screen are deleted. Next scene to record: loot rolls + DKP bids (a new
   row in `CLIPS`; a scene gets its tab only when it has a row and files).
   **What you get** (web 2.1.17, the guild lead's icon-set pick of 2026-10-23): eight cards right under the doors, each a hand-drawn
@@ -1214,8 +1214,9 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   served as themselves), `web/app/layout.tsx` (bare shell). **Search engines:** indexed on the raidmimic hosts only, canonical
   `https://raidmimic.com/` (and `/setup`); `wolfpack.quest` and `b.wolfpack.quest` stay `noindex`. Register interest
   reuses the eqmimic.quest anonymous form. Test: `test/raidmimic-landing.test.js`.
-- **Live at:** `https://wolfpack.quest/raidmimic` (Pick your path, indexing and the drawing graduated to `main` with web 2.1.16,
-  2026-10-23); the same page on beta at `https://b.wolfpack.quest/raidmimic`. On raidmimic.com once DNS points at Vercel and
+- **Live at:** `https://wolfpack.quest/raidmimic` (Pick your path, the icons and How it works graduated to `main` with web
+  2.1.29, 2026-10-24, the guild lead's "B now then A": the page first, the story video later); the same page on beta at
+  `https://b.wolfpack.quest/raidmimic`, and the video preview at `https://b.wolfpack.quest/raidmimic?v=motion`. On raidmimic.com once DNS points at Vercel and
   the Vercel redirects to eqmimic.quest come off.
 - **`?v=motion` preview, "B — Strip" (web 2.1.19, live screen 2.1.20, beta only, the guild lead 2026-10-24; VERTICAL 9:16 since web 2.1.22, the guild lead 2026-10-24: "vertical is great for both mobile and desktop"; on a desktop the headline and download button sit left of the video, on a phone above it):** a 9:16 story video
   (a chest comes alive and the real overlays end up on its monitor, over a live raid playing on the screen the whole time; the

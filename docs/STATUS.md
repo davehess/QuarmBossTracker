@@ -190,7 +190,11 @@ next touch one rather than assuming a missing row means a missing doc.
   after six months), Mimic as the long-term home, and the signed tenant import. Built and dormant: `utils/openHub.js`, the
   unapplied `20261023160000_open_hub_registry.sql` (commons project only), `test/open-hub.test.js`. Phase 1 (~15 days,
   invite-only) waits on the guild lead's eight picks (design section 12).
-- **🧪 raidmimic.com: two layout previews of the "player first, guild second" story (web 2.1.12 on `beta`, 2026-10-23, the guild lead:
+- **✅ raidmimic.com: Pick your path is LIVE (web 2.1.29 on `main`, 2026-10-24, the guild lead's "B now then A").** The three doors,
+  the eight feature icons, How it works, search indexing on the raidmimic hosts. The "coming to life" story video stays a beta
+  preview (`https://b.wolfpack.quest/raidmimic?v=motion`, web 2.1.28, the gravelly player voice) until step A graduates it; a
+  production build ignores `?v=motion`. DECISIONS §427–§430.
+- **🧪 → ✅ (picked "Pick your path", graduated above) raidmimic.com: two layout previews of the "player first, guild second" story (web 2.1.12 on `beta`, 2026-10-23, the guild lead:
   *"less about me setting it up as a service for them and more about here's what you get as a player … use this yourself, but I can
   help you with a self-hosted version"*).** `https://b.wolfpack.quest/raidmimic?v=player` (**Ladder**: one scroll, player, jump in now,
   what a guild could have, then run your own or have it hosted) and `https://b.wolfpack.quest/raidmimic?v=paths` (**Pick your path**:
