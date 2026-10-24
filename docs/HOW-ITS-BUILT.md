@@ -1189,26 +1189,41 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 ### raidmimic.com landing page (web 1.9.5, 2026-10-18, [beta]; DECISIONS §370)
 - **What:** the guild leaders' door, game-agnostic: what the platform does, each block tagged live / alpha / coming,
   works-with (PQ Companion, GINA, EQLogParser), the consent model, what it costs (no price list), "any solved world",
-  and Register interest. The one layout is **Pick your path** (`PathsLayout.tsx`, the guild lead's pick of 2026-10-23): a
-  short hero, three doors (Player, Guild, Self-host, words in `web/lib/raidmimicPlayer.ts`), the eight feature icons
-  (`FeatureIcons.tsx`, `web/lib/raidmimicFeatures.ts`), then "See it run" (the layered mascot hero, the tabbed player of
-  looping recordings, the capture gallery) and "How it works" (the four-step drawing, `web/public/raidmimic/how/scene.html`).
-  Indexed on the raidmimic hosts (`robots.txt` / `sitemap.xml` routes, `raidmimicSeo()`), noindex elsewhere. One preview
-  remains: `?v=motion`, the vertical "coming to life" story video as the hero (`MotionStage.tsx`, DECISIONS §427–§429),
-  honoured only by a beta build (`IS_BETA`); its files live on `beta` only until the guild lead graduates it.
-- **Where:** `web/app/raidmimic/page.tsx` (metadata, host-dependent links), `web/app/raidmimic/_landing/`
-  (`PathsLayout.tsx`, `Parts.tsx`, `MascotHero.tsx`, `HowItWorks.tsx`, `FeatureIcons.tsx`, `MotionStage.tsx`; client pieces `ClipTabs.tsx` the player, `SceneClip.tsx` one looping
-  clip, `MascotVideo.tsx` the mascot), ALL words in `web/lib/raidmimicLanding.ts` (`COMING` is the whole list of promises;
+  and Register interest. The one layout is **Pick your path** (`PathsLayout.tsx`, the guild lead's pick of 2026-10-23, web 2.1.16;
+  it replaced Scene-first, §409): three doors (**Player**, **Guild**, **Self-host**), then **See it run** (the layered mascot hero,
+  the tabbed player of looping recordings of the real overlays, **For raiders** and **For raid leaders and guild leaders**, and the
+  gallery of more captures), then **How it works** (a four-step interactive drawing: Overlays, The raid, Raid leader, Hosting),
+  the folded small print, the coming list and the ask. The one switch left is the `?v=motion` story preview (below), honoured only by a beta build (`IS_BETA`); the Ladder preview, Scene-first, the earlier tour,
+  the Output-first gallery, Raid-night story and Your screen are deleted. Next scene to record: loot rolls + DKP bids (a new
+  row in `CLIPS`; a scene gets its tab only when it has a row and files).
+  **What you get** (web 2.1.17, the guild lead's icon-set pick of 2026-10-23): eight cards right under the doors, each a hand-drawn
+  inline SVG (gold line art by `currentColor`, green and red accents) with a label and one plain line; the hail board and the CH
+  chain carry the "Needs your guild's server" chip. Drawn in `_landing/FeatureIcons.tsx`, words in `web/lib/raidmimicFeatures.ts`,
+  test `test/raidmimic-feature-icons.test.js`.
+- **Where:** `web/app/raidmimic/page.tsx` (metadata from the Host header, host-dependent links), `web/app/raidmimic/_landing/`
+  (`PathsLayout.tsx`, `Parts.tsx`, `MascotHero.tsx`; client pieces `ClipTabs.tsx` the player, `SceneClip.tsx` one looping
+  clip, `MascotVideo.tsx` the mascot, `HowItWorks.tsx` the drawing's lazy frame), the words in `web/lib/raidmimicPlayer.ts` (the
+  doors, "How it works", the search card) and `web/lib/raidmimicLanding.ts` (`COMING` is the whole list of promises;
   `CLIPS` + `AUDIENCES` the player; `SHOTS` the captures: the hero's seven, and the ones flagged `more` that `MoreShots`
-  in `Parts.tsx` shows in a gallery under the player). Clips: `scripts/raidmimic-shots/scenes.mjs` (the real
+  in `Parts.tsx` shows in a gallery under the player). The drawing: `web/public/raidmimic/how/scene.html` (one file, no external
+  request, ISO-GLOW credit). Clips: `scripts/raidmimic-shots/scenes.mjs` (the real
   overlays driven by a scripted stand-in agent) → `web/public/raidmimic/clips/`; stills: `shoot.mjs` →
-  `web/public/raidmimic/shots/`; the mascot: `web/public/raidmimic/mascot/`. Hosts: `web/lib/raidmimicHost.ts`,
-  `web/middleware.ts` (rewrite to `/raidmimic`, query dropped), `web/app/layout.tsx` (bare shell). Register interest
+  `web/public/raidmimic/shots/`; the mascot: `web/public/raidmimic/mascot/`. Hosts: `web/lib/raidmimicHost.ts`
+  (`raidmimicLandingTarget`, `raidmimicSeo`, `isRaidmimicAsset`), `web/middleware.ts` (rewrite to `/raidmimic`, query dropped;
+  `/robots.txt` and `/sitemap.xml` to `web/app/raidmimic/robots.txt/route.ts` and `sitemap.xml/route.ts`; the page's own files
+  served as themselves), `web/app/layout.tsx` (bare shell). **Search engines:** indexed on the raidmimic hosts only, canonical
+  `https://raidmimic.com/` (and `/setup`); `wolfpack.quest` and `b.wolfpack.quest` stay `noindex`. Register interest
   reuses the eqmimic.quest anonymous form. Test: `test/raidmimic-landing.test.js`.
 - **Live at:** `https://wolfpack.quest/raidmimic` (Pick your path, the icons and How it works graduated to `main` with web
   2.1.29, 2026-10-24, the guild lead's "B now then A": the page first, the story video later); the same page on beta at
   `https://b.wolfpack.quest/raidmimic`, and the video preview at `https://b.wolfpack.quest/raidmimic?v=motion`. On raidmimic.com once DNS points at Vercel and
   the Vercel redirects to eqmimic.quest come off.
+- **`?v=motion` preview, "B — Strip" (web 2.1.19, live screen 2.1.20, beta only, the guild lead 2026-10-24; VERTICAL 9:16 since web 2.1.22, the guild lead 2026-10-24: "vertical is great for both mobile and desktop"; on a desktop the headline and download button sit left of the video, on a phone above it):** a 9:16 story video
+  (a chest comes alive and the real overlays end up on its monitor, over a live raid playing on the screen the whole time; the
+  screen is one canvas warped onto the monitor, so the overlays sit exactly in their frames; sound effects since 2.1.21, from an
+  LTX audio-only retake of the finished picture, unmuted by a "Sound on" button) plays once, then swaps to a seamless six-second loop, with a "Watch again" button;
+  the four real captures sit in a strip below it (four across, two by two on a phone). `_landing/MotionStage.tsx`, files in
+  `web/public/raidmimic/motion/` (`story-` and `loop-` at 1080 and 720, `story-poster.jpg` 720x1280); tests in `test/raidmimic-landing.test.js`.
 
 ### Set up Raid Mimic yourself: /raidmimic/setup (web, 2026-10-21, [beta]; DECISIONS §404)
 - **What:** a step-by-step guide for players outside the guild: download, run it local-only, what works on your own
