@@ -132,6 +132,17 @@ writes.
   OpenDKP family closure over `main_name`. Canonical implementation:
   `loadOwnedCharacters` in `web/app/me/page.tsx` (mirrored in
   `web/app/me/ui/actions.ts`).
+- **First sign-in in Mimic: pick your characters, stage a recruit main** (DRAFT, bot 4.0.13 · agent 4.0.21, 2026-10-24, DECISIONS
+  §426). A member with the Discord role needs no OpenDKP account to sign in (the site gate is the role); what a brand-new member
+  lacks is a linked `characters` row, which is why `/me` ownership, the PoP spell view and the Voice tab said "not your character".
+  Agent: the dashboard card **👋 Welcome — which characters are yours?** (`#wpRecruitCard`, `renderRecruitCard` / `wpYc*` in
+  `packages/wolfpack-logsync/dashboard.html`; engine side `recruitCardPayload` / `recruitCardAct` / `_recruitScan` /
+  `_recruitUploadNow`, routes `GET`+`POST /api/recruit-card`) lists the `eqlog_<Name>_pq.proj.txt` files in the EQ folder and shows
+  when `GET /api/agent/character-prefs?mine=1` returns an empty family; state in the opt-in file (`recruitCard`). "Upload these now"
+  calls the existing `scanSpellbookFiles` / `scanInventoryUploads` / `scanQuarmyExports` with `{ only, dir }`. Bot:
+  `POST /api/agent/characters/stage` -> `utils/recruitStage.js` (`discord_id` only where NULL, Recruit / Non-raid Alt, `main_name`,
+  class from a single Discord class role on the main, `registered_via_web_*` audit pair; nothing created in OpenDKP; an owned or
+  roster-listed character comes back in `conflicts`). Tests: `test/recruit-stage.test.js`, `test/recruit-card-agent.test.js`.
 
 ## Release & deploy pipeline
 
