@@ -5,7 +5,7 @@
 // a frame), the small print, the coming list and the ask.
 // The door's arched top is the one distinctive thing here. Server component; the only client code is the player (ClipTabs)
 // and the drawing's frame (HowItWorks). Every word is in web/lib/raidmimicPlayer.ts (and raidmimicLanding.ts for the facts).
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import {
   CLIPS_HEAD, CLIPS_NOTE, COST, DATA, FACTS_TITLE, MAP_CREDIT, SHOTS_HEAD, WORKS_WITH, WORLDS,
 } from '@/lib/raidmimicLanding';
@@ -97,21 +97,30 @@ function DoorCard({ door, ctx }: { door: Door; ctx: Ctx }) {
   );
 }
 
-// `motion` is the `?v=motion` preview (beta only; a raidmimic host drops the query): the 3D mimic's story video, with the real
-// captures in a strip below it, takes the hero's place, right under the title, and the older mascot hero leaves "See it run".
+// `motion` is the `?v=motion` preview (beta only; a raidmimic host drops the query): the 3D mimic's vertical story video, with
+// the real captures in a strip below it, takes the hero's place. The headline moves into the stage, so a desktop shows it
+// beside the video (with the download button) and a phone shows it above, as before; the older mascot hero leaves "See it run".
 export default function PathsLayout({ ctx, motion = false }: { ctx: Ctx; motion?: boolean }) {
+  // The headline is the same element either way; in the preview the stage owns it and lays it out beside the video.
+  const Frame = motion ? MotionStage : Fragment;
   return (
     <div className="mx-auto max-w-5xl pb-12">
       <BetaTag ctx={ctx} />
 
-      <header className="mb-6">
-        <p className="text-xs uppercase tracking-widest text-gold">{HERO.kicker}</p>
-        <h1 className="mt-1 text-3xl leading-tight text-[#f2ede1] sm:text-5xl">{HERO.name}</h1>
-        <p className="mt-3 max-w-[60ch] text-base leading-7 text-[#f2ede1] sm:text-xl sm:leading-8">{PATHS.line}</p>
-        <p className="mt-3 max-w-[66ch] text-sm leading-6 text-text">{HERO.fine}</p>
-      </header>
-
-      {motion && <MotionStage />}
+      <Frame>
+        <header className={motion ? 'mb-6 lg:mb-0' : 'mb-6'}>
+          <p className="text-xs uppercase tracking-widest text-gold">{HERO.kicker}</p>
+          <h1 className="mt-1 text-3xl leading-tight text-[#f2ede1] sm:text-5xl">{HERO.name}</h1>
+          <p className="mt-3 max-w-[60ch] text-base leading-7 text-[#f2ede1] sm:text-xl sm:leading-8">{PATHS.line}</p>
+          <p className="mt-3 max-w-[66ch] text-sm leading-6 text-text">{HERO.fine}</p>
+          {motion && (
+            <div className="mt-5 hidden flex-wrap items-center gap-x-4 gap-y-1 lg:flex">
+              <a href={DOWNLOAD_URL} className={PRIMARY_BTN}>{HERO.download}</a>
+              <a href={ctx.setup} className="inline-flex min-h-11 items-center text-sm">{HERO.setup} →</a>
+            </div>
+          )}
+        </header>
+      </Frame>
 
       <section aria-label={PATHS.doorsLabel}>
         <ul className="m-0 grid list-none gap-4 p-0 lg:grid-cols-3">
