@@ -137,6 +137,11 @@ next touch one rather than assuming a missing row means a missing doc.
   refuses, the right-click row shows only while it is on; Setup ALL never shows a leftover hidden Canvas window; Esc leaves Setup
   ALL / THIS and Canvas arranging. Test: `test/canvas-stays-off.test.js`. Open: the raider's screen was never seen, so the exact
   trigger is unconfirmed; ask for the agent log's `[canvas]` line.
+- **🧪 raidmimic: `?v=motion` is now the story hero with a capture strip below it (web 2.1.19, draft branch `draft/rm-final`, not pushed,
+  2026-10-24; the guild lead's "B — Strip" pick).** A 16:9 story video (about 35 s, a chest comes alive, the real overlays end up on
+  its monitor) plays once, then a seamless six-second loop takes over; "Watch again" replays it. The four real captures sit in a strip
+  under the video, four across or two by two on a phone. The 9:16 files, the portrait box rule and the drift are gone; the
+  paragraph below is the superseded first design.
 - **🧪 raidmimic: `?v=motion` preview, "A — Layered" (web 2.1.17, draft branch `draft/rm-motion`, not pushed, 2026-10-23).** The
   guild lead's pick: *"clean smooth animation. not jumpy, not stretched. Something that can scale on both mobile and desktop."* A
   looping 3D mimic video behind, the real captures on top as images (4 wide, 2 on a phone), a slow transform-only drift, nothing baked

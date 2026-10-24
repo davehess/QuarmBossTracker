@@ -28,7 +28,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, stripJs } from './_source-slice.js';
+import { ROOT, stripJs, stripCss } from './_source-slice.js';
 import {
   RAIDMIMIC_HOSTS, RAIDMIMIC_LANDING_PATH, RAIDMIMIC_ORIGIN, isRaidmimicAsset, isRaidmimicHost, raidmimicLandingTarget, raidmimicSeo,
 } from '../web/lib/raidmimicHost.ts';
@@ -81,7 +81,7 @@ describe('raidmimicLandingTarget', () => {
     for (const p of ['/robots', '/robots.txt.bak', '/sitemap', '/sitemap.xml/x', '/raidmimic/robots.txt/x']) expect(raidmimicLandingTarget(p), p).toEqual({ pathname: '/raidmimic', search: '' });
   });
   it('the page’s own files (captures, clips, mascot, the drawing) are assets; nothing else is', () => {
-    for (const p of ['/raidmimic/how/scene.html', '/raidmimic/clips/grummus-hail.mp4', '/raidmimic/mascot/hop.mp4', '/raidmimic/shots/cc.webp', '/raidmimic/motion/mimic-16x9-1280.mp4']) expect(isRaidmimicAsset(p), p).toBe(true);
+    for (const p of ['/raidmimic/how/scene.html', '/raidmimic/clips/grummus-hail.mp4', '/raidmimic/mascot/hop.mp4', '/raidmimic/shots/cc.webp', '/raidmimic/motion/story-1280.mp4']) expect(isRaidmimicAsset(p), p).toBe(true);
     for (const p of ['/', '/setup', '/raidmimic', '/raidmimic/setup', '/raidmimic/how/', '/raidmimic/a/b/c.mp4', '/other/how/scene.html', '/raidmimic/../x/y.html', '/api/agent/chat', '/raidmimic/how/%2e%2e.html']) expect(isRaidmimicAsset(p), p).toBe(false);
   });
 });
@@ -920,11 +920,11 @@ describe('How it works: the four-step drawing', () => {
   });
 });
 
-// ─── `?v=motion` (the guild lead, 2026-10-23, picked "A — Layered"): a looping 3D mimic with the real captures floating over it ─
+// ─── `?v=motion` (the guild lead, 2026-10-24, picked "B — Strip"): the 3D mimic's story, then its loop; the captures in a strip ─
 describe('the motion preview (?v=motion)', () => {
   const stage = read(L + 'MotionStage.tsx');
   const stageCode = stripJs(stage);
-  const css = read('web/app/globals.css');
+  const css = stripCss(read('web/app/globals.css'));
   const M = 'web/public/raidmimic/motion/';
 
   // A file's own size, from its mp4 header (the first `tkhd` is the only video track): width and height are 16.16 numbers.
@@ -933,9 +933,10 @@ describe('the motion preview (?v=motion)', () => {
     const i = b.indexOf('tkhd');
     return { w: b.readUInt32BE(i + 4 + 76) >>> 16, h: b.readUInt32BE(i + 4 + 80) >>> 16 };
   };
-  // The table the component picks files from: src, w, h, media.
+  // The table the component picks the story's files from: src, w, h, media.
   const files = [...stageCode.matchAll(/\{ src: `\$\{DIR\}\/([\w.-]+)`,\s*w: (\d+),\s*h: (\d+),\s*media: '([^']*)' \}/g)]
     .map(m => ({ name: m[1], w: +m[2], h: +m[3], media: m[4] }));
+  const loops = [...stageCode.matchAll(/`\$\{DIR\}\/(loop-\d+\.mp4)`/g)].map(m => m[1]);
 
   it('only a query of exactly `motion` changes the page, and it is a preview: the default tree has no stage and keeps the mascot hero', () => {
     const layout = code(L + 'PathsLayout.tsx');
@@ -946,79 +947,121 @@ describe('the motion preview (?v=motion)', () => {
     // a raidmimic host never sees it: the middleware drops every query (tested above), so only the Wolf Pack hosts can
     expect(raidmimicLandingTarget('/')).toEqual({ pathname: '/raidmimic', search: '' });
   });
-  it('ships four loops and two posters, each under 3 MB, at the sizes the table says, 50 fps ping-pong', () => {
-    expect(files.map(f => f.name).sort()).toEqual(['mimic-16x9-1280.mp4', 'mimic-16x9-1920.mp4', 'mimic-9x16-1080.mp4', 'mimic-9x16-720.mp4']);
+
+  it('the motion directory holds exactly the story, the loop (each in two widths) and one poster; no portrait files are left', () => {
+    expect(fs.readdirSync(path.join(ROOT, M)).sort()).toEqual(['loop-1280.mp4', 'loop-1920.mp4', 'story-1280.mp4', 'story-1920.mp4', 'story-poster.jpg']);
+    expect(files.map(f => f.name)).toEqual(['story-1920.mp4', 'story-1280.mp4']);
+    expect(loops.sort()).toEqual(['loop-1280.mp4', 'loop-1920.mp4']);
+    expect(stageCode).not.toMatch(/9x16|portrait|orientation|mimic-16x9/);
+  });
+  it('ships the files at the sizes the component says, 16:9 only, and a poster under 100 KB at 1280 by 720', () => {
     for (const f of files) {
       const rel = M + f.name;
-      expect(fs.existsSync(path.join(ROOT, rel)), f.name).toBe(true);
-      expect(fs.statSync(path.join(ROOT, rel)).size, f.name).toBeLessThan(3_000_000);
+      expect(f.w * 9, f.name).toBe(f.h * 16);
       expect(mp4Size(rel), f.name).toEqual({ w: f.w, h: f.h });
+      expect(fs.statSync(path.join(ROOT, rel)).size, f.name).toBeLessThan(16_000_000);
     }
-    for (const p of ['mimic-16x9-poster.jpg', 'mimic-9x16-poster.jpg']) expect(fs.statSync(path.join(ROOT, M + p)).size, p).toBeLessThan(100_000);
+    // each loop has the size of the story it replaces at that width
+    expect(mp4Size(M + 'loop-1920.mp4')).toEqual({ w: 1920, h: 1080 });
+    expect(mp4Size(M + 'loop-1280.mp4')).toEqual({ w: 1280, h: 720 });
+    for (const n of ['loop-1920.mp4', 'loop-1280.mp4']) expect(fs.statSync(path.join(ROOT, M + n)).size, n).toBeLessThan(6_000_000);
+    expect(fs.statSync(path.join(ROOT, M + 'story-poster.jpg')).size).toBeLessThan(100_000);
+    const b = fs.readFileSync(path.join(ROOT, M + 'story-poster.jpg'));
+    let dims;
+    for (let i = 2; i < b.length;) { if (b[i] === 0xff && (b[i + 1] & 0xf0) === 0xc0 && b[i + 1] !== 0xc4 && b[i + 1] !== 0xc8 && b[i + 1] !== 0xcc) { dims = { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) }; break; } i += 2 + b.readUInt16BE(i + 2); }
+    expect(dims).toEqual({ w: 1280, h: 720 });
+    expect(stageCode).toMatch(/story-poster\.jpg/);
   });
-  it('every file is one of two aspects, and the box takes the SAME aspect from the SAME media query, so nothing is stretched or cropped', () => {
-    const wide = files.filter(f => !/orientation: portrait/.test(f.media));
-    const tall = files.filter(f => /orientation: portrait/.test(f.media));
-    expect(wide).toHaveLength(2);
-    expect(tall).toHaveLength(2);
-    for (const f of wide) expect(f.w * 9, f.name).toBe(f.h * 16);
-    for (const f of tall) expect(f.w * 16, f.name).toBe(f.h * 9);
-    // the wide aspect is the box's default, the tall one is the portrait query: the same query as the <source>s and the poster
+  it('the box is 16:9 always (no portrait rule, no drift), and the video fills it without stretching', () => {
     expect(css).toMatch(/\.rm-stage-box \{ aspect-ratio: 16 \/ 9; width: 100%; \}/);
-    expect(css).toMatch(/@media \(orientation: portrait\) \{\s*\.rm-stage-box \{ aspect-ratio: 9 \/ 16;/);
-    expect(stageCode).toMatch(/<source media="\(orientation: portrait\)" srcSet=\{MOTION_POSTERS\.portrait\.src\}/);
-    // the poster files have the aspect of the loops they stand in for
-    const poster = (n) => { const b = fs.readFileSync(path.join(ROOT, M + n)); for (let i = 2; i < b.length;) { if (b[i] === 0xff && (b[i + 1] & 0xf0) === 0xc0 && b[i + 1] !== 0xc4 && b[i + 1] !== 0xc8 && b[i + 1] !== 0xcc) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) }; i += 2 + b.readUInt16BE(i + 2); } };
-    expect(poster('mimic-16x9-poster.jpg')).toEqual({ w: 1280, h: 720 });
-    expect(poster('mimic-9x16-poster.jpg')).toEqual({ w: 720, h: 1280 });
+    expect(css).not.toMatch(/rm-stage-box[^}]*9 \/ 16/);
+    expect(css).not.toMatch(/rm-drift/);
+    expect(stageCode).not.toMatch(/rm-drift/);
     expect(stageCode).toMatch(/object-cover/);
-    expect(stageCode).not.toMatch(/object-(fill|none|contain)/);
+    expect(stageCode).not.toMatch(/object-(fill|none)/);
   });
-  it('the <video> is decoration that plays muted, looped and inline; the sources are listed tall-and-small first, the plain 16:9 last', () => {
+
+  it('the <video> is decoration that plays muted and inline, once: the story has no `loop` attribute, and the 1920 file is only for wide, sharp screens', () => {
     const v = stageCode.match(/<video [\s\S]*?>/)[0];
-    for (const a of ['autoPlay', 'muted', 'loop', 'playsInline', 'preload="metadata"', 'aria-hidden="true"', 'motion-reduce:hidden']) expect(v, a).toContain(a);
-    expect(files.map(f => f.name)).toEqual(['mimic-9x16-720.mp4', 'mimic-9x16-1080.mp4', 'mimic-16x9-1920.mp4', 'mimic-16x9-1280.mp4']);
-    expect(files[3].media).toBe('');                                        // the unconditional fallback is last
+    for (const a of ['autoPlay', 'muted', 'playsInline', 'preload="metadata"', 'aria-hidden="true"', 'tabIndex={-1}', 'motion-reduce:hidden']) expect(v, a).toContain(a);
+    expect(v).not.toMatch(/\bloop\b/);
+    expect(files[0].media).toBe('(min-width: 900px) and (min-resolution: 1.5dppx)');
+    expect(files[1].media).toBe('');                                        // the unconditional fallback is last
     expect(stageCode).toMatch(/<source key=\{f\.src\} src=\{f\.src\} type="video\/mp4"/);
   });
   it('is a stage on the clip’s own #0f1219 so the edges vanish', () => {
     expect(stageCode).toMatch(/backgroundColor: '#0f1219'/);
   });
-  it('pauses off-screen and in a hidden tab, re-picks the file on a rotation, and under reduced motion plays nothing and fetches nothing', () => {
+  it('when the story ends the file is swapped for the loop of the same width (chosen with the same media query), looped and played', () => {
+    expect(stageCode).toMatch(/const wide = window\.matchMedia\(WIDE_QUERY\)/);
+    expect(stageCode).toMatch(/const WIDE_QUERY = MOTION_FILES\[0\]\.media/);
+    const onEnded = stageCode.match(/const onEnded = \(\) => \{([\s\S]*?)\n      \};/)[1];
+    expect(onEnded).toMatch(/v\.loop = true;/);
+    expect(onEnded).toMatch(/v\.src = wide\.matches \? LOOP_FILES\.wide : LOOP_FILES\.plain;/);
+    expect(onEnded).toMatch(/setEnded\(true\);/);
+    expect(onEnded).toMatch(/sync\(\);/);                                    // sync() is what calls play()
+    expect(stageCode).toMatch(/v\.addEventListener\('ended', onEnded\)/);
+    expect(stageCode).toMatch(/LOOP_FILES = \{ wide: `\$\{DIR\}\/loop-1920\.mp4`, plain: `\$\{DIR\}\/loop-1280\.mp4` \}/);
+  });
+  it('“Watch again” is a real <button> that shows only once the story has ended, sits in a corner of the stage and replays the story from the start', () => {
+    const btn = stageCode.match(/\{ended && \(\s*(<button [\s\S]*?<\/button>)\s*\)\}/)[1];
+    expect(btn).toMatch(/^<button type="button" onClick=\{\(\) => replay\.current\(\)\}/);
+    expect(btn).toMatch(/Watch again/);
+    expect(btn).toMatch(/absolute bottom-2 right-2/);                       // inside the box, out of the way
+    expect(btn).toMatch(/sm:bottom-3 sm:right-3/);                          // a little more room above a phone
+    expect(btn).toMatch(/min-h-\[44px\]/);                                  // a touch target
+    expect(btn).toMatch(/text-\[#f2ede1\]/);                                // readable on the dark stage
+    expect(btn).toMatch(/focus-visible:outline/);
+    const replay = stageCode.match(/replay\.current = \(\) => \{([\s\S]*?)\n      \};/)[1];
+    expect(replay).toMatch(/v\.loop = false;/);
+    expect(replay).toMatch(/v\.src = wide\.matches \? STORY_FILES\.wide : STORY_FILES\.plain;/);
+    expect(replay).toMatch(/setEnded\(false\);/);
+    expect(replay).toMatch(/sync\(\);/);
+  });
+  it('pauses off-screen and in a hidden tab, and under reduced motion plays nothing and fetches nothing (the poster stays, and so does the strip)', () => {
     expect(stageCode).toMatch(/new IntersectionObserver\(/);
     expect(stageCode).toMatch(/visibilitychange/);
-    expect(stageCode).toMatch(/matchMedia\('\(orientation: portrait\)'\)/);
-    expect(stageCode).toMatch(/portrait\.addEventListener\('change', onTurn\)[\s\S]*?v\.load\(\)|const onTurn = \(\) => \{ v\.load\(\)/);
     expect(stageCode).toMatch(/matchMedia\('\(prefers-reduced-motion: reduce\)'\)/);
-    expect(stageCode).toMatch(/if \(reduce\.matches\) \{[\s\S]*?v\.pause\(\);[\s\S]*?querySelectorAll\('source'\)\.forEach\(s => s\.remove\(\)\);[\s\S]*?v\.load\(\);/);
-    expect(stageCode).toMatch(/motion-reduce:hidden/);                      // the poster layer under the video stays
+    expect(stageCode).toMatch(/if \(reduce\.matches\) \{[\s\S]*?v\.pause\(\);[\s\S]*?querySelectorAll\('source'\)\.forEach\(s => s\.remove\(\)\);[\s\S]*?v\.load\(\);\s*return;/);
+    // the reduced-motion branch returns before the ended handler is attached, so no loop file is ever set
+    expect(stageCode.indexOf('querySelectorAll(\'source\')')).toBeLessThan(stageCode.indexOf('addEventListener(\'ended\''));
+    expect(stageCode).toMatch(/motion-reduce:hidden/);
+    expect(stageCode).not.toMatch(/addEventListener\('change', onTurn\)|matchMedia\('\(orientation/);
+    // the poster layer is a decorative last frame, not a second copy of the words
+    expect(stageCode).toMatch(/alt="" aria-hidden="true"/);
   });
-  it('the captures are real overlay captures from the page’s own shots, with alt text; two on a phone, four on a wide screen, none baked into the video', () => {
-    expect(stageCode).toMatch(/alt=\{s\.alt\}/);
-    const wide = [...stageCode.match(/const WIDE: Card\[\] = \[([\s\S]*?)\n\];/)[1].matchAll(/id: '([\w-]+)'/g)].map(m => m[1]);
-    const phone = [...stageCode.match(/const PHONE: Card\[\] = \[([\s\S]*?)\n\];/)[1].matchAll(/id: '([\w-]+)'/g)].map(m => m[1]);
-    expect(wide).toHaveLength(4);
-    expect(phone).toHaveLength(2);
-    for (const id of [...wide, ...phone]) {
+
+  it('the strip is the four real captures under the video: images with alt text that link to the full-size file, each with a name and a one-line description', () => {
+    const ids = [...stageCode.match(/const STRIP: Card\[\] = \[([\s\S]*?)\n\];/)[1].matchAll(/id: '([\w-]+)'/g)].map(m => m[1]);
+    expect(ids).toEqual(['hud-box', 'dps-raid', 'target-debuffs', 'ch-chain']);
+    const lines = [...stageCode.match(/const STRIP: Card\[\] = \[([\s\S]*?)\n\];/)[1].matchAll(/line: '([^']+)'/g)].map(m => m[1]);
+    expect(lines).toHaveLength(4);
+    for (const l of lines) { expect(l.length).toBeGreaterThan(20); expect(l.length).toBeLessThan(70); }
+    for (const id of ids) {
       const s = C.SHOTS.find(x => x.id === id);
       expect(s, id).toBeTruthy();
       expect(fs.existsSync(path.join(ROOT, 'web/public/raidmimic/shots', s.file)), id).toBe(true);
       expect(s.alt.length, id).toBeGreaterThan(40);
+      expect(s.title.length, id).toBeGreaterThan(2);
     }
-    expect(stageCode).toMatch(/className="hidden landscape:block"/);
-    expect(stageCode).toMatch(/className="hidden portrait:block"/);
-    expect(stageCode).toMatch(/loading="lazy"/);                            // the hidden list's images are never fetched
-    // the poster layer is a decorative first frame, not a second copy of the words
-    expect(stageCode).toMatch(/alt="" aria-hidden="true"/);
+    expect(stageCode).toMatch(/<a href=\{src\} target="_blank" rel="noreferrer" aria-label=\{`\$\{s\.title\}: open the full-size capture`\}/);
+    expect(stageCode).toMatch(/const src = `\$\{SHOTS_DIR\}\/\$\{s\.file\}`/);
+    expect(stageCode).toMatch(/alt=\{s\.alt\}/);
+    expect(stageCode).toMatch(/\{s\.title\}<\/p>/);                          // the name under each capture
+    expect(stageCode).toMatch(/\{c\.line\}<\/p>/);                           // and its line
+    // the strip comes after the video box in the section, and the captures are never laid over the video
+    expect(stageCode.indexOf('</video>')).toBeLessThan(stageCode.indexOf('STRIP.map'));
+    expect(stageCode).not.toMatch(/absolute"\s+style=\{\{ left/);
   });
-  it('the drift is a slow, staggered transform and nothing else, and reduced motion turns it off', () => {
-    const drift = css.match(/@keyframes rm-drift \{[\s\S]*?\n  \}/)[0];
-    expect(drift.match(/transform: translate3d\(0, (-?\d+(?:px)?), 0\)/g)).toHaveLength(2);
-    expect(drift).not.toMatch(/\b(top|left|width|height|margin|opacity|scale)\b/);
-    const durs = [...stageCode.matchAll(/d: ([\d.]+),\s*o: (-?[\d.]+)/g)].map(m => [+m[1], +m[2]]);
-    expect(durs.length).toBe(6);
-    for (const [d] of durs) expect(d).toBeGreaterThanOrEqual(6);            // a full cycle takes at least six seconds
-    expect(new Set(durs.slice(0, 4).map(([d, o]) => `${d}/${o}`)).size).toBe(4);   // no two of the four move together
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.rm-drift \{ animation: none;/);
+  it('the strip is four across on a wide screen and two by two on a phone, on 16px gutters, with nothing that can scroll sideways', () => {
+    const ul = stageCode.match(/<ul className="([^"]+)">/)[1];
+    expect(ul).toMatch(/\bgrid-cols-2\b/);
+    expect(ul).toMatch(/\blg:grid-cols-4\b/);
+    expect(ul).toMatch(/\bgap-4\b/);                                        // 16px between cards
+    expect(ul).toMatch(/\bp-4\b/);                                          // and 16px at the stage's edge
+    expect(stageCode).toMatch(/<li key=\{c\.id\} className="min-w-0">/);    // a grid child may shrink below its content
+    expect(stageCode).toMatch(/className="block h-full w-full object-contain"/);   // the image never exceeds its cell
+    expect(stageCode).toMatch(/aspect-\[4\/3\] w-full/);
+    expect(stageCode).toMatch(/loading="lazy"/);
   });
 });
