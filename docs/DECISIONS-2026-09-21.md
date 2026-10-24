@@ -121,7 +121,7 @@ is ephemeral. It is a desktop-session job.
 | **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
 | **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
 | **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
-| **raidmimic.com's living mimic: vertical, in the real room, sweet voice** (§424, §427) | The new-look cut is on beta (web 2.1.25, `?v=motion`): your room, ears on the front corners, mascot clear of the screen, a fight on the monitor, gentle sound, Leda's greeting | the guild lead: watch it; then the graduation of raidmimic.com (page + hero) to main |
+| **raidmimic.com's living mimic: vertical, in the real room, sweet voice** (§424, §427, §428) | Rebuilt in layers (web 2.1.26 on beta, `?v=motion`): mimic always in front, overlays drawn into their gold frames, the raid loses first, a new warrior charges in, the player's calls win it, 64 s | the guild lead: watch it; then the graduation of raidmimic.com (page + hero) to main |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
@@ -12747,3 +12747,40 @@ for both mobile and desktop"; camera pick **A** (front, screen readable); "re-re
   raid still, cut to the voice timing). The loop's last six seconds carry only the bed, so a voice line never repeats.
 - **Where it landed:** web 2.1.25 on beta (`?v=motion`), the Decision Desk's Brand & media tab (the cut, the base frame, the
   greeting), the synth script and mix in the session scratchpad (`final/audio/gentle.py`).
+
+### 428. The living mimic is built in LAYERS; the raid loses first; the PLAYER wins it (2026-10-24)
+The guild lead, on the 2.1.25 cut: *"quite a bit of the scene does not look good. there are all sorts of clipping issues, the
+mimics box comes apart or gets cut off or the hinge at the back gets undone when it's jumping. the whole point is that the raid is
+supposed to be losing the fight at the beginning after the raid mimic comes in and starts watching what's happening from the game.
+it should be a little bit longer. the overlays don't really fit well into the gold boxes in this version. the mimics nose starts
+out much larger and then goes back into its face and become smaller. everything for the mimic should be rendered in front of
+monitor, including the overlays as they jump around. for the raid encounter, another warrior should run in and roar at the ogre
+engaging it in a fight. the raid leader that we hear over the computer is not the one that calls for the moves that turn this
+fight from a loss into a win. its the player."*
+- **Layers, not one generated scene.** Every earlier cut asked the video model for the whole room at once, then cut the mascot
+  back out with a segmenter, which is where the clipping, the cut-off box and the misfit overlays came from. Now: the room is
+  one still plate; the monitor is a canvas warped onto the glass (the fight + the overlays, **drawn in code, each panel sized to
+  its picture's own aspect so it fills its gold frame exactly**, 72% opaque like Mimic's real backdrops so the fight shows
+  through); the mimic is animated **alone on pure black** and keyed (bright body + filled holes, so an open mouth stays solid)
+  and placed on the desk **in front of everything**; the flying overlays are drawn in code, emerging from the mouth, circling
+  the mimic (behind it on the far side of the circle, in front on the near side), then slamming onto their exact frames with
+  a shake. **This is the method for any future mascot scene**: a layer the model draws can be wrong; a layer we draw cannot.
+- **The box stays whole.** The jumps are moves in code (a lift, a squash, a tilt) applied to the keyed mascot, never asked of
+  the model; the model only animates the face, the ears and the lid in place. The stills are one forward chain (closed chest →
+  ears out sideways → ears up + snout → face), so **the nose is drawn once and kept**: removing features from a finished face
+  (the earlier backwards chain) is what re-sized it. A beat whose ears turned into round bear ears was re-rolled with "the ears
+  stay tall, pointed and upright".
+- **The story, 64 s.** Asleep; a spark from the monitor wakes it; the ears, the snout, the face; the greeting. The raid on the
+  screen is LOSING the whole time it watches (raiders falling, the tank going down, the ogre rampaging through the healers) while
+  the raid leader, over the desk speakers, sounds worried ("Tank down! Unity lost... this is going bad", "Ramp on <name>, who's
+  got the D.I.?", "Is this one even slowed? We are losing healers"). The mimic drinks the game in (streams from the screen to its
+  mouth), howls, the overlays fly out, circle and land. **Then the player calls the fight**, close and clear (a different voice
+  from the leader): "<name> has Area Taunt! <name>, D.I.! Skip three, go four!" as **a new warrior in silver with a red cape
+  charges in and roars at the ogre** with a burst of red light, "One minute left on Beast Slow!", "Pure Tone Dirging! Pop
+  discs!" as the raid burns; the ogre falls; the leader, relieved: "Down! Wow, nice calls. Get them rezzed back up and do loot",
+  "Loot is posted, two minutes". The mimic hops proudly from one corner of the desk to the other. The loop is one full hop cycle
+  (3.6 s), so it has no seam.
+- **Cost of the rebuild:** about $14 of LTX (12 mimic beats at 1080x1080 + re-rolls, 8 fight clips at 1080p) and a few cents of
+  Gemini stills and voices.
+- **Where it landed:** web 2.1.26 on beta (`?v=motion`, https://b.wolfpack.quest/raidmimic?v=motion); the compositor
+  (`v3/comp.py`), keyer (`v3/key.py`) and soundtrack (`v3/sound.py`) in the session scratchpad.
