@@ -226,7 +226,7 @@ describe('the page', () => {
     expect(page).not.toMatch(/getSessionUser|supabase/i);
   });
   it('renders ONE layout, “Pick your path”, with one preview flag: `?v=motion` and nothing else; no Ladder, no Scene-first layout, no variant bar', () => {
-    expect(page).toMatch(/return <PathsLayout ctx=\{ctx\} motion=\{searchParams\?\.v === 'motion'\} \/>;/);
+    expect(page).toMatch(/return <PathsLayout ctx=\{ctx\} motion=\{IS_BETA && searchParams\?\.v === 'motion'\} \/>;/);
     expect(page.match(/<[A-Z]\w+Layout /g)).toHaveLength(1);
     expect(page.match(/searchParams/g)).toHaveLength(3);                       // the destructured parameter, its type and the one read
     expect(page.match(/\bv === /g)).toHaveLength(1);
@@ -677,7 +677,7 @@ describe('the gallery of more captures', () => {
     expect(layout).toMatch(/<MoreShots \/>/);
     expect(layout.indexOf('<ClipTabs')).toBeLessThan(layout.indexOf('<MoreShots'));
     expect(layout.indexOf('<MoreShots')).toBeLessThan(layout.indexOf('<HowItWorks'));
-    expect(code('web/app/raidmimic/page.tsx')).toMatch(/return <PathsLayout ctx=\{ctx\} motion=\{searchParams\?\.v === 'motion'\} \/>;/);
+    expect(code('web/app/raidmimic/page.tsx')).toMatch(/return <PathsLayout ctx=\{ctx\} motion=\{IS_BETA && searchParams\?\.v === 'motion'\} \/>;/);
   });
   it('draws only the shots flagged `more`, from the content module, as full-size links with their size and alt text', () => {
     expect(more).toHaveLength(6);
@@ -945,18 +945,30 @@ describe('the motion preview (?v=motion)', () => {
     expect(layout).toMatch(/const Frame = motion \? MotionStage : Fragment;/);           // the headline is the stage's left column
     expect(layout).toMatch(/<Frame>\s*<header /);
     expect(layout).toMatch(/\{!motion && <MascotHero \/>\}/);
-    expect(code('web/app/raidmimic/page.tsx')).toMatch(/motion=\{searchParams\?\.v === 'motion'\}/);
+    expect(code('web/app/raidmimic/page.tsx')).toMatch(/motion=\{IS_BETA && searchParams\?\.v === 'motion'\}/);
     // a raidmimic host never sees it: the middleware drops every query (tested above), so only the Wolf Pack hosts can
     expect(raidmimicLandingTarget('/')).toEqual({ pathname: '/raidmimic', search: '' });
   });
 
-  it('the motion directory holds exactly the story, the loop (each in two sizes) and one poster; no 16:9 files are left', () => {
+  // The page went live before its video (the guild lead, 2026-10-24: "B now then A"): only a beta build honours the query,
+  // so production, which does not carry the story files yet, can never point at them.
+  it('only a beta build honours the preview: the flag is the build-time IS_BETA from web/lib/guild.ts', () => {
+    const page = code('web/app/raidmimic/page.tsx');
+    expect(page).toMatch(/import \{ IS_BETA \} from '@\/lib\/guild';/);
+    expect(page.match(/IS_BETA/g)).toHaveLength(2);                              // the import and the one gate
+  });
+
+  // The story files ship on beta only until the video graduates; where they are absent, the two file checks below have
+  // nothing to check (and the gate above is what keeps production from asking for them).
+  const itFiles = fs.existsSync(path.join(ROOT, M)) ? it : it.skip;
+
+  itFiles('the motion directory holds exactly the story, the loop (each in two sizes) and one poster; no 16:9 files are left', () => {
     expect(fs.readdirSync(path.join(ROOT, M)).sort()).toEqual(['loop-1080.mp4', 'loop-720.mp4', 'story-1080.mp4', 'story-720.mp4', 'story-poster.jpg']);
     expect(files.map(f => f.name)).toEqual(['story-1080.mp4', 'story-720.mp4']);
     expect(loops.sort()).toEqual(['loop-1080.mp4', 'loop-720.mp4']);
     expect(stageCode).not.toMatch(/-1920|-1280|mimic-16x9/);
   });
-  it('ships the files at the sizes the component says, 9:16 only, and a poster under 100 KB at 720 by 1280', () => {
+  itFiles('ships the files at the sizes the component says, 9:16 only, and a poster under 100 KB at 720 by 1280', () => {
     for (const f of files) {
       const rel = M + f.name;
       expect(f.w * 16, f.name).toBe(f.h * 9);
@@ -1049,6 +1061,8 @@ describe('the motion preview (?v=motion)', () => {
     const toggle = stageCode.match(/const toggleSound = \(\) => \{([\s\S]*?)\n  \};/)[1];
     expect(toggle).toMatch(/v\.muted = sound;/);                           // pressing it flips the element, not just the label
     expect(toggle).toMatch(/setSound\(!sound\);/);
+  });
+  itFiles('every story and loop file carries an audio track', () => {
     for (const f of ['story-1080.mp4', 'story-720.mp4', 'loop-1080.mp4', 'loop-720.mp4']) {
       expect(fs.readFileSync(path.join(ROOT, M + f)).includes(Buffer.from('mp4a')), f + ' has an audio track').toBe(true);
     }
