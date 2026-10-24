@@ -4372,6 +4372,9 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   whole-bank-hash view (`shared_bank_groups`) was tried and dropped the same
   day; see `DECISIONS-2026-08-20.md`. The Quartermaster deliberately does NOT
   dedup (per-character reachability).
+  The owner-given account name (a login name) shows masked as `ab***89` in the "Who has it" cell and
+  reveals on click (web 2.1.24, `web/components/MaskedAccount.tsx`, `web/lib/maskAccount.ts`; test
+  `test/mask-account.test.js`); the unnamed "Account 3" / "same account?" labels stay plain.
 - **Game accounts (web 1.8.145, 2026-10-13, `/me/accounts` [beta])** — the owner
   drags characters onto Account 1–10 (renameable, 8 per account; a "Move to…"
   select for phones). `game_accounts` + `character_accounts` (membership HISTORY:

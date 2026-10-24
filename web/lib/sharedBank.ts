@@ -242,6 +242,8 @@ export type SharedAccount = {
   placed: boolean;
   /** Display label: "Account 3 (Aldenmar, Brackwyn)" or "same account? (Aldenmar, Brackwyn)". */
   label: string;
+  /** The owner's own name for the account (a login name), or null for "Account 3" / "same account?". */
+  name: string | null;
   /** Every character of the account we know about — INCLUDING ones with no shared-bank rows. */
   members: string[];
 };
@@ -277,7 +279,7 @@ export function planSharedBanks(rows: SharedBankRow[], placements: AccountPlacem
     const named = ps.find(p => p.label && p.label.trim())?.label?.trim();
     const slot = ps.find(p => p.slot != null)?.slot;
     const base = named || (slot != null ? `Account ${slot}` : 'Account');
-    accounts.push({ id, placed: true, label: `${base} (${members.join(', ')})`, members });
+    accounts.push({ id, placed: true, label: `${base} (${members.join(', ')})`, name: named || null, members });
     for (const m of members) accountOf.set(m.toLowerCase(), id);
     if (members.some(m => withBank.has(m.toLowerCase()))) placedWithBank++;
   }
@@ -288,7 +290,7 @@ export function planSharedBanks(rows: SharedBankRow[], placements: AccountPlacem
     if (g.length < 2) continue;
     const members = [...g].sort(byName);
     const id = `inferred:${members[0].toLowerCase()}`;
-    accounts.push({ id, placed: false, label: `same account? (${members.join(', ')})`, members });
+    accounts.push({ id, placed: false, label: `same account? (${members.join(', ')})`, name: null, members });
     for (const m of members) accountOf.set(m.toLowerCase(), id);
   }
 
