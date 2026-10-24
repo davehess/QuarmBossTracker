@@ -2978,6 +2978,11 @@ parity checklist in `CLAUDE.md` (✕ hide, ✥ move + context menu,
 hover-interact handshake, dashboard toggle row, visibility fn) — most beta
 bugs were a missing item from that list.
 
+- **Overlay motion, just-in-time overlays, pet and chat attached to EQ's own windows (DRAFT design, 2026-10-24, nothing built):**
+  `docs/DESIGN-overlay-motion.md`. It maps what exists to build on (Canvas show-when rules in `canvas.html`, Charm's
+  "When charming" idle, `_eqWindowGeometry` / `_parseUiWindowRects` / `uiClearRects.js`, chat groups as tabs) and
+  holds the "no input back into the client" rule.
+
 ### Sounds, voice packs, pronunciation, and the Willsapper proc (agent 3.7.162, beta, 2026-10-14)
 The guild lead: a "slap" when a Willsapper procs; then voice packs, names said right, members' own
 sounds, and a sound used *instead of* the spoken callout.

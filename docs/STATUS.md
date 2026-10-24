@@ -35,6 +35,7 @@ folly** — it's here.*
 | File | What it is | Why it stays |
 |---|---|---|
 | `DESIGN-platform-queue.md` | The post-audit wave plan + agreed execution order | **The live queue.** |
+| `DESIGN-overlay-motion.md` | Mimic 3.1 draft: overlay entrance motion, just-in-time overlays, pet + chat attached to EQ's windows, and the "nothing goes back into the client" rule; options with four-number costs (2026-10-24) | **Design only; waiting on the guild lead's picks (§9).** |
 | `DESIGN-open-hub.md` | The open "commons" hub: anyone joins, 12 active players is the line, short hub retention, history on the PC, tenant import (2026-10-23) | **Design; phase 0 built dormant.** Raid Mimic's free door |
 | `RUNBOOK-site-access.md` | Officer procedure: getting a member in when Discord sign-in won't work — site invite + Mimic code, reset-via-reinvite, troubleshooting | **The no-Discord door.** First live use 2026-08-25 |
 | `RUNBOOK-client-crash-triage.md` | How to read a Zeal "D'oh! Client crash" dialog and triage it: the field-by-field guide, ⚠ **Zone ID and Game state are HEX on Zeal ≥ 1.2.0**, how to look a signature up in `crash_reports`, the known `eqgame.exe` @ `0x004E138A` = graphics-driver-reset signature, and the step order sorted by effort for raiders who pay a real cost per step | **The screenshot-only case**, which is most of the server — a raider without Mimic, or with it but not uploading. Written 2026-09-21 |
@@ -903,6 +904,13 @@ next touch one rather than assuming a missing row means a missing doc.
   costed, the spec/signal/part architecture, six phases sized at 21–34 sessions, and the October 1
   answer (alpha.1 yes, full 3.0 no). Waiting on the guild lead's seven answers (plan §8).
   `DECISIONS-2026-09-21.md` §57.
+- **⏳ Mimic 3.1 — overlay motion, just-in-time overlays, pet + chat attached to EQ's windows (DRAFT design, 2026-10-24).**
+  `docs/DESIGN-overlay-motion.md`: an entrance effect (beam from the nearest edge, gold outline, fill), "show only
+  while needed" rules lifted from the Canvas onto every overlay, the Pet overlay against EQ's Pet window, a tab strip
+  at EQ's chat window; the rule that Mimic never sends input into the game. Options and four-number costs for each,
+  slices 0-5 at 15-20 days. Waiting on the guild lead's eight picks (design §9). ⚠ Needs a local session: the ini
+  section name of EQ's Pet window, and whether the chat entry line sits on the bottom edge of the always-here chat
+  window (design §8).
 - **🟡 #petstats → Pet and Charm windows (agent 3.7.35, beta 2026-09-28).** The agent parses the server's
   #petstats block (HP, AC, ATK, damage, delay, DPS, signed resists, 21 slots) and serves it as `sheet` on
   the petHealth row both windows read; haste is measured against the slowest delay seen. Display not
