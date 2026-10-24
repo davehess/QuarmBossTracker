@@ -3,9 +3,10 @@
 // before that, 2026-10-23: "clean smooth animation. not jumpy, not stretched. Something that can scale on both mobile and desktop").
 // The story went VERTICAL the same day (the guild lead, 2026-10-24: "vertical is great for both mobile and desktop").
 //
-//   - THE VIDEO: always 9:16. It is a story of about 83 s: a chest on a desk comes alive, watches the raid on its monitor start
+//   - THE VIDEO: always 9:16. It is a story of about 90 s: a chest on a desk comes alive, watches the raid on its monitor start
 //     to lose, drinks the game in, howls, and the real overlays fly out and land on the monitor; the player's calls turn the
-//     fight; then its loot card posts the drops to the monitor and its little screen draws the fight's timeline. It plays ONCE.
+//     fight; then its loot card posts the drops to the monitor, its little screen draws the fight's timeline, and flips to the
+//     flags as the raid leader says to hail the Projection. It plays ONCE.
 //     When it ends the file is swapped for a short loop (12 s: it looks around, hops, looks up at the screen, chomps, hops
 //     home). The loop file starts and ends on the same frame, so `loop` on it has no seam. A small
 //     "Watch again" button, in a corner of the stage, replays the story.
