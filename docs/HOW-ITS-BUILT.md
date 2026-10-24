@@ -1422,6 +1422,8 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 - The Tick overlay (§56) shows the beats themselves. Test: `test/entity-tick-fade.test.js`.
 - The catalog of every overlay and the 3.0 builder plan: `docs/DESIGN-overlay-catalog.md`,
   `docs/DESIGN-mimic-3.0-overlay-builder.md`.
+- A local small model on the raider's PC that advises and displays only (decision points, nothing built, 2026-10-24):
+  `docs/DESIGN-local-model.md`.
 
 ### Where EQ is, screen changes, Zeal's bars (Mimic beta, 2026-09-29)
 - **EQ's live window:** `_eqWindowGeometry()` (`apps/mimic/main.js`) runs a PowerShell + user32 script
