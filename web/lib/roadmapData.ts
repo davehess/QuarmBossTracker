@@ -37,6 +37,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raidmimic-paths-2026-10-23',
+    title: 'Web 2.1.29',
+    version: 'Web 2.1.29',
+    date: '2026-10-24',
+    headline: 'The new raidmimic.com is live: it starts with you, with three doors for players, guilds and guilds that host their own, a short drawing of how it all fits together, and the site can be found in search.',
+    features: [
+      { name: 'Three ways in', blurb: 'The page opens on Player, Guild and Self-host. Each says in a few lines what you get, whether it works today, and what to do next: download Mimic and play on your own, ask about a guild hub, or read the guide to run your own.' },
+      { name: 'What you get, at a glance', blurb: 'Eight small pictures under the three doors, one for each thing you get: timers, the map, target info, the damage meter, loot rolls, the hail board, the CH chain and joining a raid with a code.' },
+      { name: 'How it works', blurb: 'A small drawing you can click and play with, in four steps: one raider\'s overlays, the raid sharing what each log saw, the raid leader\'s review, and where the guild hub runs. Hosting for other guilds is marked coming.' },
+      { name: 'Found in search', blurb: 'Raidmimic.com and its set-up guide can now be found by search engines, under a new title: "Raid Mimic · free EverQuest raid overlays".' },
+    ],
+    fixes: [
+      'On raidmimic.com the recordings and the mascot could load as an empty page instead of the video. They load as themselves now.',
+    ],
+  },
+  {
     key: 'mimic-3-0-4-2026-10-23',
     title: 'Raid Mimic 3.0.4',
     version: 'Mimic 3.0.4 · Agent 4.0.20 · Bot 4.0.12',

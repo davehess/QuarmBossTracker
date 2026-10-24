@@ -1,18 +1,22 @@
-// test/raidmimic-landing.test.js — the raidmimic.com front door (the guild lead, 2026-10-18, option C "two doors").
-// A FIRST-DRAFT page for guild leaders, modelled on test/eqmimic-landing.test.js.
+// test/raidmimic-landing.test.js — the raidmimic.com front door (the guild lead, 2026-10-18, option C "two doors"; made
+// player-first, with "Pick your path" as the one layout, on 2026-10-23). Modelled on test/eqmimic-landing.test.js.
 //
 // What this pins:
 //   - the host list (six hosts, exact match, lookalikes refused) and the routing function: every path on those
-//     hosts goes to /raidmimic with EVERY query parameter dropped,
+//     hosts goes to /raidmimic with EVERY query parameter dropped (robots.txt and sitemap.xml to their own files, the
+//     page's own captures, clips and drawing served as themselves),
 //   - the middleware, RUN against a stand-in for next/server, agrees, and the eqmimic host still behaves as before;
 //     the branch sits before any session work and the link-preview rewrite,
 //   - the root layout gives the raidmimic hosts the same bare shell as eqmimic's,
-//   - the page: [beta] title, not indexable, public, ONE layout ("Scene-first", the guild lead's pick, 2026-10-22; no
-//     `?v=` switch, the other previews and the earlier tour are deleted), the [beta] tag, and the Register-interest
-//     address (the existing anonymous form, text in the FRAGMENT),
+//   - the page: ONE layout ("Pick your path", the guild lead's pick, 2026-10-23; no `?v=` switch, the Ladder and the
+//     Scene-first layouts are deleted), the player-first title, indexing ON for the raidmimic hosts only with
+//     https://raidmimic.com/ as the canonical address (noindex on the Wolf Pack hosts), robots.txt and the sitemap,
+//     the [beta] tag, and the Register-interest address (the existing anonymous form, text in the FRAGMENT),
 //   - the scene player: two audiences (raiders; raid leaders and guild leaders), every scene with its beat's caption
 //     and its files on disk, no empty tab,
-//   - the layout carries every required section and draws its words from the one content module,
+//   - "How it works": the four-step drawing, a static file in a lazy frame, no external request, no name of a person
+//     and nothing marked live that the page marks Coming,
+//   - the layout carries every required section and draws its words from the content modules,
 //   - honesty: every "coming" claim is in the COMING inventory, nothing invents a price, a customer count or a
 //     testimonial, and the one dollar figure is the measured Wolf Pack number eqmimic already publishes,
 //   - the metadata is in lib/pageMeta.ts as well as the page (test/page-metadata.test.js walks the rest),
@@ -21,16 +25,17 @@
 // Source-text assertions run over comment-stripped source (CLAUDE.md "comments satisfy text assertions").
 // Run: npx vitest run test/raidmimic-landing.test.js
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, stripJs } from './_source-slice.js';
+import { ROOT, stripJs, stripCss } from './_source-slice.js';
 import {
-  RAIDMIMIC_HOSTS, RAIDMIMIC_LANDING_PATH, isRaidmimicHost, raidmimicLandingTarget,
+  RAIDMIMIC_HOSTS, RAIDMIMIC_LANDING_PATH, RAIDMIMIC_ORIGIN, isRaidmimicAsset, isRaidmimicHost, raidmimicLandingTarget, raidmimicSeo,
 } from '../web/lib/raidmimicHost.ts';
 import { isEqmimicHost } from '../web/lib/eqmimicHost.ts';
 import * as C from '../web/lib/raidmimicLanding.ts';
 import * as EQ from '../web/lib/eqmimicLanding.ts';
+import * as PL from '../web/lib/raidmimicPlayer.ts';
 import { metaForPath, DEFAULT_DESCRIPTION } from '../web/lib/pageMeta.ts';
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -39,7 +44,8 @@ const L = 'web/app/raidmimic/_landing/';
 
 // Every sentence the content module can put on the page, as one string (for the "no invented X" sweeps).
 const allText = () => JSON.stringify([
-  C.HERO, C.WORKS_WITH, C.DATA, C.COST, C.WORLDS, C.CTA, C.MOMENTS, C.COMING, C.CLIPS, C.AUDIENCES, C.CLIPS_HEAD, C.CLIPS_NOTE, C.SHOTS, C.SHOTS_HEAD, C.MORE_HEAD,
+  C.WORKS_WITH, C.DATA, C.COST, C.WORLDS, C.CTA, C.COMING, C.CLIPS, C.AUDIENCES, C.CLIPS_HEAD, C.CLIPS_NOTE, C.SHOTS, C.SHOTS_HEAD, C.MORE_HEAD,
+  PL.ALL_TEXT,   // the story's own words (the doors, the drawing's section, the search card): same sweeps, same rules
 ]);
 
 describe('the host list', () => {
@@ -68,6 +74,55 @@ describe('raidmimicLandingTarget', () => {
   });
   it('the host module holds no query handling at all', () => {
     expect(code('web/lib/raidmimicHost.ts')).not.toMatch(/URLSearchParams|[?&]v=|searchParams/);
+  });
+  it('robots.txt and sitemap.xml go to their own files, in any case and with a trailing slash; lookalikes go to the page', () => {
+    for (const p of ['/robots.txt', '/Robots.TXT', '/robots.txt/']) expect(raidmimicLandingTarget(p), p).toEqual({ pathname: '/raidmimic/robots.txt', search: '' });
+    for (const p of ['/sitemap.xml', '/SITEMAP.xml', '/sitemap.xml/']) expect(raidmimicLandingTarget(p), p).toEqual({ pathname: '/raidmimic/sitemap.xml', search: '' });
+    for (const p of ['/robots', '/robots.txt.bak', '/sitemap', '/sitemap.xml/x', '/raidmimic/robots.txt/x']) expect(raidmimicLandingTarget(p), p).toEqual({ pathname: '/raidmimic', search: '' });
+  });
+  it('the page’s own files (captures, clips, mascot, the drawing) are assets; nothing else is', () => {
+    for (const p of ['/raidmimic/how/scene.html', '/raidmimic/clips/grummus-hail.mp4', '/raidmimic/mascot/hop.mp4', '/raidmimic/shots/cc.webp', '/raidmimic/motion/story-720.mp4']) expect(isRaidmimicAsset(p), p).toBe(true);
+    for (const p of ['/', '/setup', '/raidmimic', '/raidmimic/setup', '/raidmimic/how/', '/raidmimic/a/b/c.mp4', '/other/how/scene.html', '/raidmimic/../x/y.html', '/api/agent/chat', '/raidmimic/how/%2e%2e.html']) expect(isRaidmimicAsset(p), p).toBe(false);
+  });
+});
+
+// ─── Search engines (the guild lead, 2026-10-23): on, for the raidmimic hosts only ───────────────────────────────────
+describe('search engines: indexed on the raidmimic hosts, noindex everywhere else', () => {
+  const noindex = { robots: { index: false, follow: false } };
+  afterEach(() => { delete process.env.NEXT_PUBLIC_IS_BETA; });
+
+  it('every raidmimic host is indexed and names https://raidmimic.com as the canonical address, so the sister hosts fold into it', () => {
+    expect(RAIDMIMIC_ORIGIN).toBe('https://raidmimic.com');
+    for (const h of [...RAIDMIMIC_HOSTS, 'RaidMimic.COM:443']) {
+      expect(raidmimicSeo(h, '/'), h).toEqual({ robots: { index: true, follow: true }, alternates: { canonical: 'https://raidmimic.com/' } });
+      expect(raidmimicSeo(h, '/setup'), h).toEqual({ robots: { index: true, follow: true }, alternates: { canonical: 'https://raidmimic.com/setup' } });
+    }
+  });
+  it('wolfpack.quest/raidmimic, b.wolfpack.quest/raidmimic, eqmimic.quest and an unknown host stay noindex (and name no canonical)', () => {
+    for (const h of ['wolfpack.quest', 'b.wolfpack.quest', 'eqmimic.quest', 'localhost:3000', 'raidmimic.com.evil.com', '', null, undefined]) {
+      expect(raidmimicSeo(h, '/'), String(h)).toEqual(noindex);
+      expect(raidmimicSeo(h, '/setup'), String(h)).toEqual(noindex);
+    }
+  });
+  it('a build of the beta branch is noindex whatever host it is reached by', () => {
+    process.env.NEXT_PUBLIC_IS_BETA = '1';
+    expect(raidmimicSeo('raidmimic.com', '/')).toEqual(noindex);
+  });
+  it('robots.txt allows everything and names the sitemap on the canonical host; the sitemap lists the two pages', async () => {
+    const robots = await (await (await import('../web/app/raidmimic/robots.txt/route.ts')).GET()).text();
+    expect(robots).toBe('User-agent: *\nAllow: /\n\nSitemap: https://raidmimic.com/sitemap.xml\n');
+    expect(robots).not.toMatch(/Disallow/);
+    const res = await (await import('../web/app/raidmimic/sitemap.xml/route.ts')).GET();
+    expect(res.headers.get('content-type')).toMatch(/^application\/xml/);
+    const xml = await res.text();
+    expect([...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1])).toEqual(['https://raidmimic.com/', 'https://raidmimic.com/setup']);
+  });
+  it('wolfpack.quest keeps its own robots.txt (the share links and the API stay out of search), untouched', () => {
+    expect(code('web/app/robots.ts')).toMatch(/disallow: \['\/share\/', '\/api\/'\]/);
+    expect(code('web/app/robots.ts')).not.toMatch(/raidmimic/i);
+  });
+  it('the root layout still marks the beta mirror noindex', () => {
+    expect(code('web/app/layout.tsx')).toMatch(/\.\.\.\(IS_BETA \? \{ robots: \{ index: false, follow: false \} \} : \{\}\)/);
   });
 });
 
@@ -117,6 +172,20 @@ describe('the middleware, run', () => {
     expect(to).toBeNull();
     expect(next).toBe('1');
   });
+  it('the page’s own files are served as themselves (a clip or the drawing rewritten to the landing page would be HTML)', async () => {
+    for (const u of ['https://raidmimic.com/raidmimic/how/scene.html', 'https://raidmimic.net/raidmimic/clips/grummus-hail.mp4?x=1',
+      'https://www.raidmimic.quest/raidmimic/mascot/hop.mp4']) {
+      const { to, next } = await run(u);
+      expect(to, u).toBeNull();
+      expect(next, u).toBe('1');
+    }
+  });
+  it('/robots.txt and /sitemap.xml are rewritten to their own files, query dropped', async () => {
+    expect((await run('https://raidmimic.com/robots.txt')).to.pathname).toBe('/raidmimic/robots.txt');
+    const sm = (await run('https://www.raidmimic.net/sitemap.xml?x=1')).to;
+    expect(sm.pathname).toBe('/raidmimic/sitemap.xml');
+    expect(sm.search).toBe('');
+  });
   it('the eqmimic host is unchanged: / is its landing page, /feedback its form', async () => {
     expect((await run('https://eqmimic.quest/?v=b')).to.pathname).toBe('/eqmimic');
     expect((await run('https://eqmimic.quest/feedback')).to.pathname).toBe('/eqmimic/feedback');
@@ -147,25 +216,32 @@ describe('the root layout', () => {
 
 describe('the page', () => {
   const page = code('web/app/raidmimic/page.tsx');
-  it('is [beta] in its title, not indexable, and public (no session code)', () => {
-    expect(page).toMatch(/const TITLE = '\[beta\] raidmimic · raid orchestration as a service'/);
-    expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
+  it('is player-first in its title (no “as a service”, no [beta]), public (no session code), and its search metadata comes from the host', () => {
+    expect(page).toMatch(/const TITLE = 'Raid Mimic · free EverQuest raid overlays'/);
+    expect(PL.META.title).toBe('Raid Mimic · free EverQuest raid overlays');
+    expect(page).not.toMatch(/\[beta\]|as a service|orchestration/i);
+    expect(page).not.toMatch(/robots:/);                                          // no pinned noindex any more …
+    expect(page).toMatch(/\.\.\.raidmimicSeo\(headers\(\)\.get\('host'\), '\/'\)/);   // … the Host header decides (tests above)
+    expect(page).toMatch(/export function generateMetadata\(\): Metadata/);
     expect(page).not.toMatch(/getSessionUser|supabase/i);
   });
-  it('renders the one layout, Scene-first, with no `?v=` switch: every earlier preview and the tour are deleted', () => {
-    expect(page).toMatch(/return <SceneLayout ctx=\{ctx\} \/>;/);
+  it('renders ONE layout, “Pick your path”, with one preview flag: `?v=motion` and nothing else; no Ladder, no Scene-first layout, no variant bar', () => {
+    expect(page).toMatch(/return <PathsLayout ctx=\{ctx\} motion=\{IS_BETA && searchParams\?\.v === 'motion'\} \/>;/);
     expect(page.match(/<[A-Z]\w+Layout /g)).toHaveLength(1);
-    expect(page).not.toMatch(/searchParams|v === '|hero=/);
-    expect(page).not.toMatch(/raidmimicVariant|PitchLayout|TourLayout|OutputLayout|WatchLayout|StoryLayout|ScreenLayout/);
-    for (const gone of ['TourLayout', 'OutputLayout', 'WatchLayout', 'StoryLayout', 'ScreenLayout', 'PitchLayout', 'Figures']) {
+    expect(page.match(/searchParams/g)).toHaveLength(3);                       // the destructured parameter, its type and the one read
+    expect(page.match(/\bv === /g)).toHaveLength(1);
+    expect(page).not.toMatch(/variantOf|LadderLayout|SceneLayout|PreviewBar/);
+    expect(page).not.toMatch(/hero=|raidmimicVariant|PitchLayout|TourLayout|OutputLayout|WatchLayout|StoryLayout|ScreenLayout/);
+    for (const gone of ['LadderLayout', 'SceneLayout', 'VariantParts', 'TourLayout', 'OutputLayout', 'WatchLayout', 'StoryLayout', 'ScreenLayout', 'PitchLayout', 'Figures']) {
       expect(fs.existsSync(path.join(ROOT, `${L}${gone}.tsx`)), gone).toBe(false);
     }
     expect(C).not.toHaveProperty('raidmimicVariant');
     expect(C).not.toHaveProperty('BLOCKS');
-    for (const gone of ['STORY', 'SCREEN_NOTES', 'SETUP_LINK', 'ILLUSTRATIVE_NOTE']) expect(C, gone).not.toHaveProperty(gone);
-    // the layered mascot hero (the guild lead, 2026-10-21) is kept: it is the page's hero, above the player
-    expect(code('web/app/raidmimic/page.tsx')).not.toMatch(/Mascot/);
-    expect(code(L + 'SceneLayout.tsx')).toMatch(/<MascotHero \/>/);
+    for (const gone of ['STORY', 'SCREEN_NOTES', 'SETUP_LINK', 'ILLUSTRATIVE_NOTE', 'HERO', 'MOMENTS']) expect(C, gone).not.toHaveProperty(gone);
+    for (const gone of ['VARIANTS', 'VARIANT_LABEL', 'variantOf', 'PREVIEW_NOTE', 'PLAYER', 'JUMP', 'GUILD', 'RUN', 'LINUX_URL']) expect(PL, gone).not.toHaveProperty(gone);
+    // the layered mascot hero (the guild lead, 2026-10-21) is kept: it opens “See it run”
+    expect(page).not.toMatch(/Mascot|MotionStage/);
+    expect(code(L + 'PathsLayout.tsx')).toMatch(/\{!motion && <MascotHero \/>\}/);   // the default page still opens “See it run” with it
   });
   it('the Register-interest address is the anonymous form: absolute on a raidmimic host, its real path on Wolf Pack hosts', () => {
     expect(page).toMatch(/interest: interestUrl\(`\$\{EQMIMIC_ORIGIN\}\/feedback`\)/);
@@ -186,7 +262,7 @@ describe('the page', () => {
     expect(C.INTEREST_TEXT.length).toBeLessThan(400);   // the form keeps 4000; this is a template, not an essay
   });
   it('no mailto, no new form, no new endpoint', () => {
-    for (const f of ['page.tsx', 'Parts.tsx', 'SceneLayout.tsx', 'ClipTabs.tsx', 'SceneClip.tsx', 'MascotHero.tsx', 'MascotVideo.tsx']) {
+    for (const f of ['page.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'HowItWorks.tsx', 'ClipTabs.tsx', 'SceneClip.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx']) {
       const src = f === 'page.tsx' ? page : code(L + f);
       expect(src, f).not.toMatch(/mailto:|<form\b|fetch\(|action=/);
     }
@@ -195,39 +271,43 @@ describe('the page', () => {
 });
 
 describe('the layout', () => {
-  const scene = code(L + 'SceneLayout.tsx');
+  const scene = code(L + 'PathsLayout.tsx');
   const parts = code(L + 'Parts.tsx');
 
   it('the [beta] tag is the site’s NewPageTag, at the top, and its link works on a raidmimic host', () => {
     expect(parts).toMatch(/import NewPageTag from '@\/components\/NewPageTag'/);
     expect(parts).toMatch(/<NewPageTag [^>]*href=\{ctx\.onHost \? ctx\.interest : '\/feedback'\}/);
     expect(scene.indexOf('<BetaTag')).toBeGreaterThan(-1);
-    expect(scene.indexOf('<BetaTag')).toBeLessThan(scene.indexOf('<Hero'));
+    expect(scene.indexOf('<BetaTag')).toBeLessThan(scene.indexOf('<header'));
     expect(code('web/components/NewPageTag.tsx')).toMatch(/href = '\/feedback'/);   // every other page keeps its link
   });
 
   // The required sections, by the id the layout gives them.
   const REQUIRED = ['works-with', 'data', 'cost', 'worlds'];
-  it('carries the hero, the scene player, the four moments, the four facts folded away, the coming list and the ask, in that order', () => {
-    const order = ['<Hero', '<MascotHero', '<ClipTabs', 'MOMENTS.map', ...REQUIRED.map(r => `id="${r}"`), '<ComingList', '<CtaBand', '<Footer'].map(s => scene.indexOf(s));
+  it('carries the hero, the three doors, “See it run” (the mascot and captures, the scene player, the gallery), “How it works”, the four facts folded away, the coming list and the ask, in that order', () => {
+    const order = ['<header', 'DOORS.map', 'id="see"', '<MascotHero', '<ClipTabs', '<MoreShots', 'id={HOW.id}', '<HowItWorks', ...REQUIRED.map(r => `id="${r}"`), '<ComingList', '<CtaBand', '<Footer'].map(s => scene.indexOf(s));
     expect(order.every(i => i > -1)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(C.MOMENTS).toHaveLength(4);
     expect(parts).toMatch(/<details\b/);
-    expect(scene).toMatch(/<Hero ctx=\{ctx\} compact \/>/);
+    expect(scene).toMatch(/lg:grid-cols-3/);   // the doors side by side from lg, stacked on a phone
   });
   it('takes the section bodies from Parts, so a fact is corrected in one place', () => {
     for (const body of ['WorksWithBody', 'DataBody', 'CostBody', 'WorldsBody']) expect(scene, body).toMatch(new RegExp(`<${body} />`));
   });
-  it('the Register-interest button is in the hero and again at the end', () => {
-    expect(parts).toMatch(/export function Hero[\s\S]*?<InterestButton ctx=\{ctx\} \/>/);
+  it('the Register-interest address is on the Guild door and the Self-host door’s second link, and again at the end', () => {
     expect(parts).toMatch(/export function CtaBand[\s\S]*?<InterestButton ctx=\{ctx\} \/>/);
     expect(parts).toMatch(/href=\{ctx\.interest\}/);
+    expect(scene.match(/ctx\.interest/g)?.length).toBeGreaterThanOrEqual(1);
+    expect(scene).toMatch(/<CtaBand ctx=\{ctx\} \/>/);
   });
-  it('the layout switch is gone: no VariantSwitch, no ?v=b link, no landing path on the context', () => {
-    expect(parts).not.toMatch(/VariantSwitch|\?v=b|Layout preview|landing:/);
-    expect(scene).not.toMatch(/VariantSwitch/);
+  it('the layout switch is gone: no VariantSwitch, no PreviewBar, no ?v= link, no landing path on the context', () => {
+    expect(parts).not.toMatch(/VariantSwitch|\?v=|Layout preview|landing:|PreviewBar/);
+    expect(scene).not.toMatch(/VariantSwitch|PreviewBar|\?v=/);
     expect(code('web/app/raidmimic/page.tsx')).not.toMatch(/landing:/);
+  });
+  it('the old text hero is gone from Parts (the doors page has its own header); the player’s `only` mode went with the Ladder', () => {
+    expect(parts).not.toMatch(/export function Hero\b/);
+    expect(code(L + 'ClipTabs.tsx')).not.toMatch(/\bonly\b/);
   });
   it('the footer carries the rights notice and the fan-project line, verbatim from the eqmimic module', () => {
     expect(C.RIGHTS_NOTICE).toBe(EQ.RIGHTS_NOTICE);
@@ -238,15 +318,17 @@ describe('the layout', () => {
     expect(footer).not.toMatch(/text-\[(?:9|10|11)px\]/);
     expect(scene.indexOf('<Footer')).toBeGreaterThan(scene.lastIndexOf('</section>'));
   });
-  it('server components except the three that play: only SceneClip, ClipTabs and MascotVideo are client files', () => {
-    for (const f of ['Parts.tsx', 'SceneLayout.tsx', 'MascotHero.tsx']) expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
+  it('server components except the five that play: only SceneClip, ClipTabs, MascotVideo, MotionStage and the drawing’s frame are client files', () => {
+    for (const f of ['Parts.tsx', 'MascotHero.tsx', 'PathsLayout.tsx']) expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
     expect(read('web/app/raidmimic/page.tsx')).not.toMatch(/['"]use client['"]/);
-    for (const f of ['SceneClip.tsx', 'ClipTabs.tsx', 'MascotVideo.tsx']) expect(read(L + f), f).toMatch(/^'use client';/);
-    expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual(['ClipTabs.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'Parts.tsx', 'SceneClip.tsx', 'SceneLayout.tsx']);
+    for (const f of ['SceneClip.tsx', 'ClipTabs.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'HowItWorks.tsx']) expect(read(L + f), f).toMatch(/^'use client';/);
+    expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual([
+      'ClipTabs.tsx', 'FeatureIcons.tsx', 'HowItWorks.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'SceneClip.tsx',
+    ]);
   });
   it('fetches and embeds nothing external; every outbound link is one we name', () => {
     const urls = new Set();
-    for (const f of ['page.tsx', 'Parts.tsx', 'SceneLayout.tsx', 'ClipTabs.tsx', 'SceneClip.tsx', 'MascotHero.tsx', 'MascotVideo.tsx']) {
+    for (const f of ['page.tsx', 'Parts.tsx', 'ClipTabs.tsx', 'SceneClip.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'PathsLayout.tsx', 'HowItWorks.tsx']) {
       for (const m of (f === 'page.tsx' ? code('web/app/raidmimic/page.tsx') : code(L + f)).matchAll(/https?:\/\/[^\s'"`)<>]+/g)) urls.add(m[0]);
     }
     expect([...urls]).toEqual([]);   // every address is a constant in the content module
@@ -257,17 +339,22 @@ describe('the layout', () => {
 });
 
 describe('honesty: "coming" means coming', () => {
-  it('every moment and world carries a known status', () => {
-    for (const x of [...C.MOMENTS, ...C.WORLDS.list]) expect(['live', 'alpha', 'coming'], x.title || x.name).toContain(x.status);
+  it('every world carries a known status', () => {
+    for (const x of C.WORLDS.list) expect(['live', 'alpha', 'coming'], x.name).toContain(x.status);
     expect(Object.keys(C.STATUS_LABEL).sort()).toEqual(['alpha', 'coming', 'live']);
     expect(C.STATUS_LABEL.coming).toBe('Coming');
   });
-  it('the cross-guild board, the shared trial and the other games are NOT marked live', () => {
-    expect(C.MOMENTS.find(m => m.id === 'two-guilds').status).toBe('coming');
+  it('the shared trial and the other games are NOT marked live', () => {
     expect(C.COST.trialStatus).toBe('coming');
     for (const w of C.WORLDS.list.filter(w => /Monsters|Warcraft/.test(w.name))) expect(w.status, w.name).toBe('coming');
     expect(C.WORLDS.list.find(w => w.name === 'EverQuest').status).toBe('live');
-    expect(C.MOMENTS.find(m => m.id === 'builder').status).toBe('alpha');
+  });
+  it('the doors say hosting for you is coming and the guild door needs a hub; nothing in them claims hosting or a lookup is live', () => {
+    const selfhost = PL.DOORS.find(d => d.id === 'selfhost');
+    expect(selfhost.points.join(' ')).toMatch(/Hosting it for you is coming/);
+    expect(selfhost.story).toMatch(/not turnkey yet/);
+    expect(PL.DOORS.find(d => d.id === 'guild').tone).toBe('hub');
+    expect(C.COMING.join(' ')).toMatch(/multi-guild hosting/);
   });
   it('the inventory of promises names each of them', () => {
     const inv = C.COMING.join(' ');
@@ -324,20 +411,20 @@ describe('honesty: "coming" means coming', () => {
     expect(C.WORLDS.lead).toMatch(/meant to serve/);
     expect(C.WORLDS.rights).toMatch(/not affiliated/);
   });
-  it('the two doors point at each other: the hero sends players to eqmimic.quest', () => {
-    expect(C.HERO.playerLine).toMatch(/free player tool/);
-    expect(code(L + 'Parts.tsx')).toMatch(/<a href=\{EQMIMIC_ORIGIN\}[^>]*>eqmimic\.quest<\/a>/);
+  it('the two sites point at each other: the footer sends players to eqmimic.quest, and the interest form lives there', () => {
+    expect(code(L + 'Parts.tsx')).toMatch(/<a href=\{EQMIMIC_ORIGIN\} \{\.\.\.EXT\}>The free player tool<\/a>/);
+    expect(C.EQMIMIC_ORIGIN).toBe('https://eqmimic.quest');
   });
 });
 
 function sceneSrc() {
-  return ['SceneLayout', 'ClipTabs', 'SceneClip', 'MascotHero', 'MascotVideo'].map(f => code(`${L}${f}.tsx`)).join('\n');
+  return ['PathsLayout', 'HowItWorks', 'ClipTabs', 'SceneClip', 'MascotHero', 'MascotVideo'].map(f => code(`${L}${f}.tsx`)).join('\n');
 }
 
 describe('metadata: the tab AND the Discord card (CLAUDE.md, every page unfurls with its own name)', () => {
   it('lib/pageMeta.ts knows /raidmimic, with the same words as the page', () => {
     const m = metaForPath('/raidmimic');
-    expect(m.title).toBe('[beta] raidmimic · raid orchestration as a service');
+    expect(m.title).toBe('Raid Mimic · free EverQuest raid overlays');
     expect(m.description).not.toBe(DEFAULT_DESCRIPTION);
     expect(m.description.length).toBeGreaterThan(20);
     expect(m.description.length).toBeLessThanOrEqual(300);
@@ -346,9 +433,20 @@ describe('metadata: the tab AND the Discord card (CLAUDE.md, every page unfurls 
     const desc = page.match(/const DESCRIPTION =\s*'([^']+)'/)[1];
     expect(desc).toBe(m.description);
     expect(page).toMatch(/title: \{ absolute: TITLE \}/);   // not "· WolfPack.quest": this page is also raidmimic.com
+    // the story module's copy of the search card is the same words, so the three places cannot drift
+    expect(PL.META).toEqual({ title: m.title, description: m.description });
+  });
+  it('the title and description are player-first and one sentence of facts: free, open source, what a guild can add', () => {
+    const m = metaForPath('/raidmimic');
+    expect(m.title).not.toMatch(/\[beta\]|service|orchestration/i);
+    expect(m.description).not.toMatch(/\[beta\]|as a service|orchestration/i);
+    expect(m.description).toMatch(/Free, open-source/);
+    expect(m.description).toMatch(/run it on your own, or add a guild hub/);
+    expect(m.description).not.toMatch(/\$\s?\d|coming|guarantee|best|fastest|#1/i);
+    expect(m.description.split(/(?<=[.!?])\s+(?=[A-Z])/).length).toBe(1);   // one sentence
   });
   it('the card carries nothing from the database: a static entry, no lookup', () => {
-    expect(code('web/lib/pageMeta.ts')).toMatch(/'\/raidmimic':\s+\{ title: '\[beta\] raidmimic/);
+    expect(code('web/lib/pageMeta.ts')).toMatch(/'\/raidmimic':\s+\{ title: 'Raid Mimic · free EverQuest raid overlays'/);
   });
 });
 
@@ -370,7 +468,7 @@ describe('the scene player (Scene-first)', () => {
   const CLIP_DIR = path.join(ROOT, 'web/public/raidmimic/clips');
   const tabs = code(L + 'ClipTabs.tsx');
   const scene = code(L + 'SceneClip.tsx');
-  const layout = code(L + 'SceneLayout.tsx');
+  const layout = code(L + 'PathsLayout.tsx');
 
   it('is organised by two audiences, raiders first and then raid leaders and guild leaders, and the layout uses the player', () => {
     expect(C.AUDIENCES.map(a => [a.id, a.label])).toEqual([
@@ -454,7 +552,7 @@ describe('the scene player (Scene-first)', () => {
   });
 
   it('sizes by aspect ratio: no fixed pixel widths', () => {
-    for (const f of ['SceneLayout.tsx', 'SceneClip.tsx', 'ClipTabs.tsx']) {
+    for (const f of ['PathsLayout.tsx', 'SceneClip.tsx', 'ClipTabs.tsx', 'HowItWorks.tsx']) {
       expect(code(L + f), f).not.toMatch(/\bw-\[\d+px\]|\bmin-w-\[\d+px|\bh-\[\d+px\]|width: \d+px/);
     }
     expect(tabs).toMatch(/calc\(75vh \* \$\{clip\.w\} \/ \$\{clip\.h\}\)/);
@@ -487,9 +585,9 @@ describe('the mascot hero', () => {
     return { w: (bits & 0x3fff) + 1, h: ((bits >> 14) & 0x3fff) + 1 };
   }
 
-  it('is the page’s hero: the text hero, then the mascot, then the scene player', () => {
-    const scene = code(L + 'SceneLayout.tsx');
-    expect(scene.indexOf('<Hero')).toBeLessThan(scene.indexOf('<MascotHero'));
+  it('opens “See it run”: after the doors, then the mascot, then the scene player', () => {
+    const scene = code(L + 'PathsLayout.tsx');
+    expect(scene.indexOf('DOORS.map')).toBeLessThan(scene.indexOf('<MascotHero'));
     expect(scene.indexOf('<MascotHero')).toBeLessThan(scene.indexOf('<ClipTabs'));
     expect(scene).toMatch(/\{SHOTS_HEAD\.note\} \{MAP_CREDIT\}/);   // "made-up data" and the Map's walls credit sit under it
   });
@@ -572,14 +670,14 @@ describe('the mascot hero', () => {
 // ─── More captures under the player (the guild lead, 2026-10-23: "update raidmimic.com with more assets") ───────────
 describe('the gallery of more captures', () => {
   const parts = code(L + 'Parts.tsx');
-  const layout = code(L + 'SceneLayout.tsx');
+  const layout = code(L + 'PathsLayout.tsx');
   const more = C.SHOTS.filter(s => s.more);
 
-  it('is on the one page both hosts render: the layout places it after the scene player and before the four moments', () => {
+  it('is on the one page both hosts render: the layout places it after the scene player and before “How it works”', () => {
     expect(layout).toMatch(/<MoreShots \/>/);
     expect(layout.indexOf('<ClipTabs')).toBeLessThan(layout.indexOf('<MoreShots'));
-    expect(layout.indexOf('<MoreShots')).toBeLessThan(layout.indexOf('MOMENTS.map'));
-    expect(code('web/app/raidmimic/page.tsx')).toMatch(/return <SceneLayout ctx=\{ctx\} \/>;/);   // no `?v=` variant: live and beta are this page
+    expect(layout.indexOf('<MoreShots')).toBeLessThan(layout.indexOf('<HowItWorks'));
+    expect(code('web/app/raidmimic/page.tsx')).toMatch(/return <PathsLayout ctx=\{ctx\} motion=\{IS_BETA && searchParams\?\.v === 'motion'\} \/>;/);
   });
   it('draws only the shots flagged `more`, from the content module, as full-size links with their size and alt text', () => {
     expect(more).toHaveLength(6);
@@ -652,5 +750,367 @@ describe('the recordings’ fixtures name invented raiders only', () => {
     expect(walls._about).toMatch(/Not Brewall/);
     expect(walls.segs.length).toBeGreaterThan(300);
     for (const g of walls.segs) expect(g[4]).toBeLessThan(walls.bands.length);
+  });
+});
+
+
+// ─── Pick your path (the guild lead's pick, 2026-10-23): the one layout ─────────────────────────────────────────────
+// "less about me setting it up as a service for them and more about here's what you get as a player, here's what you could
+// have as a guild ... use this yourself, but I can help you with a self-hosted version". The page reads
+// web/lib/raidmimicPlayer.ts for the doors and web/lib/raidmimicLanding.ts for the facts it has always stated.
+describe('Pick your path: three doors by who is reading', () => {
+  const P = PL;
+  const paths = code(L + 'PathsLayout.tsx');
+  const mod = code('web/lib/raidmimicPlayer.ts');
+
+  it('has the doors Player, Guild and Self-host, each with a story, three points and its own next step', () => {
+    expect(P.DOORS.map(d => [d.id, d.name])).toEqual([['player', 'Player'], ['guild', 'Guild'], ['selfhost', 'Self-host']]);
+    for (const d of P.DOORS) {
+      expect(d.story.length, d.id).toBeGreaterThan(40);
+      expect(d.points, d.id).toHaveLength(3);
+      expect(d.next.length, d.id).toBeGreaterThan(5);
+      expect(d.more.length, d.id).toBeGreaterThan(5);
+      expect(['free', 'hub', 'choice'], d.id).toContain(d.tone);
+    }
+    expect(paths).toMatch(/DOORS\.map\(d => <DoorCard key=\{d\.id\} door=\{d\} ctx=\{ctx\} \/>\)/);
+    expect(paths).toMatch(/lg:grid-cols-3/);   // side by side from lg, stacked on a phone
+  });
+  it('each door ends in a real address: the download, the ask, the self-hosting guide (which exists)', () => {
+    expect(paths).toMatch(/href=\{DOWNLOAD_URL\} className=\{PRIMARY_BTN\}/);
+    expect(paths).toMatch(/href=\{SELFHOST_GUIDE_URL\} \{\.\.\.EXT\}/);
+    expect(paths.match(/ctx\.interest/g)?.length).toBeGreaterThanOrEqual(1);
+    expect(P.SELFHOST_GUIDE_URL).toBe('https://github.com/davehess/QuarmBossTracker/blob/main/docs/SELFHOSTING.md');
+    expect(fs.existsSync(path.join(ROOT, 'docs/SELFHOSTING.md'))).toBe(true);
+  });
+  it('the page: beta tag, short hero, the doors, “See it run”, “How it works”, the small print, the coming list and the ask', () => {
+    const at = (s) => { const i = paths.indexOf(s); expect(i, s).toBeGreaterThan(-1); return i; };
+    const list = ['<BetaTag', '<header', 'DOORS.map', 'id="see"', '<MascotHero', '<ClipTabs />', '<MoreShots />', 'id={HOW.id}', '<HowItWorks />', 'id="works-with"', 'id="worlds"', '<ComingList', '<CtaBand', '<Footer'];
+    const idx = list.map(at);
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+  });
+  it('the download is the same direct link eqmimic.quest uses, served by the /mimic route', () => {
+    expect(P.DOWNLOAD_URL).toBe('https://wolfpack.quest/mimic?direct=1');
+    expect(P.DOWNLOAD_URL).toBe(`${EQ.WOLFPACK_ORIGIN}${EQ.DOWNLOAD_PATH}`);
+    expect(code('web/app/mimic/route.ts')).toMatch(/searchParams\.get\('direct'\) === '1'/);
+  });
+  it('says only what runs today as fact: free, Windows, no account, local mode; what is not built is Coming', () => {
+    expect(P.HERO.fine).toMatch(/No guild, account or password/);
+    expect(P.HERO.fine).toMatch(/free and open source/);
+    expect(P.DOORS.find(d => d.id === 'player').story).toMatch(/choose Just me on the first screen/);
+    expect(read('apps/mimic/welcome.html')).toMatch(/Just me — stays on this PC/);
+    expect(P.DOORS.find(d => d.id === 'guild').story).toMatch(/When enough of them run it, a guild hub adds them up/);
+    expect(P.TAG.hub).toBe('Needs your guild’s server');
+    expect(P.TAG.free).toBe('Free · works today');
+    expect(C.COMING.join(' ')).toMatch(/multi-guild hosting/);
+  });
+  it('invents no price, count, testimonial or guarantee', () => {
+    const t = JSON.stringify(P.ALL_TEXT);
+    expect(t).not.toMatch(/\$|£|€|\bper (?:month|year|seat|user|raider)\b|\/\s?(?:mo|month|yr|year)\b|% off|money-back/i);
+    expect(t).not.toMatch(/\b\d[\d,]*\+? (?:guilds|customers|raiders|users|teams)\b/i);
+    expect(t).not.toMatch(/testimonial|trusted by|loved by|“[^”]*” said|\bsaid\b|uptime of|SLA\b|guaranteed/i);
+    expect(mod).not.toMatch(/\$\d/);
+  });
+  it('is about the player first, not a service: no “as a service”, no “sign up”, no “contact sales”', () => {
+    const t = JSON.stringify(P.ALL_TEXT);
+    expect(t).not.toMatch(/as a service|sign up|contact sales|book a demo|pricing page|enterprise|orchestration/i);
+    expect(P.HERO.kicker).toMatch(/free for every player/);
+  });
+  it('names no member, character or address, and the layout holds no sentence of its own beyond labels', () => {
+    const t = JSON.stringify(P.ALL_TEXT) + mod + paths;
+    expect(t).not.toMatch(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
+    expect(t).not.toMatch(/zhtoekwakucbckvatfky|1168893924329402420|service_role|SUPABASE_|WOLFPACK_AGENT_TOKEN|Bearer /);
+    expect(t).not.toMatch(/\b[a-z0-9]{32,}\b/i);
+    expect(t).not.toMatch(/mailto:|<form\b|fetch\(/);
+  });
+  it('is phone-first: no fixed pixel widths, 44px tap targets', () => {
+    expect(paths).not.toMatch(/\bw-\[\d+px\]|\bmin-w-\[\d+px|\bh-\[\d+px\]|width: \d+px|overflow-x-scroll/);
+    expect(paths).toMatch(/min-h-11/);
+  });
+  it('the colours are the platform’s tokens and mean something: green free, blue needs a hub, gold your call', () => {
+    expect(paths).toMatch(/free: 'border-green\/60 text-green'/);
+    expect(paths).toMatch(/hub: 'border-blue\/60 text-blue'/);
+    expect(paths).toMatch(/choice: 'border-gold\/70 text-gold'/);
+    expect(paths).not.toMatch(/bg-\[#|border-\[#|text-\[#(?!f2ede1)/);   // only the page’s own cream for headings
+  });
+});
+
+// ─── How it works: the four-step drawing (the guild lead, 2026-10-23: "add the about-page scene as a section") ────────
+// One static file in a lazy frame (web/public/raidmimic/how/scene.html, ISO-GLOW, MIT). The hero, "who gets what", "two ways
+// to run it", "what stays free" and the fan notice of the draft are NOT in it: the doors page already says them.
+describe('How it works: the four-step drawing', () => {
+  const SCENE = 'web/public/raidmimic/how/scene.html';
+  const html = read(SCENE);
+  const frame = code(L + 'HowItWorks.tsx');
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]).join('\n');
+
+  it('is a section of the page, after the captures, with the words from the story module', () => {
+    expect(PL.HOW.id).toBe('how');
+    expect(PL.HOW.title).toBe('How it works');
+    expect(PL.HOW.steps).toEqual(['Overlays', 'The raid', 'Raid leader', 'Hosting']);
+    expect(PL.HOW.src).toBe('/raidmimic/how/scene.html');
+    expect(PL.HOW.note).toMatch(/A drawing, not a recording/);
+    expect(PL.HOW.note).toMatch(/invented/);
+    const layout = code(L + 'PathsLayout.tsx');
+    expect(layout).toMatch(/<section id=\{HOW\.id\} aria-label=\{HOW\.title\}/);
+    expect(layout).toMatch(/\{HOW\.lead\}/);
+    expect(layout.indexOf('<MoreShots')).toBeLessThan(layout.indexOf('<HowItWorks'));
+    expect(layout.indexOf('<HowItWorks')).toBeLessThan(layout.indexOf('id="works-with"'));
+  });
+  it('the frame is lazy, titled, has no scroll of its own, and takes its height from the drawing’s own same-origin message', () => {
+    expect(read(L + 'HowItWorks.tsx')).toMatch(/^'use client';/);
+    expect(frame).toMatch(/src=\{HOW\.src\}/);
+    expect(frame).toMatch(/title=\{HOW\.frameTitle\}/);
+    expect(frame).toMatch(/loading="lazy"/);
+    expect(frame).toMatch(/scrolling="no"/);
+    expect(frame).toMatch(/e\.origin !== window\.location\.origin \|\| e\.source !== frame\.current\?\.contentWindow/);
+    expect(frame).toMatch(/d\.h > 100 && d\.h < 4000/);
+    expect(frame).toMatch(/aspect-\[4\/5\] sm:aspect-\[4\/3\]/);   // the box it holds until the first message
+    expect(frame).toMatch(/\{HOW\.openLink\} →/);                  // and a link to the drawing on its own page
+    expect(frame).not.toMatch(/sandbox|allow=/);                   // same origin, our own file
+    expect(PL.HOW.frameTitle.length).toBeGreaterThan(40);
+    expect(scripts).toMatch(/window\.parent\.postMessage\(\{ rmScene: 'height', h \}, location\.origin\)/);
+  });
+  it('is one self-contained file: no external script, style, font or request, and a small one', () => {
+    expect(html).not.toMatch(/<script[^>]*\ssrc=|<link\b|@import|googleapis|<img\b|<iframe/i);
+    expect(scripts).not.toMatch(/fetch\(|XMLHttpRequest|WebSocket|localStorage|sessionStorage|document\.cookie|eval\(|new Function/);
+    const urls = [...html.matchAll(/https?:\/\/[^\s'"`)<>]+/g)].map(m => m[0]);
+    expect([...new Set(urls)].sort()).toEqual(['http://www.w3.org/2000/svg', 'https://iso-glow.vercel.app']);
+    expect(fs.statSync(path.join(ROOT, SCENE)).size).toBeLessThan(80 * 1024);
+    expect(html).toMatch(/^<!doctype html>/i);
+    expect(html).toMatch(/<html lang="en" data-theme="dark">/);
+    expect(html).toMatch(/<meta name="robots" content="noindex">/);
+  });
+  it('keeps the kit’s credit link and the reduced-motion handling', () => {
+    expect(html).toMatch(/<a href="https:\/\/iso-glow\.vercel\.app" target="_blank" rel="noopener">Made with ISO-GLOW ↗<\/a>/);
+    expect(html).toMatch(/prefers-reduced-motion: reduce/);
+    expect(html).toMatch(/matchMedia\('\(prefers-reduced-motion: reduce\)'\)/);
+  });
+  it('has the four steps and nothing else of the draft: no hero, no sign-up button, no sections the doors already cover', () => {
+    const names = [...html.matchAll(/\['mm-\d', '([^']+)'/g)].map(m => m[1]);
+    expect(names).toEqual(PL.HOW.steps);
+    expect(html).not.toMatch(/class="hero"|class="about"|class="notice"|class="btn"|class="cta"|Register interest|Who gets what|Two ways to run it|What stays free|Fan site notice/);
+    expect(html).not.toMatch(/swatches|Glow colour|id="prev"|id="next"/);
+  });
+  it('its words match today’s facts: hosting is Coming, the guild lookup is Coming, the hub is needed, nothing is promised', () => {
+    const text = html.replace(/<style>[\s\S]*?<\/style>/g, '');
+    expect(text).toMatch(/HOSTED · COMING/);
+    expect(text).toMatch(/hosted · coming · not built yet/);
+    expect(text).toMatch(/Hosting for other guilds is not built yet/);
+    expect(text).toMatch(/guild lookup and hosting we run for you are <b>coming<\/b>/);
+    expect(text).toMatch(/text-anchor="middle">coming<\/text>/);   // the lookup box
+    expect(text).toMatch(/Needs a guild hub/);
+    expect(text).toMatch(/it is not turnkey yet/);
+    // claims the draft made that this page does not stand behind
+    expect(text).not.toMatch(/WE RUN IT|\/g\/your-guild|EQMIMIC\.QUEST|under a second|14-day|nightly backups|free trial|never to a player|as soon as it ends|the moment it ends/i);
+    expect(text).not.toMatch(/\$\s?\d|per month|guarantee/i);
+  });
+  it('the people in it are invented: eight names, checked on 2026-10-23 against the guild’s characters, the who history and the NPC catalog', () => {
+    // SELECT-only check on the production database, case-insensitive: 0 hits in characters.name, who_observations.character and
+    // eqemu_npc_types.name for every name below and for the boss, "The Arbiter". A test cannot reach the database, so this list
+    // is the record; adding a name means checking it the same way first.
+    const names = [...html.matchAll(/const NAMES = \[([^\]]+)\]/g)][0][1].split(',').map(s => s.trim().replace(/'/g, ''));
+    expect(names).toEqual(['Aldenmar', 'Brackwyn', 'Corvale', 'Rethlan', 'Nyssara', 'Theodric', 'Velmira', 'Zarrin']);
+    expect(html).toMatch(/const BOSS = 'The Arbiter'/);
+    expect(JSON.stringify(PL.ALL_TEXT)).not.toMatch(new RegExp(names.join('|')));
+  });
+  it('is served as itself on a raidmimic host, and is a part of the page, not a page of its own in search', () => {
+    expect(isRaidmimicAsset(PL.HOW.src)).toBe(true);
+    expect(fs.existsSync(path.join(ROOT, SCENE))).toBe(true);
+    expect(html).toMatch(/<meta name="robots" content="noindex">/);
+  });
+});
+
+// ─── `?v=motion` (the guild lead, 2026-10-24, picked "B — Strip"): the 3D mimic's story, then its loop; the captures in a strip.
+//     Vertical, 9:16, the same day ("vertical is great for both mobile and desktop"): headline beside it on a desktop ─
+describe('the motion preview (?v=motion)', () => {
+  const stage = read(L + 'MotionStage.tsx');
+  const stageCode = stripJs(stage);
+  const css = stripCss(read('web/app/globals.css'));
+  const M = 'web/public/raidmimic/motion/';
+
+  // A file's own size, from its mp4 header (the first `tkhd` is the only video track): width and height are 16.16 numbers.
+  const mp4Size = (rel) => {
+    const b = fs.readFileSync(path.join(ROOT, rel));
+    const i = b.indexOf('tkhd');
+    return { w: b.readUInt32BE(i + 4 + 76) >>> 16, h: b.readUInt32BE(i + 4 + 80) >>> 16 };
+  };
+  // The table the component picks the story's files from: src, w, h, media.
+  const files = [...stageCode.matchAll(/\{ src: `\$\{DIR\}\/([\w.-]+)`,\s*w: (\d+),\s*h: (\d+),\s*media: '([^']*)' \}/g)]
+    .map(m => ({ name: m[1], w: +m[2], h: +m[3], media: m[4] }));
+  const loops = [...stageCode.matchAll(/`\$\{DIR\}\/(loop-\d+\.mp4)`/g)].map(m => m[1]);
+
+  it('only a query of exactly `motion` changes the page, and it is a preview: the default tree has no stage and keeps the mascot hero', () => {
+    const layout = code(L + 'PathsLayout.tsx');
+    expect(layout).toMatch(/motion = false/);
+    expect(layout).toMatch(/const Frame = motion \? MotionStage : Fragment;/);           // the headline is the stage's left column
+    expect(layout).toMatch(/<Frame>\s*<header /);
+    expect(layout).toMatch(/\{!motion && <MascotHero \/>\}/);
+    expect(code('web/app/raidmimic/page.tsx')).toMatch(/motion=\{IS_BETA && searchParams\?\.v === 'motion'\}/);
+    // a raidmimic host never sees it: the middleware drops every query (tested above), so only the Wolf Pack hosts can
+    expect(raidmimicLandingTarget('/')).toEqual({ pathname: '/raidmimic', search: '' });
+  });
+
+  // The page went live before its video (the guild lead, 2026-10-24: "B now then A"): only a beta build honours the query,
+  // so production, which does not carry the story files yet, can never point at them.
+  it('only a beta build honours the preview: the flag is the build-time IS_BETA from web/lib/guild.ts', () => {
+    const page = code('web/app/raidmimic/page.tsx');
+    expect(page).toMatch(/import \{ IS_BETA \} from '@\/lib\/guild';/);
+    expect(page.match(/IS_BETA/g)).toHaveLength(2);                              // the import and the one gate
+  });
+
+  // The story files ship on beta only until the video graduates; where they are absent, the two file checks below have
+  // nothing to check (and the gate above is what keeps production from asking for them).
+  const itFiles = fs.existsSync(path.join(ROOT, M)) ? it : it.skip;
+
+  itFiles('the motion directory holds exactly the story, the loop (each in two sizes) and one poster; no 16:9 files are left', () => {
+    expect(fs.readdirSync(path.join(ROOT, M)).sort()).toEqual(['loop-1080.mp4', 'loop-720.mp4', 'story-1080.mp4', 'story-720.mp4', 'story-poster.jpg']);
+    expect(files.map(f => f.name)).toEqual(['story-1080.mp4', 'story-720.mp4']);
+    expect(loops.sort()).toEqual(['loop-1080.mp4', 'loop-720.mp4']);
+    expect(stageCode).not.toMatch(/-1920|-1280|mimic-16x9/);
+  });
+  itFiles('ships the files at the sizes the component says, 9:16 only, and a poster under 100 KB at 720 by 1280', () => {
+    for (const f of files) {
+      const rel = M + f.name;
+      expect(f.w * 16, f.name).toBe(f.h * 9);
+      expect(mp4Size(rel), f.name).toEqual({ w: f.w, h: f.h });
+      expect(fs.statSync(path.join(ROOT, rel)).size, f.name).toBeLessThan(16_000_000);
+    }
+    // each loop has the size of the story it replaces at that width
+    expect(mp4Size(M + 'loop-1080.mp4')).toEqual({ w: 1080, h: 1920 });
+    expect(mp4Size(M + 'loop-720.mp4')).toEqual({ w: 720, h: 1280 });
+    for (const n of ['loop-1080.mp4', 'loop-720.mp4']) expect(fs.statSync(path.join(ROOT, M + n)).size, n).toBeLessThan(6_000_000);
+    expect(fs.statSync(path.join(ROOT, M + 'story-poster.jpg')).size).toBeLessThan(100_000);
+    const b = fs.readFileSync(path.join(ROOT, M + 'story-poster.jpg'));
+    let dims;
+    for (let i = 2; i < b.length;) { if (b[i] === 0xff && (b[i + 1] & 0xf0) === 0xc0 && b[i + 1] !== 0xc4 && b[i + 1] !== 0xc8 && b[i + 1] !== 0xcc) { dims = { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) }; break; } i += 2 + b.readUInt16BE(i + 2); }
+    expect(dims).toEqual({ w: 720, h: 1280 });
+    expect(stageCode).toMatch(/story-poster\.jpg/);
+    expect(stageCode).toMatch(/POSTER = \{ src: `\$\{DIR\}\/story-poster\.jpg`, w: 720, h: 1280 \}/);
+  });
+  it('the box is 9:16 always: one rule, no landscape or orientation query, no drift; and the video fills it without stretching', () => {
+    expect(css).toMatch(/\.rm-stage-box \{ aspect-ratio: 9 \/ 16; width: 100%; \}/);
+    expect(css.match(/\.rm-stage-box/g)).toHaveLength(1);
+    expect(css).not.toMatch(/rm-stage-box[^}]*16 \/ 9/);
+    expect(css).not.toMatch(/orientation/);
+    expect(css).not.toMatch(/rm-drift/);
+    expect(stageCode).not.toMatch(/rm-drift/);
+    expect(stageCode).toMatch(/object-cover/);
+    expect(stageCode).not.toMatch(/object-(fill|none)/);
+  });
+
+  it('the <video> is decoration that plays muted and inline, once: the story has no `loop` attribute, and the 1080 file is only for sharp screens or a box wider than 560 px', () => {
+    const v = stageCode.match(/<video [\s\S]*?>/)[0];
+    for (const a of ['autoPlay', 'muted', 'playsInline', 'preload="metadata"', 'aria-hidden="true"', 'tabIndex={-1}', 'motion-reduce:hidden']) expect(v, a).toContain(a);
+    expect(v).not.toMatch(/\bloop\b/);
+    expect(files[0].media).toBe('(min-width: 600px) and (min-resolution: 1.5dppx), (min-width: 561px) and (max-width: 639px)');
+    expect(files[1].media).toBe('');                                        // the unconditional fallback is last
+    expect(stageCode).toMatch(/<source key=\{f\.src\} src=\{f\.src\} type="video\/mp4"/);
+  });
+  it('lays out vertically: the headline (children) is the left column on a desktop and sits above the video on a phone; the video column is capped so it never towers', () => {
+    // two columns from lg up, one below it; the headline is the first child, so it is first on a phone and left on a desktop
+    expect(stageCode).toMatch(/<div className="lg:grid lg:grid-cols-\[minmax\(0,1fr\)_auto\] lg:items-center lg:gap-10">\s*\{children\}/);
+    // the video's column: full width on a phone, and from 640 px up exactly as wide as a 9:16 box of height min(78svh, 820px)
+    expect(stageCode).toMatch(/\[--rm-w:calc\(min\(78svh,820px\)\*9\/16\)\]/);
+    expect(stageCode).toMatch(/\bw-full\b[^"]*\bsm:max-w-\[var\(--rm-w\)\][^"]*\blg:w-\[var\(--rm-w\)\]/);
+    // the strip sits after the whole two-column block, so it is underneath both columns
+    expect(stageCode.indexOf('</video>')).toBeLessThan(stageCode.indexOf('<ul '));
+    expect(stageCode.indexOf('lg:grid-cols-[minmax')).toBeLessThan(stageCode.indexOf('<ul '));
+    // the page's own headline is what goes in: one h1, with a download button on a desktop only (a phone cannot run it)
+    const layout = code(L + 'PathsLayout.tsx');
+    expect(layout.match(/<h1\b/g)).toHaveLength(1);
+    expect(layout).toMatch(/\{motion && \(\s*<div className="mt-5 hidden [^"]*lg:flex">\s*<a href=\{DOWNLOAD_URL\} className=\{PRIMARY_BTN\}>\{HERO\.download\}<\/a>/);
+    expect(layout).toMatch(/className=\{motion \? 'mb-6 lg:mb-0' : 'mb-6'\}/);   // the default page keeps its exact spacing
+  });
+  it('is a stage on the clip’s own #0f1219 so the edges vanish', () => {
+    expect(stageCode).toMatch(/const STAGE_BG = '#0f1219'/);
+    expect(stageCode.match(/backgroundColor: STAGE_BG/g)).toHaveLength(2);       // the video's frame and the strip's
+  });
+  it('when the story ends the file is swapped for the loop of the same width (chosen with the same media query), looped and played', () => {
+    expect(stageCode).toMatch(/const wide = window\.matchMedia\(WIDE_QUERY\)/);
+    expect(stageCode).toMatch(/const WIDE_QUERY = MOTION_FILES\[0\]\.media/);
+    const onEnded = stageCode.match(/const onEnded = \(\) => \{([\s\S]*?)\n      \};/)[1];
+    expect(onEnded).toMatch(/v\.loop = true;/);
+    expect(onEnded).toMatch(/v\.src = wide\.matches \? LOOP_FILES\.wide : LOOP_FILES\.plain;/);
+    expect(onEnded).toMatch(/setEnded\(true\);/);
+    expect(onEnded).toMatch(/sync\(\);/);                                    // sync() is what calls play()
+    expect(stageCode).toMatch(/v\.addEventListener\('ended', onEnded\)/);
+    expect(stageCode).toMatch(/LOOP_FILES = \{ wide: `\$\{DIR\}\/loop-1080\.mp4`, plain: `\$\{DIR\}\/loop-720\.mp4` \}/);
+  });
+  it('“Watch again” is a real <button> that shows only once the story has ended, sits in a corner of the stage and replays the story from the start', () => {
+    const btn = stageCode.match(/\{ended && \(\s*(<button [\s\S]*?<\/button>)\s*\)\}/)[1];
+    expect(btn).toMatch(/^<button type="button" onClick=\{\(\) => replay\.current\(\)\}/);
+    expect(btn).toMatch(/Watch again/);
+    expect(btn).toMatch(/absolute bottom-2 right-2/);                       // inside the box, out of the way
+    expect(btn).toMatch(/sm:bottom-3 sm:right-3/);                          // a little more room above a phone
+    expect(btn).toMatch(/min-h-\[44px\]/);                                  // a touch target
+    expect(btn).toMatch(/text-\[#f2ede1\]/);                                // readable on the dark stage
+    expect(btn).toMatch(/focus-visible:outline/);
+    const replay = stageCode.match(/replay\.current = \(\) => \{([\s\S]*?)\n      \};/)[1];
+    expect(replay).toMatch(/v\.loop = false;/);
+    expect(replay).toMatch(/v\.src = wide\.matches \? STORY_FILES\.wide : STORY_FILES\.plain;/);
+    expect(replay).toMatch(/setEnded\(false\);/);
+    expect(replay).toMatch(/sync\(\);/);
+  });
+  it('the story has sound: it autoplays muted, and a real "Sound on" button (always there, the other corner) unmutes it', () => {
+    expect(stageCode).toMatch(/v\.muted = true;/);
+    const btn = stageCode.match(/(<button type="button" onClick=\{toggleSound\}[\s\S]*?<\/button>)/)[1];
+    expect(btn).toMatch(/aria-pressed=\{sound\}/);
+    expect(btn).toMatch(/absolute bottom-2 left-2/);
+    expect(btn).toMatch(/min-h-\[44px\]/);
+    expect(btn).toMatch(/\{sound \? 'Sound off' : 'Sound on'\}/);
+    const toggle = stageCode.match(/const toggleSound = \(\) => \{([\s\S]*?)\n  \};/)[1];
+    expect(toggle).toMatch(/v\.muted = sound;/);                           // pressing it flips the element, not just the label
+    expect(toggle).toMatch(/setSound\(!sound\);/);
+  });
+  itFiles('every story and loop file carries an audio track', () => {
+    for (const f of ['story-1080.mp4', 'story-720.mp4', 'loop-1080.mp4', 'loop-720.mp4']) {
+      expect(fs.readFileSync(path.join(ROOT, M + f)).includes(Buffer.from('mp4a')), f + ' has an audio track').toBe(true);
+    }
+  });
+  it('pauses off-screen and in a hidden tab, and under reduced motion plays nothing and fetches nothing (the poster stays, and so does the strip)', () => {
+    expect(stageCode).toMatch(/new IntersectionObserver\(/);
+    expect(stageCode).toMatch(/visibilitychange/);
+    expect(stageCode).toMatch(/matchMedia\('\(prefers-reduced-motion: reduce\)'\)/);
+    expect(stageCode).toMatch(/if \(reduce\.matches\) \{[\s\S]*?v\.pause\(\);[\s\S]*?querySelectorAll\('source'\)\.forEach\(s => s\.remove\(\)\);[\s\S]*?v\.load\(\);\s*return;/);
+    // the reduced-motion branch returns before the ended handler is attached, so no loop file is ever set
+    expect(stageCode.indexOf('querySelectorAll(\'source\')')).toBeLessThan(stageCode.indexOf('addEventListener(\'ended\''));
+    expect(stageCode).toMatch(/motion-reduce:hidden/);
+    expect(stageCode).not.toMatch(/addEventListener\('change', onTurn\)|matchMedia\('\(orientation/);
+    // the poster layer is a decorative last frame, not a second copy of the words
+    expect(stageCode).toMatch(/alt="" aria-hidden="true"/);
+  });
+
+  it('the strip is the four real captures under the video: images with alt text that link to the full-size file, each with a name and a one-line description', () => {
+    const ids = [...stageCode.match(/const STRIP: Card\[\] = \[([\s\S]*?)\n\];/)[1].matchAll(/id: '([\w-]+)'/g)].map(m => m[1]);
+    expect(ids).toEqual(['hud-box', 'dps-raid', 'target-debuffs', 'ch-chain']);
+    const lines = [...stageCode.match(/const STRIP: Card\[\] = \[([\s\S]*?)\n\];/)[1].matchAll(/line: '([^']+)'/g)].map(m => m[1]);
+    expect(lines).toHaveLength(4);
+    for (const l of lines) { expect(l.length).toBeGreaterThan(20); expect(l.length).toBeLessThan(70); }
+    for (const id of ids) {
+      const s = C.SHOTS.find(x => x.id === id);
+      expect(s, id).toBeTruthy();
+      expect(fs.existsSync(path.join(ROOT, 'web/public/raidmimic/shots', s.file)), id).toBe(true);
+      expect(s.alt.length, id).toBeGreaterThan(40);
+      expect(s.title.length, id).toBeGreaterThan(2);
+    }
+    expect(stageCode).toMatch(/<a href=\{src\} target="_blank" rel="noreferrer" aria-label=\{`\$\{s\.title\}: open the full-size capture`\}/);
+    expect(stageCode).toMatch(/const src = `\$\{SHOTS_DIR\}\/\$\{s\.file\}`/);
+    expect(stageCode).toMatch(/alt=\{s\.alt\}/);
+    expect(stageCode).toMatch(/\{s\.title\}<\/p>/);                          // the name under each capture
+    expect(stageCode).toMatch(/\{c\.line\}<\/p>/);                           // and its line
+    // the strip comes after the video box in the section, and the captures are never laid over the video
+    expect(stageCode.indexOf('</video>')).toBeLessThan(stageCode.indexOf('STRIP.map'));
+    expect(stageCode).not.toMatch(/absolute"\s+style=\{\{ left/);
+  });
+  it('the strip is four across on a wide screen and two by two on a phone, on 16px gutters, with nothing that can scroll sideways', () => {
+    const ul = stageCode.match(/<ul className="([^"]+)"/)[1];
+    expect(ul).toMatch(/\bgrid-cols-2\b/);
+    expect(ul).toMatch(/\blg:grid-cols-4\b/);
+    expect(ul).toMatch(/\bgap-4\b/);                                        // 16px between cards
+    expect(ul).toMatch(/\bp-4\b/);                                          // and 16px at the stage's edge
+    expect(stageCode).toMatch(/<li key=\{c\.id\} className="min-w-0">/);    // a grid child may shrink below its content
+    expect(stageCode).toMatch(/className="block h-full w-full object-contain"/);   // the image never exceeds its cell
+    expect(stageCode).toMatch(/aspect-\[4\/3\] w-full/);
+    expect(stageCode).toMatch(/loading="lazy"/);
   });
 });

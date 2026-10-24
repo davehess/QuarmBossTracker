@@ -64,7 +64,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/screen':       { title: '[beta] Raid screen', description: 'One page the whole raid watches — the map, slides, loot or an overview, switched by the raid leader and followed live.' },
   '/mimic':        { title: 'Download Mimic', description: 'Mimic — the Wolf Pack desktop overlay: DPS/Tank Meter, triggers, buff queue, and log sync for Project Quarm.' },
   '/mimic/dirge':  { title: 'Dirge Tactical Nuke', description: 'For bards, on the Mimic beta: check off your pre-buffs, lift the cover, turn the Puretone key, and fire one button per Dirge your mana holds. Watch it run.', image: '/mimic/dirge-card.png' },
-  '/raidmimic':    { title: '[beta] raidmimic · raid orchestration as a service', description: 'Raid orchestration and analytics for guild leaders: shared raid boards, flags and lockouts, loot, parses and overlays, built from the logs your raiders already write.' },
+  '/raidmimic':    { title: 'Raid Mimic · free EverQuest raid overlays', description: 'Free, open-source overlays for your EverQuest raids, built from the log the game already writes: run it on your own, or add a guild hub for shared raid reviews, merged parses and a command center.' },
   '/raidmimic/setup': { title: '[beta] Set up Raid Mimic', description: 'A step-by-step guide to setting up Mimic on your own PC for EverQuest on Project Quarm, with no guild needed: what you need, what works on your own, and how to join a raid.' },
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },
   '/roadmap':      { title: 'Roadmap', description: 'What’s shipped and what’s next for the Wolf Pack platform.' },

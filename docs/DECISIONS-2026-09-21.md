@@ -121,7 +121,7 @@ is ephemeral. It is a desktop-session job.
 | **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
 | **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
 | **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
-| **raidmimic.com's living mimic: vertical, in the real room, sweet voice** (§424, §427–§429) | Rebuilt in layers (web 2.1.27 on beta, `?v=motion`): mimic always in front, overlays in their gold frames, the raid loses first, a warrior charges in, the crowd pours in on "pop discs", the player's calls win it; then the loot card posts the drops and the little screen draws the fight timeline; no background hum, 83 s | the guild lead: watch it; then the graduation of raidmimic.com (page + hero) to main |
+| **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§430) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 83 s story video (gravelly player voice) is still a beta preview, web 2.1.28: https://b.wolfpack.quest/raidmimic?v=motion | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
@@ -12786,3 +12786,19 @@ and forth"*; then, on the drops: *"not the spell."*
   happily, hops right and home. A beat whose ears turned round ("look around") was dropped rather than shipped.
 - **Where it landed:** web 2.1.27 on beta (https://b.wolfpack.quest/raidmimic?v=motion), 83 s; `v3/ending.py` in the
   session scratchpad holds the loot card, the loot panel and the chart.
+
+### 430. The player's voice is the gravelly one; raidmimic.com goes live page-first (2026-10-24)
+The guild lead, on the player's calls: *"the players voice just sounds very generic AI blah can you give me a couple of options
+to choose from? also the part where it says it's beast slowed sounds bad"*; four voices went on the Decision Desk, each in the
+14 s of the video around the calls; then *"A gravely, B now then A"*.
+- **Voice A (gravelly)** for the player, read as a gamer on voice chat mid-fight (not an announcer). The slow call is now
+  "Slow has a minute left, beasts be ready." Web 2.1.28 on beta.
+- **"B now then A":** the page goes live first and the story video follows later. Web 2.1.29 on `main` carries only the
+  raidmimic files from `beta` (the page, its words, icons, How it works, robots/sitemap, the middleware's asset pass-through,
+  the page's title and the roadmap entry), never the rest of beta (the route planner, /pop and spectator work stay there).
+  The `?v=motion` preview is honoured only by a beta build (`IS_BETA` in `page.tsx`), so production can never point at the
+  story files, which stay on `beta` until step A; the file checks in `test/raidmimic-landing.test.js` run wherever the files
+  ship and a test pins the gate.
+- The roadmap entry and `web/package.json` were set identically on both branches, so the main→beta sync merges clean.
+- **Where it landed:** web 2.1.28 on `beta`, web 2.1.29 on `main` (https://wolfpack.quest/raidmimic); STATUS.md and
+  HOW-ITS-BUILT.md updated.

@@ -245,4 +245,9 @@
   @media (prefers-reduced-motion: reduce) {
     .rm-card { animation: none; }
   }
+
+  /* The `?v=motion` stage (web/app/raidmimic/_landing/MotionStage.tsx). Every file is 9:16 (the guild lead, 2026-10-24: "vertical
+     is great for both mobile and desktop"), so the box is always 9:16 and object-fit: cover has nothing to crop. The column
+     around it sets how wide it may be. */
+  .rm-stage-box { aspect-ratio: 9 / 16; width: 100%; }
 }

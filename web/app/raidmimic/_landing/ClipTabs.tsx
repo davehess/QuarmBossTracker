@@ -26,24 +26,27 @@ function arrows(e: KeyboardEvent<HTMLDivElement>) {
 }
 
 export default function ClipTabs() {
+  const audiences = AUDIENCES.filter(a => CLIPS.some(c => c.audience === a.id));
   const [i, setI] = useState(0);
   const clip = CLIPS[i];
-  const audiences = AUDIENCES.filter(a => CLIPS.some(c => c.audience === a.id));
   const aud = audiences.find(a => a.id === clip.audience) ?? audiences[0];
   const scenes = CLIPS.map((c, n) => ({ c, n })).filter(x => x.c.audience === aud.id);
+  const stage = 'clip-stage';
   return (
     <div>
-      <div role="tablist" aria-label={CLIPS_HEAD.audienceLabel} onKeyDown={arrows} className="flex flex-wrap gap-2">
-        {audiences.map(a => (
-          <button key={a.id} type="button" role="tab" id={`aud-${a.id}`} aria-selected={a.id === aud.id}
-            aria-controls="clip-stage" tabIndex={a.id === aud.id ? 0 : -1}
-            onClick={() => setI(CLIPS.findIndex(c => c.audience === a.id))}
-            className={`${TAB} ${a.id === aud.id ? ON : OFF}`}>
-            {a.label}
-          </button>
-        ))}
-      </div>
-      <div id="clip-stage" role="tabpanel" aria-labelledby={`aud-${aud.id}`}>
+      {audiences.length > 1 && (
+        <div role="tablist" aria-label={CLIPS_HEAD.audienceLabel} onKeyDown={arrows} className="flex flex-wrap gap-2">
+          {audiences.map(a => (
+            <button key={a.id} type="button" role="tab" id={`aud-${a.id}`} aria-selected={a.id === aud.id}
+              aria-controls={stage} tabIndex={a.id === aud.id ? 0 : -1}
+              onClick={() => setI(CLIPS.findIndex(c => c.audience === a.id))}
+              className={`${TAB} ${a.id === aud.id ? ON : OFF}`}>
+              {a.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div id={stage} role="tabpanel" {...(audiences.length > 1 ? { 'aria-labelledby': `aud-${aud.id}` } : { 'aria-label': aud.label })}>
         <p className="mt-3 text-sm leading-6 text-text">{aud.lead}</p>
         {scenes.length > 1 && (
           <div role="tablist" aria-label={CLIPS_HEAD.scenesLabel} onKeyDown={arrows} className="mt-3 flex flex-wrap gap-2">
