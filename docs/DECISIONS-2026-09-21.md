@@ -121,7 +121,7 @@ is ephemeral. It is a desktop-session job.
 | **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
 | **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
 | **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
-| **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§431) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 83 s story video (gravelly player voice, lip-synced greeting, overlays that pulse on each call) is still a beta preview, web 2.1.30: https://b.wolfpack.quest/raidmimic?v=motion | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
+| **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§432) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 83 s story video (gravelly player voice, lip-synced greeting, overlays that pulse on each call, the flags at the end) is still a beta preview, web 2.1.31: https://b.wolfpack.quest/raidmimic?v=motion | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
@@ -12815,3 +12815,16 @@ as it goes up. who has Area Taunt? where is the CH chain at?"*
   HUD's group for "Zarrin, D.I.", CH 003 marked SKIP in red and 004 GO in green ("skip three, go four"), the timeline's
   "01:01 Tagrin - Slow" row, and the bard's song bar and damage line on "Pure Tone Dirging, pop discs". (`v3/spots.py`.)
 - **Where it landed:** web 2.1.30 on beta, https://b.wolfpack.quest/raidmimic?v=motion. The live page is unchanged.
+
+### 432. The story ends on the flags (2026-10-24)
+The guild lead: *"the end of the video should have the mimic show the flagging interface on the menu. have the raid lead say
+"make sure you hail the Projection for your flags" highlighting the flagging section of command center"*.
+- After the fight timeline, the raid leader (over the desk speakers) says "Make sure you hail the Projection for your flags";
+  the Command Center's HAIL section on the monitor glows gold for the length of the line.
+- The mimic's little screen flips like a card from the timeline to the flags view: HAIL · A Planar Projection, the time left,
+  "Still to hail" and "Hailed" counts, and sixteen names turning green one by one as the raid hails. Drawn in code, at twice
+  the size and scaled down, so the small text stays crisp.
+- **The little screen is now its own layer:** hidden by the mimic while it rises out from behind the box and while it sinks
+  back, in front of it once it is up, so the names beside the mimic's ear stay readable. (`v3/ending.py`.)
+- The story is 90 s; the 12 s loop is unchanged, only later. **Where it landed:** web 2.1.31 on beta,
+  https://b.wolfpack.quest/raidmimic?v=motion.
