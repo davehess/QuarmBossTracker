@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **First sign-in: pick your characters, stage a recruit main** (§426) | Draft on `draft/recruit-onboarding` (bot 4.0.13 for `main`, agent 4.0.21 for `beta`); not pushed | the guild lead: say if the three judgement calls hold (OpenDKP-roster names not claimable, alts unparented when the main conflicts, "Save and upload these now"); a session: land the bot half on `main` first, then the agent half on `beta`, and make staged recruits show in `/admin/links` |
 | **Route planner + off-night plans + Sol Ro tower** (§407) | Live on main (web 2.0.2): `/raid/plan/routes` [beta], Tactics + the tower, versions, compare, splits, fewest raiders per boss | the guild lead: press "Import tonight's planner" once as an officer; pick the off-night bosses and the fewest headline (A everyone present, default) |
 | **Guest raids stored as ours** (§408) | Not fixed | the guild lead: A tag them (recommended) or B don't send |
 | **Slicing a night + night timeline** (§419) | Two previews on beta (web 2.1.10): `?v=slices` draw, `?v=segments` confirm | the guild lead: pick one on the 2026-10-22 night (B recommended) |
@@ -12671,3 +12672,43 @@ OCR locally? not every game has a named pipe"*, then *"EQ without Zeal first... 
 - **Open:** the engine (A Windows' built-in OCR, recommended; B a small ONNX model; C template matching for bars and icons
   alongside), on the Decision Desk with a picture each. A two-day dry run on the guild lead's PC decides A vs B with numbers.
 - **Where it landed:** `docs/DESIGN-screen-reader.md`. Nothing built.
+
+### 426. First sign-in: pick your characters from the logs, stage a recruit main, offer the spellbook / inventory / Quarmy upload (2026-10-24, DRAFT)
+The guild lead: *"[a new member] had to create his account on opendkp before he could log in. we should check for the discord role
+and let them in, then prestage as a new recruit main. but also ask if they want to upload their spellbook and inventory now"*, then
+*"We should be asking what characters the player would like to upload (from their logs). If none show up, they can type in their
+character name to get started. A lot of things won't work without logs. And we should ask about grabbing an upload of their
+quarmy/spellbook/inventory if it shows up."*
+- **What went wrong that day:** a new member's `characters` row existed with NULL class, rank, main_name and discord_id. Every
+  ownership check (`ownsOrOfficer` in `web/app/me/spellbook-actions.ts`) said "not your character", the PoP spell view
+  (`pop_spell_needs`, which joins `characters.class`) showed nothing, and Mimic's Voice tab refused the name pronunciation. The
+  spellbook had uploaded fine (it needs no characters row). An officer fixed it with a hand UPDATE. The site sign-in itself already
+  admits by Discord role (`web/app/auth/callback/route.ts`, `ALLOWED_ROLE_NAMES`) and was not touched.
+- **The call:** a signed-in Mimic whose account has NO linked character shows a one-time **"Your characters"** card on the
+  dashboard: every `eqlog_<Name>_pq.proj.txt` in the EQ folder (newest first, with the log's date and size, so a main reads apart from
+  a forgotten alt), a tick each, a "this is my main" radio, the newest pre-ticked and pre-selected. No logs: it says why and offers a
+  box to type a name. "Also found: <Name>-Spellbook.txt, <Name>-Inventory.txt, Quarmy export" with **Save** and **Save and upload
+  these now** (the second runs the SAME three export scans the timers run, limited to the staged names, with every gate they keep:
+  raid hold, privacy prefs known, exclusions, checksums). Saving or "Not now" is remembered in the opt-in file and the card never
+  returns.
+- **Bot: `POST /api/agent/characters/stage`** (`utils/recruitStage.js`). Per name, on the `characters` row only: `discord_id` set only
+  where NULL; `rank` = Recruit for the main, Non-raid Alt for the rest, only while empty; `main_name` = the main (the main points at
+  itself, as the OpenDKP sync writes a family root); `class` from Discord only when the roles name exactly one EQ class, and for the
+  MAIN only (an alt's class cannot be read off a role); `registered_via_web_at` / `_by_discord_id` stamped once. Owned by another
+  Discord id -> `conflicts` (`owned_by_another`), untouched. Nothing is created in OpenDKP. Re-saving writes nothing.
+- **The signal to show the card (no new read route):** the existing `GET /api/agent/character-prefs?mine=1` (Mimic's onboarding
+  already calls it). Empty `characters` = nothing linked = show. It is also the smaller change: no bot edit for the read half.
+- **Judgement calls to confirm (the draft made them; any is a one-line change):**
+  1. A character that is unowned but already has an `opendkp_id` is a conflict (`in_opendkp_unclaimed`), not claimable. The brief said
+     "only where discord_id is NULL"; without this, any signed-in member could take a roster main by typing its name. Those go
+     through the existing claim flow.
+  2. If the main conflicts, its alts are staged with no `main_name` rather than under someone else's family.
+  3. The second button is labelled "Save and upload these now" (the card has one Save; uploading needs the save first).
+- **⚠ Officer visibility gap, NOT fixed here (web, out of this draft's scope):** the audit pair is stamped, but a staged row will not
+  appear in either `/admin/links` queue in `web/lib/admin-queue.ts`. "Not in OpenDKP" lists only names with NO `characters` row, and
+  "Registered, awaiting OpenDKP claim" requires `discord_id IS NULL`; a staged recruit has a row AND a discord_id. An officer finds it
+  under `/admin/links?show=linked`. A fix is a small web change (list `registered_via_web_at` rows with `opendkp_id IS NULL`).
+- **Where it landed:** draft branch `draft/recruit-onboarding`, not pushed. Bot-side (`main`): `utils/recruitStage.js`, `index.js`
+  (route), root `package.json`. Agent-side (`beta`): `packages/wolfpack-logsync/index.js` + `dashboard.html`. Tests:
+  `test/recruit-stage.test.js`, `test/recruit-card-agent.test.js`. The agent half needs the bot half live, or the card's Save answers
+  "the guild server needs its update" and nothing is remembered.
