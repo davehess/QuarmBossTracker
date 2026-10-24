@@ -5426,6 +5426,8 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   Design + v1 scope: `docs/DESIGN-fight-cards.md`.
 
 ### Designs written, build pending (read before touching)
+- **The screen reader** (the guild lead, 2026-10-24): Mimic reads a few screen regions where there is no pipe, EQ without
+  Zeal first, then WoW; regions only, never a full frame. `docs/DESIGN-screen-reader.md`, DECISIONS §425.
 - **Multi-raid awareness (#114)** — `docs/DESIGN-multi-raid.md` (leader-anchored
   identity; single-raid path is sacred).
 - **Same-name mob serial tracks (#56)** — the serialization design in
