@@ -121,7 +121,7 @@ is ephemeral. It is a desktop-session job.
 | **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
 | **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
 | **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
-| **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§430) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 83 s story video (gravelly player voice) is still a beta preview, web 2.1.28: https://b.wolfpack.quest/raidmimic?v=motion | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
+| **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§431) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 83 s story video (gravelly player voice, lip-synced greeting, overlays that pulse on each call) is still a beta preview, web 2.1.30: https://b.wolfpack.quest/raidmimic?v=motion | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
@@ -12802,3 +12802,16 @@ to choose from? also the part where it says it's beast slowed sounds bad"*; four
 - The roadmap entry and `web/package.json` were set identically on both branches, so the main→beta sync merges clean.
 - **Where it landed:** web 2.1.28 on `beta`, web 2.1.29 on `main` (https://wolfpack.quest/raidmimic); STATUS.md and
   HOW-ITS-BUILT.md updated.
+
+### 431. The mimic talks; the overlays answer each call (2026-10-24)
+The guild lead: *"mimic should move its mouth when saying it's intro and " let's get you set up" pulse some spots on the overlays
+as it goes up. who has Area Taunt? where is the CH chain at?"*
+- **Lip-sync by replacement, not generation.** Three mouth shapes of the same face (closed, half, open) were made as Gemini
+  edits of the face still and pasted into it through ONE fixed mouth mask, so only the mouth changes; each frame's shape comes
+  from the greeting's own loudness (a mouth held at least two frames, leading the sound by a frame), with a small bob on the
+  syllables. A video model cannot follow a soundtrack; a cartoon mouth chart can. (`v3/talk/talk.py` in the scratchpad.)
+- **The overlays answer the calls.** The CH chain capture joins the monitor. The spot each call reads from pulses as the
+  player says it: the Command Center's Defensives row (painted to read "Rethlan · Area Taunt · READY"), Zarrin at 31% in the
+  HUD's group for "Zarrin, D.I.", CH 003 marked SKIP in red and 004 GO in green ("skip three, go four"), the timeline's
+  "01:01 Tagrin - Slow" row, and the bard's song bar and damage line on "Pure Tone Dirging, pop discs". (`v3/spots.py`.)
+- **Where it landed:** web 2.1.30 on beta, https://b.wolfpack.quest/raidmimic?v=motion. The live page is unchanged.
