@@ -121,7 +121,7 @@ is ephemeral. It is a desktop-session job.
 | **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
 | **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
 | **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
-| **raidmimic.com's living mimic: vertical, in the real room, sweet voice** (§424, §427) | Story on beta (web 2.1.22, `?v=motion`); the new-look cut (ears on the front corners, mascot low and clear of the screen, levelled sound + greeting) rendering | the guild lead: pick the greeting voice (Leda recommended); a session: the new-look cut to beta, then the graduation to main |
+| **raidmimic.com's living mimic: vertical, in the real room, sweet voice** (§424, §427) | The new-look cut is on beta (web 2.1.25, `?v=motion`): your room, ears on the front corners, mascot clear of the screen, a fight on the monitor, gentle sound, Leda's greeting | the guild lead: watch it; then the graduation of raidmimic.com (page + hero) to main |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
@@ -12738,5 +12738,12 @@ for both mobile and desktop"; camera pick **A** (front, screen readable); "re-re
   retired for the mascot. Voice pick pending between Leda (recommended), Aoede and Kore.
 - **The page:** headline on the left and the 9:16 video on the right on a desktop (the kit's "room for a headline" rule), full
   width on a phone, the strip of real captures below (web 2.1.22 on beta; the new-look cut replaces its files).
-- **Where it landed:** the first vertical cut on beta (web 2.1.22); the new-look cut in progress in the session scratchpad, to beta
-  as the next web patch, and on the Decision Desk's Brand & media tab with the base frame and the voice takes.
+- **Later the same night:** the first gentle mix was still "far too much loud noise" with "giggles" and "little squeels", so the
+  LTX-generated bed was dropped altogether: the soundtrack is now synthesised cues (low wooden pops, soft whooshes and thumps, a
+  faint room tone), the greeting in Leda's voice at half level, and the raid leader low in the background, concerned during the
+  fight ("Ramp on <name>, who's got the D.I.?", "Tank down! <name>, pick it up", "Burn, burn, burn", "ten percent", "Down! get
+  them rezzed, do loot", "Loot's posted, congrats <name> on the circlet"; invented names). The monitor plays a fight to match: the
+  tank goes down, a new tank runs in, the raid burns the boss, it dies, the raid gathers for loot (five LTX clips chained from the
+  raid still, cut to the voice timing). The loop's last six seconds carry only the bed, so a voice line never repeats.
+- **Where it landed:** web 2.1.25 on beta (`?v=motion`), the Decision Desk's Brand & media tab (the cut, the base frame, the
+  greeting), the synth script and mix in the session scratchpad (`final/audio/gentle.py`).
