@@ -8,6 +8,7 @@
 
 import { useMemo, useState } from 'react';
 import WpDbLink from '@/components/WpDbLink';
+import MaskedAccount from '@/components/MaskedAccount';
 import { holdingVisible } from '@/lib/sharedBank';
 
 export type LocGroup = 'equipped' | 'bags' | 'bank' | 'shared';
@@ -18,7 +19,7 @@ export type Holding = {
   character: string;
   location: LocGroup;
   qty: number;
-  account?: { id: string; label: string; members: string[]; placed: boolean };
+  account?: { id: string; label: string; name: string | null; members: string[]; placed: boolean };
 };
 export type InvItem = {
   key: string;
@@ -149,7 +150,9 @@ export default function InventoryExplorer(
                         {i > 0 && <span className="text-dim"> · </span>}
                         <span className="text-text"
                           title={h.account && !h.account.placed ? 'Grouped by matching shared-bank contents — not confirmed as one game account' : undefined}>
-                          {h.character}
+                          {h.account?.name
+                            ? <><MaskedAccount name={h.account.name} /> ({h.account.members.join(', ')})</>
+                            : h.character}
                         </span>
                         <span className="text-dim"> ×{h.qty} </span>
                         <span className={LOC_TAG[h.location].cls}>({LOC_TAG[h.location].short})</span>

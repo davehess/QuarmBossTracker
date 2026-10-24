@@ -71,7 +71,7 @@ function legacyAggregate(rows, placements, metaById) {
       : it.holdings.find(x => !x.account && x.character === r.character_name && x.location === grp);
     if (h) h.qty += qty;
     else it.holdings.push(acct
-      ? { character: acct.label, location: grp, qty, account: { id: acct.id, label: acct.label, members: acct.members, placed: acct.placed } }
+      ? { character: acct.label, location: grp, qty, account: { id: acct.id, label: acct.label, name: acct.name, members: acct.members, placed: acct.placed } }
       : { character: r.character_name, location: grp, qty });
   }
   const items = [...byKey.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
