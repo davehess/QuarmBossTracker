@@ -3,9 +3,10 @@
 // before that, 2026-10-23: "clean smooth animation. not jumpy, not stretched. Something that can scale on both mobile and desktop").
 // The story went VERTICAL the same day (the guild lead, 2026-10-24: "vertical is great for both mobile and desktop").
 //
-//   - THE VIDEO: always 9:16. It is a story of about 35 s: a chest on a desk comes alive, howls, and the real overlays end up on
-//     its monitor. It plays ONCE. When it ends the file is swapped for a short loop (the last six seconds, the mimic rocking
-//     proudly from corner to corner). The loop file starts and ends on the same frame, so `loop` on it has no seam. A small
+//   - THE VIDEO: always 9:16. It is a story of about 64 s: a chest on a desk comes alive, watches the raid on its monitor start
+//     to lose, drinks the game in, howls, and the real overlays fly out and land on the monitor; the player's calls turn the
+//     fight. It plays ONCE. When it ends the file is swapped for a short loop (3.6 s, one hop from the left corner of the desk
+//     to the right and back). The loop file starts and ends on the same frame, so `loop` on it has no seam. A small
 //     "Watch again" button, in a corner of the stage, replays the story.
 //     The story carries sound effects (the guild lead, 2026-10-24: "generate it with sound effects"); it autoplays muted, as
 //     browsers require, and a "Sound on" button in the other corner unmutes it.
