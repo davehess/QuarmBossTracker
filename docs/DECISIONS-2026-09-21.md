@@ -121,7 +121,7 @@ is ephemeral. It is a desktop-session job.
 | **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
 | **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
 | **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
-| **raidmimic.com's living mimic: vertical, in the real room, sweet voice** (§424, §427, §428) | Rebuilt in layers (web 2.1.26 on beta, `?v=motion`): mimic always in front, overlays drawn into their gold frames, the raid loses first, a new warrior charges in, the player's calls win it, 64 s | the guild lead: watch it; then the graduation of raidmimic.com (page + hero) to main |
+| **raidmimic.com's living mimic: vertical, in the real room, sweet voice** (§424, §427–§429) | Rebuilt in layers (web 2.1.27 on beta, `?v=motion`): mimic always in front, overlays in their gold frames, the raid loses first, a warrior charges in, the crowd pours in on "pop discs", the player's calls win it; then the loot card posts the drops and the little screen draws the fight timeline; no background hum, 83 s | the guild lead: watch it; then the graduation of raidmimic.com (page + hero) to main |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
@@ -12784,3 +12784,27 @@ fight from a loss into a win. its the player."*
   Gemini stills and voices.
 - **Where it landed:** web 2.1.26 on beta (`?v=motion`, https://b.wolfpack.quest/raidmimic?v=motion); the compositor
   (`v3/comp.py`), keyer (`v3/key.py`) and soundtrack (`v3/sound.py`) in the session scratchpad.
+
+### 429. The living mimic's ending: the loot card, the fight timeline, a quieter track (2026-10-24)
+The guild lead, on 2.1.26: *"the wooshing fan in the background is actually very annoying and it makes it so that the looping
+at the end doesn't work very well. when he says ... pop discs we should see a bunch of characters run in. in the first set of
+videos when the overlays slapped against the screen it made a more satisfying sound with a small shake. after the enemy is down
+we should see the little pop-up from the mimic saying what loot is. a green button next to the loot gets clicked and it streams
+onto the screen. after that the fight timeline view pop up on the mimics little screen and grows from the left beginning of the
+fight to the end of the fight on the right with the dip in the middle where many of the players died and a burst damage after
+it gets picked back up. the mimic should be able to look back up at the screen and have more animations than just bouncing back
+and forth"*; then, on the drops: *"not the spell."*
+- **No background bed.** No room tone, no fight hum: between the cues the track is silent. A continuous bed is what made the
+  loop audible at its seam; the loop's sound is now the story's own track over the loop span, silent at both ends.
+- **The slam is the first cut's slap**, lifted from that cut's generated audio (one clean hit, re-pitched a little per panel)
+  over a soft thud, with the small shake kept.
+- **"Pop discs" brings the raid in:** a crowd runs in from both sides and the burn starts (the last three fight clips
+  re-chained from the warrior's clip, so the fight stays one continuous take).
+- **After the kill, drawn in code:** a LOOT card pops out of the mimic with three drops (**no spell scrolls** in the mascot's
+  loot), a cursor clicks a green **Post** button, the rows fly onto the monitor into a loot panel with a 2:00 timer as the
+  leader says "Loot is posted, two minutes"; then a little gold-framed screen rises from behind the mimic and draws the **fight
+  timeline from pull to kill**: steady damage, the dip with the deaths marked, "Area Taunt", the burst after the pickup, the kill.
+- **More than hopping:** the 12 s ending loop looks around, hops left, looks up at the screen, looks back, chomps its lid
+  happily, hops right and home. A beat whose ears turned round ("look around") was dropped rather than shipped.
+- **Where it landed:** web 2.1.27 on beta (https://b.wolfpack.quest/raidmimic?v=motion), 83 s; `v3/ending.py` in the
+  session scratchpad holds the loot card, the loot panel and the chart.
