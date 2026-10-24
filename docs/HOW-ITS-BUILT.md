@@ -1203,8 +1203,9 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Live at:** `https://wolfpack.quest/raidmimic` (Pick your path, indexing and the drawing graduated to `main` with web 2.1.16,
   2026-10-23); the same page on beta at `https://b.wolfpack.quest/raidmimic`. On raidmimic.com once DNS points at Vercel and
   the Vercel redirects to eqmimic.quest come off.
-- **`?v=motion` preview, "B — Strip" (web 2.1.19, beta only, the guild lead 2026-10-24):** a 16:9 story video (a chest comes alive
-  and the real overlays end up on its monitor) plays once, then swaps to a seamless six-second loop, with a "Watch again" button;
+- **`?v=motion` preview, "B — Strip" (web 2.1.19, live screen 2.1.20, beta only, the guild lead 2026-10-24):** a 16:9 story video
+  (a chest comes alive and the real overlays end up on its monitor, over a live raid playing on the screen the whole time; the
+  screen is one canvas warped onto the monitor, so the overlays sit exactly in their frames) plays once, then swaps to a seamless six-second loop, with a "Watch again" button;
   the four real captures sit in a strip below it (four across, two by two on a phone). `_landing/MotionStage.tsx`, files in
   `web/public/raidmimic/motion/` (`story-` and `loop-` at 1920 and 1280, `story-poster.jpg`); tests in `test/raidmimic-landing.test.js`.
 
