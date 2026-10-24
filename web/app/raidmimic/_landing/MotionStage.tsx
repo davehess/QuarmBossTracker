@@ -6,6 +6,8 @@
 //     chest on a desk comes alive, howls, and the real overlays end up on its monitor. It plays ONCE. When it ends the file is
 //     swapped for a short loop (the last six seconds, the mimic rocking proudly from corner to corner). The loop file starts and
 //     ends on the same frame, so `loop` on it has no seam. A small "Watch again" button, in a corner of the stage, replays the story.
+//     The story carries sound effects (the guild lead, 2026-10-24: "generate it with sound effects"); it autoplays muted, as
+//     browsers require, and a "Sound on" button in the other corner unmutes it.
 //   - Two widths of each file. The <source media> list picks the story's width; when it ends the same media query (matchMedia)
 //     picks the loop's width, so a phone never fetches the 1920 file. The box around the video is 16:9 (`.rm-stage-box` in
 //     globals.css), so object-fit: cover has nothing to crop and nothing is stretched.
@@ -63,7 +65,16 @@ export default function MotionStage() {
   const box = useRef<HTMLDivElement>(null);
   const vid = useRef<HTMLVideoElement>(null);
   const [ended, setEnded] = useState(false);
+  const [sound, setSound] = useState(false);
   const replay = useRef<() => void>(() => {});
+  // Autoplay is only allowed muted; the sound effects play once someone presses Sound on (a click is the permission).
+  const toggleSound = () => {
+    const v = vid.current;
+    if (!v) return;
+    v.muted = sound;
+    setSound(!sound);
+    if (!sound) void v.play().catch(() => {});
+  };
 
   useEffect(() => {
     const v = vid.current;
@@ -128,6 +139,10 @@ export default function MotionStage() {
           className="absolute inset-0 h-full w-full object-cover motion-reduce:hidden">
           {MOTION_FILES.map(f => <source key={f.src} src={f.src} type="video/mp4" {...(f.media ? { media: f.media } : {})} />)}
         </video>
+        <button type="button" onClick={toggleSound} aria-pressed={sound}
+          className="absolute bottom-2 left-2 min-h-[44px] rounded-md border border-border bg-black/60 px-3 text-xs text-[#f2ede1] sm:bottom-3 sm:left-3 sm:px-4 sm:text-sm hover:bg-black/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold motion-reduce:hidden">
+          {sound ? 'Sound off' : 'Sound on'}
+        </button>
         {ended && (
           <button type="button" onClick={() => replay.current()}
             className="absolute bottom-2 right-2 min-h-[44px] rounded-md border border-border bg-black/60 px-3 text-xs text-[#f2ede1] sm:bottom-3 sm:right-3 sm:px-4 sm:text-sm hover:bg-black/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold motion-reduce:hidden">
