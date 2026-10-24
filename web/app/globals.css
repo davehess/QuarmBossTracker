@@ -250,4 +250,9 @@
      is great for both mobile and desktop"), so the box is always 9:16 and object-fit: cover has nothing to crop. The column
      around it sets how wide it may be. */
   .rm-stage-box { aspect-ratio: 9 / 16; width: 100%; }
+  /* On a wide landscape screen the box is square (the guild lead, 2026-10-24); this is the SAME query as SQUARE_QUERY in
+     MotionStage.tsx, which picks the square files, so the box and the file can never disagree. */
+  @media (min-width: 1024px) and (orientation: landscape) { .rm-stage-box { aspect-ratio: 1 / 1; } }
+  /* Captions while the story plays muted (story.vtt). */
+  .rm-stage video::cue { background: rgb(0 0 0 / 0.72); color: #f2ede1; font-size: 0.95em; }
 }
