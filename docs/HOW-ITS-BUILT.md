@@ -1438,6 +1438,8 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 - The Tick overlay (§56) shows the beats themselves. Test: `test/entity-tick-fade.test.js`.
 - The catalog of every overlay and the 3.0 builder plan: `docs/DESIGN-overlay-catalog.md`,
   `docs/DESIGN-mimic-3.0-overlay-builder.md`.
+- A local small model on the raider's PC that advises and displays only (decision points, nothing built, 2026-10-24):
+  `docs/DESIGN-local-model.md`.
 
 ### Where EQ is, screen changes, Zeal's bars (Mimic beta, 2026-09-29)
 - **EQ's live window:** `_eqWindowGeometry()` (`apps/mimic/main.js`) runs a PowerShell + user32 script
@@ -2993,6 +2995,11 @@ BrowserWindow per overlay; `preload.js` exposes `window.mimic` IPC. Overlay
 parity checklist in `CLAUDE.md` (✕ hide, ✥ move + context menu,
 hover-interact handshake, dashboard toggle row, visibility fn) — most beta
 bugs were a missing item from that list.
+
+- **Overlay motion, just-in-time overlays, pet and chat attached to EQ's own windows (DRAFT design, 2026-10-24, nothing built):**
+  `docs/DESIGN-overlay-motion.md`. It maps what exists to build on (Canvas show-when rules in `canvas.html`, Charm's
+  "When charming" idle, `_eqWindowGeometry` / `_parseUiWindowRects` / `uiClearRects.js`, chat groups as tabs) and
+  holds the "no input back into the client" rule.
 
 ### Sounds, voice packs, pronunciation, and the Willsapper proc (agent 3.7.162, beta, 2026-10-14)
 The guild lead: a "slap" when a Willsapper procs; then voice packs, names said right, members' own
@@ -5435,6 +5442,8 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   Design + v1 scope: `docs/DESIGN-fight-cards.md`.
 
 ### Designs written, build pending (read before touching)
+- **The screen reader** (the guild lead, 2026-10-24): Mimic reads a few screen regions where there is no pipe, EQ without
+  Zeal first, then WoW; regions only, never a full frame. `docs/DESIGN-screen-reader.md`, DECISIONS §425.
 - **Multi-raid awareness (#114)** — `docs/DESIGN-multi-raid.md` (leader-anchored
   identity; single-raid path is sacred).
 - **Same-name mob serial tracks (#56)** — the serialization design in
