@@ -1938,6 +1938,7 @@ function renderDash(s) {
   // renderMeCard via morphInto so the card is byte-stable between polls and
   // never drags the #dash section into a repaint. Everything it shows is LOCAL
   // (own Zeal state, watched logs, local tells, recent uploads) — no bot call.
+  h += '<div id="wpRecruitCard"></div>';   // the first-sign-in "Your characters" card; empty for everyone it does not apply to
   h += '<div id="wpMeCard" class="card wide" style="display:none"></div>';
 
   // ⚙ Engine — the logsync/sync guts (setup checklist, files tailed, queue
@@ -2120,6 +2121,204 @@ document.addEventListener('click', function (e) {
   if (!b) return;
   e.preventDefault();
   wpSetCharacterMode(b.dataset.char, b.dataset.mode);
+});
+
+// 👋 Your characters — the first-sign-in card (the guild lead, 2026-10-24: "We should be asking what characters
+// the player would like to upload (from their logs). If none show up, they can type in their character name to
+// get started … And we should ask about grabbing an upload of their quarmy/spellbook/inventory if it shows up").
+// Shown only to a signed-in person whose account has NO character linked on wolfpack.quest, until they save or
+// dismiss it. State comes from the engine (GET /api/recruit-card: the characters whose logs are in the EQ folder,
+// newest first, and which export files sit beside them); Save POSTs the ticked ones, which the guild server stages
+// as a recruit main + alts (nothing is created in OpenDKP). Own #wpRecruitCard placeholder, filled by wpYcPaint
+// via morphInto: everything the string holds is JS-side state (ticks, the main, typed names), so it is
+// byte-stable across polls and repaints only when the person acts. The date shown is the log's modified day,
+// never a "x ago", so time passing does not rewrite it.
+var _wpYc = { pending: false, data: null, fetchedAt: 0, loading: false, ready: false, sel: {}, main: '', extra: [], typed: '', busy: false, msg: null, done: null };
+function wpYcFetch(force) {
+  if (_wpYc.loading) return;
+  if (!force && _wpYc.fetchedAt && Date.now() - _wpYc.fetchedAt < 60000) return;
+  _wpYc.loading = true;
+  fetch('/api/recruit-card', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+    _wpYc.data = d;
+    // First time it shows: the newest log is ticked and is the main. Later fetches never touch the ticks.
+    if (d && d.show && !_wpYc.ready && Array.isArray(d.characters) && d.characters.length) {
+      _wpYc.ready = true;
+      _wpYc.sel[d.characters[0].name] = true;
+      _wpYc.main = d.characters[0].name;
+    }
+  }).catch(function (err) { void err; }).then(function () {
+    _wpYc.fetchedAt = Date.now();
+    _wpYc.loading = false;
+    wpYcPaint();
+  });
+}
+function wpYcNames() {
+  var d = _wpYc.data, out = [];
+  ((d && d.characters) || []).forEach(function (c) { out.push(c.name); });
+  _wpYc.extra.forEach(function (n) { if (out.indexOf(n) < 0) out.push(n); });
+  return out;
+}
+function wpYcTicked() {
+  var t = wpYcNames().filter(function (n) { return _wpYc.sel[n]; });
+  if (t.length && t.indexOf(_wpYc.main) < 0) _wpYc.main = t[0];
+  return t;
+}
+function wpYcFilesFor(name) {
+  var f = (_wpYc.data && _wpYc.data.files && _wpYc.data.files[name.toLowerCase()]) || {};
+  var out = [];
+  if (f.spellbook) out.push(name + '-Spellbook.txt');
+  if (f.inventory) out.push(name + '-Inventory.txt');
+  if (f.quarmy) out.push(name + ' Quarmy export');
+  return out;
+}
+function wpYcResultHtml(r) {
+  var h = '<div class="card wide" style="border-color:' + (r.saved ? 'var(--green)' : 'var(--orange)') + '"><h2>👋 ' + (r.saved ? 'Saved' : 'Nothing was saved') + '</h2>';
+  (r.staged || []).forEach(function (s) {
+    h += '<div style="font-size:12px;line-height:1.7"><span style="color:var(--green)">✓</span> <b>' + esc(s.name) + '</b> '
+      + '<span class="dim">' + (s.is_main ? 'your main (' + esc(s.rank || 'Recruit') + ')' : 'alt (' + esc(s.rank || 'Non-raid Alt') + ')') + '</span></div>';
+  });
+  (r.conflicts || []).forEach(function (c) {
+    var why = c.reason === 'owned_by_another' ? 'already linked to another account'
+      : c.reason === 'in_opendkp_unclaimed' ? 'already on the OpenDKP roster; an officer links it'
+      : 'could not be saved';
+    h += '<div style="font-size:12px;line-height:1.7"><span style="color:var(--orange)">!</span> <b>' + esc(c.name) + '</b> <span class="dim">' + why + '</span></div>';
+  });
+  var up = r.upload;
+  if (up) {
+    if (up.held) {
+      h += '<div class="dim" style="font-size:12px;margin-top:6px">Your spellbook, inventory and Quarmy files are not sent yet: Mimic '
+        + (up.held === 'raid' ? 'is holding uploads during the raid. They go when the hold lifts.' : 'is still checking your privacy settings. They go within a few minutes.') + '</div>';
+    } else {
+      Object.keys(up.results || {}).forEach(function (n) {
+        var parts = Object.keys(up.results[n]).map(function (k) {
+          var st = up.results[n][k];
+          return (k === 'quarmy' ? 'Quarmy' : k) + ' ' + (st === 'queued' ? 'sent' : st === 'up to date' ? 'already up to date' : 'waiting');
+        });
+        h += '<div class="dim" style="font-size:12px;margin-top:4px">' + esc(n) + ': ' + esc(parts.join(', ')) + '</div>';
+      });
+    }
+  }
+  if (r.saved) h += '<div class="dim" style="font-size:11px;margin-top:8px">An officer still confirms your main in OpenDKP. Until then this is staged, not final.</div>';
+  return h + '<div style="margin-top:10px"><button type="button" data-rc-act="done">Done</button></div></div>';
+}
+function wpYcHtml() {
+  if (_wpYc.done) return wpYcResultHtml(_wpYc.done);
+  var d = _wpYc.data;
+  if (!_wpYc.pending || !d || !d.show) return '';
+  var logs = d.characters || [];
+  var names = wpYcNames();
+  var ticked = wpYcTicked();
+  var rows = names.map(function (n) {
+    var c = null;
+    logs.forEach(function (l) { if (l.name === n) c = l; });
+    var meta = c
+      ? 'last played ' + new Date(c.mtime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + ' · log ' + (c.size < 104858 ? '<0.1' : (c.size / 1048576).toFixed(1)) + ' MB'
+      : 'typed by you';
+    return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0">'
+      + '<input type="checkbox" data-rc-tick="' + esc(n) + '" aria-label="Upload ' + esc(n) + '"' + (_wpYc.sel[n] ? ' checked' : '') + '>'
+      + '<b>' + esc(n) + '</b>'
+      + '<label class="dim" style="font-size:11px;cursor:pointer"><input type="radio" name="rcMain" data-rc-main="' + esc(n) + '"' + (_wpYc.main === n && _wpYc.sel[n] ? ' checked' : '') + '> this is my main</label>'
+      + '<span class="dim" style="font-size:10px">' + esc(meta) + '</span></div>';
+  });
+  var h = '<div class="card wide" style="border-color:var(--blue)"><h2>👋 Welcome — which characters are yours?</h2>';
+  if (logs.length === 0) {
+    h += '<div style="font-size:12px;line-height:1.5;margin-bottom:6px">Mimic did not find any EverQuest logs. Mimic reads the game&rsquo;s log: '
+      + 'start EverQuest once with logging on, then press <b>Look again</b>. Or type your character&rsquo;s name below to get started. '
+      + 'A lot of things will not work until Mimic has your logs.'
+      + (d.eq_folder_known ? '' : ' Mimic does not know your EverQuest folder yet (Settings).') + '</div>';
+  } else {
+    h += '<div class="dim" style="font-size:12px;line-height:1.5;margin-bottom:6px">Mimic found these in your EverQuest logs, newest first. '
+      + 'Tick the ones that are yours and mark your main. Anything you leave out is not added to your account.</div>';
+  }
+  if (rows.length) h += '<div>' + wpMoreList('rc-chars', rows, { show: 6, noun: 'more characters' }) + '</div>';
+  h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px">'
+    + '<input id="rcTyped" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Character name" value="' + esc(_wpYc.typed) + '" style="width:170px">'
+    + '<button type="button" data-rc-act="add">Add</button>'
+    + '<button type="button" data-rc-act="again">Look again</button></div>';
+  var found = ticked.filter(function (n) { return wpYcFilesFor(n).length > 0; });
+  if (found.length) {
+    h += '<div style="font-size:12px;line-height:1.6;margin-top:10px"><span class="dim">Also found:</span> '
+      + esc(found.map(function (n) { return wpYcFilesFor(n).join(', '); }).join(', '))
+      + '<div class="dim" style="font-size:11px">Your spellbook, inventory and Quarmy export fill your spell, gear and PoP views. They go only for the characters ticked above.</div></div>';
+  }
+  if (_wpYc.msg) h += '<div style="font-size:12px;margin-top:8px;color:' + _wpYc.msg.color + '">' + esc(_wpYc.msg.text) + '</div>';
+  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">'
+    + '<button type="button" data-rc-act="save"' + (ticked.length && !_wpYc.busy ? '' : ' disabled') + '>' + (_wpYc.busy ? 'Saving…' : 'Save') + '</button>'
+    + (found.length ? '<button type="button" data-rc-act="saveup"' + (_wpYc.busy ? ' disabled' : '') + '>Save and upload these now</button>' : '')
+    + '<button type="button" data-rc-act="dismiss" class="dim" style="background:none;border:0;cursor:pointer;text-decoration:underline">Not now</button></div></div>';
+  return h;
+}
+function wpYcPaint() {
+  var el = document.getElementById('wpRecruitCard');
+  if (el) morphInto(el, wpYcHtml());
+}
+function renderRecruitCard(s) {
+  var el = document.getElementById('wpRecruitCard');
+  if (!el) return;
+  _wpYc.pending = !!(s && s.recruitCardPending);
+  if (!_wpYc.pending && !_wpYc.done) { _wpYc.data = null; _wpYc.fetchedAt = 0; morphInto(el, ''); return; }
+  if (_wpYc.pending && !_wpYc.done && !(_wpYc.data && _wpYc.data.show)) wpYcFetch(false);
+  wpYcPaint();
+}
+function wpYcAdd() {
+  var n = String(_wpYc.typed || '').trim();
+  if (!/^[A-Za-z]{2,24}$/.test(n)) { _wpYc.msg = { text: 'A character name is letters only, 2 to 24 of them.', color: 'var(--orange)' }; wpYcPaint(); return; }
+  n = n.charAt(0).toUpperCase() + n.slice(1).toLowerCase();
+  if (wpYcNames().indexOf(n) < 0) _wpYc.extra.push(n);
+  _wpYc.sel[n] = true;
+  if (!_wpYc.main || !_wpYc.sel[_wpYc.main]) _wpYc.main = n;
+  _wpYc.typed = '';
+  _wpYc.msg = null;
+  wpYcPaint();
+}
+function wpYcSave(upload) {
+  if (_wpYc.busy) return;
+  var t = wpYcTicked();
+  if (!t.length) { _wpYc.msg = { text: 'Tick at least one character.', color: 'var(--orange)' }; wpYcPaint(); return; }
+  _wpYc.busy = true;
+  _wpYc.msg = null;
+  wpYcPaint();
+  var chars = t.map(function (n) { return { name: n, is_main: n === _wpYc.main }; });
+  fetch('/api/recruit-card', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save', characters: chars, upload: !!upload }) })
+    .then(function (r) { return r.json(); })
+    .then(function (r) {
+      _wpYc.busy = false;
+      if (!r || r.ok === false) _wpYc.msg = { text: (r && r.error) || 'Could not save. Try again.', color: 'var(--red)' };
+      else if (!r.saved) {
+        _wpYc.msg = { text: 'Nothing was saved: ' + (r.conflicts || []).map(function (c) { return c.name; }).join(', ') + ' belong to someone else or need an officer.', color: 'var(--orange)' };
+      } else _wpYc.done = r;
+      wpYcPaint();
+      try { refresh(); } catch (e) { void e; }
+    })
+    .catch(function () { _wpYc.busy = false; _wpYc.msg = { text: 'Could not reach the engine. Try again.', color: 'var(--red)' }; wpYcPaint(); });
+}
+document.addEventListener('change', function (e) {
+  var t = e.target;
+  if (!t || !t.getAttribute) return;
+  var tick = t.getAttribute('data-rc-tick'), main = t.getAttribute('data-rc-main');
+  if (tick) { _wpYc.sel[tick] = !!t.checked; wpYcTicked(); wpYcPaint(); }
+  else if (main) { _wpYc.main = main; _wpYc.sel[main] = true; wpYcPaint(); }
+});
+document.addEventListener('input', function (e) {
+  if (e.target && e.target.id === 'rcTyped') _wpYc.typed = e.target.value;   // state only: typing never repaints
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target && e.target.id === 'rcTyped') { e.preventDefault(); wpYcAdd(); }
+});
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-rc-act]') : null;
+  if (!b) return;
+  var act = b.getAttribute('data-rc-act');
+  if (act === 'add') wpYcAdd();
+  else if (act === 'save') wpYcSave(false);
+  else if (act === 'saveup') wpYcSave(true);
+  else if (act === 'again') { _wpYc.msg = null; wpYcFetch(true); }
+  else if (act === 'done') { _wpYc.done = null; wpYcPaint(); }
+  else if (act === 'dismiss') {
+    fetch('/api/recruit-card', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'dismiss' }) })
+      .then(function () { _wpYc.pending = false; _wpYc.data = null; wpYcPaint(); try { refresh(); } catch (e2) { void e2; } })
+      .catch(function (err) { void err; });
+  }
 });
 
 // 🐺 Me — the member's own snapshot at the top of the Dashboard (in place of the
@@ -9289,7 +9488,7 @@ async function refresh() {
                      // #wpMeCard / #wpEngine placeholders exist; renderEngine builds the
                      // nested #wpSetupChecks/#wpEngineStats/#wpWatchedLogs children BEFORE
                      // their own fillers run later in this list).
-                     ['mecard', renderMeCard], ['engine', renderEngine], ['enginestats', renderEngineStats],
+                     ['recruitcard', renderRecruitCard], ['mecard', renderMeCard], ['engine', renderEngine], ['enginestats', renderEngineStats],
                      ['feedback', renderFeedback],
                      ['zealclients', renderZealClients],
                      ['critscard', renderCritsCard],

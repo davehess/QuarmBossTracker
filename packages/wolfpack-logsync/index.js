@@ -18407,6 +18407,10 @@ function _serializeForDashboard() {
     // Main / alt · Inventory only · Hide completely, per character on this PC (the guild lead, 2026-10-06),
     // including the ones whose log this PC no longer reads. No network, no clock: byte-stable between polls.
     characterModes:     _pcCharacterModeRows(),
+    // The first-sign-in "Your characters" card: true while it MAY apply (signed in, not saved or dismissed).
+    // The dashboard then asks GET /api/recruit-card, which is the call that reaches the guild server.
+    recruitCardPending: !_optinState.recruitCard && !!_mimicSessionToken && !_localOnly()
+      && _recruitLinkedKey !== String(_mimicSessionToken).slice(-8),
     // FB-51: null, or { character, file, silentSince } while the primary character's log has gone quiet
     // though Zeal says they are in game. silentSince is the last line's time, so the JSON is byte-stable.
     logSilent:          _logSilent,
@@ -21427,6 +21431,7 @@ function renderDash(s) {
   // renderMeCard via morphInto so the card is byte-stable between polls and
   // never drags the #dash section into a repaint. Everything it shows is LOCAL
   // (own Zeal state, watched logs, local tells, recent uploads) — no bot call.
+  h += '<div id="wpRecruitCard"></div>';   // the first-sign-in "Your characters" card; empty for everyone it does not apply to
   h += '<div id="wpMeCard" class="card wide" style="display:none"></div>';
 
   // ⚙ Engine — the logsync/sync guts (setup checklist, files tailed, queue
@@ -21609,6 +21614,204 @@ document.addEventListener('click', function (e) {
   if (!b) return;
   e.preventDefault();
   wpSetCharacterMode(b.dataset.char, b.dataset.mode);
+});
+
+// 👋 Your characters — the first-sign-in card (the guild lead, 2026-10-24: "We should be asking what characters
+// the player would like to upload (from their logs). If none show up, they can type in their character name to
+// get started … And we should ask about grabbing an upload of their quarmy/spellbook/inventory if it shows up").
+// Shown only to a signed-in person whose account has NO character linked on wolfpack.quest, until they save or
+// dismiss it. State comes from the engine (GET /api/recruit-card: the characters whose logs are in the EQ folder,
+// newest first, and which export files sit beside them); Save POSTs the ticked ones, which the guild server stages
+// as a recruit main + alts (nothing is created in OpenDKP). Own #wpRecruitCard placeholder, filled by wpYcPaint
+// via morphInto: everything the string holds is JS-side state (ticks, the main, typed names), so it is
+// byte-stable across polls and repaints only when the person acts. The date shown is the log's modified day,
+// never a "x ago", so time passing does not rewrite it.
+var _wpYc = { pending: false, data: null, fetchedAt: 0, loading: false, ready: false, sel: {}, main: '', extra: [], typed: '', busy: false, msg: null, done: null };
+function wpYcFetch(force) {
+  if (_wpYc.loading) return;
+  if (!force && _wpYc.fetchedAt && Date.now() - _wpYc.fetchedAt < 60000) return;
+  _wpYc.loading = true;
+  fetch('/api/recruit-card', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+    _wpYc.data = d;
+    // First time it shows: the newest log is ticked and is the main. Later fetches never touch the ticks.
+    if (d && d.show && !_wpYc.ready && Array.isArray(d.characters) && d.characters.length) {
+      _wpYc.ready = true;
+      _wpYc.sel[d.characters[0].name] = true;
+      _wpYc.main = d.characters[0].name;
+    }
+  }).catch(function (err) { void err; }).then(function () {
+    _wpYc.fetchedAt = Date.now();
+    _wpYc.loading = false;
+    wpYcPaint();
+  });
+}
+function wpYcNames() {
+  var d = _wpYc.data, out = [];
+  ((d && d.characters) || []).forEach(function (c) { out.push(c.name); });
+  _wpYc.extra.forEach(function (n) { if (out.indexOf(n) < 0) out.push(n); });
+  return out;
+}
+function wpYcTicked() {
+  var t = wpYcNames().filter(function (n) { return _wpYc.sel[n]; });
+  if (t.length && t.indexOf(_wpYc.main) < 0) _wpYc.main = t[0];
+  return t;
+}
+function wpYcFilesFor(name) {
+  var f = (_wpYc.data && _wpYc.data.files && _wpYc.data.files[name.toLowerCase()]) || {};
+  var out = [];
+  if (f.spellbook) out.push(name + '-Spellbook.txt');
+  if (f.inventory) out.push(name + '-Inventory.txt');
+  if (f.quarmy) out.push(name + ' Quarmy export');
+  return out;
+}
+function wpYcResultHtml(r) {
+  var h = '<div class="card wide" style="border-color:' + (r.saved ? 'var(--green)' : 'var(--orange)') + '"><h2>👋 ' + (r.saved ? 'Saved' : 'Nothing was saved') + '</h2>';
+  (r.staged || []).forEach(function (s) {
+    h += '<div style="font-size:12px;line-height:1.7"><span style="color:var(--green)">✓</span> <b>' + esc(s.name) + '</b> '
+      + '<span class="dim">' + (s.is_main ? 'your main (' + esc(s.rank || 'Recruit') + ')' : 'alt (' + esc(s.rank || 'Non-raid Alt') + ')') + '</span></div>';
+  });
+  (r.conflicts || []).forEach(function (c) {
+    var why = c.reason === 'owned_by_another' ? 'already linked to another account'
+      : c.reason === 'in_opendkp_unclaimed' ? 'already on the OpenDKP roster; an officer links it'
+      : 'could not be saved';
+    h += '<div style="font-size:12px;line-height:1.7"><span style="color:var(--orange)">!</span> <b>' + esc(c.name) + '</b> <span class="dim">' + why + '</span></div>';
+  });
+  var up = r.upload;
+  if (up) {
+    if (up.held) {
+      h += '<div class="dim" style="font-size:12px;margin-top:6px">Your spellbook, inventory and Quarmy files are not sent yet: Mimic '
+        + (up.held === 'raid' ? 'is holding uploads during the raid. They go when the hold lifts.' : 'is still checking your privacy settings. They go within a few minutes.') + '</div>';
+    } else {
+      Object.keys(up.results || {}).forEach(function (n) {
+        var parts = Object.keys(up.results[n]).map(function (k) {
+          var st = up.results[n][k];
+          return (k === 'quarmy' ? 'Quarmy' : k) + ' ' + (st === 'queued' ? 'sent' : st === 'up to date' ? 'already up to date' : 'waiting');
+        });
+        h += '<div class="dim" style="font-size:12px;margin-top:4px">' + esc(n) + ': ' + esc(parts.join(', ')) + '</div>';
+      });
+    }
+  }
+  if (r.saved) h += '<div class="dim" style="font-size:11px;margin-top:8px">An officer still confirms your main in OpenDKP. Until then this is staged, not final.</div>';
+  return h + '<div style="margin-top:10px"><button type="button" data-rc-act="done">Done</button></div></div>';
+}
+function wpYcHtml() {
+  if (_wpYc.done) return wpYcResultHtml(_wpYc.done);
+  var d = _wpYc.data;
+  if (!_wpYc.pending || !d || !d.show) return '';
+  var logs = d.characters || [];
+  var names = wpYcNames();
+  var ticked = wpYcTicked();
+  var rows = names.map(function (n) {
+    var c = null;
+    logs.forEach(function (l) { if (l.name === n) c = l; });
+    var meta = c
+      ? 'last played ' + new Date(c.mtime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + ' · log ' + (c.size < 104858 ? '<0.1' : (c.size / 1048576).toFixed(1)) + ' MB'
+      : 'typed by you';
+    return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0">'
+      + '<input type="checkbox" data-rc-tick="' + esc(n) + '" aria-label="Upload ' + esc(n) + '"' + (_wpYc.sel[n] ? ' checked' : '') + '>'
+      + '<b>' + esc(n) + '</b>'
+      + '<label class="dim" style="font-size:11px;cursor:pointer"><input type="radio" name="rcMain" data-rc-main="' + esc(n) + '"' + (_wpYc.main === n && _wpYc.sel[n] ? ' checked' : '') + '> this is my main</label>'
+      + '<span class="dim" style="font-size:10px">' + esc(meta) + '</span></div>';
+  });
+  var h = '<div class="card wide" style="border-color:var(--blue)"><h2>👋 Welcome — which characters are yours?</h2>';
+  if (logs.length === 0) {
+    h += '<div style="font-size:12px;line-height:1.5;margin-bottom:6px">Mimic did not find any EverQuest logs. Mimic reads the game&rsquo;s log: '
+      + 'start EverQuest once with logging on, then press <b>Look again</b>. Or type your character&rsquo;s name below to get started. '
+      + 'A lot of things will not work until Mimic has your logs.'
+      + (d.eq_folder_known ? '' : ' Mimic does not know your EverQuest folder yet (Settings).') + '</div>';
+  } else {
+    h += '<div class="dim" style="font-size:12px;line-height:1.5;margin-bottom:6px">Mimic found these in your EverQuest logs, newest first. '
+      + 'Tick the ones that are yours and mark your main. Anything you leave out is not added to your account.</div>';
+  }
+  if (rows.length) h += '<div>' + wpMoreList('rc-chars', rows, { show: 6, noun: 'more characters' }) + '</div>';
+  h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px">'
+    + '<input id="rcTyped" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Character name" value="' + esc(_wpYc.typed) + '" style="width:170px">'
+    + '<button type="button" data-rc-act="add">Add</button>'
+    + '<button type="button" data-rc-act="again">Look again</button></div>';
+  var found = ticked.filter(function (n) { return wpYcFilesFor(n).length > 0; });
+  if (found.length) {
+    h += '<div style="font-size:12px;line-height:1.6;margin-top:10px"><span class="dim">Also found:</span> '
+      + esc(found.map(function (n) { return wpYcFilesFor(n).join(', '); }).join(', '))
+      + '<div class="dim" style="font-size:11px">Your spellbook, inventory and Quarmy export fill your spell, gear and PoP views. They go only for the characters ticked above.</div></div>';
+  }
+  if (_wpYc.msg) h += '<div style="font-size:12px;margin-top:8px;color:' + _wpYc.msg.color + '">' + esc(_wpYc.msg.text) + '</div>';
+  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">'
+    + '<button type="button" data-rc-act="save"' + (ticked.length && !_wpYc.busy ? '' : ' disabled') + '>' + (_wpYc.busy ? 'Saving…' : 'Save') + '</button>'
+    + (found.length ? '<button type="button" data-rc-act="saveup"' + (_wpYc.busy ? ' disabled' : '') + '>Save and upload these now</button>' : '')
+    + '<button type="button" data-rc-act="dismiss" class="dim" style="background:none;border:0;cursor:pointer;text-decoration:underline">Not now</button></div></div>';
+  return h;
+}
+function wpYcPaint() {
+  var el = document.getElementById('wpRecruitCard');
+  if (el) morphInto(el, wpYcHtml());
+}
+function renderRecruitCard(s) {
+  var el = document.getElementById('wpRecruitCard');
+  if (!el) return;
+  _wpYc.pending = !!(s && s.recruitCardPending);
+  if (!_wpYc.pending && !_wpYc.done) { _wpYc.data = null; _wpYc.fetchedAt = 0; morphInto(el, ''); return; }
+  if (_wpYc.pending && !_wpYc.done && !(_wpYc.data && _wpYc.data.show)) wpYcFetch(false);
+  wpYcPaint();
+}
+function wpYcAdd() {
+  var n = String(_wpYc.typed || '').trim();
+  if (!/^[A-Za-z]{2,24}$/.test(n)) { _wpYc.msg = { text: 'A character name is letters only, 2 to 24 of them.', color: 'var(--orange)' }; wpYcPaint(); return; }
+  n = n.charAt(0).toUpperCase() + n.slice(1).toLowerCase();
+  if (wpYcNames().indexOf(n) < 0) _wpYc.extra.push(n);
+  _wpYc.sel[n] = true;
+  if (!_wpYc.main || !_wpYc.sel[_wpYc.main]) _wpYc.main = n;
+  _wpYc.typed = '';
+  _wpYc.msg = null;
+  wpYcPaint();
+}
+function wpYcSave(upload) {
+  if (_wpYc.busy) return;
+  var t = wpYcTicked();
+  if (!t.length) { _wpYc.msg = { text: 'Tick at least one character.', color: 'var(--orange)' }; wpYcPaint(); return; }
+  _wpYc.busy = true;
+  _wpYc.msg = null;
+  wpYcPaint();
+  var chars = t.map(function (n) { return { name: n, is_main: n === _wpYc.main }; });
+  fetch('/api/recruit-card', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save', characters: chars, upload: !!upload }) })
+    .then(function (r) { return r.json(); })
+    .then(function (r) {
+      _wpYc.busy = false;
+      if (!r || r.ok === false) _wpYc.msg = { text: (r && r.error) || 'Could not save. Try again.', color: 'var(--red)' };
+      else if (!r.saved) {
+        _wpYc.msg = { text: 'Nothing was saved: ' + (r.conflicts || []).map(function (c) { return c.name; }).join(', ') + ' belong to someone else or need an officer.', color: 'var(--orange)' };
+      } else _wpYc.done = r;
+      wpYcPaint();
+      try { refresh(); } catch (e) { void e; }
+    })
+    .catch(function () { _wpYc.busy = false; _wpYc.msg = { text: 'Could not reach the engine. Try again.', color: 'var(--red)' }; wpYcPaint(); });
+}
+document.addEventListener('change', function (e) {
+  var t = e.target;
+  if (!t || !t.getAttribute) return;
+  var tick = t.getAttribute('data-rc-tick'), main = t.getAttribute('data-rc-main');
+  if (tick) { _wpYc.sel[tick] = !!t.checked; wpYcTicked(); wpYcPaint(); }
+  else if (main) { _wpYc.main = main; _wpYc.sel[main] = true; wpYcPaint(); }
+});
+document.addEventListener('input', function (e) {
+  if (e.target && e.target.id === 'rcTyped') _wpYc.typed = e.target.value;   // state only: typing never repaints
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target && e.target.id === 'rcTyped') { e.preventDefault(); wpYcAdd(); }
+});
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-rc-act]') : null;
+  if (!b) return;
+  var act = b.getAttribute('data-rc-act');
+  if (act === 'add') wpYcAdd();
+  else if (act === 'save') wpYcSave(false);
+  else if (act === 'saveup') wpYcSave(true);
+  else if (act === 'again') { _wpYc.msg = null; wpYcFetch(true); }
+  else if (act === 'done') { _wpYc.done = null; wpYcPaint(); }
+  else if (act === 'dismiss') {
+    fetch('/api/recruit-card', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'dismiss' }) })
+      .then(function () { _wpYc.pending = false; _wpYc.data = null; wpYcPaint(); try { refresh(); } catch (e2) { void e2; } })
+      .catch(function (err) { void err; });
+  }
 });
 
 // 🐺 Me — the member's own snapshot at the top of the Dashboard (in place of the
@@ -28778,7 +28981,7 @@ async function refresh() {
                      // #wpMeCard / #wpEngine placeholders exist; renderEngine builds the
                      // nested #wpSetupChecks/#wpEngineStats/#wpWatchedLogs children BEFORE
                      // their own fillers run later in this list).
-                     ['mecard', renderMeCard], ['engine', renderEngine], ['enginestats', renderEngineStats],
+                     ['recruitcard', renderRecruitCard], ['mecard', renderMeCard], ['engine', renderEngine], ['enginestats', renderEngineStats],
                      ['feedback', renderFeedback],
                      ['zealclients', renderZealClients],
                      ['critscard', renderCritsCard],
@@ -37227,6 +37430,22 @@ function startWebDashboard(port) {
         res.writeHead(out.ok ? 200 : 400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         return res.end(JSON.stringify(out));
       }
+      // First sign-in "Your characters" card (the guild lead, 2026-10-24). GET says whether to show it and
+      // what goes in it; POST saves ({action:'save'}) or dismisses ({action:'dismiss'}). Always 200 with the
+      // reason in the body on a miss, like the routes above.
+      if (req.url === '/api/recruit-card' && req.method === 'GET') {
+        const out = await recruitCardPayload();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(out));
+      }
+      if (req.url === '/api/recruit-card' && req.method === 'POST') {
+        let payload;
+        try { payload = JSON.parse(await _readBody(req, 8 * 1024) || '{}'); }
+        catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error: 'invalid json' })); }
+        const out = await recruitCardAct(payload);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(out));
+      }
 
       // ── Personal triggers CRUD ─────────────────────────────────────────────
       // The agent already loads <state-dir>/personal_triggers.json on startup
@@ -38573,6 +38792,9 @@ const _optinState = {
   // Per-character mode chosen on this PC (persisted): lowercase name → { mode, at, synced }. `synced`
   // is false when the website never took the choice (see setCharacterMode).
   characterModes: {},
+  // The first-sign-in "Your characters" card (persisted): null until the person saves or dismisses it, then
+  // { state: 'saved' | 'dismissed', at } and the card never comes back.
+  recruitCard: null,
   // #113 per-user Extended Target pref: exclude other Mimics' targets when the
   // uploader isn't in my zone. Default ON (splinter groups elsewhere stop
   // polluting the list). Read by fetchExtendedTarget → passed to the bot as
@@ -38634,6 +38856,7 @@ function _loadOptInState() {
     _optinState.importedPaths        = Array.isArray(raw.importedPaths) ? raw.importedPaths.filter(e => e && e.path) : [];
     _optinState.hiddenLoadoutChars   = new Set((raw.hiddenLoadoutChars || []).map(s => s.toLowerCase()));
     _optinState.characterModes       = _cleanCharacterModes(raw.characterModes);
+    _optinState.recruitCard          = _cleanRecruitCard(raw.recruitCard);
     // #113 default ON: absent (old files) → true; only an explicit false disables.
     _optinState.extSameZoneOnly      = (raw.extSameZoneOnly !== false);
     if (typeof raw.lootAuctionTts === 'boolean') _optinState.lootAuctionTts = raw.lootAuctionTts;
@@ -38658,6 +38881,7 @@ function _saveOptInState() {
       importedPaths:      _optinState.importedPaths || [],
       hiddenLoadoutChars: [...(_optinState.hiddenLoadoutChars || [])],
       characterModes:     _optinState.characterModes || {},
+      recruitCard:        _optinState.recruitCard || null,
       extSameZoneOnly:    _optinState.extSameZoneOnly !== false,
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
       lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
@@ -39355,15 +39579,17 @@ function _quarmyPrefsBlock(lowerName) {
   return !!(p && (p.exclude_inventory || p.exclude_from_stats));
 }
 
-function scanQuarmyExports() {
+// `opts` ({ only: Set of lowercase names, dir }) is for the first-sign-in card's "Upload these now" (see
+// _recruitUploadNow); the timers call with none and scan everything in the first watched log's folder, as before.
+function scanQuarmyExports(opts) {
   if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
   // Hard gate: prefs must have loaded at least once this session so
   // exclude_inventory is KNOWN before any gear leaves the box. (No botUrl →
   // no prefs poll → no uploads, which is also correct.)
   if (!stats.characterPrefsCheckedAt) return;
   const firstLog = stats.watchedLogs[0]?.logPath;
-  if (!firstLog) return;
-  const dir = path.dirname(firstLog);
+  if (!firstLog && !(opts && opts.dir)) return;
+  const dir = (opts && opts.dir) || path.dirname(firstLog);
   let entries;
   try { entries = fs.readdirSync(dir); } catch { return; }
 
@@ -39376,6 +39602,7 @@ function scanQuarmyExports() {
     const m = name.match(QUARMY_FILENAME_RX);
     if (!m) continue;
     const fileChar = m[1].toLowerCase();
+    if (opts && opts.only && !opts.only.has(fileChar)) continue;
     if (envExcluded.has(fileChar) || _quarmyPrefsBlock(fileChar)) continue;
     const fullPath = path.join(dir, name);
     try {
@@ -39468,12 +39695,12 @@ function _spellbookChecksum(spells) {
   return 'sb' + spells.length + '-' + crypto.createHash('sha1').update(ids).digest('hex').slice(0, 16);
 }
 
-function scanSpellbookFiles() {
+function scanSpellbookFiles(opts) {   // opts: see scanQuarmyExports
   if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
   if (!stats.characterPrefsCheckedAt) return;   // exclude_inventory must be known first
   const firstLog = stats.watchedLogs[0]?.logPath;
-  if (!firstLog) return;
-  const dir = path.dirname(firstLog);
+  if (!firstLog && !(opts && opts.dir)) return;
+  const dir = (opts && opts.dir) || path.dirname(firstLog);
   let entries;
   try { entries = fs.readdirSync(dir); } catch { return; }
   const envExcluded = new Set(
@@ -39485,6 +39712,7 @@ function scanSpellbookFiles() {
     if (!m) continue;
     const character = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
     const lower = character.toLowerCase();
+    if (opts && opts.only && !opts.only.has(lower)) continue;
     if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;
     const fullPath = path.join(dir, name);
     try {
@@ -39569,12 +39797,12 @@ function _inventoryChecksum(rows) {
   return 'inv' + rows.length + '-' + crypto.createHash('sha1').update(parts).digest('hex').slice(0, 16);
 }
 
-function scanInventoryUploads() {
+function scanInventoryUploads(opts) {   // opts: see scanQuarmyExports
   if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
   if (!stats.characterPrefsCheckedAt) return;   // exclude_inventory must be known first
   const firstLog = stats.watchedLogs[0]?.logPath;
-  if (!firstLog) return;
-  const dir = path.dirname(firstLog);
+  if (!firstLog && !(opts && opts.dir)) return;
+  const dir = (opts && opts.dir) || path.dirname(firstLog);
   let entries;
   try { entries = fs.readdirSync(dir); } catch { return; }
   const envExcluded = new Set(
@@ -39586,6 +39814,7 @@ function scanInventoryUploads() {
     if (!m) continue;
     const character = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
     const lower = character.toLowerCase();
+    if (opts && opts.only && !opts.only.has(lower)) continue;
     if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;   // prefs can flip — never fingerprint
     const fullPath = path.join(dir, name);
     try {
@@ -46193,6 +46422,173 @@ async function characterModesPayload({ fresh = false } = {}) {
   };
 }
 // ── end character modes ─────────────────────────────────────────────────────────────────────────────
+
+// ── First sign-in: "Your characters" (the guild lead, 2026-10-24) ────────────────────────────────────
+// "We should be asking what characters the player would like to upload (from their logs). If none show up,
+// they can type in their character name to get started. A lot of things won't work without logs. And we
+// should ask about grabbing an upload of their quarmy/spellbook/inventory if it shows up." A new member who
+// signs in has NO character linked to their Discord account, so ownership checks, the PoP spell view and the
+// Voice tab all say "not your character". This card lists the characters whose logs are in the EQ folder
+// (newest first, so a main reads apart from a forgotten alt), lets the person tick theirs and pick the main,
+// and POSTs them to the bot's /characters/stage, which stages a recruit main + alts (nothing is created in
+// OpenDKP). "Upload these now" then runs the SAME spellbook / inventory / Quarmy scans the timers run, limited
+// to the staged names. The signal to show it is the existing GET /character-prefs?mine=1: an empty family.
+// Saving or dismissing is remembered in the opt-in file and the card never returns.
+const RECRUIT_LOG_RX = /^eqlog_([A-Za-z]{2,24})_pq\.proj\.txt$/i;
+const RECRUIT_NAME_RX = /^[A-Za-z]{2,24}$/;
+const RECRUIT_MAX_NAMES = 12;
+let _recruitLinkedKey = '';   // the sign-in (token tail) the guild server already showed a linked character for: the card is moot for it
+function _cleanRecruitCard(raw) {
+  if (!raw || typeof raw !== 'object' || (raw.state !== 'saved' && raw.state !== 'dismissed')) return null;
+  return { state: raw.state, at: Number(raw.at) || 0 };
+}
+function _recruitCap(n) { return n.charAt(0).toUpperCase() + n.slice(1).toLowerCase(); }
+// Folders worth reading: every EQ folder Mimic knows and each watched log's folder, with the Logs/ child of an
+// install and the install of a Logs/ folder (the export files sit beside either).
+function _recruitDirs() {
+  const dirs = new Set();
+  const add = (d) => {
+    if (!d) return;
+    dirs.add(d);
+    dirs.add(/^logs$/i.test(path.basename(d)) ? path.dirname(d) : path.join(d, 'Logs'));
+  };
+  try { for (const d of _eqSetupDirs()) add(d); } catch { void 0; }
+  for (const w of (stats.watchedLogs || [])) if (w && w.logPath) add(path.dirname(w.logPath));
+  return [...dirs];
+}
+// What is in `dirs` (fs is injected for the test): the characters with a standard log, newest log first, and
+// which export files sit beside any of them, by lowercase name. Backup copies (eqlog_Name2_..., .txt2) are not
+// characters: the name pattern is letters only and the file name must end exactly in .txt.
+function _recruitScan(dirs, fsx) {
+  const logs = new Map();
+  const files = {};
+  const mark = (name, kind) => { const lc = name.toLowerCase(); (files[lc] = files[lc] || {})[kind] = true; };
+  for (const dir of dirs) {
+    let entries;
+    try { entries = fsx.readdirSync(dir); } catch { continue; }
+    for (const file of entries) {
+      let m = file.match(RECRUIT_LOG_RX);
+      if (m) {
+        let st;
+        try { st = fsx.statSync(path.join(dir, file)); } catch { continue; }
+        const lc = m[1].toLowerCase();
+        const prev = logs.get(lc);
+        if (!prev || st.mtimeMs > prev.mtime) logs.set(lc, { name: _recruitCap(m[1]), mtime: Math.round(st.mtimeMs), size: st.size });
+        continue;
+      }
+      if ((m = file.match(SPELLBOOK_FILENAME_RX))) mark(m[1], 'spellbook');
+      else if ((m = file.match(INVENTORY_FILENAME_RX))) mark(m[1], 'inventory');
+      else if ((m = file.match(QUARMY_FILENAME_RX))) mark(m[1], 'quarmy');
+    }
+  }
+  const characters = [...logs.values()].sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name));
+  return { characters, files };
+}
+// Run the three existing export scans for `names` now, in every folder an export file can sit in. They keep
+// every rule of the timers' runs (raid hold, the privacy-prefs gate, exclusions, checksums), so the answer per
+// file is read back from their checksum maps: 'queued' (this call sent it), 'up to date' (already sent, nothing
+// changed) or 'waiting' (a gate held it, or the file had nothing to send). `held` names a gate that stopped the
+// whole run; the timers send the files later on their own.
+function _recruitUploadNow(names, found) {
+  const only = new Set(names.map(n => n.toLowerCase()));
+  const maps = { spellbook: _spellbookUploaded, inventory: _inventoryUploaded, quarmy: _quarmyUploaded };
+  const scans = { spellbook: scanSpellbookFiles, inventory: scanInventoryUploads, quarmy: scanQuarmyExports };
+  const before = {};
+  for (const k of Object.keys(maps)) before[k] = Object.assign({}, maps[k]);
+  const held = _raidHold ? 'raid' : (!stats.characterPrefsCheckedAt ? 'prefs' : null);
+  if (!held) {
+    for (const dir of _recruitDirs()) for (const k of Object.keys(scans)) { try { scans[k]({ only, dir }); } catch { void 0; } }
+  }
+  const results = {};
+  for (const n of names) {
+    const lc = n.toLowerCase();
+    for (const k of Object.keys(maps)) {
+      if (!(found[lc] && found[lc][k])) continue;
+      (results[n] = results[n] || {})[k] = maps[k][lc] !== before[k][lc] ? 'queued' : (maps[k][lc] ? 'up to date' : 'waiting');
+    }
+  }
+  return { held, results };
+}
+// POST /characters/stage → { ok, staged, conflicts } or { ok: false, reason }. Never throws.
+async function _postRecruitStage(characters) {
+  const why = _characterModesWhyNot();
+  if (why) return { ok: false, reason: why };
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const r = await fetch(base + '/characters/stage', {
+      method: 'POST',
+      headers: { ..._characterPrefsHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ characters }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (r.status === 401) return { ok: false, reason: 'signed-out' };
+    if (r.status === 400) return { ok: false, reason: 'bad-request' };
+    if (r.status === 403) return { ok: false, reason: 'not-linked' };
+    if (r.status === 404) return { ok: false, reason: 'bot-old' };
+    if (!r.ok) return { ok: false, reason: 'offline' };
+    const j = await r.json().catch(() => null);
+    // An older bot's catch-all answers 200 'OK' to any unknown route: only { ok, staged[] } counts.
+    if (!j || j.ok !== true || !Array.isArray(j.staged)) return { ok: false, reason: 'bot-old' };
+    return { ok: true, staged: j.staged, conflicts: Array.isArray(j.conflicts) ? j.conflicts : [] };
+  } catch { return { ok: false, reason: 'offline' }; }
+}
+const RECRUIT_NOTES = {
+  local:        'Local mode: nothing is sent to the guild server.',
+  'signed-out': 'Sign in to Wolf Pack first (Settings), then pick your characters.',
+  'bot-old':    'The guild server needs its update before this can save. Try again later.',
+  'not-linked': 'Your Discord account is not set up on wolfpack.quest yet. Ask an officer.',
+  offline:      'Could not reach wolfpack.quest. Try again in a minute.',
+  'bad-request': 'That list was not accepted. Check the names (letters only) and try again.',
+};
+// GET /api/recruit-card — whether to show the card and what goes in it. Only reaches the guild server when
+// nothing local already settles it (saved/dismissed, local mode, signed out).
+async function recruitCardPayload({ fresh = false } = {}) {
+  const none = (reason) => ({ show: false, reason, characters: [], files: {}, eq_folder_known: false });
+  if (_optinState.recruitCard) return none(_optinState.recruitCard.state);
+  const why = _characterModesWhyNot();
+  if (why) return none(why);
+  const mine = await fetchCharacterModesMine({ fresh });
+  if (!mine.ok) return none(mine.reason);
+  if (mine.characters.length > 0) { _recruitLinkedKey = String(_mimicSessionToken).slice(-8); return none('linked'); }
+  const scan = _recruitScan(_recruitDirs(), fs);
+  return { show: true, reason: null, characters: scan.characters, files: scan.files, eq_folder_known: _eqSetupDirs().length > 0 };
+}
+// POST /api/recruit-card { action: 'save', characters: [{ name, is_main }], upload?: boolean } | { action: 'dismiss' }
+async function recruitCardAct(body) {
+  const act = body && body.action;
+  if (act === 'dismiss') {
+    _optinState.recruitCard = { state: 'dismissed', at: Date.now() };
+    _saveOptInState();
+    _stateJsonCache = { at: 0, body: null };
+    return { ok: true, dismissed: true };
+  }
+  if (act !== 'save') return { ok: false, error: 'bad action' };
+  const list = Array.isArray(body.characters) ? body.characters : [];
+  if (list.length === 0) return { ok: false, error: 'Pick at least one character.' };
+  if (list.length > RECRUIT_MAX_NAMES) return { ok: false, error: 'At most ' + RECRUIT_MAX_NAMES + ' characters.' };
+  const chars = [];
+  for (const c of list) {
+    const name = String(c && c.name != null ? c.name : '').trim();
+    if (!RECRUIT_NAME_RX.test(name)) return { ok: false, error: '"' + name.slice(0, 24) + '" is not a character name (letters only).' };
+    chars.push({ name: _recruitCap(name), is_main: !!(c && c.is_main === true) });
+  }
+  const sent = await _postRecruitStage(chars);
+  if (!sent.ok) return { ok: false, reason: sent.reason, error: RECRUIT_NOTES[sent.reason] || RECRUIT_NOTES.offline };
+  const saved = sent.staged.length > 0;
+  let upload = null;
+  if (saved) {
+    _optinState.recruitCard = { state: 'saved', at: Date.now() };
+    _saveOptInState();
+    _modesMineCache = null;                       // the family is no longer empty: the character list shows it now
+    _stateJsonCache = { at: 0, body: null };
+    if (body.upload === true) {
+      upload = _recruitUploadNow(sent.staged.map(s => s.name), _recruitScan(_recruitDirs(), fs).files);
+    }
+    try { scheduleRender(); } catch { void 0; }
+  }
+  return { ok: true, saved, staged: sent.staged, conflicts: sent.conflicts, upload };
+}
+// ── end first sign-in card ──────────────────────────────────────────────────────────────────────────
 
 // Poll the bot for officer-tuned guild triggers. We refresh stats.guildTriggers
 // every ~10 min and merge with personal triggers loaded from disk in
