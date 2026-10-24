@@ -12659,3 +12659,15 @@ Picked on the Decision Desk (its picks are the record; this is the pointer).
 - **Where it landed:** drafts and stills in the session scratchpad and on the Decision Desk's Brand & media tab; nothing on the
   site yet. **Next:** the guild lead watches the storyboard cut; then the final pass (captures in the panels, a 9:16 cut, a short
   hero loop for the strip stage).
+
+### 425. The screen reader: Mimic reads the screen where there is no pipe (2026-10-24, design only)
+The guild lead: *"if we need to read the screen perhaps that is a good way for us to operate moving forward. I suppose we need
+OCR locally? not every game has a named pipe"*, then *"EQ without Zeal first... wow second. perhaps gta6 afterwards"*.
+- **The call:** screen reading becomes the third input beside the log and the Zeal pipe, never a replacement. Order: EverQuest
+  without Zeal first (the pipe scores every read), WoW second, GTA 6 afterwards and only after its anti-cheat terms are read.
+- **Rules that ship with it:** regions only, never a full frame stored or uploaded (the chat window holds tells; the same
+  chokepoint as the log filter); reading sends nothing into the game; regions follow the game's own window layout from the ini
+  Mimic already reads; it works where the overlays work (windowed and borderless).
+- **Open:** the engine (A Windows' built-in OCR, recommended; B a small ONNX model; C template matching for bars and icons
+  alongside), on the Decision Desk with a picture each. A two-day dry run on the guild lead's PC decides A vs B with numbers.
+- **Where it landed:** `docs/DESIGN-screen-reader.md`. Nothing built.
