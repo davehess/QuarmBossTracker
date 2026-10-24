@@ -100,6 +100,9 @@ writes.
   is deleted on exchange. Trust model: the officer attests the identity —
   same trust as this page's character↔member links; target must be a current
   `wolfpack_members` row. Action: `web/app/admin/links/mimic-link-actions.ts`.
+  `/admin/links` also carries a "Staged by their owner, not in OpenDKP yet" queue
+  (web 2.1.16): `characters` rows with `registered_via_web_at` set, `discord_id` set
+  and `opendkp_id` NULL, newest first, with the same Register row as "Not in OpenDKP".
 - **Web sign-in**: Supabase Auth Discord OAuth; callback checks guild
   membership + role names (`ALLOWED_ROLE_NAMES` via `wolfpack_roles`).
   Officer gating = `isOfficer()` per request server-side.

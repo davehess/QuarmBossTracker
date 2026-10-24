@@ -502,7 +502,7 @@ export default async function AdminLinksPage({
   const showIgnored  = show === 'ignored'  || show === 'all';
 
   const admin = supabaseAdmin();
-  const [{ data: chars }, { data: members }, { data: reqs }, uploads, { data: whoRows }, { data: registerReqs }] = await Promise.all([
+  const [{ data: chars }, { data: members }, { data: reqs }, uploads, { data: whoRows }, { data: registerReqs }, { data: stagedRaw }] = await Promise.all([
     admin
       .from('characters')
       .select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored, opendkp_id')
@@ -540,6 +540,19 @@ export default async function AdminLinksPage({
       .eq('guild_id', GUILD_TAG)
       .order('created_at', { ascending: false })
       .limit(100),
+    // Staged by their owner: a character Mimic's first sign-in filed (owner set,
+    // registered_via_web_at stamped) that OpenDKP does not have yet. discord_id is
+    // NOT NULL here, so a row can never also sit in the "awaiting claim" list
+    // (discord_id IS NULL). link_ignored keeps the Ignore button honest.
+    admin
+      .from('characters')
+      .select('name, rank, class, discord_id, registered_via_web_at')
+      .eq('guild_id', GUILD_TAG)
+      .not('registered_via_web_at', 'is', null)
+      .is('opendkp_id', null)
+      .not('discord_id', 'is', null)
+      .eq('link_ignored', false)
+      .order('registered_via_web_at', { ascending: false }),
   ]);
   const pendingRequests = (reqs ?? []) as LinkRequest[];
 
@@ -766,6 +779,30 @@ export default async function AdminLinksPage({
       rank:            u.level == null ? '?' : (u.level >= 46 ? 'Raid Alt' : 'Non-raid Alt / Trader'),
       parentName:      u.parentName,
       parentOpenDkpId: u.parentOpenDkpId,
+    };
+  });
+
+  // Staged-by-owner rows ride the same Register row as "Not in OpenDKP": owner,
+  // class and the family root resolve the same way. A recruit that is its own
+  // family root gets no parent (it would otherwise be filed "alt of" itself).
+  const stagedView = ((stagedRaw ?? []) as {
+    name: string; rank: string | null; class: string | null;
+    discord_id: string; registered_via_web_at: string;
+  }[]).map(s => {
+    const m = memberById.get(s.discord_id);
+    const parent = parentByDid.get(s.discord_id);
+    const selfRoot = !parent || parent.name.toLowerCase() === s.name.toLowerCase();
+    const who = whoByName.get(s.name.toLowerCase());
+    return {
+      name:            s.name,
+      rank:            s.rank,
+      cls:             s.class ?? who?.cls ?? null,
+      level:           who?.level ?? null,
+      did:             s.discord_id,
+      ownerLabel:      m ? memberLabel(m) : s.discord_id,
+      stagedAt:        s.registered_via_web_at,
+      parentName:      selfRoot ? null : parent.name,
+      parentOpenDkpId: selfRoot ? null : parent.opendkpId,
     };
   });
 
@@ -1285,6 +1322,55 @@ export default async function AdminLinksPage({
           <div className="p-4 text-xs text-dim">Every uploading character is in OpenDKP. 🎉</div>
         ) : (
           <UnregisteredTable rows={unregisteredView} />
+        )}
+      </section>
+
+      {/* Staged by their owner — filed from Mimic's first sign-in, owner already
+          set, nothing in OpenDKP yet. Same Register row as the section above. */}
+      <section className="bg-panel border border-border rounded-lg">
+        <h3 className="text-sm text-orange px-4 py-3 border-b border-border">
+          🌱 Staged by their owner, not in OpenDKP yet {stagedView.length > 0 && <span className="text-gold">({stagedView.length})</span>}
+        </h3>
+        <div className="p-4 text-xs text-dim leading-6 border-b border-border/40">
+          Characters a new member&apos;s Mimic filed on first sign-in. The owner is already linked; nothing
+          exists in OpenDKP until an officer registers it. Newest first. Register queues the same bot job as
+          the list above; Ignore parks a name that isn&apos;t theirs.
+        </div>
+        {stagedView.length === 0 ? (
+          <div className="p-4 text-xs text-dim">Nothing staged. 🎉</div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead className="text-dim hidden sm:table-header-group">
+              <tr className="border-b border-border">
+                <th className="text-left px-3 py-2 font-normal">Character</th>
+                <th className="text-left px-3 py-2 font-normal">Owner</th>
+                <th className="text-left px-3 py-2 font-normal">Rank / Class</th>
+                <th className="text-left px-3 py-2 font-normal">Staged</th>
+                <th className="text-left px-3 py-2 font-normal">Register</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stagedView.map(s => (
+                <tr key={s.name} className="border-b border-border/40 hover:bg-[#1a212c]">
+                  <td className="px-3 py-2 text-text font-medium">{s.name}</td>
+                  <td className="px-3 py-2 text-dim">{s.ownerLabel}</td>
+                  <td className="px-3 py-2 text-dim">{s.rank || '—'} · {s.cls || '—'}</td>
+                  <td className="px-3 py-2 text-dim">{new Date(s.stagedAt).toLocaleString()}</td>
+                  <td className="px-3 py-2">
+                    <OpenDkpRegisterRow
+                      name={s.name}
+                      observedClass={s.cls}
+                      observedLevel={s.level}
+                      observedRace={null}
+                      parentName={s.parentName}
+                      parentOpenDkpId={s.parentOpenDkpId}
+                      uploaderDiscordId={s.did}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </section>
 
