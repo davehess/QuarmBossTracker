@@ -121,7 +121,7 @@ is ephemeral. It is a desktop-session job.
 | **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
 | **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
 | **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
-| **raidmimic.com's living mimic: the storyboard cut** (§424) | Gemini stills + LTX beats built in a session scratchpad; picks recorded (strip stage B, icons V2 on beta 2.1.18, hero V1, desk V3) | the guild lead: watch the storyboard cut; a session: final pass (real captures in the monitor panels, 9:16, hero loop), to beta |
+| **raidmimic.com's living mimic: vertical, in the real room, sweet voice** (§424, §427) | Story on beta (web 2.1.22, `?v=motion`); the new-look cut (ears on the front corners, mascot low and clear of the screen, levelled sound + greeting) rendering | the guild lead: pick the greeting voice (Leda recommended); a session: the new-look cut to beta, then the graduation to main |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
@@ -12686,7 +12686,35 @@ quarmy/spellbook/inventory if it shows up."*
   appear in either `/admin/links` queue in `web/lib/admin-queue.ts`. "Not in OpenDKP" lists only names with NO `characters` row, and
   "Registered, awaiting OpenDKP claim" requires `discord_id IS NULL`; a staged recruit has a row AND a discord_id. An officer finds it
   under `/admin/links?show=linked`. A fix is a small web change (list `registered_via_web_at` rows with `opendkp_id IS NULL`).
-- **Where it landed:** draft branch `draft/recruit-onboarding`, not pushed. Bot-side (`main`): `utils/recruitStage.js`, `index.js`
-  (route), root `package.json`. Agent-side (`beta`): `packages/wolfpack-logsync/index.js` + `dashboard.html`. Tests:
-  `test/recruit-stage.test.js`, `test/recruit-card-agent.test.js`. The agent half needs the bot half live, or the card's Save answers
-  "the guild server needs its update" and nothing is remembered.
+- **Where it landed (shipped the same night):** bot 4.0.13 on `main` (`utils/recruitStage.js`, the route in `index.js`;
+  `test/recruit-stage.test.js`), agent 4.0.21 on `beta` (`packages/wolfpack-logsync/index.js` + `dashboard.html`;
+  `test/recruit-card-agent.test.js`), and web 2.1.23 on `main` adds the `/admin/links` queue "Staged by their owner, not in
+  OpenDKP yet" (`test/admin-links-staged.test.js`), which closes the gap above. The bot half went first; the card's Save needs it.
+  The report that prompted it was closed as implemented by the bot commit. Still open: a rank-aware Register button on that
+  queue (the shared row offers Raid Alt / Trader only); the officer queue in `web/lib/admin-queue.ts` still has no staged state.
+- **The member who hit it** was fixed by hand first (class from the Discord class role, rank Recruit, main = self, Discord id
+  linked); the spellbook had uploaded all along.
+
+### 427. The living mimic goes vertical, in the real gamer room, with a sweet voice (2026-10-24)
+The guild lead, on the first vertical cut: *"I don't like the way the vertical cut looks ... The ears should be on the corners like
+this version ... Instead of the screaming noises, please instead remove those super loud noises, equalize the whole thing, and have
+it say in a new robotic sounding cheery voice 'Hi! I'm your new raid mimic! Lets get you set up!'"*, then *"he shouldn't be jumping
+in front of the screen, he should be slightly further up the desk out of the way"*, then *"The voices are too robotic, it should be
+a sweet little voice, but just a little warble variability, just for pzazz"*. Earlier the same day: the realistic-style references
+were "not what I envision ... I like our cartoony mimic, but the background and the game screen looks cool, and vertical is great
+for both mobile and desktop"; camera pick **A** (front, screen readable); "re-render the whole story in the new look".
+- **The look:** our cartoon mascot (never the realistic one) in the guild lead's gamer-room reference (posters, big game screen,
+  RGB keyboard, headset), **9:16**, camera from the front. The mascot sits low on the desk, smaller, with a clear band between its
+  ears and the monitor, so the whole screen stays readable; **the ears stand on the lid's front top corners** (the official
+  mascot anatomy), never at the back. Gemini's edit mode would not move or shrink the chest, so the base frame was built by hand:
+  the mascot cut out, the desk painted in behind it, the mascot placed lower and smaller; every other still is a Gemini edit of
+  that frame, so the composition cannot drift. Hops are written as small and low, and a beat whose box turned into a furry animal
+  (the model's favourite failure, DECISIONS §424) is re-rolled with "it remains a hard-edged wooden box" in the prompt.
+- **The sound:** no howls or screams. The soundtrack is ducked where they were, compressed and loudness-normalised, and the greeting
+  "Hi! I'm your new Raid Mimic! Let's get you set up!" plays at 8 s as the face appears. **The voice is a sweet one with only a
+  hint of warble** (vibrato plus a faint shimmer, no ring-mod, no vocoder); the three robot treatments on the Decision Desk are
+  retired for the mascot. Voice pick pending between Leda (recommended), Aoede and Kore.
+- **The page:** headline on the left and the 9:16 video on the right on a desktop (the kit's "room for a headline" rule), full
+  width on a phone, the strip of real captures below (web 2.1.22 on beta; the new-look cut replaces its files).
+- **Where it landed:** the first vertical cut on beta (web 2.1.22); the new-look cut in progress in the session scratchpad, to beta
+  as the next web patch, and on the Decision Desk's Brand & media tab with the base frame and the voice takes.
