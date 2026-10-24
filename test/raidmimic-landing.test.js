@@ -1018,6 +1018,20 @@ describe('the motion preview (?v=motion)', () => {
     expect(replay).toMatch(/setEnded\(false\);/);
     expect(replay).toMatch(/sync\(\);/);
   });
+  it('the story has sound: it autoplays muted, and a real "Sound on" button (always there, the other corner) unmutes it', () => {
+    expect(stageCode).toMatch(/v\.muted = true;/);
+    const btn = stageCode.match(/(<button type="button" onClick=\{toggleSound\}[\s\S]*?<\/button>)/)[1];
+    expect(btn).toMatch(/aria-pressed=\{sound\}/);
+    expect(btn).toMatch(/absolute bottom-2 left-2/);
+    expect(btn).toMatch(/min-h-\[44px\]/);
+    expect(btn).toMatch(/\{sound \? 'Sound off' : 'Sound on'\}/);
+    const toggle = stageCode.match(/const toggleSound = \(\) => \{([\s\S]*?)\n  \};/)[1];
+    expect(toggle).toMatch(/v\.muted = sound;/);                           // pressing it flips the element, not just the label
+    expect(toggle).toMatch(/setSound\(!sound\);/);
+    for (const f of ['story-1920.mp4', 'story-1280.mp4']) {
+      expect(fs.readFileSync(path.join(ROOT, M + f)).includes(Buffer.from('mp4a')), f + ' has an audio track').toBe(true);
+    }
+  });
   it('pauses off-screen and in a hidden tab, and under reduced motion plays nothing and fetches nothing (the poster stays, and so does the strip)', () => {
     expect(stageCode).toMatch(/new IntersectionObserver\(/);
     expect(stageCode).toMatch(/visibilitychange/);

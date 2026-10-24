@@ -1205,7 +1205,8 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   the Vercel redirects to eqmimic.quest come off.
 - **`?v=motion` preview, "B — Strip" (web 2.1.19, live screen 2.1.20, beta only, the guild lead 2026-10-24):** a 16:9 story video
   (a chest comes alive and the real overlays end up on its monitor, over a live raid playing on the screen the whole time; the
-  screen is one canvas warped onto the monitor, so the overlays sit exactly in their frames) plays once, then swaps to a seamless six-second loop, with a "Watch again" button;
+  screen is one canvas warped onto the monitor, so the overlays sit exactly in their frames; sound effects since 2.1.21, from an
+  LTX audio-only retake of the finished picture, unmuted by a "Sound on" button) plays once, then swaps to a seamless six-second loop, with a "Watch again" button;
   the four real captures sit in a strip below it (four across, two by two on a phone). `_landing/MotionStage.tsx`, files in
   `web/public/raidmimic/motion/` (`story-` and `loop-` at 1920 and 1280, `story-poster.jpg`); tests in `test/raidmimic-landing.test.js`.
 
