@@ -934,10 +934,12 @@ describe('the motion preview (?v=motion)', () => {
     const i = b.indexOf('tkhd');
     return { w: b.readUInt32BE(i + 4 + 76) >>> 16, h: b.readUInt32BE(i + 4 + 80) >>> 16 };
   };
-  // The table the component picks the story's files from: src, w, h, media.
-  const files = [...stageCode.matchAll(/\{ src: `\$\{DIR\}\/([\w.-]+)`,\s*w: (\d+),\s*h: (\d+),\s*media: '([^']*)' \}/g)]
-    .map(m => ({ name: m[1], w: +m[2], h: +m[3], media: m[4] }));
-  const loops = [...stageCode.matchAll(/`\$\{DIR\}\/(loop-\d+\.mp4)`/g)].map(m => m[1]);
+  // The one query that makes the video (and its box) square, read from the component.
+  const SQUARE_QUERY = stageCode.match(/const SQUARE_QUERY = '([^']+)';/)[1];
+  // The table the component picks the story's files from: src, w, h, media (a quoted string, or the SQUARE_QUERY constant).
+  const files = [...stageCode.matchAll(/\{ src: `\$\{DIR\}\/([\w.-]+)`,\s*w: (\d+),\s*h: (\d+),\s*media: (?:'([^']*)'|(SQUARE_QUERY)) \}/g)]
+    .map(m => ({ name: m[1], w: +m[2], h: +m[3], media: m[5] ? SQUARE_QUERY : m[4] }));
+  const loops = [...stageCode.matchAll(/`\$\{DIR\}\/(loop-[\w-]+\.mp4)`/g)].map(m => m[1]);
 
   it('only a query of exactly `motion` changes the page, and it is a preview: the default tree has no stage and keeps the mascot hero', () => {
     const layout = code(L + 'PathsLayout.tsx');
@@ -962,36 +964,52 @@ describe('the motion preview (?v=motion)', () => {
   // nothing to check (and the gate above is what keeps production from asking for them).
   const itFiles = fs.existsSync(path.join(ROOT, M)) ? it : it.skip;
 
-  itFiles('the motion directory holds exactly the story, the loop (each in two sizes) and one poster; no 16:9 files are left', () => {
-    expect(fs.readdirSync(path.join(ROOT, M)).sort()).toEqual(['loop-1080.mp4', 'loop-720.mp4', 'story-1080.mp4', 'story-720.mp4', 'story-poster.jpg']);
-    expect(files.map(f => f.name)).toEqual(['story-1080.mp4', 'story-720.mp4']);
-    expect(loops.sort()).toEqual(['loop-1080.mp4', 'loop-720.mp4']);
+  // A JPEG's own size, from its SOF marker.
+  const jpegSize = (rel) => {
+    const b = fs.readFileSync(path.join(ROOT, rel));
+    for (let i = 2; i < b.length;) { if (b[i] === 0xff && (b[i + 1] & 0xf0) === 0xc0 && b[i + 1] !== 0xc4 && b[i + 1] !== 0xc8 && b[i + 1] !== 0xcc) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) }; i += 2 + b.readUInt16BE(i + 2); }
+  };
+
+  itFiles('the motion directory holds exactly the story, the loop (each in three sizes), two posters and the captions; no 16:9 files are left', () => {
+    expect(fs.readdirSync(path.join(ROOT, M)).sort()).toEqual(['loop-1080.mp4', 'loop-720.mp4', 'loop-sq-1080.mp4', 'story-1080.mp4', 'story-720.mp4', 'story-poster.jpg', 'story-sq-1080.mp4', 'story-sq-poster.jpg', 'story.vtt']);
+    expect(files.map(f => f.name)).toEqual(['story-sq-1080.mp4', 'story-1080.mp4', 'story-720.mp4']);
+    expect(loops.sort()).toEqual(['loop-1080.mp4', 'loop-720.mp4', 'loop-sq-1080.mp4']);
     expect(stageCode).not.toMatch(/-1920|-1280|mimic-16x9/);
   });
-  itFiles('ships the files at the sizes the component says, 9:16 only, and a poster under 100 KB at 720 by 1280', () => {
+  itFiles('ships the files at the sizes the component says (9:16, or 1080 square), and each poster under 100 KB', () => {
     for (const f of files) {
       const rel = M + f.name;
-      expect(f.w * 16, f.name).toBe(f.h * 9);
+      if (f.name.includes('-sq-')) expect(f.w, f.name).toBe(f.h); else expect(f.w * 16, f.name).toBe(f.h * 9);
       expect(mp4Size(rel), f.name).toEqual({ w: f.w, h: f.h });
       expect(fs.statSync(path.join(ROOT, rel)).size, f.name).toBeLessThan(16_000_000);
     }
     // each loop has the size of the story it replaces at that width
     expect(mp4Size(M + 'loop-1080.mp4')).toEqual({ w: 1080, h: 1920 });
     expect(mp4Size(M + 'loop-720.mp4')).toEqual({ w: 720, h: 1280 });
-    for (const n of ['loop-1080.mp4', 'loop-720.mp4']) expect(fs.statSync(path.join(ROOT, M + n)).size, n).toBeLessThan(6_000_000);
-    expect(fs.statSync(path.join(ROOT, M + 'story-poster.jpg')).size).toBeLessThan(100_000);
-    const b = fs.readFileSync(path.join(ROOT, M + 'story-poster.jpg'));
-    let dims;
-    for (let i = 2; i < b.length;) { if (b[i] === 0xff && (b[i + 1] & 0xf0) === 0xc0 && b[i + 1] !== 0xc4 && b[i + 1] !== 0xc8 && b[i + 1] !== 0xcc) { dims = { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) }; break; } i += 2 + b.readUInt16BE(i + 2); }
-    expect(dims).toEqual({ w: 720, h: 1280 });
-    expect(stageCode).toMatch(/story-poster\.jpg/);
+    expect(mp4Size(M + 'loop-sq-1080.mp4')).toEqual({ w: 1080, h: 1080 });
+    for (const n of ['loop-1080.mp4', 'loop-720.mp4', 'loop-sq-1080.mp4']) expect(fs.statSync(path.join(ROOT, M + n)).size, n).toBeLessThan(16_000_000);
+    for (const n of ['story-poster.jpg', 'story-sq-poster.jpg']) expect(fs.statSync(path.join(ROOT, M + n)).size, n).toBeLessThan(100_000);
+    expect(jpegSize(M + 'story-poster.jpg')).toEqual({ w: 720, h: 1280 });
+    expect(jpegSize(M + 'story-sq-poster.jpg')).toEqual({ w: 720, h: 720 });
     expect(stageCode).toMatch(/POSTER = \{ src: `\$\{DIR\}\/story-poster\.jpg`, w: 720, h: 1280 \}/);
+    expect(stageCode).toMatch(/SQ_POSTER = \{ src: `\$\{DIR\}\/story-sq-poster\.jpg`, w: 720, h: 720 \}/);
   });
-  it('the box is 9:16 always: one rule, no landscape or orientation query, no drift; and the video fills it without stretching', () => {
+  it('the box is vertical 9:16 by default and 1:1 under exactly the query that picks the square files; the poster follows the same query; no 16:9 anywhere', () => {
     expect(css).toMatch(/\.rm-stage-box \{ aspect-ratio: 9 \/ 16; width: 100%; \}/);
-    expect(css.match(/\.rm-stage-box/g)).toHaveLength(1);
+    // exactly one landscape rule, and it makes the box square
+    const rules = [...css.matchAll(/@media ([^{]*orientation[^{]*)\{\s*\.rm-stage-box \{([^}]*)\}\s*\}/g)];
+    expect(css.match(/orientation/g)).toHaveLength(1);
+    expect(rules).toHaveLength(1);
+    expect(rules[0][2].trim()).toBe('aspect-ratio: 1 / 1;');
+    // the box and the files can never disagree: the CSS query text IS the component's SQUARE_QUERY
+    expect(rules[0][1].trim()).toBe(SQUARE_QUERY);
+    expect(files[0]).toMatchObject({ name: 'story-sq-1080.mp4', w: 1080, h: 1080, media: SQUARE_QUERY });   // first, so <source media> picks it first
     expect(css).not.toMatch(/rm-stage-box[^}]*16 \/ 9/);
-    expect(css).not.toMatch(/orientation/);
+    expect(stageCode).not.toMatch(/16 ?\/ ?9|16x9/);
+    // the poster: a <picture> whose square source uses the same query; the <img> inside stays the vertical poster
+    expect(stageCode).toMatch(/<picture>\s*<source media=\{SQUARE_QUERY\} srcSet=\{SQ_POSTER\.src\} width=\{SQ_POSTER\.w\} height=\{SQ_POSTER\.h\} \/>\s*<img src=\{POSTER\.src\}/);
+    // the column is square-wide on wide landscape screens (lg = 1024 px, the query's width)
+    expect(stageCode).toMatch(/\blg:landscape:\[--rm-w:min\(70svh,720px\)\]/);
     expect(css).not.toMatch(/rm-drift/);
     expect(stageCode).not.toMatch(/rm-drift/);
     expect(stageCode).toMatch(/object-cover/);
@@ -1002,8 +1020,8 @@ describe('the motion preview (?v=motion)', () => {
     const v = stageCode.match(/<video [\s\S]*?>/)[0];
     for (const a of ['autoPlay', 'muted', 'playsInline', 'preload="metadata"', 'aria-hidden="true"', 'tabIndex={-1}', 'motion-reduce:hidden']) expect(v, a).toContain(a);
     expect(v).not.toMatch(/\bloop\b/);
-    expect(files[0].media).toBe('(min-width: 600px) and (min-resolution: 1.5dppx), (min-width: 561px) and (max-width: 639px)');
-    expect(files[1].media).toBe('');                                        // the unconditional fallback is last
+    expect(files[1].media).toBe('(min-width: 600px) and (min-resolution: 1.5dppx), (min-width: 561px) and (max-width: 639px)');
+    expect(files[2].media).toBe('');                                        // the unconditional fallback is last
     expect(stageCode).toMatch(/<source key=\{f\.src\} src=\{f\.src\} type="video\/mp4"/);
   });
   it('lays out vertically: the headline (children) is the left column on a desktop and sits above the video on a phone; the video column is capped so it never towers', () => {
@@ -1025,16 +1043,19 @@ describe('the motion preview (?v=motion)', () => {
     expect(stageCode).toMatch(/const STAGE_BG = '#0f1219'/);
     expect(stageCode.match(/backgroundColor: STAGE_BG/g)).toHaveLength(2);       // the video's frame and the strip's
   });
-  it('when the story ends the file is swapped for the loop of the same width (chosen with the same media query), looped and played', () => {
+  it('when the story ends the file is swapped for the loop of the same shape (square, else the same width, chosen with the same media queries), looped and played', () => {
     expect(stageCode).toMatch(/const wide = window\.matchMedia\(WIDE_QUERY\)/);
-    expect(stageCode).toMatch(/const WIDE_QUERY = MOTION_FILES\[0\]\.media/);
+    expect(stageCode).toMatch(/const square = window\.matchMedia\(SQUARE_QUERY\)/);
+    expect(stageCode).toMatch(/const WIDE_QUERY = MOTION_FILES\[1\]\.media/);       // the 1080-vertical entry, NOT the square one
+    expect(files[1].name).toBe('story-1080.mp4');
     const onEnded = stageCode.match(/const onEnded = \(\) => \{([\s\S]*?)\n      \};/)[1];
     expect(onEnded).toMatch(/v\.loop = true;/);
-    expect(onEnded).toMatch(/v\.src = wide\.matches \? LOOP_FILES\.wide : LOOP_FILES\.plain;/);
+    expect(onEnded).toMatch(/v\.src = square\.matches \? LOOP_FILES\.square : wide\.matches \? LOOP_FILES\.wide : LOOP_FILES\.plain;/);
     expect(onEnded).toMatch(/setEnded\(true\);/);
     expect(onEnded).toMatch(/sync\(\);/);                                    // sync() is what calls play()
     expect(stageCode).toMatch(/v\.addEventListener\('ended', onEnded\)/);
-    expect(stageCode).toMatch(/LOOP_FILES = \{ wide: `\$\{DIR\}\/loop-1080\.mp4`, plain: `\$\{DIR\}\/loop-720\.mp4` \}/);
+    expect(stageCode).toMatch(/LOOP_FILES = \{ square: `\$\{DIR\}\/loop-sq-1080\.mp4`, wide: `\$\{DIR\}\/loop-1080\.mp4`, plain: `\$\{DIR\}\/loop-720\.mp4` \}/);
+    expect(stageCode).toMatch(/STORY_FILES = \{ square: MOTION_FILES\[0\]\.src, wide: MOTION_FILES\[1\]\.src, plain: MOTION_FILES\[2\]\.src \}/);
   });
   it('“Watch again” is a real <button> that shows only once the story has ended, sits in a corner of the stage and replays the story from the start', () => {
     const btn = stageCode.match(/\{ended && \(\s*(<button [\s\S]*?<\/button>)\s*\)\}/)[1];
@@ -1047,7 +1068,7 @@ describe('the motion preview (?v=motion)', () => {
     expect(btn).toMatch(/focus-visible:outline/);
     const replay = stageCode.match(/replay\.current = \(\) => \{([\s\S]*?)\n      \};/)[1];
     expect(replay).toMatch(/v\.loop = false;/);
-    expect(replay).toMatch(/v\.src = wide\.matches \? STORY_FILES\.wide : STORY_FILES\.plain;/);
+    expect(replay).toMatch(/v\.src = square\.matches \? STORY_FILES\.square : wide\.matches \? STORY_FILES\.wide : STORY_FILES\.plain;/);
     expect(replay).toMatch(/setEnded\(false\);/);
     expect(replay).toMatch(/sync\(\);/);
   });
@@ -1063,9 +1084,58 @@ describe('the motion preview (?v=motion)', () => {
     expect(toggle).toMatch(/setSound\(!sound\);/);
   });
   itFiles('every story and loop file carries an audio track', () => {
-    for (const f of ['story-1080.mp4', 'story-720.mp4', 'loop-1080.mp4', 'loop-720.mp4']) {
+    for (const f of ['story-1080.mp4', 'story-720.mp4', 'story-sq-1080.mp4', 'loop-1080.mp4', 'loop-720.mp4', 'loop-sq-1080.mp4']) {
       expect(fs.readFileSync(path.join(ROOT, M + f)).includes(Buffer.from('mp4a')), f + ' has an audio track').toBe(true);
     }
+  });
+
+  // Closed captions (the guild lead, 2026-10-24: "if it's muted have closed captions").
+  it('the <video> carries the English captions as a default <track kind="captions"> from story.vtt', () => {
+    expect(stageCode).toMatch(/const CAPTIONS = `\$\{DIR\}\/story\.vtt`;/);
+    const video = stageCode.match(/<video [\s\S]*?<\/video>/)[0];
+    const track = video.match(/<track [^>]*\/>/)[0];
+    expect(track).toMatch(/kind="captions"/);
+    expect(track).toMatch(/srcLang="en"/);
+    expect(track).toMatch(/label="English"/);
+    expect(track).toMatch(/src=\{CAPTIONS\}/);
+    expect(track).toMatch(/\bdefault\b/);
+  });
+  it('the captions show while the story plays muted, hide once Sound is on, are disabled for the loop, and come back right on replay', () => {
+    // a missing text track must not throw
+    const set = stageCode.match(/const setCaptions = \(v: HTMLVideoElement, mode: TextTrackMode\) => \{([\s\S]*?)\n\};/)[1];
+    expect(set).toMatch(/const t = v\.textTracks\[0\];\s*if \(t\) t\.mode = mode;/);
+    // the effect sets the initial mode right after muting
+    expect(stageCode).toMatch(/v\.muted = true;\s*setCaptions\(v, 'showing'\);/);
+    // the effect's callbacks read the sound state through a ref, which toggleSound keeps in sync
+    expect(stageCode).toMatch(/const soundRef = useRef\(false\);/);
+    const toggle = stageCode.match(/const toggleSound = \(\) => \{([\s\S]*?)\n  \};/)[1];
+    expect(toggle).toMatch(/soundRef\.current = !sound;/);
+    expect(toggle).toMatch(/if \(!v\.loop\) setCaptions\(v, sound \? 'showing' : 'hidden'\);/);   // turning sound OFF shows them again; ON hides them; never in the loop
+    const onEnded = stageCode.match(/const onEnded = \(\) => \{([\s\S]*?)\n      \};/)[1];
+    expect(onEnded).toMatch(/setCaptions\(v, 'disabled'\);/);
+    const replay = stageCode.match(/replay\.current = \(\) => \{([\s\S]*?)\n      \};/)[1];
+    expect(replay).toMatch(/setCaptions\(v, soundRef\.current \? 'hidden' : 'showing'\);/);  });
+  it('the cues are styled inside the stage only', () => {
+    expect(css).toMatch(/\.rm-stage video::cue \{[^}]*background: rgb\(0 0 0 \/ 0\.72\);[^}]*color: #f2ede1;[^}]*\}/);
+    expect(css.match(/::cue/g)).toHaveLength(1);
+  });
+  it('story.vtt is a valid caption file: WEBVTT, ordered cues that each end after they start, all inside the 90 s story, every line spoken by a named voice or a [sound]', () => {
+    const vtt = read(M + 'story.vtt');
+    expect(vtt.startsWith('WEBVTT')).toBe(true);
+    const ts = (s) => { const [h, m, sec] = s.split(':'); return +h * 3600 + +m * 60 + +sec; };
+    const cues = vtt.split(/\r?\n\r?\n/).map(b => b.trim().split(/\r?\n/)).filter(l => l.some(x => x.includes('-->')))
+      .map(l => {
+        const i = l.findIndex(x => x.includes('-->'));
+        const m = l[i].match(/^(\d\d:\d\d:\d\d\.\d{3}) --> (\d\d:\d\d:\d\d\.\d{3})/);
+        return { start: ts(m[1]), end: ts(m[2]), text: l.slice(i + 1).join(' ') };
+      });
+    expect(cues.length).toBeGreaterThan(10);
+    for (const c of cues) {
+      expect(c.start, c.text).toBeLessThan(c.end);
+      expect(c.text, 'a spoken cue names its voice').toMatch(/^(?:MIMIC: |RAID LEADER: |YOU: |\[[^\]]+\]$)/);
+    }
+    for (let i = 1; i < cues.length; i++) expect(cues[i].start, cues[i].text).toBeGreaterThanOrEqual(cues[i - 1].start);
+    expect(cues[cues.length - 1].end).toBeLessThan(90);
   });
   it('pauses off-screen and in a hidden tab, and under reduced motion plays nothing and fetches nothing (the poster stays, and so does the strip)', () => {
     expect(stageCode).toMatch(/new IntersectionObserver\(/);
@@ -1075,7 +1145,10 @@ describe('the motion preview (?v=motion)', () => {
     // the reduced-motion branch returns before the ended handler is attached, so no loop file is ever set
     expect(stageCode.indexOf('querySelectorAll(\'source\')')).toBeLessThan(stageCode.indexOf('addEventListener(\'ended\''));
     expect(stageCode).toMatch(/motion-reduce:hidden/);
-    expect(stageCode).not.toMatch(/addEventListener\('change', onTurn\)|matchMedia\('\(orientation/);
+    // the shape is chosen when a file starts (matchMedia(...).matches); a 'change' listener never re-swaps mid-play
+    expect(stageCode).toMatch(/window\.matchMedia\(SQUARE_QUERY\)/);
+    expect([...stageCode.matchAll(/(\w+)\.addEventListener\('change'/g)].map(m => m[1])).toEqual(['reduce']);
+    expect(stageCode).not.toMatch(/matchMedia\('\(orientation/);
     // the poster layer is a decorative last frame, not a second copy of the words
     expect(stageCode).toMatch(/alt="" aria-hidden="true"/);
   });
