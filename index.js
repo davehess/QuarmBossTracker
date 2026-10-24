@@ -18480,6 +18480,42 @@ async function _handleAgentCharacterPrefsSet(req, res) {
   return _sendPrefsResult(res, out);
 }
 
+// POST /api/agent/characters/stage — a new member's first sign-in in Mimic stages the characters they pick from
+// their logs (the guild lead, 2026-10-24: "we should check for the discord role and let them in, then prestage as a
+// new recruit main … We should be asking what characters the player would like to upload (from their logs)").
+//   body  { characters: [{ name, is_main }] }   up to 12 names, letters only; the first is_main is the main
+//   200   { ok, staged: [{ name, is_main, rank, created, changed }], conflicts: [{ name, reason }] }
+//   400 bad body · 403 no linked account · 502 database unavailable
+// Signal for "show the card": the agent reads GET /character-prefs?mine=1 (above) and shows it when the signed-in
+// person's family is empty, so no new read route is needed. Creates NOTHING in OpenDKP; the rules live in
+// utils/recruitStage.js. A write route, not an ingest stream (like POST /character-prefs): no shed flag and no
+// budget, because a dropped 200-ack would tell the member their characters were saved when they were not. It is
+// bounded instead: 12 names, one read and at most 12 single-row writes per call, and a re-save writes nothing.
+const recruitStage = require('./utils/recruitStage');
+async function _handleAgentCharactersStage(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > recruitStage.MAX_BODY_BYTES) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const discordId = String(identity.discord_id || '');
+  const supabase = require('./utils/supabase');
+  const out = await recruitStage.stageCharacters(
+    supabase, supabase.guildId(), discordId, identity.role_names, payload, new Date().toISOString());
+  if (out.status === 200) {
+    console.log(`[characters-stage] ${discordId} staged ${out.body.staged.map(s => s.name + (s.is_main ? '*' : '')).join(',') || '(none)'}`
+      + (out.body.conflicts.length ? ` · conflicts ${out.body.conflicts.map(c => c.name + ':' + c.reason).join(',')}` : ''));
+  }
+  return _sendPrefsResult(res, out);
+}
+
 // POST + GET /api/agent/own-timers — a player's own pet/self buff timers, kept in bot_kv (the guild lead,
 // 2026-10-13: timers "synced to the database so if I logged on from a different machine or if my installation
 // failed I would still have those buff timers"). Same ownership rule as POST /character-prefs (a character in the
@@ -24707,6 +24743,15 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentCharacterPrefsSet(req, res); }
     catch (err) {
       console.error('[character-prefs set] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/characters/stage') {
+    try { return await _handleAgentCharactersStage(req, res); }
+    catch (err) {
+      console.error('[characters-stage] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

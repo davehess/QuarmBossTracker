@@ -105,6 +105,16 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 First sign-in: pick your characters from the logs, stage a recruit main, offer the spellbook / inventory / Quarmy upload (draft
+  `draft/recruit-onboarding`, 2026-10-24; bot half for `main` (bot 4.0.13), agent + dashboard half for `beta` (agent 4.0.21)). Not pushed.**
+  *"we should check for the discord role and let them in, then prestage as a new recruit main"* and *"We should be asking what
+  characters the player would like to upload (from their logs). If none show up, they can type in their character name to get
+  started."* (the guild lead). A signed-in Mimic with no linked character gets a one-time card listing the characters whose logs are in
+  the EQ folder (newest first); Save stages them through `POST /api/agent/characters/stage` (recruit main + non-raid alts, owner only
+  where empty, audit pair stamped, nothing created in OpenDKP) and "Save and upload these now" runs the existing export scans for just
+  those names. The show-or-not signal is the existing `character-prefs?mine=1`. DECISIONS §426. **To do:** land the bot half on `main`
+  first; make staged recruits visible to officers (neither `/admin/links` queue lists a row that has both a `registered_via_web_at` and
+  a `discord_id`; web change, not in this draft); confirm the three judgement calls in §426.
 - **🧪 Maps show traps (draft `draft/traps`, 2026-10-23; bot half for `main`, agent + Mimic half for `beta`). Not pushed, migration not applied.**
   *"maps should show traps as well"* (the guild lead), then *"consume this for traps"* (the eqprogression Plane of Earth guide) with the
   standing rule *"always go off of the scripts and database instead of the guides"*. Two kinds, one layer. **Trap spots:** a PoP trap is an
