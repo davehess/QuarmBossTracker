@@ -121,7 +121,7 @@ is ephemeral. It is a desktop-session job.
 | **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
 | **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
 | **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
-| **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§432) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 83 s story video (gravelly player voice, lip-synced greeting, overlays that pulse on each call, the flags at the end) is still a beta preview, web 2.1.31: https://b.wolfpack.quest/raidmimic?v=motion | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
+| **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§433) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 83 s story video (gravelly player voice, lip-synced greeting, overlays that pulse on each call, the flags at the end; square on wide screens, captions while muted, a CC0 lo-fi beat) is still a beta preview, web 2.1.32: https://b.wolfpack.quest/raidmimic?v=motion | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
@@ -12850,3 +12850,24 @@ The guild lead: *"the end of the video should have the mimic show the flagging i
   back, in front of it once it is up, so the names beside the mimic's ear stay readable. (`v3/ending.py`.)
 - The story is 90 s; the 12 s loop is unchanged, only later. **Where it landed:** web 2.1.31 on beta,
   https://b.wolfpack.quest/raidmimic?v=motion.
+
+### 433. A square cut for wide screens, captions while muted, a CC0 beat (2026-10-24)
+The guild lead: *"it looks ok to me. we should find an open source low beat to put in the background, and if it's muted have
+closed captions"*, then *"can we generate the area around it as well in case we are looking at this on a horizontal monitor? I
+basically would make it a square video"*.
+- **Music must be CC0 or plainly CC-BY, verified on the track's own page.** Four CC0 lo-fi tracks from opengameart.org were
+  checked (each page's licence field reads CC0, linking creativecommons.org/publicdomain/zero/1.0/). In the cut by default:
+  **"Lofi again" (Omfgdude)**, about 90 s, quiet; ducked ~8 dB under every voice, faded in and out; the loop carries a slice of
+  it with its seam crossfaded. The other three are on the Decision Desk for the guild lead's ear. No credit line is required;
+  the page may still credit the author as a courtesy.
+- **No background bed beyond the music** (§429 still holds): between cues the track is the beat alone.
+- **Captions:** `web/public/raidmimic/motion/story.vtt`, every spoken line with its speaker (MIMIC, RAID LEADER, YOU) and the
+  main sounds in brackets, timed from each line's own audio. A captions `<track>`: showing while the story plays muted,
+  hidden once Sound is on, disabled during the loop (whose first seconds would otherwise show the story's first cues).
+- **Square:** on a wide landscape screen (`(min-width: 1024px) and (orientation: landscape)`, ONE query for the files and the
+  box shape) the stage is 1:1 and plays a square cut: the room outpainted to 1920×1920 by Gemini (it kept the original middle
+  pixel-exact; the original is pasted back with an inside-only blend), the screen quad measured to the outpainted monitor's
+  left bezel, everything else shifted 420 px. Phones and portrait screens keep the 9:16 cut. A browser that ignores
+  `<source media>` plays the square inside the 9:16 box, which shows its middle: the vertical frame.
+- **Where it landed:** web 2.1.32 on beta, https://b.wolfpack.quest/raidmimic?v=motion (`SQUARE=1` in `v3/comp.py`, `MUSIC=` in
+  `v3/sound.py`, in the scratchpad). The live page is unchanged.
