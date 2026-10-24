@@ -97,8 +97,8 @@ function DoorCard({ door, ctx }: { door: Door; ctx: Ctx }) {
   );
 }
 
-// `motion` is the `?v=motion` preview (beta only; a raidmimic host drops the query): the looping 3D mimic with the real
-// captures floating over it takes the hero's place, right under the title, and the older mascot hero leaves "See it run".
+// `motion` is the `?v=motion` preview (beta only; a raidmimic host drops the query): the 3D mimic's story video, with the real
+// captures in a strip below it, takes the hero's place, right under the title, and the older mascot hero leaves "See it run".
 export default function PathsLayout({ ctx, motion = false }: { ctx: Ctx; motion?: boolean }) {
   return (
     <div className="mx-auto max-w-5xl pb-12">
