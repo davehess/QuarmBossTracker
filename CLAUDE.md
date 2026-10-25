@@ -290,6 +290,16 @@ name; for an entity, `<name> · <kind>`) and a **one-sentence description** of w
   dynamic route without `generateMetadata`, a route that still resolves to the site card, a pinned root OG field, or a
   card read that selects a private column. A new route's sample value goes in its `SAMPLE` map if it needs one.
 
+### Working rule — every bot error line is a bug (the guild lead, 2026-10-25)
+*"let's start watching these errors and resolving them cleanly instead."* Railway shows every stderr line
+(`console.error` AND `console.warn`) as an error, so an error line is either **fixed at its cause** or, when it
+is an expected condition, **logged once on stdout** (`console.log`, rate-limited, never per occurrence). A real
+failure stays loud. `docs/ERROR-LEDGER.md` lists every known signature and its status; the daily "Bot error
+watch" scheduled task (9:44 am ET) reads 24 h of `@level:error` lines from Railway, compares, and drafts fixes on
+a `claude/error-watch-<date>` branch. New code: don't `console.warn` an expected condition. The 2026-10-25 sweep
+found `/enragedeath` had never loaded since June (a 101-character description) behind one quiet log line;
+`test/commands-load.test.js` now builds every command so that class fails CI.
+
 ### Working rule — close reports by their FB number (guild lead, 2026-09-29)
 *"We need to start having referenceable IDs for each bug or enhancement request so the bot can update
 these when they get implemented."* Every bug or idea report has a handle **`FB-<n>`** (`feedback.ref`,
