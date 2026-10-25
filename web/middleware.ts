@@ -230,7 +230,9 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
 
 export const config = {
   matcher: [
-    // Run on everything except Next.js static assets, favicon, and image files.
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // Run on everything except Next.js static assets, favicon, and image, video, caption and sound files. A playing
+    // video is fetched in many byte-range requests, and each one that reaches middleware spends Vercel's monthly CPU
+    // allowance for nothing (the guild lead, 2026-10-25, on the 75% warning: pick A, "trim the waste").
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|mp4|webm|vtt|wav|mp3|ogg|tga)$).*)',
   ],
 };
