@@ -12920,7 +12920,9 @@ resolving them cleanly instead"*.
 - **The ledger:** `docs/ERROR-LEDGER.md`, one row per signature with its status. Watching: the 10 s Supabase timeouts
   (one on `encounter_threat_snapshots`). By design: the log-only admission budget line.
 - **The watch:** a daily scheduled task, "Bot error watch", 9:44 am Eastern, reads 24 h of Railway error lines,
-  compares them with the ledger and drafts fixes on a `claude/error-watch-<date>` branch (never main). It was saved
+  compares them with the ledger and drafts fixes on a `claude/error-watch-<date>` branch (never main). **The guild
+  lead picked A (2026-10-25): the watch drafts on a branch and reports; nothing reaches the bot until they say "ship
+  it"** (B, shipping small fixes to main itself, was declined). It was saved
   without connectors, so the Railway connector has to be added to it in claude.ai's scheduled-task settings, or its
   runs stop at step 1 and say so.
 - **Railway build failures** (`failed to fetch snapshot`, deployments 797f74f8 and 542e03cf, 2026-10-24) were Railway's
