@@ -1132,7 +1132,8 @@ describe('the motion preview (?v=motion)', () => {
     expect(cues.length).toBeGreaterThan(10);
     for (const c of cues) {
       expect(c.start, c.text).toBeLessThan(c.end);
-      expect(c.text, 'a spoken cue names its voice').toMatch(/^(?:MIMIC: |RAID LEADER: |YOU: |\[[^\]]+\]$)/);
+      // GAME is the game's own announcer ("Unit lost.", the guild lead 2026-10-24: "like a different RTS video game sound")
+      expect(c.text, 'a spoken cue names its voice').toMatch(/^(?:MIMIC: |RAID LEADER: |YOU: |GAME: |\[[^\]]+\]$)/);
     }
     for (let i = 1; i < cues.length; i++) expect(cues[i].start, cues[i].text).toBeGreaterThanOrEqual(cues[i - 1].start);
     expect(cues[cues.length - 1].end).toBeLessThan(90);
