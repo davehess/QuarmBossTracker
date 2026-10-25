@@ -16,101 +16,77 @@ NOTE hidden once Sound is on, off during the loop. Times come from the soundtrac
 [pop, pop: two ears spring out]
 
 4
-00:00:08.600 --> 00:00:09.500 line:78% align:center size:86%
-GAME: Unit lost.
+00:00:10.800 --> 00:00:13.000 line:78% align:center size:86%
+MIMIC: Hi! I'm Raid Mimic!
 
 5
-00:00:11.000 --> 00:00:13.200 line:78% align:center size:86%
-MIMIC: Hi! I'm your new Raid Mimic!
+00:00:13.000 --> 00:00:16.000 line:78% align:center size:86%
+MIMIC: Let's get you some overlays for this fight, quick!
 
 6
-00:00:13.300 --> 00:00:15.000 line:78% align:center size:86%
-MIMIC: Let's get you set up!
+00:00:16.200 --> 00:00:16.900 line:78% align:center size:86%
+[faint, from another raider’s speakers: “Unit lost.”]
 
 7
-00:00:16.600 --> 00:00:17.400 line:78% align:center size:86%
-GAME: Unit lost.
-
-8
-00:00:17.400 --> 00:00:20.500 line:78% align:center size:86%
+00:00:16.900 --> 00:00:19.200 line:78% align:center size:86%
 RAID LEADER: Tank down! This is going bad, guys.
 
+8
+00:00:19.200 --> 00:00:19.900 line:78% align:center size:86%
+[faint: “Unit lost.”]
+
 9
-00:00:20.600 --> 00:00:21.400 line:78% align:center size:86%
-GAME: Unit lost.
+00:00:19.900 --> 00:00:22.800 line:78% align:center size:86%
+RAID LEADER: Ramp on Aldenmar! Who's got the D.I.?
 
 10
-00:00:21.400 --> 00:00:23.600 line:78% align:center size:86%
-RAID LEADER: Ramp on Aldenmar. Who's got the D.I.?
+00:00:22.800 --> 00:00:24.000 line:78% align:center size:86%
+[faint: “Unit lost.” “Unit lost.”]
 
 11
-00:00:24.000 --> 00:00:24.900 line:78% align:center size:86%
-GAME: Unit lost.
+00:00:24.000 --> 00:00:28.000 line:78% align:center size:86%
+RAID LEADER: Is this one even slowed? We're losing healers!
 
 12
-00:00:25.700 --> 00:00:27.500 line:78% align:center size:86%
-RAID LEADER: Is this one even slowed?
+00:00:28.000 --> 00:00:28.900 line:78% align:center size:86%
+[faint: “Unit lost.”]
 
 13
-00:00:27.600 --> 00:00:29.300 line:78% align:center size:86%
-RAID LEADER: We're losing healers.
+00:00:29.300 --> 00:00:31.200 line:78% align:center size:86%
+YOU: Rethlan has Area Taunt!
 
 14
-00:00:29.600 --> 00:00:30.400 line:78% align:center size:86%
-GAME: Unit lost.
-
-15
-00:00:30.600 --> 00:00:31.300 line:78% align:center size:86%
-GAME: Unit lost.
-
-16
-00:00:31.400 --> 00:00:32.200 line:78% align:center size:86%
-GAME: Unit lost.
-
-17
-00:00:32.300 --> 00:00:33.500 line:78% align:center size:86%
-[a happy howl]
-
-18
-00:00:35.100 --> 00:00:37.000 line:78% align:center size:86%
-[the overlays thump onto the screen]
-
-19
-00:00:38.100 --> 00:00:40.000 line:78% align:center size:86%
-YOU: Okay, Rethlan has Area Taunt!
-
-20
-00:00:40.000 --> 00:00:41.100 line:78% align:center size:86%
+00:00:31.300 --> 00:00:32.500 line:78% align:center size:86%
 YOU: Zarrin, D.I.!
 
-21
-00:00:41.200 --> 00:00:42.600 line:78% align:center size:86%
+15
+00:00:32.600 --> 00:00:34.000 line:78% align:center size:86%
 YOU: Skip three, go four!
 
-22
-00:00:43.100 --> 00:00:45.500 line:78% align:center size:86%
-YOU: Slow has a minute left, beasts be ready.
+16
+00:00:34.100 --> 00:00:37.100 line:78% align:center size:86%
+YOU: One minute left on Beast Slow!
 
-23
-00:00:46.200 --> 00:00:48.600 line:78% align:center size:86%
-YOU: Pure Tone Dirging, pop discs, pop discs!
+17
+00:00:37.200 --> 00:00:40.100 line:78% align:center size:86%
+YOU: Pure Tone Dirging! Pop discs!
 
-24
-00:00:54.600 --> 00:00:56.200 line:78% align:center size:86%
+18
+00:00:45.600 --> 00:00:47.400 line:78% align:center size:86%
 [the ogre crashes down; the battle music fades]
 
-25
-00:00:56.300 --> 00:00:59.100 line:78% align:center size:86%
+19
+00:00:47.500 --> 00:00:49.800 line:78% align:center size:86%
 RAID LEADER: Down! Wow, nice calls.
 
-26
-00:00:59.400 --> 00:01:01.500 line:78% align:center size:86%
+20
+00:00:49.800 --> 00:00:52.500 line:78% align:center size:86%
 RAID LEADER: Get them rezzed back up and do loot.
 
-27
-00:01:01.600 --> 00:01:04.000 line:78% align:center size:86%
+21
+00:00:53.100 --> 00:00:55.800 line:78% align:center size:86%
 RAID LEADER: Loot is posted, two minutes.
 
-28
-00:01:09.400 --> 00:01:12.400 line:78% align:center size:86%
+22
+00:01:00.900 --> 00:01:04.200 line:78% align:center size:86%
 RAID LEADER: Make sure you hail the Projection for your flags.

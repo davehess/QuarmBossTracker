@@ -122,7 +122,7 @@ is ephemeral. It is a desktop-session job.
 | **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
 | **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
 | **WoW Forever: faction and ruleset for the guild** (§435) | Research and two picks on the Decision Desk's WoW Forever tab (Horde or Alliance; PvP, Normal or RP-PvP). On PvP each player gets ONE faction, set by the first character | the guild leadership: pick before early name reservation opens Tue Oct 27 |
-| **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§434) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 83 s story video (gravelly player voice, lip-synced greeting, overlays that pulse on each call, the flags at the end; square on wide screens, captions while muted, battle music then lo-fi, a nonstop fight with "Unit lost") is still a beta preview, web 2.1.33: https://b.wolfpack.quest/raidmimic?v=motion | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
+| **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§434, §437) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 81.5 s story video (the mimic greets before anything goes wrong, five quiet "Unit lost", the player's calls featured in a gold pane, a DPS-by-class timeline, DKP tick + bid extended, Epic Boss Battle then lo-fi) is still a beta preview, web 2.1.34: https://b.wolfpack.quest/raidmimic?v=motion. The site-reveal V1 note (segments on an arm or projected, rotate and lock in) is recorded, not built | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
@@ -12928,3 +12928,28 @@ resolving them cleanly instead"*.
 - **Railway build failures** (`failed to fetch snapshot`, deployments 797f74f8 and 542e03cf, 2026-10-24) were Railway's
   builder: the snapshot uploaded, then could not be read back; a redeploy of the same commit built. In the ledger as
   infrastructure.
+
+### 437. The story video: fewer deaths, the greeting first, the player as the hero, and the Desk notes built (2026-10-25)
+The guild lead: *"there are too many deaths happening in the video at a few points everyone is knocked down. 5 total unit
+lost callouts (make them low like they're coming from the other raid leaders computer). get the mimic to say 'Hi! I'm Raid
+Mimic! Let's get you some overlays for this fight, quick!' before anything negative starts in the video. the player who
+installed mimic is the hero calling for the things that help win the fight. the mimic can turn around to face the monitor
+then start collecting the data right away."* Plus the Desk picks with notes from 2026-10-24 that had not been applied.
+- **Nothing goes wrong before the greeting ends** (10.8–16.0 s). Three new fight clips: the ogre presses with nobody down,
+  then the tank and four more fall (≈16.3, 16.6, 21.7, 22.0, 26.2 s); casters and healers stay standing throughout.
+- **Exactly five "Unit lost."**, quiet and band-limited as if from another raider's speakers (16.3, 19.3, 22.9, 23.7,
+  28.1 s). Captions mark them `[faint: "Unit lost."]`.
+- **The mimic turns to the screen as soon as it has spoken** and drinks the data straight away (16.2 s); the whole story
+  moved 8.5 s earlier and is now 81.5 s.
+- **The raid leader is Puck** (brand-lead-voice B): alarmed and stressed at first, encouraging after the kill, with far less
+  speaker echo. The leader never calls the plays; every winning call is the player's (YOU).
+- **The calls are featured** (brand-checks B): each one pops into a gold pane above the monitor, naming who called it and
+  showing the overlay spot it reads from, magnified; it refreshes with a slide and a border flash on every call.
+- **The fight timeline is DPS by class** (brand-graph A): a stacked chart; the dead fall off in the dips; rogues and monks
+  spike a few seconds after discs, rangers less but longer.
+- **Loot** (brand-loot B): the loot panel shows "DKP tick captured" and one bid extended by 30 s.
+- **Music** (brand-combat C, brand-beat A): "Epic Boss Battle" (SubspaceAudio, opengameart.org, CC0) from the start, ducked
+  harder under voices since it is a loud track, fading 45.8–48.3 s as the ogre falls; the lo-fi from 47 s.
+- **Not built yet:** the site-reveal V1 note (a segment extends on an arm or projects like the summoned overlays, rotates
+  and locks in, then the next does the same) waits for the site build after the video settles.
+- **Where it landed:** web 2.1.34 on beta, https://b.wolfpack.quest/raidmimic?v=motion. The live page is unchanged.
