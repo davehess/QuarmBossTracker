@@ -8,8 +8,10 @@
 // Sync flow:
 //   1) listServerEvents()  GET /api/v4/servers/{serverId}/events  with Authorization
 //                          (falls back to the retired v3 path if v4 404s)
-//   2) getEvent(eventId)   GET /api/v2/events/{eventId}  (no auth needed)
-//   3) upsert mirror rows into rh_events + rh_signups via utils/supabase
+//                          with IncludeSignUps: the listing alone carries every event and its signups
+//   2) upsert mirror rows into rh_events + rh_signups via utils/supabase
+// getEvent(eventId) (GET /api/v4/events/{eventId}, no auth) is kept for one-off lookups; the sync never
+// calls it (the old v2 detail route answers "Endpoint not found" for every event, checked 2026-10-25).
 //
 // RH has shipped multiple API versions and reorganized field names; we
 // read defensively (several possible keys per field) and store the full
@@ -93,7 +95,7 @@ async function listServerEvents({ pageLimit = 4 } = {}) {
 
 async function getEvent(eventId) {
   if (!eventId) return null;
-  return await _request(`/api/v2/events/${encodeURIComponent(eventId)}`, { authorize: false });
+  return await _request(`/api/v4/events/${encodeURIComponent(eventId)}`, { authorize: false });
 }
 
 function _toIso(v) {
@@ -159,10 +161,10 @@ async function syncRecent({ pageLimit = 4 } = {}) {
   const list = await listServerEvents({ pageLimit });
   if (list.length === 0) return { events: 0, signups: 0 };
 
-  // The v2 per-event detail route died in the .dev→.xyz move; the v4 listing's
-  // IncludeSignUps carries everything we need, so after 3 consecutive detail
-  // failures stop asking — otherwise every 30-min sync burns one request + one
-  // 404 warn line PER EVENT (284 events = ~13.6k log lines/day of pure noise).
+  // No per-event detail request: the v4 listing's IncludeSignUps carries everything we need. The old v2
+  // detail route died in the .dev→.xyz move, and even behind a 3-strike breaker it cost three 404 warn
+  // lines every sync (~120 a day) for nothing (the guild lead, 2026-10-25: "let's start watching these
+  // errors and resolving them cleanly").
   //
   // One request per table, not one per event plus one per event's signups: ~290 events a sync, every 30
   // minutes, was ~28,000 Supabase requests a day (the guild lead, 2026-10-16: "log ingestion is WAY over").
@@ -170,13 +172,9 @@ async function syncRecent({ pageLimit = 4 } = {}) {
   // Postgres refuse the whole batch ("cannot affect row a second time"), so the last copy wins.
   const eventRows = new Map();      // id → row
   const signupRows = new Map();     // event_id|signup_id → row
-  let detailFails = 0;
-  for (const stub of list) {
-    const id = String(stub.id || stub.eventId || stub.event_id || '');
+  for (const merged of list) {
+    const id = String(merged.id || merged.eventId || merged.event_id || '');
     if (!id) continue;
-    const detail = detailFails >= 3 ? null : await getEvent(id);
-    if (detailFails < 3) detailFails = detail ? 0 : detailFails + 1;
-    const merged = { ...stub, ...(detail || {}) };
     const eventRow = _projectEvent(merged);
     if (!eventRow) continue;
     eventRows.set(eventRow.id, eventRow);

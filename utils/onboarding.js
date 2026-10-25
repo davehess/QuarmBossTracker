@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.14': [
+    '**/enragedeath works.** The officer command that logs a death to a boss enrage (and resets the "days since enrage death" counter on /fun) never actually loaded: its description was one letter over Discord\'s limit. It is there now.',
+    '**Fewer dropped saves.** A Quarmy upload with a repeated AA, a chat batch with the same line twice, or two raiders reporting the same /tag no longer makes the whole batch fail to save.',
+  ],
   '4.0.11': [
     '**A wipe no longer counts as a kill.** The nightly tidy-up used to give every unfinished fight an end time, so a wipe on a boss showed up as a kill in the raid review. Wipes now stay unfinished.',
   ],
