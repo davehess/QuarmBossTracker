@@ -642,6 +642,11 @@ and the same never-refetch guarantee.
   (`web/lib/raidmimicHost.ts`). No new service, table or cost beyond the domains themselves (Porkbun registration). Until
   Porkbun's DNS points at Vercel, Vercel 307-redirects all six to eqmimic.quest; to serve the page there, remove the
   redirects. For the wizard: entirely ours and optional, like eqmimic.quest; a self-hosting guild needs none of it.
+- **2026-10-25 — the website stays on Vercel's free plan; its CPU is budgeted in code** (`DECISIONS-2026-09-21.md` §440):
+  Hobby includes 4 hours of Fluid Active CPU a month and pauses the project past it (we hit 75% in October). Every
+  server render and API call spends it; static files do not. So: middleware skips media files, and timed page refreshes
+  run at 30-60 s, with /raid refreshing only in the raid window. Pro ($20/month) was declined. For the wizard: a guild on
+  Vercel Hobby with our page set is near the cap; self-hosting the web (Tower/Coolify) has no CPU cap at all.
 
 ## 4. Open questions for whoever builds it
 
