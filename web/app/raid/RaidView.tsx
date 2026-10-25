@@ -24,6 +24,7 @@ import {
   type BuffCategory, type Role, type HpSlotState, type ResistType,
 } from '@/lib/buffs';
 import { isRaidLeader, isGroupLeader } from '@/lib/raidGroups';
+import { inRaidWindow } from '@/lib/consoleHealth';
 
 // One tab per raid when two or more run at once; keyed by the raid's leader, not its position.
 export type RaidTab = { key: string; label: string };
@@ -255,15 +256,18 @@ export default function RaidView({
   // the group; toggle brings them back in case an officer needs to audit.
   const [showStale, setShowStale] = useState(false);
 
-  // Live page: re-runs the server component every 15s so freshly-cast buffs
+  // Live page: re-runs the server component every 60s so freshly-cast buffs
   // show without a manual reload. router.refresh() preserves client state
   // (selected raider, buffer class, view) — only the data props re-render.
-  // Paused while the tab is hidden.
+  // Paused while the tab is hidden, and outside raid hours. Each refresh is a
+  // server render billed against Vercel's monthly CPU allowance, and a tab left
+  // open at 15s was the likeliest cause of the 75% warning (the guild lead,
+  // 2026-10-25: pick A, "trim the waste"); Mimic's overlays stay live.
   const router = useRouter();
   useEffect(() => {
     const t = setInterval(() => {
-      if (document.visibilityState === 'visible') router.refresh();
-    }, 15_000);
+      if (document.visibilityState === 'visible' && inRaidWindow()) router.refresh();
+    }, 60_000);
     return () => clearInterval(t);
   }, [router]);
 
