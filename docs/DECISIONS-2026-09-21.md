@@ -121,6 +121,7 @@ is ephemeral. It is a desktop-session job.
 | **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
 | **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
 | **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
+| **WoW Forever: faction and ruleset for the guild** (§435) | Research and two picks on the Decision Desk's WoW Forever tab (Horde or Alliance; PvP, Normal or RP-PvP). On PvP each player gets ONE faction, set by the first character | the guild leadership: pick before early name reservation opens Tue Oct 27 |
 | **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§434) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 83 s story video (gravelly player voice, lip-synced greeting, overlays that pulse on each call, the flags at the end; square on wide screens, captions while muted, battle music then lo-fi, a nonstop fight with "Unit lost") is still a beta preview, web 2.1.33: https://b.wolfpack.quest/raidmimic?v=motion | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
@@ -12870,3 +12871,14 @@ does, but start with some quick paced combat music that fades when the boss is d
   from 55 s. In the cut: "Determined Pursuit" (Emma_MA, opengameart.org, CC0, licence checked on its page); "Battle Theme B"
   (cynicmusic) and "Epic Boss Battle" (SubspaceAudio) are on the Decision Desk to compare.
 - **Where it landed:** web 2.1.33 on beta, https://b.wolfpack.quest/raidmimic?v=motion. The live page is unchanged.
+
+### 435. WoW Forever: the research for a faction and ruleset pick (2026-10-25)
+The guild lead: *"put research for WoW forever on another tab for decision desk. the guild leadership started talking about
+playing together, likely on a pvp server. go through the differences for alliance and horde for a group that will still be
+called Wolf Pack"*.
+- A new **WoW Forever** tab on the Decision Desk holds the research (each point marked Blizzard-sourced or "reported" from
+  guide sites) and two picks: the faction (Horde recommended: the wolf-clan identity, the stronger PvP racials, and Forever
+  gives both sides Paladins and Shamans, which removes the old raid reason for Alliance) and the ruleset (PvP recommended).
+- The load-bearing fact, verified on Blizzard's ruleset post: on the PvP ruleset a player can only make characters for one
+  faction, set by the first character; early name reservation opens Oct 27, and balance systems may pause the bigger faction.
+- Not platform work (no code, no repo change beyond this entry); kept here so the next session knows the picks are open.
