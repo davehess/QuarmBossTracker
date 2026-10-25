@@ -39,8 +39,32 @@ const IS_BETA =
   process.env.VERCEL_GIT_COMMIT_REF === 'beta' ||
   process.env.WP_FORCE_BETA === '1';
 
+// `next/link` resolves to components/NoPrefetchLink.tsx: the same Link with automatic prefetching off. Prefetches were
+// ~80% of the signed-in requests spending Vercel's monthly CPU allowance (2026-10-25; that file says how it was measured).
+// Next maps `next/link` to `next/dist/api/link` inside its own per-layer module rules, which beat a top-level alias, so
+// the swap is made in those rules (and at the top level, for any layer without one). The wrapper imports
+// `next/dist/api/link`, which neither map touches. test/no-prefetch-link.test.js checks the build output uses it.
+const NO_PREFETCH_LINK = require('path').join(__dirname, 'components/NoPrefetchLink.tsx');
+function swapNextLink(rules) {
+  for (const rule of rules || []) {
+    if (!rule || typeof rule !== 'object') continue;
+    const alias = rule.resolve && rule.resolve.alias;
+    if (alias && !Array.isArray(alias)) {
+      // Next keys these by the resolved file path (<next>/link.js -> next/dist/api/link), not the package name.
+      for (const key of Object.keys(alias)) if (/(^|[\\/])next[\\/]link(\.js)?$/.test(key)) alias[key] = NO_PREFETCH_LINK;
+    }
+    swapNextLink(rule.oneOf);
+    swapNextLink(rule.rules);
+  }
+}
+
 module.exports = {
   reactStrictMode: true,
+  webpack(config) {
+    config.resolve.alias['next/link$'] = NO_PREFETCH_LINK;
+    swapNextLink(config.module.rules);
+    return config;
+  },
   env: {
     NEXT_PUBLIC_IS_BETA: IS_BETA ? '1' : '',
     // The guild kit's tag (web/lib/guild.ts). SUPABASE_GUILD_ID is server-only, so a deployment that sets only
