@@ -4747,6 +4747,19 @@ const _manaReportLast = new Map();   // speakerLower → last write ms (rate lim
 
 // Session-sticky speaker tags for the chat relay — speakerLower → { tag, at }.
 const _chatTagCache = new Map();
+// One row per key, the last copy winning. An upsert (ON CONFLICT DO UPDATE) whose batch holds the same
+// key twice is refused whole by Postgres (21000 "cannot affect row a second time"); the same line in one
+// second from two uploaders, or a repeated line in a backfill, did exactly that.
+function _dedupeRows(rows, keyOf) {
+  const byKey = new Map();
+  for (const r of rows) byKey.set(keyOf(r), r);
+  return [...byKey.values()];
+}
+// chat_messages' conflict key. ts is compared as an instant (Postgres does), so "…:05Z" and "…:05.000Z" collide.
+function _chatRowKey(r) {
+  const t = Date.parse(r.ts);
+  return JSON.stringify([r.guild_id, Number.isNaN(t) ? r.ts : t, r.channel, r.speaker, r.text]);
+}
 async function _handleAgentChat(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -5228,7 +5241,7 @@ async function _handleAgentChat(req, res) {
     try {
       const supabase = require('./utils/supabase');
       if (supabase.isEnabled()) {
-        await supabase.upsert('chat_messages', supabaseChatRows, 'guild_id,ts,channel,speaker,text')
+        await supabase.upsert('chat_messages', _dedupeRows(supabaseChatRows, _chatRowKey), 'guild_id,ts,channel,speaker,text')
           .catch(err => console.warn('[chat-relay] supabase upsert failed:', err?.message));
         // Passive loot detection — scan each chat row for EQ item-link IDs (the
         // 7-digit zero-padded form). For any IDs found, look up the most recent
@@ -10001,7 +10014,7 @@ async function _handleAgentQuarmy(req, res) {
   for (const e of Array.isArray(payload.bags) ? payload.bags : []) {
     const r = cleanItem(e, 'bag'); if (r) gearRows.push(r);
   }
-  const aaRows = [];
+  let aaRows = [];
   {
     const catalog = await _aaCatalogById(supabase);
     const classId = charRow?.class ? (_AA_CLASS_BIT[String(charRow.class).toLowerCase().trim()] ?? null) : null;
@@ -10022,6 +10035,7 @@ async function _handleAgentQuarmy(req, res) {
       aaRows.push({ guild_id: guildId, character, aa_index: idx, rank, updated_at: new Date().toISOString() });
     }
     if (junk > 0) console.log(`[quarmy] ${character}: dropped ${junk} implausible AA row(s) from the export`);
+    aaRows = _dedupeRows(aaRows, r => r.aa_index);   // one export row per AA; a repeated index would 409 the batch
   }
 
   // Replace wholesale — delete-then-insert handles unequipped slots, emptied
@@ -10036,7 +10050,9 @@ async function _handleAgentQuarmy(req, res) {
     if (Array.isArray(r)) written += r.length;
   }
   if (aaRows.length) {
-    const r = await supabase.insert('character_aas', aaRows)
+    // Upsert, not insert: the delete above does not exclude a second upload of the same character landing
+    // between it and this write, and that 409'd on character_aas_pkey.
+    const r = await supabase.upsert('character_aas', aaRows, 'guild_id,character,aa_index')
       .catch(err => { console.warn('[quarmy] aa insert failed:', err?.message); return null; });
     if (Array.isArray(r)) written += r.length;
   }
@@ -10522,7 +10538,7 @@ async function _handleAgentHistoricalChat(req, res) {
       });
       // upsert with on_conflict so re-runs of the same backfill don't double-count.
       // The chat_messages table needs a UNIQUE (guild_id, ts, channel, speaker, text) index.
-      await supabase.upsert('chat_messages', rows, 'guild_id,ts,channel,speaker,text')
+      await supabase.upsert('chat_messages', _dedupeRows(rows, _chatRowKey), 'guild_id,ts,channel,speaker,text')
         .catch(err => console.warn('[historical-chat] supabase upsert failed:', err?.message));
     }
   } catch (err) {
@@ -10950,6 +10966,7 @@ const _SPELL_CATALOG_TTL_MS = 60 * 60 * 1000;
 // target, 13 tap, 6 self, 9/10/11/16/17/18 the one-race singles (animal, undead, summoned, plant,
 // giant, dragon), and 3 group teleport / 41 group (all beneficial, and a group is not a mob count).
 const _AE_TARGET_TYPES = new Set([2, 4, 8, 20, 24, 25, 40]);
+const _dsFormulaWarned = new Set();   // spell-catalog DS formulas already logged as unmodeled, once per process
 async function _handleAgentSpellCatalog(req, res, isPublic) {
   if (!isPublic) {
     const identity = await mimicLink.requireAgentAuth(req, res);
@@ -11002,8 +11019,8 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
       // is base -1 / formula 109 = |base| + level/4, i.e. 1 + 60/4 = 16 at L60
       // (matches the in-game "9 (L34) to 17 (L64)"; the old |base| showed 1).
       // The guild lead 2026-07-14. Only formulas verified/canonical are scaled; any
-      // other falls back to |base| (no worse than before) and is logged once.
-      const _dsFormulaWarned = new Set();
+      // other falls back to |base| (no worse than before) and is logged once per process
+      // (the Set is module-level; it lived here and re-logged on every catalog rebuild).
       function _dsFormulaValue(base, formula, level, maxAbs) {
         const b = Math.abs(base || 0);
         let v;
@@ -11019,7 +11036,7 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
           default:
             if (Number(formula) !== 100 && !_dsFormulaWarned.has(formula)) {
               _dsFormulaWarned.add(formula);
-              console.warn(`[spell-catalog] DS formula ${formula} not modeled — using |base| (add it if a real DS buff needs it)`);
+              console.log(`[spell-catalog] DS formula ${formula} not modeled — using |base| (add it if a real DS buff needs it)`);
             }
             v = b;
         }
@@ -12307,6 +12324,16 @@ async function _isShedded(kind, res, ackBody) {
 // a row the server hands a loot lockout for, which then persists as normal.
 const TRACK_UNCURATED_MOBS_ENV = String(process.env.TRACK_UNCURATED_MOBS ?? '1').trim() !== '0';
 const _uncuratedGateLogged = new Set();
+// An upload for a mob with no bosses_local row and no exact eqemu match is an expected drop (agents
+// upload trash fights), ~420 a night. Say so at most once an hour per name, on stdout, not stderr.
+const _unmatchedMobLogged = new Map();
+function _logUnmatchedMob(name, now = Date.now()) {
+  const last = _unmatchedMobLogged.get(name);
+  if (last !== undefined && now - last < 3600000) return false;
+  _unmatchedMobLogged.set(name, now);
+  console.log(`[agent] no bosses_local match for "${name}" and no exact eqemu resolution — encounter not persisted to Supabase`);
+  return true;
+}
 async function _trackUncuratedMobs() {
   let tune = {};
   try { tune = await _overlayTuningMap(); } catch { /* fall through to the env default */ }
@@ -18689,7 +18716,9 @@ async function _noteZealTags(rows) {
     }
   }
   if (out.length === 0) return 0;
-  await supabase.insert('zeal_tag_observations', out);
+  // Several agents report the same tag; the unique index (zeal_tag_obs_dedup) is not the primary key, so
+  // a plain insert 409'd the whole batch. Duplicates are expected here, not an error.
+  await supabase.insertIgnoreDuplicates('zeal_tag_observations', out);
   return out.length;
 }
 
@@ -21819,7 +21848,7 @@ async function _syncQuarmPatchNotes() {
     if (st.fetched && st.content_missing === st.fetched) {
       console.warn(`[quarm-notes] all ${st.fetched} message(s) read had no content, embeds or attachments — the Message Content intent is off (portal toggle + MESSAGE_CONTENT_INTENT=1)`);
     } else if (st.content_missing) {
-      console.warn(`[quarm-notes] ${st.content_missing} of ${st.fetched} message(s) read had no content, embeds or attachments`);
+      console.log(`[quarm-notes] ${st.content_missing} of ${st.fetched} message(s) read had no content, embeds or attachments`);
     }
     console.log(`[quarm-notes] ${st.fetched} read, ${st.new} new, ${st.stored} written, ${st.content_missing} without content${st.capped ? ', cap hit' : ''}${st.error ? ', ERROR' : ''}`);
     const saved = await supabase.upsert('bot_kv',
@@ -23963,8 +23992,8 @@ async function _handleAgentUpload(req, res) {
         // Only reachable when the boss name has no exact, unambiguous eqemu
         // match — a mis-parsed boss (player name, garbled line), not real
         // first-time content (that self-registers above). Kept as the junk
-        // filter; anything landing here repeatedly deserves a look.
-        console.warn(`[agent] no bosses_local match for "${bossInternalId}" and no exact eqemu resolution — encounter not persisted to Supabase`);
+        // filter. Expected (trash fights), so it logs once an hour per name, not as an error.
+        _logUnmatchedMob(bossInternalId);
       }
     }
   } catch (err) {
