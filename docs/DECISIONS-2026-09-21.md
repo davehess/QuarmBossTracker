@@ -12904,3 +12904,25 @@ called Wolf Pack"*.
 - The load-bearing fact, verified on Blizzard's ruleset post: on the PvP ruleset a player can only make characters for one
   faction, set by the first character; early name reservation opens Oct 27, and balance systems may pause the bigger faction.
 - Not platform work (no code, no repo change beyond this entry); kept here so the next session knows the picks are open.
+
+### 436. Every bot error line is a bug: the sweep, the ledger and a daily watch (2026-10-25)
+The guild lead, after a Railway redeploy came up green with errors in its log: *"let's start watching these errors and
+resolving them cleanly instead"*.
+- **The rule (now in CLAUDE.md):** Railway shows every stderr line (`console.error` and `console.warn`) as an error.
+  Each error signature is fixed at its cause, or, if it is an expected condition, logged once on stdout. A real
+  failure stays loud.
+- **The sweep, bot 4.0.14:** `/enragedeath` had never registered since 2026-06-26 (a 101-character description,
+  Discord allows 100; `test/commands-load.test.js` now builds every command); the Raid-Helper sync stopped calling
+  the retired v2 per-event route (~120 404s a day; the v4 listing already carries the signups, and `getEvent` moved to
+  v4); chat_messages and character_aas batches are de-duplicated (Postgres 21000 / 23505); zeal tags go through
+  `insertIgnoreDuplicates`; unmatched trash-mob uploads (~420 lines in 90 minutes), unmodeled DS formulas and partial
+  quarm-notes reads moved to stdout, once. Zero error lines after the 4.0.14 boot.
+- **The ledger:** `docs/ERROR-LEDGER.md`, one row per signature with its status. Watching: the 10 s Supabase timeouts
+  (one on `encounter_threat_snapshots`). By design: the log-only admission budget line.
+- **The watch:** a daily scheduled task, "Bot error watch", 9:44 am Eastern, reads 24 h of Railway error lines,
+  compares them with the ledger and drafts fixes on a `claude/error-watch-<date>` branch (never main). It was saved
+  without connectors, so the Railway connector has to be added to it in claude.ai's scheduled-task settings, or its
+  runs stop at step 1 and say so.
+- **Railway build failures** (`failed to fetch snapshot`, deployments 797f74f8 and 542e03cf, 2026-10-24) were Railway's
+  builder: the snapshot uploaded, then could not be read back; a redeploy of the same commit built. In the ledger as
+  infrastructure.
