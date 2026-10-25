@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raidmimic-story-video-2026-10-25',
+    title: 'Web 2.1.36',
+    version: 'Web 2.1.36',
+    date: '2026-10-25',
+    headline: 'Raidmimic.com now opens with a short film: a raid going wrong, the mimic waking up on the desk, and the player turning the fight around with its overlays.',
+    features: [
+      { name: 'The story video', blurb: 'An 81-second film at the top of raidmimic.com: the mimic says hello, drinks in the fight, and the overlays land on screen; each call the player makes pops up with the part of the overlay it comes from; after the kill come the loot, the fight timeline and the flags.' },
+      { name: 'Fits your screen', blurb: 'Phones get a tall cut and wide screens a square one. It plays muted with captions until you turn the sound on, then loops quietly.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'raidmimic-paths-2026-10-23',
     title: 'Web 2.1.29',
     version: 'Web 2.1.29',
