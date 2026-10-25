@@ -10,7 +10,7 @@ const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('enragedeath')
-    .setDescription('Log a player death to boss enrage. Resets the /fun "days since enrage death" counter. (Officers only)')
+    .setDescription('Log a player death to boss enrage. Resets the /fun "days since enrage death" counter. (Officer only)')
     .addStringOption(opt =>
       opt.setName('player').setDescription('Character who died').setRequired(true)
     )

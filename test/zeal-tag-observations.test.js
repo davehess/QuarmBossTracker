@@ -19,7 +19,7 @@ const src = readSource(BOT_INDEX);
 const block = sliceBlock(
   src,
   'const _seenZealTags   = new Map();',
-  "  await supabase.insert('zeal_tag_observations', out);\n  return out.length;\n}",
+  "  await supabase.insertIgnoreDuplicates('zeal_tag_observations', out);\n  return out.length;\n}",
 );
 
 // The slice calls require('./utils/supabase'); stub it so the block runs
@@ -29,7 +29,7 @@ function freshSandbox() {
   return evalBlock(
     `const __writes = [];
      const require = (m) => String(m).endsWith('supabase')
-       ? { isEnabled: () => true, insert: async (t, rows) => { __writes.push([t, rows]); } }
+       ? { isEnabled: () => true, insertIgnoreDuplicates: async (t, rows) => { __writes.push([t, rows]); } }
        : {};
      ${block}
      const __drain = () => __writes.splice(0);`,
