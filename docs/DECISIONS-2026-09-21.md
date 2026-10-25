@@ -12977,3 +12977,28 @@ at like 1:10 it starts jumping up and down like a rabbit ... the animation just 
   Eyes forward most of the time, a glance up at the monitor on each call, the kill, the loot and the flags, a blink every
   six to eight seconds, a slow breath. The box cannot come apart because it never changes, and the loop no longer hops.
 - **Where it landed:** web 2.1.35 on beta, https://b.wolfpack.quest/raidmimic?v=motion. The live page is unchanged.
+
+### 439. The story video goes live; the ogre is not Shrek; what it cost and how the next one is made (2026-10-25)
+The guild lead: *"the ogre should not be Shrek"*; *"post it to raidmimic.com for now"*; *"how could this have gone differently
+and not cost me three times as much as it probably should have? what was the final cost break it down"*.
+- **Live:** web 2.1.36 made the story video the hero of https://raidmimic.com and https://wolfpack.quest/raidmimic (no
+  query, no beta flag). Web 2.1.37 swaps in the cut with the new ogre.
+- **The ogre** is a dark slate-grey warlord with tusks, a horned black iron helmet, spiked armour and a spiked mace, in every
+  shot, and the opening wide shot's clerics wear plate under white robes too. The video model's own idea of "a horned ogre"
+  is the famous film ogre: an unpinned clip turned into it within seconds, and its close-ups tripped the content filter.
+  Every clip is now pinned at both ends to edited frames (`v3/game5/`).
+- **What it cost (from the session record; prices read 2026-10-25 on docs.ltx.io/pricing and
+  ai.google.dev/gemini-api/docs/pricing):** about 156 video jobs, 1,230 s of 1080p video at $0.17/s = **~$209**; 93 images at
+  ~$0.135 = **~$13**; 37 voice lines, under $0.10; music CC0, free. **Paid generation ≈ $222.** Claude time on the video,
+  priced at API rates (Opus 5.5: $4/$20 per MTok, cache reads $0.20, 1 h cache writes $8): **≈ $100**, with no separate
+  charge on a subscription plan. About 10% of the generated video (~$22) is in the final cut. The rest, by stage: the first
+  cut (~$82, replaced by the new look), the vertical re-shoot (~$22), mimic clips re-rolled for drifting faces (~$34), fight
+  footage re-made for deaths, clerics, discs and the ogre (~$72). Failed or content-filtered jobs (about six) may or may not
+  be billed; LTX's pricing page does not say.
+- **How the next one is made (the lesson):** (1) a still-image storyboard with the voice and captions first, and the
+  gameplay checked by a raider (who calls what, what the overlay shows, which classes do what) before any paid video;
+  (2) the mascot as a rig (one master drawing or model, parts swapped by code, as `v3/idle/idle.py` does from 29 s), never as
+  generated video, since a video model re-invents the face every clip (the teeth changing between shots); (3) a model sheet
+  for the game cast before generation, every clip pinned at both ends from the first take; (4) drafts on a cheaper tier
+  (LTX Fast is $0.13/s at 1080p) and only the final takes on Pro; (5) 10-second samples at each decision, not full renders.
+  Estimated: under $100 all-in for the same film.
