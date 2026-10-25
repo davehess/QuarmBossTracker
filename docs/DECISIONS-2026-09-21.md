@@ -121,7 +121,7 @@ is ephemeral. It is a desktop-session job.
 | **Wipes read as kills in the raid review** (§416) | Two wipes now split (agent 4.0.15 beta, bot migration applied); reconcile still stamps wipes | the guild lead: A (reconcile leaves wipes unstamped) or B (review checks the wipe mark) |
 | **Graduations waiting on beta** (§413, §418) | Raid cut tool (`?v=split`), window-bounded kills, share start/end + date fix; raidmimic D + 13 captures | the guild lead: graduate now (A) or later |
 | **Actor emails on six more pages** (§414) | Parses fixed on main | the guild lead: sweep (A) or leave |
-| **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§433) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 83 s story video (gravelly player voice, lip-synced greeting, overlays that pulse on each call, the flags at the end; square on wide screens, captions while muted, a CC0 lo-fi beat) is still a beta preview, web 2.1.32: https://b.wolfpack.quest/raidmimic?v=motion | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
+| **raidmimic.com: the page is LIVE, the story video is next** (§424, §427–§434) | Pick your path, the eight icons and How it works are on `main` (web 2.1.29, https://wolfpack.quest/raidmimic). The 83 s story video (gravelly player voice, lip-synced greeting, overlays that pulse on each call, the flags at the end; square on wide screens, captions while muted, battle music then lo-fi, a nonstop fight with "Unit lost") is still a beta preview, web 2.1.33: https://b.wolfpack.quest/raidmimic?v=motion | the guild lead: say when the video joins the live page (step A); a session then graduates `web/public/raidmimic/motion/` and lifts nothing else (the beta-only gate can stay or go) |
 | **The open hub ("commons"): anyone joins, 12 active players is the line** (§423) | Designed (`docs/DESIGN-open-hub.md`); phase 0 built and dormant on branch `draft/open-hub` (pure rules `utils/openHub.js`, unapplied registry migration, 30 tests). NOT pushed, NOT applied, nothing live changes | the guild lead: the eight picks in the design's section 12 (recommendations marked); a session: phase 1 (~15 days, invite-only closed beta) after the picks and the route-compression work in the row below |
 | **Night segments + share self-refresh, live** (§419, §420) | Graduated to main (web 2.1.11): segments are the session page's default | the guild lead: confirm the segments on a real night; say if a guess is wrong |
 | **Traps on the Map** (§421) | Bot 4.0.12 main, agent 4.0.16 beta; `eqemu_traps` filled by a forced sync | the guild lead: open Plane of Earth on the beta Map |
@@ -12871,3 +12871,24 @@ basically would make it a square video"*.
   `<source media>` plays the square inside the 9:16 box, which shows its middle: the vertical frame.
 - **Where it landed:** web 2.1.32 on beta, https://b.wolfpack.quest/raidmimic?v=motion (`SQUARE=1` in `v3/comp.py`, `MUSIC=` in
   `v3/sound.py`, in the scratchpad). The live page is unchanged.
+
+### 434. Nonstop action: the fight never idles, "Unit lost", a focused mimic, battle music first (2026-10-25)
+The guild lead: *"the "unity lost" Expression should say "UNIT LOST" Like a different RTS video game sound where a unit dies.
+there's too much idle time where the boss isn't attacking. it shouldn't give everyone out in one shot. it should be one after
+the other and faster after the initial tank goes down. don't have the mimic roll it's eyes. it's gaze is focused, not doofy.
+it's there to do a job, but it's cute while doing so. the action is meant to be nonstop. the lo fi music works after the mob
+does, but start with some quick paced combat music that fades when the boss is downed"*.
+- **The fight never idles.** The losing half is five new clips (a 6 s opening that ends on the old chain's first frame, then
+  three chained clips, then one interpolated into the warrior clip's first frame, so everything after it stays): the ogre
+  swings the whole time, raiders fall one at a time, the tank at ~16.6 s, then faster; the rampage plays at 1.45–1.75x. Any
+  slow-motion of game footage is out: it reads as idle.
+- **"Unit lost." is the game's announcer, not the raid leader** (crisp computer voice, trimmed, metallic, a short slap), on
+  each death that counts and closer together as the raid collapses (8.6, 16.6, 20.6, 24.0, 29.6, 30.6, 31.4 s). The leader's
+  line is now "Tank down! This is going bad, guys." Captions name it GAME.
+- **The mimic's gaze is focused.** Two new stills, a concerned-but-alert face and a determined little smile, both looking
+  steadily at the screen, and six new beats built on them replace every watching beat; idle beats play only their steady
+  stretch (`win:a:b` in `v3/comp.py`), since a video model's idle clip drifts (ears folding, the light dimming) part-way.
+- **Music in two acts.** CC0 battle music from the start, ducked under voices, fading 53.5–56 s as the ogre falls; the lo-fi
+  from 55 s. In the cut: "Determined Pursuit" (Emma_MA, opengameart.org, CC0, licence checked on its page); "Battle Theme B"
+  (cynicmusic) and "Epic Boss Battle" (SubspaceAudio) are on the Decision Desk to compare.
+- **Where it landed:** web 2.1.33 on beta, https://b.wolfpack.quest/raidmimic?v=motion. The live page is unchanged.
