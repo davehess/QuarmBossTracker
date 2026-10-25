@@ -13017,3 +13017,13 @@ paused, which takes https://wolfpack.quest and https://raidmimic.com down until 
 - **Next:** the guild lead can confirm the cause from Vercel → Usage → Fluid Active CPU (the per-function list) and the
   cycle's reset date. If the beta set holds, graduate it; if CPU still climbs, the next candidates are caching the
   raidmimic page (built per request today) and the shared-raid pages' minute refresh.
+- **Measured, the same day (the guild lead's Vercel usage screenshots + page_views):** 3 h 4 m of 4 h in the last 30
+  days, ~8.5 min a day (the allowance sustains ~8), 61% in the edge runtime (the middleware), 71% in iad1. page_views over
+  7 days: **8,785 of 10,653 signed-in page requests came in bursts of 3+ per second per member**, i.e. Next's automatic
+  link prefetches, not reads; the top routes were the menu items and /character/<name>. The /raid refresh was only ~575
+  requests a week, so the earlier guess was the smaller cause.
+- **Fix, on beta (web 2.1.39):** `next/link` resolves to `web/components/NoPrefetchLink.tsx` (prefetch off unless asked),
+  wired in next.config.js both as a top-level alias and inside Next's own per-layer rule aliases, which Next 14.2 keys by
+  the file path (`<next>/link.js`) and which otherwise win. Verified on a full production build: all 121 pages use it.
+  `test/no-prefetch-link.test.js` runs the config. Links load on click, a moment slower. Recommended for main together
+  with the /raid refresh change.
