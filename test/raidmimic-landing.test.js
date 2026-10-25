@@ -225,11 +225,11 @@ describe('the page', () => {
     expect(page).toMatch(/export function generateMetadata\(\): Metadata/);
     expect(page).not.toMatch(/getSessionUser|supabase/i);
   });
-  it('renders ONE layout, “Pick your path”, with one preview flag: `?v=motion` and nothing else; no Ladder, no Scene-first layout, no variant bar', () => {
-    expect(page).toMatch(/return <PathsLayout ctx=\{ctx\} motion=\{IS_BETA && searchParams\?\.v === 'motion'\} \/>;/);
+  it('renders ONE layout, “Pick your path”, with the story video as its hero and no query flags; no Ladder, no Scene-first layout, no variant bar', () => {
+    expect(page).toMatch(/return <PathsLayout ctx=\{ctx\} motion \/>;/);
     expect(page.match(/<[A-Z]\w+Layout /g)).toHaveLength(1);
-    expect(page.match(/searchParams/g)).toHaveLength(3);                       // the destructured parameter, its type and the one read
-    expect(page.match(/\bv === /g)).toHaveLength(1);
+    expect(page).not.toMatch(/searchParams/);                                  // no query changes the page any more
+    expect(page).not.toMatch(/\bv === /);
     expect(page).not.toMatch(/variantOf|LadderLayout|SceneLayout|PreviewBar/);
     expect(page).not.toMatch(/hero=|raidmimicVariant|PitchLayout|TourLayout|OutputLayout|WatchLayout|StoryLayout|ScreenLayout/);
     for (const gone of ['LadderLayout', 'SceneLayout', 'VariantParts', 'TourLayout', 'OutputLayout', 'WatchLayout', 'StoryLayout', 'ScreenLayout', 'PitchLayout', 'Figures']) {
@@ -677,7 +677,7 @@ describe('the gallery of more captures', () => {
     expect(layout).toMatch(/<MoreShots \/>/);
     expect(layout.indexOf('<ClipTabs')).toBeLessThan(layout.indexOf('<MoreShots'));
     expect(layout.indexOf('<MoreShots')).toBeLessThan(layout.indexOf('<HowItWorks'));
-    expect(code('web/app/raidmimic/page.tsx')).toMatch(/return <PathsLayout ctx=\{ctx\} motion=\{IS_BETA && searchParams\?\.v === 'motion'\} \/>;/);
+    expect(code('web/app/raidmimic/page.tsx')).toMatch(/return <PathsLayout ctx=\{ctx\} motion \/>;/);
   });
   it('draws only the shots flagged `more`, from the content module, as full-size links with their size and alt text', () => {
     expect(more).toHaveLength(6);
@@ -941,23 +941,21 @@ describe('the motion preview (?v=motion)', () => {
     .map(m => ({ name: m[1], w: +m[2], h: +m[3], media: m[5] ? SQUARE_QUERY : m[4] }));
   const loops = [...stageCode.matchAll(/`\$\{DIR\}\/(loop-[\w-]+\.mp4)`/g)].map(m => m[1]);
 
-  it('only a query of exactly `motion` changes the page, and it is a preview: the default tree has no stage and keeps the mascot hero', () => {
+  it('the story video is the hero on both hosts: the page always passes `motion`; the layout keeps the mascot hero for a page without it', () => {
     const layout = code(L + 'PathsLayout.tsx');
     expect(layout).toMatch(/motion = false/);
     expect(layout).toMatch(/const Frame = motion \? MotionStage : Fragment;/);           // the headline is the stage's left column
     expect(layout).toMatch(/<Frame>\s*<header /);
     expect(layout).toMatch(/\{!motion && <MascotHero \/>\}/);
-    expect(code('web/app/raidmimic/page.tsx')).toMatch(/motion=\{IS_BETA && searchParams\?\.v === 'motion'\}/);
-    // a raidmimic host never sees it: the middleware drops every query (tested above), so only the Wolf Pack hosts can
+    expect(code('web/app/raidmimic/page.tsx')).toMatch(/<PathsLayout ctx=\{ctx\} motion \/>/);
+    // a raidmimic host drops every query (tested above) and still gets the video, since no query is needed
     expect(raidmimicLandingTarget('/')).toEqual({ pathname: '/raidmimic', search: '' });
   });
 
-  // The page went live before its video (the guild lead, 2026-10-24: "B now then A"): only a beta build honours the query,
-  // so production, which does not carry the story files yet, can never point at them.
-  it('only a beta build honours the preview: the flag is the build-time IS_BETA from web/lib/guild.ts', () => {
-    const page = code('web/app/raidmimic/page.tsx');
-    expect(page).toMatch(/import \{ IS_BETA \} from '@\/lib\/guild';/);
-    expect(page.match(/IS_BETA/g)).toHaveLength(2);                              // the import and the one gate
+  // The video went live on 2026-10-25 (the guild lead: "post it to raidmimic.com for now"), so the page no longer reads the
+  // build's beta flag: production carries the story files now.
+  it('the video is not a beta-only preview any more: the page does not read IS_BETA', () => {
+    expect(code('web/app/raidmimic/page.tsx')).not.toMatch(/IS_BETA/);
   });
 
   // The story files ship on beta only until the video graduates; where they are absent, the two file checks below have

@@ -17,7 +17,6 @@ import { headers } from 'next/headers';
 import type { Metadata } from 'next';
 import { isRaidmimicHost, raidmimicSeo, RAIDMIMIC_SETUP_PATH } from '@/lib/raidmimicHost';
 import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
-import { IS_BETA } from '@/lib/guild';
 import type { Ctx } from './_landing/Parts';
 import PathsLayout from './_landing/PathsLayout';
 
@@ -35,15 +34,14 @@ export function generateMetadata(): Metadata {
   };
 }
 
-export default function RaidmimicPage({ searchParams }: { searchParams?: { v?: string } }) {
+export default function RaidmimicPage() {
   // On a raidmimic host the form lives on eqmimic.quest and the page is `/`. On the Wolf Pack hosts the form is
   // reached by its real path, so the site header stays above it.
   const onHost = isRaidmimicHost(headers().get('host'));
   const ctx: Ctx = onHost
     ? { onHost, interest: interestUrl(`${EQMIMIC_ORIGIN}/feedback`), setup: '/setup' }
     : { onHost, interest: interestUrl(EQMIMIC_FEEDBACK_PATH), setup: RAIDMIMIC_SETUP_PATH };
-  // `?v=motion` is a beta preview of a moving hero (2026-10-23); no `v` is the page as it was. A raidmimic host drops the
-  // query in the middleware, and only a beta build honours it (IS_BETA): the page went live first and the video follows
-  // (the guild lead, 2026-10-24: "B now then A"), so production never points at story files it does not carry.
-  return <PathsLayout ctx={ctx} motion={IS_BETA && searchParams?.v === 'motion'} />;
+  // The story video is the hero on both hosts (the guild lead, 2026-10-25: "post it to raidmimic.com for now"); it was a
+  // beta-only `?v=motion` preview from 2026-10-23 until then.
+  return <PathsLayout ctx={ctx} motion />;
 }
