@@ -13002,3 +13002,18 @@ and not cost me three times as much as it probably should have? what was the fin
   for the game cast before generation, every clip pinned at both ends from the first take; (4) drafts on a cheaper tier
   (LTX Fast is $0.13/s at 1080p) and only the final takes on Pro; (5) 10-second samples at each decision, not full renders.
   Estimated: under $100 all-in for the same film.
+
+### 440. Vercel's CPU warning: trim the waste in code, stay on the free plan (2026-10-25)
+Vercel emailed that the free team had used 75% of its monthly Fluid Active CPU (4 hours); past 100% the project is
+paused, which takes https://wolfpack.quest and https://raidmimic.com down until the month resets. The guild lead picked
+**A, trim the waste in code**, over B (Pro, $20/month) and C (move the web to Tower).
+- **Measured: nothing.** Hobby shows no per-route CPU (Observability Plus is Pro-only) and keeps one hour of logs, so the
+  causes were read from the code. The likeliest: /raid re-ran its server render every 15 s while open.
+- **On main (web 2.1.38):** the middleware matcher skips mp4, webm, vtt, wav, mp3, ogg and tga as it already skipped
+  images, so a playing video's byte-range requests no longer run the sign-in check and page-view logging.
+- **On beta (web 2.1.38), to look at before main:** /raid refreshes every 60 s, only while visible and only in the raid
+  window (Sun/Wed/Thu 19:30-00:30 ET); the raid timeline strip and the route planner poll every 30 s (were 10 s); the
+  OpenDKP page every 60 s (was 30 s). Mimic's overlays are unaffected.
+- **Next:** the guild lead can confirm the cause from Vercel → Usage → Fluid Active CPU (the per-function list) and the
+  cycle's reset date. If the beta set holds, graduate it; if CPU still climbs, the next candidates are caching the
+  raidmimic page (built per request today) and the shared-raid pages' minute refresh.
