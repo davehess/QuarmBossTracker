@@ -2550,6 +2550,17 @@ a map per zone. All content is data in `web/lib/raidPlan.ts` (dated for one nigh
 `web/app/pop/raid/ZoneSvg.tsx` draws walls + route + markers + patrol; `walls.ts` reads `zone_map_lines.segs`
 only (never Brewall). `test/pop-raid-plan.test.js`.
 
+### Your flags for tonight (`/pop/raid/me`, [beta], web 2.1.44)
+A member's own link for the next raid night: the character their sign-up brings (BRINGING card, gold), every other
+character folded, each with its numbered step list (done green ✓, needed orange, `/loc` and the words to say), and
+a paste box for the Flag Seer. Which character: `pickSignupCharacter` over the member's `rh_signups` row for the next
+event (`web/lib/raidMeLoad.ts`: `loadNextEvent` = `pickNextRaidEvent` in `raidPlan.ts`, today ET or later; household
+Discord ids). Which are listed: `chooseCharacters` (`listableChars.ts` tiers: traders, hidden and under-46 out; the
+bringing one always kept). What each holds: `loadHeld` (`raidPreflags.ts`). Steps: ONE function, `stepsFor(source,
+held)` in `web/lib/raidMe.ts`; `night` (default, the `PREFLAGS` for the night) or `?steps=next` (`popNextSteps.ts`).
+Paste: the existing `app/pop/guide/SeerPaste.tsx` (+ `defaultOpen`, `onSaved`) in `MeTools.tsx`; the `#popflags
+output` tab and "Sync from my logs" are disabled slots, not wired. `test/pop-raid-me.test.js`.
+
 ### PoP checklist (`/pop/guide`)
 **Sections + sidebar (live, web 1.8.158; built 1.8.155, §306):** `web/lib/popGuideSections.ts` groups `GUIDE_ITEMS` into `GUIDE_TREE` (tiers 1–5
 from `TIER_LABELS`, planes from `POP_ZONES`, then the Plane of Knowledge) via the explicit `STEP_HOME` map; `GUIDE_NAV` comes from the

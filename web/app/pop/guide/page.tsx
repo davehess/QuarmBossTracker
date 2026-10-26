@@ -173,6 +173,7 @@ export default async function PopGuidePage(
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h1 className="text-lg text-gold">Planes of Power: your checklist</h1>
           <Link href="/pop" className="text-xs text-blue hover:underline">flag chart →</Link>
+          <Link href="/pop/raid/me" className="text-xs text-blue hover:underline">your flags for the next raid →</Link>
         </div>
         <p className="text-sm text-dim mt-1 max-w-3xl">
           What you can&apos;t skip, and who you need for each step. Tick things off as you go;

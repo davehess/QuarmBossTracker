@@ -37,7 +37,12 @@ export function useFocusStep(idPrefix: string, before?: (key: string) => void) {
 
 const SEER = GUIDE_ITEMS.find(i => i.key === 'start_flag_fixers')?.where?.find(l => l.npc.startsWith('Seer'));
 
-export default function SeerPaste({ character, onResult }: { character: string | null; onResult: (r: SeerResult | null) => void }) {
+// `defaultOpen` and `onSaved` are for /pop/raid/me, which embeds the box under a tab: it opens the box at once and
+// refreshes its step lists after a save. The checklist passes neither, so it stays closed and unchanged.
+export default function SeerPaste({ character, onResult, defaultOpen, onSaved }: {
+  character: string | null; onResult: (r: SeerResult | null) => void; defaultOpen?: boolean; onSaved?: () => void;
+}) {
+  const openProp = defaultOpen ? { open: true } : {};
   const [text, setText] = useState('');
   const [parsed, setParsed] = useState<Parsed | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -71,6 +76,7 @@ export default function SeerPaste({ character, onResult }: { character: string |
     startSave(async () => {
       const res = await saveSeerRecital(character, sentences);
       if (!res.ok) { setStatus({ ok: false, msg: res.error }); return; }
+      if (res.written > 0) onSaved?.();
       setStatus({
         ok: true,
         msg: res.written > 0
@@ -89,7 +95,7 @@ export default function SeerPaste({ character, onResult }: { character: string |
   const doneCount = views.reduce((n, v) => n + v.done.length, 0);
 
   return (
-    <details className="bg-panel border border-border rounded-lg group">
+    <details className="bg-panel border border-border rounded-lg group" {...openProp}>
       <summary className="cursor-pointer select-none p-3 text-sm text-text flex flex-wrap items-baseline gap-x-2">
         <span className="font-semibold">Paste what the Seer says</span>
         <span className="text-xs text-dim">Fix your flags and see what is next. Read here in your browser; nothing is kept unless you save.</span>
