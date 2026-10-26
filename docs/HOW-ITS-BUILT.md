@@ -2584,6 +2584,18 @@ Real server output: `test/fixtures/popflags-real-{a,b}.txt` (`test/pop-flags-rea
 `PENDING_MEMORIES` + `pendingHint()`/`pendingNext()` in `web/lib/popRecital.ts` ("do this next"), `PENDING_RECITAL` in `utils/popFlagStages.js`, stored as
 `cl_*` / source `recital`; `test/pop-seer-pending.test.js`, fixture `test/fixtures/seer-pending-memories.json`.
 
+### Soft Reserve (`/raid/sr`, `/admin/soft-reserve`, [beta], web 2.1.55)
+Per raid event, a member reserves drops for the character their sign-up brings (`bringingFrom`), so a main's pick never carries to an alt. Rules
+(caps, lock, visibility, the officer form) are pure in `web/lib/softReserve.ts`; reads in `softReserveLoad.ts` (`loadSrView` for the page,
+`loadSrBase` for the action); `app/raid/sr/` is the page, `SrPicker.tsx` (optimistic) and `actions.ts` `setPick`; officers use `app/admin/soft-reserve/`
+(`RulesForm.tsx`, `saveSrRules`, `setSrLocked`). Tables `sr_rules` (one row per `rh_events.id`, text) and `sr_picks`; service role only. Targets are
+officer-picked (`sr_rules.npc_ids`), falling back to the `/pop/raid` plan on the plan night; Raid-Helper's own text carries no target list in the mirror.
+Tests: `test/soft-reserve.test.js`.
+Bot half (bot 4.0.22): `utils/softReserve.js` (load an event's reservers, `reserverLine`, `rankWithReservers`, `lockOnFirstLoot`); `/loot` (`commands/loot.js`) and
+the Mimic loot post (`index.js _handleAgentLootPost`) add the "⭐ Soft Reserve" line (`utils/loot.js buildLootAnnounceEmbed`); event-night rolls rank reservers
+first in `utils/rollLoot.js buildRollSessions` (twin: `web/lib/rolls.ts rankWithReservers`). Raid nights show the order and an officer enforces it
+(OpenDKP settles). Tests: `test/soft-reserve-bot.test.js`.
+
 ### PoP checklist (`/pop/guide`)
 **Sections + sidebar (live, web 1.8.158; built 1.8.155, §306):** `web/lib/popGuideSections.ts` groups `GUIDE_ITEMS` into `GUIDE_TREE` (tiers 1–5
 from `TIER_LABELS`, planes from `POP_ZONES`, then the Plane of Knowledge) via the explicit `STEP_HOME` map; `GUIDE_NAV` comes from the

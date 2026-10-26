@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'soft-reserve-2026-10-26',
+    title: 'Web 2.1.55',
+    version: 'Web 2.1.55 · Bot 4.0.22',
+    date: '2026-10-26',
+    headline: 'A new page, marked [beta], lets you reserve the drops you want first claim on for the next raid.',
+    features: [
+      { name: 'Soft Reserve', blurb: 'Open it from your flags page or the raid night plan. Pick the items you want from each target boss, for the character your sign-up brings. You get a set number of picks, and you can change them until picks lock.' },
+      { name: 'Reservers go first', blurb: 'When an item drops, the people who reserved it get first claim. If you do not want it any more you can pass, and it goes to the next person who reserved it, then to everyone. Anything nobody reserved is open to the whole raid as usual.' },
+      { name: 'You see counts, not names', blurb: 'The page shows how many people reserved each item. Who reserved it shows when the item drops, and officers can switch a raid to names open or hidden.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'gear-caps-and-sources-2026-10-26',
     title: 'Web 2.1.52',
     version: 'Web 2.1.52',
