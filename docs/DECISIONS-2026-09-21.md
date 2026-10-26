@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Per-person flag link + map timers through a bot restart** (§443) | Sign-ups now count the alt they signed up as (web 2.1.43, live). Link: mocks A (page) / B (Discord reply). Map-sync dedup live (bot 4.0.17 + migration 20261026160000), outbox on beta (agent 4.0.24) | the guild lead: pick A or B for the link (A recommended); the outbox reaches the fleet with the next Mimic stable |
+| **Per-person flag link `/pop/raid/me`** (§443, §444) | Picked A: page + #popflags/Seer paste + "Sync from my logs" + #popflags read live by Mimic. Drafts in progress. Map-sync dedup fully live (index applied), outbox on beta (agent 4.0.24) | a session: review, apply the rescan migration, ship bot+web to main and the agent to beta; the outbox reaches the fleet with the next Mimic stable |
 | **First sign-in: pick your characters, stage a recruit main** (§426) | Draft on `draft/recruit-onboarding` (bot 4.0.13 for `main`, agent 4.0.21 for `beta`); not pushed | the guild lead: say if the three judgement calls hold (OpenDKP-roster names not claimable, alts unparented when the main conflicts, "Save and upload these now"); a session: land the bot half on `main` first, then the agent half on `beta`, and make staged recruits show in `/admin/links` |
 | **Route planner + off-night plans + Sol Ro tower** (§407) | Live on main (web 2.0.2): `/raid/plan/routes` [beta], Tactics + the tower, versions, compare, splits, fewest raiders per boss | the guild lead: press "Import tonight's planner" once as an officer; pick the off-night bosses and the fewest headline (A everyone present, default) |
 | **Guest raids stored as ours** (§408) | Not fixed | the guild lead: A tag them (recommended) or B don't send |
@@ -13071,4 +13071,19 @@ paused, which takes https://wolfpack.quest and https://raidmimic.com down until 
   `map_sync_outbox.json`; the durable upload queue was not reused: per-kind envelope, 404 permanent, blocks agent updates while non-empty), bot 4.0.17 on
   main (migration `20261026160000_map_spawn_events_dedup.sql`, `insertIgnoreDuplicates`). The GET look-back stays 8 h on
   purpose: a port is reused once a copy closes, and a 24 h look-back could apply an earlier copy's event to the current one. Order to ship: bot
-  deploys, then the migration is applied (SQL Editor or MCP), then the agent goes to beta.
+  deploys, then the migration is applied (SQL Editor or MCP), then the agent goes to beta. The guild lead ran the migration
+  in the SQL Editor the same day (the MCP apply stalled at its approval prompt again); `map_spawn_events_dedup_idx` verified.
+
+### 444. Per-person flag link: A, with a #popflags / Seer paste box, a "Sync from my logs" button, and #popflags read live (2026-10-26)
+- **The guild lead picked A:** a signed-in page `/pop/raid/me`, "with a copy/paste box for the seer's info or popflags
+  content. lets add a button for that sync as well to comb through the latest on logs." Then: *"ideally users are able to
+  have that text come through anytime they do it from mimic"*: Mimic reads `#popflags` output from the log as it happens.
+- **`#popflags` text is from the server source**, `SecretsOTheP/EQMacEmu` @ `11024c19`, `zone/gm_commands/popflags.cpp`
+  (967 lines; a Player command). Plain `#popflags` is an overview; `#popflags 1`..`5` print each tier, so a paste needs
+  those five. No real capture of its output exists in our data yet: the first live read is the check.
+- **Sync from my logs does NOT reuse `agent_backfill_requests`:** agents only show a banner for those and never complete
+  them (81 pending, 0 completed on 2026-10-26). A small `pop_rescan_requests` table instead; the member's Mimic takes the
+  request on its poll (minutes), re-reads N days of that character's logs through the existing PoP gates, and reports a count.
+- **Two parsers on purpose** (the agent is zero-dependency and cannot import the web's TypeScript): one shared fixture
+  and a parity test keep them the same.
+- Drafts in progress; ship order: migration, bot, web (main), then the agent (beta).
