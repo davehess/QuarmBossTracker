@@ -13105,3 +13105,21 @@ discord bot, desktop client"*. Read 2026-10-26 (its site blocks cloud addresses;
 - **The pick:** A, use parses.gg for WoW parses and keep our guild layer (sign-ups, DKP, loot, attendance, Discord cards
   from its webhook / API) — recommended; B, ship our own reader. A webhook carries only its owner's fights, so a
   guild-wide card needs the guild endpoint polled or each raider's webhook registered: verify before building.
+
+### 446. Gear upgrades: wishlist + pre-bid, paired slots, quest and tradeskill items, cap-aware scoring, icons (2026-10-26)
+The guild lead, on https://wolfpack.quest/me/upgrades, in order:
+- *"add in 'add to wishlist' ... so people get those on their list to add a pre-bid amount"*: per-row add, with priority
+  and an optional pre-bid. The bid is encrypted by the bot (the key never reaches the website). Drafting.
+- *"put wrists and ears together ... since they're interchangeable"*: Ear, Wrist (and Fingers, my addition, easy to
+  drop) shown as pairs; `WORN_SLOTS` order is left alone for its other users. Drafting with the wishlist change.
+- Comparing against another tool's chest list (*"very different interpretations"*): ours ranks gain over the worn item
+  and only knows drops and vendors. *"yes we should have quest and tradeskill items in as well"*: sources from our own
+  `eqemu_tradeskill_recipe*`, `eqemu_quest_scripts` / `quest_catalog`, never a guide.
+- *"we should be evaluating how close this gets you to maximums on stats, attack, flowing thought, AC, etc. and
+  priorities in between"*: cap-aware scoring. Caps from the EQMacEmu source and rules, the character's real totals from
+  its worn gear where we can, class weights between.
+- *"it would also be a good thing to roll into the gear page, but we need icons in our site"*: the same evaluation on
+  `/character/<name>/gear`, and item icons (the atlas `web/public/icons/items.png` + `web/components/ItemIcon.tsx`
+  exist, used only by the inventory page today) on both pages.
+- Research first (caps, totals, quest-reward parsing, why each of the ten chest items is missing), then one build on
+  top of the wishlist change. Existing pages, so all of it goes to beta first.
