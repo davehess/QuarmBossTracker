@@ -6785,6 +6785,26 @@ then every other character folded ("all set ✓" / "N steps left"), then a paste
 Next event = `pickNextRaidEvent` (Eastern day today or later); `/pop/raid` still reads its fixed night. Steps come from one function,
 `stepsFor(source, held)` (`web/lib/raidMe.ts`): the night's `PREFLAGS` by default, or `?steps=next` for the `/pop` next-steps engine; the
 targets and preflags are static data in `raidPlan.ts` until the officers' target-picking page replaces them. Traders and characters under
-the PoP floor are hidden (the sign-up's own character is always kept). ⏳ NOT wired, on purpose: the `#popflags output` tab (its format is
-being researched; no in-game text is guessed) and "Sync from my logs" (disabled, "coming next"). Tests: `test/pop-raid-me.test.js`.
+the PoP floor are hidden (the sign-up's own character is always kept). The `#popflags output` tab and "Sync from my logs" were disabled slots
+here and are wired in the entry below (web 2.1.47). Tests: `test/pop-raid-me.test.js`.
 Linked from `/pop/raid` and `/pop/guide`; `SeerPaste` gained two optional props (`defaultOpen`, `onSaved`), the checklist is unchanged.
+
+### 🧾 2026-10-26 — Paste `#popflags` + "Sync from my logs" on `/pop/raid/me` (web 2.1.47, bot 4.0.19 main; agent 4.0.25 on `beta`)
+Two ways to set a member's flags without the Seer. **(1) Paste `#popflags`** (`web/lib/popFlagsPaste.ts`, `PopFlagsPaste.tsx`): a pure parser of what
+the server's own command prints (overview and tiers 1-5), read off `popflags.cpp` at EQMacEmu commit `11024c19` with `popflags.cpp:<line>` cites in
+the code. Stage text N of a series is step `<qglobal>_<N>`; access lines, the `hohtrials`/`sol_room` bit lines, Maelin's four lines and the Miak
+preflag map to catalog keys; only keys we keep are written (`zeks_5` → `zeks_3`+`zeks_4`, `thelin_5` → `thelin_4`, Seventh Hammer is read but
+has no key). "Complete" boss lines and the Miak line are `<test> || time` in the source, so they count only when the same paste shows the member does
+not hold the time flag (`Plane of Time access: Locked`, or the overview's Tier 4/5 lines); otherwise they are listed as unproven. Saved to
+`pop_flags` with source `popflags_paste` (own characters only, the Seer paste's rules: `popFlagsPasteSave.ts`, `popflagsActions.ts`). ⏳ `/pop/latest`,
+the alt-group "newly flagged" count and the hail board's proof set list sources by name and do not count `popflags_paste` yet.
+**(2) Sync from my logs**: `requestLogRescan(character|null, days=14)` (`rescanActions.ts`, rules in `web/lib/popRescan.ts`) files a
+`pop_rescan_requests` row (migration `20261026170000`, ⏳ NOT YET APPLIED: apply before the bot ships); one open request per member; the button
+(`SyncFromLogs.tsx`) reads its row with the member's own session every 20 s while open, stops after done or 15 minutes. Bot: poll stream `rescan`
+(claims pending → taken; a taken row is handed out again after 30 min; pending expires at 24 h) and `POST /api/agent/rescan-done {id, found, ok}`,
+owner-checked (`utils/popRescan.js`). Not `agent_backfill_requests`. The agent side (re-read the last N days, count the gated flag lines, POST
+rescan-done) is on `beta`. Tests: `test/pop-flags-paste.test.js`, `test/pop-rescan-web.test.js`, `test/pop-rescan-bot.test.js`.
+**(3) Mimic reads `#popflags` live** (the guild lead: "anytime they do it from mimic"): the agent (beta) turns the command's output lines in the member's own log
+into step keys and uploads them as pop_flag events with `source: 'popflags'` (sent as an empty-text recital so an older bot skips them). The bot (this
+change, `_handleAgentPopFlags` + `popFlagStages.POPFLAGS_KEYS`, a closed vocabulary) stores them as `pop_flags` rows with source `popflags`. ⏳ Ship the bot
+BEFORE the agent. Test: `test/pop-flags-live-bot.test.js`.

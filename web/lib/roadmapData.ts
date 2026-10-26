@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'popflags-paste-and-sync-2026-10-26',
+    title: 'Web 2.1.47',
+    version: 'Web 2.1.47 · Bot 4.0.19',
+    date: '2026-10-26',
+    headline: 'Your flags page reads what #popflags prints, and can ask Mimic to re-read your logs for flags it missed.',
+    features: [
+      { name: 'Paste #popflags', blurb: 'Type #popflags 1 through #popflags 5 in game, copy what it prints, and paste it on Your flags for tonight. The page shows what it found before it saves, for your own characters only.' },
+      { name: 'Sync from my logs', blurb: 'One button asks Mimic on your PC to read the last two weeks of a character\'s logs for flag and Seer lines. It picks the request up within a few minutes and the page says when it is done and how many it found.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'raid-flags-for-tonight-2026-10-26',
     title: 'Web 2.1.44',
     version: 'Web 2.1.44',

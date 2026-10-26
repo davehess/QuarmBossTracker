@@ -1,16 +1,16 @@
 'use client';
 
 // The paste area of /pop/raid/me: pick a character, then paste what the Flag Seer says (the existing
-// SeerPaste box, unchanged apart from opening at once and telling us when it saved) or, soon, the output
-// of #popflags. Two slots are left on purpose and are NOT wired:
-//   - the "#popflags output" tab: its format is being researched, and its parser will be added after. Nothing
-//     here guesses at the in-game text;
-//   - "Sync from my logs": the way to read the flags straight from the player's logs is being researched.
-// A save refreshes the page so the step lists above show what was just saved.
+// SeerPaste box, unchanged apart from opening at once and telling us when it saved) or the output of #popflags
+// (PopFlagsPaste, read off the server's own command: web/lib/popFlagsPaste.ts). "Sync from my logs" asks the
+// member's own Mimic to re-read their recent logs (SyncFromLogs; web/lib/popRescan.ts).
+// A save, or a finished sync, refreshes the page so the step lists above show what was just saved.
 
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import SeerPaste from '@/app/pop/guide/SeerPaste';
+import PopFlagsPaste from './PopFlagsPaste';
+import SyncFromLogs from './SyncFromLogs';
 
 type Tab = 'seer' | 'popflags';
 
@@ -40,11 +40,7 @@ export default function MeTools({ chars, initial }: { chars: { name: string; cls
             {chars.map(c => <option key={c.name} value={c.name}>{c.name}{c.cls ? ` (${c.cls})` : ''}</option>)}
           </select>
         </label>
-        <button type="button" disabled title="Coming next: read your flags straight from your logs"
-                className="rounded border border-border px-3 py-1.5 text-sm text-dim opacity-50 cursor-default">
-          Sync from my logs
-          <span className="ml-1.5 text-[10px] uppercase tracking-wide">coming next</span>
-        </button>
+        <SyncFromLogs character={character} onDone={refresh} />
       </div>
 
       <div role="tablist" aria-label="Where your flags come from" className="mt-3 flex gap-1 border-b border-border">
@@ -52,7 +48,7 @@ export default function MeTools({ chars, initial }: { chars: { name: string; cls
                 onClick={() => setTab('seer')} className={tabCls(tab === 'seer')}>Seer paste</button>
         <button type="button" role="tab" id="tab-popflags" aria-selected={tab === 'popflags'} aria-controls="panel-popflags"
                 onClick={() => setTab('popflags')} className={tabCls(tab === 'popflags')}>
-          #popflags output <span className="ml-1 text-[10px] uppercase tracking-wide text-orange">soon</span>
+          #popflags output
         </button>
       </div>
 
@@ -62,16 +58,7 @@ export default function MeTools({ chars, initial }: { chars: { name: string; cls
         </div>
       ) : (
         <div role="tabpanel" id="panel-popflags" aria-labelledby="tab-popflags" className="mt-3" data-slot="popflags-output">
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-dim">#popflags output</span>
-            <textarea disabled rows={6} placeholder="Not wired yet. This box will read the #popflags output once we know its format."
-                      className="w-full rounded border border-border bg-bg p-2 font-mono text-xs text-text opacity-50" />
-          </label>
-          <button type="button" disabled title="Coming next"
-                  className="mt-2 rounded border border-gold px-3 py-1.5 text-sm text-gold opacity-40 cursor-default">
-            Check my flags
-          </button>
-          <p className="mt-2 text-xs text-dim">Coming next. For now, use the Seer paste tab.</p>
+          <PopFlagsPaste characters={chars.map(c => c.name)} character={character} onSaved={refresh} />
         </div>
       )}
     </section>

@@ -2559,7 +2559,14 @@ Discord ids). Which are listed: `chooseCharacters` (`listableChars.ts` tiers: tr
 bringing one always kept). What each holds: `loadHeld` (`raidPreflags.ts`). Steps: ONE function, `stepsFor(source,
 held)` in `web/lib/raidMe.ts`; `night` (default, the `PREFLAGS` for the night) or `?steps=next` (`popNextSteps.ts`).
 Paste: the existing `app/pop/guide/SeerPaste.tsx` (+ `defaultOpen`, `onSaved`) in `MeTools.tsx`; the `#popflags
-output` tab and "Sync from my logs" are disabled slots, not wired. `test/pop-raid-me.test.js`.
+output` tab is `PopFlagsPaste.tsx` and "Sync from my logs" is `SyncFromLogs.tsx` (web 2.1.47, below). `test/pop-raid-me.test.js`.
+
+### Paste `#popflags` and "Sync from my logs" (`/pop/raid/me`, web 2.1.47, bot 4.0.19)
+Paste: `web/lib/popFlagsPaste.ts` (`parsePopFlags`, pure, quotes `popflags.cpp:<line>` of EQMacEmu `11024c19`) → `PopFlagsPaste.tsx` →
+`popflagsActions.ts` `savePopFlagsPaste` (rules in `popFlagsPasteSave.ts`; `pop_flags` source `popflags_paste`; own characters only). Fixture
+`test/fixtures/popflags-output.txt`. Sync: `SyncFromLogs.tsx` → `rescanActions.ts` `requestLogRescan` (`popRescan.ts`) → table
+`pop_rescan_requests` → bot `utils/popRescan.js` (poll stream `rescan`, `POST /api/agent/rescan-done`) → the member's Mimic (agent, `beta`).
+Tests: `test/pop-flags-paste.test.js`, `test/pop-rescan-web.test.js`, `test/pop-rescan-bot.test.js`.
 
 ### PoP checklist (`/pop/guide`)
 **Sections + sidebar (live, web 1.8.158; built 1.8.155, §306):** `web/lib/popGuideSections.ts` groups `GUIDE_ITEMS` into `GUIDE_TREE` (tiers 1–5
