@@ -20,6 +20,7 @@
 'use strict';
 
 const { mergeRollSetRows, sessionWinner } = require('./hotDiceNight');
+const { rankWithReservers } = require('./softReserve');
 
 const STOPWORDS = new Set(['of', 'the', 'a', 'an']);
 const LOOT_WINDOW_MS = 10 * 60 * 1000;   // loot follows the roll
@@ -55,7 +56,7 @@ function itemsMatch(a, b) {
  *   { item, qty, from, to, startMs, lastMs, rollers, winners:[{name,value}], looters:[] }
  * `winners` honours qty (a 2× drop has two winners). Newest first.
  */
-function buildRollSessions(rollRows, lootedRows = []) {
+function buildRollSessions(rollRows, lootedRows = [], reserversFor = null) {
   // mergeRollSetRows keys on range+start and drops the item, so re-attach the
   // item/qty/zone from the rows that fed each merged set.
   const merged = mergeRollSetRows(rollRows);
@@ -86,12 +87,17 @@ function buildRollSessions(rollRows, lootedRows = []) {
     const ranked = [...firstByName.values()]
       .sort((a, b) => (b.value - a.value) || a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
     const nWinners = Math.max(1, Math.min(qty || 1, ranked.length));
+    // Soft Reserve (DECISIONS §448): if any reserver of this item rolled, only reservers' rolls count (top N for N
+    // copies). `sr` stays null for an item nobody reserved, so those sessions are byte-for-byte what they were.
+    const reservers = item && typeof reserversFor === 'function' ? reserversFor(item) : null;
+    const ranking = rankWithReservers(ranked, nWinners, reservers);
     const session = {
       item, qty, zone,
       from: set.from, to: set.to,
       startMs: set.startMs, lastMs,
       rollers: w.rollers,
-      winners: ranked.slice(0, nWinners).map(r => ({ name: r.name, value: r.value })),
+      winners: ranking.winners.map(r => ({ name: r.name, value: r.value })),
+      sr: ranking.sr,
       looters: [],
     };
     session.looters = attributeLooters(session, lootedRows);
@@ -196,9 +202,15 @@ function renderRollLootLines(sessions, { max = 20 } = {}) {
     const win   = s.winners.length
       ? `\n   🏆 ${s.winners.map(w => `**${w.name}** (${w.value})`).join(' · ')}`
       : '\n   _no rolls captured yet_';
+    // Soft Reserve: how many reservers rolled, and the rolls it set aside (a non-reserver who would have won).
+    let sr = '';
+    if (s.sr) {
+      sr = `\n   ⭐ SR · ${s.sr.rolled} of ${s.sr.reservers} rolled`;
+      if (s.sr.ignored && s.sr.ignored.length) sr += `\n   Ignored: ${s.sr.ignored.map(r => `${r.name} (${r.value})`).join(' · ')}`;
+    }
     const others = otherLooters(s);
     const loot = others.length ? `\n   📦 looted by ${others.map(l => l.looter).join(', ')}` : '';
-    lines.push(head + win + loot);
+    lines.push(head + win + sr + loot);
   }
   return lines;
 }

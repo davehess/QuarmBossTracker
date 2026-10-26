@@ -13,6 +13,7 @@
 const https = require('https');
 const http  = require('http');
 const { EmbedBuilder } = require('discord.js');
+const { reserverLine } = require('./softReserve');
 
 // ── Zeal Loot Paste Parser ────────────────────────────────────────────────────
 // Supported formats (all produced by Zeal's /loota or "LinkAll" commands):
@@ -279,9 +280,13 @@ function buildLootAnnounceEmbed(items, bossName, bidMinutes = 20) {
       const pct = item.dropChance !== null ? ` · ${item.dropChance.toFixed(1)}% drop rate` : '';
       line += `\n  ↳ *Seen once in guild history${pct}*`;
     }
+    // Soft Reserve (DECISIONS §448): who reserved it, as far as the raid's visibility setting lets a public card say.
+    const sr = reserverLine(item.reservers, item.srShown || 'names');
+    if (sr) line += `\n  ↳ ${sr}`;
 
     return line;
   });
+  const anyReserved = items.some(i => Array.isArray(i.reservers) && i.reservers.length > 0);
 
   return new EmbedBuilder()
     .setColor(0xf5a623)
@@ -291,7 +296,8 @@ function buildLootAnnounceEmbed(items, bossName, bidMinutes = 20) {
       name: '💰 Bidding',
       value: `Bid at **[OpenDKP Bidding Tool](<${opendkpBase}/#/bidding>)**\n` +
              `Live auctions: **[${opendkpAuctionsUrl()}](<${opendkpAuctionsUrl()}>)**\n` +
-             `Tell bids accepted — officers settle before announcing winners.`,
+             `Tell bids accepted — officers settle before announcing winners.` +
+             (anyReserved ? `\nReservers bid first; an officer settles.` : ''),
       inline: false,
     })
     .setFooter({ text: `Auction closes in ~${bidMinutes} minutes · Ties go to earlier bid` })

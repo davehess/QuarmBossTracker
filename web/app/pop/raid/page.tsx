@@ -93,6 +93,9 @@ export default async function RaidPlanPage() {
       <p className="mt-1 text-xs">
         <Link href="/pop/raid/me" className="text-blue hover:underline">Your flags for tonight: your characters and the steps each one still needs →</Link>
       </p>
+      <p className="mt-1 text-xs">
+        <Link href="/raid/sr" className="text-blue hover:underline">Soft Reserve: pick the drops you want first claim on →</Link>
+      </p>
 
       <nav className="mt-3 rounded-lg border border-border bg-panel p-3 text-xs" aria-label="Targets">
         <ol className="space-y-1">

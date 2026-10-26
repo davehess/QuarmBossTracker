@@ -6819,3 +6819,27 @@ Tests: `test/pop-flags-real.test.js`, `test/pop-seer-pending.test.js`. ⏳ Not y
 into step keys and uploads them as pop_flag events with `source: 'popflags'` (sent as an empty-text recital so an older bot skips them). The bot (this
 change, `_handleAgentPopFlags` + `popFlagStages.POPFLAGS_KEYS`, a closed vocabulary) stores them as `pop_flags` rows with source `popflags`. ⏳ Ship the bot
 BEFORE the agent. Test: `test/pop-flags-live-bot.test.js`.
+
+### 🧾 2026-10-26 — Soft Reserve per raid, web half: `/raid/sr` + `/admin/soft-reserve` (web 2.1.55, main; [beta] tag; DECISIONS §448)
+The guild lead picked a Soft Reserve per raid and then said "your picks": a member reserves drops for the ONE character their sign-up brings (a main's pick
+does not carry to an alt; `bringingFrom`), up to `per_person` (default 5) and optionally `per_boss`; picks lock at the start / a set time / the first `/loot`
+post / by hand. Counts show on the pick page, names on the loot card at drop time and to officers; an officer can switch a raid to names-open or hidden.
+Pure rules `web/lib/softReserve.ts`, reads `softReserveLoad.ts`, pick action `app/raid/sr/actions.ts` (the character is worked out on the server, a second
+count after the insert takes back a racing pick), officer page `app/admin/soft-reserve/`. Tables `sr_rules` and `sr_picks`, migration
+`20261026220000_soft_reserve.sql`, ⏳ NOT YET APPLIED: apply before the page ships. Tests: `test/soft-reserve.test.js`.
+**Targets are officer-picked.** `rh_events.description` holds the muster point and the duty roster and no `Target -` line (checked on the six newest
+events), so nothing is parsed from Raid-Helper on the web. The bot's `loadTonightsTargets` reads the live Discord embed, not the mirror. Picked bosses
+live in `sr_rules.npc_ids`; with none picked and the event on the plan night (`RAID_DATE`), the page falls back to the `/pop/raid` plan's bosses.
+⏳ The bot half (the "⭐ Soft Reserve" line on the loot card, roll ranking) is the next commit (`draft/sr-bot`).
+
+### 🧾 2026-10-26 — Soft Reserve, bot half: the loot card line and SR-aware rolls (bot 4.0.22, main, shipped with the web half; DECISIONS §448)
+`utils/softReserve.js` reads `sr_rules` + `sr_picks` for an event (a bot event id with the `rh:` prefix is used as it is; a Discord-calendar id, which wins the
+merge, is matched to its Raid-Helper twin by start time ±30 min) and renders the "⭐ Soft Reserve (n): names" line (8 names, then "+N more"). `/loot` marks the
+items after `enrichLootItems` (`getRaidNightTarget(...).event`), the card adds the line and "Reservers bid first; an officer settles." under Bidding, the
+officer's wishlist list puts reservers first (⭐), an officer-only reply names every reserver, and the Mimic loot post (`_handleAgentLootPost`) carries the same line.
+**Enforced vs shown:** event nights are ENFORCED where the bot ranks rolls (`utils/rollLoot.js buildRollSessions`: if any reserver rolled only reservers' rolls
+count, top N for N copies, spare copies fall to the raid by roll; a reserver who does not roll has passed; "⭐ SR · k of n rolled" and "Ignored: …" on the event
+roll card). Raid nights are SHOWN, not enforced: OpenDKP settles bids and the bot cannot refuse one, so an officer holds the order. Lock mode `first_loot`: the first
+`/loot` (or Mimic loot post) of the event sets `sr_rules.locked`. `web/lib/rolls.ts` has the TS twin (`rankWithReservers`, `mergeRollSets(rows, reserversFor)`); ⏳ no web
+page passes a reserver lookup yet, so the web roll review still ranks plainly. Tests: `test/soft-reserve-bot.test.js` (twin parity included).
+⏳ The migration (`20261026220000_soft_reserve.sql`) must be applied: until the tables exist every read returns nothing and the loot post is unchanged.
