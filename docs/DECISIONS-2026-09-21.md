@@ -115,7 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Add to wishlist + pre-bid on `/me/upgrades`; ears / wrists / rings paired** (§446) | Draft on `draft/upgrades-wishlist` (bot 4.0.18 for `main` first, web 2.1.45 for `beta`); not pushed | the guild lead: ship the bot half, check `SCREEN_TOKEN_SECRET` + `SCREEN_LIVE_URL` on Vercel Production and Preview; say if rings stay paired |
-| **Per-person flag link `/pop/raid/me`** (§443, §444) | Picked A: page + #popflags/Seer paste + "Sync from my logs" + #popflags read live by Mimic. Drafts in progress. Map-sync dedup fully live (index applied), outbox on beta (agent 4.0.24) | a session: review, apply the rescan migration, ship bot+web to main and the agent to beta; the outbox reaches the fleet with the next Mimic stable |
+| **Per-person flag link `/pop/raid/me`** (§443, §444) | Live: page + #popflags/Seer paste + "Sync from my logs" (web 2.1.47, bot 4.0.19); #popflags read live by Mimic on beta (agent 4.0.25). Map-sync dedup live, outbox on beta (agent 4.0.24) | the guild lead: update the beta Mimic, then backfill or press Sync; check the Thelin stage-5 line in game; both agent changes reach the fleet with the next Mimic stable |
 | **First sign-in: pick your characters, stage a recruit main** (§426) | Draft on `draft/recruit-onboarding` (bot 4.0.13 for `main`, agent 4.0.21 for `beta`); not pushed | the guild lead: say if the three judgement calls hold (OpenDKP-roster names not claimable, alts unparented when the main conflicts, "Save and upload these now"); a session: land the bot half on `main` first, then the agent half on `beta`, and make staged recruits show in `/admin/links` |
 | **Route planner + off-night plans + Sol Ro tower** (§407) | Live on main (web 2.0.2): `/raid/plan/routes` [beta], Tactics + the tower, versions, compare, splits, fewest raiders per boss | the guild lead: press "Import tonight's planner" once as an officer; pick the off-night bosses and the fewest headline (A everyone present, default) |
 | **Guest raids stored as ours** (§408) | Not fixed | the guild lead: A tag them (recommended) or B don't send |
@@ -13091,6 +13091,14 @@ paused, which takes https://wolfpack.quest and https://raidmimic.com down until 
 - **The page shipped first (web 2.1.44, live, [beta]):** the #popflags tab and the sync button are disabled slots until
   their draft lands. Its step list uses the fixed 2026-10-14 plan only on that night; any other night shows each
   character's next steps with "No flag plan is set for this night yet" (an old plan must never read as tonight's).
+- **Shipped the same day:** the guild lead ran `pop_rescan_requests` in the SQL Editor (the MCP apply stalled again);
+  bot 4.0.19 + web 2.1.47 on main (the #popflags paste, "Sync from my logs", the `popflags` source); agent 4.0.25 on
+  beta (#popflags read live from the log through an exact-line gate, and the rescan). A stage-5 Thelin line
+  ("Nightmare progression complete") is stored as `thelin_4`: check that in game. A backfill run before agent 4.0.25
+  reaches a member's PC finds Seer and grant lines but not #popflags output.
+- **The night slicer's label stays "Another guild's raid"** (the guild lead first said "Non-guild", then "it's another
+  guild", then "really its other-guild"; the stored kind is `other_guild`). The 2026-10-22/23 late Crypt of Decay run
+  was another guild's with some of ours along, so its four 'foreign' marks stay.
 
 ### 445. WoW parses: parses.gg exists and does the uploader half (open, the guild lead's pick, 2026-10-26)
 The guild lead: *"on the wow front it looks like https://parses.gg/ exists and does a lot of what we're already doing,
