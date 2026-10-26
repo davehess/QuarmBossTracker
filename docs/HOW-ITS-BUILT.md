@@ -5490,6 +5490,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   side-list row with a running timer is cleared (`/api/map-mark` kind `clear`); anything else is killed now (`/api/map-kill` by name
   when a mob is seen alive there, else `/api/map-mark` kind `killed`). The dot's handler stops propagation so the stage's
   right-click (centre on you) stays out of it; a toast (`#toast`) says what happened. Test: `test/map-watch-agent.test.js`.
+- **Guild sync outbox** (the "Guild sync" block in the agent, `_mapSyncFlush` / `_mapSyncResume`; agent 4.0.24 beta, DECISIONS §443): map events
+  the bot did not take are held, not dropped. No answer / 404 / 429 / 5xx put the batch back (retry 15 s doubling to 5 min; a 404 keeps its 10 min);
+  other 4xx drop it; 500 events max, nothing older than the bot's 24 h; kept in `map_sync_outbox.json` beside `map_timers.json`, resumed at start.
+  Bot half: `POST /api/agent/map-sync` stores through `insertIgnoreDuplicates` against `map_spawn_events_dedup_idx` (guild, zone, point, kind,
+  spawn id, `at`, reporting character), so a resend is stored once (bot 4.0.17). Tests: `test/map-sync-outbox.test.js`, `test/map-sync-dedup.test.js`.
 - Test: `test/spawn-map.test.js`. Design: `docs/DESIGN-mimic-2.9-spawn-map.md`. Every refinement since (asks, what
   shipped, what is open): `docs/MAP-REFINEMENTS.md`.
 - **Zone copies** (the "Zone copies" block in the agent; header label in `map.html` `copyLabel`): the copy you are in is
