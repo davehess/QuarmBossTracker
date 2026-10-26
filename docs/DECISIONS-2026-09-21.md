@@ -13027,3 +13027,26 @@ paused, which takes https://wolfpack.quest and https://raidmimic.com down until 
   the file path (`<next>/link.js`) and which otherwise win. Verified on a full production build: all 121 pages use it.
   `test/no-prefetch-link.test.js` runs the config. Links load on click, a moment slower. Recommended for main together
   with the /raid refresh change.
+
+### 441. After the first Bertoxxulous wipe: the event clock, missing deaths, and shared-bank accounts (2026-10-26)
+- **Bertoxxulous, from the server script** (`SecretsOTheP/quests` `codecay/encounters/Bertox.lua` @ ea0c7661, lines 22,
+  79-80, 198-215, 357-368): no despawn timer of his own; he lives inside a 123-minute event window that starts at the
+  Spectre of Corruption's death (warning 5 min before), then everything event-spawned is cleaned up. A failed attempt
+  re-arms the Spectre after 5 min; a kill sets it to 66 h (matches `data/bosses.json`). Triggered by the Spectre, then
+  trash, 8 Adan kings by kill count, the final 4, then him. The script spawns him in Crypt of Decay, where
+  `data/bosses.json` says Plane of Disease (not yet changed).
+- **The wipe (2026-10-25, 11:32 pm ET):** 59 engaged, 42 died, 17 survived; the first two deaths were bards. The parses
+  missed the first death entirely; the position data (3-second frames, health 0 = dead, health -1 = unknown) had all 42.
+  An officers-only review was written as a private doc the guild lead shares (its link is not in this repo); its data
+  is read with the queries in this session's notes: `raid_track_minutes` frames, 7 values per raider, 6th = HP.
+- **Two Mimic log-reading gaps, fixed on beta (agent 4.0.22):** the uploader's own "You have been slain by X!" was never
+  read (the byte filter dropped it and the parser had no first-person pattern), and other raiders' deaths were kept
+  only for names already confirmed by /who, chat or heals; Zeal raid-list names now confirm a player.
+  `test/death-self-and-raid-reading.test.js`. Ships to the fleet with the next Mimic beta, then stable.
+- **Shared banks on Mimic's "On this PC" inventory** count accounts by guessing from bank snapshots (23 for the guild
+  lead), while the owner's own placements on /me/accounts (35 characters on 6 game accounts) are only used by the
+  website's /me/inventory. A draft that merged tiny identical banks was NOT shipped: the guild lead's smallest bank is 11
+  slots, so it would change nothing. Next: let the local page use the placements.
+- **FB-97** (a character missing from the Command Center's flagging list): the name is in no raid-list upload from that
+  raid and not in `characters`; the window has closed. Likely not on the roster snapshot at the kill (no Mimic uploader
+  for that group) or a spelling difference. Waiting on the member's in-game spelling.
