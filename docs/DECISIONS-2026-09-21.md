@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Per-person flag link + map timers through a bot restart** (§443) | Sign-ups now count the alt they signed up as (web 2.1.43, live). Link: mocks A (page) / B (Discord reply). Map-sync outbox + dedup being drafted | the guild lead: pick A or B for the link (A recommended); a session: ship the map-sync outbox to beta and the dedup to main |
 | **First sign-in: pick your characters, stage a recruit main** (§426) | Draft on `draft/recruit-onboarding` (bot 4.0.13 for `main`, agent 4.0.21 for `beta`); not pushed | the guild lead: say if the three judgement calls hold (OpenDKP-roster names not claimable, alts unparented when the main conflicts, "Save and upload these now"); a session: land the bot half on `main` first, then the agent half on `beta`, and make staged recruits show in `/admin/links` |
 | **Route planner + off-night plans + Sol Ro tower** (§407) | Live on main (web 2.0.2): `/raid/plan/routes` [beta], Tactics + the tower, versions, compare, splits, fewest raiders per boss | the guild lead: press "Import tonight's planner" once as an officer; pick the off-night bosses and the fewest headline (A everyone present, default) |
 | **Guest raids stored as ours** (§408) | Not fixed | the guild lead: A tag them (recommended) or B don't send |
@@ -13069,3 +13070,22 @@ paused, which takes https://wolfpack.quest and https://raidmimic.com down until 
   and hiding live).
 - **Open:** FB-100 (expandable respawns on the Mimic map) — option A (accordion + pulse the down spawns) recommended;
   the kite-circle drift prediction, speed/nearby filter and stale circles are being drafted.
+
+### 443. A sign-up counts the character it signed up as; the per-person flag link; map timers through a bot restart (2026-10-26)
+- **Live on main (web 2.1.43):** /pop/raid and the raid screen picked one character per Raid-Helper sign-up from MAINS
+  only, so a raider who signed up as their alt's class was checked on their main (the guild lead: *"people sign up for
+  raids as their class, which can be an alt and not their main"*). `pickSignupCharacter` (`web/lib/raidPlan.ts`) now
+  takes the class they signed up as, alt or main, then the main. Measured over three weeks of sign-ups: 31 sign-ups by 15
+  players were on an alt's class and none had two alts of it; 28 Shadow Knight sign-ups matched no one ("Shadowknight"
+  vs "Shadow Knight", now compared by letters); ~60 rows with Tentative/Absence/Bench in the class field counted as going
+  (now not). The bot's `/preraid` class counts were not changed.
+- **Per-person flag link (open, the guild lead's pick):** A, a signed-in page `/pop/raid/me` (the character you are
+  bringing first, every other character below with its steps left) — recommended; B, a private Discord reply from the
+  card's My steps button. B needs the step engine in the bot too; a link button from the card to A gives most of B for
+  nearly nothing. No sign-in-free token link: it would show a member's characters to anyone holding it.
+- **Map timers through a bot restart:** the guild lead's model (*"hold our own timers per spawn id per zone id from the
+  port … if the bot restarted and during that timeframe i killed something it would need to … sync them back in. Source
+  is important."*) is mostly how it already works: local `map_timers.json` survives a Mimic restart, the pull refills
+  from the bot, events carry spawn id + the copy's host:port token and are applied only to the same copy, and every row
+  stores the reporting character and Discord id. The gap is the push: a POST that fails while the bot is down is dropped.
+  A durable outbox (agent, beta) plus a dedup index so a resend never doubles (bot, main) is being drafted.
