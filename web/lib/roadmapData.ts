@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'wishlist-everywhere-2026-10-26',
+    title: 'Web 2.1.50',
+    version: 'Web 2.1.50',
+    date: '2026-10-26',
+    channel: 'beta',
+    headline: 'You can put an item on your wishlist from the item page and from the raid night plan, not only from the gear upgrades page.',
+    features: [
+      { name: 'Add to wishlist on the item page', blurb: 'Open any item and there is a Wishlist box. Pick which of your characters it is for, a priority and, if you like, a sealed pre-bid. It starts on your main.' },
+      { name: 'Add to wishlist on the raid night plan', blurb: 'Every boss drop on the plan has an Add to wishlist button. It starts on the character your sign-up for the next raid brings, so a Bard sign-up lists the item for your Bard.' },
+      { name: 'See where it is already listed', blurb: 'The character picker marks the characters that already have the item, with the priority and your own pre-bid, and lets you change the bid or take it off.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'popflags-paste-and-sync-2026-10-26',
     title: 'Web 2.1.47',
     version: 'Web 2.1.47 · Bot 4.0.19',

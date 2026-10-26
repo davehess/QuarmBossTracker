@@ -220,7 +220,7 @@ describe('the site\'s wishlist actions', () => {
 describe('the site never touches a bid itself', () => {
   const strip = (rel) => stripJs(read(rel));
   it('the action and the bot client hold no key, no cipher, no bid column and no database client', () => {
-    for (const rel of ['web/app/me/upgrades/actions.ts', 'web/lib/wishlistBot.ts', 'web/app/me/upgrades/WishlistControls.tsx']) {
+    for (const rel of ['web/app/me/upgrades/actions.ts', 'web/lib/wishlistBot.ts', 'web/components/WishlistControls.tsx']) {
       const src = strip(rel);
       expect(src, rel).not.toMatch(/WISHLIST_BID_KEY|createCipheriv|createDecipheriv|bid_amount|supabaseAdmin|from\('wishlists'\)/);
     }

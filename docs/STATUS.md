@@ -159,6 +159,19 @@ next touch one rather than assuming a missing row means a missing doc.
   Test: `test/web-wishlist.test.js`. **To do:** ship the bot half to `main` first (beta web calls the one production bot, and writes real
   wishlists); confirm `SCREEN_TOKEN_SECRET` (Railway + Vercel) and `SCREEN_LIVE_URL` (Vercel, Production AND Preview) are set, or the
   controls stay hidden; the guild lead to say whether rings stay paired.
+- **🧪 "Add to wishlist" wherever an item shows, part A (draft `draft/wishlist-everywhere`, 2026-10-26; web 2.1.50 for `beta`; part B
+  `/me/wishlist` is the second commit). Not pushed.** *"How do you add items for your wishlist?"* (the guild lead), who picked "A then B".
+  The control from `/me/upgrades` is now ONE reusable component (`web/components/WishlistControls.tsx`, moved from the upgrades folder):
+  `{ itemId, itemName, characters, defaultCharacter, states, enabled, compact? }`, with a character picker when the member owns several. It
+  sits on the item page (`/db/item/<id>`), on every boss loot line of the raid night plan (`/pop/raid`, as a small "Add to wishlist"
+  button that opens it) and still on `/me/upgrades`. Same three server actions and the same bot route, so there is still one write path and
+  the bot still re-checks ownership. Reads: `web/lib/wishlistLoad.ts` (the member's own characters, where the item is already listed, the
+  owner's pre-bids through the bot's `list` op; no bid column selected on the site). Default character: on `/pop/raid` the one the member's
+  next-raid sign-up brings (`bringingFrom`), elsewhere their main (`web/lib/wishlistPick.ts`). **Not done, on purpose:** the parse page's loot
+  block lists loot already AWARDED (OpenDKP), not drops, so a wishlist button there would mean "I want one too" on a spent item; the item hover
+  card is a mouse-over portal that closes 180 ms after the pointer leaves and has no touch path, so it cannot hold a form. Test:
+  `test/wishlist-everywhere.test.js`. **To do:** web beta needs the bot on `main` at 4.0.18+ and `SCREEN_TOKEN_SECRET` / `SCREEN_LIVE_URL` in Vercel
+  Preview, as for the upgrades page.
 - **🧪 First sign-in: pick your characters from the logs, stage a recruit main, offer the spellbook / inventory / Quarmy upload (draft
   `draft/recruit-onboarding`, 2026-10-24; bot half for `main` (bot 4.0.13), agent + dashboard half for `beta` (agent 4.0.21)). Not pushed.**
   *"we should check for the discord role and let them in, then prestage as a new recruit main"* and *"We should be asking what

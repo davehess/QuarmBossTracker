@@ -15,6 +15,11 @@ import NewPageTag from '@/components/NewPageTag';
 import { PLAN, PREFLAGS, RAID_DATE_LINE, TRAVEL_BASICS, bossAnchor, loc } from '@/lib/raidPlan';
 import { loadRaiders, loadHeld, type Raider } from '@/lib/raidPreflags';
 import ItemHover, { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
+import WishlistControls from '@/components/WishlistControls';
+import { ownedCharacters } from '@/lib/ownedCharacters';
+import { loadMySignup, loadNextEvent } from '@/lib/raidMeLoad';
+import { bringingFrom } from '@/lib/raidMe';
+import { loadWishView, type WishView } from '@/lib/wishlistLoad';
 import ZoneSvg from './ZoneSvg';
 import { loadWalls } from './walls';
 import { loadSavedRoute } from './savedRoute';
@@ -66,6 +71,26 @@ async function loadLoot(): Promise<{ drops: Map<number, Drop[]>; cards: Record<n
   return { drops, cards };
 }
 
+/**
+ * The wishlist view for the loot lines. The default character is the one the member's sign-up for the next raid
+ * brings (raidMe.ts bringingFrom, the rule /pop/raid/me uses); with no sign-up it is their main. A failed read of
+ * the event or sign-up falls back to the main; a failed read of the wishlist hides the controls, never the page.
+ */
+async function loadRaidWish(userId: string, itemIds: number[]): Promise<WishView | null> {
+  try {
+    const owned = await ownedCharacters(userId);
+    let preferred: string | null = null;
+    try {
+      const event = await loadNextEvent();
+      const signup = event ? await loadMySignup(event.id, userId) : null;
+      preferred = bringingFrom(owned, signup)?.name ?? null;
+    } catch { /* no sign-up read: start on the main */ }
+    return await loadWishView(userId, itemIds, { preferred, owned });
+  } catch {
+    return null;
+  }
+}
+
 const pct = (n: number | null) => n == null ? '' : n >= 99.95 ? 'always' : `${Number(n.toFixed(1))}%`;
 
 const List = ({ items }: { items: string[] }) => (
@@ -84,6 +109,8 @@ export default async function RaidPlanPage() {
     Promise.all(PLAN.map(s => loadSavedRoute(s.zone))),
     loadLoot().catch(() => ({ drops: new Map<number, Drop[]>(), cards: {} as Record<number, ItemCard> })),
   ]);
+  // The wishlist control on each loot line: the viewer's own characters, starting on the one their sign-up brings.
+  const wish = await loadRaidWish(user.id, [...loot.drops.values()].flat().map(d => d.item_id));
   // The route a map draws: the one an officer saved from the raid's recorded movement (or the route planner), else the plan's own.
   const routes = PLAN.map((s, i) => chooseRoute(saved[i], s.route));
   const { raiders, held, note, unlinked, error } = data;
@@ -232,6 +259,13 @@ export default async function RaidPlanPage() {
                             <a href={`https://www.pqdi.cc/item/${d.item_id}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">{d.item_name}</a>
                           </ItemHover>
                           <span className="text-dim"> {pct(d.effective_chance)}</span>
+                          {wish && (
+                            <WishlistControls
+                              compact itemId={d.item_id} itemName={d.item_name} enabled={wish.enabled}
+                              characters={wish.characters} defaultCharacter={wish.defaultCharacter}
+                              states={wish.states.get(d.item_id) ?? {}}
+                            />
+                          )}
                         </li>
                       ))}
                     </ul>
