@@ -6,9 +6,14 @@
 // so it goes live with the [beta] tag (DECISIONS §135). First slice: the scoring model is web/lib/gearUpgrades.ts
 // and its tuning table is web/lib/gearWeights.ts.
 //
-// Read-only; no migration. Data: character_gear (what is worn and carried), eqemu_items (the stats and the pool of
+// No migration. Data: character_gear (what is worn and carried), eqemu_items (the stats and the pool of
 // candidates), eqemu_npc_drops / eqemu_merchantlist / eqemu_zone (where each can be had, current era only),
-// wishlists (the character's own list; the viewer is the owner, and the bid columns are never selected).
+// wishlists (the character's own list; the viewer is the owner, and the bid columns are never selected here).
+//
+// Wishlist controls (2026-10-26): each upgrade can be added to the wishlist with a priority and a sealed
+// pre-bid, changed or removed (WishlistControls.tsx, actions.ts). Those writes, and the read of the member's OWN
+// pre-bids, go through the bot (lib/wishlistBot.ts -> utils/webWishlist.js), which holds the only key that can
+// encrypt or decrypt a bid. Ears, wrists and rings sit in side-by-side pairs (groupPairedSlots).
 //
 // Privacy. The page is scoped to the viewer's OWN characters (ownedCharacters), which is also what makes the
 // wishlist safe to show: a wishlist is private to its owner. A character with exclude_inventory or
@@ -22,8 +27,10 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { ownedCharacters, type OwnedChar } from '@/lib/ownedCharacters';
 import { selectAll } from '@/lib/selectAll';
 import NewPageTag from '@/components/NewPageTag';
+import WishlistControls from './WishlistControls';
+import { callBotWishlist, wishlistWritesEnabled, type BotItem } from '@/lib/wishlistBot';
 import {
-  rankUpgrades, selectTop, candidateIds, scoredClass, resolveWeights, levelCap, expansionCap, isOptedOut,
+  rankUpgrades, selectTop, candidateIds, scoredClass, resolveWeights, levelCap, expansionCap, isOptedOut, groupPairedSlots,
   UPGRADE_SLOTS, type ItemStats, type SlotResult, type Upgrade, type Source, type Equipped,
 } from '@/lib/gearUpgrades';
 import {
@@ -115,13 +122,13 @@ export default async function UpgradesPage({ searchParams }: { searchParams: Pro
           <Link href="/me" className="text-blue hover:underline">My Stats</Link>, then come back.
         </section>
       ) : (
-        await CharacterUpgrades({ pick })
+        await CharacterUpgrades({ pick, userId: user.id })
       )}
     </div>
   );
 }
 
-async function CharacterUpgrades({ pick }: { pick: OwnedChar }) {
+async function CharacterUpgrades({ pick, userId }: { pick: OwnedChar; userId: string }) {
   const sb = supabaseAdmin();
   const name = pick.name;
   if (!/^[A-Za-z]{2,}$/.test(name)) {
@@ -206,6 +213,17 @@ async function CharacterUpgrades({ pick }: { pick: OwnedChar }) {
   }
 
   const perSlot = results.map(r => ({ r, top: selectTop(r.candidates, sources) }));
+
+  // The member's OWN sealed pre-bids, decrypted by the bot (the key never leaves it). Asked only when the site can
+  // reach the bot and something shown is already listed; if the bot does not answer, the cards show no bid line.
+  const writesEnabled = wishlistWritesEnabled();
+  const shownIds = new Set(perSlot.flatMap(p => p.top.map(u => u.item.id)));
+  const anyListed = [...shownIds].some(id => wishlist.has(id));
+  const botList = writesEnabled && anyListed
+    ? await callBotWishlist<{ items: BotItem[] }>(userId, { op: 'list', character: name })
+    : null;
+  const bids = new Map<number, number | null>(botList && botList.ok ? botList.items.map(i => [i.item_id, i.bid]) : []);
+  const wish = { name, enabled: writesEnabled, bids, bidsKnown: !anyListed || !!(botList && botList.ok) };
   // Names and effect labels for what is on screen.
   const shown = perSlot.flatMap(p => p.top.map(u => finalistItems.get(u.item.id) ?? u.item));
   const spellIds = [...shown, ...equipped.map(e => e.item)].flatMap(i => [i.focus_effect, i.worneffect]).filter((x): x is number => !!x && x > 0);
@@ -258,12 +276,22 @@ async function CharacterUpgrades({ pick }: { pick: OwnedChar }) {
       </section>
 
       <div className="space-y-3">
-        {perSlot.map(({ r, top }) => (
-          <SlotCard
-            key={r.slot} r={r} top={top} keys={keys}
-            finalists={finalistItems} wishlist={wishlist} spellNames={spellNames}
-          />
-        ))}
+        {groupPairedSlots(perSlot, p => p.r.slot).map(g => {
+          const cards = g.items.map(({ r, top }) => (
+            <SlotCard
+              key={r.slot} r={r} top={top} keys={keys}
+              finalists={finalistItems} wishlist={wishlist} spellNames={spellNames} wish={wish}
+            />
+          ));
+          // Interchangeable slots (ears, wrists, rings) sit together under one heading: stacked on a phone,
+          // side by side from md up.
+          return g.title ? (
+            <section key={g.title} aria-label={g.title} className="space-y-2">
+              <h3 className="text-xs uppercase tracking-wide text-dim">{g.title} <span className="normal-case">· either slot</span></h3>
+              <div className="grid gap-3 md:grid-cols-2">{cards}</div>
+            </section>
+          ) : cards;
+        })}
       </div>
 
       <p className="text-[11px] text-dim leading-5">
@@ -290,9 +318,12 @@ function ItemLink({ it }: { it: ItemStats }) {
   );
 }
 
-function SlotCard({ r, top, keys, finalists, wishlist, spellNames }: {
+type WishCtx = { name: string; enabled: boolean; bids: Map<number, number | null>; bidsKnown: boolean };
+
+function SlotCard({ r, top, keys, finalists, wishlist, spellNames, wish: wc }: {
   r: SlotResult; top: Upgrade[]; keys: StatKey[];
   finalists: Map<number, ItemStats>; wishlist: Map<number, number | null>; spellNames: Map<number, string>;
+  wish: WishCtx;
 }) {
   const cur = r.current;
   const effect = (it: ItemStats) => {
@@ -320,8 +351,6 @@ function SlotCard({ r, top, keys, finalists, wishlist, spellNames }: {
         <ol className="mt-2 space-y-2">
           {top.slice(0, TOP_N).map((u, i) => {
             const it = finalists.get(u.item.id) ?? u.item;
-            const wish = wishlist.has(u.item.id);
-            const prio = wishlist.get(u.item.id);
             const fx = effect(it);
             return (
               <li key={u.item.id} className="rounded border border-border bg-bg p-3">
@@ -329,11 +358,6 @@ function SlotCard({ r, top, keys, finalists, wishlist, spellNames }: {
                   <span className="text-dim text-xs">{i + 1}.</span>
                   <ItemLink it={it} />
                   <span className="text-green text-xs">+{fmtScore(u.gain)} points</span>
-                  {wish && (
-                    <span className="text-[10px] tracking-wide uppercase px-1.5 py-0.5 rounded bg-gold/15 border border-gold/50 text-gold">
-                      on your wishlist{prio != null ? ` · priority ${prio}` : ''}
-                    </span>
-                  )}
                 </div>
                 <p className="text-[11px] text-dim mt-1">{statLine(it, keys)}</p>
                 {u.diffs.length > 0 && (
@@ -350,6 +374,11 @@ function SlotCard({ r, top, keys, finalists, wishlist, spellNames }: {
                   {sourceText(u.best)}
                   {u.sources.length > 1 && <span className="text-dim"> · +{u.sources.length - 1} more source{u.sources.length > 2 ? 's' : ''}</span>}
                 </p>
+                <WishlistControls
+                  character={wc.name} itemId={u.item.id} enabled={wc.enabled}
+                  listed={wishlist.has(u.item.id)} priority={wishlist.get(u.item.id) ?? null}
+                  bid={wc.bids.get(u.item.id) ?? null} bidKnown={wc.bidsKnown}
+                />
               </li>
             );
           })}
