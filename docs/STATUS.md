@@ -6377,6 +6377,16 @@ Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Ope
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
 
+### 🧾 2026-10-26 — Local inventory uses your real game accounts; one-off hide; stale-snapshot marker (bot 4.0.16 main · agent 4.0.23 + web 2.1.40 beta, first draft, not yet routed)
+The local "My account inventory" page guessed 23 shared-bank accounts for someone with 6. Now the bot hands the agent the caller's OWN open
+placements (`GET /api/agent/account-placements`, `utils/myAccountPlacements.js`), the agent caches and serves them on `/api/local/inventory`, and the
+page runs the website's aggregation on them: header "Shared banks: N accounts (M characters)". Opt-out "Use my account list from wolfpack.quest"
+(agent opt-in file, default ON, honoured in the fetch; on the local page and the dashboard Logsync tab). "Hide one-off characters (k)" chip (log under a
+day and quiet 30+ days, `web/lib/localAccounts.ts`). A snapshot is marked ⏳ when the character's log shows play after its inventory file was written,
+and the shared bank prefers a not-stale snapshot within 3 days of the freshest. `#charactertransfer` detection NOT built: the command's text is not in
+the public EQMacEmu/Server source (searched 2026-10-26). Tests: `test/account-placements-route.test.js`, `test/local-accounts.test.js`,
+`test/local-account-list-agent.test.js`. Mimic Settings window toggle not added (Mimic config reaches the agent only as env at spawn).
+
 ### 🧾 2026-10-14 — UI Studio named layouts per character (Mimic beta `d77a7d5b`, DECISIONS §322)
 Up to 10 named `UI_<char>*.ini` snapshots per character: save, rename, delete, switch (waits for logout while EQ runs), each backed up
 with its name. **Open:** `ui_snapshots` pruning; a Windows + EQ check that the swapped file survives a camp.
