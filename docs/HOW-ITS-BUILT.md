@@ -381,6 +381,13 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   character-prefs (`_characterPrefsFor`) into `watchedLogs[].hidden`. Display only — account inventory and
   every upload ignore it.
 
+### Mimic reads `#popflags` from the log; "Sync from my logs" (agent 4.0.25 beta, 2026-10-26)
+- `popFlagsOutputEvents` (agent `index.js`, next to `parsePopFlagLine`): exact-line table of the server's `#popflags` output →
+  step keys → `pop_flag` events `source: 'popflags'`. The website's paste reader is `web/lib/popFlagsPaste.ts`; two copies, kept equal by
+  `test/pop-flags-live-parity.test.js` on `test/fixtures/popflags-output.txt`. Bot side: `_handleAgentPopFlags` + `POPFLAGS_KEYS`.
+- Sync: poll stream `rescan` → `_applyRescanResponse` → `_rescanRun` (`_rescanFile` seeks with `_rbSeek`, `_rescanWants` is the gate) →
+  `POST /api/agent/rescan-done`. Page: `/pop/raid/me` (`SyncFromLogs.tsx`). Table `pop_rescan_requests`. `test/pop-rescan-agent.test.js`.
+
 ### Self-ticked PoP flags on /pop (web 1.8.86, 2026-10-03)
 - A flag is self-reported when `pop_guide_ticks` holds the guide step that grants it, else `flag:<key>`
   (`web/lib/popSelfFlags.ts`; gate rules in `web/lib/popGateCell.ts`, import-free so the client stays small).

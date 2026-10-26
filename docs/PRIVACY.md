@@ -248,6 +248,20 @@ already collected: if a raider's `/who` shows you inside a plane behind a gate,
 members see you counted as holding that gate (and the ones on the way in),
 marked as "seen on /who", whether or not you run Mimic (on the beta site first).
 
+**The server's `#popflags` command (beta Mimic).** The command prints your PoP flags
+as fixed lines ("Mavuin's case: Mavuin's case is complete", "Crypt of Decay access:
+Unlocked", "Xuzl: Complete" and the rest). Mimic lets a log line through only when
+it is **exactly** one of those lines, a table of about eighty, built from the
+command's own text: not a line that merely starts like one, and never anything
+from chat, a tell, a group or guild channel or something you typed. What it sends
+is not the line: it is the flag step the line proves (for example `mavuin_3`), the
+time on the line and your character's name. The same table is used when you press
+"Sync from my logs" on wolfpack.quest, which asks your own Mimic to read the last
+few days of your logs for these lines and the PoP flag lines above (nothing else in
+the log is parsed for it), and answers with how many it found. A character you keep out of
+stats sends none of this. You can also paste the command's output into wolfpack.quest
+yourself; that is read in your browser and only the lines it understands are sent.
+
 ## Exceptions: NPC speech that triggers can hear
 
 *(Collapsed on the website, by the guild lead's call, 2026-09-30.)*

@@ -6588,6 +6588,23 @@ targets, DPS per-person time, Target Info hit types, Charm "Best pets here", rol
 re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). ⚠ Vercel's daily cap held back the web build; redeploy after the freeze.
 **Done 2026-10-15:** web 1.8.158/1.8.159 deployed (`0cf809fb` via the Vercel MCP), card posted 04:52 UTC.
 
+### 🧾 2026-10-26 — Mimic reads `#popflags` from the log + "Sync from my logs" (agent 4.0.25 beta, first draft)
+(The page, paste box and bot half are on `main`: web 2.1.45 / bot 4.0.18, see the 2026-10-26 `/pop/raid/me` entries there.)
+**Live read** (`popFlagsOutputEvents`, `packages/wolfpack-logsync/index.js`): the output of the server's `#popflags` command
+(EQMacEmu `popflags.cpp` @ `11024c19`) is read from the member's own log, on the live tail, the `--since` backfill and the opt-in
+backfill. The gate is an EXACT-line table (~80 lines built from the command's own text), so nothing else passes; what is uploaded is the
+step KEYS (never the line), the line's own time and the character, as a `pop_flag` event with `source: 'popflags'`, sent as an empty-text
+recital so an older bot skips it (the bot stores it from bot 4.0.18: ⏳ ship the bot first). Per-log state: the time flag (boss "Complete"
+lines are `<test> || time`, so they wait for a line that says time is not held; reset on the overview header) and the three trial lines.
+A characters kept out of stats sends none. Privacy: `docs/PRIVACY.md`.
+**Sync from my logs**: the poll stream `rescan` (every 3 min, with a watched character) hands the agent `{id, character|null, days}`; it
+re-reads that character's log(s) from `now − days` (`_rbSeek`), gives `parsePopFlagLine` only lines that hit its gates and
+`popFlagsOutputEvents` only its table, uploads through `uploadPopFlags`, waits for the queue to drain, then `POST /api/agent/rescan-done
+{id, found, ok}`. One request at a time, 12 ms of work then a rest, paused while a fight is live, 192 MB cap. Re-reads are idempotent (the pop_flags
+key; earned_at = the line's time). An older agent never asks for the stream. ⏳ A request for one character is only taken by an agent
+watching it; "all my characters" is taken by whichever of the member's PCs polls first. Tests: `test/pop-flags-live-parity.test.js` (the web paste
+reader and this one agree on `test/fixtures/popflags-output.txt` and on every table line), `test/pop-rescan-agent.test.js`.
+
 ### 🧾 2026-10-14/15 — raid-night fixes (bot 3.1.268–3.1.271 · agent 3.7.177–3.7.179 beta, DECISIONS §334)
 - ✅ Buff landings no longer lost per batch (`insert_buff_casts`, 3.1.268 hotfix).
 - ✅ A stalled role lookup no longer demotes an officer (Admin tab, DKP tick 403; 3.1.270); dashboard shows the bot's refusal (agent 3.7.178).
