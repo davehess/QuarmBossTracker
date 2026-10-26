@@ -105,6 +105,19 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 /pop/raid maps: Brewall's map underneath, lettered markers, the walked route (web 2.1.44, `draft/pop-raid-brewall`, for `beta`; 2026-10-26; first draft, not pushed).**
+  The guild lead: "pop/raid needs the brewall maps underneath, they look incomplete" and "the path is incorrect, are we able to pull from
+  what we've observed in raids". Walls: every Brewall line of every layer file, one muted colour; the EQEmu slice is drawn only for a
+  zone Brewall has no map for (its pieces were the broken white fragments). `walls.ts` now reads the `brewall` column and on a miss fetches
+  both layers as `/api/spectator/map` does, still writing nothing back. A zone whose plan is a small corner of it (the Lair's arena) is
+  framed on the plan; the rest show the whole zone. Markers carry a letter and the legend under the map carries the names (nothing piles).
+  Route: the officer-saved `bot_kv` `raid_route:<zone>` is drawn as the route when there is one, labelled "walked by the raid on <date>"
+  (or "planned in the route planner" when it came from the planner); the hand-entered route is the fallback, labelled "planned (not yet
+  walked)". Server read, 5-minute memo, no client polling. **Only `potactics` has a saved route today; none of this plan's five zones does,
+  so every map still shows the planned route until an officer presses "Make this our route" on `https://wolfpack.quest/raid/routes`
+  for each (all five have recorded nights in `raid_track_minutes`).** Code: `web/lib/popRaidMap.ts`, `web/app/pop/raid/{ZoneSvg,walls,savedRoute,page}`;
+  tests `test/pop-raid-map.test.js`. Review at `https://b.wolfpack.quest/pop/raid` before it goes to main.
+
 - **🧪 FB-98 + FB-99: a /me door in the local site, and the item hover card + icons on the inventory page (web 2.1.41 + 2.1.42, `claude/fb-98-99`, for `beta`; 2026-10-26).**
   FB-98 (a member: "NEED /ME to go to the me section that matches with the website… couldn't easily find where to turn on or off
   characters having their inventories synced or hidden"): the local site (Mimic's "On this PC" window) had Inventory / My parses / My replay
