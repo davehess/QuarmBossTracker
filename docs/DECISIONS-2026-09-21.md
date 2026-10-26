@@ -13109,3 +13109,39 @@ paused, which takes https://wolfpack.quest and https://raidmimic.com down until 
 - **Two parsers on purpose** (the agent is zero-dependency and cannot import the web's TypeScript): one shared fixture
   and a parity test keep them the same.
 - Drafts in progress; ship order: migration, bot, web (main), then the agent (beta).
+- **The page shipped first (web 2.1.44, live, [beta]):** the #popflags tab and the sync button are disabled slots until
+  their draft lands. Its step list uses the fixed 2026-10-14 plan only on that night; any other night shows each
+  character's next steps with "No flag plan is set for this night yet" (an old plan must never read as tonight's).
+
+### 445. WoW parses: parses.gg exists and does the uploader half (open, the guild lead's pick, 2026-10-26)
+The guild lead: *"on the wow front it looks like https://parses.gg/ exists and does a lot of what we're already doing,
+discord bot, desktop client"*. Read 2026-10-26 (its site blocks cloud addresses; read through a public page reader):
+- **What it is:** combat logs for every WoW version, Classic Era to Retail, with WoW Forever boards opening from the beta
+  (launch Nov 4). A desktop client (Windows, Apple silicon) uploads each pull within a minute; a Discord bot posts each pull
+  and answers /rank /guild /build; a 3D position replay; custom widget boards. Reading needs no account.
+- **Open by design:** a no-auth JSON API (20 req/s per address), the whole public dataset as daily Parquet dumps
+  (pseudonymised characters, real guild names, no wipes, no raw logs), and signed per-owner webhooks (`fight.indexed`,
+  HMAC sha256, retried, `X-Parses-Delivery` idempotency key). Small so far: 15,487 fights, a 4.5 MB dump.
+- **Ours:** a Classic WoW reader built on `wow-land` / `claude/wow-classic-reader`, never landed (its `encounters`
+  migration unapplied).
+- **The pick:** A, use parses.gg for WoW parses and keep our guild layer (sign-ups, DKP, loot, attendance, Discord cards
+  from its webhook / API) — recommended; B, ship our own reader. A webhook carries only its owner's fights, so a
+  guild-wide card needs the guild endpoint polled or each raider's webhook registered: verify before building.
+
+### 446. Gear upgrades: wishlist + pre-bid, paired slots, quest and tradeskill items, cap-aware scoring, icons (2026-10-26)
+The guild lead, on https://wolfpack.quest/me/upgrades, in order:
+- *"add in 'add to wishlist' ... so people get those on their list to add a pre-bid amount"*: per-row add, with priority
+  and an optional pre-bid. The bid is encrypted by the bot (the key never reaches the website). Drafting.
+- *"put wrists and ears together ... since they're interchangeable"*: Ear, Wrist (and Fingers, my addition, easy to
+  drop) shown as pairs; `WORN_SLOTS` order is left alone for its other users. Drafting with the wishlist change.
+- Comparing against another tool's chest list (*"very different interpretations"*): ours ranks gain over the worn item
+  and only knows drops and vendors. *"yes we should have quest and tradeskill items in as well"*: sources from our own
+  `eqemu_tradeskill_recipe*`, `eqemu_quest_scripts` / `quest_catalog`, never a guide.
+- *"we should be evaluating how close this gets you to maximums on stats, attack, flowing thought, AC, etc. and
+  priorities in between"*: cap-aware scoring. Caps from the EQMacEmu source and rules, the character's real totals from
+  its worn gear where we can, class weights between.
+- *"it would also be a good thing to roll into the gear page, but we need icons in our site"*: the same evaluation on
+  `/character/<name>/gear`, and item icons (the atlas `web/public/icons/items.png` + `web/components/ItemIcon.tsx`
+  exist, used only by the inventory page today) on both pages.
+- Research first (caps, totals, quest-reward parsing, why each of the ten chest items is missing), then one build on
+  top of the wishlist change. Existing pages, so all of it goes to beta first.
