@@ -47,7 +47,7 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
       <p className="mb-2 text-xs text-dim">
         {canEdit
           ? (mode === 'suggested'
-            ? 'Suggested from the recording: gaps, the roster changing, and our fights switching to non-guild ones. Fix what is wrong, then confirm. Nothing is kept until you do.'
+            ? 'Suggested from the recording: gaps, the roster changing, and our fights switching to another guild’s. Fix what is wrong, then confirm. Nothing is kept until you do.'
             : 'The segments saved for this night. Change them and save again, or detect afresh.')
           : 'The segments an officer confirmed for this night. Open one to review it on its own.'}
       </p>
@@ -73,7 +73,7 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
                     {r.why && r.why !== 'saved' && <span className="text-xs text-dim">· starts {r.why}</span>}
                   </div>
                   <p className="mt-1 text-xs text-dim">
-                    {[st.kills && plural(st.kills, 'kill'), st.wipes && plural(st.wipes, 'wipe'), st.otherGuild && `${plural(st.otherGuild, 'non-guild fight')}`,
+                    {[st.kills && plural(st.kills, 'kill'), st.wipes && plural(st.wipes, 'wipe'), st.otherGuild && `${plural(st.otherGuild, 'fight')} by another guild`,
                       st.deaths && plural(st.deaths, 'death'), st.mass && plural(st.mass, 'mass-death moment')].filter(Boolean).join(' · ') || 'no named fights'}
                   </p>
                   {canEdit ? (

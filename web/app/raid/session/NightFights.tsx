@@ -65,7 +65,7 @@ function FightRow({ item, fromMs, toMs, go }: {
             className="whitespace-nowrap rounded border border-border bg-panel px-1.5 py-0.5 font-mono text-xs text-blue hover:bg-[#21262d]">▶ {etMin.format(f.startMs)}</button>
           <span className={`min-w-0 flex-1 ${other ? 'text-orange' : 'text-gold'}`}>{f.name}</span>
           <span className={`rounded border px-1.5 py-0.5 text-[11px] ${f.result === 'wipe' ? 'border-red text-red' : 'border-green text-green'}`}>{f.result === 'wipe' ? 'Wipe' : 'Kill'}</span>
-          {other && <span className="rounded border border-orange px-1.5 py-0.5 text-[11px] text-orange">Non-guild</span>}
+          {other && <span className="rounded border border-orange px-1.5 py-0.5 text-[11px] text-orange">Another guild</span>}
           {f.tag && !other && <span className="rounded border border-border px-1.5 py-0.5 text-[11px] text-dim">{f.tag}</span>}
           {f.zone && <span className="text-xs text-dim">{f.zone}</span>}
           {f.durationSec != null && <span className="text-xs tabular-nums">{fmtDur(f.durationSec)}</span>}
