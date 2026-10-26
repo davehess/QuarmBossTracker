@@ -37,7 +37,7 @@ const mac = (secret, payloadB64) => crypto.createHmac('sha256', secret).update(`
 
 /**
  * Mint a ticket for `sub`. Returns { token, exp } (exp in seconds), or null when there is no secret or no sub.
- * opts: { secret, nowMs, ttlS } — all optional (tests).
+ * opts: { secret, nowMs, ttlS, aud } — all optional (tests); aud defaults to 'screen'.
  */
 function sign(sub, opts = {}) {
   const secret = secretOf(opts);
@@ -46,14 +46,14 @@ function sign(sub, opts = {}) {
   const ttlS = Number.isFinite(opts.ttlS) ? opts.ttlS : TTL_S;
   const iat = Math.floor(nowMs / 1000);
   const exp = iat + ttlS;
-  const payloadB64 = b64u(JSON.stringify({ sub, aud: AUD, iat, exp }));
+  const payloadB64 = b64u(JSON.stringify({ sub, aud: opts.aud || AUD, iat, exp }));
   return { token: `${VERSION}.${payloadB64}.${b64u(mac(secret, payloadB64))}`, exp };
 }
 
 /**
  * Check a ticket. Returns { ok: true, sub, iat, exp } or { ok: false, reason }. The signature is compared in
  * constant time; the payload is not even parsed until it has passed.
- * opts: { secret, nowMs } — optional (tests); the secret defaults to SCREEN_TOKEN_SECRET.
+ * opts: { secret, nowMs, aud } — optional (tests); the secret defaults to SCREEN_TOKEN_SECRET, aud to 'screen'.
  */
 function verify(token, opts = {}) {
   const secret = secretOf(opts);
@@ -69,7 +69,7 @@ function verify(token, opts = {}) {
   let p;
   try { p = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')); } catch { return { ok: false, reason: 'malformed' }; }
   if (!p || typeof p !== 'object' || Array.isArray(p)) return { ok: false, reason: 'malformed' };
-  if (p.aud !== AUD) return { ok: false, reason: 'wrong-audience' };
+  if (p.aud !== (opts.aud || AUD)) return { ok: false, reason: 'wrong-audience' };
   if (typeof p.sub !== 'string' || !p.sub) return { ok: false, reason: 'malformed' };
   if (!Number.isFinite(p.iat) || !Number.isFinite(p.exp)) return { ok: false, reason: 'malformed' };
   if (p.exp - p.iat > MAX_TTL_S) return { ok: false, reason: 'malformed' };
@@ -80,4 +80,10 @@ function verify(token, opts = {}) {
   return { ok: true, sub: p.sub, iat: p.iat, exp: p.exp };
 }
 
-module.exports = { sign, verify, VERSION, AUD, TTL_S, MAX_TTL_S, SKEW_S };
+// A second audience (2026-10-26): the 60-second ticket the website's server actions present to the bot's
+// POST /api/web/wishlist (utils/webWishlist.js). It is signed and used server to server and never reaches a
+// browser; the audience keeps a screen ticket (which does reach one) from opening a write, and the reverse.
+const WISHLIST_AUD = 'wishlist';
+const WISHLIST_TTL_S = 60;
+
+module.exports = { sign, verify, VERSION, AUD, TTL_S, MAX_TTL_S, SKEW_S, WISHLIST_AUD, WISHLIST_TTL_S };

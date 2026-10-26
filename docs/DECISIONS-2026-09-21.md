@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Add to wishlist + pre-bid on `/me/upgrades`; ears / wrists / rings paired** (§446) | Draft on `draft/upgrades-wishlist` (bot 4.0.18 for `main` first, web 2.1.45 for `beta`); not pushed | the guild lead: ship the bot half, check `SCREEN_TOKEN_SECRET` + `SCREEN_LIVE_URL` on Vercel Production and Preview; say if rings stay paired |
 | **Per-person flag link `/pop/raid/me`** (§443, §444) | Picked A: page + #popflags/Seer paste + "Sync from my logs" + #popflags read live by Mimic. Drafts in progress. Map-sync dedup fully live (index applied), outbox on beta (agent 4.0.24) | a session: review, apply the rescan migration, ship bot+web to main and the agent to beta; the outbox reaches the fleet with the next Mimic stable |
 | **First sign-in: pick your characters, stage a recruit main** (§426) | Draft on `draft/recruit-onboarding` (bot 4.0.13 for `main`, agent 4.0.21 for `beta`); not pushed | the guild lead: say if the three judgement calls hold (OpenDKP-roster names not claimable, alts unparented when the main conflicts, "Save and upload these now"); a session: land the bot half on `main` first, then the agent half on `beta`, and make staged recruits show in `/admin/links` |
 | **Route planner + off-night plans + Sol Ro tower** (§407) | Live on main (web 2.0.2): `/raid/plan/routes` [beta], Tactics + the tower, versions, compare, splits, fewest raiders per boss | the guild lead: press "Import tonight's planner" once as an officer; pick the off-night bosses and the fewest headline (A everyone present, default) |
@@ -13123,3 +13124,24 @@ The guild lead, on https://wolfpack.quest/me/upgrades, in order:
   exist, used only by the inventory page today) on both pages.
 - Research first (caps, totals, quest-reward parsing, why each of the ten chest items is missing), then one build on
   top of the wishlist change. Existing pages, so all of it goes to beta first.
+### 447. Add to wishlist + sealed pre-bid on the gear upgrades page; ears, wrists and rings side by side (2026-10-26)
+The guild lead: *"add in 'add to wishlist' for gear upgrades page so people get those on their list to add a pre-bid amount"*, then
+*"put wrists and ears together so we can see them easier, since they're interchangeable"*.
+- **The bid never touches the website.** `WISHLIST_BID_KEY` lives only in the bot, and the encrypted columns are service-role-only, so the
+  page's server actions hand the request to the bot (`POST /api/web/wishlist`, `utils/webWishlist.js`), which encrypts with
+  `bidCrypto.encryptBid`. A bid is refused (503) when the key is unset, where `/wishlist add` stores nothing and says nothing.
+- **Why not the existing web-to-bot call.** `/api/admin/*` wants the agent bearer, which `requireAgentAuth` stopped accepting at the
+  2026-06-04 cutover (per-user `wpms_` tokens only), and `opendkp-actions.ts` already moved off `BOT_BASE_URL` for being a foot-gun. The
+  one live web-to-bot channel is the raid screen's: an HMAC ticket with `SCREEN_TOKEN_SECRET`. Reused with a second audience (`wishlist`,
+  60 s, server to server only), so a screen ticket (which reaches browsers for two hours) cannot open a write. The bot's address is the
+  origin of `SCREEN_LIVE_URL`: no new variable.
+- **Ownership is checked twice**: the action against `ownedCharacters`, and the bot from the Supabase user id (household + OpenDKP family,
+  the same rule). A member sees only their own pre-bid, the view `/mywishlist` already gives them.
+- **Same rules as Discord**: priority 1-10 (default 5), bid whole DKP 1-50,000, no per-character cap, any item in `eqemu_items`. One file,
+  `utils/wishlistRules.js`; the slash command's option limits are built from it; `web/lib/wishlistRules.ts` is the site's twin, pinned by
+  `test/web-wishlist.test.js`.
+- **Pairs**: Ear1+Ear2, Wrist1+Wrist2 and (added unasked, easy to drop) Fingers1+Fingers2 sit under one heading, in the place of the pair's
+  first slot, side by side from `md` up (`groupPairedSlots`). Scoring is unchanged: the same item can be suggested for both slots of a pair,
+  since the finder only excludes what is already worn (noted, not fixed).
+- **Ship order**: bot (4.0.18) to `main`, then web (2.1.46; 2.1.45 went to the /pop/raid Brewall maps) to `beta`. Beta web calls the
+  one production bot, so a wishlist saved on `b.wolfpack.quest` is real.
