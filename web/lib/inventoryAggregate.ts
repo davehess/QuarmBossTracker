@@ -62,17 +62,24 @@ export type InventoryAggregate = {
   sharedAccountCount: number;
   /** Clusters too large to be one account; left un-deduped, the caller logs them. */
   oversized: string[][];
+  /** Distinct characters whose shared bank was read (the "(M characters)" beside the account count). */
+  sharedCharacterCount: number;
+  /** Characters (as spelled in the rows) whose snapshot was the one COUNTED for its shared bank although it may be out of date. */
+  staleSharedSources: string[];
 };
 
 /**
  * Aggregate every row of one person's characters into one list: the total of each item and exactly who
  * holds it. `placements` are the owner-set game accounts (empty = infer accounts from the shared banks);
  * `metaById` is the item catalog slice for the tags (empty = tags degrade to the name-based `spell`).
+ * `staleChars` (lowercased names, local page only) are characters whose snapshot may be out of date: an
+ * account's shared bank is read from a snapshot that is not stale when one is close enough in age.
  */
 export function aggregateInventory(
   rows: InvRow[],
   placements: AccountPlacement[] = [],
   metaById: ReadonlyMap<number, ItemMeta> = new Map(),
+  staleChars: ReadonlySet<string> = new Set(),
 ): InventoryAggregate {
   // Shared-bank dedup (the guild lead, 2026-08-20). The shared bank is ACCOUNT-level:
   // every character on a game account reads the SAME physical bank, so
@@ -99,10 +106,14 @@ export function aggregateInventory(
       slot:      r.slot_label,
       itemKey:   itemKeyOf(r) + '|' + String(r.quantity ?? 1),
       observedAt: r.observed_at,
+      stale:     staleChars.has(r.character_name.toLowerCase()),
       inv: r,
     }));
   const plan = planSharedBanks(sharedRows, placements);
-  const countedShared = new Set<InvRow>(pickSharedRows(sharedRows, plan.accountOf).map(s => s.inv));
+  const counted = pickSharedRows(sharedRows, plan.accountOf);
+  const countedShared = new Set<InvRow>(counted.map(s => s.inv));
+  const staleSharedSources = [...new Set(counted.filter(s => s.stale).map(s => s.character))].sort();
+  const sharedCharacterCount = new Set(sharedRows.map(s => s.character.toLowerCase())).size;
   const accountById = new Map(plan.accounts.map(a => [a.id, a]));
 
   // Aggregate by item (by id when present, else by name).
@@ -136,5 +147,5 @@ export function aggregateInventory(
       : { character: r.character_name, location: grp, qty });
   }
   const items = [...byKey.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
-  return { items, sharedAccountCount: plan.accountCount, oversized: plan.oversized };
+  return { items, sharedAccountCount: plan.accountCount, oversized: plan.oversized, sharedCharacterCount, staleSharedSources };
 }

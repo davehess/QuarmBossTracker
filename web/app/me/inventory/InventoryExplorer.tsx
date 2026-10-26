@@ -51,7 +51,11 @@ const LOC_TAG: Record<LocGroup, { short: string; cls: string }> = {
 };
 
 export default function InventoryExplorer(
-  { items, characters }: { items: InvItem[]; characters: { name: string; cls: string | null; active: boolean }[] },
+  { items, characters }: {
+    items: InvItem[];
+    /** `stale` (local page only): the snapshot may be out of date, the chip says so. */
+    characters: { name: string; cls: string | null; active: boolean; stale?: boolean }[];
+  },
 ) {
   const [cats, setCats] = useState<Set<string>>(new Set());
   const [offChars, setOffChars] = useState<Set<string>>(new Set());
@@ -106,8 +110,8 @@ export default function InventoryExplorer(
           {characters.map(c => (
             <button key={c.name} type="button" className={chip(!offChars.has(c.name))}
               onClick={() => setOffChars(s => toggle(s, c.name))}
-              title={c.cls || undefined}>
-              {c.name}{!c.active && <span className="opacity-50"> ·</span>}
+              title={c.stale ? 'May be out of date: played after its inventory file was last written. Run /outputfile inventory on it.' : (c.cls || undefined)}>
+              {c.name}{!c.active && <span className="opacity-50"> ·</span>}{c.stale && <span className="text-orange" aria-label="may be out of date"> ⏳</span>}
             </button>
           ))}
         </div>
