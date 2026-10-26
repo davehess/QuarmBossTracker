@@ -6060,7 +6060,7 @@ function conLevelFor(character, target) {
 // context for older catalogs.
 const _POP_GRANT_RX = /^You (?:have received|receive) a (new checklist|character) flag!/i;
 const _POP_PREV_RX = /^(?:Mavuin |The Tribunal |Adler Fuirstel |Elder Fuirstel |Adroha Jezith |Thelin |Fahlia Shadyglade |Miak the Searedsoul|You recognize the |Milyk Fuirstel's |Tarkil Adan |Giwin Mirakon|Giwin's invitation|Nitram Anizok |You realize that the image |Maelin|Tylis |The Planar Projection|A Planar Projection |Karana begins|Askr |An aura of soft light|As you place your hand on the burning cauldron|For a moment you pause|You have learned the meaning|You black out for a moment|You focus back to your battle|You feel the searing pain|The Cipher on your arm|As you think back to your meeting|An Image of Mithaniel)/;
-const _POP_RECITAL_RX = /^(?:Your soul has formed a bond|The History translated for you|Learning of Zebuxoruk|The information obtained from (?:Mithaniel|Karana)|You have shown your prowess|You have obtained the Talisman|The Cipher of the Divine Language|Saryrn been destroyed|Mithaniel has been bested|You have (?:completed all of Honor|beaten Rydda|saved the villagers|defeated the nomads)|You have bested Aerin|The evidence of Mavuin|Having endured the trials|Mavuin is grateful|Tylis (?:is being tortured|has been removed)|Thelin (?:being tormented|has completed his pact)|Terris Thule's grasp|Saved from a world|Alder Fuirstel wishes|Grummus has been destroyed|Milyk has been saved|Bertoxxulous has been slain|Saved from certain doom|Now that Grummus has been destroyed|The portal into the Plane of Fire|Xuzl's arcane|Arlyxir's wealth|The power of Dresolik|Rizlona's song|Jiva's strength|The true route to the Plane of Fire|Giwin would like you|The pack of notes from|The words of Maelin echo|The parchments of Rallos|You remember Nitram's words)/;
+const _POP_RECITAL_RX = /^(?:Your soul has formed a bond|The History translated for you|Learning of Zebuxoruk|The information obtained from (?:Mithaniel|Karana)|You have shown your prowess|You have obtained the Talisman|The Cipher of the Divine Language|Saryrn been destroyed|Mithaniel has been bested|You have (?:completed all of Honor|beaten Rydda|saved the villagers|defeated the nomads)|You have bested Aerin|The evidence of Mavuin|Having endured the trials|Mavuin is grateful|Tylis (?:is being tortured|has been removed)|Thelin (?:being tormented|has completed his pact)|Terris Thule's grasp|Saved from a world|Alder Fuirstel wishes|Grummus has been destroyed|Milyk has been saved|Bertoxxulous has been slain|Saved from certain doom|Now that Grummus has been destroyed|The portal into the Plane of Fire|Xuzl's arcane|Arlyxir's wealth|The power of Dresolik|Rizlona's song|Jiva's strength|The true route to the Plane of Fire|Giwin would like you|The pack of notes from|The words of Maelin echo|The parchments of Rallos|You remember Nitram's words|You remember seeing a small trinket by Grummus|You have defeated Aerin`Dar but have yet to learn|Terris still haunts your nightmares|As you recall your memory of your battle against the Plaguebringer|Although it was kind of you to help him, Tylis still|You attempt to recall your defeat of Saryrn|(?:Vallon|Tallon) fell before you with great ease|Your heart beat speeds as you recall the Warlord|You recall meeting with Karana, but the memory is clouded|An Image of Mithaniel flashes before you, 'You have yet to earn|An image of Mithaniel flashes before you\.\s+He looks up from a small book|Besting the Burning Prince proves your might)/;   // + the Seer's PENDING memories: what 'unlock memories' prints when the step a kill waits for is missing (utils/popFlagStages.js PENDING_RECITAL; Seer_Mal_Nae-Shi.lua checklistFlags)
 const _popPrevLine = new Map();   // character (lowercase) → the message of the line before this one
 // The Halls of Honor trial credit (the guild lead, 2026-10-18: "we did not get credit on the command center for
 // this trial hailing"). Hailing the NPC a won trial leaves standing prints the mist line below, naming the NPC,
@@ -6130,15 +6130,17 @@ function parsePopFlagLine(line, character) {
 // against the entries built below: not a prefix, not a keyword. Nothing else leaves the machine: a line that is not
 // one of those (chat, a tell, a player's own words typed to look like one: those carry "X says," / "You tell", so they
 // never equal a system line) is dropped here. And what is uploaded is never the line: only the step KEYS it proves,
-// the time of the line and the character (docs/PRIVACY.md lists it). About eighty lines in all.
+// the time of the line and the character (docs/PRIVACY.md lists it). About a hundred and twenty lines in all.
 //
 // Cites are popflags.cpp:<line>. A step is `<qglobal>_<N>` where N is the position in the printed array (cpp:91
 // `descriptions[stage - 1]`). Karana prints different words in Tier 2 (cpp:478) and Tier 3 (cpp:585) under different
 // labels, so the LABEL says which; no section state is needed for it.
 //
 // Per-log state, kept as small as it can be and reset on a header:
-//   time      whether the member holds the `time` flag, learned from "Plane of Time access: Locked/Unlocked" or the
-//             overview's Tier 4/5 lines (cpp:343-355, 827-854). The boss "Complete" lines and the Miak preflag are
+//   time      whether the member holds the `time` flag, learned from "Plane of Time access: Locked/Unlocked", the
+//             overview's Tier 4/5 lines (cpp:343-355, 827-854), or any line the command prints only WITHOUT it (a boss
+//             line reading Missing / Pending memory, the Seer notice, the Miak advice, Tier 1-3 not Complete: see the
+//             _PF_NO_TIME entries). The boss "Complete" lines and the Miak preflag are
 //             `<test> || time` (cpp:171-176, 717): they count only when time is known NOT held, and wait (up to 6 h)
 //             for a line that says so (the overview comes first when the member runs plain #popflags, the tier
 //             commands after). RESET on "=== Planes of Power Progression ===" (a new run).
@@ -6182,6 +6184,10 @@ const _PF_BOSS = [                                                              
 const _pfNorm = (s) => String(s).replace(/[‘’ʼ`]/g, "'").replace(/\s+/g, ' ').trim().toLowerCase();
 const _PF_LINES = new Map();
 let _PF_MAXLEN = 0;
+const _PF_NO_TIME = { k: 'time', yes: false };                    // "time is not held"
+// The few table lines with no ": " in them (the Seer notice and the Miak advice): a cheap opening test so the per-line
+// pre-check below stays a pre-check. The exact-line table is still the only gate.
+const _PF_BARE_RX = /^(?:A checklist memory is ready|Sit near Seer|Pending checklist memories|Complete the unfinished|Speak to Miak the Searedsoul in Tranquility)/;
 (function _pfBuild() {
   const add = (text, entry) => { const n = _pfNorm(text); _PF_LINES.set(n, entry); if (n.length > _PF_MAXLEN) _PF_MAXLEN = n.length; };
   for (const [label, series, texts] of _PF_STAGES) {
@@ -6195,6 +6201,20 @@ let _PF_MAXLEN = 0;
   for (const [label, keys] of _PF_MAELIN) add(`${label}: Received`, { k: 'keys', keys });
   add('Plane of Fire progression: Unlocked', { k: 'keys', keys: ['pofire_2'] });      // cpp:773-779
   for (const [label, key] of _PF_BOSS) add(`${label}: Complete`, { k: 'gated', keys: [key] });
+  // Lines the command prints ONLY while the member does not hold `time`, so each one is the answer "not held" (real
+  // output, 2026-10-26: a partway character's run never prints Tier 4 or the Plane of Time line, and its boss "Complete"
+  // lines waited forever). A boss line is `complete || time ? Complete : pending ? Pending memory : Missing` (cpp:175-176;
+  // the Miak line is Complete or Missing, cpp:718); "Pending memory: <x>" returns early with time (cpp:157, strings at
+  // 443 and 523); the Seer notice does too (cpp:184-207); the Miak advice is printed when the preflag is not Complete
+  // (cpp:719-720); tiers 1-3 are `<steps> || time` (cpp:230,241,256), so In progress / Not started means not held.
+  for (const [label] of _PF_BOSS) { add(`${label}: Missing`, _PF_NO_TIME); if (label !== 'Miak the Searedsoul preflag') add(`${label}: Pending memory`, _PF_NO_TIME); }
+  for (const n of [1, 2, 3]) { add(`Tier ${n}: In progress`, _PF_NO_TIME); add(`Tier ${n}: Not started`, _PF_NO_TIME); }
+  add("Pending memory: Thelin's hedge maze", _PF_NO_TIME); add('Pending memory: Karana', _PF_NO_TIME);                       // cpp:443, 523
+  add('A checklist memory is ready to be unlocked.', _PF_NO_TIME);                                                             // cpp:191
+  add("Sit near Seer Mal Nae`Shi and say 'unlock memories', then check #popflags again.", _PF_NO_TIME);                       // cpp:196
+  add('Pending checklist memories exist, but their prerequisite steps are incomplete.', _PF_NO_TIME);                          // cpp:202
+  add('Complete the unfinished progression shown above, then return to Seer Mal Nae`Shi.', _PF_NO_TIME);                       // cpp:207
+  add("Speak to Miak the Searedsoul in Tranquility about 'portal's destination'; hailing alone does not grant the preflag.", _PF_NO_TIME); // cpp:720
   // The overview (cpp:326-355): tier 4 complete IS Has("time") (cpp:267-270), and tier 5's test is Has("time").
   add('Tier 4: Complete', { k: 'time', yes: true }); add('Tier 4: In progress', { k: 'time', yes: false }); add('Tier 4: Not started', { k: 'time', yes: false });
   add('Tier 5 - Plane of Time: Complete', { k: 'time', yes: true }); add('Tier 5 - Plane of Time: Not started', { k: 'time', yes: false });
@@ -6214,7 +6234,7 @@ function _pfEvent(character, atMs, keys) {
 function popFlagsOutputEvents(line, character) {
   if (!character || !line) return [];
   const msg = String(line).replace(/^\[[^\]]*\]\s*/, '');
-  if (msg.length > _PF_MAXLEN + 8 || (msg.charCodeAt(0) !== 61 && msg.indexOf(': ') < 0)) return [];
+  if (msg.length > _PF_MAXLEN + 8 || (msg.charCodeAt(0) !== 61 && msg.indexOf(': ') < 0 && !_PF_BARE_RX.test(msg))) return [];
   const hit = _PF_LINES.get(_pfNorm(msg));
   if (!hit) return [];
   const cl = String(character).toLowerCase();
@@ -65268,7 +65288,7 @@ function _rescanWants(msg) {
   if (c === 65 && msg.startsWith('An ethereal mist') && _POP_TRIAL_MIST_RX.test(msg.trim())) return 'trial';
   if (c === 89 && msg.trim() === _POP_TRIAL_HELD) return 'trial';
   if (c === 89 && _POP_SELF_HAIL_RX.test(msg)) return 'hail';        // state only: the NPC a "trial held" line names
-  if ((c === 61 || msg.indexOf(': ') > 0) && msg.length <= _PF_MAXLEN + 8 && _PF_LINES.has(_pfNorm(msg))) return 'popflags';
+  if ((c === 61 || msg.indexOf(': ') > 0 || _PF_BARE_RX.test(msg)) && msg.length <= _PF_MAXLEN + 8 && _PF_LINES.has(_pfNorm(msg))) return 'popflags';
   return null;
 }
 // One line. `sink` = { events, found, prev, prevPassed }. Returns nothing; counts a line that was a flag line.

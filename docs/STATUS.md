@@ -6667,6 +6667,17 @@ and both halves were already gated (`_POP_GRANT_RX`, and the `Maelin` prefix of 
 Her #popflags labels were in `_PF_MAELIN`. Tests: `test/pop-rescan-agent.test.js` (arguments, route, shared guard, local mode / paused,
 kept-out, Maelin lines from the script), `test/dashboard-pop-capture.test.js`. Not yet on `main`; no bot change.
 
+### 🧾 2026-10-26 — Live `#popflags` read against the REAL server output; the Seer's pending memories (agent 4.0.27 beta; web side on `main` as web 2.1.54, DECISIONS §449)
+Two real runs (`test/fixtures/popflags-real-a.txt`, `-b.txt`) now go through both readers in `test/pop-flags-live-parity.test.js`. Every stage, access, boss and
+Maelin line already read the same; the gap was TIME: a partway character's run never prints Tier 4 or the Plane of Time line, so its boss "Complete" lines
+(`<test> || time`) waited for an answer that never came. The command prints a boss line as `Missing` / `Pending memory` only without the time flag, and the
+Seer notice, the Miak advice, `Pending memory: <x>` and a Tier 1-3 that is not Complete likewise, so those exact lines (`_PF_NO_TIME`, 40 more table lines,
+121 in all; `_PF_BARE_RX` is the cheap pre-check for the five with no ": ") now answer "not held" and release the waiting lines. **Pending memories:**
+`_POP_RECITAL_RX` also lets the 13 sentences the Seer prints on 'unlock memories' when a kill's prerequisite is missing through (second entry of each
+`checklistFlags` row in `Seer_Mal_Nae-Shi.lua`; the bot stores them as `cl_*` / source `recital`, never a step; bot table lands with main's 4.0.21). The
+web copies `web/lib/popFlagsPaste.ts` / `popRecital.ts` are carried here byte-identical to `main`'s so the parity test is green before sync-beta.
+Tests: `test/pop-flags-live-parity.test.js` (real A and B, the no-time lines, the exact-line gate), `test/pop-seer-pending-agent.test.js`.
+
 ### 🧾 2026-10-14/15 — raid-night fixes (bot 3.1.268–3.1.271 · agent 3.7.177–3.7.179 beta, DECISIONS §334)
 - ✅ Buff landings no longer lost per batch (`insert_buff_casts`, 3.1.268 hotfix).
 - ✅ A stalled role lookup no longer demotes an officer (Admin tab, DKP tick 403; 3.1.270); dashboard shows the bot's refusal (agent 3.7.178).

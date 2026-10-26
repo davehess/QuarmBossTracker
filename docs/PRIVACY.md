@@ -251,7 +251,7 @@ marked as "seen on /who", whether or not you run Mimic (on the beta site first).
 **The server's `#popflags` command (beta Mimic).** The command prints your PoP flags
 as fixed lines ("Mavuin's case: Mavuin's case is complete", "Crypt of Decay access:
 Unlocked", "Xuzl: Complete" and the rest). Mimic lets a log line through only when
-it is **exactly** one of those lines, a table of about eighty, built from the
+it is **exactly** one of those lines, a table of about a hundred and twenty, built from the
 command's own text: not a line that merely starts like one, and never anything
 from chat, a tell, a group or guild channel or something you typed. What it sends
 is not the line: it is the flag step the line proves (for example `mavuin_3`), the
