@@ -115,7 +115,11 @@ function Containers({ list, mode }: { list: ContainerData[]; mode: Mode }) {
               <span className="text-dim w-14 shrink-0">{c.shortLabel}</span>
               {c.bagName ? (
                 <ItemHover card={c.bagCard ?? undefined} fallbackName={c.bagName} className="text-text truncate">
-                  <span>{c.bagName}</span>
+                  {/* The bag is an item too: its icon sits beside its name (FB-99). */}
+                  <span className="inline-flex items-center gap-1.5 align-middle">
+                    {c.bagCard?.icon ? <ItemIcon icon={c.bagCard.icon} alt={c.bagName} size={20} className="shrink-0" /> : null}
+                    <span className="truncate">{c.bagName}</span>
+                  </span>
                 </ItemHover>
               ) : (
                 <span className="text-dim italic">(empty bag slot)</span>
