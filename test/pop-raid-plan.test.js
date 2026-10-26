@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
-import { PLAN, PREFLAGS, TRAVEL_BASICS, bossAnchor, loc, pickRaidEvent } from '../web/lib/raidPlan.ts';
+import { NOT_GOING, PLAN, PREFLAGS, TRAVEL_BASICS, bossAnchor, loc, pickRaidEvent, pickSignupCharacter } from '../web/lib/raidPlan.ts';
 import { POP_STEPS, STEP_IMPLIES, stepsHeld } from '../web/lib/popSteps.ts';
 
 const read = (p) => stripJs(fs.readFileSync(path.join(ROOT, p), 'utf8'));
@@ -95,7 +95,7 @@ describe('the page', () => {
     expect(preflags).toMatch(/pop_who_sightings/);
   });
   it('counts as going anyone whose status is not absent, declined, bench or tentative', () => {
-    expect(preflags).toContain('/absen|declin|bench|tentat/i');
+    expect(preflags).toMatch(/!NOT_GOING\.test\(String\(s\.status \|\| ''\)\) && !NOT_GOING\.test\(String\(s\.class_name \|\| ''\)\)/);
   });
   it('is members only and carries the beta tag', () => {
     expect(page).toMatch(/redirect\('\/auth\/signin\?next=\/pop\/raid'\)/);
@@ -109,7 +109,10 @@ describe('the page', () => {
     expect(sel.length).toBeGreaterThan(0);
     for (const s of sel) expect(s.split(/,\s*/)).not.toContain('level');
     expect(preflags).not.toMatch(/\.is\('main_name', null\)/);
-    expect(preflags).toMatch(/c\.main_name\.toLowerCase\(\) === c\.name\.toLowerCase\(\)/);
+    expect(preflags).toMatch(/pickSignupCharacter\(chars, signedClass\.get\(id\), RAIDER_RANKS\)/);
+    const own = { name: 'Zarrin', class: 'Druid', main_name: 'Zarrin', active: false, rank: null };
+    const alt = { name: 'Nyssara', class: 'Wizard', main_name: 'Zarrin', active: true, rank: 'Raid Pack' };
+    expect(pickSignupCharacter([alt, own], 'Bard', ['Raid Pack']).name).toBe('Zarrin');
   });
   it('links the overview to each target and boss, the bosses to PQDI, and the loot to item cards', () => {
     expect(page).toMatch(/href=\{`#\$\{bossAnchor\(s\.id, b\.npc\)\}`\}/);
@@ -134,5 +137,28 @@ describe('popSteps on main', () => {
   it('exports stepsHeld, and the Justice flag carries its earlier steps', () => {
     expect(typeof stepsHeld).toBe('function');
     expect(stepsHeld(['mavuin_3']).has('mavuin_1')).toBe(true);
+  });
+});
+
+describe('a sign-up brings the character of the class it signed up as', () => {
+  const RANKS = ['Raid Pack'];
+  const ch = (name, cls, main_name = null, o = {}) => ({ name, class: cls, main_name, active: true, rank: 'Raid Pack', ...o });
+  const fam = [ch('Aldenmar', 'Warrior'), ch('Brackwyn', 'Cleric', 'Aldenmar', { rank: 'Raid Alt' }), ch('Corvale', 'Shadow Knight', 'Aldenmar')];
+  it('picks the alt when the sign-up is on the alt\'s class', () => {
+    expect(pickSignupCharacter(fam, 'Cleric', RANKS).name).toBe('Brackwyn');
+  });
+  it('reads Raid-Helper\'s "Shadowknight" as Shadow Knight', () => {
+    expect(pickSignupCharacter(fam, 'Shadowknight', RANKS).name).toBe('Corvale');
+  });
+  it('falls back to the main when no character has the class', () => {
+    expect(pickSignupCharacter(fam, 'Bard', RANKS).name).toBe('Aldenmar');
+    expect(pickSignupCharacter(fam, 'Late', RANKS).name).toBe('Aldenmar');
+  });
+  it('prefers the main when main and alt share the class', () => {
+    expect(pickSignupCharacter([ch('Rethlan', 'Cleric', 'Aldenmar'), ch('Aldenmar', 'Cleric')], 'Cleric', RANKS).name).toBe('Aldenmar');
+  });
+  it('treats status words Raid-Helper files as the class as not going', () => {
+    for (const c of ['Tentative', 'Absence', 'Bench']) expect(NOT_GOING.test(c)).toBe(true);
+    expect(NOT_GOING.test('Late')).toBe(false);
   });
 });
