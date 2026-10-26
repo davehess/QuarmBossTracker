@@ -33,6 +33,7 @@ const isFail = (v: { userId: string } | WishlistResult): v is WishlistResult => 
 async function finish(r: { ok: boolean; error?: string }): Promise<WishlistResult> {
   if (!r.ok) return fail(r.error ?? 'That did not save.');
   revalidatePath('/me/upgrades');
+  revalidatePath('/me/wishlist');
   return { ok: true };
 }
 

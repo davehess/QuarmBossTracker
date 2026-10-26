@@ -138,7 +138,7 @@ describe('the site\'s wishlist actions', () => {
     expect(rowOf('Aldenmar', 1001).bid_amount_enc).toBeNull();
     expect(await actions.removeFromWishlist('Aldenmar', 1001)).toEqual({ ok: true });
     expect(rowOf('Aldenmar', 1001)).toBeUndefined();
-    expect(revalidated).toEqual(Array(4).fill('/me/upgrades'));
+    expect(revalidated).toEqual(Array(4).fill(['/me/upgrades', '/me/wishlist']).flat());
   });
 
   it('what the site sends is a 60-second wishlist ticket for the signed-in user, never a screen ticket', async () => {
@@ -188,7 +188,7 @@ describe('the site\'s wishlist actions', () => {
     const r = await actions.setPreBid('Aldenmar', 1001, 40);
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/encryption is not available/);
-    expect(revalidated.length).toBe(1);
+    expect(revalidated).toEqual(['/me/upgrades', '/me/wishlist']);   // only the first, successful add
   });
 
   it('says so, without throwing, when the bot cannot be reached or the site is not wired to it', async () => {

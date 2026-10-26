@@ -172,6 +172,16 @@ next touch one rather than assuming a missing row means a missing doc.
   card is a mouse-over portal that closes 180 ms after the pointer leaves and has no touch path, so it cannot hold a form. Test:
   `test/wishlist-everywhere.test.js`. **To do:** web beta needs the bot on `main` at 4.0.18+ and `SCREEN_TOKEN_SECRET` / `SCREEN_LIVE_URL` in Vercel
   Preview, as for the upgrades page.
+- **🧪 `/me/wishlist` [beta], part B of the same pick (draft `draft/wishlist-everywhere`, 2026-10-26; web 2.1.51; NEW route, so `main` with the
+  `[beta]` tag, DECISIONS §135). Not pushed.** Every character of the member's with its list: item, priority, the owner's own sealed pre-bid,
+  Change pre-bid and Remove (the shared control, `characters=[name]`), plus a search box that finds ANY item by name. Search scope: every
+  `eqemu_items` row with `id > 0` (not only droppers: quest rewards, crafted and vendor pieces are wanted too, and the bot's own rule is
+  "the item exists"); names that start with the text first, then names that contain it, 20 rows of `id, name, icon, slots` at most
+  (`web/app/me/wishlist/actions.ts`, `web/lib/wishlistSearch.ts`). Linked from `/me` and `/me/upgrades`; metadata in the page and `pageMeta.ts`.
+  Test: `test/wishlist-page.test.js`. **To do before it can go to `main`:** the page needs `web/app/me/upgrades/actions.ts`,
+  `web/lib/wishlistBot.ts`, `web/lib/wishlistRules.ts` (web 2.1.45) and the shared control (part A), none of which is on `main` yet, so
+  graduate those with it. **Open:** changing a priority needs a new bot op (`setpriority`); today a priority is set when the item is added.
+  The item icon atlas is disabled (`ICON_ATLAS_DISABLED`), so rows show names only until it is regenerated.
 - **🧪 First sign-in: pick your characters from the logs, stage a recruit main, offer the spellbook / inventory / Quarmy upload (draft
   `draft/recruit-onboarding`, 2026-10-24; bot half for `main` (bot 4.0.13), agent + dashboard half for `beta` (agent 4.0.21)). Not pushed.**
   *"we should check for the discord role and let them in, then prestage as a new recruit main"* and *"We should be asking what

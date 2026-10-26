@@ -1155,6 +1155,9 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
             <Link href="/me/upgrades" className="text-blue hover:underline text-sm whitespace-nowrap">
               ⬆ Gear upgrades →
             </Link>
+            <Link href="/me/wishlist" className="text-blue hover:underline text-sm whitespace-nowrap">
+              ★ My wishlist →
+            </Link>
             <Link href="/me/voice" className="text-blue hover:underline text-sm whitespace-nowrap">
               🔊 Say your name →
             </Link>

@@ -94,6 +94,8 @@ export default async function UpgradesPage({ searchParams }: { searchParams: Pro
       <NewPageTag note="First slice of the gear upgrade finder: per-slot upgrades scored for your class." />
       <div className="text-sm">
         <Link href="/me" className="text-blue hover:underline">← back to My Stats</Link>
+        <span className="mx-2 text-dim">·</span>
+        <Link href="/me/wishlist" className="text-blue hover:underline">★ My wishlist</Link>
       </div>
 
       <section className="bg-panel border border-border rounded-lg p-6">

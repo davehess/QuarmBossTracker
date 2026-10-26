@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'my-wishlist-page-2026-10-26',
+    title: 'Web 2.1.51',
+    version: 'Web 2.1.51',
+    date: '2026-10-26',
+    headline: 'A new page, marked [beta], shows every wishlist you have and lets you search for any item and add it.',
+    features: [
+      { name: 'My wishlist', blurb: 'Open it from My Stats. Each of your characters has its own list with every item, its priority and your own sealed pre-bid. You can change the bid or take an item off right there. Nobody else can see your bid.' },
+      { name: 'Search for any item', blurb: 'Type part of an item name, pick it from the list and add it to whichever character you like. Items that start with what you typed come first, and ones already on a list are marked.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'wishlist-everywhere-2026-10-26',
     title: 'Web 2.1.50',
     version: 'Web 2.1.50',
