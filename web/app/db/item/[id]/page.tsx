@@ -21,6 +21,8 @@ import {
   CLASS_TAGS, RACE_TAGS, ALL_CLASS_MASK, ALL_RACE_MASK, ERA_LABEL,
 } from '@/lib/itemDecode';
 import { type ItemRecipe, TradeskillsGrouped } from './Tradeskills';
+import WishlistControls from '@/components/WishlistControls';
+import { loadWishView } from '@/lib/wishlistLoad';
 
 import { pageMetadata } from '@/lib/pageMetaData';
 
@@ -81,7 +83,7 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
     sb.rpc('quest_scripts_for_item', { p_item_id: itemId }).range(0, 199),
   ]);
 
-  const [cardRes, itemRes, dropRes, dropCounts, merchRes, givesRes, getsRes] = await Promise.all([
+  const [cardRes, itemRes, dropRes, dropCounts, merchRes, givesRes, getsRes, wish] = await Promise.all([
     sb.rpc('item_card_info', { p_item_ids: [itemId] }),
     sb.from('eqemu_items')
       .select('id, name, lore, casttime, norent, str, sta, dex, agi, intel, wis, cha, '
@@ -103,6 +105,9 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
       .select('id, npc_name, npc_id, zone_short, inputs, outputs, cash, exp_award')
       .filter('outputs', 'cs', JSON.stringify([{ item_id: itemId }]))
       .eq('is_duplicate', false).limit(30),
+    // The viewer's own characters and where this item is already on their wishlists. A failed read hides the
+    // control, never the page. The default character is the member's main.
+    loadWishView(user.id, [itemId]).catch(() => null),
   ]);
 
   const card = ((cardRes.data ?? []) as ItemCard[])[0];
@@ -278,6 +283,18 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
              className="text-blue hover:underline">View on PQDI ↗</a>
         </div>
       </section>
+
+      {/* Wishlist: only for a signed-in member who owns a character (this page redirects everyone else). */}
+      {wish && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h2 className="text-sm text-orange">Wishlist</h2>
+          <WishlistControls
+            itemId={itemId} itemName={name} enabled={wish.enabled}
+            characters={wish.characters} defaultCharacter={wish.defaultCharacter}
+            states={wish.states.get(itemId) ?? {}}
+          />
+        </section>
+      )}
 
       {/* Dropped by */}
       <section className="bg-panel border border-border rounded-lg p-4">

@@ -3925,6 +3925,21 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
 
 ## Web features
 
+- **My wishlist (`/me/wishlist`, web 2.1.51 `[beta]`; DRAFT).** The signed-in member's characters (`ownedCharacters`, main first) each with their
+  list: item name, priority, the owner's own pre-bid (bot `list` op), Change pre-bid and Remove through the shared control
+  (`web/components/WishlistControls.tsx`, `characters=[name]`). Above them `WishlistSearch.tsx`: the `searchItems` server action
+  (`app/me/wishlist/actions.ts`) reads `eqemu_items` (`id > 0`, any item, prefix matches first then contains, 20 rows of `id, name, icon, slots`)
+  and marks hits already listed for the member's own characters; Add opens the shared control. Reads in `web/lib/wishlistLoad.ts`
+  (`loadLists`), text rules in `web/lib/wishlistSearch.ts`. Linked from `/me` and `/me/upgrades`. Test: `test/wishlist-page.test.js`.
+- **Add to wishlist everywhere an item shows (item page `/db/item/<id>`, raid plan loot `/pop/raid`, gear upgrades; web 2.1.50 `beta`; DRAFT).**
+  One client component, `web/components/WishlistControls.tsx` (`{ itemId, itemName, characters, defaultCharacter, states, enabled, compact? }`):
+  a character picker when the member has several, then Add (priority + sealed pre-bid), Set / Change pre-bid, Remove, optimistic with rollback.
+  It calls only the three server actions in `web/app/me/upgrades/actions.ts` (ownership check, then the bot's `POST /api/web/wishlist`).
+  `web/lib/wishlistLoad.ts` (`loadWishView`) reads the member's own characters (`ownedCharacters`), where the item is already listed
+  (`wishlists`: item, character, priority only) and the owner's own pre-bids through the bot's `list` op. `web/lib/wishlistPick.ts` orders the
+  characters (main first, hidden ones out, only names the action accepts) and picks the default: the sign-up character on `/pop/raid`
+  (`bringingFrom`), else the main. Not on the parse page (its loot is already awarded) or the item hover card (cannot hold a form). Test:
+  `test/wishlist-everywhere.test.js`.
 - **Wishlist + pre-bid on the gear upgrades page (`/me/upgrades`, web 2.1.45 `[beta]`, bot 4.0.18; DRAFT).** Under each upgrade,
   `WishlistControls.tsx` (client, `useTransition`, optimistic with rollback) offers Add to wishlist (priority + optional pre-bid), then Set /
   Change pre-bid and Remove. Server actions are `app/me/upgrades/actions.ts` (member must own the character via `ownedCharacters`; limits from

@@ -11,7 +11,7 @@
 // wishlists (the character's own list; the viewer is the owner, and the bid columns are never selected here).
 //
 // Wishlist controls (2026-10-26): each upgrade can be added to the wishlist with a priority and a sealed
-// pre-bid, changed or removed (WishlistControls.tsx, actions.ts). Those writes, and the read of the member's OWN
+// pre-bid, changed or removed (components/WishlistControls.tsx, actions.ts). Those writes, and the read of the member's OWN
 // pre-bids, go through the bot (lib/wishlistBot.ts -> utils/webWishlist.js), which holds the only key that can
 // encrypt or decrypt a bid. Ears, wrists and rings sit in side-by-side pairs (groupPairedSlots).
 //
@@ -27,7 +27,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { ownedCharacters, type OwnedChar } from '@/lib/ownedCharacters';
 import { selectAll } from '@/lib/selectAll';
 import NewPageTag from '@/components/NewPageTag';
-import WishlistControls from './WishlistControls';
+import WishlistControls from '@/components/WishlistControls';
 import { callBotWishlist, wishlistWritesEnabled, type BotItem } from '@/lib/wishlistBot';
 import {
   rankUpgrades, selectTop, candidateIds, scoredClass, resolveWeights, levelCap, expansionCap, isOptedOut, groupPairedSlots,
@@ -94,6 +94,8 @@ export default async function UpgradesPage({ searchParams }: { searchParams: Pro
       <NewPageTag note="First slice of the gear upgrade finder: per-slot upgrades scored for your class." />
       <div className="text-sm">
         <Link href="/me" className="text-blue hover:underline">← back to My Stats</Link>
+        <span className="mx-2 text-dim">·</span>
+        <Link href="/me/wishlist" className="text-blue hover:underline">★ My wishlist</Link>
       </div>
 
       <section className="bg-panel border border-border rounded-lg p-6">
@@ -375,9 +377,11 @@ function SlotCard({ r, top, keys, finalists, wishlist, spellNames, wish: wc }: {
                   {u.sources.length > 1 && <span className="text-dim"> · +{u.sources.length - 1} more source{u.sources.length > 2 ? 's' : ''}</span>}
                 </p>
                 <WishlistControls
-                  character={wc.name} itemId={u.item.id} enabled={wc.enabled}
-                  listed={wishlist.has(u.item.id)} priority={wishlist.get(u.item.id) ?? null}
-                  bid={wc.bids.get(u.item.id) ?? null} bidKnown={wc.bidsKnown}
+                  itemId={u.item.id} itemName={it.name ?? `Item #${u.item.id}`} enabled={wc.enabled}
+                  characters={[wc.name]} defaultCharacter={wc.name}
+                  states={wishlist.has(u.item.id)
+                    ? { [wc.name]: { priority: wishlist.get(u.item.id) ?? null, bid: wc.bids.get(u.item.id) ?? null, bidKnown: wc.bidsKnown } }
+                    : {}}
                 />
               </li>
             );

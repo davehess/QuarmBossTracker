@@ -37,6 +37,32 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'my-wishlist-page-2026-10-26',
+    title: 'Web 2.1.51',
+    version: 'Web 2.1.51',
+    date: '2026-10-26',
+    headline: 'A new page, marked [beta], shows every wishlist you have and lets you search for any item and add it.',
+    features: [
+      { name: 'My wishlist', blurb: 'Open it from My Stats. Each of your characters has its own list with every item, its priority and your own sealed pre-bid. You can change the bid or take an item off right there. Nobody else can see your bid.' },
+      { name: 'Search for any item', blurb: 'Type part of an item name, pick it from the list and add it to whichever character you like. Items that start with what you typed come first, and ones already on a list are marked.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'wishlist-everywhere-2026-10-26',
+    title: 'Web 2.1.50',
+    version: 'Web 2.1.50',
+    date: '2026-10-26',
+    channel: 'beta',
+    headline: 'You can put an item on your wishlist from the item page and from the raid night plan, not only from the gear upgrades page.',
+    features: [
+      { name: 'Add to wishlist on the item page', blurb: 'Open any item and there is a Wishlist box. Pick which of your characters it is for, a priority and, if you like, a sealed pre-bid. It starts on your main.' },
+      { name: 'Add to wishlist on the raid night plan', blurb: 'Every boss drop on the plan has an Add to wishlist button. It starts on the character your sign-up for the next raid brings, so a Bard sign-up lists the item for your Bard.' },
+      { name: 'See where it is already listed', blurb: 'The character picker marks the characters that already have the item, with the priority and your own pre-bid, and lets you change the bid or take it off.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'popflags-paste-and-sync-2026-10-26',
     title: 'Web 2.1.47',
     version: 'Web 2.1.47 · Bot 4.0.19',
