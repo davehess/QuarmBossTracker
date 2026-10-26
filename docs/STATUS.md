@@ -105,6 +105,11 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Deaths in a fight parse: your own death and raiders nobody /who'd (agent 4.0.22, `claude/death-reading`, for `beta`; 2026-10-26).**
+  The first-person "You have been slain by X!" line is now read as the log owner's death (one record when "You died." follows within
+  3 s), and names on the Zeal raid list count as players, so a raider's death is kept without a /who. `test/death-self-and-raid-reading.test.js`.
+  Not pushed; graduates with the next stable Mimic cut. The corpse-run DM (`_corpseNoteLine`) still keys on "You died." only.
+
 - **🧪 First sign-in: pick your characters from the logs, stage a recruit main, offer the spellbook / inventory / Quarmy upload (draft
   `draft/recruit-onboarding`, 2026-10-24; bot half for `main` (bot 4.0.13), agent + dashboard half for `beta` (agent 4.0.21)). Not pushed.**
   *"we should check for the discord role and let them in, then prestage as a new recruit main"* and *"We should be asking what

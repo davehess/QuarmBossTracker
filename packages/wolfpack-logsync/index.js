@@ -419,6 +419,7 @@ const KEEP_PATTERNS = [
   /\bScores? a critical hit!/i,                   // crit announcement, attaches to prior damage
   /\bdelivers? a critical blast!/i,               // SPELL crit — the caster-side twin of the line above
   /\bhas been slain by/i,
+  /\bYou have been slain by /i,                   // own death, first person (parseEvent 'death', defender null)
   /\byou have slain /i,
   /^\[.+\]\s+You died\./i,                        // /death of self
   /\bdie[ds]\./i,                                 // "X died." — see parseEvent; "X dies." is FEIGN, kept only so the trigger engine can see it
@@ -1131,6 +1132,14 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+You have slain\s+(.+?)!/i);
   if (m) {
     return { ts: tsIso, type: 'death', defender: m[1], attacker: null /* self */ };
+  }
+  // First-person twin of the line above: EverQuest prints "You have been slain by <killer>!" in the
+  // dying character's OWN log, so the uploader's own death was never recorded (only a third-person
+  // "has been slain by" or "You died." was matched). defender null = self; the builder maps it to
+  // the log's character. A death that prints this AND "You died." is recorded once (EncounterBuilder).
+  m = line.match(/\]\s+You have been slain by (.+?)!/i);
+  if (m) {
+    return { ts: tsIso, type: 'death', defender: null /* self */, attacker: m[1] };
   }
   // "X died." — a real death with no named killer (drowning, falling, DoT tick).
   //
@@ -4369,6 +4378,8 @@ const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
 // lingers before releasing pushes the home-point line out; 60s covers that
 // without ever reaching back to a PREVIOUS death.
 const DEATH_CONFIRM_WINDOW_MS = 60_000;
+// "You have been slain by X!" and "You died." are two lines for ONE self death; closer than this = same death.
+const SELF_DEATH_DEDUP_MS = 3000;
 const DI_CAST_MS = 6000, DI_RECAST_MS = 90_000;
 const _diStateByChar = new Map();   // charLower → { castAt, readyAt }
 function _noteDiCast(charLower, atMs) {
@@ -11653,7 +11664,12 @@ class EncounterBuilder {
         defName === this.character ||
         isConfirmedPlayer(defName)
       );
-      if (isPlayer) {
+      // One death can print both "You have been slain by X!" and "You died." in the dying
+      // character's own log: record the character once (a real second death is minutes away).
+      const deathTsPre = Date.parse(event.ts) || Date.now();
+      const selfDupe = isPlayer && defName === this.character && this.deaths.some(d =>
+        d && d.name === defName && Math.abs(deathTsPre - (Date.parse(d.ts) || 0)) <= SELF_DEATH_DEDUP_MS);
+      if (isPlayer && !selfDupe) {
         const deathTs      = Date.parse(event.ts) || Date.now();
         const lastRip      = this.recentRiposteDmg.get(defName);
         const riposteDeath = !!lastRip && (deathTs - lastRip) <= 3000;
@@ -12951,6 +12967,9 @@ function _maybeUploadRaidRoster(sample) {
       const lower = String(m.name).toLowerCase();
       _raidRosterMembers.add(lower);
       if (m.class) _raidClassByName.set(lower, String(m.class));
+      // A raider on the Zeal raid list is a player, /who'd or not: deaths of raiders nobody /who'd were
+      // dropped by isConfirmedPlayer. Letters only here too, so a mob-shaped name never takes a slot.
+      if (/^[A-Za-z]+$/.test(String(m.name))) confirmPlayer(m.name);
     }
     // #72 P1c: the raid ROSTER snapshot is redundant across a group (composition
     // is identical from every raider's view; HP is per-group and any group
@@ -65912,7 +65931,7 @@ module.exports = {
   _noteDeath, _clearDeath, _isDead, _deadNamesSnapshot, _ageOfServerStamp,
   // FB-84 death recap: exported so the tests exercise the shipped code. noteHealLandLine feeds the landings; stats is the session store.
   buildDeathRecap, deathRecapSnapshot, deathRecapFocusId, corpseTargetOwner, noteHealLandLine, _recentHealLandsForTest: () => _recentHealLands,
-  _deathRecapsForTest: () => stats.deathRecaps, _zealStateForTest: () => _zealState, confirmPlayer,
+  _deathRecapsForTest: () => stats.deathRecaps, _zealStateForTest: () => _zealState, confirmPlayer, isConfirmedPlayer, _maybeUploadRaidRoster,
   // #205 group-HP death watcher — the independent death source feeding that
   // registry. Exported so the tests exercise the shipped code, not a copy.
   _noteGroupHpFromState, _groupHpObservations, _groupDeathWatchSnapshot,
