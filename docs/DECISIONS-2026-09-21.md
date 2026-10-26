@@ -13047,6 +13047,25 @@ paused, which takes https://wolfpack.quest and https://raidmimic.com down until 
   lead), while the owner's own placements on /me/accounts (35 characters on 6 game accounts) are only used by the
   website's /me/inventory. A draft that merged tiny identical banks was NOT shipped: the guild lead's smallest bank is 11
   slots, so it would change nothing. Next: let the local page use the placements.
-- **FB-97** (a character missing from the Command Center's flagging list): the name is in no raid-list upload from that
-  raid and not in `characters`; the window has closed. Likely not on the roster snapshot at the kill (no Mimic uploader
-  for that group) or a spelling difference. Waiting on the member's in-game spelling.
+- **FB-97** — CORRECTED in §442: the name in the report is the Plane of Innovation flag NPC, not a character.
+
+### 442. Vercel CPU fix live; flag steps as a command then a page; the Torment chain from the scripts (2026-10-26)
+- **Live on main (web 2.1.41):** link prefetching off site-wide and the slower live-page refreshes (§440), graduated
+  from beta as the two commits' changes only. Production build: all 121 pages use the no-prefetch link.
+- **FB-97, corrected:** "Giwin" is Giwin Mirakon, the Plane of Innovation flag NPC. The Command Center already opens a
+  Giwin window after the Manaetic Behemoth (`utils/hailBoard.js` row `manaetic_behemoth`); the report came 95 s before
+  that kill, while the raid was doing Giwin's PRE-flag (`poinnovation/Giwin_Mirakon.lua`: say "great warrior" → "task" →
+  "test the machine", sets zeks=1), which the board does not cover. The flag-steps card below adds pre-flags.
+- **Torment pre-flag, from the scripts** (the member's Discord recipe was incomplete): `potranquility/Fahlia_Shadyglade.lua`
+  gates on thelin==4 AND fuirstel==5; only "will go" sets tylis=1 and prints "You have received a character flag!".
+  fuirstel 3→4 = the Bertoxxulous projection (`codecay/A_Planar_Projection.lua`), 4→5 = Elder Fuirstel; thelin 4 =
+  Elder Poxbourne after the Terris Thule projection.
+- **Flag steps for a raid: the guild lead picked A then B.** A: an officer-only `/preflags` command posting one card
+  (steps, phrases, who still needs each, Refresh + My steps buttons, links to the Seer paste at /pop/guide). B after:
+  an officers' page at /pop/raid/flags that picks the raid and bosses, shows names per step and posts the same card
+  (fixing /pop/raid's hard-coded raid date). The card builder is shared.
+- **On beta (web 2.1.42):** FB-99 (the inventory hover card clipped by its grid cell, and PQDI icons requested from a
+  case-wrong `/Icons/` path) and FB-98 (a /me door in Mimic's local site; the website's /me names where inventory sync
+  and hiding live).
+- **Open:** FB-100 (expandable respawns on the Mimic map) — option A (accordion + pulse the down spawns) recommended;
+  the kite-circle drift prediction, speed/nearby filter and stale circles are being drafted.
