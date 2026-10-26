@@ -8,6 +8,8 @@
 // the correctness traps in the design doc (§"Two correctness traps") are the
 // kind that render as a plausible-looking chart when wrong.
 
+import { classBucket } from './parseClasses';
+
 export type TimelineRow = {
   t_sec: number;
   char_name: string;
@@ -43,7 +45,7 @@ export type FightCurve = {
  *  per-character drill-down. `klass` is a display label — real class, 'Pets'
  *  is impossible here (pets fold under owners upstream), unknowns arrive as
  *  whatever fallback the caller put in classOf (the page passes null → we
- *  label 'Unknown'). */
+ *  label CLASS_NOT_KNOWN; a sentinel like 'UNKNOWN' lands in the same group). */
 export type ClassGroup = {
   klass: string;
   total: number;
@@ -167,7 +169,7 @@ export function groupSeriesByClass(
 ): ClassGroup[] {
   const byClass = new Map<string, Band[]>();
   for (const b of series) {
-    const k = classOf[b.name] || 'Unknown';
+    const k = classBucket(classOf[b.name]);
     const arr = byClass.get(k);
     if (arr) arr.push(b); else byClass.set(k, [b]);
   }
@@ -295,4 +297,40 @@ export function hpScale(
   const hp = Number(bossHp);
   if (Number.isFinite(hp) && hp > 0) return { denom: Math.max(hp, totalDamage), basis: 'catalog', showHp: true };
   return { denom: totalDamage, basis: 'damage', showHp: false };
+}
+
+/**
+ * How long the chart's x-axis should be (the guild lead, 2026-10-26: "why is the parse half the distance on the timeline
+ * instead of fit to it?"). The axis used to be the encounter's `duration_sec`, but that is the fight RECORD — first
+ * engage to the last event of any kind — and a wipe, a reset or a boss that ran keeps it open long after the raid stopped
+ * hurting the boss: a 390s record with the last damage at 220s drew the stack and the boss-HP line into the left 56% and
+ * left the rest empty. The axis now ends where the data does.
+ *
+ * `spanSec` is the last damage bucket's END (a bucket is [t, t+step)) or the last tanking segment's end, whichever is
+ * later, plus a small pad so the final point is not on the frame; it never exceeds the record unless the data does
+ * (the record is never allowed to clip real data). `tailSec` is the record left over, and `showTail` says it is long
+ * enough to be worth a note (under 10s the chart looks complete as drawn).
+ */
+export function fitAxis(
+  buckets: number[],
+  bands: Band[],
+  mt: MTSegment[],
+  durationSec: number | null | undefined,
+): { spanSec: number; tailSec: number; showTail: boolean } {
+  const step = buckets.length > 1 ? buckets[1] - buckets[0] : 5;
+  let dataEnd = 0;
+  for (const b of bands) {
+    for (let i = b.cum.length - 1; i >= 0; i--) {
+      const grew = (b.cum[i] || 0) > (i > 0 ? (b.cum[i - 1] || 0) : 0);
+      if (grew) { dataEnd = Math.max(dataEnd, (buckets[i] ?? i * step) + step); break; }
+    }
+  }
+  for (const s of mt) dataEnd = Math.max(dataEnd, s.toSec);
+  const dur = Number(durationSec);
+  const record = Number.isFinite(dur) && dur > 0 ? dur : 0;
+  if (dataEnd <= 0) return { spanSec: Math.max(1, record), tailSec: 0, showTail: false };
+  const pad = Math.max(2, Math.round(dataEnd * 0.02));
+  const spanSec = record >= dataEnd ? Math.min(record, dataEnd + pad) : dataEnd + pad;
+  const tailSec = Math.max(0, record - spanSec);
+  return { spanSec, tailSec, showTail: tailSec >= 10 };
 }

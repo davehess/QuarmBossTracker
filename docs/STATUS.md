@@ -105,6 +105,16 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Parse page: one "Class not known" bucket, classes from every source, the chart axis fit to the data (web 2.1.49, `draft/parse-unknowns`, for `beta`; 2026-10-26; first draft, not pushed).**
+  The guild lead on a foreign-guild wipe: "The Unknowns here aren't actually unknown" and "why is the parse half the distance on the timeline
+  instead of fit to it?". Cause 1: the OpenDKP mirror (`characters`) stores the literal strings `UNKNOWN`/`Unknown` for an unregistered toon; the
+  page counted them as a class (so /who never ran for that player) and also wrote its own `Unknown` for a null, so two buckets. Now
+  `web/lib/parseClasses.ts` rejects the sentinels, resolves OpenDKP mirror, then `who_directory_lookup`, then `raid_roster`, each asked only the
+  names still open, and every surface buckets the rest under "Class not known". Cause 2: the x-axis was `duration_sec` (the fight record, 390s)
+  while damage stopped at 220s. `fitAxis` ends the axis at the last damage or tanking bucket plus a pad, and a note names the empty tail. No
+  class-from-ability inference on the web (the only helper, `inferClassFromAbility`, is agent-side and already lands in /who). Tests:
+  `test/parse-unknown-and-axis.test.js`. Graduates to `main` when the guild lead has looked at it on `https://b.wolfpack.quest/parses/<id>`.
+
 - **🧪 /pop/raid maps: Brewall's map underneath, lettered markers, the walked route (web 2.1.44, `draft/pop-raid-brewall`, for `beta`; 2026-10-26; first draft, not pushed).**
   The guild lead: "pop/raid needs the brewall maps underneath, they look incomplete" and "the path is incorrect, are we able to pull from
   what we've observed in raids". Walls: every Brewall line of every layer file, one muted colour; the EQEmu slice is drawn only for a
