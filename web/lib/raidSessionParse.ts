@@ -19,7 +19,7 @@ import { selectAll } from './selectAll';
 import { chunk } from './replayBosses';
 import { inWindow, type ShareWindow } from './raidShare';
 import { loadAnon } from './raidShareLookup';
-import { anonName, nameKey, type AnonMap } from './raidSession';
+import { LISTED_MARKS, anonName, nameKey, type AnonMap } from './raidSession';
 
 export type ParseRow = { name: string; cls: string | null; damage: number; dps: number | null; pct: number; durationSec: number | null };
 export type FightParse = { id: string; durationSec: number | null; totalDamage: number; players: ParseRow[] };
@@ -59,7 +59,7 @@ export function buildFightParse(
   return { id: enc.id, durationSec: enc.duration_sec, totalDamage: total, players: rows };
 }
 
-/** One fight's full parse, or null when it is not one this caller may see (unknown id, other guild, classified, outside `win`). */
+/** One fight's full parse, or null when it is not one this caller may see (unknown id, other guild, marked live / pvp / test, outside `win`). */
 export async function loadFightParse(
   sb: SupabaseClient, encounterId: unknown,
   // `win` bounds WHAT is served (a share). `anonWin` only names the session whose bid winners are shown by name, for
@@ -71,7 +71,7 @@ export async function loadFightParse(
     .select('id, started_at, ended_at, duration_sec')
     .eq('id', encounterId)
     .eq('guild_id', opts.guild)
-    .is('classification', null)
+    .or(LISTED_MARKS)   // the marks the review lists (ours, wipes, another guild's), so a listed row opens
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;

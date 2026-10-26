@@ -13,6 +13,10 @@
 // Under the replay: "Start a new raid here" (lib/raidSplit.ts; two back-to-back raids are one recorded session) and
 // the night sliced into segments an officer confirms (lib/nightSlices.ts), with the night's named fights and mass
 // deaths. Both were beta previews (?v=split, ?v=segments) until the guild lead picked them, 2026-10-23.
+//
+// `&group=<id>` (with `gf`/`gt`, the window the raids were counted in) narrows the whole review to ONE raid of the
+// window: a window holds everyone any uploader saw, and two raids on the ground at once read as one roster (the guild
+// lead, 2026-10-26). lib/sessionGroups.ts finds the raids; RaidGroupsBar and the night strip name them.
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
@@ -44,13 +48,17 @@ const etStamp = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? '';
 
-export default async function RaidSessionPage({ searchParams }: { searchParams: { from?: string | string[]; to?: string | string[] } }) {
+export default async function RaidSessionPage({ searchParams }: { searchParams: { from?: string | string[]; to?: string | string[]; group?: string | string[]; gf?: string | string[]; gt?: string | string[] } }) {
   const from = one(searchParams.from);
   const to = one(searchParams.to);
+  // `group` narrows the review to one raid of the window (lib/sessionGroups.ts); anything but a plausible id is ignored.
+  const wanted = /^[a-z0-9-]{3,40}$/.test(one(searchParams.group)) ? one(searchParams.group) : null;
   const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect('/auth/signin?next=' + encodeURIComponent('/raid/session' + (from && to ? `?from=${from}&to=${to}` : '')));
+  if (!user) redirect('/auth/signin?next=' + encodeURIComponent('/raid/session' + (from && to ? `?from=${from}&to=${to}${wanted ? `&group=${wanted}` : ''}` : '')));
 
   const win = from && to ? makeWindow(Date.parse(from), Date.parse(to)) : null;
+  // `gf`/`gt`: the larger window the raids were counted in, when this one is a part of it (lib/sessionGroups.ts groupQuery).
+  const parent = wanted && one(searchParams.gf) && one(searchParams.gt) ? makeWindow(Date.parse(one(searchParams.gf)), Date.parse(one(searchParams.gt))) : null;
   const header = (
     <>
       <NewPageTag note="New page: a raid session, replayed with its attendance, kills, loot and rolls." />
@@ -86,11 +94,13 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
 
   const admin = supabaseAdmin();
   const [review, officer, slices] = await Promise.all([
-    loadSessionReview(admin, win, { breaks: true }),
+    loadSessionReview(admin, win, { breaks: true, groups: true, group: wanted, groupWin: parent }),
     isOfficer(user.id),
     loadSlices(admin),
   ]);
-  const marks = await loadNightMarks(admin, win, review.bundle.kills).catch(() => ({ fights: [], deaths: [], mass: [] }));
+  const raid = review.group && review.groupIndex ? { id: review.group, index: review.groupIndex } : null;
+  const marks = await loadNightMarks(admin, win, review.bundle.kills, raid).catch(() => ({ fights: [], deaths: [], mass: [] }));
+  const groups = review.groups ?? [];
   const { from: fromIso, to: toIso } = windowIso(win);
 
   return (
@@ -110,7 +120,9 @@ export default async function RaidSessionPage({ searchParams }: { searchParams: 
           fromMs: win.fromMs, toMs: win.toMs, spans: review.night?.spans ?? [],
           fights: marks.fights, deaths: marks.deaths, mass: marks.mass,
           slices: slicesIn(slices, win), breaks: review.breaks ?? [], canEdit: officer,
+          groups, groupsParent: parent ?? win,
         }}
+        groups={{ list: groups, active: review.group ?? null, parent: parent ?? win }}
       />
     </div>
   );

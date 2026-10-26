@@ -13,6 +13,7 @@ import {
   type NightCtx, type Segment, type Slice,
 } from '@/lib/nightSlices';
 import { MINUTE_MS } from '@/lib/raidReplay';
+import { groupLabel, raidsIn, type RaidGroup } from '@/lib/sessionGroups';
 import NightStrip, { type StripSlice } from './NightStrip';
 import ShareControls from './ShareControls';
 import { KIND_DOT, chip, chipIdle, chipOn, etDay, etMin, field, fmtSpan, plural, windowHref } from './nightStyle';
@@ -20,9 +21,9 @@ import type { NightSave } from './NightPanel';
 
 const asSegments = (saved: readonly Slice[]): Segment[] => saved.map(s => ({ fromMs: s.fromMs, toMs: s.toMs, kind: s.kind, label: s.label, why: 'saved' }));
 
-export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved, canEdit, save, go, playheadRef }: {
+export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved, groups, groupsParent, canEdit, save, go, playheadRef }: {
   fromMs: number; toMs: number; spans: { from: number; to: number }[]; breaks: number[]; ctx: NightCtx;
-  saved: Slice[]; canEdit: boolean; save: NightSave; go: (ms: number | null) => void;
+  saved: Slice[]; groups: RaidGroup[]; groupsParent: { fromMs: number; toMs: number }; canEdit: boolean; save: NightSave; go: (ms: number | null) => void;
   playheadRef: MutableRefObject<number | null>;
 }) {
   const detect = () => detectSegments({ fromMs, toMs }, spans, breaks, ctx);
@@ -51,7 +52,7 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
             : 'The segments saved for this night. Change them and save again, or detect afresh.')
           : 'The segments an officer confirmed for this night. Open one to review it on its own.'}
       </p>
-      <NightStrip fromMs={fromMs} toMs={toMs} spans={spans} fights={ctx.fights} mass={ctx.mass} slices={strip} onSeek={ms => go(ms)}
+      <NightStrip fromMs={fromMs} toMs={toMs} spans={spans} fights={ctx.fights} mass={ctx.mass} slices={strip} onSeek={ms => go(ms)} groups={groups}
         drawRule={canEdit ? 'Nothing was recorded in this window to divide.' : 'No segments have been confirmed for this night.'} />
 
       {rows.length > 0 && (
@@ -76,6 +77,14 @@ export default function SegmentsEditor({ fromMs, toMs, spans, breaks, ctx, saved
                     {[st.kills && plural(st.kills, 'kill'), st.wipes && plural(st.wipes, 'wipe'), st.otherGuild && `${plural(st.otherGuild, 'fight')} by another guild`,
                       st.deaths && plural(st.deaths, 'death'), st.mass && plural(st.mass, 'mass-death moment')].filter(Boolean).join(' · ') || 'no named fights'}
                   </p>
+                  {raidsIn(groups, r).length > 1 && (
+                    <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-dim">
+                      <span>{raidsIn(groups, r).length} raids at once:</span>
+                      {raidsIn(groups, r).map(g => (
+                        <Link key={g.id} href={windowHref(r.fromMs, r.toMs, g.id, groupsParent)} className={`${chip} ${chipIdle}`}>Open {groupLabel(g)}</Link>
+                      ))}
+                    </p>
+                  )}
                   {canEdit ? (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <select aria-label={`Kind of segment ${i + 1}`} className={field} value={r.kind}

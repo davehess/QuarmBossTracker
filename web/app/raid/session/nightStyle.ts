@@ -2,6 +2,7 @@
 // purple an event, orange another guild's raid (and the ring on its fights), grey is time set aside; red is a death.
 import { MINUTE_MS } from '@/lib/raidReplay';
 import type { SliceKind } from '@/lib/nightSlices';
+import { groupQuery } from '@/lib/sessionGroups';
 
 export const etMin = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
 export const etDay = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' });
@@ -31,6 +32,6 @@ export const fmtSpan = (ms: number) => {
 export const fmtDur = (sec: number | null) => (sec == null ? '' : sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${sec % 60 ? ` ${sec % 60}s` : ''}`);
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** The session page for one window. */
-export const windowHref = (fromMs: number, toMs: number) =>
-  `/raid/session?from=${encodeURIComponent(new Date(fromMs).toISOString())}&to=${encodeURIComponent(new Date(toMs).toISOString())}`;
+/** The session page for one window, optionally narrowed to one raid of it (`group` is a RaidGroup id, lib/sessionGroups.ts). */
+export const windowHref = (fromMs: number, toMs: number, group?: string | null, parent?: { fromMs: number; toMs: number } | null) =>
+  `/raid/session?from=${encodeURIComponent(new Date(fromMs).toISOString())}&to=${encodeURIComponent(new Date(toMs).toISOString())}${groupQuery(group, parent)}`;

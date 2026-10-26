@@ -18,6 +18,9 @@ import { snapCut, type RaidChange } from '@/lib/raidSplit';
 import DataSources from './DataSources';
 import SplitPanel, { type SplitRequest } from './SplitPanel';
 import NightPanel, { type NightPanelData } from './NightPanel';
+import RaidGroupsBar, { type GroupsView } from './RaidGroupsBar';
+import { hasNamed, isNamed, killTabCount, listKills, type KillLevel } from '@/lib/killList';
+import { groupQuery } from '@/lib/sessionGroups';
 import { useFollowRefresh } from './useFollowRefresh';
 
 export type ReviewMode = { kind: 'member' } | { kind: 'share'; token: string };
@@ -40,7 +43,7 @@ const chipOn = 'border-accent bg-accent text-white';
 const th = 'px-2 py-1.5 text-left text-[11px] font-normal uppercase tracking-wider text-dim';
 
 /** The routes the board reads, by who is looking. The share variant sends a token and a window INDEX, never a time. */
-function boardUrls(mode: ReviewMode, baseMs: number, toMs: number): BoundedReplay['urls'] {
+function boardUrls(mode: ReviewMode, baseMs: number, toMs: number, group?: string | null, parent?: { fromMs: number; toMs: number } | null): BoundedReplay['urls'] {
   if (mode.kind === 'share') {
     const root = `/api/share/raid/${mode.token}`;
     // `v` is a cache-buster and nothing else (the routes read the token and the index, never a time): the share's window as
@@ -55,8 +58,9 @@ function boardUrls(mode: ReviewMode, baseMs: number, toMs: number): BoundedRepla
   }
   // The members' slice comes from the session route, not the replay page's, so opted-out names are renamed here too.
   const session = `from=${encodeURIComponent(new Date(baseMs).toISOString())}&to=${encodeURIComponent(new Date(toMs).toISOString())}`;
+  const narrowed = groupQuery(group, parent);   // one raid's dots only (lib/sessionGroups.ts)
   return {
-    window: (_night, fromIso) => `/api/raid/session/replay?${session}&w=${Math.max(0, Math.round((Date.parse(fromIso) - baseMs) / REPLAY_WINDOW_MS))}`,
+    window: (_night, fromIso) => `/api/raid/session/replay?${session}${narrowed}&w=${Math.max(0, Math.round((Date.parse(fromIso) - baseMs) / REPLAY_WINDOW_MS))}`,
     bosses: () => `/api/raid/session/bosses?${session}`,   // the window's own, not the night's: the other raid of the night is not this page's
     map: zone => `/api/spectator/map?zone=${encodeURIComponent(zone)}`,
     mesh: (zone, floors) => `/api/spectator/mesh?zone=${encodeURIComponent(zone)}${floors ? `&floors=${floors}` : ''}`,
@@ -89,7 +93,7 @@ function Who({ name }: { name: string }) {
 /** Members' page only. */
 export type SplitOptions = { change: RaidChange | null; live: boolean; canShare: boolean };
 
-export default function SessionReview({ bundle, night, mode, extras, split, nightPanel, follow }: {
+export default function SessionReview({ bundle, night, mode, extras, split, nightPanel, follow, groups }: {
   bundle: SessionBundle;
   night: NightSummary | null;
   mode: ReviewMode;
@@ -101,6 +105,8 @@ export default function SessionReview({ bundle, night, mode, extras, split, nigh
   split?: SplitOptions;
   /** Members' page only: the night sliced into segments, with its named fights and mass deaths, under the replay. */
   nightPanel?: NightPanelData;
+  /** Members' page only: the raids this window holds, and the one the review is narrowed to (lib/sessionGroups.ts). */
+  groups?: GroupsView;
 }) {
   const [tab, setTab] = useState<TabKey>('attendance');
   const [seek, setSeek] = useState<{ t: number; n: number } | null>(null);
@@ -127,8 +133,9 @@ export default function SessionReview({ bundle, night, mode, extras, split, nigh
   const splitOn = !!split && mode.kind === 'member';
   const nightOn = !!nightPanel && mode.kind === 'member';
   const token = mode.kind === 'share' ? mode.token : '';
-  const urls = useMemo(() => boardUrls(mode.kind === 'share' ? { kind: 'share', token } : { kind: 'member' }, bundle.fromMs, bundle.toMs),
-    [mode.kind, token, bundle.fromMs, bundle.toMs]);
+  const activeGroup = mode.kind === 'member' ? groups?.active ?? null : null;
+  const urls = useMemo(() => boardUrls(mode.kind === 'share' ? { kind: 'share', token } : { kind: 'member' }, bundle.fromMs, bundle.toMs, activeGroup, groups?.parent),
+    [mode.kind, token, bundle.fromMs, bundle.toMs, activeGroup, groups?.parent]);
   const bounded = useMemo<BoundedReplay | null>(() => (night ? { night, urls, seek, onPlayhead: splitOn || nightOn || following ? onPlayhead : undefined } : null),
     [night, urls, seek, splitOn, nightOn, following, onPlayhead]);
   const splitAt = useCallback((ms: number) => {
@@ -159,10 +166,9 @@ export default function SessionReview({ bundle, night, mode, extras, split, nigh
     boardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  const bossKills = bundle.kills.filter(k => k.boss);
   const tabs: { key: TabKey; label: string; n: number }[] = [
     { key: 'attendance', label: 'Attendance', n: bundle.attendance.length },
-    { key: 'kills', label: 'Kills', n: bossKills.length || bundle.kills.length },
+    { key: 'kills', label: 'Kills', n: killTabCount(bundle.kills) },
     { key: 'loot', label: 'Loot & rolls', n: bundle.loot.length + bundle.rolls.length },
     { key: 'bids', label: 'Bids', n: bundle.bidders.length },
     { key: 'parses', label: 'Parses', n: bundle.kills.filter(k => k.top.length).length },
@@ -173,6 +179,7 @@ export default function SessionReview({ bundle, night, mode, extras, split, nigh
     <div className="min-w-0" onPointerDownCapture={touched} onKeyDownCapture={touched} onWheelCapture={touched}>
       {/* Above the replay, so a reader from another guild meets "where did this come from?" first (the guild lead). */}
       <DataSources />
+      {mode.kind === 'member' && groups && <div className="mt-3"><RaidGroupsBar fromMs={bundle.fromMs} toMs={bundle.toMs} groups={groups} /></div>}
 
       <div ref={boardRef} className="mt-4 scroll-mt-16">
         {bounded
@@ -201,7 +208,7 @@ export default function SessionReview({ bundle, night, mode, extras, split, nigh
 
       <div ref={panelRef} className="mt-3 scroll-mt-16" role="tabpanel">
         {tab === 'attendance' && <Attendance rows={bundle.attendance} ticks={bundle.ticks} minutes={bundle.minutesRecorded} go={go} />}
-        {tab === 'kills' && <Kills kills={bundle.kills} go={go} mode={mode} />}
+        {tab === 'kills' && <Kills kills={bundle.kills} go={go} mode={mode} deaths={nightPanel?.deaths ?? null} />}
         {tab === 'loot' && <LootAndRolls loot={bundle.loot} rolls={bundle.rolls} go={go} />}
         {tab === 'bids' && <Bids bidders={bundle.bidders} open={bidder} setOpen={setBidder} go={go} />}
         {tab === 'parses' && <Parses kills={bundle.kills} go={go} mode={mode} />}
@@ -294,40 +301,52 @@ function Attendance({ rows, ticks, minutes, go }: { rows: AttendeeRow[]; ticks: 
 
 // ── Kills ────────────────────────────────────────────────────────────────────
 
-function Kills({ kills, go, mode }: { kills: KillRow[]; go: (ms: number | null) => void; mode: ReviewMode }) {
-  const hasBoss = kills.some(k => k.boss);
+function Kills({ kills, go, mode, deaths }: { kills: KillRow[]; go: (ms: number | null) => void; mode: ReviewMode; deaths: number[] | null }) {
+  const named = hasNamed(kills);
   const [all, setAll] = useState(false);
-  const shown = hasBoss && !all ? kills.filter(k => k.boss) : kills;
+  const level: KillLevel = all ? 'all' : 'named';
+  const groups = listKills(kills, level, deaths);
+  const shown = groups.reduce((n, g) => n + g.rows.length, 0);
   if (!kills.length) return <Empty>No fights ended in this window.</Empty>;
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-dim">
-        <span>{shown.length} {shown.length === 1 ? 'fight' : 'fights'}{hasBoss && !all ? ' (guild-curated bosses)' : ''}</span>
-        {hasBoss && (
+        <span>{shown} {shown === 1 ? 'fight' : 'fights'}{named && !all ? ' (named mobs and curated bosses)' : ''}</span>
+        {named && (
           <button type="button" aria-pressed={all} onClick={() => setAll(a => !a)} className={`${chip} ${all ? chipOn : chipIdle}`}>
             {all ? 'All fights' : `Show all ${kills.length}`}
           </button>
         )}
       </div>
-      <p className="mb-1.5 text-xs text-dim">Tap a fight to open its full parse.</p>
-      <ul className="space-y-1.5">
-        {shown.map(k => (
-          <li key={k.id} className="rounded-md border border-border bg-panel">
-            <FightDetails id={k.id} mode={mode} summary={
-              <>
-                <Seek ms={k.startMs} go={go}>{etClock.format(k.startMs)}</Seek>
-                <span className={`min-w-0 flex-1 ${k.boss ? 'text-gold' : ''}`}>{k.name}</span>
-                <span className="text-xs text-dim">{k.zone ?? '—'}</span>
-                <span className="text-xs tabular-nums">{fmtDur(k.durationSec)}</span>
-                <span className="text-xs tabular-nums">{fmtDmg(k.totalDamage)}</span>
-                {mode.kind === 'member' && (
-                  <a href={`/parses/${k.id}`} className="whitespace-nowrap text-xs text-blue hover:underline">Parse page ↗</a>
-                )}
-              </>
-            } />
-          </li>
-        ))}
-      </ul>
+      <p className="mb-1.5 text-xs text-dim">Tap a fight to open its full parse. A wipe is listed, not counted as a kill.</p>
+      {groups.map(g => (
+        <section key={g.zone} aria-label={g.zone} className="mb-3">
+          <h3 className="mb-1 text-xs uppercase tracking-wider text-dim">{g.zone}</h3>
+          <ul className="space-y-1.5">
+            {g.rows.map(({ kill: k, result, foreign, deaths: dead }) => (
+              <li key={k.id} className={`rounded-md border bg-panel ${foreign ? 'border-orange/60' : 'border-border'}`}>
+                <FightDetails id={k.id} mode={mode} summary={
+                  <>
+                    <Seek ms={k.startMs} go={go}>{etClock.format(k.startMs)}</Seek>
+                    <span className={`min-w-0 flex-1 ${isNamed(k) ? 'text-gold' : ''}`}>{k.name}</span>
+                    {result === 'wipe' && (
+                      <span className="whitespace-nowrap rounded border border-red/60 px-1.5 text-xs text-red">
+                        Wipe · {etMin.format(k.startMs)}{dead != null ? ` · ${dead} ${dead === 1 ? 'death' : 'deaths'}` : ''}
+                      </span>
+                    )}
+                    {foreign && <span className="whitespace-nowrap rounded border border-orange px-1.5 text-xs text-orange">another guild&apos;s fight</span>}
+                    <span className="text-xs tabular-nums">{fmtDur(k.durationSec)}</span>
+                    <span className="text-xs tabular-nums">{fmtDmg(k.totalDamage)}</span>
+                    {mode.kind === 'member' && (
+                      <a href={`/parses/${k.id}`} className="whitespace-nowrap text-xs text-blue hover:underline">Parse page ↗</a>
+                    )}
+                  </>
+                } />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
     </div>
   );
 }
@@ -433,15 +452,15 @@ function ParseTable({ id, mode }: { id: string; mode: ReviewMode }) {
 
 function Parses({ kills, go, mode }: { kills: KillRow[]; go: (ms: number | null) => void; mode: ReviewMode }) {
   const withTop = kills.filter(k => k.top.length);
-  const hasBoss = withTop.some(k => k.boss);
-  const shown = hasBoss ? withTop.filter(k => k.boss) : withTop;
+  const hasBoss = withTop.some(isNamed);
+  const shown = hasBoss ? withTop.filter(isNamed) : withTop;
   if (!shown.length) return <Empty>No damage parses were recorded for the fights in this window.</Empty>;
   return (
     <div className="grid gap-2 sm:grid-cols-2">
       {shown.map(k => (
         <div key={k.id} className="rounded-md border border-border bg-panel p-3">
           <div className="mb-1 flex items-center justify-between gap-2 text-sm">
-            <span className={k.boss ? 'text-gold' : ''}>{k.name}</span>
+            <span className={isNamed(k) ? 'text-gold' : ''}>{k.name}{k.wipe ? ' (wipe)' : ''}{k.foreign ? " (another guild's)" : ''}</span>
             <Seek ms={k.startMs} go={go} />
           </div>
           <ol className="text-xs">
