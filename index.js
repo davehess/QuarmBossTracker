@@ -17858,11 +17858,18 @@ async function _handleAgentMapSyncPost(req, res) {
   if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
 
   const guildId = _mapSyncGuildId();
-  const written = await supabase.insert('map_spawn_events', v.events.map(e => ({
+  // The agent HOLDS events the bot did not answer for and sends them again (agent 4.0.24+), so a repeat of one already stored
+  // is normal and is skipped, not an error: insertIgnoreDuplicates against map_spawn_events_dedup_idx (same guild, zone,
+  // point, kind, spawn id, `at` and reporting character; migration 20261026160000). `representation` returns only the rows
+  // actually stored, so a batch that was all repeats is `[]` and still answers 200; null is a real failure -> 503, and the
+  // agent sends it again. by_character / by_discord_id are the SOURCE: they stay on the row the first send made.
+  const rows = v.events.map(e => ({
     guild_id: guildId, zone: v.zone, point_id: e.point_id, kind: e.kind, spawn_id: e.spawn_id,
     npc_name: e.name, at: new Date(e.at).toISOString(), by_character: v.character,
     by_discord_id: String(identity.discord_id), inst: e.inst,
-  }))).catch(err => { console.error('[map-sync] insert failed:', err?.message || err); return null; });
+  }));
+  const written = await supabase.insertIgnoreDuplicates('map_spawn_events', rows, { representation: true })
+    .catch(err => { console.error('[map-sync] insert failed:', err?.message || err); return null; });
   if (!Array.isArray(written)) return _ptsJson(res, 503, { error: 'try again shortly' });
   _mapSyncCache.delete(v.zone);
 
@@ -17872,7 +17879,7 @@ async function _handleAgentMapSyncPost(req, res) {
     await supabase.del('map_spawn_events',
       `guild_id=eq.${encodeURIComponent(guildId)}&zone=eq.${v.zone}&at=lt.${encodeURIComponent(cutoff)}`);
   } catch (err) { console.warn('[map-sync] prune failed:', err?.message); }
-  return _ptsJson(res, 200, { ok: true, stored: written.length });
+  return _ptsJson(res, 200, { ok: true, stored: written.length, duplicates: rows.length - written.length });
 }
 
 async function _handleAgentMapSyncGet(req, res) {

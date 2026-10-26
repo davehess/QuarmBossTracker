@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Per-person flag link + map timers through a bot restart** (§443) | Sign-ups now count the alt they signed up as (web 2.1.43, live). Link: mocks A (page) / B (Discord reply). Map-sync outbox + dedup being drafted | the guild lead: pick A or B for the link (A recommended); a session: ship the map-sync outbox to beta and the dedup to main |
+| **Per-person flag link + map timers through a bot restart** (§443) | Sign-ups now count the alt they signed up as (web 2.1.43, live). Link: mocks A (page) / B (Discord reply). Map-sync dedup live (bot 4.0.17 + migration 20261026160000), outbox on beta (agent 4.0.24) | the guild lead: pick A or B for the link (A recommended); the outbox reaches the fleet with the next Mimic stable |
 | **First sign-in: pick your characters, stage a recruit main** (§426) | Draft on `draft/recruit-onboarding` (bot 4.0.13 for `main`, agent 4.0.21 for `beta`); not pushed | the guild lead: say if the three judgement calls hold (OpenDKP-roster names not claimable, alts unparented when the main conflicts, "Save and upload these now"); a session: land the bot half on `main` first, then the agent half on `beta`, and make staged recruits show in `/admin/links` |
 | **Route planner + off-night plans + Sol Ro tower** (§407) | Live on main (web 2.0.2): `/raid/plan/routes` [beta], Tactics + the tower, versions, compare, splits, fewest raiders per boss | the guild lead: press "Import tonight's planner" once as an officer; pick the off-night bosses and the fewest headline (A everyone present, default) |
 | **Guest raids stored as ours** (§408) | Not fixed | the guild lead: A tag them (recommended) or B don't send |
@@ -13089,3 +13089,8 @@ paused, which takes https://wolfpack.quest and https://raidmimic.com down until 
   from the bot, events carry spawn id + the copy's host:port token and are applied only to the same copy, and every row
   stores the reporting character and Discord id. The gap is the push: a POST that fails while the bot is down is dropped.
   A durable outbox (agent, beta) plus a dedup index so a resend never doubles (bot, main) is being drafted.
+  **Shipped 2026-10-26:** agent 4.0.24 on beta (its own outbox on the map's push queue, kept in
+  `map_sync_outbox.json`; the durable upload queue was not reused: per-kind envelope, 404 permanent, blocks agent updates while non-empty), bot 4.0.17 on
+  main (migration `20261026160000_map_spawn_events_dedup.sql`, `insertIgnoreDuplicates`). The GET look-back stays 8 h on
+  purpose: a port is reused once a copy closes, and a 24 h look-back could apply an earlier copy's event to the current one. Order to ship: bot
+  deploys, then the migration is applied (SQL Editor or MCP), then the agent goes to beta.

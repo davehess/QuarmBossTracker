@@ -6442,6 +6442,18 @@ and the shared bank prefers a not-stale snapshot within 3 days of the freshest. 
 the public EQMacEmu/Server source (searched 2026-10-26). Tests: `test/account-placements-route.test.js`, `test/local-accounts.test.js`,
 `test/local-account-list-agent.test.js`. Mimic Settings window toggle not added (Mimic config reaches the agent only as env at spawn).
 
+### 🧾 2026-10-26 — Map events made while the bot is down are held and sent later (bot 4.0.17 main · agent 4.0.24 beta; DECISIONS §443)
+A map-sync POST that got no answer used to be dropped, so a kill made while the bot redeployed never reached the guild. Agent `draft/map-sync-outbox-beta`
+(4.0.24): the Spawn map's push queue is now an outbox. No answer (refused, reset, timed out), 404, 429 and 5xx put the batch back; the next try waits 15 s
+doubling to 5 min (a 404 keeps its 10 minutes and no longer empties the queue); any other 4xx drops it. Capped at 500 events (oldest out), dropped past the
+bot's 24 h age limit, written to `map_sync_outbox.json` beside `map_timers.json` and resumed at start, so a Mimic restart in the middle of an outage keeps
+them. Each event keeps its own character, spawn id, name, copy token and original `at`. The durable upload queue (`enqueueUpload`) was looked at and not
+reused (per-kind envelope, 404 permanent, holds back agent updates while non-empty). Bot `draft/map-sync-dedup-main` (4.0.17): the POST stores through
+`insertIgnoreDuplicates` against a new unique index (`supabase/migrations/20261026160000_map_spawn_events_dedup.sql`: guild, zone, point, kind, spawn id,
+`at`, reporting character), so a resend whose first answer was lost is stored once and still answers 200; the reply gains `duplicates`. The GET look-back
+stays 8 h (24 h could pull a previous copy's event in on a reused port). Tests: `test/map-sync-outbox.test.js` (beta), `test/map-sync-dedup.test.js` (main).
+⚠ Order: deploy the bot, THEN apply the migration (the index with the old bot rejects a repeated batch whole). Shipped 2026-10-26 in that order.
+
 ### 🧾 2026-10-14 — UI Studio named layouts per character (Mimic beta `d77a7d5b`, DECISIONS §322)
 Up to 10 named `UI_<char>*.ini` snapshots per character: save, rename, delete, switch (waits for logout while EQ runs), each backed up
 with its name. **Open:** `ui_snapshots` pruning; a Windows + EQ check that the swapped file survives a camp.
