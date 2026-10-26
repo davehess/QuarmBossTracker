@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.18': [
+    '**Add to wishlist from the gear upgrades page** (on the beta site first, b.wolfpack.quest/me/upgrades). An upgrade you want can go straight onto your character\'s wishlist, with a priority and an optional sealed pre-bid, the same as /wishlist add. Your bid is encrypted by the bot and only you can see it.',
+  ],
   '4.0.14': [
     '**/enragedeath works.** The officer command that logs a death to a boss enrage (and resets the "days since enrage death" counter on /fun) never actually loaded: its description was one letter over Discord\'s limit. It is there now.',
     '**Fewer dropped saves.** A Quarmy upload with a repeated AA, a chat batch with the same line twice, or two raiders reporting the same /tag no longer makes the whole batch fail to save.',

@@ -139,6 +139,16 @@ next touch one rather than assuming a missing row means a missing doc.
   3 s), and names on the Zeal raid list count as players, so a raider's death is kept without a /who. `test/death-self-and-raid-reading.test.js`.
   Not pushed; graduates with the next stable Mimic cut. The corpse-run DM (`_corpseNoteLine`) still keys on "You died." only.
 
+- **🧪 Add to wishlist + sealed pre-bid on `/me/upgrades`, ears / wrists / rings paired (draft `draft/upgrades-wishlist`, 2026-10-26; bot 4.0.18
+  for `main` FIRST, web 2.1.45 for `beta` after). Not pushed.** *"add in 'add to wishlist' for gear upgrades page so people get those on
+  their list to add a pre-bid amount"* and *"put wrists and ears together so we can see them easier, since they're interchangeable"* (the
+  guild lead). Each upgrade gets Add to wishlist (priority 1-10, optional pre-bid 1-50,000 DKP: the `/wishlist add` limits, now one file
+  `utils/wishlistRules.js` with a twin `web/lib/wishlistRules.ts`), and a listed one shows the owner's own bid with Set / Change pre-bid and
+  Remove. The website never holds `WISHLIST_BID_KEY`: server actions sign a 60-second `wishlist`-audience ticket (`SCREEN_TOKEN_SECRET`) and
+  call the bot's `POST /api/web/wishlist` (`utils/webWishlist.js`), which re-derives ownership from the member id and encrypts. DECISIONS §446.
+  Test: `test/web-wishlist.test.js`. **To do:** ship the bot half to `main` first (beta web calls the one production bot, and writes real
+  wishlists); confirm `SCREEN_TOKEN_SECRET` (Railway + Vercel) and `SCREEN_LIVE_URL` (Vercel, Production AND Preview) are set, or the
+  controls stay hidden; the guild lead to say whether rings stay paired.
 - **🧪 First sign-in: pick your characters from the logs, stage a recruit main, offer the spellbook / inventory / Quarmy upload (draft
   `draft/recruit-onboarding`, 2026-10-24; bot half for `main` (bot 4.0.13), agent + dashboard half for `beta` (agent 4.0.21)). Not pushed.**
   *"we should check for the discord role and let them in, then prestage as a new recruit main"* and *"We should be asking what
