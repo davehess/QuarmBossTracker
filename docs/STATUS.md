@@ -6951,6 +6951,17 @@ the alt-group "newly flagged" count and the hail board's proof set list sources 
 (claims pending → taken; a taken row is handed out again after 30 min; pending expires at 24 h) and `POST /api/agent/rescan-done {id, found, ok}`,
 owner-checked (`utils/popRescan.js`). Not `agent_backfill_requests`. The agent side (re-read the last N days, count the gated flag lines, POST
 rescan-done) is on `beta`. Tests: `test/pop-flags-paste.test.js`, `test/pop-rescan-web.test.js`, `test/pop-rescan-bot.test.js`.
+
+### 🧾 2026-10-26 — `#popflags` read against the REAL server output; the Seer's pending memories (web 2.1.54, bot 4.0.21 on `draft/popflags-real-main`; agent on `draft/popflags-real-beta`; DECISIONS §449)
+Two real captures (`test/fixtures/popflags-real-a.txt` tiers 1-3 complete, `-b.txt` partway) read through the paste parser. EQMacEmu `main` is still `11024c19`, so
+no new strings: the "newer" ones (`Complete; combined into Zebuxoruk lore`, `Tylis progression complete`, `Both Zek information sets obtained`, the Seer notice) are in
+that source and were already mapped; **every stage, access, boss and Maelin line in A and B already read to the right steps**. One real gap: a partway character's paste never prints
+Tier 4 or the Plane of Time line, so its boss "Complete" lines (`<test> || time`) sat as `unproven` although the same paste says `Missing` / `Pending memory` on
+others, which the server prints only WITHOUT the time flag (cpp:157,175-176,184,717-720). Those lines (and Tier 1-3 not Complete, the Seer notice, the Miak
+advice) now answer "time: no" (`NO_TIME_EXACT`). **Pending memories** (`web/lib/popRecital.ts` `PENDING_MEMORIES`, `utils/popFlagStages.js` `PENDING_RECITAL`): the 13
+sentences the Seer prints on "unlock memories" when the prerequisite is missing (`Seer_Mal_Nae-Shi.lua` `checklistFlags`, second entry; cl_maze and cl_behemoth have
+none) are stored as flag_key `cl_*`, source `recital`, never a step; `pendingHint()` turns one into "do this first / say unlock memories / already done".
+Tests: `test/pop-flags-real.test.js`, `test/pop-seer-pending.test.js`. ⏳ Not yet used on `/pop/raid/me` or the `/pop` guide (the helper is exported).
 **(3) Mimic reads `#popflags` live** (the guild lead: "anytime they do it from mimic"): the agent (beta) turns the command's output lines in the member's own log
 into step keys and uploads them as pop_flag events with `source: 'popflags'` (sent as an empty-text recital so an older bot skips them). The bot (this
 change, `_handleAgentPopFlags` + `popFlagStages.POPFLAGS_KEYS`, a closed vocabulary) stores them as `pop_flags` rows with source `popflags`. ⏳ Ship the bot

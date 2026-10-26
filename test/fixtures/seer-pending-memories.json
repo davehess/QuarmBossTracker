@@ -1,0 +1,17 @@
+[
+  { "key": "cl_grummus", "text": "You remember seeing a small trinket by Grummus' body and wondering what it was for. Perhaps speaking to someone near the Plane of Disease will shed some light on the situation." },
+  { "key": "cl_maze", "text": null },
+  { "key": "cl_behemoth", "text": null },
+  { "key": "cl_aerindar", "text": "You have defeated Aerin`Dar but have yet to learn the true meaning of Justice." },
+  { "key": "cl_terris", "text": "Terris still haunts your nightmares whenever you attemt to recall your battle with her." },
+  { "key": "cl_bertox", "text": "As you recall your memory of your battle against the Plaguebringer, an image of the Fuirstel brothers flashes through your mind." },
+  { "key": "cl_keeper", "text": "Although it was kind of you to help him, Tylis still seems to have no idea who you are." },
+  { "key": "cl_saryrn", "text": "You attempt to recall your defeat of Saryrn, but whenever you try to focus you feel a searing pain on your arm." },
+  { "key": "cl_vallon", "text": "Vallon fell before you with great ease, you seem to remember some strange pouches around his body, but... well it is probably nothing." },
+  { "key": "cl_tallon", "text": "Tallon fell before you with great ease, you seem to remember some strange pouches around his body, but... well it is probably nothing." },
+  { "key": "cl_rallos", "text": "Your heart beat speeds as you recall the Warlord's flaming axe, behind the dark sockets of his helm you sense darker intentions." },
+  { "key": "cl_karana", "text": "You recall meeting with Karana, but the memory is clouded.  You sense that the answer you seek may be in Storms." },
+  { "key": "cl_mmarr", "text": "An Image of Mithaniel flashes before you, 'You have yet to earn a place of Honor.  When you have, we will speak again.'" },
+  { "key": "cl_mmarr_book", "text": "An image of Mithaniel flashes before you.  He looks up from a small book in his hands and smiles at you, 'You have not yet earned the Honor to see these words.'" },
+  { "key": "cl_solusek", "text": "Besting the Burning Prince proves your might, but you still must prove your warrior's spirit." }
+]
