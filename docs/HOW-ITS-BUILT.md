@@ -2580,6 +2580,9 @@ Paste: `web/lib/popFlagsPaste.ts` (`parsePopFlags`, pure, quotes `popflags.cpp:<
 `test/fixtures/popflags-output.txt`. Sync: `SyncFromLogs.tsx` → `rescanActions.ts` `requestLogRescan` (`popRescan.ts`) → table
 `pop_rescan_requests` → bot `utils/popRescan.js` (poll stream `rescan`, `POST /api/agent/rescan-done`) → the member's Mimic (agent, `beta`).
 Tests: `test/pop-flags-paste.test.js`, `test/pop-rescan-web.test.js`, `test/pop-rescan-bot.test.js`.
+Real server output: `test/fixtures/popflags-real-{a,b}.txt` (`test/pop-flags-real.test.js`). Seer pending memories (a kill whose step before it is missing):
+`PENDING_MEMORIES` + `pendingHint()`/`pendingNext()` in `web/lib/popRecital.ts` ("do this next"), `PENDING_RECITAL` in `utils/popFlagStages.js`, stored as
+`cl_*` / source `recital`; `test/pop-seer-pending.test.js`, fixture `test/fixtures/seer-pending-memories.json`.
 
 ### PoP checklist (`/pop/guide`)
 **Sections + sidebar (live, web 1.8.158; built 1.8.155, §306):** `web/lib/popGuideSections.ts` groups `GUIDE_ITEMS` into `GUIDE_TREE` (tiers 1–5

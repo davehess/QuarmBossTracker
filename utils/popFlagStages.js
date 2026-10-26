@@ -165,6 +165,29 @@ const RECITAL_STAGES = [
   ["You remember Nitram's words", 'poi_door_1'],
 ];
 
+// The Seer's PENDING memories (2026-10-26): when a member says 'unlock memories' and the step a checklist flag waits
+// for is missing, she prints the second entry of that flag's row in `checklistFlags` (poknowledge/Seer_Mal_Nae-Shi.lua,
+// eqemu_quest_scripts body lines 45-137; UnlockMemories prints it at 332+). [opening of the sentence, checklist flag].
+// The flag is the existing checklist key (PREV_STAGES 'checklist' rows already store 'cl_grummus' etc.), so the row
+// lands as flag_key 'cl_x' with source 'recital' and NO STAGE_IMPLIES entry: it proves a kill, never a finished step.
+// cl_maze and cl_behemoth have an empty text in the script (the Seer says nothing). COPY (with the full sentences
+// and the step each waits for) in web/lib/popRecital.ts PENDING_MEMORIES; test/pop-seer-pending.test.js keeps them equal.
+const PENDING_RECITAL = [
+  ["You remember seeing a small trinket by Grummus' body", 'cl_grummus'],
+  ['You have defeated Aerin`Dar but have yet to learn', 'cl_aerindar'],
+  ['Terris still haunts your nightmares', 'cl_terris'],
+  ['As you recall your memory of your battle against the Plaguebringer', 'cl_bertox'],
+  ['Although it was kind of you to help him, Tylis still', 'cl_keeper'],
+  ['You attempt to recall your defeat of Saryrn', 'cl_saryrn'],
+  ['Vallon fell before you with great ease', 'cl_vallon'],
+  ['Tallon fell before you with great ease', 'cl_tallon'],
+  ["Your heart beat speeds as you recall the Warlord's flaming axe", 'cl_rallos'],
+  ['You recall meeting with Karana, but the memory is clouded.', 'cl_karana'],
+  ["An Image of Mithaniel flashes before you, 'You have yet to earn", 'cl_mmarr'],
+  ['An image of Mithaniel flashes before you.  He looks up from a small book', 'cl_mmarr_book'],
+  ['Besting the Burning Prince proves your might', 'cl_solusek'],
+];
+
 // What a stage proves, in the catalog's terms (web/lib/popFlags.ts). A later value of a series
 // carries the earlier steps, and the cipher and Zebuxoruk steps replace the flags they were built from.
 // Steps that prove no catalog flag (mavuin_1, the checklist flags, ...) map to nothing and are kept
@@ -207,6 +230,7 @@ const POPFLAGS_KEYS = new Set([
 const _norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const _PREV = PREV_STAGES.map(([zone, kind, prefix, stage]) => ({ zone, kind, prefix: _norm(prefix), stage }));
 const _RECITAL = RECITAL_STAGES.map(([prefix, stage]) => ({ prefix: _norm(prefix), stage }));
+const _PENDING = PENDING_RECITAL.map(([prefix, stage]) => ({ prefix: _norm(prefix), stage }));
 
 function zoneShort(zone) {
   if (zone == null || zone === '') return null;
@@ -246,7 +270,7 @@ function resolveStage(e, bossKey) {
   if (kind === 'recital') {
     const t = _norm(e.text);
     if (!t) return null;
-    const hit = _RECITAL.find(r => t.startsWith(r.prefix));
+    const hit = _RECITAL.find(r => t.startsWith(r.prefix)) || _PENDING.find(r => t.startsWith(r.prefix));
     return hit ? { stage: hit.stage, via: 'recital' } : null;
   }
   const zone = zoneShort(e.zone);
@@ -270,6 +294,6 @@ function resolveStage(e, bossKey) {
 }
 
 module.exports = {
-  ZONE_BY_ID, PREV_STAGES, RECITAL_STAGES, ZONE_ONLY, STAGE_IMPLIES, TACTICS_CHECKLIST_BY_BOSS,
+  ZONE_BY_ID, PREV_STAGES, RECITAL_STAGES, PENDING_RECITAL, ZONE_ONLY, STAGE_IMPLIES, TACTICS_CHECKLIST_BY_BOSS,
   zoneShort, resolveStage, resolveTrial, TRIAL_STAGE_BY_NPC, POPFLAGS_KEYS,
 };

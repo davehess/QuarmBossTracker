@@ -92,6 +92,91 @@ export const norm = (s: string) => String(s ?? '')
   .replace(/\s+/g, ' ').trim().toLowerCase();
 const NORMED = RECITAL_STAGES.map(([prefix, stage]) => ({ prefix: norm(prefix), stage }));
 
+// ── The Seer's PENDING memories ──────────────────────────────────────────────
+// A kill whose step before it was missing leaves a checklist flag instead of the step ("cl_grummus"; the projection
+// said "Now that Grummus has fallen…"). When the member says 'unlock memories' the Seer walks the table below
+// (poknowledge/Seer_Mal_Nae-Shi.lua `checklistFlags`, eqemu_quest_scripts body lines 45-137, read 2026-10-26;
+// UnlockMemories at 332): if the step the memory waits for is held she prints the unlocked text and grants the new
+// value, and if not she prints the SECOND entry of the row, copied verbatim as `text` here. Two rows (cl_maze,
+// cl_behemoth) have no such text in the script (`""`), so the Seer says nothing for them.
+//   needs  the step the script's row asks for (its 4th/5th entries: `fuirstel`, `1` = fuirstel_1). popflags.cpp
+//          PopFlagsHasReadyMemory (popflags.cpp:126-150, 11024c19) tests the same pairs.
+//   gives  the step the unlock writes (6th/7th entries).
+// A pending memory proves a KILL and that the step is NOT yet held. It is never a completed step: the key is the
+// existing checklist flag_key ('cl_grummus', source 'recital'), which has no STEP_IMPLIES/STAGE_IMPLIES entry, so
+// stepsHeld()/heldClosure() carry nothing from it. COPY of PENDING_RECITAL in utils/popFlagStages.js (openings only).
+export type PendingMemory = { key: string; text: string | null; needs: string; gives: string };
+export const PENDING_MEMORIES: PendingMemory[] = [
+  { key: 'cl_grummus', needs: 'fuirstel_1', gives: 'fuirstel_2',
+    text: "You remember seeing a small trinket by Grummus' body and wondering what it was for. Perhaps speaking to someone near the Plane of Disease will shed some light on the situation." },
+  { key: 'cl_maze', needs: 'thelin_1', gives: 'thelin_2', text: null },
+  { key: 'cl_behemoth', needs: 'zeks_1', gives: 'zeks_2', text: null },
+  { key: 'cl_aerindar', needs: 'mavuin_3', gives: 'aerindar_2',
+    text: 'You have defeated Aerin`Dar but have yet to learn the true meaning of Justice.' },
+  { key: 'cl_terris', needs: 'thelin_2', gives: 'thelin_3',
+    text: 'Terris still haunts your nightmares whenever you attemt to recall your battle with her.' },   // "attemt": the script's own spelling
+  { key: 'cl_bertox', needs: 'fuirstel_3', gives: 'fuirstel_4',
+    text: 'As you recall your memory of your battle against the Plaguebringer, an image of the Fuirstel brothers flashes through your mind.' },
+  { key: 'cl_keeper', needs: 'tylis_1', gives: 'tylis_2',
+    text: 'Although it was kind of you to help him, Tylis still seems to have no idea who you are.' },
+  { key: 'cl_saryrn', needs: 'tylis_2', gives: 'saryrn_1',
+    text: 'You attempt to recall your defeat of Saryrn, but whenever you try to focus you feel a searing pain on your arm.' },
+  // Vallon and Tallon share the zeks series: either also unlocks from the other's value (zeks 4 / 3), which the
+  // script special-cases (UnlockMemories). `needs` zeks_2 is the one value both always accept.
+  { key: 'cl_vallon', needs: 'zeks_2', gives: 'zeks_3',
+    text: 'Vallon fell before you with great ease, you seem to remember some strange pouches around his body, but... well it is probably nothing.' },
+  { key: 'cl_tallon', needs: 'zeks_2', gives: 'zeks_4',
+    text: 'Tallon fell before you with great ease, you seem to remember some strange pouches around his body, but... well it is probably nothing.' },
+  { key: 'cl_rallos', needs: 'zeks_6', gives: 'zeks_7',
+    text: "Your heart beat speeds as you recall the Warlord's flaming axe, behind the dark sockets of his helm you sense darker intentions." },
+  { key: 'cl_karana', needs: 'karana_3', gives: 'karana_4',
+    text: 'You recall meeting with Karana, but the memory is clouded.  You sense that the answer you seek may be in Storms.' },
+  { key: 'cl_mmarr', needs: 'hohtrials_111', gives: 'mmarr_1',
+    text: "An Image of Mithaniel flashes before you, 'You have yet to earn a place of Honor.  When you have, we will speak again.'" },
+  { key: 'cl_mmarr_book', needs: 'hohtrials_111', gives: 'mmarr_book_1',
+    text: "An image of Mithaniel flashes before you.  He looks up from a small book in his hands and smiles at you, 'You have not yet earned the Honor to see these words.'" },
+  { key: 'cl_solusek', needs: 'zeks_7', gives: 'pofire_2', text: 'Besting the Burning Prince proves your might, but you still must prove your warrior\'s spirit.' },
+];
+const PENDING_BY_KEY = new Map(PENDING_MEMORIES.map(m => [m.key, m]));
+/** How much of a pending sentence is matched: the bot and the agent match an opening, a long copy can wrap. */
+export const PENDING_OPENING = 60;
+const PENDING_NORMED = PENDING_MEMORIES.flatMap(m => (m.text ? [{ key: m.key, prefix: norm(m.text).slice(0, PENDING_OPENING) }] : []));
+
+const STEP_BY_KEY = new Map(Object.values(POP_STEPS).flat().map(s => [s.key, s]));
+// The one prerequisite that is a bit string (hohtrials 111), not a catalog step of its own.
+const EXTRA_LABEL: Record<string, string> = { hohtrials_111: "Win all three of Honor's Trials" };
+
+export type PendingHint = {
+  key: string;
+  /** ready: the step it waits for is held, so 'unlock memories' will grant it. blocked: that step is missing.
+   *  moot: the step it would grant is already held (a stale memory; nothing to do). */
+  state: 'ready' | 'blocked' | 'moot';
+  /** The step to do next: the missing prerequisite when blocked, the step 'unlock memories' grants when ready. */
+  step: string | null;
+  text: string;
+};
+
+/** A pending memory → what to do next. Pure: `held` is stepsHeld()/heldClosure() of what the member holds.
+ *  null for a key that is not a checklist memory. */
+export function pendingHint(key: string, held: ReadonlySet<string>): PendingHint | null {
+  const m = PENDING_BY_KEY.get(key);
+  if (!m) return null;
+  const label = (k: string) => STEP_BY_KEY.get(k)?.label ?? EXTRA_LABEL[k] ?? k;
+  if (held.has(m.gives)) return { key, state: 'moot', step: null, text: `Already done: ${label(m.gives)}.` };
+  if (held.has(m.needs)) {
+    return { key, state: 'ready', step: m.gives, text: "Ready: sit near Seer Mal Nae`Shi and say 'unlock memories' — it grants: " + label(m.gives) + '.' };
+  }
+  const s = STEP_BY_KEY.get(m.needs);
+  const where = s?.where ? ` (${s.where})` : '';
+  return { key, state: 'blocked', step: m.needs, text: `Do this first: ${label(m.needs)}${where}. Then say 'unlock memories' to Seer Mal Nae\`Shi.` };
+}
+
+/** Every pending memory in `keys`, as hints, in the Seer's table order. */
+export function pendingNext(keys: Iterable<string>, held: ReadonlySet<string>): PendingHint[] {
+  const want = new Set(keys);
+  return PENDING_MEMORIES.filter(m => want.has(m.key)).flatMap(m => pendingHint(m.key, held) ?? []);
+}
+
 // A log line's timestamp ("[Tue Oct 14 20:11:02 2026]") or the short one a chat window copies ("[20:11:02]").
 // Any bracket that holds a clock time; a recital sentence holds no bracket at all.
 const STAMP_RX = /\[[^\]\n]*\d{1,2}:\d{2}[^\]\n]*\]/g;
@@ -109,6 +194,7 @@ export type Matched = { stage: string; text: string };
 export type Parsed = {
   matched: Matched[];     // one per recognised sentence, in table order; text is the sentence as pasted (capped)
   stages: string[];       // the recognised stages
+  pending: string[];      // checklist memories the Seer said are waiting ('cl_grummus'): a kill, NOT a step (PENDING_MEMORIES)
   unknown: string[];      // lines that read like a sentence and matched nothing (deduplicated, capped)
   lines: number;          // non-empty lines read
 };
@@ -133,6 +219,13 @@ export function parseRecital(raw: string): Parsed {
     matched.push({ stage, text: joined.slice(at, at + MAX_TEXT) });
     hitAt.push({ at, end: at + prefix.length });
   }
+  const pending: string[] = [];
+  for (const { key, prefix } of PENDING_NORMED) {
+    const at = joined.indexOf(prefix);
+    if (at < 0 || pending.includes(key)) continue;
+    pending.push(key);
+    hitAt.push({ at, end: at + prefix.length });
+  }
   // A line is recognised when a match starts inside it, or it carries on a sentence the line before left open
   // (a copy that wrapped a long sentence onto two lines).
   const unknown: string[] = [];
@@ -151,7 +244,7 @@ export function parseRecital(raw: string): Parsed {
     dup.add(n);
     unknown.push(line.slice(0, 200));
   });
-  return { matched, stages: matched.map(m => m.stage), unknown, lines: lines.length };
+  return { matched, stages: matched.map(m => m.stage), pending, unknown, lines: lines.length };
 }
 
 /** Every key a set of held keys proves: what each stage implies in the catalog, and what each series value
