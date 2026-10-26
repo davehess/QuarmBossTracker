@@ -1,6 +1,7 @@
 // web/lib/gearUpgradesLoad.ts — the database reads behind /me/upgrades (server only).
 //
-// Everything is read from tables that already exist; the finder adds no migration. The expensive part is the
+// Everything is read from tables that already exist, except quest and tradeskill sources, which come from one SQL
+// function (item_alt_sources, migration 20261026200000) and degrade to "none" while it is not applied. The expensive part is the
 // candidate pool (every wearable item with a stat, ~14k rows): it is read once per server process and kept for
 // POOL_TTL_MS, because the catalog only changes with the weekly sync-quarm run. Later this is the one read to
 // replace with a set-returning SQL function (the pool filtered to the class and the slot in the database).
@@ -16,13 +17,17 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { selectAll } from './selectAll';
 import { chunk } from './selectInChunks';
-import { isEraExpansion, type ItemStats, type Source } from './gearUpgrades';
+import { altSourcesFromRows, isEraExpansion, type AltSourceRow, type ItemStats, type Source } from './gearUpgrades';
+import {
+  aaCapMods, NO_AA, SPA_RAISE_STAT_CAP, type AaCapMods, type AaEffect, type AaRow, type AaVar,
+} from './gearCaps';
 
 export const ITEM_COLS =
   'id, name, slots, classes, races, required_level, itemtype, ac, hp, mana, damage, delay, str, sta, agi, dex, wis, intel, cha, '
-  + 'mr, cr, dr, fr, pr, attack, haste, regen, manaregen, damageshield, focus_effect, worneffect, proc_effect, clickeffect';
-// The pool leaves the name out (14k names would double its size); finalists' names are read afterwards.
-const POOL_COLS = ITEM_COLS.replace('id, name, ', 'id, ');
+  + 'mr, cr, dr, fr, pr, attack, haste, regen, manaregen, damageshield, focus_effect, worneffect, proc_effect, clickeffect, icon';
+// The pool leaves the name and the icon out (14k of each would add to its size); the items the page shows are read
+// afterwards with both.
+const POOL_COLS = ITEM_COLS.replace('id, name, ', 'id, ').replace(', icon', '');
 
 // An item with none of these > 0 can never score, so it is not in the pool. (`norent` is stored inverted in the
 // mirror: true is a normal item, false is a temporary one that vanishes on camp.)
@@ -163,6 +168,60 @@ export async function loadSources(
     });
   }
   return out;
+}
+
+/**
+ * Quest-reward and tradeskill sources for items that have no drop or vendor (item_alt_sources(), migration
+ * 20261026200000). Era rules are applied in altSourcesFromRows. `ok` is false when the function is missing (the
+ * migration is not applied yet) or errors: the caller then has NO alternative sources and says so, and every other
+ * source still works. This never throws.
+ */
+export async function loadAltSources(
+  sb: SupabaseClient, itemIds: number[], items: Map<number, ItemStats>, expCap: number, levelCapNow: number,
+): Promise<{ sources: Map<number, Source[]>; ok: boolean }> {
+  const ids = [...new Set(itemIds.filter(i => Number.isInteger(i) && i > 0))];
+  if (ids.length === 0) return { sources: new Map(), ok: true };
+  try {
+    // 50 ids a call: the function returns at most 8 rows an item (5 quests, 3 recipes), so a call is under
+    // PostgREST's 1,000-row cap and the explicit range never cuts one.
+    const parts = await Promise.all(chunk(ids, 50).map(part => sb.rpc('item_alt_sources', { p_item_ids: part }).range(0, 999)));
+    const rows: AltSourceRow[] = [];
+    for (const p of parts) {
+      if (p.error) return { sources: new Map(), ok: false };
+      rows.push(...((p.data ?? []) as AltSourceRow[]));
+    }
+    return { sources: altSourcesFromRows(rows, items, expCap, levelCapNow), ok: true };
+  } catch {
+    return { sources: new Map(), ok: false };
+  }
+}
+
+/**
+ * The stat-cap raises the character's own trained AAs give (Planar Power, Innate Enlightenment, …): their
+ * character_aas rows, the SPA 262 effects, and the catalog rows those effects belong to. Three small reads. A
+ * failed read is "AAs unknown" (NO_AA), never an error. The caller has proven the viewer owns `character`.
+ */
+export async function loadAaCapMods(sb: SupabaseClient, character: string, base: string): Promise<AaCapMods> {
+  try {
+    const aaData = await selectAll<AaRow>((from, to) => sb
+      .from('character_aas')
+      .select('aa_index, rank')
+      .ilike('character', character)
+      .order('character').order('aa_index')      // the key is (guild_id, character, aa_index); the guild is fixed
+      .range(from, to) as any);
+    if (aaData.length === 0) return NO_AA;
+    const { data: effData, error: effErr } = await sb.from('eqemu_aa_effects')
+      .select('aaid, effectid, base1, base2').eq('effectid', SPA_RAISE_STAT_CAP).limit(500);
+    if (effErr || !effData) return NO_AA;
+    const effects = effData as AaEffect[];
+    const skillIds = [...new Set(effects.map(e => e.aaid))];
+    const { data: varData, error: varErr } = await sb.from('eqemu_altadv_vars')
+      .select('skill_id, eqmacid, name, max_level, classes').in('skill_id', skillIds).limit(500);
+    if (varErr || !varData) return NO_AA;
+    return aaCapMods(base, aaData as AaRow[], varData as AaVar[], effects);
+  } catch {
+    return NO_AA;
+  }
 }
 
 /** Spell names for the focus / worn / proc / click effect ids of the finalists, for the "Focus: …" line. */

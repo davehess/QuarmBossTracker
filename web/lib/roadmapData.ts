@@ -37,6 +37,25 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'gear-caps-and-sources-2026-10-26',
+    title: 'Web 2.1.52',
+    version: 'Web 2.1.52',
+    date: '2026-10-26',
+    channel: 'beta',
+    headline: 'The gear upgrade finder now counts quest and crafted gear, and scores a stat only up to the point where the game stops counting it.',
+    features: [
+      { name: 'Quest and crafted gear', blurb: 'Pieces you earn from an NPC or make with a tradeskill (like Ton Po\'s Chestwraps of Composure) are suggested now, with the quest giver and zone, or the recipe, what goes in it and which bag.' },
+      { name: 'How close you are to the caps', blurb: 'Each upgrade shows what it does to your attack, Flowing Thought, HP regen, AC and stats against their caps, for example "ATK 212 to 250 of 250". Points past a cap no longer make a piece look better than it is.' },
+      { name: 'Your real stat cap', blurb: 'The cap is 255 up to level 60, then 5 more a level, plus what your AAs add: 305 at level 65 with Planar Power. Flowing Thought counts as zero for monks, rogues and warriors, who cannot use it.' },
+      { name: 'High end or low end stats', blurb: 'We do not know your base stats, so pick whether to assume you are already near the cap on each stat (high end, the default) or to count every point (low end).' },
+      { name: 'Icons and your gear page', blurb: 'Item icons show on the finder and on your gear page. The gear page also gets an upgrade check for your own characters: the best swap per slot and how much room is left under each cap, linked to the finder.' },
+    ],
+    fixes: [
+      'Item HP regen now caps at 35 at level 65 (it was 30, the level 60 number).',
+      'Damage shield no longer has an invented cap of 30.',
+    ],
+  },
+  {
     key: 'my-wishlist-page-2026-10-26',
     title: 'Web 2.1.51',
     version: 'Web 2.1.51',
