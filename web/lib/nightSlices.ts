@@ -28,7 +28,7 @@ export type SliceKind = (typeof SLICE_KINDS)[number];
 export const KIND_LABEL: Record<SliceKind, string> = {
   raid: 'Raid',
   event: 'Event',
-  other_guild: "Another guild's raid",
+  other_guild: 'Non-guild',
   downtime: 'Forming, buffing, downtime',
 };
 export const isKind = (v: unknown): v is SliceKind => typeof v === 'string' && (SLICE_KINDS as readonly string[]).includes(v);
@@ -253,7 +253,7 @@ export function detectSegments(win: Win, spans: readonly Span[], breaks: readonl
       const lo = a.endMs, hi = Math.max(lo, b.startMs);
       if (cuts.some(c => c.at >= lo && c.at <= hi)) continue;
       const at = snapCut((lo + hi) / 2, { fromMs: st.from, toMs: st.to });
-      if (at != null) cuts.push({ at, why: 'our fights and another guild\'s alternate' });
+      if (at != null) cuts.push({ at, why: 'our fights and non-guild fights alternate' });
     }
     cuts.sort((a, b) => a.at - b.at);
     const edges = [{ at: st.from, why: si === 0 ? '' : `after a ${fmtGap(st.from - stretches[si - 1].to)} gap in the recording` }];

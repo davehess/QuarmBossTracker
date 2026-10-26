@@ -53,8 +53,8 @@ export default function NightStrip({ fromMs, toMs, spans, fights, mass, slices, 
           const wipe = f.result === 'wipe';
           return (
             <button key={f.id} type="button" onClick={() => onSeek?.(f.startMs)} style={{ left: pct(f.startMs) }}
-              title={`${f.name}: ${wipe ? 'wipe' : 'kill'}${other ? ", another guild's" : f.tag ? ` (${f.tag})` : ''}, ${etMin.format(f.startMs)} ET${f.durationSec != null ? `, ${fmtDur(f.durationSec)}` : ''}`}
-              aria-label={`${f.name}, ${wipe ? 'wipe' : 'kill'}${other ? ", another guild's fight" : ''}, ${etMin.format(f.startMs)}`}
+              title={`${f.name}: ${wipe ? 'wipe' : 'kill'}${other ? ', non-guild' : f.tag ? ` (${f.tag})` : ''}, ${etMin.format(f.startMs)} ET${f.durationSec != null ? `, ${fmtDur(f.durationSec)}` : ''}`}
+              aria-label={`${f.name}, ${wipe ? 'wipe' : 'kill'}${other ? ', non-guild fight' : ''}, ${etMin.format(f.startMs)}`}
               className={`absolute top-1 flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-full text-[10px] leading-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue ${
                 other ? 'border-2 border-orange text-orange' : wipe ? 'text-red' : 'bg-green text-bg'}`}>
               {wipe ? '✕' : null}
@@ -87,7 +87,7 @@ export default function NightStrip({ fromMs, toMs, spans, fights, mass, slices, 
       <p className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-dim">
         <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-green align-middle" />kill</span>
         <span><span className="mr-1 text-red">✕</span>wipe</span>
-        <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full border-2 border-orange align-middle" />another guild&apos;s fight</span>
+        <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full border-2 border-orange align-middle" />non-guild fight</span>
         <span><span className="mr-1 inline-block h-2 w-3 rounded-sm bg-red/80 align-middle" />mass death (number of deaths)</span>
         <span><span className="mr-1 inline-block h-1 w-3 rounded bg-border align-middle" />recorded</span>
       </p>
