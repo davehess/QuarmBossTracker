@@ -2954,6 +2954,15 @@ Personal data lives on each player's PC; the hub keeps the shared raid record. N
   My parses. Mimic opens a page in its own window (`openLocalSite`, `window.mimic.openLocalSite`); the dashboard rail group
   "On this PC" and the tray items drive the same function. An older Mimic running agent 4.x answers `/local/` with a plain
   "not installed in this build". Tests: `test/local-site-agent.test.js`, `test/local-mode.test.js`.
+- **Game accounts, one-off hide, stale marker on the local inventory page (agent 4.0.23, 2026-10-26).** The page used to guess accounts from
+  shared banks. `fetchAccountPlacements` (agent, next to `fetchCharacterModesMine`) GETs `/api/agent/account-placements` (bot:
+  `utils/myAccountPlacements.js`, the caller's own open `character_accounts` rows only), caches 15 min, fails open, and
+  `/api/local/inventory` carries `placements`, `placements_source`, `use_account_list`. The only thing this group sends is that one bearer
+  GET; no PC data goes up. Opt-out `useAccountList` (opt-in file, default ON; `POST /api/local/account-list`; checkbox on the page and
+  in the dashboard Logsync tab) stops the request itself. Per-character `log_first_at`/`log_last_at` come from two small reads per log
+  (`_logEdgeTimes`); `web/lib/localAccounts.ts` decides one-off (log under 1 day, quiet 30+ days) and stale (log activity more than 2 min
+  after the inventory file's write); `pickSharedRows` prefers a not-stale snapshot within 3 days of the freshest. Tests:
+  `test/account-placements-route.test.js`, `test/local-accounts.test.js`, `test/local-account-list-agent.test.js`.
 - **Local store + own recorder (3.8.43).** `_localStore` (agent `index.js`): zero-dependency append-only NDJSON segments,
   `local/<kind>/<UTC day>.ndjson` beside `logsync.queue.json`, per-kind retention and byte cap (`_LSTORE_POLICY`: recorded
   minutes 90 days / 400 MB). Every 3 s the recorder cuts a frame from Zeal's raid snapshot plus this PC's own character, and a
