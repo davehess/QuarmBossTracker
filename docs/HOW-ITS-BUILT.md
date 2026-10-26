@@ -387,6 +387,11 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   `test/pop-flags-live-parity.test.js` on `test/fixtures/popflags-output.txt`. Bot side: `_handleAgentPopFlags` + `POPFLAGS_KEYS`.
 - Sync: poll stream `rescan` → `_applyRescanResponse` → `_rescanRun` (`_rescanFile` seeks with `_rbSeek`, `_rescanWants` is the gate) →
   `POST /api/agent/rescan-done`. Page: `/pop/raid/me` (`SyncFromLogs.tsx`). Table `pop_rescan_requests`. `test/pop-rescan-agent.test.js`.
+- Dashboard button "Capture latest PoP flags, Seer and Maelin messages" (agent 4.0.26 beta): Logsync tab, card `#wpPopCapture` under Rebuild
+  (`dashboard.html`: `renderPopCaptureCard`, `wpPcStart`). `POST /api/local/pop-rescan {character|null, days}` + `GET .../status`
+  (`_localPopRescanRoute` → `_rescanLocalStart` → the same `_rescanRun` as the website's `_rescanPump`; one guard, `_rescan.running`). No tray item.
+  Maelin needs no gate of its own: her flags are the generic grant line after a "Maelin ..." line (`_POP_GRANT_RX` + `_POP_PREV_RX`).
+  `test/pop-rescan-agent.test.js`, `test/dashboard-pop-capture.test.js`.
 
 ### Self-ticked PoP flags on /pop (web 1.8.86, 2026-10-03)
 - A flag is self-reported when `pop_guide_ticks` holds the guide step that grants it, else `flag:<key>`

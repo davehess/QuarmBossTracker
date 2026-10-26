@@ -24481,6 +24481,115 @@ function wpRebuildOpen() {
   go(0);
 }
 
+// ── 📥 Capture latest PoP flags, Seer and Maelin messages (Logsync tab, under Rebuild) ─────────────────────
+// The guild lead, 2026-10-26: "add a button into the logsync for 'capture latest popflags, seer, and maelin
+// messages'". The website's "Sync from my logs" reader, started from this PC with no website request:
+// POST /api/local/pop-rescan {character|null, days} and GET /api/local/pop-rescan/status. One in-flight guard is
+// shared with the website's request, so the button is disabled while either runs. Unlike Rebuild this UPLOADS the
+// flag steps it finds (not the lines): in local mode or while the agent is paused it only reads and counts, and says
+// so. The card paints into its own #wpPopCapture placeholder in two children (controls, progress), so progress
+// ticking does not rebuild the controls and the tab's HTML stays byte-stable.
+var _wpPc = { status: null, at: 0, busy: false, character: '', days: 14, note: '' };
+function wpPcDaysSet(el) {
+  var max = (_wpPc.status && _wpPc.status.maxDays) || 60;
+  var n = parseInt(el.value, 10);
+  if (!isFinite(n)) n = (_wpPc.status && _wpPc.status.defaultDays) || 14;
+  _wpPc.days = Math.max(1, Math.min(max, n));
+  el.value = String(_wpPc.days);
+}
+function wpPcCtlHtml() {
+  var st = _wpPc.status;
+  var running = !!(st && st.running);
+  var dis = running ? ' disabled' : '';
+  var chars = (st && st.characters) || [];
+  var max = (st && st.maxDays) || 60;
+  var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">';
+  h += '<label class="dim" style="font-size:11px">Character <select id="wpPcChar"' + dis + ' onchange="_wpPc.character=this.value">';
+  h += '<option value="">All my characters (' + chars.length + ')</option>';
+  for (var i = 0; i < chars.length; i++) {
+    var c = chars[i];
+    h += '<option value="' + esc(c.name) + '"' + (c.name === _wpPc.character ? ' selected' : '') + (c.excluded ? ' disabled' : '') + '>'
+       + esc(c.name) + (c.excluded ? ' (kept out of stats)' : '') + '</option>';
+  }
+  h += '</select></label>';
+  h += '<label class="dim" style="font-size:11px">Days back <input type="number" id="wpPcDays" min="1" max="' + max + '" step="1" value="' + esc(String(_wpPc.days)) + '" style="width:64px"' + dis + ' onchange="wpPcDaysSet(this)"></label>';
+  h += '<button type="button" id="wpPcGo" class="wp-btn" style="background:#1a7f37;border-color:#1a7f37;color:#fff"' + (running || !chars.length ? ' disabled' : '')
+     + ' onclick="wpPcStart()" title="Read your recent logs for the Seer, Maelin and flag messages and the #popflags output, and send the flag steps they prove">'
+     + (running ? '⏳ Reading…' : '📥 Capture latest PoP flags, Seer and Maelin messages') + '</button>';
+  h += '</div>';
+  if (st && st.upload && st.upload.upload === false) {
+    h += '<div class="dim" style="font-size:11px;margin-bottom:6px">' + (st.upload.why === 'paused' ? 'This agent is paused by the guild' : 'This agent is in local mode')
+       + ': the lines are read and counted here, and nothing is uploaded.</div>';
+  }
+  if (_wpPc.note) h += '<div style="color:var(--orange);font-size:12px;margin-bottom:6px">' + esc(_wpPc.note) + '</div>';
+  return h;
+}
+function wpPcSummary(r) {
+  if (!r.logs) return 'Could not read any log.';
+  var parts = ['read ' + wpRbNum(r.logs) + (r.logs === 1 ? ' log' : ' logs'), wpRbNum(r.found) + (r.found === 1 ? ' flag line' : ' flag lines') + ' found'];
+  parts.push(r.upload ? (r.sent ? 'uploaded' : 'nothing new to upload') : 'not uploaded (' + (r.why || 'local mode / paused') + ')');
+  return parts.join(' · ');
+}
+function wpPcProgHtml() {
+  var st = _wpPc.status;
+  if (!st) return '<div class="dim">Loading…</div>';
+  if (st.error === true && !st.run) return '<div class="dim">The agent did not answer.</div>';
+  var r = st.run;
+  if (!r) return '<div class="dim">Nothing captured yet. Pick a character and how many days back, or leave both alone for every character, 14 days.</div>';
+  var who = r.by === 'website' ? 'The website asked for this one. ' : '';
+  var h;
+  if (r.state === 'running') {
+    h = '<div style="font-size:12px"><b>⏳ ' + who + 'Reading ' + esc(r.current || '…') + ' · log ' + wpRbNum(Math.min(r.files, r.filesDone + 1)) + ' of ' + wpRbNum(r.files) + '</b></div>'
+      + '<div class="dim" style="font-size:11px">' + wpRbSize(r.bytesRead) + ' read · ' + wpRbNum(r.found) + ' flag lines so far · it waits while a fight is on</div>';
+  } else if (r.state === 'error') {
+    h = '<div style="font-size:12px"><b>⚠ Stopped: ' + esc(r.error || 'an error') + '</b></div>';
+  } else {
+    h = '<div style="font-size:12px"><b>✓ ' + who + esc(wpPcSummary(r)) + '</b></div>'
+      + '<div class="dim" style="font-size:11px">Finished ' + esc(new Date(r.finishedAt || r.startedAt).toLocaleString()) + ' · last ' + wpRbNum(r.days) + ' days</div>';
+  }
+  if (r.excluded && r.excluded.length) h += '<div class="dim" style="font-size:11px;margin-top:4px">Skipped, kept out of stats: ' + esc(r.excluded.join(', ')) + '</div>';
+  return h;
+}
+function wpPcRepaint() {
+  var el = document.getElementById('wpPopCapture');
+  if (!el) return;
+  if (!document.getElementById('wpPcCtl')) {
+    el.innerHTML = '<h2>📥 Capture latest PoP flags, Seer and Maelin messages</h2>'
+      + '<div class="subtle">Reads the last few days of the EverQuest logs on this PC for the Planes of Power flag lines: the Seer\\'s recital, the flag grants with the NPC line that names them (Maelin\\'s included), '
+      + 'and the server\\'s #popflags output. Only the flag steps they prove are sent to the guild, the same as Sync from my logs on the website. '
+      + 'It runs here in the background and waits while a fight is on. Chat, tells and officer channels are not read into it, and characters you keep out of stats are skipped.</div>'
+      + '<div id="wpPcCtl"></div><div id="wpPcProg"></div>';
+    el._wpLastHtml = null;
+  }
+  morphInto(document.getElementById('wpPcCtl'), wpPcCtlHtml());
+  morphInto(document.getElementById('wpPcProg'), wpPcProgHtml());
+}
+function wpPcPoll(force) {
+  if (_wpPc.busy) return;
+  var sec = document.getElementById('optin');
+  if (!force && !(sec && sec.classList.contains('active'))) return;
+  var running = !!(_wpPc.status && _wpPc.status.running);
+  if (!force && Date.now() - _wpPc.at < (running ? 1900 : 10000)) return;
+  _wpPc.busy = true; _wpPc.at = Date.now();
+  fetch('/api/local/pop-rescan/status', { cache: 'no-store' })
+    .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+    .then(function (j) { _wpPc.status = j; })
+    .catch(function () { _wpPc.status = _wpPc.status || { error: true }; })
+    .then(function () { _wpPc.busy = false; wpPcRepaint(); });
+}
+function renderPopCaptureCard(s) { void s; wpPcPoll(false); wpPcRepaint(); }
+function wpPcStart() {
+  var body = { days: _wpPc.days };
+  if (_wpPc.character) body.character = _wpPc.character;
+  _wpPc.note = '';
+  if (_wpPc.status) _wpPc.status.running = true;   // the button greys at once; the next status read says who really holds the guard
+  wpPcRepaint();
+  fetch('/api/local/pop-rescan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (x) { if (!x.ok) _wpPc.note = (x.j && x.j.error) || 'Could not start.'; wpPcPoll(true); },
+          function () { _wpPc.note = 'The agent did not answer.'; wpPcPoll(true); });
+}
+
 // ── 🎟 Join a raid with a code (Logsync tab, above Rebuild; the rail's "On this PC" group and the tray open it) ──
 // The guild lead, 2026-10-21: a guest in someone else's raid keeps their data on their own PC. The code is a
 // label: while it is on, this PC tags what it records with the code and HOLDS the record uploads (fights,
@@ -28832,6 +28941,7 @@ function renderOptin(o) {
   wpRebuildSetFiles(o);
   h += '<div id="wpRaidCode" class="card wide"></div>';   // 🎟 Join a raid with a code: filled by renderRaidCodeCard
   h += '<div id="wpRebuild" class="card wide"></div>';
+  h += '<div id="wpPopCapture" class="card wide"></div>';   // 📥 Capture latest PoP flags, Seer and Maelin messages: filled by renderPopCaptureCard
 
   // Imported log backups (the guild lead, 2026-09-13). Inside Mimic: native pickers plus
   // a drop zone that reads real paths through the bridge. A browser tab has
@@ -29002,6 +29112,7 @@ function renderOptin(o) {
   const root = document.getElementById('optin');
   if (!setSectionHTML('optin', h)) return;   // morph in place; skip if unchanged
   try { wpRbRepaint(); } catch (e) { void e; }   // the section was rewritten, so the Rebuild card's placeholder is empty again
+  try { wpPcRepaint(); } catch (e) { void e; }   // …and so is the PoP capture card's
 
   // Wire interactions — idempotent under morph (nodes persist across polls).
   const ualCb = document.getElementById('wpUseAccountList');
@@ -29203,7 +29314,7 @@ async function refresh() {
                      // below, same rule as renderDash → renderMeCard.
                      ['diag', renderDiag],
                      ['netmeter', renderNetMeter],
-                     ['rebuild', renderRebuildCard], ['raidcode', renderRaidCodeCard],
+                     ['rebuild', renderRebuildCard], ['raidcode', renderRaidCodeCard], ['popcapture', renderPopCaptureCard],
                      ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['mutedtimers', renderMutedTimers], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
@@ -35986,6 +36097,8 @@ function startWebDashboard(port) {
       if (_localTrackRoute(req, res)) return;
       // Rebuild from my logs (the block above module.exports): start / stop / status, and the raids it found. Local only.
       if (await _localBackfillRoute(req, res)) return;
+      // Capture latest PoP flags, Seer and Maelin messages (dashboard button): the website's "Sync from my logs" reader, started here.
+      if (await _localPopRescanRoute(req, res)) return;
       if (_localParsesRoute(req, res)) return;
       if (await _raidCodeRoute(req, res)) return;
       // Item icons cut from this PC's own EQ files (local-first slice 2). Never uploaded.
@@ -65139,7 +65252,11 @@ const RESCAN_REST_MS     = 25;
 const RESCAN_MAX_DAYS    = 60;
 const RESCAN_MAX_WAIT_MS = 10 * 60_000;     // total time spent paused for a live fight
 const RESCAN_FLUSH       = 100;             // events per upload
-const _rescan = { running: false, queue: [], seen: new Set(), lastDone: null };
+// ONE in-flight guard for both callers: the website's request (the poll's `rescan` stream) and the dashboard's
+// "Capture latest PoP flags" button (POST /api/local/pop-rescan). `running` is that guard; `by` says who holds it;
+// `cur` is the progress record of the run in flight (or the last one), read by GET /api/local/pop-rescan/status.
+const RESCAN_DEFAULT_DAYS = 14;
+const _rescan = { running: false, queue: [], seen: new Set(), lastDone: null, by: null, cur: null };
 function _rescanSleep(ms) { return new Promise((r) => setTimeout(r, Math.max(0, ms | 0))); }
 
 // The gates, nothing else. `msg` is the line after its timestamp.
@@ -65234,45 +65351,96 @@ function _rescanIsolate(characters, fn) {
   };
   return Promise.resolve().then(fn).then((r) => { restore(); return r; }, (e) => { restore(); throw e; });
 }
-// Which logs: this PC's, for that character (or all of them), minus any kept out of stats.
-function _rescanFiles(character) {
+// Which logs: this PC's, for that character (or all of them), minus any kept out of stats. `info.excluded`, when
+// given, collects the names that were left out for that reason, so the dashboard can say so.
+function _rescanFiles(character, info) {
   const want = character ? String(character).toLowerCase() : null;
   const seen = new Set();
   const files = [];
   for (const c of _rebuildCandidates()) {
     if (!c || !c.path || c.ignored || seen.has(c.path) || !c.character) continue;
     if (want && String(c.character).toLowerCase() !== want) continue;
-    if (_rebuildExcluded(c.character) || !shouldUploadForCharacter(c.character)) continue;
+    if (_rebuildExcluded(c.character) || !shouldUploadForCharacter(c.character)) {
+      if (info && info.excluded.indexOf(c.character) < 0) info.excluded.push(c.character);
+      continue;
+    }
     seen.add(c.path);
     files.push(c);
   }
   return files;
 }
+// Whether this run may send what it reads: local mode (no account) and a paused agent (the guild's kill switch or
+// version floor) read and count, and upload nothing.
+function _rescanUploadMode() {
+  if (_localOnly()) return { upload: false, why: 'local mode' };
+  let down = false;
+  try { down = _controlStandDown().down; } catch { void 0; }
+  if (down) return { upload: false, why: 'paused' };
+  return { upload: true, why: null };
+}
+function _rescanDays(v) { return Math.max(1, Math.min(RESCAN_MAX_DAYS, Math.trunc(Number(v)) || RESCAN_DEFAULT_DAYS)); }
 // (_rescanDrained and _rescanReport, which touch the queue and the network, sit next to the PoP parsers: the local
 // rebuild above must stay free of both, test/local-backfill.test.js.)
-// One request: {id, character|null, days}. Resolves to { ok, found }.
-async function _rescanRun(req) {
-  const days = Math.max(1, Math.min(RESCAN_MAX_DAYS, Math.trunc(Number(req.days)) || 14));
+// One run, for either caller: {character|null, days}. `prog` (optional) is the progress record the status route
+// reads while it goes. Resolves to { ok, found, logs, sent, excluded, upload, why }: `logs` is the files opened,
+// `sent` the events handed to the upload queue (0 when the agent is in local mode or paused: the lines are still
+// read and counted, nothing leaves), `excluded` the characters left out because they are kept out of stats.
+async function _rescanRun(req, prog) {
+  const days = _rescanDays(req.days);
   const sinceMs = Date.now() - days * 86400_000;
-  const files = _rescanFiles(req.character);
-  if (!files.length) return { ok: false, found: 0 };
+  const info = { excluded: [] };
+  const files = _rescanFiles(req.character, info);
+  const mode = _rescanUploadMode();
+  const done = (o) => Object.assign({ ok: false, found: 0, logs: 0, sent: 0, excluded: info.excluded, upload: mode.upload, why: mode.why }, o);
+  if (prog) { prog.days = days; prog.files = files.length; prog.filesDone = 0; prog.excluded = info.excluded; prog.upload = mode.upload; prog.why = mode.why; }
+  if (!files.length) return done({});
   const opts = _uploadOpts || {};
   const sink = {
-    events: [], found: 0, prev: null, prevPassed: false,
-    flush() { if (this.events.length) uploadPopFlags(this.events.splice(0), opts).catch(() => {}); },
+    events: [], found: 0, sent: 0, prev: null, prevPassed: false,
+    flush() {
+      if (!this.events.length) return;
+      const evs = this.events.splice(0);
+      if (!mode.upload) return;
+      this.sent += evs.length;
+      uploadPopFlags(evs, opts).catch(() => {});
+    },
   };
   const ctx = { sinceMs, bytes: RESCAN_MAX_BYTES, waited: 0, stop: false };
+  if (prog) { prog.ctx = ctx; prog.sink = sink; }
   let opened = 0;
   await _rescanIsolate(files.map(f => f.character), async () => {
     for (const f of files) {
+      if (prog) prog.current = f.character;
       if (await _rescanFile(f, ctx, sink)) opened++;
       sink.flush();
+      if (prog) prog.filesDone++;
     }
   });
   sink.flush();
-  if (opened === 0) return { ok: false, found: 0 };
-  await _rescanDrained(90_000);
-  return { ok: true, found: sink.found };
+  if (opened === 0) return done({});
+  if (sink.sent > 0) await _rescanDrained(90_000);
+  return done({ ok: true, found: sink.found, logs: opened, sent: sink.sent });
+}
+// The website's requests, one at a time, under the shared guard. Also called when a dashboard run ends, so a
+// request that arrived meanwhile is not left waiting for the next poll.
+function _rescanPump() {
+  if (_rescan.running || !_rescan.queue.length) return;
+  _rescan.running = true; _rescan.by = 'website';
+  (async () => {
+    try {
+      while (_rescan.queue.length) {
+        const req = _rescan.queue.shift();
+        const prog = { by: 'website', id: req.id, state: 'running', startedAt: Date.now(), character: req.character, current: null, result: null };
+        _rescan.cur = prog;
+        let out = { ok: false, found: 0 };
+        try { out = await _rescanRun(req, prog); } catch (e) { console.warn('[rescan] failed:', e && e.message); }
+        prog.state = 'done'; prog.finishedAt = Date.now(); prog.current = null; prog.result = out;
+        const sent = await _rescanReport(req.id, out.found, out.ok);
+        _rescan.lastDone = { id: req.id, found: out.found, ok: out.ok, reported: sent, at: Date.now() };
+        console.log(`[rescan] request ${req.id}: ${out.ok ? out.found + ' flag line(s) read' : 'could not read'}${sent ? '' : ' (not reported)'}`);
+      }
+    } finally { _rescan.running = false; _rescan.by = null; }
+  })();
 }
 // The poll's `rescan` stream → the queue, one at a time.
 function _applyRescanResponse(resp) {
@@ -65284,20 +65452,116 @@ function _applyRescanResponse(resp) {
     if (_rescan.seen.size > 200) _rescan.seen.delete(_rescan.seen.values().next().value);
     _rescan.queue.push({ id, character: r.character == null ? null : String(r.character).slice(0, 64), days: r.days });
   }
-  if (!_rescan.running && _rescan.queue.length) {
-    _rescan.running = true;
-    (async () => {
-      try {
-        while (_rescan.queue.length) {
-          const req = _rescan.queue.shift();
-          let out = { ok: false, found: 0 };
-          try { out = await _rescanRun(req); } catch (e) { console.warn('[rescan] failed:', e && e.message); }
-          const sent = await _rescanReport(req.id, out.found, out.ok);
-          _rescan.lastDone = { id: req.id, found: out.found, ok: out.ok, reported: sent, at: Date.now() };
-          console.log(`[rescan] request ${req.id}: ${out.ok ? out.found + ' flag line(s) read' : 'could not read'}${sent ? '' : ' (not reported)'}`);
-        }
-      } finally { _rescan.running = false; }
-    })();
+  _rescanPump();
+}
+
+// ── "Capture latest PoP flags, Seer and Maelin messages": the dashboard's own button (the guild lead, 2026-10-26) ──
+// The same reader as the website's request, started from this PC with no request id and no report to the bot.
+//   POST /api/local/pop-rescan         { character?: string|null, days?: 1..60 (default 14) } -> 202 { ok, started, files, days, excluded }
+//        400 junk arguments / no log to read, 409 while any rescan runs (this button's or the website's: one guard).
+//   GET  /api/local/pop-rescan/status  -> { running, by, upload, characters, run } for the card.
+// Behind _localGuardBlock like every route (the router calls it first). What leaves the machine is exactly what the
+// website's request sends: pop_flag events through uploadPopFlags; in local mode or while paused nothing does.
+const RESCAN_BODY_MAX = 2 * 1024;
+const RESCAN_NAME_MAX = 64;
+// Arguments -> { character, days } or { error }. A missing day count is the default; a present one that is not a
+// number is refused; a number is held to 1..RESCAN_MAX_DAYS.
+function _rescanArgs(body) {
+  const b = body && typeof body === 'object' && !Array.isArray(body) ? body : null;
+  if (!b) return { error: 'send a JSON object' };
+  let character = null;
+  if (b.character != null && b.character !== '') {
+    if (typeof b.character !== 'string') return { error: 'character must be a name' };
+    character = b.character.trim();
+    if (!character) character = null;
+    else if (character.length > RESCAN_NAME_MAX) return { error: 'character name is too long' };
+  }
+  let days = RESCAN_DEFAULT_DAYS;
+  if (b.days != null && b.days !== '') {
+    const n = Number(b.days);
+    if (typeof b.days === 'boolean' || !Number.isFinite(n)) return { error: 'days must be a number' };
+    days = Math.max(1, Math.min(RESCAN_MAX_DAYS, Math.trunc(n) || 1));
+  }
+  return { character, days };
+}
+function _rescanLocalStart(body) {
+  const a = _rescanArgs(body);
+  if (a.error) return { status: 400, body: { error: a.error } };
+  if (_rescan.running) return { status: 409, body: { error: _rescan.by === 'website' ? 'a rescan the website asked for is running' : 'a rescan is already running' } };
+  const info = { excluded: [] };
+  const files = _rescanFiles(a.character, info);
+  if (!files.length) {
+    return { status: 400, body: { error: info.excluded.length ? 'kept out of stats: ' + info.excluded.join(', ') + ' (skipped)' : 'no EverQuest log found for that' } };
+  }
+  _rescan.running = true; _rescan.by = 'local';          // claimed before anything awaits: a second click gets the 409
+  const prog = { by: 'local', state: 'running', startedAt: Date.now(), character: a.character, current: null, result: null };
+  _rescan.cur = prog;
+  (async () => {
+    try { prog.result = await _rescanRun({ character: a.character, days: a.days }, prog); prog.state = 'done'; }
+    catch (e) { prog.state = 'error'; prog.error = String((e && e.message) || e).slice(0, 160); console.warn('[rescan] local run failed:', prog.error); }
+    finally {
+      prog.finishedAt = Date.now(); prog.current = null;
+      _rescan.running = false; _rescan.by = null;
+      _rescanPump();
+    }
+  })();
+  return { status: 202, body: { ok: true, started: true, files: files.length, days: a.days, excluded: info.excluded } };
+}
+// The characters this PC has a log for (not ignored), with whether each is kept out of stats. Capped.
+function _rescanCharacters() {
+  const seen = new Map();
+  for (const c of _rebuildCandidates()) {
+    if (!c || !c.path || c.ignored || !c.character) continue;
+    const k = String(c.character).toLowerCase();
+    if (!seen.has(k)) seen.set(k, { name: String(c.character), excluded: !!(_rebuildExcluded(c.character) || !shouldUploadForCharacter(c.character)) });
+  }
+  return [...seen.values()].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0)).slice(0, 200);
+}
+function _rescanStatus() {
+  const p = _rescan.cur;
+  let run = null;
+  if (p) {
+    run = {
+      by: p.by, state: p.state, character: p.character || null, current: p.current || null, error: p.error || null,
+      startedAt: p.startedAt, finishedAt: p.finishedAt || null, days: p.days || null,
+      files: p.files || 0, filesDone: p.filesDone || 0, excluded: p.excluded || [],
+      bytesRead: p.ctx ? RESCAN_MAX_BYTES - p.ctx.bytes : 0,
+      found: p.result ? p.result.found : (p.sink ? p.sink.found : 0),
+      logs: p.result ? p.result.logs : 0,
+      sent: p.result ? p.result.sent : (p.sink ? p.sink.sent : 0),
+      upload: p.upload !== false, why: p.why || null,
+    };
+  }
+  return { ok: true, running: _rescan.running, by: _rescan.running ? _rescan.by : null, queued: _rescan.queue.length,
+    upload: _rescanUploadMode(), maxDays: RESCAN_MAX_DAYS, defaultDays: RESCAN_DEFAULT_DAYS, characters: _rescanCharacters(), run };
+}
+// Returns a promise of true when it answered.
+async function _localPopRescanRoute(req, res) {
+  const url = req && req.url;
+  if (!url || url.indexOf('/api/local/pop-rescan') !== 0) return false;
+  let p;
+  try { p = new URL(url, 'http://x').pathname; } catch { return false; }
+  const isStatus = p === '/api/local/pop-rescan/status';
+  if (p !== '/api/local/pop-rescan' && !isStatus) return false;
+  const send = (status, body, extra) => {
+    res.writeHead(status, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, extra || {}));
+    res.end(JSON.stringify(body));
+    return true;
+  };
+  if (isStatus && req.method !== 'GET') return send(405, { error: 'method not allowed' }, { Allow: 'GET' });
+  if (!isStatus && req.method !== 'POST') return send(405, { error: 'method not allowed' }, { Allow: 'POST' });
+  try {
+    if (isStatus) return send(200, _rescanStatus());
+    let body = {};
+    let raw = '';
+    try { raw = await _readBody(req, RESCAN_BODY_MAX); } catch { return send(413, { error: 'too large' }); }
+    if (raw && raw.trim()) {
+      try { body = JSON.parse(raw); } catch { return send(400, { error: 'invalid json' }); }
+    }
+    const out = _rescanLocalStart(body);
+    return send(out.status, out.body);
+  } catch {
+    return send(500, { error: 'rescan unavailable' });
   }
 }
 

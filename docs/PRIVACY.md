@@ -262,6 +262,17 @@ the log is parsed for it), and answers with how many it found. A character you k
 stats sends none of this. You can also paste the command's output into wolfpack.quest
 yourself; that is read in your browser and only the lines it understands are sent.
 
+**"Capture latest PoP flags, Seer and Maelin messages" (beta Mimic's Logsync tab).**
+The same read as "Sync from my logs", started from your own PC with a button: you pick
+a character (or all of them) and how many days back (up to 60). It looks only at the
+PoP flag lines described above: the Seer's recital sentences, the "You have received a
+... flag!" line with the one NPC line right before it, Maelin's included (it is sent
+only when it opens with her name or another flag NPC's, so a player's own words never
+leave with it), the Halls of Honor trial credit lines, and the exact `#popflags` lines.
+Nothing new leaves the machine for Maelin: her flags are those same grant lines. When
+the agent is in local mode, or the guild has paused it, the lines are still read and
+counted on your PC and nothing is sent. A character you keep out of stats is skipped.
+
 ## Exceptions: NPC speech that triggers can hear
 
 *(Collapsed on the website, by the guild lead's call, 2026-09-30.)*

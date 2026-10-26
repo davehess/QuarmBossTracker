@@ -4800,6 +4800,115 @@ function wpRebuildOpen() {
   go(0);
 }
 
+// ── 📥 Capture latest PoP flags, Seer and Maelin messages (Logsync tab, under Rebuild) ─────────────────────
+// The guild lead, 2026-10-26: "add a button into the logsync for 'capture latest popflags, seer, and maelin
+// messages'". The website's "Sync from my logs" reader, started from this PC with no website request:
+// POST /api/local/pop-rescan {character|null, days} and GET /api/local/pop-rescan/status. One in-flight guard is
+// shared with the website's request, so the button is disabled while either runs. Unlike Rebuild this UPLOADS the
+// flag steps it finds (not the lines): in local mode or while the agent is paused it only reads and counts, and says
+// so. The card paints into its own #wpPopCapture placeholder in two children (controls, progress), so progress
+// ticking does not rebuild the controls and the tab's HTML stays byte-stable.
+var _wpPc = { status: null, at: 0, busy: false, character: '', days: 14, note: '' };
+function wpPcDaysSet(el) {
+  var max = (_wpPc.status && _wpPc.status.maxDays) || 60;
+  var n = parseInt(el.value, 10);
+  if (!isFinite(n)) n = (_wpPc.status && _wpPc.status.defaultDays) || 14;
+  _wpPc.days = Math.max(1, Math.min(max, n));
+  el.value = String(_wpPc.days);
+}
+function wpPcCtlHtml() {
+  var st = _wpPc.status;
+  var running = !!(st && st.running);
+  var dis = running ? ' disabled' : '';
+  var chars = (st && st.characters) || [];
+  var max = (st && st.maxDays) || 60;
+  var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">';
+  h += '<label class="dim" style="font-size:11px">Character <select id="wpPcChar"' + dis + ' onchange="_wpPc.character=this.value">';
+  h += '<option value="">All my characters (' + chars.length + ')</option>';
+  for (var i = 0; i < chars.length; i++) {
+    var c = chars[i];
+    h += '<option value="' + esc(c.name) + '"' + (c.name === _wpPc.character ? ' selected' : '') + (c.excluded ? ' disabled' : '') + '>'
+       + esc(c.name) + (c.excluded ? ' (kept out of stats)' : '') + '</option>';
+  }
+  h += '</select></label>';
+  h += '<label class="dim" style="font-size:11px">Days back <input type="number" id="wpPcDays" min="1" max="' + max + '" step="1" value="' + esc(String(_wpPc.days)) + '" style="width:64px"' + dis + ' onchange="wpPcDaysSet(this)"></label>';
+  h += '<button type="button" id="wpPcGo" class="wp-btn" style="background:#1a7f37;border-color:#1a7f37;color:#fff"' + (running || !chars.length ? ' disabled' : '')
+     + ' onclick="wpPcStart()" title="Read your recent logs for the Seer, Maelin and flag messages and the #popflags output, and send the flag steps they prove">'
+     + (running ? '⏳ Reading…' : '📥 Capture latest PoP flags, Seer and Maelin messages') + '</button>';
+  h += '</div>';
+  if (st && st.upload && st.upload.upload === false) {
+    h += '<div class="dim" style="font-size:11px;margin-bottom:6px">' + (st.upload.why === 'paused' ? 'This agent is paused by the guild' : 'This agent is in local mode')
+       + ': the lines are read and counted here, and nothing is uploaded.</div>';
+  }
+  if (_wpPc.note) h += '<div style="color:var(--orange);font-size:12px;margin-bottom:6px">' + esc(_wpPc.note) + '</div>';
+  return h;
+}
+function wpPcSummary(r) {
+  if (!r.logs) return 'Could not read any log.';
+  var parts = ['read ' + wpRbNum(r.logs) + (r.logs === 1 ? ' log' : ' logs'), wpRbNum(r.found) + (r.found === 1 ? ' flag line' : ' flag lines') + ' found'];
+  parts.push(r.upload ? (r.sent ? 'uploaded' : 'nothing new to upload') : 'not uploaded (' + (r.why || 'local mode / paused') + ')');
+  return parts.join(' · ');
+}
+function wpPcProgHtml() {
+  var st = _wpPc.status;
+  if (!st) return '<div class="dim">Loading…</div>';
+  if (st.error === true && !st.run) return '<div class="dim">The agent did not answer.</div>';
+  var r = st.run;
+  if (!r) return '<div class="dim">Nothing captured yet. Pick a character and how many days back, or leave both alone for every character, 14 days.</div>';
+  var who = r.by === 'website' ? 'The website asked for this one. ' : '';
+  var h;
+  if (r.state === 'running') {
+    h = '<div style="font-size:12px"><b>⏳ ' + who + 'Reading ' + esc(r.current || '…') + ' · log ' + wpRbNum(Math.min(r.files, r.filesDone + 1)) + ' of ' + wpRbNum(r.files) + '</b></div>'
+      + '<div class="dim" style="font-size:11px">' + wpRbSize(r.bytesRead) + ' read · ' + wpRbNum(r.found) + ' flag lines so far · it waits while a fight is on</div>';
+  } else if (r.state === 'error') {
+    h = '<div style="font-size:12px"><b>⚠ Stopped: ' + esc(r.error || 'an error') + '</b></div>';
+  } else {
+    h = '<div style="font-size:12px"><b>✓ ' + who + esc(wpPcSummary(r)) + '</b></div>'
+      + '<div class="dim" style="font-size:11px">Finished ' + esc(new Date(r.finishedAt || r.startedAt).toLocaleString()) + ' · last ' + wpRbNum(r.days) + ' days</div>';
+  }
+  if (r.excluded && r.excluded.length) h += '<div class="dim" style="font-size:11px;margin-top:4px">Skipped, kept out of stats: ' + esc(r.excluded.join(', ')) + '</div>';
+  return h;
+}
+function wpPcRepaint() {
+  var el = document.getElementById('wpPopCapture');
+  if (!el) return;
+  if (!document.getElementById('wpPcCtl')) {
+    el.innerHTML = '<h2>📥 Capture latest PoP flags, Seer and Maelin messages</h2>'
+      + '<div class="subtle">Reads the last few days of the EverQuest logs on this PC for the Planes of Power flag lines: the Seer\'s recital, the flag grants with the NPC line that names them (Maelin\'s included), '
+      + 'and the server\'s #popflags output. Only the flag steps they prove are sent to the guild, the same as Sync from my logs on the website. '
+      + 'It runs here in the background and waits while a fight is on. Chat, tells and officer channels are not read into it, and characters you keep out of stats are skipped.</div>'
+      + '<div id="wpPcCtl"></div><div id="wpPcProg"></div>';
+    el._wpLastHtml = null;
+  }
+  morphInto(document.getElementById('wpPcCtl'), wpPcCtlHtml());
+  morphInto(document.getElementById('wpPcProg'), wpPcProgHtml());
+}
+function wpPcPoll(force) {
+  if (_wpPc.busy) return;
+  var sec = document.getElementById('optin');
+  if (!force && !(sec && sec.classList.contains('active'))) return;
+  var running = !!(_wpPc.status && _wpPc.status.running);
+  if (!force && Date.now() - _wpPc.at < (running ? 1900 : 10000)) return;
+  _wpPc.busy = true; _wpPc.at = Date.now();
+  fetch('/api/local/pop-rescan/status', { cache: 'no-store' })
+    .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+    .then(function (j) { _wpPc.status = j; })
+    .catch(function () { _wpPc.status = _wpPc.status || { error: true }; })
+    .then(function () { _wpPc.busy = false; wpPcRepaint(); });
+}
+function renderPopCaptureCard(s) { void s; wpPcPoll(false); wpPcRepaint(); }
+function wpPcStart() {
+  var body = { days: _wpPc.days };
+  if (_wpPc.character) body.character = _wpPc.character;
+  _wpPc.note = '';
+  if (_wpPc.status) _wpPc.status.running = true;   // the button greys at once; the next status read says who really holds the guard
+  wpPcRepaint();
+  fetch('/api/local/pop-rescan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (x) { if (!x.ok) _wpPc.note = (x.j && x.j.error) || 'Could not start.'; wpPcPoll(true); },
+          function () { _wpPc.note = 'The agent did not answer.'; wpPcPoll(true); });
+}
+
 // ── 🎟 Join a raid with a code (Logsync tab, above Rebuild; the rail's "On this PC" group and the tray open it) ──
 // The guild lead, 2026-10-21: a guest in someone else's raid keeps their data on their own PC. The code is a
 // label: while it is on, this PC tags what it records with the code and HOLDS the record uploads (fights,
@@ -9151,6 +9260,7 @@ function renderOptin(o) {
   wpRebuildSetFiles(o);
   h += '<div id="wpRaidCode" class="card wide"></div>';   // 🎟 Join a raid with a code: filled by renderRaidCodeCard
   h += '<div id="wpRebuild" class="card wide"></div>';
+  h += '<div id="wpPopCapture" class="card wide"></div>';   // 📥 Capture latest PoP flags, Seer and Maelin messages: filled by renderPopCaptureCard
 
   // Imported log backups (the guild lead, 2026-09-13). Inside Mimic: native pickers plus
   // a drop zone that reads real paths through the bridge. A browser tab has
@@ -9321,6 +9431,7 @@ function renderOptin(o) {
   const root = document.getElementById('optin');
   if (!setSectionHTML('optin', h)) return;   // morph in place; skip if unchanged
   try { wpRbRepaint(); } catch (e) { void e; }   // the section was rewritten, so the Rebuild card's placeholder is empty again
+  try { wpPcRepaint(); } catch (e) { void e; }   // …and so is the PoP capture card's
 
   // Wire interactions — idempotent under morph (nodes persist across polls).
   const ualCb = document.getElementById('wpUseAccountList');
@@ -9522,7 +9633,7 @@ async function refresh() {
                      // below, same rule as renderDash → renderMeCard.
                      ['diag', renderDiag],
                      ['netmeter', renderNetMeter],
-                     ['rebuild', renderRebuildCard], ['raidcode', renderRaidCodeCard],
+                     ['rebuild', renderRebuildCard], ['raidcode', renderRaidCodeCard], ['popcapture', renderPopCaptureCard],
                      ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['mutedtimers', renderMutedTimers], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
