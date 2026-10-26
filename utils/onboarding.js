@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.22': [
+    '**Soft Reserve on the loot card.** When the guild reserves drops for a raid (wolfpack.quest/raid/sr), the loot post names who reserved each item, and on event nights only the reservers\' rolls count when any of them rolled. If you reserved something and do not want it any more, just do not roll and it goes to the next person.',
+  ],
   '4.0.18': [
     '**Add to wishlist from the gear upgrades page** (on the beta site first, b.wolfpack.quest/me/upgrades). An upgrade you want can go straight onto your character\'s wishlist, with a priority and an optional sealed pre-bid, the same as /wishlist add. Your bid is encrypted by the bot and only you can see it.',
   ],

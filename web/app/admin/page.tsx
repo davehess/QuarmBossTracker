@@ -110,6 +110,11 @@ export default function AdminPage() {
           href="/admin/loot"
         />
         <Card
+          title="⭐ Soft Reserve"
+          body="[beta] Per raid: which bosses members can reserve drops from, how many picks each, who sees the names, and when picks lock."
+          href="/admin/soft-reserve"
+        />
+        <Card
           title="📜 Audit log"
           body="Searchable mirror of the audit trail thread — filter by actor, action, boss name, date range. Bot v2.5.35+ mirrors every kill/unkill/updatetimer."
           href="/admin/audit"

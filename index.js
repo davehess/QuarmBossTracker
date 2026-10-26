@@ -8753,7 +8753,17 @@ async function _handleAgentLootPost(req, res) {
                  || await client.channels.fetch(threadId);
       if (ch && ch.send) {
         const { opendkpAuctionsUrl } = require('./utils/loot');
-        const lines = matched.map(m => `• **${m.name}**${m.quantity > 1 ? ` ×${m.quantity}` : ''}`).join('\n');
+        // Soft Reserve (DECISIONS §448): the same "⭐ Soft Reserve" line the /loot card carries. Additive, fail-open.
+        const _sr = require('./utils/softReserve');
+        const _srData = await _sr.loadSoftReserve(_t.event, require('./utils/supabase')).catch(() => null);
+        if (_srData) {
+          _sr.applyReservers(matched, _srData);
+          await _sr.lockOnFirstLoot(_srData, require('./utils/supabase'));
+        }
+        const lines = matched.map(m => {
+          const srLine = _sr.reserverLine(m.reservers, m.srShown || 'names');
+          return `• **${m.name}**${m.quantity > 1 ? ` ×${m.quantity}` : ''}${srLine ? `\n   ${srLine}` : ''}`;
+        }).join('\n');
         const foot = unmatched.length ? `\n\n⚠ Not found in the item catalog (not auctioned): ${unmatched.map(u => u.name).join(', ')}` : '';
         await ch.send({ content: `💰 **Bidding open (closed bids · ${duration}m)** — posted by ${identity.display_name || 'an officer'}\n${lines}\nBid on OpenDKP → ${opendkpAuctionsUrl()}${foot}` });
       }
@@ -20363,8 +20373,12 @@ async function _refreshEventRollCardNow() {
       `guild_id=eq.${encodeURIComponent(guildId)}&looted_at=gte.${encodeURIComponent(sinceIso)}`
       + `&select=looter_character,item_name,zone,looted_at`, 'looted_at,id').catch(() => []),
   ]);
-  const { buildRollSessions, renderRollLootLines } = require('./utils/rollLoot');
-  const sessions = buildRollSessions(rollRows || [], lootedRows || []);
+  const { buildRollSessions, renderRollLootLines, itemsMatch: _rollItemsMatch } = require('./utils/rollLoot');
+  // Soft Reserve (DECISIONS §448): event nights enforce it. A roll for a reserved item counts only reservers' rolls
+  // when any reserver rolled. Fail-open: no SR data leaves the ranking exactly as it was.
+  const _sr = require('./utils/softReserve');
+  const _srData = await _sr.loadSoftReserve(target.event, supabase).catch(() => null);
+  const sessions = buildRollSessions(rollRows || [], lootedRows || [], _sr.makeReserversFor(_srData, _rollItemsMatch));
   if (sessions.length === 0) return;
 
   const { EmbedBuilder: _REB } = require('discord.js');

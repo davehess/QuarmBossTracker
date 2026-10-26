@@ -41,7 +41,10 @@ export type RollSession = {
   rollers: number;
   winners: Winner[];
   rolls: { name: string; value: number; atMs: number; reroll: boolean }[];
+  /** Soft Reserve (DECISIONS §448): set only when someone reserved the item. */
+  sr?: SrRanking | null;
 };
+export type SrRanking = { reservers: number; rolled: number; ignored: Winner[] };
 export type LootMatch = { looter: string; at: string };
 
 export const SET_GAP_MS = 10 * 60 * 1000;
@@ -79,6 +82,27 @@ export function itemsMatch(a: string, b: string): boolean {
   return shared >= 2 || (shared >= 1 && jaccard >= 0.5);
 }
 
+/**
+ * Rank a roll set with Soft Reserve (rules 2, 6, 7). TWIN of utils/softReserve.js rankWithReservers (the bot is CJS and
+ * cannot import this file): keep the two in step; test/soft-reserve-bot.test.js runs both on the same cases.
+ * `ranked` = first-roll-per-player entries, best first; `n` = copies; `reservers` = names.
+ *   - no reservers: plain top n, sr null;
+ *   - reservers but none rolled (all passed): plain top n, sr { reservers, rolled: 0 };
+ *   - otherwise only reservers' rolls count, top n of them; copies left over fall to the rest of the raid by roll;
+ *     `ignored` = the non-reservers who would have won without SR.
+ */
+export function rankWithReservers<T extends Winner>(ranked: T[], n: number, reservers: readonly string[] | null | undefined): { winners: T[]; sr: SrRanking | null } {
+  const set = new Set((reservers ?? []).map(r => String(r).toLowerCase()));
+  if (set.size === 0) return { winners: ranked.slice(0, n), sr: null };
+  const isSr = (r: T) => set.has(String(r.name).toLowerCase());
+  const srRolled = ranked.filter(isSr);
+  if (srRolled.length === 0) return { winners: ranked.slice(0, n), sr: { reservers: set.size, rolled: 0, ignored: [] } };
+  const winners = srRolled.slice(0, n);
+  if (winners.length < n) winners.push(...ranked.filter(r => !isSr(r)).slice(0, n - winners.length));
+  const ignored = ranked.slice(0, n).filter(r => !isSr(r) && !winners.includes(r)).map(r => ({ name: r.name, value: r.value }));
+  return { winners, sr: { reservers: set.size, rolled: srRolled.length, ignored } };
+}
+
 function toMs(v: string | null | undefined, fallback: number): number {
   if (!v) return fallback;
   const t = Date.parse(v);
@@ -88,7 +112,7 @@ function toMs(v: string | null | undefined, fallback: number): number {
 // Merge multi-uploader roll_sets rows into logical sessions. Groups by range and
 // clusters starts within SET_GAP_MS; unions rolls across uploaders (collapsing
 // the same name+value seen within 5s); ranks winners by first-roll-per-player.
-export function mergeRollSets(rows: RollSetRow[]): RollSession[] {
+export function mergeRollSets(rows: RollSetRow[], reserversFor?: ((item: string) => readonly string[] | null) | null): RollSession[] {
   type Acc = { from: number; to: number; startMs: number; lastMs: number; item: string | null; qty: number | null; zone: string | null; rolls: { name: string; value: number; atMs: number; reroll: boolean }[] };
   const norm: Acc[] = [];
   for (const r of Array.isArray(rows) ? rows : []) {
@@ -130,11 +154,13 @@ export function mergeRollSets(rows: RollSetRow[]): RollSession[] {
     }
     const ranked = [...firstByName.values()].sort((a, b) => (b.value - a.value) || a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
     const nWinners = Math.max(1, Math.min(g.qty || 1, ranked.length));
+    const ranking = rankWithReservers(ranked, nWinners, g.item && reserversFor ? reserversFor(g.item) : null);
     out.push({
       from: g.from, to: g.to, item: g.item, qty: g.qty, zone: g.zone,
       startMs: g.startMs, lastMs: g.lastMs, rollers: firstByName.size,
-      winners: ranked.slice(0, nWinners).map(w => ({ name: w.name, value: w.value })),
+      winners: ranking.winners.map(w => ({ name: w.name, value: w.value })),
       rolls: g.rolls.slice().sort((a, b) => b.value - a.value),
+      ...(ranking.sr ? { sr: ranking.sr } : {}),
     });
   }
   out.sort((a, b) => b.lastMs - a.lastMs);

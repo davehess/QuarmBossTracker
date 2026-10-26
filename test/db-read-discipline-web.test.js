@@ -606,6 +606,8 @@ const UNIQUE_KEYS = {
   // orders on its WHOLE selected tuple, so rows that tie are identical rows and a page boundary cannot lose one.
   eqemu_merchantlist: [['merchantid', 'slot']],
   eqemu_npc_drops: [['effective_chance', 'npc_id', 'item_id']],
+  // lib/softReserveLoad.ts and the Soft Reserve officer page: sr_picks' primary key (20261026220000_soft_reserve.sql)
+  sr_picks: [['event_id', 'character_name', 'npc_id', 'item_id']],
 };
 
 const SOURCES = webSources().map(f => [f, stripJs(read(f))]);

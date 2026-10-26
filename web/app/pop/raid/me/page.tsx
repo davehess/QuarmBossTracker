@@ -115,6 +115,7 @@ export default async function RaidMePage({ searchParams }: { searchParams: Promi
               <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
                 <a href="#seer-paste" className="text-blue hover:underline">Paste what the Seer says</a>
                 <Link href={`/pop/guide?c=${encodeURIComponent(lead.name)}`} className="text-blue hover:underline">Step-by-step guide</Link>
+                <Link href="/raid/sr" className="text-blue hover:underline">Soft Reserve: pick your drops</Link>
               </p>
             </section>
           ) : (
@@ -154,6 +155,8 @@ export default async function RaidMePage({ searchParams }: { searchParams: Promi
       <p className="mt-8 text-xs text-dim">
         Traders and characters under the PoP floor are hidden · flags update as Mimic sees them.{' '}
         <Link href="/pop/raid" className="underline hover:text-text">Raid night plan</Link>
+        {' · '}
+        <Link href="/raid/sr" className="underline hover:text-text">Soft Reserve</Link>
         {' · '}
         <Link href="/pop/guide" className="underline hover:text-text">PoP checklist</Link>
       </p>

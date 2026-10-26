@@ -32,6 +32,7 @@ const {
   buildLootAnnounceEmbed,
   buildLootComponents,
 } = require('../utils/loot');
+const SR = require('../utils/softReserve');
 
 function getBosses() {
   delete require.cache[require.resolve('../data/bosses.json')];
@@ -139,6 +140,21 @@ module.exports = {
     // ── Enrich items with rarity labels ──────────────────────────────────────
     const enrichedItems = enrichLootItems(parsedItems, dropHistory, dropTable);
 
+    // ── Soft Reserve (DECISIONS §448) ─────────────────────────────────────────
+    // Who reserved each dropped item for tonight's event, shown on the card. Best-effort and additive: any failure
+    // leaves the post exactly as it was. The first /loot of the event also closes picks when the raid locks them
+    // at the first loot post.
+    let softReserve = null;
+    try {
+      const nightTarget = await require('../utils/raidNight').getRaidNightTarget(interaction.client, Date.now())
+        .catch(() => ({ event: null }));
+      softReserve = await SR.loadSoftReserve(nightTarget.event, require('../utils/supabase'));
+      if (softReserve) {
+        SR.applyReservers(enrichedItems, softReserve);
+        await SR.lockOnFirstLoot(softReserve, require('../utils/supabase'));
+      }
+    } catch (err) { console.warn('[loot] soft reserve lookup failed:', err?.message); }
+
     // ── Log each parsed item to loot_observations so the Mob Info Loot tab
     //    can show "seen N×" alongside the published drop %. One row per item
     //    per /loot call; counts are simple aggregations downstream. Best-effort
@@ -223,6 +239,17 @@ module.exports = {
       });
     }
 
+    // Soft Reserve, officer view: every name, however the raid's visibility is set. Reservers get the item first;
+    // OpenDKP still settles the DKP, so the officer enforces the order here.
+    const reservedItems = enrichedItems.filter(i => Array.isArray(i.reservers) && i.reservers.length > 0);
+    if (reservedItems.length > 0) {
+      await interaction.followUp({
+        flags: MessageFlags.Ephemeral,
+        content: `⭐ **Soft Reserve** — reservers go first, then the rest of the raid:\n`
+               + reservedItems.map(i => `• **${i.name}** — ${i.reservers.join(', ')}`).join('\n').slice(0, 1800),
+      }).catch(() => {});
+    }
+
     // Warn if items were auto-capped at 20 (Discord button limit)
     if (enrichedItems.length > 20) {
       await interaction.followUp({
@@ -265,12 +292,13 @@ module.exports = {
           const summary = enrichedItems
             .filter(i => byItem.has(i.gameItemId))
             .map(i => {
+              // Soft Reserve first (DECISIONS §448): a reserver of this item leads the list, then by sealed bid.
               const wishers = byItem.get(i.gameItemId)
-                .map(w => ({ ...w, _eff: w._bid ?? 1 }))
-                .sort((a, b) => b._eff - a._eff || a.priority - b.priority);
+                .map(w => ({ ...w, _eff: w._bid ?? 1, _sr: SR.isReserver(i, w.character_name) }))
+                .sort((a, b) => Number(b._sr) - Number(a._sr) || b._eff - a._eff || a.priority - b.priority);
 
               const lines = wishers.map((w, idx) => {
-                const marker  = idx === 0 ? '🏆' : '  ';
+                const marker  = (idx === 0 ? '🏆' : '  ') + (w._sr ? '⭐' : '');
                 const bid     = w._bid ? `**${w._bid.toLocaleString()}** DKP` : '`1 DKP`';
                 const noteStr = w.note ? ` *(${w.note})*` : '';
                 return `${marker} ${w.character_name} · P${w.priority} · ${bid}${noteStr}`;
