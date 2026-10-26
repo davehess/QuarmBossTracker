@@ -16,6 +16,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { AGENT_INDEX, readSource, sliceBlock, stripJs } from './_source-slice.js';
 
 const src = readSource(AGENT_INDEX);
@@ -24,7 +25,9 @@ const gateBlock = sliceBlock(src, 'const _POP_GRANT_RX = ', "    ...(kind === 't
 const pfBlock = sliceBlock(src, 'const _PF_STAGES = [', '  return out;\n}');
 const seekBlock = sliceBlock(src, 'async function _rbSeek(fh, size, sinceMs) {', '  return lo;\n}');
 const netBlock = sliceBlock(src, 'async function _rescanDrained(maxMs) {', '  return false;     // the bot hands the request out again after 30 minutes; the re-read is idempotent\n}');
-const rescanBlock = sliceBlock(src, 'const RESCAN_CHUNK_BYTES = ', '      } finally { _rescan.running = false; }\n    })();\n  }\n}');
+const readBodyBlock = sliceBlock(src, 'async function _readBody(req, max = 64 * 1024) {', "  return Buffer.concat(chunks).toString('utf8');\n}");
+// …through the end of the dashboard button's route (the website's pump and the local start share the one guard).
+const rescanBlock = sliceBlock(src, 'const RESCAN_CHUNK_BYTES = ', "    return send(500, { error: 'rescan unavailable' });\n  }\n}");
 
 // The shipped code, with parsePopFlagLine wrapped so every line handed to it is recorded.
 function load(world = {}) {
@@ -33,13 +36,14 @@ function load(world = {}) {
     fs, _zealState: {}, stats: {}, _liveFightActive: () => false, _uploadQueue: [], _uploadOpts: null, AGENT_VERSION: '9.9.9',
     _rebuildCandidates: () => [], _rebuildExcluded: () => false, shouldUploadForCharacter: () => true,
     uploadPopFlags: () => Promise.resolve(), _getApiBase: () => 'http://bot.test/api/agent', _getAgentToken: () => 'tok',
-    fetch: async () => ({ ok: true, status: 200 }), ...world,
+    fetch: async () => ({ ok: true, status: 200 }), _localOnly: () => false, _controlStandDown: () => ({ down: false }), ...world,
   };
   const names = Object.keys(w);
   const body = tsBlock + '\n' + gateBlock.replace('function parsePopFlagLine(', 'function _realParsePopFlagLine(') + '\n'
     + 'function parsePopFlagLine(l, c) { __calls.push(l); return _realParsePopFlagLine(l, c); }\n'
-    + pfBlock + '\n' + netBlock + '\n' + seekBlock + '\n' + rescanBlock
-    + '\nreturn { _rescanWants, _rescanLine, _rescanFile, _rescanIsolate, _rescanRun, _applyRescanResponse, _rescan, _pfState, _popPrevLine, _popLastHail, parsePopFlagLine, RESCAN_MAX_BYTES, RESCAN_MAX_WAIT_MS };';
+    + pfBlock + '\n' + netBlock + '\n' + seekBlock + '\n' + readBodyBlock + '\n' + rescanBlock
+    + '\nreturn { _rescanWants, _rescanLine, _rescanFile, _rescanIsolate, _rescanRun, _applyRescanResponse, _rescan, _pfState, _popPrevLine, _popLastHail, parsePopFlagLine, RESCAN_MAX_BYTES, RESCAN_MAX_WAIT_MS,'
+    + ' _rescanArgs, _rescanLocalStart, _rescanStatus, _localPopRescanRoute, _rescanUploadMode, _rescanCharacters, RESCAN_MAX_DAYS, RESCAN_BODY_MAX };';
   // eslint-disable-next-line no-new-func
   const M = new Function('__calls', ...names, body)(calls, ...names.map(k => w[k]));
   return { M, calls, world: w };
@@ -328,5 +332,280 @@ describe('the poll wiring (stripped source)', () => {
     expect(rep).toMatch(/JSON\.stringify\(\{ id, found, ok \}\)/);
     expect(rep).toMatch(/'Authorization': 'Bearer ' \+ token/);
     expect(rep).toMatch(/res\.status >= 400 && res\.status < 500\) return false;/);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// "Capture latest PoP flags, Seer and Maelin messages": the dashboard button (the guild lead, 2026-10-26).
+// The same reader as the website's request, started from this PC: POST /api/local/pop-rescan, GET .../status.
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════
+function fakeReq(method, url, body) {
+  const chunks = body == null ? [] : [Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))];
+  return Object.assign(Readable.from(chunks), { method, url });
+}
+function fakeRes() {
+  const r = { status: 0, headers: null, body: null, writeHead(s, h) { r.status = s; r.headers = h; }, end(b) { r.body = b ? JSON.parse(b) : null; } };
+  return r;
+}
+async function call(M, method, url, body) {
+  const res = fakeRes();
+  const answered = await M._localPopRescanRoute(fakeReq(method, url, body), res);
+  return { answered, status: res.status, body: res.body, headers: res.headers };
+}
+async function settle(M) { for (let i = 0; i < 400 && M._rescan.running; i++) await new Promise(r => setTimeout(r, 20)); }
+
+describe('local pop-rescan: the arguments', () => {
+  const { M } = load();
+  it('nothing sent means every character, 14 days', () => {
+    expect(M._rescanArgs({})).toEqual({ character: null, days: 14 });
+    expect(M._rescanArgs({ character: null, days: null })).toEqual({ character: null, days: 14 });
+    expect(M._rescanArgs({ character: '', days: '' })).toEqual({ character: null, days: 14 });
+  });
+  it('days are held to 1..60 and truncated', () => {
+    expect(M.RESCAN_MAX_DAYS).toBe(60);
+    for (const [given, want] of [[1, 1], [0, 1], [-5, 1], [7.9, 7], [60, 60], [61, 60], [100000, 60], ['30', 30]]) {
+      expect(M._rescanArgs({ days: given }).days, String(given)).toBe(want);
+    }
+  });
+  it('days that are not a number are refused, not defaulted', () => {
+    for (const d of ['abc', true, {}, [1, 2], Infinity, NaN]) expect(M._rescanArgs({ days: d }).error, String(d)).toBe('days must be a number');
+  });
+  it('a character is a trimmed string of at most 64 characters', () => {
+    expect(M._rescanArgs({ character: '  Aldenmar ' }).character).toBe('Aldenmar');
+    expect(M._rescanArgs({ character: '   ' }).character).toBeNull();
+    expect(M._rescanArgs({ character: 'x'.repeat(64) }).character).toHaveLength(64);
+    expect(M._rescanArgs({ character: 'x'.repeat(65) }).error).toBe('character name is too long');
+    for (const c of [5, {}, ['Aldenmar'], true]) expect(M._rescanArgs({ character: c }).error, String(c)).toBe('character must be a name');
+  });
+  it('a body that is not an object is refused', () => {
+    for (const b of [null, undefined, 'x', 7, [1]]) expect(M._rescanArgs(b).error, String(b)).toBe('send a JSON object');
+  });
+});
+
+describe('local pop-rescan: the route', () => {
+  const cands = () => [{ path: '/x/eqlog_Aldenmar_pq.proj.txt', character: 'Aldenmar' }];
+  it('answers only its two paths, with the right method on each', async () => {
+    const { M } = load({ _rebuildCandidates: cands });
+    expect((await call(M, 'GET', '/api/local/backfill/status')).answered).toBe(false);
+    expect((await call(M, 'GET', '/api/local/pop-rescan/other')).answered).toBe(false);
+    expect((await call(M, 'GET', '/api/local/pop-rescan')).status).toBe(405);
+    expect((await call(M, 'GET', '/api/local/pop-rescan')).headers.Allow).toBe('POST');
+    expect((await call(M, 'POST', '/api/local/pop-rescan/status', {})).status).toBe(405);
+    expect((await call(M, 'PUT', '/api/local/pop-rescan', {})).status).toBe(405);
+    const st = await call(M, 'GET', '/api/local/pop-rescan/status');
+    expect(st.status).toBe(200);
+    expect(st.headers['Cache-Control']).toBe('no-store');
+    expect(st.body).toMatchObject({ ok: true, running: false, by: null, maxDays: 60, defaultDays: 14, run: null });
+    expect(st.body.characters).toEqual([{ name: 'Aldenmar', excluded: false }]);
+  });
+  it('refuses junk: bad json, a days that is not a number, a body over the cap', async () => {
+    const { M } = load({ _rebuildCandidates: cands });
+    expect((await call(M, 'POST', '/api/local/pop-rescan', '{nope')).status).toBe(400);
+    const bad = await call(M, 'POST', '/api/local/pop-rescan', { days: 'abc' });
+    expect([bad.status, bad.body.error]).toEqual([400, 'days must be a number']);
+    expect(M.RESCAN_BODY_MAX).toBe(2048);
+    expect((await call(M, 'POST', '/api/local/pop-rescan', { character: 'x', pad: 'y'.repeat(M.RESCAN_BODY_MAX) })).status).toBe(413);
+    expect(M._rescan.running).toBe(false);
+  });
+  it('an empty body is the defaults', async () => {
+    const log = makeLog('eqlog_Aldenmar_pq.proj.txt', [[1, 'The evidence of Mavuin is the only thing that can save him now.']], 200);
+    const { M } = load({ _rebuildCandidates: () => [{ path: log, character: 'Aldenmar' }] });
+    const r = await call(M, 'POST', '/api/local/pop-rescan', '');
+    expect([r.status, r.body.started, r.body.days, r.body.files]).toEqual([202, true, 14, 1]);
+    await settle(M);
+  });
+  it('the guard is the router\'s: _localGuardBlock runs before the route, which is wired once', () => {
+    const s = stripJs(src);
+    const guard = s.indexOf('if (_localGuardBlock(req, res)) return;');
+    const route = s.indexOf('if (await _localPopRescanRoute(req, res)) return;');
+    expect(guard).toBeGreaterThan(0);
+    expect(route).toBeGreaterThan(guard);
+    expect(s.split('await _localPopRescanRoute(req, res)').length - 1).toBe(1);
+  });
+});
+
+describe('local pop-rescan: one reader, one in-flight guard', () => {
+  it('there is no second log reader: _rescanFile has one call site, inside _rescanRun, which both callers use', () => {
+    const s = stripJs(src);
+    expect(s.split('_rescanFile(').length - 1).toBe(2);                      // the definition and the one call
+    expect(sliceBlock(s, 'async function _rescanRun(req, prog) {', '\n}\n')).toMatch(/await _rescanFile\(f, ctx, sink\)/);
+    expect(sliceBlock(s, 'function _rescanPump() {', '\n}\n')).toMatch(/await _rescanRun\(req, prog\)/);
+    expect(sliceBlock(s, 'function _rescanLocalStart(body) {', '\n}\n')).toMatch(/await _rescanRun\(\{ character: a\.character, days: a\.days \}, prog\)/);
+  });
+  const log = () => makeLog('eqlog_Aldenmar_pq.proj.txt', [[1, 'The evidence of Mavuin is the only thing that can save him now.']], 200);
+  // A world whose log open waits for `gate`, so a run can be held in flight.
+  const held = () => {
+    let release; const gate = new Promise(r => { release = r; });
+    return { release, fs: { promises: { open: async (p, m) => { await gate; return fs.promises.open(p, m); } } } };
+  };
+
+  it('a second click while the button\'s own run is going is a 409, and nothing starts', async () => {
+    const h = held();
+    const { M } = load({ fs: h.fs, _rebuildCandidates: () => [{ path: log(), character: 'Aldenmar' }] });
+    const a = M._rescanLocalStart({});
+    expect(a.status).toBe(202);
+    expect(M._rescan).toMatchObject({ running: true, by: 'local' });          // claimed before anything awaits
+    const b = M._rescanLocalStart({});
+    expect([b.status, b.body.error]).toEqual([409, 'a rescan is already running']);
+    expect(M._rescanStatus()).toMatchObject({ running: true, by: 'local', run: { by: 'local', state: 'running' } });
+    h.release();
+    await settle(M);
+    expect(M._rescan.running).toBe(false);
+    expect(M._rescanStatus()).toMatchObject({ running: false, by: null, run: { state: 'done', logs: 1 } });
+  });
+  it('while the website\'s request is running, the button is refused (409, says so); the request is untouched', async () => {
+    const h = held(); const posts = [];
+    const { M } = load({ fs: h.fs, _rebuildCandidates: () => [{ path: log(), character: 'Aldenmar' }], fetch: async (u, i) => { posts.push(JSON.parse(i.body)); return { ok: true, status: 200 }; } });
+    M._applyRescanResponse({ requests: [{ id: 21, character: 'Aldenmar', days: 14 }] });
+    expect(M._rescan).toMatchObject({ running: true, by: 'website' });
+    const r = M._rescanLocalStart({});
+    expect([r.status, r.body.error]).toEqual([409, 'a rescan the website asked for is running']);
+    expect(M._rescanStatus()).toMatchObject({ running: true, by: 'website' });
+    h.release();
+    await settle(M);
+    expect(posts.map(p => p.id)).toEqual([21]);
+  });
+  it('a website request that arrives during the button\'s run waits, then runs when it ends (no poll needed)', async () => {
+    const h = held(); const posts = [];
+    const { M } = load({ fs: h.fs, _rebuildCandidates: () => [{ path: log(), character: 'Aldenmar' }], fetch: async (u, i) => { posts.push(JSON.parse(i.body)); return { ok: true, status: 200 }; } });
+    expect(M._rescanLocalStart({}).status).toBe(202);
+    M._applyRescanResponse({ requests: [{ id: 22, character: 'Aldenmar', days: 14 }] });
+    expect(M._rescan.queue).toHaveLength(1);
+    expect(posts).toEqual([]);
+    h.release();
+    await settle(M);
+    await new Promise(r => setTimeout(r, 50));
+    await settle(M);
+    expect(posts.map(p => p.id)).toEqual([22]);
+    expect(M._rescan).toMatchObject({ running: false, by: null });
+  });
+  it('a run that throws still lets go of the guard', async () => {
+    const { M } = load({ _rebuildCandidates: () => [{ path: log(), character: 'Aldenmar' }], uploadPopFlags: () => { throw new Error('boom'); } });
+    M._rescanLocalStart({});
+    await settle(M);
+    expect(M._rescan.running).toBe(false);
+    expect(['done', 'error']).toContain(M._rescanStatus().run.state);
+  });
+});
+
+describe('local pop-rescan: what the run does and says', () => {
+  const lines = [[2, 'The evidence of Mavuin is the only thing that can save him now.'], [1, "Mavuin's case: Mavuin's case is complete"]];
+  const logA = () => makeLog('eqlog_Aldenmar_pq.proj.txt', lines, 200);
+  const logB = () => makeLog('eqlog_Brackwyn_pq.proj.txt', lines, 200);
+  const logX = () => makeLog('eqlog_Rethlan_pq.proj.txt', lines, 200);
+  const cands = () => [{ path: logA(), character: 'Aldenmar' }, { path: logB(), character: 'Brackwyn' }, { path: logX(), character: 'Rethlan' }, { path: '/gone.txt', character: 'Zarrin', ignored: true }];
+  async function run(body, over = {}) {
+    const uploads = [];
+    const { M } = load({ _rebuildCandidates: cands, _rebuildExcluded: (c) => c === 'Rethlan', uploadPopFlags: (e) => { uploads.push(...e); return Promise.resolve(); }, ...over });
+    const start = M._rescanLocalStart(body);
+    await settle(M);
+    return { M, start, uploads, status: M._rescanStatus() };
+  }
+  it('reads each log, uploads the flag steps, and says how many it read, found and sent', async () => {
+    const { start, uploads, status } = await run({});
+    expect(start.status).toBe(202);
+    expect(new Set(uploads.map(e => e.character))).toEqual(new Set(['Aldenmar', 'Brackwyn']));
+    expect(status.run).toMatchObject({ state: 'done', by: 'local', logs: 2, found: 4, sent: 4, upload: true, why: null, days: 14, files: 2, filesDone: 2 });
+  });
+  it('a character kept out of stats is skipped and named; asking for it alone is refused with the reason', async () => {
+    const all = await run({});
+    expect(all.status.run.excluded).toEqual(['Rethlan']);
+    const one = await run({ character: 'rethlan' });
+    expect(one.start.status).toBe(400);
+    expect(one.start.body.error).toBe('kept out of stats: Rethlan (skipped)');
+    expect(one.uploads).toEqual([]);
+    const none = await run({ character: 'Corvale' });
+    expect([none.start.status, none.start.body.error]).toEqual([400, 'no EverQuest log found for that']);
+    const ignored = await run({ character: 'Zarrin' });
+    expect(ignored.start.status).toBe(400);
+  });
+  it('local mode: still parsed and counted, nothing handed to the upload path, and it says so', async () => {
+    const { uploads, status } = await run({}, { _localOnly: () => true });
+    expect(uploads).toEqual([]);
+    expect(status.run).toMatchObject({ state: 'done', logs: 2, found: 4, sent: 0, upload: false, why: 'local mode' });
+    expect(status.upload).toEqual({ upload: false, why: 'local mode' });
+  });
+  it('a paused agent: same, with the other reason', async () => {
+    const { uploads, status } = await run({ character: 'Aldenmar' }, { _controlStandDown: () => ({ down: true, reason: 'kill' }) });
+    expect(uploads).toEqual([]);
+    expect(status.run).toMatchObject({ logs: 1, found: 2, sent: 0, upload: false, why: 'paused' });
+  });
+  it('does not wait on the upload queue when nothing was sent', async () => {
+    const q = [{ kind: 'pop_flag' }];       // never drains: a wait here would hang for 90 s
+    const t0 = Date.now();
+    await run({}, { _localOnly: () => true, _uploadQueue: q });
+    expect(Date.now() - t0).toBeLessThan(5000);
+  });
+  it('the days reach back only that far', async () => {
+    const old = makeLog('eqlog_Corvale_pq.proj.txt', [[40, 'The evidence of Mavuin is the only thing that can save him now.'], [3, 'The evidence of Mavuin is the only thing that can save him now.']], 200);
+    const c = () => [{ path: old, character: 'Corvale' }];
+    expect((await run({ character: 'Corvale', days: 7 }, { _rebuildCandidates: c })).status.run.found).toBe(1);
+    expect((await run({ character: 'Corvale', days: 60 }, { _rebuildCandidates: c })).status.run.found).toBe(2);
+  });
+  it('the character list: every log not ignored, once per name, kept-out ones marked', () => {
+    const { M } = load({ _rebuildCandidates: () => [...cands(), { path: '/b2.txt', character: 'aldenmar' }], _rebuildExcluded: (c) => c === 'Rethlan' });
+    expect(M._rescanCharacters()).toEqual([{ name: 'Aldenmar', excluded: false }, { name: 'Brackwyn', excluded: false }, { name: 'Rethlan', excluded: true }]);
+  });
+  it('the status carries no path and no line text', async () => {
+    const { status } = await run({});
+    expect(JSON.stringify(status)).not.toMatch(/eqlog_|wp-rescan|evidence of Mavuin/);
+  });
+});
+
+// ── Maelin (the guild lead, 2026-10-26): "capture latest popflags, seer, and maelin messages" ──────────────────
+// Source: SecretsOTheP/quests @ ea0c7661df2a0d50ebfd119a3473d3215d954b26, poknowledge/Grand_Librarian_Maelin.lua.
+// Maelin's script prints no flag line of its own. Each time it sets a flag it sends the SAME generic line the other
+// flag NPCs send, e.other:Message(15, "You have received a character flag!") (.lua:18, 40, 61, 76), straight after her
+// Message(0, "Maelin tells you, '...'") / "Maelin takes a deep breath and continues, '...'" line. Both halves are already
+// gated: _POP_GRANT_RX takes the grant and _POP_PREV_RX (the "Maelin" prefix) attaches her line to it, which is what the
+// bot's table keys on (utils/popFlagStages.js: cipher_1, zebuxoruk_1, zebuxoruk_2, zeks_6). So nothing new is gated.
+// The lines below are her script's text, abridged at the end of a sentence where the script goes on.
+describe('Maelin: her flag grants are already caught; nothing else of hers leaves the machine', () => {
+  const GRANT_FLAG = 'You have received a character flag!';
+  const CIPHER   = "Maelin tells you, 'Astounding, this truly is the Cipher of Druzzil!  I shall take notes from your knowledge and try to learn from it.  If you happen upon any artifacts that have writings in the language of the gods bring them back to me and I will do my best to read them to you in common tongue.'";   // .lua:16
+  const LORE     = "Maelin tells you, 'This is quite interesting friends.  It is a detailed document on what has become of Zebuxoruk.  It seems that he had been tampering with translating works of the gods for mortals.  This knowledge was leading them to enlightenment and finally to ascention into dietyhood.  This angered the gods, for they felt that any diety should be chosen by them.  Ascension of any mortal was not something they were prepared to deal with.'";   // .lua:38
+  const POWER    = "Maelin takes a deep breath and continues, 'I can see now that he was not joking at all.  Let us suppose that you travelers could venture into the Elemental Planes and retrieve this essence; and form it into one powerful conglomeration.'";   // .lua:59 (abridged)
+  const ZEKS     = "Maelin tells you, 'This cannot be.  You must hurry!  Rallos Zek seems to be planing a massive raid on Norrath.  He is tired of mortals overstepping their boundaries!  You are the only hope!  Go challenge Rallos, hurry!'";   // .lua:74
+  const NOT_FLAG = [
+    "Maelin tells you, 'Welcome to Myrist!  This is truly something for me to be proud of.'",                                                           // .lua:22
+    "Maelin tells you, 'Welcome back my friends.  I assure you that I have been studying the Cipher of Druzzil very diligently.'",                    // .lua:13
+    "Maelin tells you, 'Come now, I don't see any new lore about you.  There is no reason to be dishonest with me.'",                                  // .lua:48
+    "Maelin tells you, 'As I have told you, you must retrieve the elemental essence from each elemental plane so that we can activate the machine.'", // .lua:10
+    "Maelin tells you, 'As I have already told you, Rallos must be stopped!  The war he plans to rage on Norrath could have devastating effects.'",   // .lua:71
+    "Maelin tells you, 'What is this that you have found?  It appears to be written in the divine language.  Let me see.'",                           // .lua:45
+  ];
+  const { M } = load();
+  const feed = (...ls) => { const s = sink(); for (const l of ls) M._rescanLine(`${stamp(at(1, s.events.length))} ${l}`, 'Aldenmar', 0, s); return s; };
+
+  it('the four grants (cipher, Zebuxoruk lore, power source, Zek notes) are each a grant carrying her line before it', () => {
+    for (const npcLine of [CIPHER, LORE, POWER, ZEKS]) {
+      expect(M._rescanWants(npcLine), npcLine.slice(0, 40)).toBe('prev');
+      const s = feed(npcLine, GRANT_FLAG);
+      const g = s.events.filter(e => e.kind === 'grant');
+      expect(g, npcLine.slice(0, 40)).toHaveLength(1);
+      expect(g[0].prev).toBe(npcLine.slice(0, 160));
+      expect(g[0].prev.startsWith('Maelin ')).toBe(true);
+    }
+  });
+  it('her lines that do not set a flag are gated as "line before" only and send nothing alone', () => {
+    for (const l of NOT_FLAG) {
+      expect(M._rescanWants(l), l.slice(0, 40)).toBe('prev');
+      const s = feed(l);
+      expect(s.events, l.slice(0, 40)).toEqual([]);
+      expect(s.found).toBe(0);
+    }
+  });
+  it('a non-grant line of hers followed by something else is never attached to a later grant', () => {
+    const s = feed(NOT_FLAG[0], 'You gain experience!!', GRANT_FLAG);
+    expect(s.events.filter(e => e.kind === 'grant').every(e => e.prev === null)).toBe(true);
+  });
+  it('a player typing her words, or quoting a grant, is not a gate', () => {
+    for (const l of [
+      `Zarrin says, '${CIPHER}'`, `Brackwyn tells the guild, '${LORE}'`, `You tell your guild, '${ZEKS}'`,
+      `Corvale tells you, '${POWER}'`, "Zarrin says, 'You have received a character flag!'", `Grand Librarian ${CIPHER}`, ` ${CIPHER}`,
+    ]) expect(M._rescanWants(l), l.slice(0, 50)).toBeNull();
+  });
+  it('the Seer\'s echo of her words stays a recital, as before', () => {
+    expect(M._rescanWants("The words of Maelin echo in your mind, 'The Zeks and Solusek are working together.'")).toBe('recital');
   });
 });

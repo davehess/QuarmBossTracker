@@ -6649,6 +6649,24 @@ key; earned_at = the line's time). An older agent never asks for the stream. ⏳
 watching it; "all my characters" is taken by whichever of the member's PCs polls first. Tests: `test/pop-flags-live-parity.test.js` (the web paste
 reader and this one agree on `test/fixtures/popflags-output.txt` and on every table line), `test/pop-rescan-agent.test.js`.
 
+### 🧾 2026-10-26 — Dashboard button "Capture latest PoP flags, Seer and Maelin messages" (agent 4.0.26 beta, first draft)
+The guild lead: *"add a button into the logsync for 'capture latest popflags, seer, and maelin messages'"*. A card under Rebuild on the
+Logsync tab (`#wpPopCapture`, `renderPopCaptureCard`, own placeholder, two children so progress never rebuilds the controls): a character
+picker (this PC's logs; kept-out characters greyed), days back (1..60, default 14), and the button. `POST /api/local/pop-rescan
+{character|null, days}` and `GET /api/local/pop-rescan/status` (`_localPopRescanRoute`, behind the router's `_localGuardBlock`, 2 KB body cap, a
+`days` that is not a number is a 400). It is the website's reader, not a second one: `_rescanRun` is the one caller of `_rescanFile`, used by
+both the poll's request (`_rescanPump`) and the button (`_rescanLocalStart`), under ONE guard (`_rescan.running` / `.by`): the button is
+refused with a 409 while the website's request runs and the other way round (a request that arrives meanwhile waits and is pumped when the run
+ends). Local mode (no account) and a paused agent (control plane) still read and count, upload nothing, and the card says "not uploaded (local
+mode)" / "(paused)"; a character kept out of stats is skipped and named. Same chunking, 12 ms work then a rest, pause during a live fight,
+192 MB cap. **Tray:** none added (dashboard-first; the parity rule runs tray to dashboard, and the rail's "On this PC" group is for things that
+upload nothing, which this does). **Maelin: no new gate.** `poknowledge/Grand_Librarian_Maelin.lua` (SecretsOTheP/quests @ `ea0c7661`) prints no
+flag line of its own: each of her four flags (`cipher` :17-18, `zebuxoruk` 1 :39-40, `zebuxoruk` 2 :60-61, `zeks` 6 :75-76) is the generic
+"You have received a character flag!" straight after her "Maelin tells you, '...'" / "Maelin takes a deep breath and continues, '...'" line,
+and both halves were already gated (`_POP_GRANT_RX`, and the `Maelin` prefix of `_POP_PREV_RX`; the bot's table already maps the four lines).
+Her #popflags labels were in `_PF_MAELIN`. Tests: `test/pop-rescan-agent.test.js` (arguments, route, shared guard, local mode / paused,
+kept-out, Maelin lines from the script), `test/dashboard-pop-capture.test.js`. Not yet on `main`; no bot change.
+
 ### 🧾 2026-10-14/15 — raid-night fixes (bot 3.1.268–3.1.271 · agent 3.7.177–3.7.179 beta, DECISIONS §334)
 - ✅ Buff landings no longer lost per batch (`insert_buff_casts`, 3.1.268 hotfix).
 - ✅ A stalled role lookup no longer demotes an officer (Admin tab, DKP tick 403; 3.1.270); dashboard shows the bot's refusal (agent 3.7.178).
