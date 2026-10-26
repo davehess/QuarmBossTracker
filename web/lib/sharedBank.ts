@@ -29,7 +29,19 @@ export type SharedBankRow = {
   slot: string;        // e.g. 'SharedBank6-Slot9'
   itemKey: string;     // stable per item+qty, e.g. 'id:12345|3'
   observedAt?: string | null;
+  /**
+   * The character's snapshot may be out of date (it was played after its inventory file was written; see
+   * web/lib/localAccounts.ts). Only `pickSharedRows` reads it; clustering ignores it.
+   */
+  stale?: boolean;
 };
+
+/**
+ * How much OLDER a not-stale snapshot may be than the freshest one and still win the account's shared bank.
+ * A stale snapshot is not a wrong one (it is only "this character played after it was written"), so trust
+ * never outranks a genuinely newer export by more than a few days.
+ */
+export const TRUST_PREFERENCE_WINDOW_MS = 3 * 86400_000;
 
 // Two banks are the same account when their slot->item maps agree, scored
 // JACCARD over the UNION of both banks. Scoring over the overlap alone let a
@@ -303,13 +315,34 @@ export function planSharedBanks(rows: SharedBankRow[], placements: AccountPlacem
  * account. An older export only says what the bank held then: mixing its slots
  * in would count an item withdrawn since, and count one moved between slots
  * twice. (The rule since 2026-08-20; the 2026-10-13 change was to the grouping.)
+ *
+ * Freshest TRUSTWORTHY (the guild lead, 2026-10-26): when the freshest snapshot is flagged `stale` (its
+ * character was played after the file was written, e.g. an unclean exit after `#charactertransfer`), a
+ * snapshot that is not stale wins instead, provided it is within TRUST_PREFERENCE_WINDOW_MS of the freshest.
+ * With no such snapshot the freshest still counts; the caller shows the stale marker.
  */
 export function pickSharedRows<T extends SharedBankRow>(rows: T[], accountOf: Map<string, string>): T[] {
   const { maps, newest } = buildMaps(rows);
   const acct = (c: string) => accountOf.get(c.toLowerCase()) ?? `solo:${c.toLowerCase()}`;
-  const rep = new Map<string, string>();               // account → the character whose snapshot counts
+  const staleChars = new Set(rows.filter(r => r.stale).map(r => r.character));
+  const ms = (c: string) => { const t = Date.parse(newest.get(c) || ''); return Number.isNaN(t) ? null : t; };
+  const ranked = new Map<string, string[]>();          // account → its characters, freshest first
   for (const c of rankByFreshness([...maps.keys()], maps, newest)) {
-    if (!rep.has(acct(c))) rep.set(acct(c), c);
+    (ranked.get(acct(c)) ?? ranked.set(acct(c), []).get(acct(c))!).push(c);
+  }
+  const rep = new Map<string, string>();               // account → the character whose snapshot counts
+  for (const [id, chars] of ranked) {
+    let pick = chars[0];
+    if (staleChars.has(pick)) {
+      const topMs = ms(pick);
+      const trusted = chars.find(c => {
+        if (staleChars.has(c)) return false;
+        const t = ms(c);
+        return topMs === null || t === null || topMs - t <= TRUST_PREFERENCE_WINDOW_MS;
+      });
+      if (trusted) pick = trusted;
+    }
+    rep.set(id, pick);
   }
   return rows.filter(r => !!r.character && !!r.slot && rep.get(acct(r.character)) === r.character);
 }

@@ -28608,6 +28608,16 @@ function renderOptin(o) {
     h += '</div>';
   }
 
+  // ── Account list for the local inventory page (the guild lead, 2026-10-26) ───
+  // "Allow people to not include if they don't want to." Default ON. OFF stops the agent asking wolfpack.quest for
+  // your game-account placements at all; the page then guesses accounts from the shared banks. Download only:
+  // nothing about this PC is sent either way. The same switch sits on the local page itself. No <details> here.
+  h += '<div class="card wide"><h2>🏦 Account list for My account inventory</h2>' +
+       '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">' +
+       '<input type="checkbox" id="wpUseAccountList"' + (o.useAccountList !== false ? ' checked' : '') + '>' +
+       '<span>Use my account list from wolfpack.quest</span></label>' +
+       '<div class="subtle" style="margin-top:5px">The inventory page on this PC can ask wolfpack.quest which of your characters are on which EverQuest game account (the list you keep on /me/accounts), so each shared bank counts once per real account. Unticked, Mimic never asks and guesses the accounts from the shared-bank files instead. Nothing from this PC is uploaded either way.</div></div>';
+
   // ── Oversized live log (the guild lead, 2026-09-22) ────────────────────────
   // EverQuest never trims eqlog_<Name>_pq.proj.txt and the client slows down on
   // multi-gigabyte ones. A member's reached 1.33 GB, unbroken since Nov 2024,
@@ -28825,6 +28835,11 @@ function renderOptin(o) {
   try { wpRbRepaint(); } catch (e) { void e; }   // the section was rewritten, so the Rebuild card's placeholder is empty again
 
   // Wire interactions — idempotent under morph (nodes persist across polls).
+  const ualCb = document.getElementById('wpUseAccountList');
+  if (ualCb) _bindOnce(ualCb, 'change', async () => {
+    try { await fetch('/api/local/account-list', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ use: !!ualCb.checked }) }); } catch (e) { void e; }
+    refreshOptin();
+  });
   root.querySelectorAll('input[type=checkbox][data-path]').forEach(cb => {
     _bindOnce(cb, 'change', async () => {
       await postOptin(cb.checked ? 'select' : 'deselect', { paths: [cb.dataset.path] });
@@ -34437,6 +34452,7 @@ function _serializeOptinForWeb() {
       status:            r.status,
     })),
     backfillRequestsCheckedAt: stats.backfillRequestsCheckedAt,
+    useAccountList: _optinState.useAccountList !== false,
   };
 }
 
@@ -35735,6 +35751,7 @@ function startWebDashboard(port) {
       // files by /api/local/*. Read-only, never uploads.
       if (req.url && (req.url === '/local' || req.url.indexOf('/local/') === 0 || req.url.indexOf('/local?') === 0)) return _serveLocalSite(req, res);
       if (req.url && req.url.split('?')[0] === '/api/local/inventory') return _handleLocalInventory(req, res);
+      if (req.url && req.url.split('?')[0] === '/api/local/account-list') return _handleLocalAccountList(req, res);
       if (req.url === '/api/state') {
         // Serve every poller the SAME serialized snapshot for 400ms. The
         // dashboard (2s) + CH chain (600ms) + tank/command/who/mobinfo
@@ -38846,6 +38863,10 @@ const _optinState = {
   bqShowDebuffs: true,
   bqShowBuffs:   true,
   bqShowBurst:   true,
+  // "Use my account list from wolfpack.quest" (the guild lead, 2026-10-26: "allow people to not include if they
+  // don't want to"). ON (default): the local inventory page asks the bot for this person's own game-account
+  // placements. OFF: the agent never makes that request and the page guesses accounts from the shared banks.
+  useAccountList: true,
 };
 
 function _optinSortFn() {
@@ -38889,6 +38910,7 @@ function _loadOptInState() {
     _optinState.bqShowDebuffs        = (raw.bqShowDebuffs !== false);
     _optinState.bqShowBuffs          = (raw.bqShowBuffs !== false);
     _optinState.bqShowBurst          = (raw.bqShowBurst !== false);
+    _optinState.useAccountList       = (raw.useAccountList !== false);
   } catch { /* missing or unreadable — fresh state */ }
   _mergeImportedFromEnv();
 }
@@ -38909,6 +38931,7 @@ function _saveOptInState() {
       bqShowDebuffs:         _optinState.bqShowDebuffs !== false,
       bqShowBuffs:           _optinState.bqShowBuffs !== false,
       bqShowBurst:           _optinState.bqShowBurst !== false,
+      useAccountList:        _optinState.useAccountList !== false,
     }, null, 2));
   } catch { /* non-fatal */ }
 }
@@ -39942,7 +39965,7 @@ function _localInventoryDirs() {
 // item_name, quantity, observed_at), so web/lib/inventoryAggregate.ts runs on it unchanged. `meta` (the
 // damage / ac / nodrop / itemtype / slots the type chips read) is EMPTY: the agent's item catalog holds
 // [id, name, era] only, so the chips other than Spell stay empty until a catalog that carries those fields lands.
-function _localInventorySnapshot(dirs) {
+function _localInventorySnapshot(dirs, logTimesOf) {
   const byChar = new Map();
   for (const dir of dirs) {
     let entries;
@@ -39973,17 +39996,113 @@ function _localInventorySnapshot(dirs) {
   }
   return {
     ok: true, generated_at: new Date().toISOString(),
-    characters: chars.map(c => ({ name: c.name, observed_at: c.observed_at, rows: c.rows.length })),
+    // log_first_at / log_last_at: the first and last timestamped line of the character's own EQ log, which the
+    // page compares with observed_at (inventory file written) and with today (web/lib/localAccounts.ts decides;
+    // the agent only reports the times). Null when there is no log for the character on this PC.
+    characters: chars.map(c => {
+      const t = typeof logTimesOf === 'function' ? logTimesOf(c.name.toLowerCase()) : null;
+      return {
+        name: c.name, observed_at: c.observed_at, rows: c.rows.length,
+        log_first_at: t && t.first ? t.first.toISOString() : null,
+        log_last_at:  t && t.last  ? t.last.toISOString()  : null,
+      };
+    }),
     rows, meta: [], meta_available: false,
   };
 }
-function _handleLocalInventory(req, res) {
+// Game-account placements for this page come from fetchAccountPlacements(), kept with the other calls to the bot
+// (next to fetchCharacterModesMine) so that THIS region stays free of network code: test/local-site-agent.test.js
+// asserts nothing between the local site's MIME table and _scanOptInFiles can send anything anywhere.
+// ── First and last time in a character's EQ log, for the local page ──
+// Two small reads per log (the head and the tail), cached until the file changes; a 1 GB log costs the same as a
+// 1 KB one. The tail chunk starts mid-line, which is harmless because lines are scanned from the end.
+const LOCAL_LOG_EDGE_BYTES = 16 * 1024;
+const LOCAL_LOG_NAME_RX = /^eqlog_([^_]+)_pq\.proj\.txt$/i;
+const _logEdgeCache = new Map();   // full path -> { mtimeMs, size, first, last }
+function _logEdgeTimesFromText(head, tail) {
+  let first = null, last = null;
+  for (const line of String(head || '').split(/\r?\n/)) { const d = parseEqTimestamp(line); if (d) { first = d; break; } }
+  const lines = String(tail || '').split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) { const d = parseEqTimestamp(lines[i]); if (d) { last = d; break; } }
+  return { first, last };
+}
+function _logEdgeTimes(fullPath) {
+  let st;
+  try { st = fs.statSync(fullPath); } catch { return null; }
+  const hit = _logEdgeCache.get(fullPath);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit;
+  let fd;
+  try {
+    fd = fs.openSync(fullPath, 'r');
+    const n = Math.min(LOCAL_LOG_EDGE_BYTES, st.size);
+    const head = Buffer.alloc(n), tail = Buffer.alloc(n);
+    if (n > 0) {
+      fs.readSync(fd, head, 0, n, 0);
+      fs.readSync(fd, tail, 0, n, st.size - n);
+    }
+    const t = _logEdgeTimesFromText(head.toString('utf8'), tail.toString('utf8'));
+    const out = { mtimeMs: st.mtimeMs, size: st.size, first: t.first, last: t.last };
+    _logEdgeCache.set(fullPath, out);
+    return out;
+  } catch { return null; }
+  finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch { void 0; } } }
+}
+// lower-cased character -> a function's answer { first: Date|null, last: Date|null } over every live log of that
+// name found in `dirs` (the earliest first and the latest last when a character has more than one).
+function _localLogActivity(dirs) {
+  const byChar = new Map();
+  for (const dir of dirs) {
+    let entries;
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    for (const name of entries) {
+      const m = name.match(LOCAL_LOG_NAME_RX);
+      if (!m) continue;
+      const e = _logEdgeTimes(path.join(dir, name));
+      if (!e) continue;
+      const k = m[1].toLowerCase();
+      const cur = byChar.get(k) || { first: null, last: null };
+      if (e.first && (!cur.first || e.first < cur.first)) cur.first = e.first;
+      if (e.last && (!cur.last || e.last > cur.last)) cur.last = e.last;
+      byChar.set(k, cur);
+    }
+  }
+  return (lower) => byChar.get(lower) || null;
+}
+async function _handleLocalInventory(req, res) {
   if (req.method !== 'GET') { res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': 'GET' }); return res.end('{"error":"method not allowed"}'); }
   let body;
-  try { body = JSON.stringify(_localInventorySnapshot(_localInventoryDirs())); }
+  try {
+    const dirs = _localInventoryDirs();
+    const snap = _localInventorySnapshot(dirs, _localLogActivity(dirs));
+    const fresh = /[?&]refresh=1\b/.test(String(req.url || ''));
+    const acct = await fetchAccountPlacements({ fresh });
+    snap.placements = acct.placements;
+    snap.placements_source = acct.source;               // 'site' | 'off' | 'none'
+    snap.placements_reason = acct.reason || null;       // why 'none' (signed-out, local, bot-old, offline) or why a cached answer is old
+    snap.use_account_list = _optinState.useAccountList !== false;
+    body = JSON.stringify(snap);
+  }
   catch (e) { console.error('[api/local/inventory] failed:', e && (e.stack || e.message || e)); res.writeHead(500, { 'Content-Type': 'application/json' }); return res.end('{"error":"could not read the inventory files"}'); }
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   return res.end(body);
+}
+// POST /api/local/account-list { use: boolean } -> { ok, use_account_list }. The "Use my account list from
+// wolfpack.quest" switch: OFF stops the placements request itself (fetchAccountPlacements), it is not only a UI hide.
+async function _handleLocalAccountList(req, res) {
+  if (req.method !== 'GET' && req.method !== 'POST') { res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': 'GET, POST' }); return res.end('{"error":"method not allowed"}'); }
+  if (!_optinState.scanned) { try { _scanOptInFiles(); } catch { void 0; } }
+  if (req.method === 'POST') {
+    const body = await _readBody(req).catch(() => '');
+    let payload = {};
+    try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+    if (typeof payload.use !== 'boolean') { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end('{"error":"use must be a boolean"}'); }
+    _optinState.useAccountList = payload.use;
+    if (!payload.use) { _placementsCache = null; }
+    _saveOptInState();
+    scheduleRender();
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(JSON.stringify({ ok: true, use_account_list: _optinState.useAccountList !== false }));
 }
 
 function _scanOptInFiles() {
@@ -46355,6 +46474,62 @@ async function fetchCharacterModesMine({ fresh = false } = {}) {
     _modesMineCache = { key, at: Date.now(), payload };
     return payload;
   } catch { return { ok: false, reason: 'offline' }; }
+}
+// ── Game-account placements for the local inventory page (the guild lead, 2026-10-26) ──
+// The local inventory page used to GUESS which characters share a game account from their shared-bank files, and
+// counted 23 accounts for someone who owns 6. The website already knows the real answer (/me/accounts), so the
+// agent asks the bot for the signed-in person's OWN placements (GET /api/agent/account-placements) and hands them
+// to the page, which runs the same aggregation the website does. Download only: nothing about this PC goes up.
+//   * Opt-out (default ON): _optinState.useAccountList. OFF means no request is made at all, so the page guesses.
+//   * Fail open: signed out, local mode, an older bot, offline, a bad answer -> no placements -> guessing.
+//   * Cached: the answer changes only when the owner edits /me/accounts, so 15 minutes; the page's Reload button
+//     may ask again (`fresh`), but never more than once per ACCOUNT_PLACEMENTS_MIN_REFETCH_MS.
+//     A failed refresh keeps the last good answer, and a failure is not retried for ACCOUNT_PLACEMENTS_RETRY_MS.
+const ACCOUNT_PLACEMENTS_TTL_MS = 15 * 60_000;
+const ACCOUNT_PLACEMENTS_MIN_REFETCH_MS = 30_000;
+const ACCOUNT_PLACEMENTS_RETRY_MS = 2 * 60_000;
+let _placementsCache = null;     // { key, at, placements }
+let _placementsFailAt = 0;
+function _cleanPlacements(list) {
+  const out = [];
+  for (const p of (Array.isArray(list) ? list : [])) {
+    if (!p || typeof p.character !== 'string' || typeof p.accountId !== 'string' || !p.character || !p.accountId) continue;
+    out.push({
+      character: p.character.slice(0, 64), accountId: p.accountId.slice(0, 64),
+      slot: Number.isInteger(p.slot) ? p.slot : null,
+      label: typeof p.label === 'string' && p.label.trim() ? p.label.trim().slice(0, 40) : null,
+    });
+  }
+  return out;
+}
+// -> { placements, source: 'site' | 'off' | 'none', reason? }. Never throws.
+async function fetchAccountPlacements({ fresh = false } = {}) {
+  // The saved switch is read from the opt-in file on first use: until something has scanned, the in-memory
+  // default is ON, and an OFF the person chose must hold before the very first request.
+  if (!_optinState.scanned) { try { _scanOptInFiles(); } catch { void 0; } }
+  if (_optinState.useAccountList === false) return { placements: [], source: 'off' };
+  const why = _characterModesWhyNot();
+  if (why) return { placements: [], source: 'none', reason: why };
+  const key = String(_mimicSessionToken).slice(-8);
+  const now = Date.now();
+  const hit = _placementsCache && _placementsCache.key === key ? _placementsCache : null;
+  const ageOk = hit && (now - hit.at) < (fresh ? ACCOUNT_PLACEMENTS_MIN_REFETCH_MS : ACCOUNT_PLACEMENTS_TTL_MS);
+  if (ageOk) return { placements: hit.placements, source: 'site' };
+  const keep = (reason) => hit ? { placements: hit.placements, source: 'site', reason } : { placements: [], source: 'none', reason };
+  if (now - _placementsFailAt < ACCOUNT_PLACEMENTS_RETRY_MS) return keep('offline');
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const r = await fetch(base + '/account-placements', { headers: _characterPrefsHeaders(), signal: AbortSignal.timeout(8_000) });
+    // A refused token means the person is signed out now: whatever was cached belonged to that sign-in.
+    if (r.status === 401 || r.status === 403) { _placementsCache = null; return { placements: [], source: 'none', reason: 'signed-out' }; }
+    if (r.status === 404) { _placementsFailAt = now; return keep('bot-old'); }
+    if (!r.ok) { _placementsFailAt = now; return keep('offline'); }
+    const j = await r.json();
+    if (!j || !Array.isArray(j.placements)) { _placementsFailAt = now; return keep('bot-old'); }
+    const placements = _cleanPlacements(j.placements);
+    _placementsCache = { key, at: now, placements };
+    return { placements, source: 'site' };
+  } catch { _placementsFailAt = now; return keep('offline'); }
 }
 // POST /character-prefs { character, mode } → { synced, reason }. Never throws.
 async function _postCharacterMode(character, mode) {

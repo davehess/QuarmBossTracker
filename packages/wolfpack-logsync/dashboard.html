@@ -9096,6 +9096,16 @@ function renderOptin(o) {
     h += '</div>';
   }
 
+  // ── Account list for the local inventory page (the guild lead, 2026-10-26) ───
+  // "Allow people to not include if they don't want to." Default ON. OFF stops the agent asking wolfpack.quest for
+  // your game-account placements at all; the page then guesses accounts from the shared banks. Download only:
+  // nothing about this PC is sent either way. The same switch sits on the local page itself. No <details> here.
+  h += '<div class="card wide"><h2>🏦 Account list for My account inventory</h2>' +
+       '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">' +
+       '<input type="checkbox" id="wpUseAccountList"' + (o.useAccountList !== false ? ' checked' : '') + '>' +
+       '<span>Use my account list from wolfpack.quest</span></label>' +
+       '<div class="subtle" style="margin-top:5px">The inventory page on this PC can ask wolfpack.quest which of your characters are on which EverQuest game account (the list you keep on /me/accounts), so each shared bank counts once per real account. Unticked, Mimic never asks and guesses the accounts from the shared-bank files instead. Nothing from this PC is uploaded either way.</div></div>';
+
   // ── Oversized live log (the guild lead, 2026-09-22) ────────────────────────
   // EverQuest never trims eqlog_<Name>_pq.proj.txt and the client slows down on
   // multi-gigabyte ones. A member's reached 1.33 GB, unbroken since Nov 2024,
@@ -9313,6 +9323,11 @@ function renderOptin(o) {
   try { wpRbRepaint(); } catch (e) { void e; }   // the section was rewritten, so the Rebuild card's placeholder is empty again
 
   // Wire interactions — idempotent under morph (nodes persist across polls).
+  const ualCb = document.getElementById('wpUseAccountList');
+  if (ualCb) _bindOnce(ualCb, 'change', async () => {
+    try { await fetch('/api/local/account-list', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ use: !!ualCb.checked }) }); } catch (e) { void e; }
+    refreshOptin();
+  });
   root.querySelectorAll('input[type=checkbox][data-path]').forEach(cb => {
     _bindOnce(cb, 'change', async () => {
       await postOptin(cb.checked ? 'select' : 'deselect', { paths: [cb.dataset.path] });
