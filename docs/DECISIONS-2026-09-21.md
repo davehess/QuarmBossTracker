@@ -13175,3 +13175,16 @@ The guild lead: *"add in 'add to wishlist' for gear upgrades page so people get 
   since the finder only excludes what is already worn (noted, not fixed).
 - **Ship order**: bot (4.0.18) to `main`, then web (2.1.46; 2.1.45 went to the /pop/raid Brewall maps) to `beta`. Beta web calls the
   one production bot, so a wishlist saved on `b.wolfpack.quest` is real.
+
+### 448. Loot picks: Soft Reserve per raid (2026-10-26)
+The guild lead: *"Some places do a loot pick system where you would select items from each mob to 'roll' on as your main
+picks, this is a good practice for us to be able to support"*, then, between per-raid picks (A) and standing "main pick"
+stars on the wishlist (B): *"and its Soft Reserve per raid"*.
+- Called **Soft Reserve (SR)** in the UI. Before a raid each signed-up raider reserves items from the night's targets'
+  loot tables for the character they bring; when one drops, the bot's loot post lists who reserved it and they go
+  first. Picks decide WHO goes first, never the price: DKP sealed bids and rolls stay as they are. Picks end with the raid.
+- Open, for the guild lead with the design: picks per person, per boss or per night, open or officer-only, which bosses,
+  when picks lock, alts vs mains, whether a pick binds, and what happens to an item nobody reserved.
+- Also open: adding ANY item to a wishlist from the website (A: the button wherever an item shows, recommended; B: a
+  /me/wishlist page). Today only `/wishlist add` in Discord and the upgrades page (beta) can.
+- Scoping and mocks in progress.
