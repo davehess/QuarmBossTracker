@@ -50,7 +50,7 @@ const BOSSES: BoardRow[] = [
 const POP_BOSSES: BoardRow[] = [
   { name: 'Gaukr Sandstorm', zone: 'Bastion of Thunder', left: '1h 05m', pct: 64, up: false },
   { name: 'Seilaen', zone: 'Plane of Nightmare', left: '9h 30m', pct: 40, up: false },
-  { name: 'Bertoxxulous', zone: 'Plane of Disease', left: 'in window', pct: 100, up: true },
+  { name: 'Bertoxxulous', zone: 'Crypt of Decay', left: 'in window', pct: 100, up: true },
 ];
 
 export function BossBoardFigure({ rows = BOSSES, sub = 'Respawn windows with the ±variance done for you', label = 'The Discord boss board' }: {
