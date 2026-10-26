@@ -61,6 +61,32 @@ export function pickRaidEvent<T extends { start_time: string }>(events: T[], dat
   return sameDay.find(e => et(e.start_time).hour >= 18) ?? sameDay[0] ?? null;
 }
 
+/** Raid-Helper sign-ups that are not coming. Raid-Helper also files these as the sign-up's class, not just its status. */
+export const NOT_GOING = /absen|declin|bench|tentat/i;
+
+const letters = (s: string | null | undefined) => String(s ?? '').toLowerCase().replace(/[^a-z]/g, '');
+
+/**
+ * Which of a player's characters a sign-up brings (the guild lead, 2026-10-26: "people sign up for raids as their
+ * class, which can be an alt and not their main"): the one of the class they signed up as, alt or main, then the
+ * main, then active, then on a raider rank. Classes compare by letters only: Raid-Helper writes "Shadowknight"
+ * where characters say "Shadow Knight".
+ */
+export function pickSignupCharacter<T extends {
+  name: string; class: string | null; main_name: string | null; active: boolean | null; rank: string | null;
+}>(chars: T[], signedClass: string | null | undefined, raiderRanks: string[]): T | null {
+  const want = letters(signedClass);
+  const score = (c: T) => {
+    const cls = letters(c.class);
+    const isMain = !c.main_name || c.main_name.toLowerCase() === c.name.toLowerCase();
+    return (want && cls && (want.startsWith(cls) || cls.startsWith(want)) ? 8 : 0)
+      + (isMain ? 4 : 0) + (c.active ? 2 : 0) + (raiderRanks.includes(c.rank ?? '') ? 1 : 0);
+  };
+  let best: T | null = null;
+  for (const c of chars) if (!best || score(c) > score(best)) best = c;
+  return best;
+}
+
 /** The in-page anchor of one boss, so the overview can link straight to it. */
 export const bossAnchor = (sectionId: string, npc: number): string => `${sectionId}-${npc}`;
 

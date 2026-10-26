@@ -9,11 +9,9 @@ import { stepsHeld } from '@/lib/popSteps';
 import { popRoster, RAIDER_RANKS, RAID_ALT_RANKS } from '@/lib/popRoster';
 import { SELF_TICK_KEYS, selfFlagsFromTicks } from '@/lib/popSelfFlags';
 import { WHO_ZONE_NAMES, flagsFromSightings, type Sighting } from '@/lib/popWho';
-import { RAID_DATE, pickRaidEvent } from '@/lib/raidPlan';
+import { NOT_GOING, RAID_DATE, pickRaidEvent, pickSignupCharacter } from '@/lib/raidPlan';
 import { GUILD_TAG } from '@/lib/guild';
 
-// Raid-Helper sign-up statuses that do not count as coming (commands/preraid.js uses the same test).
-const NOT_GOING = /absen|declin|bench|tentat/i;
 const GUILD = GUILD_TAG;
 
 export type Raider = { name: string; cls: string | null };
@@ -38,10 +36,10 @@ export async function loadRaiders(): Promise<{ raiders: Raider[]; note: string; 
       sb.from('rh_signups').select('discord_id, user_name, status, class_name')
         .eq('event_id', event.id)
         .order('signup_id', { ascending: true }).range(from, to));
-    const going = signups.filter(s => !NOT_GOING.test(String(s.status || '')));
+    const going = signups.filter(s => !NOT_GOING.test(String(s.status || '')) && !NOT_GOING.test(String(s.class_name || '')));
     const ids = [...new Set(going.map(s => s.discord_id).filter((d): d is string => !!d))];
-    // A main's main_name is its own name (null on a few old rows), so read every character the player has and
-    // keep the mains here. characters has no level column (it lives in who_directory).
+    // Every character the player has: a sign-up can bring an alt. characters has no level column (it lives in
+    // who_directory).
     type Row = { name: string; discord_id: string; class: string | null; rank: string | null; active: boolean | null; main_name: string | null };
     const rows: Row[] = [];
     for (const part of chunks(ids)) {
@@ -51,19 +49,14 @@ export async function loadRaiders(): Promise<{ raiders: Raider[]; note: string; 
       if (error) throw new Error(`characters: ${error.message}`);
       rows.push(...(data ?? []) as Row[]);
     }
-    const mains = rows.filter(c => !c.main_name || c.main_name.toLowerCase() === c.name.toLowerCase());
-    // One main per player: the one on the class they signed up as, then active, then on a raider rank.
-    const signedClass = new Map(going.map(s => [s.discord_id, String(s.class_name || '').toLowerCase()]));
-    const score = (x: Row) => {
-      const want = signedClass.get(x.discord_id) || '';
-      const cls = String(x.class || '').toLowerCase();
-      return (want && cls && (want.startsWith(cls) || cls.startsWith(want)) ? 4 : 0)
-        + (x.active ? 2 : 0) + (RAIDER_RANKS.includes(x.rank ?? '') ? 1 : 0);
-    };
+    // One character per player: the one they signed up as (pickSignupCharacter says how).
+    const signedClass = new Map(going.map(s => [s.discord_id, s.class_name]));
+    const byPlayer = new Map<string, Row[]>();
+    for (const c of rows) byPlayer.set(c.discord_id, [...(byPlayer.get(c.discord_id) ?? []), c]);
     const best = new Map<string, Row>();
-    for (const c of mains) {
-      const cur = best.get(c.discord_id);
-      if (!cur || score(c) > score(cur)) best.set(c.discord_id, c);
+    for (const [id, chars] of byPlayer) {
+      const pick = pickSignupCharacter(chars, signedClass.get(id), RAIDER_RANKS);
+      if (pick) best.set(id, pick);
     }
     const linked = new Set(best.keys());
     const unlinked = going.filter(s => !s.discord_id || !linked.has(s.discord_id)).map(s => s.user_name || 'unknown');
