@@ -7,7 +7,7 @@
 // bar, the since-last-death clock at the right. web/lib/raidTimeline.ts holds the rules; this file only draws them.
 //
 // Two ways to get "now" and the kills:
-//   live    no `kills` prop: polls /api/spectator/timeline every 10 s, ticks once a second off the local clock
+//   live    no `kills` prop: polls /api/spectator/timeline every 30 s, ticks once a second off the local clock
 //           (corrected by the server's `now`, so a wrong PC clock does not skew the countdown).
 //   replay  `kills` and `nowMs` props: the replay board passes the night's bosses and its playhead, and a boss
 //           that dies after the playhead is not yet on the timeline.
@@ -21,7 +21,7 @@ import { buildTimeline, fmtClock, shortName, type Kill, type PairState, type Tim
 const etClock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const hms = (ms: number) => etClock.format(ms);
 
-const POLL_MS = 10_000;
+const POLL_MS = 30_000;   // was 10 s; each poll is a server call against Vercel's monthly CPU allowance (2026-10-25)
 const URGENT_SEC = 60;
 
 type Props = { kills?: Kill[]; nowMs?: number; src?: string };

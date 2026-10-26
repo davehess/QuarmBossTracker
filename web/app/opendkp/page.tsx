@@ -162,7 +162,7 @@ export default async function OpenDkpPage() {
                  style={{ color: STATE.color, borderColor: STATE.color }}>
               {STATE.label}
             </div>
-            <div className="mt-2"><AutoRefresh seconds={30} /></div>
+            <div className="mt-2"><AutoRefresh seconds={60} /></div>
           </div>
         </div>
         <p className="text-sm mt-3" style={{ color: STATE.color }}>{STATE.note}</p>

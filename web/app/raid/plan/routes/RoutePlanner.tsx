@@ -55,7 +55,7 @@ export type RoutePlannerProps = {
 };
 
 const SAVE_DELAY_MS = 1000;
-const POLL_MS = 10_000;
+const POLL_MS = 30_000;   // was 10 s; each poll is a server call against Vercel's monthly CPU allowance (2026-10-25)
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 export default function RoutePlanner(props: RoutePlannerProps) {

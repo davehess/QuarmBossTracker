@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'site-lighter-2026-10-26',
+    title: 'Web 2.1.41',
+    version: 'Web 2.1.41',
+    date: '2026-10-26',
+    headline: 'The website does far less work in the background, so it stays within its free hosting allowance and stays up.',
+    features: [
+      { name: 'Pages load when you click', blurb: 'Links no longer fetch every page they point to as soon as they appear on screen. A click is a moment slower; the site does a fraction of the work.' },
+      { name: 'Calmer live pages', blurb: 'The raid page refreshes once a minute, and only during raid hours (Sunday, Wednesday and Thursday evenings). The raid timeline and the route planner check every 30 seconds, the OpenDKP page every minute. Mimic overlays stay live as before.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'raidmimic-story-video-2026-10-25',
     title: 'Web 2.1.36',
     version: 'Web 2.1.36',
