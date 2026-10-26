@@ -47,7 +47,10 @@
 // monster, but the row can say nothing about the person.
 //
 // ROW SHAPE (data is compact JSON text; see the migration header)
-//   { v:1, step_s, who:[[name,cls,group,level],...], zones:['short',...],
+//   { v:1, step_s, who:[[name,cls,group,level,raidIdx?],...], zones:['short',...],
+//     raids:['<8 hex>',...],                            // optional: raid keys (raidKey of the uploader's raid leader);
+//                                                       //   who[i][4] indexes it, -1 = unnamed; both omitted when no raid was named
+//                                                       //   (web/lib/sessionGroups.ts: which raid is which inside one window)
 //     f:[[dt, i,x,y,z,h,hp,zi, i,x,y,z,h,hp,zi, ...], ...],
 //     mobs:[[name, spawn_id|null],...],                 // optional: omitted when nothing was targeted
 //     mf:[[dt, mi,x,y,z,n,zi], ...] }                   // optional: dt as in f, mi into mobs, n = targeters
@@ -104,6 +107,30 @@ let _excl = { at: 0, set: null };     // set: Set<lowercase name> once read at l
 let _zoneCache = { at: 0, map: new Map() };   // zone_id → short_name | null
 const _timers = { frame: null, safety: null };
 
+// ── Which raid ───────────────────────────────────────────────────────────────
+
+// Zeal sends "Raid Leader"; the first readers looked for '2' (same test as utils/raidGroups.js isRaidLeader).
+const _isRaidLeader = (rank) => rank != null && (String(rank).trim() === '2' || /^raid\s*leader$/i.test(String(rank).trim()));
+
+/** FNV-1a 32-bit of the lower-cased name, 8 hex digits. web/lib/sessionGroups.ts raidKey is the same function. */
+function raidKey(leaderName) {
+  let h = 0x811c9dc5;
+  const s = String(leaderName).trim().toLowerCase();
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, '0');
+}
+
+// The raid one upload belongs to: the key of the single raid leader in the uploader's own Zeal raid list. Zero or
+// several leaders (a list caught mid-change) name no raid; those raiders are recorded without one and the site
+// falls back to their zone. An uploader's list IS its raid, so every raider it places is in that raid.
+function _raidOfUpload(rows) {
+  let lead = null, n = 0;
+  for (const r of rows) {
+    if (r && typeof r.name === 'string' && r.name && _isRaidLeader(r.rank)) { n++; lead = r.name; }
+  }
+  return n === 1 ? raidKey(lead) : null;
+}
+
 // ── Intake (the ingest hot path: O(rows), no I/O, never throws) ─────────────
 
 /**
@@ -115,6 +142,7 @@ function noteRows(rows, src, nowMs = _clock()) {
   try {
     if (!Array.isArray(rows)) return 0;
     const s = src == null ? '' : String(src);
+    const raid = _raidOfUpload(rows);
     for (const r of rows) {
       if (!r || !Number.isFinite(r.loc_x) || !Number.isFinite(r.loc_y)) continue;
       const z = Number.isFinite(r.loc_z) ? r.loc_z : 0;
@@ -142,6 +170,7 @@ function noteRows(rows, src, nowMs = _clock()) {
         h: Number.isFinite(r.heading) ? r.heading : null,
         atMs: nowMs,
         src: s,
+        raid,
       });
       kept++;
     }
@@ -360,6 +389,8 @@ function buildMinuteRow(minuteStartMs, frames, opts = {}) {
   const srcZone = opts.srcZone instanceof Map ? opts.srcZone : new Map();
   const who = [];
   const whoIdx = new Map();
+  const raids = [];                   // raid keys, by first appearance; who[i][4] indexes it (-1: no raid named)
+  const raidIdx = new Map();
   const zones = [];
   const zoneIdx = new Map();
   const f = [];
@@ -378,14 +409,19 @@ function buildMinuteRow(minuteStartMs, frames, opts = {}) {
     for (const r of fr.rows) {
       const k = r.name.toLowerCase();
       if (excluded && excluded.has(k)) continue;
+      let ri = -1;
+      if (r.raid) {
+        ri = raidIdx.get(r.raid);
+        if (ri === undefined) { ri = raids.length; raidIdx.set(r.raid, ri); raids.push(r.raid); }
+      }
       let i = whoIdx.get(k);
       if (i === undefined) {
         i = who.length;
         whoIdx.set(k, i);
-        who.push([r.name, r.cls, r.group, r.level]);
+        who.push([r.name, r.cls, r.group, r.level, ri]);
       } else {   // last seen in the minute wins, but a missing value never erases a known one
         const w = who[i];
-        who[i] = [r.name, r.cls ?? w[1], r.group ?? w[2], r.level ?? w[3]];
+        who[i] = [r.name, r.cls ?? w[1], r.group ?? w[2], r.level ?? w[3], ri >= 0 ? ri : w[4]];
       }
       const zi = zoneOf(srcZone.get(r.src) || null);
       arr.push(i, _rnd(r.x), _rnd(r.y), _rnd(r.z), r.h == null ? -1 : _rnd(r.h), r.hp == null ? -1 : _rnd(r.hp), zi);
@@ -403,6 +439,8 @@ function buildMinuteRow(minuteStartMs, frames, opts = {}) {
     }
   }
   if (!f.length) return null;
+  // Without a single named raid the fifth field is dropped again: the row keeps the shape it had before the stamp.
+  if (!raids.length) for (const w of who) w.length = 4;
   return {
     guild_id: opts.guildId || _guildId(),
     minute_at: new Date(minuteStartMs).toISOString(),
@@ -410,7 +448,7 @@ function buildMinuteRow(minuteStartMs, frames, opts = {}) {
     raiders: who.length,
     frames: f.length,
     zones: zones.slice(),
-    data: JSON.stringify({ v: 1, step_s: stepS(), who, zones, f, ...(mf.length ? { mobs, mf } : {}) }),
+    data: JSON.stringify({ v: 1, step_s: stepS(), who, zones, f, ...(raids.length ? { raids } : {}), ...(mf.length ? { mobs, mf } : {}) }),
   };
 }
 
@@ -521,7 +559,7 @@ function _state() {
 }
 
 module.exports = {
-  noteRows, takeFrame, closeFinished, liveSnapshot, liveRows, buildMinuteRow, resolveSrcZones, flush, start, stop,
+  noteRows, takeFrame, closeFinished, liveSnapshot, liveRows, buildMinuteRow, resolveSrcZones, flush, start, stop, raidKey,
   stepS, minPlaced, setTargetSource, TARGETS_PER_FRAME,
   STEP_S_DEFAULT, MIN_PLACED_DEFAULT, STICKY_MS, FRESH_MS, PRUNE_MS, MAX_TRACKED, MAX_PENDING_MINUTES,
   MAX_ATTEMPTS, RETRY_BACKOFF_MS, SAFETY_MS, EXCLUDE_TTL_MS, ZONE_TTL_MS, LIVE_ZONE_MS,
