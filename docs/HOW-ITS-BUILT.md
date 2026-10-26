@@ -3940,6 +3940,14 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   characters (main first, hidden ones out, only names the action accepts) and picks the default: the sign-up character on `/pop/raid`
   (`bringingFrom`), else the main. Not on the parse page (its loot is already awarded) or the item hover card (cannot hold a form). Test:
   `test/wishlist-everywhere.test.js`.
+- **Gear upgrade finder: caps, quest / tradeskill sources, icons (`/me/upgrades` + the owner-only check on `/character/<name>/gear`, web 2.1.52 `[beta]`; DRAFT).**
+  Pure scoring in `web/lib/gearUpgrades.ts` (weights table `web/lib/gearWeights.ts`); the game's ceilings per character in `web/lib/gearCaps.ts`
+  (stat cap by level + the AA raise read from `character_aas` / `eqemu_aa_effects` SPA 262, Flowing Thought 0 for Warrior / Rogue / Monk, HP regen
+  level − 30, AC soft cap and returns). The evaluation both pages run is `web/lib/gearUpgradesRun.ts` (`runUpgradeEval`); reads in
+  `web/lib/gearUpgradesLoad.ts`. Sources beyond drops and vendors come from the SQL function `item_alt_sources` (`loadAltSources`; quest rewards
+  from `eqemu_quest_scripts`, recipes from `eqemu_tradeskill_recipe*`; degrades to none until the migration is applied). Gear page:
+  `app/character/[name]/gear/UpgradeCheck.tsx`, drawn only for the owner. Icons: `app/character/[name]/inventory/ItemIcon.tsx` (atlas, else PQDI).
+  High end / Low end is `?ends=high|low`. Test: `test/gear-caps.test.js`, `test/gear-upgrades.test.js`.
 - **Wishlist + pre-bid on the gear upgrades page (`/me/upgrades`, web 2.1.45 `[beta]`, bot 4.0.18; DRAFT).** Under each upgrade,
   `WishlistControls.tsx` (client, `useTransition`, optimistic with rollback) offers Add to wishlist (priority + optional pre-bid), then Set /
   Change pre-bid and Remove. Server actions are `app/me/upgrades/actions.ts` (member must own the character via `ownedCharacters`; limits from

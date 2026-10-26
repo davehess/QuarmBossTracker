@@ -149,6 +149,16 @@ next touch one rather than assuming a missing row means a missing doc.
   3 s), and names on the Zeal raid list count as players, so a raider's death is kept without a /who. `test/death-self-and-raid-reading.test.js`.
   Not pushed; graduates with the next stable Mimic cut. The corpse-run DM (`_corpseNoteLine`) still keys on "You died." only.
 
+- **🧪 Gear finder: quest + tradeskill items, cap-aware scoring, icons, upgrade check on the gear page (draft `draft/gear-build`, 2026-10-26; web
+  2.1.52 for `beta`). Not pushed; migration not applied.** *"yes we should have quest and tradeskill items in as well"*, *"we should be
+  evaluating how close this gets you to maximums on stats, attack, flowing thought, AC"*, *"cap with planar power at level 65 is 305 now"*,
+  *"roll into the gear page ... we need icons"* (the guild lead). Quest rewards and recipes now count as sources (`item_alt_sources`, migration
+  `20261026200000`; the page degrades to drops + vendors until it is applied); each stat scores only the part below its cap, with the caps from the
+  server source and the stat cap raised by the character's own AAs (Planar Power → 305); each upgrade shows "Cap: ATK 212→250/250 · FT …"; a High
+  end / Low end switch models attributes; the gear page gets an owner-only per-slot upgrade check; icons on both pages (PQDI fallback while the atlas
+  is off). `test/gear-caps.test.js`. DECISIONS §448. **To do:** apply the migration; guild lead confirms the Monk AC cap (350 vs 315) and the
+  205 High end assumption; read it on `https://b.wolfpack.quest/me/upgrades`. Graduate with the wishlist change.
+
 - **🧪 Add to wishlist + sealed pre-bid on `/me/upgrades`, ears / wrists / rings paired (draft `draft/upgrades-wishlist`, 2026-10-26; bot 4.0.18
   for `main` FIRST, web 2.1.45 for `beta` after). Not pushed.** *"add in 'add to wishlist' for gear upgrades page so people get those on
   their list to add a pre-bid amount"* and *"put wrists and ears together so we can see them easier, since they're interchangeable"* (the

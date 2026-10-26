@@ -23,19 +23,28 @@
 //     stats the class swings on.
 //
 // CAPS (the "cap rules"). Each capped stat is judged against the REST of the worn set, so an upgrade can
-// never be credited with points the game would throw away:
-//   · attack — ONE shared ceiling of 250 for worn +ATK (web/app/character/[name]/gear/page.tsx WORN_ATK_CAP;
+// never be credited with points the game would throw away. The numbers come from the Quarm server source
+// (SecretsOTheP/EQMacEmu @ a3b80b2) and are computed per character in web/lib/gearCaps.ts (capsFor); the CAPS
+// table below is only the level-65, class-blind default that a bare effectiveValue() call falls back to:
+//   · attack — ONE shared ceiling of 250 for worn +ATK (zone/bonuses.cpp:78 ItemATKCap, ruletypes.h:55; also
 //     verified in game 2026-07-14). A piece's +ATK only counts up to the room the other pieces leave.
-//   · haste — the highest worn haste wins and they do not stack (same page). A piece's haste counts only by
-//     how far it beats the best OTHER worn piece.
-//   · hp regen / mana regen / damage shield — summed with a ceiling. 30, 15 and 30 are the EQEmu rule
-//     defaults (Character:ItemHealthRegenCap, ItemManaRegenCap, ItemDamageShieldCap). ⚠ Not yet checked against
-//     Project Quarm's own rule values: if Quarm differs, this is the only place to change it.
+//   · haste — the highest worn haste wins and they do not stack. A piece's haste counts only by how far it beats
+//     the best OTHER worn piece.
+//   · hp regen — summed to a ceiling of 30, or (level − 30) above level 60: 35 at 65 (client_mods.cpp:196-202).
+//     ⚠ This table said 30 until 2026-10-26; that was the level-60 number.
+//   · mana regen (Flowing Thought) — summed to 15 for any class that casts, 0 for Warrior / Rogue / Monk, whose
+//     item mana regen is discarded (client_mods.cpp:975-983; mob.cpp:856-888 for who casts). The default below is
+//     the caster 15; the class-aware 0 is in gearCaps.
+//   · damage shield — NO cap. The EQEmu default of 30 that used to sit here has no counterpart in the Quarm
+//     server source (grep of zone/ finds no ItemDamageShieldCap), so the unbacked ceiling was removed.
 //   · Magic resist has a FLOOR, not a cap: raid rule 12 wants 100 worn (web/lib/raidKit.ts MR_FLOOR). While the
 //     worn set sits under it, MR is weighed at MR_BELOW_FLOOR_TIER; at or over it, at the class's own tier.
-// Attributes have no cap here. The 255 stat cap applies to base + buffs + gear and only the gear part is known,
-// so the finder cannot tell when a stat is capped (the gear page makes the same call). There is also no
-// "heroic" stat on Quarm items; the finder reads none.
+//     (The game's ceiling on a resist is 500, plus AA; gearCaps applies that to the per-character caps.)
+//   · attributes — per-character: the stat cap is 255 to level 60, then +5 a level (280 at 65), plus the AA cap
+//     raises the character owns (Planar Power +25, Innate Enlightenment +50 on WIS/INT for casters). Base stats
+//     are not in our data, so how much of the cap gear can still fill is ASSUMED: see ATTR_ASSUMED_NONGEAR.
+//   · AC — a soft cap per class; past it each point counts 1 / `returns` (attack.cpp:5320-5451).
+// There is no "heroic" stat on Quarm items; the finder reads none.
 
 export type Tier = 'off' | 'low' | 'med' | 'high' | 'crit';
 
@@ -104,15 +113,28 @@ export const CLASS_TIERS: Record<string, Partial<Record<StatKey, Tier>>> = {
 export const MR_BELOW_FLOOR_TIER: Tier = 'high';
 
 export type CapRule =
-  | { rule: 'sum'; cap: number }      // every worn piece's value adds up, to a ceiling
-  | { rule: 'max' };                  // only the best worn piece counts; they do not stack
-export const CAPS: Partial<Record<StatKey, CapRule>> = {
+  | { rule: 'sum'; cap: number; keepNegative?: boolean }      // every worn piece's value adds up, to a ceiling
+  | { rule: 'max' }                                           // only the best worn piece counts; they do not stack
+  | { rule: 'soft'; cap: number; returns: number };           // full value to the soft cap, 1 / returns past it
+export type CapTable = Partial<Record<StatKey, CapRule>>;
+// The level-65, class-blind default (see the CAPS notes above). Per-character caps: web/lib/gearCaps.ts capsFor().
+export const CAPS: CapTable = {
   attack: { rule: 'sum', cap: 250 },
   haste: { rule: 'max' },
-  regen: { rule: 'sum', cap: 30 },
+  regen: { rule: 'sum', cap: 35 },
   manaregen: { rule: 'sum', cap: 15 },
-  damageshield: { rule: 'sum', cap: 30 },
 };
+
+// How much of an attribute is assumed to come from somewhere other than worn gear (race and class base, level,
+// AAs, buffs). Base stats are not in our data, so this is a model, not a measurement, and the page names it:
+//   high — "High end": the character is near the cap before gear, so only gear points that still fit under the cap
+//          count. 205 is 255 − 50: the old pre-Planes cap, less the 50 points a gear set typically adds.
+//   low  — "Low end": nothing is assumed, every gear point counts (up to the cap).
+// The AA cap raises widen the room in High end (cap 305 → 100 points of gear count, not 75), which is the point of
+// them. Change a number here and nothing else moves.
+export const ATTR_ASSUMED_NONGEAR = { high: 205, low: 0 };
+export type AttrEnd = keyof typeof ATTR_ASSUMED_NONGEAR;
+export const DEFAULT_ATTR_END: AttrEnd = 'high';
 
 // Flat points a worn-effect item earns on top of its stats. Deliberately small: tie-breakers, not drivers.
 export const TIEBREAK = { focus: 2, worn: 1, proc: 1, click: 0.5 };

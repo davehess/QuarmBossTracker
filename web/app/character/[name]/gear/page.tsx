@@ -23,6 +23,11 @@ import { GUILD_TAG } from '@/lib/guild';
 import type { Metadata } from 'next';
 import MoreInfo from '@/components/MoreInfo';
 import { characterMeta } from '@/lib/pageMeta';
+import ItemIcon from '../inventory/ItemIcon';
+import UpgradeCheck from './UpgradeCheck';
+import { ownedCharacters } from '@/lib/ownedCharacters';
+import { isOptedOut, scoredClass } from '@/lib/gearUpgrades';
+import { parseAttrEnd, runUpgradeEval } from '@/lib/gearUpgradesRun';
 
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
   const { name } = await params;
@@ -107,7 +112,7 @@ function decodeSpell(s: any): Fx {
   return fx;
 }
 type ItemRow = {
-  id: number; name: string; ac: number | null; hp: number | null; mana: number | null;
+  id: number; name: string; icon: number | null; ac: number | null; hp: number | null; mana: number | null;
   damage: number | null; delay: number | null; attack: number | null; haste: number | null;
   focus_effect: number | null; proc_effect: number | null; clickeffect: number | null; worneffect: number | null;
   clicktype: number | null; casttime: number | null; slots: number | null; classes: number | null;
@@ -140,7 +145,7 @@ async function load(decoded: string) {
   const sb = supabaseAdmin();
   const [charRes, gearRes, aaRes, bookRes] = await Promise.all([
     sb.from('characters')
-      .select('name, race, class, exclude_inventory, deity_id, quarmy_synced_at')
+      .select('name, race, class, exclude_inventory, exclude_from_stats, deity_id, quarmy_synced_at')
       .ilike('name', decoded)
       .limit(1),
     sb.from('character_gear')
@@ -173,7 +178,7 @@ async function load(decoded: string) {
   if (itemIds.length) {
     const { data: itemRows } = await sb
       .from('eqemu_items')
-      .select('id, name, ac, hp, mana, damage, delay, attack, haste, focus_effect, proc_effect, clickeffect, worneffect, clicktype, casttime, slots, classes, str, sta, agi, dex, wis, intel, cha, fr, cr, mr, dr, pr')
+      .select('id, name, icon, ac, hp, mana, damage, delay, attack, haste, focus_effect, proc_effect, clickeffect, worneffect, clicktype, casttime, slots, classes, str, sta, agi, dex, wis, intel, cha, fr, cr, mr, dr, pr')
       .in('id', itemIds);
     for (const it of (itemRows ?? []) as ItemRow[]) items[it.id] = it;
     const spellIds = [...new Set(
@@ -469,6 +474,20 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
         && ((a.classes ?? 0) & classBit) !== 0
         && !trainedIdx.has(a.eqmacid))
     : [];
+  // ── Upgrade check: the OWNER only ──────────────────────────────────────────────────────────────────────────
+  // This page is open to any signed-in member, but the evaluation is the owner's own tool (it is /me/upgrades, which
+  // lists only the viewer's characters), so it is drawn only when the viewer owns this character, and never for an
+  // opted-out one. Nothing here widens who can see a character's gear; it adds a view of it for its owner.
+  let upgradeEval = null;
+  if (equipped.length > 0 && scoredClass(char?.class) && !isOptedOut(char)) {
+    const mine = await ownedCharacters(user.id);
+    if (mine.some(o => o.name.toLowerCase() === decoded.toLowerCase())) {
+      upgradeEval = await runUpgradeEval(supabaseAdmin(), {
+        name: decoded, className: char?.class ?? null, race: char?.race ?? null, gear, attrEnd: parseAttrEnd(null),
+      }).catch(() => null);   // the check is an extra: if it cannot be built, the rest of the page still renders
+    }
+  }
+
   const trainedRanks = validAas.reduce((s, a) => s + a.rank, 0);
   const spentPoints = validAas.reduce((s, a) => {
     const cat = aaByMac.get(a.aa_index);
@@ -606,6 +625,8 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
             </div>
           </section>
 
+          {upgradeEval && <UpgradeCheck name={decoded} ev={upgradeEval} />}
+
           <section className="bg-panel border border-border rounded-lg p-4">
             <h3 className="text-sm text-orange mb-3">Equipped ({equipped.length} slots)</h3>
             <div className="overflow-x-auto">
@@ -644,9 +665,12 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
                       <tr key={g.slot} className="border-t border-border hover:bg-[#1f242c]">
                         <td className="py-1 text-dim">{g.slot.replace(/(\d)$/, ' $1')}</td>
                         <td className="py-1">
-                          <a href={`https://www.pqdi.cc/item/${g.item_id}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">
-                            {g.item_name}
-                          </a>
+                          <span className="inline-flex items-center gap-1.5">
+                            <ItemIcon icon={it?.icon} alt={g.item_name} size={20} />
+                            <a href={`https://www.pqdi.cc/item/${g.item_id}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">
+                              {g.item_name}
+                            </a>
+                          </span>
                         </td>
                         <td className="text-right text-dim">{it?.ac || '—'}</td>
                         <td className="text-right text-dim">{it?.hp || '—'}</td>
