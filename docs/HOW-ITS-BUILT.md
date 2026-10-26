@@ -2950,8 +2950,9 @@ Personal data lives on each player's PC; the hub keeps the shared raid record. N
   `out/replay` or `out/parses` is missing). The agent serves it read-only (`_serveLocalSite`, path-traversal refused;
   `WOLFPACK_LOCAL_SITE_DIR` points at the bundle, a dev run finds `web/local/out`) and answers `/api/local/*` from this
   PC's files behind the same local-request guard as every route. It imports `web/components` and `web/lib` through `@/`, so
-  the web tree travels as a unit. Pages: Inventory (`/api/local/inventory`, shared bank counted once per account), My replay,
-  My parses. Mimic opens a page in its own window (`openLocalSite`, `window.mimic.openLocalSite`); the dashboard rail group
+  the web tree travels as a unit. Pages: /me (`web/local/app/me`, first in the nav like the website's chip: the local pages plus a
+  jump to `wolfpack.quest/me#my-characters`, where each character's inventory sync / hide switches are; FB-98), Inventory
+  (`/api/local/inventory`, shared bank counted once per account), My replay, My parses. Mimic opens a page in its own window (`openLocalSite`, `window.mimic.openLocalSite`); the dashboard rail group
   "On this PC" and the tray items drive the same function. An older Mimic running agent 4.x answers `/local/` with a plain
   "not installed in this build". Tests: `test/local-site-agent.test.js`, `test/local-mode.test.js`.
 - **Game accounts, one-off hide, stale marker on the local inventory page (agent 4.0.23, 2026-10-26).** The page used to guess accounts from
