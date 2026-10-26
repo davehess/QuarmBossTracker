@@ -24954,6 +24954,17 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  // The website's wishlist + sealed pre-bid on /me/upgrades. The bot encrypts the bid (WISHLIST_BID_KEY lives
+  // only here), behind a 60-second ticket Vercel signs per action. utils/webWishlist.js has the why.
+  if (req.method === 'POST' && req.url === '/api/web/wishlist') {
+    try { return await require('./utils/webWishlist').handle(req, res); }
+    catch (err) {
+      console.error('[web-wishlist] handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
   if (req.method === 'POST' && req.url === '/api/agent/reporter-poll') {
     try { return await _handleAgentReporterPoll(req, res); }
     catch (err) {

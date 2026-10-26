@@ -18,6 +18,7 @@ const supabase                              = require('../utils/supabase');
 const { encryptBid, decryptBid, isEncryptionEnabled } = require('../utils/bidCrypto');
 const { getCharacter, getAllNames }         = require('../utils/roster');
 const { hasAllowedRole }                   = require('../utils/roles');
+const rules                                = require('../utils/wishlistRules'); // shared with the web's add (utils/webWishlist.js)
 
 // ── Item resolution ─────────────────────────────────────────────────────────
 // Two ways to specify an item:
@@ -64,7 +65,7 @@ async function _add(interaction) {
   const characterArg = interaction.options.getString('character');
   const itemQuery    = interaction.options.getString('item');
   const bidAmount    = interaction.options.getInteger('bid_amount') ?? null;
-  const priority     = interaction.options.getInteger('priority') ?? 5;
+  const priority     = interaction.options.getInteger('priority') ?? rules.PRIORITY_DEFAULT;
   const note         = interaction.options.getString('note') ?? null;
 
   // Validate character against roster
@@ -294,9 +295,9 @@ module.exports = {
         .setDescription('Add an item to a character\'s wishlist')
         .addStringOption(o => o.setName('character').setDescription('Character name').setRequired(true).setAutocomplete(true))
         .addStringOption(o => o.setName('item').setDescription('Item name or 7-digit ID').setRequired(true))
-        .addIntegerOption(o => o.setName('bid_amount').setDescription('EXACT DKP to bid (closed/sealed). Omit = bot bids 1 DKP only. No escalation.').setRequired(false).setMinValue(1).setMaxValue(50000))
-        .addIntegerOption(o => o.setName('priority').setDescription('1=top BIS, 10=nice-to-have (default 5)').setMinValue(1).setMaxValue(10))
-        .addStringOption(o => o.setName('note').setDescription('Optional note (e.g. "BIS for raids"; "weekend only")').setMaxLength(200))
+        .addIntegerOption(o => o.setName('bid_amount').setDescription('EXACT DKP to bid (closed/sealed). Omit = bot bids 1 DKP only. No escalation.').setRequired(false).setMinValue(rules.BID_MIN).setMaxValue(rules.BID_MAX))
+        .addIntegerOption(o => o.setName('priority').setDescription('1=top BIS, 10=nice-to-have (default 5)').setMinValue(rules.PRIORITY_MIN).setMaxValue(rules.PRIORITY_MAX))
+        .addStringOption(o => o.setName('note').setDescription('Optional note (e.g. "BIS for raids"; "weekend only")').setMaxLength(rules.NOTE_MAX))
     )
     .addSubcommand(sub =>
       sub.setName('remove')

@@ -3910,6 +3910,16 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
 
 ## Web features
 
+- **Wishlist + pre-bid on the gear upgrades page (`/me/upgrades`, web 2.1.45 `[beta]`, bot 4.0.18; DRAFT).** Under each upgrade,
+  `WishlistControls.tsx` (client, `useTransition`, optimistic with rollback) offers Add to wishlist (priority + optional pre-bid), then Set /
+  Change pre-bid and Remove. Server actions are `app/me/upgrades/actions.ts` (member must own the character via `ownedCharacters`; limits from
+  `web/lib/wishlistRules.ts`, the twin of the bot's `utils/wishlistRules.js` that `/wishlist add` is built from) and each calls the bot through
+  `web/lib/wishlistBot.ts`: a 60-second ticket (`signScreenTicket`, audience `wishlist`, `SCREEN_TOKEN_SECRET`) to `POST /api/web/wishlist`
+  (`utils/webWishlist.js`: ops list / add / setbid / remove; ownership re-derived from the Supabase user id; bid sealed by `bidCrypto.encryptBid`;
+  refused 503 when `WISHLIST_BID_KEY` is unset). The bot's address is the origin of `SCREEN_LIVE_URL`; unset means the controls are hidden. The
+  owner's own pre-bid is read back through the bot's `list` op (the view `/mywishlist` gives them); no other bid is ever returned. The page
+  groups Ear1+Ear2, Wrist1+Wrist2, Fingers1+Fingers2 under one heading each (`groupPairedSlots` in `web/lib/gearUpgrades.ts`; `WORN_SLOTS`
+  untouched). Test: `test/web-wishlist.test.js`.
 - **Flag lab, officer sandbox (`/admin/flag-lab`, web 1.9.2, `[beta]`, DRAFT)** — pre-test the PoP flag matrix and
   the hail board with invented raiders and no raid. Off unless `FLAG_LAB=1` (set it in Vercel's Preview
   environment only). All state is client `useState`; no table read, no server action, no write (asserted by
