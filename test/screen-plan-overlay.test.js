@@ -150,7 +150,8 @@ describe('the preflag code moved out of /pop/raid', () => {
     expect(sel.length).toBeGreaterThan(0);
     for (const x of sel) expect(x.split(/,\s*/)).not.toContain('level');
     expect(mod).not.toMatch(/\.is\('main_name', null\)/);
-    expect(mod).toMatch(/c\.main_name\.toLowerCase\(\) === c\.name\.toLowerCase\(\)/);
+    // The main test moved with the pick into web/lib/raidPlan.ts (pickSignupCharacter, run in pop-raid-plan.test.js).
+    expect(mod).toMatch(/pickSignupCharacter\(/);
   });
   it('spells the guild tag as the constant, never the literal', () => {
     expect(mod).toMatch(/import \{ GUILD_TAG \} from '@\/lib\/guild'/);
