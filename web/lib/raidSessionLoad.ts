@@ -30,10 +30,11 @@ import { windowIso, type ShareWindow } from './raidShare';
 import { anonSalt, loadAnon } from './raidShareLookup';
 import { loadBidders } from './raidSessionBids';
 import {
-  anonSig, attendanceFromMinutes, buildKills, buildLoot, buildRolls, buildTicks, windowNight,
-  type CapturedTickIn, type DkpLootIn, type DkpTickIn, type EncounterIn, type LootedIn,
+  LISTED_MARKS, anonSig, attendanceFromMinutes, buildKills, buildLoot, buildRolls, buildTicks, nameKey, npcZoneId, windowNight,
+  type AnonMap, type CapturedTickIn, type DkpLootIn, type DkpTickIn, type EncounterIn, type LootedIn,
   type ObservedIn, type PlayerIn, type SessionBundle,
 } from './raidSession';
+import { buildGroups, groupOfFight, inGroupAt, narrowRows, type GroupIndex, type RaidGroup } from './sessionGroups';
 import { detectRaidChange, whoSeries, type RaidChange } from './raidSplit';
 import { rosterCuts } from './liveRaidWindow';
 import type { NightSummary, NightMinute } from './raidReplay';
@@ -42,7 +43,18 @@ import type { RollOverride, RollSetRow } from './rolls';
 // `change` is a time and two counts, never a name (raidSplit.ts); only the members' page uses it.
 // `breaks` (only with opts.breaks, which the members' page asks for) is the instants at which the roster turns over, found again inside each
 // side of `change`: times only, never a name (liveRaidWindow.ts rosterCuts).
-export type SessionReview = { bundle: SessionBundle; night: NightSummary | null; change: RaidChange | null; breaks?: number[] };
+//
+// `groups` (only with opts.groups or opts.group, the members' page) is the raids the recording holds inside the window
+// (lib/sessionGroups.ts); `group` is the one this review is narrowed to, when `opts.group` named one that exists. A
+// narrowed review has its attendance, replay minutes, fights and loot cut to that raid. The window's ticks, rolls and bids
+// stay whole: they are not attributed to a raid anywhere upstream.
+export type SessionReview = {
+  bundle: SessionBundle; night: NightSummary | null; change: RaidChange | null; breaks?: number[];
+  groups?: RaidGroup[]; group?: string | null;
+  /** Server-side only (who was in each raid minute by minute): the page uses it to scope the deaths; it is never sent to the browser. */
+  groupIndex?: GroupIndex;
+};
+export type ReviewOpts = { breaks?: boolean; groups?: boolean; group?: string | null; groupWin?: ShareWindow | null };
 
 const MINUTE_PAGE = 30;       // rows of ~25 KB each: ~750 KB a response
 // The top-five list is read for this many fights at most (curated bosses first, then the biggest). It was 60, which
@@ -69,9 +81,9 @@ async function readAll(sb: SupabaseClient, win: ShareWindow) {
       .order('minute_at')
       .range(from, to), { page: MINUTE_PAGE }),
     selectAll<EncounterIn>((from, to) => sb.from('encounters')
-      .select('id, npc_id, started_at, ended_at, duration_sec, total_damage, zone_short, eqemu_npc_types(name)')
+      .select('id, npc_id, started_at, ended_at, duration_sec, total_damage, zone_short, classification, is_wipe, eqemu_npc_types(name)')
       .eq('guild_id', GUILD_TAG)
-      .is('classification', null)
+      .or(LISTED_MARKS)   // ours, wipes and another guild's: the last two are listed with a tag, never counted as kills
       .gte('ended_at', lo).lt('ended_at', hi)
       .order('id')
       .range(from, to)),
@@ -114,14 +126,56 @@ async function readAll(sb: SupabaseClient, win: ShareWindow) {
   return { minutes, encounters, looted, observed, rollRows, overrides, captured, raids };
 }
 
-export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow, opts: { breaks?: boolean } = {}): Promise<SessionReview> {
-  const key = `${GUILD_TAG}|${win.fromMs}|${win.toMs}${opts.breaks ? '|b' : ''}`;
+// The raids of a window, kept five minutes per window so the replay route (15 minutes of rows a request) does not
+// read the whole window again for each slice. Filled by the review load and by loadGroupIndex.
+const groupCache = new Map<string, { at: number; sig: string; index: GroupIndex }>();
+const groupKey = (win: ShareWindow) => `${GUILD_TAG}|${win.fromMs}|${win.toMs}`;
+function rememberGroups(win: ShareWindow, sig: string, index: GroupIndex) {
+  if (groupCache.size >= 20) groupCache.delete(groupCache.keys().next().value as string);
+  groupCache.set(groupKey(win), { at: Date.now(), sig, index });
+}
+
+/**
+ * The raids in a window (lib/sessionGroups.ts), for the routes that serve a narrowed slice. Cached per window; a miss
+ * reads the window's minute rows once (the same ~5 MB the review reads).
+ */
+export async function loadGroupIndex(sb: SupabaseClient, win: ShareWindow, anon?: AnonMap): Promise<GroupIndex> {
+  const a = anon ?? await loadAnon(sb, GUILD_TAG, win);
+  const sig = anonSig(a);
+  const hit = groupCache.get(groupKey(win));
+  if (hit && hit.sig === sig && Date.now() - hit.at < CACHE_MS) return hit.index;
+  const { from: lo, to: hi } = windowIso(win);
+  const minutes = await selectAll<{ minute_at: string; data: string }>((from, to) => sb.from('raid_track_minutes')
+    .select('minute_at, data')
+    .eq('guild_id', GUILD_TAG)
+    .gte('minute_at', lo).lt('minute_at', hi)
+    .order('minute_at')
+    .range(from, to), { page: MINUTE_PAGE });
+  const index = buildGroups(minutes, a);
+  rememberGroups(win, sig, index);
+  return index;
+}
+
+export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow, opts: ReviewOpts = {}): Promise<SessionReview> {
+  const key = `${GUILD_TAG}|${win.fromMs}|${win.toMs}${opts.breaks ? '|b' : ''}${opts.groups || opts.group ? '|g' : ''}${opts.group ? `:${opts.group}` : ''}${opts.groupWin ? `@${opts.groupWin.fromMs}.${opts.groupWin.toMs}` : ''}`;
   const anon = await loadAnon(sb, GUILD_TAG, win);
   const sig = anonSig(anon);
   const hit = cache.get(key);
   if (hit && hit.sig === sig && Date.now() - hit.at < CACHE_MS) return hit.value;
 
   const [r, bidders] = await Promise.all([readAll(sb, win), loadBidders(sb, GUILD_TAG, win, anonSalt())]);
+
+  // Which raids the window holds, and whether this review is narrowed to one of them.
+  // A part of a larger window is cut by the raids found in the LARGER one (opts.groupWin): ids only mean something there.
+  const wantGroups = !!(opts.groups || opts.group);
+  const index = !wantGroups ? null
+    : opts.groupWin ? await loadGroupIndex(sb, opts.groupWin, anon)
+    : buildGroups(r.minutes, anon);
+  if (index && !opts.groupWin) rememberGroups(win, sig, index);
+  const group = index && opts.group && index.members.has(opts.group) ? opts.group : null;
+  const inRaid = (name: string | null | undefined, atMs: number | null) =>
+    !index || !group || (!!name && (atMs == null ? false : inGroupAt(index, group, nameKey(name), atMs)));
+  const minutes = index && group ? narrowRows(r.minutes, index, group) : r.minutes;
 
   // Ids that the windowed reads returned: the opendkp children, the parses and the curated-boss flags.
   const raidIds = r.raids.map(x => x.raid_id);
@@ -165,20 +219,51 @@ export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow, op
       .range(from, to)));
   }
 
+  // A narrowed review keeps a fight when the raid holds at least half of its damage dealers; a fight with no parse
+  // at all cannot be placed, so it is left out of a raid's list (it is still in the whole window's).
+  let encounters = r.encounters;
+  if (index && group) {
+    const namesOf = new Map<string, string[]>();
+    for (const p of players) {
+      const a = namesOf.get(p.encounter_id);
+      if (a) a.push(nameKey(p.character_name)); else namesOf.set(p.encounter_id, [nameKey(p.character_name)]);
+    }
+    encounters = r.encounters.filter(e => {
+      const at = Date.parse(e.ended_at ?? e.started_at);
+      return Number.isFinite(at) && groupOfFight(index, at, namesOf.get(e.id) ?? []) === group;
+    });
+  }
+
+  // Zones for fights whose row has none: the NPC id carries it (eqemu_npc_types.id = zoneid * 1000 + n).
+  const zoneNames = new Map<number, string>();
+  const zoneIds = [...new Set(encounters.filter(e => !e.zone_short).map(e => npcZoneId(e.npc_id)).filter((z): z is number => z != null))];
+  for (const ids of chunk(zoneIds, 100)) {
+    const { data, error } = await sb.from('eqemu_zone')
+      .select('zone_id, short_name')
+      .in('zone_id', ids)
+      .limit(100);   // a literal, equal to the chunk: one row per id asked for
+    if (error) throw error;
+    for (const z of (data ?? []) as { zone_id: number; short_name: string | null }[]) if (z.short_name) zoneNames.set(z.zone_id, z.short_name);
+  }
+
   const bundle: SessionBundle = {
     fromMs: win.fromMs,
     toMs: win.toMs,
-    minutesRecorded: r.minutes.length,
-    attendance: attendanceFromMinutes(r.minutes, anon),
+    minutesRecorded: minutes.length,
+    attendance: attendanceFromMinutes(minutes, anon),
     ticks: buildTicks(r.captured, dkpTicks, anon),
-    kills: buildKills(r.encounters, players, bossIds, anon),
-    loot: buildLoot(r.looted, r.observed, dkpLoot, anon),
+    kills: buildKills(encounters, players, bossIds, anon, zoneNames),
+    loot: buildLoot(
+      r.looted.filter(l => inRaid(l.looter_character, Date.parse(l.looted_at))),
+      r.observed.filter(o => inRaid(o.winner_character, Date.parse(o.posted_at))),
+      dkpLoot, anon),
     rolls: buildRolls(r.rollRows, r.overrides, r.looted, anon),
     bidders,
   };
-  const who = whoSeries(r.minutes);
-  const value: SessionReview = { bundle, night: windowNight(r.minutes, win), change: detectRaidChange(who) };
+  const who = whoSeries(minutes);
+  const value: SessionReview = { bundle, night: windowNight(minutes, win), change: detectRaidChange(who) };
   if (opts.breaks) value.breaks = rosterCuts(who);
+  if (index) { value.groups = index.groups; value.group = group; value.groupIndex = index; }
 
   if (cache.size >= 20) cache.delete(cache.keys().next().value as string);
   cache.set(key, { at: Date.now(), sig, value });

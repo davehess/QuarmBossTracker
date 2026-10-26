@@ -6,6 +6,7 @@
 import { useCallback, useMemo, useState, type MutableRefObject } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Span } from '@/lib/raidReplay';
+import type { RaidGroup } from '@/lib/sessionGroups';
 import type { FightMark, MassDeath, NightCtx, Slice, SliceKind } from '@/lib/nightSlices';
 import NightFights from './NightFights';
 import SegmentsEditor from './SegmentsEditor';
@@ -20,6 +21,10 @@ export type NightPanelData = {
   breaks: number[];
   /** An officer. */
   canEdit: boolean;
+  /** The raids the recording holds in this window (lib/sessionGroups.ts); two or more draw a lane and give each segment an Open link per raid. */
+  groups: RaidGroup[];
+  /** The window the raids were counted in (this one, or the larger one this is a part of). */
+  groupsParent: { fromMs: number; toMs: number };
 };
 
 export type NightSave = {
@@ -61,7 +66,7 @@ export default function NightPanel({ data, go, playheadRef }: {
     <section className="mt-5" aria-label="The night, sliced">
       <h2 className="mb-2 text-lg text-gold">The night, sliced</h2>
       <div className="rounded-md border border-border bg-panel p-3">
-        <SegmentsEditor key={sig} fromMs={data.fromMs} toMs={data.toMs} spans={data.spans} breaks={data.breaks} ctx={ctx} saved={inside}
+        <SegmentsEditor key={sig} fromMs={data.fromMs} toMs={data.toMs} spans={data.spans} breaks={data.breaks} ctx={ctx} saved={inside} groups={data.groups} groupsParent={data.groupsParent}
           canEdit={data.canEdit} save={save} go={go} playheadRef={playheadRef} />
         {crossing > 0 && (
           <p className="mt-2 text-xs text-gold">

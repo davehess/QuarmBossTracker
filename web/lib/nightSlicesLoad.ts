@@ -17,7 +17,8 @@ import { selectAll } from './selectAll';
 import { GUILD_TAG } from './guild';
 import { chunk, displayMobName } from './replayBosses';
 import { windowIso, type ShareWindow } from './raidShare';
-import type { KillRow } from './raidSession';
+import { nameKey, type KillRow } from './raidSession';
+import { groupOfFight, inGroupAt, type GroupIndex } from './sessionGroups';
 import { dedupEncounterDeaths, dedupNightDeaths, type RawDeath } from './raidReview';
 import {
   massDeaths, markFights, parseSliceStore, planSliceWrite, playerDeathName, slicesKey,
@@ -89,12 +90,12 @@ export type NightMarks = { fights: FightMark[]; deaths: number[]; mass: MassDeat
  * The window's named fights (curated bosses), kills AND wipes AND other guilds', and its deaths. `kills` is the
  * session loader's own list (the fights with no mark), so only the marked ones are read again here.
  */
-export async function loadNightMarks(sb: SupabaseClient, win: ShareWindow, kills: readonly KillRow[]): Promise<NightMarks> {
+export async function loadNightMarks(sb: SupabaseClient, win: ShareWindow, kills: readonly KillRow[], raid?: RaidScope | null): Promise<NightMarks> {
   // Held for two minutes per window in this process, so saving a slice (which refreshes the page) does not read the deaths again.
-  const key = `${win.fromMs}|${win.toMs}|${kills.length}`;
+  const key = `${win.fromMs}|${win.toMs}|${kills.length}|${raid?.id ?? ''}`;
   const hit = marksCache.get(key);
   if (hit && Date.now() - hit.at < MARKS_CACHE_MS) return hit.value;
-  const value = await readMarks(sb, win, kills);
+  const value = await readMarks(sb, win, kills, raid ?? null);
   if (marksCache.size >= 10) marksCache.delete(marksCache.keys().next().value as string);
   marksCache.set(key, { at: Date.now(), value });
   return value;
@@ -103,15 +104,41 @@ export async function loadNightMarks(sb: SupabaseClient, win: ShareWindow, kills
 const MARKS_CACHE_MS = 2 * 60_000;
 const marksCache = new Map<string, { at: number; value: NightMarks }>();
 
-async function readMarks(sb: SupabaseClient, win: ShareWindow, kills: readonly KillRow[]): Promise<NightMarks> {
+/** One raid of the window (lib/sessionGroups.ts): its fights and deaths are the ones its raiders were in. */
+export type RaidScope = { id: string; index: GroupIndex };
+
+async function readMarks(sb: SupabaseClient, win: ShareWindow, kills: readonly KillRow[], raid: RaidScope | null): Promise<NightMarks> {
   const { from: lo, to: hi } = windowIso(win);
-  const extras = await selectAll<ExtraEnc>((from, to) => sb.from('encounters')
+  // Wipes and another guild's fights now arrive in `kills` too (the review lists them), so only the OTHER marks
+  // (live, pvp, test, and anything not already in the list) are new here.
+  const listed = new Set(kills.map(k => k.id));
+  let extras = (await selectAll<ExtraEnc>((from, to) => sb.from('encounters')
     .select('id, npc_id, started_at, ended_at, duration_sec, zone_short, classification, is_wipe, eqemu_npc_types(name)')
     .eq('guild_id', GUILD_TAG)
     .or('classification.not.is.null,is_wipe.eq.true')
     .gte('ended_at', lo).lt('ended_at', hi)
     .order('id')
-    .range(from, to));
+    .range(from, to))).filter(e => !listed.has(e.id));
+
+  // One raid's view: a marked fight stays when that raid holds at least half of its damage dealers.
+  if (raid && extras.length) {
+    const names = new Map<string, string[]>();
+    for (const part of chunk(extras.map(e => e.id), ID_CHUNK)) {
+      const rows = await selectAll<{ encounter_id: string; character_name: string }>((from, to) => sb.from('encounter_players')
+        .select('encounter_id, character_name')
+        .in('encounter_id', part)
+        .order('encounter_id').order('character_name')
+        .range(from, to));
+      for (const p of rows) {
+        const a = names.get(p.encounter_id);
+        if (a) a.push(nameKey(p.character_name)); else names.set(p.encounter_id, [nameKey(p.character_name)]);
+      }
+    }
+    extras = extras.filter(e => {
+      const at = Date.parse(e.ended_at ?? e.started_at);
+      return Number.isFinite(at) && groupOfFight(raid.index, at, names.get(e.id) ?? []) === raid.id;
+    });
+  }
 
   const npcIds = [...new Set(extras.map(e => e.npc_id).filter((n): n is number => typeof n === 'number'))];
   const bossIds = new Set<number>();
@@ -125,15 +152,17 @@ async function readMarks(sb: SupabaseClient, win: ShareWindow, kills: readonly K
     for (const b of (data ?? []) as { npc_id: number }[]) bossIds.add(b.npc_id);
   }
 
-  const fights: FightIn[] = kills.filter(k => k.boss).map(k => ({
-    id: k.id, name: k.name, zone: k.zone, startMs: k.startMs, endMs: k.endMs, durationSec: k.durationSec, classification: null,
+  // The night's fights are the curated bosses and the named ("#") mobs: the Crypt of Decay chain is named, not curated.
+  const fights: FightIn[] = kills.filter(k => k.boss || k.named).map(k => ({
+    id: k.id, name: k.name, zone: k.zone, startMs: k.startMs, endMs: k.endMs, durationSec: k.durationSec,
+    classification: k.foreign ? 'foreign' : k.wipe ? 'wipe' : null, isWipe: k.wipe,
   }));
   for (const e of extras) {
-    if (e.npc_id == null || !bossIds.has(e.npc_id)) continue;
+    const t = Array.isArray(e.eqemu_npc_types) ? e.eqemu_npc_types[0] : e.eqemu_npc_types;
+    if (e.npc_id == null || !(bossIds.has(e.npc_id) || String(t?.name ?? '').startsWith('#'))) continue;
     const start = Date.parse(e.started_at);
     if (!Number.isFinite(start)) continue;
     const end = e.ended_at ? Date.parse(e.ended_at) : NaN;
-    const t = Array.isArray(e.eqemu_npc_types) ? e.eqemu_npc_types[0] : e.eqemu_npc_types;
     fights.push({
       id: e.id, name: displayMobName(t?.name) || 'Unknown mob', zone: e.zone_short, startMs: start,
       endMs: Number.isFinite(end) ? end : null, durationSec: e.duration_sec, classification: e.classification, isWipe: e.is_wipe,
@@ -155,9 +184,11 @@ async function readMarks(sb: SupabaseClient, win: ShareWindow, kills: readonly K
       if (a) a.push(d); else byEnc.set(r.encounter_id, [d]);
     }
   }
+  const when = (ts: string | number) => (typeof ts === 'number' ? ts : Date.parse(ts));
   const perFight = [...byEnc.values()].flatMap(d => dedupEncounterDeaths(d)).filter(d => playerDeathName(d.name));
   const deaths = dedupNightDeaths(perFight)
-    .map(d => (typeof d.ts === 'number' ? d.ts : Date.parse(d.ts)))
+    .filter(d => !raid || inGroupAt(raid.index, raid.id, nameKey(d.name), when(d.ts)))   // a name is read to place the death, never returned
+    .map(d => when(d.ts))
     .filter(Number.isFinite)
     .sort((a, b) => a - b);
 
