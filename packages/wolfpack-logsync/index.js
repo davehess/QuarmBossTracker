@@ -6119,6 +6119,175 @@ function parsePopFlagLine(line, character) {
   };
 }
 
+// ── The server's `#popflags` command, read from the member's own log ─────────────────────────────────────────────
+// The guild lead, 2026-10-26: "ideally users are able to have that text come through anytime they do it from mimic".
+// The command (EQMacEmu zone/gm_commands/popflags.cpp, commit 11024c196790cfa370f1a44d6f03d70a23deac39) prints the
+// character's flags as fixed lines. web/lib/popFlagsPaste.ts reads a PASTE of the same lines; this is the same table
+// for the log, and test/pop-flags-live-parity.test.js fails when the two disagree on the shared fixture.
+//
+// THE GATE IS THE TABLE. Every line the command can print for a step is one of a finite set (a label, a value from a
+// fixed array, Unlocked/Complete/Received), so the gate is an EXACT match of the whole line, after the timestamp,
+// against the entries built below: not a prefix, not a keyword. Nothing else leaves the machine: a line that is not
+// one of those (chat, a tell, a player's own words typed to look like one: those carry "X says," / "You tell", so they
+// never equal a system line) is dropped here. And what is uploaded is never the line: only the step KEYS it proves,
+// the time of the line and the character (docs/PRIVACY.md lists it). About eighty lines in all.
+//
+// Cites are popflags.cpp:<line>. A step is `<qglobal>_<N>` where N is the position in the printed array (cpp:91
+// `descriptions[stage - 1]`). Karana prints different words in Tier 2 (cpp:478) and Tier 3 (cpp:585) under different
+// labels, so the LABEL says which; no section state is needed for it.
+//
+// Per-log state, kept as small as it can be and reset on a header:
+//   time      whether the member holds the `time` flag, learned from "Plane of Time access: Locked/Unlocked" or the
+//             overview's Tier 4/5 lines (cpp:343-355, 827-854). The boss "Complete" lines and the Miak preflag are
+//             `<test> || time` (cpp:171-176, 717): they count only when time is known NOT held, and wait (up to 6 h)
+//             for a line that says so (the overview comes first when the member runs plain #popflags, the tier
+//             commands after). RESET on "=== Planes of Power Progression ===" (a new run).
+//   hoh       which of the three trial lines were Complete (cpp:609-627): all three also proves hohtrials_111.
+//             RESET on "=== Tier 3 Progression ===".
+//   sent      step → last time we sent it (6 h), so running the command twice in a night is one row, not two.
+const _PF_STAGES = [
+  ["Mavuin's case", 'mavuin', ["The evidence needed to save Mavuin has been requested", "The Tribunal has agreed to hear Mavuin's case", "Mavuin's case is complete"]],                                                             // cpp:370-374
+  ['Fuirstel progression', 'fuirstel', ['Obtain the Ward for Milyk', 'Grummus defeated; return to Elder Fuirstel', 'Elder Fuirstel aided; defeat Bertoxxulous', 'Bertoxxulous defeated; return to Elder Fuirstel', 'Fuirstel progression complete']], // cpp:376-382
+  ['Thelin progression', 'thelin', ['Help Thelin escape the hedge maze', 'Defeat Terris Thule', 'Terris Thule was defeated', 'Thelin was released from Terris Thule', 'Nightmare progression complete']],                  // cpp:384-390 (FIVE)
+  ['Aerin`Dar progression', 'aerindar', ['Aerin`Dar defeated; the meaning of Justice remains', 'Halls of Honor access unlocked']],                                                                                          // cpp:473-476
+  ['Askr and Karana progression', 'karana', ['Prove yourself to Askr', "Complete Mavuin's case, then use the Storms shrine to enter Bastion of Thunder", 'Bastion of Thunder progression recorded', "Karana's information obtained"]], // cpp:478-483
+  ['Agnarr and Karana progression', 'karana', ['Return to Askr', "Complete Mavuin's case, then use the Storms shrine to enter Bastion of Thunder", 'Karana progression continues', "Karana's information obtained"]],         // cpp:585-590
+  ['Tylis progression', 'tylis', ['Rescue Tylis from the Plane of Torment', 'Tylis progression complete']],                                                                                                                   // cpp:485-488
+  ['Giwin and Zek progression', 'zeks', ['Initial Zek progression recorded', 'Meet Giwin in Drunder', "Vallon Zek's information obtained", "Tallon Zek's information obtained", 'Both Zek information sets obtained', 'Defeat Rallos Zek', 'Zek progression complete']], // cpp:575-583
+];
+const _PF_NOT_IN_CATALOG = { zeks_5: ['zeks_3', 'zeks_4'], thelin_5: ['thelin_4'] };   // values we keep no step for → what they prove
+const _PF_ACCESS = {                                                                    // "<label>: Unlocked" proves the step
+  'Crypt of Decay access': 'grummus_1',            // cpp:424-427, 529-533
+  'Lower Crypt access': 'bertox_key_1',            // cpp:537-541
+  'Factory door access': 'poi_door_1',             // cpp:451-455
+  'Air, Earth, and Water access': 'zebuxoruk_2',   // cpp:803-807
+  'Plane of Fire access': 'pofire_2',              // cpp:811-815
+  'Plane of Earth B access': 'earthb_key_1',       // cpp:819-823
+};
+const _PF_BITS = [                                                                      // "<name>: Complete", one per bit
+  ["Rydda`Dar trial", 'hoh_trial_1', 'hoh'], ['Village trial', 'hoh_trial_2', 'hoh'], ['Nomad trial', 'hoh_trial_3', 'hoh'],   // cpp:609-627
+  ['Xuzl', 'sol_room_1'], ['Arlyxir', 'sol_room_2'], ['Dresolik', 'sol_room_3'], ['Rizlona', 'sol_room_4'], ['Jiva', 'sol_room_5'], // cpp:731-767
+];
+const _PF_MAELIN = [                                                                    // "<label>: Received" (cpp:678-708)
+  ['Cipher information', ['cipher_1']], ['Zebuxoruk lore', ['zebuxoruk_1']],
+  ['Combined Zek information', ['zeks_3', 'zeks_4']], ['Final elemental information', ['zebuxoruk_2']],
+];
+const _PF_BOSS = [                                                                      // "<label>: Complete" = `<test> || time`
+  ['Grummus flag', 'fuirstel_2'], ['Terris Thule flag', 'thelin_3'], ['Manaetic Behemoth flag', 'zeks_2'],   // cpp:430, 444, 457
+  ["Aerin`Dar flag", 'aerindar_1'], ['Bertoxxulous flag', 'fuirstel_4'], ['Keeper of Sorrows flag', 'tylis_2'], // cpp:502, 543, 556
+  ['Saryrn cipher half', 'saryrn_1'], ['Mithaniel Marr cipher half', 'mmarr_1'], ['Mithaniel Marr book', 'mmarr_book_1'], // cpp:559, 631, 634
+  ['Agnarr / Karana flag', 'karana_4'], ['Vallon Zek flag', 'zeks_3'], ['Tallon Zek flag', 'zeks_4'],         // cpp:655, 669, 671
+  ['Rallos Zek flag', 'zeks_7'], ['Solusek Ro flag', 'pofire_2'], ['Miak the Searedsoul preflag', 'pofire_1'], // cpp:673, 781, 717
+];
+const _pfNorm = (s) => String(s).replace(/[‘’ʼ`]/g, "'").replace(/\s+/g, ' ').trim().toLowerCase();
+const _PF_LINES = new Map();
+let _PF_MAXLEN = 0;
+(function _pfBuild() {
+  const add = (text, entry) => { const n = _pfNorm(text); _PF_LINES.set(n, entry); if (n.length > _PF_MAXLEN) _PF_MAXLEN = n.length; };
+  for (const [label, series, texts] of _PF_STAGES) {
+    texts.forEach((t, i) => { const key = `${series}_${i + 1}`; add(`${label}: ${t}`, { k: 'keys', keys: _PF_NOT_IN_CATALOG[key] || [key] }); });
+    if (series === 'karana') add(`${label}: Complete; combined into Zebuxoruk lore`, { k: 'keys', keys: ['zebuxoruk_1'] });   // cpp:510, 642
+  }
+  for (const [label, key] of Object.entries(_PF_ACCESS)) add(`${label}: Unlocked`, { k: 'keys', keys: [key] });
+  add('Plane of Time access: Unlocked', { k: 'time', yes: true });                    // cpp:827-831, 850-854
+  add('Plane of Time access: Locked', { k: 'time', yes: false });
+  for (const [name, key, group] of _PF_BITS) add(`${name}: Complete`, group ? { k: 'hoh', keys: [key] } : { k: 'keys', keys: [key] });
+  for (const [label, keys] of _PF_MAELIN) add(`${label}: Received`, { k: 'keys', keys });
+  add('Plane of Fire progression: Unlocked', { k: 'keys', keys: ['pofire_2'] });      // cpp:773-779
+  for (const [label, key] of _PF_BOSS) add(`${label}: Complete`, { k: 'gated', keys: [key] });
+  // The overview (cpp:326-355): tier 4 complete IS Has("time") (cpp:267-270), and tier 5's test is Has("time").
+  add('Tier 4: Complete', { k: 'time', yes: true }); add('Tier 4: In progress', { k: 'time', yes: false }); add('Tier 4: Not started', { k: 'time', yes: false });
+  add('Tier 5 - Plane of Time: Complete', { k: 'time', yes: true }); add('Tier 5 - Plane of Time: Not started', { k: 'time', yes: false });
+  // The two "Tier complete" lore lines whose test is exactly Has("time") (cpp:837, 867).
+  add('Tier complete: The powers of Air, Earth, Fire, and Water have been joined. The way into the Plane of Time now stands open.', { k: 'time', yes: true });
+  add('Tier complete: The Plane of Time recognizes your soul. Beyond its shifting portals, the gods await.', { k: 'time', yes: true });
+  add('=== Planes of Power Progression ===', { k: 'head', all: true });               // cpp:321
+  add('=== Tier 3 Progression ===', { k: 'head', all: false });                      // cpp:595
+})();
+const _PF_TTL_MS = 6 * 3600_000;
+const _pfState = new Map();   // character (lowercase) → { time, timeAt, pending, hoh, sent }
+function _pfEvent(character, atMs, keys) {
+  return { character, zone: null, boss: null, ts: new Date(atMs).toISOString(), kind: 'recital', source: 'popflags', text: null, stages: keys.slice() };
+}
+/** One log line → the pop_flag events it makes (usually none). Sent as an empty-text recital so a bot that does not
+ *  know source "popflags" skips it; a bot that does stores `stages` as rows with source popflags. */
+function popFlagsOutputEvents(line, character) {
+  if (!character || !line) return [];
+  const msg = String(line).replace(/^\[[^\]]*\]\s*/, '');
+  if (msg.length > _PF_MAXLEN + 8 || (msg.charCodeAt(0) !== 61 && msg.indexOf(': ') < 0)) return [];
+  const hit = _PF_LINES.get(_pfNorm(msg));
+  if (!hit) return [];
+  const cl = String(character).toLowerCase();
+  const tsd = parseEqTimestamp(line);
+  const at = tsd ? tsd.getTime() : Date.now();
+  let st = _pfState.get(cl);
+  if (!st) {
+    st = { time: null, timeAt: 0, pending: [], hoh: new Set(), sent: new Map() };
+    _pfState.set(cl, st);
+    if (_pfState.size > 40) _pfState.delete(_pfState.keys().next().value);
+  }
+  const out = [];
+  const emit = (keys, whenMs) => {
+    const fresh = keys.filter(k => !(st.sent.has(k) && Math.abs(whenMs - st.sent.get(k)) < _PF_TTL_MS));
+    if (!fresh.length) return;
+    for (const k of fresh) st.sent.set(k, whenMs);
+    if (st.sent.size > 200) st.sent.delete(st.sent.keys().next().value);
+    out.push(_pfEvent(character, whenMs, fresh));
+  };
+  const timeKnown = () => (st.time && Math.abs(at - st.timeAt) < _PF_TTL_MS ? st.time : null);
+  if (hit.k === 'head') {
+    if (hit.all) { st.time = null; st.pending = []; }
+    st.hoh.clear();
+  } else if (hit.k === 'keys') {
+    emit(hit.keys, at);
+  } else if (hit.k === 'hoh') {
+    emit(hit.keys, at);
+    const before = st.hoh.size;
+    st.hoh.add(hit.keys[0]);
+    if (before < 3 && st.hoh.size === 3) emit(['hohtrials_111'], at);
+  } else if (hit.k === 'time') {
+    st.time = hit.yes ? 'yes' : 'no';
+    st.timeAt = at;
+    if (hit.yes) { st.pending = []; emit(['time_1'], at); }
+    else { for (const p of st.pending) emit(p.keys, p.at); st.pending = []; }
+  } else if (hit.k === 'gated') {
+    const t = timeKnown();
+    if (t === 'no') emit(hit.keys, at);
+    else if (t !== 'yes') {
+      st.pending = st.pending.filter(p => Math.abs(at - p.at) < _PF_TTL_MS).slice(-39);
+      st.pending.push({ keys: hit.keys, at });
+    }
+  }
+  return out;
+}
+
+// "Sync from my logs", the two steps that touch the upload queue and the bot (the reader itself is _rescanRun, further down).
+// Wait (bounded) for the events just queued to leave, so "done" on the website means the flags are stored.
+async function _rescanDrained(maxMs) {
+  const until = Date.now() + maxMs;
+  while (Date.now() < until && _uploadQueue.some(e => e && e.kind === 'pop_flag')) await new Promise((r) => setTimeout(r, 2000));
+}
+// POST /api/agent/rescan-done {id, found, ok}. A 4xx is a refusal (nothing to retry); anything else is tried again.
+async function _rescanReport(id, found, ok) {
+  const base = _getApiBase();
+  const token = _getAgentToken();
+  if (!base || !token) return false;
+  for (const wait of [0, 5_000, 30_000, 120_000]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try {
+      const res = await fetch(base.replace(/\/+$/, '') + '/rescan-done', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION },
+        body: JSON.stringify({ id, found, ok }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) return true;
+      if (res.status >= 400 && res.status < 500) return false;   // refused: nothing to retry
+    } catch { /* offline: retry */ }
+  }
+  return false;     // the bot hands the request out again after 30 minutes; the re-read is idempotent
+}
+
 // A hail we WITNESSED — someone else greeting an NPC in our zone. Evidence of
 // a possible flag grant, not proof of one: hailing only grants a flag when the
 // hailer already meets the prerequisites, and we cannot see that. So these are
@@ -40371,6 +40540,7 @@ function runOptinBackfill(files, opts = {}) {
             if (conFacEvt) factionBuffer.push(conFacEvt);
             const pfEvt = parsePopFlagLine(line, f.character);
             if (pfEvt) popFlagBuffer.push(pfEvt);
+            for (const pfOut of popFlagsOutputEvents(line, f.character)) popFlagBuffer.push(pfOut);   // `#popflags` output
             const hailEvt = parseWitnessedHail(line, f.character);
             if (hailEvt) popFlagBuffer.push(hailEvt);
             // Observed buff landing on another player. Backfilled casts are
@@ -51449,9 +51619,10 @@ const POLL_PREFS_MS      = 10 * 60_000;
 const POLL_BACKFILL_MS   = 5 * 60_000;
 const POLL_UI_MS         = 5 * 60_000;
 const POLL_PETS_MS       = 60_000;       // pooled pet owners (FB-35): a minute while fights run, five idle
+const POLL_RESCAN_MS     = 3 * 60_000;   // "Sync from my logs" requests (the website tells the member "every few minutes")
 const POLL_TUNING_IDLE_MS = 20_000;   // idle: still refresh tuning/control this often
 const POLL_DORMANT_MS     = 15_000;   // dormant: poll the tuning/kill channel this often
-const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0 };
+const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0, rescan: 0 };
 function _multiplexActive() { return _pollSupported !== false; }
 function _pollFellBack(reason) {
   if (_pollSupported === false) return;
@@ -51488,6 +51659,7 @@ async function _pollMultiplexed() {
       if (now - _pollLast.prefs    >= POLL_PREFS_MS)    want.push('prefs');
       if (now - _pollLast.backfill >= POLL_BACKFILL_MS) want.push('backfill');
       if (now - _pollLast.ui_edits >= POLL_UI_MS)       want.push('ui_edits');
+      if (now - _pollLast.rescan   >= POLL_RESCAN_MS && !_rescan.running) want.push('rescan');   // older bots omit it: nothing happens
     }
   }
   if (want.length === 0) return;   // nothing due this tick (idle, between cadences)
@@ -51504,7 +51676,7 @@ async function _pollMultiplexed() {
     for (const c of chars) { const cls = stats.characterClasses && stats.characterClasses[c.toLowerCase()]; if (cls) classes.push(cls); }
     if (classes.length) qs.set('classes', classes.join(','));
   }
-  if (chars.length && (want.includes('prefs') || want.includes('backfill') || want.includes('ui_edits'))) {
+  if (chars.length && (want.includes('prefs') || want.includes('backfill') || want.includes('ui_edits') || want.includes('rescan'))) {
     qs.set('characters', chars.join(','));
   }
 
@@ -51536,6 +51708,7 @@ async function _pollMultiplexed() {
     if (want.includes('pet_owners')) { if (s.pet_owners) _applyPetOwnersResponse(s.pet_owners); _pollLast.pet_owners = now; }
     if (want.includes('prefs'))    { if (s.prefs)    _applyCharacterPrefsResponse(s.prefs);   _pollLast.prefs = now; }
     if (want.includes('backfill')) { if (s.backfill) _applyBackfillResponse(s.backfill);      _pollLast.backfill = now; }
+    if (want.includes('rescan'))   { if (s.rescan)   _applyRescanResponse(s.rescan);          _pollLast.rescan = now; }
     if (want.includes('ui_edits')) {
       if (s.ui_edits) {
         const watched = (stats.watchedLogs || []).filter(w => w && w.character && w.logPath);
@@ -62829,6 +63002,7 @@ async function main() {
         if (conFacEvt) factionBuffer.push(conFacEvt);
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt) popFlagBuffer.push(pfEvt);
+        for (const pfOut of popFlagsOutputEvents(line, b.character)) popFlagBuffer.push(pfOut);   // `#popflags` output
         // Witnessed hails — coverage for raiders who don't run Mimic.
         const hailEvt = parseWitnessedHail(line, b.character);
         if (hailEvt) popFlagBuffer.push(hailEvt);
@@ -63186,6 +63360,8 @@ async function main() {
         try { noteSightCon(line, b.character); } catch (e) { void e; }   // …and, while you are invisible, whether it saw you
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
+        // …and what `#popflags` printed (popFlagsOutputEvents: an exact-line gate, step keys only, docs/PRIVACY.md).
+        if (!_sourceExcluded) { for (const pfOut of popFlagsOutputEvents(line, b.character)) popFlagBuffer.push(pfOut); }
         // A hail, yours or one you witnessed: the Command Center's hail board (the guild lead,
         // 2026-10-05) moves a raider from "still to hail" to "hailed" on this. Only a hail of a flag NPC
         // leaves the machine (_hailNpcWanted), the one /say exception docs/PRIVACY.md names. Every Mimic
@@ -64941,6 +65117,188 @@ function _rebuildStartRequest(body) {
   if (files.every(c => c.skipped)) return { status: 400, body: { error: 'every log is for a character you keep out of stats' } };
   _rebuildStart({ files, sinceMs, fresh: b.fresh === true });
   return { status: 202, body: { ok: true, started: true, files: files.length, since: sinceMs ? new Date(sinceMs).toISOString() : null, dkp: _rb.dkp } };
+}
+
+// ── "Sync from my logs": re-read recent logs for PoP flag lines (the guild lead, 2026-10-26) ──
+// The member asks on wolfpack.quest/pop/raid/me; the bot hands the request to THIS agent on the poll's `rescan`
+// stream (claiming it: pending → taken), and we answer POST /api/agent/rescan-done {id, found, ok}. Old bots never
+// send the stream and old agents never ask for it. Not the backfill-requests loop (nothing ever completed that one).
+//
+// What it reads: for each EverQuest log of that character (or every log on this PC when the request names none),
+// seek to `now − days` (_rbSeek, a bisection by timestamp), read forward in chunks, and hand parsePopFlagLine ONLY the
+// lines that hit the PoP gates it already has (_POP_GRANT_RX, _POP_RECITAL_RX, _POP_PREV_RX, the trial credit lines)
+// and popFlagsOutputEvents ONLY the lines in its exact-line table. Every other line is skipped without a parse, so
+// nothing else about the log is looked at. Events go out through the normal uploadPopFlags path; the pop_flags key
+// (guild, character, flag, earned_at) makes a re-read idempotent, and earned_at is the log line's own time.
+// It must not hurt the live tail: one request at a time, ~12 ms of work then a rest, a pause while a fight is live,
+// and a cap on the bytes read (RESCAN_MAX_BYTES per request, across files).
+const RESCAN_CHUNK_BYTES = 256 * 1024;
+const RESCAN_MAX_BYTES   = 192 * 1024 * 1024;
+const RESCAN_BUDGET_MS   = 12;
+const RESCAN_REST_MS     = 25;
+const RESCAN_MAX_DAYS    = 60;
+const RESCAN_MAX_WAIT_MS = 10 * 60_000;     // total time spent paused for a live fight
+const RESCAN_FLUSH       = 100;             // events per upload
+const _rescan = { running: false, queue: [], seen: new Set(), lastDone: null };
+function _rescanSleep(ms) { return new Promise((r) => setTimeout(r, Math.max(0, ms | 0))); }
+
+// The gates, nothing else. `msg` is the line after its timestamp.
+function _rescanWants(msg) {
+  const c = msg.charCodeAt(0);
+  if (c === 89 && (msg.indexOf(' flag!') !== -1 ? _POP_GRANT_RX.test(msg) : false)) return 'grant';                     // "You have received a ... flag!"
+  if (_POP_RECITAL_RX.test(msg)) return 'recital';
+  if (_POP_PREV_RX.test(msg)) return 'prev';
+  if (c === 65 && msg.startsWith('An ethereal mist') && _POP_TRIAL_MIST_RX.test(msg.trim())) return 'trial';
+  if (c === 89 && msg.trim() === _POP_TRIAL_HELD) return 'trial';
+  if (c === 89 && _POP_SELF_HAIL_RX.test(msg)) return 'hail';        // state only: the NPC a "trial held" line names
+  if ((c === 61 || msg.indexOf(': ') > 0) && msg.length <= _PF_MAXLEN + 8 && _PF_LINES.has(_pfNorm(msg))) return 'popflags';
+  return null;
+}
+// One line. `sink` = { events, found, prev, prevPassed }. Returns nothing; counts a line that was a flag line.
+function _rescanLine(line, character, sinceMs, sink) {
+  const msg = line.replace(/^\[[^\]]*\]\s*/, '');
+  const gate = _rescanWants(msg);
+  const prev = sink.prev;
+  sink.prev = line;
+  if (!gate) { sink.prevPassed = false; return; }
+  const ts = parseEqTimestamp(line);
+  if (!ts || ts.getTime() < sinceMs) { sink.prevPassed = false; return; }
+  // parsePopFlagLine names a grant from the line just before it; a skipped line in between must not leave an older
+  // NPC line standing in for it, so the real previous line is shown to it first (its answer, if any, is dropped).
+  if (gate === 'grant' && !sink.prevPassed && prev) parsePopFlagLine(prev, character);
+  sink.prevPassed = gate !== 'popflags';     // only the other gates go through parsePopFlagLine's own "line before"
+  if (gate === 'popflags') {
+    const evs = popFlagsOutputEvents(line, character);
+    for (const e of evs) sink.events.push(e);
+    const hit = _PF_LINES.get(_pfNorm(msg));
+    if (hit && hit.k !== 'head' && (hit.k !== 'time' || hit.yes)) sink.found++;
+    return;
+  }
+  const ev = parsePopFlagLine(line, character);
+  if (ev) { sink.events.push(ev); sink.found++; }
+}
+// One log file. `ctx` = { sinceMs, bytes (left to read, shared), waited, stop }. Returns false if it could not open the file.
+async function _rescanFile(file, ctx, sink) {
+  let fh;
+  try { fh = await fs.promises.open(file.path, 'r'); } catch { return false; }
+  try {
+    const size = (await fh.stat()).size;
+    let pos = size > 512 * 1024 ? await _rbSeek(fh, size, ctx.sinceMs) : 0;
+    let align = pos > 0;                       // a seek lands mid-line: the first piece is dropped
+    const chunk = Buffer.allocUnsafe(RESCAN_CHUNK_BYTES);
+    let carry = null;
+    let workStart = Date.now();
+    sink.prev = null; sink.prevPassed = false;
+    while (pos < size && ctx.bytes > 0 && !ctx.stop) {
+      if (_liveFightActive() && ctx.waited < RESCAN_MAX_WAIT_MS) { ctx.waited += 1500; await _rescanSleep(1500); continue; }
+      const want = Math.min(chunk.length, ctx.bytes, size - pos);
+      const { bytesRead } = await fh.read(chunk, 0, want, pos);
+      if (bytesRead <= 0) break;
+      pos += bytesRead; ctx.bytes -= bytesRead;
+      const data = carry ? Buffer.concat([carry, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
+      const nl = data.lastIndexOf(10);
+      if (nl < 0) { carry = data.length > (1 << 20) ? null : Buffer.from(data); continue; }
+      let text = data.toString('utf8', 0, nl);
+      carry = nl + 1 < data.length ? Buffer.from(data.subarray(nl + 1)) : null;
+      if (align) { const first = text.indexOf('\n'); text = first < 0 ? '' : text.slice(first + 1); align = false; }
+      let from = 0;
+      while (from <= text.length) {
+        let to = text.indexOf('\n', from);
+        if (to < 0) to = text.length;
+        let line = text.slice(from, to);
+        if (line.charCodeAt(line.length - 1) === 13) line = line.slice(0, -1);
+        if (line) { try { _rescanLine(line, file.character, ctx.sinceMs, sink); } catch { void 0; } }
+        from = to + 1;
+      }
+      if (sink.events.length >= RESCAN_FLUSH) sink.flush();
+      if (Date.now() - workStart >= RESCAN_BUDGET_MS) { await _rescanSleep(RESCAN_REST_MS); workStart = Date.now(); }
+      else await new Promise((r) => setImmediate(r));
+    }
+    if (carry && carry.length && !ctx.stop) { try { _rescanLine(carry.toString('utf8').replace(/\r$/, ''), file.character, ctx.sinceMs, sink); } catch { void 0; } }
+    return true;
+  } catch { return false; } finally { try { await fh.close(); } catch { void 0; } }
+}
+// The per-character module state the readers keep (the line before, the last hail, the #popflags time state) is
+// the LIVE tail's: a re-read starts from nothing and puts every entry back, so it can neither borrow the live
+// tail's state nor leave its own behind.
+function _rescanIsolate(characters, fn) {
+  const lcs = [...new Set(characters.map(c => String(c).toLowerCase()))];
+  const saved = lcs.map(cl => [cl, _popPrevLine.get(cl), _popLastHail.get(cl), _pfState.get(cl)]);
+  for (const cl of lcs) { _popPrevLine.delete(cl); _popLastHail.delete(cl); _pfState.delete(cl); }
+  const restore = () => {
+    for (const [cl, a, b, c] of saved) {
+      if (a !== undefined) _popPrevLine.set(cl, a); else _popPrevLine.delete(cl);
+      if (b !== undefined) _popLastHail.set(cl, b); else _popLastHail.delete(cl);
+      if (c !== undefined) _pfState.set(cl, c); else _pfState.delete(cl);
+    }
+  };
+  return Promise.resolve().then(fn).then((r) => { restore(); return r; }, (e) => { restore(); throw e; });
+}
+// Which logs: this PC's, for that character (or all of them), minus any kept out of stats.
+function _rescanFiles(character) {
+  const want = character ? String(character).toLowerCase() : null;
+  const seen = new Set();
+  const files = [];
+  for (const c of _rebuildCandidates()) {
+    if (!c || !c.path || c.ignored || seen.has(c.path) || !c.character) continue;
+    if (want && String(c.character).toLowerCase() !== want) continue;
+    if (_rebuildExcluded(c.character) || !shouldUploadForCharacter(c.character)) continue;
+    seen.add(c.path);
+    files.push(c);
+  }
+  return files;
+}
+// (_rescanDrained and _rescanReport, which touch the queue and the network, sit next to the PoP parsers: the local
+// rebuild above must stay free of both, test/local-backfill.test.js.)
+// One request: {id, character|null, days}. Resolves to { ok, found }.
+async function _rescanRun(req) {
+  const days = Math.max(1, Math.min(RESCAN_MAX_DAYS, Math.trunc(Number(req.days)) || 14));
+  const sinceMs = Date.now() - days * 86400_000;
+  const files = _rescanFiles(req.character);
+  if (!files.length) return { ok: false, found: 0 };
+  const opts = _uploadOpts || {};
+  const sink = {
+    events: [], found: 0, prev: null, prevPassed: false,
+    flush() { if (this.events.length) uploadPopFlags(this.events.splice(0), opts).catch(() => {}); },
+  };
+  const ctx = { sinceMs, bytes: RESCAN_MAX_BYTES, waited: 0, stop: false };
+  let opened = 0;
+  await _rescanIsolate(files.map(f => f.character), async () => {
+    for (const f of files) {
+      if (await _rescanFile(f, ctx, sink)) opened++;
+      sink.flush();
+    }
+  });
+  sink.flush();
+  if (opened === 0) return { ok: false, found: 0 };
+  await _rescanDrained(90_000);
+  return { ok: true, found: sink.found };
+}
+// The poll's `rescan` stream → the queue, one at a time.
+function _applyRescanResponse(resp) {
+  const list = resp && Array.isArray(resp.requests) ? resp.requests : [];
+  for (const r of list) {
+    const id = Number(r && r.id);
+    if (!Number.isInteger(id) || id <= 0 || _rescan.seen.has(id) || _rescan.queue.length >= 5) continue;
+    _rescan.seen.add(id);
+    if (_rescan.seen.size > 200) _rescan.seen.delete(_rescan.seen.values().next().value);
+    _rescan.queue.push({ id, character: r.character == null ? null : String(r.character).slice(0, 64), days: r.days });
+  }
+  if (!_rescan.running && _rescan.queue.length) {
+    _rescan.running = true;
+    (async () => {
+      try {
+        while (_rescan.queue.length) {
+          const req = _rescan.queue.shift();
+          let out = { ok: false, found: 0 };
+          try { out = await _rescanRun(req); } catch (e) { console.warn('[rescan] failed:', e && e.message); }
+          const sent = await _rescanReport(req.id, out.found, out.ok);
+          _rescan.lastDone = { id: req.id, found: out.found, ok: out.ok, reported: sent, at: Date.now() };
+          console.log(`[rescan] request ${req.id}: ${out.ok ? out.found + ' flag line(s) read' : 'could not read'}${sent ? '' : ' (not reported)'}`);
+        }
+      } finally { _rescan.running = false; }
+    })();
+  }
 }
 
 // ── Raids, as the dashboard and the local site read them ──
