@@ -51,6 +51,29 @@ describe('the two readers agree', () => {
     const bare = fixture.split('\n').filter(Boolean).map(l => l.replace(/^\[[^\]]*\]\s*/, ''));
     expect(stagesOf(agentRun(bare))).toEqual(webFlags(fixture));
   });
+  // The REAL server output (2026-10-26), timestamps off: A is a character with tiers 1-3 complete, B one partway that
+  // never printed the overview or Tier 4 (so no word on the Plane of Time). See test/pop-flags-real.test.js.
+  for (const [name, file] of [['A (tiers 1-3 complete)', 'popflags-real-a.txt'], ['B (partway, no Plane of Time line)', 'popflags-real-b.txt']]) {
+    it(`on the real capture ${name}: both readers prove the same steps, bare and stamped`, () => {
+      const text = fs.readFileSync(path.join(ROOT, 'test', 'fixtures', file), 'utf8');
+      const lines = text.split('\n').filter(Boolean);
+      const web = webFlags(text);
+      expect(web.length).toBeGreaterThan(8);
+      expect(parsePopFlags(text).unproven).toEqual([]);
+      expect(stagesOf(agentRun(lines))).toEqual(web);
+      expect(stagesOf(agentRun(lines.map(l => STAMP() + l)))).toEqual(web);
+    });
+  }
+  it('on the real captures the steps are the ones the character holds, not the ones it lacks', () => {
+    const a = fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'popflags-real-a.txt'), 'utf8').split('\n').filter(Boolean);
+    const b = fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'popflags-real-b.txt'), 'utf8').split('\n').filter(Boolean);
+    const sa = stagesOf(agentRun(a));
+    for (const k of ['pofire_2', 'zeks_7', 'zebuxoruk_2', 'cipher_1', 'sol_room_5']) expect(sa, k).toContain(k);
+    for (const k of ['earthb_key_1', 'time_1']) expect(sa, k).not.toContain(k);
+    const sb = stagesOf(agentRun(b));
+    for (const k of ['mavuin_3', 'thelin_4', 'bertox_key_1', 'zeks_3', 'zeks_4', 'karana_3', 'aerindar_2', 'grummus_1']) expect(sb, k).toContain(k);
+    for (const k of ['fuirstel_2', 'poi_door_1', 'tylis_2', 'cipher_1', 'zebuxoruk_1', 'pofire_1', 'hoh_trial_1', 'time_1']) expect(sb, k).not.toContain(k);
+  });
   it('on every stage line of every table, one at a time', () => {
     for (const t of STAGE_TABLES) {
       t.texts.forEach((text) => {
@@ -90,6 +113,31 @@ describe('the two readers agree', () => {
       expect(webFlags(line), line).toEqual([]);
     }
   });
+  it('on the lines the command prints only WITHOUT the time flag: each settles "not held" in both readers, in either order', () => {
+    const TT = 'Terris Thule flag: Complete';
+    const noTime = [
+      'Grummus flag: Missing', 'Rallos Zek flag: Pending memory', 'Miak the Searedsoul preflag: Missing',
+      "Pending memory: Thelin's hedge maze", 'Pending memory: Karana',
+      'Pending checklist memories exist, but their prerequisite steps are incomplete.',
+      'Complete the unfinished progression shown above, then return to Seer Mal Nae`Shi.',
+      'A checklist memory is ready to be unlocked.',
+      "Sit near Seer Mal Nae`Shi and say 'unlock memories', then check #popflags again.",
+      "Speak to Miak the Searedsoul in Tranquility about 'portal's destination'; hailing alone does not grant the preflag.",
+      'Tier 1: In progress', 'Tier 2: Not started', 'Tier 3: In progress',
+    ];
+    for (const line of noTime) {
+      expect(webFlags(`${line}\n${TT}`), line).toEqual(['thelin_3']);
+      expect(stagesOf(agentRun([STAMP() + line, STAMP() + TT])), line).toEqual(['thelin_3']);       // time first
+      expect(stagesOf(agentRun([STAMP() + TT, STAMP() + line])), line).toEqual(['thelin_3']);       // time after
+      expect(stagesOf(agentRun([STAMP() + line])), line).toEqual([]);                                // on its own: nothing
+    }
+    // …and a Tier 1-3 that is Complete, or time held, says no such thing
+    for (const line of ['Tier 1: Complete', 'Tier 3: Complete']) {
+      expect(stagesOf(agentRun([STAMP() + line, STAMP() + TT])), line).toEqual([]);
+      expect(webFlags(`${line}\n${TT}`), line).toEqual([]);
+    }
+    expect(stagesOf(agentRun([STAMP() + 'Grummus flag: Missing', STAMP() + 'Plane of Time access: Unlocked', STAMP() + TT]))).toEqual(['time_1']);
+  });
   it('on the boss "Complete" lines and the Miak preflag: read only when time is known NOT held (either order of paste)', () => {
     const bosses = ['Grummus flag', 'Terris Thule flag', 'Manaetic Behemoth flag', 'Aerin`Dar flag', 'Bertoxxulous flag', 'Keeper of Sorrows flag',
       'Saryrn cipher half', 'Mithaniel Marr cipher half', 'Mithaniel Marr book', 'Agnarr / Karana flag', 'Vallon Zek flag', 'Tallon Zek flag',
@@ -127,12 +175,25 @@ describe('the gate is an exact-line table', () => {
       "You tell your guild, 'Mavuin's case: Mavuin's case is complete'", "Zarrin tells the guild, 'Crypt of Decay access: Unlocked'",
       "Brackwyn tells the raid, 'Tier 4: Complete'", "You say to your group, 'Crypt of Decay access: Unlocked'",
       'Brackwyn auctions, \'Xuzl: Complete\'', "mavuin's case: mavuin's case is complete tonight", 'Crypt of Decay access: Unlocked (maybe)',
-      'Corvale access: Unlocked', 'Tier 4: Done', 'Pending memory: Thelin\'s hedge maze', '--- Plane of Justice ---', '=== Tier 4 Progression ===',
+      'Corvale access: Unlocked', 'Tier 4: Done', 'Pending memory: Thelin\'s hedge maze, friend', '--- Plane of Justice ---',
+      'Pending checklist memories exist, but their prerequisite steps are incomplete!', "Aldenmar says, 'Pending checklist memories exist, but their prerequisite steps are incomplete.'",
+      'Grummus flag: Missing in action', 'Tier 5: In progress', 'Speak to Miak the Searedsoul in Tranquility.', '=== Tier 4 Progression ===',
       'Details: #popflags 1, 2, 3, 4, or 5 (tier1-tier5 also work).', 'You have gained experience!', 'Your faction standing with X got better: lots',
       '', '   ', ': ', '=== ===',
     ];
     for (const l of no) expect(ok(l), l).toBe(0);
     for (const l of no) expect(A.popFlagsOutputEvents(l, who()).length, l).toBe(0);
+  });
+  it('the "time is not held" lines are in the table as exact lines, including the ones with no ": " in them', () => {
+    for (const l of ['Grummus flag: Missing', 'Rallos Zek flag: Pending memory', 'Miak the Searedsoul preflag: Missing', 'Tier 3: Not started',
+      "Pending memory: Thelin's hedge maze", 'Pending memory: Karana', 'A checklist memory is ready to be unlocked.',
+      'Pending checklist memories exist, but their prerequisite steps are incomplete.',
+      'Complete the unfinished progression shown above, then return to Seer Mal Nae`Shi.',
+      "Sit near Seer Mal Nae`Shi and say 'unlock memories', then check #popflags again.",
+      "Speak to Miak the Searedsoul in Tranquility about 'portal's destination'; hailing alone does not grant the preflag."]) {
+      expect(A._PF_LINES.has(A._pfNorm(l)), l).toBe(true);
+    }
+    expect(A._PF_LINES.has(A._pfNorm('Miak the Searedsoul preflag: Pending memory'))).toBe(false);   // the command never prints it (cpp:718)
   });
   it('the table is the command\'s finite set of lines, with no catch-all', () => {
     expect(A._PF_LINES.size).toBeGreaterThan(70);
