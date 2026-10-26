@@ -18572,6 +18572,18 @@ async function _handleAgentOwnTimersGet(req, res) {
     require('./utils/supabase'), _ownedCharsCache, String(identity.discord_id || ''), url.searchParams.get('character') || ''));
 }
 
+// GET /api/agent/account-placements — the caller's OWN open game-account placements (character -> account id,
+// slot, label), for Mimic's local "My account inventory" page (the guild lead, 2026-10-26: it guessed 23 accounts
+// for someone who owns 6). The person is the Mimic session's Discord id and nothing in the query names one; only
+// characters in the caller's family come back. Read-only, no shed kind. utils/myAccountPlacements.js has the rules.
+const myAccountPlacements = require('./utils/myAccountPlacements');
+async function _handleAgentAccountPlacements(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  return _sendPrefsResult(res, await myAccountPlacements.minePlacements(
+    require('./utils/supabase'), _ownedCharsCache, String(identity.discord_id || '')));
+}
+
 // POST /api/agent/live-state
 //
 // Snapshot of what each watched character is currently carrying + where, from
@@ -24781,6 +24793,15 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentCharactersStage(req, res); }
     catch (err) {
       console.error('[characters-stage] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && (req.url === '/api/agent/account-placements' || req.url.startsWith('/api/agent/account-placements?'))) {
+    try { return await _handleAgentAccountPlacements(req, res); }
+    catch (err) {
+      console.error('[account-placements] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
