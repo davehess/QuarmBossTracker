@@ -35,7 +35,8 @@
 
 import { useMemo, useState } from 'react';
 import type { Band, MTSegment } from '@/lib/fightCurve';
-import { groupSeriesByClass, hpScale } from '@/lib/fightCurve';
+import { groupSeriesByClass, hpScale, fitAxis } from '@/lib/fightCurve';
+import { classBucket } from '@/lib/parseClasses';
 
 // Validated 2026-08-13 against surface #0d1117 (dataviz validator): lightness
 // band PASS, chroma floor PASS, normal-vision floor PASS (worst adjacent ΔE
@@ -166,7 +167,12 @@ export function DamageCurve({
   const MT_Y = AXIS_Y + 30, MT_H = 14;
   const H = MT_Y + MT_H + 26;
 
-  const dur = Math.max(1, durationSec);
+  // The axis ends where the data does, not at the fight record's length (fitAxis); the record's empty tail becomes a
+  // note under the chart instead of dead space. A text note rather than a shaded tail, because shading the tail needs
+  // the axis to run out to it, which is the half-empty chart this replaces. Boss-HP line, MT strip, ribbons and ticks
+  // all read `dur`, so they share the one fitted axis.
+  const fit = useMemo(() => fitAxis(buckets, bands, mt, durationSec), [buckets, bands, mt, durationSec]);
+  const dur = Math.max(1, fit.spanSec);
   const xFor = (tSec: number) => PADL + plotW * Math.min(1, Math.max(0, tSec / dur));
   const yFor = (pct: number) => TOP + PLOT_H * (1 - Math.min(1, Math.max(0, pct / 100)));
 
@@ -192,7 +198,7 @@ export function DamageCurve({
   // character in the drill.
   const mtOn = (name: string) => {
     if (!active) return true;
-    const key = drilled ? name : (classOf[name] || 'Unknown');
+    const key = drilled ? name : classBucket(classOf[name]);
     return active.has(key) || active.has(name);
   };
 
@@ -313,7 +319,7 @@ export function DamageCurve({
           {basis === 'catalog'
             ? <>share of the boss&rsquo;s {fmt(denom)} health &middot; not killed</>
             : killed ? <>share of the boss&rsquo;s health bar</> : <>share of the damage dealt &middot; not killed</>}
-          {' '}&middot; {fmt(totalDamage)} total &middot; {mmss(dur)}
+          {' '}&middot; {fmt(totalDamage)} total &middot; {mmss(dur)}{fit.showTail ? <> of {mmss(durationSec)}</> : null}
         </span>
       </div>
 
@@ -507,6 +513,11 @@ export function DamageCurve({
           ? 'the top edge is the health removed; the boss was not killed, so it need not reach 100%'
           : 'bands stack to 100% of damage done — the top edge is the health removed'}</span>
         <span>MT gaps = nobody taking hits (mob moving / kited / off the raid)</span>
+        {fit.showTail && (
+          <span style={{ color: '#ffa657' }}>
+            fight record continues {mmss(fit.tailSec)} past the last damage{killed ? '' : ' (wipe)'} &mdash; chart ends at {mmss(dur)}
+          </span>
+        )}
       </div>
     </div>
   );

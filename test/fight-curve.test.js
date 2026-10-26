@@ -179,10 +179,10 @@ describe('unfolded series + class grouping (2026-08-16 parse review)', () => {
     expect(g[0].cum[g[0].cum.length - 1]).toBe(160);
   });
 
-  it('an unmapped name lands in Unknown, not dropped', () => {
+  it('an unmapped name lands in the one not-known bucket, not dropped', () => {
     const c = buildFightCurve([row(0, 'Mystery', 50)], 5);
     const g = groupSeriesByClass(c.series, {});
-    expect(g).toEqual([expect.objectContaining({ klass: 'Unknown', total: 50 })]);
+    expect(g).toEqual([expect.objectContaining({ klass: 'Class not known', total: 50 })]);
   });
 
   it('folds classes beyond topN into a drillable "other classes" group', () => {
