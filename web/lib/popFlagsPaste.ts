@@ -15,7 +15,10 @@
 // the steps behind them (cpp:171-176, 230, 241, 256, 269, 717). So a "Complete" that has an `|| time` in it
 // proves its stage test ONLY when the same paste shows the member does not hold `time`. The paste shows it on
 // "Plane of Time access: Locked" (cpp:828-830, 851-853) or the overview's "Tier 4: <not Complete>" and
-// "Tier 5 - Plane of Time: Not started" (cpp:343-355; tier 4 complete IS Has("time"), cpp:267-270). With no word
+// "Tier 5 - Plane of Time: Not started" (cpp:343-355; tier 4 complete IS Has("time"), cpp:267-270) — or, as the real
+// output of a partway character showed (2026-10-26), by any line that is only printed without it: a boss line reading
+// "Missing" / "Pending memory", the Seer notice, the Miak advice, "Pending memory: <x>", a Tier 1-3 that is not
+// Complete (NO_TIME_EXACT below). The server prints a boss line as `complete || time ? Complete : …`. With no word
 // on `time`, such lines are listed as `unproven` instead of read, and the member is told which command settles it.
 // Lines that need no such rule (an access line, a stage line, a bit string) are exact and are read as printed.
 //
@@ -177,15 +180,24 @@ export const SECTIONS: { title: string; command: string; tier: string }[] = [
 ];
 const SECTION_BY_NORM = new Map(SECTIONS.map(s => [norm(s.title), s.title]));
 
-// Lines the command prints that carry no flag. Recognised so they never land in `unknown`.
-const IGNORED_EXACT = new Set([
-  'details: #popflags 1, 2, 3, 4, or 5 (tier1-tier5 also work).',                                   // cpp:361
+// Lines the command prints ONLY while the member does not hold `time`, so each one is the paste's answer "time: no"
+// (real capture, 2026-10-26: a partway character's paste never prints the Plane of Time or Tier 4 lines, and
+// its boss "Complete" lines were left unproven although the same paste says "Missing" and "Pending memory" on others).
+//   · the Seer notice returns early with `time` (cpp:184)             · "Pending memory: <x>" returns early with it (cpp:157)
+//   · the Miak advice line is printed when the preflag is not Complete, which `|| time` would make so (cpp:717-720)
+//   · a boss line that reads "Missing" / "Pending memory" is `!(complete || time)` (cpp:175-176)
+const NO_TIME_EXACT = new Set([
   'a checklist memory is ready to be unlocked.',                                                    // cpp:191
   "sit near seer mal nae`shi and say 'unlock memories', then check #popflags again.",              // cpp:196
   'pending checklist memories exist, but their prerequisite steps are incomplete.',                 // cpp:202
   'complete the unfinished progression shown above, then return to seer mal nae`shi.',              // cpp:207
-  'if one of these is missing, hail maelin and ask about new lore and new information.',            // cpp:711
   "speak to miak the searedsoul in tranquility about 'portal's destination'; hailing alone does not grant the preflag.", // cpp:720
+].map(norm));
+
+// Lines the command prints that carry no flag. Recognised so they never land in `unknown`.
+const IGNORED_EXACT = new Set([
+  'details: #popflags 1, 2, 3, 4, or 5 (tier1-tier5 also work).',                                   // cpp:361
+  'if one of these is missing, hail maelin and ask about new lore and new information.',            // cpp:711
   'complete the elemental progression, combine the four elemental essences, and return to grand librarian maelin.',     // cpp:859
   'halls of honor trials: none completed',                                                          // cpp:601
   'tower wing flags: none completed',                                                               // cpp:725
@@ -263,7 +275,8 @@ export function parsePopFlags(raw: unknown): PopFlagsParse {
       if (title) { if (!sections.includes(title)) sections.push(title); mark(); continue; }
     } else if (/^--- .+ ---$/.test(n)) { continue; }                               // plane sub-headers: no flag
     if (IGNORED_EXACT.has(n)) continue;
-    if (n.startsWith('pending memory:')) continue;                                  // cpp:164 — a cl_* memory, not a flag
+    if (NO_TIME_EXACT.has(n)) { timeSeen.add('no'); mark(); continue; }
+    if (n.startsWith('pending memory:')) { timeSeen.add('no'); mark(); continue; }  // cpp:157,164 — a cl_* memory, not a flag
 
     // Tier complete: <lore>
     const tc = /^tier complete: (.*)$/.exec(n);
@@ -279,6 +292,8 @@ export function parsePopFlags(raw: unknown): PopFlagsParse {
       if (num === 4 || num === 5) {           // tier 4 complete is Has("time") (cpp:269); tier 5's test is Has("time") (cpp:354)
         if (tier[2] === 'complete') { timeSeen.add('yes'); addFact(['time_1'], line); } else timeSeen.add('no');
         mark();
+      } else if (tier[2] !== 'complete') {    // tiers 1-3 are `<steps> || time` (cpp:230,241,256): not Complete means no time
+        timeSeen.add('no'); mark();
       }
       continue;
     }
@@ -337,7 +352,7 @@ export function parsePopFlags(raw: unknown): PopFlagsParse {
     // Miak the Searedsoul preflag: Complete | Missing — `pofire >= 1 || time`
     if (label === MIAK.label && (rest === 'complete' || rest === 'missing')) {
       mark();
-      if (rest === 'complete') addFact([MIAK.key], line, true);
+      if (rest === 'complete') addFact([MIAK.key], line, true); else timeSeen.add('no');
       continue;
     }
 
@@ -345,7 +360,7 @@ export function parsePopFlags(raw: unknown): PopFlagsParse {
     const boss = label && BOSS[label];
     if (boss && (rest === 'complete' || rest === 'pending memory' || rest === 'missing')) {
       mark();
-      if (rest === 'complete') addFact([boss.key], line, true);
+      if (rest === 'complete') addFact([boss.key], line, true); else timeSeen.add('no');
       continue;
     }
 

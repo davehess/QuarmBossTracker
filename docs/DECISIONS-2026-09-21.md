@@ -13166,3 +13166,19 @@ stars on the wishlist (B): *"and its Soft Reserve per raid"*.
 - Also open: adding ANY item to a wishlist from the website (A: the button wherever an item shows, recommended; B: a
   /me/wishlist page). Today only `/wishlist add` in Discord and the upgrades page (beta) can.
 - Scoping and mocks in progress.
+
+### 449. Seer pending memories are checklist flags (`cl_*`, source `recital`), never steps; no-time lines settle a paste (2026-10-26)
+A partway character's Seer log carried two sentences no reader knew ("a small trinket by Grummus' body", "the Warlord's flaming
+axe"). They are the Seer's PENDING memories: what she prints on 'unlock memories' when the step a checklist flag waits for is
+missing (`Seer_Mal_Nae-Shi.lua` `checklistFlags`, second entry of each row).
+- **Stored as the existing checklist flag_key** (`cl_grummus`, `cl_rallos`, …), source `recital`. Not `pending:cl_x`: the
+  bot already stores `cl_*` for a kill without its prerequisite (PREV_STAGES 'checklist'), and `/pop` already counts "killed it
+  before the step that comes first" as `flags.has(cl_x) && !holdsStep`. A recital row just adds a second way to learn it. No
+  STAGE_IMPLIES/STEP_IMPLIES entry, so `stepsHeld()` carries nothing from it. `#popflags` source keeps its closed vocabulary
+  (no `cl_*`).
+- `pendingHint(key, held)` → ready / blocked / moot with a plain-words "do this next" (prerequisite pairs from the script and
+  `PopFlagsHasReadyMemory`, popflags.cpp:126-150). Exported only; `/pop/raid/me` and the guide can use it later.
+- cl_maze and cl_behemoth print nothing (empty text in the script); `#popflags` does print "Pending memory: Thelin's hedge maze"
+  and "Pending memory: Karana", not stored here.
+- The paste/log reader treats a boss line reading `Missing` / `Pending memory`, the Seer notice, the Miak advice,
+  `Pending memory: <x>` and a Tier 1-3 that is not Complete as "time not held" (the server prints them only without it).

@@ -1,0 +1,59 @@
+=== Tier 1 Progression ===
+--- Plane of Justice ---
+Mavuin's case: Mavuin's case is complete
+Seventh Hammer access: Locked
+--- Plane of Disease ---
+Fuirstel progression: Not started
+Crypt of Decay access: Unlocked
+Grummus flag: Pending memory
+--- Plane of Nightmare ---
+Thelin progression: Thelin was released from Terris Thule
+Terris Thule flag: Complete
+--- Plane of Innovation ---
+Factory door access: Locked
+Manaetic Behemoth flag: Complete
+Pending checklist memories exist, but their prerequisite steps are incomplete.
+Complete the unfinished progression shown above, then return to Seer Mal Nae`Shi.
+=== Tier 2 Progression ===
+--- Plane of Valor ---
+Aerin`Dar progression: Halls of Honor access unlocked
+Aerin`Dar flag: Complete
+--- Plane of Storms ---
+Askr and Karana progression: Bastion of Thunder progression recorded
+--- Crypt of Decay ---
+Crypt of Decay access: Unlocked
+Lower Crypt access: Unlocked
+Bertoxxulous flag: Missing
+--- Plane of Torment ---
+Tylis progression: Not started
+Keeper of Sorrows flag: Missing
+Saryrn cipher half: Missing
+Pending checklist memories exist, but their prerequisite steps are incomplete.
+Complete the unfinished progression shown above, then return to Seer Mal Nae`Shi.
+=== Tier 3 Progression ===
+--- Halls of Honor ---
+Halls of Honor trials: None completed
+Mithaniel Marr cipher half: Missing
+Mithaniel Marr book: Missing
+--- Bastion of Thunder ---
+Agnarr and Karana progression: Karana progression continues
+Agnarr / Karana flag: Missing
+--- Plane of Tactics ---
+Giwin and Zek progression: Both Zek information sets obtained
+Vallon Zek flag: Complete
+Tallon Zek flag: Complete
+Rallos Zek flag: Pending memory
+--- Grand Librarian Maelin ---
+Cipher information: Missing
+Zebuxoruk lore: Missing
+Combined Zek information: Received
+Final elemental information: Missing
+If one of these is missing, hail Maelin and ask about new lore and new information.
+--- Tower of Solusek Ro ---
+Miak the Searedsoul preflag: Missing
+Speak to Miak the Searedsoul in Tranquility about 'portal's destination'; hailing alone does not grant the preflag.
+Tower wing flags: None completed
+Plane of Fire progression: Not started
+Solusek Ro flag: Missing
+Pending checklist memories exist, but their prerequisite steps are incomplete.
+Complete the unfinished progression shown above, then return to Seer Mal Nae`Shi.
