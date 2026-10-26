@@ -1,0 +1,78 @@
+[Mon Oct 26 21:10:01 2026] === Planes of Power Progression ===
+[Mon Oct 26 21:10:01 2026] Tier 1: In progress
+[Mon Oct 26 21:10:01 2026] Tier 2: In progress
+[Mon Oct 26 21:10:01 2026] Tier 3: In progress
+[Mon Oct 26 21:10:01 2026] Tier 4: Not started
+[Mon Oct 26 21:10:01 2026] Tier 5 - Plane of Time: Not started
+[Mon Oct 26 21:10:01 2026] Details: #popflags 1, 2, 3, 4, or 5 (tier1-tier5 also work).
+[Mon Oct 26 21:10:09 2026] Brackwyn tells the guild, 'who has a spare ring for the Seer quest tonight'
+[Mon Oct 26 21:10:14 2026] === Tier 1 Progression ===
+[Mon Oct 26 21:10:14 2026] --- Plane of Justice ---
+[Mon Oct 26 21:10:14 2026] Mavuin's case: Mavuin's case is complete
+[Mon Oct 26 21:10:14 2026] Seventh Hammer access: Unlocked
+[Mon Oct 26 21:10:14 2026] --- Plane of Disease ---
+[Mon Oct 26 21:10:14 2026] Fuirstel progression: Elder Fuirstel aided; defeat Bertoxxulous
+[Mon Oct 26 21:10:14 2026] Crypt of Decay access: Unlocked
+[Mon Oct 26 21:10:14 2026] Grummus flag: Complete
+[Mon Oct 26 21:10:14 2026] --- Plane of Nightmare ---
+[Mon Oct 26 21:10:14 2026] Thelin progression: Nightmare progression complete
+[Mon Oct 26 21:10:14 2026] Pending memory: Thelin's hedge maze
+[Mon Oct 26 21:10:14 2026] Terris Thule flag: Complete
+[Mon Oct 26 21:10:14 2026] --- Plane of Innovation ---
+[Mon Oct 26 21:10:14 2026] Factory door access: Unlocked
+[Mon Oct 26 21:10:14 2026] Manaetic Behemoth flag: Complete
+[Mon Oct 26 21:10:14 2026] A checklist memory is ready to be unlocked.
+[Mon Oct 26 21:10:14 2026] Sit near Seer Mal Nae`Shi and say 'unlock memories', then check #popflags again.
+[Mon Oct 26 21:10:20 2026] === Tier 2 Progression ===
+[Mon Oct 26 21:10:20 2026] --- Plane of Valor ---
+[Mon Oct 26 21:10:20 2026] Aerin`Dar progression: Halls of Honor access unlocked
+[Mon Oct 26 21:10:20 2026] Aerin`Dar flag: Complete
+[Mon Oct 26 21:10:20 2026] --- Plane of Storms ---
+[Mon Oct 26 21:10:20 2026] Askr and Karana progression: Bastion of Thunder progression recorded
+[Mon Oct 26 21:10:20 2026] --- Crypt of Decay ---
+[Mon Oct 26 21:10:20 2026] Crypt of Decay access: Unlocked
+[Mon Oct 26 21:10:20 2026] Lower Crypt access: Unlocked
+[Mon Oct 26 21:10:20 2026] Bertoxxulous flag: Missing
+[Mon Oct 26 21:10:20 2026] --- Plane of Torment ---
+[Mon Oct 26 21:10:20 2026] Tylis progression: Tylis progression complete
+[Mon Oct 26 21:10:20 2026] Keeper of Sorrows flag: Complete
+[Mon Oct 26 21:10:20 2026] Saryrn cipher half: Complete
+[Mon Oct 26 21:10:27 2026] === Tier 3 Progression ===
+[Mon Oct 26 21:10:27 2026] --- Halls of Honor ---
+[Mon Oct 26 21:10:27 2026] Rydda`Dar trial: Complete
+[Mon Oct 26 21:10:27 2026] Village trial: Incomplete
+[Mon Oct 26 21:10:27 2026] Nomad trial: Complete
+[Mon Oct 26 21:10:27 2026] Mithaniel Marr cipher half: Complete
+[Mon Oct 26 21:10:27 2026] Mithaniel Marr book: Missing
+[Mon Oct 26 21:10:27 2026] --- Bastion of Thunder ---
+[Mon Oct 26 21:10:27 2026] Agnarr and Karana progression: Karana progression continues
+[Mon Oct 26 21:10:27 2026] Agnarr / Karana flag: Pending memory
+[Mon Oct 26 21:10:27 2026] --- Plane of Tactics ---
+[Mon Oct 26 21:10:27 2026] Giwin and Zek progression: Both Zek information sets obtained
+[Mon Oct 26 21:10:27 2026] Vallon Zek flag: Complete
+[Mon Oct 26 21:10:27 2026] Tallon Zek flag: Complete
+[Mon Oct 26 21:10:27 2026] Rallos Zek flag: Missing
+[Mon Oct 26 21:10:27 2026] --- Grand Librarian Maelin ---
+[Mon Oct 26 21:10:27 2026] Cipher information: Received
+[Mon Oct 26 21:10:27 2026] Zebuxoruk lore: Missing
+[Mon Oct 26 21:10:27 2026] Combined Zek information: Received
+[Mon Oct 26 21:10:27 2026] Final elemental information: Missing
+[Mon Oct 26 21:10:27 2026] If one of these is missing, hail Maelin and ask about new lore and new information.
+[Mon Oct 26 21:10:27 2026] --- Tower of Solusek Ro ---
+[Mon Oct 26 21:10:27 2026] Miak the Searedsoul preflag: Complete
+[Mon Oct 26 21:10:27 2026] Xuzl: Complete
+[Mon Oct 26 21:10:27 2026] Arlyxir: Incomplete
+[Mon Oct 26 21:10:27 2026] Dresolik: Complete
+[Mon Oct 26 21:10:27 2026] Rizlona: Incomplete
+[Mon Oct 26 21:10:27 2026] Jiva: Incomplete
+[Mon Oct 26 21:10:27 2026] Plane of Fire progression: In progress
+[Mon Oct 26 21:10:27 2026] Solusek Ro flag: Missing
+[Mon Oct 26 21:10:33 2026] === Tier 4 Progression ===
+[Mon Oct 26 21:10:33 2026] --- Elemental Planes ---
+[Mon Oct 26 21:10:33 2026] Air, Earth, and Water access: Locked
+[Mon Oct 26 21:10:33 2026] Plane of Fire access: Locked
+[Mon Oct 26 21:10:33 2026] Plane of Earth B access: Locked
+[Mon Oct 26 21:10:33 2026] Plane of Time access: Locked
+[Mon Oct 26 21:10:39 2026] === Plane of Time ===
+[Mon Oct 26 21:10:39 2026] Plane of Time access: Locked
+[Mon Oct 26 21:10:39 2026] Complete the elemental progression, combine the four elemental essences, and return to Grand Librarian Maelin.

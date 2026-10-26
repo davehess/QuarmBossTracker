@@ -228,14 +228,15 @@ describe('the page and its wiring (stripped source)', () => {
     expect(tools).toMatch(/import SeerPaste from '@\/app\/pop\/guide\/SeerPaste'/);
     expect(tools).not.toMatch(/parseRecital|popRecital/);
   });
-  it('leaves the #popflags tab and the log sync as disabled, clearly marked slots', () => {
+  it('wires the #popflags tab and the log sync to their components (no longer disabled slots)', () => {
     expect(tools).toMatch(/data-slot="popflags-output"/);
     expect(tools).toMatch(/#popflags output/);
     const popflags = tools.slice(tools.indexOf('data-slot="popflags-output"'));
-    expect(popflags).toMatch(/<textarea disabled/);
-    expect(popflags).toMatch(/<button type="button" disabled/);
-    expect(tools).toMatch(/<button type="button" disabled title="Coming next: read your flags straight from your logs"/);
-    expect(tools).toMatch(/Sync from my logs/);
+    expect(popflags).toMatch(/<PopFlagsPaste characters=\{chars\.map\(c => c\.name\)\} character=\{character\} onSaved=\{refresh\} \/>/);
+    expect(popflags).not.toMatch(/<textarea disabled/);
+    expect(tools).toMatch(/import PopFlagsPaste from '\.\/PopFlagsPaste'/);
+    expect(tools).toMatch(/<SyncFromLogs character=\{character\} onDone=\{refresh\} \/>/);
+    expect(tools).not.toMatch(/disabled title="Coming next/);
   });
   it('is linked from the raid night plan and the checklist', () => {
     expect(raidPage).toMatch(/href="\/pop\/raid\/me"/);

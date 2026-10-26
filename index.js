@@ -9829,6 +9829,18 @@ async function _handleAgentPopFlags(req, res) {
       push(e, iso, 'hail', { source: 'hail_witnessed', npc: e.npc ? String(e.npc).slice(0, 64) : null });
       continue;
     }
+    // The agent read the server's `#popflags` output off the member's own log (2026-10-26): step KEYS, not text.
+    // Only the closed vocabulary is stored, as source 'popflags', and each step carries the catalog flags it
+    // proves, like a recital. Older agents never send this; an older BOT sees kind 'recital' with no text and
+    // skips it (the line below), which is why the agent sends it as a recital.
+    if (e.source === 'popflags') {
+      for (const st of (Array.isArray(e.stages) ? e.stages.slice(0, 16) : [])) {
+        if (!popFlagStages.POPFLAGS_KEYS.has(st)) continue;
+        push(e, iso, st, { source: 'popflags', stage: st });
+        for (const k of popFlagStages.STAGE_IMPLIES[st] || []) push(e, iso, k, { source: 'popflags', stage: st });
+      }
+      continue;
+    }
     const bossLower = _popBossKey(e.boss);
     // The server's own flag step first (utils/popFlagStages.js), then what it proves in the catalog's
     // terms; the boss map is the fallback for anything the step tables do not name.
@@ -21233,7 +21245,7 @@ async function _handleRecentFiresGet(req, res) {
 //   tuning_ver=<hash> tuning bundle version (unchanged-gate)
 //   trig_ver=<hash>   guild-triggers version (_guildTriggersVersion; unchanged-gate)
 //   classes=<csv>     guild-triggers class targeting
-//   characters=<csv>  prefs / backfill / ui_edits key list
+//   characters=<csv>  prefs / backfill / ui_edits / rescan key list
 // Response: { ok, streams: { <key>: {data…} | { unchanged:true } }, agent_kill,
 //   min_agent_ver_num }. A stream that wasn't requested is absent; a stream shed
 // via flag_shed_<key> is OMITTED (the client fails open to its own fallback for
@@ -21358,6 +21370,13 @@ async function _handleAgentPoll(req, res) {
   if (_pollStreamDecision('ui_edits', want, tune, null, null) === 'send') {
     out.streams.ui_edits = await _uiPendingEditsFor(chars, identity.discord_id);
   }
+  // rescan — "Sync from my logs" (2026-10-26): the caller's own open requests to re-read recent logs for PoP flag
+  // lines, claimed as they go out (utils/popRescan.js). Older agents never ask for it; one that does asks every few
+  // minutes and only with a watched character, so it costs one indexed read per ask.
+  if (_pollStreamDecision('rescan', want, tune, null, null) === 'send') {
+    const sb = require('./utils/supabase');
+    out.streams.rescan = await popRescan.rescanRequestsFor(sb, sb.guildId(), String(identity.discord_id || ''), chars);
+  }
   // pet_owners (FB-35) — the owners pooled from every raider's uploads, so one
   // "My leader is <Owner>" seen by anyone names that pet on every client's live meter.
   if (_pollStreamDecision('pet_owners', want, tune, null, null) === 'send') {
@@ -21371,6 +21390,32 @@ async function _handleAgentPoll(req, res) {
 
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   return res.end(JSON.stringify(out));
+}
+
+// POST /api/agent/rescan-done — the agent closes a "Sync from my logs" request it was handed on the poll's `rescan`
+// stream (the guild lead, 2026-10-26).
+//   body  { id, found, ok }   found = PoP flag lines read, ok = false when it could not read
+//   200 closed (or already closed) · 400 bad body · 404 not your request · 409 not taken · 502 database down
+// WHO: the Mimic session's own discord_id; a request is closed only by its owner (utils/popRescan.js). A write
+// route, not an ingest stream: no shed flag and no budget (a dropped 200-ack would leave the member's page
+// waiting for ever).
+const popRescan = require('./utils/popRescan');
+async function _handleAgentRescanDone(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 4 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const sb = require('./utils/supabase');
+  const out = await popRescan.finishRescan(sb, sb.guildId(), String(identity.discord_id || ''), payload);
+  res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(JSON.stringify(out.body));
 }
 
 // Voice playback path. Hands off to utils/voice.js, which queues + speaks
@@ -25123,6 +25168,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentPoll(req, res); }
     catch (err) {
       console.error('[agent-poll] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // "Sync from my logs": the agent closes a request the poll's `rescan` stream handed it (utils/popRescan.js).
+  if (req.method === 'POST' && req.url === '/api/agent/rescan-done') {
+    try { return await _handleAgentRescanDone(req, res); }
+    catch (err) {
+      console.error('[rescan-done] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

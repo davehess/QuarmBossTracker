@@ -193,6 +193,17 @@ const STAGE_IMPLIES = {
   time_1: ['fennin_dead', 'coirnav_dead', 'rathe_dead', 'xegony_dead'],
 };
 
+// The steps a read of the server's `#popflags` command may carry (the agent's popFlagsOutputEvents, 2026-10-26;
+// web/lib/popFlagsPaste.ts is the same reader on a paste). A closed vocabulary: the agent sends step KEYS, and the
+// bot stores only these, so a payload cannot put an arbitrary flag_key into pop_flags. Every stage the tables above
+// know except the checklist memories, plus aerindar_1 (the Aerin`Dar projection prints no line, but #popflags
+// shows its stage). test/pop-flags-live.test.js keeps it equal to what the readers can emit.
+const POPFLAGS_KEYS = new Set([
+  ...RECITAL_STAGES.map(([, stage]) => stage),
+  ...PREV_STAGES.map(([, , , stage]) => stage).filter(s => !s.startsWith('cl_')),
+  'aerindar_1',
+]);
+
 const _norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const _PREV = PREV_STAGES.map(([zone, kind, prefix, stage]) => ({ zone, kind, prefix: _norm(prefix), stage }));
 const _RECITAL = RECITAL_STAGES.map(([prefix, stage]) => ({ prefix: _norm(prefix), stage }));
@@ -260,5 +271,5 @@ function resolveStage(e, bossKey) {
 
 module.exports = {
   ZONE_BY_ID, PREV_STAGES, RECITAL_STAGES, ZONE_ONLY, STAGE_IMPLIES, TACTICS_CHECKLIST_BY_BOSS,
-  zoneShort, resolveStage, resolveTrial, TRIAL_STAGE_BY_NPC,
+  zoneShort, resolveStage, resolveTrial, TRIAL_STAGE_BY_NPC, POPFLAGS_KEYS,
 };
