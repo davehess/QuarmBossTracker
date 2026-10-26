@@ -52142,6 +52142,10 @@ const _mapPaths = {
   set cache(v) { this._c = v; },
   get timers() { return this._t || path.join(path.dirname(STATS_FILE), 'map_timers.json'); },
   set timers(v) { this._t = v; },
+  // Guild-sync events the bot has not taken yet (see "Guild sync"), beside map_timers.json.
+  _o: null,
+  get outbox() { return this._o || path.join(path.dirname(this.timers), 'map_sync_outbox.json'); },
+  set outbox(v) { this._o = v; },
   // Brewall's maps downloaded from Zeal's repo (see "Brewall maps"); null switches the download and the source off.
   _b: undefined,
   get brewall() { return this._b === undefined ? path.join(__dirname, 'brewall-maps') : this._b; },
@@ -52178,7 +52182,10 @@ const MAP_SYNC_BATCH         = 50;                  // events per POST
 const MAP_SYNC_PULL_MS       = 10 * 1000;
 const MAP_SYNC_BACKOFF_MS    = 10 * 60 * 1000;      // the bot answered 404: not deployed yet, ask again later
 const MAP_SYNC_TIMEOUT_MS    = 8000;
-const MAP_SYNC_QUEUE_MAX     = 200;
+const MAP_SYNC_QUEUE_MAX     = 500;                 // the outbox: events held while the bot is unreachable (oldest out)
+const MAP_SYNC_RETRY_MIN_MS  = 15 * 1000;           // the bot did not answer: first retry after this, doubling...
+const MAP_SYNC_RETRY_MAX_MS  = 5 * 60 * 1000;       // ...up to this
+const MAP_SYNC_KEEP_MS       = 24 * 60 * 60 * 1000 - 10 * 60 * 1000;   // the bot keeps 24 h and drops older events: stop holding them just before
 const MAP_CORPSE_RE          = /[`'’]s\s+corpse\d*$/i;
 // NPCs whose walk is recorded whenever anyone's target is on them (the guild lead, 2026-10-14: "for Thelin, if anyone
 // is targetting him we should track that path and put his path on the map"). Thelin Poxbourne is the escort of the
@@ -53191,26 +53198,109 @@ function _mapCopyInfo(zone, now) {
 // Push: pinned sightings ("seen"), assigned deaths ("died") and your own marks (died / empty / up / clear), batched
 // (one POST per 3 s, 50 events). Never a "?" candidate. Pull: only while the overlay is polling /api/map-state
 // (the pull starts from that request and from nothing else, so a closed or hidden map stops it), every 10 s, for
-// events newer than the last one seen. Ephemeral on purpose: no durable queue, a failed POST is dropped. A 404
-// means the bot does not have the route yet: nothing is asked of it for 10 minutes, and nothing is shown.
+// events newer than the last one seen. A 404 means the bot does not have the route yet: nothing is asked of it for
+// 10 minutes, and nothing is shown.
+// The OUTBOX (the guild lead, 2026-10-26: "if the bot restarted and during that timeframe i killed something it would
+// need to collect any of those spawn id + name matches and sync them back in. Source is important."): an event the bot
+// has not taken is HELD, not dropped. A POST that gets no answer (refused, reset, timed out) or a 404 / 429 / 5xx puts its
+// batch back; the next try waits 15 s, doubling to 5 min (a 404 keeps its 10 minutes). Held events keep their own
+// character, spawn id, name, copy token and original `at`, so a late arrival is the same event it would have been, and
+// the bot ignores a repeat of one it already has. Capped at 500 (oldest out) and dropped once the bot would drop them
+// (24 h). Kept in map_sync_outbox.json beside map_timers.json, so a Mimic restart during an outage loses nothing
+// (`_mapSyncResume`, at start). Any other 4xx is a bad event or a bad token: dropped, as before. Not the durable upload
+// queue (enqueueUpload): that one is per-event-kind with its own envelope, treats a 404 as permanent, and holds back
+// agent updates while it has anything; a map event is one small row in a batch the bot already knows how to read.
 // Same URL derivation, bearer, timeout and _mapFetchAllowed() gate as _mapGetZone: local mode never syncs.
 // The same pull also brings the raid's shared targets and the escort trails (bot 3.1.263, DECISIONS 299), kept here per
 // zone: `targets[zone]` = { rows, botNow, pulledAt }, `trails[zone][<name>]` = { name, at, live, pulledAt, pts, tmax }.
 // Memory only; the bot is where they persist. An older bot sends neither and nothing here changes.
 // `watches[zone][<point_id>]` = { point_id, named, inst, by, at, seenAt, synced }: the spots marked "watch for <named>"
 // (see "Watched spots" below). Memory only, like targets and trails: the bot is where they persist.
-const _mapSync = { q: [], flushTimer: null, backoffUntil: 0, pulling: false, pullAt: 0, pullZone: null, since: {}, keys: new Set(),
+// `q` = the outbox: [{ zone, character, ev }], oldest first. `flying` = entries in a POST that has not answered yet (still
+// on disk until it does). retryAt / fails / failGen = the backoff after an unanswered POST; epoch ends callbacks after a stop.
+const _mapSync = { q: [], flying: new Set(), flushTimer: null, saveTimer: null, onDisk: false, loaded: false, epoch: 0,
+  retryAt: 0, fails: 0, failGen: 0, backoffUntil: 0, pulling: false, pullAt: 0, pullZone: null, since: {}, keys: new Set(),
   targets: {}, trails: {}, watches: {}, watchOff: {}, watchBackoffUntil: 0 };
 const _mapSyncKey = (zone, e) => zone + '|' + e.point_id + '|' + e.kind + '|' + (e.spawn_id == null ? '' : e.spawn_id) + '|' + e.at;
 function _mapSyncRemember(key) { if (_mapSync.keys.size > 4000) _mapSync.keys.clear(); _mapSync.keys.add(key); }
+// ── the outbox on disk: { version, q: [{ zone, character, ev }] }, written whole (.tmp + rename) a moment after a change ──
+function _mapOutboxSaveNow() {
+  if (_mapSync.saveTimer) { clearTimeout(_mapSync.saveTimer); _mapSync.saveTimer = null; }
+  const file = _mapPaths.outbox, held = [..._mapSync.flying, ..._mapSync.q];
+  try {
+    if (!held.length) {
+      if (_mapSync.onDisk) { _mapSync.onDisk = false; fs.unlinkSync(file); }
+      return;
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ version: 1, q: held }));
+    fs.renameSync(file + '.tmp', file);
+    _mapSync.onDisk = true;
+  } catch { /* best effort: the events are still in memory */ }
+}
+function _mapOutboxSaveSoon() {
+  if (_mapSync.saveTimer) return;
+  _mapSync.saveTimer = setTimeout(() => { _mapSync.saveTimer = null; _mapOutboxSaveNow(); }, 2000);
+  if (_mapSync.saveTimer.unref) _mapSync.saveTimer.unref();
+}
+// Put entries back (a POST that did not land, or the file read at start): oldest first, the oldest out past the cap.
+function _mapSyncRequeue(entries) {
+  const q = _mapSync.q;
+  for (const x of entries) q.push(x);
+  q.sort((a, b) => a.ev.at - b.ev.at);
+  while (q.length > MAP_SYNC_QUEUE_MAX) q.shift();
+}
+// Events the bot would refuse for age are not worth holding.
+function _mapSyncPrune(now) {
+  const q = _mapSync.q, min = now - MAP_SYNC_KEEP_MS;
+  for (let i = q.length - 1; i >= 0; i--) if (!(q[i].ev.at >= min)) q.splice(i, 1);
+}
+// At start (a signed-in agent): take back what the last run could not send, and try again.
+function _mapSyncResume(now) {
+  if (_mapSync.loaded) return _mapSync.q.length;
+  _mapSync.loaded = true;
+  let rows = [];
+  try {
+    const j = JSON.parse(fs.readFileSync(_mapPaths.outbox, 'utf8'));
+    if (j && Array.isArray(j.q)) rows = j.q;
+    _mapSync.onDisk = true;
+  } catch { /* none, or unreadable: nothing to resume */ }
+  const back = [];
+  for (const r of rows) {
+    const e = r && r.ev;
+    if (!r || typeof r.zone !== 'string' || typeof r.character !== 'string' || !e || typeof e !== 'object') continue;
+    if (!Number.isInteger(e.point_id) || typeof e.kind !== 'string' || !Number.isFinite(e.at)) continue;
+    const ev = { point_id: e.point_id, kind: e.kind, spawn_id: e.spawn_id > 0 ? e.spawn_id : null,
+      name: e.name ? String(e.name).slice(0, 80) : null, at: e.at };
+    if (typeof e.inst === 'string') ev.inst = e.inst;
+    back.push({ zone: r.zone, character: r.character, ev });
+  }
+  _mapSyncRequeue(back);
+  _mapSyncPrune(now);
+  _mapOutboxSaveSoon();
+  if (_mapSync.q.length) _mapSyncSchedule();
+  return _mapSync.q.length;
+}
 function _mapSyncStop() {
   if (_mapSync.flushTimer) { clearTimeout(_mapSync.flushTimer); _mapSync.flushTimer = null; }
-  _mapSync.q.length = 0;
+  _mapSync.epoch++;   // a POST still in the air must not put its batch back
+  _mapSync.q.length = 0; _mapSync.flying.clear();
+  _mapSync.retryAt = 0; _mapSync.fails = 0;
+  _mapOutboxSaveNow();   // nothing held: removes the file
 }
-function _mapSyncSchedule() {
+function _mapSyncSchedule(delayMs) {
   if (_mapSync.flushTimer) return;
-  _mapSync.flushTimer = setTimeout(() => { _mapSync.flushTimer = null; _mapSyncFlush(Date.now()); }, MAP_SYNC_FLUSH_MS);
+  const wait = Math.min(Math.max(delayMs || MAP_SYNC_FLUSH_MS, MAP_SYNC_FLUSH_MS), MAP_SYNC_BACKOFF_MS);
+  _mapSync.flushTimer = setTimeout(() => { _mapSync.flushTimer = null; _mapSyncFlush(Date.now()); }, wait);
   if (_mapSync.flushTimer.unref) _mapSync.flushTimer.unref();
+}
+// What an answer means for the batch it answers: 'ok' (taken), 'retry' (hold it and try again) or 'drop' (the bot will never
+// take it: a bad event or a bad token). `err` = no answer at all.
+function _mapSyncVerdict(err, status) {
+  if (err) return 'retry';
+  if (status >= 200 && status < 300) return 'ok';
+  if (status === 404 || status === 429 || status >= 500) return 'retry';
+  return status >= 400 ? 'drop' : 'retry';
 }
 // A local event: it stamps the point (newer wins), is remembered so its own echo from the bot is skipped, and is
 // queued for the guild when this machine may talk to the bot.
@@ -53227,6 +53317,7 @@ function _mapLocalEvent(zone, zd, character, ev, now) {
   if (!ch) return;
   if (_mapSync.q.length >= MAP_SYNC_QUEUE_MAX) _mapSync.q.shift();
   _mapSync.q.push({ zone, character: String(ch), ev: e });
+  _mapOutboxSaveSoon();
   _mapSyncSchedule();
 }
 function _mapSyncRequest(method, query, bodyObj, done, endpoint) {
@@ -53250,17 +53341,40 @@ function _mapSyncRequest(method, query, bodyObj, done, endpoint) {
   } catch (e) { fin(e); }
 }
 // Send the oldest batch (one zone + character, up to 50). Returns true when a POST went out.
+// Local mode (no token) holds nothing. A paused agent keeps its outbox but sends nothing; a bot that is backing off (404) or
+// has not answered lately is not asked again until the wait is over, and the outbox is never emptied for it.
 function _mapSyncFlush(now) {
   const q = _mapSync.q;
   if (!q.length) return false;
-  if (!_mapFetchAllowed() || now < _mapSync.backoffUntil) { q.length = 0; return false; }
-  const first = q[0], batch = [];
-  for (let i = 0; i < q.length && batch.length < MAP_SYNC_BATCH;) {
-    if (q[i].zone === first.zone && q[i].character === first.character) batch.push(q.splice(i, 1)[0].ev); else i++;
+  if (_localOnly()) { _mapSyncStop(); return false; }
+  _mapSyncPrune(now);
+  if (!q.length) { _mapOutboxSaveSoon(); return false; }
+  if (!_mapFetchAllowed()) { _mapSyncSchedule(MAP_SYNC_RETRY_MAX_MS); return false; }
+  const until = Math.max(_mapSync.backoffUntil, _mapSync.retryAt);
+  if (now < until) { _mapSyncSchedule(until - now); return false; }
+  const first = q[0], sent = [];
+  for (let i = 0; i < q.length && sent.length < MAP_SYNC_BATCH;) {
+    if (q[i].zone === first.zone && q[i].character === first.character) sent.push(q.splice(i, 1)[0]); else i++;
   }
+  for (const x of sent) _mapSync.flying.add(x);
   if (q.length) _mapSyncSchedule();
-  _mapSyncRequest('POST', '', { zone: first.zone, character: first.character, events: batch }, (err, status) => {
-    if (!err && status === 404) _mapSync.backoffUntil = now + MAP_SYNC_BACKOFF_MS;
+  const epoch = _mapSync.epoch, gen = _mapSync.failGen;
+  _mapSyncRequest('POST', '', { zone: first.zone, character: first.character, events: sent.map(x => x.ev) }, (err, status) => {
+    if (epoch !== _mapSync.epoch) return;
+    for (const x of sent) _mapSync.flying.delete(x);
+    const verdict = _mapSyncVerdict(err, status);
+    if (verdict === 'ok') { _mapSync.fails = 0; _mapSync.retryAt = 0; }
+    else if (verdict === 'retry') {
+      _mapSyncRequeue(sent);
+      if (!err && status === 404) _mapSync.backoffUntil = now + MAP_SYNC_BACKOFF_MS;
+      else if (gen === _mapSync.failGen) {   // one escalation per outage, however many POSTs were in the air
+        _mapSync.failGen++; _mapSync.fails++;
+        _mapSync.retryAt = now + Math.min(MAP_SYNC_RETRY_MIN_MS * 2 ** (_mapSync.fails - 1), MAP_SYNC_RETRY_MAX_MS);
+      }
+      _mapSyncSchedule(Math.max(_mapSync.backoffUntil, _mapSync.retryAt) - now);
+    }
+    _mapOutboxSaveSoon();
+    if (_mapSync.q.length) _mapSyncSchedule();
   });
   return true;
 }
@@ -54975,7 +55089,7 @@ function _handleKiteLoopsGet(req, res) {
 // ── end Kite loops ──
 
 // A timer written in the last two seconds is flushed on the way out.
-process.on('exit', () => { try { if (_mapSaveTimer) _mapSaveNow(); } catch { void 0; } });
+process.on('exit', () => { try { if (_mapSaveTimer) _mapSaveNow(); } catch { void 0; } try { if (_mapSync.saveTimer) _mapOutboxSaveNow(); } catch { void 0; } });
 
 // Target Info F/Q/V: the bot's /api/agent/npc-interact by npc id (the guild lead,
 // 2026-09-28). Catalog data, so 6h; an empty answer is retried after 10 minutes rather
@@ -62335,6 +62449,8 @@ async function main() {
   // Make opts available to the chat relay flush (module-level so the interval can see them)
   _uploadOpts    = { botUrl, token, dryRun };
   _isServiceMode = !!args.flags.noServiceCheck;
+  // The Spawn map's guild-sync outbox: events a bot outage kept from going out last run are sent now (see "Guild sync").
+  if (!dryRun && token) { try { _mapSyncResume(Date.now()); } catch (e) { console.warn('[map] outbox resume failed:', e && e.message); } }
 
   // Spell catalog: load any cached copy from disk synchronously so the first
   // dashboard render has spell names + PQDI ids, then fire a background fetch
