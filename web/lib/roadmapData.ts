@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raid-flags-for-tonight-2026-10-26',
+    title: 'Web 2.1.44',
+    version: 'Web 2.1.44',
+    date: '2026-10-26',
+    headline: 'A new page, marked [beta], shows the character you signed up with for the next raid and exactly which flag steps it still needs.',
+    features: [
+      { name: 'Your flags for tonight', blurb: 'Open it from the raid night plan. It finds the character your sign-up brings (an alt if you signed up as its class), lists the steps for the night with done ones ticked and the rest in orange, and says where to stand and what to say for each.' },
+      { name: 'All your other characters', blurb: 'Every other character of yours sits below, folded, with "all set" or how many steps are left. Traders and characters under the Planes of Power level floor stay out.' },
+      { name: 'Paste what the Seer says', blurb: 'The same box as the checklist, right on the page, so a character Mimic has not seen can catch up. A tab for the #popflags output and a button to read your flags from your logs are marked coming next.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'site-lighter-2026-10-26',
     title: 'Web 2.1.41',
     version: 'Web 2.1.41',

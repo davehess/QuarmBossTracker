@@ -48,17 +48,44 @@ export const RAID_DATE_LINE = 'Wednesday 2026-10-14 · 8:30pm ET';
  * that starts at 18:00 ET or later, else the earliest of the day. Null when none.
  */
 export function pickRaidEvent<T extends { start_time: string }>(events: T[], date: string = RAID_DATE): T | null {
-  const et = (iso: string) => {
-    const p = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23',
-    }).formatToParts(new Date(iso));
-    const g = (t: string) => p.find(x => x.type === t)?.value ?? '';
-    return { day: `${g('year')}-${g('month')}-${g('day')}`, hour: Number(g('hour')) };
-  };
   const sameDay = events
-    .filter(e => et(e.start_time).day === date)
+    .filter(e => etParts(e.start_time).day === date)
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
-  return sameDay.find(e => et(e.start_time).hour >= 18) ?? sameDay[0] ?? null;
+  return sameDay.find(e => etParts(e.start_time).hour >= 18) ?? sameDay[0] ?? null;
+}
+
+/** An instant as Eastern calendar day (YYYY-MM-DD) and hour (0-23). */
+function etParts(iso: string | number | Date): { day: string; hour: number } {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(iso));
+  const g = (t: string) => p.find(x => x.type === t)?.value ?? '';
+  return { day: `${g('year')}-${g('month')}-${g('day')}`, hour: Number(g('hour')) };
+}
+
+/**
+ * The raid night a player is looking at "now" (the guild lead, 2026-10-26: the next raid-helper event, today or
+ * later): the first ET calendar day that has an event, from today on, then pickRaidEvent's choice within that day
+ * (the evening event). Null when nothing is scheduled. pickRaidEvent and the fixed night /pop/raid reads stay as
+ * they were.
+ */
+export function pickNextRaidEvent<T extends { start_time: string }>(events: T[], now: Date | number = new Date()): T | null {
+  const today = etParts(now).day;
+  const upcoming = events.filter(e => etParts(e.start_time).day >= today);
+  if (upcoming.length === 0) return null;
+  const firstDay = upcoming.map(e => etParts(e.start_time).day).sort()[0];
+  return pickRaidEvent(upcoming, firstDay);
+}
+
+/** Whether an event falls on the night this plan was written for (RAID_DATE, Eastern). */
+export const isPlanNight = (iso: string): boolean => etParts(iso).day === RAID_DATE;
+
+/** "Wed Oct 28 · 8:30 pm ET" for an event start. */
+export function eventWhen(iso: string): string {
+  const d = new Date(iso);
+  const day = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(d);
+  const time = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true }).format(d);
+  return `${day.replace(',', '')} · ${time.toLowerCase().replace(/\s?([ap]m)/, ' $1')} ET`;
 }
 
 /** Raid-Helper sign-ups that are not coming. Raid-Helper also files these as the sign-up's class, not just its status. */

@@ -90,6 +90,9 @@ export default async function RaidPlanPage() {
       <NewPageTag note="New page: raid-night plan with a preflag check, travel, expectations and maps." />
       <h1 className="text-2xl text-gold">Raid night plan</h1>
       <p className="mt-1 text-sm text-dim">{RAID_DATE_LINE}</p>
+      <p className="mt-1 text-xs">
+        <Link href="/pop/raid/me" className="text-blue hover:underline">Your flags for tonight: your characters and the steps each one still needs →</Link>
+      </p>
 
       <nav className="mt-3 rounded-lg border border-border bg-panel p-3 text-xs" aria-label="Targets">
         <ol className="space-y-1">

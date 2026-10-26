@@ -6767,3 +6767,14 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   `test/kite-coach.test.js`. ⏳ Bars come from synthetic laps (0.5 u of position noise), NOT real kite data: tune on a real log; a drift
   under ~10% of r usually has no cause that clears a bar (3% speed change over half a lap already drifts 5%); ⏳ `slope` rests on a guess
   about how EverQuest slows you uphill, unverified; a jump of ~40 u mid-lap makes the lap lumpy enough that the coach lets go (no tag).
+
+### 🧾 2026-10-26 — Your flags for tonight: `/pop/raid/me` (web 2.1.44 main, first draft on `draft/pop-raid-me`, not yet routed; [beta] tag)
+The guild lead picked option A (a link with a copy/paste box): a signed-in page that finds the character the member's raid-helper sign-up
+brings (alt or main, `pickSignupCharacter`), shows it first with its numbered steps (done ✓ green, needed orange, `/loc` and words to say),
+then every other character folded ("all set ✓" / "N steps left"), then a paste box for the Flag Seer (the existing `SeerPaste`, reused).
+Next event = `pickNextRaidEvent` (Eastern day today or later); `/pop/raid` still reads its fixed night. Steps come from one function,
+`stepsFor(source, held)` (`web/lib/raidMe.ts`): the night's `PREFLAGS` by default, or `?steps=next` for the `/pop` next-steps engine; the
+targets and preflags are static data in `raidPlan.ts` until the officers' target-picking page replaces them. Traders and characters under
+the PoP floor are hidden (the sign-up's own character is always kept). ⏳ NOT wired, on purpose: the `#popflags output` tab (its format is
+being researched; no in-game text is guessed) and "Sync from my logs" (disabled, "coming next"). Tests: `test/pop-raid-me.test.js`.
+Linked from `/pop/raid` and `/pop/guide`; `SeerPaste` gained two optional props (`defaultOpen`, `onSaved`), the checklist is unchanged.
