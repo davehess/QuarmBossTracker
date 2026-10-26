@@ -286,3 +286,37 @@ export function candidateIds(results: SlotResult[]): number[] {
 export function isOptedOut(flags: { exclude_inventory?: boolean | null; exclude_from_stats?: boolean | null } | null | undefined): boolean {
   return !!(flags && (flags.exclude_inventory || flags.exclude_from_stats));
 }
+
+/** Interchangeable slots the page shows side by side under one heading (the guild lead, 2026-10-26: ears and wrists, "since they're interchangeable"; rings too, which is dropped by deleting its line). */
+export const SLOT_PAIRS: { title: string; slots: [string, string] }[] = [
+  { title: 'Ears', slots: ['Ear1', 'Ear2'] },
+  { title: 'Wrists', slots: ['Wrist1', 'Wrist2'] },
+  { title: 'Fingers', slots: ['Fingers1', 'Fingers2'] },
+];
+
+export type SlotGroup<T> = { title: string | null; items: T[] };
+
+/**
+ * Lay the per-slot rows out for the page: each pair of interchangeable slots becomes ONE group (two items, pair
+ * order) sitting where the pair's first slot sat; every other row is a group of its own with no title. The order
+ * of everything else is untouched. A pair with only one slot present is left as a plain row. WORN_SLOTS (which
+ * other code reads in bit order) is not changed.
+ */
+export function groupPairedSlots<T>(rows: T[], slotOf: (row: T) => string): SlotGroup<T>[] {
+  const bySlot = new Map(rows.map(r => [slotOf(r), r]));
+  const pairOf = new Map<string, (typeof SLOT_PAIRS)[number]>();
+  for (const p of SLOT_PAIRS) {
+    if (bySlot.has(p.slots[0]) && bySlot.has(p.slots[1])) for (const s of p.slots) pairOf.set(s, p);
+  }
+  const done = new Set<string>();
+  const out: SlotGroup<T>[] = [];
+  for (const row of rows) {
+    const slot = slotOf(row);
+    if (done.has(slot)) continue;
+    const pair = pairOf.get(slot);
+    if (!pair) { out.push({ title: null, items: [row] }); continue; }
+    for (const s of pair.slots) done.add(s);
+    out.push({ title: pair.title, items: pair.slots.map(s => bySlot.get(s) as T) });
+  }
+  return out;
+}

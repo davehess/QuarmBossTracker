@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'upgrades-wishlist-2026-10-26',
+    title: 'Web 2.1.46',
+    version: 'Web 2.1.46 · Bot 4.0.18',
+    date: '2026-10-26',
+    channel: 'beta',
+    headline: 'On the gear upgrades page you can put an upgrade on your wishlist and set a sealed pre-bid without leaving the page.',
+    features: [
+      { name: 'Add to wishlist', blurb: 'Under every upgrade there is an Add to wishlist button. Pick a priority (1 is top BIS, 10 is nice to have) and, if you like, a pre-bid in DKP. It is the same wishlist /wishlist add fills in Discord.' },
+      { name: 'Set, change or clear a pre-bid', blurb: 'Upgrades already on your wishlist show your priority and your own pre-bid, with buttons to change the bid or take the item off. Nobody else can see your bid; the bot seals it before it is saved.' },
+      { name: 'Ears, wrists and rings side by side', blurb: 'Because the two slots are interchangeable, each pair now sits together under one heading, so you can compare them at a glance. On a phone they stack.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'raid-flags-for-tonight-2026-10-26',
     title: 'Web 2.1.44',
     version: 'Web 2.1.44',

@@ -15,7 +15,13 @@ export const TICKET_TTL_S = 2 * 60 * 60;       // the page renews it a few minut
 export const TICKET_MAX_TTL_S = 24 * 60 * 60;  // a ticket claiming a longer life than this is not one we minted
 export const TICKET_SKEW_S = 60;               // clock drift allowed between Vercel and the bot, both directions
 
-type Opts = { secret?: string | null; nowMs?: number; ttlS?: number };
+// A second audience (2026-10-26): the 60-second ticket a server action presents to the bot's POST /api/web/wishlist
+// (utils/webWishlist.js). Signed and used server to server, never sent to a browser; the audience keeps a screen
+// ticket (which does reach one) from opening a write, and the reverse.
+export const WISHLIST_AUD = 'wishlist';
+export const WISHLIST_TTL_S = 60;
+
+type Opts = { secret?: string | null; nowMs?: number; ttlS?: number; aud?: string };
 
 const b64u = (buf: Buffer | string) => Buffer.from(buf).toString('base64url');
 const secretOf = (opts?: Opts): string | null => {
@@ -33,7 +39,7 @@ export function signScreenTicket(sub: string, opts: Opts = {}): { token: string;
   const ttlS = Number.isFinite(opts.ttlS) ? (opts.ttlS as number) : TICKET_TTL_S;
   const iat = Math.floor(nowMs / 1000);
   const exp = iat + ttlS;
-  const payloadB64 = b64u(JSON.stringify({ sub, aud: TICKET_AUD, iat, exp }));
+  const payloadB64 = b64u(JSON.stringify({ sub, aud: opts.aud || TICKET_AUD, iat, exp }));
   return { token: `${TICKET_VERSION}.${payloadB64}.${b64u(mac(secret, payloadB64))}`, exp };
 }
 
@@ -54,7 +60,7 @@ export function verifyScreenTicket(token: unknown, opts: Opts = {}): TicketCheck
   let p: { sub?: unknown; aud?: unknown; iat?: unknown; exp?: unknown } | null;
   try { p = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')); } catch { return { ok: false, reason: 'malformed' }; }
   if (!p || typeof p !== 'object' || Array.isArray(p)) return { ok: false, reason: 'malformed' };
-  if (p.aud !== TICKET_AUD) return { ok: false, reason: 'wrong-audience' };
+  if (p.aud !== (opts.aud || TICKET_AUD)) return { ok: false, reason: 'wrong-audience' };
   if (typeof p.sub !== 'string' || !p.sub) return { ok: false, reason: 'malformed' };
   if (typeof p.iat !== 'number' || !Number.isFinite(p.iat) || typeof p.exp !== 'number' || !Number.isFinite(p.exp)) {
     return { ok: false, reason: 'malformed' };
