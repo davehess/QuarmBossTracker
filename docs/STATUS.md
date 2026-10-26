@@ -105,6 +105,22 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 FB-98 + FB-99: a /me door in the local site, and the item hover card + icons on the inventory page (web 2.1.41 + 2.1.42, `claude/fb-98-99`, for `beta`; 2026-10-26).**
+  FB-98 (a member: "NEED /ME to go to the me section that matches with the website… couldn't easily find where to turn on or off
+  characters having their inventories synced or hidden"): the local site (Mimic's "On this PC" window) had Inventory / My parses / My replay
+  and no `/me`, the door the website's nav has. Now `/local/me/` is first in its nav: the three local pages in the website's /me order, then
+  where the per-character switches are and a button to `https://wolfpack.quest/me#my-characters`. The website's "My Characters" section got that
+  id and a plain-words callout over the cards ("Inventory sync: on / EXCLUDED", "Inventory page: private / PUBLIC", "Hide from lists"); the button
+  that read "Inventory: on / EXCLUDED" now says "Inventory **sync**". The local inventory page links to it too. `test/local-me-door.test.js`.
+  FB-99 (a member: item mouseover "chopped up into pieces… they need icons still"): **cause 1,** the hover card was drawn INSIDE its trigger and the
+  grid cell is `overflow-hidden`, so the card was cut to the cell (all of it sat above the cell: none showed). It now draws in a portal on `<body>`,
+  fixed, placed by `web/lib/tipPlacement.ts` (flips below at the top of the page, clamped to the window); the pop guide/raid pages use the same
+  component. **Cause 2,** icons hotlink PQDI and the path was `/Icons/item_<n>.png`, which PQDI answers 404 (case-sensitive); `/icons/item_<n>.png` is
+  the art (measured 2026-10-26). The 404 was hidden by the image's onError, so the 2026-08-13 "fix" never showed anything once the atlas was
+  switched off. Bags now show their own icon beside the name. `test/item-hover-icons.test.js` (mutation-checked). **Open:** if Vercel carries
+  `NEXT_PUBLIC_EQ_ICON_BASE` with the capital-I path it overrides the new default; the website atlas stays disabled (its sheets were read
+  row-major, the local icon route reads them column-major, `test/local-icons.test.js`), and `/me/inventory` (`InventoryExplorer`) draws no icons.
+
 - **🧪 Deaths in a fight parse: your own death and raiders nobody /who'd (agent 4.0.22, `claude/death-reading`, for `beta`; 2026-10-26).**
   The first-person "You have been slain by X!" line is now read as the log owner's death (one record when "You died." follows within
   3 s), and names on the Zeal raid list count as players, so a raider's death is kept without a /who. `test/death-self-and-raid-reading.test.js`.

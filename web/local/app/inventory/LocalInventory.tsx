@@ -9,6 +9,7 @@
 // both pages agree. The switch "Use my account list from wolfpack.quest" turns that off (the agent then never
 // asks) and the page guesses accounts from the shared-bank files.
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import InventoryExplorer from '@/app/me/inventory/InventoryExplorer';
 import { aggregateInventory, type InvRow, type ItemMeta } from '@/lib/inventoryAggregate';
 import type { AccountPlacement } from '@/lib/sharedBank';
@@ -112,7 +113,9 @@ export default function LocalInventory() {
           Everything across <b className="text-text">all your characters</b> at once, with the total of each item and
           exactly who is holding it. Items in the <b className="text-purple">shared bank</b> are tagged and count{' '}
           <b className="text-text">once per game account</b>. Data comes from the{' '}
-          <code>/outputfile inventory</code> files on this PC.
+          <code>/outputfile inventory</code> files on this PC.{' '}
+          To turn a character&apos;s inventory sync or hiding on or off, see{' '}
+          <Link href="/me/#characters" className="text-blue hover:underline">/me</Link>.
         </div>
         {data && agg && (
           <div className="mt-3 text-xs text-dim flex flex-wrap gap-x-6 gap-y-1">

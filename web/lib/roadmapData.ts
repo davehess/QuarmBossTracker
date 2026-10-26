@@ -37,6 +37,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'me-door-and-item-cards-2026-10-26',
+    title: 'Web 2.1.42',
+    version: 'Web 2.1.42',
+    date: '2026-10-26',
+    channel: 'beta',
+    headline: 'Mimic\'s "On this PC" pages get a /me button like the website, and item cards on the inventory page show up whole, with their icons.',
+    features: [
+      { name: '/me in Mimic', blurb: 'The "On this PC" window now starts with a /me button, set up like the one on wolfpack.quest. It lists your inventory, fights and replay, and says where to turn a character\'s inventory sync or hiding on and off, with a button that takes you there.' },
+      { name: 'Easier to find: inventory sync and hiding', blurb: 'On wolfpack.quest/me a short note over your characters says which small buttons do what: Inventory sync, who can open the inventory page, and Hide from lists. The button that said "Inventory" now says "Inventory sync".' },
+    ],
+    fixes: [
+      'Hovering an item on a character\'s inventory page cut the item card into pieces or hid it. It now shows whole, and moves under the item when there is no room above.',
+      'Item icons were missing on character inventory pages. They show again, and a bag shows its own icon next to its name.',
+    ],
+  },
+  {
     key: 'site-lighter-2026-10-26',
     title: 'Web 2.1.41',
     version: 'Web 2.1.41',

@@ -85,9 +85,9 @@ export default function ExclusionToggles({
         <Toggle
           on={inventory}
           disabled={pending}
-          tooltip="Exclude inventory: Mimic stops uploading this character's inventory and spellbook exports. It doesn't delete what was already uploaded."
-          onLabel="Inventory: EXCLUDED"
-          offLabel="Inventory: on"
+          tooltip="Inventory sync: on = Mimic uploads this character's inventory and spellbook exports. EXCLUDED = it stops uploading them (it doesn't delete what was already uploaded). Turn it back on any time."
+          onLabel="Inventory sync: EXCLUDED"
+          offLabel="Inventory sync: on"
           variant="warn-when-on"
           onChange={(next) => flip('exclude_inventory', next, setInventory, inventory)}
         />

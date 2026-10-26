@@ -1,12 +1,14 @@
 'use client';
 
-// The local site's top nav: Inventory, My parses and My replay are pages. An entry marked `coming` would render as a
-// dim, titled span until its page exists (none is, today).
+// The local site's top nav: /me, Inventory, My parses and My replay are pages. An entry marked `coming` would render as a
+// dim, titled span until its page exists (none is, today). "/me" comes first and is spelled like the website's own
+// nav chip (FB-98): it lists these pages and says where the per-character inventory switches are.
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 const PAGES: { href: string; label: string; icon: string; coming?: boolean }[] = [
+  { href: '/me/',        label: '/me', icon: '👤' },
   { href: '/inventory/', label: 'Inventory', icon: '🎒' },
   { href: '/parses/',    label: 'My parses', icon: '📈' },
   { href: '/replay/',    label: 'My replay', icon: '🎬' },
