@@ -1,0 +1,667 @@
+{
+ "version": "or2gqt",
+ "characters": {
+  "brackwyn": {
+   "character": "Brackwyn",
+   "steps": {
+    "done": 22,
+    "total": 57
+   },
+   "held": [
+    "mavuin_1",
+    "mavuin_2",
+    "mavuin_3",
+    "zeks_1",
+    "zeks_2",
+    "thelin_1",
+    "thelin_2",
+    "karana_1",
+    "karana_2",
+    "karana_3",
+    "aerindar_1",
+    "aerindar_2",
+    "thelin_3",
+    "thelin_4",
+    "karana_4",
+    "hoh_trial_1",
+    "hoh_trial_2",
+    "hoh_trial_3",
+    "mmarr_1",
+    "mmarr_book_1",
+    "zeks_3",
+    "zeks_4"
+   ],
+   "top": [
+    {
+     "line": "decay",
+     "step": "disease_ward"
+    }
+   ],
+   "next": [
+    {
+     "line": "decay",
+     "label": "Disease to Decay",
+     "short": "Decay",
+     "state": "next",
+     "done": 0,
+     "total": 6,
+     "steps": [
+      {
+       "key": "disease_ward",
+       "title": "Disease, before Grummus: ask Adler Fuirstel about the ward",
+       "who": "solo",
+       "must": true,
+       "zone": "Plane of Tranquility",
+       "verify": false
+      }
+     ],
+     "blocked_on": [],
+     "skipped": []
+    },
+    {
+     "line": "justice",
+     "label": "Justice flag",
+     "short": "Justice",
+     "state": "done",
+     "done": 4,
+     "total": 4,
+     "steps": [],
+     "blocked_on": [],
+     "skipped": []
+    },
+    {
+     "line": "innovation",
+     "label": "Innovation",
+     "short": "Innovation",
+     "state": "done",
+     "done": 2,
+     "total": 2,
+     "steps": [],
+     "blocked_on": [],
+     "skipped": []
+    },
+    {
+     "line": "nightmare",
+     "label": "Nightmare to Terris Thule",
+     "short": "Nightmare",
+     "state": "done",
+     "done": 4,
+     "total": 4,
+     "steps": [],
+     "blocked_on": [],
+     "skipped": []
+    },
+    {
+     "line": "storms",
+     "label": "Storms to Thunder",
+     "short": "Storms",
+     "state": "done",
+     "done": 4,
+     "total": 4,
+     "steps": [],
+     "blocked_on": [],
+     "skipped": []
+    },
+    {
+     "line": "valor",
+     "label": "Valor to Honor",
+     "short": "Valor",
+     "state": "done",
+     "done": 6,
+     "total": 6,
+     "steps": [],
+     "blocked_on": [],
+     "skipped": []
+    },
+    {
+     "line": "torment",
+     "label": "Torment",
+     "short": "Torment",
+     "state": "blocked",
+     "done": 0,
+     "total": 2,
+     "steps": [
+      {
+       "key": "torment_fahlia",
+       "title": "Torment, first: tell Fahlia Shadyglade you will go",
+       "who": "solo",
+       "must": true,
+       "zone": "Plane of Tranquility",
+       "verify": false
+      }
+     ],
+     "blocked_on": [
+      {
+       "flag": "fuirstel_5",
+       "label": "Elder Fuirstel thanks you",
+       "line": "decay"
+      }
+     ],
+     "skipped": []
+    },
+    {
+     "line": "tactics",
+     "label": "Tactics, the Zeks",
+     "short": "Tactics",
+     "state": "blocked",
+     "done": 3,
+     "total": 6,
+     "steps": [
+      {
+       "key": "zeks_maelin",
+       "title": "Between the Zeks and Rallos: Maelin reads Vallon’s and Tallon’s notes",
+       "who": "solo",
+       "must": true,
+       "zone": "Plane of Knowledge",
+       "verify": false
+      }
+     ],
+     "blocked_on": [
+      {
+       "flag": "cipher_1",
+       "label": "Cipher of the Divine Language",
+       "line": "maelin"
+      }
+     ],
+     "skipped": [
+      "tactics_maelin_before"
+     ]
+    },
+    {
+     "line": "maelin",
+     "label": "Maelin: cipher and power source",
+     "short": "Maelin",
+     "state": "blocked",
+     "done": 0,
+     "total": 3,
+     "steps": [
+      {
+       "key": "maelin_cipher",
+       "title": "The cipher: take Saryrn’s and Mithaniel Marr’s halves to Grand Librarian Maelin",
+       "who": "solo",
+       "must": true,
+       "zone": "Plane of Knowledge",
+       "verify": false
+      }
+     ],
+     "blocked_on": [
+      {
+       "flag": "saryrn_dead",
+       "label": "Kill Saryrn",
+       "line": "torment"
+      }
+     ],
+     "skipped": []
+    },
+    {
+     "line": "solro",
+     "label": "Sol Ro to Fire",
+     "short": "Sol Ro",
+     "state": "blocked",
+     "done": 0,
+     "total": 4,
+     "steps": [
+      {
+       "key": "pofire_miak",
+       "title": "Before the tower: ask Miak the Searedsoul about the portal’s destination",
+       "who": "solo",
+       "must": true,
+       "zone": "Plane of Tranquility",
+       "verify": false
+      }
+     ],
+     "blocked_on": [
+      {
+       "flag": "cipher_1",
+       "label": "Cipher of the Divine Language",
+       "line": "maelin"
+      },
+      {
+       "flag": "zeks_6",
+       "label": "Maelin reads the Zek notes",
+       "line": "tactics"
+      }
+     ],
+     "skipped": []
+    },
+    {
+     "line": "air",
+     "label": "Plane of Air",
+     "short": "Air",
+     "state": "blocked",
+     "done": 0,
+     "total": 2,
+     "steps": [
+      {
+       "key": "flag_avatars_air",
+       "title": "Kill the four air avatars",
+       "who": "raid",
+       "must": false,
+       "zone": "Eryslai, the Kingdom of Wind",
+       "verify": true
+      }
+     ],
+     "blocked_on": [
+      {
+       "flag": "zebuxoruk_2",
+       "label": "Maelin's power source",
+       "line": "maelin"
+      }
+     ],
+     "skipped": []
+    },
+    {
+     "line": "water",
+     "label": "Plane of Water",
+     "short": "Water",
+     "state": "blocked",
+     "done": 0,
+     "total": 1,
+     "steps": [
+      {
+       "key": "flag_coirnav",
+       "title": "Kill Coirnav (Plane of Water)",
+       "who": "raid",
+       "must": true,
+       "zone": "Reef of Coirnav",
+       "verify": false
+      }
+     ],
+     "blocked_on": [
+      {
+       "flag": "zebuxoruk_2",
+       "label": "Maelin's power source",
+       "line": "maelin"
+      }
+     ],
+     "skipped": []
+    },
+    {
+     "line": "earth",
+     "label": "Plane of Earth",
+     "short": "Earth",
+     "state": "blocked",
+     "done": 0,
+     "total": 2,
+     "steps": [
+      {
+       "key": "flag_arbitor",
+       "title": "The four earth rings and A Mystical Arbitor of Earth",
+       "who": "raid",
+       "must": true,
+       "zone": "Plane of Earth",
+       "verify": true
+      }
+     ],
+     "blocked_on": [
+      {
+       "flag": "zebuxoruk_2",
+       "label": "Maelin's power source",
+       "line": "maelin"
+      }
+     ],
+     "skipped": []
+    },
+    {
+     "line": "time",
+     "label": "Plane of Time",
+     "short": "Time",
+     "state": "blocked",
+     "done": 0,
+     "total": 3,
+     "steps": [
+      {
+       "key": "time_quintessence",
+       "title": "Combine the four essences into the Quintessence of Elements",
+       "who": "solo",
+       "must": true,
+       "zone": null,
+       "verify": false
+      }
+     ],
+     "blocked_on": [
+      {
+       "flag": "fennin_dead",
+       "label": "Kill Fennin Ro",
+       "line": "solro"
+      },
+      {
+       "flag": "coirnav_dead",
+       "label": "Kill Coirnav",
+       "line": "water"
+      },
+      {
+       "flag": "rathe_dead",
+       "label": "Kill the Rathe Council",
+       "line": "earth"
+      },
+      {
+       "flag": "xegony_dead",
+       "label": "Kill Xegony",
+       "line": "air"
+      }
+     ],
+     "skipped": []
+    }
+   ],
+   "pending": [
+    {
+     "key": "cl_grummus",
+     "state": "blocked",
+     "gives": "fuirstel_2",
+     "label": "Kill Grummus, hail the Planar Projection",
+     "step": "fuirstel_1",
+     "text": "Do this first: Hail Adler Fuirstel before the kill (Tranquility). Then say 'unlock memories' to Seer Mal Nae`Shi.",
+     "waits_on": []
+    },
+    {
+     "key": "cl_rallos",
+     "state": "blocked",
+     "gives": "zeks_7",
+     "label": "Kill Rallos Zek, hail the Planar Projection",
+     "step": "zeks_6",
+     "text": "Do this first: Maelin reads both Zek notes (Knowledge). Then say 'unlock memories' to Seer Mal Nae`Shi.",
+     "waits_on": [
+      {
+       "flag": "cipher_1",
+       "label": "Cipher of the Divine Language",
+       "line": "maelin",
+       "via": [
+        {
+         "flag": "saryrn_dead",
+         "label": "Kill Saryrn",
+         "line": "torment"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "zones": [
+    {
+     "key": "justice",
+     "name": "Plane of Justice",
+     "short": "Justice",
+     "tier": 1,
+     "state": "done",
+     "done": 3,
+     "total": 3,
+     "open": true,
+     "missing": []
+    },
+    {
+     "key": "innovation",
+     "name": "Plane of Innovation",
+     "short": "Innovation",
+     "tier": 1,
+     "state": "part",
+     "done": 2,
+     "total": 3,
+     "open": true,
+     "missing": []
+    },
+    {
+     "key": "disease",
+     "name": "Plane of Disease",
+     "short": "Disease",
+     "tier": 1,
+     "state": "none",
+     "done": 0,
+     "total": 3,
+     "open": true,
+     "missing": []
+    },
+    {
+     "key": "nightmare",
+     "name": "Plane of Nightmare",
+     "short": "Nightmare",
+     "tier": 1,
+     "state": "done",
+     "done": 2,
+     "total": 2,
+     "open": true,
+     "missing": []
+    },
+    {
+     "key": "storms",
+     "name": "Plane of Storms",
+     "short": "Storms",
+     "tier": 2,
+     "state": "done",
+     "done": 3,
+     "total": 3,
+     "open": true,
+     "missing": []
+    },
+    {
+     "key": "valor",
+     "name": "Plane of Valor",
+     "short": "Valor",
+     "tier": 2,
+     "state": "done",
+     "done": 2,
+     "total": 2,
+     "open": true,
+     "missing": []
+    },
+    {
+     "key": "cod",
+     "name": "Crypt of Decay",
+     "short": "Decay",
+     "tier": 2,
+     "state": "none",
+     "done": 0,
+     "total": 2,
+     "open": false,
+     "missing": [
+      "Kill Grummus"
+     ]
+    },
+    {
+     "key": "codb",
+     "name": "Crypt of Decay (lower)",
+     "short": "Bertoxx",
+     "tier": 2,
+     "state": "none",
+     "done": 0,
+     "total": 2,
+     "open": false,
+     "missing": [
+      "Tarkil Adan's key (Carprin cycle)"
+     ]
+    },
+    {
+     "key": "ponb",
+     "name": "Lair of Terris Thule",
+     "short": "T. Thule",
+     "tier": 2,
+     "state": "done",
+     "done": 2,
+     "total": 2,
+     "open": true,
+     "missing": []
+    },
+    {
+     "key": "torment",
+     "name": "Plane of Torment",
+     "short": "Torment",
+     "tier": 2,
+     "state": "none",
+     "done": 0,
+     "total": 3,
+     "open": false,
+     "missing": [
+      "Elder Fuirstel thanks you"
+     ]
+    },
+    {
+     "key": "bot",
+     "name": "Bastion of Thunder",
+     "short": "Thunder",
+     "tier": 3,
+     "state": "part",
+     "done": 1,
+     "total": 3,
+     "open": true,
+     "missing": []
+    },
+    {
+     "key": "hoh",
+     "name": "Halls of Honor",
+     "short": "Honor",
+     "tier": 3,
+     "state": "done",
+     "done": 3,
+     "total": 3,
+     "open": true,
+     "missing": []
+    },
+    {
+     "key": "hohb",
+     "name": "Temple of Marr",
+     "short": "M. Marr",
+     "tier": 3,
+     "state": "part",
+     "done": 2,
+     "total": 3,
+     "open": true,
+     "missing": []
+    },
+    {
+     "key": "tactics",
+     "name": "Plane of Tactics",
+     "short": "Tactics",
+     "tier": 3,
+     "state": "part",
+     "done": 2,
+     "total": 4,
+     "open": true,
+     "missing": []
+    },
+    {
+     "key": "solro",
+     "name": "Tower of Solusek Ro",
+     "short": "Sol Ro",
+     "tier": 3,
+     "state": "none",
+     "done": 0,
+     "total": 7,
+     "open": false,
+     "missing": [
+      "Cipher of the Divine Language",
+      "Maelin reads the Zek notes"
+     ]
+    },
+    {
+     "key": "earth",
+     "name": "Plane of Earth",
+     "short": "Earth",
+     "tier": 4,
+     "state": "none",
+     "done": 0,
+     "total": 1,
+     "open": false,
+     "missing": [
+      "Maelin's power source"
+     ]
+    },
+    {
+     "key": "poeb",
+     "name": "Ragrax, Stronghold of the Twelve",
+     "short": "Ragrax",
+     "tier": 4,
+     "state": "none",
+     "done": 0,
+     "total": 2,
+     "open": false,
+     "missing": [
+      "Kill Arbitor of Earth"
+     ]
+    },
+    {
+     "key": "air",
+     "name": "Eryslai, the Kingdom of Wind",
+     "short": "Air",
+     "tier": 4,
+     "state": "none",
+     "done": 0,
+     "total": 3,
+     "open": false,
+     "missing": [
+      "Maelin's power source"
+     ]
+    },
+    {
+     "key": "water",
+     "name": "Reef of Coirnav",
+     "short": "Water",
+     "tier": 4,
+     "state": "none",
+     "done": 0,
+     "total": 2,
+     "open": false,
+     "missing": [
+      "Maelin's power source"
+     ]
+    },
+    {
+     "key": "fire",
+     "name": "Doomfire, the Burning Lands",
+     "short": "Fire",
+     "tier": 4,
+     "state": "none",
+     "done": 0,
+     "total": 2,
+     "open": false,
+     "missing": [
+      "Kill Solusek Ro"
+     ]
+    },
+    {
+     "key": "time",
+     "name": "Plane of Time",
+     "short": "Time",
+     "tier": 5,
+     "state": "none",
+     "done": 0,
+     "total": 2,
+     "open": false,
+     "missing": [
+      "Bond with the Plane of Time"
+     ]
+    }
+   ],
+   "doors": [
+    {
+     "step": "poi_door_1",
+     "zone": "innovation",
+     "label": "Kill Xanamech: Nitram opens the door",
+     "note": "The door to Meldrath's machine (Time)",
+     "held": false
+    },
+    {
+     "step": "grummus_1",
+     "zone": "disease",
+     "label": "Crypt of Decay key (same hail)",
+     "note": "Opens the Crypt of Decay",
+     "held": false
+    },
+    {
+     "step": "bertox_key_1",
+     "zone": "cod",
+     "label": "Carprin cycle, then hail Tarkil Adan",
+     "note": "Opens the lower Crypt",
+     "held": false
+    },
+    {
+     "step": "earthb_key_1",
+     "zone": "earth",
+     "label": "Kill the Arbitor (four rings), hail the projection",
+     "note": "Opens Ragrax",
+     "held": false
+    }
+   ]
+  }
+ },
+ "unlinked": []
+}

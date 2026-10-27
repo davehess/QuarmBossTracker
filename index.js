@@ -9791,6 +9791,13 @@ const POP_FLAG_BY_BOSS = {
 // A catalog name ("#Xegony_the_Queen_of_Air") and a log name ("Xegony the Queen of Air") are the same
 // boss: drop the leading #, read _ as a space, lowercase.
 const _popBossKey = (b) => (b ? String(b).trim().replace(/^#/, '').replace(/_/g, ' ').toLowerCase() : '');
+// The `pop` stream of the poll (utils/popStatus.js): a member's OWN characters' PoP flag status, for the Flags mode of
+// Mimic's PoP overlay. Created on the first ask; a pop_flags upsert below drops the characters it touched from its cache.
+let _popStatusInst = null;
+const _popStatus = () => _popStatusInst || (_popStatusInst = require('./utils/popStatus').create({
+  supabase: require('./utils/supabase'),
+  guildId: require('./utils/supabase').guildId,
+}));
 async function _handleAgentPopFlags(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -9871,6 +9878,8 @@ async function _handleAgentPopFlags(req, res) {
   if (rows.length) {
     const r = await supabase.upsert('pop_flags', rows, 'guild_id,character,flag_key,earned_at')
       .catch(err => { console.warn('[pop-flags] upsert failed:', err?.message); return null; });
+    // The Flags mode reads these characters again: whatever it cached for them is now older than their rows.
+    if (_popStatusInst) _popStatusInst.invalidate(rows.map(x => x.character));
     if (Array.isArray(r)) {
       written = r.length;
       // A flag NPC no kill stands up (the hedge maze's Thelin) opens its hail window on the first flag it gives.
@@ -21259,7 +21268,8 @@ async function _handleRecentFiresGet(req, res) {
 //   tuning_ver=<hash> tuning bundle version (unchanged-gate)
 //   trig_ver=<hash>   guild-triggers version (_guildTriggersVersion; unchanged-gate)
 //   classes=<csv>     guild-triggers class targeting
-//   characters=<csv>  prefs / backfill / ui_edits / rescan key list
+//   characters=<csv>  prefs / backfill / ui_edits / rescan / pop key list
+//   pop_ver=<hash>    pop stream version (utils/popStatus.js; unchanged-gate)
 // Response: { ok, streams: { <key>: {data…} | { unchanged:true } }, agent_kill,
 //   min_agent_ver_num }. A stream that wasn't requested is absent; a stream shed
 // via flag_shed_<key> is OMITTED (the client fails open to its own fallback for
@@ -21390,6 +21400,15 @@ async function _handleAgentPoll(req, res) {
   if (_pollStreamDecision('rescan', want, tune, null, null) === 'send') {
     const sb = require('./utils/supabase');
     out.streams.rescan = await popRescan.rescanRequestsFor(sb, sb.guildId(), String(identity.discord_id || ''), chars);
+  }
+  // pop — the Flags mode of the PoP overlay (2026-10-27): where the caller's OWN characters stand on the PoP flags and
+  // what to do next (utils/popStatus.js; the rules are the website's, generated into utils/popEngine.js). Scoped to
+  // the Mimic session's own characters (the `characters=` list can only narrow that). Version-gated: the agent
+  // sends the `pop_ver` it holds and an unchanged answer is a few bytes. Older agents never ask for it.
+  if (_pollStreamDecision('pop', want, tune, null, null) === 'send') {
+    const bundle = await _popStatus().streamFor({ discordId: String(identity.discord_id || ''), wanted: chars });
+    const dec = _pollStreamDecision('pop', want, tune, url.searchParams.get('pop_ver'), bundle.version);
+    out.streams.pop = dec === 'unchanged' ? { version: bundle.version, unchanged: true } : bundle;
   }
   // pet_owners (FB-35) — the owners pooled from every raider's uploads, so one
   // "My leader is <Owner>" seen by anyone names that pet on every client's live meter.

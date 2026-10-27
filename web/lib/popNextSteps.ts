@@ -31,6 +31,7 @@
 import { GUIDE_ITEMS, ZONE_NAMES, type GuideItem, type Who } from './popGuide';
 import { POP_FLAGS, POP_ZONE_BY_KEY, missingFor } from './popFlags';
 import { GATE_IMPLIES, whoProves } from './popWho';
+import { POP_STEPS } from './popSteps';
 import { stepPlaces } from './popGuideMore';
 import { flagForTickKey } from './popSelfFlags';
 
@@ -88,14 +89,25 @@ export const NEXT_LINES: NextLine[] = [
   { key: 'tactics', label: 'Tactics, the Zeks', short: 'Tactics', stages: [
     { zone: 'tactics', steps: ['tactics_maelin_before'] },
     { zone: 'tactics', steps: ['flag_vallon', 'flag_tallon'] },
-    { zone: 'tactics', steps: ['zeks_maelin'] },
-    { zone: 'tactics', steps: ['flag_rallos'] },
+    // Maelin moves zeks 5 -> 6 ONLY inside `if ( qglobals.cipher )`: poknowledge/Grand_Librarian_Maelin.lua:65-77 (the
+    // "information" branch, `elseif ( qglobals.zeks == "5" )` at :73, the grant at :75). Without the cipher she never offers
+    // it: :78-81 only tells you to go and find the cipher. So the reading waits for the cipher (the maelin line below
+    // earns it), not just for the two Zeks. (eqemu_quest_scripts, sha b1d5b43b, read 2026-10-27.)
+    { zone: 'tactics', steps: ['zeks_maelin'], needs: ['cipher_1'] },
+    { zone: 'tactics', steps: ['flag_rallos'], flags: ['zeks_7'] },
     { zone: 'tactics', steps: ['tactics_maelin_after'] },
   ] },
   { key: 'maelin', label: 'Maelin: cipher and power source', short: 'Maelin', stages: [
+    // The same script, line by line (poknowledge/Grand_Librarian_Maelin.lua, sha b1d5b43b):
+    //  cipher  :15-20  a hail with both halves held (`qglobals.mmarr and qglobals.saryrn`); GATE_IMPLIES.cipher_1 says the halves.
+    //  lore    :37-42  "lore" with `qglobals.mmarr_book and qglobals.karana == "4"` (and no zebuxoruk yet, :27): Karana's notes
+    //          AND Mithaniel's. It sets zebuxoruk 1, so holding zebuxoruk_1 completes the stage.
+    //  second  :57-61  "information" with `zebuxoruk == "1" and zeks == "7"`: Rallos Zek's projection hailed (zeks 7), not 6.
+    // This line is linear (a stage opens when the one before it is done); her script does not need the cipher for the
+    // lore, so a character can do the lore first and the page still offers the cipher before it.
     { zone: null, steps: ['maelin_cipher'] },
-    { zone: null, steps: ['maelin_lore'] },
-    { zone: null, steps: ['zebuxoruk_maelin'], needs: ['zeks_6'] },
+    { zone: null, steps: ['maelin_lore'], flags: ['zebuxoruk_1'], needs: ['karana_4', 'mmarr_book_1'] },
+    { zone: null, steps: ['zebuxoruk_maelin'], needs: ['zeks_7'] },
   ] },
   { key: 'solro', label: 'Sol Ro to Fire', short: 'Sol Ro', stages: [
     { zone: 'solro', steps: ['pofire_miak'] },
@@ -156,6 +168,8 @@ export type LineNext = {
 const ITEM_TOKEN = /\[\[([^\]#]+)#\d+\]\]/g;
 const ITEM_BY_KEY = new Map<string, GuideItem>(GUIDE_ITEMS.map(i => [i.key, i]));
 const ORDER = new Map<string, number>(GUIDE_ITEMS.map((i, n) => [i.key, n]));
+// A `needs` can name a server step that is no catalog flag ('karana_4', 'zeks_7'): its words are the step's own.
+const STEP_LABEL = new Map<string, string>(Object.values(POP_STEPS).flat().map(s => [s.key, s.label]));
 
 // Which line grants a flag, so "needs X" can say where X comes from.
 const LINE_OF_FLAG = new Map<string, NextLine>();
@@ -213,7 +227,7 @@ function blockersFor(stage: Stage, item: GuideItem, held: ReadonlySet<string>): 
   }
   return [...need].map(flag => {
     const line = LINE_OF_FLAG.get(flag);
-    return { flag, label: POP_FLAGS[flag]?.label ?? flag, line: line?.key ?? null, lineLabel: line?.label ?? null, lineShort: line?.short ?? null };
+    return { flag, label: POP_FLAGS[flag]?.label ?? STEP_LABEL.get(flag) ?? flag, line: line?.key ?? null, lineLabel: line?.label ?? null, lineShort: line?.short ?? null };
   });
 }
 

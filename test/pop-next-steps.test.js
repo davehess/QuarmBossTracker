@@ -13,7 +13,11 @@ import { ROOT, stripJs } from './_source-slice.js';
 import { GUIDE_ITEMS } from '../web/lib/popGuide.ts';
 import { POP_FLAGS, POP_ZONE_BY_KEY } from '../web/lib/popFlags.ts';
 import { GATE_IMPLIES } from '../web/lib/popWho.ts';
+import { POP_STEPS } from '../web/lib/popSteps.ts';
+import { heldClosure } from '../web/lib/popRecital.ts';
 import { NEXT_LINES, nextSteps, charNextSteps, topNext, nextCard, nxMode } from '../web/lib/popNextSteps.ts';
+
+const STEP_KEYS = new Set(Object.values(POP_STEPS).flat().map(s => s.key));
 
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const byLine = (res) => Object.fromEntries(res.map(l => [l.line, l]));
@@ -39,7 +43,9 @@ describe('the line table', () => {
     for (const line of NEXT_LINES) {
       for (const st of line.stages) {
         if (st.zone) expect(POP_ZONE_BY_KEY[st.zone], `${line.key} zone ${st.zone}`).toBeTruthy();
-        for (const f of [...(st.flags ?? []), ...(st.needs ?? [])]) expect(POP_FLAGS[f], `${line.key} flag ${f}`).toBeTruthy();
+        // A catalog flag, or a server step of the flag chart (popSteps.ts) where the script's own condition is a step
+        // value that no catalog flag stands for ('zeks_7': Rallos Zek's projection hailed, 'karana_4').
+        for (const f of [...(st.flags ?? []), ...(st.needs ?? [])]) expect(POP_FLAGS[f] || STEP_KEYS.has(f), `${line.key} flag ${f}`).toBeTruthy();
       }
     }
   });
@@ -158,11 +164,69 @@ describe('prerequisites', () => {
     expect(keys(open.maelin)).toEqual(['maelin_cipher']);
   });
 
-  it('keeps Maelin\'s second reading behind the Zek notes (the guide says the order matters)', () => {
+  // Grand_Librarian_Maelin.lua (eqemu_quest_scripts, sha b1d5b43b, read 2026-10-27). The tests below hold the engine to
+  // her conditions line by line; the lines are quoted in popNextSteps.ts next to the stages they gate.
+  it('keeps Maelin\'s second reading behind Rallos Zek\'s projection: she asks for zeks 7 (script :57), not 6', () => {
     const res = byLine(nextSteps({ done: ['maelin_cipher', 'maelin_lore'], flags: ['askr_quest', 'agnarr_dead', 'marr_dead'] }));
     expect(res.maelin.state).toBe('blocked');
-    expect(res.maelin.blockedOn.map(b => b.flag)).toEqual(['zeks_6']);
+    expect(res.maelin.blockedOn.map(b => b.flag)).toEqual(['zeks_7']);
     expect(res.maelin.blockedOn[0].line).toBe('tactics');
+    expect(res.maelin.blockedOn[0].label).toMatch(/Rallos/);
+    // zeks 6 alone is not enough; zeks 7 is.
+    const six = byLine(nextSteps({ done: ['maelin_cipher', 'maelin_lore'], flags: ['zeks_6'] }));
+    expect(six.maelin.state).toBe('blocked');
+    const seven = byLine(nextSteps({ done: ['maelin_cipher', 'maelin_lore'], flags: ['zeks_7', 'askr_quest', 'agnarr_dead', 'marr_dead'] }));
+    expect(keys(seven.maelin)).toEqual(['zebuxoruk_maelin']);
+    expect(seven.maelin.state).toBe('next');
+  });
+
+  it('the Zek notes reading needs the cipher: she moves zeks 5 -> 6 only inside `if ( qglobals.cipher )` (script :65-77)', () => {
+    // Both Zeks hailed (zeks 5 is what the pair of projections leave), no cipher.
+    const noCipher = byLine(nextSteps({ done: [], flags: ['behemoth_dead', 'vallon_dead', 'tallon_dead'] }));
+    expect(noCipher.tactics.state).toBe('blocked');
+    expect(keys(noCipher.tactics)).toEqual(['zeks_maelin']);
+    expect(noCipher.tactics.blockedOn.map(b => [b.flag, b.line])).toEqual([['cipher_1', 'maelin']]);
+    expect(noCipher.tactics.blockedOn[0].label).toMatch(/Cipher/);
+    // With the cipher the reading is the next step.
+    const cipher = byLine(nextSteps({ done: [], flags: ['behemoth_dead', 'vallon_dead', 'tallon_dead', 'cipher_1'] }));
+    expect(cipher.tactics.state).toBe('next');
+    expect(keys(cipher.tactics)).toEqual(['zeks_maelin']);
+  });
+
+  it('the cipher is what the Zek notes wait on, which waits on Saryrn and Mithaniel Marr (script :15-20)', () => {
+    const res = byLine(nextSteps({ done: [], flags: ['behemoth_dead', 'vallon_dead', 'tallon_dead', 'marr_dead'] }));
+    expect(res.tactics.blockedOn.map(b => b.flag)).toEqual(['cipher_1']);
+    expect(res.maelin.state).toBe('blocked');
+    expect(res.maelin.blockedOn.map(b => b.flag)).toEqual(['saryrn_dead']);       // the Marr half is held, the Saryrn half is not
+    expect(res.maelin.blockedOn[0].line).toBe('torment');
+  });
+
+  it('the lore reading needs Karana\'s notes AND Mithaniel\'s (script :37), and holding zebuxoruk 1 completes it', () => {
+    const base = { done: ['maelin_cipher'], flags: ['cipher_1'] };
+    const none = byLine(nextSteps(base));
+    expect(none.maelin.state).toBe('blocked');
+    expect(none.maelin.blockedOn.map(b => b.flag).sort()).toEqual(['karana_4', 'mmarr_book_1']);
+    const one = byLine(nextSteps({ ...base, flags: ['cipher_1', 'karana_4'] }));
+    expect(one.maelin.blockedOn.map(b => b.flag)).toEqual(['mmarr_book_1']);        // "there must be another piece" (:45)
+    const both = byLine(nextSteps({ ...base, flags: ['cipher_1', 'karana_4', 'mmarr_book_1'] }));
+    expect(both.maelin.state).toBe('next');
+    expect(keys(both.maelin)).toEqual(['maelin_lore']);
+    // Done: zebuxoruk 1 held. The next reading is then the second one, waiting on Rallos.
+    const done = byLine(nextSteps({ ...base, flags: ['cipher_1', 'zebuxoruk_1', 'askr_quest', 'agnarr_dead', 'marr_dead'] }));
+    expect(keys(done.maelin)).toEqual(['zebuxoruk_maelin']);
+    expect(done.maelin.blockedOn.map(b => b.flag)).toEqual(['zeks_7']);
+  });
+
+  it('a partway character (Zeks pair and notes held, no cipher, Rallos killed early): Next is the earliest step she can do, not the Zeks reading', () => {
+    // The shape the Flags mode is drawn for: the Marr half is held, the Saryrn half is not; a pending memory for Rallos.
+    const held = heldClosure(['mavuin_3', 'zeks_2', 'thelin_4', 'karana_4', 'aerindar_2', 'mmarr_1', 'mmarr_book_1', 'zeks_3', 'zeks_4', 'cl_rallos']);
+    const lines = nextSteps({ done: [], flags: held });
+    const top = topNext(lines, 5).map(t => t.step.key);
+    expect(top).not.toContain('zeks_maelin');
+    expect(top[0]).toBe('disease_ward');
+    expect(byLine(lines).tactics.state).toBe('blocked');
+    expect(byLine(lines).tactics.blockedOn.map(b => b.flag)).toEqual(['cipher_1']);
+    // (The lore reading sits behind the cipher on its line: a simplification noted in popNextSteps.ts.)
   });
 
   it('keeps the Plane of Time behind the four elemental gods, from the shared table', () => {
