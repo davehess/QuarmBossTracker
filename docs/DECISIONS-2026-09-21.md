@@ -13278,3 +13278,21 @@ website already does with `#popflags` and the Seer's lines: read what a characte
   cipher) is offered after the cipher stage.
 - **A pending memory says what its own step waits on** (`pending[].waits_on`, one level down): Rallos Zek's memory waits on the Zek-notes reading, which waits
   on the cipher, which waits on the missing half.
+
+### 452. Mimic map: heading up with the compass always on; kite circles; FB-100 / FB-103; FB-101 / 102 / 104 (2026-10-27, beta)
+- **Heading up** (the guild lead: *"allow map to follow player heading as well as cardinal direction, but make sure we're showing the
+  cardinality on the map"*): North up / Heading up toggle on the Map; the compass is always drawn. Default **Rose** (corner dial, red north
+  needle, N/E/S/W), with Edges and Both in ⚙ Compass. Text never rotates; drag, zoom and hit-testing use the un-turned frame.
+- **Kite circles** (yesterday's asks, the draft found uncommitted in a worktree and finished): other raiders' circles age out and filter
+  (Others Live / All / Off; Circles All / My speed / Near me); the drift forecast is ONE look, an arrow plus a landing ring. The faint-copies
+  look was dropped because at a unit or two of drift per lap it sits inside the circle. That pick was the session's, not the guild lead's: say so
+  if the other look is wanted.
+- **FB-100**: the Respawns count opens into its spots; left click pulses, right click focuses (the guild lead's rule). On an opened spot row,
+  right click is focus, so the old right-click off/on lives on the folded rows and the dots.
+- **FB-103**: a group member's circle now shows while it forms, coached locally from group positions (never posted), dotted in their class
+  colour. The guild library still holds only finished, anonymous loops.
+- **FB-101** (agent 4.0.30): saved layouts keep positions and sizes across screen setups; ↩ Restore saved layout in the tray and on the
+  Overlays tab. The XL / M presets on the trigger window are still unexplained (needs a device check), so FB-101 stays open.
+- **FB-102** (agent 4.0.29): the Charm card times the buffs the pet reports, from Mob Info's landing when no other mob is proven.
+- **FB-104** (web 2.1.57): Summon leads the special-ability chips in solid red, on Target Info and /db/npc.
+- All of it reaches the stable fleet only with the next Mimic stable cut.
