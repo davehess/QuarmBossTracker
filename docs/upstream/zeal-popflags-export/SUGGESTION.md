@@ -2,7 +2,9 @@
 
 # Save your #popflags output with "Export data on /camp"
 
-*Fork branch `pr/popflags-export` (`e362827`), rebased on upstream `d88b691` (2026-10-27). Status: ready to file. Third in-game run passed on 2026-10-27: camping wrote `<name>-PoPFlags.txt` with the header, the overview, Tiers 1-4 and the Plane of Time section, and the guild lead confirmed the camp and corpse/zoning tests work.*
+*Fork branch `pr/popflags-export` (`d36a336`, one commit on upstream `d88b691`). Status: filed as upstream PR 253 on 2026-10-27, then updated the same day (below). Third in-game run passed on 2026-10-27 on the earlier capture: camping wrote `<name>-PoPFlags.txt` with the header, the overview, Tiers 1-4 and the Plane of Time section.*
+
+*Update, 2026-10-27 (`d36a336`): the earlier capture cleared every white, lime, yellow and red line for about 3 seconds after camping, so an unrelated system message in that window was lost. Now the reply shows in chat as normal; `/outputfile hidepopflags` (off by default) hides only the reply's own lines and the command echo. Both the file and the hiding take only reply-shaped lines: `===` / `---` headers, `Label: value` lines, and yellow hints once a header has arrived (checked against every message in the server's `popflags.cpp`). No CHANGELOG edit; one commit.*
 
 This answers the suggestion thread 'Zeal "Export data on /camp" option to include a full #POPFLAGS output?'.
 
@@ -26,6 +28,6 @@ The file keeps the server's reply line for line, so it stays correct if the serv
 
 **Try it:** in the fork's test-all build (https://github.com/davehess/Zeal/releases/tag/test-all-build), `593f848` or later, then `/outputfile popflags`.
 
-**Pull request:** _link added when it is filed._
+**Pull request:** https://github.com/CoastalRedwood/Zeal/pull/253
 
 **Testing evidence:** _added after the in-game test run._
