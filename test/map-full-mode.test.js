@@ -678,7 +678,8 @@ describe('the Map page: outlines, the list in ⚙, and the pick', () => {
     m.mapClearPickSet = vi.fn((c, id, keep) => { m.picked.push([c, id, keep]); return Promise.resolve(null); });
     return m;
   };
-  const texts = (g) => g.canvas.seq.filter(s => s[0] === 'fillText').map(s => s[1]);
+  // (the compass's N / E / S / W are canvas text too, on every frame: they are not what these tests are about)
+  const texts = (g) => g.canvas.seq.filter(s => s[0] === 'fillText').map(s => s[1]).filter(t => !/^[NESW]$/.test(t));
   const rows = (g) => g.all.clearList.children;
 
   it('an ignored window is not cut out, and a guessed one starts that way; the kept window and your box are', async () => {

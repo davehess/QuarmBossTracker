@@ -20,6 +20,10 @@
 // take `!_BARE_KINDS.has(kind)` off the character stamp in enqueueUpload and "the queued body is exactly the contract" fails.
 // Cause tags (2026-10-23): drop the "next step is off by the opposite" test from lapSignals and the 6 u shove and 40 u jump
 // tests fail; zero the turn score in causeOf and "turn input" and the by-hand ranking fail. Synthetic laps only (steer()).
+// Other circles + drift forecast (2026-10-26): make loopFresh always true and the Live tests fail; ignore the speed band or the near
+// radius in filterLoops and the filter tests fail; draw S.guild.loops instead of visibleLoops (or match the chip / hover against it)
+// and the "what is drawn follows the filter" tests fail; take the m-laps scaling out of driftForecast, or the landing ring out of drawKite,
+// and the forecast tests fail; set the drift default to true and the default-unchanged tests fail.
 //
 // Run: npx vitest run test/kite-coach.test.js
 
@@ -368,6 +372,90 @@ describe('the guild helpers', () => {
   });
 });
 
+// The guild lead, 2026-10-26 (a bard kiting): circles of other characters from the day before could not be hidden; circles
+// "that are my speed or nearby"; and "show my circle drift as a movement of the circle in a prediction".
+describe('other people\'s circles: live, my speed, near me', () => {
+  const NOW = 1_760_000_000_000, MIN = 60_000;
+  const at = (agoMs) => new Date(NOW - agoMs).toISOString();
+  const loop = (o) => ({ id: 1, cx: 500, cy: -300, cz: 12, r: 118, lap_s: 12.4, speed_pct: 104, dir: 'cw', drift_u: 3, wobble_u: 2, laps: 9, seen: 7, last_at: at(MIN), ...o });
+  const ids = (list) => list.map(l => l.id);
+  it('a loop is live for 20 minutes after anyone last ran it, and not a second longer', () => {
+    expect(KC.K.OTHERS_LIVE_MS).toBe(20 * MIN);
+    expect(KC.loopFresh(loop({ last_at: at(20 * MIN) }), NOW)).toBe(true);
+    expect(KC.loopFresh(loop({ last_at: at(20 * MIN + 1000) }), NOW)).toBe(false);
+    expect(KC.loopFresh(loop({ last_at: at(-5000) }), NOW)).toBe(true);                 // a clock a few seconds ahead is not stale
+    for (const bad of [null, undefined, '', 'yesterday', 12]) expect(KC.loopFresh(loop({ last_at: bad }), NOW)).toBe(false);   // age unknown: not "live"
+  });
+  it('Live (the default) drops yesterday\'s circles; All keeps the library', () => {
+    const list = [loop({ id: 1 }), loop({ id: 2, last_at: at(26 * 60 * MIN) }), loop({ id: 3, last_at: at(19 * MIN) })];
+    expect(ids(KC.filterLoops(list, { now: NOW }))).toEqual([1, 3]);
+    expect(ids(KC.filterLoops(list, { others: 'live', now: NOW }))).toEqual([1, 3]);
+    expect(ids(KC.filterLoops(list, { others: 'all', now: NOW }))).toEqual([1, 2, 3]);
+  });
+  it('My speed keeps a lap time within 25% of YOUR circle\'s: 12 s keeps 9 to 15 s', () => {
+    const list = [8.9, 9, 12, 15, 15.1, 30].map((s, i) => loop({ id: i, lap_s: s }));
+    const got = KC.filterLoops(list, { others: 'all', filter: 'speed', cur: { lapS: 12 }, now: NOW });
+    expect(got.map(l => l.lap_s)).toEqual([9, 12, 15]);
+  });
+  it('Near me keeps a centre within 300 u of where you stand (the edge counts)', () => {
+    const list = [0, 299, 300, 301, 900].map((d, i) => loop({ id: i, cx: 1000 + d, cy: 50 }));
+    const got = KC.filterLoops(list, { others: 'all', filter: 'near', pos: { x: 1000, y: 50 }, now: NOW });
+    expect(got.map(l => l.cx - 1000)).toEqual([0, 299, 300]);
+  });
+  it('with nothing to compare against, the filter keeps the loop rather than hiding everything', () => {
+    const list = [loop({ id: 1, lap_s: 30 }), loop({ id: 2, cx: 9000 })];
+    expect(ids(KC.filterLoops(list, { others: 'all', filter: 'speed', cur: null, now: NOW }))).toEqual([1, 2]);
+    expect(ids(KC.filterLoops(list, { others: 'all', filter: 'near', pos: null, now: NOW }))).toEqual([1, 2]);
+    expect(KC.filterLoops(null, { now: NOW })).toEqual([]);
+    expect(KC.filterLoops([null, loop()], { others: 'all', now: NOW })).toHaveLength(1);
+  });
+  it('the age and the filter stack', () => {
+    const list = [loop({ id: 1 }), loop({ id: 2, lap_s: 30 }), loop({ id: 3, last_at: at(3 * 60 * MIN) })];
+    expect(ids(KC.filterLoops(list, { others: 'live', filter: 'speed', cur: { lapS: 12.4 }, now: NOW }))).toEqual([1]);
+  });
+});
+
+describe('the drift forecast: where your circle will be', () => {
+  // A view the way the coach hands it over: this lap's circle, the lap before, and the 3%-of-r arrow bar.
+  const view = (o = {}) => ({ showArrow: true, ghost: { cx: 500, cy: -300, r: 25, lapS: 6.4 }, cur: { cx: 500 + 1, cy: -300, r: 25, lapS: 6.4 }, ...o });
+  it('is null with no drift worth drawing, no lap before, or no scale', () => {
+    expect(KC.driftForecast(null, 1.5)).toBeNull();
+    expect(KC.driftForecast(view({ showArrow: false }), 1.5)).toBeNull();
+    expect(KC.driftForecast(view({ ghost: null }), 1.5)).toBeNull();
+    expect(KC.driftForecast(view(), 0)).toBeNull();
+    expect(KC.driftForecast(view({ ghost: { cx: 501, cy: -300, r: 25 } }), 1.5)).toBeNull();   // the centre has not moved
+  });
+  it('the landing is enough laps along the drift to stand 36 px from your circle', () => {
+    const f = KC.driftForecast(view(), 3);                    // 1 u a lap = 3 px a lap: 12 laps make 36 px
+    expect(f.m).toBe(12);
+    expect(f.land).toMatchObject({ laps: 12, cx: 513, cy: -300, r: 25 });              // this lap's centre (501) + 12 x 1 u
+    expect(f.land.secs).toBeCloseTo(76.8, 6); expect(f.land.units).toBeCloseTo(12, 6);
+    expect(f.dir).toBe('W');                                  // +x is west on this Map
+  });
+  it('a faster drift needs fewer laps to stand as far off', () => {
+    const f = KC.driftForecast(view({ cur: { cx: 500 - 8, cy: -300 + 6, r: 25, lapS: 6.4 } }), 1.5);   // 10 u a lap = 15 px
+    expect(f.m).toBe(3);                                      // ceil(36 / 15)
+    expect(f.land).toMatchObject({ laps: 3, cx: 468, cy: -276 });   // from (492, -294), + 3 x (-8, +6)
+    expect(f.dir).toBe('NE');
+  });
+  it('never looks further than 20 laps', () => {
+    expect(KC.driftForecast(view({ cur: { cx: 500.8, cy: -300, r: 25, lapS: 6.4 } }), 0.2).m).toBe(20);
+    expect(KC.driftForecast(view(), 1.5).m).toBe(20);         // ceil(36 / 1.5) = 24, held to 20
+  });
+  it('reads off a real drifting run: the landing is on the line the centres are walking', () => {
+    const { coach } = run(circle({ cx: 500, cy: -300, r: 25, lap: 6.4, drift: [0.4, 0], noise: 0.3, seed: 7 }), 90);
+    const v = coach.view(), f = KC.driftForecast(v, 2);
+    expect(v.showArrow).toBe(true);
+    expect(f.perLap).toBeGreaterThan(2); expect(f.perLap).toBeLessThan(3.2);              // 0.4 u/s x 6.4 s = 2.6 u a lap
+    expect(f.land.cx).toBeCloseTo(v.cur.cx + (v.cur.cx - v.ghost.cx) * f.m, 6);
+    expect(f.dir).toBe('W');
+  });
+  it('labels the landing: laps, seconds, units and the way', () => {
+    expect(KC.forecastLabel(KC.driftForecast(view(), 3))).toBe('12 laps · 77 s: 12 u W');
+    expect(KC.forecastLabel({ dir: 'W', land: { laps: 1, secs: 6.4, units: 1 } })).toBe('1 lap · 6 s: 1 u W');
+  });
+});
+
 // ───────────────────────────── 2. the agent ─────────────────────────────
 
 const BOT = 'https://bot.test/api/agent/encounter';
@@ -586,7 +674,7 @@ describe('map.html: the coach on the Map page', () => {
   afterEach(() => nowSpy.mockRestore());
   const tick = () => new Promise(r => setImmediate(() => setImmediate(r)));
 
-  async function boot({ store = {}, kiteLoops, withCoach = true } = {}) {
+  async function boot({ store = {}, kiteLoops, withCoach = true, search = '' } = {}) {
     const script = MAP_HTML.slice(MAP_HTML.indexOf('<script>') + 8, MAP_HTML.lastIndexOf('</script>'));
     const all = {}, canvas = { arcs: [], dashes: [] }, docListeners = {};
     const mkEl = (tag) => {
@@ -632,7 +720,7 @@ describe('map.html: the coach on the Map page', () => {
     const ls = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
     // eslint-disable-next-line no-new-func
     const S = new Function('window', 'document', 'location', 'fetch', 'localStorage', 'ResizeObserver', 'setInterval', 'clearInterval',
-      script + '\nreturn S;')(win, doc, { search: '' }, fetchImpl, ls, undefined, () => 1, () => {});
+      script + '\nreturn S;')(win, doc, { search }, fetchImpl, ls, undefined, () => 1, () => {});
     await tick();
     const drive = (path, secs, hz = 10) => {
       for (let i = 0; i < secs * hz; i++) {
@@ -747,9 +835,149 @@ describe('map.html: the coach on the Map page', () => {
     m.drive(KITE(), 10);
     expect(m.calls.some(c => /kite/.test(c.url))).toBe(false);
   });
+  it('the circle buttons\' tooltips quote the numbers the filters really use', () => {
+    const title = (id) => new RegExp('id="' + id + '"[^>]*title="([^"]*)"').exec(MAP_HTML)[1];
+    expect(title('kiteOthersBtn')).toContain('last ' + KC.K.OTHERS_LIVE_MS / 60000 + ' minutes');
+    expect(title('kiteFilterBtn')).toContain('within ' + KC.K.SPEED_BAND * 100 + '%');
+    expect(title('kiteFilterBtn')).toContain('within ' + KC.K.NEAR_UNITS + ' units');
+  });
   it('the Timers pop-out never coaches or uploads (it hears the same positions)', () => {
     const js = stripJs(MAP_HTML);
     expect(js).toMatch(/S\.kite = KC && !PART_TIMERS \? KC\.create\(\) : null;/);
+  });
+
+  // ── 2026-10-26: other people's circles (Live / All / Off, My speed / Near me) and the drift forecast ──
+  // Zoomed out (0.5 px a unit: 1200 x 800 u on screen) so a loop a few hundred units away is still on the canvas.
+  const iso = (agoMs) => new Date(clock - agoMs).toISOString();
+  const aged = (o, agoMs = 60_000) => ({ ...GUILD, cx: 500, cy: -300, ...o, last_at: iso(agoMs) });
+  const click = (m, id) => m.all[id].listeners.click[0]();
+  const wide = (m) => { m.S.view.scale = 0.5; return m; };
+  // A repaint with the cursor on nothing (the hover id changes, so the Map redraws).
+  const paint = (m) => { m.canvas.arcs.length = 0; m.canvas.dashes.length = 0; m.S.hoverLoop = '-'; m.hoverAt(0, 0); };
+  // The rings of radius r (units) the stub canvas recorded at the Map's current zoom.
+  const ringsOf = (m, r) => m.canvas.arcs.filter(a => Math.abs(a[2] - r * m.S.view.scale) < 1e-6);
+  const px = (m, x, y) => [(-x - m.S.view.cx) * m.S.view.scale + m.S.w / 2, (-y - m.S.view.cy) * m.S.view.scale + m.S.h / 2];
+
+  it('yesterday\'s circles are not drawn by default; the library is one tap away (Others: Live -> All -> Off -> Live)', async () => {
+    const m = await boot({ kiteLoops: [aged({ id: 11, r: 118 }), aged({ id: 12, cx: 560, cy: -250, r: 61 }, 26 * 3600_000)] });
+    expect(m.S.guild.loops).toHaveLength(2);                                       // both arrived ...
+    m.drive(KITE({ r: 80 }), 2); wide(m); paint(m);
+    expect(ringsOf(m, 118).length).toBeGreaterThan(0);                             // ... the live one is up
+    expect(ringsOf(m, 61)).toHaveLength(0);                                        // ... and the 26-hours-old one is not
+    expect(m.all.kiteOthersBtn.textContent).toBe('Others: Live');
+    click(m, 'kiteOthersBtn');                                                     // Live -> All
+    expect(m.all.kiteOthersBtn.textContent).toBe('Others: All'); expect(m.S.cfg.kiteOthers).toBe('all');
+    expect(ringsOf(m, 61).length).toBeGreaterThan(0);
+    m.canvas.arcs.length = 0;
+    click(m, 'kiteOthersBtn');                                                     // All -> Off: the existing ⚙ switch
+    expect(m.all.kiteOthersBtn.textContent).toBe('Others: Off'); expect(m.S.cfg.show.kiteLoops).toBe(false);
+    expect(m.all.kiteOthersBtn.classList.contains('on')).toBe(false);
+    paint(m);
+    expect(ringsOf(m, 118)).toHaveLength(0); expect(ringsOf(m, 61)).toHaveLength(0);
+    expect(m.all.kiteOthersBtn.hidden).toBe(false);                                // the button does not hide itself with the circles it turned off
+    click(m, 'kiteOthersBtn');                                                     // Off -> Live
+    expect(m.all.kiteOthersBtn.textContent).toBe('Others: Live'); expect(m.S.cfg.show.kiteLoops).toBe(true); expect(m.S.cfg.kiteOthers).toBe('live');
+  });
+  it('"vs guild" on the chip talks only about a circle that is drawn: not a day-old one on Live, yes on All', async () => {
+    const m = await boot({ kiteLoops: [aged({ id: 12 }, 26 * 3600_000)] });
+    m.drive(KITE({ lap: 13.2 }), 60); paint(m);
+    expect(m.chip()).toMatch(/^Lap 13\.\d s/); expect(m.chip()).not.toMatch(/vs guild/);
+    click(m, 'kiteOthersBtn'); clock += 300; paint(m);                              // (the chip refreshes at most 4 times a second)
+    expect(m.chip()).toMatch(/ · vs guild: \+0\.\d s\/lap, centre \d u off$/);
+  });
+  it('the choice is saved with the other Map settings, and junk in a save is ignored', async () => {
+    const store = {};
+    const m = await boot({ store, kiteLoops: [aged({})] });
+    click(m, 'kiteOthersBtn'); click(m, 'kiteFilterBtn'); m.drive(KITE({ drift: [1.5, 0] }), 60); click(m, 'kiteDriftBtn');
+    expect(JSON.parse(store['wp-map-cfg'])).toMatchObject({ kiteOthers: 'all', kiteFilter: 'speed', kiteDrift: true });
+    const again = await boot({ store });
+    expect(again.S.cfg).toMatchObject({ kiteOthers: 'all', kiteFilter: 'speed', kiteDrift: true });
+    const junk = await boot({ store: { 'wp-map-cfg': JSON.stringify({ kiteOthers: 'sometimes', kiteFilter: 7, kiteDrift: 'z' }) } });
+    expect(junk.S.cfg).toMatchObject({ kiteOthers: 'live', kiteFilter: 'all', kiteDrift: false });   // the defaults: nothing changes for anyone
+  });
+  it('the circle buttons show only with something to act on (a guild circle or one of yours)', async () => {
+    const empty = await boot({ kiteLoops: [] });
+    empty.drive(KITE(), 1); paint(empty);
+    for (const id of ['kiteOthersBtn', 'kiteFilterBtn', 'kiteDriftBtn']) expect(empty.all[id].hidden, id).toBe(true);
+    const some = await boot({ kiteLoops: [aged({})] });
+    some.drive(KITE(), 1); paint(some);
+    expect(some.all.kiteOthersBtn.hidden).toBe(false); expect(some.all.kiteFilterBtn.hidden).toBe(false);
+    expect(some.all.kiteDriftBtn.hidden).toBe(true);                               // no circle of yours yet
+    some.drive(KITE(), 60); paint(some);
+    expect(some.all.kiteDriftBtn.hidden).toBe(false);
+    const nobody = await boot({ withCoach: false });
+    expect(nobody.all.kiteOthersBtn.hidden).toBe(true);
+  });
+  it('Circles: My speed keeps the loops with about your lap time; Near me the ones close to where you stand', async () => {
+    const slow = aged({ id: 21, cx: 520, cy: -290, r: 90, lap_s: 30 });           // your lap is 12.4 s
+    const same = aged({ id: 23, cx: 540, cy: -310, r: 100, lap_s: 12.6 });
+    const far = aged({ id: 22, cx: 950, cy: -300, r: 70, lap_s: 12.4 });          // 450 u from the middle of your circle
+    const m = await boot({ kiteLoops: [slow, same, far] });
+    m.drive(KITE({ lap: 12.4 }), 40); wide(m);
+    const drawn = () => { paint(m); return [90, 100, 70].map(r => ringsOf(m, r).length > 0); };
+    expect(drawn()).toEqual([true, true, true]);
+    click(m, 'kiteFilterBtn');                                                     // All -> My speed
+    expect(m.all.kiteFilterBtn.textContent).toBe('Circles: My speed'); expect(m.all.kiteFilterBtn.classList.contains('on')).toBe(true);
+    expect(m.S.cfg.kiteFilter).toBe('speed');
+    expect(drawn()).toEqual([false, true, true]);
+    click(m, 'kiteFilterBtn');                                                     // -> Near me
+    expect(m.all.kiteFilterBtn.textContent).toBe('Circles: Near me'); expect(m.S.cfg.kiteFilter).toBe('near');
+    expect(drawn()).toEqual([true, true, false]);
+    click(m, 'kiteFilterBtn');                                                     // -> All again
+    expect(m.all.kiteFilterBtn.textContent).toBe('Circles: All'); expect(m.all.kiteFilterBtn.classList.contains('on')).toBe(false);
+    expect(drawn()).toEqual([true, true, true]);
+  });
+  it('a ring the filter hides cannot be hovered or matched on the chip either', async () => {
+    const slow = aged({ id: 21, cx: 800, cy: -300, r: 90, lap_s: 30 });
+    const m = await boot({ kiteLoops: [slow, aged({ id: 5 })] });
+    m.drive(KITE({ lap: 12.4 }), 40); wide(m);
+    m.hoverAt(800, -300 - 90); expect(m.S.hoverLoop).toBe('21');
+    click(m, 'kiteFilterBtn');                                                     // My speed: the 30 s loop goes
+    m.hoverAt(800, -300 - 90); expect(m.S.hoverLoop).toBeNull();
+    m.hoverAt(500, -300 - 118); expect(m.S.hoverLoop).toBe('5');
+  });
+
+  // The forecast. One drifting run: 0.4 u/s on a 6.4 s lap of r 25 = ~2.6 u a lap, west.
+  const driftRun = async (extra = {}) => {
+    const m = await boot({ kiteLoops: [], ...extra });
+    m.drive(circle({ cx: 500, cy: -300, r: 25, lap: 6.4, drift: [0.4, 0], noise: 0.3, seed: 7 }), 90);
+    return m;
+  };
+  const ownRings = (m) => ringsOf(m, m.S.kiteView.cur.r);   // (the lap before is drawn too, at ITS radius)
+  const atPx = (m, pt) => { const [x, y] = px(m, pt.cx, pt.cy); return ownRings(m).some(a => Math.abs(a[0] - x) < 1e-6 && Math.abs(a[1] - y) < 1e-6); };
+  it('default (no setting, no flag): your circle is drawn as it always was, with no forecast', async () => {
+    const m = await driftRun();
+    expect(m.S.cfg.kiteDrift).toBe(false); expect(m.S.kiteView.showArrow).toBe(true);
+    paint(m);
+    expect(ownRings(m)).toHaveLength(1);
+  });
+  it('Drift on: an arrow along the drift to a thin ring where the circle lands', async () => {
+    const m = await driftRun();
+    click(m, 'kiteDriftBtn');
+    expect(m.all.kiteDriftBtn.textContent).toBe('Drift: on');
+    m.S.view.scale = 1.5; paint(m);                                                // (zoomed out: 20 laps is the cap and the ring is closer)
+    const f = KC.driftForecast(m.S.kiteView, m.S.view.scale, KC.K.DRIFT_STEP_PX), c = m.S.kiteView.cur;
+    expect(ownRings(m)).toHaveLength(2);                                           // yours + the landing ring
+    expect(atPx(m, f.land)).toBe(true);
+    expect(atPx(m, { cx: f.land.cx + 30, cy: f.land.cy })).toBe(false);            // (the check can fail)
+    m.S.view.scale = 5; paint(m);                                                  // zoomed in the ring stands >= 36 px off
+    const g = KC.driftForecast(m.S.kiteView, m.S.view.scale, KC.K.DRIFT_STEP_PX);
+    const a = px(m, c.cx, c.cy), b = px(m, g.land.cx, g.land.cy);
+    expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeGreaterThanOrEqual(36);
+    click(m, 'kiteDriftBtn');                                                      // and off again
+    expect(m.all.kiteDriftBtn.textContent).toBe('Drift: off'); expect(m.S.cfg.kiteDrift).toBe(false);
+    paint(m); expect(ownRings(m)).toHaveLength(1);
+  });
+  it('?kdrift=1 opens the Map with the forecast on; anything else leaves it off', async () => {
+    expect((await boot({ kiteLoops: [], search: '?kdrift=1' })).S.cfg.kiteDrift).toBe(true);
+    expect((await boot({ kiteLoops: [], search: '?kdrift=zzz' })).S.cfg.kiteDrift).toBe(false);
+  });
+  it('a clean circle (drift under the arrow bar) gets no forecast', async () => {
+    const m = await boot({ kiteLoops: [] });
+    m.drive(KITE(), 60);
+    expect(m.S.kiteView.showArrow).toBe(false);
+    click(m, 'kiteDriftBtn'); paint(m); expect(ownRings(m)).toHaveLength(1);
+    expect(m.S.cfg.kiteDrift).toBe(true);
   });
 });
 

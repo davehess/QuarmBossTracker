@@ -62,6 +62,7 @@
   #kiteChip{position:absolute;left:30px;z-index:4;font-size:11px;line-height:1.35;color:#e6edf3;pointer-events:none;white-space:nowrap;
     text-shadow:0 0 3px #000,0 0 2px #000;font-variant-numeric:tabular-nums}
   #kiteChip[hidden]{display:none}
+  #tools .tb[hidden]{display:none}   /* the circle buttons (Others / Circles / Drift) show only while there is a circle to act on */
   #kiteChip .g{color:#56d364}#kiteChip .a{color:#f0b429}#kiteChip .r{color:#ff6b5e}#kiteChip .gd{color:#d4f542}
   /* The timers list slides in and out (the guild lead, 2026-10-12: "slide the spawn timers in and out. So that it could
      take up less space if we weren't focused on that"): a top-right button on the map; slid in, the map takes the width. */
@@ -133,6 +134,14 @@
   .trow .kill:hover{color:#ffd866;border-color:#f0b429}
   .sec.watch{color:#f0b429}
   .sec.engaged{color:#f0883e}
+  /* Respawns (FB-100): the top line is itself a control (left click pulses the spots that are down, right click zooms to them),
+     with a ▸ button that lists the actual spots under it. */
+  .sec.resp{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px}
+  .sec.resp:hover{color:#c9d1d9}
+  .sec.resp .more{background:rgba(22,27,34,.9);color:#8b949e;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;
+    font-size:9px;padding:0 5px;cursor:pointer;text-transform:none;letter-spacing:0}
+  .sec.resp .more:hover{color:#e6edf3;border-color:#58a6ff}
+  .trow.sub{margin-left:10px;border-left-width:2px;padding-top:1px;padding-bottom:1px}
   .kite{font-size:11px;color:#8b949e;padding:0 2px 4px}
   .trow.engaged{border-left-color:#f0883e;cursor:default} .trow.engaged .tm{color:#f0883e}
   .trow.watch .nm{font-weight:bold}
@@ -253,11 +262,15 @@
         <button class="tb grip" id="toolsGrip" type="button" title="Drag the buttons anywhere on the map; let go near an edge and they lock to it (on the left or right edge they stand upright).">⠿</button>
         <button class="tb on" id="followBtn" type="button" title="Keep the map centred on you. Dragging the map turns it off.">Follow me</button>
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
+        <button class="tb" id="orientBtn" type="button" title="Which way is up. North up: north is at the top, as a map has always been drawn. Heading up: the map turns so the way you face is the top, with you in the middle (it turns Follow me on). The compass shows where north is in both (⚙ → Compass). The same switch as ⚙ → Map up.">North up</button>
         <button class="tb" id="panBtn" type="button" title="Over this button: the mouse wheel zooms, and dragging it pans the map, locked or not. A click switches Pan on, so the whole map drags and zooms; right-click centres on you.">✋ Pan / zoom</button>
         <button class="tb on" id="labelsBtn" type="button" title="Names on the map: boss names and room names. Switch off when it gets busy.">Labels: on</button>
         <button class="tb on" id="namesBtn" type="button" title="Raiders' names: show or hide the name beside each raid and group member's dot. The dots stay, and mob names are not touched (the same switch as ⚙ → Group names and Raid names).">Raiders</button>
         <button class="tb on" id="dotsBtn" type="button" title="Spawn points: show or hide the spawn dots (the same switch as ⚙ → Spawn points).">•</button>
         <button class="tb" id="aggroBtn" type="button" title="Aggro rings: how close you can get to each spawn before it aggros (its aggro radius). Red: KOS to you (from its faction, your race, class and deity, your con, or an illusion it does not see through). Yellow: not KOS to you, but KOS to some players. Green: KOS to nobody. Dashed: how far it comes to help a friend (social aggro). Your target carries its own rings. Points on a running respawn timer have no ring.">◯</button>
+        <button class="tb on" id="kiteOthersBtn" type="button" hidden title="Other raiders' kite circles (the dashed yellow rings). Live: only a circle someone ran in the last 20 minutes. All: the guild's whole library, circles from earlier days too. Off: none. The same switch as ⚙ → Guild kite loops.">Others: Live</button>
+        <button class="tb" id="kiteFilterBtn" type="button" hidden title="Which of those circles are drawn. All: every one. My speed: only circles with about your own lap time (within 25% of your current circle's). Near me: only circles whose centre is within 300 units of where you stand.">Circles: All</button>
+        <button class="tb" id="kiteDriftBtn" type="button" hidden title="Where your circle will be if its drift holds. Off: just the numbers. On: an arrow along the drift to a thin ring where the circle lands, with how many laps and seconds that is.">Drift: off</button>
         <button class="tb" id="modeBtn" type="button" title="Full screen: the Map covers EverQuest's window and you click straight through it to the game. Window: the Map is a window you place, as before. The same switch as ⚙ → Mode and the tray.">▣ Full</button>
         <button class="tb" id="cfgBtn" type="button" title="Map settings: what is drawn, the height ranges, the ability icons, colours and the background">⚙</button>
       </div>
@@ -285,6 +298,8 @@
         <label class="row" title="Spawn points this far above or below you are shown; the rest are hidden. Same height units as Levels: ±25 is about your own floor, ±100 a floor or two either way."><span class="bl" id="spawnVal">Spawn height</span><input id="spawnLevels" type="range" min="0" max="7" step="1"></label>
         <div class="grp">Show</div>
         <label class="row" title="Which way each raider faces. Arrow: a small arrowhead in their class colour, the point is the way they look. Slice: a pizza slice of a circle opening the way they look. Off: plain dots. Yours is the same, a little bigger, with a white rim."><span class="bl">Facing</span><select id="cfgFacing"><option value="arrow">Arrow</option><option value="slice">Slice</option><option value="off">Off</option></select></label>
+        <label class="row" title="North: north is at the top. Your heading: the map turns so the way you face is the top, with you in the middle. Text never turns. The same switch as the toolbar's North up / Heading up."><span class="bl">Map up</span><select id="cfgOrient"><option value="north">North</option><option value="heading">Your heading</option></select></label>
+        <label class="row" title="Where north is, always on the map. Rose: a small compass in a corner, its red needle points north, with N E S W round it. Edges: N E S W at the edges of the map. Both: the two."><span class="bl">Compass</span><select id="cfgCompass"><option value="rose">Rose</option><option value="edges">Edges</option><option value="both">Both</option></select></label>
         <div id="cfgShow"></div>
         <div class="grp">Ability icons on spawn points</div>
         <div id="cfgGlyphs"></div>
@@ -392,10 +407,81 @@
   // heading 0, on +x is 64, on -y is 128), which with screen = (-x, -y) is the same left-hand turn.
   var HEADING_CCW = true;
   function toScreen(x, y) { return { sx: -x, sy: -y }; }
-  function headingVec(heading) {
+  // `rot` (optional, radians) is the Map's own turn when it is heading up: the way they face on the SCREEN. 0 or missing = north up.
+  function headingVec(heading, rot) {
     var turn = ((heading % 512) + 512) % 512 / 512 * Math.PI * 2;
     var a = HEADING_CCW ? turn : -turn;
-    return { dx: -Math.sin(a), dy: -Math.cos(a) };
+    var v = { dx: -Math.sin(a), dy: -Math.cos(a) };
+    return rot ? turnVec(v.dx, v.dy, rot) : v;
+  }
+  // ── Heading up, and the compass (the guild lead, 2026-10-27: "allow map to follow player heading as well as cardinal
+  // direction, but make sure we're showing the cardinality on the map") ──
+  // The picture is NORTH UP by default. Heading up turns it about the middle of the Map so the way you face points to the top.
+  // `rot` is that turn in radians, the canvas way (clockwise, y down): a screen-frame point (sx, sy) = (-x, -y) goes to
+  // ((sx - cx) * scale, (sy - cy) * scale), is turned by rot, and lands relative to the middle of the canvas. 0 is north up and
+  // costs nothing: every projection below takes the exact old path when rot is 0 or missing.
+  var ORIENTS = ['north', 'heading'], ORIENT_DEFAULT = 'north';
+  var COMPASS_MODES = ['rose', 'edges', 'both'], COMPASS_DEFAULT = 'rose';
+  function orientFrom(saved) { return saved && ORIENTS.indexOf(saved.orient) >= 0 ? saved.orient : ORIENT_DEFAULT; }
+  function compassFrom(saved) { return saved && COMPASS_MODES.indexOf(saved.compass) >= 0 ? saved.compass : COMPASS_DEFAULT; }
+  function turnVec(dx, dy, rot) {   // a vector turned by rot (clockwise on screen)
+    var c = Math.cos(rot), s = Math.sin(rot);
+    return { dx: dx * c - dy * s, dy: dx * s + dy * c };
+  }
+  // The turn that puts a heading (0-512) at the TOP of the screen, or null when there is no heading.
+  function headingRot(heading) {
+    if (heading == null || !isFinite(heading)) return null;
+    var v = headingVec(heading);   // the way they face on the north-up picture
+    return -Math.PI / 2 - Math.atan2(v.dy, v.dx);
+  }
+  // The shorter way round the 0-512 wheel from a to b, in heading units (-256..256).
+  function headingGap(a, b) { return (((b - a) % 512) + 768) % 512 - 256; }
+  // The heading the picture is turned to, one step on: it chases the player's drawn heading (already glided by the tracks)
+  // with a short time constant, so the whole map does not jerk on every sample; a long gap (a hidden window) or no old value snaps.
+  var ROT_TAU_MS = 90, ROT_SNAP_MS = 1500, ROT_EPS = 0.25;
+  function rotStep(cur, target, dtMs) {
+    if (target == null || !isFinite(target)) return cur == null ? null : cur;
+    if (cur == null || dtMs == null || !(dtMs >= 0) || dtMs > ROT_SNAP_MS) return target;
+    var next = lerpHeading(cur, target, 1 - Math.exp(-dtMs / ROT_TAU_MS));
+    return Math.abs(headingGap(next, target)) < ROT_EPS ? target : next;
+  }
+  // A screen-frame point to canvas px, and a canvas px back to the screen frame (view = { cx, cy, scale, rot }).
+  function projectPx(sx, sy, v, w, h) {
+    var dx = (sx - v.cx) * v.scale, dy = (sy - v.cy) * v.scale;
+    if (!v.rot) return [dx + w / 2, dy + h / 2];
+    var t = turnVec(dx, dy, v.rot);
+    return [t.dx + w / 2, t.dy + h / 2];
+  }
+  function unprojectPx(px, py, v, w, h) {
+    var dx = px - w / 2, dy = py - h / 2;
+    if (v.rot) { var t = turnVec(dx, dy, -v.rot); dx = t.dx; dy = t.dy; }
+    return { sx: dx / v.scale + v.cx, sy: dy / v.scale + v.cy };
+  }
+  // Where N / E / S / W sit around the picture's edge. On north up, N is top-middle, E right-middle and so on; heading up swings
+  // them round (facing west, west is the top and north is on the right). Each letter is where the ray from the middle in its
+  // direction meets the box inset from the canvas by `ins` ({ t, r, b, l } px: room for the buttons and the readout).
+  var CARDINAL_DIRS = [['N', 0, -1], ['E', 1, 0], ['S', 0, 1], ['W', -1, 0]];
+  function cardinalSpots(rot, w, h, ins) {
+    var out = [];
+    for (var i = 0; i < CARDINAL_DIRS.length; i++) {
+      var d = CARDINAL_DIRS[i], v = rot ? turnVec(d[1], d[2], rot) : { dx: d[1], dy: d[2] };
+      var ex = v.dx > 1e-9 ? (w - ins.r - w / 2) / v.dx : v.dx < -1e-9 ? (ins.l - w / 2) / v.dx : Infinity;
+      var ey = v.dy > 1e-9 ? (h - ins.b - h / 2) / v.dy : v.dy < -1e-9 ? (ins.t - h / 2) / v.dy : Infinity;
+      var k = Math.min(ex, ey);
+      out.push({ k: d[0], x: w / 2 + v.dx * k, y: h / 2 + v.dy * k, dx: v.dx, dy: v.dy });
+    }
+    return out;
+  }
+  // The corner the compass rose takes: bottom-left, else bottom-right, else top-right, the first whose square (`size` px, `m` px
+  // from the edges) the button bar does not cover. `tools` = { l, t, w, h } in canvas px, or null when it is not known.
+  function roseSpot(w, h, size, m, tools) {
+    var cs = [[m + size / 2, h - m - size / 2], [w - m - size / 2, h - m - size / 2], [w - m - size / 2, m + size / 2]];
+    for (var i = 0; i < cs.length; i++) {
+      var c = cs[i];
+      var hit = tools && c[0] + size / 2 > tools.l && c[0] - size / 2 < tools.l + tools.w && c[1] + size / 2 > tools.t && c[1] - size / 2 < tools.t + tools.h;
+      if (!hit) return { x: c[0], y: c[1] };
+    }
+    return { x: cs[0][0], y: cs[0][1] };
   }
   // Facing (the guild lead, 2026-10-22, beside Zeal's map: "maps overlay should show 'pizza slices' for which way
   // people are facing and see them easier"; then, on the first beta: "the Viewpoint is too large and covers up other
@@ -421,9 +507,9 @@
   }
   // The arrowhead for a heading: four corners as screen px [tipX, tipY, rightX, rightY, notchX, notchY, leftX, leftY], the
   // tip pointing the way they face, the shape centred on (cx, cy) so the spot is the middle of the arrow. Null with no heading.
-  function arrowPoints(heading, cx, cy, len, half) {
+  function arrowPoints(heading, cx, cy, len, half, rot) {
     if (heading == null || !isFinite(heading)) return null;
-    var v = headingVec(heading), nx = -v.dy, ny = v.dx;
+    var v = headingVec(heading, rot), nx = -v.dy, ny = v.dx;
     var tip = len * 0.6, tail = -len * 0.4, notch = -len * 0.14;
     return [cx + v.dx * tip, cy + v.dy * tip,
       cx + v.dx * tail + nx * half, cy + v.dy * tail + ny * half,
@@ -462,9 +548,9 @@
   }
   // The two canvas angles (clockwise from +x, y down: what ctx.arc takes) a heading's slice runs between, or null when
   // the heading is unknown.
-  function wedgeArc(heading) {
+  function wedgeArc(heading, rot) {
     if (heading == null || !isFinite(heading)) return null;
-    var v = headingVec(heading), a = Math.atan2(v.dy, v.dx);
+    var v = headingVec(heading, rot), a = Math.atan2(v.dy, v.dx);
     return { a0: a - WEDGE_HALF, a1: a + WEDGE_HALF };
   }
   var FLASH_MS = 15000;   // keep equal to MAP_FLASH_MS in the agent
@@ -501,11 +587,46 @@
     var groups = [], byKey = {};
     (timers || []).forEach(function (t) {
       var name = t.name || 'spawn', st = timerState(t, now), key = name + '|' + st, g = byKey[key];
-      if (!g) { g = byKey[key] = { name: name, state: st, n: 0, soonest: t }; groups.push(g); }
-      g.n++;
+      if (!g) { g = byKey[key] = { name: name, state: st, n: 0, soonest: t, timers: [] }; groups.push(g); }
+      g.n++; g.timers.push(t);
       if (t.earliest < g.soonest.earliest) g.soonest = t;
     });
     return groups.sort(function (a, b) { return a.soonest.earliest - b.soonest.earliest; });
+  }
+  // The actual spots behind a group ("A blood raven ×4" -> 4 rows), soonest first, each with its spot's point; a timer whose
+  // point the zone data does not know is left out (there is nowhere to pulse or centre on). `timers` are one group's timers.
+  function spotRows(timers, byId) {
+    var rows = [];
+    (timers || []).forEach(function (t) {
+      var p = byId && byId[String(t.point_id)];
+      if (p) rows.push({ pid: String(t.point_id), p: p, t: t });
+    });
+    return rows.sort(function (a, b) { return a.t.earliest - b.t.earliest || Number(a.pid) - Number(b.pid); });
+  }
+  // FB-100 (the guild lead, 2026-10-27: "LEFT CLICK PULSE, RIGHT CLICK MAP FOCUS"). A pulse is a ring that rings out from each
+  // spot for PULSE_MS: `ids` is the set of point ids, `t0` when it began. null once it is over.
+  var PULSE_MS = 3000, PULSE_RING_MS = 1000, PULSE_MAX_SCALE = 2.5;
+  function pulseAt(pulse, now) {
+    if (!pulse || !(now - pulse.t0 < PULSE_MS) || now < pulse.t0) return null;
+    var phase = ((now - pulse.t0) % PULSE_RING_MS) / PULSE_RING_MS;
+    return { phase: phase, fade: 1 - (now - pulse.t0) / PULSE_MS };   // the ring's growth, and the whole pulse dying away
+  }
+  // The box round some points (server frame), or null for none.
+  function pointsBox(pts) {
+    var b = null;
+    (pts || []).forEach(function (p) {
+      if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
+      if (!b) b = { minX: p.x, maxX: p.x, minY: p.y, maxY: p.y };
+      else { b.minX = Math.min(b.minX, p.x); b.maxX = Math.max(b.maxX, p.x); b.minY = Math.min(b.minY, p.y); b.maxY = Math.max(b.maxY, p.y); }
+    });
+    return b;
+  }
+  // The view that shows all of a box: fitView, but never zoomed in past PULSE_MAX_SCALE (two spots a few units apart should not
+  // fill the screen with two dots). `rot` is the heading-up turn.
+  function focusView(b, w, h, rot) {
+    var v = fitView(b, w, h, rot);
+    v.scale = Math.max(0.02, Math.min(v.scale, PULSE_MAX_SCALE));
+    return v;
   }
   function prettyNpc(n) { return String(n && n.name || '').replace(/_/g, ' ').replace(/^[#!~]+/, ''); }
   // The mob a spot can be watched for: its named / raid-target npc, or null (a spot of ordinary mobs has nothing to snipe).
@@ -884,10 +1005,12 @@
     return { minX: b.minX - pad, maxX: b.maxX + pad, minY: b.minY - pad, maxY: b.maxY + pad };
   }
   // bounds {minX,maxX,minY,maxY} in the server frame -> a view {cx, cy, scale} in screen-frame coordinates.
-  function fitView(b, w, h) {
+  // `rot` (heading up): the box is turned about its middle, so it is its turned extent that has to fit.
+  function fitView(b, w, h, rot) {
     var s1 = toScreen(b.minX, b.minY), s2 = toScreen(b.maxX, b.maxY);
     var x0 = Math.min(s1.sx, s2.sx), x1 = Math.max(s1.sx, s2.sx), y0 = Math.min(s1.sy, s2.sy), y1 = Math.max(s1.sy, s2.sy);
     var bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0);
+    if (rot) { var c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot)), tw = bw * c + bh * s, th = bw * s + bh * c; bw = tw; bh = th; }
     return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, scale: Math.min(w / bw, h / bh) * 0.92 };
   }
   function targetKey(t) { return 't:' + (t.id != null ? t.id : t.name); }
@@ -1092,6 +1215,7 @@
   function followOffNow(me, view, w, h) {
     if (!me) return { x: 0, y: 0 };
     var s = toScreen(me.x, me.y), ox = (s.sx - view.cx) * view.scale, oy = (s.sy - view.cy) * view.scale;
+    if (view.rot) { var t = turnVec(ox, oy, view.rot); ox = t.dx; oy = t.dy; }   // heading up: the spot on the turned picture
     return Math.abs(ox) <= w / 2 - 20 && Math.abs(oy) <= h / 2 - 20 ? { x: ox, y: oy } : { x: 0, y: 0 };
   }
   // Where the map's buttons lock when let go at (cx, cy), their middle, in a w × h map: the nearest edge. The spot
@@ -1270,8 +1394,11 @@
   function locText(x, y) { return Math.round(y) + ', ' + Math.round(x); }
   // The canvas pixel under the cursor back to the server frame (wpt run backwards; toScreen is its own inverse).
   function screenToServer(px, py, view, w, h) {
+    if (view.rot) { var u = unprojectPx(px, py, view, w, h); return { x: -u.sx, y: -u.sy }; }   // heading up: undo the turn first
     return { x: -((px - w / 2) / view.scale + view.cx), y: -((py - h / 2) / view.scale + view.cy) };
   }
+  // A drag of (dx, dy) canvas px, or a zoom about a canvas px, is a move on the UNturned picture.
+  function unturnPx(dx, dy, view) { return view.rot ? turnVec(dx, dy, -view.rot) : { dx: dx, dy: dy }; }
   // Your speed in game units a second, over the samples of the last ~1.5 s (null until there is a full second).
   // The DISTANCE WALKED over the window, not the straight line between its two ends: Zeal's number is the speed you are
   // moving at this instant (Entity.MovementSpeed, zone_map.cpp render_labels), and on a turn the chord is shorter than the
@@ -1442,7 +1569,8 @@
     for (k in MAP_SCHEMES.default) col[k] = MAP_SCHEMES.default[k];
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
-    return { show: show, facing: FACING_DEFAULT, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false, tail: TAIL_DEFAULT };
+    return { show: show, facing: FACING_DEFAULT, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false, tail: TAIL_DEFAULT,
+      kiteOthers: 'live', kiteFilter: 'all', kiteDrift: false, orient: ORIENT_DEFAULT, compass: COMPASS_DEFAULT };
   }
   // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
   // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
@@ -1477,6 +1605,10 @@
     if (typeof saved.ink === 'number' && saved.ink >= INK_MIN && saved.ink <= INK_MAX) c.ink = Math.round(saved.ink * 4) / 4;
     if (typeof saved.avoidEq === 'boolean') c.avoidEq = saved.avoidEq;   // null (unset) follows the mode
     if (TAIL_STEPS.indexOf(saved.tail) >= 0) c.tail = saved.tail;   // seconds of target trail drawn; anything off the slider's steps is ignored
+    if (saved.kiteOthers === 'live' || saved.kiteOthers === 'all') c.kiteOthers = saved.kiteOthers;
+    if (saved.kiteFilter === 'all' || saved.kiteFilter === 'speed' || saved.kiteFilter === 'near') c.kiteFilter = saved.kiteFilter;
+    if (saved.kiteDrift === true) c.kiteDrift = true;   // false (unset) = no forecast
+    c.orient = orientFrom(saved); c.compass = compassFrom(saved);   // north up and the rose, unless a save says otherwise
     if (saved.showClear === true) c.showClear = true;   // outlines always on; off shows them only while ⚙ is open or editing
     return c;
   }
@@ -1634,10 +1766,12 @@
     local: null, localVer: null, walls: 'auto', labels: 'all',   // the player's own map files (prepLocal), the version held, Walls: Auto|Ours only, Labels all|targets|off
     followOff: { x: 0, y: 0 }, followLock: false, followWho: 'me', pointTrails: {}, kills: 0, killSeen: {},   // Follow me's screen spot + lock; killed mobs' paths (see noteKills)
     src: 'direct', smooth: 'light', direct: null, sampleAt: 0, sampleSrc: '',   // beta tuning knobs + the latest pushed positions
+    pulse: null, respOpen: false,   // FB-100: the spots being pulsed ({ ids, t0 }), and Respawns listing its spots (saved: wp-map-resp-open)
   };
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, String(v)); } catch (e) {} }
   try { var sv = parseFloat(localStorage.getItem('wp-map-scale')); if (sv > 0.02 && sv < 20) S.view.scale = sv; } catch (e) {}
+  S.respOpen = lsGet('wp-map-resp-open') === '1';
   (function () {
     var lv = parseInt(lsGet('wp-map-levels'), 10), fm = lsGet('wp-map-fit'), sr = lsGet('wp-map-src'), sm = lsGet('wp-map-smooth');
     if (lv >= 0 && lv < LEVEL_STEPS.length) S.levels = lv;
@@ -1747,7 +1881,7 @@
     }
     if (p.zone !== S.zone) {
       S.zone = p.zone; S.fitted = false; S.follow = true; S.followOff = { x: 0, y: 0 }; S.trk = {}; S.trails = {}; S.pointTrails = {}; S.kills = 0; S.killSeen = {}; S.killPrimed = false; zoned = true;
-      if (S.kite) { S.kite.reset(); S.kiteView = null; }   // a new zone: the kite coach starts over, and so do the guild's loops
+      if (S.kite) { S.kite.reset(); S.kiteView = null; S.mates = {}; }   // a new zone: the kite coach starts over (and the group's), and so do the guild's loops
       S.guild = { zone: null, loops: [], asked: 0, retried: false };
       if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; S.sgs = null; S.traps = null; }
       S.local = null; S.localVer = null; S.route = null; S.routeVer = null;
@@ -1799,6 +1933,7 @@
     put('self', p.self);
     kiteFeed(dm ? (S.direct.p.at || now) : (Number(p.pos_at) > 0 ? Number(p.pos_at) : now));   // the kite coach hears YOUR spot, when it was taken
     (p.group || []).forEach(function (m) { put('g:' + m.name, m); });
+    matesFeed(p.group, dm ? (S.direct.p.at || now) : (Number(p.pos_at) > 0 ? Number(p.pos_at) : now));   // a group member's circle, as it forms (FB-103)
     (p.raid || []).forEach(function (m) { put('r:' + m.name, m); });
     if (p.target) put(targetKey(p.target), p.target);
     for (var k in S.trk) if (!keep[k]) delete S.trk[k];
@@ -1818,7 +1953,7 @@
   }
   // Where to draw a reported thing right now: its glide, or the reported spot when it has no track.
   function drawn(key, m, now) { var tr = S.trk[key]; return tr ? trackAt(tr, now) : m; }
-  function anyMoving(now) { for (var k in S.trk) if (trackMoving(S.trk[k], now)) return true; return false; }
+  function anyMoving(now) { for (var k in S.trk) if (trackMoving(S.trk[k], now)) return true; return rotSettling(now) || !!pulseAt(S.pulse, now); }
   // Animation: a frame loop that runs only while something is gliding (no idle CPU), at most ~30 frames a second.
   var raf = 0, lastFrame = 0, lastHits = 0;
   var FRAME_MS = 33, HITS_MS = 200, lastAge = 0;
@@ -1960,6 +2095,39 @@
     for (var i = 0; i < ev.length; i++) if (ev[i].type === 'report') postKiteLoop(ev[i].body);
     S.kiteView = S.kite.view();
   }
+  // FB-103 (a member, Mimic 3.0.5-beta.9: "Should be able to see <a group member>'s circle getting formed with me in his group."):
+  // the guild's loops are FINISHED circles (their raider's own Map must see 3 clean laps, then the answer crosses the bot and two
+  // caches: minutes), anonymous, and a group member's circle is not yours to wait on. So the Map also runs a coach on each GROUP
+  // member's positions, which Zeal already gives it, and draws the circle as it forms, named, in their class colour, dotted.
+  // Local only: nothing here is posted (a report is the raider's own Map's to make), nothing is kept past the session, and it
+  // goes quiet the moment they stop circling or leave the group. Both ⚙ switches turn it off (Kite coach: no listening; Guild kite
+  // loops: no other raiders' circles), Others: Off hides it, and Circles: My speed / Near me apply to it.
+  var MATE_FRESH_MS = 6000;       // a member we have not heard from for this long has no circle on the Map
+  S.mates = {};
+  function matesFeed(group, t) {
+    if (!S.kite || !kiteOn() || !guildOn()) { S.mates = {}; return; }
+    var keep = {}, now = Date.now();
+    (group || []).forEach(function (m) {
+      var tr = m && m.name ? S.trk['g:' + m.name] : null;
+      if (!tr || !tr.to) return;
+      keep[m.name] = 1;
+      var e = S.mates[m.name] || (S.mates[m.name] = { coach: KC.create(), view: null, seen: 0, cls: null });
+      e.coach.push(t, tr.to.x, tr.to.y, tr.to.z);   // (its events are dropped: a 'report' is the raider's own Map's to make)
+      e.view = e.coach.view(); e.seen = now; e.cls = m.class;
+    });
+    for (var k in S.mates) if (!keep[k]) delete S.mates[k];
+  }
+  // The members' circles the Map draws now: fresh, engaged, and through the same Circles filter as the guild's.
+  function visibleMates(now) {
+    var tr = S.trk && S.trk.self, list = [];
+    for (var name in S.mates) {
+      var e = S.mates[name];
+      if (!e.view || now - e.seen > MATE_FRESH_MS) continue;
+      list.push({ name: name, view: e.view, cx: e.view.cur.cx, cy: e.view.cur.cy, lap_s: e.view.cur.lapS, cls: e.cls });
+    }
+    return KC.filterLoops(list, { others: 'all', filter: S.cfg.kiteFilter, now: now, cur: S.kiteView ? S.kiteView.cur : null,
+      pos: tr && tr.to ? { x: tr.to.x, y: tr.to.y } : null });
+  }
   function postKiteLoop(b) {
     var zone = S.p && S.p.zone;
     if (!zone) return;
@@ -1985,11 +2153,18 @@
       if (!g.retried) { g.retried = true; g.asked = Date.now() - GUILD_POLL_MS + 4000; }
     }).catch(function () {});
   }
+  // The guild's circles the Map draws right now: the Others switch (Live = run in the last 20 minutes, All = the library)
+  // and the circle filter (All / My speed / Near me). The rest stay in S.guild.loops, ready for a flip of the switch.
+  function visibleLoops(now) {
+    var tr = S.trk && S.trk.self;
+    return KC.filterLoops(S.guild.loops, { others: S.cfg.kiteOthers, filter: S.cfg.kiteFilter, now: now,
+      cur: S.kiteView ? S.kiteView.cur : null, pos: tr && tr.to ? { x: tr.to.x, y: tr.to.y } : null });
+  }
   function loopAt(loc) {
     if (!loc || !guildOn()) return null;
-    var best = null, bd = 9 / S.view.scale;
-    for (var i = 0; i < S.guild.loops.length; i++) {
-      var L = S.guild.loops[i], d = Math.abs(Math.hypot(loc.x - L.cx, loc.y - L.cy) - L.r);
+    var best = null, bd = 9 / S.view.scale, vis = visibleLoops(Date.now());
+    for (var i = 0; i < vis.length; i++) {
+      var L = vis[i], d = Math.abs(Math.hypot(loc.x - L.cx, loc.y - L.cy) - L.r);
       if (d <= bd) { best = L; bd = d; }
     }
     return best;
@@ -2018,12 +2193,27 @@
         ctx.closePath(); ctx.fillStyle = col; ctx.fill();
         halo(Math.round(v.cur.drift) + ' u', ex + ux * 6, ey + uy * 6 - 4, labelFont('dist'), col);
       }
+      // Where the circle will be if its drift holds (the toolbar's Drift button; ?kdrift=1 opens the Map with it on): an arrow
+      // from the centre along the drift to a thin ring where the circle lands, labelled with the laps and seconds that is
+      // (the guild lead, 2026-10-26: "show my circle drift as a movement of the circle in a prediction").
+      var fc = S.cfg.kiteDrift ? KC.driftForecast(v, sc, KC.K.DRIFT_STEP_PX) : null;
+      if (fc) {
+        ctx.fillStyle = col; ctx.strokeStyle = col;
+        var lq = ring(fc.land.cx, fc.land.cy, fc.land.r);
+        ctx.lineWidth = 1; ctx.globalAlpha = 0.6; ctx.stroke();
+        var ax = lq[0] - cq[0], ay = lq[1] - cq[1], al = Math.hypot(ax, ay) || 1, bx = ax / al, by = ay / al;
+        ctx.globalAlpha = 0.9; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(cq[0], cq[1]); ctx.lineTo(lq[0], lq[1]); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(lq[0], lq[1]); ctx.lineTo(lq[0] - bx * 7 - by * 4, lq[1] - by * 7 + bx * 4); ctx.lineTo(lq[0] - bx * 7 + by * 4, lq[1] - by * 7 - bx * 4);
+        ctx.closePath(); ctx.fill();
+        ctx.globalAlpha = 1; halo(KC.forecastLabel(fc), lq[0], lq[1] + (lq[1] > cq[1] ? 1 : -1) * (fc.land.r * sc + 10), labelFont('dist'), col, 'center');
+      }
       ctx.globalAlpha = 1;
     }
     if (S.kite && SH.kiteLoops !== false) {
-      var now = Date.now();
-      for (var i = 0; i < S.guild.loops.length; i++) {
-        var L = S.guild.loops[i], q = wpt(L.cx, L.cy), rp = L.r * sc;
+      var now = Date.now(), vis = visibleLoops(now);
+      for (var i = 0; i < vis.length; i++) {
+        var L = vis[i], q = wpt(L.cx, L.cy), rp = L.r * sc;
         if (q[0] + rp < 0 || q[0] - rp > w || q[1] + rp < 0 || q[1] - rp > h) continue;
         var hot = S.hoverLoop === String(L.id);
         ring(L.cx, L.cy, L.r); ctx.setLineDash([6, 5]); ctx.globalAlpha = hot ? 1 : 0.75; ctx.lineWidth = hot ? 2.6 : 1.6; ctx.strokeStyle = KITE_GUILD_COL; ctx.stroke(); ctx.setLineDash([]);
@@ -2031,6 +2221,15 @@
         ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(dq[0], dq[1], 3.5, 0, 6.2832); ctx.fillStyle = KITE_GUILD_COL; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = '#0d1117'; ctx.stroke();
         if (hot) halo(KC.guildLabel(L), q[0], q[1] - rp - 8, labelFont('dist'), KITE_GUILD_COL, 'center');
         live = true;
+      }
+      // A group member's circle as it forms (FB-103): dotted, in their class colour, named. Fainter and thinner until three
+      // clean laps in a row, then full strength with its size and lap time. Yours stays the solid ring, the guild's the dashes.
+      var mates = visibleMates(now);
+      for (var mi = 0; mi < mates.length; mi++) {
+        var M = mates[mi], mc = M.view.cur, mq = wpt(mc.cx, mc.cy), mrp = mc.r * sc, formed = KC.mateFormed(M.view), mcol = classHex(M.cls) || S.cfg.col.group;
+        if (mq[0] + mrp < 0 || mq[0] - mrp > w || mq[1] + mrp < 0 || mq[1] - mrp > h) continue;
+        ring(mc.cx, mc.cy, mc.r); ctx.setLineDash([2, 4]); ctx.globalAlpha = formed ? 0.95 : 0.6; ctx.lineWidth = formed ? 2.2 : 1.6; ctx.strokeStyle = mcol; ctx.stroke(); ctx.setLineDash([]);
+        ctx.globalAlpha = 1; halo(KC.mateLabel(M.name, M.view), mq[0], mq[1] - mrp - 8, labelFont('dist'), mcol, 'center');
       }
       ctx.globalAlpha = 1;
     }
@@ -2041,8 +2240,9 @@
   var kiteChipEl = document.getElementById('kiteChip'), kiteChipKey = '', lastKiteChip = 0;
   function updateKiteChip() {
     if (!kiteChipEl) return;
+    syncKiteBtns();
     var v = kiteOn() ? S.kiteView : null, key = '';
-    var gl = v && guildOn() ? KC.matchGuild(v.cur, S.guild.loops) : null;
+    var gl = v && guildOn() ? KC.matchGuild(v.cur, visibleLoops(Date.now())) : null;
     if (v) key = v.chip + '|' + v.cls + '|' + (v.why || '') + '|' + (gl ? KC.guildText(v.cur, gl) : '');
     if (key === kiteChipKey) return;
     kiteChipKey = key;
@@ -2063,6 +2263,41 @@
     kiteChipEl.style.top = ((parseFloat(locBarEl.style.top) || 28) + Math.round(30 * (S.cfg.text || 1))) + 'px';
   }
   var kiteDotTimer = null;
+  // The circle buttons on the toolbar (the guild lead, 2026-10-26, a bard kiting: "i can't hide <another character>'s
+  // circles from yesterday", "show circles that are my speed or nearby", "show my circle drift ... in a prediction").
+  //   Others   Live -> All -> Off -> Live: the guild's circles by age (Off is the ⚙ → Guild kite loops switch)
+  //   Circles  All -> My speed -> Near me -> All: which of them are drawn
+  //   Drift    off <-> on: the forecast of where your circle lands if its drift holds
+  // They show only while there is something to act on (a guild circle, a circle of yours), except that a switch that is
+  // not at its default stays on screen: a button that hides itself with the circles it turned off cannot be turned back.
+  var kiteOthersBtn = document.getElementById('kiteOthersBtn'), kiteFilterBtn = document.getElementById('kiteFilterBtn'), kiteDriftBtn = document.getElementById('kiteDriftBtn');
+  var KITE_FILTER_LABEL = { all: 'Circles: All', speed: 'Circles: My speed', near: 'Circles: Near me' };
+  var KITE_FILTER_NEXT = { all: 'speed', speed: 'near', near: 'all' };
+  try { if (new URLSearchParams(location.search).get('kdrift') === '1') S.cfg.kiteDrift = true; } catch (e) {}   // ?kdrift=1 opens the Map with the forecast on
+  function syncKiteBtns() {
+    if (!kiteOthersBtn) return;
+    var has = !!S.kite, loops = has && (S.guild.loops.length > 0 || visibleMates(Date.now()).length > 0), mine = has && !!S.kiteView, off = S.cfg.show.kiteLoops === false;
+    kiteOthersBtn.hidden = !(loops || off || S.cfg.kiteOthers !== 'live') || !has;
+    kiteOthersBtn.textContent = off ? 'Others: Off' : S.cfg.kiteOthers === 'all' ? 'Others: All' : 'Others: Live';
+    kiteOthersBtn.classList.toggle('on', !off);
+    kiteFilterBtn.hidden = !(has && !off && (loops || mine || S.cfg.kiteFilter !== 'all'));
+    kiteFilterBtn.textContent = KITE_FILTER_LABEL[S.cfg.kiteFilter];
+    kiteFilterBtn.classList.toggle('on', S.cfg.kiteFilter !== 'all');
+    kiteDriftBtn.hidden = !(has && (mine || S.cfg.kiteDrift));
+    kiteDriftBtn.textContent = S.cfg.kiteDrift ? 'Drift: on' : 'Drift: off';
+    kiteDriftBtn.classList.toggle('on', !!S.cfg.kiteDrift);
+  }
+  function kiteBtnDone() { if (cfgBuilt) buildCfg(); cfgCommit(); renderMap(true); }
+  if (kiteOthersBtn) {
+    kiteOthersBtn.addEventListener('click', function () {
+      if (S.cfg.show.kiteLoops === false) { S.cfg.show.kiteLoops = true; S.cfg.kiteOthers = 'live'; }
+      else if (S.cfg.kiteOthers === 'live') S.cfg.kiteOthers = 'all';
+      else { S.cfg.show.kiteLoops = false; S.cfg.kiteOthers = 'live'; }
+      kiteBtnDone();
+    });
+    kiteFilterBtn.addEventListener('click', function () { S.cfg.kiteFilter = KITE_FILTER_NEXT[S.cfg.kiteFilter]; kiteBtnDone(); });
+    kiteDriftBtn.addEventListener('click', function () { S.cfg.kiteDrift = !S.cfg.kiteDrift; kiteBtnDone(); });
+  }
   // ── end Kite coach ──
 
   // ── drawing ──
@@ -2085,7 +2320,7 @@
     var plan = resolveFit(mode || 'zone', group.length, raid.length);
     var b = plan.use === 'zone' ? zoneBounds() : membersBounds(P.self, plan.use === 'raid' ? group.concat(raid) : group);
     if (!b || !S.w) return plan;
-    S.view = fitView(b, S.w, S.h); S.fitted = true;
+    S.view = fitView(b, S.w, S.h, S.view && S.view.rot); S.fitted = true;
     return plan;
   }
   // Follow me keeps you where you are on screen and moves the map under you, instead of snapping you to the middle
@@ -2094,7 +2329,29 @@
   // always follow the player even if they pan"). S.followOff is your offset from the middle in screen pixels, so a
   // zoom keeps you on the same spot; with the lock (right-click), dragging the map moves that spot instead of
   // switching Follow off.
-  function followTo(me) { if (!me) return; var s = toScreen(me.x, me.y), o = S.followOff || { x: 0, y: 0 }, v = S.view; v.cx = s.sx - o.x / v.scale; v.cy = s.sy - o.y / v.scale; }
+  function followTo(me) {
+    if (!me) return;
+    var s = toScreen(me.x, me.y), o = S.followOff || { x: 0, y: 0 }, v = S.view;
+    if (v.rot) { var u = unturnPx(o.x, o.y, v); v.cx = s.sx - u.dx / v.scale; v.cy = s.sy - u.dy / v.scale; return; }   // heading up: the spot is on the turned picture
+    v.cx = s.sx - o.x / v.scale; v.cy = s.sy - o.y / v.scale;
+  }
+  // Heading up: the turn of the picture follows YOUR drawn heading (the glide the tracks already give it, then a short chase of
+  // its own, rotStep). North up leaves it at 0 and costs nothing. No heading yet (or no you) keeps the last turn.
+  function updateRot(rt) {
+    var v = S.view;
+    if (S.cfg.orient !== 'heading') { v.rot = 0; S.rotHead = null; S.rotAt = 0; return; }
+    var me = S.p && S.p.self ? drawn('self', S.p.self, rt) : null;
+    S.rotHead = rotStep(S.rotHead == null ? null : S.rotHead, me ? me.heading : null, S.rotAt ? rt - S.rotAt : null);
+    S.rotAt = rt;
+    var r = S.rotHead == null ? 0 : headingRot(S.rotHead);
+    v.rot = r || 0;
+  }
+  // The picture is still turning toward your heading: the frame loop keeps painting until it arrives.
+  function rotSettling(now) {
+    if (S.cfg.orient !== 'heading' || S.rotHead == null || !S.p || !S.p.self) return false;
+    var me = drawn('self', S.p.self, now);
+    return me.heading != null && Math.abs(headingGap(S.rotHead, me.heading)) >= ROT_EPS;
+  }
   // What Follow rides: you, or your target (the guild lead, 2026-10-13: "if we're using something like Solidarity of
   // Vision could we have a 'Follow Target' mode"). Follow target with no target placed falls back to you. Drawn
   // positions, so the view glides with the dot.
@@ -2115,6 +2372,7 @@
   }
   function wpt(x, y) {   // server-frame point -> canvas pixels
     var s = toScreen(x, y), v = S.view;
+    if (v.rot) return projectPx(s.sx, s.sy, v, S.w, S.h);   // heading up
     return [(s.sx - v.cx) * v.scale + S.w / 2, (s.sy - v.cy) * v.scale + S.h / 2];
   }
   var RING = { wait: '#f85149', window: '#f0b429', up: '#56d364' };
@@ -2489,10 +2747,14 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, S.w, S.h);
     var rt = Date.now();
+    updateRot(rt);   // heading up: turn the picture to your heading first, so everything below projects through it
     // Follow me: the view rides the DRAWN position of you, so the map glides with you instead of stepping per poll.
     if (S.follow && S.p && !S.drag) followTo(followSubject(rt));
-    var v = S.view, w = S.w, h = S.h, now = nowMs();
+    var v = S.view, w = S.w, h = S.h, now = nowMs(), rot = v.rot || 0;
     var ox = w / 2 - v.cx * v.scale, oy = h / 2 - v.cy * v.scale;
+    // Heading up turns the walls too (they are laid out by hand here, not through wpt): turnPt() leaves the turned point in tx, ty.
+    var tx = 0, ty = 0, rc = Math.cos(rot), rs = Math.sin(rot), hw = w / 2, hh = h / 2;
+    var turnPt = function (x, y) { var a = x - hw, b = y - hh; tx = a * rc - b * rs + hw; ty = a * rs + b * rc + hh; };
     var sz = selfZ(), range = levelRange();
     var C = S.cfg, SH = C.show, CO = C.col;   // ⚙ Map settings: what is drawn, and in which colours
     var I = inkStyle(C.ink);                  // ⚙ → Line strength
@@ -2516,6 +2778,7 @@
           for (var li = 0, lj = 0; li < G.xy.length; li += 4, lj++) {
             if (lvOn && inLevelRange(G.z[lj], sz, range) !== (pass === 0)) continue;
             var lx1 = G.xy[li] * v.scale + ox, ly1 = G.xy[li + 1] * v.scale + oy, lx2 = G.xy[li + 2] * v.scale + ox, ly2 = G.xy[li + 3] * v.scale + oy;
+            if (rot) { turnPt(lx1, ly1); lx1 = tx; ly1 = ty; turnPt(lx2, ly2); lx2 = tx; ly2 = ty; }
             if ((lx1 < 0 && lx2 < 0) || (lx1 > w && lx2 > w) || (ly1 < 0 && ly2 < 0) || (ly1 > h && ly2 > h)) continue;
             ctx.moveTo(lx1, ly1); ctx.lineTo(lx2, ly2);
           }
@@ -2533,6 +2796,7 @@
         ctx.beginPath();
         for (var i = 0; i < a.length; i += 4) {
           var x1 = a[i] * v.scale + ox, y1 = a[i + 1] * v.scale + oy, x2 = a[i + 2] * v.scale + ox, y2 = a[i + 3] * v.scale + oy;
+          if (rot) { turnPt(x1, y1); x1 = tx; y1 = ty; turnPt(x2, y2); x2 = tx; y2 = ty; }
           if ((x1 < 0 && x2 < 0) || (x1 > w && x2 > w) || (y1 < 0 && y2 < 0) || (y1 > h && y2 > h)) continue;
           ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
         }
@@ -2550,7 +2814,7 @@
     for (var k = 0; k < S.points.length; k++) {
       var p0 = S.points[k], xy0 = wpt(p0.x, p0.y);
       if (xy0[0] < -30 || xy0[0] > w + 30 || xy0[1] < -30 || xy0[1] > h + 30) continue;
-      if (!inLevelRange(p0.z, sz, srange) && String(p0.id) !== tgtPid) continue;   // outside the Spawns slider: hidden (dot, route and click target)
+      if (!inLevelRange(p0.z, sz, srange) && String(p0.id) !== tgtPid && !(S.pulse && S.pulse.ids[String(p0.id)])) continue;   // outside the Spawns slider: hidden (dot, route and click target), unless it is being pulsed (FB-100)
       vis.push({ p: p0, x: xy0[0], y: xy0[1] });
     }
     // Spawn points hidden (•) hides the route markers with them, all but your target's own route (the guild lead,
@@ -2629,6 +2893,7 @@
       else if (kind.named && SH.bosses) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: conCol(namedNpc(p)) || (kind.raid ? CO.raidLabel : CO.bossLabel), tier: kind.raid ? 0 : 1, align: 'left', font: fontBoss });
     }
     ctx.globalAlpha = 1;
+    drawPulse(vis, rt, ringOf, I);
     // Traps (the guild lead, 2026-10-23: "maps should show traps as well"; see trapHex): the trigger circle faint underneath,
     // then a △ in the type's colour with the first letter of the named it can bring up ("!" when there is none). Spots follow
     // the Spawn height slider like the dots; an undetectable trap-table trap is drawn hollow with a dashed edge, because it
@@ -2695,7 +2960,7 @@
         if (wedgesOn) {
           ctx.lineWidth = 1.25; ctx.strokeStyle = 'rgba(8,11,16,0.9)'; ctx.lineJoin = 'round';
           for (j = 0; j < vis.length; j += 4) {
-            arc = wedgeArc(vis[j + 1]);
+            arc = wedgeArc(vis[j + 1], rot);
             if (!arc) continue;
             ctx.beginPath(); ctx.moveTo(vis[j + 2], vis[j + 3]); ctx.arc(vis[j + 2], vis[j + 3], wedgeR, arc.a0, arc.a1); ctx.closePath();
             ctx.fillStyle = classHex(vis[j].class) || color; ctx.globalAlpha = 0.65; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
@@ -2704,7 +2969,7 @@
         }
         for (j = 0; j < vis.length; j += 4) {
           col = facingOn ? (classHex(vis[j].class) || color) : color;
-          pts = arrowsOn ? arrowPoints(vis[j + 1], vis[j + 2], vis[j + 3], arrowSz.len, arrowSz.half) : null;
+          pts = arrowsOn ? arrowPoints(vis[j + 1], vis[j + 2], vis[j + 3], arrowSz.len, arrowSz.half, rot) : null;
           if (pts) {
             ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); ctx.lineTo(pts[2], pts[3]); ctx.lineTo(pts[4], pts[5]); ctx.lineTo(pts[6], pts[7]); ctx.closePath();
             ctx.fillStyle = col; ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(8,11,16,0.95)'; ctx.lineJoin = 'round'; ctx.fill(); ctx.stroke(); ctx.lineJoin = 'miter';
@@ -2882,8 +3147,8 @@
       // You: the same arrow or slice as everyone else, a little bigger with a white rim, so you stand out in a crowd of
       // them. No heading yet: just the dot with its white rim. (Facing off keeps the old arrow below.)
       if (P.self && SH.you && C.facing !== 'off') {
-        var wd = drawn('self', P.self, rt), wq = wpt(wd.x, wd.y), warc = wedgeArc(wd.heading);
-        var selfSz = arrowSize(I.dot, true), apts = arrowsOn ? arrowPoints(wd.heading, wq[0], wq[1], selfSz.len, selfSz.half) : null;
+        var wd = drawn('self', P.self, rt), wq = wpt(wd.x, wd.y), warc = wedgeArc(wd.heading, rot);
+        var selfSz = arrowSize(I.dot, true), apts = arrowsOn ? arrowPoints(wd.heading, wq[0], wq[1], selfSz.len, selfSz.half, rot) : null;
         if (apts) {
           ctx.beginPath(); ctx.moveTo(apts[0], apts[1]); ctx.lineTo(apts[2], apts[3]); ctx.lineTo(apts[4], apts[5]); ctx.lineTo(apts[6], apts[7]); ctx.closePath();
           ctx.fillStyle = CO.you; ctx.fill();
@@ -2899,7 +3164,7 @@
         }
       } else if (P.self && SH.you) {
         var md = drawn('self', P.self, rt), me = wpt(md.x, md.y);
-        var hv = md.heading != null ? headingVec(md.heading) : { dx: 0, dy: -1 };
+        var hv = md.heading != null ? headingVec(md.heading, rot) : { dx: 0, dy: -1 };
         var nx = -hv.dy, ny = hv.dx;
         ctx.beginPath();
         ctx.moveTo(me[0] + hv.dx * 9, me[1] + hv.dy * 9);
@@ -2909,6 +3174,7 @@
         ctx.closePath(); ctx.fillStyle = CO.you; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#ffffff'; ctx.stroke();
       }
     }
+    drawCompass(rot);
     if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : trapSpots); layoutTrapHits(trapHits); layoutCorpseHits(corpseVis); }   // hidden points take no clicks (a trap spot is still a △ with Spawn points off)
     if (posAgeEl && rt - lastAge >= 200) { lastAge = rt; posAgeEl.textContent = S.sampleAt ? posAgeText(rt - S.sampleAt, S.sampleSrc) : ''; }
     if (rt - lastLoc >= 200) { lastLoc = rt; updateLocBar(rt); }
@@ -2921,6 +3187,69 @@
     if (!kiteDots && kiteDotTimer) { clearInterval(kiteDotTimer); kiteDotTimer = null; }
   }
   var flashTimer = null;
+
+  // ── The pulse (FB-100): a steady ring and a ring that rings out from each pulsed spot, in the spot's timer colour ──
+  // `vis` is the frame's visible points ({ p, x, y }); a spot off screen simply is not in it (the toast said so). Once the pulse is
+  // over the state is dropped, and anyMoving() has stopped asking for frames.
+  function drawPulse(vis, rt, ringOf, I) {
+    if (!S.pulse) return;
+    var k = pulseAt(S.pulse, rt);
+    if (!k) { S.pulse = null; return; }
+    for (var i = 0; i < vis.length; i++) {
+      var pid = String(vis[i].p.id);
+      if (!S.pulse.ids[pid]) continue;
+      var t = S.timerBy[pid], col = t ? (ringOf[timerState(t, nowMs())] || '#ffd866') : '#ffffff';
+      var base = 6.5 * I.dot + 3.5;   // (a spot that just became possible has no ring colour of its own: the flash yellow)
+      ctx.lineWidth = 2.4; ctx.strokeStyle = col;
+      ctx.globalAlpha = 0.5 + 0.5 * k.fade; ctx.beginPath(); ctx.arc(vis[i].x, vis[i].y, base, 0, 6.2832); ctx.stroke();
+      ctx.globalAlpha = (1 - k.phase) * k.fade; ctx.beginPath(); ctx.arc(vis[i].x, vis[i].y, base + 4 + k.phase * 26, 0, 6.2832); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ── The compass (the guild lead, 2026-10-27: "make sure we're showing the cardinality on the map") ──
+  // On in both orientations. North up it stands still; heading up it turns with the picture, so N is always where north is.
+  //   rose   a small rose in a corner: its N needle points to true north, with N / E / S / W round it (the default)
+  //   edges  N / E / S / W at the edges of the map, riding round as the picture turns
+  //   both   both
+  // Text is never turned: only the places move. Drawn last, so nothing covers it; the rose steps out of the way of the buttons.
+  var NORTH_COL = '#ff6b5e', CARDINAL_COL = '#c9d1d9', ROSE_R = 15, ROSE_BOX = 54;
+  function compassInsets() {   // room at each edge for the button bar and the readout, so a letter never hides behind them
+    var ins = { t: 16, r: 16, b: 16, l: 16 }, tp = S.toolPos;
+    if (toolsEl && tp) {
+      var tw = toolsEl.offsetWidth || 0, th = toolsEl.offsetHeight || 0;
+      if (tp.edge === 'top') ins.t = Math.max(ins.t, (document.body.classList.contains('setup') ? 32 : 6) + th + 12);
+      else if (tp.edge === 'bottom') ins.b = Math.max(ins.b, th + 18);
+      else if (tp.edge === 'left') ins.l = Math.max(ins.l, tw + 36);
+      else if (tp.edge === 'right') ins.r = Math.max(ins.r, tw + 36);
+    }
+    return ins;
+  }
+  function drawCompass(rot) {
+    var mode = S.cfg.compass, w = S.w, h = S.h, text = Math.min(1.3, Math.max(0.8, Number(S.cfg.text) || 1));
+    var font = 'bold ' + Math.round(11 * text) + 'px ui-monospace,Consolas,monospace';
+    ctx.globalAlpha = 1;
+    if (mode === 'edges' || mode === 'both') {
+      cardinalSpots(rot, w, h, compassInsets()).forEach(function (c) { halo(c.k, c.x, c.y, font, c.k === 'N' ? NORTH_COL : CARDINAL_COL, 'center'); });
+    }
+    if (mode === 'rose' || mode === 'both') {
+      var tools = toolsEl && w && toolsEl.offsetWidth ? { l: toolsEl.offsetLeft || 0, t: toolsEl.offsetTop || 0, w: toolsEl.offsetWidth, h: toolsEl.offsetHeight || 0 } : null;
+      var box = ROSE_BOX * text, R = ROSE_R * text, spot = roseSpot(w, h, box, 10, tools), x = spot.x, y = spot.y;
+      ctx.beginPath(); ctx.arc(x, y, R + 2, 0, 6.2832); ctx.fillStyle = 'rgba(13,17,23,0.55)'; ctx.fill();
+      ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(201,209,217,0.55)'; ctx.stroke();
+      var n = turnVec(0, -1, rot), side = function (k) { return [-n.dy * k, n.dx * k]; };   // the way north points on screen, and across it
+      var nt = [x + n.dx * (R - 1), y + n.dy * (R - 1)], st = [x - n.dx * (R - 1), y - n.dy * (R - 1)], s1 = side(R * 0.3);
+      ctx.beginPath(); ctx.moveTo(nt[0], nt[1]); ctx.lineTo(x + s1[0], y + s1[1]); ctx.lineTo(x - s1[0], y - s1[1]); ctx.closePath();
+      ctx.fillStyle = NORTH_COL; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(st[0], st[1]); ctx.lineTo(x + s1[0], y + s1[1]); ctx.lineTo(x - s1[0], y - s1[1]); ctx.closePath();
+      ctx.fillStyle = 'rgba(201,209,217,0.75)'; ctx.fill();
+      var lf = 'bold ' + Math.round(9 * text) + 'px ui-monospace,Consolas,monospace';
+      CARDINAL_DIRS.forEach(function (d) {
+        var u = turnVec(d[1], d[2], rot);
+        halo(d[0], x + u.dx * (R + 9 * text), y + u.dy * (R + 9 * text), lf, d[0] === 'N' ? NORTH_COL : CARDINAL_COL, 'center');
+      });
+    }
+  }
 
   // One transparent button per visible spawn dot (capped): the click and hover target.
   function layoutHits(vis) {
@@ -3203,9 +3532,26 @@
       });
     }
     var timers = ((P && P.timers) || []).filter(function (t) { return !S.watchBy[String(t.point_id)]; });
-    box.appendChild(el('div', 'sec', 'Respawns (' + timers.length + ')'));
+    var groups = mergeTimers(timers, now), folded = groups.some(function (g) { return g.n > 1; });
+    // FB-100 (the guild lead, 2026-10-26: "The respawns (6) needs to be expandable to show the actual spots. Clicking on the
+    // top-level should highlight the spawns that are down"; then "LEFT CLICK PULSE, RIGHT CLICK MAP FOCUS"). The top line: left click
+    // pulses every spot that is down, right click zooms the map to them; the ▸ button lists the spots a folded row hides.
+    var downIds = timers.map(function (t) { return String(t.point_id); }).filter(function (id) { return !!S.byId[id]; });
+    var head = el('div', 'sec resp', 'Respawns (' + timers.length + ')'); head.setAttribute('data-wp-interact', '');
+    head.title = 'Click: pulse every spot that is down on the map. Right-click: zoom the map to them.' + (folded ? ' The ▸ button lists the spots a folded row hides.' : '');
+    head.addEventListener('click', function () { sendAct('pulse', downIds); });
+    head.addEventListener('contextmenu', function (e) { e.preventDefault(); e.stopPropagation(); sendAct('focus', downIds); });
+    if (folded) {
+      var more = el('button', 'more', (S.respOpen ? '▾' : '▸') + ' spots'); more.type = 'button'; more.setAttribute('data-wp-interact', '');
+      more.title = S.respOpen ? 'Fold the spots back into one row each' : 'List every spot that is down, under its row';
+      more.addEventListener('click', function (e) { e.stopPropagation(); S.respOpen = !S.respOpen; lsSet('wp-map-resp-open', S.respOpen ? 1 : 0); renderSide(); });
+      more.addEventListener('contextmenu', function (e) { e.stopPropagation(); });   // (the button is not the top line's right-click)
+      head.appendChild(more);
+    }
+    box.appendChild(head);
     // Same name and same state fold into one row, spoken for by the soonest ("A blood raven ×4"); a click centres on that one.
-    mergeTimers(timers, now).forEach(function (g) {
+    // Open (▾ spots): every spot behind a folded row is listed under it, one row each.
+    groups.forEach(function (g) {
       var t = g.soonest;
       var r = el('div', 'trow ' + g.state); r.setAttribute('data-wp-interact', '');
       r.appendChild(el('span', 'nm', g.name + (g.n > 1 ? ' ×' + g.n : ''))); r.appendChild(el('span', 'tm', timerText(t, now)));
@@ -3213,6 +3559,16 @@
       r.addEventListener('click', function () { centreOn(S.byId[String(t.point_id)]); });
       rowToggle(r, function () { toggleSpawn(t.point_id, g.name); });   // the soonest of a folded row, the one the row speaks for
       box.appendChild(r);
+      if (g.n > 1 && S.respOpen) spotRows(g.timers, S.byId).forEach(function (s) {
+        var sr = el('div', 'trow sub ' + g.state); sr.setAttribute('data-wp-interact', '');
+        sr.title = 'Click: pulse this spot on the map. Right-click: centre the map on it.';
+        // (the folded row above already says what it is: the name here would only repeat, and truncate, in a narrow list)
+        sr.appendChild(el('span', 'nm', 'spot #' + s.pid)); sr.appendChild(el('span', 'tm', timerText(s.t, now)));
+        sr.appendChild(el('span', 'src', '(' + locText(s.p.x, s.p.y) + ')' + (s.t.source === 'marked' ? ' · marked' : '') + (s.t.by ? ' · by ' + s.t.by : '')));
+        sr.addEventListener('click', function () { sendAct('pulse', [s.pid]); });
+        sr.addEventListener('contextmenu', function (e) { e.preventDefault(); e.stopPropagation(); sendAct('focus', [s.pid]); });
+        box.appendChild(sr);
+      });
     });
     if (!timers.length && !wrows.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot (right-click a dot to switch it off and on)')).id = 'empty';
     // a seen mob already listed under Engaged (the agent flags it) is not listed twice
@@ -3274,6 +3630,37 @@
     else { S.follow = false; syncFollowBtn(); }
     renderMap();
   }
+  // FB-100: what the Respawns list does to the map. 'pulse' rings out from the spots for PULSE_MS (colour = the timer's state); 'focus'
+  // zooms to them (one spot: centres, as a click on a row always did). The pop-out has no map, so it sends the order to the Map window
+  // over the same channel as centring (main.js 'map-centre' passes any value through).
+  function mapAct(act, pids) {
+    var pts = (pids || []).map(function (id) { return S.byId[String(id)]; }).filter(Boolean);
+    if (!pts.length) return;
+    if (act === 'focus') {
+      if (pts.length === 1) { centreOn(pts[0]); return; }
+      var fv = focusView(pointsBox(pts), S.w, S.h, S.view.rot);
+      S.view.cx = fv.cx; S.view.cy = fv.cy; S.view.scale = fv.scale;
+      var fs1 = followSubject(Date.now());
+      if (S.followLock && fs1) S.followOff = followOffNow(fs1, S.view, S.w, S.h);
+      else { S.follow = false; syncFollowBtn(); }
+      renderMap();
+      return;
+    }
+    var ids = {}, off = 0;
+    pts.forEach(function (p) {
+      ids[String(p.id)] = true;
+      var q = wpt(p.x, p.y);
+      if (q[0] < 0 || q[0] > S.w || q[1] < 0 || q[1] > S.h) off++;
+    });
+    S.pulse = { ids: ids, t0: Date.now() };
+    toast('Pulsing ' + pts.length + (pts.length === 1 ? ' spot' : ' spots that are down') + (off ? ' · ' + off + ' off the map: right-click to zoom to ' + (pts.length === 1 ? 'it' : 'them') : ''));
+    renderMap(); kickAnim();
+  }
+  function sendAct(act, pids) {
+    if (!(pids || []).length) return;
+    if (PART_TIMERS) { try { window.mimic.mapCentreOn({ act: act, ids: pids }); } catch (e) {} return; }
+    mapAct(act, pids);
+  }
 
   function message() {
     var P = S.p, m = '';
@@ -3306,6 +3693,24 @@
     if (S.followLock && !S.follow) { S.follow = true; var fs2 = followSubject(Date.now()); if (fs2) S.followOff = followOffNow(fs2, S.view, S.w, S.h); }
     syncFollowBtn(); renderMap();
   });
+  // North up / Heading up (the toolbar button and ⚙ → Map up, one switch). Heading up centres you and turns Follow me on: the
+  // picture turns about the middle of the Map, so you have to be the middle. Going back leaves Follow as it is. The turn itself
+  // (updateRot) and the compass (drawCompass) are in the drawing.
+  var orientBtn = document.getElementById('orientBtn');
+  function syncOrientBtn() {
+    if (!orientBtn) return;
+    var h = S.cfg.orient === 'heading';
+    orientBtn.textContent = h ? 'Heading up' : 'North up';
+    orientBtn.classList.toggle('on', h);
+    var sel = document.getElementById('cfgOrient'); if (sel) sel.value = S.cfg.orient;
+  }
+  function setOrient(mode) {
+    S.cfg.orient = ORIENTS.indexOf(mode) >= 0 ? mode : ORIENT_DEFAULT;
+    S.rotHead = null; S.rotAt = 0;   // start the new turn from your heading, not from where the last one stopped
+    if (S.cfg.orient === 'heading') { S.follow = true; S.followWho = 'me'; S.followOff = { x: 0, y: 0 }; syncFollowBtn(); }
+    cfgCommit(); renderMap(); kickAnim();
+  }
+  if (orientBtn) orientBtn.addEventListener('click', function () { setOrient(S.cfg.orient === 'heading' ? 'north' : 'heading'); });
   // ⠿ moves the button bar (toolDock / toolBox); where it locks is saved as { edge, t }.
   var toolsEl = document.getElementById('tools'), gripEl = document.getElementById('toolsGrip'), paneEl = document.getElementById('mapPane');
   S.toolPos = (function () {
@@ -3424,7 +3829,7 @@
   syncRouteNote();
   // ⚙ Map settings: built from CFG_SHOW / CFG_GLYPHS / CFG_COLS on first open, saved on every change.
   var cfgEl = document.getElementById('cfg'), cfgBtn = document.getElementById('cfgBtn');
-  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncRouteNote(); syncClearCtl(); rebuildClear(); }
+  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncKiteBtns(); syncOrientBtn(); syncRouteNote(); syncClearCtl(); rebuildClear(); }
   // ◯ on the toolbar (the guild lead, 2026-10-13: "add aggro rings onto the map, make a circle icon on the main
   // screen"): the same switch as ⚙ → Show → Aggro rings.
   var aggroBtn = document.getElementById('aggroBtn');
@@ -3497,6 +3902,7 @@
     };
     CFG_COLS.forEach(function (it) { colorRow(colEl, it[0], it[1]); });
     document.getElementById('cfgFacing').value = C.facing;
+    document.getElementById('cfgOrient').value = C.orient; document.getElementById('cfgCompass').value = C.compass;
     var wm = document.getElementById('cfgWallMode'); wm.value = C.wallMode;
     var bg = document.getElementById('cfgBg'); bg.value = C.col.bg;
     var bgOwn = document.getElementById('cfgBgOwn'), bgA = document.getElementById('cfgBgA');
@@ -3516,6 +3922,10 @@
   });
   document.getElementById('cfgFacing').addEventListener('change', function (e) {
     S.cfg.facing = FACING_MODES.indexOf(e.target.value) >= 0 ? e.target.value : FACING_DEFAULT; cfgCommit();
+  });
+  document.getElementById('cfgOrient').addEventListener('change', function (e) { setOrient(e.target.value); });
+  document.getElementById('cfgCompass').addEventListener('change', function (e) {
+    S.cfg.compass = COMPASS_MODES.indexOf(e.target.value) >= 0 ? e.target.value : COMPASS_DEFAULT; cfgCommit();
   });
   document.getElementById('cfgWallMode').addEventListener('change', function (e) {
     var v = e.target.value; S.cfg.wallMode = v === 'one' || v === 'layers' ? v : 'map'; cfgCommit();
@@ -3602,7 +4012,11 @@
   sideBtn.addEventListener('contextmenu', function (e) { e.preventDefault(); popTimers(!S.popped); });
   window.mimic && window.mimic.onMapTimersPopped && window.mimic.onMapTimersPopped(function (on) { setPopped(on, false); });
   window.mimic && window.mimic.getMapTimersPopped && window.mimic.getMapTimersPopped().then(function (on) { setPopped(on, true); }).catch(function () {});
-  window.mimic && window.mimic.onMapCentre && window.mimic.onMapCentre(function (id) { if (!PART_TIMERS) centreOn(S.byId[String(id)]); });
+  window.mimic && window.mimic.onMapCentre && window.mimic.onMapCentre(function (id) {
+    if (PART_TIMERS) return;
+    if (id && typeof id === 'object') mapAct(id.act, id.ids);   // the pop-out's pulse / focus (FB-100)
+    else centreOn(S.byId[String(id)]);
+  });
   sideBtn.addEventListener('click', function () {
     if (S.popped) { popTimers(false); return; }   // out in its own window: the button brings it back
     var before = slotOpen();
@@ -3631,7 +4045,7 @@
     renderMap();
   });
   Object.keys(SMOOTH_LABEL).forEach(function (k) { var o = document.createElement('option'); o.value = k; o.textContent = SMOOTH_LABEL[k]; smoothSel.appendChild(o); });
-  syncLevels(); syncFitBtn(''); syncKnobs(); syncFollowBtn(); placeTools();
+  syncLevels(); syncFitBtn(''); syncKnobs(); syncFollowBtn(); syncOrientBtn(); placeTools();
   window.mimic && window.mimic.onMapPos && window.mimic.onMapPos(onDirect);
 
   stage.addEventListener('mousedown', function (e) {
@@ -3647,9 +4061,10 @@
     var dx = e.clientX - d.x, dy = e.clientY - d.y;
     if (!d.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
     if (!d.moved) { d.moved = true; document.body.classList.add('dragging'); if (!S.followLock) { S.follow = false; syncFollowBtn(); } }
-    S.view.cx = d.cx - dx / S.view.scale; S.view.cy = d.cy - dy / S.view.scale;
+    var ud = unturnPx(dx, dy, S.view);   // heading up: a drag across the screen is a move on the unturned picture
+    S.view.cx = d.cx - ud.dx / S.view.scale; S.view.cy = d.cy - ud.dy / S.view.scale;
     var fm = S.follow && S.followLock ? followSubject(Date.now()) : null;
-    if (fm) { var fsv = toScreen(fm.x, fm.y); S.followOff = { x: (fsv.sx - S.view.cx) * S.view.scale, y: (fsv.sy - S.view.cy) * S.view.scale }; }
+    if (fm) { S.followOff = followOffNow(fm, { cx: S.view.cx, cy: S.view.cy, scale: S.view.scale, rot: S.view.rot }, 1e9, 1e9); }
     renderMap();
   });
   document.addEventListener('mouseup', function () {
@@ -3659,8 +4074,9 @@
   function zoomBy(deltaY, mx, my) {
     var v = S.view, f = Math.exp(-deltaY * 0.0015), ns = Math.max(0.02, Math.min(20, v.scale * f));
     if (!S.follow && mx != null) {   // around the cursor; while following, around you
-      var wx = (mx - S.w / 2) / v.scale + v.cx, wy = (my - S.h / 2) / v.scale + v.cy;
-      v.cx = wx - (mx - S.w / 2) / ns; v.cy = wy - (my - S.h / 2) / ns;
+      var zu = unturnPx(mx - S.w / 2, my - S.h / 2, v);   // (heading up: the cursor's offset on the unturned picture)
+      var wx = zu.dx / v.scale + v.cx, wy = zu.dy / v.scale + v.cy;
+      v.cx = wx - zu.dx / ns; v.cy = wy - zu.dy / ns;
     }
     v.scale = ns;
     try { localStorage.setItem('wp-map-scale', String(ns)); } catch (err) {}

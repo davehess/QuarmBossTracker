@@ -247,7 +247,7 @@ describe('what the draw does with it', () => {
     expect(dots).toMatch(/ctx\.arc\(vis\[j \+ 2\], vis\[j \+ 3\], facingOn \?/);   // no heading yet: still the dot
   });
   it('turns off cleanly: you keep the old arrow, and Arrow / Slice share your white rim', () => {
-    expect(js).toMatch(/if \(P\.self && SH\.you && C\.facing !== 'off'\) \{[\s\S]+?\} else if \(P\.self && SH\.you\) \{[\s\S]+?headingVec\(md\.heading\)/);
+    expect(js).toMatch(/if \(P\.self && SH\.you && C\.facing !== 'off'\) \{[\s\S]+?\} else if \(P\.self && SH\.you\) \{[\s\S]+?headingVec\(md\.heading, rot\)/);
     const me = sliceBlock(js, "if (P.self && SH.you && C.facing !== 'off') {", '} else if (P.self && SH.you) {');
     expect(me).toMatch(/arrowSize\(I\.dot, true\)/);
     expect(me).toMatch(/wedgeRadius\(v\.scale, C\.text, true\)/);

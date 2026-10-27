@@ -7073,3 +7073,70 @@ Tests: `test/pop-status-bot.test.js`, `test/pop-engine-sync.test.js`. ⏳ Ship o
 inside `if ( qglobals.cipher )` (`Grand_Librarian_Maelin.lua:65-77`). It now waits on `cipher_1` (which waits on the Saryrn and Marr halves); her lore reading needs Karana's AND
 Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. The pending memory carries `waits_on` for what its step waits on. ⏳ The `maelin` line stays linear
 (the lore, which her script does not tie to the cipher, is offered after the cipher stage). Tests: `test/pop-next-steps.test.js`.
+- 🧪 **Kite circles: other raiders' circles age out and can be hidden; "my speed / near me" filter; drift forecast
+  (Mimic beta, 2026-10-26; the forecast was drafted two ways and the mocks picked the arrow, see below).** The guild lead, kiting in Plane of Valor: *"i can't hide
+  <another character>'s circles from yesterday"*, *"show circles that are my speed or nearby"*, *"show my circle drift as a movement of
+  the circle in a prediction"*. The dashed yellow rings are the guild library (`utils/kiteLoops.js`: anonymous, kept ~14 days, stamped
+  `last_at`), not per-character, and the Map drew every one for ever; the only off switch was buried in ⚙. Now: **Others: Live / All /
+  Off** on the toolbar (Live = run in the last 20 minutes, `K.OTHERS_LIVE_MS`, longer than the agent's 10-minute cache; Off is the old ⚙
+  switch), **Circles: All / My speed / Near me** (lap time within 25% of your circle's / centre within 300 u of you; no circle or position
+  yet keeps everything), **Drift: off / on** (an arrow along the drift to a thin ring where your circle lands, labelled "N laps · S s: D u dir"; N is however
+  many laps put the ring 36 px off, capped at 20; `?kdrift=1` opens the Map with it on). Two looks were drafted: A, faint dashed copies of the
+  circle, and B, this arrow and ring. **B kept**: at the 1 to 3 units a lap a clean circle drifts, A's copies lie inside the circle and read
+  as a thicker line (the mock, `1-drift-A-ghost-circles.png`), while B's ring stands clear of it. A is removed, not hidden.
+  Defaults: Live, All, off. `apps/mimic/kiteCoach.js` (`loopFresh`, `filterLoops`, `driftForecast`, `forecastLabel`), `apps/mimic/map.html`
+  (`visibleLoops`, `syncKiteBtns`, forecast in `drawKite`), tests in `test/kite-coach.test.js`. No agent or bot change. ⏳ The default
+  flips from "library for ever" to "Live", so yesterday's circles are one tap away rather than on screen: the guild lead to confirm;
+  ⏳ the three buttons make the toolbar wider (it wraps under ~800 px: drag/dock it or say if one should live only in ⚙); ⏳ a clean
+  circle drifts only a unit or two a lap, so the forecast is a few pixels a lap and reads as "N laps · S s" ahead, not one lap.
+- 🧪 **Map: Heading up, with a compass on screen in both orientations (Mimic beta, 2026-10-27; no agent or bot change).** The guild lead:
+  *"allow map to follow player heading as well as cardinal direction, but make sure we're showing the cardinality on the map"*. A toolbar
+  button **North up / Heading up** (also ⚙ → Map up; saved in `cfg.orient`, default North up, so nothing changes for anyone until they
+  press it). Heading up turns the whole picture about the middle of the Map so the way you face is the top (`headingRot`, from the
+  existing `headingVec` / `HEADING_CCW`), turns Follow me on and centres you; the turn chases your drawn heading through `lerpHeading`'s
+  glide plus a 90 ms time constant (`rotStep`), snapping on a long gap, and the frame loop runs only until it arrives. Everything goes
+  through one projection (`wpt` / `projectPx`), so dots, labels, trails, corpses, timers, routes, aggro rings and the kite circles and
+  drift ring turn together; the two hand-laid wall loops turn explicitly; raiders' arrows and slices take the turn (`headingVec(h, rot)`);
+  text is never rotated (no canvas rotate), so labels stay upright. A click is un-turned: the cursor's /loc read (`screenToServer`), a drag
+  (`unturnPx`), a zoom about the cursor, Follow me's parked spot and Fit (the turned box has to fit). **Compass** (`cfg.compass`, ⚙ →
+  Compass): **Rose** (default), **Edges** or **Both**. The rose is a small corner dial (bottom-left, or the next corner the button bar does
+  not cover) whose red needle points to true north, with N E S W round it; Edges puts N E S W at the map's edges, inside room left for the
+  button bar, riding round as the picture turns. Recommendation: Rose as the default (small, never competes with the game scene in Full
+  mode, all four letters still on it); Edges is one ⚙ row, kept because it reads from across the screen. Tray/dashboard parity: main.js
+  and the dashboard carry only Map MODE, no other Map setting, so there is no twin to add. Tests: `test/map-heading-up.test.js`
+  (mutation-checked, 15 mutants); `test/map-facing-wedges.test.js` and `test/map-full-mode.test.js` updated for the new `rot` argument and the
+  compass's canvas letters. ⏳ Not seen in a live game: a heading-up Map over a moving EverQuest scene in Full mode; the first thing to
+  check is whether a 90 ms chase feels steady at the pipe's sample rate. ⏳ Fit zone/group/raid in Heading up fits the box turned at the
+  moment you press it; it does not keep refitting as you turn.
+- 🧪 **FB-100: Respawns opens into its spots; left click pulses, right click focuses (Mimic beta, 2026-10-27; no agent or bot change).** The
+  report: *"The respawns (6) needs to be expandable to show the actual spots. Clicking on the top-level should highlight the spawns that are
+  down"*; the guild lead then: *"LEFT CLICK PULSE, RIGHT CLICK MAP FOCUS."* The top line of the side list is now a control: **left click**
+  rings out from every spot that is down on the map (a steady ring plus one ringing out each second for 3 seconds, in the timer's colour;
+  a toast says how many spots are off the visible map), **right click** zooms the Map to all of them (never closer than 2.5 px a unit; Follow
+  me lets go unless it is locked). A **▸ spots** button on that line (shown only when a row is folded, e.g. "a blood raven ×4") lists every
+  spot under its row, soonest first, each as `spot #id` with its own time and its `(y, x)` under it; **left click a spot** pulses that spot, **right
+  click** centres the Map on it, keeping the zoom. Open or folded is remembered (`wp-map-resp-open`). The folded rows are unchanged
+  (click centres on the soonest; right-click still switches that spot off or on). The pop-out sends its clicks to the Map window over the
+  existing `map-centre` channel (an `{ act, ids }` object; no new IPC, main.js and the preload untouched). Heading up: the focus fits the
+  turned box. ⏳ "Down" means every spot on the Respawns list, in any timer state (waiting, window open, past its window); ★ Watched spots
+  are listed in their own section and are not part of it. ⏳ The spot rows give the right-click to "focus", so the off/on switch on a
+  single spot is on its dot and its folded row, not on the expanded spot row; say if that should move. ⏳ A pulsed spot outside the Spawn
+  height range is shown for the three seconds, then hidden again. Test: `test/map-respawns-expand.test.js` (mutation-checked, 17 mutants).
+- 🧪 **FB-103: a group member's kite circle shows while it forms (Mimic beta, 2026-10-27; no agent or bot change).** The report (a member on
+  Mimic 3.0.5-beta.9): *"Should be able to see <a group member>'s circle getting formed with me in his group."* **Why it was missing:** the Map's
+  circles were yours (your own positions through `kiteCoach.js`) and the guild library's. The library holds only FINISHED loops: their raider's
+  own Map must see 3 clean laps and post one summary (`POST /api/agent/kite-loop`, `utils/kiteLoops.js`: anonymous, no name, no path), the bot
+  serves it, the agent caches that answer for 10 minutes (`_kiteLoopsFor`) and the Map asks the agent once a minute (`guildLoopsMaybe`), so a
+  circle being run appears minutes after it is done, without a name, if at all. The group member's positions were already on the Map
+  every poll (Zeal's group list, `S.p.group`); nothing coached them. **Now** the Map runs a kite coach per group member (`matesFeed`,
+  `S.mates`) on those positions, locally, and draws what it finds in `drawKite`: a **dotted** ring in their class colour with a name label,
+  **"Brackwyn · forming"** (first lap), **"forming n/3"** (clean laps in a row), then **"Brackwyn · circle r 62 · 12 s"** at 3 clean laps (the bar
+  `K.CLEAN_LAPS` that their own Map would report at). Yours stays the solid ring, the guild's the yellow dashes. It is quiet by itself: gone the
+  moment they stop circling (the coach lets go after 1.5 laps) or 6 s after their last position (`MATE_FRESH_MS`), and a member who leaves the
+  group takes their coach. The draft's controls apply: **Others: Off** (and ⚙ → Guild kite loops) hides them, **Circles: My speed / Near
+  me** filter them (their lap time against yours, their centre against where you stand), and ⚙ → Kite coach off means nobody is coached. Nothing
+  is posted: their events are dropped, so a member's circle is only ever reported by that member's own Map (no duplicate, no new data leaves
+  anyone's machine; it reads what Zeal already shows in the group window). Group only, not the whole raid (a raid is up to ~50 coaches' worth of
+  per-sample fitting). `kiteCoach.js` `mateLabel` / `mateFormed`; test `test/map-kite-mates.test.js` (mutation-checked, 10 mutants). ⏳ Not seen
+  on a real kite: the coach was tuned on synthetic circles and a member's group-window position arrives at the pipe's rate, so how soon the first
+  lap is recognised in a live game is the thing to look at; a member out of range of your client has no position and so no circle.
