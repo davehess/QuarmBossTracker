@@ -70,6 +70,21 @@
     CAUSE_WARP_U: 20,         // "warp/lag": ... and this far or more is no shove any more, it is a jump
     CAUSE_SLOPE_Z: 4,         // "slope": the ground rose or fell this much in a slice (a step is ~6 u tall) ...
     CAUSE_SLOPE_CORR: 0.9,    //   ... and the slices' speeds follow the slices' rise (|correlation|)
+    // Other people's circles on your Map (the guild lead, 2026-10-26: "i can't hide <another character>'s circles from
+    // yesterday"). The guild library keeps a loop for weeks (utils/kiteLoops.js fades it over ~14 days) and stamps it with
+    // last_at, the last time ANYONE ran it. The Map used to draw all of them for ever. "Live" draws only a loop run this
+    // recently. The agent caches the bot's list for 10 minutes and the Map asks the agent once a minute, so a loop being run
+    // right now can show up to ~11 minutes late: the window has to be longer than that, or a live circle never appears.
+    OTHERS_LIVE_MS: 20 * 60 * 1000,
+    // "My speed" keeps a loop whose lap time is within this share of YOUR circle's lap time (+-25%: a 12 s lap keeps 9 to 15 s).
+    SPEED_BAND: 0.25,
+    // "Near me" keeps a loop whose centre is within this many units of where you stand (a loop's radius is 20-500; 300 u is
+    // about a screen's width at the default zoom).
+    NEAR_UNITS: 300,
+    // The drift forecast (Map option A / B). One lap moves a clean circle a unit or two, which is a pixel or two on the
+    // Map: so the forecast steps in whole laps, as many per step as it takes for one step to be this many pixels long, and
+    // stops at DRIFT_LAPS_MAX laps (about two minutes of kiting): past that it is a guess about nothing the data shows.
+    DRIFT_STEP_PX: 14, DRIFT_LAND_PX: 36, DRIFT_LAPS_MAX: 20,   // (B's landing ring wants to stand clear of the circle: 36 px)
   };
 
   function wrap(a) { return a - TAU * Math.round(a / TAU); }
@@ -365,6 +380,49 @@
     return { x: L.cx - L.r * Math.cos(th), y: L.cy - L.r * Math.sin(th) };   // screen (r cos, r sin), back to the server frame
   }
 
+  // ── Other people's circles: which ones the Map draws ──
+  // `loops` is the guild list (utils/kiteLoops.js rows through the agent). `o`:
+  //   others  'live' (default) a loop run in the last OTHERS_LIVE_MS · 'all' the whole library (off is the Map's own switch)
+  //   filter  'all' (default) · 'speed' lap time within SPEED_BAND of `cur` (your current circle) · 'near' centre within NEAR_UNITS of `pos`
+  //   now     ms epoch · cur  your circle ({ lapS }) or null · pos  where you stand ({ x, y }) or null
+  // "My speed" with no circle of yours yet, or "Near me" with no position, has nothing to compare with and keeps the loop:
+  // hiding everything because the reference is missing would read as "no loops here".
+  function loopFresh(L, now) {
+    var t = L && typeof L.last_at === 'string' ? Date.parse(L.last_at) : NaN;
+    return isFinite(t) && now - t <= K.OTHERS_LIVE_MS;       // no usable stamp: age unknown, so not "live"
+  }
+  function filterLoops(loops, o) {
+    o = o || {};
+    var others = o.others || 'live', filter = o.filter || 'all', out = [];
+    for (var i = 0; i < (loops || []).length; i++) {
+      var L = loops[i];
+      if (!L) continue;
+      if (others === 'live' && !loopFresh(L, o.now)) continue;
+      if (filter === 'speed' && o.cur && o.cur.lapS > 0 && Math.abs(L.lap_s - o.cur.lapS) > K.SPEED_BAND * o.cur.lapS) continue;
+      if (filter === 'near' && o.pos && Math.hypot(L.cx - o.pos.x, L.cy - o.pos.y) > K.NEAR_UNITS) continue;
+      out.push(L);
+    }
+    return out;
+  }
+
+  // ── The drift forecast: where your circle will be ──
+  // `view` is the coach's view (cur = this lap, ghost = the lap before). The centre has moved (dx, dy) from the ghost to
+  // cur; if that holds, lap k is at cur + k (dx, dy). One lap is a pixel or two, so the forecast takes `m` laps per step
+  // (m = enough that a step is >= stepPx on screen, 1 up to DRIFT_LAPS_MAX) and gives the circle at m and 2 m laps ahead.
+  // null when there is no drift worth drawing (the view's own showArrow bar: 3% of r) or nothing to scale by.
+  function driftForecast(view, pxPerUnit, stepPx) {
+    if (!view || !view.showArrow || !view.ghost || !view.cur || !(pxPerUnit > 0)) return null;
+    var cur = view.cur, dx = cur.cx - view.ghost.cx, dy = cur.cy - view.ghost.cy, per = Math.hypot(dx, dy);
+    if (!(per > 0)) return null;
+    var m = Math.max(1, Math.min(K.DRIFT_LAPS_MAX, Math.ceil((stepPx || K.DRIFT_STEP_PX) / (per * pxPerUnit))));
+    var at = function (laps) { return { laps: laps, cx: cur.cx + dx * laps, cy: cur.cy + dy * laps, r: cur.r, secs: laps * cur.lapS, units: per * laps }; };
+    return { dx: dx, dy: dy, perLap: per, dir: compass(dx, dy), m: m, first: at(m), second: at(2 * m) };
+  }
+  // `6 laps · 38 s: 14 u SW` (the point the forecast names: its laps, how long that is, how far the centre goes)
+  function forecastLabel(f, pt) {
+    return pt.laps + ' lap' + (pt.laps === 1 ? '' : 's') + ' · ' + Math.round(pt.secs) + ' s: ' + Math.round(pt.units) + ' u ' + f.dir;
+  }
+
   function create() {
     var buf = [], eng = null, cand = null, lastSearch = -Infinity, view = null;
 
@@ -510,5 +568,6 @@
   }
 
   return { K: K, create: create, fitCircle: fitCircle, turned: turned, compass: compass, chipText: chipText, driftClass: driftClass,
-    cleanLap: cleanLap, pathUps: pathUps, lapSignals: lapSignals, causeOf: causeOf, matchGuild: matchGuild, guildText: guildText, guildLabel: guildLabel, guildDot: guildDot };
+    cleanLap: cleanLap, pathUps: pathUps, lapSignals: lapSignals, causeOf: causeOf, matchGuild: matchGuild, guildText: guildText, guildLabel: guildLabel, guildDot: guildDot,
+    loopFresh: loopFresh, filterLoops: filterLoops, driftForecast: driftForecast, forecastLabel: forecastLabel };
 });

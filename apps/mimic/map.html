@@ -62,6 +62,7 @@
   #kiteChip{position:absolute;left:30px;z-index:4;font-size:11px;line-height:1.35;color:#e6edf3;pointer-events:none;white-space:nowrap;
     text-shadow:0 0 3px #000,0 0 2px #000;font-variant-numeric:tabular-nums}
   #kiteChip[hidden]{display:none}
+  #tools .tb[hidden]{display:none}   /* the circle buttons (Others / Circles / Drift) show only while there is a circle to act on */
   #kiteChip .g{color:#56d364}#kiteChip .a{color:#f0b429}#kiteChip .r{color:#ff6b5e}#kiteChip .gd{color:#d4f542}
   /* The timers list slides in and out (the guild lead, 2026-10-12: "slide the spawn timers in and out. So that it could
      take up less space if we weren't focused on that"): a top-right button on the map; slid in, the map takes the width. */
@@ -258,6 +259,9 @@
         <button class="tb on" id="namesBtn" type="button" title="Raiders' names: show or hide the name beside each raid and group member's dot. The dots stay, and mob names are not touched (the same switch as ⚙ → Group names and Raid names).">Raiders</button>
         <button class="tb on" id="dotsBtn" type="button" title="Spawn points: show or hide the spawn dots (the same switch as ⚙ → Spawn points).">•</button>
         <button class="tb" id="aggroBtn" type="button" title="Aggro rings: how close you can get to each spawn before it aggros (its aggro radius). Red: KOS to you (from its faction, your race, class and deity, your con, or an illusion it does not see through). Yellow: not KOS to you, but KOS to some players. Green: KOS to nobody. Dashed: how far it comes to help a friend (social aggro). Your target carries its own rings. Points on a running respawn timer have no ring.">◯</button>
+        <button class="tb on" id="kiteOthersBtn" type="button" hidden title="Other raiders' kite circles (the dashed yellow rings). Live: only a circle someone ran in the last 20 minutes. All: the guild's whole library, circles from earlier days too. Off: none. The same switch as ⚙ → Guild kite loops.">Others: Live</button>
+        <button class="tb" id="kiteFilterBtn" type="button" hidden title="Which of those circles are drawn. All: every one. My speed: only circles with about your own lap time (within 25% of your current circle's). Near me: only circles whose centre is within 300 units of where you stand.">Circles: All</button>
+        <button class="tb" id="kiteDriftBtn" type="button" hidden title="Where your circle will be if its drift holds. Off: just the numbers. A: faint copies of the circle a few laps on. B: an arrow along the drift to a thin ring where the circle lands.">Drift: off</button>
         <button class="tb" id="modeBtn" type="button" title="Full screen: the Map covers EverQuest's window and you click straight through it to the game. Window: the Map is a window you place, as before. The same switch as ⚙ → Mode and the tray.">▣ Full</button>
         <button class="tb" id="cfgBtn" type="button" title="Map settings: what is drawn, the height ranges, the ability icons, colours and the background">⚙</button>
       </div>
@@ -1442,7 +1446,8 @@
     for (k in MAP_SCHEMES.default) col[k] = MAP_SCHEMES.default[k];
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
-    return { show: show, facing: FACING_DEFAULT, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false, tail: TAIL_DEFAULT };
+    return { show: show, facing: FACING_DEFAULT, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false, tail: TAIL_DEFAULT,
+      kiteOthers: 'live', kiteFilter: 'all', kiteDrift: '' };
   }
   // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
   // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
@@ -1477,6 +1482,9 @@
     if (typeof saved.ink === 'number' && saved.ink >= INK_MIN && saved.ink <= INK_MAX) c.ink = Math.round(saved.ink * 4) / 4;
     if (typeof saved.avoidEq === 'boolean') c.avoidEq = saved.avoidEq;   // null (unset) follows the mode
     if (TAIL_STEPS.indexOf(saved.tail) >= 0) c.tail = saved.tail;   // seconds of target trail drawn; anything off the slider's steps is ignored
+    if (saved.kiteOthers === 'live' || saved.kiteOthers === 'all') c.kiteOthers = saved.kiteOthers;
+    if (saved.kiteFilter === 'all' || saved.kiteFilter === 'speed' || saved.kiteFilter === 'near') c.kiteFilter = saved.kiteFilter;
+    if (saved.kiteDrift === 'a' || saved.kiteDrift === 'b') c.kiteDrift = saved.kiteDrift;   // '' (unset) = no forecast
     if (saved.showClear === true) c.showClear = true;   // outlines always on; off shows them only while ⚙ is open or editing
     return c;
   }
@@ -1985,11 +1993,18 @@
       if (!g.retried) { g.retried = true; g.asked = Date.now() - GUILD_POLL_MS + 4000; }
     }).catch(function () {});
   }
+  // The guild's circles the Map draws right now: the Others switch (Live = run in the last 20 minutes, All = the library)
+  // and the circle filter (All / My speed / Near me). The rest stay in S.guild.loops, ready for a flip of the switch.
+  function visibleLoops(now) {
+    var tr = S.trk && S.trk.self;
+    return KC.filterLoops(S.guild.loops, { others: S.cfg.kiteOthers, filter: S.cfg.kiteFilter, now: now,
+      cur: S.kiteView ? S.kiteView.cur : null, pos: tr && tr.to ? { x: tr.to.x, y: tr.to.y } : null });
+  }
   function loopAt(loc) {
     if (!loc || !guildOn()) return null;
-    var best = null, bd = 9 / S.view.scale;
-    for (var i = 0; i < S.guild.loops.length; i++) {
-      var L = S.guild.loops[i], d = Math.abs(Math.hypot(loc.x - L.cx, loc.y - L.cy) - L.r);
+    var best = null, bd = 9 / S.view.scale, vis = visibleLoops(Date.now());
+    for (var i = 0; i < vis.length; i++) {
+      var L = vis[i], d = Math.abs(Math.hypot(loc.x - L.cx, loc.y - L.cy) - L.r);
       if (d <= bd) { best = L; bd = d; }
     }
     return best;
@@ -2018,12 +2033,37 @@
         ctx.closePath(); ctx.fillStyle = col; ctx.fill();
         halo(Math.round(v.cur.drift) + ' u', ex + ux * 6, ey + uy * 6 - 4, labelFont('dist'), col);
       }
+      // Where the circle will be if its drift holds (⚙-less: the toolbar's Drift button, or ?kdrift=a|b). Two looks to compare
+      // (the guild lead, 2026-10-26: "show my circle drift as a movement of the circle in a prediction"):
+      //   A  faint dashed copies of the circle at m and 2 m laps on, labelled with the farther one
+      //   B  an arrow from the centre along the drift to a thin ring where the circle lands, labelled
+      var fc = S.cfg.kiteDrift ? KC.driftForecast(v, sc, S.cfg.kiteDrift === 'b' ? KC.K.DRIFT_LAND_PX : KC.K.DRIFT_STEP_PX) : null;
+      if (fc) {
+        ctx.lineWidth = 1.4; ctx.strokeStyle = col; ctx.fillStyle = col;
+        if (S.cfg.kiteDrift === 'a') {
+          [fc.first, fc.second].forEach(function (pt, i) {
+            ring(pt.cx, pt.cy, pt.r); ctx.setLineDash([3, 4]); ctx.globalAlpha = i ? 0.28 : 0.5; ctx.stroke(); ctx.setLineDash([]);
+          });
+          var q2 = wpt(fc.second.cx, fc.second.cy);
+          // the label sits on the far side of the farther copy (the way the circle is going), clear of your own ring
+          ctx.globalAlpha = 1; halo(KC.forecastLabel(fc, fc.second), q2[0], q2[1] + (q2[1] > cq[1] ? 1 : -1) * (fc.second.r * sc + 10), labelFont('dist'), col, 'center');
+        } else {
+          var lq = ring(fc.first.cx, fc.first.cy, fc.first.r);
+          ctx.lineWidth = 1; ctx.globalAlpha = 0.6; ctx.stroke();
+          var ax = lq[0] - cq[0], ay = lq[1] - cq[1], al = Math.hypot(ax, ay) || 1, bx = ax / al, by = ay / al;
+          ctx.globalAlpha = 0.9; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(cq[0], cq[1]); ctx.lineTo(lq[0], lq[1]); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(lq[0], lq[1]); ctx.lineTo(lq[0] - bx * 7 - by * 4, lq[1] - by * 7 + bx * 4); ctx.lineTo(lq[0] - bx * 7 + by * 4, lq[1] - by * 7 - bx * 4);
+          ctx.closePath(); ctx.fill();
+          ctx.globalAlpha = 1; halo(KC.forecastLabel(fc, fc.first), lq[0], lq[1] + (lq[1] > cq[1] ? 1 : -1) * (fc.first.r * sc + 10), labelFont('dist'), col, 'center');
+        }
+      }
       ctx.globalAlpha = 1;
     }
     if (S.kite && SH.kiteLoops !== false) {
-      var now = Date.now();
-      for (var i = 0; i < S.guild.loops.length; i++) {
-        var L = S.guild.loops[i], q = wpt(L.cx, L.cy), rp = L.r * sc;
+      var now = Date.now(), vis = visibleLoops(now);
+      for (var i = 0; i < vis.length; i++) {
+        var L = vis[i], q = wpt(L.cx, L.cy), rp = L.r * sc;
         if (q[0] + rp < 0 || q[0] - rp > w || q[1] + rp < 0 || q[1] - rp > h) continue;
         var hot = S.hoverLoop === String(L.id);
         ring(L.cx, L.cy, L.r); ctx.setLineDash([6, 5]); ctx.globalAlpha = hot ? 1 : 0.75; ctx.lineWidth = hot ? 2.6 : 1.6; ctx.strokeStyle = KITE_GUILD_COL; ctx.stroke(); ctx.setLineDash([]);
@@ -2041,8 +2081,9 @@
   var kiteChipEl = document.getElementById('kiteChip'), kiteChipKey = '', lastKiteChip = 0;
   function updateKiteChip() {
     if (!kiteChipEl) return;
+    syncKiteBtns();
     var v = kiteOn() ? S.kiteView : null, key = '';
-    var gl = v && guildOn() ? KC.matchGuild(v.cur, S.guild.loops) : null;
+    var gl = v && guildOn() ? KC.matchGuild(v.cur, visibleLoops(Date.now())) : null;
     if (v) key = v.chip + '|' + v.cls + '|' + (v.why || '') + '|' + (gl ? KC.guildText(v.cur, gl) : '');
     if (key === kiteChipKey) return;
     kiteChipKey = key;
@@ -2063,6 +2104,43 @@
     kiteChipEl.style.top = ((parseFloat(locBarEl.style.top) || 28) + Math.round(30 * (S.cfg.text || 1))) + 'px';
   }
   var kiteDotTimer = null;
+  // The circle buttons on the toolbar (the guild lead, 2026-10-26, a bard kiting: "i can't hide <another character>'s
+  // circles from yesterday", "show circles that are my speed or nearby", "show my circle drift ... in a prediction").
+  //   Others   Live -> All -> Off -> Live: the guild's circles by age (Off is the ⚙ → Guild kite loops switch)
+  //   Circles  All -> My speed -> Near me -> All: which of them are drawn
+  //   Drift    off -> A -> B -> off: the forecast of where your circle goes
+  // They show only while there is something to act on (a guild circle, a circle of yours), except that a switch that is
+  // not at its default stays on screen: a button that hides itself with the circles it turned off cannot be turned back.
+  var kiteOthersBtn = document.getElementById('kiteOthersBtn'), kiteFilterBtn = document.getElementById('kiteFilterBtn'), kiteDriftBtn = document.getElementById('kiteDriftBtn');
+  var KITE_FILTER_LABEL = { all: 'Circles: All', speed: 'Circles: My speed', near: 'Circles: Near me' };
+  var KITE_FILTER_NEXT = { all: 'speed', speed: 'near', near: 'all' };
+  var KITE_DRIFT_LABEL = { '': 'Drift: off', a: 'Drift: A', b: 'Drift: B' };
+  var KITE_DRIFT_NEXT = { '': 'a', a: 'b', b: '' };
+  try { var kdUrl = new URLSearchParams(location.search).get('kdrift'); if (kdUrl === 'a' || kdUrl === 'b') S.cfg.kiteDrift = kdUrl; } catch (e) {}   // ?kdrift=a|b opens the Map on that look
+  function syncKiteBtns() {
+    if (!kiteOthersBtn) return;
+    var has = !!S.kite, loops = has && S.guild.loops.length > 0, mine = has && !!S.kiteView, off = S.cfg.show.kiteLoops === false;
+    kiteOthersBtn.hidden = !(loops || off || S.cfg.kiteOthers !== 'live') || !has;
+    kiteOthersBtn.textContent = off ? 'Others: Off' : S.cfg.kiteOthers === 'all' ? 'Others: All' : 'Others: Live';
+    kiteOthersBtn.classList.toggle('on', !off);
+    kiteFilterBtn.hidden = !(has && !off && (loops || mine || S.cfg.kiteFilter !== 'all'));
+    kiteFilterBtn.textContent = KITE_FILTER_LABEL[S.cfg.kiteFilter];
+    kiteFilterBtn.classList.toggle('on', S.cfg.kiteFilter !== 'all');
+    kiteDriftBtn.hidden = !(has && (mine || S.cfg.kiteDrift));
+    kiteDriftBtn.textContent = KITE_DRIFT_LABEL[S.cfg.kiteDrift];
+    kiteDriftBtn.classList.toggle('on', !!S.cfg.kiteDrift);
+  }
+  function kiteBtnDone() { if (cfgBuilt) buildCfg(); cfgCommit(); renderMap(true); }
+  if (kiteOthersBtn) {
+    kiteOthersBtn.addEventListener('click', function () {
+      if (S.cfg.show.kiteLoops === false) { S.cfg.show.kiteLoops = true; S.cfg.kiteOthers = 'live'; }
+      else if (S.cfg.kiteOthers === 'live') S.cfg.kiteOthers = 'all';
+      else { S.cfg.show.kiteLoops = false; S.cfg.kiteOthers = 'live'; }
+      kiteBtnDone();
+    });
+    kiteFilterBtn.addEventListener('click', function () { S.cfg.kiteFilter = KITE_FILTER_NEXT[S.cfg.kiteFilter]; kiteBtnDone(); });
+    kiteDriftBtn.addEventListener('click', function () { S.cfg.kiteDrift = KITE_DRIFT_NEXT[S.cfg.kiteDrift]; kiteBtnDone(); });
+  }
   // ── end Kite coach ──
 
   // ── drawing ──
@@ -3424,7 +3502,7 @@
   syncRouteNote();
   // ⚙ Map settings: built from CFG_SHOW / CFG_GLYPHS / CFG_COLS on first open, saved on every change.
   var cfgEl = document.getElementById('cfg'), cfgBtn = document.getElementById('cfgBtn');
-  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncRouteNote(); syncClearCtl(); rebuildClear(); }
+  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncKiteBtns(); syncRouteNote(); syncClearCtl(); rebuildClear(); }
   // ◯ on the toolbar (the guild lead, 2026-10-13: "add aggro rings onto the map, make a circle icon on the main
   // screen"): the same switch as ⚙ → Show → Aggro rings.
   var aggroBtn = document.getElementById('aggroBtn');

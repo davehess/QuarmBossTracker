@@ -7073,3 +7073,17 @@ Tests: `test/pop-status-bot.test.js`, `test/pop-engine-sync.test.js`. ⏳ Ship o
 inside `if ( qglobals.cipher )` (`Grand_Librarian_Maelin.lua:65-77`). It now waits on `cipher_1` (which waits on the Saryrn and Marr halves); her lore reading needs Karana's AND
 Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. The pending memory carries `waits_on` for what its step waits on. ⏳ The `maelin` line stays linear
 (the lore, which her script does not tie to the cipher, is offered after the cipher stage). Tests: `test/pop-next-steps.test.js`.
+- 🧪 **Kite circles: other raiders' circles age out and can be hidden; "my speed / near me" filter; drift forecast, two looks to pick from
+  (Mimic beta, 2026-10-26, DRAFT awaiting the guild lead's pick of A or B).** The guild lead, kiting in Plane of Valor: *"i can't hide
+  <another character>'s circles from yesterday"*, *"show circles that are my speed or nearby"*, *"show my circle drift as a movement of
+  the circle in a prediction"*. The dashed yellow rings are the guild library (`utils/kiteLoops.js`: anonymous, kept ~14 days, stamped
+  `last_at`), not per-character, and the Map drew every one for ever; the only off switch was buried in ⚙. Now: **Others: Live / All /
+  Off** on the toolbar (Live = run in the last 20 minutes, `K.OTHERS_LIVE_MS`, longer than the agent's 10-minute cache; Off is the old ⚙
+  switch), **Circles: All / My speed / Near me** (lap time within 25% of your circle's / centre within 300 u of you; no circle or position
+  yet keeps everything), **Drift: off / A / B** (A = faint dashed copies of your circle m and 2m laps on; B = arrow along the drift to a
+  thin landing ring; m is however many laps make a step 14 px (A) / 36 px (B), capped at 20; `?kdrift=a|b` opens the Map on one).
+  Defaults: Live, All, off. `apps/mimic/kiteCoach.js` (`loopFresh`, `filterLoops`, `driftForecast`, `forecastLabel`), `apps/mimic/map.html`
+  (`visibleLoops`, `syncKiteBtns`, forecast in `drawKite`), tests in `test/kite-coach.test.js`. No agent or bot change. ⏳ The default
+  flips from "library for ever" to "Live", so yesterday's circles are one tap away rather than on screen: the guild lead to confirm;
+  ⏳ the three buttons make the toolbar wider (it wraps under ~800 px: drag/dock it or say if one should live only in ⚙); ⏳ a clean
+  circle drifts only a unit or two a lap, so the forecast is a few pixels a lap and reads as "N laps · S s" ahead, not one lap.
