@@ -13305,3 +13305,21 @@ the gear finder's quest/tradeskill sources and caps, Summon first). One commit s
 release body is that commit's player notes. It repeats `Fixes FB-98, FB-99, FB-100, FB-102, FB-103, FB-104`; FB-101 stays open (XL / M).
 The beta sync failed on the roadmap again and was merged by hand (main's roadmap is beta's plus the 3.0.5 entry); beta re-parked at
 3.0.6 (e1d330a9).
+
+### 454. Zeal PRs: 253 and 254 filed; 253 reworked to show the reply by default (2026-10-27)
+The guild lead filed upstream PR 253 (PoP flags on `/camp`) and PR 254 (`/pipedelay` printed 0), then asked for another slop check
+against the maintainer's bar plus a ponytail review, and picked **1B, 2B, 3A**, then *"Popflags showing in chat should be an option
+actually"*.
+- **PR 253** (`pr/popflags-export`, now `d36a336`, one commit on upstream `d88b691`, force-updated in place). The earlier capture cleared
+  every server-colour line for ~3 s after camping, so an unrelated system message could be lost. Now the reply shows in chat by
+  default and `/outputfile hidepopflags` (setting `PopFlagsHide`, off) hides only the reply's lines and the command echo. Capture and
+  hiding take only reply-shaped lines: `===` / `---` headers, `Label: value` lines, and yellow hints once a header has arrived (every
+  message in the server's `popflags.cpp` @ `11024c19` checked; the yellow Seer / Maelin / Miak hints were missed by the first draft of
+  the fix). Still tied to "Export data on /camp" (2B). No CHANGELOG edit. The agent's file reader and the paste parser already handle
+  the hint lines. `d36a336` itself is untested in game.
+- **PR 254**: passed the check, left as filed.
+- **Tags (3A)**: two small PRs instead of one: the name-match fix alone, and persistence + corpses with persistence default OFF, no
+  shapes, no CHANGELOG. Shapes stay off upstream (meshes built for every font user, a per-frame guild loop, the guild roster, the wolf
+  mesh).
+- Reviews of the other open upstream PRs 249 and 251 (both auto-regroup of returning raid members; 251 is the maintainer's own) are
+  ready to paste; 252 (melody item clicks) is unchanged since its review.
