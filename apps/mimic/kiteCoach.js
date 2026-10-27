@@ -81,10 +81,12 @@
     // "Near me" keeps a loop whose centre is within this many units of where you stand (a loop's radius is 20-500; 300 u is
     // about a screen's width at the default zoom).
     NEAR_UNITS: 300,
-    // The drift forecast (Map option A / B). One lap moves a clean circle a unit or two, which is a pixel or two on the
-    // Map: so the forecast steps in whole laps, as many per step as it takes for one step to be this many pixels long, and
-    // stops at DRIFT_LAPS_MAX laps (about two minutes of kiting): past that it is a guess about nothing the data shows.
-    DRIFT_STEP_PX: 14, DRIFT_LAND_PX: 36, DRIFT_LAPS_MAX: 20,   // (B's landing ring wants to stand clear of the circle: 36 px)
+    // The drift forecast (an arrow to a thin ring where your circle lands; chosen from the mocks over faint copies of the
+    // circle, whose copies sat inside the circle at a drift of a unit or two a lap). One lap moves a clean circle a unit or
+    // two, which is a pixel or two on the Map: so the forecast looks as many whole laps ahead as it takes for the landing to
+    // stand this many pixels off, and stops at DRIFT_LAPS_MAX laps (about two minutes of kiting): past that it is a guess
+    // about nothing the data shows.
+    DRIFT_STEP_PX: 36, DRIFT_LAPS_MAX: 20,
   };
 
   function wrap(a) { return a - TAU * Math.round(a / TAU); }
@@ -407,19 +409,20 @@
 
   // ── The drift forecast: where your circle will be ──
   // `view` is the coach's view (cur = this lap, ghost = the lap before). The centre has moved (dx, dy) from the ghost to
-  // cur; if that holds, lap k is at cur + k (dx, dy). One lap is a pixel or two, so the forecast takes `m` laps per step
-  // (m = enough that a step is >= stepPx on screen, 1 up to DRIFT_LAPS_MAX) and gives the circle at m and 2 m laps ahead.
+  // cur; if that holds, lap k is at cur + k (dx, dy). One lap is a pixel or two, so the forecast looks `m` laps ahead
+  // (m = enough that the landing is >= stepPx on screen, 1 up to DRIFT_LAPS_MAX) and gives the circle there.
   // null when there is no drift worth drawing (the view's own showArrow bar: 3% of r) or nothing to scale by.
   function driftForecast(view, pxPerUnit, stepPx) {
     if (!view || !view.showArrow || !view.ghost || !view.cur || !(pxPerUnit > 0)) return null;
     var cur = view.cur, dx = cur.cx - view.ghost.cx, dy = cur.cy - view.ghost.cy, per = Math.hypot(dx, dy);
     if (!(per > 0)) return null;
     var m = Math.max(1, Math.min(K.DRIFT_LAPS_MAX, Math.ceil((stepPx || K.DRIFT_STEP_PX) / (per * pxPerUnit))));
-    var at = function (laps) { return { laps: laps, cx: cur.cx + dx * laps, cy: cur.cy + dy * laps, r: cur.r, secs: laps * cur.lapS, units: per * laps }; };
-    return { dx: dx, dy: dy, perLap: per, dir: compass(dx, dy), m: m, first: at(m), second: at(2 * m) };
+    var land = { laps: m, cx: cur.cx + dx * m, cy: cur.cy + dy * m, r: cur.r, secs: m * cur.lapS, units: per * m };
+    return { dx: dx, dy: dy, perLap: per, dir: compass(dx, dy), m: m, land: land };
   }
-  // `6 laps · 38 s: 14 u SW` (the point the forecast names: its laps, how long that is, how far the centre goes)
-  function forecastLabel(f, pt) {
+  // `6 laps · 38 s: 14 u SW` (the landing: its laps, how long that is, how far the centre goes)
+  function forecastLabel(f) {
+    var pt = f.land;
     return pt.laps + ' lap' + (pt.laps === 1 ? '' : 's') + ' · ' + Math.round(pt.secs) + ' s: ' + Math.round(pt.units) + ' u ' + f.dir;
   }
 
