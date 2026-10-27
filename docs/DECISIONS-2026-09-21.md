@@ -13296,3 +13296,12 @@ website already does with `#popflags` and the Seer's lines: read what a characte
 - **FB-102** (agent 4.0.29): the Charm card times the buffs the pet reports, from Mob Info's landing when no other mob is proven.
 - **FB-104** (web 2.1.57): Summon leads the special-ability chips in solid red, on Target Info and /db/npc.
 - All of it reaches the stable fleet only with the next Mimic stable cut.
+
+### 453. Mimic 3.0.5 stable, and everything on beta to main (2026-10-27)
+The guild lead: *"PUSH TO MAIN for a new release"*. Commit 74181d15 on main: a file-level graduation of every file on beta that
+differed from main (143), so main's tree equals beta's plus the roadmap's 3.0.5 entry. Mimic 3.0.4 → 3.0.5 stable, agent 4.0.30, web
+2.1.57 (the beta-only web work goes live: Brewall raid maps, raid groups and the Kills tab, parse classes and chart fit, the wishlist set,
+the gear finder's quest/tradeskill sources and caps, Summon first). One commit so Vercel's last-commit check deploys the web and the
+release body is that commit's player notes. It repeats `Fixes FB-98, FB-99, FB-100, FB-102, FB-103, FB-104`; FB-101 stays open (XL / M).
+The beta sync failed on the roadmap again and was merged by hand (main's roadmap is beta's plus the 3.0.5 entry); beta re-parked at
+3.0.6 (e1d330a9).
