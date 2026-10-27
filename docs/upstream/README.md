@@ -14,6 +14,10 @@ Fork: https://github.com/davehess/Zeal. Combined test build (every pushed branch
 `e1fde3d`; `75e85e4` adds the popflags echo fix): https://github.com/davehess/Zeal/releases/tag/test-all-build.
 Branch heads below are as of 2026-10-11.
 
+**The build we suggest to raiders is Wolf Pack Zeal** (official release + the commits in the fork's
+`wolfpack/approved.txt`, release `wolfpack-beta`): see [`WOLFPACK-ZEAL.md`](WOLFPACK-ZEAL.md). A change goes into it only
+once tested; it leaves when upstream releases it.
+
 ## Index
 
 | Change | Folder | Fork branch (head) | Status | In test-all build? | Needs |
