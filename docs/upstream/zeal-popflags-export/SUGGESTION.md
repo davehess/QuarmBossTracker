@@ -2,7 +2,7 @@
 
 # Save your #popflags output with "Export data on /camp"
 
-*Fork branch `popflags-export` (`b27bb26`), based on Zeal 1.4.8. Status: draft; in the test-all build (`593f848`). Two in-game runs so far; the fixes from the second (repeats, chat flood) need a third.*
+*Fork branch `pr/popflags-export` (`e362827`), rebased on upstream `d88b691` (2026-10-27). Status: ready to file. Third in-game run passed on 2026-10-27: camping wrote `<name>-PoPFlags.txt` with the header, the overview, Tiers 1-4 and the Plane of Time section, and the guild lead confirmed the camp and corpse/zoning tests work.*
 
 This answers the suggestion thread 'Zeal "Export data on /camp" option to include a full #POPFLAGS output?'.
 
