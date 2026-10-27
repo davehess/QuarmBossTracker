@@ -6995,7 +6995,9 @@ And a page that orders on a non-unique key drops and repeats rows at page bounda
     (migration `20261004221000_guild_held_spell_needs_fast`, applied and recorded): 29 s → under half a second,
     same 561 rows with the same md5. The per-spell subquery called `eq_class_bit()` ~312k times and scanned the
     spellbook unindexed; class bits are now computed once per character (a MATERIALIZED CTE: without it the
-    planner put the call back and it took 12 s) and needers are one grouped join.
+    planner put the call back and it took 12 s) and needers are one grouped join. Re-measured 2026-10-06:
+    561 rows in ~1.1 s. The one-pass shape is now pinned by `test/cap-safe-admin2.test.js` (stripSql;
+    mutation-checked: dropping MATERIALIZED, the `have` CTE or the LEFT join each fails it).
   - The threat rollup has not run since 2026-08-19. It is the unapplied `snapshot_at` index above.
   - Beta's /db/item preview (`?v=b` / `?v=c`) reads `item_recipes` in one call. One item is in 1,450
     recipes, so it must page before that preview graduates. The beta sync by hand (`015d55d2`) paged
