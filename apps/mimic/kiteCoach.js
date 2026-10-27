@@ -426,6 +426,19 @@
     return pt.laps + ' lap' + (pt.laps === 1 ? '' : 's') + ' · ' + Math.round(pt.secs) + ' s: ' + Math.round(pt.units) + ' u ' + f.dir;
   }
 
+  // ── A group member's circle, as it forms (FB-103) ──
+  // The Map runs a coach of its own on each group member's positions, so a circle shows while it is being run, not 10+ minutes
+  // after it is finished (the guild library only gets a loop once its raider's own Map has seen 3 clean laps, and the
+  // answer reaches you through two caches). `view` is that member's coach view:
+  //   provisional (the first lap's fit, no lap closed yet) or fewer than CLEAN_LAPS clean laps in a row: "forming", with the count
+  //   3 clean laps in a row (the point at which their own Map would report it): "circle r 62 · 12 s"
+  function mateFormed(view) { return !!view && (!!view.reported || view.streak >= K.CLEAN_LAPS); }
+  function mateLabel(name, view) {
+    if (!view) return name;
+    if (mateFormed(view)) return name + ' · circle r ' + Math.round(view.cur.r) + ' · ' + Math.round(view.cur.lapS) + ' s';
+    return name + ' · forming' + (view.provisional ? '' : ' ' + view.streak + '/' + K.CLEAN_LAPS);
+  }
+
   function create() {
     var buf = [], eng = null, cand = null, lastSearch = -Infinity, view = null;
 
@@ -572,5 +585,5 @@
 
   return { K: K, create: create, fitCircle: fitCircle, turned: turned, compass: compass, chipText: chipText, driftClass: driftClass,
     cleanLap: cleanLap, pathUps: pathUps, lapSignals: lapSignals, causeOf: causeOf, matchGuild: matchGuild, guildText: guildText, guildLabel: guildLabel, guildDot: guildDot,
-    loopFresh: loopFresh, filterLoops: filterLoops, driftForecast: driftForecast, forecastLabel: forecastLabel };
+    loopFresh: loopFresh, filterLoops: filterLoops, driftForecast: driftForecast, forecastLabel: forecastLabel, mateFormed: mateFormed, mateLabel: mateLabel };
 });

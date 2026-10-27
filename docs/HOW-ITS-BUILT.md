@@ -5613,7 +5613,9 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Kite circles on the Map** (2026-10-26, Mimic beta; kite coach 2026-10-15): `apps/mimic/kiteCoach.js` is the pure math (circle fit, laps,
   drift, cause) plus `filterLoops` (Others Live/All by `last_at`, Circles All/My speed/Near me) and `driftForecast`; `map.html` draws it
   (`drawKite`, `visibleLoops`) and owns the three toolbar buttons (`syncKiteBtns`; saved in `cfg.kiteOthers/kiteFilter/kiteDrift`).
-  The guild loops themselves come from the agent (`_kiteLoopsFor`) and the bot (`utils/kiteLoops.js`). Test: `test/kite-coach.test.js`.
+  The guild loops themselves come from the agent (`_kiteLoopsFor`) and the bot (`utils/kiteLoops.js`): FINISHED loops only, anonymous. A group
+  member's circle as it forms is drawn from their own positions instead (FB-103, 2026-10-27: `matesFeed` / `visibleMates` in `map.html`, a
+  coach per member, local, never posted; `KC.mateLabel`). Tests: `test/kite-coach.test.js`, `test/map-kite-mates.test.js`.
 - Test: `test/spawn-map.test.js`. Design: `docs/DESIGN-mimic-2.9-spawn-map.md`. Every refinement since (asks, what
   shipped, what is open): `docs/MAP-REFINEMENTS.md`.
 - **Zone copies** (the "Zone copies" block in the agent; header label in `map.html` `copyLabel`): the copy you are in is

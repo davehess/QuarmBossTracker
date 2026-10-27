@@ -7122,3 +7122,21 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   are listed in their own section and are not part of it. ⏳ The spot rows give the right-click to "focus", so the off/on switch on a
   single spot is on its dot and its folded row, not on the expanded spot row; say if that should move. ⏳ A pulsed spot outside the Spawn
   height range is shown for the three seconds, then hidden again. Test: `test/map-respawns-expand.test.js` (mutation-checked, 17 mutants).
+- 🧪 **FB-103: a group member's kite circle shows while it forms (Mimic beta, 2026-10-27; no agent or bot change).** The report (a member on
+  Mimic 3.0.5-beta.9): *"Should be able to see <a group member>'s circle getting formed with me in his group."* **Why it was missing:** the Map's
+  circles were yours (your own positions through `kiteCoach.js`) and the guild library's. The library holds only FINISHED loops: their raider's
+  own Map must see 3 clean laps and post one summary (`POST /api/agent/kite-loop`, `utils/kiteLoops.js`: anonymous, no name, no path), the bot
+  serves it, the agent caches that answer for 10 minutes (`_kiteLoopsFor`) and the Map asks the agent once a minute (`guildLoopsMaybe`), so a
+  circle being run appears minutes after it is done, without a name, if at all. The group member's positions were already on the Map
+  every poll (Zeal's group list, `S.p.group`); nothing coached them. **Now** the Map runs a kite coach per group member (`matesFeed`,
+  `S.mates`) on those positions, locally, and draws what it finds in `drawKite`: a **dotted** ring in their class colour with a name label,
+  **"Brackwyn · forming"** (first lap), **"forming n/3"** (clean laps in a row), then **"Brackwyn · circle r 62 · 12 s"** at 3 clean laps (the bar
+  `K.CLEAN_LAPS` that their own Map would report at). Yours stays the solid ring, the guild's the yellow dashes. It is quiet by itself: gone the
+  moment they stop circling (the coach lets go after 1.5 laps) or 6 s after their last position (`MATE_FRESH_MS`), and a member who leaves the
+  group takes their coach. The draft's controls apply: **Others: Off** (and ⚙ → Guild kite loops) hides them, **Circles: My speed / Near
+  me** filter them (their lap time against yours, their centre against where you stand), and ⚙ → Kite coach off means nobody is coached. Nothing
+  is posted: their events are dropped, so a member's circle is only ever reported by that member's own Map (no duplicate, no new data leaves
+  anyone's machine; it reads what Zeal already shows in the group window). Group only, not the whole raid (a raid is up to ~50 coaches' worth of
+  per-sample fitting). `kiteCoach.js` `mateLabel` / `mateFormed`; test `test/map-kite-mates.test.js` (mutation-checked, 10 mutants). ⏳ Not seen
+  on a real kite: the coach was tuned on synthetic circles and a member's group-window position arrives at the pipe's rate, so how soon the first
+  lap is recognised in a live game is the thing to look at; a member out of range of your client has no position and so no circle.

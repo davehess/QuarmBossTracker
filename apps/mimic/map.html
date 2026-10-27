@@ -1881,7 +1881,7 @@
     }
     if (p.zone !== S.zone) {
       S.zone = p.zone; S.fitted = false; S.follow = true; S.followOff = { x: 0, y: 0 }; S.trk = {}; S.trails = {}; S.pointTrails = {}; S.kills = 0; S.killSeen = {}; S.killPrimed = false; zoned = true;
-      if (S.kite) { S.kite.reset(); S.kiteView = null; }   // a new zone: the kite coach starts over, and so do the guild's loops
+      if (S.kite) { S.kite.reset(); S.kiteView = null; S.mates = {}; }   // a new zone: the kite coach starts over (and the group's), and so do the guild's loops
       S.guild = { zone: null, loops: [], asked: 0, retried: false };
       if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; S.sgs = null; S.traps = null; }
       S.local = null; S.localVer = null; S.route = null; S.routeVer = null;
@@ -1933,6 +1933,7 @@
     put('self', p.self);
     kiteFeed(dm ? (S.direct.p.at || now) : (Number(p.pos_at) > 0 ? Number(p.pos_at) : now));   // the kite coach hears YOUR spot, when it was taken
     (p.group || []).forEach(function (m) { put('g:' + m.name, m); });
+    matesFeed(p.group, dm ? (S.direct.p.at || now) : (Number(p.pos_at) > 0 ? Number(p.pos_at) : now));   // a group member's circle, as it forms (FB-103)
     (p.raid || []).forEach(function (m) { put('r:' + m.name, m); });
     if (p.target) put(targetKey(p.target), p.target);
     for (var k in S.trk) if (!keep[k]) delete S.trk[k];
@@ -2094,6 +2095,39 @@
     for (var i = 0; i < ev.length; i++) if (ev[i].type === 'report') postKiteLoop(ev[i].body);
     S.kiteView = S.kite.view();
   }
+  // FB-103 (a member, Mimic 3.0.5-beta.9: "Should be able to see <a group member>'s circle getting formed with me in his group."):
+  // the guild's loops are FINISHED circles (their raider's own Map must see 3 clean laps, then the answer crosses the bot and two
+  // caches: minutes), anonymous, and a group member's circle is not yours to wait on. So the Map also runs a coach on each GROUP
+  // member's positions, which Zeal already gives it, and draws the circle as it forms, named, in their class colour, dotted.
+  // Local only: nothing here is posted (a report is the raider's own Map's to make), nothing is kept past the session, and it
+  // goes quiet the moment they stop circling or leave the group. Both ⚙ switches turn it off (Kite coach: no listening; Guild kite
+  // loops: no other raiders' circles), Others: Off hides it, and Circles: My speed / Near me apply to it.
+  var MATE_FRESH_MS = 6000;       // a member we have not heard from for this long has no circle on the Map
+  S.mates = {};
+  function matesFeed(group, t) {
+    if (!S.kite || !kiteOn() || !guildOn()) { S.mates = {}; return; }
+    var keep = {}, now = Date.now();
+    (group || []).forEach(function (m) {
+      var tr = m && m.name ? S.trk['g:' + m.name] : null;
+      if (!tr || !tr.to) return;
+      keep[m.name] = 1;
+      var e = S.mates[m.name] || (S.mates[m.name] = { coach: KC.create(), view: null, seen: 0, cls: null });
+      e.coach.push(t, tr.to.x, tr.to.y, tr.to.z);   // (its events are dropped: a 'report' is the raider's own Map's to make)
+      e.view = e.coach.view(); e.seen = now; e.cls = m.class;
+    });
+    for (var k in S.mates) if (!keep[k]) delete S.mates[k];
+  }
+  // The members' circles the Map draws now: fresh, engaged, and through the same Circles filter as the guild's.
+  function visibleMates(now) {
+    var tr = S.trk && S.trk.self, list = [];
+    for (var name in S.mates) {
+      var e = S.mates[name];
+      if (!e.view || now - e.seen > MATE_FRESH_MS) continue;
+      list.push({ name: name, view: e.view, cx: e.view.cur.cx, cy: e.view.cur.cy, lap_s: e.view.cur.lapS, cls: e.cls });
+    }
+    return KC.filterLoops(list, { others: 'all', filter: S.cfg.kiteFilter, now: now, cur: S.kiteView ? S.kiteView.cur : null,
+      pos: tr && tr.to ? { x: tr.to.x, y: tr.to.y } : null });
+  }
   function postKiteLoop(b) {
     var zone = S.p && S.p.zone;
     if (!zone) return;
@@ -2188,6 +2222,15 @@
         if (hot) halo(KC.guildLabel(L), q[0], q[1] - rp - 8, labelFont('dist'), KITE_GUILD_COL, 'center');
         live = true;
       }
+      // A group member's circle as it forms (FB-103): dotted, in their class colour, named. Fainter and thinner until three
+      // clean laps in a row, then full strength with its size and lap time. Yours stays the solid ring, the guild's the dashes.
+      var mates = visibleMates(now);
+      for (var mi = 0; mi < mates.length; mi++) {
+        var M = mates[mi], mc = M.view.cur, mq = wpt(mc.cx, mc.cy), mrp = mc.r * sc, formed = KC.mateFormed(M.view), mcol = classHex(M.cls) || S.cfg.col.group;
+        if (mq[0] + mrp < 0 || mq[0] - mrp > w || mq[1] + mrp < 0 || mq[1] - mrp > h) continue;
+        ring(mc.cx, mc.cy, mc.r); ctx.setLineDash([2, 4]); ctx.globalAlpha = formed ? 0.95 : 0.6; ctx.lineWidth = formed ? 2.2 : 1.6; ctx.strokeStyle = mcol; ctx.stroke(); ctx.setLineDash([]);
+        ctx.globalAlpha = 1; halo(KC.mateLabel(M.name, M.view), mq[0], mq[1] - mrp - 8, labelFont('dist'), mcol, 'center');
+      }
       ctx.globalAlpha = 1;
     }
     return live;
@@ -2233,7 +2276,7 @@
   try { if (new URLSearchParams(location.search).get('kdrift') === '1') S.cfg.kiteDrift = true; } catch (e) {}   // ?kdrift=1 opens the Map with the forecast on
   function syncKiteBtns() {
     if (!kiteOthersBtn) return;
-    var has = !!S.kite, loops = has && S.guild.loops.length > 0, mine = has && !!S.kiteView, off = S.cfg.show.kiteLoops === false;
+    var has = !!S.kite, loops = has && (S.guild.loops.length > 0 || visibleMates(Date.now()).length > 0), mine = has && !!S.kiteView, off = S.cfg.show.kiteLoops === false;
     kiteOthersBtn.hidden = !(loops || off || S.cfg.kiteOthers !== 'live') || !has;
     kiteOthersBtn.textContent = off ? 'Others: Off' : S.cfg.kiteOthers === 'all' ? 'Others: All' : 'Others: Live';
     kiteOthersBtn.classList.toggle('on', !off);
