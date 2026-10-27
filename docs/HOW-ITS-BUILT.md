@@ -3959,6 +3959,15 @@ is named `testall-<hash>` from the release name, so each push reads as a new
 version for Check, Install and the 12-hour reminder. Default stays `official`.
 `test/zeal-source.test.js`. DECISIONS §117.
 
+### Wolf Pack Zeal: the suggested build — 2026-10-27
+The latest official Zeal release plus the commits in the fork's `wolfpack/approved.txt`, built by
+`.github/workflows/build-wolfpack.yml` on the fork's `main` (daily, on a push to `wolfpack/`, or by hand) into one
+rolling prerelease, tag `wolfpack-beta`; `/zeal version` shows `wolfpack-<run>-<hash>`. A change that no longer applies
+fails the run and leaves the last build up. Mimic beta (agent 4.0.32, `56b30547`): Settings → Zeal → "Wolf Pack" sets
+`cfg.zealSource = 'wolfpack'`; `zealUpdater._wolfpackBuildTag` names the build from the release name's parentheses; the
+crash card labels it "🐺 Wolf Pack Zeal" (`wpZealBuildTag`). Runbook: `docs/upstream/WOLFPACK-ZEAL.md`. Tests:
+`test/zeal-source.test.js`, `test/crash-build-tag.test.js`. DECISIONS §455.
+
 **Tag pictures on disk (in-game folder `uifiles\zeal\tagicons\`):**
 - `tagicons\`: pictures that ship with a build (replaced on update).
 - `tagicons\custom\`: the player's own. Nothing installs here, and a picture here

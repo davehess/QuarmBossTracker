@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Wolf Pack Zeal: the suggested Zeal build** (§455) | Live: fork pipeline + first build `wolfpack-1-6a3ee20` (official 1.4.8 + PRs 253, 254, tag name check, tag persistence/corpses); Mimic option on beta (agent 4.0.32) | the guild lead: install it from Mimic beta and raid on it once; say if a stable channel is wanted; an officer: ask Quarm staff whether a guild build is fine; tell the Zeal maintainer it exists |
 | **Add to wishlist + pre-bid on `/me/upgrades`; ears / wrists / rings paired** (§446) | Draft on `draft/upgrades-wishlist` (bot 4.0.18 for `main` first, web 2.1.45 for `beta`); not pushed | the guild lead: ship the bot half, check `SCREEN_TOKEN_SECRET` + `SCREEN_LIVE_URL` on Vercel Production and Preview; say if rings stay paired |
 | **Gear finder: quest + tradeskill sources, cap-aware scoring, icons, gear-page upgrade check** (§448) | Draft on `draft/gear-build` (web 2.1.52 for `beta`); not pushed. Migration `20261026200000_item_alt_sources.sql` written, NOT applied (the page works without it) | the guild lead: apply the migration (SQL Editor or MCP), check Monk AC cap (350 vs 315) and High end's 205 assumption, then read `https://b.wolfpack.quest/me/upgrades` |
 | **Per-character PoP flags checklist in Mimic: A then B** (§451) | A built on drafts: bot 4.0.23 `draft/pop-flags-bot` (the `pop` poll stream + generated engine), agent + overlay on `draft/pop-flags-mimic` (Flags mode, links into Quests); not pushed | the guild lead: ship the bot first, then the beta Mimic, check Flags on a real character; then say what B adds |
@@ -13323,3 +13324,22 @@ actually"*.
   mesh).
 - Reviews of the other open upstream PRs 249 and 251 (both auto-regroup of returning raid members; 251 is the maintainer's own) are
   ready to paste; 252 (melody item clicks) is unchanged since its review.
+
+### 455. Wolf Pack Zeal: one suggested Zeal, rebuilt from the latest official release (2026-10-27)
+The guild lead: *"let's make a consistent Wolfpack zeal version that we can suggest to our raiders. always rebuilt from
+the latest releases that are approved. we will need to bring forward the Coastalredwood changes as they come through."*
+- **Base = the latest upstream RELEASE**, not upstream `main` (a release is what the maintainer signed off). Our additions
+  are cherry-picked onto it from `wolfpack/approved.txt` on the fork's `main`, **pinned by commit sha**, so a later push
+  to a branch never ships untested code. Upstream changes come forward by themselves: the daily run (09:41 UTC) takes a
+  new release as the base; an addition upstream already shipped, or one that conflicts, fails the run loudly and the
+  last build stays up.
+- First build `wolfpack-1-6a3ee20` (run 40601028907): 1.4.8 + PR 253 (`d36a336`), PR 254, the tag name check, tag
+  persistence (default off) + corpses. All four picked cleanly onto 1.4.8. ⚠ The last two and `d36a336` itself have
+  not been run in game; the session's call to include them as the starting list, since the guild lead tested the
+  older versions — remove a line if that is too early.
+- **One rolling prerelease** (`wolfpack-beta`, never "latest"); the build labels itself `wolfpack-<run>-<hash>` so crash
+  reports and screenshots tell it apart. MIT licence: the zip carries `LICENSE` plus a readme saying it is unofficial
+  and to report problems to us, not upstream.
+- **Mimic**: Settings → Zeal → "Wolf Pack" (beta, agent 4.0.32, `56b30547`); crash card labels it "🐺 Wolf Pack Zeal".
+- Open: a stable channel (promote a beta that has raided); asking Quarm staff; telling the Zeal maintainer. Runbook
+  `docs/upstream/WOLFPACK-ZEAL.md`.
