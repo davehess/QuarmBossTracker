@@ -1003,8 +1003,13 @@ Tests: `test/buff-durations.test.js`.
 ### Dashboard: the Overlays tab, option C (agent 3.7.49, beta `b8c6b98c`, 2026-09-29)
 The guild lead picked option C of three mockups (DECISIONS §106–§107). The tab, top to bottom:
 - **Your layouts**: one tile per saved per-character layout (`_wpOvLaysHtml`), with its ✕ forget and a
-  "Save current layout for <character>" tile. Each tile lists the overlays that are on; saved layouts hold
-  no positions, so there is no sketch. The auto-switch checkbox is `#wpCharProfEn`.
+  "Save current layout for <character>" tile. Each tile lists the overlays that are on; the per-character
+  profile holds no positions, so there is no sketch. The auto-switch checkbox is `#wpCharProfEn`.
+  **Since agent 4.0.30 (FB-101) the same save also writes where everything sits**: the overlay set "Saved layout"
+  (`_saveLayoutSnapshot` in `_captureCharProfile`: rects, look, floors), and the tile beside it, **↩ Restore saved
+  layout** (`#wpLayoutRestore`; bridge `layoutRestore` → IPC `layout-restore` → `_restoreSavedLayout`), is also a tray
+  item under Overlays (`_charProfileTrayItems`). Restore is always asked for; a character change still applies
+  visibility only. `test/overlay-layout-restore.test.js`.
   ⚠ The old card read `s.charProfiles` from `/api/state`, which never carries them, so its list was always
   empty. Tiles and checkbox now paint from `window.mimic.getStatus()` / `getConfig()`.
 - **Arrange bar**: `#wpOvArrangeBtn` ("✏ Arrange on screen" ↔ "✓ Done arranging"; `canvasEdit` where it
@@ -1486,6 +1491,11 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
   `dialog.showMessageBox` asks; `_rescueOffscreenOverlays` is the "leave them" safety net. Each overlay
   keeps its side: the memory also stores EverQuest's rect per setup, and the plan sends an overlay that
   sat on another screen to another non-EQ screen (`_displayPlanText` words the question).
+  A window being BUILT (every EverQuest start rebuilds them) takes its saved spot only on the screen setup it was
+  saved on; on another it takes `overlayLayoutBySig[current setup]` (`_resolveBounds`, FB-101) and only then the
+  default. The dragged-height floor is kept per setup the same way (`{ h, sig, by }`, `_floorFor` / `_floorWith`), and
+  an overlay set carries it (`floors`) with the grow-up choice; loading a set sets each placed window's zoom without
+  rescaling its bounds (`_applyScaleInPlace`).
 - **Auto-arrange, per screen:** `_autoArrangeOverlays` groups overlays by the screen they are on and runs
   `_arrangeOnScreen` for each; only the home (EverQuest's) screen gets EQ's windows as obstacles and the
   keep-the-middle-clear rule.

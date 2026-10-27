@@ -6259,6 +6259,24 @@ function _wpCpSavePaint(cpChar) {
   (b.querySelector('.wp-laysave') || b).textContent = look.text;
   b.style.color = look.color;
 }
+// ↩ Restore saved layout (FB-101) says what happened, the way the save above does: the answer lives in a variable the
+// render reads, because the tile is rebuilt on the next status push and a label set on the button alone would be wiped.
+var _wpLrFlash = null;   // { ok, msg, at }
+function _wpLrLook() {
+  var f = _wpLrFlash;
+  if (f && (Date.now() - f.at) < _WP_CP_FLASH_MS) {
+    return f.ok ? { text: '✓ Restored', color: '#56d364' }
+                : { text: '✗ ' + (f.msg || 'Could not restore'), color: '#f85149' };
+  }
+  return { text: '↩ Restore saved layout', color: '#79c0ff' };
+}
+function _wpLrPaint() {
+  var b = document.getElementById('wpLayoutRestore');
+  if (!b) return;
+  var look = _wpLrLook();
+  (b.querySelector('.wp-lrlabel') || b).textContent = look.text;
+  b.style.color = look.color;
+}
 // 💾 The "Your layouts" tiles (option C), from Mimic status + config — the
 // agent's /api/state never carries the saved layouts, so the render cannot
 // bake them. One tile per saved layout, the active character's first; each
@@ -6302,7 +6320,12 @@ function _wpOvLaysHtml(st, cfg, flagOf) {
   h += '<button type="button" class="wp-lay new wp-charprof-save" id="wpCharProfSave" data-char="' + esc(act) + '"' + (act ? '' : ' disabled')
     + ' style="color:' + look.color + '"><span class="wp-laysave">' + esc(look.text) + '</span>'
     + '<span class="dim">' + (!act ? 'no active character yet &mdash; log one in and this saves for them'
-      : (saved[actLc] ? 'replaces ' + esc(cap(act)) + '’s saved one' : 'saves which overlays are on now')) + '</span></button>';
+      : (saved[actLc] ? 'replaces ' + esc(cap(act)) + '’s saved one' : 'saves which overlays are on, where they sit and how big')) + '</span></button>';
+  // ↩ The way back to the last save (the tray has the same item). Not tied to a character: the positions are the screen's.
+  var lr = _wpLrLook();
+  h += '<button type="button" class="wp-lay new wp-layout-restore" id="wpLayoutRestore" style="color:' + lr.color + '">'
+    + '<span class="wp-lrlabel">' + esc(lr.text) + '</span>'
+    + '<span class="dim">puts the overlays back where the last save left them</span></button>';
   return h;
 }
 function wpWireHideHotkey() {
@@ -7143,6 +7166,18 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
         setTimeout(function(){ _wpCpSavePaint(who); }, _WP_CP_FLASH_MS + 100);
       };
       try { Promise.resolve(window.mimic.charProfileSave()).then(done, function(){ done(false); }); } catch (e3) { done(false); }
+      return;
+    }
+    // ↩ Restore saved layout — the tray's item, through the same main-process function.
+    var lrb = (t && t.closest) ? t.closest('.wp-layout-restore') : null;
+    if (lrb && window.mimic && window.mimic.layoutRestore) {
+      var doneR = function(r){
+        _wpLrFlash = { ok: !!(r && r.ok), msg: (r && r.message) || '', at: Date.now() };
+        _wpLrPaint();
+        wpRefreshOverlayToggles();
+        setTimeout(function(){ _wpLrPaint(); }, _WP_CP_FLASH_MS + 100);
+      };
+      try { Promise.resolve(window.mimic.layoutRestore()).then(doneR, function(){ doneR(null); }); } catch (e5) { doneR(null); }
       return;
     }
     var cpd = (t && t.closest) ? t.closest('.wp-charprof-del') : null;
