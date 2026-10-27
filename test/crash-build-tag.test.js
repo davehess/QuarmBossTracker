@@ -23,6 +23,9 @@ describe('wpZealBuildTag', () => {
       expect(wpZealBuildTag(v), v).toEqual({ test: true, text: '🧪 Zeal test build' });
     }
   });
+  it('the Wolf Pack build reads as its own build, not a test build', () => {
+    expect(wpZealBuildTag('1.4.8 (wolfpack-12-0a2e25d)')).toEqual({ test: false, text: '🐺 Wolf Pack Zeal' });
+  });
   it('nothing to go on gives no tag', () => {
     for (const v of [null, undefined, '', '?', '1.4.8', '1.4.8 ()']) expect(wpZealBuildTag(v), String(v)).toBeNull();
   });

@@ -14701,9 +14701,12 @@ async function checkZealUpdate({ manual = false } = {}) {
     appendAgentLog(`[zeal-update] newer Zeal available: ${latest.tag} (installed: ${cfg.zealInstalledTag || 'unknown'})\n`);
     if (Notification.isSupported()) {
       const n = new Notification({
-        title: latest.source === 'test' ? 'New Zeal test build' : 'Zeal update available',
+        title: latest.source === 'test' ? 'New Zeal test build'
+          : latest.source === 'wolfpack' ? 'New Wolf Pack Zeal build' : 'Zeal update available',
         body: latest.source === 'test'
           ? `Zeal test build ${latest.tag} is ready. Open Mimic Settings → Zeal to install it in one click.`
+          : latest.source === 'wolfpack'
+          ? `Wolf Pack Zeal ${latest.tag} is ready. Open Mimic Settings → Zeal to install it in one click.`
           : `Zeal ${latest.tag} is out. Open Mimic Settings → Zeal to install it in one click.`,
         silent: true,
       });

@@ -24,10 +24,13 @@ const { httpsGet, unzip, backupAndWriteBinary } = require('./ghDownload');
 // (every tag branch merged onto the current Zeal), rebuilt on GitHub on every push
 // into one rolling prerelease (the guild lead, 2026-10-01: "build the option into
 // mimic to pull my zeal repo's build as an option"; fork workflow
-// build-test-all.yml, DECISIONS §117). Anything else reads as 'official'.
+// build-test-all.yml, DECISIONS §117). 'wolfpack' is the guild's tested build: the latest official
+// release plus the few fixes the guild has run, one rolling prerelease (tag wolfpack-beta). Anything
+// else reads as 'official'.
 const ZEAL_SOURCES = {
   official: { api: 'https://api.github.com/repos/CoastalRedwood/Zeal/releases/latest' },
   test:     { api: 'https://api.github.com/repos/davehess/Zeal/releases/tags/test-all-build' },
+  wolfpack: { api: 'https://api.github.com/repos/davehess/Zeal/releases/tags/wolfpack-beta' },
 };
 function _zealSource(name) { return Object.prototype.hasOwnProperty.call(ZEAL_SOURCES, name) ? name : 'official'; }
 
@@ -41,6 +44,15 @@ function _testBuildTag(rel, zip) {
   const sha = m ? m[1] : (/^[0-9a-f]{7,40}$/i.test(commitish) ? commitish : null);
   if (sha) return 'testall-' + sha.slice(0, 7).toLowerCase();
   return 'testall-' + String((zip && (zip.updated_at || zip.id)) || (rel && rel.published_at) || 'unknown');
+}
+
+// The Wolf Pack release also keeps one tag, so the build is named from the parentheses in the release
+// name, "Wolf Pack Zeal beta (wolfpack-<run>-<sha>)" — exactly what `/zeal version` prints in game.
+// Without them, the asset's upload time, so a new build always reads as new.
+function _wolfpackBuildTag(rel, zip) {
+  const m = /\((wolfpack-\d+-[0-9a-f]{7,40})\)/i.exec(String((rel && rel.name) || ''));
+  if (m) return m[1].toLowerCase();
+  return 'wolfpack-' + String((zip && (zip.updated_at || zip.id)) || (rel && rel.published_at) || 'unknown');
 }
 
 // Map a zip entry to its destination under the EQ client folder, or null to
@@ -64,7 +76,7 @@ function _destFor(eqDir, entryName) {
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
-// Fetch the latest release metadata from `source` ('official' | 'test'). Picks the
+// Fetch the latest release metadata from `source` ('official' | 'test' | 'wolfpack'). Picks the
 // zeal_v*.zip asset (falls back to any .zip). Network-only, no disk writes.
 async function checkLatest(source) {
   const src = _zealSource(source);
@@ -73,11 +85,15 @@ async function checkLatest(source) {
   const zip = assets.find(a => /^zeal_v.*\.zip$/i.test(a.name))
            || assets.find(a => /\.zip$/i.test(a.name));
   if (!zip || !zip.browser_download_url) {
-    throw new Error(src === 'test' ? 'the Zeal test build has no .zip yet' : 'latest Zeal release has no .zip asset');
+    throw new Error(src === 'test' ? 'the Zeal test build has no .zip yet'
+      : src === 'wolfpack' ? 'the Wolf Pack Zeal build has no .zip yet'
+      : 'latest Zeal release has no .zip asset');
   }
   return {
     source:      src,
-    tag:         src === 'test' ? _testBuildTag(rel, zip) : (rel.tag_name || null),
+    tag:         src === 'test' ? _testBuildTag(rel, zip)
+               : src === 'wolfpack' ? _wolfpackBuildTag(rel, zip)
+               : (rel.tag_name || null),
     name:        rel.name || rel.tag_name || null,
     htmlUrl:     rel.html_url || null,
     publishedAt: rel.published_at || null,
@@ -125,4 +141,4 @@ async function install(eqDir, { release, source } = {}) {
   return { ok: true, tag: rel.tag, name: rel.name, written, backedUp };
 }
 
-module.exports = { checkLatest, localStatus, install, _destFor, ZEAL_SOURCES, _zealSource, _testBuildTag };
+module.exports = { checkLatest, localStatus, install, _destFor, ZEAL_SOURCES, _zealSource, _testBuildTag, _wolfpackBuildTag };
