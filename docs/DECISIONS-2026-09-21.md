@@ -13182,3 +13182,23 @@ missing (`Seer_Mal_Nae-Shi.lua` `checklistFlags`, second entry of each row).
   and "Pending memory: Karana", not stored here.
 - The paste/log reader treats a boss line reading `Missing` / `Pending memory`, the Seer notice, the Miak advice,
   `Pending memory: <x>` and a Tier 1-3 that is not Complete as "time not held" (the server prints them only without it).
+
+### 450. Faction standing: bound it from cons + tracked hits, and account for temporary bonuses (future, 2026-10-27)
+Asked how far into Amiable a character is with Frogloks of Guk, the answer came from our own data: Amiable is 100-499
+(`common/faction.cpp:70`, EQMacEmu @ 11024c19); a Guk froglok conned the character amiably BEFORE the first tracked hit, the
+165 tracked hits since were all +1 (catalog-priced where the kill was named), and a tad still cons amiably today, so the value
+is 265-499. The guild lead: *"we should in the future look at these sorts of faction interactions, but also account for the
+faction granted from illusions and Ornate Velium Pendant and other faction songs or spells"*. What the server does
+(EQMacEmu @ 11024c19):
+- **The con value** is personal faction + spell bonus + item bonus + base + class / race / deity mods
+  (`zone/client.cpp:5250-5254`). `GetFactionData` takes the illusion into account (texture, gender, base race), unless the
+  faction sees through illusions (`eqemu_faction_list_full.see_illusion`).
+- **Spell bonus:** SPA 19 (SE_AddFaction) on an NPC gives the CASTER a bonus with that NPC's primary faction, and replaces any
+  earlier one (`zone/spell_effects.cpp:541-555`: `ClearFactionBonuses` then `AddFactionBonus`). The Ornate Velium Pendant
+  (items 30294 / 30297) clicks Alliance (spell 298: SPA 19, +100, single target, "You feel quite amicable.").
+- **Item bonus:** worn items with FactionMod / FactionAmt (`zone/bonuses.cpp:316-327`).
+- **Gains are multiplied** by Quarm's XP-potion buff (`spellbonuses.FactionBonus`, `zone/client.cpp:5356-5361`), so a catalog
+  value is a floor, not the hit.
+- So a con is only an exact bound when no illusion, no SPA 19 bonus and no faction item applied at that moment. A future
+  faction view should: read the illusion and Alliance-type buffs at con time (the agent sees buff landings / fades and Zeal's
+  buff list), discount cons taken under them, list worn faction items, and widen the range when a potion was up. Not built.
