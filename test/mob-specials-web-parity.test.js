@@ -65,6 +65,6 @@ describe('web shows Reverse Slow as a warning', () => {
     const page = stripJs(readSource(path.join(ROOT, 'web', 'app', 'db', 'npc', '[id]', 'page.tsx')));
     expect(page).toMatch(/decodeMobSpecialChips\(/);
     expect(page).toMatch(/s\.danger\s*\?\s*'[^']*text-red-400/);
-    expect(page).toMatch(/Number\(b\.danger\)\s*-\s*Number\(a\.danger\)/);
+    expect(page).toMatch(/sortMobSpecialChips\(decodeMobSpecialChips\(/);   // FB-104: the rank sort puts every danger chip first
   });
 });

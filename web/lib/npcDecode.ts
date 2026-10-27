@@ -104,6 +104,25 @@ export function decodeMobSpecialChips(special_abilities?: string | null, npcspec
   return out;
 }
 
+// The order chips are drawn in (FB-104: Summon sat last because the catalog lists codes numerically). What the mob
+// DOES to you first, then what it is immune to (damage, then control), then the notes; an unlisted label keeps its
+// place after all of these. A COPY of the Mimic Target Info overlay's SPEC_ORDER (apps/mimic/mobinfo.html), which
+// cannot import this file: test/mob-specials-order.test.js fails when they drift.
+export const MOB_SPECIAL_ORDER: string[] = [
+  'Summon', 'Reverse Slow — slowing hastes it', 'Enrage', 'Area Rampage', 'Rampage', 'Flurry',
+  'Silences (AoE)', 'Silences', 'Bane',
+  'Immune Melee', 'Immune Magic', 'Immune Melee Except Bane', 'Immune Non-Magical', 'Immune Ranged Spells',
+  'Unmezzable', 'Uncharmable', 'Unslowable', 'Unstunnable', 'Unsnareable', 'Unfearable', 'Undispellable',
+  'Immune Pacify', 'Immune Taunt', 'Immune Feign Death', 'Immune Fleeing',
+  'Magical', 'Triple Attack', 'Ranged', 'Disable Melee', 'Always Flee', 'Flee At Percent', 'Does Not Equip',
+];
+
+// Stable: two chips of the same rank (both unlisted) keep catalog order.
+export function sortMobSpecialChips<T extends { label: string }>(chips: T[]): T[] {
+  const rank = (l: string) => { const r = MOB_SPECIAL_ORDER.indexOf(l); return r < 0 ? MOB_SPECIAL_ORDER.length : r; };
+  return chips.map((c, i) => ({ c, i, r: rank(c.label) })).sort((a, b) => a.r - b.r || a.i - b.i).map(o => o.c);
+}
+
 export function decodeMobSpecials(special_abilities?: string | null, npcspecialattks?: string | null): string[] {
   return decodeMobSpecialChips(special_abilities, npcspecialattks).map(c => c.label);
 }
