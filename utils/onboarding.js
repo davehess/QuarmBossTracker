@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.23': [
+    '**Your PoP flags, for Mimic.** The bot can now tell your own Mimic where each of your characters stands on the Planes of Power flags and what to do next (the Flags view in the PoP overlay, on the Mimic beta first). It only ever answers about your own characters.',
+  ],
   '4.0.22': [
     '**Soft Reserve on the loot card.** When the guild reserves drops for a raid (wolfpack.quest/raid/sr), the loot post names who reserved each item, and on event nights only the reservers\' rolls count when any of them rolled. If you reserved something and do not want it any more, just do not roll and it goes to the next person.',
   ],

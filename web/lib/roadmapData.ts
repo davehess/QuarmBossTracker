@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'maelin-needs-cipher-2026-10-27',
+    title: 'Web 2.1.56',
+    version: 'Web 2.1.56 · Bot 4.0.23',
+    date: '2026-10-27',
+    headline: 'The next-steps panel no longer sends you to Maelin\'s Zek reading before you have the cipher.',
+    features: [],
+    fixes: [
+      'Maelin only reads the Zek notes once you have the cipher, so that step now waits for it, and the panel says the cipher is what you need first.',
+      'His second reading (the power source) waits for Rallos Zek\'s projection, not only the Zek notes.',
+      'The lore reading waits until you hold both Karana\'s notes and Mithaniel\'s.',
+    ],
+  },
+  {
     key: 'soft-reserve-2026-10-26',
     title: 'Web 2.1.55',
     version: 'Web 2.1.55 · Bot 4.0.22',
