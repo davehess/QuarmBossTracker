@@ -6991,6 +6991,32 @@ step's card and list block. Boss slides are not linked (v1). `wp:pop:mode` accep
 untouched); a beta push touching `apps/mimic/**` or the agent builds the next `-beta.N`. ⏳ Needs the bot half (bot 4.0.23, `main`) first; until then Flags shows "need the newer bot".
 Tests: `test/pop-overlay-flags.test.js`, `test/pop-overlay-links.test.js`, `test/pop-status-agent.test.js` (fixture `test/fixtures/pop-status-brackwyn.json`, the same file the bot's tests pin).
 
+### 🧾 2026-10-27 — FB-102: the Charm tracker times the buffs the pet reports (agent 4.0.29, DRAFT on `draft/fb-102-104`, for `beta`)
+A beta tester (Mimic 3.0.5-beta.8): "Charm Tracker is missing timeframes despite target info having the data." The report's own 30-minute log, replayed through the real agent
+functions with a simulated clock, ends with a `/pet health` block naming Pacify, Visions of Grandeur and Boon of the Garou on a mob that had been re-charmed after a break. Mob Info
+(landings keyed by the mob's NAME) counted all three down; the Charm tracker (keyed by the OWNER, `petBuffsForOwner`) showed each as "(?)". Cause: `_bumpCharmTick` clears the owner's
+landings on a re-charm it cannot prove is the same spawn (`sameMobAgain` needs two spawn ids; the 2026-10-13 rule, pinned by `test/charm-keeps-buffs.test.js`), and the pre-charm sweep
+(`_captureTargetBuffsOnCharm`) only carries the last 60 s, so a buff cast minutes earlier was gone from the pet side while still on the mob. **Fix** (`petBuffsForOwner`, end of function):
+a buff the pet's own report names, with no owner-side timer, takes its timer from the name-keyed landing (`targetBuffsFor(petKey, petId)`). Never when the spawn id proves the landing is another
+mob's, never one that has worn off or run out (the chip stays untimed, not "fell off"), never a buff the pet did not report. The "same name cannot be ruled out" clear is unchanged.
+⚠ **Which surface the report meant is a guess**: the screenshot is in the private bucket, and "timeframes" was read as the buff chips' countdowns on the full Charm card (the one place the
+log shows Mob Info and the Charm tracker disagreeing); the charm duration bar itself was timed (420 s) in every land of the replay. Tests: `test/charm-pet-health-timers.test.js`
+(mutation-checked: the two positive cases and the spawn-id guard each fail without their line). `applyPetHealthLine` and `_petHealthByOwner` are now exported for it.
+`test/pop-status-agent.test.js` pinned the agent version to exactly 4.0.28; it now asks for "at least".
+
+### 🧾 2026-10-27 — FB-104: Summon first and loudest on Target Info and `/db/npc` (web 2.1.57 + Mimic Target Info, DRAFT on `draft/fb-102-104`, for `beta`)
+A beta tester (Mimic 3.0.5-beta.9, Target Info Stats tab, "A Valorous Spirit"): "Summon shows up at the end of this list instead of at the beginning. It should stand out more."
+The surface is the Stats tab (`log_meta.target_info.shown: "stats"`, and the Spells tab's chip row draws from the same list). Why last: the catalog row (211005) carries no Summon; the bot UNIONS
+same-name sibling rows after the primary's (`pickAndMergeMobRows`), and the chips were drawn in that catalog order. **Fix, display only (bot untouched, so a cached answer re-orders at once):**
+`apps/mimic/mobinfo.html` `SPEC_ORDER` + `specSort` (both chip rows), and the same table as `MOB_SPECIAL_ORDER` + `sortMobSpecialChips` in `web/lib/npcDecode.ts` for `/db/npc/<id>`. Order: what the
+mob does to you (Summon, Reverse Slow, Enrage, Area Rampage, Rampage, Flurry, Silences (AoE), Silences, Bane), then what it is immune to (damage: Immune Melee/Magic/Melee Except Bane/Non-Magical/Ranged
+Spells; control: Unmezzable, Uncharmable, Unslowable, Unstunnable, Unsnareable, Unfearable, Undispellable, Immune Pacify/Taunt/Feign Death/Fleeing), then the notes (Magical, Triple Attack, Ranged, Disable Melee,
+Always Flee, Flee At Percent, Does Not Equip); a label with no rank follows in the order it came. Summon alone is a solid red chip with a warning mark and a tooltip, on both surfaces; no motion.
+The sight and lull chips still sit ahead of the specials in the overlay (they are asked before the pull). ⏳ `apps/mimic/parts.js` (`target.specials`, the Canvas piece of the same list) keeps the old order
+and its own shorter `WARN_SPECS`: left alone as adjacent code; the same `specSort` goes there if the guild lead wants the Canvas to match. Tests: `test/mob-specials-order.test.js` (real `specSort`/`specChip`
+evaluated out of the overlay, the web sort imported, the two tables compared; mutation-checked), `test/mob-specials-web-parity.test.js` (page assertion updated). The web page is an EXISTING route, so it is
+read at https://b.wolfpack.quest/db/npc/211005 before it graduates; the roadmap entry waits for that.
+
 ### 🧾 2026-10-26 — Soft Reserve per raid, web half: `/raid/sr` + `/admin/soft-reserve` (web 2.1.55, main; [beta] tag; DECISIONS §448)
 The guild lead picked a Soft Reserve per raid and then said "your picks": a member reserves drops for the ONE character their sign-up brings (a main's pick
 does not carry to an alt; `bringingFrom`), up to `per_person` (default 5) and optionally `per_boss`; picks lock at the start / a set time / the first `/loot`

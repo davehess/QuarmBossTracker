@@ -227,6 +227,8 @@
   .spec .chip{font-size:10px;padding:2px 7px;border-radius:4px;background:#2a1d3d;
     color:#d2a8ff;border:1px solid #3d2a57}
   .spec .chip.warn{background:#3d1d1d;color:#ffb3b3;border-color:#5a2a2a}
+  /* Summon: the one solid-red chip (FB-104). Dark text on the platform red keeps it readable at a glance. */
+  .spec .chip.warn.summon{background:#f85149;color:#0d1117;border-color:#f85149;font-weight:700;text-shadow:none}
   .spec .chip.imm{background:#1d2a3d;color:#9ecbff;border-color:#2a3d57}
   /* sight chips — "invis will not hide you". Amber rather than the red warn
      tone: it defeats a PLAN (a pull, a corpse run), it is not something the mob
@@ -599,11 +601,14 @@
     for (var i = 0; i < mob.specials.length; i++) if (/^Reverse Slow/.test(mob.specials[i])) return true;
     return false;
   }
-  function specClass(label){ if (WARN_SPECS[label]) return 'chip warn'; if (label.indexOf('Immune')===0 || label.indexOf('Un')===0) return 'chip imm'; return 'chip'; }
+  // Summon is the loudest chip on the card (FB-104): it takes the raider out of the fight and into the mob's
+  // lap, and it is the one a pull plan cannot see coming. The other warnings stay tinted; this one is solid red.
+  function specClass(label){ if (label === 'Summon') return 'chip warn summon'; if (WARN_SPECS[label]) return 'chip warn'; if (label.indexOf('Immune')===0 || label.indexOf('Un')===0) return 'chip imm'; return 'chip'; }
   // Display words for a catalog label whose name does not say what the game says (the guild lead, 2026-10-15: "This mob
   // is immune to runspeed changes but it doesn't say it anywhere until you cast on him" — the chip read "Unsnareable").
   // The label itself stays the data contract (the bot and tests key on it); only the chip text and its tooltip change.
   var SPEC_SHOW = {
+    'Summon':      ['⚠ Summon', 'This mob can summon players to itself'],
     'Unsnareable': ['Snare / run speed immune', 'Your target is immune to changes in its run speed: snares and run-speed debuffs will not land'],
     'Silences':       ['Silences', 'This mob casts a silence: casters it lands on cannot cast until it wears off'],
     'Silences (AoE)': ['Silences (AoE)', 'This mob casts an area silence: every caster in range can be silenced at once — spread out or stay back'],
@@ -611,6 +616,23 @@
   function specChip(label){
     var s = SPEC_SHOW[label];
     return '<span class="'+specClass(label)+'"'+(s ? ' title="'+esc(s[1])+'"' : '')+'>'+esc(s ? s[0] : label)+'</span>';
+  }
+  // The order the chips are drawn in (FB-104: Summon sat last because the catalog lists codes numerically and a
+  // same-name sibling row's extras are appended after the primary's). What the mob DOES to you first, then what
+  // it is immune to (damage, then control), then the notes. A label not listed keeps its place after all of these.
+  // ⚠ web/lib/npcDecode.ts MOB_SPECIAL_ORDER is a copy; test/mob-specials-order.test.js fails if they drift.
+  var SPEC_ORDER = [
+    'Summon', 'Reverse Slow — slowing hastes it', 'Enrage', 'Area Rampage', 'Rampage', 'Flurry',
+    'Silences (AoE)', 'Silences', 'Bane',
+    'Immune Melee', 'Immune Magic', 'Immune Melee Except Bane', 'Immune Non-Magical', 'Immune Ranged Spells',
+    'Unmezzable', 'Uncharmable', 'Unslowable', 'Unstunnable', 'Unsnareable', 'Unfearable', 'Undispellable',
+    'Immune Pacify', 'Immune Taunt', 'Immune Feign Death', 'Immune Fleeing',
+    'Magical', 'Triple Attack', 'Ranged', 'Disable Melee', 'Always Flee', 'Flee At Percent', 'Does Not Equip'
+  ];
+  function specSort(labels){
+    return labels.map(function(l, i){ var r = SPEC_ORDER.indexOf(l); return { l: l, i: i, r: r < 0 ? SPEC_ORDER.length : r }; })
+      .sort(function(a, b){ return a.r - b.r || a.i - b.i; })
+      .map(function(o){ return o.l; });
   }
 
   // Sight chips — "will invis hide me from this?" (the guild lead, 2026-09-02).
@@ -1699,8 +1721,9 @@
       //      synced to Supabase yet for this mob.
       var specChips = '';
       if (mob && Array.isArray(mob.specials) && mob.specials.length){
-        for (var sj=0; sj<mob.specials.length; sj++){
-          var slab = mob.specials[sj];
+        var sortedSpecs = specSort(mob.specials);
+        for (var sj=0; sj<sortedSpecs.length; sj++){
+          var slab = sortedSpecs[sj];
           specChips += specChip(slab);
         }
       }
@@ -1806,7 +1829,8 @@
       var spec = '';
       var chips = sightChips(mob, mi.target_invis) + lullChip(mi.target_lull);   // before the specials: asked before the pull
       if (mob && Array.isArray(mob.specials) && mob.specials.length){
-        for (var j=0;j<mob.specials.length;j++){ var lab=mob.specials[j]; chips += specChip(lab); }
+        var orderedSpecs = specSort(mob.specials);
+        for (var j=0;j<orderedSpecs.length;j++){ var lab=orderedSpecs[j]; chips += specChip(lab); }
       }
       chips += hitsChip(mi.target_hits);   // after the specials: seen in the fight, not catalogued
       if (chips) spec = '<div class="spec">'+chips+'</div>';
