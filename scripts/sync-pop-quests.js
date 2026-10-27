@@ -30,13 +30,19 @@
 // PLANES: each step also carries `plane`, and the file carries `eras` (era → its planes, in block order),
 // both from the hand-set table in scripts/pop-quest-planes.js, for the overlay's era → plane → quest blocks.
 // A step with no plane, a plane no step uses, and a table line for a step the guide dropped all stop the sync.
+// ANCHORS (the guild lead, 2026-10-27, the Flags mode): the file also carries `anchors`, the join from the flag engine's
+// keys (a server step, a Seer pending memory, a catalog flag, a chart zone) to the quest step or plane the overlay jumps
+// to. See anchors() below; it is all read from web/lib, with ZONE_PLANE the one hand-set table.
 // WHAT IS DROPPED: the checkbox keys' flag
 // plumbing, the auto-tick explanations and the site-relative links (none of them mean anything in
 // an overlay). [[Item Name#id]] tokens become the bare name: the overlay has no item cards.
 const fs = require('fs');
 const path = require('path');
 
-const { ERAS, PLANE_OF } = require('./pop-quest-planes');
+const { ERAS, PLANE_OF, ZONE_PLANE, SAME_HAIL } = require('./pop-quest-planes');
+
+// The one step the Seer's "unlock my memories" is in (the Flags mode's pending memories link to it). Checked below.
+const SEER_STEP = 'start_flag_fixers';
 
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(ROOT, 'web', 'lib');
@@ -54,7 +60,11 @@ async function loadGuide() {
       name: 'pop-quests-entry',
       resolveId(id) { return id === entry ? id : null; },
       load(id) {
-        return id === entry ? "export * from './popGuide'; export * from './popGuideMore';" : null;
+        return id === entry
+          ? "export * from './popGuide'; export * from './popGuideMore';"
+            + " export { STEP_GUIDE } from './popGuideSeer'; export { POP_STEPS, STEP_IMPLIES } from './popSteps';"
+            + " export { PENDING_MEMORIES } from './popRecital'; export { POP_ZONES } from './popFlags';"
+          : null;
       },
     }],
   });
@@ -178,7 +188,68 @@ function build(g) {
   const lost = g.GUIDE_ITEMS.filter((i) => !placed.has(i.key)).map((i) => i.key);
   if (lost.length) throw new Error('sync-pop-quests: steps in no level: ' + lost.join(', '));
   const eras = ERAS.map((e) => ({ key: e.key, title: e.title, planes: e.planes.map((p) => ({ key: p.key, title: p.title })) }));
-  return clean({ eras, levels });
+  return clean({ eras, levels, anchors: anchors(g, planeKeys) });
+}
+
+// Where a KEY from the flag engine lands in this file (the Flags mode of the overlay links through it; the bot's payload
+// carries keys, never guide steps). Everything is read from the web files, nothing is typed here:
+//   stage      the server's flag step ('fuirstel_1') -> the guide step that does it (popGuideSeer STEP_GUIDE)
+//   checklist  a Seer pending memory ('cl_grummus') -> the guide step of the step its kill leaves unfinished: the
+//              step whose `checklist` it is (popSteps POP_STEPS), else the step the memory unlocks (popRecital)
+//   flag       a catalog flag ('cipher_1') -> the guide step that grants it (popGuide GUIDE_ITEMS `flag`, the first one)
+//   zone       a flag-chart zone ('codb') -> the plane its steps are listed under (scripts/pop-quest-planes.js ZONE_PLANE)
+//   seer       the step the Seer's "unlock my memories" is in
+// A value that is not a guide step, a plane that is not listed, or a chart zone / pending memory with no line here
+// stops the sync: a link that goes nowhere is found here, not by a raider.
+function anchors(g, planeKeys) {
+  const guide = new Set(g.GUIDE_ITEMS.map((i) => i.key));
+  const need = (what, k, v) => { if (!guide.has(v)) throw new Error('sync-pop-quests: anchors.' + what + ' ' + k + ' -> ' + v + ' is not a guide step'); return v; };
+  const sorted = (o) => Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
+
+  const stage = {};
+  for (const k of Object.keys(g.STEP_GUIDE)) stage[k] = need('stage', k, g.STEP_GUIDE[k]);
+  const known = new Set(Object.values(g.POP_STEPS).flat().map((s) => s.key));
+  for (const k of Object.keys(SAME_HAIL)) {
+    if (!known.has(k)) throw new Error('sync-pop-quests: SAME_HAIL names step ' + k + ' that POP_STEPS no longer has');
+    if (!stage[SAME_HAIL[k]]) throw new Error('sync-pop-quests: SAME_HAIL ' + k + ' -> ' + SAME_HAIL[k] + ' has no guide step');
+    if (stage[k]) throw new Error('sync-pop-quests: SAME_HAIL ' + k + ' now has its own guide step; drop it from SAME_HAIL');
+    stage[k] = stage[SAME_HAIL[k]];
+  }
+
+  // A pending memory can wait on a value that is not a step of its own (hohtrials_111, the three trials' bit string): it
+  // links to the first step that value carries, the way popSteps STEP_IMPLIES lists them.
+  for (const m of g.PENDING_MEMORIES) {
+    const first = (g.STEP_IMPLIES[m.needs] || []).find((k) => stage[k]);
+    if (!stage[m.needs] && first) stage[m.needs] = stage[first];
+  }
+
+  const checklist = {};
+  for (const steps of Object.values(g.POP_STEPS)) {
+    for (const s of steps) if (s.checklist && stage[s.key]) checklist[s.checklist] = stage[s.key];
+  }
+  for (const m of g.PENDING_MEMORIES) {
+    if (!checklist[m.key] && stage[m.gives]) checklist[m.key] = stage[m.gives];
+    if (!checklist[m.key]) throw new Error('sync-pop-quests: pending memory ' + m.key + ' has no guide step (its step ' + m.gives + ' is not in STEP_GUIDE)');
+  }
+
+  const flag = {};
+  for (const i of g.GUIDE_ITEMS) if (i.flag && !flag[i.flag]) flag[i.flag] = i.key;
+
+  const chart = g.POP_ZONES.map((z) => z.key);
+  const zone = {};
+  for (const k of chart) {
+    if (!ZONE_PLANE[k]) throw new Error('sync-pop-quests: chart zone ' + k + ' has no plane; add it to ZONE_PLANE in scripts/pop-quest-planes.js');
+    if (!planeKeys.has(ZONE_PLANE[k])) throw new Error('sync-pop-quests: ZONE_PLANE ' + k + ' names unknown plane ' + ZONE_PLANE[k]);
+    zone[k] = ZONE_PLANE[k];
+  }
+  const gone = Object.keys(ZONE_PLANE).filter((k) => !chart.includes(k));
+  if (gone.length) throw new Error('sync-pop-quests: ZONE_PLANE names chart zones that no longer exist: ' + gone.join(', '));
+
+  const seerItem = g.GUIDE_ITEMS.find((i) => i.key === SEER_STEP);
+  if (!seerItem || !(seerItem.says || []).some((s) => /unlock my memories/i.test(s.text))) {
+    throw new Error('sync-pop-quests: ' + SEER_STEP + ' is not the guide step that says "unlock my memories"');
+  }
+  return { stage: sorted(stage), checklist: sorted(checklist), flag: sorted(flag), zone, seer: SEER_STEP };
 }
 
 const HEADER = [

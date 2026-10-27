@@ -6978,6 +6978,19 @@ into step keys and uploads them as pop_flag events with `source: 'popflags'` (se
 change, `_handleAgentPopFlags` + `popFlagStages.POPFLAGS_KEYS`, a closed vocabulary) stores them as `pop_flags` rows with source `popflags`. ⏳ Ship the bot
 BEFORE the agent. Test: `test/pop-flags-live-bot.test.js`.
 
+### 🧾 2026-10-27 — PoP Flags mode, Mimic half: agent 4.0.28 + the third segment of the PoP overlay (DRAFT on `draft/pop-flags-mimic`, for `beta`; DECISIONS §450)
+The guild lead picked "A then B": **A** is a Flags mode in `apps/mimic/popraid.html`, next to Slides and Quests, for the character being played, with links that jump into the
+Quests steps. **Agent:** asks the bot's `pop` poll stream every five minutes (and ~2 s after its own `pop_flag` upload is acknowledged), keeps the answer, serves it on
+localhost as `GET /api/pop-status?character=` (read-only, behind the local guard; states `ok` / `loading` / `offline` / `no_character` / `unlinked` / `error` / `old_bot`).
+An older bot has no `pop` stream: the answer is `old_bot` and the overlay says "Flags need the newer bot". **Overlay:** polls the agent every 3 s (a redraw only when the answer
+changed, so scroll and folds stay); the picker is the character ("Playing now" follows the one being played); cards are Next (the guide's NPC, phrase, `/map`, "Step →"), Pending
+memories (Seer `cl_*`: what to do first, what that step is "Blocked by" (Rallos: the cipher, which needs the missing Saryrn half), then the Seer), Flags by tier (✓ ◐ ✗ per plane, each a jump to that plane's step list), Doors and keys, the other lines, and Capture now
+(the dashboard's own `POST /api/local/pop-rescan`). Links go through `anchors` in the generated `pop-quests.js` (`scripts/sync-pop-quests.js` + `ZONE_PLANE` / `SAME_HAIL` in
+`scripts/pop-quest-planes.js`); `popGoto()` opens the step, rings the row that says the phrase for 2 s (an outline, no animation) and shows "← My flags". `data-step` is on each
+step's card and list block. Boss slides are not linked (v1). `wp:pop:mode` accepts `flags`; `wp:pop:flagchar` is private. **Mimic's own version stays parked** (`apps/mimic/package.json`
+untouched); a beta push touching `apps/mimic/**` or the agent builds the next `-beta.N`. ⏳ Needs the bot half (bot 4.0.23, `main`) first; until then Flags shows "need the newer bot".
+Tests: `test/pop-overlay-flags.test.js`, `test/pop-overlay-links.test.js`, `test/pop-status-agent.test.js` (fixture `test/fixtures/pop-status-brackwyn.json`, the same file the bot's tests pin).
+
 ### 🧾 2026-10-26 — Soft Reserve per raid, web half: `/raid/sr` + `/admin/soft-reserve` (web 2.1.55, main; [beta] tag; DECISIONS §448)
 The guild lead picked a Soft Reserve per raid and then said "your picks": a member reserves drops for the ONE character their sign-up brings (a main's pick
 does not carry to an alt; `bringingFrom`), up to `per_person` (default 5) and optionally `per_boss`; picks lock at the start / a set time / the first `/loot`

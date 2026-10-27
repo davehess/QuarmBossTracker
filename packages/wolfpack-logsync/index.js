@@ -13467,6 +13467,9 @@ function _onUploadSuccess(entry, responseText) {
     }
     return;
   }
+  // Our own PoP flag upload landed: the bot has dropped its cached status for these characters, so ask again soon
+  // (the Flags mode of the PoP overlay then shows the new flag within a few seconds, not five minutes).
+  if (entry.kind === 'pop_flag') { _popSoon(); return; }
   if (entry.kind !== 'encounter') return;
   try {
     const resp = JSON.parse(responseText);
@@ -36887,6 +36890,15 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
       }
+      // The Flags mode of the PoP overlay: where the member's own characters stand on the PoP flags and what to do
+      // next (_popStatus above; the bot's `pop` poll stream). Served from memory, so the overlay's 3 s poll costs the
+      // bot nothing. ?character= picks one (default: the character being played). Read-only; nothing is written.
+      if (req.method === 'GET' && req.url.startsWith('/api/pop-status')) {
+        let want = '';
+        try { want = new URL(req.url, 'http://x').searchParams.get('character') || ''; } catch { /* */ }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(_popStatusBody(want.slice(0, 40))));
+      }
       // Toggle/reset an objective, or ⚑-flag an anomaly — synchronous forward
       // to the bot (the overlay needs the real status: 403 = reset is
       // officer-only, 429 = anomaly rate limit). Objective writes drop the
@@ -51753,9 +51765,60 @@ const POLL_BACKFILL_MS   = 5 * 60_000;
 const POLL_UI_MS         = 5 * 60_000;
 const POLL_PETS_MS       = 60_000;       // pooled pet owners (FB-35): a minute while fights run, five idle
 const POLL_RESCAN_MS     = 3 * 60_000;   // "Sync from my logs" requests (the website tells the member "every few minutes")
+const POLL_POP_MS        = 5 * 60_000;   // the PoP Flags mode's status of the member's own characters (_popStatus below)
 const POLL_TUNING_IDLE_MS = 20_000;   // idle: still refresh tuning/control this often
 const POLL_DORMANT_MS     = 15_000;   // dormant: poll the tuning/kill channel this often
-const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0, rescan: 0 };
+const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0, rescan: 0, pop: 0 };
+
+// ── PoP Flags mode: where the member's own characters stand on the PoP flags (2026-10-27) ──────────────────────────
+// The guild lead picked "A then B" for the per-character PoP flags checklist in Mimic; this is the data under A. The
+// bot answers the poll's `pop` stream with a status per character (utils/popStatus.js, the website's rules, scoped to
+// the Mimic session's OWN characters); we keep the latest answer and serve it to the overlay on localhost
+// (GET /api/pop-status). The overlay polls us every 3 s, which costs nothing; the bot is asked every five minutes
+// and once ~2 s after one of OUR pop_flag uploads is acknowledged (the bot has dropped its cache for those
+// characters by then). Nothing here is sent anywhere: it is a read.
+//   supported: null until the bot has answered a poll that asked for `pop`; false when it answered without the stream
+//   (an older bot, or the stream is shed): the overlay says "Flags need the newer bot".
+const _popStatus = { supported: null, ver: '', at: 0, byChar: {}, unlinked: [], error: null };
+function _applyPopResponse(p, now) {
+  if (!p || typeof p !== 'object') { _popStatus.supported = false; return; }
+  _popStatus.supported = true;
+  _popStatus.at = now;
+  if (p.error) { _popStatus.error = String(p.error).slice(0, 80); return; }   // the bot's database was down: keep what we hold
+  _popStatus.error = null;
+  if (p.version != null) _popStatus.ver = String(p.version);
+  if (p.unchanged) return;
+  const by = {};
+  const chars = p.characters && typeof p.characters === 'object' ? p.characters : {};
+  for (const k of Object.keys(chars).slice(0, 24)) { if (chars[k] && typeof chars[k] === 'object') by[String(k).toLowerCase()] = chars[k]; }
+  _popStatus.byChar = by;
+  _popStatus.unlinked = Array.isArray(p.unlinked) ? p.unlinked.map(String).slice(0, 24) : [];
+}
+// One of our pop_flag uploads was acknowledged: ask for the status again in ~2 s (the next poll tick takes it).
+let _popSoonTimer = null;
+function _popSoon() {
+  if (_popSoonTimer) return;
+  _popSoonTimer = setTimeout(() => { _popSoonTimer = null; _pollLast.pop = 0; }, 2000);
+  if (_popSoonTimer.unref) _popSoonTimer.unref();
+}
+// The body of GET /api/pop-status?character=<name>: the status of the named (else the played) character plus who else
+// the overlay may pick. `state` says what to draw when there is no status.
+function _popStatusBody(wantName) {
+  const watched = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
+  const active = (stats && stats.activeCharacter) ? String(stats.activeCharacter) : (watched[0] || '');
+  const name = wantName ? String(wantName) : active;
+  const have = Object.values(_popStatus.byChar).map(s => s && s.character).filter(Boolean);
+  const characters = [...new Set([...have, ...watched])].sort((a, b) => a.localeCompare(b));
+  const out = { active, character: name, characters, age_ms: _popStatus.at ? Math.max(0, Date.now() - _popStatus.at) : null };
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return { ...out, state: 'offline', status: null };
+  if (_pollSupported === false || _popStatus.supported === false) return { ...out, state: 'old_bot', status: null };
+  if (!name) return { ...out, state: 'no_character', status: null };
+  if (_popStatus.supported == null) return { ...out, state: 'loading', status: null };
+  const status = _popStatus.byChar[name.toLowerCase()] || null;
+  if (status) return { ...out, state: 'ok', status };
+  return { ...out, state: _popStatus.unlinked.some(n => n.toLowerCase() === name.toLowerCase()) ? 'unlinked' : (_popStatus.error ? 'error' : 'loading'), status: null };
+}
 function _multiplexActive() { return _pollSupported !== false; }
 function _pollFellBack(reason) {
   if (_pollSupported === false) return;
@@ -51793,6 +51856,7 @@ async function _pollMultiplexed() {
       if (now - _pollLast.backfill >= POLL_BACKFILL_MS) want.push('backfill');
       if (now - _pollLast.ui_edits >= POLL_UI_MS)       want.push('ui_edits');
       if (now - _pollLast.rescan   >= POLL_RESCAN_MS && !_rescan.running) want.push('rescan');   // older bots omit it: nothing happens
+      if (now - _pollLast.pop      >= POLL_POP_MS)      want.push('pop');                        // older bots omit it: _popStatus.supported = false
     }
   }
   if (want.length === 0) return;   // nothing due this tick (idle, between cadences)
@@ -51811,6 +51875,10 @@ async function _pollMultiplexed() {
   }
   if (chars.length && (want.includes('prefs') || want.includes('backfill') || want.includes('ui_edits') || want.includes('rescan'))) {
     qs.set('characters', chars.join(','));
+  }
+  if (want.includes('pop')) {   // only asked for with a watched character (above): the bot scopes it to the member's own
+    qs.set('characters', chars.join(','));
+    qs.set('pop_ver', _popStatus.ver || '');
   }
 
   _pollInflight = true;
@@ -51842,6 +51910,7 @@ async function _pollMultiplexed() {
     if (want.includes('prefs'))    { if (s.prefs)    _applyCharacterPrefsResponse(s.prefs);   _pollLast.prefs = now; }
     if (want.includes('backfill')) { if (s.backfill) _applyBackfillResponse(s.backfill);      _pollLast.backfill = now; }
     if (want.includes('rescan'))   { if (s.rescan)   _applyRescanResponse(s.rescan);          _pollLast.rescan = now; }
+    if (want.includes('pop'))      { _applyPopResponse(s.pop, now);                           _pollLast.pop = now; }
     if (want.includes('ui_edits')) {
       if (s.ui_edits) {
         const watched = (stats.watchedLogs || []).filter(w => w && w.character && w.logPath);
