@@ -2571,6 +2571,19 @@ Real server output: `test/fixtures/popflags-real-{a,b}.txt` (`test/pop-flags-rea
 `PENDING_MEMORIES` + `pendingHint()`/`pendingNext()` in `web/lib/popRecital.ts` ("do this next"), `PENDING_RECITAL` in `utils/popFlagStages.js`, stored as
 `cl_*` / source `recital`; `test/pop-seer-pending.test.js`, fixture `test/fixtures/seer-pending-memories.json`.
 
+### Flags mode of the PoP overlay: the bot half (`pop` poll stream, bot 4.0.23; DECISIONS §451)
+A member's OWN characters' PoP flag status, read into "what to do next", for the Flags mode of Mimic's PoP overlay (`apps/mimic/popraid.html`, agent on `beta`).
+**One engine, generated:** the rules are the website's (`web/lib/popNextSteps.ts` `nextSteps`, `popRecital.ts` `pendingNext` / `heldClosure` / `zoneViews`,
+`popSteps.ts`, `popGuideSeer.ts`, `popSelfFlags.ts`, `popWho.ts`); `scripts/sync-pop-engine.js` (`npm run sync:pop-engine`, rolldown from vitest's tree, no new
+dependency) bundles them into `utils/popEngine.js`. Never hand-edit it: `test/pop-engine-sync.test.js` fails when stale and runs the bundle against the TypeScript on
+the same inputs. `utils/popStatus.js` (`buildStatus` pure; `create` = the service) holds no progression rule of its own. Stream: `GET /api/agent/poll?streams=pop&characters=<csv>&pop_ver=<hash>` →
+`streams.pop = { version, characters: { <lower name>: status }, unlinked: [] }` or `{ version, unchanged: true }`; shed with `flag_shed_pop`. **Scope:** the Mimic session's
+`discord_id` → its `characters` rows (a `characters=` list can only narrow), `exclude_from_stats` left out. **Sources** (the website's `loadHeld`): `pop_flags` rows,
+the owner's `pop_guide_ticks`, `/who` proof (`pop_who_sightings`); 2-minute per-character cache, dropped by a `pop_flags` upsert. Status = `{ character, steps:{done,total}, held:[stage keys],
+top:[{line,step}], next:[{line,label,short,state,done,total,steps:[{key,title,who,must,zone,verify}],blocked_on:[{flag,label,line}],skipped}], pending:[{key,state,gives,label,step,text,waits_on:[{flag,label,line,via:[{flag,label,line}]}]}],
+zones:[{key,name,short,tier,state,done,total,open,missing}], doors:[{step,zone,label,note,held}] }`: KEYS, not prose (the overlay links them through the `anchors` table in `pop-quests.js`).
+Tests: `test/pop-status-bot.test.js` (scoping against a fake PostgREST, cache, the stream block run from `index.js`), `test/pop-engine-sync.test.js`; fixture `test/fixtures/pop-status-brackwyn.json` is the payload the overlay's tests load too.
+
 ### Soft Reserve (`/raid/sr`, `/admin/soft-reserve`, [beta], web 2.1.55)
 Per raid event, a member reserves drops for the character their sign-up brings (`bringingFrom`), so a main's pick never carries to an alt. Rules
 (caps, lock, visibility, the officer form) are pure in `web/lib/softReserve.ts`; reads in `softReserveLoad.ts` (`loadSrView` for the page,

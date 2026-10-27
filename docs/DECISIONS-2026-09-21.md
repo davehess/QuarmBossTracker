@@ -115,6 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Add to wishlist + pre-bid on `/me/upgrades`; ears / wrists / rings paired** (§446) | Draft on `draft/upgrades-wishlist` (bot 4.0.18 for `main` first, web 2.1.45 for `beta`); not pushed | the guild lead: ship the bot half, check `SCREEN_TOKEN_SECRET` + `SCREEN_LIVE_URL` on Vercel Production and Preview; say if rings stay paired |
+| **Per-character PoP flags checklist in Mimic: A then B** (§451) | A built on drafts: bot 4.0.23 `draft/pop-flags-bot` (the `pop` poll stream + generated engine), agent + overlay on `draft/pop-flags-mimic` (Flags mode, links into Quests); not pushed | the guild lead: ship the bot first, then the beta Mimic, check Flags on a real character; then say what B adds |
 | **Per-person flag link `/pop/raid/me`** (§443, §444) | Live: page + #popflags/Seer paste + "Sync from my logs" (web 2.1.47, bot 4.0.19); #popflags read live by Mimic on beta (agent 4.0.25). Map-sync dedup live, outbox on beta (agent 4.0.24) | the guild lead: update the beta Mimic, then backfill or press Sync; check the Thelin stage-5 line in game; both agent changes reach the fleet with the next Mimic stable |
 | **First sign-in: pick your characters, stage a recruit main** (§426) | Draft on `draft/recruit-onboarding` (bot 4.0.13 for `main`, agent 4.0.21 for `beta`); not pushed | the guild lead: say if the three judgement calls hold (OpenDKP-roster names not claimable, alts unparented when the main conflicts, "Save and upload these now"); a session: land the bot half on `main` first, then the agent half on `beta`, and make staged recruits show in `/admin/links` |
 | **Route planner + off-night plans + Sol Ro tower** (§407) | Live on main (web 2.0.2): `/raid/plan/routes` [beta], Tactics + the tower, versions, compare, splits, fewest raiders per boss | the guild lead: press "Import tonight's planner" once as an officer; pick the off-night bosses and the fewest headline (A everyone present, default) |
@@ -13202,3 +13203,27 @@ faction granted from illusions and Ornate Velium Pendant and other faction songs
 - So a con is only an exact bound when no illusion, no SPA 19 bonus and no faction item applied at that moment. A future
   faction view should: read the illusion and Alliance-type buffs at con time (the agent sees buff landings / fades and Zeal's
   buff list), discount cons taken under them, list worn faction items, and widen the range when a potion was up. Not built.
+### 451. Per-character PoP flags checklist in Mimic: "A then B", A built first (2026-10-27)
+The guild lead: *"A then B"* for the per-character PoP flags checklist in Mimic, then *"Build in this sort of logic and put the flags checklist per
+character into motion … as a main addition to the pop overlay … with deep linking to steps in the rest of that overlay"*. "This sort of logic" is what the
+website already does with `#popflags` and the Seer's lines: read what a character holds into "what to do next".
+- **A (built, drafts not pushed): a Flags mode in the PoP overlay**, the third segment next to Slides and Quests, for the character being played, with links
+  that jump into the Quests steps. **B comes after A** (the guild lead's order); what B needs on top is in the STATUS entry of the same date.
+- **One engine, not a third copy.** The bot reads the website's own TypeScript, bundled into `utils/popEngine.js` by `scripts/sync-pop-engine.js` (rolldown,
+  already installed, no new dependency); a drift test fails when the web rules change and the bundle is stale. Why not port the functions by hand: the Seer's
+  tables already exist twice (web + `utils/popFlagStages.js`, held together by a parity test) and that was one copy too many.
+- **Read, not written.** A new `pop` stream on `GET /api/agent/poll` answers only about the caller's OWN characters (their `discord_id`'s `characters` rows;
+  the agent's watched list can only narrow it). Nothing new leaves the machine, so `docs/PRIVACY.md` is unchanged. Mimic's agent caches the answer and
+  serves it to the overlay on localhost.
+- **The payload carries keys, not prose.** The overlay turns them into words and links from its own generated tables, so a newer bot with an older overlay
+  (and the reverse) disagree only about a key they do not know.
+- **Ship the bot first** (it is additive: no agent asks for the stream yet), then the agent on `beta`. An older bot without the stream makes the overlay say
+  "Flags need the newer bot".
+- **The engine was wrong about Maelin; fixed in the web engine, so the website gets it too.** `popNextSteps.ts` offered her Zek-notes reading (zeks 5 to 6) as
+  doable without the cipher. Her script (`poknowledge/Grand_Librarian_Maelin.lua`, sha `b1d5b43b`) moves zeks 5 to 6 only inside `if ( qglobals.cipher )`
+  (:65-77); without it she only says to go and find the cipher (:78-81). Now the reading waits on `cipher_1`, which waits on the Saryrn and Marr halves (:15-20).
+  Checked against the same script: the lore reading needs Karana's notes AND Mithaniel's (:37) and sets zebuxoruk 1 (so holding it completes the stage); the
+  second reading needs zebuxoruk 1 and **zeks 7**, not 6 (:57). Left as it was: the `maelin` line is linear, so the lore (which her script does not tie to the
+  cipher) is offered after the cipher stage.
+- **A pending memory says what its own step waits on** (`pending[].waits_on`, one level down): Rallos Zek's memory waits on the Zek-notes reading, which waits
+  on the cipher, which waits on the missing half.

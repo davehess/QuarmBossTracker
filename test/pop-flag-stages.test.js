@@ -123,9 +123,9 @@ describe('the upload handler', () => {
       upsert: async (_t, rows) => { written = rows; return rows; },
     };
     // eslint-disable-next-line no-new-func
-    const fn = new Function('mimicLink', 'require', 'popFlagStages', 'POP_FLAG_BY_BOSS', '_popBossKey', '_trackUpload', '_hailGrants',
+    const fn = new Function('mimicLink', 'require', 'popFlagStages', 'POP_FLAG_BY_BOSS', '_popBossKey', '_trackUpload', '_hailGrants', '_popStatusInst',
       `${handler}\nreturn _handleAgentPopFlags;`)(
-      { requireAgentAuth: async () => ({ discord_id: '1' }) }, () => supabase, S, POP_FLAG_BY_BOSS, _popBossKey, () => {}, () => {});
+      { requireAgentAuth: async () => ({ discord_id: '1' }) }, () => supabase, S, POP_FLAG_BY_BOSS, _popBossKey, () => {}, () => {}, null);
     const body = Buffer.from(JSON.stringify({ events }));
     const req = { [Symbol.asyncIterator]: async function* () { yield body; } };
     await fn(req, { writeHead: () => {}, end: () => {} });

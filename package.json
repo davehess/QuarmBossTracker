@@ -1,6 +1,6 @@
 {
   "name": "quarm-raid-timer-bot",
-  "version": "4.0.22",
+  "version": "4.0.23",
   "description": "Discord bot for tracking Project Quarm instanced raid boss spawn timers, multi-perspective parse aggregation, and DKP loot distribution",
   "license": "AGPL-3.0-or-later",
   "main": "index.js",
@@ -16,6 +16,7 @@
     "test": "vitest run",
     "sync:dashboard": "node scripts/sync-dashboard-embed.js",
     "sync:pop-quests": "node scripts/sync-pop-quests.js",
+    "sync:pop-engine": "node scripts/sync-pop-engine.js",
     "graphify": "bash scripts/graphify.sh"
   },
   "engines": {

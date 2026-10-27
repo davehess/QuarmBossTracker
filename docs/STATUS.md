@@ -6843,3 +6843,16 @@ roll card). Raid nights are SHOWN, not enforced: OpenDKP settles bids and the bo
 `/loot` (or Mimic loot post) of the event sets `sr_rules.locked`. `web/lib/rolls.ts` has the TS twin (`rankWithReservers`, `mergeRollSets(rows, reserversFor)`); ⏳ no web
 page passes a reserver lookup yet, so the web roll review still ranks plainly. Tests: `test/soft-reserve-bot.test.js` (twin parity included).
 ⏳ The migration (`20261026220000_soft_reserve.sql`) must be applied: until the tables exist every read returns nothing and the loot post is unchanged.
+
+### 🧾 2026-10-27 — PoP Flags mode for Mimic, bot half: the `pop` poll stream + the generated flag engine (bot 4.0.23, DRAFT on `draft/pop-flags-bot`, not pushed; DECISIONS §451)
+The guild lead picked "A then B" for the per-character PoP flags checklist in Mimic; this is the data path under A. `GET /api/agent/poll?streams=pop` answers, for the
+caller's OWN characters only, where each stands on the PoP flags and what to do next: held steps, the next step per progression line and what blocks it, the Seer's pending
+memories (`cl_*`), per-plane state (done / part / none, open or shut) and the keys-and-doors list. **The rules are not retyped:** `scripts/sync-pop-engine.js` bundles the
+website's `popNextSteps` / `popRecital` / `popSteps` / `popGuideSeer` / `popSelfFlags` / `popWho` into `utils/popEngine.js` (`npm run sync:pop-engine`; drift + same-input
+parity in `test/pop-engine-sync.test.js`). Sources are the website's `loadHeld`: `pop_flags`, the owner's ticks, `/who` proof. 2-minute per-character cache, dropped by a
+`pop_flags` upsert; version-gated (`pop_ver` → `unchanged`); sheddable (`flag_shed_pop`). Nothing new leaves anyone's machine (a read), so PRIVACY is unchanged.
+Tests: `test/pop-status-bot.test.js`, `test/pop-engine-sync.test.js`. ⏳ Ship order: this bot first (additive; no agent asks for the stream yet), then the agent + overlay on `beta`.
+**Engine fix (web, rides with this commit): Maelin's Zek-notes reading needs the cipher.** `web/lib/popNextSteps.ts` offered it as next without; her script moves zeks 5 to 6 only
+inside `if ( qglobals.cipher )` (`Grand_Librarian_Maelin.lua:65-77`). It now waits on `cipher_1` (which waits on the Saryrn and Marr halves); her lore reading needs Karana's AND
+Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. The pending memory carries `waits_on` for what its step waits on. ⏳ The `maelin` line stays linear
+(the lore, which her script does not tie to the cipher, is offered after the cipher stage). Tests: `test/pop-next-steps.test.js`.
