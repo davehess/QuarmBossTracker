@@ -471,6 +471,11 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
 - Data: `apps/mimic/pop-quests.js`, GENERATED from `web/lib/popGuide.ts` + `popGuideMore.ts` by
   `scripts/sync-pop-quests.js` (`npm run sync:pop-quests`, bundles the .ts with rolldown from vitest's tree).
   Never hand-edit it; `test/pop-quests-sync.test.js` fails when stale. Renderer: `test/pop-overlay-quests.test.js`.
+- **Flags mode** (the third segment, 2026-10-27, DECISIONS §450): the character being played, from the agent's `GET /api/pop-status` (`packages/wolfpack-logsync/index.js`
+  `_popStatus` / `_popStatusBody`; the bot's `pop` poll stream, see "Flags mode of the PoP overlay: the bot half"). Renderer block `// ── PoP flags — renderers` in `popraid.html`
+  (`flagsHtml`, `fNextHtml`, `fPendingHtml`, `fTiersHtml`, `fDoorsHtml`), runtime `pollFlags` / `popGoto` / `popRing`. Links resolve through `anchors` in `pop-quests.js`
+  (`stage`, `checklist`, `flag`, `zone`, `seer`; `ZONE_PLANE` / `SAME_HAIL` in `scripts/pop-quest-planes.js`); `data-step` marks the landing. Capture now = `POST /api/local/pop-rescan`.
+  Tests: `test/pop-overlay-flags.test.js`, `test/pop-overlay-links.test.js`, `test/pop-status-agent.test.js`, harness `test/_pop-overlay-harness.js`.
   DECISIONS-2026-09-21 §141.
 
 ### Reporter fleet: one account, several installs, one slot (bot 3.1.102)

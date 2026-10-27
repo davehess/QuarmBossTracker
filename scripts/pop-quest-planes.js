@@ -144,4 +144,21 @@ const PLANE_OF = {
   flag_quarm: 'time',
 };
 
-module.exports = { ERAS, PLANE_OF };
+// The PLANE each flag-chart zone (web/lib/popFlags.ts POP_ZONES) belongs to, for the Flags mode of the overlay: a tier
+// chip ("Decay 0/2") jumps to that plane's step list. The chart splits some planes in two (the lower Crypt, the Temple
+// of Marr, Ragrax, the Lair of Terris Thule); the blocks do not. The sync stops on a chart zone with no line here, on a
+// line for a zone the chart dropped, and on a plane the table above does not list.
+const ZONE_PLANE = {
+  justice: 'justice', innovation: 'innovation', disease: 'disease', nightmare: 'nightmare',
+  storms: 'storms', valor: 'valor', cod: 'decay', codb: 'decay', ponb: 'tthule', torment: 'torment',
+  bot: 'thunder', hoh: 'honor', hohb: 'honor', tactics: 'tactics', solro: 'solro',
+  earth: 'earth', poeb: 'earth', air: 'air', water: 'water', fire: 'fire',
+  time: 'time',
+};
+
+// Two flag steps the server gives with the SAME hail as another step, so the guide has one step for both (web/lib/popSteps.ts
+// labels them "(same hail)"): the Crypt of Decay key comes with Grummus's projection, Mithaniel's notes with Marr's. They
+// have no STEP_GUIDE line of their own; the Flags mode links them to the step that does the hail.
+const SAME_HAIL = { grummus_1: 'fuirstel_2', mmarr_book_1: 'mmarr_1' };
+
+module.exports = { ERAS, PLANE_OF, ZONE_PLANE, SAME_HAIL };

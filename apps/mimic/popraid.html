@@ -121,6 +121,7 @@
   /* Quests mode (the guild lead, 2026-10-03: "the pop overlay should include the quests and a mode for
      selecting them and all of the things to say or do for any of the pop quests or flags so we can
      reference them"). Data module: pop-quests.js, generated from the website's PoP guide. */
+  .title > span{white-space:nowrap}
   .navbtns{min-width:0} select.pick{min-width:0}   /* the picker gives way when the mode toggle crowds the bar */
   .seg{display:flex;flex:0 0 auto}
   .seg .nbtn{border-radius:0}
@@ -198,6 +199,48 @@
   #fspanel.open{display:flex}
   #fspanel input[type=range]{flex:1;min-width:0;cursor:pointer}
   #fsVal{min-width:32px;text-align:right;font-variant-numeric:tabular-nums}
+  /* Flags mode (the guild lead, 2026-10-27: "put the flags checklist per character into motion ... as a main addition
+     to the pop overlay ... with deep linking to steps in the rest of that overlay"). The character you play: what to do
+     next, the Seer's pending memories, every plane done / part / not started, the doors still shut. Blue → buttons jump
+     into Quests; purple chips copy, as in Quests. Done is green, part is orange, not started is dim: colour only ever
+     means that. No animation anywhere (the ring on a jumped-to step is a plain outline for two seconds). */
+  body.flags #upBtn, body.flags #prevBtn, body.flags #nextBtn, body.flags #flagBtn{display:none}
+  .fhead{display:flex;align-items:center;gap:8px;margin:0 0 5px;padding:0 24px 0 22px;text-shadow:0 1px 2px #000}
+  .fname{font-size:14px;font-weight:bold;color:#e9d5ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fbar{flex:0 0 80px;height:5px;border-radius:3px;background:rgba(255,255,255,0.14);overflow:hidden}
+  .fbar i{display:block;height:100%;background:#56d364}
+  .fprog,.fage{font-size:10px;color:#8b949e;white-space:nowrap}
+  .fnext{border-left-color:#d29922}
+  .fnext .ft{font-size:13px;font-weight:bold;color:#fff;line-height:1.3;margin:1px 0 3px}
+  .fpend{border-left-color:#ffa657}
+  .fpend .fpi{padding:3px 0;border-top:1px solid rgba(255,255,255,0.06)}
+  .fpend .ph + .fpi{border-top:0}
+  .fpend .fpt{font-size:10px;color:#e6edf3;line-height:1.4}
+  .fpend .fpt b{color:#ffa657}
+  .ftiers{border-left-color:#a371f7}
+  .fdoors{border-left-color:#f85149}
+  .fdoors .fl{color:#f85149;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em}
+  .ftier{display:flex;gap:6px;align-items:flex-start;padding:2px 0;border-top:1px solid rgba(255,255,255,0.06)}
+  .ph + .ftier{border-top:0}
+  .ftn{flex:0 0 20px;font-size:9px;color:#8b949e;padding-top:4px}
+  .fchips{display:flex;flex-wrap:wrap;gap:3px;min-width:0}
+  .fgo{display:inline-block;max-width:100%;box-sizing:border-box;padding:2px 6px;border-radius:3px;font:inherit;font-size:10px;line-height:1.5;
+    cursor:pointer;text-align:left;border:1px solid rgba(88,166,255,0.4);background:rgba(88,166,255,0.10);color:#79c0ff}
+  .fgo:hover{background:rgba(88,166,255,0.22)}
+  .fgo.fchip{border-color:rgba(255,255,255,0.18);background:rgba(255,255,255,0.04);color:#8b949e}
+  .fgo.fchip.st-done{border-color:rgba(86,211,100,0.5);background:rgba(86,211,100,0.08);color:#56d364}
+  .fgo.fchip.st-part{border-color:rgba(255,166,87,0.55);background:rgba(255,166,87,0.08);color:#ffa657}
+  .fgo.fchip.lock{opacity:0.7}
+  .fgo.fchip:hover{background:rgba(163,113,247,0.2)}
+  .fsr{font-size:9px;color:#8b949e;letter-spacing:0.04em}
+  .fcap{padding:6px 10px;border-radius:4px;font:inherit;font-size:11px;font-weight:600;cursor:pointer;line-height:1.3;
+    border:1px solid rgba(86,211,100,0.6);background:rgba(86,211,100,0.18);color:#7ee787}
+  .fcap:hover{background:rgba(86,211,100,0.3)}
+  .fcap:disabled{opacity:0.45;cursor:default}
+  .fcapr{display:flex;align-items:center;gap:8px}
+  .fback{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 5px;font-size:9px;color:#8b949e}
+  .fstate{font-size:11px;color:#e6edf3;line-height:1.45}
+  .ringed{outline:2px solid #f0b429;outline-offset:1px;border-radius:3px}
   /* A step's parts (the six Justice trials): folds inside one panel. */
   .qparts > details.sub.panel{margin-top:3px;background:rgb(255 255 255 / 0.04)}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
@@ -251,6 +294,7 @@
         <span class="seg" id="modeSeg">
           <button id="modeSlides" class="nbtn on" title="Boss slideshow: one encounter at a time">Slides</button>
           <button id="modeQuests" class="nbtn" title="Quests and flags: who to talk to, what to say, where to go">Quests</button>
+          <button id="modeFlags" class="nbtn" title="Your flags: what the character you play holds and what to do next">Flags</button>
         </span>
         <select id="encPick" class="pick" title="Jump to an encounter"></select>
         <button id="upBtn" class="nbtn" title="Up one level: the step's list, then the planes">▲</button>
@@ -393,8 +437,16 @@
       (sec.quests || []).forEach(function(q){ QUESTS.push({ q: q, level: lv, sec: sec }); });
     });
   });
+  // Quest by key: what a Flags link lands on. The Flags mode needs the quests (its links jump into them), so with no
+  // quest data it is hidden like Quests is.
+  var QBY = {};
+  QUESTS.forEach(function(e){ QBY[e.q.key] = e.q; });
+  // Slides, Quests, or Flags (the character you play: what it holds, what to do next; links jump into Quests).
   var popMode = 'slides';
-  try { if (localStorage.getItem('wp:pop:mode') === 'quests' && QUESTS.length) popMode = 'quests'; } catch (e) {}
+  try {
+    var _savedMode = localStorage.getItem('wp:pop:mode');
+    if ((_savedMode === 'quests' || _savedMode === 'flags') && QUESTS.length) popMode = _savedMode;
+  } catch (e) {}
   var qIdx = 0;
   try {
     var savedQ = localStorage.getItem('wp:pop:quest');
@@ -434,6 +486,13 @@
   })();
   encPick.addEventListener('change', function(){
     var v = encPick.value;
+    if (popMode === 'flags') {   // the picker is the character here: '' follows the one being played
+      _flagsPick = v;
+      try { localStorage.setItem('wp:pop:flagchar', v); } catch (e) {}
+      _flags = null; _flagsKey = '';
+      renderFlags(); pollFlags();
+      return;
+    }
     if (popMode === 'quests') {
       var qi = QUESTS.findIndex(function(e){ return e.q.key === v; });
       if (qi >= 0) { qIdx = qi; qScreen = 'card'; renderSlide(); }
@@ -606,7 +665,7 @@
   function currentEnc(){ var s = SLIDES[idx]; return s && s.enc; }
 
   async function pollObjectives(){
-    if (popMode === 'quests') return;   // Quests mode has no shared checklist to poll
+    if (popMode !== 'slides') return;   // Quests and Flags have no shared checklist to poll
     var enc = currentEnc();
     if (!enc || !enc.tracker || !enc.tracker.length) return;
     try {
@@ -1030,6 +1089,7 @@
   // One big tap block: a <button> (a locked overlay is click-through; the preload arms every button).
   function qBlockHtml(nav, key, title, small, color, cur, cls){
     return '<button type="button" class="qblock' + (cls ? ' ' + cls : '') + (cur ? ' cur' : '') + '" data-nav="' + esc(nav) + '" data-key="' + esc(key) + '"'
+      + (nav === 'quest' ? ' data-step="' + esc(key) + '"' : '')
       + (color ? ' style="border-left-color:' + esc(color) + '"' : '') + '>'
       + '<span class="qbt">' + esc(title) + '</span>' + (small ? '<span class="qbs">' + esc(small) + '</span>' : '') + '</button>';
   }
@@ -1077,6 +1137,234 @@
   }
   // ── /PoP quests — renderers ────────────────────────────────────────────────
 
+  // ── PoP flags — renderers ──────────────────────────────────────────────────
+  // The Flags mode (the guild lead, 2026-10-27). Pure string builders over the body of the agent's GET /api/pop-status,
+  // which is the bot's `pop` stream for one character (utils/popStatus.js: KEYS, no prose) — test/pop-overlay-flags.test.js
+  // runs this block as it stands, after the quest renderers it borrows (qChip, qSay, qWhere, questStops, qDetails).
+  //  · Every words-and-places line is the guide's: the quest a key links to is looked up in pop-quests.js and its own
+  //    phrase, NPC and /map are shown. Nothing is made up here; a key with no quest is shown as plain text with no link.
+  //  · Keys become links through `A` (pop-quests.js `anchors`, generated from the same web files the bot's engine is):
+  //    a server step, a Seer pending memory, a catalog flag → a quest key; a chart zone → a plane. `Q` is quest by key.
+  //  · A link is a <button class="fgo" data-go="step:KEY|PHRASE"> (the preload arms every button, so a locked overlay
+  //    still takes the click); the chips are the Quests mode's own and carry data-wp-interact.
+  var F_LINE_STATE = { done: 'done', next: 'to do', blocked: 'waiting' };
+  // Any key the engine uses → the quest key it lands on, or '' (no link).
+  function fQuestKey(A, Q, key){
+    if (!key) return '';
+    if (Q[key]) return key;
+    var a = A || {}, v = (a.stage || {})[key] || (a.checklist || {})[key] || (a.flag || {})[key] || '';
+    return Q[v] ? v : '';
+  }
+  function fPlaneKey(A, zone){ return ((A || {}).zone || {})[zone] || ''; }
+  function fGo(label, go, title){
+    return '<button type="button" class="fgo" data-go="' + esc(go) + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(label) + ' →</button>';
+  }
+  // The step-link for a key: a button when it resolves; '' when it does not. `phrase` rings the row that says it.
+  // `phrase` null = ring the row of the first words the step says; '' = ring the card's header only.
+  function fStepLink(A, Q, key, label, phrase){
+    var k = fQuestKey(A, Q, key);
+    if (!k) return '';
+    if (phrase == null) { var st = fStop(Q[k]); phrase = st && st.says.length ? st.says[0].text : ''; }
+    return fGo(label || ('Step: ' + Q[k].title), 'step:' + k + (phrase ? '|' + phrase : ''), Q[k].title);
+  }
+  // The first stop of a quest worth showing: the place with words, with those words. A step with a seq and no says
+  // (the guide keeps its order in the seq) gives the first words it has there.
+  function fStop(q){
+    var stops = questStops(q);
+    var pick = null;
+    stops.forEach(function(s){ if (!pick && s.says.length) pick = s; });
+    if (pick) return pick;
+    var said = [];
+    (q.seq || []).forEach(function(a){ if (a.kind === 'say' && said.length < 2) said.push({ to: a.to, text: a.text, sit: !!a.sit }); });
+    if (said.length) {
+      var at = null;
+      (q.where || []).forEach(function(w){ if (!at && qNorm(w.npc) === qNorm(said[0].to)) at = w; });
+      return { at: at || (q.where && q.where[0]) || null, label: said[0].to, says: said, quiet: false };
+    }
+    return stops[0] || null;
+  }
+  function fAgo(ms){
+    if (ms == null) return '';
+    var s = Math.round(ms / 1000);
+    return 'read ' + (s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago');
+  }
+  // The words and the place for a quest, as the Quests mode draws them (the same chips).
+  function fWhereSay(q){
+    var st = fStop(q);
+    if (!st) return '';
+    var h = '<div class="qrow">' + (st.at ? qWhere(st.at) : '<span class="qwho">' + esc(st.label) + '</span>') + '</div>';
+    if (st.says.length) h += '<div class="qrow">' + st.says.slice(0, 2).map(qSay).join(' ') + '</div>';
+    return h;
+  }
+  function fNextHtml(S, A, Q){
+    var top = (S.top || []);
+    if (!top.length) {
+      return '<div class="panel fnext"><div class="ph">▶ Next</div><div class="fstate">'
+        + (S.steps && S.steps.done >= S.steps.total ? 'Every flag step is done.' : 'No line has a step you can do right now: see what each one waits on below.') + '</div></div>';
+    }
+    var t = top[0], line = null, step = null;
+    (S.next || []).forEach(function(l){ if (l.line === t.line) { line = l; (l.steps || []).forEach(function(s){ if (s.key === t.step) step = s; }); } });
+    var q = Q[t.step];
+    var h = '<div class="panel fnext"><div class="ph">▶ Next' + (line ? ' <span class="ct">' + esc(line.label) + '</span>' : '')
+      + (step && step.must ? '<span class="act qtag must" title="Needed for the flags that follow">★ must</span>' : '') + '</div>'
+      + '<div class="ft">' + esc((step && step.title) || (q && q.title) || t.step) + '</div>';
+    if (q) h += fWhereSay(q);
+    var more = line ? Math.max(0, (line.total || 0) - (line.done || 0) - 1) : 0;   // steps left on the line, after this one
+    h += '<div class="qrow">' + (q ? fStepLink(A, Q, t.step, null, null) : '')
+      + (more ? ' <span class="qk">then ' + more + ' more on this line</span>' : '') + '</div></div>';
+    return h;
+  }
+  // The other lines with something to do now, one row each, and a fold for the rest (waiting / done).
+  function fLinesHtml(S, A, Q){
+    var top = (S.top || []), first = top[0] ? top[0].line : '';
+    var rows = [], rest = [];
+    (S.next || []).forEach(function(l){
+      if (l.line === first) return;
+      var s = (l.steps || [])[0];
+      var link = s ? fStepLink(A, Q, s.key, 'Step', null) : '';
+      if (l.state === 'next') {
+        rows.push('<div class="qrow"><span class="qwho">' + esc(l.short) + '</span> <span>' + esc(s ? s.title : '') + '</span> ' + link + '</div>');
+        return;
+      }
+      var waits = l.state === 'blocked' && (l.blocked_on || []).length
+        ? ' <span class="qk">needs</span> ' + (l.blocked_on || []).map(function(b){ return fStepLink(A, Q, b.flag, b.label, null) || esc(b.label); }).join(' ') : '';
+      rest.push('<div class="qrow"><span class="qwho">' + esc(l.short) + '</span> <span class="qk">' + esc(F_LINE_STATE[l.state] || l.state) + ' · '
+        + (l.done || 0) + '/' + (l.total || 0) + '</span>' + waits + '</div>');
+    });
+    var h = '';
+    if (rows.length) h += '<div class="panel fnext"><div class="ph">▷ Also open <span class="ct">' + rows.length + '</span></div>' + rows.join('') + '</div>';
+    if (rest.length) h += qDetails('flags|lines', 'The other lines · ' + rest.length, rest.join(''));
+    return h;
+  }
+  // The Seer's pending memories: a kill is logged, the memory is not unlocked yet.
+  function fPendingHtml(S, A, Q){
+    var list = S.pending || [];
+    if (!list.length) return '';
+    var seerQ = Q[(A || {}).seer], unlock = null;
+    if (seerQ) (seerQ.says || []).forEach(function(s){ if (!unlock && /unlock my memories/i.test(s.text)) unlock = s; });
+    var seer = (unlock ? qSay(unlock) + ' ' : '') + fStepLink(A, Q, (A || {}).seer, 'Seer step', unlock ? unlock.text : '');
+    var h = '<div class="panel fpend"><div class="ph">◐ Pending memories <span class="ct">' + list.length + '</span></div>';
+    list.forEach(function(p){
+      var firstQ = Q[fQuestKey(A, Q, p.step)];
+      h += '<div class="fpi"><div class="fpt"><b>◐</b> ' + esc(p.label) + ' <span class="qk">kill logged, memory not unlocked</span></div>';
+      if (p.state === 'ready') {
+        h += '<div class="qrow"><span class="qk">Ready: sit at the Seer and say</span> ' + seer + '</div>';
+      } else {
+        h += '<div class="qrow"><span class="qk">Do first</span> <span>' + esc(firstQ ? firstQ.title : p.text) + '</span></div>';
+        if (firstQ) h += fWhereSay(firstQ);
+        // That step can itself be shut (Maelin reads the Zek notes only with the cipher): say what it waits on, and what
+        // each of those waits on, as links.
+        if ((p.waits_on || []).length) {
+          h += '<div class="qrow"><span class="qk">Blocked by</span> ' + p.waits_on.map(function(w){
+            return (fStepLink(A, Q, w.flag, w.label, null) || esc(w.label))
+              + ((w.via || []).length ? ' <span class="qk">which needs</span> ' + w.via.map(function(v){ return fStepLink(A, Q, v.flag, v.label, null) || esc(v.label); }).join(' ') : '');
+          }).join(' ') + '</div>';
+        }
+        h += '<div class="qrow">' + (firstQ ? fStepLink(A, Q, p.step, 'Step', null) + ' ' : '') + '<span class="qk">then sit at the Seer</span> ' + seer + '</div>';
+      }
+      h += '</div>';
+    });
+    return h + '</div>';
+  }
+  var F_MARK = { done: '✓', part: '◐', none: '✗' };
+  var F_STATE_WORD = { done: 'done', part: 'part way', none: 'not started' };
+  // Every plane of the chart, by tier: done / part / not started, each a jump to that plane's step list.
+  function fTiersHtml(S, A, Q){
+    var zones = S.zones || [];
+    if (!zones.length) return '';
+    var tiers = {}, order = [];
+    zones.forEach(function(z){ if (!tiers[z.tier]) { tiers[z.tier] = []; order.push(z.tier); } tiers[z.tier].push(z); });
+    order.sort(function(a, b){ return a - b; });
+    var h = '<div class="panel ftiers"><div class="ph">☑ Flags by tier <span class="fsr">✓ done · ◐ part · ✗ not started</span></div>';
+    order.forEach(function(t){
+      h += '<div class="ftier"><span class="ftn">T' + esc(t) + '</span><span class="fchips">'
+        + tiers[t].map(function(z){
+            var label = F_MARK[z.state] + ' ' + z.short + (z.state === 'part' ? ' ' + z.done + '/' + z.total : '');
+            var title = z.name + ': ' + (F_STATE_WORD[z.state] || '') + (z.total ? ' (' + z.done + ' of ' + z.total + ' steps)' : '')
+              + (z.open ? '' : ' · shut: needs ' + (z.missing || []).join(', '));
+            var cls = 'fgo fchip st-' + esc(z.state) + (z.open ? '' : ' lock');
+            var plane = fPlaneKey(A, z.key);
+            return plane
+              ? '<button type="button" class="' + cls + '" data-go="plane:' + esc(plane) + '" title="' + esc(title) + '">' + esc(label) + '</button>'
+              : '<span class="' + cls + '" title="' + esc(title) + '">' + esc(label) + '</span>';
+          }).join('')
+        + '</span></div>';
+    });
+    return h + '</div>';
+  }
+  // Doors and keys the server has not opened for her yet.
+  function fDoorsHtml(S, A, Q){
+    var shut = (S.doors || []).filter(function(d){ return !d.held; });
+    if (!shut.length) return '';
+    var h = '<div class="panel fdoors"><div class="ph">🔒 Doors and keys <span class="ct">' + shut.length + '</span></div>';
+    shut.forEach(function(d){
+      h += '<div class="qrow"><span class="fl">Locked</span> <span class="qwho">' + esc(d.label) + '</span>'
+        + (d.note ? ' <span class="qk">' + esc(d.note) + '</span>' : '') + ' ' + fStepLink(A, Q, d.step, 'Door step', null) + '</div>';
+    });
+    return h + '</div>';
+  }
+  function fStateHtml(state, name){
+    var say = {
+      offline: 'Mimic is not linked to the guild yet. Link it in Settings and your flags show here.',
+      old_bot: 'Flags need the newer bot. The guild\'s bot has not been updated for this yet; Slides and Quests work as they always did.',
+      loading: 'Reading your flags…',
+      no_character: 'Log in to a character and its flags show here.',
+      unlinked: esc(name) + ' is not linked to your Discord on wolfpack.quest, so the bot will not say what it holds. Link it there, then come back.',
+      error: 'The bot could not read the flags just now. Trying again.',
+      agent: 'Mimic\'s agent is not answering. It restarts on its own; this fills in when it is back.',
+    }[state] || 'No flags to show.';
+    return '<div class="panel fnext"><div class="ph">⚑ Flags</div><div class="fstate">' + say + '</div></div>';
+  }
+  // The Capture-now row: the dashboard's own rescan of the log (POST /api/local/pop-rescan), from here.
+  function fCaptureHtml(name, cap){
+    var note = cap && cap.note ? esc(cap.note) : (name ? 'reads ' + esc(name) + '\'s last 14 days of log · same scan as the dashboard' : 'needs a character');
+    return '<div class="panel ftiers"><div class="fcapr"><button type="button" class="fcap" id="flagsCapture"' + ((cap && cap.busy) || !name ? ' disabled' : '') + '>📥 Capture now</button>'
+      + '<span class="qk" id="flagsCapNote">' + note + '</span></div></div>';
+  }
+  // The whole mode. `B` is the agent's /api/pop-status body (or null when the agent did not answer).
+  // ctx: { A, Q, ageText, cap }.
+  function flagsHtml(B, ctx){
+    var A = ctx.A || {}, Q = ctx.Q || {};
+    var name = B ? (B.character || B.active || '') : '';
+    if (!B) return fStateHtml('agent', '');
+    if (B.state !== 'ok' || !B.status) return fStateHtml(B.state, name) + (B.state === 'offline' || B.state === 'old_bot' ? '' : fCaptureHtml(name, ctx.cap));
+    var S = B.status, pct = S.steps && S.steps.total ? Math.round(100 * S.steps.done / S.steps.total) : 0;
+    return '<div class="fhead"><span class="fname" title="' + esc(S.character) + '">' + esc(S.character) + '</span>'
+      + '<span class="fbar"><i style="width:' + pct + '%"></i></span>'
+      + '<span class="fprog">' + esc(S.steps.done) + '/' + esc(S.steps.total) + ' steps</span>'
+      + '<span class="fage" id="flagsAge">' + esc(ctx.ageText || '') + '</span></div>'
+      + '<div id="panels">'
+      + fNextHtml(S, A, Q) + fPendingHtml(S, A, Q) + fTiersHtml(S, A, Q) + fDoorsHtml(S, A, Q)
+      + fLinesHtml(S, A, Q) + fCaptureHtml(S.character, ctx.cap)
+      + '</div>';
+  }
+  // Mini: the character and the next step, one tap to its card.
+  function flagsMiniHtml(B, ctx){
+    var A = ctx.A || {}, Q = ctx.Q || {};
+    var S = B && B.state === 'ok' ? B.status : null;
+    if (!S) return '<div class="mini-ttl"><span class="wp-mini-name">Flags · ' + esc(B && (B.character || B.active) || '…') + '</span></div><div class="empty">' + (B && B.state === 'old_bot' ? 'Flags need the newer bot' : 'no flags yet') + '</div>';
+    var t = (S.top || [])[0];
+    var q = t && Q[t.step];
+    return '<div class="mini-ttl"><span class="wp-mini-name">Flags · ' + esc(S.character) + ' · ' + esc(S.steps.done) + '/' + esc(S.steps.total) + '</span></div>'
+      + (q ? '<div class="qnext fgo-mini" data-wp-interact data-go="step:' + esc(t.step) + '" title="Open this step">next · ' + esc(q.title) + '</div>'
+           : '<div class="empty">nothing to do right now</div>');
+  }
+  // The picker in Flags mode: follow the character being played, or fix one.
+  function flagsPickHtml(B, pick){
+    var chars = (B && B.characters) || [];
+    var h = '<option value="">Playing now' + (B && B.active ? ' · ' + esc(B.active) : '') + '</option>';
+    chars.forEach(function(c){ h += '<option value="' + esc(c) + '"' + (c === pick ? ' selected' : '') + '>' + esc(c) + '</option>'; });
+    if (pick && chars.indexOf(pick) < 0) h += '<option value="' + esc(pick) + '" selected>' + esc(pick) + '</option>';
+    return h;
+  }
+  // "← My flags": shown above a step or a plane's list you jumped to from Flags.
+  function flagsBackHtml(back){
+    if (!back) return '';
+    return '<div class="fback"><button type="button" class="fgo" data-go="flags" title="Back to your flags">← My flags</button>'
+      + '<span>came from ' + esc(back.from || 'Flags') + (back.character ? ' · ' + esc(back.character) : '') + '</span></div>';
+  }
+  // ── /PoP flags — renderers ─────────────────────────────────────────────────
+
   // ── Slide renderer ──────────────────────────────────────────────────────────
   function renderSlide(){
     // Every navigation, mode flip and mini flip comes through here: set the layout it needs (fixed or
@@ -1085,6 +1373,7 @@
     applyFs();
     document.getElementById('content').scrollTop = 0;
     if (popMode === 'quests') { renderQuest(); paintNav(); return; }
+    if (popMode === 'flags') { renderFlags(); paintNav(); pollFlags(); return; }
     paintNav();
     var s = SLIDES[idx]; if (!s) return;
     var sec = s.sec, enc = s.enc;
@@ -1260,11 +1549,12 @@
     if (qScreen !== 'card') {
       if (qScreen === 'eras') content.innerHTML = qErasHtml(QIDX, pl ? pl.era : '');
       else if (qScreen === 'planes') content.innerHTML = qPlanesHtml(QIDX, qEra, pl ? pl.key : '');
-      else content.innerHTML = qListHtml(QIDX, QUESTS, qPlane, qIdx);
+      else content.innerHTML = flagsBackHtml(_back) + qListHtml(QIDX, QUESTS, qPlane, qIdx);
       _fit();
       return;
     }
-    content.innerHTML = '<div class="enc-hdr">'
+    // data-step: the key the Flags links land on (popGoto rings it, or the row inside it that says the phrase).
+    content.innerHTML = flagsBackHtml(_back) + '<div class="enc-hdr" data-step="' + esc(q.key) + '">'
       +   '<span class="pos">' + (pl ? pl.idxs.indexOf(qIdx) + 1 : qIdx + 1) + '/' + (pl ? pl.idxs.length : QUESTS.length) + '</span>'
       +   (pl ? qCrumb(QIDX, pl.era, pl.key) : '')
       +   '<div class="nm">' + esc(q.title) + '</div>'
@@ -1275,6 +1565,7 @@
       +   (e.sec.blurb ? qDetails('sec|' + e.sec.key, 'About this section', '<div class="callout">' + esc(e.sec.blurb) + '</div>') : '')
       + '</div>';
     _fit();
+    popRing();
   }
 
   // Copy for the /say, /sit and /map chips (the pattern mobinfo.html uses). Clipboard first, the
@@ -1301,6 +1592,10 @@
       setTimeout(function(){ chip.classList.remove('ok'); chip.textContent = chip.getAttribute('data-copy') || ''; }, 1200);
       return;
     }
+    // Flags mode: a blue → button jumps into Quests (or back); Capture now reads the log.
+    var go = t.closest('[data-go]');
+    if (go) { popGoto(go.getAttribute('data-go'), fFrom(go)); return; }
+    if (t.closest('#flagsCapture')) { flagsCapture(); return; }
     // A drill-down block: an era opens its planes, a plane its steps, a step its card.
     var blk = t.closest('.qblock');
     if (blk) {
@@ -1328,20 +1623,154 @@
     if (!_isFixed()) _fit();
   }, true);
 
+  // ── Flags mode: the character you play, from the agent (GET /api/pop-status, the bot's `pop` stream) ──────────
+  // The overlay asks the LOCAL agent every 3 s; that costs the bot nothing (the agent asks the bot every five minutes and
+  // again ~2 s after its own flag upload lands). The page redraws only when the answer changed (its age is its own span),
+  // so the card does not flicker or lose its scroll. test/pop-overlay-flags.test.js drives all of this on a fake page.
+  var _flags = null;          // the last /api/pop-status body, or null (agent not answering / not asked yet)
+  var _flagsKey = '';         // that body without its age: the change gate
+  var _flagsAt = 0;           // when the agent last answered
+  var _flagsPick = '';        // '' = whoever is being played
+  try { _flagsPick = localStorage.getItem('wp:pop:flagchar') || ''; } catch (e) {}
+  var _flagsAge = null;       // the body's age_ms at _flagsAt
+  var _cap = { busy: false, note: '' };
+  var _back = null;           // { from, character } while the step you are on was jumped to from Flags
+  var _ring = '', _ringSay = '', _keepScreen = false;
+  function flagsCtx(){ return { A: QDB.anchors || {}, Q: QBY, ageText: fAgo(_flagsAge), cap: _cap }; }
+  function renderFlags(){
+    var content = document.getElementById('content');
+    var keep = content.scrollTop;
+    var mini = document.body.classList.contains('wp-mini');
+    content.innerHTML = mini ? flagsMiniHtml(_flags, flagsCtx()) : flagsHtml(_flags, flagsCtx());
+    var pickHtml = flagsPickHtml(_flags, _flagsPick);
+    if (encPick.innerHTML !== pickHtml) encPick.innerHTML = pickHtml;
+    encPick.value = _flagsPick;
+    content.scrollTop = keep;
+    _fit();
+  }
+  function flagsApply(body){
+    var gate = '';
+    if (body) { var c = {}; Object.keys(body).forEach(function(k){ if (k !== 'age_ms') c[k] = body[k]; }); gate = JSON.stringify(c); }
+    _flagsAt = Date.now(); _flagsAge = body ? body.age_ms : null;
+    var age = document.getElementById('flagsAge');
+    if (gate === _flagsKey && _flags !== null) { if (age) age.textContent = fAgo(_flagsAge); return; }
+    _flags = body; _flagsKey = gate;
+    if (popMode === 'flags') renderFlags();
+  }
+  async function pollFlags(){
+    if (popMode !== 'flags') return;
+    var conn = document.getElementById('conn');
+    try {
+      var r = await fetch('http://127.0.0.1:' + PORT + '/api/pop-status' + (_flagsPick ? '?character=' + encodeURIComponent(_flagsPick) : ''), { cache: 'no-store' });
+      var s = await r.json();
+      if (conn) { conn.className = 'conn ok'; conn.textContent = '●'; }
+      flagsApply(s && typeof s === 'object' ? s : null);
+    } catch (e) {
+      if (conn) { conn.className = 'conn bad'; conn.textContent = '○'; }
+      flagsApply(null);
+    }
+    if (_cap.busy) pollCapture();
+  }
+  // Capture now: the dashboard's own rescan of the log for this character (agent 4.0.26+). One at a time, the agent says
+  // so (409). Progress is read back from its status route while it runs; the flags it finds reach the bot, which tells the
+  // agent, which shows them here within a few seconds.
+  function _capSay(note, busy){ _cap.note = note; _cap.busy = !!busy; var n = document.getElementById('flagsCapNote'), b = document.getElementById('flagsCapture'); if (n) n.textContent = note; if (b) b.disabled = !!busy; }
+  async function flagsCapture(){
+    var name = _flags && (_flags.character || _flags.active);
+    if (!name || _cap.busy) return;
+    _capSay('starting…', true);
+    try {
+      var r = await fetch('http://127.0.0.1:' + PORT + '/api/local/pop-rescan', {
+        method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ character: name, days: 14 }),
+      });
+      var j = await r.json().catch(function(){ return {}; });
+      if (r.status === 202 || (r.ok && j && j.started)) { _capSay('reading ' + name + '\'s log…', true); return; }
+      _capSay((j && j.error) ? j.error : 'could not start', false);
+    } catch (e) { _capSay('agent offline', false); }
+  }
+  async function pollCapture(){
+    try {
+      var r = await fetch('http://127.0.0.1:' + PORT + '/api/local/pop-rescan/status', { cache: 'no-store' });
+      var j = await r.json();
+      var run = j && j.run;
+      if (j && j.running) { _capSay('reading ' + (run && run.character ? run.character + '\'s ' : '') + 'log…', true); return; }
+      if (run && run.state === 'error') { _capSay('failed: ' + (run.error || 'could not read the log'), false); return; }
+      _capSay('done: ' + ((run && run.found) || 0) + ' flag line(s) read; new flags show here in a moment', false);
+    } catch (e) { _capSay('agent offline', false); }
+  }
+  // Where a jump started, for the "← My flags" chip ("came from Next · Brackwyn").
+  function fFrom(el){
+    var p = el && el.closest ? el.closest('.panel') : null, c = p && p.classList;
+    if (c && c.contains('fpend')) return 'Pending memories';
+    if (c && c.contains('ftiers')) return 'Flags by tier';
+    if (c && c.contains('fdoors')) return 'Doors and keys';
+    if (c && c.contains('fnext')) return 'Next';
+    return 'Flags';
+  }
+  // The jump. go = 'step:KEY[|PHRASE]' (a quest's card; PHRASE = the row to ring), 'plane:KEY' (that plane's step list), or
+  // 'flags' (back). A key the overlay does not know does nothing: a link is only drawn for one it knows.
+  function popGoto(go, from){
+    var s = String(go || ''), bar = s.indexOf('|'), phrase = bar >= 0 ? s.slice(bar + 1) : '';
+    if (bar >= 0) s = s.slice(0, bar);
+    var colon = s.indexOf(':'), kind = colon >= 0 ? s.slice(0, colon) : s, key = colon >= 0 ? s.slice(colon + 1) : '';
+    if (kind === 'flags') { _back = null; popMode = 'flags'; applyMode(); return; }
+    var char = _flags && (_flags.character || _flags.active) || '';
+    if (kind === 'step') {
+      var qi = QUESTS.findIndex(function(e){ return e.q.key === key; });
+      if (qi < 0) return;
+      qIdx = qi; qScreen = 'card'; _ring = key; _ringSay = phrase;
+    } else if (kind === 'plane') {
+      if (!QIDX.planes[key]) return;
+      qPlane = key; qEra = QIDX.planes[key].era; qScreen = 'list'; _ring = ''; _ringSay = '';
+    } else return;
+    _back = { from: from || 'Flags', character: char };
+    popMode = 'quests'; _keepScreen = true;
+    applyMode();
+  }
+  // Rings the step you jumped to (the row that says the phrase, else the card's header) for two seconds and scrolls it
+  // into view. No animation: an outline that appears and goes.
+  function popRing(){
+    var key = _ring, say = _ringSay;
+    _ring = ''; _ringSay = '';
+    if (!key) return;
+    var box = document.getElementById('content'), el = null;
+    try {
+      if (say && box.querySelectorAll) {
+        var chips = box.querySelectorAll('.qcopy.say');
+        for (var i = 0; i < chips.length && !el; i++) {
+          if (chips[i].getAttribute('data-copy') === '/say ' + say) el = chips[i].closest('.qs, .qstop');
+        }
+      }
+      if (!el && box.querySelector) el = box.querySelector('[data-step="' + String(key).replace(/["\\]/g, '') + '"]');
+    } catch (e) { el = null; }
+    if (!el) return;
+    try { el.scrollIntoView({ block: 'center' }); } catch (e) {}
+    el.classList.add('ringed');
+    setTimeout(function(){ el.classList.remove('ringed'); }, 2000);
+  }
+
   var modeSlidesBtn = document.getElementById('modeSlides');
   var modeQuestsBtn = document.getElementById('modeQuests');
+  var modeFlagsBtn = document.getElementById('modeFlags');
   function applyMode(){
-    var q = popMode === 'quests';
-    if (q) qScreen = 'card';   // Quests opens on the step you left, not on a block screen
-    modeSlidesBtn.classList.toggle('on', !q);
+    var q = popMode === 'quests', f = popMode === 'flags';
+    if (q && !_keepScreen) qScreen = 'card';   // Quests opens on the step you left, not on a block screen
+    _keepScreen = false;
+    if (!q && !f) { _back = null; _ring = ''; }
+    modeSlidesBtn.classList.toggle('on', !q && !f);
     modeQuestsBtn.classList.toggle('on', q);
+    modeFlagsBtn.classList.toggle('on', f);
     document.body.classList.toggle('quests', q);
-    encPick.innerHTML = q ? _questPickHtml : _slidePickHtml;
-    try { localStorage.setItem('wp:pop:mode', q ? 'quests' : 'slides'); } catch (e) {}
+    document.body.classList.toggle('flags', f);
+    encPick.innerHTML = f ? flagsPickHtml(_flags, _flagsPick) : (q ? _questPickHtml : _slidePickHtml);
+    if (f) encPick.value = _flagsPick;
+    try { localStorage.setItem('wp:pop:mode', f ? 'flags' : (q ? 'quests' : 'slides')); } catch (e) {}
     renderSlide();
   }
+  // (A "← My flags" chip belongs to a jump: Slides, which applyMode clears it for, is how it goes away; Flags is where it leads.)
   modeSlidesBtn.addEventListener('click', function(){ if (popMode !== 'slides') { popMode = 'slides'; applyMode(); } });
   modeQuestsBtn.addEventListener('click', function(){ if (popMode !== 'quests' && QUESTS.length) { popMode = 'quests'; applyMode(); } });
+  modeFlagsBtn.addEventListener('click', function(){ if (popMode !== 'flags' && QUESTS.length) { popMode = 'flags'; applyMode(); } });
   if (!QUESTS.length) document.getElementById('modeSeg').style.display = 'none';
 
   applyFramed();
@@ -1350,6 +1779,7 @@
   // ends in _fit(), so the window re-measures after the new content is in.
   window.addEventListener('wp-mini-change', renderSlide);
   setInterval(pollObjectives, 3000);
+  setInterval(pollFlags, 3000);
 </script>
 </body>
 </html>
