@@ -7108,3 +7108,17 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   compass's canvas letters. ⏳ Not seen in a live game: a heading-up Map over a moving EverQuest scene in Full mode; the first thing to
   check is whether a 90 ms chase feels steady at the pipe's sample rate. ⏳ Fit zone/group/raid in Heading up fits the box turned at the
   moment you press it; it does not keep refitting as you turn.
+- 🧪 **FB-100: Respawns opens into its spots; left click pulses, right click focuses (Mimic beta, 2026-10-27; no agent or bot change).** The
+  report: *"The respawns (6) needs to be expandable to show the actual spots. Clicking on the top-level should highlight the spawns that are
+  down"*; the guild lead then: *"LEFT CLICK PULSE, RIGHT CLICK MAP FOCUS."* The top line of the side list is now a control: **left click**
+  rings out from every spot that is down on the map (a steady ring plus one ringing out each second for 3 seconds, in the timer's colour;
+  a toast says how many spots are off the visible map), **right click** zooms the Map to all of them (never closer than 2.5 px a unit; Follow
+  me lets go unless it is locked). A **▸ spots** button on that line (shown only when a row is folded, e.g. "a blood raven ×4") lists every
+  spot under its row, soonest first, each as `spot #id` with its own time and its `(y, x)` under it; **left click a spot** pulses that spot, **right
+  click** centres the Map on it, keeping the zoom. Open or folded is remembered (`wp-map-resp-open`). The folded rows are unchanged
+  (click centres on the soonest; right-click still switches that spot off or on). The pop-out sends its clicks to the Map window over the
+  existing `map-centre` channel (an `{ act, ids }` object; no new IPC, main.js and the preload untouched). Heading up: the focus fits the
+  turned box. ⏳ "Down" means every spot on the Respawns list, in any timer state (waiting, window open, past its window); ★ Watched spots
+  are listed in their own section and are not part of it. ⏳ The spot rows give the right-click to "focus", so the off/on switch on a
+  single spot is on its dot and its folded row, not on the expanded spot row; say if that should move. ⏳ A pulsed spot outside the Spawn
+  height range is shown for the three seconds, then hidden again. Test: `test/map-respawns-expand.test.js` (mutation-checked, 17 mutants).

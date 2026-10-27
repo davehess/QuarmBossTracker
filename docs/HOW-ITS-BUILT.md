@@ -5603,6 +5603,9 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   other 4xx drop it; 500 events max, nothing older than the bot's 24 h; kept in `map_sync_outbox.json` beside `map_timers.json`, resumed at start.
   Bot half: `POST /api/agent/map-sync` stores through `insertIgnoreDuplicates` against `map_spawn_events_dedup_idx` (guild, zone, point, kind,
   spawn id, `at`, reporting character), so a resend is stored once (bot 4.0.17). Tests: `test/map-sync-outbox.test.js`, `test/map-sync-dedup.test.js`.
+- **Respawns list: expand, pulse, focus** (FB-100, 2026-10-27, Mimic beta, `map.html` `renderSide`): the top line `Respawns (N)` is a control
+  (left = `mapAct('pulse')` → `S.pulse` drawn by `drawPulse`, right = `mapAct('focus')` → `focusView`); its `▸ spots` button lists every spot a
+  folded row hides (`spotRows`, `S.respOpen`). The pop-out reaches the Map window through `mapCentreOn({ act, ids })`. Test: `test/map-respawns-expand.test.js`.
 - **Map: Heading up and the compass** (2026-10-27, Mimic beta, `map.html`): `cfg.orient` (`north` | `heading`, toolbar `#orientBtn`, ⚙ → Map up)
   sets `S.view.rot` every frame (`updateRot` → `rotStep` → `headingRot`); `wpt` / `projectPx` / `unprojectPx` / `screenToServer` / `unturnPx`
   carry it, `headingVec(h, rot)` turns the arrows and slices, `drawCompass` draws the rose and/or edge letters (`cfg.compass`, `cardinalSpots`,

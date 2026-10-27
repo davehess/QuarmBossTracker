@@ -1709,7 +1709,7 @@ describe('pather routes', () => {
     expect(H.brewallLayer([0], 0, 5)).toBeNull();
     expect(H.namedNpc({ npcs: [{ name: 'a_rat', chance: 90 }, { name: 'Boss', named: true, chance: 10 }] }).name).toBe('Boss');
     const js = stripJs(MAP_HTML);
-    expect(js).toMatch(/if \(!inLevelRange\(p0\.z, sz, srange\) && String\(p0\.id\) !== tgtPid\) continue;/);
+    expect(js).toMatch(/if \(!inLevelRange\(p0\.z, sz, srange\) && String\(p0\.id\) !== tgtPid && !\(S\.pulse && S\.pulse\.ids\[String\(p0\.id\)\]\)\) continue;/);   // (and a spot being pulsed, FB-100)
     expect(js).toMatch(/col: conCol\(un\) \|\| CO\.upLabel/);
     expect(js).toMatch(/var layerCol = C\.wallMode === 'layers' \? brewallLayer\(S\.prep\.bands, b, sz\) : null;/);
   });

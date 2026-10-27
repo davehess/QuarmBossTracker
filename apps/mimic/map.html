@@ -134,6 +134,14 @@
   .trow .kill:hover{color:#ffd866;border-color:#f0b429}
   .sec.watch{color:#f0b429}
   .sec.engaged{color:#f0883e}
+  /* Respawns (FB-100): the top line is itself a control (left click pulses the spots that are down, right click zooms to them),
+     with a ▸ button that lists the actual spots under it. */
+  .sec.resp{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px}
+  .sec.resp:hover{color:#c9d1d9}
+  .sec.resp .more{background:rgba(22,27,34,.9);color:#8b949e;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;
+    font-size:9px;padding:0 5px;cursor:pointer;text-transform:none;letter-spacing:0}
+  .sec.resp .more:hover{color:#e6edf3;border-color:#58a6ff}
+  .trow.sub{margin-left:10px;border-left-width:2px;padding-top:1px;padding-bottom:1px}
   .kite{font-size:11px;color:#8b949e;padding:0 2px 4px}
   .trow.engaged{border-left-color:#f0883e;cursor:default} .trow.engaged .tm{color:#f0883e}
   .trow.watch .nm{font-weight:bold}
@@ -579,11 +587,46 @@
     var groups = [], byKey = {};
     (timers || []).forEach(function (t) {
       var name = t.name || 'spawn', st = timerState(t, now), key = name + '|' + st, g = byKey[key];
-      if (!g) { g = byKey[key] = { name: name, state: st, n: 0, soonest: t }; groups.push(g); }
-      g.n++;
+      if (!g) { g = byKey[key] = { name: name, state: st, n: 0, soonest: t, timers: [] }; groups.push(g); }
+      g.n++; g.timers.push(t);
       if (t.earliest < g.soonest.earliest) g.soonest = t;
     });
     return groups.sort(function (a, b) { return a.soonest.earliest - b.soonest.earliest; });
+  }
+  // The actual spots behind a group ("A blood raven ×4" -> 4 rows), soonest first, each with its spot's point; a timer whose
+  // point the zone data does not know is left out (there is nowhere to pulse or centre on). `timers` are one group's timers.
+  function spotRows(timers, byId) {
+    var rows = [];
+    (timers || []).forEach(function (t) {
+      var p = byId && byId[String(t.point_id)];
+      if (p) rows.push({ pid: String(t.point_id), p: p, t: t });
+    });
+    return rows.sort(function (a, b) { return a.t.earliest - b.t.earliest || Number(a.pid) - Number(b.pid); });
+  }
+  // FB-100 (the guild lead, 2026-10-27: "LEFT CLICK PULSE, RIGHT CLICK MAP FOCUS"). A pulse is a ring that rings out from each
+  // spot for PULSE_MS: `ids` is the set of point ids, `t0` when it began. null once it is over.
+  var PULSE_MS = 3000, PULSE_RING_MS = 1000, PULSE_MAX_SCALE = 2.5;
+  function pulseAt(pulse, now) {
+    if (!pulse || !(now - pulse.t0 < PULSE_MS) || now < pulse.t0) return null;
+    var phase = ((now - pulse.t0) % PULSE_RING_MS) / PULSE_RING_MS;
+    return { phase: phase, fade: 1 - (now - pulse.t0) / PULSE_MS };   // the ring's growth, and the whole pulse dying away
+  }
+  // The box round some points (server frame), or null for none.
+  function pointsBox(pts) {
+    var b = null;
+    (pts || []).forEach(function (p) {
+      if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
+      if (!b) b = { minX: p.x, maxX: p.x, minY: p.y, maxY: p.y };
+      else { b.minX = Math.min(b.minX, p.x); b.maxX = Math.max(b.maxX, p.x); b.minY = Math.min(b.minY, p.y); b.maxY = Math.max(b.maxY, p.y); }
+    });
+    return b;
+  }
+  // The view that shows all of a box: fitView, but never zoomed in past PULSE_MAX_SCALE (two spots a few units apart should not
+  // fill the screen with two dots). `rot` is the heading-up turn.
+  function focusView(b, w, h, rot) {
+    var v = fitView(b, w, h, rot);
+    v.scale = Math.max(0.02, Math.min(v.scale, PULSE_MAX_SCALE));
+    return v;
   }
   function prettyNpc(n) { return String(n && n.name || '').replace(/_/g, ' ').replace(/^[#!~]+/, ''); }
   // The mob a spot can be watched for: its named / raid-target npc, or null (a spot of ordinary mobs has nothing to snipe).
@@ -1723,10 +1766,12 @@
     local: null, localVer: null, walls: 'auto', labels: 'all',   // the player's own map files (prepLocal), the version held, Walls: Auto|Ours only, Labels all|targets|off
     followOff: { x: 0, y: 0 }, followLock: false, followWho: 'me', pointTrails: {}, kills: 0, killSeen: {},   // Follow me's screen spot + lock; killed mobs' paths (see noteKills)
     src: 'direct', smooth: 'light', direct: null, sampleAt: 0, sampleSrc: '',   // beta tuning knobs + the latest pushed positions
+    pulse: null, respOpen: false,   // FB-100: the spots being pulsed ({ ids, t0 }), and Respawns listing its spots (saved: wp-map-resp-open)
   };
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, String(v)); } catch (e) {} }
   try { var sv = parseFloat(localStorage.getItem('wp-map-scale')); if (sv > 0.02 && sv < 20) S.view.scale = sv; } catch (e) {}
+  S.respOpen = lsGet('wp-map-resp-open') === '1';
   (function () {
     var lv = parseInt(lsGet('wp-map-levels'), 10), fm = lsGet('wp-map-fit'), sr = lsGet('wp-map-src'), sm = lsGet('wp-map-smooth');
     if (lv >= 0 && lv < LEVEL_STEPS.length) S.levels = lv;
@@ -1907,7 +1952,7 @@
   }
   // Where to draw a reported thing right now: its glide, or the reported spot when it has no track.
   function drawn(key, m, now) { var tr = S.trk[key]; return tr ? trackAt(tr, now) : m; }
-  function anyMoving(now) { for (var k in S.trk) if (trackMoving(S.trk[k], now)) return true; return rotSettling(now); }
+  function anyMoving(now) { for (var k in S.trk) if (trackMoving(S.trk[k], now)) return true; return rotSettling(now) || !!pulseAt(S.pulse, now); }
   // Animation: a frame loop that runs only while something is gliding (no idle CPU), at most ~30 frames a second.
   var raf = 0, lastFrame = 0, lastHits = 0;
   var FRAME_MS = 33, HITS_MS = 200, lastAge = 0;
@@ -2726,7 +2771,7 @@
     for (var k = 0; k < S.points.length; k++) {
       var p0 = S.points[k], xy0 = wpt(p0.x, p0.y);
       if (xy0[0] < -30 || xy0[0] > w + 30 || xy0[1] < -30 || xy0[1] > h + 30) continue;
-      if (!inLevelRange(p0.z, sz, srange) && String(p0.id) !== tgtPid) continue;   // outside the Spawns slider: hidden (dot, route and click target)
+      if (!inLevelRange(p0.z, sz, srange) && String(p0.id) !== tgtPid && !(S.pulse && S.pulse.ids[String(p0.id)])) continue;   // outside the Spawns slider: hidden (dot, route and click target), unless it is being pulsed (FB-100)
       vis.push({ p: p0, x: xy0[0], y: xy0[1] });
     }
     // Spawn points hidden (•) hides the route markers with them, all but your target's own route (the guild lead,
@@ -2805,6 +2850,7 @@
       else if (kind.named && SH.bosses) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: conCol(namedNpc(p)) || (kind.raid ? CO.raidLabel : CO.bossLabel), tier: kind.raid ? 0 : 1, align: 'left', font: fontBoss });
     }
     ctx.globalAlpha = 1;
+    drawPulse(vis, rt, ringOf, I);
     // Traps (the guild lead, 2026-10-23: "maps should show traps as well"; see trapHex): the trigger circle faint underneath,
     // then a △ in the type's colour with the first letter of the named it can bring up ("!" when there is none). Spots follow
     // the Spawn height slider like the dots; an undetectable trap-table trap is drawn hollow with a dashed edge, because it
@@ -3098,6 +3144,25 @@
     if (!kiteDots && kiteDotTimer) { clearInterval(kiteDotTimer); kiteDotTimer = null; }
   }
   var flashTimer = null;
+
+  // ── The pulse (FB-100): a steady ring and a ring that rings out from each pulsed spot, in the spot's timer colour ──
+  // `vis` is the frame's visible points ({ p, x, y }); a spot off screen simply is not in it (the toast said so). Once the pulse is
+  // over the state is dropped, and anyMoving() has stopped asking for frames.
+  function drawPulse(vis, rt, ringOf, I) {
+    if (!S.pulse) return;
+    var k = pulseAt(S.pulse, rt);
+    if (!k) { S.pulse = null; return; }
+    for (var i = 0; i < vis.length; i++) {
+      var pid = String(vis[i].p.id);
+      if (!S.pulse.ids[pid]) continue;
+      var t = S.timerBy[pid], col = t ? (ringOf[timerState(t, nowMs())] || '#ffd866') : '#ffffff';
+      var base = 6.5 * I.dot + 3.5;   // (a spot that just became possible has no ring colour of its own: the flash yellow)
+      ctx.lineWidth = 2.4; ctx.strokeStyle = col;
+      ctx.globalAlpha = 0.5 + 0.5 * k.fade; ctx.beginPath(); ctx.arc(vis[i].x, vis[i].y, base, 0, 6.2832); ctx.stroke();
+      ctx.globalAlpha = (1 - k.phase) * k.fade; ctx.beginPath(); ctx.arc(vis[i].x, vis[i].y, base + 4 + k.phase * 26, 0, 6.2832); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
 
   // ── The compass (the guild lead, 2026-10-27: "make sure we're showing the cardinality on the map") ──
   // On in both orientations. North up it stands still; heading up it turns with the picture, so N is always where north is.
@@ -3424,9 +3489,26 @@
       });
     }
     var timers = ((P && P.timers) || []).filter(function (t) { return !S.watchBy[String(t.point_id)]; });
-    box.appendChild(el('div', 'sec', 'Respawns (' + timers.length + ')'));
+    var groups = mergeTimers(timers, now), folded = groups.some(function (g) { return g.n > 1; });
+    // FB-100 (the guild lead, 2026-10-26: "The respawns (6) needs to be expandable to show the actual spots. Clicking on the
+    // top-level should highlight the spawns that are down"; then "LEFT CLICK PULSE, RIGHT CLICK MAP FOCUS"). The top line: left click
+    // pulses every spot that is down, right click zooms the map to them; the ▸ button lists the spots a folded row hides.
+    var downIds = timers.map(function (t) { return String(t.point_id); }).filter(function (id) { return !!S.byId[id]; });
+    var head = el('div', 'sec resp', 'Respawns (' + timers.length + ')'); head.setAttribute('data-wp-interact', '');
+    head.title = 'Click: pulse every spot that is down on the map. Right-click: zoom the map to them.' + (folded ? ' The ▸ button lists the spots a folded row hides.' : '');
+    head.addEventListener('click', function () { sendAct('pulse', downIds); });
+    head.addEventListener('contextmenu', function (e) { e.preventDefault(); e.stopPropagation(); sendAct('focus', downIds); });
+    if (folded) {
+      var more = el('button', 'more', (S.respOpen ? '▾' : '▸') + ' spots'); more.type = 'button'; more.setAttribute('data-wp-interact', '');
+      more.title = S.respOpen ? 'Fold the spots back into one row each' : 'List every spot that is down, under its row';
+      more.addEventListener('click', function (e) { e.stopPropagation(); S.respOpen = !S.respOpen; lsSet('wp-map-resp-open', S.respOpen ? 1 : 0); renderSide(); });
+      more.addEventListener('contextmenu', function (e) { e.stopPropagation(); });   // (the button is not the top line's right-click)
+      head.appendChild(more);
+    }
+    box.appendChild(head);
     // Same name and same state fold into one row, spoken for by the soonest ("A blood raven ×4"); a click centres on that one.
-    mergeTimers(timers, now).forEach(function (g) {
+    // Open (▾ spots): every spot behind a folded row is listed under it, one row each.
+    groups.forEach(function (g) {
       var t = g.soonest;
       var r = el('div', 'trow ' + g.state); r.setAttribute('data-wp-interact', '');
       r.appendChild(el('span', 'nm', g.name + (g.n > 1 ? ' ×' + g.n : ''))); r.appendChild(el('span', 'tm', timerText(t, now)));
@@ -3434,6 +3516,16 @@
       r.addEventListener('click', function () { centreOn(S.byId[String(t.point_id)]); });
       rowToggle(r, function () { toggleSpawn(t.point_id, g.name); });   // the soonest of a folded row, the one the row speaks for
       box.appendChild(r);
+      if (g.n > 1 && S.respOpen) spotRows(g.timers, S.byId).forEach(function (s) {
+        var sr = el('div', 'trow sub ' + g.state); sr.setAttribute('data-wp-interact', '');
+        sr.title = 'Click: pulse this spot on the map. Right-click: centre the map on it.';
+        // (the folded row above already says what it is: the name here would only repeat, and truncate, in a narrow list)
+        sr.appendChild(el('span', 'nm', 'spot #' + s.pid)); sr.appendChild(el('span', 'tm', timerText(s.t, now)));
+        sr.appendChild(el('span', 'src', '(' + locText(s.p.x, s.p.y) + ')' + (s.t.source === 'marked' ? ' · marked' : '') + (s.t.by ? ' · by ' + s.t.by : '')));
+        sr.addEventListener('click', function () { sendAct('pulse', [s.pid]); });
+        sr.addEventListener('contextmenu', function (e) { e.preventDefault(); e.stopPropagation(); sendAct('focus', [s.pid]); });
+        box.appendChild(sr);
+      });
     });
     if (!timers.length && !wrows.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot (right-click a dot to switch it off and on)')).id = 'empty';
     // a seen mob already listed under Engaged (the agent flags it) is not listed twice
@@ -3494,6 +3586,37 @@
     if (S.followLock && fs0) S.followOff = followOffNow(fs0, S.view, S.w, S.h);   // locked: keep following
     else { S.follow = false; syncFollowBtn(); }
     renderMap();
+  }
+  // FB-100: what the Respawns list does to the map. 'pulse' rings out from the spots for PULSE_MS (colour = the timer's state); 'focus'
+  // zooms to them (one spot: centres, as a click on a row always did). The pop-out has no map, so it sends the order to the Map window
+  // over the same channel as centring (main.js 'map-centre' passes any value through).
+  function mapAct(act, pids) {
+    var pts = (pids || []).map(function (id) { return S.byId[String(id)]; }).filter(Boolean);
+    if (!pts.length) return;
+    if (act === 'focus') {
+      if (pts.length === 1) { centreOn(pts[0]); return; }
+      var fv = focusView(pointsBox(pts), S.w, S.h, S.view.rot);
+      S.view.cx = fv.cx; S.view.cy = fv.cy; S.view.scale = fv.scale;
+      var fs1 = followSubject(Date.now());
+      if (S.followLock && fs1) S.followOff = followOffNow(fs1, S.view, S.w, S.h);
+      else { S.follow = false; syncFollowBtn(); }
+      renderMap();
+      return;
+    }
+    var ids = {}, off = 0;
+    pts.forEach(function (p) {
+      ids[String(p.id)] = true;
+      var q = wpt(p.x, p.y);
+      if (q[0] < 0 || q[0] > S.w || q[1] < 0 || q[1] > S.h) off++;
+    });
+    S.pulse = { ids: ids, t0: Date.now() };
+    toast('Pulsing ' + pts.length + (pts.length === 1 ? ' spot' : ' spots that are down') + (off ? ' · ' + off + ' off the map: right-click to zoom to ' + (pts.length === 1 ? 'it' : 'them') : ''));
+    renderMap(); kickAnim();
+  }
+  function sendAct(act, pids) {
+    if (!(pids || []).length) return;
+    if (PART_TIMERS) { try { window.mimic.mapCentreOn({ act: act, ids: pids }); } catch (e) {} return; }
+    mapAct(act, pids);
   }
 
   function message() {
@@ -3846,7 +3969,11 @@
   sideBtn.addEventListener('contextmenu', function (e) { e.preventDefault(); popTimers(!S.popped); });
   window.mimic && window.mimic.onMapTimersPopped && window.mimic.onMapTimersPopped(function (on) { setPopped(on, false); });
   window.mimic && window.mimic.getMapTimersPopped && window.mimic.getMapTimersPopped().then(function (on) { setPopped(on, true); }).catch(function () {});
-  window.mimic && window.mimic.onMapCentre && window.mimic.onMapCentre(function (id) { if (!PART_TIMERS) centreOn(S.byId[String(id)]); });
+  window.mimic && window.mimic.onMapCentre && window.mimic.onMapCentre(function (id) {
+    if (PART_TIMERS) return;
+    if (id && typeof id === 'object') mapAct(id.act, id.ids);   // the pop-out's pulse / focus (FB-100)
+    else centreOn(S.byId[String(id)]);
+  });
   sideBtn.addEventListener('click', function () {
     if (S.popped) { popTimers(false); return; }   // out in its own window: the button brings it back
     var before = slotOpen();
