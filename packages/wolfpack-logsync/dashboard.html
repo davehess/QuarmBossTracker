@@ -4844,8 +4844,11 @@ function wpPcCtlHtml() {
   return h;
 }
 function wpPcSummary(r) {
-  if (!r.logs) return 'Could not read any log.';
-  var parts = ['read ' + wpRbNum(r.logs) + (r.logs === 1 ? ' log' : ' logs'), wpRbNum(r.found) + (r.found === 1 ? ' flag line' : ' flag lines') + ' found'];
+  if (!r.logs && !r.exports) return 'Could not read any log.';
+  var parts = [];
+  if (r.logs) parts.push('read ' + wpRbNum(r.logs) + (r.logs === 1 ? ' log' : ' logs'));
+  if (r.exports) parts.push('read ' + wpRbNum(r.exports) + (r.exports === 1 ? ' saved PoP flags file' : ' saved PoP flags files'));
+  parts.push(wpRbNum(r.found) + (r.found === 1 ? ' flag line' : ' flag lines') + ' found');
   parts.push(r.upload ? (r.sent ? 'uploaded' : 'nothing new to upload') : 'not uploaded (' + (r.why || 'local mode / paused') + ')');
   return parts.join(' · ');
 }
@@ -4875,7 +4878,7 @@ function wpPcRepaint() {
   if (!document.getElementById('wpPcCtl')) {
     el.innerHTML = '<h2>📥 Capture latest PoP flags, Seer and Maelin messages</h2>'
       + '<div class="subtle">Reads the last few days of the EverQuest logs on this PC for the Planes of Power flag lines: the Seer\'s recital, the flag grants with the NPC line that names them (Maelin\'s included), '
-      + 'and the server\'s #popflags output. Only the flag steps they prove are sent to the guild, the same as Sync from my logs on the website. '
+      + 'and the server\'s #popflags output, including the newest PoP flags file Zeal saved next to the log (Export data on /camp, or /outputfile popflags), whatever its age. Only the flag steps they prove are sent to the guild, the same as Sync from my logs on the website. '
       + 'It runs here in the background and waits while a fight is on. Chat, tells and officer channels are not read into it, and characters you keep out of stats are skipped.</div>'
       + '<div id="wpPcCtl"></div><div id="wpPcProg"></div>';
     el._wpLastHtml = null;
