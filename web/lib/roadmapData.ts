@@ -37,6 +37,29 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-5-2026-10-27',
+    title: 'Raid Mimic 3.0.5',
+    version: 'Mimic 3.0.5 · Agent 4.0.30 · Web 2.1.57 · Bot 4.0.23',
+    date: '2026-10-27',
+    headline: 'Your Planes of Power flags in the PoP overlay with the next step to take, a map that turns with you, and overlays that stay where you put them.',
+    features: [
+      { name: 'Flags in the PoP overlay', blurb: 'A Flags tab next to Slides and Quests shows the character you are playing: the next step you can actually do (who, where, the words to say), pending memories and what each one is waiting on, every plane done or not, and the doors and keys. Each line jumps to that step in Quests.' },
+      { name: 'Mimic reads #popflags and the Seer', blurb: 'Type #popflags 1 through #popflags 5, or have the Seer recite, and Mimic records your flags from the log. A Capture button on the dashboard re-reads the last two weeks of a character\'s logs for flag, Seer and Maelin lines.' },
+      { name: 'Heading-up map', blurb: 'The Map can turn with you so the way you face is up. A compass with a red north needle is always on screen, and ⚙ Compass adds N, E, S, W at the edges.' },
+      { name: 'Kite circles', blurb: 'Your circle shows where it is drifting to. Other raiders\' circles age out and can be filtered to your speed or near you, and a groupmate\'s circle shows while they are still forming it.' },
+      { name: 'Respawns you can open', blurb: 'The Respawns count opens into its spots. Left click pulses the spawns that are down; right click moves the map to them.' },
+      { name: 'Overlays stay put', blurb: '💾 Save current layout now keeps where every overlay sits and how big it is, and ↩ Restore saved layout (tray or Overlays tab) puts them back. A monitor that was asleep at launch no longer resets them.' },
+      { name: 'Summon first', blurb: 'In Target Info a mob\'s Summon leads its abilities in solid red, then Enrage, Rampage and Flurry.' },
+      { name: 'Spawn timers through a bot restart', blurb: 'Kills you mark on the map while the bot is restarting are kept and sent when it is back, so the guild still sees them.' },
+      { name: 'On the website', blurb: 'Raid maps drawn from the full zone map with lettered markers; a raid session splits overlapping raids and lists every named fight and wipe; parse pages name almost every class and fit the damage chart to the fight; add to wishlist from any item; the gear finder counts quest and crafted gear and your real stat caps.' },
+    ],
+    fixes: [
+      'The Charm tracker showed no time left on buffs after a re-charm while Target Info had them. It times them now.',
+      'Your own death ("You have been slain by …") is recorded, and raid-list names count as players for deaths.',
+      'Loading a saved overlay set no longer doubles its size.',
+    ],
+  },
+  {
     key: 'maelin-needs-cipher-2026-10-27',
     title: 'Web 2.1.56',
     version: 'Web 2.1.56 · Bot 4.0.23',
@@ -67,7 +90,6 @@ export const releases: Release[] = [
     title: 'Web 2.1.52',
     version: 'Web 2.1.52',
     date: '2026-10-26',
-    channel: 'beta',
     headline: 'The gear upgrade finder now counts quest and crafted gear, and scores a stat only up to the point where the game stops counting it.',
     features: [
       { name: 'Quest and crafted gear', blurb: 'Pieces you earn from an NPC or make with a tradeskill (like Ton Po\'s Chestwraps of Composure) are suggested now, with the quest giver and zone, or the recipe, what goes in it and which bag.' },
@@ -98,7 +120,6 @@ export const releases: Release[] = [
     title: 'Web 2.1.50',
     version: 'Web 2.1.50',
     date: '2026-10-26',
-    channel: 'beta',
     headline: 'You can put an item on your wishlist from the item page and from the raid night plan, not only from the gear upgrades page.',
     features: [
       { name: 'Add to wishlist on the item page', blurb: 'Open any item and there is a Wishlist box. Pick which of your characters it is for, a priority and, if you like, a sealed pre-bid. It starts on your main.' },
@@ -124,7 +145,6 @@ export const releases: Release[] = [
     title: 'Web 2.1.46',
     version: 'Web 2.1.46 · Bot 4.0.18',
     date: '2026-10-26',
-    channel: 'beta',
     headline: 'On the gear upgrades page you can put an upgrade on your wishlist and set a sealed pre-bid without leaving the page.',
     features: [
       { name: 'Add to wishlist', blurb: 'Under every upgrade there is an Add to wishlist button. Pick a priority (1 is top BIS, 10 is nice to have) and, if you like, a pre-bid in DKP. It is the same wishlist /wishlist add fills in Discord.' },
@@ -151,7 +171,6 @@ export const releases: Release[] = [
     title: 'Web 2.1.42',
     version: 'Web 2.1.42',
     date: '2026-10-26',
-    channel: 'beta',
     headline: 'Mimic\'s "On this PC" pages get a /me button like the website, and item cards on the inventory page show up whole, with their icons.',
     features: [
       { name: '/me in Mimic', blurb: 'The "On this PC" window now starts with a /me button, set up like the one on wolfpack.quest. It lists your inventory, fights and replay, and says where to turn a character\'s inventory sync or hiding on and off, with a button that takes you there.' },
