@@ -7158,3 +7158,11 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   per-sample fitting). `kiteCoach.js` `mateLabel` / `mateFormed`; test `test/map-kite-mates.test.js` (mutation-checked, 10 mutants). ⏳ Not seen
   on a real kite: the coach was tuned on synthetic circles and a member's group-window position arrives at the pipe's rate, so how soon the first
   lap is recognised in a live game is the thing to look at; a member out of range of your client has no position and so no circle.
+
+### 🧾 2026-10-27 — Wolf Pack Zeal: the suggested Zeal build (fork pipeline live; Mimic option on beta, agent 4.0.32; DECISIONS §455)
+- **Fork** (github.com/davehess/Zeal, `main` `907bf34`): `.github/workflows/build-wolfpack.yml` rebuilds the latest official
+  release + `wolfpack/approved.txt` (commit-pinned) daily, on a push to `wolfpack/`, or by hand, into the rolling
+  prerelease `wolfpack-beta`. First build `wolfpack-1-6a3ee20`, run green on the first try.
+- **Mimic beta `56b30547`**: Settings → Zeal → Wolf Pack; checked against the live release (tag derives to
+  `wolfpack-1-6a3ee20`). Tests `test/zeal-source.test.js`, `test/crash-build-tag.test.js`.
+- ⏳ Not run in game yet; no stable channel yet; Quarm staff not asked. Runbook `docs/upstream/WOLFPACK-ZEAL.md`.
