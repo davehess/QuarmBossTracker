@@ -153,7 +153,9 @@ describe('the wiring in the agent (index.js)', () => {
   });
   it('the agent version moved with it', () => {
     const v = JSON.parse(fs.readFileSync(path.join(ROOT, 'packages', 'wolfpack-logsync', 'package.json'), 'utf8')).version;
-    expect(v).toBe('4.0.28');
+    // "At least": a later agent patch must not break this (it pinned '4.0.28' exactly, and FB-102's 4.0.29 tripped it).
+    const n = v.split('.').map(Number);
+    expect(n[0] * 1e6 + n[1] * 1e3 + n[2]).toBeGreaterThanOrEqual(4 * 1e6 + 0 * 1e3 + 28);
   });
 });
 

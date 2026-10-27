@@ -3826,6 +3826,30 @@ function petBuffsForOwner(ownerLower) {
         total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: now, good: _spellGood(b.name), fell_off: fellOff });
     }
   }
+  // FB-102: a buff the pet's own /pet health report names but our landings do not time shows "(?)" on the Charm
+  // tracker while Mob Info, which keys the same landing by the mob's name, counts it down. The gap is the
+  // charm land: a re-charm we cannot PROVE is the same spawn (no spawn id on the pipe) clears this owner's
+  // landings, and the pre-charm sweep only carries the last 60 s. The report is the pet itself saying the buff is
+  // on it NOW, so the name-keyed landing's timer is borrowed for it. Never for a landing the id proves is
+  // another spawn's, never one that has worn off or run out (the chip stays untimed rather than "fell off").
+  const _untimed = [...byName.values()].some(v => v.remaining_secs == null);
+  if (_untimed && typeof targetBuffsFor === 'function') {
+    let petKey = String(_petNameForOwner(ownerLower) || _lastPetByOwner.get(ownerLower) || '').toLowerCase();
+    if (!petKey && typeof _charmTickTracker !== 'undefined') {
+      for (const [ck, ci] of _charmTickTracker) {
+        if (ci && ci.is_active && ci.owner && String(ci.owner).toLowerCase() === ownerLower) { petKey = ck; break; }
+      }
+    }
+    if (petKey) {
+      for (const t of targetBuffsFor(petKey, _petIdForOwner(ownerLower))) {
+        const cur = byName.get(String(t.name || '').toLowerCase());
+        if (!cur || cur.remaining_secs != null || t.fell_off || !(t.remaining_secs > 0)) continue;
+        cur.remaining_secs = t.remaining_secs;
+        cur.total_secs = t.total_secs;
+        cur.observed_at_ms = now;
+      }
+    }
+  }
   return Array.from(byName.values());
 }
 
@@ -66975,7 +66999,7 @@ module.exports = {
   _petBuffLandings, _npcCasterLevelFor, _npcCastStarts, _charmMobId,
   // Your own timers pause while you are logged out (2026-10-13) — exported for test/own-timers-pause.test.js.
   _lastLineMs, _lastPetByOwner, _lastPetIdByOwner, _lastPetZoneByOwner, _ownFrozenAt, _resumeOwnTimers, _noteOwnRawLine,
-  _ownTimersPayload, _ownRestoreOnFirstSight, _loadPetStateFromDisk, petBuffsForOwner, targetBuffsFor,
+  _ownTimersPayload, _ownRestoreOnFirstSight, _loadPetStateFromDisk, petBuffsForOwner, targetBuffsFor, applyPetHealthLine, _petHealthByOwner,
   _resetOwnRestoreForTest: () => { _ownRestoreTried.clear(); _ownRestoreInflight.clear(); },
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,

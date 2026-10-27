@@ -6991,6 +6991,19 @@ step's card and list block. Boss slides are not linked (v1). `wp:pop:mode` accep
 untouched); a beta push touching `apps/mimic/**` or the agent builds the next `-beta.N`. ⏳ Needs the bot half (bot 4.0.23, `main`) first; until then Flags shows "need the newer bot".
 Tests: `test/pop-overlay-flags.test.js`, `test/pop-overlay-links.test.js`, `test/pop-status-agent.test.js` (fixture `test/fixtures/pop-status-brackwyn.json`, the same file the bot's tests pin).
 
+### 🧾 2026-10-27 — FB-102: the Charm tracker times the buffs the pet reports (agent 4.0.29, DRAFT on `draft/fb-102-104`, for `beta`)
+A beta tester (Mimic 3.0.5-beta.8): "Charm Tracker is missing timeframes despite target info having the data." The report's own 30-minute log, replayed through the real agent
+functions with a simulated clock, ends with a `/pet health` block naming Pacify, Visions of Grandeur and Boon of the Garou on a mob that had been re-charmed after a break. Mob Info
+(landings keyed by the mob's NAME) counted all three down; the Charm tracker (keyed by the OWNER, `petBuffsForOwner`) showed each as "(?)". Cause: `_bumpCharmTick` clears the owner's
+landings on a re-charm it cannot prove is the same spawn (`sameMobAgain` needs two spawn ids; the 2026-10-13 rule, pinned by `test/charm-keeps-buffs.test.js`), and the pre-charm sweep
+(`_captureTargetBuffsOnCharm`) only carries the last 60 s, so a buff cast minutes earlier was gone from the pet side while still on the mob. **Fix** (`petBuffsForOwner`, end of function):
+a buff the pet's own report names, with no owner-side timer, takes its timer from the name-keyed landing (`targetBuffsFor(petKey, petId)`). Never when the spawn id proves the landing is another
+mob's, never one that has worn off or run out (the chip stays untimed, not "fell off"), never a buff the pet did not report. The "same name cannot be ruled out" clear is unchanged.
+⚠ **Which surface the report meant is a guess**: the screenshot is in the private bucket, and "timeframes" was read as the buff chips' countdowns on the full Charm card (the one place the
+log shows Mob Info and the Charm tracker disagreeing); the charm duration bar itself was timed (420 s) in every land of the replay. Tests: `test/charm-pet-health-timers.test.js`
+(mutation-checked: the two positive cases and the spawn-id guard each fail without their line). `applyPetHealthLine` and `_petHealthByOwner` are now exported for it.
+`test/pop-status-agent.test.js` pinned the agent version to exactly 4.0.28; it now asks for "at least".
+
 ### 🧾 2026-10-26 — Soft Reserve per raid, web half: `/raid/sr` + `/admin/soft-reserve` (web 2.1.55, main; [beta] tag; DECISIONS §448)
 The guild lead picked a Soft Reserve per raid and then said "your picks": a member reserves drops for the ONE character their sign-up brings (a main's pick
 does not carry to an alt; `bringingFrom`), up to `per_person` (default 5) and optionally `per_boss`; picks lock at the start / a set time / the first `/loot`
