@@ -6978,6 +6978,26 @@ into step keys and uploads them as pop_flag events with `source: 'popflags'` (se
 change, `_handleAgentPopFlags` + `popFlagStages.POPFLAGS_KEYS`, a closed vocabulary) stores them as `pop_flags` rows with source `popflags`. ⏳ Ship the bot
 BEFORE the agent. Test: `test/pop-flags-live-bot.test.js`.
 
+### 🧾 2026-10-27 — FB-101: overlays keep their place and size; 💾 Save current layout keeps them; ↩ Restore saved layout (agent 4.0.30, beta; reaches the 3.0.4 stable fleet only with the next stable cut; the XL / M presets on the trigger window are still open)
+A member on stable 3.0.4: *"The overlays do not save when the windows are set up to one's liking and then manually saved in the interface. Instead, when mimic exits, the
+overlays are in different positions. The trigger window … snaps back to a smaller size. XL, M … doesn't work. … reload a save from the overlays window to bring back the last saved position."*
+**Beta has no earlier fix:** `apps/mimic/main.js` is byte-identical between the v3.0.4 stable and beta 3.0.5 (only the PoP overlay and `setupBundle.js` differ), so a stable cut is needed to deliver any of this.
+**Causes found in the source (nothing could be run on a device):**
+1. 💾 Save current layout (`_captureCharProfile`) kept ONLY which overlays are on. Positions, sizes, scale and heights were never in it (the dashboard tile said "saves which overlays are on now").
+2. `_resolveBounds` dropped a saved spot whenever `_screenSignature()` differed from the one of the LAST write, although `cfg.overlayLayoutBySig` remembers every setup's layout. A launch with a
+   monitor asleep or not yet up (Mimic autostarts at login) put every window on its default. Windows are rebuilt on every EverQuest start (`_reapDisabledOverlays`), so it bites often.
+3. The height a window is dragged to (`<key>Floor`, what stops the trigger window shrinking to its content) was `{ h, sig }`: valid on one setup only. Same launch, same loss: the window fits to its content again.
+4. Loading an overlay set grew or shrank every window by (set's scale ÷ current scale) a second time: `applyAllOverlayOpacities` → `applyOverlayScale` ran after the rects were set. A set made at 1.5 loaded at 1.0 came out 675×450 instead of 450×300 (reproduced in the test). Sets also carried no floors and no grow-up choice.
+**Changed:** `_resolveBounds` falls back to `overlayLayoutBySig[current setup].rects[key]` for a window being BUILT (nothing already on screen moves, so "Screens changing never moves an overlay without a yes" holds);
+the floor keeps the latest few other setups' heights (`{ h, sig, by }`, `_floorFor` / `_floorWith`, old shape still read); an overlay set now holds `floors`, and `overlayGrowUp` is one of its look keys; loading a set puts each placed window's
+zoom to the set's scale with its bounds untouched (`_applyScaleInPlace`). **New:** 💾 Save current layout also writes the overlay set "Saved layout" (`_saveLayoutSnapshot`: positions, sizes, look, floors); **↩ Restore saved layout** on the tray
+(`_charProfileTrayItems`) and on the Overlays tab (`#wpLayoutRestore`, bridge `layoutRestore` → IPC `layout-restore`) both call `_restoreSavedLayout`, which loads that set through `_applyOverlaySet` (so a snapshot from another
+screen setup lands by the §80a side rules, and a hide-all steps aside). Restore needs no active character. A character change still applies visibility only (`_applyCharProfile` untouched): two clients open flip the active character as you alt-tab. A layout saved before this change has no snapshot: Restore says to save once.
+⏳ **Not found, needs a device:** why XL / M "don't work" on the trigger window. `overlay-resize-preset` sets the width and keeps x / y / height, and the fit holds the new width (`_fitHeldWidth`); the trigger window's default is 600 wide, so M (320) and XL (500) only ever narrow it.
+Suspects, unconfirmed: Electron on Windows pins a LOCKED (non-resizable) window's min = max to whatever `setBounds` last set (the FB-38 note), which also makes `_startWindowResizeUp` (`win.getMinimumSize()`) unable to shrink a locked grow-up window. If a report still says presets do nothing, the agent log
+needs a read-back of `getBounds().width` after the preset. Open pick for the guild lead: whether 💾 should stay one button for both (this draft) or split into "Save layout" (positions) and "Save overlays on/off".
+Tests: `test/overlay-layout-restore.test.js` (new); `test/overlay-sets.test.js`, `test/overlays-tab-option-c.test.js` and `test/pop-status-agent.test.js` adjusted (a look key, a slice anchor, a version floor instead of an exact version).
+
 ### 🧾 2026-10-27 — PoP Flags mode, Mimic half: agent 4.0.28 + the third segment of the PoP overlay (DRAFT on `draft/pop-flags-mimic`, for `beta`; DECISIONS §450)
 The guild lead picked "A then B": **A** is a Flags mode in `apps/mimic/popraid.html`, next to Slides and Quests, for the character being played, with links that jump into the
 Quests steps. **Agent:** asks the bot's `pop` poll stream every five minutes (and ~2 s after its own `pop_flag` upload is acknowledged), keeps the answer, serves it on

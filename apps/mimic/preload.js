@@ -1129,6 +1129,7 @@ contextBridge.exposeInMainWorld('mimic', {
   hideAllToggle:      ()     => ipcRenderer.invoke('hide-all-toggle'),
   charProfilesEnable: (on)   => ipcRenderer.invoke('char-profiles-enable', !!on),
   charProfileSave:    ()     => ipcRenderer.invoke('char-profile-save'),
+  layoutRestore:      ()     => ipcRenderer.invoke('layout-restore'),
   charProfileForget:  (name) => ipcRenderer.invoke('char-profile-forget', name),
   // Background-alpha push from main → overlay renderer. The slider value drives
   // a CSS variable (--bg-alpha) on each overlay so "100%" means an OPAQUE card

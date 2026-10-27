@@ -24,7 +24,7 @@ const ESC     = sliceBlock(html, 'function esc(s) {', ' }\n');
 const KEEP    = 'var _wpOpenDetails = {};\n' + sliceBlock(html, 'function wpKeep(key, defaultOpen) {', '\n}\n');
 const MORPH   = sliceBlock(html, 'function morphInto(el, html) {', '\n}\n');
 const RENDER  = sliceBlock(html, 'function renderOverlays(s) {', '\n}\n');
-const TILES   = sliceBlock(html, 'var _WP_CP_FLASH_MS = 2500;', "'saves which overlays are on now')) + '</span></button>';\n  return h;\n}\n");
+const TILES   = sliceBlock(html, 'var _WP_CP_FLASH_MS = 2500;', '\n  return h;\n}\n');   // through the end of _wpOvLaysHtml (the restore tile is its last line)
 const PAINT   = sliceBlock(html, 'function wpRefreshOverlayToggles() {', '\n}\n');
 const FLAG_OF = sliceBlock(PAINT, 'var flagOf = {', '};');
 const FMT     = sliceBlock(html, 'function _wpFmtAccel(a) {', '}\n');

@@ -150,10 +150,12 @@ describe('main.js: what a set holds, and where it lands', () => {
 
   it('captures which overlays are on, open windows\' spots, saved spots of closed ones on this setup only, and the look', () => {
     const capSrc = sliceBlock(main, 'function _captureOverlaySet() {', '\n  };\n}');
-    const consts = sliceBlock(main, 'const _SET_BOUNDS_KEYS = [', "const _SET_LOOK_KEYS = ['overlayOpacity', 'overlayBgAlpha', 'overlayBackdrop', 'overlayScaleByKey'];");
+    const consts = sliceBlock(main, 'const _SET_BOUNDS_KEYS = [', "'overlayScaleByKey', 'overlayGrowUp'];");
+    // The real floor reader (it is pure), so the capture is held to what the fit would read.
+    const floorFor = sliceBlock(main, 'function _floorFor(f, sig) {', '\n}\n');
     const HIDEALL = ['showDock', 'showHud', 'showTriggerOverlay', 'showCharm'];
     const run = (cfg, hidden, prev) => new Function('loadConfig', '_screenSignature', '_HIDEALL_FLAGS', '_hideAllActive', '_hideAllPrev',
-      '_overlayRectsNow', '_eqMainWindow', consts + '\n' + capSrc + '\nreturn _captureOverlaySet();')(
+      '_overlayRectsNow', '_eqMainWindow', floorFor + '\n' + consts + '\n' + capSrc + '\nreturn _captureOverlaySet();')(
       () => cfg, () => ONE, HIDEALL, hidden, prev, () => ({ hudBounds: { x: 5, y: 6, width: 7, height: 8 } }), () => null);
     const cfg = {
       showHud: true, showCharm: false,                                    // showTriggerOverlay unset = shown
@@ -161,11 +163,17 @@ describe('main.js: what a set holds, and where it lands', () => {
       petsBounds: { x: 9, y: 9, width: 9, height: 9 }, petsBoundsSig: BOTH, // another setup's spot: not this set's
       hudBounds: { x: 0, y: 0, width: 1, height: 1 }, hudBoundsSig: ONE,   // the open window wins
       overlayOpacity: { hud: 0.6 }, canvasLayouts: { '1920x1080': { panels: [] } },
+      overlayGrowUp: { trigger: false },
+      // FB-101: the heights dragged to ride with the set — the one for THIS setup, wherever it sits in the record.
+      hudBoundsFloor: { h: 140, sig: ONE },
+      charmBoundsFloor: { h: 90, sig: BOTH, by: { [ONE]: 70 } },
+      petsBoundsFloor: { h: 60, sig: ONE },                                // pets has no spot in this set: no floor either
     };
     const s = run(cfg, false, null);
+    expect(s.floors).toEqual({ hudBounds: 140, charmBounds: 70 });
     expect(s.show).toEqual({ showDock: false, showHud: true, showTriggerOverlay: true, showCharm: false });
     expect(s.rects).toEqual({ charmBounds: { x: 1, y: 2, width: 3, height: 4 }, hudBounds: { x: 5, y: 6, width: 7, height: 8 } });
-    expect(s.look).toEqual({ overlayOpacity: { hud: 0.6 } });
+    expect(s.look).toEqual({ overlayOpacity: { hud: 0.6 }, overlayGrowUp: { trigger: false } });
     expect(s.canvas).toEqual({ '1920x1080': { panels: [] } });
     expect(s.sig).toBe(ONE);
     // Hidden with the hotkey: the set is what the unhide would bring back.
