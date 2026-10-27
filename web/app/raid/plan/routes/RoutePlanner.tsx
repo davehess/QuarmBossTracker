@@ -52,6 +52,10 @@ export type RoutePlannerProps = {
   fewest: FewestKill[];
   /** The line under the Recorded nights list (the recorder's live raid nights are merged into the zone's): what it is made of and that it is capped. */
   nightsNote?: string;
+  /** `?v=floors` (beta preview): with One leg on, the map draws only the floors the current leg walks. */
+  floorFollow?: boolean;
+  /** `?v=draw` (beta preview): a Draw tool on the map toolbar: a leg's path by points or with a pen, or a stretch of it redrawn. */
+  draw?: boolean;
 };
 
 const SAVE_DELAY_MS = 1000;
@@ -139,6 +143,8 @@ export default function RoutePlanner(props: RoutePlannerProps) {
       onPreview: (on: boolean) => setPreviewing(on),
       onOptMode: (m: string) => setSkipOptional(m === 'skip'),
       legFocus: true,
+      floorFollow: !!props.floorFollow,
+      draw: !!props.draw,
       onLegFocus: (k: string | null) => setLegKey(k),
       // "Walk route": the navigation library and the zone's walkable map are fetched when it is first turned on
       navRoute: { load: () => import('@/lib/routePlanner/navLoad').then(m => m.loadNavRouter(zone)) },
@@ -236,7 +242,7 @@ export default function RoutePlanner(props: RoutePlannerProps) {
   const [delArm, setDelArm] = useState(false);
   useEffect(() => { setNameDraft(meta.name); setTargetDraft(meta.target == null ? '' : String(meta.target)); }, [meta.name, meta.target]);
 
-  const href = (id: string) => `/raid/plan/routes?zone=${zone.zone}${id === 'main' ? '' : '&plan=' + id}`;
+  const href = (id: string) => `/raid/plan/routes?zone=${zone.zone}${id === 'main' ? '' : '&plan=' + id}${props.floorFollow ? '&v=floors' : props.draw ? '&v=draw' : ''}`;
   const addPlan = async () => {
     if (st.current.dirty) await flush(false);
     const r = await createRoutePlan(zone.zone, newName || 'Off-night plan', copyFrom || null);

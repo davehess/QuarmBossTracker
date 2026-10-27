@@ -20,6 +20,7 @@ import {
   MINUTE_MS, summarizeNights, type NightMinute, type NightSummary,
 } from './raidReplay';
 import { displayMobName } from './replayBosses';
+import { isWipe } from './encounterMarks';
 import {
   applyRollOverrides, attributeLoot, mergeRollSets, rollBreakdown,
   type RollLine, type RollOverride, type RollSetRow, type LootedRow,
@@ -137,11 +138,24 @@ export function scrubMinuteData(data: string, anon: AnonMap): string {
 export type AttendeeRow = { name: string; cls: string | null; minutes: number; firstMs: number; lastMs: number };
 export type TickRow = { label: string; atMs: number | null; source: 'captured' | 'opendkp'; names: string[] };
 export type KillTop = { name: string; damage: number; dps: number | null };
+/**
+ * boss: a curated boss (bosses_local). named: the game's own "#" mark on the NPC (a named mob, curated or not: the
+ * Crypt of Decay chain is named and not curated). wipe: did not die (encounters.is_wipe / classification 'wipe').
+ * foreign: marked as another guild's fight. A wipe or a foreign fight is listed, never counted as a kill.
+ */
 export type KillRow = {
-  id: string; boss: boolean; name: string; zone: string | null;
+  id: string; boss: boolean; named: boolean; wipe: boolean; foreign: boolean; name: string; zone: string | null;
   startMs: number; endMs: number | null; durationSec: number | null;
   totalDamage: number | null; top: KillTop[];
 };
+/**
+ * The marks a fight may carry and still be listed on the review: none (ours), a wipe, or another guild's. 'live',
+ * 'pvp' and 'test' stay off it. One filter string for the list and for the one-fight parse, so a row that is listed
+ * can be opened and a row that is not listed cannot be served by id.
+ */
+export const LISTED_MARKS = 'classification.is.null,classification.in.(wipe,foreign)';
+/** The zone an NPC lives in, from its id (docs/eqemu-catalog-cheatsheet.md: eqemu_npc_types.id = zoneid * 1000 + n). */
+export const npcZoneId = (npcId: number | null | undefined): number | null => (typeof npcId === 'number' && npcId >= 1000 ? Math.floor(npcId / 1000) : null);
 export type LootEntry = {
   atMs: number | null;
   item: string;
@@ -270,6 +284,7 @@ export type EncounterIn = {
   started_at: string; ended_at: string | null;
   duration_sec: number | null; total_damage: number | null;
   zone_short: string | null;
+  classification?: string | null; is_wipe?: boolean | null;
   eqemu_npc_types: { name: string | null } | { name: string | null }[] | null;
 };
 export type PlayerIn = { encounter_id: string; character_name: string; total_damage: number | null; dps: number | null };
@@ -278,6 +293,7 @@ export const TOP_PER_KILL = 5;
 
 export function buildKills(
   encs: readonly EncounterIn[], players: readonly PlayerIn[], bossIds: ReadonlySet<number>, anon: AnonMap,
+  zoneNames: ReadonlyMap<number, string> = new Map(),
 ): KillRow[] {
   const byEnc = new Map<string, PlayerIn[]>();
   for (const p of players) {
@@ -298,8 +314,12 @@ export function buildKills(
     out.push({
       id: e.id,
       boss: e.npc_id != null && bossIds.has(e.npc_id),
+      named: String(t?.name ?? '').startsWith('#'),
+      wipe: isWipe({ classification: e.classification ?? null, is_wipe: e.is_wipe }),
+      foreign: e.classification === 'foreign',
       name: displayMobName(t?.name) || 'Unknown mob',
-      zone: e.zone_short,
+      // encounters.zone_short is NULL on new rows (find_or_create_encounter does not set it): the zone then comes from the NPC id.
+      zone: e.zone_short ?? zoneNames.get(npcZoneId(e.npc_id) ?? -1) ?? null,
       startMs: start,
       endMs: Number.isFinite(end) ? end : null,
       durationSec: e.duration_sec,

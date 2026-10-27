@@ -26,6 +26,7 @@
 .rp-root button.primary{background:var(--gold);color:#111;border-color:var(--gold);font-weight:600}
 .rp-root button.primary:hover{filter:brightness(1.08)}
 .rp-root button.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.rp-root #floorBtns button.inview{outline:2px solid var(--gold);outline-offset:-2px}
 .rp-root button.danger:hover{background:var(--red);color:#fff;border-color:var(--red)}
 .rp-root button.sm{padding:2px 7px;font-size:12px}
 .rp-root button:disabled{opacity:.45;cursor:not-allowed}
@@ -188,9 +189,15 @@
 
 /* the 3D view (Real, Floors): the 3D button sits right after Move / Add pin / Follow paths, and while the 3D view is up the
    2D map's own controls (which would move a map nobody can see) step aside. */
-.rp-root .toolbar #modeGrp{order:-2}
+.rp-root .toolbar #modeGrp,.rp-root .toolbar #drawGrp{order:-2}
+/* Draw (?v=draw): the crosshair, bends that do not catch a press meant for the pen, and the banner under the toolbar's second row and the One leg bar */
+.rp-root svg#map.drawing{cursor:crosshair}
+.rp-root svg#map.drawing.panning{cursor:grabbing}
+.rp-root svg#map.drawing #gBends{pointer-events:none}
+.rp-root .banner.draw{top:108px;width:max-content;max-width:min(90%,720px)}
 .rp-root .toolbar .grp-3d{order:-1}
 .rp-root.rp-3d #modeGrp,
+.rp-root.rp-3d #drawGrp,
 .rp-root.rp-3d #addKind,
 .rp-root.rp-3d #addTo,
 .rp-root.rp-3d .zoombar,

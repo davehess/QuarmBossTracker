@@ -93,7 +93,7 @@ const SHARED = [
   ['wp:pop:framed', 'popraid', 'framed', FLAG],
   ['wp:pop:fs', 'popraid', 'fontSize', INT(6, 40)],
   ['wp:pop:height', 'popraid', 'height', HEIGHT],
-  ['wp:pop:mode', 'popraid', 'mode', ENUM(['slides', 'quests'])],
+  ['wp:pop:mode', 'popraid', 'mode', ENUM(['slides', 'quests', 'flags'])],
   ['wpMeStyle', 'me', 'style', ENUM(['hud', 'a'])],
 ];
 const SHARED_BY_KEY = new Map(SHARED.map(r => [r[0], r]));
@@ -107,6 +107,7 @@ const PRIVATE_KEYS = new Set([
   'wp_ext_hidden',                        // mobs / names hidden by hand
   'wpCharmPetsOpen',                      // a panel's open state
   'wp:pop:enc', 'wp:pop:quest',           // where the person is in the Planes of Power
+  'wp:pop:flagchar',                      // which of their characters the Flags mode is fixed on ('' = whoever is played)
   'wp.melodyBardOnly', 'wp.melodyDmgTotals',   // mirrors of Mimic's own config, rewritten from it on every status
   'wpMeCardBounds', 'wpHudPreBuild',      // window positions
   'wp:settings:draft',                    // an unsaved Settings form

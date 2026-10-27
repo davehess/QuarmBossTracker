@@ -15,8 +15,15 @@ import NewPageTag from '@/components/NewPageTag';
 import { PLAN, PREFLAGS, RAID_DATE_LINE, TRAVEL_BASICS, bossAnchor, loc } from '@/lib/raidPlan';
 import { loadRaiders, loadHeld, type Raider } from '@/lib/raidPreflags';
 import ItemHover, { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
+import WishlistControls from '@/components/WishlistControls';
+import { ownedCharacters } from '@/lib/ownedCharacters';
+import { loadMySignup, loadNextEvent } from '@/lib/raidMeLoad';
+import { bringingFrom } from '@/lib/raidMe';
+import { loadWishView, type WishView } from '@/lib/wishlistLoad';
 import ZoneSvg from './ZoneSvg';
 import { loadWalls } from './walls';
+import { loadSavedRoute } from './savedRoute';
+import { chooseRoute, markerLetter } from '@/lib/popRaidMap';
 
 export const metadata: Metadata = {
   title: '[beta] Raid night plan',
@@ -64,6 +71,26 @@ async function loadLoot(): Promise<{ drops: Map<number, Drop[]>; cards: Record<n
   return { drops, cards };
 }
 
+/**
+ * The wishlist view for the loot lines. The default character is the one the member's sign-up for the next raid
+ * brings (raidMe.ts bringingFrom, the rule /pop/raid/me uses); with no sign-up it is their main. A failed read of
+ * the event or sign-up falls back to the main; a failed read of the wishlist hides the controls, never the page.
+ */
+async function loadRaidWish(userId: string, itemIds: number[]): Promise<WishView | null> {
+  try {
+    const owned = await ownedCharacters(userId);
+    let preferred: string | null = null;
+    try {
+      const event = await loadNextEvent();
+      const signup = event ? await loadMySignup(event.id, userId) : null;
+      preferred = bringingFrom(owned, signup)?.name ?? null;
+    } catch { /* no sign-up read: start on the main */ }
+    return await loadWishView(userId, itemIds, { preferred, owned });
+  } catch {
+    return null;
+  }
+}
+
 const pct = (n: number | null) => n == null ? '' : n >= 99.95 ? 'always' : `${Number(n.toFixed(1))}%`;
 
 const List = ({ items }: { items: string[] }) => (
@@ -77,10 +104,15 @@ export default async function RaidPlanPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/raid');
 
-  const [data, walls, loot] = await Promise.all([
+  const [data, walls, saved, loot] = await Promise.all([
     load(), Promise.all(PLAN.map(s => loadWalls(s.zone))),
+    Promise.all(PLAN.map(s => loadSavedRoute(s.zone))),
     loadLoot().catch(() => ({ drops: new Map<number, Drop[]>(), cards: {} as Record<number, ItemCard> })),
   ]);
+  // The wishlist control on each loot line: the viewer's own characters, starting on the one their sign-up brings.
+  const wish = await loadRaidWish(user.id, [...loot.drops.values()].flat().map(d => d.item_id));
+  // The route a map draws: the one an officer saved from the raid's recorded movement (or the route planner), else the plan's own.
+  const routes = PLAN.map((s, i) => chooseRoute(saved[i], s.route));
   const { raiders, held, note, unlinked, error } = data;
   const has = (name: string, key: string) => held.get(name.toLowerCase())?.has(key) ?? false;
   const missing = (key: string) => raiders.filter(r => !has(r.name, key)).map(r => r.name);
@@ -230,6 +262,13 @@ export default async function RaidPlanPage() {
                             <a href={`https://www.pqdi.cc/item/${d.item_id}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">{d.item_name}</a>
                           </ItemHover>
                           <span className="text-dim"> {pct(d.effective_chance)}</span>
+                          {wish && (
+                            <WishlistControls
+                              compact itemId={d.item_id} itemName={d.item_name} enabled={wish.enabled}
+                              characters={wish.characters} defaultCharacter={wish.defaultCharacter}
+                              states={wish.states.get(d.item_id) ?? {}}
+                            />
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -242,21 +281,30 @@ export default async function RaidPlanPage() {
               <ZoneSvg
                 walls={walls[i]}
                 markers={s.markers}
-                route={s.route}
-                altRoutes={s.altRoutes}
+                route={routes[i]}
+                altRoutes={routes[i].kind === 'planned' ? s.altRoutes : undefined}
                 patrol={s.patrol}
                 label={`Map of ${s.zoneName} with the route`}
               />
               <p className="mt-1 text-[11px] text-dim">
                 <span className="text-red">●</span> boss · <span className="text-green">◆</span> zone-in or door · <span className="text-gold">▲</span> NPC ·{' '}
-                <span className="text-orange">- - -</span> numbered route: straight legs in order, not a walking path
+                {routes[i].kind === 'walked'
+                  ? <><span className="text-orange">——</span> numbered route, {routes[i].note}</>
+                  : <><span className="text-orange">- - -</span> numbered route, {routes[i].note}: straight legs in order, not a walking path</>}
                 {s.patrol && <> · <span className="text-purple">——</span> patrol</>}
                 {walls[i] ? '' : ' · walls unavailable for this zone right now'}
               </p>
+              <ul className="mt-1 columns-2 text-[11px] text-dim">
+                {s.markers.map((m, j) => (
+                  <li key={`${m.label}${j}`} className="break-inside-avoid">
+                    <span className={m.kind === 'boss' ? 'text-red' : m.kind === 'zonein' ? 'text-green' : 'text-gold'}>{markerLetter(j)}</span> {m.label}
+                  </li>
+                ))}
+              </ul>
               <ol className="mt-1 list-decimal pl-5 text-[11px] text-dim">
-                {s.route.map((p, j) => <li key={j}>{p.label}</li>)}
+                {routes[i].stops.map((p, j) => <li key={j}>{p.label}</li>)}
               </ol>
-              {s.altRoutes?.map((rt, j) => (
+              {routes[i].kind === 'planned' && s.altRoutes?.map((rt, j) => (
                 <ol key={j} className="mt-1 list-decimal pl-5 text-[11px] text-blue">
                   {rt.map((p, k) => <li key={k}>{p.label}</li>)}
                 </ol>
@@ -274,7 +322,7 @@ export default async function RaidPlanPage() {
 
       <p className="mt-8 text-xs text-dim">
         Read from Quarm&apos;s own quest scripts and spawn tables; distances are straight-line. Anything marked (inferred) is our reading, not a script line.
-        Walls: EQEmu maps (GPLv2+, © EQEmulator.NET, AX-Classic and ProjectEQ).{' '}
+        Maps: Brewall&apos;s EverQuest maps via Zeal; where Brewall has none, EQEmu maps (GPLv2+, © EQEmulator.NET, AX-Classic and ProjectEQ).{' '}
         <Link href="/pop" className="underline hover:text-text">Back to PoP flags</Link>.
       </p>
     </div>

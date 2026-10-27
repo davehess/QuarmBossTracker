@@ -1,4 +1,4 @@
-// GET /api/raid/session/replay?from=<iso>&to=<iso>&w=<n>: one 15-minute slice of the session review's recording,
+// GET /api/raid/session/replay?from=<iso>&to=<iso>&w=<n>[&group=<id>]: one 15-minute slice of the session review's recording,
 // for the members' page (/raid/session). The twin of /api/share/raid/<token>/replay, behind a sign-in instead of
 // a token: `from`/`to` are the review's window, `w` counts 15-minute slices from its start.
 //
@@ -15,6 +15,8 @@ import { GUILD_TAG } from '@/lib/guild';
 import { makeWindow, replaySlice, windowIso } from '@/lib/raidShare';
 import { loadAnon } from '@/lib/raidShareLookup';
 import { scrubMinuteData } from '@/lib/raidSession';
+import { loadGroupIndex } from '@/lib/raidSessionLoad';
+import { narrowRows } from '@/lib/sessionGroups';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,7 +43,16 @@ export async function GET(req: Request) {
       .limit(15);   // a literal: REPLAY_WINDOW_MS / MINUTE_MS, one row per minute of the slice
     if (error) return fail(502, 'replay unavailable');
     const anon = await loadAnon(db, GUILD_TAG, win);
-    const rows = (data ?? []).map((r: { minute_at: string; zones: string[] | null; data: string }) => ({
+    let got = (data ?? []) as { minute_at: string; zones: string[] | null; data: string }[];
+    // `group` narrows the dots to one raid of the window (lib/sessionGroups.ts). Cut on the recorded names, BEFORE the
+    // opt-out scrub below renames anyone. An id the window does not hold narrows to nothing: never to everyone.
+    const group = q.get('group');
+    if (group && /^[a-z0-9-]{3,40}$/.test(group)) {
+      // A part of a larger window is cut by the raids counted in the larger one (gf, gt): lib/sessionGroups.ts groupQuery.
+      const parent = makeWindow(Date.parse(q.get('gf') ?? ''), Date.parse(q.get('gt') ?? '')) ?? win;
+      got = narrowRows(got, await loadGroupIndex(db, parent, anon), group);
+    }
+    const rows = got.map(r => ({
       minute_at: r.minute_at, zones: r.zones, data: scrubMinuteData(r.data, anon),
     }));
     // A slice that ended more than five minutes ago will not change; one still being recorded may.

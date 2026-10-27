@@ -28,12 +28,12 @@
 
 import { useState } from 'react';
 import { ItemIcon as AtlasIcon, hasItemIcon } from '@/components/ItemIcon';
+import { pqdiIconUrl } from '@/lib/itemIcon';
 
-const ICON_BASE = (process.env.NEXT_PUBLIC_EQ_ICON_BASE || 'https://www.pqdi.cc/Icons').replace(/\/+$/, '');
-
+// ⚠ The URL builder lives in web/lib/itemIcon.ts (pqdiIconUrl) so a test can run it: PQDI's path is
+// LOWERCASE `/icons/`, and the capitalised one in the history above answers 404 (FB-99, 2026-10-26).
 export function iconUrl(icon: number | null | undefined): string | null {
-  if (icon == null || icon <= 0) return null;
-  return `${ICON_BASE}/item_${icon}.png`;
+  return pqdiIconUrl(icon, process.env.NEXT_PUBLIC_EQ_ICON_BASE);
 }
 
 export default function ItemIcon({ icon, alt, size = 40, className }: {

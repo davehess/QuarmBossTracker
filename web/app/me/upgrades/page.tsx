@@ -6,9 +6,20 @@
 // so it goes live with the [beta] tag (DECISIONS §135). First slice: the scoring model is web/lib/gearUpgrades.ts
 // and its tuning table is web/lib/gearWeights.ts.
 //
-// Read-only; no migration. Data: character_gear (what is worn and carried), eqemu_items (the stats and the pool of
-// candidates), eqemu_npc_drops / eqemu_merchantlist / eqemu_zone (where each can be had, current era only),
-// wishlists (the character's own list; the viewer is the owner, and the bid columns are never selected).
+// Data: character_gear (what is worn and carried), eqemu_items (the stats and the pool of candidates),
+// eqemu_npc_drops / eqemu_merchantlist / eqemu_zone (where each can be had, current era only), item_alt_sources
+// (quest rewards and tradeskill recipes for what neither drops nor sells; migration 20261026200000, and the page
+// works without it), character_aas + eqemu_aa_effects (the character's stat-cap raises, so the cap is 305 with
+// Planar Power, not 280), wishlists (the character's own list; the viewer is the owner, and the bid columns are
+// never selected here). The evaluation itself is web/lib/gearUpgradesRun.ts, shared with the gear page.
+//
+// Caps (2026-10-26): a stat is worth what lands BELOW its cap (web/lib/gearCaps.ts), not its face value, and each
+// slot shows how close the swap takes the worn set to ATK 250, Flowing Thought, HP regen, AC and the rest.
+//
+// Wishlist controls (2026-10-26): each upgrade can be added to the wishlist with a priority and a sealed
+// pre-bid, changed or removed (components/WishlistControls.tsx, actions.ts). Those writes, and the read of the member's OWN
+// pre-bids, go through the bot (lib/wishlistBot.ts -> utils/webWishlist.js), which holds the only key that can
+// encrypt or decrypt a bid. Ears, wrists and rings sit in side-by-side pairs (groupPairedSlots).
 //
 // Privacy. The page is scoped to the viewer's OWN characters (ownedCharacters), which is also what makes the
 // wishlist safe to show: a wishlist is private to its owner. A character with exclude_inventory or
@@ -22,16 +33,19 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { ownedCharacters, type OwnedChar } from '@/lib/ownedCharacters';
 import { selectAll } from '@/lib/selectAll';
 import NewPageTag from '@/components/NewPageTag';
+import ItemIcon from '@/app/character/[name]/inventory/ItemIcon';
+import WishlistControls from '@/components/WishlistControls';
+import { callBotWishlist, wishlistWritesEnabled, type BotItem } from '@/lib/wishlistBot';
 import {
-  rankUpgrades, selectTop, candidateIds, scoredClass, resolveWeights, levelCap, expansionCap, isOptedOut,
-  UPGRADE_SLOTS, type ItemStats, type SlotResult, type Upgrade, type Source, type Equipped,
+  scoredClass, resolveWeights, isOptedOut, groupPairedSlots, capRows, capRowText, sourceLine,
+  type ItemStats, type SlotResult, type Upgrade, type Equipped,
 } from '@/lib/gearUpgrades';
-import {
-  loadItemPool, loadItems, loadZones, loadSources, loadSpellNames, loadWishlist,
-} from '@/lib/gearUpgradesLoad';
+import { loadSpellNames, loadWishlist } from '@/lib/gearUpgradesLoad';
+import { parseAttrEnd, runUpgradeEval, type UpgradeEval } from '@/lib/gearUpgradesRun';
+import { attrCapLabel } from '@/lib/gearCaps';
 import {
   STAT_KEYS, STAT_LABEL, MIN_GAIN, TOP_N, BASE_TIERS, CLASS_TIERS, TIER_POINTS, MR_BELOW_FLOOR_TIER,
-  type StatKey, type Tier,
+  ATTR_ASSUMED_NONGEAR, type AttrEnd, type StatKey, type Tier,
 } from '@/lib/gearWeights';
 import { MR_FLOOR } from '@/lib/raidKit';
 import { GUILD_TAG } from '@/lib/guild';
@@ -60,15 +74,9 @@ function statLine(it: ItemStats | null, keys: StatKey[]): string {
   return parts.join(' · ');
 }
 
-function sourceText(s: Source): string {
-  if (s.kind === 'bag') return 'Already in your bags';
-  const where = s.zone ?? 'an unknown zone';
-  if (s.kind === 'vendor') return `Sold in ${where}${s.npc ? ` by ${s.npc}` : ''}`;
-  return `Drops in ${where}${s.npc ? ` from ${s.npc}` : ''}${s.chance != null && s.chance > 0 ? ` (${s.chance}%)` : ''}`;
-}
-
-export default async function UpgradesPage({ searchParams }: { searchParams: Promise<{ c?: string }> }) {
-  const { c } = await searchParams;
+export default async function UpgradesPage({ searchParams }: { searchParams: Promise<{ c?: string; ends?: string }> }) {
+  const { c, ends } = await searchParams;
+  const attrEnd = parseAttrEnd(ends);
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/me/upgrades');
 
@@ -87,6 +95,8 @@ export default async function UpgradesPage({ searchParams }: { searchParams: Pro
       <NewPageTag note="First slice of the gear upgrade finder: per-slot upgrades scored for your class." />
       <div className="text-sm">
         <Link href="/me" className="text-blue hover:underline">← back to My Stats</Link>
+        <span className="mx-2 text-dim">·</span>
+        <Link href="/me/wishlist" className="text-blue hover:underline">★ My wishlist</Link>
       </div>
 
       <section className="bg-panel border border-border rounded-lg p-6">
@@ -104,6 +114,11 @@ export default async function UpgradesPage({ searchParams }: { searchParams: Pro
                 <option key={o.name} value={o.name}>{o.name}{o.class ? ` (${o.class})` : ''}</option>
               ))}
             </select>
+            <label htmlFor="ends" className="text-dim sm:ml-3">Stats</label>
+            <select id="ends" name="ends" defaultValue={attrEnd} className="bg-bg border border-border rounded px-2 py-1 text-text">
+              <option value="high">High end: stats already near cap</option>
+              <option value="low">Low end: count every stat point</option>
+            </select>
             <button type="submit" className="px-3 py-1 rounded border border-border bg-bg text-blue hover:underline">Show upgrades</button>
           </form>
         )}
@@ -115,13 +130,13 @@ export default async function UpgradesPage({ searchParams }: { searchParams: Pro
           <Link href="/me" className="text-blue hover:underline">My Stats</Link>, then come back.
         </section>
       ) : (
-        await CharacterUpgrades({ pick })
+        await CharacterUpgrades({ pick, userId: user.id, attrEnd })
       )}
     </div>
   );
 }
 
-async function CharacterUpgrades({ pick }: { pick: OwnedChar }) {
+async function CharacterUpgrades({ pick, userId, attrEnd }: { pick: OwnedChar; userId: string; attrEnd: AttrEnd }) {
   const sb = supabaseAdmin();
   const name = pick.name;
   if (!/^[A-Za-z]{2,}$/.test(name)) {
@@ -172,40 +187,24 @@ async function CharacterUpgrades({ pick }: { pick: OwnedChar }) {
     );
   }
 
-  const now = new Date();
-  const cap = levelCap(now);
-  const expCap = expansionCap(now);
-  const bagIds = new Set(gear.filter(g => g.loc === 'bag').map(g => g.item_id));
-
-  const [pool, wornItems, zones, wishlist] = await Promise.all([
-    loadItemPool(sb, cap),
-    loadItems(sb, [...wornRows.map(g => g.item_id), ...bagIds]),
-    loadZones(sb),
+  // The ranking, the character's own caps and every source (web/lib/gearUpgradesRun.ts; the gear page runs the same).
+  const [ev, wishlist] = await Promise.all([
+    runUpgradeEval(sb, { name, className, race, gear, attrEnd }),
     loadWishlist(sb, name),
   ]);
+  if (!ev) return null;
+  const { equipped, perSlot, finalistItems, ctx, caps } = ev;
 
-  const equipped: Equipped[] = [];
-  for (const g of wornRows) {
-    const it = wornItems.get(g.item_id);
-    if (it && UPGRADE_SLOTS.some(s => s.name === g.slot)) equipped.push({ slot: g.slot, item: it });
-  }
-  // Items in the bags are candidates even when they are not in the pool (their stats were read above).
-  const poolIds = new Set(pool.map(p => p.id));
-  const bagExtras = [...bagIds].map(id => wornItems.get(id)).filter((x): x is ItemStats => !!x && !poolIds.has(x.id));
-  const results = rankUpgrades({ className, race, equipped, pool: [...pool, ...bagExtras], levelCap: cap });
-  if (!results) return null;
-
-  const ids = candidateIds(results);
-  const [sources, finalistItems] = await Promise.all([
-    loadSources(sb, ids, zones, expCap),
-    loadItems(sb, ids),
-  ]);
-  // Anything already carried needs no drop source.
-  for (const id of ids) {
-    if (bagIds.has(id)) sources.set(id, [{ kind: 'bag', zone: null, expansion: null, npc: null, chance: null }, ...(sources.get(id) ?? [])]);
-  }
-
-  const perSlot = results.map(r => ({ r, top: selectTop(r.candidates, sources) }));
+  // The member's OWN sealed pre-bids, decrypted by the bot (the key never leaves it). Asked only when the site can
+  // reach the bot and something shown is already listed; if the bot does not answer, the cards show no bid line.
+  const writesEnabled = wishlistWritesEnabled();
+  const shownIds = new Set(perSlot.flatMap(p => p.top.map(u => u.item.id)));
+  const anyListed = [...shownIds].some(id => wishlist.has(id));
+  const botList = writesEnabled && anyListed
+    ? await callBotWishlist<{ items: BotItem[] }>(userId, { op: 'list', character: name })
+    : null;
+  const bids = new Map<number, number | null>(botList && botList.ok ? botList.items.map(i => [i.item_id, i.bid]) : []);
+  const wish = { name, enabled: writesEnabled, bids, bidsKnown: !anyListed || !!(botList && botList.ok) };
   // Names and effect labels for what is on screen.
   const shown = perSlot.flatMap(p => p.top.map(u => finalistItems.get(u.item.id) ?? u.item));
   const spellIds = [...shown, ...equipped.map(e => e.item)].flatMap(i => [i.focus_effect, i.worneffect]).filter((x): x is number => !!x && x > 0);
@@ -236,9 +235,10 @@ async function CharacterUpgrades({ pick }: { pick: OwnedChar }) {
             <span key={g.tier}>{i > 0 && ' · '}<b className="text-text">{g.tier}</b> {g.stats.join(', ')}</span>
           ))}.
           {' '}Worn magic resist is {wornMrNow} (raid rule 12 wants {MR_FLOOR}
-          {wornMrNow < MR_FLOOR ? ', so MR counts for more until you reach it' : ', met'}). Attack stops counting at 250 worn,
-          haste does not stack, and the best swap must gain at least {MIN_GAIN} point.
+          {wornMrNow < MR_FLOOR ? ', so MR counts for more until you reach it' : ', met'}). A stat only scores for the part
+          that lands under its cap, haste does not stack, and the best swap must gain at least {MIN_GAIN} point.
         </p>
+        <CapSummary ev={ev} keys={keys} attrEnd={attrEnd} />
         {wins.length > 0 ? (
           <div>
             <div className="text-xs text-orange mb-1">Biggest wins</div>
@@ -258,19 +258,31 @@ async function CharacterUpgrades({ pick }: { pick: OwnedChar }) {
       </section>
 
       <div className="space-y-3">
-        {perSlot.map(({ r, top }) => (
-          <SlotCard
-            key={r.slot} r={r} top={top} keys={keys}
-            finalists={finalistItems} wishlist={wishlist} spellNames={spellNames}
-          />
-        ))}
+        {groupPairedSlots(perSlot, p => p.r.slot).map(g => {
+          const cards = g.items.map(({ r, top }) => (
+            <SlotCard
+              key={r.slot} r={r} top={top} keys={keys} equipped={equipped} caps={caps}
+              finalists={finalistItems} wishlist={wishlist} spellNames={spellNames} wish={wish}
+            />
+          ));
+          // Interchangeable slots (ears, wrists, rings) sit together under one heading: stacked on a phone,
+          // side by side from md up.
+          return g.title ? (
+            <section key={g.title} aria-label={g.title} className="space-y-2">
+              <h3 className="text-xs uppercase tracking-wide text-dim">{g.title} <span className="normal-case">· either slot</span></h3>
+              <div className="grid gap-3 md:grid-cols-2">{cards}</div>
+            </section>
+          ) : cards;
+        })}
       </div>
 
       <p className="text-[11px] text-dim leading-5">
-        First slice. Scores are a guide, not a verdict: they weigh the numbers on the item, not set bonuses, quests or
-        what your raid will actually have to loot. Items with no known drop or vendor (quest rewards, crafted pieces)
-        are not suggested yet. Only stats on the item count; +ATK and haste that ride a worn spell are not read.
-        Worn gear comes from your Quarmy export, so run it again after a swap.
+        Scores are a guide, not a verdict: they weigh the numbers on the item, not set bonuses or what your raid will
+        actually have to loot. Quest rewards and crafted pieces are included when nothing drops or sells them; a recipe
+        has no zone, so it counts as current era when the item&apos;s level is within the cap. Only stats on the item
+        count; +ATK and haste that ride a worn spell are not read. Worn gear comes from your Quarmy export, so run it
+        again after a swap.
+        {!ev.altOk && <> Quest and crafted sources could not be read just now, so only drops and vendors are listed.</>}
       </p>
     </>
   );
@@ -286,26 +298,72 @@ function weightTier(base: string, equipped: Equipped[], k: StatKey): Tier {
 
 function ItemLink({ it }: { it: ItemStats }) {
   return (
-    <Link href={`/db/item/${it.id}`} className="text-blue hover:underline">{it.name ?? `Item #${it.id}`}</Link>
+    <span className="inline-flex items-center gap-1.5">
+      <ItemIcon icon={it.icon} alt={it.name ?? `Item #${it.id}`} size={24} />
+      <Link href={`/db/item/${it.id}`} className="text-blue hover:underline">{it.name ?? `Item #${it.id}`}</Link>
+    </span>
   );
 }
 
-function SlotCard({ r, top, keys, finalists, wishlist, spellNames }: {
-  r: SlotResult; top: Upgrade[]; keys: StatKey[];
+// Where the worn set stands against every cap the class has, and what the stat-cap numbers rest on.
+function CapSummary({ ev, keys, attrEnd }: { ev: UpgradeEval; keys: StatKey[]; attrEnd: AttrEnd }) {
+  const { ctx, capNow } = ev;
+  const rows = capNow.filter(r => keys.includes(r.key));   // only the stats this class weighs
+  const text = (r: (typeof capNow)[number]) => {
+    if (r.kind === 'max') return `${r.label} ${r.have}%`;
+    if (r.kind === 'soft') return `${r.label} ${r.have} / soft cap ${r.cap}`;
+    const gear = (['str', 'sta', 'agi', 'dex', 'wis', 'intel', 'cha'] as StatKey[]).includes(r.key) ? ' gear' : '';
+    return `${r.label}${gear} ${r.have} / ${r.cap}`;
+  };
+  const aaText = ctx.aa.used.length > 0
+    ? ctx.aa.used.filter((u, i, a) => a.findIndex(x => x.eqmacid === u.eqmacid) === i)
+        .map(u => `${u.name} rank ${u.rank}`).join(', ')
+    : null;
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-orange">Worn set against the caps</div>
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        {rows.map(r => {
+          const full = r.cap != null && r.kind === 'sum' && r.have >= r.cap;
+          return (
+            <li key={r.key} title={r.detail ?? undefined} className={full ? 'text-green' : 'text-text'}>{text(r)}{full ? ' ✓' : ''}</li>
+          );
+        })}
+      </ul>
+      <p className="text-[11px] text-dim leading-5">
+        Stat cap at level {ctx.level}: {attrCapLabel(ctx, 'str')}
+        {aaText ? <> (from {aaText})</> : ctx.aa.known ? ' (no cap-raising AAs trained)' : ''}.
+        {ctx.aa.known && ctx.aa.mods.wis ? <> Wisdom and intelligence reach {attrCapLabel(ctx, 'wis')} for you.</> : null}
+        {' '}Base stats are not in our data, so {attrEnd === 'high'
+          ? <><b className="text-text">High end</b> assumes you already hold {ATTR_ASSUMED_NONGEAR.high} of each stat before gear and only counts gear points under the cap</>
+          : <><b className="text-text">Low end</b> counts every gear stat point up to the cap</>}.
+        {' '}Flowing Thought counts to {ev.caps.manaregen && 'cap' in ev.caps.manaregen ? ev.caps.manaregen.cap : 15} and HP regen to {ev.caps.regen && 'cap' in ev.caps.regen ? ev.caps.regen.cap : 35} for a level {ctx.level} {ctx.base}.
+      </p>
+    </div>
+  );
+}
+
+type WishCtx = { name: string; enabled: boolean; bids: Map<number, number | null>; bidsKnown: boolean };
+
+function SlotCard({ r, top, keys, equipped, caps, finalists, wishlist, spellNames, wish: wc }: {
+  r: SlotResult; top: Upgrade[]; keys: StatKey[]; equipped: Equipped[]; caps: UpgradeEval['caps'];
   finalists: Map<number, ItemStats>; wishlist: Map<number, number | null>; spellNames: Map<number, string>;
+  wish: WishCtx;
 }) {
   const cur = r.current;
+  const others = equipped.filter(e => e.slot !== r.slot).map(e => e.item);   // the rest of the worn set
   const effect = (it: ItemStats) => {
     const f = it.focus_effect && it.focus_effect > 0 ? spellNames.get(it.focus_effect) : null;
     const w = it.worneffect && it.worneffect > 0 ? spellNames.get(it.worneffect) : null;
     return [f ? `Focus: ${f}` : null, w ? `Worn: ${w}` : null].filter(Boolean).join(' · ');
   };
   return (
-    <section className="bg-panel border border-border rounded-lg p-4">
+    // id = the slot name: the gear page links here (/me/upgrades?c=<name>#Chest)
+    <section id={r.slot} className="bg-panel border border-border rounded-lg p-4 scroll-mt-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h4 className="text-sm text-orange">{r.slot}</h4>
-        <span className="text-[11px] text-dim">
-          {cur ? <>wearing <b className="text-text">{cur.name ?? `Item #${cur.id}`}</b> · score {fmtScore(r.currentScore)}</> : 'empty'}
+        <span className="text-[11px] text-dim inline-flex items-center gap-1.5">
+          {cur ? <>{cur.icon != null && <ItemIcon icon={cur.icon} alt={cur.name ?? `Item #${cur.id}`} size={20} />}wearing <b className="text-text">{cur.name ?? `Item #${cur.id}`}</b> · score {fmtScore(r.currentScore)}</> : 'empty'}
         </span>
       </div>
       {cur && <p className="text-[11px] text-dim mt-0.5">{statLine(cur, keys)}</p>}
@@ -313,27 +371,21 @@ function SlotCard({ r, top, keys, finalists, wishlist, spellNames }: {
       {top.length === 0 ? (
         <p className="text-xs text-dim mt-2">
           {r.note ?? (r.candidates.length > 0
-            ? 'Better pieces exist, but none with a known drop or vendor in the current era.'
+            ? 'Better pieces exist, but none with a known drop, vendor, quest or recipe in the current era.'
             : `Nothing in the current era beats this by ${MIN_GAIN}+ points.`)}
         </p>
       ) : (
         <ol className="mt-2 space-y-2">
           {top.slice(0, TOP_N).map((u, i) => {
             const it = finalists.get(u.item.id) ?? u.item;
-            const wish = wishlist.has(u.item.id);
-            const prio = wishlist.get(u.item.id);
             const fx = effect(it);
+            const cap = capRows(it, cur, others, caps).slice(0, 5).map(capRowText);
             return (
               <li key={u.item.id} className="rounded border border-border bg-bg p-3">
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                   <span className="text-dim text-xs">{i + 1}.</span>
                   <ItemLink it={it} />
                   <span className="text-green text-xs">+{fmtScore(u.gain)} points</span>
-                  {wish && (
-                    <span className="text-[10px] tracking-wide uppercase px-1.5 py-0.5 rounded bg-gold/15 border border-gold/50 text-gold">
-                      on your wishlist{prio != null ? ` · priority ${prio}` : ''}
-                    </span>
-                  )}
                 </div>
                 <p className="text-[11px] text-dim mt-1">{statLine(it, keys)}</p>
                 {u.diffs.length > 0 && (
@@ -345,11 +397,23 @@ function SlotCard({ r, top, keys, finalists, wishlist, spellNames }: {
                     ))}
                   </p>
                 )}
+                {cap.length > 0 && (
+                  <p className="text-[11px] text-dim mt-1" title="Worn total before → after the swap, against its cap. Stat lines count gear points only.">
+                    <span className="text-text">Cap:</span> {cap.join(' · ')}
+                  </p>
+                )}
                 {fx && <p className="text-[11px] text-dim mt-1">{fx}</p>}
                 <p className="text-xs text-text mt-1">
-                  {sourceText(u.best)}
+                  {sourceLine(u.best)}
                   {u.sources.length > 1 && <span className="text-dim"> · +{u.sources.length - 1} more source{u.sources.length > 2 ? 's' : ''}</span>}
                 </p>
+                <WishlistControls
+                  itemId={u.item.id} itemName={it.name ?? `Item #${u.item.id}`} enabled={wc.enabled}
+                  characters={[wc.name]} defaultCharacter={wc.name}
+                  states={wishlist.has(u.item.id)
+                    ? { [wc.name]: { priority: wishlist.get(u.item.id) ?? null, bid: wc.bids.get(u.item.id) ?? null, bidKnown: wc.bidsKnown } }
+                    : {}}
+                />
               </li>
             );
           })}

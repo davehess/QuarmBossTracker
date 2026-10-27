@@ -21,6 +21,7 @@ import { FightEventLog } from '@/components/FightEventLog';
 import { DamageCurve } from '@/components/DamageCurve';
 import { buildFightCurve, observedHpSeries } from '@/lib/fightCurve';
 import { selectAll } from '@/lib/selectAll';
+import { resolveClasses, realClass, classBucket } from '@/lib/parseClasses';
 import { loadAgentVersionsAround, loadEncounterEvents } from '@/lib/fullReads';
 import { classifyEncounter, clearClassification, toggleWipe, markDeathIntentional, unmarkDeathIntentional } from '../actions';
 import { shownActor } from '@/lib/actorName';
@@ -289,42 +290,56 @@ async function load(id: string) {
       icon: typeof l.game_item_id === 'number' ? iconById.get(l.game_item_id) ?? null : null,
     }));
 
-    // Class lookup comes from the OpenDKP roster mirror (characters table) —
-    // the authoritative source. who_observations is too noisy and depends on
-    // someone actually /who'ing the character in-zone. We include all players
-    // in the encounter so the damage table and the by-class roll-up resolve
-    // class consistently.
+    // Class per player, strongest source first (lib/parseClasses.ts): the OpenDKP mirror (`characters`), then the
+    // latest /who sighting, then the live Zeal raid roster. Each source is asked only about the names the earlier
+    // ones could not place, and a sentinel ('UNKNOWN') is no answer — it used to count as one and block the /who
+    // lookup (the guild lead, 2026-10-26). A foreign guild's raiders are mostly in /who and not in `characters`.
+    // Spell/ability inference is NOT used here: the only class-from-ability helper (`inferClassFromAbility`) lives
+    // in the agent and writes into /who rows, so it already reaches us through who_observations.
     const charNames = (encTyped.encounter_players ?? []).map(p => p.character_name);
-    let charRows: { name: string; class: string | null; race: string | null; rank: string | null }[] = [];
-    if (charNames.length > 0) {
-      const { data } = await sb
-        .from('characters')
-        .select('name, class, race, rank')
-        .in('name', charNames);
-      charRows = (data ?? []) as typeof charRows;
-    }
-    // Build the class map, OpenDKP roster first. For any player the roster
-    // doesn't cover (alts not synced, or a roster gap), fall back to the most
-    // recent /who observation that carried a class. who_observations is
-    // noisier but it's better than "Unknown" for a known raider.
-    const whoMap = new Map<string, { character: string; class: string | null; race: string | null; level: number | null }>();
-    for (const c of charRows) {
-      whoMap.set(c.name.toLowerCase(), { character: c.name, class: c.class, race: c.race, level: null });
-    }
-    const missing = charNames.filter(n => !whoMap.get(n.toLowerCase())?.class);
-    if (missing.length > 0) {
-      const { data: obs } = await sb
-        .from('who_observations')
-        .select('character, class, race, level, observed_at')
-        .in('character', missing)
-        .not('class', 'is', null)
-        .order('observed_at', { ascending: false });
-      for (const o of (obs ?? []) as { character: string; class: string | null; race: string | null; level: number | null }[]) {
-        const k = o.character.toLowerCase();
-        if (!whoMap.get(k)?.class) {
-          whoMap.set(k, { character: o.character, class: o.class, race: o.race, level: o.level });
+    const classByName = await resolveClasses(charNames, [
+      async (missing) => {
+        const { data } = await sb.from('characters').select('name, class').in('name', missing);
+        return new Map((data ?? []).map((r: { name: string; class: string | null }) => [r.name.toLowerCase(), r.class]));
+      },
+      async (missing) => {
+        // who_directory_lookup returns one row per name (its latest non-empty class); the raw who_observations read
+        // returned every sighting of every name. The raw read stays as the fallback if the function is unavailable.
+        const out = new Map<string, string | null>();
+        try {
+          const keys = missing.map(n => n.toLowerCase());
+          const rows = await selectAll<{ character_key: string; observed_class: string | null }>((from, to) =>
+            sb.rpc('who_directory_lookup', { p_keys: keys }).range(from, to));
+          for (const r of rows) out.set(r.character_key, r.observed_class);
+          return out;
+        } catch { /* function missing or timed out: the raw read below */ }
+        const { data: obs } = await sb
+          .from('who_observations')
+          .select('character, class, observed_at')
+          .in('character', missing)
+          .not('class', 'is', null)
+          .order('observed_at', { ascending: false });
+        for (const o of (obs ?? []) as { character: string; class: string | null }[]) {
+          const k = o.character.toLowerCase();
+          if (!realClass(out.get(k))) out.set(k, o.class);
         }
-      }
+        return out;
+      },
+      async (missing) => {
+        const { data } = await sb.from('raid_roster').select('name, class, captured_at')
+          .eq('guild_id', GUILD_TAG).in('name', missing).order('captured_at', { ascending: false });
+        const out = new Map<string, string | null>();
+        for (const r of (data ?? []) as { name: string; class: string | null }[]) {
+          const k = r.name.toLowerCase();
+          if (!realClass(out.get(k))) out.set(k, r.class);
+        }
+        return out;
+      },
+    ]);
+    const whoMap = new Map<string, { character: string; class: string | null; race: string | null; level: number | null }>();
+    for (const n of charNames) {
+      const c = classByName.get(n.toLowerCase());
+      if (c) whoMap.set(n.toLowerCase(), { character: n, class: c, race: null, level: null });
     }
     // Known summoned-pet names — exact (case-insensitive) match only, so a
     // real player is never mis-flagged. Pet rows get bucketed under "Pets"
@@ -455,7 +470,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
     : null;
   // Class per contributor — the chart stacks BY CLASS now (the guild lead, 2026-08-16),
   // so every name in the unfolded series needs its class, not just the top-7
-  // bands. Unknowns stay null; the grouping labels them 'Unknown'.
+  // bands. Unknowns stay null; the grouping labels them 'Class not known' (parseClasses.ts).
   const classOf: Record<string, string | null> = {};
   if (curve) for (const e of curve.everyone) {
     classOf[e.name] = whoMap.get(e.name.toLowerCase())?.class ?? null;
@@ -789,9 +804,8 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
         const byClass = new Map<string, { total: number; players: number }>();
         for (const p of players) {
           const who = whoMap.get(p.character_name.toLowerCase());
-          const klass = isPet(p.character_name)
-            ? 'Pets'
-            : (who?.class || (p.has_pets ? 'Pets / unknown' : 'Unknown'));
+          // ONE unknown bucket (parseClasses.ts): a player with pets and no class is still a player of no known class.
+          const klass = isPet(p.character_name) ? 'Pets' : classBucket(who?.class);
           const e = byClass.get(klass) || { total: 0, players: 0 };
           e.total += p.total_damage || 0;
           e.players += 1;
@@ -806,7 +820,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
             <h3 className="text-sm text-blue mb-3 flex items-center gap-2">
               <span aria-hidden>🎯</span>
               <span>Damage by class</span>
-              <span className="text-dim text-xs">· class from OpenDKP roster, then /who; known pets bucket under Pets</span>
+              <span className="text-dim text-xs">· class from OpenDKP roster, then /who, then the raid roster; known pets bucket under Pets</span>
             </h3>
             <ul className="space-y-1">
               {rows.map((r) => (

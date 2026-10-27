@@ -2,7 +2,8 @@
 // tangle of crossing legs, so the mode draws one leg at a time. No DOM here, so the root vitest suite real-imports this; the
 // engine only decides what to draw from what this returns.
 import type { Leg } from './plan';
-import { legLength } from './plan';
+import { floorOf, legLength } from './plan';
+import type { Floor } from './types';
 
 /** A leg index held inside 0..n-1 (0 when there are no legs, or the index is not a number). */
 export function clampLeg(i: number, n: number): number {
@@ -48,4 +49,35 @@ export function legBarText(leg: Leg, index: number, count: number, timeS: number
   if (leg.branch) bits.push(leg.branch.branch.label);
   if (leg.off) bits.push('hidden leg');
   return `Leg ${index + 1} of ${count}: ${leg.a.label} → ${leg.b.label} · ${bits.join(' · ')}`;
+}
+
+/**
+ * One stretch of a leg and the heights it is known at. `filled` marks a stretch whose heights are only its ENDS (a straight
+ * line, a recorded average: the nights carry no height), so it climbs through every floor between them; a stretch with a
+ * height on each of its points (a walked route, baked bends) or a teleport jump (from and to, nothing between) is not filled.
+ */
+export type LegRun = { zs: readonly (number | null | undefined)[]; filled?: boolean };
+
+/**
+ * The floors a leg touches (`?v=floors`, One leg mode): the floor of every known height on every run, plus the floors in
+ * between for a filled run. A height that no floor band holds, or that is missing, counts for nothing. An empty set means "no
+ * idea": the caller then leaves the map on all floors rather than drawing none.
+ */
+export function legFloorKeys(floors: readonly Floor[], runs: readonly LegRun[]): Set<string> {
+  const keys = new Set<string>();
+  for (const run of runs) {
+    const zs = run.zs.filter((z): z is number => typeof z === 'number' && Number.isFinite(z));
+    for (const z of zs) { const f = floorOf(floors, z); if (f) keys.add(f.key); }
+    if (run.filled && zs.length > 1) {
+      const lo = Math.min(...zs), hi = Math.max(...zs);
+      for (const f of floors) if ((f.zmax ?? Infinity) > lo && (f.zmin ?? -Infinity) < hi) keys.add(f.key);   // strict: a band that only touches the range at its edge is not crossed
+    }
+  }
+  return keys;
+}
+
+/** Whether a floor is drawn at full strength: the floor picked by hand wins; on All, only the leg's floors when there are some. */
+export function floorInView(key: string, picked: string, auto: ReadonlySet<string> | null): boolean {
+  if (picked !== 'all') return key === picked;
+  return !auto || auto.has(key);
 }

@@ -3090,7 +3090,39 @@ function _captureCharProfile(charLower) {
   cfg.charProfiles[charLower] = { show, savedAt: Date.now() };
   cfg.charProfilesEnabled = true;   // first save opts in
   saveConfig(cfg);
+  _saveLayoutSnapshot();
   return charLower;
+}
+// FB-101 (a member, 2026-10-27): "The overlays do not save when the windows are set up to one's liking and then
+// manually saved in the interface". 💾 Save current layout kept ONLY which overlays are on (the profile above), so
+// nothing the person arranged was in it. It now also writes where each overlay sits, how big, how it is drawn and
+// the heights dragged to, as the overlay set "Saved layout" — the same snapshot and store as 🗂 Overlay sets.
+// It is NOT applied when the character changes (_applyCharProfile stays visibility-only: with two clients open the
+// active character flips as you alt-tab and the screen must not rearrange itself); ↩ Restore saved layout, on the
+// tray and the Overlays tab, is the ask for it. Positions belong to the screen setup, not the character, so there
+// is one snapshot, not one per character.
+const _SAVED_LAYOUT_SET = 'Saved layout';
+function _saveLayoutSnapshot() {
+  try {
+    const file = _SETS_FILE();
+    const store = overlaySets.load(file);
+    const r = overlaySets.put(store, _SAVED_LAYOUT_SET, _captureOverlaySet(), null);   // no character: it is nobody's "current" set
+    if (!r.ok) { appendAgentLog(`[layout] positions not kept: ${r.error}\n`); return false; }
+    overlaySets.save(file, store);
+    return true;
+  } catch (e) {
+    appendAgentLog(`[layout] positions not kept: ${e && e.message}\n`);
+    return false;
+  }
+}
+// → { ok, message }. Loads the snapshot through _applyOverlaySet, so a snapshot made on another screen setup lands
+// the way a loaded set does (an overlay keeps its side, §80a) and a hide-all steps aside. Always asked for.
+function _restoreSavedLayout(quiet) {
+  let set = null;
+  try { set = overlaySets.load(_SETS_FILE()).sets[overlaySets.keyOf(_SAVED_LAYOUT_SET)]; } catch { /* none */ }
+  if (!set) return _setsSay({ ok: false, message: 'No saved layout yet. Press Save current layout first.' }, quiet);
+  _applyOverlaySet(set);
+  return _setsSay({ ok: true, message: 'Restored your saved layout' }, quiet);
 }
 // Apply a saved profile's visibility set to live config + windows. No-op if the
 // character has no profile, or while a hide-all is active (we must not stomp the
@@ -3231,6 +3263,9 @@ function _charProfileTrayItems() {
       click: () => {
         if (_captureCharProfile(charLc)) { _lastProfileChar = charLc; buildTrayMenu(); pushStatus(); }
       } },
+    // The way back to the last save (FB-101): which overlays are on, where they sit and how big. Not tied to a
+    // character, so it works before one is active. The dashboard's Overlays tab has the same button.
+    { label: '↩ Restore saved layout', click: () => { _restoreSavedLayout(false); } },
   ];
   if (hasProfile) {
     items.push({ label: `🗑 Forget ${char}'s saved layout`,
@@ -3266,8 +3301,9 @@ const _SET_BOUNDS_KEYS = [
   'buffQueueBounds', 'whoBounds', 'melodyBounds', 'zealBounds', 'threatBounds', 'chChainBounds',
   'tankBounds', 'extTargetBounds', 'commandBounds', 'popRaidBounds', 'meBounds',
 ];
-// How each overlay is drawn: opacity, background, per-overlay size.
-const _SET_LOOK_KEYS = ['overlayOpacity', 'overlayBgAlpha', 'overlayBackdrop', 'overlayScaleByKey'];
+// How each overlay is drawn: opacity, background, per-overlay size, and which edge a fitting overlay grows from
+// (FB-101: "retain their size and settings consistently" — grow-up decides where a fit puts the top edge).
+const _SET_LOOK_KEYS = ['overlayOpacity', 'overlayBgAlpha', 'overlayBackdrop', 'overlayScaleByKey', 'overlayGrowUp'];
 
 function _captureOverlaySet() {
   const cfg = loadConfig();
@@ -3291,9 +3327,13 @@ function _captureOverlaySet() {
   for (const k of _SET_LOOK_KEYS) {
     if (cfg[k] && typeof cfg[k] === 'object') look[k] = JSON.parse(JSON.stringify(cfg[k]));
   }
+  // The heights dragged to (the height floor) ride with the set: without them a loaded set's rect is the height the
+  // overlay fitted to at the time, and the next fit shrinks it back to its content (FB-101, the trigger window).
+  const floors = {};
+  for (const bk of Object.keys(rects)) { const h = _floorFor(cfg[bk + 'Floor'], sig); if (h > 0) floors[bk] = h; }
   const eq = _eqMainWindow(10 * 60 * 1000);
   return {
-    show, sig, rects, look,
+    show, sig, rects, look, floors,
     eq: eq ? { x: eq.client.x, y: eq.client.y, width: eq.client.width, height: eq.client.height } : null,
     canvas: (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? JSON.parse(JSON.stringify(cfg.canvasLayouts)) : null,
   };
@@ -3329,12 +3369,28 @@ function _applyOverlaySet(set) {
   // An overlay the set turns on opens at its spot (_resolveBounds reads these).
   for (const [bk, r] of Object.entries(rects)) { cfg[bk] = r; cfg[bk + 'Sig'] = sig; }
   for (const k of _SET_LOOK_KEYS) { if (set.look && set.look[k]) cfg[k] = set.look[k]; }
+  // The heights the set was made with. A set saved before they were kept says nothing and leaves the floors alone;
+  // one that has the map but no entry for an overlay means that overlay had none.
+  if (set.floors && typeof set.floors === 'object') {
+    for (const bk of Object.keys(rects)) {
+      const next = _floorWith(cfg[bk + 'Floor'], sig, +set.floors[bk]);
+      if (next) cfg[bk + 'Floor'] = next; else delete cfg[bk + 'Floor'];
+    }
+  }
   if (set.canvas) cfg.canvasLayouts = set.canvas;
   saveConfig(cfg);
   applyAllVisibility();
   for (const [key, win] of _overlayEntries()) {
     const bk = _boundsKeyForEntry(key, win);
     if (bk && rects[bk]) { try { win.setBounds(rects[bk]); } catch { /* mid-close */ } }
+    if (bk && rects[bk]) {
+      try { win.__wpFloor = undefined; } catch { /* mid-close */ }   // the fit reads its floor again
+      // The set's rect is the size AT the set's scale. The scale change below (applyAllOverlayOpacities → applyOverlayScale)
+      // would grow or shrink that rect by the ratio between the scales a second time, so the zoom goes to the set's
+      // value here, bounds untouched, and that pass finds nothing to do. An overlay the set has no spot for keeps
+      // the old way: its window follows the scale.
+      _applyScaleInPlace(win, key);
+    }
   }
   applyAllOverlayOpacities();
   applyAllOverlayBackdrops();
@@ -5112,9 +5168,19 @@ function _resolveBounds(boundsKey, sigKey, def, legacySigKey) {
   const cfg = loadConfig();
   const saved = cfg[boundsKey];
   const savedSig = cfg[sigKey] !== undefined ? cfg[sigKey] : (legacySigKey ? cfg[legacySigKey] : undefined);
-  if (saved && savedSig === _screenSignature() && _boundsOnScreen(saved)) {
+  const sig = _screenSignature();
+  if (saved && savedSig === sig && _boundsOnScreen(saved)) {
     return { x: saved.x, y: saved.y, width: saved.width, height: saved.height };
   }
+  // FB-101 (a member, 2026-10-27: "when mimic exits, the overlays are in different positions"). The spot saved
+  // above belongs to ONE screen setup, the one of the last write; start Mimic on another (a monitor asleep or
+  // not yet up when it autostarts at login, a dock, a different scaling) and it was thrown away for the default,
+  // although every setup's layout is remembered (cfg.overlayLayoutBySig, _rememberLayout). A window being BUILT
+  // takes the spot remembered for the screens it is built on; nothing already on screen is moved, so this is
+  // not a screen change in the sense of "Screens changing never moves an overlay without a yes".
+  const mem = cfg.overlayLayoutBySig && cfg.overlayLayoutBySig[sig];
+  const r = mem && mem.rects && mem.rects[boundsKey];
+  if (r && _boundsOnScreen(r)) return { x: r.x, y: r.y, width: r.width, height: r.height };
   return def;
 }
 
@@ -5199,6 +5265,29 @@ const _SETUP_CHROME_PX = 104;
 function _setupChromeFor(win) {
   try { return (setupMode || _singleSetupWins.has(win.webContents.id)) ? _SETUP_CHROME_PX : 0; } catch { return 0; }
 }
+// The floor is kept per screen setup, like the bounds (FB-101: the trigger window's dragged height "snaps back to a
+// smaller size"). It was one { h, sig } and counted only while the screens matched the ones it was set on, so a
+// launch on another setup (a monitor asleep, a dock) lost it and the window shrank to its content. { h, sig } is
+// still the setup it was last set on; `by` holds the floors of the other setups (the latest few), so going back to
+// a setup brings its height back. Pure, so they run without Electron.
+const _FLOOR_OTHER_MAX = 5;
+function _floorFor(f, sig) {
+  if (!f) return 0;
+  if (f.sig === sig) return f.h > 0 ? f.h : 0;
+  const o = f.by && f.by[sig];
+  return o > 0 ? o : 0;
+}
+// The floor to store after `h` is set on `sig` (h <= 0 clears it: null).
+function _floorWith(prev, sig, h) {
+  if (!(h > 0)) return null;
+  const by = Object.assign({}, prev && prev.by);
+  if (prev && prev.sig && prev.sig !== sig && prev.h > 0) by[prev.sig] = prev.h;
+  delete by[sig];
+  const keep = Object.keys(by).slice(-_FLOOR_OTHER_MAX);   // insertion order: the oldest setups go first
+  const out = { h, sig };
+  if (keep.length) out.by = Object.fromEntries(keep.map(k => [k, by[k]]));
+  return out;
+}
 // The floor in CSS px for this window, or 0. Cached on the window: a fit asks on
 // every page tick and the config read is a file read.
 function _heightFloorFor(win) {
@@ -5207,16 +5296,16 @@ function _heightFloorFor(win) {
       const key = _boundsKeyForWindow(win);
       win.__wpFloor = (key && loadConfig()[key + 'Floor']) || null;
     }
-    const f = win.__wpFloor;
-    return (f && f.h > 0 && f.sig === _screenSignature()) ? f.h : 0;
+    return _floorFor(win.__wpFloor, _screenSignature());
   } catch { return 0; }
 }
 function _setFloor(win, key, h) {
   const cfg = loadConfig();
-  if (h > 0) cfg[key + 'Floor'] = { h, sig: _screenSignature() };
+  const next = _floorWith(cfg[key + 'Floor'], _screenSignature(), h);
+  if (next) cfg[key + 'Floor'] = next;
   else delete cfg[key + 'Floor'];
   saveConfig(cfg);
-  win.__wpFloor = h > 0 ? cfg[key + 'Floor'] : null;
+  win.__wpFloor = next;
 }
 // A drag ends when 'will-resize' has been quiet for 400 ms (the bounds save's
 // debounce). startH is the height before the gesture's first step: a drag that
@@ -5685,6 +5774,16 @@ function _scaleTween(win, toZ, toB, smooth) {
 }
 function applyAllOverlayScales() {
   for (const [key, win] of _overlayEntries()) applyOverlayScale(win, key);
+}
+// The zoom to this overlay's saved scale with its bounds left alone: for a window whose bounds were just set to a size
+// that already is the scale's (a loaded overlay set). applyOverlayScale would grow or shrink those bounds by the ratio.
+function _applyScaleInPlace(win, key) {
+  if (!win || win.isDestroyed()) return;
+  const target = key ? overlayScaleFor(key) : overlayScale();
+  if (win.__wpScaleTimer) { clearInterval(win.__wpScaleTimer); win.__wpScaleTimer = null; }
+  try { win.webContents.setZoomFactor(target); } catch { /* mid-close */ }
+  _pushZoomVar(win, target);
+  win.__wpScaleState = { z: target, bounds: null };
 }
 
 // ── Per-overlay solid backdrop (a member, 2026-07-10) ─────────────────────────
@@ -13981,6 +14080,10 @@ ipcMain.handle('char-profile-save', () => {
     return true;
   }
   return false;
+});
+// ↩ Restore saved layout (the tray item's twin): → { ok, message }. The dashboard paints its own answer, so no flash.
+ipcMain.handle('layout-restore', () => {
+  try { return _restoreSavedLayout(true); } catch (e) { return { ok: false, message: String(e && e.message || e) }; }
 });
 ipcMain.handle('char-profile-forget', (_e, name) => {
   const key = String(name || '').trim().toLowerCase();

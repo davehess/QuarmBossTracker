@@ -126,19 +126,23 @@ const META = new Map([
   [41006, { id: 41006, damage: 0, ac: 0, nodrop: true, itemtype: 20, slots: 0 }],        // spell by itemtype
 ]);
 
+// The three fields the old inline code returned. The lib has since GROWN two more for the local page
+// (sharedCharacterCount, staleSharedSources); parity is about the original three being unchanged.
+const legacyView = (a) => ({ items: a.items, sharedAccountCount: a.sharedAccountCount, oversized: a.oversized });
+
 describe('aggregateInventory — parity with the code that used to live in the page', () => {
   it('matches the old inline aggregation exactly (no placements, inference only)', () => {
-    expect(aggregateInventory(ROWS, [], META)).toEqual(legacyAggregate(ROWS, [], META));
+    expect(legacyView(aggregateInventory(ROWS, [], META))).toEqual(legacyAggregate(ROWS, [], META));
   });
   it('matches with owner-placed game accounts', () => {
     const placements = [
       { character: 'Rethlan', accountId: 'acct-9', label: 'Alt account', slot: 3 },
       { character: 'Nyssara', accountId: 'acct-9', label: 'Alt account', slot: 3 },
     ];
-    expect(aggregateInventory(ROWS, placements, META)).toEqual(legacyAggregate(ROWS, placements, META));
+    expect(legacyView(aggregateInventory(ROWS, placements, META))).toEqual(legacyAggregate(ROWS, placements, META));
   });
   it('matches with no item meta at all (the local page today)', () => {
-    expect(aggregateInventory(ROWS, [], new Map())).toEqual(legacyAggregate(ROWS, [], new Map()));
+    expect(legacyView(aggregateInventory(ROWS, [], new Map()))).toEqual(legacyAggregate(ROWS, [], new Map()));
   });
   it('locGroup and tagsFor are the old functions', () => {
     for (const s of ['Primary', 'Bank1', 'Bank1-Slot2', 'SharedBank6-Slot9', 'General3-Slot4', 'Cursor', 'Charm', 'Fingers']) {

@@ -32,7 +32,7 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-type SP = { zone?: string | string[]; plan?: string | string[] };
+type SP = { zone?: string | string[]; plan?: string | string[]; v?: string | string[] };
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 export default async function RoutePlannerPage({ searchParams }: { searchParams: SP }) {
@@ -65,6 +65,13 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
   const planZone = { ...zone, nights: pn.nights };
   const nightsNote = pn.note;
 
+  // ?v=floors (a beta preview of an existing page): One leg draws only the floors the current leg walks; no ?v= is the page as it was
+  const floorFollow = one(searchParams.v) === 'floors';
+  // ?v=draw (a beta preview of an existing page, the guild lead, 2026-10-22): a Draw tool on the map toolbar to lay a leg's path by
+  // points or with a pen, or to redraw a stretch of it. No ?v= is the page as it was.
+  const draw = one(searchParams.v) === 'draw';
+  const vq = floorFollow ? '&v=floors' : draw ? '&v=draw' : '';
+
   return (
     <div className="mx-auto max-w-7xl py-2">
       <NewPageTag note="New page: plan the raid's route on the map." />
@@ -74,7 +81,7 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
       </div>
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs" aria-label="Zone">
         {zoneList().map(z => (
-          <Link key={z.zone} href={`/raid/plan/routes?zone=${z.zone}`}
+          <Link key={z.zone} href={`/raid/plan/routes?zone=${z.zone}${vq}`}
             className={`rounded-md border px-2 py-1 ${z.zone === zone.zone ? 'border-gold bg-gold/10 text-gold' : 'border-border text-dim hover:text-text'}`}>
             {z.name}{z.stub ? ' (data pending)' : ''}
           </Link>
@@ -86,7 +93,9 @@ export default async function RoutePlannerPage({ searchParams }: { searchParams:
         </div>
       )}
       <RoutePlanner
-        key={`${zone.zone}:${planId}`}
+        key={`${zone.zone}:${planId}${floorFollow ? ':floors' : ''}${draw ? ':draw' : ''}`}
+        floorFollow={floorFollow}
+        draw={draw}
         zone={planZone}
         nightsNote={nightsNote}
         planId={planId}

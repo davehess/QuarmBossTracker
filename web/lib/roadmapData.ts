@@ -37,6 +37,29 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-5-2026-10-27',
+    title: 'Raid Mimic 3.0.5',
+    version: 'Mimic 3.0.5 · Agent 4.0.30 · Web 2.1.57 · Bot 4.0.23',
+    date: '2026-10-27',
+    headline: 'Your Planes of Power flags in the PoP overlay with the next step to take, a map that turns with you, and overlays that stay where you put them.',
+    features: [
+      { name: 'Flags in the PoP overlay', blurb: 'A Flags tab next to Slides and Quests shows the character you are playing: the next step you can actually do (who, where, the words to say), pending memories and what each one is waiting on, every plane done or not, and the doors and keys. Each line jumps to that step in Quests.' },
+      { name: 'Mimic reads #popflags and the Seer', blurb: 'Type #popflags 1 through #popflags 5, or have the Seer recite, and Mimic records your flags from the log. A Capture button on the dashboard re-reads the last two weeks of a character\'s logs for flag, Seer and Maelin lines.' },
+      { name: 'Heading-up map', blurb: 'The Map can turn with you so the way you face is up. A compass with a red north needle is always on screen, and ⚙ Compass adds N, E, S, W at the edges.' },
+      { name: 'Kite circles', blurb: 'Your circle shows where it is drifting to. Other raiders\' circles age out and can be filtered to your speed or near you, and a groupmate\'s circle shows while they are still forming it.' },
+      { name: 'Respawns you can open', blurb: 'The Respawns count opens into its spots. Left click pulses the spawns that are down; right click moves the map to them.' },
+      { name: 'Overlays stay put', blurb: '💾 Save current layout now keeps where every overlay sits and how big it is, and ↩ Restore saved layout (tray or Overlays tab) puts them back. A monitor that was asleep at launch no longer resets them.' },
+      { name: 'Summon first', blurb: 'In Target Info a mob\'s Summon leads its abilities in solid red, then Enrage, Rampage and Flurry.' },
+      { name: 'Spawn timers through a bot restart', blurb: 'Kills you mark on the map while the bot is restarting are kept and sent when it is back, so the guild still sees them.' },
+      { name: 'On the website', blurb: 'Raid maps drawn from the full zone map with lettered markers; a raid session splits overlapping raids and lists every named fight and wipe; parse pages name almost every class and fit the damage chart to the fight; add to wishlist from any item; the gear finder counts quest and crafted gear and your real stat caps.' },
+    ],
+    fixes: [
+      'The Charm tracker showed no time left on buffs after a re-charm while Target Info had them. It times them now.',
+      'Your own death ("You have been slain by …") is recorded, and raid-list names count as players for deaths.',
+      'Loading a saved overlay set no longer doubles its size.',
+    ],
+  },
+  {
     key: 'maelin-needs-cipher-2026-10-27',
     title: 'Web 2.1.56',
     version: 'Web 2.1.56 · Bot 4.0.23',
@@ -63,6 +86,49 @@ export const releases: Release[] = [
     fixes: [],
   },
   {
+    key: 'gear-caps-and-sources-2026-10-26',
+    title: 'Web 2.1.52',
+    version: 'Web 2.1.52',
+    date: '2026-10-26',
+    headline: 'The gear upgrade finder now counts quest and crafted gear, and scores a stat only up to the point where the game stops counting it.',
+    features: [
+      { name: 'Quest and crafted gear', blurb: 'Pieces you earn from an NPC or make with a tradeskill (like Ton Po\'s Chestwraps of Composure) are suggested now, with the quest giver and zone, or the recipe, what goes in it and which bag.' },
+      { name: 'How close you are to the caps', blurb: 'Each upgrade shows what it does to your attack, Flowing Thought, HP regen, AC and stats against their caps, for example "ATK 212 to 250 of 250". Points past a cap no longer make a piece look better than it is.' },
+      { name: 'Your real stat cap', blurb: 'The cap is 255 up to level 60, then 5 more a level, plus what your AAs add: 305 at level 65 with Planar Power. Flowing Thought counts as zero for monks, rogues and warriors, who cannot use it.' },
+      { name: 'High end or low end stats', blurb: 'We do not know your base stats, so pick whether to assume you are already near the cap on each stat (high end, the default) or to count every point (low end).' },
+      { name: 'Icons and your gear page', blurb: 'Item icons show on the finder and on your gear page. The gear page also gets an upgrade check for your own characters: the best swap per slot and how much room is left under each cap, linked to the finder.' },
+    ],
+    fixes: [
+      'Item HP regen now caps at 35 at level 65 (it was 30, the level 60 number).',
+      'Damage shield no longer has an invented cap of 30.',
+    ],
+  },
+  {
+    key: 'my-wishlist-page-2026-10-26',
+    title: 'Web 2.1.51',
+    version: 'Web 2.1.51',
+    date: '2026-10-26',
+    headline: 'A new page, marked [beta], shows every wishlist you have and lets you search for any item and add it.',
+    features: [
+      { name: 'My wishlist', blurb: 'Open it from My Stats. Each of your characters has its own list with every item, its priority and your own sealed pre-bid. You can change the bid or take an item off right there. Nobody else can see your bid.' },
+      { name: 'Search for any item', blurb: 'Type part of an item name, pick it from the list and add it to whichever character you like. Items that start with what you typed come first, and ones already on a list are marked.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'wishlist-everywhere-2026-10-26',
+    title: 'Web 2.1.50',
+    version: 'Web 2.1.50',
+    date: '2026-10-26',
+    headline: 'You can put an item on your wishlist from the item page and from the raid night plan, not only from the gear upgrades page.',
+    features: [
+      { name: 'Add to wishlist on the item page', blurb: 'Open any item and there is a Wishlist box. Pick which of your characters it is for, a priority and, if you like, a sealed pre-bid. It starts on your main.' },
+      { name: 'Add to wishlist on the raid night plan', blurb: 'Every boss drop on the plan has an Add to wishlist button. It starts on the character your sign-up for the next raid brings, so a Bard sign-up lists the item for your Bard.' },
+      { name: 'See where it is already listed', blurb: 'The character picker marks the characters that already have the item, with the priority and your own pre-bid, and lets you change the bid or take it off.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'popflags-paste-and-sync-2026-10-26',
     title: 'Web 2.1.47',
     version: 'Web 2.1.47 · Bot 4.0.19',
@@ -71,6 +137,19 @@ export const releases: Release[] = [
     features: [
       { name: 'Paste #popflags', blurb: 'Type #popflags 1 through #popflags 5 in game, copy what it prints, and paste it on Your flags for tonight. The page shows what it found before it saves, for your own characters only.' },
       { name: 'Sync from my logs', blurb: 'One button asks Mimic on your PC to read the last two weeks of a character\'s logs for flag and Seer lines. It picks the request up within a few minutes and the page says when it is done and how many it found.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'upgrades-wishlist-2026-10-26',
+    title: 'Web 2.1.46',
+    version: 'Web 2.1.46 · Bot 4.0.18',
+    date: '2026-10-26',
+    headline: 'On the gear upgrades page you can put an upgrade on your wishlist and set a sealed pre-bid without leaving the page.',
+    features: [
+      { name: 'Add to wishlist', blurb: 'Under every upgrade there is an Add to wishlist button. Pick a priority (1 is top BIS, 10 is nice to have) and, if you like, a pre-bid in DKP. It is the same wishlist /wishlist add fills in Discord.' },
+      { name: 'Set, change or clear a pre-bid', blurb: 'Upgrades already on your wishlist show your priority and your own pre-bid, with buttons to change the bid or take the item off. Nobody else can see your bid; the bot seals it before it is saved.' },
+      { name: 'Ears, wrists and rings side by side', blurb: 'Because the two slots are interchangeable, each pair now sits together under one heading, so you can compare them at a glance. On a phone they stack.' },
     ],
     fixes: [],
   },
@@ -86,6 +165,21 @@ export const releases: Release[] = [
       { name: 'Paste what the Seer says', blurb: 'The same box as the checklist, right on the page, so a character Mimic has not seen can catch up. A tab for the #popflags output and a button to read your flags from your logs are marked coming next.' },
     ],
     fixes: [],
+  },
+  {
+    key: 'me-door-and-item-cards-2026-10-26',
+    title: 'Web 2.1.42',
+    version: 'Web 2.1.42',
+    date: '2026-10-26',
+    headline: 'Mimic\'s "On this PC" pages get a /me button like the website, and item cards on the inventory page show up whole, with their icons.',
+    features: [
+      { name: '/me in Mimic', blurb: 'The "On this PC" window now starts with a /me button, set up like the one on wolfpack.quest. It lists your inventory, fights and replay, and says where to turn a character\'s inventory sync or hiding on and off, with a button that takes you there.' },
+      { name: 'Easier to find: inventory sync and hiding', blurb: 'On wolfpack.quest/me a short note over your characters says which small buttons do what: Inventory sync, who can open the inventory page, and Hide from lists. The button that said "Inventory" now says "Inventory sync".' },
+    ],
+    fixes: [
+      'Hovering an item on a character\'s inventory page cut the item card into pieces or hid it. It now shows whole, and moves under the item when there is no room above.',
+      'Item icons were missing on character inventory pages. They show again, and a bag shows its own icon next to its name.',
+    ],
   },
   {
     key: 'site-lighter-2026-10-26',

@@ -1709,7 +1709,7 @@ describe('pather routes', () => {
     expect(H.brewallLayer([0], 0, 5)).toBeNull();
     expect(H.namedNpc({ npcs: [{ name: 'a_rat', chance: 90 }, { name: 'Boss', named: true, chance: 10 }] }).name).toBe('Boss');
     const js = stripJs(MAP_HTML);
-    expect(js).toMatch(/if \(!inLevelRange\(p0\.z, sz, srange\) && String\(p0\.id\) !== tgtPid\) continue;/);
+    expect(js).toMatch(/if \(!inLevelRange\(p0\.z, sz, srange\) && String\(p0\.id\) !== tgtPid && !\(S\.pulse && S\.pulse\.ids\[String\(p0\.id\)\]\)\) continue;/);   // (and a spot being pulsed, FB-100)
     expect(js).toMatch(/col: conCol\(un\) \|\| CO\.upLabel/);
     expect(js).toMatch(/var layerCol = C\.wallMode === 'layers' \? brewallLayer\(S\.prep\.bands, b, sz\) : null;/);
   });
@@ -2157,7 +2157,8 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       expect(net.calls).toHaveLength(1);
       c._mapStatePayload('', N + 600001);
       expect(net.calls).toHaveLength(2);
-      // a push: the first POST learns it, the next events are dropped quietly for the same ten minutes
+      // a push: the first POST learns it and nothing more is sent for the same ten minutes - but the events are HELD
+      // (the outbox, test/map-sync-outbox.test.js), not dropped, and go out once the wait is over
       const { c: k, net: n2 } = liveCore(() => ({ status: 404 }));
       const zd = k._mapZoneDoc('thedeep');
       k._mapLocalEvent('thedeep', zd, 'Aldenmar', { point_id: 1, kind: 'empty', at: N }, N);
@@ -2166,7 +2167,9 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       k._mapLocalEvent('thedeep', zd, 'Aldenmar', { point_id: 1, kind: 'empty', at: N + 1 }, N + 1);
       expect(k._mapSyncFlush(N + 1000)).toBe(false);
       expect(n2.calls).toHaveLength(1);
-      expect(k._mapSync.q).toEqual([]);
+      expect(k._mapSync.q.map(x => x.ev.at)).toEqual([N, N + 1]);
+      expect(k._mapSyncFlush(N + 600001)).toBe(true);
+      expect(JSON.parse(n2.calls[1].__body).events.map(e => e.at)).toEqual([N, N + 1]);
     });
     it('an error or a bad answer is ignored (the next poll asks again after the gate)', async () => {
       const { c, net } = liveCore(() => ({ status: 200, body: 'not json {' })); const N = Date.now();

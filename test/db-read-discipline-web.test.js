@@ -554,6 +554,7 @@ const UNIQUE_KEYS = {
   characters: [['name']],
   character_inventory: [['id'], ['character_name', 'slot_label']],
   character_gear: [['character', 'loc', 'slot']],
+  character_aas: [['character', 'aa_index']],   // pkey (guild_id, character, aa_index); lib/gearUpgradesLoad.ts reads one character's AAs
   character_spellbook: [['id'], ['character_name', 'spell_id']],
   character_lockouts: [['character', 'boss_key']],
   fun_events: [['id']],

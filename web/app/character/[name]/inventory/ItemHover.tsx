@@ -16,14 +16,22 @@
 // ⚠ PQDI answers only on `www.pqdi.cc`; bare `pqdi.cc` resets the connection
 // (a member's report, 2026-09-24: inventory links "don't ever load").
 //
-// Implementation is a CSS-positioned popover that toggles via mouseenter +
-// focus. No portal, no library — keeps the page server-rendered everywhere
-// except this one tooltip surface.
+// Implementation is a popover that toggles via mouseenter + focus, drawn in a
+// PORTAL on <body> with fixed coordinates (FB-99, a member, 2026-10-26: "item
+// mouseover gets chopped up into pieces"). It used to be `absolute` INSIDE the
+// trigger, and the inventory grid's cell is `overflow-hidden` (it has to clip a
+// long item name), so the card was cut to the cell's box — all of it above the
+// cell, so none of it showed. Any ancestor with overflow / transform / contain
+// does the same to an in-place popover; a portal is out of every one of them.
+// The card flips below the item when there is no room above, and is clamped to
+// the viewport sideways.
 
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import ItemIcon from './ItemIcon';
 import WpDbLink from '@/components/WpDbLink';
+import { placeTip } from '@/lib/tipPlacement';
 
 // Decoders now come from the shared module. This file used to carry its own
 // copies, and its SLOT table was missing EQ's paired slot bits (both ears,
@@ -45,7 +53,29 @@ export default function ItemHover({ card, fallbackName, className, children }: {
 }) {
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
   const tipId = useId();
+
+  // Fixed coordinates, set straight on the node (no state, so no second render and no flash): measured after the
+  // card is in the DOM, and again on scroll / resize so it follows its item. Hidden until first placed.
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const trigger = triggerRef.current, tip = tipRef.current;
+      if (!trigger || !tip) return;
+      const t = tip.getBoundingClientRect();
+      const p = placeTip(trigger.getBoundingClientRect(), { width: t.width, height: t.height },
+        { width: document.documentElement.clientWidth, height: window.innerHeight });
+      tip.style.left = `${p.left}px`;
+      tip.style.top = `${p.top}px`;
+      tip.style.visibility = 'visible';
+    };
+    place();
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => { window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place); };
+  }, [open]);
   const pqdiHref = card ? `https://www.pqdi.cc/item/${card.item_id}` : null;
 
   // Close on a short delay so the cursor can travel from the item up to the
@@ -56,7 +86,7 @@ export default function ItemHover({ card, fallbackName, className, children }: {
   const scheduleClose = () => { cancelClose(); closeTimer.current = setTimeout(() => setOpen(false), 180); };
 
   return (
-    <span className={`relative inline-block ${className ?? ''}`}
+    <span ref={triggerRef} className={`relative inline-block ${className ?? ''}`}
       onMouseEnter={openNow}
       onMouseLeave={scheduleClose}
       onFocus={openNow}
@@ -65,13 +95,18 @@ export default function ItemHover({ card, fallbackName, className, children }: {
       aria-describedby={open ? tipId : undefined}
     >
       {children}
-      {open && (
+      {open && createPortal(
         <div
           id={tipId}
+          ref={tipRef}
           role="tooltip"
-          // pt-1.5 (padding, not margin) keeps the gap visually but as part of
-          // the hover target, so the cursor never crosses dead space.
-          className="absolute left-1/2 -translate-x-1/2 bottom-full pt-1.5 z-50 w-64 max-w-[16rem] text-[11px] text-left pointer-events-auto"
+          // py-1.5 (padding, not margin) keeps the gap visually but as part of
+          // the hover target, so the cursor never crosses dead space — above
+          // the card when it sits over the item, below it when it flips under.
+          // React still bubbles this card's mouse and focus events to the
+          // trigger above, so the open/close handlers below keep working.
+          className="fixed z-50 py-1.5 w-64 max-w-[16rem] text-[11px] text-left pointer-events-auto"
+          style={{ left: 0, top: 0, visibility: 'hidden' }}
           onMouseEnter={openNow}
           onMouseLeave={scheduleClose}
         >
@@ -141,7 +176,8 @@ export default function ItemHover({ card, fallbackName, className, children }: {
             <span className="text-dim/70">stats-only · v1</span>
           </div>
         </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </span>
   );

@@ -419,6 +419,7 @@ const KEEP_PATTERNS = [
   /\bScores? a critical hit!/i,                   // crit announcement, attaches to prior damage
   /\bdelivers? a critical blast!/i,               // SPELL crit — the caster-side twin of the line above
   /\bhas been slain by/i,
+  /\bYou have been slain by /i,                   // own death, first person (parseEvent 'death', defender null)
   /\byou have slain /i,
   /^\[.+\]\s+You died\./i,                        // /death of self
   /\bdie[ds]\./i,                                 // "X died." — see parseEvent; "X dies." is FEIGN, kept only so the trigger engine can see it
@@ -1131,6 +1132,14 @@ function parseEvent(line, ts) {
   m = line.match(/\]\s+You have slain\s+(.+?)!/i);
   if (m) {
     return { ts: tsIso, type: 'death', defender: m[1], attacker: null /* self */ };
+  }
+  // First-person twin of the line above: EverQuest prints "You have been slain by <killer>!" in the
+  // dying character's OWN log, so the uploader's own death was never recorded (only a third-person
+  // "has been slain by" or "You died." was matched). defender null = self; the builder maps it to
+  // the log's character. A death that prints this AND "You died." is recorded once (EncounterBuilder).
+  m = line.match(/\]\s+You have been slain by (.+?)!/i);
+  if (m) {
+    return { ts: tsIso, type: 'death', defender: null /* self */, attacker: m[1] };
   }
   // "X died." — a real death with no named killer (drowning, falling, DoT tick).
   //
@@ -3817,6 +3826,30 @@ function petBuffsForOwner(ownerLower) {
         total_secs: durSecs > 0 ? Math.round(durSecs) : null, observed_at_ms: now, good: _spellGood(b.name), fell_off: fellOff });
     }
   }
+  // FB-102: a buff the pet's own /pet health report names but our landings do not time shows "(?)" on the Charm
+  // tracker while Mob Info, which keys the same landing by the mob's name, counts it down. The gap is the
+  // charm land: a re-charm we cannot PROVE is the same spawn (no spawn id on the pipe) clears this owner's
+  // landings, and the pre-charm sweep only carries the last 60 s. The report is the pet itself saying the buff is
+  // on it NOW, so the name-keyed landing's timer is borrowed for it. Never for a landing the id proves is
+  // another spawn's, never one that has worn off or run out (the chip stays untimed rather than "fell off").
+  const _untimed = [...byName.values()].some(v => v.remaining_secs == null);
+  if (_untimed && typeof targetBuffsFor === 'function') {
+    let petKey = String(_petNameForOwner(ownerLower) || _lastPetByOwner.get(ownerLower) || '').toLowerCase();
+    if (!petKey && typeof _charmTickTracker !== 'undefined') {
+      for (const [ck, ci] of _charmTickTracker) {
+        if (ci && ci.is_active && ci.owner && String(ci.owner).toLowerCase() === ownerLower) { petKey = ck; break; }
+      }
+    }
+    if (petKey) {
+      for (const t of targetBuffsFor(petKey, _petIdForOwner(ownerLower))) {
+        const cur = byName.get(String(t.name || '').toLowerCase());
+        if (!cur || cur.remaining_secs != null || t.fell_off || !(t.remaining_secs > 0)) continue;
+        cur.remaining_secs = t.remaining_secs;
+        cur.total_secs = t.total_secs;
+        cur.observed_at_ms = now;
+      }
+    }
+  }
   return Array.from(byName.values());
 }
 
@@ -4369,6 +4402,8 @@ const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
 // lingers before releasing pushes the home-point line out; 60s covers that
 // without ever reaching back to a PREVIOUS death.
 const DEATH_CONFIRM_WINDOW_MS = 60_000;
+// "You have been slain by X!" and "You died." are two lines for ONE self death; closer than this = same death.
+const SELF_DEATH_DEDUP_MS = 3000;
 const DI_CAST_MS = 6000, DI_RECAST_MS = 90_000;
 const _diStateByChar = new Map();   // charLower → { castAt, readyAt }
 function _noteDiCast(charLower, atMs) {
@@ -6049,7 +6084,7 @@ function conLevelFor(character, target) {
 // context for older catalogs.
 const _POP_GRANT_RX = /^You (?:have received|receive) a (new checklist|character) flag!/i;
 const _POP_PREV_RX = /^(?:Mavuin |The Tribunal |Adler Fuirstel |Elder Fuirstel |Adroha Jezith |Thelin |Fahlia Shadyglade |Miak the Searedsoul|You recognize the |Milyk Fuirstel's |Tarkil Adan |Giwin Mirakon|Giwin's invitation|Nitram Anizok |You realize that the image |Maelin|Tylis |The Planar Projection|A Planar Projection |Karana begins|Askr |An aura of soft light|As you place your hand on the burning cauldron|For a moment you pause|You have learned the meaning|You black out for a moment|You focus back to your battle|You feel the searing pain|The Cipher on your arm|As you think back to your meeting|An Image of Mithaniel)/;
-const _POP_RECITAL_RX = /^(?:Your soul has formed a bond|The History translated for you|Learning of Zebuxoruk|The information obtained from (?:Mithaniel|Karana)|You have shown your prowess|You have obtained the Talisman|The Cipher of the Divine Language|Saryrn been destroyed|Mithaniel has been bested|You have (?:completed all of Honor|beaten Rydda|saved the villagers|defeated the nomads)|You have bested Aerin|The evidence of Mavuin|Having endured the trials|Mavuin is grateful|Tylis (?:is being tortured|has been removed)|Thelin (?:being tormented|has completed his pact)|Terris Thule's grasp|Saved from a world|Alder Fuirstel wishes|Grummus has been destroyed|Milyk has been saved|Bertoxxulous has been slain|Saved from certain doom|Now that Grummus has been destroyed|The portal into the Plane of Fire|Xuzl's arcane|Arlyxir's wealth|The power of Dresolik|Rizlona's song|Jiva's strength|The true route to the Plane of Fire|Giwin would like you|The pack of notes from|The words of Maelin echo|The parchments of Rallos|You remember Nitram's words)/;
+const _POP_RECITAL_RX = /^(?:Your soul has formed a bond|The History translated for you|Learning of Zebuxoruk|The information obtained from (?:Mithaniel|Karana)|You have shown your prowess|You have obtained the Talisman|The Cipher of the Divine Language|Saryrn been destroyed|Mithaniel has been bested|You have (?:completed all of Honor|beaten Rydda|saved the villagers|defeated the nomads)|You have bested Aerin|The evidence of Mavuin|Having endured the trials|Mavuin is grateful|Tylis (?:is being tortured|has been removed)|Thelin (?:being tormented|has completed his pact)|Terris Thule's grasp|Saved from a world|Alder Fuirstel wishes|Grummus has been destroyed|Milyk has been saved|Bertoxxulous has been slain|Saved from certain doom|Now that Grummus has been destroyed|The portal into the Plane of Fire|Xuzl's arcane|Arlyxir's wealth|The power of Dresolik|Rizlona's song|Jiva's strength|The true route to the Plane of Fire|Giwin would like you|The pack of notes from|The words of Maelin echo|The parchments of Rallos|You remember Nitram's words|You remember seeing a small trinket by Grummus|You have defeated Aerin`Dar but have yet to learn|Terris still haunts your nightmares|As you recall your memory of your battle against the Plaguebringer|Although it was kind of you to help him, Tylis still|You attempt to recall your defeat of Saryrn|(?:Vallon|Tallon) fell before you with great ease|Your heart beat speeds as you recall the Warlord|You recall meeting with Karana, but the memory is clouded|An Image of Mithaniel flashes before you, 'You have yet to earn|An image of Mithaniel flashes before you\.\s+He looks up from a small book|Besting the Burning Prince proves your might)/;   // + the Seer's PENDING memories: what 'unlock memories' prints when the step a kill waits for is missing (utils/popFlagStages.js PENDING_RECITAL; Seer_Mal_Nae-Shi.lua checklistFlags)
 const _popPrevLine = new Map();   // character (lowercase) → the message of the line before this one
 // The Halls of Honor trial credit (the guild lead, 2026-10-18: "we did not get credit on the command center for
 // this trial hailing"). Hailing the NPC a won trial leaves standing prints the mist line below, naming the NPC,
@@ -6106,6 +6141,195 @@ function parsePopFlagLine(line, character) {
     text,
     ...(kind === 'trial' ? { npc: trialNpc.slice(0, 64) } : {}),
   };
+}
+
+// ── The server's `#popflags` command, read from the member's own log ─────────────────────────────────────────────
+// The guild lead, 2026-10-26: "ideally users are able to have that text come through anytime they do it from mimic".
+// The command (EQMacEmu zone/gm_commands/popflags.cpp, commit 11024c196790cfa370f1a44d6f03d70a23deac39) prints the
+// character's flags as fixed lines. web/lib/popFlagsPaste.ts reads a PASTE of the same lines; this is the same table
+// for the log, and test/pop-flags-live-parity.test.js fails when the two disagree on the shared fixture.
+//
+// THE GATE IS THE TABLE. Every line the command can print for a step is one of a finite set (a label, a value from a
+// fixed array, Unlocked/Complete/Received), so the gate is an EXACT match of the whole line, after the timestamp,
+// against the entries built below: not a prefix, not a keyword. Nothing else leaves the machine: a line that is not
+// one of those (chat, a tell, a player's own words typed to look like one: those carry "X says," / "You tell", so they
+// never equal a system line) is dropped here. And what is uploaded is never the line: only the step KEYS it proves,
+// the time of the line and the character (docs/PRIVACY.md lists it). About a hundred and twenty lines in all.
+//
+// Cites are popflags.cpp:<line>. A step is `<qglobal>_<N>` where N is the position in the printed array (cpp:91
+// `descriptions[stage - 1]`). Karana prints different words in Tier 2 (cpp:478) and Tier 3 (cpp:585) under different
+// labels, so the LABEL says which; no section state is needed for it.
+//
+// Per-log state, kept as small as it can be and reset on a header:
+//   time      whether the member holds the `time` flag, learned from "Plane of Time access: Locked/Unlocked", the
+//             overview's Tier 4/5 lines (cpp:343-355, 827-854), or any line the command prints only WITHOUT it (a boss
+//             line reading Missing / Pending memory, the Seer notice, the Miak advice, Tier 1-3 not Complete: see the
+//             _PF_NO_TIME entries). The boss "Complete" lines and the Miak preflag are
+//             `<test> || time` (cpp:171-176, 717): they count only when time is known NOT held, and wait (up to 6 h)
+//             for a line that says so (the overview comes first when the member runs plain #popflags, the tier
+//             commands after). RESET on "=== Planes of Power Progression ===" (a new run).
+//   hoh       which of the three trial lines were Complete (cpp:609-627): all three also proves hohtrials_111.
+//             RESET on "=== Tier 3 Progression ===".
+//   sent      step → last time we sent it (6 h), so running the command twice in a night is one row, not two.
+const _PF_STAGES = [
+  ["Mavuin's case", 'mavuin', ["The evidence needed to save Mavuin has been requested", "The Tribunal has agreed to hear Mavuin's case", "Mavuin's case is complete"]],                                                             // cpp:370-374
+  ['Fuirstel progression', 'fuirstel', ['Obtain the Ward for Milyk', 'Grummus defeated; return to Elder Fuirstel', 'Elder Fuirstel aided; defeat Bertoxxulous', 'Bertoxxulous defeated; return to Elder Fuirstel', 'Fuirstel progression complete']], // cpp:376-382
+  ['Thelin progression', 'thelin', ['Help Thelin escape the hedge maze', 'Defeat Terris Thule', 'Terris Thule was defeated', 'Thelin was released from Terris Thule', 'Nightmare progression complete']],                  // cpp:384-390 (FIVE)
+  ['Aerin`Dar progression', 'aerindar', ['Aerin`Dar defeated; the meaning of Justice remains', 'Halls of Honor access unlocked']],                                                                                          // cpp:473-476
+  ['Askr and Karana progression', 'karana', ['Prove yourself to Askr', "Complete Mavuin's case, then use the Storms shrine to enter Bastion of Thunder", 'Bastion of Thunder progression recorded', "Karana's information obtained"]], // cpp:478-483
+  ['Agnarr and Karana progression', 'karana', ['Return to Askr', "Complete Mavuin's case, then use the Storms shrine to enter Bastion of Thunder", 'Karana progression continues', "Karana's information obtained"]],         // cpp:585-590
+  ['Tylis progression', 'tylis', ['Rescue Tylis from the Plane of Torment', 'Tylis progression complete']],                                                                                                                   // cpp:485-488
+  ['Giwin and Zek progression', 'zeks', ['Initial Zek progression recorded', 'Meet Giwin in Drunder', "Vallon Zek's information obtained", "Tallon Zek's information obtained", 'Both Zek information sets obtained', 'Defeat Rallos Zek', 'Zek progression complete']], // cpp:575-583
+];
+const _PF_NOT_IN_CATALOG = { zeks_5: ['zeks_3', 'zeks_4'], thelin_5: ['thelin_4'] };   // values we keep no step for → what they prove
+const _PF_ACCESS = {                                                                    // "<label>: Unlocked" proves the step
+  'Crypt of Decay access': 'grummus_1',            // cpp:424-427, 529-533
+  'Lower Crypt access': 'bertox_key_1',            // cpp:537-541
+  'Factory door access': 'poi_door_1',             // cpp:451-455
+  'Air, Earth, and Water access': 'zebuxoruk_2',   // cpp:803-807
+  'Plane of Fire access': 'pofire_2',              // cpp:811-815
+  'Plane of Earth B access': 'earthb_key_1',       // cpp:819-823
+};
+const _PF_BITS = [                                                                      // "<name>: Complete", one per bit
+  ["Rydda`Dar trial", 'hoh_trial_1', 'hoh'], ['Village trial', 'hoh_trial_2', 'hoh'], ['Nomad trial', 'hoh_trial_3', 'hoh'],   // cpp:609-627
+  ['Xuzl', 'sol_room_1'], ['Arlyxir', 'sol_room_2'], ['Dresolik', 'sol_room_3'], ['Rizlona', 'sol_room_4'], ['Jiva', 'sol_room_5'], // cpp:731-767
+];
+const _PF_MAELIN = [                                                                    // "<label>: Received" (cpp:678-708)
+  ['Cipher information', ['cipher_1']], ['Zebuxoruk lore', ['zebuxoruk_1']],
+  ['Combined Zek information', ['zeks_3', 'zeks_4']], ['Final elemental information', ['zebuxoruk_2']],
+];
+const _PF_BOSS = [                                                                      // "<label>: Complete" = `<test> || time`
+  ['Grummus flag', 'fuirstel_2'], ['Terris Thule flag', 'thelin_3'], ['Manaetic Behemoth flag', 'zeks_2'],   // cpp:430, 444, 457
+  ["Aerin`Dar flag", 'aerindar_1'], ['Bertoxxulous flag', 'fuirstel_4'], ['Keeper of Sorrows flag', 'tylis_2'], // cpp:502, 543, 556
+  ['Saryrn cipher half', 'saryrn_1'], ['Mithaniel Marr cipher half', 'mmarr_1'], ['Mithaniel Marr book', 'mmarr_book_1'], // cpp:559, 631, 634
+  ['Agnarr / Karana flag', 'karana_4'], ['Vallon Zek flag', 'zeks_3'], ['Tallon Zek flag', 'zeks_4'],         // cpp:655, 669, 671
+  ['Rallos Zek flag', 'zeks_7'], ['Solusek Ro flag', 'pofire_2'], ['Miak the Searedsoul preflag', 'pofire_1'], // cpp:673, 781, 717
+];
+const _pfNorm = (s) => String(s).replace(/[‘’ʼ`]/g, "'").replace(/\s+/g, ' ').trim().toLowerCase();
+const _PF_LINES = new Map();
+let _PF_MAXLEN = 0;
+const _PF_NO_TIME = { k: 'time', yes: false };                    // "time is not held"
+// The few table lines with no ": " in them (the Seer notice and the Miak advice): a cheap opening test so the per-line
+// pre-check below stays a pre-check. The exact-line table is still the only gate.
+const _PF_BARE_RX = /^(?:A checklist memory is ready|Sit near Seer|Pending checklist memories|Complete the unfinished|Speak to Miak the Searedsoul in Tranquility)/;
+(function _pfBuild() {
+  const add = (text, entry) => { const n = _pfNorm(text); _PF_LINES.set(n, entry); if (n.length > _PF_MAXLEN) _PF_MAXLEN = n.length; };
+  for (const [label, series, texts] of _PF_STAGES) {
+    texts.forEach((t, i) => { const key = `${series}_${i + 1}`; add(`${label}: ${t}`, { k: 'keys', keys: _PF_NOT_IN_CATALOG[key] || [key] }); });
+    if (series === 'karana') add(`${label}: Complete; combined into Zebuxoruk lore`, { k: 'keys', keys: ['zebuxoruk_1'] });   // cpp:510, 642
+  }
+  for (const [label, key] of Object.entries(_PF_ACCESS)) add(`${label}: Unlocked`, { k: 'keys', keys: [key] });
+  add('Plane of Time access: Unlocked', { k: 'time', yes: true });                    // cpp:827-831, 850-854
+  add('Plane of Time access: Locked', { k: 'time', yes: false });
+  for (const [name, key, group] of _PF_BITS) add(`${name}: Complete`, group ? { k: 'hoh', keys: [key] } : { k: 'keys', keys: [key] });
+  for (const [label, keys] of _PF_MAELIN) add(`${label}: Received`, { k: 'keys', keys });
+  add('Plane of Fire progression: Unlocked', { k: 'keys', keys: ['pofire_2'] });      // cpp:773-779
+  for (const [label, key] of _PF_BOSS) add(`${label}: Complete`, { k: 'gated', keys: [key] });
+  // Lines the command prints ONLY while the member does not hold `time`, so each one is the answer "not held" (real
+  // output, 2026-10-26: a partway character's run never prints Tier 4 or the Plane of Time line, and its boss "Complete"
+  // lines waited forever). A boss line is `complete || time ? Complete : pending ? Pending memory : Missing` (cpp:175-176;
+  // the Miak line is Complete or Missing, cpp:718); "Pending memory: <x>" returns early with time (cpp:157, strings at
+  // 443 and 523); the Seer notice does too (cpp:184-207); the Miak advice is printed when the preflag is not Complete
+  // (cpp:719-720); tiers 1-3 are `<steps> || time` (cpp:230,241,256), so In progress / Not started means not held.
+  for (const [label] of _PF_BOSS) { add(`${label}: Missing`, _PF_NO_TIME); if (label !== 'Miak the Searedsoul preflag') add(`${label}: Pending memory`, _PF_NO_TIME); }
+  for (const n of [1, 2, 3]) { add(`Tier ${n}: In progress`, _PF_NO_TIME); add(`Tier ${n}: Not started`, _PF_NO_TIME); }
+  add("Pending memory: Thelin's hedge maze", _PF_NO_TIME); add('Pending memory: Karana', _PF_NO_TIME);                       // cpp:443, 523
+  add('A checklist memory is ready to be unlocked.', _PF_NO_TIME);                                                             // cpp:191
+  add("Sit near Seer Mal Nae`Shi and say 'unlock memories', then check #popflags again.", _PF_NO_TIME);                       // cpp:196
+  add('Pending checklist memories exist, but their prerequisite steps are incomplete.', _PF_NO_TIME);                          // cpp:202
+  add('Complete the unfinished progression shown above, then return to Seer Mal Nae`Shi.', _PF_NO_TIME);                       // cpp:207
+  add("Speak to Miak the Searedsoul in Tranquility about 'portal's destination'; hailing alone does not grant the preflag.", _PF_NO_TIME); // cpp:720
+  // The overview (cpp:326-355): tier 4 complete IS Has("time") (cpp:267-270), and tier 5's test is Has("time").
+  add('Tier 4: Complete', { k: 'time', yes: true }); add('Tier 4: In progress', { k: 'time', yes: false }); add('Tier 4: Not started', { k: 'time', yes: false });
+  add('Tier 5 - Plane of Time: Complete', { k: 'time', yes: true }); add('Tier 5 - Plane of Time: Not started', { k: 'time', yes: false });
+  // The two "Tier complete" lore lines whose test is exactly Has("time") (cpp:837, 867).
+  add('Tier complete: The powers of Air, Earth, Fire, and Water have been joined. The way into the Plane of Time now stands open.', { k: 'time', yes: true });
+  add('Tier complete: The Plane of Time recognizes your soul. Beyond its shifting portals, the gods await.', { k: 'time', yes: true });
+  add('=== Planes of Power Progression ===', { k: 'head', all: true });               // cpp:321
+  add('=== Tier 3 Progression ===', { k: 'head', all: false });                      // cpp:595
+})();
+const _PF_TTL_MS = 6 * 3600_000;
+const _pfState = new Map();   // character (lowercase) → { time, timeAt, pending, hoh, sent }
+function _pfEvent(character, atMs, keys) {
+  return { character, zone: null, boss: null, ts: new Date(atMs).toISOString(), kind: 'recital', source: 'popflags', text: null, stages: keys.slice() };
+}
+/** One log line → the pop_flag events it makes (usually none). Sent as an empty-text recital so a bot that does not
+ *  know source "popflags" skips it; a bot that does stores `stages` as rows with source popflags. */
+function popFlagsOutputEvents(line, character) {
+  if (!character || !line) return [];
+  const msg = String(line).replace(/^\[[^\]]*\]\s*/, '');
+  if (msg.length > _PF_MAXLEN + 8 || (msg.charCodeAt(0) !== 61 && msg.indexOf(': ') < 0 && !_PF_BARE_RX.test(msg))) return [];
+  const hit = _PF_LINES.get(_pfNorm(msg));
+  if (!hit) return [];
+  const cl = String(character).toLowerCase();
+  const tsd = parseEqTimestamp(line);
+  const at = tsd ? tsd.getTime() : Date.now();
+  let st = _pfState.get(cl);
+  if (!st) {
+    st = { time: null, timeAt: 0, pending: [], hoh: new Set(), sent: new Map() };
+    _pfState.set(cl, st);
+    if (_pfState.size > 40) _pfState.delete(_pfState.keys().next().value);
+  }
+  const out = [];
+  const emit = (keys, whenMs) => {
+    const fresh = keys.filter(k => !(st.sent.has(k) && Math.abs(whenMs - st.sent.get(k)) < _PF_TTL_MS));
+    if (!fresh.length) return;
+    for (const k of fresh) st.sent.set(k, whenMs);
+    if (st.sent.size > 200) st.sent.delete(st.sent.keys().next().value);
+    out.push(_pfEvent(character, whenMs, fresh));
+  };
+  const timeKnown = () => (st.time && Math.abs(at - st.timeAt) < _PF_TTL_MS ? st.time : null);
+  if (hit.k === 'head') {
+    if (hit.all) { st.time = null; st.pending = []; }
+    st.hoh.clear();
+  } else if (hit.k === 'keys') {
+    emit(hit.keys, at);
+  } else if (hit.k === 'hoh') {
+    emit(hit.keys, at);
+    const before = st.hoh.size;
+    st.hoh.add(hit.keys[0]);
+    if (before < 3 && st.hoh.size === 3) emit(['hohtrials_111'], at);
+  } else if (hit.k === 'time') {
+    st.time = hit.yes ? 'yes' : 'no';
+    st.timeAt = at;
+    if (hit.yes) { st.pending = []; emit(['time_1'], at); }
+    else { for (const p of st.pending) emit(p.keys, p.at); st.pending = []; }
+  } else if (hit.k === 'gated') {
+    const t = timeKnown();
+    if (t === 'no') emit(hit.keys, at);
+    else if (t !== 'yes') {
+      st.pending = st.pending.filter(p => Math.abs(at - p.at) < _PF_TTL_MS).slice(-39);
+      st.pending.push({ keys: hit.keys, at });
+    }
+  }
+  return out;
+}
+
+// "Sync from my logs", the two steps that touch the upload queue and the bot (the reader itself is _rescanRun, further down).
+// Wait (bounded) for the events just queued to leave, so "done" on the website means the flags are stored.
+async function _rescanDrained(maxMs) {
+  const until = Date.now() + maxMs;
+  while (Date.now() < until && _uploadQueue.some(e => e && e.kind === 'pop_flag')) await new Promise((r) => setTimeout(r, 2000));
+}
+// POST /api/agent/rescan-done {id, found, ok}. A 4xx is a refusal (nothing to retry); anything else is tried again.
+async function _rescanReport(id, found, ok) {
+  const base = _getApiBase();
+  const token = _getAgentToken();
+  if (!base || !token) return false;
+  for (const wait of [0, 5_000, 30_000, 120_000]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try {
+      const res = await fetch(base.replace(/\/+$/, '') + '/rescan-done', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION },
+        body: JSON.stringify({ id, found, ok }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) return true;
+      if (res.status >= 400 && res.status < 500) return false;   // refused: nothing to retry
+    } catch { /* offline: retry */ }
+  }
+  return false;     // the bot hands the request out again after 30 minutes; the re-read is idempotent
 }
 
 // A hail we WITNESSED — someone else greeting an NPC in our zone. Evidence of
@@ -11653,7 +11877,12 @@ class EncounterBuilder {
         defName === this.character ||
         isConfirmedPlayer(defName)
       );
-      if (isPlayer) {
+      // One death can print both "You have been slain by X!" and "You died." in the dying
+      // character's own log: record the character once (a real second death is minutes away).
+      const deathTsPre = Date.parse(event.ts) || Date.now();
+      const selfDupe = isPlayer && defName === this.character && this.deaths.some(d =>
+        d && d.name === defName && Math.abs(deathTsPre - (Date.parse(d.ts) || 0)) <= SELF_DEATH_DEDUP_MS);
+      if (isPlayer && !selfDupe) {
         const deathTs      = Date.parse(event.ts) || Date.now();
         const lastRip      = this.recentRiposteDmg.get(defName);
         const riposteDeath = !!lastRip && (deathTs - lastRip) <= 3000;
@@ -12951,6 +13180,9 @@ function _maybeUploadRaidRoster(sample) {
       const lower = String(m.name).toLowerCase();
       _raidRosterMembers.add(lower);
       if (m.class) _raidClassByName.set(lower, String(m.class));
+      // A raider on the Zeal raid list is a player, /who'd or not: deaths of raiders nobody /who'd were
+      // dropped by isConfirmedPlayer. Letters only here too, so a mob-shaped name never takes a slot.
+      if (/^[A-Za-z]+$/.test(String(m.name))) confirmPlayer(m.name);
     }
     // #72 P1c: the raid ROSTER snapshot is redundant across a group (composition
     // is identical from every raider's view; HP is per-group and any group
@@ -13259,6 +13491,9 @@ function _onUploadSuccess(entry, responseText) {
     }
     return;
   }
+  // Our own PoP flag upload landed: the bot has dropped its cached status for these characters, so ask again soon
+  // (the Flags mode of the PoP overlay then shows the new flag within a few seconds, not five minutes).
+  if (entry.kind === 'pop_flag') { _popSoon(); return; }
   if (entry.kind !== 'encounter') return;
   try {
     const resp = JSON.parse(responseText);
@@ -18407,6 +18642,10 @@ function _serializeForDashboard() {
     // Main / alt · Inventory only · Hide completely, per character on this PC (the guild lead, 2026-10-06),
     // including the ones whose log this PC no longer reads. No network, no clock: byte-stable between polls.
     characterModes:     _pcCharacterModeRows(),
+    // The first-sign-in "Your characters" card: true while it MAY apply (signed in, not saved or dismissed).
+    // The dashboard then asks GET /api/recruit-card, which is the call that reaches the guild server.
+    recruitCardPending: !_optinState.recruitCard && !!_mimicSessionToken && !_localOnly()
+      && _recruitLinkedKey !== String(_mimicSessionToken).slice(-8),
     // FB-51: null, or { character, file, silentSince } while the primary character's log has gone quiet
     // though Zeal says they are in game. silentSince is the last line's time, so the JSON is byte-stable.
     logSilent:          _logSilent,
@@ -21427,6 +21666,7 @@ function renderDash(s) {
   // renderMeCard via morphInto so the card is byte-stable between polls and
   // never drags the #dash section into a repaint. Everything it shows is LOCAL
   // (own Zeal state, watched logs, local tells, recent uploads) — no bot call.
+  h += '<div id="wpRecruitCard"></div>';   // the first-sign-in "Your characters" card; empty for everyone it does not apply to
   h += '<div id="wpMeCard" class="card wide" style="display:none"></div>';
 
   // ⚙ Engine — the logsync/sync guts (setup checklist, files tailed, queue
@@ -21609,6 +21849,204 @@ document.addEventListener('click', function (e) {
   if (!b) return;
   e.preventDefault();
   wpSetCharacterMode(b.dataset.char, b.dataset.mode);
+});
+
+// 👋 Your characters — the first-sign-in card (the guild lead, 2026-10-24: "We should be asking what characters
+// the player would like to upload (from their logs). If none show up, they can type in their character name to
+// get started … And we should ask about grabbing an upload of their quarmy/spellbook/inventory if it shows up").
+// Shown only to a signed-in person whose account has NO character linked on wolfpack.quest, until they save or
+// dismiss it. State comes from the engine (GET /api/recruit-card: the characters whose logs are in the EQ folder,
+// newest first, and which export files sit beside them); Save POSTs the ticked ones, which the guild server stages
+// as a recruit main + alts (nothing is created in OpenDKP). Own #wpRecruitCard placeholder, filled by wpYcPaint
+// via morphInto: everything the string holds is JS-side state (ticks, the main, typed names), so it is
+// byte-stable across polls and repaints only when the person acts. The date shown is the log's modified day,
+// never a "x ago", so time passing does not rewrite it.
+var _wpYc = { pending: false, data: null, fetchedAt: 0, loading: false, ready: false, sel: {}, main: '', extra: [], typed: '', busy: false, msg: null, done: null };
+function wpYcFetch(force) {
+  if (_wpYc.loading) return;
+  if (!force && _wpYc.fetchedAt && Date.now() - _wpYc.fetchedAt < 60000) return;
+  _wpYc.loading = true;
+  fetch('/api/recruit-card', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+    _wpYc.data = d;
+    // First time it shows: the newest log is ticked and is the main. Later fetches never touch the ticks.
+    if (d && d.show && !_wpYc.ready && Array.isArray(d.characters) && d.characters.length) {
+      _wpYc.ready = true;
+      _wpYc.sel[d.characters[0].name] = true;
+      _wpYc.main = d.characters[0].name;
+    }
+  }).catch(function (err) { void err; }).then(function () {
+    _wpYc.fetchedAt = Date.now();
+    _wpYc.loading = false;
+    wpYcPaint();
+  });
+}
+function wpYcNames() {
+  var d = _wpYc.data, out = [];
+  ((d && d.characters) || []).forEach(function (c) { out.push(c.name); });
+  _wpYc.extra.forEach(function (n) { if (out.indexOf(n) < 0) out.push(n); });
+  return out;
+}
+function wpYcTicked() {
+  var t = wpYcNames().filter(function (n) { return _wpYc.sel[n]; });
+  if (t.length && t.indexOf(_wpYc.main) < 0) _wpYc.main = t[0];
+  return t;
+}
+function wpYcFilesFor(name) {
+  var f = (_wpYc.data && _wpYc.data.files && _wpYc.data.files[name.toLowerCase()]) || {};
+  var out = [];
+  if (f.spellbook) out.push(name + '-Spellbook.txt');
+  if (f.inventory) out.push(name + '-Inventory.txt');
+  if (f.quarmy) out.push(name + ' Quarmy export');
+  return out;
+}
+function wpYcResultHtml(r) {
+  var h = '<div class="card wide" style="border-color:' + (r.saved ? 'var(--green)' : 'var(--orange)') + '"><h2>👋 ' + (r.saved ? 'Saved' : 'Nothing was saved') + '</h2>';
+  (r.staged || []).forEach(function (s) {
+    h += '<div style="font-size:12px;line-height:1.7"><span style="color:var(--green)">✓</span> <b>' + esc(s.name) + '</b> '
+      + '<span class="dim">' + (s.is_main ? 'your main (' + esc(s.rank || 'Recruit') + ')' : 'alt (' + esc(s.rank || 'Non-raid Alt') + ')') + '</span></div>';
+  });
+  (r.conflicts || []).forEach(function (c) {
+    var why = c.reason === 'owned_by_another' ? 'already linked to another account'
+      : c.reason === 'in_opendkp_unclaimed' ? 'already on the OpenDKP roster; an officer links it'
+      : 'could not be saved';
+    h += '<div style="font-size:12px;line-height:1.7"><span style="color:var(--orange)">!</span> <b>' + esc(c.name) + '</b> <span class="dim">' + why + '</span></div>';
+  });
+  var up = r.upload;
+  if (up) {
+    if (up.held) {
+      h += '<div class="dim" style="font-size:12px;margin-top:6px">Your spellbook, inventory and Quarmy files are not sent yet: Mimic '
+        + (up.held === 'raid' ? 'is holding uploads during the raid. They go when the hold lifts.' : 'is still checking your privacy settings. They go within a few minutes.') + '</div>';
+    } else {
+      Object.keys(up.results || {}).forEach(function (n) {
+        var parts = Object.keys(up.results[n]).map(function (k) {
+          var st = up.results[n][k];
+          return (k === 'quarmy' ? 'Quarmy' : k) + ' ' + (st === 'queued' ? 'sent' : st === 'up to date' ? 'already up to date' : 'waiting');
+        });
+        h += '<div class="dim" style="font-size:12px;margin-top:4px">' + esc(n) + ': ' + esc(parts.join(', ')) + '</div>';
+      });
+    }
+  }
+  if (r.saved) h += '<div class="dim" style="font-size:11px;margin-top:8px">An officer still confirms your main in OpenDKP. Until then this is staged, not final.</div>';
+  return h + '<div style="margin-top:10px"><button type="button" data-rc-act="done">Done</button></div></div>';
+}
+function wpYcHtml() {
+  if (_wpYc.done) return wpYcResultHtml(_wpYc.done);
+  var d = _wpYc.data;
+  if (!_wpYc.pending || !d || !d.show) return '';
+  var logs = d.characters || [];
+  var names = wpYcNames();
+  var ticked = wpYcTicked();
+  var rows = names.map(function (n) {
+    var c = null;
+    logs.forEach(function (l) { if (l.name === n) c = l; });
+    var meta = c
+      ? 'last played ' + new Date(c.mtime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + ' · log ' + (c.size < 104858 ? '<0.1' : (c.size / 1048576).toFixed(1)) + ' MB'
+      : 'typed by you';
+    return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0">'
+      + '<input type="checkbox" data-rc-tick="' + esc(n) + '" aria-label="Upload ' + esc(n) + '"' + (_wpYc.sel[n] ? ' checked' : '') + '>'
+      + '<b>' + esc(n) + '</b>'
+      + '<label class="dim" style="font-size:11px;cursor:pointer"><input type="radio" name="rcMain" data-rc-main="' + esc(n) + '"' + (_wpYc.main === n && _wpYc.sel[n] ? ' checked' : '') + '> this is my main</label>'
+      + '<span class="dim" style="font-size:10px">' + esc(meta) + '</span></div>';
+  });
+  var h = '<div class="card wide" style="border-color:var(--blue)"><h2>👋 Welcome — which characters are yours?</h2>';
+  if (logs.length === 0) {
+    h += '<div style="font-size:12px;line-height:1.5;margin-bottom:6px">Mimic did not find any EverQuest logs. Mimic reads the game&rsquo;s log: '
+      + 'start EverQuest once with logging on, then press <b>Look again</b>. Or type your character&rsquo;s name below to get started. '
+      + 'A lot of things will not work until Mimic has your logs.'
+      + (d.eq_folder_known ? '' : ' Mimic does not know your EverQuest folder yet (Settings).') + '</div>';
+  } else {
+    h += '<div class="dim" style="font-size:12px;line-height:1.5;margin-bottom:6px">Mimic found these in your EverQuest logs, newest first. '
+      + 'Tick the ones that are yours and mark your main. Anything you leave out is not added to your account.</div>';
+  }
+  if (rows.length) h += '<div>' + wpMoreList('rc-chars', rows, { show: 6, noun: 'more characters' }) + '</div>';
+  h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px">'
+    + '<input id="rcTyped" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Character name" value="' + esc(_wpYc.typed) + '" style="width:170px">'
+    + '<button type="button" data-rc-act="add">Add</button>'
+    + '<button type="button" data-rc-act="again">Look again</button></div>';
+  var found = ticked.filter(function (n) { return wpYcFilesFor(n).length > 0; });
+  if (found.length) {
+    h += '<div style="font-size:12px;line-height:1.6;margin-top:10px"><span class="dim">Also found:</span> '
+      + esc(found.map(function (n) { return wpYcFilesFor(n).join(', '); }).join(', '))
+      + '<div class="dim" style="font-size:11px">Your spellbook, inventory and Quarmy export fill your spell, gear and PoP views. They go only for the characters ticked above.</div></div>';
+  }
+  if (_wpYc.msg) h += '<div style="font-size:12px;margin-top:8px;color:' + _wpYc.msg.color + '">' + esc(_wpYc.msg.text) + '</div>';
+  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">'
+    + '<button type="button" data-rc-act="save"' + (ticked.length && !_wpYc.busy ? '' : ' disabled') + '>' + (_wpYc.busy ? 'Saving…' : 'Save') + '</button>'
+    + (found.length ? '<button type="button" data-rc-act="saveup"' + (_wpYc.busy ? ' disabled' : '') + '>Save and upload these now</button>' : '')
+    + '<button type="button" data-rc-act="dismiss" class="dim" style="background:none;border:0;cursor:pointer;text-decoration:underline">Not now</button></div></div>';
+  return h;
+}
+function wpYcPaint() {
+  var el = document.getElementById('wpRecruitCard');
+  if (el) morphInto(el, wpYcHtml());
+}
+function renderRecruitCard(s) {
+  var el = document.getElementById('wpRecruitCard');
+  if (!el) return;
+  _wpYc.pending = !!(s && s.recruitCardPending);
+  if (!_wpYc.pending && !_wpYc.done) { _wpYc.data = null; _wpYc.fetchedAt = 0; morphInto(el, ''); return; }
+  if (_wpYc.pending && !_wpYc.done && !(_wpYc.data && _wpYc.data.show)) wpYcFetch(false);
+  wpYcPaint();
+}
+function wpYcAdd() {
+  var n = String(_wpYc.typed || '').trim();
+  if (!/^[A-Za-z]{2,24}$/.test(n)) { _wpYc.msg = { text: 'A character name is letters only, 2 to 24 of them.', color: 'var(--orange)' }; wpYcPaint(); return; }
+  n = n.charAt(0).toUpperCase() + n.slice(1).toLowerCase();
+  if (wpYcNames().indexOf(n) < 0) _wpYc.extra.push(n);
+  _wpYc.sel[n] = true;
+  if (!_wpYc.main || !_wpYc.sel[_wpYc.main]) _wpYc.main = n;
+  _wpYc.typed = '';
+  _wpYc.msg = null;
+  wpYcPaint();
+}
+function wpYcSave(upload) {
+  if (_wpYc.busy) return;
+  var t = wpYcTicked();
+  if (!t.length) { _wpYc.msg = { text: 'Tick at least one character.', color: 'var(--orange)' }; wpYcPaint(); return; }
+  _wpYc.busy = true;
+  _wpYc.msg = null;
+  wpYcPaint();
+  var chars = t.map(function (n) { return { name: n, is_main: n === _wpYc.main }; });
+  fetch('/api/recruit-card', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save', characters: chars, upload: !!upload }) })
+    .then(function (r) { return r.json(); })
+    .then(function (r) {
+      _wpYc.busy = false;
+      if (!r || r.ok === false) _wpYc.msg = { text: (r && r.error) || 'Could not save. Try again.', color: 'var(--red)' };
+      else if (!r.saved) {
+        _wpYc.msg = { text: 'Nothing was saved: ' + (r.conflicts || []).map(function (c) { return c.name; }).join(', ') + ' belong to someone else or need an officer.', color: 'var(--orange)' };
+      } else _wpYc.done = r;
+      wpYcPaint();
+      try { refresh(); } catch (e) { void e; }
+    })
+    .catch(function () { _wpYc.busy = false; _wpYc.msg = { text: 'Could not reach the engine. Try again.', color: 'var(--red)' }; wpYcPaint(); });
+}
+document.addEventListener('change', function (e) {
+  var t = e.target;
+  if (!t || !t.getAttribute) return;
+  var tick = t.getAttribute('data-rc-tick'), main = t.getAttribute('data-rc-main');
+  if (tick) { _wpYc.sel[tick] = !!t.checked; wpYcTicked(); wpYcPaint(); }
+  else if (main) { _wpYc.main = main; _wpYc.sel[main] = true; wpYcPaint(); }
+});
+document.addEventListener('input', function (e) {
+  if (e.target && e.target.id === 'rcTyped') _wpYc.typed = e.target.value;   // state only: typing never repaints
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target && e.target.id === 'rcTyped') { e.preventDefault(); wpYcAdd(); }
+});
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-rc-act]') : null;
+  if (!b) return;
+  var act = b.getAttribute('data-rc-act');
+  if (act === 'add') wpYcAdd();
+  else if (act === 'save') wpYcSave(false);
+  else if (act === 'saveup') wpYcSave(true);
+  else if (act === 'again') { _wpYc.msg = null; wpYcFetch(true); }
+  else if (act === 'done') { _wpYc.done = null; wpYcPaint(); }
+  else if (act === 'dismiss') {
+    fetch('/api/recruit-card', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'dismiss' }) })
+      .then(function () { _wpYc.pending = false; _wpYc.data = null; wpYcPaint(); try { refresh(); } catch (e2) { void e2; } })
+      .catch(function (err) { void err; });
+  }
 });
 
 // 🐺 Me — the member's own snapshot at the top of the Dashboard (in place of the
@@ -24090,6 +24528,115 @@ function wpRebuildOpen() {
   go(0);
 }
 
+// ── 📥 Capture latest PoP flags, Seer and Maelin messages (Logsync tab, under Rebuild) ─────────────────────
+// The guild lead, 2026-10-26: "add a button into the logsync for 'capture latest popflags, seer, and maelin
+// messages'". The website's "Sync from my logs" reader, started from this PC with no website request:
+// POST /api/local/pop-rescan {character|null, days} and GET /api/local/pop-rescan/status. One in-flight guard is
+// shared with the website's request, so the button is disabled while either runs. Unlike Rebuild this UPLOADS the
+// flag steps it finds (not the lines): in local mode or while the agent is paused it only reads and counts, and says
+// so. The card paints into its own #wpPopCapture placeholder in two children (controls, progress), so progress
+// ticking does not rebuild the controls and the tab's HTML stays byte-stable.
+var _wpPc = { status: null, at: 0, busy: false, character: '', days: 14, note: '' };
+function wpPcDaysSet(el) {
+  var max = (_wpPc.status && _wpPc.status.maxDays) || 60;
+  var n = parseInt(el.value, 10);
+  if (!isFinite(n)) n = (_wpPc.status && _wpPc.status.defaultDays) || 14;
+  _wpPc.days = Math.max(1, Math.min(max, n));
+  el.value = String(_wpPc.days);
+}
+function wpPcCtlHtml() {
+  var st = _wpPc.status;
+  var running = !!(st && st.running);
+  var dis = running ? ' disabled' : '';
+  var chars = (st && st.characters) || [];
+  var max = (st && st.maxDays) || 60;
+  var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">';
+  h += '<label class="dim" style="font-size:11px">Character <select id="wpPcChar"' + dis + ' onchange="_wpPc.character=this.value">';
+  h += '<option value="">All my characters (' + chars.length + ')</option>';
+  for (var i = 0; i < chars.length; i++) {
+    var c = chars[i];
+    h += '<option value="' + esc(c.name) + '"' + (c.name === _wpPc.character ? ' selected' : '') + (c.excluded ? ' disabled' : '') + '>'
+       + esc(c.name) + (c.excluded ? ' (kept out of stats)' : '') + '</option>';
+  }
+  h += '</select></label>';
+  h += '<label class="dim" style="font-size:11px">Days back <input type="number" id="wpPcDays" min="1" max="' + max + '" step="1" value="' + esc(String(_wpPc.days)) + '" style="width:64px"' + dis + ' onchange="wpPcDaysSet(this)"></label>';
+  h += '<button type="button" id="wpPcGo" class="wp-btn" style="background:#1a7f37;border-color:#1a7f37;color:#fff"' + (running || !chars.length ? ' disabled' : '')
+     + ' onclick="wpPcStart()" title="Read your recent logs for the Seer, Maelin and flag messages and the #popflags output, and send the flag steps they prove">'
+     + (running ? '⏳ Reading…' : '📥 Capture latest PoP flags, Seer and Maelin messages') + '</button>';
+  h += '</div>';
+  if (st && st.upload && st.upload.upload === false) {
+    h += '<div class="dim" style="font-size:11px;margin-bottom:6px">' + (st.upload.why === 'paused' ? 'This agent is paused by the guild' : 'This agent is in local mode')
+       + ': the lines are read and counted here, and nothing is uploaded.</div>';
+  }
+  if (_wpPc.note) h += '<div style="color:var(--orange);font-size:12px;margin-bottom:6px">' + esc(_wpPc.note) + '</div>';
+  return h;
+}
+function wpPcSummary(r) {
+  if (!r.logs) return 'Could not read any log.';
+  var parts = ['read ' + wpRbNum(r.logs) + (r.logs === 1 ? ' log' : ' logs'), wpRbNum(r.found) + (r.found === 1 ? ' flag line' : ' flag lines') + ' found'];
+  parts.push(r.upload ? (r.sent ? 'uploaded' : 'nothing new to upload') : 'not uploaded (' + (r.why || 'local mode / paused') + ')');
+  return parts.join(' · ');
+}
+function wpPcProgHtml() {
+  var st = _wpPc.status;
+  if (!st) return '<div class="dim">Loading…</div>';
+  if (st.error === true && !st.run) return '<div class="dim">The agent did not answer.</div>';
+  var r = st.run;
+  if (!r) return '<div class="dim">Nothing captured yet. Pick a character and how many days back, or leave both alone for every character, 14 days.</div>';
+  var who = r.by === 'website' ? 'The website asked for this one. ' : '';
+  var h;
+  if (r.state === 'running') {
+    h = '<div style="font-size:12px"><b>⏳ ' + who + 'Reading ' + esc(r.current || '…') + ' · log ' + wpRbNum(Math.min(r.files, r.filesDone + 1)) + ' of ' + wpRbNum(r.files) + '</b></div>'
+      + '<div class="dim" style="font-size:11px">' + wpRbSize(r.bytesRead) + ' read · ' + wpRbNum(r.found) + ' flag lines so far · it waits while a fight is on</div>';
+  } else if (r.state === 'error') {
+    h = '<div style="font-size:12px"><b>⚠ Stopped: ' + esc(r.error || 'an error') + '</b></div>';
+  } else {
+    h = '<div style="font-size:12px"><b>✓ ' + who + esc(wpPcSummary(r)) + '</b></div>'
+      + '<div class="dim" style="font-size:11px">Finished ' + esc(new Date(r.finishedAt || r.startedAt).toLocaleString()) + ' · last ' + wpRbNum(r.days) + ' days</div>';
+  }
+  if (r.excluded && r.excluded.length) h += '<div class="dim" style="font-size:11px;margin-top:4px">Skipped, kept out of stats: ' + esc(r.excluded.join(', ')) + '</div>';
+  return h;
+}
+function wpPcRepaint() {
+  var el = document.getElementById('wpPopCapture');
+  if (!el) return;
+  if (!document.getElementById('wpPcCtl')) {
+    el.innerHTML = '<h2>📥 Capture latest PoP flags, Seer and Maelin messages</h2>'
+      + '<div class="subtle">Reads the last few days of the EverQuest logs on this PC for the Planes of Power flag lines: the Seer\\'s recital, the flag grants with the NPC line that names them (Maelin\\'s included), '
+      + 'and the server\\'s #popflags output. Only the flag steps they prove are sent to the guild, the same as Sync from my logs on the website. '
+      + 'It runs here in the background and waits while a fight is on. Chat, tells and officer channels are not read into it, and characters you keep out of stats are skipped.</div>'
+      + '<div id="wpPcCtl"></div><div id="wpPcProg"></div>';
+    el._wpLastHtml = null;
+  }
+  morphInto(document.getElementById('wpPcCtl'), wpPcCtlHtml());
+  morphInto(document.getElementById('wpPcProg'), wpPcProgHtml());
+}
+function wpPcPoll(force) {
+  if (_wpPc.busy) return;
+  var sec = document.getElementById('optin');
+  if (!force && !(sec && sec.classList.contains('active'))) return;
+  var running = !!(_wpPc.status && _wpPc.status.running);
+  if (!force && Date.now() - _wpPc.at < (running ? 1900 : 10000)) return;
+  _wpPc.busy = true; _wpPc.at = Date.now();
+  fetch('/api/local/pop-rescan/status', { cache: 'no-store' })
+    .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+    .then(function (j) { _wpPc.status = j; })
+    .catch(function () { _wpPc.status = _wpPc.status || { error: true }; })
+    .then(function () { _wpPc.busy = false; wpPcRepaint(); });
+}
+function renderPopCaptureCard(s) { void s; wpPcPoll(false); wpPcRepaint(); }
+function wpPcStart() {
+  var body = { days: _wpPc.days };
+  if (_wpPc.character) body.character = _wpPc.character;
+  _wpPc.note = '';
+  if (_wpPc.status) _wpPc.status.running = true;   // the button greys at once; the next status read says who really holds the guard
+  wpPcRepaint();
+  fetch('/api/local/pop-rescan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (x) { if (!x.ok) _wpPc.note = (x.j && x.j.error) || 'Could not start.'; wpPcPoll(true); },
+          function () { _wpPc.note = 'The agent did not answer.'; wpPcPoll(true); });
+}
+
 // ── 🎟 Join a raid with a code (Logsync tab, above Rebuild; the rail's "On this PC" group and the tray open it) ──
 // The guild lead, 2026-10-21: a guest in someone else's raid keeps their data on their own PC. The code is a
 // label: while it is on, this PC tags what it records with the code and HOLDS the record uploads (fights,
@@ -25440,6 +25987,24 @@ function _wpCpSavePaint(cpChar) {
   (b.querySelector('.wp-laysave') || b).textContent = look.text;
   b.style.color = look.color;
 }
+// ↩ Restore saved layout (FB-101) says what happened, the way the save above does: the answer lives in a variable the
+// render reads, because the tile is rebuilt on the next status push and a label set on the button alone would be wiped.
+var _wpLrFlash = null;   // { ok, msg, at }
+function _wpLrLook() {
+  var f = _wpLrFlash;
+  if (f && (Date.now() - f.at) < _WP_CP_FLASH_MS) {
+    return f.ok ? { text: '✓ Restored', color: '#56d364' }
+                : { text: '✗ ' + (f.msg || 'Could not restore'), color: '#f85149' };
+  }
+  return { text: '↩ Restore saved layout', color: '#79c0ff' };
+}
+function _wpLrPaint() {
+  var b = document.getElementById('wpLayoutRestore');
+  if (!b) return;
+  var look = _wpLrLook();
+  (b.querySelector('.wp-lrlabel') || b).textContent = look.text;
+  b.style.color = look.color;
+}
 // 💾 The "Your layouts" tiles (option C), from Mimic status + config — the
 // agent's /api/state never carries the saved layouts, so the render cannot
 // bake them. One tile per saved layout, the active character's first; each
@@ -25483,7 +26048,12 @@ function _wpOvLaysHtml(st, cfg, flagOf) {
   h += '<button type="button" class="wp-lay new wp-charprof-save" id="wpCharProfSave" data-char="' + esc(act) + '"' + (act ? '' : ' disabled')
     + ' style="color:' + look.color + '"><span class="wp-laysave">' + esc(look.text) + '</span>'
     + '<span class="dim">' + (!act ? 'no active character yet &mdash; log one in and this saves for them'
-      : (saved[actLc] ? 'replaces ' + esc(cap(act)) + '’s saved one' : 'saves which overlays are on now')) + '</span></button>';
+      : (saved[actLc] ? 'replaces ' + esc(cap(act)) + '’s saved one' : 'saves which overlays are on, where they sit and how big')) + '</span></button>';
+  // ↩ The way back to the last save (the tray has the same item). Not tied to a character: the positions are the screen's.
+  var lr = _wpLrLook();
+  h += '<button type="button" class="wp-lay new wp-layout-restore" id="wpLayoutRestore" style="color:' + lr.color + '">'
+    + '<span class="wp-lrlabel">' + esc(lr.text) + '</span>'
+    + '<span class="dim">puts the overlays back where the last save left them</span></button>';
   return h;
 }
 function wpWireHideHotkey() {
@@ -26324,6 +26894,18 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
         setTimeout(function(){ _wpCpSavePaint(who); }, _WP_CP_FLASH_MS + 100);
       };
       try { Promise.resolve(window.mimic.charProfileSave()).then(done, function(){ done(false); }); } catch (e3) { done(false); }
+      return;
+    }
+    // ↩ Restore saved layout — the tray's item, through the same main-process function.
+    var lrb = (t && t.closest) ? t.closest('.wp-layout-restore') : null;
+    if (lrb && window.mimic && window.mimic.layoutRestore) {
+      var doneR = function(r){
+        _wpLrFlash = { ok: !!(r && r.ok), msg: (r && r.message) || '', at: Date.now() };
+        _wpLrPaint();
+        wpRefreshOverlayToggles();
+        setTimeout(function(){ _wpLrPaint(); }, _WP_CP_FLASH_MS + 100);
+      };
+      try { Promise.resolve(window.mimic.layoutRestore()).then(doneR, function(){ doneR(null); }); } catch (e5) { doneR(null); }
       return;
     }
     var cpd = (t && t.closest) ? t.closest('.wp-charprof-del') : null;
@@ -28386,6 +28968,16 @@ function renderOptin(o) {
     h += '</div>';
   }
 
+  // ── Account list for the local inventory page (the guild lead, 2026-10-26) ───
+  // "Allow people to not include if they don't want to." Default ON. OFF stops the agent asking wolfpack.quest for
+  // your game-account placements at all; the page then guesses accounts from the shared banks. Download only:
+  // nothing about this PC is sent either way. The same switch sits on the local page itself. No <details> here.
+  h += '<div class="card wide"><h2>🏦 Account list for My account inventory</h2>' +
+       '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">' +
+       '<input type="checkbox" id="wpUseAccountList"' + (o.useAccountList !== false ? ' checked' : '') + '>' +
+       '<span>Use my account list from wolfpack.quest</span></label>' +
+       '<div class="subtle" style="margin-top:5px">The inventory page on this PC can ask wolfpack.quest which of your characters are on which EverQuest game account (the list you keep on /me/accounts), so each shared bank counts once per real account. Unticked, Mimic never asks and guesses the accounts from the shared-bank files instead. Nothing from this PC is uploaded either way.</div></div>';
+
   // ── Oversized live log (the guild lead, 2026-09-22) ────────────────────────
   // EverQuest never trims eqlog_<Name>_pq.proj.txt and the client slows down on
   // multi-gigabyte ones. A member's reached 1.33 GB, unbroken since Nov 2024,
@@ -28431,6 +29023,7 @@ function renderOptin(o) {
   wpRebuildSetFiles(o);
   h += '<div id="wpRaidCode" class="card wide"></div>';   // 🎟 Join a raid with a code: filled by renderRaidCodeCard
   h += '<div id="wpRebuild" class="card wide"></div>';
+  h += '<div id="wpPopCapture" class="card wide"></div>';   // 📥 Capture latest PoP flags, Seer and Maelin messages: filled by renderPopCaptureCard
 
   // Imported log backups (the guild lead, 2026-09-13). Inside Mimic: native pickers plus
   // a drop zone that reads real paths through the bridge. A browser tab has
@@ -28601,8 +29194,14 @@ function renderOptin(o) {
   const root = document.getElementById('optin');
   if (!setSectionHTML('optin', h)) return;   // morph in place; skip if unchanged
   try { wpRbRepaint(); } catch (e) { void e; }   // the section was rewritten, so the Rebuild card's placeholder is empty again
+  try { wpPcRepaint(); } catch (e) { void e; }   // …and so is the PoP capture card's
 
   // Wire interactions — idempotent under morph (nodes persist across polls).
+  const ualCb = document.getElementById('wpUseAccountList');
+  if (ualCb) _bindOnce(ualCb, 'change', async () => {
+    try { await fetch('/api/local/account-list', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ use: !!ualCb.checked }) }); } catch (e) { void e; }
+    refreshOptin();
+  });
   root.querySelectorAll('input[type=checkbox][data-path]').forEach(cb => {
     _bindOnce(cb, 'change', async () => {
       await postOptin(cb.checked ? 'select' : 'deselect', { paths: [cb.dataset.path] });
@@ -28778,7 +29377,7 @@ async function refresh() {
                      // #wpMeCard / #wpEngine placeholders exist; renderEngine builds the
                      // nested #wpSetupChecks/#wpEngineStats/#wpWatchedLogs children BEFORE
                      // their own fillers run later in this list).
-                     ['mecard', renderMeCard], ['engine', renderEngine], ['enginestats', renderEngineStats],
+                     ['recruitcard', renderRecruitCard], ['mecard', renderMeCard], ['engine', renderEngine], ['enginestats', renderEngineStats],
                      ['feedback', renderFeedback],
                      ['zealclients', renderZealClients],
                      ['critscard', renderCritsCard],
@@ -28797,7 +29396,7 @@ async function refresh() {
                      // below, same rule as renderDash → renderMeCard.
                      ['diag', renderDiag],
                      ['netmeter', renderNetMeter],
-                     ['rebuild', renderRebuildCard], ['raidcode', renderRaidCodeCard],
+                     ['rebuild', renderRebuildCard], ['raidcode', renderRaidCodeCard], ['popcapture', renderPopCaptureCard],
                      ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['mutedtimers', renderMutedTimers], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
@@ -34215,6 +34814,7 @@ function _serializeOptinForWeb() {
       status:            r.status,
     })),
     backfillRequestsCheckedAt: stats.backfillRequestsCheckedAt,
+    useAccountList: _optinState.useAccountList !== false,
   };
 }
 
@@ -35513,6 +36113,7 @@ function startWebDashboard(port) {
       // files by /api/local/*. Read-only, never uploads.
       if (req.url && (req.url === '/local' || req.url.indexOf('/local/') === 0 || req.url.indexOf('/local?') === 0)) return _serveLocalSite(req, res);
       if (req.url && req.url.split('?')[0] === '/api/local/inventory') return _handleLocalInventory(req, res);
+      if (req.url && req.url.split('?')[0] === '/api/local/account-list') return _handleLocalAccountList(req, res);
       if (req.url === '/api/state') {
         // Serve every poller the SAME serialized snapshot for 400ms. The
         // dashboard (2s) + CH chain (600ms) + tank/command/who/mobinfo
@@ -35578,6 +36179,8 @@ function startWebDashboard(port) {
       if (_localTrackRoute(req, res)) return;
       // Rebuild from my logs (the block above module.exports): start / stop / status, and the raids it found. Local only.
       if (await _localBackfillRoute(req, res)) return;
+      // Capture latest PoP flags, Seer and Maelin messages (dashboard button): the website's "Sync from my logs" reader, started here.
+      if (await _localPopRescanRoute(req, res)) return;
       if (_localParsesRoute(req, res)) return;
       if (await _raidCodeRoute(req, res)) return;
       // Item icons cut from this PC's own EQ files (local-first slice 2). Never uploaded.
@@ -36345,6 +36948,15 @@ function startWebDashboard(port) {
         const payload = (cached && cached.payload) || { rev: -1, encounters: {}, loading: true };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(payload));
+      }
+      // The Flags mode of the PoP overlay: where the member's own characters stand on the PoP flags and what to do
+      // next (_popStatus above; the bot's `pop` poll stream). Served from memory, so the overlay's 3 s poll costs the
+      // bot nothing. ?character= picks one (default: the character being played). Read-only; nothing is written.
+      if (req.method === 'GET' && req.url.startsWith('/api/pop-status')) {
+        let want = '';
+        try { want = new URL(req.url, 'http://x').searchParams.get('character') || ''; } catch { /* */ }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(_popStatusBody(want.slice(0, 40))));
       }
       // Toggle/reset an objective, or ⚑-flag an anomaly — synchronous forward
       // to the bot (the overlay needs the real status: 403 = reset is
@@ -37225,6 +37837,22 @@ function startWebDashboard(port) {
         catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error: 'invalid json' })); }
         const out = await setCharacterMode(payload && payload.character, payload && payload.mode);
         res.writeHead(out.ok ? 200 : 400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(out));
+      }
+      // First sign-in "Your characters" card (the guild lead, 2026-10-24). GET says whether to show it and
+      // what goes in it; POST saves ({action:'save'}) or dismisses ({action:'dismiss'}). Always 200 with the
+      // reason in the body on a miss, like the routes above.
+      if (req.url === '/api/recruit-card' && req.method === 'GET') {
+        const out = await recruitCardPayload();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(out));
+      }
+      if (req.url === '/api/recruit-card' && req.method === 'POST') {
+        let payload;
+        try { payload = JSON.parse(await _readBody(req, 8 * 1024) || '{}'); }
+        catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error: 'invalid json' })); }
+        const out = await recruitCardAct(payload);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         return res.end(JSON.stringify(out));
       }
 
@@ -38573,6 +39201,9 @@ const _optinState = {
   // Per-character mode chosen on this PC (persisted): lowercase name → { mode, at, synced }. `synced`
   // is false when the website never took the choice (see setCharacterMode).
   characterModes: {},
+  // The first-sign-in "Your characters" card (persisted): null until the person saves or dismisses it, then
+  // { state: 'saved' | 'dismissed', at } and the card never comes back.
+  recruitCard: null,
   // #113 per-user Extended Target pref: exclude other Mimics' targets when the
   // uploader isn't in my zone. Default ON (splinter groups elsewhere stop
   // polluting the list). Read by fetchExtendedTarget → passed to the bot as
@@ -38605,6 +39236,10 @@ const _optinState = {
   bqShowDebuffs: true,
   bqShowBuffs:   true,
   bqShowBurst:   true,
+  // "Use my account list from wolfpack.quest" (the guild lead, 2026-10-26: "allow people to not include if they
+  // don't want to"). ON (default): the local inventory page asks the bot for this person's own game-account
+  // placements. OFF: the agent never makes that request and the page guesses accounts from the shared banks.
+  useAccountList: true,
 };
 
 function _optinSortFn() {
@@ -38634,6 +39269,7 @@ function _loadOptInState() {
     _optinState.importedPaths        = Array.isArray(raw.importedPaths) ? raw.importedPaths.filter(e => e && e.path) : [];
     _optinState.hiddenLoadoutChars   = new Set((raw.hiddenLoadoutChars || []).map(s => s.toLowerCase()));
     _optinState.characterModes       = _cleanCharacterModes(raw.characterModes);
+    _optinState.recruitCard          = _cleanRecruitCard(raw.recruitCard);
     // #113 default ON: absent (old files) → true; only an explicit false disables.
     _optinState.extSameZoneOnly      = (raw.extSameZoneOnly !== false);
     if (typeof raw.lootAuctionTts === 'boolean') _optinState.lootAuctionTts = raw.lootAuctionTts;
@@ -38647,6 +39283,7 @@ function _loadOptInState() {
     _optinState.bqShowDebuffs        = (raw.bqShowDebuffs !== false);
     _optinState.bqShowBuffs          = (raw.bqShowBuffs !== false);
     _optinState.bqShowBurst          = (raw.bqShowBurst !== false);
+    _optinState.useAccountList       = (raw.useAccountList !== false);
   } catch { /* missing or unreadable — fresh state */ }
   _mergeImportedFromEnv();
 }
@@ -38658,6 +39295,7 @@ function _saveOptInState() {
       importedPaths:      _optinState.importedPaths || [],
       hiddenLoadoutChars: [...(_optinState.hiddenLoadoutChars || [])],
       characterModes:     _optinState.characterModes || {},
+      recruitCard:        _optinState.recruitCard || null,
       extSameZoneOnly:    _optinState.extSameZoneOnly !== false,
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
       lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
@@ -38666,6 +39304,7 @@ function _saveOptInState() {
       bqShowDebuffs:         _optinState.bqShowDebuffs !== false,
       bqShowBuffs:           _optinState.bqShowBuffs !== false,
       bqShowBurst:           _optinState.bqShowBurst !== false,
+      useAccountList:        _optinState.useAccountList !== false,
     }, null, 2));
   } catch { /* non-fatal */ }
 }
@@ -39355,15 +39994,17 @@ function _quarmyPrefsBlock(lowerName) {
   return !!(p && (p.exclude_inventory || p.exclude_from_stats));
 }
 
-function scanQuarmyExports() {
+// `opts` ({ only: Set of lowercase names, dir }) is for the first-sign-in card's "Upload these now" (see
+// _recruitUploadNow); the timers call with none and scan everything in the first watched log's folder, as before.
+function scanQuarmyExports(opts) {
   if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
   // Hard gate: prefs must have loaded at least once this session so
   // exclude_inventory is KNOWN before any gear leaves the box. (No botUrl →
   // no prefs poll → no uploads, which is also correct.)
   if (!stats.characterPrefsCheckedAt) return;
   const firstLog = stats.watchedLogs[0]?.logPath;
-  if (!firstLog) return;
-  const dir = path.dirname(firstLog);
+  if (!firstLog && !(opts && opts.dir)) return;
+  const dir = (opts && opts.dir) || path.dirname(firstLog);
   let entries;
   try { entries = fs.readdirSync(dir); } catch { return; }
 
@@ -39376,6 +40017,7 @@ function scanQuarmyExports() {
     const m = name.match(QUARMY_FILENAME_RX);
     if (!m) continue;
     const fileChar = m[1].toLowerCase();
+    if (opts && opts.only && !opts.only.has(fileChar)) continue;
     if (envExcluded.has(fileChar) || _quarmyPrefsBlock(fileChar)) continue;
     const fullPath = path.join(dir, name);
     try {
@@ -39468,12 +40110,12 @@ function _spellbookChecksum(spells) {
   return 'sb' + spells.length + '-' + crypto.createHash('sha1').update(ids).digest('hex').slice(0, 16);
 }
 
-function scanSpellbookFiles() {
+function scanSpellbookFiles(opts) {   // opts: see scanQuarmyExports
   if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
   if (!stats.characterPrefsCheckedAt) return;   // exclude_inventory must be known first
   const firstLog = stats.watchedLogs[0]?.logPath;
-  if (!firstLog) return;
-  const dir = path.dirname(firstLog);
+  if (!firstLog && !(opts && opts.dir)) return;
+  const dir = (opts && opts.dir) || path.dirname(firstLog);
   let entries;
   try { entries = fs.readdirSync(dir); } catch { return; }
   const envExcluded = new Set(
@@ -39485,6 +40127,7 @@ function scanSpellbookFiles() {
     if (!m) continue;
     const character = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
     const lower = character.toLowerCase();
+    if (opts && opts.only && !opts.only.has(lower)) continue;
     if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;
     const fullPath = path.join(dir, name);
     try {
@@ -39569,12 +40212,12 @@ function _inventoryChecksum(rows) {
   return 'inv' + rows.length + '-' + crypto.createHash('sha1').update(parts).digest('hex').slice(0, 16);
 }
 
-function scanInventoryUploads() {
+function scanInventoryUploads(opts) {   // opts: see scanQuarmyExports
   if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
   if (!stats.characterPrefsCheckedAt) return;   // exclude_inventory must be known first
   const firstLog = stats.watchedLogs[0]?.logPath;
-  if (!firstLog) return;
-  const dir = path.dirname(firstLog);
+  if (!firstLog && !(opts && opts.dir)) return;
+  const dir = (opts && opts.dir) || path.dirname(firstLog);
   let entries;
   try { entries = fs.readdirSync(dir); } catch { return; }
   const envExcluded = new Set(
@@ -39586,6 +40229,7 @@ function scanInventoryUploads() {
     if (!m) continue;
     const character = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
     const lower = character.toLowerCase();
+    if (opts && opts.only && !opts.only.has(lower)) continue;
     if (envExcluded.has(lower) || _quarmyPrefsBlock(lower)) continue;   // prefs can flip — never fingerprint
     const fullPath = path.join(dir, name);
     try {
@@ -39694,7 +40338,7 @@ function _localInventoryDirs() {
 // item_name, quantity, observed_at), so web/lib/inventoryAggregate.ts runs on it unchanged. `meta` (the
 // damage / ac / nodrop / itemtype / slots the type chips read) is EMPTY: the agent's item catalog holds
 // [id, name, era] only, so the chips other than Spell stay empty until a catalog that carries those fields lands.
-function _localInventorySnapshot(dirs) {
+function _localInventorySnapshot(dirs, logTimesOf) {
   const byChar = new Map();
   for (const dir of dirs) {
     let entries;
@@ -39725,17 +40369,113 @@ function _localInventorySnapshot(dirs) {
   }
   return {
     ok: true, generated_at: new Date().toISOString(),
-    characters: chars.map(c => ({ name: c.name, observed_at: c.observed_at, rows: c.rows.length })),
+    // log_first_at / log_last_at: the first and last timestamped line of the character's own EQ log, which the
+    // page compares with observed_at (inventory file written) and with today (web/lib/localAccounts.ts decides;
+    // the agent only reports the times). Null when there is no log for the character on this PC.
+    characters: chars.map(c => {
+      const t = typeof logTimesOf === 'function' ? logTimesOf(c.name.toLowerCase()) : null;
+      return {
+        name: c.name, observed_at: c.observed_at, rows: c.rows.length,
+        log_first_at: t && t.first ? t.first.toISOString() : null,
+        log_last_at:  t && t.last  ? t.last.toISOString()  : null,
+      };
+    }),
     rows, meta: [], meta_available: false,
   };
 }
-function _handleLocalInventory(req, res) {
+// Game-account placements for this page come from fetchAccountPlacements(), kept with the other calls to the bot
+// (next to fetchCharacterModesMine) so that THIS region stays free of network code: test/local-site-agent.test.js
+// asserts nothing between the local site's MIME table and _scanOptInFiles can send anything anywhere.
+// ── First and last time in a character's EQ log, for the local page ──
+// Two small reads per log (the head and the tail), cached until the file changes; a 1 GB log costs the same as a
+// 1 KB one. The tail chunk starts mid-line, which is harmless because lines are scanned from the end.
+const LOCAL_LOG_EDGE_BYTES = 16 * 1024;
+const LOCAL_LOG_NAME_RX = /^eqlog_([^_]+)_pq\.proj\.txt$/i;
+const _logEdgeCache = new Map();   // full path -> { mtimeMs, size, first, last }
+function _logEdgeTimesFromText(head, tail) {
+  let first = null, last = null;
+  for (const line of String(head || '').split(/\r?\n/)) { const d = parseEqTimestamp(line); if (d) { first = d; break; } }
+  const lines = String(tail || '').split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) { const d = parseEqTimestamp(lines[i]); if (d) { last = d; break; } }
+  return { first, last };
+}
+function _logEdgeTimes(fullPath) {
+  let st;
+  try { st = fs.statSync(fullPath); } catch { return null; }
+  const hit = _logEdgeCache.get(fullPath);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit;
+  let fd;
+  try {
+    fd = fs.openSync(fullPath, 'r');
+    const n = Math.min(LOCAL_LOG_EDGE_BYTES, st.size);
+    const head = Buffer.alloc(n), tail = Buffer.alloc(n);
+    if (n > 0) {
+      fs.readSync(fd, head, 0, n, 0);
+      fs.readSync(fd, tail, 0, n, st.size - n);
+    }
+    const t = _logEdgeTimesFromText(head.toString('utf8'), tail.toString('utf8'));
+    const out = { mtimeMs: st.mtimeMs, size: st.size, first: t.first, last: t.last };
+    _logEdgeCache.set(fullPath, out);
+    return out;
+  } catch { return null; }
+  finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch { void 0; } } }
+}
+// lower-cased character -> a function's answer { first: Date|null, last: Date|null } over every live log of that
+// name found in `dirs` (the earliest first and the latest last when a character has more than one).
+function _localLogActivity(dirs) {
+  const byChar = new Map();
+  for (const dir of dirs) {
+    let entries;
+    try { entries = fs.readdirSync(dir); } catch { continue; }
+    for (const name of entries) {
+      const m = name.match(LOCAL_LOG_NAME_RX);
+      if (!m) continue;
+      const e = _logEdgeTimes(path.join(dir, name));
+      if (!e) continue;
+      const k = m[1].toLowerCase();
+      const cur = byChar.get(k) || { first: null, last: null };
+      if (e.first && (!cur.first || e.first < cur.first)) cur.first = e.first;
+      if (e.last && (!cur.last || e.last > cur.last)) cur.last = e.last;
+      byChar.set(k, cur);
+    }
+  }
+  return (lower) => byChar.get(lower) || null;
+}
+async function _handleLocalInventory(req, res) {
   if (req.method !== 'GET') { res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': 'GET' }); return res.end('{"error":"method not allowed"}'); }
   let body;
-  try { body = JSON.stringify(_localInventorySnapshot(_localInventoryDirs())); }
+  try {
+    const dirs = _localInventoryDirs();
+    const snap = _localInventorySnapshot(dirs, _localLogActivity(dirs));
+    const fresh = /[?&]refresh=1\b/.test(String(req.url || ''));
+    const acct = await fetchAccountPlacements({ fresh });
+    snap.placements = acct.placements;
+    snap.placements_source = acct.source;               // 'site' | 'off' | 'none'
+    snap.placements_reason = acct.reason || null;       // why 'none' (signed-out, local, bot-old, offline) or why a cached answer is old
+    snap.use_account_list = _optinState.useAccountList !== false;
+    body = JSON.stringify(snap);
+  }
   catch (e) { console.error('[api/local/inventory] failed:', e && (e.stack || e.message || e)); res.writeHead(500, { 'Content-Type': 'application/json' }); return res.end('{"error":"could not read the inventory files"}'); }
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   return res.end(body);
+}
+// POST /api/local/account-list { use: boolean } -> { ok, use_account_list }. The "Use my account list from
+// wolfpack.quest" switch: OFF stops the placements request itself (fetchAccountPlacements), it is not only a UI hide.
+async function _handleLocalAccountList(req, res) {
+  if (req.method !== 'GET' && req.method !== 'POST') { res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': 'GET, POST' }); return res.end('{"error":"method not allowed"}'); }
+  if (!_optinState.scanned) { try { _scanOptInFiles(); } catch { void 0; } }
+  if (req.method === 'POST') {
+    const body = await _readBody(req).catch(() => '');
+    let payload = {};
+    try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+    if (typeof payload.use !== 'boolean') { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end('{"error":"use must be a boolean"}'); }
+    _optinState.useAccountList = payload.use;
+    if (!payload.use) { _placementsCache = null; }
+    _saveOptInState();
+    scheduleRender();
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(JSON.stringify({ ok: true, use_account_list: _optinState.useAccountList !== false }));
 }
 
 function _scanOptInFiles() {
@@ -40004,6 +40744,7 @@ function runOptinBackfill(files, opts = {}) {
             if (conFacEvt) factionBuffer.push(conFacEvt);
             const pfEvt = parsePopFlagLine(line, f.character);
             if (pfEvt) popFlagBuffer.push(pfEvt);
+            for (const pfOut of popFlagsOutputEvents(line, f.character)) popFlagBuffer.push(pfOut);   // `#popflags` output
             const hailEvt = parseWitnessedHail(line, f.character);
             if (hailEvt) popFlagBuffer.push(hailEvt);
             // Observed buff landing on another player. Backfilled casts are
@@ -46108,6 +46849,62 @@ async function fetchCharacterModesMine({ fresh = false } = {}) {
     return payload;
   } catch { return { ok: false, reason: 'offline' }; }
 }
+// ── Game-account placements for the local inventory page (the guild lead, 2026-10-26) ──
+// The local inventory page used to GUESS which characters share a game account from their shared-bank files, and
+// counted 23 accounts for someone who owns 6. The website already knows the real answer (/me/accounts), so the
+// agent asks the bot for the signed-in person's OWN placements (GET /api/agent/account-placements) and hands them
+// to the page, which runs the same aggregation the website does. Download only: nothing about this PC goes up.
+//   * Opt-out (default ON): _optinState.useAccountList. OFF means no request is made at all, so the page guesses.
+//   * Fail open: signed out, local mode, an older bot, offline, a bad answer -> no placements -> guessing.
+//   * Cached: the answer changes only when the owner edits /me/accounts, so 15 minutes; the page's Reload button
+//     may ask again (`fresh`), but never more than once per ACCOUNT_PLACEMENTS_MIN_REFETCH_MS.
+//     A failed refresh keeps the last good answer, and a failure is not retried for ACCOUNT_PLACEMENTS_RETRY_MS.
+const ACCOUNT_PLACEMENTS_TTL_MS = 15 * 60_000;
+const ACCOUNT_PLACEMENTS_MIN_REFETCH_MS = 30_000;
+const ACCOUNT_PLACEMENTS_RETRY_MS = 2 * 60_000;
+let _placementsCache = null;     // { key, at, placements }
+let _placementsFailAt = 0;
+function _cleanPlacements(list) {
+  const out = [];
+  for (const p of (Array.isArray(list) ? list : [])) {
+    if (!p || typeof p.character !== 'string' || typeof p.accountId !== 'string' || !p.character || !p.accountId) continue;
+    out.push({
+      character: p.character.slice(0, 64), accountId: p.accountId.slice(0, 64),
+      slot: Number.isInteger(p.slot) ? p.slot : null,
+      label: typeof p.label === 'string' && p.label.trim() ? p.label.trim().slice(0, 40) : null,
+    });
+  }
+  return out;
+}
+// -> { placements, source: 'site' | 'off' | 'none', reason? }. Never throws.
+async function fetchAccountPlacements({ fresh = false } = {}) {
+  // The saved switch is read from the opt-in file on first use: until something has scanned, the in-memory
+  // default is ON, and an OFF the person chose must hold before the very first request.
+  if (!_optinState.scanned) { try { _scanOptInFiles(); } catch { void 0; } }
+  if (_optinState.useAccountList === false) return { placements: [], source: 'off' };
+  const why = _characterModesWhyNot();
+  if (why) return { placements: [], source: 'none', reason: why };
+  const key = String(_mimicSessionToken).slice(-8);
+  const now = Date.now();
+  const hit = _placementsCache && _placementsCache.key === key ? _placementsCache : null;
+  const ageOk = hit && (now - hit.at) < (fresh ? ACCOUNT_PLACEMENTS_MIN_REFETCH_MS : ACCOUNT_PLACEMENTS_TTL_MS);
+  if (ageOk) return { placements: hit.placements, source: 'site' };
+  const keep = (reason) => hit ? { placements: hit.placements, source: 'site', reason } : { placements: [], source: 'none', reason };
+  if (now - _placementsFailAt < ACCOUNT_PLACEMENTS_RETRY_MS) return keep('offline');
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const r = await fetch(base + '/account-placements', { headers: _characterPrefsHeaders(), signal: AbortSignal.timeout(8_000) });
+    // A refused token means the person is signed out now: whatever was cached belonged to that sign-in.
+    if (r.status === 401 || r.status === 403) { _placementsCache = null; return { placements: [], source: 'none', reason: 'signed-out' }; }
+    if (r.status === 404) { _placementsFailAt = now; return keep('bot-old'); }
+    if (!r.ok) { _placementsFailAt = now; return keep('offline'); }
+    const j = await r.json();
+    if (!j || !Array.isArray(j.placements)) { _placementsFailAt = now; return keep('bot-old'); }
+    const placements = _cleanPlacements(j.placements);
+    _placementsCache = { key, at: now, placements };
+    return { placements, source: 'site' };
+  } catch { _placementsFailAt = now; return keep('offline'); }
+}
 // POST /character-prefs { character, mode } → { synced, reason }. Never throws.
 async function _postCharacterMode(character, mode) {
   const why = _characterModesWhyNot();
@@ -46193,6 +46990,173 @@ async function characterModesPayload({ fresh = false } = {}) {
   };
 }
 // ── end character modes ─────────────────────────────────────────────────────────────────────────────
+
+// ── First sign-in: "Your characters" (the guild lead, 2026-10-24) ────────────────────────────────────
+// "We should be asking what characters the player would like to upload (from their logs). If none show up,
+// they can type in their character name to get started. A lot of things won't work without logs. And we
+// should ask about grabbing an upload of their quarmy/spellbook/inventory if it shows up." A new member who
+// signs in has NO character linked to their Discord account, so ownership checks, the PoP spell view and the
+// Voice tab all say "not your character". This card lists the characters whose logs are in the EQ folder
+// (newest first, so a main reads apart from a forgotten alt), lets the person tick theirs and pick the main,
+// and POSTs them to the bot's /characters/stage, which stages a recruit main + alts (nothing is created in
+// OpenDKP). "Upload these now" then runs the SAME spellbook / inventory / Quarmy scans the timers run, limited
+// to the staged names. The signal to show it is the existing GET /character-prefs?mine=1: an empty family.
+// Saving or dismissing is remembered in the opt-in file and the card never returns.
+const RECRUIT_LOG_RX = /^eqlog_([A-Za-z]{2,24})_pq\.proj\.txt$/i;
+const RECRUIT_NAME_RX = /^[A-Za-z]{2,24}$/;
+const RECRUIT_MAX_NAMES = 12;
+let _recruitLinkedKey = '';   // the sign-in (token tail) the guild server already showed a linked character for: the card is moot for it
+function _cleanRecruitCard(raw) {
+  if (!raw || typeof raw !== 'object' || (raw.state !== 'saved' && raw.state !== 'dismissed')) return null;
+  return { state: raw.state, at: Number(raw.at) || 0 };
+}
+function _recruitCap(n) { return n.charAt(0).toUpperCase() + n.slice(1).toLowerCase(); }
+// Folders worth reading: every EQ folder Mimic knows and each watched log's folder, with the Logs/ child of an
+// install and the install of a Logs/ folder (the export files sit beside either).
+function _recruitDirs() {
+  const dirs = new Set();
+  const add = (d) => {
+    if (!d) return;
+    dirs.add(d);
+    dirs.add(/^logs$/i.test(path.basename(d)) ? path.dirname(d) : path.join(d, 'Logs'));
+  };
+  try { for (const d of _eqSetupDirs()) add(d); } catch { void 0; }
+  for (const w of (stats.watchedLogs || [])) if (w && w.logPath) add(path.dirname(w.logPath));
+  return [...dirs];
+}
+// What is in `dirs` (fs is injected for the test): the characters with a standard log, newest log first, and
+// which export files sit beside any of them, by lowercase name. Backup copies (eqlog_Name2_..., .txt2) are not
+// characters: the name pattern is letters only and the file name must end exactly in .txt.
+function _recruitScan(dirs, fsx) {
+  const logs = new Map();
+  const files = {};
+  const mark = (name, kind) => { const lc = name.toLowerCase(); (files[lc] = files[lc] || {})[kind] = true; };
+  for (const dir of dirs) {
+    let entries;
+    try { entries = fsx.readdirSync(dir); } catch { continue; }
+    for (const file of entries) {
+      let m = file.match(RECRUIT_LOG_RX);
+      if (m) {
+        let st;
+        try { st = fsx.statSync(path.join(dir, file)); } catch { continue; }
+        const lc = m[1].toLowerCase();
+        const prev = logs.get(lc);
+        if (!prev || st.mtimeMs > prev.mtime) logs.set(lc, { name: _recruitCap(m[1]), mtime: Math.round(st.mtimeMs), size: st.size });
+        continue;
+      }
+      if ((m = file.match(SPELLBOOK_FILENAME_RX))) mark(m[1], 'spellbook');
+      else if ((m = file.match(INVENTORY_FILENAME_RX))) mark(m[1], 'inventory');
+      else if ((m = file.match(QUARMY_FILENAME_RX))) mark(m[1], 'quarmy');
+    }
+  }
+  const characters = [...logs.values()].sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name));
+  return { characters, files };
+}
+// Run the three existing export scans for `names` now, in every folder an export file can sit in. They keep
+// every rule of the timers' runs (raid hold, the privacy-prefs gate, exclusions, checksums), so the answer per
+// file is read back from their checksum maps: 'queued' (this call sent it), 'up to date' (already sent, nothing
+// changed) or 'waiting' (a gate held it, or the file had nothing to send). `held` names a gate that stopped the
+// whole run; the timers send the files later on their own.
+function _recruitUploadNow(names, found) {
+  const only = new Set(names.map(n => n.toLowerCase()));
+  const maps = { spellbook: _spellbookUploaded, inventory: _inventoryUploaded, quarmy: _quarmyUploaded };
+  const scans = { spellbook: scanSpellbookFiles, inventory: scanInventoryUploads, quarmy: scanQuarmyExports };
+  const before = {};
+  for (const k of Object.keys(maps)) before[k] = Object.assign({}, maps[k]);
+  const held = _raidHold ? 'raid' : (!stats.characterPrefsCheckedAt ? 'prefs' : null);
+  if (!held) {
+    for (const dir of _recruitDirs()) for (const k of Object.keys(scans)) { try { scans[k]({ only, dir }); } catch { void 0; } }
+  }
+  const results = {};
+  for (const n of names) {
+    const lc = n.toLowerCase();
+    for (const k of Object.keys(maps)) {
+      if (!(found[lc] && found[lc][k])) continue;
+      (results[n] = results[n] || {})[k] = maps[k][lc] !== before[k][lc] ? 'queued' : (maps[k][lc] ? 'up to date' : 'waiting');
+    }
+  }
+  return { held, results };
+}
+// POST /characters/stage → { ok, staged, conflicts } or { ok: false, reason }. Never throws.
+async function _postRecruitStage(characters) {
+  const why = _characterModesWhyNot();
+  if (why) return { ok: false, reason: why };
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const r = await fetch(base + '/characters/stage', {
+      method: 'POST',
+      headers: { ..._characterPrefsHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ characters }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (r.status === 401) return { ok: false, reason: 'signed-out' };
+    if (r.status === 400) return { ok: false, reason: 'bad-request' };
+    if (r.status === 403) return { ok: false, reason: 'not-linked' };
+    if (r.status === 404) return { ok: false, reason: 'bot-old' };
+    if (!r.ok) return { ok: false, reason: 'offline' };
+    const j = await r.json().catch(() => null);
+    // An older bot's catch-all answers 200 'OK' to any unknown route: only { ok, staged[] } counts.
+    if (!j || j.ok !== true || !Array.isArray(j.staged)) return { ok: false, reason: 'bot-old' };
+    return { ok: true, staged: j.staged, conflicts: Array.isArray(j.conflicts) ? j.conflicts : [] };
+  } catch { return { ok: false, reason: 'offline' }; }
+}
+const RECRUIT_NOTES = {
+  local:        'Local mode: nothing is sent to the guild server.',
+  'signed-out': 'Sign in to Wolf Pack first (Settings), then pick your characters.',
+  'bot-old':    'The guild server needs its update before this can save. Try again later.',
+  'not-linked': 'Your Discord account is not set up on wolfpack.quest yet. Ask an officer.',
+  offline:      'Could not reach wolfpack.quest. Try again in a minute.',
+  'bad-request': 'That list was not accepted. Check the names (letters only) and try again.',
+};
+// GET /api/recruit-card — whether to show the card and what goes in it. Only reaches the guild server when
+// nothing local already settles it (saved/dismissed, local mode, signed out).
+async function recruitCardPayload({ fresh = false } = {}) {
+  const none = (reason) => ({ show: false, reason, characters: [], files: {}, eq_folder_known: false });
+  if (_optinState.recruitCard) return none(_optinState.recruitCard.state);
+  const why = _characterModesWhyNot();
+  if (why) return none(why);
+  const mine = await fetchCharacterModesMine({ fresh });
+  if (!mine.ok) return none(mine.reason);
+  if (mine.characters.length > 0) { _recruitLinkedKey = String(_mimicSessionToken).slice(-8); return none('linked'); }
+  const scan = _recruitScan(_recruitDirs(), fs);
+  return { show: true, reason: null, characters: scan.characters, files: scan.files, eq_folder_known: _eqSetupDirs().length > 0 };
+}
+// POST /api/recruit-card { action: 'save', characters: [{ name, is_main }], upload?: boolean } | { action: 'dismiss' }
+async function recruitCardAct(body) {
+  const act = body && body.action;
+  if (act === 'dismiss') {
+    _optinState.recruitCard = { state: 'dismissed', at: Date.now() };
+    _saveOptInState();
+    _stateJsonCache = { at: 0, body: null };
+    return { ok: true, dismissed: true };
+  }
+  if (act !== 'save') return { ok: false, error: 'bad action' };
+  const list = Array.isArray(body.characters) ? body.characters : [];
+  if (list.length === 0) return { ok: false, error: 'Pick at least one character.' };
+  if (list.length > RECRUIT_MAX_NAMES) return { ok: false, error: 'At most ' + RECRUIT_MAX_NAMES + ' characters.' };
+  const chars = [];
+  for (const c of list) {
+    const name = String(c && c.name != null ? c.name : '').trim();
+    if (!RECRUIT_NAME_RX.test(name)) return { ok: false, error: '"' + name.slice(0, 24) + '" is not a character name (letters only).' };
+    chars.push({ name: _recruitCap(name), is_main: !!(c && c.is_main === true) });
+  }
+  const sent = await _postRecruitStage(chars);
+  if (!sent.ok) return { ok: false, reason: sent.reason, error: RECRUIT_NOTES[sent.reason] || RECRUIT_NOTES.offline };
+  const saved = sent.staged.length > 0;
+  let upload = null;
+  if (saved) {
+    _optinState.recruitCard = { state: 'saved', at: Date.now() };
+    _saveOptInState();
+    _modesMineCache = null;                       // the family is no longer empty: the character list shows it now
+    _stateJsonCache = { at: 0, body: null };
+    if (body.upload === true) {
+      upload = _recruitUploadNow(sent.staged.map(s => s.name), _recruitScan(_recruitDirs(), fs).files);
+    }
+    try { scheduleRender(); } catch { void 0; }
+  }
+  return { ok: true, saved, staged: sent.staged, conflicts: sent.conflicts, upload };
+}
+// ── end first sign-in card ──────────────────────────────────────────────────────────────────────────
 
 // Poll the bot for officer-tuned guild triggers. We refresh stats.guildTriggers
 // every ~10 min and merge with personal triggers loaded from disk in
@@ -50859,9 +51823,61 @@ const POLL_PREFS_MS      = 10 * 60_000;
 const POLL_BACKFILL_MS   = 5 * 60_000;
 const POLL_UI_MS         = 5 * 60_000;
 const POLL_PETS_MS       = 60_000;       // pooled pet owners (FB-35): a minute while fights run, five idle
+const POLL_RESCAN_MS     = 3 * 60_000;   // "Sync from my logs" requests (the website tells the member "every few minutes")
+const POLL_POP_MS        = 5 * 60_000;   // the PoP Flags mode's status of the member's own characters (_popStatus below)
 const POLL_TUNING_IDLE_MS = 20_000;   // idle: still refresh tuning/control this often
 const POLL_DORMANT_MS     = 15_000;   // dormant: poll the tuning/kill channel this often
-const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0 };
+const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0, rescan: 0, pop: 0 };
+
+// ── PoP Flags mode: where the member's own characters stand on the PoP flags (2026-10-27) ──────────────────────────
+// The guild lead picked "A then B" for the per-character PoP flags checklist in Mimic; this is the data under A. The
+// bot answers the poll's `pop` stream with a status per character (utils/popStatus.js, the website's rules, scoped to
+// the Mimic session's OWN characters); we keep the latest answer and serve it to the overlay on localhost
+// (GET /api/pop-status). The overlay polls us every 3 s, which costs nothing; the bot is asked every five minutes
+// and once ~2 s after one of OUR pop_flag uploads is acknowledged (the bot has dropped its cache for those
+// characters by then). Nothing here is sent anywhere: it is a read.
+//   supported: null until the bot has answered a poll that asked for `pop`; false when it answered without the stream
+//   (an older bot, or the stream is shed): the overlay says "Flags need the newer bot".
+const _popStatus = { supported: null, ver: '', at: 0, byChar: {}, unlinked: [], error: null };
+function _applyPopResponse(p, now) {
+  if (!p || typeof p !== 'object') { _popStatus.supported = false; return; }
+  _popStatus.supported = true;
+  _popStatus.at = now;
+  if (p.error) { _popStatus.error = String(p.error).slice(0, 80); return; }   // the bot's database was down: keep what we hold
+  _popStatus.error = null;
+  if (p.version != null) _popStatus.ver = String(p.version);
+  if (p.unchanged) return;
+  const by = {};
+  const chars = p.characters && typeof p.characters === 'object' ? p.characters : {};
+  for (const k of Object.keys(chars).slice(0, 24)) { if (chars[k] && typeof chars[k] === 'object') by[String(k).toLowerCase()] = chars[k]; }
+  _popStatus.byChar = by;
+  _popStatus.unlinked = Array.isArray(p.unlinked) ? p.unlinked.map(String).slice(0, 24) : [];
+}
+// One of our pop_flag uploads was acknowledged: ask for the status again in ~2 s (the next poll tick takes it).
+let _popSoonTimer = null;
+function _popSoon() {
+  if (_popSoonTimer) return;
+  _popSoonTimer = setTimeout(() => { _popSoonTimer = null; _pollLast.pop = 0; }, 2000);
+  if (_popSoonTimer.unref) _popSoonTimer.unref();
+}
+// The body of GET /api/pop-status?character=<name>: the status of the named (else the played) character plus who else
+// the overlay may pick. `state` says what to draw when there is no status.
+function _popStatusBody(wantName) {
+  const watched = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
+  const active = (stats && stats.activeCharacter) ? String(stats.activeCharacter) : (watched[0] || '');
+  const name = wantName ? String(wantName) : active;
+  const have = Object.values(_popStatus.byChar).map(s => s && s.character).filter(Boolean);
+  const characters = [...new Set([...have, ...watched])].sort((a, b) => a.localeCompare(b));
+  const out = { active, character: name, characters, age_ms: _popStatus.at ? Math.max(0, Date.now() - _popStatus.at) : null };
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return { ...out, state: 'offline', status: null };
+  if (_pollSupported === false || _popStatus.supported === false) return { ...out, state: 'old_bot', status: null };
+  if (!name) return { ...out, state: 'no_character', status: null };
+  if (_popStatus.supported == null) return { ...out, state: 'loading', status: null };
+  const status = _popStatus.byChar[name.toLowerCase()] || null;
+  if (status) return { ...out, state: 'ok', status };
+  return { ...out, state: _popStatus.unlinked.some(n => n.toLowerCase() === name.toLowerCase()) ? 'unlinked' : (_popStatus.error ? 'error' : 'loading'), status: null };
+}
 function _multiplexActive() { return _pollSupported !== false; }
 function _pollFellBack(reason) {
   if (_pollSupported === false) return;
@@ -50898,6 +51914,8 @@ async function _pollMultiplexed() {
       if (now - _pollLast.prefs    >= POLL_PREFS_MS)    want.push('prefs');
       if (now - _pollLast.backfill >= POLL_BACKFILL_MS) want.push('backfill');
       if (now - _pollLast.ui_edits >= POLL_UI_MS)       want.push('ui_edits');
+      if (now - _pollLast.rescan   >= POLL_RESCAN_MS && !_rescan.running) want.push('rescan');   // older bots omit it: nothing happens
+      if (now - _pollLast.pop      >= POLL_POP_MS)      want.push('pop');                        // older bots omit it: _popStatus.supported = false
     }
   }
   if (want.length === 0) return;   // nothing due this tick (idle, between cadences)
@@ -50914,8 +51932,12 @@ async function _pollMultiplexed() {
     for (const c of chars) { const cls = stats.characterClasses && stats.characterClasses[c.toLowerCase()]; if (cls) classes.push(cls); }
     if (classes.length) qs.set('classes', classes.join(','));
   }
-  if (chars.length && (want.includes('prefs') || want.includes('backfill') || want.includes('ui_edits'))) {
+  if (chars.length && (want.includes('prefs') || want.includes('backfill') || want.includes('ui_edits') || want.includes('rescan'))) {
     qs.set('characters', chars.join(','));
+  }
+  if (want.includes('pop')) {   // only asked for with a watched character (above): the bot scopes it to the member's own
+    qs.set('characters', chars.join(','));
+    qs.set('pop_ver', _popStatus.ver || '');
   }
 
   _pollInflight = true;
@@ -50946,6 +51968,8 @@ async function _pollMultiplexed() {
     if (want.includes('pet_owners')) { if (s.pet_owners) _applyPetOwnersResponse(s.pet_owners); _pollLast.pet_owners = now; }
     if (want.includes('prefs'))    { if (s.prefs)    _applyCharacterPrefsResponse(s.prefs);   _pollLast.prefs = now; }
     if (want.includes('backfill')) { if (s.backfill) _applyBackfillResponse(s.backfill);      _pollLast.backfill = now; }
+    if (want.includes('rescan'))   { if (s.rescan)   _applyRescanResponse(s.rescan);          _pollLast.rescan = now; }
+    if (want.includes('pop'))      { _applyPopResponse(s.pop, now);                           _pollLast.pop = now; }
     if (want.includes('ui_edits')) {
       if (s.ui_edits) {
         const watched = (stats.watchedLogs || []).filter(w => w && w.character && w.logPath);
@@ -51552,6 +52576,10 @@ const _mapPaths = {
   set cache(v) { this._c = v; },
   get timers() { return this._t || path.join(path.dirname(STATS_FILE), 'map_timers.json'); },
   set timers(v) { this._t = v; },
+  // Guild-sync events the bot has not taken yet (see "Guild sync"), beside map_timers.json.
+  _o: null,
+  get outbox() { return this._o || path.join(path.dirname(this.timers), 'map_sync_outbox.json'); },
+  set outbox(v) { this._o = v; },
   // Brewall's maps downloaded from Zeal's repo (see "Brewall maps"); null switches the download and the source off.
   _b: undefined,
   get brewall() { return this._b === undefined ? path.join(__dirname, 'brewall-maps') : this._b; },
@@ -51588,7 +52616,10 @@ const MAP_SYNC_BATCH         = 50;                  // events per POST
 const MAP_SYNC_PULL_MS       = 10 * 1000;
 const MAP_SYNC_BACKOFF_MS    = 10 * 60 * 1000;      // the bot answered 404: not deployed yet, ask again later
 const MAP_SYNC_TIMEOUT_MS    = 8000;
-const MAP_SYNC_QUEUE_MAX     = 200;
+const MAP_SYNC_QUEUE_MAX     = 500;                 // the outbox: events held while the bot is unreachable (oldest out)
+const MAP_SYNC_RETRY_MIN_MS  = 15 * 1000;           // the bot did not answer: first retry after this, doubling...
+const MAP_SYNC_RETRY_MAX_MS  = 5 * 60 * 1000;       // ...up to this
+const MAP_SYNC_KEEP_MS       = 24 * 60 * 60 * 1000 - 10 * 60 * 1000;   // the bot keeps 24 h and drops older events: stop holding them just before
 const MAP_CORPSE_RE          = /[`'’]s\s+corpse\d*$/i;
 // NPCs whose walk is recorded whenever anyone's target is on them (the guild lead, 2026-10-14: "for Thelin, if anyone
 // is targetting him we should track that path and put his path on the map"). Thelin Poxbourne is the escort of the
@@ -52601,26 +53632,109 @@ function _mapCopyInfo(zone, now) {
 // Push: pinned sightings ("seen"), assigned deaths ("died") and your own marks (died / empty / up / clear), batched
 // (one POST per 3 s, 50 events). Never a "?" candidate. Pull: only while the overlay is polling /api/map-state
 // (the pull starts from that request and from nothing else, so a closed or hidden map stops it), every 10 s, for
-// events newer than the last one seen. Ephemeral on purpose: no durable queue, a failed POST is dropped. A 404
-// means the bot does not have the route yet: nothing is asked of it for 10 minutes, and nothing is shown.
+// events newer than the last one seen. A 404 means the bot does not have the route yet: nothing is asked of it for
+// 10 minutes, and nothing is shown.
+// The OUTBOX (the guild lead, 2026-10-26: "if the bot restarted and during that timeframe i killed something it would
+// need to collect any of those spawn id + name matches and sync them back in. Source is important."): an event the bot
+// has not taken is HELD, not dropped. A POST that gets no answer (refused, reset, timed out) or a 404 / 429 / 5xx puts its
+// batch back; the next try waits 15 s, doubling to 5 min (a 404 keeps its 10 minutes). Held events keep their own
+// character, spawn id, name, copy token and original `at`, so a late arrival is the same event it would have been, and
+// the bot ignores a repeat of one it already has. Capped at 500 (oldest out) and dropped once the bot would drop them
+// (24 h). Kept in map_sync_outbox.json beside map_timers.json, so a Mimic restart during an outage loses nothing
+// (`_mapSyncResume`, at start). Any other 4xx is a bad event or a bad token: dropped, as before. Not the durable upload
+// queue (enqueueUpload): that one is per-event-kind with its own envelope, treats a 404 as permanent, and holds back
+// agent updates while it has anything; a map event is one small row in a batch the bot already knows how to read.
 // Same URL derivation, bearer, timeout and _mapFetchAllowed() gate as _mapGetZone: local mode never syncs.
 // The same pull also brings the raid's shared targets and the escort trails (bot 3.1.263, DECISIONS 299), kept here per
 // zone: `targets[zone]` = { rows, botNow, pulledAt }, `trails[zone][<name>]` = { name, at, live, pulledAt, pts, tmax }.
 // Memory only; the bot is where they persist. An older bot sends neither and nothing here changes.
 // `watches[zone][<point_id>]` = { point_id, named, inst, by, at, seenAt, synced }: the spots marked "watch for <named>"
 // (see "Watched spots" below). Memory only, like targets and trails: the bot is where they persist.
-const _mapSync = { q: [], flushTimer: null, backoffUntil: 0, pulling: false, pullAt: 0, pullZone: null, since: {}, keys: new Set(),
+// `q` = the outbox: [{ zone, character, ev }], oldest first. `flying` = entries in a POST that has not answered yet (still
+// on disk until it does). retryAt / fails / failGen = the backoff after an unanswered POST; epoch ends callbacks after a stop.
+const _mapSync = { q: [], flying: new Set(), flushTimer: null, saveTimer: null, onDisk: false, loaded: false, epoch: 0,
+  retryAt: 0, fails: 0, failGen: 0, backoffUntil: 0, pulling: false, pullAt: 0, pullZone: null, since: {}, keys: new Set(),
   targets: {}, trails: {}, watches: {}, watchOff: {}, watchBackoffUntil: 0 };
 const _mapSyncKey = (zone, e) => zone + '|' + e.point_id + '|' + e.kind + '|' + (e.spawn_id == null ? '' : e.spawn_id) + '|' + e.at;
 function _mapSyncRemember(key) { if (_mapSync.keys.size > 4000) _mapSync.keys.clear(); _mapSync.keys.add(key); }
+// ── the outbox on disk: { version, q: [{ zone, character, ev }] }, written whole (.tmp + rename) a moment after a change ──
+function _mapOutboxSaveNow() {
+  if (_mapSync.saveTimer) { clearTimeout(_mapSync.saveTimer); _mapSync.saveTimer = null; }
+  const file = _mapPaths.outbox, held = [..._mapSync.flying, ..._mapSync.q];
+  try {
+    if (!held.length) {
+      if (_mapSync.onDisk) { _mapSync.onDisk = false; fs.unlinkSync(file); }
+      return;
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ version: 1, q: held }));
+    fs.renameSync(file + '.tmp', file);
+    _mapSync.onDisk = true;
+  } catch { /* best effort: the events are still in memory */ }
+}
+function _mapOutboxSaveSoon() {
+  if (_mapSync.saveTimer) return;
+  _mapSync.saveTimer = setTimeout(() => { _mapSync.saveTimer = null; _mapOutboxSaveNow(); }, 2000);
+  if (_mapSync.saveTimer.unref) _mapSync.saveTimer.unref();
+}
+// Put entries back (a POST that did not land, or the file read at start): oldest first, the oldest out past the cap.
+function _mapSyncRequeue(entries) {
+  const q = _mapSync.q;
+  for (const x of entries) q.push(x);
+  q.sort((a, b) => a.ev.at - b.ev.at);
+  while (q.length > MAP_SYNC_QUEUE_MAX) q.shift();
+}
+// Events the bot would refuse for age are not worth holding.
+function _mapSyncPrune(now) {
+  const q = _mapSync.q, min = now - MAP_SYNC_KEEP_MS;
+  for (let i = q.length - 1; i >= 0; i--) if (!(q[i].ev.at >= min)) q.splice(i, 1);
+}
+// At start (a signed-in agent): take back what the last run could not send, and try again.
+function _mapSyncResume(now) {
+  if (_mapSync.loaded) return _mapSync.q.length;
+  _mapSync.loaded = true;
+  let rows = [];
+  try {
+    const j = JSON.parse(fs.readFileSync(_mapPaths.outbox, 'utf8'));
+    if (j && Array.isArray(j.q)) rows = j.q;
+    _mapSync.onDisk = true;
+  } catch { /* none, or unreadable: nothing to resume */ }
+  const back = [];
+  for (const r of rows) {
+    const e = r && r.ev;
+    if (!r || typeof r.zone !== 'string' || typeof r.character !== 'string' || !e || typeof e !== 'object') continue;
+    if (!Number.isInteger(e.point_id) || typeof e.kind !== 'string' || !Number.isFinite(e.at)) continue;
+    const ev = { point_id: e.point_id, kind: e.kind, spawn_id: e.spawn_id > 0 ? e.spawn_id : null,
+      name: e.name ? String(e.name).slice(0, 80) : null, at: e.at };
+    if (typeof e.inst === 'string') ev.inst = e.inst;
+    back.push({ zone: r.zone, character: r.character, ev });
+  }
+  _mapSyncRequeue(back);
+  _mapSyncPrune(now);
+  _mapOutboxSaveSoon();
+  if (_mapSync.q.length) _mapSyncSchedule();
+  return _mapSync.q.length;
+}
 function _mapSyncStop() {
   if (_mapSync.flushTimer) { clearTimeout(_mapSync.flushTimer); _mapSync.flushTimer = null; }
-  _mapSync.q.length = 0;
+  _mapSync.epoch++;   // a POST still in the air must not put its batch back
+  _mapSync.q.length = 0; _mapSync.flying.clear();
+  _mapSync.retryAt = 0; _mapSync.fails = 0;
+  _mapOutboxSaveNow();   // nothing held: removes the file
 }
-function _mapSyncSchedule() {
+function _mapSyncSchedule(delayMs) {
   if (_mapSync.flushTimer) return;
-  _mapSync.flushTimer = setTimeout(() => { _mapSync.flushTimer = null; _mapSyncFlush(Date.now()); }, MAP_SYNC_FLUSH_MS);
+  const wait = Math.min(Math.max(delayMs || MAP_SYNC_FLUSH_MS, MAP_SYNC_FLUSH_MS), MAP_SYNC_BACKOFF_MS);
+  _mapSync.flushTimer = setTimeout(() => { _mapSync.flushTimer = null; _mapSyncFlush(Date.now()); }, wait);
   if (_mapSync.flushTimer.unref) _mapSync.flushTimer.unref();
+}
+// What an answer means for the batch it answers: 'ok' (taken), 'retry' (hold it and try again) or 'drop' (the bot will never
+// take it: a bad event or a bad token). `err` = no answer at all.
+function _mapSyncVerdict(err, status) {
+  if (err) return 'retry';
+  if (status >= 200 && status < 300) return 'ok';
+  if (status === 404 || status === 429 || status >= 500) return 'retry';
+  return status >= 400 ? 'drop' : 'retry';
 }
 // A local event: it stamps the point (newer wins), is remembered so its own echo from the bot is skipped, and is
 // queued for the guild when this machine may talk to the bot.
@@ -52637,6 +53751,7 @@ function _mapLocalEvent(zone, zd, character, ev, now) {
   if (!ch) return;
   if (_mapSync.q.length >= MAP_SYNC_QUEUE_MAX) _mapSync.q.shift();
   _mapSync.q.push({ zone, character: String(ch), ev: e });
+  _mapOutboxSaveSoon();
   _mapSyncSchedule();
 }
 function _mapSyncRequest(method, query, bodyObj, done, endpoint) {
@@ -52660,17 +53775,40 @@ function _mapSyncRequest(method, query, bodyObj, done, endpoint) {
   } catch (e) { fin(e); }
 }
 // Send the oldest batch (one zone + character, up to 50). Returns true when a POST went out.
+// Local mode (no token) holds nothing. A paused agent keeps its outbox but sends nothing; a bot that is backing off (404) or
+// has not answered lately is not asked again until the wait is over, and the outbox is never emptied for it.
 function _mapSyncFlush(now) {
   const q = _mapSync.q;
   if (!q.length) return false;
-  if (!_mapFetchAllowed() || now < _mapSync.backoffUntil) { q.length = 0; return false; }
-  const first = q[0], batch = [];
-  for (let i = 0; i < q.length && batch.length < MAP_SYNC_BATCH;) {
-    if (q[i].zone === first.zone && q[i].character === first.character) batch.push(q.splice(i, 1)[0].ev); else i++;
+  if (_localOnly()) { _mapSyncStop(); return false; }
+  _mapSyncPrune(now);
+  if (!q.length) { _mapOutboxSaveSoon(); return false; }
+  if (!_mapFetchAllowed()) { _mapSyncSchedule(MAP_SYNC_RETRY_MAX_MS); return false; }
+  const until = Math.max(_mapSync.backoffUntil, _mapSync.retryAt);
+  if (now < until) { _mapSyncSchedule(until - now); return false; }
+  const first = q[0], sent = [];
+  for (let i = 0; i < q.length && sent.length < MAP_SYNC_BATCH;) {
+    if (q[i].zone === first.zone && q[i].character === first.character) sent.push(q.splice(i, 1)[0]); else i++;
   }
+  for (const x of sent) _mapSync.flying.add(x);
   if (q.length) _mapSyncSchedule();
-  _mapSyncRequest('POST', '', { zone: first.zone, character: first.character, events: batch }, (err, status) => {
-    if (!err && status === 404) _mapSync.backoffUntil = now + MAP_SYNC_BACKOFF_MS;
+  const epoch = _mapSync.epoch, gen = _mapSync.failGen;
+  _mapSyncRequest('POST', '', { zone: first.zone, character: first.character, events: sent.map(x => x.ev) }, (err, status) => {
+    if (epoch !== _mapSync.epoch) return;
+    for (const x of sent) _mapSync.flying.delete(x);
+    const verdict = _mapSyncVerdict(err, status);
+    if (verdict === 'ok') { _mapSync.fails = 0; _mapSync.retryAt = 0; }
+    else if (verdict === 'retry') {
+      _mapSyncRequeue(sent);
+      if (!err && status === 404) _mapSync.backoffUntil = now + MAP_SYNC_BACKOFF_MS;
+      else if (gen === _mapSync.failGen) {   // one escalation per outage, however many POSTs were in the air
+        _mapSync.failGen++; _mapSync.fails++;
+        _mapSync.retryAt = now + Math.min(MAP_SYNC_RETRY_MIN_MS * 2 ** (_mapSync.fails - 1), MAP_SYNC_RETRY_MAX_MS);
+      }
+      _mapSyncSchedule(Math.max(_mapSync.backoffUntil, _mapSync.retryAt) - now);
+    }
+    _mapOutboxSaveSoon();
+    if (_mapSync.q.length) _mapSyncSchedule();
   });
   return true;
 }
@@ -54385,7 +55523,7 @@ function _handleKiteLoopsGet(req, res) {
 // ── end Kite loops ──
 
 // A timer written in the last two seconds is flushed on the way out.
-process.on('exit', () => { try { if (_mapSaveTimer) _mapSaveNow(); } catch { void 0; } });
+process.on('exit', () => { try { if (_mapSaveTimer) _mapSaveNow(); } catch { void 0; } try { if (_mapSync.saveTimer) _mapOutboxSaveNow(); } catch { void 0; } });
 
 // Target Info F/Q/V: the bot's /api/agent/npc-interact by npc id (the guild lead,
 // 2026-09-28). Catalog data, so 6h; an empty answer is retried after 10 minutes rather
@@ -61745,6 +62883,8 @@ async function main() {
   // Make opts available to the chat relay flush (module-level so the interval can see them)
   _uploadOpts    = { botUrl, token, dryRun };
   _isServiceMode = !!args.flags.noServiceCheck;
+  // The Spawn map's guild-sync outbox: events a bot outage kept from going out last run are sent now (see "Guild sync").
+  if (!dryRun && token) { try { _mapSyncResume(Date.now()); } catch (e) { console.warn('[map] outbox resume failed:', e && e.message); } }
 
   // Spell catalog: load any cached copy from disk synchronously so the first
   // dashboard render has spell names + PQDI ids, then fire a background fetch
@@ -62123,6 +63263,7 @@ async function main() {
         if (conFacEvt) factionBuffer.push(conFacEvt);
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt) popFlagBuffer.push(pfEvt);
+        for (const pfOut of popFlagsOutputEvents(line, b.character)) popFlagBuffer.push(pfOut);   // `#popflags` output
         // Witnessed hails — coverage for raiders who don't run Mimic.
         const hailEvt = parseWitnessedHail(line, b.character);
         if (hailEvt) popFlagBuffer.push(hailEvt);
@@ -62480,6 +63621,8 @@ async function main() {
         try { noteSightCon(line, b.character); } catch (e) { void e; }   // …and, while you are invisible, whether it saw you
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
+        // …and what `#popflags` printed (popFlagsOutputEvents: an exact-line gate, step keys only, docs/PRIVACY.md).
+        if (!_sourceExcluded) { for (const pfOut of popFlagsOutputEvents(line, b.character)) popFlagBuffer.push(pfOut); }
         // A hail, yours or one you witnessed: the Command Center's hail board (the guild lead,
         // 2026-10-05) moves a raider from "still to hail" to "hailed" on this. Only a hail of a flag NPC
         // leaves the machine (_hailNpcWanted), the one /say exception docs/PRIVACY.md names. Every Mimic
@@ -64237,6 +65380,339 @@ function _rebuildStartRequest(body) {
   return { status: 202, body: { ok: true, started: true, files: files.length, since: sinceMs ? new Date(sinceMs).toISOString() : null, dkp: _rb.dkp } };
 }
 
+// ── "Sync from my logs": re-read recent logs for PoP flag lines (the guild lead, 2026-10-26) ──
+// The member asks on wolfpack.quest/pop/raid/me; the bot hands the request to THIS agent on the poll's `rescan`
+// stream (claiming it: pending → taken), and we answer POST /api/agent/rescan-done {id, found, ok}. Old bots never
+// send the stream and old agents never ask for it. Not the backfill-requests loop (nothing ever completed that one).
+//
+// What it reads: for each EverQuest log of that character (or every log on this PC when the request names none),
+// seek to `now − days` (_rbSeek, a bisection by timestamp), read forward in chunks, and hand parsePopFlagLine ONLY the
+// lines that hit the PoP gates it already has (_POP_GRANT_RX, _POP_RECITAL_RX, _POP_PREV_RX, the trial credit lines)
+// and popFlagsOutputEvents ONLY the lines in its exact-line table. Every other line is skipped without a parse, so
+// nothing else about the log is looked at. Events go out through the normal uploadPopFlags path; the pop_flags key
+// (guild, character, flag, earned_at) makes a re-read idempotent, and earned_at is the log line's own time.
+// It must not hurt the live tail: one request at a time, ~12 ms of work then a rest, a pause while a fight is live,
+// and a cap on the bytes read (RESCAN_MAX_BYTES per request, across files).
+const RESCAN_CHUNK_BYTES = 256 * 1024;
+const RESCAN_MAX_BYTES   = 192 * 1024 * 1024;
+const RESCAN_BUDGET_MS   = 12;
+const RESCAN_REST_MS     = 25;
+const RESCAN_MAX_DAYS    = 60;
+const RESCAN_MAX_WAIT_MS = 10 * 60_000;     // total time spent paused for a live fight
+const RESCAN_FLUSH       = 100;             // events per upload
+// ONE in-flight guard for both callers: the website's request (the poll's `rescan` stream) and the dashboard's
+// "Capture latest PoP flags" button (POST /api/local/pop-rescan). `running` is that guard; `by` says who holds it;
+// `cur` is the progress record of the run in flight (or the last one), read by GET /api/local/pop-rescan/status.
+const RESCAN_DEFAULT_DAYS = 14;
+const _rescan = { running: false, queue: [], seen: new Set(), lastDone: null, by: null, cur: null };
+function _rescanSleep(ms) { return new Promise((r) => setTimeout(r, Math.max(0, ms | 0))); }
+
+// The gates, nothing else. `msg` is the line after its timestamp.
+function _rescanWants(msg) {
+  const c = msg.charCodeAt(0);
+  if (c === 89 && (msg.indexOf(' flag!') !== -1 ? _POP_GRANT_RX.test(msg) : false)) return 'grant';                     // "You have received a ... flag!"
+  if (_POP_RECITAL_RX.test(msg)) return 'recital';
+  if (_POP_PREV_RX.test(msg)) return 'prev';
+  if (c === 65 && msg.startsWith('An ethereal mist') && _POP_TRIAL_MIST_RX.test(msg.trim())) return 'trial';
+  if (c === 89 && msg.trim() === _POP_TRIAL_HELD) return 'trial';
+  if (c === 89 && _POP_SELF_HAIL_RX.test(msg)) return 'hail';        // state only: the NPC a "trial held" line names
+  if ((c === 61 || msg.indexOf(': ') > 0 || _PF_BARE_RX.test(msg)) && msg.length <= _PF_MAXLEN + 8 && _PF_LINES.has(_pfNorm(msg))) return 'popflags';
+  return null;
+}
+// One line. `sink` = { events, found, prev, prevPassed }. Returns nothing; counts a line that was a flag line.
+function _rescanLine(line, character, sinceMs, sink) {
+  const msg = line.replace(/^\[[^\]]*\]\s*/, '');
+  const gate = _rescanWants(msg);
+  const prev = sink.prev;
+  sink.prev = line;
+  if (!gate) { sink.prevPassed = false; return; }
+  const ts = parseEqTimestamp(line);
+  if (!ts || ts.getTime() < sinceMs) { sink.prevPassed = false; return; }
+  // parsePopFlagLine names a grant from the line just before it; a skipped line in between must not leave an older
+  // NPC line standing in for it, so the real previous line is shown to it first (its answer, if any, is dropped).
+  if (gate === 'grant' && !sink.prevPassed && prev) parsePopFlagLine(prev, character);
+  sink.prevPassed = gate !== 'popflags';     // only the other gates go through parsePopFlagLine's own "line before"
+  if (gate === 'popflags') {
+    const evs = popFlagsOutputEvents(line, character);
+    for (const e of evs) sink.events.push(e);
+    const hit = _PF_LINES.get(_pfNorm(msg));
+    if (hit && hit.k !== 'head' && (hit.k !== 'time' || hit.yes)) sink.found++;
+    return;
+  }
+  const ev = parsePopFlagLine(line, character);
+  if (ev) { sink.events.push(ev); sink.found++; }
+}
+// One log file. `ctx` = { sinceMs, bytes (left to read, shared), waited, stop }. Returns false if it could not open the file.
+async function _rescanFile(file, ctx, sink) {
+  let fh;
+  try { fh = await fs.promises.open(file.path, 'r'); } catch { return false; }
+  try {
+    const size = (await fh.stat()).size;
+    let pos = size > 512 * 1024 ? await _rbSeek(fh, size, ctx.sinceMs) : 0;
+    let align = pos > 0;                       // a seek lands mid-line: the first piece is dropped
+    const chunk = Buffer.allocUnsafe(RESCAN_CHUNK_BYTES);
+    let carry = null;
+    let workStart = Date.now();
+    sink.prev = null; sink.prevPassed = false;
+    while (pos < size && ctx.bytes > 0 && !ctx.stop) {
+      if (_liveFightActive() && ctx.waited < RESCAN_MAX_WAIT_MS) { ctx.waited += 1500; await _rescanSleep(1500); continue; }
+      const want = Math.min(chunk.length, ctx.bytes, size - pos);
+      const { bytesRead } = await fh.read(chunk, 0, want, pos);
+      if (bytesRead <= 0) break;
+      pos += bytesRead; ctx.bytes -= bytesRead;
+      const data = carry ? Buffer.concat([carry, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
+      const nl = data.lastIndexOf(10);
+      if (nl < 0) { carry = data.length > (1 << 20) ? null : Buffer.from(data); continue; }
+      let text = data.toString('utf8', 0, nl);
+      carry = nl + 1 < data.length ? Buffer.from(data.subarray(nl + 1)) : null;
+      if (align) { const first = text.indexOf('\n'); text = first < 0 ? '' : text.slice(first + 1); align = false; }
+      let from = 0;
+      while (from <= text.length) {
+        let to = text.indexOf('\n', from);
+        if (to < 0) to = text.length;
+        let line = text.slice(from, to);
+        if (line.charCodeAt(line.length - 1) === 13) line = line.slice(0, -1);
+        if (line) { try { _rescanLine(line, file.character, ctx.sinceMs, sink); } catch { void 0; } }
+        from = to + 1;
+      }
+      if (sink.events.length >= RESCAN_FLUSH) sink.flush();
+      if (Date.now() - workStart >= RESCAN_BUDGET_MS) { await _rescanSleep(RESCAN_REST_MS); workStart = Date.now(); }
+      else await new Promise((r) => setImmediate(r));
+    }
+    if (carry && carry.length && !ctx.stop) { try { _rescanLine(carry.toString('utf8').replace(/\r$/, ''), file.character, ctx.sinceMs, sink); } catch { void 0; } }
+    return true;
+  } catch { return false; } finally { try { await fh.close(); } catch { void 0; } }
+}
+// The per-character module state the readers keep (the line before, the last hail, the #popflags time state) is
+// the LIVE tail's: a re-read starts from nothing and puts every entry back, so it can neither borrow the live
+// tail's state nor leave its own behind.
+function _rescanIsolate(characters, fn) {
+  const lcs = [...new Set(characters.map(c => String(c).toLowerCase()))];
+  const saved = lcs.map(cl => [cl, _popPrevLine.get(cl), _popLastHail.get(cl), _pfState.get(cl)]);
+  for (const cl of lcs) { _popPrevLine.delete(cl); _popLastHail.delete(cl); _pfState.delete(cl); }
+  const restore = () => {
+    for (const [cl, a, b, c] of saved) {
+      if (a !== undefined) _popPrevLine.set(cl, a); else _popPrevLine.delete(cl);
+      if (b !== undefined) _popLastHail.set(cl, b); else _popLastHail.delete(cl);
+      if (c !== undefined) _pfState.set(cl, c); else _pfState.delete(cl);
+    }
+  };
+  return Promise.resolve().then(fn).then((r) => { restore(); return r; }, (e) => { restore(); throw e; });
+}
+// Which logs: this PC's, for that character (or all of them), minus any kept out of stats. `info.excluded`, when
+// given, collects the names that were left out for that reason, so the dashboard can say so.
+function _rescanFiles(character, info) {
+  const want = character ? String(character).toLowerCase() : null;
+  const seen = new Set();
+  const files = [];
+  for (const c of _rebuildCandidates()) {
+    if (!c || !c.path || c.ignored || seen.has(c.path) || !c.character) continue;
+    if (want && String(c.character).toLowerCase() !== want) continue;
+    if (_rebuildExcluded(c.character) || !shouldUploadForCharacter(c.character)) {
+      if (info && info.excluded.indexOf(c.character) < 0) info.excluded.push(c.character);
+      continue;
+    }
+    seen.add(c.path);
+    files.push(c);
+  }
+  return files;
+}
+// Whether this run may send what it reads: local mode (no account) and a paused agent (the guild's kill switch or
+// version floor) read and count, and upload nothing.
+function _rescanUploadMode() {
+  if (_localOnly()) return { upload: false, why: 'local mode' };
+  let down = false;
+  try { down = _controlStandDown().down; } catch { void 0; }
+  if (down) return { upload: false, why: 'paused' };
+  return { upload: true, why: null };
+}
+function _rescanDays(v) { return Math.max(1, Math.min(RESCAN_MAX_DAYS, Math.trunc(Number(v)) || RESCAN_DEFAULT_DAYS)); }
+// (_rescanDrained and _rescanReport, which touch the queue and the network, sit next to the PoP parsers: the local
+// rebuild above must stay free of both, test/local-backfill.test.js.)
+// One run, for either caller: {character|null, days}. `prog` (optional) is the progress record the status route
+// reads while it goes. Resolves to { ok, found, logs, sent, excluded, upload, why }: `logs` is the files opened,
+// `sent` the events handed to the upload queue (0 when the agent is in local mode or paused: the lines are still
+// read and counted, nothing leaves), `excluded` the characters left out because they are kept out of stats.
+async function _rescanRun(req, prog) {
+  const days = _rescanDays(req.days);
+  const sinceMs = Date.now() - days * 86400_000;
+  const info = { excluded: [] };
+  const files = _rescanFiles(req.character, info);
+  const mode = _rescanUploadMode();
+  const done = (o) => Object.assign({ ok: false, found: 0, logs: 0, sent: 0, excluded: info.excluded, upload: mode.upload, why: mode.why }, o);
+  if (prog) { prog.days = days; prog.files = files.length; prog.filesDone = 0; prog.excluded = info.excluded; prog.upload = mode.upload; prog.why = mode.why; }
+  if (!files.length) return done({});
+  const opts = _uploadOpts || {};
+  const sink = {
+    events: [], found: 0, sent: 0, prev: null, prevPassed: false,
+    flush() {
+      if (!this.events.length) return;
+      const evs = this.events.splice(0);
+      if (!mode.upload) return;
+      this.sent += evs.length;
+      uploadPopFlags(evs, opts).catch(() => {});
+    },
+  };
+  const ctx = { sinceMs, bytes: RESCAN_MAX_BYTES, waited: 0, stop: false };
+  if (prog) { prog.ctx = ctx; prog.sink = sink; }
+  let opened = 0;
+  await _rescanIsolate(files.map(f => f.character), async () => {
+    for (const f of files) {
+      if (prog) prog.current = f.character;
+      if (await _rescanFile(f, ctx, sink)) opened++;
+      sink.flush();
+      if (prog) prog.filesDone++;
+    }
+  });
+  sink.flush();
+  if (opened === 0) return done({});
+  if (sink.sent > 0) await _rescanDrained(90_000);
+  return done({ ok: true, found: sink.found, logs: opened, sent: sink.sent });
+}
+// The website's requests, one at a time, under the shared guard. Also called when a dashboard run ends, so a
+// request that arrived meanwhile is not left waiting for the next poll.
+function _rescanPump() {
+  if (_rescan.running || !_rescan.queue.length) return;
+  _rescan.running = true; _rescan.by = 'website';
+  (async () => {
+    try {
+      while (_rescan.queue.length) {
+        const req = _rescan.queue.shift();
+        const prog = { by: 'website', id: req.id, state: 'running', startedAt: Date.now(), character: req.character, current: null, result: null };
+        _rescan.cur = prog;
+        let out = { ok: false, found: 0 };
+        try { out = await _rescanRun(req, prog); } catch (e) { console.warn('[rescan] failed:', e && e.message); }
+        prog.state = 'done'; prog.finishedAt = Date.now(); prog.current = null; prog.result = out;
+        const sent = await _rescanReport(req.id, out.found, out.ok);
+        _rescan.lastDone = { id: req.id, found: out.found, ok: out.ok, reported: sent, at: Date.now() };
+        console.log(`[rescan] request ${req.id}: ${out.ok ? out.found + ' flag line(s) read' : 'could not read'}${sent ? '' : ' (not reported)'}`);
+      }
+    } finally { _rescan.running = false; _rescan.by = null; }
+  })();
+}
+// The poll's `rescan` stream → the queue, one at a time.
+function _applyRescanResponse(resp) {
+  const list = resp && Array.isArray(resp.requests) ? resp.requests : [];
+  for (const r of list) {
+    const id = Number(r && r.id);
+    if (!Number.isInteger(id) || id <= 0 || _rescan.seen.has(id) || _rescan.queue.length >= 5) continue;
+    _rescan.seen.add(id);
+    if (_rescan.seen.size > 200) _rescan.seen.delete(_rescan.seen.values().next().value);
+    _rescan.queue.push({ id, character: r.character == null ? null : String(r.character).slice(0, 64), days: r.days });
+  }
+  _rescanPump();
+}
+
+// ── "Capture latest PoP flags, Seer and Maelin messages": the dashboard's own button (the guild lead, 2026-10-26) ──
+// The same reader as the website's request, started from this PC with no request id and no report to the bot.
+//   POST /api/local/pop-rescan         { character?: string|null, days?: 1..60 (default 14) } -> 202 { ok, started, files, days, excluded }
+//        400 junk arguments / no log to read, 409 while any rescan runs (this button's or the website's: one guard).
+//   GET  /api/local/pop-rescan/status  -> { running, by, upload, characters, run } for the card.
+// Behind _localGuardBlock like every route (the router calls it first). What leaves the machine is exactly what the
+// website's request sends: pop_flag events through uploadPopFlags; in local mode or while paused nothing does.
+const RESCAN_BODY_MAX = 2 * 1024;
+const RESCAN_NAME_MAX = 64;
+// Arguments -> { character, days } or { error }. A missing day count is the default; a present one that is not a
+// number is refused; a number is held to 1..RESCAN_MAX_DAYS.
+function _rescanArgs(body) {
+  const b = body && typeof body === 'object' && !Array.isArray(body) ? body : null;
+  if (!b) return { error: 'send a JSON object' };
+  let character = null;
+  if (b.character != null && b.character !== '') {
+    if (typeof b.character !== 'string') return { error: 'character must be a name' };
+    character = b.character.trim();
+    if (!character) character = null;
+    else if (character.length > RESCAN_NAME_MAX) return { error: 'character name is too long' };
+  }
+  let days = RESCAN_DEFAULT_DAYS;
+  if (b.days != null && b.days !== '') {
+    const n = Number(b.days);
+    if (typeof b.days === 'boolean' || !Number.isFinite(n)) return { error: 'days must be a number' };
+    days = Math.max(1, Math.min(RESCAN_MAX_DAYS, Math.trunc(n) || 1));
+  }
+  return { character, days };
+}
+function _rescanLocalStart(body) {
+  const a = _rescanArgs(body);
+  if (a.error) return { status: 400, body: { error: a.error } };
+  if (_rescan.running) return { status: 409, body: { error: _rescan.by === 'website' ? 'a rescan the website asked for is running' : 'a rescan is already running' } };
+  const info = { excluded: [] };
+  const files = _rescanFiles(a.character, info);
+  if (!files.length) {
+    return { status: 400, body: { error: info.excluded.length ? 'kept out of stats: ' + info.excluded.join(', ') + ' (skipped)' : 'no EverQuest log found for that' } };
+  }
+  _rescan.running = true; _rescan.by = 'local';          // claimed before anything awaits: a second click gets the 409
+  const prog = { by: 'local', state: 'running', startedAt: Date.now(), character: a.character, current: null, result: null };
+  _rescan.cur = prog;
+  (async () => {
+    try { prog.result = await _rescanRun({ character: a.character, days: a.days }, prog); prog.state = 'done'; }
+    catch (e) { prog.state = 'error'; prog.error = String((e && e.message) || e).slice(0, 160); console.warn('[rescan] local run failed:', prog.error); }
+    finally {
+      prog.finishedAt = Date.now(); prog.current = null;
+      _rescan.running = false; _rescan.by = null;
+      _rescanPump();
+    }
+  })();
+  return { status: 202, body: { ok: true, started: true, files: files.length, days: a.days, excluded: info.excluded } };
+}
+// The characters this PC has a log for (not ignored), with whether each is kept out of stats. Capped.
+function _rescanCharacters() {
+  const seen = new Map();
+  for (const c of _rebuildCandidates()) {
+    if (!c || !c.path || c.ignored || !c.character) continue;
+    const k = String(c.character).toLowerCase();
+    if (!seen.has(k)) seen.set(k, { name: String(c.character), excluded: !!(_rebuildExcluded(c.character) || !shouldUploadForCharacter(c.character)) });
+  }
+  return [...seen.values()].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0)).slice(0, 200);
+}
+function _rescanStatus() {
+  const p = _rescan.cur;
+  let run = null;
+  if (p) {
+    run = {
+      by: p.by, state: p.state, character: p.character || null, current: p.current || null, error: p.error || null,
+      startedAt: p.startedAt, finishedAt: p.finishedAt || null, days: p.days || null,
+      files: p.files || 0, filesDone: p.filesDone || 0, excluded: p.excluded || [],
+      bytesRead: p.ctx ? RESCAN_MAX_BYTES - p.ctx.bytes : 0,
+      found: p.result ? p.result.found : (p.sink ? p.sink.found : 0),
+      logs: p.result ? p.result.logs : 0,
+      sent: p.result ? p.result.sent : (p.sink ? p.sink.sent : 0),
+      upload: p.upload !== false, why: p.why || null,
+    };
+  }
+  return { ok: true, running: _rescan.running, by: _rescan.running ? _rescan.by : null, queued: _rescan.queue.length,
+    upload: _rescanUploadMode(), maxDays: RESCAN_MAX_DAYS, defaultDays: RESCAN_DEFAULT_DAYS, characters: _rescanCharacters(), run };
+}
+// Returns a promise of true when it answered.
+async function _localPopRescanRoute(req, res) {
+  const url = req && req.url;
+  if (!url || url.indexOf('/api/local/pop-rescan') !== 0) return false;
+  let p;
+  try { p = new URL(url, 'http://x').pathname; } catch { return false; }
+  const isStatus = p === '/api/local/pop-rescan/status';
+  if (p !== '/api/local/pop-rescan' && !isStatus) return false;
+  const send = (status, body, extra) => {
+    res.writeHead(status, Object.assign({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, extra || {}));
+    res.end(JSON.stringify(body));
+    return true;
+  };
+  if (isStatus && req.method !== 'GET') return send(405, { error: 'method not allowed' }, { Allow: 'GET' });
+  if (!isStatus && req.method !== 'POST') return send(405, { error: 'method not allowed' }, { Allow: 'POST' });
+  try {
+    if (isStatus) return send(200, _rescanStatus());
+    let body = {};
+    let raw = '';
+    try { raw = await _readBody(req, RESCAN_BODY_MAX); } catch { return send(413, { error: 'too large' }); }
+    if (raw && raw.trim()) {
+      try { body = JSON.parse(raw); } catch { return send(400, { error: 'invalid json' }); }
+    }
+    const out = _rescanLocalStart(body);
+    return send(out.status, out.body);
+  } catch {
+    return send(500, { error: 'rescan unavailable' });
+  }
+}
+
 // ── Raids, as the dashboard and the local site read them ──
 // Sessions from different characters on this PC that overlap (or sit within the gap of each other) are ONE raid.
 function _rebuildRaids(store, o = {}) {
@@ -65516,7 +66992,7 @@ module.exports = {
   _noteDeath, _clearDeath, _isDead, _deadNamesSnapshot, _ageOfServerStamp,
   // FB-84 death recap: exported so the tests exercise the shipped code. noteHealLandLine feeds the landings; stats is the session store.
   buildDeathRecap, deathRecapSnapshot, deathRecapFocusId, corpseTargetOwner, noteHealLandLine, _recentHealLandsForTest: () => _recentHealLands,
-  _deathRecapsForTest: () => stats.deathRecaps, _zealStateForTest: () => _zealState, confirmPlayer,
+  _deathRecapsForTest: () => stats.deathRecaps, _zealStateForTest: () => _zealState, confirmPlayer, isConfirmedPlayer, _maybeUploadRaidRoster,
   // #205 group-HP death watcher — the independent death source feeding that
   // registry. Exported so the tests exercise the shipped code, not a copy.
   _noteGroupHpFromState, _groupHpObservations, _groupDeathWatchSnapshot,
@@ -65558,7 +67034,7 @@ module.exports = {
   _petBuffLandings, _npcCasterLevelFor, _npcCastStarts, _charmMobId,
   // Your own timers pause while you are logged out (2026-10-13) — exported for test/own-timers-pause.test.js.
   _lastLineMs, _lastPetByOwner, _lastPetIdByOwner, _lastPetZoneByOwner, _ownFrozenAt, _resumeOwnTimers, _noteOwnRawLine,
-  _ownTimersPayload, _ownRestoreOnFirstSight, _loadPetStateFromDisk, petBuffsForOwner, targetBuffsFor,
+  _ownTimersPayload, _ownRestoreOnFirstSight, _loadPetStateFromDisk, petBuffsForOwner, targetBuffsFor, applyPetHealthLine, _petHealthByOwner,
   _resetOwnRestoreForTest: () => { _ownRestoreTried.clear(); _ownRestoreInflight.clear(); },
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,

@@ -1,22 +1,38 @@
 'use client';
-// The night on one time axis: three rows over the whole window.
+// The night on one time axis: rows over the whole window.
 //   top      the segments an officer confirmed (or is drafting): a bar each, coloured by kind.
+//   raids    (only when the recording holds two or more) one row per raid that overlaps another in time, labelled by size.
 //   middle   the named fights: a green dot for a kill, a red cross for a wipe, an orange ring for another guild's fight.
 //   bottom   the recording (a grey bar where minutes were recorded, so a hole reads as a hole) and, in red, each moment
 //            of mass death with its count.
 // Everything with a time seeks the replay (`onSeek`). The axis is hourly, in Eastern time.
 import { MINUTE_MS, type Span } from '@/lib/raidReplay';
 import { KIND_LABEL, type FightMark, type MassDeath, type SliceKind } from '@/lib/nightSlices';
+import { groupLabel, raidsIn, type RaidGroup } from '@/lib/sessionGroups';
 import { KIND_BAR, etHour, etMin, fmtDur, plural } from './nightStyle';
 
 export type StripSlice = { id: string; fromMs: number; toMs: number; kind: SliceKind; label: string; draft?: boolean };
 
 const HOUR_MS = 60 * MINUTE_MS;
 
-export default function NightStrip({ fromMs, toMs, spans, fights, mass, slices, onSeek, drawRule }: {
+const LANE_TONE = ['border-blue bg-blue/20 text-blue', 'border-purple bg-purple/20 text-purple', 'border-gold bg-gold/20 text-gold', 'border-orange bg-orange/20 text-orange'];
+
+/** Raids that overlap in time go on separate rows; one that starts after another ended shares its row. */
+function laneRows(groups: readonly RaidGroup[]): RaidGroup[][] {
+  const rows: RaidGroup[][] = [];
+  for (const g of [...groups].sort((a, b) => a.fromMs - b.fromMs || b.size - a.size)) {
+    const row = rows.find(r => r[r.length - 1].toMs <= g.fromMs);
+    if (row) row.push(g); else rows.push([g]);
+  }
+  return rows.slice(0, LANE_TONE.length);
+}
+
+export default function NightStrip({ fromMs, toMs, spans, fights, mass, slices, onSeek, drawRule, groups }: {
   fromMs: number; toMs: number;
   spans: readonly Span[]; fights: readonly FightMark[]; mass: readonly MassDeath[];
   slices: readonly StripSlice[];
+  /** The raids the recording holds in the window. Two or more draw a row each under the segments. */
+  groups?: readonly RaidGroup[];
   onSeek?: (ms: number) => void;
   /** What the segments row says when it is empty. */
   drawRule?: string;
@@ -24,6 +40,9 @@ export default function NightStrip({ fromMs, toMs, spans, fights, mass, slices, 
   const span = Math.max(1, toMs - fromMs);
   const pct = (ms: number) => `${(Math.min(toMs, Math.max(fromMs, ms)) - fromMs) / span * 100}%`;
   const width = (a: number, b: number) => `${Math.max(0.4, (Math.min(toMs, b) - Math.max(fromMs, a)) / span * 100)}%`;
+
+  const here = raidsIn(groups ?? [], { fromMs, toMs });
+  const lanes = here.length > 1 ? laneRows(here) : [];
 
   const ticks: number[] = [];
   for (let t = Math.ceil(fromMs / HOUR_MS) * HOUR_MS; t < toMs; t += HOUR_MS) ticks.push(t);
@@ -45,6 +64,23 @@ export default function NightStrip({ fromMs, toMs, spans, fights, mass, slices, 
           </div>
         ))}
       </div>
+
+      {/* raids on the ground: one row each when they overlap in time */}
+      {lanes.length > 0 && (
+        <div className="mt-1" role="group" aria-label="Raids on the ground">
+          {lanes.map((row, ri) => (
+            <div key={ri} className="relative mt-0.5 h-6">
+              {row.map(g => (
+                <div key={g.id} title={`${groupLabel(g)}, ${etMin.format(Math.max(g.fromMs, fromMs))} to ${etMin.format(Math.min(g.toMs, toMs))} ET`}
+                  style={{ left: pct(g.fromMs), width: width(g.fromMs, g.toMs) }}
+                  className={`absolute top-0.5 bottom-0.5 overflow-hidden whitespace-nowrap rounded border px-1.5 text-left text-[11px] leading-5 ${LANE_TONE[ri]}`}>
+                  {groupLabel(g)}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* fights */}
       <div className="relative mt-1 h-6" role="group" aria-label="Named fights">

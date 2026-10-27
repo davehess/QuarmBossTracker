@@ -73,6 +73,22 @@ export function hasItemIcon(icon: number | null | undefined): boolean {
   return inAtlasRange(icon);
 }
 
+/**
+ * PQDI's item art, the source the inventory page draws from while the atlas is disabled.
+ *
+ * ⚠ LOWERCASE `/icons/`. PQDI is case-sensitive: `/Icons/item_633.png` answers 404 (an HTML page) and
+ * `/icons/item_633.png` answers 200 with the 40x40 PNG (measured 2026-10-26, FB-99: "they need icons still").
+ * The capitalised path was why every icon on /character/<name>/inventory rendered as nothing once the atlas was
+ * switched off, and the image's onError hid the 404 so nothing said why. `www.` is required too (bare pqdi.cc
+ * resets the connection). `base` overrides the host (the NEXT_PUBLIC_EQ_ICON_BASE env var).
+ */
+export const PQDI_ICON_BASE = 'https://www.pqdi.cc/icons';
+
+export function pqdiIconUrl(icon: number | null | undefined, base?: string | null): string | null {
+  if (typeof icon !== 'number' || !Number.isFinite(icon) || icon <= 0) return null;
+  return `${(base || PQDI_ICON_BASE).replace(/\/+$/, '')}/item_${icon}.png`;
+}
+
 export type IconPos = { x: number; y: number };
 
 /** Sprite offset for an icon id, or null when the atlas does not cover it. */

@@ -1134,7 +1134,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
       )}
       <SuspectedCharacters suspects={suspects} />
 
-      <section data-tour="me-characters" className="bg-panel border border-border rounded-lg p-6">
+      <section id="my-characters" data-tour="me-characters" className="bg-panel border border-border rounded-lg p-6 scroll-mt-20">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <h2 className="text-xl text-gold mb-1">👤 My Characters</h2>
@@ -1155,6 +1155,9 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
             <Link href="/me/upgrades" className="text-blue hover:underline text-sm whitespace-nowrap">
               ⬆ Gear upgrades →
             </Link>
+            <Link href="/me/wishlist" className="text-blue hover:underline text-sm whitespace-nowrap">
+              ★ My wishlist →
+            </Link>
             <Link href="/me/voice" className="text-blue hover:underline text-sm whitespace-nowrap">
               🔊 Say your name →
             </Link>
@@ -1162,6 +1165,20 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
               📬 Inbound /tell →
             </Link>
           </div>
+        </div>
+
+        {/* Where the per-character switches are (FB-98, a member, 2026-10-26: "I couldn't easily find where to
+            turn on or off characters having their inventories synced or hidden"). They sit in each card's
+            header as small buttons, which is easy to miss; this says so in words. The same wording is on the
+            local site's /me page (web/local/app/me/page.tsx), which links here (#my-characters). */}
+        <div className="mt-3 bg-bg border border-blue/40 rounded p-3 text-xs text-dim leading-5">
+          <b className="text-text">⚙ Inventory sync and hiding are per character.</b> Find the small buttons in the top-right of
+          each character card below:{' '}
+          <span className="text-text">Inventory sync: on / EXCLUDED</span> (does Mimic upload that character&apos;s inventory),{' '}
+          <span className="text-text">Inventory page: private / PUBLIC</span> (who can open it) and{' '}
+          <span className="text-text">Hide from lists</span> (keep it out of lists and charts; it still counts in your{' '}
+          <Link href="/me/inventory" className="text-blue hover:underline">account inventory</Link>).
+          Hidden characters wait in a collapsed &quot;Hidden by you&quot; group, where the same button reads Unhide.
         </div>
 
         {/* Bank mules and never-raiding alts have no logs, so nothing else on

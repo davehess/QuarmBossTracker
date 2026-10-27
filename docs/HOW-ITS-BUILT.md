@@ -381,6 +381,18 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   character-prefs (`_characterPrefsFor`) into `watchedLogs[].hidden`. Display only — account inventory and
   every upload ignore it.
 
+### Mimic reads `#popflags` from the log; "Sync from my logs" (agent 4.0.25 beta, 2026-10-26)
+- `popFlagsOutputEvents` (agent `index.js`, next to `parsePopFlagLine`): exact-line table of the server's `#popflags` output →
+  step keys → `pop_flag` events `source: 'popflags'`. The website's paste reader is `web/lib/popFlagsPaste.ts`; two copies, kept equal by
+  `test/pop-flags-live-parity.test.js` on `test/fixtures/popflags-output.txt`. Bot side: `_handleAgentPopFlags` + `POPFLAGS_KEYS`.
+- Sync: poll stream `rescan` → `_applyRescanResponse` → `_rescanRun` (`_rescanFile` seeks with `_rbSeek`, `_rescanWants` is the gate) →
+  `POST /api/agent/rescan-done`. Page: `/pop/raid/me` (`SyncFromLogs.tsx`). Table `pop_rescan_requests`. `test/pop-rescan-agent.test.js`.
+- Dashboard button "Capture latest PoP flags, Seer and Maelin messages" (agent 4.0.26 beta): Logsync tab, card `#wpPopCapture` under Rebuild
+  (`dashboard.html`: `renderPopCaptureCard`, `wpPcStart`). `POST /api/local/pop-rescan {character|null, days}` + `GET .../status`
+  (`_localPopRescanRoute` → `_rescanLocalStart` → the same `_rescanRun` as the website's `_rescanPump`; one guard, `_rescan.running`). No tray item.
+  Maelin needs no gate of its own: her flags are the generic grant line after a "Maelin ..." line (`_POP_GRANT_RX` + `_POP_PREV_RX`).
+  `test/pop-rescan-agent.test.js`, `test/dashboard-pop-capture.test.js`.
+
 ### Self-ticked PoP flags on /pop (web 1.8.86, 2026-10-03)
 - A flag is self-reported when `pop_guide_ticks` holds the guide step that grants it, else `flag:<key>`
   (`web/lib/popSelfFlags.ts`; gate rules in `web/lib/popGateCell.ts`, import-free so the client stays small).
@@ -459,6 +471,11 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
 - Data: `apps/mimic/pop-quests.js`, GENERATED from `web/lib/popGuide.ts` + `popGuideMore.ts` by
   `scripts/sync-pop-quests.js` (`npm run sync:pop-quests`, bundles the .ts with rolldown from vitest's tree).
   Never hand-edit it; `test/pop-quests-sync.test.js` fails when stale. Renderer: `test/pop-overlay-quests.test.js`.
+- **Flags mode** (the third segment, 2026-10-27, DECISIONS §450): the character being played, from the agent's `GET /api/pop-status` (`packages/wolfpack-logsync/index.js`
+  `_popStatus` / `_popStatusBody`; the bot's `pop` poll stream, see "Flags mode of the PoP overlay: the bot half"). Renderer block `// ── PoP flags — renderers` in `popraid.html`
+  (`flagsHtml`, `fNextHtml`, `fPendingHtml`, `fTiersHtml`, `fDoorsHtml`), runtime `pollFlags` / `popGoto` / `popRing`. Links resolve through `anchors` in `pop-quests.js`
+  (`stage`, `checklist`, `flag`, `zone`, `seer`; `ZONE_PLANE` / `SAME_HAIL` in `scripts/pop-quest-planes.js`); `data-step` marks the landing. Capture now = `POST /api/local/pop-rescan`.
+  Tests: `test/pop-overlay-flags.test.js`, `test/pop-overlay-links.test.js`, `test/pop-status-agent.test.js`, harness `test/_pop-overlay-harness.js`.
   DECISIONS-2026-09-21 §141.
 
 ### Reporter fleet: one account, several installs, one slot (bot 3.1.102)
@@ -634,6 +651,7 @@ labelled the same way. Tests: `test/raid-session-anon.test.js`.
 **Splitting a session into two raids** (web 2.1.5; the default on the members' session page since web 2.1.11, 2026-10-23, no `?v=`): `SplitPanel.tsx` cuts the window at the replay playhead, a ✂ beside any time, or the loader's roster-turnover suggestion (`web/lib/raidSplit.ts`); each half is an ordinary window with Open and the existing Share… (the still-running half follows the raid); nothing is written. `https://wolfpack.quest/raid/session?from=2026-10-22T23:02Z&to=2026-10-23T04:34Z`. Tests: `test/raid-split.test.js`.
 **The live Spectator timeline starting at the current raid** (beta preview `?v=newraid`, web 2.1.6, 2026-10-23): `RaidTimeline` polls `/api/spectator/timeline?v=newraid`, which `web/lib/liveRaidLoad.ts` answers from the last six hours of curated kills, then starts them at an officer's cut (`POST /api/spectator/newraid`, bot_kv `live_raid_cut:<guild>`, 12 h), else the latest roster hand-over (`raidSplit.ts` detector), else a zone change after a quiet spell with a different crew (`web/lib/liveRaidWindow.ts`, pure). Header: "this raid from <time>", **earlier raid** and **review this raid** links to `/raid/session`. `https://b.wolfpack.quest/spectator?v=newraid`. Tests: `test/live-raid-window.test.js`.
 **Slicing a night** (web 2.1.9; the default on the members' session page since web 2.1.11, 2026-10-23: of the two previews the guild lead picked `?v=segments`, and `?v=slices`, drawing spans by hand, was deleted with its editor): an officer marks spans of a night as raid / event / another guild's raid / downtime (`web/lib/nightSlices.ts`, pure; stored in bot_kv `night_slices:<guild>` by `PUT /api/raid/slices`, `nightSlicesLoad.ts`); `SegmentsEditor.tsx` confirms detected ones (gaps, `rosterCuts`, our-vs-other-guild fight hand-over) on `NightStrip.tsx`. `NightFights.tsx` shows the window's named fights incl. wipes and another guild's, mass-death moments (`massDeaths`: 5+ in a minute, times only), and a lazy per-fight Timeline (`/api/raid/session/fight-timeline`, `raidFightTimeline.ts`, reusing `DamageCurve`). `https://wolfpack.quest/raid/session?from=2026-10-22T23%3A02%3A00.000Z&to=2026-10-23T07%3A55%3A00.000Z`. Tests: `test/night-slices.test.js`.
+**Which raid is which inside a window, and the Kills tab** (web 2.1.48, beta draft 2026-10-26): `web/lib/sessionGroups.ts` (pure) finds the raids a window holds from the recording (raid key when the recorder stamped one, `utils/raidTrack.js` `who[i][4]` / `raids`; zone and crew otherwise), `?group=<id>` (+ `gf`/`gt`) on `/raid/session` narrows attendance, replay dots (`/api/raid/session/replay?group=`), fights, deaths and loot to one (`raidSessionLoad.ts`, `nightSlicesLoad.ts`), `RaidGroupsBar.tsx` names them and `NightStrip.tsx` draws a lane per overlapping raid. The Kills tab (`web/lib/killList.ts`) lists named ("#") + curated fights by zone, wipes and another guild's fights as tagged rows, zone from the NPC id when the row has none. Tests: `test/session-groups.test.js`, `test/kills-tab.test.js`.
 **A shared raid that follows the raid redraws itself** (web 2.1.11, 2026-10-23): `shareIsFollowing(row)` (`web/lib/raidShare.ts`: an open share short of its 24 h cap) is worked out on every render of `/share/raid/<token>` and passed to `SessionReview` as `follow`; `useFollowRefresh.ts` then calls `router.refresh()` once a minute (checked every 5 s, so a held refresh goes out soon after the hold lifts; nothing while the tab is hidden). The rule for holding still is `web/lib/shareFollow.ts` `followHeld`: a touch (click, key, wheel) in the last 30 s, or a playhead moved off where the page opened it and left more than 3 minutes short of the window's end. `ReplayBoard.tsx` takes the grown `bounded.night` in place (the reset keys on the window's start, so the playhead stays). Each refresh is a page view to `shareGuard.ts`: 60 an hour per viewer against `PAGE_PER_HOUR` 600 per share. Tests: `test/share-follow.test.js`.
 **Sessions cut where the raid changed** (web 2.1.6; on `main` since web 2.1.11, 2026-10-23, because the window-bounded kills below build on it): `summarizeNights(rows, cuts)` in `web/lib/raidReplay.ts` splits a gap-session at each cut; `web/lib/raidCuts.ts` `loadRaidCuts` finds them with `rosterCuts` (the `raidSplit.ts` detector, recursive) over the recorded rosters (`web/lib/raidWho.ts`, incremental), keeping a finished session's answer in bot_kv `raid_cuts:<guild>`. The replay route (`/api/spectator/replay?nights=1`) and the `/raid/session` list call it, so the replay's Session dropdown and the list agree. The replay board's Raid timeline takes `killsInSession`, the selected session's kills only. Tests: `test/raid-cuts.test.js`.
 **A window shows only its own kills; officers move a share's start and end** (web 2.1.7 and 2.1.8; on `main` since web 2.1.11, 2026-10-23; 2.1.8: a share's end typed as a clock time earlier than its start means the next morning, `endAfterStart` in `web/lib/raidSplit.ts`): `ReplayBoard.tsx` reads the bosses for a night (or a share's window) into `allBosses` and everything it draws (kill chips, path numbers, spawn rings, the timeline strip) uses `bossesInWindow` (`web/lib/replayBosses.ts`) of the window on screen; a session adds `trailSlackMs` (`raidReplay.ts`), never past the next session. The members' review reads `/api/raid/session/bosses?from&to` (window-bounded, sign-in gated). `PATCH /api/raid/shares/<id>` takes `{ from }` (`planShareWindow`, `web/lib/raidShare.ts`) and `ShareControls.tsx` has Set start, Set start and end and Start this share at the split. The share timeline's 10 s memo is keyed by id + the row's window. Tests: `test/window-kills.test.js`.
@@ -985,8 +1003,13 @@ Tests: `test/buff-durations.test.js`.
 ### Dashboard: the Overlays tab, option C (agent 3.7.49, beta `b8c6b98c`, 2026-09-29)
 The guild lead picked option C of three mockups (DECISIONS §106–§107). The tab, top to bottom:
 - **Your layouts**: one tile per saved per-character layout (`_wpOvLaysHtml`), with its ✕ forget and a
-  "Save current layout for <character>" tile. Each tile lists the overlays that are on; saved layouts hold
-  no positions, so there is no sketch. The auto-switch checkbox is `#wpCharProfEn`.
+  "Save current layout for <character>" tile. Each tile lists the overlays that are on; the per-character
+  profile holds no positions, so there is no sketch. The auto-switch checkbox is `#wpCharProfEn`.
+  **Since agent 4.0.30 (FB-101) the same save also writes where everything sits**: the overlay set "Saved layout"
+  (`_saveLayoutSnapshot` in `_captureCharProfile`: rects, look, floors), and the tile beside it, **↩ Restore saved
+  layout** (`#wpLayoutRestore`; bridge `layoutRestore` → IPC `layout-restore` → `_restoreSavedLayout`), is also a tray
+  item under Overlays (`_charProfileTrayItems`). Restore is always asked for; a character change still applies
+  visibility only. `test/overlay-layout-restore.test.js`.
   ⚠ The old card read `s.charProfiles` from `/api/state`, which never carries them, so its list was always
   empty. Tiles and checkbox now paint from `window.mimic.getStatus()` / `getConfig()`.
 - **Arrange bar**: `#wpOvArrangeBtn` ("✏ Arrange on screen" ↔ "✓ Done arranging"; `canvasEdit` where it
@@ -1468,6 +1491,11 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
   `dialog.showMessageBox` asks; `_rescueOffscreenOverlays` is the "leave them" safety net. Each overlay
   keeps its side: the memory also stores EverQuest's rect per setup, and the plan sends an overlay that
   sat on another screen to another non-EQ screen (`_displayPlanText` words the question).
+  A window being BUILT (every EverQuest start rebuilds them) takes its saved spot only on the screen setup it was
+  saved on; on another it takes `overlayLayoutBySig[current setup]` (`_resolveBounds`, FB-101) and only then the
+  default. The dragged-height floor is kept per setup the same way (`{ h, sig, by }`, `_floorFor` / `_floorWith`), and
+  an overlay set carries it (`floors`) with the grow-up choice; loading a set sets each placed window's zoom without
+  rescaling its bounds (`_applyScaleInPlace`).
 - **Auto-arrange, per screen:** `_autoArrangeOverlays` groups overlays by the screen they are on and runs
   `_arrangeOnScreen` for each; only the home (EverQuest's) screen gets EQ's windows as obstacles and the
   keep-the-middle-clear rule.
@@ -2996,8 +3024,9 @@ Personal data lives on each player's PC; the hub keeps the shared raid record. N
   `out/replay` or `out/parses` is missing). The agent serves it read-only (`_serveLocalSite`, path-traversal refused;
   `WOLFPACK_LOCAL_SITE_DIR` points at the bundle, a dev run finds `web/local/out`) and answers `/api/local/*` from this
   PC's files behind the same local-request guard as every route. It imports `web/components` and `web/lib` through `@/`, so
-  the web tree travels as a unit. Pages: Inventory (`/api/local/inventory`, shared bank counted once per account), My replay,
-  My parses. Mimic opens a page in its own window (`openLocalSite`, `window.mimic.openLocalSite`); the dashboard rail group
+  the web tree travels as a unit. Pages: /me (`web/local/app/me`, first in the nav like the website's chip: the local pages plus a
+  jump to `wolfpack.quest/me#my-characters`, where each character's inventory sync / hide switches are; FB-98), Inventory
+  (`/api/local/inventory`, shared bank counted once per account), My replay, My parses. Mimic opens a page in its own window (`openLocalSite`, `window.mimic.openLocalSite`); the dashboard rail group
   "On this PC" and the tray items drive the same function. An older Mimic running agent 4.x answers `/local/` with a plain
   "not installed in this build". Tests: `test/local-site-agent.test.js`, `test/local-mode.test.js`.
 - **Game accounts, one-off hide, stale marker on the local inventory page (agent 4.0.23, 2026-10-26).** The page used to guess accounts from
@@ -3944,6 +3973,29 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
 
 ## Web features
 
+- **My wishlist (`/me/wishlist`, web 2.1.51 `[beta]`; DRAFT).** The signed-in member's characters (`ownedCharacters`, main first) each with their
+  list: item name, priority, the owner's own pre-bid (bot `list` op), Change pre-bid and Remove through the shared control
+  (`web/components/WishlistControls.tsx`, `characters=[name]`). Above them `WishlistSearch.tsx`: the `searchItems` server action
+  (`app/me/wishlist/actions.ts`) reads `eqemu_items` (`id > 0`, any item, prefix matches first then contains, 20 rows of `id, name, icon, slots`)
+  and marks hits already listed for the member's own characters; Add opens the shared control. Reads in `web/lib/wishlistLoad.ts`
+  (`loadLists`), text rules in `web/lib/wishlistSearch.ts`. Linked from `/me` and `/me/upgrades`. Test: `test/wishlist-page.test.js`.
+- **Add to wishlist everywhere an item shows (item page `/db/item/<id>`, raid plan loot `/pop/raid`, gear upgrades; web 2.1.50 `beta`; DRAFT).**
+  One client component, `web/components/WishlistControls.tsx` (`{ itemId, itemName, characters, defaultCharacter, states, enabled, compact? }`):
+  a character picker when the member has several, then Add (priority + sealed pre-bid), Set / Change pre-bid, Remove, optimistic with rollback.
+  It calls only the three server actions in `web/app/me/upgrades/actions.ts` (ownership check, then the bot's `POST /api/web/wishlist`).
+  `web/lib/wishlistLoad.ts` (`loadWishView`) reads the member's own characters (`ownedCharacters`), where the item is already listed
+  (`wishlists`: item, character, priority only) and the owner's own pre-bids through the bot's `list` op. `web/lib/wishlistPick.ts` orders the
+  characters (main first, hidden ones out, only names the action accepts) and picks the default: the sign-up character on `/pop/raid`
+  (`bringingFrom`), else the main. Not on the parse page (its loot is already awarded) or the item hover card (cannot hold a form). Test:
+  `test/wishlist-everywhere.test.js`.
+- **Gear upgrade finder: caps, quest / tradeskill sources, icons (`/me/upgrades` + the owner-only check on `/character/<name>/gear`, web 2.1.52 `[beta]`; DRAFT).**
+  Pure scoring in `web/lib/gearUpgrades.ts` (weights table `web/lib/gearWeights.ts`); the game's ceilings per character in `web/lib/gearCaps.ts`
+  (stat cap by level + the AA raise read from `character_aas` / `eqemu_aa_effects` SPA 262, Flowing Thought 0 for Warrior / Rogue / Monk, HP regen
+  level − 30, AC soft cap and returns). The evaluation both pages run is `web/lib/gearUpgradesRun.ts` (`runUpgradeEval`); reads in
+  `web/lib/gearUpgradesLoad.ts`. Sources beyond drops and vendors come from the SQL function `item_alt_sources` (`loadAltSources`; quest rewards
+  from `eqemu_quest_scripts`, recipes from `eqemu_tradeskill_recipe*`; degrades to none until the migration is applied). Gear page:
+  `app/character/[name]/gear/UpgradeCheck.tsx`, drawn only for the owner. Icons: `app/character/[name]/inventory/ItemIcon.tsx` (atlas, else PQDI).
+  High end / Low end is `?ends=high|low`. Test: `test/gear-caps.test.js`, `test/gear-upgrades.test.js`.
 - **Wishlist + pre-bid on the gear upgrades page (`/me/upgrades`, web 2.1.45 `[beta]`, bot 4.0.18; DRAFT).** Under each upgrade,
   `WishlistControls.tsx` (client, `useTransition`, optimistic with rollback) offers Add to wishlist (priority + optional pre-bid), then Set /
   Change pre-bid and Remove. Server actions are `app/me/upgrades/actions.ts` (member must own the character via `ownedCharacters`; limits from
@@ -5551,6 +5603,19 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   other 4xx drop it; 500 events max, nothing older than the bot's 24 h; kept in `map_sync_outbox.json` beside `map_timers.json`, resumed at start.
   Bot half: `POST /api/agent/map-sync` stores through `insertIgnoreDuplicates` against `map_spawn_events_dedup_idx` (guild, zone, point, kind,
   spawn id, `at`, reporting character), so a resend is stored once (bot 4.0.17). Tests: `test/map-sync-outbox.test.js`, `test/map-sync-dedup.test.js`.
+- **Respawns list: expand, pulse, focus** (FB-100, 2026-10-27, Mimic beta, `map.html` `renderSide`): the top line `Respawns (N)` is a control
+  (left = `mapAct('pulse')` → `S.pulse` drawn by `drawPulse`, right = `mapAct('focus')` → `focusView`); its `▸ spots` button lists every spot a
+  folded row hides (`spotRows`, `S.respOpen`). The pop-out reaches the Map window through `mapCentreOn({ act, ids })`. Test: `test/map-respawns-expand.test.js`.
+- **Map: Heading up and the compass** (2026-10-27, Mimic beta, `map.html`): `cfg.orient` (`north` | `heading`, toolbar `#orientBtn`, ⚙ → Map up)
+  sets `S.view.rot` every frame (`updateRot` → `rotStep` → `headingRot`); `wpt` / `projectPx` / `unprojectPx` / `screenToServer` / `unturnPx`
+  carry it, `headingVec(h, rot)` turns the arrows and slices, `drawCompass` draws the rose and/or edge letters (`cfg.compass`, `cardinalSpots`,
+  `roseSpot`). Test: `test/map-heading-up.test.js`.
+- **Kite circles on the Map** (2026-10-26, Mimic beta; kite coach 2026-10-15): `apps/mimic/kiteCoach.js` is the pure math (circle fit, laps,
+  drift, cause) plus `filterLoops` (Others Live/All by `last_at`, Circles All/My speed/Near me) and `driftForecast`; `map.html` draws it
+  (`drawKite`, `visibleLoops`) and owns the three toolbar buttons (`syncKiteBtns`; saved in `cfg.kiteOthers/kiteFilter/kiteDrift`).
+  The guild loops themselves come from the agent (`_kiteLoopsFor`) and the bot (`utils/kiteLoops.js`): FINISHED loops only, anonymous. A group
+  member's circle as it forms is drawn from their own positions instead (FB-103, 2026-10-27: `matesFeed` / `visibleMates` in `map.html`, a
+  coach per member, local, never posted; `KC.mateLabel`). Tests: `test/kite-coach.test.js`, `test/map-kite-mates.test.js`.
 - Test: `test/spawn-map.test.js`. Design: `docs/DESIGN-mimic-2.9-spawn-map.md`. Every refinement since (asks, what
   shipped, what is open): `docs/MAP-REFINEMENTS.md`.
 - **Zone copies** (the "Zone copies" block in the agent; header label in `map.html` `copyLabel`): the copy you are in is

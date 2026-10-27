@@ -115,6 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Add to wishlist + pre-bid on `/me/upgrades`; ears / wrists / rings paired** (§446) | Draft on `draft/upgrades-wishlist` (bot 4.0.18 for `main` first, web 2.1.45 for `beta`); not pushed | the guild lead: ship the bot half, check `SCREEN_TOKEN_SECRET` + `SCREEN_LIVE_URL` on Vercel Production and Preview; say if rings stay paired |
+| **Gear finder: quest + tradeskill sources, cap-aware scoring, icons, gear-page upgrade check** (§448) | Draft on `draft/gear-build` (web 2.1.52 for `beta`); not pushed. Migration `20261026200000_item_alt_sources.sql` written, NOT applied (the page works without it) | the guild lead: apply the migration (SQL Editor or MCP), check Monk AC cap (350 vs 315) and High end's 205 assumption, then read `https://b.wolfpack.quest/me/upgrades` |
 | **Per-character PoP flags checklist in Mimic: A then B** (§451) | A built on drafts: bot 4.0.23 `draft/pop-flags-bot` (the `pop` poll stream + generated engine), agent + overlay on `draft/pop-flags-mimic` (Flags mode, links into Quests); not pushed | the guild lead: ship the bot first, then the beta Mimic, check Flags on a real character; then say what B adds |
 | **Per-person flag link `/pop/raid/me`** (§443, §444) | Live: page + #popflags/Seer paste + "Sync from my logs" (web 2.1.47, bot 4.0.19); #popflags read live by Mimic on beta (agent 4.0.25). Map-sync dedup live, outbox on beta (agent 4.0.24) | the guild lead: update the beta Mimic, then backfill or press Sync; check the Thelin stage-5 line in game; both agent changes reach the fleet with the next Mimic stable |
 | **First sign-in: pick your characters, stage a recruit main** (§426) | Draft on `draft/recruit-onboarding` (bot 4.0.13 for `main`, agent 4.0.21 for `beta`); not pushed | the guild lead: say if the three judgement calls hold (OpenDKP-roster names not claimable, alts unparented when the main conflicts, "Save and upload these now"); a session: land the bot half on `main` first, then the agent half on `beta`, and make staged recruits show in `/admin/links` |
@@ -12506,6 +12507,28 @@ without `SWP_NOMOVE`, or another periodic writer moving a window mid-drag; a fix
 proves it on the next report. Same batch: Target Info cached a failed mob lookup for 6 h (a bot redeploy at the first target hid
 a mob's stats and resists, e.g. hobgoblins) → a miss now retries within a minute; overlay windows get crash recovery.
 
+### 413. The Canvas stays off until the person turns it on (2026-10-22, Mimic beta draft `draft/canvas-off`)
+A raider on 3.0.2 stable, mid-raid, by tell: *"all the overlays are on the screen and I can't turn them off"*, *"what is a canvas?"*,
+*"they go away when you exit the app"*, *"clicked on shit in the blue box and everything would not go away"*. The guild lead: *"Canvas needs
+to not turn on by default."* 3.8.57 already wrote the Canvas OFF in `defaultConfig()` and made it a tour choice, so a new install was
+never the path.
+- **Root cause (probable, not reproduced; the raider's screen was not seen).** Two things are in memory only, which is exactly what a
+  restart clears: Setup ALL (`setupMode`) and Arrange (`_canvasArrange`). The blue boxes are the Canvas's arrange outline
+  (`body.edit .panel`), which only draws while the Canvas is ON. Three code paths could have put the Canvas on without a choice:
+  (1) `_setCanvasArrange(true)` turned it on and SAVED it, and was reached from the third row of EVERY overlay's right-click menu
+  ("🧩 Arrange the canvas (pieces)", right under "Setup ALL overlays"), from the tray's Arrange item (live while the Canvas is off) and
+  from `/pipe mimic edit`; (2) a config saved with it on by an earlier Arrange or a profile/hide-all snapshot kept it on across the
+  3.0 upgrade; (3) a saved character profile or hide-all snapshot with `showCanvas` true re-applies it on a character change or unhide.
+  Setup ALL itself was not turning it on (`_overlayWanted` gates the Canvas on its own flag), but force-showed a hidden leftover window.
+- **Calls.** (a) One-time pass in `loadConfig`: any config without `canvasDefaultOffApplied` gets the Canvas OFF (and cleared in the
+  hide-all snapshot and every character profile), logged once; we cannot tell a chosen "on" from an accidental one, so a person who
+  chose it in the tour is switched off once and turns it on again (their layouts are kept). Beta/alpha testers get the same pass.
+  (b) Arranging with the Canvas off asks first ("Turn the Canvas on and arrange it" / "Not now", default Not now); `/pipe mimic edit`
+  refuses; the overlays' right-click row appears only while the Canvas is on. (c) Setup ALL never shows a leftover hidden Canvas
+  window. (d) Esc leaves Setup ALL / Setup THIS (preload, any overlay) and leaves arranging on the Canvas.
+- **Left alone on purpose:** a saved overlay SET or an imported layout that carries the Canvas turns it on when the person loads it
+  (they approved it in a dialog with Undo); a Canvas group hotkey turns it on (they bound it).
+- Tests: `test/canvas-stays-off.test.js`. Docs: `STATUS.md`, `HOW-ITS-BUILT.md`.
 ### 413. Shared raids follow the raid, and their window is moved from the page, not by hand (2026-10-23, web 2.1.7–2.1.8 beta)
 A share that "follows the raid" is stored as `to_at = from_at + 24 h − 1 s`; moving only its start breaks that shape and freezes
 its end (a hand SQL edit did exactly that, and the slider ended at 7:02 PM). Officers now move a share's start and end on the
@@ -13169,6 +13192,32 @@ stars on the wishlist (B): *"and its Soft Reserve per raid"*.
 - Also open: adding ANY item to a wishlist from the website (A: the button wherever an item shows, recommended; B: a
   /me/wishlist page). Today only `/wishlist add` in Discord and the upgrades page (beta) can.
 - Scoping and mocks in progress.
+### 448. Gear finder: quest and tradeskill sources, cap-aware scoring, icons, the gear page's upgrade check (2026-10-26)
+The build behind the four asks in §446 (draft `draft/gear-build`, web 2.1.52 for `beta`; not pushed, migration not applied).
+- **Sources.** One batch function, `item_alt_sources(int[])` (`supabase/migrations/20261026200000_item_alt_sources.sql`), the batch of
+  `quest_scripts_for_item` + `item_recipes`: quest REWARDS only (NPC + zone, instanced copies collapsed) and recipes that MAKE the item
+  (quest combines also return components and the bag). Asked only for finalists that have no drop, vendor or bag source. **The page works
+  without the migration**: an RPC error is "no alternative sources" and the footnote says so. Era: a quest uses its zone's
+  `eqemu_zone.expansion` like a drop; a recipe has no zone, so the item's `required_level` against the level cap is the proxy (it cannot tell
+  a PoP-era recipe from a Luclin one when both are level-46 items; with PoP live since 2026-10-01 that only matters for a cap-60 view).
+- **Caps are the server's** (`web/lib/gearCaps.ts`, EQMacEmu @ `a3b80b2`, file:line in the header): attributes 255 to 60 then +5 a level
+  (280 at 65) plus the AA raise; resists 500; item ATK 250; HP regen 30, level − 30 above 60 (35 at 65; the table said 30); Flowing Thought 15,
+  0 for Warrior / Rogue / Monk; AC soft cap per class with 1 / returns past it. **Damage shield's 30 cap was removed**: nothing in the server
+  source backs it. Haste stays max-not-stack.
+- **AA raises are read, not assumed**: SPA 262 (`SE_RaiseStatCap`) in `eqemu_aa_effects`, base1 per rank into the stat base2 names, joined
+  through `eqemu_altadv_vars.skill_id` to the character's `character_aas.aa_index` (= `eqmacid`). In the data today: Planar Power (eqmacid 142,
+  skill 418, +5 a rank to all seven attributes, 305 at 65) and Innate Enlightenment (eqmacid 144, skill 426, +10 a rank to WIS and INT for the
+  seven casting classes, 355 with both). No AA rows for a character means "+AA unknown", assumed 0.
+- **High end / Low end** (the other tool's toggle). Base stats are not in our data, so High end ASSUMES 205 of each attribute before gear
+  (`ATTR_ASSUMED_NONGEAR`, 255 minus the 50 a gear set adds) and counts only gear points that fit under the cap; Low end counts them all.
+  Default High. A model, labelled on the page, one constant to change. The AA raise widens High end's room (100 points, not 75).
+- **AC taper uses item AC only**, so it under-fires (the game caps total mitigation). Monk is 350 as given; the server reads
+  `ReducedMonkAC ? 315 : 350` with the rule defaulting on, so if Quarm leaves it on the Monk number is 315 (one constant).
+- **Icons**: the atlas is still switched off (wrong art, `ICON_ATLAS_DISABLED`), so `components/ItemIcon` draws nothing. Both pages use
+  the inventory page's component, which falls back to PQDI's icon images (the same hotlink the inventory page already makes).
+- **Gear page**: the per-slot upgrade check shows only to the character's owner (`ownedCharacters`) and never for an opted-out character,
+  because it is the finder's own view; nothing widens who can see a character's gear. Item icons on its Equipped table show to everyone who
+  can already see that table.
 
 ### 449. Seer pending memories are checklist flags (`cl_*`, source `recital`), never steps; no-time lines settle a paste (2026-10-26)
 A partway character's Seer log carried two sentences no reader knew ("a small trinket by Grummus' body", "the Warlord's flaming

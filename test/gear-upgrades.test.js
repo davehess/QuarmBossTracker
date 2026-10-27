@@ -259,8 +259,13 @@ describe('opt-outs are honoured', () => {
     const gear = page.indexOf(".from('character_gear')");
     expect(gate).toBeGreaterThan(0);
     expect(gear).toBeGreaterThan(gate);
-    expect(page.indexOf('loadItemPool(')).toBeGreaterThan(gate);
+    // the pool, the sources and the AA read all live in the shared evaluator, which the page only calls after the gate
+    expect(page.indexOf('runUpgradeEval(')).toBeGreaterThan(gate);
     expect(page.indexOf('loadWishlist(')).toBeGreaterThan(gate);
+    // ...and the evaluator takes the gear rows it is handed: it reads neither `characters` nor `character_gear`
+    const run = read('web', 'lib', 'gearUpgradesRun.ts');
+    expect(run).not.toMatch(/\.from\('characters'\)/);
+    expect(run).not.toMatch(/\.from\('character_gear'\)/);
   });
   it('is scoped to the signed-in member\'s own characters', () => {
     expect(page).toMatch(/ownedCharacters\(user\.id\)/);

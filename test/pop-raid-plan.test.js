@@ -126,11 +126,8 @@ describe('the page', () => {
   it('folds the travel notes behind "Click here for more info"', () => {
     expect(page).toMatch(/<details[^>]*>\s*<summary[^>]*>Click here for more info<\/summary>\s*<List items=\{TRAVEL_BASICS\.points\}/);
   });
-  it('never touches the Brewall layer', () => {
-    for (const f of ['web/app/pop/raid/page.tsx', 'web/app/pop/raid/walls.ts', 'web/app/pop/raid/ZoneSvg.tsx']) {
-      expect(read(f), f).not.toMatch(/brewall/i);
-    }
-  });
+  // (It used to assert the Brewall layer was never touched; the maps now draw it. The new guarantees, no partial
+  // zone_map_lines row and a server-only read, are in test/pop-raid-map.test.js.)
 });
 
 describe('popSteps on main', () => {

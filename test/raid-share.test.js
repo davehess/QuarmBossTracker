@@ -26,7 +26,7 @@ import {
 } from '../web/lib/raidShare.ts';
 import { resolveShare, clearShareMemo, clearOptedOutCache } from '../web/lib/raidShareLookup.ts';
 import {
-  nameKey, anonLabels, anonName, scrubMinuteData, attendanceFromMinutes, buildKills, buildLoot,
+  LISTED_MARKS, nameKey, anonLabels, anonName, scrubMinuteData, attendanceFromMinutes, buildKills, buildLoot,
   buildRolls, buildTicks,
 } from '../web/lib/raidSession.ts';
 import { loadSessionReview } from '../web/lib/raidSessionLoad.ts';
@@ -302,12 +302,13 @@ describe('the full parse of one fight', () => {
     for (const bad of [null, undefined, '', 'e1', `${ID}' or 1=1`, 42]) expect(await loadFightParse(db, bad, opts)).toBeNull();
     expect(db.queries.length).toBe(0);   // a junk id never becomes a query
   });
-  it('is read for this guild, unclassified, and by the fight id', async () => {
+  it('is read for this guild, only with a mark the review lists (none, wipe, another guild\'s), and by the fight id', async () => {
     const db = dbFor(inside);
     await loadFightParse(db, ID, opts);
     const enc = db.queries.find(q => q.table === 'encounters');
     expect(hasOp(enc, 'eq', 'guild_id', 'parse-test-guild')).toBe(true);
-    expect(hasOp(enc, 'is', 'classification', null)).toBe(true);
+    expect(hasOp(enc, 'or', LISTED_MARKS)).toBe(true);
+    expect(LISTED_MARKS).toBe('classification.is.null,classification.in.(wipe,foreign)');   // live / pvp / test are not served by id
     expect(hasOp(enc, 'eq', 'id', ID)).toBe(true);
     expect(hasOp(db.queries.find(q => q.table === 'encounter_players'), 'eq', 'encounter_id', ID)).toBe(true);
   });

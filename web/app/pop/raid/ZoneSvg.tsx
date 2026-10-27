@@ -1,15 +1,24 @@
-// One zone map as inline SVG for /pop/raid: the EQEmu wall layer underneath, then markers, the numbered
-// dashed route and the solid patrol. Server component, no JS.
+// One zone map as inline SVG for /pop/raid: Brewall's map underneath, then the patrol, the numbered route and the
+// lettered markers. Server component, no JS.
 //
-// Frame: the data is in the SERVER frame (the spawn table's x, y). The picture is north-up, so a point is
-// drawn at (-x, -y), the site's convention (toScreen in web/lib/spectator.ts). Strokes are thin and
-// non-scaling so they stay one pixel wide whatever the zone's size; text carries a dark halo.
+// Frame: the data is in the SERVER frame (the spawn table's x, y; Brewall's files are converted into it by
+// lib/zoneMap/brewall.ts). The picture is north-up, so a point is drawn at (-x, -y), the site's convention (toScreen in
+// web/lib/spectator.ts). One conversion for the art, the markers and the routes is what keeps them lined up; the
+// frame and the wall path are lib/popRaidMap.ts.
+//
+// Names are NOT drawn on the map: a marker is a coloured shape with a letter in it, and the legend under the map (page.tsx)
+// says which letter is which. Names set beside their shapes piled on each other wherever a plan packs several points
+// into one corner of a zone (the Lair's door, statues and boss).
+//
+// Walls: Brewall's lines in one muted colour, every line of every layer file the loader merges. The EQEmu slice is
+// drawn only for a zone Brewall has no map for: its pieces read as broken white fragments next to the art.
 import { toScreen } from '@/lib/spectator';
 import type { MapMarker, Pt, RoutePt } from '@/lib/raidPlan';
+import { brewallPath, markerLetter, planFrame, spreadGlyphs, type DrawnRoute } from '@/lib/popRaidMap';
 import type { Walls } from './walls';
 
-const MIN_SEG = 2;       // drop wall pieces shorter than this
-const MAX_SEGS = 6000;   // keep the page small: the longest walls win
+const MIN_SEG = 2;       // EQEmu fallback only: drop wall pieces shorter than this
+const MAX_SEGS = 6000;   // EQEmu fallback only: keep the page small, the longest walls win
 
 const WALL = '#6e7681';
 const ROUTE = '#ffa657';
@@ -17,10 +26,9 @@ const ALT = '#58a6ff';
 const PATROL = '#a371f7';
 const KIND_COLOR = { boss: '#f85149', zonein: '#56d364', npc: '#d29922' } as const;
 const INK = '#0d1117';
-const TEXT = '#c9d1d9';
 
-function wallPath(walls: Walls): string {
-  const kept = walls.segs
+function eqemuPath(walls: Walls): string {
+  const kept = (walls.segs ?? [])
     .map(s => ({ s, len: Math.hypot(s[2] - s[0], s[3] - s[1]) }))
     .filter(o => o.len >= MIN_SEG);
   if (kept.length > MAX_SEGS) kept.sort((a, b) => b.len - a.len);
@@ -43,30 +51,21 @@ const niceStep = (span: number) => {
 export default function ZoneSvg({ walls, markers, route, altRoutes = [], patrol, label }: {
   walls: Walls | null;
   markers: MapMarker[];
-  route: RoutePt[];
+  route: DrawnRoute;
   altRoutes?: RoutePt[][];
   patrol?: Pt[];
   label: string;
 }) {
-  const pts: Pt[] = [...markers, ...route, ...altRoutes.flat(), ...(patrol ?? [])];
-  const scr = pts.map(p => toScreen(p.x, p.y));
-  const xs = scr.map(p => p.sx);
-  const ys = scr.map(p => p.sy);
-  if (walls) {
-    const b = walls.bounds;
-    xs.push(-b.maxX, -b.minX);
-    ys.push(-b.maxY, -b.minY);
-  }
-  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-  const span = Math.max(maxX - minX, maxY - minY, 100);
-  const pad = span * 0.06;
-  const vx = minX - pad, vy = minY - pad, vw = maxX - minX + pad * 2, vh = maxY - minY + pad * 2;
+  const brewall = walls?.brewall ?? null;
+  const pts: Pt[] = [...markers, ...route.legs.flat(), ...route.stops, ...altRoutes.flat(), ...(patrol ?? [])];
+  const f = planFrame(pts, brewall ? brewall.bounds : walls?.bounds ?? null);
+  const { vx, vy, vw, vh } = f;
   const big = Math.max(vw, vh);
-  const fs = big * 0.028;
-  const r = big * 0.009;
-  const halo = fs * 0.28;
+  const gr = big * 0.02;          // a marker's half-size
+  const br = gr * 0.8;            // a route number's radius
+  const glyphs = spreadGlyphs(markers, gr);
 
-  const d = walls ? wallPath(walls) : '';
+  const d = brewall ? brewallPath(brewall.lines, f) : walls ? eqemuPath(walls) : '';
   const step = niceStep(big);
   const gridX: number[] = [];
   const gridY: number[] = [];
@@ -76,23 +75,20 @@ export default function ZoneSvg({ walls, markers, route, altRoutes = [], patrol,
   }
 
   const line = (p: Pt[]) => p.map(q => { const s = toScreen(q.x, q.y); return `${s.sx},${s.sy}`; }).join(' ');
-  const text = { fontSize: fs, fill: TEXT, stroke: INK, strokeWidth: halo, paintOrder: 'stroke' as const, strokeLinejoin: 'round' as const };
 
-  const numbered = (rt: RoutePt[], color: string, keyPrefix: string) => (
-    <g key={keyPrefix}>
-      <polyline points={line(rt)} fill="none" stroke={color} strokeWidth={1.5} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />
-      {rt.map((p, i) => {
-        const s = toScreen(p.x, p.y);
-        const bx = s.sx - r * 2, by = s.sy - r * 2;
-        return (
-          <g key={`${keyPrefix}${i}`}>
-            <circle cx={bx} cy={by} r={r * 1.25} fill={INK} stroke={color} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-            <text x={bx} y={by} textAnchor="middle" dominantBaseline="central" fontSize={fs * 0.8} fill={color} fontFamily="ui-monospace, monospace">{i + 1}</text>
-          </g>
-        );
-      })}
-    </g>
-  );
+  // A route number sits up and left of its point, clear of the marker drawn on the same spot.
+  const badges = (rt: Pt[], color: string, keyPrefix: string) => rt.map((p, i) => {
+    const s = toScreen(p.x, p.y);
+    const bx = s.sx - (gr + br) * 0.85, by = s.sy - (gr + br) * 0.85;
+    return (
+      <g key={`${keyPrefix}${i}`}>
+        <circle cx={bx} cy={by} r={br} fill={INK} stroke={color} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        <text x={bx} y={by} textAnchor="middle" dominantBaseline="central" fontSize={br * 1.25} fill={color} fontFamily="ui-monospace, monospace">{i + 1}</text>
+      </g>
+    );
+  });
+
+  const walked = route.kind !== 'planned';
 
   return (
     <svg
@@ -106,26 +102,41 @@ export default function ZoneSvg({ walls, markers, route, altRoutes = [], patrol,
     >
       {gridX.map(g => <line key={`gx${g}`} x1={g} y1={vy} x2={g} y2={vy + vh} stroke={WALL} strokeOpacity={0.25} strokeWidth={1} vectorEffect="non-scaling-stroke" />)}
       {gridY.map(g => <line key={`gy${g}`} x1={vx} y1={g} x2={vx + vw} y2={g} stroke={WALL} strokeOpacity={0.25} strokeWidth={1} vectorEffect="non-scaling-stroke" />)}
-      {d && <path d={d} fill="none" stroke={WALL} strokeOpacity={0.85} strokeWidth={1} vectorEffect="non-scaling-stroke" />}
+      {d && <path d={d} fill="none" stroke={WALL} strokeOpacity={brewall ? 0.7 : 0.85} strokeWidth={1} vectorEffect="non-scaling-stroke" />}
       {patrol && patrol.length > 1 && (
         <polyline points={line(patrol)} fill="none" stroke={PATROL} strokeWidth={2} vectorEffect="non-scaling-stroke" />
       )}
-      {numbered(route, ROUTE, 'r')}
-      {altRoutes.map((rt, i) => numbered(rt, ALT, `a${i}`))}
-      {markers.map(m => {
-        const s = toScreen(m.x, m.y);
+      {route.legs.map((leg, i) => (
+        <polyline
+          key={`l${i}`} points={line(leg)} fill="none" stroke={ROUTE} strokeWidth={walked ? 2 : 1.5}
+          strokeDasharray={walked ? undefined : '6 4'} strokeLinejoin="round" vectorEffect="non-scaling-stroke"
+        />
+      ))}
+      {badges(route.stops, ROUTE, 'r')}
+      {altRoutes.map((rt, i) => (
+        <g key={`a${i}`}>
+          <polyline points={line(rt)} fill="none" stroke={ALT} strokeWidth={1.5} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />
+          {badges(rt, ALT, `a${i}`)}
+        </g>
+      ))}
+      {markers.map((m, i) => {
+        const s = { sx: glyphs[i].sx, sy: glyphs[i].sy };
+        const away = Math.hypot(s.sx - glyphs[i].ox, s.sy - glyphs[i].oy) > gr * 0.3;
         const c = KIND_COLOR[m.kind];
-        const right = s.sx > vx + vw * 0.72;
-        const lx = right ? s.sx - r * 1.9 : s.sx + r * 1.9;
         const shape = m.kind === 'boss'
-          ? <circle cx={s.sx} cy={s.sy} r={r} fill={c} stroke={INK} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          ? <circle cx={s.sx} cy={s.sy} r={gr} fill={c} stroke={INK} strokeWidth={1} vectorEffect="non-scaling-stroke" />
           : m.kind === 'zonein'
-            ? <polygon points={`${s.sx},${s.sy - r * 1.3} ${s.sx + r * 1.3},${s.sy} ${s.sx},${s.sy + r * 1.3} ${s.sx - r * 1.3},${s.sy}`} fill={c} stroke={INK} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-            : <polygon points={`${s.sx},${s.sy - r * 1.3} ${s.sx + r * 1.2},${s.sy + r} ${s.sx - r * 1.2},${s.sy + r}`} fill={c} stroke={INK} strokeWidth={1} vectorEffect="non-scaling-stroke" />;
+            ? <polygon points={`${s.sx},${s.sy - gr * 1.3} ${s.sx + gr * 1.3},${s.sy} ${s.sx},${s.sy + gr * 1.3} ${s.sx - gr * 1.3},${s.sy}`} fill={c} stroke={INK} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            : <polygon points={`${s.sx},${s.sy - gr * 1.3} ${s.sx + gr * 1.25},${s.sy + gr} ${s.sx - gr * 1.25},${s.sy + gr}`} fill={c} stroke={INK} strokeWidth={1} vectorEffect="non-scaling-stroke" />;
         return (
           <g key={`${m.label}${m.x},${m.y}`}>
+            {away && <line x1={glyphs[i].ox} y1={glyphs[i].oy} x2={s.sx} y2={s.sy} stroke={c} strokeWidth={1} vectorEffect="non-scaling-stroke" />}
+            {away && <circle cx={glyphs[i].ox} cy={glyphs[i].oy} r={gr * 0.2} fill={c} />}
             {shape}
-            <text x={lx} y={s.sy} textAnchor={right ? 'end' : 'start'} dominantBaseline="central" {...text}>{m.label}</text>
+            <text
+              x={s.sx} y={s.sy + (m.kind === 'npc' ? gr * 0.3 : 0)} textAnchor="middle" dominantBaseline="central"
+              fontSize={gr * 1.15} fontWeight={700} fill={INK} fontFamily="ui-monospace, monospace"
+            >{markerLetter(i)}</text>
           </g>
         );
       })}

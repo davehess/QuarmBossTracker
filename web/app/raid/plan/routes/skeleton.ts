@@ -6,7 +6,7 @@ import type { ZoneData } from '@/lib/routePlanner/types';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 
-export function skeletonHtml(Z: ZoneData, readOnly: boolean, legMode = false): string {
+export function skeletonHtml(Z: ZoneData, readOnly: boolean, legMode = false, drawTool = false): string {
   return `
 <div id="app">
   <aside id="side">
@@ -62,7 +62,9 @@ export function skeletonHtml(Z: ZoneData, readOnly: boolean, legMode = false): s
             <li><b>Drag</b> a pin to move it. Drag a row by its handle (or use the arrows) to reorder.</li>
             <li><b>Optional</b> pins are hollow and dashed; so is an <b>optional leg</b> (Legs tab). The Optional switch decides whether the route runs through them; they are never counted in the totals.</li>
             <li><b>Bend a leg:</b> click the line to add a bend point, drag it to pull the line off a wall. Right-click a bend to remove it, right-click a leg to hide it.</li>
-            <li><b>Follow paths:</b> pick that tool, click a leg (or its start pin then end pin). The leg becomes the average of the recorded nights that ran between the two pins.</li>
+            ${drawTool ? `<li><b>Draw, Points:</b> pick a leg (the One leg leg, a click on it, or Redraw on its card), then click its bends in order. Backspace undoes, Enter or the end pin finishes, Esc cancels. With no leg picked, clicks on empty map drop a chain of new pins.</li>
+            <li><b>Draw, Pen:</b> drag along the corridor. Pin to pin redraws the whole leg; a stroke from one place on the leg to another redraws only that stretch. Shift-drag pans.</li>
+            ` : ''}<li><b>Follow paths:</b> pick that tool, click a leg (or its start pin then end pin). The leg becomes the average of the recorded nights that ran between the two pins.</li>
             <li><b>Split:</b> on the Legs tab, <i>Split this leg</i> sends the raid up two or more branches at once (Team A, Team B) and regroups at the leg's end. Pick the branch in the map toolbar to drop its pins. The split's time is its slowest branch.</li>
             <li><b>Teleports:</b> a leg can go <i>via</i> a teleport (Legs tab); the jump is drawn but not counted.</li>${legMode ? `
             <li><b>Straight · Walk route · Recorded</b> (map toolbar) is how legs are drawn. <i>Walk route</i> goes along the server's own walkable map, round walls and through teleporters and flagged doors; the jump is dashed and not counted. <i>Use this route</i> on a leg's card keeps that path as the leg's bend points.</li>
@@ -110,8 +112,9 @@ export function skeletonHtml(Z: ZoneData, readOnly: boolean, legMode = false): s
       <div class="grp" id="modeGrp">
         <button data-mode="select" class="active" title="Move pins, pan, bend legs">Move</button>
         <button data-mode="addpin" title="Click the map to drop a pin">Add pin</button>
-        <button data-mode="follow" title="Click a leg to snap it to recorded paths">Follow paths</button>
-      </div>${legMode ? `
+        <button data-mode="follow" title="Click a leg to snap it to recorded paths">Follow paths</button>${drawTool ? '<button data-mode="draw" title="Lay a leg\'s path in one go: click its bend points, or draw it with a pen">Draw</button>' : ''}
+      </div>${drawTool ? `
+      <div class="grp" id="drawGrp" role="group" aria-label="How to draw" style="display:none"><button data-draw="points" class="active" aria-pressed="true" title="Click the bend points in order, from the leg's start pin to its end pin">Points</button><button data-draw="pen" aria-pressed="false" title="Drag along the corridor. A stroke from pin to pin redraws the leg; a stroke between two bends redraws just that stretch.">Pen</button></div>` : ''}${legMode ? `
       <div class="grp" id="legGrp"><button id="legOnly" aria-pressed="false" title="Draw one leg at a time: the one that starts at the selected pin. Left / right arrow keys step.">One leg</button></div>
       <div class="grp" id="srcGrp" role="group" aria-label="How legs are drawn"><button data-src="straight" aria-pressed="true" title="Each leg as the plan has it: straight, or bent where an officer bent it">Straight</button><button data-src="walk" aria-pressed="false" title="Draw each leg along the server's own walkable map: round walls, through teleporters and flagged doors. The straight or bent line stays the plan; this is a view.">Walk route</button><button data-src="rec" aria-pressed="false" title="Draw each leg along where the raid actually went: the average of every recorded night that passed both pins. A leg no night covers is walked, or straight when the walkable map is not there. The plan keeps its own line; this is a view.">Recorded</button></div>
       <span class="walknote" id="walkNote" role="status"></span>` : ''}
