@@ -254,6 +254,7 @@
         <button class="tb grip" id="toolsGrip" type="button" title="Drag the buttons anywhere on the map; let go near an edge and they lock to it (on the left or right edge they stand upright).">⠿</button>
         <button class="tb on" id="followBtn" type="button" title="Keep the map centred on you. Dragging the map turns it off.">Follow me</button>
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
+        <button class="tb" id="orientBtn" type="button" title="Which way is up. North up: north is at the top, as a map has always been drawn. Heading up: the map turns so the way you face is the top, with you in the middle (it turns Follow me on). The compass shows where north is in both (⚙ → Compass). The same switch as ⚙ → Map up.">North up</button>
         <button class="tb" id="panBtn" type="button" title="Over this button: the mouse wheel zooms, and dragging it pans the map, locked or not. A click switches Pan on, so the whole map drags and zooms; right-click centres on you.">✋ Pan / zoom</button>
         <button class="tb on" id="labelsBtn" type="button" title="Names on the map: boss names and room names. Switch off when it gets busy.">Labels: on</button>
         <button class="tb on" id="namesBtn" type="button" title="Raiders' names: show or hide the name beside each raid and group member's dot. The dots stay, and mob names are not touched (the same switch as ⚙ → Group names and Raid names).">Raiders</button>
@@ -289,6 +290,8 @@
         <label class="row" title="Spawn points this far above or below you are shown; the rest are hidden. Same height units as Levels: ±25 is about your own floor, ±100 a floor or two either way."><span class="bl" id="spawnVal">Spawn height</span><input id="spawnLevels" type="range" min="0" max="7" step="1"></label>
         <div class="grp">Show</div>
         <label class="row" title="Which way each raider faces. Arrow: a small arrowhead in their class colour, the point is the way they look. Slice: a pizza slice of a circle opening the way they look. Off: plain dots. Yours is the same, a little bigger, with a white rim."><span class="bl">Facing</span><select id="cfgFacing"><option value="arrow">Arrow</option><option value="slice">Slice</option><option value="off">Off</option></select></label>
+        <label class="row" title="North: north is at the top. Your heading: the map turns so the way you face is the top, with you in the middle. Text never turns. The same switch as the toolbar's North up / Heading up."><span class="bl">Map up</span><select id="cfgOrient"><option value="north">North</option><option value="heading">Your heading</option></select></label>
+        <label class="row" title="Where north is, always on the map. Rose: a small compass in a corner, its red needle points north, with N E S W round it. Edges: N E S W at the edges of the map. Both: the two."><span class="bl">Compass</span><select id="cfgCompass"><option value="rose">Rose</option><option value="edges">Edges</option><option value="both">Both</option></select></label>
         <div id="cfgShow"></div>
         <div class="grp">Ability icons on spawn points</div>
         <div id="cfgGlyphs"></div>
@@ -396,10 +399,81 @@
   // heading 0, on +x is 64, on -y is 128), which with screen = (-x, -y) is the same left-hand turn.
   var HEADING_CCW = true;
   function toScreen(x, y) { return { sx: -x, sy: -y }; }
-  function headingVec(heading) {
+  // `rot` (optional, radians) is the Map's own turn when it is heading up: the way they face on the SCREEN. 0 or missing = north up.
+  function headingVec(heading, rot) {
     var turn = ((heading % 512) + 512) % 512 / 512 * Math.PI * 2;
     var a = HEADING_CCW ? turn : -turn;
-    return { dx: -Math.sin(a), dy: -Math.cos(a) };
+    var v = { dx: -Math.sin(a), dy: -Math.cos(a) };
+    return rot ? turnVec(v.dx, v.dy, rot) : v;
+  }
+  // ── Heading up, and the compass (the guild lead, 2026-10-27: "allow map to follow player heading as well as cardinal
+  // direction, but make sure we're showing the cardinality on the map") ──
+  // The picture is NORTH UP by default. Heading up turns it about the middle of the Map so the way you face points to the top.
+  // `rot` is that turn in radians, the canvas way (clockwise, y down): a screen-frame point (sx, sy) = (-x, -y) goes to
+  // ((sx - cx) * scale, (sy - cy) * scale), is turned by rot, and lands relative to the middle of the canvas. 0 is north up and
+  // costs nothing: every projection below takes the exact old path when rot is 0 or missing.
+  var ORIENTS = ['north', 'heading'], ORIENT_DEFAULT = 'north';
+  var COMPASS_MODES = ['rose', 'edges', 'both'], COMPASS_DEFAULT = 'rose';
+  function orientFrom(saved) { return saved && ORIENTS.indexOf(saved.orient) >= 0 ? saved.orient : ORIENT_DEFAULT; }
+  function compassFrom(saved) { return saved && COMPASS_MODES.indexOf(saved.compass) >= 0 ? saved.compass : COMPASS_DEFAULT; }
+  function turnVec(dx, dy, rot) {   // a vector turned by rot (clockwise on screen)
+    var c = Math.cos(rot), s = Math.sin(rot);
+    return { dx: dx * c - dy * s, dy: dx * s + dy * c };
+  }
+  // The turn that puts a heading (0-512) at the TOP of the screen, or null when there is no heading.
+  function headingRot(heading) {
+    if (heading == null || !isFinite(heading)) return null;
+    var v = headingVec(heading);   // the way they face on the north-up picture
+    return -Math.PI / 2 - Math.atan2(v.dy, v.dx);
+  }
+  // The shorter way round the 0-512 wheel from a to b, in heading units (-256..256).
+  function headingGap(a, b) { return (((b - a) % 512) + 768) % 512 - 256; }
+  // The heading the picture is turned to, one step on: it chases the player's drawn heading (already glided by the tracks)
+  // with a short time constant, so the whole map does not jerk on every sample; a long gap (a hidden window) or no old value snaps.
+  var ROT_TAU_MS = 90, ROT_SNAP_MS = 1500, ROT_EPS = 0.25;
+  function rotStep(cur, target, dtMs) {
+    if (target == null || !isFinite(target)) return cur == null ? null : cur;
+    if (cur == null || dtMs == null || !(dtMs >= 0) || dtMs > ROT_SNAP_MS) return target;
+    var next = lerpHeading(cur, target, 1 - Math.exp(-dtMs / ROT_TAU_MS));
+    return Math.abs(headingGap(next, target)) < ROT_EPS ? target : next;
+  }
+  // A screen-frame point to canvas px, and a canvas px back to the screen frame (view = { cx, cy, scale, rot }).
+  function projectPx(sx, sy, v, w, h) {
+    var dx = (sx - v.cx) * v.scale, dy = (sy - v.cy) * v.scale;
+    if (!v.rot) return [dx + w / 2, dy + h / 2];
+    var t = turnVec(dx, dy, v.rot);
+    return [t.dx + w / 2, t.dy + h / 2];
+  }
+  function unprojectPx(px, py, v, w, h) {
+    var dx = px - w / 2, dy = py - h / 2;
+    if (v.rot) { var t = turnVec(dx, dy, -v.rot); dx = t.dx; dy = t.dy; }
+    return { sx: dx / v.scale + v.cx, sy: dy / v.scale + v.cy };
+  }
+  // Where N / E / S / W sit around the picture's edge. On north up, N is top-middle, E right-middle and so on; heading up swings
+  // them round (facing west, west is the top and north is on the right). Each letter is where the ray from the middle in its
+  // direction meets the box inset from the canvas by `ins` ({ t, r, b, l } px: room for the buttons and the readout).
+  var CARDINAL_DIRS = [['N', 0, -1], ['E', 1, 0], ['S', 0, 1], ['W', -1, 0]];
+  function cardinalSpots(rot, w, h, ins) {
+    var out = [];
+    for (var i = 0; i < CARDINAL_DIRS.length; i++) {
+      var d = CARDINAL_DIRS[i], v = rot ? turnVec(d[1], d[2], rot) : { dx: d[1], dy: d[2] };
+      var ex = v.dx > 1e-9 ? (w - ins.r - w / 2) / v.dx : v.dx < -1e-9 ? (ins.l - w / 2) / v.dx : Infinity;
+      var ey = v.dy > 1e-9 ? (h - ins.b - h / 2) / v.dy : v.dy < -1e-9 ? (ins.t - h / 2) / v.dy : Infinity;
+      var k = Math.min(ex, ey);
+      out.push({ k: d[0], x: w / 2 + v.dx * k, y: h / 2 + v.dy * k, dx: v.dx, dy: v.dy });
+    }
+    return out;
+  }
+  // The corner the compass rose takes: bottom-left, else bottom-right, else top-right, the first whose square (`size` px, `m` px
+  // from the edges) the button bar does not cover. `tools` = { l, t, w, h } in canvas px, or null when it is not known.
+  function roseSpot(w, h, size, m, tools) {
+    var cs = [[m + size / 2, h - m - size / 2], [w - m - size / 2, h - m - size / 2], [w - m - size / 2, m + size / 2]];
+    for (var i = 0; i < cs.length; i++) {
+      var c = cs[i];
+      var hit = tools && c[0] + size / 2 > tools.l && c[0] - size / 2 < tools.l + tools.w && c[1] + size / 2 > tools.t && c[1] - size / 2 < tools.t + tools.h;
+      if (!hit) return { x: c[0], y: c[1] };
+    }
+    return { x: cs[0][0], y: cs[0][1] };
   }
   // Facing (the guild lead, 2026-10-22, beside Zeal's map: "maps overlay should show 'pizza slices' for which way
   // people are facing and see them easier"; then, on the first beta: "the Viewpoint is too large and covers up other
@@ -425,9 +499,9 @@
   }
   // The arrowhead for a heading: four corners as screen px [tipX, tipY, rightX, rightY, notchX, notchY, leftX, leftY], the
   // tip pointing the way they face, the shape centred on (cx, cy) so the spot is the middle of the arrow. Null with no heading.
-  function arrowPoints(heading, cx, cy, len, half) {
+  function arrowPoints(heading, cx, cy, len, half, rot) {
     if (heading == null || !isFinite(heading)) return null;
-    var v = headingVec(heading), nx = -v.dy, ny = v.dx;
+    var v = headingVec(heading, rot), nx = -v.dy, ny = v.dx;
     var tip = len * 0.6, tail = -len * 0.4, notch = -len * 0.14;
     return [cx + v.dx * tip, cy + v.dy * tip,
       cx + v.dx * tail + nx * half, cy + v.dy * tail + ny * half,
@@ -466,9 +540,9 @@
   }
   // The two canvas angles (clockwise from +x, y down: what ctx.arc takes) a heading's slice runs between, or null when
   // the heading is unknown.
-  function wedgeArc(heading) {
+  function wedgeArc(heading, rot) {
     if (heading == null || !isFinite(heading)) return null;
-    var v = headingVec(heading), a = Math.atan2(v.dy, v.dx);
+    var v = headingVec(heading, rot), a = Math.atan2(v.dy, v.dx);
     return { a0: a - WEDGE_HALF, a1: a + WEDGE_HALF };
   }
   var FLASH_MS = 15000;   // keep equal to MAP_FLASH_MS in the agent
@@ -888,10 +962,12 @@
     return { minX: b.minX - pad, maxX: b.maxX + pad, minY: b.minY - pad, maxY: b.maxY + pad };
   }
   // bounds {minX,maxX,minY,maxY} in the server frame -> a view {cx, cy, scale} in screen-frame coordinates.
-  function fitView(b, w, h) {
+  // `rot` (heading up): the box is turned about its middle, so it is its turned extent that has to fit.
+  function fitView(b, w, h, rot) {
     var s1 = toScreen(b.minX, b.minY), s2 = toScreen(b.maxX, b.maxY);
     var x0 = Math.min(s1.sx, s2.sx), x1 = Math.max(s1.sx, s2.sx), y0 = Math.min(s1.sy, s2.sy), y1 = Math.max(s1.sy, s2.sy);
     var bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0);
+    if (rot) { var c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot)), tw = bw * c + bh * s, th = bw * s + bh * c; bw = tw; bh = th; }
     return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, scale: Math.min(w / bw, h / bh) * 0.92 };
   }
   function targetKey(t) { return 't:' + (t.id != null ? t.id : t.name); }
@@ -1096,6 +1172,7 @@
   function followOffNow(me, view, w, h) {
     if (!me) return { x: 0, y: 0 };
     var s = toScreen(me.x, me.y), ox = (s.sx - view.cx) * view.scale, oy = (s.sy - view.cy) * view.scale;
+    if (view.rot) { var t = turnVec(ox, oy, view.rot); ox = t.dx; oy = t.dy; }   // heading up: the spot on the turned picture
     return Math.abs(ox) <= w / 2 - 20 && Math.abs(oy) <= h / 2 - 20 ? { x: ox, y: oy } : { x: 0, y: 0 };
   }
   // Where the map's buttons lock when let go at (cx, cy), their middle, in a w × h map: the nearest edge. The spot
@@ -1274,8 +1351,11 @@
   function locText(x, y) { return Math.round(y) + ', ' + Math.round(x); }
   // The canvas pixel under the cursor back to the server frame (wpt run backwards; toScreen is its own inverse).
   function screenToServer(px, py, view, w, h) {
+    if (view.rot) { var u = unprojectPx(px, py, view, w, h); return { x: -u.sx, y: -u.sy }; }   // heading up: undo the turn first
     return { x: -((px - w / 2) / view.scale + view.cx), y: -((py - h / 2) / view.scale + view.cy) };
   }
+  // A drag of (dx, dy) canvas px, or a zoom about a canvas px, is a move on the UNturned picture.
+  function unturnPx(dx, dy, view) { return view.rot ? turnVec(dx, dy, -view.rot) : { dx: dx, dy: dy }; }
   // Your speed in game units a second, over the samples of the last ~1.5 s (null until there is a full second).
   // The DISTANCE WALKED over the window, not the straight line between its two ends: Zeal's number is the speed you are
   // moving at this instant (Entity.MovementSpeed, zone_map.cpp render_labels), and on a turn the chord is shorter than the
@@ -1447,7 +1527,7 @@
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
     return { show: show, facing: FACING_DEFAULT, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false, tail: TAIL_DEFAULT,
-      kiteOthers: 'live', kiteFilter: 'all', kiteDrift: false };
+      kiteOthers: 'live', kiteFilter: 'all', kiteDrift: false, orient: ORIENT_DEFAULT, compass: COMPASS_DEFAULT };
   }
   // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
   // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
@@ -1485,6 +1565,7 @@
     if (saved.kiteOthers === 'live' || saved.kiteOthers === 'all') c.kiteOthers = saved.kiteOthers;
     if (saved.kiteFilter === 'all' || saved.kiteFilter === 'speed' || saved.kiteFilter === 'near') c.kiteFilter = saved.kiteFilter;
     if (saved.kiteDrift === true) c.kiteDrift = true;   // false (unset) = no forecast
+    c.orient = orientFrom(saved); c.compass = compassFrom(saved);   // north up and the rose, unless a save says otherwise
     if (saved.showClear === true) c.showClear = true;   // outlines always on; off shows them only while ⚙ is open or editing
     return c;
   }
@@ -1826,7 +1907,7 @@
   }
   // Where to draw a reported thing right now: its glide, or the reported spot when it has no track.
   function drawn(key, m, now) { var tr = S.trk[key]; return tr ? trackAt(tr, now) : m; }
-  function anyMoving(now) { for (var k in S.trk) if (trackMoving(S.trk[k], now)) return true; return false; }
+  function anyMoving(now) { for (var k in S.trk) if (trackMoving(S.trk[k], now)) return true; return rotSettling(now); }
   // Animation: a frame loop that runs only while something is gliding (no idle CPU), at most ~30 frames a second.
   var raf = 0, lastFrame = 0, lastHits = 0;
   var FRAME_MS = 33, HITS_MS = 200, lastAge = 0;
@@ -2151,7 +2232,7 @@
     var plan = resolveFit(mode || 'zone', group.length, raid.length);
     var b = plan.use === 'zone' ? zoneBounds() : membersBounds(P.self, plan.use === 'raid' ? group.concat(raid) : group);
     if (!b || !S.w) return plan;
-    S.view = fitView(b, S.w, S.h); S.fitted = true;
+    S.view = fitView(b, S.w, S.h, S.view && S.view.rot); S.fitted = true;
     return plan;
   }
   // Follow me keeps you where you are on screen and moves the map under you, instead of snapping you to the middle
@@ -2160,7 +2241,29 @@
   // always follow the player even if they pan"). S.followOff is your offset from the middle in screen pixels, so a
   // zoom keeps you on the same spot; with the lock (right-click), dragging the map moves that spot instead of
   // switching Follow off.
-  function followTo(me) { if (!me) return; var s = toScreen(me.x, me.y), o = S.followOff || { x: 0, y: 0 }, v = S.view; v.cx = s.sx - o.x / v.scale; v.cy = s.sy - o.y / v.scale; }
+  function followTo(me) {
+    if (!me) return;
+    var s = toScreen(me.x, me.y), o = S.followOff || { x: 0, y: 0 }, v = S.view;
+    if (v.rot) { var u = unturnPx(o.x, o.y, v); v.cx = s.sx - u.dx / v.scale; v.cy = s.sy - u.dy / v.scale; return; }   // heading up: the spot is on the turned picture
+    v.cx = s.sx - o.x / v.scale; v.cy = s.sy - o.y / v.scale;
+  }
+  // Heading up: the turn of the picture follows YOUR drawn heading (the glide the tracks already give it, then a short chase of
+  // its own, rotStep). North up leaves it at 0 and costs nothing. No heading yet (or no you) keeps the last turn.
+  function updateRot(rt) {
+    var v = S.view;
+    if (S.cfg.orient !== 'heading') { v.rot = 0; S.rotHead = null; S.rotAt = 0; return; }
+    var me = S.p && S.p.self ? drawn('self', S.p.self, rt) : null;
+    S.rotHead = rotStep(S.rotHead == null ? null : S.rotHead, me ? me.heading : null, S.rotAt ? rt - S.rotAt : null);
+    S.rotAt = rt;
+    var r = S.rotHead == null ? 0 : headingRot(S.rotHead);
+    v.rot = r || 0;
+  }
+  // The picture is still turning toward your heading: the frame loop keeps painting until it arrives.
+  function rotSettling(now) {
+    if (S.cfg.orient !== 'heading' || S.rotHead == null || !S.p || !S.p.self) return false;
+    var me = drawn('self', S.p.self, now);
+    return me.heading != null && Math.abs(headingGap(S.rotHead, me.heading)) >= ROT_EPS;
+  }
   // What Follow rides: you, or your target (the guild lead, 2026-10-13: "if we're using something like Solidarity of
   // Vision could we have a 'Follow Target' mode"). Follow target with no target placed falls back to you. Drawn
   // positions, so the view glides with the dot.
@@ -2181,6 +2284,7 @@
   }
   function wpt(x, y) {   // server-frame point -> canvas pixels
     var s = toScreen(x, y), v = S.view;
+    if (v.rot) return projectPx(s.sx, s.sy, v, S.w, S.h);   // heading up
     return [(s.sx - v.cx) * v.scale + S.w / 2, (s.sy - v.cy) * v.scale + S.h / 2];
   }
   var RING = { wait: '#f85149', window: '#f0b429', up: '#56d364' };
@@ -2555,10 +2659,14 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, S.w, S.h);
     var rt = Date.now();
+    updateRot(rt);   // heading up: turn the picture to your heading first, so everything below projects through it
     // Follow me: the view rides the DRAWN position of you, so the map glides with you instead of stepping per poll.
     if (S.follow && S.p && !S.drag) followTo(followSubject(rt));
-    var v = S.view, w = S.w, h = S.h, now = nowMs();
+    var v = S.view, w = S.w, h = S.h, now = nowMs(), rot = v.rot || 0;
     var ox = w / 2 - v.cx * v.scale, oy = h / 2 - v.cy * v.scale;
+    // Heading up turns the walls too (they are laid out by hand here, not through wpt): turnPt() leaves the turned point in tx, ty.
+    var tx = 0, ty = 0, rc = Math.cos(rot), rs = Math.sin(rot), hw = w / 2, hh = h / 2;
+    var turnPt = function (x, y) { var a = x - hw, b = y - hh; tx = a * rc - b * rs + hw; ty = a * rs + b * rc + hh; };
     var sz = selfZ(), range = levelRange();
     var C = S.cfg, SH = C.show, CO = C.col;   // ⚙ Map settings: what is drawn, and in which colours
     var I = inkStyle(C.ink);                  // ⚙ → Line strength
@@ -2582,6 +2690,7 @@
           for (var li = 0, lj = 0; li < G.xy.length; li += 4, lj++) {
             if (lvOn && inLevelRange(G.z[lj], sz, range) !== (pass === 0)) continue;
             var lx1 = G.xy[li] * v.scale + ox, ly1 = G.xy[li + 1] * v.scale + oy, lx2 = G.xy[li + 2] * v.scale + ox, ly2 = G.xy[li + 3] * v.scale + oy;
+            if (rot) { turnPt(lx1, ly1); lx1 = tx; ly1 = ty; turnPt(lx2, ly2); lx2 = tx; ly2 = ty; }
             if ((lx1 < 0 && lx2 < 0) || (lx1 > w && lx2 > w) || (ly1 < 0 && ly2 < 0) || (ly1 > h && ly2 > h)) continue;
             ctx.moveTo(lx1, ly1); ctx.lineTo(lx2, ly2);
           }
@@ -2599,6 +2708,7 @@
         ctx.beginPath();
         for (var i = 0; i < a.length; i += 4) {
           var x1 = a[i] * v.scale + ox, y1 = a[i + 1] * v.scale + oy, x2 = a[i + 2] * v.scale + ox, y2 = a[i + 3] * v.scale + oy;
+          if (rot) { turnPt(x1, y1); x1 = tx; y1 = ty; turnPt(x2, y2); x2 = tx; y2 = ty; }
           if ((x1 < 0 && x2 < 0) || (x1 > w && x2 > w) || (y1 < 0 && y2 < 0) || (y1 > h && y2 > h)) continue;
           ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
         }
@@ -2761,7 +2871,7 @@
         if (wedgesOn) {
           ctx.lineWidth = 1.25; ctx.strokeStyle = 'rgba(8,11,16,0.9)'; ctx.lineJoin = 'round';
           for (j = 0; j < vis.length; j += 4) {
-            arc = wedgeArc(vis[j + 1]);
+            arc = wedgeArc(vis[j + 1], rot);
             if (!arc) continue;
             ctx.beginPath(); ctx.moveTo(vis[j + 2], vis[j + 3]); ctx.arc(vis[j + 2], vis[j + 3], wedgeR, arc.a0, arc.a1); ctx.closePath();
             ctx.fillStyle = classHex(vis[j].class) || color; ctx.globalAlpha = 0.65; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
@@ -2770,7 +2880,7 @@
         }
         for (j = 0; j < vis.length; j += 4) {
           col = facingOn ? (classHex(vis[j].class) || color) : color;
-          pts = arrowsOn ? arrowPoints(vis[j + 1], vis[j + 2], vis[j + 3], arrowSz.len, arrowSz.half) : null;
+          pts = arrowsOn ? arrowPoints(vis[j + 1], vis[j + 2], vis[j + 3], arrowSz.len, arrowSz.half, rot) : null;
           if (pts) {
             ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); ctx.lineTo(pts[2], pts[3]); ctx.lineTo(pts[4], pts[5]); ctx.lineTo(pts[6], pts[7]); ctx.closePath();
             ctx.fillStyle = col; ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(8,11,16,0.95)'; ctx.lineJoin = 'round'; ctx.fill(); ctx.stroke(); ctx.lineJoin = 'miter';
@@ -2948,8 +3058,8 @@
       // You: the same arrow or slice as everyone else, a little bigger with a white rim, so you stand out in a crowd of
       // them. No heading yet: just the dot with its white rim. (Facing off keeps the old arrow below.)
       if (P.self && SH.you && C.facing !== 'off') {
-        var wd = drawn('self', P.self, rt), wq = wpt(wd.x, wd.y), warc = wedgeArc(wd.heading);
-        var selfSz = arrowSize(I.dot, true), apts = arrowsOn ? arrowPoints(wd.heading, wq[0], wq[1], selfSz.len, selfSz.half) : null;
+        var wd = drawn('self', P.self, rt), wq = wpt(wd.x, wd.y), warc = wedgeArc(wd.heading, rot);
+        var selfSz = arrowSize(I.dot, true), apts = arrowsOn ? arrowPoints(wd.heading, wq[0], wq[1], selfSz.len, selfSz.half, rot) : null;
         if (apts) {
           ctx.beginPath(); ctx.moveTo(apts[0], apts[1]); ctx.lineTo(apts[2], apts[3]); ctx.lineTo(apts[4], apts[5]); ctx.lineTo(apts[6], apts[7]); ctx.closePath();
           ctx.fillStyle = CO.you; ctx.fill();
@@ -2965,7 +3075,7 @@
         }
       } else if (P.self && SH.you) {
         var md = drawn('self', P.self, rt), me = wpt(md.x, md.y);
-        var hv = md.heading != null ? headingVec(md.heading) : { dx: 0, dy: -1 };
+        var hv = md.heading != null ? headingVec(md.heading, rot) : { dx: 0, dy: -1 };
         var nx = -hv.dy, ny = hv.dx;
         ctx.beginPath();
         ctx.moveTo(me[0] + hv.dx * 9, me[1] + hv.dy * 9);
@@ -2975,6 +3085,7 @@
         ctx.closePath(); ctx.fillStyle = CO.you; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#ffffff'; ctx.stroke();
       }
     }
+    drawCompass(rot);
     if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : trapSpots); layoutTrapHits(trapHits); layoutCorpseHits(corpseVis); }   // hidden points take no clicks (a trap spot is still a △ with Spawn points off)
     if (posAgeEl && rt - lastAge >= 200) { lastAge = rt; posAgeEl.textContent = S.sampleAt ? posAgeText(rt - S.sampleAt, S.sampleSrc) : ''; }
     if (rt - lastLoc >= 200) { lastLoc = rt; updateLocBar(rt); }
@@ -2987,6 +3098,50 @@
     if (!kiteDots && kiteDotTimer) { clearInterval(kiteDotTimer); kiteDotTimer = null; }
   }
   var flashTimer = null;
+
+  // ── The compass (the guild lead, 2026-10-27: "make sure we're showing the cardinality on the map") ──
+  // On in both orientations. North up it stands still; heading up it turns with the picture, so N is always where north is.
+  //   rose   a small rose in a corner: its N needle points to true north, with N / E / S / W round it (the default)
+  //   edges  N / E / S / W at the edges of the map, riding round as the picture turns
+  //   both   both
+  // Text is never turned: only the places move. Drawn last, so nothing covers it; the rose steps out of the way of the buttons.
+  var NORTH_COL = '#ff6b5e', CARDINAL_COL = '#c9d1d9', ROSE_R = 15, ROSE_BOX = 54;
+  function compassInsets() {   // room at each edge for the button bar and the readout, so a letter never hides behind them
+    var ins = { t: 16, r: 16, b: 16, l: 16 }, tp = S.toolPos;
+    if (toolsEl && tp) {
+      var tw = toolsEl.offsetWidth || 0, th = toolsEl.offsetHeight || 0;
+      if (tp.edge === 'top') ins.t = Math.max(ins.t, (document.body.classList.contains('setup') ? 32 : 6) + th + 12);
+      else if (tp.edge === 'bottom') ins.b = Math.max(ins.b, th + 18);
+      else if (tp.edge === 'left') ins.l = Math.max(ins.l, tw + 36);
+      else if (tp.edge === 'right') ins.r = Math.max(ins.r, tw + 36);
+    }
+    return ins;
+  }
+  function drawCompass(rot) {
+    var mode = S.cfg.compass, w = S.w, h = S.h, text = Math.min(1.3, Math.max(0.8, Number(S.cfg.text) || 1));
+    var font = 'bold ' + Math.round(11 * text) + 'px ui-monospace,Consolas,monospace';
+    ctx.globalAlpha = 1;
+    if (mode === 'edges' || mode === 'both') {
+      cardinalSpots(rot, w, h, compassInsets()).forEach(function (c) { halo(c.k, c.x, c.y, font, c.k === 'N' ? NORTH_COL : CARDINAL_COL, 'center'); });
+    }
+    if (mode === 'rose' || mode === 'both') {
+      var tools = toolsEl && w && toolsEl.offsetWidth ? { l: toolsEl.offsetLeft || 0, t: toolsEl.offsetTop || 0, w: toolsEl.offsetWidth, h: toolsEl.offsetHeight || 0 } : null;
+      var box = ROSE_BOX * text, R = ROSE_R * text, spot = roseSpot(w, h, box, 10, tools), x = spot.x, y = spot.y;
+      ctx.beginPath(); ctx.arc(x, y, R + 2, 0, 6.2832); ctx.fillStyle = 'rgba(13,17,23,0.55)'; ctx.fill();
+      ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(201,209,217,0.55)'; ctx.stroke();
+      var n = turnVec(0, -1, rot), side = function (k) { return [-n.dy * k, n.dx * k]; };   // the way north points on screen, and across it
+      var nt = [x + n.dx * (R - 1), y + n.dy * (R - 1)], st = [x - n.dx * (R - 1), y - n.dy * (R - 1)], s1 = side(R * 0.3);
+      ctx.beginPath(); ctx.moveTo(nt[0], nt[1]); ctx.lineTo(x + s1[0], y + s1[1]); ctx.lineTo(x - s1[0], y - s1[1]); ctx.closePath();
+      ctx.fillStyle = NORTH_COL; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(st[0], st[1]); ctx.lineTo(x + s1[0], y + s1[1]); ctx.lineTo(x - s1[0], y - s1[1]); ctx.closePath();
+      ctx.fillStyle = 'rgba(201,209,217,0.75)'; ctx.fill();
+      var lf = 'bold ' + Math.round(9 * text) + 'px ui-monospace,Consolas,monospace';
+      CARDINAL_DIRS.forEach(function (d) {
+        var u = turnVec(d[1], d[2], rot);
+        halo(d[0], x + u.dx * (R + 9 * text), y + u.dy * (R + 9 * text), lf, d[0] === 'N' ? NORTH_COL : CARDINAL_COL, 'center');
+      });
+    }
+  }
 
   // One transparent button per visible spawn dot (capped): the click and hover target.
   function layoutHits(vis) {
@@ -3372,6 +3527,24 @@
     if (S.followLock && !S.follow) { S.follow = true; var fs2 = followSubject(Date.now()); if (fs2) S.followOff = followOffNow(fs2, S.view, S.w, S.h); }
     syncFollowBtn(); renderMap();
   });
+  // North up / Heading up (the toolbar button and ⚙ → Map up, one switch). Heading up centres you and turns Follow me on: the
+  // picture turns about the middle of the Map, so you have to be the middle. Going back leaves Follow as it is. The turn itself
+  // (updateRot) and the compass (drawCompass) are in the drawing.
+  var orientBtn = document.getElementById('orientBtn');
+  function syncOrientBtn() {
+    if (!orientBtn) return;
+    var h = S.cfg.orient === 'heading';
+    orientBtn.textContent = h ? 'Heading up' : 'North up';
+    orientBtn.classList.toggle('on', h);
+    var sel = document.getElementById('cfgOrient'); if (sel) sel.value = S.cfg.orient;
+  }
+  function setOrient(mode) {
+    S.cfg.orient = ORIENTS.indexOf(mode) >= 0 ? mode : ORIENT_DEFAULT;
+    S.rotHead = null; S.rotAt = 0;   // start the new turn from your heading, not from where the last one stopped
+    if (S.cfg.orient === 'heading') { S.follow = true; S.followWho = 'me'; S.followOff = { x: 0, y: 0 }; syncFollowBtn(); }
+    cfgCommit(); renderMap(); kickAnim();
+  }
+  if (orientBtn) orientBtn.addEventListener('click', function () { setOrient(S.cfg.orient === 'heading' ? 'north' : 'heading'); });
   // ⠿ moves the button bar (toolDock / toolBox); where it locks is saved as { edge, t }.
   var toolsEl = document.getElementById('tools'), gripEl = document.getElementById('toolsGrip'), paneEl = document.getElementById('mapPane');
   S.toolPos = (function () {
@@ -3490,7 +3663,7 @@
   syncRouteNote();
   // ⚙ Map settings: built from CFG_SHOW / CFG_GLYPHS / CFG_COLS on first open, saved on every change.
   var cfgEl = document.getElementById('cfg'), cfgBtn = document.getElementById('cfgBtn');
-  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncKiteBtns(); syncRouteNote(); syncClearCtl(); rebuildClear(); }
+  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncKiteBtns(); syncOrientBtn(); syncRouteNote(); syncClearCtl(); rebuildClear(); }
   // ◯ on the toolbar (the guild lead, 2026-10-13: "add aggro rings onto the map, make a circle icon on the main
   // screen"): the same switch as ⚙ → Show → Aggro rings.
   var aggroBtn = document.getElementById('aggroBtn');
@@ -3563,6 +3736,7 @@
     };
     CFG_COLS.forEach(function (it) { colorRow(colEl, it[0], it[1]); });
     document.getElementById('cfgFacing').value = C.facing;
+    document.getElementById('cfgOrient').value = C.orient; document.getElementById('cfgCompass').value = C.compass;
     var wm = document.getElementById('cfgWallMode'); wm.value = C.wallMode;
     var bg = document.getElementById('cfgBg'); bg.value = C.col.bg;
     var bgOwn = document.getElementById('cfgBgOwn'), bgA = document.getElementById('cfgBgA');
@@ -3582,6 +3756,10 @@
   });
   document.getElementById('cfgFacing').addEventListener('change', function (e) {
     S.cfg.facing = FACING_MODES.indexOf(e.target.value) >= 0 ? e.target.value : FACING_DEFAULT; cfgCommit();
+  });
+  document.getElementById('cfgOrient').addEventListener('change', function (e) { setOrient(e.target.value); });
+  document.getElementById('cfgCompass').addEventListener('change', function (e) {
+    S.cfg.compass = COMPASS_MODES.indexOf(e.target.value) >= 0 ? e.target.value : COMPASS_DEFAULT; cfgCommit();
   });
   document.getElementById('cfgWallMode').addEventListener('change', function (e) {
     var v = e.target.value; S.cfg.wallMode = v === 'one' || v === 'layers' ? v : 'map'; cfgCommit();
@@ -3697,7 +3875,7 @@
     renderMap();
   });
   Object.keys(SMOOTH_LABEL).forEach(function (k) { var o = document.createElement('option'); o.value = k; o.textContent = SMOOTH_LABEL[k]; smoothSel.appendChild(o); });
-  syncLevels(); syncFitBtn(''); syncKnobs(); syncFollowBtn(); placeTools();
+  syncLevels(); syncFitBtn(''); syncKnobs(); syncFollowBtn(); syncOrientBtn(); placeTools();
   window.mimic && window.mimic.onMapPos && window.mimic.onMapPos(onDirect);
 
   stage.addEventListener('mousedown', function (e) {
@@ -3713,9 +3891,10 @@
     var dx = e.clientX - d.x, dy = e.clientY - d.y;
     if (!d.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
     if (!d.moved) { d.moved = true; document.body.classList.add('dragging'); if (!S.followLock) { S.follow = false; syncFollowBtn(); } }
-    S.view.cx = d.cx - dx / S.view.scale; S.view.cy = d.cy - dy / S.view.scale;
+    var ud = unturnPx(dx, dy, S.view);   // heading up: a drag across the screen is a move on the unturned picture
+    S.view.cx = d.cx - ud.dx / S.view.scale; S.view.cy = d.cy - ud.dy / S.view.scale;
     var fm = S.follow && S.followLock ? followSubject(Date.now()) : null;
-    if (fm) { var fsv = toScreen(fm.x, fm.y); S.followOff = { x: (fsv.sx - S.view.cx) * S.view.scale, y: (fsv.sy - S.view.cy) * S.view.scale }; }
+    if (fm) { S.followOff = followOffNow(fm, { cx: S.view.cx, cy: S.view.cy, scale: S.view.scale, rot: S.view.rot }, 1e9, 1e9); }
     renderMap();
   });
   document.addEventListener('mouseup', function () {
@@ -3725,8 +3904,9 @@
   function zoomBy(deltaY, mx, my) {
     var v = S.view, f = Math.exp(-deltaY * 0.0015), ns = Math.max(0.02, Math.min(20, v.scale * f));
     if (!S.follow && mx != null) {   // around the cursor; while following, around you
-      var wx = (mx - S.w / 2) / v.scale + v.cx, wy = (my - S.h / 2) / v.scale + v.cy;
-      v.cx = wx - (mx - S.w / 2) / ns; v.cy = wy - (my - S.h / 2) / ns;
+      var zu = unturnPx(mx - S.w / 2, my - S.h / 2, v);   // (heading up: the cursor's offset on the unturned picture)
+      var wx = zu.dx / v.scale + v.cx, wy = zu.dy / v.scale + v.cy;
+      v.cx = wx - zu.dx / ns; v.cy = wy - zu.dy / ns;
     }
     v.scale = ns;
     try { localStorage.setItem('wp-map-scale', String(ns)); } catch (err) {}

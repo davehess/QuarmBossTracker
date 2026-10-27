@@ -5603,6 +5603,10 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   other 4xx drop it; 500 events max, nothing older than the bot's 24 h; kept in `map_sync_outbox.json` beside `map_timers.json`, resumed at start.
   Bot half: `POST /api/agent/map-sync` stores through `insertIgnoreDuplicates` against `map_spawn_events_dedup_idx` (guild, zone, point, kind,
   spawn id, `at`, reporting character), so a resend is stored once (bot 4.0.17). Tests: `test/map-sync-outbox.test.js`, `test/map-sync-dedup.test.js`.
+- **Map: Heading up and the compass** (2026-10-27, Mimic beta, `map.html`): `cfg.orient` (`north` | `heading`, toolbar `#orientBtn`, ⚙ → Map up)
+  sets `S.view.rot` every frame (`updateRot` → `rotStep` → `headingRot`); `wpt` / `projectPx` / `unprojectPx` / `screenToServer` / `unturnPx`
+  carry it, `headingVec(h, rot)` turns the arrows and slices, `drawCompass` draws the rose and/or edge letters (`cfg.compass`, `cardinalSpots`,
+  `roseSpot`). Test: `test/map-heading-up.test.js`.
 - **Kite circles on the Map** (2026-10-26, Mimic beta; kite coach 2026-10-15): `apps/mimic/kiteCoach.js` is the pure math (circle fit, laps,
   drift, cause) plus `filterLoops` (Others Live/All by `last_at`, Circles All/My speed/Near me) and `driftForecast`; `map.html` draws it
   (`drawKite`, `visibleLoops`) and owns the three toolbar buttons (`syncKiteBtns`; saved in `cfg.kiteOthers/kiteFilter/kiteDrift`).

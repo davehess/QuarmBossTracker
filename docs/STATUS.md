@@ -7089,3 +7089,22 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   flips from "library for ever" to "Live", so yesterday's circles are one tap away rather than on screen: the guild lead to confirm;
   ⏳ the three buttons make the toolbar wider (it wraps under ~800 px: drag/dock it or say if one should live only in ⚙); ⏳ a clean
   circle drifts only a unit or two a lap, so the forecast is a few pixels a lap and reads as "N laps · S s" ahead, not one lap.
+- 🧪 **Map: Heading up, with a compass on screen in both orientations (Mimic beta, 2026-10-27; no agent or bot change).** The guild lead:
+  *"allow map to follow player heading as well as cardinal direction, but make sure we're showing the cardinality on the map"*. A toolbar
+  button **North up / Heading up** (also ⚙ → Map up; saved in `cfg.orient`, default North up, so nothing changes for anyone until they
+  press it). Heading up turns the whole picture about the middle of the Map so the way you face is the top (`headingRot`, from the
+  existing `headingVec` / `HEADING_CCW`), turns Follow me on and centres you; the turn chases your drawn heading through `lerpHeading`'s
+  glide plus a 90 ms time constant (`rotStep`), snapping on a long gap, and the frame loop runs only until it arrives. Everything goes
+  through one projection (`wpt` / `projectPx`), so dots, labels, trails, corpses, timers, routes, aggro rings and the kite circles and
+  drift ring turn together; the two hand-laid wall loops turn explicitly; raiders' arrows and slices take the turn (`headingVec(h, rot)`);
+  text is never rotated (no canvas rotate), so labels stay upright. A click is un-turned: the cursor's /loc read (`screenToServer`), a drag
+  (`unturnPx`), a zoom about the cursor, Follow me's parked spot and Fit (the turned box has to fit). **Compass** (`cfg.compass`, ⚙ →
+  Compass): **Rose** (default), **Edges** or **Both**. The rose is a small corner dial (bottom-left, or the next corner the button bar does
+  not cover) whose red needle points to true north, with N E S W round it; Edges puts N E S W at the map's edges, inside room left for the
+  button bar, riding round as the picture turns. Recommendation: Rose as the default (small, never competes with the game scene in Full
+  mode, all four letters still on it); Edges is one ⚙ row, kept because it reads from across the screen. Tray/dashboard parity: main.js
+  and the dashboard carry only Map MODE, no other Map setting, so there is no twin to add. Tests: `test/map-heading-up.test.js`
+  (mutation-checked, 15 mutants); `test/map-facing-wedges.test.js` and `test/map-full-mode.test.js` updated for the new `rot` argument and the
+  compass's canvas letters. ⏳ Not seen in a live game: a heading-up Map over a moving EverQuest scene in Full mode; the first thing to
+  check is whether a 90 ms chase feels steady at the pipe's sample rate. ⏳ Fit zone/group/raid in Heading up fits the box turned at the
+  moment you press it; it does not keep refitting as you turn.
