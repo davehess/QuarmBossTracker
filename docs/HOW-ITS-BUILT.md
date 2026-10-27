@@ -381,6 +381,13 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   character-prefs (`_characterPrefsFor`) into `watchedLogs[].hidden`. Display only — account inventory and
   every upload ignore it.
 
+### Mimic reads Zeal's `<Name>-PoPFlags.txt` (agent 4.0.31 beta, 2026-10-27)
+- Zeal's /camp export / `/outputfile popflags` writes the `#popflags` reply to `<EQ dir>/<Name>-PoPFlags.txt` (header + `---` + reply), not to the log.
+  Agent `index.js`: `parsePopFlagsFile` + `popFlagsFileEvents` (beside `popFlagsOutputEvents`, same table, earned_at = the header's local time),
+  `scanPopFlagsFiles` (beside `scanInventoryUploads`; boot timer in the same block), `_latestPopFlagsExport` + `_rescanPopFlagsExports` (the dashboard
+  button and the website's rescan also read the newest file per character). Source `popflags`; bot unchanged. Fixture: `test/fixtures/Soandso-PoPFlags.txt`.
+  `test/pop-flags-file.test.js`, `test/pop-flags-live-parity.test.js`.
+
 ### Mimic reads `#popflags` from the log; "Sync from my logs" (agent 4.0.25 beta, 2026-10-26)
 - `popFlagsOutputEvents` (agent `index.js`, next to `parsePopFlagLine`): exact-line table of the server's `#popflags` output →
   step keys → `pop_flag` events `source: 'popflags'`. The website's paste reader is `web/lib/popFlagsPaste.ts`; two copies, kept equal by

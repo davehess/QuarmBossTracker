@@ -1,0 +1,81 @@
+Character	Soandso
+Timestamp	2026-10-27_16-32-09
+Command	#popflags, #popflags 1-5
+---
+=== Planes of Power Progression ===
+Tier 1: Complete
+Tier 2: Complete
+Tier 3: Complete
+Tier 4: Not started
+Tier 5 - Plane of Time: Not started
+Details: #popflags 1, 2, 3, 4, or 5 (tier1-tier5 also work).
+=== Tier 1 Progression ===
+--- Plane of Justice ---
+Mavuin's case: Mavuin's case is complete
+Seventh Hammer access: Locked
+--- Plane of Disease ---
+Fuirstel progression: Fuirstel progression complete
+Crypt of Decay access: Unlocked
+Grummus flag: Complete
+--- Plane of Nightmare ---
+Thelin progression: Thelin was released from Terris Thule
+Terris Thule flag: Complete
+--- Plane of Innovation ---
+Factory door access: Unlocked
+Manaetic Behemoth flag: Complete
+Tier complete: Justice has been served, Disease's grip weakened, Nightmare ended, and Innovation's hidden plot uncovered.
+=== Tier 2 Progression ===
+--- Plane of Valor ---
+Aerin`Dar progression: Halls of Honor access unlocked
+Aerin`Dar flag: Complete
+--- Plane of Storms ---
+Askr and Karana progression: Complete; combined into Zebuxoruk lore
+--- Crypt of Decay ---
+Crypt of Decay access: Unlocked
+Lower Crypt access: Unlocked
+Bertoxxulous flag: Complete
+--- Plane of Torment ---
+Tylis progression: Tylis progression complete
+Keeper of Sorrows flag: Complete
+Saryrn cipher half: Complete
+Tier complete: Valor has been proven, Storms weathered, the Crypt of Decay purged, and Torment overcome.
+=== Tier 3 Progression ===
+--- Halls of Honor ---
+Rydda`Dar trial: Complete
+Village trial: Complete
+Nomad trial: Complete
+Mithaniel Marr cipher half: Complete
+Mithaniel Marr book: Complete
+--- Bastion of Thunder ---
+Agnarr and Karana progression: Complete; combined into Zebuxoruk lore
+Agnarr / Karana flag: Complete
+--- Plane of Tactics ---
+Giwin and Zek progression: Zek progression complete
+Vallon Zek flag: Complete
+Tallon Zek flag: Complete
+Rallos Zek flag: Complete
+--- Grand Librarian Maelin ---
+Cipher information: Received
+Zebuxoruk lore: Received
+Combined Zek information: Received
+Final elemental information: Received
+If one of these is missing, hail Maelin and ask about new lore and new information.
+--- Tower of Solusek Ro ---
+Miak the Searedsoul preflag: Complete
+Xuzl: Complete
+Arlyxir: Complete
+Dresolik: Complete
+Rizlona: Complete
+Jiva: Complete
+Plane of Fire progression: Unlocked
+Solusek Ro flag: Complete
+Tier complete: Honor has been earned, the Bastion of Thunder conquered, the Warlord defeated, and the Burning Prince's plot exposed. The Elemental Planes now stand open.
+=== Tier 4 Progression ===
+--- Elemental Planes ---
+Air, Earth, and Water access: Unlocked
+Plane of Fire access: Unlocked
+Plane of Earth B access: Locked
+Plane of Time access: Locked
+=== Plane of Time ===
+Plane of Time access: Locked
+Complete the elemental progression, combine the four elemental essences, and return to Grand Librarian Maelin.

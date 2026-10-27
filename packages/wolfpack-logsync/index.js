@@ -6254,8 +6254,10 @@ function _pfEvent(character, atMs, keys) {
   return { character, zone: null, boss: null, ts: new Date(atMs).toISOString(), kind: 'recital', source: 'popflags', text: null, stages: keys.slice() };
 }
 /** One log line → the pop_flag events it makes (usually none). Sent as an empty-text recital so a bot that does not
- *  know source "popflags" skips it; a bot that does stores `stages` as rows with source popflags. */
-function popFlagsOutputEvents(line, character) {
+ *  know source "popflags" skips it; a bot that does stores `stages` as rows with source popflags.
+ *  `atMs` (optional) is the time of a line that carries no timestamp of its own: the line of Zeal's export file
+ *  (popFlagsFileEvents), whose time is the file's Timestamp header. A log line keeps its own time. */
+function popFlagsOutputEvents(line, character, atMs) {
   if (!character || !line) return [];
   const msg = String(line).replace(/^\[[^\]]*\]\s*/, '');
   if (msg.length > _PF_MAXLEN + 8 || (msg.charCodeAt(0) !== 61 && msg.indexOf(': ') < 0 && !_PF_BARE_RX.test(msg))) return [];
@@ -6263,7 +6265,7 @@ function popFlagsOutputEvents(line, character) {
   if (!hit) return [];
   const cl = String(character).toLowerCase();
   const tsd = parseEqTimestamp(line);
-  const at = tsd ? tsd.getTime() : Date.now();
+  const at = Number.isFinite(atMs) ? atMs : (tsd ? tsd.getTime() : Date.now());
   let st = _pfState.get(cl);
   if (!st) {
     st = { time: null, timeAt: 0, pending: [], hoh: new Set(), sent: new Map() };
@@ -6303,6 +6305,61 @@ function popFlagsOutputEvents(line, character) {
     }
   }
   return out;
+}
+
+// ── Zeal's own save of the `#popflags` reply: <EQ dir>/<Name>-PoPFlags.txt ───────────────────────────────────────
+// Zeal's "Export data on /camp" and `/outputfile popflags` (Zeal/outputfile.cpp export_popflags, the guild lead's fork)
+// send `#popflags` and `#popflags 1`-`5`, and write the server's reply to this file INSTEAD of the chat window, so it
+// never reaches the eqlog and popFlagsOutputEvents above never sees it. The layout (write_to_file in that source):
+//     Character<TAB><name>
+//     Timestamp<TAB>YYYY-MM-DD_HH-MM-SS        local time of the write (Zeal::Game::generateTimestamp)
+//     Command<TAB>#popflags, #popflags 1-5
+//     ---
+//     <the reply lines, the chat timestamp already stripped>
+// With Zeal's per-host export format the name carries a host tag ("-PoPFlags_<tag>.txt"), accepted here.
+// The reply lines go through popFlagsOutputEvents, the SAME exact-line table the log uses: no second parser, nothing
+// else in the file is looked at, and only the step keys it proves leave (docs/PRIVACY.md). earned_at is the file's
+// Timestamp, so re-reading the same file is the same rows (the pop_flags key).
+const POPFLAGS_FILENAME_RX = /^([A-Za-z]+)-PoPFlags(?:_[A-Za-z0-9]+)?\.txt$/i;
+const POPFLAGS_FILE_MAX_BYTES = 128 * 1024;                     // Zeal keeps at most 400 lines of reply
+const _PF_FILE_TS_RX = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})$/;
+/** The text of one export → { character, atMs, lines }, or null when it is not one (no header, no `---`, a name or
+ *  a Timestamp that does not read). `lines` are the reply lines, blank ones dropped. */
+function parsePopFlagsFile(text) {
+  const rows = String(text || '').split(/\r?\n/);
+  let character = null;
+  let atMs = null;
+  let i = 0;
+  for (; i < rows.length && i < 8; i++) {
+    if (rows[i] === '---') break;
+    const tab = rows[i].indexOf('\t');
+    if (tab < 0) return null;                                   // a header line is Key<TAB>Value
+    const key = rows[i].slice(0, tab);
+    const val = rows[i].slice(tab + 1).trim();
+    if (key === 'Character') character = val;
+    else if (key === 'Timestamp') {
+      const m = _PF_FILE_TS_RX.exec(val);
+      if (m) {
+        const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+        if (d.getMonth() === +m[2] - 1 && d.getDate() === +m[3] && d.getHours() === +m[4]) atMs = d.getTime();   // not rolled over (month 13, 31 Feb)
+      }
+    }
+  }
+  if (rows[i] !== '---' || !character || !/^[A-Za-z]{2,}$/.test(character) || atMs === null) return null;
+  return { character, atMs, lines: rows.slice(i + 1).filter(l => l.trim()) };
+}
+/** The pop_flag events one export makes, and how many of its lines were flag lines (what the dashboard counts).
+ *  Its time is the file's Timestamp, but never later than now. */
+function popFlagsFileEvents(parsed, character) {
+  const at = Math.min(parsed.atMs, Date.now());
+  const events = [];
+  let found = 0;
+  for (const line of parsed.lines) {
+    for (const e of popFlagsOutputEvents(line, character, at)) events.push(e);
+    const hit = _PF_LINES.get(_pfNorm(line.replace(/^\[[^\]]*\]\s*/, '')));
+    if (hit && hit.k !== 'head' && (hit.k !== 'time' || hit.yes)) found++;
+  }
+  return { events, found };
 }
 
 // "Sync from my logs", the two steps that touch the upload queue and the bot (the reader itself is _rescanRun, further down).
@@ -24572,8 +24629,11 @@ function wpPcCtlHtml() {
   return h;
 }
 function wpPcSummary(r) {
-  if (!r.logs) return 'Could not read any log.';
-  var parts = ['read ' + wpRbNum(r.logs) + (r.logs === 1 ? ' log' : ' logs'), wpRbNum(r.found) + (r.found === 1 ? ' flag line' : ' flag lines') + ' found'];
+  if (!r.logs && !r.exports) return 'Could not read any log.';
+  var parts = [];
+  if (r.logs) parts.push('read ' + wpRbNum(r.logs) + (r.logs === 1 ? ' log' : ' logs'));
+  if (r.exports) parts.push('read ' + wpRbNum(r.exports) + (r.exports === 1 ? ' saved PoP flags file' : ' saved PoP flags files'));
+  parts.push(wpRbNum(r.found) + (r.found === 1 ? ' flag line' : ' flag lines') + ' found');
   parts.push(r.upload ? (r.sent ? 'uploaded' : 'nothing new to upload') : 'not uploaded (' + (r.why || 'local mode / paused') + ')');
   return parts.join(' · ');
 }
@@ -24603,7 +24663,7 @@ function wpPcRepaint() {
   if (!document.getElementById('wpPcCtl')) {
     el.innerHTML = '<h2>📥 Capture latest PoP flags, Seer and Maelin messages</h2>'
       + '<div class="subtle">Reads the last few days of the EverQuest logs on this PC for the Planes of Power flag lines: the Seer\\'s recital, the flag grants with the NPC line that names them (Maelin\\'s included), '
-      + 'and the server\\'s #popflags output. Only the flag steps they prove are sent to the guild, the same as Sync from my logs on the website. '
+      + 'and the server\\'s #popflags output, including the newest PoP flags file Zeal saved next to the log (Export data on /camp, or /outputfile popflags), whatever its age. Only the flag steps they prove are sent to the guild, the same as Sync from my logs on the website. '
       + 'It runs here in the background and waits while a fight is on. Chat, tells and officer channels are not read into it, and characters you keep out of stats are skipped.</div>'
       + '<div id="wpPcCtl"></div><div id="wpPcProg"></div>';
     el._wpLastHtml = null;
@@ -40257,6 +40317,86 @@ function scanInventoryUploads(opts) {   // opts: see scanQuarmyExports
       _saveUploadedStateSoon();
       enqueueUpload('inventory', { agent_version: AGENT_VERSION, character, checksum, rows });
       console.log(`[inventory] queued inventory upload for ${character} (${rows.length} rows)`);
+    } catch { /* unreadable / malformed — skip, retry next scan */ }
+  }
+}
+
+// ── PoP flags export ingest: Zeal's <Name>-PoPFlags.txt (format and reader: popFlagsFileEvents, further up) ───
+// The fourth sibling of the Quarmy / spellbook / inventory scans, with their contract: the first watched log's folder
+// is the EQ folder, the prefs poll must have answered once, a raid hold waits, an unchanged file (mtime-size) is
+// skipped without a read, and a dry run uploads and fingerprints nothing. The character is the one in the file's own
+// header (a renamed copy is still that character); both names are checked against the opt-outs. A character kept out
+// of stats, or in the env list, or with log reading stopped, is never read. The shared per-character state of
+// popFlagsOutputEvents (the 6 h "already sent" memory) is NOT isolated here: two camps in one night are one set of rows.
+// Source tag: 'popflags', the log's. The bot's handler stores only that source (bot `_handleAgentPopFlags`), and
+// 'popflags_file' would be dropped there, so the vocabulary stays as it is.
+function _pfFileBlocked(lowerName) {
+  return _rebuildExcluded(lowerName) || !shouldUploadForCharacter(lowerName);
+}
+/** One export file → { parsed, blocked }: parsed is null when it is not an export; blocked when its character is kept out. */
+function _readPopFlagsExport(fullPath) {
+  const parsed = parsePopFlagsFile(fs.readFileSync(fullPath, 'utf8'));
+  return { parsed, blocked: !!parsed && _pfFileBlocked(parsed.character.toLowerCase()) };
+}
+/** The newest export of one character in one folder (by file time; host-tagged copies compete), read: { path, parsed },
+ *  or null for none / unreadable / not an export / kept out of stats. */
+function _latestPopFlagsExport(dir, characterLower) {
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return null; }
+  let best = null;
+  for (const name of entries) {
+    const m = name.match(POPFLAGS_FILENAME_RX);
+    if (!m || m[1].toLowerCase() !== characterLower) continue;
+    try {
+      const full = path.join(dir, name);
+      const st = fs.statSync(full);
+      if (st.isFile() && st.size <= POPFLAGS_FILE_MAX_BYTES && (!best || st.mtimeMs > best.mtimeMs)) best = { full, mtimeMs: st.mtimeMs };
+    } catch { /* gone between the listing and the stat */ }
+  }
+  if (!best) return null;
+  try {
+    const x = _readPopFlagsExport(best.full);
+    return x.parsed && !x.blocked ? { path: best.full, parsed: x.parsed } : null;
+  } catch { return null; }
+}
+function scanPopFlagsFiles(opts) {   // opts: see scanQuarmyExports
+  if (_raidHold) return;   // raid hold — files wait on disk, scanned when it lifts
+  if (!stats.characterPrefsCheckedAt) return;   // exclude_from_stats must be KNOWN before any flag leaves
+  const firstLog = stats.watchedLogs[0]?.logPath;
+  if (!firstLog && !(opts && opts.dir)) return;
+  const dir = (opts && opts.dir) || path.dirname(firstLog);
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return; }
+  const dryRun = !!(_uploadOpts && _uploadOpts.dryRun);
+  for (const name of entries) {
+    const m = name.match(POPFLAGS_FILENAME_RX);
+    if (!m) continue;
+    const fileChar = m[1].toLowerCase();
+    if (opts && opts.only && !opts.only.has(fileChar)) continue;
+    if (_pfFileBlocked(fileChar)) continue;   // prefs can flip — never fingerprint
+    const fullPath = path.join(dir, name);
+    try {
+      const _st = fs.statSync(fullPath);
+      if (!_st.isFile()) continue;
+      const fpKey = fullPath + '#popflags';
+      const _fp = _fileFingerprint(_st);
+      if (_scannedFiles[fpKey] === _fp) continue;
+      if (_st.size > POPFLAGS_FILE_MAX_BYTES) { _scannedFiles[fpKey] = _fp; _saveUploadedStateSoon(); continue; }
+      const { parsed, blocked } = _readPopFlagsExport(fullPath);
+      if (blocked) continue;   // the header names a character kept out of stats
+      if (!parsed) { _scannedFiles[fpKey] = _fp; _saveUploadedStateSoon(); continue; }
+      const { events, found } = popFlagsFileEvents(parsed, parsed.character);
+      if (dryRun) {
+        console.log(`[pop-flags] DRY RUN — would upload ${parsed.character}: ${found} flag lines, ${events.length} events`);
+        uploadPopFlags(events, _uploadOpts).catch(() => {});
+        continue;
+      }
+      _scannedFiles[fpKey] = _fp;
+      _saveUploadedStateSoon();
+      if (events.length) {
+        uploadPopFlags(events, _uploadOpts || {}).catch(() => {});
+        console.log(`[pop-flags] queued ${events.length} event(s) for ${parsed.character} from ${name} (${found} flag lines)`);
+      }
     } catch { /* unreadable / malformed — skip, retry next scan */ }
   }
 }
@@ -62979,6 +63119,11 @@ async function main() {
   setTimeout(scanInventoryUploads, 40_000);
   setInterval(scanInventoryUploads, 10 * 60_000);
 
+  // PoP flags export ingest — Zeal's <Char>-PoPFlags.txt (/camp export or /outputfile popflags), whose #popflags
+  // reply never reaches the log. Same dir, prefs gate and cadence as the three above.
+  setTimeout(scanPopFlagsFiles, 45_000);
+  setInterval(scanPopFlagsFiles, 10 * 60_000);
+
   // Buff-blocks socials queued while a character was logged in are written once
   // it has logged out. Local file work only (no bot, no network), and a no-op
   // until something is queued, so it runs in local mode too.
@@ -65529,17 +65674,41 @@ function _rescanUploadMode() {
 function _rescanDays(v) { return Math.max(1, Math.min(RESCAN_MAX_DAYS, Math.trunc(Number(v)) || RESCAN_DEFAULT_DAYS)); }
 // (_rescanDrained and _rescanReport, which touch the queue and the network, sit next to the PoP parsers: the local
 // rebuild above must stay free of both, test/local-backfill.test.js.)
+// Zeal's own save of the #popflags reply (<Name>-PoPFlags.txt, popFlagsFileEvents): the NEWEST one beside each
+// character's log, whatever its age. It is a snapshot of what the server said, not a stretch of log, so the days
+// window does not apply; one small file, so there is no pacing. The same table, the file's own time as earned_at (a
+// re-read is the same rows), and a kept-out character is never read. Like the log read, the prefs must be known before
+// anything is going to leave. Returns the number of files read.
+function _rescanPopFlagsExports(files, sink, mode) {
+  if (mode.upload && !stats.characterPrefsCheckedAt) return 0;
+  let read = 0;
+  const seen = new Set();
+  for (const f of files) {
+    const cl = String(f.character).toLowerCase();
+    const dir = path.dirname(f.path);
+    if (seen.has(dir + '\0' + cl)) continue;
+    seen.add(dir + '\0' + cl);
+    const x = _latestPopFlagsExport(dir, cl);
+    if (!x || x.parsed.character.toLowerCase() !== cl) continue;   // a renamed copy of another character's file is not this one's
+    const r = popFlagsFileEvents(x.parsed, x.parsed.character);
+    for (const e of r.events) sink.events.push(e);
+    sink.found += r.found;
+    read++;
+  }
+  return read;
+}
 // One run, for either caller: {character|null, days}. `prog` (optional) is the progress record the status route
-// reads while it goes. Resolves to { ok, found, logs, sent, excluded, upload, why }: `logs` is the files opened,
-// `sent` the events handed to the upload queue (0 when the agent is in local mode or paused: the lines are still
-// read and counted, nothing leaves), `excluded` the characters left out because they are kept out of stats.
+// reads while it goes. Resolves to { ok, found, logs, exports, sent, excluded, upload, why }: `logs` is the files opened,
+// `exports` the Zeal PoP flags files read, `sent` the events handed to the upload queue (0 when the agent is in local
+// mode or paused: the lines are still read and counted, nothing leaves), `excluded` the characters left out because
+// they are kept out of stats.
 async function _rescanRun(req, prog) {
   const days = _rescanDays(req.days);
   const sinceMs = Date.now() - days * 86400_000;
   const info = { excluded: [] };
   const files = _rescanFiles(req.character, info);
   const mode = _rescanUploadMode();
-  const done = (o) => Object.assign({ ok: false, found: 0, logs: 0, sent: 0, excluded: info.excluded, upload: mode.upload, why: mode.why }, o);
+  const done = (o) => Object.assign({ ok: false, found: 0, logs: 0, exports: 0, sent: 0, excluded: info.excluded, upload: mode.upload, why: mode.why }, o);
   if (prog) { prog.days = days; prog.files = files.length; prog.filesDone = 0; prog.excluded = info.excluded; prog.upload = mode.upload; prog.why = mode.why; }
   if (!files.length) return done({});
   const opts = _uploadOpts || {};
@@ -65556,6 +65725,7 @@ async function _rescanRun(req, prog) {
   const ctx = { sinceMs, bytes: RESCAN_MAX_BYTES, waited: 0, stop: false };
   if (prog) { prog.ctx = ctx; prog.sink = sink; }
   let opened = 0;
+  let exportsRead = 0;
   await _rescanIsolate(files.map(f => f.character), async () => {
     for (const f of files) {
       if (prog) prog.current = f.character;
@@ -65563,11 +65733,13 @@ async function _rescanRun(req, prog) {
       sink.flush();
       if (prog) prog.filesDone++;
     }
+    exportsRead = _rescanPopFlagsExports(files, sink, mode);
+    if (prog) prog.exports = exportsRead;
   });
   sink.flush();
-  if (opened === 0) return done({});
+  if (opened === 0 && exportsRead === 0) return done({});
   if (sink.sent > 0) await _rescanDrained(90_000);
-  return done({ ok: true, found: sink.found, logs: opened, sent: sink.sent });
+  return done({ ok: true, found: sink.found, logs: opened, exports: exportsRead, sent: sink.sent });
 }
 // The website's requests, one at a time, under the shared guard. Also called when a dashboard run ends, so a
 // request that arrived meanwhile is not left waiting for the next poll.
@@ -65676,6 +65848,7 @@ function _rescanStatus() {
       bytesRead: p.ctx ? RESCAN_MAX_BYTES - p.ctx.bytes : 0,
       found: p.result ? p.result.found : (p.sink ? p.sink.found : 0),
       logs: p.result ? p.result.logs : 0,
+      exports: p.result ? p.result.exports : (p.exports || 0),
       sent: p.result ? p.result.sent : (p.sink ? p.sink.sent : 0),
       upload: p.upload !== false, why: p.why || null,
     };

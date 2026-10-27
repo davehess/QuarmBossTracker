@@ -6632,6 +6632,24 @@ targets, DPS per-person time, Target Info hit types, Charm "Best pets here", rol
 re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). ⚠ Vercel's daily cap held back the web build; redeploy after the freeze.
 **Done 2026-10-15:** web 1.8.158/1.8.159 deployed (`0cf809fb` via the Vercel MCP), card posted 04:52 UTC.
 
+### 🧾 2026-10-27 — Mimic reads Zeal's `<Name>-PoPFlags.txt` (agent 4.0.31 beta, draft on `draft/popflags-file`, not pushed)
+Zeal (the guild lead's fork, branch `pr/popflags-export`, about to be filed upstream) makes "Export data on /camp" and `/outputfile popflags`
+send `#popflags` and `#popflags 1`-`5` and write the reply to `<EQ dir>/<Name>-PoPFlags.txt`, keeping it out of chat, so the eqlog never has it.
+The agent now reads that file. **Format** (from `Zeal/outputfile.cpp`, confirmed on a real file from the game, `test/fixtures/Soandso-PoPFlags.txt`,
+byte-identical): `Character<TAB>name`, `Timestamp<TAB>YYYY-MM-DD_HH-MM-SS`, `Command<TAB>#popflags, #popflags 1-5`, `---`, the reply lines.
+The Timestamp has no zone: it is read as the PC's LOCAL time (Zeal writes `localtime_s`), capped at now. **Reader:** `parsePopFlagsFile` /
+`popFlagsFileEvents` (next to `popFlagsOutputEvents`, which gained an optional `atMs` for a line with no stamp of its own): the SAME exact-line table,
+no second parser; earned_at = the header time; source `popflags` (the bot stores only that source, `popflags_file` would be dropped, so no bot
+change). **Watcher:** `scanPopFlagsFiles`, the fourth sibling of the Quarmy/spellbook/inventory scans (EQ folder = the first watched log's folder,
+prefs poll must have answered, raid hold waits, 45 s after boot then every 10 min, mtime-size fingerprint under `<path>#popflags`, dry run fingerprints
+nothing). Character = the header's; both names are checked against `exclude_from_stats` / the env list / a stopped log mode / off-guild server. The
+6 h "already sent" memory of the log reader is shared, so two camps in one night are one set of rows. **Dashboard / website rescan:**
+`_rescanPopFlagsExports` reads the newest `*-PoPFlags*.txt` per character beside its log (any age, the days window is for log lines) inside the
+same run; the result and `/status` carry `exports`, the card says "read N saved PoP flags files". Only step keys leave: `docs/PRIVACY.md`.
+The new closing section `=== Plane of Time ===` (access line: time NOT held; an advice line) needed no table change: the advice line is not a
+table line and sets nothing. ⏳ Not in the "Upload these now" first-sign-in card; ⏳ a file in a `Logs\` subfolder is not seen (the siblings share this).
+Tests: `test/pop-flags-file.test.js` (header, gate, scan, opt-outs, mtime, rescan), `test/pop-flags-live-parity.test.js` (web paste reader and agent on the real file).
+
 ### 🧾 2026-10-26 — Mimic reads `#popflags` from the log + "Sync from my logs" (agent 4.0.25 beta, first draft)
 (The page, paste box and bot half are on `main`: web 2.1.45 / bot 4.0.18, see the 2026-10-26 `/pop/raid/me` entries there.)
 **Live read** (`popFlagsOutputEvents`, `packages/wolfpack-logsync/index.js`): the output of the server's `#popflags` command
