@@ -84,12 +84,13 @@ function makeWorld(spec) {
     + '\n' + slice('  function growsUp(p) {', '\n') + '\n' + slice('  var TALL_GRAB = 120,', '\n') + '\n' + slice('  function yBounds(rTop, rH, h, up, free) {')
     + '\n' + slice('  function xBounds(rLeft, rW, w, free) {') + '\n' + slice('  function isFree(q) {', '\n') + '\n' + slice('  function isCorner(q) {', '\n')
     + '\n' + slice('  function sizeMax(p, cap, avail) {', '\n')
+    + '\n' + slice('  var MIN_GAP = 8, MIN_LINE = 2, MIN_H = 18;', '\n') + '\n' + slice('  function topFromBox(p, boxY, up, collapsed) {') + '\n' + slice('  function sizeStart(p, collapsed, mode, axis, shownH) {')
     + '\n' + slice('  var SNAP = 8;', "document.addEventListener('mouseup', endDrag);\n");
   const env = new Function('window', 'document', '_layout', '_els', '_sel', 'saves', 'screenList', 'M', 'shield',
     'var _widen = {}; var _fitAdd = {}; var _edit = false; var _one = null; function isEd(id) { return _edit || (_one != null && _one === id); }\n'
     + 'function panelById(id) { return _layout.panels.filter(function (q) { return q.id === id; })[0] || null; }\n'
     + 'function selIds() { return []; }\n'
-    + 'function place() {} function sizeFrame() {} function closeMenu() {} function openMenu() {} function render() {}\n'
+    + 'function place() {} function sizeFrame() {} function closeMenu() {} function openMenu() {} function render() {} function isMin() { return false; }\n'
     + 'function note() {} function save() { saves.push(1); } function fitOn() { return false; } function pdefOf() { return null; }\n'
     + block + '\nreturn { startDrag: startDrag };'
   )(win, doc, { panels: [p] }, els, {}, saves, () => [{ x: 0, y: 0, w: SCR.w, h: SCR.h, sig: 's' }],

@@ -71,6 +71,10 @@ function world(panels) {
     ${sliceBlock(SRC, '  function xBounds(rLeft, rW, w, free) {', '\n  }\n')}
     ${sliceBlock(SRC, '  function isFree(q) {', '\n')}
     ${sliceBlock(SRC, '  function sizeMax(p, cap, avail) {', '\n')}
+    function isMin() { return false; }
+    ${sliceBlock(SRC, '  var MIN_GAP = 8, MIN_LINE = 2, MIN_H = 18;', '\n')}
+    ${sliceBlock(SRC, '  function topFromBox(p, boxY, up, collapsed) {', '\n  }\n')}
+    ${sliceBlock(SRC, '  function sizeStart(p, collapsed, mode, axis, shownH) {', '\n  }\n')}
     ${LOCK}
     ${IS_ED}
     ${DRAG}

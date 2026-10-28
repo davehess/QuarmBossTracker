@@ -405,6 +405,15 @@ const _WP_MINI_CSS =
   // closable, and a control that vanishes reads as a control that is gone.
   'body.wp-mini #move-btn,body.wp-mini #hide-btn,body.wp-mini #wp-grip,body.wp-mini #wp-grip-top{opacity:0.12;transition:opacity 0.12s ease}' +
   'body.wp-mini:hover #move-btn,body.wp-mini:hover #hide-btn,body.wp-mini:hover #wp-grip,body.wp-mini:hover #wp-grip-top{opacity:1}' +
+  // ▭ Fold (the guild lead, 2026-10-28: "minimized overlays need to be draggable and resizable still"). A folded window is
+  // its title row and nothing else, so the corner controls ARE the window: they stay readable (the 12% fade is for a designed
+  // mini, which still has data to read). Its height is the row's, so only the width resizes: the ◢ becomes a strip along the
+  // bottom edge, 8px tall, which ends where the ✕ (6 + 18 from the top of a 32px window) begins instead of sitting on it,
+  // and the grow-up corner keeps its place with the width cursor. (After the rules above, same specificity.)
+  'body.wp-fold #move-btn,body.wp-fold #hide-btn,body.wp-fold #wp-grip,body.wp-fold #wp-grip-top{opacity:0.6}' +
+  'body.wp-fold #wp-grip{width:18px;height:8px;cursor:ew-resize;' +
+  'background:linear-gradient(90deg,transparent 0 30%,rgba(230,237,243,.85) 30% 40%,transparent 40% 55%,rgba(230,237,243,.85) 55% 65%,transparent 65% 80%,rgba(230,237,243,.85) 80% 90%,transparent 90%)}' +
+  'body.wp-fold #wp-grip-top{cursor:ew-resize}' +
   'body.wp-mini .wp-mini-hide{display:none !important}' +
   'body.wp-mini .wp-mini-bar{height:var(--wp-mini-bar-h) !important;border-radius:2px}' +
   'body.wp-mini .wp-mini-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}' +

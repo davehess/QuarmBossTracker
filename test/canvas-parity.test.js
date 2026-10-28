@@ -365,12 +365,12 @@ function makeWorld(specs) {
   const gbox = { classList: { add() {}, remove() {} }, style: {} };
   const doc = { addEventListener: (t, f) => { handlers[t] = f; }, getElementById: () => gbox, querySelector: () => ({ addEventListener() {} }) };
   const shield = { classList: { add() {}, remove() {} }, style: {} };
-  const block = NUM + SIZE_BLOCK + '\n' + slice('  var SNAP = 8;', "document.addEventListener('mouseup', endDrag);\n");
+  const block = NUM + SIZE_BLOCK + '\n' + slice('  var MIN_GAP = 8, MIN_LINE = 2, MIN_H = 18;', '\n') + '\n' + slice('  function topFromBox(p, boxY, up, collapsed) {') + '\n' + slice('  function sizeStart(p, collapsed, mode, axis, shownH) {') + '\n' + slice('  var SNAP = 8;', "document.addEventListener('mouseup', endDrag);\n");
   const env = new Function('window', 'document', '_layout', '_els', '_sel', 'notes', 'saves', 'frames', 'screenList', 'M', 'shield',
     'var _widen = {}; var _fitAdd = {}; var _edit = true; var _one = null; function isEd(id) { return _edit || (_one != null && _one === id); }\n'
     + 'function panelById(id) { return _layout.panels.filter(function (q) { return q.id === id; })[0] || null; }\n'
     + 'function selIds() { return Object.keys(_sel).filter(function (id) { return panelById(id); }); }\n'
-    + 'function place() {} function sizeFrame(e, q, w, h) { frames.push([q.id, w, h]); } function closeMenu() {} function openMenu() {} function render() {}\n'
+    + 'function place() {} function sizeFrame(e, q, w, h) { frames.push([q.id, w, h]); } function closeMenu() {} function openMenu() {} function render() {} function isMin() { return false; }\n'
     + 'function note(m) { notes.push(m); } function save() { saves.push(1); }\n'
     + block + '\nreturn { startDrag: startDrag };'
   )(win, doc, { panels }, els, {}, notes, saves, frames, () => [{ x: 0, y: 0, w: SCR.w, h: SCR.h, sig: 's' }],
