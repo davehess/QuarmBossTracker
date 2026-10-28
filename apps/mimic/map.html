@@ -1253,6 +1253,25 @@
     var dz = t.z != null && pin.z != null && isFinite(t.z) && isFinite(pin.z) ? t.z - pin.z : 0;
     return Math.round(Math.sqrt((t.x - pin.x) * (t.x - pin.x) + (t.y - pin.y) * (t.y - pin.y) + dz * dz));
   }
+  // How far your target stands from you, the way a spell measures it: in 3D (a member, 2026-10-28, FB-108: "Map distance is
+  // only x/y not z, so when casting on something it should be full distance and if it's too high or too low"). Positions are
+  // {x, y, z} in game units (the agent's _mapPos turns Zeal's loc into this order; z is 0 when the pipe sent none, so an
+  // exact 0 reads as "no height" and the range stays flat rather than inventing a drop to the floor of the world).
+  // `flat` is the old map-plane number; only the NUMBER SHOWN changes, no circle or line on the map is drawn from this.
+  var RANGE_DZ_SHOW = 10;   // a height gap this big is said aloud; under it the 3D number already tells (you are ~6 tall)
+  function zKnown(z) { return z != null && isFinite(Number(z)) && Number(z) !== 0; }
+  function targetRange(a, b) {
+    if (!a || !b || a.x == null || b.x == null) return null;
+    var dx = b.x - a.x, dy = b.y - a.y, known = zKnown(a.z) && zKnown(b.z), dz = known ? Number(b.z) - Number(a.z) : 0;
+    return { flat: Math.round(Math.hypot(dx, dy)), d: Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz)), dz: known ? Math.round(dz) : null };
+  }
+  // "42" on the level, "42 (↑18)" with the target 18 above you, "42 (↓18)" below.
+  function rangeText(r) {
+    if (!r) return '';
+    var t = String(r.d);
+    if (r.dz != null && Math.abs(r.dz) >= RANGE_DZ_SHOW) t += ' (' + (r.dz > 0 ? '↑' : '↓') + Math.abs(r.dz) + ')';
+    return t;
+  }
   // Past this many units from its spawn point a mob that has Gate in its spell list can gate home once it is at 15% HP
   // or less, outside classic-era zones and unless it roams a box (Quarm's server source; a 50% roll each AI check).
   // Whether a given mob HAS Gate is not in our data yet, so the Map says "can gate", never "will".
@@ -3036,7 +3055,7 @@
           var sd = drawn('self', P.self, rt), sq = wpt(sd.x, sd.y);
           ctx.beginPath(); ctx.setLineDash([2, 4]); ctx.moveTo(sq[0], sq[1]); ctx.lineTo(tq[0], tq[1]);
           ctx.lineWidth = 1.5; ctx.strokeStyle = CO.target; ctx.stroke(); ctx.setLineDash([]);
-          if (P.target.dist != null && SH.distance) halo(String(Math.round(Math.hypot(td.x - sd.x, td.y - sd.y))), (sq[0] + tq[0]) / 2, (sq[1] + tq[1]) / 2 - 7, labelFont('dist'), CO.target, 'center');   // from the drawn spots, so it keeps up with the dots
+          if (P.target.dist != null && SH.distance) halo(rangeText(targetRange(sd, td)), (sq[0] + tq[0]) / 2, (sq[1] + tq[1]) / 2 - 7, labelFont('dist'), CO.target, 'center');   // from the drawn spots, so it keeps up with the dots
         }
         // The path we have watched it walk, and where it is heading (the guild lead, 2026-10-13: "Can we show the path
         // that we observed a mob walking towards?"): its positions since you targeted it, fading with age, and an
@@ -3486,7 +3505,7 @@
     zEl.textContent = ((P && (P.long_name || P.zone)) ? (P.long_name || P.zone) : 'Map') + (cp ? ' · ' + cp.text : '');
     zEl.title = cp ? cp.title : '';
     var tg = document.getElementById('tgt');
-    if (P && P.target) tg.textContent = '◎ ' + P.target.name + (P.target.dist != null ? ' · ' + P.target.dist : (P.target.x == null ? ' · no position' : '')) + (P.target.point_id != null ? ' → pinned' : '') + (P.target.tot ? ' · on ' + P.target.tot.name : '');
+    if (P && P.target) tg.textContent = '◎ ' + P.target.name + (P.target.dist != null ? ' · ' + (rangeText(targetRange(P.self, P.target)) || P.target.dist) : (P.target.x == null ? ' · no position' : '')) + (P.target.point_id != null ? ' → pinned' : '') + (P.target.tot ? ' · on ' + P.target.tot.name : '');
     else tg.textContent = '';
     var box = document.getElementById('lists');
     box.innerHTML = '';
