@@ -235,6 +235,36 @@ describe('swing timer — measured from your own rounds', () => {
     expect(h._meHands(h._meSwings.get('aldenmar'))).toBeNull();
   });
 
+  // FB-107 (a member's monk on a two-hand blunt weapon): the hands are named by the ORDER of two verbs in
+  // one round, and in the report's 15 minutes that order was crush-first in 71 rounds and punch-first in
+  // 76. The bare majority won, and every crush read "OH". A split order is no evidence of a main hand.
+  it('names no hand when the verbs come in either order (FB-107)', () => {
+    const h = load();
+    for (let i = 0; i < 20; i++) swing(h, 'Aldenmar', i % 2 ? ['crush', 'punch'] : ['punch', 'crush'], 2800);
+    expect(h._meHands(h._meSwings.get('aldenmar'))).toBeNull();
+    expect(h._meSwingState('aldenmar', { autoattack: true, gauges: [] }, clock).hands).toBeNull();
+    // 52 / 48 is the report's own split.
+    const h2 = load();
+    for (let i = 0; i < 25; i++) swing(h2, 'Brackwyn', i % 25 < 13 ? ['punch', 'crush'] : ['crush', 'punch'], 2800);
+    expect(h2._meHands(h2._meSwings.get('brackwyn'))).toBeNull();
+  });
+
+  it('still names the hands when one order carries the rounds, with a stray the other way', () => {
+    const h = load();
+    for (let i = 0; i < 12; i++) swing(h, 'Corvale', ['slash', 'pierce'], 2800);
+    swing(h, 'Corvale', ['pierce', 'slash'], 2800);
+    for (let i = 0; i < 4; i++) swing(h, 'Corvale', ['slash', 'pierce'], 2800);
+    expect(h._meHands(h._meSwings.get('corvale'))).toEqual({ mh: 'slash', oh: 'pierce' });
+  });
+
+  it('a weapon change stops being read through the old pairing', () => {
+    const h = load();
+    for (let i = 0; i < 10; i++) swing(h, 'Rethlan', ['slash', 'pierce'], 2800);
+    expect(h._meHands(h._meSwings.get('rethlan'))).toEqual({ mh: 'slash', oh: 'pierce' });
+    for (let i = 0; i < 45; i++) swing(h, 'Rethlan', ['crush', 'crush'], 2800);   // a two-hander now
+    expect(h._meHands(h._meSwings.get('rethlan'))).toBeNull();
+  });
+
   it('prefers Zeal\'s attack gauge (34) whenever a build sends it', () => {
     const h = load();
     const s = h._meSwingState('corvale', { autoattack: true, gauges: [{ slot: 34, hp_pct: 40, text: '1' }] }, clock);
