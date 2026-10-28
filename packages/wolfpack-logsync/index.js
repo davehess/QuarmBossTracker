@@ -42039,6 +42039,32 @@ const PVP_GLORY_EXULTS_RX  = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek exults as (\w+)(
 const PVP_GLORY_FALLS_TO_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek (?:looks on|looks down in disgust) as (\w+)(?:\s+<([^>]*)>)? falls to (.+?)\s*$/;
 const PVP_GLORY_NO_FOE_RX  = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? falls in (.+?) (without a worthy foe.*?)[.!]?\s*$/;
 const PVP_GLORY_FORFEIT_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? (?:flees|abandons) the battlefield(.*?),\s+(surrendering\b.*?)[.!]?\s*$/;
+// The server REWORDED every one of those on 2026-10-02 (Quarm commit da650526 "Show guilds in Rallosian
+// Glory death broadcasts", merged 07:49 CDT; our last kill under the old wording is 10:54 UTC the same
+// day, the first new-wording death row 19:23 UTC). Every name now carries its guild, and no kill line
+// kept the old text, so from that day no kill or assist reached the bot while NPC deaths ("falls to
+// <mob>") kept parsing. Real wording, invented names (zone ends at the sentence break):
+//   "Rallos Zek favors Aldenmar <Wolf Pack> for killing Brackwyn <Zek> in Ruins of Sebilis. Aldenmar
+//    <Wolf Pack> now has 1/10 Glory."                                               → a worthy kill
+//   "Rallos Zek exults as Aldenmar <Wolf Pack> cuts down Brackwyn <Zek> in Ruins of Sebilis. Brackwyn
+//    <Zek> loses 2 Glory; Aldenmar <Wolf Pack> now has 3/10."                       → a worthy kill
+//   "Rallos Zek exults as Aldenmar <Wolf Pack> kills Brackwyn <Zek> in Ruins of Sebilis and reaches
+//    10/10 Glory!"  (or "and remains at 10/10 Glory.")                              → a worthy kill
+//   "Rallos Zek looks down in disgust as Brackwyn <Zek> falls to Aldenmar <Wolf Pack> in Ruins of
+//    Sebilis. No Glory awarded."  (or "…. Brackwyn <Zek> loses 2 Glory; no Glory awarded.")
+//                                       → killed by a PLAYER, no Glory (it used to read as an NPC kill)
+//   "Rallos Zek looks down in disgust as Brackwyn <Zek> falls in Kedge Keep."  (+ " 2 Glory lost.")
+//                                                                                    → dead, no killer named
+//   "Rallos Zek looks down in disgust as Brackwyn <Zek> flees the battlefield in Kedge Keep like a
+//    cowardly dog, forfeiting 2 Glory."   (also "abandons")                          → a forfeit
+// A name with no guild has no "<…>"; the guild stays null for the bot to fill from /who, as before. The
+// older wordings stay parsed: logs from before 2026-10-02 are still replayed by --since backfills.
+const PVP_GLORY_FAVORS_RX   = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek favors (\w+)(?:\s+<([^>]*)>)? for killing (\w+)(?:\s+<([^>]*)>)? in (.+?)\.\s+(\w+(?:\s+<[^>]*>)? now has \d+\/\d+ Glory)\.?\s*$/;
+const PVP_GLORY_CUTS_DOWN_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek exults as (\w+)(?:\s+<([^>]*)>)? cuts down (\w+)(?:\s+<([^>]*)>)? in (.+?)\.\s+(\w+(?:\s+<[^>]*>)? loses \d+ Glory; .+? now has \d+\/\d+)\.?\s*$/;
+const PVP_GLORY_KILLS_RX    = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek exults as (\w+)(?:\s+<([^>]*)>)? kills (\w+)(?:\s+<([^>]*)>)? in (.+?) and ((?:remains at|reaches) \d+\/\d+ Glory)[.!]?\s*$/;
+const PVP_GLORY_FALLS_TO_PLAYER_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? falls to (\w+)(?:\s+<([^>]*)>)? in (.+?)\.\s+((?:[^.]*? loses \d+ Glory; no|No) Glory awarded)\.?\s*$/;
+const PVP_GLORY_FALLS_IN_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? falls in (.+?)\.(?:\s+(\d+ Glory lost)\.?)?\s*$/;
+const PVP_GLORY_FORFEIT2_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? (?:flees|abandons) the battlefield in (.+?) like a cowardly dog, (forfeiting \d+ Glory)[.!]?\s*$/;
 // "<NPC> in <zone>[, <clause>][. <more>]" → the NPC, the zone and the text after it. No zone name has a
 // period or " in " in it (eqemu_zone, checked 2026-10-02) but one NPC does ("a lady in waiting"), so the
 // zone starts after the LAST " in ", once the clause is off.
@@ -42080,6 +42106,37 @@ function parseGloryKill(line) {
     victim: ex[4], victimGuild: _gloryGuild(ex[5]),
     zone: ex[6].trim(), glory: true, gloryText: ex[7].trim(),
   };
+  // The 2026-10-02 wordings (see PVP_GLORY_FAVORS_RX). A kill: killer, victim, zone, a Glory note.
+  const fv = PVP_GLORY_FAVORS_RX.exec(line);
+  if (fv) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: fv[2], killerGuild: _gloryGuild(fv[3]),
+    victim: fv[4], victimGuild: _gloryGuild(fv[5]),
+    zone: fv[6].trim(), glory: true, gloryText: fv[7].trim(),
+  };
+  const cd = PVP_GLORY_CUTS_DOWN_RX.exec(line);
+  if (cd) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: cd[2], killerGuild: _gloryGuild(cd[3]),
+    victim: cd[4], victimGuild: _gloryGuild(cd[5]),
+    zone: cd[6].trim(), glory: true, gloryText: cd[7].trim(),
+  };
+  const kl = PVP_GLORY_KILLS_RX.exec(line);
+  if (kl) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: kl[2], killerGuild: _gloryGuild(kl[3]),
+    victim: kl[4], victimGuild: _gloryGuild(kl[5]),
+    zone: kl[6].trim(), glory: true, gloryText: kl[7].trim(),
+  };
+  // Killed by a PLAYER but no Glory: before the guilds were on the line this was indistinguishable from a
+  // mob kill, and the death row said "killed by an NPC". The "No Glory awarded" tail is what tells them apart.
+  const fp = PVP_GLORY_FALLS_TO_PLAYER_RX.exec(line);
+  if (fp) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: fp[4], killerGuild: _gloryGuild(fp[5]),
+    victim: fp[2], victimGuild: _gloryGuild(fp[3]),
+    zone: fp[6].trim(), glory: false, gloryText: fp[7].trim(),
+  };
   const ft = PVP_GLORY_FALLS_TO_RX.exec(line);
   const nz = ft && _gloryNpcZone(ft[4]);
   if (nz) return {
@@ -42094,6 +42151,20 @@ function parseGloryKill(line) {
     killer: null, killerGuild: null,
     victim: nf[2], victimGuild: _gloryGuild(nf[3]),
     zone: nf[4].trim(), glory: false, gloryText: nf[5].trim(),
+  };
+  const ni = PVP_GLORY_FALLS_IN_RX.exec(line);
+  if (ni) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: null, killerGuild: null,
+    victim: ni[2], victimGuild: _gloryGuild(ni[3]),
+    zone: ni[4].trim(), glory: false, gloryText: ni[5] ? ni[5].trim() : null,
+  };
+  const f2 = PVP_GLORY_FORFEIT2_RX.exec(line);
+  if (f2) return {
+    ts: tsIso(), text: text(), killType: 'forfeit', source: 'rallos_glory',
+    killer: null, killerGuild: null,
+    victim: f2[2], victimGuild: _gloryGuild(f2[3]),
+    zone: f2[4].trim(), glory: false, gloryText: f2[5].trim(),
   };
   const ff = PVP_GLORY_FORFEIT_RX.exec(line);
   if (ff) {
