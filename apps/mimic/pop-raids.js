@@ -98,20 +98,30 @@ window.POP_RAIDS = {
           pageImages: ['Nitram-Map.png'],
         },
         {
+          // Thresholds come from the server's script, not the guide (FB-109, 2026-10-28):
+          // nightmareb/Terris_Thule.lua at SecretsOTheP/quests d4625cdd (unchanged on HEAD) —
+          //   :3-4   header: "dream defilers at 79% and 69%, dispel at 50%, gargoyles at 40%"
+          //   :35-56 SpawnDefilers: one defiler per CLIENT on her hate list with damage > 0
+          //          (so pets, and players who have not hit her, add nothing); each is a
+          //          coin-flip between the small (221045) and large (221044) type
+          //   :64-70 hp events 79 and 69 both call SpawnDefilers
+          //   :72-75 50% casts Direption of Dreams (spell 3150, SPA 27 cancel magic, PB AE)
+          //   :77-98 40% turns the four statues into gargoyles (221043)
           id: 'terris-a', name: 'Terris-Thule (flag)', zone: 'Plane of Nightmare B', npcName: 'Terris Thule',
           callouts: [
             'Requires the 18-man Hedge Maze first. Clear trash to her chamber.',
-            '75%: small adds (some mez).',
+            '79% and 69%: dream defilers, one for EVERY player who has damaged her (pets do not count), so the add count grows with your DPS crowd. The big ones are immune to some spells.',
             '50%: MASS AE DISPEL — all but MT + 2 healers hide behind the wall, wait it out, return.',
-            '~35% (often delayed): 4 Gargoyles — off-tank/kite them and burn Terris.',
+            '40%: 4 Gargoyles — off-tank/kite them and burn Terris.',
             'Kill gargoyles after; hail the Projection.',
           ],
           stats: { hp: '500K (MoTM)', hits: '1100+', slow: 'slowable', ramp: null },
           abilities: [],
           tracker: [
-            { id: 'p75', label: '75% adds' },
+            { id: 'p79', label: '79% defilers' },
+            { id: 'p69', label: '69% defilers' },
             { id: 'p50', label: '50% dispel dodged' },
-            { id: 'p35', label: '35% gargoyles' },
+            { id: 'p40', label: '40% gargoyles' },
             { id: 'boss', label: 'Terris down' },
             { id: 'gargs', label: 'Gargoyles cleared' },
             { id: 'proj', label: 'Projection hailed' },
