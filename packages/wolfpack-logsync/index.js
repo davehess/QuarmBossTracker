@@ -15795,24 +15795,22 @@ function _meRegenFor(cl, now, inCombat) {
 // primary first (Client::Process), so a round with two DIFFERENT verbs names
 // both hands. When both hands share a verb (a monk's punch and punch) nothing
 // can tell them apart, and no hand is claimed.
+// ⚠ The ORDER is the only evidence that one verb is the main hand, so it has to be consistent
+// (FB-107, a monk on a two-hander: crush then punch in 71 rounds and punch then crush in 76 of
+// the same 15 minutes — a coin flip, and the 76 won, so every two-hand blunt hit read "OH").
+// A pairing is claimed only when ONE order carries 80% of the recent mixed rounds; a split
+// order claims nothing (the same honest fallback as two hands sharing a verb).
 const _ME_SWING_RX = /^You (?:try to )?(hit|slash|crush|pierce|punch)\b/;
-const _meSwings = new Map();          // charLower → { rounds: [{ t, lastAt, sec, verbs }], votes }
+const _meSwings = new Map();          // charLower → { rounds: [{ t, lastAt, sec, verbs }] } — the newest 40
 const _meSawAttackGauge = new Set();  // characters whose Zeal has sent gauge 34
 function _meNoteSwing(cl, verb, atMs, sec, secMs) {
   let s = _meSwings.get(cl);
-  if (!s) { s = { rounds: [], votes: new Map() }; _meSwings.set(cl, s); }
+  if (!s) { s = { rounds: [] }; _meSwings.set(cl, s); }
   const last = s.rounds[s.rounds.length - 1];
   if (last && last.sec === sec && atMs - last.lastAt <= 600) {
     last.verbs.push(verb); last.lastAt = atMs;
     if (atMs < last.t) last.t = atMs;
     return;
-  }
-  if (last) {
-    const distinct = [...new Set(last.verbs)];
-    if (distinct.length === 2) {
-      const k = distinct[0] + '|' + distinct[1];
-      s.votes.set(k, (s.votes.get(k) || 0) + 1);
-    }
   }
   s.rounds.push({ t: atMs, lastAt: atMs, sec, secMs: Number.isFinite(secMs) ? secMs : null, verbs: [verb] });
   if (s.rounds.length > 40) s.rounds.shift();
@@ -15871,12 +15869,22 @@ function _meSwingFit(rs) {
   }
   return { period: p0, lastAt: rs[n - 1].t - 250, spread: _ME_SWING_LAG };
 }
-// The hand pairing seen in at least three rounds, and in most of them.
+// The hand pairing seen in at least three of the recent rounds, in one order in 80% of them. Counted
+// over the newest 40 rounds (not since the agent started), so a weapon change stops being read
+// through the old pairing; the newest round may still be filling, so it is not counted.
 function _meHands(s) {
   if (!s) return null;
+  const votes = new Map();
   let best = null, total = 0;
-  for (const [k, n] of s.votes) { total += n; if (!best || n > best[1]) best = [k, n]; }
-  if (!best || best[1] < 3 || best[1] * 2 <= total) return null;
+  for (const r of s.rounds.slice(0, -1)) {
+    const distinct = [...new Set(r.verbs)];
+    if (distinct.length !== 2) continue;
+    const k = distinct[0] + '|' + distinct[1];
+    const n = (votes.get(k) || 0) + 1;
+    votes.set(k, n); total++;
+    if (!best || n > best[1]) best = [k, n];
+  }
+  if (!best || best[1] < 3 || best[1] * 5 < total * 4) return null;
   const [mh, oh] = best[0].split('|');
   return { mh, oh };
 }
