@@ -40,7 +40,7 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     const memoKey = `${share.row.id}|${share.row.from_at}|${share.row.to_at}`;
     let hit = memo.get(memoKey);
     if (!hit || t0 - hit.at >= CACHE_MS) {
-      const kills = await loadTimelineKills(sb, new Date(share.win.fromMs).toISOString(), new Date(share.win.toMs).toISOString(), share.row.guild_id);
+      const kills = await loadTimelineKills(sb, new Date(share.win.fromMs).toISOString(), new Date(share.win.toMs).toISOString(), share.row.guild_id, { guestRaids: true });
       hit = { at: t0, kills };
       memo.delete(memoKey);
       memo.set(memoKey, hit);
