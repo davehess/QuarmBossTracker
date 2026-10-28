@@ -2568,7 +2568,7 @@ window.POP_QUESTS = {
        "plane": "nightmare",
        "who": "solo",
        "must": true,
-       "detail": "He answers as Thelin, and only once your Thelin flag stands at 3: Terris Thule dead and her projection hailed. Before that Adroha says there is no response to be had from Thelin. This hail is the other half of the Torment portal check, with the second Elder Fuirstel visit. His script prints “You receive a character flag!” (no “have”).",
+       "detail": "He answers as Thelin, and only once your Thelin flag stands at 3: Terris Thule dead and her projection hailed. Before that Adroha says there is no response to be had from Thelin. This hail is the other half of the Torment portal check, with the second Elder Fuirstel visit. His script prints “You receive a character flag!” (no “have”). Self-found characters can also bring him a Raw Diamond, Nightmare Mephit Blood and 500 platinum for a Black Diamond of Nightmares.",
        "brief": "Hail Elder Poxbourne once Terris Thule is dead and her projection is hailed. It is half of the Torment portal check.",
        "says": [
         {
@@ -4518,7 +4518,8 @@ window.POP_QUESTS = {
        "who": "raid",
        "must": true,
        "check": true,
-       "detail": "Hail A Planar Projection for the Passkey of the Twelve, then click the door into Plane of Earth B. In Plane of Earth A the projection now flags up to 72 players (it was 54). If you were in the raid or group that made the kill you can still claim it after camping out or changing groups.",
+       "detail": "Hail A Planar Projection for the Passkey of the Twelve, then click the door into Plane of Earth B. In Plane of Earth A the projection now flags up to 72 players (it was 54). If you were in the raid or group that made the kill you can still claim it after camping out or changing groups. Each ring announces its stages to the zone, with a message at the halfway point and near the end of the larger waves. A ring attempt has 98 minutes. If the time runs out, or a guardian the ring needs despawns without being killed, the ring ends with a message and can be tried again after 15 minutes; a Mud Ring that is interrupted resets the same way (server patch 2026-10-28).",
+       "brief": "Clear the four rings, then kill the Arbitor. A ring gets 98 minutes; a failed one can retry in 15.",
        "seq": [
         {
          "kind": "kill",
@@ -4555,7 +4556,8 @@ window.POP_QUESTS = {
        "plane": "earth",
        "who": "raid",
        "must": true,
-       "detail": "Hail Essence of Earth, who appears where the Avatar of Earth falls, to receive the Mound of Living Stone.",
+       "detail": "Hail Essence of Earth, who appears where the Avatar of Earth falls, to receive the Mound of Living Stone. The Council round has no time limit. Once all twelve are down the Avatar spawns with 35 idle minutes (it was 50). The clock stops while it is in combat and does not refill after a wipe, and the Avatar speaks a warning at 20, 10 and 5 minutes left. If the clock runs out the attempt fails and can be tried again after 15 minutes.",
+       "brief": "Kill all twelve, then the Avatar: 35 idle minutes, stopped in combat, never refilled. A failed try can retry in 15.",
        "seq": [
         {
          "kind": "kill",
@@ -4582,7 +4584,7 @@ window.POP_QUESTS = {
        "title": "Optional: the four Essences of Power for a Jade Hoop of Speed or another reward (part 2)",
        "plane": "chains",
        "who": "raid",
-       "detail": "Carry the Tiny Gold Fist: Councilwoman Kerasha answers only while you have it, and checks no flags. Say “essences of power” for a Sacred Bowl. Put in the Essence of Fire (Fennin Ro), Essence of Wind (Xegony), Essence of Water (Coirnav) and Essence of Earth (the Avatar of Earth, the Rathe Council), and combine for Power of the Planes. Each god drops its essence on 40% of kills, one per kill, and you can hold only one of each, so they are a loot call. They are not the four the Plane of Time needs. Give her Power of the Planes for the Jade Hoop of Speed. To change it, hand the reward back for the next one, in this order: Frizzniks Endless Coin Purse, Cord of Invigoration, Mace of the Ancients, Ring of Farsight, then the Hoop again.",
+       "detail": "Carry the Tiny Gold Fist: Councilwoman Kerasha answers only while you have it, and checks no flags. Say “essences of power” for a Sacred Bowl. Put in the Essence of Fire (Fennin Ro), Essence of Wind (Xegony), Essence of Water (Coirnav) and Essence of Earth (the Avatar of Earth, the Rathe Council), and combine for Power of the Planes. Each god now always drops its essence (before the server patch of 2026-10-28 it was only a chance), one per kill, and you can hold only one of each, so they are a loot call. They are not the four the Plane of Time needs. Give her Power of the Planes for the Jade Hoop of Speed. To change it, hand the reward back for the next one, in this order: Frizzniks Endless Coin Purse, Cord of Invigoration, Mace of the Ancients, Ring of Farsight, then the Hoop again.",
        "brief": "Optional. Keep the Fist, combine the four gods’ essences in the bowl, then trade the result for a reward.",
        "says": [
         {
@@ -4681,7 +4683,7 @@ window.POP_QUESTS = {
          "src": "poknowledge/Councilwoman_Kerasha.lua"
         }
        ],
-       "expect": "Solo once you hold all four essences. Getting them is four raid kills at 40% each, so the guild decides who they go to.",
+       "expect": "Solo once you hold all four essences. Getting them is four raid kills, one essence per kill (each god always drops it now), so the guild decides who they go to.",
        "turnIn": [
         {
          "to": {
