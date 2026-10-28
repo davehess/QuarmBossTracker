@@ -12,7 +12,9 @@ Dispatch a single `Explore` subagent with `model: haiku` and give it this task:
 >
 > Read, in this order — earlier files outrank later ones on conflict:
 > 1. `CLAUDE.md` — architecture, release routing, scope boundaries, domain policies
-> 2. `docs/DECISIONS-*.md` — dated decision records, newest first
+> 2. `docs/decisions/` — decisions by feature set: `README.md` (the set list + an ID index for "§N"
+>    citations), `OPEN.md` (what is still waiting), one `<set>.md` per feature set, and `inbox/` (the newest,
+>    not yet merged: read it too). The `docs/DECISIONS-<date>.md` files are only pointers now.
 > 3. `docs/HOW-ITS-BUILT.md` — the feature → file + surface index
 > 4. `docs/STATUS.md` — status ledger and durable queue
 > 5. anything else under `docs/` that matches
