@@ -159,6 +159,34 @@
   /* One ✥ per group: the top-left piece carries it and moves them all. */
   .panel.mvtail .mvbtn{display:none}
 
+  /* ▭ Minimize (the guild lead, 2026-10-28: "have a minimize tab if the window is wide enough, otherwise hover it
+     either over or to the side of ... Make sure you can always read a label of what the button is, even if you have
+     to move it. You can always put a little matching colored line in between if you must."). On every panel, all the
+     time, labelled in words and never shortened. The label sits in the panel's tab when the tab has room (arranging),
+     hugs the panel's top edge when the panel is wide enough (playing), and otherwise floats clear of everything, a
+     2px line in the panel's colour tying it to the panel (placeMin picks the side). The floating one is a <button>
+     with data-wp-interact, so it is on the same hover handshake as the ✥ and the window stays click-through. */
+  #mins{position:fixed;inset:0;z-index:60;pointer-events:none}
+  .minchip{display:none;position:absolute;left:0;top:0;margin:0;padding:0 7px;box-sizing:border-box;height:18px;
+    font:inherit;font-size:11px;line-height:16px;white-space:nowrap;color:#e6edf3;background:rgba(13,17,23,0.92);
+    border:1px solid var(--acc,#58a6ff);border-radius:3px;cursor:pointer;pointer-events:auto;opacity:0.8}
+  .minchip:hover{opacity:1;background:rgba(31,111,235,0.35)}
+  #mins.hold .minchip,#mins.hold .minline{visibility:hidden}
+  /* Playing, the label shows only under the pointer (paintMins adds .hot); arranging, every one shows. Hidden ones keep their
+     place, so the label is where it was the moment it appears, and a hidden one takes no click. */
+  .minchip:not(.hot),.minline:not(.hot){visibility:hidden}
+  .minline{display:none;position:absolute;background:var(--acc,#58a6ff);opacity:0.8;pointer-events:none}
+  .tab .minb{display:none;flex:none;white-space:nowrap;color:#e6edf3;border:1px solid var(--acc,#58a6ff);padding:0 6px}
+  .tab.intab .minb{display:inline}
+  /* Collapsed to its tab: a panel with no mini of its own keeps its page running (a pinned callout lives there) but shows
+     only a strip with its name, in its colour. A group's other pieces step aside; the one ✥-carrying piece is the strip. */
+  .panel.collapsed{overflow:hidden;background:rgba(13,17,23,0.9)!important;border:1px solid var(--acc,#58a6ff)!important;border-radius:4px}
+  .panel.collapsed > iframe,.panel.collapsed > .pbody{visibility:hidden}
+  .panel.collapsed::after{content:attr(data-nm);position:absolute;left:6px;right:6px;top:0;line-height:16px;font-size:11px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#c9d1d9;pointer-events:none}
+  .panel.collapsed > .grip,.panel.collapsed > .edge{display:none!important}
+  .panel.collapsed.mvtail{visibility:hidden}
+
   /* The drag shield: while a panel moves, one screen-sized interactive layer
      keeps the window taking the mouse, so a fast drag that outruns the panel
      still lands its mouseup here instead of in EQ. */
@@ -302,6 +330,7 @@
 </style></head>
 <body data-wp-overlay>
   <div id="panels"></div>
+  <div id="mins"></div>
   <div id="gbox"><span class="ggrip" data-wp-interact title="Drag to size the whole group · Shift: keep its shape">◢</span></div>
   <div id="shield" data-wp-interact></div>
   <div id="bar" data-wp-interact>
@@ -679,6 +708,8 @@
       if (src1.fit === false) o.fit = false;
       // Locked in place: stored only when set (absent = free), for every kind.
       if (src1.lock === true) o.lock = true;
+      // ▭ Minimized (a panel with no mini of its own collapses to its tab): stored only when set, for every kind.
+      if (src1.min === true) o.min = true;
       // Not kept inside the screen: stored only when chosen (absent = kept inside), for every kind.
       if (src1.free === true) o.free = true;
       // Resize corner while playing: stored only when chosen (absent = the ◢ shows only while arranging / editing one).
@@ -894,6 +925,76 @@
     return (stacked ? ['top', 'middle', 'bottom'] : ['left', 'middle', 'right'])[n === 2 ? (i ? 2 : 0) : (i === 0 ? 0 : i === n - 1 ? 2 : 1)];
   }
 
+  // ── ▭ Minimize: where the label goes (pure; test/canvas-minimize.test.js runs it as written) ───────────────
+  // Rects are {x, y, w, h} in canvas pixels. The label ({w, h}) is measured, never shortened: when it does not fit
+  // beside the panel's other controls it moves, it does not shrink.
+  //   panel   the panel's box          label   the control's own size          canvas  {w, h}
+  //   tabRoom the width the panel's tab has left for the label (a panel narrower than its label has none)
+  //   tabBox  while playing, where the control would hug the panel's top edge ({x, y, w, h}); null while the tab shows
+  //   avoid   every other panel, panel control (✥, ✕, tab), toolbar and label already placed: nothing may cover these
+  // Answer: { side: 'tab' | 'right' | 'left' | 'above' | 'below', box, line, boxed }. box is where the label goes (null
+  // for the in-tab control); line is the 2px connector back to the panel (null when the label touches it); boxed is
+  // true when every side was taken and the least-bad one was used.
+  var MIN_GAP = 8, MIN_LINE = 2, MIN_H = 18;
+  function minHit(a, b) { return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h; }
+  function minInside(a, c) { return a.x >= 0 && a.y >= 0 && a.x + a.w <= c.w && a.y + a.h <= c.h; }
+  function minHull(a, b) {
+    if (!b) return a;
+    var x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+    return { x: x, y: y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+  }
+  function minOverlap(a, b) {
+    var w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x), h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    return w > 0 && h > 0 ? w * h : 0;
+  }
+  function placeMin(o) {
+    var pn = o.panel, lb = o.label, cv = o.canvas, avoid = o.avoid || [], G = MIN_GAP;
+    function clear(r) { if (!minInside(r, cv)) return false; for (var i = 0; i < avoid.length; i++) if (minHit(r, avoid[i])) return false; return true; }
+    if (o.tabRoom >= lb.w) {
+      if (!o.tabBox) return { side: 'tab', box: null, line: null, boxed: false };
+      if (clear(o.tabBox)) return { side: 'tab', box: o.tabBox, line: null, boxed: false };
+    }
+    // Beside the panel: below the ✥/✕ that sit on its top corners, kept on the canvas, and the line at a height where the
+    // label and the panel both are, so it meets both. Above or below: the label slides along the edge to stay on the canvas
+    // (the panel's own edge still runs under it), and the line is dropped where the two overlap.
+    var by = Math.max(0, Math.min(pn.y + Math.max(0, Math.min(18, pn.h - lb.h)), cv.h - lb.h));
+    var ly = Math.max(Math.max(pn.y, by), Math.min(Math.min(pn.y + pn.h, by + lb.h) - MIN_LINE, by + Math.floor((lb.h - MIN_LINE) / 2)));
+    var bx = Math.max(0, Math.min(pn.x, cv.w - lb.w));
+    var lx = Math.max(pn.x, bx) + Math.max(0, Math.min(8, Math.min(pn.x + pn.w, bx + lb.w) - Math.max(pn.x, bx) - MIN_LINE));
+    var tries = [
+      { side: 'right', box: { x: pn.x + pn.w + G, y: by, w: lb.w, h: lb.h }, line: { x: pn.x + pn.w, y: ly, w: G, h: MIN_LINE } },
+      { side: 'left',  box: { x: pn.x - G - lb.w, y: by, w: lb.w, h: lb.h }, line: { x: pn.x - G, y: ly, w: G, h: MIN_LINE } },
+      { side: 'above', box: { x: bx, y: pn.y - G - lb.h, w: lb.w, h: lb.h }, line: { x: lx, y: pn.y - G, w: MIN_LINE, h: G } },
+      { side: 'below', box: { x: bx, y: pn.y + pn.h + G, w: lb.w, h: lb.h }, line: { x: lx, y: pn.y + pn.h, w: MIN_LINE, h: G } }
+    ];
+    for (var i = 0; i < tries.length; i++) if (clear(minHull(tries[i].box, tries[i].line))) return { side: tries[i].side, box: tries[i].box, line: tries[i].line, boxed: false };
+    // Boxed in on all four sides: the one that covers the least (and leaves the canvas least), whole label kept.
+    var best = null, bestCost = Infinity;
+    tries.forEach(function (t) {
+      var h = minHull(t.box, t.line), cost = 0;
+      avoid.forEach(function (a) { cost += minOverlap(h, a); });
+      cost += (h.w * h.h - minOverlap(h, { x: 0, y: 0, w: cv.w, h: cv.h })) * 4;
+      if (cost < bestCost) { bestCost = cost; best = t; }
+    });
+    return { side: best.side, box: best.box, line: best.line, boxed: true };
+  }
+  // Which panel's label the pointer is keeping up: zones are [{id, rects:[…]}] (panel, ✥, label + line), later ones win.
+  var MIN_GRACE = 400;
+  function minHot(zones, x, y) {
+    var id = null;
+    (zones || []).forEach(function (z) { if (z.rects.some(function (r) { return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h; })) id = z.id; });
+    return id;
+  }
+  // Whether a label is drawn right now. Placement is the same either way; this only decides if it shows.
+  //   collapsed: the panel is minimized (its ▭ Restore is how it comes back: always)   edit: arranging, or this one being edited
+  //   empty: nothing showing in the panel   hovered: the pointer is on the panel, its ✥ or the label (or just left)
+  function minVisible(s) { return !!s.collapsed || (!s.empty || !!s.edit) && (!!s.edit || !!s.hovered); }
+  // A collapsed panel is just its tab-high strip; one anchored to the bottom keeps its bottom edge.
+  function collapsedBox(p, topPx, up, collapsed) {
+    return collapsed ? { y: up ? topPx + p.h - MIN_H : topPx, h: MIN_H } : { y: topPx, h: p.h };
+  }
+  // ── end ▭ Minimize placement ─────────────────────────────────────────────────
+
   // ── Routing: which panel shows a countdown ──────────────────────────────────
   // Called by every timers part (window.parent.wpCanvasRoute). A timer claimed
   // BY NAME goes to that panel; else to the first panel claiming its group;
@@ -919,6 +1020,7 @@
 
   // ── Panels ──────────────────────────────────────────────────────────────────
   var panelsEl = document.getElementById('panels');
+  var minsEl = document.getElementById('mins');
   var shield = document.getElementById('shield');
   var menuEl = document.getElementById('menu');
   var _els = {};
@@ -974,6 +1076,7 @@
     tab.className = 'tab';
     tab.innerHTML = '<span class="mv">✥</span><span class="lkb" title="Locked in place — its ⚙ unlocks it">🔒</span><span class="nm"></span><span class="what"></span>'
       + '<span class="ctl done" role="button" title="Finish editing this one (Esc does the same)">✓ Done</span>'
+      + '<span class="ctl minb" role="button" data-wp-interact></span>'
       + '<span class="ctl gear" role="button" title="What this panel shows, its text size">⚙</span>'
       + '<span class="ctl x" role="button"></span>';
     // A piece is drawn right here (parts.js); every other panel is a page.
@@ -1012,7 +1115,19 @@
     er.setAttribute('data-wp-interact', ''); eb.setAttribute('data-wp-interact', '');
     er.title = 'Drag to set the width'; eb.title = 'Drag to set the height';
     root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(er); root.appendChild(eb); root.appendChild(mv); root.appendChild(dsm); root.appendChild(whb);
-    var e = { root: root, tab: tab, frame: fr, body: body, grip: grip, mv: mv, whb: whb };
+    // ▭ Minimize, floating: its own button on the hover handshake (data-wp-interact + <button>, both on the armed list),
+    // outside the panel so a locked, click-through panel keeps all of its area for the game. placeMins() decides where.
+    var chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'minchip';
+    chip.setAttribute('data-wp-interact', '');
+    var line = document.createElement('div');
+    line.className = 'minline';
+    minsEl.appendChild(line); minsEl.appendChild(chip);
+    function flip(ev) { ev.stopPropagation(); toggleMin(p.id); }
+    chip.addEventListener('click', flip);
+    tab.querySelector('.minb').addEventListener('click', flip);
+    var e = { root: root, tab: tab, frame: fr, body: body, grip: grip, mv: mv, whb: whb, dsm: dsm, chip: chip, line: line };
     if (fr) fr.addEventListener('load', function () {
       var q = panelById(p.id);
       if (!q) return;
@@ -1061,6 +1176,145 @@
     try { w.dispatchEvent(new w.Event('wp-mini-change')); w.dispatchEvent(new w.Event('resize')); } catch (err) { /* page mid-load */ }
   }
 
+  // ── ▭ Minimize / ▭ Restore, on every panel ──────────────────────────────────────────────────────────────────
+  // An overlay that has a mini rendition (main's _MINI_KEYS) drives that, the same setting its ⚙ menu row, its own
+  // right-click menu, the dashboard and Ctrl+Shift+M change. Any other panel (the trigger parts, a piece, a cut
+  // section, an overlay with no mini) collapses to its tab: `min: true` on the panel, saved with the layout like
+  // its lock or its opacity, and its page keeps running behind the strip. A group's pieces go together.
+  function hasMini(p) { return p.kind === 'overlay' && !!miniOf(p.key); }
+  function isMin(p) { return p.min === true && !hasMini(p); }
+  function minOn(p) { return hasMini(p) ? !!miniOf(p.key).on : isMin(p); }
+  function minLabel(p) { return minOn(p) ? '▭ Restore' : '▭ Minimize'; }
+  function accentOf(p) { return /^#[0-9a-fA-F]{6}$/.test(String(p.color || '')) ? p.color : '#58a6ff'; }
+  // The overlay's own setting (pin: its "Keep mini"); returns main's promise when there is one.
+  function flipMini(p, pin) {
+    var mm = miniOf(p.key);
+    try { return pin ? (M.setOverlayMiniPin && M.setOverlayMiniPin(p.key, !(mm && mm.pin))) : (M.setOverlayMini && M.setOverlayMini(p.key, !(mm && mm.on))); } catch (err) { return null; }
+  }
+  function setMin(p) {
+    var on = !isMin(p);
+    var set = _layout.panels.filter(function (q) { return (q === p || (p.grp && q.grp === p.grp)) && !hasMini(q); });
+    set.forEach(function (q) { if (on) q.min = true; else delete q.min; });
+  }
+  function toggleMin(id) {
+    var p = panelById(id); if (!p) return;
+    if (hasMini(p)) {
+      var done = flipMini(p, false);
+      if (done && done.then) done.then(refresh, function () {});
+      return;
+    }
+    setMin(p); save(); render();
+    if (_menuFor === id && _els[id]) openMenu(id, _menuAnchor || _els[id].root);
+  }
+  // Where each panel's label goes. Recomputed when something moves (a panel's box or class changes, a render, the
+  // canvas resizes) and nowhere else: one pass per frame at most, writes first, then every read, then the writes.
+  var _minsRaf = 0;
+  function scheduleMins() { if (!_minsRaf) _minsRaf = requestAnimationFrame(placeMins); }
+  function elRect(el) { var r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; }
+  function drawn(el) { return !!el && el.getClientRects().length > 0; }
+  // The width the tab keeps for what is not the label: the ✥, 🔒, ✓ Done, ⚙ and ✕ it shows, its padding, and a few letters of the name.
+  function tabFixed(tab) {
+    var w = 14 + 36;
+    Array.prototype.forEach.call(tab.children, function (c) {
+      if (c.classList.contains('nm') || c.classList.contains('what') || c.classList.contains('minb')) return;
+      if (drawn(c)) w += c.offsetWidth + 6;
+    });
+    return w;
+  }
+  function placeMins() {
+    _minsRaf = 0;
+    minsEl.classList.toggle('hold', !!_drag);
+    if (_drag) return;   // a drag moves panels per mouse move; the end of it renders
+    var cv = { w: window.innerWidth, h: window.innerHeight }, live = [], obst = [];
+    var editing = document.body.classList.contains('edit');
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id]; if (!e) return;
+      // Playing, a panel with nothing showing (an empty trigger box, a Timers panel with no rows) gets no label at all.
+      var c = e.root.classList, txt = minLabel(p), show = !p.gone && !p.off && !c.contains('wh') && !c.contains('mvtail') && !(p.kind === 'sect' && c.contains('nodata'))
+        && (editing || _one === p.id || minOn(p) || !c.contains('fitempty'));
+      if (e.chip.textContent !== txt) {
+        e.chip.textContent = txt;
+        e.tab.querySelector('.minb').textContent = txt;
+      }
+      var tip = hasMini(p) ? 'The overlay\'s own mini setting (the same as ⚙ → Mini mode)' : minOn(p) ? 'Bring the panel back' : 'Collapse the panel to its tab';
+      e.chip.title = tip; e.tab.querySelector('.minb').title = tip;
+      e.chip.style.setProperty('--acc', accentOf(p)); e.line.style.setProperty('--acc', accentOf(p)); e.tab.style.setProperty('--acc', accentOf(p));
+      e.chip.style.display = show ? 'block' : 'none';
+      e.line.style.display = 'none';
+      if (show) live.push({ p: p, e: e });
+    });
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id]; if (!e) return;
+      var c = e.root.classList;
+      if (p.gone || p.off || c.contains('wh') || (p.kind === 'sect' && c.contains('nodata')) || (c.contains('collapsed') && c.contains('mvtail'))) return;
+      obst.push({ id: p.id, root: true, r: elRect(e.root) });
+      [e.mv, e.dsm, e.tab].forEach(function (el) { if (drawn(el)) obst.push({ id: p.id, root: false, r: elRect(el) }); });
+    });
+    if (editing) [document.getElementById('bar'), chEl].forEach(function (el) { if (drawn(el)) obst.push({ id: '', root: false, r: elRect(el) }); });
+    var placed = [], plans = [];
+    _minZones = [];
+    live.forEach(function (it) {
+      var e = it.e, pr = elRect(e.root), lb = { w: Math.ceil(e.chip.offsetWidth), h: e.chip.offsetHeight };
+      var tabUp = drawn(e.tab);
+      var hoverTab = !tabUp && editing && it.p.kind === 'part';   // a piece's tab is drawn only under the mouse: its spot is not the label's
+      var avoid = obst.filter(function (o) { return !(o.root && o.id === it.p.id); }).map(function (o) { return o.r; }).concat(placed);
+      var res = placeMin({
+        panel: pr, label: lb, canvas: cv, avoid: avoid,
+        tabRoom: tabUp ? pr.w + 2 - tabFixed(e.tab) - 6 : hoverTab ? 0 : pr.w,
+        tabBox: tabUp ? null : { x: pr.x, y: pr.y - lb.h, w: lb.w, h: lb.h }
+      });
+      if (res.box) placed.push(minHull(res.box, res.line));
+      // Where the pointer keeps the label up while playing: the panel, its ✥, and the label with its line (so the way across is covered).
+      var zone = [pr];
+      if (drawn(e.mv)) zone.push(elRect(e.mv));
+      if (res.box) zone.push(minHull(res.box, res.line));
+      _minZones.push({ id: it.p.id, rects: zone });
+      plans.push({ e: e, res: res });
+    });
+    plans.forEach(function (pl) {
+      var e = pl.e, res = pl.res, inTab = res.side === 'tab' && !res.box;
+      e.tab.classList.toggle('intab', inTab);
+      e.chip.setAttribute('data-side', res.side + (res.boxed ? '-boxed' : ''));
+      if (inTab) { e.chip.style.display = 'none'; return; }
+      e.chip.style.left = Math.round(res.box.x) + 'px'; e.chip.style.top = Math.round(res.box.y) + 'px';
+      if (res.line) {
+        e.line.style.left = Math.round(res.line.x) + 'px'; e.line.style.top = Math.round(res.line.y) + 'px';
+        e.line.style.width = res.line.w + 'px'; e.line.style.height = res.line.h + 'px';
+        e.line.style.display = 'block';
+      }
+    });
+    paintMins();
+  }
+  // Playing, a label shows only while the pointer is over its panel, its ✥ or the label itself, and for MIN_GRACE ms after it
+  // leaves (long enough to cross the gap). Arranging, the one being edited, and a minimized panel's ▭ Restore always show.
+  // Event-driven: the pointer's moves (the page's own, and main's cursor reports) are tested against zones kept from the last
+  // placement, so a move reads no layout and a hide is one timer.
+  var _minZones = [], _hoverId = null, _hoverT = 0;
+  function paintMins() {
+    var editing = document.body.classList.contains('edit');
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id]; if (!e) return;
+      var on = minVisible({ edit: editing || _one === p.id, collapsed: minOn(p), empty: e.root.classList.contains('fitempty'), hovered: _hoverId === p.id });
+      e.chip.classList.toggle('hot', on); e.line.classList.toggle('hot', on);
+    });
+  }
+  function hoverMins(x, y) {
+    var id = minHot(_minZones, x, y);
+    if (id) {
+      clearTimeout(_hoverT); _hoverT = 0;
+      if (id !== _hoverId) { _hoverId = id; paintMins(); }
+    } else if (_hoverId && !_hoverT) {
+      _hoverT = setTimeout(function () { _hoverT = 0; _hoverId = null; paintMins(); }, MIN_GRACE);
+    }
+  }
+  document.addEventListener('mousemove', function (ev) { hoverMins(ev.clientX, ev.clientY); }, true);
+  // Only a panel's own box or class moving matters (its page's insides changing does not), so the watch ignores deeper nodes.
+  try {
+    new MutationObserver(function (ms) {
+      for (var i = 0; i < ms.length; i++) if (ms[i].target.parentNode === panelsEl) { scheduleMins(); return; }
+    }).observe(panelsEl, { attributes: true, attributeFilter: ['class', 'style'], subtree: true });
+  } catch (err) { /* no observer: the render hook still places them */ }
+
   // Same-origin, so the canvas reaches into each part directly: its text
   // size, its stack direction, whether it is being arranged (sample rows),
   // and the card alpha the overlay-wide slider sets.
@@ -1087,13 +1341,15 @@
     // Wider while its page's builder is open, toward the side with room; the page's own part keeps its place.
     // Kept whole on the screen holding its middle (the whole window when there is one screen).
     var wd = _widen[p.id];
-    var f = fitRect(screenList(W, H), Math.round(p.x * W) - (wd && wd.left ? wd.add : 0), Math.round(p.y * H), p.w + (wd ? wd.add : 0), p.h, growsUp(p), isFree(p));
+    // ▭ Minimized: only a tab-high strip is held (a bottom-anchored one keeps its bottom edge); p.h stays what it was.
+    var cb =collapsedBox(p, Math.round(p.y * H), growsUp(p), isMin(p));
+    var f = fitRect(screenList(W, H), Math.round(p.x * W) - (wd && wd.left ? wd.add : 0), cb.y, p.w + (wd ? wd.add : 0), cb.h, growsUp(p), isFree(p));
     var x = f.x, y = f.y, w = f.w, h = f.h;
     e.root.style.left = x + 'px'; e.root.style.top = y + 'px';
     e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
     e.root.classList.toggle('tabin', y < 22);
     e.root.classList.toggle('mvin', x < 18);
-    sizeFrame(e, p, w, h);
+    sizeFrame(e, p, w, isMin(p) ? p.h : h);   // the page behind a strip keeps the layout it had
   }
   // An overlay page lays out at the panel's size ÷ its scale, then is scaled
   // back up, so A+ makes the whole overlay bigger the way its window zoom did.
@@ -1285,6 +1541,9 @@
       e.root.classList.toggle('fitempty', !!_fitEmpty[p.id]);
       e.root.classList.toggle('sel', !!_sel[p.id]);
       e.root.classList.toggle('one', _one === p.id);
+      e.root.classList.toggle('collapsed', isMin(p));
+      e.root.setAttribute('data-nm', p.name || (partDef(p) ? partDef(p).label : p.part || ''));
+      e.root.style.setProperty('--acc', accentOf(p));
       place(e, p);
       e.root.classList.toggle('off', !!p.off);
       if (isEd(p.id)) e.root.setAttribute('data-wp-interact', ''); else e.root.removeAttribute('data-wp-interact');
@@ -1296,7 +1555,7 @@
       applyFrame(e, p);
     });
     Object.keys(_els).forEach(function (id) {
-      if (!keep[id]) { _els[id].root.remove(); delete _els[id]; delete _widen[id]; delete _fitAdd[id]; }
+      if (!keep[id]) { _els[id].root.remove(); _els[id].chip.remove(); _els[id].line.remove(); delete _els[id]; delete _widen[id]; delete _fitAdd[id]; }
     });
     if (_one != null && !_els[_one]) _one = null;   // the item being edited was deleted
     applyWhen();
@@ -1306,6 +1565,7 @@
     renderChooser();
     renderSelbar();
     placeGbox();
+    scheduleMins();
   }
 
   // One ✥ per group (the guild lead, 2026-09-30, FB-40: "Some huds will want to be closer and overlap
@@ -1807,6 +2067,10 @@
       h += '<div class="sec">Mini mode</div><div class="row">'
         + '<button class="btn' + (mini.on ? ' on' : '') + '" data-mini title="The overlay\'s own mini setting: the same one its right-click menu, the dashboard and Ctrl+Shift+M change">▭ Mini mode: ' + (mini.on ? 'ON' : 'off') + '</button>'
         + '<button class="btn' + (mini.pin ? ' on' : '') + '" data-minipin title="Stays mini when Ctrl+Shift+M restores the others">📌 Keep mini: ' + (mini.pin ? 'ON' : 'off') + '</button></div>';
+    } else {
+      // No mini of its own: the panel collapses to its tab (the same control that floats by it).
+      h += '<div class="sec">Minimize</div><div class="row">'
+        + '<button class="btn' + (isMin(p) ? ' on' : '') + '" data-min title="Collapse this panel to its tab; its page keeps running behind it">' + minLabel(p) + '</button></div>';
     }
     // The page's own options (its setup bar's extras: Charm's "recharm warn at"), which the panel hides with the rest of that bar.
     if (p.kind === 'overlay' && pageOptEl(_els[p.id])) {
@@ -2182,15 +2446,13 @@
     else if (t.hasAttribute('data-al')) { stepAlpha(p, Number(t.getAttribute('data-al')) < 0 ? -1 : 1); }
     else if (t.hasAttribute('data-mini') || t.hasAttribute('data-minipin')) {
       // The overlay's own setting, through the same setters as its right-click menu and the dashboard; the canvas hears it back.
-      var mm = miniOf(p.key), isPin = t.hasAttribute('data-minipin');
-      try {
-        var done = isPin ? (M.setOverlayMiniPin && M.setOverlayMiniPin(p.key, !(mm && mm.pin))) : (M.setOverlayMini && M.setOverlayMini(p.key, !(mm && mm.on)));
-        if (done && done.then) done.then(refresh).then(function () {
-          if (_menuFor === p.id && _els[p.id]) openMenu(p.id, _menuAnchor || _els[p.id].root);
-        }, function () {});
-      } catch (err) { /* main gone */ }
+      var done = flipMini(p, t.hasAttribute('data-minipin'));
+      if (done && done.then) done.then(refresh).then(function () {
+        if (_menuFor === p.id && _els[p.id]) openMenu(p.id, _menuAnchor || _els[p.id].root);
+      }, function () {});
       return;
     }
+    else if (t.hasAttribute('data-min')) { setMin(p); }
     else if (t.hasAttribute('data-popt')) {
       var oe = _els[p.id], od = oe && oe.frame && oe.frame.contentDocument;
       if (od && od.body) { var oo = !od.body.classList.contains('wp-opts'); od.body.classList.toggle('wp-opts', oo); oe.root.classList.toggle('opts', oo); }
@@ -2473,7 +2735,7 @@
     var H = window.innerHeight, changed = false;
     _layout.panels.forEach(function (p) {
       var e = _els[p.id];
-      if (!e || p.off || _widen[p.id] || _fitAdd[p.id] || _fitStop[p.id]) return;
+      if (!e || p.off || isMin(p) || _widen[p.id] || _fitAdd[p.id] || _fitStop[p.id]) return;   // a strip's content is not measured: its height is not a fit
       if (!fitOn(p, pdefOf(p))) { if (_fitEmpty[p.id]) { delete _fitEmpty[p.id]; e.root.classList.remove('fitempty'); } return; }
       var need = contentNeed(p, e);
       if (need == null) return;
@@ -3562,6 +3824,7 @@
   document.addEventListener('mouseup', function () { _pressed = 0; }, true);
   try {
     if (M.onCanvasCursor) M.onCanvasCursor(function (p) {
+      hoverMins(p ? p.x : -1, p ? p.y : -1);   // ▭ Minimize shows under the pointer (main reports it where Windows forwards no moves)
       if (_edit || (_pressed && Date.now() - _pressed < 10000)) return;
       if (!p) { if (_panelHot) panelHover(false); return; }   // the cursor left the Canvas window
       pointerOn(document.elementFromPoint(p.x, p.y), p.x, p.y);

@@ -506,6 +506,10 @@ describe('Mini mode: the overlay\'s own setting, shown on its frame', () => {
       const sent = []; let canvasWindow = { isDestroyed() { return false; }, webContents: { send: (ch) => sent.push(ch) } };
       function _live(x) { return !!(x && !x.isDestroyed()); }
       const _MINI_KEYS = ['charm'];
+      const _FOLD_KEYS = [];
+      function _miniCapable(k) { return _MINI_KEYS.includes(k) || _FOLD_KEYS.includes(k); }
+      let _activeCharName = null;
+      function _charStateKey() { return null; } function _charStateNote() {}
       let CFG = {}; function loadConfig() { return JSON.parse(JSON.stringify(CFG)); } function saveConfig(x) { CFG = x; }
       let _miniAllActive = false, _miniAllPrev = null;
       function _overlayEntries() { return []; } function pushStatus() {}
@@ -647,6 +651,8 @@ describe('⚙: the real click handler reaches every control', () => {
         function openMenu() { log.opened++; } function closeMenu() {}
         function note(m) { log.notes.push(m); }
         function miniOf() { return globalThis.__t_mini; }
+        function setMin() {}
+        ${slice('  function flipMini(p, pin) {', '\n  }\n')}
         function refresh() { return Promise.resolve(); }
         function fitWidth(p, e, W) { log.fitw.push([p.id, W]); return !isLocked(p); }
         var WpSizes = globalThis.__t_sizes;

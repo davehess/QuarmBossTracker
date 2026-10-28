@@ -89,6 +89,7 @@ describe('dashboard: mini mode on the Overlays page', () => {
     // Option C (2026-09-29): the switch and the 📌 sit in the row's controls under On screen now.
     const code = stripJs(dash);
     expect(code).toContain("? '<button type=\"button\" class=\"wp-ov-mini\" data-mini=\"' + miniKey + '\">…</button>'");
+    expect(code).toContain("+ (WP_MINI_KEY_OF[key] ? '<button type=\"button\" class=\"wp-ov-pin\"");   // the 📌 is the nine's alone (the fold overlays have none)
     expect(code).toContain("+ '<span class=\"wp-ovctl\">' + topCell + dockCell + miniCell + '</span>'");   // 🔝 Stay on top leads (2026-10-13)
   });
 
@@ -100,7 +101,7 @@ describe('dashboard: mini mode on the Overlays page', () => {
     expect(d).toContain("_wpWireHotkeyRow('wpMiniHotkey', 'miniHotkey', 'miniHotkeyEnabled', 'CommandOrControl+Shift+M');");
     const m = stripJs(mainRaw);
     expect(m).toMatch(/ipcMain\.handle\('wp-mini-pin-set', \(_e, name, on\) => \{\s*if \(!_MINI_KEYS\.includes\(name\)\) return null;/);
-    for (const f of ['miniCapable: _MINI_KEYS.slice(),', 'overlayMini: Object.assign(', 'overlayMiniPinned: Object.assign(', 'miniAllActive: !!_miniAllActive,']) expect(m).toContain(f);
+    for (const f of ['miniCapable: _MINI_KEYS.concat(_FOLD_KEYS),','overlayMini: Object.assign(', 'overlayMiniPinned: Object.assign(', 'miniAllActive: !!_miniAllActive,']) expect(m).toContain(f);
   });
 });
 

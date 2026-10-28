@@ -25718,6 +25718,11 @@ var WP_OVERLAY_BLURB = {
 // nine with a mini rendition; the pet tracker is 'pets' there.
 var WP_MINI_KEY_OF = { hud: 'hud', tank: 'tank', mobinfo: 'mobinfo', chchain: 'chchain', charm: 'charm',
   exttarget: 'exttarget', pet: 'pets', popraid: 'popraid', buffQueue: 'buffQueue' };
+// …and the overlays with NO designed mini, which fold to their title row instead (main.js _FOLD_KEYS; the guild lead,
+// 2026-10-28: "everything can minimize"). Same switch, same IPC; no 📌, because Minimize ALL (Ctrl+Shift+M) never
+// reaches them — folding the alerts window mid-raid would hide the callouts.
+var WP_FOLD_KEY_OF = { trigger: 'trigger', who: 'who', chat: 'chat', melody: 'melody', zeal: 'zeal', threat: 'threat',
+  command: 'command', me: 'me', map: 'map', maptimers: 'maptimers' };
 
 function renderOverlays(s) {
   let h = '';
@@ -25810,10 +25815,10 @@ function renderOverlays(s) {
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
     // Mini-mode overlays in here. Those need to go in") — the same switch and
     // 📌 as the overlay's right-click menu, for the nine that have a mini.
-    var miniKey = WP_MINI_KEY_OF[key];
+    var miniKey = WP_MINI_KEY_OF[key] || WP_FOLD_KEY_OF[key];
     var miniCell = miniKey
       ? '<button type="button" class="wp-ov-mini" data-mini="' + miniKey + '">…</button>'
-        + '<button type="button" class="wp-ov-pin" data-mini="' + miniKey + '" title="Keep it mini when Minimize ALL restores the rest">📌</button>'
+        + (WP_MINI_KEY_OF[key] ? '<button type="button" class="wp-ov-pin" data-mini="' + miniKey + '" title="Keep it mini when Minimize ALL restores the rest">📌</button>' : '')
       : '';
     // 🔝 Stay on top (the guild lead, 2026-10-13: "Other apps should be able to draw over the overlays automatically,
     // unless specifically set to stay on top"): the same switch as the overlay's right-click menu. The dashboard's
@@ -35165,7 +35170,7 @@ const COMMAND_HTML = `<!doctype html>
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span aria-hidden>🎛</span><span>Command Center</span><span class="who" id="who"></span></div>
+    <div class="title"><span aria-hidden>🎛</span><span data-wp-name>Command Center</span><span class="who" id="who"></span></div>
     <div id="content"></div>
   </div>
 <script>
