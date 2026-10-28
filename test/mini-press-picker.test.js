@@ -13,7 +13,7 @@
 //
 // Run: npx vitest run test/mini-press-picker.test.js
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { readSource, sliceBlock, evalBlock, stripJs, ROOT } from './_source-slice.js';
@@ -425,5 +425,169 @@ describe('every overlay folds through the one mini path', () => {
     expect(p).toContain('body.wp-fold .wp-fold-hide{display:none !important}');
     // main tells the page whether to fold or use the page's own designed mini
     expect(m).toContain("win.webContents.send('wp-mini', { key, mini: !!on, fold });");
+  });
+});
+
+// ── a minimized window stays draggable and resizable (the guild lead, 2026-10-28) ──────────────────────────────────
+// "minimized overlays need to be draggable and resizable still." The rule these hold:
+//   • FOLDED (one title row tall): moves like any window; resizes in WIDTH alone, the height stays the row; neither a move
+//     nor a resize corrupts the height it unfolds to, and a height pulled on it is never saved as a floor.
+//   • DESIGNED MINI: moves and resizes both ways, and the height dragged on it is its OWN floor (<key>MiniFloor), so the
+//     full-size floor is neither overwritten by it nor holds the mini open tall.
+//   • The name press never swallows a ✥ or ◢ press.
+describe('a folded window: move, resize, unfold', () => {
+  const { _foldWindow } = evalBlock(sliceBlock(main, 'function _foldWindow(win, on) {', '\n}\n'), ['_foldWindow']);
+  const { _applyBounds } = evalBlock(
+    'const _displaySettleUntil = 0; const _screenSignature = () => "sig"; const _rememberLayout = (cfg, sig, key, b) => { cfg.__remembered = b; };\n'
+    + sliceBlock(main, 'function _atLoan(b, stash) {', '\n}\n') + '\n'
+    + sliceBlock(main, 'function _settledBounds(b, stash) {', '\n}\n') + '\n'
+    + sliceBlock(main, 'function _applyBounds(cfg, key, win) {', '\n}\n'), ['_applyBounds']);
+  const fakeWin = (bounds, min) => {
+    const w = {
+      b: { ...bounds }, min: min.slice(),
+      isDestroyed: () => false, getBounds: () => ({ ...w.b }), setBounds: (n) => { w.b = { ...n }; },
+      getMinimumSize: () => w.min.slice(), setMinimumSize: (a, h) => { w.min = [a, h]; },
+    };
+    return w;
+  };
+  it('moved and widened while folded, it saves its place and width but the height it will unfold to', () => {
+    const win = fakeWin({ x: 100, y: 100, width: 300, height: 400 }, [200, 120]);
+    _foldWindow(win, true);
+    win.b = { x: 900, y: 60, width: 520, height: 32 };            // a ✥ drag and a width drag, the page holding the row height
+    const cfg = {};
+    _applyBounds(cfg, 'whoBounds', win);
+    expect(cfg.whoBounds).toEqual({ x: 900, y: 60, width: 520, height: 400 });
+    expect(cfg.__remembered.height).toBe(400);                    // the per-screen layout memory is not corrupted either
+  });
+  it('unfolding after a move and a resize keeps the new place and width, and gives the 400 back', () => {
+    const win = fakeWin({ x: 100, y: 100, width: 300, height: 400 }, [200, 120]);
+    _foldWindow(win, true);
+    win.b = { x: 900, y: 60, width: 520, height: 32 };
+    _foldWindow(win, false);
+    expect(win.b).toEqual({ x: 900, y: 60, width: 520, height: 400 });
+    expect(win.min).toEqual([200, 120]);                          // and its own minimum comes back with it
+  });
+  it('a height "resize" that left it at the row changes nothing it unfolds to, and a repeat fold push keeps the first height', () => {
+    const win = fakeWin({ x: 0, y: 0, width: 300, height: 250 }, [200, 100]);
+    _foldWindow(win, true);
+    win.b.height = 40; _foldWindow(win, true);
+    expect(win.__wpFoldPrev.h).toBe(250);
+    _foldWindow(win, false);
+    expect(win.b.height).toBe(250);
+  });
+  it('a height pulled on a folded window (a native edge in setup) is no floor: the row height is asked for again, exactly, once the pull is quiet', () => {
+    vi.useFakeTimers();
+    try {
+      globalThis.__commits = [];
+      const { _noteUserResize } = evalBlock(
+        'const _boundsKeyForWindow = () => "whoBounds"; const _commitFloor = () => { globalThis.__commits.push(1); };\n'
+        + sliceBlock(main, 'function _noteUserResize(win, nb) {', '\n}\n'), ['_noteUserResize']);
+      const sent = [];
+      const win = { __wpFolded: true, __wpHeightMode: 'fit', isDestroyed: () => false, getBounds: () => ({ height: 32 }), webContents: { send: (c) => sent.push(c) } };
+      for (let i = 0; i < 20; i++) { _noteUserResize(win, { height: 32 + i * 10 }); vi.advanceTimersByTime(16); }
+      expect(sent).toEqual([]);                                   // still pulling
+      vi.advanceTimersByTime(400);
+      expect(sent).toEqual(['wp-refit']);                         // one refit, not one per step
+      expect(win.__wpFitNowAt).toBeGreaterThan(0);                // taken exactly, however small the shrink back is
+      expect(win.__wpResizeGesture).toBeUndefined();              // no gesture was opened, so no floor can be committed
+      expect(globalThis.__commits).toEqual([]);
+      // the same call on an UNFOLDED fit window still opens a gesture and commits a floor
+      const open = { __wpHeightMode: 'fit', isDestroyed: () => false, getBounds: () => ({ height: 200 }), webContents: { send: () => {} } };
+      _noteUserResize(open, { height: 300 });
+      expect(open.__wpResizeGesture).toBeTruthy();
+      vi.advanceTimersByTime(400);
+      expect(globalThis.__commits).toEqual([1]);
+    } finally { vi.useRealTimers(); delete globalThis.__commits; }
+  });
+  it('the refit is not sent to a window that has unfolded or closed meanwhile', () => {
+    vi.useFakeTimers();
+    try {
+      const { _noteUserResize } = evalBlock(
+        'const _boundsKeyForWindow = () => "whoBounds"; const _commitFloor = () => {};\n' + sliceBlock(main, 'function _noteUserResize(win, nb) {', '\n}\n'), ['_noteUserResize']);
+      const sent = [];
+      const win = { __wpFolded: true, isDestroyed: () => false, webContents: { send: (c) => sent.push(c) } };
+      _noteUserResize(win, { height: 90 });
+      win.__wpFolded = false;
+      vi.advanceTimersByTime(500);
+      expect(sent).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('a designed mini keeps its own height floor', () => {
+  function rig() {
+    const cfg = {};
+    const sig = { v: 'S1' };
+    globalThis.__rig = { cfg, sig };
+    const f = evalBlock(
+      'const loadConfig = () => globalThis.__rig.cfg; const saveConfig = () => {}; const _screenSignature = () => globalThis.__rig.sig.v;\n'
+      + 'const _boundsKeyForWindow = () => "whoBounds";\n'
+      + sliceBlock(main, 'const _FLOOR_OTHER_MAX = 5;', '  win[_floorSlot(win)] = next;\n}'), ['_heightFloorFor', '_setFloor', '_floorSlot', '_floorField']);
+    return { cfg, ...f };
+  }
+  it('the slot and the config field follow win.__wpMini', () => {
+    const { _floorSlot, _floorField } = rig();
+    expect(_floorSlot({})).toBe('__wpFloor');
+    expect(_floorField({}, 'whoBounds')).toBe('whoBoundsFloor');
+    expect(_floorSlot({ __wpMini: true })).toBe('__wpMiniFloor');
+    expect(_floorField({ __wpMini: true }, 'whoBounds')).toBe('whoBoundsMiniFloor');
+  });
+  it('a height dragged on a mini is the mini\'s floor and leaves the full-size one alone, both ways round', () => {
+    const { cfg, _heightFloorFor, _setFloor } = rig();
+    const win = {};
+    _setFloor(win, 'whoBounds', 400);                              // dragged tall at full size
+    expect(_heightFloorFor(win)).toBe(400);
+    win.__wpMini = true;                                           // minimized: the tall floor does not hold the mini open
+    expect(_heightFloorFor(win)).toBe(0);
+    _setFloor(win, 'whoBounds', 120);                              // dragged on the mini
+    expect(_heightFloorFor(win)).toBe(120);
+    expect(cfg.whoBoundsMiniFloor.h).toBe(120);
+    expect(cfg.whoBoundsFloor.h).toBe(400);                        // the full-size floor is untouched
+    win.__wpMini = false;                                          // un-minimized: the 400 is back, the 120 is not what it sizes to
+    expect(_heightFloorFor(win)).toBe(400);
+    _setFloor(win, 'whoBounds', 0);                                // ↕ Fit height at full size clears only the full-size floor
+    expect(cfg.whoBoundsFloor).toBeUndefined();
+    expect(cfg.whoBoundsMiniFloor.h).toBe(120);
+  });
+  it('main tells the window it is mini on every flip and on the load pull, before its first fit', () => {
+    expect(m).toMatch(/try \{ if \(win\) win\.__wpMini = !!on; \} catch/);
+    expect(sliceBlock(m, "ipcMain.handle('wp-mini-state'", '\n});')).toMatch(/win\.__wpMini = mini;/);
+  });
+  it('a folded window reads and records no floor at all (overlay-auto-height, _noteUserResize)', () => {
+    expect(sliceBlock(m, "ipcMain.handle('overlay-auto-height'", '\n});')).toContain('if (!win.__wpFolded) wanted = Math.round(Math.max(wanted, _heightFloorFor(win)));');
+    expect(sliceBlock(m, 'function _noteUserResize(win, nb) {', '\n}\n')).toMatch(/if \(win && win\.__wpFolded\) \{[\s\S]*?return;\s*\}/);
+  });
+});
+
+describe('the name press never takes a ✥ or ◢ press', () => {
+  const press = sliceBlock(p, "document.addEventListener('DOMContentLoaded', function () {\n  try {\n    if (WP_IS_DOCKED || !_wpOverlayDoc()) return;\n    let host = null;", "_wpOpenPicker();\n    }, true);\n  } catch (e) {}\n});");
+  it('listens only for the name and its stand-in chip, and stops nothing except the name\'s own right-click', () => {
+    expect(press).toContain("ev.target.closest('[data-wp-name],.wp-name-proxy')");
+    expect(press).not.toMatch(/stopPropagation|stopImmediatePropagation|setPointerCapture/);
+    expect((press.match(/preventDefault/g) || []).length).toBe(1);
+    expect(press).toMatch(/addEventListener\('contextmenu', function \(ev\) \{\s*if \(!target\(ev\)\) return;\s*ev\.preventDefault\(\);/);
+    for (const ev of ['mousedown', 'mousemove', 'mouseup']) {
+      const at = press.indexOf("addEventListener('" + ev + "'");
+      expect(at, ev).toBeGreaterThan(-1);
+      expect(press.slice(at, press.indexOf('}, true);', at)), ev).not.toMatch(/preventDefault/);
+    }
+  });
+  it('on every overlay page the ✥ and the ✕ are closed, siblings of the name and before it: the name never contains them', () => {
+    for (const f of OVERLAY_PAGES) {
+      const html = fs.readFileSync(path.join(mimicDir, f), 'utf8');
+      const name = html.search(/<[a-z][^>]*\sdata-wp-name(?=[\s>=])/);
+      expect(name, f).toBeGreaterThan(-1);
+      for (const id of ['move-btn', 'hide-btn']) {
+        const open = html.indexOf('<button id="' + id + '"');
+        expect(open, f + ' ' + id).toBeGreaterThan(-1);
+        expect(html.indexOf('</button>', open), f + ' ' + id).toBeLessThan(name);
+      }
+    }
+  });
+  it('a folded window\'s chip starts right of the ✥ (6 + 18) and leaves the ✕ and the width strip clear at the right', () => {
+    const chip = p.match(/body\.wp-fold \.wp-name-chip\{top:6px !important;bottom:auto !important;left:(\d+)px !important\}/);
+    expect(chip).not.toBeNull();
+    expect(+chip[1]).toBeGreaterThanOrEqual(6 + 18);
+    expect(p).toContain('max-width:calc(100% - 64px)');            // 28 from the left + 64 → 36px free on the right, past the ✕ (6 + 18)
   });
 });

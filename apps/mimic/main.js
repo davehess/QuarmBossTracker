@@ -1563,25 +1563,34 @@ function _startWindowResize(win) {
     if (s.win.isDestroyed() || Date.now() - s.startedAt > 30_000) { _stopWindowDrag(); return; }
     try {
       const cur = screen.getCursorScreenPoint(), wa = screen.getDisplayMatching(b0).workArea;
-      const nb = {
-        x: b0.x, y: b0.y,
-        width:  Math.max(120, Math.min(wa.x + wa.width - b0.x,  b0.width  + cur.x - c0.x)),
-        height: Math.max(60,  Math.min(wa.y + wa.height - b0.y, b0.height + cur.y - c0.y)),
-      };
+      const nb = _resizeBounds(b0, cur.x - c0.x, cur.y - c0.y, wa, !!s.win.__wpFolded);
       _noteUserResize(s.win, nb);
       s.win.setBounds(nb);
     } catch {}
   }, 16);
 }
+// The ◢ grip's size for a cursor travel of (dx, dy) from b0: top-left fixed, kept inside the screen's work area, 120x60
+// at the least. A FOLDED window (▭ Fold) is its title row tall on purpose, so it sizes in width alone: the height stays
+// the row's, and the 60px floor that would stretch a 32px window on the first step does not apply (the guild lead,
+// 2026-10-28: "minimized overlays need to be draggable and resizable still"). Pure, so a test can run it.
+function _resizeBounds(b0, dx, dy, wa, folded) {
+  return {
+    x: b0.x, y: b0.y,
+    width:  Math.max(120, Math.min(wa.x + wa.width - b0.x, b0.width + dx)),
+    height: folded ? b0.height : Math.max(60, Math.min(wa.y + wa.height - b0.y, b0.height + dy)),
+  };
+}
 // The top-right grip a grow-upward overlay gets (the guild lead, 2026-10-14: "when grow upwards is on, we should be
 // able to drag the top right corner of overlays while not hitting the X button"). A grow-upward overlay is parked
 // by its BOTTOM edge, so that edge and the left edge stay put: the cursor's right/up travel widens the window and
 // raises its top. Pure, so the bottom-edge rule and the minimums are testable. `min` is the window's own minimum
-// size where it sets one; the floor of 120x60 is the same one the bottom-right grip uses.
-function _resizeUpBounds(b0, dx, dy, wa, min) {
+// size where it sets one; the floor of 120x60 is the same one the bottom-right grip uses. `folded` (▭ Fold): width alone,
+// the window keeps the row's height and both its edges (see _resizeBounds).
+function _resizeUpBounds(b0, dx, dy, wa, min, folded) {
   const bottom = b0.y + b0.height;
   const minW = Math.max(120, (min && min.width) || 0), minH = Math.max(60, (min && min.height) || 0);
   const width  = Math.max(minW, Math.min(wa.x + wa.width - b0.x, b0.width + dx));
+  if (folded) return { x: b0.x, y: b0.y, width, height: b0.height };
   const height = Math.max(minH, Math.min(bottom - wa.y,          b0.height - dy));
   return { x: b0.x, y: bottom - height, width, height };
 }
@@ -1598,7 +1607,7 @@ function _startWindowResizeUp(win) {
     if (s.win.isDestroyed() || Date.now() - s.startedAt > 30_000) { _stopWindowDrag(); return; }
     try {
       const cur = screen.getCursorScreenPoint(), wa = screen.getDisplayMatching(b0).workArea;
-      const nb = _resizeUpBounds(b0, cur.x - c0.x, cur.y - c0.y, wa, { width: mw, height: mh });
+      const nb = _resizeUpBounds(b0, cur.x - c0.x, cur.y - c0.y, wa, { width: mw, height: mh }, !!s.win.__wpFolded);
       _noteUserResize(s.win, nb);
       s.win.setBounds(nb);
     } catch {}
@@ -5294,26 +5303,46 @@ function _floorWith(prev, sig, h) {
 // every page tick and the config read is a file read.
 function _heightFloorFor(win) {
   try {
-    if (win.__wpFloor === undefined) {
+    const slot = _floorSlot(win);
+    if (win[slot] === undefined) {
       const key = _boundsKeyForWindow(win);
-      win.__wpFloor = (key && loadConfig()[key + 'Floor']) || null;
+      win[slot] = (key && loadConfig()[_floorField(win, key)]) || null;
     }
-    return _floorFor(win.__wpFloor, _screenSignature());
+    return _floorFor(win[slot], _screenSignature());
   } catch { return 0; }
 }
+// A designed mini (win.__wpMini, set by _sendOverlayMini) is a different SHAPE of window, so the height dragged on it is
+// its own floor (<key>MiniFloor, cached as __wpMiniFloor) and the full-size floor is neither read nor overwritten there.
+// Without the split a height dragged on a mini became the full-size floor the moment it unminimized, and the full-size
+// floor held the mini open at its tall height (the guild lead, 2026-10-28: "minimized overlays need to be draggable and
+// resizable still"). A folded window records and reads neither (see _noteUserResize, overlay-auto-height).
+function _floorSlot(win) { return win && win.__wpMini ? '__wpMiniFloor' : '__wpFloor'; }
+function _floorField(win, key) { return key + (win && win.__wpMini ? 'MiniFloor' : 'Floor'); }
 function _setFloor(win, key, h) {
-  const cfg = loadConfig();
-  const next = _floorWith(cfg[key + 'Floor'], _screenSignature(), h);
-  if (next) cfg[key + 'Floor'] = next;
-  else delete cfg[key + 'Floor'];
+  const cfg = loadConfig(), field = _floorField(win, key);
+  const next = _floorWith(cfg[field], _screenSignature(), h);
+  if (next) cfg[field] = next;
+  else delete cfg[field];
   saveConfig(cfg);
-  win.__wpFloor = next;
+  win[_floorSlot(win)] = next;
 }
 // A drag ends when 'will-resize' has been quiet for 400 ms (the bounds save's
 // debounce). startH is the height before the gesture's first step: a drag that
 // left the height where it was (an edge pulled sideways) sets no floor.
 function _noteUserResize(win, nb) {
   try {
+    // A folded window (▭ Fold) is one row tall by design: a height pulled on it (a native edge in setup; the grips pin
+    // theirs) is no height choice and must never become a floor, or it would hold the window open once it unfolds. Its
+    // width is a choice and is saved with the bounds. The height goes back to the row when the gesture is quiet, through
+    // the same exact refit ↕ Fit height uses.
+    if (win && win.__wpFolded) {
+      clearTimeout(win.__wpRefoldT);
+      win.__wpRefoldT = setTimeout(() => {
+        win.__wpRefoldT = null;
+        try { if (!win.isDestroyed() && win.__wpFolded) { win.__wpFitNowAt = Date.now(); win.webContents.send('wp-refit'); } } catch { /* mid-close */ }
+      }, 400);
+      return;
+    }
     if (!nb || win.__wpHeightMode !== 'fit' || !_boundsKeyForWindow(win)) return;
     const g = win.__wpResizeGesture || (win.__wpResizeGesture = { startH: win.getBounds().height, lastH: 0, timer: null });
     g.lastH = nb.height;
@@ -12001,6 +12030,7 @@ function _miniPinSetting(cfg, key) {
 // resets itself every time an overlay is re-enabled.
 function _sendOverlayMini(key, win, on) {
   const fold = _FOLD_KEYS.includes(key);
+  try { if (win) win.__wpMini = !!on; } catch { /* window mid-close */ }   // which height floor the window reads (_floorSlot)
   if (fold) _foldWindow(win, !!on);
   try { win.webContents.send('wp-mini', { key, mini: !!on, fold }); } catch { /* window mid-close */ }
 }
@@ -12698,7 +12728,9 @@ ipcMain.handle('wp-mini-state', (e) => {
   let key = null;
   for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
   if (!_miniCapable(key)) return { key, mini: false, capable: false };
-  return { key, mini: _miniSetting(loadConfig(), key), capable: true, fold: _FOLD_KEYS.includes(key) };
+  const mini = _miniSetting(loadConfig(), key);
+  try { win.__wpMini = mini; } catch { /* window mid-close */ }   // a window that comes up mini reads the mini floor from its first fit
+  return { key, mini, capable: true, fold: _FOLD_KEYS.includes(key) };
 });
 // Dashboard-driven flip (Overlays tab). Named rather than sender-derived,
 // because the caller is the dashboard window, not the overlay.

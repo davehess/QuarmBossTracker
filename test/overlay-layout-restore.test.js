@@ -82,7 +82,7 @@ describe('a window being built (_resolveBounds)', () => {
 });
 
 // ── 3. the dragged height is kept per screen setup ───────────────────────────────────────────────────────────────────
-const floorSrc = sliceBlock(MAIN, 'const _FLOOR_OTHER_MAX = 5;', '  win.__wpFloor = next;\n}');
+const floorSrc = sliceBlock(MAIN, 'const _FLOOR_OTHER_MAX = 5;', '  win[_floorSlot(win)] = next;\n}');
 function floorEnv(initialCfg, sig) {
   const state = { cfg: JSON.parse(JSON.stringify(initialCfg || {})), sig };
   // eslint-disable-next-line no-new-func

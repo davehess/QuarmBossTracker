@@ -28,7 +28,7 @@ const canvas = readSource(mimic('canvas.html'));
 const c = stripJs(canvas);
 
 const PURE = sliceBlock(canvas, '  var MIN_GAP = 8', '  // ── end ▭ Minimize placement');
-const { placeMin, collapsedBox, minHot, minVisible, MIN_GRACE, MIN_H, MIN_GAP, MIN_LINE } = evalBlock(PURE + '\n', ['placeMin', 'collapsedBox', 'minHot', 'minVisible', 'MIN_GRACE', 'MIN_H', 'MIN_GAP', 'MIN_LINE']);
+const { placeMin, collapsedBox, topFromBox, sizeStart, minHot, minVisible, MIN_GRACE, MIN_H, MIN_GAP, MIN_LINE } = evalBlock(PURE + '\n', ['placeMin', 'collapsedBox', 'topFromBox', 'sizeStart', 'minHot', 'minVisible', 'MIN_GRACE', 'MIN_H', 'MIN_GAP', 'MIN_LINE']);
 
 const CV = { w: 1920, h: 1080 };
 const LB = { w: 92, h: 18 };   // "▭ Minimize" at 11px, measured by the page; the rule only ever sees the number
@@ -330,5 +330,64 @@ describe('playing: a label shows only under the pointer (the guild lead\'s clutt
     expect(body).toMatch(/\(editing \|\| _one === p\.id \|\| minOn\(p\) \|\| !c\.contains\('fitempty'\)\)/);
     expect(body).not.toMatch(/_hoverId/);
     expect(body).toMatch(/_minZones\.push\(/);
+  });
+});
+
+// ── a minimized strip is still movable and resizable (the guild lead, 2026-10-28: "minimized overlays need to be draggable
+// and resizable still") ──────────────────────────────────────────────────────────────────────────────────────────────
+// Measured on the real page in Chromium first: with the strip's overflow:hidden the ✥ (just outside its left edge) was not
+// what a click at its position hit, a ✥ drag moved nothing, and the ◢ was display:none. What is held here:
+//   • nothing clips the ✥, the tab or the dismiss ✕ of a strip; the ◢ stays (width cursor), the full-box edges do not;
+//   • a ✥ drag of a BOTTOM-anchored strip saves the panel's top, not the strip's (topFromBox, the inverse of collapsedBox);
+//   • a size press on a strip works in width alone, from the height the page behind it keeps.
+describe('a minimized strip can be moved and sized', () => {
+  const css = stripCss(canvas);
+  function stripCss(src) { return src.replace(/\/\*[\s\S]*?\*\//g, ''); }
+  const rule = (sel) => { const at = css.indexOf(sel + '{'); return at < 0 ? null : css.slice(at, css.indexOf('}', at)); };
+  it('the strip does not clip what hangs outside it, and the name clips itself', () => {
+    expect(rule('.panel.collapsed')).not.toBeNull();
+    expect(rule('.panel.collapsed')).not.toMatch(/overflow/);
+    expect(rule('.panel.collapsed::after')).toMatch(/overflow:hidden;text-overflow:ellipsis/);
+  });
+  it('the ◢ is no longer hidden on a strip (the edges, drawn for a full box, still are)', () => {
+    expect(css).toMatch(/\.panel\.collapsed > \.edge\{display:none!important\}/);
+    expect(css).not.toMatch(/\.panel\.collapsed > \.grip[^{]*\{[^}]*display:none/);
+    expect(css).toMatch(/\.panel\.collapsed:not\(\.plock\) > \.grip\{cursor:ew-resize!important\}/);   // a locked one keeps not-allowed
+  });
+  it('topFromBox undoes collapsedBox for every anchor, height and position', () => {
+    for (const up of [false, true]) for (const h of [18, 60, 240, 700]) for (const top of [-90, 0, 300, 812]) {
+      const p = { h };
+      const box = collapsedBox(p, top, up, true);
+      expect(topFromBox(p, box.y, up, true)).toBe(top);
+    }
+  });
+  it('an unminimized panel saves exactly where it was dropped, and a top-anchored strip does too', () => {
+    expect(topFromBox({ h: 240 }, 410, true, false)).toBe(410);
+    expect(topFromBox({ h: 240 }, 410, false, true)).toBe(410);
+    expect(topFromBox({ h: 240 }, 410, false, false)).toBe(410);
+  });
+  it('a bottom-anchored strip dragged 60px down saves a top 60px lower (it used to save the strip\'s top and jump p.h - 18 on the next draw)', () => {
+    const p = { h: 200 }, top = 280;
+    const strip = collapsedBox(p, top, true, true);                       // y = 462
+    const dropped = strip.y + 60;
+    const saved = topFromBox(p, dropped, true, true);
+    expect(saved).toBe(top + 60);
+    expect(collapsedBox(p, saved, true, true).y).toBe(dropped);           // redrawn where it was dropped
+  });
+  it('sizeStart: a size press on a strip is width-only from the page\'s height; everything else starts from the box as drawn', () => {
+    expect(sizeStart({ h: 200 }, true, 'size', '', 18)).toEqual({ axis: 'x', h0: 200 });
+    expect(sizeStart({ h: 200 }, true, 'size', 'y', 18)).toEqual({ axis: 'x', h0: 200 });
+    expect(sizeStart({ h: 200 }, true, 'move', '', 18)).toEqual({ axis: '', h0: 18 });
+    expect(sizeStart({ h: 200 }, false, 'size', '', 150)).toEqual({ axis: '', h0: 150 });
+    expect(sizeStart({ h: 200 }, false, 'size', 'y', 150)).toEqual({ axis: 'y', h0: 150 });
+    expect(sizeStart(null, false, 'size', undefined, 150)).toEqual({ axis: '', h0: 150 });
+  });
+  it('the drag path uses them: the press, the strip\'s own height kept while sizing, and both saves', () => {
+    expect(c).toMatch(/ss = sizeStart\(dq, !!dq && isMin\(dq\), mode, axis, e\.root\.offsetHeight\)/);
+    expect(c).toMatch(/if \(!\(dp && isMin\(dp\)\)\) e\.root\.style\.height = h \+ 'px';/);
+    expect(c).toMatch(/q\.y = topFromBox\(q, m\.y, growsUp\(q\), isMin\(q\)\) \/ window\.innerHeight/);
+    expect(c).toMatch(/p\.y = topFromBox\(p, d\.y, growsUp\(p\), isMin\(p\)\) \/ window\.innerHeight/);
+    // a group SIZE leaves a strip as it is (its box is the page's); a group MOVE carries it
+    expect(c).toMatch(/lock: isLocked\(q\) \|\| kStrip/);
   });
 });

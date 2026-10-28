@@ -180,11 +180,20 @@
   .tab.intab .minb{display:inline}
   /* Collapsed to its tab: a panel with no mini of its own keeps its page running (a pinned callout lives there) but shows
      only a strip with its name, in its colour. A group's other pieces step aside; the one ✥-carrying piece is the strip. */
-  .panel.collapsed{overflow:hidden;background:rgba(13,17,23,0.9)!important;border:1px solid var(--acc,#58a6ff)!important;border-radius:4px}
+  /* (No overflow:hidden here: the ✥ sits just outside the strip's left edge, the tab above it and the dismiss ✕ outside its right, and
+     a clip hid all three: a minimized panel could not be grabbed, the guild lead, 2026-10-28: "minimized overlays need to be
+     draggable and resizable still". The page behind is visibility:hidden and the name below clips itself.) */
+  .panel.collapsed{background:rgba(13,17,23,0.9)!important;border:1px solid var(--acc,#58a6ff)!important;border-radius:4px}
   .panel.collapsed > iframe,.panel.collapsed > .pbody{visibility:hidden}
   .panel.collapsed::after{content:attr(data-nm);position:absolute;left:6px;right:6px;top:0;line-height:16px;font-size:11px;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#c9d1d9;pointer-events:none}
-  .panel.collapsed > .grip,.panel.collapsed > .edge{display:none!important}
+  /* The strip sizes in width alone (startDrag pins its axis to x and keeps the height the page behind it has), so the ◢ stays
+     where it was shown (arranging, or the Resize corner switch) with the width cursor, and the name steps clear of it. The
+     right and bottom EDGES are drawn for the full box, which a strip is not. */
+  .panel.collapsed > .edge{display:none!important}
+  .panel.collapsed:not(.plock) > .grip{cursor:ew-resize!important}
+  :is(body.edit .panel, .panel.one).collapsed::after,.panel.rc.collapsed:not(.plock):not(.sect)::after{right:22px}
+  .panel.collapsed.mvin:not(.mvtail)::after{left:20px}   /* at the screen's left edge the ✥ tucks inside the strip: the name starts after it */
   .panel.collapsed.mvtail{visibility:hidden}
 
   /* The drag shield: while a panel moves, one screen-sized interactive layer
@@ -993,6 +1002,16 @@
   function collapsedBox(p, topPx, up, collapsed) {
     return collapsed ? { y: up ? topPx + p.h - MIN_H : topPx, h: MIN_H } : { y: topPx, h: p.h };
   }
+  // …and its inverse: the strip's top edge as dropped by a ✥ drag, back to the panel's saved top. Without it a bottom-anchored
+  // strip saved the STRIP's top as the panel's, and collapsedBox hung it another (p.h − MIN_H) lower on the next draw.
+  function topFromBox(p, boxY, up, collapsed) {
+    return collapsed && up ? boxY - (p.h - MIN_H) : boxY;
+  }
+  // What a press on a panel starts from. A strip is MIN_H tall on screen but the page behind it keeps p.h, so a SIZE press on
+  // it works in width alone (axis 'x') from that height; every other press starts from the box as drawn.
+  function sizeStart(p, collapsed, mode, axis, shownH) {
+    return collapsed && mode === 'size' ? { axis: 'x', h0: p.h } : { axis: axis || '', h0: shownH };
+  }
   // ── end ▭ Minimize placement ─────────────────────────────────────────────────
 
   // ── Routing: which panel shows a countdown ──────────────────────────────────
@@ -1666,8 +1685,13 @@
       try { e.frame.contentWindow.wpCloseBuilder(); } catch (err) { /* page gone */ }
       delete _widen[id]; e.root.classList.remove('building'); place(e, panelById(id));
     }
-    _drag = { id: id, mode: mode, axis: axis || '', sx: ev.clientX, sy: ev.clientY, add: ev.shiftKey || ev.ctrlKey, alt: ev.altKey, fromMv: !!anyTime,
-      x0: e.root.offsetLeft, y0: e.root.offsetTop, w0: e.root.offsetWidth, h0: e.root.offsetHeight };
+    // ▭ A minimized strip sizes in width alone: its height is the page behind it (kept in p.h), not the strip's 18px, so the
+    // press starts from that height and the axis is pinned to x (the guild lead, 2026-10-28: "minimized overlays need to be
+    // draggable and resizable still").
+    var dq = panelById(id), ss = sizeStart(dq, !!dq && isMin(dq), mode, axis, e.root.offsetHeight);
+    axis = ss.axis;
+    _drag = { id: id, mode: mode, axis: axis, sx: ev.clientX, sy: ev.clientY, add: ev.shiftKey || ev.ctrlKey, alt: ev.altKey, fromMv: !!anyTime,
+      x0: e.root.offsetLeft, y0: e.root.offsetTop, w0: e.root.offsetWidth, h0: ss.h0 };
     // What moves together (the guild lead, 2026-09-29: "I should also be able to drag the whole group …
     // instead of grabbing the top one and having it get disconnected"): the selection, if this panel is in
     // it; else the group it was placed or locked with. Alt-drag moves this one alone and takes it out.
@@ -1681,7 +1705,9 @@
       ids.forEach(function (k) {
         if (!_els[k]) return;
         var r = _els[k].root, q = panelById(k);
-        _drag.members.push({ id: k, x0: r.offsetLeft, y0: r.offsetTop, w0: r.offsetWidth, h0: r.offsetHeight, sc0: (q && q.scale) || 1, lock: isLocked(q) });
+        // (A minimized strip rides a group's move, but a group SIZE leaves it as it is: its box is the page's, not the strip's.)
+        var kStrip = !!q && isMin(q) && mode === 'size';
+        _drag.members.push({ id: k, x0: r.offsetLeft, y0: r.offsetTop, w0: r.offsetWidth, h0: kStrip ? q.h : r.offsetHeight, sc0: (q && q.scale) || 1, lock: isLocked(q) || kStrip });
         _drag.skip[k] = true;
       });
       if (mode === 'size') _drag.box = groupBox(_drag.members);
@@ -1796,7 +1822,7 @@
         var m = d.members.filter(function (k) { return k.id === n.id; })[0];
         m.x = n.x; m.y = n.y; m.w = n.w; m.h = n.h; m.scale = n.scale;
         ee.root.style.left = n.x + 'px'; ee.root.style.top = n.y + 'px';
-        ee.root.style.width = n.w + 'px'; ee.root.style.height = n.h + 'px';
+        ee.root.style.width = n.w + 'px'; if (!isMin(q)) ee.root.style.height = n.h + 'px';
         if (q.kind === 'part') ee.root.style.setProperty('--ps', String(n.scale));
         sizeFrame(ee, q, n.w, n.h);
       });
@@ -1815,7 +1841,7 @@
       var isPart = dp && dp.kind === 'part';
       var w = d.axis === 'y' ? d.w0 : Math.max(isPart ? 40 : (dp && dp.kind === 'overlay') ? 80 : 120, Math.min(sizeMax(dp, 4000, W - d.x0), d.w0 + ev.clientX - d.sx));
       var h = d.axis === 'x' ? d.h0 : Math.max(isPart ? 16 : 36, Math.min(sizeMax(dp, 3000, H - d.y0), d.h0 + ev.clientY - d.sy));
-      e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
+      e.root.style.width = w + 'px'; if (!(dp && isMin(dp))) e.root.style.height = h + 'px';   // a strip keeps its strip height
       if (dp) sizeFrame(e, dp, w, h);
       d.w = w; d.h = h;
     }
@@ -1860,14 +1886,14 @@
       d.members.forEach(function (m) {
         var q = panelById(m.id);
         if (isLocked(q)) return;   // 🔒 it stayed where it was
-        if (q && m.x != null) { q.x = m.x / window.innerWidth; q.y = m.y / window.innerHeight; }
+        if (q && m.x != null) { q.x = m.x / window.innerWidth; q.y = topFromBox(q, m.y, growsUp(q), isMin(q)) / window.innerHeight; }
         // A group size: each piece's size, and a piece's text with it.
         if (q && m.w != null) { q.w = m.w; q.h = m.h; if (q.kind === 'part') q.scale = m.scale; }
         // A height chosen by hand is the item's now: it stops following its content (⚙ → ↕ Fit height turns it back on).
         if (q && m.w != null && Math.abs(m.h - m.h0) > 2 && fitOn(q, pdefOf(q))) q.fit = false;
       });
       save();
-    } else if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = d.y / window.innerHeight; save(); }
+    } else if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = topFromBox(p, d.y, growsUp(p), isMin(p)) / window.innerHeight; save(); }
     if (p && d.mode === 'size' && d.w != null) {
       // Dragging the height by hand turns the live fit off for this item, and says so; dragging only the width does not.
       if (Math.abs(Math.round(d.h) - p.h) > 2 && fitOn(p, pdefOf(p))) { p.fit = false; note('Fit height is off for this one (its ⚙ turns it back on)', 3500); }
