@@ -373,13 +373,15 @@ function updateAnnounceEasterEgg(msgId, level) {
 
 // ── PVP kills ────────────────────────────────────────────────────────────────────────────────
 function pvpMobKey(name) { return name.toLowerCase().replace(/[^a-z0-9]+/g, '_'); }
-function recordPvpKill(name, timerHours, killedBy, bossId = null, timerUnknown = false, killedAt = null) {
+// `expansion` (the boss's data/bosses.json field) picks the window: open-world raid targets through Luclin
+// respawn 7 to 11 days after the kill (Quarm patch 2026-10-28); PoP and an unknown expansion keep base +/-20%.
+function recordPvpKill(name, timerHours, killedBy, bossId = null, timerUnknown = false, killedAt = null, expansion = null) {
   const s = loadState();
   const key = bossId || pvpMobKey(name);
   killedAt            = killedAt || Date.now();
-  const baseMs        = timerHours * 3600000;
-  const nextSpawn     = timerUnknown ? null : (killedAt + baseMs * 0.8);
-  const nextSpawnLatest = timerUnknown ? null : (killedAt + baseMs * 1.2);
+  const win           = require('./timer').openWorldSpawnWindow(timerHours, expansion);
+  const nextSpawn     = timerUnknown ? null : (killedAt + win.earliestMs);
+  const nextSpawnLatest = timerUnknown ? null : (killedAt + win.latestMs);
   const entry = { name, killedAt, nextSpawn, nextSpawnLatest, timerHours, killedBy, bossId: key, threadMessageId: null };
   if (timerUnknown) entry.timerUnknown = true;
   s.pvpKills[key] = entry;

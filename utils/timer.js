@@ -124,7 +124,45 @@ function isShortTimerBoss(boss) {
   return Number.isFinite(h) && h > 0 && h <= SHORT_TIMER_MAX_HOURS;
 }
 
+// Open-world respawn window (the PvP / open-world kill track: utils/state.js recordPvpKill and the
+// pvp_boss_kills mirror). Quarm patch 2026-10-28: open-world raid targets through Luclin respawn on one random
+// 7 to 11 day roll after the kill (EQMacEmu zone/spawn2.cpp, Spawn2::resetTimer: Int(7d, 11d), commit f6e20a0 / #489).
+// Quakes and guild instances keep their own rules, and Planes of Power open-world respawns have a separate switch
+// that is OFF, so PoP (expansion 'PoP') keeps the older base timer with +/-20%. A boss with no known expansion
+// also keeps the old window rather than guessing.
+const OPEN_WORLD_RAID_MIN_HOURS = 7 * 24;
+const OPEN_WORLD_RAID_MAX_HOURS = 11 * 24;
+
+function isOpenWorldRaidWindowBoss(expansion) {
+  const e = String(expansion || '').trim();
+  return e !== '' && e.toLowerCase() !== 'pop';
+}
+
+/**
+ * Earliest / latest spawn offsets (ms after the kill) for an open-world kill.
+ * @returns {{ earliestMs: number, latestMs: number, label: string }}
+ */
+function openWorldSpawnWindow(timerHours, expansion) {
+  if (isOpenWorldRaidWindowBoss(expansion)) {
+    return {
+      earliestMs: OPEN_WORLD_RAID_MIN_HOURS * 3600000,
+      latestMs: OPEN_WORLD_RAID_MAX_HOURS * 3600000,
+      label: '7 to 11 days',
+    };
+  }
+  const baseMs = timerHours * 3600000;
+  return {
+    earliestMs: baseMs * 0.8,
+    latestMs: baseMs * 1.2,
+    label: `${timerHours}h (±20%)`,
+  };
+}
+
 module.exports = {
+  openWorldSpawnWindow,
+  isOpenWorldRaidWindowBoss,
+  OPEN_WORLD_RAID_MIN_HOURS,
+  OPEN_WORLD_RAID_MAX_HOURS,
   calcNextSpawn,
   formatDuration,
   formatTimestamp,
