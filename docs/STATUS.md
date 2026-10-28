@@ -786,6 +786,9 @@ next touch one rather than assuming a missing row means a missing doc.
   rewritten to use its indexes (applied). §140.
 - **⏳ Loot tab: who looted what, last 12 hours (bot 3.1.192 live; agent 3.7.73 beta, 2026-10-03).** Plus "looted by" on
   a roll someone else looted. §139.
+  - **Reload now pulls the saved window (agent 4.0.34, draft on `draft/loot-window`, 2026-10-28).** The saved 12h/24h/7d/30d
+    pick came back after a reload but the list waited for the next 7 s poll after opening the tab, under a stale
+    "last 12 hours" header; opening the Loot tab now asks at once and the header names the saved window.
 - **⏳ Extra PoP spells, an officer list (web 1.8.82, live with the `[beta]` tag, 2026-10-03).**
   [`wolfpack.quest/admin/extra-spells`](https://wolfpack.quest/admin/extra-spells): a PoK trainer reward scroll in a
   character's bags whose spell that character already has, with who needs it in /pop's first-dibs order. RPC
