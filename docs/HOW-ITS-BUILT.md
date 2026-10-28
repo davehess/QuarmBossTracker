@@ -357,6 +357,9 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   `#wpNightLoot` above `#wpLootRolls`; fetched through `/api/server/night-loot` by the Loot IIFE on the
   bidding card's gate, every 30 s; "📦 looted by" on a roll set when the looter is not a winner shown.
 - Tests: `test/night-loot-panel.test.js`, `test/night-loot-section.test.js`. DECISIONS-2026-09-21 §139.
+- **Opening the tab fetches (agent 4.0.34, 2026-10-28):** the tab switcher calls `wpNightLootOpened()`, which forces
+  `fetchNightLoot` when the list on screen is not the saved window's (reload, failed read); the window pick lives in
+  `localStorage['wp:nightLootHours']`. Tests: `test/dashboard-loot-value.test.js`.
 - **Charm-pet gear is not loot (2026-10-09):** the per-looter value totals (`utils/lootValue.js`) and the web `/admin/loot` RPC
   base (`loot_value_rows`) leave out names with any `eqemu_items` row at `mr < 0` or listed in `loot_pet_gear_names`; the list
   keeps showing them. Tests: `test/loot-pet-gear.test.js`. DECISIONS-2026-09-21 §210.
@@ -5250,6 +5253,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `_wpCaptureAccel` (+ `_wpAccelNorm`, `_wpHotkeyUseLabel`), main
   `hotkey-capture` IPC → `_setHotkeysSuspended` / `_mimicHotkeyUses`,
   `status.hotkeysBlocked`. Test: `test/overlay-hotkeys.test.js`.
+- **Press a name to minimize; every overlay folds; overlay picker; Canvas Minimize (Mimic beta `37f988e9`, agent 4.0.33, §458)** —
+  Canvas: `canvas.html` `placeMin` / `placeMins` (test `test/canvas-minimize.test.js`). Windows: `data-wp-name` on each overlay page's
+  name; `preload.js` `_wpMakeNamePress` (press / long-press / right-click), `_wpFoldSync` (`body.wp-fold`), `_buildOverlayPicker`;
+  main `_FOLD_KEYS`, `_foldWindow`, `wp-overlay-picker`, per-character `cfg.overlayCharState` (`_charStateNote`, `_charMiniRestore`).
+  Test `test/mini-press-picker.test.js`.
 - **Mini mode on the dashboard (agent 3.7.15, beta)** — Overlays table Mini
   column (`WP_MINI_KEY_OF`, `.wp-ov-mini` / `.wp-ov-pin`), Minimize ALL row
   (`wpMiniHotkey*`, `data-act="miniall"`); main `wp-mini-pin-set`, status

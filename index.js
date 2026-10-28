@@ -417,6 +417,9 @@ client.once(Events.ClientReady, async (readyClient) => {
   // loaded (the beta ref resolver awaits the tuning map — unsafe at module top).
   _refreshAgentManifestBeta().catch(() => {});
   try { setInterval(_refreshAgentManifestBeta, AGENT_MANIFEST_REFRESH_MS).unref(); } catch (_) { /* non-fatal */ }
+  // An event's rolled-loot card refreshes only on new rolls; refresh it once at boot so a deploy during (or just
+  // after) an event corrects the card in the thread instead of leaving it stale (2026-10-27). No event: a no-op.
+  try { _scheduleEventRollCard(); } catch { /* presentation only */ }
   // Slow mode (utils/slowMode.js) before any kill is recorded or reconciled: it decides the timer length.
   await require('./utils/slowMode').loadSlowMode();
   // Plane of Time cycle ledger (utils/potimeCycle.js): Quarm's timer is the cycle end, so load it before the same reconcile.
@@ -20382,13 +20385,22 @@ async function _refreshEventRollCardNow() {
       `guild_id=eq.${encodeURIComponent(guildId)}&looted_at=gte.${encodeURIComponent(sinceIso)}`
       + `&select=looter_character,item_name,zone,looted_at`, 'looted_at,id').catch(() => []),
   ]);
-  const { buildRollSessions, renderRollLootLines, itemsMatch: _rollItemsMatch } = require('./utils/rollLoot');
+  const { buildRollSessions, renderRollLootLines, itemsMatch: _rollItemsMatch,
+    rollerNames, keepOurRollSets, loadOurRollers, findRollCardMessage } = require('./utils/rollLoot');
   // Soft Reserve (DECISIONS §448): event nights enforce it. A roll for a reserved item counts only reservers' rolls
   // when any reserver rolled. Fail-open: no SR data leaves the ranking exactly as it was.
   const _sr = require('./utils/softReserve');
   const _srData = await _sr.loadSoftReserve(target.event, supabase).catch(() => null);
-  const sessions = buildRollSessions(rollRows || [], lootedRows || [], _sr.makeReserversFor(_srData, _rollItemsMatch));
-  if (sessions.length === 0) return;
+  // Our raiders' rolls only: agents capture any /random they can see, so a hub-zone night also holds other guilds'
+  // loot rolls. A set stays when at least half its rollers are ours. Fail-open: a failed membership read shows all.
+  const _ours = await loadOurRollers(rollerNames(rollRows), supabase,
+    { guildId, ourGuild: require('./utils/guildConfig').inGameGuild() }).catch(() => null);
+  const { rows: ourRollRows, hidden: _hiddenRows } = keepOurRollSets(rollRows || [], _ours);
+  const sessions = buildRollSessions(ourRollRows, lootedRows || [], _sr.makeReserversFor(_srData, _rollItemsMatch));
+  const hiddenSets = _hiddenRows ? buildRollSessions(rollRows || []).length - sessions.length : 0;
+  // Only other guilds' rolls so far: never post a card for that, but do correct one already posted (2026-10-27).
+  const onlyHidden = sessions.length === 0;
+  if (onlyHidden && hiddenSets === 0) return;
 
   const { EmbedBuilder: _REB } = require('discord.js');
   const lines = renderRollLootLines(sessions);
@@ -20396,19 +20408,28 @@ async function _refreshEventRollCardNow() {
   const card = new _REB()
     .setColor(0xa371f7)
     .setTitle(`🎲 Rolled loot — ${target.event?.title || 'guild event'}`)
-    .setDescription(lines.join('\n\n').slice(0, 4000))
-    .setFooter({ text: `${sessions.length} roll${sessions.length === 1 ? '' : 's'} captured${shown < sessions.length ? ` · showing ${shown}` : ''} · no DKP on event nights · edits in place` })
+    .setDescription(onlyHidden ? 'No loot rolls from our raiders yet.' : lines.join('\n\n').slice(0, 4000))
+    .setFooter({ text: `${sessions.length} roll${sessions.length === 1 ? '' : 's'} captured${shown < sessions.length ? ` · showing ${shown}` : ''}${hiddenSets > 0 ? ` · ${hiddenSets} other-guild roll${hiddenSets === 1 ? '' : 's'} hidden` : ''} · no DKP on event nights · edits in place` })
     .setTimestamp();
 
   const { getEventRollCardId, setEventRollCardId } = require('./utils/state');
   const existingId = getEventRollCardId(target.thread.id);
-  if (existingId) {
+  let existing = null;
+  if (existingId) existing = await target.thread.messages.fetch(existingId).catch(() => null);
+  // state.json does not survive a deploy (two cards at 8:15 and 8:25 PM, 2026-10-27), so with no stored id the
+  // thread itself is the memory: edit our newest 🎲 Rolled loot card in the last 50 messages, post only if none.
+  if (!existing) {
+    const recent = await target.thread.messages.fetch({ limit: 50 }).catch(() => null);
+    existing = recent ? findRollCardMessage(recent.values(), client.user?.id) : null;
+  }
+  if (existing) {
     try {
-      const msg = await target.thread.messages.fetch(existingId);
-      await msg.edit({ embeds: [card] });
+      await existing.edit({ embeds: [card] });
+      if (existing.id !== existingId) setEventRollCardId(target.thread.id, existing.id);
       return;
     } catch { /* message gone — post fresh */ }
   }
+  if (onlyHidden) return;
   const sent = await target.thread.send({ embeds: [card] });
   setEventRollCardId(target.thread.id, sent.id);
 }
