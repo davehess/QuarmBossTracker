@@ -13,7 +13,7 @@
 // brother has its own out-of-combat allowance (20 min, 150 min in a guild instance; L228-255, L464), not a window
 // between the two deaths. The machinery stays for a rule a script does carry.
 
-export type Kill = { npcId: number; name: string; atMs: number };
+export type Kill = { npcId: number; name: string; atMs: number; /** A guest raid's kill: another guild's fight a share still shows. */ other?: boolean };
 
 export type PairRule = { ids: [number, number]; windowSec: number; label: string };
 
