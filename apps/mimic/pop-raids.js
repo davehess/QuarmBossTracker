@@ -419,7 +419,10 @@ window.POP_RAIDS = {
             'Pull mezzables 1 at a time → DPS to 5-10% → enchanters hold. Pull team roots/debuffs the 6 rootables.',
             'Earthen Vengeance (AE DoT/−atk speed/1000 DD) = REMOVE GREATER CURSE.',
             'Don\'t let a councilman exit combat (regens). Kill all 12; the Council round has no time limit → Avatar of Earth spawns.',
-            'Avatar of Earth: 50 minutes of idle time, paused while it is fighting; if it loses all aggro the clock refills to the full 50. Warnings at 20, 10 and 5 minutes left.',
+            // Server patch 2026-10-28, poearthb/encounters/RatheCouncil.lua at SecretsOTheP/quests 572bc06:
+            //   :8 AVATAR_IDLE 2100 s (was 3000) · :156-158 SetAvatarCombat only pauses (the wipe refill is gone)
+            //   :74 saved runs capped at 35 min · :295-300 warnings at 900/1500/1800 s elapsed = 20/10/5 left
+            'Avatar of Earth: 35 minutes of idle time (it was 50), paused while it is fighting. It does not refill after a wipe: the clock resumes where it stopped. Warnings at 20, 10 and 5 minutes left; at zero the attempt fails and can be retried after 15 minutes.',
             'Avatar: Ashen Form drops MT aggro −95% — AGGRO DISCIPLINE. Essence of Earth → Mound of Living Stone.',
           ],
           stats: { hp: 'Avatar 550K (MoTM)', hits: 'council ~3000 · Avatar 2400+', slow: 'Avatar slowable', ramp: null },
