@@ -198,7 +198,7 @@
      client area by main and is click-through always, like the Timers canvas, so only the buttons take the mouse. There is
      no ✥ (nothing to move), no timers column (the pop-out still works), and a small control pair at the top-right to go
      back to Window and open the settings. */
-  body.full #move-btn, body.full #drag-controls, body.full #sideBtn, body.full #side{display:none !important}
+  body.full #move-btn, body.full #drag-controls, body.full #sideBtn, body.full #side, body.full .wp-name-chip{display:none !important}
   body.full.unlocked{outline:none}
   #fullCtl{display:none;position:fixed;top:6px;right:30px;z-index:66;gap:4px}
   body.full #fullCtl{display:flex}
@@ -228,6 +228,7 @@
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner - same on every overlay)">✥</button>
   <button id="hide-btn" title="Hide the Map (turn back on from the tray → Overlays)">✕</button>
+  <div class="wp-name-chip wp-name-bl" data-wp-name title="Press to fold this window to its title; right-click for the overlay picker">🗺 Map</div>
   <div id="fullCtl">
     <button class="tb" id="fullWinBtn" type="button" title="Back to Window mode: the Map returns to the size and spot it had.">▢ Window</button>
     <button class="tb" id="fullCfgBtn" type="button" title="Map settings">⚙</button>

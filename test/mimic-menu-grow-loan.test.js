@@ -327,8 +327,10 @@ describe('the menu hands the height back through the page that opened it', () =>
   });
 
   it('a menu opened over another one borrows the height again after the give-back', () => {
-    const open = sliceBlock(pre, 'function _openOverlayMenu(state) {', '  _wpMenuOpen = true;');
+    // The overlay picker opens through the same function with its own builder and height (build, minH); the chrome menu's is 420.
+    const open = sliceBlock(pre, 'function _openOverlayMenu(state, build, minH) {', '  _wpMenuOpen = true;');
+    expect(open).toContain('const need = minH || 420;');
     expect(open.indexOf('_wpMenuCleanupFn()')).toBeGreaterThan(-1);
-    expect(open.indexOf("invoke('overlay-ensure-min-height', 420)")).toBeGreaterThan(open.indexOf('_wpMenuCleanupFn()'));
+    expect(open.indexOf("invoke('overlay-ensure-min-height', need)")).toBeGreaterThan(open.indexOf('_wpMenuCleanupFn()'));
   });
 });

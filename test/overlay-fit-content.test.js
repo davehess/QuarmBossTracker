@@ -369,6 +369,7 @@ function canvasEnv(panels, { H = 1000 } = {}) {
     function placeGbox() {} function placeMenu() {}
     function save() { saves++; }
     function embedWant() { return null; }
+    function isMin() { return false; }   // ▭ Minimize: fitStep leaves a collapsed strip alone
     ${fitCode}
     return { window: window, layout: _layout, els: _els, set: function (k, v) { eval(k + ' = v'); }, fitStep: fitStep, saves: function () { return saves; }, placed: placed,
       empty: _fitEmpty, intervals: intervals, widen: _widen, fitAdd: _fitAdd };

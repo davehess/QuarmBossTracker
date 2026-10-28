@@ -3162,6 +3162,7 @@ function _onActiveCharacter(name) {
   _activeCharName = name;
   if (cl === _lastProfileChar) { if (shownChanged) { try { buildTrayMenu(); } catch {} } return; }
   _lastProfileChar = cl;
+  try { _applyCharOverlayState(_charStateKey(cl)); } catch (e) { void e; }   // their folded/mini overlays come back; the picker order follows them
   const cfg = loadConfig();
   // _applyCharProfile rebuilds the tray itself; when the feature is off we
   // still rebuild so the "Save layout for <toon>" label tracks the new char.
@@ -5215,6 +5216,7 @@ function _settledBounds(b, stash) {
 // graceful shutdown applies every pending window to ONE cfg and writes the file once.
 function _applyBounds(cfg, key, win) {
   const b = _settledBounds(win.getBounds(), win.__wpPreMenuBounds);
+  if (win.__wpFolded && win.__wpFoldPrev) b.height = win.__wpFoldPrev.h;   // a folded window is saved at the height it will unfold to
   cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
   cfg[key + 'Sig'] = _screenSignature();
   // Remembered per screen setup — but not while the screens are settling,
@@ -9825,6 +9827,8 @@ app.on('browser-window-created', (_e, win) => {
   // Overlays follow EverQuest's z-order: a window that comes up (or comes back from hide) while another app is in front
   // must not appear on top of it. Non-overlays resolve no entry and fall straight through.
   try { win.on('show', () => { try { _applyOverlayZ(win); } catch (e) { void e; } }); } catch (e) { void e; }
+  // A shown overlay is "used" by whoever is playing: it orders the overlay picker (see _noteOverlayShown).
+  try { win.on('show', () => { try { _noteOverlayShown(win); } catch (e) { void e; } }); } catch (e) { void e; }
 });
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -10390,7 +10394,7 @@ function currentStatus() {
     hotkeysBlocked: Object.assign({}, _blockedHotkeys),
     // ▭ Mini mode for the dashboard's Overlays table: which overlays have a
     // mini, which are mini now, which are pinned mini (📌), and the Ctrl+Shift+M latch.
-    miniCapable: _MINI_KEYS.slice(),
+    miniCapable: _MINI_KEYS.concat(_FOLD_KEYS),
     overlayMini: Object.assign({}, (cfg.overlayMini && typeof cfg.overlayMini === 'object') ? cfg.overlayMini : {}),
     overlayMiniPinned: Object.assign({}, (cfg.overlayMiniPinned && typeof cfg.overlayMiniPinned === 'object') ? cfg.overlayMiniPinned : {}),
     miniAllActive: !!_miniAllActive,
@@ -11742,12 +11746,13 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     // ↕ Fit height to content asks for an exact fit, once (see overlay-fit-height).
     const fitNow = (Date.now() - (win.__wpFitNowAt || 0)) < 3000;
     win.__wpFitNowAt = 0;
-    let wanted = Math.max(50, Math.round(+h || 0));
+    let wanted = Math.max(win.__wpFolded ? 24 : 50, Math.round(+h || 0));
     if (!wanted) return false;
     // The height the user dragged this overlay to is a floor (see "Height floor"):
     // content grows the window above it, and shrinking content stops there.
     // Compared in CSS px, before the zoom multiply, because the floor is stored unscaled.
-    wanted = Math.round(Math.max(wanted, _heightFloorFor(win)));
+    // A folded window (▭ Fold) is one row tall on purpose, so the floor does not apply to it.
+    if (!win.__wpFolded) wanted = Math.round(Math.max(wanted, _heightFloorFor(win)));
     // Setup chrome allowance: overlays measure #wrap.scrollHeight, which has
     // never included the setup bar — and now that the bar is position:fixed
     // with #wrap pushed 102 painted px down (preload counter-zoom CSS), a
@@ -11856,6 +11861,127 @@ function _overlayGrowsUp(win) {
 // whose stylesheet has never heard of it, which would be a no-op the user reads
 // as a broken hotkey. Adding one here without adding its CSS is that bug.
 const _MINI_KEYS = ['hud', 'tank', 'mobinfo', 'chchain', 'charm', 'exttarget', 'pets', 'popraid', 'buffQueue'];
+// ▭ Fold (the guild lead, 2026-10-28: "everything can minimize"). These have no DESIGNED mini, so a mini one folds to its
+// title row (preload's body.wp-fold: everything but the row with the name goes, the window shrinks to the row, and the old
+// height comes back on un-mini). Same cfg.overlayMini, same _setOverlayMini, same wp-mini push as the nine above.
+// ⚠ _MINI_KEYS stays the nine: Ctrl+Shift+M (toggleMinimizeAllOverlays) and the 📌 are theirs alone. Folding the alerts
+// window mid-raid would hide the callouts, so the hotkey must never reach it; pressing a window's name, the right-click
+// row and the dashboard's switch are the ways to fold these. NOT here: the Timers canvas (a screen-sized window) and the dock.
+const _FOLD_KEYS = ['trigger', 'who', 'chat', 'melody', 'zeal', 'threat', 'command', 'me', 'map', 'maptimers'];
+function _miniCapable(key) { return !!key && (_MINI_KEYS.includes(key) || _FOLD_KEYS.includes(key)); }
+
+// ── Per-character overlay state (the guild lead, 2026-10-28) ────────────────────
+// cfg.overlayCharState[<character, lower-case>] = { mini: { <overlay>: bool }, used: { <overlay>: last-shown ms }, at }.
+// The character is the same one the per-character layout saves use (_activeCharName, the agent's activeCharacter off
+// the 1s state poll). `mini` is put back when that character becomes active; with no entry the global cfg.overlayMini
+// stands. `used` orders the overlay picker (most recently shown first). Capped, oldest dropped, so the config stays small.
+const _CHAR_STATE_CAP = 40;
+function _charStateKey(name) {
+  const k = String(name || '').toLowerCase();
+  return /^[a-z]{1,24}$/.test(k) ? k : null;
+}
+function _charStateNote(cfg, charKey, field, key, value, now) {
+  if (!charKey || (field !== 'mini' && field !== 'used')) return;
+  const all = (cfg.overlayCharState && typeof cfg.overlayCharState === 'object') ? cfg.overlayCharState : {};
+  const ent = (all[charKey] && typeof all[charKey] === 'object') ? all[charKey] : {};
+  ent[field] = (ent[field] && typeof ent[field] === 'object') ? ent[field] : {};
+  ent[field][key] = value;
+  ent.at = now;
+  all[charKey] = ent;
+  const names = Object.keys(all);
+  if (names.length > _CHAR_STATE_CAP) {
+    names.sort((a, b) => ((all[b] && all[b].at) || 0) - ((all[a] && all[a].at) || 0));
+    for (const n of names.slice(_CHAR_STATE_CAP)) delete all[n];
+  }
+  cfg.overlayCharState = all;
+}
+// Put a character's remembered mini flags over the global map; keys they never set keep the global value.
+// Returns true when anything changed.
+function _charMiniRestore(cfg, charKey) {
+  const ent = charKey && cfg.overlayCharState && cfg.overlayCharState[charKey];
+  if (!ent || !ent.mini || typeof ent.mini !== 'object') return false;
+  const map = (cfg.overlayMini && typeof cfg.overlayMini === 'object') ? cfg.overlayMini : {};
+  let changed = false;
+  for (const k of Object.keys(ent.mini)) {
+    if (!_miniCapable(k)) continue;
+    const v = !!ent.mini[k];
+    if (!!map[k] !== v) { map[k] = v; changed = true; }
+  }
+  cfg.overlayMini = map;
+  return changed;
+}
+// The overlays offered by the picker (right-click or long-press an overlay's name). STANDARD first, then ▸ MORE.
+// `toggle` is the name main's _toggleOverlay takes ('pet', not 'pets'); `flag` is the cfg switch that says it is on.
+const _PICKER_STANDARD = [
+  { key: 'hud',       toggle: 'hud',       flag: 'showHud',          label: 'DPS/Tank meter' },
+  { key: 'tank',      toggle: 'tank',      flag: 'showTank',         label: 'Tank' },
+  { key: 'mobinfo',   toggle: 'mobinfo',   flag: 'showMobInfo',      label: 'Target Info' },
+  { key: 'buffQueue', toggle: 'buffQueue', flag: 'showBuffQueue',    label: 'Buff queue' },
+  { key: 'chchain',   toggle: 'chchain',   flag: 'showChChain',      label: 'CH chain' },
+  { key: 'charm',     toggle: 'charm',     flag: 'showCharm',        label: 'Charm' },
+  { key: 'pets',      toggle: 'pet',       flag: 'showPets',         label: 'Pets' },
+  { key: 'trigger',   toggle: 'trigger',   flag: 'enableTriggerTts', label: 'Alerts & timers' },
+  { key: 'map',       toggle: 'map',       flag: 'showMap',          label: 'Map' },
+];
+const _PICKER_MORE = [
+  { key: 'exttarget', toggle: 'exttarget', flag: 'showExtTarget',    label: 'Extended Target' },
+  { key: 'who',       toggle: 'who',       flag: 'showWho',          label: '/who' },
+  { key: 'chat',      toggle: 'chat',      flag: 'showChat',         label: 'Chat' },
+  { key: 'melody',    toggle: 'melody',    flag: 'showMelody',       label: 'Melody' },
+  { key: 'zeal',      toggle: 'zeal',      flag: 'showZeal',         label: 'Tick' },
+  { key: 'threat',    toggle: 'threat',    flag: 'showThreat',       label: 'Threat meter' },
+  { key: 'command',   toggle: 'command',   flag: 'showCommand',      label: 'Command Center' },
+  { key: 'popraid',   toggle: 'popraid',   flag: 'showPopRaid',      label: 'PoP raids' },
+  { key: 'me',        toggle: 'me',        flag: 'showMe',           label: 'HUD' },
+  { key: 'maptimers', toggle: 'maptimers', flag: 'showMapTimers',    label: 'Map timers' },
+  { key: 'dock',      toggle: 'dock',      flag: 'showDock',         label: 'Dock' },
+];
+// Catalog order, except what THIS character has shown before comes first, most recent first (ties keep catalog order).
+// `alpha` sorts by name instead (leading punctuation ignored, so "/who" files under W).
+function _pickerOrder(items, used, alpha) {
+  const u = (used && typeof used === 'object') ? used : {};
+  const idx = new Map(items.map((c, i) => [c.key, i]));
+  const name = (c) => String(c.label).replace(/^\W+/, '').toLowerCase();
+  return items.slice().sort((a, b) => {
+    if (alpha) return name(a) < name(b) ? -1 : name(a) > name(b) ? 1 : idx.get(a.key) - idx.get(b.key);
+    const ta = +u[a.key] || 0, tb = +u[b.key] || 0;
+    if ((ta > 0) !== (tb > 0)) return ta > 0 ? -1 : 1;
+    if (ta !== tb) return tb - ta;
+    return idx.get(a.key) - idx.get(b.key);
+  });
+}
+// A window that just came up counts as "used" by whoever is playing, at most once a minute per overlay (a show on an
+// already-visible window repeats, and each note is a config write).
+const _usedNotedAt = {};
+function _noteOverlayShown(win) {
+  const ck = _charStateKey(_activeCharName);
+  if (!ck || !win || win.isDestroyed()) return;
+  let key = null;
+  for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+  if (!key || ![..._PICKER_STANDARD, ..._PICKER_MORE].some(c => c.key === key)) return;
+  const now = Date.now();
+  if (now - (_usedNotedAt[ck + ':' + key] || 0) < 60_000) return;
+  _usedNotedAt[ck + ':' + key] = now;
+  const cfg = loadConfig();
+  _charStateNote(cfg, ck, 'used', key, now, now);
+  saveConfig(cfg);
+}
+// The character has just become active: its mini flags come back, and whatever is on screen counts as theirs.
+function _applyCharOverlayState(charKey) {
+  const cfg = loadConfig();
+  const changed = _charMiniRestore(cfg, charKey);
+  const now = Date.now();
+  for (const [k, w] of _overlayEntries()) {
+    if (!w || w.isDestroyed() || !w.isVisible()) continue;
+    if ([..._PICKER_STANDARD, ..._PICKER_MORE].some(c => c.key === k)) _charStateNote(cfg, charKey, 'used', k, now, now);
+  }
+  if (changed && _miniAllActive && !_MINI_KEYS.some(k => cfg.overlayMini[k])) {
+    _miniAllActive = false; _miniAllPrev = null;
+    cfg.miniAllActive = false; cfg.miniAllPrev = null;
+  }
+  saveConfig(cfg);
+  if (changed) { applyAllOverlayMini(); pushStatus(); }
+}
 
 function _miniSetting(cfg, key) {
   if (!key) return false;
@@ -11874,7 +12000,33 @@ function _miniPinSetting(cfg, key) {
 // a window created while mini was on must come up mini, or the setting silently
 // resets itself every time an overlay is re-enabled.
 function _sendOverlayMini(key, win, on) {
-  try { win.webContents.send('wp-mini', { key, mini: !!on }); } catch { /* window mid-close */ }
+  const fold = _FOLD_KEYS.includes(key);
+  if (fold) _foldWindow(win, !!on);
+  try { win.webContents.send('wp-mini', { key, mini: !!on, fold }); } catch { /* window mid-close */ }
+}
+// A folded window is only its title row tall. The height it had is kept, and is what _applyBounds saves while it is
+// folded, so a restart never reopens the window one row tall. The height floor and the window's minimum height step
+// aside while folded, and un-folding gives the height back (a page that fits itself then fits again). Idempotent: it
+// runs on every push, including the load-time pull.
+function _foldWindow(win, on) {
+  try {
+    if (!win || win.isDestroyed()) return;
+    if (on && !win.__wpFolded) {
+      const min = win.getMinimumSize();
+      win.__wpFoldPrev = { h: win.getBounds().height, minH: min[1] };
+      win.__wpFolded = true;
+      win.setMinimumSize(min[0], 24);
+    } else if (!on && win.__wpFolded) {
+      const prev = win.__wpFoldPrev;
+      win.__wpFolded = false;
+      win.__wpFoldPrev = null;
+      if (prev) {
+        win.setMinimumSize(win.getMinimumSize()[0], prev.minH);
+        const b = win.getBounds();
+        if (b.height < prev.h) win.setBounds({ x: b.x, y: b.y, width: b.width, height: prev.h });
+      }
+    }
+  } catch { /* window mid-close */ }
 }
 // An overlay hosted on the Canvas has no window to push to; the Canvas reads the flag back (canvas-state) on this ping.
 function _pingCanvasMini() {
@@ -11888,7 +12040,7 @@ function applyOverlayMini(win, key, cfg) {
 function applyAllOverlayMini() {
   const cfg = loadConfig();
   for (const [k, w] of _overlayEntries()) {
-    if (!_MINI_KEYS.includes(k)) continue;
+    if (!_miniCapable(k)) continue;
     applyOverlayMini(w, k, cfg);
   }
   _pingCanvasMini();
@@ -12351,6 +12503,9 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
   let key = null;
   for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
   const cfg = loadConfig();
+  // The page pulls this at load, so it is also where a window that CAME UP folded learns it (before the page asks
+  // for its folded height, which the height floor must not stretch).
+  if (key && _FOLD_KEYS.includes(key)) _foldWindow(win, _miniSetting(cfg, key));
   return {
     key,
     screens: key && !_coversScreen(key) ? _otherScreensFor(win) : [],
@@ -12362,8 +12517,12 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     timersTopDown: !!cfg.triggerTimersTopDown,
     theme: cfg.overlayTheme || 'default',
     // ▭ / 📌 rows are built only for overlays that HAVE a mini rendition, so
-    // the menu never offers a switch that would do nothing (see _MINI_KEYS).
-    miniCapable: !!key && _MINI_KEYS.includes(key),
+    // the menu never offers a switch that would do nothing (see _MINI_KEYS). Every
+    // foldable overlay (_FOLD_KEYS) is capable too; the 📌 is the nine designed ones' alone (miniDesigned).
+    miniCapable: _miniCapable(key),
+    miniDesigned: !!key && _MINI_KEYS.includes(key),
+    fold: !!key && _FOLD_KEYS.includes(key),
+    label: key ? ((_PICKER_STANDARD.concat(_PICKER_MORE).find(c => c.key === key) || {}).label || null) : null,
     mini: _miniSetting(cfg, key),
     miniPinned: _miniPinSetting(cfg, key),
     // "Stay on top" is offered only where it does something: Windows with follow-EQ on.
@@ -12495,7 +12654,7 @@ ipcMain.handle('wp-mini-toggle', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   let key = null;
   for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
-  if (!key || !_MINI_KEYS.includes(key)) return false;
+  if (!_miniCapable(key)) return false;
   return _setOverlayMini(key, !_miniSetting(loadConfig(), key));
 });
 // Single writer for one overlay's mini flag — the chrome menu, the dashboard
@@ -12510,6 +12669,8 @@ function _setOverlayMini(key, next) {
     _miniAllActive = false; _miniAllPrev = null;
     cfg.miniAllActive = false; cfg.miniAllPrev = null;
   }
+  // Remembered for whoever is playing, and put back when they next become the active character (_charMiniRestore).
+  _charStateNote(cfg, _charStateKey(_activeCharName), 'mini', key, !!next, Date.now());
   saveConfig(cfg);
   for (const [k, w] of _overlayEntries()) if (k === key) applyOverlayMini(w, k, cfg);
   _pingCanvasMini();
@@ -12536,13 +12697,13 @@ ipcMain.handle('wp-mini-state', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   let key = null;
   for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
-  if (!key || !_MINI_KEYS.includes(key)) return { key, mini: false, capable: false };
-  return { key, mini: _miniSetting(loadConfig(), key), capable: true };
+  if (!_miniCapable(key)) return { key, mini: false, capable: false };
+  return { key, mini: _miniSetting(loadConfig(), key), capable: true, fold: _FOLD_KEYS.includes(key) };
 });
 // Dashboard-driven flip (Overlays tab). Named rather than sender-derived,
 // because the caller is the dashboard window, not the overlay.
 ipcMain.handle('wp-mini-set', (_e, name, on) => {
-  if (!_MINI_KEYS.includes(name)) return null;
+  if (!_miniCapable(name)) return null;
   return _setOverlayMini(name, !!on);
 });
 // …and its 📌, named for the same reason (the right-click menu's pin toggle
@@ -12559,6 +12720,44 @@ ipcMain.handle('wp-mini-pin-set', (_e, name, on) => {
   return !!map[name];
 });
 ipcMain.handle('wp-mini-all', () => { try { toggleMinimizeAllOverlays(); return true; } catch { return false; } });
+
+// ☰ Overlay picker (right-click, or long-press, an overlay's name). The rows only NAME overlays and say which are on; a
+// click flips one through the existing 'toggle-overlay' (_toggleOverlay), the dashboard's and the hotkeys' own path.
+// Ordered per character: what the active character has shown before comes first, most recent first (_pickerOrder).
+ipcMain.handle('wp-overlay-picker', () => {
+  const cfg = loadConfig();
+  const ck = _charStateKey(_activeCharName);
+  const ent = ck && cfg.overlayCharState && cfg.overlayCharState[ck];
+  const used = (ent && ent.used) || {};
+  const alpha = !!cfg.pickerMoreAlpha;
+  const row = (c) => ({ key: c.key, toggle: c.toggle, label: c.label, on: !!cfg[c.flag] });
+  return {
+    standard: _pickerOrder(_PICKER_STANDARD, used, false).map(row),
+    more: _pickerOrder(_PICKER_MORE, used, alpha).map(row),
+    alpha,
+    canvasOn: !!cfg.showCanvas,
+    // ▸ MORE and ▸ CANVAS are sections that start collapsed and remember how the person left them.
+    open: _pickerOpenOf(cfg),
+  };
+});
+function _pickerOpenOf(cfg) {
+  const o = (cfg && cfg.pickerOpen && typeof cfg.pickerOpen === 'object') ? cfg.pickerOpen : {};
+  return { more: o.more === true, canvas: o.canvas === true };
+}
+ipcMain.handle('wp-picker-open-set', (_e, name, on) => {
+  if (name !== 'more' && name !== 'canvas') return null;
+  const cfg = loadConfig();
+  cfg.pickerOpen = Object.assign(_pickerOpenOf(cfg), { [name]: !!on });
+  saveConfig(cfg);
+  return cfg.pickerOpen[name];
+});
+// ▸ MORE's "A–Z" switch, kept in the config.
+ipcMain.handle('wp-picker-alpha-toggle', () => {
+  const cfg = loadConfig();
+  cfg.pickerMoreAlpha = !cfg.pickerMoreAlpha;
+  saveConfig(cfg);
+  return !!cfg.pickerMoreAlpha;
+});
 
 // Hide the overlay that sent this — the ✕ in an overlay's corner. For the
 // named overlays (hud/trigger/charm) we flip the matching pref OFF (so it
