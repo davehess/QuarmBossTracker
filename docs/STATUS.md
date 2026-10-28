@@ -7189,3 +7189,25 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   panel gets none. Panels without a mini fold to an 18px named strip (`min: true`, saved like lock). Test `test/canvas-minimize.test.js`.
 - ⏳ Not run in a real Electron window: the logic was exercised in Chromium against the real preload with a stubbed bridge. Window
   height on fold/unfold (`_foldWindow`, `win.setMinimumSize`) and the hover-handshake on the name are the things to look at on beta.
+- **Follow-up, Mimic beta `bc260ee9`: minimized overlays stay draggable and resizable** (the guild lead, 2026-10-28; §459). Causes
+  found: the ◢ grip sat on the ✕ in a 32px folded window; `_startWindowResize` clamped height to 60 and `_noteUserResize` saved
+  that as a floor; fold kept the mini's 12% fade on ✥/✕; a collapsed Canvas strip clipped its ✥/tab (`overflow:hidden`), hid ◢,
+  and a grow-up strip jumped on drag. Rule: folded = width resizes, height stays the row (never saved as a floor); designed mini =
+  both axes with its own `<key>MiniFloor`; Canvas strip = width only. ⏳ Not run in Electron (native edge resize, hover handshake).
+  Open: layout profiles do not carry `MiniFloor`; the HUD ring has no ◢; folding a grow-up overlay (alerts) restores top-anchored.
+
+### 🧾 2026-10-28 — FB-105, FB-107, FB-108, FB-109 (Mimic beta; web 2.1.58 on main)
+- **FB-105** (beta `83401c91`): Canvas alerts/timers panels no longer show a title plate — the "🔔 Alerts & timers" name chip
+  from the press-to-minimize change is hidden in `?part=` frames (`triggers.html` `body.part .wp-name-chip`). Rests on a guess
+  about the screenshot. Test `test/canvas-part-title.test.js`.
+- **FB-107** (agent 4.0.35, beta `347f923e`): the HUD tagged a two-hander's crush hits "OH". `_meHands` guessed hands from the
+  verb order in a round over the whole session, and a 52/48 split won. Now only the newest 40 rounds count and a pairing needs
+  ≥ 80% (and ≥ 3 rounds); a split order names no hand. ⏳ A true "two-hander has no off-hand" gate needs a two-hand flag in the
+  bot's item catalog (main) — not built. Tests in `test/me-hud-timers.test.js`.
+- **FB-108** (beta `64570f93`): the Map's target range is 3D (`map.html` `targetRange` / `rangeText`), with "(↑18)" / "(↓18)"
+  when the height gap is ≥ 10; kite circles and rings unchanged; an exact z of 0 counts as unknown. Test `test/map-range-3d.test.js`.
+- **FB-109** (Mimic slideshow beta `916f5476`; raid plan web 2.1.58 main `e1f64581`): Terris Thule's defilers at 79% and 69%,
+  one per player who has damaged her (pets excluded), mass dispel at 50%, gargoyles at 40% — from
+  `nightmareb/Terris_Thule.lua:35-56, 64-98` @ `d4625cdd`; the slideshow had 75% / ~35%, the web plan "every name on the hate
+  list" and "slow and miss". Test `test/pop-raids-terris.test.js`.
+- **FB-106** (rolls typed as a number in chat): researched, two options with a mockup sent; waiting on the guild lead's pick.
