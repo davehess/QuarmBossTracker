@@ -458,6 +458,7 @@ client.once(Events.ClientReady, async (readyClient) => {
           boss_id:     entry.bossId || key,
           boss_name:   entry.name,
           zone:        meta?.zone || null,
+          expansion:   meta?.expansion || null,
           timer_hours: entry.timerHours,
           killed_at:   new Date(entry.killedAt).toISOString(),
           recorded_by: typeof entry.killedBy === 'string' && /^\d{17,20}$/.test(entry.killedBy) ? entry.killedBy : null,
@@ -5680,6 +5681,7 @@ async function _handleAgentPvp(req, res) {
               boss_id:         boss.id,
               boss_name:       boss.name,
               zone:            boss.zone || null,
+              expansion:       boss.expansion || null,
               timer_hours:     boss.timerHours,
               killed_at:       new Date(killedAtMs).toISOString(),
               killed_by:       killer || null,
@@ -5706,8 +5708,9 @@ async function _handleAgentPvp(req, res) {
               // it to the ledger, which is all backfill is meant to do.
               if (!alreadyActive && !b?.backfill) {
                 const killedByLabel = `auto:${killer || '?'}${killerGuild ? '/' + killerGuild : ''}`;
-                recordPvpKill(boss.name, boss.timerHours, killedByLabel, boss.id, false, killedAtMs);
-                content += `\n_⏱️ Auto-tracked — respawns in ~${boss.timerHours}h (±20%) · see /timers_`;
+                recordPvpKill(boss.name, boss.timerHours, killedByLabel, boss.id, false, killedAtMs, boss.expansion);
+                const _owWindow = require('./utils/timer').openWorldSpawnWindow(boss.timerHours, boss.expansion);
+                content += `\n_⏱️ Auto-tracked — respawns in ${_owWindow.label} · see /timers_`;
 
                 const killsThreadId = process.env.PVP_KILLS_THREAD_ID;
                 if (killsThreadId) {
@@ -5721,7 +5724,7 @@ async function _handleAgentPvp(req, res) {
                       .addFields(
                         { name: 'Zone',       value: boss.zone, inline: true },
                         { name: 'Killed by',  value: `${killer || '?'}${killerGuild ? ' of <' + killerGuild + '>' : ''}`, inline: true },
-                        { name: 'Base Timer', value: `${boss.timerHours}h (±20%)`, inline: true },
+                        { name: 'Base Timer', value: _owWindow.label, inline: true },
                         { name: '⏰ Earliest Spawn',
                           value: `${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,
                           inline: false },
