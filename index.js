@@ -20395,7 +20395,9 @@ async function _refreshEventRollCardNow() {
   const { rows: ourRollRows, hidden: _hiddenRows } = keepOurRollSets(rollRows || [], _ours);
   const sessions = buildRollSessions(ourRollRows, lootedRows || [], _sr.makeReserversFor(_srData, _rollItemsMatch));
   const hiddenSets = _hiddenRows ? buildRollSessions(rollRows || []).length - sessions.length : 0;
-  if (sessions.length === 0) return;
+  // Only other guilds' rolls so far: never post a card for that, but do correct one already posted (2026-10-27).
+  const onlyHidden = sessions.length === 0;
+  if (onlyHidden && hiddenSets === 0) return;
 
   const { EmbedBuilder: _REB } = require('discord.js');
   const lines = renderRollLootLines(sessions);
@@ -20403,7 +20405,7 @@ async function _refreshEventRollCardNow() {
   const card = new _REB()
     .setColor(0xa371f7)
     .setTitle(`🎲 Rolled loot — ${target.event?.title || 'guild event'}`)
-    .setDescription(lines.join('\n\n').slice(0, 4000))
+    .setDescription(onlyHidden ? 'No loot rolls from our raiders yet.' : lines.join('\n\n').slice(0, 4000))
     .setFooter({ text: `${sessions.length} roll${sessions.length === 1 ? '' : 's'} captured${shown < sessions.length ? ` · showing ${shown}` : ''}${hiddenSets > 0 ? ` · ${hiddenSets} other-guild roll${hiddenSets === 1 ? '' : 's'} hidden` : ''} · no DKP on event nights · edits in place` })
     .setTimestamp();
 
@@ -20424,6 +20426,7 @@ async function _refreshEventRollCardNow() {
       return;
     } catch { /* message gone — post fresh */ }
   }
+  if (onlyHidden) return;
   const sent = await target.thread.send({ embeds: [card] });
   setEventRollCardId(target.thread.id, sent.id);
 }
