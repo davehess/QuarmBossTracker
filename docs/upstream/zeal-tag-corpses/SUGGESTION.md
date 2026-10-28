@@ -4,6 +4,8 @@
 
 *Branch `tag-corpses` on our fork (`7f7c824`), based on Zeal 1.4.8. Status: pushed, not yet filed upstream.*
 
+![In game: a raid's corpses after the kill, two of them tagged; untagged corpses show nothing (nameplates blurred)](in-game.png)
+
 ![Diagram: a kill mark does not follow a mob onto its corpse, but a tag set on the corpse shows](diagram.png)
 
 **What**
@@ -26,4 +28,6 @@ A target whose model is not drawn (too far away, not loaded) still cannot be tag
 
 **Pull request:** _link added when it is filed._
 
-**Testing evidence:** _added after the in-game test run._
+**Testing evidence:** `in-game.png`, a capture from the guild lead's test-all build (2026-10-28): corpses tagged after the kill
+carry their mark; the rest show none. The marks in it are tag shapes from that build; with corpse tagging alone
+(`fix/tag-persist-corpses`, `8bb72be`) a corpse tag shows as the usual arrow and text.
