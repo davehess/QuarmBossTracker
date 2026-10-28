@@ -3312,3 +3312,24 @@ never the path.
 - **Left alone on purpose:** a saved overlay SET or an imported layout that carries the Canvas turns it on when the person loads it
   (they approved it in a dialog with Undo); a Canvas group hotkey turns it on (they bound it).
 - Tests: `test/canvas-stays-off.test.js`. Docs: `STATUS.md`, `HOW-ITS-BUILT.md`.
+
+## §458 — Press a window's name to minimize; every overlay folds; picker from the name (2026-10-28)
+*2026-10-28 · decisions/inbox/2026-10-28.md*
+
+The guild lead: *"add minimize buttons to everything to switch to the mini mode"*, then *"Make it so you can click on the
+name and release to minimize actually, and highlight the name of the window when you do. for full windows, for canvas
+have a minimize tab if the window is wide enough, otherwise hover it either over or to the side of, dependent on other UI
+element position. Make sure you can always read a label of what the button is, even if you have to move it. You can
+always put a little matching colored line in between if you must. Overlay picker should be built in too, all of the
+standard ones, then >MORE and >CANVAS"*, then picked **3A** (the picker opens from the window name: right-click or
+long-press) *"with the top overlays the ones used previously on that character as default sort, also allow alpha sort on
+more"*, and *"make sure we're saving state for the character's last"* (read as: each character's last minimize state and
+overlay use; the message was cut off there).
+- Press-and-release on the name toggles mini (gold highlight while held; a drag cancels). The nine designed minis keep
+  their design; the other overlays fold to their title row (the session's default, offered and not objected to). The
+  minimize-all hotkey still covers only the nine, so the alerts window never folds mid-raid by a hotkey.
+- Canvas panels: a labelled "▭ Minimize" in the panel's tab when it fits; otherwise floated beside / above / below the
+  panel where it overlaps nothing, joined by a line in the panel's colour; the label is never shortened.
+- Picker: standard overlays (most recently used on this character first), ▸ MORE (with A–Z), ▸ CANVAS.
+- On Mimic beta `37f988e9` (agent 4.0.33), 2026-10-28; mockup and real-page screenshots sent the same night. Not yet seen
+  in a real Electron window: fold height and the name's hover handshake are the things to check.

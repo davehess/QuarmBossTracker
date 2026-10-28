@@ -1351,3 +1351,14 @@ recommended). The one merged parse stays as it is unless the guild lead asks for
 mass-death moments on the night timeline, and the fights' parse timelines on the session page. Stored in bot_kv
 `night_slices:<guild>` (no migration). Two previews: `?v=slices` (draw labelled spans) and `?v=segments` (confirm detected
 segments; recommended). Pick open.
+
+## §457 — The event rolled-loot card shows only our raiders' rolls, and posts once (2026-10-28)
+*2026-10-28 · decisions/inbox/2026-10-28.md*
+
+The guild lead, on the 2026-10-27 flagging-night card: *"Whose rolls are these? Not our people"*. Our agents record every
+`/random` in range; on a night in a hub zone the card listed another guild's loot rolls (20 of 21 rollers were not ours;
+`roll_sets.zone` is never filled, so zone cannot separate them). Fix on `draft/roll-card-ours` (bot 4.0.24, not yet on
+main): keep a roll set only when at least half its rollers are ours (a linked character, or /who guild = ours), say how
+many were hidden, fail open; with no stored card id the bot edits its own card found in the thread instead of posting a
+second one; a card with only other guilds' rolls is corrected to "No loot rolls from our raiders yet", never posted fresh.
+Pending: the guild lead's "now or after the event" call on shipping.
