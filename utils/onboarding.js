@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.24': [
+    '**The event rolled-loot card only shows our rolls, and posts once.** On a guild-event night spent in a busy hub zone, the card used to list other guilds\' loot rolls too; it now keeps a roll only when at least half of the people in it are ours, and says how many it hid. It also no longer posts a second card after the bot restarts mid-event; it finds its own card in the thread and keeps editing that one.',
+  ],
   '4.0.23': [
     '**Your PoP flags, for Mimic.** The bot can now tell your own Mimic where each of your characters stands on the Planes of Power flags and what to do next (the Flags view in the PoP overlay, on the Mimic beta first). It only ever answers about your own characters.',
   ],
