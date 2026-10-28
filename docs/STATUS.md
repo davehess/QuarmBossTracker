@@ -233,6 +233,11 @@ next touch one rather than assuming a missing row means a missing doc.
   refuses, the right-click row shows only while it is on; Setup ALL never shows a leftover hidden Canvas window; Esc leaves Setup
   ALL / THIS and Canvas arranging. Test: `test/canvas-stays-off.test.js`. Open: the raider's screen was never seen, so the exact
   trigger is unconfirmed; ask for the agent log's `[canvas]` line.
+- **🧪 raidmimic.com/setup: one step at a time by default (web 2.1.60, draft branch `draft/raidmimic-setup-steps`, not pushed,
+  2026-10-28; the guild lead: "setup needs the step-by-step by default").** Rail, "Step 2 of 6", Back / Next, arrow keys, the step
+  in the URL hash, and a remembered "Show all steps" switch for the old page; no-JS readers still get every step. Words unchanged.
+  Test: `test/raidmimic-setup-steps.test.js`. Open: not seen in a browser (no Next build in the draft session); read it at
+  `https://b.wolfpack.quest/raidmimic/setup` once on `beta`.
 - **🧪 raidmimic: `?v=motion` is now the story hero with a capture strip below it (web 2.1.19, draft branch `draft/rm-final`, not pushed,
   2026-10-24; the guild lead's "B — Strip" pick).** A 16:9 story video (about 35 s, a chest comes alive, the real overlays end up on
   its monitor) plays once, then a seamless six-second loop takes over; "Watch again" replays it. The four real captures sit in a strip
