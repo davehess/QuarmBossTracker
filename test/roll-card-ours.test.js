@@ -256,4 +256,9 @@ describe('source guards (comments stripped)', () => {
   it('an expected condition logs nothing to stderr', () => {
     expect(body).not.toMatch(/console\.(warn|error)/);
   });
+  it('boot refreshes the card once, so a deploy during an event corrects it', () => {
+    const start = SRC.indexOf('client.once(Events.ClientReady');
+    const ready = stripJs(SRC.slice(start, SRC.indexOf('\n});\n', start)));
+    expect(ready).toMatch(/_scheduleEventRollCard\(\)/);
+  });
 });

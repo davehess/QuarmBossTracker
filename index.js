@@ -417,6 +417,9 @@ client.once(Events.ClientReady, async (readyClient) => {
   // loaded (the beta ref resolver awaits the tuning map — unsafe at module top).
   _refreshAgentManifestBeta().catch(() => {});
   try { setInterval(_refreshAgentManifestBeta, AGENT_MANIFEST_REFRESH_MS).unref(); } catch (_) { /* non-fatal */ }
+  // An event's rolled-loot card refreshes only on new rolls; refresh it once at boot so a deploy during (or just
+  // after) an event corrects the card in the thread instead of leaving it stale (2026-10-27). No event: a no-op.
+  try { _scheduleEventRollCard(); } catch { /* presentation only */ }
   // Slow mode (utils/slowMode.js) before any kill is recorded or reconciled: it decides the timer length.
   await require('./utils/slowMode').loadSlowMode();
   // Plane of Time cycle ledger (utils/potimeCycle.js): Quarm's timer is the cycle end, so load it before the same reconcile.
