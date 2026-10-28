@@ -27988,7 +27988,9 @@ function wpNightLootTotalsHtml(nl, win) {
 }
 function wpNightLootHtml(nl) {
   var have = nl && Array.isArray(nl.loot);
-  var dataHrs = have && nl.window_hours ? nl.window_hours : 12;
+  // Before the first answer (a reload) there is no data window yet: the header names the saved window the chip
+  // already shows, not a stale "12 hours". An answer with no window_hours is an older bot's 12h.
+  var dataHrs = have ? (nl.window_hours || 12) : _wpNightHours;
   var win = _wpNightWindowText(dataHrs);
   var h = '<div class="card wide"><h2>📦 Who looted what <span class="dim" style="font-size:11px;text-transform:none;letter-spacing:0">· last ' + win + '</span></h2>';
   if (!nl) {
@@ -28062,6 +28064,16 @@ function wpNightLootWindow(el) {
   try { localStorage.setItem('wp:nightLootHours', String(v)); } catch (e) { void e; }
   wpRenderNightLoot();
   if (typeof wpNightLootRefetch === 'function') wpNightLootRefetch(true);
+}
+// Opening the Loot tab (the guild lead, 2026-10-28: "when you reload it doesn't pull in loot from the last x hours
+// based on setting"). A reload lands on the Dashboard tab with the saved window already chosen but no list; the
+// fetch behind the tab only runs on the next 7s poll after the tab shows, so the card sat on "Loading…" (once under a
+// "last 12 hours" header). Ask at once when the list on screen is not the saved window's; a list that is already
+// current just takes the normal 30s-throttled refresh.
+function wpNightLootOpened() {
+  var nl = _wpNightLoot;
+  var current = !!(nl && Array.isArray(nl.loot) && (nl.window_hours || 12) === _wpNightHours);
+  if (typeof wpNightLootRefetch === 'function') wpNightLootRefetch(!current);
 }
 // Who looted a roll set's item when that is NOT someone the card already shows as
 // a winner (a re-roll or a pass hands it on). The bot linked looters to the
@@ -29699,6 +29711,7 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   if (b.dataset.tab === 'optin') refreshOptin();
   if (b.dataset.tab === 'raid') refreshRaidTab();
   if (b.dataset.tab === 'myparses') wpMpOpenTab();
+  if (b.dataset.tab === 'loot') wpNightLootOpened();
   try { wpIndexSync(); } catch (e) { void e; }   // the pinned index follows the tab at once, not on the next poll
 }));
 // #myparses opens the 📈 My parses tab — the tray's "📈 My parses" item loads the dashboard with that hash, the
