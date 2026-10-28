@@ -39,7 +39,7 @@ function build({ saved = null, storageThrows = false } = {}) {
     function _wpDeathrollHtml(){ return ''; }
   `;
   const api = evalBlock(pre + uiBlock + '\nfunction _hours(v){ if (v !== undefined) _wpNightHours = v; return _wpNightHours; }',
-    ['wpNightLootHtml', 'wpFmtPP', 'wpNightLootWindow', 'wpNightLootSet', '_hours']);
+    ['wpNightLootHtml', 'wpFmtPP', 'wpNightLootWindow', 'wpNightLootSet', 'wpNightLootOpened', '_hours']);
   return { ...api, store, refetches: globalThis.__lvRefetch };
 }
 
@@ -214,6 +214,49 @@ describe('the window chips — pick, remember, ask', () => {
     expect(blocked._hours()).toBe(12);
     expect(() => blocked.wpNightLootWindow(chip(24))).not.toThrow();
     expect(blocked._hours()).toBe(24);
+  });
+});
+
+describe('opening the Loot tab after a reload — the saved window is fetched at once', () => {
+  // The guild lead, 2026-10-28: "when you reload it doesn't pull in loot from the last x hours based on setting".
+  // A reload lands on the Dashboard tab with the pick restored from storage and no list; the poll behind the tab
+  // is up to one 7s tick away, so the card sat on "Loading…" (under a "last 12 hours" header for a 7d pick).
+  it('before any answer the header names the saved window, matching the chip', () => {
+    const t = build({ saved: 168 });
+    const html = t.wpNightLootHtml(null);
+    expect(html).toContain('· last 7 days');
+    expect(html).not.toContain('last 12 hours');
+    expect(html).toContain('class="wp-btn pri" data-v="168"');
+    expect(t.wpNightLootHtml({ failed: true })).toContain('· last 7 days');
+  });
+
+  it('an answer without window_hours is still an older bot\'s 12h', () => {
+    const t = build({ saved: 24 });
+    expect(t.wpNightLootHtml(OLD([{ looter: 'Corvale', item: 'Cloak of Flames', zone: 'x', at: AT }]))).toContain('· last 12 hours');
+  });
+
+  it('opening the tab with no list asks now (forced past the 30s throttle)', () => {
+    const t = build({ saved: 168 });
+    t.wpNightLootOpened();
+    expect(t.refetches).toEqual([true]);
+  });
+
+  it('a failed or other-window list is re-asked; a current one takes only the throttled refresh', () => {
+    const t = build({ saved: 168 });
+    t.wpNightLootSet({ failed: true });
+    t.wpNightLootOpened();
+    expect(t.refetches).toEqual([true]);
+    t.wpNightLootSet(BODY([CLOAK], { window_hours: 12 }));        // a reply for a window that is not the pick
+    t.wpNightLootOpened();
+    expect(t.refetches).toEqual([true, true]);
+    t.wpNightLootSet(BODY([CLOAK], { window_hours: 168 }));
+    t.wpNightLootOpened();
+    expect(t.refetches).toEqual([true, true, false]);
+  });
+
+  it('the tab switcher calls it for the Loot tab', () => {
+    const sw = stripJs(sliceBlock(dash, "document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListener('click'", 'wpIndexSync(); }'));
+    expect(sw).toMatch(/b\.dataset\.tab === 'loot'\)\s*wpNightLootOpened\(\)/);
   });
 });
 
