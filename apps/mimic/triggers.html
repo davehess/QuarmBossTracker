@@ -285,6 +285,11 @@
      panel's bottom edge (or its top, per panel). */
   body.part #move-btn, body.part #clear-btn, body.part #hide-btn,
   body.part #drag-controls, body.part #setupbar{display:none !important}
+  /* The window's name chip ("Alerts & timers", with its own dark plate) is the window's title. A canvas panel has no
+     window title: its name is in its own tab while arranging, and its plate is the panel's Background switch alone
+     (FB-105: "display their window title background and you can't turn it off"). Hidden here, in the page, so it does not
+     depend on the preload's docked-frame rule having run. */
+  body.part .wp-name-chip{display:none !important}
   body.part-timers #alertcol, body.part-timers #placeholder{display:none !important}
   body.part-callouts #timers{display:none !important}
   body.part #timers{top:auto;bottom:4px;left:4px;right:auto;max-height:none;overflow:hidden;
