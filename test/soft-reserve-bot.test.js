@@ -288,7 +288,7 @@ describe('the wiring', () => {
   });
   it('the event roll card ranks with Soft Reserve', () => {
     const s = src('index.js');
-    expect(s).toMatch(/buildRollSessions\(rollRows \|\| \[\], lootedRows \|\| \[\], _sr\.makeReserversFor\(_srData, _rollItemsMatch\)\)/);
+    expect(s).toMatch(/buildRollSessions\(ourRollRows, lootedRows \|\| \[\], _sr\.makeReserversFor\(_srData, _rollItemsMatch\)\)/);
   });
   it('the bot version and its changelog moved together', () => {
     const v = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
