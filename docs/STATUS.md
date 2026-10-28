@@ -7146,3 +7146,25 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
 - **Mimic beta `56b30547`**: Settings → Zeal → Wolf Pack; checked against the live release (tag derives to
   `wolfpack-1-6a3ee20`). Tests `test/zeal-source.test.js`, `test/crash-build-tag.test.js`.
 - ⏳ Not run in game yet; no stable channel yet; Quarm staff not asked. Runbook `docs/upstream/WOLFPACK-ZEAL.md`.
+
+### 🧾 2026-10-28 — Press a window's name to minimize; every overlay folds; the overlay picker; Canvas Minimize (Mimic beta `37f988e9`, agent 4.0.33; DECISIONS §458)
+- **Press the name**: pointer-down on an overlay's name lights it (gold); letting go on it (moved ≤ 4 px) flips THAT overlay's mini through
+  the existing `wp-mini-toggle`; moving away or dragging cancels. One implementation, `preload.js` (`_wpMakeNamePress`), keyed on
+  `data-wp-name` — exactly one per overlay page (`test/mini-press-picker.test.js`). Pages with no title row (Alerts, Map) carry a small
+  `.wp-name-chip`; the nine designed minis hide their title rows, so a faded proxy chip stands in while mini.
+- **Everything folds**: `_FOLD_KEYS` (alerts, /who, chat, melody, Tick, threat, command, HUD ring, map, map timers) fold to their title
+  row (`body.wp-fold`, window shrinks to the row; main keeps the old height and restores it). Same `cfg.overlayMini` / `_setOverlayMini`
+  / `wp-mini` push. ⚠ Ctrl+Shift+M and the 📌 still cover ONLY the nine (`_MINI_KEYS`): folding the alerts window mid-raid would hide
+  callouts. The dashboard's Mini column now has a switch on all of them (`WP_FOLD_KEY_OF`), no 📌.
+- **Picker**: right-click or ~500 ms long-press on the name → "Overlays" menu (STANDARD with ✓, ▸ MORE with an A–Z switch in
+  `cfg.pickerMoreAlpha`, ▸ CANVAS → `canvas-edit`, which asks first when the Canvas is off). Rows flip through `toggle-overlay`.
+- **Per character** (`cfg.overlayCharState[<char>]`, ≤ 40, oldest dropped; the character is `_activeCharName`, same as layout saves):
+  mini flags restored when they become active (global `overlayMini` when no entry); last-shown stamps order the picker.
+- **Follow-up**: the stand-in chip (designed minis) shows only while the pointer is over the window and sits in a strip clear of all text,
+  controls and bars (`_wpFreeSpot`; not drawn when none); the picker's ▸ MORE / ▸ CANVAS start collapsed and remember (`cfg.pickerOpen`).
+- **Canvas** (`canvas.html` `placeMin`, pure): every panel gets "▭ Minimize" / "▭ Restore" — in its tab when the label fits, else
+  right / left / above / below the panel (first spot on the canvas covering no other panel or control) with a 2px line in the panel's
+  colour; the label is never shortened. While playing it shows only under the pointer (400 ms grace); Restore always shows; an empty
+  panel gets none. Panels without a mini fold to an 18px named strip (`min: true`, saved like lock). Test `test/canvas-minimize.test.js`.
+- ⏳ Not run in a real Electron window: the logic was exercised in Chromium against the real preload with a stubbed bridge. Window
+  height on fold/unfold (`_foldWindow`, `win.setMinimumSize`) and the hover-handshake on the name are the things to look at on beta.
