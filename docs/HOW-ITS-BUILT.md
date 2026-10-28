@@ -5243,6 +5243,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `_wpCaptureAccel` (+ `_wpAccelNorm`, `_wpHotkeyUseLabel`), main
   `hotkey-capture` IPC → `_setHotkeysSuspended` / `_mimicHotkeyUses`,
   `status.hotkeysBlocked`. Test: `test/overlay-hotkeys.test.js`.
+- **Press a name to minimize; every overlay folds; overlay picker; Canvas Minimize (Mimic beta `37f988e9`, agent 4.0.33, §458)** —
+  Canvas: `canvas.html` `placeMin` / `placeMins` (test `test/canvas-minimize.test.js`). Windows: `data-wp-name` on each overlay page's
+  name; `preload.js` `_wpMakeNamePress` (press / long-press / right-click), `_wpFoldSync` (`body.wp-fold`), `_buildOverlayPicker`;
+  main `_FOLD_KEYS`, `_foldWindow`, `wp-overlay-picker`, per-character `cfg.overlayCharState` (`_charStateNote`, `_charMiniRestore`).
+  Test `test/mini-press-picker.test.js`.
 - **Mini mode on the dashboard (agent 3.7.15, beta)** — Overlays table Mini
   column (`WP_MINI_KEY_OF`, `.wp-ov-mini` / `.wp-ov-pin`), Minimize ALL row
   (`wpMiniHotkey*`, `data-act="miniall"`); main `wp-mini-pin-set`, status
