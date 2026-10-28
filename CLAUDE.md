@@ -333,10 +333,22 @@ which surface the screenshot shows.
 A decision that lives only in chat is lost: cloud and desktop sessions cannot
 share a conversation, and a container reset takes the scratchpad with it. When
 The guild lead makes a call — a default, a threshold, a policy, a "we don't do
-that" — append it to **`docs/DECISIONS-<YYYY-MM-DD>.md`** before the session
-ends, and fold anything that outlives the week into this file. Each entry: the
-call, why, and where it landed. Keep the "Open — read this first" table at the
-bottom current; that table is what the next session reads first.
+that" — write it down before the session ends, and fold anything that outlives
+the week into this file. Each entry: the call, why, and where it landed.
+
+**Decisions live by feature set in `docs/decisions/`** (the guild lead, 2026-10-28: *"one directory of
+decisions per feature set. we can still carry forward new decision docs but they should get periodically
+merged into our structure"*; §456):
+- **New entry:** append `### <N>. [<set>] <title>` to `docs/decisions/inbox/<YYYY-MM-DD>.md`, where `<N>` is
+  `npm run -s decisions:next` (the running § number) and `<set>` is a slug from `docs/decisions/README.md`.
+- **Open items:** `docs/decisions/OPEN.md`, kept current in place; it is what the next session reads first.
+- **Merge:** `npm run decisions:merge` folds the inbox into the set files and rebuilds the ID index. Do it at
+  least weekly (the session digest names the oldest inbox file), in a docs-only commit.
+- **Citations do not change:** `DECISIONS §117` still means entry 117; older logs' entries are `<date>/<n>`.
+  The old `docs/DECISIONS-<date>.md` files are pointers to where their entries went.
+- The guild lead's **Decision Desk** artifact has an "All decisions" tab built from these files
+  (`node scripts/decisions/build.js json <out>`, published as its `data/decisions.json`); a session that
+  merges the inbox republishes it.
 
 Retrieval is automatic and cheap: `.claude/hooks/session-digest.sh` runs on
 SessionStart and prints the open-items table + doc index + live versions, and
@@ -371,7 +383,7 @@ never carries its link) holds:
   **Even that tab carries no addresses, tokens, open ports or "this box is unpatched" statements**: a
   hardening list there is a checklist the guild lead ticks, never a record of what is exposed.
 
-Everything else still goes in the public DECISIONS file. A private call gets a
+Everything else still goes in the public decisions (`docs/decisions/`). A private call gets a
 one-line public pointer only when other sessions need to know that it exists.
 
 ### Working rule — deployment decisions write to the self-host epic

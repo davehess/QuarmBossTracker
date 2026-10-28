@@ -18,16 +18,20 @@ echo "on by BOTH local desktop and cloud sessions, which cannot share a"
 echo "conversation. Read the file before concluding anything is missing."
 echo
 
-# ── Most recent decisions doc ───────────────────────────────────────────────
-LATEST_DECISIONS="$(ls -1 docs/DECISIONS-*.md 2>/dev/null | sort | tail -1)"
-if [ -n "${LATEST_DECISIONS:-}" ] && [ -f "$LATEST_DECISIONS" ]; then
-  echo "### Latest decisions — \`$LATEST_DECISIONS\`"
+# ── Open decisions + the inbox waiting to be merged ─────────────────────────
+if [ -f docs/decisions/OPEN.md ]; then
+  echo "### Open decisions — \`docs/decisions/OPEN.md\`"
   echo
-  # The "Open — read this first" table is the highest-value block; print it and
-  # nothing else, so the digest stays short enough to always be read.
-  awk '/^## Open/{flag=1} flag' "$LATEST_DECISIONS" | head -40
+  # The open-items table is the highest-value block; print it and nothing else,
+  # so the digest stays short enough to always be read.
+  awk '/^\| /{flag=1} flag' docs/decisions/OPEN.md | head -40
   echo
-  echo "_Full decision history in that file; other DECISIONS-*.md are older._"
+  INBOX_FILES="$(ls -1 docs/decisions/inbox/*.md 2>/dev/null | sort)"
+  if [ -n "$INBOX_FILES" ]; then
+    OLDEST="$(basename "$(echo "$INBOX_FILES" | head -1)" .md)"
+    echo "_Decision inbox: $(echo "$INBOX_FILES" | wc -l | tr -d ' ') file(s), oldest $OLDEST. Merge weekly: \`npm run decisions:merge\`._"
+  fi
+  echo "_All decisions by feature set, with the ID index: \`docs/decisions/README.md\`._"
   echo
 fi
 

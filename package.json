@@ -17,7 +17,10 @@
     "sync:dashboard": "node scripts/sync-dashboard-embed.js",
     "sync:pop-quests": "node scripts/sync-pop-quests.js",
     "sync:pop-engine": "node scripts/sync-pop-engine.js",
-    "graphify": "bash scripts/graphify.sh"
+    "graphify": "bash scripts/graphify.sh",
+    "decisions:merge": "node scripts/decisions/build.js merge",
+    "decisions:next": "node scripts/decisions/build.js next",
+    "decisions:check": "node scripts/decisions/build.js check"
   },
   "engines": {
     "node": ">=18.0.0"
