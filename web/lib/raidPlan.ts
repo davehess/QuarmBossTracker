@@ -375,8 +375,10 @@ export const PLAN: PlanSection[] = [
       abilities: 'Summons, enrages, flurries. Unmezzable, unstunnable, uncharmable, pacify-immune. Can be slowed. Magic weapons. 10% proc: Touch of Night.',
       mechanics: [
         `She stands at ${loc(-1803, -13)}.`,
-        `At 79% and 69%: one dream defiler spawns for EVERY player on her hate list (at ${loc(-1661, -168)}).`,
-        'At 50%: Direption of Dreams (slow and miss debuff). Our Mimic card: "MASS AE DISPEL, all but MT + 2 healers hide behind the wall".',
+        // nightmareb/Terris_Thule.lua:35-56, 64-75 @ d4625cdd (FB-109): one defiler per CLIENT on her hate list with
+        // damage > 0 (pets and players who have not hit her add none); spell 3150 is 12x cancel magic, PB AE.
+        `At 79% and 69%: one dream defiler spawns for every player who has damaged her; pets do not count (at ${loc(-1661, -168)}).`,
+        'At 50%: Direption of Dreams, a mass dispel around her (her emote talks of slowing and missing; the spell itself strips buffs). Our Mimic card: "MASS AE DISPEL, all but MT + 2 healers hide behind the wall".',
         `At 40%: four statues wake (L63, 53,000 HP, enrage) at ${loc(-1954, 99)}, ${loc(-1748, 91)}, ${loc(-1736, -125)}, ${loc(-1958, -104)}.`,
         'Leash box: x -2090 to -1580, y -280 to 250. Out of combat she resets all adds.',
       ],
