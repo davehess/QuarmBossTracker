@@ -14,12 +14,12 @@ older dated logs are `<date>/<n>` (the n-th entry of that day's log).
 | Set | File | Entries | What |
 |---|---|---|---|
 | Raid timers & boards | [raid-timers.md](raid-timers.md) | 20 | Boss kill timers, spawn alerts, lockouts, the #raid-mobs boards. |
-| Parses & raid review | [raid-review.md](raid-review.md) | 39 | Encounters, meters, threat, kills and wipes, raid nights and sessions, attendance. |
+| Parses & raid review | [raid-review.md](raid-review.md) | 40 | Encounters, meters, threat, kills and wipes, raid nights and sessions, attendance. |
 | Raid planning, maps & strategy | [raid-planning.md](raid-planning.md) | 47 | Route planner, raid plans, timelines, maps, kiting, sign-ups. |
 | PoP flags & progression | [pop-progression.md](pop-progression.md) | 42 | #popflags, the Seer and Maelin, flag checklists, quests. |
 | Triggers, callouts & voice | [triggers.md](triggers.md) | 33 | Guild and personal triggers, trigger timers, voices, callout wording. |
 | Buffs, debuffs, charm & healing | [buffs-debuffs.md](buffs-debuffs.md) | 26 | Buff and debuff queues, landings, charm and pets, CH chain, mez and slow. |
-| Mimic overlays & HUD | [mimic-overlays.md](mimic-overlays.md) | 111 | Every overlay window: how it looks, moves, docks and fits. |
+| Mimic overlays & HUD | [mimic-overlays.md](mimic-overlays.md) | 112 | Every overlay window: how it looks, moves, docks and fits. |
 | Mimic app & releases | [mimic-app.md](mimic-app.md) | 48 | The desktop app: install, update channels, tray, settings, stable cuts. |
 | Agent & log upload | [agent.md](agent.md) | 19 | The log agent, its dashboard, backfill, the upload queue, ingest and load-shed. |
 | Zeal & upstream | [zeal.md](zeal.md) | 31 | The Zeal fork, upstream PRs, the pipe, spawn ids, tags, Wolf Pack Zeal. |
@@ -28,7 +28,7 @@ older dated logs are `<date>/<n>` (the n-th entry of that day's log).
 | Website & sign-in | [web.md](web.md) | 14 | wolfpack.quest pages, sign-in, link previews, admin pages, the beta site. |
 | Discord bot & community | [bot-discord.md](bot-discord.md) | 24 | Bot commands, Discord cards, feedback reports, onboarding, roster, Bristlebane. |
 | Hosting, database & costs | [infra-costs.md](infra-costs.md) | 34 | Supabase, Railway, Vercel, the home server, retention, the self-host wizard. |
-| Working rules & process | [process.md](process.md) | 45 | How sessions work, branches and releases, docs rules, tooling assessed. |
+| Working rules & process | [process.md](process.md) | 46 | How sessions work, branches and releases, docs rules, tooling assessed. |
 | Brand, media & marketing | [brand-media.md](brand-media.md) | 30 | Raid Mimic and eqmimic.quest pages, videos, posters, the mascot. |
 | Other games | [other-games.md](other-games.md) | 3 | World of Warcraft and anything outside EverQuest. |
 
@@ -36,6 +36,9 @@ older dated logs are `<date>/<n>` (the n-th entry of that day's log).
 
 | ID | Date | Set | Title |
 |---|---|---|---|
+| §458 | 2026-10-28 | [mimic-overlays](mimic-overlays.md) | Press a window's name to minimize; every overlay folds; picker from the name (2026-10-28) |
+| §457 | 2026-10-28 | [raid-review](raid-review.md) | The event rolled-loot card shows only our raiders' rolls, and posts once (2026-10-28) |
+| §456 | 2026-10-28 | [process](process.md) | Decisions live by feature set in docs/decisions/, searchable on the Decision Desk (2026-10-28) |
 | §455 | 2026-10-27 | [zeal](zeal.md) | Wolf Pack Zeal: one suggested Zeal, rebuilt from the latest official release (2026-10-27) |
 | §454 | 2026-10-27 | [zeal](zeal.md) | Zeal PRs: 253 and 254 filed; 253 reworked to show the reply by default (2026-10-27) |
 | §453 | 2026-10-27 | [mimic-app](mimic-app.md) | Mimic 3.0.5 stable, and everything on beta to main (2026-10-27) |

@@ -1651,3 +1651,22 @@ resolving them cleanly instead"*.
 - **Railway build failures** (`failed to fetch snapshot`, deployments 797f74f8 and 542e03cf, 2026-10-24) were Railway's
   builder: the snapshot uploaded, then could not be read back; a redeploy of the same commit built. In the ledger as
   infrastructure.
+
+## §456 — Decisions live by feature set in docs/decisions/, searchable on the Decision Desk (2026-10-28)
+*2026-10-28 · decisions/inbox/2026-10-28.md*
+
+The guild lead: *"can we rip down all the decisions and just make one directory of decisions per feature set? we can
+still carry forward new decision docs but they should get periodically merged into our structure"*, then *"build these
+all into my decision deck with search ability"*.
+- **622 entries** from the 22 dated logs, each sorted into one of 18 feature sets (`docs/decisions/<set>.md`, oldest
+  first). The sort was made per entry from its title and opening by three Sonnet agents; a misfiled entry is moved by
+  editing its set file and running `npm run decisions:merge`.
+- **IDs are kept**, so every `DECISIONS §N` in code, tests and docs still resolves (`docs/decisions/README.md` indexes
+  all of them). Entries of the older logs, which were cited by file, are `<date>/<n>`. The old files are pointers.
+- **New decisions** go to `inbox/<date>.md` as `### <N>. [<set>] <title>` and are merged into the set files at least
+  weekly; the session digest names the oldest inbox file. `docs/decisions/OPEN.md` replaces the old "Open — read this
+  first" table.
+- **The Decision Desk** gets an "All decisions" tab: search across every entry, filter by feature set, open any entry in
+  full, link straight to one (`#log/§117`). Its data is `build.js json`, republished when the inbox is merged.
+- Lost on purpose: only each old log's opening "previous file" lines; the old logs' superseded open tables stay in git
+  (`git show 89d3c5f1:docs/DECISIONS-<date>.md`).
