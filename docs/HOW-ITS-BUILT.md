@@ -1264,6 +1264,12 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   hub adds, privacy in plain words, the two known Zeal fixes. Marked [beta] (a new page goes live first).
 - **Where:** `web/app/raidmimic/setup/page.tsx`, the words in `web/lib/raidmimicSetup.ts`; `raidmimicLandingTarget(pathname)`
   in `web/lib/raidmimicHost.ts` maps `/setup` on raidmimic.com to it; `pageMeta.ts` entry. Test: `test/raidmimic-setup.test.js`.
+- **One step at a time by default (web 2.1.60, on beta, 2026-10-28; the guild lead: "setup needs the step-by-step by default").**
+  `setup/SetupSteps.tsx` (the one client piece) shows a single step with a numbered rail, "Step 2 of 6", Back / Next and the
+  left/right arrow keys; the URL hash (`#first-run`) is the step, so a link or reload lands on it. A small "Show all steps"
+  switch renders the old full page and is remembered in localStorage (guarded). Every step stays in the server HTML, hidden
+  with `hidden` and un-hidden by `<noscript>`, so no-JS readers and crawlers get all six. State helper:
+  `web/lib/raidmimicSetupSteps.ts`; test: `test/raidmimic-setup-steps.test.js`. Words unchanged (`raidmimicSetup.ts`).
 - **Live at:** `https://wolfpack.quest/raidmimic/setup`. The landing's `?v=b`/`?v=c` previews (output gallery, mascot hero)
   are NOT promoted; they stay on beta until the guild lead picks.
 
