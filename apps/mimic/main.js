@@ -13730,13 +13730,50 @@ ipcMain.handle('voice:install', async (_e, engine, voice, accept) => {
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }
 });
+// A custom Piper voice (the guild lead, 2026-10-28: "link to a custom one"): two https links, or two files picked from
+// this PC (`src.files` true opens the picker for a .onnx and its .onnx.json). `accept.terms` is the ticked "I am
+// responsible for its licence" box; neuralVoice.addCustomVoice checks the links, size, file shape and that box.
+ipcMain.handle('voice:add-custom', async (e, src, accept) => {
+  try {
+    const a = accept && typeof accept === 'object' ? { terms: accept.terms === true } : {};
+    const s = src && typeof src === 'object' ? src : {};
+    let spec;
+    if (s.files === true) {
+      const early = neuralVoice.acceptanceProblem({ id: neuralVoice.CUSTOM_PREFIX + 'x', tier: 'custom' }, a);
+      if (early) throw new Error(early.replace('Nothing was downloaded', 'Nothing was added'));
+      const win = BrowserWindow.fromWebContents(e.sender);
+      const r = await dialog.showOpenDialog(win || null, {
+        title: 'Select a Piper voice: the .onnx model and its .onnx.json settings file', properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'Piper voice files', extensions: ['onnx', 'json'] }, { name: 'All files', extensions: ['*'] }],
+      });
+      if (r.canceled || !Array.isArray(r.filePaths) || !r.filePaths.length) return { ok: true, cancelled: true, status: neuralVoice.status(VOICES_DIR()) };
+      const onnxPath = r.filePaths.find(f => /\.onnx$/i.test(f)), configPath = r.filePaths.find(f => /\.onnx\.json$/i.test(f));
+      if (!onnxPath || !configPath) throw new Error('Pick both files at once: the .onnx model and its .onnx.json settings file.');
+      spec = { onnxPath, configPath };
+    } else {
+      spec = { onnxUrl: String(s.onnxUrl || ''), configUrl: String(s.configUrl || '') };
+    }
+    const st = await neuralVoice.addCustomVoice(VOICES_DIR(), spec, a);
+    appendAgentLog(`[voice] added a custom Piper voice\n`);
+    return { ok: true, status: st };
+  } catch (err) {
+    appendAgentLog(`[voice] custom voice failed: ${err && err.message}\n`);
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
 ipcMain.handle('voice:remove', (_e, engine, voice) => {
   try { return { ok: true, status: neuralVoice.remove(VOICES_DIR(), String(engine || ''), process.platform, String(voice || '')) }; }
   catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
 });
 ipcMain.handle('voice:synth', (_e, text, spec) => {
   const s = spec && typeof spec === 'object' ? spec : {};
-  return neuralVoice.synthesize(VOICES_DIR(), { engine: s.engine, voice: s.voice, rate: s.rate, test: s.test === true, text });
+  // A multi-speaker Piper voice: a ▶ Test sends the number being tried; a live callout sends none, so it is read from
+  // the player's saved choice (cfg.voice.piperSpeakers[<voice id>], default 0). neuralVoice.normalizeSpeaker clamps it.
+  let speaker = s.speaker;
+  if (speaker == null && s.engine === 'piper') {
+    try { const m = ((loadConfig() || {}).voice || {}).piperSpeakers; speaker = m && typeof m === 'object' ? m[s.voice] : 0; } catch { speaker = 0; }
+  }
+  return neuralVoice.synthesize(VOICES_DIR(), { engine: s.engine, voice: s.voice, rate: s.rate, speaker, test: s.test === true, text });
 });
 // Mute (cfg.quietMode) reaches every overlay renderer as one boolean, so the
 // three places that speak or play a sound (triggers.html, chchain.html,

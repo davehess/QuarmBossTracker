@@ -14584,7 +14584,8 @@ function wpSoundOverrideHtml(t, ov) {
     return { engine: 'windows', voice: null };
   }
   // acc: the accept panel that is open for a non-free voice ({ id, terms, research }), or null.
-  var eng = { st: null, note: '', busy: false, acc: null }, curAudio = null;
+  // moreLang: the language open under "More voices"; cu: what is typed in the custom-voice form (kept here so a repaint keeps it).
+  var eng = { st: null, note: '', busy: false, acc: null, moreLang: '', cu: { onnx: '', config: '', ok: false } }, curAudio = null;
   // TEST PHRASE (the guild lead, 2026-10-18): every ▶ Test speaks the line chosen or typed at the top of the engine card.
   // The picker and the box live in ONE element built once (phraseEl) and moved back in after each paint, so a repaint never
   // resets what is typed, the caret or the choice; the choice is also kept in this browser (localStorage) across reloads.
@@ -14658,6 +14659,7 @@ function wpSoundOverrideHtml(t, ov) {
       var late = false, t = setTimeout(function(){ late = true; done(false); }, test ? 12900 : 2900);
       var spec = { engine: ch.engine, voice: ch.voice, rate: rate > 0 ? rate : pick(packId).rate };
       if (test) spec.test = true;
+      if (ch.engine === 'piper' && ch.voice) spec.speaker = speakerOf(ch.voice);   // a multi-speaker model: the number in its field
       Promise.resolve(m.voiceSynth(text, spec)).then(function(buf){
         if (late) return;
         clearTimeout(t);
@@ -14723,16 +14725,88 @@ function wpSoundOverrideHtml(t, ov) {
   // The accept screen for a non-commercial or research-only voice: licence, the publisher's model card, the credit,
   // and the box(es) that must be ticked before Download turns on. Research voices add the warning and a second box.
   function acceptHtml(v){
-    var a = eng.acc, research = v.tier === 'research', ok = a.terms && (!research || a.research);
+    var a = eng.acc, research = v.tier === 'research', unchecked = v.tier === 'unchecked', ok = a.terms && (!research || a.research);
     var h = '<div data-vn-accept="' + esc(v.id) + '" style="width:100%;margin:2px 0 4px 22px;padding:8px 10px;border:1px solid ' + (research ? 'var(--red)' : 'var(--border)') + ';border-radius:5px;font-size:12px;display:flex;flex-direction:column;gap:6px">';
     if (research) h += '<div style="border:2px solid var(--red);border-radius:4px;padding:6px 8px;color:var(--red)"><b>Research only and experimental.</b> This voice is built from data licensed for research use only. Using it for game callouts may fall outside that licence; you take that on yourself by downloading it. It may also sound or behave unexpectedly.</div>';
     h += '<div>Licence: <b>' + esc(v.licence) + '</b> &middot; <a href="' + esc(v.modelCardUrl) + '" target="_blank" rel="noopener noreferrer">Model card</a></div>'
       + '<div class="dim">' + esc(v.credit) + '</div>';
-    if (!research) h += '<div>For personal, non-commercial use. Mimic downloads it from its publisher for you; we don\'t share it.</div>';
-    h += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-acc="terms"' + (a.terms ? ' checked' : '') + '> I accept these terms</label>';
+    if (unchecked) h += '<div style="border:1px solid var(--border);border-radius:4px;padding:6px 8px"><b>Licence not checked by Wolf Pack &mdash; read the model card.</b> It is published by the Piper project; what you may do with the voice depends on the data it was trained on. You take that on yourself by downloading it.</div>';
+    else if (!research) h += '<div>For personal, non-commercial use. Mimic downloads it from its publisher for you; we don\'t share it.</div>';
+    h += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-acc="terms"' + (a.terms ? ' checked' : '') + '> ' + (unchecked ? 'I have read the model card and accept its terms' : 'I accept these terms') + '</label>';
     if (research) h += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-acc="research"' + (a.research ? ' checked' : '') + '> I understand this voice is for research use only and is experimental</label>';
     h += '<div style="display:flex;gap:8px"><button type="button" data-vn-dl-gated="' + esc(v.id) + '" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (ok && !eng.busy ? '' : ' disabled') + '>Download &middot; ' + mb(v.downloadBytes) + '</button>'
       + btn('data-vn-acc-cancel', 'Cancel') + '</div></div>';
+    return h;
+  }
+  // THE PIPER LIST (the guild lead, 2026-10-28: "grab more voices… or link to a custom one"). Mimic's voice:status catalog
+  // is every model in rhasspy/piper-voices (see neuralVoice.js / scripts/sync-piper-voices.js) plus the player's own.
+  // US and UK English are the curated lists, each Free first and then "Needs your OK" (non-commercial, research only,
+  // share-alike); every other language sits under "More voices" (licence not checked by Wolf Pack); "Your own voice" takes
+  // two https links or two files. A Mimic that predates this sends no lang/quality/size: its six voices read as US English.
+  var CURATED_LANGS = [['en_US', 'US English'], ['en_GB', 'UK English']];
+  var TEST_STYLE = 'background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px';
+  var INPUT_STYLE = 'background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:12px';
+  function vLang(c){ return c.lang || 'en_US'; }
+  function qual(c){ return String(c.quality || '').replace(/_/g, '-'); }
+  function shortLic(s){ s = String(s || ''); return s.length > 64 ? s.slice(0, 61) + '…' : s; }
+  function tierChip(c){
+    var chip = function(txt, col){ return '<span style="font-size:10px;border:1px solid ' + col + ';color:' + col + ';border-radius:3px;padding:0 4px">' + txt + '</span>'; };
+    if (c.tier === 'research') return chip('research only', 'var(--red)');
+    if (c.tier === 'nc') return chip('non-commercial', 'var(--muted, #8b949e)');
+    if (c.tier === 'unchecked') return chip('licence not checked', 'var(--muted, #8b949e)');
+    if (c.tier === 'custom') return chip('your licence', 'var(--muted, #8b949e)');
+    return '';
+  }
+  function speakerOf(id){ var m = cfgVoice.piperSpeakers, n = m && typeof m === 'object' ? Number(m[id]) : 0; return (isFinite(n) && n > 0) ? Math.floor(n) : 0; }
+  function piperRow(c, ch, mi){
+    var sel = ch.engine === 'piper' && ch.voice === c.id, gated = (c.tier || 'free') !== 'free';
+    var r = '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;width:100%;padding-left:22px;font-size:12px">'
+      + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="wpPiperVoice" value="' + esc(c.id) + '"' + (sel ? ' checked' : '') + (c.installed && mi ? '' : ' disabled') + '>' + esc(c.label) + '</label>'
+      + '<span class="dim" title="' + esc(c.credit) + '">' + (qual(c) ? esc(qual(c)) + ' &middot; ' : '') + (c.voiceBytes ? mb(c.voiceBytes) + ' &middot; ' : '') + esc(shortLic(c.licence)) + '</span>' + tierChip(c);
+    if (c.installed && c.speakers > 1) r += '<label class="dim" title="This model holds ' + c.speakers + ' voices. Pick one by number; 0 is the first.">speaker <input type="number" min="0" max="' + (c.speakers - 1) + '" step="1" value="' + speakerOf(c.id) + '" data-vn-speaker="' + esc(c.id) + '" style="width:64px;' + INPUT_STYLE + '"> of ' + c.speakers + '</label>';
+    if (c.installed) r += '<button type="button" data-vn-engtest="piper:' + esc(c.id) + '" style="' + TEST_STYLE + '">&#9654; Test</button><span class="dim">Installed</span>' + btn('data-vn-rm="piper:' + esc(c.id) + '"', 'Remove');
+    else if (mi) r += gated ? btn('data-vn-acc-open="' + esc(c.id) + '"', 'Read terms &amp; download') : btn('data-vn-dl="piper:' + esc(c.id) + '"', 'Download &middot; ' + mb(c.downloadBytes), true);
+    r += '</div>';
+    if (gated && !c.installed && eng.acc && eng.acc.id === c.id) r += acceptHtml(c);
+    return r;
+  }
+  function piperRows(list, ch, mi){ var h = ''; for (var i = 0; i < list.length; i++) h += piperRow(list[i], ch, mi); return h; }
+  function anyOpen(list){ for (var i = 0; i < list.length; i++) if (list[i].installed || (eng.acc && eng.acc.id === list[i].id)) return true; return false; }
+  function customHtml(list, ch, mi){
+    var cu = eng.cu, canUrls = cu.ok && /^https:\/\//i.test(cu.onnx.trim()) && /^https:\/\//i.test(cu.config.trim());
+    var h = '<details ' + wpKeep('vn|piper|custom', list.length > 0) + ' style="width:100%;padding-left:22px;margin-top:6px"><summary style="font-size:12px;cursor:pointer"><b>Your own voice</b> <span class="dim">' + (list.length ? list.length + ' added &mdash; ' : '') + 'from two https links, or two files on this PC</span></summary>';
+    h += piperRows(list, ch, mi);
+    h += '<div style="margin:4px 0 0 0;display:flex;flex-direction:column;gap:4px;font-size:12px">'
+      + '<div class="dim" style="font-size:11px">A Piper voice is two files: the model (<b>.onnx</b>) and its settings (<b>.onnx.json</b>). Links must be https and the model up to 200 MB. Mimic checks the settings file, keeps the model on this PC and only ever hands it to Piper to speak with.</div>'
+      + '<input type="url" data-vn-cu="onnx" placeholder="https://…/voice.onnx" value="' + esc(cu.onnx) + '" style="width:100%;box-sizing:border-box;' + INPUT_STYLE + '">'
+      + '<input type="url" data-vn-cu="config" placeholder="https://…/voice.onnx.json" value="' + esc(cu.config) + '" style="width:100%;box-sizing:border-box;' + INPUT_STYLE + '">'
+      + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-vn-cu-ok' + (cu.ok ? ' checked' : '') + '> Custom voice &mdash; you are responsible for its licence. I have the right to use it.</label>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:8px">' + btn('data-vn-cu-add="urls"', 'Add from the links', true, !canUrls) + btn('data-vn-cu-add="files"', 'Pick the two files…', false, !cu.ok) + '</div></div></details>';
+    return h;
+  }
+  function piperListHtml(p, ch, mi){
+    var cat = p.catalog || [], h = '';
+    for (var g = 0; g < CURATED_LANGS.length; g++) {
+      var code = CURATED_LANGS[g][0], all = cat.filter(function(c){ return !c.custom && vLang(c) === code; });
+      if (!all.length) continue;
+      var free = all.filter(function(c){ return (c.tier || 'free') === 'free'; }), ok = all.filter(function(c){ return (c.tier || 'free') !== 'free'; });
+      h += '<div style="width:100%;padding-left:22px;margin-top:6px;font-size:12px"><b>' + CURATED_LANGS[g][1] + '</b> <span class="dim">' + all.length + ' voices</span></div>';
+      if (free.length) h += '<div style="width:100%;padding-left:22px;font-size:11px"><b>Free</b> <span class="dim">download on a click</span></div>' + piperRows(free, ch, mi);
+      if (ok.length) h += '<details ' + wpKeep('vn|piper|ok|' + code, anyOpen(ok)) + ' style="width:100%;padding-left:22px;margin-top:2px"><summary style="font-size:11px;cursor:pointer"><b>Needs your OK</b> <span class="dim">' + ok.length + ' voices &mdash; non-commercial, research only or share-alike. You read the terms and tick a box first.</span></summary>' + piperRows(ok, ch, mi) + '</details>';
+    }
+    var more = cat.filter(function(c){ return !c.custom && c.lang && !CURATED_LANGS.some(function(l){ return l[0] === c.lang; }); });
+    if (more.length) {
+      var byLang = {};
+      more.forEach(function(c){ (byLang[c.languageName || c.lang] = byLang[c.languageName || c.lang] || []).push(c); });
+      var names = Object.keys(byLang).sort();
+      if (!byLang[eng.moreLang]) eng.moreLang = names[0];
+      h += '<details ' + wpKeep('vn|piper|more', anyOpen(more)) + ' style="width:100%;padding-left:22px;margin-top:6px"><summary style="font-size:12px;cursor:pointer"><b>More voices</b> <span class="dim">' + more.length + ' in ' + names.length + ' other languages &mdash; licence not checked by Wolf Pack</span></summary>'
+        + '<div class="dim" style="font-size:11px;margin:2px 0">Every other model Piper publishes. Wolf Pack has not read their licences: each one shows its model card and asks for your OK first.</div>'
+        + '<select data-vn-morelang style="' + INPUT_STYLE + ';max-width:100%;margin:2px 0">';
+      names.forEach(function(n){ h += '<option value="' + esc(n) + '"' + (n === eng.moreLang ? ' selected' : '') + '>' + esc(n) + ' (' + byLang[n].length + ')</option>'; });
+      h += '</select>' + piperRows(byLang[eng.moreLang], ch, mi) + '</details>';
+    }
+    if (mi && window.mimic && window.mimic.voiceAddCustom) h += customHtml(cat.filter(function(c){ return c.custom; }), ch, mi);
     return h;
   }
   function engineHtml(){
@@ -14752,25 +14826,7 @@ function wpSoundOverrideHtml(t, ov) {
     if (!st) h += '<div class="dim" style="font-size:11px">' + (mi ? 'Checking what is installed…' : 'Not available outside Mimic.') + '</div>';
     else if (!p.available) h += '<div class="dim" style="font-size:11px">' + esc(p.reason) + '</div>';
     else {
-      // Three groups (the guild lead, 2026-10-17): free ones download on a click; the other two make you read
-      // the terms and tick a box first. Neither is hosted or shipped by us: Mimic fetches it from its publisher.
-      var groups = [['free', 'Free', ''], ['nc', 'Non-commercial &mdash; accept to download', 'Personal, non-commercial use only. You read the terms and accept them before it downloads.'],
-        ['research', 'Research only &mdash; experimental', 'Built on research-only data. Experimental, and you take the licence risk yourself.']];
-      for (var g = 0; g < groups.length; g++) {
-        var inGroup = p.catalog.filter(function(c){ return (c.tier || 'free') === groups[g][0]; });
-        if (!inGroup.length) continue;
-        var research = groups[g][0] === 'research';
-        h += '<div style="width:100%;padding-left:22px;margin-top:4px;font-size:11px;' + (research ? 'color:var(--red);border-left:3px solid var(--red);padding-left:8px;margin-left:14px' : '') + '"><b>' + groups[g][1] + '</b>' + (groups[g][2] ? ' <span class="dim">' + groups[g][2] + '</span>' : '') + '</div>';
-        for (var i = 0; i < inGroup.length; i++) {
-          var v = inGroup[i], sel = ch.engine === 'piper' && ch.voice === v.id, gated = (v.tier || 'free') !== 'free';
-          h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">'
-            + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="wpPiperVoice" value="' + esc(v.id) + '"' + (sel ? ' checked' : '') + (v.installed && mi ? '' : ' disabled') + '>' + esc(v.label) + '</label>'
-            + '<span class="dim" title="' + esc(v.credit) + '">' + esc(v.licence) + ' &mdash; ' + esc(v.credit) + '</span>'
-            + (v.installed ? '<button type="button" data-vn-engtest="piper:' + esc(v.id) + '" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654; Test</button><span class="dim">Installed</span>' + (gated ? btn('data-vn-rm="piper:' + esc(v.id) + '"', 'Remove') : '')
-              : (!mi ? '' : (gated ? btn('data-vn-acc-open="' + esc(v.id) + '"', 'Read terms &amp; download') : btn('data-vn-dl="piper:' + esc(v.id) + '"', 'Download &middot; ' + mb(v.downloadBytes), true)))) + '</div>';
-          if (gated && !v.installed && eng.acc && eng.acc.id === v.id) h += acceptHtml(v);
-        }
-      }
+      h += piperListHtml(p, ch, mi);
       h += '<div class="dim" style="font-size:11px;padding-left:22px">Piper itself is MIT-licensed (rhasspy/piper). Speed applies to it; it has no pitch.</div>';
     }
     h += '</div>';
@@ -14816,6 +14872,26 @@ function wpSoundOverrideHtml(t, ov) {
     } catch (e) { eng.note = 'Could not reach Mimic to download.'; }
     clearInterval(poll); eng.busy = false;
     await loadPc();   // the disk just changed
+    paint();
+  }
+  // Add the player's own Piper voice: mode 'urls' sends the two typed links, 'files' opens Mimic's file picker.
+  // The ticked box (eng.cu.ok) is the responsibility acceptance; Mimic refuses without it.
+  async function addCustom(mode){
+    if (eng.busy || !eng.cu.ok) return;
+    if (!window.mimic || !window.mimic.voiceAddCustom) { eng.note = 'This version of Mimic cannot add your own voice yet. Update Mimic first.'; paint(); return; }
+    eng.busy = true; eng.note = ''; paint();
+    var poll = setInterval(function(){
+      window.mimic.voiceStatus().then(function(s){ var pr = s && s.progress, n = document.getElementById('wpVoiceProg'); if (n) n.textContent = pr ? pr.text + ' ' + pr.pct + '%' : ''; }, function(){});
+    }, 600);
+    try {
+      var r = await window.mimic.voiceAddCustom(mode === 'files' ? { files: true } : { onnxUrl: eng.cu.onnx.trim(), configUrl: eng.cu.config.trim() }, { terms: true });
+      if (r && r.ok) {
+        eng.st = r.status;
+        if (!r.cancelled) { eng.note = 'Added. Pick it in the list above, then press ▶ Test.'; eng.cu = { onnx: '', config: '', ok: false }; }
+      } else eng.note = (r && r.error) || 'The voice was not added. Nothing was changed.';
+    } catch (e) { eng.note = 'Could not reach Mimic to add the voice.'; }
+    clearInterval(poll); eng.busy = false;
+    await loadPc();
     paint();
   }
   async function removeEngine(engine, voice){
@@ -14933,6 +15009,7 @@ function wpSoundOverrideHtml(t, ov) {
     if ((b = t.closest('[data-vn-acc-open]'))) { eng.acc = { id: b.getAttribute('data-vn-acc-open'), terms: false, research: false }; paint(); return; }
     if (t.closest('[data-vn-acc-cancel]')) { eng.acc = null; paint(); return; }
     if ((b = t.closest('[data-vn-dl-gated]'))) { if (eng.acc && eng.acc.terms) download('piper', b.getAttribute('data-vn-dl-gated'), { terms: !!eng.acc.terms, research: !!eng.acc.research }); return; }
+    if ((b = t.closest('[data-vn-cu-add]'))) { addCustom(b.getAttribute('data-vn-cu-add')); return; }
     if ((b = t.closest('[data-vn-rm]'))) { var rm = b.getAttribute('data-vn-rm').split(':'); removeEngine(rm[0], rm[1]); return; }
     if (t.closest('#wpVoiceHear')) { speak(sampleLine()); return; }
     if (t.closest('#wpVoiceReset')) { cfgVoice.voiceName = ''; cfgVoice.rate = null; cfgVoice.pitch = null; save(); paint(); return; }
@@ -14955,6 +15032,18 @@ function wpSoundOverrideHtml(t, ov) {
     if (t.name === 'wpVoiceEngine') { cfgVoice.engine = t.value; save(); paint(); return; }
     if (t.name === 'wpPiperVoice') { cfgVoice.piperVoice = t.value; cfgVoice.engine = 'piper'; save(); paint(); return; }
     if (t.name === 'wpKokoroVoice') { cfgVoice.kokoroVoice = t.value; cfgVoice.engine = 'kokoro'; save(); paint(); return; }
+    // A multi-speaker model's number: kept per voice in the saved voice settings (Mimic reads it for live callouts too).
+    if (t.hasAttribute && t.hasAttribute('data-vn-speaker')) {
+      var sp = Math.floor(Number(t.value)), mx = Number(t.max);
+      if (!(sp >= 0)) sp = 0;
+      if (mx >= 0 && sp > mx) sp = mx;
+      t.value = String(sp);
+      if (typeof cfgVoice.piperSpeakers !== 'object' || !cfgVoice.piperSpeakers) cfgVoice.piperSpeakers = {};
+      cfgVoice.piperSpeakers[t.getAttribute('data-vn-speaker')] = sp;
+      save(); return;
+    }
+    if (t.hasAttribute && t.hasAttribute('data-vn-morelang')) { eng.moreLang = t.value; paint(); return; }
+    if (t.hasAttribute && t.hasAttribute('data-vn-cu-ok')) { eng.cu.ok = !!t.checked; paint(); return; }
     if (t.hasAttribute && t.hasAttribute('data-vn-acc') && eng.acc) { eng.acc[t.getAttribute('data-vn-acc')] = !!t.checked; paint(); return; }
     if (t.id === 'wpVoiceName') { cfgVoice.voiceName = t.value; save(); return; }
   }
@@ -14965,6 +15054,13 @@ function wpSoundOverrideHtml(t, ov) {
     if (t.id === 'wpVoicePitch') { cfgVoice.pitch = Number(t.value) / 100; var pv = document.getElementById('wpVoicePitchV'); if (pv) pv.textContent = pct(cfgVoice.pitch); save(); return; }
     // Volume moves a sample that is playing right now too; the next ▶ Hear it / ▶ Test plays at the new level.
     if (t.id === 'wpVoiceVolume') { cfgVoice.volume = Number(t.value) / 100; var vv = document.getElementById('wpVoiceVolumeV'); if (vv) vv.textContent = Math.round(cfgVoice.volume * 100) + '%'; if (curAudio) { try { curAudio.volume = volumeNow(); } catch (e) { void e; } } save(); return; }
+    // The custom-voice links: kept in eng.cu, and the "Add from the links" button enabled in place (no repaint, so the caret stays).
+    if (t.hasAttribute && t.hasAttribute('data-vn-cu')) {
+      eng.cu[t.getAttribute('data-vn-cu')] = t.value;
+      var addBtn = el && el.querySelector('[data-vn-cu-add="urls"]');
+      if (addBtn) addBtn.disabled = eng.busy || !(eng.cu.ok && /^https:\/\//i.test(eng.cu.onnx.trim()) && /^https:\/\//i.test(eng.cu.config.trim()));
+      return;
+    }
     if (t.hasAttribute && t.hasAttribute('data-vn-say')) { var nm = charOf(t); if (nm) drafts[nm] = t.value; }
   }
   function mount(){
