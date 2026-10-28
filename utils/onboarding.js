@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.26': [
+    '**The PoP guide follows the October 28 server patch.** The Avatar of Earth now waits 35 idle minutes (it was 50), stops its clock in combat and never refills it after a wipe. The earth rings give each attempt 98 minutes and can be tried again after 15. Xegony, Coirnav, Fennin Ro and the Avatar of Earth now always drop their Essence.',
+  ],
   '4.0.25': [
     '**Open-world raid targets respawn in a 7 to 11 day window.** Since Quarm\'s October 28 patch, a raid target killed in the open world (Classic through Luclin) comes back on a random 7 to 11 days after the kill. The PvP kill cards and the boss timers on wolfpack.quest/pvp now show that window instead of the old timer with 20% either side. Guild instances, earthquakes and the Planes of Power keep their timers.',
   ],
