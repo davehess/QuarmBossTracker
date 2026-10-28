@@ -81,20 +81,61 @@ function leadInWav(buf, ms = NEURAL_LEAD_IN_MS) {
 // commit) on the user's own action, and keeps a local record of the acceptance next to the download.
 // Piper itself is MIT, but its zip carries espeak-ng (GPL-3) — fetched from upstream on the user's PC, never
 // bundled in Mimic's installer. See docs/DECISIONS for the call.
-const PIPER_VOICES_REV = 'c10ece1aade47bb51c153c893d14e5bf8e5b7117';   // rhasspy/piper-voices @ 2026-09-17
-const _HF = 'https://huggingface.co/rhasspy/piper-voices/resolve/' + PIPER_VOICES_REV + '/en/en_US/';
-const _HF_CARD = 'https://huggingface.co/rhasspy/piper-voices/blob/' + PIPER_VOICES_REV + '/en/en_US/';
-// A voice that needs the user's acceptance first (everything but the free tier).
-function _gated(id, dir, tier, label, licence, credit, onnx, json) {
-  const base = _HF + dir + '/' + id;
+//
+// ⚠ The voice list is GENERATED (the guild lead, 2026-10-28: "lets make it so we can grab more voices"):
+// `node scripts/sync-piper-voices.js` pins a commit of rhasspy/piper-voices and writes piper-voices.json — every
+// model in the repo with its two files' URLs, byte sizes and sha256, and for en_US / en_GB the licence tier read from
+// the voice's MODEL_CARD. Two more tiers sit beside the three above:
+//   · unchecked — every other language (and anything the generator could not classify): offered, but Wolf Pack has not
+//                 read the licence. The user ticks the accept box; the text says "read the model card".
+//   · custom    — a voice the user adds from two https links or two files on this PC (addCustomVoice). Licence
+//                 unknown by definition; the user ticks "you are responsible for its licence". Id prefix `custom-`.
+// The six voices offered since 2026-10-17 keep their ids and their hand-written label / licence / credit text
+// (LEGACY_TEXT), so an installed choice still resolves and the accept screens read as before.
+const PIPER_DATA = require('./piper-voices.json');
+const PIPER_VOICES_REV = PIPER_DATA.rev;
+const CUSTOM_PREFIX = 'custom-';
+const CUSTOM_LICENCE = 'Custom voice — you are responsible for its licence';
+const UNCHECKED_LICENCE = 'Licence not checked by Wolf Pack — read the model card';
+const LEGACY_TEXT = Object.freeze({
+  'en_US-kristin-medium': Object.freeze({ label: 'Kristin (US English, woman)', licence: 'Public domain',
+    credit: 'Voice trained by Bryce Beattie on LibriVox recordings (public domain).' }),
+  'en_US-john-medium': Object.freeze({ label: 'John (US English, man)', licence: 'Public domain',
+    credit: 'Voice trained by Bryce Beattie on LibriVox recordings (public domain).' }),
+  'en_US-ryan-high': Object.freeze({ label: 'Ryan (US English, man, high quality)', licence: 'CC BY-NC-SA 4.0',
+    credit: 'Trained on the RyanSpeech data set (CC BY-NC-SA 4.0), voice by the Piper project (rhasspy/piper-voices).' }),
+  'en_US-lessac-medium': Object.freeze({ label: 'Lessac (US English, woman)', licence: 'Blizzard 2013 data, research licence',
+    credit: 'Trained on the Lessac Blizzard 2013 data (per-user research licence), voice by the Piper project.' }),
+  'en_US-joe-medium': Object.freeze({ label: 'Joe (US English, man)', licence: 'CC0 data, fine-tuned from the research-only Lessac voice',
+    credit: 'Trained on the OHF-Voice CC0 data set, fine-tuned from the Lessac voice (research licence), by the Piper project.' }),
+  'en_US-ryan-medium': Object.freeze({ label: 'Ryan (US English, man, medium)', licence: 'CC BY-NC-SA 4.0 data, fine-tuned from the research-only Lessac voice',
+    credit: 'Trained on RyanSpeech (CC BY-NC-SA 4.0), fine-tuned from the Lessac voice (research licence), by the Piper project.' }),
+});
+const LEGACY_ORDER = Object.freeze(Object.keys(LEGACY_TEXT));   // first in the list, so "the first voice" is still Kristin
+
+function _titleCase(s) { return String(s).replace(/_/g, ' ').replace(/\b[a-z]/g, c => c.toUpperCase()); }
+// One generated record → the manifest shape the rest of this file uses.
+function _voiceFromData(d) {
+  const t = LEGACY_TEXT[d.id] || {};
   return Object.freeze({
-    id, label, tier, licence, credit, modelCardUrl: _HF_CARD + dir + '/MODEL_CARD',
+    id: d.id,
+    label: t.label || _titleCase(d.name),
+    tier: d.tier,
+    licence: t.licence || d.licence || UNCHECKED_LICENCE,
+    credit: t.credit || d.credit || '',
+    modelCardUrl: d.card || '',
+    lang: d.lang, languageName: d.languageName, quality: d.quality, speakers: d.speakers > 1 ? d.speakers : 1,
     files: Object.freeze([
-      Object.freeze({ name: id + '.onnx', url: base + '.onnx', size: onnx[0], sha256: onnx[1] }),
-      Object.freeze({ name: id + '.onnx.json', url: base + '.onnx.json', size: json[0], sha256: json[1] }),
+      Object.freeze({ name: d.id + '.onnx', url: d.onnx.url, size: d.onnx.size, sha256: d.onnx.sha256 }),
+      Object.freeze({ name: d.id + '.onnx.json', url: d.config.url, size: d.config.size, sha256: d.config.sha256 }),
     ]),
   });
 }
+const PIPER_VOICES = Object.freeze(PIPER_DATA.voices.map(_voiceFromData).sort((a, b) => {
+  const ia = LEGACY_ORDER.indexOf(a.id), ib = LEGACY_ORDER.indexOf(b.id);
+  if (ia >= 0 || ib >= 0) return ia < 0 ? 1 : ib < 0 ? -1 : ia - ib;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}));
 
 const MANIFEST = Object.freeze({
   piper: Object.freeze({
@@ -109,49 +150,7 @@ const MANIFEST = Object.freeze({
       sha256: 'f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea',
       licence: 'MIT (Piper); the bundled espeak-ng is GPL-3',
     }),
-    voices: Object.freeze([
-      Object.freeze({
-        id: 'en_US-kristin-medium',
-        label: 'Kristin (US English, woman)',
-        tier: 'free',
-        licence: 'Public domain',
-        credit: 'Voice trained by Bryce Beattie on LibriVox recordings (public domain).',
-        files: Object.freeze([
-          Object.freeze({ name: 'en_US-kristin-medium.onnx', url: _HF + 'kristin/medium/en_US-kristin-medium.onnx', size: 63531379, sha256: '5849957f929cbf720c258f8458692d6103fff2f0e3d3b19c8259474bb06a18d4' }),
-          Object.freeze({ name: 'en_US-kristin-medium.onnx.json', url: _HF + 'kristin/medium/en_US-kristin-medium.onnx.json', size: 4968, sha256: '5681426d4aead22195de70531eeeeddb46493cfaffc5764b2ea3db73428b651c' }),
-        ]),
-      }),
-      Object.freeze({
-        id: 'en_US-john-medium',
-        label: 'John (US English, man)',
-        tier: 'free',
-        licence: 'Public domain',
-        credit: 'Voice trained by Bryce Beattie on LibriVox recordings (public domain).',
-        files: Object.freeze([
-          Object.freeze({ name: 'en_US-john-medium.onnx', url: _HF + 'john/medium/en_US-john-medium.onnx', size: 63531379, sha256: '789c6c875726e627ddee93d51d8727859abe9c091c3d141591f4b83c2072e988' }),
-          Object.freeze({ name: 'en_US-john-medium.onnx.json', url: _HF + 'john/medium/en_US-john-medium.onnx.json', size: 4965, sha256: 'af60f177b6b550f3d7a302720c0fb89e7f94a82b5dca464775ef63b1c69ba09a' }),
-        ]),
-      }),
-      // Non-commercial tier. ryan-high is trained from scratch on CC BY-NC-SA 4.0 data (RyanSpeech), so only that
-      // licence applies. (ryan-MEDIUM is fine-tuned from lessac, so it sits in the research tier below.)
-      _gated('en_US-ryan-high', 'ryan/high', 'nc', 'Ryan (US English, man, high quality)', 'CC BY-NC-SA 4.0',
-        'Trained on the RyanSpeech data set (CC BY-NC-SA 4.0), voice by the Piper project (rhasspy/piper-voices).',
-        [120786792, 'b3990d7606e183ec8dbfba70a4607074f162de1a0c412e0180d1ff60bb154eca'],
-        [4166, 'c6d3b98f08315cb4bebf0d49d50fc4ff491b503c64b940cd3d5ca28543b48011']),
-      // Research-only tier. Order matters for nothing but the picker.
-      _gated('en_US-lessac-medium', 'lessac/medium', 'research', 'Lessac (US English, woman)', 'Blizzard 2013 data, research licence',
-        'Trained on the Lessac Blizzard 2013 data (per-user research licence), voice by the Piper project.',
-        [63201294, '5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f'],
-        [4885, 'efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0']),
-      _gated('en_US-joe-medium', 'joe/medium', 'research', 'Joe (US English, man)', 'CC0 data, fine-tuned from the research-only Lessac voice',
-        'Trained on the OHF-Voice CC0 data set, fine-tuned from the Lessac voice (research licence), by the Piper project.',
-        [63201294, '58afce0321b8d9c46d7cdf9c16500cc55a793b4220212dba6b70fb788b3baf06'],
-        [4794, '3d6d5410b3795cb1950595247ef8f06190719e6fdbfa3a2356d8ec368e1aad33']),
-      _gated('en_US-ryan-medium', 'ryan/medium', 'research', 'Ryan (US English, man, medium)', 'CC BY-NC-SA 4.0 data, fine-tuned from the research-only Lessac voice',
-        'Trained on RyanSpeech (CC BY-NC-SA 4.0), fine-tuned from the Lessac voice (research licence), by the Piper project.',
-        [63201294, 'abf4c274862564ed647ba0d2c47f8ee7c9b717d27bdad9219100eb310db4047a'],
-        [4883, '44034c056cb15681b2ad494307c7f3f2e4499d1253c700c711fa0a4607ffe78d']),
-    ]),
+    voices: PIPER_VOICES,   // generated: piper-voices.json (scripts/sync-piper-voices.js)
   }),
   // Kokoro-82M (English, int8) run by sherpa-onnx's prebuilt Windows command-line synthesiser. Two archives,
   // both pinned by size and sha256: the engine (a release tag) and the model (the project's rolling `tts-models`
@@ -210,9 +209,29 @@ function _cleanText(text) {
 }
 
 // One cached WAV per (engine, voice, speed, words). Speed is rounded so a slider wobble does not defeat the cache.
-function cacheKey(engine, voice, rate, text) {
-  const r = Number(rate);
-  return [engine, voice, (Number.isFinite(r) && r > 0) ? r.toFixed(2) : '1.00', _cleanText(text)].join('|');
+// A multi-speaker voice is a different sound per speaker number, so a speaker above 0 is part of the key.
+function cacheKey(engine, voice, rate, text, speaker) {
+  const r = Number(rate), s = Number(speaker);
+  return [engine, voice + ((Number.isInteger(s) && s > 0) ? '#' + s : ''), (Number.isFinite(r) && r > 0) ? r.toFixed(2) : '1.00', _cleanText(text)].join('|');
+}
+
+// The speaker number a multi-speaker Piper model is asked for (--speaker): a whole number inside 0..speakers-1, else 0.
+// A single-speaker voice has no speaker to pick (normalizeSpeaker → 0, and piperArgs leaves the flag off).
+function normalizeSpeaker(v, n) {
+  const s = Number(n), count = v && v.speakers > 1 ? v.speakers : 1;
+  return (Number.isInteger(s) && s >= 0 && s < count) ? s : 0;
+}
+
+// Piper's command line for one phrase. The model and config are file PATHS handed to the program; nothing in them is
+// ever evaluated here. `--speaker <n>` only for a model with more than one speaker.
+function piperArgs(p, v, dir, out, rate, speaker) {
+  const args = [
+    '--model', path.join(dir, v.files[0].name), '--config', path.join(dir, v.files[1].name),
+    '--output_file', out, '--length_scale', String(lengthScale(rate)),
+    '--espeak_data', p.espeak, '--quiet',
+  ];
+  if (v.speakers > 1) args.push('--speaker', String(normalizeSpeaker(v, speaker)));
+  return args;
 }
 
 // Least-recently-used, bounded by entries AND bytes (a 3-second WAV at 22 kHz is ~130 KB).
@@ -464,6 +483,226 @@ function _voiceReady(p, v) {
   return fs.existsSync(path.join(d, '.ok')) && v.files.every(f => fs.existsSync(path.join(d, f.name))) && _accepted(p, v);
 }
 
+// ── Custom voices (the user's own, from two https links or two files) ────────────────────────────────
+// Each lives in voices/custom-<name>/ beside the catalog ones: <id>.onnx, <id>.onnx.json, custom.json (what Mimic
+// needs to list it), accepted.json (the ticked responsibility box) and the .ok marker written last. They are found by
+// reading the folder, so there is no second list to keep in step; the prefix cannot collide with a catalog id (those
+// start with a language code).
+const CUSTOM_META = 'custom.json';
+const CUSTOM_ID_RE = /^custom-[a-z0-9][a-z0-9._-]{0,47}$/;
+const CUSTOM_MAX_BYTES = 200 * 1024 * 1024;   // the biggest catalog model is ~130 MB
+const CUSTOM_MAX_CONFIG_BYTES = 1024 * 1024;  // a model's .onnx.json is a few KB to a few hundred KB
+
+function _customFromMeta(id, m) {
+  return Object.freeze({
+    id, label: String(m.label || id.slice(CUSTOM_PREFIX.length)).slice(0, 60), tier: 'custom',
+    licence: CUSTOM_LICENCE, credit: 'Added by you' + (m.source ? ' from ' + String(m.source).slice(0, 120) : '') + '.',
+    modelCardUrl: '', custom: true, speakers: m.speakers > 1 ? Math.floor(m.speakers) : 1,
+    files: Object.freeze([Object.freeze({ name: id + '.onnx' }), Object.freeze({ name: id + '.onnx.json' })]),
+  });
+}
+// → the custom voices on disk (finished installs only: the .ok marker and the metadata are both there).
+function customVoices(p) {
+  let names = [];
+  try { names = fs.readdirSync(p.voices); } catch { return []; }
+  const out = [];
+  for (const n of names.sort()) {
+    if (!CUSTOM_ID_RE.test(n)) continue;
+    try {
+      const m = JSON.parse(fs.readFileSync(path.join(p.voices, n, CUSTOM_META), 'utf8'));
+      if (m && m.id === n && fs.existsSync(path.join(p.voices, n, '.ok'))) out.push(_customFromMeta(n, m));
+    } catch { /* half-written or foreign folder: not a voice */ }
+  }
+  return out;
+}
+// A Piper voice by id: the catalog first, then the user's own.
+function _piperVoice(p, id) {
+  return findVoice('piper', id) || (CUSTOM_ID_RE.test(String(id || '')) ? customVoices(p).find(v => v.id === id) || null : null);
+}
+
+// ── Taking a custom voice in ─────────────────────────────────────────────────────────────────────────
+// → the href of an https URL, or throws a plain-words Error. http, file:, ftp:, data: and the rest are refused, and so
+// is a link carrying a user name or password.
+function customUrl(raw) {
+  let u;
+  try { u = new URL(String(raw == null ? '' : raw).trim()); } catch { throw _plain('That is not a web address. Paste a full link that starts with https://'); }
+  if (u.protocol !== 'https:') throw _plain('Only https:// links are accepted (not ' + u.protocol.replace(':', '') + ':). Nothing was downloaded.');
+  if (u.username || u.password) throw _plain('Links with a user name or password in them are not accepted.');
+  if (u.href.length > 2048) throw _plain('That link is too long.');
+  return u.href;
+}
+
+// A file or link name → the id of a custom voice: lower case, letters/digits/dot/dash/underscore only, no path
+// separators, never starting with a dot. `taken` (names already used) makes it unique with -2, -3…
+function customName(raw, taken = []) {
+  let base = String(raw == null ? '' : raw);
+  try { base = decodeURIComponent(base); } catch { /* keep as is */ }
+  base = base.split(/[\\/]/).pop().replace(/\.onnx(\.json)?$/i, '').replace(/\.json$/i, '');
+  let slug = base.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/\.{2,}/g, '.').replace(/-{2,}/g, '-').replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '').slice(0, 40).replace(/[^a-z0-9]+$/, '');
+  if (!slug) slug = 'voice';
+  let id = CUSTOM_PREFIX + slug, n = 2;
+  while (taken.includes(id)) id = CUSTOM_PREFIX + slug.slice(0, 36) + '-' + n++;
+  return id;
+}
+
+// The .onnx.json of a Piper voice → { sampleRate, speakers, label } or throws a plain-words Error. Piper cannot load a
+// voice without its sample rate, speaker count and phoneme table, so a file missing them is refused before anything
+// is kept. The text is only ever parsed as JSON.
+function validateVoiceConfig(buf) {
+  const bad = (why) => _plain('That does not look like a Piper voice file (' + why + '). Nothing was added.');
+  if (!buf || !buf.length) throw bad('the .onnx.json is empty');
+  if (buf.length > CUSTOM_MAX_CONFIG_BYTES) throw bad('the .onnx.json is far larger than a voice file');
+  let j;
+  try { j = JSON.parse(Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf)); } catch { throw bad('the .onnx.json is not valid JSON'); }
+  if (!j || typeof j !== 'object' || Array.isArray(j)) throw bad('the .onnx.json is not an object');
+  const sr = j.audio && j.audio.sample_rate;
+  if (!Number.isInteger(sr) || sr < 4000 || sr > 192000) throw bad('no audio.sample_rate');
+  const sp = j.num_speakers;
+  if (!Number.isInteger(sp) || sp < 1 || sp > 100000) throw bad('no num_speakers');
+  if (!j.phoneme_id_map || typeof j.phoneme_id_map !== 'object' || Array.isArray(j.phoneme_id_map) || !Object.keys(j.phoneme_id_map).length) throw bad('no phoneme_id_map');
+  const label = typeof j.dataset === 'string' ? j.dataset : '';
+  return { sampleRate: sr, speakers: sp, label };
+}
+
+// The first bytes of an ONNX model: a protobuf whose first field is ir_version (tag 0x08). Cheap proof that a download
+// is not a web page or a text file with the right name.
+function looksLikeOnnx(head) { return !!head && head.length >= 2 && head[0] === 0x08; }
+
+// Stream `readable` into `dest`, stopping (and deleting the partial file) once it passes `maxBytes`. Resolves the byte
+// count and sha256. Pure enough to test with a Readable.
+function pipeLimited(readable, dest, maxBytes, onProgress) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const out = fs.createWriteStream(dest);
+    let got = 0, head = null, done = false;
+    const fail = (e) => {
+      if (done) return;
+      done = true;
+      try { readable.destroy(); } catch { /* gone */ }
+      out.destroy();
+      try { fs.unlinkSync(dest); } catch { /* not created */ }
+      reject(e);
+    };
+    readable.on('data', (c) => {
+      got += c.length;
+      if (got > maxBytes) { fail(_plain('That file is bigger than the ' + Math.round(maxBytes / 1048576) + ' MB limit for a custom voice, so it was thrown away.')); return; }
+      if (!head) head = Buffer.from(c.subarray(0, 16));
+      hash.update(c);
+      if (!out.write(c)) { readable.pause(); out.once('drain', () => readable.resume()); }
+      if (onProgress) { try { onProgress(got); } catch { /* a progress bar must not break a download */ } }
+    });
+    readable.on('error', fail);
+    readable.on('aborted', () => fail(_plain('The download was cut short, so it was thrown away.')));
+    out.on('error', fail);
+    readable.on('end', () => {
+      if (done) return;
+      out.end(() => { if (done) return; done = true; resolve({ size: got, sha256: hash.digest('hex'), head: head || Buffer.alloc(0) }); });
+    });
+  });
+}
+
+// GET an https URL into `dest` through pipeLimited. Redirects are followed only to other https addresses.
+function fetchToFile(url, dest, { maxBytes = CUSTOM_MAX_BYTES, onProgress = null, redirects = 5, request = require('https').request } = {}) {
+  return new Promise((resolve, reject) => {
+    let href;
+    try { href = customUrl(url); } catch (e) { reject(e); return; }
+    const req = request(href, { method: 'GET', headers: { 'User-Agent': 'WolfPackMimic', Accept: '*/*' }, timeout: 30000 }, (res) => {
+      const code = res.statusCode || 0;
+      if (code >= 300 && code < 400 && res.headers.location) {
+        res.resume();
+        if (redirects <= 0) { reject(_plain('That link redirects too many times.')); return; }
+        let next;
+        try { next = customUrl(new URL(res.headers.location, href).href); } catch (e) { reject(_plain('That link redirects somewhere that is not https, so it was not followed.')); return; }
+        resolve(fetchToFile(next, dest, { maxBytes, onProgress, redirects: redirects - 1, request }));
+        return;
+      }
+      if (code < 200 || code >= 300) { res.resume(); reject(_plain('The server answered ' + code + ' for ' + new URL(href).hostname + '. Nothing was added.')); return; }
+      const total = Number(res.headers['content-length']) || 0;
+      if (total > maxBytes) { res.resume(); reject(_plain('That file is ' + Math.round(total / 1048576) + ' MB, over the ' + Math.round(maxBytes / 1048576) + ' MB limit for a custom voice. Nothing was downloaded.')); return; }
+      pipeLimited(res, dest, maxBytes, onProgress).then(resolve, reject);
+    });
+    req.on('error', (e) => reject(_plain('Could not reach ' + new URL(href).hostname + (e && e.code ? ' (' + e.code + ')' : '') + '. Nothing was added.')));
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.end();
+  });
+}
+
+// A small file (the .onnx.json) from a link, in memory, with its own tight cap.
+async function _fetchSmall(url, fetchFile, dir) {
+  const tmp = path.join(dir, 'config-download.json');
+  await fetchFile(url, tmp, { maxBytes: CUSTOM_MAX_CONFIG_BYTES });
+  const buf = fs.readFileSync(tmp);
+  fs.unlinkSync(tmp);
+  return buf;
+}
+
+// Add a voice of the user's own. `src` is { onnxUrl, configUrl } (two https links) or { onnxPath, configPath } (two files
+// on this PC); `accept` must carry { terms: true } (the "I am responsible for its licence" box). Piper itself is fetched
+// first if it is not installed yet. The model is copied or streamed into a scratch folder, checked, and renamed into
+// place whole. Never executes or evaluates the model: it is only ever a path on Piper's command line.
+// `deps` (tests): fetchFile, get (for the Piper runtime).
+async function addCustomVoice(root, src, accept, platform = process.platform, deps = {}) {
+  if (platform !== MANIFEST.piper.platform) throw new Error('The Piper download is for Windows only.');
+  const probe = { id: CUSTOM_PREFIX + 'x', tier: 'custom' };
+  const unaccepted = acceptanceProblem(probe, accept);
+  if (unaccepted) throw new Error(unaccepted.replace('this voice', 'this custom voice').replace('Nothing was downloaded', 'Nothing was added'));
+  if (_progress) throw new Error('A voice download is already running.');
+  src = src && typeof src === 'object' ? src : {};
+  const fromUrl = !!(src.onnxUrl || src.configUrl);
+  let onnxHref = '', cfgHref = '';
+  if (fromUrl) {
+    onnxHref = customUrl(src.onnxUrl); cfgHref = customUrl(src.configUrl);
+    if (!/\.onnx$/i.test(new URL(onnxHref).pathname)) throw _plain('The first link should end in .onnx (the voice model).');
+    if (!/\.onnx\.json$/i.test(new URL(cfgHref).pathname)) throw _plain('The second link should end in .onnx.json (the voice settings).');
+  } else {
+    for (const [k, ext] of [['onnxPath', /\.onnx$/i], ['configPath', /\.onnx\.json$/i]]) {
+      const f = String(src[k] || '');
+      let st = null;
+      try { st = f && fs.statSync(f); } catch { /* missing */ }
+      if (!st || !st.isFile()) throw _plain('Pick the voice files again: ' + (k === 'onnxPath' ? 'the .onnx model' : 'the .onnx.json settings') + ' was not found.');
+      if (!ext.test(f)) throw _plain('Pick a file ending in ' + (k === 'onnxPath' ? '.onnx' : '.onnx.json') + '.');
+      if (st.size > (k === 'onnxPath' ? CUSTOM_MAX_BYTES : CUSTOM_MAX_CONFIG_BYTES)) throw _plain('That file is too large for a voice, so nothing was added.');
+    }
+  }
+  const p = piperPaths(root), fetchFile = deps.fetchFile || fetchToFile;
+  _progress = { engine: 'piper', phase: 'start', pct: 0, text: 'Starting…' };
+  const scratch = path.join(p.voices, '.custom-tmp-' + stamp());
+  try {
+    if (!_runtimeReady(p)) {
+      _progress = { engine: 'piper', phase: 'runtime', pct: 1, text: 'Downloading Piper…' };
+      const rt = MANIFEST.piper.runtime;
+      const buf = await (deps.get || httpsGet)(rt.url, { onProgress: (got) => { _progress = { engine: 'piper', phase: 'runtime', pct: Math.min(40, Math.floor(got / rt.size * 40)), text: 'Downloading Piper…' }; } });
+      verifyFile(buf, rt);
+      _progress = { engine: 'piper', phase: 'unpack', pct: 45, text: 'Unpacking Piper…' };
+      _installRuntime(p, buf);
+    }
+    fs.mkdirSync(scratch, { recursive: true });
+    const cfgBuf = fromUrl ? await _fetchSmall(cfgHref, fetchFile, scratch) : fs.readFileSync(src.configPath);
+    const info = validateVoiceConfig(cfgBuf);
+    const taken = []; try { taken.push(...fs.readdirSync(p.voices)); } catch { /* none yet */ }
+    const id = customName(fromUrl ? new URL(onnxHref).pathname : src.onnxPath, taken);
+    const modelTmp = path.join(scratch, id + '.onnx');
+    let head;
+    if (fromUrl) {
+      const r = await fetchFile(onnxHref, modelTmp, { maxBytes: CUSTOM_MAX_BYTES, onProgress: (got) => { _progress = { engine: 'piper', phase: 'voice', pct: Math.min(98, 50 + Math.floor(got / CUSTOM_MAX_BYTES * 48)), text: 'Downloading your voice…' }; } });
+      head = r.head;
+    } else {
+      fs.copyFileSync(src.onnxPath, modelTmp);
+      const fd = fs.openSync(modelTmp, 'r'); head = Buffer.alloc(16); try { fs.readSync(fd, head, 0, 16, 0); } finally { fs.closeSync(fd); }
+    }
+    if (!looksLikeOnnx(head)) throw _plain('That file is not a voice model (it does not start like an .onnx file), so nothing was added.');
+    fs.writeFileSync(path.join(scratch, id + '.onnx.json'), cfgBuf);
+    const label = (info.label ? _titleCase(info.label) : _titleCase(id.slice(CUSTOM_PREFIX.length))) + ' (custom)';
+    const source = fromUrl ? new URL(onnxHref).hostname : 'a file on this PC';
+    fs.writeFileSync(path.join(scratch, CUSTOM_META), JSON.stringify({ id, label, speakers: info.speakers, sampleRate: info.sampleRate, source, addedAt: new Date().toISOString() }, null, 2));
+    fs.writeFileSync(path.join(scratch, ACCEPT_FILE), JSON.stringify(acceptanceRecord(_customFromMeta(id, { speakers: info.speakers }), accept), null, 2));   // stays on this PC
+    fs.writeFileSync(path.join(scratch, '.ok'), id);
+    fs.renameSync(scratch, _voiceDir(p, { id }));
+    _cache.clear();
+    return status(root, platform);
+  } finally { _progress = null; _rmrf(scratch); }
+}
+
 function kokoroPaths(root) {
   const base = path.join(root, 'kokoro');
   const runtime = path.join(base, 'runtime'), model = path.join(base, 'model');
@@ -494,10 +733,16 @@ function status(root, platform = process.platform) {
     const installed = runtimeReady && _voiceReady(p, v);
     return {
       id: v.id, label: v.label, tier: v.tier, licence: v.licence, credit: v.credit, modelCardUrl: v.modelCardUrl || '', installed,
+      lang: v.lang, languageName: v.languageName, quality: v.quality, speakers: v.speakers,
       // what pressing Download would fetch for this voice (the runtime counts only if it is not there yet)
       downloadBytes: downloadPlan(v.id, { runtimeReady, voiceReady: installed }).totalBytes,
+      voiceBytes: v.files.reduce((n, f) => n + f.size, 0),
     };
   });
+  for (const v of customVoices(p)) {
+    catalog.push({ id: v.id, label: v.label, tier: v.tier, licence: v.licence, credit: v.credit, modelCardUrl: '', installed: runtimeReady && _voiceReady(p, v),
+      custom: true, speakers: v.speakers, downloadBytes: 0, voiceBytes: 0 });
+  }
   const voices = available ? catalog.filter(v => v.installed).map(v => v.id) : [];
   const K = MANIFEST.kokoro, kp = kokoroPaths(root);
   const kRuntime = _kokoroRuntimeReady(kp), kModel = _kokoroModelReady(kp);
@@ -670,7 +915,7 @@ async function install(root, engine, voiceId, platform = process.platform, opts 
 function remove(root, engine, platform = process.platform, voiceId = '') {
   if (_progress) throw new Error('A voice download is running; wait for it to finish.');
   if (engine === 'piper') {
-    if (voiceId) { const v = findVoice('piper', voiceId); if (v) _rmrf(_voiceDir(piperPaths(root), v)); }
+    if (voiceId) { const p = piperPaths(root), v = _piperVoice(p, voiceId); if (v) _rmrf(_voiceDir(p, v)); }
     else _rmrf(piperPaths(root).base);
     _cache.clear();
   }
@@ -680,17 +925,13 @@ function remove(root, engine, platform = process.platform, voiceId = '') {
 
 // ── Speaking ────────────────────────────────────────────────────────────────────────────────────────
 let _tmpSwept = false;
-function _runPiper(p, v, text, rate, signal) {
+function _runPiper(p, v, text, rate, signal, speaker) {
   return new Promise((resolve, reject) => {
     if (!_tmpSwept) { _tmpSwept = true; _rmrf(p.tmp); }   // leftovers of a phrase that was cut off last time
     fs.mkdirSync(p.tmp, { recursive: true });
     const out = path.join(p.tmp, 'say-' + stamp() + '.wav');
     const dir = _voiceDir(p, v);
-    const args = [
-      '--model', path.join(dir, v.files[0].name), '--config', path.join(dir, v.files[1].name),
-      '--output_file', out, '--length_scale', String(lengthScale(rate)),
-      '--espeak_data', p.espeak, '--quiet',
-    ];
+    const args = piperArgs(p, v, dir, out, rate, speaker);
     const child = spawn(p.exe, args, { cwd: path.dirname(p.exe), windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
     const drop = () => { try { fs.unlinkSync(out); } catch { /* not written */ } };
     signal.addEventListener('abort', () => { try { child.kill(); } catch { /* gone */ } drop(); reject(new Error('timed out')); }, { once: true });
@@ -734,9 +975,10 @@ function _runKokoro(p, v, text, rate, signal) {
 async function synthesize(root, spec, platform = process.platform) {
   try {
     const engine = spec && spec.engine;
-    const v = findVoice(engine, spec && spec.voice);
+    const v = engine === 'piper' ? _piperVoice(piperPaths(root), spec && spec.voice) : findVoice(engine, spec && spec.voice);
     const text = _cleanText(spec && spec.text);
     if (!v || !text || platform !== MANIFEST[engine].platform) return null;
+    const speaker = engine === 'piper' ? normalizeSpeaker(v, spec.speaker) : 0;
     let run;
     if (engine === 'kokoro') {
       const p = kokoroPaths(root);
@@ -746,9 +988,9 @@ async function synthesize(root, spec, platform = process.platform) {
     } else {
       const p = piperPaths(root);
       if (!_runtimeReady(p) || !_voiceReady(p, v)) return null;
-      run = (signal) => _runPiper(p, v, text, spec.rate, signal);
+      run = (signal) => _runPiper(p, v, text, spec.rate, signal, speaker);
     }
-    const key = cacheKey(engine, v.id, spec.rate, text);
+    const key = cacheKey(engine, v.id, spec.rate, text, speaker);
     const hit = _cache.get(key);
     if (hit) return hit;
     const raw = await synthOrNull(run, spec.test === true ? TEST_TIMEOUT_MS : SYNTH_TIMEOUT_MS);
@@ -784,6 +1026,8 @@ module.exports = {
   MANIFEST, SYNTH_TIMEOUT_MS, TEST_TIMEOUT_MS, NEURAL_LEAD_IN_MS, leadInWav, PIPER_VOICES_REV, NO_VCRT, WARM_PHRASE,
   status, install, remove, synthesize, warmUp,
   // pure, for tests
+  addCustomVoice, customUrl, customName, validateVoiceConfig, customVoices, pipeLimited, fetchToFile, looksLikeOnnx,
+  normalizeSpeaker, piperArgs, CUSTOM_MAX_BYTES, CUSTOM_PREFIX, CUSTOM_LICENCE, UNCHECKED_LICENCE,
   lengthScale, cacheKey, createLru, synthOrNull, downloadPlan, safeZipTarget, verifyFile, findVoice, piperPaths,
   kokoroPaths, kokoroArgs, extractTarBz2, acceptanceProblem, acceptanceRecord, kokoroStartProblem: _kokoroStartProblem,
   installVoiceFiles: _installVoice,

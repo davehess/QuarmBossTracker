@@ -28,7 +28,9 @@ const require_ = createRequire(import.meta.url);
 const nv = require_('../apps/mimic/neuralVoice.js');
 const WPVoice = require_('../apps/mimic/voice.js');
 
-const HFV = 'https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/';
+const HFV = 'https://huggingface.co/rhasspy/piper-voices/resolve/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/';
+// The six voices offered before the catalogue was generated (2026-10-28): their ids, tiers and files must not move.
+const LEGACY = ['en_US-kristin-medium', 'en_US-john-medium', 'en_US-ryan-high', 'en_US-lessac-medium', 'en_US-joe-medium', 'en_US-ryan-medium'];
 const READY = { piper: { ready: true, voices: ['en_US-kristin-medium', 'en_US-john-medium'] }, kokoro: { ready: false, voices: [] } };
 const EMPTY = { piper: { ready: false, voices: [] }, kokoro: { ready: false, voices: [] } };
 
@@ -211,7 +213,7 @@ describe('synthOrNull (the 2.5 s limit)', () => {
 });
 
 describe('download manifest', () => {
-  const REV = 'c10ece1aade47bb51c153c893d14e5bf8e5b7117';
+  const REV = '5041a7a49ae5b3a0f30e6837769eb03fdbb231bd';
   const HF = `https://huggingface.co/rhasspy/piper-voices/resolve/${REV}/en/en_US/`;
 
   it('pins the official Piper Windows release: exact URL, size, sha256', () => {
@@ -224,7 +226,7 @@ describe('download manifest', () => {
 
   it('pins each voice to a Hugging Face COMMIT: exact URLs, sizes, sha256, licence', () => {
     expect(nv.PIPER_VOICES_REV).toBe(REV);
-    const got = nv.MANIFEST.piper.voices.filter(v => v.tier === 'free').map(v => ({ id: v.id, licence: v.licence, files: v.files.map(f => [f.name, f.url, f.size, f.sha256]) }));
+    const got = nv.MANIFEST.piper.voices.filter(v => v.tier === 'free' && LEGACY.includes(v.id)).map(v => ({ id: v.id, licence: v.licence, files: v.files.map(f => [f.name, f.url, f.size, f.sha256]) }));
     expect(got).toEqual([
       { id: 'en_US-kristin-medium', licence: 'Public domain', files: [
         ['en_US-kristin-medium.onnx', HF + 'kristin/medium/en_US-kristin-medium.onnx', 63531379, '5849957f929cbf720c258f8458692d6103fff2f0e3d3b19c8259474bb06a18d4'],
@@ -245,19 +247,20 @@ describe('download manifest', () => {
       expect(Number.isInteger(f.size) && f.size > 0).toBe(true);
       expect(f.sha256).toMatch(/^[0-9a-f]{64}$/);
     }
-    for (const v of nv.MANIFEST.piper.voices) { expect(v.licence).toBeTruthy(); expect(v.credit).toBeTruthy(); }
+    for (const v of nv.MANIFEST.piper.voices) { expect(v.licence).toBeTruthy(); expect(v.credit).toBeTruthy(); expect(v.modelCardUrl).toMatch(/\/blob\/[0-9a-f]{40}\/.+\/MODEL_CARD$/); }
   });
 
   it('the pinned Piper tiers: free (public domain), non-commercial (ryan-high), research only (lessac and its fine-tunes)', () => {
     const tiers = {};
-    for (const v of nv.MANIFEST.piper.voices) (tiers[v.tier] = tiers[v.tier] || []).push(v.id);
+    for (const v of nv.MANIFEST.piper.voices.filter(x => LEGACY.includes(x.id))) (tiers[v.tier] = tiers[v.tier] || []).push(v.id);
     expect(tiers).toEqual({
       free: ['en_US-kristin-medium', 'en_US-john-medium'],
       nc: ['en_US-ryan-high'],
       research: ['en_US-lessac-medium', 'en_US-joe-medium', 'en_US-ryan-medium'],
     });
-    // free voices first, so "the first installed voice" (what auto picks) is never a gated one when a free one is there
-    expect(nv.MANIFEST.piper.voices.map(v => v.tier)).toEqual(['free', 'free', 'nc', 'research', 'research', 'research']);
+    // the legacy six come first, in their old order, so "the first installed voice" (what auto picks) is still Kristin
+    expect(nv.MANIFEST.piper.voices.slice(0, 6).map(v => v.id)).toEqual(LEGACY);
+    expect(nv.MANIFEST.piper.voices.slice(0, 6).map(v => v.tier)).toEqual(['free', 'free', 'nc', 'research', 'research', 'research']);
     for (const v of nv.MANIFEST.piper.voices.filter(x => x.tier === 'free')) expect(v.id).not.toMatch(/lessac|ryan|joe/);
     expect(nv.MANIFEST.piper.voices.find(v => v.id === 'en_US-ryan-high').licence).toBe('CC BY-NC-SA 4.0');
     // ryan-MEDIUM and joe are fine-tuned from lessac, so they carry its research-only terms, not just their own data's
@@ -265,7 +268,7 @@ describe('download manifest', () => {
   });
 
   it('pins each gated voice to the same Hugging Face commit: exact URLs, sizes, sha256, and its model card', () => {
-    const got = nv.MANIFEST.piper.voices.filter(v => v.tier !== 'free').map(v => [v.id, v.modelCardUrl, v.files.map(f => [f.name, f.url, f.size, f.sha256])]);
+    const got = nv.MANIFEST.piper.voices.filter(v => v.tier !== 'free' && LEGACY.includes(v.id)).map(v => [v.id, v.modelCardUrl, v.files.map(f => [f.name, f.url, f.size, f.sha256])]);
     const card = (d) => `https://huggingface.co/rhasspy/piper-voices/blob/${REV}/en/en_US/${d}/MODEL_CARD`;
     expect(got).toEqual([
       ['en_US-ryan-high', card('ryan/high'), [
@@ -365,12 +368,12 @@ describe('download plan and guards', () => {
     expect(st.piper.reason).toMatch(/Windows only/);
     const win = nv.status(root, 'win32');
     expect(win.piper).toMatchObject({ available: true, ready: false, runtimeInstalled: false });
-    expect(win.piper.catalog.map(c => [c.id, c.tier, c.installed, c.downloadBytes])).toEqual([
+    expect(win.piper.catalog.filter(c => LEGACY.includes(c.id)).map(c => [c.id, c.tier, c.installed, c.downloadBytes])).toEqual([
       ['en_US-kristin-medium', 'free', false, 22477236 + 63531379 + 4968], ['en_US-john-medium', 'free', false, 22477236 + 63531379 + 4965],
       ['en_US-ryan-high', 'nc', false, 22477236 + 120786792 + 4166],
       ['en_US-lessac-medium', 'research', false, 22477236 + 63201294 + 4885], ['en_US-joe-medium', 'research', false, 22477236 + 63201294 + 4794],
       ['en_US-ryan-medium', 'research', false, 22477236 + 63201294 + 4883]]);
-    expect(win.piper.catalog.find(c => c.id === 'en_US-ryan-high').modelCardUrl).toMatch(/\/blob\/c10ece1[0-9a-f]+\/en\/en_US\/ryan\/high\/MODEL_CARD$/);
+    expect(win.piper.catalog.find(c => c.id === 'en_US-ryan-high').modelCardUrl).toMatch(/\/blob\/5041a7a[0-9a-f]+\/en\/en_US\/ryan\/high\/MODEL_CARD$/);
   });
 
   it('Kokoro installs on Windows only', async () => {
@@ -937,7 +940,8 @@ describe('every failure ends in the Windows voice (source, comments stripped)', 
   });
 
   it('the dashboard: three groups, an accept screen with the licence, the model card link, the credit and the required wording', () => {
-    for (const g of ["['free', 'Free'", "['nc', 'Non-commercial &mdash; accept to download'", "['research', 'Research only &mdash; experimental'"]) expect(dash).toContain(g);
+    // the picker: US / UK English, Free first and "Needs your OK" after it; the other languages under "More voices"
+    for (const g of ["['en_US', 'US English']", "['en_GB', 'UK English']", '<b>Free</b>', '<b>Needs your OK</b>', '<b>More voices</b>', '<b>Your own voice</b>', 'licence not checked']) expect(dash).toContain(g);
     const acc = sliceBlock(dash, 'function acceptHtml(v){', 'return h;');
     expect(acc).toContain('Research only and experimental.</b> This voice is built from data licensed for research use only. Using it for game callouts may fall outside that licence; you take that on yourself by downloading it. It may also sound or behave unexpectedly.');
     expect(acc).toContain("For personal, non-commercial use. Mimic downloads it from its publisher for you; we don\\'t share it.");
@@ -953,7 +957,7 @@ describe('every failure ends in the Windows voice (source, comments stripped)', 
     expect(dash).toMatch(/data-vn-dl-gated\]'\)\)\) \{ if \(eng\.acc && eng\.acc\.terms\) download\('piper', b\.getAttribute\('data-vn-dl-gated'\), \{ terms: !!eng\.acc\.terms, research: !!eng\.acc\.research \}\)/);
     // a gated voice is never offered a one-click Download
     expect(dash).toMatch(/gated \? btn\('data-vn-acc-open="'/);
-    expect(dash).toMatch(/gated \? btn\('data-vn-acc-open="' \+ esc\(v\.id\) \+ '"', 'Read terms &amp; download'\) : btn\('data-vn-dl="piper:'/);
+    expect(dash).toMatch(/gated \? btn\('data-vn-acc-open="' \+ esc\(c\.id\) \+ '"', 'Read terms &amp; download'\) : btn\('data-vn-dl="piper:'/);
   });
 
   it('the dashboard Kokoro row: Download (size), voice pick, ▶ Test, Remove, the licence and credit line, and the honest wording', () => {

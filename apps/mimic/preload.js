@@ -1373,6 +1373,7 @@ contextBridge.exposeInMainWorld('mimic', {
   voiceStatus:      ()                    => ipcRenderer.invoke('voice:status'),
   voiceInstall:     (engine, voice, accept) => ipcRenderer.invoke('voice:install', engine, voice, accept),
   voiceRemove:      (engine, voice)       => ipcRenderer.invoke('voice:remove', engine, voice),
+  voiceAddCustom:   (src, accept)         => ipcRenderer.invoke('voice:add-custom', src, accept),
   voiceSynth:       (text, spec)          => ipcRenderer.invoke('voice:synth', text, spec),
   // A JSON POST to one of the engine's pronunciation routes (main keeps the list); → { ok, status, body }.
   agentPost:        (route, body) => ipcRenderer.invoke('agent-post', route, body),
