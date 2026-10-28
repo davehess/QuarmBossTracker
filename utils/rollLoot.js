@@ -215,7 +215,92 @@ function renderRollLootLines(sessions, { max = 20 } = {}) {
   return lines;
 }
 
+// ── Our raiders' rolls only (the event card) ─────────────────────────────────
+// Agents capture any /random they can see, so on a night spent in a hub zone the roll_sets table also holds
+// other guilds' loot rolls (2026-10-27: 14 of 21 rollers last seen in one other guild, 1 of ours). roll_sets.zone
+// is NULL on every row, so zone cannot tell them apart; the rollers can.
+
+const _ROLLER_NAME_RE = /^[A-Za-z]{2,24}$/;
+const _OURS_CHUNK = 100;
+
+/** Distinct roller names (original case) across roll_sets rows. */
+function rollerNames(rollRows) {
+  const out = new Set();
+  for (const r of (Array.isArray(rollRows) ? rollRows : [])) {
+    for (const x of (Array.isArray(r?.rolls) ? r.rolls : [])) {
+      if (x?.name != null && String(x.name)) out.add(String(x.name));
+    }
+  }
+  return out;
+}
+
+/**
+ * Keep a roll set only when at least half of its distinct rollers are ours. `isOurs` is a predicate on a
+ * roller name, or a Set of lowercase names. Fail-open: no predicate, or an empty Set (a membership read that
+ * returned nothing), keeps every row. A row with no rollers is kept (nothing in it is foreign).
+ * Returns { rows, hidden } — hidden is the number of rows dropped.
+ */
+function keepOurRollSets(rollRows, isOurs) {
+  const rows = Array.isArray(rollRows) ? rollRows : [];
+  const pred = typeof isOurs === 'function' ? isOurs
+    : (isOurs instanceof Set && isOurs.size > 0 ? (n) => isOurs.has(String(n).toLowerCase()) : null);
+  if (!pred) return { rows, hidden: 0 };
+  const kept = rows.filter((r) => {
+    const names = new Set();
+    for (const x of (Array.isArray(r?.rolls) ? r.rolls : [])) if (x?.name) names.add(String(x.name).toLowerCase());
+    if (names.size === 0) return true;
+    let ours = 0;
+    for (const n of names) if (pred(n)) ours++;
+    return ours * 2 >= names.size;
+  });
+  return { rows: kept, hidden: rows.length - kept.length };
+}
+
+/**
+ * Which of `names` are ours: a `characters` row with a discord_id, OR whose best-known guild on /who
+ * (who_directory_lookup, the same read Mob Info uses) is the guild's in-game name. Returns a Set of lowercase
+ * names, or null when either read fails or comes back empty, so the caller keeps the unfiltered card.
+ */
+async function loadOurRollers(names, supabase, { guildId, ourGuild }) {
+  const list = [...new Set([...(names || [])].map(String))].filter(n => _ROLLER_NAME_RE.test(n));
+  if (list.length === 0) return null;
+  const ourGuildLc = String(ourGuild || '').trim().toLowerCase();
+  const ours = new Set();
+  try {
+    for (let i = 0; i < list.length; i += _OURS_CHUNK) {
+      const chunk = list.slice(i, i + _OURS_CHUNK);
+      const [chars, who] = await Promise.all([
+        supabase.select('characters',
+          `guild_id=eq.${encodeURIComponent(guildId)}&discord_id=not.is.null&name=in.(${chunk.map(encodeURIComponent).join(',')})&select=name&limit=${chunk.length}`),
+        ourGuildLc ? supabase.rpc('who_directory_lookup', { p_keys: chunk.map(n => n.toLowerCase()) }) : Promise.resolve([]),
+      ]);
+      if (!Array.isArray(chars) || !Array.isArray(who)) return null;
+      for (const r of chars) if (r?.name) ours.add(String(r.name).toLowerCase());
+      for (const r of who) {
+        if (r?.character_key && String(r.guild_name || '').trim().toLowerCase() === ourGuildLc) ours.add(String(r.character_key).toLowerCase());
+      }
+    }
+  } catch { return null; }
+  return ours.size > 0 ? ours : null;
+}
+
+/**
+ * The bot's own newest "🎲 Rolled loot" card among a thread's recent messages (any iterable of discord.js
+ * messages), or null. state.json does not survive a Railway deploy, so the thread is the memory of the card.
+ */
+function findRollCardMessage(messages, botId) {
+  let best = null;
+  for (const m of (messages || [])) {
+    if (!m || !botId || m.author?.id !== botId) continue;
+    const title = m.embeds?.[0]?.title ?? m.embeds?.[0]?.data?.title;
+    if (typeof title !== 'string' || !title.startsWith('🎲 Rolled loot')) continue;
+    if (!best || (m.createdTimestamp || 0) > (best.createdTimestamp || 0)) best = m;
+  }
+  return best;
+}
+
 module.exports = {
+  rollerNames, keepOurRollSets, loadOurRollers, findRollCardMessage,
   normalizeItemName, itemsMatch,
   buildRollSessions, attributeLooters, renderRollLootLines,
   otherLooters, buildNightLootPanel,
