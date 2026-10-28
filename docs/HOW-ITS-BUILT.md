@@ -2178,6 +2178,13 @@ that the worthy kills went to the local `logsync.pvp-unmatched.json` and never u
 The bot's `_resolveGloryGuilds` fills a guild the line left out from `/who`, else the roster. A guild the
 newer wording names ("X <Zek>") is kept. `test/pvp-glory.test.js`, `test/pvp-glory-bot.test.js`.
 
+The server reworded all of these on 2026-10-02 (Quarm `da650526`), and since agent 4.0.37 the parser reads
+the new text too (§463): "favors X <G> for killing Y <G> in Z. X <G> now has n/10 Glory", "exults as X cuts
+down Y in Z. Y loses n Glory; X now has n/10", "exults as X kills Y in Z and reaches / remains at n/10 Glory",
+"Y falls to `<player>` in Z. No Glory awarded" (a player kill, `killType: 'pvp'`), "falls in Z", and
+"flees / abandons the battlefield in Z like a cowardly dog, forfeiting n Glory". The older forms stay, for
+backfills of older logs. Assists need no change: they are cut from who hit the victim, once a kill parses.
+
 **Fight sizes** (§57, migration `20260927040000`): `pvp_fights` returns `zek_players`, `ally_players`
 and `players_by_guild` — everyone a Wolf Pack log saw on the field (the dead, their killers, the
 assisters ±3 min, /who in the zone from 4 min before to 1 min after), one row per name with the best
