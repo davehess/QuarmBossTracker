@@ -222,6 +222,21 @@ describe('_refreshEventRollCardNow (the shipped function)', () => {
     expect(asked[0]).toEqual({ limit: 50 });
   });
 
+  it('only other guilds rolled: corrects a card already posted, never posts a new one (2026-10-27)', async () => {
+    const sb = supabase();
+    sb.selectAllPaged = async (table) => (table === 'roll_sets' ? [rows[2]] : []);   // Zarrin + Nyssara only
+    const edits = [], posted = [];
+    const old = { id: 'c1', createdTimestamp: 1, author: { id: BOT }, embeds: [{ title: '🎲 Rolled loot — Test Event' }], edit: async (b) => { edits.push(b); } };
+    const withCard = { id: 't1', messages: { fetch: async () => ({ values: () => [old].values() }) }, send: async (m) => { posted.push(m); return { id: 'new' }; } };
+    await run({ thread: withCard, sb });
+    expect(edits).toHaveLength(1);
+    expect(edits[0].embeds[0].data.description).toBe('No loot rolls from our raiders yet.');
+    expect(edits[0].embeds[0].data.footer.text).toMatch(/1 other-guild roll hidden/);
+    const empty = { id: 't2', messages: { fetch: async () => ({ values: () => [].values() }) }, send: async (m) => { posted.push(m); return { id: 'new' }; } };
+    await run({ thread: empty, sb });
+    expect(posted).toHaveLength(0);
+  });
+
   it('no stored id and no card in the thread: posts one', async () => {
     const posted = [];
     const thread = { id: 't1', messages: { fetch: async () => ({ values: () => [].values() }) }, send: async (m) => { posted.push(m); return { id: 'new' }; } };
