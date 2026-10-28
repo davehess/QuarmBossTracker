@@ -5,6 +5,7 @@ itself stays in its set file). Each row names its decision ID; find it in [the i
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Hosted guilds on raidmimic.com: setup + same-database segmentation** (§460) | Requirements and build order in `docs/DESIGN-raidmimic-hosted.md`; segmentation step drafts started 2026-10-28 (not applied) | the guild lead: same project or separate project for hosted guilds; one shared bot or one per guild; other guilds' captured raid data A/B/C (§408) |
 | **Press a window's name to minimize; every overlay folds; picker; Canvas Minimize** (§458) | Mimic beta `37f988e9` (agent 4.0.33); Loot tab reload fix rides beta agent 4.0.34 | the guild lead: on beta, press names on a locked and an unlocked overlay, fold/unfold `/who` and the Map (height must come back exactly), right-click a name for the picker; set Loot to 7d, reload, open Loot |
 | **Event rolled-loot card: our rolls only, one card** (§457) | Live, bot 4.0.24 (main, 2026-10-28 00:47 ET) | an officer: delete the older 8:15 PM duplicate card in the 2026-10-27 event thread if wanted; watch the next event's card |
 | **Wolf Pack Zeal: the suggested Zeal build** (§455) | Live: fork pipeline + first build `wolfpack-1-6a3ee20` (official 1.4.8 + PRs 253, 254, tag name check, tag persistence/corpses); Mimic option on beta (agent 4.0.32) | the guild lead: install it from Mimic beta and raid on it once; say if a stable channel is wanted; an officer: ask Quarm staff whether a guild build is fine; tell the Zeal maintainer it exists |
