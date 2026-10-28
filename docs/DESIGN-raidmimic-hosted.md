@@ -49,6 +49,19 @@ anonymised aggregates only) applies unchanged and is a requirement on everything
 
 Steps 1–3 are migrations with no behaviour change; 4 is the large one (code); 5–7 only matter once a second guild exists.
 
+**Progress (2026-10-28):**
+- **Backup first.** All 33 tables the change touches were copied to schema `backup_seg_20261028` (117 MB, not exposed to the
+  API; row counts verified against live) before anything changed. Tower's archive (`archive_meta.merge_log`, daily) had merged
+  138 tables at 12:37 UTC the same day, covering 27 of the 33; the six it does not carry are `guild_media`, `member_lockouts`,
+  `feedback_replies` and the three `gallery_*` children. This session's Tower access is read-only (`claude_ro`, a Coolify token
+  that lists no databases), so a fresh Tower backup cannot be started from a cloud session. Drop the snapshot schema once step 3
+  has landed and settled.
+- **Step 2 done:** `20261028170000_guild_id_on_untagged_tables.sql` applied; 33 of 33 tables carry `guild_id text not null
+  default 'wolfpack'`. Excluded on purpose (game data or platform-wide): the `eqemu_*` mirrors and 16 others listed in the file.
+- **Step 4 started:** `test/guild-scope.test.js` ratchet — 230 unscoped calls today (bot 56, utils 22, commands 8, web 144),
+  listed in `scripts/guild-scope-baseline.json`; a new one fails the build, and a fixed one must leave the list.
+- Next: step 1 (apply the `hub_*` registry), step 3 (keys with the guild), then working the 230 down.
+
 **How this meets the open-hub design.** `docs/DESIGN-open-hub.md` (§358) puts the free "commons" in a **separate Supabase
 project** with a headless bot, and its registry migration (`20261023160000_open_hub_registry.sql`: `hub_guilds`,
 `hub_players`, `hub_memberships`, `hub_invites`, …) is written but not applied. Steps 1–4 above are needed **either way**: the
