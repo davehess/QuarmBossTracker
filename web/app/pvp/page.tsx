@@ -514,8 +514,8 @@ export default async function PvpPage({
             <span>PvP Boss Timers</span>
           </h2>
           <p className="text-sm text-dim mt-2">
-            Respawn windows for PvP-server bosses with a ±20% variance applied
-            to the base timer. Fed live by Druzzil broadcasts in <code className="text-text">#pvp</code> and by
+            Respawn windows for PvP-server bosses: 7 to 11 days after the kill through Luclin (Quarm patch
+            2026-10-28), and the base timer ±20% in the Planes of Power. Fed live by Druzzil broadcasts in <code className="text-text">#pvp</code> and by
             manual <code className="text-text">/pvpkill</code>. Pending rows sorted by earliest spawn; <span className="text-green">camp now</span> rows
             sort by most recent kill so fresh activity floats to the top of the open list.
           </p>

@@ -915,9 +915,10 @@ async function mirrorPvpBossKill(row) {
   const guildId   = row.guild_id || _guildId();
   const dedupKey  = row.dedup_key || `${guildId}|${row.boss_id}|${minuteIso}`;
   const killedAt  = new Date(row.killed_at);
-  const baseMs    = Number(row.timer_hours) * 3600000;
-  const spawnEarly = new Date(killedAt.getTime() + baseMs * 0.8).toISOString();
-  const spawnLate  = new Date(killedAt.getTime() + baseMs * 1.2).toISOString();
+  // Same window as state.recordPvpKill: 7 to 11 days for open-world raid targets through Luclin (row.expansion).
+  const win        = require('./timer').openWorldSpawnWindow(Number(row.timer_hours), row.expansion);
+  const spawnEarly = new Date(killedAt.getTime() + win.earliestMs).toISOString();
+  const spawnLate  = new Date(killedAt.getTime() + win.latestMs).toISOString();
   return upsert('pvp_boss_kills', [{
     guild_id:        guildId,
     boss_id:         row.boss_id,

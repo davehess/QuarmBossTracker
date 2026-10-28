@@ -57,7 +57,7 @@ module.exports = {
       });
     }
 
-    const key   = recordPvpKill(boss.name, boss.timerHours, interaction.user.id, bossId, timerUnknown);
+    const key   = recordPvpKill(boss.name, boss.timerHours, interaction.user.id, bossId, timerUnknown, null, boss.expansion);
     const entry = getAllPvpKills()[key];
     // Mirror to Supabase for the wolfpack.quest/pvp boss timer board. Skipped
     // on timer_unknown — no respawn window means no useful spawn_earliest /
@@ -67,6 +67,7 @@ module.exports = {
         boss_id:     boss.id,
         boss_name:   boss.name,
         zone:        boss.zone || null,
+        expansion:   boss.expansion || null,
         timer_hours: boss.timerHours,
         killed_at:   new Date(entry.killedAt).toISOString(),
         recorded_by: interaction.user.id,
@@ -95,7 +96,7 @@ module.exports = {
         .addFields(
           { name: 'Zone',      value: boss.zone,                   inline: true },
           { name: 'Killed by', value: `<@${interaction.user.id}>`, inline: true },
-          { name: 'Base Timer', value: `${boss.timerHours}h (±20%)`, inline: true },
+          { name: 'Base Timer', value: require('../utils/timer').openWorldSpawnWindow(boss.timerHours, boss.expansion).label, inline: true },
           { name: '⏰ Earliest Spawn',
             value: `${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,
             inline: false },

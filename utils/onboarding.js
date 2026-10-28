@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.25': [
+    '**Open-world raid targets respawn in a 7 to 11 day window.** Since Quarm\'s October 28 patch, a raid target killed in the open world (Classic through Luclin) comes back on a random 7 to 11 days after the kill. The PvP kill cards and the boss timers on wolfpack.quest/pvp now show that window instead of the old timer with 20% either side. Guild instances, earthquakes and the Planes of Power keep their timers.',
+  ],
   '4.0.24': [
     '**The event rolled-loot card only shows our rolls, and posts once.** On a guild-event night spent in a busy hub zone, the card used to list other guilds\' loot rolls too; it now keeps a roll only when at least half of the people in it are ours, and says how many it hid. It also no longer posts a second card after the bot restarts mid-event; it finds its own card in the thread and keeps editing that one.',
   ],
