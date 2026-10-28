@@ -130,7 +130,7 @@ export const STEP_MORE: Record<string, StepMore> = {
     auto: 'Ticks itself when your last inventory upload holds the Tiny Gold Fist.',
   },
   essences_power: {
-    expect: 'Solo once you hold all four essences. Getting them is four raid kills at 40% each, so the guild decides who they go to.',
+    expect: 'Solo once you hold all four essences. Getting them is four raid kills, one essence per kill (each god always drops it now), so the guild decides who they go to.',
     turnIn: [
       { to: at('essences_power'), give: '[[Power of the Planes#16266]] (the four essences combined in the bowl)', get: '[[Jade Hoop of Speed#32106]]' },
       { to: at('essences_power'), give: 'the reward you hold', get: 'the next one: Coin Purse, Cord, Mace, Ring, then the Hoop again' },
@@ -193,6 +193,8 @@ const BRIEFS: Record<string, string> = {
   zebuxoruk_maelin: 'Needs his first reading and Rallos Zek’s projection hailed. This second reading opens Air, Earth and Water.',
   pofire_miak: 'Ask Miak about the portal’s destination before you kill Solusek Ro. That gives your first Fire flag.',
   flag_solro_minis: 'Five wings, any order. Kill each boss, then click its flaming cauldron within 30 minutes. Everyone clicks their own.',
+  flag_arbitor: 'Clear the four rings, then kill the Arbitor. A ring gets 98 minutes; a failed one can retry in 15.',
+  flag_rathe: 'Kill all twelve, then the Avatar: 35 idle minutes, stopped in combat, never refilled. A failed try can retry in 15.',
   essences_power: 'Optional. Keep the Fist, combine the four gods’ essences in the bowl, then trade the result for a reward.',
   binden_small: 'Optional. Trade a rat’s bottle for a schematic, fill Tabben’s kit with four planar parts, get your first talisman.',
   binden_powered: 'Optional. Fill Tabben’s container with four more parts and your first talisman, and trade the box for the Powered one.',

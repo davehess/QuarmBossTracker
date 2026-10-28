@@ -204,7 +204,7 @@ describe('Justice and the Bastion of Thunder read the way the server works', () 
 // eqprogression.com/essences-of-power-quest-pop-elemental-gods). Checked against the server's scripts:
 // ponightmare/EinoInvisNight (the phrase, night only, within 30 of the tree), ponightmare/Aid_Eino
 // (the waves, the strand hand-in, depop after it), poknowledge/Councilwoman_Kerasha (the Fist check,
-// the bowl, the reward cycle), tradeskill recipe 9921 and the gods' loot tables (40%, lore).
+// the bowl, the reward cycle), tradeskill recipe 9921 and the gods' loot tables (100% since the 2026-10-28 patch, lore).
 describe('Essences of Power reads the way the server works', () => {
   const step = (k) => GUIDE_ITEMS.find(i => i.key === k);
   const ids = (t) => splitItems(t ?? '').filter(p => 'item' in p).map(p => p.item.id);
@@ -228,7 +228,9 @@ describe('Essences of Power reads the way the server works', () => {
     // Fist, bowl, the four essences, Power of the Planes, then Hoop → Purse → Cord → Mace → Ring.
     expect(ids(p.detail)).toEqual([16260, 17183, 16262, 16263, 16265, 32111, 16266, 17209, 32107, 32108, 32109]);
     expect(p.detail).toMatch(/not the four the Plane of Time needs/);
-    expect(p.detail).toMatch(/40% of kills/);
+    // Always drops since the 2026-10-28 patch (was 40%); a mutation back to 40% must fail this.
+    expect(p.detail).toMatch(/always drops its essence/);
+    expect(p.detail).not.toMatch(/40%/);
   });
 });
 
@@ -321,5 +323,26 @@ describe('the page and the table', () => {
     expect(sql).toMatch(/enable row level security/);
     expect(sql).toMatch(/revoke all on pop_guide_ticks from anon, authenticated/);
     expect(sql).not.toMatch(/create policy/i);
+  });
+});
+
+// The server patch of 2026-10-28, checked against SecretsOTheP/quests 572bc06: poearthb/encounters/RatheCouncil.lua
+// (AVATAR_IDLE 2100 s = 35 min; SetAvatarCombat only pauses; warnings at 900/1500/1800 s elapsed = 20/10/5 left;
+// FAILURE 900 s) and the four poeartha/encounters/*Ring.lua (5880 s = 98 min; FAILURE_RESPAWN_TIME 900000 ms = 15 min).
+describe('the Earth guide follows the 2026-10-28 patch', () => {
+  const step = (k) => GUIDE_ITEMS.find(i => i.key === k);
+  it('gives the Avatar of Earth 35 idle minutes, paused in combat and never refilled', () => {
+    const d = step('flag_rathe').detail;
+    expect(d).toMatch(/35 idle minutes \(it was 50\)/);
+    expect(d).toMatch(/does not refill after a wipe/);
+    expect(d).toMatch(/20, 10 and 5 minutes left/);
+    expect(d).toMatch(/no time limit/);
+    expect(d).not.toMatch(/\b50 (idle )?minutes\b(?! ?\))/);
+  });
+  it('gives the earth rings 98 minutes and a 15 minute retry', () => {
+    const d = step('flag_arbitor').detail;
+    expect(d).toMatch(/98 minutes/);
+    expect(d).toMatch(/again after 15 minutes/);
+    expect(d).toMatch(/Mud Ring that is interrupted resets/);
   });
 });

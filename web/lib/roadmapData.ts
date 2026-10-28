@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-patch-2026-10-28',
+    title: 'Web 2.1.61',
+    version: 'Web 2.1.61 · Bot 4.0.26',
+    date: '2026-10-28',
+    headline: 'The Planes of Power guide follows the October 28 server patch: the Avatar of Earth, the earth rings and the four essences, and open-world raid targets respawn in 7 to 11 days.',
+    features: [
+      { name: 'Avatar of Earth: 35 minutes', blurb: 'After the Council falls, the Avatar waits 35 idle minutes instead of 50. The clock stops while it fights and no longer refills after a wipe.' },
+      { name: 'Earth rings', blurb: 'Each ring announces its stages to the zone. A ring that runs past 98 minutes, or loses a guardian it needs, ends with a message and can be tried again after 15 minutes.' },
+      { name: 'The four essences always drop', blurb: 'Xegony, Coirnav, Fennin Ro and the Avatar of Earth now drop their Essence on every kill (it was 40%). It is still one per kill and one per person, so it is still a loot call.' },
+      { name: 'Black Diamond of Nightmares', blurb: 'Self-found characters can have Elder Poxbourne imbue one for a Raw Diamond, Nightmare Mephit Blood and 500 platinum.' },
+      { name: 'Open-world respawns: 7 to 11 days', blurb: 'A raid target killed in the open world, Classic through Luclin, now comes back 7 to 11 days later. The PvP boss timers and kill cards show that window; the Planes of Power, guild instances and earthquakes are unchanged.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-3-0-5-2026-10-27',
     title: 'Raid Mimic 3.0.5',
     version: 'Mimic 3.0.5 · Agent 4.0.30 · Web 2.1.57 · Bot 4.0.23',

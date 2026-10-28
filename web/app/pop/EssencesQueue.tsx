@@ -68,7 +68,7 @@ export default function EssencesQueue({ demo, queue, done, next, classOf, raidLi
           return (
             <div key={ess.key} className="border border-border rounded p-2">
               <div className="text-sm text-text">{ICON[ess.key]} {ess.name}</div>
-              <div className="text-[10px] text-dim mb-2">{ess.god} · 40% a kill</div>
+              <div className="text-[10px] text-dim mb-2">{ess.god} · every kill</div>
               <div className="text-xs mb-1">
                 {n.bid
                   ? <span className="text-gold">Next drop: bid it</span>
