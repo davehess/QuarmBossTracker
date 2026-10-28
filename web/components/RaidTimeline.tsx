@@ -60,13 +60,13 @@ export default function RaidTimeline({ kills, nowMs, src = '/api/spectator/timel
         if (res.status === 401) { setStatus('signedout'); return; }
         if (!res.ok) { setStatus('error'); return; }
         const j = await res.json() as {
-          now: number; ended?: boolean; kills: { npc_id: number; name: string; at: number }[];
+          now: number; ended?: boolean; kills: { npc_id: number; name: string; at: number; other?: boolean }[];
           from?: number | null; why?: Where['why'] | null; earlier?: Where['earlier']; cut?: number | null;
         };
         if (!alive) return;
         setWhere(typeof j.from === 'number' && j.why ? { from: j.from, why: j.why, earlier: j.earlier ?? null, cut: j.cut ?? null, now: j.now } : null);
         setSkew(j.now - Date.now());
-        setFetched(j.kills.map(k => ({ npcId: k.npc_id, name: k.name, atMs: k.at })));
+        setFetched(j.kills.map(k => ({ npcId: k.npc_id, name: k.name, atMs: k.at, other: k.other })));
         setStatus('ok');
         if (j.ended) { setEndedAt(j.now); clearInterval(id); }   // nothing more can land: stop polling
       } catch { if (alive) setStatus('error'); }
@@ -239,7 +239,7 @@ function Strip({ tl, now }: { tl: Timeline; now: number }) {
                 style={{ left: `${pct(d.atMs)}%`, height: (lanes[i].lane + 1) * LANE }}>
                 <div className={`absolute top-0 whitespace-nowrap text-[11px] leading-tight ${lanes[i].left ? 'right-1 text-right' : 'left-1'}`}>
                   <div className="text-text">{d.name}</div>
-                  <div className="tabular-nums text-dim">{hms(d.atMs)}</div>
+                  <div className="tabular-nums text-dim">{hms(d.atMs)}{d.other ? ' · Another guild' : ''}</div>
                 </div>
               </div>
             ))}
