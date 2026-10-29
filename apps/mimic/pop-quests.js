@@ -3108,7 +3108,7 @@ window.POP_QUESTS = {
        "title": "The Keeper of Sorrows, then hail Tylis Newleaf",
        "plane": "torment",
        "who": "raid",
-       "detail": "A small raid; resets every 2 hours. Whoever asks for it must be flagged this far. Tylis stands in Torment after the kill, and a second, temporary entrance Tylis appears beside him; both stay 30 minutes (the rescued Tylis used to stay 10). For those 30 minutes the entrance Tylis needs no Screaming Sphere, but you still need the Tylis pre-flag. His hail gives the flag (your Tylis flag from 1 to 2) only if Fahlia’s “will go” came first; otherwise it is a checklist flag the Seer’s “unlock my memories” turns into the real one. “ready to return” asks him to send you out of the plane.",
+       "detail": "A small raid; resets every 2 hours. Whoever asks for it must be flagged this far. When the Keeper dies, the rescued Tylis appears down by the Keeper (/loc 368, -176, -764): hail him there. At the same moment the entrance Tylis (/loc -6, 0, 466, where he always stands) is swapped for a temporary copy in the same spot, not beside the rescued one. Both stay 30 minutes from the kill (the rescued Tylis used to stay 10) and each flags up to 72 players. For those 30 minutes the entrance copy needs no Screaming Sphere, but you still need the Tylis pre-flag. The rescued Tylis’s hail gives the flag (your Tylis flag from 1 to 2) only if Fahlia’s “will go” came first; otherwise it is a checklist flag the Seer’s “unlock my memories” turns into the real one. “ready to return” asks him to send you out of the plane.",
        "brief": "A small raid kills the Keeper, then hails Tylis. Do Fahlia’s step first or it is a checklist flag. Resets in 2 hours.",
        "says": [
         {
@@ -3160,7 +3160,8 @@ window.POP_QUESTS = {
        "plane": "torment",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late. Her projection stays 30 minutes (it used to be 20).",
+       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late. There is only one, where she died; it stays 30 minutes (it used to be 20) and flags up to 72 players. It answers the raid or group that killed her, or anyone saved at the kill. It gives the real flag only if your Tylis flag is at 2 (the Keeper step); otherwise a checklist flag the Seer’s “unlock my memories” turns into the real one.",
+       "brief": "Kill Saryrn, then hail her one projection: 30 minutes, 72 players. Real flag only after the Keeper step.",
        "seq": [
         {
          "kind": "kill",
