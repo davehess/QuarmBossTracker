@@ -98,7 +98,7 @@ describe('runbook lever references still resolve', () => {
     }
     expect(KNOWN_FLAGS.has('flag_shed_encounter'), 'encounter must never be sheddable').toBe(false);
     expect(KNOWN_FLAGS.has('flag_totally_made_up')).toBe(false);
-    expect(KNOWN_FLAGS.size).toBeLessThan(60);
+    expect(KNOWN_FLAGS.size).toBeLessThan(70);   // 60 until the six flag_shed_hist_* raid-history kinds joined (2026-10-29)
   });
 
   it('every flag key exists in the bot whitelist or the overlays catalog', () => {

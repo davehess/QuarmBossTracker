@@ -140,6 +140,7 @@ function relayRig({ book = {}, tune = {}, inWindow = false, raid = [], rosterFai
     _triggerRelay: triggerRelay, _triggerRate: new Map(), TRIGGER_RATE_WINDOW_MS: 1000, TRIGGER_RATE_MAX: 100,
     TRIGGER_RELAY_DEDUP_WINDOW_MS: 8000, TRIGGER_RELAY_MAX_ENTRIES: 500,
     _senderClockOffsetMs: () => 0,
+    _raidHistory: () => ({ noteTriggerFire() {} }),   // raid history saver (utils/raidHistory.js): not under test here
   });
   let n = 0;
   return {

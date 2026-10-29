@@ -59,12 +59,13 @@ function makeBot() {
   );
   const ingestFn = new Function(
     'mimicLink', '_spellFxByName', '_spellFxMap', '_cureCastByTarget', '_healAmtFor',
-    '_castingByTarget', '_pruneCasts', '_noteLastCaster', '_groupmatesOf',
+    '_castingByTarget', '_pruneCasts', '_noteLastCaster', '_groupmatesOf', '_raidHistory',
     ingestSrc + '\nreturn _handleAgentCasting;',
   )(
     mimicLink, fx, async () => {}, cureCastByTarget, () => 0,
     castingByTarget, () => {}, mem._noteLastCaster,
     async (c) => mem._groupmatesFromSplit(state.split, c),
+    () => ({ noteCast() {} }),   // raid history saver (utils/raidHistory.js): not under test here
   );
 
   const mkRes = () => ({ code: 0, body: '', writeHead(c) { this.code = c; }, end(b) { this.body = b || ''; } });
