@@ -8007,7 +8007,7 @@ function _canvasStatePayload() {
   // screens: the displays this window covers, relative to its corner (one while not spanning); span / spanWhy:
   // the switch and, when it cannot be on, why; rev: bumped when main rewrote the layout under the Canvas.
   const scrs = screen.getAllDisplays(), span = _canvasSpanOn(cfg);
-  return { res, layout, edit: _canvasArrange, displays: scrs.length,
+  return { res, layout, edit: _canvasArrange, displays: scrs.length, splitFitOff: !!cfg.canvasSplitFitOff,
     screens: _canvasScreens(scrs, d, span), span, spanWhy: _canvasSpanWhy(scrs) || '', rev: _canvasLayoutRev,
     backdrop: !!((cfg.overlayBackdrop && typeof cfg.overlayBackdrop === 'object') ? cfg.overlayBackdrop : {}).canvas };
 }
@@ -10443,6 +10443,7 @@ function currentStatus() {
     showHud: !!cfg.showHud,
     enableTriggerTts: !!cfg.enableTriggerTts,
     triggerTimersTopDown: !!cfg.triggerTimersTopDown,
+    triggerLockSize: !!cfg.triggerLockSize,   // 🔒 the alerts window keeps the size it was given
     showCharm: !!cfg.showCharm,
     showPets: !!cfg.showPets,
     showMobInfo: !!cfg.showMobInfo,
@@ -11765,11 +11766,38 @@ function _fitHeldWidth(win, readW) {
   win.__wpFitW = readW;
   return readW;
 }
+// 🔒 Lock size on the alerts window (FB-110, a raider: "the alerts window keeps growing as countdowns and callouts
+// appear and can't be resized"). cfg.triggerLockSize: overlay-auto-height leaves the window's bounds alone, so the
+// size set by dragging (the ◢ / ◥ grips, a native edge) or a size preset is the size, across restarts too (the
+// bounds are saved as always). The page keeps its countdown rows inside the window (triggers.html lockedRowCap).
+// The one setter: the right-click menu, the dashboard and any later tray item land here. Unlocking is "↕ Fit height
+// to content" (overlay-fit-height): the height dragged to is forgotten, and the next fit takes the content exactly.
+function _setTriggerLockSize(on) {
+  const cfg = loadConfig();
+  cfg.triggerLockSize = !!on;
+  saveConfig(cfg);
+  if (_live(triggerWindow)) {
+    if (!cfg.triggerLockSize) {
+      const key = _boundsKeyForWindow(triggerWindow);
+      triggerWindow.__wpResizeGesture = null;   // a drag still settling must not set the floor back
+      if (key) _setFloor(triggerWindow, key, 0);
+      triggerWindow.__wpFitNowAt = Date.now();
+    }
+    try {
+      triggerWindow.webContents.send('status', Object.assign(currentStatus(), hideAllStatusForRenderer()));
+      if (!cfg.triggerLockSize) triggerWindow.webContents.send('wp-refit');
+    } catch { /* mid-close */ }
+  }
+  try { pushStatus(); } catch { /* */ }
+  return !!cfg.triggerLockSize;
+}
 ipcMain.handle('overlay-auto-height', (e, h) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
     win.__wpHeightMode = 'fit';   // this page fits its window: a drag can set a height floor
+    // 🔒 Lock size (FB-110): the alerts window is the size the person gave it; the page keeps its rows inside it.
+    if (_boundsKeyForWindow(win) === 'triggerBounds' && loadConfig().triggerLockSize) return true;
     // Not under a drag: the drag writes its own bounds every 16 ms. Held, and asked for again when it ends.
     if (_holdForMove(win, 'fit')) { win.__wpFitPending = true; return true; }
     // ↕ Fit height to content asks for an exact fit, once (see overlay-fit-height).
@@ -12545,6 +12573,7 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     pointer: cfg.standInPointer !== false,  // the stand-in mouse pointer switch (preload _wpPointerOn)
     growUp: _growUpSetting(cfg, key),
     timersTopDown: !!cfg.triggerTimersTopDown,
+    triggerLockSize: !!cfg.triggerLockSize,
     theme: cfg.overlayTheme || 'default',
     // ▭ / 📌 rows are built only for overlays that HAVE a mini rendition, so
     // the menu never offers a switch that would do nothing (see _MINI_KEYS). Every
@@ -12663,6 +12692,23 @@ ipcMain.handle('wp-timers-order-toggle', () => {
   }
   return cfg.triggerTimersTopDown;
 });
+// 🔒 Lock size (right-click menu on the alerts window, and the dashboard's Overlays tab — same setter).
+ipcMain.handle('wp-trigger-lock-size', (_e, on) => _setTriggerLockSize(on === undefined ? !loadConfig().triggerLockSize : !!on));
+// 🧩 Split callouts and timers into their own boxes (FB-110): the Timers canvas, on. The SAME internals as the
+// tray's Canvas checkbox (_toggleOverlay('canvas') + buildTrayMenu); the person's click on this item is the yes
+// the Canvas being a choice asks for. A first-time Canvas starts from its default Callouts / Timers / Charm panels
+// with Fit height off (cfg.canvasSplitFitOff, read by canvas.html when it has no saved layout), so a size the
+// person gives a box sticks; a layout of their own is left exactly as it was. Already on: nothing to switch, the
+// menus say "Open the Timers canvas to arrange" and that row is canvas-edit.
+function _splitCalloutsAndTimers() {
+  const cfg = loadConfig();
+  if (cfg.showCanvas) return { ok: true, already: true };
+  if (!_canvasLayoutNow(cfg).layout) { cfg.canvasSplitFitOff = true; saveConfig(cfg); }
+  _toggleOverlay('canvas');
+  buildTrayMenu();
+  return { ok: true, already: false };
+}
+ipcMain.handle('canvas-split', () => _splitCalloutsAndTimers());
 ipcMain.handle('wp-backdrop-toggle', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   let key = null;
@@ -12861,6 +12907,7 @@ ipcMain.handle('canvas-save', (e, layout) => {
   const before = _canvasHostedKeys(cfg);
   cfg.canvasLayouts = Object.assign({}, (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {}, { [res]: JSON.parse(json) });
   cfg.canvasLastRes = res;
+  delete cfg.canvasSplitFitOff;   // the split's one-shot: the layout it seeded is saved now
   const after = _canvasHostedKeys(cfg);
   // An overlay newly on the canvas: its own switch goes on, so removing the
   // panel later gives it its window back visible (undocking's rule), and it

@@ -64,6 +64,7 @@ function env({ growsUp = false, skew = 0, work = { x: 0, y: 0, width: 1920, heig
     function _holdForMove(w) { return !!(w && w.__wpDragging); }   // the real one is tested in mimic-window-move.test.js
     function appendAgentLog() {}
     function _overlayGrowsUp() { return ${growsUp ? 'true' : 'false'}; }
+    function _boundsKeyForWindow() { return '${KEY}'; }   // overlay-auto-height asks (🔒 Lock size is the alerts window's alone)
     function mkWin(b) {
       const w = {
         b: { ...b }, dead: false,

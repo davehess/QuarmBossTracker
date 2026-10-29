@@ -25777,6 +25777,8 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act wp-btn" data-act="arrange" title="Arranging only ever runs when you click it — never automatically.">✨ Auto-arrange now</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="rescue" title="Lost an overlay off the edge of a screen? Brings back only the overlays you cannot reach, each to a free spot on the screen this window is on; nothing else moves. Overlays sitting on another screen come too only if you say yes. That screen becomes the overlays\\' home for future arranges.">🧲 Rescue to this screen</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="canvasSpan" id="wpOvSpanBtn" style="display:none" title="One Canvas across every screen, so its panels can sit on any of them. Needs every screen at the same Windows display scaling. The same switch as the tray and the Canvas&rsquo;s own toolbar.">…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="triggerLock" id="wpOvTrigLockBtn" style="display:none" title="Keeps the alerts window the size you drag it to instead of growing as countdowns and callouts arrive. Countdowns that do not fit fold into a +N more line; callouts always get their room. The same switch as the alerts window&rsquo;s right-click menu.">…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="canvasSplit" id="wpOvSplitBtn" style="display:none" title="Callouts and countdowns each get a box of their own that you place, resize and lock. Turns the Canvas on, the same as the tray&rsquo;s Canvas item; the alerts window steps aside.">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="mapMode" id="wpOvMapModeBtn" title="The Map as a window you place, or laid over EverQuest and click-through so you play straight through it (it keeps clear of your UI windows). The same switch as the Map&rsquo;s own toolbar button and the tray.">…</button>'
     + '</span>'
     + '</div>';
@@ -26752,6 +26754,20 @@ function wpRefreshOverlayToggles() {
         spBtn.className = 'wp-ov-act wp-btn' + (st.canvasSpan ? ' on' : '');
         spBtn.textContent = spBtn.disabled ? '⇔ Span all screens — ' + st.canvasSpanWhy : '⇔ Span all screens: ' + (st.canvasSpan ? 'ON — back to one screen' : 'off');
       }
+      // 🔒 Lock the alerts window's size, and 🧩 split callouts and timers into their own boxes (FB-110): the alerts
+      // window's right-click rows, same setters. An older Mimic does not report them: no buttons. With the Canvas
+      // already on, the split says where the boxes are arranged.
+      var tlBtn = document.getElementById('wpOvTrigLockBtn');
+      if (tlBtn) {
+        tlBtn.style.display = typeof st.triggerLockSize === 'boolean' ? '' : 'none';
+        tlBtn.className = 'wp-ov-act wp-btn' + (st.triggerLockSize ? ' on' : '');
+        tlBtn.textContent = st.triggerLockSize ? '🔒 Alerts window size: locked — unlock' : '🔓 Alerts window size: grows with content — lock';
+      }
+      var splBtn = document.getElementById('wpOvSplitBtn');
+      if (splBtn) {
+        splBtn.style.display = typeof st.showCanvas === 'boolean' && typeof st.triggerLockSize === 'boolean' ? '' : 'none';
+        splBtn.textContent = st.showCanvas ? '🧩 Open the Canvas to arrange' : '🧩 Split callouts and timers into their own boxes';
+      }
       // 🗺 Map: Window ↔ Full, as the tray item and the Map's own button. An older Mimic does not report it: no button.
       var mmBtn = document.getElementById('wpOvMapModeBtn');
       if (mmBtn) {
@@ -26933,6 +26949,20 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
       // Same setter as the tray item and the Canvas's own button.
       if (a === 'canvasSpan' && window.mimic.canvasSpan) {
         window.mimic.canvasSpan(!act.classList.contains('on')).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      // Same setters as the alerts window's right-click rows; the split is the tray's Canvas item (turns it on), and
+      // with the Canvas already on the button arranges it instead.
+      if (a === 'triggerLock' && window.mimic.triggerLockSize) {
+        window.mimic.triggerLockSize(!act.classList.contains('on')).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      if (a === 'canvasSplit' && window.mimic.canvasSplit) {
+        window.mimic.getStatus().then(function(st){
+          return st && st.showCanvas ? window.mimic.canvasEdit(true) : window.mimic.canvasSplit();
+        }).then(function(){
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
         }).catch(function(){});
       }
