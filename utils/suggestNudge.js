@@ -23,8 +23,7 @@ const { hasAllowedRole, hasOfficerRole, allowedRolesList } = require('./roles');
 const { isPopLocked } = require('./config');
 
 function _bosses() {
-  delete require.cache[require.resolve('../data/bosses.json')];
-  return require('../data/bosses.json');
+  return require('./readJsonFresh')(require('path').join(__dirname, '..', 'data', 'bosses.json'));
 }
 
 // ── Group events — outings that are not (and must not become) board bosses ──

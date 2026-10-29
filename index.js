@@ -315,8 +315,7 @@ const _mainAssistStore = _mainAssist.createStore();
 const { discordAbsoluteTime, discordRelativeTime, isShortTimerBoss } = require('./utils/timer');
 
 function getBosses() {
-  delete require.cache[require.resolve('./data/bosses.json')];
-  return require('./data/bosses.json');
+  return require('./utils/readJsonFresh')(path.join(__dirname, 'data', 'bosses.json'));
 }
 
 // ── Client ─────────────────────────────────────────────────────────────────
@@ -2093,8 +2092,7 @@ async function handlePvpSpawnAlert(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const bossId = interaction.customId.replace('pvp_spawn_alert:', '');
-  delete require.cache[require.resolve('./data/bosses.json')];
-  const bosses = require('./data/bosses.json');
+  const bosses = getBosses();
   const boss   = bosses.find(b => b.id === bossId);
 
   const name = boss?.name || bossId;
@@ -3680,8 +3678,7 @@ async function archivePassedAnnounceThreads(readyClient) {
         const targetNames = (data.targets || [])
           .filter(t => !t.startsWith('_'))
           .map(tid => {
-            delete require.cache[require.resolve('./data/bosses.json')];
-            const b = require('./data/bosses.json').find(b => b.id === tid);
+            const b = getBosses().find(b => b.id === tid);
             return b ? `${b.emoji || '⚔️'} ${b.name}` : tid;
           });
 
@@ -5663,8 +5660,7 @@ async function _handleAgentPvp(req, res) {
       // happened, not when the relay landed. A Glory line's victim is always a player, never a boss.
       if (killType === 'pvp' && !victimGuild && victim && !isGlory) {
         try {
-          delete require.cache[require.resolve('./data/bosses.json')];
-          const bosses = require('./data/bosses.json');
+          const bosses = getBosses();
           const needle = String(victim).trim().toLowerCase();
           const candidates = bosses.filter(b =>
             b.name.toLowerCase() === needle ||
@@ -6370,8 +6366,7 @@ async function _handleAgentBossKill(req, res) {
     // forget — timers below don't depend on it).
     _promoteLockoutBoss(bossName, require('./utils/supabase'));
 
-    delete require.cache[require.resolve('./data/bosses.json')];
-    const bosses = require('./data/bosses.json');
+    const bosses = getBosses();
     const nameLower = bossName.toLowerCase();
     const boss = bosses.find(b =>
       b.name.toLowerCase() === nameLower ||
@@ -10626,8 +10621,7 @@ async function _handleAgentLockout(req, res) {
     // exactly the instanced nameds this exists for).
     _promoteLockoutBoss(bossName, require('./utils/supabase'));
 
-    delete require.cache[require.resolve('./data/bosses.json')];
-    const bosses    = require('./data/bosses.json');
+    const bosses    = getBosses();
     const nameLower = bossName.toLowerCase();
     const boss      = bosses.find(b =>
       b.name.toLowerCase() === nameLower ||

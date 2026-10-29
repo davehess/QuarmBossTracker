@@ -904,6 +904,14 @@ raid_roster and character_live_state rows in bot memory and answers the bot's ow
 never scale the bot service past one replica. Supabase stays the record (rows still written, batched every
 2 s) and a fresh process reads Supabase until it has received a reader's whole window (15 min roster).
 
+⚠ **Never hot-reload a JSON file with `delete require.cache[…]; require(…)` (2026-10-29, bot 4.0.28).** Each
+re-require builds a new Module that Node pushes onto the caller's `module.children` and never trims, so every
+call keeps a parsed copy for the life of the process. `getBosses()` did this up to 4× per upload and was most of
+the bot's raid-night climb (+900 MB in an hour, 2.3 GB weekly peak, reset only by a redeploy). Read the file with
+`utils/readJsonFresh.js` (fresh object per call). `commands/` still carries 33 cold copies of the pattern (one
+per slash command); convert any of them that moves onto a repeating path. The bot logs `[mem]` every 10 min and
+`/health` reports `mem` (4.0.27), so a new climb is visible the night it starts.
+
 **Discord is the source of truth** for parses (`PARSES_LOG_THREAD_ID`
 reloaded on startup), hate state (hidden JSON embeds), and roster (chunked
 messages); `data/state.json` and `data/parses.json` are local mirrors with
