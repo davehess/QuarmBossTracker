@@ -46519,9 +46519,13 @@ let _buffLandingBySuffix = new Map();
 // Powers (a) Target Info showing debuffs ON the mob and (b) the bot's cure queue
 // for raiders not running Mimic (player-target debuffs upload to buff_casts).
 let _debuffLandingBySuffix = new Map();
+// A mob's OWN timed beneficial spells (FB-111): suffix(lower) → [{ id, name, dur, durf }]. Neither index above can
+// hold these: the buff index wants a player-shaped name and a tracked keyword, the debuff index wants good === 0.
+let _npcSelfBuffBySuffix = new Map();
 function _rebuildBuffMatchers() {
   const m = new Map();
   const dm = new Map();
+  const nm = new Map();
   // Catalog-wide sharer count per landing text — over EVERY spell that has an
   // on-other message, BEFORE any timed/detrimental filtering. This is the
   // 2026-08-16 Kneel Test regression fix: the junk guard below used to count
@@ -46562,6 +46566,13 @@ function _rebuildBuffMatchers() {
       arr.push(rec);
       dm.set(suffix, arr);
     }
+    // e.npc === 1: a spell mobs can cast (spell-catalog v8, the #206 flag). A pre-v8 catalog carries none, so this
+    // index stays empty rather than guess from the text.
+    if (e.good === 1 && e.npc === 1 && sharerCount(suffix) <= 8) {
+      const arr = nm.get(suffix) || [];
+      arr.push(rec);
+      nm.set(suffix, arr);
+    }
   }
   // Junk-text guard (2026-07-07): a landing message shared by MANY unrelated
   // spells is unattributable garbage, not a family. Real families cap out
@@ -46589,6 +46600,7 @@ function _rebuildBuffMatchers() {
   }
   _buffLandingBySuffix = m;
   _debuffLandingBySuffix = dm;
+  _npcSelfBuffBySuffix = nm;
   if (m.size || dm.size) console.log(`[buff-landing] indexed ${m.size} buff + ${dm.size} debuff landing messages (${junked} unattributable shared texts dropped)`);
 }
 
@@ -46734,6 +46746,54 @@ function parseDebuffLanding(line, observer) {
       cast_at:      ts ? ts.toISOString() : new Date().toISOString(),
       observer:     observer || null,
       detrimental:  true,
+    };
+  }
+  return null;
+}
+
+// A mob buffing ITSELF (FB-111: a rogue playing alone casts nothing, so a mob's own buffs and the item procs on it
+// are all that can ever land on his target). EQ prints "<mob> begins to cast a spell." and then the spell's
+// cast_on_other text, with no spell and no caster named — so a landing is claimed only when the victim IS the mob that
+// began casting inside the window (_npcCasterFor, the same pairing the mana ledger uses). Shared texts are narrowed to
+// the spells that mob is known to have; if more than one still fits it records nothing, never a crowned guess. Local
+// only: same shape as parseBuffLanding's event, but the caller does not queue it for upload.
+function parseNpcSelfBuffLanding(line) {
+  if (!_npcSelfBuffBySuffix.size || !_npcCastStarts.length) return null;
+  const m = line.match(/^\[(.+?)\]\s+(.+)$/);
+  if (!m) return null;
+  const body = m[2].replace(/\s+$/, '');
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const candidates = [];
+  const apos = body.indexOf("'s");
+  if (apos > 0) candidates.push([body.slice(0, apos), body.slice(apos)]);   // possessive
+  const words = body.split(' ');
+  for (let k = 1; k <= Math.min(5, words.length - 1); k++) {
+    candidates.push([words.slice(0, k).join(' '), words.slice(k).join(' ')]);
+  }
+  for (const [name, suffixRaw] of candidates) {
+    if (!_looksLikeTargetName(name)) continue;
+    let hits = _npcSelfBuffBySuffix.get(suffixRaw.trim().toLowerCase());
+    if (!hits || !hits.length) continue;
+    if (!_npcCasterFor(atMs, name)) continue;
+    if (new Set(hits.map(h => h.name)).size > 1) {
+      const mob = _npcMobInfoFor(name);
+      const own = mob && Array.isArray(mob.spells)
+        ? new Set(mob.spells.map(s => String(s && s.name || '').toLowerCase().replace(/`/g, "'"))) : null;
+      const narrowed = own ? hits.filter(h => own.has(String(h.name).toLowerCase().replace(/`/g, "'"))) : [];
+      if (new Set(narrowed.map(h => h.name)).size !== 1) return null;
+      hits = narrowed;
+    }
+    const r = hits[0];
+    return {
+      target:       name,
+      spell_id:     r.id || 0,
+      spell_name:   r.name,
+      landing_text: suffixRaw.trim().slice(0, 200),
+      dur_ticks:    r.dur,
+      dur_formula:  r.durf,
+      cast_at:      ts ? ts.toISOString() : new Date().toISOString(),
+      observer:     null,
     };
   }
   return null;
@@ -57646,6 +57706,18 @@ function mobInfoFeedbackMeta(now) {
     };
   } catch { return null; }
 }
+// FB-111: is this character's EverQuest log quiet while Zeal still sees them in game? Then Target Info can only know
+// their own buffs (Zeal's list), never what lands on a mob. Two cases, the dashboard's two banners: the log went
+// silent mid-session (_logSilent), or no log is being read at all. null when the log is fine. Nothing volatile in it.
+function _logQuietFor(selfChar) {
+  const lc = String(selfChar || '').toLowerCase();
+  if (!lc) return null;
+  if (_logSilent && String(_logSilent.character || '').toLowerCase() === lc) return { character: _logSilent.character, file: _logSilent.file };
+  // No log for THIS character (none at all, or only other characters' logs) is the same blindness.
+  const logs = (typeof stats !== 'undefined' && stats && stats.watchedLogs) || [];
+  if (!logs.some(w => String((w && w.character) || '').toLowerCase() === lc)) return { character: selfChar, file: null };
+  return null;
+}
 function buildMobInfo() {
   const st = _currentTargetState();
   if (!st || !st.target_name) return null;
@@ -57764,6 +57836,7 @@ function buildMobInfo() {
     // FB-95: why there is no row to show (null when there is one) — the overlay prints it beside a ↻ retry.
     mob_miss:       _mobMiss(mobKey, cached, st.target_name, myZoneId),
     target_buffs:   buffs,
+    log_quiet:      _logQuietFor(selfChar),
     // PC = live buff data (own Zeal list OR the target's uploaded live-state)
     // — drives the "(live)" header suffix instead of "(observed)".
     target_is_pc:   zealBuffs !== null || liveBuffs !== null,
@@ -64149,6 +64222,11 @@ async function main() {
           // shouldKeep (default-DROP, and still ahead of us in this callback)
           // would have thrown it away. Local ring only — nothing uploads.
           if (!dbEvt) {
+            // FB-111: the mob buffing itself. Local Target Info only — nothing is queued for upload.
+            try {
+              const nbEvt = parseNpcSelfBuffLanding(line);
+              if (nbEvt) { nbEvt.target_id = _landingTargetId(b.character, nbEvt); recordTargetBuffLanding(nbEvt); }
+            } catch (e) { void e; }
             try { noteMechanicLanding(line, b.character, b.builder); } catch (e) { void e; }
           }
         }

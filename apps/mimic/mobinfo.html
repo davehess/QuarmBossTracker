@@ -133,6 +133,7 @@
   /* observed buffs on the current target (timed from the cast that landed) */
   .tbuffs{margin-top:6px;display:flex;flex-direction:column;gap:3px}
   .tbuffs .hdr{font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase}
+  .tbuffs .logquiet{font-size:10px;line-height:1.3;color:#f6c365}
   .tbuff{display:flex;align-items:center;gap:5px;font-size:10px;line-height:1.2}
   .tbuff .bn{color:#d2a8ff;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis}
   .tbuff .bt{font-variant-numeric:tabular-nums;color:#8b949e;margin-left:auto}
@@ -543,7 +544,11 @@
     for (var u = 0; buffs && u < buffs.length; u++) if (buffs[u] && buffs[u].name && !buffs[u].fell_off) upNow[_tbuffTarget + '|' + buffs[u].name] = 1;
     for (var sk in _tbuffSeen) if (sk.indexOf(_tbuffTarget + '|') === 0 && !upNow[sk]) delete _tbuffSeen[sk];
     if (Object.keys(_tbuffSeen).length > 3000) _tbuffSeen = {};   // a long night of other targets' buffs
-    if (!buffs || !buffs.length) return '';
+    // FB-111: EverQuest's log is not being written (or not read), so a mob's buffs and debuffs cannot be seen and only
+    // your own (from Zeal) show. Plain text, nothing to click, nothing that changes between polls.
+    var quiet = (mi && mi.log_quiet && !mi.target_is_pc)
+      ? '<div class="tbuffs" data-wp-sect="logquiet"><div class="logquiet">Your EQ log is quiet, so only your own buffs show. Type /log on in EverQuest.</div></div>' : '';
+    if (!buffs || !buffs.length) return quiet;
     // Pacify FIRST, on its own line, then Debuffs (good===0), then Buffs
     // (the guild lead, 2026-09-02). It is pulled out before the good/bad split because it
     // is neither — the catalog calls it beneficial (it is, to the mob) but what
@@ -558,7 +563,8 @@
       else goods.push(b);
     }
     var suffix = (mi && mi.target_is_pc) ? '(live)' : '(observed)';
-    return _tbuffSection('aggro reduced', pacified, true)
+    return quiet
+         + _tbuffSection('aggro reduced', pacified, true)
          + _tbuffSection('debuffs '+suffix, debuffs)
          + _tbuffSection('buffs '+suffix, goods);
   }
