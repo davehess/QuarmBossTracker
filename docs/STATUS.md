@@ -7209,6 +7209,22 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   both axes with its own `<key>MiniFloor`; Canvas strip = width only. ⏳ Not run in Electron (native edge resize, hover handshake).
   Open: layout profiles do not carry `MiniFloor`; the HUD ring has no ◢; folding a grow-up overlay (alerts) restores top-anchored.
 
+### 🧾 2026-10-29 — FB-111 (agent 4.0.39 + 4.0.40, Mimic beta `07f96100`); PoP guide Tylis/Saryrn (web 2.1.62, main)
+- **FB-111** ("solo, he doesn't see buffs or debuffs landing on a mob; he sees his own"). Measured read-only: the reporter's
+  install has uploaded nothing from a log since 2026-09-01 (only trigger feedback) while Zeal stays live, and the characters are
+  not excluded. So Mimic is most likely not reading that character's EverQuest log: Target Info then has only Zeal's own-buff
+  list, and in a group other raiders' relay hides it. Fix (4.0.40): `buildMobInfo` carries `log_quiet` (`_logQuietFor`: the
+  `_logSilent` record for that character, or no watched log for that character at all), and `mobinfo.html` prints one plain
+  line, "Your EQ log is quiet… Type /log on in EverQuest", above the buffs. Side gap found and fixed (4.0.39): a mob's own
+  timed buff ("X begins to cast a spell" then its landing) matched neither landing parser; `parseNpcSelfBuffLanding` records it
+  locally when the landing follows that mob's cast within 15 s (shared texts narrowed by the mob's spell list). Instant procs stay
+  hidden on purpose (#154). Tests `test/target-info-solo-landings.test.js`. ⏳ Unconfirmed: a log excerpt from the reporter
+  would settle it; ask whether `/log on` brings the landings back.
+- **PoP guide** (web 2.1.62): after the Keeper of Sorrows the rescued Tylis spawns at /loc 368, -176, -764 and the entrance
+  Tylis is swapped for a temporary copy where he stands (/loc -6, 0, 466), both 30 minutes from the kill, 72 flags; Saryrn
+  leaves one projection, 30 minutes, 72 flags, bound to the killing raid/group or characters saved at the kill. From
+  SecretsOTheP/quests `ea0c766` `potorment/The_Keeper_of_Sorrows.lua:3-21`, `Saryrn.lua:118`.
+
 ### 🧾 2026-10-28 — FB-105, FB-107, FB-108, FB-109 (Mimic beta; web 2.1.58 on main)
 - **FB-105** (beta `83401c91`): Canvas alerts/timers panels no longer show a title plate — the "🔔 Alerts & timers" name chip
   from the press-to-minimize change is hidden in `?part=` frames (`triggers.html` `body.part .wp-name-chip`). Rests on a guess

@@ -185,6 +185,7 @@ const BRIEFS: Record<string, string> = {
   flag_carprin: 'Kill the five Carprin nameds, then hail Tarkil Adan while you hold the kill credit. It is your way into the lower Crypt.',
   flag_askr: 'Everyone does their own: a head for a bag, three parts for the flag, two medallions for the second. Stay in the zone.',
   flag_keeper: 'A small raid kills the Keeper, then hails Tylis. Do Fahlia’s step first or it is a checklist flag. Resets in 2 hours.',
+  flag_saryrn: 'Kill Saryrn, then hail her one projection: 30 minutes, 72 players. Real flag only after the Keeper step.',
   bot_symbol: 'Build one Symbol per raid: four spheres in an Unadorned Symbol. The holder clicks the portal; all follow in 5 minutes.',
   hoh_trial_villager: 'Win the trial, then hail Alekson while you are in the winning group for your credit. A loss can retry in 10 minutes.',
   maelin_cipher: 'Hail Maelin once you hold both halves, Saryrn’s and Mithaniel Marr’s. He joins them into your cipher flag.',

@@ -172,6 +172,9 @@ logs. Tests: `test/eq-family-servers.test.js`.
 `mobinfo.html` prints it with a ↻ (POST `/api/mob-info/retry` → `mobInfoRetry`), and a feedback report carries
 `log_meta.target_info` (`mobInfoFeedbackMeta`). For the catalog a name with ONE Quarm log is a Quarm character
 (`_charQuarmLogs`), unlike the upload gate. Tests: `test/mob-miss-reason.test.js`.
+**Why Target Info shows only your own buffs (FB-111, agent 4.0.40):** landings on a mob come from the log; with the log quiet
+(`_logSilent`) or no watched log for the character, `buildMobInfo` sends `log_quiet` and `mobinfo.html` says "type /log on".
+A mob's own timed buff is read by `parseNpcSelfBuffLanding` (4.0.39). Tests: `test/target-info-solo-landings.test.js`.
 
 ### Guild kit — the tenant config contract (`guild/`, 2026-09-18)
 **Slice 1a live (bot 3.1.129):** `_loadGuildDiscordJson` at the top of
