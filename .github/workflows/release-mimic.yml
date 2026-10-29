@@ -207,15 +207,129 @@ jobs:
           test -f out/replay/index.html || { echo "::error::web/local did not export out/replay/index.html"; exit 1; }
           test -f out/parses/index.html || { echo "::error::web/local did not export out/parses/index.html"; exit 1; }
 
+      # ── Code signing (Azure Artifact Signing) — OFF until the account exists ──
+      # docs/code-signing.md "Turning it on". The signing itself happens INSIDE the build:
+      # apps/mimic/package.json build.win.sign points at scripts/azure-sign.cjs, which electron-builder
+      # calls for the app exe, the installer and the uninstaller, and which does nothing unless all six
+      # AZURE_* settings are present. Because electron-builder signs first and only then hashes the
+      # installer for latest.yml / beta.yml and the blockmap, the update manifests already match the
+      # SIGNED file (the verify step below checks it); the old patch-latest-yml.js repair is not needed.
+      # Secrets absent -> `configured` is false -> every signing step below is skipped and the build is
+      # the unsigned build it has always been. Secrets present -> a build that cannot sign FAILS.
+      - name: Detect signing configuration
+        id: sign
+        if: steps.tag.outputs.build == 'true'
+        shell: bash
+        env:
+          AZURE_TENANT_ID:        ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID:        ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET:    ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT:  ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE:     ${{ vars.AZURE_CERT_PROFILE }}
+        run: |
+          set -euo pipefail
+          set_count=0; total=0
+          for v in AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_SIGNING_ENDPOINT AZURE_SIGNING_ACCOUNT AZURE_CERT_PROFILE; do
+            total=$((total + 1))
+            if [ -n "${!v:-}" ]; then set_count=$((set_count + 1)); fi
+          done
+          if [ "$set_count" -eq "$total" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "Code signing: configured — this build will be signed and verified."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            if [ "$set_count" -gt 0 ]; then
+              echo "::warning::Code signing is only partly configured ($set_count of $total AZURE_* settings) — building UNSIGNED. See docs/code-signing.md."
+            else
+              echo "Code signing: not configured — unsigned build."
+            fi
+          fi
+
+      - uses: actions/setup-dotnet@v4
+        if: steps.tag.outputs.build == 'true' && steps.sign.outputs.configured == 'true'
+        with:
+          dotnet-version: 8.0.x
+
+      # SignTool + the Artifact Signing dlib, as Microsoft documents them
+      # (https://learn.microsoft.com/en-us/azure/artifact-signing/how-to-signing-integrations):
+      # SDK Build Tools (SignTool >= 10.0.2261.755) and Microsoft.ArtifactSigning.Client from NuGet.
+      - name: Install signing tools
+        if: steps.tag.outputs.build == 'true' && steps.sign.outputs.configured == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'azsign'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Push-Location $dir
+          Invoke-WebRequest -Uri 'https://dist.nuget.org/win-x86-commandline/latest/nuget.exe' -OutFile .\nuget.exe
+          .\nuget.exe install Microsoft.Windows.SDK.BuildTools -x -NonInteractive
+          .\nuget.exe install Microsoft.ArtifactSigning.Client -x -NonInteractive
+          Pop-Location
+          $signtool = Get-ChildItem -Path (Join-Path $dir 'Microsoft.Windows.SDK.BuildTools') -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } | Select-Object -First 1
+          $dlib = Get-ChildItem -Path (Join-Path $dir 'Microsoft.ArtifactSigning.Client') -Recurse -Filter Azure.CodeSigning.Dlib.dll |
+            Where-Object { $_.FullName -match '\\x64\\Azure\.CodeSigning\.Dlib\.dll$' } | Select-Object -First 1
+          if (-not $signtool) { throw 'x64 signtool.exe not found in Microsoft.Windows.SDK.BuildTools' }
+          if (-not $dlib)     { throw 'x64 Azure.CodeSigning.Dlib.dll not found in Microsoft.ArtifactSigning.Client' }
+          "AZURE_SIGNTOOL_PATH=$($signtool.FullName)"    | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "AZURE_SIGNING_DLIB_PATH=$($dlib.FullName)"    | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "signtool: $($signtool.FullName)"
+          Write-Host "dlib:     $($dlib.FullName)"
+
       - name: Build Windows installer
         if: steps.tag.outputs.build == 'true'
         working-directory: apps/mimic
         run: npm run dist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Handed to the build ONLY when signing is fully configured; otherwise empty, and
+          # scripts/azure-sign.cjs treats empty as "not configured".
+          AZURE_TENANT_ID:        ${{ steps.sign.outputs.configured == 'true' && secrets.AZURE_TENANT_ID || '' }}
+          AZURE_CLIENT_ID:        ${{ steps.sign.outputs.configured == 'true' && secrets.AZURE_CLIENT_ID || '' }}
+          AZURE_CLIENT_SECRET:    ${{ steps.sign.outputs.configured == 'true' && secrets.AZURE_CLIENT_SECRET || '' }}
+          AZURE_SIGNING_ENDPOINT: ${{ steps.sign.outputs.configured == 'true' && vars.AZURE_SIGNING_ENDPOINT || '' }}
+          AZURE_SIGNING_ACCOUNT:  ${{ steps.sign.outputs.configured == 'true' && vars.AZURE_SIGNING_ACCOUNT || '' }}
+          AZURE_CERT_PROFILE:     ${{ steps.sign.outputs.configured == 'true' && vars.AZURE_CERT_PROFILE || '' }}
 
-      # (SignPath code-signing block removed — the Foundation declined the
-      #  certificate request. docs/code-signing.md kept for a future provider.)
+      # Runs ONLY when signing was configured: a configured-but-unsigned installer fails the build
+      # (so nothing unsigned is published by mistake), and the update manifests are checked against
+      # the SIGNED installer's hash. Also exposes the signer's name for the release body.
+      - name: Verify Authenticode signature + update manifests
+        id: verify
+        if: steps.tag.outputs.build == 'true' && steps.sign.outputs.configured == 'true'
+        shell: pwsh
+        working-directory: apps/mimic/dist
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem -Filter 'Raid-Mimic-Setup-*.exe')
+          if ($installers.Count -ne 1) { throw "expected exactly one Raid-Mimic-Setup-*.exe in dist, found $($installers.Count)" }
+          $installer = $installers[0]
+          $targets = @($installer.FullName)
+          $appExe = Join-Path 'win-unpacked' 'Raid Mimic.exe'
+          if (Test-Path -LiteralPath $appExe) { $targets += (Resolve-Path -LiteralPath $appExe).Path }
+          $publisher = ''
+          foreach ($t in $targets) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $t
+            if ($sig.Status -ne 'Valid') {
+              throw "Code signing was configured but $([IO.Path]::GetFileName($t)) is not validly signed (status: $($sig.Status))"
+            }
+            $publisher = $sig.SignerCertificate.GetNameInfo('SimpleName', $false)
+            Write-Host "$([IO.Path]::GetFileName($t)): Valid, signed by $publisher"
+          }
+          # electron-updater rejects an update whose hash differs from the manifest's.
+          $b64 = [Convert]::ToBase64String([Security.Cryptography.SHA512]::Create().ComputeHash([IO.File]::ReadAllBytes($installer.FullName)))
+          $ymls = @(Get-ChildItem -Filter '*.yml')
+          if ($ymls.Count -eq 0) { throw 'no update manifest (*.yml) in dist' }
+          foreach ($y in $ymls) {
+            $m = Select-String -LiteralPath $y.FullName -Pattern '^sha512:\s*(\S+)\s*$' | Select-Object -First 1
+            if (-not $m) { continue }
+            if ($m.Matches[0].Groups[1].Value -ne $b64) {
+              throw "$($y.Name) sha512 does not match the signed installer - auto-update would reject it"
+            }
+            Write-Host "$($y.Name): sha512 matches the signed installer"
+          }
+          "publisher=$publisher" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       # Release notes = WHAT CHANGED, not boilerplate. The release commit's
       # message already describes the change (stable graduations list the
@@ -228,6 +342,10 @@ jobs:
         id: notes
         if: steps.tag.outputs.build == 'true'
         shell: bash
+        env:
+          # "signed by" only when the verify step ran and passed; the name goes through env, never
+          # interpolated into the script.
+          SIGNED_BY: ${{ steps.sign.outputs.configured == 'true' && steps.verify.outputs.publisher || '' }}
         run: |
           set -euo pipefail
           subject=$(git log -1 --pretty=%s HEAD)
@@ -264,7 +382,11 @@ jobs:
               printf '%s\n' "$body"
             fi
             printf '\n---\n'
-            printf 'Windows installer — not code-signed (SmartScreen → More info → Run anyway). Bundles its own Node runtime; auto-updates in place via electron-updater, no re-download.\n'
+            if [ -n "$SIGNED_BY" ]; then
+              printf 'Windows installer — code-signed by %s. Bundles its own Node runtime; auto-updates in place via electron-updater, no re-download.\n' "$SIGNED_BY"
+            else
+              printf 'Windows installer — not code-signed (SmartScreen → More info → Run anyway). Bundles its own Node runtime; auto-updates in place via electron-updater, no re-download.\n'
+            fi
           } > "$GITHUB_WORKSPACE/release-notes.md"
           echo "----- release-notes.md -----"; cat "$GITHUB_WORKSPACE/release-notes.md"
 
