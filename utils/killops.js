@@ -12,8 +12,7 @@ const { buildZoneKillCard, buildSummaryCard, buildSpawningTomorrowCard, buildExp
 const { getThreadId, getBossExpansion, EXPANSION_META } = require('./config');
 
 function getBosses() {
-  delete require.cache[require.resolve('../data/bosses.json')];
-  return require('../data/bosses.json');
+  return require('./readJsonFresh')(require('path').join(__dirname, '..', 'data', 'bosses.json'));
 }
 
 /**
