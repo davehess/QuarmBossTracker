@@ -138,9 +138,10 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
 
   let response = NextResponse.next({ request });
 
+  // Server key, as in lib/supabase-server.ts (2026-10-29): the public key is the browser's alone.
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
     {
       cookies: {
         get(name: string) {

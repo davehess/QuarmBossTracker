@@ -7,9 +7,13 @@ import { cookies } from 'next/headers';
 
 export function supabaseServer() {
   const cookieStore = cookies();
+  // The server key, never the browser's public key (2026-10-29 security finding): until then
+  // NEXT_PUBLIC_SUPABASE_ANON_KEY held the service key on Vercel, so every signed-out server read ran
+  // as service_role and the browser bundle shipped it. Keeping the server on the service key keeps
+  // those reads exactly as they were; a signed-in request still runs as the member (their JWT).
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
     {
       cookies: {
         get(name: string) {

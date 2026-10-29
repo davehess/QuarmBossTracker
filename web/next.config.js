@@ -58,6 +58,13 @@ function swapNextLink(rules) {
   }
 }
 
+// The browser's Supabase key is public by design; a secret one here ships to every visitor. Fail the build.
+const _publicKeyProblem = require('./lib/publicKeyGuard').publicKeyProblem(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+if (_publicKeyProblem) {
+  throw new Error(`NEXT_PUBLIC_SUPABASE_ANON_KEY must be the public (anon or sb_publishable_) key: ${_publicKeyProblem}. ` +
+    'It is inlined into the browser bundle. Put the service key in SUPABASE_SERVICE_ROLE_KEY only.');
+}
+
 module.exports = {
   reactStrictMode: true,
   webpack(config) {
