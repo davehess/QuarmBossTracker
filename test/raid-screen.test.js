@@ -993,7 +993,7 @@ describe('the page, the nav, the embed and the migration', () => {
 
   it('the spectator board is embedded by a prop, and /spectator still mounts it with none', () => {
     const board = stripJs(read('web/app/spectator/SpectatorBoard.tsx'));
-    expect(board).toMatch(/export default function SpectatorBoard\(\{ embedded = false, shared, plan \}: \{\s*embedded\?: boolean;\s*shared\?: Pick<ScreenLive, 'feed' \| 'netErr' \| 'signedOut'>;\s*plan\?: PlanOverlay\[\];\s*\} = \{\}\)/);
+    expect(board).toMatch(/export default function SpectatorBoard\(\{ embedded = false, shared, plan, mobs \}: \{\s*embedded\?: boolean;\s*shared\?: Pick<ScreenLive, 'feed' \| 'netErr' \| 'signedOut'>;\s*plan\?: PlanOverlay\[\];\s*mobs\?: MobLayer;\s*\} = \{\}\)/);
     expect(stripJs(read('web/app/spectator/page.tsx'))).toMatch(/<SpectatorBoard \/>/);
   });
 
