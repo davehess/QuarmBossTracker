@@ -1203,6 +1203,13 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   Test: `test/map-watch-agent.test.js`. Charm aging's default-off lives beside it in `BUILTIN_DEFAULT_MODES`
   (`test/trigger-rules.test.js`).
 
+### Timers panel name picker: autocomplete, spell bar, most-cast (agent 4.0.41, Mimic beta draft, 2026-10-29; DECISIONS §467)
+- **What:** the name box in a Timers panel's ⚙ menu lists names A to Z, narrowing as you type; each row says where it came from
+  (on your bar / cast N× / live now). Click or Up/Down + Enter claims it (one panel per name); Escape closes the list, then the menu.
+- **Where:** `apps/mimic/canvas.html` `normEffect` (curly quotes folded), `mergeSuggestions`, `fillSuggestions`/`renderSugg`/`suggKey`;
+  agent `castCountBump`/`_noteCastCount` (called from `noteSelfCast`), `_timerSuggestions` behind `GET /api/timer-suggestions`; gems
+  from Zeal labels 60-67 (`_meLabel`, as `_serializeMeState`); counts in `logsync.cast-counts.json`. Test: `test/timer-name-picker.test.js`.
+
 ### The Canvas is never on unless you turned it on; Esc leaves setup (Mimic, draft on beta, 2026-10-22; DECISIONS §413)
 - **What:** `cfg.showCanvas` is written `false` for a new install and put back to `false` ONCE for any saved config without
   `cfg.canvasDefaultOffApplied` (also in `hideAllPrev` and every `charProfiles[*].show`). Arranging with it off asks first;

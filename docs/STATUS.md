@@ -7200,6 +7200,17 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   both axes with its own `<key>MiniFloor`; Canvas strip = width only. ⏳ Not run in Electron (native edge resize, hover handshake).
   Open: layout profiles do not carry `MiniFloor`; the HUD ring has no ◢; folding a grow-up overlay (alerts) restores top-anchored.
 
+### 🧾 2026-10-29 — FB-112 Timers canvas name picker (agent 4.0.41, Mimic beta draft `draft/timer-picker`; DECISIONS §467)
+- **FB-112** (a member's panel was filtered to a spell name and the real timer names were hard to pick; the guild lead: autocomplete,
+  suggest "your most often cast timers and the spells you have on your bars right now", alpha order). The ⚙ menu's name box on a Timers
+  panel now opens an A-to-Z list that narrows as you type, merged from three sources and tagged: the spell bar (Zeal gem labels
+  60-67, already read for the HUD), your most-cast spells (new local per-character count, `logsync.cast-counts.json`, 30-day half-life,
+  200 names), and the countdowns up now. `normEffect` also folds ’ ‘ to `'`. Agent `GET /api/timer-suggestions`. Test
+  `test/timer-name-picker.test.js` (alpha sort, dedupe, cap and the count store mutation-checked).
+- ⏳ Not run in a real Electron window: exercised in Chromium against the real canvas.html with a stubbed bridge. To look at on beta: the
+  list opens on a click into the box on a LOCKED canvas (hover handshake on the menu), and the window keeps EQ's focus until then.
+  Open: the count only starts from this agent version, so "cast N×" is empty for a day of play; a panel's 20-name cap is unchanged.
+
 ### 🧾 2026-10-29 — FB-111 (agent 4.0.39 + 4.0.40, Mimic beta `07f96100`); PoP guide Tylis/Saryrn (web 2.1.62, main)
 - **FB-111** ("solo, he doesn't see buffs or debuffs landing on a mob; he sees his own"). Measured read-only: the reporter's
   install has uploaded nothing from a log since 2026-09-01 (only trigger feedback) while Zeal stays live, and the characters are
