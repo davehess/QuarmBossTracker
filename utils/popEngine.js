@@ -1747,7 +1747,7 @@ const BASE_ITEMS = [
 		section: "t2",
 		who: "raid",
 		title: "Optional: [[A Screaming Sphere#22954]] for Saryrn’s tower door",
-		detail: "One person needs it. An Unimaginable Horror now respawns in 30 minutes. For 30 minutes after the Keeper of Sorrows dies, the temporary entrance Tylis does not require it (you still need the Tylis pre-flag)."
+		detail: "One person needs it. An Unimaginable Horror now respawns in 30 minutes. For 30 minutes after the Keeper of Sorrows dies, the temporary entrance Tylis does not require it (you still need the Tylis pre-flag). Tylis counts a sphere on the key ring of anyone in your raid (or group), so one holder covers everyone; your own Tylis flag is still required."
 	},
 	{
 		key: "flag_keeper",
@@ -1774,7 +1774,7 @@ const BASE_ITEMS = [
 		must: true,
 		flag: "saryrn_dead",
 		title: "Kill Saryrn",
-		detail: `${PROJECTION} There is only one, where she died; it stays 30 minutes (it used to be 20) and flags up to 72 players. It answers the raid or group that killed her, or anyone saved at the kill. It gives the real flag only if your Tylis flag is at 2 (the Keeper step); otherwise a checklist flag the Seer’s “unlock my memories” turns into the real one.`,
+		detail: `${PROJECTION} There is only one, where she died; it stays 30 minutes (it used to be 20) and flags up to 72 players. It answers the raid or group that killed her, or anyone saved at the kill. It gives the real flag only if your Tylis flag is at 2 (the Keeper step); otherwise a checklist flag the Seer’s “unlock my memories” turns into the real one. Alts can take it from any raid that kills Saryrn, even another guild’s: it checks the raid, never the guild, so get the alt into that raid and hail within the 30 minutes.`,
 		link: popZone("torment")
 	},
 	{
@@ -1803,7 +1803,7 @@ const BASE_ITEMS = [
 		section: "t3",
 		who: "raid",
 		title: "The [[Symbol of Torden#9433]] opens Agnarr’s tower: one per raid, and the raid needs it",
-		detail: "Combine the [[Sandstorm Sphere#9429]], [[Lightning Sphere#9430]], [[Blizzard Sphere#9431]] and [[Tornado Sphere#9432]] inside an [[Unadorned Symbol of Torden#17169]]. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has 5 minutes to click in. Anyone else clicking wakes the storm watchers.",
+		detail: "Combine the [[Sandstorm Sphere#9429]], [[Lightning Sphere#9430]], [[Blizzard Sphere#9431]] and [[Tornado Sphere#9432]] inside an [[Unadorned Symbol of Torden#17169]]. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has 5 minutes to click in. Anyone else clicking wakes the storm watchers. Each person clicks the portal themselves: the holder’s click opens it for everyone in the same raid, and another click by the holder renews the 5 minutes.",
 		where: [L.botTower]
 	},
 	{
@@ -1812,7 +1812,7 @@ const BASE_ITEMS = [
 		who: "raid",
 		must: true,
 		title: "In the tower: Evynd Firestorm, then Askr; Emmerik Skyfury, then Askr again",
-		detail: "Everyone does both. When Evynd Firestorm dies, hail Askr the Lost and say “transport”. When Emmerik Skyfury dies, hail him again and say “what storm”; he opens A Chaotic Vortex. Click it to reach Agnarr. Askr and the vortex stay until Karana’s flagging window ends.",
+		detail: "Everyone does both. When Evynd Firestorm dies, hail Askr the Lost and say “transport”. When Emmerik Skyfury dies, hail him again and say “what storm”; he opens A Chaotic Vortex. Click it to reach Agnarr. Askr and the vortex stay until Karana’s flagging window ends. Once Emmerik is dead, alts can wait on the second floor and use the vortex any time until that window ends: nothing on that path checks a flag or a raid.",
 		says: [{
 			to: "Askr the Lost",
 			text: "transport"
@@ -1829,7 +1829,7 @@ const BASE_ITEMS = [
 		must: true,
 		flag: "agnarr_dead",
 		title: "Kill Agnarr the Storm Lord, then speak to Karana",
-		detail: "Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. “Follow the path of the Fallen” gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point.",
+		detail: "Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. “Follow the path of the Fallen” gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point. An alt has to be in that raid at the moment it hails him, inside the 20 minutes; someone who has left the raid cannot claim.",
 		says: [{
 			to: "Karana",
 			text: "I will follow the path of the Fallen."
@@ -1846,7 +1846,7 @@ const BASE_ITEMS = [
 		who: "raid",
 		must: true,
 		title: "Halls of Honor trial 1 (the dragon), then hail Trydan Faye",
-		detail: "Only “ready” starts the trial; Hail and “trials” are his story. After the win he stands here again; hail him while you are in the group or raid that won. That is your credit for this trial, with a line about an ethereal mist instead of the usual flag message.",
+		detail: "Only “ready” starts the trial; Hail and “trials” are his story. After the win he stands here again; hail him while you are in the group or raid that won. That is your credit for this trial, with a line about an ethereal mist instead of the usual flag message. After a win he stands 10 minutes and credits whoever is in the winning raid or group when they hail, late joiners included; a won trial does not come back for about 18 hours.",
 		says: [
 			{
 				to: "Trydan Faye (to start the trial)",
@@ -1877,7 +1877,7 @@ const BASE_ITEMS = [
 		who: "raid",
 		must: true,
 		title: "Trial 2 (save the villagers), then hail Rhaliq Trell",
-		detail: "Only “ready” starts the trial; Hail is his story. After the win he stands here again; hail him while you are in the group or raid that won, for your credit (the same ethereal mist line).",
+		detail: "Only “ready” starts the trial; Hail is his story. After the win he stands here again; hail him while you are in the group or raid that won, for your credit (the same ethereal mist line). He stands 10 minutes and credits late joiners to the winning raid or group too; a won trial does not come back for about 18 hours.",
 		says: [
 			{
 				to: "Rhaliq Trell (to start the trial)",
@@ -1903,7 +1903,7 @@ const BASE_ITEMS = [
 		who: "raid",
 		must: true,
 		title: "Trial 3 (save one villager), then hail Alekson Garn",
-		detail: "A failed trial can be retried after 10 minutes. Only “ready” starts the trial; Hail is his story. After the win he stands here again; hail him while you are in the group or raid that won, for your credit. All three credits together are what opens the Temple of Marr portals and what Mithaniel Marr’s projection checks.",
+		detail: "A failed trial can be retried after 10 minutes. Only “ready” starts the trial; Hail is his story. After the win he stands here again; hail him while you are in the group or raid that won, for your credit. All three credits together are what opens the Temple of Marr portals and what Mithaniel Marr’s projection checks. After a win he stands 10 minutes and credits late joiners to the winning raid or group too; a won trial does not come back for about 18 hours.",
 		says: [
 			{
 				to: "Alekson Garn (to start the trial)",
@@ -2097,7 +2097,7 @@ const BASE_ITEMS = [
 		who: "raid",
 		flag: "solro_minis",
 		title: "The five Tower of Solusek Ro minis",
-		detail: "Xuzl, Arlyxir, the Protector of Dresolik, Rizlona and Jiva, in any order. Each wing is a boss fight and then a click, and everyone clicks their own: when the boss dies a flaming cauldron appears for 30 minutes, and while it is up you click the cauldron to take that wing’s flag. Click when it is not there and you only become disoriented. Dresolik’s Protector appears when the last of the four Guardians of Dresolik dies; Rizlona has a second form where she falls, and it is that one’s death that leaves the cauldron. Nobody speaks to anything here. All five wings, with your Zeks flag at 7 (every flag up to Rallos Zek and the Zek notes), open the lava runes that take you into Solusek Ro’s chamber, and his projection checks all five too.",
+		detail: "Xuzl, Arlyxir, the Protector of Dresolik, Rizlona and Jiva, in any order. Each wing is a boss fight and then a click, and everyone clicks their own: when the boss dies a flaming cauldron appears for 30 minutes, and while it is up you click the cauldron to take that wing’s flag. Click when it is not there and you only become disoriented. Dresolik’s Protector appears when the last of the four Guardians of Dresolik dies; Rizlona has a second form where she falls, and it is that one’s death that leaves the cauldron. Nobody speaks to anything here. All five wings, with your Zeks flag at 7 (every flag up to Rallos Zek and the Zek notes), open the lava runes that take you into Solusek Ro’s chamber, and his projection checks all five too. Alts take a wing the same way: whoever reaches a cauldron and clicks it inside its 30 minutes gets that wing. Each cauldron runs its own 30 minutes from its own boss’s death, so send the alts to each wing right after its kill; clearing all five first and clicking later misses the early ones.",
 		where: [
 			L.xuzl,
 			L.xuzlCauldron,
@@ -3773,8 +3773,13 @@ for (const [key, brief] of Object.entries({
 	flag_carprin: "Kill the five Carprin nameds, then hail Tarkil Adan while you hold the kill credit. It is your way into the lower Crypt.",
 	flag_askr: "Everyone does their own: a head for a bag, three parts for the flag, two medallions for the second. Stay in the zone.",
 	flag_keeper: "A small raid kills the Keeper, then hails Tylis. Do Fahlia’s step first or it is a checklist flag. Resets in 2 hours.",
+	torment_sphere: "Optional. One sphere on the key ring of anyone in your raid covers everyone. You still need your own Tylis flag.",
 	flag_saryrn: "Kill Saryrn, then hail her one projection: 30 minutes, 72 players. Real flag only after the Keeper step.",
 	bot_symbol: "Build one Symbol per raid: four spheres in an Unadorned Symbol. The holder clicks the portal; all follow in 5 minutes.",
+	flag_agnarr: "Hail Karana within 20 minutes of the kill, in the raid that got it. An alt must be in that raid to claim.",
+	hoh_trial_dragon: "Say “ready” to start. After the win, hail Trydan within 10 minutes from the winning raid or group for credit.",
+	hoh_trial_villagers: "Say “ready” to start. After the win, hail Rhaliq within 10 minutes from the winning raid or group for credit.",
+	bot_tower: "Everyone does both Askr steps; Emmerik’s Askr opens the vortex to Agnarr. Alts can wait on floor two for it.",
 	hoh_trial_villager: "Win the trial, then hail Alekson while you are in the winning group for your credit. A loss can retry in 10 minutes.",
 	maelin_cipher: "Hail Maelin once you hold both halves, Saryrn’s and Mithaniel Marr’s. He joins them into your cipher flag.",
 	maelin_lore: "Needs Karana’s path flag and Mithaniel’s notes. Maelin reads both and gives you a flag.",

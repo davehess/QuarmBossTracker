@@ -446,8 +446,11 @@ const BASE_ITEMS: GuideItem[] = [
   { key: 'torment_fahlia', section: 't2', who: 'solo', must: true, title: 'Torment, first: tell Fahlia Shadyglade you will go',
     detail: 'Needs the Disease, Crypt and Nightmare flags done in order.',
     says: [{ to: 'Fahlia Shadyglade', text: 'i will go' }], where: [L.fahlia] },
+  // SecretsOTheP/quests ea0c766: potorment/Tylis_Newleaf.lua:5-42 (RaidHasKey: the client's own bags and key ring, then
+  // every raid member's, or every group member's when there is no raid) and :57-70 (the check on "will assist you" and
+  // "ready"; qglobals.tylis is read from the person speaking, so every person needs their own Tylis flag).
   { key: 'torment_sphere', section: 't2', who: 'raid', title: 'Optional: [[A Screaming Sphere#22954]] for Saryrn’s tower door',
-    detail: 'One person needs it. An Unimaginable Horror now respawns in 30 minutes. For 30 minutes after the Keeper of Sorrows dies, the temporary entrance Tylis does not require it (you still need the Tylis pre-flag).' },
+    detail: 'One person needs it. An Unimaginable Horror now respawns in 30 minutes. For 30 minutes after the Keeper of Sorrows dies, the temporary entrance Tylis does not require it (you still need the Tylis pre-flag). Tylis counts a sphere on the key ring of anyone in your raid (or group), so one holder covers everyone; your own Tylis flag is still required.' },
   // SecretsOTheP/quests ea0c766: potorment/The_Keeper_of_Sorrows.lua:3-21 (rescued #Tylis spawn2 at x -176 y 368, the
   // entrance 207014 depopped and re-spawned at its own position, one shared 1800 s deadline); FLAG_LIMIT 72 in
   // potorment/#Tylis_Newleaf.lua:3 and A_Planar_Projection.lua:1; Saryrn.lua:118 spawns the one projection.
@@ -458,7 +461,10 @@ const BASE_ITEMS: GuideItem[] = [
       { to: 'Tylis Newleaf (in Torment)', text: 'ready to return', src: 'potorment/#Tylis_Newleaf.lua' },
     ],
     link: popZone('torment') },
-  { key: 'flag_saryrn', section: 't2', who: 'raid', must: true, flag: 'saryrn_dead', title: 'Kill Saryrn', detail: `${PROJECTION} There is only one, where she died; it stays 30 minutes (it used to be 20) and flags up to 72 players. It answers the raid or group that killed her, or anyone saved at the kill. It gives the real flag only if your Tylis flag is at 2 (the Keeper step); otherwise a checklist flag the Seer’s “unlock my memories” turns into the real one.`, link: popZone('torment') },
+  // Alts (SecretsOTheP/quests ea0c766): lua_modules/projection_eligibility.lua:1-2,128-152 (CanFlag matches the hailer's
+  // CURRENT raid id against the killer's, never a guild) and potorment/A_Planar_Projection.lua:1,11-13,29-47 (30-minute
+  // depop, 72 claims, and the Tylis-at-2 branch the text already carries).
+  { key: 'flag_saryrn', section: 't2', who: 'raid', must: true, flag: 'saryrn_dead', title: 'Kill Saryrn', detail: `${PROJECTION} There is only one, where she died; it stays 30 minutes (it used to be 20) and flags up to 72 players. It answers the raid or group that killed her, or anyone saved at the kill. It gives the real flag only if your Tylis flag is at 2 (the Keeper step); otherwise a checklist flag the Seer’s “unlock my memories” turns into the real one. Alts can take it from any raid that kills Saryrn, even another guild’s: it checks the raid, never the guild, so get the alt into that raid and hail within the 30 minutes.`, link: popZone('torment') },
   { key: 'torment_return', section: 't2', who: 'solo', title: 'Hail Fahlia Shadyglade and Tylis Newleaf in the sick bay, then Maelin',
     detail: 'Story only: neither hail gives a flag. Fahlia thanks you, and Tylis points you at the Grand Librarian in Knowledge for the cipher.',
     says: [
@@ -469,23 +475,41 @@ const BASE_ITEMS: GuideItem[] = [
 
   // ── Tier three ────────────────────────────────────────────────────────────
   // Bastion of Thunder
+  // SecretsOTheP/quests ea0c766: bothunder/player.lua:9-17 (HasKey: cursor, then key ring), :47-84 (AddRaid: the holder's
+  // raid or group id gets 300 s, and a second holder click only resets that expiry), :164-190 (door 51: FindRaid, then
+  // MovePC of e.self alone, so each person clicks for themselves).
   { key: 'bot_symbol', section: 't3', who: 'raid', title: 'The [[Symbol of Torden#9433]] opens Agnarr’s tower: one per raid, and the raid needs it',
-    detail: 'Combine the [[Sandstorm Sphere#9429]], [[Lightning Sphere#9430]], [[Blizzard Sphere#9431]] and [[Tornado Sphere#9432]] inside an [[Unadorned Symbol of Torden#17169]]. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has 5 minutes to click in. Anyone else clicking wakes the storm watchers.',
+    detail: 'Combine the [[Sandstorm Sphere#9429]], [[Lightning Sphere#9430]], [[Blizzard Sphere#9431]] and [[Tornado Sphere#9432]] inside an [[Unadorned Symbol of Torden#17169]]. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has 5 minutes to click in. Anyone else clicking wakes the storm watchers. Each person clicks the portal themselves: the holder’s click opens it for everyone in the same raid, and another click by the holder renews the 5 minutes.',
     where: [L.botTower] },
+  // Alts (SecretsOTheP/quests ea0c766): bothunder/#Askr_the_Lost.lua:8-12 ("transport" moves whoever says it) and
+  // bothunder/##Askr_the_Lost.lua:8-10 ("what storm" spawns the vortex); bothunder/player.lua:218-228 (the vortex click
+  // moves e.self); lua_modules/flagging_travel.lua:75-100 (CanUse tests only the deadline). None of them reads a flag
+  // or a raid.
   { key: 'bot_tower', section: 't3', who: 'raid', must: true, title: 'In the tower: Evynd Firestorm, then Askr; Emmerik Skyfury, then Askr again',
-    detail: 'Everyone does both. When Evynd Firestorm dies, hail Askr the Lost and say “transport”. When Emmerik Skyfury dies, hail him again and say “what storm”; he opens A Chaotic Vortex. Click it to reach Agnarr. Askr and the vortex stay until Karana’s flagging window ends.',
+    detail: 'Everyone does both. When Evynd Firestorm dies, hail Askr the Lost and say “transport”. When Emmerik Skyfury dies, hail him again and say “what storm”; he opens A Chaotic Vortex. Click it to reach Agnarr. Askr and the vortex stay until Karana’s flagging window ends. Once Emmerik is dead, alts can wait on the second floor and use the vortex any time until that window ends: nothing on that path checks a flag or a raid.',
     says: [{ to: 'Askr the Lost', text: 'transport' }, { to: 'Askr the Lost', text: 'what storm' }],
     where: [L.askrTower1, L.askrTower2] },
+  // SecretsOTheP/quests ea0c766: bothunder/Karana.lua:8-24 (ClientCanFlag compares the hailer's CURRENT raid, group or
+  // self with the killer's, so someone who left the raid fails it), :46-50 (20-minute depop), :58-62 and :67-86
+  // (every answer is behind that check).
   { key: 'flag_agnarr', section: 't3', who: 'raid', must: true, flag: 'agnarr_dead', title: 'Kill Agnarr the Storm Lord, then speak to Karana',
-    detail: 'Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. “Follow the path of the Fallen” gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point.',
+    detail: 'Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. “Follow the path of the Fallen” gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point. An alt has to be in that raid at the moment it hails him, inside the 20 minutes; someone who has left the raid cannot claim.',
     says: [{ to: 'Karana', text: 'I will follow the path of the Fallen.' }, { to: 'Karana', text: 'Send me on my path.' }],
     where: [L.karana], link: popZone('bot') },
   // Halls of Honor
   // The three trial givers (hohonora/encounters/RyddaDar.lua, Villagers.lua, Crazed.lua). Each starts the
   // trial on "ready"; after a win a second copy of the same NPC stands there and its hail is your credit
   // (one digit of hohtrials), printed as an "ethereal mist" line rather than the usual flag message.
+  // The 10-minute stand and the 18-hour gap (SecretsOTheP/quests ea0c766): the winner's second copy depops on a
+  // 600000 ms timer (RyddaDar.lua:50-57, Villagers.lua:78-84, Crazed.lua:100-106) and credits a hail through
+  // ClientCanFlag (RyddaDar.lua:15-31, 59-76; Villagers.lua:43-60, 86; Crazed.lua:65-82, 108), which compares the
+  // hailer's CURRENT raid or group with the one recorded off the killing blow (RyddaDar.lua:136-146, Villagers.lua:114-128,
+  // Crazed.lua:138-150), so a late joiner passes.
+  // SUCCESS_RESPAWN_TIME = 64800 * 1000, "18 hours" (RyddaDar.lua:6, Villagers.lua:5, Crazed.lua:5), is the delay
+  // EnableSpawns puts on the room's spawns when the trial is won (RyddaDar.lua:128-129, Villagers.lua:261-262,
+  // Crazed.lua:329-330).
   { key: 'hoh_trial_dragon', section: 't3', who: 'raid', must: true, title: 'Halls of Honor trial 1 (the dragon), then hail Trydan Faye',
-    detail: 'Only “ready” starts the trial; Hail and “trials” are his story. After the win he stands here again; hail him while you are in the group or raid that won. That is your credit for this trial, with a line about an ethereal mist instead of the usual flag message.',
+    detail: 'Only “ready” starts the trial; Hail and “trials” are his story. After the win he stands here again; hail him while you are in the group or raid that won. That is your credit for this trial, with a line about an ethereal mist instead of the usual flag message. After a win he stands 10 minutes and credits whoever is in the winning raid or group when they hail, late joiners included; a won trial does not come back for about 18 hours.',
     says: [
       { to: 'Trydan Faye (to start the trial)', text: 'Hail', src: 'hohonora/encounters/RyddaDar.lua' },
       { to: 'Trydan Faye (to start the trial)', text: 'trials', src: 'hohonora/encounters/RyddaDar.lua' },
@@ -494,7 +518,7 @@ const BASE_ITEMS: GuideItem[] = [
     ],
     where: [L.trydan] },
   { key: 'hoh_trial_villagers', section: 't3', who: 'raid', must: true, title: 'Trial 2 (save the villagers), then hail Rhaliq Trell',
-    detail: 'Only “ready” starts the trial; Hail is his story. After the win he stands here again; hail him while you are in the group or raid that won, for your credit (the same ethereal mist line).',
+    detail: 'Only “ready” starts the trial; Hail is his story. After the win he stands here again; hail him while you are in the group or raid that won, for your credit (the same ethereal mist line). He stands 10 minutes and credits late joiners to the winning raid or group too; a won trial does not come back for about 18 hours.',
     says: [
       { to: 'Rhaliq Trell (to start the trial)', text: 'Hail', src: 'hohonora/encounters/Villagers.lua' },
       { to: 'Rhaliq Trell (to start the trial)', text: 'ready', src: 'hohonora/encounters/Villagers.lua' },
@@ -502,7 +526,7 @@ const BASE_ITEMS: GuideItem[] = [
     ],
     where: [L.rhaliq] },
   { key: 'hoh_trial_villager', section: 't3', who: 'raid', must: true, title: 'Trial 3 (save one villager), then hail Alekson Garn',
-    detail: 'A failed trial can be retried after 10 minutes. Only “ready” starts the trial; Hail is his story. After the win he stands here again; hail him while you are in the group or raid that won, for your credit. All three credits together are what opens the Temple of Marr portals and what Mithaniel Marr’s projection checks.',
+    detail: 'A failed trial can be retried after 10 minutes. Only “ready” starts the trial; Hail is his story. After the win he stands here again; hail him while you are in the group or raid that won, for your credit. All three credits together are what opens the Temple of Marr portals and what Mithaniel Marr’s projection checks. After a win he stands 10 minutes and credits late joiners to the winning raid or group too; a won trial does not come back for about 18 hours.',
     says: [
       { to: 'Alekson Garn (to start the trial)', text: 'Hail', src: 'hohonora/encounters/Crazed.lua' },
       { to: 'Alekson Garn (to start the trial)', text: 'ready', src: 'hohonora/encounters/Crazed.lua' },
@@ -550,8 +574,11 @@ const BASE_ITEMS: GuideItem[] = [
   // The five wings are clicks and no words (solrotower/player.lua doors 12, 7, 10, 6, 11 and the Xuzl,
   // Arlyxir, Protector of Dresolik, #Rizlona and Jiva scripts that spawn the cauldron). Each click sets one
   // digit of the server's sol_room; 11111 is what the chamber portals and Solusek Ro's projection check.
+  // Alts (SecretsOTheP/quests ea0c766): solrotower/a_flaming_cauldron.lua:1-17 (a 1,800,000 ms depop armed at spawn, one
+  // cauldron each; only combat pauses it) and solrotower/player.lua:27-90 (a wing's door sets its digit for whoever
+  // clicks while that cauldron's NPC is spawned: no raid or group is read). Each boss's event_death_complete spawns its own.
   { key: 'flag_solro_minis', section: 't3', who: 'raid', flag: 'solro_minis', title: 'The five Tower of Solusek Ro minis',
-    detail: 'Xuzl, Arlyxir, the Protector of Dresolik, Rizlona and Jiva, in any order. Each wing is a boss fight and then a click, and everyone clicks their own: when the boss dies a flaming cauldron appears for 30 minutes, and while it is up you click the cauldron to take that wing’s flag. Click when it is not there and you only become disoriented. Dresolik’s Protector appears when the last of the four Guardians of Dresolik dies; Rizlona has a second form where she falls, and it is that one’s death that leaves the cauldron. Nobody speaks to anything here. All five wings, with your Zeks flag at 7 (every flag up to Rallos Zek and the Zek notes), open the lava runes that take you into Solusek Ro’s chamber, and his projection checks all five too.',
+    detail: 'Xuzl, Arlyxir, the Protector of Dresolik, Rizlona and Jiva, in any order. Each wing is a boss fight and then a click, and everyone clicks their own: when the boss dies a flaming cauldron appears for 30 minutes, and while it is up you click the cauldron to take that wing’s flag. Click when it is not there and you only become disoriented. Dresolik’s Protector appears when the last of the four Guardians of Dresolik dies; Rizlona has a second form where she falls, and it is that one’s death that leaves the cauldron. Nobody speaks to anything here. All five wings, with your Zeks flag at 7 (every flag up to Rallos Zek and the Zek notes), open the lava runes that take you into Solusek Ro’s chamber, and his projection checks all five too. Alts take a wing the same way: whoever reaches a cauldron and clicks it inside its 30 minutes gets that wing. Each cauldron runs its own 30 minutes from its own boss’s death, so send the alts to each wing right after its kill; clearing all five first and clicking later misses the early ones.',
     where: [L.xuzl, L.xuzlCauldron, L.arlyxir, L.arlyxirCauldron, L.dresolik, L.dresolikCauldron, L.rizlona, L.rizlonaCauldron, L.jiva, L.jivaCauldron],
     link: popZone('solro') },
   { key: 'flag_solro', section: 't3', who: 'raid', must: true, flag: 'solro_dead', title: 'Kill Solusek Ro',

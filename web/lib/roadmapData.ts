@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-alt-tips-2026-10-29',
+    title: 'Web 2.1.67',
+    version: 'Web 2.1.67',
+    date: '2026-10-29',
+    headline: 'The Planes of Power guide now says how to get your alts through the flags that are claimed in a raid.',
+    features: [
+      { name: 'Alts and the Saryrn projection', blurb: 'Alts can take Saryrn’s flag from any raid that kills her, even another guild’s: get the alt into that raid and hail within 30 minutes.' },
+      { name: 'One Screaming Sphere covers the raid', blurb: 'Tylis counts a sphere on the key ring of anyone in your raid. Everyone still needs their own Tylis flag.' },
+      { name: 'Bastion of Thunder, step by step for alts', blurb: 'Each person clicks the courtyard portal themselves, and the holder clicking again renews the 5 minutes. Once Emmerik is dead, alts can wait on the second floor and use the vortex until Karana’s window ends. To claim from Karana, an alt has to be in the raid that killed Agnarr when it hails.' },
+      { name: 'Tower of Solusek Ro wings for alts', blurb: 'Each cauldron lasts 30 minutes from its own boss’s death, so send alts to each wing right after its kill instead of clearing all five first.' },
+      { name: 'Halls of Honor trial credit', blurb: 'After a win the trial giver stands 10 minutes and credits everyone in the winning raid or group, late joiners included. A won trial does not come back for about 18 hours.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'pop-guide-tylis-2026-10-29',
     title: 'Web 2.1.62',
     version: 'Web 2.1.62',
