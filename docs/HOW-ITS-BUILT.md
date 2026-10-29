@@ -459,6 +459,18 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   `NextUp.tsx` (client, follows `?c=`), `NextTable.tsx` (server). Cells and links use the rows' own ids (`guide-<key>`,
   `route-<key>`); `GuideRoute.tsx` opens the level a `#route-<key>` link points into. Test `test/pop-next-steps.test.js`.
 
+### PoP guide: "Getting there" line (`/pop/guide?v=b`, beta preview, web 2.1.66, 2026-10-29)
+- The guild lead, 2026-10-29: "take the paths we know and build that into the plan". One compact line above the first
+  step of each zone's run of steps ("PoK book → Tranquility → Valor portal (needs Mavuin 3)"), and, where
+  `web/lib/popTravel.ts` has a repeat-visit shortcut, a muted second line. A pick between this and leaving the guide as
+  it is is the guild lead's; `?v=c` and the default view are untouched.
+- `web/lib/popGettingThere.ts` (server) turns `FORWARD_ROUTES` into sentences from a `PHRASE` table (one entry per hop,
+  held to the routes by `test/pop-getting-there.test.js`) and places each step in a zone (`stepZone`: its flag-chart link,
+  else its first placed NPC, else `STEP_ZONE`). `web/lib/popGettingThereRuns.ts` is the import-free half the client
+  uses (`startsOfRuns`: the line goes on the first SHOWN step of a zone's run; a step with no zone does not break the run,
+  a Plane of Knowledge step ends it). Only the finished sentences cross to the browser (~5 KB), never popTravel's `src` /
+  `unverified` (~90 KB). `GuideRoute.tsx` draws it (`GettingThereLine`).
+
 ### PoP guide steps in script order (web 1.8.88, Mimic beta, 2026-10-03)
 - `GuideItem.seq?: Act[]` in `web/lib/popGuide.ts` (the `SEQ` table): hail / say / give / get / kill / click /
   zone / wait / note, with `times`, `until`, `sit`, and `src` (the `eqemu_quest_scripts` path). `seqRows` turns
