@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.27': [
+    '**Behind the scenes: the bot reports its own memory use.** Nothing changes for you. It lets us see why the bot slows down late on raid nights.',
+  ],
   '4.0.26': [
     '**The PoP guide follows the October 28 server patch.** The Avatar of Earth now waits 35 idle minutes (it was 50), stops its clock in combat and never refills it after a wipe. The earth rings give each attempt 98 minutes and can be tried again after 15. Xegony, Coirnav, Fennin Ro and the Avatar of Earth now always drop their Essence.',
   ],

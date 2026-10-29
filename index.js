@@ -25584,11 +25584,14 @@ const httpServer = http.createServer(async (req, res) => {
       for (const [, b] of book) if (b.count > perMin) tripped++;
       if (tripped) budgets[kind] = { uploaders_over_budget: tripped };
     }
+    // Process memory in MB (utils/memStats.js) — tells real retention from V8 declining to collect early.
+    let mem = null;
+    try { mem = require('./utils/memStats').memSnapshot(); } catch { /* */ }
     const ready = _botReady && !_shuttingDown;
     res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
       ok: ready, ready, shutting_down: _shuttingDown,
-      supabase_breaker: breaker, supabase_row_cap: rowCap, budgets,
+      supabase_breaker: breaker, supabase_row_cap: rowCap, budgets, mem,
     }));
   }
 
@@ -25599,6 +25602,8 @@ const httpServer = http.createServer(async (req, res) => {
 httpServer.listen(process.env.PORT || 3000, () =>
   console.log(`[health] HTTP check + agent endpoint on :${process.env.PORT || 3000}`)
 );
+// One `[mem]` stdout line at boot and every 10 minutes, so the memory curve can be read from the deploy logs.
+try { require('./utils/memStats').startMemLog(); } catch (e) { void e; }
 
 // #58 graceful shutdown — Railway sends SIGTERM before replacing a container.
 // Stop accepting new connections, give in-flight handlers ~10s to drain, then
