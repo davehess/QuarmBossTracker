@@ -245,7 +245,10 @@ async function select(table, queryString = '') {
   return rows;
 }
 
-async function insert(table, rows) {
+// opts.minimal: return=minimal, and resolve true on success (null = failed) — a batch writer that must tell the two
+// apart and has no use for the echoed rows (utils/raidHistory.js).
+async function insert(table, rows, opts = {}) {
+  if (opts.minimal) return _request(`/${table}`, { method: 'POST', body: rows, prefer: 'return=minimal', okValue: true });
   return _request(`/${table}`, { method: 'POST', body: rows });
 }
 

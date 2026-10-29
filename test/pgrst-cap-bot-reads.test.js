@@ -284,6 +284,7 @@ function loadExtTarget(sb) {
     require: realRequireWith(sb),
     mimicLink: { requireAgentAuth: async () => ({ discord_id: 'u01' }) },
     _overlayTuningMap: async () => ({}),
+    _raidHistory: () => ({ noteMobHp() {} }),   // raid history saver (utils/raidHistory.js): not under test here
     _rosterNameSet: async () => new Set(),
     _keepRaidSplit: (split) => split,
     _raidGroups: requireBot('./utils/raidGroups'),

@@ -143,7 +143,8 @@ function shownStretches(pts) {
   return out;
 }
 
-function create({ supabase = null, guildId = null, now = Date.now, log = console, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+// onSample(sample, atMs): called with each CLEANED sample (utils/raidHistory.js saves the sighting). Never throws out.
+function create({ supabase = null, guildId = null, now = Date.now, log = console, setTimer = setTimeout, clearTimer = clearTimeout, onSample = null } = {}) {
   const gid = () => (typeof guildId === 'function' ? guildId() : guildId)
     || (supabase && typeof supabase.guildId === 'function' ? supabase.guildId() : '');
   const enabled = () => !!(supabase && supabase.isEnabled && supabase.isEnabled());
@@ -237,6 +238,7 @@ function create({ supabase = null, guildId = null, now = Date.now, log = console
       if (samples.size >= SAMPLES_MAX) return false;
     }
     samples.set(key, Object.assign(s, { at: tnow }));
+    if (onSample) { try { onSample(s, tnow); } catch { /* a recorder must not fail the upload */ } }
     noteTrail(s, tnow);
     return true;
   }

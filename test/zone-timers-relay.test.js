@@ -46,6 +46,7 @@ function rig({ zonesOf = {}, tagged = TAGGED } = {}) {
     _triggerRelay: triggerRelay, _triggerRate: new Map(), TRIGGER_RATE_WINDOW_MS: 1000, TRIGGER_RATE_MAX: 100,
     TRIGGER_RELAY_DEDUP_WINDOW_MS: 8000, TRIGGER_RELAY_MAX_ENTRIES: 500,
     _senderClockOffsetMs: () => 0,
+    _raidHistory: () => ({ noteTriggerFire() {} }),   // raid history saver (utils/raidHistory.js): not under test here
     _requesterZones: async (acct) => zoneSet(acct),
     _senderStamp: async () => ({ origin_raid: null, origin_group: null }),
     _groupScope: groupScope,

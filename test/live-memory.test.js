@@ -330,6 +330,7 @@ function liveStateHandler(sb) {
     require: realRequireWith(sb),
     mimicLink: { requireAgentAuth: async () => ({ discord_id: 'u1' }) },
     _raidTargets: () => ({ forget() {}, noteSample() {} }),
+    _raidHistory: () => ({ noteLiveRows() {} }),   // raid history saver (utils/raidHistory.js): not under test here
     _sanitizeLiveCooldowns: () => null,
     _pickZealTags: (t) => t,
     _noteTargetSwitches: async () => 0,
