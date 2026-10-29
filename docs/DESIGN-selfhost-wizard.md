@@ -648,6 +648,11 @@ and the same never-refetch guarantee.
   server render and API call spends it; static files do not. So: middleware skips media files, and timed page refreshes
   run at 30-60 s, with /raid refreshing only in the raid window. Pro ($20/month) was declined. For the wizard: a guild on
   Vercel Hobby with our page set is near the cap; self-hosting the web (Tower/Coolify) has no CPU cap at all.
+- **2026-10-29 — the bot saves six raid streams it used to drop, kept 60 days in Supabase** (§465): mob sightings
+  (spawn id + position), mob HP on change, casts, zone changes, pet owners, trigger fires, written in batches. Estimated
+  a few tens of MB a raid night, so ~60 days is a few hundred MB on hosted Supabase (database size is the metered item
+  that only grows). The 60 days is a HOSTED number: an on-prem box keeps them forever for the price of disk, and
+  Wolf Pack's long-term copy is the Tower archive. Each stream has a `flag_shed_hist_*` switch.
 
 ## 4. Open questions for whoever builds it
 
