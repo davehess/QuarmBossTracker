@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-guide-tylis-2026-10-29',
+    title: 'Web 2.1.62',
+    version: 'Web 2.1.62',
+    date: '2026-10-29',
+    headline: 'The Planes of Power guide shows where Tylis appears after the Keeper of Sorrows, and how Saryrn’s single projection works.',
+    features: [],
+    fixes: [
+      'The Keeper of Sorrows step said the temporary entrance Tylis appears beside the rescued one. The rescued Tylis appears down by the Keeper; the entrance Tylis is swapped for a temporary copy where he always stands. Both last 30 minutes and flag up to 72 players.',
+      'Saryrn step: there is one Planar Projection, where she died, for 30 minutes and up to 72 players, for the raid or group that killed her. It gives the real flag only with the Keeper flag done.',
+    ],
+  },
+  {
     key: 'pop-patch-2026-10-28',
     title: 'Web 2.1.61',
     version: 'Web 2.1.61 · Bot 4.0.26',

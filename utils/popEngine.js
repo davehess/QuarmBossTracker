@@ -1755,7 +1755,7 @@ const BASE_ITEMS = [
 		who: "raid",
 		flag: "keeper_dead",
 		title: "The Keeper of Sorrows, then hail Tylis Newleaf",
-		detail: "A small raid; resets every 2 hours. Whoever asks for it must be flagged this far. Tylis stands in Torment after the kill, and a second, temporary entrance Tylis appears beside him; both stay 30 minutes (the rescued Tylis used to stay 10). For those 30 minutes the entrance Tylis needs no Screaming Sphere, but you still need the Tylis pre-flag. His hail gives the flag (your Tylis flag from 1 to 2) only if Fahlia’s “will go” came first; otherwise it is a checklist flag the Seer’s “unlock my memories” turns into the real one. “ready to return” asks him to send you out of the plane.",
+		detail: "A small raid; resets every 2 hours. Whoever asks for it must be flagged this far. When the Keeper dies, the rescued Tylis appears down by the Keeper (/loc 368, -176, -764): hail him there. At the same moment the entrance Tylis (/loc -6, 0, 466, where he always stands) is swapped for a temporary copy in the same spot, not beside the rescued one. Both stay 30 minutes from the kill (the rescued Tylis used to stay 10) and each flags up to 72 players. For those 30 minutes the entrance copy needs no Screaming Sphere, but you still need the Tylis pre-flag. The rescued Tylis’s hail gives the flag (your Tylis flag from 1 to 2) only if Fahlia’s “will go” came first; otherwise it is a checklist flag the Seer’s “unlock my memories” turns into the real one. “ready to return” asks him to send you out of the plane.",
 		says: [{
 			to: "Tylis Newleaf (in Torment)",
 			text: "Hail",
@@ -1774,7 +1774,7 @@ const BASE_ITEMS = [
 		must: true,
 		flag: "saryrn_dead",
 		title: "Kill Saryrn",
-		detail: `${PROJECTION} Her projection stays 30 minutes (it used to be 20).`,
+		detail: `${PROJECTION} There is only one, where she died; it stays 30 minutes (it used to be 20) and flags up to 72 players. It answers the raid or group that killed her, or anyone saved at the kill. It gives the real flag only if your Tylis flag is at 2 (the Keeper step); otherwise a checklist flag the Seer’s “unlock my memories” turns into the real one.`,
 		link: popZone("torment")
 	},
 	{
@@ -3773,6 +3773,7 @@ for (const [key, brief] of Object.entries({
 	flag_carprin: "Kill the five Carprin nameds, then hail Tarkil Adan while you hold the kill credit. It is your way into the lower Crypt.",
 	flag_askr: "Everyone does their own: a head for a bag, three parts for the flag, two medallions for the second. Stay in the zone.",
 	flag_keeper: "A small raid kills the Keeper, then hails Tylis. Do Fahlia’s step first or it is a checklist flag. Resets in 2 hours.",
+	flag_saryrn: "Kill Saryrn, then hail her one projection: 30 minutes, 72 players. Real flag only after the Keeper step.",
 	bot_symbol: "Build one Symbol per raid: four spheres in an Unadorned Symbol. The holder clicks the portal; all follow in 5 minutes.",
 	hoh_trial_villager: "Win the trial, then hail Alekson while you are in the winning group for your credit. A loss can retry in 10 minutes.",
 	maelin_cipher: "Hail Maelin once you hold both halves, Saryrn’s and Mithaniel Marr’s. He joins them into your cipher flag.",
