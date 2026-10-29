@@ -49968,7 +49968,9 @@ const SUGGESTED_TRIGGERS = [
     builtin_timer: 'recharm_tick', no_tts: true },
   { id: 'timer_lull', category: 'timer', label: 'Pacify / Calm / Harmony timers on mobs',
     builtin_timer: 'lull', no_tts: true },
-  { id: 'timer_my_spells', category: 'timer', label: 'Every spell you land on a mob (30s or longer)',
+  // "on mobs or players" (the guild lead, 2026-10-29, FB-112): the old "on a mob" hid this switch from a member
+  // timing a heal-over-time on groupmates. _builtinTimerRows has always counted landings on players too.
+  { id: 'timer_my_spells', category: 'timer', label: 'Every spell you land (30s or longer), on mobs or players',
     builtin_timer: 'my_spells', no_tts: true },
   // The guild lead, 2026-10-13: "a mez you cast should end up on the timers, same for charm".
   { id: 'timer_mez', category: 'timer', label: 'Mez and charm you cast (any length, bard songs included)',
