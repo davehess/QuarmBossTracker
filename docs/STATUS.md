@@ -1910,6 +1910,15 @@ next touch one rather than assuming a missing row means a missing doc.
   player called **Susanna** (47 rows, never a boss) and real players named
   Dread, Terror and Fright, all of which are also mob names.
 
+- **⚠ Needs a local session (or the guild lead) — put the six raid-history tables on Tower (2026-10-29).**
+  `raid_mob_sightings`, `raid_mob_hp`, `raid_casts`, `raid_zone_changes`, `raid_pet_owners` and `raid_trigger_fires`
+  (migration `20261029121500`) are pruned at 60 days in Supabase; Tower must keep them. `scripts/lib/archive-merge.sql`
+  now creates and ARCHIVES all six (insert/update, never delete), self-test extended. Tower's copy is not a git checkout,
+  so the nightly merge only gets it when the file is copied there by hand (method + md5 drift check:
+  `docs/PATCH-tower-raid-track.md`, `docs/HANDOFF-tower-archive-catchup.md`). Until then Tower skips the six
+  silently and, were the merge to meet them, would treat them as MIRROR. After the copy: run
+  `scripts/test-archive-merge.sh` on Tower, grant `select` on the six to `claude_ro`, and after the next raid read
+  `select count(*) from raid_casts` there.
 - **⚠ Needs a local session (or the guild lead) — put the raid replay table on Tower (2026-10-05, §161).**
   Tower's copy of `scripts/lib/archive-merge.sql` is not a git checkout, so the change only reaches the nightly
   archive when the file is copied there by hand (method + md5 drift check: `docs/HANDOFF-tower-archive-catchup.md`).
