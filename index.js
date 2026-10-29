@@ -310,6 +310,7 @@ const _raidGroups = require('./utils/raidGroups');
 const _groupScope = require('./utils/groupScope');
 const _zoneTimersMod = require('./utils/zoneTimers');
 const _raidTargetsMod = require('./utils/raidTargets');
+const _raidHistoryMod = require('./utils/raidHistory');
 const _mainAssist = require('./utils/mainAssist');
 const _mainAssistStore = _mainAssist.createStore();
 const { discordAbsoluteTime, discordRelativeTime, isShortTimerBoss } = require('./utils/timer');
@@ -3534,6 +3535,23 @@ function scheduleMidnightSummary(readyClient) {
         }
       } catch (err) {
         console.warn('[midnight] buff_casts retention skipped:', err?.message);
+      }
+
+      // ── Retention sweep: raid history (utils/raidHistory.js) ──────────────
+      // The six saved streams (mob sightings, mob HP, casts, zone changes, pet owners, trigger fires) keep 60 days in
+      // Supabase (the guild lead, 2026-10-29); the Tower archive keeps them longer. Each table's time column leads its
+      // index, and pruneAll deletes in time slices from the oldest row, so no one DELETE can outrun the 10 s client
+      // timeout. A sweep that did not finish resumes tomorrow. RAID_HISTORY_RETENTION_DAYS overrides (0 disables).
+      try {
+        const supabase = require('./utils/supabase');
+        const d = parseInt(process.env.RAID_HISTORY_RETENTION_DAYS, 10);
+        const keep = Number.isFinite(d) ? d : _raidHistoryMod.RETENTION_DAYS;
+        if (supabase.isEnabled() && keep > 0) {
+          const swept = await _raidHistory().pruneAll({ keepDays: keep });
+          console.log(`[midnight] swept raid history older than ${keep} days (delete passes: ${JSON.stringify(swept.deleted)}; stopped: ${JSON.stringify(swept.stopped)})`);
+        }
+      } catch (err) {
+        console.warn('[midnight] raid history retention skipped:', err?.message);
       }
 
       // ── Retention sweep: raid_roster ──────────────────────────────────────
@@ -12322,6 +12340,10 @@ const _SHED_KINDS = new Set([
   'replay_window',                                             // the GET behind the agent's Rehearse tab (a read of past nights)
   'local_sync',                                                // the GET that fills a player's local copy of the guild's parses (a re-readable catch-up)
   'raid_route',                                                // the GET behind the Map's saved raid route line (a decoration, re-asked at the next zone-in)
+  // Raid history (utils/raidHistory.js): not ingest routes but the writer's six streams. `flag_shed_hist_<stream>` stops
+  // the SAVING (the live feature each rides on is untouched); the writer reads the flag from the same tuning map. They
+  // sit here so _FLAG_OVERRIDE_KEYS lists them for the Mimic Admin tab. Nothing calls _isShedded() with them.
+  'hist_mob_sightings', 'hist_mob_hp', 'hist_casts', 'hist_zone_changes', 'hist_pet_owners', 'hist_trigger_fires',
 ]);
 const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
 async function _isShedded(kind, res, ackBody) {
@@ -15383,6 +15405,9 @@ async function _handleAgentExtendedTarget(req, res) {
     }
 
     const targets = [];
+    // Raid history (utils/raidHistory.js) saves a mob's HP when it steps; a mob's zone is where its observers stand.
+    const _histZoneOf = new Map(inScope.map(r => [String(r.character).toLowerCase(), r.zone_name]));
+    const _histZone = (names) => { for (const n of names || []) { const z = _histZoneOf.get(String(n).toLowerCase()); if (z) return z; } return scopeZone || ''; };
     for (const g of byName.values()) {
       const cls = classify(g.name, g.key);
       // Only MOBS earn a target row. Allies (players/pets) are surfaced solely
@@ -15396,7 +15421,14 @@ async function _handleAgentExtendedTarget(req, res) {
       // no business on the tracker (Shei's corpse lingering was the report).
       if (/\bcorpse\b/i.test(g.name)) continue;
       const mobHp = median(g.obs.filter(o => o.hp != null).map(o => o.hp));
-      if (mobHp != null && mobHp <= 0) continue;
+      if (mobHp != null && mobHp <= 0) {
+        // A death is saved once, and only when the observers agree on WHICH mob (one spawn id, or a unique name).
+        const ids = [...new Set(g.obs.map(o => o.spawn_id).filter(v => v != null))];
+        if (ids.length === 1 || (ids.length === 0 && !cls.ambiguous)) {
+          _raidHistory().noteMobHp({ zone: _histZone(g.obs.map(o => o.raider)), spawn_id: ids[0], name: g.name, hp: 0 });
+        }
+        continue;
+      }
       // HP-clustering only makes sense for ambiguous generic mob names
       // ("a wolf" etc.) where the same name really can be ≥2 distinct
       // spawns. Players, pets, and uniquely-named NPCs are one entity —
@@ -15520,6 +15552,12 @@ async function _handleAgentExtendedTarget(req, res) {
       });
     }
 
+    // Raid history: every fresh mob row with an identity (a spawn id, or a name no other mob shares). Many Mimics
+    // poll the same mob; the saver keys by the MOB and keeps a row only when its HP stepped.
+    for (const t of targets) {
+      if (t.hp_pct == null || (t.ambiguous && t.spawn_id == null)) continue;
+      _raidHistory().noteMobHp({ zone: _histZone(t.raiders), spawn_id: t.spawn_id, name: t.name, hp: t.hp_pct });
+    }
     // Persist unique (non-ambiguous, non-duplicate) NPC rows this poll so a
     // brief targeting gap doesn't drop them off the board, then restore any
     // cached mob NOT seen this poll that's still within its grace window and
@@ -18067,8 +18105,14 @@ async function _handleAgentMapCorpse(req, res) {
 
 // Each Mimic's current target rides its live-state upload (_handleAgentLiveState); this is what the Map's pull gets
 // back: { targets, trails }. Scoped like Extended Target: the requester's raid, else group, else only their own.
+// Raid history (utils/raidHistory.js): six streams saved instead of forgotten at a restart. One batched writer; the
+// shed flags (flag_shed_hist_<stream>) come from the same tuning map as the ingest kinds.
+let _raidHistoryInst = null;
+const _raidHistory = () => _raidHistoryInst || (_raidHistoryInst = _raidHistoryMod.create({
+  supabase: require('./utils/supabase'), tuning: () => _overlayTuningMap() }));
 let _raidTargetsInst = null;
-const _raidTargets = () => _raidTargetsInst || (_raidTargetsInst = _raidTargetsMod.create({ supabase: require('./utils/supabase') }));
+const _raidTargets = () => _raidTargetsInst || (_raidTargetsInst = _raidTargetsMod.create({
+  supabase: require('./utils/supabase'), onSample: (s, at) => _raidHistory().noteSighting(s, at) }));
 async function _raidTargetsFor(identity, zone, sp) {
   const rt = _raidTargets();
   const inp = await _groupScopeInputs(identity.discord_id);
@@ -19086,6 +19130,8 @@ async function _handleAgentLiveState(req, res) {
     try { await _noteTargetSwitches(rows); } catch (err) {
       console.warn('[target-obs] append failed:', err?.message);
     }
+    // Zone history (utils/raidHistory.js): a row when a character's zone changes. Memory-only decision, no I/O.
+    _raidHistory().noteLiveRows(rows);
     // #194 tag evidence — same placement, same best-effort contract: the upsert
     // above has already replaced zeal_tags, so this is the last point the tag
     // is durable. Never fail a live-state POST over an experiment.
@@ -19709,6 +19755,9 @@ async function _handleAgentCasting(req, res) {
         : (_healAmtFor(spell) || undefined),
       heal_fixed:  c.heal_fixed === true ? true : undefined,
     });
+    // Cast history (utils/raidHistory.js): one row per cast start, the same cast from two uploaders saved once.
+    _raidHistory().noteCast({ caster, spell, target, target_id: mp.get(caster.toLowerCase()).target_id,
+      started_at_ms: startMs, cast_secs: castSecs, heal_amount: mp.get(caster.toLowerCase()).heal_amount }, now);
     // Cure-cast tracking → optimistic debuff removal + the durable cure ledger.
     // If this cast is a CURE (catalog SPA 35/36/116 negative or 20 beneficial),
     // record which affliction it clears on this target, HOW MANY counters it
@@ -21034,6 +21083,7 @@ async function _handleTriggerRelayPost(req, res) {
       origin_group:        originStamp.origin_group,
     };
     _triggerRelay.entries.push(entry);
+    _raidHistory().noteTriggerFire(entry);   // raid history: the relay's own dedupe already made this one event
     accepted++;
   }
   if (_triggerRelay.entries.length > TRIGGER_RELAY_MAX_ENTRIES) {
@@ -22879,6 +22929,7 @@ async function _handleAgentUpload(req, res) {
       if (p && p.name && !/\s/.test(String(p.name)) && Number.isInteger(id) && id > 0) petIds[String(p.name).toLowerCase()] = id;
     }
     addPetSpawnIds(petIds);
+    _raidHistory().notePets(uploadedPetLeaders, petIds);   // raid history: each new owner declaration is saved
   } catch {}
   // Normalise petLeaders to { petNameLower: [{o, at}, …] } — timestamped
   // declarations (petOwnerEntries upgrades legacy string shapes with at:0).
@@ -25611,6 +25662,7 @@ function _gracefulShutdown(signal) {
   try { httpServer.close(() => console.log('[shutdown] HTTP server closed (connections drained)')); } catch (e) { console.warn('[shutdown] server.close failed:', e && e.message); }
   // Rows held for the next 2-second batch (utils/liveMemory.js) go out now, inside the drain window.
   try { require('./utils/liveMemory').flushAll().catch(() => {}); } catch (e) { void e; }
+  try { _raidHistory().flush().catch(() => {}); } catch (e) { void e; }   // raid history rows still buffered
   const done = () => {
     console.log('[shutdown] destroying Discord client + exiting');
     try { client.destroy(); } catch (e) { void e; }
