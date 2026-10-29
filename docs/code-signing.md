@@ -1,4 +1,72 @@
-# Code signing — Wolf Pack Mimic (Windows)
+# Code signing — Raid Mimic (Windows)
+
+> ## STATUS (2026-10-29): pipeline ready, waiting on the Azure account.
+>
+> Our side is built and **inert**: with the six settings below absent, the build is
+> the unsigned build it has always been and CI stays green. The moment they exist,
+> every Windows build (stable, beta, alpha) signs and verifies itself.
+> Nothing is signed yet, because the Azure Artifact Signing account (and the
+> identity validation behind it) does not exist yet. That part is the guild lead's.
+>
+> | Piece | Where |
+> |---|---|
+> | Signing hook (SignTool + Artifact Signing dlib, no-op without the settings, fails closed once configured) | `apps/mimic/scripts/azure-sign.cjs`, wired by `build.win.sign` in `apps/mimic/package.json` |
+> | Detect / install tools / build / verify / release-body switch | `.github/workflows/release-mimic.yml` |
+> | Tests | `test/codesign-wiring.test.js` |
+>
+> **Turning it on** (the guild lead):
+>
+> 1. **Azure subscription**, and register the `Microsoft.CodeSigning` resource provider on it
+>    ([quickstart](https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart)).
+> 2. **Create an Artifact Signing account** (resource group, a globally unique 3-24 character name,
+>    a region, Basic pricing tier). Note the region: the endpoint below must match it.
+> 3. **Identity validation as an individual**, Azure portal only. Individual public-trust validation needs
+>    an applicant in the **US or Canada**; the details come from the Azure *billing account* (Account Type
+>    "Individual"), whose legal name and sold-to address must match the government-issued ID used. You need the
+>    **Artifact Signing Identity Verifier** role to see the New identity button. Microsoft quotes 1 to 20
+>    business days. The certificate shows your name and your city/state/country, not street or email.
+> 4. **Certificate profile**, type **Public Trust**, linked to that identity validation.
+> 5. **App registration (service principal)** in Microsoft Entra ID, with a client secret, then assign it the
+>    **Artifact Signing Certificate Profile Signer** role on the certificate profile (or the account)
+>    ([roles](https://learn.microsoft.com/en-us/azure/artifact-signing/tutorial-assign-roles)):
+>    `az role assignment create --assignee <service principal object id> --role "Artifact Signing Certificate Profile Signer" --scope <certificate profile resource id>`.
+> 6. **GitHub, repo Settings, Secrets and variables, Actions** (names are exact):
+>    - **Secrets:** `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` (the app registration's tenant, application (client) id and secret value).
+>    - **Variables:** `AZURE_SIGNING_ENDPOINT` (the regional endpoint, e.g. `https://eus.codesigning.azure.net`, listed in
+>      [the integrations doc](https://learn.microsoft.com/en-us/azure/artifact-signing/how-to-signing-integrations)),
+>      `AZURE_SIGNING_ACCOUNT` (the account name), `AZURE_CERT_PROFILE` (the certificate profile name).
+> 7. Push a Mimic beta. The run log's "Detect signing configuration" step says `configured=true`; "Verify
+>    Authenticode signature" must pass; the release body then reads "code-signed by <your name>".
+>    Partly configured (some but not all six) builds UNSIGNED and prints a warning, so a typo cannot half-sign.
+>
+> **First signed build checklist.** Verify step green; right-click the downloaded installer, Properties, Digital
+> Signatures; install over an existing Mimic and confirm auto-update still works (the verify step already checks
+> that `latest.yml`/`beta.yml` carry the signed installer's sha512).
+>
+> **Unverified until the first signed run** (no account exists to test against): that `windows-latest` has a
+> .NET 8 runtime for the dlib (the workflow installs one anyway), that the NuGet package ids
+> `Microsoft.Windows.SDK.BuildTools` and `Microsoft.ArtifactSigning.Client` (renamed from
+> `Microsoft.Trusted.Signing.Client`) still resolve, and where the `x64` folders sit inside them (the install
+> step searches for `x64\signtool.exe` and `x64\Azure.CodeSigning.Dlib.dll` and fails loudly if absent).
+>
+> **Design notes.**
+> - *Why a hook, not `azureSignOptions`:* the installed electron-builder is `^24.13.3`, which has `win.sign`
+>   (a custom function or module path, called for the app exe, installer and uninstaller) but **not**
+>   `azureSignOptions` (electron-builder 25.x). No upgrade was needed or made. The upstream Azure path also
+>   breaks on paths with spaces; our hook launches SignTool with an argument array and no shell.
+> - *`signingHashAlgorithms: ["sha256"]`* is set because electron-builder otherwise calls the hook twice per file
+>   (sha1, then a nested sha256); Artifact Signing is SHA-256 and the doubled signature would double the quota use.
+> - *`latest.yml` needs no repair.* electron-builder signs inside the build and only then hashes the installer
+>   (`NsisTarget` signs, then `createBlockmap`/`callArtifactBuildCompleted`), so `apps/mimic/scripts/patch-latest-yml.js`
+>   (the SignPath-era repair) is **not wired** and is kept only for reference. The workflow's verify step checks the
+>   match anyway.
+> - *Signature quota:* each build signs the app exe, the uninstaller and the installer (three signatures) against
+>   Basic's 5,000 a month.
+> - *`publisherName` is deliberately not set* in `build.win`: with it, electron-updater would reject any
+>   UNSIGNED installer (every secrets-less build), so a later change should add it only once every channel is signed.
+> - Linux/Deck builds do not sign (`build-mimic-linux.yml` untouched); alpha shares `release-mimic.yml` and signs with the rest.
+> - Web copy that says "not code-signed" (`web/lib/raidmimicSetup.ts` and friends) is not switched by the workflow;
+>   revisit once the first signed stable ships.
 
 > ## ⚠ REOPENED 2026-08-13. The status line below was stale AND the blocker is gone.
 >
@@ -86,9 +154,11 @@ Two smaller notes from reading their build config:
 
 - They hit a real electron-builder bug: **its built-in Azure signing path breaks
   on file paths containing spaces**, so they route through a custom
-  `scripts/azure-sign.cjs` hook. **We would not hit this** — our
-  `artifactName` is `Wolf-Pack-Mimic-Setup-${version}.${ext}`, hyphenated. Worth
-  knowing before anyone "tidies" that into a spaced product name.
+  `scripts/azure-sign.cjs` hook. **Correction (2026-10-29): we WOULD hit this.**
+  The hyphenated `artifactName` only names the installer; the app exe inside is
+  `Raid Mimic.exe` (productName "Raid Mimic"), which has a space and is signed
+  by the same call. So we carry the same kind of hook, with SignTool launched by
+  argument array so no quoting is involved.
 - They use `oneClick: true`; we use `oneClick: false` with
   `allowToChangeInstallationDirectory: true`. Keep ours — but note that the
   directory chooser is exactly how users end up installing Mimic INSIDE the EQ
@@ -134,7 +204,7 @@ certificate by SignPath Foundation."* Cheaper paid fallbacks if it's declined:
 Signing** (~$10/mo, electron-builder has native support via `win.azureSignOptions`
 — would replace the SignPath steps).
 
-## What's pre-staged
+## What was pre-staged for SignPath (HISTORICAL — deleted; superseded by the status block at the top)
 1. **`.github/workflows/release-mimic.yml`** — between "Build Windows installer"
    and "Publish release", four steps gated on `vars.SIGNPATH_ENABLED == 'true'`:
    - upload the unsigned installer as a GitHub Actions artifact,
