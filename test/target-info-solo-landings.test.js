@@ -186,3 +186,93 @@ describe('what reaches Target Info for a solo melee class', () => {
     expect(code).not.toMatch(/buffCastBuffer|enqueueUpload/);
   });
 });
+
+// ── The other half of FB-111 ────────────────────────────────────────────────
+// The reporter's install uploaded nothing from a log since 2026-09-01 while Zeal stayed live, so his Target Info
+// held Zeal's own-buff list and nothing else. The dashboard already says so; Target Info did not.
+import fs from 'node:fs';
+import path from 'node:path';
+import { ROOT } from './_source-slice.js';
+
+const html = fs.readFileSync(path.join(ROOT, 'apps', 'mimic', 'mobinfo.html'), 'utf8');
+
+function loadQuiet({ silent = null, logs = [{ character: 'Aldenmar' }] } = {}) {
+  const block = `
+    let _logSilent = ${JSON.stringify(silent)};
+    const stats = { watchedLogs: ${JSON.stringify(logs)} };
+    ${grab('_logQuietFor')}
+  `;
+  return evalBlock(block, ['_logQuietFor']);
+}
+
+describe('Target Info says when the EverQuest log is quiet', () => {
+  it('names the character whose log went silent, and only that character', () => {
+    const h = loadQuiet({ silent: { character: 'Aldenmar', file: 'eqlog_Aldenmar_pq.proj.txt', silentSince: 1 },
+      logs: [{ character: 'Aldenmar' }, { character: 'Brackwyn' }] });
+    expect(h._logQuietFor('Aldenmar')).toEqual({ character: 'Aldenmar', file: 'eqlog_Aldenmar_pq.proj.txt' });
+    expect(h._logQuietFor('aldenmar')).not.toBeNull();
+    expect(h._logQuietFor('Brackwyn')).toBeNull();
+  });
+
+  it('flags the no-logs-read case, and stays null when a log is being read', () => {
+    expect(loadQuiet({ logs: [] })._logQuietFor('Aldenmar')).toEqual({ character: 'Aldenmar', file: null });
+    expect(loadQuiet()._logQuietFor('Aldenmar')).toBeNull();
+    expect(loadQuiet()._logQuietFor('')).toBeNull();
+  });
+
+  it('flags a character whose own log is not read, even while another character’s is', () => {
+    expect(loadQuiet()._logQuietFor('Brackwyn')).toEqual({ character: 'Brackwyn', file: null });
+  });
+
+  it('is byte-stable between polls', () => {
+    const h = loadQuiet({ silent: { character: 'Aldenmar', file: 'f.txt', silentSince: 5 } });
+    expect(JSON.stringify(h._logQuietFor('Aldenmar'))).toBe(JSON.stringify(h._logQuietFor('Aldenmar')));
+  });
+
+  it('buildMobInfo carries the field', () => {
+    const code = stripJs(sliceBlock(src, 'function buildMobInfo() {', '\n}\n'));
+    expect(code).toMatch(/log_quiet:\s+_logQuietFor\(selfChar\)/);
+  });
+});
+
+function loadOverlay() {
+  const block = `
+    function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+    function fmtSecs(s){ return String(s); }
+    function _slowUncertainTip(){ return ''; }
+    ${sliceBlock(html, '  function _tbuffRow(b, isPacify){', '\n  // Cross-client "Casting" section')}
+  `;
+  return evalBlock(block, ['renderTargetBuffs']);
+}
+
+describe('the Target Info line', () => {
+  const LINE = 'Your EQ log is quiet, so only your own buffs show. Type /log on in EverQuest.';
+  const mob = (extra) => ({ target_name: 'a hollow guard', target_buffs: [], target_is_pc: false, ...extra });
+
+  it('shows once above the list when the log is quiet, with or without buffs', () => {
+    const h = loadOverlay();
+    const bare = h.renderTargetBuffs(mob({ log_quiet: { character: 'Aldenmar', file: null } }));
+    expect(bare).toContain(LINE);
+    const withBuff = h.renderTargetBuffs(mob({
+      log_quiet: { character: 'Aldenmar', file: null },
+      target_buffs: [{ name: 'Hollow Hide', good: 1, remaining_secs: 30, total_secs: 60 }],
+    }));
+    expect(withBuff.indexOf(LINE)).toBeGreaterThanOrEqual(0);
+    expect(withBuff.indexOf(LINE)).toBeLessThan(withBuff.indexOf('Hollow Hide'));
+    expect(withBuff.split(LINE).length - 1).toBe(1);
+  });
+
+  it('is absent when the log is fine, and when the target is a player (their own live buffs)', () => {
+    const h = loadOverlay();
+    expect(h.renderTargetBuffs(mob({ log_quiet: null }))).toBe('');
+    expect(h.renderTargetBuffs(mob())).toBe('');
+    expect(h.renderTargetBuffs(mob({ log_quiet: { character: 'Aldenmar', file: null }, target_is_pc: true }))).toBe('');
+  });
+
+  it('is plain text: nothing to click, no timestamps, no code words', () => {
+    const out = loadOverlay().renderTargetBuffs(mob({ log_quiet: { character: 'Aldenmar', file: 'eqlog_Aldenmar_pq.proj.txt' } }));
+    expect(out).not.toMatch(/<(?:button|a|input|select)|onclick|data-wp-interact/i);
+    expect(out).not.toContain('eqlog_');
+    expect(out).toBe(loadOverlay().renderTargetBuffs(mob({ log_quiet: { character: 'Aldenmar', file: 'eqlog_Aldenmar_pq.proj.txt' } })));
+  });
+});

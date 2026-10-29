@@ -57706,6 +57706,18 @@ function mobInfoFeedbackMeta(now) {
     };
   } catch { return null; }
 }
+// FB-111: is this character's EverQuest log quiet while Zeal still sees them in game? Then Target Info can only know
+// their own buffs (Zeal's list), never what lands on a mob. Two cases, the dashboard's two banners: the log went
+// silent mid-session (_logSilent), or no log is being read at all. null when the log is fine. Nothing volatile in it.
+function _logQuietFor(selfChar) {
+  const lc = String(selfChar || '').toLowerCase();
+  if (!lc) return null;
+  if (_logSilent && String(_logSilent.character || '').toLowerCase() === lc) return { character: _logSilent.character, file: _logSilent.file };
+  // No log for THIS character (none at all, or only other characters' logs) is the same blindness.
+  const logs = (typeof stats !== 'undefined' && stats && stats.watchedLogs) || [];
+  if (!logs.some(w => String((w && w.character) || '').toLowerCase() === lc)) return { character: selfChar, file: null };
+  return null;
+}
 function buildMobInfo() {
   const st = _currentTargetState();
   if (!st || !st.target_name) return null;
@@ -57824,6 +57836,7 @@ function buildMobInfo() {
     // FB-95: why there is no row to show (null when there is one) — the overlay prints it beside a ↻ retry.
     mob_miss:       _mobMiss(mobKey, cached, st.target_name, myZoneId),
     target_buffs:   buffs,
+    log_quiet:      _logQuietFor(selfChar),
     // PC = live buff data (own Zeal list OR the target's uploaded live-state)
     // — drives the "(live)" header suffix instead of "(observed)".
     target_is_pc:   zealBuffs !== null || liveBuffs !== null,
