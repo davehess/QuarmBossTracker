@@ -36,8 +36,7 @@ const {
 const supabase = require('./supabase');
 
 function getBosses() {
-  delete require.cache[require.resolve('../data/bosses.json')];
-  return require('../data/bosses.json');
+  return require('./readJsonFresh')(path.join(__dirname, '..', 'data', 'bosses.json'));
 }
 
 function loadStateBosses() {
