@@ -43,6 +43,8 @@ function mainEnv({ growsUp = false, work = { x: 0, y: 0, width: 1920, height: 10
     const _heightFloorFor = () => ${floor};
     const _setupChromeFor = () => 0;
     const _overlayGrowsUp = () => ${growsUp};
+    const _boundsKeyForWindow = () => 'commandBounds';   // overlay-auto-height asks (🔒 Lock size is the alerts window's alone)
+    const loadConfig = () => ({});
     const _overlayEntries = () => [];
     const _holdForMove = (w) => !!(w && w.__wpDragging);   // the real one is tested in mimic-window-move.test.js
     const _GROW_UP_DEFAULT_KEYS = new Set();

@@ -4275,6 +4275,9 @@
     // First time on: keep the starting layout and open arranging, so the three
     // panels are placed before a pull (and not re-opened on the next refresh).
     if (fresh) {
+      // "Split callouts and timers into their own boxes" (FB-110): the starting boxes keep the size they are given,
+      // so Fit height starts off on each (a layout of the person's own is never touched: fresh is "none saved").
+      if (st.splitFitOff && _layout && _layout.panels) _layout.panels.forEach(function (p) { if (fitKind(p, pdefOf(p))) p.fit = false; });
       save();
       if (!_arrange && M.canvasEdit) { try { M.canvasEdit(true); } catch (e) {} }
     }

@@ -1509,16 +1509,56 @@
   // auction chips are EXEMPT — an open bid window is actionable and must stay
   // visible (#129), so it can never be pushed out by trigger countdowns.
   const MAX_TIMER_ROWS = 6;
+  // 🔒 Lock size (FB-110): the window is the size the raider gave it, so the countdown rows are what FITS it, with the
+  // rest folded into "+N more" (the stack is click-through, so a scroll bar inside it could never be reached). The
+  // callouts win: the centred callout column is lifted clear of the stack by twice the stack's height (--timers-space),
+  // so the stack may take only (window - column - gutters) / 2 — whatever is on the screen as a callout shrinks the
+  // rows, never the other way. Pure: all measurements in, a row count (0..14) out.
+  function lockedRowCap(innerH, colH, tlBlock, rowH, topReserve){
+    var byTop = innerH - topReserve - 8 - tlBlock;
+    var byColumn = (innerH - colH - 24) / 2 - 8 - tlBlock;
+    var room = Math.min(byTop, byColumn);
+    var n = Math.floor((room + 3) / ((rowH || 24) + 3));
+    return Math.max(0, Math.min(14, n));
+  }
+  var _sizeLocked = false, _lastTimers = null, _lastLockedCap = -1;
+  function lockedRowCapNow(){
+    var first = timersEl.querySelector('.timer-row:not(.timer-more)');
+    var tlH = (tlineEl && document.body.classList.contains('has-tline') && tlineEl.offsetHeight) ? tlineEl.offsetHeight + 4 : 0;
+    var topReserve = document.body.classList.contains('setup') ? 58 : 34;
+    _lastLockedCap = lockedRowCap(window.innerHeight, _alertColEl ? _alertColEl.scrollHeight : 0, tlH, (first && first.offsetHeight) || 24, topReserve);
+    return _lastLockedCap;
+  }
+  // The right-click 🔒 (or the dashboard's) arrives on the status the window already listens to.
+  function applySizeLock(s){
+    if (PART) return;   // a canvas panel is sized on the canvas
+    var on = !!(s && s.triggerLockSize);
+    if (on === _sizeLocked) return;
+    _sizeLocked = on;
+    _lastLockedCap = -1;
+    if (_lastTimers) renderTimers(_lastTimers);
+    requestAutoHeight();
+  }
+  // A callout coming or going changes how many rows fit: redraw only when the count moved.
+  function relockRows(){
+    if (!_sizeLocked || !_lastTimers) return;
+    var was = _lastLockedCap;
+    if (lockedRowCapNow() !== was) renderTimers(_lastTimers);
+  }
   function splitVisible(list){
     const loot = [], rest = [];
     for (const t of list) ((t.kind === 'loot') ? loot : rest).push(t);
     // A canvas panel holds as many rows as its height fits, keeping the last
     // slot for "+N more" when it overflows — the raider sized it, so the
-    // panel's edge is the cap, not a fixed six.
-    const cap = PART === 'timers' ? _partRowCap() : MAX_TIMER_ROWS;
-    const shown = rest.slice(0, (PART === 'timers' && rest.length > cap) ? Math.max(1, cap - 1) : cap);
+    // panel's edge is the cap, not a fixed six. A locked window does the same
+    // (lockedRowCap), and may fold every row into the one "+N more" line.
+    const cap = PART === 'timers' ? _partRowCap() : (_sizeLocked ? lockedRowCapNow() : MAX_TIMER_ROWS);
+    const folds = PART === 'timers' || _sizeLocked;
+    const shown = rest.slice(0, (folds && rest.length > cap) ? Math.max(_sizeLocked ? 0 : 1, cap - 1) : cap);
     return { visible: loot.concat(shown), hidden: rest.length - shown.length };
   }
+  if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(applySizeLock).catch(function(){});
+  if (window.mimic && window.mimic.onStatus)  window.mimic.onStatus(applySizeLock);
   function _partScale(){
     var s = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--part-scale'));
     return (s > 0) ? s : 1;
@@ -1587,6 +1627,7 @@
     return _moreRow;
   }
   function renderTimers(serverTimers){
+    _lastTimers = serverTimers;
     const seen = new Set();
     const list = collapseTimers(serverTimers).filter(function(t){ return !_isDismissed(t.id) && _partWants(t); });
     for (const t of list){
@@ -1881,7 +1922,7 @@
   // and not tied to the 100 ms paint tick.
   try {
     if (window.ResizeObserver){
-      var _ro = new ResizeObserver(function(){ requestAutoHeight(); });
+      var _ro = new ResizeObserver(function(){ relockRows(); requestAutoHeight(); });
       if (_alertColEl) _ro.observe(_alertColEl);
       if (timersEl)    _ro.observe(timersEl);
     }

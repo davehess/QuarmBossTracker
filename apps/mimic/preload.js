@@ -995,6 +995,14 @@ function _buildOverlayMenu(onClose, state) {
   if (st.key === 'trigger') {
     menu.appendChild(mkItem('⇅ Timers start at: ' + (st.timersTopDown ? 'TOP (list grows down)' : 'bottom (list grows up)'), '#20374a',
       () => ipcRenderer.invoke('wp-timers-order-toggle')));
+    // 🔒 The window keeps the size it is dragged to (FB-110); the rows past what fit fold into "+N more".
+    menu.appendChild(mkItem('🔒 Lock size: ' + (st.triggerLockSize ? 'ON (drag ◢ to resize)' : 'off (grows with content)'), '#20374a',
+      () => ipcRenderer.invoke('wp-trigger-lock-size')));
+    // 🧩 Callouts and timers as two boxes of their own: the Timers canvas, on (the tray's Canvas item, same internals).
+    // With it already on, the way in to the boxes is arranging them.
+    menu.appendChild(st.canvasOn
+      ? mkItem('🧩 Open the Canvas to arrange', '#1f3d57', () => ipcRenderer.invoke('canvas-edit', true))
+      : mkItem('🧩 Split callouts and timers into their own boxes', '#1f3d57', () => ipcRenderer.invoke('canvas-split')));
   }
   // Color theme — cycles Wolf (dark) → Light → Vivid → Muted → High contrast
   // → the three colour-blind ones
@@ -1591,6 +1599,10 @@ contextBridge.exposeInMainWorld('mimic', {
   canvasNextDisplay: ()       => ipcRenderer.invoke('canvas-next-display'),
   // "Span all screens": one Canvas over every monitor (same scaling only). → { ok, span, why }
   canvasSpan:        (on)     => ipcRenderer.invoke('canvas-span', !!on),
+  // "Split callouts and timers into their own boxes" (FB-110): the Canvas on, as the tray's Canvas item does. → { ok, already }
+  canvasSplit:       ()       => ipcRenderer.invoke('canvas-split'),
+  // 🔒 Lock size on the alerts window (FB-110): the same setter as its right-click menu. → the new state
+  triggerLockSize:   (on)     => ipcRenderer.invoke('wp-trigger-lock-size', !!on),
   // The panel menu's "Background" row: the SAME writer as the shared overlay menu, Ctrl+Shift+B and the dashboard
   // button (main's wp-backdrop-toggle finds the key from the sender window). Resolves to the new on/off state.
   toggleBackdropThis: ()      => ipcRenderer.invoke('wp-backdrop-toggle'),
