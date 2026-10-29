@@ -4663,6 +4663,130 @@ function lullVerdictFor(targetName, zoneId) {
   return u ? { verdict: 'unaffected', spell: u.spell, caster_level: u.caster_level, at_ms: u.at_ms } : null;
 }
 
+// ── Your most-cast spells (the Timers canvas name picker) ────────────────────
+// The guild lead, 2026-10-29: the picker should "suggest your most often cast timers and the spells you
+// have on your bars right now". A spell's countdown is named by the spell, so the count is per spell name,
+// per character, from your own "You begin casting X" lines. Local only: it feeds one GET for the picker
+// and is never uploaded. Decayed (half-life 30 days) rather than a raw lifetime total, so a spell you
+// stopped casting sinks; capped so the file stays a few kilobytes.
+const CAST_COUNT_HALFLIFE_MS = 30 * 86400_000;
+const CAST_COUNT_DROP_MS     = 90 * 86400_000;   // not cast for this long: gone, whatever its count was
+const CAST_COUNT_MAX         = 200;              // names kept per character
+// store: { [spellLower]: { n, at } }  (n = decayed count as of `at`)
+function castCountScore(e, nowMs) {
+  if (!e || !(e.n > 0)) return 0;
+  return e.n * Math.pow(0.5, Math.max(0, nowMs - e.at) / CAST_COUNT_HALFLIFE_MS);
+}
+function castCountPrune(store, nowMs, max) {
+  const cap = max || CAST_COUNT_MAX;
+  const rows = [];
+  for (const k of Object.keys(store)) {
+    const e = store[k];
+    const s = castCountScore(e, nowMs);
+    if (!e || !(s >= 0.5) || nowMs - e.at > CAST_COUNT_DROP_MS) { delete store[k]; continue; }
+    rows.push([k, s]);
+  }
+  if (rows.length > cap) {
+    rows.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+    for (let i = cap; i < rows.length; i++) delete store[rows[i][0]];
+  }
+  return store;
+}
+function castCountBump(store, name, nowMs) {
+  const k = String(name == null ? '' : name).trim().toLowerCase();
+  if (!k || k.length > 64) return false;
+  store[k] = { n: castCountScore(store[k], nowMs) + 1, at: Math.max(nowMs, store[k] ? store[k].at : 0) };
+  // Prune only once the store is a quarter over its cap, so a steady cast rate does not sort 200 rows per cast.
+  if (Object.keys(store).length > CAST_COUNT_MAX * 1.25) castCountPrune(store, nowMs, CAST_COUNT_MAX);
+  return true;
+}
+// The `limit` most-cast names, biggest first: [{ name, n }] (n = the decayed count, rounded).
+function castCountTop(store, nowMs, limit) {
+  const rows = [];
+  for (const k of Object.keys(store)) {
+    const s = castCountScore(store[k], nowMs);
+    if (s >= 0.5) rows.push({ name: k, n: Math.round(s) });
+  }
+  rows.sort((a, b) => b.n - a.n || (a.name < b.name ? -1 : 1));
+  return rows.slice(0, limit || CAST_COUNT_MAX);
+}
+const _castCounts = new Map();   // charLower → store
+let _castCountsLoaded = false, _castCountsSaveT = null;
+function _castCountsFile() { return path.join(__dirname, 'logsync.cast-counts.json'); }
+function _castCountsLoad() {
+  if (_castCountsLoaded) return;
+  _castCountsLoaded = true;
+  try {
+    const j = JSON.parse(fs.readFileSync(_castCountsFile(), 'utf8')) || {};
+    const now = Date.now();
+    for (const [cl, rows] of Object.entries(j)) {
+      if (!rows || typeof rows !== 'object') continue;
+      const store = {};
+      for (const [k, v] of Object.entries(rows)) {
+        if (Array.isArray(v) && v[0] > 0 && v[1] > 0) store[k] = { n: Number(v[0]), at: Number(v[1]) };
+      }
+      _castCounts.set(cl, castCountPrune(store, now, CAST_COUNT_MAX));
+    }
+  } catch { /* first run, or not writable — start empty */ }
+}
+function _castCountsSave() {
+  if (_castCountsSaveT) return;
+  _castCountsSaveT = setTimeout(() => {
+    _castCountsSaveT = null;
+    try {
+      const out = {}, now = Date.now();
+      for (const [cl, store] of _castCounts) {
+        castCountPrune(store, now, CAST_COUNT_MAX);
+        const rows = {};
+        for (const [k, e] of Object.entries(store)) rows[k] = [Math.round(e.n * 100) / 100, e.at];
+        if (Object.keys(rows).length) out[cl] = rows;
+      }
+      const tmp = _castCountsFile() + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(out));
+      fs.renameSync(tmp, _castCountsFile());
+    } catch { /* best effort */ }
+  }, 5000);
+  try { if (_castCountsSaveT.unref) _castCountsSaveT.unref(); } catch { void 0; }
+}
+// One live cast. A line older than two minutes is a replay of an old log, not you casting now.
+function _noteCastCount(character, name, atMs) {
+  const now = Date.now();
+  if (!(Math.abs(now - atMs) < 120_000)) return;
+  _castCountsLoad();
+  const cl = String(character).toLowerCase();
+  let store = _castCounts.get(cl);
+  if (!store) { store = {}; _castCounts.set(cl, store); }
+  if (castCountBump(store, name, now)) _castCountsSave();
+}
+// What the Timers canvas name picker offers beside the live countdowns: the spells on the bar right now
+// (Zeal's gem labels 60-67, the same read as the HUD's spell list) and the ones this character casts most.
+// The character is the one whose Zeal reported last; with no Zeal, the one that cast last.
+function _timerSuggestions() {
+  const now = Date.now();
+  _castCountsLoad();
+  let active = null, activeTs = 0;
+  for (const ch of Object.keys(_zealState || {})) {
+    const ts = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  const gems = [];
+  if (active) {
+    for (let i = 0; i < 8; i++) {
+      const name = _meLabel(_zealState[active] || {}, 60 + i);
+      if (name && !/^(empty|none)$/i.test(name)) gems.push(name);
+    }
+  }
+  let who = active ? String(active).toLowerCase() : null;
+  if (!who) {
+    let bestAt = 0;
+    for (const [cl, st] of _castCounts) {
+      for (const e of Object.values(st)) if (e.at > bestAt) { bestAt = e.at; who = cl; }
+    }
+  }
+  const store = who && _castCounts.get(who);
+  return { ok: true, character: active || who || null, gems, casts: store ? castCountTop(store, now, CAST_COUNT_MAX) : [] };
+}
+
 // ── Self-cast capture ────────────────────────────────────────────────────────
 // Every "You begin casting X." — no allowlist. Several pipelines depend on that
 // completeness (DI recast, rez attribution, charm staging, the pacify synthesis
@@ -4690,6 +4814,8 @@ function noteSelfCast(line, character) {
   if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
   // Me overlay: long-recast timers (Theft of Thought, Harvest, …).
   if (typeof _meNoteSelfCast === 'function') _meNoteSelfCast(cl, m[1].trim(), atMs);
+  // The Timers canvas name picker's "most cast" list (local only).
+  if (typeof _noteCastCount === 'function') _noteCastCount(character, m[1].trim(), atMs);
   // Silent pacifies (Harmony et al.) have no landing line — this cast is the
   // only evidence they will ever produce. typeof-guarded like the rez hook
   // below so source-slice tests that lift noteSelfCast alone still run.
@@ -38363,6 +38489,14 @@ function startWebDashboard(port) {
           replayDeaths:       _replayDeathsSnapshot(),
           replayClock:        _replayClockForWeb(),
         }));
+      }
+      // GET /api/timer-suggestions — the Timers canvas name picker: spells on the bar now + most-cast spells.
+      if (req.url === '/api/timer-suggestions' && req.method === 'GET') {
+        let _b;
+        try { _b = JSON.stringify(_timerSuggestions()); }
+        catch (e) { _b = JSON.stringify({ ok: false, gems: [], casts: [] }); }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(_b);
       }
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
         const body = await _readBody(req).catch(() => '');
