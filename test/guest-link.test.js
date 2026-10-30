@@ -20,24 +20,27 @@ const freshToken = () => 'wpms_' + crypto.randomBytes(32).toString('hex');
 
 // ── expiry choice ────────────────────────────────────────────────────────────
 describe('guestExpiry', () => {
-  // 2026-10-30 is EDT (UTC-4): 6 AM ET is 10:00Z.
-  it('"tonight" is the next 6 AM Eastern, after midnight', () => {
-    expect(guestExpiry('tonight', new Date('2026-10-30T23:30:00Z'))).toBe('2026-10-31T10:00:00.000Z');   // 7:30 PM ET Friday
-    expect(guestExpiry('tonight', new Date('2026-10-31T03:30:00Z'))).toBe('2026-10-31T10:00:00.000Z');   // 11:30 PM ET, still Friday's raid
+  // "Tonight" ends at 1 AM Eastern (the guild lead, 2026-10-30: "why 6am eastern?"). 2026-10-30 is EDT (UTC-4): 1 AM is 05:00Z.
+  it('"tonight" is the next 1 AM Eastern, just past the raid window', () => {
+    expect(guestExpiry('tonight', new Date('2026-10-30T23:30:00Z'))).toBe('2026-10-31T05:00:00.000Z');   // 7:30 PM ET Friday
+    expect(guestExpiry('tonight', new Date('2026-10-31T03:30:00Z'))).toBe('2026-10-31T05:00:00.000Z');   // 11:30 PM ET, still Friday's raid
   });
-  it('"tonight" rolls to the same morning when asked in the small hours, and to tomorrow after 6 AM', () => {
-    expect(guestExpiry('tonight', new Date('2026-10-31T05:00:00Z'))).toBe('2026-10-31T10:00:00.000Z');   // 1 AM ET
-    expect(guestExpiry('tonight', new Date('2026-10-31T10:00:00Z'))).toBe('2026-11-01T11:00:00.000Z');   // exactly 6 AM ET: tomorrow (and DST ended)
-    expect(guestExpiry('tonight', new Date('2026-10-31T15:00:00Z'))).toBe('2026-11-01T11:00:00.000Z');
+  it('"tonight" rolls to the next night once 1 AM has passed', () => {
+    expect(guestExpiry('tonight', new Date('2026-10-31T04:30:00Z'))).toBe('2026-10-31T05:00:00.000Z');   // 12:30 AM ET
+    expect(guestExpiry('tonight', new Date('2026-10-31T05:00:00Z'))).toBe('2026-11-01T06:00:00.000Z');   // exactly 1 AM ET: next night (and DST ends)
+    expect(guestExpiry('tonight', new Date('2026-10-31T15:00:00Z'))).toBe('2026-11-01T06:00:00.000Z');
   });
-  it('"tonight" follows daylight saving: 6 AM is 11:00Z in winter, 10:00Z in summer', () => {
-    expect(guestExpiry('tonight', new Date('2026-12-10T01:00:00Z'))).toBe('2026-12-10T11:00:00.000Z');
-    expect(guestExpiry('tonight', new Date('2026-07-10T01:00:00Z'))).toBe('2026-07-10T10:00:00.000Z');
-    // The night DST starts (2027-03-14, 2 AM ET): 6 AM that morning is already EDT.
-    expect(guestExpiry('tonight', new Date('2027-03-14T03:00:00Z'))).toBe('2027-03-14T10:00:00.000Z');
+  it('"tonight" follows daylight saving: 1 AM is 06:00Z in winter, 05:00Z in summer, and real on both change nights', () => {
+    expect(guestExpiry('tonight', new Date('2026-12-10T01:00:00Z'))).toBe('2026-12-10T06:00:00.000Z');
+    expect(guestExpiry('tonight', new Date('2026-07-10T01:00:00Z'))).toBe('2026-07-10T05:00:00.000Z');
+    // Spring forward (2027-03-14, 2 AM ET): 1 AM that night is still EST.
+    expect(guestExpiry('tonight', new Date('2027-03-14T03:00:00Z'))).toBe('2027-03-14T06:00:00.000Z');
   });
-  it('"7d" is seven days from now, and anything else is refused', () => {
+  it('"1h", "3h" and "7d" are straight spans from now, and anything else is refused', () => {
+    expect(guestExpiry('1h', new Date('2026-10-30T12:00:00Z'))).toBe('2026-10-30T13:00:00.000Z');
+    expect(guestExpiry('3h', new Date('2026-10-30T12:00:00Z'))).toBe('2026-10-30T15:00:00.000Z');
     expect(guestExpiry('7d', new Date('2026-10-30T12:00:00Z'))).toBe('2026-11-06T12:00:00.000Z');
+    expect(guestExpiry('toString', new Date())).toBeNull();
     expect(guestExpiry('forever', new Date())).toBeNull();
     expect(guestExpiry('', new Date())).toBeNull();
   });

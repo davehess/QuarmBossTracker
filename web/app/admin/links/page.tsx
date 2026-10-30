@@ -1007,7 +1007,9 @@ export default async function AdminLinksPage({
               defaultValue="tonight"
               className="bg-bg border border-border rounded px-3 py-2"
             >
-              <option value="tonight">Tonight (until 6 AM Eastern)</option>
+              <option value="1h">1 hour</option>
+              <option value="3h">3 hours</option>
+              <option value="tonight">Tonight (until 1 AM Eastern)</option>
               <option value="7d">7 days</option>
             </select>
           </label>
