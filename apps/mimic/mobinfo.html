@@ -1962,6 +1962,20 @@
     _renderBody(_lastMi);
     _fitHeight();
   });
+  // ── Refit when the window is resized (a member, 2026-10-30: "gets all messed up when u resize the window …
+  // closing it and reopening it fixes it"). The page reports its content height only when its HTML changes
+  // (_renderBody returns early on an unchanged paint), but a new WIDTH rewraps the same HTML to a different
+  // height: narrower and the chips and lines run past the bottom of the window and are cut off, wider and a
+  // tall empty card is left. Nothing re-measured until the target changed, and reopening ran the first fit.
+  // Waits out the drag (and the 400 ms floor commit in main) before measuring; a height-only drag rewraps
+  // nothing and is left to the floor logic.
+  var _rsW = window.innerWidth, _rsT = null;
+  window.addEventListener('resize', function(){
+    if (window.innerWidth === _rsW) return;
+    _rsW = window.innerWidth;
+    clearTimeout(_rsT);
+    _rsT = setTimeout(_fitHeight, 500);
+  });
 
   async function tick(){
     try {
