@@ -268,7 +268,7 @@ window.POP_RAIDS = {
         {
           id: 'agnarr', name: 'Agnarr the Storm Lord (3 phases)', zone: 'Bastion of Thunder', npcName: 'Agnarr the Storm Lord',
           callouts: [
-            'Symbol of Torden holder clicks the courtyard tower: the raid then has 5 min to click up, each person clicking. Every holder click resets the 5 min. Askr ports between rooms.',
+            'Symbol of Torden holder clicks the courtyard tower: the raid then has about 1 min to click up, each person clicking. Every holder click restarts that minute. Askr ports between rooms.',
             'P1: Evynd Firestorm (FIRE-IMMUNE, 500K) + kill 3 red summon portals fast → "transport".',
             'P2: Emmerik Skyfury (high cold resist, 600K; nasty AEs Meteor Storm / Storm Comet) + 3 portals → "storm".',
             'P3: tanks in FIRST (instant aggro), then healers. 5 portals (middle unkillable). Named adds ~100/75/50/25%: Jolur / Ekil (fire-immune) / Oljin (cold-immune) / Hibdin (slow-immune).',
