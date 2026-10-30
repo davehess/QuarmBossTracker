@@ -8,7 +8,7 @@ The guild platform for **Wolf Pack** on Project Quarm (EverQuest emu, Luclin era
 | **[wolfpack.quest](https://wolfpack.quest)** | Guild tracker site — `/raid` hub, parses, buffs, PvP, leaderboards, character pages, officer admin | Vercel, ships from `main` |
 | **Wolf Pack Mimic** | Desktop client for raid members — log parser + overlays + uploads, auto-updating | Member PCs, releases from this repo |
 
-Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances). Architecture map + release playbook: `CLAUDE.md`. Component versions live in each `package.json`; builds on the [Releases](https://github.com/davehess/QuarmBossTracker/releases) page.
+Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances). Architecture map + release playbook: `CLAUDE.md`. Component versions live in each `package.json`; the current stable Mimic is the [latest release](https://github.com/davehess/QuarmBossTracker/releases/latest) (betas are on the [Releases](https://github.com/davehess/QuarmBossTracker/releases) page; only the newest 3 keep a release).
 
 ☕ **Tips:** if this saves your raid some grief, you can buy the maintainer a coffee at [ko-fi.com/davehess](https://ko-fi.com/davehess).
 

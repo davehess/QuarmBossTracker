@@ -1,0 +1,87 @@
+name: prune-beta-releases
+
+# Keeps the stable Mimic on the first page of the GitHub releases list.
+#
+# THE REPORT (the guild lead, 2026-10-30): "our releases don't show the latest stable at all on the GitHub releases
+# page, it's just all of the betas". Every beta push publishes a v<park>-beta.N release, and 28 of them landed in the
+# three days after v3.0.5, so the stable (still marked Latest) sat on page 3. The pick was A + B: links open
+# /releases/latest (A), and this workflow keeps only the newest betas (B).
+#
+# WHAT IT DELETES. Published releases whose tag is exactly v<major>.<minor>.<patch>-beta.<n>, except the newest KEEP of
+# them, ordered by version (not by date). Never a stable, an alpha (mimic-alpha), a -linux.N build or a draft, and
+# NEVER A TAG: the release goes, the git tag stays, so every beta build's commit is still reachable by its tag (the
+# beta re-sync in CLAUDE.md relies on that).
+#
+# WHAT IT COSTS. A beta tester several builds behind gets a full download instead of a differential one (the old
+# build's blockmap went with its release); the updater falls back on its own. Beta clients find the newest beta
+# through the release feed, which only ever needs the newest one.
+#
+# Runs at the end of every beta build (release-mimic.yml) and by hand (Actions -> prune-beta-releases).
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: 'How many of the newest -beta.N releases to keep'
+        required: false
+        default: '3'
+  workflow_call:
+    inputs:
+      keep:
+        type: string
+        required: false
+        default: '3'
+
+permissions:
+  contents: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune old -beta.N releases (tags kept)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          KEEP: ${{ inputs.keep || '3' }}
+        run: |
+          set -euo pipefail
+          case "$KEEP" in ''|*[!0-9]*) echo "keep must be a number: '$KEEP'"; exit 1;; esac
+          if [ "$KEEP" -lt 1 ]; then echo "keep must be at least 1"; exit 1; fi
+          echo "Repo: $REPO, keeping the newest $KEEP -beta.N release(s)"
+
+          gh api --paginate "repos/$REPO/releases" \
+            --jq '.[] | [(.id|tostring), .tag_name, (.draft|tostring)] | @tsv' > all.tsv
+          echo "Total releases: $(wc -l < all.tsv)"
+
+          # Eligible ONLY when published and the tag is exactly vX.Y.Z-beta.N. Sorted by X, Y, Z, N, newest first:
+          # created_at is not trusted (the Linux pruner learned that on 2026-07-30).
+          awk -F'\t' '$3 != "true" && $2 ~ /^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$/ {
+            v = $2; sub(/^v/, "", v); gsub(/-beta\./, ".", v);
+            split(v, p, ".");
+            printf "%d\t%d\t%d\t%d\t%s\t%s\n", p[1], p[2], p[3], p[4], $1, $2
+          }' all.tsv | sort -t "$(printf '\t')" -k1,1nr -k2,2nr -k3,3nr -k4,4nr | cut -f5- > betas.tsv
+          echo "Beta releases found: $(wc -l < betas.tsv)"
+          echo "--- keeping ---"
+          head -n "$KEEP" betas.tsv || true
+
+          tail -n +$((KEEP + 1)) betas.tsv > doomed.tsv || true
+          if [ ! -s doomed.tsv ]; then
+            echo "Nothing to prune."
+            exit 0
+          fi
+
+          echo "--- deleting $(wc -l < doomed.tsv) release(s); their tags stay ---"
+          while IFS="$(printf '\t')" read -r id tag; do
+            # Hard guard: a line that is not a -beta.N tag is skipped, so a stable or an alpha can never go.
+            if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$'; then
+              echo "SKIP (guard tripped): '$tag'"
+              continue
+            fi
+            echo "Deleting release id=$id tag=$tag"
+            gh api -X DELETE "repos/$REPO/releases/$id"
+          done < doomed.tsv
+
+          echo "--- done. Newest releases now: ---"
+          gh api "repos/$REPO/releases?per_page=10" --jq '.[] | .tag_name' > remaining.txt || true
+          cat remaining.txt || true
