@@ -1025,6 +1025,14 @@ The guild lead picked option C of three mockups (DECISIONS §106–§107). The t
   profile holds no positions, so there is no sketch. The auto-switch checkbox is `#wpCharProfEn`.
   Switching the Canvas yourself (or loading a set) also writes the active character's layout's Canvas flag
   (`_noteCanvasChoice`), so a relaunch keeps your answer; test `test/canvas-per-character.test.js`.
+  **Since 2026-10-30 (beta, DECISIONS §468) each character's LAST layout is kept automatically**: the full overlay-set
+  snapshot (Canvas and its panels included) in `overlay-last.json`, written 2 s after a change settles
+  (`_lastLayoutWatch`), applied on a swap by `_lastLayoutObserve` / `_switchLastLayout` only when the other client has
+  been quiet 60 s (`zealClients`), store helpers `loadLast/putLast/lastFor/removeLast` in `overlaySets.js`; test
+  `test/char-last-layout.test.js`. The visibility-only profile above is used for a character only until they have one.
+  Same day: the Overlays tab's **⇅ Timers start at** (`wpOvTimersOrderBtn` → bridge `timersTopDown` →
+  `wp-timers-order-toggle`), a folded window's name chip reads "click to restore" (`preload.js` `_WP_NAME_CSS`), and
+  Target Info refits after a width change (`mobinfo.html` resize listener → `_fitHeight`).
   **Since agent 4.0.30 (FB-101) the same save also writes where everything sits**: the overlay set "Saved layout"
   (`_saveLayoutSnapshot` in `_captureCharProfile`: rects, look, floors), and the tile beside it, **↩ Restore saved
   layout** (`#wpLayoutRestore`; bridge `layoutRestore` → IPC `layout-restore` → `_restoreSavedLayout`), is also a tray

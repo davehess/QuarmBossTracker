@@ -223,8 +223,23 @@ next touch one rather than assuming a missing row means a missing doc.
   also run; rows and dots carry the hover-interact handshake, so it works locked. Map only: the agent already had `clear` and `killed`
   marks, so no agent bump. A clear is a local override: the next death the agent sees starts a timer again. Test:
   `test/map-watch-agent.test.js` ("right-click a spawn"). Not seen in a live window: needs a Mimic beta cut and a locked Map to confirm.
-- **🧪 Mimic: a character's layout remembers whether they wanted the Canvas (draft `draft/canvas-per-char` on `beta`, Mimic stays
-  parked, 2026-10-30). Not pushed.** The guild lead: "overlay sets aren't remembering if a character wanted to use canvas or not."
+- **🧪 Raid chat relays only from a raid that is ours (bot 4.0.32, main, 2026-10-30; DECISIONS §470).** A member in another group's
+  raid relayed its /rs into #raid-chat. The uploader's newest raid_roster capture must be at least half guild characters
+  (`_uploaderRaidIsOurs` / `_raidRosterIsOurs` / `_raidChatLineAllowed` in `index.js`); refused lines are not posted or stored.
+  Test: `test/raid-chat-foreign-raid.test.js`.
+- **🧪 Mimic: each character's overlays come back when you swap to them (beta `b906c15f`, Mimic parked, 2026-10-30; DECISIONS §468).**
+  Saved by itself per character as you change things (`overlay-last.json`; `_lastLayoutWatch` / `_lastLayoutObserve` /
+  `_switchLastLayout` in `main.js`, store in `overlaySets.js`); applied on a swap only when the other client has been quiet 60 s
+  (multi-box guard). The Canvas on/off and its panels are per character. Test: `test/char-last-layout.test.js` (34). Not yet seen in
+  a live Mimic: needs a beta build and a two-character swap. Graduates with the next stable cut (add its version here then).
+- **🧪 Mimic: Target Info re-fits after a resize (beta `ae0b9ed9`, 2026-10-30).** A member: "gets all messed up when u resize the
+  window … closing it and reopening it fixes it". It reported its height only when its HTML changed; a width change now refits once
+  after 500 ms (`mobinfo.html`; `test/mobinfo-resize-refit.test.js`). Open: the other nine overlays that call `overlayAutoHeight(h)`
+  directly (who, charm, command, melody, pets, popraid, tank, triggers, zealhealth) share the shape; audit each.
+- **🧪 Mimic: a folded window leaves a readable "click to restore" handle; Overlays tab "Timers start at" (agent 4.0.44, beta
+  `e443aafc`, 2026-10-30; DECISIONS §469).** Test: `test/timers-top-mini-handle.test.js`. Not seen in a real Electron window yet.
+- **🧪 Mimic: a character's layout remembers whether they wanted the Canvas (beta `79ea102a`, Mimic stays parked, 2026-10-30;
+  superseded the same day by the automatic last layout above, which keeps this as its fallback).** The guild lead: "overlay sets aren't remembering if a character wanted to use canvas or not."
   Both saves already held the flag (a character's layout in `_CHAR_PROFILE_FLAGS`, an overlay set via `_HIDEALL_FLAGS`), so nothing
   was missing from them. The loss: a character's layout is a snapshot, written back over the live setting at every launch and
   character change, and the 3.0.3 pass wrote every layout's Canvas OFF once, so a Canvas the person then switched on went off again at
