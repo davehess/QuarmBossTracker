@@ -348,7 +348,7 @@ function EventCard({ e, r, rank, scores, itemName, dkp, cls }: {
 
       {e.rewards.length > 0 && (
         <div className="mt-3">
-          <h4 className="text-[11px] font-semibold uppercase tracking-wider text-dim">Handed out by the script (not a drop, not in the value)</h4>
+          <h4 className="text-[11px] font-semibold uppercase tracking-wider text-dim">Handed out by a quest (not a drop, not in the value)</h4>
           <ul className="mt-1 space-y-0.5 text-xs">
             {e.rewards.map(w => {
               const sc = scores.get(w.itemId);

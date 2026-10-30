@@ -86,6 +86,58 @@ describe('the event list', () => {
     expect(eventZones().find(z => z.zone === 'postorms').count).toBeGreaterThanOrEqual(5);
   });
 
+  // The guild lead, 2026-10-30: "The bits that are more technical up here (PusEventStarter and ID) are not really
+  // worth displaying for everyone." Every text field the page prints is plain raider English. Ids stay in the data
+  // (npcId and itemId feed the PQDI links and the loot reads); they never appear in a sentence.
+  const TECHNICAL = [
+    [/\b\d{5,}\b/, 'a bare id or a millisecond count (write 40 minutes, or 50,000 with its comma)'],
+    [/\bms\b/i, 'milliseconds'],
+    [/\beq\./, 'a script call'],
+    [/#/, 'a # name prefix'],
+    [/_/, 'an underscore in a name'],
+    [/\b(signal|controller|spawn2|depop|qglobal|unique_spawn|spawn_condition|MovePC|GMMove|PusEventStarter)\w*/i, 'a script word'],
+    [/\b(npc|item|spawn|zone) ?id\b|\bid \d/i, 'an id'],
+  ];
+  const technicalIn = (text) => TECHNICAL.filter(([re]) => re.test(text)).map(([, why]) => why);
+  // every string the page prints about an event, outside the loot tables the database fills
+  const shownText = (e) => [
+    ['name', e.name], ['kindWhy', e.kindWhy], ['start', e.start], ['timers', e.timers],
+    ['groupLimit', e.groupLimit ?? ''], ['size', e.size ?? ''],
+    ...e.mechanics.map((m, i) => [`mechanics[${i}]`, m]),
+    ...e.rewards.flatMap((r, i) => [[`rewards[${i}].name`, r.name], [`rewards[${i}].trigger`, r.trigger]]),
+    ...e.npcs.flatMap((n, i) => [[`npcs[${i}].name`, n.name], [`npcs[${i}].killsNote`, n.killsNote ?? '']]),
+  ];
+
+  it('prints no id, no script word and no raw timer in an event’s text', () => {
+    const bad = [];
+    for (const e of EVENTS) for (const [field, text] of shownText(e)) {
+      for (const why of technicalIn(text)) bad.push(`${e.slug} ${field}: ${why}: ${text.slice(0, 80)}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('the plain-words check catches what it is for and passes real raider text', () => {
+    for (const bad of [
+      'Enter the proximity: BanordEnter signals the controller (PusEventStarter 200218).',
+      'wave timer 234000 ms', 'calls eq.spawn2 on the pad', '#Overlord_Banord_Paffa', 'Foul_Pusling', 'npc id 200252',
+      'a depop timer', 'set the qglobal',
+    ]) expect(technicalIn(bad), bad).not.toEqual([]);
+    for (const good of [
+      'A wave of puslings comes every 3 min 54 s. The raid has 40 minutes to kill Overlord Banord Paffa (level 70, 1,000,000 HP).',
+      'Hand in the Lightning Crystals for 50,000 experience. Go to /loc 5469, -574.', 'Rydda`Dar leaves after 56 seconds.',
+    ]) expect(technicalIn(good), good).toEqual([]);
+  });
+
+  it('tells the Banord Paffa event in minutes, from the script’s numbers', () => {
+    const p = eventBySlug('codecay-paffa');
+    expect(p.start).toMatch(/first player/i);
+    expect(p.timers).toMatch(/3 min 54 s/);
+    expect(p.timers).toMatch(/40 minutes/);
+    expect(p.timers).toMatch(/10 minutes/);
+    expect(p.timers).toMatch(/3 days/);
+    expect(p.mechanics.join(' ')).toMatch(/25% chance to be a Corrupted Pusling/);
+  });
+
   it('is what the PoP guide step links to, and the page unfurls with its own name', () => {
     const step = GUIDE_ITEMS.find(i => i.key === 'storms_relv_falto');
     expect(step.title).toMatch(/^Optional: /);

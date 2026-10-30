@@ -22,6 +22,11 @@
 //
 // ⚠ Upstream's scripts: Quarm's own may differ. Where the scripts name no number the field says "unknown".
 // This file is generated once from the research pass (events.json); edit a record by hand, keep its `cites` honest.
+//
+// ⚠ The TEXT of a record (kindWhy, start, timers, groupLimit, mechanics, reward names and triggers) is read by raiders
+// (the guild lead, 2026-10-30: "the technical bits up here ... are not really worth displaying for everyone"). Write
+// minutes and seconds, item and mob names with spaces, and /loc as Y, X. No ids, no script words, no milliseconds. The
+// ids live in npcId, itemId and `cites`; test/pop-events.test.js refuses them in a sentence.
 
 /** The commit of SecretsOTheP/quests the cites were read at. */
 export const QUESTS_SHA = '572bc06874612ade7e9274979158747737bcd9bb';
@@ -70,18 +75,20 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Disease",
   "name": "Alternate access: Grimror Plaguebringer (Crypt of Decay key)",
   "kind": "optional",
-  "kindWhy": "Alternate-access quest, enabled only when server data pop_alt_access_enabled == '1'; gives key 9294 (checked by potranquility door 12 / keyring). Not part of the flag path.",
-  "start": "Hail Grimror_Plaguebringer: 'stuff', 'big plan', 'help Grimror', 'dem tings'; then hand in 9290 + 9291 + 9292 + 9293 (four items).",
-  "timers": "n/a",
+  "kindWhy": "Optional back door into the Crypt of Decay. It sets no flag, and it only works while the server has the alternate-access quests switched on.",
+  "start": "In the Plane of Disease, hail Grimror Plaguebringer, then say 'stuff', 'big plan', 'help Grimror' and 'dem tings'. Hand him one each of Sengian, Generian, Scaevian and Harrion Larvae Flesh.",
+  "timers": "None.",
   "mechanics": [
-   "Grimror asks for the bile of the little bugs ('Keel little bugs'); otherwise he returns the items and says to come back another time."
+   "Grimror wants the larvae of four little bugs: two from the flies, one from the worms and one from the moss-skeeters.",
+   "Hand in the right four and he gives you the Bangle of Disease Warding. Any other hand-in is returned.",
+   "Hold the bangle on your cursor at the Crypt of Decay portal in the Plane of Tranquility once. It goes on your key ring and lets you through."
   ],
   "npcs": [],
   "rewards": [
    {
     "itemId": 9294,
-    "name": "Crypt of Decay key (item 9294)",
-    "trigger": "Hand in 9290, 9291, 9292, 9293 to Grimror_Plaguebringer (QuestReward itemid 9294, exp 1)"
+    "name": "Bangle of Disease Warding (Crypt of Decay key)",
+    "trigger": "Hand the four larvae flesh to Grimror Plaguebringer"
    }
   ],
   "cites": [
@@ -95,28 +102,28 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Tranquility",
   "name": "Alternate access: Torment key (Iramai Sacredsoul / Brugga / Purified Bubonian Bile)",
   "kind": "optional",
-  "kindWhy": "Alternate-access chain (pop_alt_access_enabled == '1'); key 29213 used at potranquility door 93.",
-  "start": "Hand Iramai_Sacredsoul 29315 -> Purified Bubonian Bile 29302 + 50000 xp; Brugga (pojustice) turns 29297 + 29298 + 29299 into 29295 (+100000 xp) and 29302 back; hand Iramai 29295 + 29302 -> 29213.",
-  "timers": "n/a",
+  "kindWhy": "Optional chain that earns the Symbol of Torment, a back door into the Plane of Torment. It sets no flag, and it only works while the server has the alternate-access quests switched on.",
+  "start": "Hand Iramai Sacredsoul the Bubonian Bile for Purified Bubonian Bile and 50,000 experience. Take the Purified Bubonian Bile to Brugga in the Plane of Justice, who hands it back and asks for a Mechanical Clockwork Venom, a Terror Matriarch Venom Sack and a Nettling Wraith Stinger. Hand those to Brugga for a Vial of Opaque Fluid and 100,000 experience. Hand Iramai the Vial and the Purified Bubonian Bile for the Symbol of Torment.",
+  "timers": "None.",
   "mechanics": [
-   "Brugga requires faction < 5."
+   "Brugga only deals with you at Amiable standing or better."
   ],
   "npcs": [],
   "rewards": [
    {
     "itemId": 29213,
-    "name": "Torment key (29213)",
-    "trigger": "Hand 29295 + 29302 to Iramai_Sacredsoul (6250 xp)"
+    "name": "Symbol of Torment",
+    "trigger": "Hand the Vial of Opaque Fluid and the Purified Bubonian Bile to Iramai Sacredsoul (6,250 experience)"
    },
    {
     "itemId": 29302,
     "name": "Purified Bubonian Bile",
-    "trigger": "Hand 29315 to Iramai_Sacredsoul (50000 xp)"
+    "trigger": "Hand the Bubonian Bile to Iramai Sacredsoul (50,000 experience)"
    },
    {
     "itemId": 29295,
     "name": "Vial of Opaque Fluid",
-    "trigger": "Hand 29297, 29298, 29299 to Brugga (pojustice, 100000 xp)"
+    "trigger": "Hand the three venoms and stinger to Brugga in the Plane of Justice (100,000 experience)"
    }
   ],
   "cites": [
@@ -131,23 +138,23 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Valor",
   "name": "Alternate access: Halls of Honor key (Grenic Drere / Borik Darkanvil / exiled soldiers)",
   "kind": "optional",
-  "kindWhy": "Alternate-access chain (pop_alt_access_enabled == '1'); Ring of Marr 29214 opens potranquility door 23 (HoH).",
-  "start": "Borik_Darkanvil (poknowledge): hand 29228 + 29229 + 29230 + 3000 platinum -> Box of Souls 29281. Hand the Box of Souls to an Exiled Soldier/Officer/Trooper of Marr (pojustice): each returns the Box plus Soul Sphere 29293 / 29294 / 29292. Hand Grenic_Drere 29281 + 29292 + 29293 + 29294.",
-  "timers": "n/a",
+  "kindWhy": "Optional chain that earns the Ring of Marr, a back door into the Halls of Honor. It sets no flag, and it only works while the server has the alternate-access quests switched on.",
+  "start": "Say 'box of souls', 'Perilium' or 'forge them for me' to Borik Darkanvil in the Plane of Knowledge. Hand him a Nightmare Mephit Heart, a Crystal Spider Brain, a Solid Block of Perilium and 3,000 platinum for a Box of Souls. Bring the box to an Exiled Soldier, Officer and Trooper of Marr in the Plane of Justice. Each hands it back with a Soul Sphere. Hand Grenic Drere the Box of Souls and all three Soul Spheres.",
+  "timers": "None.",
   "mechanics": [
-   "Say 'box of souls', 'Perilium' or 'forge them for me' to Borik first."
+   "Each exile returns the box together with one of the three Soul Spheres."
   ],
   "npcs": [],
   "rewards": [
    {
     "itemId": 29214,
     "name": "Ring of Marr",
-    "trigger": "Hand 29281, 29292, 29293, 29294 to Grenic_Drere (50000 xp)"
+    "trigger": "Hand the Box of Souls and the three Soul Spheres to Grenic Drere (50,000 experience)"
    },
    {
     "itemId": 29281,
     "name": "Box of Souls",
-    "trigger": "Hand 29228, 29229, 29230 + 3000 platinum to Borik_Darkanvil"
+    "trigger": "Hand Borik Darkanvil a Nightmare Mephit Heart, a Crystal Spider Brain, a Solid Block of Perilium and 3,000 platinum"
    }
   ],
   "cites": [
@@ -165,18 +172,18 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Storms",
   "name": "Alternate access: Drunder key (Askr the Lost / Wembly the Forlorn, four Diaku Emblem pieces)",
   "kind": "optional",
-  "kindWhy": "Alternate-access quest (pop_alt_access_enabled == '1'); key 29215 opens potranquility door 24 (Drunder). Requires faction <= 4.",
-  "start": "Hail Wembly_the_Forlorn: 'done', 'key', 'agree to help', 'tied to the mast', 'Diaku', 'Drunder'; hand 29216 + 29217 + 29218 + 29219.",
-  "timers": "n/a",
+  "kindWhy": "Optional chain that earns the Completed Diaku Emblem, a back door into Drunder. It sets no flag, and it only works while the server has the alternate-access quests switched on. You need Amiable standing or better with Wembly.",
+  "start": "In the Plane of Storms, hail Wembly the Forlorn and say 'done', 'key', 'agree to help', 'tied to the mast', 'Diaku' and 'Drunder'. Hand him all four Quarter of a Diaku Emblem pieces.",
+  "timers": "None.",
   "mechanics": [
-   "Faction hits: Askr the Lost 1609 +5 and Storm Guardians 1618 +5."
+   "The hand-in also raises your standing a little with Askr the Lost and with the Storm Guardians."
   ],
   "npcs": [],
   "rewards": [
    {
     "itemId": 29215,
-    "name": "Drunder key (29215)",
-    "trigger": "Hand 29216, 29217, 29218, 29219 to Wembly_the_Forlorn (150000 xp)"
+    "name": "Completed Diaku Emblem (Drunder key)",
+    "trigger": "Hand the four Quarter of a Diaku Emblem pieces to Wembly the Forlorn (150,000 experience)"
    }
   ],
   "cites": [
@@ -190,15 +197,16 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Bastion of Thunder",
   "name": "Agnarr the Storm Lord (top of Torden) + Karana flagging",
   "kind": "raid-boss",
-  "kindWhy": "Final kill of the Bastion; killing Agnarr spawns Karana (209136) who sets qglobal karana 3 -> 4 ('You have received a character flag!') when told 'follow the path of the Fallen' - the flag-path boss.",
-  "groupLimit": "Karana only flags the killer's raid/group (or the solo killer); FLAG_LIMIT = 72 flags per Karana spawn.",
-  "start": "Enter Torden tower: click door id 51 while carrying Symbol of Torden (item 9433, must be in slot 0/cursor or on keyring) -> MovePC(209,-765,-1735,1270); one Symbol click authorises the clicker's raid/group for 300 s (SYMBOL_AUTHORIZATION_SECONDS). Without it the 1st and 2nd clicks give messages and the 3rd signals A_storm_watcher (209113) gargoyles to aggro. Upper floor doors 61/63/65/67 teleport anyone holding item 9425 to the tower floors. Fight starts on pulling Agnarr (209026).",
-  "timers": "portals timer 120000 ms (90000 below 50% hp, 60000 below 25%); link timer 45000 ms (assist-link all giants/adds). Initial giant spawn timer 3000 ms. Karana depops after 1200000 ms (20 min); Karana's flagging-travel window is 1200 s.",
+  "kindWhy": "The last kill of the Bastion of Thunder. Agnarr's death brings Karana, who gives the character flag on the road to Quarm.",
+  "groupLimit": "Karana only flags the raid, group or solo player that got credit for the kill, and only 72 players per Karana.",
+  "start": "Click the door into Torden's tower while the Symbol of Torden is on your cursor or key ring. One click covers your raid or group for 5 minutes. Without it, the first two clicks only give messages and the third wakes the storm watcher gargoyles. Doors on the upper floors take anyone carrying an Enchanted Ring of Torden up the tower. The fight starts when Agnarr is pulled.",
+  "timers": "A storm portal adds one monster every 2 minutes, every 1 min 30 s below half health and every minute below a quarter. Every 45 seconds all the giants and adds are pulled onto Agnarr's target. Karana stays for 20 minutes.",
   "mechanics": [
-   "On first aggro (hp>96%) Jolur_Sandstorm (209147) spawns after 3 s; at 75% hp Ekil_Thundercall (209142), at 50% Oljin_Stormtide (209148), at 25% Hibdin_Cyclone (209146), all unique-spawned at -1070,-1739,2257.",
-   "Every portals tick signals A_storm_portal (209034) which spawns one random add: A_firestorm 209124 / A_comet 209123 / A_hurricane 209125 / A_storm_cloud 209130.",
-   "Link timer pulls all giants/adds onto Agnarr's target and leashes them back if z < 2200.",
-   "Agnarr death_complete spawns Karana at -477,-1758,2355 and signals him the killer's id. Karana: 'hail' (info), 'follow the path of the Fallen' (karana 3 -> 4 if karana==3; if karana<3 and no zebuxoruk/cl_karana it only sets checklist flag cl_karana), 'send me' (casts Gate on the player)."
+   "Jolur Sandstorm appears 3 seconds after the pull. Ekil Thundercall joins at 75% health, Oljin Stormtide at 50% and Hibdin Cyclone at 25%. They all appear at /loc -1739, -1070.",
+   "Each storm portal adds one random monster: a firestorm, a comet, a hurricane or a storm cloud.",
+   "Giants and adds that fall below the top of the tower are sent back to where they started.",
+   "When Agnarr dies, Karana appears at /loc -1758, -477. Hail him for his story. Say 'follow the path of the Fallen' to get the flag if you are at that step of the road. If you are at an earlier step, you only get the checklist flag.",
+   "Say 'send me' and Karana casts Gate on you."
   ],
   "npcs": [
    {
@@ -254,12 +262,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Bastion of Thunder",
   "name": "Evynd Firestorm and Emmerik Skyfury (lieutenants, Askr transports)",
   "kind": "flag",
-  "kindWhy": "Not a zone/character flag, but killing them spawns #Askr_the_Lost / ##Askr_the_Lost who transport the group up toward Agnarr's floor (FlaggingTravel window); progression path to Agnarr.",
-  "start": "Passive: pull Evynd_Firestorm (209054) or Emmerik_Skyfury (209053).",
-  "timers": "portals timer 120000 ms (Emmerik: 90000 below 50%, 60000 below 25%). Askr transports expire with the FlaggingTravel window tied to Karana (209136) type; unknown exact seconds for these two.",
+  "kindWhy": "Not a flag. Each lieutenant's death brings Askr the Lost, who carries your group up toward Agnarr's floor.",
+  "start": "Pull Evynd Firestorm or Emmerik Skyfury.",
+  "timers": "While Evynd fights, a firestorm portal adds a monster every 2 minutes. Emmerik's portals come every 2 minutes, every 1 min 30 s below half health and every minute below a quarter. Askr does not stay long, and the script does not say exactly how long.",
   "mechanics": [
-   "Evynd in combat every 120 s signals A_firestorm_portal (209122); on death spawns #Askr_the_Lost (209156) at -1123,-1732,1269 ('transport' moves you to -880,-1787,1729).",
-   "Emmerik in combat every 120 s signals A_celestial_portal (209102); on death spawns ##Askr_the_Lost (209157) at -1065,-1733,1727."
+   "Evynd Firestorm calls a firestorm portal every 2 minutes. When he dies, Askr the Lost appears at /loc -1732, -1123. Say 'transport' to him and he takes you to /loc -1787, -880.",
+   "Emmerik Skyfury calls a celestial portal every 2 minutes. When he dies, a second Askr the Lost appears at /loc -1733, -1065."
   ],
   "npcs": [
    {
@@ -288,14 +296,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Bastion of Thunder",
   "name": "Progression loot: Symbol of Torden components (giants of the lower halls)",
   "kind": "flag",
-  "kindWhy": "ProgressionLoot encounter AddItem()s guaranteed Rings of Torden (17168) and Unadorned Symbols of Torden (17169) and 25% storm Gems/Spheres (9421-9424, 9429-9432); the Symbol of Torden (9433) opens Torden's tower (player.lua door 51). The tradeskill combine is not in the scripts.",
-  "start": "Passive: kill the listed giants. Spawn event hands out loot.",
-  "timers": "unknown (spawn2 respawns are DB-side).",
+  "kindWhy": "The giants of the lower halls hand out the pieces for the Symbol of Torden, which opens Torden's tower. How the pieces are combined is not in the scripts.",
+  "start": "Nothing to start: kill the listed giants. The loot is handed out when each one spawns.",
+  "timers": "Unknown. Respawn times are in the database, not the scripts.",
   "mechanics": [
-   "Guaranteed: 209070 Laef Windfall, 209071 Gaukr Sandstorm, 209072 Oreen Wavecrasher, 209082 Hreidar Lynhillig each +3 Ring of Torden (17168).",
-   "Guaranteed: 209016 Brynju Thunderclap, 209059 Auliffe Chaoswind, 209060 Eindride Icestorm, 209061 Kuanbyr Hailstorm, 209142 Ekil Thundercall, 209146 Hibdin Cyclone, 209147 Jolur Sandstorm, 209148 Oljin Stormtide each +1 Unadorned Symbol of Torden (17169).",
-   "25% chance per spawn of one component: Sandstorm Gem 9421 (209001/4/11), Lightning Gem 9422 (209007/9/64), Blizzard Gem 9423 (209014/18/55/62), Tornado Gem 9424 (209000/2/51/162), Sandstorm Sphere 9429 (209015/40/41), Lightning Sphere 9430 (209013/19/20), Blizzard Sphere 9431 (209043/44/133/134/161), Tornado Sphere 9432 (209048/50/135).",
-   "Kuanbyr Hailstorm (209061) links his hate to Hrani 209058 / Iri 209057 / Leistr 209056 every 6 s; Brynju/Auliffe/Eindride leash to their spawn when below z 2200/1400/2100."
+   "Laef Windfall, Gaukr Sandstorm, Oreen Wavecrasher and Hreidar Lynhillig each carry 3 Rings of Torden, always.",
+   "Brynju Thunderclap, Auliffe Chaoswind, Eindride Icestorm, Kuanbyr Hailstorm, Ekil Thundercall, Hibdin Cyclone, Jolur Sandstorm and Oljin Stormtide each carry 1 Unadorned Symbol of Torden, always.",
+   "Many other giants have a 25% chance to carry one component. Earth (jord) giants carry Sandstorm Gems and Spheres, fire (brann) giants Lightning, water (vann) giants Blizzard and wind (vind) giants Tornado.",
+   "Kuanbyr Hailstorm shares his hate with Hrani, Iri and Leistr every 6 seconds. Brynju, Auliffe and Eindride are sent back to where they started if they fall too far."
   ],
   "npcs": [
    {
@@ -381,12 +389,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Bastion of Thunder",
   "name": "Elemental trap spawners (storm clouds)",
   "kind": "optional",
-  "kindWhy": "Environmental hazard on trash that sits in lower halls and towers; no loot or flag.",
-  "start": "Pulling any Air/Earth/Fire/Water TrapSpawner mob.",
-  "timers": "cast timer 5500 ms; storm cloud depops after 5000 ms; chance 50% (75% in the tower, z > 0).",
+  "kindWhy": "A storm hazard on trash in the lower halls and towers. It gives no loot and no flag.",
+  "start": "Pull any air, earth, fire or water trap monster.",
+  "timers": "The storm cloud casts 5.5 seconds after it appears and leaves 5 seconds later.",
   "mechanics": [
-   "Emote 'Storm clouds begin to gather over your head.'; 50%/75% a_storm_cloud (209160) spawns on the spawner and casts a spell via signal (Air 1049 Tempest Wind, Earth 1031 Stone Gale, Water one of 1050 Raging Blizzard / 1048 Monsoons / 1032 Hail Storm, Fire one of 1024 Thunderclap / 1025 Static Pulse / 1026 Thunder Call [FireTrapSpawner.lua:22]).",
-   "Otherwise 'The storm clouds pass harmlessly.'"
+   "You see 'Storm clouds begin to gather over your head.' There is a 50% chance a storm cloud follows (75% in the tower). Otherwise you see 'The storm clouds pass harmlessly.'",
+   "The cloud casts one spell by trap type. Air: Tempest Wind. Earth: Stone Gale. Water: Raging Blizzard, Monsoons or Hail Storm. Fire: Thunderclap, Static Pulse or Thunder Call."
   ],
   "npcs": [],
   "rewards": [],
@@ -404,15 +412,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "The Crypt of Decay",
   "name": "Chapel chain: Carprin Deatharn -> Avhi Escron -> Bishop Toluwon -> Ultor Szanvon (Tarkil Adan key)",
   "kind": "flag",
-  "kindWhy": "Ends with Tarkil_Adan (200267) who sets bertox_key=1 ('You have received a character flag!'); player.lua door 7 only admits characters with bertox_key into the lower crypt (Bertoxxulous), and the Bertox Planar Projection rejects anyone without bertox_key. Seer header: 'bertox_key - Access to Bertoxxulous level'.",
-  "groupLimit": "Tarkil_Adan MAX_KEYS = 72 keys per spawn; only the killer's raid/group (rid/gid/cid).",
-  "start": "Pull #_Carprin_Deatharn (200007, 1,000,000 hp, shielded): on first aggro it unique-spawns #Breddan_Rutyl (200229), #Fran_Prisoal (200230) and #Abroan_Drian (200222). Kill all three (they signal each other; the last one depops 200007 and spawns the vulnerable #Carprin_Deatharn 200232).",
-  "timers": "Guards depop 800000 ms; #Carprin depop 12300000 ms; #Bishop_Toluwon / #High_Priest_Ultor_Szanvon depop 11700000 ms; #Raex_Pwodill / #Vindor_Mawnil depop 9900000 ms; Tarkil_Adan depop 600000 ms.",
+  "kindWhy": "The chapel chain ends with Tarkil Adan, who gives the key that lets you into Bertoxxulous's lower crypt. Without it the Bertoxxulous projection turns you away.",
+  "groupLimit": "Tarkil Adan flags only the raid, group or solo player that got credit, and only 72 players per Tarkil Adan.",
+  "start": "Pull the shielded Carprin Deatharn, who has 1,000,000 HP. On the first pull, Breddan Rutyl, Fran Prisoal and Abroan Drian appear. Kill all three. The last one removes the shielded Carprin and brings the real one.",
+  "timers": "The three guards leave after 13 min 20 s. Carprin stays 3 h 25 min. Bishop Toluwon and High Priest Ultor Szanvon stay 3 h 15 min. Raex Pwodill and Vindor Mawnil stay 2 h 45 min. Tarkil Adan stays 10 minutes.",
   "mechanics": [
-   "Carprin Deatharn death -> #Avhi_Escron (200225) at 405,135,-54 (spawns Reanimated_Reaver 200259 adds).",
-   "Avhi death -> #Bishop_Toluwon (200228) at 258,84,-70.",
-   "Bishop death -> #High_Priest_Ultor_Szanvon (200245) at 306,318,-64 plus generals #Vindor_Mawnil (200261) and #Raex_Pwodill (200258).",
-   "Ultor death -> unique-spawn Tarkil_Adan at 309,330,-72.122 and signal him the killer id; hail Tarkil -> bertox_key."
+   "Carprin Deatharn dies, then Avhi Escron appears at /loc 135, 405 with Reanimated Reaver adds.",
+   "Avhi dies, then Bishop Toluwon appears at /loc 84, 258.",
+   "The Bishop dies, then High Priest Ultor Szanvon appears at /loc 318, 306 with the generals Vindor Mawnil and Raex Pwodill.",
+   "Ultor dies, then Tarkil Adan appears at /loc 330, 309. Hail him for the key flag."
   ],
   "npcs": [
    {
@@ -500,15 +508,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "The Crypt of Decay",
   "name": "Bertoxxulous (kings + trash waves in the lower crypt)",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss: death spawns A_Planar_Projection 200269 whose hail sets fuirstel 3 -> 4 (requires bertox_key; no key = rejected). Seer header: 'fuirstel - PoDisease and CoD flag series (five values)'.",
-  "groupLimit": "Projection FLAG_LIMIT (see codecay/A_Planar_Projection.lua).",
-  "start": "Kill #Spectre_of_Corruption (200016, spawn point 360643) in the lower crypt; the kill triggers the attempt (summoners spawn at five locations).",
-  "timers": "Preparation 350 s (PREPARATION_SECONDS), overall deadline 7380 s (EVENT_SECONDS), expiry warning at 300 s remaining, trash respawn every 350 s on 32 spawn points, failure cooldown 300 s, success cooldown 237600 * 1000 ms (66 h) on the Spectre spawn; watchdog 5000 ms.",
+  "kindWhy": "The flag boss of the Crypt of Decay. His death brings a Planar Projection that advances the Disease and Crypt flag series. You need the chapel key flag first, or the projection turns you away.",
+  "groupLimit": "The projection flags only the raid, group or solo player that got credit, and only 72 players per projection.",
+  "start": "Kill the Spectre of Corruption in the lower crypt. His death begins the attempt and summoners appear at five spots.",
+  "timers": "There are 5 min 50 s of preparation, then 2 h 3 min to finish. You get a warning when 5 minutes are left. Trash respawns every 5 min 50 s on 32 spawn points. After a failed attempt there is a 5 minute wait. After a win, the Spectre is back in 66 hours.",
   "mechanics": [
-   "After preparation, 32 trash spawn points (Knight / Priest / Necromancer of Decay and Elite variants) respawn on a 350 s clock.",
-   "King spawns are keyed off trash kills: Darwol Adan at kill 44, Feig 48, Xhut 52, Kavilis 56, Raddi 84, Wavadozzik 88, Zandal 92, Akkapan 96.",
-   "After the first eight kings the final four kings Meedo, Qezzin, Pzo, Bhaly Adan are summoned ('last corrupted Kings of Lxanvom'), then #Bertoxxulous (200226).",
-   "Failure: deadline expiry or lost state -> Retry state; Bertoxxulous death -> victory emote, Planar Projection 200269 for the killer."
+   "After preparation, 32 trash spawn points (Knights, Priests and Necromancers of Decay, and their Elite versions) respawn on that 5 min 50 s clock.",
+   "The kings come out by the number of trash kills. Darwol Adan at kill 44, Feig at 48, Xhut at 52, Kavilis at 56, Raddi at 84, Wavadozzik at 88, Zandal at 92 and Akkapan at 96.",
+   "After the first eight kings, the last four corrupted Kings of Lxanvom come: Meedo, Qezzin, Pzo and Bhaly Adan. Then Bertoxxulous himself.",
+   "If time runs out, the attempt fails and resets. When Bertoxxulous dies, a victory message plays and a Planar Projection appears for whoever killed him."
   ],
   "npcs": [
    {
@@ -616,12 +624,16 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "The Crypt of Decay",
   "name": "Banord Paffa (puslings event)",
   "kind": "optional",
-  "kindWhy": "No flag; wave event with loot on #Overlord_Banord_Paffa.",
-  "start": "Enter Banord Paffa's proximity (75 radius around 180,-475,-390..-100): BanordEnter signals the controller (PusEventStarter 200218) unless active. #Banord_Paffa (200020).",
-  "timers": "wave timer 234000 ms; at wave 3 Overlord spawns and an overall depop timer of 2400000 ms starts (fail -> spawn 360632 timer 600000 ms); spawn points re-enabled after the event with random 60-200 s timers.",
+  "kindWhy": "Optional wave fight with loot on Overlord Banord Paffa. It sets no flag.",
+  "start": "The first player (not a GM) to step into the room around Banord starts it. Nothing happens if it is already running.",
+  "timers": "A wave of puslings comes every 3 min 54 s, the first one 3 min 54 s after the start. At the third wave Banord becomes Overlord Banord Paffa and the raid has 40 minutes to kill him. If time runs out he laughs and despawns, and Banord is back in 10 minutes. After a win, Banord's own respawn is 3 days.",
   "mechanics": [
-   "Each wave spawns five Foul_Pusling (200242) / Corrupted_Pusling (200233, 25%) at fixed points.",
-   "Wave 3 turns Banord into #Overlord_Banord_Paffa (200252)."
+   "Each wave is five puslings at fixed spots in the room. Each has a 25% chance to be a Corrupted Pusling; the rest are Foul Puslings.",
+   "Waves keep coming every 3 min 54 s until the event ends.",
+   "While the event runs, the room's normal pusling spawns are switched off.",
+   "At the third wave Banord shouts and turns into Overlord Banord Paffa, level 70.",
+   "Win: kill the Overlord. The puslings vanish and the normal spawns come back after 1 to 3 minutes.",
+   "Fail: the Overlord and the puslings vanish and the normal spawns come back the same way."
   ],
   "npcs": [
    {
@@ -654,14 +666,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Halls of Honor",
   "name": "Trial of Honor 1: Rydda`Dar (Trydan Faye)",
   "kind": "flag",
-  "kindWhy": "Success + hail to #Trydan_Faye sets digit 1 of qglobal hohtrials (format 'abc'); hohtrials == '111' opens Temple of Marr portals (doors 19/20 -> zone flag 220) and is required for the Mithaniel Marr flags (mmarr).",
-  "groupLimit": "Flagger FLAG_LIMIT 72 per success; only the killer's raid/group (rid/gid/cid) can be flagged; no scripted player cap.",
-  "start": "Hail Trydan_Faye (211051): 'trials', then 'ready' -> spawns A_Custodian_of_Marr (211078) at his spot (depop timer 10000 ms) and Trydan depops with timer; killing the Custodian starts the trial and spawns Rydda`Dar.",
-  "timers": "Custodian depop 10000 ms; Rydda`Dar self-depop 56000 ms; attacker depop 10000 ms; success respawn SUCCESS_RESPAWN_TIME = 64800 * 1000 ms (18 h) for the room spawn points; failed/aborted: 600000 ms retry (EnableSpawns default); #Trydan_Faye 211117 depops 600000 ms.",
+  "kindWhy": "Trial of Honor 1. Winning and hailing Trydan Faye gives the first of the three trial flags. All three open the Temple of Marr portals and are needed for the Mithaniel Marr flags.",
+  "groupLimit": "Trydan Faye flags only the raid, group or solo player that got credit, and only 72 players per win. The script sets no cap on how many can take part.",
+  "start": "Hail Trydan Faye and say 'trials', then 'ready'. A Custodian of Marr appears in his place and Trydan leaves. Killing the Custodian starts the trial and Rydda`Dar appears.",
+  "timers": "The Custodian leaves after 10 seconds, and Rydda`Dar after 56 seconds, unless they are in a fight. The timer stops while they fight. After a win, the room's spawns stay off for 18 hours. After a fail or abort, Trydan Faye is back in 10 minutes.",
   "mechanics": [
-   "Custodian bounds check every 6000 ms (y outside 1750..2300 -> reset, Balance of the Nameless).",
-   "On Custodian death the room spawn points (360860, 361050, 361051, 361052) are disabled and Rydda`Dar (211107, level 75, 500000 hp) spawns.",
-   "Rydda`Dar death re-enables room spawns for 18 h and spawns #Trydan_Faye (211117) at -1725,2040,-111.4 for the killer's raid/group; hail #Trydan -> hohtrials digit 1 = '1'."
+   "Every 6 seconds the Custodian is checked. If it leaves the room, it is sent back, loses its hate list and casts Balance of the Nameless.",
+   "When the Custodian dies, the room's normal spawns are switched off and Rydda`Dar appears, level 75 with 500,000 HP.",
+   "When Rydda`Dar dies, the normal spawns stay off for 18 hours and Trydan Faye appears at /loc 2040, -1725 for the killer's raid or group. Hail him to get the first trial flag."
   ],
   "npcs": [
    {
@@ -702,14 +714,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Halls of Honor",
   "name": "Trial of Honor 2: Villagers (Rhaliq Trell)",
   "kind": "flag",
-  "kindWhy": "Success + hail to #Rhaliq_Trell (211106) sets digit 2 of hohtrials.",
-  "groupLimit": "Flagger FLAG_LIMIT 72; killer's raid/group only.",
-  "start": "Hail Rhaliq_Trell (211050), then 'ready' -> Custodian of Marr spawns (10000 ms) and the event begins when it dies.",
-  "timers": "Attackers depop 72000 ms after spawn (an unengaged timeout fails the event); retry 600000 ms after a failure; success respawn 64800000 ms (18 h); Rhaliq2 depop 600000 ms.",
+  "kindWhy": "Trial of Honor 2. Winning and hailing Rhaliq Trell gives the second of the three trial flags.",
+  "groupLimit": "Rhaliq Trell flags only the raid, group or solo player that got credit, and only 72 players per win.",
+  "start": "Hail Rhaliq Trell and say 'ready'. A Custodian of Marr appears. The trial begins when it dies.",
+  "timers": "Each attacker must be fought within 72 seconds of appearing, or the trial fails. The clock stops while it fights. After a fail, Rhaliq Trell is back in 10 minutes. After a win, the room stays closed for 18 hours. The reward Rhaliq stays 10 minutes.",
   "mechanics": [
-   "StartEvent spawns 7 villagers (barbarian, dwarf, gnome, half-elf, halfling, human, wood elf) and 12 named attackers (Granmuck Reiga 211105, Fligg Starp 211104, Trann Berk 211103, Shott Tarbs 211102, Ruark Barr 211101, Zullkata Reeps 211100, Maeryn Malladry 211096, Thullias Rhidron 211095, Herot Terkins 211094, Mirezvakla Ry`Ten 211099, Yarezka Tri`Lok 211098, Merken Lysonn 211097) on timed move timers (4-26 s).",
-   "Kill 12 attackers (attackersKilled >= 12) -> EventSuccess; any attacker timing out -> FailEvent (attackers depop, spawn timers 600000 ms).",
-   "Success spawns #Rhaliq_Trell at 456,1374,-110.4; hail -> hohtrials digit 2."
+   "Seven villagers appear (barbarian, dwarf, gnome, half-elf, halfling, human and wood elf), along with twelve named attackers. The attackers are Granmuck Reiga, Fligg Starp, Trann Berk, Shott Tarbs, Ruark Barr, Zullkata Reeps, Maeryn Malladry, Thullias Rhidron, Herot Terkins, Mirezvakla Ry`Ten, Yarezka Tri`Lok and Merken Lysonn.",
+   "The attackers set off on their own timers, between 4 and 26 seconds apart.",
+   "Kill all twelve attackers to win. If any attacker times out, the trial fails and they all vanish.",
+   "On a win Rhaliq Trell appears at /loc 1374, 456. Hail him to get the second trial flag."
   ],
   "npcs": [
    {
@@ -749,14 +762,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Halls of Honor",
   "name": "Trial of Honor 3: Crazed Norrathians (Alekson Garn)",
   "kind": "flag",
-  "kindWhy": "Success + hail to #Alekson_Garn (211108) sets digit 3 of hohtrials.",
-  "groupLimit": "Flagger FLAG_LIMIT 72; killer's raid/group only.",
-  "start": "Hail Alekson_Garn (211060), then 'ready' -> Custodian spawns and the event begins when it dies.",
-  "timers": "Attacker depop 50000 ms (a timeout fails the event); #Alekson depop 600000 ms; bounds 6000 ms (x outside -2800..-2200); success respawn 64800000 ms (18 h).",
+  "kindWhy": "Trial of Honor 3. Winning and hailing Alekson Garn gives the third of the three trial flags.",
+  "groupLimit": "Alekson Garn flags only the raid, group or solo player that got credit, and only 72 players per win.",
+  "start": "Hail Alekson Garn and say 'ready'. A Custodian of Marr appears. The trial begins when it dies.",
+  "timers": "Each attacker must be fought within 50 seconds of appearing, or the trial fails. The clock stops while it fights. Alekson Garn stays 10 minutes. After a win, the room stays closed for 18 hours. Mobs that leave the trial area are checked every 6 seconds.",
   "mechanics": [
-   "StartEvent spawns Miranda_Climmes (211082) and Ydira_Merok (211083) and trash rooms of a_crazed_norrathian (211074/211118) and recuso vagrant/straggler/drifter (211077/211076/211075).",
-   "Killing all trash in a room spawns that room's boss: Advocent_Joran (211084), Halgoz_Rellinic (211086), Freegan_Haun (211085).",
-   "After all 3 bosses die (bossKills == 3) -> EventSuccess; #Alekson_Garn (211108) spawns at -2330,-1724,-110.4; hail -> hohtrials digit 3."
+   "Miranda Climmes and Ydira Merok appear, with rooms of crazed Norrathians and of recuso vagrants, stragglers and drifters.",
+   "Kill every mob in a room and that room's boss appears: Advocent Joran, Halgoz Rellinic or Freegan Haun.",
+   "Kill all three bosses to win. Alekson Garn then appears at /loc -1724, -2330. Hail him to get the third trial flag."
   ],
   "npcs": [
    {
@@ -802,14 +815,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Temple of Marr",
   "name": "Lord Mithaniel Marr (with Edium, Halon, Ralthazor)",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss: death spawns Planar Projection 220025 (1200 s); hail sets mmarr=1 and mmarr_book=1 when hohtrials=='111' (Seer header: mmarr/mmarr_book; zebuxoruk needs them).",
-  "groupLimit": "Projection FLAG_LIMIT = 72 * 2.",
-  "start": "Kill the three guardians Edium, Guardian of Marr (220021), Halon of Marr (220022) and Ralthazor, Champion of Marr (220012); each spawn signals Mithaniel 2 (untargetable), each death signals 1 (check after 3000 ms; targetable when all 3 spawn ids 367227/366604/367163 are empty).",
-  "timers": "check 3000 ms; bounds 5000 ms in combat (x < 2200 resets + Balance of the Nameless); projection depop 1200000 ms.",
+  "kindWhy": "The flag boss of the Temple of Marr. His death brings a Planar Projection that gives the Mithaniel Marr flag, which the road to Zebuxoruk needs. You need all three trial flags to get it.",
+  "groupLimit": "The projection flags only the raid, group or solo player that got credit, and up to 144 players.",
+  "start": "Kill the three guardians, Edium, Halon of Marr and Ralthazor, Champion of Marr. Lord Mithaniel Marr cannot be targeted until all three are dead.",
+  "timers": "The game checks the guardians 3 seconds after each one dies. During the fight it checks every 5 seconds that Mithaniel has not been pulled out of the room. The projection stays for 20 minutes.",
   "mechanics": [
-   "Lord_Mithaniel_Marr (220020, level 77, 1,200,000 hp) is untargetable until all three guardians are dead.",
-   "On Mithaniel spawn the three guardian spawn points are reset (SetTimer(1)).",
-   "Death: Planar Projection spawns. Hail: no mmarr/cipher and hohtrials=='111' -> mmarr=1 (character flag) and, if no zebuxoruk, mmarr_book=1; otherwise checklist flags cl_mmarr / cl_mmarr_book."
+   "Lord Mithaniel Marr is level 77 with 1,200,000 HP.",
+   "A mob pulled out of the room is sent back, loses its hate list and casts Balance of the Nameless.",
+   "When Mithaniel appears, the three guardians' spawn points are reset.",
+   "When he dies, a Planar Projection appears. With all three trials done, hailing it gives the Mithaniel Marr flag, plus the Marr book flag if you have not yet been to Zebuxoruk. Otherwise you get the checklist flags."
   ],
   "npcs": [
    {
@@ -853,14 +867,16 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Air",
   "name": "Xegony, the Queen of Air (rainbow room)",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss of Air: death spawns Essence_of_Air (215432, 1200 s) whose hail summons Amorphous Cloud of Air (29164); Seer/Quintessence path (29165). Entry requires the Wind Etched Key (28638, keyring) or a 300 s raid/group authorization (player.lua door 1).",
-  "groupLimit": "Essence_of_Air FLAG_LIMIT 72 items; it depops once the limit is reached.",
-  "start": "Click the Xegony rainbow door (id 1) holding Wind Etched Key 28638 (or its keyring entry); one holder authorizes his raid/group for 300 s. Pull #Xegony_the_Queen_of_Air (215056).",
-  "timers": "check_hp 6000 ms; HP triggers 99, 85, 70, 55, 40, 25%; if the fight lasted over 120 s when it drops she resets to spawn; all adds repop (RepopEverything) on disengage.",
+  "kindWhy": "The flag boss of the Plane of Air. His death brings the Essence of Air, which gives you an Amorphous Cloud of Air, a step toward the Plane of Time.",
+  "groupLimit": "The Essence of Air gives out 72 items, then leaves.",
+  "start": "Click Xegony's rainbow door while carrying the Wind Etched Key on your cursor or key ring. One holder covers the raid or group for 5 minutes. Then pull Xegony, the Queen of Air.",
+  "timers": "Her health is checked every 6 seconds. Waves come at 99%, 85%, 70%, 55%, 40% and 25%. The Essence of Air stays for 20 minutes.",
   "mechanics": [
-   "At each of the 6 HP triggers one unused named wave (random of 6) spawns and charges Xegony: Nuquernal Belegrodian 215404 + A_Djinni_Air_Defender 215047; Wesreh Galleantan 215403 + Servant_of_Air 215051; Rindaler Egulrtan 215408 + A_Knight_of_Air 215052; An_Elemental_Arbitor 215406 + An_Air_Infused_Defender 215050; Weruis Herfadban 215407 + An_Air_Phoenix_Scout 215049; Huridaf Vorgaasna 215405 + A_Deadly_Cloudwalker 215048.",
-   "Prismatic guardians (215004), High_Councilman_of_the_Queen (215005) and #Muzlakh_the_Chosen (215053) are the room's other resident mobs (Muzlakh has the drophate / combat scripts).",
-   "Essence_of_Air hail: summons Amorphous Cloud of Air (29164) if the character has neither it nor 29165."
+   "At each health mark, one named wave you have not met yet (picked at random of six) appears and runs to Xegony. The six are Nuquernal Belegrodian with a Djinni Air Defender, Wesreh Galleantan with a Servant of Air, Rindaler Egulrtan with a Knight of Air, an Elemental Arbitor with an Air Infused Defender, Weruis Herfadban with an Air Phoenix Scout, and Huridaf Vorgaasna with a Deadly Cloudwalker.",
+   "The ordinary defender of that wave in the room joins in as well.",
+   "If you stop fighting after more than 2 minutes, Xegony goes back to her spot and all the adds come back.",
+   "The room's other mobs are the prismatic guardians, the High Councilman of the Queen and Muzlakh the Chosen.",
+   "Hail the Essence of Air after she dies to be given an Amorphous Cloud of Air, if you have neither it nor a Quintessence of Elements."
   ],
   "npcs": [
    {
@@ -928,7 +944,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 29164,
     "name": "Amorphous Cloud of Air",
-    "trigger": "Hail Essence_of_Air (215432) after Xegony dies, if character lacks 29164/29165 (SummonCursorItem)"
+    "trigger": "Hail the Essence of Air after Xegony dies, if you have neither the Cloud nor a Quintessence of Elements"
    }
   ],
   "cites": [
@@ -943,12 +959,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Air",
   "name": "Castellan event (Constables -> Chamberlain Escalardian)",
   "kind": "optional",
-  "kindWhy": "Side event on the castellan island (POACastellanController 215419); loot only, no flag.",
-  "start": "Passive: kill A_Castellan_of_Air (215000) island mobs; 5th, 10th and 15th kills spawn the three constables in random order.",
-  "timers": "castellan_repop 1080000 ms (18 min) when a castellan is still up, else 10800000 ms (3 h); controller only runs when the zone is guild>1 or guild 1 inside the raid window.",
+  "kindWhy": "Side event on the castellan island, with loot and no flag.",
+  "start": "Nothing to start: kill the castellans of air on the island. Kills 5, 10 and 15 each bring one of three constables, in random order. In the shared copy of the zone this only runs while the server's raid window is open.",
+  "timers": "The castellans come back after 18 minutes if one is still alive, otherwise after 3 hours.",
   "mechanics": [
-   "Kill 5/10/15 -> #Constable_Alranderisan 215383 / #Constable_Belecohen 215384 / #Constable_Ferabalen 215385 (order random) unique-spawn at fixed 403,463 / 518,456 / 461,498.",
-   "When all three constables are dead a #Chamberlain_Escalardian (215411) spawns at 457,412,-88.622 (or placeholder #A_Chamberlain`s_Apprentice 215410 when armor_guy 215418 is absent)."
+   "Kill 5, 10 and 15 bring Constable Alranderisan at /loc 463, 403, Constable Belecohen at /loc 456, 518 and Constable Ferabalen at /loc 498, 461. Which one comes first is random.",
+   "When all three constables are dead, Chamberlain Escalardian appears at /loc 412, 457. A Chamberlain's Apprentice can stand in for him."
   ],
   "npcs": [
    {
@@ -995,11 +1011,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Air",
   "name": "Named air mobs: Queen Silandria, Baltaldor, Gakamenial, Rinturion, Arch Mage Alchtonion, Inlokher",
   "kind": "optional",
-  "kindWhy": "Scripts only reduce hate on the tank every ~60 s and simulate warp-home heals; loot only.",
-  "start": "Passive pulls.",
-  "timers": "drophate 1000 ms timer in combat (1.666% per tick, about once per 60 s sets tank hate to 1%).",
+  "kindWhy": "Named mobs on the Plane of Air with loot and no flag. Their scripts only drop the tank's hate and let them warp home and heal.",
+  "start": "Nothing to start: pull them.",
+  "timers": "About once a minute during the fight, the mob drops its target's hate to almost nothing.",
   "mechanics": [
-   "On disengage, when HP < 50% or by chance (100 - ratio %), the boss is warped to its guard point and healed 30% of max HP."
+   "When the fight ends, a boss below half health always warps back to its post and heals 30% of its health. Above half health the chance is 100 minus its health percent.",
+   "The mobs are Queen Silandria, Baltaldor the Cursed, Gakamenial Fir`Disralsi, Rinturion Windblade, Arch Mage Alchtonion and Inlokher."
   ],
   "npcs": [
    {
@@ -1054,15 +1071,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Air",
   "name": "Plane of Air ring: Wind (Stormriders -> Pherlondien Clawpike -> Avatar of Wind)",
   "kind": "flag",
-  "kindWhy": "Each of the four ring events ends with an Avatar whose Mystical Essence (28639 Wind / 28640 Smoke / 28641 Mist / 28642 Dust, 100%) is the ingredient for the Wind Etched Key (28638) that opens Xegony's rainbow door (player.lua door 1). The combine is not in the scripts. Xegony's Essence of Air then feeds the Quintessence of Elements / Plane of Time access.",
-  "groupLimit": "No scripted cap. In the main (guild id 1) zone the ring only activates while eq.guild_one_raid_window_open() is true (ControllerSignal returns early otherwise).",
-  "start": "Passive: kill every native island mob (A_Stormrider_Lightningclaw 215013 / A_Mischievous_Stormrider 215002 / A_Fearsome_Stormrider 215014 at the 27 ISLAND_SPAWNIDS). When CheckIsland() finds them all dead, POAStormriderController (215420) starts the event.",
-  "timers": "Island repop clock 237600000 ms (66 h) after a success; attempt window 10800000 ms (3 h, 'air_attempt_end') and a 1080000 ms (18 min) island repop after a failed/reset attempt; the Avatar self-depops after 9000000 ms (2.5 h) out of combat; guild instances use lua_modules/air_ring_recovery (RETRY 900 s, ATTEMPT 10800 s, IDLE 9000 s, CYCLE 237600 s).",
+  "kindWhy": "One of four ring events on the Plane of Air. Each ends with an Avatar that drops a Mystical Essence, a part of the Wind Etched Key for Xegony's door. How the key is made is not in the scripts.",
+  "groupLimit": "No cap in the script. In the shared copy of the zone the ring only starts while the server's raid window is open. Guild instances have no such limit.",
+  "start": "Kill every native stormrider on the island: Stormrider Lightningclaws, Mischievous Stormriders and Fearsome Stormriders, 27 spawn points in all. When the last one is dead, the event begins.",
+  "timers": "After a win the island is back in 66 hours. The attempt lasts 3 hours. After a failed or reset attempt the island is back in 18 minutes. The Avatar leaves after 2 hours 30 minutes out of combat. Guild instances retry after 15 minutes.",
   "mechanics": [
-   "Eight A_Menacing_Stormrider (215386) spawn and are woken at 60/60/120/120/180/180/240/240 s; Stormrider_Priest_of_Destruction (215387) spawns at -259,-677,115.",
-   "Priest death: menacing riders depop and 4 storm_boss_inv traps (215424) are placed randomly (x -589..-169, y -842..-498); stepping into combat with a trap spawns an A_Sporadic_Stormrider (215388).",
-   "When the sporadic stormriders are dead and the marker (215414) is up, one real Pherlondien_Clawpike (215390) and fake bosses (215389) spawn at BOSS_LOCS; otherwise placeholder A_Loathesome_Stormclaw (215425).",
-   "Boss death spawns #Avatar_of_Wind (215391) at -1591,484,15."
+   "Eight Menacing Stormriders appear and wake at 1, 1, 2, 2, 3, 3, 4 and 4 minutes. The Stormrider Priest of Destruction appears at /loc -677, -259.",
+   "When the Priest dies, the riders vanish and four traps are placed at random in the area. Stepping into combat with a trap brings a Sporadic Stormrider.",
+   "When the Sporadic Stormriders are dead, one real Pherlondien Clawpike appears among fake bosses. If something is missing, a Loathesome Stormclaw appears instead.",
+   "When the boss dies, the Avatar of Wind appears at /loc 484, -1591 and drops the Mystical Essence of Wind every time."
   ],
   "npcs": [
    {
@@ -1113,14 +1130,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Air",
   "name": "Plane of Air ring: Smoke (Elemental Champions -> Masterpiece -> Avatar of Smoke)",
   "kind": "flag",
-  "kindWhy": "Each of the four ring events ends with an Avatar whose Mystical Essence (28639 Wind / 28640 Smoke / 28641 Mist / 28642 Dust, 100%) is the ingredient for the Wind Etched Key (28638) that opens Xegony's rainbow door (player.lua door 1). The combine is not in the scripts. Xegony's Essence of Air then feeds the Quintessence of Elements / Plane of Time access.",
-  "groupLimit": "No scripted cap. In the main (guild id 1) zone the ring only activates while eq.guild_one_raid_window_open() is true (ControllerSignal returns early otherwise).",
-  "start": "Passive: kill the 21 island elementals (A_Confused_Air_Elemental 215012 / A_Swirling_Elemental_Force 215039). Each kill signals POAElementalController (215421).",
-  "timers": "Island repop clock 237600000 ms (66 h) after a success; attempt window 10800000 ms (3 h, 'air_attempt_end') and a 1080000 ms (18 min) island repop after a failed/reset attempt; the Avatar self-depops after 9000000 ms (2.5 h) out of combat; guild instances use lua_modules/air_ring_recovery (RETRY 900 s, ATTEMPT 10800 s, IDLE 9000 s, CYCLE 237600 s).",
+  "kindWhy": "One of four ring events on the Plane of Air. Each ends with an Avatar that drops a Mystical Essence, a part of the Wind Etched Key for Xegony's door. How the key is made is not in the scripts.",
+  "groupLimit": "No cap in the script. In the shared copy of the zone the ring only starts while the server's raid window is open. Guild instances have no such limit.",
+  "start": "Kill the 21 island elementals, Confused Air Elementals and Swirling Elemental Forces. Each kill counts toward the event.",
+  "timers": "After a win the island is back in 66 hours. The attempt lasts 3 hours. After a failed or reset attempt the island is back in 18 minutes. The Avatar leaves after 2 hours 30 minutes out of combat. Guild instances retry after 15 minutes.",
   "mechanics": [
-   "Island kills 5, 10, 15 and 21 spawn An_Elemental_Champion variants (215395, 215447, 215448, 215449) at -491,-1274 / -434,-1208 / -395,-1283 / -452,-1341; at kill 21 all champions are made attackable.",
-   "When all champions are dead, An_Elemental_Masterpiece (215396) unique-spawns at -445,-1284,323 (or the placeholder An_Elemental_Anomaly 215427).",
-   "Masterpiece death spawns #Avatar_of_Smoke (215392) at 1396,-680,18."
+   "Kills 5, 10, 15 and 21 each bring an Elemental Champion, at /loc -1274, -491, /loc -1208, -434, /loc -1283, -395 and /loc -1341, -452. At kill 21 all the champions can be attacked.",
+   "When all the champions are dead, the Elemental Masterpiece appears at /loc -1284, -445. An Elemental Anomaly can stand in for it.",
+   "When the Masterpiece dies, the Avatar of Smoke appears at /loc -680, 1396 and drops the Mystical Essence of Smoke every time."
   ],
   "npcs": [
    {
@@ -1174,15 +1191,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Air",
   "name": "Plane of Air ring: Mist (Phoenixes -> Melernil Faal`Armanna -> Avatar of Mist)",
   "kind": "flag",
-  "kindWhy": "Each of the four ring events ends with an Avatar whose Mystical Essence (28639 Wind / 28640 Smoke / 28641 Mist / 28642 Dust, 100%) is the ingredient for the Wind Etched Key (28638) that opens Xegony's rainbow door (player.lua door 1). The combine is not in the scripts. Xegony's Essence of Air then feeds the Quintessence of Elements / Plane of Time access.",
-  "groupLimit": "No scripted cap. In the main (guild id 1) zone the ring only activates while eq.guild_one_raid_window_open() is true (ControllerSignal returns early otherwise).",
-  "start": "Passive: kill the island phoenixes (A_Wind_Phoenix 215026 / 215450, Servitor_of_Xegony 215027, A_Phoenix_Breezewing 215058, A_Phoenix_Searedwing 215028, #Calebgrothiel 215324). POAPhoenixController (215423) starts the event when the island is clear.",
-  "timers": "Island repop clock 237600000 ms (66 h) after a success; attempt window 10800000 ms (3 h, 'air_attempt_end') and a 1080000 ms (18 min) island repop after a failed/reset attempt; the Avatar self-depops after 9000000 ms (2.5 h) out of combat; guild instances use lua_modules/air_ring_recovery (RETRY 900 s, ATTEMPT 10800 s, IDLE 9000 s, CYCLE 237600 s).",
+  "kindWhy": "One of four ring events on the Plane of Air. Each ends with an Avatar that drops a Mystical Essence, a part of the Wind Etched Key for Xegony's door. How the key is made is not in the scripts.",
+  "groupLimit": "No cap in the script. In the shared copy of the zone the ring only starts while the server's raid window is open. Guild instances have no such limit.",
+  "start": "Kill the island phoenixes: Wind Phoenixes, Servitors of Xegony, Phoenix Breezewings, Phoenix Searedwings and Calebgrothiel. When the island is clear, the event begins.",
+  "timers": "After a win the island is back in 66 hours. The attempt lasts 3 hours. After a failed or reset attempt the island is back in 18 minutes. The Avatar leaves after 2 hours 30 minutes out of combat. Guild instances retry after 15 minutes.",
   "mechanics": [
-   "Stage 1: four A_Phoenix_Firesurger (215397) spawn at SURGER_LOCS (369,-741,438 etc.); when all die stage 2 spawns four A_Phoenix_Windsurger (215398).",
-   "When the windsurgers are dead Melernil_Faal`Armanna (215399) unique-spawns at 326,-718,441 (or placeholder A_Firewing_Imitor 215429).",
-   "Killing a wizard Wind Phoenix (215450) spawns two Ardent_Phoenix_of_Xegony (215430).",
-   "Boss death spawns #Avatar_of_Mist (215393) at -1573,-570,356.125."
+   "Stage 1: four Phoenix Firesurgers appear. When all are dead, stage 2 brings four Phoenix Windsurgers.",
+   "When the Windsurgers are dead, Melernil Faal`Armanna appears at /loc -718, 326. A Firewing Imitor can stand in for her.",
+   "Killing a wizard Wind Phoenix brings two Ardent Phoenixes of Xegony.",
+   "When the boss dies, the Avatar of Mist appears at /loc -570, -1573 and drops the Mystical Essence of Mist every time."
   ],
   "npcs": [
    {
@@ -1233,15 +1250,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Air",
   "name": "Plane of Air ring: Dust (Vorladien spiders / Sigismond Windwalker -> Avatar of Dust)",
   "kind": "flag",
-  "kindWhy": "Each of the four ring events ends with an Avatar whose Mystical Essence (28639 Wind / 28640 Smoke / 28641 Mist / 28642 Dust, 100%) is the ingredient for the Wind Etched Key (28638) that opens Xegony's rainbow door (player.lua door 1). The combine is not in the scripts. Xegony's Essence of Air then feeds the Quintessence of Elements / Plane of Time access.",
-  "groupLimit": "No scripted cap. In the main (guild id 1) zone the ring only activates while eq.guild_one_raid_window_open() is true (ControllerSignal returns early otherwise).",
-  "start": "Passive: kill the 35 island spiders/windwalkers (A_Crystalline_Windwalker 215043 / A_Pristine_Recluse 215044 / A_Vorladien_Webspinner 215045 / #Lossenmachar 215060). POASpiderController (215422) starts the event when the island is clear.",
-  "timers": "Island repop clock 237600000 ms (66 h) after a success; attempt window 10800000 ms (3 h, 'air_attempt_end') and a 1080000 ms (18 min) island repop after a failed/reset attempt; the Avatar self-depops after 9000000 ms (2.5 h) out of combat; guild instances use lua_modules/air_ring_recovery (RETRY 900 s, ATTEMPT 10800 s, IDLE 9000 s, CYCLE 237600 s). Dust stage 2 has an extra 3600000 ms (1 h) limit.",
+  "kindWhy": "One of four ring events on the Plane of Air. Each ends with an Avatar that drops a Mystical Essence, a part of the Wind Etched Key for Xegony's door. How the key is made is not in the scripts.",
+  "groupLimit": "No cap in the script. In the shared copy of the zone the ring only starts while the server's raid window is open. Guild instances have no such limit.",
+  "start": "Kill the 35 island spiders and windwalkers: Crystalline Windwalkers, Pristine Recluses, Vorladien Webspinners and Lossenmachar. When the island is clear, the event begins.",
+  "timers": "After a win the island is back in 66 hours. The attempt lasts 3 hours, and stage 2 has its own 1 hour limit. After a failed or reset attempt the island is back in 18 minutes. The Avatar leaves after 2 hours 30 minutes out of combat. Guild instances retry after 15 minutes.",
   "mechanics": [
-   "Sigismond_Windwalker (215375) grows in size with island kills (every 3 kills, 16 at the last).",
-   "Stage 2 (1 h limit, '1h_despawn' 3600000 ms): A_Vorladien_Archwalker (215400) spawn with A_Vorladien_Spawn (215401) adds; 3 archwalker waves, with An_Erratic_Arachnid (215402) spawn points toggled on.",
-   "After the third wave Sigismond is made attackable (or placeholder An_Ominous_Recluse 215428 at -400,889,433.6).",
-   "Death of the boss spawns #Avatar_of_Dust (215394) at 1671,527,344."
+   "Sigismond Windwalker grows bigger as the island is cleared: every 3 kills, and the most at the last.",
+   "Stage 2 has three waves of Vorladien Archwalkers with Vorladien Spawn adds, and Erratic Arachnid spawn points switched on.",
+   "After the third wave Sigismond can be attacked. An Ominous Recluse can stand in for him at /loc 889, -400.",
+   "When the boss dies, the Avatar of Dust appears at /loc 527, 1671 and drops the Mystical Essence of Dust every time."
   ],
   "npcs": [
    {
@@ -1288,13 +1305,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Disease",
   "name": "Grummus (Planar Projection grants grummus / fuirstel=2)",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss: death spawns Planar Projection 205156 (1200 s) whose hail sets fuirstel 1 -> 2 (if fuirstel==1) and grummus=1 (grants access to the Crypt of Decay; player.lua event_zone sets zone flag 200 when entering zone 200 with grummus). Otherwise gives checklist cl_grummus.",
-  "groupLimit": "Projection FLAG_LIMIT = 72 * 2 = 144.",
-  "start": "Pull #Grummus (205091).",
-  "timers": "Projection depops 1200000 ms (20 min).",
+  "kindWhy": "The flag boss of the Plane of Disease. His death brings a Planar Projection that moves the Disease and Crypt flag series on and gives the Grummus flag, which opens the Crypt of Decay.",
+  "groupLimit": "The projection flags the killer's raid, group or solo player, up to 144 players.",
+  "start": "Pull Grummus.",
+  "timers": "The projection stays for 20 minutes.",
   "mechanics": [
-   "Death: ProjectionEligibility.Spawn(205156) at the corpse for the killer's raid/group.",
-   "Hail projection: fuirstel==1 -> fuirstel=2; no fuirstel and no cl_grummus -> checklist flag cl_grummus; any hail without grummus -> grummus=1 (flags++)."
+   "When Grummus dies, a Planar Projection appears on his corpse for the killer's raid or group.",
+   "Hail the projection. If you are on step 1 of the Disease and Crypt flag series, you move to step 2. Any hail without the Grummus flag gives you the Grummus flag.",
+   "If you have neither the series flag nor the checklist flag for Grummus, you get the checklist flag."
   ],
   "npcs": [
    {
@@ -1317,11 +1335,11 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Disease",
   "name": "Aramin the Spider Guardian (arachnae spawns)",
   "kind": "optional",
-  "kindWhy": "No flag; death spawns 7-8 arachnae and has gear drops.",
-  "start": "Pull #Aramin_the_Spider_Guardian (205095).",
-  "timers": "Arachnae script timers not summarised (see An_Arachnae_*.lua).",
+  "kindWhy": "Optional fight that sets no flag. His death brings 7 or 8 arachnae, and he has gear drops.",
+  "start": "Pull Aramin the Spider Guardian.",
+  "timers": "The arachnae's own timers are not covered here.",
   "mechanics": [
-   "On death_complete spawns 3-4 An_Arachnae_Serioun (205158) and 3-4 An_Arachnae_Maleveler (205157) (7 or 8 total) at fixed coordinates near z 373."
+   "When Aramin dies, 3 or 4 Arachnae Serioun and 3 or 4 Arachnae Maleveler appear (7 or 8 in all) at fixed spots near him."
   ],
   "npcs": [
    {
@@ -1354,13 +1372,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Disease",
   "name": "Rallius Rattican (ratboss wave event)",
   "kind": "optional",
-  "kindWhy": "Loot/side event (Rattican's Head 29133 100%); no flag in script.",
-  "start": "Engage #Rallius_Rattican (205134) - first combat join starts the event.",
-  "timers": "cronies every 290000 ms (initially 1000 ms); youth every 360000 ms (first at 150000 ms); reset 1200000 ms (paused while in combat); trash depop 300000 ms.",
+  "kindWhy": "Optional wave fight with loot (Rattican's Head, always) and no flag.",
+  "start": "Engage Rallius Rattican. The first fight begins the event.",
+  "timers": "Two cronies appear right away, then every 4 min 50 s. Bubonian youths come every 6 minutes, the first after 2 min 30 s. The event resets after 20 minutes (the clock stops while you fight). Leftover adds leave after 5 minutes.",
   "mechanics": [
-   "On first combat: 2 A_gargantuan_arachnae (205159) spawn at 96,-3384 and -539,-3482.",
-   "Every cycle 2 a_bubonian_cronie (205160) spawn at the boss's lair; every 6 min 3-6 A_bubonian_youth (205161) spawn and walk waypoint 7.",
-   "Boss death or timeout resets: depop spiders."
+   "On the first fight, two gargantuan arachnae appear at /loc -3384, 96 and /loc -3482, -539.",
+   "Every cycle, two Bubonian cronies appear at the boss's lair.",
+   "Every 6 minutes, 3 to 6 Bubonian youths appear and walk along a set path.",
+   "When the boss dies or the time runs out, the spiders vanish and the event resets."
   ],
   "npcs": [
    {
@@ -1399,11 +1418,11 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Disease",
   "name": "Gryme the Crypt Guardian",
   "kind": "optional",
-  "kindWhy": "Drops Grymes Crypt Key (28999) 100%; grep found no script that consumes item 28999 in this repo, so purpose is unknown. No script file for Gryme.",
-  "start": "Passive pull of #Gryme_the_Crypt_Guardian (205096).",
-  "timers": "unknown",
+  "kindWhy": "Always drops the Grymes Crypt Key. No script in the quest files uses that key, so what it opens is unknown. There is no script for Gryme.",
+  "start": "Nothing to start: pull Gryme the Crypt Guardian.",
+  "timers": "Unknown.",
   "mechanics": [
-   "No dedicated script; drops come from the database loot table."
+   "No script covers Gryme. His drops come from the loot table only."
   ],
   "npcs": [
    {
@@ -1422,14 +1441,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Earth (Rathe Temple, A)",
   "name": "Dust Ring (dusty warder -> devotees -> Triumvirate of Soil -> Perfected Warder)",
   "kind": "flag",
-  "kindWhy": "Each of the four rings signals the Arbitor controller (arbitor_guy, signal 4 = Dust, 2 = Mud, 1 = Stone, 3 = Vine); once all four are completed within 24 h the Mystical Arbitor of Earth spawns, and its Planar Projection sets earthb_key (door 9-11 into Plane of Earth B).",
-  "groupLimit": "none scripted",
-  "start": "Passive: kill the dusty warder (218022, spawn point 366233) - the temple wakes.",
-  "timers": "Failure respawn FAILURE_RESPAWN_TIME = 900000 ms (15 min); success respawn SUCCESS_RESPAWN_TIME = 237600 * 1000 ms (66 h); invisible 'invis' timer 60000 ms; the despawn man times the attempt out.",
+  "kindWhy": "Ring 4 of 4. When all four rings are done within 24 hours, the Mystical Arbitor of Earth appears, and his projection gives the key into the Plane of Earth B.",
+  "groupLimit": "No cap in the script.",
+  "start": "Kill the dusty warder. The temple wakes.",
+  "timers": "After a fail the ring is back in 15 minutes. After a win it is back in 66 hours. The attempt is timed out by a hidden despawn timer.",
   "mechanics": [
-   "Warder death: three streams of dust devotees (218366) rise; kill 37 devotees (devoteeKills == 37).",
-   "Then the Triumvirate of Soil (218367 / 218421) advance; when all fall the final defender appears (Perfected Warder of Earth 218413, with Protector 218414 and Follower 218415).",
-   "Success sends signal 4 to the Arbitor controller (ARBITOR_GUY 218393); failure resets the ring (15 min)."
+   "When the warder dies, three streams of dust devotees rise. Kill 37 of them.",
+   "Then the Triumvirate of Soil advances. When all three fall, the final defender appears: the Perfected Warder of Earth, with a Protector and a Follower.",
+   "A win counts the Dust ring toward the Arbitor. A fail resets the ring for 15 minutes."
   ],
   "npcs": [
    {
@@ -1483,14 +1502,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Earth (Rathe Temple, A)",
   "name": "Mud Ring (blue/red mudwalkers -> Sludge Lurker -> mudlings)",
   "kind": "flag",
-  "kindWhy": "Ring 2 of 4 toward the Arbitor (signal 2); see Dust Ring.",
-  "groupLimit": "none scripted",
-  "start": "Passive: kill the blue mudwalkers (218317) in the mire; red mudwalkers (218418) follow.",
-  "timers": "Failure respawn 900000 ms (15 min); success respawn 237600 * 1000 ms (66 h); watchdog 5000 ms; RUNNER_GRACE 30 s for the red-wave runners.",
+  "kindWhy": "Ring 2 of 4 toward the Mystical Arbitor of Earth. See the Dust Ring.",
+  "groupLimit": "No cap in the script.",
+  "start": "Kill the blue mudwalkers in the mire. The red mudwalkers follow.",
+  "timers": "After a fail the ring is back in 15 minutes. After a win it is back in 66 hours. The ring waits up to 30 seconds for the little golem runners.",
   "mechanics": [
-   "Red mudwalkers (218418) release little golem runners (218419) that run to the temple after they die.",
-   "The final mudwalker bursts and A_Sludge_Lurker (218357) heaves free; Muck Mudlets (218358), Mud-dite Mudlings (218361), Filth Gorgers (218359), Monsterous Mudwalker (218360) and Merciless Mudslinger (218365) are the later defenders.",
-   "Success signals the Arbitor controller with 2."
+   "When red mudwalkers die, they release little golem runners that run to the temple.",
+   "The last mudwalker bursts and a Sludge Lurker heaves free. Later defenders are Muck Mudlets, Mud-dite Mudlings, Filth Gorgers, a Monsterous Mudwalker and a Merciless Mudslinger.",
+   "A win counts the Mud ring toward the Arbitor."
   ],
   "npcs": [
    {
@@ -1543,14 +1562,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Earth (Rathe Temple, A)",
   "name": "Stone Ring (rock creations -> fortifications -> Rock Monstrosity / Peregrin Rockskull)",
   "kind": "flag",
-  "kindWhy": "Ring 1 of 4 toward the Arbitor (signal 1); see Dust Ring.",
-  "groupLimit": "none scripted",
-  "start": "Passive: kill the trigger mobs (Rock Creation 218032 / Crumbling Stone Mass 218031 / Pile of Boulders 218030 / Boulder Thrower 218033).",
-  "timers": "The invisible STONEDESPAWN man (218395) spawns when the event begins and depops in 98 minutes, which fails the event; failure respawn 900000 ms; success respawn 237600 * 1000 ms (66 h).",
+  "kindWhy": "Ring 1 of 4 toward the Mystical Arbitor of Earth. See the Dust Ring.",
+  "groupLimit": "No cap in the script.",
+  "start": "Kill the trigger mobs: Rock Creation, Crumbling Stone Mass, Pile of Boulders or Boulder Thrower.",
+  "timers": "You have 98 minutes from the start, then the event fails. After a fail the ring is back in 15 minutes. After a win it is back in 66 hours.",
   "mechanics": [
-   "Fortifications (218369) and Mound of Rubble (218370) waves; A_Rock_Monstrosity (218371, 800000 hp) with stone heaps (218372).",
-   "Final: Peregrin_Rockskull (218374) with An_Encrusted_Dirt_Cloud (218373).",
-   "Success signals the Arbitor controller with 1."
+   "Waves of Fortifications and Mounds of Rubble come first.",
+   "Then a Rock Monstrosity (800,000 HP) comes with stone heaps.",
+   "Last is Peregrin Rockskull with an Encrusted Dirt Cloud.",
+   "A win counts the Stone ring toward the Arbitor."
   ],
   "npcs": [
    {
@@ -1603,14 +1623,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Earth (Rathe Temple, A)",
   "name": "Vine Ring (tainted rock beasts -> bloodthirsty creatures -> Derugoak Bloodwalker)",
   "kind": "flag",
-  "kindWhy": "Ring 3 of 4 toward the Arbitor (signal 3); see Dust Ring.",
-  "groupLimit": "none scripted",
-  "start": "Passive: kill the tainted rock beasts (218019).",
-  "timers": "Boss adds timer 60000 ms; adds depop 600000 ms; success cleanup depop 600000 ms; failure respawn 900000 ms; success respawn 66 h.",
+  "kindWhy": "Ring 3 of 4 toward the Mystical Arbitor of Earth. See the Dust Ring.",
+  "groupLimit": "No cap in the script.",
+  "start": "Kill the tainted rock beasts.",
+  "timers": "Boss adds come every minute during the fight. Adds leave after 10 minutes, and the cleanup after a win also takes 10 minutes. After a fail the ring is back in 15 minutes. After a win it is back in 66 hours.",
   "mechanics": [
-   "Last tainted rock beast falls -> vines raise the bloodthirsty creatures (218362).",
-   "Last bloodthirsty creature falls -> Derugoak_Bloodwalker (218363; fake boss A_Bloodsoaked_Vegerog 218364) emerges; mangled adds (218420) spawn every 60 s in combat.",
-   "Success signals the Arbitor controller with 3."
+   "When the last tainted rock beast falls, the vines raise the bloodthirsty creatures.",
+   "When the last bloodthirsty creature falls, Derugoak Bloodwalker emerges (a fake boss, a Bloodsoaked Vegerog, is also in play). Mangled adds appear every minute while he fights.",
+   "A win counts the Vine ring toward the Arbitor."
   ],
   "npcs": [
    {
@@ -1651,13 +1671,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Earth (Rathe Temple, A)",
   "name": "Mystical Arbitor of Earth (after all four rings)",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss: death spawns A_Planar_Projection 218398 (1200 s) whose hail sets earthb_key=1 ('character flag'); doors 9-11 move characters with earthb_key into Plane of Earth B (zone flag 222). Seer header lists earthb_key.",
-  "groupLimit": "Projection MAX_KEYS = 72 per spawn.",
-  "start": "Complete all four rings (Stone 1, Mud 2, Vine 3, Dust 4), each within the last 24 h (WINDOW = 86400 s); arbitor_guy then unique-spawns A_Mystical_Arbitor_of_Earth (218375) at 1530,-2739,28 (retry every 30 s if it fails).",
-  "timers": "Arbitor depop 3000000 ms; drophate 5% per second tick (about once per 20 s: sets tank hate to 1%); ring progress persisted per guild in eq data for 24 h + 1 s.",
+  "kindWhy": "The flag boss of the Plane of Earth A. His death brings a Planar Projection that gives the key into the Plane of Earth B.",
+  "groupLimit": "The projection flags only the raid, group or solo player that got credit, and only 72 players per projection.",
+  "start": "Finish all four rings (Stone, Mud, Vine, Dust), each within the last 24 hours. The Mystical Arbitor of Earth then appears at /loc -2739, 1530, retrying every 30 seconds if it fails.",
+  "timers": "The Arbitor stays for 50 minutes. Ring progress is kept for 24 hours for the guild.",
   "mechanics": [
-   "Disengage heal: below 50% HP or random warp-home with 30% heal.",
-   "Death: ProjectionEligibility spawns the Planar Projection; hail -> earthb_key."
+   "About once every 20 seconds he drops his target's hate to almost nothing.",
+   "When the fight ends he may warp home and heal 30%, and always does below half health.",
+   "When he dies, a Planar Projection appears. Hail it to get the key flag."
   ],
   "npcs": [
    {
@@ -1681,11 +1702,11 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Earth (Rathe Temple, A)",
   "name": "Tantisala Jaggedtooth and traps",
   "kind": "optional",
-  "kindWhy": "Named mob with only a drophate script; traps (encounters/Traps.lua) are environment.",
-  "start": "Passive.",
-  "timers": "trap mob depop 1200000 ms.",
+  "kindWhy": "A named mob with only a hate-drop script. The traps in the zone are a hazard, not an event.",
+  "start": "Nothing to start: pull Tantisala Jaggedtooth.",
+  "timers": "Trap mobs leave after 20 minutes. Her hate-drop check runs every second.",
   "mechanics": [
-   "Tantisala_Jaggedtooth (218038) drophate timer 1000 ms."
+   "Tantisala Jaggedtooth now and then drops her target's hate. Nothing else is scripted for her."
   ],
   "npcs": [
    {
@@ -1707,14 +1728,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Earth (B)",
   "name": "Rathe Council (12) -> Avatar of Earth",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss of Earth: Avatar death spawns Essence_of_Earth (222041, 1200 s) whose hail summons Mound of Living Stone (29146), one of the four Essence items for the Quintessence of Elements (29165) / Plane of Time.",
-  "groupLimit": "Essence_of_Earth FLAG_LIMIT 72.",
-  "start": "Kill all twelve Rathe Councilmen on their native spawn points (369377, 369380, 369382, 369384, 369386, 369387 = A_Rathe_Councilman 222003 mezable; 369376, 369378, 369379, 369381, 369383, 369385 = 222039 unmezable). Combat mechanics live in A_Rathe_Councilman.lua; the encounter file only owns deaths and recovery.",
-  "timers": "COUNCIL_RESPAWN 420 s; AVATAR_IDLE 2100 s (35 min of hesitation, paused during combat and never refilled); failure cooldown 900 s; success cooldown 496800 s (138 h); watchdog 1000 ms. Council teleport timer 60000 ms and unmezable checkhp 3000 ms.",
+  "kindWhy": "The flag boss of the Plane of Earth B. The Avatar's death brings the Essence of Earth, which gives a Mound of Living Stone, one of four parts of the Quintessence of Elements (a step toward the Plane of Time).",
+  "groupLimit": "The Essence of Earth flags up to 72 players.",
+  "start": "Kill all twelve Rathe Councilmen at their spawn points. Six can be mesmerized and six cannot. The fight itself is in the Councilman's own script. The event script only tracks deaths and recovery.",
+  "timers": "The Council respawns after 7 minutes. The Avatar can wait 35 minutes, paused during combat and never refilled. After a fail there is a 15 minute wait. After a win, the Council is held for 138 hours. The Council teleports every minute, and the unmezzable ones are checked every 3 seconds.",
   "mechanics": [
-   "When all twelve Council deaths are confirmed, the Council spawn points are held and #Avatar_of_Earth (222040, level 80, 500,000 hp) unique-spawns at 2050,410,-210.",
-   "Idle budget of the Avatar is 35 minutes; running out -> Fail (Retry 900 s).",
-   "Avatar death -> Essence_of_Earth projection for the killer; Council spawn points are held for the success cooldown."
+   "When all twelve Council deaths are confirmed, the Avatar of Earth appears at /loc 410, 2050. He is level 80 with 500,000 HP.",
+   "If the Avatar's 35 minutes of waiting run out, the attempt fails and retries after 15 minutes.",
+   "When the Avatar dies, the Essence of Earth appears for the killer. Hail it to be given a Mound of Living Stone, if you have neither it nor a Quintessence of Elements."
   ],
   "npcs": [
    {
@@ -1740,7 +1761,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 29146,
     "name": "Mound of Living Stone",
-    "trigger": "Hail Essence_of_Earth after the Avatar dies, if character lacks 29146/29165 (SummonCursorItem)"
+    "trigger": "Hail the Essence of Earth after the Avatar dies, if you have neither the Mound nor a Quintessence of Elements"
    }
   ],
   "cites": [
@@ -1757,12 +1778,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Earth (B)",
   "name": "War Chieftains (Birak, Galronar, Awisano) -> Warlord Gintolaken",
   "kind": "optional",
-  "kindWhy": "Chain unlocking the Warlord; loot only. Door 2/3 click requires the wall spawn sets (DOOR1_IDS/DOOR2_IDS in player.lua) to be dead to open - zone access, not a character flag.",
-  "start": "Passive: kill the three #War_Chieftan_* (222035 Birak, 222036 Galronar, 222037 Awisano); the invisible kill markers (spawn ids 369487-369489) let Gintolaken (spawn 369491) spawn even after a zone crash.",
-  "timers": "check timer 1000 ms at Chieftan spawn; Gintolaken drophate 1000 ms.",
+  "kindWhy": "Optional chain: three war chieftains unlock Warlord Gintolaken. It has loot and no character flag. The wall doors open only when the guards on them are dead, which is zone access.",
+  "start": "Kill the three war chieftains: Birak, Galronar and Awisano. Hidden kill markers let Gintolaken appear even after a zone crash.",
+  "timers": "Checked every second. Gintolaken's hate-drop check also runs every second.",
   "mechanics": [
-   "'The' (signal controller) checks the three markers; when none remains #Warlord_Gintolaken (222038, 1,050,000 hp) is allowed to spawn.",
-   "Warlord and chieftain script share the standard disengage-heal / tank-hate-drop behaviour."
+   "A hidden check looks at the three markers. When none is left, Warlord Gintolaken (1,050,000 HP) is allowed to appear.",
+   "The Warlord and the chieftains use the usual behavior: they drop their target's hate now and then and may warp home and heal when a fight ends."
   ],
   "npcs": [
    {
@@ -1804,16 +1825,16 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Fire",
   "name": "Fennin Ro, the Tyrant of Fire (Doomfire army, 4 stages)",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss of Fire: death spawns Essence_of_Fire (217454, ProjectionEligibility) whose hail summons Globe of Dancing Flame (29147) - one of the four Essence items that make the Quintessence of Elements (29165) needed for the Plane of Time (zebuxoruk '2' + 29165). pofire flag series is 'pofire' in Seer header.",
-  "groupLimit": "Essence_of_Fire FLAG_LIMIT = 72 (it depops when 72 items have been handed out); killer raid/group eligibility via ProjectionEligibility.",
-  "start": "Engage Guardian_of_Doomfire (217050, spawn point 367088) while the encounter phase is Ready (phase 0).",
-  "timers": "Shared event clock EVENT_SECONDS = 17500 s (4 h 51 min 40 s) including combat, never extended; Fennin Ro red-text warnings every WARNING_SECONDS = 2700 s; failure retry FAILURE_RETRY_TIME = 64800 * 1000 ms (18 h); success respawn SUCCESS_RESPAWN_TIME = 496800 * 1000 ms (5 d 18 h = 138 h Guardian reuse); watchdog 1000 ms.",
+  "kindWhy": "The flag boss of the Plane of Fire, in four stages. His death brings the Essence of Fire, which gives a Globe of Dancing Flame, one of four parts of the Quintessence of Elements (needed for the Plane of Time).",
+  "groupLimit": "The Essence of Fire gives out 72 items, then leaves. Only the killer's raid or group can take one.",
+  "start": "Engage the Guardian of Doomfire while the event is ready to begin.",
+  "timers": "One clock of 4 hours 51 min 40 s covers the whole event, combat included. It is never extended. Fennin Ro gives a red-text warning every 45 minutes. After a fail you retry in 18 hours. After a win the Guardian is back in 138 hours (5 days 18 hours).",
   "mechanics": [
-   "Stage 1 (Army of Flames): a_rage_reaver_of_flame 217417, a_chaos_healer_of_flame 217418, a_dark_magus_of_flame 217419 and a_doomfire_darkfiend 217421 / chaosfiend 217420 / ragefiend 217422 at fixed coordinates; all must be confirmed dead to advance.",
-   "Stage 2 (commanders): Azobian_the_Darklord 217425, Javonn_the_Overlord 217426, Hebabbilys_the_Ragelord 217453, Reaxnous_the_Chaoslord 217427 plus fresh soldiers.",
-   "Stage 3 (Council of Fire): Chancellor_Kirtra 217432, Chancellor_Traxom 217433, Omni_Magus_Crato 217429, Warlord_Prollaz 217428.",
-   "Stage 4: Fennin_Ro_the_Tyrant_of_Fire (217440, level 80, 1,000,000 hp) at -930,-1504,-160 plus ten elite_guardian_of_ro (217430) spawn points armed.",
-   "Clock expiry or an unverifiable state -> Fail (retry 18 h); Fennin death -> victory, 138 h cooldown, Essence_of_Fire spawns for the killer."
+   "Stage 1, the Army of Flames: a rage reaver, a chaos healer, a dark magus and doomfire darkfiends, chaosfiends and ragefiends at fixed spots. All must be dead to move on.",
+   "Stage 2, the commanders: Azobian the Darklord, Javonn the Overlord, Hebabbilys the Ragelord and Reaxnous the Chaoslord, with fresh soldiers.",
+   "Stage 3, the Council of Fire: Chancellor Kirtra, Chancellor Traxom, Omni Magus Crato and Warlord Prollaz.",
+   "Stage 4: Fennin Ro, the Tyrant of Fire (level 80, 1,000,000 HP) at /loc -1504, -930, and ten elite Guardians of Ro are armed.",
+   "If the clock runs out, the attempt fails. When Fennin Ro dies, the Essence of Fire appears for the killer."
   ],
   "npcs": [
    {
@@ -1887,7 +1908,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 29147,
     "name": "Globe of Dancing Flame",
-    "trigger": "Hail Essence_of_Fire (217454) after Fennin Ro dies, if character lacks 29147/29165 (SummonCursorItem)"
+    "trigger": "Hail the Essence of Fire after Fennin Ro dies, if you have neither the Globe nor a Quintessence of Elements"
    }
   ],
   "cites": [
@@ -1903,11 +1924,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Fire",
   "name": "Field named mobs and snare-immune spawns",
   "kind": "optional",
-  "kindWhy": "SnareImmunity encounter gives each of 9 field-1 mob types a 1-in-5 chance (math.random(5)==1) to spawn snare-immune; named field mobs (Blazzax, Babnoxis, Arch Mage Yozanni, General Reparm...) are unscripted here.",
-  "start": "Passive.",
-  "timers": "none",
+  "kindWhy": "Optional field mobs with loot and no flag. The only script makes some of the common mobs immune to snare.",
+  "start": "Nothing to start: pull them.",
+  "timers": "None.",
   "mechanics": [
-   "Spawn-time snare immunity (special ability 16) on obsidian tree spiders, jopal hunters/gatherers/lavahurlers, flame lords and fiery spirit steeds."
+   "Nine kinds of common field mob each have a 1 in 5 chance to appear immune to snare. They are obsidian tree spiders, jopal hunters, gatherers and lavahurlers, flame lords and fiery spirit steeds.",
+   "The named field mobs (Blazzax, Babnoxis, Arch Mage Yozanni, General Reparm and others) have no script."
   ],
   "npcs": [
    {
@@ -1982,15 +2004,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Innovation",
   "name": "Manaetic Behemoth (weapon test, Giwin Mirakon flag)",
   "kind": "flag",
-  "kindWhy": "Giwin_Mirakon (206038 preflag NPC) 'test the machine' sets zeks=1; killing the Behemoth spawns flagger #Giwin_Mirakon (206203, 600 s) whose hail sets zeks 1 -> 2 (needed for Drunder door: zeks >= 2). Seer header: 'zeks - PoI Giwin flags + Zeks in Tactics'.",
-  "groupLimit": "Flagger FLAG_LIMIT 72 per spawn (ProjectionEligibility).",
-  "start": "Talk to Giwin_Mirakon (preflag NPC): hail, 'great warrior', 'task', 'test the machine' (zeks=1). Then enter the main construction area; the Weapon_Event_Master controller (206197) fires clockwork devices.",
-  "timers": "Wave timer WAVE_TIME = 48000 ms; devices spawn one per wave location (6 locations/wave table, 12:00-10:30 clock positions); Behemoth stays asleep until 10 qualifying kills ('kills >= 10'); once awake depop timer 10800000 ms (3 h) with failure retry FAILURE_RETRY = 600000 ms (10 min) on spawn timer 345273; boundscheck 2000 ms; flagger Giwin depops 600000 ms.",
+  "kindWhy": "The weapon test. Killing the Behemoth lets Giwin Mirakon give the second step of his flag, which the Drunder door needs.",
+  "groupLimit": "Giwin flags the killer's group, up to 72 players per spawn.",
+  "start": "Talk to Giwin Mirakon: hail, then 'great warrior', 'task' and 'test the machine'. That gives step 1. Then go to the main construction area, where clockwork devices begin to appear.",
+  "timers": "A new set of devices comes every 48 seconds. Once the Behemoth wakes you have 3 hours. After a fail you retry in 10 minutes. Giwin stays 10 minutes after the win.",
   "mechanics": [
-   "Every 48 s a clockwork device (206001) spawns at a random of 6 points in each of 6 'clock' areas, on grids 13-20, and walks to the Behemoth room where it can blow up (spell 2321).",
-   "After 10 qualifying kills the Behemoth (206046) is woken (bodytype construct, aggro on) and gets a random AI spell (Gas Leak 1080 / Deathfog IV 1081 / Biomelt IX 1082 / Liquid Hydrokill 1083).",
-   "If the Behemoth leaves x 1033..1215 / y -120..120 it resets (Balance of the Nameless).",
-   "Death: waves stop, devices depop, #Giwin_Mirakon (206203) spawns at 1013,0,2.1 for the killer's group (600 s)."
+   "Every 48 seconds clockwork devices appear around the construction area and walk to the Behemoth's room, where they can blow up.",
+   "Kill 10 clockwork devices to wake the Manaetic Behemoth. He then casts one random spell: Gas Leak, Deathfog IV, Biomelt IX or Liquid Hydrokill.",
+   "If the Behemoth leaves his room, he is sent back and casts Balance of the Nameless.",
+   "When he dies, the waves stop and the devices vanish. Giwin Mirakon appears at /loc 0, 1013 for the killer's group. Hail him to move from step 1 to step 2."
   ],
   "npcs": [
    {
@@ -2024,16 +2046,16 @@ export const EVENTS: PopEvent[] = [
   "slug": "poinnovation-xanamech-nitram",
   "zone": "poinnovation",
   "zoneName": "Plane of Innovation",
-  "name": "Xanamech Nezmirthafen / Nitram Anizok (poi_door flag)",
+  "name": "Xanamech Nezmirthafen / Nitram Anizok (Innovation door flag)",
   "kind": "flag",
-  "kindWhy": "Killing #Xanamech_Nezmirthafen signals Nitram_Anizok (206033) who then, on hail, sets qglobal poi_door=1; player.lua door 7 only force-opens for characters with poi_door. Seer header: 'poi_door - Plane of Innovation door openable: Xanamech killed'.",
-  "groupLimit": "Nitram FLAG_LIMIT 72 per kill, killer's raid/group only (ClientCanFlag).",
-  "start": "Hand Nitram_Anizok (206033) item1=9295 Copper Node, item2=9426 Bundle of Super Conductive Wires, item3=9434 Intact Power Cell (all three; they drop 2% each from Xanamech and the Innovation junk) -> 'please follow me!', he walks waypoint grid 22 and the dragon wakes via signal 1.",
-  "timers": "Nitram depop 3600000 ms after the turn-in; after the dragon dies 600000 ms; Xanamech lies down at spawn (300 ms 'lie'), wake timer 3500 ms; Xanamech depop 1800000 ms.",
+  "kindWhy": "Killing Xanamech Nezmirthafen lets Nitram Anizok give the door flag for the Plane of Innovation. The door only opens by force for players who have it.",
+  "groupLimit": "Nitram flags only the killer's raid, group or solo player, and only 72 players per kill.",
+  "start": "Hand Nitram Anizok a Copper Node, a Bundle of Super Conductive Wires and an Intact Power Cell, all three. Xanamech and the junk of Innovation each drop them at 2%. Nitram says 'please follow me!', walks his route and the dragon wakes.",
+  "timers": "Nitram leaves 1 hour after the hand-in, or 10 minutes after the dragon dies. Xanamech lies asleep until woken, 3.5 seconds into Nitram's walk. Xanamech leaves after 30 minutes.",
   "mechanics": [
-   "Xanamech (206208) is asleep until Nitram's walk signals him; once awake he is attackable (construct).",
-   "Death: signal 206033 with the killer's entity id -> Nitram records the killer's raid/group, becomes interactive; hail while still unflagged -> poi_door=1 'character flag'.",
-   "Nitram's spawn respawn timer is set to 1 so new attempts can begin after his window ends."
+   "Xanamech is asleep until Nitram's walk wakes him. Then he can be attacked.",
+   "When Xanamech dies, Nitram notes the killer's raid or group and can be talked to. Hail him while you are unflagged to get the door flag.",
+   "Nitram's respawn is reset so a new attempt can begin after his window ends."
   ],
   "npcs": [
    {
@@ -2062,12 +2084,13 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Innovation",
   "name": "Chronographer Muon / Loreseeker Maelin / time-machine door (Plane of Time access)",
   "kind": "flag",
-  "kindWhy": "player.lua door 145 sets qglobal time=1 and zone flags 219 and 223 for a character with zebuxoruk == '2' AND Quintessence of Elements (29165) in inventory; Muon's 'yes' ports to the time-projection chamber and spawns Loreseeker Maelin (206209).",
-  "start": "Hail #Chronographer_Muon (206044) while holding item 29165 and zebuxoruk == 2; say 'yes' -> MovePC to 291,-860,-1850 and unique-spawn Maelin at 763,-837,-1887. Then click door id 145 (needs 29165 + zebuxoruk 2).",
-  "timers": "Maelin depop 900000 ms.",
+  "kindWhy": "The way into the Plane of Time. Chronographer Muon, Loreseeker Maelin and the time-machine door need the Zebuxoruk flag at step 2 and a Quintessence of Elements.",
+  "start": "Hail Chronographer Muon while carrying a Quintessence of Elements and having the Zebuxoruk flag at step 2. Say 'yes' and he sends you to the time chamber, where Loreseeker Maelin appears. Then click the time-machine door, which needs the same two things.",
+  "timers": "Maelin stays for 15 minutes.",
   "mechanics": [
-   "Muon only recognises players with qglobal zebuxoruk == '2' and 29165 in main inventory/bags/cursor (HasItemInvOnly).",
-   "Maelin says the Plane of Time bond will be formed once the machine is activated ('researched')."
+   "Muon only knows players with the Zebuxoruk flag at step 2 and a Quintessence of Elements in their bags, inventory or on the cursor.",
+   "The door gives you the Plane of Time flag and the zone flags for the Plane of Time.",
+   "Maelin says the Plane of Time bond will be formed once the machine is activated."
   ],
   "npcs": [
    {
@@ -2090,14 +2113,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Innovation",
   "name": "Endurance testing rooms (Researcher Kaeon, Assistant Kelrig)",
   "kind": "optional",
-  "kindWhy": "No flag or reward is scripted; runs continue until the group quits; Kelrig only teleports you out.",
+  "kindWhy": "A repeatable test room. No flag or reward is scripted. Runs go on until the group quits, and Assistant Kelrig only sends you out.",
   "size": "6 players",
-  "groupLimit": "Max six players ('a maximum of six at one time'); two rooms; MoveGroup radius 150.",
-  "start": "Talk to #Researcher_Kaeon (206045): hail, 'comply to endurance testing', 'ready' -> group sent to the testing bay (-274,-760); Assistant Kelrig (206204) then asks 'ready' / 'quit'.",
-  "timers": "Wave timer 120000 ms (randomised (0..21)+107 s thereafter); room reset 1800000 ms (720000 ms after completion); mob depop 720000 ms; idle check 3000000 ms.",
+  "groupLimit": "A maximum of six players at a time, in either of two rooms. Your group is moved if within 150 units.",
+  "start": "Talk to Researcher Kaeon: hail, then 'comply to endurance testing' and 'ready'. Your group goes to the testing bay. Assistant Kelrig then asks 'ready' or 'quit'.",
+  "timers": "The first wave comes after 2 minutes, then every 1 min 47 s to 2 min 8 s. A room resets after 30 minutes, or 12 minutes after a finished run. Mobs leave 12 minutes after they appear.",
   "mechanics": [
-   "8 waves with WAVE_SPAWN_NUMS = {3,4,6,8,4,4,8,7} (44 mobs) of manaetic contraption / gadget / persistent mechanization (206199/206201/206202) and manaetic devices (206200/206205/206206/206207, device tier rises with run count).",
-   "After wave 8 and enough kills (> total-15) Kelrig respawns; saying ready starts another, harder run; at runs>3 he thanks you and casts Mechinetic Dislocation IV (1090) to eject you."
+   "A run is 8 waves of 3, 4, 6, 8, 4, 4, 8 and 7 mobs (44 in all). They are manaetic contraptions, gadgets and persistent mechanizations, and manaetic devices. The device tier rises with each run.",
+   "After wave 8, with all but about 15 of the mobs dead, Kelrig comes back. Say 'ready' to start another, harder run.",
+   "After four runs he thanks you and casts Mechinetic Dislocation IV to eject you."
   ],
   "npcs": [
    {
@@ -2152,13 +2176,13 @@ export const EVENTS: PopEvent[] = [
   "slug": "poinnovation-junk-beast",
   "zone": "poinnovation",
   "zoneName": "Plane of Innovation",
-  "name": "#Junk Beast (roamer)",
+  "name": "Junk Beast (roamer)",
   "kind": "optional",
-  "kindWhy": "Scripted patrol only; drops Junk Beast Power Source (29145) 100%, whose use is not in the scripts.",
-  "start": "Roaming spawn (spawn id 345196 = grid 4 patrol; roambox spawn ids > 700000).",
-  "timers": "type timers 3000 ms at spawn.",
+  "kindWhy": "A roaming mob with a patrol script. It always drops the Junk Beast Power Source, whose use is not in the scripts.",
+  "start": "It roams on its own.",
+  "timers": "Nothing is timed in the scripts.",
   "mechanics": [
-   "Spawns via grid 4 -> walks to -690,962,-44.5 and patrols the short route near the mech-dragon room; or roambox spawn -> grid 9 whole-zone route."
+   "It walks to /loc 962, -690 and patrols a short route near the mech-dragon room. A second spawn of it walks a route through the whole zone."
   ],
   "npcs": [
    {
@@ -2179,11 +2203,11 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Innovation",
   "name": "Manaetic Prototypes IX / X / XI",
   "kind": "optional",
-  "kindWhy": "Named mobs that teleport during the fight; loot only.",
-  "start": "Passive pulls.",
-  "timers": "teleport timer random 2-30 s in combat; boundscheck 3000 ms.",
+  "kindWhy": "Named mobs that teleport during the fight. They have loot and no flag.",
+  "start": "Nothing to start: pull them.",
+  "timers": "While engaged, each teleports at a random time between 2 and 30 seconds.",
   "mechanics": [
-   "Each prototype randomly teleports on a 2-30 second timer while engaged and has a boundscheck leash."
+   "Manaetic Prototypes IX, X and XI teleport at random in a fight. A check every 3 seconds sends them back if they leave their area."
   ],
   "npcs": [
    {
@@ -2218,19 +2242,19 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Justice",
   "name": "Mavuin / Tribunal plea (mavuin flag series)",
   "kind": "flag",
-  "kindWhy": "qglobal mavuin 0 -> 1 -> 2 -> 3 is the Justice flag series; mavuin==3 opens the Valor/Storms portals in Tranquility and gates the Askr door in Storms (mavuin>=3).",
-  "start": "#Mavuin: say 'information' (mavuin unset -> 1) after hail; The_Tribunal (201508): say 'mavuin' with mavuin==1 and at least one Mark in inventory (FindMarks > 0) -> mavuin=2; #Mavuin: hail with mavuin>=2 -> mavuin=3.",
-  "timers": "qglobal expiry arg 5,'F' (permanent).",
+  "kindWhy": "The Plane of Justice flag series. At the last step it opens the Valor and Storms portals in Tranquility and the Askr door in Storms.",
+  "start": "Hail Mavuin and say 'information' for step 1. Tell the Tribunal 'mavuin' with at least one Mark in your inventory for step 2. Hail Mavuin again for step 3.",
+  "timers": "None. The flags are permanent.",
   "mechanics": [
-   "Mark items checked: 31796, 31842, 31844, 31845, 31846, 31960 (one per trial).",
-   "The Tribunal also summons The Mark of Justice (31599) on 'knowledge' when all 6 marks are present or qglobal seventh is set."
+   "Any one of the six trial Marks counts: Mark of Flame, Mark of Execution, Mark of Torture, Mark of Stone, Mark of Suffocation or Mark of Lashing. There is one per trial.",
+   "Say 'knowledge' to the Tribunal when you hold all six Marks, or have the Seventh flag, and he gives you The Mark of Justice."
   ],
   "npcs": [],
   "rewards": [
    {
     "itemId": 31599,
     "name": "The Mark of Justice",
-    "trigger": "Say 'knowledge' to The_Tribunal holding all six Marks (or qglobal seventh); also sets seventh=1"
+    "trigger": "Say 'knowledge' to the Tribunal holding all six Marks (or having the Seventh flag), which also sets the Seventh flag"
    }
   ],
   "cites": [
@@ -2247,11 +2271,11 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Justice",
   "name": "The Seventh Hammer (judgement room)",
   "kind": "optional",
-  "kindWhy": "Entered with The Mark of Justice (31599) after the six trial Marks; the kill script sets no qglobal or flag (the 'seventh' flag was set earlier by The_Tribunal). 1,080,000 hp boss, treated as optional raid loot.",
-  "start": "Hold The Mark of Justice (31599) on the cursor and click doors id 1-6 (player.lua event_click_door sets a 1 ms 'seventh' timer that MovePC's you to 76,1310,10, unless the Hammer is engaged). Then hail The_Seventh_Hammer (201074) and say 'ready to face' -> he adds you to his hate list.",
-  "timers": "'verdict' timer first at 181-190 s then every 187000 ms (casts Verdict of Eternity 1108 via the invisible Tribunal 201423); 'tremor' first at 86-95 s then every 187000 ms (Tremor of Judgment 1107); 'stop' timer 600000 ms after combat ends.",
+  "kindWhy": "The judgement room, entered with The Mark of Justice after the six trials. Killing the Seventh Hammer sets no flag. He has 1,080,000 HP and counts as optional raid loot.",
+  "start": "Hold The Mark of Justice on your cursor and click any of the six doors. That sends you to /loc 1310, 76, unless the Hammer is already fighting. Hail the Seventh Hammer and say 'ready to face' and he adds you to his hate list.",
+  "timers": "The Tribunal casts Tremor of Judgment first at 1 min 26 s to 1 min 35 s, then every 3 min 7 s. It casts Verdict of Eternity first at 3 min 1 s to 3 min 10 s, then every 3 min 7 s. The room resets 10 minutes after combat ends.",
   "mechanics": [
-   "Both spells are cast by #The_Tribunal_ (201423) and animate the visible The_Tribunal (201427)."
+   "A hidden Tribunal casts both spells, and the visible Tribunal animates them."
   ],
   "npcs": [
    {
@@ -2272,13 +2296,13 @@ export const EVENTS: PopEvent[] = [
   "slug": "pojustice-ancient-crawler",
   "zone": "pojustice",
   "zoneName": "Plane of Justice",
-  "name": "#the_ancient_crawler (raid_target)",
+  "name": "The ancient crawler (marked as a raid target)",
   "kind": "optional",
-  "kindWhy": "Flagged raid_target in eqemu_npc_types; no script for it was found in pojustice/ (loot only).",
-  "start": "unknown (no script)",
-  "timers": "unknown",
+  "kindWhy": "Marked as a raid target in our database. No script covers it, so only the loot tables speak for it.",
+  "start": "Unknown: no script covers it.",
+  "timers": "Unknown.",
   "mechanics": [
-   "No quest script; named in the DB only."
+   "No quest script exists for it. It is named in the database only."
   ],
   "npcs": [
    {
@@ -2297,16 +2321,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Justice",
   "name": "Trial of Lashing (Lashman Azakal)",
   "kind": "flag",
-  "kindWhy": "Completing ANY one trial (a Mark in inventory) lets The Tribunal advance mavuin 1 -> 2 on 'mavuin'; having all six Marks lets 'knowledge' set qglobal seventh=1 and summon The Mark of Justice (31599). Mavuin=3 is the key for Valor/Storms (PoTranquility portal 16/21).",
-  "groupLimit": "No scripted cap; The Tribunal teleports group/raid-group members within 50 units of the speaker (MoveGroup(201, ..., 50, ...)).",
-  "start": "Say to The_Tribunal (201508): 'prove' -> 'prepared' -> 'ready to begin the Trial of Lashing'. Fails with 'That trial is already underway' if trialsUnderway or a mob is in the trial. Controller 201512 is spawned and the group is teleported.",
-  "timers": "First wave 26000 ms after the controller spawns; wave interval 192000 ms (WAVE_TIMER 192000 ms, 'AK timer 3:12'); 4 waves; mobs depop 60000 ms out of combat (a timeout after wave 1 fails the trial); trial failed -> accessible again in 60 s (update_spawn_timer 60000) and players returned after 10 s; trial won -> accessible again in 600 s, 'warn' at 540 s and boot at 599 s.",
+  "kindWhy": "One of the six Justice trials. Winning gives a Mark. Any one Mark lets the Tribunal move the Mavuin flag on, and all six let him give The Mark of Justice.",
+  "groupLimit": "No cap in the script. The Tribunal moves your group or raid group, anyone within 50 units of you.",
+  "start": "Say to the Tribunal 'prove', then 'prepared', then 'ready to begin the Trial of Lashing'. He refuses with 'That trial is already underway' if another trial is running.",
+  "timers": "The first wave comes 26 seconds after the start, then one every 3 min 12 s, four in all. Mobs that stay out of combat for 60 seconds after wave 1 fail the trial. After a fail you are returned after 10 seconds and the trial is open again in 1 minute. After a win it is open again in 10 minutes, with a warning at 9 minutes and a boot at 9 min 59 s.",
   "mechanics": [
-   "Four waves from the controller (#Event_Lashing_Control 201512): savage lashers (201466), malevolent punishers (201463), rare #a_harrowing_lasher (201462) / #a_stinging_nemesis (201472), plus a_scourge_of_honor (201467) that cannot be fought directly.",
-   "Tormented prisoners (a_tormented_prisoner 201502, ogres) are being lashed; if any prisoner dies ('You have failed') the trial fails (OgreDeath -> TrialFail -> signal 1 to Tribunal).",
-   "Scourges of honor spawn on a 30-60 s timer alongside flickering spirits (201503 level 15 / 201516 level 30, 7000 hp); killing the 7k hp spirit removes all scourges.",
-   "Boss #Lashman_Azakal (201479) spawns at 1334,-1119,1.126 when wave 4 is out and scourges == 0; his death signals the Tribunal with 7 (success).",
-   "Randomised spirit placement (3 locations)."
+   "The waves are savage lashers and malevolent punishers, with a rare Harrowing Lasher or Stinging Nemesis. Scourges of Honor also appear and cannot be fought directly.",
+   "Tormented prisoners (ogres) are being lashed. If any prisoner dies, you see 'You have failed' and the trial fails.",
+   "Scourges of Honor come every 30 to 60 seconds with flickering spirits (a level 15 or a level 30 one with 7,000 HP) in one of three places. Killing the 7,000 HP spirit removes all the scourges.",
+   "When wave 4 is out and no scourge is left, Lashman Azakal appears at /loc -1119, 1334. His death wins the trial."
   ],
   "npcs": [
    {
@@ -2350,7 +2373,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 31960,
     "name": "Mark of Lashing",
-    "trigger": "100% loot from #Lashman_Azakal (201479) - the Mark that proves this trial (script lists marks 31796, 31842, 31844, 31845, 31846, 31960 in FindMarks)"
+    "trigger": "Always dropped by Lashman Azakal. It proves this trial."
    }
   ],
   "cites": [
@@ -2366,16 +2389,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Justice",
   "name": "Trial of Execution (Prime Executioner Vathoch)",
   "kind": "flag",
-  "kindWhy": "Completing ANY one trial (a Mark in inventory) lets The Tribunal advance mavuin 1 -> 2 on 'mavuin'; having all six Marks lets 'knowledge' set qglobal seventh=1 and summon The Mark of Justice (31599). Mavuin=3 is the key for Valor/Storms (PoTranquility portal 16/21).",
-  "groupLimit": "No scripted cap; The Tribunal teleports group/raid-group members within 50 units of the speaker (MoveGroup(201, ..., 50, ...)).",
-  "start": "Say to The_Tribunal (201508): 'prove' -> 'prepared' -> 'ready to begin the Trial of Execution'. Fails with 'That trial is already underway' if trialsUnderway or a mob is in the trial. Controller 201511 is spawned and the group is teleported.",
-  "timers": "First wave 26000 ms after the controller spawns; wave interval 137000 ms (WAVE_TIMER 137000 ms, 'AK timer 2:15-2:20'); 4 waves; mobs depop 60000 ms out of combat (a timeout after wave 1 fails the trial); trial failed -> accessible again in 60 s (update_spawn_timer 60000) and players returned after 10 s; trial won -> accessible again in 600 s, 'warn' at 540 s and boot at 599 s.",
+  "kindWhy": "One of the six Justice trials. Winning gives a Mark. Any one Mark lets the Tribunal move the Mavuin flag on, and all six let him give The Mark of Justice.",
+  "groupLimit": "No cap in the script. The Tribunal moves your group or raid group, anyone within 50 units of you.",
+  "start": "Say to the Tribunal 'prove', then 'prepared', then 'ready to begin the Trial of Execution'. He refuses with 'That trial is already underway' if another trial is running.",
+  "timers": "The first wave comes 26 seconds after the start, then one every 2 min 17 s, four in all. Mobs that stay out of combat for 60 seconds after wave 1 fail the trial. After a fail you are returned after 10 seconds and the trial is open again in 1 minute. After a win it is open again in 10 minutes, with a warning at 9 minutes and a boot at 9 min 59 s.",
   "mechanics": [
-   "Controller #Event_Execution_Control (201511) spawns nemesis waves (a_dark_nemesis 201457 / a_fierce_nemesis 201458) with named #priest_of_doom (201484) and #herald_of_destruction (201478) while an_executioner (201501) walks toward a_sentenced_prisoner (201500).",
-   "Executioner timer 60000 ms first / 40000 ms, then 34000 ms after each kill; if the executioner reaches the prisoner the prisoner dies and the trial fails (fail timer 2500 ms, TrialFail -> signal 2).",
-   "After four kills per wave the executioner is depopped; at wave 4 the prisoner depops and #Prime_Executioner_Vathoch (201485) spawns at 195,-1157,82.",
-   "Boss death signals Tribunal 8 (success).",
-   ""
+   "Waves of dark and fierce nemeses come, with the named Priest of Doom and Herald of Destruction, while an executioner walks toward a sentenced prisoner.",
+   "The executioner is on a clock of about 34 to 60 seconds. If it runs out, he kills the prisoner and the trial fails. After you kill four mobs of a wave he leaves.",
+   "At wave 4 the prisoner leaves and Prime Executioner Vathoch appears at /loc -1157, 195. His death wins the trial."
   ],
   "npcs": [
    {
@@ -2419,7 +2440,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 31842,
     "name": "Mark of Execution",
-    "trigger": "100% loot from #Prime_Executioner_Vathoch (201485) - the Mark that proves this trial (script lists marks 31796, 31842, 31844, 31845, 31846, 31960 in FindMarks)"
+    "trigger": "Always dropped by Prime Executioner Vathoch. It proves this trial."
    }
   ],
   "cites": [
@@ -2432,16 +2453,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Justice",
   "name": "Trial of Stoning (Yurae Zhaleem)",
   "kind": "flag",
-  "kindWhy": "Completing ANY one trial (a Mark in inventory) lets The Tribunal advance mavuin 1 -> 2 on 'mavuin'; having all six Marks lets 'knowledge' set qglobal seventh=1 and summon The Mark of Justice (31599). Mavuin=3 is the key for Valor/Storms (PoTranquility portal 16/21).",
-  "groupLimit": "No scripted cap; The Tribunal teleports group/raid-group members within 50 units of the speaker (MoveGroup(201, ..., 50, ...)).",
-  "start": "Say to The_Tribunal (201508): 'prove' -> 'prepared' -> 'ready to begin the Trial of Stoning'. Fails with 'That trial is already underway' if trialsUnderway or a mob is in the trial. Controller 201513 is spawned and the group is teleported.",
-  "timers": "First wave 26000 ms after the controller spawns; wave interval 170000 ms (WAVE_TIMER 170000 ms, 'AK timer 2:50-2:55'); 4 waves; mobs depop 60000 ms out of combat (a timeout after wave 1 fails the trial); trial failed -> accessible again in 60 s (update_spawn_timer 60000) and players returned after 10 s; trial won -> accessible again in 600 s, 'warn' at 540 s and boot at 599 s.",
+  "kindWhy": "One of the six Justice trials. Winning gives a Mark. Any one Mark lets the Tribunal move the Mavuin flag on, and all six let him give The Mark of Justice.",
+  "groupLimit": "No cap in the script. The Tribunal moves your group or raid group, anyone within 50 units of you.",
+  "start": "Say to the Tribunal 'prove', then 'prepared', then 'ready to begin the Trial of Stoning'. He refuses with 'That trial is already underway' if another trial is running.",
+  "timers": "The first wave comes 26 seconds after the start, then one every 2 min 50 s, four in all. Mobs that stay out of combat for 60 seconds after wave 1 fail the trial. After a fail you are returned after 10 seconds and the trial is open again in 1 minute. After a win it is open again in 10 minutes, with a warning at 9 minutes and a boot at 9 min 59 s.",
   "mechanics": [
-   "Controller #Event_Stoning_Control (201513) spawns waves of a_relentless_punisher (201464), a_shadow_grinder (201469) with rare #nemesis_of_stone (201482) / #a_ruthless_grinder (201465) around a_pitiless_avenger archers (201475) pelting an_accused_prisoner (201504).",
-   "Prisoner takes damage from archers; if she collapses ('no longer shielding herself from the stones') the trial fails (TrialFail -> signal 3).",
-   "When killed == spawned in wave 4, #Yurae_Zhaleem (201496) unique-spawns at -130,-1120,75.",
-   "Boss death signals Tribunal 9 (success).",
-   ""
+   "The waves are relentless punishers and shadow grinders, with a rare Nemesis of Stone or Ruthless Grinder. Pitiless avenger archers pelt an accused prisoner.",
+   "The prisoner takes damage from the archers. If she collapses, you see 'no longer shielding herself from the stones' and the trial fails.",
+   "When you have killed every mob of wave 4, Yurae Zhaleem appears at /loc -1120, -130. Her death wins the trial."
   ],
   "npcs": [
    {
@@ -2485,7 +2504,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 31845,
     "name": "Mark of Stone",
-    "trigger": "100% loot from #Yurae_Zhaleem (201496) - the Mark that proves this trial (script lists marks 31796, 31842, 31844, 31845, 31846, 31960 in FindMarks)"
+    "trigger": "Always dropped by Yurae Zhaleem. It proves this trial."
    }
   ],
   "cites": [
@@ -2498,16 +2517,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Justice",
   "name": "Trial of Torture (Punisher Veshtaq)",
   "kind": "flag",
-  "kindWhy": "Completing ANY one trial (a Mark in inventory) lets The Tribunal advance mavuin 1 -> 2 on 'mavuin'; having all six Marks lets 'knowledge' set qglobal seventh=1 and summon The Mark of Justice (31599). Mavuin=3 is the key for Valor/Storms (PoTranquility portal 16/21).",
-  "groupLimit": "No scripted cap; The Tribunal teleports group/raid-group members within 50 units of the speaker (MoveGroup(201, ..., 50, ...)).",
-  "start": "Say to The_Tribunal (201508): 'prove' -> 'prepared' -> 'ready to begin the Trial of Torture'. Fails with 'That trial is already underway' if trialsUnderway or a mob is in the trial. Controller 201514 is spawned and the group is teleported.",
-  "timers": "First wave 26000 ms after the controller spawns; wave interval 172000 ms (WAVE_TIMER 172000 ms, 'AK timer ~172 s'); 4 waves; mobs depop 60000 ms out of combat (a timeout after wave 1 fails the trial); trial failed -> accessible again in 60 s (update_spawn_timer 60000) and players returned after 10 s; trial won -> accessible again in 600 s, 'warn' at 540 s and boot at 599 s.",
+  "kindWhy": "One of the six Justice trials. Winning gives a Mark. Any one Mark lets the Tribunal move the Mavuin flag on, and all six let him give The Mark of Justice.",
+  "groupLimit": "No cap in the script. The Tribunal moves your group or raid group, anyone within 50 units of you.",
+  "start": "Say to the Tribunal 'prove', then 'prepared', then 'ready to begin the Trial of Torture'. He refuses with 'That trial is already underway' if another trial is running.",
+  "timers": "The first wave comes 26 seconds after the start, then one every 2 min 52 s, four in all. Mobs that stay out of combat for 60 seconds after wave 1 fail the trial. After a fail you are returned after 10 seconds and the trial is open again in 1 minute. After a win it is open again in 10 minutes, with a warning at 9 minutes and a boot at 9 min 59 s.",
   "mechanics": [
-   "Controller #Event_Torture_Control (201514) spawns wraith_of_agony (201495) with twisted tormentors (201473), nemesis_of_pain (201481), #nemesis_of_despair (201480) and #an_accursed_tormentor (201474) near a_tortured_prisoner (201505); Pain_and_Suffering (201506) and Relief (201507) are scenery/relief NPCs.",
-   "Prisoner death fails the trial (event death on PRISONER_TYPE -> TrialFail -> signal 4); killing the wraith of agony gives relief.",
-   "At wave 4 with killed >= 19, #Punisher_Veshtaq (201487) spawns at 887,-1121,60.",
-   "Boss death signals Tribunal 10 (success).",
-   ""
+   "A Wraith of Agony comes with twisted tormentors, a Nemesis of Pain, a Nemesis of Despair and an Accursed Tormentor near a tortured prisoner. Pain and Suffering, and Relief, are scenery.",
+   "If the prisoner dies, the trial fails. Killing the Wraith of Agony gives relief.",
+   "At wave 4, once 19 or more mobs are dead, Punisher Veshtaq appears at /loc -1121, 887. His death wins the trial."
   ],
   "npcs": [
    {
@@ -2551,7 +2568,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 31844,
     "name": "Mark of Torture",
-    "trigger": "100% loot from #Punisher_Veshtaq (201487) - the Mark that proves this trial (script lists marks 31796, 31842, 31844, 31845, 31846, 31960 in FindMarks)"
+    "trigger": "Always dropped by Punisher Veshtaq. It proves this trial."
    }
   ],
   "cites": [
@@ -2564,16 +2581,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Justice",
   "name": "Trial of Hanging (Gallows Master Teion)",
   "kind": "flag",
-  "kindWhy": "Completing ANY one trial (a Mark in inventory) lets The Tribunal advance mavuin 1 -> 2 on 'mavuin'; having all six Marks lets 'knowledge' set qglobal seventh=1 and summon The Mark of Justice (31599). Mavuin=3 is the key for Valor/Storms (PoTranquility portal 16/21).",
-  "groupLimit": "No scripted cap; The Tribunal teleports group/raid-group members within 50 units of the speaker (MoveGroup(201, ..., 50, ...)).",
-  "start": "Say to The_Tribunal (201508): 'prove' -> 'prepared' -> 'ready to begin the Trial of Hanging'. Fails with 'That trial is already underway' if trialsUnderway or a mob is in the trial. Controller 201515 is spawned and the group is teleported.",
-  "timers": "First wave 26000 ms after the controller spawns; wave interval 118000 ms (WAVE_TIMER 118000 ms, 'AK timer ~118-119 s'); 4 waves; mobs depop 60000 ms out of combat (a timeout after wave 1 fails the trial); trial failed -> accessible again in 60 s (update_spawn_timer 60000) and players returned after 10 s; trial won -> accessible again in 600 s, 'warn' at 540 s and boot at 599 s.",
+  "kindWhy": "One of the six Justice trials. Winning gives a Mark. Any one Mark lets the Tribunal move the Mavuin flag on, and all six let him give The Mark of Justice.",
+  "groupLimit": "No cap in the script. The Tribunal moves your group or raid group, anyone within 50 units of you.",
+  "start": "Say to the Tribunal 'prove', then 'prepared', then 'ready to begin the Trial of Hanging'. He refuses with 'That trial is already underway' if another trial is running.",
+  "timers": "The first wave comes 26 seconds after the start, then one every 1 min 58 s, four in all. Mobs that stay out of combat for 60 seconds after wave 1 fail the trial. After a fail you are returned after 10 seconds and the trial is open again in 1 minute. After a win it is open again in 10 minutes, with a warning at 9 minutes and a boot at 9 min 59 s.",
   "mechanics": [
-   "Controller #Event_Hanging_Control (201515) spawns a_breathless_void (201449), a_stifling_nemesis (201471), rare #a_smothering_nemesis (201470) / #phantom_of_asphyxiation (201483) and spirit_of_suffocation (201489/201490/201491, timer 47000 ms) around three sentenced prisoners (201497/201498/201499).",
-   "Each prisoner has a 'noose' timer of 17000 ms; letting a prisoner die fails the trial (TrialFail -> signal 5).",
-   "At wave 4 with killed >= 16 #Gallows_Master_Teion (201477) spawns at 490,-1052,76.251.",
-   "Boss death signals Tribunal 11 (success).",
-   ""
+   "The waves are breathless voids and stifling nemeses, with a rare Smothering Nemesis or Phantom of Asphyxiation. Spirits of Suffocation come every 47 seconds. They gather around three sentenced prisoners.",
+   "Each prisoner has a noose that tightens every 17 seconds. If a prisoner dies, the trial fails.",
+   "At wave 4, once 16 or more mobs are dead, Gallows Master Teion appears at /loc -1052, 490. His death wins the trial."
   ],
   "npcs": [
    {
@@ -2611,7 +2626,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 31846,
     "name": "Mark of Suffocation",
-    "trigger": "100% loot from #Gallows_Master_Teion (201477) - the Mark that proves this trial (script lists marks 31796, 31842, 31844, 31845, 31846, 31960 in FindMarks)"
+    "trigger": "Always dropped by Gallows Master Teion. It proves this trial."
    }
   ],
   "cites": [
@@ -2624,16 +2639,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Justice",
   "name": "Trial of Flame (Punisher of Flame)",
   "kind": "flag",
-  "kindWhy": "Completing ANY one trial (a Mark in inventory) lets The Tribunal advance mavuin 1 -> 2 on 'mavuin'; having all six Marks lets 'knowledge' set qglobal seventh=1 and summon The Mark of Justice (31599). Mavuin=3 is the key for Valor/Storms (PoTranquility portal 16/21).",
-  "groupLimit": "No scripted cap; The Tribunal teleports group/raid-group members within 50 units of the speaker (MoveGroup(201, ..., 50, ...)).",
-  "start": "Say to The_Tribunal (201508): 'prove' -> 'prepared' -> 'ready to begin the Trial of Flame'. Fails with 'That trial is already underway' if trialsUnderway or a mob is in the trial. Controller 201510 is spawned and the group is teleported.",
-  "timers": "First wave 26000 ms after the controller spawns; wave interval 130000 ms (WAVE_TIMER 130000 ms, 'AK timer ~130 s'); 4 waves; mobs depop 60000 ms out of combat (a timeout after wave 1 fails the trial); trial failed -> accessible again in 60 s (update_spawn_timer 60000) and players returned after 10 s; trial won -> accessible again in 600 s, 'warn' at 540 s and boot at 599 s.",
+  "kindWhy": "One of the six Justice trials. Winning gives a Mark. Any one Mark lets the Tribunal move the Mavuin flag on, and all six let him give The Mark of Justice.",
+  "groupLimit": "No cap in the script. The Tribunal moves your group or raid group, anyone within 50 units of you.",
+  "start": "Say to the Tribunal 'prove', then 'prepared', then 'ready to begin the Trial of Flame'. He refuses with 'That trial is already underway' if another trial is running.",
+  "timers": "The first wave comes 26 seconds after the start, then one every 2 min 10 s, four in all. Mobs that stay out of combat for 60 seconds after wave 1 fail the trial. After a fail you are returned after 10 seconds and the trial is open again in 1 minute. After a win it is open again in 10 minutes, with a warning at 9 minutes and a boot at 9 min 59 s. The boss's corpse lasts 8 minutes.",
   "mechanics": [
-   "Controller #Event_Burning_Control (201510) spawns fiend_of_flame (201476) / spirit_of_flame (201488) in 4-mob waves (47/47/3/3 percent mix with #a_burning_nemesis 201450 and #a_fiery_aggressor 201459) and The_flame (201509) casting Searing Heat 1281 / Wave of Heat 1131 every 28 s.",
-   "Mobs walk to the centre (880,-730); a mob timing out (60000 ms) after wave 1 fails the trial (TrialFail -> signal 6); mobs that reach the stake cast Unfold Fletching Kit 3610.",
-   "At wave 4 with killed >= 16 #Punisher_of_Flame (201486) spawns at 885,-725,58.251.",
-   "Boss death signals Tribunal 12 (success); boss corpse decay timer 480000 ms.",
-   ""
+   "Waves of four come: fiends of flame (47%), spirits of flame (47%), and a burning nemesis or a fiery aggressor (3% each). The Flame casts Searing Heat or Wave of Heat every 28 seconds.",
+   "The mobs walk to the middle at /loc -730, 880. A mob that reaches the stake casts Unfold Fletching Kit. If a mob times out after wave 1, the trial fails.",
+   "At wave 4, once 16 or more mobs are dead, Punisher of Flame appears at /loc -725, 885. His death wins the trial."
   ],
   "npcs": [
    {
@@ -2671,7 +2684,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 31796,
     "name": "Mark of Flame",
-    "trigger": "100% loot from #Punisher_of_Flame (201486) - the Mark that proves this trial (script lists marks 31796, 31842, 31844, 31845, 31846, 31960 in FindMarks)"
+    "trigger": "Always dropped by Punisher of Flame. It proves this trial."
    }
   ],
   "cites": [
@@ -2684,12 +2697,13 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Knowledge",
   "name": "Grand Librarian Maelin - cipher, zebuxoruk and zeks 6 flags",
   "kind": "flag",
-  "kindWhy": "Hub NPC that converts boss-kill flags into the next flag: cipher=1 (needs mmarr and saryrn, which are then deleted), zebuxoruk=1 (needs mmarr_book and karana==4, which are deleted), zebuxoruk=2 (zebuxoruk==1 and zeks==7), zeks 5 -> 6 (needs cipher). cipher + zeks>=6 gate Tower of Solusek Ro; zebuxoruk 2 gates Water/Earth/Air and the Time machine.",
-  "start": "Hail Maelin (cipher check; requires qglobals mmarr AND saryrn); say 'lore' with mmarr_book and karana==4 (zebuxoruk=1); say 'information' with zebuxoruk==1 and zeks==7 (zebuxoruk=2), or with cipher and zeks==5 (zeks=6).",
-  "timers": "all qglobals have expiry arg 5,'F' (permanent).",
+  "kindWhy": "Grand Librarian Maelin turns boss-kill flags into the next flag in the series. The Cipher flag and Zeks step 6 open the Tower of Solusek Ro. Zebuxoruk step 2 opens the Water, Earth and Air planes and the time machine.",
+  "start": "Hail Maelin to check for the Cipher flag, which needs the Mithaniel Marr and Saryrn flags. Say 'lore' with the Marr book flag and Karana step 4 for Zebuxoruk step 1. Say 'information' with Zebuxoruk step 1 and Zeks step 7 for Zebuxoruk step 2, or with the Cipher flag and Zeks step 5 for Zeks step 6.",
+  "timers": "None. The flags are permanent.",
   "mechanics": [
-   "Hail with qglobal time, or zebuxoruk=='2' plus Quintessence of Elements (29165): Maelin points you to Chronographer Muon.",
-   "zebuxoruk '2' text: collect the elemental essences (Fire, Air, Water, Earth) and combine them to open the Plane of Time machine in Innovation."
+   "The Cipher flag uses up the Mithaniel Marr and Saryrn flags. Zebuxoruk step 1 uses up the Marr book flag and Karana step 4.",
+   "If you have the Time flag, or Zebuxoruk step 2 with a Quintessence of Elements, Maelin points you to Chronographer Muon.",
+   "At Zebuxoruk step 2 he tells you to collect the essences of Fire, Air, Water and Earth and combine them to open the time machine in the Plane of Innovation."
   ],
   "npcs": [],
   "rewards": [],
@@ -2704,12 +2718,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Knowledge",
   "name": "Seer Mal Nae`Shi - guided meditation / unlock memories (flag checklist)",
   "kind": "flag",
-  "kindWhy": "The authoritative PoP flag index: header lists every character-flag qglobal and checklist flag; 'unlock memories' converts a cl_* checklist flag into its real flag if the preflags are present (checklistFlags table).",
-  "start": "Sit and say 'guided meditation' (lists your flag state) or 'unlock' + 'memories' (UnlockMemories). GMs (Admin >= 80) can say 'time' to grant every flag or 'delete' to remove them.",
-  "timers": "n/a",
+  "kindWhy": "The Seer's list of every Planes of Power flag. 'Unlock memories' turns a checklist flag into the real flag if you have the earlier steps.",
+  "start": "Sit and say 'guided meditation' to list your flags, or say 'unlock' and 'memories' to turn checklist flags into real ones. GMs can say 'time' to grant every flag or 'delete' to remove them.",
+  "timers": "None.",
   "mechanics": [
-   "Flags: mavuin (3 values), seventh, thelin (4), poi_door, zeks (7), fuirstel (5), grummus, aerindar (2), bertox_key, hohtrials ('abc'), mmarr, mmarr_book, tylis (2), saryrn, karana (4), cipher, sol_room ('abcde'), zebuxoruk (2), pofire (2), time, earthb_key.",
-   "Checklist flags: cl_grummus, cl_maze, cl_behemoth, cl_aerindar, cl_terris, cl_bertox, cl_keeper, cl_saryrn, cl_vallon, cl_tallon, cl_rallos, cl_karana, cl_mmarr, cl_mmarr_book, cl_solusek."
+   "Flags: Mavuin (3 steps), Seventh, Thelin (4), Innovation door, Zeks (7), Fuirstel (5), Grummus, Aerindar (2), Bertoxxulous key, Halls of Honor trials (3 parts), Mithaniel Marr, Marr book, Tylis (2), Saryrn, Karana (4), Cipher, Solusek Ro room (5 parts), Zebuxoruk (2), Fire (2), Time and Earth B key.",
+   "Checklist flags: Grummus, Maze, Behemoth, Aerindar, Terris, Bertoxxulous, Keeper, Saryrn, Vallon, Tallon, Rallos, Karana, Mithaniel Marr, Marr book and Solusek."
   ],
   "npcs": [],
   "rewards": [],
@@ -2725,16 +2739,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Nightmares",
   "name": "Thelin's Maze (dagger shards, Terris dialogue)",
   "kind": "flag",
-  "kindWhy": "Hailing Thelin_Poxbourne at the end (state 4) with qglobal thelin == 1 sets thelin=2 ('character flag'); the Seer header lists 'thelin - PoNightmare flag series'. Checklist flag cl_maze is given instead if the player has no thelin flag.",
+  "kindWhy": "Thelin's Maze. Hailing Thelin Poxbourne at the end with Thelin step 1 moves you to step 2 of the Thelin flag series. If you have no Thelin flag, you get the Maze checklist flag.",
   "size": "24 per dream",
-  "groupLimit": "Three simultaneous dreams (rooms); max 24 seats per room (Seats()+Needed > 24 denied); one raid per room (rid recorded), in-room clients beyond the limit are removed (CheckRemoveFromTrial).",
-  "start": "Talk to Thelin_Poxbourne outside (204070): 'hail', 'dagger', 'help', then 'ready' -> raid/group sent to a free maze room (needs Maze_Checker governor 204458). First port-in sets state 1 and a 300 s wait (room.wait_until = Now()+300) before the maze starts.",
-  "timers": "Start wait 300 s after first entry; ARRIVAL_GRACE 60 s; boss-state depop timer 7200000 ms (2 h) so the room cannot lock; after the dagger is restored the depop timer is reset to 1500000 ms (25 min); Terris dialogue talk1 5000 ms, talk2 8000 ms, talk3 8000 ms, terrisdepop 2000 ms, then 600000 ms; mobs depop 1200000 ms.",
+  "groupLimit": "Three dreams (rooms) can run at once, with up to 24 players each. One raid per room. Players beyond the limit are removed from the room.",
+  "start": "Talk to Thelin Poxbourne outside: hail, then 'dagger', 'help' and 'ready'. Your raid or group goes to a free maze room. After the first group enters, the maze waits 5 minutes before it starts.",
+  "timers": "The maze starts 5 minutes after the first entry. Players have 60 seconds to arrive. The room closes after 2 hours at most, so it cannot lock up. After the dagger is restored that drops to 25 minutes. Mobs leave after 20 minutes.",
   "mechanics": [
-   "Maze room states: 0 free, 1 group ported but not started, 2 Thelin wandering, 3 boss spawned (accepting Dagger Blade Shard), 4 dialogue complete, 5 cleanup.",
-   "Thelin (204486 inside) walks waypoints; at waypoints 26/46/57/71/88/99 he recovers dagger pieces and spawn waves of nightstalkers (204472 sinister, 204473 thulian, 204476 abhorrent), ravens (204463), arachnids (204477) plus a nightmarish_construct (204487) each wave.",
-   "At waypoint 26 the final a_construct_of_nightmares (204464) spawns; it drops the Dagger Blade Shard (9258) 100%.",
-   "Hand the Dagger Blade Shard 9258 to Thelin (state 3) -> QuestReward Thelin's Dagger (9259); Terris_Thule (204483, lvl 1 dialogue form) spawns and talks; hail Thelin again (state 4) for thelin=2 and exit."
+   "Thelin walks the maze. At six points he recovers pieces of his dagger, and each time waves appear: sinister, Thulian and abhorrent nightstalkers, ravens, arachnids and a nightmarish construct.",
+   "At the first of those points the last Construct of Nightmares appears. It always drops the Dagger Blade Shard.",
+   "Hand the Dagger Blade Shard to Thelin for Thelin's Dagger. Terris Thule, in a harmless level 1 form, appears and speaks. Hail Thelin again for step 2 of the flag and to leave."
   ],
   "npcs": [
    {
@@ -2760,7 +2773,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 9259,
     "name": "Thelin's Dagger",
-    "trigger": "Turn in Dagger Blade Shard (9258) to Thelin_Poxbourne while room state == 3"
+    "trigger": "Hand the Dagger Blade Shard to Thelin Poxbourne once the maze boss is dead"
    }
   ],
   "cites": [
@@ -2777,14 +2790,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "The Lair of Terris Thule",
   "name": "Terris Thule (lair)",
   "kind": "raid-boss",
-  "kindWhy": "Death spawns A_Planar_Projection (221042) whose hail sets thelin 2 -> 3 (flag series); preflag 'cl_terris' if thelin missing/1.",
-  "groupLimit": "Projection FLAG_LIMIT (72 per ProjectionEligibility; see nightmareb/A_Planar_Projection.lua).",
-  "start": "Pull Terris_Thule (221041).",
-  "timers": "checkhp 3000 ms after combat drop (reset to 100%); boundscheck 1000 ms in combat; projection depops 1200000 ms (20 min).",
+  "kindWhy": "The flag boss of the Lair of Terris Thule. His death brings a Planar Projection that moves the Thelin flag from step 2 to step 3. If you have no Thelin flag, you get the Terris checklist flag.",
+  "groupLimit": "The projection flags up to 72 players.",
+  "start": "Pull Terris Thule.",
+  "timers": "If a fight drops, she resets to full health after 3 seconds. Her area is checked every second. The projection stays 20 minutes.",
   "mechanics": [
-   "Event hp: 95% message; 79% and 69% spawn one dream defiler per attacking client (221045 small / 221044 large) at -1661,-168,140; 50% casts Direption of Dreams (3150); 40% four grotesque statues (221043) wake from spawn ids 365397/366053/366176/367232.",
-   "Leashes: outside x -1580..-2090 / y -280..250 she resets to spawn, full HP, Balance of the Nameless 3230.",
-   "Death: reset adds, Planar Projection spawns at the corpse."
+   "At 95% health a message plays. At 79% and 69% one dream defiler appears for each player attacking, small or large, at /loc -168, -1661.",
+   "At 50% she casts Direption of Dreams. At 40% four grotesque statues wake.",
+   "If she leaves her area she resets to full health and casts Balance of the Nameless.",
+   "When she dies, her adds are reset and a Planar Projection appears on her corpse."
   ],
   "npcs": [
    {
@@ -2824,15 +2838,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Nightmares",
   "name": "Mujaki the Devourer (Etumer's rescue, wave event)",
   "kind": "optional",
-  "kindWhy": "No flag or qglobal in Mujaki.lua; loot/xp event (Nightmare Rift 32546 100%).",
+  "kindWhy": "Optional wave event with loot (the Nightmare Rift, always) and experience. It sets no flag.",
   "size": "24 per room",
-  "groupLimit": "Three rooms, up to 24 each (Etumer says 'twenty four'); ports<4 groups per room; raid rule: first group's raid id is saved and only that raid may enter; non-raid groups cannot join raided rooms.",
-  "start": "Talk to Etumer (204036): 'hail', 'brother', 'perhaps', then 'ready' -> group moved into a free trial room (Grave_Checker governor 204455). Event starts 5 minutes after the first group ports in.",
-  "timers": "First wave 5 min after port; wave timer 120000 ms; 8 waves then the boss is made targetable; Mujaki/riders depop 1500000 ms after becoming active (paused in combat); respawn after 25 minutes of cumulative non-aggro per header comment.",
+  "groupLimit": "Three rooms, up to 24 players each, fewer than 4 groups per room. The first group's raid is saved and only that raid may enter. A group not in a raid cannot join a raided room.",
+  "start": "Talk to Etumer: hail, then 'brother', 'perhaps' and 'ready'. Your group is moved to a free trial room. The event starts 5 minutes after the first group arrives.",
+  "timers": "The first wave comes 5 minutes after you arrive, then one every 2 minutes, 8 waves in all. Mujaki and the riders leave 25 minutes after they become active (the clock stops in combat). The room comes back after 25 minutes with no one fighting.",
   "mechanics": [
-   "Waves 1-3 singles, 4-7 doubles ('double' timer 3000 ms spawns a second set), 8 -> ActivateBoss.",
-   "a_servant_of_Mujaki (204470, lvl 58) wave mobs; platform riders (204471, lvl 60) are created from servants that reach Mujaki; helots (204466).",
-   "Mujaki (204039) becomes targetable (bodytype 3) only after wave 8."
+   "Waves 1 to 3 are single waves, 4 to 7 are doubles (a second set follows 3 seconds later), and wave 8 makes Mujaki attackable.",
+   "The wave mobs are Servants of Mujaki (level 58). Platform riders (level 60) are made from servants that reach Mujaki. Helots also appear.",
+   "Mujaki can only be targeted after wave 8."
   ],
   "npcs": [
    {
@@ -2880,14 +2894,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Nightmares",
   "name": "Deyid the Twisted (Seilaen's forest plateau)",
   "kind": "optional",
-  "kindWhy": "No flag; loot (Screamstaff, Ribbon Choker, Scorched Wand) only.",
+  "kindWhy": "Optional fight on Seilaen's plateau with loot (Screamstaff, Ribbon Choker, Scorched Wand) and no flag.",
   "size": "2 groups",
-  "groupLimit": "Seilaen ports at most 2 groups ('ports < 2') to the plateau; 'ready' ports a group within 150 units.",
-  "start": "Talk to Seilaen (204047): hail, 'help', 'following', 'locket', 'want' (if Deyid not already up it spawns #Deyid_the_Twisted 204461 at 1011,1081,283 and moves you to 1213,1103,282), then 'deyid' and 'ready' to bring more groups.",
-  "timers": "Deyid depop 1800000 ms; checkbounds 5000 ms; foreboding trees (204484) depop 3600000 ms; blighted/corrupt treants (204459/204460) depop 100000 ms; Seilaen resets ports 600000 ms after if players remain on plateau.",
+  "groupLimit": "Seilaen sends at most 2 groups to the plateau. Saying 'ready' sends a group that is within 150 units.",
+  "start": "Talk to Seilaen: hail, then 'help', 'following', 'locket' and 'want'. If Deyid is not already up, Deyid the Twisted appears at /loc 1081, 1011 and you are moved to /loc 1103, 1213. Say 'deyid' and 'ready' to bring more groups.",
+  "timers": "Deyid leaves after 30 minutes. The foreboding trees stay up to an hour. Treants leave after 1 min 40 s. Seilaen resets her ports 10 minutes later if players are still on the plateau. The plateau edge is checked every 5 seconds.",
   "mechanics": [
-   "HP events: 85% spawns 11 foreboding trees ringed round the plateau; 60% they close in; 45% six of them transform into blighted/corrupt treants that run at Deyid's target.",
-   "Death signals Seilaen (frees her) and foreboding trees."
+   "At 85% health, 11 foreboding trees appear in a ring round the plateau. At 60% they close in. At 45% six of them become blighted or corrupt treants and run at Deyid's target.",
+   "When Deyid dies, Seilaen and the trees are freed."
   ],
   "npcs": [
    {
@@ -2927,13 +2941,13 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Nightmares",
   "name": "Hobgoblin chain: Bullyrag Bat -> Painwrack -> Fearsome -> Anguish Lord",
   "kind": "optional",
-  "kindWhy": "Placeholder chain of named mobs; no flag.",
-  "start": "Passive: kill #The_Bullyrag_Bat (204010); each death unique-spawns the next link.",
-  "timers": "unknown (spawn2 respawn is DB-side).",
+  "kindWhy": "A chain of named placeholder mobs with no flag.",
+  "start": "Nothing to start: kill The Bullyrag Bat. Each death brings the next one.",
+  "timers": "Unknown. Respawn times are in the database, not the scripts.",
   "mechanics": [
-   "#The_Bullyrag_Bat dies -> #The_Painwrack_Hobgoblin (204482) at 727,4567,-97.75.",
-   "Painwrack dies -> #The_Fearsome_Hobgoblin (204481) at 1686,4079,36.875.",
-   "Fearsome dies -> #Hobgoblin_Anguish_Lord (204479) at 1484,2650,-69.5 with a_malevolent_mephit (204468) and a_fearsome_bat (204465)."
+   "The Bullyrag Bat dies, then The Painwrack Hobgoblin appears at /loc 4567, 727.",
+   "Painwrack dies, then The Fearsome Hobgoblin appears at /loc 4079, 1686.",
+   "Fearsome dies, then the Hobgoblin Anguish Lord appears at /loc 2650, 1484 with a malevolent mephit and a fearsome bat."
   ],
   "npcs": [
    {
@@ -2986,13 +3000,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Nightmares",
   "name": "Named uniques: Terror Matriarch, Vhaksiz the Shade, Untel`Dak, The Dreamkeeper",
   "kind": "optional",
-  "kindWhy": "Scripts only leash / spawn adds. Vhaksiz drops Heart of Vhaksiz (28801) which is a turn-in item to Cadelid_Etord in Plane of Knowledge together with 28795 (side quest).",
-  "start": "Passive pulls.",
-  "timers": "Terror Matriarch hatchling timer 30000 ms; Dreamkeeper depop 600000 ms; Vhaksiz leash 3000 ms (>155 units reset, spell 2830).",
+  "kindWhy": "Named mobs whose scripts only send them back when pulled too far or add monsters. Vhaksiz drops the Heart of Vhaksiz, which goes with a Beginner Magic Manual to Cadelid Etord in the Plane of Knowledge for a side quest.",
+  "start": "Nothing to start: pull them.",
+  "timers": "The Terror Matriarch adds a hatchling every 30 seconds. The Dreamkeeper leaves after 10 minutes. Vhaksiz is checked every 3 seconds.",
   "mechanics": [
-   "#Terror_Matriarch (204034) every 30 s in combat spawns a hatchling (204475/204469/204474).",
-   "Vhaksiz_the_Shade (204028) resets if pulled >155 from spawn.",
-   "Untel`Dak (204035) boundscheck 3000 ms."
+   "The Terror Matriarch spawns a hatchling every 30 seconds in a fight.",
+   "Vhaksiz the Shade resets if pulled more than 155 units from where he spawns.",
+   "Untel`Dak is checked every 3 seconds to see that he has not left his area.",
+   "The Dreamkeeper has only a despawn timer."
   ],
   "npcs": [
    {
@@ -3035,16 +3050,18 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Storms",
   "name": "Relv the Mysterious - Falto, Lord of Thunder (burning forest)",
   "kind": "optional",
-  "kindWhy": "Nothing in the script sets a flag or zone flag; reward is a Ruby Pendant (7755) + 50000 xp for turning in Lightning Crystals dropped by Falto. Loot/xp side event.",
+  "kindWhy": "Optional event. It sets no flag. Turn in the Lightning Crystals that Falto drops for a Ruby Pendant with a Gold Chain and 50,000 experience.",
   "size": "4 groups, one at a time; 24 players in",
-  "groupLimit": "Up to 4 parties, one at a time; MoveGroup sends the clicker's group (or raid group); CheckRemoveFromTrial(24) removes anyone over 24 clients in the trial every 30s.",
-  "start": "Talk to Relv_the_Mysterious (210090): say 'hail' (state 1), then 'destruction' or 'continue' (x3 'continue' through states 2-4), then say 'courageous' -> StartEvent() (only if event not active and nobody in trial). Then say 'ready' to be moved (group within 100 units) to -1087,6040,-483; max 4 groups (groups>=4 refused).",
-  "timers": "Event ends after 10800000 ms (3 h) via Decrepit Ent 'event' timer (everyone pulled back to 1562,2088,-450; EndEvent depops all). 'check' timer 30000 ms trims >24 clients. Falto adds timer 60000 ms (adds wave = 1,2,3... mephits per tick, reset on each combat join). Add mobs self-depop after 180000 ms out of combat. Vivacious Ent 'check' every 20000 ms ends event when no client is in the trial (y>3000).",
+  "groupLimit": "Up to 4 parties, sent in one at a time. Relv moves your group or raid group, anyone within 100 units. Every 30 seconds, anyone beyond the 24th player in the burning forest is sent back to /loc -2059, -1795.",
+  "start": "Talk to Relv the Mysterious. Say 'hail' once. Then say 'destruction' or 'continue', then 'continue' twice more. Finally say 'courageous'. That starts the event, but only if no event is running and nobody is inside. Then say 'ready' and your group is moved into the burning forest. Four groups at most.",
+  "timers": "The event lasts 3 hours from the start. When it ends, everyone is pulled back to Relv at /loc 2088, 1562 and everything resets. Falto's adds come every minute during his fight: 1 mephit in the first wave, 2 in the second, 3 in the third, and so on. The count starts again at 1 each time a new fight starts. Add mobs leave after 3 minutes out of combat.",
   "mechanics": [
-   "StartEvent unique-spawns a_decrepit_ent (210486) at -1017,6055,-486 and spawns 30 mephits (random blazing 210459 / burning 210460, level 62) across the burning forest.",
-   "Each mephit death spawns 3 a_fiery_mepheeka (210462); when no blazing/burning mephit remains alive, Falto, Lord of Thunder (210470) unique-spawns at -574,5469,-480.",
-   "While Falto is in combat, every 60s a growing wave of level-60 blazing/burning mephit adds (210488/210489) spawns (wave 1, 2, 3, ...).",
-   "Falto death: decrepit ent depops and a_vivacious_ent (210487) spawns; saying 'ready to return' to it ports the group back to Relv. Turn in Lightning Crystals (28784) to Relv for Ruby Pendant with a Gold Chain + 50000 xp."
+   "Don't repeat 'hail' to Relv. After a few he gets annoyed and ignores you.",
+   "When the event starts, a Decrepit Ent appears at /loc 6055, -1017 and 30 mephits are spread across the burning forest, each randomly blazing or burning, level 62.",
+   "Each mephit that dies leaves 3 fiery mepheekas. You don't have to kill them. When no blazing or burning mephit is left alive, Falto, Lord of Thunder appears at /loc 5469, -574.",
+   "While Falto fights, level 60 blazing and burning mephit adds spawn around him once a minute.",
+   "When Falto dies, the Decrepit Ent is replaced by a Vivacious Ent. Say 'ready to return' to it and your group goes back to Relv. If nobody is left in the burning forest, the event ends and resets.",
+   "Hand the Lightning Crystals that Falto drops to Relv for the Ruby Pendant with a Gold Chain and 50,000 experience."
   ],
   "npcs": [
    {
@@ -3088,7 +3105,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 7755,
     "name": "Ruby Pendant with a Gold Chain",
-    "trigger": "Hand Lightning Crystals (28784, a Falto drop) to Relv_the_Mysterious; 50000 xp (Relv Trade event)"
+    "trigger": "Hand the Lightning Crystals (a Falto drop) to Relv the Mysterious; 50,000 experience"
    }
   ],
   "cites": [
@@ -3107,13 +3124,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Storms",
   "name": "Drornok Tok Vo`Lok (Grenidor caves, Lok frog king)",
   "kind": "optional",
-  "kindWhy": "Script sets no flag and gives no quest item; Drornok has only gear/parchment drops. Not referenced by the karana/Askr chain.",
-  "start": "Passive: kill the cave placeholder spawns (spawn2 ids 346427..346458 in SPAWNPOINT_IDS). When >31 of those have been killed AND none of a_typhoon_amphan 210040 / a_tempest_toad 210047 / a_hurricane_loktole 210046 / a_vacillating_loktole 210084 are alive at the same time, Drornok spawns.",
-  "timers": "Respawns of the 32 cave spawn points are disabled (spawn_condition postorms 1 0) while Drornok is up; on his death each spawn point timer is set to 3000000 + rand(0..600000) ms (50-60 min) and respawns re-enabled. Add depop 180000 ms after spawn out of combat. Drornok adds timer 120000 ms.",
+  "kindWhy": "Optional fight in the Grenidor caves. It sets no flag and gives no quest item, only gear and parchment drops. The Karana and Askr chain does not use him.",
+  "start": "Clear the cave: kill all 32 of its spawns, and make sure none of the typhoon amphans, tempest toads, hurricane loktoles or vacillating loktoles is left alive. Drornok Tok Vo`Lok then appears.",
+  "timers": "While Drornok is up, the cave's respawns are off. After he dies each cave spawn returns after 50 to 60 minutes. Adds leave 3 minutes after spawning if not in combat. He calls adds every 2 minutes.",
   "mechanics": [
-   "Drornok (210469) unique-spawns at -46,-180,-574 with 20 random cave mobs (210040/210047/210046/210084) placed around the cave.",
-   "In combat every 120s he spawns 4 random adds (210473/210474/210475/210476) near himself.",
-   "Adds depop 180s after spawn unless in combat."
+   "Drornok appears at /loc -180, -46 with 20 random cave mobs placed around the cave.",
+   "In a fight, every 2 minutes he spawns 4 random adds near himself."
   ],
   "npcs": [
    {
@@ -3137,13 +3153,13 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Storms",
   "name": "Gurebk, Lord of Krendic (Krendic storm giants)",
   "kind": "flag",
-  "kindWhy": "Drops Esoteric Medallion 28780 (Krendic) guaranteed (5 + up to 3 more via AddItem; 3 + 0/2 in PvP instance). The script gives medallions only; the karana flag turn-in (Esoteric Meld 11488 -> Askr) needs the medallion set, but the tradeskill combine is not in these scripts. Treated as flag path.",
-  "start": "Passive. Gurebk starts untargetable (no-aggro) and becomes attackable when every trash giant (210035, 210407, 210022) is dead (checked 5s after his spawn and on each trash death_complete). He re-hides after 3600000 ms (1h) if not engaged.",
-  "timers": "untarget timer 3600000 ms (paused in combat). Adds timer 20000 ms. Add depop 170000 ms. While active, trash giants that respawn are instantly depopped.",
+  "kindWhy": "Gurebk, Lord of Krendic, is guaranteed to drop Krendic Esoteric Medallions. They belong to the set the Karana flag turn-in needs. The combine is not in the scripts. Treated as part of the flag path.",
+  "start": "Nothing to start. Gurebk cannot be attacked until every trash giant around him is dead. This is checked 5 seconds after he spawns and after each trash giant dies. He hides again after 1 hour if not engaged.",
+  "timers": "The hide timer is 1 hour and stops while he fights. Adds come every 20 seconds and leave after 2 min 50 s. While he is active, trash giants that respawn are removed at once.",
   "mechanics": [
-   "On spawn Gurebk (210332) is given 5 Krendic medallions + 3 x 50% chance for another (PvP instance: 3 + 50% for 2). Trash giants carry one medallion with 20% chance each (2% PvP instance).",
-   "Once active, every 20s in combat he spawns 4-6 level-56 adds (210482 scorpioco, 210483 scorponnis, 210485 cactore, 210484 cactoric), capped at 6 alive.",
-   "Adds spawn within x+-100, y-50..-100 of him."
+   "Gurebk spawns carrying 5 Krendic medallions, plus three more with a 50% chance each. In a PvP instance he carries 3 and two more at 50%. Trash giants each carry one with a 20% chance (2% in a PvP instance).",
+   "Once active, every 20 seconds in a fight he spawns 4 to 6 level 56 adds: scorpiocos, scorponnis, cactores and cactorics. No more than 6 stay alive.",
+   "Adds appear within 100 units either side of him."
   ],
   "npcs": [
    {
@@ -3184,13 +3200,13 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Storms",
   "name": "Jeplak, Lord of Srerendi (fake then real)",
   "kind": "flag",
-  "kindWhy": "Real Jeplak is given 5 guaranteed Srerendi Esoteric Medallions (28765); medallions feed the karana flag chain via Esoteric Meld (combine not in scripts).",
-  "start": "Passive, two stages. Fake Jeplak (210403, level 65): becomes attackable when all 23 spawn points in SPAWNPOINT_IDS1 are dead; at that moment 8 more trash hleyta (210099/210419/210056) spawn at x248..442,y-2412..-2364. Killing fake spawns Real Jeplak (210472) at 348,-3159,-440.5 and a_confused_castaway (210461) at 346,-2513,-455.56; real becomes attackable when the 11 spawn points in SPAWNPOINT_IDS2 are dead.",
-  "timers": "untarget 3600000 ms (1h; paused in combat). If the untarget expires on Real Jeplak he depops and the fake is respawned via spawn2 346711. Adds timer 60000 ms; adds depop 57000 ms. Castaway talk: say hail, 'yes'/'you did', 'jeplak' then he depops.",
+  "kindWhy": "Jeplak, Lord of Srerendi, has a fake and then a real fight. The real one carries Srerendi Esoteric Medallions for the Karana flag chain (via an Esoteric Meld; the combine is not in the scripts).",
+  "start": "Two stages. The fake Jeplak (level 65) can be attacked once all 23 spawn points around him are dead. At that moment 8 more hleyta trash appear. Killing him brings the real Jeplak at /loc -3159, 348 and a confused castaway at /loc -2513, 346. The real Jeplak can be attacked once the 11 spawn points of his stage are dead.",
+  "timers": "The hide timer is 1 hour and stops while he fights. If it runs out on the real Jeplak, he leaves and the fake one comes back. Adds come every minute and leave after 57 seconds.",
   "mechanics": [
-   "Real Jeplak in combat: every 60s spawns 7 adds (i=2..8) of a_mangled_traveler (210478) / a_lost_soul (210477) north of him.",
-   "Trash giants carry a Srerendi medallion 20% (2% PvP instance); trash re-spawns depop while the real Jeplak is active.",
-   "Castaway (210461) is a flavor NPC that explains the fake Jeplak."
+   "The real Jeplak carries 5 Srerendi medallions, always. Trash giants carry one with a 20% chance (2% in a PvP instance). Their respawns vanish while the real Jeplak is active.",
+   "In a fight, every minute the real Jeplak spawns 7 adds, mangled travelers and lost souls, north of him.",
+   "The confused castaway just explains the fake Jeplak. Hail him and say 'yes' or 'you did', then 'jeplak', and he leaves."
   ],
   "npcs": [
    {
@@ -3251,13 +3267,13 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Storms",
   "name": "Neffiken, Lord of Kelek`Vor (+ Dolshak the Ornery)",
   "kind": "flag",
-  "kindWhy": "Drops 5+ guaranteed Kelek`Vor Esoteric Medallions (28783); part of the karana flag medallion set (combine not in scripts).",
-  "start": "Passive. Neffiken (210251) becomes attackable once all trash giants (210038, 210411, 210015) are dead; he re-hides after 3600000 ms.",
-  "timers": "untarget 3600000 ms (paused in combat); trees timer 35000 ms; tree depop 170000 ms. On Neffiken death the Dolshak spawn point (369224) is set to rand(900..3600) s. Dolshak (210468) depops after 900000 ms (15 min) out of combat and 4200000 ms (70 min) outright; he depops if Neffiken is up.",
+  "kindWhy": "Neffiken, Lord of Kelek`Vor, is guaranteed to drop at least 5 Kelek`Vor Esoteric Medallions, part of the set for the Karana flag chain. The combine is not in the scripts.",
+  "start": "Nothing to start. Neffiken can be attacked once all the trash giants around him are dead. He hides again after 1 hour if not engaged.",
+  "timers": "The hide timer is 1 hour and stops while he fights. Ents come every 35 seconds and leave after 2 min 50 s. When Neffiken dies, Dolshak the Ornery comes back after a random 15 to 60 minutes. Dolshak leaves after 15 minutes out of combat or 70 minutes in all, and does not appear while Neffiken is up.",
   "mechanics": [
-   "Neffiken spawn: 5 guaranteed Kelek`Vor medallions + 3 x 50% extra; trash giants hold one with 20% chance each (2% PvP).",
-   "In combat every 35s he spawns 5-8 ents (210479/210480/210481), max 8 alive, south of him in a semi-circle (dist 50-100).",
-   "Dolshak the Ornery (210468) is a side spawn that drops Polished Obsidian Tomahawk 28785 (100%); its use is not in the scripts."
+   "Neffiken spawns with 5 Kelek`Vor medallions, plus three more at 50% each. Trash giants carry one with a 20% chance (2% in a PvP instance).",
+   "In a fight, every 35 seconds he spawns 5 to 8 ents south of him in a half circle, 50 to 100 units away. No more than 8 stay alive.",
+   "Dolshak the Ornery is a side spawn that always drops a Polished Obsidian Tomahawk. What it is for is not in the scripts."
   ],
   "npcs": [
    {
@@ -3323,12 +3339,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Storms",
   "name": "Ston`Ruak, Ancient of the Trees (Koka`Vor tree city)",
   "kind": "optional",
-  "kindWhy": "No flag or medallion in the script; loot (Storm Rider Blood/Skin, gear). Whether Storm Rider Blood is a flag component is not in the scripts.",
-  "start": "Passive, two phases. Phase 1: kill 38 of the Koka`Vor senvar/krovian guards (210087, 210088) and none of those types remain. Phase 2: 8 Koka`Vor Elder/Chieftain (210466/210465) spawn at fixed PHASE2_LOCS; when none alive Ston`Ruak spawns at -206,669,-368.",
-  "timers": "Adds timer 35000 ms in combat; totem depop 170000 ms. Trash re-spawns during phase 2 / while Ston`Ruak is up depop at once.",
+  "kindWhy": "Optional fight in the Koka`Vor tree city. It gives loot (Storm Rider Blood and Skin, gear), but no flag or medallion. Whether Storm Rider Blood is part of a flag is not in the scripts.",
+  "start": "Two phases. Phase 1: kill 38 of the Koka`Vor guards (senvar and krovian) until none are left. Phase 2: 8 Koka`Vor Elders and Chieftains appear at set spots. When none are alive, Ston`Ruak appears at /loc 669, -206.",
+  "timers": "Totem adds come every 35 seconds in a fight and leave after 2 min 50 s. Trash that respawns during phase 2, or while Ston`Ruak is up, is removed at once.",
   "mechanics": [
-   "Every 35s in combat 5-8 totem adds (210458 earthen spirit, 210463 advisor, 210464 bark spirit) spawn, capped at 8 alive.",
-   "killed counter resets to 0 on Ston`Ruak spawn."
+   "Every 35 seconds in a fight, 5 to 8 totem adds appear: earthen spirits, advisors and bark spirits. No more than 8 stay alive.",
+   "The kill count starts again when Ston`Ruak appears."
   ],
   "npcs": [
    {
@@ -3381,12 +3397,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Storms",
   "name": "Storm giant mini-bosses (Zertuken, Solnebk, Pendubk, Paruek, Laruken, Faruek)",
   "kind": "flag",
-  "kindWhy": "Each spawns holding 1-3 medallions (AddItem) of its tribe: Laruken/Zertuken Kelek`Vor 28783, Paruek/Faruek Srerendi 28765, Pendubk/Solnebk Krendic 28780. These feed the karana flag chain.",
-  "start": "Passive: roaming giant mini-bosses; fighting one starts storm adds.",
-  "timers": "storms timer 60000 ms while in combat; each storm depops after 9000 ms.",
+  "kindWhy": "Each storm giant mini-boss spawns holding 1 to 3 Esoteric Medallions of its tribe. They feed the Karana flag chain. Laruken and Zertuken carry Kelek`Vor, Paruek and Faruek carry Srerendi, and Pendubk and Solnebk carry Krendic.",
+  "start": "Nothing to start: they roam. Fighting one brings storm adds.",
+  "timers": "A storm comes every minute in a fight and each storm leaves after 9 seconds.",
   "mechanics": [
-   "On spawn: math.random(1, 3) medallions (max 2 in PvP instance).",
-   "In combat every 60s spawn 7-10 a_tumultuous_storm (210467) within 75 units."
+   "Each carries 1 to 3 medallions (at most 2 in a PvP instance).",
+   "In a fight, every minute 7 to 10 tumultuous storms appear within 75 units."
   ],
   "npcs": [
    {
@@ -3438,24 +3454,24 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Storms",
   "name": "Askr the Lost - Karana flag chain (Bastion of Thunder access)",
   "kind": "flag",
-  "kindWhy": "Sets qglobal karana 1 -> 2 and the shrine door (door id 4) in player.lua sets zone flag 209 (Bastion of Thunder) when karana>=2 and mavuin>=3.",
-  "start": "Hail Askr_the_Lost (state machine; saying 'it was me', 'paying attention', 'yes', 'continue' etc.). Turn in a giant head (28749 wind / 28781 desert / 28782 forest) -> returns Storm Giant Head 11486 on cursor and sets state 6; 'continue' at state 9 summons Askr's Bag of Verity (17192). Turn in 11487 Askr's Sealed Bag of Verity (karana 0 -> 1, 1000 xp). Turn in 11488 Esoteric Meld (karana 1 -> 2, 10000 xp). Click door id 4 in the zone with karana>=2 and mavuin>=3 -> zone flag 209 and karana=3.",
-  "timers": "qglobal 'karana' set with expiry arg 5,'F' (permanent); conversation state cleared when player leaves zone (checkreset 15000 ms).",
+  "kindWhy": "Askr the Lost's chain moves the Karana flag from step 1 to step 2. The shrine door then opens the Bastion of Thunder to anyone with Karana step 2 and the Mavuin flag at step 3.",
+  "start": "Hail Askr the Lost and answer him ('it was me', 'paying attention', 'yes', 'continue' and so on). Hand him a giant head (wind, desert or forest) and he returns a Storm Giant Head. At the right point, 'continue' gives you Askr's Bag of Verity. Hand in Askr's Sealed Bag of Verity (Karana step 0 to 1, 1,000 experience). Hand in the Esoteric Meld (step 1 to 2, 10,000 experience). Click the shrine door in the zone with Karana step 2 and Mavuin step 3 to get the Bastion of Thunder zone flag and Karana step 3.",
+  "timers": "None. The flag is permanent. Askr forgets your conversation when you leave the zone.",
   "mechanics": [
-   "Needs the Esoteric Meld (made from the three tribal Esoteric Medallions; the combine recipe is not in the scripts).",
-   "Door click also requires qglobal mavuin >= 3 (Plane of Justice Mavuin chain)."
+   "The Esoteric Meld is made from the three tribal Esoteric Medallions. The recipe is not in the scripts.",
+   "The shrine door also needs the Mavuin flag at step 3, from the Plane of Justice chain."
   ],
   "npcs": [],
   "rewards": [
    {
     "itemId": 17192,
     "name": "Askr's Bag of Verity",
-    "trigger": "SummonCursorItem at Askr state 9 'continue' (karana 0) or on saying 'bastion of thunder' at karana 1"
+    "trigger": "Given by Askr at the right point of his talk, or when you say 'bastion of thunder' at Karana step 1"
    },
    {
     "itemId": 11486,
-    "name": "Storm Giant Head (non-turn-in)",
-    "trigger": "Returned when a tribal giant head is handed in"
+    "name": "Storm Giant Head",
+    "trigger": "Returned when you hand in a tribal giant head"
    }
   ],
   "cites": [
@@ -3470,13 +3486,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Drunder, the Fortress of Zek",
   "name": "Tallon Zek (south wing)",
   "kind": "flag",
-  "kindWhy": "Death spawns A_Planar_Projection 214323 (1200 s) whose hail sets zeks 2 -> 4 (or 3 -> 5): the 'Tallon' half of the zeks flag series (zeks>=2 opens Drunder door; zeks==5 needs both twins; 5 -> 6 via Maelin in Plane of Knowledge). Seer header: 'zeks - PoI Giwin flags + Zeks in Tactics (seven values)'.",
-  "groupLimit": "Projection FLAG_LIMIT 72; killer's raid/group (ProjectionEligibility).",
-  "start": "Pull Tallon_Zek (214026) in the south wing.",
-  "timers": "shadowstep timer 20000 ms in combat: teleports (GMMove) to a random point x -725..-505, y -2100..-1820, z 207.6 and wipes hate; stops when not engaged and returns to spawn. Projection depops 1200000 ms.",
+  "kindWhy": "Tallon's half of the Zeks flag series. His death brings a Planar Projection. Zeks step 2 opens the Drunder door. Step 5 needs both twins, and step 6 comes from Maelin in the Plane of Knowledge.",
+  "groupLimit": "The projection flags the killer's raid, group or solo player, up to 72 players.",
+  "start": "Pull Tallon Zek in the south wing.",
+  "timers": "In a fight, every 20 seconds he teleports to a random spot in the room and wipes his hate. When the fight ends he returns to his spawn. The projection stays 20 minutes.",
   "mechanics": [
-   "Spawn: detrimental cast rate set to 75 (about 3.5 s between barbs).",
-   "Death: Planar Projection (214323) for the killer; hail: zeks==2 -> 4, zeks==3 -> 5 (character flag); zeks<2 and no cl_tallon -> checklist flag cl_tallon."
+   "He casts his harmful spells faster than normal, about every 3.5 seconds.",
+   "When he dies, a Planar Projection appears for the killer. Hail it to move from Zeks step 2 to 4, or from step 3 to 5.",
+   "If you are below Zeks step 2 and have no Tallon checklist flag, you get that instead."
   ],
   "npcs": [
    {
@@ -3499,14 +3516,16 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Drunder, the Fortress of Zek",
   "name": "Vallon Zek (north wing, splitting illusion)",
   "kind": "flag",
-  "kindWhy": "Death of the real Vallon (214317) spawns A_Planar_Projection 214324 whose hail sets zeks 2 -> 3 (or 4 -> 5): the 'Vallon' half of the zeks series.",
-  "groupLimit": "Projection FLAG_LIMIT 72; killer's raid/group.",
-  "start": "Pull Vallon_Zek (214316, level 73, 175000 hp) in the north wing.",
-  "timers": "each Vallon copy depops 120000 ms after spawn (paused in combat); the real one on timeout also calls eq.spawn_from_spawn2(369265) to restore the base spawn; bounds 6000 ms (resets to -625,1980,204.5 if y < 1750).",
+  "kindWhy": "Vallon's half of the Zeks flag series. The real Vallon's death brings a Planar Projection.",
+  "groupLimit": "The projection flags the killer's raid, group or solo player, up to 72 players.",
+  "start": "Pull Vallon Zek (level 73, 175,000 HP) in the north wing.",
+  "timers": "Each Vallon copy leaves 2 minutes after appearing, and the clock stops in combat. If the real one times out, the base spawn is restored. The room is checked every 6 seconds.",
   "mechanics": [
-   "At 50% HP each Vallon says 'fades into the shadows as five figures take shape' and depops, spawning five copies in x -645..-565, y 1940..2020: one real (214317, level 64, 84000 hp) and four fakes (214318 / 214319, 42000 hp).",
-   "The real one carries a wave counter via signal (wave+1) and splits again at 50% until wave == 4 (four generations).",
-   "The real Vallon (214317) death spawns the Planar Projection for the killer; hail: zeks==2 -> 3, zeks==4 -> 5; zeks<2 and no cl_vallon -> checklist flag cl_vallon."
+   "At 50% health each Vallon says he 'fades into the shadows as five figures take shape' and leaves. Five copies appear: one real (level 64, 84,000 HP) and four fakes (42,000 HP).",
+   "The real one splits again at 50%, up to four times in all.",
+   "When the real Vallon dies, a Planar Projection appears. Hail it to move from Zeks step 2 to 3, or from step 4 to 5.",
+   "If you are below Zeks step 2 and have no Vallon checklist flag, you get that instead.",
+   "A Vallon that leaves the room is sent back."
   ],
   "npcs": [
    {
@@ -3548,15 +3567,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Drunder, the Fortress of Zek",
   "name": "Rallos Zek / the Warlord (War Room)",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss: Warlord death spawns A_Planar_Projection 214322 (1200 s); hail with zeks == 6 sets zeks=7 (needed for Tower of Solusek Ro / Plane of Fire: solrotower door requires zeks 7) else checklist flag cl_rallos.",
-  "groupLimit": "Projection FLAG_LIMIT 72; no scripted raid cap; arena/guard recovery state is persisted via eq.set_data per guild id.",
-  "start": "Kill both War Room door guards Decorin_Berik (214056) and Decorin_Grunhork (214057) while phase is Ready (guardDeaths for both) -> StartAttempt().",
-  "timers": "Success: guards on a 66-hour cooldown (SUCCESS_RESPAWN_TIME = 237600 * 1000 ms), arena restored 30 min later (arenaUntil +1800). Failure: phase Retry, cooldownUntil = Now()+600 s. Idle allowances: upstairs Rallos 1170000 ms, Warlord 1200000 ms (FailureTimeout). Elite waves: 20000 ms after engage then every 50000 ms. Pit wave 'twitch' timer 55000 ms then wraiths 10000 ms later. Watchdog 5000 ms.",
+  "kindWhy": "The flag boss of Drunder, in three phases. The Warlord's death brings a Planar Projection. With Zeks step 6, hailing it gives Zeks step 7, which the Tower of Solusek Ro needs. Otherwise you get a checklist flag.",
+  "groupLimit": "The projection flags up to 72 players. There is no raid cap in the script. The state of the arena is kept per guild.",
+  "start": "Kill both War Room door guards, Decorin Berik and Decorin Grunhork, while the event is ready to begin.",
+  "timers": "After a win the guards are on a 66 hour cooldown, and the arena is restored 30 minutes later. After a fail there is a 10 minute wait. Rallos upstairs can idle for 19 min 30 s and the Warlord for 20 minutes before the attempt fails. Elite waves come 20 seconds after the fight begins, then every 50 seconds. In the pit, the corpses twitch every 55 seconds and the wraiths come 10 seconds later.",
   "mechanics": [
-   "Phase 1 (Brothers): Tallon_Zek (214313) spawned at 621,-560,158 and Vallon_Zek (214320) at 594,581,158 walk to the council room; Vallon splits like his wing counterpart (HP event 50 with 9001 signal); both must die (BrotherDeathEvent) to advance.",
-   "Phase 2 (Upstairs): Rallos_Zek (214311, 750000 hp) spawns where the brothers died; HP events 98/75/50; every 50 s while engaged two A_Decorin_Elite (214289) spawn at 1060,581,124 and 1060,-560,124; at 75% the arena spawn points are disabled; at 50% Rallos jumps down and despawns.",
-   "Phase 3 (Pit): Rallos_Zek_the_Warlord (214312, 1,050,000 hp) unique-spawns at 705,0,-290; his corpses of 'the unworthy' (CORPSE_TYPES 214007-214011) twitch and become A_Chaos_Wraith (214288) every 55 s, and two A_Chaos_Boar (214287) spawn each wave; leaving bounds (x 439..940, y -400..410, z <= -250) casts spell 982 and resets him.",
-   "Failure at any phase (idle timeout, Rallos dying early, adds failing to spawn) -> Retry state, 10-minute cooldown."
+   "Phase 1, the Brothers: Tallon Zek appears at /loc -560, 621 and Vallon Zek at /loc 581, 594. They walk to the council room. Vallon splits as in his wing. Both must die.",
+   "Phase 2, upstairs: Rallos Zek (750,000 HP) appears where the brothers died. Every 50 seconds in a fight two Decorin Elites appear, at /loc 581, 1060 and /loc -560, 1060. At 75% health the arena's spawns are switched off. At 50% Rallos jumps down and leaves.",
+   "Phase 3, the pit: Rallos Zek the Warlord (1,050,000 HP) appears at /loc 0, 705. The corpses of the unworthy twitch and become Chaos Wraiths every 55 seconds, and two Chaos Boars come with each wave. If he leaves the pit he is reset.",
+   "A fail in any phase (idle time out, Rallos dying early, adds that fail to appear) puts the event into a 10 minute wait."
   ],
   "npcs": [
    {
@@ -3618,14 +3637,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Drunder, the Fortress of Zek",
   "name": "Named side mobs: Glykus Helmir, Tagrin Maldric, Anival the Blade, Hinvat Deathbringer, Diaku Overseer, Eriak",
   "kind": "optional",
-  "kindWhy": "Scripts only handle evolving boars, blade spawns, splitting or quest text; no flag set. Eriak (214073) hails/gives A Vial of Black Blood (28592) only when zeks > 4. Diaku Emblem pieces (29216-29219) used by the alternate-access key quest are not in these loot tables as listed.",
-  "start": "Passive pulls (Glykus Helmir 214053, Tagrin Maldric 214054, #Anival_the_Blade 214033, #Hinvat_Deathbringer 214075, The_Diaku_Overseer 214092, Eriak 214073).",
-  "timers": "Glykus: evolve 59000 ms, respawn 6000 ms, poof 90000 ms; Anival copy depop 360000 ms (script-spawned); Tagrin tick 6000 ms.",
+  "kindWhy": "Named side mobs with loot and no flag. Their scripts handle evolving boars, blade spawns, splitting and quest text. Eriak gives A Vial of Black Blood only once you are past Zeks step 4. The Diaku Emblem pieces for the alternate-access key quest are not in these loot tables.",
+  "start": "Nothing to start: pull Glykus Helmir, Tagrin Maldric, Anival the Blade, Hinvat Deathbringer, the Diaku Overseer or Eriak.",
+  "timers": "Glykus evolves a boar every 59 seconds. Anival's copy leaves after 6 minutes.",
   "mechanics": [
-   "Glykus Helmir evolves a_Fledgling_War_Boar (214040) through enraged/fierce/greater/enchanted war boars (214308/214296/214300/214307) on the five boar spawn points.",
-   "Tagrin Maldric spawns Animated_Decorin_Blades (214310 drops Decorin Ore Shard, 214326 drops Useless Hunk of Metal) at four points.",
-   "#Anival_the_Blade splits at <50% hp (75% of the time) into two copies, one with an empty item list.",
-   "Eriak: with zeks > 4, say 'blood' to receive A Vial of Black Blood (28592)."
+   "Glykus Helmir evolves a Fledgling War Boar through enraged, fierce, greater and enchanted war boars on the five boar spawn points.",
+   "Tagrin Maldric spawns Animated Decorin Blades at four spots. Some drop a Decorin Ore Shard and some a Useless Hunk of Metal.",
+   "Anival the Blade splits below 50% health (75% of the time) into two copies, one with nothing to drop.",
+   "Eriak: past Zeks step 4, say 'blood' to be given A Vial of Black Blood."
   ],
   "npcs": [
    {
@@ -3669,7 +3688,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 28592,
     "name": "A Vial of Black Blood",
-    "trigger": "Say 'blood' to Eriak when qglobal zeks > 4 (SummonCursorItem)"
+    "trigger": "Say 'blood' to Eriak when you are past Zeks step 4"
    }
   ],
   "cites": [
@@ -3683,16 +3702,15 @@ export const EVENTS: PopEvent[] = [
   "slug": "potimea-dial-hub",
   "zone": "potimea",
   "zoneName": "Plane of Time (A)",
-  "name": "Plane of Time A: dial hub and Time B instance controller",
+  "name": "Plane of Time A: dial hub (starts the Time B instance)",
   "kind": "flag",
-  "kindWhy": "Entry is gated upstream by qglobal time (set in Plane of Innovation by the time-machine door with zebuxoruk '2' + Quintessence of Elements 29165) and zone flag 219; potimea/219053.lua then relays dial clicks to the Time B instance. Seer header: 'time - PoTime series (1 value)'.",
+  "kindWhy": "The way into the Plane of Time B. You need the Time flag, from the time-machine door in the Plane of Innovation, and the Plane of Time zone flag. Clicking a dial sends your raid to a Time B instance.",
   "size": "90 players",
-  "groupLimit": "Time B MAX_CLIENTS = 90 per instance; one instance per raid (activeRaidID / activeInstanceID); one in-flight entry per character.",
-  "start": "Click a dial (1-5) in Plane of Time A (DIALS = {2,4,1,5,3}); signal 3 to controller 219053 starts a new Time B instance for the clicking raid when Time A is idle (activeRaidID == 0 and activeInstanceID == 0 and activePhase == 0). Door 13 (graveyard tombstone) is handled in Lua to avoid the default teleport to the public copy of Time B.",
-  "timers": "Cycle: fixed guild cycle duration 6 d 18 h (6*86400 + 18*3600 = 583200 s, empty_grace 600 s) in lua_modules/potime_cycle.lua; 'cooldown' timer 120000 ms after the instance expires; start_retry 5000 ms (12 tries); 'unblock' 60000 ms.",
+  "groupLimit": "90 players per Time B instance. One instance per raid. Each character can have one entry in progress. In Phase 1, a trial room takes up to 18 players.",
+  "start": "Click one of the five dials in the Plane of Time A. When Time A is idle, the first click starts a new Time B instance for your raid. The graveyard tombstone door is handled by script so it does not send you to the public copy.",
+  "timers": "The instance cycle lasts 6 days 18 hours, with a 10 minute grace if it is empty. After an instance ends there is a 2 minute wait. A pending entry expires after 60 seconds.",
   "mechanics": [
-   "Signals: 1 = new instance started, 2 = instance expired, 3 = dial clicked, 4 = phase changed (from Time B).",
-   "Foreign loot lockouts are checked (12 timer slots) before entry; partial/malformed records do not release a character."
+   "Loot lockouts from other raids are checked before you enter. A broken or partial record does not let a character in."
   ],
   "npcs": [],
   "rewards": [],
@@ -3710,17 +3728,17 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Time (B)",
   "name": "Phase 1: five elemental trials (Terlok of Earth, Neimon of Air, Rythor of the Undead, Anar of Water, Kazrok of Fire)",
   "kind": "optional",
-  "kindWhy": "Time content past the flagging chain: no qglobal is set. Each boss drops loot and counts toward the Time B phase progression (zoneBossTable[1]); a boss already killed in the 12 h lockout respawns as a 'Shadow_of_X' (bossStatus == 1).",
+  "kindWhy": "Time content past the flag chain. It sets no flag. Each boss drops loot and counts toward the next phase. A boss already killed in the last 12 hours comes back as a 'Shadow of' version.",
   "size": "90 players",
-  "groupLimit": "Time B instance max 90 clients; a trial starts when the first player stands in its room region.",
-  "start": "Walk into a trial room (REGIONS 1-5): the controller sets trialStates[i]=1 and the 'trial<i>start' timer fires after 44000 ms. Signals 111 Earth, 121 Air, 131 Undead, 141 Water, 151 Fire start each trial; signal 100 depops it.",
-  "timers": "Per-boss loot lockout 43200 s (12 h) for phase 1; Time B cycle 583200 s (6 d 18 h).",
+  "groupLimit": "A Time B instance holds up to 90 players. A trial starts when the first player stands in its room.",
+  "start": "Walk into one of the five trial rooms. The trial starts 44 seconds later.",
+  "timers": "Each boss has a 12 hour loot lockout in Phase 1. The Time B cycle lasts 6 days 18 hours.",
   "mechanics": [
-   "Earth (223032 Terlok of Earth): living rubble (223030) and rock-shaped assassins (223031) wave in; boss at 71,1646,500.",
-   "Water (223037 Anar of Water): triloun gatherers (223035/223036) and deepwater trilouns (223033/223034); boss appears after 7 kills at 68,867,500.",
-   "Fire (223018 Kazrok of Fire): flame (223009-223011) and inferno (223012-223017) mephits; boss at 68,573,504 with add waves at 9 and 16 kills.",
-   "Air (223044 Neimon of Air): phoenix nobles (223038-223040) and servitors (223041-223043); boss at 68,1355,504 after 4/9 kills.",
-   "Undead (223029 Rythor of the Undead): undead guardians in 3 waves (223019-223027) and protectors (223028); boss at 68,1109,500."
+   "Earth, Terlok of Earth: waves of living rubble and rock-shaped assassins come in, then the boss.",
+   "Water, Anar of Water: triloun gatherers and deepwater trilouns. The boss appears after 7 kills.",
+   "Fire, Kazrok of Fire: flame and inferno mephits. The boss comes with add waves at 9 and 16 kills.",
+   "Air, Neimon of Air: phoenix nobles and servitors. The boss appears after 4 and 9 kills.",
+   "Undead, Rythor of the Undead: undead guardians in 3 waves and protectors, then the boss."
   ],
   "npcs": [
    {
@@ -3771,12 +3789,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Time (B)",
   "name": "Phase 2: elemental war champions (Windshapen Warlord, Earthen Overseer, Ralthos Enrok, War Shapen Emissary, Gutripping War Beast)",
   "kind": "optional",
-  "kindWhy": "Time content; no flag set. Added after Phase 1 (GetAdditionalHours(2) = 1 extra hour on the attempt clock).",
-  "start": "Phase advance from Phase 1; events controller signal 201 spawns the phase (undead guardian waves 223055-223059 first).",
-  "timers": "Boss lockout 302400 s (3 d 12 h) for phases 2 and 3 (223077 line 178); +1 hour added to the attempt clock.",
+  "kindWhy": "Time content. It sets no flag. It adds 1 hour to the attempt clock.",
+  "start": "It begins when Phase 1 is done. Three lanes open: top, middle and bottom.",
+  "timers": "The boss loot lockout is 3 days 12 hours. The attempt clock gets 1 extra hour.",
   "mechanics": [
-   "Undead guardian waves (223055, 223056, 223057 wizard, 223058, plus summoned guardians 223059) are cleared in waves 1-3 before the champions engage.",
-   "Five champions: Windshapen_Warlord_of_Air 223075, Earthen_Overseer 223072, Ralthos_Enrok 223076, War_Shapen_Emissary 223074, Gutripping_War_Beast 223073 (each with a Shadow_ variant when already killed)."
+   "Top lane: the Windshapen Warlord of Air and the Earthen Overseer, with elemental stonefists, unholy rock fiends and Champions of Korascian.",
+   "Middle lane: undead guardians come in waves. Kill the first two and two more come. Kill those and the skeleton guardians and a wizard come. Kill five of them and Ralthos Enrok appears. At 75% and 25% health he calls two summoned guardians each time, up to four in all.",
+   "Bottom lane: the War Shapen Emissary and the Gutripping War Beast, with crustacean champions, watercrafted hunters, deepwater assassins, warboars, doombringers and smoldering elementals.",
+   "When a lane is cleared, ethereal mists gather at the far wall. The phase is done once 54 kills are counted and no champion is left alive.",
+   "A champion that is still under the lockout comes back as a 'Shadow of' version with no loot."
   ],
   "npcs": [
    {
@@ -3824,12 +3845,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Time (B)",
   "name": "Phase 3: nine waves of the gods' champions (Warboars, Deathbringers, Avatar of the Elements, Supernatural Guardian)",
   "kind": "optional",
-  "kindWhy": "Time content; no flag set. +1.25 hours added to the attempt clock (GetAdditionalHours(3)).",
-  "start": "Phase advance from Phase 2; signal 301 begins wave 1.",
-  "timers": "Boss lockout 302400 s (3 d 12 h); hatelink timer 2000 ms; waves advance at kills == 10 (wave 9: kills == 2).",
+  "kindWhy": "Time content. It sets no flag. It adds 1 hour 15 minutes to the attempt clock.",
+  "start": "It begins when Phase 2 is done. The first wave comes at once.",
+  "timers": "The boss loot lockout is 3 days 12 hours. The mobs link their hate every 2 seconds. Each wave ends after 10 kills, and wave 9 after 2.",
   "mechanics": [
-   "Waves 1-8 are a named pair plus eight adds each: (A_Ferocious_Warboar 223084, Deathbringer_Blackheart 223083), (Xeroan_Xi`Geruonask 223090, Kraksmaal_Fir`Dethsin 223091), (A_Deadly_Warboar 223096, Deathbringer_Skullsmash 223097), (Herlsoakian 223101, Sinrunal_Gorgedreal 223105), (Deathbringer_Rianit 223109, A_Needletusk_Warboar 223108), (Xerskel_Gerodnsal 223115, Dersool_Fal`Giersnaol 223116), (Undead_Squad_Leader 223124, Dark_Knight_of_Terris 223123), (Champion_of_Torment 223132, Dreamwarp 223131).",
-   "Wave 9: Avatar_of_the_Elements (223134) and Supernatural_Guardian (223133) only."
+   "Waves 1 to 8 are each a named pair and eight adds: a Ferocious Warboar and Deathbringer Blackheart; Xeroan Xi`Geruonask and Kraksmaal Fir`Dethsin; a Deadly Warboar and Deathbringer Skullsmash; Herlsoakian and Sinrunal Gorgedreal; Deathbringer Rianit and a Needletusk Warboar; Xerskel Gerodnsal and Dersool Fal`Giersnaol; an Undead Squad Leader and a Dark Knight of Terris; a Champion of Torment and Dreamwarp.",
+   "Wave 9 is only the Avatar of the Elements and the Supernatural Guardian."
   ],
   "npcs": [
    {
@@ -3954,12 +3975,13 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Time (B)",
   "name": "Phase 4: Vallon Zek, Tallon Zek, Terris Thule, Saryrn",
   "kind": "raid-boss",
-  "kindWhy": "God kills of the Time chain (no flag set by the script); original god lockout 561600 s (6 d 12 h). GetAdditionalHours(4/5) adds 1 hour per god still unkilled.",
-  "start": "Phase advance from Phase 3 via the events controller (signal 401).",
-  "timers": "Boss loot lockout 561600 s (6 d 12 h); leash 3000-6000 ms; check_hp 3000 ms; HP events 95/50/10 (and 90/50/10 for the second pair); +1 h to the attempt clock for each unkilled god.",
+  "kindWhy": "The first four gods of the Time chain: Vallon Zek, Tallon Zek, Terris Thule and Saryrn. The script sets no flag.",
+  "start": "It begins when Phase 3 is done.",
+  "timers": "Each god has a loot lockout of 6 days 12 hours. The attempt clock gets 1 extra hour for each god not yet killed. Health events fire at 95%, 50% and 10% (90%, 50% and 10% for the second pair). Health is checked every 3 seconds.",
   "mechanics": [
-   "Four gods: Vallon_Zek 223000, Tallon_Zek 223001, Terris_Thule 223002, Saryrn 223003 (1,100,000-1,400,000 hp).",
-   "Terris spawns A_Phantasm_of_Terris (223140), A_Nightmare_Knight_of_Terris (223143), A_Summoned_Guardian_of_Terris (223141), A_Summoned_Knight_of_Terris (223142); Saryrn adds A_Mouth_of_Insanity (223136), A_Mouth_of_Dementia (223137), A_Tormentor (223139)."
+   "The gods have 1,100,000 to 1,400,000 HP.",
+   "Terris adds a Phantasm of Terris, a Nightmare Knight of Terris, a Summoned Guardian of Terris and a Summoned Knight of Terris.",
+   "Saryrn adds a Mouth of Insanity, a Mouth of Dementia and a Tormentor."
   ],
   "npcs": [
    {
@@ -4000,13 +4022,13 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Time (B)",
   "name": "Phase 5: Cazic Thule, Bertoxxulous, Rallos Zek, Innoruuk",
   "kind": "raid-boss",
-  "kindWhy": "God kills of the Time chain (no flag set by the script); lockout 561600 s.",
-  "start": "Phase advance from Phase 4 (signals 501/502 from the instance controller).",
-  "timers": "Lockout 561600 s; HP events at 91/71/56/46/31/11% (first pair) and 91/76/51/26% (second pair); leash 3000 ms.",
+  "kindWhy": "The last four gods of the Time chain: Cazic Thule, Bertoxxulous, Rallos Zek and Innoruuk. The script sets no flag.",
+  "start": "It begins when Phase 4 is done.",
+  "timers": "Each god has a loot lockout of 6 days 12 hours. Health events fire at 91%, 71%, 56%, 46%, 31% and 11% for the first pair, and 91%, 76%, 51% and 26% for the second. Mobs that wander too far are sent back after 3 seconds.",
   "mechanics": [
-   "Four gods: Cazic_Thule 223004, Bertoxxulous 223005, Rallos_Zek 223006, Innoruuk 223007 (1,700,000 hp).",
-   "Adds: Guardian_of_the_Crypt 223147, Guardian_Knight_of_Pestilence 223145, A_Firebone_Caster 223146, Amygdalan_knight 223149, phoboplasm 223148, an_abhorrent 223153, Cleric_of_Innoruuk 223152.",
-   "At later HP events a god's stats change (flurry/wild rampage off, 5% rampage, resists and ATK modified)."
+   "Each god has 1,700,000 HP.",
+   "The adds are a Guardian of the Crypt, a Guardian Knight of Pestilence, a Firebone Caster, an Amygdalan knight, a phoboplasm, an abhorrent and a Cleric of Innoruuk.",
+   "At the later health events a god changes: flurry and wild rampage go off, a 5% rampage comes on, and the resists and attack change."
   ],
   "npcs": [
    {
@@ -4046,12 +4068,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Time (B)",
   "name": "Phase 6: Quarm (with Zebuxoruk and Druzzil)",
   "kind": "raid-boss",
-  "kindWhy": "Final boss of Plane of Time; lockout 561600 s; +2 hours on the attempt clock. No flag set by the script.",
-  "start": "Phase advance from Phase 5 (signal 601).",
-  "timers": "HP events random 73-77% / 48-52% / 23-27%; 'aoe' timer 10000 ms first then 25000-33000 ms; 'vortices' 25000 ms; 'phase_spell' 4000 ms; end dialog timers 6000-32000 ms then 'port' 2000 ms and depop 10000 ms.",
+  "kindWhy": "The final boss of the Plane of Time. The script sets no flag. It adds 2 hours to the attempt clock.",
+  "start": "It begins when Phase 5 is done.",
+  "timers": "Quarm has a loot lockout of 6 days 12 hours. His area attack first comes 10 seconds into the fight, then every 25 to 33 seconds. Vortices come every 25 seconds. His three head events fire near 75%, 50% and 25% health.",
   "mechanics": [
-   "Quarm (223008, level 80, 1,700,000 hp) changes resist/AC state at each HP event (QUARM_STATE table of mr/fr/cr/pr/dr/ac).",
-   "Spawns vortices (223158) and eggs (223161) during the fight; Zebuxoruk (223159) and Druzzil (223160) appear in the closing dialog."
+   "Quarm is level 80 with 1,700,000 HP. At each head event his resists and armor change and he casts Balance of the Nameless.",
+   "At about 75% his red head explodes and he starts a cold area attack (Drakeen Vortex). At about 50% his blue head explodes and he stuns with an 18 second Timeforged Airblast. At about 25% his white head explodes and he casts a Venomed Mist that drains 500 mana a tick.",
+   "Vortices and eggs appear during the fight.",
+   "After he dies the egg can be attacked. Killing it brings Zebuxoruk, who speaks. Druzzil appears, and then everyone is sent back to the Plane of Knowledge."
   ],
   "npcs": [
    {
@@ -4093,15 +4117,17 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Torment, the Plane of Pain",
   "name": "Saryrn (Citadel) + Sorrowsong + Planar Projection",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss: death spawns A_Planar_Projection (207317, 1800 s) whose hail sets qglobal saryrn=1 (needs tylis==2, no existing saryrn/cipher). Seer Mal Nae`Shi header lists 'saryrn - Saryrn (one value)'.",
-  "groupLimit": "Projection FLAG_LIMIT 72 flags per spawn; eligibility restricted to killer credit via ProjectionEligibility (module not read).",
-  "start": "Pull Saryrn (207001). On spawn the script force-spawns Sorrowsong via spawn2 346761 (SetTimer(1)).",
-  "timers": "bounds check 5000 ms in combat (leash z<575 -> Balance of the Nameless 3230 + wipe hate); checkhp 5000 ms out of combat (reset when 100%). Projection depops 1800000 ms (30 min).",
+  "kindWhy": "The flag boss of the Plane of Torment. Her death brings a Planar Projection that gives the Saryrn flag. You need Tylis step 2, and you cannot already have the Saryrn or Cipher flag.",
+  "groupLimit": "The projection flags up to 72 players, only for those with kill credit.",
+  "start": "Pull Saryrn. When she appears, Sorrowsong appears with her.",
+  "timers": "Every 5 seconds in a fight it checks that she has not left her area. She resets when out of combat and healed. The projection stays 30 minutes.",
   "mechanics": [
-   "HP events at 99,90,80,70,60,50,40,30,25,20,10%. At 99% Saryrn says 'Sorrowsong, sing for us' (Sorrowsong signal 1: sings Sorrow Song 3011, patrols) and 5 stair/floor mobs spawn (207023 / 207284 / 207024 / 207291) at fixed SPAWN_LOCS.",
-   "At 25% Sorrowsong is signalled to become targetable and attack (signal 2).",
-   "At every other HP event 3 adds (a_summoned_servant 207306 / a_twisted_spirit 207308) spawn near 580 z.",
-   "Death: Despawn() stairs mobs and Planar Projection 207317 spawns at the corpse."
+   "Health events fire at 99%, 90%, 80%, 70%, 60%, 50%, 40%, 30%, 25%, 20% and 10%.",
+   "At 99% Saryrn says 'Sorrowsong, sing for us'. Sorrowsong sings the Sorrow Song and patrols, and 5 stair and floor mobs appear at set spots.",
+   "At 25% Sorrowsong becomes targetable and attacks.",
+   "At every other health event, 3 adds (summoned servants and twisted spirits) appear near her.",
+   "If she leaves her area she resets, casts Balance of the Nameless and wipes hate.",
+   "When she dies, the stair mobs vanish and a Planar Projection appears on her corpse."
   ],
   "npcs": [
    {
@@ -4167,13 +4193,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Torment, the Plane of Pain",
   "name": "Maareq the Prophet (Tylis entrance via Insanity of Tylis)",
   "kind": "flag",
-  "kindWhy": "Part of the tylis flag series: Maareq's death frees Tylis (entrance NPC becomes targetable); the tylis=1 preflag is granted in Plane of Tranquility by Fahlia_Shadyglade, tylis=2 by the rescued Tylis (see Keeper event). Without Maareq death, Tylis stays untargetable.",
-  "start": "Hail Tylis_Newleaf (207014): say 'will assist you' (requires qglobal tylis and a raid/group member with Screaming Sphere 22954 on keyring or inventory), then 'we are ready' / 'i am ready' -> casts Insanity of Tylis (spell 1134) on you.",
-  "timers": "Minion timer 5000 ms in combat; upgrade timer 3000 ms (after power thresholds); revert timer 480000 ms (8 min) after leaving combat if upgraded.",
+  "kindWhy": "Part of the Tylis flag series. Maareq's death frees Tylis Newleaf, the entrance NPC. Without it Tylis stays untargetable.",
+  "start": "Hail Tylis Newleaf and say 'will assist you'. This needs the Tylis flag and a raid or group member with a Screaming Sphere. Then say 'we are ready' or 'i am ready' and he casts Insanity of Tylis on you.",
+  "timers": "A minion comes every 5 seconds in a fight. If he was powered up, he reverts 8 minutes after the fight ends.",
   "mechanics": [
-   "Every 5 s in combat Maareq spawns a_minion_of_Maareq (207297) at -25,0,451 which walks to him.",
-   "Each minion signals Maareq: power +1; at power>=10 state 0->1 (flurry 25%, size 12), >=20 state 1->2 (race change, size 12, flurry off, wild/aoe rampage 10%), >=40 state 2->3 (size 17, attack_delay 8).",
-   "Death: depops minions, Tylis_Newleaf (207014) becomes targetable ('Maareq's hold over Tylis fades')."
+   "Tylis step 1 comes from Fahlia Shadyglade in the Plane of Tranquility. Step 2 comes from the rescued Tylis after the Keeper of Sorrows.",
+   "Every 5 seconds in a fight, a minion of Maareq appears at /loc 0, -25 and walks to him.",
+   "Each minion that reaches him powers him up. At 10 he gains flurry and grows. At 20 he changes form, loses flurry and gains a wild rampage. At 40 he grows larger and attacks faster.",
+   "When Maareq dies, the minions vanish and Tylis Newleaf can be targeted again."
   ],
   "npcs": [
    {
@@ -4208,13 +4235,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Torment, the Plane of Pain",
   "name": "The Keeper of Sorrows (Tylis rescue)",
   "kind": "flag",
-  "kindWhy": "Keeper death spawns the rescued #Tylis_Newleaf (207318); hailing him with qglobal tylis==1 sets tylis=2 ('character flag'), required for the Saryrn Planar Projection flag.",
-  "groupLimit": "#Tylis flags max 72 (keeper_flags counter) per kill.",
-  "start": "Reach and kill The_Keeper_of_Sorrows (207015) after Maareq's death (Tylis release).",
-  "timers": "Both Tylis copies share a 1800 s deadline from the Keeper kill (FlaggingTravel.StartFixed os.time()+1800); the 207014 entrance copy re-spawned at the original position stays usable for that window and the entrance spawn timer starts normally.",
+  "kindWhy": "The rescue of Tylis. The Keeper's death brings the rescued Tylis Newleaf. Hailing him at Tylis step 1 gives step 2, which the Saryrn projection needs.",
+  "groupLimit": "Tylis flags at most 72 players per kill.",
+  "start": "Reach and kill the Keeper of Sorrows after Maareq has died.",
+  "timers": "Both Tylis copies leave 30 minutes after the Keeper dies. The entrance copy stays usable for that time.",
   "mechanics": [
-   "On death: depop_with_timer(207014), spawns a temporary Tylis_Newleaf copy at the entrance (targetable) and #Tylis_Newleaf (207318) at -176,368,-764.8.",
-   "Hail #Tylis: qglobal tylis=='1' -> tylis=2 + 'You have received a character flag!'; no tylis and no cl_keeper -> checklist flag cl_keeper; 'ready to return' casts Torment's Beckon (1136)."
+   "When the Keeper dies, a temporary Tylis Newleaf appears at the entrance and the rescued Tylis Newleaf appears at /loc 368, -176.",
+   "Hail the rescued Tylis at Tylis step 1 to reach step 2. You see 'You have received a character flag!'. If you have no Tylis flag and no Keeper checklist flag, you get the checklist flag.",
+   "Say 'ready to return' and he casts Torment's Beckon on you."
   ],
   "npcs": [
    {
@@ -4242,12 +4270,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Torment, the Plane of Pain",
   "name": "Argan Milek / A Horrifying Vision / Baraguj Szuul (vision and stomach)",
   "kind": "optional",
-  "kindWhy": "No qglobal or flag set in these scripts; Baraguj's reward form #Baraguj_Szuul (207319) holds loot only. Not in the Seer flag list.",
-  "start": "Say 'save' and 'memories' to #Argan_Milek (once 'here to aid you' conversation reached) -> casts Visions of Argan (1135). Argan spawns only while A_Horrifying_Vision (207047) is up (otherwise depop_with_timer).",
-  "timers": "Argan depops after 1800000 ms (30 min); #Baraguj_Szuul reward form depops after 43200000 ms (12 h). Entry Baraguj (207028) defers while 207319 is up.",
+  "kindWhy": "Optional vision and stomach event. It sets no flag. Baraguj's reward form holds loot only and is not in the Seer's flag list.",
+  "start": "Once Argan Milek has talked to you ('here to aid you'), say 'save' and then 'memories' and he casts Visions of Argan on you. Argan only appears while A Horrifying Vision is up.",
+  "timers": "Argan leaves after 30 minutes. The reward form of Baraguj Szuul leaves after 12 hours. The entry Baraguj waits while the reward form is up.",
   "mechanics": [
-   "A_Horrifying_Vision death spawns Argan_Milek (207322) at its position; Argan then tells 'ready' to MovePC to 207,-257,1711,-481.",
-   "An_Unimaginable_Horror (207031) death: depop_with_timer(207028), unique-spawn #Baraguj_Szuul (207319) at 5,-1041,-26.25 and An_unseen_entity (207321) at -805,962,-1644; player corpses in the stomach box are moved to the instance graveyard."
+   "When A Horrifying Vision dies, Argan Milek appears where it stood. Say 'ready' and he moves you on.",
+   "When An Unimaginable Horror dies, Baraguj Szuul (the reward form) appears at /loc -1041, 5 and An Unseen Entity at /loc 962, -805. Player corpses in the stomach box are moved to the instance graveyard."
   ],
   "npcs": [
    {
@@ -4285,12 +4313,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Torment, the Plane of Pain",
   "name": "The Acolyte of Affliction",
   "kind": "optional",
-  "kindWhy": "Loot-only named mob; no flag or quest in script.",
-  "start": "Passive pull of The_Acolyte_of_Affliction (207003).",
-  "timers": "adds timer 50000 ms in combat; construct depop 100000 ms.",
+  "kindWhy": "A named mob with loot and no flag or quest.",
+  "start": "Nothing to start: pull the Acolyte of Affliction.",
+  "timers": "Seedlings come every 50 seconds in a fight and leave after 1 min 40 s.",
   "mechanics": [
-   "Every 50 s spawns 5-10 A_construct_seedling (207295) near -32..32,-175..-153,194; seedlings walk to the Acolyte.",
-   "On death all seedlings depop."
+   "Every 50 seconds, 5 to 10 construct seedlings appear near him and walk to him.",
+   "When he dies, all the seedlings vanish."
   ],
   "npcs": [
    {
@@ -4318,11 +4346,11 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Torment, the Plane of Pain",
   "name": "Salczek the Fleshgrinder",
   "kind": "optional",
-  "kindWhy": "Named mob with a single HP-event buff; loot only.",
-  "start": "Passive pull of Salczek_the_Fleshgrinder (207027).",
-  "timers": "none in script.",
+  "kindWhy": "A named mob with one health event. It has loot and no flag.",
+  "start": "Nothing to start: pull Salczek the Fleshgrinder.",
+  "timers": "None.",
   "mechanics": [
-   "At 50% HP gains wild/aoe rampage 20%."
+   "At 50% health he gains a 20% wild rampage."
   ],
   "npcs": [
    {
@@ -4343,20 +4371,20 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Tranquility",
   "name": "Zone portals / zone-flag gates (player.lua)",
   "kind": "flag",
-  "kindWhy": "Click-door script that grants zone flags when the character flags (qglobals) are met; this is the flag consumption point for the chains.",
-  "start": "Click a portal door in Plane of Tranquility.",
-  "timers": "n/a",
+  "kindWhy": "The portals of the Plane of Tranquility give out zone flags once your character flags are met. This is where the flag chains get used.",
+  "start": "Click a portal in the Plane of Tranquility.",
+  "timers": "None.",
   "mechanics": [
-   "door 16 or 21 (Valor / Storms): needs qglobal mavuin == 3 -> SetZoneFlag(210) and (208).",
-   "door 12 (Crypt of Decay): zone flag 200 is set elsewhere (Plane of Disease toilet drop); alt-access item 9294 only if pop_alt_access_enabled == '1'.",
-   "door 93 (Torment): needs fuirstel == 5 AND thelin == 4 (or alt-access key 29213) -> SetZoneFlag(207).",
-   "door 48 (Bastion of Thunder): needs karana >= 3 or zebuxoruk -> SetZoneFlag(209).",
-   "door 23 (Halls of Honor): zone flag 211 set by zoning in from Valor; alt-access key 29214.",
-   "door 24 (Drunder, Fortress of Zek): needs zeks >= 2 (or alt key 29215) -> SetZoneFlag(214).",
-   "door 22 (Tower of Solusek Ro): needs qglobal cipher AND zeks >= 6 -> SetZoneFlag(212).",
-   "door 82 (Plane of Fire): script only shows 'You lack the will...' if flag 217 absent (flag is set elsewhere).",
-   "doors 81/83/84 (Water/Earth/Air): need zebuxoruk == '2' -> SetZoneFlag(216), (215), (218).",
-   "door 18 (Plane of Time A): GM or level>=65 with zone flag 219 and qglobal time."
+   "Valor and Storms: you need the Mavuin flag at step 3.",
+   "Crypt of Decay: the zone flag is set elsewhere, by dropping down the Plane of Disease zone-in near Grummus. The Bangle of Disease Warding only works when the alternate-access quests are switched on.",
+   "Torment: you need Fuirstel step 5 and Thelin step 4, or the Symbol of Torment.",
+   "Bastion of Thunder: you need Karana step 3 or the Zebuxoruk flag.",
+   "Halls of Honor: the zone flag is set by zoning in from Valor, or use the Ring of Marr.",
+   "Drunder, the Fortress of Zek: you need Zeks step 2 or higher, or the Completed Diaku Emblem.",
+   "Tower of Solusek Ro: you need the Cipher flag and Zeks step 6 or higher.",
+   "Plane of Fire: the script only shows 'You lack the will...' if the flag is missing. The flag is set elsewhere.",
+   "Water, Earth and Air: you need Zebuxoruk step 2.",
+   "Plane of Time A: a GM, or level 65 or higher with the Plane of Time zone flag and the Time flag."
   ],
   "npcs": [],
   "rewards": [],
@@ -4370,14 +4398,14 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Tranquility",
   "name": "Quest-giver flags: Adroha Jezith, Elder Poxbourne, Adler/Elder Fuirstel, Fahlia Shadyglade, Miak the Searedsoul",
   "kind": "flag",
-  "kindWhy": "Each sets or advances a character-flag qglobal used by the other planes (thelin, fuirstel, tylis, pofire).",
-  "start": "Hail / keyword to each NPC: Adroha Jezith - 'tortured by nightmares' (thelin 0 -> 1); Adler Fuirstel - 'ward' (fuirstel unset -> 1); Elder Fuirstel - hail (fuirstel 2 -> 3, and 4 -> 5); Elder Poxbourne (Thelin) - hail with thelin >= 3 (3 -> 4); Fahlia Shadyglade - 'will go' (needs thelin==4 AND fuirstel==5; tylis unset -> 1); Miak the Searedsoul - 'portal's destination' (pofire unset -> 1; pofire==2 is the unlocked state).",
-  "timers": "all flags qglobal expiry arg 5, 'F' (permanent).",
+  "kindWhy": "Each of these quest-givers sets or moves a character flag that the other planes use: Thelin, Fuirstel, Tylis and Fire.",
+  "start": "Hail each NPC or say the keyword. Adroha Jezith: 'tortured by nightmares' (Thelin 0 to 1). Adler Fuirstel: 'ward' (Fuirstel 0 to 1). Elder Fuirstel: hail (Fuirstel 2 to 3, and 4 to 5). Elder Poxbourne: hail at Thelin step 3 or higher (3 to 4). Fahlia Shadyglade: 'will go', which needs Thelin step 4 and Fuirstel step 5 (Tylis 0 to 1). Miak the Searedsoul: 'portal's destination' (Fire 0 to 1; step 2 is the unlocked state).",
+  "timers": "None. The flags are permanent.",
   "mechanics": [
-   "thelin: 1 (Adroha) -> 2 (Maze, ponightmare) -> 3 (Terris Thule Planar Projection, nightmareb) -> 4 (Poxbourne hail).",
-   "fuirstel: 1 (Adler 'ward') -> 2 (podisease Planar Projection) -> 3 (Elder Fuirstel) -> 4 (codecay Planar Projection) -> 5 (Elder Fuirstel).",
-   "tylis: 1 (Fahlia) -> 2 (potorment #Tylis_Newleaf).",
-   "pofire: 1 (Miak) -> 2 (solrotower Planar Projection)."
+   "Thelin: step 1 from Adroha, step 2 from the Maze in the Plane of Nightmares, step 3 from the Terris Thule projection, step 4 from Poxbourne.",
+   "Fuirstel: step 1 from Adler, step 2 from the Plane of Disease projection, step 3 from Elder Fuirstel, step 4 from the Crypt of Decay projection, step 5 from Elder Fuirstel.",
+   "Tylis: step 1 from Fahlia, step 2 from the rescued Tylis Newleaf in the Plane of Torment.",
+   "Fire: step 1 from Miak, step 2 from the Tower of Solusek Ro projection."
   ],
   "npcs": [],
   "rewards": [],
@@ -4396,14 +4424,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Valor",
   "name": "Aerin`Dar (glass dragon lair)",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss: death spawns Planar Projection 208207 whose hail sets aerindar=1 (requires mavuin==3); then clicking the HoH zone-in door 3 sets aerindar=2 and zone flag 211 (Halls of Honor). Seer header: 'aerindar - Aerin`Dar flag; access to HoH (two values)'.",
-  "groupLimit": "Planar Projection FLAG_LIMIT (see povalor/A_Planar_Projection.lua).",
-  "start": "Enter the lair (glass door switches doors 8/9 open with A Crystalline Globe 25596, or the dragon-orb teleporter door 6 while #Aerin`Dar 208074 is up); pull #Aerin`Dar.",
-  "timers": "checkhp 3000 ms after combat drop (reset at 100%); boundscheck 3000 ms (leash z>120 or y outside 2100..2880); projection depops 1200000 ms (20 min).",
+  "kindWhy": "The flag boss of the Plane of Valor. His death brings a Planar Projection that gives Aerin`Dar step 1 if you have the Mavuin flag at step 3. Then clicking the Halls of Honor zone-in door gives step 2 and the Halls of Honor zone flag.",
+  "groupLimit": "The projection flags up to 72 players.",
+  "start": "Get into the lair. The glass door switches open with A Crystalline Globe, or use the dragon-orb teleporter while Aerin`Dar is up. Then pull Aerin`Dar.",
+  "timers": "After a fight drops he resets to full health within 3 seconds. His area is checked every 3 seconds. The projection stays 20 minutes.",
   "mechanics": [
-   "On spawn all 9 Rahlgon/minion spawn points are respawned (SetTimer(1)); the adds start asleep (no-aggro, no harm).",
-   "HP events wake adds: 85% -> spawn idx 1,2; 65% -> 3,4; 45% -> 5,6; 25% -> 7,8,9 (idx 9 = Rahlgon spawn 347213).",
-   "Death: Rahlgon spawn disabled, Planar Projection (208207) spawns at 360,2528,39."
+   "When he appears, the 9 Rahlgon and minion spawn points respawn, and the adds start asleep.",
+   "Adds wake as he loses health: two at 85%, two at 65%, two at 45%, and three at 25%.",
+   "If he leaves his area he resets.",
+   "When he dies, the Planar Projection appears at /loc 2528, 360."
   ],
   "npcs": [
    {
@@ -4437,20 +4466,20 @@ export const EVENTS: PopEvent[] = [
   "slug": "povalor-crystalline-globe-quest",
   "zone": "povalor",
   "zoneName": "Plane of Valor",
-  "name": "Battalion orb quest (pov_orb_quest) -> A Crystalline Globe",
+  "name": "Battalion orb quest -> A Crystalline Globe",
   "kind": "optional",
-  "kindWhy": "Side quest chain on qglobal pov_orb_quest (expiry arg 1,'F'); the Crystalline Globe (25596) only opens the glass-lair door switches and does not set a PoP flag.",
-  "start": "Sergeant_Johson_Popoah: hail (0 -> 1) / 'compound' (-> 2); Paralin_Notion: 'things' (-> 3); Master_Sergeant_Aaramis_Daryln: 'aerin' (3 -> 4); turn in hearts 25597+25598+25599 to Paralin with questState>=4 (4 -> 5, xp 1); Aaramis 'mission' (5 -> 6); Captain_Ryglot_Cupperhide: turn in globe pieces 25796+25797+25798 -> Crystalline Globe 25596.",
-  "timers": "n/a",
+  "kindWhy": "A side quest chain that ends with A Crystalline Globe. The globe only opens the glass lair door switches. It sets no flag.",
+  "start": "Hail Sergeant Johson Popoah, then say 'compound'. Tell Paralin Notion 'things'. Tell Master Sergeant Aaramis Daryln 'aerin'. Hand Paralin a Crystalline Spider's Heart, a Razorfiend's Heart and a Planarian Larvae's Heart. Tell Aaramis 'mission'. Hand Captain Ryglot Cupperhide the three pieces of the crystalline globe.",
+  "timers": "None.",
   "mechanics": [
-   "Door switches 8/9 force open the glass door when you hold or have keyringed the globe."
+   "The glass door switches open the door when you hold the globe or have it on your key ring."
   ],
   "npcs": [],
   "rewards": [
    {
     "itemId": 25596,
     "name": "A Crystalline Globe",
-    "trigger": "Turn in 25796, 25797, 25798 to Captain_Ryglot_Cupperhide"
+    "trigger": "Hand the three pieces of the crystalline globe to Captain Ryglot Cupperhide"
    }
   ],
   "cites": [
@@ -4467,11 +4496,11 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Valor",
   "name": "A Wandering Spirit (Crescent Symbol of Rhaj + Righteous Amulet of Marr)",
   "kind": "optional",
-  "kindWhy": "250000 xp quest that spawns #A_Wandering_Spirit (208209, level 70, 168000 hp); no flag.",
-  "start": "Hail A_Wandering_Spirit (208061): 'help', 'belongings', 'amulet'; hand in 20605 Crescent Symbol of Rhaj + 20606 Righteous Amulet of Marr.",
-  "timers": "Spirit depop 100000 ms (#A_Wandering_Spirit).",
+  "kindWhy": "A 250,000 experience quest that brings the Wandering Spirit (level 70, 168,000 HP). It sets no flag.",
+  "start": "Hail A Wandering Spirit and say 'help', 'belongings' and 'amulet'. Hand in the Crescent Symbol of Rhaj and the Righteous Amulet of Marr.",
+  "timers": "The Wandering Spirit leaves after 1 min 40 s.",
   "mechanics": [
-   "Turn-in gives 250000 xp, spawns #A_Wandering_Spirit at the same spot and depops the quest NPC with timer."
+   "The hand-in gives 250,000 experience. The Wandering Spirit appears on the same spot and the quest NPC leaves."
   ],
   "npcs": [
    {
@@ -4499,11 +4528,11 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Valor",
   "name": "The Sleep Walker named mobs",
   "kind": "optional",
-  "kindWhy": "Named mobs with no script found in povalor/; loot only (Signet of the Valorous, Band of the Visionary...).",
-  "start": "unknown (no script)",
-  "timers": "unknown",
+  "kindWhy": "Named mobs with loot (Signet of the Valorous, Band of the Visionary and others). No script covers them, so only the loot tables speak for them.",
+  "start": "Unknown: no script covers them.",
+  "timers": "Unknown.",
   "mechanics": [
-   "Three #The_Sleep_Walker variants (208157, 208202, 208208) exist in the NPC table."
+   "Three versions of The Sleep Walker exist in the NPC table."
   ],
   "npcs": [
    {
@@ -4534,15 +4563,15 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Water",
   "name": "Coirnav, the Avatar of Water (Triumvirate defenders)",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss of Water: death spawns Essence_of_Water (216266) whose hail summons Sphere of Coalesced Water (29163), one of the four Essence items for the Quintessence of Elements (29165) / Plane of Time.",
-  "groupLimit": "Essence_of_Water FLAG_LIMIT = 72 (powater/Essence_of_Water.lua:1).",
-  "start": "Kill Guardian_of_Coirnav (216053, spawn point 366321) while Coirnav (216048, spawn point 365647) is up and the encounter phase is Ready.",
-  "timers": "EVENT_SECONDS = 900 s (15 min) from the Guardian kill (deadline never extended; red-text warnings at 600, 720, 840 s); wave 2 at +180 s, wave 3 at +300 s; failure cooldown FAILURE_SECONDS = 1200 s; success cooldown SUCCESS_SECONDS = 496800 s (138 h); lings wave every 49 s in the final phase.",
+  "kindWhy": "The flag boss of the Plane of Water. His death brings the Essence of Water, which gives a Sphere of Coalesced Water, one of four parts of the Quintessence of Elements (a step toward the Plane of Time).",
+  "groupLimit": "The Essence of Water flags up to 72 players.",
+  "start": "Kill the Guardian of Coirnav while Coirnav is up and the event is ready to begin.",
+  "timers": "You have 15 minutes from the Guardian's death. It is never extended. Red-text warnings come at 10, 12 and 14 minutes. Wave 2 comes at 3 minutes and wave 3 at 5 minutes. After a fail you retry in 20 minutes. After a win Coirnav is back in 138 hours. In the last phase, lings arrive every 49 seconds.",
   "mechanics": [
-   "Phase 1: three waves, each 25 individually tracked fiends and an early miniboss (a_triloun_vaporfiend/ling 216257/216256, a_hraquis_icefiend/ling 216260/216259, a_regrua_waterfiend/ling 216258/216265); all 75 must be killed (kills == 75).",
-   "Phase 2: Pwelon_of_Vapor (216236), Nrinda_of_Ice (216245), Vamuil_of_Water (216247) (level 75, 2,000,000 hp each in the NPC table) are summoned and Coirnav (216048, level 80, 3,000,000 hp in the table) becomes attackable.",
-   "Phase 3: after the three minibosses die Coirnav's base HP is set to 250000 and he is buffed-faded; lings reinforcements spawn every 49 s.",
-   "Expiry of the 15-minute deadline -> Fail (1200 s retry); Coirnav death -> 138 h cooldown and Essence_of_Water (216266)."
+   "Phase 1 is three waves of 25 fiends each, with an early miniboss: triloun vaporfiends, hraquis icefiends and regrua waterfiends, and their lings. All 75 must die.",
+   "Phase 2: Pwelon of Vapor, Nrinda of Ice and Vamuil of Water (level 75, 2,000,000 HP each in the NPC table) are summoned and Coirnav (level 80, 3,000,000 HP in the table) can be attacked.",
+   "Phase 3: when the three minibosses are dead, Coirnav's health is cut to 250,000 and his buffs fade. Lings arrive every 49 seconds.",
+   "If the 15 minutes run out, the attempt fails. When Coirnav dies, the Essence of Water appears."
   ],
   "npcs": [
    {
@@ -4580,7 +4609,7 @@ export const EVENTS: PopEvent[] = [
    {
     "itemId": 29163,
     "name": "Sphere of Coalesced Water",
-    "trigger": "Hail Essence_of_Water after Coirnav dies, if character lacks 29163/29165 (SummonCursorItem)"
+    "trigger": "Hail the Essence of Water after Coirnav dies, if you have neither the Sphere nor a Quintessence of Elements"
    }
   ],
   "cites": [
@@ -4596,12 +4625,12 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Water",
   "name": "Fishlords Lezom and Craiyk (100 platinum summoning)",
   "kind": "optional",
-  "kindWhy": "Pay-to-summon anglerfish event; no flag; loot on the summoned 'dwellers' only.",
-  "start": "Say 'dwellers' to Fishlord_Lezom (216020) or Fishlord_Craiyk (216019): 'For 100 platinum I will summon them forth.' Hand in platinum = 100 (check_turn_in) -> a scripted Lezom/Craiyk copy (216284 / 216283) walks to 94,217,-359 / -269,157,-362 and the native spawn is disabled.",
-  "timers": "Lord spawn timer set to 1500000 ms (25 min) on EndEvent; anglerfish self-depop 180000 ms.",
+  "kindWhy": "Pay-to-summon anglerfish event with no flag. Only the summoned 'dwellers' carry loot.",
+  "start": "Say 'dwellers' to Fishlord Lezom or Fishlord Craiyk. He says, 'For 100 platinum I will summon them forth.' Hand him 100 platinum. A scripted copy of Lezom or Craiyk walks to /loc 217, 94 or /loc 157, -269, and the normal spawn is switched off.",
+  "timers": "The Fishlord is back 25 minutes after the event ends. Anglerfish leave after 3 minutes.",
   "mechanics": [
-   "At the waypoint the Fishlord chants and trash spawn points (369521-369528) are enabled; he is vulnerable ('If death claims me the summoning will be finished').",
-   "Killing 5/10/15/25 of each anglerfish family (ferocious 216268, fierce 216270, furious 216269) spawns a stronger named dweller from the SPAWNS table (e.g. a_master_anglerfish 216267, a_king_anglerfish 216281, a_supreme_anglerfish 216282); the 25th kill ends the event and the Fishlord leaves."
+   "At the stopping point the Fishlord chants and the trash spawns switch on. He can be killed ('If death claims me the summoning will be finished').",
+   "Kill 5, 10, 15 and 25 of each anglerfish kind (ferocious, fierce and furious) and a stronger named dweller appears, such as a master, king or supreme anglerfish. The 25th kill ends the event and the Fishlord leaves."
   ],
   "npcs": [
    {
@@ -4642,11 +4671,11 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Water",
   "name": "Named water mobs (Ofossaa, Krziik, Grioihin, Hydrotha) and trap mobs",
   "kind": "optional",
-  "kindWhy": "No dedicated scripts; Traps.lua only adds a 1200000 ms depop to 8 trap mob types (216249-216255, 216264).",
-  "start": "Passive.",
-  "timers": "trap mobs depop 1200000 ms.",
+  "kindWhy": "Named water mobs (Ofossaa, Krziik, Grioihin, Hydrotha) and trap mobs. No script covers the named ones.",
+  "start": "Nothing to start: pull them.",
+  "timers": "Trap mobs leave after 20 minutes.",
   "mechanics": [
-   "Trap types: 216255, 216252, 216250, 216249, 216264, 216254, 216253, 216251."
+   "The only script gives eight kinds of trap mob a 20 minute despawn timer."
   ],
   "npcs": [
    {
@@ -4685,13 +4714,13 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Tower of Solusek Ro",
   "name": "Solusek Ro (summit)",
   "kind": "raid-boss",
-  "kindWhy": "Flag-path boss: death spawns Planar Projection 212420 whose hail sets pofire 1 -> 2 (needs sol_room=='11111', pofire=='1' (Miak in Tranquility) and zeks=='7'); otherwise checklist flag cl_solusek. Seer header: 'pofire - PoFire flag and preflag (two values)'.",
-  "groupLimit": "Projection FLAG_LIMIT (see solrotower/A_Planar_Projection.lua).",
-  "start": "Enter via door 44/45 (needs sol_room == '11111' AND zeks == '7') -> MovePC to 0,-847,244; pull Solusek_Ro (212025). Floor doors 38/39 open when A_Planar_Projection 212420 is up.",
-  "timers": "anti_cheat 30000 ms in combat: if Solusek is below z 240 and HP < 50% the Guardians of Fire (212041) are teleported to him and he is healed 100000.",
+  "kindWhy": "The flag boss of the Tower of Solusek Ro. His death brings a Planar Projection that gives Fire step 2. You need the full Solusek Ro room flag, Fire step 1 (from Miak in Tranquility) and Zeks step 7. Otherwise you get a checklist flag.",
+  "groupLimit": "The projection flags up to 72 players.",
+  "start": "Enter by the lava rune doors, which need the full Solusek Ro room flag and Zeks step 7. They take you to /loc -847, 0. Pull Solusek Ro. The floor doors open while the projection is up.",
+  "timers": "Every 30 seconds in a fight the script checks his position. If he is below the top level and under 50% health, the Guardians of Fire are teleported to him and he is healed 100,000.",
   "mechanics": [
-   "Death: ProjectionEligibility.Spawn(212420) at 0,-815,244 for the killer.",
-   "A_focus_of_Sol: charmed pets above z 240 lose charm and get MR 200."
+   "When he dies, a Planar Projection appears at /loc -815, 0 for the killer.",
+   "A Focus of Sol takes the charm off pets above the top level and gives them 200 magic resist."
   ],
   "npcs": [
    {
@@ -4721,11 +4750,11 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Tower of Solusek Ro",
   "name": "Galremos (magmite split)",
   "kind": "optional",
-  "kindWhy": "Named mob with HP-event splitting; loot only.",
-  "start": "Passive pull of Galremos (212033).",
-  "timers": "none",
+  "kindWhy": "A named mob that splits. It has loot and no flag.",
+  "start": "Nothing to start: pull Galremos.",
+  "timers": "None.",
   "mechanics": [
-   "HP events 90/60/35/20/5% shrink him and spawn 1/2/1/4/6 a_magmite (212397)."
+   "At 90%, 60%, 35%, 20% and 5% health he shrinks and 1, 2, 1, 4 and 6 magmites appear."
   ],
   "npcs": [
    {
@@ -4750,16 +4779,16 @@ export const EVENTS: PopEvent[] = [
   "slug": "solrotower-wing-xuzl",
   "zone": "solrotower",
   "zoneName": "Tower of Solusek Ro",
-  "name": "Xuzl's wing (sol_room digit 1)",
+  "name": "Xuzl's wing (room flag part 1)",
   "kind": "flag",
-  "kindWhy": "Each wing sets one digit of qglobal sol_room (five characters, '11111' = all wings); sol_room=='11111' AND zeks=='7' are required by the Solusek Ro Planar Projection to give pofire=2, and sol_room + zeks>=6 + cipher gate the tower portal door 22 / lava runes doors 44-45.",
-  "groupLimit": "none scripted (the flag is per clicking player)",
-  "start": "Kill the wing boss, then click the flaming cauldron (door id 12) while a_flaming_cauldron 212410 is spawned.",
-  "timers": "bounds 6000 ms; cauldron depop 1800000 ms; warders depop 3600000 ms.",
+  "kindWhy": "Xuzl's wing gives part 1 of the five-part Solusek Ro room flag. All five parts plus Zeks step 7 let the Solusek Ro projection give Fire step 2. The room flag with Zeks step 6 and the Cipher flag also opens the tower portal and the lava rune doors.",
+  "groupLimit": "No cap in the script. The flag goes to whoever clicks the cauldron.",
+  "start": "Kill Xuzl, then click the flaming cauldron while it is there.",
+  "timers": "The cauldron stays 30 minutes. The warders stay 1 hour. His area is checked every 6 seconds.",
   "mechanics": [
-   "Xuzl (212055, level 75, 600000 hp) is leashed to y >= -914 (bounds 6000 ms, Annul Self 2830).",
-   "Death spawns a_flaming_cauldron (212410) at 1780,-336,339 and three a_warder_of_Xuzl (212415).",
-   "Clicking the cauldron (door 12) sets sol_room digit 1 = '1'."
+   "Xuzl is level 75 with 600,000 HP. If he leaves his area, he is sent back.",
+   "When he dies, a flaming cauldron appears at /loc -336, 1780 with three Warders of Xuzl.",
+   "Click the cauldron to set part 1 of the room flag."
   ],
   "npcs": [
    {
@@ -4786,16 +4815,16 @@ export const EVENTS: PopEvent[] = [
   "slug": "solrotower-wing-arlyxir",
   "zone": "solrotower",
   "zoneName": "Tower of Solusek Ro",
-  "name": "Arlyxir's wing (sol_room digit 2)",
+  "name": "Arlyxir's wing (room flag part 2)",
   "kind": "flag",
-  "kindWhy": "Each wing sets one digit of qglobal sol_room (five characters, '11111' = all wings); sol_room=='11111' AND zeks=='7' are required by the Solusek Ro Planar Projection to give pofire=2, and sol_room + zeks>=6 + cipher gate the tower portal door 22 / lava runes doors 44-45.",
-  "groupLimit": "none scripted (the flag is per clicking player)",
-  "start": "Kill the wing boss, then click the flaming cauldron (door id 7) while a_flaming_cauldron 212411 is spawned.",
-  "timers": "heal timer 750000 ms; bounds 6000 ms; cauldron depop 1800000 ms.",
+  "kindWhy": "Arlyxir's wing gives part 2 of the five-part Solusek Ro room flag. All five parts plus Zeks step 7 let the Solusek Ro projection give Fire step 2. The room flag with Zeks step 6 and the Cipher flag also opens the tower portal and the lava rune doors.",
+  "groupLimit": "No cap in the script. The flag goes to whoever clicks the cauldron.",
+  "start": "Kill Arlyxir, then click the flaming cauldron while it is there.",
+  "timers": "In a fight he heals to full every 12 min 30 s. The cauldron stays 30 minutes. His area is checked every 6 seconds.",
   "mechanics": [
-   "Arlyxir (212023, level 75, 750000 hp) heals to full every 750000 ms in combat ('is immolated in flames, and is reborn!') and casts Searing Flames 1281; leashed to y >= 1230.",
-   "Death spawns a_flaming_cauldron (212411) at 1607,1891,627 and three a_warder_of_Arlyxir (212416).",
-   "Clicking the cauldron (door 7) sets sol_room digit 2 = '1'."
+   "Arlyxir is level 75 with 750,000 HP. He casts Searing Flames. When he heals he is 'immolated in flames, and is reborn!'. If he leaves his area, he is sent back.",
+   "When he dies, a flaming cauldron appears at /loc 1891, 1607 with three Warders of Arlyxir.",
+   "Click the cauldron to set part 2 of the room flag."
   ],
   "npcs": [
    {
@@ -4821,16 +4850,17 @@ export const EVENTS: PopEvent[] = [
   "slug": "solrotower-wing-dresolik",
   "zone": "solrotower",
   "zoneName": "Tower of Solusek Ro",
-  "name": "Dresolik's wing (sol_room digit 3)",
+  "name": "Dresolik's wing (room flag part 3)",
   "kind": "flag",
-  "kindWhy": "Each wing sets one digit of qglobal sol_room (five characters, '11111' = all wings); sol_room=='11111' AND zeks=='7' are required by the Solusek Ro Planar Projection to give pofire=2, and sol_room + zeks>=6 + cipher gate the tower portal door 22 / lava runes doors 44-45.",
-  "groupLimit": "none scripted (the flag is per clicking player)",
-  "start": "Kill the wing boss, then click the flaming cauldron (door id 10) while a_flaming_cauldron 212414 is spawned.",
-  "timers": "Protector depop 9000000 ms (paused in combat); bounds 6000 ms; guardian respawn after depop 600000 ms.",
+  "kindWhy": "Dresolik's wing gives part 3 of the five-part Solusek Ro room flag. All five parts plus Zeks step 7 let the Solusek Ro projection give Fire step 2. The room flag with Zeks step 6 and the Cipher flag also opens the tower portal and the lava rune doors.",
+  "groupLimit": "No cap in the script. The flag goes to whoever clicks the cauldron.",
+  "start": "Kill the Guardians of Dresolik and then the Protector of Dresolik. Then click the flaming cauldron while it is there.",
+  "timers": "If the Protector is not killed within 2 hours 30 minutes, he leaves and the guardians return after 10 minutes. The clock stops in combat. His area is checked every 6 seconds.",
   "mechanics": [
-   "Guardian_of_Dresolik (212046) spawns reset the four guardian spawn points (367793-367796, SetTimer(1)); when no Guardian is left alive the last death unique-spawns The_Protector_of_Dresolik (212408) at 606,1584,-152.",
-   "Protector (level 75, 800000 hp): if he is not killed within 9000000 ms (2.5 h) he depops and the guardian spawn timers reset to 600000 ms.",
-   "Protector death spawns a_flaming_cauldron (212414) at 166,1449,-68 and three a_warder_of_Dresolik (212419); cauldron click (door 10) sets sol_room digit 3 = '1'. Both leash to x 558..978."
+   "When a Guardian of Dresolik appears, the four guardian spawn points reset. When no guardian is left, the last one to die brings the Protector of Dresolik at /loc 1584, 606.",
+   "The Protector is level 75 with 800,000 HP. Both stay within their own area.",
+   "When the Protector dies, a flaming cauldron appears at /loc 1449, 166 with three Warders of Dresolik.",
+   "Click the cauldron to set part 3 of the room flag."
   ],
   "npcs": [
    {
@@ -4863,16 +4893,17 @@ export const EVENTS: PopEvent[] = [
   "slug": "solrotower-wing-rizlona",
   "zone": "solrotower",
   "zoneName": "Tower of Solusek Ro",
-  "name": "Rizlona's wing (sol_room digit 4)",
+  "name": "Rizlona's wing (room flag part 4)",
   "kind": "flag",
-  "kindWhy": "Each wing sets one digit of qglobal sol_room (five characters, '11111' = all wings); sol_room=='11111' AND zeks=='7' are required by the Solusek Ro Planar Projection to give pofire=2, and sol_room + zeks>=6 + cipher gate the tower portal door 22 / lava runes doors 44-45.",
-  "groupLimit": "none scripted (the flag is per clicking player)",
-  "start": "Kill the wing boss, then click the flaming cauldron (door id 6) while a_flaming_cauldron 212413 is spawned.",
-  "timers": "depop 9000000 ms (paused in combat); bounds 6000 ms.",
+  "kindWhy": "Rizlona's wing gives part 4 of the five-part Solusek Ro room flag. All five parts plus Zeks step 7 let the Solusek Ro projection give Fire step 2. The room flag with Zeks step 6 and the Cipher flag also opens the tower portal and the lava rune doors.",
+  "groupLimit": "No cap in the script. The flag goes to whoever clicks the cauldron.",
+  "start": "Kill Rizlona, then the stronger Rizlona who takes her place. Then click the flaming cauldron while it is there.",
+  "timers": "The second Rizlona leaves after 2 hours 30 minutes, and her spawn comes back after 10 minutes. The clock stops in combat. Her area is checked every 6 seconds.",
   "mechanics": [
-   "Rizlona (212026) is a phase-1 mob (drops The Time Grows Near 18440 100%); her death spawns #Rizlona (212407, 600000 hp) in place.",
-   "#Rizlona depops after 9000000 ms (resetting spawn 367546 to 600000 ms); bounds leash y 2047..2538 (moves to -1103,2384,-905).",
-   "#Rizlona death spawns a_flaming_cauldron (212413) at -980,2717,-908 and three a_warder_of_Rizonla (212418); cauldron click (door 6) sets sol_room digit 4 = '1'."
+   "The first Rizlona is a phase 1 mob and always drops The Time Grows Near. When she dies, a second Rizlona (600,000 HP) appears in her place.",
+   "The second Rizlona is sent back to /loc 2384, -1103 if she leaves her area.",
+   "When she dies, a flaming cauldron appears at /loc 2717, -980 with three Warders of Rizlona.",
+   "Click the cauldron to set part 4 of the room flag."
   ],
   "npcs": [
    {
@@ -4905,16 +4936,16 @@ export const EVENTS: PopEvent[] = [
   "slug": "solrotower-wing-jiva",
   "zone": "solrotower",
   "zoneName": "Tower of Solusek Ro",
-  "name": "Jiva's wing (sol_room digit 5)",
+  "name": "Jiva's wing (room flag part 5)",
   "kind": "flag",
-  "kindWhy": "Each wing sets one digit of qglobal sol_room (five characters, '11111' = all wings); sol_room=='11111' AND zeks=='7' are required by the Solusek Ro Planar Projection to give pofire=2, and sol_room + zeks>=6 + cipher gate the tower portal door 22 / lava runes doors 44-45.",
-  "groupLimit": "none scripted (the flag is per clicking player)",
-  "start": "Kill the wing boss, then click the flaming cauldron (door id 11) while a_flaming_cauldron 212412 is spawned.",
-  "timers": "adds timer 45000 ms; helper depop 600000 ms.",
+  "kindWhy": "Jiva's wing gives part 5 of the five-part Solusek Ro room flag. All five parts plus Zeks step 7 let the Solusek Ro projection give Fire step 2. The room flag with Zeks step 6 and the Cipher flag also opens the tower portal and the lava rune doors.",
+  "groupLimit": "No cap in the script. The flag goes to whoever clicks the cauldron.",
+  "start": "Kill Jiva, then click the flaming cauldron while it is there.",
+  "timers": "In a fight a helper is called every 45 seconds. Helpers leave after 10 minutes.",
   "mechanics": [
-   "Jiva (212014, level 75, 700000 hp) in combat every 45000 ms calls one of 8 named helpers in a cycle (Makin, Adeel, Jiri, Seif, Nabil, Aydin, Cemal, Fahim = types 212404, 212399, 212403, 212406, 212405, 212400, 212401, 212402) to fixed spots around (-2255..-2183, -338..-192).",
-   "Helpers depop 600000 ms (JivaAdds encounter).",
-   "Death spawns a_flaming_cauldron (212412) at -2126,105,-1100 and three a_warder_of_Jiva (212417); cauldron click (door 11) sets sol_room digit 5 = '1'."
+   "Jiva is level 75 with 700,000 HP. Every 45 seconds in a fight he calls one of eight named helpers in turn: Makin, Adeel, Jiri, Seif, Nabil, Aydin, Cemal and Fahim. They appear at set spots in the wing.",
+   "When he dies, a flaming cauldron appears at /loc 105, -2126 with three Warders of Jiva.",
+   "Click the cauldron to set part 5 of the room flag."
   ],
   "npcs": [
    {
