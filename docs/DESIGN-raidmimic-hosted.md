@@ -116,3 +116,8 @@ with no diagnostic (step 17).
 - **One shared bot or one bot per guild** (step 4).
 - **What other guilds' raid data our raiders capture keeps** (§408 / 2026-10-28: tag now, move later; only kills, timers and
   boss behaviour for a public RaidMimic database).
+- **Mimic signs into a guild of the raider's choosing** (§475, 2026-10-30: "it's hard-linked to wolfpack discord, but perhaps
+  shouldn't be"). Today the link flow (`utils/mimicLink.js`, `/auth/mimic-link`, the Discord OAuth gate) assumes Wolf Pack.
+  Needed: a guild picker in Mimic (first run and Settings), the link code minted by THAT guild's hub, and the agent's upload
+  base URL and session per guild. Open: picker shape, and one Mimic holding links to several guilds. Guest links (§474) stand
+  in until then.
