@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.31': [
+    '**Fixed: an @here typed in raid chat pinged the Discord channel.** Relayed chat can no longer mention anyone.',
+  ],
   '4.0.30': [
     '**Raid chat moves into the raid-night thread.** During a raid, relayed /rs lines post in that night\'s thread instead of filling #raid-chat. Announcements still post in the channel.',
   ],

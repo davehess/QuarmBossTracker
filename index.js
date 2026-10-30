@@ -4873,7 +4873,9 @@ async function _handleAgentChat(req, res) {
   //   - Truncate to 400 chars — EQ chat is typically <100 chars; 400 is generous
   function sanitizeChatText(raw) {
     return String(raw || '')
-      .replace(/@(everyone|here)\b/gi, '[@$1]')        // neutralise mass pings
+      // A zero-width space after the @: "[@here]" still rendered as a live @here and pinged the channel
+      // (2026-10-30). The sends below also pass allowedMentions { parse: [] }, which is the real guard.
+      .replace(/@(everyone|here)\b/gi, '@​$1')     // neutralise mass pings
       .replace(/<@[!&]?\d+>/g, '[mention]')             // neutralise user/role pings
       .replace(/<#\d+>/g, '[channel]')                  // neutralise channel links
       .replace(/`/g, 'ˋ')                          // replace backtick with modifier letter grave
@@ -5215,7 +5217,7 @@ async function _handleAgentChat(req, res) {
         const bestSpeaker = healable ? safeSpeaker : (relayEntry.speaker || safeSpeaker);
         const bestText    = textHealable ? safeText : (relayEntry.text || safeText);
         try {
-          await relayEntry.msg.edit(`${tsPrefix}**${bestSpeaker}**${whoTag}: ${bestText}`);
+          await relayEntry.msg.edit({ content: `${tsPrefix}**${bestSpeaker}**${whoTag}: ${bestText}`, allowedMentions: { parse: [] } });
           if (healable) {
             relayEntry.speaker = effectiveSpeaker;
             relayEntry.source  = 'line';
@@ -5240,7 +5242,7 @@ async function _handleAgentChat(req, res) {
         ? await _raidChatDestination(client, channelId)
         : await client.channels.fetch(channelId).catch(() => null);
       if (!ch) return;
-      const sent = await ch.send(`${tsPrefix}**${safeSpeaker}**${whoTag}: ${safeText}`);
+      const sent = await ch.send({ content: `${tsPrefix}**${safeSpeaker}**${whoTag}: ${safeText}`, allowedMentions: { parse: [] } });
       relayEntry.at = Date.now();
       relayEntry.speaker = effectiveSpeaker;
       relayEntry.source = speakerSource;
