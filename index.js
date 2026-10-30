@@ -4651,6 +4651,19 @@ setInterval(() => {
   }
 }, 10_000);
 
+// Relayed raid chat posts into the night's raid thread (the guild lead, 2026-10-30, on the stream filling #raid-chat:
+// "i'd rather it be in a thread"), so the channel keeps the announcements and the thread holds the chatter. Outside a
+// raid or event window there is no thread and the line posts in the channel as before. RAID_CHAT_IN_THREAD=0 turns
+// it off. `rn` is injectable for tests; the default is utils/raidNight.js, the same resolver the parse cards use.
+async function _raidChatDestination(client, fallbackId, rn) {
+  if (process.env.RAID_CHAT_IN_THREAD !== '0') {
+    const mod = rn || require('./utils/raidNight');
+    const t = await mod.getRaidNightTarget(client, Date.now()).catch(() => null);
+    if (t && t.thread) return t.thread;
+  }
+  return client.channels.fetch(fallbackId).catch(() => null);
+}
+
 // ── Era boundaries for chat thread routing ─────────────────────────────────
 // Each chat message is routed to the era thread matching its timestamp.
 // Set <CHANNEL>_CHAT_<ERA>_THREAD_ID env vars to enable era threading;
@@ -5223,7 +5236,9 @@ async function _handleAgentChat(req, res) {
     }
 
     try {
-      const ch = await client.channels.fetch(channelId).catch(() => null);
+      const ch = channel === 'raid'
+        ? await _raidChatDestination(client, channelId)
+        : await client.channels.fetch(channelId).catch(() => null);
       if (!ch) return;
       const sent = await ch.send(`${tsPrefix}**${safeSpeaker}**${whoTag}: ${safeText}`);
       relayEntry.at = Date.now();
