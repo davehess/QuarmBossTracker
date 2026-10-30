@@ -1023,6 +1023,8 @@ The guild lead picked option C of three mockups (DECISIONS §106–§107). The t
 - **Your layouts**: one tile per saved per-character layout (`_wpOvLaysHtml`), with its ✕ forget and a
   "Save current layout for <character>" tile. Each tile lists the overlays that are on; the per-character
   profile holds no positions, so there is no sketch. The auto-switch checkbox is `#wpCharProfEn`.
+  Switching the Canvas yourself (or loading a set) also writes the active character's layout's Canvas flag
+  (`_noteCanvasChoice`), so a relaunch keeps your answer; test `test/canvas-per-character.test.js`.
   **Since agent 4.0.30 (FB-101) the same save also writes where everything sits**: the overlay set "Saved layout"
   (`_saveLayoutSnapshot` in `_captureCharProfile`: rects, look, floors), and the tile beside it, **↩ Restore saved
   layout** (`#wpLayoutRestore`; bridge `layoutRestore` → IPC `layout-restore` → `_restoreSavedLayout`), is also a tray

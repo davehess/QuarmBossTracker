@@ -223,6 +223,17 @@ next touch one rather than assuming a missing row means a missing doc.
   also run; rows and dots carry the hover-interact handshake, so it works locked. Map only: the agent already had `clear` and `killed`
   marks, so no agent bump. A clear is a local override: the next death the agent sees starts a timer again. Test:
   `test/map-watch-agent.test.js` ("right-click a spawn"). Not seen in a live window: needs a Mimic beta cut and a locked Map to confirm.
+- **🧪 Mimic: a character's layout remembers whether they wanted the Canvas (draft `draft/canvas-per-char` on `beta`, Mimic stays
+  parked, 2026-10-30). Not pushed.** The guild lead: "overlay sets aren't remembering if a character wanted to use canvas or not."
+  Both saves already held the flag (a character's layout in `_CHAR_PROFILE_FLAGS`, an overlay set via `_HIDEALL_FLAGS`), so nothing
+  was missing from them. The loss: a character's layout is a snapshot, written back over the live setting at every launch and
+  character change, and the 3.0.3 pass wrote every layout's Canvas OFF once, so a Canvas the person then switched on went off again at
+  the next launch (and one saved on came back after a ✕). **Fix:** `_noteCanvasChoice` makes every place the person switches the
+  Canvas (tray / Overlays page / hotkey toggle, the Canvas's ✕, an accepted Arrange, loading a set) also write the active character's
+  existing layout's Canvas flag; nothing is created, other flags and other characters untouched; a set or layout with no Canvas
+  answer leaves it alone as before. Test: `test/canvas-per-character.test.js`. Open: the Canvas's PANELS (`cfg.canvasLayouts`) are
+  per screen resolution and per overlay set, never per character; a character's layout holds none. Not built; ask first. The report's
+  exact scenario was not seen, so this is the cause found in the code, not one reproduced.
 - **🧪 Mimic: the Canvas stays off until you turn it on; Esc leaves setup (draft `draft/canvas-off` on `beta`, Mimic parked 3.0.3,
   2026-10-22; DECISIONS §413). Not pushed; a 3.0.3 stable is the guild lead's call.** A raider on 3.0.2 stable, mid-raid: every overlay on
   screen in blue boxes, "what is a canvas?", gone after a restart. Probable cause (not reproduced): the Canvas had been switched ON
