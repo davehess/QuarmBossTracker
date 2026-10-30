@@ -1127,6 +1127,14 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   flag OR the list), served by `_buildMobInfo` in `index.js` and `utils/zoneSpawns.js`. Add a boss by adding its id to
   the JSON. Test: `test/named-bosses.test.js`.
 
+### Relv event mephit counter (agent 4.0.45 beta, 2026-10-30; DECISIONS §471)
+- **What:** a Command Center row during Relv the Mysterious's event in Plane of Storms: "Relv: mephits N/30 · M left"
+  and mepheekas killed, then "Falto is up" / "Falto slain". Shows for this event only. A per-client floor: a death far
+  across the clearing prints no line here. Falto's same-named mephit adds are not counted.
+- **Where:** agent `_relvNoteLine` / `_relvSnapshot` (beside `_deadMobNameFromLine`) → Command Center state `relv` →
+  `apps/mimic/command.html` `relvHtml`. Source: SecretsOTheP/quests `postorms/encounters/Relv.lua` @ 572bc06. Test:
+  `test/relv-mephit-counter.test.js`.
+
 ### Several rampages at once (agent 3.8.4 beta, 2026-10-19; DECISIONS §373)
 - **What:** one Command Center row per rampaging boss, and named bosses' rampages spoken by name.
 - **Where:** agent `stats.currentRampages`, tank state `rampages`, `apps/mimic/command.html` `rampHtml`. Test:

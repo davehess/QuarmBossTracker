@@ -223,6 +223,10 @@ next touch one rather than assuming a missing row means a missing doc.
   also run; rows and dots carry the hover-interact handshake, so it works locked. Map only: the agent already had `clear` and `killed`
   marks, so no agent bump. A clear is a local override: the next death the agent sees starts a timer again. Test:
   `test/map-watch-agent.test.js` ("right-click a spawn"). Not seen in a live window: needs a Mimic beta cut and a locked Map to confirm.
+- **🧪 Relv event mephit counter in the Command Center (agent 4.0.45, beta `1370257c`, 2026-10-30; DECISIONS §471).** The guild
+  lead, mid-event: "add in a mephit counter into the command center … for this event only". Per-client floor count of the 30
+  blazing/burning mephits from death lines, Falto's adds excluded, resets on a new start, the pulled-back line, leaving the
+  zone, 3 h, or 10 min after Falto. Not seen live yet. Graduates with the next stable cut.
 - **🧪 Raid chat relays only from a raid that is ours (bot 4.0.32, main, 2026-10-30; DECISIONS §470).** A member in another group's
   raid relayed its /rs into #raid-chat. The uploader's newest raid_roster capture must be at least half guild characters
   (`_uploaderRaidIsOurs` / `_raidRosterIsOurs` / `_raidChatLineAllowed` in `index.js`); refused lines are not posted or stored.
