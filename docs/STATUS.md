@@ -103,6 +103,15 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Guests in the Command Center: +1h / +3h for officers, and a page to review their fights (bot 4.0.36 + web, agent 4.0.48 beta; `draft/guest-cc-main`
+  + `draft/guest-cc-beta`; 2026-10-30; first draft, not pushed; no migration).** The guild lead: "add guests to the command center for officers/admins with
+  an extend button for +1/+3. we should be able to review their data and contributions after the fact". Bot: officer-only `GET /api/agent/guest-links`
+  (15 s cache) and `POST /api/agent/guest-links/extend` (`utils/guestLinks.js`): max(now, expiry) + 1 or 3 h, a key that lapsed under 12 h ago can be
+  revived, a revoked one never, `guest_link_extended` audit row, the guest's cached identity dropped at once. Web: `/admin/links` +1h / +3h, and
+  `/admin/guests` (every guest link and each fight, linking to the parse page). Agent (beta): the officer's agent reads the list while the Command Center
+  polls and `POST /api/guest-extend` forwards; `command.html` draws the "Guests" card. Open: not run end to end against a live guest (decision §476 item 6).
+  Tests `test/guest-extend.test.js`, `test/guest-extend-web.test.js`, `test/command-guests.test.js`.
+
 - **🧪 Guest Mimic links: an officer-approved, time-limited key that uploads parses only (bot 4.0.35 + web 2.1.70, `draft/guest-link`; 2026-10-30; first
   draft, not pushed; migration `20261030150000_mimic_guest_sessions.sql` NOT yet applied, and it must be applied before the bot deploys).** The guild lead:
   "where can i give someone a temp key to contribute to shared parses as a raider from another guild" (option A). `/admin/links` gains a "Guest links"

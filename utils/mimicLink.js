@@ -526,6 +526,16 @@ function invalidateSessionCache(token) {
   if (token) { _sessionCache.delete(token); _sessionMissCache.delete(token); }
 }
 
+// A guest session's expiry just changed (utils/guestLinks.js extend). The caches are keyed by token, and a guest
+// identity is trusted from cache with its OLD expires_at, so drop it by token when the caller has it and, in case it
+// does not, by the synthetic discord_id every guest identity carries. The miss cache is token-keyed only, which is why
+// a caller reviving a lapsed key must pass the token.
+function forgetGuestSession(sessionId, token) {
+  invalidateSessionCache(token);
+  const did = `guest:${sessionId}`;
+  for (const [t, c] of _sessionCache) if (c.value && c.value.discord_id === did) _sessionCache.delete(t);
+}
+
 // Mint a new mimic_session for a Discord user — bypasses the OAuth device
 // flow. Used by /token in Discord so users (especially standalone-agent
 // users without Mimic) can get a per-user token without a web round-trip.
@@ -588,6 +598,7 @@ module.exports = {
   resolveMimicSession,
   requireAgentAuth,
   invalidateSessionCache,
+  forgetGuestSession,   // utils/guestLinks.js: an extended guest's new expiry applies at once
   mintSessionForUser,
   revokeSessionForUser,
   listSessionsForUser,

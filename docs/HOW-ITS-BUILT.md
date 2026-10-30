@@ -62,6 +62,11 @@ Component paths: bot = `/index.js` + `commands/` + `utils/`; agent =
 - **Enforcement**: one allowlist in `requireAgentAuth` (`GUEST_ALLOWED_ROUTES`): the parse upload and the stream-less poll; everything else is
   403 `guest_scope`. `_handleAgentUpload` in `index.js` treats a guest like a replay for live side effects and skips the member-keyed writes.
 - **Ends** at `expires_at` (401), or on Revoke (within a minute). Tests: `test/guest-link.test.js`. Decision §474.
+- **Extend and review (2026-10-30, §476)**: officer-only `GET /api/agent/guest-links` and `POST /api/agent/guest-links/extend` (`utils/guestLinks.js`;
+  `forgetGuestSession` in `utils/mimicLink.js`). Extend is max(now, expiry) + 1 or 3 h; a key lapsed under 12 h can be revived, a revoked one never.
+  Surfaces: the Command Center "Guests" card (agent `_guestLinksSnapshot` + `POST /api/guest-extend`, `apps/mimic/command.html`, beta only);
+  `/admin/links` +1h / +3h (`extendGuestSession`, math in `web/lib/guestLink.ts`); `/admin/guests` lists every guest link and their fights. Tests
+  `test/guest-extend.test.js`, `test/guest-extend-web.test.js`, `test/command-guests.test.js`.
 
 ### Keys assumed from loot · the quest tracker's sharing (2026-09-25)
 - **Keyed zones** — `locked_zone_keys`: the five zones whose entry door needs a

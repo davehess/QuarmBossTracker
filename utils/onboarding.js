@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.36': [
+    '**Officers can extend a guest link by 1 or 3 hours.** The Command Center in Mimic lists the guests and their fights, and a key that lapsed in the last 12 hours can be brought back.',
+  ],
   '4.0.35': [
     '**Officers can give a raider from another guild a temporary Mimic link that uploads parses only.** It expires on its own (tonight or 7 days) and can be ended early on the Character links page.',
   ],

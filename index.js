@@ -25224,6 +25224,25 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  // Guest Mimic links in the Command Center: the officer's list and the +1h / +3h extend (utils/guestLinks.js; both
+  // OFFICER-ONLY, the gate is inside the handlers).
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/agent/guest-links') {
+    try { return await require('./utils/guestLinks').handleList(req, res); }
+    catch (err) {
+      console.error('[guest-links] handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+  if (req.method === 'POST' && req.url === '/api/agent/guest-links/extend') {
+    try { return await require('./utils/guestLinks').handleExtend(req, res); }
+    catch (err) {
+      console.error('[guest-links] extend handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
   if (req.method === 'POST' && req.url === '/api/agent/flag-override') {
     try { return await _handleAgentFlagOverride(req, res); }
     catch (err) {
