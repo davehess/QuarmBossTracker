@@ -235,3 +235,18 @@ describe('officer action', () => {
     expect(actions).toMatch(/action:\s+'guest_link_revoked'/);
   });
 });
+
+// 2026-10-30, the guild lead: Mimic opens /auth/mimic-link?code=…, and the page sent everyone signed out straight to
+// Discord sign-in, which walked a guest into joining our Discord and a link needing a role they will never have.
+describe('the link page gives a signed-out visitor with a code the guest choice', () => {
+  const page = stripJs(readSource(path.join(ROOT, 'web', 'app', 'auth', 'mimic-link', 'page.tsx')));
+  const signedOut = page.slice(page.indexOf('if (!user) {', page.indexOf('export default async function MimicLinkPage')));
+  it('redirects to sign-in only when there is no usable code', () => {
+    expect(signedOut).toMatch(/if \(!\/\^\[A-Z0-9\]\{4,12\}\$\/\.test\(prefilled\)\) redirect\(`\/auth\/signin/);
+  });
+  it('shows the code and tells a guest to send it to the officer, with no sign-in needed', () => {
+    expect(signedOut).toMatch(/Raiding with Wolf Pack as a guest\?/);
+    expect(signedOut).toMatch(/\{prefilled\}/);
+    expect(signedOut).toMatch(/do not need to sign in or join our Discord/);
+  });
+});
