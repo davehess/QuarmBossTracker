@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'session-other-raids-2026-10-30',
+    title: 'Web 2.1.76 · Bot 4.0.37',
+    version: 'Web 2.1.76 · Bot 4.0.37',
+    date: '2026-10-30',
+    headline: 'A raid session no longer lists other raids’ kills, and bosses with a comma in their name are saved again.',
+    features: [],
+    fixes: [
+      'Raid session: a kill none of the raid took part in (a small raid somewhere else at the same time, or someone soloing before the raid) no longer shows in the raid’s session.',
+      'Fights against Falto, Jeplak, Ston`Ruak, Gurebk and other bosses with a comma in their name were dropped instead of saved. They are saved now.',
+    ],
+  },
+  {
     key: 'pop-events-2026-10-30',
     title: 'Web 2.1.69',
     version: 'Web 2.1.69',

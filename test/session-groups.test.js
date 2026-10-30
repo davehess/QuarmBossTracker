@@ -22,7 +22,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ROOT, stripJs } from './_source-slice.js';
 import {
-  buildGroups, filterMinuteData, groupLabel, groupOfFight, hasConcurrent, inGroupAt, inGroupEver, narrowRows, raidKey,
+  buildGroups, filterMinuteData, groupLabel, groupOfFight, hasConcurrent, inGroupAt, inGroupEver, narrowRows, outsideRaids, raidKey,
   MIN_GROUP, SAME_RAID,
 } from '../web/lib/sessionGroups.ts';
 import { attendanceFromMinutes, anonLabels } from '../web/lib/raidSession.ts';
@@ -224,6 +224,31 @@ describe('which group a fight belongs to', () => {
     expect(groupOfFight(idx, t, ['stranger1', 'stranger2'])).toBeNull();
     expect(groupOfFight(idx, t, ['aldenmar1', 'brackwyn1', 'stranger1', 'stranger2'])).toBeNull();
     expect(groupOfFight(idx, t, [])).toBeNull();
+  });
+});
+
+// The guild lead, 2026-10-30: a two-person raid's Growth and Lord of Ire kills sat in the Storms raid's session, "It's
+// included in here, but shouldn't be". The pair stood in a raid of their own, too small to be a group.
+describe('a fight from none of the window\'s raids leaves the whole-window view', () => {
+  const pair = ['Zarrin1', 'Zarrin2'];
+  const rows = span(0, 20, () => [{ zone: 'postorms', tag: 'Corvale', names: A }, { zone: 'growthplane', tag: 'Nyssara', names: pair }]);
+  const idx = buildGroups(rows);
+  const recorded = new Set(rows.map(r => Math.floor(Date.parse(r.minute_at) / MIN)));
+  const t = T0 + 5 * MIN;
+  it('the pair is no raid, and their fight is outside every raid', () => {
+    expect(idx.groups).toHaveLength(1);
+    expect(outsideRaids(idx, recorded, t, ['zarrin1', 'zarrin2'])).toBe(true);
+  });
+  it('a fight any raider was in stays, and so does one with no parse rows', () => {
+    expect(outsideRaids(idx, recorded, t, ['aldenmar1'])).toBe(false);
+    expect(outsideRaids(idx, recorded, t, ['zarrin1', 'aldenmar1'])).toBe(false);
+    expect(outsideRaids(idx, recorded, t, [])).toBe(false);
+  });
+  it('a fight in a minute nobody recorded stays: a gap must not hide the raid\'s own kills', () => {
+    expect(outsideRaids(idx, recorded, T0 + 40 * MIN, ['zarrin1'])).toBe(false);
+  });
+  it('a window with no raid at all keeps everything', () => {
+    expect(outsideRaids(buildGroups(span(0, 20, () => [{ zone: 'x', tag: 'Nyssara', names: pair }])), recorded, t, ['zarrin1'])).toBe(false);
   });
 });
 
