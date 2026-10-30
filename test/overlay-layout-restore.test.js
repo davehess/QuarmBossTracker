@@ -161,6 +161,7 @@ function loadSetEnv({ cfg, windows }) {
   const fn = new Function('loadConfig', 'saveConfig', '_screenSignature', '_HIDEALL_FLAGS', '_setRectsHere', 'applyAllVisibility',
     '_overlayEntries', '_boundsKeyForEntry', 'pushStatus', 'buildTrayMenu', 'applyAllOverlayBackdrops', 'canvasWindow', 'screen',
     `let _hideAllActive = false, _hideAllPrev = null;
+     const _noteCanvasChoice = () => false;   // the active character's saved layout follows the Canvas (canvas-per-character.test.js)
      ${floorSrc}
      ${lookKeysSrc}
      ${scaleSrc}

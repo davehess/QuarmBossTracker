@@ -3102,6 +3102,22 @@ function _captureCharProfile(charLower) {
   _saveLayoutSnapshot();
   return charLower;
 }
+// The Canvas is a choice, and a saved layout is a snapshot: one saved while the Canvas was off put it back OFF at
+// every launch and every character change (_applyCharProfile writes the saved flag over the live one), whatever the
+// person had chosen since; one saved while it was on brought it back after they closed it (the guild lead,
+// 2026-10-30: "overlay sets aren't remembering if a character wanted to use canvas or not"). So when the person
+// switches the Canvas on or off themselves, the active character's saved layout takes the answer too. Only a layout
+// that exists is touched (saving one stays the person's call), and only the Canvas flag in it. Returns whether the
+// profile changed; the caller's own saveConfig(cfg) writes it.
+function _noteCanvasChoice(cfg) {
+  const k = _activeCharName ? String(_activeCharName).toLowerCase() : null;
+  const prof = k && cfg && cfg.charProfiles && cfg.charProfiles[k];
+  if (!prof || !prof.show || typeof prof.show !== 'object') return false;
+  const on = !!cfg.showCanvas;
+  if (prof.show.showCanvas === on) return false;
+  prof.show.showCanvas = on;
+  return true;
+}
 // FB-101 (a member, 2026-10-27): "The overlays do not save when the windows are set up to one's liking and then
 // manually saved in the interface". 💾 Save current layout kept ONLY which overlays are on (the profile above), so
 // nothing the person arranged was in it. It now also writes where each overlay sits, how big, how it is drawn and
@@ -3388,6 +3404,7 @@ function _applyOverlaySet(set) {
     }
   }
   if (set.canvas) cfg.canvasLayouts = set.canvas;
+  _noteCanvasChoice(cfg);   // a set that turns the Canvas on or off is that character's answer too
   saveConfig(cfg);
   applyAllVisibility();
   for (const [key, win] of _overlayEntries()) {
@@ -8021,7 +8038,7 @@ function _setCanvasArrange(on, consented) {
     return false;
   }
   _canvasArrange = !!on;
-  if (_canvasArrange && !cfg.showCanvas) { cfg.showCanvas = true; saveConfig(cfg); }
+  if (_canvasArrange && !cfg.showCanvas) { cfg.showCanvas = true; _noteCanvasChoice(cfg); saveConfig(cfg); }
   if (_canvasArrange && !canvasWindow) createCanvasWindow();
   applyCanvasVisibility();
   applyTriggerVisibility();
@@ -12475,7 +12492,7 @@ function _toggleOverlay(name) {
     case 'canvas':
       // The Timers canvas. On, the trigger overlay hands it the timers and
       // callouts; off, they come back to the trigger overlay.
-      cfg.showCanvas = !cfg.showCanvas; saveConfig(cfg);
+      cfg.showCanvas = !cfg.showCanvas; _noteCanvasChoice(cfg); saveConfig(cfg);
       if (!cfg.showCanvas) _canvasArrange = false;
       if (cfg.showCanvas && !canvasWindow) createCanvasWindow(); else applyCanvasVisibility();
       applyTriggerVisibility();
@@ -13281,7 +13298,7 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === canvasWindow) {
       // Turning the canvas off gives the timers and callouts back to the
       // trigger overlay — same as the tray / dashboard switch.
-      cfg.showCanvas = false; _canvasArrange = false; saveConfig(cfg);
+      cfg.showCanvas = false; _canvasArrange = false; _noteCanvasChoice(cfg); saveConfig(cfg);
       try { canvasWindow.hide(); } catch {}
       applyTriggerVisibility();
       try { buildTrayMenu(); } catch {}
