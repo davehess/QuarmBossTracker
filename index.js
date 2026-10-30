@@ -4693,16 +4693,28 @@ setInterval(() => {
 }, 10_000);
 
 // Relayed raid chat posts into the night's raid thread (the guild lead, 2026-10-30, on the stream filling #raid-chat:
-// "i'd rather it be in a thread"), so the channel keeps the announcements and the thread holds the chatter. Outside a
-// raid or event window there is no thread and the line posts in the channel as before. RAID_CHAT_IN_THREAD=0 turns
-// it off. `rn` is injectable for tests; the default is utils/raidNight.js, the same resolver the parse cards use.
+// "i'd rather it be in a thread"), so the channel keeps the announcements and the thread holds the chatter.
+// Outside a raid or event window there is no thread, and NOTHING posts (the guild lead, 2026-10-30, after a two-person
+// raid's chat and six copies of one kill landed in #raid-chat in the morning: "just restrict those to main raid times
+// and events in threads"). Returns null then; the caller skips the send. RAID_CHAT_IN_THREAD=0 keeps the old
+// behaviour (always the channel). `rn` is injectable for tests; the default is utils/raidNight.js, the same resolver
+// the parse cards use.
 async function _raidChatDestination(client, fallbackId, rn) {
-  if (process.env.RAID_CHAT_IN_THREAD !== '0') {
-    const mod = rn || require('./utils/raidNight');
-    const t = await mod.getRaidNightTarget(client, Date.now()).catch(() => null);
-    if (t && t.thread) return t.thread;
-  }
-  return client.channels.fetch(fallbackId).catch(() => null);
+  if (process.env.RAID_CHAT_IN_THREAD === '0') return client.channels.fetch(fallbackId).catch(() => null);
+  const mod = rn || require('./utils/raidNight');
+  const t = await mod.getRaidNightTarget(client, Date.now()).catch(() => null);
+  return (t && t.thread) || null;
+}
+// One kill announcement per boss kill: every raider's client that saw the server's kill message relays it, and each
+// used to post its own copy (six for one Lord of Ire, 2026-10-30). Ten minutes covers the relays of one kill.
+const _killAnnounced = new Map();   // boss name (lower) → ms posted
+function _killAnnounceOnce(name, now = Date.now()) {
+  const k = String(name || '').toLowerCase();
+  const at = _killAnnounced.get(k);
+  if (at && now - at < 10 * 60 * 1000) return false;
+  _killAnnounced.set(k, now);
+  if (_killAnnounced.size > 500) { for (const [kk, t] of _killAnnounced) if (now - t > 10 * 60 * 1000) _killAnnounced.delete(kk); }
+  return true;
 }
 
 // ── Era boundaries for chat thread routing ─────────────────────────────────
@@ -6482,9 +6494,9 @@ async function _handleAgentBossKill(req, res) {
           console.warn('[bosskill] postKillUpdate error:', e?.message));
       }
       // Announce in raid channel with next-spawn time (deferred post-ack).
-      if (raidChId) {
+      if (raidChId && _killAnnounceOnce(boss.name)) {
         discordJobs.push(async () => {
-          const ch = await client.channels.fetch(raidChId).catch(() => null);
+          const ch = await _raidChatDestination(client, raidChId);   // the raid / event thread, or nothing
           if (ch) {
             await ch.send(
               `⚔️ **${character}** of <${guild}> killed **${boss.name}** in ${zone} — ` +
@@ -6506,9 +6518,9 @@ async function _handleAgentBossKill(req, res) {
       // A boss taken off the board on purpose says so, instead of inviting an
       // officer to /addboss it back (§132).
       const offBoard = _OFF_BOARD_NO_LOCKOUT.has(nameLower);
-      if (raidChId) {
+      if (raidChId && _killAnnounceOnce(bossName)) {
         discordJobs.push(async () => {
-          const ch = await client.channels.fetch(raidChId).catch(() => null);
+          const ch = await _raidChatDestination(client, raidChId);   // the raid / event thread, or nothing
           if (ch) {
             await ch.send(
               `⚔️ **${character}** of <${guild}> killed **${bossName}** in ${zone} ` +
