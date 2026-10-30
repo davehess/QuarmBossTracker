@@ -479,7 +479,7 @@ const BASE_ITEMS: GuideItem[] = [
   // raid or group id gets 300 s, and a second holder click only resets that expiry), :164-190 (door 51: FindRaid, then
   // MovePC of e.self alone, so each person clicks for themselves).
   { key: 'bot_symbol', section: 't3', who: 'raid', title: 'The [[Symbol of Torden#9433]] opens Agnarr’s tower: one per raid, and the raid needs it',
-    detail: 'Combine the [[Sandstorm Sphere#9429]], [[Lightning Sphere#9430]], [[Blizzard Sphere#9431]] and [[Tornado Sphere#9432]] inside an [[Unadorned Symbol of Torden#17169]]. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has 5 minutes to click in. Anyone else clicking wakes the storm watchers. Each person clicks the portal themselves: the holder’s click opens it for everyone in the same raid, and another click by the holder renews the 5 minutes.',
+    detail: 'Combine the [[Sandstorm Sphere#9429]], [[Lightning Sphere#9430]], [[Blizzard Sphere#9431]] and [[Tornado Sphere#9432]] inside an [[Unadorned Symbol of Torden#17169]]. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has about 1 minute to click in. Anyone else clicking wakes the storm watchers. Each person clicks the portal themselves: the holder’s click opens it for everyone in the same raid, and every click by the holder restarts that minute, so the holder clicks again for anyone late. The first click puts the Symbol on the holder’s key ring for good, so they can reopen it any time; a raid that is disbanded and re-formed needs a fresh holder click.',
     where: [L.botTower] },
   // Alts (SecretsOTheP/quests ea0c766): bothunder/#Askr_the_Lost.lua:8-12 ("transport" moves whoever says it) and
   // bothunder/##Askr_the_Lost.lua:8-10 ("what storm" spawns the vortex); bothunder/player.lua:218-228 (the vortex click
@@ -493,7 +493,7 @@ const BASE_ITEMS: GuideItem[] = [
   // self with the killer's, so someone who left the raid fails it), :46-50 (20-minute depop), :58-62 and :67-86
   // (every answer is behind that check).
   { key: 'flag_agnarr', section: 't3', who: 'raid', must: true, flag: 'agnarr_dead', title: 'Kill Agnarr the Storm Lord, then speak to Karana',
-    detail: 'Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. “Follow the path of the Fallen” gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point. An alt has to be in that raid at the moment it hails him, inside the 20 minutes; someone who has left the raid cannot claim.',
+    detail: 'Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. Hailing him only gets his speech: you have to say “follow the path of the Fallen”. That gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point. An alt has to be in that raid at the moment it hails him, inside the 20 minutes; someone who has left the raid cannot claim.',
     says: [{ to: 'Karana', text: 'I will follow the path of the Fallen.' }, { to: 'Karana', text: 'Send me on my path.' }],
     where: [L.karana], link: popZone('bot') },
   // Halls of Honor
@@ -980,8 +980,11 @@ const SEQ: Record<string, Act[]> = {
 
   // ── Tier three ──
   bot_symbol: [
-    click('the tower portal in the courtyard', 'bothunder/player.lua', { items: [I('Symbol of Torden', 9433)], text: 'the holder puts it on the cursor and clicks; their raid or group then has 5 minutes' }),
-    click('the tower portal in the courtyard', 'bothunder/player.lua', { text: 'everyone else, within those 5 minutes' }),
+    click('the tower portal in the courtyard', 'bothunder/player.lua', { items: [I('Symbol of Torden', 9433)], text: 'the holder puts it on the cursor and clicks; their raid or group then has about a minute, restarted by each holder click' }),
+    // The public scripts say 300 s since 2026-09-05 (bothunder/player.lua:9, SYMBOL_AUTHORIZATION_SECONDS; it was
+    // `now + 60` before), but on the live server on 2026-10-29 the window behaved like the old 60 s (the guild lead:
+    // "seems shorter than 5 minutes"). The guide states the live behaviour until a test shows the 5-minute script.
+    click('the tower portal in the courtyard', 'bothunder/player.lua', { text: 'everyone else, within that minute' }),
   ],
   // Askr in the tower is two different NPCs (#Askr_the_Lost after Evynd, ##Askr_the_Lost after Emmerik). Each
   // hail is story; "transport" and "what storm" are what act. "what storm" spawns the vortex, the vortex click carries you.

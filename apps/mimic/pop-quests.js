@@ -3269,8 +3269,8 @@ window.POP_QUESTS = {
        "title": "The Symbol of Torden opens Agnarr’s tower: one per raid, and the raid needs it",
        "plane": "thunder",
        "who": "raid",
-       "detail": "Combine the Sandstorm Sphere, Lightning Sphere, Blizzard Sphere and Tornado Sphere inside an Unadorned Symbol of Torden. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has 5 minutes to click in. Anyone else clicking wakes the storm watchers. Each person clicks the portal themselves: the holder’s click opens it for everyone in the same raid, and another click by the holder renews the 5 minutes.",
-       "brief": "Build one Symbol per raid: four spheres in an Unadorned Symbol. The holder clicks the portal; all follow in 5 minutes.",
+       "detail": "Combine the Sandstorm Sphere, Lightning Sphere, Blizzard Sphere and Tornado Sphere inside an Unadorned Symbol of Torden. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has about 1 minute to click in. Anyone else clicking wakes the storm watchers. Each person clicks the portal themselves: the holder’s click opens it for everyone in the same raid, and every click by the holder restarts that minute, so the holder clicks again for anyone late. The first click puts the Symbol on the holder’s key ring for good, so they can reopen it any time; a raid that is disbanded and re-formed needs a fresh holder click.",
+       "brief": "Build one Symbol per raid: four spheres in an Unadorned Symbol. The holder clicks the portal; all follow in about 1 min.",
        "where": [
         {
          "npc": "The tower portal",
@@ -3284,7 +3284,7 @@ window.POP_QUESTS = {
         {
          "kind": "click",
          "to": "the tower portal in the courtyard",
-         "text": "the holder puts it on the cursor and clicks; their raid or group then has 5 minutes",
+         "text": "the holder puts it on the cursor and clicks; their raid or group then has about a minute, restarted by each holder click",
          "items": [
           "Symbol of Torden"
          ],
@@ -3293,11 +3293,11 @@ window.POP_QUESTS = {
         {
          "kind": "click",
          "to": "the tower portal in the courtyard",
-         "text": "everyone else, within those 5 minutes",
+         "text": "everyone else, within that minute",
          "src": "bothunder/player.lua"
         }
        ],
-       "expect": "The raid farms the four spheres and one Unadorned Symbol. One raider carries the finished Symbol; everyone else clicks the portal within 5 minutes of them.",
+       "expect": "The raid farms the four spheres and one Unadorned Symbol. One raider carries the finished Symbol; everyone else clicks the portal within about a minute of them.",
        "turnIn": [
         {
          "to": {
@@ -3308,7 +3308,7 @@ window.POP_QUESTS = {
           "note": "in the courtyard"
          },
          "give": "the Symbol of Torden on your cursor, then click",
-         "get": "5 minutes for your raid to follow you in"
+         "get": "about a minute for your raid to click up, restarted by each of your clicks"
         }
        ]
       },
@@ -3403,7 +3403,7 @@ window.POP_QUESTS = {
        "plane": "thunder",
        "who": "raid",
        "must": true,
-       "detail": "Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. “Follow the path of the Fallen” gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point. An alt has to be in that raid at the moment it hails him, inside the 20 minutes; someone who has left the raid cannot claim.",
+       "detail": "Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. Hailing him only gets his speech: you have to say “follow the path of the Fallen”. That gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point. An alt has to be in that raid at the moment it hails him, inside the 20 minutes; someone who has left the raid cannot claim.",
        "brief": "Hail Karana within 20 minutes of the kill, in the raid that got it. An alt must be in that raid to claim.",
        "says": [
         {
@@ -3453,7 +3453,7 @@ window.POP_QUESTS = {
          "src": "bothunder/Karana.lua"
         }
        ],
-       "expect": "A raid. Karana stays up 20 minutes and answers up to 72 people from the raid with the kill; he no longer spends one of those flags on a player who already has his checklist flag. Ask for the path of the Fallen before “send me”, which casts Gate."
+       "expect": "A raid. Karana stays up 20 minutes and answers up to 72 people from the raid with the kill; he no longer spends one of those flags on a player who already has his checklist flag. A hail only gets his speech: say “follow the path of the Fallen” before “send me”, which casts Gate."
       },
       {
        "key": "hoh_trial_dragon",

@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-bot-clickup-2026-10-30',
+    title: 'Web 2.1.68',
+    version: 'Web 2.1.68',
+    date: '2026-10-30',
+    headline: 'The Bastion of Thunder steps spell out the one-minute click-up and what to say to Karana.',
+    features: [],
+    fixes: [
+      'Symbol of Torden: every click by the holder restarts the raid’s minute or so to click up; the first click keeps the Symbol on the holder’s key ring, and a re-formed raid needs a fresh click.',
+      'Karana: hailing him only gets his speech. You have to say "follow the path of the Fallen" for the flag.',
+    ],
+  },
+  {
     key: 'pop-alt-tips-2026-10-29',
     title: 'Web 2.1.67',
     version: 'Web 2.1.67',
@@ -45,7 +57,7 @@ export const releases: Release[] = [
     features: [
       { name: 'Alts and the Saryrn projection', blurb: 'Alts can take Saryrn’s flag from any raid that kills her, even another guild’s: get the alt into that raid and hail within 30 minutes.' },
       { name: 'One Screaming Sphere covers the raid', blurb: 'Tylis counts a sphere on the key ring of anyone in your raid. Everyone still needs their own Tylis flag.' },
-      { name: 'Bastion of Thunder, step by step for alts', blurb: 'Each person clicks the courtyard portal themselves, and the holder clicking again renews the 5 minutes. Once Emmerik is dead, alts can wait on the second floor and use the vortex until Karana’s window ends. To claim from Karana, an alt has to be in the raid that killed Agnarr when it hails.' },
+      { name: 'Bastion of Thunder, step by step for alts', blurb: 'Each person clicks the courtyard portal themselves, and the holder clicking again restarts the minute or so they have. Once Emmerik is dead, alts can wait on the second floor and use the vortex until Karana’s window ends. To claim from Karana, an alt has to be in the raid that killed Agnarr when it hails.' },
       { name: 'Tower of Solusek Ro wings for alts', blurb: 'Each cauldron lasts 30 minutes from its own boss’s death, so send alts to each wing right after its kill instead of clearing all five first.' },
       { name: 'Halls of Honor trial credit', blurb: 'After a win the trial giver stands 10 minutes and credits everyone in the winning raid or group, late joiners included. A won trial does not come back for about 18 hours.' },
     ],

@@ -1803,7 +1803,7 @@ const BASE_ITEMS = [
 		section: "t3",
 		who: "raid",
 		title: "The [[Symbol of Torden#9433]] opens Agnarr’s tower: one per raid, and the raid needs it",
-		detail: "Combine the [[Sandstorm Sphere#9429]], [[Lightning Sphere#9430]], [[Blizzard Sphere#9431]] and [[Tornado Sphere#9432]] inside an [[Unadorned Symbol of Torden#17169]]. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has 5 minutes to click in. Anyone else clicking wakes the storm watchers. Each person clicks the portal themselves: the holder’s click opens it for everyone in the same raid, and another click by the holder renews the 5 minutes.",
+		detail: "Combine the [[Sandstorm Sphere#9429]], [[Lightning Sphere#9430]], [[Blizzard Sphere#9431]] and [[Tornado Sphere#9432]] inside an [[Unadorned Symbol of Torden#17169]]. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has about 1 minute to click in. Anyone else clicking wakes the storm watchers. Each person clicks the portal themselves: the holder’s click opens it for everyone in the same raid, and every click by the holder restarts that minute, so the holder clicks again for anyone late. The first click puts the Symbol on the holder’s key ring for good, so they can reopen it any time; a raid that is disbanded and re-formed needs a fresh holder click.",
 		where: [L.botTower]
 	},
 	{
@@ -1829,7 +1829,7 @@ const BASE_ITEMS = [
 		must: true,
 		flag: "agnarr_dead",
 		title: "Kill Agnarr the Storm Lord, then speak to Karana",
-		detail: "Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. “Follow the path of the Fallen” gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point. An alt has to be in that raid at the moment it hails him, inside the 20 minutes; someone who has left the raid cannot claim.",
+		detail: "Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. Hailing him only gets his speech: you have to say “follow the path of the Fallen”. That gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point. An alt has to be in that raid at the moment it hails him, inside the 20 minutes; someone who has left the raid cannot claim.",
 		says: [{
 			to: "Karana",
 			text: "I will follow the path of the Fallen."
@@ -2775,8 +2775,8 @@ const SEQ = {
 	torment_return: [hail("Fahlia Shadyglade", "potranquility/Fahlia_Shadyglade.lua"), hail("Tylis Newleaf", "potranquility/Tylis_Newleaf.lua")],
 	bot_symbol: [click("the tower portal in the courtyard", "bothunder/player.lua", {
 		items: [I("Symbol of Torden", 9433)],
-		text: "the holder puts it on the cursor and clicks; their raid or group then has 5 minutes"
-	}), click("the tower portal in the courtyard", "bothunder/player.lua", { text: "everyone else, within those 5 minutes" })],
+		text: "the holder puts it on the cursor and clicks; their raid or group then has about a minute, restarted by each holder click"
+	}), click("the tower portal in the courtyard", "bothunder/player.lua", { text: "everyone else, within that minute" })],
 	bot_tower: [
 		kill("Evynd Firestorm", "bothunder/Evynd_Firestorm.lua"),
 		hail("Askr the Lost (appears where Evynd falls)", "bothunder/#Askr_the_Lost.lua"),
@@ -3647,11 +3647,11 @@ const STEP_MORE = {
 		auto: "Ticks itself when Mimic records your Bastion of Thunder flag, which is this click."
 	},
 	bot_symbol: {
-		expect: "The raid farms the four spheres and one Unadorned Symbol. One raider carries the finished Symbol; everyone else clicks the portal within 5 minutes of them.",
+		expect: "The raid farms the four spheres and one Unadorned Symbol. One raider carries the finished Symbol; everyone else clicks the portal within about a minute of them.",
 		turnIn: [{
 			to: at("bot_symbol"),
 			give: "the [[Symbol of Torden#9433]] on your cursor, then click",
-			get: "5 minutes for your raid to follow you in"
+			get: "about a minute for your raid to click up, restarted by each of your clicks"
 		}]
 	},
 	bot_tower: {
@@ -3659,7 +3659,7 @@ const STEP_MORE = {
 		back: [at("flag_agnarr")]
 	},
 	flag_agnarr: {
-		expect: "A raid. Karana stays up 20 minutes and answers up to 72 people from the raid with the kill; he no longer spends one of those flags on a player who already has his checklist flag. Ask for the path of the Fallen before “send me”, which casts Gate.",
+		expect: "A raid. Karana stays up 20 minutes and answers up to 72 people from the raid with the kill; he no longer spends one of those flags on a player who already has his checklist flag. A hail only gets his speech: say “follow the path of the Fallen” before “send me”, which casts Gate.",
 		auto: FLAG_AUTO
 	},
 	flag_behemoth: {
@@ -3775,7 +3775,7 @@ for (const [key, brief] of Object.entries({
 	flag_keeper: "A small raid kills the Keeper, then hails Tylis. Do Fahlia’s step first or it is a checklist flag. Resets in 2 hours.",
 	torment_sphere: "Optional. One sphere on the key ring of anyone in your raid covers everyone. You still need your own Tylis flag.",
 	flag_saryrn: "Kill Saryrn, then hail her one projection: 30 minutes, 72 players. Real flag only after the Keeper step.",
-	bot_symbol: "Build one Symbol per raid: four spheres in an Unadorned Symbol. The holder clicks the portal; all follow in 5 minutes.",
+	bot_symbol: "Build one Symbol per raid: four spheres in an Unadorned Symbol. The holder clicks the portal; all follow in about 1 min.",
 	flag_agnarr: "Hail Karana within 20 minutes of the kill, in the raid that got it. An alt must be in that raid to claim.",
 	hoh_trial_dragon: "Say “ready” to start. After the win, hail Trydan within 10 minutes from the winning raid or group for credit.",
 	hoh_trial_villagers: "Say “ready” to start. After the win, hail Rhaliq within 10 minutes from the winning raid or group for credit.",
