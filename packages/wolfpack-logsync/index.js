@@ -24989,7 +24989,7 @@ var WP_MP_SCOPES = [['bosses', 'Bosses'], ['all', 'Everything']];
 // for My logs: the id an answer gives each zone). q: what the search box asked for; qBox is what is typed in it
 // right now (the debounce below is what turns one into the other). zones/mobs are the last answer's pickers, and
 // facets says it had any: an older bot sends none, and the tab then leaves the pickers out.
-var _wpMp = { w: '7d', scope: 'bosses', char: '', src: 'guild', zone: '', q: '', qBox: '', day: false, chars: [], zones: [], mobs: [], facets: false, showAll: false, data: null, state: 'idle', seq: 0, asOf: 0 };
+var _wpMp = { w: '7d', scope: 'bosses', char: '', src: 'guild', zone: '', q: '', qBox: '', day: false, chars: [], zones: [], mobs: [], facets: false, showAll: false, allRows: false, data: null, state: 'idle', seq: 0, asOf: 0 };
 // What a search may hold, as the agent's whitelist has it: letters, digits, spaces and ' \` - _, at most 40.
 function wpMpCleanQ(v) { return String(v || '').replace(/[^A-Za-z0-9 '\`_-]/g, '').replace(/ +/g, ' ').trim().slice(0, 40); }
 function _wpMpZoneOk(src, z) { z = String(z || ''); return src === 'local' ? z.length > 0 && z.length <= 64 : /^[1-9][0-9]{0,2}$/.test(z); }
@@ -25163,7 +25163,9 @@ function wpMpChart(d, asOf) {
 // whole window, so a night cut by the 400-fight limit still says how many it had). The Character column only
 // exists when more than one character is in the data, the Zone column when any fight has a zone (an older bot
 // sends none), and the Rank column not for My logs (a log has no rank among the guild).
-function wpMpTable(d, byDay) {
+// \`allRows\` (the guild lead, 2026-10-30: "My parses hides the majority of fights": 22 in the chart, 12 in the list)
+// lists every fight in the answer, newest first, without the night headers; the switch under the table sets it.
+function wpMpTable(d, byDay, allRows) {
   var all = (d && d.fights) || [], seen = {}, nChars = 0, anyZone = false, i;
   for (i = 0; i < all.length; i++) {
     var c = String(all[i].char || '');
@@ -25171,7 +25173,7 @@ function wpMpTable(d, byDay) {
     if (all[i].zone) anyZone = true;
   }
   var noRank = !!(d && d.source === 'local');
-  var rows = byDay ? all.slice().reverse() : all.slice(-12).reverse(), th = 'style="text-align:right"', td = 'style="text-align:right;font-variant-numeric:tabular-nums"';
+  var rows = byDay || allRows ? all.slice().reverse() : all.slice(-12).reverse(), th = 'style="text-align:right"', td = 'style="text-align:right;font-variant-numeric:tabular-nums"';
   var cols = 4 + (nChars > 1 ? 1 : 0) + (anyZone ? 1 : 0) + (noRank ? 0 : 1);
   var nmap = {};
   ((d && d.nights) || []).forEach(function (n) { if (n && n.night) nmap[n.night] = n; });
@@ -25303,7 +25305,11 @@ function wpMpHtml() {
       +  wpMpChart(d, m.asOf)
       +  '<div class="dim" style="font-size:11px;margin-top:2px"><span style="color:#4493e8">●</span> boss fight · <span style="color:#4a5568">●</span> other fight · '
       +  '<span style="color:#a371f7">━</span> raid-night average · shaded = a raid night</div>'
-      +  wpMpTable(d, m.day);
+      +  wpMpTable(d, m.day, m.allRows);
+    if (!m.day && fights.length > 12) {
+      h += '<button type="button" class="wp-btn ghost" onclick="wpMpAllRows()" style="margin:2px 0 4px">'
+        +  (m.allRows ? 'Show the newest 12' : 'Show all ' + fights.length + ' fights') + '</button>';
+    }
     if (d.truncated) h += dimNote('Showing the newest ' + fights.length + ' of ' + total + ' fights.');
   }
   var since = local ? Date.parse(d.since || '') : NaN;
@@ -25411,6 +25417,7 @@ function wpMpClear() {
 function wpMpRefresh() { if (_wpMp.state !== 'loading') wpMpFetch(true); }
 // "+N more" / "fewer": only changes what is drawn, so it asks nothing and is not saved (a new load starts folded).
 function wpMpMore() { _wpMp.showAll = !_wpMp.showAll; wpMpRepaint(); }
+function wpMpAllRows() { _wpMp.allRows = !_wpMp.allRows; wpMpRepaint(); }
 // Opened from the rail (or the tray's #myparses): ask once. The agent answers from its copy inside five minutes.
 function wpMpOpenTab() { wpMpFetch(false); }
 // wolfpack.quest links go out through Mimic's open-external (it only lets https://wolfpack.quest through), so the
