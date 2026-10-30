@@ -27,7 +27,8 @@ import OpenDkpRegisterRow from './OpenDkpRegisterRow';
 import UnregisteredTable from './UnregisteredTable';
 import MainCombobox from './MainCombobox';
 import { authorizeMimicForMember } from './mimic-link-actions';
-import { authorizeMimicForGuest, revokeGuestSession } from './guest-link-actions';
+import { authorizeMimicForGuest, revokeGuestSession, extendGuestSession } from './guest-link-actions';
+import { canExtendGuest, GUEST_EXTEND_HOURS } from '@/lib/guestLink';
 import { createSiteAccessInvite } from './site-access-actions';
 import { loadAgentUploadStats, loadWhoForNames } from '@/lib/adminReads';
 import { GUILD_TAG } from '@/lib/guild';
@@ -487,6 +488,21 @@ async function dismissLinkRequest(formData: FormData) {
     .eq('id', id)
     .eq('status', 'pending');
   revalidatePath('/admin/links');
+}
+
+// The +1h / +3h buttons on a guest row (guest-link-actions.ts extendGuestSession).
+function ExtendButtons({ id }: { id: string }) {
+  return (
+    <>
+      {GUEST_EXTEND_HOURS.map(h => (
+        <form key={h} action={extendGuestSession} className="inline mr-3">
+          <input type="hidden" name="session_id" value={id} />
+          <input type="hidden" name="hours" value={h} />
+          <button type="submit" className="text-blue hover:underline text-sm">+{h}h</button>
+        </form>
+      ))}
+    </>
+  );
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────
@@ -960,6 +976,7 @@ export default async function AdminLinksPage({
           <p className="mt-3 text-sm text-green">
             {gok === 'already' ? '✓ That code was already authorized.'
               : gok === 'revoked' ? '✓ Guest link revoked. Their Mimic stops uploading within a minute.'
+              : gok === 'extended' ? '✓ Guest link extended. A key that had lapsed works again within a minute.'
               : '✓ Guest approved. Their Mimic picks it up within a couple of seconds.'}
           </p>
         )}
@@ -974,6 +991,9 @@ export default async function AdminLinksPage({
               update_failed: 'Couldn’t save (database error). Try again in a moment.',
               no_actor:      'Your officer record was not found; sign out and back in.',
               bad_session:   'That guest session id looks wrong.',
+              bad_hours:     'An extension is 1 or 3 hours.',
+              revoked:       'That guest link was revoked, so it can’t be extended. Approve a new code instead.',
+              too_old:       'That link ended more than 12 hours ago. Approve a new code instead.',
             } as Record<string, string>)[gerr] || `Error: ${gerr}`}
           </p>
         )}
@@ -1021,6 +1041,11 @@ export default async function AdminLinksPage({
           </button>
         </form>
 
+        <p className="mt-3 text-sm">
+          <Link href="/admin/guests" className="text-blue hover:underline">Review guests&apos; fights →</Link>
+          <span className="text-dim"> every guest link ever approved, and the fights each one uploaded</span>
+        </p>
+
         <h3 className="text-sm text-gold mt-5 mb-2">Active guest links ({guestActive.length})</h3>
         {guestActive.length === 0 ? (
           <p className="text-sm text-dim">None right now.</p>
@@ -1045,8 +1070,9 @@ export default async function AdminLinksPage({
                     <td className="px-3 py-2 text-dim">{guestWhen(g.expires_at)}</td>
                     <td className="px-3 py-2 text-dim">{guestWhen(g.last_used_at)}</td>
                     <td className="px-3 py-2 text-dim">{g.agent_version || '—'}</td>
-                    <td className="px-3 py-2 text-right">
-                      <form action={revokeGuestSession}>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      <ExtendButtons id={g.id} />
+                      <form action={revokeGuestSession} className="inline">
                         <input type="hidden" name="session_id" value={g.id} />
                         <button type="submit" className="text-red hover:underline text-sm">Revoke</button>
                       </form>
@@ -1070,6 +1096,9 @@ export default async function AdminLinksPage({
                       <td className="px-3 py-2 text-dim">{guestApproverName(g.linked_by_discord_id)}</td>
                       <td className="px-3 py-2 text-dim">{g.revoked_at ? `revoked ${guestWhen(g.revoked_at)}` : `expired ${guestWhen(g.expires_at)}`}</td>
                       <td className="px-3 py-2 text-dim">last used {guestWhen(g.last_used_at)}</td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        {!g.revoked_at && canExtendGuest(g.expires_at) ? <ExtendButtons id={g.id} /> : null}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

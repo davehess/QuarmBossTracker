@@ -14,7 +14,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
-import { guestExpiry, cleanGuestLabel } from '@/lib/guestLink';
+import { guestExpiry, cleanGuestLabel, extendedGuestExpiry, canExtendGuest, GUEST_EXTEND_HOURS } from '@/lib/guestLink';
 
 const PAGE = '/admin/links';
 
@@ -111,4 +111,54 @@ export async function revokeGuestSession(formData: FormData) {
 
   revalidatePath(PAGE);
   redirect(`${PAGE}?gok=revoked`);
+}
+
+// +1h / +3h on a guest link (the guild lead, 2026-10-30). The same rule the Command Center's button applies in the bot
+// (utils/guestLinks.js): max(now, current expiry) + hours, a lapse of up to 12 hours can be revived, a revoked link never.
+// The bot trusts a guest identity from cache for at most 60 s, so the new expiry reaches a guest who was cut off
+// within a minute without anyone telling the bot.
+export async function extendGuestSession(formData: FormData) {
+  const userId = await requireOfficer();
+  const actor = await actorOf(userId);
+  if (!actor) redirect(`${PAGE}?gerr=no_actor`);
+
+  const sessionId = String(formData.get('session_id') || '').trim();
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) redirect(`${PAGE}?gerr=bad_session`);
+  const hours = Number(formData.get('hours'));
+  if (!GUEST_EXTEND_HOURS.includes(hours as 1 | 3)) redirect(`${PAGE}?gerr=bad_hours`);
+
+  const admin = supabaseAdmin();
+  const { data: rows, error: readErr } = await admin
+    .from('mimic_sessions')
+    .select('guest_label, expires_at, revoked_at')
+    .eq('id', sessionId)
+    .eq('scope', 'guest')
+    .limit(1);
+  if (readErr) redirect(`${PAGE}?gerr=update_failed`);
+  const row = rows?.[0];
+  if (!row) redirect(`${PAGE}?gerr=bad_session`);
+  if (row!.revoked_at) redirect(`${PAGE}?gerr=revoked`);
+  if (!canExtendGuest(row!.expires_at)) redirect(`${PAGE}?gerr=too_old`);
+
+  const expiresAt = extendedGuestExpiry(row!.expires_at, hours)!;
+  // revoked_at IS NULL in the filter: a Revoke landing between the read and this write wins.
+  const { data: updated, error } = await admin
+    .from('mimic_sessions')
+    .update({ expires_at: expiresAt })
+    .eq('id', sessionId)
+    .eq('scope', 'guest')
+    .is('revoked_at', null)
+    .select('id');
+  if (error) redirect(`${PAGE}?gerr=update_failed`);
+  if (!updated || updated.length === 0) redirect(`${PAGE}?gerr=revoked`);
+
+  await admin.from('audit_log').insert({
+    action:           'guest_link_extended',
+    actor_discord_id: actor!.discordId,
+    actor_name:       actor!.name,
+    payload:          { session_id: sessionId, guest_label: row!.guest_label ?? null, hours, from: row!.expires_at, to: expiresAt, via: 'admin_links' },
+  });
+
+  revalidatePath(PAGE);
+  redirect(`${PAGE}?gok=extended`);
 }

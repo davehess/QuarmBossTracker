@@ -225,9 +225,9 @@ describe('officer action', () => {
     expect(actions).toMatch(/\.is\('authorized_at', null\)/);
     expect(actions).toMatch(/action:\s+'guest_link_approved'/);
   });
-  it('keeps the member-link validation ladder and the officer gate on both actions', () => {
+  it('keeps the member-link validation ladder and the officer gate on every action (approve, revoke, extend)', () => {
     for (const code of ['unknown_code', 'expired', 'already']) expect(actions).toContain(code);
-    expect((actions.match(/await requireOfficer\(\)/g) || []).length).toBe(2);
+    expect((actions.match(/await requireOfficer\(\)/g) || []).length).toBe(3);
   });
   it('revoke can only ever touch a guest session', () => {
     expect(actions).toMatch(/\.eq\('scope', 'guest'\)/);

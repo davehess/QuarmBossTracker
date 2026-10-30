@@ -50,3 +50,24 @@ export function cleanGuestLabel(raw: unknown): string | null {
   const s = String(raw ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, GUEST_LABEL_MAX).trim();
   return s || null;
 }
+
+// ── Extend (the guild lead, 2026-10-30: "an extend button for +1/+3") ───────────────────────────────────────
+// The same rule as the bot's utils/guestLinks.js (extendedExpiry / canRevive): the new expiry is max(now, current expiry)
+// + the hours, so a key with time left gains the hours on top and a lapsed one is brought back for that long from now.
+// A key that lapsed mid-raid can be revived for 12 hours after it ended; a revoked one never is.
+export type GuestExtendHours = 1 | 3;
+export const GUEST_EXTEND_HOURS: GuestExtendHours[] = [1, 3];
+export const GUEST_REVIVE_WINDOW_MS = 12 * 3600_000;
+
+export function extendedGuestExpiry(currentIso: string | null | undefined, hours: number, now: Date = new Date()): string | null {
+  if (!GUEST_EXTEND_HOURS.includes(hours as GuestExtendHours)) return null;
+  const cur = currentIso ? Date.parse(currentIso) : NaN;
+  const base = Number.isFinite(cur) && cur > now.getTime() ? cur : now.getTime();
+  return new Date(base + hours * 3600_000).toISOString();
+}
+
+// Whether an unrevoked guest session may still be extended: running, or lapsed within the revive window.
+export function canExtendGuest(expiresIso: string | null | undefined, now: Date = new Date()): boolean {
+  const exp = expiresIso ? Date.parse(expiresIso) : NaN;
+  return Number.isFinite(exp) && exp > now.getTime() - GUEST_REVIVE_WINDOW_MS;
+}

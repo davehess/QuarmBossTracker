@@ -126,6 +126,7 @@ const ADMIN_TITLES: Record<string, string> = {
   '/admin/flag-lab':           '[beta] Flag lab',
   '/admin/feedback':           'Feedback',
   '/admin/feedback/anonymous': 'Anonymous feedback',
+  '/admin/guests':             'Guest fights',
   '/admin/links':              'Character links',
   '/admin/lockouts':           'Raid lockouts',
   '/admin/loot':               'Loot by value',
