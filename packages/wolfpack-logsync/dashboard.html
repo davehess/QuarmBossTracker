@@ -222,7 +222,7 @@ button.wp-key:hover { border-color:var(--blue); }
 .wp-ov-dock.on { background:#2a1d3d; border-color:#a371f7; color:#d2a8ff; }
 .wp-ov-mini { min-width:58px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; }
 .wp-ov-mini:hover { border-color:#39c5bb; color:var(--text); }
-.wp-ov-mini.on { background:#123d3a; border-color:#39c5bb; color:#9ff0e8; }
+.wp-ov-mini.on { background:#3d2e0f; border-color:#d29922; color:#f0c674; }
 .wp-ov-pin { background:#21262d; border:1px solid var(--border); border-radius:5px; padding:2px 5px; font-size:11px; cursor:pointer; opacity:0.35; filter:grayscale(1); }
 .wp-ov-pin:hover { opacity:0.8; }
 .wp-ov-pin.on { opacity:1; filter:none; border-color:#d29922; }
@@ -5985,6 +5985,7 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act wp-btn" data-act="rescue" title="Lost an overlay off the edge of a screen? Brings back only the overlays you cannot reach, each to a free spot on the screen this window is on; nothing else moves. Overlays sitting on another screen come too only if you say yes. That screen becomes the overlays\' home for future arranges.">🧲 Rescue to this screen</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="canvasSpan" id="wpOvSpanBtn" style="display:none" title="One Canvas across every screen, so its panels can sit on any of them. Needs every screen at the same Windows display scaling. The same switch as the tray and the Canvas&rsquo;s own toolbar.">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="triggerLock" id="wpOvTrigLockBtn" style="display:none" title="Keeps the alerts window the size you drag it to instead of growing as countdowns and callouts arrive. Countdowns that do not fit fold into a +N more line; callouts always get their room. The same switch as the alerts window&rsquo;s right-click menu.">…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="timersOrder" id="wpOvTimersOrderBtn" style="display:none" title="Which edge the countdown stack starts from on the alerts window: the bottom (rising) or the top (reading down). The same switch as the alerts window&rsquo;s right-click menu. With the Canvas on, each Timers box has its own: arrange the Canvas, right-click the box, Stack.">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="canvasSplit" id="wpOvSplitBtn" style="display:none" title="Callouts and countdowns each get a box of their own that you place, resize and lock. Turns the Canvas on, the same as the tray&rsquo;s Canvas item; the alerts window steps aside.">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="mapMode" id="wpOvMapModeBtn" title="The Map as a window you place, or laid over EverQuest and click-through so you play straight through it (it keeps clear of your UI windows). The same switch as the Map&rsquo;s own toolbar button and the tray.">…</button>'
     + '</span>'
@@ -6970,6 +6971,15 @@ function wpRefreshOverlayToggles() {
         tlBtn.className = 'wp-ov-act wp-btn' + (st.triggerLockSize ? ' on' : '');
         tlBtn.textContent = st.triggerLockSize ? '🔒 Alerts window size: locked — unlock' : '🔓 Alerts window size: grows with content — lock';
       }
+      // ⇅ Timers start at: the alerts window's own switch. With the Canvas on that window steps aside and each Timers box
+      // carries its own (Stack, in its menu), so the button says so and opens the Canvas instead of flipping a hidden window.
+      var toBtn = document.getElementById('wpOvTimersOrderBtn');
+      if (toBtn) {
+        toBtn.style.display = typeof st.triggerTimersTopDown === 'boolean' && window.mimic && window.mimic.timersTopDown ? '' : 'none';
+        toBtn.className = 'wp-ov-act wp-btn' + (!st.showCanvas && st.triggerTimersTopDown ? ' on' : '');
+        toBtn.textContent = st.showCanvas ? '⇅ Timers start at: set per Timers box — open the Canvas'
+          : '⇅ Timers start at: ' + (st.triggerTimersTopDown ? 'TOP (reads down) — switch to bottom' : 'bottom (rises) — switch to top');
+      }
       var splBtn = document.getElementById('wpOvSplitBtn');
       if (splBtn) {
         splBtn.style.display = typeof st.showCanvas === 'boolean' && typeof st.triggerLockSize === 'boolean' ? '' : 'none';
@@ -6986,9 +6996,9 @@ function wpRefreshOverlayToggles() {
       var mbs = document.querySelectorAll('.wp-ov-mini');
       for (var mi = 0; mi < mbs.length; mi++) {
         var mk = mbs[mi].getAttribute('data-mini'), mOn = !!miniMap[mk];
-        mbs[mi].textContent = mOn ? '▭ MINI' : '▭ full';
+        mbs[mi].textContent = mOn ? '▭ MINI — click to restore' : '▭ full';
         mbs[mi].className = 'wp-ov-mini' + (mOn ? ' on' : '');
-        mbs[mi].title = mOn ? 'Mini now. Click for the full overlay.' : 'Full size now. Click for its mini.';
+        mbs[mi].title = mOn ? 'Mini now (a folded overlay shows only its name). Click to restore the full overlay.' : 'Full size now. Click for its mini.';
       }
       var pbs = document.querySelectorAll('.wp-ov-pin');
       for (var pi2 = 0; pi2 < pbs.length; pi2++) {
@@ -7163,6 +7173,13 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
       // with the Canvas already on the button arranges it instead.
       if (a === 'triggerLock' && window.mimic.triggerLockSize) {
         window.mimic.triggerLockSize(!act.classList.contains('on')).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      if (a === 'timersOrder' && window.mimic.timersTopDown) {
+        window.mimic.getStatus().then(function(st){
+          return st && st.showCanvas && window.mimic.canvasEdit ? window.mimic.canvasEdit(true) : window.mimic.timersTopDown();
+        }).then(function(){
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
         }).catch(function(){});
       }
