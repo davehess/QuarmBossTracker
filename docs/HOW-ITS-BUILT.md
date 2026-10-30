@@ -55,6 +55,14 @@ Component paths: bot = `/index.js` + `commands/` + `utils/`; agent =
 - ⚠ **PQDI answers only on `www.pqdi.cc`** and has no GET search URL;
   `test/pqdi-links.test.js` guards both.
 
+### Guest Mimic links — a raider from another guild uploads parses (2026-10-30)
+- **Surface**: bot + web. `/admin/links` "Guest links" (`web/app/admin/links/guest-link-actions.ts`, expiry math in `web/lib/guestLink.ts`) stamps
+  the Mimic link code `authorized_via = 'guest'` with a label and an expiry; `handlePoll` in `utils/mimicLink.js` mints the session with
+  `scope = 'guest'`, `expires_at` and a `guest:<session id>` discord id. Columns: migration `20261030150000_mimic_guest_sessions.sql`.
+- **Enforcement**: one allowlist in `requireAgentAuth` (`GUEST_ALLOWED_ROUTES`): the parse upload and the stream-less poll; everything else is
+  403 `guest_scope`. `_handleAgentUpload` in `index.js` treats a guest like a replay for live side effects and skips the member-keyed writes.
+- **Ends** at `expires_at` (401), or on Revoke (within a minute). Tests: `test/guest-link.test.js`. Decision §474.
+
 ### Keys assumed from loot · the quest tracker's sharing (2026-09-25)
 - **Keyed zones** — `locked_zone_keys`: the five zones whose entry door needs a
   key in `eqemu_doors` (Veeshan's Peak, Sleeper's Tomb, Howling Stones, Sebilis,

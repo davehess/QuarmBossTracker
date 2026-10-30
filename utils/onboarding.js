@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.35': [
+    '**Officers can give a raider from another guild a temporary Mimic link that uploads parses only.** It expires on its own (tonight or 7 days) and can be ended early on the Character links page.',
+  ],
   '4.0.34': [
     '**#raid-chat stays quiet outside raids.** Relayed raid chat and boss-kill announcements post only in the raid-night or event thread, so nothing lands in the channel on off nights.',
     '**Fixed: one boss kill posted once per raider.** A kill is now announced once.',

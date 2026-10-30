@@ -103,6 +103,14 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Guest Mimic links: an officer-approved, time-limited key that uploads parses only (bot 4.0.35 + web 2.1.70, `draft/guest-link`; 2026-10-30; first
+  draft, not pushed; migration `20261030150000_mimic_guest_sessions.sql` NOT yet applied, and it must be applied before the bot deploys).** The guild lead:
+  "where can i give someone a temp key to contribute to shared parses as a raider from another guild" (option A). `/admin/links` gains a "Guest links"
+  section: the guest's Mimic code, a label, "Tonight (until 6 AM Eastern)" or "7 days"; active list with Revoke, expired fold. The session is
+  `mimic_sessions.scope = 'guest'` with `expires_at` and a `guest:<id>` stand-in for the Discord id; `requireAgentAuth` allows a guest only the parse
+  upload and the (stream-less) poll and answers 403 `guest_scope` elsewhere. A guest upload is recorded and merged but triggers no card, timer, review
+  count, /who data or upload stats. Tests `test/guest-link.test.js`. Decision §474 in `docs/decisions/inbox/2026-10-30.md`.
+
 - **🧪 `/pop/events` [beta]: every scripted PoP event, its loot with the percentages, item scores and a ranking, plus the Relv / Falto step in
   the Plane of Storms checklist (web 2.1.69, `draft/pop-events`; 2026-10-30; NEW route, so it goes to `main` with the `[beta]` tag, DECISIONS
   §135; first draft, not pushed).** The guild lead: "add this [the Relv / Falto, Lord of Thunder event] to the pop guide for plane of storms as an

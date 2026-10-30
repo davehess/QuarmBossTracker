@@ -44,6 +44,28 @@ const SESSION_RETRY_MS = 15 * 1000;   // how soon a failed member read is tried 
 // A real token is exactly this (see _generateSessionToken). Anything else is rejected before ANY lookup or cache write.
 const SESSION_TOKEN_RE = /^wpms_[0-9a-f]{64}$/;
 
+// ── Guest sessions (the guild lead, 2026-10-30) ──────────────────────────────────────────────────────────────
+// An officer-approved, time-limited link for a raider from another guild: scope 'guest' on mimic_sessions, an
+// expires_at, and a synthetic discord_id `guest:<session id>` (every consumer wants a non-null string; it is text in
+// each uploaded_by column, and the prefix keeps it from ever reading as a Discord snowflake).
+// A guest may call ONLY these routes. requireAgentAuth enforces it, so every handler is covered from one place.
+// poll serves a guest no stream at all, only the control plane (see _handleAgentPoll in index.js).
+const GUEST_ALLOWED_ROUTES = [
+  ['POST', '/api/agent/encounter'],       // the parse upload: the whole point of a guest link
+  ['GET',  '/api/agent/poll'],            // the agent's one poll loop; answers the kill switch + version floor, no streams
+  ['GET',  '/api/agent/latest-version'],  // update prompts (answered without a session; listed so the allowlist reads whole)
+];
+function guestRouteAllowed(method, url) {
+  const path = String(url || '').split(/[?#]/)[0];
+  return GUEST_ALLOWED_ROUTES.some(([m, p]) => m === method && p === path);
+}
+const GUEST_LABEL_MAX = 64;
+const GUEST_CACHE_MS  = 60 * 1000;   // a guest identity is trusted from cache for this long, so a Revoke lands within a minute
+const _guestRefusedLogged = new Set();   // `${label}|${path}` → logged once per process, so a chatty agent cannot flood the log
+function _guestExpired(value, nowMs = Date.now()) {
+  return !!(value && value.scope === 'guest' && value.expires_at && Date.parse(value.expires_at) <= nowMs);
+}
+
 // Failed-auth throttle, per client IP: a lookup that costs a store read and finds nothing counts. Over the limit an
 // IP's further UNKNOWN tokens get a 429 with no read; tokens already known good still pass (a member mid-relink is
 // not locked out by an old install on the same IP). index.js re-reads the tuning knob `ip_failauth_per_min`.
@@ -160,7 +182,9 @@ async function handlePoll(req, res) {
   const deviceCode = String(payload.device_code);
   const rows = await supabase.select(
     'mimic_link_codes',
-    `device_code=eq.${encodeURIComponent(deviceCode)}&select=user_code,expires_at,authorized_at,authorized_user_id,authorized_discord_id,agent_version,authorized_via,authorized_by_discord_id&limit=1`,
+    // select=* on purpose: the guest columns (guest_label, guest_expires_at) arrive with a migration, and naming a
+    // column that does not exist yet would turn every member's poll into "expired" until it is applied.
+    `device_code=eq.${encodeURIComponent(deviceCode)}&select=*&limit=1`,
   ).catch(() => null);
   const row = Array.isArray(rows) ? rows[0] : null;
   if (!row) {
@@ -178,13 +202,22 @@ async function handlePoll(req, res) {
   // Linked when a web OAuth confirm stamped authorized_user_id, OR (since
   // 2026-07-31) when a discord-only authorization stamped just the discord id
   // (members Discord blocks from OAuth have no auth.users row to stamp).
-  if (!row.authorized_at || (!row.authorized_user_id && !row.authorized_discord_id)) {
+  // An officer-approved GUEST link stamps neither id: it is a guest, not a member (authorized_via 'guest').
+  const isGuest = row.authorized_via === 'guest';
+  if (!row.authorized_at || (!isGuest && !row.authorized_user_id && !row.authorized_discord_id)) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ status: 'pending' }));
   }
 
+  // A guest link without a usable expiry or label is never turned into a session, and a spent expiry is expired.
+  if (isGuest && (!row.guest_label || !row.guest_expires_at || Date.parse(row.guest_expires_at) <= Date.now())) {
+    await supabase.del('mimic_link_codes', `device_code=eq.${encodeURIComponent(deviceCode)}`).catch(() => null);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ status: 'expired' }));
+  }
+
   // A locked member gets no new session: the code is spent and the device is told it expired.
-  if (memberLockout.isLocked(row.authorized_discord_id)) {
+  if (!isGuest && memberLockout.isLocked(row.authorized_discord_id)) {
     await supabase.del('mimic_link_codes', `device_code=eq.${encodeURIComponent(deviceCode)}`).catch(() => null);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ status: 'expired' }));
@@ -192,10 +225,18 @@ async function handlePoll(req, res) {
 
   // Authorized — mint the session, look up display info, delete the link code.
   const sessionToken = _generateSessionToken();
+  // A guest's id is chosen here so the synthetic discord_id (`guest:<id>`) can name the row it belongs to.
+  const guestSessionId = isGuest ? crypto.randomUUID() : null;
   const insertSession = await supabase.insert('mimic_sessions', [{
+    ...(isGuest ? {
+      id:          guestSessionId,
+      scope:       'guest',
+      expires_at:  row.guest_expires_at,
+      guest_label: String(row.guest_label).slice(0, GUEST_LABEL_MAX),
+    } : {}),
     session_token: sessionToken,
     user_id:       row.authorized_user_id || null,
-    discord_id:    row.authorized_discord_id,
+    discord_id:    isGuest ? `guest:${guestSessionId}` : row.authorized_discord_id,
     agent_version: row.agent_version || null,
     // Durable audit: the link-code row is deleted right below, so HOW this
     // session came to exist survives only here. 'officer' means an officer
@@ -210,6 +251,22 @@ async function handlePoll(req, res) {
   }
   // Best-effort delete; if it fails the row will expire on its own.
   await supabase.del('mimic_link_codes', `device_code=eq.${encodeURIComponent(deviceCode)}`).catch(() => null);
+
+  if (isGuest) {
+    // No member row to read: the label the officer typed is the display name, and a guest holds no roles.
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
+      status:        'linked',
+      session_token: sessionToken,
+      user_id:       null,
+      discord_id:    `guest:${guestSessionId}`,
+      display_name:  String(row.guest_label).slice(0, GUEST_LABEL_MAX),
+      is_officer:    false,
+      role_names:    [],
+      scope:         'guest',
+      expires_at:    row.guest_expires_at,
+    }));
+  }
 
   // Look up display name + roles so Mimic can show "Signed in as <name>" right
   // away without a second round-trip. discord_id fallback for sessions with
@@ -292,7 +349,13 @@ const RATE_LIMITED = Symbol('session_lookup_rate_limited');
 async function _lookupSessionToken(token, ip) {
   if (!token || !SESSION_TOKEN_RE.test(token)) return null;   // wrong shape: nothing to look up, nothing to cache
   const cached = _sessionCache.get(token);
-  if (cached && (Date.now() - cached.resolvedAt) < SESSION_CACHE_TTL_MS) return cached.value;
+  if (cached && (Date.now() - cached.resolvedAt) < SESSION_CACHE_TTL_MS) {
+    // A guest session dies at its expiry, not at the end of the 5-minute cache window.
+    if (!_guestExpired(cached.value)) return cached.value;
+    _sessionCache.delete(token);
+    _setBounded(_sessionMissCache, SESSION_MISS_MAX, token, Date.now());
+    return null;
+  }
   const missAt = _sessionMissCache.get(token);
   if (missAt !== undefined) {
     if (Date.now() - missAt < SESSION_MISS_TTL_MS) return null;
@@ -309,18 +372,35 @@ async function _lookupSessionToken(token, ip) {
   // found. The extra .catch is belt-and-suspenders in case _request ever throws.
   const rows = await supabase.select(
     'mimic_sessions',
-    `session_token=eq.${encodeURIComponent(token)}&select=user_id,discord_id,revoked_at&limit=1`,
+    // select=*: scope / expires_at / guest_label arrive with a migration (see handlePoll's note on naming columns).
+    `session_token=eq.${encodeURIComponent(token)}&select=*&limit=1`,
   ).catch(() => null);
   if (rows === null) return LOOKUP_ERROR;   // store down — do NOT cache, do NOT 401
   const row = Array.isArray(rows) ? rows[0] : null;
-  if (!row || row.revoked_at) {
-    // Not found / revoked: short-lived, separate, bounded cache, and one strike against this IP.
+  if (!row || row.revoked_at || (row.scope === 'guest' && (!row.expires_at || Date.parse(row.expires_at) <= Date.now()))) {
+    // Not found / revoked / an expired guest: short-lived, separate, bounded cache, and one strike against this IP.
     _sessionCache.delete(token);
     _setBounded(_sessionMissCache, SESSION_MISS_MAX, token, Date.now());
     _failAuth.hit(ip, _failAuthPerMin);
     return null;
   }
   _sessionMissCache.delete(token);
+  if (row.scope === 'guest') {
+    // A guest has no wolfpack_members row to read: the officer's label is the name and there are no roles.
+    const value = {
+      user_id: null, discord_id: row.discord_id, display_name: row.guest_label || 'Guest',
+      role_names: [], is_officer: false,
+      scope: 'guest', guest_label: row.guest_label || null, expires_at: row.expires_at,
+    };
+    // Cached for a minute, not five: the officer's Revoke on /admin/links is a web write the bot is not told about.
+    _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now() - SESSION_CACHE_TTL_MS + GUEST_CACHE_MS, value });
+    supabase.update(
+      'mimic_sessions',
+      `session_token=eq.${encodeURIComponent(token)}`,
+      { last_used_at: new Date().toISOString() },
+    ).catch(() => null);
+    return value;
+  }
   // Sessions minted for OAuth-blocked members carry no user_id — fall back
   // to the discord_id key (wolfpack_members' PK) so display + roles resolve.
   const memberFilter = row.user_id
@@ -421,6 +501,21 @@ async function requireAgentAuth(req, res) {
     return null;
   }
 
+  // Guest scope (2026-10-30): one allowlist, here, so no handler has to remember it. A refused route answers 403
+  // without the handler running; the refusal is logged once per guest per route, never warned (it is expected).
+  if (identity.scope === 'guest' && !guestRouteAllowed(req.method, req.url)) {
+    const path = String(req.url || '').split(/[?#]/)[0];
+    const key  = `${identity.guest_label || identity.discord_id}|${path}`;
+    if (!_guestRefusedLogged.has(key)) {
+      if (_guestRefusedLogged.size >= 500) _guestRefusedLogged.clear();
+      _guestRefusedLogged.add(key);
+      console.log(`[guest] "${identity.guest_label || 'guest'}" refused ${req.method} ${path} (guest links upload parses only)`);
+    }
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'guest_scope' }));
+    return null;
+  }
+
   return identity;
 }
 
@@ -496,6 +591,7 @@ module.exports = {
   mintSessionForUser,
   revokeSessionForUser,
   listSessionsForUser,
+  guestRouteAllowed, GUEST_ALLOWED_ROUTES, GUEST_LABEL_MAX,   // the guest-link allowlist (test/guest-link.test.js)
   setFailAuthPerMin,   // index.js feeds the `ip_failauth_per_min` tuning knob in here
   // Exposed for test/bot-auth-flood.test.js — the bounded caches and the failed-auth throttle.
   _sessionCache, _sessionMissCache, _failAuth,

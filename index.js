@@ -21501,6 +21501,10 @@ async function _handleAgentPoll(req, res) {
   if (!identity) return;
   const url = new URL(req.url, 'http://x');
   const want = new Set((url.searchParams.get('streams') || '').split(',').map(s => s.trim()).filter(Boolean));
+  // A guest link (2026-10-30) is served NO stream: not the tuning bundle (it carries the guild's channel specs and
+  // notices), not raid callouts, triggers, prefs or backfill. The control plane below rides every poll regardless,
+  // so the kill switch and the version floor still reach a guest's agent.
+  if (identity.scope === 'guest') want.clear();
 
   // One tuning read powers the control plane, the shed checks, and the tuning
   // stream. 60s-cached — cheap on every fast poll. Fail-open to defaults.
@@ -22915,7 +22919,12 @@ async function _handleAgentUpload(req, res) {
   // timer reset. Otherwise importing weeks of old combat would spam Discord
   // and stomp every active boss timer.
   const { character, encounter } = payload || {};
-  const isBackfill = payload?.backfill === true;
+  // A GUEST link (an officer-approved raider from another guild, 2026-10-30) contributes the parse and nothing
+  // else: recordParse below still persists it, but it is treated like a replay for every live side effect (no
+  // Discord card, no session totals, no auto-kill or timer, no live review), and the member-keyed writes (/who
+  // data, /parseagents activity, upload stats, raider deaths) are skipped.
+  const isGuest    = identity.scope === 'guest';
+  const isBackfill = payload?.backfill === true || isGuest;
   if (!encounter || !Array.isArray(encounter.events)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'missing encounter.events' }));
@@ -22926,7 +22935,7 @@ async function _handleAgentUpload(req, res) {
   // rejected by the noise filter below. Merge into state.whoData so /whois
   // sees the new entries even when no combat happened recently.
   const uploadedWhoData = encounter.who_data;
-  if (Array.isArray(uploadedWhoData) && uploadedWhoData.length > 0) {
+  if (Array.isArray(uploadedWhoData) && uploadedWhoData.length > 0 && !isGuest) {
     try { mergeWhoData(uploadedWhoData); } catch {}
 
     // Mirror to Supabase who_observations for long-term SQL access. The
@@ -22982,7 +22991,7 @@ async function _handleAgentUpload(req, res) {
               `boss=${encounter.boss_name || '?'}, started=${encounter.started_at}`);
 
   // Record per-character upload activity for /parseagents
-  try { recordAgentUpload(character, encounter.boss_name, encounter.events.length); } catch {}
+  if (!isGuest) { try { recordAgentUpload(character, encounter.boss_name, encounter.events.length); } catch {} }
 
   // ── Compute damage totals once (used by both parses.json and Supabase paths) ──
   // Filter out noise before aggregating:
@@ -23244,7 +23253,7 @@ async function _handleAgentUpload(req, res) {
   // cast that happened before their most recent death (dying clears buffs).
   // In-memory only; resets on bot restart, which is fine because buff_casts
   // themselves expire on their catalog duration anyway.
-  _noteRaiderDeaths(uploadedDeaths);
+  if (!isGuest) _noteRaiderDeaths(uploadedDeaths);
   const uploadedHealGaps  = encounter.heal_gaps || null;
 
   // ── Accumulate into active /raidnight session (all encounters, not just bosses) ──
@@ -24344,7 +24353,8 @@ async function _handleAgentUpload(req, res) {
   const requestedChars = (process.env.REQUESTED_AGENT_CHARACTERS || '')
     .split(',').map(s => s.trim()).filter(Boolean);
 
-  _trackUpload({
+  // Not for a guest: upload stats are the fleet-adoption count, which is counted in PLAYERS (a guest is not one).
+  if (!isGuest) _trackUpload({
     endpoint:      'encounter',
     character:     payload?.character,
     agentVersion:  payload?.agent_version,
