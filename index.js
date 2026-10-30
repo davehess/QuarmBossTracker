@@ -4096,6 +4096,47 @@ async function _rosterNameSet() {
   } catch { /* offline → keep last good set (or empty: safeguard just no-ops) */ }
   return _rosterNames;
 }
+// Raid chat is OUR raid's chat (the guild lead, 2026-10-30: "raid chat from a non-wolfpack raid is leaking into raid
+// chat"). A member who joins another group's raid relays that raid's /rs like ours. The uploader's own latest
+// raid_roster capture says whose raid it is: ours when at least half of it is guild characters. → true / false, or
+// null when it cannot tell (no recent roster from this uploader, or the guild roster is not loaded).
+const RAID_CHAT_OURS_MIN_SHARE = 0.5;
+async function _uploaderRaidIsOurs(uploaderId, rosterSet) {
+  if (!uploaderId || !rosterSet || !rosterSet.size) return null;
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const windowMs = 15 * 60 * 1000;
+  let rows;
+  try {
+    const mem = require('./utils/liveMemory').rosterRowsSince(guildId, windowMs, null);
+    rows = mem
+      ? mem.filter(r => r.uploaded_by_discord_id === uploaderId)
+      : await require('./utils/supabase').select('raid_roster',
+        `guild_id=eq.${encodeURIComponent(guildId)}&uploaded_by_discord_id=eq.${encodeURIComponent(uploaderId)}` +
+        `&captured_at=gte.${encodeURIComponent(new Date(Date.now() - windowMs).toISOString())}&select=name,captured_at`);
+  } catch { return null; }
+  return _raidRosterIsOurs(rows, rosterSet);
+}
+// Pure half of the above. Rows linger per (uploader, name) after someone leaves, so only the newest capture counts
+// (rows within a minute of the newest one).
+function _raidRosterIsOurs(rows, rosterSet) {
+  if (!Array.isArray(rows) || !rows.length || !rosterSet || !rosterSet.size) return null;
+  const newest = Math.max(...rows.map(r => Date.parse(r.captured_at) || 0));
+  const names = new Set(rows.filter(r => (Date.parse(r.captured_at) || 0) >= newest - 60_000)
+    .map(r => String(r.name || '').toLowerCase()).filter(Boolean));
+  if (names.size < 2) return null;
+  let ours = 0;
+  for (const n of names) if (rosterSet.has(n)) ours++;
+  return ours / names.size >= RAID_CHAT_OURS_MIN_SHARE;
+}
+// One raid line: relay when the raid is ours; drop when it is not; when it is unknown, only a guild character's words.
+function _raidChatLineAllowed(raidIsOurs, speaker, rosterSet, uploaderCharacters) {
+  if (raidIsOurs === true) return true;
+  if (raidIsOurs === false) return false;
+  if (!rosterSet || !rosterSet.size) return true;   // roster not loaded: keep today's behaviour rather than go silent
+  const lc = String(speaker || '').toLowerCase();
+  return rosterSet.has(lc) || (!!uploaderCharacters && uploaderCharacters.has(lc));
+}
+let _foreignRaidChatLoggedAt = 0;
 // Returns the speaker to use. Relabels a distrusted stray-log name to a trusted
 // alternative witnessed on the same line; otherwise returns the input unchanged.
 function _safeguardSpeaker(slot, incomingSpeaker, uploaderId, rosterSet, uploaderCharacters) {
@@ -4853,6 +4894,8 @@ async function _handleAgentChat(req, res) {
     for (const r of (Array.isArray(rows) ? rows : [])) if (r?.name) uploaderCharacters.add(String(r.name).toLowerCase());
   } catch { /* offline: safeguard degrades to roster + corroboration only */ }
   const rosterSet = await _rosterNameSet();
+  // Whose raid is this uploader in? Asked once per batch, only when the batch carries raid chat.
+  const raidIsOurs = messages.some(m => m && m.channel === 'raid') ? await _uploaderRaidIsOurs(identity.discord_id, rosterSet) : null;
   // Mirror every relayed chat line into chat_messages so the historical
   // record builds up live, not just via the agent's --since backfill.
   // Same dedup as the Discord-side path (speaker + text + 5s window) but
@@ -4957,6 +5000,14 @@ async function _handleAgentChat(req, res) {
     // chat only ever fills chat_messages, never Discord).
     const channelId = channel === 'guild' ? guildChId : channel === 'raid' ? raidChId : null;
     if (!channelId) continue; // channel not configured — silently skip
+    // Another group's raid: not relayed, not stored (it is their chat, not ours). Logged once a minute at most.
+    if (channel === 'raid' && !_raidChatLineAllowed(raidIsOurs, speaker, rosterSet, uploaderCharacters)) {
+      if (Date.now() - _foreignRaidChatLoggedAt > 60_000) {
+        _foreignRaidChatLoggedAt = Date.now();
+        console.log(`[chat] raid chat from a raid that is not ours dropped (uploader roster ${raidIsOurs === false ? 'mostly outside the guild' : 'unknown, speaker not a guild character'})`);
+      }
+      continue;
+    }
 
     // Dedup: same speaker + text = multiple parsers saw the same line.
     // CRITICAL: normalize the text in the key, because the same in-game line
