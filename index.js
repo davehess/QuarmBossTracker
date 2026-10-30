@@ -17234,8 +17234,12 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
     // "#The_Final_Arbiter") — the agent + bot both strip the # during target-
     // name normalization, so a straight ilike on the no-# form would never
     // match those rows. PostgREST OR matches either case in a single round trip.
-    const encPlain  = encodeURIComponent(norm);
-    const encHashed = encodeURIComponent('#' + norm);
+    // A name holding , . : ( ) or " is double-quoted inside or=(…): unquoted, a comma ends the value and PostgREST
+    // refuses the whole query ("failed to parse logic tree"), so Falto, Lord of Thunder and the six other comma bosses
+    // (Storms, Valor) read as "not in the catalog" (the guild lead, 2026-10-30). Plain names go as they always did.
+    const pq = (v) => (/[,.:()"\\]/.test(v) ? '"' + v.replace(/["\\]/g, '\\$&') + '"' : v);
+    const encPlain  = encodeURIComponent(pq(norm));
+    const encHashed = encodeURIComponent(pq('#' + norm));
     // #171 — fetch ALL matching rows, never `limit=1`. A name resolves to many
     // eqemu_npc_types bodies (real variants + level-1 placeholder/controller
     // rows), and with no ORDER BY the old single-row fetch let PostgREST's

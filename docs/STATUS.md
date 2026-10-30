@@ -223,6 +223,11 @@ next touch one rather than assuming a missing row means a missing doc.
   also run; rows and dots carry the hover-interact handshake, so it works locked. Map only: the agent already had `clear` and `killed`
   marks, so no agent bump. A clear is a local override: the next death the agent sees starts a timer again. Test:
   `test/map-watch-agent.test.js` ("right-click a spawn"). Not seen in a live window: needs a Mimic beta cut and a locked Map to confirm.
+- **✅ Target Info finds bosses with a comma in their name (bot 4.0.33, main, 2026-10-30).** The guild lead: Falto, Lord of Thunder
+  read "not in the catalog". An unquoted comma inside PostgREST's `or=(…)` ends the value and the whole query is refused, so all
+  seven comma bosses (Falto, Gurebk, Jeplak, Neffiken, Ston`Ruak, Edium, Ralthazor) missed. `_buildMobInfo` and
+  `utils/backfillScan.js` now double-quote a name holding `, . : ( ) "`; plain names send the old query. Test:
+  `test/mobinfo-comma-names.test.js`.
 - **🧪 My parses lists every fight on request (agent 4.0.46, beta `e4c8bfea`, 2026-10-30).** The guild lead: "My parses hides the
   majority of fights" (22 on the chart, 12 in the list). Past 12 fights a "Show all N fights" switch under the table lists every
   one (`wpMpTable(d, byDay, allRows)`, `wpMpAllRows` in `dashboard.html`); By day already did. Test: `test/my-parses-tab.test.js`.
