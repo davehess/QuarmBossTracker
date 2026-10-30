@@ -24,6 +24,7 @@ function load({ enabled = false } = {}) {
     let _activeCharName = null, _lastProfileChar = null;
     function loadConfig() { return { charProfilesEnabled: enabled }; }
     function _applyCharProfile(cl) { calls.applied.push(cl); return false; }
+    function _hasLastLayout() { return false; }   // no last layout yet: the profile is the one that applies (char-last-layout.test.js)
     function buildTrayMenu() { calls.builds++; }
     ${block}
     return { on: _onActiveCharacter, get name() { return _activeCharName; } };

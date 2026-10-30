@@ -3005,6 +3005,8 @@ function _pollBlindState() {
       // Per-character overlay profiles — swap the visibility set when the
       // active toon changes (cheap; only acts on an actual change).
       try { _onActiveCharacter(s && s.activeCharacter); } catch {}
+      // …and their last layout (screen, Canvas and all), unless another client is still live (see _lastLayoutObserve).
+      try { _lastLayoutObserve(s && s.activeCharacter, s && s.zealClients); } catch {}
       // Fresh-install class seeding (one-shot; no-ops instantly once done).
       try { _maybeSeedClassSet(s); } catch {}
       const a = s && s.blind && s.blind.active;
@@ -3122,10 +3124,10 @@ function _noteCanvasChoice(cfg) {
 // manually saved in the interface". 💾 Save current layout kept ONLY which overlays are on (the profile above), so
 // nothing the person arranged was in it. It now also writes where each overlay sits, how big, how it is drawn and
 // the heights dragged to, as the overlay set "Saved layout" — the same snapshot and store as 🗂 Overlay sets.
-// It is NOT applied when the character changes (_applyCharProfile stays visibility-only: with two clients open the
-// active character flips as you alt-tab and the screen must not rearrange itself); ↩ Restore saved layout, on the
-// tray and the Overlays tab, is the ask for it. Positions belong to the screen setup, not the character, so there
-// is one snapshot, not one per character.
+// It is NOT applied by the profile on a character change (_applyCharProfile stays visibility-only); ↩ Restore saved
+// layout, on the tray and the Overlays tab, is the ask for it. What follows a character is their LAST layout
+// (_lastLayoutObserve, below the overlay sets), which waits while another client is live. This one is the manual
+// snapshot: one, not one per character.
 const _SAVED_LAYOUT_SET = 'Saved layout';
 function _saveLayoutSnapshot() {
   try {
@@ -3191,7 +3193,9 @@ function _onActiveCharacter(name) {
   const cfg = loadConfig();
   // _applyCharProfile rebuilds the tray itself; when the feature is off we
   // still rebuild so the "Save layout for <toon>" label tracks the new char.
-  if (cfg.charProfilesEnabled && _applyCharProfile(cl)) return;
+  // A character with a last layout is handled by _lastLayoutObserve (which waits while another client is live);
+  // the visibility-only profile is for one that has none yet.
+  if (cfg.charProfilesEnabled && !_hasLastLayout(cl) && _applyCharProfile(cl)) return;
   try { buildTrayMenu(); } catch {}
 }
 
@@ -3272,7 +3276,7 @@ function _charProfileTrayItems() {
   const cfg = loadConfig();
   const char  = _activeCharName;
   const charLc = char ? char.toLowerCase() : null;
-  const hasProfile = !!(charLc && cfg.charProfiles && cfg.charProfiles[charLc]);
+  const hasProfile = !!(charLc && ((cfg.charProfiles && cfg.charProfiles[charLc]) || _hasLastLayout(charLc)));
   const items = [
     { type: 'separator' },
     { label: 'Per-character overlay layouts', type: 'checkbox',
@@ -3298,6 +3302,7 @@ function _charProfileTrayItems() {
       click: () => {
         const c = loadConfig();
         if (c.charProfiles) { delete c.charProfiles[charLc]; saveConfig(c); }
+        _forgetLastLayout(charLc);
         buildTrayMenu();
       } });
   }
@@ -3313,10 +3318,9 @@ function _charProfileTrayItems() {
 // canvas panels; overlaySets.js keeps them in overlay-sets.json beside the
 // config, so they work with no network. The hotkey is EverQuest's own: a social
 // with `/pipe mimic next` on a hotbar button.
-// Loading is always asked for — /pipe, the tray or Settings — never done on a
-// character switch: with two clients open the active character flips as you
-// alt-tab, and the screen must not rearrange itself under you. The
-// per-character layouts above stay until sets replace them.
+// Loading a NAMED set is always asked for — /pipe, the tray or Settings. A character switch brings back that
+// character's own last layout instead (_lastLayoutObserve), and only when the other client has gone quiet: with two
+// clients open the active character flips as you alt-tab, and the screen must not rearrange itself under you.
 const overlaySets = require('./overlaySets');
 // The XS … XL width presets: one table for the window's right-click menu (overlay-resize-preset) and the Canvas's Width row.
 const overlaySizes = require('./overlaySizes');
@@ -3427,6 +3431,149 @@ function _applyOverlaySet(set) {
   try { buildTrayMenu(); } catch { /* */ }
   return true;
 }
+// ── Each character's LAST layout (the guild lead, 2026-10-30, after raiders said overlay setup "has become a lot"):
+// "save the state for each character as changes are made, make them a 'last overlay' that comes back up when you
+// swap to that character. Make sure we remember if someone was using the canvas, and don't automatically move other
+// overlays into canvas unless the user wants it."
+// It is the overlay-set snapshot (_captureOverlaySet: which overlays are on, where, how drawn, the Canvas and its
+// panels), kept per character in overlay-last.json beside the sets, written by itself and applied by itself:
+//  • SAVE: _lastLayoutWatch looks at the config once a second. A change that has held still for 2 s is written for the
+//    character being played. Never while everything is hidden, while an overlay is in the person's hand, or in the 3 s
+//    after Mimic itself applied a layout (the windows echo their new bounds back as config writes, and that is not an edit).
+//  • SWAP: _lastLayoutObserve, from the 1 s state poll. The screen belongs to one character at a time (_lastOwner).
+//    MULTI-BOX GUARD: with two clients open the active character flips as you alt-tab, and the screen must not
+//    rearrange itself under you (the long comment above _saveLayoutSnapshot). So a new active character's layout is
+//    applied only when the character the screen belongs to has gone quiet (no Zeal sample for 60 s: logged out, or
+//    camped to switch), or at the first look after launch. Both live: nothing moves, and it is looked at again every
+//    poll, so the layout lands once the other box closes. An agent that does not report its clients never counts as quiet.
+//  • A character with no memory yet keeps the screen as it is: nothing is invented for them, and nothing moves into
+//    the Canvas on their behalf. Their first change starts their record.
+//  • The Canvas: its on/off and its panels are in the snapshot, so a character who used it gets it back and one who did
+//    not stays without it. A layout with no Canvas panels clears the stored ones (cfg.canvasLayouts is one shared slot;
+//    left alone, the next character to switch the Canvas on would inherit this one's pieces and their overlays would
+//    leave the screen for it).
+//  • The older "Save layout for <character>" (visibility only) stays as a manual snapshot, and is used for a character
+//    only until they have a last layout. cfg.charLastLayoutOff = true switches all of this off (no control; a field escape).
+const _LAST_FILE = () => path.join(app.getPath('userData'), 'overlay-last.json');
+const _LAST_QUIET_MS = 60 * 1000;    // the agent's own activeCharacter window
+const _LAST_SETTLE_MS = 2000;
+const _LAST_HOLD_MS = 3000;
+let _lastOwner = null;               // lowercase name of the character the screen belongs to
+let _lastBaseFp = null;              // fingerprint of the screen as last written, applied or adopted
+let _lastSeenFp = null;              // the previous look, to tell a change that is still moving
+let _lastChangedAt = 0;
+let _lastHoldUntil = 0;
+let _lastEditedBeforeChar = false;   // the person arranged things before Mimic knew who was playing
+let _lastClients = null;             // zealClients from the latest state poll; null = the agent did not say
+// Everything a layout is made of, as one string, read from the config alone (cheap enough for once a second).
+function _layoutFingerprint(cfg) {
+  const parts = [];
+  for (const f of _HIDEALL_FLAGS) parts.push(f === 'showTriggerOverlay' ? cfg[f] !== false : !!cfg[f]);
+  for (const bk of _SET_BOUNDS_KEYS) parts.push(cfg[bk], cfg[bk + 'Sig'], cfg[bk + 'Floor']);
+  for (const k of _SET_LOOK_KEYS) parts.push(cfg[k]);
+  parts.push(cfg.canvasLayouts);
+  return JSON.stringify(parts);
+}
+function _lastWho() { return _activeCharName ? String(_activeCharName).toLowerCase() : null; }
+// Did this character's Zeal send a sample in the last minute? An unknown client list answers yes: not knowing is never
+// a reason to move the screen.
+function _charIsLive(lower, clients, now) {
+  if (!Array.isArray(clients)) return true;
+  return clients.some(c => c && String(c.character || '').toLowerCase() === lower && c.updatedAt > 0 && (now - c.updatedAt) < _LAST_QUIET_MS);
+}
+function _hasLastLayout(cl) {
+  try { return !!overlaySets.lastFor(overlaySets.loadLast(_LAST_FILE()), cl); } catch { return false; }
+}
+function _saveLastLayout(cl) {
+  try {
+    const file = _LAST_FILE();
+    const store = overlaySets.loadLast(file);
+    const snap = _captureOverlaySet();
+    snap.fp = _layoutFingerprint(loadConfig());   // lets a swap skip re-applying the screen that is already there
+    const r = overlaySets.putLast(store, cl, snap);
+    if (!r.ok) { appendAgentLog(`[layout] last layout not kept: ${r.error}\n`); return false; }
+    overlaySets.save(file, store);
+    return true;
+  } catch (e) {
+    appendAgentLog(`[layout] last layout not kept: ${e && e.message}\n`);
+    return false;
+  }
+}
+function _forgetLastLayout(cl) {
+  try {
+    const file = _LAST_FILE();
+    const store = overlaySets.loadLast(file);
+    if (!overlaySets.removeLast(store, cl)) return false;
+    overlaySets.save(file, store);
+    return true;
+  } catch { return false; }
+}
+// Write the screen now if it has changed since the last write: the swap does it for the character being left, and
+// shutdown for the one being played, so an edit inside the 2 s wait is not lost.
+function _lastLayoutFlush(cl) {
+  if (!cl || _agentOnly() || _hideAllActive || _lastBaseFp === null) return false;
+  const cfg = loadConfig();
+  if (cfg.charLastLayoutOff === true) return false;
+  const fp = _layoutFingerprint(cfg);
+  if (fp === _lastBaseFp) return false;
+  _lastBaseFp = _lastSeenFp = fp;
+  return _saveLastLayout(cl);
+}
+// Once a second. → true when it wrote a layout.
+function _lastLayoutWatch(now) {
+  now = now || Date.now();
+  if (_agentOnly()) return false;
+  const cfg = loadConfig();
+  if (cfg.charLastLayoutOff === true) return false;
+  const fp = _layoutFingerprint(cfg);
+  if (_lastBaseFp === null || now < _lastHoldUntil) {   // the first look, or a layout Mimic applied settling: this IS the baseline
+    _lastBaseFp = _lastSeenFp = fp; _lastChangedAt = now;
+    return false;
+  }
+  if (_hideAllActive) return false;                     // everything hidden on purpose is not a layout
+  if (fp !== _lastSeenFp) { _lastSeenFp = fp; _lastChangedAt = now; }
+  if (fp === _lastBaseFp) return false;
+  if (now - _lastChangedAt < _LAST_SETTLE_MS || _dragSession) return false;   // still moving, or in the person's hand
+  const cl = _lastWho();
+  if (!cl) { _lastEditedBeforeChar = true; return false; }   // _lastLayoutObserve files it under whoever turns up first
+  _lastBaseFp = fp;
+  _lastOwner = cl;                                       // an edit makes the screen this character's
+  return _saveLastLayout(cl);
+}
+function _switchLastLayout(cl, now) {
+  const prev = _lastOwner;
+  if (prev) _lastLayoutFlush(prev);                      // the screen being left keeps its last edit
+  _lastOwner = cl;
+  const fp0 = _layoutFingerprint(loadConfig());
+  if (_lastEditedBeforeChar && !prev) {                  // arranged before anyone was known: that arrangement is theirs
+    _lastEditedBeforeChar = false;
+    _lastBaseFp = _lastSeenFp = fp0;
+    _saveLastLayout(cl);
+    return false;
+  }
+  let snap = null;
+  try { snap = overlaySets.lastFor(overlaySets.loadLast(_LAST_FILE()), cl); } catch { /* none */ }
+  if (!snap || (snap.fp && snap.fp === fp0)) return false;   // no memory of them yet, or the screen is already theirs
+  _lastHoldUntil = now + _LAST_HOLD_MS;
+  _applyOverlaySet(Object.assign({}, snap, { canvas: snap.canvas || {} }));
+  _lastBaseFp = _lastSeenFp = _layoutFingerprint(loadConfig());
+  appendAgentLog(`[layout] ${cl}'s last layout is back on screen\n`);
+  return true;
+}
+// From the state poll: who is being played, and every client the agent has heard from (zealClients). → true when a
+// layout was applied.
+function _lastLayoutObserve(name, clients, now) {
+  now = now || Date.now();
+  _lastClients = Array.isArray(clients) ? clients : null;   // a poll that does not say is "unknown", never last poll's answer
+  const cl = name ? String(name).toLowerCase() : null;
+  if (!cl || cl === _lastOwner || _agentOnly()) return false;
+  if (loadConfig().charLastLayoutOff === true) return false;
+  if (_lastOwner && _charIsLive(_lastOwner, _lastClients, now)) return false;   // multi-box: both live, the screen stays
+  if (_hideAllActive || setupMode || _dragSession) return false;                // not under the person's hands; the next poll asks again
+  return _switchLastLayout(cl, now);
+}
+// ── end of the last layout ──
+
 // A short line on the trigger overlay — where a raider is already looking; a
 // Windows notification does not show over full-screen EverQuest. It goes
 // through the agent's own preview path (/api/triggers/fire), so nothing new
@@ -5449,6 +5596,7 @@ function _gracefulShutdown(reason, cfgPatch) {
   try { appendAgentLog(`[mimic] shutting down cleanly (${reason})\n`); } catch { /* log only */ }
   try { _flushAllBounds(cfgPatch); }
   catch (e) { try { appendAgentLog(`[mimic] saving window positions failed: ${e && e.message}\n`); } catch { /* log only */ } }
+  try { _lastLayoutFlush(_lastWho()); } catch { /* the 2 s watcher already kept everything before this */ }
   try { _stopEqPolling(); _stopFocusWatcher(); } catch { /* best effort */ }
   _shutdownP = _stopAgentGracefully(AGENT_STOP_TIMEOUT_MS).then((clean) => {
     _shutdownDone = true;
@@ -14421,9 +14569,10 @@ ipcMain.handle('char-profile-forget', (_e, name) => {
   const key = String(name || '').trim().toLowerCase();
   if (!key) return false;
   const cfg = loadConfig();
-  if (!(cfg.charProfiles && cfg.charProfiles[key])) return false;
-  delete cfg.charProfiles[key];
-  saveConfig(cfg);
+  const hadProfile = !!(cfg.charProfiles && cfg.charProfiles[key]);
+  if (hadProfile) { delete cfg.charProfiles[key]; saveConfig(cfg); }
+  const hadLast = _forgetLastLayout(key);   // the automatic one goes with it
+  if (!hadProfile && !hadLast) return false;
   buildTrayMenu(); pushStatus();
   return true;
 });
@@ -15520,6 +15669,9 @@ app.whenReady().then(async () => {
   // Begin polling eqgame.exe presence so overlays auto-hide when the user
   // isn't in EverQuest. No-op on non-Windows.
   _startEqPolling();
+
+  // Each character's last layout: once a second, write a settled change to the character being played.
+  setInterval(() => { try { _lastLayoutWatch(); } catch (e) { void e; } }, 1000);
 
   // Hide-all overlays global hotkey (Ctrl+Shift+H on Windows). Single-shot
   // toggle: snapshots current prefs, hides everything, restores on second

@@ -154,6 +154,58 @@ function list(store, char) {
   }));
 }
 
+// ── Each character's LAST layout (the guild lead, 2026-10-30: "save the state for each character as changes are made,
+// make them a 'last overlay' that comes back up when you swap to that character") ──
+// The same snapshot a named set holds (main.js _captureOverlaySet), kept in a file of its own so it never counts against
+// MAX_SETS and never shows in the sets list: nobody names these or deletes them, Mimic writes one per character as the
+// person changes things. save() above writes the file; this is only the shape and the lookups.
+const LAST_MAX = 60;   // characters; the oldest goes first. A snapshot is a few KB, the Canvas's panels are the big part
+
+function emptyLast() { return { version: 1, chars: {} }; }
+
+function normalizeLast(j) {
+  const out = emptyLast();
+  if (!j || typeof j !== 'object') return out;
+  for (const [c, s] of Object.entries(j.chars || {})) {
+    if (!/^[a-z]+$/.test(c) || !s || typeof s !== 'object' || !s.show || typeof s.show !== 'object') continue;
+    out.chars[c] = s;
+  }
+  return out;
+}
+
+function loadLast(file) {
+  for (const f of [file, file + '.bak']) {
+    try { return normalizeLast(JSON.parse(fs.readFileSync(f, 'utf8'))); } catch { /* next */ }
+  }
+  return emptyLast();
+}
+
+// → { ok, key } or { ok:false, error }. A name with anything but letters has no layout (EverQuest names are letters).
+function putLast(store, char, snapshot, now) {
+  const c = charKey(char);
+  if (!c) return { ok: false, error: 'No character to keep a layout for.' };
+  if (!snapshot || typeof snapshot !== 'object' || !snapshot.show) return { ok: false, error: 'Nothing to keep.' };
+  store.chars[c] = Object.assign({}, snapshot, { savedAt: now || Date.now() });
+  const keys = Object.keys(store.chars);
+  if (keys.length > LAST_MAX) {
+    keys.sort((a, b) => (store.chars[a].savedAt || 0) - (store.chars[b].savedAt || 0));
+    for (const k of keys.slice(0, keys.length - LAST_MAX)) delete store.chars[k];
+  }
+  return { ok: true, key: c };
+}
+
+function lastFor(store, char) {
+  const c = charKey(char);
+  return (c && store.chars[c]) || null;
+}
+
+function removeLast(store, char) {
+  const c = charKey(char);
+  if (!c || !store.chars[c]) return false;
+  delete store.chars[c];
+  return true;
+}
+
 // `/pipe mimic <verb> [name]` → { verb, name?, on? } or null for anything that is not ours.
 //   load <set> · save [set] (no name = over the current one) · next · prev
 //   lock (flips) · lock on|off · unlock · group <canvas group name> (show / hide it)
@@ -185,4 +237,5 @@ function parsePipeCommand(text) {
   return null;
 }
 
-module.exports = { MAX_SETS, NAME_MAX, cleanName, keyOf, empty, normalize, load, save, put, uniqueName, use, step, remove, current, list, parsePipeCommand };
+module.exports = { MAX_SETS, NAME_MAX, LAST_MAX, cleanName, keyOf, empty, normalize, load, save, put, uniqueName, use, step, remove, current, list, parsePipeCommand,
+  emptyLast, normalizeLast, loadLast, putLast, lastFor, removeLast };
