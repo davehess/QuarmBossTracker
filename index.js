@@ -22761,9 +22761,19 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase, { track
       return { internalId: k, registered: false };
     }
   }
-  const or = eqemuForms.map(f => `name.eq.${encodeURIComponent(f)}`).join(',');
+  // A name holding , . : ( ) or " is double-quoted inside or=(…): unquoted, the comma in "Falto, Lord of Thunder" ended
+  // the value, PostgREST refused the query, and every fight against the seven comma bosses (Falto, Jeplak, Gurebk,
+  // Neffiken, Ston`Ruak, Edium, Ralthazor) was dropped unsaved (the guild lead, 2026-10-30: "Falto should be included").
+  const pq = (v) => (/[,.:()"\\]/.test(v) ? '"' + v.replace(/["\\]/g, '\\$&') + '"' : v);
+  const or = eqemuForms.map(f => `name.eq.${encodeURIComponent(pq(f))}`).join(',');
   const npcs = await supabase.select('eqemu_npc_types', `or=(${or})&select=id,name&limit=3`);
-  const ids = [...new Set((Array.isArray(npcs) ? npcs : []).map(r => r.id).filter(n => Number.isFinite(n)))];
+  let ids = [...new Set((Array.isArray(npcs) ? npcs : []).map(r => r.id).filter(n => Number.isFinite(n)))];
+  // Two bodies under one name, one of them a curated named boss BY ID (the fake and the real Jeplak, 2026-10-30): the
+  // named one. Matched on the id alone (an empty name), so a name-only listing cannot claim both bodies.
+  if (ids.length > 1) {
+    const named = ids.filter(id => namedBosses.isNamedBoss({ id, name: '' }));
+    if (named.length === 1) ids = named;
+  }
   if (ids.length !== 1) return null;   // no exact match, or ambiguous — refuse
   const npcId = ids[0];
   const byNpc = await supabase.select('bosses_local', `npc_id=eq.${npcId}&select=internal_id,auto_registered&limit=1`);
