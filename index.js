@@ -4103,7 +4103,7 @@ async function _rosterNameSet() {
 const RAID_CHAT_OURS_MIN_SHARE = 0.5;
 async function _uploaderRaidIsOurs(uploaderId, rosterSet) {
   if (!uploaderId || !rosterSet || !rosterSet.size) return null;
-  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const guildId = require('./utils/supabase').guildId();
   const windowMs = 15 * 60 * 1000;
   let rows;
   try {

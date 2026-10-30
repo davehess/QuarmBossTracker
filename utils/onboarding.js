@@ -29,6 +29,16 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.34': [
+    '**#raid-chat stays quiet outside raids.** Relayed raid chat and boss-kill announcements post only in the raid-night or event thread, so nothing lands in the channel on off nights.',
+    '**Fixed: one boss kill posted once per raider.** A kill is now announced once.',
+  ],
+  '4.0.33': [
+    '**Fixed: Target Info said "not in the catalog" for bosses with a comma in their name** (Falto, Lord of Thunder; Gurebk; Jeplak; Neffiken; Ston`Ruak; Edium; Ralthazor).',
+  ],
+  '4.0.32': [
+    '**Raid chat from another group\'s raid is no longer relayed.** A member raiding with another guild no longer fills #raid-chat with that raid\'s chat.',
+  ],
   '4.0.31': [
     '**Fixed: an @here typed in raid chat pinged the Discord channel.** Relayed chat can no longer mention anyone.',
   ],
