@@ -867,7 +867,7 @@ export const EVENTS: PopEvent[] = [
   "zoneName": "Plane of Air",
   "name": "Xegony, the Queen of Air (rainbow room)",
   "kind": "raid-boss",
-  "kindWhy": "The flag boss of the Plane of Air. His death brings the Essence of Air, which gives you an Amorphous Cloud of Air, a step toward the Plane of Time.",
+  "kindWhy": "The flag boss of the Plane of Air. Her death brings the Essence of Air, which gives you an Amorphous Cloud of Air, a step toward the Plane of Time.",
   "groupLimit": "The Essence of Air gives out 72 items, then leaves.",
   "start": "Click Xegony's rainbow door while carrying the Wind Etched Key on your cursor or key ring. One holder covers the raid or group for 5 minutes. Then pull Xegony, the Queen of Air.",
   "timers": "Her health is checked every 6 seconds. Waves come at 99%, 85%, 70%, 55%, 40% and 25%. The Essence of Air stays for 20 minutes.",
