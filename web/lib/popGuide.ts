@@ -174,6 +174,8 @@ const L = {
   giwin: { npc: 'Giwin Mirakon', zone: 'poinnovation', y: -52, x: 49, note: 'inside the factory door' },
   muon: { npc: 'Chronographer Muon', zone: 'poinnovation', y: 34, x: -310 },
   askr: { npc: 'Askr the Lost', zone: 'postorms', y: -1255, x: -2576 },
+  // Relv_the_Mysterious (npc 210090): his eqemu_spawn2 row, 2026-10-30.
+  relv: { npc: 'Relv the Mysterious', zone: 'postorms', y: 2169, x: 1683 },
   // The shrine in the heart of Mount Grenidor (postorms door 4, BOTPOSPORT500): clicking it IS the
   // "Talisman of Thunderous Foyer" (postorms/player.lua).
   stormsShrine: { npc: 'The shrine in Mount Grenidor', zone: 'postorms', y: -163, x: -362, note: 'the stone in the middle of Storms' },
@@ -434,6 +436,24 @@ const BASE_ITEMS: GuideItem[] = [
   { key: 'storms_zone_bot', section: 't2', who: 'solo', must: true, flag: 'askr_quest', title: 'Click the shrine in Mount Grenidor to enter the Bastion of Thunder',
     detail: 'Needs Askr’s flag AND your Justice flag (the last Mavuin hail). The “Talisman of Thunderous Foyer” is this click, a flag, not a keyring item. Without both flags the shrine says it finds no mystic symbol. You land in the lower halls.',
     where: [L.stormsShrine] },
+  // The Relv / Falto event (the guild lead, 2026-10-30: "add this to the pop guide for plane of storms as an optional
+  // event"). SecretsOTheP/quests 572bc06: postorms/encounters/Relv.lua:214-293 (the say states: "hail" at 221, then "destruction"
+  // or "continue" at 242, "continue" twice more at 251, then "courageous" at 266 starts it; "ready" at 272 moves the group at any
+  // time, groups >= 4 refused), :107-120 (StartEvent: the decrepit ent and 30 random blazing or burning mephits), :122-132
+  // (EndEvent), :134-149 (every mephit death spawns 3 mepheekas; Falto when no blazing or burning mephit is left), :151-171 (every
+  // 60 s in combat a wave of 1, 2, 3 ... adds, the count reset on each combat join), :173-177 (Falto's death: the vivacious ent),
+  // :179-200 (the 3 hour timer, the 24 client check every 30 s), :202-212 (the vivacious ent's check), :330-339 (its "ready to
+  // return"), :320-328 (the hand-in). It sets no flag, so no `flag` here and no auto-tick. The drops and the item scores are on
+  // /pop/events (read live from the server's loot tables).
+  { key: 'storms_relv_falto', section: 't2', who: 'raid', title: 'Optional: Relv the Mysterious and Falto, Lord of Thunder (Plane of Storms)',
+    detail: 'Loot and experience, no flag. Hail Relv, say “continue” three times, then “courageous”: that opens a 3 hour event for up to 4 groups, one at a time, 24 players inside. Say “ready” and your group (within 100 units) is sent into the burning forest. Kill all 30 mephits (each leaves 3 mepheekas) and Falto, Lord of Thunder (level 70, 305,000 HP) appears. In combat he adds a wave of mephits every 60 seconds, one more each time, and they stay after he dies. He drops [[Stout Water Repellant Boots#19097]], [[Carved Jetsam Short Staff#21891]], [[Tempest Mace#22882]] and [[Ironbound Quarterstaff#24779]] (25% each) and [[Lightning Crystals#28784]] (50%). Hand the crystals to Relv for [[Ruby Pendant with a Gold Chain#7755]] and 50,000 experience. After the kill, say “ready to return” to the vivacious ent to be sent back.',
+    says: [
+      { to: 'Relv the Mysterious', text: 'continue', src: 'postorms/encounters/Relv.lua' },
+      { to: 'Relv the Mysterious', text: 'courageous', src: 'postorms/encounters/Relv.lua' },
+      { to: 'Relv the Mysterious', text: 'ready', src: 'postorms/encounters/Relv.lua' },
+      { to: 'A vivacious ent (after Falto dies)', text: 'ready to return', src: 'postorms/encounters/Relv.lua' },
+    ],
+    where: [L.relv], link: { href: '/pop/events#postorms-relv-falto', label: 'Event loot and ranking' } },
   // Valor
   // A click and no words (povalor/player.lua doors 8 and 9, the switches by the glass door 2).
   { key: 'valor_globe', section: 't2', who: 'group', title: 'Optional: [[A Crystalline Globe#25596]] for Aerin`Dar’s door',
@@ -673,6 +693,7 @@ const TRIBUNAL = 'pojustice/The_Tribunal.lua';
 const MAVUIN = 'pojustice/#Mavuin.lua';
 const POJ_PLAYER = 'pojustice/player.lua';
 const ASKR = 'postorms/Askr_the_Lost.lua';
+const RELV = 'postorms/encounters/Relv.lua';
 const NITRAM = 'poinnovation/Nitram_Anizok.lua';
 const POI_PLAYER = 'poinnovation/player.lua';
 const TRANQ = 'potranquility/player.lua';        // the Tranquility portals set the zone flags on the click
@@ -952,6 +973,22 @@ const SEQ: Record<string, Act[]> = {
   ],
   storms_zone_bot: [
     zone('the shrine in the heart of Mount Grenidor', 'Click it: with Askr’s second flag and your Justice flag (Mavuin at 3) it sets your Bastion flag and sends you in; without both it refuses.', 'postorms/player.lua'),
+  ],
+  // Relv.lua is a state machine per player (hail → "destruction" or "continue" → "continue" → "continue" → "courageous"); "ready"
+  // answers at any time, once the event is up. Falto's wave count and the 3 hour timer are in the step's detail, not acts.
+  storms_relv_falto: [
+    hail('Relv the Mysterious', RELV),
+    say('Relv the Mysterious', 'continue', RELV, { times: 3 }),
+    say('Relv the Mysterious', 'courageous', RELV),
+    note('That opens the event for 3 hours. Only the one who says it needs the whole conversation; the others just say “ready”. It starts only if no event is running and nobody is inside.', RELV),
+    say('Relv the Mysterious', 'ready', RELV),
+    note('Your group within 100 units is sent in; four groups at most, one at a time, and 24 players inside.', RELV),
+    kill('the 30 mephits', RELV, 'each leaves 3 mepheekas; Falto appears when none is left'),
+    kill('Falto, Lord of Thunder', RELV, 'level 70, 305,000 HP; a growing wave of mephits every 60 seconds while he fights'),
+    get(RELV, { items: [I('Lightning Crystals', 28784)], text: 'his gear drops are on the events page' }),
+    say('A vivacious ent', 'ready to return', RELV),
+    give('Relv the Mysterious', [I('Lightning Crystals', 28784)], RELV),
+    get(RELV, { items: [I('Ruby Pendant with a Gold Chain', 7755)], text: '50,000 experience' }),
   ],
   valor_globe: [
     click('either switch by the glass door', 'povalor/player.lua', { items: [I('A Crystalline Globe', 25596)], text: 'hold the globe on your cursor; the glass door opens' }),

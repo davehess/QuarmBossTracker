@@ -1454,6 +1454,12 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Latest flags page** (`/pop/latest` [beta] tag, live on https://wolfpack.quest/pop/latest since web 1.8.158; built 1.8.157, §309): `web/lib/popLatestView.ts` (moments, clusters, recital-repeat
   collapse, derived chain order, unlocks, raid still-needs, filters), `web/app/pop/latest/` (page, Stream, StageBoard, ExpandList);
   strip rules shared with `web/lib/popLatestFlags.ts`. Test: `test/pop-latest-view.test.js`.
+- **PoP events: every scripted event, its loot, item scores and a ranking** (`/pop/events` [beta] https://wolfpack.quest/pop/events, web 2.1.69, 2026-10-30):
+  `web/lib/popEvents.ts` (the committed event list: start, timers, mechanics, loot mobs, script-line cites linked to the pinned quests commit),
+  `web/lib/popEventsScore.ts` (pure: the 0 to 100 class-relative item index over the gear finder's weights + `EVENT_SCORE_TUNING`, event value,
+  best item, classes helped, big-drop odds, sorts), `web/app/pop/events/` (`page.tsx` server page, plain-link sort/zone/class; `load.ts` the live
+  drops + item stats + DKP read, cached 6 h). Each event is an anchor `#<slug>`; the PoP checklist's optional Relv / Falto step links to
+  `#postorms-relv-falto`. Test: `test/pop-events.test.js`.
 - **Best charm pets in this zone** (agent 3.7.170 · Mimic beta + bot 3.1.264, §308): Charm overlay `apps/mimic/charm.html` section
   `#pets` (collapsed); agent "Charm pets" blocks (`CHARM_PET_SPELLS`, `pickCharmPetSpell` — spellbook file first, else assumed from
   level; `rankCharmPets`; local `GET /api/charm-best`; disk cache `charm-pets-cache/`); bot `utils/charmPets.js` +

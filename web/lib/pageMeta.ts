@@ -34,6 +34,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/pop':          { title: 'PoP Flags', description: 'The guild’s road to Quarm — every flag gate by tier, how many raiders hold each flag, who can enter each zone today, and what to raid next to move the most people forward.' },
   '/pop/guide':    { title: 'PoP Checklist', description: 'Every Planes of Power step in order — what to say to whom, where they stand, and whether it is solo, group or raid work. Tick it off per character.' },
   '/pop/latest':   { title: '[beta] Latest flags', description: 'The newest Planes of Power flags the server or an NPC recital confirmed, as a stream and as cards in step order, with who in the raid still needs them.' },
+  '/pop/events':   { title: '[beta] PoP events', description: 'Every scripted Planes of Power event with its loot, the drop chances, a score for each item and a ranking of the events.' },
   '/pop/raid':     { title: '[beta] Raid night plan', description: 'Tonight’s Planes of Power targets in order — who still needs a preflag, how to get there, what to expect, and a map with the route.' },
   '/pop/raid/me':  { title: '[beta] Your flags for tonight', description: 'Your characters and the Planes of Power flag steps each one still needs for the next raid night, with where to stand and what to say.' },
   '/roster':       { title: 'Raid Roster', description: 'Typical raiders by role and class — 60-day raid attendance from DKP ticks, tanks/healers/DPS grouped, notable alts called out.' },

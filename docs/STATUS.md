@@ -103,6 +103,20 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 `/pop/events` [beta]: every scripted PoP event, its loot with the percentages, item scores and a ranking, plus the Relv / Falto step in
+  the Plane of Storms checklist (web 2.1.69, `draft/pop-events`; 2026-10-30; NEW route, so it goes to `main` with the `[beta]` tag, DECISIONS
+  §135; first draft, not pushed).** The guild lead: "add this [the Relv / Falto, Lord of Thunder event] to the pop guide for plane of storms as an
+  optional event. Please comb through the PoP LUA scripts and get us a repository of those events and include the loot that can drop and the
+  percentages. Give item scores to each item and then add a ranking that could be there for each event." then "count procs and focus effects
+  higher, PLUS ATTACK for melee". 100 events from SecretsOTheP/quests @ 572bc06, each cited to script lines (`web/lib/popEvents.ts`, committed);
+  drops (`eqemu_npc_drops`), item stats (`eqemu_items`) and DKP paid (`opendkp_loot`) read live and kept 6 h (`web/app/pop/events/load.ts`);
+  score and ranking are pure (`web/lib/popEventsScore.ts`): a 0 to 100 class-relative index over the finder's own weights, with the event tuning
+  (`EVENT_SCORE_TUNING`: focus 35 caster / 20 hybrid / 5 melee, proc 30 melee / 45 melee weapon / 5 others, attack ×2 for melee) on this page only;
+  value per run = Σ kills × rolls × chance × score. Guide step `storms_relv_falto` (optional, no flag) + its seq, brief, `STEP_HOME`, `PLANE_OF`;
+  regenerated `apps/mimic/pop-quests.js` and `utils/popEngine.js` (data only, no Mimic or bot version bump). Tests `test/pop-events.test.js`.
+  ⚠ Open: kills per run are 1 unless a script gives a number (waves of trash are under-counted); three events have no script (loot only); the
+  tuning could go global in `gearWeights.ts` if the guild lead wants /me/upgrades to match. Graduates (drops `[beta]`) when the guild lead says so.
+
 - **🧪 Parse page: one "Class not known" bucket, classes from every source, the chart axis fit to the data (web 2.1.49, `draft/parse-unknowns`, for `beta`; 2026-10-26; first draft, not pushed).**
   The guild lead on a foreign-guild wipe: "The Unknowns here aren't actually unknown" and "why is the parse half the distance on the timeline
   instead of fit to it?". Cause 1: the OpenDKP mirror (`characters`) stores the literal strings `UNKNOWN`/`Unknown` for an unregistered toon; the

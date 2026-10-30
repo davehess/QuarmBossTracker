@@ -184,6 +184,7 @@ const BRIEFS: Record<string, string> = {
   cod_fuirstel_before: 'Hail Elder Fuirstel before Bertoxxulous dies. Needs Grummus done, and Adler asked about the ward before Grummus fell.',
   flag_carprin: 'Kill the five Carprin nameds, then hail Tarkil Adan while you hold the kill credit. It is your way into the lower Crypt.',
   flag_askr: 'Everyone does their own: a head for a bag, three parts for the flag, two medallions for the second. Stay in the zone.',
+  storms_relv_falto: 'Optional, no flag. Hail Relv, “continue” three times, “courageous”. Kill 30 mephits, then Falto, for loot and exp.',
   flag_keeper: 'A small raid kills the Keeper, then hails Tylis. Do Fahlia’s step first or it is a checklist flag. Resets in 2 hours.',
   torment_sphere: 'Optional. One sphere on the key ring of anyone in your raid covers everyone. You still need your own Tylis flag.',
   flag_saryrn: 'Kill Saryrn, then hail her one projection: 30 minutes, 72 players. Real flag only after the Keeper step.',

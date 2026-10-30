@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-events-2026-10-30',
+    title: 'Web 2.1.69',
+    version: 'Web 2.1.69',
+    date: '2026-10-30',
+    headline: 'A new page lists every scripted Planes of Power event with its loot, the drop chances, a score for each item and a ranking.',
+    features: [
+      { name: 'PoP events [beta]', blurb: 'One page with all 100 events found in the quest scripts: how each starts, the timers, what happens, and the loot that can drop with its chance. Every line links to the script it was read from.' },
+      { name: 'Item scores', blurb: 'Every wearable item gets a 0 to 100 score, measured against the best item for each class on the page. Procs and focus effects count for more here, and attack counts double for melee. Hover a score for the raw points; the guild’s average DKP price shows beside it.' },
+      { name: 'A ranking for every event', blurb: 'Events are ranked by what a run is worth in expected score, with the best item, how many classes it helps and the chance of a big drop. Sort it four ways, filter by zone, or pick your class to see the best events for you.' },
+      { name: 'Relv and Falto, Lord of Thunder', blurb: 'The Plane of Storms checklist has a new optional step for Relv’s burning forest: what to say, who can go in, the mephit waves, Falto’s loot and the Ruby Pendant turn-in.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'pop-bot-clickup-2026-10-30',
     title: 'Web 2.1.68',
     version: 'Web 2.1.68',
