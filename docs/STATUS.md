@@ -223,6 +223,9 @@ next touch one rather than assuming a missing row means a missing doc.
   also run; rows and dots carry the hover-interact handshake, so it works locked. Map only: the agent already had `clear` and `killed`
   marks, so no agent bump. A clear is a local override: the next death the agent sees starts a timer again. Test:
   `test/map-watch-agent.test.js` ("right-click a spawn"). Not seen in a live window: needs a Mimic beta cut and a locked Map to confirm.
+- **🧪 My parses lists every fight on request (agent 4.0.46, beta `e4c8bfea`, 2026-10-30).** The guild lead: "My parses hides the
+  majority of fights" (22 on the chart, 12 in the list). Past 12 fights a "Show all N fights" switch under the table lists every
+  one (`wpMpTable(d, byDay, allRows)`, `wpMpAllRows` in `dashboard.html`); By day already did. Test: `test/my-parses-tab.test.js`.
 - **🧪 Relv event mephit counter in the Command Center (agent 4.0.45, beta `1370257c`, 2026-10-30; DECISIONS §471).** The guild
   lead, mid-event: "add in a mephit counter into the command center … for this event only". Per-client floor count of the 30
   blazing/burning mephits from death lines, Falto's adds excluded, resets on a new start, the pulled-back line, leaving the
