@@ -2986,6 +2986,118 @@ window.POP_QUESTS = {
        "expect": "Solo. With both flags the shrine sends you to the lower halls of the Bastion of Thunder. Without the Justice flag it finds “no mystic symbol”: go back to Mavuin."
       },
       {
+       "key": "storms_relv_falto",
+       "title": "Optional: Relv the Mysterious and Falto, Lord of Thunder (Plane of Storms)",
+       "plane": "storms",
+       "who": "raid",
+       "detail": "Loot and experience, no flag. Hail Relv, say “continue” three times, then “courageous”: that opens a 3 hour event for up to 4 groups, one at a time, 24 players inside. Say “ready” and your group (within 100 units) is sent into the burning forest. Kill all 30 mephits (each leaves 3 mepheekas) and Falto, Lord of Thunder (level 70, 305,000 HP) appears. In combat he adds a wave of mephits every 60 seconds, one more each time, and they stay after he dies. He drops Stout Water Repellant Boots, Carved Jetsam Short Staff, Tempest Mace and Ironbound Quarterstaff (25% each) and Lightning Crystals (50%). Hand the crystals to Relv for Ruby Pendant with a Gold Chain and 50,000 experience. After the kill, say “ready to return” to the vivacious ent to be sent back.",
+       "brief": "Optional, no flag. Hail Relv, “continue” three times, “courageous”. Kill 30 mephits, then Falto, for loot and exp.",
+       "says": [
+        {
+         "to": "Relv the Mysterious",
+         "text": "continue"
+        },
+        {
+         "to": "Relv the Mysterious",
+         "text": "courageous"
+        },
+        {
+         "to": "Relv the Mysterious",
+         "text": "ready"
+        },
+        {
+         "to": "A vivacious ent (after Falto dies)",
+         "text": "ready to return"
+        }
+       ],
+       "where": [
+        {
+         "npc": "Relv the Mysterious",
+         "zone": "Plane of Storms",
+         "y": 2169,
+         "x": 1683
+        }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Relv the Mysterious",
+         "src": "postorms/encounters/Relv.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Relv the Mysterious",
+         "text": "continue",
+         "times": 3,
+         "src": "postorms/encounters/Relv.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Relv the Mysterious",
+         "text": "courageous",
+         "src": "postorms/encounters/Relv.lua"
+        },
+        {
+         "kind": "note",
+         "text": "That opens the event for 3 hours. Only the one who says it needs the whole conversation; the others just say “ready”. It starts only if no event is running and nobody is inside.",
+         "src": "postorms/encounters/Relv.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Relv the Mysterious",
+         "text": "ready",
+         "src": "postorms/encounters/Relv.lua"
+        },
+        {
+         "kind": "note",
+         "text": "Your group within 100 units is sent in; four groups at most, one at a time, and 24 players inside.",
+         "src": "postorms/encounters/Relv.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "the 30 mephits",
+         "text": "each leaves 3 mepheekas; Falto appears when none is left",
+         "src": "postorms/encounters/Relv.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "Falto, Lord of Thunder",
+         "text": "level 70, 305,000 HP; a growing wave of mephits every 60 seconds while he fights",
+         "src": "postorms/encounters/Relv.lua"
+        },
+        {
+         "kind": "get",
+         "text": "his gear drops are on the events page",
+         "items": [
+          "Lightning Crystals"
+         ],
+         "src": "postorms/encounters/Relv.lua"
+        },
+        {
+         "kind": "say",
+         "to": "A vivacious ent",
+         "text": "ready to return",
+         "src": "postorms/encounters/Relv.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Relv the Mysterious",
+         "items": [
+          "Lightning Crystals"
+         ],
+         "src": "postorms/encounters/Relv.lua"
+        },
+        {
+         "kind": "get",
+         "text": "50,000 experience",
+         "items": [
+          "Ruby Pendant with a Gold Chain"
+         ],
+         "src": "postorms/encounters/Relv.lua"
+        }
+       ]
+      },
+      {
        "key": "valor_globe",
        "title": "Optional: A Crystalline Globe for Aerin`Dar’s door",
        "plane": "valor",

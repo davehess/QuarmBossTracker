@@ -338,7 +338,7 @@ describe('quest renderer: a step’s ordered seq', () => {
       expect(shape(R.seqRows(q.seq)), q.key).toEqual(shape(web(q.seq)));
       n++;
     }
-    expect(n).toBe(67);
+    expect(n).toBe(68);
   });
 });
 
@@ -548,7 +548,7 @@ describe('the generated guide through the renderer', () => {
 
   it('every step with a brief shows it first, and still carries its full detail and expect, folded under More', () => {
     const withBrief = all.filter(q => q.brief);
-    expect(withBrief.length).toBe(37);
+    expect(withBrief.length).toBe(38);
     for (const q of withBrief) {
       const h = R.questHtml(q);
       const more = h.indexOf('data-dk="' + q.key + '|more"');
@@ -575,7 +575,7 @@ describe('the generated guide through the renderer', () => {
 
   it('draws the seq of every step that has one: every act’s words, items, ×N and zone-in text, in act order', () => {
     const withSeq = all.filter(q => q.seq);
-    expect(withSeq.length).toBe(67);
+    expect(withSeq.length).toBe(68);
     for (const q of withSeq) {
       const html = R.questHtml(q);
       expect(html, q.key).toContain('<ol class="qseq">');

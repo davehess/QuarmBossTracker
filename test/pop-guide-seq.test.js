@@ -68,6 +68,8 @@ const KW = {
   'ponightmare/EinoInvisNight.lua': ['quellious be my guide'],
   'ponightmare/encounters/Maze.lua': ['hail', 'dagger', 'help', 'ready'],
   'postorms/Askr_the_Lost.lua': ['hail', 'massive problem', 'it was me', 'paying attention', 'yes', 'continue', 'bastion of thunder'],
+  // Relv the Mysterious and the vivacious ent share one encounter file (pulled 2026-10-30, the Falto event).
+  'postorms/encounters/Relv.lua': ['hail', 'destruction', 'continue', 'courageous', 'ready', 'ready to return'],
   'potactics/214322.lua': ['hail'],
   'potactics/214323.lua': ['hail'],
   'potactics/214324.lua': ['hail'],
@@ -124,7 +126,7 @@ const SCRIPTS = new Set([
 // id → name for every item token in a seq (eqemu_items, 2026-10-03). The database drops some apostrophes
 // ("Boirons Standard") and the guide keeps them, so names are compared without apostrophes.
 const ITEMS = {
-  2569: 'Forlorn Totem of Rolfron Zek', 3392: 'Stretched Skin Drum', 4680: 'Book of Inspiration', 4696: 'Hope Diamond',
+  2569: 'Forlorn Totem of Rolfron Zek', 7755: 'Ruby Pendant with a Gold Chain', 28784: 'Lightning Crystals', 3392: 'Stretched Skin Drum', 4680: 'Book of Inspiration', 4696: 'Hope Diamond',
   4748: 'Petrified Totem', 7154: 'Tiny Rockhopper Eye', 9258: 'Dagger Blade Shard', 9259: "Thelin's Dagger", 9295: 'Copper Node',
   9321: 'Fine Cut, Diamond Inlaid Mask', 9426: 'Bundle of Super Conductive Wires', 9433: 'Symbol of Torden', 9434: 'Intact Power Cell',
   11486: 'Storm Giant Head', 11487: "Askr's Sealed Bag of Verity", 11488: 'Esoteric Meld', 11935: 'Cockatrice Beak',
@@ -182,7 +184,7 @@ describe('the coverage: every step with words, a hand-in or a hail has an ordere
   });
 
   it('every seq sits on a real step (a typo in the table would silently attach to nothing)', () => {
-    expect(withSeq.length).toBe(67);
+    expect(withSeq.length).toBe(68);
     for (const i of withSeq) expect(i.seq.length, i.key).toBeGreaterThan(0);
   });
 
@@ -215,7 +217,7 @@ describe('every act: a kind, a script it was read from, and the words the script
   const acts = withSeq.flatMap(i => i.seq.map((a, n) => ({ key: i.key, n, a })));
 
   it('has a known kind, a src that is a real script, and the fields its kind needs', () => {
-    expect(acts.length).toBe(335);
+    expect(acts.length).toBe(347);
     for (const { key, n, a } of acts) {
       const at = `${key}[${n}] ${a.kind}`;
       expect(KINDS, at).toContain(a.kind);

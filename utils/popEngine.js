@@ -803,6 +803,12 @@ const L = {
 		y: -1255,
 		x: -2576
 	},
+	relv: {
+		npc: "Relv the Mysterious",
+		zone: "postorms",
+		y: 2169,
+		x: 1683
+	},
 	stormsShrine: {
 		npc: "The shrine in Mount Grenidor",
 		zone: "postorms",
@@ -1705,6 +1711,40 @@ const BASE_ITEMS = [
 		where: [L.stormsShrine]
 	},
 	{
+		key: "storms_relv_falto",
+		section: "t2",
+		who: "raid",
+		title: "Optional: Relv the Mysterious and Falto, Lord of Thunder (Plane of Storms)",
+		detail: "Loot and experience, no flag. Hail Relv, say “continue” three times, then “courageous”: that opens a 3 hour event for up to 4 groups, one at a time, 24 players inside. Say “ready” and your group (within 100 units) is sent into the burning forest. Kill all 30 mephits (each leaves 3 mepheekas) and Falto, Lord of Thunder (level 70, 305,000 HP) appears. In combat he adds a wave of mephits every 60 seconds, one more each time, and they stay after he dies. He drops [[Stout Water Repellant Boots#19097]], [[Carved Jetsam Short Staff#21891]], [[Tempest Mace#22882]] and [[Ironbound Quarterstaff#24779]] (25% each) and [[Lightning Crystals#28784]] (50%). Hand the crystals to Relv for [[Ruby Pendant with a Gold Chain#7755]] and 50,000 experience. After the kill, say “ready to return” to the vivacious ent to be sent back.",
+		says: [
+			{
+				to: "Relv the Mysterious",
+				text: "continue",
+				src: "postorms/encounters/Relv.lua"
+			},
+			{
+				to: "Relv the Mysterious",
+				text: "courageous",
+				src: "postorms/encounters/Relv.lua"
+			},
+			{
+				to: "Relv the Mysterious",
+				text: "ready",
+				src: "postorms/encounters/Relv.lua"
+			},
+			{
+				to: "A vivacious ent (after Falto dies)",
+				text: "ready to return",
+				src: "postorms/encounters/Relv.lua"
+			}
+		],
+		where: [L.relv],
+		link: {
+			href: "/pop/events#postorms-relv-falto",
+			label: "Event loot and ranking"
+		}
+	},
+	{
 		key: "valor_globe",
 		section: "t2",
 		who: "group",
@@ -2357,6 +2397,7 @@ const TRIBUNAL = "pojustice/The_Tribunal.lua";
 const MAVUIN = "pojustice/#Mavuin.lua";
 const POJ_PLAYER = "pojustice/player.lua";
 const ASKR = "postorms/Askr_the_Lost.lua";
+const RELV = "postorms/encounters/Relv.lua";
 const NITRAM = "poinnovation/Nitram_Anizok.lua";
 const POI_PLAYER = "poinnovation/player.lua";
 const TRANQ = "potranquility/player.lua";
@@ -2750,6 +2791,26 @@ const SEQ = {
 		note("That is not your Bastion of Thunder flag yet: the shrine click in the next step is. It needs this flag AND your Justice flag (Mavuin at 3), or the shrine finds “no mystic symbol”.", "postorms/player.lua")
 	],
 	storms_zone_bot: [zone("the shrine in the heart of Mount Grenidor", "Click it: with Askr’s second flag and your Justice flag (Mavuin at 3) it sets your Bastion flag and sends you in; without both it refuses.", "postorms/player.lua")],
+	storms_relv_falto: [
+		hail("Relv the Mysterious", RELV),
+		say("Relv the Mysterious", "continue", RELV, { times: 3 }),
+		say("Relv the Mysterious", "courageous", RELV),
+		note("That opens the event for 3 hours. Only the one who says it needs the whole conversation; the others just say “ready”. It starts only if no event is running and nobody is inside.", RELV),
+		say("Relv the Mysterious", "ready", RELV),
+		note("Your group within 100 units is sent in; four groups at most, one at a time, and 24 players inside.", RELV),
+		kill("the 30 mephits", RELV, "each leaves 3 mepheekas; Falto appears when none is left"),
+		kill("Falto, Lord of Thunder", RELV, "level 70, 305,000 HP; a growing wave of mephits every 60 seconds while he fights"),
+		get(RELV, {
+			items: [I("Lightning Crystals", 28784)],
+			text: "his gear drops are on the events page"
+		}),
+		say("A vivacious ent", "ready to return", RELV),
+		give("Relv the Mysterious", [I("Lightning Crystals", 28784)], RELV),
+		get(RELV, {
+			items: [I("Ruby Pendant with a Gold Chain", 7755)],
+			text: "50,000 experience"
+		})
+	],
 	valor_globe: [click("either switch by the glass door", "povalor/player.lua", {
 		items: [I("A Crystalline Globe", 25596)],
 		text: "hold the globe on your cursor; the glass door opens"
@@ -3772,6 +3833,7 @@ for (const [key, brief] of Object.entries({
 	cod_fuirstel_before: "Hail Elder Fuirstel before Bertoxxulous dies. Needs Grummus done, and Adler asked about the ward before Grummus fell.",
 	flag_carprin: "Kill the five Carprin nameds, then hail Tarkil Adan while you hold the kill credit. It is your way into the lower Crypt.",
 	flag_askr: "Everyone does their own: a head for a bag, three parts for the flag, two medallions for the second. Stay in the zone.",
+	storms_relv_falto: "Optional, no flag. Hail Relv, “continue” three times, “courageous”. Kill 30 mephits, then Falto, for loot and exp.",
 	flag_keeper: "A small raid kills the Keeper, then hails Tylis. Do Fahlia’s step first or it is a checklist flag. Resets in 2 hours.",
 	torment_sphere: "Optional. One sphere on the key ring of anyone in your raid covers everyone. You still need your own Tylis flag.",
 	flag_saryrn: "Kill Saryrn, then hail her one projection: 30 minutes, 72 players. Real flag only after the Keeper step.",
