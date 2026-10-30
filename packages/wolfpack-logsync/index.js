@@ -18128,6 +18128,7 @@ function _serializeCommandCenterState() {
     mt:            tank.mt,
     rampage:       tank.rampage,
     rampages:      tank.rampages,
+    relv:          _relvSnapshot(activeChar, Date.now()),   // null unless the Relv event is running
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
     needs_rez:     _rezBoardSnapshot(),
@@ -35241,6 +35242,10 @@ const COMMAND_HTML = `<!doctype html>
     border:1px solid #c084fc;border-radius:5px;margin-bottom:4px;font-size:11px}
   .dt.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
   .dt .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
+    border:1px solid #fb923c;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .relv .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv .sub{margin-left:auto;font-size:9px;color:#d0d7de}
   .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
     border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
   .ramp .row{display:flex;align-items:center;gap:6px}
@@ -35881,6 +35886,16 @@ const COMMAND_HTML = `<!doctype html>
          +      '<div class="val">' + valText + '</div></div>'
          +  '</div>';
   }
+  // Relv's event in Plane of Storms (the guild lead, 2026-10-30): mephits this client has seen die, of the 30.
+  // The agent sends s.relv only while the event runs; the count is a floor (a far death line never prints here).
+  function relvHtml(v){
+    var left = Math.max(0, (Number(v.total) || 30) - (Number(v.mephits) || 0));
+    var main = v.falto_slain ? 'Falto slain'
+             : (v.falto_up ? 'Falto is up'
+             : 'mephits <span class="n">' + (Number(v.mephits) || 0) + '/' + (Number(v.total) || 30) + '</span> · ' + left + ' left');
+    return '<div class="relv"><span>🔥 Relv: ' + main + '</span>'
+         +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
+  }
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -35936,6 +35951,7 @@ const COMMAND_HTML = `<!doctype html>
     // card above, byte for byte, and an older agent that sends no rampages array lands here too.
     var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
     for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
+    if (s.relv) html += relvHtml(s.relv);
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
     // above the long lists: after a kill there is no fight to push it down, and a fight that starts while
@@ -59496,6 +59512,86 @@ function _deadMobNameFromLine(line) {
   if (m) return m[1].trim().replace(/[!.]+$/, '');
   return null;
 }
+// ── Relv the Mysterious (Plane of Storms): the Command Center's mephit counter ───────────────────────────────
+// The guild lead, 2026-10-30: "add in a mephit counter into the command center ... for this event only." The
+// quest script (Relv.lua) spawns exactly 30 mobs, each `a blazing mephit` or `a burning mephit`; every death
+// leaves three `a fiery mepheeka`, and when none is left alive `Falto, Lord of Thunder` spawns. Falto then sends
+// blazing/burning mephit ADDS (same display names) while he fights, so deaths after Falto is up do not count.
+// ⚠ The count is what THIS client saw. EverQuest prints a death line only to players near it, so a kill far
+// across the clearing can be missed: the number is a floor, never exact. Nothing is shared across clients.
+// Starts on Relv's "As I had hoped" line or a port emote, or on the first mephit death seen in Plane of Storms
+// (Zeal zone, else the log's "You have entered" line). Ends on the pulled-back line, on leaving the zone, 3 h
+// after the start, or 10 min after Falto dies. Live tail only (the caller is the live loop), so it takes now.
+const RELV_MEPHITS = 30;
+const RELV_MAX_MS  = 3 * 3600 * 1000;
+const RELV_DONE_MS = 10 * 60 * 1000;
+const _RELV_START_RX   = /As I had hoped\. I regret that I have only enough strength to send four parties/;
+const _RELV_PORT_RX    = /A powerfully green aura surrounds Relv/;
+const _RELV_BACK_RX    = /pulled back to Relv the Mysterious/;
+const _RELV_ZONE_RX    = /^\[[^\]]+\]\s+You have entered (?!an?\s)([^.]{2,60})\.\s*$/;
+const _RELV_MEPHIT_RX  = /^an? (?:blazing|burning) mephit$/i;
+const _RELV_MEPHEEKA_RX = /^an? fiery mepheeka$/i;
+const _RELV_FALTO_RX   = /^Falto, Lord of Thunder$/i;
+// Falto's own swings and ours at him; a guild-chat line that merely names him must not flip the count off.
+const _RELV_FALTO_SEEN_RX = /\]\s+(?:Falto, Lord of Thunder\s|You\b[^']*?\bFalto, Lord of Thunder\b)/;
+const _relvState   = new Map();   // character (lower) → { mephits, mepheekas, faltoUp, faltoSlainAt, startedAt }
+const _relvLogZone = new Map();   // character (lower) → last zone named by a "You have entered" line (lower)
+function _relvFresh(now) { return { mephits: 0, mepheekas: 0, faltoUp: false, faltoSlainAt: 0, startedAt: now }; }
+function _relvInStorms(cl) {
+  for (const ch of Object.keys(_zealState || {})) {
+    if (ch.toLowerCase() !== cl) continue;
+    const z = _mapZoneShort(_zealState[ch] && _zealState[ch].zone);
+    if (z) return z === 'postorms';
+  }
+  return _relvLogZone.get(cl) === 'plane of storms';
+}
+function _relvLive(cl, now) {
+  const st = _relvState.get(cl);
+  if (!st) return null;
+  if (now - st.startedAt > RELV_MAX_MS || (st.faltoSlainAt && now - st.faltoSlainAt > RELV_DONE_MS)) { _relvState.delete(cl); return null; }
+  return st;
+}
+function _relvNoteLine(line, character, now) {
+  if (!line || !character) return;
+  const cl = String(character).toLowerCase();
+  const zm = line.indexOf('You have entered') !== -1 ? _RELV_ZONE_RX.exec(line) : null;
+  if (zm) {
+    const z = zm[1].trim().toLowerCase();
+    _relvLogZone.set(cl, z);
+    if (z !== 'plane of storms') _relvState.delete(cl);
+    return;
+  }
+  if (line.indexOf('Relv') === -1 && line.indexOf('mephit') === -1 && line.indexOf('mepheeka') === -1 && line.indexOf('Falto') === -1) return;
+  let st = _relvLive(cl, now);
+  if (_RELV_START_RX.test(line)) { _relvState.set(cl, _relvFresh(now)); return; }
+  if (_RELV_BACK_RX.test(line)) { _relvState.delete(cl); return; }
+  if (_RELV_PORT_RX.test(line)) { if (!st) _relvState.set(cl, _relvFresh(now)); return; }
+  const dead = _deadMobNameFromLine(line);
+  if (dead) {
+    if (_RELV_MEPHIT_RX.test(dead)) {
+      if (!st) {
+        if (!_relvInStorms(cl)) return;
+        st = _relvFresh(now); _relvState.set(cl, st);
+      }
+      if (st.faltoUp) return;   // a Falto add, not one of the 30
+      st.mephits++;
+      if (st.mephits >= RELV_MEPHITS) { st.mephits = RELV_MEPHITS; st.faltoUp = true; }
+    } else if (st && _RELV_MEPHEEKA_RX.test(dead)) {
+      st.mepheekas++;
+    } else if (st && _RELV_FALTO_RX.test(dead)) {
+      st.faltoUp = true; st.faltoSlainAt = now;
+    }
+    return;
+  }
+  if (st && !st.faltoUp && _RELV_FALTO_SEEN_RX.test(line)) st.faltoUp = true;
+}
+// The Command Center row: null unless the event is running for this character (so nothing shows for any other fight).
+function _relvSnapshot(character, now) {
+  const st = _relvLive(String(character || '').toLowerCase(), now);
+  if (!st) return null;
+  return { mephits: st.mephits, total: RELV_MEPHITS, mepheekas: st.mepheekas, falto_up: !!st.faltoUp, falto_slain: !!st.faltoSlainAt, started_at: st.startedAt };
+}
+// ── end Relv mephit counter ────────────────────────────────────────────────────────────────────────────────────
 // ── Death timeline (the guild lead, 2026-10-21: "the death timers between mobs ... easily and clearly displayed
 // versus having to say it out loud ... a timeline view ... on the bottom of the TTS") ──────────────────────────
 // A small ring of recent boss / Tactics-brother deaths read off the lines THIS PC's logs see (a kill out of this
@@ -64573,6 +64669,8 @@ async function main() {
         try { _meNoteRawLine(line, b.character); } catch { void 0; }
         // XP events: each experience line with the bars around it (FB-37 option B; live tail only).
         try { _xpNoteRawLine(line, b.character, Date.now()); } catch { void 0; }
+        // Relv event (Plane of Storms): the Command Center's mephit counter (live tail only).
+        try { _relvNoteLine(line, b.character, Date.now()); } catch { void 0; }
         // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
         // log never DMs anyone).
         try { _corpseNoteLine(line, b.character); } catch { void 0; }

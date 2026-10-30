@@ -45,6 +45,10 @@
     border:1px solid #c084fc;border-radius:5px;margin-bottom:4px;font-size:11px}
   .dt.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
   .dt .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
+    border:1px solid #fb923c;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .relv .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv .sub{margin-left:auto;font-size:9px;color:#d0d7de}
   .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
     border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
   .ramp .row{display:flex;align-items:center;gap:6px}
@@ -685,6 +689,16 @@
          +      '<div class="val">' + valText + '</div></div>'
          +  '</div>';
   }
+  // Relv's event in Plane of Storms (the guild lead, 2026-10-30): mephits this client has seen die, of the 30.
+  // The agent sends s.relv only while the event runs; the count is a floor (a far death line never prints here).
+  function relvHtml(v){
+    var left = Math.max(0, (Number(v.total) || 30) - (Number(v.mephits) || 0));
+    var main = v.falto_slain ? 'Falto slain'
+             : (v.falto_up ? 'Falto is up'
+             : 'mephits <span class="n">' + (Number(v.mephits) || 0) + '/' + (Number(v.total) || 30) + '</span> · ' + left + ' left');
+    return '<div class="relv"><span>🔥 Relv: ' + main + '</span>'
+         +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
+  }
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -740,6 +754,7 @@
     // card above, byte for byte, and an older agent that sends no rampages array lands here too.
     var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
     for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
+    if (s.relv) html += relvHtml(s.relv);
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
     // above the long lists: after a kill there is no fight to push it down, and a fight that starts while
