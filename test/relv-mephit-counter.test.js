@@ -143,6 +143,37 @@ describe('Falto and the 30 cap', () => {
   });
 });
 
+// 2026-10-30, the guild lead, mid-fight on a fresh agent: "mephits 1/30" was one of Falto's adds — his own lines had come
+// before any counter existed. Only the mephits before the boss spawns count.
+describe('joining after Falto is up', () => {
+  it('a Falto line in Storms with no counter shows "Falto is up", and his adds are not counted', () => {
+    zeal[WHO] = { zone: 210 };
+    say('Falto, Lord of Thunder hits Brackwyn for 812 points of damage.');
+    expect(snap()).toMatchObject({ mephits: 0, falto_up: true });
+    slainBy('A blazing mephit');
+    expect(snap()).toMatchObject({ mephits: 0, falto_up: true });
+  });
+  it('an add dying first, after Falto was seen, starts the counter with Falto up', () => {
+    zeal[WHO] = { zone: 210 };
+    say('You kick Falto, Lord of Thunder for 60 points of damage.');
+    T.state.clear();                                  // as if the row had gone; the sighting is kept apart
+    slainBy('A burning mephit');
+    expect(snap()).toMatchObject({ mephits: 0, falto_up: true });
+  });
+  it('a new run (Relv\'s start line) forgets the old Falto', () => {
+    zeal[WHO] = { zone: 210 };
+    say('You kick Falto, Lord of Thunder for 60 points of damage.');
+    say(START);
+    slainBy('A blazing mephit');
+    expect(snap()).toMatchObject({ mephits: 1, falto_up: false });
+  });
+  it('his death with no counter still says "Falto slain"', () => {
+    zeal[WHO] = { zone: 210 };
+    slainBy('Falto, Lord of Thunder');
+    expect(snap()).toMatchObject({ falto_up: true, falto_slain: true });
+  });
+});
+
 describe('reset rules', () => {
   it('a new start line restarts at zero', () => {
     say(START);
@@ -194,7 +225,7 @@ describe('Command Center row', () => {
   const plain = (h) => h.replace(/<[^>]+>/g, '');
 
   it('shows the count, what is left and the mepheekas', () => {
-    expect(plain(relvHtml({ mephits: 20, total: 30, mepheekas: 7 }))).toBe('🔥 Relv: mephits 20/30 · 10 leftmepheekas killed 7');
+    expect(plain(relvHtml({ mephits: 20, total: 30, mepheekas: 7 }))).toBe('🔥 Falto: mephits 20/30 · 10 leftmepheekas killed 7');
   });
   it('turns into Falto is up, then Falto slain', () => {
     expect(plain(relvHtml({ mephits: 30, total: 30, mepheekas: 90, falto_up: true }))).toContain('Falto is up');

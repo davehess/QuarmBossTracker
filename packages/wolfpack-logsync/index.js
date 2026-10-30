@@ -35900,7 +35900,7 @@ const COMMAND_HTML = `<!doctype html>
     var main = v.falto_slain ? 'Falto slain'
              : (v.falto_up ? 'Falto is up'
              : 'mephits <span class="n">' + (Number(v.mephits) || 0) + '/' + (Number(v.total) || 30) + '</span> · ' + left + ' left');
-    return '<div class="relv"><span>🔥 Relv: ' + main + '</span>'
+    return '<div class="relv"><span>🔥 Falto: ' + main + '</span>'
          +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
   }
   function render(s){
@@ -59543,7 +59543,16 @@ const _RELV_FALTO_RX   = /^Falto, Lord of Thunder$/i;
 const _RELV_FALTO_SEEN_RX = /\]\s+(?:Falto, Lord of Thunder\s|You\b[^']*?\bFalto, Lord of Thunder\b)/;
 const _relvState   = new Map();   // character (lower) → { mephits, mepheekas, faltoUp, faltoSlainAt, startedAt }
 const _relvLogZone = new Map();   // character (lower) → last zone named by a "You have entered" line (lower)
-function _relvFresh(now) { return { mephits: 0, mepheekas: 0, faltoUp: false, faltoSlainAt: 0, startedAt: now }; }
+// When this character last saw Falto (a swing, a hit on him, his death), kept even with no counter running. The guild
+// lead, 2026-10-30, mid-fight on a fresh agent: the counter was started by one of Falto's ADDS dying ("mephits 1/30")
+// because his earlier lines arrived before any counter existed. A counter that starts within FALTO_RECENT_MS of a
+// sighting therefore starts with Falto up, and counts nothing.
+const _relvFaltoSeenAt = new Map();
+const RELV_FALTO_RECENT_MS = 30 * 60 * 1000;
+function _relvFresh(now, cl) {
+  const seen = cl ? _relvFaltoSeenAt.get(cl) : 0;
+  return { mephits: 0, mepheekas: 0, faltoUp: !!seen && now - seen < RELV_FALTO_RECENT_MS, faltoSlainAt: 0, startedAt: now };
+}
 function _relvInStorms(cl) {
   for (const ch of Object.keys(_zealState || {})) {
     if (ch.toLowerCase() !== cl) continue;
@@ -59570,27 +59579,35 @@ function _relvNoteLine(line, character, now) {
   }
   if (line.indexOf('Relv') === -1 && line.indexOf('mephit') === -1 && line.indexOf('mepheeka') === -1 && line.indexOf('Falto') === -1) return;
   let st = _relvLive(cl, now);
-  if (_RELV_START_RX.test(line)) { _relvState.set(cl, _relvFresh(now)); return; }
+  if (_RELV_START_RX.test(line)) { _relvFaltoSeenAt.delete(cl); _relvState.set(cl, _relvFresh(now)); return; }   // a new run: no Falto yet
   if (_RELV_BACK_RX.test(line)) { _relvState.delete(cl); return; }
-  if (_RELV_PORT_RX.test(line)) { if (!st) _relvState.set(cl, _relvFresh(now)); return; }
+  if (_RELV_PORT_RX.test(line)) { if (!st) _relvState.set(cl, _relvFresh(now, cl)); return; }
   const dead = _deadMobNameFromLine(line);
+  if (dead && _RELV_FALTO_RX.test(dead)) {
+    _relvFaltoSeenAt.set(cl, now);
+    if (!st && _relvInStorms(cl)) { st = _relvFresh(now, cl); _relvState.set(cl, st); }
+    if (st) { st.faltoUp = true; st.faltoSlainAt = now; }
+    return;
+  }
   if (dead) {
     if (_RELV_MEPHIT_RX.test(dead)) {
       if (!st) {
         if (!_relvInStorms(cl)) return;
-        st = _relvFresh(now); _relvState.set(cl, st);
+        st = _relvFresh(now, cl); _relvState.set(cl, st);
       }
       if (st.faltoUp) return;   // a Falto add, not one of the 30
       st.mephits++;
       if (st.mephits >= RELV_MEPHITS) { st.mephits = RELV_MEPHITS; st.faltoUp = true; }
     } else if (st && _RELV_MEPHEEKA_RX.test(dead)) {
       st.mepheekas++;
-    } else if (st && _RELV_FALTO_RX.test(dead)) {
-      st.faltoUp = true; st.faltoSlainAt = now;
     }
     return;
   }
-  if (st && !st.faltoUp && _RELV_FALTO_SEEN_RX.test(line)) st.faltoUp = true;
+  if (_RELV_FALTO_SEEN_RX.test(line)) {
+    _relvFaltoSeenAt.set(cl, now);
+    if (!st && _relvInStorms(cl)) { st = _relvFresh(now, cl); _relvState.set(cl, st); }   // joined mid-fight: "Falto is up"
+    if (st) st.faltoUp = true;
+  }
 }
 // The Command Center row: null unless the event is running for this character (so nothing shows for any other fight).
 function _relvSnapshot(character, now) {

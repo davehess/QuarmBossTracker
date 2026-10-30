@@ -696,7 +696,7 @@
     var main = v.falto_slain ? 'Falto slain'
              : (v.falto_up ? 'Falto is up'
              : 'mephits <span class="n">' + (Number(v.mephits) || 0) + '/' + (Number(v.total) || 30) + '</span> · ' + left + ' left');
-    return '<div class="relv"><span>🔥 Relv: ' + main + '</span>'
+    return '<div class="relv"><span>🔥 Falto: ' + main + '</span>'
          +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
   }
   function render(s){
