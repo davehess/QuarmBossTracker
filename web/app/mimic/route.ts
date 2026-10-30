@@ -33,9 +33,9 @@ type Release  = {
   assets: Asset[];
 };
 
-// Fallback URL if the GitHub API call fails — points at the repo's releases
-// page so the user can still find an installer to grab.
-const FALLBACK = 'https://github.com/davehess/QuarmBossTracker/releases';
+// Fallback URL if the GitHub API call fails — points at the latest stable
+// release (the plain list opens on betas) so the user can still grab an installer.
+const FALLBACK = 'https://github.com/davehess/QuarmBossTracker/releases/latest';
 
 export async function GET(req: NextRequest) {
   const direct = req.nextUrl.searchParams.get('direct') === '1';
