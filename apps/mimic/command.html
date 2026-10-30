@@ -105,6 +105,18 @@
   .rollClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
     letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
   .rollClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  /* 🎟 Guests (officers only): one row per guest Mimic link, with +1h / +3h. Same right gutter as the rolls card. */
+  .card.guests-card{padding-right:28px}
+  .guest-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
+  .guest-row .gwhen{flex-shrink:0;font-size:10px;color:#9aa4ad;font-variant-numeric:tabular-nums}
+  .guest-row .gwhen.soon{color:#f0a52d}
+  .guest-row .gwhen.out{color:#f87171}
+  .guest-row .gn{flex-shrink:0;font-size:9px;color:#8b949e;font-variant-numeric:tabular-nums}
+  .guest-row .guestExt{cursor:pointer;flex-shrink:0;color:#e6edf3;font-size:9px;border:1px solid rgba(110,118,129,0.5);
+    border-radius:3px;padding:0 4px;opacity:0.85;user-select:none}
+  .guest-row .guestExt:hover{opacity:1;color:#f0c419;border-color:#f0c419}
+  .guest-row .gflash{flex-shrink:0;font-size:9px;color:#56d364}
+  .guest-row .gflash.bad{color:#f87171}
   .roll-row .rollMore{cursor:pointer;color:#8b949e;font-size:9px;flex-shrink:0;opacity:0.8;user-select:none}
   .roll-row .rollMore:hover{opacity:1;color:#e6edf3}
   .roll-row .rollCopy{cursor:pointer;color:#8b949e;font-size:10px;flex-shrink:0;opacity:0.8;user-select:none;margin-right:4px}
@@ -240,7 +252,7 @@
      too large"): the panel owns the move and hide buttons, so the window padding and the gutter the cure
      and rolls cards keep clear of the hide button both go. */
   body.wp-in-canvas #wrap{padding:2px 3px;min-width:0}
-  body.wp-in-canvas .card.cure-card, body.wp-in-canvas .card.rolls-card{padding-right:7px}
+  body.wp-in-canvas .card.cure-card, body.wp-in-canvas .card.rolls-card, body.wp-in-canvas .card.guests-card{padding-right:7px}
   #setupbar input[type=range]{flex:1;cursor:pointer}
   #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
     display:flex;align-items:center;justify-content:center;border-radius:4px;
@@ -699,6 +711,76 @@
     return '<div class="relv"><span>🔥 Falto: ' + main + '</span>'
          +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
   }
+  // 🎟 Guests (officers only; the guild lead, 2026-10-30: "add guests to the command center for officers/admins with an
+  // extend button for +1/+3"). s.guests is the agent's copy of the bot's guest-link list, or null for anyone who is not
+  // an officer, so the card simply is not there for a raider. A guest whose key ended more than 12 hours ago is left
+  // off (the bot will not revive it; approve a new code on /admin/links), and a revoked one has nothing to extend.
+  // The buttons act on the PRESS like the hail chips: the card repaints once a minute as the clock moves.
+  var GUEST_REVIVE_MS = 12 * 3600000;
+  var _guestPend  = {};   // session id -> true while its extend is in flight
+  var _guestFlash = {};   // session id -> { txt, bad, until }: the answer, shown for a few seconds in place of the buttons
+  function guestSpan(ms){
+    var m = Math.floor(ms / 60000);
+    if (m < 1) return 'under 1m';
+    if (m < 60) return m + 'm';
+    var h = Math.floor(m / 60), r = m % 60;
+    return h + 'h' + (r < 10 ? '0' : '') + r + 'm';
+  }
+  function guestsHtml(list){
+    var now = Date.now();
+    var rows = [];
+    for (var gi = 0; gi < list.length; gi++) {
+      var g = list[gi];
+      if (!g || g.revoked || !g.id) continue;
+      var exp = Date.parse(g.expires_at);
+      if (!isFinite(exp) || exp < now - GUEST_REVIVE_MS) continue;
+      rows.push({ g: g, exp: exp });
+    }
+    if (!rows.length) return '';
+    var col = _isCollapsed('guests');
+    var h = '<div class="card guests-card"><div class="head">' + secToggle('guests', '🎟 Guests', rows.length) + '</div>';
+    if (!col) {
+      h += '<div class="list">';
+      for (var ri = 0; ri < rows.length; ri++) {
+        var gg = rows[ri].g, left = rows[ri].exp - now;
+        var when = left > 0 ? 'expires in ' + guestSpan(left) : 'expired ' + guestSpan(-left) + ' ago';
+        var cls = left <= 0 ? 'out' : (left < 600000 ? 'soon' : '');
+        var n = Number(gg.fights) || 0;
+        var fl = _guestFlash[gg.id];
+        if (fl && fl.until <= now) { delete _guestFlash[gg.id]; fl = null; }
+        var ctl;
+        if (_guestPend[gg.id]) ctl = '<span class="gflash">…</span>';
+        else if (fl) ctl = '<span class="gflash' + (fl.bad ? ' bad' : '') + '">' + esc(fl.txt) + '</span>';
+        else ctl = '<span class="guestExt" data-wp-interact data-guest-id="' + esc(gg.id) + '" data-guest-h="1" title="Keep this guest link open one more hour">+1h</span>'
+                 + '<span class="guestExt" data-wp-interact data-guest-id="' + esc(gg.id) + '" data-guest-h="3" title="Keep this guest link open three more hours">+3h</span>';
+        h += '<div class="row guest-row"><span class="nm" title="' + esc((gg.label || 'Guest') + (gg.approved_by ? ' - approved by ' + gg.approved_by : '')) + '">' + esc(gg.label || 'Guest') + '</span>'
+           +   '<span class="gwhen ' + cls + '">' + esc(when) + '</span>'
+           +   '<span class="gn">' + n + (n === 1 ? ' fight' : ' fights') + '</span>'
+           +   ctl + '</div>';
+      }
+      h += '</div>';
+    }
+    return h + '</div>';
+  }
+  function guestExtend(id, hours){
+    if (!id || _guestPend[id] || (hours !== 1 && hours !== 3)) return;
+    _guestPend[id] = true;
+    if (_lastState) render(_lastState);
+    var done = function(txt, bad){
+      delete _guestPend[id];
+      _guestFlash[id] = { txt: txt, bad: !!bad, until: Date.now() + 4000 };
+      tick();
+    };
+    fetch('http://127.0.0.1:' + PORT + '/api/guest-extend', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, hours: hours }),
+    }).then(function(r){
+      return r.json().then(function(j){ return { ok: r.ok && j && j.ok, err: j && j.error }; }, function(){ return { ok: false, err: '' }; });
+    }).then(function(res){
+      done(res.ok ? '+' + hours + 'h ✓' : (res.err === 'revoked' ? 'revoked' : (res.err && res.err.indexOf('expired too long') === 0 ? 'too old' : 'failed')), !res.ok);
+    }, function(){ done('failed', true); });
+  }
+
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -981,6 +1063,9 @@
       }
     }
 
+    // 🎟 Guests (officers only): s.guests is null for everyone else, and an empty list draws nothing.
+    if (s.guests && s.guests.length) html += guestsHtml(s.guests);
+
     // Curse/Cure alerts — reuses the buff queue's real observed-debuff
     // tracking (not chat parsing) so it stays accurate even when nobody's
     // typed a "please cure" macro. Per-line ✕ + "clear all" dismiss (#66) are
@@ -1123,6 +1208,14 @@
       if (!chip) return;
       e.preventDefault(); e.stopPropagation();
       hailTap(chip.getAttribute('data-hail-win'), chip.getAttribute('data-hail-name'), chip.getAttribute('data-hail-act') === 'mark');
+    });
+    // Guests card: +1h / +3h act on the press too (the card repaints as the clock moves).
+    contentEl.addEventListener('mousedown', function(e){
+      if (e.button !== 0) return;
+      var ext = e.target && e.target.closest ? e.target.closest('.guestExt') : null;
+      if (!ext) return;
+      e.preventDefault(); e.stopPropagation();
+      guestExtend(ext.getAttribute('data-guest-id'), Number(ext.getAttribute('data-guest-h')));
     });
     contentEl.addEventListener('click', function(e){
       var hmore = e.target && e.target.closest ? e.target.closest('.hail-more') : null;

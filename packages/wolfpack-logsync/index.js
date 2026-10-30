@@ -18896,6 +18896,9 @@ function _serializeForDashboard() {
     // Officer-only DKP tick sources — live raid roster + detected RaidTick
     // files. null when not an officer. Submitted via POST /api/dkp/tick.
     dkpTick:            (_mimicIdentity && _mimicIdentity.is_officer) ? _dkpTickSnapshot() : null,
+    // Officer-only: the guest Mimic links (label, expiry, fight count) for the Command Center's Guests card, read
+    // lazily from the bot (fetchGuestLinks). null for a non-officer, or when the bot has no list to give.
+    guests:             (_mimicIdentity && _mimicIdentity.is_officer) ? _guestLinksSnapshot() : null,
     // Zeal's "Export data on /camp" toggle, read straight from zeal.ini in
     // each known EQ folder (60s cache). true = every found zeal.ini has
     // ExportOnCamp=TRUE; false = at least one has it off; null = no zeal.ini
@@ -35309,6 +35312,18 @@ const COMMAND_HTML = `<!doctype html>
   .rollClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
     letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
   .rollClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  /* 🎟 Guests (officers only): one row per guest Mimic link, with +1h / +3h. Same right gutter as the rolls card. */
+  .card.guests-card{padding-right:28px}
+  .guest-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
+  .guest-row .gwhen{flex-shrink:0;font-size:10px;color:#9aa4ad;font-variant-numeric:tabular-nums}
+  .guest-row .gwhen.soon{color:#f0a52d}
+  .guest-row .gwhen.out{color:#f87171}
+  .guest-row .gn{flex-shrink:0;font-size:9px;color:#8b949e;font-variant-numeric:tabular-nums}
+  .guest-row .guestExt{cursor:pointer;flex-shrink:0;color:#e6edf3;font-size:9px;border:1px solid rgba(110,118,129,0.5);
+    border-radius:3px;padding:0 4px;opacity:0.85;user-select:none}
+  .guest-row .guestExt:hover{opacity:1;color:#f0c419;border-color:#f0c419}
+  .guest-row .gflash{flex-shrink:0;font-size:9px;color:#56d364}
+  .guest-row .gflash.bad{color:#f87171}
   .roll-row .rollMore{cursor:pointer;color:#8b949e;font-size:9px;flex-shrink:0;opacity:0.8;user-select:none}
   .roll-row .rollMore:hover{opacity:1;color:#e6edf3}
   .roll-row .rollCopy{cursor:pointer;color:#8b949e;font-size:10px;flex-shrink:0;opacity:0.8;user-select:none;margin-right:4px}
@@ -35444,7 +35459,7 @@ const COMMAND_HTML = `<!doctype html>
      too large"): the panel owns the move and hide buttons, so the window padding and the gutter the cure
      and rolls cards keep clear of the hide button both go. */
   body.wp-in-canvas #wrap{padding:2px 3px;min-width:0}
-  body.wp-in-canvas .card.cure-card, body.wp-in-canvas .card.rolls-card{padding-right:7px}
+  body.wp-in-canvas .card.cure-card, body.wp-in-canvas .card.rolls-card, body.wp-in-canvas .card.guests-card{padding-right:7px}
   #setupbar input[type=range]{flex:1;cursor:pointer}
   #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
     display:flex;align-items:center;justify-content:center;border-radius:4px;
@@ -35903,6 +35918,76 @@ const COMMAND_HTML = `<!doctype html>
     return '<div class="relv"><span>🔥 Falto: ' + main + '</span>'
          +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
   }
+  // 🎟 Guests (officers only; the guild lead, 2026-10-30: "add guests to the command center for officers/admins with an
+  // extend button for +1/+3"). s.guests is the agent's copy of the bot's guest-link list, or null for anyone who is not
+  // an officer, so the card simply is not there for a raider. A guest whose key ended more than 12 hours ago is left
+  // off (the bot will not revive it; approve a new code on /admin/links), and a revoked one has nothing to extend.
+  // The buttons act on the PRESS like the hail chips: the card repaints once a minute as the clock moves.
+  var GUEST_REVIVE_MS = 12 * 3600000;
+  var _guestPend  = {};   // session id -> true while its extend is in flight
+  var _guestFlash = {};   // session id -> { txt, bad, until }: the answer, shown for a few seconds in place of the buttons
+  function guestSpan(ms){
+    var m = Math.floor(ms / 60000);
+    if (m < 1) return 'under 1m';
+    if (m < 60) return m + 'm';
+    var h = Math.floor(m / 60), r = m % 60;
+    return h + 'h' + (r < 10 ? '0' : '') + r + 'm';
+  }
+  function guestsHtml(list){
+    var now = Date.now();
+    var rows = [];
+    for (var gi = 0; gi < list.length; gi++) {
+      var g = list[gi];
+      if (!g || g.revoked || !g.id) continue;
+      var exp = Date.parse(g.expires_at);
+      if (!isFinite(exp) || exp < now - GUEST_REVIVE_MS) continue;
+      rows.push({ g: g, exp: exp });
+    }
+    if (!rows.length) return '';
+    var col = _isCollapsed('guests');
+    var h = '<div class="card guests-card"><div class="head">' + secToggle('guests', '🎟 Guests', rows.length) + '</div>';
+    if (!col) {
+      h += '<div class="list">';
+      for (var ri = 0; ri < rows.length; ri++) {
+        var gg = rows[ri].g, left = rows[ri].exp - now;
+        var when = left > 0 ? 'expires in ' + guestSpan(left) : 'expired ' + guestSpan(-left) + ' ago';
+        var cls = left <= 0 ? 'out' : (left < 600000 ? 'soon' : '');
+        var n = Number(gg.fights) || 0;
+        var fl = _guestFlash[gg.id];
+        if (fl && fl.until <= now) { delete _guestFlash[gg.id]; fl = null; }
+        var ctl;
+        if (_guestPend[gg.id]) ctl = '<span class="gflash">…</span>';
+        else if (fl) ctl = '<span class="gflash' + (fl.bad ? ' bad' : '') + '">' + esc(fl.txt) + '</span>';
+        else ctl = '<span class="guestExt" data-wp-interact data-guest-id="' + esc(gg.id) + '" data-guest-h="1" title="Keep this guest link open one more hour">+1h</span>'
+                 + '<span class="guestExt" data-wp-interact data-guest-id="' + esc(gg.id) + '" data-guest-h="3" title="Keep this guest link open three more hours">+3h</span>';
+        h += '<div class="row guest-row"><span class="nm" title="' + esc((gg.label || 'Guest') + (gg.approved_by ? ' - approved by ' + gg.approved_by : '')) + '">' + esc(gg.label || 'Guest') + '</span>'
+           +   '<span class="gwhen ' + cls + '">' + esc(when) + '</span>'
+           +   '<span class="gn">' + n + (n === 1 ? ' fight' : ' fights') + '</span>'
+           +   ctl + '</div>';
+      }
+      h += '</div>';
+    }
+    return h + '</div>';
+  }
+  function guestExtend(id, hours){
+    if (!id || _guestPend[id] || (hours !== 1 && hours !== 3)) return;
+    _guestPend[id] = true;
+    if (_lastState) render(_lastState);
+    var done = function(txt, bad){
+      delete _guestPend[id];
+      _guestFlash[id] = { txt: txt, bad: !!bad, until: Date.now() + 4000 };
+      tick();
+    };
+    fetch('http://127.0.0.1:' + PORT + '/api/guest-extend', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, hours: hours }),
+    }).then(function(r){
+      return r.json().then(function(j){ return { ok: r.ok && j && j.ok, err: j && j.error }; }, function(){ return { ok: false, err: '' }; });
+    }).then(function(res){
+      done(res.ok ? '+' + hours + 'h ✓' : (res.err === 'revoked' ? 'revoked' : (res.err && res.err.indexOf('expired too long') === 0 ? 'too old' : 'failed')), !res.ok);
+    }, function(){ done('failed', true); });
+  }
+
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -36185,6 +36270,9 @@ const COMMAND_HTML = `<!doctype html>
       }
     }
 
+    // 🎟 Guests (officers only): s.guests is null for everyone else, and an empty list draws nothing.
+    if (s.guests && s.guests.length) html += guestsHtml(s.guests);
+
     // Curse/Cure alerts — reuses the buff queue's real observed-debuff
     // tracking (not chat parsing) so it stays accurate even when nobody's
     // typed a "please cure" macro. Per-line ✕ + "clear all" dismiss (#66) are
@@ -36327,6 +36415,14 @@ const COMMAND_HTML = `<!doctype html>
       if (!chip) return;
       e.preventDefault(); e.stopPropagation();
       hailTap(chip.getAttribute('data-hail-win'), chip.getAttribute('data-hail-name'), chip.getAttribute('data-hail-act') === 'mark');
+    });
+    // Guests card: +1h / +3h act on the press too (the card repaints as the clock moves).
+    contentEl.addEventListener('mousedown', function(e){
+      if (e.button !== 0) return;
+      var ext = e.target && e.target.closest ? e.target.closest('.guestExt') : null;
+      if (!ext) return;
+      e.preventDefault(); e.stopPropagation();
+      guestExtend(ext.getAttribute('data-guest-id'), Number(ext.getAttribute('data-guest-h')));
     });
     contentEl.addEventListener('click', function(e){
       var hmore = e.target && e.target.closest ? e.target.closest('.hail-more') : null;
@@ -36866,6 +36962,23 @@ function startWebDashboard(port) {
         catch (e) { console.error('[api/command-center] serialize failed, serving last-good:', e && (e.stack || e.message || e)); _b = _commandCenterLastGood; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
+      }
+      // Command Center Guests card: +1h / +3h on a guest Mimic link. Officer-gated here and again on the bot, which
+      // owns the revival window and the revoked check; this route only checks the shape and forwards.
+      if (req.url === '/api/guest-extend' && req.method === 'POST') {
+        if (!(_mimicIdentity && _mimicIdentity.is_officer)) { res.writeHead(403, { 'Content-Type': 'application/json' }); return res.end('{"error":"officers only"}'); }
+        let gp;
+        try { gp = JSON.parse(await _readBody(req, 2 * 1024) || '{}'); }
+        catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end('{"error":"bad json"}'); }
+        const gid = String((gp && gp.id) || '');
+        const ghours = gp && gp.hours;
+        if (!/^[0-9a-f-]{36}$/i.test(gid) || (ghours !== 1 && ghours !== 3)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end('{"error":"id and hours (1 or 3) required"}');
+        }
+        const gr = await extendGuestLink(gid, ghours);
+        res.writeHead(gr.status, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(gr.body));
       }
       // Command Center tap on a name in the hail board — marks (or unmarks) it hailed for the whole raid.
       if (req.url === '/api/hail-mark' && req.method === 'POST') return _handleHailMark(req, res);
@@ -56594,6 +56707,104 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
     req.on('timeout', () => { req.destroy(); _buffQueueInflight.delete(key); });
     req.end();
   } catch { _buffQueueInflight.delete(key); }
+}
+
+// ── Guest links for officers (Command Center "Guests" card) ──────────────────
+// The guild lead, 2026-10-30: "add guests to the command center for officers/admins with an extend button for +1/+3".
+// An OFFICER's agent asks the bot for the guest Mimic links (GET /api/agent/guest-links) and the card extends one by
+// 1 or 3 hours (POST /api/agent/guest-links/extend). Both routes are officer-only on the bot (utils/guestLinks.js); the
+// agent additionally never asks unless the signed-in identity is an officer, so a raider's agent makes no call at all.
+// Like fetchRaidBuffQueue the read is LAZY: _serializeCommandCenterState asks for it, and the Command Center polls
+// that only while its window is open, so a closed window costs nothing. Every failure is quiet: `guests` stays null
+// and the card is simply absent. A bot that predates the route (404) or a refusal (403) backs off for 5 minutes.
+const GUEST_LINKS_TTL_MS     = 30 * 1000;
+const GUEST_LINKS_BACKOFF_MS = 5 * 60 * 1000;
+let _guestLinks = { at: 0, guests: null, retryAt: 0, inflight: false, logged: false };
+function _guestLinksUrl(suffix) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return null;
+  return opts.botUrl.replace(/\/encounter(\?.*)?$/, suffix);
+}
+function _guestLinksQuiet(why) {
+  if (!_guestLinks.logged) { _guestLinks.logged = true; console.log('[guest-links] no guest list (' + why + '); the Guests card stays hidden'); }
+}
+function fetchGuestLinks() {
+  if (!(_mimicIdentity && _mimicIdentity.is_officer)) return;
+  const now = Date.now();
+  if (_guestLinks.inflight || now < _guestLinks.retryAt || (now - _guestLinks.at) < GUEST_LINKS_TTL_MS) return;
+  const url = _guestLinksUrl('/guest-links');
+  if (!url) return;
+  _guestLinks.inflight = true;
+  // A refusal (403/404) drops the list; a blip (timeout, 5xx) keeps the last good one so the card does not flicker off.
+  const done = (guests, retryMs, why) => {
+    _guestLinks.inflight = false;
+    _guestLinks.at = Date.now();
+    if (guests || retryMs) _guestLinks.guests = guests;
+    _guestLinks.retryAt = retryMs ? Date.now() + retryMs : 0;
+    if (!guests && why) _guestLinksQuiet(why);
+  };
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + _uploadOpts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => { if (body.length < 256 * 1024) body += c; });
+      res.on('end', () => {
+        if (res.statusCode === 404 || res.statusCode === 403) return done(null, GUEST_LINKS_BACKOFF_MS, 'bot answered ' + res.statusCode);
+        if (res.statusCode !== 200) return done(null, 0, 'bot answered ' + res.statusCode);
+        try {
+          const j = JSON.parse(body);
+          done(Array.isArray(j.guests) ? j.guests : null, 0, 'unreadable answer');
+        } catch { done(null, 0, 'unreadable answer'); }
+      });
+    });
+    req.on('error',   () => done(null, 0, 'bot unreachable'));
+    req.on('timeout', () => { req.destroy(); done(null, 0, 'timed out'); });
+    req.end();
+  } catch { done(null, 0, 'bad bot url'); }
+}
+// What the Command Center state carries: the list, or null for a non-officer / nothing known yet.
+function _guestLinksSnapshot() {
+  fetchGuestLinks();
+  return Array.isArray(_guestLinks.guests) ? _guestLinks.guests : null;
+}
+// POST /api/guest-extend { id, hours: 1 | 3 } -> the bot's reply, passed through. On success the cached row takes the
+// new expiry at once and the list is refetched on the next poll, so the card never flips back to the old time.
+function extendGuestLink(id, hours) {
+  return new Promise((resolve) => {
+    const url = _guestLinksUrl('/guest-links/extend');
+    if (!url) return resolve({ status: 503, body: { ok: false, error: 'not connected to the bot' } });
+    const payload = JSON.stringify({ id, hours });
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const req = mod.request({
+        method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+        headers: {
+          'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload),
+          'Authorization': 'Bearer ' + _uploadOpts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`,
+        }, timeout: 10000,
+      }, (res) => {
+        let body = '';
+        res.on('data', c => { if (body.length < 64 * 1024) body += c; });
+        res.on('end', () => {
+          let j = null; try { j = JSON.parse(body); } catch { j = null; }
+          if (res.statusCode === 200 && j && j.ok && j.guest && Array.isArray(_guestLinks.guests)) {
+            _guestLinks.guests = _guestLinks.guests.map(g => (g && g.id === id ? { ...g, expires_at: j.guest.expires_at, revoked: false } : g));
+            _guestLinks.at = 0;   // refetch on the next poll
+          }
+          resolve({ status: res.statusCode || 502, body: j || { ok: false, error: 'unreadable answer' } });
+        });
+      });
+      req.on('error',   () => resolve({ status: 502, body: { ok: false, error: 'bot unreachable' } }));
+      req.on('timeout', () => { req.destroy(); resolve({ status: 504, body: { ok: false, error: 'bot timed out' } }); });
+      req.end(payload);
+    } catch { resolve({ status: 502, body: { ok: false, error: 'bad bot url' } }); }
+  });
 }
 
 // ── PoP raid objectives proxy (popraid.html) ─────────────────────────────────
