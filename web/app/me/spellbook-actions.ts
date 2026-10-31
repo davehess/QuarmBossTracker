@@ -93,6 +93,11 @@ export async function uploadSpellbook(characterName: string, rawText: string): P
     const { error } = await admin.from('character_spellbook').insert(rows.slice(i, i + 500));
     if (error) return { ok: false, error: error.message };
   }
+  // Same upload-arrival stamps the bot writes for a Mimic upload (migration 20261031120000). An extra: its error is
+  // not read, so a failed stamp never fails the upload.
+  await admin.from('characters')
+    .update({ spellbook_synced_at: now, spellbook_checked_at: now })
+    .eq('guild_id', GUILD_TAG).ilike('name', canonical);
 
   revalidatePath('/me');
   return { ok: true, count: rows.length };

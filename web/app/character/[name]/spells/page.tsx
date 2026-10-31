@@ -30,6 +30,8 @@ import { fetchScrollSources } from '@/lib/capSafeReads';
 import MissingSpellsView from './MissingSpellsView';
 import { poolTierByName, type PoolRow } from '@/lib/popSpells';
 import { GUILD_TAG } from '@/lib/guild';
+import UploadFreshness from '@/components/UploadFreshness';
+import { loadUploadStampRow, uploadStampsFor } from '@/lib/uploadFreshnessServer';
 
 import type { Metadata } from 'next';
 import MoreInfo from '@/components/MoreInfo';
@@ -129,6 +131,14 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
 
   const hasBook = (scribedCount ?? 0) > 0;
 
+  // When each upload last arrived (past the visibility gate above, so inventory and spells are both the viewer's to see).
+  const stampRow = await loadUploadStampRow(decoded);
+  const [gearStamps, invStamps, spellStamps] = await Promise.all([
+    uploadStampsFor('gear', decoded, stampRow),
+    uploadStampsFor('inventory', decoded, stampRow),
+    uploadStampsFor('spells', decoded, stampRow),
+  ]);
+
   // Where-from sources for every missing scroll, one RPC. Failure here only
   // costs the dropdown detail — the list itself must still render.
   let sourcesByItem: Record<number, ItemSources> = {};
@@ -197,6 +207,7 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
           someone uploads.
           </MoreInfo>
         </div>
+        <UploadFreshness gear={gearStamps} inventory={invStamps} spells={spellStamps} />
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-dim">
           <span>Class: <span className="text-text">{baseClass ?? '—'}</span></span>
           <span>Scribed: <span className="text-text">{scribedCount ?? 0}</span></span>

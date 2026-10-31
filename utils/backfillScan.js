@@ -604,9 +604,10 @@ async function _npcFamilyRows(supabase, encounters) {
   const sel = 'select=id,name,level,maxlevel,hp,runspeed,special_abilities,npcspecialattks&limit=200';
   await Promise.all([...wanted.entries()].map(async ([base, npcIds]) => {
     try {
-      const p = encodeURIComponent(base);
+      // Double-quoted: a comma in a name (Falto,_Lord_of_Thunder) otherwise breaks the or=(…) list and the query fails.
+      const q = (v) => encodeURIComponent(/[,.:()"\\]/.test(v) ? '"' + String(v).replace(/["\\]/g, '\\$&') + '"' : v);
       const rows = await supabase.select('eqemu_npc_types',
-        `or=(name.ilike.${p},name.ilike.${encodeURIComponent('#' + base)},name.ilike.${encodeURIComponent(base + '_')})&${sel}`);
+        `or=(name.ilike.${q(base)},name.ilike.${q('#' + base)},name.ilike.${q(base + '_')})&${sel}`);
       for (const id of npcIds) out.set(id, Array.isArray(rows) ? rows : []);
     } catch { /* one mob failing must not kill the scan */ }
   }));

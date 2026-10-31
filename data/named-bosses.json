@@ -60,7 +60,11 @@
     "postorms": { "zoneId": 210, "name": "Plane of Storms", "bosses": [
       { "id": 210062, "name": "Askr the Lost" },
       { "id": 210251, "name": "Neffiken, Lord of Kelek`Vor" },
-      { "id": 210332, "name": "Gurebk, Lord of Krendic" }
+      { "id": 210332, "name": "Gurebk, Lord of Krendic" },
+      { "id": 210472, "name": "Jeplak, Lord of Srerendi" },
+      { "id": 210470, "name": "Falto, Lord of Thunder" },
+      { "id": 210471, "name": "Ston`Ruak, Ancient of the Trees" },
+      { "id": 210469, "name": "Drornok Tok Vo`Lok" }
     ] },
     "povalor": { "zoneId": 208, "name": "Plane of Valor", "bosses": [
       { "id": 208074, "name": "Aerin`Dar" },

@@ -54,7 +54,7 @@ export const STEP_HOME: Record<string, string> = {
   // Tier Two
   flag_tthule: 'ponb', nightmare_poxbourne: 'ponb',
   cod_fuirstel_before: 'cod', flag_carprin: 'cod', flag_bert: 'cod', cod_fuirstel_after: 'cod',
-  flag_askr: 'storms', storms_zone_bot: 'storms',
+  flag_askr: 'storms', storms_zone_bot: 'storms', storms_relv_falto: 'storms',
   valor_globe: 'valor', flag_aerindar: 'valor', valor_zone_hoh: 'valor',
   torment_fahlia: 'torment', torment_sphere: 'torment', flag_keeper: 'torment', flag_saryrn: 'torment', torment_return: 'torment',
   // Tier Three

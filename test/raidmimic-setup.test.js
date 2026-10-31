@@ -115,7 +115,7 @@ describe('the page', () => {
     expect(page).toMatch(/TROUBLESHOOTING\.list\.map/);
   });
   it('step 1: the releases page, the SmartScreen way through, and the requirements', () => {
-    expect(S.RELEASES_URL).toBe('https://github.com/davehess/QuarmBossTracker/releases');
+    expect(S.RELEASES_URL).toBe('https://github.com/davehess/QuarmBossTracker/releases/latest');
     const dl = S.STEPS.find(s => s.id === 'download');
     expect(dl.link.href).toBe(S.RELEASES_URL);
     expect(JSON.stringify(dl)).toMatch(/More info/);

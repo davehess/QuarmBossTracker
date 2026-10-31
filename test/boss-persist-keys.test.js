@@ -158,6 +158,34 @@ describe('_resolveBossForPersist — resolution order', () => {
     expect(await _resolveBossForPersist('Tunare', null, sb)).toBe(null);
   });
 
+  // The guild lead, 2026-10-30: "Falto should be included". The comma in the name ended the or=() value unquoted, and
+  // PostgREST refused the whole query, so the fight was dropped.
+  it('a comma name is double-quoted inside or=() and resolves', async () => {
+    const queries = [];
+    const sb = fakeSupabase({});
+    const base = sb.select;
+    sb.select = async (table, query) => {
+      if (table !== 'eqemu_npc_types') return base(table, query);
+      queries.push(query);
+      // Like PostgREST: an unquoted comma inside a value is a parse error.
+      const vals = [...query.matchAll(/name\.eq\.([^,)]+)/g)].map(m => decodeURIComponent(m[1]));
+      if (vals.some(v => !v.startsWith('"') && v.includes(','))) throw new Error('PGRST100');
+      return vals.map(v => v.replace(/^"|"$/g, '')).filter(v => v === 'Falto,_Lord_of_Thunder').map(() => ({ id: 210470 }));
+    };
+    const r = await _resolveBossForPersist('Falto, Lord of Thunder', null, sb);
+    expect(queries[0]).toContain(encodeURIComponent('"Falto,_Lord_of_Thunder"'));
+    expect(r).toEqual({ internalId: 'falto_lord_of_thunder', registered: true });
+    expect(sb.inserts).toEqual([expect.objectContaining({ npc_id: 210470, auto_registered: false })]);
+  });
+
+  it('two bodies under one name: the curated named-boss id wins (the real Jeplak over the fake)', async () => {
+    const sb = fakeSupabase({ eqemuByName: { 'Jeplak,_Lord_of_Srerendi': 210472, '#Jeplak,_Lord_of_Srerendi': 210300 } });
+    sb.select = (orig => async (table, query) => orig(table, query.replace(/%22/g, '')))(sb.select);
+    const r = await _resolveBossForPersist('Jeplak, Lord of Srerendi', null, sb);
+    expect(r).toEqual({ internalId: 'jeplak_lord_of_srerendi', registered: true });
+    expect(sb.inserts).toEqual([expect.objectContaining({ npc_id: 210472 })]);
+  });
+
   it('the live path still prefers the curated id over the raw slug', async () => {
     const sb = fakeSupabase({ localByKey: { nanzata_warder: true, nanzata_the_warder: true } });
     const r = await _resolveBossForPersist('Nanzata the Warder', 'nanzata_warder', sb);

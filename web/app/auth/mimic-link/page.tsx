@@ -102,12 +102,40 @@ export default async function MimicLinkPage({
   searchParams: { code?: string; error?: string; ok?: string };
 }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
+  const prefilled = String(searchParams.code || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
   if (!user) {
     const next = '/auth/mimic-link' + (searchParams.code ? `?code=${encodeURIComponent(searchParams.code)}` : '');
-    redirect(`/auth/signin?next=${encodeURIComponent(next)}`);
+    // A guest raider from another guild must not be sent into Discord sign-in: it walks them into joining the Wolf Pack
+    // Discord and a link that needs a role they will never have (the guild lead, 2026-10-30). With a code in hand they
+    // get a choice instead; the guest half shows the code to send to the officer, who approves it on /admin/links.
+    if (!/^[A-Z0-9]{4,12}$/.test(prefilled)) redirect(`/auth/signin?next=${encodeURIComponent(next)}`);
+    return (
+      <div className="max-w-lg mx-auto mt-10 space-y-6">
+        <section className="bg-panel border border-border rounded-lg p-6">
+          <h2 className="text-xl text-gold mb-2">Wolf Pack member?</h2>
+          <p className="text-sm text-dim mb-4">Sign in with Discord to link this Mimic to your account.</p>
+          <Link href={`/auth/signin?next=${encodeURIComponent(next)}`}
+            className="inline-block bg-blue text-white rounded px-4 py-2 text-sm font-bold hover:bg-blue/90">
+            Sign in with Discord
+          </Link>
+        </section>
+        <section className="bg-panel border border-border rounded-lg p-6">
+          <h2 className="text-xl text-gold mb-2">Raiding with Wolf Pack as a guest?</h2>
+          <p className="text-sm text-dim mb-4">
+            You do not need to sign in or join our Discord. Send this code to the Wolf Pack officer who invited you:
+          </p>
+          <div className="font-mono text-3xl tracking-[0.3em] text-center text-text bg-bg border border-border rounded px-3 py-3 mb-4 select-all">
+            {prefilled}
+          </div>
+          <p className="text-sm text-dim">
+            Keep Mimic open. When they approve it, Mimic links by itself within a few seconds, and your fight parses join the
+            raid&apos;s. The code lasts 10 minutes: if it runs out, press Sign in again in Mimic for a new one.
+          </p>
+        </section>
+      </div>
+    );
   }
 
-  const prefilled = String(searchParams.code || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
   const errorMsg  = searchParams.error ? (ERROR_LABELS[searchParams.error] || `Error: ${searchParams.error}`) : null;
   const okMsg     = searchParams.ok    ? (OK_LABELS[searchParams.ok]       || OK_LABELS['1'])              : null;
 

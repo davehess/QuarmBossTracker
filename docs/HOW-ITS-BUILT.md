@@ -55,6 +55,19 @@ Component paths: bot = `/index.js` + `commands/` + `utils/`; agent =
 - ⚠ **PQDI answers only on `www.pqdi.cc`** and has no GET search URL;
   `test/pqdi-links.test.js` guards both.
 
+### Guest Mimic links — a raider from another guild uploads parses (2026-10-30)
+- **Surface**: bot + web. `/admin/links` "Guest links" (`web/app/admin/links/guest-link-actions.ts`, expiry math in `web/lib/guestLink.ts`) stamps
+  the Mimic link code `authorized_via = 'guest'` with a label and an expiry; `handlePoll` in `utils/mimicLink.js` mints the session with
+  `scope = 'guest'`, `expires_at` and a `guest:<session id>` discord id. Columns: migration `20261030150000_mimic_guest_sessions.sql`.
+- **Enforcement**: one allowlist in `requireAgentAuth` (`GUEST_ALLOWED_ROUTES`): the parse upload and the stream-less poll; everything else is
+  403 `guest_scope`. `_handleAgentUpload` in `index.js` treats a guest like a replay for live side effects and skips the member-keyed writes.
+- **Ends** at `expires_at` (401), or on Revoke (within a minute). Tests: `test/guest-link.test.js`. Decision §474.
+- **Extend and review (2026-10-30, §476)**: officer-only `GET /api/agent/guest-links` and `POST /api/agent/guest-links/extend` (`utils/guestLinks.js`;
+  `forgetGuestSession` in `utils/mimicLink.js`). Extend is max(now, expiry) + 1 or 3 h; a key lapsed under 12 h can be revived, a revoked one never.
+  Surfaces: the Command Center "Guests" card (agent `_guestLinksSnapshot` + `POST /api/guest-extend`, `apps/mimic/command.html`, beta only);
+  `/admin/links` +1h / +3h (`extendGuestSession`, math in `web/lib/guestLink.ts`); `/admin/guests` lists every guest link and their fights. Tests
+  `test/guest-extend.test.js`, `test/guest-extend-web.test.js`, `test/command-guests.test.js`.
+
 ### Keys assumed from loot · the quest tracker's sharing (2026-09-25)
 - **Keyed zones** — `locked_zone_keys`: the five zones whose entry door needs a
   key in `eqemu_doors` (Veeshan's Peak, Sleeper's Tomb, Howling Stones, Sebilis,
@@ -465,6 +478,18 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   branch; the data is `loadRoute` (`routeData.ts`, which now also returns every flag shown for a character).
   `NextUp.tsx` (client, follows `?c=`), `NextTable.tsx` (server). Cells and links use the rows' own ids (`guide-<key>`,
   `route-<key>`); `GuideRoute.tsx` opens the level a `#route-<key>` link points into. Test `test/pop-next-steps.test.js`.
+
+### PoP guide: "Getting there" line (`/pop/guide?v=b`, beta preview, web 2.1.66, 2026-10-29)
+- The guild lead, 2026-10-29: "take the paths we know and build that into the plan". One compact line above the first
+  step of each zone's run of steps ("PoK book → Tranquility → Valor portal (needs Mavuin 3)"), and, where
+  `web/lib/popTravel.ts` has a repeat-visit shortcut, a muted second line. A pick between this and leaving the guide as
+  it is is the guild lead's; `?v=c` and the default view are untouched.
+- `web/lib/popGettingThere.ts` (server) turns `FORWARD_ROUTES` into sentences from a `PHRASE` table (one entry per hop,
+  held to the routes by `test/pop-getting-there.test.js`) and places each step in a zone (`stepZone`: its flag-chart link,
+  else its first placed NPC, else `STEP_ZONE`). `web/lib/popGettingThereRuns.ts` is the import-free half the client
+  uses (`startsOfRuns`: the line goes on the first SHOWN step of a zone's run; a step with no zone does not break the run,
+  a Plane of Knowledge step ends it). Only the finished sentences cross to the browser (~5 KB), never popTravel's `src` /
+  `unverified` (~90 KB). `GuideRoute.tsx` draws it (`GettingThereLine`).
 
 ### PoP guide steps in script order (web 1.8.88, Mimic beta, 2026-10-03)
 - `GuideItem.seq?: Act[]` in `web/lib/popGuide.ts` (the `SEQ` table): hail / say / give / get / kill / click /
@@ -1018,6 +1043,16 @@ The guild lead picked option C of three mockups (DECISIONS §106–§107). The t
 - **Your layouts**: one tile per saved per-character layout (`_wpOvLaysHtml`), with its ✕ forget and a
   "Save current layout for <character>" tile. Each tile lists the overlays that are on; the per-character
   profile holds no positions, so there is no sketch. The auto-switch checkbox is `#wpCharProfEn`.
+  Switching the Canvas yourself (or loading a set) also writes the active character's layout's Canvas flag
+  (`_noteCanvasChoice`), so a relaunch keeps your answer; test `test/canvas-per-character.test.js`.
+  **Since 2026-10-30 (beta, DECISIONS §468) each character's LAST layout is kept automatically**: the full overlay-set
+  snapshot (Canvas and its panels included) in `overlay-last.json`, written 2 s after a change settles
+  (`_lastLayoutWatch`), applied on a swap by `_lastLayoutObserve` / `_switchLastLayout` only when the other client has
+  been quiet 60 s (`zealClients`), store helpers `loadLast/putLast/lastFor/removeLast` in `overlaySets.js`; test
+  `test/char-last-layout.test.js`. The visibility-only profile above is used for a character only until they have one.
+  Same day: the Overlays tab's **⇅ Timers start at** (`wpOvTimersOrderBtn` → bridge `timersTopDown` →
+  `wp-timers-order-toggle`), a folded window's name chip reads "click to restore" (`preload.js` `_WP_NAME_CSS`), and
+  Target Info refits after a width change (`mobinfo.html` resize listener → `_fitHeight`).
   **Since agent 4.0.30 (FB-101) the same save also writes where everything sits**: the overlay set "Saved layout"
   (`_saveLayoutSnapshot` in `_captureCharProfile`: rects, look, floors), and the tile beside it, **↩ Restore saved
   layout** (`#wpLayoutRestore`; bridge `layoutRestore` → IPC `layout-restore` → `_restoreSavedLayout`), is also a tray
@@ -1112,6 +1147,14 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   flag OR the list), served by `_buildMobInfo` in `index.js` and `utils/zoneSpawns.js`. Add a boss by adding its id to
   the JSON. Test: `test/named-bosses.test.js`.
 
+### Relv event mephit counter (agent 4.0.45 beta, 2026-10-30; DECISIONS §471)
+- **What:** a Command Center row during Relv the Mysterious's event in Plane of Storms: "Relv: mephits N/30 · M left"
+  and mepheekas killed, then "Falto is up" / "Falto slain". Shows for this event only. A per-client floor: a death far
+  across the clearing prints no line here. Falto's same-named mephit adds are not counted.
+- **Where:** agent `_relvNoteLine` / `_relvSnapshot` (beside `_deadMobNameFromLine`) → Command Center state `relv` →
+  `apps/mimic/command.html` `relvHtml`. Source: SecretsOTheP/quests `postorms/encounters/Relv.lua` @ 572bc06. Test:
+  `test/relv-mephit-counter.test.js`.
+
 ### Several rampages at once (agent 3.8.4 beta, 2026-10-19; DECISIONS §373)
 - **What:** one Command Center row per rampaging boss, and named bosses' rampages spoken by name.
 - **Where:** agent `stats.currentRampages`, tank state `rampages`, `apps/mimic/command.html` `rampHtml`. Test:
@@ -1197,6 +1240,13 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Where:** agent `POST /api/map-kill` (same path as a log death); buttons on the Map's Up, Watched and Engaged rows.
   Test: `test/map-watch-agent.test.js`. Charm aging's default-off lives beside it in `BUILTIN_DEFAULT_MODES`
   (`test/trigger-rules.test.js`).
+
+### Timers panel name picker: autocomplete, spell bar, most-cast (agent 4.0.41, Mimic beta draft, 2026-10-29; DECISIONS §467)
+- **What:** the name box in a Timers panel's ⚙ menu lists names A to Z, narrowing as you type; each row says where it came from
+  (on your bar / cast N× / live now). Click or Up/Down + Enter claims it (one panel per name); Escape closes the list, then the menu.
+- **Where:** `apps/mimic/canvas.html` `normEffect` (curly quotes folded), `mergeSuggestions`, `fillSuggestions`/`renderSugg`/`suggKey`;
+  agent `castCountBump`/`_noteCastCount` (called from `noteSelfCast`), `_timerSuggestions` behind `GET /api/timer-suggestions`; gems
+  from Zeal labels 60-67 (`_meLabel`, as `_serializeMeState`); counts in `logsync.cast-counts.json`. Test: `test/timer-name-picker.test.js`.
 
 ### The Canvas is never on unless you turned it on; Esc leaves setup (Mimic, draft on beta, 2026-10-22; DECISIONS §413)
 - **What:** `cfg.showCanvas` is written `false` for a new install and put back to `false` ONCE for any saved config without
@@ -1424,6 +1474,12 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Latest flags page** (`/pop/latest` [beta] tag, live on https://wolfpack.quest/pop/latest since web 1.8.158; built 1.8.157, §309): `web/lib/popLatestView.ts` (moments, clusters, recital-repeat
   collapse, derived chain order, unlocks, raid still-needs, filters), `web/app/pop/latest/` (page, Stream, StageBoard, ExpandList);
   strip rules shared with `web/lib/popLatestFlags.ts`. Test: `test/pop-latest-view.test.js`.
+- **PoP events: every scripted event, its loot, item scores and a ranking** (`/pop/events` [beta] https://wolfpack.quest/pop/events, web 2.1.69, 2026-10-30):
+  `web/lib/popEvents.ts` (the committed event list: start, timers, mechanics, loot mobs, script-line cites linked to the pinned quests commit),
+  `web/lib/popEventsScore.ts` (pure: the 0 to 100 class-relative item index over the gear finder's weights + `EVENT_SCORE_TUNING`, event value,
+  best item, classes helped, big-drop odds, sorts), `web/app/pop/events/` (`page.tsx` server page, plain-link sort/zone/class; `load.ts` the live
+  drops + item stats + DKP read, cached 6 h). Each event is an anchor `#<slug>`; the PoP checklist's optional Relv / Falto step links to
+  `#postorms-relv-falto`. Test: `test/pop-events.test.js`.
 - **Best charm pets in this zone** (agent 3.7.170 · Mimic beta + bot 3.1.264, §308): Charm overlay `apps/mimic/charm.html` section
   `#pets` (collapsed); agent "Charm pets" blocks (`CHARM_PET_SPELLS`, `pickCharmPetSpell` — spellbook file first, else assumed from
   level; `rankCharmPets`; local `GET /api/charm-best`; disk cache `charm-pets-cache/`); bot `utils/charmPets.js` +

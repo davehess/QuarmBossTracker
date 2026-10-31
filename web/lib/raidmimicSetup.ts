@@ -13,7 +13,8 @@
 import { REPO_URL } from './eqmimicLanding';
 
 // ─── Where things live ──────────────────────────────────────────────────────────────────────────────
-export const RELEASES_URL = `${REPO_URL}/releases`;
+// The stable release itself: the plain releases list opens on a run of betas (the guild lead, 2026-10-30).
+export const RELEASES_URL = `${REPO_URL}/releases/latest`;
 export const PRIVACY_URL = 'https://wolfpack.quest/privacy';
 export const LANDING_PATH_ON_HOST = '/';                 // raidmimic.com/
 export const LANDING_PATH_ON_WOLFPACK = '/raidmimic';    // wolfpack.quest/raidmimic
@@ -62,12 +63,12 @@ export const STEPS: Step[] = [
     title: 'Download Mimic',
     lead: 'Get the newest release from the releases page and run the Windows installer.',
     items: [
-      'Open the releases page and pick the newest release. Once 3.0 is out, that is the one marked Latest.',
-      'Download the Windows installer from the list of files under that release and run it.',
+      'Open the latest release: the link goes straight to the newest stable version.',
+      'Download the Windows installer from the list of files under it and run it.',
       'The installer is not code-signed, so Windows may show a blue SmartScreen warning. Click More info, then Run anyway.',
       'If you already run PQ Companion, GINA or EQLogParser, leave them installed. They read the same log file and do not get in each other’s way.',
     ],
-    link: { label: 'Open the releases page', href: RELEASES_URL },
+    link: { label: 'Open the latest release', href: RELEASES_URL },
     note: 'Install Mimic in its own folder, not inside your EverQuest folder. If Zeal is not found later, this is the first thing to fix.',
   },
   {

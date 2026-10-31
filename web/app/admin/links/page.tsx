@@ -27,6 +27,8 @@ import OpenDkpRegisterRow from './OpenDkpRegisterRow';
 import UnregisteredTable from './UnregisteredTable';
 import MainCombobox from './MainCombobox';
 import { authorizeMimicForMember } from './mimic-link-actions';
+import { authorizeMimicForGuest, revokeGuestSession, extendGuestSession } from './guest-link-actions';
+import { canExtendGuest, GUEST_EXTEND_HOURS } from '@/lib/guestLink';
 import { createSiteAccessInvite } from './site-access-actions';
 import { loadAgentUploadStats, loadWhoForNames } from '@/lib/adminReads';
 import { GUILD_TAG } from '@/lib/guild';
@@ -488,15 +490,30 @@ async function dismissLinkRequest(formData: FormData) {
   revalidatePath('/admin/links');
 }
 
+// The +1h / +3h buttons on a guest row (guest-link-actions.ts extendGuestSession).
+function ExtendButtons({ id }: { id: string }) {
+  return (
+    <>
+      {GUEST_EXTEND_HOURS.map(h => (
+        <form key={h} action={extendGuestSession} className="inline mr-3">
+          <input type="hidden" name="session_id" value={id} />
+          <input type="hidden" name="hours" value={h} />
+          <button type="submit" className="text-blue hover:underline text-sm">+{h}h</button>
+        </form>
+      ))}
+    </>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────
 
 export default async function AdminLinksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ show?: string; mlok?: string; mlerr?: string; sitok?: string; sifor?: string; sierr?: string }>;
+  searchParams: Promise<{ show?: string; mlok?: string; mlerr?: string; sitok?: string; sifor?: string; sierr?: string; gok?: string; gerr?: string }>;
 }) {
   await requireOfficer();
-  const { show, mlok, mlerr, sitok, sifor, sierr } = await searchParams;
+  const { show, mlok, mlerr, sitok, sifor, sierr, gok, gerr } = await searchParams;
   const showInactive = show === 'inactive' || show === 'all';
   const showLinked   = show === 'linked'   || show === 'all';
   const showIgnored  = show === 'ignored'  || show === 'all';
@@ -846,6 +863,29 @@ export default async function AdminLinksPage({
     manualActive: activeRows.filter(r => !r.suggestion.discord_id).length,
   };
 
+  // Guest Mimic sessions (guest-link-actions.ts). Before the migration lands the columns do not exist: the read
+  // answers an error, and the list is simply empty.
+  type GuestSession = {
+    id: string; guest_label: string | null; created_at: string; expires_at: string | null;
+    last_used_at: string | null; revoked_at: string | null; agent_version: string | null; linked_by_discord_id: string | null;
+  };
+  const { data: guestRaw } = await admin
+    .from('mimic_sessions')
+    .select('id, guest_label, created_at, expires_at, last_used_at, revoked_at, agent_version, linked_by_discord_id')
+    .eq('guild_id', GUILD_TAG)
+    .eq('scope', 'guest')
+    .order('created_at', { ascending: false })
+    .limit(100);
+  const guestSessions = (guestRaw ?? []) as GuestSession[];
+  const guestNowMs = Date.now();
+  const guestActive  = guestSessions.filter(g => !g.revoked_at && g.expires_at && new Date(g.expires_at).getTime() > guestNowMs);
+  const guestExpired = guestSessions.filter(g => !guestActive.includes(g));
+  const guestApproverName = (id: string | null) => {
+    const m = (members ?? []).find(x => x.discord_id === id);
+    return m ? (m.nickname || m.global_name || id) : (id ?? 'unknown');
+  };
+  const guestWhen = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' }) + ' ET' : '—');
+
   return (
     <div className="space-y-6">
       <div className="text-sm flex items-center gap-2">
@@ -919,6 +959,153 @@ export default async function AdminLinksPage({
             Authorize link
           </button>
         </form>
+      </section>
+
+      {/* Guest links (the guild lead, 2026-10-30): a raider from another guild who should be able to contribute to
+          the shared parses, for a limited time. Upload-only, enforced by the bot (utils/mimicLink.js allowlist).
+          Actions + audit trail: guest-link-actions.ts. */}
+      <section className="bg-panel border border-border rounded-lg p-6">
+        <h2 className="text-xl text-gold mb-1">🎟 Guest links</h2>
+        <p className="text-sm text-dim leading-6 max-w-3xl">
+          For a raider from another guild who should add their parses to ours. They open Mimic →{' '}
+          <b className="text-text">Sign in to Wolf Pack</b> and read you the short code; you name them and pick how long
+          the link lasts. A guest link can <b className="text-text">upload parses and nothing else</b>: no raid
+          callouts, no chat, no member data. It stops working on its own at the expiry, and you can end it sooner below.
+        </p>
+        {gok && (
+          <p className="mt-3 text-sm text-green">
+            {gok === 'already' ? '✓ That code was already authorized.'
+              : gok === 'revoked' ? '✓ Guest link revoked. Their Mimic stops uploading within a minute.'
+              : gok === 'extended' ? '✓ Guest link extended. A key that had lapsed works again within a minute.'
+              : '✓ Guest approved. Their Mimic picks it up within a couple of seconds.'}
+          </p>
+        )}
+        {gerr && (
+          <p className="mt-3 text-sm text-red">
+            {({
+              invalid_code:  'That code doesn’t look right — it’s the short code Mimic shows.',
+              need_label:    'Name the guest (for example “character of guild”) so the list says who it is.',
+              pick_expiry:   'Pick how long the link lasts.',
+              unknown_code:  'No matching code — expired (10-minute window) or mistyped.',
+              expired:       'That code expired. Have them click “Sign in to Wolf Pack” again for a fresh one.',
+              update_failed: 'Couldn’t save (database error). Try again in a moment.',
+              no_actor:      'Your officer record was not found; sign out and back in.',
+              bad_session:   'That guest session id looks wrong.',
+              bad_hours:     'An extension is 1 or 3 hours.',
+              revoked:       'That guest link was revoked, so it can’t be extended. Approve a new code instead.',
+              too_old:       'That link ended more than 12 hours ago. Approve a new code instead.',
+            } as Record<string, string>)[gerr] || `Error: ${gerr}`}
+          </p>
+        )}
+        <form action={authorizeMimicForGuest} className="mt-4 flex flex-wrap items-end gap-3">
+          <label className="text-sm">
+            <span className="block text-dim text-xs mb-1">Code from their Mimic</span>
+            <input
+              name="user_code"
+              required
+              autoComplete="off"
+              placeholder="e.g. 7KQ2WV"
+              className="bg-bg border border-border rounded px-3 py-2 w-40 uppercase tracking-widest"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="block text-dim text-xs mb-1">Who they are</span>
+            <input
+              name="guest_label"
+              required
+              maxLength={64}
+              autoComplete="off"
+              placeholder="character of guild"
+              className="bg-bg border border-border rounded px-3 py-2 w-64"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="block text-dim text-xs mb-1">Lasts</span>
+            <select
+              name="expiry"
+              required
+              defaultValue="tonight"
+              className="bg-bg border border-border rounded px-3 py-2"
+            >
+              <option value="1h">1 hour</option>
+              <option value="3h">3 hours</option>
+              <option value="tonight">Tonight (until 1 AM Eastern)</option>
+              <option value="7d">7 days</option>
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="bg-accent hover:bg-blue text-white text-sm rounded px-4 py-2"
+          >
+            Approve guest
+          </button>
+        </form>
+
+        <p className="mt-3 text-sm">
+          <Link href="/admin/guests" className="text-blue hover:underline">Review guests&apos; fights →</Link>
+          <span className="text-dim"> every guest link ever approved, and the fights each one uploaded</span>
+        </p>
+
+        <h3 className="text-sm text-gold mt-5 mb-2">Active guest links ({guestActive.length})</h3>
+        {guestActive.length === 0 ? (
+          <p className="text-sm text-dim">None right now.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-dim text-xs text-left">
+                <tr>
+                  <th className="px-3 py-1">Guest</th>
+                  <th className="px-3 py-1">Approved by</th>
+                  <th className="px-3 py-1">Expires</th>
+                  <th className="px-3 py-1">Last used</th>
+                  <th className="px-3 py-1">Agent</th>
+                  <th className="px-3 py-1"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {guestActive.map(g => (
+                  <tr key={g.id} className="border-t border-border">
+                    <td className="px-3 py-2">{g.guest_label || 'Guest'}</td>
+                    <td className="px-3 py-2 text-dim">{guestApproverName(g.linked_by_discord_id)}</td>
+                    <td className="px-3 py-2 text-dim">{guestWhen(g.expires_at)}</td>
+                    <td className="px-3 py-2 text-dim">{guestWhen(g.last_used_at)}</td>
+                    <td className="px-3 py-2 text-dim">{g.agent_version || '—'}</td>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      <ExtendButtons id={g.id} />
+                      <form action={revokeGuestSession} className="inline">
+                        <input type="hidden" name="session_id" value={g.id} />
+                        <button type="submit" className="text-red hover:underline text-sm">Revoke</button>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {guestExpired.length > 0 && (
+          <details className="mt-4">
+            <summary className="text-sm text-dim cursor-pointer">Expired or revoked ({guestExpired.length})</summary>
+            <div className="overflow-x-auto mt-2">
+              <table className="w-full text-sm">
+                <tbody>
+                  {guestExpired.map(g => (
+                    <tr key={g.id} className="border-t border-border">
+                      <td className="px-3 py-2">{g.guest_label || 'Guest'}</td>
+                      <td className="px-3 py-2 text-dim">{guestApproverName(g.linked_by_discord_id)}</td>
+                      <td className="px-3 py-2 text-dim">{g.revoked_at ? `revoked ${guestWhen(g.revoked_at)}` : `expired ${guestWhen(g.expires_at)}`}</td>
+                      <td className="px-3 py-2 text-dim">last used {guestWhen(g.last_used_at)}</td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        {!g.revoked_at && canExtendGuest(g.expires_at) ? <ExtendButtons id={g.id} /> : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        )}
       </section>
 
       {/* Officer-issued SITE-ACCESS invites — the no-Discord path for the

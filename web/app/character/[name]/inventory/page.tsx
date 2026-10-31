@@ -31,6 +31,8 @@ import { isOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
 import { type ItemCard } from './ItemHover';
 import InventoryView, { type ViewData, type CellData, type ContainerData } from './InventoryView';
+import UploadFreshness from '@/components/UploadFreshness';
+import { loadUploadStampRow, uploadStampsFor } from '@/lib/uploadFreshnessServer';
 
 import type { Metadata } from 'next';
 import { characterMeta } from '@/lib/pageMeta';
@@ -111,6 +113,14 @@ export default async function CharacterInventoryPage({ params }: { params: Promi
     .ilike('character_name', decoded)
     .limit(2000);
   const inv = (rows ?? []) as InvRow[];
+
+  // When each upload last arrived (past the visibility gate above, so inventory and spells are both the viewer's to see).
+  const stampRow = await loadUploadStampRow(decoded);
+  const [gearStamps, invStamps, spellStamps] = await Promise.all([
+    uploadStampsFor('gear', decoded, stampRow),
+    uploadStampsFor('inventory', decoded, stampRow),
+    uploadStampsFor('spells', decoded, stampRow),
+  ]);
 
   // Resolve item card data for every item id (one RPC call).
   const ids = Array.from(new Set(inv.map(r => r.item_id).filter((x): x is number => x != null)));
@@ -209,6 +219,7 @@ export default async function CharacterInventoryPage({ params }: { params: Promi
           Stored snapshot from {decoded}&apos;s last <code className="text-text">/outputfile inventory</code>{' '}
           (Mimic 2.6.0+ picks the file up automatically within ~10 minutes). Hover an item for stats. Click through to PQDI for the full sheet.
         </p>
+        <UploadFreshness gear={gearStamps} inventory={invStamps} spells={spellStamps} />
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-dim">
           <span>Total items: <span className="text-text">{totalSlotsUsed.toLocaleString()}</span></span>
           <span>Equipped: <span className="text-text">{equipped.size}</span></span>

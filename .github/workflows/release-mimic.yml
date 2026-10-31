@@ -472,3 +472,14 @@ jobs:
           for a in $(gh release view mimic-alpha --json assets --jq '.assets[].name'); do
             case "$keep" in *" $a "*) ;; *) gh release delete-asset mimic-alpha "$a" -y || echo "could not delete $a (left in place)";; esac
           done
+
+  # Keep the stable on the first page of the releases list: only the newest 3 betas keep a release; their tags stay
+  # (prune-beta-releases.yml; the guild lead, 2026-10-30).
+  prune-betas:
+    needs: build
+    if: github.ref_name == 'beta'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/prune-beta-releases.yml
+    with:
+      keep: '3'

@@ -96,6 +96,7 @@ const PLANE_OF = {
   cod_fuirstel_after: 'decay',
   flag_askr: 'storms',
   storms_zone_bot: 'storms',
+  storms_relv_falto: 'storms',
   valor_globe: 'valor',
   flag_aerindar: 'valor',
   valor_zone_hoh: 'valor',
