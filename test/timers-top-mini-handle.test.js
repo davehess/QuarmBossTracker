@@ -18,7 +18,9 @@ import { createRequire } from 'node:module';
 import { readSource, sliceBlock, evalBlock, stripJs, ROOT } from './_source-slice.js';
 
 const require = createRequire(import.meta.url);
-const mimic = (f) => readSource(path.join(ROOT, 'apps', 'mimic', f));
+// CI installs no browser library; the three Chromium checks below run where playwright resolves (cloud sessions), skip elsewhere.
+const HAS_PW = (() => { try { require.resolve('playwright'); return true; } catch { return false; } })();
+const mimic =(f) => readSource(path.join(ROOT, 'apps', 'mimic', f));
 const preloadRaw = mimic('preload.js');
 const dashRaw = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'dashboard.html'));
 const preload = stripJs(preloadRaw);
@@ -83,6 +85,7 @@ describe('▭ Mini: the folded window\'s handle', () => {
     return names + fade;
   })();
   beforeAll(async () => {
+    if (!HAS_PW) return;
     const { chromium } = require('playwright');
     browser = await chromium.launch();
     page = await browser.newPage({ viewport: { width: 420, height: 60 } });
@@ -102,7 +105,7 @@ describe('▭ Mini: the folded window\'s handle', () => {
       };
     });
   }
-  it('folded: full strength at any overlay opacity, bigger, solid, gold-edged, says what a press does, and fits the 32px window', async () => {
+  it.skipIf(!HAS_PW)('folded: full strength at any overlay opacity, bigger, solid, gold-edged, says what a press does, and fits the 32px window', async () => {
     const folded = await chipLook('wp-mini wp-fold', 0.2);
     expect(folded.opacity).toBe(1);
     expect(folded.fontSize).toBeGreaterThanOrEqual(12);
@@ -114,13 +117,13 @@ describe('▭ Mini: the folded window\'s handle', () => {
     expect(folded.bottom).toBeLessThanOrEqual(32);   // the fold's window is 32px tall at the least (_wpFoldSync)
     expect(folded.w).toBeGreaterThan(140);
   });
-  it('not folded: the chip keeps its quiet look and gets no instruction', async () => {
+  it.skipIf(!HAS_PW)('not folded: the chip keeps its quiet look and gets no instruction', async () => {
     const quiet = await chipLook('', 1);
     expect(quiet.fontSize).toBe(10);
     expect(quiet.after).toBe('none');
     expect(quiet.before).toBe('none');
   });
-  it('the name comes first: a narrow window ellipsizes the instruction, never the name', async () => {
+  it.skipIf(!HAS_PW)('the name comes first: a narrow window ellipsizes the instruction, never the name', async () => {
     await page.setViewportSize({ width: 200, height: 60 });
     const look = await chipLook('wp-mini wp-fold', 1);
     expect(look.w).toBeLessThanOrEqual(200 - 28 - 36 + 1);   // max-width: calc(100% - 64px) from left 28

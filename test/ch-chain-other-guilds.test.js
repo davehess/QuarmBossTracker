@@ -22,8 +22,10 @@ const agent = createRequire(import.meta.url)('../packages/wolfpack-logsync/index
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const z2 = n => String(n).padStart(2, '0');
+// One clock per test, mid-second: stamping each line from the live clock let a second boundary turn a 4 s gap into 5 s (CI, 2026-10-31).
+let NOW = 0;
 function stamp(secondsAgo) {
-  const d = new Date(Date.now() - secondsAgo * 1000);
+  const d = new Date(NOW - secondsAgo * 1000);
   return `[${DAY[d.getDay()]} ${MON[d.getMonth()]} ${String(d.getDate()).padStart(2, ' ')} `
     + `${z2(d.getHours())}:${z2(d.getMinutes())}:${z2(d.getSeconds())} ${d.getFullYear()}]`;
 }
@@ -35,6 +37,7 @@ const slotOf = (n) => { const s = agent.chChainSnapshot(); return s && s.slots[n
 let written;
 let spy;
 beforeEach(() => {
+  NOW = Math.floor(Date.now() / 1000) * 1000 + 500;
   agent._resetChChainForTest();
   agent._setAgentPrefsForTest({});
   written = [];
