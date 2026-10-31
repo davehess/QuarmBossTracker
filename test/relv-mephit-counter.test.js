@@ -14,12 +14,14 @@ import { readSource, sliceBlock, evalBlock, stripJs, AGENT_INDEX, ROOT } from '.
 const agentSrc = readSource(AGENT_INDEX);
 const zoneBlock = sliceBlock(agentSrc, 'const MAP_ZONE_SHORT = ', 'return Number.isFinite(n) && n > 0 ? (MAP_ZONE_SHORT[n] || null) : null;\n}');
 const relvBlock = sliceBlock(agentSrc, 'const _DEATH_SLAIN_BY_RX', '// ── end Relv mephit counter');
+// The tracker reads the zone line through the chat classifier's one pattern, so the real one rides along.
+const zoneRxBlock = sliceBlock(agentSrc, 'const CHAT_ZONE_RX = ', '\n');
 
 let zeal, T;
 function fresh() {
   zeal = {};
   // _zealState is read live by the tracker; hand it in as a closure variable.
-  const make = new Function('_zealState', zoneBlock + '\n' + relvBlock + '\nreturn { note: _relvNoteLine, snap: _relvSnapshot, state: _relvState };');
+  const make = new Function('_zealState', zoneBlock + '\n' + zoneRxBlock + '\n' + relvBlock + '\nreturn { note: _relvNoteLine, snap: _relvSnapshot, state: _relvState };');
   return make(zeal);
 }
 beforeEach(() => { T = fresh(); });

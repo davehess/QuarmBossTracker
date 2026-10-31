@@ -59752,14 +59752,13 @@ const RELV_DONE_MS = 10 * 60 * 1000;
 const _RELV_START_RX   = /As I had hoped\. I regret that I have only enough strength to send four parties/;
 const _RELV_PORT_RX    = /A powerfully green aura surrounds Relv/;
 const _RELV_BACK_RX    = /pulled back to Relv the Mysterious/;
-const _RELV_ZONE_RX    = /^\[[^\]]+\]\s+You have entered (?!an?\s)([^.]{2,60})\.\s*$/;
 const _RELV_MEPHIT_RX  = /^an? (?:blazing|burning) mephit$/i;
 const _RELV_MEPHEEKA_RX = /^an? fiery mepheeka$/i;
 const _RELV_FALTO_RX   = /^Falto, Lord of Thunder$/i;
 // Falto's own swings and ours at him; a guild-chat line that merely names him must not flip the count off.
 const _RELV_FALTO_SEEN_RX = /\]\s+(?:Falto, Lord of Thunder\s|You\b[^']*?\bFalto, Lord of Thunder\b)/;
 const _relvState   = new Map();   // character (lower) → { mephits, mepheekas, faltoUp, faltoSlainAt, startedAt }
-const _relvLogZone = new Map();   // character (lower) → last zone named by a "You have entered" line (lower)
+const _relvLogZone = new Map();   // character (lower) → last zone a zone-change line (CHAT_ZONE_RX) named (lower)
 // When this character last saw Falto (a swing, a hit on him, his death), kept even with no counter running. The guild
 // lead, 2026-10-30, mid-fight on a fresh agent: the counter was started by one of Falto's ADDS dying ("mephits 1/30")
 // because his earlier lines arrived before any counter existed. A counter that starts within FALTO_RECENT_MS of a
@@ -59787,7 +59786,8 @@ function _relvLive(cl, now) {
 function _relvNoteLine(line, character, now) {
   if (!line || !character) return;
   const cl = String(character).toLowerCase();
-  const zm = line.indexOf('You have entered') !== -1 ? _RELV_ZONE_RX.exec(line) : null;
+  // The zone line is parsed in one place, the chat feed's CHAT_ZONE_RX (the cheap indexOf keeps the regex off most lines).
+  const zm = line.indexOf(' have entered ') !== -1 ? CHAT_ZONE_RX.exec(line) : null;
   if (zm) {
     const z = zm[1].trim().toLowerCase();
     _relvLogZone.set(cl, z);
