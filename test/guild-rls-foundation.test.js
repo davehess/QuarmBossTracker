@@ -22,7 +22,14 @@ const require = createRequire(import.meta.url);
 const guildScoped = require('../utils/guildScoped.js');
 const supabase = require('../utils/supabase.js');
 
-const SECRET = 'unit-test-secret-not-a-real-one';
+// A throwaway P-256 key per run: the JWK the bot would receive in SUPABASE_JWT_SIGNING_JWK, and its public half to verify with.
+const KP = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+const JWK = JSON.stringify({ ...KP.privateKey.export({ format: 'jwk' }), kid: 'test-kid-1' });
+const OTHER_JWK = JSON.stringify({ ...crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' }), kid: 'test-kid-2' });
+const verifies = (token) => {
+  const [h, b, s] = token.split('.');
+  return crypto.verify('sha256', Buffer.from(`${h}.${b}`), { key: KP.publicKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(s, 'base64url'));
+};
 const SERVICE_KEY = 'service-key-for-tests';
 
 const MIGRATION = stripSql(readSource(path.join(ROOT, 'supabase', 'migrations', '20261031180000_guild_rls_foundation.sql')));
@@ -37,12 +44,13 @@ function decode(token) {
   };
 }
 
-const ENV_KEYS = ['GUILD_RLS', 'SUPABASE_JWT_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'SUPABASE_GUILD_ID'];
+const ENV_KEYS = ['GUILD_RLS', 'SUPABASE_JWT_SIGNING_JWK', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'SUPABASE_GUILD_ID'];
 let savedEnv;
 beforeEach(() => {
   savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   for (const k of ENV_KEYS) delete process.env[k];
   guildScoped._resetWarned();
+  guildScoped._resetStatus();
   supabase._resetBreaker();
   supabase._resetScopedStats();
 });
@@ -110,35 +118,48 @@ describe('migration 20261031180000_guild_rls_foundation.sql', () => {
 });
 
 describe('mintToken', () => {
-  it('signs an HS256 JWT carrying role guild_scoped, the guild_id claim and a short expiry', () => {
+  it('signs an ES256 JWT (kid in the header) carrying role guild_scoped, the guild_id claim and a short expiry', () => {
     const now = 1_800_000_000_000;
-    const { header, claims, sig, signed } = decode(guildScoped.mintToken('acme', { secret: SECRET, nowMs: now }));
-    expect(header).toEqual({ alg: 'HS256', typ: 'JWT' });
+    const token = guildScoped.mintToken('acme', { jwk: JWK, nowMs: now });
+    const { header, claims, sig } = decode(token);
+    expect(header).toEqual({ alg: 'ES256', kid: 'test-kid-1', typ: 'JWT' });
+    expect(Buffer.from(sig, 'base64url')).toHaveLength(64);   // IEEE P1363: r || s, not DER
     expect(claims.role).toBe('guild_scoped');
     expect(claims.guild_id).toBe('acme');
     expect(claims.iat).toBe(now / 1000);
     expect(claims.exp - claims.iat).toBeGreaterThan(0);
     expect(claims.exp - claims.iat).toBeLessThanOrEqual(300);
-    expect(sig).toBe(crypto.createHmac('sha256', SECRET).update(signed).digest('base64url'));
+    expect(verifies(token)).toBe(true);
+    expect(verifies(token.replace(/\.[^.]+\./, `.${Buffer.from(JSON.stringify({ ...claims, guild_id: 'other' })).toString('base64url')}.`))).toBe(false);
   });
 
   it('never lives longer than five minutes, whatever ttl is asked', () => {
-    const { claims } = decode(guildScoped.mintToken('acme', { secret: SECRET, ttlSec: 86_400 }));
+    const { claims } = decode(guildScoped.mintToken('acme', { jwk: JWK, ttlSec: 86_400 }));
     expect(claims.exp - claims.iat).toBe(300);
-    expect(decode(guildScoped.mintToken('acme', { secret: SECRET, ttlSec: 0 })).claims.exp - claims.iat).toBeLessThanOrEqual(300);
+    expect(decode(guildScoped.mintToken('acme', { jwk: JWK, ttlSec: 0 })).claims.exp - claims.iat).toBeLessThanOrEqual(300);
   });
 
-  it('does not verify under another secret, and mints nothing without a secret or a guild', () => {
-    const { sig, signed } = decode(guildScoped.mintToken('acme', { secret: SECRET }));
-    expect(sig).not.toBe(crypto.createHmac('sha256', 'another-secret').update(signed).digest('base64url'));
-    expect(guildScoped.mintToken('acme', { secret: '' })).toBeNull();
-    expect(guildScoped.mintToken('', { secret: SECRET })).toBeNull();
+  it('does not verify under another key, and mints nothing without a key or a guild', () => {
+    expect(verifies(guildScoped.mintToken('acme', { jwk: OTHER_JWK }))).toBe(false);
+    expect(guildScoped.mintToken('acme', { jwk: '' })).toBeNull();
+    expect(guildScoped.mintToken('', { jwk: JWK })).toBeNull();
   });
 
-  it('reads SUPABASE_JWT_SECRET from the environment by default', () => {
-    process.env.SUPABASE_JWT_SECRET = SECRET;
-    const { sig, signed } = decode(guildScoped.mintToken('acme'));
-    expect(sig).toBe(crypto.createHmac('sha256', SECRET).update(signed).digest('base64url'));
+  it('refuses a bad JWK (not JSON, wrong curve, no kid, no private part) with one warning that never echoes the value', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const good = JSON.parse(JWK);
+    const bads = ['{not json', JSON.stringify({ ...good, crv: 'P-384' }), JSON.stringify({ ...good, kid: '' }),
+      JSON.stringify({ ...good, d: undefined }), JSON.stringify({ ...good, kty: 'RSA' })];
+    for (const bad of bads) expect(guildScoped.mintToken('acme', { jwk: bad })).toBeNull();
+    expect(warn.mock.calls.length).toBeGreaterThan(0);
+    for (const c of warn.mock.calls) expect(String(c[0])).not.toContain(good.d);
+    expect(guildScoped.mintToken('acme', { jwk: bads[0] })).toBeNull();
+    expect(warn.mock.calls.length).toBeLessThanOrEqual(2);   // the not-JSON and the invalid-shape messages, once each
+  });
+
+  it('reads SUPABASE_JWT_SIGNING_JWK from the environment by default', () => {
+    process.env.SUPABASE_JWT_SIGNING_JWK = JWK;
+    expect(verifies(guildScoped.mintToken('acme'))).toBe(true);
   });
 });
 
@@ -150,8 +171,8 @@ describe('forIdentity / scopedClient (the factory)', () => {
   });
 
   it('flag off: returns null and mints nothing (the unchanged path)', () => {
-    process.env.SUPABASE_JWT_SECRET = SECRET;
-    const hmac = vi.spyOn(crypto, 'createHmac');
+    process.env.SUPABASE_JWT_SIGNING_JWK = JWK;
+    const hmac = vi.spyOn(crypto, 'sign');
     expect(guildScoped.forIdentity({ guild_id: 'acme' }, {})).toBeNull();
     expect(guildScoped.forIdentity({ guild_id: 'acme' }, { flag_guild_rls: 0 })).toBeNull();
     expect(guildScoped.forIdentity({ guild_id: 'acme' }, undefined)).toBeNull();
@@ -159,7 +180,7 @@ describe('forIdentity / scopedClient (the factory)', () => {
   });
 
   it('flag on via the env var or the tuning map, with a secret: a scoped client for the IDENTITY guild', () => {
-    process.env.SUPABASE_JWT_SECRET = SECRET;
+    process.env.SUPABASE_JWT_SIGNING_JWK = JWK;
     process.env.GUILD_RLS = '1';
     const viaEnv = guildScoped.forIdentity({ guild_id: 'acme' }, {});
     expect(viaEnv).toMatchObject({ scoped: true, guildId: 'acme' });
@@ -170,7 +191,7 @@ describe('forIdentity / scopedClient (the factory)', () => {
   });
 
   it('takes the guild from the identity, not from SUPABASE_GUILD_ID; the env tag is only the fallback', () => {
-    process.env.SUPABASE_JWT_SECRET = SECRET;
+    process.env.SUPABASE_JWT_SIGNING_JWK = JWK;
     process.env.GUILD_RLS = '1';
     expect(guildScoped.forIdentity({ guild_id: 'acme' }, {}).guildId).toBe('acme');
     expect(guildScoped.forIdentity({ guild_id: null }, {}).guildId).toBe('wolfpack');
@@ -182,18 +203,18 @@ describe('forIdentity / scopedClient (the factory)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(guildScoped.forIdentity({ guild_id: 'acme' }, {})).toBeNull();
     expect(guildScoped.forIdentity({ guild_id: 'acme' }, {})).toBeNull();
-    expect(warn.mock.calls.filter((c) => /SUPABASE_JWT_SECRET/.test(String(c[0])))).toHaveLength(1);
+    expect(warn.mock.calls.filter((c) => /SUPABASE_JWT_SIGNING_JWK/.test(String(c[0])))).toHaveLength(1);
   });
 
   it('scopedClient without a secret returns the service-key facade (no token), with a secret a token', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(guildScoped.scopedClient('acme')).toEqual({ guildId: 'acme', scoped: false, token: null });
-    expect(guildScoped.scopedClient('acme', { secret: SECRET })).toMatchObject({ scoped: true, guildId: 'acme' });
+    expect(guildScoped.scopedClient('acme', { jwk: JWK })).toMatchObject({ scoped: true, guildId: 'acme' });
   });
 
   it('is off when Supabase itself is not configured', () => {
     delete process.env.SUPABASE_URL;
-    process.env.SUPABASE_JWT_SECRET = SECRET;
+    process.env.SUPABASE_JWT_SIGNING_JWK = JWK;
     process.env.GUILD_RLS = '1';
     expect(guildScoped.forIdentity({ guild_id: 'acme' }, {})).toBeNull();
   });
@@ -256,29 +277,30 @@ describe('recordParse under a stubbed PostgREST', () => {
   it('flag on: contributions and encounters run under the guild token; every other table keeps the service key', async () => {
     const { calls, fetchStub } = fakeRest();
     vi.stubGlobal('fetch', fetchStub);
-    const client = guildScoped.scopedClient('acme', { secret: SECRET });
+    const client = guildScoped.scopedClient('acme', { jwk: JWK });
     await runRecordParse(client);
 
     const scopedCalls = calls.filter((c) => c.bearer !== SERVICE_KEY);
     expect(scopedCalls.map((c) => `${c.method} ${c.path}`).sort()).toEqual([
       'GET /encounters', 'PATCH /encounters', 'PATCH /encounters', 'POST /contributions',
-    ]);
+      'POST /rpc/find_or_create_encounter', 'POST /rpc/merge_encounter_players',   // slice 2 (test/guild-rls-slice2.test.js)
+    ].sort());
     for (const c of scopedCalls) expect(decode(c.bearer).claims).toMatchObject({ role: 'guild_scoped', guild_id: 'acme' });
 
     // the rows name their guild (the column default is 'wolfpack', which RLS would refuse for another guild)
     expect(calls.find((c) => c.path === '/contributions').body[0].guild_id).toBe('acme');
     expect(calls.find((c) => c.path === '/rpc/find_or_create_encounter').body.p_guild_id).toBe('acme');
 
-    // not yet covered, so still the service key: the catalog read, the RPCs, the snapshot claim, the merge
+    // not yet covered, so still the service key: the catalog read and the snapshot claim
     const unscoped = calls.filter((c) => c.bearer === SERVICE_KEY).map((c) => c.path);
-    expect(unscoped).toEqual(expect.arrayContaining(['/bosses_local', '/rpc/find_or_create_encounter', '/rpc/merge_encounter_players', '/encounter_threat_snapshots']));
+    expect(unscoped).toEqual(expect.arrayContaining(['/bosses_local', '/encounter_threat_snapshots']));
   });
 
   it('sends the anon key as the gateway apikey on a scoped request when the bot has one', async () => {
     process.env.SUPABASE_ANON_KEY = 'anon-key-for-tests';
     const { calls, fetchStub } = fakeRest();
     vi.stubGlobal('fetch', fetchStub);
-    await runRecordParse(guildScoped.scopedClient('acme', { secret: SECRET }));
+    await runRecordParse(guildScoped.scopedClient('acme', { jwk: JWK }));
     expect(calls.filter((c) => c.bearer !== SERVICE_KEY).every((c) => c.apikey === 'anon-key-for-tests')).toBe(true);
     expect(calls.filter((c) => c.bearer === SERVICE_KEY).every((c) => c.apikey === SERVICE_KEY)).toBe(true);
   });
@@ -286,9 +308,9 @@ describe('recordParse under a stubbed PostgREST', () => {
   it('a token the database rejects (401) is retried once with the service key, so a mis-set secret loses no parse', async () => {
     const { calls, fetchStub } = fakeRest({ rejectScoped: true });
     vi.stubGlobal('fetch', fetchStub);
-    const out = await runRecordParse(guildScoped.scopedClient('acme', { secret: 'wrong-secret' }));
+    const out = await runRecordParse(guildScoped.scopedClient('acme', { jwk: OTHER_JWK }));
     expect(out).toMatchObject({ encounterId: 'enc-uuid-1', contributionId: 'contrib-1' });
-    expect(supabase.scopedStats().rejected).toBe(4);
+    expect(supabase.scopedStats().rejected).toBe(6);
     const posts = calls.filter((c) => c.path === '/contributions');
     expect(posts.map((c) => c.bearer === SERVICE_KEY)).toEqual([false, true]);
   });
@@ -296,7 +318,7 @@ describe('recordParse under a stubbed PostgREST', () => {
   it('a request made outside a scope is unaffected by one running at the same time', async () => {
     const { calls, fetchStub } = fakeRest();
     vi.stubGlobal('fetch', fetchStub);
-    const client = guildScoped.scopedClient('acme', { secret: SECRET });
+    const client = guildScoped.scopedClient('acme', { jwk: JWK });
     await Promise.all([runRecordParse(client), supabase.select('bosses_local', 'internal_id=eq.x')]);
     expect(calls.filter((c) => c.path === '/bosses_local').every((c) => c.bearer === SERVICE_KEY)).toBe(true);
   });
@@ -322,7 +344,7 @@ describe('the encounter handler (POST /api/agent/encounter)', () => {
     process.env.SUPABASE_URL = 'https://example.supabase.test';
     process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_KEY;
     process.env.SUPABASE_GUILD_ID = 'wolfpack';
-    process.env.SUPABASE_JWT_SECRET = SECRET;
+    process.env.SUPABASE_JWT_SIGNING_JWK = JWK;
   });
 
   it('flag on: the scoped client is built from the SESSION guild, not SUPABASE_GUILD_ID', async () => {
@@ -332,7 +354,7 @@ describe('the encounter handler (POST /api/agent/encounter)', () => {
   });
 
   it('flag off: no scoped client is created and nothing is minted (today\'s path)', async () => {
-    const hmac = vi.spyOn(crypto, 'createHmac');
+    const hmac = vi.spyOn(crypto, 'sign');
     const out = await runHead({ identity: { discord_id: 'd1', guild_id: 'acme' }, tune: {} });
     expect(out.guildDb).toBeNull();
     expect(hmac).not.toHaveBeenCalled();

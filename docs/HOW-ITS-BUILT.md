@@ -330,8 +330,10 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
   The service role still bypasses RLS, so the existing path is untouched.
 - **Where:** `utils/guildScoped.js` (`mintToken`, `flagOn`, `scopedClient`, `forIdentity`, `run`); `utils/supabase.js` `runScoped(token, fn)`
   (an async-local store: every request inside the callback carries the token; a 401 retries with the service key and logs loudly); the call
-  in `index.js` `recordParse`. **Off until `GUILD_RLS=1` or the tuning flag `flag_guild_rls=1`, and inert without `SUPABASE_JWT_SECRET`**
-  (logs once, runs today's path). `SUPABASE_ANON_KEY` is optional (the gateway's apikey header).
+  in `index.js` `recordParse`. **Off until `GUILD_RLS=1` or the tuning flag `flag_guild_rls=1`, and inert without `SUPABASE_JWT_SIGNING_JWK`**
+  (an ES256 private JWK we generated and imported into Supabase, 2026-10-31; logs once, runs today's path). The status (flag on, key ok,
+  rejections) is written to `bot_kv` `guild_rls_status`, served on `/health` as `guild_rls`, and shown as a red/green line on
+  https://wolfpack.quest/admin/overlays (`web/lib/guildRlsStatus.ts`). `SUPABASE_ANON_KEY` is optional (the gateway's apikey header).
 - **Not covered:** the two RPCs, `raid_nights`, rollups, events, threat snapshots, `/who`, every other handler, RLS by membership for the web.
   `scripts/guild-scope-audit.js` still ratchets the unscoped calls. Verified on a local Postgres 16 (12 policies; another guild's rows
   invisible, unwritable, unmovable).

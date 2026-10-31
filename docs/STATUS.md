@@ -104,10 +104,12 @@ next touch one rather than assuming a missing row means a missing doc.
 ## The work ledger
 
 - **⚠ Needs the guild lead — switch the guild RLS foundation on (2026-10-31, §496).** It is on `main` and off. Steps, outside a raid window
-  (Sun/Wed/Thu 19:30 to 00:30 ET): (1) copy the JWT secret (Supabase → Project Settings → API) into Railway as `SUPABASE_JWT_SECRET`;
-  (2) set the tuning flag `flag_guild_rls=1` in the `/admin/overlays` tuning editor (or `GUILD_RLS=1` on Railway); (3) watch the bot log
-  for a scoped-call 401 fallback (it logs loudly and retries with the service key, so a wrong secret loses nothing and also enforces
-  nothing). Until then nothing changes.
+  (Sun/Wed/Thu 19:30 to 00:30 ET). **Corrected 2026-10-31: the legacy JWT secret was disabled on 2026-10-29, so there is no secret to copy.**
+  (1) generate our own ES256 (P-256) key, import it into Supabase as a standby JWT signing key and rotate to it; (2) put the PRIVATE key as
+  JSON (`{kty:'EC', crv:'P-256', kid, d, x, y}`) into Railway as `SUPABASE_JWT_SIGNING_JWK`; (3) set the tuning flag `flag_guild_rls=1` in
+  the `/admin/overlays` tuning editor (or `GUILD_RLS=1` on Railway); (4) watch the red/green line at the top of https://wolfpack.quest/admin/overlays
+  (and `guild_rls` on the bot's `/health`): a bad key or a database rejection (the bot retries with the service key, so nothing is lost and
+  nothing is enforced) shows a red "Guild separation is OFF in practice" box. Until then nothing changes.
 - **✅ Guild RLS foundation: the bot writes a parse as the session's guild under row security, behind a flag (bot 4.0.40, `main`, 2026-10-31; migration `20261031180000_guild_rls_foundation.sql` applied; DECISIONS §496, §490).**
   `utils/guildScoped.js` mints a 2-minute HS256 JWT (`role: guild_scoped`, `guild_id` from `mimic_sessions.guild_id`) and `utils/supabase.js`
   `runScoped(token, fn)` sends it as the bearer for the encounter and contribution writes in `recordParse`; the database compares the row's

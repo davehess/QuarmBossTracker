@@ -25808,6 +25808,8 @@ const httpServer = http.createServer(async (req, res) => {
     // their own: almost certainly truncated. Non-zero here means a read needs paging.
     let rowCap = null;
     try { rowCap = require('./utils/supabase').capStats(); } catch { /* */ }
+    let guildRls = null;
+    try { guildRls = guildScoped.status(); } catch { /* */ }
     const budgets = {};
     for (const [kind, book] of _budgetBuckets) {
       const perMin = _BUDGET_DEFAULTS[kind]?.perMin;
@@ -25822,7 +25824,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
       ok: ready, ready, shutting_down: _shuttingDown,
-      supabase_breaker: breaker, supabase_row_cap: rowCap, budgets, mem,
+      supabase_breaker: breaker, supabase_row_cap: rowCap, guild_rls: guildRls, budgets, mem,
     }));
   }
 

@@ -36,6 +36,7 @@ function build({ enabled = true, nightRows = [{ id: 'night-uuid-1' }], insertFai
     const _raidNightIdByKey = new Map();
     function isEnabled() { return ${enabled}; }
     function _guildId() { return 'wolfpack'; }
+    function _asGuild(client, fn) { return fn(); }
     async function insertIgnoreDuplicates(table, rows) {
       calls.inserts.push({ table, rows });
       return ${insertFails} && rows[0].zone_main ? null : rows;
