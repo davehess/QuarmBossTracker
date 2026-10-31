@@ -143,6 +143,7 @@ const ADMIN_TITLES: Record<string, string> = {
   '/admin/signups':            'Sign-ups',
   '/admin/soft-reserve':       '[beta] Soft Reserve',
   '/admin/spells':             'Spell exchange',
+  '/admin/theme':              '[beta] Guild theme',
   '/admin/triggers':           'Guild triggers',
   '/admin/voice':              'Voice triggers',
   '/admin/voice-reports':      '[beta] Voice reports',

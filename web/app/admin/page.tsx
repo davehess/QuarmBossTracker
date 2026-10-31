@@ -175,6 +175,11 @@ export default function AdminPage() {
           href="/admin/pronunciations"
         />
         <Card
+          title="🎨 Guild theme"
+          body="[beta] The guild's colours, font, logo and Discord card colour, with a live preview. Green, red, gold and orange stay fixed because they carry meaning."
+          href="/admin/theme"
+        />
+        <Card
           title="🗣️ Voice reports"
           body="[beta] Lines Mimic said wrong, reported by raiders with an optional better spelling. Hear them again, then mark them fixed or dismiss them."
           href="/admin/voice-reports"

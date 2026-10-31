@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'guild-theme-2026-10-31',
+    title: 'Web 2.1.80',
+    version: 'Web 2.1.80',
+    date: '2026-10-31',
+    headline: 'Officers can set the guild’s colours, font, logo and Discord card colour, with a live preview.',
+    features: [
+      { name: 'Guild theme [beta]', blurb: 'A new officer page sets the guild’s look: background, panels, text, brand accent, link colours, font, logo and the stripe on neutral Discord cards. A preview of a fight card, an overlay row and a Discord card updates as you type. Green, red and gold keep their meanings and cannot be changed.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'raidmimic-signin-2026-10-31',
     title: 'Web 2.1.79',
     version: 'Web 2.1.79',
