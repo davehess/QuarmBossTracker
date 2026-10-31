@@ -2,10 +2,9 @@
 -- (the guild lead, 2026-10-23: "anyone can join, once a guild has 12 members they need to stand up their own or
 -- pay for the 25 hosting"; design: docs/DESIGN-open-hub.md.)
 --
--- ⚠ NOT FOR WOLF PACK'S PRODUCTION DATABASE. These tables belong to the SEPARATE commons project (DECISIONS §358:
--- "not in the Wolfpack database"). The file lives in supabase/migrations/ so the repo and the commons project share one
--- history; do not apply it to zhtoekwakucbckvatfky unless the guild lead says so. Nothing applies migrations
--- automatically; the commons project gets it through apply_migration or the SQL Editor.
+-- APPLIED to the production project on 2026-10-31 (DECISIONS §485: one database for every guild, which superseded §358's
+-- separate commons project; §492: raidmimic.com signs players in against this registry). The earlier header said
+-- "not for Wolf Pack's production database"; that was §358's plan and is no longer the design.
 --
 -- Idempotent. RLS on, NO policies: the hub bot uses the service role and bypasses it; nothing else may read these
 -- (a player's own view is served by the bot after it checks the session, never straight from the table).

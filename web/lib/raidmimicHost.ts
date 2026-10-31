@@ -21,6 +21,23 @@ export function isRaidmimicHost(host: string | null | undefined): boolean {
   return RAIDMIMIC_HOSTS.includes(host.toLowerCase().replace(/:\d+$/, ''));
 }
 
+/** `origin` is what web/lib/request-origin.ts returns: scheme://host[:port]. The sign-in callback decides its path from it. */
+export function isRaidmimicOrigin(origin: string | null | undefined): boolean {
+  if (!origin) return false;
+  try { return isRaidmimicHost(new URL(origin).host); } catch { return false; }
+}
+
+// ─── Signing in (the guild lead, 2026-10-31, DECISIONS §492: raidmimic.com is a sign-in first, then "your guilds") ───
+// These paths are the ONLY ones on a raidmimic host that are not rewritten to the landing page: the sign-in pages and
+// callback, the auth API, and the signed-in /guilds page. The middleware lets them through to the normal request
+// flow (session refresh, lockout check), because a page that reads the session needs both.
+export const RAIDMIMIC_GUILDS_PATH = '/guilds';
+
+export function isRaidmimicOpenPath(pathname: string): boolean {
+  return pathname.startsWith('/auth/') || pathname.startsWith('/api/auth/')
+    || pathname === RAIDMIMIC_GUILDS_PATH || pathname.startsWith(`${RAIDMIMIC_GUILDS_PATH}/`);
+}
+
 // The set-up guide for someone who is not in a guild (the guild lead, 2026-10-21): raidmimic.com/setup.
 export const RAIDMIMIC_SETUP_PATH = '/raidmimic/setup';
 

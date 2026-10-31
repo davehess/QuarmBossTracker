@@ -69,6 +69,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/mimic/dirge':  { title: 'Dirge Tactical Nuke', description: 'For bards, on the Mimic beta: check off your pre-buffs, lift the cover, turn the Puretone key, and fire one button per Dirge your mana holds. Watch it run.', image: '/mimic/dirge-card.png' },
   '/raidmimic':    { title: 'Raid Mimic · free EverQuest raid overlays', description: 'Free, open-source overlays for your EverQuest raids, built from the log the game already writes: run it on your own, or add a guild hub for shared raid reviews, merged parses and a command center.' },
   '/raidmimic/setup': { title: '[beta] Set up Raid Mimic', description: 'A step-by-step guide to setting up Mimic on your own PC for EverQuest on Project Quarm, with no guild needed: what you need, what works on your own, and how to join a raid.' },
+  '/guilds':       { title: '[beta] Your guilds', description: 'The guilds you are in on Raid Mimic, with a way to join one by invite code, find the ones you already belong to, or start your own.' },
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },
   '/roadmap':      { title: 'Roadmap', description: 'What’s shipped and what’s next for the Wolf Pack platform.' },
   '/ai':           { title: 'Built with AI', description: 'The working method behind the platform: the rules, the incident behind each one, and a timeline you can scrub.' },
