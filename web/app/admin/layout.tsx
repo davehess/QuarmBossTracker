@@ -9,6 +9,9 @@ import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import AdminQueueBanner from './AdminQueueBanner';
+import AdminShell from './AdminShell';
+import { loadAdminFacts } from '@/lib/adminShellFacts';
+import { shellOn } from './shellOn';
 
 // Every officer page stays out of search results (the guild lead, 2026-10-10: every page gets its own title and
 // summary; the officer pages get theirs and keep this). Set once here so a new admin page cannot forget it.
@@ -21,6 +24,16 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!user) redirect('/auth/signin?next=/admin');
   const ok = await isOfficer(user.id);
   if (!ok) redirect('/?error=admin_required');
+  // The sidebar preview (?v=b, DECISIONS §493): middleware turns `?v=b` into the admin_shell cookie and this reads it, so
+  // every admin page after the first shows it. No cookie → the layout is exactly what it was (banner, then the page).
+  if (shellOn()) {
+    return (
+      <AdminShell facts={await loadAdminFacts()}>
+        <AdminQueueBanner />
+        {children}
+      </AdminShell>
+    );
+  }
   return (
     <>
       <AdminQueueBanner />

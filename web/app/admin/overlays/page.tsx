@@ -21,6 +21,8 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { GUILD_TAG } from '@/lib/guild';
 import { actorName, shownActor } from '@/lib/actorName';
 import MoreInfo, { FoldText } from '@/components/MoreInfo';
+import { VERSION_FLOOR_KEY } from '@/lib/adminTyped';
+import { DangerFlag, DangerFloor } from './DangerControls';
 
 export const metadata = {
   title: 'Overlay tuning · Admin',
@@ -110,7 +112,7 @@ const FLAGS: Flag[] = [
   { key: 'dedup_roster', label: 'Roster dedup — 1 reporter per group (default off)',
     desc: 'Turns ON the P1c raid-roster de-duplication (#72). Roster composition is identical from every raider’s view, but per-member HP arrives only for the uploader’s own group — so when checked, exactly ONE agent per raid group uploads the Zeal roster snapshot; the rest stand down (an agent not in a raid, or with no Zeal, is its own group and always uploads). Fail-open — an agent that loses contact with the bot uploads everything, a camping raider hands off ~30s early, and re-election covers a group within ~60s if its reporter leaves. Leave OFF to keep today’s every-agent-uploads behavior. Overridden by the disable switch above.' },
   { key: 'flag_agent_kill', label: '☠ AGENT KILL — pause the ENTIRE fleet', danger: true,
-    desc: 'Fleet-wide dormancy (#74). Every agent stops ALL uploads and non-control polls and goes quiet, keeping only its 20s heartbeat so recovery is instant when you clear this. The durable queue HOLDS (nothing dropped) and overlays keep working on each user\'s LOCAL data — nobody\'s HUD blanks. Clearing this resumes the fleet within one heartbeat. Conservative v1 — coordinate with Hitya before flipping. Fail-open: if the bot is unreachable, agents run normally.' },
+    desc: 'Fleet-wide dormancy (#74). Every agent stops ALL uploads and non-control polls and goes quiet, keeping only its 20s heartbeat so recovery is instant when you clear this. The durable queue HOLDS (nothing dropped) and overlays keep working on each user\'s LOCAL data — nobody\'s HUD blanks. Clearing this resumes the fleet within one heartbeat. Conservative v1 — coordinate with the guild lead before flipping. Fail-open: if the bot is unreachable, agents run normally.' },
   { key: 'flag_shed_live_state', label: 'Shed: live-state stream', danger: true,
     desc: 'Mid-raid load-shed — the bot 200-acks and DROPS the character live-state stream (buffs/zone). Overlays needing it go stale until cleared. Emergency use only.' },
   { key: 'flag_shed_raid_roster', label: 'Shed: raid-roster stream', danger: true,
@@ -136,11 +138,15 @@ const FLAGS: Flag[] = [
   { key: 'flag_skip_uncurated_mobs', label: 'Stop tracking uncurated mobs (farm trash)',
     desc: 'Ingest gate for encounter collection. Since bot 3.1.52 every exactly-matched mob persists an encounter so a first kill is never lost — which made collection scale with member farming: 97% of the encounters written in the 30 days to 2026-09-04 were uncurated trash (~9 MB/day across the encounter tables, threat snapshots most of it). Checked: the bot stops self-registering new mobs and stops persisting encounters on already auto-registered rows; curated bosses are untouched, the "Trash cleared" tally on the review still runs off the upload stream, and a mob the server hands a loot lockout for is promoted to curated and starts persisting. Unchecked: the TRACK_UNCURATED_MOBS env default (on for us). Takes effect within ~60s.' },
 ];
-const FLAG_KEYS = new Set(FLAGS.map(f => f.key));
+// The flags that stay in the "Save tuning" form are the ones that cannot take a fleet down. The fleet pause and every
+// shed flag (`danger: true`), and the version floor, moved to the Danger zone below the form (the guild lead,
+// 2026-10-31, DECISIONS §493): each is its own form with a typed confirm, so a stray Save can no longer flip one.
+const TUNING_FLAGS = FLAGS.filter(f => !f.danger);
+const DANGER_FLAGS = FLAGS.filter(f => f.danger);
+const FLAG_KEYS = new Set(TUNING_FLAGS.map(f => f.key));
 
-// Version floor is a NUMBER control (not a 0/1 flag) that lives in the same
-// Kill-switches section. Empty = unset. Handled specially in save/render.
-const VERSION_FLOOR_KEY = 'min_agent_ver_num';
+// Version floor is a NUMBER control (not a 0/1 flag) in the Danger zone. Empty = unset. Its key (VERSION_FLOOR_KEY, in
+// lib/adminTyped.ts) is no longer written by the tuning save: it rides through that save untouched.
 // /tag channel join specs (agent 3.6.33). The ONLY home of the password: it
 // rides the tuning poll into each raider's LOCAL dashboard at render time and
 // is never in source, a log, or an upload. These are STRINGS — every other
@@ -205,8 +211,9 @@ async function saveOverlayTuning(formData: FormData) {
   // officer nudging a slider mid-raid should never lose the save to a typo.
   const tuning: Record<string, number | string> = {};
   for (const [k, v] of Object.entries(existing)) {
-    // passthrough unknown keys; the version floor and the text keys are managed below
-    if (!ALL_KNOB_KEYS.has(k) && !FLAG_KEYS.has(k) && k !== VERSION_FLOOR_KEY && !TEXT_KEY_SET.has(k)) tuning[k] = v;
+    // passthrough every key this form does not manage: the danger flags and the version floor (the Danger zone owns
+    // them) and the out-of-band ones. The text keys are managed below.
+    if (!ALL_KNOB_KEYS.has(k) && !FLAG_KEYS.has(k) && !TEXT_KEY_SET.has(k)) tuning[k] = v;
   }
   for (const k of ALL_KNOBS) {
     const raw = String(formData.get(k.key) ?? '').trim();
@@ -215,8 +222,8 @@ async function saveOverlayTuning(formData: FormData) {
     if (!Number.isFinite(n)) continue;
     tuning[k.key] = Math.max(k.min, Math.min(k.max, n));
   }
-  // Kill switches: checked → 1 (on); unchecked → key omitted (bot reads as off).
-  for (const f of FLAGS) {
+  // Switches: checked → 1 (on); unchecked → key omitted (bot reads as off).
+  for (const f of TUNING_FLAGS) {
     if (formData.get(f.key) != null) tuning[f.key] = 1;
   }
   // Text tuning (tag channel specs): a non-empty trimmed string is stored as-is;
@@ -224,13 +231,6 @@ async function saveOverlayTuning(formData: FormData) {
   for (const t of TEXT_KEYS) {
     const raw = String(formData.get(t.key) ?? '').trim();
     if (raw) tuning[t.key] = raw.slice(0, 120);
-  }
-  // Version floor (#74): a bare integer. Empty/0/non-numeric → omitted (unset =
-  // no floor). The bot stands down any agent whose numeric version is below it.
-  {
-    const raw = String(formData.get(VERSION_FLOOR_KEY) ?? '').trim();
-    const n = Number(raw);
-    if (raw && Number.isFinite(n) && n > 0) tuning[VERSION_FLOOR_KEY] = Math.floor(n);
   }
 
   const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
@@ -282,8 +282,25 @@ async function saveClassSets(formData: FormData) {
   revalidatePath('/admin/overlays');
 }
 
-export default async function OverlayTuningPage() {
+// What the Danger zone says after a control was used: `danger` is the outcome code applyDangerControl redirected with and
+// `k` the key it was about. Closed vocabulary, so a hand-typed URL can only ever pick one of these sentences.
+const DANGER_NOTES: Record<string, { ok: boolean; text: string }> = {
+  'set':          { ok: true,  text: 'Set. The bot picks it up within ~60s and agents within ~90s. Clear it as soon as the incident is over.' },
+  'cleared':      { ok: true,  text: 'Cleared. Back to the default within the same window.' },
+  'wrong-phrase': { ok: false, text: 'Nothing changed: the phrase did not match. Type it exactly as shown.' },
+  'bad-value':    { ok: false, text: 'Nothing changed: the floor must be a whole number above zero (major×10000 + minor×100 + patch).' },
+  'write-failed': { ok: false, text: 'Nothing changed: the database refused the write. Try again in a moment.' },
+  'unknown':      { ok: false, text: 'Nothing changed: that control is not one of the Danger zone’s.' },
+};
+
+export default async function OverlayTuningPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ danger?: string; k?: string }>;
+}) {
   await requireOfficer();
+  const sp = await searchParams;
+  const dangerNote = sp?.danger ? DANGER_NOTES[sp.danger] ?? null : null;
   const sb = supabaseAdmin();
   const { data } = await sb
     .from('overlay_tuning')
@@ -364,14 +381,15 @@ export default async function OverlayTuningPage() {
           </section>
         ))}
 
-        <section className="bg-panel border border-red/40 rounded-lg p-5">
-          <div className="text-base font-semibold text-text mb-1">🛑 Kill switches</div>
+        <section className="bg-panel border border-border rounded-lg p-5">
+          <div className="text-base font-semibold text-text mb-1">🔀 Fleet switches</div>
           <p className="text-xs text-dim mb-4 leading-5">
-            Emergency toggles the bot re-reads within <b>~60s</b> — no redeploy. Leave everything
-            off in normal operation. Saving here preserves the numeric knobs above (and vice-versa).
+            Switches the bot re-reads within <b>~60s</b> — no redeploy. None of these can take the fleet down; the fleet
+            pause, the version floor and every shed are in the <a href="#danger" className="text-red hover:underline">Danger zone</a> below
+            this form. Saving here preserves the numeric knobs above (and vice-versa).
           </p>
           <div className="space-y-3">
-            {FLAGS.map(f => {
+            {TUNING_FLAGS.map(f => {
               const on = Number(tuning[f.key]) >= 1;
               return (
                 <div key={f.key}>
@@ -381,45 +399,23 @@ export default async function OverlayTuningPage() {
                       type="checkbox"
                       name={f.key}
                       defaultChecked={on}
-                      className={f.danger ? 'accent-red' : 'accent-orange'}
+                      className="accent-orange"
                     />
                     <span className="text-sm font-semibold text-text">{f.label}</span>
                     <code className="text-[10px] text-dim">{f.key}</code>
                     {on && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-red/20 text-red border border-red/40">ON</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange/20 text-orange border border-orange/40">ON</span>
                     )}
                   </div>
                 </label>
-                {/* A danger switch's caution stays in view; only the plain explanations fold. */}
                 <div className="ml-6">
-                  {f.danger
-                    ? <p className="text-xs text-dim leading-5">{f.desc}</p>
-                    : <FoldText text={f.desc} className="text-xs text-dim leading-5" />}
+                  <FoldText text={f.desc} className="text-xs text-dim leading-5" />
                 </div>
                 </div>
               );
             })}
 
-            {/* Version floor (#74) — a number, not a toggle. Empty = unset. */}
             <div className="block pt-2 border-t border-border/60">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-sm font-semibold text-text">Minimum agent version</span>
-                <code className="text-[10px] text-dim">{VERSION_FLOOR_KEY}</code>
-                {typeof tuning[VERSION_FLOOR_KEY] === 'number' && tuning[VERSION_FLOOR_KEY] > 0 && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-red/20 text-red border border-red/40">
-                    floor {tuning[VERSION_FLOOR_KEY]}
-                  </span>
-                )}
-              </div>
-              <input
-                type="number"
-                name={VERSION_FLOOR_KEY}
-                min={0}
-                step={1}
-                defaultValue={typeof tuning[VERSION_FLOOR_KEY] === 'number' && tuning[VERSION_FLOOR_KEY] > 0 ? tuning[VERSION_FLOOR_KEY] : ''}
-                placeholder="unset"
-                className="w-32 bg-bg border border-border rounded px-3 py-1.5 text-sm text-text font-mono"
-              />
               {TEXT_KEYS.map(t => (
                 <label key={t.key} className="block mt-3">
                   <div className="text-xs text-text">{t.label} <code className="text-[10px] text-dim">{t.key}</code></div>
@@ -434,17 +430,6 @@ export default async function OverlayTuningPage() {
                   <div className="text-[10px] text-dim mt-0.5">{t.hint}</div>
                 </label>
               ))}
-              <p className="text-xs text-dim leading-5 mt-1">
-                Fleet version floor (#74). Enter the numeric form of a version — <b>major×10000 + minor×100 + patch</b>,
-                e.g. agent <b>3.3.85 → 30385</b>.
-              </p>
-              <MoreInfo>
-                <p className="text-xs text-dim leading-5 mt-1">
-                  Any agent below the floor pauses uploads exactly like the kill switch
-                  and shows an <b>update</b> nudge on its dashboard (Mimic auto-updates handle the rest). Leave <b>empty</b> to
-                  impose no floor. Conservative v1 — coordinate with Hitya. Fail-open: an agent that can’t reach the bot runs normally.
-                </p>
-              </MoreInfo>
             </div>
           </div>
         </section>
@@ -519,6 +504,25 @@ export default async function OverlayTuningPage() {
           </div>
         </section>
       </form>
+
+      {/* The Danger zone (the guild lead, 2026-10-31, DECISIONS §493): every control here takes the whole fleet, or a data
+          stream, down. Each is its own form, and setting one needs its phrase typed; the server checks it. Clearing never asks. */}
+      <section id="danger" className="scroll-mt-24 rounded-lg border-2 border-red/70 bg-red/5 p-5">
+        <h2 className="text-base font-semibold text-red">⚠ Danger zone — fleet-wide, confirmed by typing</h2>
+        <p className="text-xs text-dim mt-1 leading-5">
+          The bot re-reads these within <b>~60s</b> and agents within ~90s, no redeploy. Setting one asks you to type the
+          phrase beside it; clearing one never does. Leave all of them off in normal operation.
+        </p>
+        {dangerNote && (
+          <p role="status" className={`mt-3 text-xs rounded border px-3 py-2 ${dangerNote.ok ? 'border-green/40 text-green' : 'border-red/60 text-red'}`}>
+            {sp.k ? <code className="mr-1">{sp.k}</code> : null}{dangerNote.text}
+          </p>
+        )}
+        <div className="space-y-3 mt-4">
+          {DANGER_FLAGS.map(f => <DangerFlag key={f.key} f={f} on={Number(tuning[f.key]) >= 1} />)}
+          <DangerFloor current={typeof tuning[VERSION_FLOOR_KEY] === 'number' && tuning[VERSION_FLOOR_KEY] > 0 ? tuning[VERSION_FLOOR_KEY] : null} />
+        </div>
+      </section>
 
       <section className="bg-panel border border-border rounded-lg p-4 text-xs text-dim leading-5">
         <div className="font-semibold text-text mb-1">How it propagates</div>

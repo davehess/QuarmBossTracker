@@ -26,6 +26,7 @@ import { getDemoMode, maybeFake } from '@/lib/obfuscate';
 import { selectAll } from '@/lib/selectAll';
 import { charsSeenByUploader, countsByDiscord, readChatCounts, readContribCounts, readWhoActivity } from '@/lib/memberActivity';
 import { GUILD_TAG } from '@/lib/guild';
+import { shellOn } from '../shellOn';
 
 export const metadata = {
   title: 'Members · Admin',
@@ -308,10 +309,10 @@ type Tab = 'active' | 'visitor' | 'unlinked' | 'silent' | 'recent' | 'all';
 export default async function AdminMembersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: Tab }>;
+  searchParams: Promise<{ tab?: Tab; member?: string; character?: string }>;
 }) {
   await requireOfficer();
-  const { tab: tabRaw } = await searchParams;
+  const { tab: tabRaw, member: onlyMember, character: onlyCharacter } = await searchParams;
   const tab: Tab = (['active','visitor','unlinked','silent','recent','all'] as const).includes(tabRaw as Tab) ? (tabRaw as Tab) : 'active';
   const demoMode = getDemoMode();
   const members = await loadMembers();
@@ -339,6 +340,16 @@ export default async function AdminMembersPage({
   else if (tab === 'recent')   rows = members.filter(isRecent);
   else rows = members;
 
+  // Smart links from the other officer pages (DECISIONS §493): `?member=` is a Discord id, `?character=` a character
+  // name; either narrows the list to the one member it points at, whatever tab they are on.
+  const pointed = !!(onlyMember || onlyCharacter);
+  const smart = shellOn();   // the row links to agents and feedback are the sidebar preview's
+  if (pointed) {
+    rows = members.filter(m =>
+      (!!onlyMember && m.discord_id === onlyMember)
+      || (!!onlyCharacter && m.charNames.some(c => c.name.toLowerCase() === onlyCharacter.toLowerCase())));
+  }
+
   // Sort: silent/recent emphasize recency; everything else alpha by name
   if (tab === 'recent' || tab === 'silent') {
     rows = rows.sort((a, b) => {
@@ -355,6 +366,14 @@ export default async function AdminMembersPage({
       <div className="text-sm">
         <Link href="/admin" className="text-blue hover:underline">← back to admin</Link>
       </div>
+
+      {pointed && (
+        <p role="status" className="text-xs text-dim border border-blue/40 bg-blue/5 rounded px-3 py-2">
+          Showing {rows.length === 0 ? 'no member' : rows.length === 1 ? 'one member' : `${rows.length} members`} for{' '}
+          <b className="text-text">{onlyCharacter || 'that member'}</b>.{' '}
+          <Link href="/admin/members" className="text-blue hover:underline">Show everyone</Link>
+        </p>
+      )}
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">👥 Member dashboard</h2>
@@ -409,6 +428,13 @@ export default async function AdminMembersPage({
                     <div className="flex items-center gap-2 flex-wrap">
                       <span>{memberLabel(m)}</span>
                       {silent && <span className="text-orange text-[10px]">· silent</span>}
+                      {smart && (
+                        <span className="text-[10px] text-dim">
+                          <Link href={`/admin/agents?member=${encodeURIComponent(m.discord_id)}`} className="hover:text-blue">agents</Link>
+                          {' · '}
+                          <Link href={`/admin/feedback?member=${encodeURIComponent(m.discord_id)}`} className="hover:text-blue">feedback</Link>
+                        </span>
+                      )}
                     </div>
                     <div className="text-dim text-[10px] sm:hidden">
                       {fmtJoined(m.joined_at)}
