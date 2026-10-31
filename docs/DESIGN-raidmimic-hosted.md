@@ -406,3 +406,78 @@ would be a lifetime liability unless the quota is small and fixed. Options, cost
   billing event. Simple to explain, awkward to run.
 - **C — One-time $20 Personal (lifetime, fixed quota) + Guild flat $25/mo**: works only because the Personal quota is bounded;
   no recurring personal revenue, so the guild fee carries everything.
+
+## 9. Bots at scale: one per guild or one for all, subdomains, where guest data lives, and other games (2026-10-31)
+
+The guild lead: *"we're also going to need to account for the additional load on railway bots. each Guild will probably want
+their own subdomain on raidmimic.com … how much will this run if we encapsulate each guild's bot into a spot or could we
+directly manage this spinning up load balanced bots that are generic? feels like an easy way for data to be exfiltrated
+programmatically. but at the same time where would guest data be stored, per guild bot? what does that look like when 10 to
+30 guilds buy in? 100+? if we get into wow or live eq/eq2."*
+
+### 9a. What one guild's bot costs
+Measured over 30 days (`docs/COSTS.md`): **0.080 GB RAM and 0.0196 vCPU on average**, which at Railway's $10/GB-month and
+$20/vCPU-month is **$1.20 a month of usage**; the plan ($5 Hobby, $20 Pro) is the bill, not the usage. A raid night peaks at
+0.70 GB and 8.7% of a vCPU. So a dedicated bot per guild is about **$1.50–3 a month at raid size**, and a shared bot carrying
+30 guilds would run far below 30× that, because the load is bursty and the nights overlap only partly.
+
+### 9b. Three shapes
+
+| | **A — one bot per guild** | **B — one generic bot, load-balanced** | **C — hybrid: shared hub bot + a dedicated bot per paying guild** |
+|---|---|---|---|
+| What it is | each guild gets its own Railway service, its own Discord application, its own `SUPABASE_GUILD_ID` (today's code, N times) | one Discord application in every guild's server; `guild_id` resolved per request from the session token; horizontal copies behind Railway's load balancer | the free commons and guests run on the shared bot; a guild that pays gets A |
+| Isolation | strong: a bug in one guild's process cannot read another's rows if its credential is guild-scoped | weak by default: one process, one service key, every guild's rows one `guild_id` away | strong where money is; weak only where the data is already shared |
+| Build | small: it is the self-host kit run by us (§4 wizard) + a provisioner | large: per-request scoping (§3 step 6), the 229 unscoped calls, RLS by membership, sharding of in-memory state (`state.json`, caches, timers) | A's provisioner + B's scoping, but B only has to be right for the commons |
+| Maintenance | N deploys per release (a fleet script), N Discord apps to keep alive | one deploy; one incident takes everyone down | two deploy paths |
+| Runtime, 30 guilds | ~$60/mo usage + plan | ~$10–20/mo | ~$40–60/mo |
+| Runtime, 100 guilds | ~$200/mo + plan | ~$30–50/mo (two or three replicas) | ~$120–180/mo |
+| Change | easy per guild (a guild can be moved to its own project, the exit) | every change is tenant-aware | both |
+
+**The exfiltration question is the deciding one, and the answer is not "which shape" but "who holds the key".** Today the
+bot uses `service_role`, which bypasses RLS: in shape B that key reads every guild. The fix that makes B safe is also what A
+needs to be honest: **the bot never uses `service_role` for guild data.** Each request runs as a Postgres role with RLS on
+and `app.guild_id` set from the session token (`set_config` in a transaction, or a guild-scoped JWT minted per request), so a
+missed `.eq('guild_id', …)` returns nothing instead of everything, and the database enforces the boundary rather than 229
+call sites. With that in place the two shapes differ in blast radius of a *process* compromise (A: one guild; B: all), not in
+what a *bug* can read. Recommendation: **C.** Paying guilds get their own process, their own Discord app and their own
+credential (the exit path is then trivial), the commons shares one bot, and the per-request role is built once for both.
+
+### 9c. Subdomains
+`wp.raidmimic.com` / `wolfpack.raidmimic.com`: one Next.js deployment serves every tenant. Vercel takes a wildcard domain
+(`*.raidmimic.com`) when the domain's nameservers are Vercel's, and the middleware reads the host to pick the guild
+(`web/middleware.ts` already runs on every request for the session cookie). Supabase's redirect allowlist takes
+`https://*.raidmimic.com/**` as one entry. Costs: Vercel Pro ($20/mo) is required anyway once this is commercial (Hobby is
+non-commercial); storage and bandwidth are per deployment, not per domain, so 100 subdomains cost nothing extra. A guild's own
+domain (`raids.theirguild.com`) is a CNAME onto the same thing, like `b.wolfpack.quest` today. Each subdomain carries the
+guild's theme (`DESIGN-theming.md` §4) and its `pageMeta` unfurls.
+
+### 9d. Where guest data lives
+A guest's parse is written under the `guild_id` of the guild whose officer approved the key (§474): in shape A that is the
+guild's bot and the guild's rows; in B/C the same rows in the shared database. The guest's own account holds nothing but the
+key and a `players` row. When that guest's own guild later joins, the fight already carries a `fight_id` (§7c) and their
+contribution is theirs to see through the merge, labelled by guild. Nothing is copied between guilds; the merge is a join.
+
+### 9e. 10, 30, 100, 1,000 guilds
+
+| | 10 guilds | 30 | 100 | 1,000 |
+|---|---|---|---|---|
+| Raiders (×40) | 400 | 1,200 | 4,000 | 40,000 |
+| Railway, shape C | $25 | $55 | $170 | $1,500 (a fleet; consider a VPS pool) |
+| Vercel | Pro $20 | $20 | $20 + bandwidth | Enterprise or self-run |
+| Supabase (§7a, threat feed in object storage) | Pro $25 | $35 | $45 + ~$20 storage | ~$300 compute + $200 storage |
+| Discord | one app in N servers (sharding at 2,500 servers) | same | same | shards |
+| Revenue at $25/guild | $250 | $750 | $2,500 | $25,000 |
+| Per-guild cost | ~$7 | ~$4 | ~$2.50 | ~$2 |
+
+The margin is fine at every size; what changes at 100+ is operations (a fleet script for A/C deploys, a status page, on-call)
+and the database size, which is why §7a's object-storage move comes first.
+
+### 9f. Other games
+The record is already game-shaped rather than EverQuest-shaped: fights, raiders, loot, rolls, attendance, triggers. What is
+EverQuest-specific is the input (the log format, Zeal's pipe, the `eqemu_*` catalog) and the overlays' content. Adding a game
+means: a `game` key beside `server` on fights and characters; a parser module per game behind the §7d library seam (WoW's
+combat log is documented and has `advanced combat logging`; EQ2 has ACT's plugin ecosystem); a catalog mirror per game
+(WoW: Wowhead/Blizzard API; EQ2: the community databases); the overlays reading their game's state source. Live EQ's log
+format is close to Quarm's, so it is the cheapest second target; WoW already has Warcraft Logs for parses, so the pitch there
+is the guild layer (raid record, loot, DKP, triggers, the Canvas), not the parse. The leadership's WoW Forever talk (Decision
+Desk, the faction and ruleset picks) is the first real test.
