@@ -391,6 +391,7 @@ async function _lookupSessionToken(token, ip) {
       user_id: null, discord_id: row.discord_id, display_name: row.guest_label || 'Guest',
       role_names: [], is_officer: false,
       scope: 'guest', guest_label: row.guest_label || null, expires_at: row.expires_at,
+      guild_id: row.guild_id || null,   // the session's guild (utils/guildScoped.js scopes a request to it)
     };
     // Cached for a minute, not five: the officer's Revoke on /admin/links is a web write the bot is not told about.
     _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now() - SESSION_CACHE_TTL_MS + GUEST_CACHE_MS, value });
@@ -416,7 +417,7 @@ async function _lookupSessionToken(token, ip) {
   if (memberRows === null) {
     const value = (cached && cached.value) || {
       user_id: row.user_id || null, discord_id: row.discord_id, display_name: row.discord_id,
-      role_names: [], is_officer: false,
+      role_names: [], is_officer: false, guild_id: row.guild_id || null,
     };
     _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now() - SESSION_CACHE_TTL_MS + SESSION_RETRY_MS, value });
     return value;
@@ -429,6 +430,7 @@ async function _lookupSessionToken(token, ip) {
     display_name:  member?.nickname || member?.global_name || row.discord_id,
     role_names:    roleNames,
     is_officer:    _hasOfficerRole(roleNames),
+    guild_id:      row.guild_id || null,
   };
   _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now(), value });
   // Best-effort bump last_used_at so we can show "this install last seen X ago".
