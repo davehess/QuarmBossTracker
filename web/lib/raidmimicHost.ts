@@ -33,8 +33,11 @@ export function isRaidmimicOrigin(origin: string | null | undefined): boolean {
 // flow (session refresh, lockout check), because a page that reads the session needs both.
 export const RAIDMIMIC_GUILDS_PATH = '/guilds';
 
+// /api/hubs is the guild directory Mimic's picker reads from https://raidmimic.com/api/hubs (public, exactly this path).
+export const RAIDMIMIC_HUBS_PATH = '/api/hubs';
+
 export function isRaidmimicOpenPath(pathname: string): boolean {
-  return pathname.startsWith('/auth/') || pathname.startsWith('/api/auth/')
+  return pathname.startsWith('/auth/') || pathname.startsWith('/api/auth/') || pathname === RAIDMIMIC_HUBS_PATH
     || pathname === RAIDMIMIC_GUILDS_PATH || pathname.startsWith(`${RAIDMIMIC_GUILDS_PATH}/`);
 }
 
