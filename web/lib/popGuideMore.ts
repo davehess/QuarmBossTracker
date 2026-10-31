@@ -84,15 +84,15 @@ export const STEP_MORE: Record<string, StepMore> = {
   },
 
   bot_symbol: {
-    expect: 'The raid farms the four spheres and one Unadorned Symbol. One raider carries the finished Symbol; everyone else clicks the portal within 5 minutes of them.',
-    turnIn: [{ to: at('bot_symbol'), give: 'the [[Symbol of Torden#9433]] on your cursor, then click', get: '5 minutes for your raid to follow you in' }],
+    expect: 'The raid farms the four spheres and one Unadorned Symbol. One raider carries the finished Symbol; everyone else clicks the portal within about a minute of them.',
+    turnIn: [{ to: at('bot_symbol'), give: 'the [[Symbol of Torden#9433]] on your cursor, then click', get: 'about a minute for your raid to click up, restarted by each of your clicks' }],
   },
   bot_tower: {
     expect: 'A raid. Everyone talks to Askr twice, once after each tower boss. Askr (both floors) and the vortex have no 55-minute timer any more: once Karana is up they stay until his flagging window ends, and they do not vanish when he spawns. Killing Emmerik no longer removes the lower-floor Askr.',
     back: [at('flag_agnarr')],
   },
   flag_agnarr: {
-    expect: 'A raid. Karana stays up 20 minutes and answers up to 72 people from the raid with the kill; he no longer spends one of those flags on a player who already has his checklist flag. Ask for the path of the Fallen before “send me”, which casts Gate.',
+    expect: 'A raid. Karana stays up 20 minutes and answers up to 72 people from the raid with the kill; he no longer spends one of those flags on a player who already has his checklist flag. A hail only gets his speech: say “follow the path of the Fallen” before “send me”, which casts Gate.',
     auto: FLAG_AUTO,
   },
 
@@ -184,10 +184,16 @@ const BRIEFS: Record<string, string> = {
   cod_fuirstel_before: 'Hail Elder Fuirstel before Bertoxxulous dies. Needs Grummus done, and Adler asked about the ward before Grummus fell.',
   flag_carprin: 'Kill the five Carprin nameds, then hail Tarkil Adan while you hold the kill credit. It is your way into the lower Crypt.',
   flag_askr: 'Everyone does their own: a head for a bag, three parts for the flag, two medallions for the second. Stay in the zone.',
+  storms_relv_falto: 'Optional, no flag. Hail Relv, “continue” three times, “courageous”. Kill 30 mephits, then Falto, for loot and exp.',
   flag_keeper: 'A small raid kills the Keeper, then hails Tylis. Do Fahlia’s step first or it is a checklist flag. Resets in 2 hours.',
+  torment_sphere: 'Optional. One sphere on the key ring of anyone in your raid covers everyone. You still need your own Tylis flag.',
   flag_saryrn: 'Kill Saryrn, then hail her one projection: 30 minutes, 72 players. Real flag only after the Keeper step.',
-  bot_symbol: 'Build one Symbol per raid: four spheres in an Unadorned Symbol. The holder clicks the portal; all follow in 5 minutes.',
-  hoh_trial_villager: 'Win the trial, then hail Alekson while you are in the winning group for your credit. A loss can retry in 10 minutes.',
+  bot_symbol: 'Build one Symbol per raid: four spheres in an Unadorned Symbol. The holder clicks the portal; all follow in about 1 min.',
+  flag_agnarr: 'Hail Karana within 20 minutes of the kill, in the raid that got it. An alt must be in that raid to claim.',
+  hoh_trial_dragon: 'Say “ready” to start. After the win, hail Trydan within 10 minutes from the winning raid or group for credit.',
+  hoh_trial_villagers: 'Say “ready” to start. After the win, hail Rhaliq within 10 minutes from the winning raid or group for credit.',
+  bot_tower: 'Everyone does both Askr steps; Emmerik’s Askr opens the vortex to Agnarr. Alts can wait on floor two for it.',
+  hoh_trial_villager:'Win the trial, then hail Alekson while you are in the winning group for your credit. A loss can retry in 10 minutes.',
   maelin_cipher: 'Hail Maelin once you hold both halves, Saryrn’s and Mithaniel Marr’s. He joins them into your cipher flag.',
   maelin_lore: 'Needs Karana’s path flag and Mithaniel’s notes. Maelin reads both and gives you a flag.',
   zeks_maelin: 'Needs the cipher and both Zek projections hailed. Maelin reads the notes and moves you to Zeks 6.',

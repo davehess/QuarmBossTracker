@@ -30,6 +30,7 @@ import { setGuideTick } from './actions';
 import { CharOptions, ChainView, Place, SeqView, WithItems } from './GuideChecklist';
 import SeerPaste, { useFocusStep, type SeerResult } from './SeerPaste';
 import ZoneMap, { type ZoneOutline } from './ZoneMap';
+import { startsOfRuns, type GettingThere, type GuideGettingThere } from '@/lib/popGettingThereRuns';
 
 // How a step got its tick. mimic = Mimic saw it happen; database = our records already show it;
 // who = a raider's /who showed the character inside a plane that needs it (web/lib/popGuideAuto.ts).
@@ -121,9 +122,10 @@ function MapPeek({ places, outlines, label, className, children }: {
   );
 }
 
-export default function GuideRoute({ chars, initial, cards, outlines, layout, noLevel }: {
+export default function GuideRoute({ chars, initial, cards, outlines, layout, noLevel, gettingThere }: {
   chars: RouteChar[]; initial: string | null; cards: Record<number, ItemCard>;
   outlines: Record<string, ZoneOutline>; layout: 'b' | 'c'; noLevel?: string[];
+  gettingThere?: GuideGettingThere;   // ?v=b only: the finished "Getting there" sentences (popGettingThere.ts)
 }) {
   const [charName, setCharName] = useState<string | null>(initial);
   const [manualBy, setManualBy] = useState<Record<string, Set<string>>>(
@@ -367,6 +369,7 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout, no
                         const s = GUIDE_SECTIONS.find(x => x.key === sk);
                         const rows = shown.filter(i => i.section === sk);
                         if (!s || rows.length === 0) return null;
+                        const gt = gettingThere ? startsOfRuns(rows, gettingThere) : null;
                         return (
                           <div key={sk} id={`sec-${sk}`} className="scroll-mt-4 pt-1">
                             {l.sections.length > 1 && <h3 className="text-xs text-text font-semibold mt-2">{s.title}</h3>}
@@ -376,7 +379,7 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout, no
                                 <li key={i.key} className="border-t border-border first:border-t-0">
                                   <StepRow item={i} layout={layout} checked={done.has(i.key)} ev={auto[i.key]}
                                            seerNext={!!seer?.next.has(i.key)} manual={manual.has(i.key)} disabled={!char} onToggle={toggle} cards={cards}
-                                           outlines={outlines} picked={picked === i.key}
+                                           outlines={outlines} picked={picked === i.key} gettingThere={gt?.get(i.key)}
                                            onPick={() => setPicked(p => (p === i.key ? null : i.key))} />
                                 </li>
                               ))}
@@ -404,10 +407,20 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout, no
   );
 }
 
-function StepRow({ item, layout, checked, ev, seerNext, manual, disabled, onToggle, cards, outlines, picked, onPick }: {
+// "Getting there" (?v=b): one line above the first step of a zone's run, the repeat-visit shortcut under it, muted.
+export function GettingThereLine({ gt }: { gt: GettingThere }) {
+  return (
+    <div className="mb-1 text-[11px] leading-snug">
+      <p className="text-text"><span className="text-dim">Getting there:</span> {gt.main}</p>
+      {gt.alt && <p className="text-dim">{gt.alt}</p>}
+    </div>
+  );
+}
+
+function StepRow({ item, layout, checked, ev, seerNext, manual, disabled, onToggle, cards, outlines, picked, onPick, gettingThere }: {
   item: GuideItem; layout: 'b' | 'c'; checked: boolean; ev?: Evidence; seerNext: boolean; manual: boolean; disabled: boolean;
   onToggle: (item: GuideItem, next: boolean) => void; cards: Record<number, ItemCard>;
-  outlines: Record<string, ZoneOutline>; picked: boolean; onPick: () => void;
+  outlines: Record<string, ZoneOutline>; picked: boolean; onPick: () => void; gettingThere?: GettingThere;
 }) {
   const id = `route-${item.key}`;
   const places = stepPlaces(item, STEP_MORE[item.key]);
@@ -418,6 +431,7 @@ function StepRow({ item, layout, checked, ev, seerNext, manual, disabled, onTogg
              className="mt-0.5 h-4 w-4 shrink-0 accent-green cursor-pointer disabled:cursor-default"
              title={ev ? ev.what : undefined} />
       <div className="flex-1 min-w-0">
+        {gettingThere && <GettingThereLine gt={gettingThere} />}
         <label htmlFor={id} className={`text-sm cursor-pointer ${checked ? 'text-dim' : 'text-text'}`}>
           <WithItems text={item.title} cards={cards} />
         </label>

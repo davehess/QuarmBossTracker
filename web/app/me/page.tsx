@@ -52,6 +52,7 @@ import {
 import { type NightChip } from '@/components/RaidHeatmap';
 import { type StripNight } from '@/components/RaidNightsStrips';
 import AttendanceSection from './AttendanceSection';
+import MeHub from './MeHub';
 import { cookies } from 'next/headers';
 import { pickRaidLayout, RAID_LAYOUT_COOKIE } from '@/lib/raidLayout';
 import { GUILD_TAG } from '@/lib/guild';
@@ -672,11 +673,16 @@ async function loadSuspectedCharacters(discordId: string | null): Promise<Suspec
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export default async function MePage({ searchParams }: { searchParams?: Promise<{ layout?: string }> }) {
+export default async function MePage({ searchParams }: { searchParams?: Promise<{ layout?: string; v?: string }> }) {
   const layout = pickRaidLayout((await searchParams)?.layout, (await cookies()).get(RAID_LAYOUT_COOKIE)?.value);
+  // ?v=b is the hub variant (MeHub.tsx, DECISIONS §481). It is chosen BEFORE any of this page's loaders run: the hub
+  // streams its own blocks, so nothing below may be awaited ahead of it. No ?v= is this page, unchanged.
+  const variantB = (await searchParams)?.v === 'b';
   const supabase = supabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
+  if (!user && variantB) redirect('/auth/signin?next=%2Fme%3Fv%3Db');
   if (!user) redirect('/auth/signin?next=/me');
+  if (variantB) return <MeHub userId={user.id} />;
 
   const tz = await userTz();
 

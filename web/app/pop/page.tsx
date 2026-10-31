@@ -964,7 +964,7 @@ export default async function PopFlagsPage(
         { label: 'Chart', href: chartHref, active: chartBody },
         { label: 'Matrix', href: hrefFor({ view: 'matrix', zone: null }), active: matrixView || mineView },
       ]}
-      extras={[{ label: '☑ My checklist', href: '/pop/guide' }, { label: 'Latest flags', href: '/pop/latest' }]}
+      extras={[{ label: '☑ My checklist', href: '/pop/guide' }, { label: 'Latest flags', href: '/pop/latest' }, { label: 'Events & loot [beta]', href: '/pop/events' }]}
       groups={navGroups(topLevel, eligibleCount)}
       base={jumpBase}
       essencesQueued={essences.queue.length}
@@ -1090,6 +1090,7 @@ export default async function PopFlagsPage(
         </span>
         <Link href="/pop/guide" className={`${navCls(false)} shrink-0`}>☑ My checklist</Link>
         <Link href="/pop/latest" className={`${navCls(false)} shrink-0`}>Latest flags (try the new view)</Link>
+        <Link href="/pop/events" className={`${navCls(false)} shrink-0`}>Events &amp; loot [beta]</Link>
       </div>
       </div>
       )}

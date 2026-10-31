@@ -720,7 +720,7 @@
   }
   var TIMER_SAMPLE = { items: [{ name: 'a burning guardian – Tashanian', text: '1:42', pct: 70 }, { name: 'Recharm tick', text: '0:04', pct: 60, color: C.orange }] };
   P('timers.all', 'timers', 'Every countdown', 'timers', 'list', function (d, at) { return timerRows(d, at, null); }, TIMER_SAMPLE, { short: 'Timers' });
-  [['charm', 'Charm countdowns'], ['lull', 'Lull countdowns'], ['spell', 'My spells on mobs'], ['trigger', 'Trigger countdowns'], ['loot', 'Loot bids']].forEach(function (g) {
+  [['charm', 'Charm countdowns'], ['lull', 'Lull countdowns'], ['spell', 'My spells (mobs or players)'], ['trigger', 'Trigger countdowns'], ['loot', 'Loot bids']].forEach(function (g) {
     P('timers.' + g[0], 'timers', g[1], 'timers', 'list', function (d, at) { return timerRows(d, at, g[0]); }, TIMER_SAMPLE, { short: g[1] });
   });
   P('tick.all', 'timers', 'Server tick, every character', 'state', 'list',

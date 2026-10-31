@@ -29,6 +29,37 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.39': [
+    'Mimic uploads now remember which gear each character is seen wearing, so the gear page can offer your most-worn sets later. Only you will see them.',
+  ],
+  '4.0.38': [
+    '**A character\'s gear, inventory and spells pages now say when each upload last arrived**, even when nothing in the file had changed.',
+  ],
+  '4.0.37': [
+    '**Fixed: fights against bosses with a comma in their name (Falto, Jeplak, Gurebk, Ston`Ruak and others) were not being saved.** They now show on parses and the raid session.',
+  ],
+  '4.0.36': [
+    '**Officers can extend a guest link by 1 or 3 hours.** The Command Center in Mimic lists the guests and their fights, and a key that lapsed in the last 12 hours can be brought back.',
+  ],
+  '4.0.35': [
+    '**Officers can give a raider from another guild a temporary Mimic link that uploads parses only.** It expires on its own (tonight or 7 days) and can be ended early on the Character links page.',
+  ],
+  '4.0.34': [
+    '**#raid-chat stays quiet outside raids.** Relayed raid chat and boss-kill announcements post only in the raid-night or event thread, so nothing lands in the channel on off nights.',
+    '**Fixed: one boss kill posted once per raider.** A kill is now announced once.',
+  ],
+  '4.0.33': [
+    '**Fixed: Target Info said "not in the catalog" for bosses with a comma in their name** (Falto, Lord of Thunder; Gurebk; Jeplak; Neffiken; Ston`Ruak; Edium; Ralthazor).',
+  ],
+  '4.0.32': [
+    '**Raid chat from another group\'s raid is no longer relayed.** A member raiding with another guild no longer fills #raid-chat with that raid\'s chat.',
+  ],
+  '4.0.31': [
+    '**Fixed: an @here typed in raid chat pinged the Discord channel.** Relayed chat can no longer mention anyone.',
+  ],
+  '4.0.30': [
+    '**Raid chat moves into the raid-night thread.** During a raid, relayed /rs lines post in that night\'s thread instead of filling #raid-chat. Announcements still post in the channel.',
+  ],
   '4.0.29': [
     '**Raid history keeps more.** The bot now saves where mobs were, their health over a fight, who cast what, zone changes, pet owners and trigger fires, instead of forgetting them at a restart.',
   ],

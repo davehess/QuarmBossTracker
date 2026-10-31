@@ -103,6 +103,37 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Guests in the Command Center: +1h / +3h for officers, and a page to review their fights (bot 4.0.36 + web, agent 4.0.48 beta; `draft/guest-cc-main`
+  + `draft/guest-cc-beta`; 2026-10-30; first draft, not pushed; no migration).** The guild lead: "add guests to the command center for officers/admins with
+  an extend button for +1/+3. we should be able to review their data and contributions after the fact". Bot: officer-only `GET /api/agent/guest-links`
+  (15 s cache) and `POST /api/agent/guest-links/extend` (`utils/guestLinks.js`): max(now, expiry) + 1 or 3 h, a key that lapsed under 12 h ago can be
+  revived, a revoked one never, `guest_link_extended` audit row, the guest's cached identity dropped at once. Web: `/admin/links` +1h / +3h, and
+  `/admin/guests` (every guest link and each fight, linking to the parse page). Agent (beta): the officer's agent reads the list while the Command Center
+  polls and `POST /api/guest-extend` forwards; `command.html` draws the "Guests" card. Open: not run end to end against a live guest (decision §476 item 6).
+  Tests `test/guest-extend.test.js`, `test/guest-extend-web.test.js`, `test/command-guests.test.js`.
+
+- **🧪 Guest Mimic links: an officer-approved, time-limited key that uploads parses only (bot 4.0.35 + web 2.1.70, `draft/guest-link`; 2026-10-30; first
+  draft, not pushed; migration `20261030150000_mimic_guest_sessions.sql` NOT yet applied, and it must be applied before the bot deploys).** The guild lead:
+  "where can i give someone a temp key to contribute to shared parses as a raider from another guild" (option A). `/admin/links` gains a "Guest links"
+  section: the guest's Mimic code, a label, "1 hour", "3 hours", "Tonight (until 1 AM Eastern)" or "7 days" (web 2.1.71: the shorter two and 1 AM, at the guild lead's word); active list with Revoke, expired fold. The session is
+  `mimic_sessions.scope = 'guest'` with `expires_at` and a `guest:<id>` stand-in for the Discord id; `requireAgentAuth` allows a guest only the parse
+  upload and the (stream-less) poll and answers 403 `guest_scope` elsewhere. A guest upload is recorded and merged but triggers no card, timer, review
+  count, /who data or upload stats. Tests `test/guest-link.test.js`. Decision §474 in `docs/decisions/inbox/2026-10-30.md`.
+
+- **🧪 `/pop/events` [beta]: every scripted PoP event, its loot with the percentages, item scores and a ranking, plus the Relv / Falto step in
+  the Plane of Storms checklist (web 2.1.69, `draft/pop-events`; 2026-10-30; NEW route, so it goes to `main` with the `[beta]` tag, DECISIONS
+  §135; first draft, not pushed).** The guild lead: "add this [the Relv / Falto, Lord of Thunder event] to the pop guide for plane of storms as an
+  optional event. Please comb through the PoP LUA scripts and get us a repository of those events and include the loot that can drop and the
+  percentages. Give item scores to each item and then add a ranking that could be there for each event." then "count procs and focus effects
+  higher, PLUS ATTACK for melee". 100 events from SecretsOTheP/quests @ 572bc06, each cited to script lines (`web/lib/popEvents.ts`, committed);
+  drops (`eqemu_npc_drops`), item stats (`eqemu_items`) and DKP paid (`opendkp_loot`) read live and kept 6 h (`web/app/pop/events/load.ts`);
+  score and ranking are pure (`web/lib/popEventsScore.ts`): a 0 to 100 class-relative index over the finder's own weights, with the event tuning
+  (`EVENT_SCORE_TUNING`: focus 35 caster / 20 hybrid / 5 melee, proc 30 melee / 45 melee weapon / 5 others, attack ×2 for melee) on this page only;
+  value per run = Σ kills × rolls × chance × score. Guide step `storms_relv_falto` (optional, no flag) + its seq, brief, `STEP_HOME`, `PLANE_OF`;
+  regenerated `apps/mimic/pop-quests.js` and `utils/popEngine.js` (data only, no Mimic or bot version bump). Tests `test/pop-events.test.js`.
+  ⚠ Open: kills per run are 1 unless a script gives a number (waves of trash are under-counted); three events have no script (loot only); the
+  tuning could go global in `gearWeights.ts` if the guild lead wants /me/upgrades to match. Graduates (drops `[beta]`) when the guild lead says so.
+
 - **🧪 Parse page: one "Class not known" bucket, classes from every source, the chart axis fit to the data (web 2.1.49, `draft/parse-unknowns`, for `beta`; 2026-10-26; first draft, not pushed).**
   The guild lead on a foreign-guild wipe: "The Unknowns here aren't actually unknown" and "why is the parse half the distance on the timeline
   instead of fit to it?". Cause 1: the OpenDKP mirror (`characters`) stores the literal strings `UNKNOWN`/`Unknown` for an unregistered toon; the
@@ -223,6 +254,44 @@ next touch one rather than assuming a missing row means a missing doc.
   also run; rows and dots carry the hover-interact handshake, so it works locked. Map only: the agent already had `clear` and `killed`
   marks, so no agent bump. A clear is a local override: the next death the agent sees starts a timer again. Test:
   `test/map-watch-agent.test.js` ("right-click a spawn"). Not seen in a live window: needs a Mimic beta cut and a locked Map to confirm.
+- **✅ Target Info finds bosses with a comma in their name (bot 4.0.33, main, 2026-10-30).** The guild lead: Falto, Lord of Thunder
+  read "not in the catalog". An unquoted comma inside PostgREST's `or=(…)` ends the value and the whole query is refused, so all
+  seven comma bosses (Falto, Gurebk, Jeplak, Neffiken, Ston`Ruak, Edium, Ralthazor) missed. `_buildMobInfo` and
+  `utils/backfillScan.js` now double-quote a name holding `, . : ( ) "`; plain names send the old query. Test:
+  `test/mobinfo-comma-names.test.js`.
+- **🧪 My parses lists every fight on request (agent 4.0.46, beta `e4c8bfea`, 2026-10-30).** The guild lead: "My parses hides the
+  majority of fights" (22 on the chart, 12 in the list). Past 12 fights a "Show all N fights" switch under the table lists every
+  one (`wpMpTable(d, byDay, allRows)`, `wpMpAllRows` in `dashboard.html`); By day already did. Test: `test/my-parses-tab.test.js`.
+- **🧪 Relv event mephit counter in the Command Center (agent 4.0.45, beta `1370257c`, 2026-10-30; DECISIONS §471).** The guild
+  lead, mid-event: "add in a mephit counter into the command center … for this event only". Per-client floor count of the 30
+  blazing/burning mephits from death lines, Falto's adds excluded, resets on a new start, the pulled-back line, leaving the
+  zone, 3 h, or 10 min after Falto. Not seen live yet. Graduates with the next stable cut.
+- **🧪 Raid chat relays only from a raid that is ours (bot 4.0.32, main, 2026-10-30; DECISIONS §470).** A member in another group's
+  raid relayed its /rs into #raid-chat. The uploader's newest raid_roster capture must be at least half guild characters
+  (`_uploaderRaidIsOurs` / `_raidRosterIsOurs` / `_raidChatLineAllowed` in `index.js`); refused lines are not posted or stored.
+  Test: `test/raid-chat-foreign-raid.test.js`.
+- **🧪 Mimic: each character's overlays come back when you swap to them (beta `b906c15f`, Mimic parked, 2026-10-30; DECISIONS §468).**
+  Saved by itself per character as you change things (`overlay-last.json`; `_lastLayoutWatch` / `_lastLayoutObserve` /
+  `_switchLastLayout` in `main.js`, store in `overlaySets.js`); applied on a swap only when the other client has been quiet 60 s
+  (multi-box guard). The Canvas on/off and its panels are per character. Test: `test/char-last-layout.test.js` (34). Not yet seen in
+  a live Mimic: needs a beta build and a two-character swap. Graduates with the next stable cut (add its version here then).
+- **🧪 Mimic: Target Info re-fits after a resize (beta `ae0b9ed9`, 2026-10-30).** A member: "gets all messed up when u resize the
+  window … closing it and reopening it fixes it". It reported its height only when its HTML changed; a width change now refits once
+  after 500 ms (`mobinfo.html`; `test/mobinfo-resize-refit.test.js`). Open: the other nine overlays that call `overlayAutoHeight(h)`
+  directly (who, charm, command, melody, pets, popraid, tank, triggers, zealhealth) share the shape; audit each.
+- **🧪 Mimic: a folded window leaves a readable "click to restore" handle; Overlays tab "Timers start at" (agent 4.0.44, beta
+  `e443aafc`, 2026-10-30; DECISIONS §469).** Test: `test/timers-top-mini-handle.test.js`. Not seen in a real Electron window yet.
+- **🧪 Mimic: a character's layout remembers whether they wanted the Canvas (beta `79ea102a`, Mimic stays parked, 2026-10-30;
+  superseded the same day by the automatic last layout above, which keeps this as its fallback).** The guild lead: "overlay sets aren't remembering if a character wanted to use canvas or not."
+  Both saves already held the flag (a character's layout in `_CHAR_PROFILE_FLAGS`, an overlay set via `_HIDEALL_FLAGS`), so nothing
+  was missing from them. The loss: a character's layout is a snapshot, written back over the live setting at every launch and
+  character change, and the 3.0.3 pass wrote every layout's Canvas OFF once, so a Canvas the person then switched on went off again at
+  the next launch (and one saved on came back after a ✕). **Fix:** `_noteCanvasChoice` makes every place the person switches the
+  Canvas (tray / Overlays page / hotkey toggle, the Canvas's ✕, an accepted Arrange, loading a set) also write the active character's
+  existing layout's Canvas flag; nothing is created, other flags and other characters untouched; a set or layout with no Canvas
+  answer leaves it alone as before. Test: `test/canvas-per-character.test.js`. Open: the Canvas's PANELS (`cfg.canvasLayouts`) are
+  per screen resolution and per overlay set, never per character; a character's layout holds none. Not built; ask first. The report's
+  exact scenario was not seen, so this is the cause found in the code, not one reproduced.
 - **🧪 Mimic: the Canvas stays off until you turn it on; Esc leaves setup (draft `draft/canvas-off` on `beta`, Mimic parked 3.0.3,
   2026-10-22; DECISIONS §413). Not pushed; a 3.0.3 stable is the guild lead's call.** A raider on 3.0.2 stable, mid-raid: every overlay on
   screen in blue boxes, "what is a canvas?", gone after a restart. Probable cause (not reproduced): the Canvas had been switched ON
@@ -1910,6 +1979,15 @@ next touch one rather than assuming a missing row means a missing doc.
   player called **Susanna** (47 rows, never a boss) and real players named
   Dread, Terror and Fright, all of which are also mob names.
 
+- **⚠ Needs a local session (or the guild lead) — put the six raid-history tables on Tower (2026-10-29).**
+  `raid_mob_sightings`, `raid_mob_hp`, `raid_casts`, `raid_zone_changes`, `raid_pet_owners` and `raid_trigger_fires`
+  (migration `20261029121500`) are pruned at 60 days in Supabase; Tower must keep them. `scripts/lib/archive-merge.sql`
+  now creates and ARCHIVES all six (insert/update, never delete), self-test extended. Tower's copy is not a git checkout,
+  so the nightly merge only gets it when the file is copied there by hand (method + md5 drift check:
+  `docs/PATCH-tower-raid-track.md`, `docs/HANDOFF-tower-archive-catchup.md`). Until then Tower skips the six
+  silently and, were the merge to meet them, would treat them as MIRROR. After the copy: run
+  `scripts/test-archive-merge.sh` on Tower, grant `select` on the six to `claude_ro`, and after the next raid read
+  `select count(*) from raid_casts` there.
 - **⚠ Needs a local session (or the guild lead) — put the raid replay table on Tower (2026-10-05, §161).**
   Tower's copy of `scripts/lib/archive-merge.sql` is not a git checkout, so the change only reaches the nightly
   archive when the file is copied there by hand (method + md5 drift check: `docs/HANDOFF-tower-archive-catchup.md`).
@@ -7208,6 +7286,17 @@ Mithaniel's notes (:37) and the second reading needs zeks **7** (:57), not 6. Th
   and a grow-up strip jumped on drag. Rule: folded = width resizes, height stays the row (never saved as a floor); designed mini =
   both axes with its own `<key>MiniFloor`; Canvas strip = width only. ⏳ Not run in Electron (native edge resize, hover handshake).
   Open: layout profiles do not carry `MiniFloor`; the HUD ring has no ◢; folding a grow-up overlay (alerts) restores top-anchored.
+
+### 🧾 2026-10-29 — FB-112 Timers canvas name picker (agent 4.0.41, Mimic beta draft `draft/timer-picker`; DECISIONS §467)
+- **FB-112** (a member's panel was filtered to a spell name and the real timer names were hard to pick; the guild lead: autocomplete,
+  suggest "your most often cast timers and the spells you have on your bars right now", alpha order). The ⚙ menu's name box on a Timers
+  panel now opens an A-to-Z list that narrows as you type, merged from three sources and tagged: the spell bar (Zeal gem labels
+  60-67, already read for the HUD), your most-cast spells (new local per-character count, `logsync.cast-counts.json`, 30-day half-life,
+  200 names), and the countdowns up now. `normEffect` also folds ’ ‘ to `'`. Agent `GET /api/timer-suggestions`. Test
+  `test/timer-name-picker.test.js` (alpha sort, dedupe, cap and the count store mutation-checked).
+- ⏳ Not run in a real Electron window: exercised in Chromium against the real canvas.html with a stubbed bridge. To look at on beta: the
+  list opens on a click into the box on a LOCKED canvas (hover handshake on the menu), and the window keeps EQ's focus until then.
+  Open: the count only starts from this agent version, so "cast N×" is empty for a day of play; a panel's 20-name cap is unchanged.
 
 ### 🧾 2026-10-29 — FB-111 (agent 4.0.39 + 4.0.40, Mimic beta `07f96100`); PoP guide Tylis/Saryrn (web 2.1.62, main)
 - **FB-111** ("solo, he doesn't see buffs or debuffs landing on a mob; he sees his own"). Measured read-only: the reporter's

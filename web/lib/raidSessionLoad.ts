@@ -34,7 +34,7 @@ import {
   type AnonMap, type CapturedTickIn, type DkpLootIn, type DkpTickIn, type EncounterIn, type LootedIn,
   type ObservedIn, type PlayerIn, type SessionBundle,
 } from './raidSession';
-import { buildGroups, groupOfFight, inGroupAt, narrowRows, type GroupIndex, type RaidGroup } from './sessionGroups';
+import { buildGroups, groupOfFight, inGroupAt, narrowRows, outsideRaids, type GroupIndex, type RaidGroup } from './sessionGroups';
 import { detectRaidChange, whoSeries, type RaidChange } from './raidSplit';
 import { rosterCuts } from './liveRaidWindow';
 import type { NightSummary, NightMinute } from './raidReplay';
@@ -221,15 +221,18 @@ export async function loadSessionReview(sb: SupabaseClient, win: ShareWindow, op
 
   // A narrowed review keeps a fight when the raid holds at least half of its damage dealers; a fight with no parse
   // at all cannot be placed, so it is left out of a raid's list (it is still in the whole window's).
+  // The whole window drops only the fights of a crew in none of its raids (sessionGroups.ts outsideRaids).
   let encounters = r.encounters;
-  if (index && group) {
+  if (index) {
     const namesOf = new Map<string, string[]>();
     for (const p of players) {
       const a = namesOf.get(p.encounter_id);
       if (a) a.push(nameKey(p.character_name)); else namesOf.set(p.encounter_id, [nameKey(p.character_name)]);
     }
+    const recorded = new Set(r.minutes.map(m => Math.floor(Date.parse(m.minute_at) / 60_000)));
     encounters = r.encounters.filter(e => {
       const at = Date.parse(e.ended_at ?? e.started_at);
+      if (!group) return !Number.isFinite(at) || !outsideRaids(index, recorded, at, namesOf.get(e.id) ?? []);
       return Number.isFinite(at) && groupOfFight(index, at, namesOf.get(e.id) ?? []) === group;
     });
   }

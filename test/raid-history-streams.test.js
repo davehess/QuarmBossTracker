@@ -587,6 +587,21 @@ describe('the migration', () => {
   });
 });
 
+describe('the Tower archive keeps the six streams past the 60-day prune', () => {
+  const merge = stripSql(fs.readFileSync(path.join(ROOT, 'scripts/lib/archive-merge.sql'), 'utf8'));
+  const mig = stripSql(fs.readFileSync(path.join(ROOT, 'supabase/migrations/20261029121500_raid_history_streams.sql'), 'utf8'));
+  const list = /archive_tables text\[\] := array\[([\s\S]*?)\];/.exec(merge);
+  const cols = (sql, table) => new RegExp(`create table if not exists public\\.${table} \\(([\\s\\S]*?)\\n\\);`).exec(sql)[1]
+    .split('\n').map(l => l.replace(/\s--.*$/, '').replace(/\s+/g, ' ').trim().replace(/,$/, '')).filter(Boolean);   // column lines only: trailing notes and commas are not the definition
+
+  it.each(Object.values(rh.STREAMS).map(s => [s.table, s.timeCol]))('%s: ARCHIVE listed, created with the migration\'s columns and primary key, time column indexed', (table, timeCol) => {
+    expect(list).not.toBeNull();
+    expect(list[1]).toContain(`'${table}'`);
+    expect(cols(merge, table)).toEqual(cols(mig, table));
+    expect(merge).toMatch(new RegExp(`create index if not exists \\w+ on public\\.${table} \\(${timeCol}\\);`));
+  });
+});
+
 describe('wiring in index.js', () => {
   const code = stripJs(SRC);
 

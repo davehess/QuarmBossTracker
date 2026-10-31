@@ -249,6 +249,20 @@ export function groupOfFight(index: GroupIndex, fightMs: number, players: readon
 }
 
 /**
+ * A fight that belongs to none of the window's raids, for the whole-window view (the guild lead, 2026-10-30: a two-person
+ * raid's Plane of Growth and Lord of Ire kills sat in the Storms raid's session, "It's included in here, but shouldn't
+ * be"). True only when the window has a raid, the recorder wrote the fight's minute (or one either side), and not one of
+ * its damage dealers was in any raid then. A fight with no parse rows, or in a minute nobody recorded, stays: it cannot be
+ * placed, and a gap in the recording must not hide the raid's own kills. Players: nameKeys. `recorded`: minute numbers.
+ */
+export function outsideRaids(index: GroupIndex, recorded: ReadonlySet<number>, fightMs: number, players: readonly string[]): boolean {
+  if (!index.groups.length || !players.length) return false;
+  const m = Math.floor(fightMs / MINUTE);
+  if (!recorded.has(m - 1) && !recorded.has(m) && !recorded.has(m + 1)) return false;
+  return !players.some(p => index.groups.some(g => inGroupAt(index, g.id, p, fightMs)));
+}
+
+/**
  * One minute's `data` with only the group's raiders in it: the `who` list and each frame's tuples. A minute in which
  * the group has nobody comes back null (the caller drops the row). Mobs the raid targeted (`mf`) stay: they are
  * monsters, and the targets are counts, not people. `keep` is the group's nameKeys in that minute.

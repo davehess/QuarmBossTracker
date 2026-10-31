@@ -497,6 +497,15 @@ const _WP_NAME_CSS =
   // The Map's top strip is full (✥, its toolbar, Timers), so its chip sits bottom-left; folded, it is the only row left, at the top.
   '.wp-name-chip.wp-name-bl{top:auto;bottom:6px;left:6px}' +
   'body.wp-fold .wp-name-chip{top:6px !important;bottom:auto !important;left:28px !important}' +
+  // A folded window with no title row of its own (the alerts window, the Map) is NOTHING BUT this chip over a see-through
+  // window, and a member read that as the overlay having vanished (the guild lead, 2026-10-30: "I clicked mini and it went
+  // away"). So the one handle left is plain to see and says what a press does: solid, full strength whatever the overlay's
+  // opacity is set to (!important: the whole-overlay fade rule keys on body>:not(#…)), the name first so a narrow window
+  // ellipsizes the instruction and never the name. A designed mini's stand-in chip (.wp-name-proxy) keeps its quiet look.
+  'body.wp-fold .wp-name-chip:not(.wp-name-proxy){opacity:1 !important;height:20px;gap:5px;font-size:12px;color:#f0f6fc;' +
+  'background:rgba(13,17,23,0.97);border:1px solid #d29922;box-shadow:0 0 0 1px rgba(0,0,0,0.7)}' +
+  'body.wp-fold .wp-name-chip:not(.wp-name-proxy)::before{content:"▭"}' +
+  'body.wp-fold .wp-name-chip:not(.wp-name-proxy)::after{content:"\\2014  click to restore";color:#d29922}' +
   'body.setup .wp-name-chip{display:none}' +
   (WP_IS_DOCKED ? '.wp-name-chip{display:none !important}' : '') +
   // ▭ Fold: the rows the fold hid, and a window that is one row tall.
@@ -967,7 +976,7 @@ function _buildOverlayMenu(onClose, state) {
   // on an overlay that cannot would be a switch that does nothing. The 📌 belongs to the
   // nine alone: it is "stay mini when Minimize ALL restores", and a folded overlay is not part of that hotkey.
   if (st.miniCapable) {
-    menu.appendChild(mkItem('▭ Mini mode: ' + (st.mini ? 'ON' : 'off') + ' (this overlay)', '#1f4f47',
+    menu.appendChild(mkItem(st.mini ? '▭ Mini — click to restore (this overlay)' : '▭ Mini mode: off (this overlay)', st.mini ? '#9a6a00' : '#1f4f47',
       () => ipcRenderer.invoke('wp-mini-toggle')));
     if (st.miniDesigned) {
       menu.appendChild(mkItem('📌 Keep mini on restore: ' + (st.miniPinned ? 'ON' : 'off'), '#4a3a1f',
@@ -1603,6 +1612,9 @@ contextBridge.exposeInMainWorld('mimic', {
   canvasSplit:       ()       => ipcRenderer.invoke('canvas-split'),
   // 🔒 Lock size on the alerts window (FB-110): the same setter as its right-click menu. → the new state
   triggerLockSize:   (on)     => ipcRenderer.invoke('wp-trigger-lock-size', !!on),
+  // ⇅ Timers start at top/bottom on the alerts window (a member, 2026-09-27; the dashboard twin, 2026-10-30): the same
+  // setter as its right-click row. → the new state (true = top)
+  timersTopDown:     ()       => ipcRenderer.invoke('wp-timers-order-toggle'),
   // The panel menu's "Background" row: the SAME writer as the shared overlay menu, Ctrl+Shift+B and the dashboard
   // button (main's wp-backdrop-toggle finds the key from the sender window). Resolves to the new on/off state.
   toggleBackdropThis: ()      => ipcRenderer.invoke('wp-backdrop-toggle'),

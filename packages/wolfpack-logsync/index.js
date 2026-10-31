@@ -4663,6 +4663,130 @@ function lullVerdictFor(targetName, zoneId) {
   return u ? { verdict: 'unaffected', spell: u.spell, caster_level: u.caster_level, at_ms: u.at_ms } : null;
 }
 
+// ── Your most-cast spells (the Timers canvas name picker) ────────────────────
+// The guild lead, 2026-10-29: the picker should "suggest your most often cast timers and the spells you
+// have on your bars right now". A spell's countdown is named by the spell, so the count is per spell name,
+// per character, from your own "You begin casting X" lines. Local only: it feeds one GET for the picker
+// and is never uploaded. Decayed (half-life 30 days) rather than a raw lifetime total, so a spell you
+// stopped casting sinks; capped so the file stays a few kilobytes.
+const CAST_COUNT_HALFLIFE_MS = 30 * 86400_000;
+const CAST_COUNT_DROP_MS     = 90 * 86400_000;   // not cast for this long: gone, whatever its count was
+const CAST_COUNT_MAX         = 200;              // names kept per character
+// store: { [spellLower]: { n, at } }  (n = decayed count as of `at`)
+function castCountScore(e, nowMs) {
+  if (!e || !(e.n > 0)) return 0;
+  return e.n * Math.pow(0.5, Math.max(0, nowMs - e.at) / CAST_COUNT_HALFLIFE_MS);
+}
+function castCountPrune(store, nowMs, max) {
+  const cap = max || CAST_COUNT_MAX;
+  const rows = [];
+  for (const k of Object.keys(store)) {
+    const e = store[k];
+    const s = castCountScore(e, nowMs);
+    if (!e || !(s >= 0.5) || nowMs - e.at > CAST_COUNT_DROP_MS) { delete store[k]; continue; }
+    rows.push([k, s]);
+  }
+  if (rows.length > cap) {
+    rows.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+    for (let i = cap; i < rows.length; i++) delete store[rows[i][0]];
+  }
+  return store;
+}
+function castCountBump(store, name, nowMs) {
+  const k = String(name == null ? '' : name).trim().toLowerCase();
+  if (!k || k.length > 64) return false;
+  store[k] = { n: castCountScore(store[k], nowMs) + 1, at: Math.max(nowMs, store[k] ? store[k].at : 0) };
+  // Prune only once the store is a quarter over its cap, so a steady cast rate does not sort 200 rows per cast.
+  if (Object.keys(store).length > CAST_COUNT_MAX * 1.25) castCountPrune(store, nowMs, CAST_COUNT_MAX);
+  return true;
+}
+// The `limit` most-cast names, biggest first: [{ name, n }] (n = the decayed count, rounded).
+function castCountTop(store, nowMs, limit) {
+  const rows = [];
+  for (const k of Object.keys(store)) {
+    const s = castCountScore(store[k], nowMs);
+    if (s >= 0.5) rows.push({ name: k, n: Math.round(s) });
+  }
+  rows.sort((a, b) => b.n - a.n || (a.name < b.name ? -1 : 1));
+  return rows.slice(0, limit || CAST_COUNT_MAX);
+}
+const _castCounts = new Map();   // charLower → store
+let _castCountsLoaded = false, _castCountsSaveT = null;
+function _castCountsFile() { return path.join(__dirname, 'logsync.cast-counts.json'); }
+function _castCountsLoad() {
+  if (_castCountsLoaded) return;
+  _castCountsLoaded = true;
+  try {
+    const j = JSON.parse(fs.readFileSync(_castCountsFile(), 'utf8')) || {};
+    const now = Date.now();
+    for (const [cl, rows] of Object.entries(j)) {
+      if (!rows || typeof rows !== 'object') continue;
+      const store = {};
+      for (const [k, v] of Object.entries(rows)) {
+        if (Array.isArray(v) && v[0] > 0 && v[1] > 0) store[k] = { n: Number(v[0]), at: Number(v[1]) };
+      }
+      _castCounts.set(cl, castCountPrune(store, now, CAST_COUNT_MAX));
+    }
+  } catch { /* first run, or not writable — start empty */ }
+}
+function _castCountsSave() {
+  if (_castCountsSaveT) return;
+  _castCountsSaveT = setTimeout(() => {
+    _castCountsSaveT = null;
+    try {
+      const out = {}, now = Date.now();
+      for (const [cl, store] of _castCounts) {
+        castCountPrune(store, now, CAST_COUNT_MAX);
+        const rows = {};
+        for (const [k, e] of Object.entries(store)) rows[k] = [Math.round(e.n * 100) / 100, e.at];
+        if (Object.keys(rows).length) out[cl] = rows;
+      }
+      const tmp = _castCountsFile() + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(out));
+      fs.renameSync(tmp, _castCountsFile());
+    } catch { /* best effort */ }
+  }, 5000);
+  try { if (_castCountsSaveT.unref) _castCountsSaveT.unref(); } catch { void 0; }
+}
+// One live cast. A line older than two minutes is a replay of an old log, not you casting now.
+function _noteCastCount(character, name, atMs) {
+  const now = Date.now();
+  if (!(Math.abs(now - atMs) < 120_000)) return;
+  _castCountsLoad();
+  const cl = String(character).toLowerCase();
+  let store = _castCounts.get(cl);
+  if (!store) { store = {}; _castCounts.set(cl, store); }
+  if (castCountBump(store, name, now)) _castCountsSave();
+}
+// What the Timers canvas name picker offers beside the live countdowns: the spells on the bar right now
+// (Zeal's gem labels 60-67, the same read as the HUD's spell list) and the ones this character casts most.
+// The character is the one whose Zeal reported last; with no Zeal, the one that cast last.
+function _timerSuggestions() {
+  const now = Date.now();
+  _castCountsLoad();
+  let active = null, activeTs = 0;
+  for (const ch of Object.keys(_zealState || {})) {
+    const ts = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  const gems = [];
+  if (active) {
+    for (let i = 0; i < 8; i++) {
+      const name = _meLabel(_zealState[active] || {}, 60 + i);
+      if (name && !/^(empty|none)$/i.test(name)) gems.push(name);
+    }
+  }
+  let who = active ? String(active).toLowerCase() : null;
+  if (!who) {
+    let bestAt = 0;
+    for (const [cl, st] of _castCounts) {
+      for (const e of Object.values(st)) if (e.at > bestAt) { bestAt = e.at; who = cl; }
+    }
+  }
+  const store = who && _castCounts.get(who);
+  return { ok: true, character: active || who || null, gems, casts: store ? castCountTop(store, now, CAST_COUNT_MAX) : [] };
+}
+
 // ── Self-cast capture ────────────────────────────────────────────────────────
 // Every "You begin casting X." — no allowlist. Several pipelines depend on that
 // completeness (DI recast, rez attribution, charm staging, the pacify synthesis
@@ -4690,6 +4814,8 @@ function noteSelfCast(line, character) {
   if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
   // Me overlay: long-recast timers (Theft of Thought, Harvest, …).
   if (typeof _meNoteSelfCast === 'function') _meNoteSelfCast(cl, m[1].trim(), atMs);
+  // The Timers canvas name picker's "most cast" list (local only).
+  if (typeof _noteCastCount === 'function') _noteCastCount(character, m[1].trim(), atMs);
   // Silent pacifies (Harmony et al.) have no landing line — this cast is the
   // only evidence they will ever produce. typeof-guarded like the rez hook
   // below so source-slice tests that lift noteSelfCast alone still run.
@@ -18002,6 +18128,7 @@ function _serializeCommandCenterState() {
     mt:            tank.mt,
     rampage:       tank.rampage,
     rampages:      tank.rampages,
+    relv:          _relvSnapshot(activeChar, Date.now()),   // null unless the Relv event is running
     enrage:        tank.enrage,
     deathtouch:    tank.deathtouch,
     needs_rez:     _rezBoardSnapshot(),
@@ -18769,6 +18896,9 @@ function _serializeForDashboard() {
     // Officer-only DKP tick sources — live raid roster + detected RaidTick
     // files. null when not an officer. Submitted via POST /api/dkp/tick.
     dkpTick:            (_mimicIdentity && _mimicIdentity.is_officer) ? _dkpTickSnapshot() : null,
+    // Officer-only: the guest Mimic links (label, expiry, fight count) for the Command Center's Guests card, read
+    // lazily from the bot (fetchGuestLinks). null for a non-officer, or when the bot has no list to give.
+    guests:             (_mimicIdentity && _mimicIdentity.is_officer) ? _guestLinksSnapshot() : null,
     // Zeal's "Export data on /camp" toggle, read straight from zeal.ini in
     // each known EQ folder (60s cache). true = every found zeal.ini has
     // ExportOnCamp=TRUE; false = at least one has it off; null = no zeal.ini
@@ -20015,7 +20145,7 @@ button.wp-key:hover { border-color:var(--blue); }
 .wp-ov-dock.on { background:#2a1d3d; border-color:#a371f7; color:#d2a8ff; }
 .wp-ov-mini { min-width:58px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; }
 .wp-ov-mini:hover { border-color:#39c5bb; color:var(--text); }
-.wp-ov-mini.on { background:#123d3a; border-color:#39c5bb; color:#9ff0e8; }
+.wp-ov-mini.on { background:#3d2e0f; border-color:#d29922; color:#f0c674; }
 .wp-ov-pin { background:#21262d; border:1px solid var(--border); border-radius:5px; padding:2px 5px; font-size:11px; cursor:pointer; opacity:0.35; filter:grayscale(1); }
 .wp-ov-pin:hover { opacity:0.8; }
 .wp-ov-pin.on { opacity:1; filter:none; border-color:#d29922; }
@@ -20201,6 +20331,9 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
 <h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">${process.env.WOLFPACK_CLIENT === 'mimic' ? 'Raid Mimic' : 'Wolf Pack EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${(/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' ' + (String(process.env.WOLFPACK_APP_VERSION || '').indexOf('-alpha.') >= 0 ? '<span title="Running an alpha build: the Mimic 3.0 overlay builder, tried first" style="font-size:10px;font-weight:600;color:#1a0f2e;background:#a371f7;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">ALPHA</span>' : '<span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>') + ' <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpJoinBeta" title="Get beta builds of Mimic — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">⤴ beta</button>' : '')) + (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpAlpha" title="Try the Mimic 3.0 alpha — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">α alpha</button>' : '')}<span id="wpTopRight">
     <button id="wpMailBtn" type="button" style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit;position:relative"
        title="Notices from the Wolf Pack team">✉<span id="wpMailDot" style="display:none;position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--red,#f87171)"></span></button>
+    <!-- 💬 Feedback sits beside Reload in the title row's top-right (the guild lead, 2026-10-29: "put the feedback
+         button on the top right. next to the reload"); it had been at the foot of the rail since 2026-09-23. -->
+    <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpFeedbackClick()">💬 Feedback</button>
     <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
   </span></h1>
 <div id="wpActiveChar"></div>
@@ -20277,14 +20410,11 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
     <button id="wpLocalRebuild" type="button" onclick="wpRebuildOpen()" title="Build your fights, raids, deaths and loot from the log files on this PC. Nothing is uploaded.">🔁 Rebuild from my logs</button>
     <button id="wpLocalRaid" type="button" onclick="wpRaidCodeOpen()" title="In someone else's raid? Enter their raid code: this PC keeps the raid's data to itself, tagged with the code, for six hours. The tray's Open menu has the same item.">🎟 Join a raid with a code</button>
   </div>
-  <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
-       2026-09-23: "We're running out of horizontal real estate"). They went up to
-       the top bar on 2026-09-02 so a long page never meant scrolling back for
-       them; the rail is sticky too, so that still holds. No data-tab, so the
-       tab switcher ignores them. The ids are unchanged, so their handlers bind. -->
+  <!-- ✨ Tour sits at the FOOT of the rail (the guild lead, 2026-09-23: "We're running out of horizontal real
+       estate"); the rail is sticky, so a long page never means scrolling back for it. No data-tab, so the tab
+       switcher ignores it. 💬 Feedback moved to the title row's top-right on 2026-10-29 (next to Reload). -->
   <div class="wp-rail-foot">
     <button id="wpTourBtn" class="wp-gear" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
-    <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpFeedbackClick()">💬 Feedback</button>
     <!-- ☕ Tip (the guild lead, 2026-10-17): the maintainer's Ko-fi, same link as the README and /about. -->
     <a id="wpTipLink" class="wp-gear" href="https://ko-fi.com/davehess" target="_blank" rel="noreferrer" style="text-decoration:none;text-align:center" title="Buy the maintainer a coffee on Ko-fi (opens in your browser)">☕ Tip</a>
     <!-- ⏻ Quit (2026-09-26): the tray's Quit, here too — tray ↔ dashboard parity, and the way out when
@@ -24862,7 +24992,7 @@ var WP_MP_SCOPES = [['bosses', 'Bosses'], ['all', 'Everything']];
 // for My logs: the id an answer gives each zone). q: what the search box asked for; qBox is what is typed in it
 // right now (the debounce below is what turns one into the other). zones/mobs are the last answer's pickers, and
 // facets says it had any: an older bot sends none, and the tab then leaves the pickers out.
-var _wpMp = { w: '7d', scope: 'bosses', char: '', src: 'guild', zone: '', q: '', qBox: '', day: false, chars: [], zones: [], mobs: [], facets: false, showAll: false, data: null, state: 'idle', seq: 0, asOf: 0 };
+var _wpMp = { w: '7d', scope: 'bosses', char: '', src: 'guild', zone: '', q: '', qBox: '', day: false, chars: [], zones: [], mobs: [], facets: false, showAll: false, allRows: false, data: null, state: 'idle', seq: 0, asOf: 0 };
 // What a search may hold, as the agent's whitelist has it: letters, digits, spaces and ' \` - _, at most 40.
 function wpMpCleanQ(v) { return String(v || '').replace(/[^A-Za-z0-9 '\`_-]/g, '').replace(/ +/g, ' ').trim().slice(0, 40); }
 function _wpMpZoneOk(src, z) { z = String(z || ''); return src === 'local' ? z.length > 0 && z.length <= 64 : /^[1-9][0-9]{0,2}$/.test(z); }
@@ -25036,7 +25166,9 @@ function wpMpChart(d, asOf) {
 // whole window, so a night cut by the 400-fight limit still says how many it had). The Character column only
 // exists when more than one character is in the data, the Zone column when any fight has a zone (an older bot
 // sends none), and the Rank column not for My logs (a log has no rank among the guild).
-function wpMpTable(d, byDay) {
+// \`allRows\` (the guild lead, 2026-10-30: "My parses hides the majority of fights": 22 in the chart, 12 in the list)
+// lists every fight in the answer, newest first, without the night headers; the switch under the table sets it.
+function wpMpTable(d, byDay, allRows) {
   var all = (d && d.fights) || [], seen = {}, nChars = 0, anyZone = false, i;
   for (i = 0; i < all.length; i++) {
     var c = String(all[i].char || '');
@@ -25044,7 +25176,7 @@ function wpMpTable(d, byDay) {
     if (all[i].zone) anyZone = true;
   }
   var noRank = !!(d && d.source === 'local');
-  var rows = byDay ? all.slice().reverse() : all.slice(-12).reverse(), th = 'style="text-align:right"', td = 'style="text-align:right;font-variant-numeric:tabular-nums"';
+  var rows = byDay || allRows ? all.slice().reverse() : all.slice(-12).reverse(), th = 'style="text-align:right"', td = 'style="text-align:right;font-variant-numeric:tabular-nums"';
   var cols = 4 + (nChars > 1 ? 1 : 0) + (anyZone ? 1 : 0) + (noRank ? 0 : 1);
   var nmap = {};
   ((d && d.nights) || []).forEach(function (n) { if (n && n.night) nmap[n.night] = n; });
@@ -25176,7 +25308,11 @@ function wpMpHtml() {
       +  wpMpChart(d, m.asOf)
       +  '<div class="dim" style="font-size:11px;margin-top:2px"><span style="color:#4493e8">●</span> boss fight · <span style="color:#4a5568">●</span> other fight · '
       +  '<span style="color:#a371f7">━</span> raid-night average · shaded = a raid night</div>'
-      +  wpMpTable(d, m.day);
+      +  wpMpTable(d, m.day, m.allRows);
+    if (!m.day && fights.length > 12) {
+      h += '<button type="button" class="wp-btn ghost" onclick="wpMpAllRows()" style="margin:2px 0 4px">'
+        +  (m.allRows ? 'Show the newest 12' : 'Show all ' + fights.length + ' fights') + '</button>';
+    }
     if (d.truncated) h += dimNote('Showing the newest ' + fights.length + ' of ' + total + ' fights.');
   }
   var since = local ? Date.parse(d.since || '') : NaN;
@@ -25284,6 +25420,7 @@ function wpMpClear() {
 function wpMpRefresh() { if (_wpMp.state !== 'loading') wpMpFetch(true); }
 // "+N more" / "fewer": only changes what is drawn, so it asks nothing and is not saved (a new load starts folded).
 function wpMpMore() { _wpMp.showAll = !_wpMp.showAll; wpMpRepaint(); }
+function wpMpAllRows() { _wpMp.allRows = !_wpMp.allRows; wpMpRepaint(); }
 // Opened from the rail (or the tray's #myparses): ask once. The agent answers from its copy inside five minutes.
 function wpMpOpenTab() { wpMpFetch(false); }
 // wolfpack.quest links go out through Mimic's open-external (it only lets https://wolfpack.quest through), so the
@@ -25778,6 +25915,7 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act wp-btn" data-act="rescue" title="Lost an overlay off the edge of a screen? Brings back only the overlays you cannot reach, each to a free spot on the screen this window is on; nothing else moves. Overlays sitting on another screen come too only if you say yes. That screen becomes the overlays\\' home for future arranges.">🧲 Rescue to this screen</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="canvasSpan" id="wpOvSpanBtn" style="display:none" title="One Canvas across every screen, so its panels can sit on any of them. Needs every screen at the same Windows display scaling. The same switch as the tray and the Canvas&rsquo;s own toolbar.">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="triggerLock" id="wpOvTrigLockBtn" style="display:none" title="Keeps the alerts window the size you drag it to instead of growing as countdowns and callouts arrive. Countdowns that do not fit fold into a +N more line; callouts always get their room. The same switch as the alerts window&rsquo;s right-click menu.">…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="timersOrder" id="wpOvTimersOrderBtn" style="display:none" title="Which edge the countdown stack starts from on the alerts window: the bottom (rising) or the top (reading down). The same switch as the alerts window&rsquo;s right-click menu. With the Canvas on, each Timers box has its own: arrange the Canvas, right-click the box, Stack.">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="canvasSplit" id="wpOvSplitBtn" style="display:none" title="Callouts and countdowns each get a box of their own that you place, resize and lock. Turns the Canvas on, the same as the tray&rsquo;s Canvas item; the alerts window steps aside.">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="mapMode" id="wpOvMapModeBtn" title="The Map as a window you place, or laid over EverQuest and click-through so you play straight through it (it keeps clear of your UI windows). The same switch as the Map&rsquo;s own toolbar button and the tray.">…</button>'
     + '</span>'
@@ -26763,6 +26901,15 @@ function wpRefreshOverlayToggles() {
         tlBtn.className = 'wp-ov-act wp-btn' + (st.triggerLockSize ? ' on' : '');
         tlBtn.textContent = st.triggerLockSize ? '🔒 Alerts window size: locked — unlock' : '🔓 Alerts window size: grows with content — lock';
       }
+      // ⇅ Timers start at: the alerts window's own switch. With the Canvas on that window steps aside and each Timers box
+      // carries its own (Stack, in its menu), so the button says so and opens the Canvas instead of flipping a hidden window.
+      var toBtn = document.getElementById('wpOvTimersOrderBtn');
+      if (toBtn) {
+        toBtn.style.display = typeof st.triggerTimersTopDown === 'boolean' && window.mimic && window.mimic.timersTopDown ? '' : 'none';
+        toBtn.className = 'wp-ov-act wp-btn' + (!st.showCanvas && st.triggerTimersTopDown ? ' on' : '');
+        toBtn.textContent = st.showCanvas ? '⇅ Timers start at: set per Timers box — open the Canvas'
+          : '⇅ Timers start at: ' + (st.triggerTimersTopDown ? 'TOP (reads down) — switch to bottom' : 'bottom (rises) — switch to top');
+      }
       var splBtn = document.getElementById('wpOvSplitBtn');
       if (splBtn) {
         splBtn.style.display = typeof st.showCanvas === 'boolean' && typeof st.triggerLockSize === 'boolean' ? '' : 'none';
@@ -26779,9 +26926,9 @@ function wpRefreshOverlayToggles() {
       var mbs = document.querySelectorAll('.wp-ov-mini');
       for (var mi = 0; mi < mbs.length; mi++) {
         var mk = mbs[mi].getAttribute('data-mini'), mOn = !!miniMap[mk];
-        mbs[mi].textContent = mOn ? '▭ MINI' : '▭ full';
+        mbs[mi].textContent = mOn ? '▭ MINI — click to restore' : '▭ full';
         mbs[mi].className = 'wp-ov-mini' + (mOn ? ' on' : '');
-        mbs[mi].title = mOn ? 'Mini now. Click for the full overlay.' : 'Full size now. Click for its mini.';
+        mbs[mi].title = mOn ? 'Mini now (a folded overlay shows only its name). Click to restore the full overlay.' : 'Full size now. Click for its mini.';
       }
       var pbs = document.querySelectorAll('.wp-ov-pin');
       for (var pi2 = 0; pi2 < pbs.length; pi2++) {
@@ -26956,6 +27103,13 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
       // with the Canvas already on the button arranges it instead.
       if (a === 'triggerLock' && window.mimic.triggerLockSize) {
         window.mimic.triggerLockSize(!act.classList.contains('on')).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      if (a === 'timersOrder' && window.mimic.timersTopDown) {
+        window.mimic.getStatus().then(function(st){
+          return st && st.showCanvas && window.mimic.canvasEdit ? window.mimic.canvasEdit(true) : window.mimic.timersTopDown();
+        }).then(function(){
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
         }).catch(function(){});
       }
@@ -35098,6 +35252,10 @@ const COMMAND_HTML = `<!doctype html>
     border:1px solid #c084fc;border-radius:5px;margin-bottom:4px;font-size:11px}
   .dt.crit{background:rgba(220,38,38,0.5);border-color:#f87171;animation:flash 0.6s linear infinite alternate}
   .dt .sec{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv{display:flex;align-items:center;gap:6px;padding:4px 7px;background:rgba(180,83,9,0.5);
+    border:1px solid #fb923c;border-radius:5px;margin-bottom:4px;font-size:11px}
+  .relv .n{font-size:13px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+  .relv .sub{margin-left:auto;font-size:9px;color:#d0d7de}
   .ramp{display:flex;flex-direction:column;gap:4px;padding:4px 7px;background:rgba(180,32,32,0.55);
     border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
   .ramp .row{display:flex;align-items:center;gap:6px}
@@ -35154,6 +35312,18 @@ const COMMAND_HTML = `<!doctype html>
   .rollClearAll{margin-left:auto;cursor:pointer;color:#9aa4ad;font-size:9px;text-transform:none;
     letter-spacing:0;border:1px solid rgba(110,118,129,0.4);border-radius:3px;padding:0 4px;opacity:0.7}
   .rollClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
+  /* 🎟 Guests (officers only): one row per guest Mimic link, with +1h / +3h. Same right gutter as the rolls card. */
+  .card.guests-card{padding-right:28px}
+  .guest-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
+  .guest-row .gwhen{flex-shrink:0;font-size:10px;color:#9aa4ad;font-variant-numeric:tabular-nums}
+  .guest-row .gwhen.soon{color:#f0a52d}
+  .guest-row .gwhen.out{color:#f87171}
+  .guest-row .gn{flex-shrink:0;font-size:9px;color:#8b949e;font-variant-numeric:tabular-nums}
+  .guest-row .guestExt{cursor:pointer;flex-shrink:0;color:#e6edf3;font-size:9px;border:1px solid rgba(110,118,129,0.5);
+    border-radius:3px;padding:0 4px;opacity:0.85;user-select:none}
+  .guest-row .guestExt:hover{opacity:1;color:#f0c419;border-color:#f0c419}
+  .guest-row .gflash{flex-shrink:0;font-size:9px;color:#56d364}
+  .guest-row .gflash.bad{color:#f87171}
   .roll-row .rollMore{cursor:pointer;color:#8b949e;font-size:9px;flex-shrink:0;opacity:0.8;user-select:none}
   .roll-row .rollMore:hover{opacity:1;color:#e6edf3}
   .roll-row .rollCopy{cursor:pointer;color:#8b949e;font-size:10px;flex-shrink:0;opacity:0.8;user-select:none;margin-right:4px}
@@ -35289,7 +35459,7 @@ const COMMAND_HTML = `<!doctype html>
      too large"): the panel owns the move and hide buttons, so the window padding and the gutter the cure
      and rolls cards keep clear of the hide button both go. */
   body.wp-in-canvas #wrap{padding:2px 3px;min-width:0}
-  body.wp-in-canvas .card.cure-card, body.wp-in-canvas .card.rolls-card{padding-right:7px}
+  body.wp-in-canvas .card.cure-card, body.wp-in-canvas .card.rolls-card, body.wp-in-canvas .card.guests-card{padding-right:7px}
   #setupbar input[type=range]{flex:1;cursor:pointer}
   #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
     display:flex;align-items:center;justify-content:center;border-radius:4px;
@@ -35738,6 +35908,86 @@ const COMMAND_HTML = `<!doctype html>
          +      '<div class="val">' + valText + '</div></div>'
          +  '</div>';
   }
+  // Relv's event in Plane of Storms (the guild lead, 2026-10-30): mephits this client has seen die, of the 30.
+  // The agent sends s.relv only while the event runs; the count is a floor (a far death line never prints here).
+  function relvHtml(v){
+    var left = Math.max(0, (Number(v.total) || 30) - (Number(v.mephits) || 0));
+    var main = v.falto_slain ? 'Falto slain'
+             : (v.falto_up ? 'Falto is up'
+             : 'mephits <span class="n">' + (Number(v.mephits) || 0) + '/' + (Number(v.total) || 30) + '</span> · ' + left + ' left');
+    return '<div class="relv"><span>🔥 Falto: ' + main + '</span>'
+         +   '<span class="sub">mepheekas killed ' + (Number(v.mepheekas) || 0) + '</span></div>';
+  }
+  // 🎟 Guests (officers only; the guild lead, 2026-10-30: "add guests to the command center for officers/admins with an
+  // extend button for +1/+3"). s.guests is the agent's copy of the bot's guest-link list, or null for anyone who is not
+  // an officer, so the card simply is not there for a raider. A guest whose key ended more than 12 hours ago is left
+  // off (the bot will not revive it; approve a new code on /admin/links), and a revoked one has nothing to extend.
+  // The buttons act on the PRESS like the hail chips: the card repaints once a minute as the clock moves.
+  var GUEST_REVIVE_MS = 12 * 3600000;
+  var _guestPend  = {};   // session id -> true while its extend is in flight
+  var _guestFlash = {};   // session id -> { txt, bad, until }: the answer, shown for a few seconds in place of the buttons
+  function guestSpan(ms){
+    var m = Math.floor(ms / 60000);
+    if (m < 1) return 'under 1m';
+    if (m < 60) return m + 'm';
+    var h = Math.floor(m / 60), r = m % 60;
+    return h + 'h' + (r < 10 ? '0' : '') + r + 'm';
+  }
+  function guestsHtml(list){
+    var now = Date.now();
+    var rows = [];
+    for (var gi = 0; gi < list.length; gi++) {
+      var g = list[gi];
+      if (!g || g.revoked || !g.id) continue;
+      var exp = Date.parse(g.expires_at);
+      if (!isFinite(exp) || exp < now - GUEST_REVIVE_MS) continue;
+      rows.push({ g: g, exp: exp });
+    }
+    if (!rows.length) return '';
+    var col = _isCollapsed('guests');
+    var h = '<div class="card guests-card"><div class="head">' + secToggle('guests', '🎟 Guests', rows.length) + '</div>';
+    if (!col) {
+      h += '<div class="list">';
+      for (var ri = 0; ri < rows.length; ri++) {
+        var gg = rows[ri].g, left = rows[ri].exp - now;
+        var when = left > 0 ? 'expires in ' + guestSpan(left) : 'expired ' + guestSpan(-left) + ' ago';
+        var cls = left <= 0 ? 'out' : (left < 600000 ? 'soon' : '');
+        var n = Number(gg.fights) || 0;
+        var fl = _guestFlash[gg.id];
+        if (fl && fl.until <= now) { delete _guestFlash[gg.id]; fl = null; }
+        var ctl;
+        if (_guestPend[gg.id]) ctl = '<span class="gflash">…</span>';
+        else if (fl) ctl = '<span class="gflash' + (fl.bad ? ' bad' : '') + '">' + esc(fl.txt) + '</span>';
+        else ctl = '<span class="guestExt" data-wp-interact data-guest-id="' + esc(gg.id) + '" data-guest-h="1" title="Keep this guest link open one more hour">+1h</span>'
+                 + '<span class="guestExt" data-wp-interact data-guest-id="' + esc(gg.id) + '" data-guest-h="3" title="Keep this guest link open three more hours">+3h</span>';
+        h += '<div class="row guest-row"><span class="nm" title="' + esc((gg.label || 'Guest') + (gg.approved_by ? ' - approved by ' + gg.approved_by : '')) + '">' + esc(gg.label || 'Guest') + '</span>'
+           +   '<span class="gwhen ' + cls + '">' + esc(when) + '</span>'
+           +   '<span class="gn">' + n + (n === 1 ? ' fight' : ' fights') + '</span>'
+           +   ctl + '</div>';
+      }
+      h += '</div>';
+    }
+    return h + '</div>';
+  }
+  function guestExtend(id, hours){
+    if (!id || _guestPend[id] || (hours !== 1 && hours !== 3)) return;
+    _guestPend[id] = true;
+    if (_lastState) render(_lastState);
+    var done = function(txt, bad){
+      delete _guestPend[id];
+      _guestFlash[id] = { txt: txt, bad: !!bad, until: Date.now() + 4000 };
+      tick();
+    };
+    fetch('http://127.0.0.1:' + PORT + '/api/guest-extend', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, hours: hours }),
+    }).then(function(r){
+      return r.json().then(function(j){ return { ok: r.ok && j && j.ok, err: j && j.error }; }, function(){ return { ok: false, err: '' }; });
+    }).then(function(res){
+      done(res.ok ? '+' + hours + 'h ✓' : (res.err === 'revoked' ? 'revoked' : (res.err && res.err.indexOf('expired too long') === 0 ? 'too old' : 'failed')), !res.ok);
+    }, function(){ done('failed', true); });
+  }
+
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -35793,6 +36043,7 @@ const COMMAND_HTML = `<!doctype html>
     // card above, byte for byte, and an older agent that sends no rampages array lands here too.
     var rampRows = (s.rampages && s.rampages.length > 1) ? s.rampages : (s.rampage && s.rampage.target ? [s.rampage] : []);
     for (var ri = 0; ri < rampRows.length; ri++) html += rampHtml(rampRows[ri], rampRows.length > 1);
+    if (s.relv) html += relvHtml(s.relv);
 
     // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
     // above the long lists: after a kill there is no fight to push it down, and a fight that starts while
@@ -36019,6 +36270,9 @@ const COMMAND_HTML = `<!doctype html>
       }
     }
 
+    // 🎟 Guests (officers only): s.guests is null for everyone else, and an empty list draws nothing.
+    if (s.guests && s.guests.length) html += guestsHtml(s.guests);
+
     // Curse/Cure alerts — reuses the buff queue's real observed-debuff
     // tracking (not chat parsing) so it stays accurate even when nobody's
     // typed a "please cure" macro. Per-line ✕ + "clear all" dismiss (#66) are
@@ -36161,6 +36415,14 @@ const COMMAND_HTML = `<!doctype html>
       if (!chip) return;
       e.preventDefault(); e.stopPropagation();
       hailTap(chip.getAttribute('data-hail-win'), chip.getAttribute('data-hail-name'), chip.getAttribute('data-hail-act') === 'mark');
+    });
+    // Guests card: +1h / +3h act on the press too (the card repaints as the clock moves).
+    contentEl.addEventListener('mousedown', function(e){
+      if (e.button !== 0) return;
+      var ext = e.target && e.target.closest ? e.target.closest('.guestExt') : null;
+      if (!ext) return;
+      e.preventDefault(); e.stopPropagation();
+      guestExtend(ext.getAttribute('data-guest-id'), Number(ext.getAttribute('data-guest-h')));
     });
     contentEl.addEventListener('click', function(e){
       var hmore = e.target && e.target.closest ? e.target.closest('.hail-more') : null;
@@ -36700,6 +36962,23 @@ function startWebDashboard(port) {
         catch (e) { console.error('[api/command-center] serialize failed, serving last-good:', e && (e.stack || e.message || e)); _b = _commandCenterLastGood; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
+      }
+      // Command Center Guests card: +1h / +3h on a guest Mimic link. Officer-gated here and again on the bot, which
+      // owns the revival window and the revoked check; this route only checks the shape and forwards.
+      if (req.url === '/api/guest-extend' && req.method === 'POST') {
+        if (!(_mimicIdentity && _mimicIdentity.is_officer)) { res.writeHead(403, { 'Content-Type': 'application/json' }); return res.end('{"error":"officers only"}'); }
+        let gp;
+        try { gp = JSON.parse(await _readBody(req, 2 * 1024) || '{}'); }
+        catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end('{"error":"bad json"}'); }
+        const gid = String((gp && gp.id) || '');
+        const ghours = gp && gp.hours;
+        if (!/^[0-9a-f-]{36}$/i.test(gid) || (ghours !== 1 && ghours !== 3)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end('{"error":"id and hours (1 or 3) required"}');
+        }
+        const gr = await extendGuestLink(gid, ghours);
+        res.writeHead(gr.status, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(gr.body));
       }
       // Command Center tap on a name in the hail board — marks (or unmarks) it hailed for the whole raid.
       if (req.url === '/api/hail-mark' && req.method === 'POST') return _handleHailMark(req, res);
@@ -38363,6 +38642,14 @@ function startWebDashboard(port) {
           replayDeaths:       _replayDeathsSnapshot(),
           replayClock:        _replayClockForWeb(),
         }));
+      }
+      // GET /api/timer-suggestions — the Timers canvas name picker: spells on the bar now + most-cast spells.
+      if (req.url === '/api/timer-suggestions' && req.method === 'GET') {
+        let _b;
+        try { _b = JSON.stringify(_timerSuggestions()); }
+        catch (e) { _b = JSON.stringify({ ok: false, gems: [], casts: [] }); }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(_b);
       }
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
         const body = await _readBody(req).catch(() => '');
@@ -49834,7 +50121,9 @@ const SUGGESTED_TRIGGERS = [
     builtin_timer: 'recharm_tick', no_tts: true },
   { id: 'timer_lull', category: 'timer', label: 'Pacify / Calm / Harmony timers on mobs',
     builtin_timer: 'lull', no_tts: true },
-  { id: 'timer_my_spells', category: 'timer', label: 'Every spell you land on a mob (30s or longer)',
+  // "on mobs or players" (the guild lead, 2026-10-29, FB-112): the old "on a mob" hid this switch from a member
+  // timing a heal-over-time on groupmates. _builtinTimerRows has always counted landings on players too.
+  { id: 'timer_my_spells', category: 'timer', label: 'Every spell you land (30s or longer), on mobs or players',
     builtin_timer: 'my_spells', no_tts: true },
   // The guild lead, 2026-10-13: "a mez you cast should end up on the timers, same for charm".
   { id: 'timer_mez', category: 'timer', label: 'Mez and charm you cast (any length, bard songs included)',
@@ -56420,6 +56709,104 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
   } catch { _buffQueueInflight.delete(key); }
 }
 
+// ── Guest links for officers (Command Center "Guests" card) ──────────────────
+// The guild lead, 2026-10-30: "add guests to the command center for officers/admins with an extend button for +1/+3".
+// An OFFICER's agent asks the bot for the guest Mimic links (GET /api/agent/guest-links) and the card extends one by
+// 1 or 3 hours (POST /api/agent/guest-links/extend). Both routes are officer-only on the bot (utils/guestLinks.js); the
+// agent additionally never asks unless the signed-in identity is an officer, so a raider's agent makes no call at all.
+// Like fetchRaidBuffQueue the read is LAZY: _serializeCommandCenterState asks for it, and the Command Center polls
+// that only while its window is open, so a closed window costs nothing. Every failure is quiet: `guests` stays null
+// and the card is simply absent. A bot that predates the route (404) or a refusal (403) backs off for 5 minutes.
+const GUEST_LINKS_TTL_MS     = 30 * 1000;
+const GUEST_LINKS_BACKOFF_MS = 5 * 60 * 1000;
+let _guestLinks = { at: 0, guests: null, retryAt: 0, inflight: false, logged: false };
+function _guestLinksUrl(suffix) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return null;
+  return opts.botUrl.replace(/\/encounter(\?.*)?$/, suffix);
+}
+function _guestLinksQuiet(why) {
+  if (!_guestLinks.logged) { _guestLinks.logged = true; console.log('[guest-links] no guest list (' + why + '); the Guests card stays hidden'); }
+}
+function fetchGuestLinks() {
+  if (!(_mimicIdentity && _mimicIdentity.is_officer)) return;
+  const now = Date.now();
+  if (_guestLinks.inflight || now < _guestLinks.retryAt || (now - _guestLinks.at) < GUEST_LINKS_TTL_MS) return;
+  const url = _guestLinksUrl('/guest-links');
+  if (!url) return;
+  _guestLinks.inflight = true;
+  // A refusal (403/404) drops the list; a blip (timeout, 5xx) keeps the last good one so the card does not flicker off.
+  const done = (guests, retryMs, why) => {
+    _guestLinks.inflight = false;
+    _guestLinks.at = Date.now();
+    if (guests || retryMs) _guestLinks.guests = guests;
+    _guestLinks.retryAt = retryMs ? Date.now() + retryMs : 0;
+    if (!guests && why) _guestLinksQuiet(why);
+  };
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + _uploadOpts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => { if (body.length < 256 * 1024) body += c; });
+      res.on('end', () => {
+        if (res.statusCode === 404 || res.statusCode === 403) return done(null, GUEST_LINKS_BACKOFF_MS, 'bot answered ' + res.statusCode);
+        if (res.statusCode !== 200) return done(null, 0, 'bot answered ' + res.statusCode);
+        try {
+          const j = JSON.parse(body);
+          done(Array.isArray(j.guests) ? j.guests : null, 0, 'unreadable answer');
+        } catch { done(null, 0, 'unreadable answer'); }
+      });
+    });
+    req.on('error',   () => done(null, 0, 'bot unreachable'));
+    req.on('timeout', () => { req.destroy(); done(null, 0, 'timed out'); });
+    req.end();
+  } catch { done(null, 0, 'bad bot url'); }
+}
+// What the Command Center state carries: the list, or null for a non-officer / nothing known yet.
+function _guestLinksSnapshot() {
+  fetchGuestLinks();
+  return Array.isArray(_guestLinks.guests) ? _guestLinks.guests : null;
+}
+// POST /api/guest-extend { id, hours: 1 | 3 } -> the bot's reply, passed through. On success the cached row takes the
+// new expiry at once and the list is refetched on the next poll, so the card never flips back to the old time.
+function extendGuestLink(id, hours) {
+  return new Promise((resolve) => {
+    const url = _guestLinksUrl('/guest-links/extend');
+    if (!url) return resolve({ status: 503, body: { ok: false, error: 'not connected to the bot' } });
+    const payload = JSON.stringify({ id, hours });
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'https:' ? https : http;
+      const req = mod.request({
+        method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+        headers: {
+          'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload),
+          'Authorization': 'Bearer ' + _uploadOpts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`,
+        }, timeout: 10000,
+      }, (res) => {
+        let body = '';
+        res.on('data', c => { if (body.length < 64 * 1024) body += c; });
+        res.on('end', () => {
+          let j = null; try { j = JSON.parse(body); } catch { j = null; }
+          if (res.statusCode === 200 && j && j.ok && j.guest && Array.isArray(_guestLinks.guests)) {
+            _guestLinks.guests = _guestLinks.guests.map(g => (g && g.id === id ? { ...g, expires_at: j.guest.expires_at, revoked: false } : g));
+            _guestLinks.at = 0;   // refetch on the next poll
+          }
+          resolve({ status: res.statusCode || 502, body: j || { ok: false, error: 'unreadable answer' } });
+        });
+      });
+      req.on('error',   () => resolve({ status: 502, body: { ok: false, error: 'bot unreachable' } }));
+      req.on('timeout', () => { req.destroy(); resolve({ status: 504, body: { ok: false, error: 'bot timed out' } }); });
+      req.end(payload);
+    } catch { resolve({ status: 502, body: { ok: false, error: 'bad bot url' } }); }
+  });
+}
+
 // ── PoP raid objectives proxy (popraid.html) ─────────────────────────────────
 // The PoP overlay polls the local agent's /api/pop-objectives; we proxy the
 // bot's /api/agent/raid-objectives (the raid-wide shared checkbox board) with
@@ -59343,6 +59730,103 @@ function _deadMobNameFromLine(line) {
   if (m) return m[1].trim().replace(/[!.]+$/, '');
   return null;
 }
+// ── Relv the Mysterious (Plane of Storms): the Command Center's mephit counter ───────────────────────────────
+// The guild lead, 2026-10-30: "add in a mephit counter into the command center ... for this event only." The
+// quest script (Relv.lua) spawns exactly 30 mobs, each `a blazing mephit` or `a burning mephit`; every death
+// leaves three `a fiery mepheeka`, and when none is left alive `Falto, Lord of Thunder` spawns. Falto then sends
+// blazing/burning mephit ADDS (same display names) while he fights, so deaths after Falto is up do not count.
+// ⚠ The count is what THIS client saw. EverQuest prints a death line only to players near it, so a kill far
+// across the clearing can be missed: the number is a floor, never exact. Nothing is shared across clients.
+// Starts on Relv's "As I had hoped" line or a port emote, or on the first mephit death seen in Plane of Storms
+// (Zeal zone, else the log's "You have entered" line). Ends on the pulled-back line, on leaving the zone, 3 h
+// after the start, or 10 min after Falto dies. Live tail only (the caller is the live loop), so it takes now.
+const RELV_MEPHITS = 30;
+const RELV_MAX_MS  = 3 * 3600 * 1000;
+const RELV_DONE_MS = 10 * 60 * 1000;
+const _RELV_START_RX   = /As I had hoped\. I regret that I have only enough strength to send four parties/;
+const _RELV_PORT_RX    = /A powerfully green aura surrounds Relv/;
+const _RELV_BACK_RX    = /pulled back to Relv the Mysterious/;
+const _RELV_ZONE_RX    = /^\[[^\]]+\]\s+You have entered (?!an?\s)([^.]{2,60})\.\s*$/;
+const _RELV_MEPHIT_RX  = /^an? (?:blazing|burning) mephit$/i;
+const _RELV_MEPHEEKA_RX = /^an? fiery mepheeka$/i;
+const _RELV_FALTO_RX   = /^Falto, Lord of Thunder$/i;
+// Falto's own swings and ours at him; a guild-chat line that merely names him must not flip the count off.
+const _RELV_FALTO_SEEN_RX = /\]\s+(?:Falto, Lord of Thunder\s|You\b[^']*?\bFalto, Lord of Thunder\b)/;
+const _relvState   = new Map();   // character (lower) → { mephits, mepheekas, faltoUp, faltoSlainAt, startedAt }
+const _relvLogZone = new Map();   // character (lower) → last zone named by a "You have entered" line (lower)
+// When this character last saw Falto (a swing, a hit on him, his death), kept even with no counter running. The guild
+// lead, 2026-10-30, mid-fight on a fresh agent: the counter was started by one of Falto's ADDS dying ("mephits 1/30")
+// because his earlier lines arrived before any counter existed. A counter that starts within FALTO_RECENT_MS of a
+// sighting therefore starts with Falto up, and counts nothing.
+const _relvFaltoSeenAt = new Map();
+const RELV_FALTO_RECENT_MS = 30 * 60 * 1000;
+function _relvFresh(now, cl) {
+  const seen = cl ? _relvFaltoSeenAt.get(cl) : 0;
+  return { mephits: 0, mepheekas: 0, faltoUp: !!seen && now - seen < RELV_FALTO_RECENT_MS, faltoSlainAt: 0, startedAt: now };
+}
+function _relvInStorms(cl) {
+  for (const ch of Object.keys(_zealState || {})) {
+    if (ch.toLowerCase() !== cl) continue;
+    const z = _mapZoneShort(_zealState[ch] && _zealState[ch].zone);
+    if (z) return z === 'postorms';
+  }
+  return _relvLogZone.get(cl) === 'plane of storms';
+}
+function _relvLive(cl, now) {
+  const st = _relvState.get(cl);
+  if (!st) return null;
+  if (now - st.startedAt > RELV_MAX_MS || (st.faltoSlainAt && now - st.faltoSlainAt > RELV_DONE_MS)) { _relvState.delete(cl); return null; }
+  return st;
+}
+function _relvNoteLine(line, character, now) {
+  if (!line || !character) return;
+  const cl = String(character).toLowerCase();
+  const zm = line.indexOf('You have entered') !== -1 ? _RELV_ZONE_RX.exec(line) : null;
+  if (zm) {
+    const z = zm[1].trim().toLowerCase();
+    _relvLogZone.set(cl, z);
+    if (z !== 'plane of storms') _relvState.delete(cl);
+    return;
+  }
+  if (line.indexOf('Relv') === -1 && line.indexOf('mephit') === -1 && line.indexOf('mepheeka') === -1 && line.indexOf('Falto') === -1) return;
+  let st = _relvLive(cl, now);
+  if (_RELV_START_RX.test(line)) { _relvFaltoSeenAt.delete(cl); _relvState.set(cl, _relvFresh(now)); return; }   // a new run: no Falto yet
+  if (_RELV_BACK_RX.test(line)) { _relvState.delete(cl); return; }
+  if (_RELV_PORT_RX.test(line)) { if (!st) _relvState.set(cl, _relvFresh(now, cl)); return; }
+  const dead = _deadMobNameFromLine(line);
+  if (dead && _RELV_FALTO_RX.test(dead)) {
+    _relvFaltoSeenAt.set(cl, now);
+    if (!st && _relvInStorms(cl)) { st = _relvFresh(now, cl); _relvState.set(cl, st); }
+    if (st) { st.faltoUp = true; st.faltoSlainAt = now; }
+    return;
+  }
+  if (dead) {
+    if (_RELV_MEPHIT_RX.test(dead)) {
+      if (!st) {
+        if (!_relvInStorms(cl)) return;
+        st = _relvFresh(now, cl); _relvState.set(cl, st);
+      }
+      if (st.faltoUp) return;   // a Falto add, not one of the 30
+      st.mephits++;
+      if (st.mephits >= RELV_MEPHITS) { st.mephits = RELV_MEPHITS; st.faltoUp = true; }
+    } else if (st && _RELV_MEPHEEKA_RX.test(dead)) {
+      st.mepheekas++;
+    }
+    return;
+  }
+  if (_RELV_FALTO_SEEN_RX.test(line)) {
+    _relvFaltoSeenAt.set(cl, now);
+    if (!st && _relvInStorms(cl)) { st = _relvFresh(now, cl); _relvState.set(cl, st); }   // joined mid-fight: "Falto is up"
+    if (st) st.faltoUp = true;
+  }
+}
+// The Command Center row: null unless the event is running for this character (so nothing shows for any other fight).
+function _relvSnapshot(character, now) {
+  const st = _relvLive(String(character || '').toLowerCase(), now);
+  if (!st) return null;
+  return { mephits: st.mephits, total: RELV_MEPHITS, mepheekas: st.mepheekas, falto_up: !!st.faltoUp, falto_slain: !!st.faltoSlainAt, started_at: st.startedAt };
+}
+// ── end Relv mephit counter ────────────────────────────────────────────────────────────────────────────────────
 // ── Death timeline (the guild lead, 2026-10-21: "the death timers between mobs ... easily and clearly displayed
 // versus having to say it out loud ... a timeline view ... on the bottom of the TTS") ──────────────────────────
 // A small ring of recent boss / Tactics-brother deaths read off the lines THIS PC's logs see (a kill out of this
@@ -64420,6 +64904,8 @@ async function main() {
         try { _meNoteRawLine(line, b.character); } catch { void 0; }
         // XP events: each experience line with the bars around it (FB-37 option B; live tail only).
         try { _xpNoteRawLine(line, b.character, Date.now()); } catch { void 0; }
+        // Relv event (Plane of Storms): the Command Center's mephit counter (live tail only).
+        try { _relvNoteLine(line, b.character, Date.now()); } catch { void 0; }
         // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
         // log never DMs anyone).
         try { _corpseNoteLine(line, b.character); } catch { void 0; }

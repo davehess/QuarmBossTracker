@@ -298,6 +298,7 @@ const {
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList, isGuildMember, MEMBERS_ONLY } = require('./utils/roles');
 const mimicLink = require('./utils/mimicLink');
+const wornSets = require('./utils/wornSets');
 const { clientIp } = require('./utils/clientIp');
 const { createIpLimiter } = require('./utils/ipLimiter');
 const { charmSpellName, charmRanFull } = require('./utils/charmSession');
@@ -4096,6 +4097,47 @@ async function _rosterNameSet() {
   } catch { /* offline → keep last good set (or empty: safeguard just no-ops) */ }
   return _rosterNames;
 }
+// Raid chat is OUR raid's chat (the guild lead, 2026-10-30: "raid chat from a non-wolfpack raid is leaking into raid
+// chat"). A member who joins another group's raid relays that raid's /rs like ours. The uploader's own latest
+// raid_roster capture says whose raid it is: ours when at least half of it is guild characters. → true / false, or
+// null when it cannot tell (no recent roster from this uploader, or the guild roster is not loaded).
+const RAID_CHAT_OURS_MIN_SHARE = 0.5;
+async function _uploaderRaidIsOurs(uploaderId, rosterSet) {
+  if (!uploaderId || !rosterSet || !rosterSet.size) return null;
+  const guildId = require('./utils/supabase').guildId();
+  const windowMs = 15 * 60 * 1000;
+  let rows;
+  try {
+    const mem = require('./utils/liveMemory').rosterRowsSince(guildId, windowMs, null);
+    rows = mem
+      ? mem.filter(r => r.uploaded_by_discord_id === uploaderId)
+      : await require('./utils/supabase').select('raid_roster',
+        `guild_id=eq.${encodeURIComponent(guildId)}&uploaded_by_discord_id=eq.${encodeURIComponent(uploaderId)}` +
+        `&captured_at=gte.${encodeURIComponent(new Date(Date.now() - windowMs).toISOString())}&select=name,captured_at`);
+  } catch { return null; }
+  return _raidRosterIsOurs(rows, rosterSet);
+}
+// Pure half of the above. Rows linger per (uploader, name) after someone leaves, so only the newest capture counts
+// (rows within a minute of the newest one).
+function _raidRosterIsOurs(rows, rosterSet) {
+  if (!Array.isArray(rows) || !rows.length || !rosterSet || !rosterSet.size) return null;
+  const newest = Math.max(...rows.map(r => Date.parse(r.captured_at) || 0));
+  const names = new Set(rows.filter(r => (Date.parse(r.captured_at) || 0) >= newest - 60_000)
+    .map(r => String(r.name || '').toLowerCase()).filter(Boolean));
+  if (names.size < 2) return null;
+  let ours = 0;
+  for (const n of names) if (rosterSet.has(n)) ours++;
+  return ours / names.size >= RAID_CHAT_OURS_MIN_SHARE;
+}
+// One raid line: relay when the raid is ours; drop when it is not; when it is unknown, only a guild character's words.
+function _raidChatLineAllowed(raidIsOurs, speaker, rosterSet, uploaderCharacters) {
+  if (raidIsOurs === true) return true;
+  if (raidIsOurs === false) return false;
+  if (!rosterSet || !rosterSet.size) return true;   // roster not loaded: keep today's behaviour rather than go silent
+  const lc = String(speaker || '').toLowerCase();
+  return rosterSet.has(lc) || (!!uploaderCharacters && uploaderCharacters.has(lc));
+}
+let _foreignRaidChatLoggedAt = 0;
 // Returns the speaker to use. Relabels a distrusted stray-log name to a trusted
 // alternative witnessed on the same line; otherwise returns the input unchanged.
 function _safeguardSpeaker(slot, incomingSpeaker, uploaderId, rosterSet, uploaderCharacters) {
@@ -4651,6 +4693,31 @@ setInterval(() => {
   }
 }, 10_000);
 
+// Relayed raid chat posts into the night's raid thread (the guild lead, 2026-10-30, on the stream filling #raid-chat:
+// "i'd rather it be in a thread"), so the channel keeps the announcements and the thread holds the chatter.
+// Outside a raid or event window there is no thread, and NOTHING posts (the guild lead, 2026-10-30, after a two-person
+// raid's chat and six copies of one kill landed in #raid-chat in the morning: "just restrict those to main raid times
+// and events in threads"). Returns null then; the caller skips the send. RAID_CHAT_IN_THREAD=0 keeps the old
+// behaviour (always the channel). `rn` is injectable for tests; the default is utils/raidNight.js, the same resolver
+// the parse cards use.
+async function _raidChatDestination(client, fallbackId, rn) {
+  if (process.env.RAID_CHAT_IN_THREAD === '0') return client.channels.fetch(fallbackId).catch(() => null);
+  const mod = rn || require('./utils/raidNight');
+  const t = await mod.getRaidNightTarget(client, Date.now()).catch(() => null);
+  return (t && t.thread) || null;
+}
+// One kill announcement per boss kill: every raider's client that saw the server's kill message relays it, and each
+// used to post its own copy (six for one Lord of Ire, 2026-10-30). Ten minutes covers the relays of one kill.
+const _killAnnounced = new Map();   // boss name (lower) → ms posted
+function _killAnnounceOnce(name, now = Date.now()) {
+  const k = String(name || '').toLowerCase();
+  const at = _killAnnounced.get(k);
+  if (at && now - at < 10 * 60 * 1000) return false;
+  _killAnnounced.set(k, now);
+  if (_killAnnounced.size > 500) { for (const [kk, t] of _killAnnounced) if (now - t > 10 * 60 * 1000) _killAnnounced.delete(kk); }
+  return true;
+}
+
 // ── Era boundaries for chat thread routing ─────────────────────────────────
 // Each chat message is routed to the era thread matching its timestamp.
 // Set <CHANNEL>_CHAT_<ERA>_THREAD_ID env vars to enable era threading;
@@ -4840,6 +4907,8 @@ async function _handleAgentChat(req, res) {
     for (const r of (Array.isArray(rows) ? rows : [])) if (r?.name) uploaderCharacters.add(String(r.name).toLowerCase());
   } catch { /* offline: safeguard degrades to roster + corroboration only */ }
   const rosterSet = await _rosterNameSet();
+  // Whose raid is this uploader in? Asked once per batch, only when the batch carries raid chat.
+  const raidIsOurs = messages.some(m => m && m.channel === 'raid') ? await _uploaderRaidIsOurs(identity.discord_id, rosterSet) : null;
   // Mirror every relayed chat line into chat_messages so the historical
   // record builds up live, not just via the agent's --since backfill.
   // Same dedup as the Discord-side path (speaker + text + 5s window) but
@@ -4860,7 +4929,9 @@ async function _handleAgentChat(req, res) {
   //   - Truncate to 400 chars — EQ chat is typically <100 chars; 400 is generous
   function sanitizeChatText(raw) {
     return String(raw || '')
-      .replace(/@(everyone|here)\b/gi, '[@$1]')        // neutralise mass pings
+      // A zero-width space after the @: "[@here]" still rendered as a live @here and pinged the channel
+      // (2026-10-30). The sends below also pass allowedMentions { parse: [] }, which is the real guard.
+      .replace(/@(everyone|here)\b/gi, '@​$1')     // neutralise mass pings
       .replace(/<@[!&]?\d+>/g, '[mention]')             // neutralise user/role pings
       .replace(/<#\d+>/g, '[channel]')                  // neutralise channel links
       .replace(/`/g, 'ˋ')                          // replace backtick with modifier letter grave
@@ -4942,6 +5013,14 @@ async function _handleAgentChat(req, res) {
     // chat only ever fills chat_messages, never Discord).
     const channelId = channel === 'guild' ? guildChId : channel === 'raid' ? raidChId : null;
     if (!channelId) continue; // channel not configured — silently skip
+    // Another group's raid: not relayed, not stored (it is their chat, not ours). Logged once a minute at most.
+    if (channel === 'raid' && !_raidChatLineAllowed(raidIsOurs, speaker, rosterSet, uploaderCharacters)) {
+      if (Date.now() - _foreignRaidChatLoggedAt > 60_000) {
+        _foreignRaidChatLoggedAt = Date.now();
+        console.log(`[chat] raid chat from a raid that is not ours dropped (uploader roster ${raidIsOurs === false ? 'mostly outside the guild' : 'unknown, speaker not a guild character'})`);
+      }
+      continue;
+    }
 
     // Dedup: same speaker + text = multiple parsers saw the same line.
     // CRITICAL: normalize the text in the key, because the same in-game line
@@ -5202,7 +5281,7 @@ async function _handleAgentChat(req, res) {
         const bestSpeaker = healable ? safeSpeaker : (relayEntry.speaker || safeSpeaker);
         const bestText    = textHealable ? safeText : (relayEntry.text || safeText);
         try {
-          await relayEntry.msg.edit(`${tsPrefix}**${bestSpeaker}**${whoTag}: ${bestText}`);
+          await relayEntry.msg.edit({ content: `${tsPrefix}**${bestSpeaker}**${whoTag}: ${bestText}`, allowedMentions: { parse: [] } });
           if (healable) {
             relayEntry.speaker = effectiveSpeaker;
             relayEntry.source  = 'line';
@@ -5223,9 +5302,11 @@ async function _handleAgentChat(req, res) {
     }
 
     try {
-      const ch = await client.channels.fetch(channelId).catch(() => null);
+      const ch = channel === 'raid'
+        ? await _raidChatDestination(client, channelId)
+        : await client.channels.fetch(channelId).catch(() => null);
       if (!ch) return;
-      const sent = await ch.send(`${tsPrefix}**${safeSpeaker}**${whoTag}: ${safeText}`);
+      const sent = await ch.send({ content: `${tsPrefix}**${safeSpeaker}**${whoTag}: ${safeText}`, allowedMentions: { parse: [] } });
       relayEntry.at = Date.now();
       relayEntry.speaker = effectiveSpeaker;
       relayEntry.source = speakerSource;
@@ -6414,9 +6495,9 @@ async function _handleAgentBossKill(req, res) {
           console.warn('[bosskill] postKillUpdate error:', e?.message));
       }
       // Announce in raid channel with next-spawn time (deferred post-ack).
-      if (raidChId) {
+      if (raidChId && _killAnnounceOnce(boss.name)) {
         discordJobs.push(async () => {
-          const ch = await client.channels.fetch(raidChId).catch(() => null);
+          const ch = await _raidChatDestination(client, raidChId);   // the raid / event thread, or nothing
           if (ch) {
             await ch.send(
               `⚔️ **${character}** of <${guild}> killed **${boss.name}** in ${zone} — ` +
@@ -6438,9 +6519,9 @@ async function _handleAgentBossKill(req, res) {
       // A boss taken off the board on purpose says so, instead of inviting an
       // officer to /addboss it back (§132).
       const offBoard = _OFF_BOARD_NO_LOCKOUT.has(nameLower);
-      if (raidChId) {
+      if (raidChId && _killAnnounceOnce(bossName)) {
         discordJobs.push(async () => {
-          const ch = await client.channels.fetch(raidChId).catch(() => null);
+          const ch = await _raidChatDestination(client, raidChId);   // the raid / event thread, or nothing
           if (ch) {
             await ch.send(
               `⚔️ **${character}** of <${guild}> killed **${bossName}** in ${zone} ` +
@@ -9974,6 +10055,32 @@ async function _handleAgentHailMark(req, res) {
   res.end(JSON.stringify({ ok: true, ...r.window }));
 }
 
+// Stamp the upload-arrival columns on a character row (migration 20261031120000): <x>_checked_at on EVERY accepted
+// upload, including the unchanged early-return, and <x>_synced_at beside it when the content really changed. The
+// stamp is an extra — a failure here is logged and never fails the upload.
+async function _stampCharacterUpload(supabase, guildId, charName, patch, tag) {
+  if (!charName) return;
+  await supabase
+    .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charName)}`, patch)
+    .catch(err => console.warn(`[${tag}] upload timestamp update failed:`, err?.message));
+}
+
+// Worn-set history (migration 20261031130000, utils/wornSets.js): the equipped slots of every accepted Quarmy or
+// inventory upload, so the gear page can offer a character's most-worn sets. `slots` is the normalised worn set for a
+// real write; null means the unchanged (checksum-skip) path, which counts the set the character is still wearing,
+// seeded through `loadSlots` when no history exists yet. A character who opted out of inventory or stats is recorded
+// nowhere. An extra, like the stamp: a failure is logged and never fails the upload.
+async function _recordWornSet(supabase, guildId, charRow, character, source, slots, loadSlots) {
+  if (charRow && (charRow.exclude_inventory || charRow.exclude_from_stats)) return;
+  try {
+    const name = charRow?.name || character;
+    if (slots) await wornSets.recordWornSet(supabase, { guildId, character: name, source, slots });
+    else await wornSets.countUnchangedWornSet(supabase, { guildId, character: name, source, loadSlots });
+  } catch (err) {
+    console.warn(`[${source}] worn set record failed:`, err?.message);
+  }
+}
+
 // POST /api/agent/quarmy
 //
 // Quarmy export ingest (docs/DESIGN-quarmy-gear.md, table 20260610210000).
@@ -10033,7 +10140,7 @@ async function _handleAgentQuarmy(req, res) {
   // Owner opt-out is enforced server-side too — a stale agent that missed the
   // prefs poll cannot write an excluded character's gear.
   const charRows = await supabase
-    .select('characters', `select=name,class,exclude_inventory,quarmy_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
+    .select('characters', `select=name,class,exclude_inventory,exclude_from_stats,quarmy_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
     .catch(() => null);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   if (charRow && charRow.exclude_inventory) {
@@ -10041,6 +10148,9 @@ async function _handleAgentQuarmy(req, res) {
   }
   const checksum = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
   if (checksum && charRow && charRow.quarmy_checksum === checksum) {
+    await _stampCharacterUpload(supabase, guildId, charRow.name, { quarmy_checked_at: new Date().toISOString() }, 'quarmy');
+    await _recordWornSet(supabase, guildId, charRow, character, 'quarmy', null, async () => wornSets.wornSlotsFromQuarmy(
+      await supabase.select('character_gear', `select=slot,item_id&guild_id=eq.${encodeURIComponent(guildId)}&character=eq.${encodeURIComponent(charRow.name)}&loc=eq.equipped&limit=100`)));
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
   }
 
@@ -10094,10 +10204,11 @@ async function _handleAgentQuarmy(req, res) {
   await supabase.del('character_gear', charQ).catch(() => {});
   await supabase.del('character_aas', charQ).catch(() => {});
   let written = 0;
+  let gearWritten = false;
   if (gearRows.length) {
     const r = await supabase.insert('character_gear', gearRows)
       .catch(err => { console.warn('[quarmy] gear insert failed:', err?.message); return null; });
-    if (Array.isArray(r)) written += r.length;
+    if (Array.isArray(r)) { written += r.length; gearWritten = true; }
   }
   if (aaRows.length) {
     // Upsert, not insert: the delete above does not exclude a second upload of the same character landing
@@ -10111,13 +10222,19 @@ async function _handleAgentQuarmy(req, res) {
   // by the roster/link flows; gear ingest shouldn't invent membership).
   // deity_id finally pins the faction page's deity-shifted base estimates.
   if (charRow) {
-    const patch = { quarmy_synced_at: new Date().toISOString() };
+    const stampedAt = new Date().toISOString();
+    const patch = { quarmy_synced_at: stampedAt, quarmy_checked_at: stampedAt };
     if (checksum) patch.quarmy_checksum = checksum;
     const deity = parseInt(payload.deity_id, 10);
     if (Number.isFinite(deity) && deity > 0) patch.deity_id = deity;
     await supabase
       .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charRow.name)}`, patch)
       .catch(err => console.warn('[quarmy] characters update failed:', err?.message));
+  }
+
+  if (gearWritten) {
+    await _recordWornSet(supabase, guildId, charRow, character, 'quarmy',
+      wornSets.wornSlotsFromQuarmy(gearRows.filter(g => g.loc === 'equipped')));
   }
 
   _trackUpload({ endpoint: 'quarmy', character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
@@ -10159,7 +10276,7 @@ async function _handleAgentInventory(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
 
   const charRows = await supabase
-    .select('characters', `select=name,exclude_inventory,inventory_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
+    .select('characters', `select=name,exclude_inventory,exclude_from_stats,inventory_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
     .catch(() => null);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   if (charRow && charRow.exclude_inventory) {
@@ -10168,6 +10285,9 @@ async function _handleAgentInventory(req, res) {
   const canonical = charRow?.name || character;
   const checksum  = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
   if (checksum && charRow && charRow.inventory_checksum === checksum) {
+    await _stampCharacterUpload(supabase, guildId, charRow.name, { inventory_checked_at: new Date().toISOString() }, 'inventory');
+    await _recordWornSet(supabase, guildId, charRow, character, 'inventory', null, async () => wornSets.wornSlotsFromInventory(
+      await supabase.select('character_inventory', `select=slot_label,item_id&guild_id=eq.${encodeURIComponent(guildId)}&character_name=ilike.${encodeURIComponent(canonical)}&slot_label=in.(${wornSets.INVENTORY_WORN_LABELS.map(encodeURIComponent).join(',')})&limit=100`)));
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
   }
 
@@ -10209,12 +10329,13 @@ async function _handleAgentInventory(req, res) {
     });
     if (Array.isArray(ok)) written += ok.length;
   }
-  if (checksum && charRow?.name) {
-    await supabase
-      .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charRow.name)}`,
-        { inventory_checksum: checksum })
-      .catch(err => console.warn('[inventory] checksum update failed:', err?.message));
+  if (charRow?.name) {
+    const stampedAt = new Date().toISOString();
+    const patch = { inventory_synced_at: stampedAt, inventory_checked_at: stampedAt };
+    if (checksum) patch.inventory_checksum = checksum;
+    await _stampCharacterUpload(supabase, guildId, charRow.name, patch, 'inventory');
   }
+  if (written > 0) await _recordWornSet(supabase, guildId, charRow, character, 'inventory', wornSets.wornSlotsFromInventory(rows));
   _trackUpload({ endpoint: 'inventory', character: canonical, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, written }));
@@ -10259,6 +10380,7 @@ async function _handleAgentSpellbook(req, res) {
   const canonical = charRow?.name || character;
   const checksum  = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
   if (checksum && charRow && charRow.spellbook_checksum === checksum) {
+    await _stampCharacterUpload(supabase, guildId, charRow.name, { spellbook_checked_at: new Date().toISOString() }, 'spellbook');
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
   }
 
@@ -10293,11 +10415,11 @@ async function _handleAgentSpellbook(req, res) {
     });
     if (Array.isArray(ok)) written += ok.length;
   }
-  if (checksum && charRow?.name) {
-    await supabase
-      .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charRow.name)}`,
-        { spellbook_checksum: checksum })
-      .catch(err => console.warn('[spellbook] checksum update failed:', err?.message));
+  if (charRow?.name) {
+    const stampedAt = new Date().toISOString();
+    const patch = { spellbook_synced_at: stampedAt, spellbook_checked_at: stampedAt };
+    if (checksum) patch.spellbook_checksum = checksum;
+    await _stampCharacterUpload(supabase, guildId, charRow.name, patch, 'spellbook');
   }
   _trackUpload({ endpoint: 'spellbook', character: canonical, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
@@ -17166,8 +17288,12 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
     // "#The_Final_Arbiter") — the agent + bot both strip the # during target-
     // name normalization, so a straight ilike on the no-# form would never
     // match those rows. PostgREST OR matches either case in a single round trip.
-    const encPlain  = encodeURIComponent(norm);
-    const encHashed = encodeURIComponent('#' + norm);
+    // A name holding , . : ( ) or " is double-quoted inside or=(…): unquoted, a comma ends the value and PostgREST
+    // refuses the whole query ("failed to parse logic tree"), so Falto, Lord of Thunder and the six other comma bosses
+    // (Storms, Valor) read as "not in the catalog" (the guild lead, 2026-10-30). Plain names go as they always did.
+    const pq = (v) => (/[,.:()"\\]/.test(v) ? '"' + v.replace(/["\\]/g, '\\$&') + '"' : v);
+    const encPlain  = encodeURIComponent(pq(norm));
+    const encHashed = encodeURIComponent(pq('#' + norm));
     // #171 — fetch ALL matching rows, never `limit=1`. A name resolves to many
     // eqemu_npc_types bodies (real variants + level-1 placeholder/controller
     // rows), and with no ORDER BY the old single-row fetch let PostgREST's
@@ -21417,6 +21543,10 @@ async function _handleAgentPoll(req, res) {
   if (!identity) return;
   const url = new URL(req.url, 'http://x');
   const want = new Set((url.searchParams.get('streams') || '').split(',').map(s => s.trim()).filter(Boolean));
+  // A guest link (2026-10-30) is served NO stream: not the tuning bundle (it carries the guild's channel specs and
+  // notices), not raid callouts, triggers, prefs or backfill. The control plane below rides every poll regardless,
+  // so the kill switch and the version floor still reach a guest's agent.
+  if (identity.scope === 'guest') want.clear();
 
   // One tuning read powers the control plane, the shed checks, and the tuning
   // stream. 60s-cached — cheap on every fast poll. Fail-open to defaults.
@@ -22673,9 +22803,19 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase, { track
       return { internalId: k, registered: false };
     }
   }
-  const or = eqemuForms.map(f => `name.eq.${encodeURIComponent(f)}`).join(',');
+  // A name holding , . : ( ) or " is double-quoted inside or=(…): unquoted, the comma in "Falto, Lord of Thunder" ended
+  // the value, PostgREST refused the query, and every fight against the seven comma bosses (Falto, Jeplak, Gurebk,
+  // Neffiken, Ston`Ruak, Edium, Ralthazor) was dropped unsaved (the guild lead, 2026-10-30: "Falto should be included").
+  const pq = (v) => (/[,.:()"\\]/.test(v) ? '"' + v.replace(/["\\]/g, '\\$&') + '"' : v);
+  const or = eqemuForms.map(f => `name.eq.${encodeURIComponent(pq(f))}`).join(',');
   const npcs = await supabase.select('eqemu_npc_types', `or=(${or})&select=id,name&limit=3`);
-  const ids = [...new Set((Array.isArray(npcs) ? npcs : []).map(r => r.id).filter(n => Number.isFinite(n)))];
+  let ids = [...new Set((Array.isArray(npcs) ? npcs : []).map(r => r.id).filter(n => Number.isFinite(n)))];
+  // Two bodies under one name, one of them a curated named boss BY ID (the fake and the real Jeplak, 2026-10-30): the
+  // named one. Matched on the id alone (an empty name), so a name-only listing cannot claim both bodies.
+  if (ids.length > 1) {
+    const named = ids.filter(id => namedBosses.isNamedBoss({ id, name: '' }));
+    if (named.length === 1) ids = named;
+  }
   if (ids.length !== 1) return null;   // no exact match, or ambiguous — refuse
   const npcId = ids[0];
   const byNpc = await supabase.select('bosses_local', `npc_id=eq.${npcId}&select=internal_id,auto_registered&limit=1`);
@@ -22831,7 +22971,12 @@ async function _handleAgentUpload(req, res) {
   // timer reset. Otherwise importing weeks of old combat would spam Discord
   // and stomp every active boss timer.
   const { character, encounter } = payload || {};
-  const isBackfill = payload?.backfill === true;
+  // A GUEST link (an officer-approved raider from another guild, 2026-10-30) contributes the parse and nothing
+  // else: recordParse below still persists it, but it is treated like a replay for every live side effect (no
+  // Discord card, no session totals, no auto-kill or timer, no live review), and the member-keyed writes (/who
+  // data, /parseagents activity, upload stats, raider deaths) are skipped.
+  const isGuest    = identity.scope === 'guest';
+  const isBackfill = payload?.backfill === true || isGuest;
   if (!encounter || !Array.isArray(encounter.events)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'missing encounter.events' }));
@@ -22842,7 +22987,7 @@ async function _handleAgentUpload(req, res) {
   // rejected by the noise filter below. Merge into state.whoData so /whois
   // sees the new entries even when no combat happened recently.
   const uploadedWhoData = encounter.who_data;
-  if (Array.isArray(uploadedWhoData) && uploadedWhoData.length > 0) {
+  if (Array.isArray(uploadedWhoData) && uploadedWhoData.length > 0 && !isGuest) {
     try { mergeWhoData(uploadedWhoData); } catch {}
 
     // Mirror to Supabase who_observations for long-term SQL access. The
@@ -22898,7 +23043,7 @@ async function _handleAgentUpload(req, res) {
               `boss=${encounter.boss_name || '?'}, started=${encounter.started_at}`);
 
   // Record per-character upload activity for /parseagents
-  try { recordAgentUpload(character, encounter.boss_name, encounter.events.length); } catch {}
+  if (!isGuest) { try { recordAgentUpload(character, encounter.boss_name, encounter.events.length); } catch {} }
 
   // ── Compute damage totals once (used by both parses.json and Supabase paths) ──
   // Filter out noise before aggregating:
@@ -23160,7 +23305,7 @@ async function _handleAgentUpload(req, res) {
   // cast that happened before their most recent death (dying clears buffs).
   // In-memory only; resets on bot restart, which is fine because buff_casts
   // themselves expire on their catalog duration anyway.
-  _noteRaiderDeaths(uploadedDeaths);
+  if (!isGuest) _noteRaiderDeaths(uploadedDeaths);
   const uploadedHealGaps  = encounter.heal_gaps || null;
 
   // ── Accumulate into active /raidnight session (all encounters, not just bosses) ──
@@ -24260,7 +24405,8 @@ async function _handleAgentUpload(req, res) {
   const requestedChars = (process.env.REQUESTED_AGENT_CHARACTERS || '')
     .split(',').map(s => s.trim()).filter(Boolean);
 
-  _trackUpload({
+  // Not for a guest: upload stats are the fleet-adoption count, which is counted in PLAYERS (a guest is not one).
+  if (!isGuest) _trackUpload({
     endpoint:      'encounter',
     character:     payload?.character,
     agentVersion:  payload?.agent_version,
@@ -25126,6 +25272,25 @@ const httpServer = http.createServer(async (req, res) => {
     catch (err) {
       console.error('[reporter-override] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Guest Mimic links in the Command Center: the officer's list and the +1h / +3h extend (utils/guestLinks.js; both
+  // OFFICER-ONLY, the gate is inside the handlers).
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/agent/guest-links') {
+    try { return await require('./utils/guestLinks').handleList(req, res); }
+    catch (err) {
+      console.error('[guest-links] handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+  if (req.method === 'POST' && req.url === '/api/agent/guest-links/extend') {
+    try { return await require('./utils/guestLinks').handleExtend(req, res); }
+    catch (err) {
+      console.error('[guest-links] extend handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
   }

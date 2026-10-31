@@ -129,6 +129,33 @@ insert into snap.raid_night_appearance (guild_id, night_key, name_key, look_hash
              '{16,1,0,0,0,0,0}','{4294967168,0,0,0,0,0,0}',63,'[{"slot":"Head","item_id":1001}]'),
             ('wolfpack','2026-10-07','aldenmar','fedcba9876543210','Aldenmar','quarmy','Dark Elf',6,
              '{16,2,0,0,0,0,0}','{4294967168,0,0,0,0,0,0}',63,'[{"slot":"Head","item_id":1001}]');
+
+-- CREATED BY THE MERGE: the six raid-history streams (migration 20261029121500), identity ids on the
+-- archive side and plain bigint on this one, two rows each. Production prunes at 60 days.
+create table snap.raid_mob_sightings (id bigint primary key, guild_id text not null default 'wolfpack',
+       seen_at timestamptz not null default now(), character text not null, zone text not null,
+       spawn_id integer not null, mob_name text not null, x real not null, y real not null, z real not null default 0);
+create table snap.raid_mob_hp (id bigint primary key, guild_id text not null default 'wolfpack',
+       at timestamptz not null default now(), zone text not null default '', spawn_id integer,
+       mob_name text not null, hp_pct real not null);
+create table snap.raid_casts (id bigint primary key, guild_id text not null default 'wolfpack',
+       cast_at timestamptz not null default now(), caster text not null, spell text not null,
+       target text not null, target_id integer, cast_secs real, heal_amount integer);
+create table snap.raid_zone_changes (id bigint primary key, guild_id text not null default 'wolfpack',
+       at timestamptz not null default now(), character text not null, zone_id integer, zone_name text,
+       from_zone_id integer, from_zone_name text);
+create table snap.raid_pet_owners (id bigint primary key, guild_id text not null default 'wolfpack',
+       declared_at timestamptz not null default now(), pet text not null, owner text not null, pet_spawn_id integer);
+create table snap.raid_trigger_fires (id bigint primary key, guild_id text not null default 'wolfpack',
+       fired_at timestamptz not null default now(), trigger_name text not null, trigger_key text,
+       captures jsonb, uploaded_by text);
+insert into snap.raid_mob_sightings (id, character, zone, spawn_id, mob_name, x, y) values
+       (1,'Aldenmar','potactics',101,'a test mob',1.5,-2.5),(2,'Aldenmar','potactics',101,'a test mob',30,-2.5);
+insert into snap.raid_mob_hp (id, spawn_id, mob_name, hp_pct) values (1,NULL,'a test mob',95),(2,NULL,'a test mob',0);
+insert into snap.raid_casts (id, caster, spell, target) values (1,'Aldenmar','Complete Heal','Brackwyn'),(2,'Aldenmar','Complete Heal','Corvale');
+insert into snap.raid_zone_changes (id, character, zone_id, zone_name) values (1,'Aldenmar',214,'potactics'),(2,'Brackwyn',214,'potactics');
+insert into snap.raid_pet_owners (id, pet, owner) values (1,'Gobsnak','Aldenmar'),(2,'Spotter','Brackwyn');
+insert into snap.raid_trigger_fires (id, trigger_name, captures) values (1,'Test callout','["a","b"]'),(2,'Test callout',NULL);
 SQL
 
 fail=0
@@ -185,6 +212,17 @@ if ! run -q -v ON_ERROR_STOP=1 -f scripts/lib/archive-merge.sql >"$OUT" 2>&1; th
   echo "  FAIL merge after the raid_night_appearance prune errored:"; sed -n '1,12p' "$OUT" | sed 's/^/       /'; fail=1
 fi
 check "raid_night_appearance keeps a look production dropped" "$(q 'select count(*) from raid_night_appearance')" 2
+
+for t in raid_mob_sightings raid_mob_hp raid_casts raid_zone_changes raid_pet_owners raid_trigger_fires; do
+  check "merge creates $t and fills it" "$(q "select count(*) from $t")" 2
+  run -q -c "delete from snap.$t where id = 1"
+done
+if ! run -q -v ON_ERROR_STOP=1 -f scripts/lib/archive-merge.sql >"$OUT" 2>&1; then
+  echo "  FAIL merge after the raid-history prune errored:"; sed -n '1,12p' "$OUT" | sed 's/^/       /'; fail=1
+fi
+for t in raid_mob_sightings raid_mob_hp raid_casts raid_zone_changes raid_pet_owners raid_trigger_fires; do
+  check "$t keeps a row production pruned" "$(q "select count(*) from $t")" 2
+done
 
 # LAST, because it leaves the database unmergeable: an allowlisted ARCHIVE table
 # the snapshot lacks must STOP the run, never be skipped. That silent skip is how

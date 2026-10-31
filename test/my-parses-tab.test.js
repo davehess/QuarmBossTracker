@@ -547,6 +547,20 @@ describe('the tab\'s states, captions and links', () => {
     expect(h).not.toMatch(/NaN|undefined|null/);
   });
 
+  // 2026-10-30, the guild lead: "My parses hides the majority of fights" (22 in the chart, 12 in the list).
+  it('past twelve fights, a switch lists every one, and back', () => {
+    const many = ANSWER({ total: 22, fights: Array.from({ length: 22 }, (_, i) => F(i % 90, { t: iso(1, 20, i) })) });
+    const short = html({ data: many });
+    expect(short).toContain('>Show all 22 fights</button>');
+    expect(short).toContain('onclick="wpMpAllRows()"');
+    expect((short.split('<tbody>')[1].match(/<tr>/g) || []).length).toBe(12);
+    const long = html({ data: many, allRows: true });
+    expect(long).toContain('>Show the newest 12</button>');
+    expect((long.split('<tbody>')[1].match(/<tr>/g) || []).length).toBe(22);
+    expect(html()).not.toContain('wpMpAllRows');   // twelve or fewer: no switch
+    expect(html({ data: many, day: true })).not.toContain('wpMpAllRows');   // By day already lists every fight
+  });
+
   it('says how many of the fights it is showing when the answer was cut', () => {
     const cut = ANSWER({ truncated: true, total: 523, fights: Array.from({ length: 400 }, (_, i) => F(i % 90, { t: iso(1 + (i % 4), 20, i % 60) })) });
     expect(html({ data: cut })).toContain('Showing the newest 400 of 523 fights.');

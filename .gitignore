@@ -49,6 +49,9 @@ packages/wolfpack-logsync/logsync.targets.json.tmp
 packages/wolfpack-logsync/logsync.myfights.json
 packages/wolfpack-logsync/logsync.myfights.json.tmp
 packages/wolfpack-logsync/logsync.pid.json
+# The Timers canvas name picker's per-spell cast counts (agent 4.0.41): this PC's own casting habits, machine-local.
+packages/wolfpack-logsync/logsync.cast-counts.json
+packages/wolfpack-logsync/logsync.cast-counts.json.tmp
 # Durable upload queue + pet/buff state. Same machine-local runtime class as the
 # four above, but they were missing from this list — so merely REQUIRING the
 # agent (a test, a repl, a probe script) drops them in the working tree and they
