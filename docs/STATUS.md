@@ -197,6 +197,12 @@ next touch one rather than assuming a missing row means a missing doc.
   a 3:1 text-contrast floor is enforced. A guild on the defaults emits nothing. **Inert on `main` until the site token layer (beta) graduates**;
   `utils/theme.js` `embedColor()` exists but no Discord call site uses it yet. Next in `docs/DESIGN-theming.md` §7: the designer surfaces
   (Canvas builder, UI Studio, Overlays tab, the colour scheme) read the same row. Test `test/guild-theme.test.js`.
+- **🧪 Guild theme reaches Mimic: overlays wear the guild's colours; Canvas and Overlays-tab "Guild palette" strips (bot 4.0.43 `main`; agent 4.0.51 beta `14bf3a8e`; 2026-10-31; DECISIONS §488; `docs/DESIGN-theming.md` §4, §7 step 4).**
+  The sign-in reply and a version-gated poll `theme` stream carry the guild's themable slots (bot `guildThemeFor()`); the agent
+  caches and serves them on `/api/state`; Mimic stores them in `userData/brand/theme.json` and the preload paints `--wp-*` on every
+  page that links `theme.css` (the agent dashboard is untouched), Canvas iframes included. A hub-guild session gets this one stream;
+  a guest none. Font and logo are carried, not applied. No themed-vs-default screenshots yet. Graduates with the next stable cut,
+  which must also carry the token layer above. Test `test/guild-theme-mimic.test.js` (beta).
 - **✅ raidmimic.com signs anyone in; `/guilds` (web 2.1.79, `main`, `[beta]` page, 2026-10-31; DECISIONS §485, §492; migration `20261031150000_hub_registry_discord_guild.sql` and the `hub_*` registry `20261023160000` both applied).**
   Identify-only Discord sign-in on the raidmimic hosts (no guild or role gate, lockout check, `hub_players` upsert, redirect to `/guilds`),
   with wolfpack.quest's gated path unchanged byte for byte; the middleware exempts `/auth/*` and `/guilds` from the landing rewrite. The
