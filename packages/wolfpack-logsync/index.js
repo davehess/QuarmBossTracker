@@ -18889,6 +18889,12 @@ function _serializeForDashboard() {
     // window, so an agent restart / pre-push gap never flashes it (#120).
     mimicSignedOutMs:   _mimicSessionToken ? 0 : Math.max(0, Date.now() - (_mimicNoTokenSince || Date.now())),
     mimicIdentity:      _mimicIdentity,
+    // The guild's colour theme (the poll's `theme` stream): Mimic caches it and paints the overlays with it, the
+    // dashboard's Overlays tab shows it as the guild palette. null = none held, everything keeps its defaults.
+    theme:              _guildTheme.theme,
+    // true once the bot has answered the theme stream: only then is a null `theme` "the guild has none" rather than
+    // "not asked yet" (Mimic keeps its cached copy until it is true).
+    themeKnown:         !!_guildTheme.ver,
     // Officer-only DKP loot capture — item lists seen in /gu + /rs, ready to
     // review + post. Gated on the signed-in officer flag so a non-officer's
     // dashboard never even receives it. null when not an officer.
@@ -26076,6 +26082,25 @@ function renderOverlays(s) {
     +   '<span class="dim">Opacity, Background and Size set every overlay at once &mdash; fine-tune one with the sliders in its setup bar. Size runs 50%&ndash;200% for high-DPI screens.</span>'
     + '</div></details>'
     + '</div>';
+  // The guild's palette, read-only, under the raider's own choices (docs/DESIGN-theming.md section 5). Layers: the guild's
+  // colours are the base; the theme/colour-blind pick, opacity and size above sit ON TOP of them and are yours. The
+  // swatches come from the agent's \`theme\` (the bot's answer, six-digit hex only); the guild's name is filled in by
+  // wpRefreshOverlayToggles so this HTML stays byte-stable between polls.
+  var GP_SLOTS = [['accent','Brand'],['blue','Blue'],['purple','Purple'],['text','Text'],['dim','Dim'],['border','Border'],['panel','Panel'],['bg','Background']];
+  var gpTheme = s && s.theme && s.theme.slots ? s.theme.slots : null, gpSw = '';
+  if (gpTheme) {
+    for (var gi = 0; gi < GP_SLOTS.length; gi++) {
+      var gpHex = gpTheme[GP_SLOTS[gi][0]];
+      if (typeof gpHex === 'string' && /^#[0-9a-f]{6}$/i.test(gpHex)) {
+        gpSw += '<span class="wp-gpsw" title="' + GP_SLOTS[gi][1] + ' ' + gpHex + '" style="display:inline-block;width:18px;height:18px;border-radius:4px;border:1px solid var(--border);vertical-align:middle;margin-right:4px;background:' + gpHex + '"></span>';
+      }
+    }
+  }
+  h += '<div class="wp-strip wp-guildpal"><span class="wp-lbl">Guild palette</span>'
+    + '<span class="wp-kcell"><b id="wpGuildPalName">Your guild</b>'
+    +   (gpSw ? ' ' + gpSw : ' <span class="dim">has not set a palette, so the default colours apply</span>') + '</span>'
+    + '<span class="dim">Your own look sits on top: the theme, colour-blind mode, opacity and size above are yours and apply over the guild&rsquo;s colours.</span>'
+    + '</div>';
   h += '</div>';
 
   // #113 Extended Target options — a per-user filter that changes what we ASK
@@ -26987,6 +27012,9 @@ function wpRefreshOverlayToggles() {
       if (cpEn2 && Date.now() - _wpCpEnAt > 1500) cpEn2.checked = !!st.charProfilesEnabled;
       // Theme picker highlight — driven from Mimic status (st.overlayTheme),
       // not the render's state blob (which never carries it).
+      var gpn = document.getElementById('wpGuildPalName');
+      var gpName = (st.hub && st.hub.display_name) ? String(st.hub.display_name) : 'Your guild';
+      if (gpn && gpn.textContent !== gpName) gpn.textContent = gpName;
       var tcur = st.overlayTheme || 'default';
       var tb = document.querySelectorAll('.wp-theme-pick');
       for (var j = 0; j < tb.length; j++) {
@@ -52547,7 +52575,39 @@ const POLL_RESCAN_MS     = 3 * 60_000;   // "Sync from my logs" requests (the we
 const POLL_POP_MS        = 5 * 60_000;   // the PoP Flags mode's status of the member's own characters (_popStatus below)
 const POLL_TUNING_IDLE_MS = 20_000;   // idle: still refresh tuning/control this often
 const POLL_DORMANT_MS     = 15_000;   // dormant: poll the tuning/kill channel this often
-const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0, rescan: 0, pop: 0 };
+const POLL_THEME_MS      = 10 * 60_000;  // the guild's colour theme for the overlays (_guildTheme below)
+const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0, rescan: 0, theme: 0, pop: 0 };
+
+// ── The guild theme (docs/DESIGN-theming.md section 4) ──────────────────────────────────────────────────────────────
+// The bot answers the poll's `theme` stream with the guild's colours; we keep the latest and serve it on /api/state as
+// `theme` for Mimic (which caches it and paints the overlays) and for the dashboard's guild-palette strip. Nothing is
+// sent anywhere. The reply is untrusted text from the network, so only the themable slots survive, as six-digit hex
+// (the meaning colours green/red/gold/orange are never accepted), the font from a short list and an https logo.
+// null = the guild has no theme (or we hold none yet): everything keeps its defaults.
+const _GUILD_THEME_SLOTS = ['bg', 'panel', 'border', 'text', 'dim', 'accent', 'blue', 'purple'];
+const _GUILD_THEME_FONTS = ['default', 'system-mono', 'sans', 'serif'];
+const _guildTheme = { ver: '', theme: null };
+function _cleanGuildTheme(t) {
+  if (!t || typeof t !== 'object') return null;
+  const hex = (v) => { const m = typeof v === 'string' ? v.trim().match(/^#?([0-9a-f]{6})$/i) : null; return m ? '#' + m[1].toLowerCase() : null; };
+  const slots = {};
+  const inSlots = t.slots && typeof t.slots === 'object' ? t.slots : {};
+  for (const s of _GUILD_THEME_SLOTS) { const h = hex(inSlots[s]); if (h) slots[s] = h; }
+  const logo = typeof t.logo_url === 'string' ? t.logo_url.trim() : '';
+  return {
+    slots,
+    font: _GUILD_THEME_FONTS.includes(t.font) ? t.font : 'default',
+    logo_url: logo && logo.length <= 500 && /^https:\/\/[^\s"'()<>\\]+$/i.test(logo) ? logo : null,
+    embed_color: hex(t.embed_color),
+    updated_at: typeof t.updated_at === 'string' ? t.updated_at.slice(0, 40) : null,
+  };
+}
+function _applyGuildThemeResponse(r) {
+  if (!r || typeof r !== 'object') return;
+  if (r.version != null) _guildTheme.ver = String(r.version).slice(0, 40);
+  if (r.unchanged) return;
+  _guildTheme.theme = _cleanGuildTheme(r.theme);
+}
 
 // ── PoP Flags mode: where the member's own characters stand on the PoP flags (2026-10-27) ──────────────────────────
 // The guild lead picked "A then B" for the per-character PoP flags checklist in Mimic; this is the data under A. The
@@ -52630,6 +52690,7 @@ async function _pollMultiplexed() {
     if (active || (now - _pollLast.tuning >= POLL_TUNING_IDLE_MS)) want.push('tuning');
     if (now - _pollLast.triggers >= POLL_TRIG_MS) want.push('triggers');
     if (now - _pollLast.pet_owners >= (active ? POLL_PETS_MS : 5 * POLL_PETS_MS)) want.push('pet_owners');
+    if (now - _pollLast.theme >= POLL_THEME_MS) want.push('theme');   // not character-scoped; older bots omit it
     if (chars.length) {
       if (now - _pollLast.prefs    >= POLL_PREFS_MS)    want.push('prefs');
       if (now - _pollLast.backfill >= POLL_BACKFILL_MS) want.push('backfill');
@@ -52646,6 +52707,7 @@ async function _pollMultiplexed() {
     qs.set('loot_since_id', String(_lastLootPostedId));   // #149 loot-posted cursor rides recent_fires
   }
   if (want.includes('tuning'))       qs.set('tuning_ver', _pollTuningVer || '');
+  if (want.includes('theme'))        qs.set('theme_ver', _guildTheme.ver || '');
   if (want.includes('triggers')) {
     qs.set('trig_ver', stats.guildTriggersVersion || '');
     const classes = [];
@@ -52686,7 +52748,8 @@ async function _pollMultiplexed() {
     }
     if (want.includes('triggers')) { if (s.triggers) _applyGuildTriggersResponse(s.triggers); _pollLast.triggers = now; }
     if (want.includes('pet_owners')) { if (s.pet_owners) _applyPetOwnersResponse(s.pet_owners); _pollLast.pet_owners = now; }
-    if (want.includes('prefs'))    { if (s.prefs)    _applyCharacterPrefsResponse(s.prefs);   _pollLast.prefs = now; }
+    if (want.includes('theme'))    { if (s.theme) _applyGuildThemeResponse(s.theme);           _pollLast.theme = now; }
+    if (want.includes('prefs'))    { if (s.prefs)   _applyCharacterPrefsResponse(s.prefs);   _pollLast.prefs = now; }
     if (want.includes('backfill')) { if (s.backfill) _applyBackfillResponse(s.backfill);      _pollLast.backfill = now; }
     if (want.includes('rescan'))   { if (s.rescan)   _applyRescanResponse(s.rescan);          _pollLast.rescan = now; }
     if (want.includes('pop'))      { _applyPopResponse(s.pop, now);                           _pollLast.pop = now; }

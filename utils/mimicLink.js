@@ -348,6 +348,7 @@ async function handlePoll(req, res) {
       scope:         'member',
       guild_id:      hub,
       hub_role:      hubMember.role,
+      theme:         await _themeOf(hub),
     }));
   }
 
@@ -376,7 +377,14 @@ async function handlePoll(req, res) {
     display_name:  displayName,
     is_officer:    isOfficer,
     role_names:    roleNames,
+    theme:         await _themeOf(supabase.guildId()),
   }));
+}
+
+// The guild's theme for the `linked` reply (docs/DESIGN-theming.md section 4): null when the guild has no row or the
+// read failed, so a sign-in never waits on, or fails because of, a colour scheme. A guest link carries none.
+async function _themeOf(guildId) {
+  try { return await require('./theme').guildThemeFor(guildId); } catch { return null; }
 }
 
 // POST /api/mimic-link/revoke — sign out. Header: X-Wolfpack-Mimic-Session.
