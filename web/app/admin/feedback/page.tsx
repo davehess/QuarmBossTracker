@@ -15,6 +15,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { SHOT_BUCKET } from '@/lib/feedbackShots';
+import { shellOn } from '../shellOn';
 
 export const metadata = {
   title: 'Feedback · Admin',
@@ -101,7 +102,8 @@ function fmtTs(iso: string | null): string {
   });
 }
 
-type Params = { status?: string; category?: string };
+// `member` is a Discord id: a smart link from the members page (DECISIONS §493) narrows the inbox to what they sent.
+type Params = { status?: string; category?: string; member?: string };
 
 export default async function AdminFeedbackPage({
   searchParams,
@@ -110,6 +112,7 @@ export default async function AdminFeedbackPage({
 }) {
   await requireOfficer();
   const p = await searchParams;
+  const smart = shellOn();   // the row links to members and agents are the sidebar preview's
   const admin = supabaseAdmin();
   let q: any = admin
     .from('feedback')
@@ -118,6 +121,7 @@ export default async function AdminFeedbackPage({
     .limit(300);
   if (p.status && p.status !== 'all') q = q.eq('status', p.status);
   if (p.category)                     q = q.eq('category', p.category);
+  if (p.member)                       q = q.eq('submitter_discord_id', p.member);
   const { data } = await q;
   const rows = (data ?? []) as FeedbackRow[];
 
@@ -174,6 +178,13 @@ export default async function AdminFeedbackPage({
         </div>
       </section>
 
+      {p.member && (
+        <p role="status" className="text-xs text-dim border border-blue/40 bg-blue/5 rounded px-3 py-2">
+          Showing the reports from one member.{' '}
+          <Link href="/admin/feedback?status=all" className="text-blue hover:underline">Show everyone</Link>
+        </p>
+      )}
+
       <nav className="text-xs flex items-center gap-2 flex-wrap">
         <Toggle href="/admin/feedback?status=new" active={p.status === 'new' || !p.status} label="Open (new)" />
         <Toggle href="/admin/feedback?status=acked" active={p.status === 'acked'} label="Acked" />
@@ -214,6 +225,15 @@ export default async function AdminFeedbackPage({
                     {r.category && <span className="text-dim">· {r.category}</span>}
                     <span className="text-dim">· {fmtTs(r.submitted_at)}</span>
                     <span className="text-dim">· by <span className="text-text">{r.submitter_name || '—'}</span></span>
+                    {smart && r.submitter_discord_id && (
+                      <span className="text-[10px] text-dim">
+                        <Link href={`/admin/members?member=${encodeURIComponent(r.submitter_discord_id)}`} className="hover:text-blue">member</Link>
+                        {' · '}
+                        <Link href={`/admin/agents?member=${encodeURIComponent(r.submitter_discord_id)}`} className="hover:text-blue">agents</Link>
+                        {' · '}
+                        <Link href={`/admin/feedback?status=all&member=${encodeURIComponent(r.submitter_discord_id)}`} className="hover:text-blue">their reports</Link>
+                      </span>
+                    )}
                     {r.discord_msg_link && (
                       <a href={r.discord_msg_link} target="_blank" rel="noreferrer" className="text-blue hover:underline">↗ jump</a>
                     )}

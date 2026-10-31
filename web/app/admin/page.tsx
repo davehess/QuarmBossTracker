@@ -1,6 +1,8 @@
 // Admin landing — officer-only. Auth + officer gating handled by parent layout.
 import Link from 'next/link';
 import { FoldText } from '@/components/MoreInfo';
+import AdminCards from './AdminCards';
+import { shellOn } from './shellOn';
 
 export const metadata = {
   title: 'Officer tools · Admin',
@@ -8,6 +10,8 @@ export const metadata = {
 };
 
 export default function AdminPage() {
+  // The sidebar preview (?v=b, DECISIONS §493): the same pages as grouped cards. No cookie → the grid below, as it was.
+  if (shellOn()) return <AdminCards />;
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">

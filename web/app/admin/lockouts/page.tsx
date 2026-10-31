@@ -42,6 +42,7 @@ import { selectAll } from '@/lib/selectAll';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { isCurrentEraName, currentEraNames } from '@/lib/eras';
 import { GUILD_TAG } from '@/lib/guild';
+import { shellOn } from '../shellOn';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
@@ -61,6 +62,8 @@ function Section({
   title, blurb, rows, tz, tone, kindOf,
 }: { title: string; blurb: string; rows: Row[]; tz: string; tone: string;
      kindOf: (name: string) => Kind }) {
+  // Smart links to the same character on the agents and members pages (DECISIONS §493): the sidebar preview only.
+  const smart = shellOn();
   return (
     <section className="bg-panel border border-border rounded-lg p-4">
       <h2 className={`text-sm mb-1 ${tone}`}>{title} ({rows.length})</h2>
@@ -84,6 +87,13 @@ function Section({
               <tr key={`${r.character}|${r.boss_key}|${r.expires_at}`} className="hover:bg-[#1a212c]">
                 <td className="py-1.5 pr-3">
                   <Link href={`/character/${encodeURIComponent(r.character)}`} className="text-blue hover:underline">{r.character}</Link>
+                  {smart && (
+                    <span className="ml-2 text-[10px] text-dim">
+                      <Link href={`/admin/agents?character=${encodeURIComponent(r.character)}`} className="hover:text-blue">agent</Link>
+                      {' · '}
+                      <Link href={`/admin/members?character=${encodeURIComponent(r.character)}`} className="hover:text-blue">member</Link>
+                    </span>
+                  )}
                 </td>
                 <td className="py-1.5 pr-3 text-xs">
                   {(() => {
@@ -118,8 +128,13 @@ function Section({
   );
 }
 
-export default async function LockoutsPage() {
+export default async function LockoutsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ character?: string }>;
+}) {
   await requireOfficer();
+  const { character: onlyCharacter } = await searchParams;
   const sb = supabaseAdmin();
   const tz = await userTz();
   // Only lockouts that are still BINDING — an expired one is history, and the
@@ -127,7 +142,7 @@ export default async function LockoutsPage() {
   // Paginated, not .limit() — kill-derived lockouts took this table past 700
   // rows on day one, and PostgREST caps a response at 1000 SILENTLY, so a bare
   // limit would drop the tail with no error (web/lib/selectAll.ts).
-  const rows = await selectAll<Row>((from, to) => sb
+  const allRows = await selectAll<Row>((from, to) => sb
     .from('character_lockouts')
     .select('character, boss_key, boss_name, expires_at, implied_kill_at, ours, observed_at, observed_by, source, encounter_id')
     .eq('guild_id', GUILD_TAG)
@@ -136,6 +151,8 @@ export default async function LockoutsPage() {
     .order('character', { ascending: true })
     .order('boss_key', { ascending: true })
     .range(from, to));
+  // `?character=` (a smart link from the agents and feedback pages, DECISIONS §493) narrows to that character's lockouts.
+  const rows = onlyCharacter ? allRows.filter(r => r.character.toLowerCase() === onlyCharacter.toLowerCase()) : allRows;
 
   // Main vs alt, so a MAIN on the foreign list stands out — that's the case
   // that shouldn't normally happen for a current-era boss.
@@ -183,6 +200,12 @@ export default async function LockoutsPage() {
 
   return (
     <div className="space-y-6">
+      {onlyCharacter && (
+        <p role="status" className="text-xs text-dim border border-blue/40 bg-blue/5 rounded px-3 py-2">
+          Showing the lockouts of <b className="text-text">{onlyCharacter}</b> only.{' '}
+          <Link href="/admin/lockouts" className="text-blue hover:underline">Show everyone</Link>
+        </p>
+      )}
       <section className="bg-panel border border-border rounded-lg p-5">
         <h1 className="text-xl text-gold">🔒 Loot lockouts</h1>
         <p className="text-sm text-dim mt-1 max-w-3xl leading-6">

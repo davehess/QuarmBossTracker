@@ -110,7 +110,7 @@ const STATIC_META: Record<string, PageMeta> = {
 // "<name> · Admin" rather than one shared "Officer Tools" card. Anything under /admin not listed here
 // still gets the shared card, and the test fails for a real page that is missing.
 const ADMIN_DESCRIPTION = 'A Wolf Pack officer page. Officer sign-in required.';
-const ADMIN_TITLES: Record<string, string> = {
+export const ADMIN_TITLES: Record<string, string> = {
   '/admin':                    'Officer tools',
   '/admin/access':             '[beta] Member access',
   '/admin/adoption':           'Adoption',
