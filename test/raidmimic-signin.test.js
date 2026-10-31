@@ -833,9 +833,9 @@ describe('the /guilds page', () => {
     expect(page).toMatch(/\{onHost \? \([\s\S]*flow="guilds"/);
     expect(page).not.toMatch(/provider_token/);
   });
-  it('"Start a guild" is a stub: a link and a coming-soon line, no form', () => {
+  it('"Start a guild" is a link to the form on /guilds/new (test/guilds-new.test.js), not a form of its own', () => {
     const start = page.slice(page.indexOf('Start a guild</h2>'));
-    expect(start).toMatch(/Coming soon/);
+    expect(start).toMatch(/href="\/guilds\/new"/);
     expect(start).not.toMatch(/<form|<input|<button|action=/);
   });
 });

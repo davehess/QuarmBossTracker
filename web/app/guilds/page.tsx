@@ -8,7 +8,7 @@
 // One card per guild the player is in: Wolf Pack when their Discord id is a Wolf Pack member, plus one per
 // hub_memberships row (the registry, web/lib/hubRegistry.ts). Under them, three cards: join with an invite code,
 // "Find my guilds" (an optional SECOND Discord consent, only on a raidmimic host: openSignIn.ts), and start a guild
-// (a stub: the setup guide has the plan, there is no form yet).
+// (a link to /guilds/new). Each hub card opens /guilds/<slug>.
 // The hub_* tables may not exist on a database the registry has not been applied to; every hub read fails soft to
 // "no guilds there", so the Wolf Pack card and the page itself still render.
 import { headers } from 'next/headers';
@@ -112,7 +112,6 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
   const [wolf, hub] = discordId ? await Promise.all([loadWolfPack(discordId), loadHubGuilds(discordId)]) : [null, [] as HubCard[]];
   const closed = searchParams.find === 'ok' ? await loadClosedMatches(searchParams.closed, hub) : [];
   const note = findNote(searchParams.find, searchParams.found, closed.length);
-  const startHref = onHost ? '/setup#guild' : '/raidmimic/setup#guild';
 
   return (
     <div className="mx-auto max-w-3xl px-1 py-2 pb-12">
@@ -141,7 +140,7 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
               <span className={PILL}>{ROLE_LABEL[g.role] ?? 'Member'}</span>
             </div>
             {g.joined_at && <p className="mt-1 text-sm text-dim">Joined {g.joined_at.slice(0, 10)}</p>}
-            <p className="mt-2 text-xs text-dim">This guild&rsquo;s own page is coming soon.</p>
+            <p className="mt-2"><a href={`/guilds/${g.guild_id}`} className={LINK}>Open the guild &rarr;</a></p>
           </article>
         ))}
         {closed.length > 0 && (
@@ -189,8 +188,8 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
 
         <div className={CARD}>
           <h2 className="text-base text-[#f2ede1]">Start a guild</h2>
-          <p className="mt-1 text-xs leading-5 text-dim">Coming soon. Starting a guild here is not open yet.</p>
-          <p className="mt-2"><a href={startHref} className={LINK}>How guilds will work →</a></p>
+          <p className="mt-1 text-xs leading-5 text-dim">Name it, pick its address, and invite your raiders with codes. You become its owner.</p>
+          <p className="mt-2"><a href="/guilds/new" className={LINK}>Start a guild →</a></p>
         </div>
       </section>
     </div>

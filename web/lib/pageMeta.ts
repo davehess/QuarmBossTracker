@@ -70,6 +70,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/raidmimic':    { title: 'Raid Mimic · free EverQuest raid overlays', description: 'Free, open-source overlays for your EverQuest raids, built from the log the game already writes: run it on your own, or add a guild hub for shared raid reviews, merged parses and a command center.' },
   '/raidmimic/setup': { title: '[beta] Set up Raid Mimic', description: 'A step-by-step guide to setting up Mimic on your own PC for EverQuest on Project Quarm, with no guild needed: what you need, what works on your own, and how to join a raid.' },
   '/guilds':       { title: '[beta] Your guilds', description: 'The guilds you are in on Raid Mimic, with a way to join one by invite code, find the ones you already belong to, or start your own.' },
+  '/guilds/new':   { title: '[beta] Start a guild', description: 'Start a guild on Raid Mimic: name it, pick its address and optionally link its Discord server, then invite your raiders with codes.' },
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },
   '/roadmap':      { title: 'Roadmap', description: 'What’s shipped and what’s next for the Wolf Pack platform.' },
   '/ai':           { title: 'Built with AI', description: 'The working method behind the platform: the rules, the incident behind each one, and a timeline you can scrub.' },
@@ -314,6 +315,11 @@ export function metaForPath(rawPath: string): PageMeta {
   // title, window and contents are whatever the officer chose to share, none of it for an anonymous crawler.
   if (/^\/share\/raid\/[^/]+$/.test(path)) {
     return { title: '[beta] Shared raid session', description: 'A raid session shared by Wolf Pack: the replay with who was there, the kills, the loot and the rolls.' };
+  }
+  // A guild's own page: the card says "Guild" and never the guild's name. The page needs a sign-in, a closed guild
+  // answers a non-member with a 404, and the crawler is anonymous, so no name is read here at all.
+  if (/^\/guilds\/[^/]+$/.test(path)) {
+    return { title: '[beta] Guild', description: 'A guild on Raid Mimic: its members, its plan and its invite codes. Sign in to open it.' };
   }
   if (/^\/parses\/[^/]+$/.test(path)) {
     // Deliberately NOT the boss, date or DPS: a parse is guild data that /parses/<id> hides from a signed-out
