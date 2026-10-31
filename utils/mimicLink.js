@@ -59,6 +59,40 @@ function guestRouteAllowed(method, url) {
   const path = String(url || '').split(/[?#]/)[0];
   return GUEST_ALLOWED_ROUTES.some(([m, p]) => m === method && p === path);
 }
+
+// ── Hub sessions (the guild lead, 2026-10-31, DECISIONS §499): a Mimic linked to a guild other than this process's ──
+// A session whose guild_id is not the process guild (supabase.guildId()) belongs to a guild on Raid Mimic. It resolves
+// through hub_players / hub_memberships, never wolfpack_members, and it is a member of ITS guild only. While row-level
+// scoping is behind a flag (§496) it may call only the routes below: the same three as a guest, plus the link routes.
+// The /api/mimic-link/* routes are answered before requireAgentAuth runs (the device code is their credential), so they
+// are listed to keep the allowlist whole, not because this gate sees them. There is no /api/me route on the bot: the
+// signed-in reads live on the website, which reads the hub tables itself.
+const HUB_ALLOWED_ROUTES = [
+  ...GUEST_ALLOWED_ROUTES,
+  ['POST', '/api/mimic-link/start'],
+  ['POST', '/api/mimic-link/poll'],
+  ['POST', '/api/mimic-link/revoke'],
+];
+function hubRouteAllowed(method, url) {
+  const path = String(url || '').split(/[?#]/)[0];
+  return HUB_ALLOWED_ROUTES.some(([m, p]) => m === method && p === path);
+}
+// The registry's slug shape (supabase hub_guilds_slug_shape; web/lib/hubRegistry.ts GUILD_SLUG_RX).
+const HUB_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$/;
+const HUB_SITE_URL_DEFAULT = 'https://raidmimic.com';
+// The site a hosted guild's members finish the link on. Configurable because a guild can get its own address; https only.
+function _hubSiteUrl() {
+  const env = String(process.env.HUB_SITE_URL || '').trim().replace(/\/+$/, '');
+  return /^https:\/\/[^\s/]+(\/[^\s]*)?$/.test(env) ? env : HUB_SITE_URL_DEFAULT;
+}
+// The hub slug a request asked for: null for "none given" and for this process's own guild (Wolf Pack as today),
+// undefined for a value that is not a slug (the caller answers 400).
+function _cleanHub(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string' || !HUB_SLUG_RE.test(raw)) return undefined;
+  return raw === supabase.guildId() ? null : raw;
+}
+
 const GUEST_LABEL_MAX = 64;
 const GUEST_CACHE_MS  = 60 * 1000;   // a guest identity is trusted from cache for this long, so a Revoke lands within a minute
 const _guestRefusedLogged = new Set();   // `${label}|${path}` → logged once per process, so a chatty agent cannot flood the log
@@ -117,7 +151,9 @@ function _generateUserCode() {
 function _generateDeviceCode()   { return crypto.randomBytes(32).toString('hex'); }
 function _generateSessionToken() { return 'wpms_' + crypto.randomBytes(32).toString('hex'); }
 
-function _verificationUrl() {
+// Wolf Pack (no hub) keeps today's address exactly; a hub guild's link is finished on the hosted site.
+function _verificationUrl(hub = null) {
+  if (hub) return `${_hubSiteUrl()}/auth/mimic-link`;
   return process.env.MIMIC_LINK_VERIFICATION_URL || VERIFICATION_URL_DEFAULT;
 }
 
@@ -139,6 +175,9 @@ async function handleStart(req, res) {
   const payload = await _readJsonBody(req).catch(() => null);
   if (payload === null) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid json' })); }
   if (!supabase.isEnabled()) { res.writeHead(503, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'service unavailable' })); }
+  // The guild the link is for (§499): none = this process's guild, as always. A value that is not a slug is refused.
+  const hub = _cleanHub(payload?.hub);
+  if (hub === undefined) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid hub' })); }
   if (_startRateLimited(req)) {
     res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
     return res.end(JSON.stringify({ error: 'too many link attempts, wait a minute and retry' }));
@@ -155,16 +194,19 @@ async function handleStart(req, res) {
       device_code:   deviceCode,
       expires_at:    expiresAt,
       agent_version: payload?.agent_version ? String(payload.agent_version).slice(0, 32) : null,
+      // Only a hub link names its guild: a Wolf Pack row is written exactly as before, so it needs no new column.
+      ...(hub ? { hub } : {}),
     }]).catch(() => null);
     if (Array.isArray(inserted) && inserted[0]) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         user_code:         userCode,
         device_code:       deviceCode,
-        verification_url:  _verificationUrl(),
-        verification_url_complete: `${_verificationUrl()}?code=${encodeURIComponent(userCode)}`,
+        verification_url:  _verificationUrl(hub),
+        verification_url_complete: `${_verificationUrl(hub)}?code=${encodeURIComponent(userCode)}`,
         expires_in:        LINK_CODE_TTL_SECONDS,
         poll_interval:     POLL_INTERVAL_SECONDS,
+        ...(hub ? { hub } : {}),
       }));
     }
   }
@@ -223,6 +265,29 @@ async function handlePoll(req, res) {
     return res.end(JSON.stringify({ status: 'expired' }));
   }
 
+  // A link made for a hub guild (§499). The web page only stamps the code; THIS is where the guild is enforced, because an
+  // officer-assisted stamp or a stolen stamp must not mint a session in a guild the person is not in. A guest approval is
+  // Wolf Pack's alone. The session carries the code's guild, and the answer is the hub member's, never wolfpack_members'.
+  const hub = _hubGuildOf(row.hub);
+  let hubMember = null;
+  if (hub) {
+    if (isGuest) {
+      await supabase.del('mimic_link_codes', `device_code=eq.${encodeURIComponent(deviceCode)}`).catch(() => null);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ status: 'expired' }));
+    }
+    hubMember = await _hubMembership(hub, row.authorized_discord_id);
+    if (hubMember === LOOKUP_ERROR) {   // a failed read keeps the code, so the next poll asks again
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ status: 'pending' }));
+    }
+    if (!hubMember) {
+      await supabase.del('mimic_link_codes', `device_code=eq.${encodeURIComponent(deviceCode)}`).catch(() => null);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ status: 'expired' }));
+    }
+  }
+
   // Authorized — mint the session, look up display info, delete the link code.
   const sessionToken = _generateSessionToken();
   // A guest's id is chosen here so the synthetic discord_id (`guest:<id>`) can name the row it belongs to.
@@ -244,6 +309,7 @@ async function handlePoll(req, res) {
     // Discord's unverified-account wall); absent/'self' is the normal flow.
     linked_via:           row.authorized_via || (row.authorized_user_id ? 'self' : null),
     linked_by_discord_id: row.authorized_by_discord_id || null,
+    ...(hub ? { guild_id: hub } : {}),   // a Wolf Pack session leaves the column to its default, as before
   }]).catch(() => null);
   if (!Array.isArray(insertSession) || !insertSession[0]) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -265,6 +331,23 @@ async function handlePoll(req, res) {
       role_names:    [],
       scope:         'guest',
       expires_at:    row.guest_expires_at,
+    }));
+  }
+
+  if (hub) {
+    // The guild's own roster is the source: no Wolf Pack nickname or role names exist for this person here.
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
+      status:        'linked',
+      session_token: sessionToken,
+      user_id:       row.authorized_user_id || null,
+      discord_id:    row.authorized_discord_id,
+      display_name:  hubMember.display_name || row.authorized_discord_id,
+      is_officer:    hubMember.is_officer,
+      role_names:    [],
+      scope:         'member',
+      guild_id:      hub,
+      hub_role:      hubMember.role,
     }));
   }
 
@@ -328,6 +411,41 @@ function _hasOfficerRole(roleNames) {
 // durable queue drop the payload as permanent, so a transient blip would become
 // fleet-wide data loss (audit P0 #1). Never cached, so the next request retries.
 const LOOKUP_ERROR = Symbol('session_lookup_error');
+
+// Who a Discord id is in a hub guild: { player_id, display_name, role, is_officer } for an active member of an
+// unsuspended guild, null for anyone else (never joined, left, account deleted, guild suspended or unknown), or
+// LOOKUP_ERROR when a read failed (the store is down is not "not a member"). Both the poll (before a session is minted)
+// and the session resolver (every refresh) ask this, so a link cannot outlive the membership it was made on.
+// The role is the guild's own call: owner and officer are the guild's officers, and only on that guild.
+async function _hubMembership(guildId, discordId) {
+  if (!guildId || !discordId) return null;
+  const guild = await supabase.select(
+    'hub_guilds',
+    `guild_id=eq.${encodeURIComponent(guildId)}&select=guild_id,suspended_at&limit=1`,
+  ).catch(() => null);
+  if (!Array.isArray(guild)) return LOOKUP_ERROR;
+  if (!guild[0] || guild[0].suspended_at) return null;
+  const players = await supabase.select(
+    'hub_players',
+    `discord_id=eq.${encodeURIComponent(String(discordId))}&select=player_id,display_name,deleted_at&limit=1`,
+  ).catch(() => null);
+  if (!Array.isArray(players)) return LOOKUP_ERROR;
+  const player = players[0];
+  if (!player || player.deleted_at) return null;
+  const members = await supabase.select(
+    'hub_memberships',
+    `guild_id=eq.${encodeURIComponent(guildId)}&player_id=eq.${encodeURIComponent(player.player_id)}&left_at=is.null&select=role&limit=1`,
+  ).catch(() => null);
+  if (!Array.isArray(members)) return LOOKUP_ERROR;
+  if (!members[0]) return null;
+  const role = String(members[0].role || 'member');
+  return { player_id: player.player_id, display_name: player.display_name || null, role, is_officer: role === 'owner' || role === 'officer' };
+}
+// The guild a session row belongs to when it is not this process's own; null for Wolf Pack and for a row that predates
+// the guild_id column.
+function _hubGuildOf(guildId) {
+  return guildId && guildId !== supabase.guildId() ? String(guildId) : null;
+}
 
 // Core lookup: token string → identity, or null (unknown/revoked), or
 // LOOKUP_ERROR (transient store failure — retryable). Shared by both the
@@ -395,6 +513,39 @@ async function _lookupSessionToken(token, ip) {
     };
     // Cached for a minute, not five: the officer's Revoke on /admin/links is a web write the bot is not told about.
     _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now() - SESSION_CACHE_TTL_MS + GUEST_CACHE_MS, value });
+    supabase.update(
+      'mimic_sessions',
+      `session_token=eq.${encodeURIComponent(token)}`,
+      { last_used_at: new Date().toISOString() },
+    ).catch(() => null);
+    return value;
+  }
+  // A session linked to a hub guild (§499) resolves through that guild's roster, never wolfpack_members. Leaving the
+  // guild, deleting the account or the guild being suspended ends the session like a revoke does (within the 5-minute
+  // cache window at most). A read that FAILS keeps the last good identity and tries again in 15 s, the same rule the
+  // Wolf Pack member read follows below.
+  const hubGuild = _hubGuildOf(row.guild_id);
+  if (hubGuild) {
+    const m = await _hubMembership(hubGuild, row.discord_id);
+    if (m === LOOKUP_ERROR) {
+      const value = (cached && cached.value) || {
+        user_id: row.user_id || null, discord_id: row.discord_id, display_name: row.discord_id,
+        role_names: [], is_officer: false, scope: 'member', guild_id: hubGuild, hub_guild: hubGuild,
+      };
+      _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now() - SESSION_CACHE_TTL_MS + SESSION_RETRY_MS, value });
+      return value;
+    }
+    if (!m) {
+      _sessionCache.delete(token);
+      _setBounded(_sessionMissCache, SESSION_MISS_MAX, token, Date.now());
+      return null;
+    }
+    const value = {
+      user_id: row.user_id || null, discord_id: row.discord_id, display_name: m.display_name || row.discord_id,
+      role_names: [], is_officer: m.is_officer,   // the HUB role: it grants nothing on Wolf Pack data (requireAgentAuth's gate)
+      scope: 'member', guild_id: hubGuild, hub_guild: hubGuild, hub_role: m.role,
+    };
+    _setBounded(_sessionCache, SESSION_CACHE_MAX, token, { resolvedAt: Date.now(), value });
     supabase.update(
       'mimic_sessions',
       `session_token=eq.${encodeURIComponent(token)}`,
@@ -518,6 +669,24 @@ async function requireAgentAuth(req, res) {
     return null;
   }
 
+  // Hub scope (2026-10-31, §499): a session linked to another guild gets the allowlist above and nothing else, whatever
+  // role it holds there. Same one-place rule as the guest gate, logged once per guild and route.
+  if (identity.hub_guild && !hubRouteAllowed(req.method, req.url)) {
+    const path = String(req.url || '').split(/[?#]/)[0];
+    const key  = `hub:${identity.hub_guild}|${path}`;
+    if (!_guestRefusedLogged.has(key)) {
+      if (_guestRefusedLogged.size >= 500) _guestRefusedLogged.clear();
+      _guestRefusedLogged.add(key);
+      console.log(`[hub] a "${identity.hub_guild}" session refused ${req.method} ${path} (guild links upload parses only for now)`);
+    }
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error:   'hub_scope',
+      message: 'This Mimic is linked to another guild. For now that link can upload parses and check for updates; nothing else is served to it yet.',
+    }));
+    return null;
+  }
+
   return identity;
 }
 
@@ -605,6 +774,7 @@ module.exports = {
   revokeSessionForUser,
   listSessionsForUser,
   guestRouteAllowed, GUEST_ALLOWED_ROUTES, GUEST_LABEL_MAX,   // the guest-link allowlist (test/guest-link.test.js)
+  hubRouteAllowed, HUB_ALLOWED_ROUTES,   // the hub-session allowlist (test/mimic-link-hub.test.js)
   setFailAuthPerMin,   // index.js feeds the `ip_failauth_per_min` tuning knob in here
   // Exposed for test/bot-auth-flood.test.js — the bounded caches and the failed-auth throttle.
   _sessionCache, _sessionMissCache, _failAuth,

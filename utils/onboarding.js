@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.41': [
+    'A Mimic link can now belong to another guild on Raid Mimic: the code remembers which guild, the claim checks that guild\'s roster, and that Mimic can only upload parses until its guild\'s own data permission is switched on. Wolf Pack links are unchanged.',
+  ],
   '4.0.40': [
     'Groundwork for hosting other guilds: parse uploads can run under a per-guild database permission instead of the bot\'s master key. Off by default; nothing changes for Wolf Pack.',
   ],

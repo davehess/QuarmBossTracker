@@ -21548,6 +21548,9 @@ async function _handleAgentPoll(req, res) {
   // notices), not raid callouts, triggers, prefs or backfill. The control plane below rides every poll regardless,
   // so the kill switch and the version floor still reach a guest's agent.
   if (identity.scope === 'guest') want.clear();
+  // A session linked to another guild (2026-10-31, §499) is served no stream either: the tuning bundle, triggers, prefs
+  // and backfill below are this process's guild's, and nothing in them is keyed by the session's guild yet.
+  if (identity.hub_guild) want.clear();
 
   // One tuning read powers the control plane, the shed checks, and the tuning
   // stream. 60s-cached — cheap on every fast poll. Fail-open to defaults.
@@ -22952,6 +22955,14 @@ async function _handleAgentUpload(req, res) {
   try { guildDb = guildScoped.forIdentity(identity, await _overlayTuningMap()); }
   catch (err) { console.warn('[guild-rls] scoping skipped:', err?.message); }
 
+  // A session linked to another guild (2026-10-31, §499) is written ONLY as that guild. Without the scoped client
+  // (flag off, or no JWT secret) the writes below would stamp the parse with this process's guild, so the upload waits:
+  // 503 is retried by the agent's durable queue, where a 4xx would be dropped.
+  if (identity.hub_guild && !guildDb) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'guild_scope_unavailable', retry: true }));
+  }
+
   // Read body (cap at 10MB for safety; encounters are typically <1MB)
   const chunks = [];
   let total = 0;
@@ -22982,7 +22993,9 @@ async function _handleAgentUpload(req, res) {
   // else: recordParse below still persists it, but it is treated like a replay for every live side effect (no
   // Discord card, no session totals, no auto-kill or timer, no live review), and the member-keyed writes (/who
   // data, /parseagents activity, upload stats, raider deaths) are skipped.
-  const isGuest    = identity.scope === 'guest';
+  // A hub-guild session (§499) is handled like a guest: its parse is kept, but no member-keyed write and no live side
+  // effect of THIS process's guild fires for it (a name that is not in our roster, a Discord post in our channels).
+  const isGuest    = identity.scope === 'guest' || !!identity.hub_guild;
   const isBackfill = payload?.backfill === true || isGuest;
   if (!encounter || !Array.isArray(encounter.events)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
