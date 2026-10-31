@@ -37,6 +37,7 @@ const { visibleUiRects, zealAreas, applyPicks, cleanPicks } = require('./uiClear
 const uiLayouts = require('./uiLayouts');
 const soundLib = require('./sounds');
 const neuralVoice = require('./neuralVoice');
+const hubs = require('./hubs');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -273,6 +274,10 @@ function defaultConfig() {
     // the Logsync tab edits that list directly.
     importedLogPaths: [],
     botUrl: 'https://wolfpackparse.up.railway.app/api/agent/encounter',
+    // The guild this install points at (hubs.js; DECISIONS §475). Wolf Pack until someone picks another, which is what every
+    // install before the picker is. cfg.botUrl stays what the agent is launched with; the picker writes both. A literal, not
+    // hubs.WOLFPACK_HUB, because tests evaluate this function on its own; test/mimic-guild-picker.test.js holds the two equal.
+    hub: { slug: 'wolfpack', display_name: 'Wolf Pack', url: 'https://wolfpackparse.up.railway.app', site: 'https://wolfpack.quest' },
     token: null,
     // Overlays default OFF on a fresh install — a brand-new user shouldn't be
     // ambushed by floating windows before they've opted in. They turn these on
@@ -2623,16 +2628,23 @@ async function startMimicLink() {
   }
   const cfg = loadConfig();
   const base = _botBaseUrl(cfg);
+  const hub = hubs.hubOf(cfg);
   let resp;
   try {
-    resp = await _httpsJsonPost(base, '/api/mimic-link/start', { agent_version: 'mimic ' + app.getVersion() });
+    // `hub` names the guild the raider picked: the commons bot answers for many guilds and ignores it until it learns to read it.
+    resp = await _httpsJsonPost(base, '/api/mimic-link/start', { agent_version: 'mimic ' + app.getVersion(), hub: hub.slug });
   } catch (e) {
-    return { ok: false, error: 'Could not reach the Wolf Pack server: ' + (e && e.message || e) };
+    return { ok: false, error: 'Could not reach the ' + hub.display_name + ' server: ' + (e && e.message || e) };
   }
   if (resp.status !== 200 || !resp.body || !resp.body.device_code) {
     return { ok: false, error: 'Server rejected the link request' + (resp.body?.error ? ': ' + resp.body.error : '') };
   }
-  const { user_code, device_code, verification_url, verification_url_complete, expires_in, poll_interval } = resp.body;
+  // The address to open comes from the guild's server, and Mimic opens it in a browser: https only, and moved onto the
+  // guild's own site when it is a listed guild (hubs.linkUrls).
+  const links = hubs.linkUrls(hub, resp.body);
+  if (!links) return { ok: false, error: 'The ' + hub.display_name + ' server gave a sign-in address Mimic will not open.' };
+  const { user_code, device_code, expires_in, poll_interval } = resp.body;
+  const { verification_url, verification_url_complete } = links;
   const expiresAt = Date.now() + (expires_in * 1000);
   const pub = { user_code, verification_url, verification_url_complete, expires_at: expiresAt };
   _linkInFlight = { device_code, user_code, expires_at: expiresAt, _pub: pub, timer: null };
@@ -2734,6 +2746,66 @@ async function signOutMimic() {
     try { await _httpsJsonPost(_botBaseUrl(cfg), '/api/mimic-link/revoke', {}, { 'X-Wolfpack-Mimic-Session': token }); } catch (e) { void e; }
   }
 }
+// ── Guild picker (DECISIONS §475, first slice) ──────────────────────────────────────────────────────────────────────
+// Which guild's bot this install talks to. The list comes from the hub directory (raidmimic.com/api/hubs until the hosted
+// bot serves one), cached in userData and refreshed at most daily; a guild that is not listed is pasted as an address.
+// The pure parts (cleaning the list, the stored shape, the link addresses) are in hubs.js. A session belongs to one
+// guild's bot, so switching signs out first: the old bot is told (best effort), the Chat cache's grace window starts, and
+// the raider links again.
+const HUB_CACHE_FILE = () => path.join(app.getPath('userData'), 'hubs.json');
+function _readHubCache() {
+  try { const c = JSON.parse(fs.readFileSync(HUB_CACHE_FILE(), 'utf8')); if (c && Array.isArray(c.hubs)) return c; } catch (e) { void e; }
+  return null;
+}
+async function getHubDirectory(force) {
+  const cached = _readHubCache();
+  const now = Date.now();
+  if (!force && hubs.directoryFresh(cached, now)) return hubs.sanitizeDirectory(cached.hubs);
+  try {
+    const raw = await Promise.race([
+      _httpsJson(hubs.HUB_DIRECTORY_URL, { headers: { Accept: 'application/json' } }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 6000)),
+    ]);
+    const list = hubs.sanitizeDirectory(raw);
+    try { fs.writeFileSync(HUB_CACHE_FILE(), JSON.stringify({ fetched_at: now, hubs: list })); } catch (e) { void e; }
+    return list;
+  } catch (e) {
+    void e;   // offline or the directory is down: the last copy, or just Wolf Pack
+    return hubs.sanitizeDirectory(cached ? cached.hubs : []);
+  }
+}
+// choice is { slug } (a listed guild, looked up in the directory here rather than trusted from the page) or { address }.
+async function setHub(choice) {
+  const c = choice || {};
+  let next = null;
+  if (c.address) next = hubs.parseGuildAddress(c.address);
+  else if (c.slug) next = (await getHubDirectory(false)).find(h => h.slug === String(c.slug)) || null;
+  if (!next) return { ok: false, error: c.address ? 'That is not a guild address Mimic can use. Paste the https address your officer gave you.' : 'That guild is not in the list.' };
+  const cfg = loadConfig();
+  const prev = hubs.hubOf(cfg);
+  if (hubs.sameHub(prev, next)) {
+    // Same bot: only the name or site may differ, and a session stays valid.
+    cfg.hub = { slug: next.slug, display_name: next.display_name, url: next.url, site: next.site || '' };
+    saveConfig(cfg); pushStatus();
+    return { ok: true, changed: false, signedOut: false, hub: hubs.hubOf(cfg) };
+  }
+  const oldToken = resolveUploadToken(cfg) || '';
+  const oldBase = _botBaseUrl(cfg);
+  cancelMimicLink();
+  if (oldToken) { try { _chatCacheOnLogout(); } catch (e) { void e; } }
+  const after = loadConfig();
+  hubs.applyHub(after, next);
+  saveConfig(after);
+  pushMimicSession();
+  pushStatus();
+  appendAgentLog('[mimic] guild changed to ' + next.display_name + ' — restarting agent without a token\n');
+  if (agentProc) { try { agentProc.kill(); } catch (e) { void e; } }
+  if (oldToken) {
+    try { await _httpsJsonPost(oldBase, '/api/mimic-link/revoke', {}, { 'X-Wolfpack-Mimic-Session': oldToken }); } catch (e) { void e; }
+  }
+  return { ok: true, changed: true, signedOut: !!oldToken, hub: hubs.hubOf(loadConfig()) };
+}
+// ── end Guild picker ──
 // ── Chat cache: the Chat overlay's feed, kept across a restart ───────────────────────────────────────────
 // The guild lead, 2026-10-17: "cache the filled in chat overlay data encrypted locally and invalidate it on logout if a
 // fresh session isn't established within a reasonable timeframe, and wipe before revoking access". The agent owns the file
@@ -10682,6 +10754,8 @@ function currentStatus() {
     // crash-loop auto-rollback so the dashboard/settings can surface it).
     lkgReverted: _lkgReverted && (Date.now() - _lkgReverted.at < 30 * 60_000) ? _lkgReverted : null,
     botUrl: cfg.botUrl,
+    // The guild this install points at ({ slug, display_name, url, site }); the pages name it in the sign-in copy.
+    hub: hubs.hubOf(cfg),
     // Mimic Discord login (v1). `mimicSession` is the cached identity if
     // we've completed the device-code dance; `mimicLinking` is the in-flight
     // user code so the Settings window can show it while polling.
@@ -14584,7 +14658,12 @@ ipcMain.handle('char-profile-forget', (_e, name) => {
 ipcMain.handle('open-external', (_e, url) => {
   if (typeof url !== 'string') return false;
   const ALLOW = /^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker|(www\.)?eqprogression\.com\/|(www\.)?pqdi\.cc\/|(www\.)?youtube\.com\/watch|youtu\.be\/|eqmimic\.quest\/feedback(#|$))/i;
-  if (!ALLOW.test(url)) {
+  // The page being linked to right now (the code-prefilled address the guild's server gave, already checked as https) and
+  // the chosen guild's own site open too: a guild's website is not on the list above, and the "Open page" retry needs it.
+  const linkNow = _linkInFlight && (_linkInFlight._pub.verification_url_complete || _linkInFlight._pub.verification_url);
+  const hubSite = hubs.hubOf(loadConfig()).site;
+  const ownGuild = (linkNow && url === linkNow) || (hubSite && (url === hubSite || url.startsWith(hubSite + '/')));
+  if (!ALLOW.test(url) && !ownGuild) {
     appendAgentLog(`[mimic] refused open-external: ${url}\n`);
     return false;
   }
@@ -15295,6 +15374,9 @@ ipcMain.handle('ui-pack-set-options', async (_e, id, ids) => {
 ipcMain.handle('mimic-link-start',   async () => await startMimicLink());
 ipcMain.handle('mimic-link-cancel',  () => { cancelMimicLink(); return true; });
 ipcMain.handle('mimic-link-signout', async () => { await signOutMimic(); return true; });
+// The guild picker: the directory (cached, at most daily) plus the guild this install points at, and the switch.
+ipcMain.handle('hub-list', async () => ({ hubs: await getHubDirectory(false), current: hubs.hubOf(loadConfig()) }));
+ipcMain.handle('hub-set', async (_e, choice) => await setHub(choice));
 ipcMain.handle('check-for-updates', () => { safeCheckForUpdates(true); checkAgentUpdate({ manual: true }); checkZealUpdate({ manual: true }); return true; });
 // Revert to stable from the dashboard header's link (next to the BETA badge).
 // The native confirm lives HERE so the page-side control is a plain link and

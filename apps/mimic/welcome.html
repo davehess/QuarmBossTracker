@@ -36,7 +36,9 @@
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
   button.discord{background:#5865f2;border-color:#5865f2;color:#fff;font-weight:600}
   button.link{background:none;border:0;padding:0;color:var(--blue);text-decoration:underline}
-  button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  select,input.addr{font:inherit;color:var(--text);background:var(--ink);border:1px solid var(--border);border-radius:5px;padding:5px 8px}
+  input.addr{min-width:260px;flex:1}
   code{background:var(--ink);border:1px solid var(--border);border-radius:3px;padding:0 4px;font-size:12px}
   .dim{color:var(--dim)}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -137,6 +139,8 @@
     modes: {}, modeBusy: {}, modesAt: 0, modesBusyLoad: false, modesSynced: null, modesRetried: false, focusKey: null,
     zeal: null, zealLatest: null, eqSetup: null, defender: null, clock: null,
     backfill: true, imported: [], visited: new Set(), tourBusy: {},
+    // The guild picker (account step): the directory, the guild this install points at, the paste box, the last answer.
+    hubs: [], hub: null, hubPaste: false, hubBusy: false, hubNote: '',
   };
   // Opened by "Take the tour again" (location.hash is #tour): start at the first overlay step, not at Welcome or the
   // account step, and do not offer to read the main's old log again at the finish.
@@ -231,12 +235,53 @@
       + '<div class="box"><h3>Everything after that is optional</h3><div class="dim">Zeal, the EverQuest fixes, overlays, your /me page and old logs. Skip any of them — the dashboard\'s Setup card has every one of them later.</div></div>';
   }
 
+  // The Guild choice: a list from the directory (Wolf Pack first, chosen for installs that never picked), and a way to paste
+  // the address of a guild that is not listed. The select and the paste box carry data-keep-typing so a background redraw
+  // waits while one has the focus. Switching signs this PC out of the old guild, so a signed-in PC is asked first.
+  function hubCurrent() { return S.hub || (S.status && S.status.hub) || { slug: 'wolfpack', display_name: 'Wolf Pack', site: 'https://wolfpack.quest' }; }
+  function hubChoose(choice) {
+    var cur = hubCurrent();
+    if (S.signedIn && !window.confirm('Switching guilds signs you out of ' + cur.display_name + ' on this PC. You will need to link again. Continue?')) { changed(); return; }
+    S.hubBusy = true; S.hubNote = ''; changed();
+    Promise.resolve(M.hubSet(choice)).catch(function () { return { ok: false, error: 'Could not reach Mimic to switch.' }; }).then(function (r) {
+      S.hubBusy = false;
+      if (!r || r.ok === false) { S.hubNote = (r && r.error) || 'Could not switch guilds.'; changed(); return; }
+      S.hub = r.hub; S.hubPaste = false;
+      if (r.signedOut) { S.signedIn = false; S.hubNote = 'Switched to ' + r.hub.display_name + '. You are signed out here. Link Mimic again with this guild.'; }
+      else if (r.changed) S.hubNote = 'Switched to ' + r.hub.display_name + '.';
+      changed();
+    });
+  }
+  function hubPicker(linking) {
+    var cur = hubCurrent();
+    var opts = S.hubs.slice();
+    if (!opts.some(function (x) { return x.slug === cur.slug; })) opts.push(cur);
+    var dis = (S.hubBusy || linking) ? ' disabled' : '';
+    var h = '<div class="row" style="margin:0 0 8px"><label for="wHub" class="dim">Guild</label>'
+      + '<select id="wHub" data-keep-typing' + dis + '>'
+      + opts.map(function (x) { return '<option value="' + esc(x.slug) + '"' + (x.slug === cur.slug ? ' selected' : '') + '>' + esc(x.display_name) + '</option>'; }).join('')
+      + '<option value="__paste">Paste a guild address…</option></select></div>';
+    if (S.hubPaste) {
+      h += '<div class="row" style="margin:0 0 8px"><input class="addr" id="wHubAddr" type="text" data-keep-typing placeholder="https://your-guild.example" aria-label="Guild address" />'
+        + '<button data-a="hubuse">Use this guild</button><button class="link" data-a="hubnopaste">Cancel</button></div>';
+    }
+    if (S.hubNote) h += '<div class="note ' + (/^Switched/.test(S.hubNote) ? 'ok' : 'warn') + '" style="margin:0 0 8px">' + esc(S.hubNote) + '</div>';
+    return h;
+  }
+  function loadHubs() {
+    if (!M.hubList) return;
+    Promise.resolve(M.hubList()).then(function (r) {
+      if (r && Array.isArray(r.hubs)) { S.hubs = r.hubs; S.hub = r.current || S.hub; changed(); }
+    }).catch(function () {});
+  }
+
   function bAccount(el) {
     var st = S.status || {}, linking = st.mimicLinking, session = st.mimicSession;
-    var h = '';
+    var hub = hubCurrent();
+    var h = hubPicker(linking);
     if (linking) {
       h += '<div class="box"><div class="dim" style="font-size:11px">Paste this code at <span style="color:var(--blue)">'
-        + esc(String(linking.verification_url || 'wolfpack.quest/auth/mimic-link').replace(/^https?:\/\//, ''))
+        + esc(String(linking.verification_url || ((hub.site || 'https://wolfpack.quest') + '/auth/mimic-link')).replace(/^https?:\/\//, ''))
         + '</span> — we opened it in your browser</div>'
         + '<div class="row" style="margin-top:6px"><span class="code" id="wCode">' + esc(linking.user_code) + '</span>'
         + '<button data-a="copy">Copy</button><button data-a="cancel">Cancel</button></div></div>';
@@ -262,6 +307,15 @@
       cancel: function () { Promise.resolve(M.mimicLinkCancel()).catch(function () {}); },
       signout:function () { Promise.resolve(M.mimicLinkSignOut()).catch(function () {}); },
       local:  function () { S.localOnly = true; if (M.setLocalOnly) Promise.resolve(M.setLocalOnly(true)).catch(function () {}); changed('account'); },
+      hubuse: function () { var a = $('#wHubAddr', el); hubChoose({ address: a ? a.value : '' }); },
+      hubnopaste: function () { S.hubPaste = false; S.hubNote = ''; changed(); },
+    });
+    var sel = $('#wHub', el);
+    if (sel) sel.addEventListener('change', function () {
+      var v = sel.value;
+      sel.blur();   // the redraw is held while the list has the focus
+      if (v === '__paste') { S.hubPaste = true; S.hubNote = ''; changed(); return; }
+      if (v !== hub.slug) hubChoose({ slug: v }); else changed();
     });
   }
 
@@ -1124,7 +1178,7 @@
     if (S.cfg.onboarded) cur = 'account';
     if (TOUR_ONLY) { cur = 'overlays'; S.backfill = false; }
     render();
-    loadFolders(); loadChars(); refreshZeal(); refreshDefender(); refreshClock();
+    loadFolders(); loadChars(); refreshZeal(); refreshDefender(); refreshClock(); loadHubs();
     Promise.resolve(M.getStatus()).then(onStatus).catch(function () {});
     try { M.onStatus(onStatus); } catch (e) { void e; }
     pollEngine();
@@ -1147,7 +1201,10 @@
       pickEqDir: ok(null), pickLogBackups: ok([]), zealCheckUpdate: ok({ ok: true, updateAvailable: true, latestTag: 'v1.4.6' }),
       zealInstallUpdate: ok({ ok: true }), eqSetupForMe: ok({ ok: true, folders: [{}] }), defenderAddExclusions: ok({ ok: true }),
       clockResync: ok({ ok: true }), setQuietMode: ok(true), setGpuDrawing: ok({ ok: true }), setRunMode: ok({ ok: true }), toggleCrashReports: ok(true), openUiStudio: ok(true), openExternal: ok(true),
-      mimicLinkStart: ok(true), mimicLinkCancel: ok(true), mimicLinkSignOut: ok(true), welcomeOptin: ok({ ok: true, results: [] }),
+      mimicLinkStart: ok(true), mimicLinkCancel: ok(true), mimicLinkSignOut: ok(true),
+      hubList: ok({ hubs: [{ slug: 'wolfpack', display_name: 'Wolf Pack', url: 'https://wolfpackparse.up.railway.app', site: 'https://wolfpack.quest' }, { slug: 'example', display_name: 'Example Guild', url: 'https://bot.example', site: '' }], current: { slug: 'wolfpack', display_name: 'Wolf Pack', url: 'https://wolfpackparse.up.railway.app', site: 'https://wolfpack.quest' } }),
+      hubSet: ok({ ok: true, changed: true, signedOut: false, hub: { slug: 'example', display_name: 'Example Guild', url: 'https://bot.example', site: '' } }),
+      welcomeOptin: ok({ ok: true, results: [] }),
       characterModes: ok({ ok: true, synced: true, characters: [
         { name: 'Aldenmar', mode: 'show', src: 'site', on_pc: true, log_read: true },
         { name: 'Brackwyn', mode: 'inventory', src: 'site', on_pc: true, log_read: true },
