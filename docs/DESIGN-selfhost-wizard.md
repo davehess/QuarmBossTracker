@@ -817,3 +817,5 @@ a **shared trial we run**. The decided architecture (do not re-derive):
 - **Front door:** `raidboss.quest` (to register) or `eqmimic.quest`; the Mimic sign-in URL is already bot-controlled
   (`MIMIC_LINK_VERIFICATION_URL`), so a trial bot can point clients at the trial site with no client change, but
   Mimic's hard-coded wolfpack.quest links (~20) need a manifest field.
+- 2026-10-31 (§496): the bot writes guild data under a per-request `guild_scoped` JWT when `GUILD_RLS=1` and `SUPABASE_JWT_SECRET` are
+  set; a self-hosted install that stays single-guild may leave both unset (service-role path, today's behaviour).
