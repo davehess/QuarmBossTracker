@@ -22,7 +22,9 @@ import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
 import {
   pickMain, mimicStatus, syncStatus, characterLinks, hubEntry, HUB_GROUPS, CHARACTER_PAGES,
+  topFights, lootSummary, sessionForNight, replayHref, NIGHT_ROLLOVER_MS,
 } from '../web/lib/meHub.ts';
+import { parsePicks, pickedSet } from '../web/lib/replayFollow.ts';
 import { DEFAULT_DESCRIPTION } from '../web/lib/pageMeta.ts';
 
 const WEB = path.join(ROOT, 'web');
@@ -102,7 +104,8 @@ describe('load at once, fill in behind Suspense', () => {
   const blocks = [...BLOCKS.matchAll(/export async function (\w+)\(/g)].map(m => m[1]);
   it('the blocks exist and the shell is neither async nor awaits anything', () => {
     expect(blocks).toEqual(expect.arrayContaining([
-      'MainIdentity', 'MainFreshness', 'MainRecord', 'AccountMimic', 'AccountDiscord', 'AccountCharacters', 'DirectoryCharacters',
+      'MainIdentity', 'MainFreshness', 'MainRecord', 'MainBest', 'MainLoot', 'MainRaids', 'MainUploads',
+      'AccountMimic', 'AccountDiscord', 'AccountCharacters', 'DirectoryCharacters',
     ]));
     expect(HUB).toMatch(/export default function MeHub\(/);
     expect(HUB).not.toMatch(/\basync\b|\bawait\b/);
@@ -178,22 +181,62 @@ describe('the hub reads nothing the classic /me does not already read', () => {
   const classic = colsByTable(PAGE + '\n' + CAP);
   const hub = colsByTable(READS);
 
+  // THE declared table exceptions: a table the classic /me page does not select from, read by the hub for a block the
+  // guild lead asked for (2026-10-31). Each names the page that already reads the same columns, and that read is
+  // asserted below, so an exception cannot drift from its source or grow a column unseen.
+  const TABLE_EXCEPTIONS = {
+    raid_track_minutes: { cols: 'night_key, minute_at, zones, raiders', source: ['app', 'raid', 'session', 'page.tsx'], why: 'the recorded session a raid night links its replay to' },
+  };
+  const RPC_EXCEPTIONS = {
+    my_parse_series_v2: { source: ['app', 'me', 'parses', 'page.tsx'], why: 'the best-fights lists: the series /me/parses and the Mimic tab read' },
+  };
+
   it('has selects to check', () => {
-    expect([...hub.keys()].sort()).toEqual(['agent_upload_stats', 'characters', 'eqemu_npc_types', 'wolfpack_members']);
+    expect([...hub.keys()].sort()).toEqual([
+      'agent_upload_stats', 'characters', 'eqemu_npc_types', 'opendkp_loot_recent', 'opendkp_raids', 'opendkp_ticks',
+      'raid_track_minutes', 'wolfpack_members',
+    ]);
   });
-  it('every table the hub selects from is one the classic page selects from, column by column', () => {
+  it('every table the hub selects from is one the classic page selects from, column by column (bar the declared exceptions)', () => {
     for (const [table, cols] of hub) {
+      if (TABLE_EXCEPTIONS[table]) continue;
       expect(classic.has(table), `${table} is not read by /me`).toBe(true);
       for (const c of cols) expect(classic.get(table).has(c), `${table}.${c} is not read by /me`).toBe(true);
     }
   });
-  it('every RPC the hub calls is one /me calls (levels go through the shared me_levels reader)', () => {
+  it('each declared table exception is a real addition, read with exactly the columns of the page it names', () => {
+    for (const [table, ex] of Object.entries(TABLE_EXCEPTIONS)) {
+      expect(classic.has(table), `${table} is read by /me now: drop it from the exceptions`).toBe(false);
+      expect([...hub.get(table)].sort(), `${table} columns`).toEqual(ex.cols.split(', ').sort());
+      const theirs = colsByTable(src(...ex.source)).get(table);
+      expect(theirs, `${ex.source.join('/')} no longer reads ${table}`).toBeDefined();
+      expect([...hub.get(table)].every(c => theirs.has(c)), `${table} has a column ${ex.source.join('/')} does not read`).toBe(true);
+      expect(ex.why.length).toBeGreaterThan(10);
+    }
+  });
+  it('every RPC the hub calls is one /me calls, or a declared exception another page already calls', () => {
     const rpcs = (t) => new Set([...t.matchAll(/\.rpc\('(\w+)'/g)].map(m => m[1]));
     const classicRpc = rpcs(PAGE + CAP);
-    expect([...rpcs(READS)]).toEqual([]);   // no RPC of its own: the helpers below make them
+    // the hub's own file calls only the exception; the levels helpers below make the rest
+    expect([...rpcs(READS)].sort()).toEqual(Object.keys(RPC_EXCEPTIONS));
+    for (const [name, ex] of Object.entries(RPC_EXCEPTIONS)) {
+      expect(classicRpc.has(name), `/me calls ${name} now: drop it from the exceptions`).toBe(false);
+      expect(rpcs(src(...ex.source)).has(name), `${ex.source.join('/')} no longer calls ${name}`).toBe(true);
+    }
     expect(LOAD).toMatch(/loadLevels\(supabaseAdmin\(\), owned\.map\(c => c\.name\)\)/);
     expect(classicRpc.has('me_levels')).toBe(true);
     expect(rpcs(src('lib', 'listableChars.ts')).has('me_levels')).toBe(true);
+  });
+  it('every new read is bounded: paged through selectAll or one capped rpc, and the guild-wide one is scoped by guild', () => {
+    const mins = LOAD.slice(LOAD.indexOf(".from('raid_track_minutes')"));
+    expect(mins.slice(0, mins.indexOf('.range(')).replace(/\s+/g, ' ')).toMatch(/\.eq\('guild_id', GUILD_TAG\) \.gte\('minute_at', recFrom\)/);
+    expect(LOAD).toMatch(/const FIGHTS_CAP = 400;/);
+    expect(LOAD).toMatch(/p_cap: FIGHTS_CAP/);
+    for (const t of ['opendkp_raids', 'opendkp_ticks', 'opendkp_loot_recent', 'raid_track_minutes']) {
+      const at = LOAD.indexOf(`.from('${t}')`);
+      expect(LOAD.slice(Math.max(0, at - 120), at), `${t} is not paged through selectAll`).toMatch(/selectAll<[^>]+>\(\(from, to\) => (admin|sb)\s*$/);
+      expect(LOAD.slice(at, at + 700), `${t} is not ranged`).toMatch(/\.range\(from, to\)/);
+    }
   });
   it('the parse numbers and live state come from the classic helpers, not a copy', () => {
     expect(LOAD).toMatch(/fetchCharAggs\(admin, \[name\]\)/);
@@ -284,5 +327,133 @@ describe('the tour pointer starts the existing tour', () => {
     expect(TOUR_BTN).toMatch(/new Event\('wp-tour-start'\)/);
     expect(tour).toMatch(/addEventListener\('wp-tour-start'/);
     expect(TOUR_BTN.startsWith("'use client';")).toBe(true);
+  });
+});
+
+// ── Your main: best fights, loot and DKP, raids with the replay, and the upload spot (the guild lead, 2026-10-31) ──
+describe('best fights', () => {
+  const f = (eid, dmg, dps, t = '2026-10-20T01:00:00Z', o = {}) => ({ eid, name: `Mob ${eid}`, zone: null, t, dmg, dps, char: 'Aldenmar', ...o });
+  it('ranks by damage and by DPS separately, a tie going to the newer fight, five at most', () => {
+    const fights = [f('a', 500, 10), f('b', 900, 5), f('c', 900, 7, '2026-10-25T01:00:00Z'), f('d', 100, 99), f('e', 300, 8), f('g', 200, 6), f('h', 50, 1)];
+    expect(topFights(fights, 'dmg').map(x => x.eid)).toEqual(['c', 'b', 'a', 'e', 'g']);
+    expect(topFights(fights, 'dps').map(x => x.eid)).toEqual(['d', 'a', 'e', 'c', 'g']);
+    expect(topFights(fights, 'dmg', 2)).toHaveLength(2);
+  });
+  it('a fight with no damage is not a best fight, and nothing in means nothing out', () => {
+    expect(topFights([f('z', 0, 0), f('y', Number.NaN, 5)], 'dmg')).toEqual([]);
+    expect(topFights([], 'dps')).toEqual([]);
+  });
+  it('is read for the main alone, from the series /me/parses reads, and every fight links to its parse page', () => {
+    expect(LOAD).toMatch(/p_character: name,/);
+    expect(LOAD).toMatch(/f\.char\.toLowerCase\(\) === name\.toLowerCase\(\)/);
+    expect(LOAD).toMatch(/p_discord_id: pack\.discordId/);
+    expect(LOAD).toMatch(/p_bosses_only: true/);
+    expect(BLOCKS).toMatch(/href=\{`\/parses\/\$\{f\.eid\}`\}/);
+    expect(BLOCKS).toMatch(/loadMainFights\(userId, main\.char\.name\)/);
+  });
+  it('the top-fight cell of the record links its parse', () => {
+    expect(BLOCKS).toMatch(/`\/parses\/\$\{a\.top_encounter_id\}`/);
+  });
+});
+
+describe('latest loot and DKP', () => {
+  const row = (character_name, item_name, dkp, raid_date) => ({ character_name, item_name, dkp, raid_date, raid_name: 'r' });
+  it('sums DKP for the main and for every character, and lists the main\'s newest awards first', () => {
+    const rows = [
+      row('Aldenmar', 'Sword', 120, '2026-10-01'), row('aldenmar', 'Helm', 80, '2026-10-20'),
+      row('Brackwyn', 'Ring', 40, '2026-10-25'), row('Aldenmar', 'Cloak', null, '2026-10-10'),
+    ];
+    const s = lootSummary(rows, 'ALDENMAR');
+    expect(s.mainSpent).toBe(200);
+    expect(s.mainItems).toBe(3);
+    expect(s.allSpent).toBe(240);
+    expect(s.allItems).toBe(4);
+    expect(s.latest.map(l => l.item_name)).toEqual(['Helm', 'Cloak', 'Sword']);
+  });
+  it('shows six awards at most and copes with none', () => {
+    const rows = Array.from({ length: 9 }, (_, i) => row('Aldenmar', `Item ${i}`, 1, `2026-10-0${i + 1}`));
+    expect(lootSummary(rows, 'Aldenmar').latest).toHaveLength(6);
+    expect(lootSummary([], 'Aldenmar')).toMatchObject({ latest: [], mainSpent: 0, allSpent: 0 });
+  });
+  it('reads only characters that have not opted out of stats, and says the balance is not here', () => {
+    expect(LOAD).toMatch(/\(await loadHubChars\(userId\)\)\.filter\(c => !c\.excludeStats\)\.map\(c => c\.name\)/);
+    expect(LOAD).toMatch(/\.in\('character_name', names\)/);
+    expect(BLOCKS).toMatch(/live balance is OpenDKP&apos;s own number/);
+    expect(BLOCKS).not.toMatch(/current_dkp|CurrentDKP/i);
+  });
+});
+
+describe('raids the main was in, and the replay with the main highlighted', () => {
+  const ET_NIGHT = (ms) => dayKeyOf(ms - NIGHT_ROLLOVER_MS);
+  const dayKeyOf = (ms) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const s = (iso, minutes, raid = true) => ({ from: Date.parse(iso), to: Date.parse(iso) + minutes * 60000, minutes, raid });
+  it('a night\'s session is the guild-raid stretch that started that night, the longest if there are several', () => {
+    // 20:30 ET on Thu Oct 29 2026 is 00:30 UTC on the 30th
+    const evening = s('2026-10-30T00:30:00Z', 200);
+    const shortOne = s('2026-10-30T01:00:00Z', 30);
+    const daytime = s('2026-10-29T15:00:00Z', 300, false);
+    const nextNight = s('2026-11-02T00:30:00Z', 240);
+    expect(sessionForNight('2026-10-29', [daytime, shortOne, evening, nextNight], ET_NIGHT)).toBe(evening);
+    expect(sessionForNight('2026-11-01', [daytime, shortOne, evening, nextNight], ET_NIGHT)).toBe(nextNight);
+  });
+  it('a session that begins after midnight still belongs to the night before; a daytime or unrecorded night has none', () => {
+    const afterMidnight = s('2026-10-30T04:20:00Z', 90);   // 00:20 ET on the 30th
+    expect(sessionForNight('2026-10-29', [afterMidnight], ET_NIGHT)).toBe(afterMidnight);
+    expect(sessionForNight('2026-10-30', [afterMidnight], ET_NIGHT)).toBeNull();
+    expect(sessionForNight('2026-10-29', [s('2026-10-30T00:30:00Z', 200, false)], ET_NIGHT)).toBeNull();
+    expect(sessionForNight('2026-10-29', [], ET_NIGHT)).toBeNull();
+  });
+  it('the replay link names the window and follows the main; /raid/session reads that as a followed, highlighted raider', () => {
+    const from = Date.parse('2026-10-30T00:30:00Z'), to = from + 200 * 60000;
+    const href = replayHref(from, to, 'Aldenmar');
+    expect(href.startsWith('/raid/session?')).toBe(true);
+    const q = new URLSearchParams(href.split('?')[1]);
+    expect(q.get('from')).toBe('2026-10-30T00:30:00.000Z');
+    expect(q.get('to')).toBe('2026-10-30T03:50:00.000Z');
+    const picks = parsePicks('?' + href.split('?')[1]);
+    expect(picks.follow).toBe('Aldenmar');
+    expect(pickedSet(picks).has('aldenmar')).toBe(true);
+  });
+  it('the replay board takes its picks from the address whether or not a caller bounds the window (so no new replay code)', () => {
+    const board = src('app', 'spectator', 'replay', 'ReplayBoard.tsx');
+    const at = board.indexOf('setPicks(parsePicks(window.location.search));');
+    expect(at).toBeGreaterThan(0);
+    const effect = board.slice(board.lastIndexOf('useEffect(', at), board.indexOf('setUrlReady(true)', at));
+    expect(effect).not.toMatch(/bounded|urlsRef/);
+    expect(src('app', 'raid', 'session', 'SessionReview.tsx')).toMatch(/ReplayBoard/);
+  });
+  it('the block links each recorded night with the MAIN\'s name, and a night with no recording says so', () => {
+    expect(BLOCKS).toMatch(/const name = main\.char\.name;\s*const raids = await loadMainRaids\(name\)/);
+    expect(BLOCKS).toMatch(/replayHref\(r\.from, r\.to, name\)/);
+    expect(BLOCKS).toMatch(/no recording/);
+    expect(BLOCKS).toMatch(/href=\{`\/raid\/review\/\$\{r\.date\}`\}/);
+  });
+  it('the nights are the classic rule, for the main alone: official raids, ticks the main is in', () => {
+    expect(LOAD).toMatch(/\.overlaps\('attendees', \[name\]\)/);
+    expect(LOAD).toMatch(/buildNights\(raids, mine\)/);
+    expect(LOAD).toMatch(/filter\(n => n\.tickIds\.length > 0\)/);
+    expect(LOAD).toMatch(/const RAIDS_SHOWN = 5;/);
+  });
+});
+
+describe('the upload spot', () => {
+  const UP = src('app', 'me', 'MeHubUploads.tsx');
+  it('reuses the classic inventory, keys and spellbook uploads, unchanged', () => {
+    for (const c of ['InventoryUpload', 'KeysUpload', 'SpellbookUpload']) {
+      expect(UP).toMatch(new RegExp(`import ${c} from './${c}';`));
+      expect(UP).toMatch(new RegExp(`<${c} character=\\{picked\\.name\\} />`));
+      expect(PAGE).toMatch(new RegExp(`<${c} character=\\{c\\.name\\} />`));
+    }
+    expect(UP.startsWith("'use client';")).toBe(true);
+  });
+  it('offers only characters that have not opted out of stats, the main first, and says Mimic does it for you', () => {
+    expect(BLOCKS).toMatch(/chars\.filter\(c => !c\.excludeStats\)\.map\(c => \(\{ name: c\.name, excludeInventory: c\.excludeInventory \}\)\)/);
+    expect(BLOCKS).toMatch(/initial=\{main\?\.char\.name \?\? pickable\[0\]\.name\}/);
+    expect(BLOCKS).toMatch(/Mimic uploads these for you/);
+  });
+  it('a character whose inventory sync is off gets no upload widgets', () => {
+    expect(UP).toMatch(/\{picked\.excludeInventory \? \(/);
+    const widgets = UP.indexOf('<InventoryUpload');
+    expect(widgets).toBeGreaterThan(UP.indexOf('picked.excludeInventory ?'));
   });
 });

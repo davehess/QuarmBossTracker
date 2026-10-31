@@ -8,6 +8,11 @@
 // same height, so a slow read holds only its own block. page.tsx renders this before it loads anything else, which is
 // also why the hub reads only what the classic page reads (lib/meHubLoad.ts) and never its page-wide loaders.
 //
+// "Your main" also carries the main's best fights, latest loot and DKP spent, the raid nights it was in (each linking
+// the replay with the main followed) and a spot to upload files by hand (the guild lead, 2026-10-31: "highest damage,
+// best fights, latest loot and dkp total, raids I was in and a link to that raid replay with me highlighted ... spot
+// to upload your files"). Stat totals from worn gear are not here: only the gear page computes them, inline.
+//
 // Not on the hub, on purpose: the attendance heatmap, The Scrap, the per-character cards and the mule/claim uploads.
 // They are all on the classic view, one link away, until the guild lead says which of them move.
 import { Suspense } from 'react';
@@ -15,7 +20,7 @@ import Link from 'next/link';
 import { HUB_GROUPS, CHARACTER_PAGES, hubEntry } from '@/lib/meHub';
 import HubTourButton from './HubTourButton';
 import {
-  Skeleton, SLOT, MainIdentity, MainFreshness, MainRecord, AccountMimic, AccountDiscord, AccountCharacters, DirectoryCharacters,
+  Skeleton, SLOT, MainIdentity, MainFreshness, MainRecord, MainBest, MainLoot, MainRaids, MainUploads, AccountMimic, AccountDiscord, AccountCharacters, DirectoryCharacters,
 } from './MeHubBlocks';
 
 const section = 'rounded-lg border border-border bg-panel p-4 sm:p-6';
@@ -54,6 +59,16 @@ export default function MeHub({ userId }: { userId: string }) {
         <Suspense fallback={<Skeleton h={SLOT.fresh} />}><MainFreshness userId={userId} /></Suspense>
         <div className="mt-4">
           <Suspense fallback={<Skeleton h={SLOT.record} />}><MainRecord userId={userId} /></Suspense>
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <Suspense fallback={<Skeleton h={SLOT.best} />}><MainBest userId={userId} /></Suspense>
+          <Suspense fallback={<Skeleton h={SLOT.loot} />}><MainLoot userId={userId} /></Suspense>
+        </div>
+        <div className="mt-4">
+          <Suspense fallback={<Skeleton h={SLOT.raids} />}><MainRaids userId={userId} /></Suspense>
+        </div>
+        <div className="mt-4">
+          <Suspense fallback={<Skeleton h={SLOT.uploads} />}><MainUploads userId={userId} /></Suspense>
         </div>
       </section>
 
