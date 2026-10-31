@@ -105,7 +105,8 @@ describe('every link lands somewhere', () => {
 
   it('`soon` is on exactly the links whose page file is absent (a stale flag fails either way)', () => {
     for (const l of links) expect(!!l.soon, l.href).toBe(!fs.existsSync(pageFile(l.href)));
-    expect(links.filter(l => l.soon).map(l => l.href)).toEqual(['/admin/theme']);
+    // /admin/theme landed (web 2.1.80), so nothing is "soon" today; a new unbuilt link goes here when one is added.
+    expect(links.filter(l => l.soon).map(l => l.href)).toEqual([]);
   });
 
   it('a link with no label of its own has a title in ADMIN_TITLES', () => {
