@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'start-a-guild-2026-10-31',
+    title: 'Web 2.1.82',
+    version: 'Web 2.1.82',
+    date: '2026-10-31',
+    headline: 'Any signed-in player can start a guild on Raid Mimic and hand out invite codes.',
+    features: [
+      { name: 'Start a guild [beta]', blurb: 'From your guilds page: a name, a web address for it, an optional Discord server, and whether anyone can join or only people with a code. You become its owner.' },
+      { name: 'Invite codes [beta]', blurb: 'Owners and officers make six-letter codes (25 uses, a week) and revoke them; raiders redeem a code on their guilds page.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'guild-theme-2026-10-31',
     title: 'Web 2.1.80',
     version: 'Web 2.1.80',
