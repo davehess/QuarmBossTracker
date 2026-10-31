@@ -253,7 +253,7 @@ describe('an overlay panel is the page, with nothing of the canvas\'s own around
     }
     // the plate that exists is the piece's, and a hand-set Background on a piece
     // (backing is only the plate, no border/padding of its own: see test/canvas-pieces-round.test.js)
-    expect(css).toMatch(/\.panel\.part\.back > \.pbody\{background:rgba\(13,17,23,var\(--bg-alpha,0\.72\)\);box-shadow:inset 0 0 0 1px #30363d/);
+    expect(css).toMatch(/\.panel\.part\.back > \.pbody\{background:rgba\(var\(--wp-bg-rgb\),var\(--bg-alpha,0\.72\)\);box-shadow:inset 0 0 0 1px var\(--wp-border\)/);
     expect(css).toContain(':is(body.edit .panel, .panel.one){outline:1px dashed');
   });
   it('click-through is untouched: arranging blocks the page, only an open builder gets the mouse back', () => {

@@ -57,7 +57,7 @@ describe('the Target Info overlay', () => {
     expect(h).toContain('>⚠ Summon<');
     expect(h).toContain('title="This mob can summon players to itself"');
     expect(specChip('Enrage')).toBe('<span class="chip warn">Enrage</span>');
-    expect(stripJs(html)).toMatch(/\.spec \.chip\.warn\.summon\{background:#f85149;/);
+    expect(stripJs(html)).toMatch(/\.spec \.chip\.warn\.summon\{background:var\(--wp-red\);/);
   });
 
   it('both chip rows sort before they draw', () => {

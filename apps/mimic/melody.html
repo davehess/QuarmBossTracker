@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>melody</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* --bg-alpha: card-surface alpha, driven by slider via main → preload
      'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
@@ -11,17 +12,17 @@
   #wrap{background:rgb(14 17 22 / var(--bg-alpha));border:1px solid rgba(163,113,247,0.45);
     border-radius:8px;margin:4px;padding:8px 10px;backdrop-filter:blur(2px);
     position:relative;text-shadow:0 1px 2px #000}
-  .title{font-size:11px;color:#a371f7;letter-spacing:0.1em;
+  .title{font-size:11px;color:var(--wp-purple);letter-spacing:0.1em;
     text-transform:uppercase;display:flex;gap:6px;align-items:center}
   .conn{font-size:10px}
-  .conn.ok{color:#56d364}
+  .conn.ok{color:var(--wp-green)}
   .conn.bad{color:#f87171}
   /* Empty state: deliberately NO background — feedback was that the "box of
      text" framing of "no bard songs yet" was hard to read. Now reads as
      plain dimmed text under the title. */
   .empty{color:#6b7280;font-size:10px;margin-top:6px;font-style:italic}
   /* "Now casting: X" — Zeal-driven, real-time. Pulled from label 134. */
-  .nowcast{font-size:10px;color:#c9d1d9;margin-top:4px;font-variant-numeric:tabular-nums}
+  .nowcast{font-size:10px;color:var(--wp-text);margin-top:4px;font-variant-numeric:tabular-nums}
   .nowcast .lbl{color:#6b7280}
   .nowcast .spell{color:#f6c365;font-weight:600}
   /* Bard utility-buff strip — persistent (shows "off" when buff absent).
@@ -30,15 +31,15 @@
   .bardbuffs{margin-top:6px;padding-top:5px;border-top:1px dashed rgba(110,118,129,0.30);
     display:flex;flex-direction:column;gap:2px}
   .bardbuffs .util-row{display:grid;grid-template-columns:14px 1fr auto;gap:6px;align-items:baseline;
-    font-size:11px;color:#c9d1d9}
-  .bardbuffs .util-cast{color:#a371f7;font-size:10px;text-align:center;animation:utilpulse 1.2s ease-in-out infinite}
+    font-size:11px;color:var(--wp-text)}
+  .bardbuffs .util-cast{color:var(--wp-purple);font-size:10px;text-align:center;animation:utilpulse 1.2s ease-in-out infinite}
   .bardbuffs .util-cast.off{opacity:0.18;animation:none}
   @keyframes utilpulse{0%,100%{opacity:1}50%{opacity:0.4}}
-  .bardbuffs .util-lbl{color:#d2a8ff;font-weight:600}   /* The lighter purple of the song chips: #a371f7 was lost on grass. */
+  .bardbuffs .util-lbl{color:#d2a8ff;font-weight:600}   /* The lighter purple of the song chips: var(--wp-purple) was lost on grass. */
   .bardbuffs .util-t{font-variant-numeric:tabular-nums;color:#7ee787;padding:0 5px;
     border-radius:3px;background:rgba(126,231,135,0.10);border:1px solid rgba(126,231,135,0.22)}
   .bardbuffs .util-t.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
-  .bardbuffs .util-t.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
+  .bardbuffs .util-t.crit{color:var(--wp-red);background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
   .bardbuffs .util-t.off{color:#8b949e;background:rgba(110,118,129,0.10);border-color:rgba(110,118,129,0.25);font-style:italic}
   /* Cast-progress bar for a utility row. Same left-to-right fill as the top
      song row's .row.casting, just sized for the compact strip. Painted only
@@ -50,7 +51,7 @@
   /* Per-character melody block. */
   .mel{margin-top:6px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)}
   .mel:first-of-type{border-top:none;padding-top:0;margin-top:4px}
-  .mel .who{font-size:10px;color:#c9d1d9;font-weight:600;display:flex;
+  .mel .who{font-size:10px;color:var(--wp-text);font-weight:600;display:flex;
     justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:3px}
   .mel .who .since{color:#6b7280;font-size:9px;font-weight:normal}
   /* Each song row: [icon] [name] [cast bar]. Vertical stack, cast-order. */
@@ -74,13 +75,13 @@
     padding:0 5px;border-radius:3px;border:1px solid rgba(163,113,247,0.28);vertical-align:middle}
   .row .name .aoe.full{color:#7ee787;background:rgba(126,231,135,0.12);border-color:rgba(126,231,135,0.35);font-weight:600}
   .row .timer.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
-  .row .timer.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
+  .row .timer.crit{color:var(--wp-red);background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
   .row .icon{display:flex;align-items:center;justify-content:center;
     width:16px;height:16px;font-size:12px;color:#8b949e}
   /* The name cell is a flex row: the song name shrinks with an ellipsis and the AE chip after it never does.
      The chip used to sit inside the one ellipsised span, so on a long name (Chords of Cessation, Disruptive
      Discord) it was cut off behind the "…" (the guild lead, 2026-10-09: "not seeing the number of mobs"). */
-  .row .name{display:flex;align-items:center;min-width:0;white-space:nowrap;color:#c9d1d9}
+  .row .name{display:flex;align-items:center;min-width:0;white-space:nowrap;color:var(--wp-text)}
   .row .name .nm{overflow:hidden;text-overflow:ellipsis;min-width:0}
   .row .name .aoe{flex-shrink:0}
   /* Casting row — fills the row background left→right as the cast progresses,
@@ -93,16 +94,16 @@
   .row.casting .name{color:#fff;font-weight:600}
   /* Completed-this-cycle row — song landed, waiting for the next twist to
      come around. Green check; subtle so the casting row dominates. */
-  .row.done .icon{color:#56d364}
+  .row.done .icon{color:var(--wp-green)}
   .row.done .name{color:#9aa3ad}
   /* Stopped — bard stopped singing. The last casting row freezes here with a
      ⏹ so they can see "I'd resume on this one". */
   .row.stopped{background:rgba(248,81,73,0.12);border:1px solid rgba(248,81,73,0.4)}
-  .row.stopped .icon{color:#f85149}
+  .row.stopped .icon{color:var(--wp-red)}
   .row.stopped .name{color:#f6c365;font-weight:600}
   /* Queued / upcoming — bog-standard play arrow. */
-  .row.queued .icon{color:#a371f7;opacity:0.85}
-  .row.queued .name{color:#c9d1d9}
+  .row.queued .icon{color:var(--wp-purple);opacity:0.85}
+  .row.queued .name{color:var(--wp-text)}
   @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.65;transform:scale(0.92)}}
 
   /* dirge-board:css:start — the DIRGE TACTICAL NUKE board (the guild lead, 2026-09-26). The switch sits
@@ -111,15 +112,15 @@
   .dsw{display:none;margin-left:auto;margin-right:24px;align-items:center;gap:4px;padding:0;border:0;
     background:none;font:inherit;font-size:9px;letter-spacing:0.08em;color:#8b949e;cursor:pointer}
   body.has-bard .dsw{display:inline-flex}
-  .dsw i{position:relative;width:18px;height:10px;border-radius:5px;background:#30363d;transition:background .15s}
+  .dsw i{position:relative;width:18px;height:10px;border-radius:5px;background:var(--wp-border);transition:background .15s}
   .dsw i::after{content:'';position:absolute;left:1px;top:1px;width:8px;height:8px;border-radius:50%;
     background:#8b949e;transition:transform .15s,background .15s}
-  .dsw.on{color:#f85149}
+  .dsw.on{color:var(--wp-red)}
   .dsw.on i{background:rgba(248,81,73,0.35)}
-  .dsw.on i::after{transform:translateX(8px);background:#f85149}
+  .dsw.on i::after{transform:translateX(8px);background:var(--wp-red)}
   /* The current Dirge count, up by the switch (the guild lead: "Show the total number of current Dirge
      on the top with the toggle"). */
-  .dsw b{font-size:11px;color:#f85149;font-variant-numeric:tabular-nums;margin-right:2px}
+  .dsw b{font-size:11px;color:var(--wp-red);font-variant-numeric:tabular-nums;margin-right:2px}
   .dsw b:empty{display:none}
   #dirge{display:none;margin-top:6px}
   #dirge.show{display:block}
@@ -127,12 +128,12 @@
   /* The steps, in the order the guild lead sings them. Numbered because the order is the point. */
   .dl{display:grid;grid-auto-flow:column;grid-template-rows:repeat(3,auto);grid-template-columns:auto 1fr;
     gap:2px 6px;font-size:9.5px;letter-spacing:-0.01em}
-  .dl span{display:flex;gap:4px;align-items:baseline;color:#6e7681;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .dl span i{font-style:normal;width:11px;text-align:center;border:1px solid #30363d;border-radius:2px;
+  .dl span{display:flex;gap:4px;align-items:baseline;color:var(--wp-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dl span i{font-style:normal;width:11px;text-align:center;border:1px solid var(--wp-border);border-radius:2px;
     font-size:8px;line-height:10px;flex:none}
-  .dl span.on{color:#c9d1d9}
-  .dl span.on i{color:#0d1117;background:#56d364;border-color:#56d364}
-  .dl span.warn{color:#ffa657}
+  .dl span.on{color:var(--wp-text)}
+  .dl span.on i{color:var(--wp-bg);background:var(--wp-green);border-color:var(--wp-green)}
+  .dl span.warn{color:var(--wp-orange)}
   .dl span.warn i{border-color:rgba(255,166,87,0.7)}
   .db-wrap{display:grid;grid-template-rows:0fr;transition:grid-template-rows .3s cubic-bezier(.2,.8,.2,1)}
   #dirge.open .db-wrap{grid-template-rows:1fr}
@@ -142,7 +143,7 @@
     background:linear-gradient(#262b31,#15181c);box-shadow:inset 0 1px 0 rgba(255,255,255,0.07);
     transform:translateY(-105%);transition:transform .38s cubic-bezier(.25,1.35,.4,1)}
   #dirge.open .db{transform:translateY(0);animation:dbflash .9s ease-out .3s 1}
-  @keyframes dbflash{0%{border-color:#f85149;box-shadow:0 0 12px rgba(248,81,73,0.55)}100%{border-color:#3a4048}}
+  @keyframes dbflash{0%{border-color:var(--wp-red);box-shadow:0 0 12px rgba(248,81,73,0.55)}100%{border-color:#3a4048}}
   .db-row{display:flex;gap:10px;align-items:center}
   /* The keyswitch under a flip-up plastic cover. The cover lifts when every step is checked; the key
      turns when Puretone lands. */
@@ -150,8 +151,8 @@
   .dk svg{width:44px;height:44px;display:block}
   .dk .key{transform-origin:22px 22px;transition:transform .45s cubic-bezier(.3,1.6,.5,1) .1s}
   .dk.turned .key{transform:rotate(90deg)}
-  .dk .plate{stroke:#6e7681;transition:stroke .3s}
-  .dk.turned .plate{stroke:#d29922}
+  .dk .plate{stroke:var(--wp-dim);transition:stroke .3s}
+  .dk.turned .plate{stroke:var(--wp-gold)}
   .dk .cover{position:absolute;left:2px;top:-2px;width:50px;height:50px;border-radius:5px;
     border:1px solid rgba(255,140,130,0.55);
     background:linear-gradient(160deg,rgba(255,120,110,0.42),rgba(190,40,40,0.22) 60%,rgba(120,20,20,0.3));
@@ -160,19 +161,19 @@
   .dk.uncovered .cover{transform:perspective(140px) rotateX(-118deg);opacity:0.35}
   .dk .kl{font-size:8px;letter-spacing:0.08em;color:#8b949e;text-align:center;line-height:1.25;
     font-variant-numeric:tabular-nums}
-  .dk.turned .kl{color:#d29922}
+  .dk.turned .kl{color:var(--wp-gold)}
   /* One button per Dirge the player's full mana holds; the ones current mana holds are lit. They stay
      hidden behind a shutter until the key turns, then pop in one after another. */
   .bank{flex:1;display:flex;flex-wrap:wrap;gap:6px;align-content:center;min-height:52px;position:relative}
   .bank .shut{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-    font-size:8px;letter-spacing:0.14em;color:#6e7681;border:1px dashed #3a4048;border-radius:4px;
+    font-size:8px;letter-spacing:0.14em;color:var(--wp-dim);border:1px dashed #3a4048;border-radius:4px;
     transition:opacity .25s}
   .dk.turned ~ .bank .shut{opacity:0;pointer-events:none}
   #dirge-btns{display:contents}
   .bank b{--sweep:0;position:relative;width:30px;height:30px;border-radius:50%;flex:none;
     display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;
     text-shadow:0 1px 1px rgba(0,0,0,0.7);
-    background:radial-gradient(circle at 35% 30%,#ff9b93,#f85149 40%,#b62324 75%,#5c0f13);
+    background:radial-gradient(circle at 35% 30%,#ff9b93,var(--wp-red) 40%,#b62324 75%,#5c0f13);
     box-shadow:0 3px 0 #4a0c10,0 4px 6px rgba(0,0,0,0.6);
     opacity:0;transform:scale(0.4);transition:transform .08s,box-shadow .08s,filter .25s}
   .dk.turned ~ .bank b{animation:bpop .35s cubic-bezier(.3,1.6,.5,1) forwards;animation-delay:calc(var(--i) * 70ms + .45s)}
@@ -180,7 +181,7 @@
   .bank b.spent{filter:grayscale(1) brightness(0.45)}
   .bank b.firing{transform:translateY(3px) !important;box-shadow:0 0 0 #4a0c10,0 1px 3px rgba(0,0,0,0.6)}
   .bank b.firing::before{content:'';position:absolute;inset:-4px;border-radius:50%;z-index:-1;
-    background:conic-gradient(#ffa657 calc(var(--sweep) * 1turn),transparent 0)}
+    background:conic-gradient(var(--wp-orange) calc(var(--sweep) * 1turn),transparent 0)}
   /* The labelmaker strip, stuck on underneath. */
   .dtape{display:block;width:max-content;margin:8px auto 0;padding:2px 9px;border-radius:2px;
     background:linear-gradient(#1b1d1f,#0b0c0d);color:#f2f2f2;transform:rotate(-1.2deg);
@@ -192,9 +193,9 @@
     font-size:9px;letter-spacing:0.08em;font-variant-numeric:tabular-nums;color:#8b949e;
     border:1px solid #3a4048;border-bottom-width:2px;background:#15181c}
   body.dirge-on #dirge-disc{display:block}
-  #dirge-disc.up{color:#56d364;border-color:rgba(86,211,100,0.6)}
-  #dirge-disc.on{color:#d29922;border-color:rgba(210,153,34,0.7)}
-  #dirge-disc.down{color:#f85149;border-color:rgba(248,81,73,0.5);border-bottom-width:1px;transform:translateY(1px)}
+  #dirge-disc.up{color:var(--wp-green);border-color:rgba(86,211,100,0.6)}
+  #dirge-disc.on{color:var(--wp-gold);border-color:rgba(210,153,34,0.7)}
+  #dirge-disc.down{color:var(--wp-red);border-color:rgba(248,81,73,0.5);border-bottom-width:1px;transform:translateY(1px)}
   @media (prefers-reduced-motion: reduce){#dirge *,.dsw *{transition:none !important;animation:none !important}
     .dk.turned ~ .bank b{opacity:1;transform:none}}
   /* dirge-board:css:end */
@@ -206,7 +207,7 @@
     font-size:11px;line-height:1;opacity:0.45;transition:opacity .12s;z-index:60}
   #move-btn{left:6px;cursor:move}
   #hide-btn{right:6px;cursor:pointer}
-  #move-btn:hover{opacity:1;color:#a371f7;border-color:#a371f7}
+  #move-btn:hover{opacity:1;color:var(--wp-purple);border-color:var(--wp-purple)}
   #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
   #drag-controls{display:none;position:absolute;top:4px;left:4px;gap:4px;z-index:50}
   body.unlocked #drag-controls{display:flex}
@@ -252,9 +253,9 @@
         <div class="db-row">
           <div class="dk" id="dirge-key" title="Puretone Discipline: the key. The cover lifts when every step is checked; the key turns when you pop Puretone.">
             <svg viewBox="0 0 44 44" aria-hidden="true">
-              <circle class="plate" cx="22" cy="22" r="20" fill="#0d1117" stroke-width="2"/>
-              <path d="M22 5v4M39 22h-4" stroke="#6e7681" stroke-width="2"/>
-              <g class="key"><rect x="17" y="8" width="10" height="28" rx="5" fill="#d29922"/><circle cx="22" cy="14" r="2.4" fill="#0d1117"/></g>
+              <circle class="plate" cx="22" cy="22" r="20" fill="var(--wp-bg)" stroke-width="2"/>
+              <path d="M22 5v4M39 22h-4" stroke="var(--wp-dim)" stroke-width="2"/>
+              <g class="key"><rect x="17" y="8" width="10" height="28" rx="5" fill="var(--wp-gold)"/><circle cx="22" cy="14" r="2.4" fill="var(--wp-bg)"/></g>
             </svg>
             <div class="cover"></div>
             <div class="kl" id="dirge-kl">PURETONE</div>

@@ -215,7 +215,7 @@ describe('mob tick: learned from DoT ticks and log breaks, not from the charm la
 
 describe('charm overlay: two tick rows', () => {
   const charm = readSource(path.join(ROOT, 'apps', 'mimic', 'charm.html'));
-  const block = sliceBlock(charm, "  var TICK_SRV = '#58a6ff'", '\n\n  // Per-charm session memory');
+  const block = sliceBlock(charm, "  var TICK_SRV = 'var(--wp-blue)'", '\n\n  // Per-charm session memory');
   const h = new Function('function esc(s){ return String(s); }\n' + block + '\nreturn { tickLeft, tickRowsHtml };')();
   it('counts each clock down from its own tick', () => {
     const now = 1_000_000;

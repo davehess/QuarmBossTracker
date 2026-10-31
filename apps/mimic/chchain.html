@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>ch chain</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* CH Chain overlay — cleric Complete Heal rotation, read from the zone-
      visible shout/raid callouts ("004 - CH - Drayvon - Mana: 52%" /
@@ -23,7 +24,7 @@
   .head .tgt{color:#f6c365;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
   .head .beat{color:#9aa4ad;font-size:10px;font-variant-numeric:tabular-nums;flex-shrink:0}
   .head .conn{font-size:11px;flex-shrink:0}
-  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .conn.ok{color:var(--wp-green)} .conn.bad{color:#8b949e}
   .rows{display:flex;flex-direction:column;gap:2px;background:rgb(0 0 0 / var(--bg-alpha));
     border-radius:5px;padding:5px 6px}
   .row{position:relative;display:grid;
@@ -59,15 +60,15 @@
   /* Tag on an auto-slotted row folded in from a non-cleric CH-equivalent
      cast (e.g. a druid's Tunare's Renewal) — see CH_EQUIVALENT_SPELLS in
      the agent. Distinguishes it from an ordinary numbered cleric slot. */
-  .row .nm .slot-kind{color:#a371f7;font-size:9px;font-style:italic;font-weight:500;margin-left:4px}
+  .row .nm .slot-kind{color:var(--wp-purple);font-size:9px;font-style:italic;font-weight:500;margin-left:4px}
   .row .mana{font-variant-numeric:tabular-nums;font-weight:600;text-align:right;font-size:11px}
-  .mana.hi{color:#56d364} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:#6e7681}
+  .mana.hi{color:var(--wp-green)} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:var(--wp-dim)}
   .row .stat{color:#8b949e;font-size:10px;font-variant-numeric:tabular-nums;text-align:right;min-width:3.4em}
   /* Casting row — BLUE accent + a 10s CH cast bar that fills RIGHT-TO-LEFT
      (the guild lead, 2026-08-11: every countdown fills left-to-right, so the cast bar
      runs the other way and in its own color — one glance tells a cast from a
      countdown). GO stays green (green = go), interrupted stays red-frozen. */
-  .row.casting{background:rgba(88,166,255,0.12);border-left-color:#58a6ff}
+  .row.casting{background:rgba(88,166,255,0.12);border-left-color:var(--wp-blue)}
   .row.casting .nm{color:#79c0ff}
   .row.casting .stat{color:#79c0ff;font-weight:600}
   /* Next-up row — amber accent, like the GO call it's about to get. */
@@ -96,7 +97,7 @@
      Left to Right, then say GO on the right when its time, then right to left
      in blue when casting"). The in-flight cast bar re-anchors right below, so
      the two read as opposite motions at a glance. */
-  .bar .fill{height:100%;background:#58a6ff;transition:width 120ms linear;
+  .bar .fill{height:100%;background:var(--wp-blue);transition:width 120ms linear;
     position:absolute;top:0;left:0}
   /* The cast itself drains RIGHT→LEFT, blue — the opposite direction from the
      amber countdown that preceded it. Interrupted inherits the anchor so a
@@ -150,7 +151,7 @@
      end up underneath it. */
   .row .rmv{position:absolute;right:2px;top:1px;z-index:3;
     color:#8b949e;font-size:11px;font-weight:700;line-height:1;cursor:pointer;
-    padding:2px 4px;border-radius:3px;background:rgba(13,17,23,0.85);
+    padding:2px 4px;border-radius:3px;background:rgba(var(--wp-bg-rgb),0.85);
     opacity:0.30;transition:opacity 120ms ease,color 120ms ease}
   .row:hover .rmv{opacity:0.75}
   .row .rmv:hover{opacity:1;color:#f87171;background:rgba(220,38,38,0.25)}
@@ -240,9 +241,9 @@
     text-shadow:0 1px 2px #000;color:#f6c365;letter-spacing:0.03em}
   .gaprow.show{display:flex}
   .gaprow .label{color:#f6c365}
-  .gaprow .sep{color:#6e7681;font-weight:400}
+  .gaprow .sep{color:var(--wp-dim);font-weight:400}
   .gaprow .tank{color:#fde68a}
-  .gaprow .cleric{color:#c9d1d9;font-weight:600}
+  .gaprow .cleric{color:var(--wp-text);font-weight:600}
   /* Chain-integrity banner — trust indicator for the DATA FEED itself, as
      opposed to gaprow (chain healthy, a cleric is late) and pivotrow (chain
      healthy, a slot slipped). Amber = calls stopped mid-fight, verify
@@ -289,7 +290,7 @@
     font-size:10px;line-height:1;cursor:pointer;opacity:0.6;transition:opacity .12s}
   #go-btn:hover{opacity:1;color:#7ee787;border-color:#7ee787}
   #go-btn.on{color:#7ee787;border-color:rgba(126,231,135,0.6);opacity:0.9}
-  #go-btn.off{color:#6e7681}
+  #go-btn.off{color:var(--wp-dim)}
   body.setup #go-btn{top:30px}
   /* DDR grading toggle (the guild lead, 2026-07-31). Furthest LEFT of the button row
      (right:86px) so it stays well clear of the ✕ at right:6 and its ~30px
@@ -300,14 +301,14 @@
     font-size:10px;line-height:1;cursor:pointer;opacity:0.6;transition:opacity .12s}
   #ddr-btn:hover{opacity:1;color:#f6c365;border-color:#f6c365}
   #ddr-btn.on{color:#f6c365;border-color:rgba(246,195,101,0.6);opacity:0.9}
-  #ddr-btn.off{color:#6e7681}
+  #ddr-btn.off{color:var(--wp-dim)}
   body.setup #ddr-btn{top:30px}
   /* Inline settings panel — appears when the ⚙ button is clicked. Currently
      just the lead-time slider; room to grow for future knobs. Sits at the
      top of #wrap so it pushes the rotation down instead of overlapping. */
   #cfg-panel{display:none;background:rgba(13,17,22,0.92);
-    border:1px solid var(--border, #30363d);border-radius:5px;padding:6px 8px;
-    margin-bottom:5px;font-size:10px;color:#c9d1d9}
+    border:1px solid var(--border, var(--wp-border));border-radius:5px;padding:6px 8px;
+    margin-bottom:5px;font-size:10px;color:var(--wp-text)}
   #cfg-panel.show{display:block}
   #cfg-panel .row{display:flex;align-items:center;gap:6px}
   #cfg-panel label{color:#8b949e;font-size:10px;white-space:nowrap}
@@ -315,7 +316,7 @@
   #cfg-panel input[type=range]{flex:1;cursor:pointer}
   #cfg-panel input[type=range]:disabled{opacity:0.4;cursor:default}
   #cfg-panel .val{color:#f6c365;font-variant-numeric:tabular-nums;min-width:3.6em;text-align:right;font-weight:600}
-  #cfg-panel .hint{color:#6e7681;font-size:9px;margin-top:3px;line-height:1.3}
+  #cfg-panel .hint{color:var(--wp-dim);font-size:9px;margin-top:3px;line-height:1.3}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
   /* Chain idle (no call in 60s+) — dim so post-fight numbers read as stale. */
   .rows.stale,.nextrow.stale{opacity:0.5}
@@ -334,7 +335,7 @@
   /* HP% of the candidate (who needs an off-heal) — colored by severity, not
      seconds-under-fire (a member, 2026-07-06: "we should see their percentage"). */
   .offheal-row .oh-hp{font-variant-numeric:tabular-nums;font-weight:700;flex-shrink:0}
-  .oh-hp.hi{color:#56d364} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171} .oh-hp.unk{color:#6e7681}
+  .oh-hp.hi{color:var(--wp-green)} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171} .oh-hp.unk{color:var(--wp-dim)}
   /* DI readiness chips — green ✓ = on the spell gems and ready, amber = recast countdown, grey ? = not
      confirmed on their gems (no tick). When only ONE cleric has DI up (and none is "?") the whole
      section gets the gold "save it" outline. */
@@ -368,7 +369,7 @@
     border-radius:3px;padding:0 3px}
   .dicall-chip.ok{color:#7ee787;border-color:rgba(86,211,100,0.6)}
   .dicall-chip.unk{color:#f0b429;border-color:rgba(240,180,41,0.5)}
-  .dicall-or{color:#6e7681;font-size:10px;align-self:center}
+  .dicall-or{color:var(--wp-dim);font-size:10px;align-self:center}
   .dicall-note{font-size:9px;color:#f0b429;margin-top:2px;text-shadow:0 1px 2px #000}
   /* Learn a CH call — SETUP MODE ONLY (2026-10-23). Other guilds' chain macros read differently from ours; the
      built-in matchers cover the common shapes and this panel teaches the tracker the rest from one example line.
@@ -381,17 +382,17 @@
   #learnhint{align-items:center;gap:6px;background:rgba(246,195,101,0.16);border:1px solid rgba(246,195,101,0.6);
     color:#f6c365;border-radius:4px;padding:4px 7px;font-size:10px;font-weight:600;margin-bottom:5px}
   #learnhint span{flex:1}
-  #learn-panel{background:rgba(13,17,22,0.94);border:1px solid #30363d;border-radius:5px;padding:6px 8px;
-    margin-bottom:5px;font-size:10px;color:#c9d1d9}
+  #learn-panel{background:rgba(13,17,22,0.94);border:1px solid var(--wp-border);border-radius:5px;padding:6px 8px;
+    margin-bottom:5px;font-size:10px;color:var(--wp-text)}
   #learn-panel .lp-hd{color:#9aa4ad;text-transform:uppercase;letter-spacing:0.5px;font-size:9px;margin:5px 0 3px}
   #learn-panel .lp-hd:first-child{margin-top:0}
-  #learn-panel .lp-none{color:#6e7681;font-style:italic}
+  #learn-panel .lp-none{color:var(--wp-dim);font-style:italic}
   #learn-panel .lp-tpl{display:flex;align-items:center;gap:6px;line-height:1.7}
   #learn-panel .lp-ex{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
-  #learn-panel .lp-kind{color:#6e7681}
-  #learn-panel select,#learn-panel input[type=text]{width:100%;box-sizing:border-box;background:#0d1117;color:#c9d1d9;
-    border:1px solid #30363d;border-radius:3px;font-size:10px;padding:2px 4px;margin-bottom:3px}
-  #learn-panel button,#learnhint button,#learn-btn{background:#21262d;color:#c9d1d9;border:1px solid #484f58;
+  #learn-panel .lp-kind{color:var(--wp-dim)}
+  #learn-panel select,#learn-panel input[type=text]{width:100%;box-sizing:border-box;background:var(--wp-bg);color:var(--wp-text);
+    border:1px solid var(--wp-border);border-radius:3px;font-size:10px;padding:2px 4px;margin-bottom:3px}
+  #learn-panel button,#learnhint button,#learn-btn{background:#21262d;color:var(--wp-text);border:1px solid #484f58;
     border-radius:3px;font-size:10px;padding:1px 6px;cursor:pointer}
   #learn-panel button:hover,#learnhint button:hover,#learn-btn:hover{border-color:#79c0ff;color:#79c0ff}
   #lp-chips{display:flex;flex-wrap:wrap;gap:3px;margin:3px 0}
@@ -401,10 +402,10 @@
   #lp-chips .r-TARGET{border-color:#7ee787;color:#7ee787}
   #lp-chips .r-MANA{border-color:#79c0ff;color:#79c0ff}
   #lp-chips .r-TAG{border-color:#d2a8ff;color:#d2a8ff}
-  #lp-chips .r-skip{border-color:#30363d;color:#6e7681;text-decoration:line-through}
+  #lp-chips .r-skip{border-color:var(--wp-border);color:var(--wp-dim);text-decoration:line-through}
   #lp-read{min-height:13px;color:#7ee787}
   #lp-read.bad{color:#f87171}
-  #learn-panel .lp-legend{color:#6e7681;font-size:9px;line-height:1.4}
+  #learn-panel .lp-legend{color:var(--wp-dim);font-size:9px;line-height:1.4}
   /* drag/lock/setup chrome — same pattern as every other overlay. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -459,32 +460,32 @@
     border-radius:2px;overflow:hidden}
   .chmini .mt-bar i{display:block;height:100%;transition:width 120ms linear}
   .chmini .mt-nm{flex:0 1 auto;color:#e6edf3;font-weight:600}
-  .chmini .mt-tag{flex:0 0 auto;color:#6e7681;font-size:9px}
-  .mt-pct.hi{color:#56d364} .mt-pct.mid{color:#f0b429} .mt-pct.lo{color:#f85149} .mt-pct.unk{color:#6e7681}
-  .mt-bar i.hi{background:#56d364} .mt-bar i.mid{background:#f0b429} .mt-bar i.lo{background:#f85149}
+  .chmini .mt-tag{flex:0 0 auto;color:var(--wp-dim);font-size:9px}
+  .mt-pct.hi{color:var(--wp-green)} .mt-pct.mid{color:#f0b429} .mt-pct.lo{color:var(--wp-red)} .mt-pct.unk{color:var(--wp-dim)}
+  .mt-bar i.hi{background:var(--wp-green)} .mt-bar i.mid{background:#f0b429} .mt-bar i.lo{background:var(--wp-red)}
   /* Axis and lanes share one grid at 10px, so the 9ch name column lines up
      (ch resolves against each element's own font size, and the axis text is
      smaller). */
   .chmini .axis,.chmini .lane{display:grid;grid-template-columns:9ch minmax(0,1fr);gap:6px;
     align-items:center;font-size:10px}
   .chmini .axis{height:11px}
-  .chmini .ax{display:flex;font-size:8px;color:#6e7681;letter-spacing:0.06em;
+  .chmini .ax{display:flex;font-size:8px;color:var(--wp-dim);letter-spacing:0.06em;
     text-transform:uppercase;white-space:nowrap}
   .chmini .ax > span{flex:1 1 0;min-width:0}
   .chmini .ax-r{display:flex;justify-content:space-between}
   .chmini .ax-c{margin-left:-0.5ch}
   .chmini .lane{height:15px}
   .chmini .lnm{font-weight:600}
-  .chmini .cQ{color:#ffa657} .chmini .cC{color:#79c0ff} .chmini .cX{color:#fca5a5}
-  .chmini .cL{color:#7ee787} .chmini .cI{color:#6e7681}
+  .chmini .cQ{color:var(--wp-orange)} .chmini .cC{color:#79c0ff} .chmini .cX{color:#fca5a5}
+  .chmini .cL{color:#7ee787} .chmini .cI{color:var(--wp-dim)}
   .chmini .trk{position:relative;height:8px;background:rgba(255,255,255,0.06);border-radius:2px}
   .chmini .trk::after{content:"";position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;
     background:rgba(255,255,255,0.55)}
   .chmini .blk{position:absolute;top:0;height:100%;border-radius:2px;
     transition:left 100ms linear,width 100ms linear}
-  .chmini .bQ{background:#ffa657} .chmini .bC{background:#58a6ff}
-  .chmini .bX{background:#f85149;transition:none}
-  .chmini .bL{background:#56d364;box-shadow:0 0 6px rgba(86,211,100,0.8)}
+  .chmini .bQ{background:var(--wp-orange)} .chmini .bC{background:var(--wp-blue)}
+  .chmini .bX{background:var(--wp-red);transition:none}
+  .chmini .bL{background:var(--wp-green);box-shadow:0 0 6px rgba(86,211,100,0.8)}
   .chmini.stale #miniLanes{opacity:0.5}
   @media (prefers-reduced-motion: reduce){
     .chmini .blk,.chmini .mt-bar i{transition:none}

@@ -30,8 +30,18 @@
 (function (root) {
   'use strict';
 
-  var C = { text: '#c9d1d9', dim: '#6e7681', blue: '#58a6ff', gold: '#d29922', green: '#56d364',
-    red: '#f85149', orange: '#ffa657', purple: '#a371f7', teal: '#39c5cf' };
+  // The pieces' colours, read from the shared theme (theme.css) once when the page loads, so a theme reaches
+  // them. The hex is theme.css's own default: it is what a page without the stylesheet gets, and what the
+  // tests (no document) see. Teal has no slot and stays literal.
+  function themed(slot, dflt) {
+    try {
+      var v = root.getComputedStyle(root.document.documentElement).getPropertyValue('--wp-' + slot).trim();
+      return v || dflt;
+    } catch (e) { return dflt; }
+  }
+  var C = { text: themed('text', '#c9d1d9'), dim: themed('dim', '#6e7681'), blue: themed('blue', '#58a6ff'),
+    gold: themed('gold', '#d29922'), green: themed('green', '#56d364'), red: themed('red', '#f85149'),
+    orange: themed('orange', '#ffa657'), purple: themed('purple', '#a371f7'), teal: '#39c5cf' };
 
   var CATS = [
     ['me', 'My info'], ['target', 'Target'], ['group', 'Group'], ['raid', 'Raid'], ['pet', 'Pet'],
@@ -431,23 +441,23 @@
     + '.pt-l{color:' + C.dim + ';overflow:hidden;text-overflow:ellipsis}'
     + '.pt-v{font-weight:700;font-variant-numeric:tabular-nums}'
     + '.pt-sub{color:' + C.dim + ';font-size:0.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
-    + '.pt-track{height:calc(8px * var(--ps,1));margin-top:2px;background:rgba(13,17,23,0.75);border:1px solid #30363d;border-radius:3px;overflow:hidden}'
+    + '.pt-track{height:calc(8px * var(--ps,1));margin-top:2px;background:rgba(var(--wp-bg-rgb),0.75);border:1px solid var(--wp-border);border-radius:3px;overflow:hidden}'
     + '.pt-track.thin{height:calc(4px * var(--ps,1));margin-top:1px}'
     + '.pt-fill{height:100%;transition:width 0.25s linear}'
     + '.pt-ring svg{width:100%;height:100%;display:block}'
-    + '.pt-rt{fill:none;stroke:rgba(13,17,23,0.75);stroke-width:9}'
+    + '.pt-rt{fill:none;stroke:rgba(var(--wp-bg-rgb),0.75);stroke-width:9}'
     + '.pt-rf{fill:none;stroke-width:9;stroke-linecap:round}'
     + '.pt-rv{fill:' + C.text + ';font-size:18px;font-weight:700;text-anchor:middle;paint-order:stroke;stroke:#000;stroke-width:3px}'
     + '.pt-rl{fill:' + C.dim + ';font-size:10px;text-anchor:middle;paint-order:stroke;stroke:#000;stroke-width:2px}'
     + '.pt-read{white-space:nowrap}'
     + '.pt-big{display:flex;flex-direction:column;justify-content:center}'
     + '.pt-bv{font-size:calc(26px * var(--ps,1));font-weight:700;line-height:1.05;font-variant-numeric:tabular-nums}'
-    + '.pt-pp{display:flex;gap:2px;margin-top:2px}.pt-pp i{flex:1;height:calc(8px * var(--ps,1));background:rgba(13,17,23,0.75);border:1px solid #30363d;border-radius:2px}'
+    + '.pt-pp{display:flex;gap:2px;margin-top:2px}.pt-pp i{flex:1;height:calc(8px * var(--ps,1));background:rgba(var(--wp-bg-rgb),0.75);border:1px solid var(--wp-border);border-radius:2px}'
     + '.pt-head{margin-bottom:2px}'
     + '.pt-row{margin-bottom:2px}.pt-row.hi .pt-n{color:' + C.gold + '}'
     + '.pt-n{overflow:hidden;text-overflow:ellipsis}'
     + '.pt-chips{display:flex;flex-wrap:wrap;gap:3px;align-items:center;align-content:flex-start}'
-    + '.pt-chip{padding:0 5px;border:1px solid;border-radius:9px;background:rgba(13,17,23,0.7);white-space:nowrap}'
+    + '.pt-chip{padding:0 5px;border:1px solid;border-radius:9px;background:rgba(var(--wp-bg-rgb),0.7);white-space:nowrap}'
     + '.pt-none{opacity:0.55}'
     // Regen per tick (FB-90): the words, and the glow at the fill's edge for the last second before the tick.
     + '.pt-rg{color:' + C.green + ';font-weight:700;font-variant-numeric:tabular-nums}'
@@ -461,14 +471,14 @@
     + '.pt-thin .pt-track{flex:1;margin-top:0;height:calc(6px * var(--ps,1))}'
     + '.pt-vbar{display:flex;flex-direction:column;align-items:center;gap:2px}'
     + '.pt-vbar .pt-l{max-width:100%;font-size:0.85em}'
-    + '.pt-vt{flex:1;width:calc(12px * var(--ps,1));background:rgba(13,17,23,0.75);border:1px solid #30363d;border-radius:3px;display:flex;align-items:flex-end;overflow:hidden}'
+    + '.pt-vt{flex:1;width:calc(12px * var(--ps,1));background:rgba(var(--wp-bg-rgb),0.75);border:1px solid var(--wp-border);border-radius:3px;display:flex;align-items:flex-end;overflow:hidden}'
     + '.pt-vf{width:100%;transition:height 0.25s linear}'
     + '.pt-arc svg{width:100%;height:100%;display:block}'
     // A ring arc: its text is the HUD ring's (thin weight), in the ring's own units, so it scales with the arc.
     + '.pt-seg{overflow:visible}.pt-seg svg{width:100%;height:100%;display:block;overflow:visible}'
     + '.pt-seg text{font-variant-numeric:tabular-nums;paint-order:stroke;stroke:rgba(0,0,0,.8);stroke-width:1.6px;stroke-linejoin:round}'
     + '.pt-badge{display:flex;align-items:center;justify-content:center}'
-    + '.pt-bc{box-sizing:border-box;height:100%;max-width:100%;aspect-ratio:1;border:2px solid;border-radius:50%;background:rgba(13,17,23,0.6);'
+    + '.pt-bc{box-sizing:border-box;height:100%;max-width:100%;aspect-ratio:1;border:2px solid;border-radius:50%;background:rgba(var(--wp-bg-rgb),0.6);'
     + 'display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.1}'
     + '.pt-bc .pt-l{font-size:0.75em}.pt-bc b{font-size:1.25em;font-variant-numeric:tabular-nums}'
     + '.pt-inline{white-space:normal}.pt-in{margin-right:0.6em;font-weight:700;white-space:nowrap}.pt-in b{margin-left:1px}'

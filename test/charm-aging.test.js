@@ -190,8 +190,8 @@ describe('charm aging — full card', () => {
 });
 
 describe('charm aging — mini', () => {
-  const PURPLE = 'style="color:#a371f7">⏳ ';
-  const RED = 'style="color:#f85149">⏳ ';
+  const PURPLE = 'style="color:var(--wp-purple)">⏳ ';
+  const RED = 'style="color:var(--wp-red)">⏳ ';
 
   it('non-bard timer turns red at 25 s, without the word recharm; purple before', async () => {
     const h = await bootCharm(() => stateOf(pet({ started_at: NOW - 24000 })), { mini: true });

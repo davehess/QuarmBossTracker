@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>threat</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Threat Meter overlay — transparent, always-on-top. Per-fight threat per
      player: stacked breakdown bar (swing / proc / spell / heal) so a tank
@@ -20,7 +21,7 @@
   .head .boss{color:#f6c365;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
   .head .elapsed{color:#9aa4ad;font-size:10px;font-variant-numeric:tabular-nums;flex-shrink:0}
   .head .conn{font-size:11px;flex-shrink:0}
-  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .conn.ok{color:var(--wp-green)} .conn.bad{color:#8b949e}
   .rows{display:flex;flex-direction:column;gap:2px;background:rgb(0 0 0 / var(--bg-alpha));
     border-radius:5px;padding:5px 6px}
   .row{position:relative;display:grid;
@@ -31,24 +32,24 @@
     transition:background 200ms ease}
   .row.me{background:rgba(246,195,101,0.10);border-left-color:#f6c365}
   .row.leader{background:rgba(248,113,113,0.10);border-left-color:#f87171}
-  .row .rank{color:#6e7681;text-align:right;font-size:10px;font-variant-numeric:tabular-nums}
+  .row .rank{color:var(--wp-dim);text-align:right;font-size:10px;font-variant-numeric:tabular-nums}
   .row .nm-wrap{min-width:0;overflow:hidden}
   .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
   .row.me .nm{color:#f6c365}
   .row.leader .nm{color:#fca5a5}
-  .row .nm .pet-tag{color:#a371f7;font-size:9px;font-style:italic;margin-left:4px;font-weight:500}
-  .row .nm .with-pet{color:#a371f7;font-size:9px;margin-left:5px;font-variant-numeric:tabular-nums}
+  .row .nm .pet-tag{color:var(--wp-purple);font-size:9px;font-style:italic;margin-left:4px;font-weight:500}
+  .row .nm .with-pet{color:var(--wp-purple);font-size:9px;margin-left:5px;font-variant-numeric:tabular-nums}
   /* Stacked breakdown bar — swing (green) / proc (blue) / spell (purple) /
      heal (amber). Width relative to the leader's total so the eye reads
      "second place at 70% of top" immediately. */
   .bar{grid-column:1 / -1;height:5px;background:rgba(255,255,255,0.06);
     border-radius:2px;overflow:hidden;display:flex;margin-top:3px}
   .bar .seg{height:100%;transition:width 250ms ease}
-  .bar .seg.sw{background:#56d364}
-  .bar .seg.pr{background:#58a6ff}
-  .bar .seg.sp{background:#a371f7}
+  .bar .seg.sw{background:var(--wp-green)}
+  .bar .seg.pr{background:var(--wp-blue)}
+  .bar .seg.sp{background:var(--wp-purple)}
   .bar .seg.hl{background:#f0b429}
-  .row .total{color:#56d364;font-variant-numeric:tabular-nums;font-weight:600;font-size:11px;text-align:right}
+  .row .total{color:var(--wp-green);font-variant-numeric:tabular-nums;font-weight:600;font-size:11px;text-align:right}
   .row.me     .total{color:#f6c365}
   .row.leader .total{color:#fca5a5}
   /* Negative spell totals (Quivering Veil / Voice of Quellious etc.) render
@@ -90,9 +91,9 @@
     padding:0 4px;align-items:center}
   .legend .sw,.legend .pr,.legend .sp,.legend .hl{display:inline-flex;align-items:center;gap:3px}
   .legend i{display:inline-block;width:8px;height:8px;border-radius:1px}
-  .legend .sw i{background:#56d364}
-  .legend .pr i{background:#58a6ff}
-  .legend .sp i{background:#a371f7}
+  .legend .sw i{background:var(--wp-green)}
+  .legend .pr i{background:var(--wp-blue)}
+  .legend .sp i{background:var(--wp-purple)}
   .legend .hl i{background:#f0b429}
   /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
      panel owns ✥ and ✕ — the preload hides this page's — so the window's padding and the title's gutters go. */

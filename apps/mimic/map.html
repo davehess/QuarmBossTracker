@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>map</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Spawn map overlay (Mimic 2.9, beta) - layout C, the tracker: the zone map on the left, the active respawn
      timers on the right. Reads the agent's /api/map-state once a second; click a spawn dot to mark it.
@@ -17,27 +18,27 @@
      customization should open up to a new section to the side where the timers would be so you can update the map at
      the same time"). Same width as the list, so it takes the list's slot; see setCfgOpen. */
   #cfg{flex:0 0 210px;box-sizing:border-box;min-height:0;overflow-y:auto;overflow-x:hidden;border-radius:6px;
-    background:rgba(13,17,23,0.97);border:1px solid rgba(110,118,129,0.5);padding:0 8px 8px;font-size:10.5px;color:#c9d1d9;text-shadow:none}
+    background:rgba(var(--wp-bg-rgb),0.97);border:1px solid rgba(110,118,129,0.5);padding:0 8px 8px;font-size:10.5px;color:var(--wp-text);text-shadow:none}
   #cfg[hidden]{display:none}
   #wrap.cfgopen #side{display:none}
   #cfg::-webkit-scrollbar{width:10px}
-  #cfg::-webkit-scrollbar-thumb{background:#484f58;border-radius:5px;border:2px solid rgba(13,17,23,0.95)}
-  #cfg .chead{position:sticky;top:0;z-index:1;background:rgba(13,17,23,0.99);padding:7px 26px 5px 0;border-bottom:1px solid rgba(110,118,129,0.4);
+  #cfg::-webkit-scrollbar-thumb{background:#484f58;border-radius:5px;border:2px solid rgba(var(--wp-bg-rgb),0.95)}
+  #cfg .chead{position:sticky;top:0;z-index:1;background:rgba(var(--wp-bg-rgb),0.99);padding:7px 26px 5px 0;border-bottom:1px solid rgba(110,118,129,0.4);
     display:flex;align-items:center;gap:6px;font-size:12px}
   #cfg .chead .sp{flex:1}
   #cfg .grp{margin:9px 0 3px;color:#8b949e;text-transform:uppercase;font-size:9.5px;letter-spacing:.5px}
   #cfg .row{display:flex;align-items:center;gap:6px;padding:1.5px 0}
   #cfg .row .bl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #cfg label.row{cursor:pointer}
-  #cfg input[type=checkbox]{margin:0;accent-color:#58a6ff;cursor:pointer}
-  #cfg input[type=range]{width:86px;margin:0;accent-color:#58a6ff;cursor:ew-resize}
+  #cfg input[type=checkbox]{margin:0;accent-color:var(--wp-blue);cursor:pointer}
+  #cfg input[type=range]{width:86px;margin:0;accent-color:var(--wp-blue);cursor:ew-resize}
   #cfg input[type=color]{width:26px;height:16px;padding:0;border:1px solid rgba(110,118,129,0.6);border-radius:3px;background:none;cursor:pointer}
-  #cfg select,#cfg button{background:rgba(22,27,34,.9);color:#c9d1d9;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
-  #cfg button:hover,#cfg select:hover{border-color:#58a6ff;color:#fff}
+  #cfg select,#cfg button{background:rgba(var(--wp-panel-rgb),.9);color:var(--wp-text);border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
+  #cfg button:hover,#cfg select:hover{border-color:var(--wp-blue);color:#fff}
   #cfg .rs{flex:none;width:20px;padding:0;line-height:15px;color:#8b949e}
   #cfg .gl{width:20px;text-align:center;flex:none}
   #cfg .val{flex:none;min-width:58px;text-align:right;color:#8b949e}
-  #cfg .foot{margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:6px;color:#6e7681;font-size:9.5px}
+  #cfg .foot{margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:6px;color:var(--wp-dim);font-size:9.5px}
   #stage{position:absolute;inset:0}
   #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
   #hits{position:absolute;inset:0;pointer-events:none}
@@ -63,18 +64,18 @@
     text-shadow:0 0 3px #000,0 0 2px #000;font-variant-numeric:tabular-nums}
   #kiteChip[hidden]{display:none}
   #tools .tb[hidden]{display:none}   /* the circle buttons (Others / Circles / Drift) show only while there is a circle to act on */
-  #kiteChip .g{color:#56d364}#kiteChip .a{color:#f0b429}#kiteChip .r{color:#ff6b5e}#kiteChip .gd{color:#d4f542}
+  #kiteChip .g{color:var(--wp-green)}#kiteChip .a{color:#f0b429}#kiteChip .r{color:#ff6b5e}#kiteChip .gd{color:#d4f542}
   /* The timers list slides in and out (the guild lead, 2026-10-12: "slide the spawn timers in and out. So that it could
      take up less space if we weren't focused on that"): a top-right button on the map; slid in, the map takes the width. */
   #sideBtn{position:absolute;top:6px;right:6px;z-index:6}
   #wrap.noside #side{display:none}
   #wrap.noside:not(.cfgopen) #sideBtn{right:30px}   /* slid in, the map's top-right is the window's: keep clear of the ✕ */
-  .tb{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:#c9d1d9;
+  .tb{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:var(--wp-text);
     border:1px solid rgba(110,118,129,0.45);font:inherit;font-size:10px;line-height:1;cursor:pointer}
-  .tb:hover{color:#fff;border-color:#58a6ff}
-  .tb.on{background:rgba(88,166,255,0.35);color:#fff;border-color:#58a6ff}
+  .tb:hover{color:#fff;border-color:var(--wp-blue)}
+  .tb.on{background:rgba(88,166,255,0.35);color:#fff;border-color:var(--wp-blue)}
   /* Levels: how far above and below you (in z) the walls, spawn dots and routes stay bright. */
-  .lv{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:#c9d1d9;display:flex;align-items:center;gap:4px;
+  .lv{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:var(--wp-text);display:flex;align-items:center;gap:4px;
     border:1px solid rgba(110,118,129,0.45);font-size:10px;line-height:1;box-sizing:border-box}
   .lv input{width:64px;height:10px;margin:0;cursor:pointer}
   .lv span{min-width:64px}
@@ -99,21 +100,21 @@
   #menu{display:none}
   #menu button{display:block;width:100%;text-align:left;margin-top:3px;padding:3px 6px;border-radius:4px;
     background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.18);color:#e6edf3;font:inherit;font-size:11px;cursor:pointer}
-  #menu button:hover{border-color:#58a6ff;background:rgba(88,166,255,0.2)}
+  #menu button:hover{border-color:var(--wp-blue);background:rgba(88,166,255,0.2)}
   #menu .x{color:#8b949e;margin-top:4px}
   /* The list is text read over EverQuest's nameplates: its background never goes below 0.94, whatever the opacity slider says
      for the map pane (the guild lead, 2026-10-16: nameplates showed through the respawn list). The colour is still --map-bg. */
   #side{flex:0 0 210px;display:flex;flex-direction:column;min-height:0;background:rgb(var(--map-bg, 19 26 38) / max(0.94, var(--map-bg-a, var(--bg-alpha))));
     border-radius:6px;padding:6px 8px;text-shadow:0 1px 2px #000}
   #zone{font-size:12px;color:#79c0ff;padding-right:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #posage{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap}
-  #wallsrc{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #posage{font-size:9px;color:var(--wp-dim);min-height:11px;white-space:nowrap}
+  #wallsrc{font-size:9px;color:var(--wp-dim);min-height:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* The saved raid route's legend, which is also its switch. A button because a click-through window needs the hover handshake
      on anything clickable (the preload arms it for buttons). Dimmed and struck through while the line is hidden. */
   #routenote{display:block;max-width:100%;margin:0;padding:0;border:0;background:none;font:inherit;font-size:9px;line-height:11px;text-align:left;
     color:#e8b923;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;text-shadow:inherit}
   #routenote[hidden]{display:none}
-  #routenote.off{color:#6e7681;text-decoration:line-through}
+  #routenote.off{color:var(--wp-dim);text-decoration:line-through}
   #setupbar select{font:inherit;font-size:10px;max-width:90px}
   #tgt{font-size:10px;color:#f0883e;min-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* The header lines (zone, position age, walls, target) and the foot never shrink: they are overflow:hidden flex items, so in a
@@ -121,15 +122,15 @@
      the top of this timer window"). Only the list gives way, from a zero basis, and scrolls inside its own box under them. */
   #side > :not(#lists){flex:0 0 auto}
   #lists{flex:1 1 0;overflow:auto;min-height:0;margin-top:3px}
-  .sec{font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;margin:5px 0 2px}
+  .sec{font-size:9px;color:var(--wp-dim);text-transform:uppercase;letter-spacing:.5px;margin:5px 0 2px}
   .trow{display:grid;grid-template-columns:1fr auto;column-gap:6px;padding:2px 4px;margin-bottom:2px;
-    border-left:3px solid #6e7681;background:rgba(255,255,255,0.05);border-radius:3px;cursor:pointer;font-size:10px}
+    border-left:3px solid var(--wp-dim);background:rgba(255,255,255,0.05);border-radius:3px;cursor:pointer;font-size:10px}
   .trow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
   /* the time sits in its own right-aligned column, 2px bigger than the name; the source line is small and dim under the name */
   .trow .tm{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:12px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
   .trow .src{grid-column:1;color:#586069;font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* "☠ killed" on an alive row: its own third column, so rows without one keep their two */
-  .trow .kill{grid-column:3;grid-row:1 / span 2;align-self:center;background:rgba(22,27,34,.9);color:#c9d1d9;border:1px solid rgba(110,118,129,0.5);
+  .trow .kill{grid-column:3;grid-row:1 / span 2;align-self:center;background:rgba(var(--wp-panel-rgb),.9);color:var(--wp-text);border:1px solid rgba(110,118,129,0.5);
     border-radius:4px;font:inherit;font-size:9px;padding:0 5px;cursor:pointer;white-space:nowrap}
   .trow .kill:hover{color:#ffd866;border-color:#f0b429}
   .sec.watch{color:#f0b429}
@@ -137,26 +138,26 @@
   /* Respawns (FB-100): the top line is itself a control (left click pulses the spots that are down, right click zooms to them),
      with a ▸ button that lists the actual spots under it. */
   .sec.resp{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px}
-  .sec.resp:hover{color:#c9d1d9}
-  .sec.resp .more{background:rgba(22,27,34,.9);color:#8b949e;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;
+  .sec.resp:hover{color:var(--wp-text)}
+  .sec.resp .more{background:rgba(var(--wp-panel-rgb),.9);color:#8b949e;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;
     font-size:9px;padding:0 5px;cursor:pointer;text-transform:none;letter-spacing:0}
-  .sec.resp .more:hover{color:#e6edf3;border-color:#58a6ff}
+  .sec.resp .more:hover{color:#e6edf3;border-color:var(--wp-blue)}
   .trow.sub{margin-left:10px;border-left-width:2px;padding-top:1px;padding-bottom:1px}
   .kite{font-size:11px;color:#8b949e;padding:0 2px 4px}
   .trow.engaged{border-left-color:#f0883e;cursor:default} .trow.engaged .tm{color:#f0883e}
   .trow.watch .nm{font-weight:bold}
   .trow.corpse{border-left-color:#8b949e} .trow.corpse .tm{color:#8b949e}
   .trow.corpse.drag{border-left-color:#f0b429} .trow.corpse.drag .tm{color:#f0b429}
-  .trow.wait{border-left-color:#f85149} .trow.wait .tm{color:#f85149}
+  .trow.wait{border-left-color:var(--wp-red)} .trow.wait .tm{color:var(--wp-red)}
   .trow.window{border-left-color:#f0b429} .trow.window .tm{color:#f0b429}
   .trow.flash{border-left-color:#f0b429;background:rgba(240,180,41,0.22)} .trow.flash .tm{color:#ffd866;font-weight:bold}
-  .trow.up{border-left-color:#56d364} .trow.up .tm{color:#56d364;font-weight:bold}
+  .trow.up{border-left-color:var(--wp-green)} .trow.up .tm{color:var(--wp-green);font-weight:bold}
   .trow.q{border-left-color:#d2a8ff} .trow.q .tm{color:#d2a8ff}
-  .trow.seen{border-left-color:#56d364;background:rgba(86,211,100,0.12)} .trow.seen .tm{color:#56d364}
+  .trow.seen{border-left-color:var(--wp-green);background:rgba(86,211,100,0.12)} .trow.seen .tm{color:var(--wp-green)}
   .trow .tm .hp{font-size:10px;font-weight:bold;margin-right:5px}
-  .trow .tm .hp.hi{color:#56d364} .trow .tm .hp.mid{color:#f0b429} .trow .tm .hp.lo{color:#f87171}
+  .trow .tm .hp.hi{color:var(--wp-green)} .trow .tm .hp.mid{color:#f0b429} .trow .tm .hp.lo{color:#f87171}
   #empty{color:rgba(255,255,255,0.45);font-size:10px;padding:2px 4px}
-  #foot{font-size:9px;color:#6e7681;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #foot{font-size:9px;color:var(--wp-dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* drag/lock/setup - same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -180,7 +181,7 @@
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
-  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  #move-btn:hover{opacity:1;color:var(--wp-blue);border-color:var(--wp-blue)}
   body.setup #move-btn{top:30px}
   body.setup #tools,body.setup #sideBtn{top:32px}
   /* A narrow window (XS is 200 wide) keeps the map and drops the timer list. */
@@ -208,11 +209,11 @@
   #clearEdit{position:absolute;inset:0;z-index:7;cursor:crosshair;background:rgba(88,166,255,0.05)}
   #clearEdit[hidden]{display:none}
   #clearBar{position:absolute;top:34px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:3px 8px;
-    border-radius:5px;background:rgba(14,17,22,0.96);border:1px solid rgba(88,166,255,0.7);font-size:10px;color:#c9d1d9;cursor:default;white-space:nowrap}
-  #clearBar button{background:rgba(22,27,34,.9);color:#c9d1d9;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
-  #clearBar button:hover{border-color:#58a6ff;color:#fff}
+    border-radius:5px;background:rgba(14,17,22,0.96);border:1px solid rgba(88,166,255,0.7);font-size:10px;color:var(--wp-text);cursor:default;white-space:nowrap}
+  #clearBar button{background:rgba(var(--wp-panel-rgb),.9);color:var(--wp-text);border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
+  #clearBar button:hover{border-color:var(--wp-blue);color:#fff}
   .cbox{position:absolute;box-sizing:border-box;pointer-events:none}
-  .cbox.user{border:1.5px dashed #58a6ff;background:rgba(88,166,255,0.12)}
+  .cbox.user{border:1.5px dashed var(--wp-blue);background:rgba(88,166,255,0.12)}
   .cbox.ui{border:1px dotted rgba(240,180,41,0.75);background:rgba(240,180,41,0.06)}
   .cbox.band{border:1.5px dashed #f0b429;background:rgba(240,180,41,0.1)}
   .cbox .cx{position:absolute;top:-1px;right:-1px;width:16px;height:16px;padding:0;line-height:14px;font-size:10px;border-radius:3px;pointer-events:auto;cursor:pointer;
@@ -222,7 +223,7 @@
   /* ⚙ → Keep clear: every game window found in the UI file, tick = keep it clear, hover = outline it on the map. */
   #clearList{max-height:176px;overflow-y:auto;margin:3px 0;padding:2px 4px;border:1px solid rgba(110,118,129,0.3);border-radius:4px}
   #clearList .crow:hover{background:rgba(88,166,255,0.14)}
-  #clearList .crow .sub{color:#6e7681}
+  #clearList .crow .sub{color:var(--wp-dim)}
   #clearList .crow.off .bl{color:#8b949e}
 </style></head>
 <body>
@@ -325,7 +326,7 @@
         <div class="foot"><span>Saved on this computer.</span><button id="cfgReset" type="button">Reset to default</button></div>
       </div>
     <div id="side">
-      <div id="zone">Map <span style="color:#6e7681">[beta]</span></div>
+      <div id="zone">Map <span style="color:var(--wp-dim)">[beta]</span></div>
       <div id="posage" title="Age of the newest position when drawn, and where it came from."></div>
       <div id="wallsrc" title="Where the walls on the map come from."></div>
       <button id="routenote" type="button" hidden></button>

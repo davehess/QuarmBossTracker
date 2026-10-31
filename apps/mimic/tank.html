@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>tank</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Wolf Pack Tank Overlay — a member 2026-06-25:
      "DS total and buffs with timers, enrage upcoming based on boss HP …
@@ -30,7 +31,7 @@
     text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000}
   .hpwrap{position:relative;height:14px;background:#222;border-radius:3px;overflow:hidden;
     border:1px solid rgba(255,255,255,0.06)}
-  .hpbar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(to right,#56d364,#56d364);
+  .hpbar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(to right,var(--wp-green),var(--wp-green));
     transition:width .25s ease, background .25s ease}
   .hpbar.low {background:linear-gradient(to right,#f0d264,#f0a52d)}
   .hpbar.crit{background:linear-gradient(to right,#f87171,#dc2626)}
@@ -39,7 +40,7 @@
      it's up (they can't take damage, don't panic-heal), green once it's
      about to fall (get ready). Bold "INV" tags bracket the bar. */
   .hpbar.gold{background:linear-gradient(to right,#f0c419,#d4a017)}
-  .hpbar.inv-soon{background:linear-gradient(to right,#56d364,#2ea043);box-shadow:0 0 8px rgba(86,211,100,0.9) inset}
+  .hpbar.inv-soon{background:linear-gradient(to right,var(--wp-green),#2ea043);box-shadow:0 0 8px rgba(86,211,100,0.9) inset}
   .hpwrap .val{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;
     font-size:10px;color:#fff;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;font-weight:600}
   .hpwrap .inv-tag{position:absolute;top:0;bottom:0;display:flex;align-items:center;
@@ -61,7 +62,7 @@
     text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
   .ih-bar{position:relative;flex:1 1 auto;height:8px;background:#222;border-radius:2px;overflow:hidden;min-width:28px}
   .ih-fill{position:absolute;left:0;top:0;bottom:0;border-radius:2px;transition:width .1s linear}
-  .ih-amt{color:#c9d1d9;white-space:nowrap;font-variant-numeric:tabular-nums;
+  .ih-amt{color:var(--wp-text);white-space:nowrap;font-variant-numeric:tabular-nums;
     text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
   .ih-sec{color:#fff;font-weight:600;font-variant-numeric:tabular-nums;min-width:24px;text-align:right;
     text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
@@ -89,7 +90,7 @@
     border:1px solid #f87171;border-radius:5px;margin-bottom:4px;font-size:11px}
   .ramp .row{display:flex;align-items:center;gap:6px}
   .ramp .who{font-weight:700;color:#fff}
-  .ds-total{font-size:13px;color:#56d364;font-variant-numeric:tabular-nums;font-weight:700}
+  .ds-total{font-size:13px;color:var(--wp-green);font-variant-numeric:tabular-nums;font-weight:700}
   .ds-total .avg{color:#7ee787;font-weight:700}
   .ds-total .hits{color:#9aa4ad;font-weight:400;font-size:10px}
   .ds-breakdown{font-size:10px;color:#9aa4ad;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;line-height:1.4}
@@ -102,13 +103,13 @@
   .ds-sources .src{display:flex;justify-content:space-between;gap:6px;font-size:10px;line-height:1.4}
   .ds-sources .src .nm{color:#7ee787;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .ds-sources .src .val{color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0}
-  .ds-sources .none{font-size:9px;color:#6e7681;font-style:italic;line-height:1.3}
+  .ds-sources .none{font-size:9px;color:var(--wp-dim);font-style:italic;line-height:1.3}
   /* Shield cancelled (Mark of the Plague Lords): the worn shields return nothing
      and the mob is healed instead — red, and the sources are struck through. */
-  .ds-off{display:flex;justify-content:space-between;gap:6px;font-size:11px;font-weight:700;color:#f85149;line-height:1.35}
+  .ds-off{display:flex;justify-content:space-between;gap:6px;font-size:11px;font-weight:700;color:var(--wp-red);line-height:1.35}
   .ds-off .left{font-variant-numeric:tabular-nums;flex-shrink:0}
   .ds-off-sub{font-size:10px;color:#ff7b72;line-height:1.3}
-  .ds-sources.off .src .nm,.ds-sources.off .src .val{color:#6e7681;text-decoration:line-through}
+  .ds-sources.off .src .nm,.ds-sources.off .src .val{color:var(--wp-dim);text-decoration:line-through}
   .buffs{display:flex;flex-direction:column;gap:1px;font-size:10px;line-height:1.4}
   .buffs .buff{display:flex;align-items:center;gap:4px}
   .buffs .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
@@ -120,7 +121,7 @@
   .offheal-row .oh-nm{font-weight:600;color:#fca5a5;flex-shrink:0}
   .offheal-row .oh-mob{color:#9aa4ad;font-size:9px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .offheal-row .oh-hp{font-variant-numeric:tabular-nums;font-weight:700;flex-shrink:0}
-  .oh-hp.hi{color:#56d364} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171}
+  .oh-hp.hi{color:var(--wp-green)} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -159,25 +160,25 @@
   .mini{background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:2px 22px;display:flex;flex-direction:column;gap:2px}
   .mini-row{display:flex;align-items:center;gap:5px;min-height:16px;font-size:11px;line-height:1.35;
     text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
-  .mini-pct{width:4ch;text-align:right;font-weight:700;color:#56d364}
+  .mini-pct{width:4ch;text-align:right;font-weight:700;color:var(--wp-green)}
   .mini-bar{flex:1 1 48px;min-width:24px;height:4px;background:rgba(255,255,255,0.09);border-radius:2px;overflow:hidden}
-  .mini-bar i{display:block;height:100%;background:#56d364}
+  .mini-bar i{display:block;height:100%;background:var(--wp-green)}
   .mini-row.low .mini-pct{color:#f0b429}  .mini-row.low .mini-bar i{background:#f0b429}
-  .mini-row.crit .mini-pct{color:#f85149} .mini-row.crit .mini-bar i{background:#f85149}
-  .mini-row.none .mini-pct{color:#6e7681}
+  .mini-row.crit .mini-pct{color:var(--wp-red)} .mini-row.crit .mini-bar i{background:var(--wp-red)}
+  .mini-row.none .mini-pct{color:var(--wp-dim)}
   .mini-nm{font-weight:700;color:#fff}
-  .mini-arr{color:#6e7681;flex:0 0 auto}
-  .mini-mob{color:#ffa657}
+  .mini-arr{color:var(--wp-dim);flex:0 0 auto}
+  .mini-mob{color:var(--wp-orange)}
   /* The spiky box: what ONE hit returns. Dark text on the fill, so no outline. */
   .mini-ds{display:inline-grid;place-items:center;flex:0 0 auto;min-width:52px;height:20px;padding:0 6px;box-sizing:border-box;
-    background:#56d364;color:#03170a;font-weight:700;font-size:10px;text-shadow:none;
+    background:var(--wp-green);color:#03170a;font-weight:700;font-size:10px;text-shadow:none;
     clip-path:polygon(100% 50%,86.7% 59.8%,93.3% 75%,76.9% 76.9%,75% 93.3%,59.8% 86.7%,50% 100%,40.2% 86.7%,25% 93.3%,23.1% 76.9%,6.7% 75%,13.3% 59.8%,0 50%,13.3% 40.2%,6.7% 25%,23.1% 23.1%,25% 6.7%,40.2% 13.3%,50% 0,59.8% 13.3%,75% 6.7%,76.9% 23.1%,93.3% 25%,86.7% 40.2%)}
   .mini-ds.off{background:#3a4048;color:#9aa4ad}
-  .mini-ds.cut{background:#f85149;color:#1a0505}
+  .mini-ds.cut{background:var(--wp-red);color:#1a0505}
   .mini-ramp{background:rgba(180,32,32,0.35);border-radius:3px;padding:0 4px;margin:0 -4px}
   .mini-who{font-weight:700;color:#fff}
   .mini-da{color:#f0c419;font-size:10px;font-weight:700}
-  .mini-call{flex:0 0 auto;color:#fff;background:#f85149;border-radius:3px;padding:0 4px;font-size:10px;font-weight:800;text-shadow:none}
+  .mini-call{flex:0 0 auto;color:#fff;background:var(--wp-red);border-radius:3px;padding:0 4px;font-size:10px;font-weight:800;text-shadow:none}
   /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
      panel owns ✥ and ✕ — the preload hides this page's — so the window's padding goes. */
   body.wp-in-canvas #wrap{padding:2px 3px}
@@ -465,7 +466,7 @@
       return;
     }
     whoEl.textContent = '· ' + ((s.mt && s.mt.name) ? 'MT ' + s.mt.name : s.character);
-    if (s.fast_sync) { syncEl.textContent = 'sync'; syncEl.style.color = '#56d364'; syncEl.style.borderColor = '#56d364'; }
+    if (s.fast_sync) { syncEl.textContent = 'sync'; syncEl.style.color = 'var(--wp-green)'; syncEl.style.borderColor = 'var(--wp-green)'; }
     else { syncEl.textContent = 'local'; syncEl.style.color = '#9aa4ad'; syncEl.style.borderColor = 'rgba(255,255,255,0.2)'; }
 
     var html = '';
@@ -614,7 +615,7 @@
       var line = ch.is_target
         ? '🪢 <strong>Your CH</strong> in ' + dueSec + 's <span class="opacity-70">(beat ' + beatSec + 's)</span>'
         : '🪢 CH on <strong>' + esc(ch.target || '?') + '</strong> in ' + dueSec + 's <span class="opacity-70">(beat ' + beatSec + 's)</span>';
-      html += '<div class="enrage ' + urgCls + '" style="border-color:' + (ch.urgency === 'red' ? '#f87171' : ch.urgency === 'yellow' ? '#f0d264' : '#56d364') + ';background:rgb(0 0 0 / var(--bg-alpha))">' + line + '</div>';
+      html += '<div class="enrage ' + urgCls + '" style="border-color:' + (ch.urgency === 'red' ? '#f87171' : ch.urgency === 'yellow' ? '#f0d264' : 'var(--wp-green)') + ';background:rgb(0 0 0 / var(--bg-alpha))">' + line + '</div>';
     }
 
     // DS card — the MAIN TANK's parser-confirmed reflects this fight (never
@@ -665,7 +666,7 @@
     var buffHead = mt ? 'Buffs — ' + esc(mt.name) : 'Buffs';
     // 'observed' = landing inference only (MT not running Mimic) — partial
     // by nature, so say so instead of letting it read as the full list.
-    if (mt && mt.buff_source === 'observed') buffHead += ' <span style="text-transform:none;color:#6e7681">(observed — MT not on Mimic)</span>';
+    if (mt && mt.buff_source === 'observed') buffHead += ' <span style="text-transform:none;color:var(--wp-dim)">(observed — MT not on Mimic)</span>';
     if (buffSrc.length) {
       var buffsHtml = '';
       var buffs = buffSrc.slice().sort(function(a,b){
@@ -683,7 +684,7 @@
       html += '<div class="card"><div class="head">' + buffHead + '</div><div class="buffs">' + buffsHtml + '</div></div>';
     } else if (mt && !mt.is_self) {
       html += '<div class="card"><div class="head">' + buffHead + '</div>'
-           +  '<div class="buffs"><div class="buff"><span class="name" style="color:#6e7681;font-style:italic">no buffs observed on the MT yet</span></div></div></div>';
+           +  '<div class="buffs"><div class="buff"><span class="name" style="color:var(--wp-dim);font-style:italic">no buffs observed on the MT yet</span></div></div></div>';
     }
 
     // Hurt offtanks — the same list the CH-chain overlay shows, so a tank

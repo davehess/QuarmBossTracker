@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>chat</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Chat overlay: this PC's own chat feed (the guild lead, 2026-10-14: "move it off the screen and be able
      to show/hide different components from it, or break it into tabs"). Picked "B then A": ONE scrolling
@@ -29,16 +30,16 @@
   .title{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:0 24px 0 24px;
     font-size:12px;color:#7ee7c7;text-shadow:0 1px 2px #000;min-height:18px}
   .conn{font-size:11px}
-  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .conn.ok{color:var(--wp-green)} .conn.bad{color:#8b949e}
   .title .sp{flex:1}
   .fbtn{font-family:inherit;font-size:10px;font-weight:bold;letter-spacing:0.5px;padding:0 6px;border-radius:3px;
-    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid #30363d;cursor:pointer;line-height:15px;white-space:nowrap}
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid var(--wp-border);cursor:pointer;line-height:15px;white-space:nowrap}
   .fbtn:hover{color:#7ee7c7;border-color:#2da68a}
   .fbtn.on{background:#10302a;color:#7ee7c7;border-color:#2da68a}
   /* the channel chips: lit = shown. The dot carries the channel's colour even when the chip is off. */
   #chips{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:3px}
   .chip{font-family:inherit;font-size:10px;padding:0 6px 0 5px;border-radius:3px;background:rgba(14,17,22,0.6);
-    color:#6e7681;border:1px solid #30363d;cursor:pointer;line-height:15px;white-space:nowrap;
+    color:var(--wp-dim);border:1px solid var(--wp-border);cursor:pointer;line-height:15px;white-space:nowrap;
     display:inline-flex;align-items:center;gap:4px}
   .chip i{width:7px;height:7px;border-radius:50%;background:var(--c);opacity:0.45;display:inline-block}
   .chip:hover{border-color:var(--c)}
@@ -61,11 +62,11 @@
   #ctxmenu{position:fixed;z-index:200;display:flex;flex-direction:column;gap:2px;padding:4px;border-radius:5px;
     background:rgba(14,17,22,0.95);border:1px solid rgba(88,166,255,0.4);box-shadow:0 4px 12px rgba(0,0,0,0.6)}
   #ctxmenu button{font-family:inherit;font-size:11px;text-align:left;white-space:nowrap;padding:5px 10px;border-radius:3px;
-    background:#21262d;color:#c9d1d9;border:1px solid #30363d;cursor:pointer}
-  #ctxmenu button:hover{background:#1f6feb;color:#fff}
+    background:#21262d;color:var(--wp-text);border:1px solid var(--wp-border);cursor:pointer}
+  #ctxmenu button:hover{background:var(--wp-accent);color:#fff}
   /* settings drawer behind the gear: text size and the opt-in channels */
   #spanel{display:none;flex:0 0 auto;flex-direction:column;gap:5px;padding:6px 8px;border-radius:5px;
-    background:rgb(0 0 0 / max(var(--bg-alpha), 0.6));font-size:11px;color:#c9d1d9;text-shadow:0 1px 2px #000}
+    background:rgb(0 0 0 / max(var(--bg-alpha), 0.6));font-size:11px;color:var(--wp-text);text-shadow:0 1px 2px #000}
   #spanel.open{display:flex}
   #spanel .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   #spanel .hint{font-size:10px;color:#8b949e;line-height:1.35}
@@ -88,35 +89,35 @@
   #feed::-webkit-scrollbar-track{background:transparent}
   /* one line of chat flows like EQ's own window: inline pieces, and a wrap runs back under the line (14px hanging
      indent) instead of down a narrow column beside the name (the guild lead, 2026-10-14: "some weird spacing") */
-  .ln{display:block;padding:0 0 0 19px;text-indent:-14px;border-left:3px solid var(--lc,#6e7681);
+  .ln{display:block;padding:0 0 0 19px;text-indent:-14px;border-left:3px solid var(--lc,var(--wp-dim));
     text-shadow:0 1px 2px #000;overflow-wrap:anywhere}
   .ln > *{margin-right:6px}
   .ln > .tx{margin-right:0}
   /* the timestamp is a button: click it to copy the line */
-  .ln .tm{flex:0 0 auto;color:#6e7681;font-size:0.82em;font-variant-numeric:tabular-nums;font-family:inherit;
+  .ln .tm{flex:0 0 auto;color:var(--wp-dim);font-size:0.82em;font-variant-numeric:tabular-nums;font-family:inherit;
     background:none;border:0;padding:0;margin:0 6px 0 0;cursor:copy;text-shadow:inherit;line-height:inherit;text-indent:0}
   .ln .tm:hover{color:#7ee7c7;text-decoration:underline}
-  .ln .tm.copied{color:#56d364;text-decoration:none}
-  .ln .tx{flex:1 1 auto;min-width:0;color:var(--lc,#c9d1d9)}
+  .ln .tm.copied{color:var(--wp-green);text-decoration:none}
+  .ln .tx{flex:1 1 auto;min-width:0;color:var(--lc,var(--wp-text))}
   /* a line relayed from another member's Mimic while you are out of game: a small dim mark after the text, nothing louder */
   /* a /random as one line: the item the roll was for is a link to its PQDI page; ▲ marks a roll that beat every earlier one of its range */
   .ln .tx a.itm{color:#7ee7c7;text-decoration:underline dotted;cursor:pointer}
   .ln .tx a.itm:hover{text-decoration:underline}
   .ln .tx .rtop{color:#e3b341;font-size:0.85em;white-space:nowrap}
-  .ln .via{margin-left:6px;font-size:0.75em;font-style:italic;color:#6e7681;white-space:nowrap}
+  .ln .via{margin-left:6px;font-size:0.75em;font-style:italic;color:var(--wp-dim);white-space:nowrap}
   /* the title bar's hint while that feed is live */
-  .awayhint{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#6e7681}
+  .awayhint{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--wp-dim)}
   .awayhint[hidden]{display:none}
   /* nobody with Mimic is in game, so there is nothing to relay: said once, dim, not an alarm */
-  .awaynote{flex:0 0 auto;font-size:10px;color:#6e7681;text-shadow:0 1px 2px #000;padding:0 2px}
+  .awaynote{flex:0 0 auto;font-size:10px;color:var(--wp-dim);text-shadow:0 1px 2px #000;padding:0 2px}
   .awaynote[hidden]{display:none}
-  .ln .who{flex:0 0 auto;font-weight:bold;color:var(--lc,#c9d1d9)}
+  .ln .who{flex:0 0 auto;font-weight:bold;color:var(--lc,var(--wp-text))}
   .ln .who.you{opacity:0.75}
   .ln .who.npc{font-weight:normal;font-style:italic}
-  .ln .arrow{flex:0 0 auto;color:#6e7681}
+  .ln .arrow{flex:0 0 auto;color:var(--wp-dim)}
   /* the EQ-style channel tag in front of a line: [GU] [P] [2]. Bold in the channel's own colour, fixed to its
      content so a column of them lines up on the left without a wide gutter. Right-click it for "Show only". */
-  .ln .ctag{flex:0 0 auto;font-weight:bold;color:var(--lc,#c9d1d9);font-size:0.86em;letter-spacing:0.2px;cursor:context-menu}
+  .ln .ctag{flex:0 0 auto;font-weight:bold;color:var(--lc,var(--wp-text));font-size:0.86em;letter-spacing:0.2px;cursor:context-menu}
   /* "Show only [GU]" is on: a pill above the feed says so, and its ✕ turns it off */
   #onlypill{display:none;flex:0 0 auto;align-items:center;gap:6px;align-self:flex-start;padding:0 3px 0 8px;border-radius:9px;
     background:#10302a;color:#7ee7c7;border:1px solid #2da68a;font-size:10px;line-height:15px}
@@ -126,17 +127,17 @@
   /* a zone change: dim, no speaker, so it reads as a note in the margin rather than something said */
   .ln.zone .tx{font-style:italic;opacity:0.85}
   /* which of your characters heard it: shown only where the character changes without a swap line, so it never fills the feed */
-  .ln .otag{flex:0 0 auto;color:#6e7681;font-size:0.78em;border:1px solid #30363d;border-radius:3px;padding:0 3px;line-height:1.3}
+  .ln .otag{flex:0 0 auto;color:var(--wp-dim);font-size:0.78em;border:1px solid var(--wp-border);border-radius:3px;padding:0 3px;line-height:1.3}
   /* "Swapped to X": a rule across the feed, not a line of chat. It has no timestamp button, so nothing copies from it. */
   .sep{display:flex;align-items:center;gap:6px;margin:3px 0;color:#8b949e;font-size:0.82em;text-shadow:0 1px 2px #000}
   .sep::before,.sep::after{content:"";flex:1 1 12px;border-top:1px solid rgba(139,148,158,0.4)}
   .sep span{flex:0 1 auto;text-align:center}
-  .hdiv{margin:3px 0;text-align:center;color:#6e7681;font-size:0.82em;font-style:italic;text-shadow:0 1px 2px #000}
+  .hdiv{margin:3px 0;text-align:center;color:var(--wp-dim);font-size:0.82em;font-style:italic;text-shadow:0 1px 2px #000}
   /* the search box and the history button live in the title bar; a locked overlay is click-through, so both are armed by the preload */
   #find{flex:1 1 50px;min-width:40px;max-width:130px;box-sizing:border-box;font-family:inherit;font-size:10px;padding:0 5px;
-    height:17px;border-radius:3px;background:rgba(14,17,22,0.7);color:#e6edf3;border:1px solid #30363d;user-select:text}
+    height:17px;border-radius:3px;background:rgba(14,17,22,0.7);color:#e6edf3;border:1px solid var(--wp-border);user-select:text}
   #find:focus{outline:none;border-color:#2da68a}
-  #find::placeholder{color:#6e7681}
+  #find::placeholder{color:var(--wp-dim)}
   #cpick{display:none;flex:0 0 auto;flex-wrap:wrap;gap:3px}
   #cpick.open{display:flex}
   #empty{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
@@ -413,7 +414,7 @@
   // The line's colour: a CSS variable per category (melee misses dimmer; Spells and Skills each a shade per category
   // inside their hue), else the channel's own.
   function lineColor(l){
-    var base = (_channels[l.ch] || {}).color || '#c9d1d9';
+    var base = (_channels[l.ch] || {}).color || 'var(--wp-text)';
     if (l.ch === 'melee' && l.cat) return 'var(--c-melee-' + l.cat + (l.miss ? '-miss' : '') + ',' + base + ')';
     if ((l.ch === 'spell' || l.ch === 'skill') && l.cat) return 'var(--c-' + l.ch + '-' + l.cat + ',' + base + ')';
     return base;

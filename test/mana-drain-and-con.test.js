@@ -298,7 +298,7 @@ describe('the Target Info card', () => {
     expect(h).toContain('level <b>61–62</b>');
     expect(h).toContain('yellow con');
     expect(h).toContain('last seen 58');
-    expect(h).toContain('drained up to <b style="color:#58a6ff">770</b> mana · 2 casts');
+    expect(h).toContain('drained up to <b style="color:var(--wp-blue)">770</b> mana · 2 casts');
   });
   it('with no level at all, says where it comes from: /who, or an even con', () => {
     expect(card({ anonymous: true })).toContain('level unknown until a /who sees them out of anonymous or they con even');

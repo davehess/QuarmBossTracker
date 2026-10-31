@@ -32,7 +32,7 @@ describe('A: backing is only a plate', () => {
   it('the plate adds no padding, border or margin of its own: the box and content area are the same with or without it', () => {
     const plain = body('.panel.part > .pbody'), back = body('.panel.part.back > .pbody');
     expect(plain).toMatch(/padding:1px 3px/);
-    expect(back).toMatch(/background:rgba\(13,17,23,var\(--bg-alpha,0\.72\)\)/);
+    expect(back).toMatch(/background:rgba\(var\(--wp-bg-rgb\),var\(--bg-alpha,0\.72\)\)/);
     expect(back).not.toMatch(/padding|margin|(?:^|;)\s*border\s*:|border-width/);
     // the outline is drawn, not laid out
     expect(back).toMatch(/box-shadow:inset 0 0 0 1px/);

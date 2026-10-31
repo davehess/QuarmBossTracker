@@ -47,7 +47,7 @@ const srv = http.createServer((req, res) => {
   }
   const f = path.join(MIMIC, u.pathname.replace(/^\/+/, ''));
   if (f.startsWith(MIMIC) && fs.existsSync(f) && fs.statSync(f).isFile()) {
-    res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' });
+    res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : f.endsWith('.css') ? 'text/css' : 'text/html' });
     // The Map names its walls "Wolf Pack" when the agent holds no map file of the player's own. These walls are EQEmu's, and the
     // agent has no label for that layer, so the capture is served with the label reworded (the repo's map.html is untouched).
     if (u.pathname === '/map.html') return res.end(fs.readFileSync(f, 'utf8').replace("return 'walls: Wolf Pack';", "return 'walls: EQEmu (generated)';"));

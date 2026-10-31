@@ -377,7 +377,7 @@ describe('the Box (was A)', () => {
 
     it('a shield-cancelling debuff reads red "DS OFF" with the time left, as it does on the ring', () => {
       const off = { name: 'Mark of the Plague Lords', heals: 50, seconds: 125 };
-      expect(chips(R.renderA(snap({ my_procs: 1, my_stuns: 1 }, Object.assign({}, DS, { per_hit: 0, off }))))[2]).toEqual(['#f85149', 'DS OFF', '2:05']);
+      expect(chips(R.renderA(snap({ my_procs: 1, my_stuns: 1 }, Object.assign({}, DS, { per_hit: 0, off }))))[2]).toEqual(['var(--wp-red)', 'DS OFF', '2:05']);
     });
   });
 });
@@ -1196,7 +1196,7 @@ describe('the three HUDs', () => {
     const fn = HUDS.HUD || Object.values(HUDS)[0];
     const off = { name: 'Mark of the Plague Lords', heals: 50, seconds: 125 };
     const h = fn(Object.assign({}, base, { combat: Object.assign({}, base.combat, { ds: { hits: 3, total: 114, last: 38, per_hit: 0, from_buffs: true, kind: null, off } }) }));
-    expect(h).toMatch(/r="13" fill="rgba\(60,8,8,0\.82\)" stroke="#f85149"[^>]*stroke-dasharray="3 2"/);
+    expect(h).toMatch(/r="13" fill="rgba\(60,8,8,0\.82\)" stroke="var\(--wp-red\)"[^>]*stroke-dasharray="3 2"/);
     expect(h).toMatch(/>DS OFF</);
     expect(h).toMatch(/>2:05</);
     expect(h).not.toContain('#1d5c2e');

@@ -1,7 +1,8 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>UI Studio</title>
+<link rel="stylesheet" href="theme.css">
 <style>
-  html,body{margin:0;height:100%;background:#0d1117;color:#e6edf3;
+  html,body{margin:0;height:100%;background:var(--wp-bg);color:#e6edf3;
     font-family:ui-sans-serif,system-ui,sans-serif;user-select:none;overflow:hidden}
   /* Page is a flex column: toolbar takes its NATURAL height (it wraps to 2+
      rows when there are many buttons) and #content fills the rest. This is why
@@ -11,42 +12,42 @@
   body{display:flex;flex-direction:column}
   #content{flex:1 1 auto;display:flex;min-height:0}
   /* Top toolbar — resolution pickers, character selector, save/load. */
-  #bar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#161b22;
-    border-bottom:1px solid #30363d;flex-wrap:wrap}
+  #bar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--wp-panel);
+    border-bottom:1px solid var(--wp-border);flex-wrap:wrap}
   #bar h1{font-size:13px;margin:0;color:#7ee7c7;letter-spacing:0.5px;font-weight:600;margin-right:6px}
   #bar label{font-size:11px;color:#8b949e;display:flex;align-items:center;gap:4px}
-  #bar select,#bar input,#bar button{background:#0d1117;color:#e6edf3;border:1px solid #30363d;
+  #bar select,#bar input,#bar button{background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-border);
     border-radius:4px;padding:4px 8px;font-size:11px;font-family:inherit}
-  #bar select:hover,#bar input:hover{border-color:#58a6ff}
-  #bar button{cursor:pointer;background:#1f6feb;border-color:#1f6feb;color:#fff;font-weight:600}
+  #bar select:hover,#bar input:hover{border-color:var(--wp-blue)}
+  #bar button{cursor:pointer;background:var(--wp-accent);border-color:var(--wp-accent);color:#fff;font-weight:600}
   #bar button:hover{background:#388bfd}
-  #bar button.secondary{background:#21262d;border-color:#30363d;color:#c9d1d9;font-weight:500}
-  #bar button.secondary:hover{background:#30363d}
+  #bar button.secondary{background:#21262d;border-color:var(--wp-border);color:var(--wp-text);font-weight:500}
+  #bar button.secondary:hover{background:var(--wp-border)}
   #bar button[disabled]{opacity:0.4;cursor:not-allowed}
-  #bar .sep{width:1px;height:18px;background:#30363d;margin:0 2px}
+  #bar .sep{width:1px;height:18px;background:var(--wp-border);margin:0 2px}
   #status{margin-left:auto;font-size:10px;color:#8b949e}
-  #status.ok{color:#56d364} #status.err{color:#f87171}
+  #status.ok{color:var(--wp-green)} #status.err{color:#f87171}
   /* Named-layout row: same look as the toolbar, one line under it. */
   #layoutBar{flex:0 0 auto;align-items:center;gap:8px;padding:6px 12px;background:#131820;
-    border-bottom:1px solid #30363d;flex-wrap:wrap;font-size:11px;color:#8b949e}
+    border-bottom:1px solid var(--wp-border);flex-wrap:wrap;font-size:11px;color:#8b949e}
   #layoutBar strong{color:#7ee7c7;font-weight:600}
-  #layoutBar select,#layoutBar input,#layoutBar button{background:#0d1117;color:#e6edf3;border:1px solid #30363d;
+  #layoutBar select,#layoutBar input,#layoutBar button{background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-border);
     border-radius:4px;padding:4px 8px;font-size:11px;font-family:inherit}
   #layoutBar select{min-width:260px;max-width:420px}
   #layoutBar input{width:200px;user-select:text}
-  #layoutBar button{cursor:pointer;background:#1f6feb;border-color:#1f6feb;color:#fff;font-weight:600}
+  #layoutBar button{cursor:pointer;background:var(--wp-accent);border-color:var(--wp-accent);color:#fff;font-weight:600}
   #layoutBar button:hover{background:#388bfd}
-  #layoutBar button.secondary{background:#21262d;border-color:#30363d;color:#c9d1d9;font-weight:500}
-  #layoutBar button.secondary:hover{background:#30363d}
+  #layoutBar button.secondary{background:#21262d;border-color:var(--wp-border);color:var(--wp-text);font-weight:500}
+  #layoutBar button.secondary:hover{background:var(--wp-border)}
   #layoutBar button[disabled]{opacity:0.4;cursor:not-allowed}
-  #layoutBar .sep{width:1px;height:18px;background:#30363d}
+  #layoutBar .sep{width:1px;height:18px;background:var(--wp-border)}
   #layoutMsg{margin-left:auto;font-size:10px}
-  #layoutMsg.ok{color:#56d364} #layoutMsg.err{color:#f87171}
+  #layoutMsg.ok{color:var(--wp-green)} #layoutMsg.err{color:#f87171}
   /* Canvas — proportional to target resolution, scaled to fit. Black bg
      represents the EQ screen. Window rectangles overlay. */
   #stageWrap{display:flex;justify-content:center;align-items:center;flex:1 1 auto;min-width:0;
     padding:14px;background:#0a0c10;overflow:auto}
-  #stage{position:relative;background:#000;border:1px solid #58a6ff;
+  #stage{position:relative;background:#000;border:1px solid var(--wp-blue);
     box-shadow:0 0 12px rgba(88,166,255,0.18)}
   /* Each window rectangle is absolutely positioned inside #stage. Color-coded
      by kind so a glance at the canvas tells you what's a chat window vs a
@@ -84,54 +85,54 @@
   .chatCard.chatSel{outline:2px solid #7ee7c7;outline-offset:1px}
   .chatCard.chatFlash{animation:chatFlash .9s ease-out}
   @keyframes chatFlash{0%{box-shadow:0 0 0 4px rgba(126,231,199,.8)}100%{box-shadow:0 0 0 0 rgba(126,231,199,0)}}
-  #stage.chipDragging .win.chat-drop{outline:2px dashed #58a6ff;outline-offset:-2px}
+  #stage.chipDragging .win.chat-drop{outline:2px dashed var(--wp-blue);outline-offset:-2px}
   #stage.chipDragging .win:not(.chat-drop){opacity:.35}
-  .win.chat-drop-hover{outline:2px solid #58a6ff !important;background:rgba(88,166,255,.38) !important}
+  .win.chat-drop-hover{outline:2px solid var(--wp-blue) !important;background:rgba(88,166,255,.38) !important}
   /* Side panel for the selected window's properties. Flex item (not fixed) so
      it sits beside the canvas under the natural-height toolbar. */
-  #side{flex:0 0 240px;box-sizing:border-box;background:#161b22;
-    border-left:1px solid #30363d;padding:10px;font-size:11px;overflow-y:auto;
+  #side{flex:0 0 240px;box-sizing:border-box;background:var(--wp-panel);
+    border-left:1px solid var(--wp-border);padding:10px;font-size:11px;overflow-y:auto;
     display:none}
   #side.on{display:block}
   #side h3{margin:0 0 8px 0;color:#7ee7c7;font-size:12px}
   #side .field{margin-bottom:6px}
   #side .field label{display:block;color:#8b949e;font-size:10px;margin-bottom:2px}
-  #side .field input{width:100%;box-sizing:border-box;background:#0d1117;
-    color:#e6edf3;border:1px solid #30363d;border-radius:3px;padding:3px 6px;font-size:11px}
+  #side .field input{width:100%;box-sizing:border-box;background:var(--wp-bg);
+    color:#e6edf3;border:1px solid var(--wp-border);border-radius:3px;padding:3px 6px;font-size:11px}
   #side .row{display:flex;gap:6px}
   #side .row .field{flex:1}
-  #side .meta{color:#6e7681;font-size:9px;margin-top:8px}
-  #side .meta button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:2px 10px;font-size:11px;cursor:pointer}
-  #side .meta button:hover{background:#30363d}
+  #side .meta{color:var(--wp-dim);font-size:9px;margin-top:8px}
+  #side .meta button{background:#21262d;color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;padding:2px 10px;font-size:11px;cursor:pointer}
+  #side .meta button:hover{background:var(--wp-border)}
   /* The Hotbar Pages editor is docked beside the canvas (a flex item of #content), so the canvas gives up
      width instead of being covered; the window-properties panel steps aside while it is open. */
   body.inspecting #side{display:none !important}
   /* "Discard changes to hotbar pages?" */
   .chatRenameIn{user-select:text}
   #discardAsk{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:90;display:flex;align-items:center;justify-content:center}
-  #discardAsk .box{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;width:min(380px,90vw);color:#c9d1d9;font-size:12px}
+  #discardAsk .box{background:var(--wp-panel);border:1px solid var(--wp-border);border-radius:8px;padding:16px;width:min(380px,90vw);color:var(--wp-text);font-size:12px}
   #discardAsk h3{margin:0 0 6px;color:#7ee7c7;font-size:14px}
   #discardAsk p{margin:0 0 12px;color:#9aa4ad;line-height:1.4}
   #discardAsk .btns{display:flex;gap:8px;justify-content:flex-end}
-  #discardAsk button{background:#f85149;border:1px solid #f85149;color:#fff;border-radius:4px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
-  #discardAsk button.secondary{background:#1f6feb;border-color:#1f6feb}
+  #discardAsk button{background:var(--wp-red);border:1px solid var(--wp-red);color:#fff;border-radius:4px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+  #discardAsk button.secondary{background:var(--wp-accent);border-color:var(--wp-accent)}
   /* Left filter panel — category toggles so the canvas isn't an unreadable
      pile of all 130 windows at once. Flex item beside the canvas. View-only
      (Save still writes every window). */
   #filterPanel{flex:0 0 186px;box-sizing:border-box;
-    background:#161b22;border-right:1px solid #30363d;padding:10px;font-size:11px;
+    background:var(--wp-panel);border-right:1px solid var(--wp-border);padding:10px;font-size:11px;
     overflow-y:auto}
   #filterPanel h3{margin:0 0 6px;color:#7ee7c7;font-size:12px}
-  #filterPanel .hint{color:#6e7681;font-size:9px;margin:0 0 8px;line-height:1.4}
+  #filterPanel .hint{color:var(--wp-dim);font-size:9px;margin:0 0 8px;line-height:1.4}
   #filterPanel .fbtns{display:flex;gap:6px;margin-bottom:8px}
   #filterPanel .fbtns button{flex:1;font-size:10px;padding:3px 0;background:#21262d;
-    border:1px solid #30363d;color:#c9d1d9;border-radius:4px;cursor:pointer;font-family:inherit}
-  #filterPanel .fbtns button:hover{background:#30363d;border-color:#58a6ff}
+    border:1px solid var(--wp-border);color:var(--wp-text);border-radius:4px;cursor:pointer;font-family:inherit}
+  #filterPanel .fbtns button:hover{background:var(--wp-border);border-color:var(--wp-blue)}
   #filterPanel label{display:flex;align-items:center;gap:6px;padding:3px 3px;cursor:pointer;
-    color:#c9d1d9;border-radius:3px;user-select:none}
-  #filterPanel label:hover{background:#0d1117}
+    color:var(--wp-text);border-radius:3px;user-select:none}
+  #filterPanel label:hover{background:var(--wp-bg)}
   #filterPanel label input{margin:0}
-  #filterPanel label .cnt{margin-left:auto;color:#6e7681;font-size:10px}
+  #filterPanel label .cnt{margin-left:auto;color:var(--wp-dim);font-size:10px}
   #filterPanel label.empty{opacity:0.4;cursor:default}
   /* Snap edge highlight when dragging — visual feedback when a window
      edge aligns with another window edge. */
@@ -146,7 +147,7 @@
     <label>Character
       <select id="charSelect"><option value="">— pick —</option></select>
     </label>
-    <span id="eqDirLabel" style="font-size:10px;color:#6e7681;max-width:240px;overflow:hidden;
+    <span id="eqDirLabel" style="font-size:10px;color:var(--wp-dim);max-width:240px;overflow:hidden;
       text-overflow:ellipsis;white-space:nowrap" title=""></span>
     <span class="sep"></span>
     <!-- Source/Target use a preset <select> + freeform W×H inputs. The
@@ -215,14 +216,14 @@
   <div id="deferBanner" style="display:none;align-items:center;gap:10px;padding:6px 12px;
        background:#1c2330;border-bottom:1px solid #d6a922;color:#f0d264;font-size:11px">
     <span class="txt"></span>
-    <button id="deferCancel" style="margin-left:auto;background:#21262d;color:#c9d1d9;
-       border:1px solid #30363d;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Cancel</button>
+    <button id="deferCancel" style="margin-left:auto;background:#21262d;color:var(--wp-text);
+       border:1px solid var(--wp-border);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Cancel</button>
   </div>
   <!-- PvP-set prompt — slides in from the top when the loaded character's
        class matches a bundled template. User can dismiss or open the
        details panel to preview + import. -->
-  <div id="pvpPrompt" style="display:none;background:#1c2330;border-bottom:1px solid #58a6ff;
-       padding:10px 16px;color:#c9d1d9;font-size:12px;display:none">
+  <div id="pvpPrompt" style="display:none;background:#1c2330;border-bottom:1px solid var(--wp-blue);
+       padding:10px 16px;color:var(--wp-text);font-size:12px;display:none">
     <strong style="color:#7ee7c7" id="pvpPromptTitle">PvP set available</strong>
     <span id="pvpPromptCredit" style="color:#8b949e;margin-left:6px"></span>
     <p id="pvpPromptDesc" style="margin:4px 0;color:#9aa4ad;font-size:11px"></p>
@@ -235,15 +236,15 @@
        (CRLF-preserving); Save writes with a .bak backup. -->
   <div id="ssModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:80">
     <div style="position:absolute;top:8%;left:50%;transform:translateX(-50%);width:440px;max-height:80%;overflow-y:auto;
-         background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;color:#c9d1d9;font-size:12px">
+         background:var(--wp-panel);border:1px solid var(--wp-border);border-radius:8px;padding:16px;color:var(--wp-text);font-size:12px">
       <button id="ssClose" style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px">✕</button>
       <h3 style="margin:0 0 4px">🎵 Swap a song/spell across all spell sets</h3>
       <p id="ssFileLine" style="margin:0 0 10px;color:#8b949e;font-size:10px"></p>
       <label style="display:block;margin-bottom:8px">Replace this spell (currently in your sets):
-        <select id="ssOld" style="width:100%;margin-top:3px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px"></select>
+        <select id="ssOld" style="width:100%;margin-top:3px;background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;padding:4px"></select>
       </label>
       <label style="display:block;margin-bottom:8px">With this one (type a spell name, or a spell id):
-        <input id="ssNew" list="ssCatalog" placeholder="e.g. Chorus of Marr — or 1234" autocomplete="off" style="width:100%;margin-top:3px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px">
+        <input id="ssNew" list="ssCatalog" placeholder="e.g. Chorus of Marr — or 1234" autocomplete="off" style="width:100%;margin-top:3px;background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;padding:4px">
         <datalist id="ssCatalog"></datalist>
       </label>
       <div id="ssPreview" style="margin:8px 0;color:#7ee7c7;min-height:16px"></div>
@@ -258,8 +259,8 @@
        Renders phases, spell sets, clickies, potions for the active
        template. Sits on top of the canvas as an overlay. -->
   <div id="pvpPreview" style="display:none;position:fixed;top:50px;right:0;bottom:0;width:380px;
-       background:#161b22;border-left:1px solid #30363d;z-index:50;overflow-y:auto;
-       padding:14px;font-size:12px;color:#c9d1d9">
+       background:var(--wp-panel);border-left:1px solid var(--wp-border);z-index:50;overflow-y:auto;
+       padding:14px;font-size:12px;color:var(--wp-text)">
     <button id="pvpPreviewClose" style="float:right;background:none;border:none;color:#8b949e;
        cursor:pointer;font-size:18px">×</button>
     <h2 id="pvpPreviewName" style="margin:0 0 4px;color:#7ee7c7;font-size:15px"></h2>
@@ -671,21 +672,21 @@
     var dlg = document.createElement('div');
     dlg.id = 'displayPicker';
     dlg.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);' +
-      'background:#161b22;border:1px solid #58a6ff;border-radius:6px;z-index:100;' +
-      'padding:10px;font-size:12px;color:#c9d1d9;min-width:280px;box-shadow:0 4px 16px rgba(0,0,0,0.5)';
+      'background:var(--wp-panel);border:1px solid var(--wp-blue);border-radius:6px;z-index:100;' +
+      'padding:10px;font-size:12px;color:var(--wp-text);min-width:280px;box-shadow:0 4px 16px rgba(0,0,0,0.5)';
     var html = '<div style="color:#7ee7c7;font-weight:600;margin-bottom:6px">Pick a display for Target</div>' +
       '<div style="color:#8b949e;font-size:10px;margin-bottom:8px">EQ runs fullscreen at the monitor\'s full pixel size — pick the screen you play on.</div>';
     for (var i = 0; i < displays.length; i++) {
       var d = displays[i];
       html += '<button data-w="' + d.w + '" data-h="' + d.h + '" ' +
-        'style="display:block;width:100%;text-align:left;background:#0d1117;color:#e6edf3;' +
-        'border:1px solid #30363d;border-radius:4px;padding:6px 8px;margin-bottom:4px;' +
+        'style="display:block;width:100%;text-align:left;background:var(--wp-bg);color:#e6edf3;' +
+        'border:1px solid var(--wp-border);border-radius:4px;padding:6px 8px;margin-bottom:4px;' +
         'cursor:pointer;font-size:11px;font-family:inherit">' + escapeHtml(d.label) +
         (d.scaleFactor !== 1 ? ' <span style="color:#8b949e">@ ' + d.scaleFactor + 'x DPI</span>' : '') +
         '</button>';
     }
     html += '<div style="margin-top:6px;text-align:right">' +
-      '<button id="displayPickerCancel" style="background:transparent;color:#8b949e;border:1px solid #30363d;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>' +
+      '<button id="displayPickerCancel" style="background:transparent;color:#8b949e;border:1px solid var(--wp-border);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>' +
       '</div>';
     dlg.innerHTML = html;
     document.body.appendChild(dlg);
@@ -1311,7 +1312,7 @@
     // up front so the user knows BEFORE scrolling that optional sections
     // are skippable.
     if (raw.availability_note) {
-      html += '<div style="background:#1f2a3d;border-left:3px solid #f0d264;padding:6px 8px;margin-bottom:10px;color:#c9d1d9;font-size:11px;line-height:1.5">'
+      html += '<div style="background:#1f2a3d;border-left:3px solid #f0d264;padding:6px 8px;margin-bottom:10px;color:var(--wp-text);font-size:11px;line-height:1.5">'
             + '<strong style="color:#f0d264">Bring what you have on the truck.</strong> '
             + escapeHtml(raw.availability_note)
             + '</div>';
@@ -1322,7 +1323,7 @@
     if (Array.isArray(raw.phases)) {
       for (var i = 0; i < raw.phases.length; i++) {
         var ph = raw.phases[i];
-        html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:5px;padding:8px;margin-bottom:8px">'
+        html += '<div style="background:var(--wp-bg);border:1px solid var(--wp-border);border-radius:5px;padding:8px;margin-bottom:8px">'
               + '<div style="color:#7ee7c7;font-weight:600;margin-bottom:4px">' + escapeHtml(ph.name)
               + (ph.page_label ? ' <span style="color:#8b949e;font-weight:400">— ' + escapeHtml(ph.page_label) + '</span>' : '')
               + '</div>';
@@ -1347,12 +1348,12 @@
       for (var c = 0; c < raw.clickies.length; c++) {
         var ck = raw.clickies[c];
         var tierBadge = ck.tier
-          ? '<span style="background:#21262d;color:#a371f7;border:1px solid #30363d;border-radius:3px;padding:0 4px;font-size:9px;margin-left:4px">' + escapeHtml(ck.tier) + '</span>'
+          ? '<span style="background:#21262d;color:var(--wp-purple);border:1px solid var(--wp-border);border-radius:3px;padding:0 4px;font-size:9px;margin-left:4px">' + escapeHtml(ck.tier) + '</span>'
           : '';
         var reqBadge = ck.required
           ? '<span style="background:#3d1d1d;color:#ff7b72;border-radius:3px;padding:0 4px;font-size:9px;margin-left:4px">REQUIRED</span>'
-          : '<span style="background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:3px;padding:0 4px;font-size:9px;margin-left:4px">optional</span>';
-        html += '<div style="margin-bottom:8px;padding:6px;background:#0d1117;border:1px solid #21262d;border-radius:4px">'
+          : '<span style="background:#21262d;color:#8b949e;border:1px solid var(--wp-border);border-radius:3px;padding:0 4px;font-size:9px;margin-left:4px">optional</span>';
+        html += '<div style="margin-bottom:8px;padding:6px;background:var(--wp-bg);border:1px solid #21262d;border-radius:4px">'
               + '<div><b>' + escapeHtml(ck.slot) + '</b>: ' + escapeHtml(ck.item || '') + tierBadge + reqBadge + '</div>';
         if (ck.provides) {
           html += '<div style="color:#7ee787;font-size:10px;margin-top:3px">Provides: ' + escapeHtml(ck.provides) + '</div>';
@@ -1601,11 +1602,11 @@
              + '<br>Section: <b>' + escapeHtml(w.section) + '</b>'
              + '<br>Read from: <b>' + escapeHtml(w.zealBar ? 'Left/Top (Zeal screen pixels)' : (w.srcSuffix ? w.srcSuffix + ' block' : 'bare XPos/YPos')) + '</b>'
              + (w.hasWH ? '' : (w.sizeEdited
-                  ? '<br><span style="color:#56d364">size pinned — Save writes Width/Height</span>'
+                  ? '<br><span style="color:var(--wp-green)">size pinned — Save writes Width/Height</span>'
                   : '<br><span style="color:#8b949e">auto-size (no Width/Height in the ini) — resize it here to pin one</span>'))
              + '<br>Original: ' + w.origX + ',' + w.origY + ' ' + w.origW + '×' + w.origH;
     if (w.contents && w.contents.length > 0) {
-      meta += '<hr style="border:none;border-top:1px solid #30363d;margin:8px 0">'
+      meta += '<hr style="border:none;border-top:1px solid var(--wp-border);margin:8px 0">'
             + '<div style="color:#7ee7c7;font-size:11px;margin-bottom:4px">Contains</div>';
       for (var ci = 0; ci < w.contents.length; ci++) {
         var c = w.contents[ci];
@@ -1615,9 +1616,9 @@
     }
     var zcmd = _zealBarCommand(w);
     if (zcmd) {
-      meta += '<hr style="border:none;border-top:1px solid #30363d;margin:8px 0">'
+      meta += '<hr style="border:none;border-top:1px solid var(--wp-border);margin:8px 0">'
             + '<div style="color:#7ee7c7;font-size:11px;margin-bottom:4px">Move it in game</div>'
-            + '<code id="zealCmdText" style="display:block;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:4px 6px;color:#e6edf3;font-size:11px;word-break:break-all;user-select:all">' + escapeHtml(zcmd) + '</code>'
+            + '<code id="zealCmdText" style="display:block;background:var(--wp-bg);border:1px solid var(--wp-border);border-radius:4px;padding:4px 6px;color:#e6edf3;font-size:11px;word-break:break-all;user-select:all">' + escapeHtml(zcmd) + '</code>'
             + '<button id="zealCmdCopy" type="button" style="margin-top:4px">Copy</button>'
             + '<div style="margin-top:4px">Paste this in EverQuest chat: Zeal moves it now and remembers it. Saving here instead takes effect next time EverQuest starts.</div>';
     }
@@ -1926,7 +1927,7 @@
       setStatus('spell sets updated', 'ok');
     } else {
       STATE.bundle[_ssKey]=text;   // revert in-memory on save failure
-      st.style.color='#f85149'; st.textContent='Save failed: '+(res && res.error ? res.error : 'unknown');
+      st.style.color='var(--wp-red)'; st.textContent='Save failed: '+(res && res.error ? res.error : 'unknown');
     }
   }
   (function(){
@@ -2130,18 +2131,18 @@
     _layMsg('');
     var old = _layEl('layoutImportPicker'); if (old) old.remove();
     var dlg = document.createElement('div'); dlg.id = 'layoutImportPicker';
-    dlg.style.cssText = 'position:fixed;top:90px;left:50%;transform:translateX(-50%);background:#161b22;border:1px solid #58a6ff;' +
-      'border-radius:6px;z-index:100;padding:10px;font-size:12px;color:#c9d1d9;min-width:340px;max-width:480px;max-height:70vh;overflow-y:auto';
+    dlg.style.cssText = 'position:fixed;top:90px;left:50%;transform:translateX(-50%);background:var(--wp-panel);border:1px solid var(--wp-blue);' +
+      'border-radius:6px;z-index:100;padding:10px;font-size:12px;color:var(--wp-text);min-width:340px;max-width:480px;max-height:70vh;overflow-y:auto';
     var html = '<div style="color:#7ee7c7;font-weight:600;margin-bottom:4px">Bring back a layout for ' + escapeHtml(who.character) + '</div>' +
       '<div style="color:#8b949e;font-size:10px;margin-bottom:8px">Adds it to this computer\'s layouts. Nothing in your EQ folder changes until you Switch to it.</div>';
     snaps.forEach(function(s, i){
-      html += '<button data-i="' + i + '" style="display:block;width:100%;text-align:left;background:#0d1117;color:#e6edf3;border:1px solid #30363d;' +
+      html += '<button data-i="' + i + '" style="display:block;width:100%;text-align:left;background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-border);' +
         'border-radius:4px;padding:6px 8px;margin-bottom:4px;cursor:pointer;font-size:11px;font-family:inherit">' +
         '<div style="font-weight:600">' + escapeHtml(String(s.label).slice(LAY_PREFIX.length)) + '</div>' +
         '<div style="color:#8b949e;font-size:10px">' + escapeHtml(s.created_at ? new Date(s.created_at).toLocaleString() : '') +
         ' · 💻 ' + escapeHtml(s.machine_name || 'unknown machine') + '</div></button>';
     });
-    html += '<div style="text-align:right"><button id="layoutImportCancel" style="background:transparent;color:#8b949e;border:1px solid #30363d;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button></div>';
+    html += '<div style="text-align:right"><button id="layoutImportCancel" style="background:transparent;color:#8b949e;border:1px solid var(--wp-border);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button></div>';
     dlg.innerHTML = html; document.body.appendChild(dlg);
     _layEl('layoutImportCancel').addEventListener('click', function(){ dlg.remove(); });
     dlg.querySelectorAll('button[data-i]').forEach(function(btn){
@@ -2211,8 +2212,8 @@
     var dlg = document.createElement('div');
     dlg.id = 'snapPicker';
     dlg.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);' +
-      'background:#161b22;border:1px solid #58a6ff;border-radius:6px;z-index:100;' +
-      'padding:10px;font-size:12px;color:#c9d1d9;min-width:340px;max-width:480px;' +
+      'background:var(--wp-panel);border:1px solid var(--wp-blue);border-radius:6px;z-index:100;' +
+      'padding:10px;font-size:12px;color:var(--wp-text);min-width:340px;max-width:480px;' +
       'max-height:70vh;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,0.5)';
     var html = '<div style="color:#7ee7c7;font-weight:600;margin-bottom:4px">Restore a backup for ' +
       escapeHtml(who.character) + '</div>' +
@@ -2230,19 +2231,19 @@
                     String(s.machine_name).toLowerCase() === THIS_MACHINE.toLowerCase();
       html += '<button data-id="' + escapeHtml(s.id) + '" ' +
         'data-w="' + (s.source_width || '') + '" data-h="' + (s.source_height || '') + '" ' +
-        'style="display:block;width:100%;text-align:left;background:#0d1117;color:#e6edf3;' +
-        'border:1px solid #30363d;border-radius:4px;padding:6px 8px;margin-bottom:4px;' +
+        'style="display:block;width:100%;text-align:left;background:var(--wp-bg);color:#e6edf3;' +
+        'border:1px solid var(--wp-border);border-radius:4px;padding:6px 8px;margin-bottom:4px;' +
         'cursor:pointer;font-size:11px;font-family:inherit">' +
         '<div style="color:#e6edf3;font-weight:600">' + escapeHtml(label) + '</div>' +
         '<div style="color:#8b949e;font-size:10px">' + escapeHtml(when) + ' · ' + escapeHtml(srcRes) +
         ' · ' + (s.file_count || '?') + ' file(s)</div>' +
-        '<div style="font-size:10px;margin-top:1px;color:' + (s.machine_name ? '#7ee7c7' : '#6e7681') + '">' +
+        '<div style="font-size:10px;margin-top:1px;color:' + (s.machine_name ? '#7ee7c7' : 'var(--wp-dim)') + '">' +
         '💻 ' + escapeHtml(machine) +
         (isThis ? '<span style="color:#8b949e"> · this computer</span>' : '') + '</div>' +
         '</button>';
     }
     html += '<div style="margin-top:6px;text-align:right">' +
-      '<button id="snapPickerCancel" style="background:transparent;color:#8b949e;border:1px solid #30363d;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>' +
+      '<button id="snapPickerCancel" style="background:transparent;color:#8b949e;border:1px solid var(--wp-border);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>' +
       '</div>';
     dlg.innerHTML = html;
     document.body.appendChild(dlg);
@@ -2428,7 +2429,7 @@
   // already read "Ch N", so they get no second copy.
   function _chatChipInner(n, joined) {
     var inf = _chatChannelInfo(n, joined);
-    return escapeHtml(inf.text) + (inf.known ? ' <span class="chId" style="color:#6e7681;font-size:9px">' + n + '</span>' : '');
+    return escapeHtml(inf.text) + (inf.known ? ' <span class="chId" style="color:var(--wp-dim);font-size:9px">' + n + '</span>' : '');
   }
   // The "default:" pill. ChatWindow<N>_DefaultChannel is a different list from
   // ChannelMap; only 3 = Tell is sourced (Zeal creates its tell windows with
@@ -2864,8 +2865,8 @@
       // hotbar pages"): the editor is a flex item of #content, so the layout canvas gives up its width
       // instead of being covered, and #side hides while it is open (body.inspecting).
       dlg.style.cssText = 'position:relative;flex:0 0 auto;min-width:0;box-sizing:border-box;width:' + savedW + 'px;max-width:70vw;' +
-        'background:#161b22;border-left:1px solid #30363d;overflow-y:auto;' +
-        'padding:14px 14px 14px 22px;font-size:11px;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace';
+        'background:var(--wp-panel);border-left:1px solid var(--wp-border);overflow-y:auto;' +
+        'padding:14px 14px 14px 22px;font-size:11px;color:var(--wp-text);font-family:ui-monospace,Menlo,Consolas,monospace';
       document.getElementById('content').appendChild(dlg);
       document.body.classList.add('inspecting');
       // Resize handle pinned to the left edge — drag to resize between 320px
@@ -2903,7 +2904,7 @@
       '<button id="uiInspectorClose" title="Close the inspector (asks first if there are unsaved changes)" ' +
       'style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px;line-height:1;padding:0 0 0 6px">×</button>' +
       '<button id="uiInspectorSave" disabled ' +
-      'style="float:right;background:#21262d;border:1px solid #30363d;color:#6e7681;border-radius:4px;' +
+      'style="float:right;background:#21262d;border:1px solid var(--wp-border);color:var(--wp-dim);border-radius:4px;' +
       'padding:3px 10px;font-family:sans-serif;font-size:11px;cursor:not-allowed;margin-right:8px">Save changes</button>' +
       '<h2 style="margin:0 0 8px;color:#7ee7c7;font-size:13px;font-family:sans-serif">📖 UI Inspector</h2>' +
       '<p style="color:#8b949e;font-size:10px;margin:0 0 10px;font-family:sans-serif">' +
@@ -2942,7 +2943,7 @@
         escapeHtml(chat.file) + ' · ' + view.num + ' windows)</span></span>' +
         '<button id="chatAddBtn" title="Add a chat window: it starts empty, with Main Chat\'s font and settings, ready for channel chips"' +
         (view.num >= CHAT_WINDOWS_MAX ? ' disabled' : '') +
-        ' style="margin-left:auto;background:#1f6feb;border:1px solid #1f6feb;color:#fff;border-radius:4px;padding:2px 9px;font-size:10px;cursor:pointer;font-family:sans-serif">+ New chat window</button></div>' +
+        ' style="margin-left:auto;background:var(--wp-accent);border:1px solid var(--wp-accent);color:#fff;border-radius:4px;padding:2px 9px;font-size:10px;cursor:pointer;font-family:sans-serif">+ New chat window</button></div>' +
         '<p style="color:#8b949e;font-size:10px;margin:0 0 6px;font-family:sans-serif">' +
         'Drag a channel chip from one window to another to reroute. Click <b>★</b> on a window ' +
         'to make it the <b>Always chat here</b> target (highlights + bolds). <b>✎</b> renames, <b>🗑</b> deletes ' +
@@ -2961,9 +2962,9 @@
         var isAlways = alwaysIdx === cwn.index;
         var headerStyle = isAlways
           ? 'color:#f6c365;font-weight:700;letter-spacing:0.5px'
-          : 'color:#c9d1d9;font-weight:600';
+          : 'color:var(--wp-text);font-weight:600';
         var cardBorder = isAlways ? '#f0b429' : '#21262d';
-        var cardBg     = isAlways ? 'rgba(240,180,41,0.06)' : '#0d1117';
+        var cardBg     = isAlways ? 'rgba(240,180,41,0.06)' : 'var(--wp-bg)';
         html += '<div class="chatCard" data-win="' + cwn.index + '" data-is-tell="' + (isTell?'1':'0') + '"' +
           ' style="background:' + cardBg + ';border:1px solid ' + cardBorder + ';border-radius:5px;padding:6px 8px">';
         // Header — name (Chat #) + ✎ + default channel + font + ★ + 🗑
@@ -2976,20 +2977,20 @@
           '<button class="chatRenameBtn" data-win="' + cwn.index + '" title="Rename this chat window (up to ' + CHAT_NAME_MAX + ' characters)" ' +
             'style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:12px;line-height:1;padding:0 2px">✎</button>' +
           '<span style="color:#8b949e;font-size:10px;font-family:sans-serif">default:</span>' +
-          '<span title="' + escapeHtml(_defaultChannelInfo(cwn.default_channel).title) + '" style="background:#161b22;border:1px solid #30363d;border-radius:3px;padding:1px 6px;font-size:10px;color:#79c0ff">' +
+          '<span title="' + escapeHtml(_defaultChannelInfo(cwn.default_channel).title) + '" style="background:var(--wp-panel);border:1px solid var(--wp-border);border-radius:3px;padding:1px 6px;font-size:10px;color:#79c0ff">' +
             escapeHtml(_defaultChannelInfo(cwn.default_channel).text) + '</span>' +
           '<label title="Chat font style: an index 0 to ' + CHAT_FONT_MAX + ' (ChatWindow' + cwn.index + '_FontStyle). The point size each index draws at is not confirmed, so this shows the index." ' +
             'style="display:inline-flex;align-items:center;gap:3px;color:#8b949e;font-size:10px;font-family:sans-serif">font ' +
-            '<select class="chatFontSel" data-win="' + cwn.index + '" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:3px;font-size:10px;padding:0 2px">' +
+            '<select class="chatFontSel" data-win="' + cwn.index + '" style="background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:3px;font-size:10px;padding:0 2px">' +
               _chatFontOptions(cwn.font) + '</select></label>' +
           (isTell
             ? '<span style="margin-left:auto;color:#8b949e;font-size:9px;font-family:sans-serif">tell window · not a drop target</span>'
             : '<button class="alwaysHereBtn" data-win="' + cwn.index + '" title="Always chat here — outgoing chat goes to this window" ' +
-              'style="margin-left:auto;background:none;border:1px solid ' + (isAlways ? '#f0b429' : '#30363d') + ';color:' + (isAlways ? '#f6c365' : '#8b949e') + ';' +
+              'style="margin-left:auto;background:none;border:1px solid ' + (isAlways ? '#f0b429' : 'var(--wp-border)') + ';color:' + (isAlways ? '#f6c365' : '#8b949e') + ';' +
               'cursor:pointer;font-size:13px;line-height:1;padding:2px 8px;border-radius:3px">★</button>') +
           '<button class="chatDeleteBtn" data-win="' + cwn.index + '" title="' + (delWhy ? escapeHtml(delWhy) : 'Delete this chat window: its channels move to Main Chat (0) and later windows renumber') + '"' +
             (delWhy ? ' disabled' : '') +
-            ' style="background:none;border:1px solid #30363d;color:' + (delWhy ? '#484f58' : '#f87171') + ';cursor:' + (delWhy ? 'not-allowed' : 'pointer') + ';font-size:12px;line-height:1;padding:2px 6px;border-radius:3px">🗑</button>' +
+            ' style="background:none;border:1px solid var(--wp-border);color:' + (delWhy ? '#484f58' : '#f87171') + ';cursor:' + (delWhy ? 'not-allowed' : 'pointer') + ';font-size:12px;line-height:1;padding:2px 6px;border-radius:3px">🗑</button>' +
           '</div>';
         if (_chatWhy && _chatWhy.idx === cwn.index) {
           html += '<div class="chatCardWhy" role="alert" style="margin-top:6px;padding:4px 6px;border:1px solid #f87171;border-radius:3px;color:#f6c365;font-size:11px;font-family:sans-serif">' + escapeHtml(_chatWhy.msg) + '</div>';
@@ -2998,7 +2999,7 @@
         html += '<div class="chatChipRow" data-win="' + cwn.index + '" data-drop="' + (isTell?'0':'1') + '" ' +
           'style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;min-height:18px">';
         if (routed.length === 0) {
-          html += '<span style="color:#6e7681;font-size:10px;font-style:italic">no routed channels</span>';
+          html += '<span style="color:var(--wp-dim);font-size:10px;font-style:italic">no routed channels</span>';
         }
         for (var rf = 0; rf < routed.length; rf++) {
           var filt = routed[rf];
@@ -3022,11 +3023,11 @@
 
     // ── Tell windows (Zeal) ───────────────────────────────────────────────
     if (tells) {
-      var onOff = function(v){ return v ? '<span style="color:#56d364">ON</span>' : '<span style="color:#8b949e">off</span>'; };
+      var onOff = function(v){ return v ? '<span style="color:var(--wp-green)">ON</span>' : '<span style="color:#8b949e">off</span>'; };
       html += '<div style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
         '🗨 Tell windows <span style="color:#8b949e;font-weight:400;font-size:10px">(Zeal · ' + escapeHtml(tells.file) + ')</span></div>';
-      html += '<div style="background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:6px 8px;font-size:11px">' +
-        '<div style="color:#c9d1d9"><b>' + escapeHtml(tells.character) + '</b>: tell windows ' + onOff(tells.enabled) +
+      html += '<div style="background:var(--wp-bg);border:1px solid #21262d;border-radius:4px;padding:6px 8px;font-size:11px">' +
+        '<div style="color:var(--wp-text)"><b>' + escapeHtml(tells.character) + '</b>: tell windows ' + onOff(tells.enabled) +
         ' · history ' + onOff(tells.history) + '</div>';
       if (tells.enabled) {
         html += '<div style="color:#9aa4ad;font-size:10px;margin-top:4px">' +
@@ -3078,7 +3079,7 @@
       return out;
     }
     if (_sugTargetFile) {
-      html += '<details id="sugBlock" style="margin-bottom:14px;background:#0d1117;border:1px solid #21262d;border-radius:5px;padding:6px 8px">' +
+      html += '<details id="sugBlock" style="margin-bottom:14px;background:var(--wp-bg);border:1px solid #21262d;border-radius:5px;padding:6px 8px">' +
         '<summary style="color:#f6c365;cursor:pointer;font-family:sans-serif;font-weight:600">📚 Suggested macros ' +
         '<span style="color:#8b949e;font-weight:400;font-size:10px">— CH chain, DA announce, clickies… queue into an empty social slot</span></summary>' +
         '<p style="color:#8b949e;font-size:10px;margin:6px 0;font-family:sans-serif">Seeded from the raid\'s real callouts (the same shapes the ' +
@@ -3088,13 +3089,13 @@
         '<div id="sugQueued" style="margin:4px 0"></div>';
       for (var sgi = 0; sgi < MACRO_SUGGESTIONS.length; sgi++) {
         var sg = MACRO_SUGGESTIONS[sgi];
-        html += '<div style="margin:5px 0;padding:5px 7px;background:#161b22;border:1px solid #21262d;border-radius:4px">' +
+        html += '<div style="margin:5px 0;padding:5px 7px;background:var(--wp-panel);border:1px solid #21262d;border-radius:4px">' +
           '<div style="display:flex;align-items:center;gap:6px">' +
-            '<b style="color:#56d364;font-size:11px;font-family:sans-serif">' + escapeHtml(sg.name) + '</b>' +
-            '<span style="color:#a371f7;font-size:9px;font-family:sans-serif">' + escapeHtml(sg.who) + '</span>' +
+            '<b style="color:var(--wp-green);font-size:11px;font-family:sans-serif">' + escapeHtml(sg.name) + '</b>' +
+            '<span style="color:var(--wp-purple);font-size:9px;font-family:sans-serif">' + escapeHtml(sg.who) + '</span>' +
             '<span style="margin-left:auto;color:#8b949e;font-size:9px;font-family:sans-serif">slot</span>' +
-            '<select class="sugSlot" data-sug="' + sg.id + '" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:3px;font-size:10px;padding:1px 3px"></select>' +
-            '<button class="sugQueue" data-sug="' + sg.id + '" style="background:#1f6feb;border:none;color:#fff;border-radius:3px;padding:2px 8px;font-size:10px;cursor:pointer;font-family:sans-serif">Queue</button>' +
+            '<select class="sugSlot" data-sug="' + sg.id + '" style="background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:3px;font-size:10px;padding:1px 3px"></select>' +
+            '<button class="sugQueue" data-sug="' + sg.id + '" style="background:var(--wp-accent);border:none;color:#fff;border-radius:3px;padding:2px 8px;font-size:10px;cursor:pointer;font-family:sans-serif">Queue</button>' +
           '</div>' +
           '<div style="color:#e6edf3;font-size:10px;margin-top:3px;white-space:pre-wrap">' + escapeHtml(sg.lines.join('\n')) + '</div>' +
           '<div style="color:#8b949e;font-size:9px;margin-top:2px;font-family:sans-serif">' + escapeHtml(sg.note) + '</div>' +
@@ -3122,7 +3123,7 @@
         // them in a parent <details> (closed by default) so it reads as one row
         // until opened. Plain <details> is safe: openSocialsInspector renders
         // once per open (no poll), so no repaint resets the open-state.
-        html += '<details style="margin:4px 0 8px;background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:6px 8px">' +
+        html += '<details style="margin:4px 0 8px;background:var(--wp-bg);border:1px solid #21262d;border-radius:4px;padding:6px 8px">' +
           '<summary style="color:#f6c365;cursor:pointer;font-family:sans-serif;font-weight:600">🔥 Hotbar Pages ' +
           '<span style="color:#8b949e;font-weight:400;font-size:10px">— ' + allPages.length + ' page' + (allPages.length === 1 ? '' : 's') +
           ' with data, Shift+' + (allPages[0]+1) + ' through Shift+' + (allPages[allPages.length-1]+1) + ' in-game</span></summary>';
@@ -3132,7 +3133,7 @@
           var socs = (pgs.socials || {})[P] || {};
           var hotBtns = Object.keys(hots).map(function(n){return parseInt(n,10);}).sort(function(a,b){return a-b;});
           var socBtns = Object.keys(socs).map(function(n){return parseInt(n,10);}).sort(function(a,b){return a-b;});
-          html += '<details ' + (ap === 0 ? 'open ' : '') + 'style="margin-bottom:6px;background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:6px 8px">' +
+          html += '<details ' + (ap === 0 ? 'open ' : '') + 'style="margin-bottom:6px;background:var(--wp-bg);border:1px solid #21262d;border-radius:4px;padding:6px 8px">' +
             '<summary style="color:#79c0ff;cursor:pointer;font-family:sans-serif">Page ' + P +
             ' <span style="color:#8b949e;font-size:10px">(Shift+' + (P+1) + ')</span>' +
             ' <span style="color:#8b949e;font-size:10px">— ' + hotBtns.length + ' hotbutton' + (hotBtns.length===1?'':'s') +
@@ -3141,41 +3142,41 @@
           // Save handler can collect dirty fields surgically. Original value
           // is preserved on data-orig so we know what's actually changed.
           if (hotBtns.length > 0) {
-            html += '<div style="margin:6px 0 3px;color:#a371f7;font-size:10px;font-weight:600;font-family:sans-serif">HotButtons</div>';
+            html += '<div style="margin:6px 0 3px;color:var(--wp-purple);font-size:10px;font-weight:600;font-family:sans-serif">HotButtons</div>';
             for (var hb = 0; hb < hotBtns.length; hb++) {
               var B = hotBtns[hb];
               var hotVal = hots[B] == null ? '' : String(hots[B]);
               html += '<div style="padding:1px 0;color:#9aa4ad;font-size:10px;display:flex;align-items:center;gap:6px">' +
-                '<span style="color:#c9d1d9;min-width:62px">Button ' + B + '</span> = ' +
+                '<span style="color:var(--wp-text);min-width:62px">Button ' + B + '</span> = ' +
                 '<input class="uiEdit" type="text" ' +
                 ' data-file="' + escapeHtml(f.file) + '" data-section="HotButtons"' +
                 ' data-key="Page' + P + 'Button' + B + '" data-orig="' + escapeHtml(hotVal) + '"' +
                 ' value="' + escapeHtml(hotVal) + '"' +
-                ' style="flex:1;background:#0d1117;color:#f6c365;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:10px"></div>';
+                ' style="flex:1;background:var(--wp-bg);color:#f6c365;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:10px"></div>';
             }
           }
           if (socBtns.length > 0) {
-            html += '<div style="margin:8px 0 3px;color:#56d364;font-size:10px;font-weight:600;font-family:sans-serif">Socials</div>';
+            html += '<div style="margin:8px 0 3px;color:var(--wp-green);font-size:10px;font-weight:600;font-family:sans-serif">Socials</div>';
             for (var sb = 0; sb < socBtns.length; sb++) {
               var SB = socBtns[sb];
               var cell = socs[SB] || { name: null, color: null, lines: [] };
               var nameVal  = cell.name  == null ? '' : String(cell.name);
               var colorVal = cell.color == null ? '' : String(cell.color);
               var keyBase  = 'Page' + P + 'Button' + SB;
-              html += '<div style="margin:4px 0;padding:4px 6px;background:#161b22;border:1px solid #21262d;border-radius:3px">' +
+              html += '<div style="margin:4px 0;padding:4px 6px;background:var(--wp-panel);border:1px solid #21262d;border-radius:3px">' +
                 '<div style="display:flex;align-items:center;gap:6px;font-size:11px">' +
-                  '<span style="color:#c9d1d9;min-width:62px">Button ' + SB + '</span>' +
+                  '<span style="color:var(--wp-text);min-width:62px">Button ' + SB + '</span>' +
                   '<input class="uiEdit" type="text" placeholder="(unnamed)"' +
                   ' data-file="' + escapeHtml(f.file) + '" data-section="Socials"' +
                   ' data-key="' + keyBase + 'Name" data-orig="' + escapeHtml(nameVal) + '"' +
                   ' value="' + escapeHtml(nameVal) + '"' +
-                  ' style="flex:1;background:#0d1117;color:#56d364;font-weight:600;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:11px">' +
+                  ' style="flex:1;background:var(--wp-bg);color:var(--wp-green);font-weight:600;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:11px">' +
                   '<span style="color:#8b949e;font-size:9px">color</span>' +
                   '<input class="uiEdit" type="number" min="0" max="255"' +
                   ' data-file="' + escapeHtml(f.file) + '" data-section="Socials"' +
                   ' data-key="' + keyBase + 'Color" data-orig="' + escapeHtml(colorVal) + '"' +
                   ' value="' + escapeHtml(colorVal) + '"' +
-                  ' style="width:48px;background:#0d1117;color:#9aa4ad;border:1px solid #21262d;border-radius:3px;padding:1px 4px;font-family:inherit;font-size:10px;text-align:right">' +
+                  ' style="width:48px;background:var(--wp-bg);color:#9aa4ad;border:1px solid #21262d;border-radius:3px;padding:1px 4px;font-family:inherit;font-size:10px;text-align:right">' +
                 '</div>';
               for (var ln = 0; ln < 5; ln++) {
                 var lineVal = cell.lines[ln] == null ? '' : String(cell.lines[ln]);
@@ -3190,7 +3191,7 @@
                   ' data-key="' + keyBase + 'Line' + (ln+1) + '" data-orig="' + escapeHtml(lineVal) + '"' +
                   ' data-was-set="' + (hasOrig ? '1' : '0') + '"' +
                   ' value="' + escapeHtml(lineVal) + '"' +
-                  ' style="flex:1;background:#0d1117;color:#9aa4ad;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:10px"></div>';
+                  ' style="flex:1;background:var(--wp-bg);color:#9aa4ad;border:1px solid #21262d;border-radius:3px;padding:1px 6px;font-family:inherit;font-size:10px"></div>';
               }
               html += '</div>';
             }
@@ -3203,18 +3204,18 @@
       // the old 8-key truncation hid Quarm's flat-key HotButtons / Socials
       // sections, which is what made the inspector look "incomplete".
       var sections = f.sections || [];
-      html += '<details style="margin-top:8px;background:#0d1117;border:1px solid #21262d;border-radius:3px;padding:4px 6px">' +
+      html += '<details style="margin-top:8px;background:var(--wp-bg);border:1px solid #21262d;border-radius:3px;padding:4px 6px">' +
         '<summary style="color:#8b949e;cursor:pointer;font-family:sans-serif;font-size:10px">▸ raw section dump (' + sections.length + ' sections)</summary>';
       for (var s = 0; s < Math.min(sections.length, 60); s++) {
         var sec = sections[s];
         var propKeys = Object.keys(sec.props);
-        html += '<details style="margin:3px 0 3px 6px;background:#0d1117;border:1px solid #21262d;border-radius:3px;padding:4px 6px">' +
+        html += '<details style="margin:3px 0 3px 6px;background:var(--wp-bg);border:1px solid #21262d;border-radius:3px;padding:4px 6px">' +
           '<summary style="color:#79c0ff;cursor:pointer">[' + escapeHtml(sec.name) + '] ' +
           '<span style="color:#8b949e;font-size:10px">(' + propKeys.length + ' keys)</span></summary>';
         for (var p = 0; p < Math.min(propKeys.length, 300); p++) {
           var key = propKeys[p];
           html += '<div style="padding:1px 0;color:#9aa4ad;font-size:10px">' +
-            '<span style="color:#c9d1d9">' + escapeHtml(key) + '</span> = ' +
+            '<span style="color:var(--wp-text)">' + escapeHtml(key) + '</span> = ' +
             escapeHtml(sec.props[key]) + '</div>';
         }
         if (propKeys.length > 300) {
@@ -3281,15 +3282,15 @@
       _renderChatDirtyHint();
       if (anyDirty) {
         saveBtn.disabled = false;
-        saveBtn.style.background = '#1f6feb';
-        saveBtn.style.borderColor = '#1f6feb';
+        saveBtn.style.background = 'var(--wp-accent)';
+        saveBtn.style.borderColor = 'var(--wp-accent)';
         saveBtn.style.color = '#fff';
         saveBtn.style.cursor = 'pointer';
       } else {
         saveBtn.disabled = true;
         saveBtn.style.background = '#21262d';
-        saveBtn.style.borderColor = '#30363d';
-        saveBtn.style.color = '#6e7681';
+        saveBtn.style.borderColor = 'var(--wp-border)';
+        saveBtn.style.color = 'var(--wp-dim)';
         saveBtn.style.cursor = 'not-allowed';
       }
     }
@@ -3511,7 +3512,7 @@
       if (!title) return;
       var cur = _csGet(CHAT_MODEL.cm, 'ChatWindow' + idx + '_Name') || '';
       title.innerHTML = '<input class="chatRenameIn" maxlength="' + CHAT_NAME_MAX + '" value="' + escapeHtml(String(cur).replace(/^\s+|\s+$/g, '')) + '" ' +
-        'style="width:150px;background:#0d1117;color:#f6c365;border:1px solid #58a6ff;border-radius:3px;padding:1px 4px;font-size:12px;font-family:sans-serif">';
+        'style="width:150px;background:var(--wp-bg);color:#f6c365;border:1px solid var(--wp-blue);border-radius:3px;padding:1px 4px;font-size:12px;font-family:sans-serif">';
       var inp = title.querySelector('input'), done = false;
       inp.addEventListener('click', function(e){ e.stopPropagation(); });
       inp.addEventListener('keydown', function(e){
@@ -3540,7 +3541,7 @@
       var rows  = chatBlock.querySelectorAll('.chatChipRow');
       function _setRowHover(row, on){
         if (!row) return;
-        row.style.outline = on ? '1px dashed #58a6ff' : '';
+        row.style.outline = on ? '1px dashed var(--wp-blue)' : '';
         row.style.outlineOffset = on ? '2px' : '';
       }
       for (var ci2 = 0; ci2 < chips.length; ci2++) {
@@ -3574,7 +3575,7 @@
           // If the source row is now empty, restore its placeholder.
           var fromRow = chatBlock.querySelector('.chatChipRow[data-win="' + fromWin + '"]');
           if (fromRow && fromRow.querySelectorAll('.chatChip').length === 0) {
-            fromRow.innerHTML = '<span style="color:#6e7681;font-size:10px;font-style:italic">no routed channels</span>';
+            fromRow.innerHTML = '<span style="color:var(--wp-dim);font-size:10px;font-style:italic">no routed channels</span>';
           }
         }
       }
@@ -3619,7 +3620,7 @@
           var rowEl  = chipEl ? chipEl.parentElement : null;
           if (chipEl) chipEl.remove();
           if (rowEl && rowEl.querySelectorAll('.chatChip').length === 0) {
-            rowEl.innerHTML = '<span style="color:#6e7681;font-size:10px;font-style:italic">no routed channels</span>';
+            rowEl.innerHTML = '<span style="color:var(--wp-dim);font-size:10px;font-style:italic">no routed channels</span>';
           }
         });
       }
@@ -3641,17 +3642,17 @@
             var c = cards[k];
             var w = parseInt(c.getAttribute('data-win'), 10);
             var on = !isOff && (w === newWin);
-            c.style.background = on ? 'rgba(240,180,41,0.06)' : '#0d1117';
+            c.style.background = on ? 'rgba(240,180,41,0.06)' : 'var(--wp-bg)';
             c.style.borderColor = on ? '#f0b429' : '#21262d';
             var btn = c.querySelector('.alwaysHereBtn');
             if (btn) {
-              btn.style.borderColor = on ? '#f0b429' : '#30363d';
+              btn.style.borderColor = on ? '#f0b429' : 'var(--wp-border)';
               btn.style.color = on ? '#f6c365' : '#8b949e';
             }
             // Re-tag the header name with the ⭐ + bold.
             var nameSpan = c.querySelector('div span:first-child');
             if (nameSpan) {
-              nameSpan.style.color      = on ? '#f6c365' : '#c9d1d9';
+              nameSpan.style.color      = on ? '#f6c365' : 'var(--wp-text)';
               nameSpan.style.fontWeight = on ? '700' : '600';
               var nm = nameSpan.textContent.replace(/^⭐\s*/, '');
               nameSpan.firstChild.textContent = (on ? '⭐ ' : '') + nm;
@@ -3685,8 +3686,8 @@
       if (_sugStaged.size === 0) { qEl.innerHTML = ''; return; }
       var qh = '<div style="color:#f6c365;font-size:10px;font-family:sans-serif;margin-bottom:2px">Queued — written on Save changes:</div>';
       _sugStaged.forEach(function(v, k){
-        qh += '<div style="display:flex;align-items:center;gap:6px;font-size:10px;color:#c9d1d9;padding:1px 0">' +
-          '<span style="color:#56d364">' + escapeHtml(v.name) + '</span> → Page ' + v.page + ' · Button ' + v.btn +
+        qh += '<div style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--wp-text);padding:1px 0">' +
+          '<span style="color:var(--wp-green)">' + escapeHtml(v.name) + '</span> → Page ' + v.page + ' · Button ' + v.btn +
           ' <button class="sugRemove" data-slot="' + escapeHtml(k) + '" title="Un-queue"' +
           ' style="background:none;border:none;color:#f87171;cursor:pointer;font-size:11px;padding:0 3px;line-height:1">×</button></div>';
       });

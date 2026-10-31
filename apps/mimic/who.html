@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>who</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* /who overlay — the latest /who you ran (Current) + people who were in a
      recent /who this session but aren't anymore (Recently gone). Anonymous rows
@@ -14,10 +15,10 @@
   .title{display:flex;align-items:center;gap:8px;
     font-size:12px;color:#7ee7c7;text-shadow:0 1px 2px #000;margin-bottom:4px;}
   .conn{font-size:11px}
-  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .conn.ok{color:var(--wp-green)} .conn.bad{color:#8b949e}
   /* Zek only toggle (the guild lead, 2026-09-26). Lit in the ZEK flag's red when on. */
   .zekbtn{font-family:inherit;font-size:9px;font-weight:bold;letter-spacing:0.5px;padding:0 5px;border-radius:3px;
-    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid #30363d;cursor:pointer;line-height:14px}
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid var(--wp-border);cursor:pointer;line-height:14px}
   .zekbtn:hover{color:#ff7b72;border-color:#ff7b72}
   .zekbtn.on{background:#3d1d1d;color:#ff7b72;border-color:#ff7b72}
   .nozek{font-size:11px;color:#8b949e;text-shadow:0 1px 2px #000;padding:1px 0}
@@ -33,14 +34,14 @@
   #body::-webkit-scrollbar-track{background:transparent}
   .title{padding-right:22px}
   .fbtn{font-family:inherit;font-size:9px;font-weight:bold;letter-spacing:0.5px;padding:0 5px;border-radius:3px;
-    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid #30363d;cursor:pointer;line-height:14px;white-space:nowrap}
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid var(--wp-border);cursor:pointer;line-height:14px;white-space:nowrap}
   .fbtn:hover{color:#7ee7c7;border-color:#2da68a}
   .fbtn.on{background:#10302a;color:#7ee7c7;border-color:#2da68a}
   #fpanel{display:none;flex-wrap:wrap;gap:3px;margin:0 0 5px;padding:4px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px}
   #fpanel.open{display:flex}
   .fchip{font-family:inherit;font-size:10px;padding:0 5px;border-radius:3px;background:rgba(14,17,22,0.6);
-    color:#c9d1d9;border:1px solid #30363d;cursor:pointer;line-height:15px;white-space:nowrap}
-  .fchip .c{color:#6e7681;margin-left:3px}
+    color:var(--wp-text);border:1px solid var(--wp-border);cursor:pointer;line-height:15px;white-space:nowrap}
+  .fchip .c{color:var(--wp-dim);margin-left:3px}
   .fchip:hover{border-color:#2da68a}
   .fchip.on{background:#10302a;color:#7ee7c7;border-color:#2da68a}
   .fchip.on .c{color:#7ee7c7}
@@ -69,15 +70,15 @@
   .r .flag.anon{background:#2d2150;color:#c9a0ff}
   /* Copy-name button on unknown-identity rows — dim until hovered so it
      doesn't clutter the roster; turns green briefly after a copy. */
-  .r .copybtn{background:none;border:none;color:#6e7681;cursor:pointer;font-size:11px;
+  .r .copybtn{background:none;border:none;color:var(--wp-dim);cursor:pointer;font-size:11px;
     padding:0 3px;line-height:1;opacity:0.65}
   .r .copybtn:hover{color:#e6edf3;opacity:1}
-  .r .copybtn.copied{color:#56d364;opacity:1}
+  .r .copybtn.copied{color:var(--wp-green);opacity:1}
   /* Crowd-sourced class picker — set an anon player's class for the guild. */
   .r .clspick{font-family:inherit;font-size:10px;background:#151b26;color:#e6edf3;
     border:1px solid #30414f;border-radius:3px;padding:0 2px;margin:0 2px 0 4px;
     max-width:118px;cursor:pointer;height:16px;line-height:14px}
-  .r .clspick:hover{border-color:#58a6ff}
+  .r .clspick:hover{border-color:var(--wp-blue)}
   .r .flag.gm{background:#3d3416;color:#f0d264}
   .r .flag.zek{background:#3d1d1d;color:#ff7b72}
   /* Class + level columns: fixed-width, LEFT-aligned so every class stacks in
@@ -86,7 +87,7 @@
      row) so the user can tell our-data from the game's. #111. */
   .r .klass{font-size:10px;color:#9aa4ad;flex-shrink:0;width:96px;text-align:left;white-space:nowrap;overflow:hidden}
   .r .lvl{font-size:10px;color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0;width:34px;text-align:left}
-  .r .klass.deanon,.r .lvl.deanon{font-style:italic;color:#6e7681}
+  .r .klass.deanon,.r .lvl.deanon{font-style:italic;color:var(--wp-dim)}
   /* Zone column, behind the title bar's ZONE switch (the guild lead, 2026-09-29). As the game printed
      it: the short name from /who all, the full name from a plain /who's footer. */
   .r .zn{font-size:10px;color:#9aa4ad;flex-shrink:0;width:96px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -96,7 +97,7 @@
   /* The player you are targeting, pinned on top with their guild UNDER the name (like a nameplate) —
      the guild lead, 2026-09-26, in a raid shared with other guilds. Italic when the guild or class comes
      from /who history rather than a live /who. */
-  .tgt .rowlist{border-left:2px solid #d29922}
+  .tgt .rowlist{border-left:2px solid var(--wp-gold)}
   .tgt .r .nm{color:#f2ede1}
   .tgt .guildline{font-size:11px;color:#6e9bd6;text-shadow:0 1px 2px #000;line-height:1.35}
   .tgt .guildline.deanon{font-style:italic}
