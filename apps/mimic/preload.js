@@ -1736,6 +1736,11 @@ contextBridge.exposeInMainWorld('mimic', {
   mimicLinkStart:   ()  => ipcRenderer.invoke('mimic-link-start'),
   mimicLinkCancel:  ()  => ipcRenderer.invoke('mimic-link-cancel'),
   mimicLinkSignOut: ()  => ipcRenderer.invoke('mimic-link-signout'),
+  // The guild picker. `hubList` returns { hubs, current } (the directory, cached up to a day, Wolf Pack first). `hubSet`
+  // takes { slug } for a listed guild or { address } for a pasted one and returns { ok, changed, signedOut, hub } or
+  // { ok:false, error }. Switching guilds signs out: a session belongs to one guild's server.
+  hubList: ()       => ipcRenderer.invoke('hub-list'),
+  hubSet:  (choice) => ipcRenderer.invoke('hub-set', choice),
 
   // Updates.
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

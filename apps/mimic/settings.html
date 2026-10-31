@@ -91,6 +91,15 @@
 
   <h2>Wolf Pack account <span style="background:#5a1d1d;color:#ff9b9b;border:1px solid #a04040;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">REQUIRED</span></h2>
   <div class="sub">Sign in with Discord to link this Mimic install to your account. Persists across upgrades. <b>Required</b> for charm/melody/pet trackers, suggested triggers, cross-machine sync, and officer tools. <span style="color:#9aa4ad">(If you're running Mimic purely offline — no Discord, no Wolf Pack uploads — you can skip sign-in, but most overlay features will stay hidden.)</span></div>
+  <div id="hubBox" style="margin-top:10px">
+    <label for="hubSel" style="margin-top:0">Guild</label>
+    <select id="hubSel" style="width:100%;box-sizing:border-box;background:var(--wp-panel);border:1px solid var(--wp-border);border-radius:4px;color:var(--wp-text);padding:7px 9px;font-family:inherit;font-size:12px"></select>
+    <div id="hubPasteRow" style="display:none;gap:8px;margin-top:6px">
+      <input id="hubAddr" type="text" placeholder="https://your-guild.example" aria-label="Guild address" style="flex:1" />
+      <button id="hubUseBtn" type="button" style="margin:0">Use this guild</button>
+    </div>
+    <div class="hint" id="hubNote">Which guild's server this Mimic signs in to. Switching signs this PC out of the old guild, and you link again.</div>
+  </div>
   <div id="acctSignedOut" style="margin-top:10px">
     <button id="acctSignInBtn" type="button" style="background:#5865f2;border:none;color:#fff;padding:8px 14px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px;display:inline-flex;align-items:center;gap:8px">
       <span style="font-size:14px">⛓</span> Sign in to Wolf Pack
@@ -1222,9 +1231,54 @@
   }
   let _linkRemainingTimer = null;
   let _lastLinkUrl = null;
+  let _hub = { slug: 'wolfpack', display_name: 'Wolf Pack', site: 'https://wolfpack.quest' };
+  let _signedInNow = false;
+  // The Guild choice. The list is the hub directory (Wolf Pack first); a guild that is not listed is pasted as an address.
+  // Switching writes the guild's server address through main (the Bot URL field above follows it) and signs this PC out.
+  async function _loadHubs(){
+    try {
+      const r = await window.mimic.hubList();
+      if (!r || !Array.isArray(r.hubs)) return;
+      _hub = r.current || _hub;
+      const sel = document.getElementById('hubSel');
+      const opts = r.hubs.slice();
+      if (!opts.some(x => x.slug === _hub.slug)) opts.push(_hub);
+      sel.innerHTML = '';
+      for (const x of opts) { const o = document.createElement('option'); o.value = x.slug; o.textContent = x.display_name; sel.appendChild(o); }
+      const p = document.createElement('option'); p.value = '__paste'; p.textContent = 'Paste a guild address…'; sel.appendChild(p);
+      sel.value = _hub.slug;
+    } catch (e) { /* the directory is a convenience: the Bot URL field below still works */ }
+  }
+  async function _chooseHub(choice){
+    const note = document.getElementById('hubNote');
+    if (_signedInNow && !confirm('Switching guilds signs you out of ' + _hub.display_name + ' on this PC. You will need to link again. Continue?')) { document.getElementById('hubSel').value = _hub.slug; return; }
+    const wasClean = _settingsSig() === _cleanSig;
+    let r;
+    try { r = await window.mimic.hubSet(choice); } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+    if (!r || r.ok === false) { note.textContent = (r && r.error) || 'Could not switch guilds.'; document.getElementById('hubSel').value = _hub.slug; return; }
+    _hub = r.hub;
+    document.getElementById('hubPasteRow').style.display = 'none';
+    document.getElementById('hubAddr').value = '';
+    await _loadHubs();
+    // main wrote the new server address; show it in the Bot URL field without turning the form dirty.
+    const c = await window.mimic.getConfig();
+    document.getElementById('botUrl').value = c.botUrl || '';
+    _loaded.botUrl = c.botUrl || '';
+    if (wasClean) _markClean();
+    note.textContent = r.signedOut ? 'Switched to ' + r.hub.display_name + '. You are signed out here. Link Mimic again with this guild.' : (r.changed ? 'Switched to ' + r.hub.display_name + '.' : 'Already on ' + r.hub.display_name + '.');
+  }
+  document.getElementById('hubSel').addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (v === '__paste') { document.getElementById('hubPasteRow').style.display = 'flex'; document.getElementById('hubAddr').focus(); return; }
+    document.getElementById('hubPasteRow').style.display = 'none';
+    if (v !== _hub.slug) _chooseHub({ slug: v });
+  });
+  document.getElementById('hubUseBtn').addEventListener('click', () => _chooseHub({ address: document.getElementById('hubAddr').value }));
   function _renderAccount(status){
     const linking = status && status.mimicLinking;
     const session = status && status.mimicSession;
+    _signedInNow = !!session;
+    if (status && status.hub) _hub = status.hub;
     document.getElementById('acctSignedOut').style.display = (!linking && !session) ? '' : 'none';
     document.getElementById('acctLinking').style.display   = linking ? '' : 'none';
     document.getElementById('acctSignedIn').style.display  = session ? '' : 'none';
@@ -1232,7 +1286,7 @@
     if (linking) {
       document.getElementById('acctLinkCode').textContent = linking.user_code;
       document.getElementById('acctLinkUrl').textContent  =
-        (linking.verification_url || 'wolfpack.quest/auth/mimic-link').replace(/^https?:\/\//, '');
+        (linking.verification_url || ((_hub.site || 'https://wolfpack.quest') + '/auth/mimic-link')).replace(/^https?:\/\//, '');
       // Mimic asks the OS to open your browser; that can fail silently (a
       // broken default-browser association, a sandboxed Firefox). Say so
       // rather than leaving a code on screen with no instruction — the code
@@ -1302,6 +1356,7 @@
   });
   // Live-update on every status push (linking completes, polling expires).
   window.mimic.getStatus().then(_renderAccount).catch(() => {});
+  _loadHubs();
   window.mimic.onStatus(_renderAccount);
 
   load();
