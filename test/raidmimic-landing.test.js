@@ -1114,7 +1114,7 @@ describe('the motion preview (?v=motion)', () => {
     const replay = stageCode.match(/replay\.current = \(\) => \{([\s\S]*?)\n      \};/)[1];
     expect(replay).toMatch(/setCaptions\(v, soundRef\.current \? 'hidden' : 'showing'\);/);  });
   it('the cues are styled inside the stage only', () => {
-    expect(css).toMatch(/\.rm-stage video::cue \{[^}]*background: rgb\(0 0 0 \/ 0\.72\);[^}]*color: #f2ede1;[^}]*\}/);
+    expect(css).toMatch(/\.rm-stage video::cue \{[^}]*background: rgb\(0 0 0 \/ 0\.72\);[^}]*color: rgb\(var\(--wp-bone\)\);[^}]*\}/);   // #f2ede1, now a site-only token (test/theme-tokens.test.js keeps globals.css hex-free)
     expect(css.match(/::cue/g)).toHaveLength(1);
   });
   it('story.vtt is a valid caption file: WEBVTT, ordered cues that each end after they start, all inside the 90 s story, every line spoken by a named voice or a [sound]', () => {

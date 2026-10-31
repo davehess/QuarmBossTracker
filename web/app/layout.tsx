@@ -98,7 +98,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const showMe    = !!user;
 
   return (
-    <html lang="en" className={`${display.variable} ${proseFace.variable}`}>
+    // data-theme is the hook for the guild theme (docs/DESIGN-theming.md §4). Nothing reads it yet.
+    <html lang="en" data-theme="guild" className={`${display.variable} ${proseFace.variable}`}>
       <body className="font-mono">
         {/* Direction contract — audited at the finish review. Kept in the
             emitted markup so it survives the production build and can be

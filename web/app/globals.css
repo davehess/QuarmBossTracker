@@ -1,10 +1,11 @@
+@import './tokens.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  html, body { background: #0d1117; color: #c9d1d9; }
-  a { color: #58a6ff; }
+  html, body { background: rgb(var(--wp-bg)); color: rgb(var(--wp-text)); }
+  a { color: rgb(var(--wp-blue)); }
   a:hover { text-decoration: underline; }
 }
 
@@ -55,14 +56,14 @@
     border-radius: 999px;
     background: linear-gradient(
       to right,
-      #56d364 0%, #d29922 var(--wp-pct, 100%), #30363d var(--wp-pct, 100%), #30363d 100%);
+      rgb(var(--wp-green)) 0%, rgb(var(--wp-gold)) var(--wp-pct, 100%), rgb(var(--wp-border)) var(--wp-pct, 100%), rgb(var(--wp-border)) 100%);
   }
   .wp-scrub::-moz-range-track {
     height: 4px;
     border-radius: 999px;
     background: linear-gradient(
       to right,
-      #56d364 0%, #d29922 var(--wp-pct, 100%), #30363d var(--wp-pct, 100%), #30363d 100%);
+      rgb(var(--wp-green)) 0%, rgb(var(--wp-gold)) var(--wp-pct, 100%), rgb(var(--wp-border)) var(--wp-pct, 100%), rgb(var(--wp-border)) 100%);
   }
   .wp-scrub::-webkit-slider-thumb {
     -webkit-appearance: none;
@@ -71,18 +72,18 @@
     height: 18px;
     width: 18px;
     border-radius: 999px;
-    background: #d29922;
-    border: 3px solid #0d1117;
-    box-shadow: 0 0 0 1px #d29922;
+    background: rgb(var(--wp-gold));
+    border: 3px solid rgb(var(--wp-bg));
+    box-shadow: 0 0 0 1px rgb(var(--wp-gold));
     transition: transform 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
   }
   .wp-scrub::-moz-range-thumb {
     height: 18px;
     width: 18px;
     border-radius: 999px;
-    background: #d29922;
-    border: 3px solid #0d1117;
-    box-shadow: 0 0 0 1px #d29922;
+    background: rgb(var(--wp-gold));
+    border: 3px solid rgb(var(--wp-bg));
+    box-shadow: 0 0 0 1px rgb(var(--wp-gold));
     transition: transform 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
   }
   .wp-scrub:active::-webkit-slider-thumb { transform: scale(1.15); }
@@ -121,7 +122,7 @@
    plate. The keyed art is bone-on-transparency: every dark LINE is a hole, so
    without this a wolf in front showed the wolf behind through its own linework
    and the overlaps read as smeared glass rather than as one body in front of
-   another. Painted #0d1117, so against the ground it is invisible and its only
+   another. Painted in --wp-bg, so against the ground it is invisible and its only
    job is to occlude. Blurred to its wolf's own distance so the occlusion edge
    matches the body it belongs to. */
 .wolf-solid {
@@ -212,17 +213,17 @@
 
 /* ── Browser surfaces ─────────────────────────────────────────────────────
    The parts we did not draw still carry the design. */
-::selection { background: rgba(210, 153, 34, .28); color: #f2ede1; }
-:root { caret-color: #d29922; accent-color: #d29922; }
-:focus-visible { outline: 2px solid #d29922; outline-offset: 2px; border-radius: 2px; }
-* { scrollbar-color: #30363d #0d1117; scrollbar-width: thin; }
+::selection { background: rgb(var(--wp-gold) / .28); color: rgb(var(--wp-bone)); }
+:root { caret-color: rgb(var(--wp-gold)); accent-color: rgb(var(--wp-gold)); }
+:focus-visible { outline: 2px solid rgb(var(--wp-gold)); outline-offset: 2px; border-radius: 2px; }
+* { scrollbar-color: rgb(var(--wp-border)) rgb(var(--wp-bg)); scrollbar-width: thin; }
 ::-webkit-scrollbar { width: 11px; height: 11px; }
-::-webkit-scrollbar-track { background: #0d1117; }
-::-webkit-scrollbar-thumb { background: #30363d; border: 3px solid #0d1117; border-radius: 99px; }
-::-webkit-scrollbar-thumb:hover { background: #4a5560; }
+::-webkit-scrollbar-track { background: rgb(var(--wp-bg)); }
+::-webkit-scrollbar-thumb { background: rgb(var(--wp-border)); border: 3px solid rgb(var(--wp-bg)); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--wp-scroll-hover)); }
 .tnum { font-variant-numeric: tabular-nums; }
 /* The head has to close as a mass before any line reads as anatomy. */
-.wolf-mass { fill: #141b25; stroke: none; }
+.wolf-mass { fill: rgb(var(--wp-mass)); stroke: none; }
 
 /* The raidmimic hero (web/app/raidmimic/_landing/MascotHero.tsx).
    .rm-fade melts the clip's square edge into the page: both axes fade over the outer 8%.
@@ -230,9 +231,9 @@
    and none of it under prefers-reduced-motion. */
 @layer utilities {
   .rm-fade {
-    -webkit-mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent), linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+    -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent), linear-gradient(to bottom, transparent, black 8%, black 92%, transparent);
     -webkit-mask-composite: source-in;
-    mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent), linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+    mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent), linear-gradient(to bottom, transparent, black 8%, black 92%, transparent);
     mask-composite: intersect;
   }
   @keyframes rm-fan {
@@ -254,5 +255,5 @@
      MotionStage.tsx, which picks the square files, so the box and the file can never disagree. */
   @media (min-width: 1024px) and (orientation: landscape) { .rm-stage-box { aspect-ratio: 1 / 1; } }
   /* Captions while the story plays muted (story.vtt). */
-  .rm-stage video::cue { background: rgb(0 0 0 / 0.72); color: #f2ede1; font-size: 0.95em; }
+  .rm-stage video::cue { background: rgb(0 0 0 / 0.72); color: rgb(var(--wp-bone)); font-size: 0.95em; }
 }
