@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>canvas</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* ── The Timers canvas ─────────────────────────────────────────────────────
      One transparent window the size of the screen, holding the trigger
@@ -34,7 +35,7 @@
      Remove hands it back. Its size is the panel; its text size scales the
      whole page. The different views come later, one overlay at a time. */
   html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden;
-    font-family:ui-monospace,"Cascadia Code",Consolas,Menlo,monospace;color:#c9d1d9;user-select:none}
+    font-family:ui-monospace,"Cascadia Code",Consolas,Menlo,monospace;color:var(--wp-text);user-select:none}
   #panels{position:fixed;inset:0}
   .panel{position:absolute;box-sizing:border-box}
   .panel > iframe{position:absolute;inset:0;width:100%;height:100%;border:0;
@@ -63,7 +64,7 @@
   .panel.back.fitempty:not(.part){background:transparent}
   :is(body.edit .panel, .panel.one).back.fitempty:not(.part){background:rgb(8 10 14 / 0.35)}
   .panel.part.back.fitempty > .pbody{background:transparent;box-shadow:none}
-  :is(body.edit .panel, .panel.one).part.back.fitempty > .pbody{background:rgba(13,17,23,0.35)}
+  :is(body.edit .panel, .panel.one).part.back.fitempty > .pbody{background:rgba(var(--wp-bg-rgb),0.35)}
   /* A page with its own builder open (the HUD ring's ⚙) takes the mouse even while arranging. */
   :is(body.edit .panel, .panel.one).building > iframe{pointer-events:auto}
   /* ...and so does one whose own options (⚙ → Page options) are showing. */
@@ -94,36 +95,36 @@
   :is(body.edit .panel, .panel.one).off{visibility:visible;opacity:0.4}
   :is(body.edit, .panel.one) .whb.on{display:block;position:absolute;left:2px;bottom:2px;z-index:3;max-width:calc(100% - 22px);
     padding:0 5px;font-size:10px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-    pointer-events:none;color:#0d1117;background:rgba(210,153,34,0.92);border-radius:3px}
+    pointer-events:none;color:var(--wp-bg);background:rgba(210,153,34,0.92);border-radius:3px}
   :is(body.edit .panel, .panel.one).lift{z-index:50;outline-style:solid}
   :is(body.edit, .panel.one) .tab{display:flex;align-items:center;gap:6px;position:absolute;left:-1px;
     bottom:100%;max-width:calc(100% + 2px);box-sizing:border-box;
     padding:2px 6px;font-size:11px;line-height:16px;white-space:nowrap;
-    background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-bottom:0;
+    background:var(--wp-panel);color:var(--wp-text);border:1px solid var(--wp-border);border-bottom:0;
     border-radius:4px 4px 0 0}
   /* No room above (a panel at the top edge): the tab sits inside. */
   :is(body.edit .panel, .panel.one).tabin .tab{bottom:auto;top:0;left:0;border-radius:0 0 4px 0;
-    border:0;border-right:1px solid #30363d;border-bottom:1px solid #30363d}
-  .tab .mv{color:#58a6ff}
+    border:0;border-right:1px solid var(--wp-border);border-bottom:1px solid var(--wp-border)}
+  .tab .mv{color:var(--wp-blue)}
   .tab .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis}
-  .tab .what{color:#6e7681;overflow:hidden;text-overflow:ellipsis}
+  .tab .what{color:var(--wp-dim);overflow:hidden;text-overflow:ellipsis}
   /* 🔒 Locked in place: a badge on the tab while arranging, and a ◢ that is plainly not a handle. */
   .tab .lkb{display:none}
   :is(body.edit .panel, .panel.one).plock .tab .lkb{display:inline}
   :is(body.edit .panel, .panel.one).plock .grip{opacity:0.35;cursor:not-allowed}
   /* ✓ Done: only on the tab of the one item being edited (the whole canvas has its own Done in the bar). */
   .tab .done{display:none}
-  .panel.one .tab .done{display:inline;color:#56d364}
-  .tab .ctl{cursor:pointer;color:#6e7681;padding:0 3px;border-radius:3px}
+  .panel.one .tab .done{display:inline;color:var(--wp-green)}
+  .tab .ctl{cursor:pointer;color:var(--wp-dim);padding:0 3px;border-radius:3px}
   .tab .ctl:hover{color:#e6edf3;background:rgba(88,166,255,0.18)}
-  .tab .ctl.x:hover{color:#f85149;background:rgba(248,81,73,0.18)}
+  .tab .ctl.x:hover{color:var(--wp-red);background:rgba(248,81,73,0.18)}
   :is(body.edit, .panel.one) .grip{display:block;position:absolute;right:0;bottom:0;width:16px;height:16px;
-    line-height:16px;text-align:center;font-size:11px;color:#58a6ff;cursor:nwse-resize}
+    line-height:16px;text-align:center;font-size:11px;color:var(--wp-blue);cursor:nwse-resize}
   /* Resize corner ON (⚙ → Position): the ◢ stays on the piece while playing, on the hover handshake like the ✥ (it carries
      data-wp-interact), so the rest of the piece stays click-through. Locked pieces show none; a cut piece has no ◢ at all. */
   .panel.rc:not(.plock):not(.sect) > .grip{display:block;position:absolute;right:0;bottom:0;width:16px;height:16px;
-    line-height:16px;text-align:center;font-size:11px;color:#58a6ff;cursor:nwse-resize;
-    background:rgba(13,17,23,0.6);border-radius:3px 0 0 0;opacity:0.6}
+    line-height:16px;text-align:center;font-size:11px;color:var(--wp-blue);cursor:nwse-resize;
+    background:rgba(var(--wp-bg-rgb),0.6);border-radius:3px 0 0 0;opacity:0.6}
   .panel.rc:not(.plock):not(.sect) > .grip:hover{opacity:1}
   /* The right and bottom EDGES size one direction (width alone, height alone), like an overlay window's edges
      (the guild lead, 2026-10-21: "◢ grip and edge drags"). Page frames only: a piece has its ◢, and a cut piece
@@ -142,7 +143,7 @@
      corner so it never covers a timer; at the screen's left edge it tucks
      inside. While arranging, the panel's tab carries ✥ instead. */
   .mvbtn{position:absolute;top:0;right:100%;width:16px;height:16px;line-height:16px;
-    text-align:center;font-size:12px;color:#58a6ff;background:rgba(13,17,23,0.6);
+    text-align:center;font-size:12px;color:var(--wp-blue);background:rgba(var(--wp-bg-rgb),0.6);
     border-radius:3px 0 0 3px;opacity:0.6;cursor:move}
   .mvbtn:hover{opacity:1}
   .panel.mvin .mvbtn{right:auto;left:0;border-radius:0 0 3px 0}
@@ -150,9 +151,9 @@
      "Dismiss gets rid of it until they charm again"). On the hover handshake like the ✥, so the rest of the piece
      stays click-through; just outside the top-right corner; only that rule's pieces have one, and not while arranging. */
   .dsmbtn{display:none;position:absolute;top:0;left:100%;width:16px;height:16px;line-height:16px;
-    text-align:center;font-size:11px;color:#8b949e;background:rgba(13,17,23,0.6);
+    text-align:center;font-size:11px;color:#8b949e;background:rgba(var(--wp-bg-rgb),0.6);
     border-radius:0 3px 3px 0;opacity:0.6;cursor:pointer}
-  .dsmbtn:hover{opacity:1;color:#f85149}
+  .dsmbtn:hover{opacity:1;color:var(--wp-red)}
   .panel.chm .dsmbtn{display:block}
   :is(body.edit, .panel.one) .dsmbtn{display:none}
   body.edit .mvbtn{display:none}
@@ -168,25 +169,25 @@
      with data-wp-interact, so it is on the same hover handshake as the ✥ and the window stays click-through. */
   #mins{position:fixed;inset:0;z-index:60;pointer-events:none}
   .minchip{display:none;position:absolute;left:0;top:0;margin:0;padding:0 7px;box-sizing:border-box;height:18px;
-    font:inherit;font-size:11px;line-height:16px;white-space:nowrap;color:#e6edf3;background:rgba(13,17,23,0.92);
-    border:1px solid var(--acc,#58a6ff);border-radius:3px;cursor:pointer;pointer-events:auto;opacity:0.8}
+    font:inherit;font-size:11px;line-height:16px;white-space:nowrap;color:#e6edf3;background:rgba(var(--wp-bg-rgb),0.92);
+    border:1px solid var(--acc,var(--wp-blue));border-radius:3px;cursor:pointer;pointer-events:auto;opacity:0.8}
   .minchip:hover{opacity:1;background:rgba(31,111,235,0.35)}
   #mins.hold .minchip,#mins.hold .minline{visibility:hidden}
   /* Playing, the label shows only under the pointer (paintMins adds .hot); arranging, every one shows. Hidden ones keep their
      place, so the label is where it was the moment it appears, and a hidden one takes no click. */
   .minchip:not(.hot),.minline:not(.hot){visibility:hidden}
-  .minline{display:none;position:absolute;background:var(--acc,#58a6ff);opacity:0.8;pointer-events:none}
-  .tab .minb{display:none;flex:none;white-space:nowrap;color:#e6edf3;border:1px solid var(--acc,#58a6ff);padding:0 6px}
+  .minline{display:none;position:absolute;background:var(--acc,var(--wp-blue));opacity:0.8;pointer-events:none}
+  .tab .minb{display:none;flex:none;white-space:nowrap;color:#e6edf3;border:1px solid var(--acc,var(--wp-blue));padding:0 6px}
   .tab.intab .minb{display:inline}
   /* Collapsed to its tab: a panel with no mini of its own keeps its page running (a pinned callout lives there) but shows
      only a strip with its name, in its colour. A group's other pieces step aside; the one ✥-carrying piece is the strip. */
   /* (No overflow:hidden here: the ✥ sits just outside the strip's left edge, the tab above it and the dismiss ✕ outside its right, and
      a clip hid all three: a minimized panel could not be grabbed, the guild lead, 2026-10-28: "minimized overlays need to be
      draggable and resizable still". The page behind is visibility:hidden and the name below clips itself.) */
-  .panel.collapsed{background:rgba(13,17,23,0.9)!important;border:1px solid var(--acc,#58a6ff)!important;border-radius:4px}
+  .panel.collapsed{background:rgba(var(--wp-bg-rgb),0.9)!important;border:1px solid var(--acc,var(--wp-blue))!important;border-radius:4px}
   .panel.collapsed > iframe,.panel.collapsed > .pbody{visibility:hidden}
   .panel.collapsed::after{content:attr(data-nm);position:absolute;left:6px;right:6px;top:0;line-height:16px;font-size:11px;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#c9d1d9;pointer-events:none}
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--wp-text);pointer-events:none}
   /* The strip sizes in width alone (startDrag pins its axis to x and keeps the height the page behind it has), so the ◢ stays
      where it was shown (arranging, or the Resize corner switch) with the width cursor, and the name steps clear of it. The
      right and bottom EDGES are drawn for the full box, which a strip is not. */
@@ -205,54 +206,54 @@
   /* Toolbar, top centre, only while arranging. */
   #bar{display:none;position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:90;
     align-items:center;gap:8px;flex-wrap:wrap;max-width:calc(100% - 32px);
-    padding:5px 10px;font-size:11px;background:rgba(22,27,34,0.96);
-    border:1px solid #1f6feb;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
+    padding:5px 10px;font-size:11px;background:rgba(var(--wp-panel-rgb),0.96);
+    border:1px solid var(--wp-accent);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
   body.edit #bar{display:flex}
   #bar b{color:#e6edf3}
-  #bar .dim{color:#6e7681}
+  #bar .dim{color:var(--wp-dim)}
   .btn{font:inherit;font-size:11px;padding:2px 9px;border-radius:4px;cursor:pointer;
-    background:#21262d;color:#c9d1d9;border:1px solid #30363d}
-  .btn:hover{border-color:#58a6ff;color:#e6edf3}
-  .btn.go{color:#56d364}
-  .btn.warn{color:#ffa657;border-color:#ffa657}
+    background:#21262d;color:var(--wp-text);border:1px solid var(--wp-border)}
+  .btn:hover{border-color:var(--wp-blue);color:#e6edf3}
+  .btn.go{color:var(--wp-green)}
+  .btn.warn{color:var(--wp-orange);border-color:var(--wp-orange)}
 
   /* Panel settings. */
   #menu{display:none;position:fixed;z-index:95;width:280px;box-sizing:border-box;
-    padding:8px;font-size:11px;background:#161b22;border:1px solid #30363d;
+    padding:8px;font-size:11px;background:var(--wp-panel);border:1px solid var(--wp-border);
     border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.6);max-height:80vh;overflow:auto}
   #menu.show{display:block}
   #menu .mh{font-weight:700;color:#e6edf3;margin-bottom:6px}
-  #menu .sec{margin:8px 0 3px;color:#6e7681;text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
+  #menu .sec{margin:8px 0 3px;color:var(--wp-dim);text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
   #menu .row{display:flex;align-items:center;gap:6px;margin:3px 0}
   #menu .note{color:#8b949e;line-height:1.4}
   #menu input[type=text]{flex:1;min-width:0;font:inherit;font-size:11px;padding:2px 6px;
-    background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
-  #menu input[type=text]:focus{outline:none;border-color:#58a6ff}
-  #menu input[type=range]{flex:1;min-width:0;accent-color:#1f6feb}
+    background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-border);border-radius:4px}
+  #menu input[type=text]:focus{outline:none;border-color:var(--wp-blue)}
+  #menu input[type=range]{flex:1;min-width:0;accent-color:var(--wp-accent)}
   #menu label.chk{display:flex;align-items:baseline;gap:6px;padding:2px 0;cursor:pointer}
-  #menu label.chk input{accent-color:#1f6feb;cursor:pointer}
-  #menu label.chk .dim{color:#6e7681}
-  #menu .btn.on{background:rgba(31,111,235,0.25);border-color:#1f6feb;color:#e6edf3}
-  #menu .btn.sw{width:22px;height:20px;padding:0;border:2px solid #30363d;border-radius:4px}
+  #menu label.chk input{accent-color:var(--wp-accent);cursor:pointer}
+  #menu label.chk .dim{color:var(--wp-dim)}
+  #menu .btn.on{background:rgba(31,111,235,0.25);border-color:var(--wp-accent);color:#e6edf3}
+  #menu .btn.sw{width:22px;height:20px;padding:0;border:2px solid var(--wp-border);border-radius:4px}
   #menu .btn.sw.on{border-color:#e6edf3}
   .chips{display:flex;flex-wrap:wrap;gap:4px}
   .chip{display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:10px;
-    background:#21262d;border:1px solid #30363d;cursor:pointer}
-  .chip:hover{border-color:#58a6ff}
-  .chip .cx{color:#6e7681}
-  .chip:hover .cx{color:#f85149}
-  .chip.add{color:#58a6ff}
+    background:#21262d;border:1px solid var(--wp-border);cursor:pointer}
+  .chip:hover{border-color:var(--wp-blue)}
+  .chip .cx{color:var(--wp-dim)}
+  .chip:hover .cx{color:var(--wp-red)}
+  .chip.add{color:var(--wp-blue)}
   /* The name picker's list: one row per name, alphabetical, inside the menu (not a floating popup, so the menu's
      own edge cannot clip it and it stays on the same hover handshake as the rest of the menu). */
   #menu .sugg{display:none;flex-direction:column;max-height:150px;overflow-y:auto;margin:2px 0;
-    background:#0d1117;border:1px solid #30363d;border-radius:4px}
+    background:var(--wp-bg);border:1px solid var(--wp-border);border-radius:4px}
   #menu .sugg.show{display:flex}
   #menu .sg{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:2px 6px;cursor:pointer;
     color:#e6edf3;border:0;border-radius:0;background:none}
   #menu .sg:hover,#menu .sg.on{background:rgba(31,111,235,0.25)}
   #menu .sg .sn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #menu .sg .st{flex:none;font-size:9px;color:#8b949e;white-space:nowrap}
-  #menu .sugg .none{padding:2px 6px;color:#6e7681}
+  #menu .sugg .none{padding:2px 6px;color:var(--wp-dim)}
 
   /* ── Pieces (3.0 alpha): single data elements drawn by parts.js ─────────── */
   .panel.part > .pbody{position:absolute;inset:0;padding:1px 3px;box-sizing:border-box;overflow:hidden}
@@ -260,7 +261,7 @@
      the same box, padding and content area with or without it. The outline is an inset shadow, not a
      border, so it takes no room; it used to add 1px border + 3px 6px padding, which shrank the piece's
      content box by 8 x 6 px and made Fit (+4) come up short. */
-  .panel.part.back > .pbody{background:rgba(13,17,23,var(--bg-alpha,0.72));box-shadow:inset 0 0 0 1px #30363d;border-radius:5px}
+  .panel.part.back > .pbody{background:rgba(var(--wp-bg-rgb),var(--bg-alpha,0.72));box-shadow:inset 0 0 0 1px var(--wp-border);border-radius:5px}
   :is(body.edit .panel, .panel.one).part.sample > .pbody{opacity:0.7}
   /* A Ring arc is drawn into its panel's whole box, so the arcs of one ring line up: no padding, no outline. */
   .panel.part.seg > .pbody{padding:0}
@@ -269,23 +270,23 @@
      on it (the piece itself drags; right-click opens its ⚙). */
   body.edit .panel.part .tab{display:none}
   body.edit .panel.part:hover .tab,body.edit .panel.part.lift .tab{display:flex;z-index:60}
-  body.edit .panel.sel{outline:2px solid #d29922;outline-offset:1px}
+  body.edit .panel.sel{outline:2px solid var(--wp-gold);outline-offset:1px}
   /* Two or more selected (a group, or a Shift-click set): one box around them all, and its ◢
      stretches every piece at once. The box itself lets clicks through; only the ◢ takes the mouse. */
   #gbox{display:none;position:fixed;z-index:55;border:1px dashed rgba(210,153,34,0.8);pointer-events:none}
   body.edit #gbox.on{display:block}
   #gbox .ggrip{position:absolute;right:-9px;bottom:-9px;width:16px;height:16px;pointer-events:auto;cursor:nwse-resize;
-    background:#d29922;color:#0d1117;font-size:11px;line-height:16px;text-align:center;border-radius:3px}
+    background:var(--wp-gold);color:var(--wp-bg);font-size:11px;line-height:16px;text-align:center;border-radius:3px}
   /* What is selected, and what can be done with it: lock together, save as a
      group, remove. A row of its own under the toolbar, only while there is one. */
-  #selbar{display:none;flex-basis:100%;align-items:center;gap:6px;flex-wrap:wrap;padding-top:4px;border-top:1px solid #30363d}
+  #selbar{display:none;flex-basis:100%;align-items:center;gap:6px;flex-wrap:wrap;padding-top:4px;border-top:1px solid var(--wp-border)}
   #selbar.on{display:flex}
-  #selbar b{color:#d29922}
-  #selbar select{font:inherit;font-size:11px;padding:2px 4px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
-  #selbar input{font:inherit;font-size:11px;padding:2px 6px;width:120px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
+  #selbar b{color:var(--wp-gold)}
+  #selbar select{font:inherit;font-size:11px;padding:2px 4px;background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-border);border-radius:4px}
+  #selbar input{font:inherit;font-size:11px;padding:2px 6px;width:120px;background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-border);border-radius:4px}
   /* ✕ on a piece deletes it; Undo stays here for a few seconds. */
   #toast{display:none;position:fixed;left:50%;bottom:48px;transform:translateX(-50%);z-index:96;align-items:center;gap:10px;
-    padding:6px 10px;font-size:12px;background:rgba(22,27,34,0.97);border:1px solid #d29922;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
+    padding:6px 10px;font-size:12px;background:rgba(var(--wp-panel-rgb),0.97);border:1px solid var(--wp-gold);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
   #toast.on{display:flex}
   #toast:not(.undo) #undoBtn{display:none}
 
@@ -293,20 +294,20 @@
      groups — today's overlays first. Only while arranging. */
   /* Wide enough to read, and wider on request: drag its right edge (the width is kept). */
   #chooser{display:none;position:fixed;z-index:85;width:360px;min-width:280px;max-width:640px;max-height:75vh;box-sizing:border-box;
-    flex-direction:column;font-size:12px;background:rgba(22,27,34,0.97);border:1px solid #1f6feb;
+    flex-direction:column;font-size:12px;background:rgba(var(--wp-panel-rgb),0.97);border:1px solid var(--wp-accent);
     border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.6);resize:horizontal;overflow:hidden}
   body.edit #chooser.open{display:flex}
-  #chooser .ch-h{display:flex;align-items:center;gap:6px;padding:5px 8px;cursor:move;border-bottom:1px solid #30363d}
+  #chooser .ch-h{display:flex;align-items:center;gap:6px;padding:5px 8px;cursor:move;border-bottom:1px solid var(--wp-border)}
   #chooser .ch-h b{color:#e6edf3;flex:1}
-  #chooser .ch-tabs{display:flex;flex-wrap:wrap;gap:3px;padding:5px 6px;border-bottom:1px solid #30363d}
-  #chooser .ch-tab{padding:1px 6px;border-radius:9px;border:1px solid #30363d;cursor:pointer;color:#8b949e;background:#0d1117}
-  #chooser .ch-tab.on{color:#e6edf3;border-color:#1f6feb;background:rgba(31,111,235,0.25)}
+  #chooser .ch-tabs{display:flex;flex-wrap:wrap;gap:3px;padding:5px 6px;border-bottom:1px solid var(--wp-border)}
+  #chooser .ch-tab{padding:1px 6px;border-radius:9px;border:1px solid var(--wp-border);cursor:pointer;color:#8b949e;background:var(--wp-bg)}
+  #chooser .ch-tab.on{color:#e6edf3;border-color:var(--wp-accent);background:rgba(31,111,235,0.25)}
   #chooser .ch-list{overflow:auto;padding:4px 6px;flex:1;min-height:60px}
-  #chooser .ch-sec{margin:6px 0 3px;color:#6e7681;text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
+  #chooser .ch-sec{margin:6px 0 3px;color:var(--wp-dim);text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
   #chooser .pc{display:flex;flex-wrap:wrap;align-items:center;gap:3px 6px;padding:4px 5px;border:1px solid transparent;border-radius:4px;cursor:grab}
-  #chooser .pc:hover{border-color:#30363d;background:#0d1117}
-  #chooser .pc-l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
-  #chooser .pc-v{color:#6e7681;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #chooser .pc:hover{border-color:var(--wp-border);background:var(--wp-bg)}
+  #chooser .pc-l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--wp-text)}
+  #chooser .pc-v{color:var(--wp-dim);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* A piece: its whole name, what it reads now, then the ways to draw it on a line of their own
      (the guild lead, 2026-09-29, on one crowded line: "i can't read this"). */
   #chooser .pc.pp{border-bottom-color:#21262d;border-radius:0}
@@ -315,35 +316,35 @@
      piece makes); a fixed height so hovering a mode chip never moves the chips. It is not a drag target of its
      own: the mouse goes to its row. */
   #chooser .pc-pv{flex-basis:100%;height:42px;box-sizing:border-box;overflow:hidden;pointer-events:none;
-    padding:1px 3px;border-radius:4px;background:rgba(13,17,23,0.6)}
+    padding:1px 3px;border-radius:4px;background:rgba(var(--wp-bg-rgb),0.6)}
   #chooser .pc-pv.sample{opacity:0.55}
   #chooser .pc-ms{flex-basis:100%;display:flex;flex-wrap:wrap;gap:3px}
-  #chooser .pc-m{padding:0 5px;border:1px solid #30363d;border-radius:3px;color:#58a6ff;cursor:grab;font-size:11px;line-height:17px}
-  #chooser .pc-m:hover{border-color:#58a6ff}
+  #chooser .pc-m{padding:0 5px;border:1px solid var(--wp-border);border-radius:3px;color:var(--wp-blue);cursor:grab;font-size:11px;line-height:17px}
+  #chooser .pc-m:hover{border-color:var(--wp-blue)}
   /* A saved group's hotkey: dashed when it has none, blue with a key, amber while it listens, red when
      another program holds it. */
-  #chooser .pc-k{padding:0 5px;border:1px dashed #30363d;border-radius:3px;color:#6e7681;cursor:pointer;font-size:11px;line-height:17px}
-  #chooser .pc-k:hover{border-color:#58a6ff;color:#e6edf3}
-  #chooser .pc-k.set{border-style:solid;color:#58a6ff}
-  #chooser .pc-k.on{border-style:solid;border-color:#d29922;color:#d29922}
-  #chooser .pc-k.clash{border-style:solid;border-color:#f85149;color:#f85149}
-  #chooser .pc .x{color:#6e7681;cursor:pointer;padding:0 3px}
-  #chooser .pc .x:hover{color:#f85149}
-  #chooser .ch-f{border-top:1px solid #30363d;padding:5px 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
-  #chooser .ch-f input{flex:1;min-width:80px;font:inherit;font-size:11px;padding:2px 6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
-  #chooser .dim{color:#6e7681}
+  #chooser .pc-k{padding:0 5px;border:1px dashed var(--wp-border);border-radius:3px;color:var(--wp-dim);cursor:pointer;font-size:11px;line-height:17px}
+  #chooser .pc-k:hover{border-color:var(--wp-blue);color:#e6edf3}
+  #chooser .pc-k.set{border-style:solid;color:var(--wp-blue)}
+  #chooser .pc-k.on{border-style:solid;border-color:var(--wp-gold);color:var(--wp-gold)}
+  #chooser .pc-k.clash{border-style:solid;border-color:var(--wp-red);color:var(--wp-red)}
+  #chooser .pc .x{color:var(--wp-dim);cursor:pointer;padding:0 3px}
+  #chooser .pc .x:hover{color:var(--wp-red)}
+  #chooser .ch-f{border-top:1px solid var(--wp-border);padding:5px 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  #chooser .ch-f input{flex:1;min-width:80px;font:inherit;font-size:11px;padding:2px 6px;background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-border);border-radius:4px}
+  #chooser .dim{color:var(--wp-dim)}
   /* Where is it? A row of the chooser and the piece(s) it is on the screen as: the piece is outlined in green
      (steady while hovered, a short pulse after a click on an already-placed row) and a dashed line runs between
      them. The chooser and the pieces are one page, so the line is just an SVG over it that takes no clicks. */
-  .panel.hl,.panel.loc{outline:3px solid #56d364!important;outline-offset:2px;z-index:60;box-shadow:0 0 14px 3px rgba(86,211,100,0.6)}
+  .panel.hl,.panel.loc{outline:3px solid var(--wp-green)!important;outline-offset:2px;z-index:60;box-shadow:0 0 14px 3px rgba(86,211,100,0.6)}
   .panel.loc{animation:locpulse 0.5s ease-in-out 4 alternate}
   @keyframes locpulse{from{box-shadow:0 0 6px 1px rgba(86,211,100,0.3)}to{box-shadow:0 0 26px 8px rgba(86,211,100,0.9)}}
   body.edit .panel.off.hl,body.edit .panel.off.loc{opacity:0.9}
-  #chooser .pc.hl,#chooser .ch-tab.hl{border-color:#56d364;background:rgba(86,211,100,0.14)}
+  #chooser .pc.hl,#chooser .ch-tab.hl{border-color:var(--wp-green);background:rgba(86,211,100,0.14)}
   #loc{display:none;position:fixed;inset:0;width:100%;height:100%;z-index:84;pointer-events:none}
   #loc.on{display:block}
-  #loc line{stroke:#56d364;stroke-width:2.5;stroke-dasharray:7 5;filter:drop-shadow(0 0 3px #56d364);animation:locdash 0.5s linear infinite}
-  #loc circle{fill:#56d364}
+  #loc line{stroke:var(--wp-green);stroke-width:2.5;stroke-dasharray:7 5;filter:drop-shadow(0 0 3px var(--wp-green));animation:locdash 0.5s linear infinite}
+  #loc circle{fill:var(--wp-green)}
   @keyframes locdash{to{stroke-dashoffset:-12}}
   #ghost{display:none;position:fixed;z-index:99;pointer-events:none;padding:3px 8px;font-size:11px;
     background:rgba(31,111,235,0.85);color:#fff;border-radius:4px;white-space:nowrap}
@@ -1236,7 +1237,7 @@
   function isMin(p) { return p.min === true && !hasMini(p); }
   function minOn(p) { return hasMini(p) ? !!miniOf(p.key).on : isMin(p); }
   function minLabel(p) { return minOn(p) ? '▭ Restore' : '▭ Minimize'; }
-  function accentOf(p) { return /^#[0-9a-fA-F]{6}$/.test(String(p.color || '')) ? p.color : '#58a6ff'; }
+  function accentOf(p) { return /^#[0-9a-fA-F]{6}$/.test(String(p.color || '')) ? p.color : 'var(--wp-blue)'; }
   // The overlay's own setting (pin: its "Keep mini"); returns main's promise when there is one.
   function flipMini(p, pin) {
     var mm = miniOf(p.key);
@@ -2968,7 +2969,7 @@
               + '<span class="x" data-delgrp="' + g.id + '" title="Delete the group; its pieces stay where they are">delete, keep them</span>'
             : '<span class="x" data-delgrp="' + g.id + '">sure?</span>';
         lh += '<div class="pc" data-drag="group:' + g.id + '"><span class="pc-l">'
-          + (_renId === g.id ? '<input data-renin="' + esc(g.id) + '" maxlength="24" value="' + esc(g.name) + '" style="width:100%;font:inherit;font-size:11px;background:#0d1117;color:#e6edf3;border:1px solid #58a6ff;border-radius:4px">' : '★ ' + esc(g.name))
+          + (_renId === g.id ? '<input data-renin="' + esc(g.id) + '" maxlength="24" value="' + esc(g.name) + '" style="width:100%;font:inherit;font-size:11px;background:var(--wp-bg);color:#e6edf3;border:1px solid var(--wp-blue);border-radius:4px">' : '★ ' + esc(g.name))
           + '</span><span class="pc-v">' + g.parts.length + ' pieces' + (here ? ' · ' + here + ' here' : '') + groupHiddenText(g.id) + '</span>'
           + groupKeyChip(g)
           + '<span class="x" data-dupgrp="' + g.id + '" title="Save a copy to change (the original stays as it is)">⧉</span>'

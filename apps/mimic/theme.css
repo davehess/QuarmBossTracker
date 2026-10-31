@@ -1,0 +1,30 @@
+/* The overlays' shared theme: the platform's colour slots as CSS variables (docs/DESIGN-theming.md §2, §3).
+   Every overlay window links this file FIRST, so a page's own rules can read var(--wp-…) instead of a hex.
+   Seeded with the values the overlays used before this file existed, so loading it changes nothing on screen.
+   A guild theme and a raider's own look are later layers that override these on :root; nothing here is
+   per-overlay (an overlay's one-off tints and class colours stay in its own file).
+
+   The four green/red/gold/orange slots carry fixed MEANINGS (good, bad, DKP and warning) and are not themable
+   by a guild; the rest are. The *-rgb triplets exist for the few places that need the colour at an alpha:
+   rgba(var(--wp-bg-rgb), 0.6). Keep each triplet equal to its hex. */
+:root {
+  --wp-bg: #0d1117;
+  --wp-panel: #161b22;
+  --wp-border: #30363d;
+  --wp-text: #c9d1d9;
+  --wp-dim: #6e7681;
+  --wp-accent: #1f6feb;
+  --wp-blue: #58a6ff;
+  --wp-purple: #a371f7;
+  --wp-green: #56d364;
+  --wp-red: #f85149;
+  --wp-gold: #d29922;
+  --wp-orange: #ffa657;
+
+  --wp-bg-rgb: 13, 17, 23;
+  --wp-panel-rgb: 22, 27, 34;
+
+  --wp-radius: 6px;
+  --wp-font-mono: ui-monospace, Menlo, Consolas, monospace;
+  --wp-font-ui: ui-sans-serif, system-ui, sans-serif;
+}

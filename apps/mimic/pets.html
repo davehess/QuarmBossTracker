@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>pets</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Pet tracker overlay — transparent, always-on-top. For SUMMONED pets
      (mage/necro/beastlord), distinct from the charm tracker: no 6s mob-tick
@@ -14,15 +15,15 @@
   .title{display:flex;align-items:center;gap:8px;
     font-size:12px;color:#79c0ff;text-shadow:0 1px 2px #000;margin-bottom:4px;}
   .conn{font-size:11px}
-  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .conn.ok{color:var(--wp-green)} .conn.bad{color:#8b949e}
   .pet{position:relative;padding:5px 8px;margin-bottom:5px;background:rgb(0 0 0 / var(--bg-alpha));
-    border-radius:5px;border-left:3px solid #58a6ff;text-shadow:0 1px 2px #000;}
-  .pet.stale{border-left-color:#6e7681}
+    border-radius:5px;border-left:3px solid var(--wp-blue);text-shadow:0 1px 2px #000;}
+  .pet.stale{border-left-color:var(--wp-dim)}
   .pet .head{display:flex;justify-content:space-between;gap:8px;font-size:12px}
   .pet .nm{font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pet .owner{color:#8b949e;font-size:10px}
-  .pet .meta{font-size:10px;color:#c9d1d9;margin-top:1px;font-variant-numeric:tabular-nums}
-  .pet .meta .hp{color:#56d364;font-weight:bold}
+  .pet .meta{font-size:10px;color:var(--wp-text);margin-top:1px;font-variant-numeric:tabular-nums}
+  .pet .meta .hp{color:var(--wp-green);font-weight:bold}
   .hpbar{height:5px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
   .hpbar > div{height:100%;transition:width 200ms linear,background 200ms linear}
   /* buff chips — same tone tiers as the web BuffChip: dim → low (orange ≤6m)
@@ -30,19 +31,19 @@
   .petbuffs{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;font-size:10px;line-height:1.2}
   .petbuffs.stale{opacity:0.55}
   .petbuff{padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.06);
-    border:1px solid rgba(255,255,255,0.10);color:#c9d1d9}
+    border:1px solid rgba(255,255,255,0.10);color:var(--wp-text)}
   .petbuff .bn{color:#7ee787}
   .petbuff .t{font-variant-numeric:tabular-nums;margin-left:4px;color:#8b949e}
   .petbuff.low .t{color:#f0883e}
-  .petbuff.crit .t{color:#f85149}
-  .petbuff .t.q{color:#6e7681}
-  .petbuffs .src{font-size:9px;color:#6e7681;align-self:center;margin-left:2px}
+  .petbuff.crit .t{color:var(--wp-red)}
+  .petbuff .t.q{color:var(--wp-dim)}
+  .petbuffs .src{font-size:9px;color:var(--wp-dim);align-self:center;margin-left:2px}
   /* Buff bars (Mob Info style) — label "Name (cur/max · time)" with a
      counting-down bar underneath, sorted by time-left ascending. */
   .bufrows{margin-top:4px;display:flex;flex-direction:column;gap:3px}
   .bufrows.stale{opacity:0.55}
-  .bufrows .src{font-size:9px;color:#6e7681}
-  .bufb .lbl{font-size:10px;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bufrows .src{font-size:9px;color:var(--wp-dim)}
+  .bufb .lbl{font-size:10px;color:var(--wp-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .bufb .lbl .nm{color:#7ee787}
   .bufb .lbl .tk{color:#8b949e;font-variant-numeric:tabular-nums}
   .bufb .bar{height:4px;background:rgba(255,255,255,0.13);border-radius:2px;overflow:hidden;margin-top:1px}
@@ -51,17 +52,17 @@
   .pettarget{font-size:10px;color:#9aa4ad;margin-top:3px;display:flex;
     align-items:baseline;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pettarget .tgt{color:#f0883e;font-weight:600}
-  .pettarget .ago{color:#6e7681;font-size:9px}
+  .pettarget .ago{color:var(--wp-dim);font-size:9px}
   /* combat stats — running attack signature for the current pet. dual-wield
      pill highlights when ≥2 skill buckets observed. */
-  .petstats{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;font-size:10px;line-height:1.2;color:#c9d1d9}
+  .petstats{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;font-size:10px;line-height:1.2;color:var(--wp-text)}
   .petstats .blk{background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;border:1px solid rgba(255,255,255,0.10)}
   .petstats .blk b{color:#7ee787;font-variant-numeric:tabular-nums}
   .petstats .dw{background:#3d1d1d;color:#ff7b72;border-color:#5a2a2a;font-weight:600;letter-spacing:0.5px}
   .petstats .sk{background:rgba(88,166,255,0.10);color:#9ecbff;border-color:rgba(88,166,255,0.25)}
   /* ✕ dismiss — top-right of each card; dims by default, hover red. */
   .pet .dismiss{position:absolute;top:3px;right:4px;width:14px;height:14px;display:flex;
-    align-items:center;justify-content:center;background:rgba(14,17,22,0.4);color:#6e7681;
+    align-items:center;justify-content:center;background:rgba(14,17,22,0.4);color:var(--wp-dim);
     border:1px solid rgba(110,118,129,0.25);border-radius:3px;font-size:10px;line-height:1;
     cursor:pointer;padding:0;opacity:0.35;transition:opacity .12s;font-family:inherit}
   .pet .dismiss:hover{opacity:1;color:#f87171;border-color:#f87171;background:rgba(40,10,10,0.7)}
@@ -82,18 +83,18 @@
   .pmini .mbar{height:4px;background:rgba(255,255,255,0.13);border-radius:2px;overflow:hidden}
   .pmini .mbar>div{height:100%;transition:width 250ms linear}
   .pmini .tail{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
-  .pmini .arr{color:#6e7681}
+  .pmini .arr{color:var(--wp-dim)}
   .pmini .tgt{color:#f0883e;font-weight:600}
-  .pmini .tgt.none{color:#6e7681;font-weight:400}
-  .pmini .hi .pct{color:#56d364}  .pmini .hi .mbar>div{background:#56d364}
+  .pmini .tgt.none{color:var(--wp-dim);font-weight:400}
+  .pmini .hi .pct{color:var(--wp-green)}  .pmini .hi .mbar>div{background:var(--wp-green)}
   .pmini .mid .pct{color:#f0b429} .pmini .mid .mbar>div{background:#f0b429}
-  .pmini .lo .pct{color:#f85149}  .pmini .lo .mbar>div{background:#f85149}
-  .pmini .unk .pct{color:#6e7681}
-  .pmini .mh.run{color:#56d364} .pmini .mh.run .mbar>div{background:#56d364}
+  .pmini .lo .pct{color:var(--wp-red)}  .pmini .lo .mbar>div{background:var(--wp-red)}
+  .pmini .unk .pct{color:var(--wp-dim)}
+  .pmini .mh.run{color:var(--wp-green)} .pmini .mh.run .mbar>div{background:var(--wp-green)}
   .pmini .mh.low{color:#f0b429} .pmini .mh.low .mbar>div{background:#f0b429}
-  .pmini .mh.off{color:#a371f7} .pmini .mh.off .mbar>div{background:#a371f7}
-  .pmini .mh.unk{color:#8b949e} .pmini .mh.unk .mbar>div{background:#6e7681}
-  .pmini .mh.none{color:#6e7681}
+  .pmini .mh.off{color:var(--wp-purple)} .pmini .mh.off .mbar>div{background:var(--wp-purple)}
+  .pmini .mh.unk{color:#8b949e} .pmini .mh.unk .mbar>div{background:var(--wp-dim)}
+  .pmini .mh.none{color:var(--wp-dim)}
   /* drag/lock/setup — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -118,7 +119,7 @@
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
-  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  #move-btn:hover{opacity:1;color:var(--wp-blue);border-color:var(--wp-blue)}
   body.setup #move-btn{top:30px}
   /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
      panel owns ✥ and ✕ — the preload hides this page's — so the window's padding goes. */
@@ -298,9 +299,9 @@
       var pct = (hasTimer && total) ? Math.max(0, Math.min(100, (b.remaining_secs / total) * 100)) : (hasTimer ? 100 : 0);
       // Buff = green, debuff (good===0) = red; unknown timer = gray. The bar
       // length + time text convey urgency, the color conveys buff vs debuff.
-      var col = (b.good === 0) ? '#f85149' : (!hasTimer ? '#6e7681' : '#56d364');
+      var col = (b.good === 0) ? 'var(--wp-red)' : (!hasTimer ? 'var(--wp-dim)' : 'var(--wp-green)');
       // Fell off in the last 5 min → solid purple rebuff cue.
-      if (b.fell_off) { col = '#a371f7'; pct = 100; tk = ' (fell off — rebuff)'; }
+      if (b.fell_off) { col = 'var(--wp-purple)'; pct = 100; tk = ' (fell off — rebuff)'; }
       var title = b.name + (b.fell_off ? ' · fell off (rebuff)' : (hasTimer ? ' · ' + fmtRem(b.remaining_secs, bo) + ' left' : ' · present (duration unknown)'));
       rows += '<div class="bufb" title="' + esc(title) + '">'
            +    '<div class="lbl"><span class="nm">' + esc(shortBuffName(b.name)) + '</span><span class="tk">' + esc(tk) + '</span></div>'
@@ -424,7 +425,7 @@
         var ageMs = obs ? (Date.now() - obs) : null;
         var stale = ageMs != null && ageMs > 5*60*1000;
         var hp = (p.hp_pct != null) ? Math.max(0, Math.min(100, p.hp_pct)) : null;
-        var hpColor = hp == null ? '#58a6ff' : (hp > 50 ? '#56d364' : (hp > 20 ? '#f0883e' : '#f85149'));
+        var hpColor = hp == null ? 'var(--wp-blue)' : (hp > 50 ? 'var(--wp-green)' : (hp > 20 ? '#f0883e' : 'var(--wp-red)'));
         var hpStr = hp != null ? ' · <span class="hp">' + Math.round(hp) + '%</span>' : '';
         var hpBar = hp != null
           ? '<div class="hpbar"><div style="width:' + hp.toFixed(0) + '%;background:' + hpColor + '"></div></div>'

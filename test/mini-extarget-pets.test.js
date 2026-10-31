@@ -310,9 +310,9 @@ describe('Pet mini — line two: the haste bar', () => {
     expect(unk).toContain('<span class="tl wp-mini-num">?</span>');
     // The colours are the platform's: green, amber, purple.
     const css = cssOf(petHtml);
-    expect(css).toContain('.pmini .mh.run{color:#56d364}');
+    expect(css).toContain('.pmini .mh.run{color:var(--wp-green)}');
     expect(css).toContain('.pmini .mh.low{color:#f0b429}');
-    expect(css).toContain('.pmini .mh.off{color:#a371f7}');
+    expect(css).toContain('.pmini .mh.off{color:var(--wp-purple)}');
   });
 
   it('keeps a dim "no haste" line when no haste buff is on the pet', () => {

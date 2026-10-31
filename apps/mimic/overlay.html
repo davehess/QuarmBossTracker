@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>overlay</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Transparent always-on-top overlay. The window itself is frameless +
      transparent (set in main.js); this just paints a translucent HUD. */
@@ -10,7 +11,7 @@
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#e6edf3;user-select:none}
   .hud{background:rgb(14 17 22 / var(--bg-alpha));border:1px solid rgba(88,166,255,0.4);
     border-radius:8px;margin:4px;padding:8px 10px;backdrop-filter:blur(2px)}
-  .title{font-size:10px;color:#58a6ff;letter-spacing:0.1em;text-transform:uppercase;
+  .title{font-size:10px;color:var(--wp-blue);letter-spacing:0.1em;text-transform:uppercase;
     display:flex;justify-content:space-between}
   /* DPS / Tank tabs — ported from mobinfo.html so the surface reads the
      same across overlays. Same margin-right:28px clears the ✕ hide
@@ -21,8 +22,8 @@
      a narrow overlay's space, so it stays a size DOWN from the row text. */
   .tab{background:rgba(255,255,255,0.05);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
        border-radius:3px;padding:0 5px;font-size:9px;line-height:14px;cursor:pointer;font-family:inherit;letter-spacing:0.3px}
-  .tab:hover{color:#fff;border-color:#a371f7}
-  .tab.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+  .tab:hover{color:#fff;border-color:var(--wp-purple)}
+  .tab.on{background:#2a1d3d;color:#d2a8ff;border-color:var(--wp-purple)}
   .tab .beta{font-size:8px;color:#1f1300;background:#f0b429;border-radius:2px;padding:0 3px;margin-left:3px;font-weight:600}
   /* DPS over Tank, one column (the guild lead, 2026-09-25: "stack DPS and Tank
      on top of each other and make more horizontal room") — the boss name
@@ -55,10 +56,10 @@
   li .obs, .colhdr .obs{display:none}
   .obs-inline{color:#8b949e;font-size:9px}
   li .r{color:#6b7280;text-align:right}
-  li .n{color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  li .n{color:var(--wp-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   li .p{color:#6b7280;text-align:right;font-size:10px}
-  li .d{color:#56d364;text-align:right;font-variant-numeric:tabular-nums}
-  li .dps{color:#58a6ff;text-align:right;font-variant-numeric:tabular-nums}
+  li .d{color:var(--wp-green);text-align:right;font-variant-numeric:tabular-nums}
+  li .dps{color:var(--wp-blue);text-align:right;font-variant-numeric:tabular-nums}
   li .sec{color:#6b7280;text-align:right;font-variant-numeric:tabular-nums;font-size:10px}
   li.me .n{color:#f6c365;font-weight:600}
   /* Your row stands out as a whole band, not just a gold name (the guild lead,
@@ -89,8 +90,8 @@
   /* Mob-total footer (EQLogParser's bottom line): solid rule, bold numbers. */
   li.total{border-top:1px solid rgba(110,118,129,0.4);margin-top:2px;padding-top:3px}
   li.total .n{color:#f6c365;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  li.total .d{color:#56d364;font-weight:600}
-  li.total .dps{color:#58a6ff;font-weight:600}
+  li.total .d{color:var(--wp-green);font-weight:600}
+  li.total .dps{color:var(--wp-blue);font-weight:600}
   li.total .sec{color:#9aa4ad}
   /* Row-count stepper in the title bar (− N +). */
   .rowcfg{display:flex;align-items:center;gap:1px;margin-left:auto}
@@ -136,17 +137,17 @@
   body.hist .histwrap:has(> .histlist:empty){display:block}   /* no fights yet: no empty column */
   body.hist .histlist:empty{display:none}
   .histlist > li{display:block;padding:0;margin:0 0 2px}
-  .hitem{display:block;width:100%;text-align:left;background:rgba(255,255,255,0.03);color:#c9d1d9;
+  .hitem{display:block;width:100%;text-align:left;background:rgba(255,255,255,0.03);color:var(--wp-text);
     border:1px solid rgba(255,255,255,0.08);border-radius:3px;padding:2px 5px;cursor:pointer;font-family:inherit}
-  .hitem:hover{border-color:#a371f7}
-  .hitem.on{background:#2a1d3d;border-color:#a371f7}
+  .hitem:hover{border-color:var(--wp-purple)}
+  .hitem.on{background:#2a1d3d;border-color:var(--wp-purple)}
   .hitem .hb{display:block;font-size:10px;color:#f6c365;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .hitem .hm{display:block;font-size:9px;color:#8b949e;font-variant-numeric:tabular-nums}
-  .hitem .hs-synced{color:#56d364}
-  .hitem .hs-local{color:#d29922}
+  .hitem .hs-synced{color:var(--wp-green)}
+  .hitem .hs-local{color:var(--wp-gold)}
   .dim{color:#6b7280;font-size:10px}
   .conn{font-size:9px}
-  .conn.ok{color:#56d364}
+  .conn.ok{color:var(--wp-green)}
   .conn.bad{color:#f87171}
   /* Move-handle ✥ button + lock — visible only when overlays are UNLOCKED.
      The handle is the EXPLICIT drag affordance: mousedown sends IPC to
@@ -200,7 +201,7 @@
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
-  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  #move-btn:hover{opacity:1;color:var(--wp-blue);border-color:var(--wp-blue)}
   /* ▭ Mini — option B "Me and my neighbours" (the guild vote, 2026-09-17).
      Three rows: the player I am chasing, me, the player chasing me. Every
      rule is scoped to body.wp-mini, so full mode is exactly what it was. */
@@ -216,10 +217,10 @@
   body.wp-mini #deeps li.mrow .v{text-align:right;white-space:nowrap}
   body.wp-mini #deeps li.mrow .v .dps{font-size:10px}
   .mbar{grid-column:2 / -1;background:rgba(255,255,255,0.08);overflow:hidden}
-  .mbar i{display:block;height:100%;background:#a371f7}
+  .mbar i{display:block;height:100%;background:var(--wp-purple)}
   /* The tab strip is hidden in mini, so the bar says which tab this is:
      red on Tank, where the number is damage TAKEN. */
-  li.mrow.tk .mbar i{background:#f85149}
+  li.mrow.tk .mbar i{background:var(--wp-red)}
   /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
      panel owns ✥ and ✕ — the preload hides this page's — so the margin, the padding and the gutter kept clear
      of them go, and the card sits at the panel's edge. */
@@ -247,14 +248,14 @@
   .tnone{color:#8b949e;font-size:11px;padding:6px 0}
   .trows{margin-top:5px}
   .trow{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;width:100%;box-sizing:border-box;
-    text-align:left;background:transparent;border:0;border-radius:2px;color:#c9d1d9;font:inherit;font-size:11px;
+    text-align:left;background:transparent;border:0;border-radius:2px;color:var(--wp-text);font:inherit;font-size:11px;
     padding:1px 2px 4px;cursor:pointer}
   .trow:hover{background:rgba(163,113,247,0.10)}
   .trow .tn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   .trow .tv{color:#d2a8ff;font-variant-numeric:tabular-nums}
   .trow .tb{position:absolute;left:2px;right:2px;bottom:1px;height:2px;background:rgba(255,255,255,0.06);border-radius:1px}
   .trow .tb i{display:block;height:100%;background:rgba(163,113,247,0.6);border-radius:1px}
-  .trow.new .tb i{background:#a371f7}
+  .trow.new .tb i{background:var(--wp-purple)}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -1257,7 +1258,7 @@
   //     (the agent's avg_dps), not the mean of the dots.
   //   • "tonight" cuts at 6am local, as the agent's _meNightKey does.
   // ── Trend: the pure parts (begin) ──
-  var TREND_COL = '#a371f7';
+  var TREND_COL = 'var(--wp-purple)';
   var TREND_ROWS = 8;
   var TREND_WEEK_MS = 7 * 24 * 3600 * 1000;
   function _trendNightKey(ms) {

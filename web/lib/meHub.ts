@@ -125,3 +125,66 @@ export function hubEntry(href: string): HubEntry {
     beta: /^\[beta\]/i.test(m.title),
   };
 }
+
+// ── "Your main": best fights, loot and raids ───────────────────────────────────────────────────────────────
+// The pure rules behind the hub's best-fights, loot and raids blocks (the guild lead, 2026-10-31: "highest damage,
+// best fights, latest loot and dkp total, raids I was in and a link to that raid replay with me highlighted").
+
+/** The few fields of a fight the best-fights lists rank and print (a ParseFight from lib/parseTrend.ts has them). */
+export type FightLite = { eid: string; name: string; zone: string | null; t: string; dmg: number; dps: number; char: string };
+
+/** The `n` best fights by total damage or by DPS, a tie going to the newer fight. A fight with nothing in it is not a best. */
+export function topFights<T extends FightLite>(fights: readonly T[], by: 'dmg' | 'dps', n = 5): T[] {
+  return fights
+    .filter(f => Number.isFinite(f[by]) && f[by] > 0)
+    .slice()
+    .sort((a, b) => b[by] - a[by] || Date.parse(b.t) - Date.parse(a.t) || a.eid.localeCompare(b.eid))
+    .slice(0, n);
+}
+
+/** One OpenDKP award, as the loot block reads it. */
+export type LootLite = { character_name: string; item_name: string | null; dkp: number | null; raid_date: string | null; raid_name: string | null };
+
+export type LootSummary = {
+  /** The main's newest awards. */
+  latest: LootLite[];
+  /** DKP spent by the main alone, and by every character the member holds (the guild pools DKP onto the main). */
+  mainSpent: number; mainItems: number;
+  allSpent: number; allItems: number;
+};
+
+/** Awards -> what the loot block shows. Names are matched without case, as the roster is. */
+export function lootSummary(rows: readonly LootLite[], mainName: string, n = 6): LootSummary {
+  const key = mainName.toLowerCase();
+  const mine = rows.filter(r => r.character_name.toLowerCase() === key);
+  const spent = (list: readonly LootLite[]) => list.reduce((s, r) => s + (Number(r.dkp) || 0), 0);
+  const newest = (a: LootLite, b: LootLite) => String(b.raid_date ?? '').localeCompare(String(a.raid_date ?? ''));
+  return {
+    latest: mine.slice().sort(newest).slice(0, n),
+    mainSpent: spent(mine), mainItems: mine.length,
+    allSpent: spent(rows), allItems: rows.length,
+  };
+}
+
+/** A raid night starts in the evening and runs past midnight; shifting an instant back this far lands it on the night's date. */
+export const NIGHT_ROLLOVER_MS = 6 * 60 * 60 * 1000;
+
+/** The recorded sessions the replay knows (lib/raidReplay.ts ReplaySession has these fields). */
+export type SessionLite = { from: number; to: number; minutes: number; raid: boolean };
+
+/** The raid session that belongs to an OpenDKP night: a guild-raid session whose start falls on that night, the longest if several. */
+export function sessionForNight<T extends SessionLite>(date: string, sessions: readonly T[], nightOf: (ms: number) => string): T | null {
+  const hits = sessions.filter(s => s.raid && nightOf(s.from) === date);
+  if (hits.length === 0) return null;
+  return hits.reduce((a, b) => (b.minutes > a.minutes ? b : a));
+}
+
+/**
+ * The replay of one recorded window with one raider followed (and so highlighted): /raid/session reads `follow` from
+ * its own address (lib/replayFollow.ts parsePicks), and says "not recorded at this moment" when that raider is not in
+ * the picture, so the link needs no roster check.
+ */
+export function replayHref(fromMs: number, toMs: number, follow: string): string {
+  const q = new URLSearchParams({ from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString(), follow });
+  return `/raid/session?${q.toString()}`;
+}

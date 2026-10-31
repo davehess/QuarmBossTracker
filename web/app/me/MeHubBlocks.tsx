@@ -9,15 +9,24 @@ import { relTime, fmtAbs } from '@/lib/timezone-shared';
 import { loadUploadStampRow, uploadStampsFor } from '@/lib/uploadFreshnessServer';
 import {
   loadHubChars, loadHubHeartbeats, loadHubMain, loadHubPack, loadMainStats, loadMainZone, loadToggleFlags,
+  loadMainFights, loadMainLoot, loadMainRaids,
 } from '@/lib/meHubLoad';
-import { characterLinks, mimicStatus, isRoot, syncStatus, type HubChar } from '@/lib/meHub';
+import { characterLinks, mimicStatus, isRoot, syncStatus, replayHref, type HubChar } from '@/lib/meHub';
+import { fmtDkp, cleanBossName } from '@/lib/format';
+import { nightLabel } from '@/lib/raidHeatmap';
+import type { ParseFight } from '@/lib/parseTrend';
 import ExclusionToggles from './ExclusionToggles';
+import MeHubUploads from './MeHubUploads';
 
 // Heights of each block's slot (skeleton and filled block alike).
 export const SLOT = {
   identity: '7rem',
   fresh: '1.5rem',
   record: '17rem',
+  best: '16rem',
+  loot: '16rem',
+  raids: '14rem',
+  uploads: '7rem',
   mimic: '5rem',
   discord: '2rem',
   alts: '9rem',
@@ -119,10 +128,10 @@ export async function MainRecord({ userId }: { userId: string }) {
   ]);
   if (!stats) return <Failed h={SLOT.record} what="your parses" />;
   const a = stats.agg;
-  const cells: { label: string; value: string }[] = [
+  const cells: { label: string; value: string; href?: string }[] = [
     { label: 'Encounters', value: (a?.encounter_count ?? 0).toLocaleString() },
     { label: 'Total damage', value: fmtDmg(a?.total_damage ?? 0) },
-    { label: 'Top fight', value: a && a.top_damage > 0 ? fmtDmg(a.top_damage) : '—' },
+    { label: 'Top fight', value: a && a.top_damage > 0 ? fmtDmg(a.top_damage) : '—', href: a && a.top_damage > 0 && a.top_encounter_id ? `/parses/${a.top_encounter_id}` : undefined },
     { label: 'Last upload', value: a?.last_upload ? relTime(a.last_upload) : '—' },
   ];
   return (
@@ -131,7 +140,7 @@ export async function MainRecord({ userId }: { userId: string }) {
         {cells.map(x => (
           <div key={x.label} className="rounded border border-border bg-bg p-3">
             <div className="text-xl text-text">{x.value}</div>
-            <div className="text-dim">{x.label}</div>
+            <div className="text-dim">{x.href ? <Link href={x.href} className="text-blue hover:underline">{x.label} →</Link> : x.label}</div>
           </div>
         ))}
       </div>
@@ -153,6 +162,141 @@ export async function MainRecord({ userId }: { userId: string }) {
         <Link href="/me/parses" className="text-blue hover:underline">All your parses →</Link>
         {zone?.zone && <span className="ml-3">Last seen in <span className="text-text">{zone.zone}</span>{zone.updatedAt && <> · {relTime(zone.updatedAt)}</>}</span>}
       </p>
+    </div>
+  );
+}
+
+function FightList({ title, fights, figure }: { title: string; fights: ParseFight[]; figure: (f: ParseFight) => string }) {
+  return (
+    <div>
+      <h4 className="mb-1 text-[11px] text-dim">{title}</h4>
+      {fights.length === 0 ? (
+        <p className="text-xs italic text-dim">No boss fights recorded.</p>
+      ) : (
+        <ol className="space-y-1 text-xs">
+          {fights.map((f, i) => (
+            <li key={f.eid} className="flex items-center gap-2">
+              <span className="w-4 shrink-0 text-right text-[10px] text-dim">{i + 1}</span>
+              <Link href={`/parses/${f.eid}`} className="min-w-0 flex-1 truncate text-blue hover:underline">{cleanBossName(f.name)}</Link>
+              <span className="shrink-0 whitespace-nowrap text-[10px] tabular-nums text-text">{figure(f)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+// The main's best boss fights, by damage and by DPS. Each is a link to its parse page.
+export async function MainBest({ userId }: { userId: string }) {
+  const main = await loadHubMain(userId).catch(() => null);
+  if (!main) return <div style={{ minHeight: SLOT.best }} />;
+  const fights = await loadMainFights(userId, main.char.name).catch(() => null);
+  if (!fights) return <Failed h={SLOT.best} what="your best fights" />;
+  return (
+    <div style={{ minHeight: SLOT.best }} className="rounded border border-border bg-bg p-3">
+      <h3 className="mb-2 text-xs text-orange">Best fights</h3>
+      <div className="space-y-3">
+        <FightList title="Highest damage" fights={fights.byDamage} figure={f => f.dmg.toLocaleString()} />
+        <FightList title="Highest DPS" fights={fights.byDps} figure={f => `${Math.round(f.dps).toLocaleString()} dps`} />
+      </div>
+      <p className="mt-2 text-[10px] text-dim">
+        {fights.truncated ? `From your newest ${fights.considered} boss fights.` : `From your ${fights.considered} boss fights since parses became comparable.`}
+      </p>
+    </div>
+  );
+}
+
+// The main's newest loot and the DKP spent. The OpenDKP mirror holds what was spent, not the live balance: the balance
+// is OpenDKP's own number (Mimic's loot panel reads it live), so this block does not guess one.
+export async function MainLoot({ userId }: { userId: string }) {
+  const main = await loadHubMain(userId).catch(() => null);
+  if (!main) return <div style={{ minHeight: SLOT.loot }} />;
+  const loot = await loadMainLoot(userId, main.char.name).catch(() => null);
+  if (!loot) return <Failed h={SLOT.loot} what="your loot" />;
+  return (
+    <div style={{ minHeight: SLOT.loot }} className="rounded border border-border bg-bg p-3">
+      <h3 className="mb-2 text-xs text-orange">Latest loot and DKP</h3>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded border border-border/60 p-2">
+          <div className="text-lg text-gold">{fmtDkp(loot.allSpent)}</div>
+          <div className="text-dim">DKP spent, all your characters · {loot.allItems} items</div>
+        </div>
+        <div className="rounded border border-border/60 p-2">
+          <div className="text-lg text-text">{fmtDkp(loot.mainSpent)}</div>
+          <div className="text-dim">on {main.char.name} · {loot.mainItems} items</div>
+        </div>
+      </div>
+      {loot.latest.length === 0 ? (
+        <p className="mt-2 text-xs italic text-dim">No loot won yet.</p>
+      ) : (
+        <ul className="mt-2 space-y-1 text-xs">
+          {loot.latest.map((l, i) => (
+            <li key={`${l.raid_date}-${l.item_name}-${i}`} className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-text">{l.item_name || 'unknown item'}</span>
+              <span className="hidden shrink-0 text-[10px] text-dim sm:inline">{l.raid_date ? nightLabel(String(l.raid_date).slice(0, 10)) : ''}</span>
+              <span className="w-12 shrink-0 text-right text-[10px] tabular-nums text-gold">{fmtDkp(l.dkp)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-2 text-[10px] text-dim">
+        Your live balance is OpenDKP&apos;s own number: it is on the loot panel in Mimic, and on the OpenDKP site.
+      </p>
+    </div>
+  );
+}
+
+// The raid nights the main was ticked into, each with a link to that night's replay with the main followed (and so
+// highlighted). A night nobody recorded has no replay to link.
+export async function MainRaids({ userId }: { userId: string }) {
+  const main = await loadHubMain(userId).catch(() => null);
+  if (!main) return <div style={{ minHeight: SLOT.raids }} />;
+  const name = main.char.name;
+  const raids = await loadMainRaids(name).catch(() => null);
+  if (!raids) return <Failed h={SLOT.raids} what="your raids" />;
+  return (
+    <div style={{ minHeight: SLOT.raids }} className="rounded border border-border bg-bg p-3">
+      <h3 className="mb-2 text-xs text-orange">Raids {name} was in</h3>
+      {raids.length === 0 ? (
+        <p className="text-xs italic text-dim">No raid nights with {name} in the last 45 days.</p>
+      ) : (
+        <ul className="space-y-2 text-xs">
+          {raids.map(r => (
+            <li key={r.date} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="w-28 shrink-0 text-text">{nightLabel(r.date)}</span>
+              <span className="min-w-0 flex-1 truncate text-dim">{r.names.join(' · ') || '(unnamed)'} · {r.ticks} {r.ticks === 1 ? 'tick' : 'ticks'}</span>
+              <span className="flex shrink-0 gap-3">
+                {r.from != null && r.to != null
+                  ? <Link href={replayHref(r.from, r.to, name)} className="py-1 text-blue hover:underline">Replay with you highlighted →</Link>
+                  : <span className="py-1 text-dim">no recording</span>}
+                <Link href={`/raid/review/${r.date}`} className="py-1 text-blue hover:underline">Night review →</Link>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-2 text-[10px] text-dim">
+        Nights OpenDKP ticked {name} into. <Link href="/me" className="text-blue hover:underline">The classic view</Link> has the 60-day attendance grid for all your characters.
+      </p>
+    </div>
+  );
+}
+
+// A spot to hand over files by hand: the same inventory, keys and spellbook uploads the classic cards carry, for the
+// main or another character. Mimic sends these on its own, so this is the fallback.
+export async function MainUploads({ userId }: { userId: string }) {
+  const chars = await loadHubChars(userId).catch(() => null);
+  if (!chars) return <Failed h={SLOT.uploads} what="your characters" />;
+  const main = await loadHubMain(userId).catch(() => null);
+  const pickable = chars.filter(c => !c.excludeStats).map(c => ({ name: c.name, excludeInventory: c.excludeInventory }));
+  return (
+    <div style={{ minHeight: SLOT.uploads }} className="rounded border border-border bg-bg p-3">
+      <h3 className="mb-1 text-xs text-orange">Upload your files</h3>
+      <p className="mb-2 text-xs text-dim">Mimic uploads these for you; use this only if it cannot reach a character.</p>
+      {pickable.length === 0
+        ? <p className="text-xs italic text-dim">No characters to upload for yet.</p>
+        : <MeHubUploads chars={pickable} initial={main?.char.name ?? pickable[0].name} />}
     </div>
   );
 }

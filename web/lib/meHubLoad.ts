@@ -13,7 +13,12 @@ import { selectAll } from '@/lib/selectAll';
 import { GUILD_TAG } from '@/lib/guild';
 import { fetchCharAggs, fetchLiveStateRows, ilikeAnyFilter, type CharAgg } from '@/lib/capSafeReads';
 import { loadLevels, tierOf } from '@/lib/listableChars';
-import { isRoot, pickMain, type HubChar, type MainPick } from '@/lib/meHub';
+import { isRoot, pickMain, lootSummary, topFights, NIGHT_ROLLOVER_MS, sessionForNight, type HubChar, type MainPick, type LootLite, type LootSummary } from '@/lib/meHub';
+import { readParseSeries, type ParseFight } from '@/lib/parseTrend';
+import { dayKey, RAID_TZ } from '@/lib/format';
+import { zonedDayRangeUtc } from '@/lib/raidReview';
+import { windowStart, buildNights, nightNames, type NightRaid, type NightTick } from '@/lib/raidHeatmap';
+import { summarizeNights, type NightMinute } from '@/lib/raidReplay';
 
 /** The member's characters (the whole family and household), best first: level high to low, a root above its alts. */
 export const loadHubChars = cache(async (userId: string): Promise<HubChar[]> => {
@@ -140,4 +145,96 @@ export async function loadToggleFlags(names: string[]): Promise<Map<string, Togg
     .in('name', names);
   for (const r of (data ?? []) as (ToggleFlags & { name: string })[]) out.set(r.name.toLowerCase(), r);
   return out;
+}
+
+export type MainFights = { byDamage: ParseFight[]; byDps: ParseFight[]; considered: number; truncated: boolean };
+const FIGHTS_CAP = 400;   // the same cap /me/parses draws
+
+/**
+ * The main's best boss fights by damage and by DPS, picked from the newest FIGHTS_CAP boss fights since parses became
+ * comparable. It is the series /me/parses and the Mimic tab read (my_parse_series_v2), narrowed to the one character;
+ * the function itself leaves out a character that opted out of stats.
+ */
+export const loadMainFights = cache(async (userId: string, name: string): Promise<MainFights> => {
+  const pack = await loadHubPack(userId);
+  if (!pack) return { byDamage: [], byDps: [], considered: 0, truncated: false };
+  const { data, error } = await supabaseAdmin().rpc('my_parse_series_v2', {
+    p_discord_id: pack.discordId, p_since: null, p_until: null, p_bosses_only: true,
+    p_character: name, p_cap: FIGHTS_CAP, p_zone: null, p_search: null,
+  });
+  if (error) throw new Error(error.message);
+  const series = readParseSeries(data);
+  const mine = series.fights.filter(f => f.char.toLowerCase() === name.toLowerCase());
+  return { byDamage: topFights(mine, 'dmg'), byDps: topFights(mine, 'dps'), considered: mine.length, truncated: series.truncated };
+});
+
+/**
+ * The main's latest loot and the DKP spent, from the OpenDKP mirror (opendkp_loot_recent, the classic card's source).
+ * Awards are read for every character the member holds that has not opted out of stats, the family the guild pools
+ * DKP onto, then summed per main and across all. The mirror carries what was spent, not the live balance.
+ */
+export const loadMainLoot = cache(async (userId: string, mainName: string): Promise<LootSummary> => {
+  const names = (await loadHubChars(userId)).filter(c => !c.excludeStats).map(c => c.name);
+  if (names.length === 0) return lootSummary([], mainName);
+  const admin = supabaseAdmin();
+  const rows = await selectAll<LootLite>((from, to) => admin
+    .from('opendkp_loot_recent')
+    .select('character_name, item_name, dkp, raid_date, raid_name')
+    .in('character_name', names)
+    .order('raid_date', { ascending: false })
+    .order('auction_id')
+    .order('character_name')
+    .order('item_name')
+    .range(from, to));
+  return lootSummary(rows, mainName);
+});
+
+export type HubRaid = { date: string; names: string[]; ticks: number; from: number | null; to: number | null };
+const RAIDS_SHOWN = 5;
+const RAIDS_WINDOW_DAYS = 45;
+
+/**
+ * The latest raid nights the main was ticked into, each with the recorded session of that night when there is one.
+ * The nights are the classic attendance rule (an official OpenDKP raid, a tick the character is in), for the main
+ * alone. A night's session is the guild-raid stretch of raid_track_minutes starting that night; a night nobody
+ * recorded has none, and the block says so.
+ */
+export async function loadMainRaids(name: string): Promise<HubRaid[]> {
+  const admin = supabaseAdmin();
+  const todayKey = dayKey(new Date().toISOString(), RAID_TZ);
+  const { startIso } = zonedDayRangeUtc(windowStart(todayKey, RAIDS_WINDOW_DAYS), RAID_TZ);
+  const raids = await selectAll<NightRaid>((from, to) => admin
+    .from('opendkp_raids')
+    .select('raid_id, ts, name')
+    .gte('ts', startIso)
+    .order('raid_id')
+    .range(from, to));
+  if (raids.length === 0) return [];
+  const mine = await selectAll<NightTick>((from, to) => admin
+    .from('opendkp_ticks')
+    .select('raid_id, tick_id')
+    .in('raid_id', raids.map(r => r.raid_id))
+    .overlaps('attendees', [name])
+    .order('tick_id')
+    .range(from, to));
+  const nights = [...buildNights(raids, mine).values()]
+    .filter(n => n.tickIds.length > 0)
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, RAIDS_SHOWN);
+  if (nights.length === 0) return [];
+
+  const { startIso: recFrom } = zonedDayRangeUtc(nights[nights.length - 1].date, RAID_TZ);
+  const minutes = await selectAll<NightMinute>((from, to) => admin
+    .from('raid_track_minutes')
+    .select('night_key, minute_at, zones, raiders')
+    .eq('guild_id', GUILD_TAG)
+    .gte('minute_at', recFrom)
+    .order('minute_at')
+    .range(from, to)).catch(() => [] as NightMinute[]);
+  const sessions = summarizeNights(minutes).flatMap(n => n.sessions);
+  const nightOf = (ms: number) => dayKey(new Date(ms - NIGHT_ROLLOVER_MS).toISOString(), RAID_TZ);
+  return nights.map(n => {
+    const s = sessionForNight(n.date, sessions, nightOf);
+    return { date: n.date, names: nightNames(n), ticks: n.tickIds.length, from: s?.from ?? null, to: s?.to ?? null };
+  });
 }

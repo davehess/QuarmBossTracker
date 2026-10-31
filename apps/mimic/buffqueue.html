@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>buffqueue</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Buff Queue overlay — same data the web /raid page shows in its two-column
      queue (buff queue + debuff/cure queue), pinned in-game so a buffer can
@@ -19,24 +20,24 @@
   .title{display:flex;align-items:center;gap:6px;
     font-size:12px;color:#79c0ff;text-shadow:0 1px 2px #000;margin-bottom:5px;}
   .title .conn{font-size:11px}
-  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .conn.ok{color:var(--wp-green)} .conn.bad{color:#8b949e}
   /* margin-right reserves a gutter so the class picker doesn't sit UNDER the
      ✕ hide button (top:6/right:6, 18px wide) — selecting a class from the
      dropdown lands the cursor right next to ✕, and one stray click hides
      the whole overlay. 30px = X width + breathing room. */
-  .clsPick{margin-left:auto;margin-right:30px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;
+  .clsPick{margin-left:auto;margin-right:30px;background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);
     border-radius:3px;font-size:10px;padding:1px 4px;font-family:inherit;cursor:pointer;}
-  .clsPick:focus{outline:1px solid #58a6ff}
+  .clsPick:focus{outline:1px solid var(--wp-blue)}
   /* By buff | By group switch (the guild lead, 2026-10-04: "we should be grouping people for
      buffs ... treat that like the buff queue as well"). Its own row under the title: the title
      row is already full at the default 330px width. The right margin keeps it clear of the ✕
      gutter like the picker above. Selected state is the same blue as the picker's focus ring. */
   .vsw{display:flex;gap:3px;margin:0 30px 4px 0}
-  .vbtn{background:#0d1117;color:#8b949e;border:1px solid #30363d;border-radius:3px;
+  .vbtn{background:var(--wp-bg);color:#8b949e;border:1px solid var(--wp-border);border-radius:3px;
     font-size:10px;line-height:1.2;padding:1px 6px;font-family:inherit;cursor:pointer}
-  .vbtn:hover{color:#c9d1d9}
-  .vbtn:focus-visible{outline:1px solid #58a6ff}
-  .vbtn.on{background:rgba(88,166,255,0.15);border-color:#58a6ff;color:#79c0ff}
+  .vbtn:hover{color:var(--wp-text)}
+  .vbtn:focus-visible{outline:1px solid var(--wp-blue)}
+  .vbtn.on{background:rgba(88,166,255,0.15);border-color:var(--wp-blue);color:#79c0ff}
   /* Two stacked sections — buff queue on top, debuff queue below. Each section
      has its own header chip and row list. */
   .sec{margin-bottom:6px}
@@ -50,24 +51,24 @@
      severity tiers. */
   .row.burst{border-left-color:#f0b429;background:rgb(40 28 8 / var(--bg-alpha))}
   .row.burst .miss{color:#fde68a;font-variant-numeric:tabular-nums}
-  .sec .hdr .ct{color:#6e7681;font-variant-numeric:tabular-nums}
-  .sec .hdr .hint{color:#6e7681;font-size:9px;text-transform:none;letter-spacing:0;font-style:italic}
+  .sec .hdr .ct{color:var(--wp-dim);font-variant-numeric:tabular-nums}
+  .sec .hdr .hint{color:var(--wp-dim);font-size:9px;text-transform:none;letter-spacing:0;font-style:italic}
   .row{position:relative;display:flex;align-items:baseline;gap:5px;padding:2px 5px;
-    background:rgb(8 5 16 / var(--bg-alpha));border-radius:3px;border-left:3px solid #58a6ff;
+    background:rgb(8 5 16 / var(--bg-alpha));border-radius:3px;border-left:3px solid var(--wp-blue);
     text-shadow:0 1px 2px #000;font-size:10px;margin-bottom:2px}
-  .row.r{border-left-color:#f85149}
+  .row.r{border-left-color:var(--wp-red)}
   .row.o{border-left-color:#f0883e}
   .row.y{border-left-color:#d4a72c}
   .row.d{border-left-color:#f87171;background:rgb(40 12 12 / var(--bg-alpha))}
   .row .nm{color:#e6edf3;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
-  .row .grp{color:#6e7681;font-variant-numeric:tabular-nums}
+  .row .grp{color:var(--wp-dim);font-variant-numeric:tabular-nums}
   .row .cls{color:#9aa4ad;font-size:9px}
   /* State chips that ride between class and the right column — inferred,
      Avatar active, Celestial Tranquility, SK T. of Hate Recourse. Compact;
      tooltip carries the detail. */
   .row .chip{display:inline-flex;align-items:center;justify-content:center;
     height:14px;min-width:14px;padding:0 3px;border-radius:3px;font-size:10px;
-    line-height:1;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.06);color:#c9d1d9;cursor:help}
+    line-height:1;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.06);color:var(--wp-text);cursor:help}
   .row .chip.inferred{background:rgba(88,166,255,0.15);border-color:rgba(88,166,255,0.4);color:#79c0ff}
   .row .chip.avatar  {background:rgba(240,180,41,0.18);border-color:rgba(240,180,41,0.5);color:#f0b429}
   .row .chip.ct      {background:rgba(126,231,135,0.15);border-color:rgba(126,231,135,0.4);color:#7ee787}
@@ -86,8 +87,8 @@
   /* Inferred rows dim slightly to differentiate from authoritative Mimic data. */
   /* Inferred rows scale to ~73% of the main surface alpha so they read as faded. */
   .row.inferred{background:rgb(8 5 16 / calc(var(--bg-alpha) * 0.73))}
-  .row.inferred .nm{color:#c9d1d9}
-  .row .miss{margin-left:auto;color:#c9d1d9;font-size:9px;white-space:nowrap;
+  .row.inferred .nm{color:var(--wp-text)}
+  .row .miss{margin-left:auto;color:var(--wp-text);font-size:9px;white-space:nowrap;
     overflow:hidden;text-overflow:ellipsis;max-width:160px;text-align:right}
   .row.r .miss{color:#fca5a5}
   .row.o .miss{color:#fed7aa}
@@ -104,8 +105,8 @@
   .casting{font-size:9px;color:#79c0ff;padding:0 5px 1px;line-height:1.3;
     display:flex;flex-wrap:wrap;gap:4px;align-items:baseline}
   .casting .who{color:#79c0ff;font-weight:600}
-  .casting .sp{color:#c9d1d9}
-  .casting .t{color:#6e7681;font-variant-numeric:tabular-nums}
+  .casting .sp{color:var(--wp-text)}
+  .casting .t{color:var(--wp-dim);font-variant-numeric:tabular-nums}
   /* Raid groups. A group buff lands on the CASTER'S OWN group in this era, so a line reads
      "Haste ×4 → <caster in that group>: <spell>"; green = someone in the group can cast it,
      orange = nobody in the group can, so single-target it or move a caster. Static colours,
@@ -114,19 +115,19 @@
   .ghdr{display:flex;align-items:baseline;gap:5px;padding:2px 4px;font-size:10px;
     background:rgba(88,166,255,0.07);border-radius:3px;margin-bottom:2px}
   .ghdr .gl{color:#79c0ff;font-weight:600}
-  .ghdr .gct{color:#6e7681;font-variant-numeric:tabular-nums}
+  .ghdr .gct{color:var(--wp-dim);font-variant-numeric:tabular-nums}
   .ghdr .gme{color:#7ee787;font-size:9px}
-  .gline{font-size:9px;color:#c9d1d9;padding:0 5px 1px;line-height:1.35;text-shadow:0 1px 2px #000}
+  .gline{font-size:9px;color:var(--wp-text);padding:0 5px 1px;line-height:1.35;text-shadow:0 1px 2px #000}
   .gline .gl{color:#79c0ff;font-weight:600}
   .gline .gb{color:#e6edf3;font-weight:600}
   .gline .gcast{color:#7ee787}
-  .gline .gno{color:#ffa657}
-  .gmore{cursor:pointer;color:#6e7681;font-size:9px;padding:1px 5px}
-  .gmore:hover{color:#c9d1d9}
+  .gline .gno{color:var(--wp-orange)}
+  .gmore{cursor:pointer;color:var(--wp-dim);font-size:9px;padding:1px 5px}
+  .gmore:hover{color:var(--wp-text)}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:6px 4px;font-style:italic}
   /* Two or more raids at once: which one these queues are for. */
   .raids-note{font-size:10px;color:#8b949e;padding:1px 4px 3px;text-shadow:0 1px 2px #000}
-  .raids-note .n{color:#ffa657}
+  .raids-note .n{color:var(--wp-orange)}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -151,7 +152,7 @@
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
-  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  #move-btn:hover{opacity:1;color:var(--wp-blue);border-color:var(--wp-blue)}
   body.setup #move-btn{top:30px}
   /* "Buffs feel laggy" reporter — sits inside the title bar. Quiet by default
      so it doesn't compete with the live queue; pulses green for 60s after a
@@ -172,22 +173,22 @@
      a full-mode job. */
   .mledger{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 8px}
   .mcol{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}
-  .mlab{height:22px;line-height:22px;font-size:9px;color:#6e7681;letter-spacing:0.06em;text-transform:uppercase}
+  .mlab{height:22px;line-height:22px;font-size:9px;color:var(--wp-dim);letter-spacing:0.06em;text-transform:uppercase}
   .mcol.mb .mlab{padding-left:22px}
   .mchip{display:inline-flex;align-items:center;gap:4px;max-width:100%;box-sizing:border-box;padding:0 6px;
-    border:1px solid #30363d;border-radius:3px;background:rgba(255,255,255,0.04);color:#c9d1d9;
+    border:1px solid var(--wp-border);border-radius:3px;background:rgba(255,255,255,0.04);color:var(--wp-text);
     font-family:inherit;font-size:10px;line-height:16px;white-space:nowrap;cursor:pointer;text-shadow:0 1px 2px #000}
   .mchip b{color:#fff}
   .mchip.cure{border-color:rgba(248,81,73,0.5)}
   .mchip.cure b{color:#fca5a5}
-  .mchip.on{border-color:#a371f7;background:#2a1d3d;color:#d2a8ff}
-  .mnone{color:#6e7681;font-size:10px}
+  .mchip.on{border-color:var(--wp-purple);background:#2a1d3d;color:#d2a8ff}
+  .mnone{color:var(--wp-dim);font-size:10px}
   .mexp{display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:4px;padding:2px 0 2px 6px;
-    border-left:1px solid #a371f7;font-size:10px;text-shadow:0 1px 2px #000}
-  .mexp .grp{color:#6e7681;font-variant-numeric:tabular-nums}
+    border-left:1px solid var(--wp-purple);font-size:10px;text-shadow:0 1px 2px #000}
+  .mexp .grp{color:var(--wp-dim);font-variant-numeric:tabular-nums}
   /* The busiest group on a buff line ("Haste 5 · G3×3"). Rides the shared .wp-mini-num rule (never
      shrinks) so the category name gives way first and the chip is no wider than its column. */
-  .mchip .mtop{color:#6e7681;font-variant-numeric:tabular-nums}
+  .mchip .mtop{color:var(--wp-dim);font-variant-numeric:tabular-nums}
   body.wp-mini #empty{padding:4px 24px}
   /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
      panel owns ✥ and ✕ — the preload hides this page's — so the window's padding and the 30px kept clear of ✕
@@ -477,7 +478,7 @@
       bits.push('<span><span class="who">'+esc(c.caster)+'</span> <span class="sp">→ '+esc(c.spell)+'</span> <span class="t">'+fmtSecs(rem)+'</span></span>');
     }
     if (!bits.length) return '';
-    return '<div class="casting"><span style="color:#6e7681">🔮</span>'+bits.join(' · ')+'</div>';
+    return '<div class="casting"><span style="color:var(--wp-dim)">🔮</span>'+bits.join(' · ')+'</div>';
   }
   // Buff-state chips that ride on every row — gives the buffer info that
   // changes how they target:
@@ -680,7 +681,7 @@
         // caster WHICH cure to reach for. Counters ride in the tooltip.
         var cu = '';
         if (c.cure) {
-          var cuCol = c.cure === 'poison' ? '#56d364' : c.cure === 'disease' ? '#d4a72c' : c.cure === 'blind' ? '#8b949e' : '#f0883e';
+          var cuCol = c.cure === 'poison' ? 'var(--wp-green)' : c.cure === 'disease' ? '#d4a72c' : c.cure === 'blind' ? '#8b949e' : '#f0883e';
           cu = ' <span style="color:'+cuCol+'" title="Cure type: '+esc(c.cure)+(c.counters ? ' — '+c.counters+' counters' : '')+'">'+esc(c.cure)+'</span>';
         }
         // Being cured (bot v3.0.90+): a matching cure is in flight on this
@@ -873,7 +874,7 @@
               +   '<div class="cathdr" data-wp-interact data-cat="'+esc(label)+'" style="display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:2px 4px;font-size:10px;color:#79c0ff;background:rgba(88,166,255,0.07);border-radius:3px;margin:3px 0 2px">'
               +     '<span style="font-size:9px">'+(isCollapsed ? '▸' : '▾')+'</span>'
               +     '<span style="font-weight:600">'+esc(label)+'</span>'
-              +     '<span style="color:#6e7681;font-variant-numeric:tabular-nums">'+rowsC.length+'</span>'
+              +     '<span style="color:var(--wp-dim);font-variant-numeric:tabular-nums">'+rowsC.length+'</span>'
               +     preview
               +     (mem ? '<span style="margin-left:auto;color:#7ee787;font-size:9px" title="You cast '+esc(mem)+' this session — likely still on a gem">🔮 '+esc(mem)+'</span>' : '')
               +   '</div>';

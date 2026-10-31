@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>me</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Me overlay (the guild lead, 2026-09-24): "a 'me' overlay. my target, my
      casting, my health, mana, XP detail. avg DPS per fight, total per
@@ -20,13 +21,13 @@
        (C, Role — the class's own numbers first — was retired the same day.)
      Colour is semantic, never decoration: green/orange/red = HP health,
      blue = mana and casting, gold = XP, purple = AA, red = danger. */
-  :root{ --bg-alpha:0.55; --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9;
-         --dim:#6e7681; --blue:#58a6ff; --gold:#d29922; --green:#56d364; --red:#f85149;
-         --orange:#ffa657; --purple:#a371f7; }
+  :root{ --bg-alpha:0.55; --bg:var(--wp-bg); --panel:var(--wp-panel); --border:var(--wp-border); --text:var(--wp-text);
+         --dim:var(--wp-dim); --blue:var(--wp-blue); --gold:var(--wp-gold); --green:var(--wp-green); --red:var(--wp-red);
+         --orange:var(--wp-orange); --purple:var(--wp-purple); }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:'Cascadia Code',ui-monospace,Consolas,monospace;color:var(--text);user-select:none;}
   #wrap{padding:4px 6px 6px}
-  .card{background:rgb(13 17 23 / var(--bg-alpha));border:1px solid rgb(48 54 61 / 0.8);border-radius:6px;
+  .card{background:rgba(var(--wp-bg-rgb),var(--bg-alpha));border:1px solid rgb(48 54 61 / 0.8);border-radius:6px;
     padding:6px 8px;text-shadow:0 1px 2px #000}
   .title{display:flex;align-items:center;gap:6px;font-size:12px;min-height:20px;padding-left:22px;padding-right:26px}
   /* The name is never cut short (the guild lead, 2026-10-13: "We can afford to show the character's name"); the level and
@@ -36,10 +37,10 @@
   .title .sp{flex:1}
   .conn{font-size:10px} .conn.ok{color:var(--green)} .conn.bad{color:var(--dim)}
   #picker{display:inline-flex;border:1px solid var(--border);border-radius:4px;overflow:hidden;flex:none}
-  #picker button{background:rgba(22,27,34,0.85);color:var(--dim);border:0;border-left:1px solid var(--border);
+  #picker button{background:rgba(var(--wp-panel-rgb),0.85);color:var(--dim);border:0;border-left:1px solid var(--border);
     font:inherit;font-size:10px;padding:1px 6px;cursor:pointer;line-height:1.4}
   #picker button:first-child{border-left:0}
-  #picker button.on{background:#1f6feb;color:#fff}
+  #picker button.on{background:var(--wp-accent);color:#fff}
   #picker button:hover{color:var(--text)}
   .blind{margin:4px 0;padding:3px 6px;border:1px solid var(--red);color:var(--red);border-radius:4px;
     font-size:11px;font-weight:700;letter-spacing:.5px;text-align:center}
@@ -97,12 +98,12 @@
   body.hud #build-btn{display:inline-block}
   #builder{position:fixed;right:0;top:0;bottom:0;width:calc(var(--panel-w) - 8px);box-sizing:border-box;z-index:80;overflow-y:auto;overflow-x:hidden;
     overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#484f58 transparent;
-    background:rgba(13,17,23,0.95);border:1px solid var(--border);border-radius:8px;padding:0 12px 8px;
+    background:rgba(var(--wp-bg-rgb),0.95);border:1px solid var(--border);border-radius:8px;padding:0 12px 8px;
     font-size:11px;box-shadow:0 4px 18px rgba(0,0,0,.55)}
   #builder::-webkit-scrollbar{width:10px}
-  #builder::-webkit-scrollbar-thumb{background:#484f58;border-radius:5px;border:2px solid rgba(13,17,23,0.95)}
-  #builder::-webkit-scrollbar-thumb:hover{background:#6e7681}
-  #builder .bsticky{position:sticky;top:0;z-index:1;background:rgba(13,17,23,0.98);padding:8px 0 6px;border-bottom:1px solid var(--border)}
+  #builder::-webkit-scrollbar-thumb{background:#484f58;border-radius:5px;border:2px solid rgba(var(--wp-bg-rgb),0.95)}
+  #builder::-webkit-scrollbar-thumb:hover{background:var(--wp-dim)}
+  #builder .bsticky{position:sticky;top:0;z-index:1;background:rgba(var(--wp-bg-rgb),0.98);padding:8px 0 6px;border-bottom:1px solid var(--border)}
   #builder .ball{display:flex;align-items:center;gap:7px;margin-top:6px;font-size:10.5px}
   #builder .ball .bl{flex:1}
   #builder .brs{flex:none;width:20px;padding:0 !important;line-height:16px;color:var(--dim) !important}
@@ -118,8 +119,8 @@
   #builder .grp{margin:8px 0 2px;color:var(--dim);text-transform:uppercase;font-size:10px;letter-spacing:.5px}
   #builder label{display:flex;align-items:center;gap:7px;padding:2px 0;cursor:pointer}
   #builder label .bl{flex:1;min-width:0}
-  #builder .bsz{width:54px;flex:none;margin:0;accent-color:#58a6ff;cursor:ew-resize}
-  #builder select,#builder button{background:rgba(22,27,34,.9);color:var(--text);border:1px solid var(--border);
+  #builder .bsz{width:54px;flex:none;margin:0;accent-color:var(--wp-blue);cursor:ew-resize}
+  #builder select,#builder button{background:rgba(var(--wp-panel-rgb),.9);color:var(--text);border:1px solid var(--border);
     border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
   #builder .bfoot{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
   /* The clicky picker (FB-65): a tickable row per clicky — name and kind, charges, "Recharged". */
@@ -180,7 +181,7 @@
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
-  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  #move-btn:hover{opacity:1;color:var(--wp-blue);border-color:var(--wp-blue)}
   body.setup #move-btn{top:30px}
   /* HUD: one row at the bottom of the ring, centred — ✥ [Box|HUD|⚙] ✕ — below
      the tick and swing timers (the guild lead, 2026-09-24: "Put the Move icon
@@ -579,7 +580,7 @@
       c.push(chip('stuns', m.stuns, 'var(--gold)', 'Stuns and aggro spells you landed on the target', !m.stuns));
     }
     if (ds && ds.off) {
-      c.push(chip('DS OFF', ds.off.seconds != null ? mmss(ds.off.seconds * 1000) : '—', '#f85149', 'A shield-cancelling debuff is on you', false));
+      c.push(chip('DS OFF', ds.off.seconds != null ? mmss(ds.off.seconds * 1000) : '—', 'var(--wp-red)', 'A shield-cancelling debuff is on you', false));
     } else if (ds) {
       c.push(chip('DS' + dsMark(ds), ds.per_hit != null ? n0(ds.per_hit) : '—', dsColor(ds.kind),
         ds.measured === true ? 'Your damage shield per hit, as it landed' : 'Your damage shield per hit, estimated from your buffs and gear until one lands', false));
@@ -719,7 +720,7 @@
   // we cannot tell ready from used-before-Mimic-started.
   // A failed Feign Death is red with a ✗ (round seven: "FD cooldown in the Hud
   // should show an X on it"); the agent keeps `failed` until 5 s after it is back.
-  function cdColor(c){ return !c.seen ? 'var(--dim)' : (c.failed ? 'var(--red)' : (c.on > 0 || c.left <= 0 ? 'var(--green)' : (c.key === 'disc' ? 'var(--purple)' : '#c9d1d9'))); }
+  function cdColor(c){ return !c.seen ? 'var(--dim)' : (c.failed ? 'var(--red)' : (c.on > 0 || c.left <= 0 ? 'var(--green)' : (c.key === 'disc' ? 'var(--purple)' : 'var(--wp-text)'))); }
   function cdValue(c){ return !c.seen ? '—' : (c.failed ? '✗' + (c.left > 0 ? ' ' + tfmt(c.left) : '') : (c.on > 0 ? 'on ' + tfmt(c.on) : (c.left > 0 ? tfmt(c.left) : 'ready'))); }
   // Round six (the guild lead, 2026-09-24): "Corpses shouldn't ever say 'not
   // slowed'" · "If a mob is unslowable it should say that in its place, but
@@ -1391,7 +1392,7 @@
   // A line's text: the number, and a small "OH" when your off hand swung it
   // (only known when the two hands swing different verbs).
   function laneInner(it){
-    return esc(it.text) + (it.hand === 'OH' ? '<tspan font-size="6" fill="#6e7681"> OH</tspan>' : '');
+    return esc(it.text) + (it.hand === 'OH' ? '<tspan font-size="6" fill="var(--wp-dim)"> OH</tspan>' : '');
   }
 
   // ── HUD ────────────────────────────────────────────────────────────────────
@@ -1547,7 +1548,7 @@
         var totSize = fitSize(8 * sz('tot'), totLabel.length, 60, totR);
         var totSpan = Math.min(60, totLabel.length * totSize * 0.6 / totR * 180 / Math.PI + 6);
         h += gauge(totBarR, -totSpan / 2, totSpan / 2, (d.t.tot.hp || 0) / 100, hpColor(d.t.tot.hp), 1.8 * W);
-        h += ringLabel('htt', totR, -30, 30, '<tspan fill="#c9d1d9">→ ' + esc(d.t.tot.name) + ' </tspan><tspan fill="' + hpColor(d.t.tot.hp) + '">' + pctTxt(d.t.tot.hp) + '</tspan>', totSize);
+        h += ringLabel('htt', totR, -30, 30, '<tspan fill="var(--wp-text)">→ ' + esc(d.t.tot.name) + ' </tspan><tspan fill="' + hpColor(d.t.tot.hp) + '">' + pctTxt(d.t.tot.hp) + '</tspan>', totSize);
       }
       // Inside the bar: level and class, curved to fit it.
       var inR = R - 5;
@@ -1565,7 +1566,7 @@
         var plain = (showRes ? d.t.res.map(function(x){ return x[0] + (x[1] == null ? '—' : x[1]); }).join(' ') : '') + (showRes && showSlow ? ' · ' : '') + (showSlow ? d.t.slow.s : '');
         var fsR = fitSize(rs, plain.length, 80, inR - 6);
         inR -= 0.72 * fsR;
-        h += ringLabel('htr', inR, -40, 40, (showRes ? resTspans(d.t.res) : '') + (showRes && showSlow ? '<tspan fill="#6e7681"> · </tspan>' : '')
+        h += ringLabel('htr', inR, -40, 40, (showRes ? resTspans(d.t.res) : '') + (showRes && showSlow ? '<tspan fill="var(--wp-dim)"> · </tspan>' : '')
           + (showSlow ? '<tspan font-size="' + f1(fsR * ss * sz('status')) + '" fill="' + d.t.slow.c + '">' + d.t.slow.s + '</tspan>' : ''), fsR);
         inR -= 3;
       }
@@ -1622,7 +1623,7 @@
       // A shield-cancelling debuff (Mark of the Plague Lords): no shield at all,
       // and each hit heals the mob — red, no thorns or lava, with the time left
       // (the guild lead, 2026-10-02: "should be reflected in the hud").
-      var op = [286, 272], oc = '#f85149', ol = d.ds.off.seconds != null ? mmss(d.ds.off.seconds * 1000) : '—';
+      var op = [286, 272], oc = 'var(--wp-red)', ol = d.ds.off.seconds != null ? mmss(d.ds.off.seconds * 1000) : '—';
       h += '<circle cx="' + f1(op[0]) + '" cy="' + f1(op[1]) + '" r="13" fill="rgba(60,8,8,0.82)" stroke="' + oc + '" stroke-width="' + f1(1.2 * W + 0.3) + '" stroke-dasharray="3 2"/>'
         + T(op[0], op[1] - 3.5, 'DS OFF', 5.5, oc, 'middle', 700)
         + T(op[0], op[1] + 7, ol, 8 * Math.min(1.2, sz('ds')), oc, 'middle', 700);
@@ -1643,9 +1644,9 @@
     // The same thin bar as its target's, in the ring's upper corners, each
     // further one a step outward — nothing new reaches toward the middle.
     var SIDE_R = R + 19, sideSz = 8 * sz('tot');
-    if (p.ramp && d.ramp) h += sideArc('hrp', SIDE_R, 34, 56, 'R ' + d.ramp.name, d.ramp.hp, d.ramp.fresh ? 'var(--orange)' : '#c9d1d9', W, sideSz);
+    if (p.ramp && d.ramp) h += sideArc('hrp', SIDE_R, 34, 56, 'R ' + d.ramp.name, d.ramp.hp, d.ramp.fresh ? 'var(--orange)' : 'var(--wp-text)', W, sideSz);
     if (p.lowhp) d.low.forEach(function(m, i){
-      h += sideArc('hlh' + i, SIDE_R + i * 13 * sz('tot'), -56, -34, m.name, m.hp, '#c9d1d9', W, sideSz);
+      h += sideArc('hlh' + i, SIDE_R + i * 13 * sz('tot'), -56, -34, m.name, m.hp, 'var(--wp-text)', W, sideSz);
     });
     if (p.resists && d.res) h += ringLabel('hrs', 136, 146, 214, resTspans(d.res), 8 * sz('resists'), true);
     // Clicky counters (the guild lead, 2026-10-02: "On the hud, there should be
@@ -1666,8 +1667,8 @@
       cfit.rows.forEach(function(row, ri){
         if (!row.length && cfit.tail !== ri) return;
         var cspans = row.map(function(e, i){
-          var col = e.c.left === 0 ? 'var(--red)' : (e.c.left === 1 ? 'var(--orange)' : '#c9d1d9');
-          return (i ? '<tspan fill="#6e7681"> · </tspan>' : '') + '<tspan fill="#e6edf3">' + esc(e.nm) + '</tspan>'
+          var col = e.c.left === 0 ? 'var(--red)' : (e.c.left === 1 ? 'var(--orange)' : 'var(--wp-text)');
+          return (i ? '<tspan fill="var(--wp-dim)"> · </tspan>' : '') + '<tspan fill="#e6edf3">' + esc(e.nm) + '</tspan>'
             + (e.n ? '<tspan fill="' + col + '" font-weight="700"> ' + e.n + '</tspan>' : '');
         }).join('') + (cfit.tail === ri ? '<tspan fill="#8b949e"> +' + cfit.more + '</tspan>' : '');
         h += ringLabel(ri ? 'hcl2' : 'hcl', Math.round((CLICKY_R - ri * CLICKY_PITCH * cfit.size) * 10) / 10, 140, 220, cspans, cfit.size, true);

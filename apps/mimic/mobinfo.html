@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>mobinfo</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Mob Info overlay — current target's catalog stats (HP, AC, resists, special
      attacks) from eqemu_npc_types via the bot, with the live target HP% layered
@@ -18,26 +19,26 @@
   .lvlRange{font-size:11px;color:#f0b429;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:0.5px;margin-right:auto}
   .lvlRange:empty{margin-right:auto}
   .conn{font-size:11px}
-  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .conn.ok{color:var(--wp-green)} .conn.bad{color:#8b949e}
   .mob{padding:5px 7px;background:rgb(8 5 16 / var(--bg-alpha));border-radius:6px;
-    border-left:3px solid #a371f7;text-shadow:0 1px 2px #000;}
+    border-left:3px solid var(--wp-purple);text-shadow:0 1px 2px #000;}
   .mob .nm{font-size:13px;font-weight:bold;color:#e9d5ff}
   /* #186 PQDI link — clickable chip next to the mob name; opens pqdi.cc/npc/<id>.
      Matches the overlay's purple theme (like the .spec chips); no glow (was
      blurry) — small + tidy. */
   .mob .pqdi{display:inline-block;margin-left:8px;font-size:9px;font-weight:600;color:#d2a8ff;
-    background:#2a1d3d;text-decoration:none;cursor:pointer;padding:1px 7px;border:1px solid #a371f7;
+    background:#2a1d3d;text-decoration:none;cursor:pointer;padding:1px 7px;border:1px solid var(--wp-purple);
     border-radius:4px;vertical-align:middle;white-space:nowrap;letter-spacing:.3px}
   .mob .pqdi:hover{background:#3d2a57;border-color:#d2a8ff;color:#e9d5ff}
   .mob .cls{font-size:10px;color:#9b8bb5;margin-left:4px}
   /* A Shadow Knight mob's Harm Touch: green while it has it, red once used. */
   .mob .ht{font-size:10px;margin-left:5px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums}
-  .mob .ht.ok{color:#56d364}
-  .mob .ht.used{color:#f85149}
+  .mob .ht.ok{color:var(--wp-green)}
+  .mob .ht.used{color:var(--wp-red)}
   /* A targeted player's known timers (disc, Mend, Lay on Hands, AAs): the HT chip's look. */
   .mob .cds{display:flex;flex-wrap:wrap;gap:4px;margin:3px 0 1px}
-  .mob .cd{font-size:10px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums;color:#f85149}
-  .mob .cd.ok{color:#56d364}
+  .mob .cd{font-size:10px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--wp-red)}
+  .mob .cd.ok{color:var(--wp-green)}
   .mob .zone{font-size:9px;color:#79c0ff;margin-top:1px}
   .mob .sub{font-size:9px;color:#8b949e;margin-top:1px;font-variant-numeric:tabular-nums}
   .hpbar{height:6px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:4px}
@@ -49,68 +50,68 @@
   .mob .mana{font-size:9px;color:#79c0ff;margin-top:2px;font-variant-numeric:tabular-nums}
   /* "est" — the bar is a FLOOR on mana used, never a reading. Quiet on purpose:
      it is a caveat, not a callout, and screen centre is sacred mid-raid. */
-  .mob .mana .est{font-size:8px;color:#6e7681;border:1px solid rgba(255,255,255,0.14);
+  .mob .mana .est{font-size:8px;color:var(--wp-dim);border:1px solid rgba(255,255,255,0.14);
     border-radius:2px;padding:0 3px;margin-left:3px;letter-spacing:0.5px}
   /* Last observed cast. Gold because it is a fact about the fight, not a
      warning — red and orange are spoken for. A '?' tier is dimmed instead of
      hidden: knowing the family still beats silence. */
   .mob .lastcast{font-size:10px;color:#f0b429;margin-top:3px}
   .mob .lastcast.guess{color:#b8912a}
-  .mob .lastcast .sn{color:#6e7681;font-size:9px}
+  .mob .lastcast .sn{color:var(--wp-dim);font-size:9px}
   /* Factions tab — what killing this does to your standing. */
   .fac{display:flex;align-items:baseline;gap:6px;font-size:10px;padding:1px 0}
-  .fac .fn{flex:1 1 auto;color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fac .fn{flex:1 1 auto;color:var(--wp-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .fac .fv{font-variant-numeric:tabular-nums;font-weight:600}
-  .fac .up{color:#56d364}
-  .fac .dn{color:#f85149}
+  .fac .up{color:var(--wp-green)}
+  .fac .dn{color:var(--wp-red)}
   /* What the mob IS on, who will assist it, what it helps (above the on-kill list). Wraps — the
      window is small and a zone can hold a dozen helpers. The faction name is the one link; the
      handshake and the click are wired with the PQDI chip's, below. */
   .fhead{margin-bottom:3px}
-  .fmeta{font-size:10px;line-height:1.35;padding:1px 0;color:#c9d1d9;overflow-wrap:anywhere}
-  .fmeta .fk{color:#6e7681}
-  .facl{color:#d2a8ff;cursor:pointer;text-decoration:none;border-bottom:1px dotted #a371f7}
+  .fmeta{font-size:10px;line-height:1.35;padding:1px 0;color:var(--wp-text);overflow-wrap:anywhere}
+  .fmeta .fk{color:var(--wp-dim)}
+  .facl{color:#d2a8ff;cursor:pointer;text-decoration:none;border-bottom:1px dotted var(--wp-purple)}
   .facl:hover{color:#e9d5ff;border-bottom-color:#d2a8ff}
   /* F/Q/V sub-tabs (Faction / Quest / Vendor), the quest rows and their copy chips. */
   .fqvtabs{display:flex;gap:3px;margin:6px 0 3px}
   .fqvtab{background:rgba(255,255,255,0.04);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
           border-radius:4px;padding:1px 8px;font-size:10px;cursor:pointer;font-family:inherit}
-  .fqvtab:hover{color:#fff;border-color:#a371f7}
-  .fqvtab.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+  .fqvtab:hover{color:#fff;border-color:var(--wp-purple)}
+  .fqvtab.on{background:#2a1d3d;color:#d2a8ff;border-color:var(--wp-purple)}
   .qhead{font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;margin:6px 0 1px}
   .qrow{padding:3px 0;border-top:1px solid rgba(110,118,129,0.14);font-size:10px}
   .qhead + .qrow{border-top:0}
   .qline{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
-  .qcopy{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:0 5px;
+  .qcopy{background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;padding:0 5px;
          font-size:10px;font-family:inherit;cursor:pointer}
-  .qcopy:hover{border-color:#58a6ff}
-  .qcopy.ok{border-color:#56d364;color:#56d364}
-  .mretry{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:0 5px;margin-left:4px;
+  .qcopy:hover{border-color:var(--wp-blue)}
+  .qcopy.ok{border-color:var(--wp-green);color:var(--wp-green)}
+  .mretry{background:var(--wp-bg);color:var(--wp-text);border:1px solid var(--wp-border);border-radius:4px;padding:0 5px;margin-left:4px;
           font-size:10px;font-family:inherit;cursor:pointer}
-  .mretry:hover{border-color:#58a6ff}
-  .qsay{color:#c9d1d9;line-height:1.35;margin-top:1px;font-size:10px}
+  .mretry:hover{border-color:var(--wp-blue)}
+  .qsay{color:var(--wp-text);line-height:1.35;margin-top:1px;font-size:10px}
   .qsay.alt{color:#8b949e}
   .qtag{font-size:8.5px;border-radius:3px;padding:0 4px;border:1px solid}
-  .qtag.gate{color:#d29922;border-color:rgba(210,153,34,0.5)}
-  .qtag.flag{color:#56d364;border-color:rgba(86,211,100,0.5)}
+  .qtag.gate{color:var(--wp-gold);border-color:rgba(210,153,34,0.5)}
+  .qtag.flag{color:var(--wp-green);border-color:rgba(86,211,100,0.5)}
   /* Warnings and item labels (the guild lead, 2026-09-29): ⚠ orange for a despawn or a spawn, red
      for a faction loss; "needs" blue; "get" gold like the hand-in rewards. */
-  .qtag.warn{color:#ffa657;border-color:rgba(255,166,87,0.55)}
-  .qtag.bad{color:#f85149;border-color:rgba(248,81,73,0.55)}
-  .qtag.need{color:#58a6ff;border-color:rgba(88,166,255,0.5)}
-  .qtag.give{color:#d29922;border-color:rgba(210,153,34,0.5)}
+  .qtag.warn{color:var(--wp-orange);border-color:rgba(255,166,87,0.55)}
+  .qtag.bad{color:var(--wp-red);border-color:rgba(248,81,73,0.55)}
+  .qtag.need{color:var(--wp-blue);border-color:rgba(88,166,255,0.5)}
+  .qtag.give{color:var(--wp-gold);border-color:rgba(210,153,34,0.5)}
   .qtoggle{background:none;border:0;color:#8b949e;font-size:10px;font-family:inherit;cursor:pointer;padding:0 2px}
   .qtoggle:hover{color:#fff}
   .qlbl{font-size:8.5px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;flex:0 0 24px}
-  .qget{color:#d29922}
+  .qget{color:var(--wp-gold)}
   .qfac{font-size:9.5px;color:#8b949e;margin-top:1px}
-  .qfac .up{color:#56d364}
-  .qfac .dn{color:#f85149}
-  .qnpc{color:#58a6ff}
+  .qfac .up{color:var(--wp-green)}
+  .qfac .dn{color:var(--wp-red)}
+  .qnpc{color:var(--wp-blue)}
   .qzone{color:#8b949e}
   .vrow{display:flex;gap:6px;font-size:10px;padding:1px 0}
-  .vrow .vn{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
-  .vrow .vp{color:#d29922;font-variant-numeric:tabular-nums}
+  .vrow .vn{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--wp-text)}
+  .vrow .vp{color:var(--wp-gold);font-variant-numeric:tabular-nums}
   /* #130 slow status — a distinct compact badge right under the HP header so
      "is it slowed, with what, how long left" reads at a glance (a slow matters
      more than a generic debuff row, so it is NOT buried in the debuff list). */
@@ -138,7 +139,7 @@
   .tbuff .bn{color:#d2a8ff;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis}
   .tbuff .bt{font-variant-numeric:tabular-nums;color:#8b949e;margin-left:auto}
   .tbuff .bbar{flex:1 1 50px;height:4px;background:rgba(255,255,255,0.13);border-radius:2px;overflow:hidden}
-  .tbuff .bbar > div{height:100%;background:#a371f7;transition:width 250ms linear}
+  .tbuff .bbar > div{height:100%;background:var(--wp-purple);transition:width 250ms linear}
   /* resist grid */
   .res{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:7px}
   .res .cell{text-align:center;background:rgba(255,255,255,0.05);border-radius:4px;padding:3px 0}
@@ -149,8 +150,8 @@
   .tabs{display:flex;gap:2px;margin-left:auto;margin-right:28px}
   .tab{background:rgba(255,255,255,0.05);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
        border-radius:4px;padding:1px 7px;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.5px}
-  .tab:hover{color:#fff;border-color:#a371f7}
-  .tab.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+  .tab:hover{color:#fff;border-color:var(--wp-purple)}
+  .tab.on{background:#2a1d3d;color:#d2a8ff;border-color:var(--wp-purple)}
   .tab .beta{font-size:8px;color:#1f1300;background:#f0b429;border-radius:2px;padding:0 3px;margin-left:3px;font-weight:600}
   /* Target history (the guild lead, 2026-10-19, Decision Desk "Pager"): ◀ ▶ step back through the mobs you have
      targeted, a chip cycles All / Killed / Left alive, and the ⟲ tab lists them. The strip hides until there is a
@@ -174,7 +175,7 @@
   .rcrow.on{background:#2a1d3d}
   .rcrow .rn{display:block;font-size:11px;color:#e9d5ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .rcrow .rz{display:block;font-size:9px;color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
-  .rcempty{font-size:11px;color:#6e7681;font-style:italic;padding:18px 0 5px}
+  .rcempty{font-size:11px;color:var(--wp-dim);font-style:italic;padding:18px 0 5px}
   body.wp-in-canvas .pager,body.wp-in-canvas #tabRecent{display:none !important}
   body.wp-in-canvas .rclist{padding-top:0}
   /* loot list — slightly smaller text, tighter rows so the table fits more
@@ -183,53 +184,53 @@
   .loot{margin-top:5px;padding-top:18px;display:flex;flex-direction:column;gap:1px;font-size:9px}
   .loot .row{display:flex;align-items:baseline;gap:5px;padding:1px 5px;background:rgba(255,255,255,0.03);
              border-radius:3px;border-left:2px solid transparent;line-height:1.4}
-  .loot .row.t100{border-left-color:#56d364}                  /* guaranteed */
+  .loot .row.t100{border-left-color:var(--wp-green)}                  /* guaranteed */
   .loot .row.t50 {border-left-color:#3b82f6}                  /* common */
-  .loot .row.t20 {border-left-color:#a371f7}                  /* uncommon */
+  .loot .row.t20 {border-left-color:var(--wp-purple)}                  /* uncommon */
   .loot .row.t5  {border-left-color:#f0883e}                  /* rare */
-  .loot .row.t1  {border-left-color:#f85149}                  /* ultra rare */
+  .loot .row.t1  {border-left-color:var(--wp-red)}                  /* ultra rare */
   .loot .nm{color:#e6edf3;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* Percent is the headline data point — bold + slightly larger than the chips
      so the drop rate reads at a glance, even on the narrowest overlay width.
      Tier-tinted by the row's border-left color so high-chance items pop. */
-  .loot .pct{font-variant-numeric:tabular-nums;color:#c9d1d9;font-size:9px;
+  .loot .pct{font-variant-numeric:tabular-nums;color:var(--wp-text);font-size:9px;
     font-weight:600;min-width:32px;text-align:right}
-  .loot .pct.high{color:#56d364}
-  .loot .row.t100 .pct{color:#56d364}
+  .loot .pct.high{color:var(--wp-green)}
+  .loot .row.t100 .pct{color:var(--wp-green)}
   .loot .row.t50  .pct{color:#3b82f6}
-  .loot .row.t20  .pct{color:#a371f7}
+  .loot .row.t20  .pct{color:var(--wp-purple)}
   .loot .row.t5   .pct{color:#f0883e}
-  .loot .row.t1   .pct{color:#f85149}
+  .loot .row.t1   .pct{color:var(--wp-red)}
   .loot .lore{font-size:8px;color:#d2a8ff;padding:0 3px;border-radius:2px;background:rgba(163,113,247,0.2)}
-  .loot .seen{font-size:8px;color:#a371f7;padding:0 4px;border-radius:2px;background:rgba(163,113,247,0.15);
+  .loot .seen{font-size:8px;color:var(--wp-purple);padding:0 4px;border-radius:2px;background:rgba(163,113,247,0.15);
               border:1px solid rgba(163,113,247,0.35);font-variant-numeric:tabular-nums;font-weight:600;letter-spacing:0.5px}
   /* Unique (only-this-mob) win counts ride brighter; shared/multi-source ones
      dim out so the eye reads "reliable" vs "approximate" at a glance. */
   .loot .seen.uniq{color:#7ee787;background:rgba(126,231,135,0.12);border-color:rgba(126,231,135,0.35)}
   .loot .seen.shared{opacity:0.7}
   .loot .unique{font-size:10px;line-height:1;margin-right:2px;color:#f0b429}
-  .loot .empty{font-size:11px;color:#6e7681;font-style:italic;padding:5px 0}
+  .loot .empty{font-size:11px;color:var(--wp-dim);font-style:italic;padding:5px 0}
   /* FB-73 — the item name copies its EQ link, PQDI opens the item, hovering the name shows its card. */
   .loot button.inm{background:none;border:0;padding:0;margin:0;font:inherit;text-align:left;cursor:pointer;min-width:0}
   .loot button.inm:hover{color:#fff;text-decoration:underline dotted}
-  .loot button.inm.ok{color:#56d364}
+  .loot button.inm.ok{color:var(--wp-green)}
   .loot .pqdi{flex:none;font-size:8px;font-weight:600;color:#d2a8ff;background:#2a1d3d;text-decoration:none;cursor:pointer;
-    padding:0 4px;border:1px solid #a371f7;border-radius:3px;letter-spacing:.3px}
+    padding:0 4px;border:1px solid var(--wp-purple);border-radius:3px;letter-spacing:.3px}
   .loot .pqdi:hover{background:#3d2a57;border-color:#d2a8ff;color:#e9d5ff}
   #itemTip{position:fixed;z-index:50;display:none;pointer-events:none;width:230px;max-width:calc(100vw - 8px);box-sizing:border-box;
-    padding:5px 7px;background:rgb(12 8 22 / .97);border:1px solid #a371f7;border-radius:5px;font-size:10px;line-height:1.35;
-    color:#c9d1d9;text-shadow:none;overflow:hidden}
+    padding:5px 7px;background:rgb(12 8 22 / .97);border:1px solid var(--wp-purple);border-radius:5px;font-size:10px;line-height:1.35;
+    color:var(--wp-text);text-shadow:none;overflow:hidden}
   #itemTip .tn{font-size:11px;font-weight:700;color:#e9d5ff;margin-bottom:2px}
   #itemTip .tl{white-space:normal}
   #itemTip .tl.fl{color:#f0b429;font-weight:600}
-  #itemTip .te{color:#6e7681;font-style:italic}
+  #itemTip .te{color:var(--wp-dim);font-style:italic}
   /* special attack chips */
   .spec{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
   .spec .chip{font-size:10px;padding:2px 7px;border-radius:4px;background:#2a1d3d;
     color:#d2a8ff;border:1px solid #3d2a57}
   .spec .chip.warn{background:#3d1d1d;color:#ffb3b3;border-color:#5a2a2a}
   /* Summon: the one solid-red chip (FB-104). Dark text on the platform red keeps it readable at a glance. */
-  .spec .chip.warn.summon{background:#f85149;color:#0d1117;border-color:#f85149;font-weight:700;text-shadow:none}
+  .spec .chip.warn.summon{background:var(--wp-red);color:var(--wp-bg);border-color:var(--wp-red);font-weight:700;text-shadow:none}
   .spec .chip.imm{background:#1d2a3d;color:#9ecbff;border-color:#2a3d57}
   /* sight chips — "invis will not hide you". Amber rather than the red warn
      tone: it defeats a PLAN (a pull, a corpse run), it is not something the mob
@@ -238,7 +239,7 @@
   /* a sight claim a /consider disproved (or could not confirm): the same amber, dimmed and dashed */
   .spec .chip.sight.cancelled{opacity:.55;border-style:dashed}
   /* hit types — observed in the fight, not catalogued: slate, apart from the purple catalogue chips */
-  .spec .chip.hits{background:#1f2733;color:#c9d1d9;border-color:#30363d}
+  .spec .chip.hits{background:#1f2733;color:var(--wp-text);border-color:var(--wp-border)}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000;padding:4px 0}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -264,7 +265,7 @@
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
-  #move-btn:hover{opacity:1;color:#a371f7;border-color:#a371f7}
+  #move-btn:hover{opacity:1;color:var(--wp-purple);border-color:var(--wp-purple)}
   body.setup #move-btn{top:30px}
   /* ▭ Mini — "Two rows, draining timers" (the guild vote, closed 2026-09-17:
      "Mini is mob health plus slow and root timers"). The markup only exists
@@ -274,23 +275,23 @@
   .mini{background:rgb(8 5 16 / var(--bg-alpha));border-radius:6px;padding:2px 22px;display:flex;flex-direction:column;gap:2px}
   .mini-row{display:flex;align-items:center;gap:5px;min-height:16px;font-size:11px;line-height:1.35;text-shadow:0 1px 2px #000}
   .mini-pct,.mini-lab{width:4ch;text-align:right;font-weight:700}
-  .mini-pct{color:#56d364}
+  .mini-pct{color:var(--wp-green)}
   .mini-bar{flex:1 1 48px;min-width:24px;height:4px;background:rgba(255,255,255,0.13);border-radius:2px;overflow:hidden}
-  .mini-bar i{display:block;height:100%;background:#56d364}
+  .mini-bar i{display:block;height:100%;background:var(--wp-green)}
   .mini-row.mid .mini-pct{color:#f0b429} .mini-row.mid .mini-bar i{background:#f0b429}
-  .mini-row.lo .mini-pct{color:#f85149}  .mini-row.lo .mini-bar i{background:#f85149}
-  .mini-row.none .mini-pct{color:#6e7681}
+  .mini-row.lo .mini-pct{color:var(--wp-red)}  .mini-row.lo .mini-bar i{background:var(--wp-red)}
+  .mini-row.none .mini-pct{color:var(--wp-dim)}
   .mini-nm{font-weight:700;color:#e9d5ff}
-  /* Timer rows: amber is slow on every overlay (root will be blue #58a6ff). */
+  /* Timer rows: amber is slow on every overlay (root will be blue var(--wp-blue)). */
   .mini-row.slow .mini-lab{color:#f0b429;font-size:10px;letter-spacing:.3px}
   .mini-row.slow .mini-bar i{background:#f0b429}
-  .mini-row.rev .mini-lab{color:#f85149;font-size:10px;letter-spacing:.3px}
-  .mini-row.rev .mini-bar i{background:#f85149}
+  .mini-row.rev .mini-lab{color:var(--wp-red);font-size:10px;letter-spacing:.3px}
+  .mini-row.rev .mini-bar i{background:var(--wp-red)}
   .mini-row.rev .mini-t{color:#ff7b72;font-weight:700}
   .mini-t{color:#e6edf3}
   .mini .ht{flex:0 0 auto;font-size:10px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums}
-  .mini .ht.ok{color:#56d364}
-  .mini .ht.used{color:#f85149}
+  .mini .ht.ok{color:var(--wp-green)}
+  .mini .ht.used{color:var(--wp-red)}
   /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
      panel owns ✥ and ✕ — the preload hides this page's — so the window's padding, the tabs' gutter and the
      18px kept above the Loot and abilities lists (clear of ✕) go (the abilities' is inline, hence !important). */
@@ -448,7 +449,7 @@
     // on the mob and not a debuff we want it to suffer; it is a pull condition
     // that is either still true or no longer true.
     var col = isPacify ? '#79c0ff'
-            : (b.good === 0) ? '#f85149' : (!hasRem ? '#6e7681' : '#56d364');
+            : (b.good === 0) ? 'var(--wp-red)' : (!hasRem ? 'var(--wp-dim)' : 'var(--wp-green)');
     // Right-side label: "cur/max · M:SS" when we know the full duration, else M:SS.
     var bt;
     if (hasTotal) bt = Math.max(0, Math.ceil(b.remaining_secs/6)) + '/' + Math.max(1, Math.round(b.total_secs/6)) + ' · ' + fmtSecs(b.remaining_secs);
@@ -458,8 +459,8 @@
     // aggro radius is back and the pull is no longer safe, so it says so and
     // stays red rather than borrowing the purple rebuff colour.
     if (b.fell_off) {
-      if (isPacify) { col = '#f85149'; pct = 100; bt = 'WORE OFF'; }
-      else { col = '#a371f7'; pct = 100; bt = 'fell off'; }
+      if (isPacify) { col = 'var(--wp-red)'; pct = 100; bt = 'WORE OFF'; }
+      else { col = 'var(--wp-purple)'; pct = 100; bt = 'fell off'; }
     }
     // Owner-in-parens: charm-spell entries (Allure, etc.) carry the caster's
     // name so other Mimic users targeting the same charmed mob can see who's
@@ -589,7 +590,7 @@
       var lbl = rem >= 0.1 ? rem.toFixed(1) + 's' : '✓';
       rows += '<div class="tbuff" title="'+esc(c.caster+' casting '+c.spell)+'">'
            +    '<span class="bn">'+esc(c.caster)+' · '+esc(c.spell)+'</span>'
-           +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:#58a6ff"></div></div>'
+           +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:var(--wp-blue)"></div></div>'
            +    '<span class="bt">'+lbl+'</span>'
            +  '</div>';
     }
@@ -661,7 +662,7 @@
   // exact /who or Zeal's raid and group roster (both exact, so no tag), an even con, a con
   // RANGE (in EverQuest's own con colours), or the last level /who history saw — because
   // those are different confidences.
-  var CON_COLOURS = { green: '#56d364', lightblue: '#79c0ff', blue: '#4c8dff', white: '#e6edf3', yellow: '#e3b341', red: '#f85149' };
+  var CON_COLOURS = { green: 'var(--wp-green)', lightblue: '#79c0ff', blue: '#4c8dff', white: '#e6edf3', yellow: '#e3b341', red: 'var(--wp-red)' };
   var CON_NAMES = { green: 'green', lightblue: 'light blue', blue: 'blue', white: 'even', yellow: 'yellow', red: 'red' };
   function playerCard(pl){
     var lvl = '';
@@ -684,7 +685,7 @@
     if (pl.drain_immune) h += '<div class="sub">bards take no mana drain</div>';
     else if (pl.no_mana) h += '<div class="sub">no mana to take (' + esc(pl.class) + ')</div>';
     else if (pl.drained && pl.drained.mana > 0) {
-      h += '<div class="sub" title="Your drains this fight, at full strength. The server only takes what they have, so this is the most it could be.">drained up to <b style="color:#58a6ff">' + fmtNum(pl.drained.mana) + '</b> mana · ' + pl.drained.casts + ' cast' + (pl.drained.casts === 1 ? '' : 's') + '</div>';
+      h += '<div class="sub" title="Your drains this fight, at full strength. The server only takes what they have, so this is the most it could be.">drained up to <b style="color:var(--wp-blue)">' + fmtNum(pl.drained.mana) + '</b> mana · ' + pl.drained.casts + ' cast' + (pl.drained.casts === 1 ? '' : 's') + '</div>';
     }
     return h;
   }
@@ -1128,7 +1129,7 @@
     if (helpNames.length) head += '<div class="fmeta"><span class="fk">Helps:</span> ' + helpNames.join(', ') + '</div>';
     if (head) head = '<div class="fhead">' + head + '</div>';
     if (!f || !f.length) {
-      var none = '<div class="sn" style="font-size:10px;color:#6e7681;padding:2px 0">'
+      var none = '<div class="sn" style="font-size:10px;color:var(--wp-dim);padding:2px 0">'
                + (mob ? (head ? 'No faction change on kill.' : 'No faction change recorded for this mob.') : '') + '</div>';
       return head ? '<div class="facwrap">' + head + none + '</div>' : none;
     }
@@ -1139,7 +1140,7 @@
            +   '<span class="fv ' + (up ? 'up' : 'dn') + '">' + (up ? '+' : '') + r.value + '</span>'
            + '</div>';
     }).join('');
-    return '<div class="facwrap">' + head + '<div class="sn" style="font-size:9px;color:#6e7681;margin-bottom:2px">on kill</div>' + rows + '</div>';
+    return '<div class="facwrap">' + head + '<div class="sn" style="font-size:9px;color:var(--wp-dim);margin-bottom:2px">on kill</div>' + rows + '</div>';
   }
 
   // ── F/Q/V: Faction · Quest · Vendor ───────────────────────────────────────
@@ -1221,7 +1222,7 @@
   }
   function renderQuest(mob, d){
     if (!mob || !mob.id) return '<div class="sub">no catalog NPC for this target</div>';
-    if (!d) return '<div class="sub" style="color:#a371f7">' + (_npc.loading ? 'reading the quest script…' : 'nothing on record for this NPC') + '</div>';
+    if (!d) return '<div class="sub" style="color:var(--wp-purple)">' + (_npc.loading ? 'reading the quest script…' : 'nothing on record for this NPC') + '</div>';
     if (_qOpenFor !== _qid(mob)) { _qOpen = {}; _qOpenFor = _qid(mob); }
     var out = '';
     if (d.say && d.say.length) {
@@ -1500,7 +1501,7 @@
   // The line under a target with no stats (FB-95): the agent's reason, and a ↻ that asks the bot again. Retrying cannot
   // help an off-Quarm character or a Mimic with no guild connection, so those two get the reason alone.
   function missNote(mm){
-    if (!mm || mm.reason === 'looking_up') return '<div class="sub" style="color:#a371f7">looking up stats…</div>';
+    if (!mm || mm.reason === 'looking_up') return '<div class="sub" style="color:var(--wp-purple)">looking up stats…</div>';
     var canRetry = mm.reason === 'not_in_catalog' || mm.reason === 'lookup_failed';
     return '<div class="sub">no catalog stats · ' + esc(mm.text || 'not in the catalog')
          + (canRetry ? '<button type="button" class="mretry" title="Ask the guild bot again">&#x21BB;</button>' : '') + '</div>';
@@ -1586,7 +1587,7 @@
     // Header strip — always visible regardless of tab so the user always sees
     // who they're targeting + live HP%.
     var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, mi.target_hp_pct)) : null;
-    var hpColor = hp == null ? '#a371f7' : (hp > 50 ? '#56d364' : (hp > 20 ? '#f0883e' : '#f85149'));
+    var hpColor = hp == null ? 'var(--wp-purple)' : (hp > 50 ? 'var(--wp-green)' : (hp > 20 ? '#f0883e' : 'var(--wp-red)'));
     var hpBar = hp != null ? '<div class="hpbar"><div style="width:'+hp.toFixed(0)+'%;background:'+hpColor+'"></div></div>' : '';
     // #130 — best ACTIVE slow badge (🐌 Turgur's 75% · 2:10). Self-casts name the
     // caster; bystander landings can't (documented limitation). Distinct from the
@@ -1733,7 +1734,7 @@
           specChips += specChip(slab);
         }
       }
-      var specBlock = '<div class="spec" style="padding-top:18px">' + (specChips || '<span class="empty" style="color:#6e7681;font-style:italic">no abilities catalogued</span>') + '</div>';
+      var specBlock = '<div class="spec" style="padding-top:18px">' + (specChips || '<span class="empty" style="color:var(--wp-dim);font-style:italic">no abilities catalogued</span>') + '</div>';
       // PROCS above the spell lists (the guild lead, 2026-10-07: "Need to see mobs Procs as
       // well, not just spells"): a proc lands on the tank every fight, a cast list is what
       // the mob might do. The bot sends procs: [{ kind, spell_id, name, chance, summary }];
@@ -1750,7 +1751,7 @@
           procRows += '<div style="display:grid;grid-template-columns:minmax(0,1fr) 40px minmax(0,1.5fr);gap:6px;padding:1px 0;font-size:10.5px;align-items:baseline">'
                     +   '<span style="color:#d2a8ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + prName + '</span>'
                     +   '<span style="color:#f0b429;text-align:right;font-variant-numeric:tabular-nums">' + prChance + '</span>'
-                    +   '<span style="color:#c9d1d9;font-size:9.5px">' + (pr.summary ? esc(pr.summary) : '—') + '</span>'
+                    +   '<span style="color:var(--wp-text);font-size:9.5px">' + (pr.summary ? esc(pr.summary) : '—') + '</span>'
                     + '</div>';
         }
         procsBlock = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
@@ -1815,7 +1816,7 @@
                     + spellTable(buffs.length     ? 'Buffs ('     + buffs.length     + ')' : 'Buffs',     buffs,     false)
                     + '</div>';
       } else {
-        spellsBlock = '<div class="sub" style="margin-top:8px;color:#6e7681">no spell list catalogued (npc_spells_id missing or eqemu_npc_spells_entries not yet synced).</div>';
+        spellsBlock = '<div class="sub" style="margin-top:8px;color:var(--wp-dim)">no spell list catalogued (npc_spells_id missing or eqemu_npc_spells_entries not yet synced).</div>';
       }
       tabBody = '<div data-wp-sect="spells">' + specBlock + procsBlock + spellsBlock + '</div>';
     } else {
@@ -1824,7 +1825,7 @@
       if (mob) {
         var cells = [['AC', mob.ac], ['MR', mob.resists&&mob.resists.mr], ['FR', mob.resists&&mob.resists.fr],
                     ['CR', mob.resists&&mob.resists.cr], ['PR', mob.resists&&mob.resists.pr], ['DR', mob.resists&&mob.resists.dr]];
-        function resColor(v){ if (v == null) return '#8b949e'; if (v >= 150) return '#f85149'; if (v >= 75) return '#f0883e'; return '#56d364'; }
+        function resColor(v){ if (v == null) return '#8b949e'; if (v >= 150) return 'var(--wp-red)'; if (v >= 75) return '#f0883e'; return 'var(--wp-green)'; }
         for (var i=0;i<cells.length;i++){
           var lab = cells[i][0], v = cells[i][1];
           var col = lab === 'AC' ? '#d2a8ff' : resColor(v);
@@ -1842,7 +1843,7 @@
       if (chips) spec = '<div class="spec">'+chips+'</div>';
       // FB-95: "no catalog stats" used to stand for six different situations. The agent now says which
       // (mi.mob_miss.reason/text) and the ↻ asks the bot again; an older agent sends none and keeps the bare line.
-      var loadingNote = (!mob && mi.loading) && !(mi.mob_miss && mi.mob_miss.reason !== 'looking_up') ? '<div class="sub" style="color:#a371f7">looking up stats…</div>'
+      var loadingNote = (!mob && mi.loading) && !(mi.mob_miss && mi.mob_miss.reason !== 'looking_up') ? '<div class="sub" style="color:var(--wp-purple)">looking up stats…</div>'
                        : (!mob ? (corpseOf ? '<div class="sub">corpse of ' + esc(corpseOf) + '</div>'
                                            : (mi.mob_miss ? missNote(mi.mob_miss)
                                                           : '<div class="sub">no catalog stats for this target</div>')) : '');
@@ -1879,7 +1880,7 @@
                +     '<span style="position:absolute;left:0;top:0;bottom:0;width:'+pct+'%;background:rgba(86,211,100,0.18);border-radius:2px;"></span>'
                +     '<span style="position:relative;padding-left:4px">'+esc(r.n)+'</span>'
                +   '</span>'
-               +   '<span style="color:#56d364;text-align:right;font-variant-numeric:tabular-nums">'+dmgTxt+'</span>'
+               +   '<span style="color:var(--wp-green);text-align:right;font-variant-numeric:tabular-nums">'+dmgTxt+'</span>'
                + '</div>';
         }).join('');
         lastFight = '<div data-wp-sect="lastfight" style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
@@ -1894,8 +1895,8 @@
     var slotLine = '';
     if (mi.target_slots) {
       var ts = mi.target_slots;
-      var bcol = ts.buffs >= ts.buff_max ? '#f0883e' : '#56d364';
-      var scol = ts.songs >= ts.song_max ? '#f0883e' : '#56d364';
+      var bcol = ts.buffs >= ts.buff_max ? '#f0883e' : 'var(--wp-green)';
+      var scol = ts.songs >= ts.song_max ? '#f0883e' : 'var(--wp-green)';
       slotLine = '<div class="sub" data-wp-sect="slots">buffs <span style="color:'+bcol+'">'+ts.buffs+'/'+ts.buff_max+'</span>'
                + ' · songs <span style="color:'+scol+'">'+ts.songs+'/'+ts.song_max+'</span></div>';
     }

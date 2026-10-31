@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>tick</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Tick overlay (key 'zeal', file kept so every saved position, size and
      on/off survives). Was the Zeal health diagnostic; now the standalone
@@ -12,7 +13,7 @@
      Bars only (the guild lead picked them over dials, DECISIONS §383): a number plus a bar that drains. */
   /* --bg-alpha: card-surface alpha, driven by slider via main → preload
      'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
-  :root{ --bg-alpha:0.5; --srv:#58a6ff; --mob:#a371f7; }
+  :root{ --bg-alpha:0.5; --srv:var(--wp-blue); --mob:var(--wp-purple); }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{padding:6px 8px;min-width:180px}
@@ -20,7 +21,7 @@
     font-size:12px;color:#7ee7c7;text-shadow:0 1px 2px #000;margin-bottom:4px;}
   .title .grow{flex:1}
   .conn{font-size:11px}
-  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .conn.ok{color:var(--wp-green)} .conn.bad{color:#8b949e}
   .card{background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 7px}
 
   /* Bars: seconds left, and a bar that drains toward the left. One grid for
@@ -28,14 +29,14 @@
   .bars{display:grid;grid-template-columns:auto 3.2em 1fr;align-items:center;column-gap:6px;
     font-size:11px;line-height:1.6;text-shadow:0 1px 2px #000}
   .tk{display:contents}
-  .tk .tl{color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:11em}
+  .tk .tl{color:var(--wp-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:11em}
   .tk.mob .tl{color:#d2b8ff}
   .tk .tv{font-size:15px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
   .tk .bar{height:6px;border-radius:3px;background:rgba(255,255,255,0.12);overflow:hidden}
   .tk .bar i{display:block;height:100%;width:0}
   .tk.srv .tv{color:var(--srv)} .tk.srv .bar i{background:var(--srv)}
   .tk.mob .tv{color:var(--mob)} .tk.mob .bar i{background:var(--mob)}
-  .tk .tn{grid-column:1 / -1;color:#6e7681;font-size:10px;line-height:1.2;margin-top:-2px}
+  .tk .tn{grid-column:1 / -1;color:var(--wp-dim);font-size:10px;line-height:1.2;margin-top:-2px}
 
   #empty{color:rgba(255,255,255,0.55);font-size:11px;text-shadow:0 1px 2px #000;padding:2px 0}
 
@@ -43,14 +44,14 @@
   #status{display:flex;gap:10px;align-items:center;margin-top:5px;font-size:10px;
     color:#9aa4ad;text-shadow:0 1px 2px #000;cursor:pointer}
   #status:hover{color:#e6edf3}
-  #status .ok{color:#56d364} #status .warn{color:#ffa657} #status .bad{color:#f85149} #status .dim{color:#6e7681}
+  #status .ok{color:var(--wp-green)} #status .warn{color:var(--wp-orange)} #status .bad{color:var(--wp-red)} #status .dim{color:var(--wp-dim)}
   #status .arr::after{content:'▸'}
   body.show-detail #status .arr::after{content:'▾'}
   /* Connection line: the agent's local lag meter (/api/net), one line under the status row.
      Hidden until the meter has something to say. Amber/red are set from the numbers. */
   #net{margin-top:3px;font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000;white-space:nowrap;
     overflow:hidden;text-overflow:ellipsis;cursor:default}
-  #net.warn{color:#ffa657} #net.bad{color:#f85149}
+  #net.warn{color:var(--wp-orange)} #net.bad{color:var(--wp-red)}
   #detail{display:none;margin-top:5px}
   body.show-detail #detail{display:block}
   .pid{font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000;margin-bottom:4px}
@@ -59,7 +60,7 @@
   .row{display:flex;align-items:baseline;gap:6px;font-size:11px;line-height:1.5;
     text-shadow:0 1px 2px #000}
   .row .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block}
-  .row.ok    .dot{background:#56d364;box-shadow:0 0 4px rgba(86,211,100,0.7)}
+  .row.ok    .dot{background:var(--wp-green);box-shadow:0 0 4px rgba(86,211,100,0.7)}
   .row.warn  .dot{background:#f0d264}
   .row.stale .dot{background:#f87171}
   .row.off   .dot{background:#373e47}
@@ -67,11 +68,11 @@
   .row .desc{color:#9aa4ad;font-size:10px;flex:1;min-width:0;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .row .count{color:#79c0ff;font-variant-numeric:tabular-nums;font-size:10px;flex-shrink:0}
-  .row.off .lbl,.row.off .desc{color:#6e7681}
+  .row.off .lbl,.row.off .desc{color:var(--wp-dim)}
   .hint{margin-top:6px;font-size:10px;color:#f0d264;text-shadow:0 1px 2px #000;line-height:1.4}
-  .hint.ok{color:#56d364}
-  .clock{margin-top:6px;font-size:10px;color:#c9d1d9;text-shadow:0 1px 2px #000;line-height:1.5}
-  .clock .muted{color:#6e7681}
+  .hint.ok{color:var(--wp-green)}
+  .clock{margin-top:6px;font-size:10px;color:var(--wp-text);text-shadow:0 1px 2px #000;line-height:1.5}
+  .clock .muted{color:var(--wp-dim)}
 
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}

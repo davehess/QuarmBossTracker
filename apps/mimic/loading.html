@@ -1,94 +1,95 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Mimic — getting ready</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   *{box-sizing:border-box}
-  html,body{height:100%;margin:0;background:#0e1116;color:#c9d1d9;
+  html,body{height:100%;margin:0;background:#0e1116;color:var(--wp-text);
     font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;overflow-y:auto}
   body{padding:32px 28px;display:flex;flex-direction:column;align-items:center}
   .wrap{width:100%;max-width:720px}
   header{display:flex;align-items:center;gap:14px;margin-bottom:18px}
   .wolf img{width:64px;height:64px;border-radius:12px;display:block}
-  h1{margin:0;color:#58a6ff;font-size:18px;font-weight:600}
+  h1{margin:0;color:var(--wp-blue);font-size:18px;font-weight:600}
   .sub{color:#8b949e;font-size:11px;margin-top:2px}
   .beta{color:#f6c365;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;margin-left:6px}
 
   /* Status bar */
   .status{display:flex;gap:8px;margin:18px 0 24px;align-items:stretch}
   .step{flex:1;padding:10px 12px;border:1px solid #2a3140;border-radius:6px;
-    background:#161b22;display:flex;align-items:center;gap:8px;
+    background:var(--wp-panel);display:flex;align-items:center;gap:8px;
     transition:border-color .2s, background .2s}
   .step .icon{font-size:14px;width:18px;text-align:center}
   .step .label{flex:1;font-size:11px;color:#8b949e}
-  .step.active{border-color:#58a6ff;background:#1a2230}
-  .step.active .label{color:#c9d1d9}
+  .step.active{border-color:var(--wp-blue);background:#1a2230}
+  .step.active .label{color:var(--wp-text)}
   .step.active .icon{animation:pulse 1s ease-in-out infinite}
   .step.done{border-color:#1a7f37;background:#1a2a22}
-  .step.done .label{color:#56d364}
-  .step.done .icon{color:#56d364}
+  .step.done .label{color:var(--wp-green)}
+  .step.done .icon{color:var(--wp-green)}
   .step.error{border-color:#a3260a;background:#2a1212}
   .step.error .label{color:#f87171}
   @keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
 
   /* Section header */
-  h2{color:#58a6ff;font-size:11px;font-weight:600;text-transform:uppercase;
+  h2{color:var(--wp-blue);font-size:11px;font-weight:600;text-transform:uppercase;
     letter-spacing:0.1em;margin:0 0 8px;padding-bottom:5px;border-bottom:1px solid #2a3140}
   .section-hint{color:#6b7280;font-size:11px;margin-bottom:14px;line-height:1.5}
 
   /* Setup cards */
-  .card{background:#161b22;border:1px solid #2a3140;border-radius:8px;
+  .card{background:var(--wp-panel);border:1px solid #2a3140;border-radius:8px;
     padding:14px 16px;margin-bottom:12px;transition:border-color .2s}
   .card:hover{border-color:#3a4150}
   .card-h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
   .card-h .ico{font-size:16px}
-  .card-h .title{font-size:13px;color:#c9d1d9;font-weight:600}
+  .card-h .title{font-size:13px;color:var(--wp-text);font-weight:600}
   .card-h .badge{margin-left:auto;font-size:9px;padding:2px 6px;border-radius:10px;
-    background:#1a2230;color:#58a6ff;border:1px solid #2a3140;text-transform:uppercase;letter-spacing:0.08em}
+    background:#1a2230;color:var(--wp-blue);border:1px solid #2a3140;text-transform:uppercase;letter-spacing:0.08em}
   .card-h .badge.priv{background:#2a2010;color:#f6c365;border-color:#3a3020}
-  .card-h .badge.ok{background:#1a2a22;color:#56d364;border-color:#1a7f37}
+  .card-h .badge.ok{background:#1a2a22;color:var(--wp-green);border-color:#1a7f37}
   .card p{margin:0 0 10px;color:#8b949e;font-size:11px;line-height:1.55}
   .card .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .card input[type=text]{flex:1;min-width:0;background:#0e1116;border:1px solid #2a3140;
-    border-radius:4px;color:#c9d1d9;padding:6px 9px;font-family:inherit;font-size:11px}
-  .card input[type=text]:focus{outline:none;border-color:#58a6ff}
-  .card button{background:#1f6feb;border:none;color:#fff;padding:6px 12px;
+    border-radius:4px;color:var(--wp-text);padding:6px 9px;font-family:inherit;font-size:11px}
+  .card input[type=text]:focus{outline:none;border-color:var(--wp-blue)}
+  .card button{background:var(--wp-accent);border:none;color:#fff;padding:6px 12px;
     border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;white-space:nowrap}
   .card button:hover{background:#3a8bff}
   .card button:disabled{opacity:0.5;cursor:wait}
   .card button.ghost{background:transparent;border:1px solid #2a3140;color:#8b949e}
-  .card button.ghost:hover{border-color:#58a6ff;color:#58a6ff}
+  .card button.ghost:hover{border-color:var(--wp-blue);color:var(--wp-blue)}
   .card label.radio{display:flex;align-items:flex-start;gap:8px;padding:6px 8px;
-    border-radius:4px;cursor:pointer;font-size:11px;color:#c9d1d9}
+    border-radius:4px;cursor:pointer;font-size:11px;color:var(--wp-text)}
   .card label.radio:hover{background:#1a2230}
-  .card label.radio input{margin-top:2px;accent-color:#58a6ff}
+  .card label.radio input{margin-top:2px;accent-color:var(--wp-blue)}
   .card label.radio .desc{display:block;color:#6b7280;font-size:10px;margin-top:1px}
-  .card .saved{color:#56d364;font-size:10px}
+  .card .saved{color:var(--wp-green);font-size:10px}
 
   /* Bottom action bar */
   .actions{position:sticky;bottom:0;background:#0e1116;border-top:1px solid #2a3140;
     padding:14px 0 6px;margin-top:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .actions button.primary{background:#1f6feb;border:none;color:#fff;padding:9px 18px;
+  .actions button.primary{background:var(--wp-accent);border:none;color:#fff;padding:9px 18px;
     border-radius:6px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600}
   .actions button.primary:hover{background:#3a8bff}
   .actions button.primary:disabled{background:#2a3140;color:#6b7280;cursor:not-allowed}
   .actions .countdown{color:#8b949e;font-size:11px}
-  .actions .countdown b{color:#58a6ff}
+  .actions .countdown b{color:var(--wp-blue)}
   .actions .skip{background:transparent;border:1px solid #2a3140;color:#8b949e;
     padding:9px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px}
-  .actions .skip:hover{border-color:#8b949e;color:#c9d1d9}
+  .actions .skip:hover{border-color:#8b949e;color:var(--wp-text)}
 
   /* Diagnostics panel — only shown when engine fails to come up */
   .diag{display:none;margin-top:16px;background:#1a1212;border:1px solid #a3260a;
     border-radius:6px;padding:12px}
   .diag.show{display:block}
   .diag h3{margin:0 0 4px;color:#f87171;font-size:12px;font-weight:600}
-  .diag p{margin:0 0 8px;color:#c9d1d9;font-size:11px;line-height:1.5}
+  .diag p{margin:0 0 8px;color:var(--wp-text);font-size:11px;line-height:1.5}
   .diag pre{margin:0;padding:8px 10px;background:#0e1116;border:1px solid #2a3140;
     border-radius:4px;color:#8b949e;font-size:10px;line-height:1.4;overflow:auto;max-height:240px;white-space:pre-wrap;word-break:break-word}
   .diag-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
-  .diag-row button{background:#1f6feb;border:none;color:#fff;padding:6px 12px;
+  .diag-row button{background:var(--wp-accent);border:none;color:#fff;padding:6px 12px;
     border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px}
   .diag-row button.ghost{background:transparent;border:1px solid #2a3140;color:#8b949e}
-  .diag-row button.ghost:hover{border-color:#58a6ff;color:#58a6ff}
+  .diag-row button.ghost:hover{border-color:var(--wp-blue);color:var(--wp-blue)}
 </style></head>
 <body>
 <div class="wrap">
@@ -119,7 +120,7 @@
   <h2>Set up Mimic</h2>
   <p class="section-hint">Three quick steps. Sign in and pick your EverQuest folder, then launch — you can change any preference later from the tray menu.</p>
   <!-- The step-by-step walkthrough (DECISIONS §93; the trail was picked, §383). This page stays the first-run page. -->
-  <p class="section-hint">✨ Prefer it one step at a time? <a href="welcome.html" style="color:#58a6ff">Try the step-by-step setup</a>.</p>
+  <p class="section-hint">✨ Prefer it one step at a time? <a href="welcome.html" style="color:var(--wp-blue)">Try the step-by-step setup</a>.</p>
 
   <!-- STEP 1 — Sign in with Discord (primary connect method) -->
   <div class="card" id="cardToken">
@@ -134,10 +135,10 @@
       <button id="acctSignInBtn" style="background:#5865f2;display:inline-flex;align-items:center;gap:6px"><svg viewBox="0 0 127.14 96.36" width="14" height="14" fill="#fff" aria-hidden="true"><path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"/></svg>Join a guild — sign in with Discord</button>
       <span class="saved" style="color:#6b7280">Persists across upgrades · unlocks cross-machine sync</span>
     </div>
-    <div id="acctLinking" style="display:none;margin-top:8px;padding:10px 12px;background:#0e1116;border:1px dashed #58a6ff;border-radius:6px">
-      <div style="font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Paste this code at <span id="acctLinkUrl" style="color:#58a6ff">wolfpack.quest/auth/mimic-link</span> (we opened it for you)</div>
+    <div id="acctLinking" style="display:none;margin-top:8px;padding:10px 12px;background:#0e1116;border:1px dashed var(--wp-blue);border-radius:6px">
+      <div style="font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Paste this code at <span id="acctLinkUrl" style="color:var(--wp-blue)">wolfpack.quest/auth/mimic-link</span> (we opened it for you)</div>
       <div class="row">
-        <div id="acctLinkCode" style="font-size:22px;letter-spacing:0.3em;color:#f6c365;font-weight:bold;background:#161b22;border:1px solid #2a3140;border-radius:4px;padding:5px 12px">------</div>
+        <div id="acctLinkCode" style="font-size:22px;letter-spacing:0.3em;color:#f6c365;font-weight:bold;background:var(--wp-panel);border:1px solid #2a3140;border-radius:4px;padding:5px 12px">------</div>
         <button id="acctLinkCopyBtn" class="ghost">Copy</button>
         <span id="acctLinkRemaining" style="font-size:11px;color:#8b949e"></span>
         <button id="acctLinkCancelBtn" class="ghost">Cancel</button>
@@ -145,7 +146,7 @@
     </div>
     <div id="acctSignedIn" style="display:none;margin-top:8px;padding:10px 12px;background:#0f2a1a;border:1px solid #1a7f37;border-radius:6px">
       <div class="row">
-        <span style="font-size:13px">✓ Signed in as <b id="acctName" style="color:#56d364">—</b></span>
+        <span style="font-size:13px">✓ Signed in as <b id="acctName" style="color:var(--wp-green)">—</b></span>
         <button id="acctSignOutBtn" class="ghost" style="margin-left:auto">Sign out</button>
       </div>
     </div>
@@ -293,7 +294,7 @@
     <p style="margin-top:10px;font-size:10px;color:#6b7280">
       A newer beta probably has the fix. Reinstall over your existing copy —
       settings + token are preserved. Direct link:
-      <a href="#" id="diagDownloadLink" style="color:#58a6ff">wolfpack.quest/mimic</a>
+      <a href="#" id="diagDownloadLink" style="color:var(--wp-blue)">wolfpack.quest/mimic</a>
     </p>
   </div>
 
@@ -519,7 +520,7 @@
       list.innerHTML = _foundCandidates.map((c, i) => {
         const checked = _checkedFound.has(_norm(c.path));
         const meta = [];
-        if (c.hasEqgame) meta.push('<span style="color:#56d364">eqgame.exe</span>');
+        if (c.hasEqgame) meta.push('<span style="color:var(--wp-green)">eqgame.exe</span>');
         if (c.hasLogs)   meta.push((c.logCount || 0) + ' log file' + (c.logCount === 1 ? '' : 's'));
         else             meta.push('<span style="color:#6b7280">no logs yet</span>');
         return '<label class="radio" style="align-items:center">' +
@@ -539,7 +540,7 @@
     if (_manualFolders.length === 0) ml.innerHTML = '';
     else ml.innerHTML = _manualFolders.map((p, i) =>
       '<div class="row" style="margin:3px 0;justify-content:space-between">' +
-        '<code style="font-size:11px;color:#c9d1d9">' + p.replace(/</g,'&lt;') + '</code>' +
+        '<code style="font-size:11px;color:var(--wp-text)">' + p.replace(/</g,'&lt;') + '</code>' +
         '<button type="button" class="eqRm ghost" data-idx="' + i + '" style="padding:2px 8px">✕ Remove</button>' +
       '</div>').join('');
     ml.querySelectorAll('.eqRm').forEach(b => b.addEventListener('click', e => {

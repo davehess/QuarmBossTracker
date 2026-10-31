@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>extended target</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Extended Target overlay — a raid-wide "extended target window". Polls the
      local agent's /api/extended-target (which proxies the bot's aggregation of
@@ -35,7 +36,7 @@
   @media (max-width: 379px){ .head .offtank-btn .bl{display:none} }
   @media (max-width: 319px){ .head{gap:4px} }
   .head .conn{font-size:11px;flex-shrink:0}
-  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .conn.ok{color:var(--wp-green)} .conn.bad{color:#8b949e}
   .rows{display:flex;flex-direction:column;gap:3px;background:rgb(0 0 0 / var(--bg-alpha));
     border-radius:5px;padding:5px 6px}
   .row{position:relative;display:grid;
@@ -67,7 +68,7 @@
   .row .cc-badge{display:inline-block;font-size:8px;font-weight:800;letter-spacing:0.04em;
     line-height:1.35;padding:0 5px;border-radius:3px;margin-left:5px;vertical-align:middle;
     text-shadow:none;flex-shrink:0}
-  .row .cc-badge.mez{background:#a371f7;color:#160a2e;border:1px solid #d2a8ff;
+  .row .cc-badge.mez{background:var(--wp-purple);color:#160a2e;border:1px solid #d2a8ff;
     box-shadow:0 0 6px rgba(163,113,247,0.55)}
   .row .cc-badge.slow{background:#f0b429;color:#3a2405;border:1px solid #ffd566;
     box-shadow:0 0 6px rgba(240,180,41,0.5)}
@@ -83,21 +84,21 @@
   /* #194 — Zeal /tag text + shape on the row. Colors mirror Zeal's arrow set. */
   .row .ztag{font-size:9px;margin-left:4px;padding:0 3px;border-radius:2px;background:#1c2128;cursor:help}
   .row .ztag .shp{margin-right:2px}
-  .debuffs .chip.ztag-pool{background:#1c2128;border-color:#30363d}
+  .debuffs .chip.ztag-pool{background:#1c2128;border-color:var(--wp-border)}
   .debuffs .chip.unattr{opacity:.45;font-style:italic}
   .row.player .nm{color:#79c0ff}
   .row.pet    .nm{color:#c9a0ff}
   .row .owner{color:#8b949e;font-size:9px;margin-left:4px}
   .row .hp{font-variant-numeric:tabular-nums;font-weight:700;text-align:right;font-size:11px}
-  .hp.hi{color:#56d364} .hp.mid{color:#f0b429} .hp.lo{color:#f87171} .hp.unk{color:#6e7681}
+  .hp.hi{color:var(--wp-green)} .hp.mid{color:#f0b429} .hp.lo{color:#f87171} .hp.unk{color:var(--wp-dim)}
   /* #145 (overlay half) absolute HP on player/needs-attention rows — dim
      "cur/max" appended after the % when the bot aggregate carries hp_cur+hp_max. */
-  .row .hp .hpabs{color:#6e7681;font-weight:400;font-size:9px;margin-left:4px;font-variant-numeric:tabular-nums}
+  .row .hp .hpabs{color:var(--wp-dim);font-weight:400;font-size:9px;margin-left:4px;font-variant-numeric:tabular-nums}
   /* HP bar under the row. */
   .bar{grid-column:1 / -1;height:4px;background:rgba(255,255,255,0.07);
     border-radius:2px;overflow:hidden;margin-top:3px}
   .bar .fill{height:100%;transition:width 250ms ease,background 250ms ease}
-  .bar .fill.hi{background:#56d364} .bar .fill.mid{background:#f0b429} .bar .fill.lo{background:#f87171}
+  .bar .fill.hi{background:var(--wp-green)} .bar .fill.mid{background:#f0b429} .bar .fill.lo{background:#f87171}
   /* Debuff chips — the detrimental casts landed on this target. */
   .debuffs{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:3px;margin-top:3px}
   .debuffs .chip{font-size:8px;line-height:1.4;padding:0 4px;border-radius:2px;
@@ -152,7 +153,7 @@
   .row.selfrow{grid-template-columns:minmax(0,1fr) auto auto}
   .row.selfrow .ago{color:#9aa4ad;font-size:9px;font-variant-numeric:tabular-nums;white-space:nowrap}
   .row.selfrow.now .ago{color:#5fd0c9;font-weight:700}
-  .row.selfrow .noid{color:#6e7681;font-size:9px;margin-left:4px;font-style:italic}
+  .row.selfrow .noid{color:var(--wp-dim);font-size:9px;margin-left:4px;font-style:italic}
   .row.fade-1{opacity:.8} .row.fade-2{opacity:.6} .row.fade-3{opacity:.45}
   /* #3 Extended Target V2 — the mob-stats sub-line: → who the mob is meleeing
      (from the local combat log's "<mob> hits <player>"; the pipe carries no
@@ -164,10 +165,10 @@
     overflow:hidden;text-shadow:0 1px 2px #000}
   .row .mobx>span{white-space:nowrap}
   .row .mobx .vic{color:#c9b389;font-weight:600;overflow:hidden;text-overflow:ellipsis;min-width:0}
-  .row .mobx .vic .arrow{color:#6e7681;font-weight:400;margin-right:2px}
+  .row .mobx .vic .arrow{color:var(--wp-dim);font-weight:400;margin-right:2px}
   .row .mobx .vic.auth{color:#7ee787}
   .row .mobx .hitby{color:#f0b429;overflow:hidden;text-overflow:ellipsis;min-width:0}
-  .row .mobx .hitby .arrow{color:#6e7681;margin-right:2px}
+  .row .mobx .hitby .arrow{color:var(--wp-dim);margin-right:2px}
   .row .mobx .mdps{color:#8fb7d6;font-variant-numeric:tabular-nums;flex-shrink:0}
   .row .mobx .mttl{color:#d69a9a;font-variant-numeric:tabular-nums;flex-shrink:0}
   /* Per-row hide ✕ — sits right next to the target name and is ALWAYS
@@ -183,8 +184,8 @@
      compact line: the first few, then "+N" with the rest in its tooltip. */
   .row .cds{grid-column:1 / -1;display:flex;flex-wrap:nowrap;gap:3px;overflow:hidden;margin-top:2px;min-width:0}
   .row .cd{font-size:9px;line-height:1.35;padding:0 3px;border:1px solid currentColor;border-radius:3px;
-    white-space:nowrap;font-variant-numeric:tabular-nums;color:#f85149;flex-shrink:0;cursor:help}
-  .row .cd.ok{color:#56d364}
+    white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--wp-red);flex-shrink:0;cursor:help}
+  .row .cd.ok{color:var(--wp-green)}
   .row .cd.more{color:#9aa4ad}
   /* Who's targeting this — the raiders on each target, dim full-width line
      under the row (a member, 2026-07-15: "Extended Target should show who is
@@ -192,7 +193,7 @@
   .row .who{grid-column:1 / -1;color:#9aa4ad;font-size:9px;line-height:1.4;
     padding-left:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     text-shadow:0 1px 2px #000}
-  .row .who .arrow{color:#6e7681;margin-right:2px}
+  .row .who .arrow{color:var(--wp-dim);margin-right:2px}
   .foot .unhide{color:#5fd0c9;cursor:pointer;text-decoration:underline;margin-left:6px}
   /* ▭ Mini — the guild vote (closed 2026-09-17) picked option A, "CC letters +
      count". One line per row, built by miniRowHtml(): HP%, the 4px bar, then
@@ -211,13 +212,13 @@
   body.wp-mini .row.mrow .vic{color:#c9b389;font-weight:600;white-space:nowrap;overflow:hidden;
     text-overflow:ellipsis;min-width:0;flex:0 1 auto}
   body.wp-mini .row.mrow .vic.auth{color:#7ee787}
-  body.wp-mini .row.mrow .vic.none{color:#6e7681;font-weight:400}
-  body.wp-mini .row.mrow .vic .arrow{color:#6e7681;font-weight:400;margin-right:2px}
+  body.wp-mini .row.mrow .vic.none{color:var(--wp-dim);font-weight:400}
+  body.wp-mini .row.mrow .vic .arrow{color:var(--wp-dim);font-weight:400;margin-right:2px}
   body.wp-mini .row.mrow .cc-badge{margin-left:0}
   body.wp-mini .row.mrow .cc-badge.more{background:rgba(255,255,255,0.08);color:#9aa4ad;
     border:1px solid rgba(255,255,255,0.16);font-weight:600;cursor:help}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
-  .foot{margin-top:4px;font-size:8px;color:#6e7681;padding:0 4px;line-height:1.3}
+  .foot{margin-top:4px;font-size:8px;color:var(--wp-dim);padding:0 4px;line-height:1.3}
   .foot b{color:#f0b429;font-weight:700}
   /* drag/lock/setup chrome — same pattern as every other overlay. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -558,7 +559,7 @@
     // The main assist's target, pinned to the top by the bot (the guild lead,
     // 2026-10-02: "when someone is declared as main assist in raid chat, their
     // target should be at the top of the extended target list").
-    if (t.ma_target) nm += '<span class="tank-tag" style="color:#d29922" title="The main assist is on this one">MA</span>';
+    if (t.ma_target) nm += '<span class="tank-tag" style="color:var(--wp-gold)" title="The main assist is on this one">MA</span>';
     if (kind === 'pet' && t.owner) nm += '<span class="owner">(' + esc(t.owner) + ')</span>';
     if (t.hurt) nm += '<span class="warn">⚠ ' + (t.hurt_secs || 0) + 's</span>';
     if (t.off_tank) {
@@ -850,13 +851,13 @@
     function cntHtml(withOnline){
       var h = '';
       if (raids) h += '<span title="' + esc(raids.length) + ' raids at once. These targets are your raid&#39;s.">'
-                   + '<span style="color:#ffa657">⚔ ' + esc(raids.length) + ' raids</span>'
+                   + '<span style="color:var(--wp-orange)">⚔ ' + esc(raids.length) + ' raids</span>'
                    + (myRaid ? ' · 👑 ' + esc(myRaid.leader) : '') + '</span>';
       if (withOnline && payload && payload.online != null) h += '<span>' + esc(payload.online) + (groupScope ? ' in group' : ' online') + '</span>';
       if (!_showOffTank && offTankCount) h += '<span>🛡 ' + esc(offTankCount) + ' off-tanked</span>';
       // Who the raid named main assist, and (when known) what they are on.
       var ma = payload && payload.main_assist;
-      if (ma && ma.name) h += '<span style="color:#d29922" title="Main assist, named in raid chat by ' + esc(ma.declared_by || 'a raider') + '">MA ' + esc(ma.name) + '</span>';
+      if (ma && ma.name) h += '<span style="color:var(--wp-gold)" title="Main assist, named in raid chat by ' + esc(ma.declared_by || 'a raider') + '">MA ' + esc(ma.name) + '</span>';
       return h;
     }
     if (!targets.length) {

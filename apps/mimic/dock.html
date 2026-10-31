@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>dock</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* ── The Dock ──────────────────────────────────────────────────────────────
      One always-on-top transparent window that HOSTS other overlays as panes,
@@ -51,8 +52,8 @@
   .btn{background:rgba(255,255,255,0.06);color:#9aa4ad;
     border:1px solid rgba(255,255,255,0.12);border-radius:4px;
     padding:1px 7px;font-size:10px;cursor:pointer;font-family:inherit}
-  .btn:hover{color:#fff;border-color:#a371f7}
-  .btn.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+  .btn:hover{color:#fff;border-color:var(--wp-purple)}
+  .btn.on{background:#2a1d3d;color:#d2a8ff;border-color:var(--wp-purple)}
 
   /* Panes. `min-content` rows + a per-pane height measured from its own
      content is what makes auto-height work: a pane with two lines in it is two
@@ -78,7 +79,7 @@
      stationary cursor never picks up :hover; the same trap that made the CH
      chain's ✕ invisible on exactly the row you wanted it on (2026-08-14). */
   .pane > .ph .ctl{cursor:pointer;opacity:0.45;padding:0 3px;border-radius:3px}
-  .pane > .ph .ctl:hover{opacity:1;color:#a371f7;background:rgba(163,113,247,0.18)}
+  .pane > .ph .ctl:hover{opacity:1;color:var(--wp-purple);background:rgba(163,113,247,0.18)}
   .pane > .ph .x:hover{color:#f87171;background:rgba(220,38,38,0.20)}
   .pane > iframe{flex:1 1 auto;width:100%;border:0;background:transparent;
     min-height:0;display:block}
@@ -116,41 +117,41 @@
   /* Pane picker — which overlays live in the dock. #layouts (named dock
      layouts + rename, the guild lead 2026-08-19) shares the same panel chrome. */
   #picker,#layouts{display:none;position:absolute;top:26px;left:6px;right:6px;z-index:80;
-    background:rgba(13,17,23,0.98);border:1px solid rgba(163,113,247,0.5);
+    background:rgba(var(--wp-bg-rgb),0.98);border:1px solid rgba(163,113,247,0.5);
     border-radius:6px;padding:6px;max-height:70%;overflow:auto;
     box-shadow:0 4px 16px rgba(0,0,0,0.6)}
   #picker.show,#layouts.show{display:block}
   #picker .hint,#layouts .hint{font-size:9px;color:#6b7280;margin:0 0 5px;line-height:1.4}
   #layouts .lay{display:flex;align-items:center;gap:6px;font-size:11px;
-    padding:3px 4px;border-radius:3px;cursor:pointer;color:#c9d1d9}
+    padding:3px 4px;border-radius:3px;cursor:pointer;color:var(--wp-text)}
   #layouts .lay:hover{background:rgba(163,113,247,0.14)}
   #layouts .lay .cnt{margin-left:auto;font-size:9px;color:#6b7280}
-  #layouts .lay .del{background:none;border:none;color:#6e7681;cursor:pointer;
+  #layouts .lay .del{background:none;border:none;color:var(--wp-dim);cursor:pointer;
     font-size:11px;padding:0 3px;line-height:1}
   #layouts .lay .del:hover{color:#f87171}
   #layouts .lrow{display:flex;gap:6px;margin-top:6px}
   #layouts .lrow input{flex:1;min-width:0;background:rgba(255,255,255,0.06);
     color:#e6edf3;border:1px solid rgba(255,255,255,0.15);border-radius:4px;
     padding:2px 6px;font-size:11px;font-family:inherit}
-  #layouts .lrow input:focus{outline:none;border-color:#a371f7}
+  #layouts .lrow input:focus{outline:none;border-color:var(--wp-purple)}
   #picker label{display:flex;align-items:center;gap:6px;font-size:11px;
-    padding:2px 3px;border-radius:3px;cursor:pointer;color:#c9d1d9}
+    padding:2px 3px;border-radius:3px;cursor:pointer;color:var(--wp-text)}
   #picker label:hover{background:rgba(163,113,247,0.14)}
-  #picker input{accent-color:#a371f7;cursor:pointer}
+  #picker input{accent-color:var(--wp-purple);cursor:pointer}
 
   /* Per-pane size + background menu. */
   #panemenu{display:none;position:absolute;z-index:90;min-width:150px;
-    background:rgba(13,17,23,0.98);border:1px solid rgba(163,113,247,0.55);
+    background:rgba(var(--wp-bg-rgb),0.98);border:1px solid rgba(163,113,247,0.55);
     border-radius:6px;padding:5px;box-shadow:0 4px 16px rgba(0,0,0,0.6)}
   #panemenu.show{display:block}
   #panemenu .h{font-size:9px;color:#8b949e;letter-spacing:0.08em;
     text-transform:uppercase;padding:2px 3px}
   #panemenu .row{display:flex;gap:3px;padding:2px 3px}
-  #panemenu .mb{flex:1;background:rgba(255,255,255,0.06);color:#c9d1d9;
+  #panemenu .mb{flex:1;background:rgba(255,255,255,0.06);color:var(--wp-text);
     border:1px solid rgba(255,255,255,0.12);border-radius:3px;
     padding:2px 0;font-size:10px;cursor:pointer;font-family:inherit}
-  #panemenu .mb:hover{border-color:#a371f7;color:#fff}
-  #panemenu .mb.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+  #panemenu .mb:hover{border-color:var(--wp-purple);color:#fff}
+  #panemenu .mb.on{background:#2a1d3d;color:#d2a8ff;border-color:var(--wp-purple)}
 
   /* Shared overlay chrome — ✕ hide (top-right) and ✥ move (top-left), same
      positions and behaviour as every other overlay (checklist items 1 + 2). */
@@ -163,7 +164,7 @@
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
-  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  #move-btn:hover{opacity:1;color:var(--wp-blue);border-color:var(--wp-blue)}
   body.setup #hide-btn,body.setup #move-btn{top:30px}
   body.unlocked #shell{border-color:rgba(31,111,235,0.9);
     box-shadow:0 0 0 1px rgba(31,111,235,0.6)}

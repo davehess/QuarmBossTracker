@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Import a setup</title>
+<link rel="stylesheet" href="theme.css">
 <!--
   Import a whole setup (the guild lead, 2026-10-19, DECISIONS §383: "file + share code"). One window, three stages:
     code     the box for a six-character code (the tray's, Settings' and the dashboard's "Enter a code")
@@ -11,25 +12,25 @@
 -->
 <style>
   :root { color-scheme: dark; }
-  body { margin: 0; background: #0e1116; color: #c9d1d9; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; padding: 16px 18px 24px; }
+  body { margin: 0; background: #0e1116; color: var(--wp-text); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; padding: 16px 18px 24px; }
   h1 { color: #f6c365; font-size: 15px; font-weight: normal; margin: 0 0 4px; }
   h2 { color: #f6c365; font-size: 12px; font-weight: normal; margin: 18px 0 6px; letter-spacing: .02em; }
   .sub, .note { color: #8b949e; font-size: 11px; line-height: 1.5; margin: 4px 0 8px; }
-  .box { background: #161b22; border: 1px solid #2a3140; border-radius: 6px; padding: 10px 12px; margin: 0 0 10px; }
+  .box { background: var(--wp-panel); border: 1px solid #2a3140; border-radius: 6px; padding: 10px 12px; margin: 0 0 10px; }
   .row { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
   .row label { flex: 1; cursor: pointer; overflow-wrap: anywhere; }
-  .row .detail { color: #6e7681; font-size: 11px; }
+  .row .detail { color: var(--wp-dim); font-size: 11px; }
   input[type=text] { background: #0b0f14; border: 1px solid #2a3140; border-radius: 4px; color: #e6edf3; padding: 8px 10px; font: inherit; }
   #code { width: 11ch; font-size: 22px; letter-spacing: .25em; text-transform: uppercase; text-align: center; }
-  button { background: #21262d; border: 1px solid #2a3140; border-radius: 4px; color: #c9d1d9; padding: 6px 14px; font: inherit; cursor: pointer; }
-  button.pri { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button { background: #21262d; border: 1px solid #2a3140; border-radius: 4px; color: var(--wp-text); padding: 6px 14px; font: inherit; cursor: pointer; }
+  button.pri { background: var(--wp-accent); border-color: var(--wp-accent); color: #fff; }
   button:disabled { opacity: .5; cursor: default; }
   .msg { min-height: 1.4em; margin: 8px 0; font-size: 12px; }
   .msg.bad { color: #ff9b9b; }
-  .msg.good { color: #56d364; }
+  .msg.good { color: var(--wp-green); }
   .who { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 4px 0; }
   .who b { min-width: 11ch; font-weight: normal; color: #e6edf3; }
-  .who .what { color: #6e7681; font-size: 11px; flex: 1 1 14em; }
+  .who .what { color: var(--wp-dim); font-size: 11px; flex: 1 1 14em; }
   .who label { white-space: nowrap; }
   details summary { cursor: pointer; color: #8b949e; font-size: 11px; margin: 4px 0; }
   .actions { display: flex; gap: 8px; margin-top: 14px; }

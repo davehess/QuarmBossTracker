@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>charm</title>
+<link rel="stylesheet" href="theme.css">
 <style>
   /* Charm tracker overlay — transparent, always-on-top. Shows each active
      charmed pet with: the 6s MOB-TICK countdown (each tick is a break-risk
@@ -16,21 +17,21 @@
   .title{display:flex;align-items:center;gap:8px;
     font-size:12px;color:#c9a0ff;text-shadow:0 1px 2px #000;margin-bottom:4px;}
   .conn{font-size:11px}
-  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .conn.ok{color:var(--wp-green)} .conn.bad{color:#8b949e}
   .charm{position:relative;padding:5px 8px;margin-bottom:5px;background:rgb(0 0 0 / var(--bg-alpha));
-    border-radius:5px;border-left:3px solid #a371f7;text-shadow:0 1px 2px #000;}
+    border-radius:5px;border-left:3px solid var(--wp-purple);text-shadow:0 1px 2px #000;}
   /* ✕ dismiss — top-right of each card, dim by default, light up on hover.
      Click drops the entry from the agent's tracker. Pointer-events: auto on
      a transparent overlay so the click lands when the overlay is locked. */
   .charm .dismiss{position:absolute;top:3px;right:4px;width:14px;height:14px;display:flex;
-    align-items:center;justify-content:center;background:rgba(14,17,22,0.4);color:#6e7681;
+    align-items:center;justify-content:center;background:rgba(14,17,22,0.4);color:var(--wp-dim);
     border:1px solid rgba(110,118,129,0.25);border-radius:3px;font-size:10px;line-height:1;
     cursor:pointer;padding:0;opacity:0.35;transition:opacity .12s;font-family:inherit}
   .charm .dismiss:hover{opacity:1;color:#f87171;border-color:#f87171;background:rgba(40,10,10,0.7)}
-  .charm.dire{border-left-color:#56d364}
+  .charm.dire{border-left-color:var(--wp-green)}
   .charm.warn{border-left-color:#f0883e;animation:pulse 0.8s ease-in-out infinite}
-  .charm.imminent{border-left-color:#f85149}
-  .charm.broke{border-left-color:#f85149;background:rgba(80,12,12,0.7)}
+  .charm.imminent{border-left-color:var(--wp-red)}
+  .charm.broke{border-left-color:var(--wp-red);background:rgba(80,12,12,0.7)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.55}}
   /* Break imminent → flash the OUTSIDE of the overlay (the whole card stack). */
   body.imminent #wrap{border-radius:6px;animation:overlayflash 0.55s ease-in-out infinite}
@@ -41,13 +42,13 @@
   .charm .head{display:flex;justify-content:space-between;gap:8px;font-size:12px}
   .charm .pet{font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .charm .owner{color:#8b949e;font-size:10px}
-  .charm .meta{font-size:10px;color:#c9d1d9;margin-top:1px;font-variant-numeric:tabular-nums}
+  .charm .meta{font-size:10px;color:var(--wp-text);margin-top:1px;font-variant-numeric:tabular-nums}
   /* "up" elapsed-time turns red once the charm has been up long enough that
      a recharm is overdue. Threshold mirrors the user-tuned RECHARM_RED_AT_S
      (default 54s — the canonical bard SBB "you're about to lose it" mark). */
-  .charm .meta .up.danger{color:#f85149;font-weight:bold}
+  .charm .meta .up.danger{color:var(--wp-red);font-weight:bold}
   .charm .badge{font-size:9px;padding:0 4px;border-radius:3px;background:#2d2150;color:#c9a0ff;margin-left:4px}
-  .charm.dire .badge{background:#16361f;color:#56d364}
+  .charm.dire .badge{background:#16361f;color:var(--wp-green)}
   /* Inline "remove" button next to the BROKE badge — bigger target than the
      ✕ corner dismiss for clearing stale broken-charm cards after a mez break
      or a botched cycle. Reuses the same data-dismiss path via class="dismiss". */
@@ -59,9 +60,9 @@
     margin-left:6px;font-size:9px;padding:1px 6px;border-radius:3px;vertical-align:middle;
     background:#2a0d0d;color:#ffd1d1;border:1px solid #f87171;cursor:pointer;
     font-family:inherit;font-weight:bold;letter-spacing:0.5px;text-transform:uppercase;line-height:1.3}
-  .charm .dismiss.remove-broken:hover{background:#f85149;color:#fff;border-color:#fff}
+  .charm .dismiss.remove-broken:hover{background:var(--wp-red);color:#fff;border-color:#fff}
   .tickbar{height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
-  .tickbar > div{height:100%;background:#a371f7;transition:width 100ms linear}
+  .tickbar > div{height:100%;background:var(--wp-purple);transition:width 100ms linear}
   /* Server tick + mob tick — two different 6s clocks, one row each (the guild
      lead, 2026-09-26). Blue = the server's, purple = the charmed mob's own. */
   .ticks{margin-top:3px;display:flex;flex-direction:column;gap:2px}
@@ -69,9 +70,9 @@
   .tk .tl{flex:0 0 40px;color:#8b949e}
   .tk .tv{flex:0 0 5ch;text-align:right;color:#fff;font-weight:bold}
   .tk .tickbar{flex:1 1 60px;margin-top:0}
-  .tk .tn{flex:0 1 auto;color:#6e7681;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .charm .meta .hp{color:#56d364;font-weight:bold}
-  .petbuff .t.q{color:#6e7681}
+  .tk .tn{flex:0 1 auto;color:var(--wp-dim);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .charm .meta .hp{color:var(--wp-green);font-weight:bold}
+  .petbuff .t.q{color:var(--wp-dim)}
   .hpbar{height:5px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
   .hpbar > div{height:100%;transition:width 200ms linear,background 200ms linear}
   /* Buff countdown bars — one per timed buff observed on the pet (from the
@@ -80,14 +81,14 @@
   .buffrow{display:flex;align-items:center;gap:5px;font-size:10px;line-height:1.2}
   .buffrow .bn{color:#7ee787;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis}
   .buffrow .bt{font-variant-numeric:tabular-nums;color:#8b949e;margin-left:auto}
-  .buffrow.low .bt{color:#f0883e} .buffrow.crit .bt{color:#f85149}
+  .buffrow.low .bt{color:#f0883e} .buffrow.crit .bt{color:var(--wp-red)}
   .buffrow .bbar{flex:1 1 60px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden}
-  .buffrow .bbar > div{height:100%;background:#56d364;transition:width 200ms linear}
+  .buffrow .bbar > div{height:100%;background:var(--wp-green);transition:width 200ms linear}
   /* Mob-Info-style buff rows: "Name (cur/max · time)" label over a bar. */
   .bufrows{margin-top:4px;display:flex;flex-direction:column;gap:3px}
   .bufrows.stale{opacity:0.55}
-  .bufrows .src{font-size:9px;color:#6e7681}
-  .bufb .lbl{font-size:10px;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bufrows .src{font-size:9px;color:var(--wp-dim)}
+  .bufb .lbl{font-size:10px;color:var(--wp-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .bufb .lbl .nm{color:#7ee787}
   .bufb .lbl .tk{color:#8b949e;font-variant-numeric:tabular-nums}
   .bufb .bar{height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:1px}
@@ -98,12 +99,12 @@
   .petbuffs{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;font-size:10px;line-height:1.2}
   .petbuffs .stale{opacity:0.5}
   .petbuff{padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.06);
-    border:1px solid rgba(255,255,255,0.10);color:#c9d1d9;text-shadow:0 1px 2px #000}
+    border:1px solid rgba(255,255,255,0.10);color:var(--wp-text);text-shadow:0 1px 2px #000}
   .petbuff .nm{color:#7ee787}
   .petbuff .t{font-variant-numeric:tabular-nums;margin-left:4px;color:#8b949e}
   .petbuff.low .t{color:#f0883e}
-  .petbuff.crit .t{color:#f85149}
-  .petbuffs .src{font-size:9px;color:#6e7681;align-self:center;margin-left:2px}
+  .petbuff.crit .t{color:var(--wp-red)}
+  .petbuffs .src{font-size:9px;color:var(--wp-dim);align-self:center;margin-left:2px}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000}
   /* ▭ Mini — "Two rows", the guild vote (closed 2026-09-17). Only mini emits
      .cm, so full mode never sees these. Row one is the pet (HP, name → what it
@@ -118,7 +119,7 @@
   .cm-lab{white-space:nowrap}
   .cm-bar{flex:1 1 40px;min-width:30px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden}
   .cm-bar > i{display:block;height:100%}
-  .cm-tail{flex:0 1 auto;font-size:11px;color:#c9d1d9}
+  .cm-tail{flex:0 1 auto;font-size:11px;color:var(--wp-text)}
   .cm-tail b{color:#fff}
   /* Tick cells (the guild lead, 2026-10-08, "B — Mob tick first"): a number over a 2px line that
      shrinks over the 6 s cycle. Mob tick is the big one, in its own colour. */
@@ -129,7 +130,7 @@
   .cm-tkl{display:block;height:2px;background:rgba(255,255,255,0.14);border-radius:1px;overflow:hidden}
   .cm-tkl > u{display:block;height:100%;text-decoration:none}
   .cm-mr{color:#8b949e;font-size:10px;white-space:nowrap}
-  .cm-arr{color:#6e7681}
+  .cm-arr{color:var(--wp-dim)}
   .cm-tg{color:#f0883e}
   body.wp-mini #empty{font-size:10px;padding-left:22px}
   /* drag/lock/setup — same pattern as overlay.html / triggers.html */
@@ -162,7 +163,7 @@
     display:flex;align-items:center;justify-content:center;border-radius:4px;
     background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
-  #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  #move-btn:hover{opacity:1;color:var(--wp-blue);border-color:var(--wp-blue)}
   body.setup #move-btn{top:30px}
   /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
      panel owns ✥ and ✕ — the preload hides this page's — so the window's padding and the first card's gutters go. */
@@ -174,30 +175,30 @@
   #pets{display:none;margin-top:4px}
   #pets.on{display:block}
   #pets-toggle{display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:3px 8px;
-    background:rgb(0 0 0 / var(--bg-alpha));border:0;border-radius:5px;color:#c9d1d9;font:inherit;font-size:11px;
+    background:rgb(0 0 0 / var(--bg-alpha));border:0;border-radius:5px;color:var(--wp-text);font:inherit;font-size:11px;
     text-align:left;cursor:pointer;text-shadow:0 1px 2px #000}
   #pets-toggle:hover{color:#fff}
-  #pets-toggle .car{color:#6e7681;width:10px}
-  #pets-toggle .ct{margin-left:auto;color:#6e7681}
+  #pets-toggle .car{color:var(--wp-dim);width:10px}
+  #pets-toggle .ct{margin-left:auto;color:var(--wp-dim)}
   #pets-body{display:none;padding:3px 8px 4px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:0 0 5px 5px;margin-top:1px}
   #pets.open #pets-body{display:block}
   .pets-sub{font-size:10px;color:#8b949e;margin-bottom:2px;line-height:1.3}
-  .pets-sub b{color:#c9d1d9;font-weight:normal}
-  .pets-sub .assumed{color:#ffa657}
-  .pets-note{font-size:10px;color:#6e7681;padding:2px 0}
-  .pr{display:flex;align-items:center;gap:6px;padding:1px 0;color:#c9d1d9;font-size:11px;line-height:1.35;text-shadow:0 1px 2px #000}
+  .pets-sub b{color:var(--wp-text);font-weight:normal}
+  .pets-sub .assumed{color:var(--wp-orange)}
+  .pets-note{font-size:10px;color:var(--wp-dim);padding:2px 0}
+  .pr{display:flex;align-items:center;gap:6px;padding:1px 0;color:var(--wp-text);font-size:11px;line-height:1.35;text-shadow:0 1px 2px #000}
   .pr .pm{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;padding:0;background:transparent;border:0;
     color:inherit;font:inherit;text-align:left;cursor:pointer;text-shadow:inherit}
   .pr .pm:hover .pn{color:#fff;text-decoration:underline}
-  .pr .pm.copied .pn{color:#56d364}
+  .pr .pm.copied .pn{color:var(--wp-green)}
   .pr .lv{flex:0 0 38px;color:#8b949e;font-variant-numeric:tabular-nums}
   .pr .pn{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pr .nm{flex:0 0 auto;color:#8b949e;font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
-  .pr .nm b{color:#c9d1d9;font-weight:normal}
+  .pr .nm b{color:var(--wp-text);font-weight:normal}
   .pr .ch{flex:0 0 auto;font-size:9px;padding:0 4px;border-radius:3px;border:1px solid rgba(255,255,255,0.18);color:#8b949e}
   .pr .loc{flex:0 0 auto;padding:0 3px;background:transparent;border:1px solid rgba(255,255,255,0.18);border-radius:3px;font:inherit;font-size:9px;color:#8b949e;cursor:pointer}
-  .pr .loc:hover{color:#58a6ff;border-color:#58a6ff}
-  .pr .loc.copied{color:#56d364;border-color:#56d364}
+  .pr .loc:hover{color:var(--wp-blue);border-color:var(--wp-blue)}
+  .pr .loc.copied{color:var(--wp-green);border-color:var(--wp-green)}
   body.wp-mini #pets{display:none !important}
 </style></head>
 <body>
@@ -467,9 +468,9 @@
       } else { tk = ' (?)'; }
       var pct = (hasTimer && total) ? Math.max(0, Math.min(100, (b.remaining_secs / total) * 100)) : (hasTimer ? 100 : 0);
       // Buff = green, debuff (good===0) = red; unknown timer = gray.
-      var col = (b.good === 0) ? '#f85149' : (!hasTimer ? '#6e7681' : '#56d364');
+      var col = (b.good === 0) ? 'var(--wp-red)' : (!hasTimer ? 'var(--wp-dim)' : 'var(--wp-green)');
       // Fell off in the last 5 min → solid purple rebuff cue.
-      if (b.fell_off) { col = '#a371f7'; pct = 100; tk = ' (fell off — rebuff)'; }
+      if (b.fell_off) { col = 'var(--wp-purple)'; pct = 100; tk = ' (fell off — rebuff)'; }
       var title = b.name + (b.fell_off ? ' · fell off (rebuff)' : (hasTimer ? ' · ' + fmtRem(b.remaining_secs, bo) + ' left' : ' · present (duration unknown)'));
       rows += '<div class="bufb" title="' + esc(title) + '">'
            +    '<div class="lbl"><span class="nm">' + esc(shortBuffName(b.name)) + '</span><span class="tk">' + esc(tk) + '</span></div>'
@@ -549,7 +550,7 @@
   function charmMiniHtml(p, v){
     var hp = (p.pet_hp_pct != null) ? Math.max(0, Math.min(100, p.pet_hp_pct)) : null;
     // The shared mini bar steps (preload _WP_MINI_CSS): 50 / 25.
-    var hpCol = hp == null ? '#8b949e' : (hp > 50 ? '#56d364' : (hp > 25 ? '#f0b429' : '#f85149'));
+    var hpCol = hp == null ? '#8b949e' : (hp > 50 ? 'var(--wp-green)' : (hp > 25 ? '#f0b429' : 'var(--wp-red)'));
     var row1 = '<div class="cm-row">'
       + '<span class="cm-pct wp-mini-num" style="color:' + hpCol + '">' + (hp == null ? '?' : Math.round(hp)) + '%</span>'
       + (hp == null ? '' : '<span class="cm-bar wp-mini-bar"><i style="width:' + hp.toFixed(0) + '%;background:' + hpCol + '"></i></span>')
@@ -559,12 +560,12 @@
       + (v.mr ? '<span class="cm-mr wp-mini-num" title="Pet magic resist' + (v.mr.approx ? ' (catalog base)' : '') + '">MR ' + v.mr.val + (v.mr.approx ? '~' : '') + '</span>' : '')
       + '</div>';
     var lab, pct, col;
-    if (v.broke)             { lab = '⏳ 0:00 recharm'; pct = 0; col = '#f85149'; }
-    else if (p.is_dire_charm) { lab = '∞ dire'; pct = 100; col = '#56d364'; }
+    if (v.broke)             { lab = '⏳ 0:00 recharm'; pct = 0; col = 'var(--wp-red)'; }
+    else if (p.is_dire_charm) { lab = '∞ dire'; pct = 100; col = 'var(--wp-green)'; }
     else {
       lab = '⏳ ' + (v.est ? '~' : '') + fmtElapsed(v.remMs) + (v.urgent ? ' recharm' : '');
       pct = v.pct;
-      col = (v.urgent || v.aged) ? '#f85149' : (v.est ? '#8b94a3' : '#a371f7');
+      col = (v.urgent || v.aged) ? 'var(--wp-red)' : (v.est ? '#8b94a3' : 'var(--wp-purple)');
     }
     // The two ticks ride row two (the guild lead, 2026-10-08, "B — Mob tick
     // first"): M = the mob's own, big and in its own colour (NOT the charm bar's
@@ -584,7 +585,7 @@
   // Server tick vs mob tick (the guild lead, 2026-09-26: "they're different").
   // The agent sends each as the time of one tick boundary; count down on our
   // own clock so the 500 ms poll never shows a stale number. null = unknown.
-  var TICK_SRV = '#58a6ff', TICK_MOB = '#a371f7';
+  var TICK_SRV = 'var(--wp-blue)', TICK_MOB = 'var(--wp-purple)';
   // Mini only: teal-cyan, clear of the charm bar's purple, the HP greens/amber/red
   // and the server tick's blue. The full card keeps TICK_MOB.
   var TICK_MOB_MINI = '#2ee6d6';
@@ -826,7 +827,7 @@
         // uploader's own pet. Color the bar green→amber→red as it drops.
         var hp = (p.pet_hp_pct != null) ? Math.max(0, Math.min(100, p.pet_hp_pct)) : null;
         var hpStr = hp != null ? ' · <span class="hp">' + Math.round(hp) + '%</span>' : '';
-        var hpColor = hp == null ? '#a371f7' : (hp > 50 ? '#56d364' : (hp > 20 ? '#f0883e' : '#f85149'));
+        var hpColor = hp == null ? 'var(--wp-purple)' : (hp > 50 ? 'var(--wp-green)' : (hp > 20 ? '#f0883e' : 'var(--wp-red)'));
         var hpBar = hp != null
           ? '<div class="hpbar"><div style="width:' + hp.toFixed(0) + '%;background:' + hpColor + '"></div></div>'
           : '';
@@ -835,7 +836,7 @@
         // (no detected spell cast); the countdown is still useful for tempo.
         var durStr = '', durBar = '';
         if (!broke && !p.is_dire_charm) {
-          var durColor = durRemMs > warnLeadMs ? '#3b82f6' : (durRemMs > warnLeadMs/2 ? '#f0883e' : '#f85149');
+          var durColor = durRemMs > warnLeadMs ? '#3b82f6' : (durRemMs > warnLeadMs/2 ? '#f0883e' : 'var(--wp-red)');
           if (durEst) durColor = '#8b94a3';   // muted gray = estimate
           durStr = ' · breaks ' + (durEst ? '~' : '') + fmtElapsed(durRemMs);
           durBar = '<div class="tickbar" style="margin-top:2px"><div style="width:' + durPct.toFixed(1) + '%;background:' + durColor + '"></div></div>';

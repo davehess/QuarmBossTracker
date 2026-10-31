@@ -66,8 +66,8 @@ describe('where a pacify lands on the overlay', () => {
     // it". It is neither: it is a pull condition that is true or false.
     const html = renderTargetBuffs({ target_buffs: [pacify] });
     expect(html).toContain('#79c0ff');
-    expect(html).not.toContain('#56d364');   // the buff green
-    expect(html).not.toContain('#f85149');   // the debuff red
+    expect(html).not.toContain('var(--wp-green)');   // the buff green
+    expect(html).not.toContain('var(--wp-red)');   // the debuff red
   });
 
   it('says WORE OFF in red when it lapses, not "fell off" in purple', () => {
@@ -75,8 +75,8 @@ describe('where a pacify lands on the overlay', () => {
     // means the mob's aggro radius is BACK, which is a hazard, not a chore.
     const html = renderTargetBuffs({ target_buffs: [{ ...pacify, fell_off: true, remaining_secs: 0 }] });
     expect(html).toContain('WORE OFF');
-    expect(html).toContain('#f85149');       // hazard red
-    expect(html).not.toContain('#a371f7');   // the rebuff purple
+    expect(html).toContain('var(--wp-red)');       // hazard red
+    expect(html).not.toContain('var(--wp-purple)');   // the rebuff purple
     expect(html).not.toContain('fell off');
   });
 

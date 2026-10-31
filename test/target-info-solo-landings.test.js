@@ -7,7 +7,7 @@
 //
 // Run: npx vitest run test/target-info-solo-landings.test.js
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readSource, sliceBlock, evalBlock, stripJs, AGENT_INDEX } from './_source-slice.js';
 
 const src = readSource(AGENT_INDEX);
@@ -116,6 +116,12 @@ function feed(h, line, who) {
 const names = (h, t) => h.targetBuffsFor(t).map(b => b.name);
 
 describe('what reaches Target Info for a solo melee class', () => {
+  // targetBuffsFor ages every landing against Date.now(). T0 is a fixed date, so on the wall clock the fixtures
+  // were fresh only until a few minutes after T0 and every row had faded and been pruned by the next day (the
+  // suite went red on 2026-10-31 with no code change). Pin the clock a few seconds after the landings.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(T0 + 5000); });
+  afterEach(() => { vi.useRealTimers(); });
+
   it('(d) control: the member\'s own cast debuff shows', () => {
     const h = load();
     h.noteSelfCast(stamp(T0) + 'You begin casting Malosini.', 'Aldenmar');
