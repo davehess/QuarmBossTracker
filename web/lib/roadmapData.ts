@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'upload-freshness-2026-10-31',
+    title: 'Web 2.1.78 · Bot 4.0.38',
+    version: 'Web 2.1.78 · Bot 4.0.38',
+    date: '2026-10-31',
+    headline: 'Your gear, inventory and spells pages now show when each upload last arrived.',
+    features: [
+      { name: 'Last upload', blurb: 'A line at the top of a character’s gear, inventory and spells pages: "Last upload: Gear 2h ago · Inventory 3d ago · Spells 12d ago". Hover one for the exact time, and for when its contents last changed if Mimic has been sending the same file.' },
+    ],
+    fixes: [
+      'The gear page’s old "Last sync" date could show an older time than the real last upload. It now shows the newest.',
+    ],
+  },
+  {
     key: 'session-other-raids-2026-10-30',
     title: 'Web 2.1.76 · Bot 4.0.37',
     version: 'Web 2.1.76 · Bot 4.0.37',

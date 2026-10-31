@@ -19,6 +19,10 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { isMustEquipClicky, usableByClass, pickSlot, buildClickyMacro } from '@/lib/clicky-macros';
 import { computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult } from '@/lib/raidKit';
 import { GUILD_TAG } from '@/lib/guild';
+import { isOfficer } from '@/lib/officer';
+import UploadFreshness from '@/components/UploadFreshness';
+import { latestIso } from '@/lib/uploadFreshness';
+import { loadUploadStampRow, uploadStampsFor } from '@/lib/uploadFreshnessServer';
 
 import type { Metadata } from 'next';
 import MoreInfo from '@/components/MoreInfo';
@@ -145,7 +149,8 @@ async function load(decoded: string) {
   const sb = supabaseAdmin();
   const [charRes, gearRes, aaRes, bookRes] = await Promise.all([
     sb.from('characters')
-      .select('name, race, class, exclude_inventory, exclude_from_stats, deity_id, quarmy_synced_at')
+      .select('name, race, class, exclude_inventory, exclude_from_stats, deity_id, quarmy_synced_at, discord_id, show_inventory_publicly')
+      .eq('guild_id', GUILD_TAG)
       .ilike('name', decoded)
       .limit(1),
     sb.from('character_gear')
@@ -446,7 +451,23 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
     .map(g => ({ g, click: fx(items[g.item_id]?.clickeffect, spellNames) }))
     .filter(x => !!x.click);
 
-  const synced = gear[0]?.updated_at ? new Date(gear[0].updated_at) : null;
+  // When each upload last arrived. The inventory and spells timestamps follow those pages' own gate (owner, officer, or
+  // the character's "inventory page" switch), so a viewer who cannot open them does not see when they arrived either.
+  const officerViewer = await isOfficer(user.id);
+  let ownerViewer = false;
+  if (char?.discord_id) {
+    const { data: me } = await supabaseAdmin().from('wolfpack_members')
+      .select('discord_id').eq('user_id', user.id).maybeSingle();
+    ownerViewer = !!me?.discord_id && me.discord_id === char.discord_id;
+  }
+  const mayViewInvSpells = officerViewer || ownerViewer || !!char?.show_inventory_publicly;
+  const stampRow = await loadUploadStampRow(decoded);
+  const gearRowAt = latestIso(...gear.map(g => g.updated_at));
+  const [gearStamps, invStamps, spellStamps] = await Promise.all([
+    uploadStampsFor('gear', decoded, stampRow, gearRowAt),
+    mayViewInvSpells ? uploadStampsFor('inventory', decoded, stampRow) : Promise.resolve(undefined),
+    mayViewInvSpells ? uploadStampsFor('spells', decoded, stampRow) : Promise.resolve(undefined),
+  ]);
 
   // ── AAs: trained vs available ─────────────────────────────────────────────
   const aaByMac = new Map<number, AaCat>();
@@ -512,8 +533,8 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
           (<code>{decoded}Quarmy.txt</code>), picked up automatically while Mimic runs.
           Bank, shared bank, and coin are stripped <b>on the member&apos;s machine</b> before
           anything uploads — they aren&apos;t in our database at all.
-          {synced && <> Last sync: {synced.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.</>}
         </p>
+        <UploadFreshness gear={gearStamps} inventory={invStamps} spells={spellStamps} />
       </section>
 
       <RaidKitCard kit={raidKit} name={decoded} />
