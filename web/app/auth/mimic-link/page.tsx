@@ -8,11 +8,20 @@
 //
 // Why server actions: keeps the secret (service_role) on the server, no client
 // JS needed, and ties the action to the signed-in user via supabaseServer().
+//
+// On a raidmimic host (the guild lead, 2026-10-31, DECISIONS §499) the same address finishes a link for a guild on Raid
+// Mimic instead: the open sign-in, no Wolf Pack role gate, and the code is claimed only by an active member of the guild
+// the code was started for (web/lib/mimicLinkHub.ts). The Wolf Pack flow below is untouched.
 
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import Link from 'next/link';
+import type { User } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { isRaidmimicHost } from '@/lib/raidmimicHost';
+import { profileOf } from '@/lib/hubRegistry';
+import { LINK_CODE_RX, checkHubLink, claimHubCode, cleanLinkCode, hubLinkDb, type LinkRefusal } from '@/lib/mimicLinkHub';
 
 export const metadata = {
   title: 'Link Mimic',
@@ -23,6 +32,9 @@ export const dynamic = 'force-dynamic';
 
 async function authorizeCode(formData: FormData) {
   'use server';
+  // This is Wolf Pack's gated claim. A raidmimic host has its own (authorizeHubCode): a signed-in player there has no
+  // wolfpack_members row, and must not be able to post here to stamp a Wolf Pack code with a Discord id of their own.
+  if (isRaidmimicHost(headers().get('host'))) redirect('/auth/mimic-link?error=wrong_site');
   const codeRaw = String(formData.get('user_code') || '').trim().toUpperCase();
   // Normalize: strip spaces / dashes the user may have added.
   const userCode = codeRaw.replace(/[\s\-_]/g, '');
@@ -90,6 +102,7 @@ const ERROR_LABELS: Record<string, string> = {
   expired:        'That code expired. In Mimic, click "Sign in to Wolf Pack" again to get a fresh one.',
   update_failed:  'Couldn\'t save the link (database error). Try again in a moment.',
   no_discord_id:  'Your Wolf Pack member record is missing a Discord ID — sign out and back in, then retry.',
+  wrong_site:     'That form belongs to wolfpack.quest. Open the link Mimic gave you instead.',
 };
 const OK_LABELS: Record<string, string> = {
   '1':       '✓ Linked. Return to Mimic — it\'ll pick up the link within a couple of seconds.',
@@ -103,6 +116,7 @@ export default async function MimicLinkPage({
 }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   const prefilled = String(searchParams.code || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+  if (isRaidmimicHost(headers().get('host'))) return <HubLinkPage user={user} searchParams={searchParams} />;
   if (!user) {
     const next = '/auth/mimic-link' + (searchParams.code ? `?code=${encodeURIComponent(searchParams.code)}` : '');
     // A guest raider from another guild must not be sent into Discord sign-in: it walks them into joining the Wolf Pack
@@ -190,6 +204,159 @@ export default async function MimicLinkPage({
           </form>
         )}
       </section>
+    </div>
+  );
+}
+
+// ── raidmimic hosts: finish a link for a guild on Raid Mimic (§499) ──────────────────────────────────────────────
+const HUB_ERROR_LABELS: Record<LinkRefusal | 'invalid_code' | 'no_discord_id' | 'update_failed' | 'wrong_site', string> = {
+  invalid_code:   'That code doesn\'t look right — paste the 6 characters Mimic is showing.',
+  unknown_code:   'No matching code. Did it already expire (10 minute window) or get mistyped?',
+  expired:        'That code expired. In Mimic, press Sign in again to get a fresh one.',
+  wolfpack_code:  'That code is for Wolf Pack, which signs in on its own site.',
+  unknown_guild:  'That code names a guild that is not on Raid Mimic any more. Pick a guild in Mimic and try again.',
+  suspended:      'That guild is not active right now, so Mimic cannot be linked to it.',
+  join_first:     'Join the guild first, then come back to this page.',
+  update_failed:  'Couldn\'t save the link (database error). Try again in a moment.',
+  no_discord_id:  'Your account is missing a Discord ID — sign out and back in, then retry.',
+  error:          'Couldn\'t check that code just now. Try again in a moment.',
+  wrong_site:     'That form belongs to wolfpack.quest. Open the link Mimic gave you instead.',
+};
+const HUB_OK_LABELS: Record<string, string> = {
+  '1':       '✓ Linked. Return to Mimic — it\'ll pick up the link within a couple of seconds.',
+  'already': '✓ Already linked. Return to Mimic — it should already be signed in.',
+};
+
+function discordIdOf(user: User): string {
+  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
+  return String(meta.provider_id ?? meta.sub ?? '');
+}
+
+async function authorizeHubCode(formData: FormData) {
+  'use server';
+  const userCode = cleanLinkCode(formData.get('user_code'));
+  if (!LINK_CODE_RX.test(userCode)) redirect('/auth/mimic-link?error=invalid_code');
+
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect(`/auth/signin?next=${encodeURIComponent('/auth/mimic-link?code=' + userCode)}`);
+  const discordId = discordIdOf(user!);
+  if (!discordId) redirect(`/auth/mimic-link?code=${userCode}&error=no_discord_id`);
+
+  const res = await claimHubCode(hubLinkDb(supabaseAdmin()), { userCode, userId: user!.id, discordId });
+  if (!res.ok) redirect(`/auth/mimic-link?code=${userCode}&error=${res.reason}`);
+  redirect(`/auth/mimic-link?ok=${res.already ? 'already' : '1'}`);
+}
+
+async function HubLinkPage({
+  user,
+  searchParams,
+}: {
+  user: User | null;
+  searchParams: { code?: string; error?: string; ok?: string };
+}) {
+  const prefilled = cleanLinkCode(searchParams.code);
+  const codeOk = LINK_CODE_RX.test(prefilled);
+  if (!user) redirect(`/auth/signin?next=${encodeURIComponent('/auth/mimic-link' + (codeOk ? `?code=${prefilled}` : ''))}`);
+
+  const okMsg = searchParams.ok ? (HUB_OK_LABELS[searchParams.ok] || HUB_OK_LABELS['1']) : null;
+  const discordId = discordIdOf(user!);
+  // What claiming this code would do, read before the button so a player not in the guild is told first.
+  const check = !okMsg && codeOk && discordId
+    ? await checkHubLink(hubLinkDb(supabaseAdmin()), { userCode: prefilled, discordId })
+    : null;
+  const refusal = check && check.state === 'refused' ? check : null;
+  const queryError = searchParams.error ? (HUB_ERROR_LABELS[searchParams.error as keyof typeof HUB_ERROR_LABELS] || `Error: ${searchParams.error}`) : null;
+  // A refusal the page read itself wins over the one the action redirected with (they are normally the same one).
+  const errorMsg = refusal ? HUB_ERROR_LABELS[refusal.reason] : queryError;
+  const guildName = check && check.state !== 'refused' ? check.guildName : refusal?.guildName;
+  // Some refusals end the page (nothing to type again); the rest leave the form up so a mistyped code can be retried.
+  const ended = !!refusal && (refusal.reason === 'join_first' || refusal.reason === 'wolfpack_code' || refusal.reason === 'suspended' || refusal.reason === 'unknown_guild');
+  const successMsg = okMsg || (check?.state === 'already' ? HUB_OK_LABELS['already'] : null);
+  const name = profileOf(user).displayName || 'your Discord account';
+
+  return (
+    <div className="max-w-lg mx-auto mt-10 space-y-6">
+      {successMsg && (
+        <section className="bg-panel border border-border rounded-lg p-6">
+          <h2 className="text-xl text-gold mb-3">{guildName ? `Mimic linked to ${guildName}` : 'Mimic linked'}</h2>
+          <div className="bg-[#1a4731] border border-green text-green text-sm rounded p-3">{successMsg}</div>
+        </section>
+      )}
+
+      {refusal?.reason === 'join_first' && (
+        <section className="bg-panel border border-border rounded-lg p-6">
+          <h2 className="text-xl text-gold mb-2">Join {guildName} first</h2>
+          <p className="text-sm text-dim mb-4">
+            This Mimic is asking to link to {guildName}, and your account is not a member yet. Join with an invite code from
+            the guild, then come back: the code from Mimic lasts 10 minutes.
+          </p>
+          <div className="flex gap-3">
+            <Link href="/guilds" className="inline-block bg-blue text-white rounded px-4 py-2 text-sm font-bold hover:bg-blue/90">
+              Go to my guilds
+            </Link>
+            <Link href={`/auth/mimic-link?code=${prefilled}`} className="inline-block border border-border text-text rounded px-4 py-2 text-sm hover:bg-bg">
+              I joined — check again
+            </Link>
+          </div>
+        </section>
+      )}
+
+      {refusal?.reason === 'wolfpack_code' && (
+        <section className="bg-panel border border-border rounded-lg p-6">
+          <h2 className="text-xl text-gold mb-2">That code is for Wolf Pack</h2>
+          <p className="text-sm text-dim mb-4">Wolf Pack members link Mimic on their own site.</p>
+          <a href={`https://wolfpack.quest/auth/mimic-link?code=${prefilled}`} className="text-blue hover:underline text-sm">
+            Open it on wolfpack.quest
+          </a>
+        </section>
+      )}
+
+      {ended && refusal && (refusal.reason === 'suspended' || refusal.reason === 'unknown_guild') && (
+        <section className="bg-panel border border-border rounded-lg p-6">
+          <div className="bg-[#3a1a1a] border border-red text-red text-sm rounded p-3">{errorMsg}</div>
+        </section>
+      )}
+
+      {!successMsg && !ended && (
+        <section className="bg-panel border border-border rounded-lg p-6">
+          <h2 className="text-xl text-gold mb-2">{guildName ? `Link Mimic to ${guildName}` : 'Link Mimic to your guild'}</h2>
+          <p className="text-sm text-dim mb-5">
+            Paste the 6-character code Mimic is showing to link this install to your Raid Mimic account.
+          </p>
+
+          {errorMsg && (
+            <div className="bg-[#3a1a1a] border border-red text-red text-sm rounded p-3 mb-4">{errorMsg}</div>
+          )}
+
+          <form action={authorizeHubCode} className="space-y-4">
+            <label className="block">
+              <span className="block text-xs uppercase tracking-widest text-dim mb-1">Code from Mimic</span>
+              <input
+                type="text"
+                name="user_code"
+                defaultValue={prefilled}
+                placeholder="ABCD23"
+                maxLength={12}
+                autoComplete="off"
+                autoCapitalize="characters"
+                autoFocus={!prefilled}
+                className="w-full bg-bg border border-border rounded px-3 py-2 text-text font-mono text-2xl tracking-[0.3em] text-center uppercase focus:border-blue outline-none"
+              />
+            </label>
+            <button
+              type="submit"
+              className="w-full bg-blue text-white border-0 rounded px-4 py-2 text-sm font-bold cursor-pointer hover:bg-blue/90"
+            >
+              {guildName ? `Confirm — link this Mimic to ${guildName}` : 'Confirm — link this Mimic install'}
+            </button>
+            <p className="text-xs text-dim text-center">
+              Signed in as <span className="text-text">{name}</span>.
+              <br />
+              Wrong account? <Link href="/auth/signout" className="text-blue hover:underline">Sign out</Link> first.
+            </p>
+          </form>
+        </section>
+      )}
     </div>
   );
 }
