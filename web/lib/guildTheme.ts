@@ -4,13 +4,13 @@
 // /admin/theme editor can share them in the browser; this file re-exports them and adds the one read.
 //
 // COST. The root layout already runs per request (it reads the session), so this adds no dynamic rendering. It
-// adds one tiny read (four columns, one row), cached twice: React cache() dedupes it inside a request, and a
-// 60 s in-process copy means a warm server instance reads the table about once a minute, not once a page. A
+// adds one tiny read (four columns, one row) behind a 60 s in-process copy, so a warm server instance reads the
+// table about once a minute, not once a page (no React cache(): the root test run has no web/node_modules, and
+// the TTL already dedupes a request's renders). A
 // theme change therefore reaches every page within a minute; the editor reads the table directly so an
 // officer sees their own save at once. A failed read keeps the last good theme (and falls back to today's
 // values on a cold start): a Supabase blip must never repaint, or blank, the site.
 
-import { cache } from 'react';
 import { supabaseAdmin } from './supabase';
 import { GUILD_TAG } from './guild';
 import { DEFAULT_THEME, normalizeStoredTheme, type GuildTheme } from './guildThemeCore';
@@ -36,7 +36,7 @@ export async function readGuildTheme(guildId: string = GUILD_TAG): Promise<Guild
   }
 }
 
-export const loadGuildTheme = cache(async (guildId: string = GUILD_TAG): Promise<GuildTheme> => {
+export async function loadGuildTheme(guildId: string = GUILD_TAG): Promise<GuildTheme> {
   const hit = _memo.get(guildId);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.theme;
   const fresh = await readGuildTheme(guildId);
@@ -49,7 +49,7 @@ export const loadGuildTheme = cache(async (guildId: string = GUILD_TAG): Promise
   const theme = hit?.theme ?? DEFAULT_THEME;
   _memo.set(guildId, { at: Date.now() - TTL_MS + 10_000, theme });
   return theme;
-});
+}
 
 // After an officer saves: drop this instance's copy so the next render re-reads.
 export function forgetGuildTheme(guildId: string = GUILD_TAG): void {

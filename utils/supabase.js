@@ -10,6 +10,24 @@
 //   SUPABASE_SERVICE_ROLE_KEY   — from Project Settings → API → service_role
 //   SUPABASE_GUILD_ID           — guild identifier written to every row (default: 'wolfpack')
 
+// ── Guild-scoped requests (docs/DESIGN-raidmimic-hosted.md section 9b) ─────────
+// utils/guildScoped.js mints a short-lived JWT (role guild_scoped, claim guild_id) and runs a callback inside
+// runScoped(token, fn). Every request `_request` makes inside that callback carries the token as its bearer instead of the
+// service key, so RLS limits it to one guild. Outside a callback the store is empty and `_request` is exactly what it was.
+// AsyncLocalStorage, not a parameter on every helper: select/insert/update/upsert/rpc all funnel through `_request`.
+const { AsyncLocalStorage } = require('node:async_hooks');
+const _scopeStore = new AsyncLocalStorage();
+function runScoped(token, fn) { return _scopeStore.run({ token }, fn); }
+// Run one call as the guild a utils/guildScoped.js client names; a null client runs it plainly (the flag-off path). The
+// call stays written in place, so scripts/guild-scope-audit.js still reads it.
+function _asGuild(client, fn) { return client && client.token ? runScoped(client.token, fn) : fn(); }
+// A scoped request the gateway answered 401 (a token the database will not verify: wrong secret, or a clock gone off)
+// is retried once with the service key rather than dropped, because the durable streams (parses) must not be lost to a
+// mis-set secret. Loud, and counted for the log line and /health.
+const _scopedStats = { rejected: 0 };
+function scopedStats() { return { ..._scopedStats }; }
+function _resetScopedStats() { _scopedStats.rejected = 0; }
+
 function isEnabled() {
   return !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
@@ -111,10 +129,12 @@ async function _request(path, opts = {}) {
 
   const url = `${process.env.SUPABASE_URL}/rest/v1${path}`;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // Inside runScoped(): the guild token is the bearer; the gateway's apikey is the anon key when the bot has one.
+  const scope = opts.unscoped ? null : _scopeStore.getStore();
 
   const headers = {
-    'apikey':        key,
-    'Authorization': `Bearer ${key}`,
+    'apikey':        scope ? (process.env.SUPABASE_ANON_KEY || key) : key,
+    'Authorization': `Bearer ${scope ? scope.token : key}`,
     'Content-Type':  'application/json',
     'Prefer':        opts.prefer || 'return=representation',
     ...(opts.headers || {}),
@@ -138,6 +158,13 @@ async function _request(path, opts = {}) {
     let parsed;
     try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
 
+    if (!res.ok && scope && res.status === 401) {
+      _scopedStats.rejected++;
+      if (_scopedStats.rejected === 1 || _scopedStats.rejected % 100 === 0) {
+        console.warn(`[guild-rls] the database rejected the guild token (401) on ${opts.method || 'GET'} ${path} — retrying with the service key. Check SUPABASE_JWT_SECRET (rejected so far: ${_scopedStats.rejected})`);
+      }
+      return _request(path, { ...opts, unscoped: true });
+    }
     if (!res.ok) {
       // 5xx = origin trouble → trip the breaker; 4xx = origin reachable but the
       // request was rejected (bad query) → count as reachable so a run of bad
@@ -156,7 +183,7 @@ async function _request(path, opts = {}) {
       const bodyStr = parsed && typeof parsed === 'object'
         ? JSON.stringify(parsed).slice(0, 800)
         : String(parsed || '').slice(0, 800);
-      console.warn(`[supabase] ${opts.method || 'GET'} ${path} → ${res.status}: ${bodyStr}`);
+      console.warn(`[supabase] ${scope ? '[guild-rls] ' : ''}${opts.method || 'GET'} ${path} → ${res.status}: ${bodyStr}`);
       return null;
     }
     _breakerOnSuccess();
@@ -420,10 +447,10 @@ async function getNpcIdForInternalId(internalId) {
 // Returns the encounter id (uuid) or null on failure.
 // zoneShort is optional — when present it's stored on insert. When absent the
 // RPC falls back to bosses_local.zone_short for the npc.
-async function findOrCreateEncounter({ npcId, startedAtMs, durationSec, windowMin = 30, zoneShort = null }) {
+async function findOrCreateEncounter({ npcId, startedAtMs, durationSec, windowMin = 30, zoneShort = null, guildId = null }) {
   if (!isEnabled() || !npcId) return null;
   const params = {
-    p_guild_id:   _guildId(),
+    p_guild_id:   guildId || _guildId(),
     p_npc_id:     npcId,
     p_started_at: new Date(startedAtMs).toISOString(),
     p_duration:   durationSec,
@@ -620,6 +647,9 @@ async function recordContribution({
   // CHARACTER on the parse. uploadedByDiscordId is the agent identity that
   // actually pushed the bytes; it's the forensic trace.
   uploadedByDiscordId = null,
+  // A client from utils/guildScoped.js (null = today's service-key path, unchanged). With one, the contributions write
+  // runs under RLS for that guild, and the row names its guild (the column default is 'wolfpack').
+  scoped = null,
 }) {
   if (!isEnabled() || !encounterId) return null;
 
@@ -635,11 +665,12 @@ async function recordContribution({
     agent_version:            agentVersion,
     has_ability_detail:       !!hasAbilityDetail,
     uploaded_by_discord_id:   uploadedByDiscordId || null,
+    ...(scoped ? { guild_id: scoped.guildId } : {}),
   };
 
   const written = contributorCharacter
-    ? await upsert('contributions', [row], 'encounter_id,source,contributor_character')
-    : await insert('contributions', [row]);
+    ? await _asGuild(scoped, () => upsert('contributions', [row], 'encounter_id,source,contributor_character'))
+    : await _asGuild(scoped, () => insert('contributions', [row]));
   const contributionId = Array.isArray(written) ? written[0]?.id : null;
 
   // Recompute the merged encounter_players view
@@ -680,6 +711,9 @@ async function recordParse({
   // (enrage/DT/rampage/AoE), trigger fires, tank switches. [{at,kind,subtype,
   // actor,label,meta}]. Stored in encounter_events, deduped at read like deaths.
   timelineEvents = null,
+  // A client from utils/guildScoped.js, or null for today's service-key path. It carries the encounters and
+  // contributions writes only; every other table this function touches stays on the service key (see that file).
+  scoped = null,
 }) {
   if (!isEnabled()) return null;
 
@@ -716,6 +750,7 @@ async function recordParse({
     startedAtMs: timestampMs,
     durationSec: parsed.duration,
     zoneShort:   zoneShort || row.zone_short || null,
+    guildId:     scoped ? scoped.guildId : null,
   });
   if (!encounterId) return null;
 
@@ -756,6 +791,7 @@ async function recordParse({
     agentVersion,
     hasAbilityDetail,
     uploadedByDiscordId,
+    scoped,
   });
 
   // Stamp encounters.uploaded_by_discord_id only on FIRST creation — once a
@@ -764,11 +800,11 @@ async function recordParse({
   // enforces that.
   if (uploadedByDiscordId) {
     try {
-      await update(
+      await _asGuild(scoped, () => update(
         'encounters',
         `id=eq.${encounterId}&uploaded_by_discord_id=is.null`,
         { uploaded_by_discord_id: uploadedByDiscordId },
-      );
+      ));
     } catch (err) {
       console.warn('[supabase] encounters uploaded_by stamp failed:', err?.message);
     }
@@ -789,13 +825,13 @@ async function recordParse({
   // we keep the higher tally rather than letting the last-write win.
   if (npcHealedTotal > 0) {
     try {
-      const existing = await select(
+      const existing = await _asGuild(scoped, () => select(
         'encounters',
         `id=eq.${encounterId}&select=npc_healed_total&limit=1`
-      );
+      ));
       const current = (Array.isArray(existing) && existing[0]?.npc_healed_total) || 0;
       if (npcHealedTotal > current) {
-        await update('encounters', `id=eq.${encounterId}`, { npc_healed_total: npcHealedTotal });
+        await _asGuild(scoped, () => update('encounters', `id=eq.${encounterId}`, { npc_healed_total: npcHealedTotal }));
       }
     } catch (err) {
       console.warn('[supabase] npc_healed_total patch failed:', err?.message);
@@ -994,6 +1030,7 @@ async function upsertWhoOverride({ character, klass, isZek, setBy, setByName, no
 module.exports = {
   isEnabled,
   guildId: _guildId,
+  runScoped, scopedStats, _resetScopedStats,   // utils/guildScoped.js
   breakerState,
   _resetBreaker,   // test-only
   capStats,

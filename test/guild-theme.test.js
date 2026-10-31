@@ -23,9 +23,9 @@ import {
 } from '../web/lib/guildThemeCore.ts';
 import { metaForPath } from '../web/lib/pageMeta.ts';
 
-// guildTheme.ts reads through the service client and uses React's cache(), which plain Node's React lacks.
+// guildTheme.ts reads through the service client; it deliberately uses no React cache() (the root test run, like CI,
+// has no web/node_modules), so nothing React-shaped is mocked here.
 const db = vi.hoisted(() => ({ row: null, error: null, throws: false, calls: [] }));
-vi.mock('../web/node_modules/react/index.js', async (orig) => ({ ...(await orig()), cache: (fn) => fn }));
 vi.mock('../web/lib/supabase.ts', () => ({
   supabaseAdmin: () => ({
     from: (table) => ({

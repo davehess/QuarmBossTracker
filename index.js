@@ -298,6 +298,7 @@ const {
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList, isGuildMember, MEMBERS_ONLY } = require('./utils/roles');
 const mimicLink = require('./utils/mimicLink');
+const guildScoped = require('./utils/guildScoped');
 const wornSets = require('./utils/wornSets');
 const { clientIp } = require('./utils/clientIp');
 const { createIpLimiter } = require('./utils/ipLimiter');
@@ -22945,6 +22946,12 @@ async function _handleAgentUpload(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
 
+  // Guild RLS foundation (docs/DESIGN-raidmimic-hosted.md section 9b): with GUILD_RLS=1 (or flag_guild_rls) and a JWT
+  // secret, the encounters and contributions writes below run as the SESSION's guild under RLS. Null = today's path.
+  let guildDb = null;
+  try { guildDb = guildScoped.forIdentity(identity, await _overlayTuningMap()); }
+  catch (err) { console.warn('[guild-rls] scoping skipped:', err?.message); }
+
   // Read body (cap at 10MB for safety; encounters are typically <1MB)
   const chunks = [];
   let total = 0;
@@ -24233,6 +24240,7 @@ async function _handleAgentUpload(req, res) {
           // events, trigger fires, tank switches. Older agents omit the field;
           // recordParse no-ops on null. Backward-compatible.
           timelineEvents: Array.isArray(encounter.timeline_events) ? encounter.timeline_events : null,
+          scoped: guildDb,
         }).catch(err => { console.warn('[agent] recordParse failed:', err?.message); return null; });
 
         // #83 — remember the encounter id for the post-200 parse deep-link step.
@@ -24255,10 +24263,10 @@ async function _handleAgentUpload(req, res) {
           const endedIso = encounter.ended_at
             ? new Date(encounter.ended_at).toISOString()
             : new Date(startedMs + duration * 1000).toISOString();
-          await supabase.update('encounters',
+          await guildScoped.run(guildDb, () => supabase.update('encounters',
             `id=eq.${encodeURIComponent(recParseResult.encounterId)}&ended_at=is.null`,
             { ended_at: endedIso }
-          ).catch(err => console.warn('[agent] ended_at set failed:', err?.message));
+          )).catch(err => console.warn('[agent] ended_at set failed:', err?.message));
         }
 
         // (The kill-derived lockout write that used to sit here moved into

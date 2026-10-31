@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.40': [
+    'Groundwork for hosting other guilds: parse uploads can run under a per-guild database permission instead of the bot\'s master key. Off by default; nothing changes for Wolf Pack.',
+  ],
   '4.0.39': [
     'Mimic uploads now remember which gear each character is seen wearing, so the gear page can offer your most-worn sets later. Only you will see them.',
   ],
