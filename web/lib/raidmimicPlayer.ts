@@ -144,5 +144,47 @@ export const META = {
     'run it on your own, or add a guild hub for shared raid reviews, merged parses and a command center.',
 };
 
+// ─── The `?v=b` variant: "sign in first" (the guild lead picked sample A, 2026-10-31) ───────────────
+// The door IS the sign-in: a card beside the story video, and three short doors under it for who is reading. The rest of
+// the page below is today's. Beta only, and only on the Wolf Pack hosts (a raidmimic host drops every query), until it is
+// graduated. Sign-in lands on /guilds, which is another draft: until it and the host-side sign-in ship, this is for LOOK.
+// Two clauses of the sample are left out because the page's rule is "coming means coming": hosting for guilds that would
+// rather not run it themselves, and "five minutes" to start a guild (neither is built or measured).
+export const SIGNIN_FIRST = {
+  brand: 'Raid Mimic',
+  tagline: 'for EverQuest raids',
+  already: 'Already set up?',
+  download: 'Download Mimic',
+  headline: 'Your raids, one record.',
+  pitch:
+    'Every raider’s parse of the same fight merged into one, with replays, triggers and loot for the whole guild. ' +
+    'Free to run yourself.',
+  card: {
+    title: 'Sign in to Raid Mimic',
+    lead: 'Discord tells us who you are. Nothing else.',
+    button: 'Sign in with Discord',
+    then: 'Then: your guilds, or join one with a code, or start one.',
+    guest: 'Raiding as a one-night guest?',
+    guestLink: 'Enter a guest code',
+  },
+  after: '/guilds',
+  guestPath: '/auth/mimic-link',
+  doorsLabel: 'Who are you?',
+  doors: [
+    {
+      id: 'raider', tone: 'hub' as Tone, name: 'I raid with a guild on Raid Mimic',
+      body: 'Sign in and your guilds are listed. Finding them from your Discord servers is optional.',
+    },
+    {
+      id: 'officer', tone: 'choice' as Tone, name: 'I’m an officer starting a guild',
+      body: 'Sign in, then choose Start a guild: your Discord, your own subdomain.',
+    },
+    {
+      id: 'alone', tone: 'free' as Tone, name: 'I play alone',
+      body: 'Download Mimic and run it local-only. Sign in later if you join a guild.',
+    },
+  ],
+};
+
 /** Every sentence the page's own story can put on the screen, for the sweeps in test/raidmimic-landing.test.js. */
-export const ALL_TEXT = [HERO, PATHS, DOORS, TAG, ASK, HOW, META];
+export const ALL_TEXT = [HERO, PATHS, DOORS, TAG, ASK, HOW, META, SIGNIN_FIRST];

@@ -20,6 +20,7 @@ import FeatureGrid from './FeatureIcons';
 import HowItWorks from './HowItWorks';
 import MascotHero from './MascotHero';
 import MotionStage from './MotionStage';
+import SignInTop from './SignInTop';
 
 // Colour stays semantic (frontend-design): green = free and working today, blue = needs the guild's own server, gold =
 // a choice for you; the dashed orange "Coming" chip from Parts is the only way a promise is ever drawn.
@@ -100,33 +101,37 @@ function DoorCard({ door, ctx }: { door: Door; ctx: Ctx }) {
 // `motion` is the `?v=motion` preview (beta only; a raidmimic host drops the query): the 3D mimic's vertical story video, with
 // the real captures in a strip below it, takes the hero's place. The headline moves into the stage, so a desktop shows it
 // beside the video (with the download button) and a phone shows it above, as before; the older mascot hero leaves "See it run".
-export default function PathsLayout({ ctx, motion = false }: { ctx: Ctx; motion?: boolean }) {
+// `signIn` is the `?v=b` variant (the guild lead's pick, 2026-10-31): the top, headline with the video and the three doors, is
+// SignInTop instead (a sign-in card first); everything from the feature grid down is the same. See SignInTop.tsx.
+export default function PathsLayout({ ctx, motion = false, signIn = false }: { ctx: Ctx; motion?: boolean; signIn?: boolean }) {
   // The headline is the same element either way; in the preview the stage owns it and lays it out beside the video.
   const Frame = motion ? MotionStage : Fragment;
   return (
     <div className="mx-auto max-w-5xl pb-12">
       <BetaTag ctx={ctx} />
 
-      <Frame>
-        <header className={motion ? 'mb-6 lg:mb-0' : 'mb-6'}>
-          <p className="text-xs uppercase tracking-widest text-gold">{HERO.kicker}</p>
-          <h1 className="mt-1 text-3xl leading-tight text-[#f2ede1] sm:text-5xl">{HERO.name}</h1>
-          <p className="mt-3 max-w-[60ch] text-base leading-7 text-[#f2ede1] sm:text-xl sm:leading-8">{PATHS.line}</p>
-          <p className="mt-3 max-w-[66ch] text-sm leading-6 text-text">{HERO.fine}</p>
-          {motion && (
-            <div className="mt-5 hidden flex-wrap items-center gap-x-4 gap-y-1 lg:flex">
-              <a href={DOWNLOAD_URL} className={PRIMARY_BTN}>{HERO.download}</a>
-              <a href={ctx.setup} className="inline-flex min-h-11 items-center text-sm">{HERO.setup} →</a>
-            </div>
-          )}
-        </header>
-      </Frame>
+      {signIn ? <SignInTop ctx={ctx} /> : <>
+        <Frame>
+          <header className={motion ? 'mb-6 lg:mb-0' : 'mb-6'}>
+            <p className="text-xs uppercase tracking-widest text-gold">{HERO.kicker}</p>
+            <h1 className="mt-1 text-3xl leading-tight text-[#f2ede1] sm:text-5xl">{HERO.name}</h1>
+            <p className="mt-3 max-w-[60ch] text-base leading-7 text-[#f2ede1] sm:text-xl sm:leading-8">{PATHS.line}</p>
+            <p className="mt-3 max-w-[66ch] text-sm leading-6 text-text">{HERO.fine}</p>
+            {motion && (
+              <div className="mt-5 hidden flex-wrap items-center gap-x-4 gap-y-1 lg:flex">
+                <a href={DOWNLOAD_URL} className={PRIMARY_BTN}>{HERO.download}</a>
+                <a href={ctx.setup} className="inline-flex min-h-11 items-center text-sm">{HERO.setup} →</a>
+              </div>
+            )}
+          </header>
+        </Frame>
 
-      <section aria-label={PATHS.doorsLabel}>
-        <ul className="m-0 grid list-none gap-4 p-0 lg:grid-cols-3">
-          {DOORS.map(d => <DoorCard key={d.id} door={d} ctx={ctx} />)}
-        </ul>
-      </section>
+        <section aria-label={PATHS.doorsLabel}>
+          <ul className="m-0 grid list-none gap-4 p-0 lg:grid-cols-3">
+            {DOORS.map(d => <DoorCard key={d.id} door={d} ctx={ctx} />)}
+          </ul>
+        </section>
+      </>}
 
       <FeatureGrid />
 
