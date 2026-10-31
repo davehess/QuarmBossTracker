@@ -103,6 +103,47 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⚠ Needs the guild lead — switch the guild RLS foundation on (2026-10-31, §496).** It is on `main` and off. Steps, outside a raid window
+  (Sun/Wed/Thu 19:30 to 00:30 ET): (1) copy the JWT secret (Supabase → Project Settings → API) into Railway as `SUPABASE_JWT_SECRET`;
+  (2) set the tuning flag `flag_guild_rls=1` in the `/admin/overlays` tuning editor (or `GUILD_RLS=1` on Railway); (3) watch the bot log
+  for a scoped-call 401 fallback (it logs loudly and retries with the service key, so a wrong secret loses nothing and also enforces
+  nothing). Until then nothing changes.
+- **✅ Guild RLS foundation: the bot writes a parse as the session's guild under row security, behind a flag (bot 4.0.40, `main`, 2026-10-31; migration `20261031180000_guild_rls_foundation.sql` applied; DECISIONS §496, §490).**
+  `utils/guildScoped.js` mints a 2-minute HS256 JWT (`role: guild_scoped`, `guild_id` from `mimic_sessions.guild_id`) and `utils/supabase.js`
+  `runScoped(token, fn)` sends it as the bearer for the encounter and contribution writes in `recordParse`; the database compares the row's
+  `guild_id` with the claim (`app_guild_id()`), so a missed filter returns nothing. Role `guild_scoped` (NOLOGIN, granted to `authenticator`)
+  plus policies on `encounters`, `encounter_players` and `contributions`; the service role still bypasses RLS, so today's path is untouched.
+  **Off until `GUILD_RLS=1` or `flag_guild_rls=1`, inert without `SUPABASE_JWT_SECRET`**; a 401 on a scoped call retries with the service key.
+  Verified on a local Postgres 16 (12 policies; another guild's rows invisible, unwritable, unmovable). Not covered yet: the two RPCs
+  (`merge_encounter_players` takes no guild; `find_or_create_encounter` trusts `p_guild_id`), `raid_nights`, rollups, events, threat
+  snapshots, `/who`, every other handler, RLS by membership for the web. Next three slices: raid_nights + rollup + events; threat snapshots +
+  who; characters + loot, with the RPCs checking `app_guild_id()`.
+- **🧪 Admin sidebar `?v=b`: the grouped sidebar with a Danger zone and typed confirms (web beta `f4d51697` + `b6c1bd57`, no version bump, 2026-10-31; DECISIONS §493 pick A, §497).**
+  The guild lead picked A ("most used up top … catastrophic or destructive moves down the bottom in red barriers"). `?v=b` sets a cookie that keeps the
+  sidebar across every admin page (`?v=a` clears it); the default grid is untouched. One list, `web/lib/adminNav.ts`, feeds the sidebar
+  (`web/app/admin/AdminShell.tsx`) and the landing cards; `AdminStrip.tsx` is the context strip (tonight's raid, locked out, agents, new
+  feedback; 60 s cached reads that fail soft). **The typed confirms apply to BOTH layouts on beta** (safety, not look): the twelve kill/shed flags
+  and the version floor left "Save tuning" for a Danger pane (`PAUSE FLEET`, `SHED <kind>`, `FLOOR <n>`; `overlays/DangerControls.tsx` +
+  `dangerActions.ts`), delete encounter asks for the boss name and merge all for `MERGE` (`encounters/dangerActions.ts`), delete trigger for its
+  name (`triggers/dangerActions.ts`); browser and server both refuse a wrong phrase. Also found: the tuning Save used to clear the danger keys; it
+  now writes only the four safe switches. Left: the console's one-click shed buttons. Preview: https://b.wolfpack.quest/admin?v=b. Awaiting the
+  guild lead's compare against the grid (Decision Desk), then it replaces the grid. Test `test/admin-shell.test.js`.
+- **✅ Start a guild and invite codes (web 2.1.82, `main`, `[beta]` page, 2026-10-31; DECISIONS §498, §492).** The "Start a guild" door on
+  https://wolfpack.quest/guilds is real: https://wolfpack.quest/guilds/new (name, address, optional Discord server, open-join; one a day per player;
+  the maker becomes owner) and `web/app/guilds/[slug]` (members see the guild; owners and officers make and revoke six-letter codes, 25 uses, a
+  week, at most ten live). Rules in `web/lib/hubGuilds.ts` (pure; the form and the server share the slug function). With this the raidmimic
+  landing variant's two guild doors lead somewhere, so the landing can be promoted. Drops `[beta]` when the guild lead says so. Test
+  `test/guilds-new.test.js`. Also on `beta` by the sync.
+- **✅ Hub directory `GET /api/hubs` (web 2.1.83, `main`, 2026-10-31; DECISIONS §499).** `web/app/api/hubs/route.ts` + `web/lib/hubDirectory.ts`: the
+  unsuspended guilds, Wolf Pack first and fixed, hosted guilds on `HUB_BOT_URL`, self-hosted on their own origin; 5-minute cache; public, no
+  member data. Mimic's guild picker reads it. Test `test/hub-directory.test.js`.
+- **🧪 Mimic guild picker, first slice (Mimic beta `84614a7d`, 2026-10-31; DECISIONS §499, §475).** `apps/mimic/hubs.js` (pure: normalise a directory
+  row or a pasted address, https origins only) and `hub-list` / `hub-set` in `main.js`; a Guild choice in the welcome account step and in Settings
+  (directory cached a day, plus "Paste a guild address…"). Switching signs the PC out of the old guild (confirm first), relaunches the agent without
+  a token and best-effort revokes the old session. Existing installs keep Wolf Pack and see no change. One active guild at a time; several at once
+  is still open. **Next slice, in draft: the bot reads the hub slug** (the chosen guild goes on the link code and the session, so the session's
+  `guild_id` feeds §496's scoping, and `/auth/mimic-link` completes on that guild's site through the raidmimic sign-in); until then picking another
+  guild changes the address Mimic talks to but the bot does not yet scope by it. Test `test/mimic-guild-picker.test.js`. Awaiting a try on the beta build.
 - **⚠ Needs the guild lead — send the PQ Companion note (2026-10-31, §487).** PQ Companion has no licence and no plugin API, so "their
   client plus our platform" needs the author first (`docs/DESIGN-raidmimic-hosted.md` §8b). The note asks the author (a third party)
   about a licence for their client code or an upload hook. The draft is in the session scratchpad and is sent by the guild lead; it is

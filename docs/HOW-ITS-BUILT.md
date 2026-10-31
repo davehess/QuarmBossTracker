@@ -322,6 +322,20 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
 
 ## Bot features
 
+### Guild RLS foundation: a parse written as one guild, under row security (bot 4.0.40, 2026-10-31; DECISIONS §496, §490)
+- **What:** the first slice of "the bot stops using `service_role` for guild data". The bot cannot SET ROLE through PostgREST, so it mints a
+  2-minute HS256 JWT (`role: guild_scoped`, `guild_id` from `mimic_sessions.guild_id`) with the project's JWT secret and sends it as the bearer
+  for the encounter and contribution writes in `recordParse`. Migration `20261031180000_guild_rls_foundation.sql` (applied): role
+  `guild_scoped` (NOLOGIN, granted to `authenticator`), `app_guild_id()`, and policies on `encounters`, `encounter_players` and `contributions`.
+  The service role still bypasses RLS, so the existing path is untouched.
+- **Where:** `utils/guildScoped.js` (`mintToken`, `flagOn`, `scopedClient`, `forIdentity`, `run`); `utils/supabase.js` `runScoped(token, fn)`
+  (an async-local store: every request inside the callback carries the token; a 401 retries with the service key and logs loudly); the call
+  in `index.js` `recordParse`. **Off until `GUILD_RLS=1` or the tuning flag `flag_guild_rls=1`, and inert without `SUPABASE_JWT_SECRET`**
+  (logs once, runs today's path). `SUPABASE_ANON_KEY` is optional (the gateway's apikey header).
+- **Not covered:** the two RPCs, `raid_nights`, rollups, events, threat snapshots, `/who`, every other handler, RLS by membership for the web.
+  `scripts/guild-scope-audit.js` still ratchets the unscoped calls. Verified on a local Postgres 16 (12 policies; another guild's rows
+  invisible, unwritable, unmovable).
+
 ### "Last upload" stamps: when each gear, inventory and spellbook upload arrived (bot 4.0.38 · web 2.1.78, 2026-10-31; DECISIONS §480)
 - **What:** the three uploads checksum-dedup and returned early on an unchanged file, so the only timestamps meant "last
   changed". `characters` gains `quarmy_checked_at`, `inventory_checked_at`, `spellbook_checked_at` (every accepted upload,
@@ -3250,6 +3264,18 @@ bugs were a missing item from that list.
   "When charming" idle, `_eqWindowGeometry` / `_parseUiWindowRects` / `uiClearRects.js`, chat groups as tabs) and
   holds the "no input back into the client" rule.
 
+### Guild picker: which guild Mimic links to (Mimic beta, 2026-10-31; DECISIONS §475, §499; web 2.1.83 serves the directory)
+- **What:** a "Guild" choice in the welcome account step and in Settings. The list is the hub directory (`GET https://raidmimic.com/api/hubs`,
+  Wolf Pack first and fixed, cached a day) plus "Paste a guild address…". Switching guilds signs the PC out of the old one (confirm first),
+  relaunches the agent without a token and best-effort revokes the old session. Existing installs keep Wolf Pack and see no change. https only
+  for every link address (the old flow opened whatever the bot returned). One active guild at a time.
+- **Where:** `apps/mimic/hubs.js` (pure, electron-free: `normalizeHub` keeps a short slug, a short name and https origins and drops the rest;
+  the built-in Wolf Pack entry can never be replaced by a directory row); `hub-list` / `hub-set` IPC in `apps/mimic/main.js` (`getHubDirectory`,
+  `setHub`), `hubList` / `hubSet` in `preload.js`, the UI in `welcome.html` and `settings.html`. Server side: Web features, "The hub directory".
+- **Not built:** the bot reading the hub slug (the next slice puts the chosen guild on the link code and the session so `mimic_sessions.guild_id`
+  feeds the RLS scoping above, and completes `/auth/mimic-link` on that guild's site), several guilds at once. Tests:
+  `test/mimic-guild-picker.test.js`, `test/hub-directory.test.js`.
+
 ### Sounds, voice packs, pronunciation, and the Willsapper proc (agent 3.7.162, beta, 2026-10-14)
 The guild lead: a "slap" when a Willsapper procs; then voice packs, names said right, members' own
 sounds, and a sound used *instead of* the spoken callout.
@@ -4132,6 +4158,26 @@ crash card labels it "🐺 Wolf Pack Zeal" (`wpZealBuildTag`). Runbook: `docs/up
 
 ## Web features
 
+- **The admin sidebar, `?v=b` (beta preview, 2026-10-31; DECISIONS §493 pick A, §497).** `web/app/admin/AdminShell.tsx` wraps every admin
+  page when the `?v=b` cookie is set (`?v=a` clears it; the grid at `/admin` is the default). One list, `web/lib/adminNav.ts` (pure; groups
+  Raid night → Between raids → Data & site, rarely-used pages sharing a line, a red Danger zone last, every link checked to resolve to a page
+  file), feeds the sidebar and the landing cards. `AdminStrip.tsx` is the context strip (tonight's raid, locked out, agents, new feedback; 60 s
+  cached reads that fail soft); `?member=` / `?character=` work on members, agents, lockouts and feedback. **Typed confirms live on both layouts**:
+  `web/app/admin/overlays/DangerControls.tsx` + `dangerActions.ts` (the kill/shed flags and version floor: `PAUSE FLEET`, `SHED <kind>`,
+  `FLOOR <n>`; "Save tuning" writes only the four safe switches), `encounters/dangerActions.ts` (delete asks the boss name, merge all asks `MERGE`),
+  `triggers/dangerActions.ts` (delete asks the trigger name); the browser refuses a wrong phrase and the server refuses it again. Test:
+  `test/admin-shell.test.js`. Preview: https://b.wolfpack.quest/admin?v=b.
+- **Start a guild and invite codes (web 2.1.82 on `main`, `[beta]`, 2026-10-31; DECISIONS §498).** `web/app/guilds/new/` (`page.tsx`,
+  `NewGuildForm.tsx`, `actions.ts`): name, address (slug), optional Discord server, open-join; one guild a day per player; the maker becomes
+  owner in `hub_memberships`. `web/app/guilds/[slug]/` (`page.tsx`, `InviteControls.tsx`, `actions.ts`): members see the guild; owners and
+  officers make and revoke `hub_invites` codes (six letters, 25 uses, a week, at most ten live). The rules are `web/lib/hubGuilds.ts`, pure, so
+  the form derives the slug with the function the server checks it with. It replaces the "Start a guild" stub on `/guilds` (Identity & auth
+  above). Test: `test/guilds-new.test.js`. https://wolfpack.quest/guilds/new.
+- **The hub directory: `GET /api/hubs` (web 2.1.83 on `main`, 2026-10-31; DECISIONS §499).** `web/app/api/hubs/route.ts` returns
+  `web/lib/hubDirectory.ts`'s list: Wolf Pack first and fixed, then every registered guild that is not suspended and has somewhere to talk to
+  (a `commons` or `managed` guild uses the hosted bot at `HUB_BOT_URL`; a `self_hosted` one its own `self_host_url`), 5-minute cache. Public by
+  design: guild names and a bot address, nothing about members. Mimic's picker reads it (Mimic features, "Guild picker"). Test:
+  `test/hub-directory.test.js`.
 - **Guild theme: the `guild_theme` row, the variables on `<html>`, `/admin/theme` (web 2.1.80 on `main`, `[beta]`, 2026-10-31; DECISIONS §488; `docs/DESIGN-theming.md` §7 step 5).**
   Table `guild_theme` (`guild_id` pk, `slots` jsonb, `logo_url`, `font`, `embed_color`, `updated_by`; migration
   `20261031170000_guild_theme.sql`, applied, seeded with today's values; RLS on, no policies; listed in `scripts/guild-tables.json`).
