@@ -36,6 +36,17 @@ vi.mock('@/lib/supabase', () => ({
 }));
 vi.mock('@/lib/hubDirectory', async () => await import('../web/lib/hubDirectory.ts'));
 vi.mock('@/lib/guild', async () => await import('../web/lib/guild.ts'));
+// The root test run (and CI) has no web/node_modules, so `next/server` is a stand-in: the route only needs
+// NextResponse.json(body, { headers }) with .json() and .headers.get() on the result.
+vi.mock('next/server', () => ({
+  NextResponse: {
+    json: (body, init = {}) => {
+      // Header names are case-insensitive, as on the real Headers object.
+      const h = new Map(Object.entries(init.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
+      return { status: init.status ?? 200, headers: { get: (k) => h.get(String(k).toLowerCase()) ?? null }, json: async () => body };
+    },
+  },
+}));
 const { GET } = await import('../web/app/api/hubs/route.ts');
 const { buildHubDirectory } = await import('../web/lib/hubDirectory.ts');
 
