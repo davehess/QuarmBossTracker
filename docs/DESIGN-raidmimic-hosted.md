@@ -145,9 +145,14 @@ stands; §1–§6 above hold the segmentation build order it rests on. DECISIONS
 
 **About 55 MB a raid night, 41 of it the per-second threat feed.** Everything a guild would want to keep for a year (fights,
 players, loot, rolls, tracker minutes, who) is under 8 MB a night. The database is 4.57 GB today (2.39 GB on 2026-09-22); the
-threat-snapshot table alone is 2.49 GB, never vacuumed, 20k dead rows against 40k the planner thinks are live, and its 30-day
-sweep still fails (CLAUDE.md, Supabase section). **Fixing that sweep is the first hosting task, not a chore**: at 41 MB a night it
-is the whole storage story.
+threat-snapshot table alone is 2.49 GB and never vacuumed. **Correction (2026-10-31, after the first draft of this section):
+the sweep is not broken.** The batched sweep (`prune_threat_snapshots`, bot 3.1.271, 2026-10-15) works; it is GATED by the
+2026-09-22 rule to delete only what the Tower archive has confirmed, and that watermark (`bot_kv.archive_watermark_threat_snapshots`)
+was set by hand on 2026-09-23 and never refreshed, so 441,790 rows older than 30 days were held back. Tower was checked through
+the tailnet on 2026-10-31: its nightly merge has run every night since 2026-09-23 and its row count reconciles exactly with Supabase
+(1,494,269 both sides at the dump); the watermark was moved to 2026-10-24 (a week of margin for late arrivals) and the sweep clears
+the backlog over about two nights. The remaining job is to have the nightly merge write the watermark itself (DECISIONS §494).
+**Still the first hosting task**: at 41 MB a night the feed is the whole storage story, and object storage is where it belongs.
 
 **Sizing the shared model.** A guild raids ~3 nights a week. Per guild-month: durable ≈ 100 MB, threat feed ≈ 500 MB at 30-day
 retention. So:
