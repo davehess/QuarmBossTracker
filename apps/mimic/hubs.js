@@ -107,19 +107,62 @@ function directoryFresh(cache, now) {
 // listed guild whose site is known, the bot's path and code are kept and the host is the guild's site: the commons bot
 // answers for many guilds and does not know which site the raider chose. Wolf Pack's own bot stays the authority for Wolf
 // Pack's site, so an override on that bot (a beta host) keeps working.
+// A reply that carries a `hub` key comes from a bot that read the slug Mimic sent and chose the site itself (DECISIONS
+// §500), so its addresses are used as they are; the re-homing above is for a bot that has not learned the slug yet.
 function linkUrls(hub, resp) {
   const r = resp || {};
   const first = originOf(r.verification_url) ? String(r.verification_url) : '';
   const complete = originOf(r.verification_url_complete) ? String(r.verification_url_complete) : '';
   if (!first && !complete) return null;
-  const rehome = hub && hub.site && hub.slug !== WOLFPACK_HUB.slug;
+  const botChoseSite = typeof r.hub === 'string' && r.hub !== '';
+  const rehome = !botChoseSite && hub && hub.site && hub.slug !== WOLFPACK_HUB.slug;
   const move = (u) => { if (!u || !rehome) return u; const x = new URL(u); return hub.site + x.pathname + x.search; };
   const verification_url = move(first || complete.split('?')[0]);
   return { verification_url, verification_url_complete: complete ? move(complete) : null };
 }
 
+// The body of POST /api/mimic-link/start. Only a listed guild other than Wolf Pack names itself: Wolf Pack's body (and a
+// pasted self-host's, whose slug is the placeholder 'custom' and whose bot answers for exactly one guild) stays
+// byte-identical to what every earlier Mimic sent.
+function linkStartBody(hub, agentVersion) {
+  const body = { agent_version: agentVersion };
+  if (hub && hub.slug && hub.slug !== WOLFPACK_HUB.slug && hub.slug !== 'custom') body.hub = hub.slug;
+  return body;
+}
+
+// The identity stored for a finished link, from the bot's poll reply. A member of a hub guild also carries the guild's slug
+// and the role the guild's roster gives them (the reply is untrusted text: a slug and a short lowercase word, or nothing).
+// Wolf Pack's reply has neither, so its identity keeps the shape it always had.
+function identityFromPoll(body) {
+  const b = body || {};
+  const id = {
+    user_id:      b.user_id,
+    discord_id:   b.discord_id,
+    display_name: b.display_name,
+    is_officer:   !!b.is_officer,
+    role_names:   Array.isArray(b.role_names) ? b.role_names : [],
+  };
+  const gid = typeof b.guild_id === 'string' ? b.guild_id.trim().toLowerCase() : '';
+  if (b.scope === 'member' && SLUG_RE.test(gid) && gid !== WOLFPACK_HUB.slug) {
+    id.guild_id = gid;
+    const role = typeof b.hub_role === 'string' ? b.hub_role.trim().toLowerCase() : '';
+    if (/^[a-z]{1,16}$/.test(role)) id.hub_role = role;
+  }
+  return id;
+}
+
+// What Settings and the welcome page say about a signed-in session's guild: null for a Wolf Pack session (their copy stays
+// as it was), else { slug, display_name, role } with role 'officer' or 'member'. The name is the hub Mimic points at when it
+// is the session's guild, else the slug.
+function sessionGuild(identity, hub) {
+  const gid = identity && typeof identity.guild_id === 'string' ? identity.guild_id : '';
+  if (!gid || gid === WOLFPACK_HUB.slug) return null;
+  const role = (identity.is_officer || identity.hub_role === 'officer' || identity.hub_role === 'owner') ? 'officer' : 'member';
+  return { slug: gid, display_name: hub && hub.slug === gid ? hub.display_name : gid, role };
+}
+
 module.exports = {
   HUB_DIRECTORY_URL, HUB_BOT_PATH, HUB_DIRECTORY_TTL_MS, WOLFPACK_HUB,
   originOf, normalizeHub, parseGuildAddress, botUrlOf, hubOf, sameHub, applyHub,
-  sanitizeDirectory, directoryFresh, linkUrls,
+  sanitizeDirectory, directoryFresh, linkUrls, linkStartBody, identityFromPoll, sessionGuild,
 };

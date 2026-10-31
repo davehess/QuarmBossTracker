@@ -1316,9 +1316,15 @@
       document.getElementById('acctName').textContent =
         session.display_name || session.discord_id || 'your Discord account';
       document.getElementById('acctOfficerBadge').style.display = session.is_officer ? '' : 'none';
-      document.getElementById('acctLinkedAt').textContent =
-        session.linked_at ? 'Linked ' + new Date(session.linked_at).toLocaleString() : '';
+      document.getElementById('acctLinkedAt').textContent = [
+        _guildLine(session.guild),
+        session.linked_at ? 'Linked ' + new Date(session.linked_at).toLocaleString() : '',
+      ].filter(Boolean).join(' · ');
     }
+  }
+  // A hub guild's session names its guild and role; a Wolf Pack session has no guild and keeps the old wording.
+  function _guildLine(g){
+    return g ? 'Linked to ' + g.display_name + ' (' + (g.role === 'officer' ? 'officer' : 'member') + ')' : '';
   }
   document.getElementById('acctSignInBtn').addEventListener('click', async () => {
     const btn = document.getElementById('acctSignInBtn');

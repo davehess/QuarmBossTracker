@@ -288,6 +288,7 @@
     } else if (S.signedIn) {
       h += '<div class="box" style="border-color:#1a7f37;background:#0f2a1a">✓ Signed in'
         + (session ? ' as <b class="ok">' + esc(session.display_name || session.discord_id) + '</b>' : '')
+        + (session && session.guild ? ' — linked to <b>' + esc(session.guild.display_name) + '</b> (' + (session.guild.role === 'officer' ? 'officer' : 'member') + ')' : '')
         + ' <button data-a="signout" style="margin-left:10px">Sign out</button></div>';
     } else {
       h += '<div class="row"><button class="discord" data-a="signin">Join a guild — sign in with Discord</button>'
