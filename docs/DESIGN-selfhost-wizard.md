@@ -653,6 +653,41 @@ and the same never-refetch guarantee.
   a few tens of MB a raid night, so ~60 days is a few hundred MB on hosted Supabase (database size is the metered item
   that only grows). The 60 days is a HOSTED number: an on-prem box keeps them forever for the price of disk, and
   Wolf Pack's long-term copy is the Tower archive. Each stream has a `flag_shed_hist_*` switch.
+- **2026-10-31 — hosted guilds share ONE database: one Supabase project, one schema, `guild_id` on every row, RLS by membership**
+  (§485, `docs/DESIGN-raidmimic-hosted.md` §7b). Settles §460's §6 against §358's schema-per-guild; a separate project (the
+  fork) stays only as the exit for a guild that wants its data alone. Two guilds' fights merge into one `fight_id` only on a
+  shared spawn id, or, with none on either side, when a raider appears in both parses (same server + mob + window alone never
+  merges). For the wizard: a SELF-hosted guild is one tenant in its own project and needs none of this; the `guild_id`
+  columns still exist so it can federate or move into the hub later.
+- **2026-10-31 — hybrid bots, and the bot stops using `service_role` for guild data** (§490, hosted design §9). The commons
+  and guests share one bot; each PAYING guild gets its own process with its own Discord application and credential. Measured:
+  one guild's bot is about $1.20/mo of Railway usage (0.08 GB, 0.02 vCPU on average). For both shapes, guild data is read and
+  written under RLS with the guild set per request from the session token, so a missed filter returns nothing. This
+  supersedes the 2026-10-06 "ONE bot that does both jobs" line for the HOSTED product only (a guild standing up its own
+  deployment still creates one application). The wizard's hosted path creates the per-guild application; its self-host path
+  keeps `service_role` because the whole database is that guild's.
+- **2026-10-31 — guild subdomains are a Vercel wildcard on `*.raidmimic.com`** (§490, hosted design §9c). Needs the Vercel Pro
+  plan and the domain's nameservers at Vercel; Supabase Auth carries the matching redirect entries (`raidmimic.com`,
+  `www.raidmimic.com`, `*.raidmimic.com`, done 2026-10-31). The Hobby-plan caps in this section (CPU, deployments, storage) do
+  not carry over: a hosted deployment is Pro. A self-hosting guild uses its own domain and needs none of it.
+- **2026-10-31 — the per-second threat feed leaves Postgres for object storage** (hosted design §7a, recommended in §484; not
+  built). 41 MB of a ~55 MB raid night is the threat feed; at 1,000 guilds it is 500 GB of hot rows, against about 20 GB of
+  gzipped files at roughly $0.02/GB/mo, with Postgres keeping the per-fight summary. This is the line that keeps $25 a guild
+  affordable. Until it is built the §3 "Threat data retention" rule stands, and its archive gate needs the Tower watermark
+  written by the nightly merge itself (§494: it had been set by hand and went stale). The wizard must ask where raw feeds live.
+- **2026-10-31 — billing is monthly only, nothing up front, and pauses itself when the guild stops raiding** (§495, supersedes
+  §385's annual option and §487's Personal tier). $25 a month per guild, first month free, cancel in one click, Stripe
+  `pause_collection` when the guild has had no raid upload for 30 days (resumes on the next upload with a notice to
+  officers); individuals pay nothing (local-first, the free column); tips stay on GitHub Sponsors and Ko-fi. Rail: Stripe
+  Payment Links / Billing with a webhook setting `hub_guilds.plan` and the pause state. The `game` and `server` keys are
+  required so a guild keeps its record, theme and subscription if its server ends. For the wizard: billing is HOSTED-only; a
+  self-hosting guild has no plan, no webhook and no pause logic.
+- **2026-10-31 — a guild's look is a table row, not a deployment setting** (§488, `docs/DESIGN-theming.md`, web 2.1.80): table
+  `guild_theme` (`guild_id` primary key; named colour slots, logo URL, font, embed colour; RLS on, no policies, service
+  role), one `tokens.css` shared by the site, the overlays and the dashboard, the raider's own look above it. The meanings
+  red/green/gold/orange are never themable and a 3:1 text-contrast floor is enforced on save. A row at today's values emits
+  nothing, so a guild that never opens `/admin/theme` costs no bytes. For the wizard: seed one row per guild (the migration seeds today's
+  values); the table holds a logo URL, not the image.
 
 ## 4. Open questions for whoever builds it
 

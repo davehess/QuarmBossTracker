@@ -14,6 +14,8 @@ import { fetchGuildMember, memberAvatarUrl, memberDisplayName } from '@/lib/disc
 import { requestOrigin } from '@/lib/request-origin';
 import { isLockedOut } from '@/lib/lockout';
 import { landingAfterSignIn } from '@/lib/landing';
+import { isRaidmimicOrigin } from '@/lib/raidmimicHost';
+import { openSignInCallback } from '@/lib/openSignIn';
 
 // Sanitize the post-login redirect target. Must be a same-origin relative
 // path: starts with a single "/" (not "//", which is protocol-relative and an
@@ -36,6 +38,10 @@ export async function GET(req: NextRequest) {
   const origin = requestOrigin(req);
   const code = url.searchParams.get('code');
   const next = safeNext(url.searchParams.get('next'));
+
+  // raidmimic.com (DECISIONS §492): anyone with a Discord account signs in; no guild or role gate. Everything below
+  // this line is Wolf Pack's gated path and is not reached from a raidmimic host.
+  if (isRaidmimicOrigin(origin)) return openSignInCallback(req, origin, next);
 
   if (!code) {
     return NextResponse.redirect(`${origin}/auth/signin?error=missing_code`);

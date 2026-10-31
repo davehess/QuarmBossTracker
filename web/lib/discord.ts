@@ -29,6 +29,30 @@ export async function fetchGuildMember(accessToken: string): Promise<GuildMember
   return (await res.json()) as GuildMember;
 }
 
+// The ids of every Discord server the token's owner is in (raidmimic.com "Find my guilds", DECISIONS §492). Needs the
+// `guilds` scope, which only that optional second sign-in asks for. IDS ONLY: the names, icons and permissions Discord
+// sends back are dropped here, so nothing past this call can store or show more than the id. Discord returns up to 200
+// servers a page; five pages is 1,000, far past what Discord lets an account join.
+// null = the token was refused (expired, or the scope was not granted).
+export async function fetchUserGuilds(accessToken: string): Promise<string[] | null> {
+  const ids: string[] = [];
+  let after = '';
+  for (let page = 0; page < 5; page++) {
+    const res = await fetch(
+      `https://discord.com/api/v10/users/@me/guilds?limit=200${after ? `&after=${after}` : ''}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (res.status === 401 || res.status === 403) return null;
+    if (!res.ok) throw new Error(`Discord API error ${res.status}`);
+    const rows = (await res.json()) as { id?: unknown }[];
+    for (const r of rows) if (typeof r?.id === 'string') ids.push(r.id);
+    if (rows.length < 200) break;
+    after = String(rows[rows.length - 1]?.id ?? '');
+    if (!after) break;
+  }
+  return ids;
+}
+
 // Build a usable avatar URL from a member object — preferring the
 // guild-specific avatar over the global one.
 export function memberAvatarUrl(member: GuildMember): string | null {

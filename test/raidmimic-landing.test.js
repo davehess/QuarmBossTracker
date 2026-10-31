@@ -1253,8 +1253,10 @@ describe('the sign-in-first variant (?v=b)', () => {
     expect(btn).toMatch(/className\?: string/);
     expect(btn).toMatch(/className=\{className \?\? 'inline-flex items-center gap-2 px-4 py-2 rounded bg-\[#5865F2\]/);
     expect(btn).toMatch(/\{!className && <span aria-hidden>🎮<\/span>\}/);
-    expect(btn).toMatch(/scopes: 'identify guilds\.members\.read'/);   // the sign-in itself is not touched
-    expect(btn).toMatch(/redirectTo: `\$\{origin\}\/auth\/callback\?next=\$\{encodeURIComponent\(next\)\}`/);
+    // the sign-in itself is not touched: the scopes come from the host rule (web/lib/hubRegistry.ts signInScopes),
+    // which hands wolfpack.quest exactly 'identify guilds.members.read' (pinned in test/raidmimic-signin.test.js)
+    expect(btn).toMatch(/scopes: signInScopes\(window\.location\.host, flow\)/);
+    expect(btn).toMatch(/redirectTo: `\$\{origin\}\/auth\/callback\?next=\$\{encodeURIComponent\(next\)\}\$\{flow \? `&flow=/);
   });
 
   it('the "I play alone" door has the download and the set-up guide (/raidmimic/setup on the Wolf Pack hosts); the other two have no button', () => {
