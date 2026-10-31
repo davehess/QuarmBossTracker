@@ -1,6 +1,10 @@
 # API proposal to OpenDKP: an incremental audit feed
 
-**Status: designed 2026-08-27, REFRESHED 2026-08-31, not yet sent.** Supersedes
+**Status: designed 2026-08-27, refreshed 2026-08-31, REFRESHED AGAIN 2026-10-31 for the hosted model and handed to the
+guild lead to send** (the guild lead, 2026-10-31: *"send the opendkp ask"*; DECISIONS §485). The 2026-10-31 page re-measures
+every figure from `opendkp_call_stats` over the 7 days to that date (29 MB/day, `/audits` now the largest line at 12 MB/day,
+51 events per active day over 21 days, 50,339 mirror rows) and adds a "many guilds, one well-behaved client" section: per-guild
+keys issued by OpenDKP, a traffic budget per guild, a webhook alternative, and attendance ticks + loot winners pushed back. Supersedes
 the earlier "`?since` on the list endpoints" ask (`opendkp-api-request`
 artifact), which was right in spirit and aimed at too many endpoints.
 

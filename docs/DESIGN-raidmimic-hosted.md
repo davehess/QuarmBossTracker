@@ -121,3 +121,363 @@ with no diagnostic (step 17).
   Needed: a guild picker in Mimic (first run and Settings), the link code minted by THAT guild's hub, and the agent's upload
   base URL and session per guild. Open: picker shape, and one Mimic holding links to several guilds. Guest links (§474) stand
   in until then.
+
+## 7. The shared-server model: what one raid night costs, how guilds' fights merge, and what keeps the numbers honest (2026-10-31)
+
+The guild lead (2026-10-31): *"how can we make the current implementation work as a hosted model? open source still works, the
+easy mode is pay a certain amount and get access to the raid data when you're in it. dkp and guild specific elements need to
+stay in guild, but each guild's loot distribution and rolling and parsing gets merged on same mobs … validate logs that people
+aren't cheating them and padding their numbers, flag users that are anomalous … everyone's information should be anonymized …
+could raid management be a piece of cake?"* This section answers from measurements of 2026-10-30's capture and the code as it
+stands; §1–§6 above hold the segmentation build order it rests on. DECISIONS §484.
+
+### 7a. What one raid night of one guild writes (measured 2026-10-30, 36 uploaders, 521 fights)
+
+| Stream | Rows | Bytes | Share | Keep for |
+|---|---|---|---|---|
+| Threat snapshots (one per uploader per second of fight) | 42,744 | 41 MB | 75% | 30 days by policy; the sweep is broken, so forever |
+| Buff landings | 26,119 | 4.4 MB | 8% | 7 days |
+| /who sightings | 23,792 | 3.4 MB | 6% | forever |
+| Raid tracker (one row a minute) | 938 | 3.1 MB | 6% | forever |
+| Parse contributions | 1,660 | 2.3 MB | 4% | raw nulled at 7 days |
+| Fights + per-player rows | 526 + 4,150 | 0.5 MB | 1% | forever |
+| Chat relay | 3,404 | 0.6 MB | 1% | forever |
+
+**About 55 MB a raid night, 41 of it the per-second threat feed.** Everything a guild would want to keep for a year (fights,
+players, loot, rolls, tracker minutes, who) is under 8 MB a night. The database is 4.57 GB today (2.39 GB on 2026-09-22); the
+threat-snapshot table alone is 2.49 GB, never vacuumed, 20k dead rows against 40k the planner thinks are live, and its 30-day
+sweep still fails (CLAUDE.md, Supabase section). **Fixing that sweep is the first hosting task, not a chore**: at 41 MB a night it
+is the whole storage story.
+
+**Sizing the shared model.** A guild raids ~3 nights a week. Per guild-month: durable ≈ 100 MB, threat feed ≈ 500 MB at 30-day
+retention. So:
+
+| Guilds | Raiders (×40) | Durable, after a year | Threat feed, steady | Postgres total |
+|---|---|---|---|---|
+| 10 | 400 | 12 GB | 5 GB | ~17 GB |
+| 100 | 4,000 | 120 GB | 50 GB | ~170 GB |
+| 1,000 | 40,000 | 1.2 TB | 500 GB | ~1.7 TB |
+
+Supabase Pro includes 8 GB and bills $0.125/GB/mo over it: 100 guilds ≈ $20/mo of storage, 1,000 ≈ $210/mo. **That is affordable
+against $25 a guild only if the threat feed leaves Postgres.** The replay needs it for a few days (the raid review) and the
+leaderboards never do; the right home is object storage (one compressed file per fight, ~1 KB a row → ~40 KB a fight gzipped,
+$0.02/GB/mo) with Postgres keeping the per-fight summary. That turns 500 GB of hot rows at 1,000 guilds into ~20 GB of cold files.
+Concurrency is not the problem: 36 uploaders tonight were 0.4% of the bot's CPU; "hundreds at a time" is tens of guilds raiding
+together, a few hundred requests a second at most, which one Railway service already handles with a tuning map for shedding (#73,
+#74). The real concurrency cost is reads (egress), and §385's unbuilt `/poll` compression is what pays for it.
+
+### 7b. One database or many: share the schema, not the rows
+
+Three documents pointed three ways (fork per tenant, schema per guild §358, same database with `guild_id` §460). The
+measurements settle it for the easy mode: **one project, one schema, `guild_id` on every row, RLS by membership** (§460's §6
+recommendation), because the cross-guild merge the guild lead wants (7c) is a JOIN across guilds, and a join across projects is
+an export pipeline. The separate project stays the exit for a guild that wants its data alone (the fork, 2026-09-18/2). What
+stays strictly in the guild: DKP (OpenDKP mirror, wishlists, bids), signups and soft reserves, triggers, member roster, officer
+pages, chat. What may be read across guilds: fights, per-player parses, loot drops and rolls on the same mob, zone presence
+(for the replay of a shared instance). That split is the `guild_id` ratchet's finishing line: 229 unscoped calls remain
+(`scripts/guild-scope-baseline.json`), and every cross-guild read must be an explicit, audited exception, never the default.
+
+### 7c. Merging fights across guilds: the "same spawn" key
+
+Today a fight is `(guild_id, npc_id, started_at ± 30 min)` (`find_or_create_encounter`), with a respawn splitter and a 15-minute
+gap splitter. Two guilds on the same mob are two rows that never meet. For the merge:
+1. **Add a server key.** Nothing records which server a log came from. `encounters.server` (text, default `'quarm'`) and the
+   same on `contributions`, read from the log line's server name where the client prints it, else the guild's configured server.
+   Quarm, the test server (`/test-server`) and any other EQEmu box must never merge.
+2. **Add a `fight_id` above the guild rows.** A new `fights (id, server, zone_id, npc_id, spawn_id, started_at, ended_at)` row
+   that any guild's `encounters` row points at. `find_or_create_fight(server, zone, npc, spawn_id, started_at)` runs BEFORE the
+   guild's `find_or_create_encounter`: same server + zone + npc within the window, and the same `spawn_id` when both sides have
+   one, is one fight. Different `spawn_id`s in one window are two fights (two instances). No `spawn_id` on either side falls
+   back to the window, with one more test: **shared raiders**. An instance is private, so two guilds in one fight means at least
+   one character appears in both guilds' parses of it. No overlap in a window → treat as separate instances and do not merge.
+3. **Carry the spawn id on the encounter payload.** Zeal 1.4.6 puts the spawn id on the pipe; the agent already stores it on buff
+   landings (`buff_casts.target_id`, `0` means none). Add `spawn_id` + `zone_id` of the observer's target at engage to the
+   `/api/agent/encounter` payload (agent + bot, one field each). Ids are per-zone-entry slots, so they only mean something with
+   the zone and the window, never alone.
+4. **Merge rules.** Parses: `merge_encounter_players` already takes the max per player across submitters; across guilds it
+   runs over the `fight_id` instead of the `encounter_id`, so a raider seen by both guilds' uploaders gets one row. Loot drops
+   and rolls: stay per guild (`loot_drops.guild_id`, `roll_sets.guild_id`) and are unioned at read on the fight page, each row
+   labelled with its guild. DKP: never crosses. The 2026-09-18/4 rule ("observations made under another tenant are never merged
+   as fact") gets its one exception here: a fight the two guilds **provably shared** (same `spawn_id`, or shared raiders) is a
+   fact both saw.
+
+### 7d. Extensible inputs: the agent is the only parser, and that is the bottleneck
+
+All parsing happens in the agent on the member's PC; the bot receives structured events and keeps only aggregates. A whole
+log file uploaded on the web, a PQ Companion export, or a Zeal spawn stream from another tool all need the same thing: **the
+agent's parser as a library** (`packages/wolfpack-logsync/index.js` is one 35k-line file the bot already reads for its version).
+Order of work: (1) split the parse functions (`shouldKeep`, the event parser, the encounter builder) into a module the bot can
+`require`; (2) `POST /api/log-upload` runs it server-side in `--once` mode on an uploaded file, same privacy filter, same
+payload shape, `source='log_upload'`; (3) PQ Companion: its trigger packs already import (`test/pqc-import.test.js`); its parse
+export was studied (`docs/pq-companion/04`) and is a second reader for the same module; (4) spawn ids: the field in 7c.3, with
+any source allowed to fill it. `contributions.raw_parse->source` already tells the sources apart, and agent data wins when both
+exist (CLAUDE.md, chat-extracted parses).
+
+### 7e. Honest numbers: validation that cannot be forged, only cross-checked
+
+The agent is open source and runs on the member's machine, so nothing it signs can be trusted; a doctored upload with a big
+number simply wins today's max-merge. Validation therefore has to be statistical and cross-submitter. What exists: bearer
+auth per Mimic session, admission budgets (rate, not plausibility), the 10 MB / 1,800 s caps, the ±30 min dedup. **No
+plausibility check of any kind exists** (grep `plausib|anomal|suspicious|cheat` finds only the PoP ⚑ human flag).
+
+The signals, cheapest first, and where each lands:
+1. **Submitter disagreement** (cheap, at ingest): N uploaders each report a player's damage in `contributions.raw_parse`; a
+   player whose own upload says 2× what every other uploader saw is the padding signature. Store a per-fight, per-player
+   `(submitters, min, median, max, self_reported)` vector at ingest (`raw_parse` is nulled after 7 days, so it must be computed
+   then). Flag when `self_reported > 1.5 × median of others` with ≥ 3 others.
+2. **Damage above the mob** (cheap): `encounters.total_damage` vs `eqemu_npc_types.hp` + `npc_healed_total`; the respawn
+   splitter already computes the ratio.
+3. **Peer band** (cheap): a character's DPS vs the 30-day distribution of its class at its level (`encounter_players`,
+   `characters.class`, level from `who_observations`); flag past the 99th percentile three fights running.
+4. **Events per second** (partly cheap): `raw_parse.eventCount / duration_sec` per submitter; a log cannot print more than the
+   client writes.
+5. **Presence** (needs a join): the submitter's character must appear in `raid_track_minutes` / `raid_roster` for that window;
+   a parse from someone nobody saw is the strongest flag of all.
+6. **Max hit per skill** (new storage): the agent's rollup gains `maxHit` and `crits` per skill, persisted by
+   `upsertCombatRollup`; compared with the class's ceiling for its level and weapon.
+
+Flags go to a `contribution_flags (contribution_id, kind, score, detail)` table and an officer page; a flagged contribution is
+**excluded from the merge** (so it cannot win the max) but kept for review, and a character with three flags in 30 days is
+"anomalous" on the officer page and on the server-wide stats (7f) is dropped. Nothing bans; officers decide.
+
+### 7f. Anonymized server-wide stats
+
+What exists: `AnonMap`/`anonName` (an opted-out character is "Cleric 2"), the token-credentialed `/share/raid/<token>` page,
+the demo obfuscation salt, and the PRIVATE / ANON / GUILD scopes of `docs/PRIVACY.md`. What a public server page needs on top:
+(1) the aggregation runs **inside** each guild's scope and exports counts only (the 2026-09-18/3 rule); (2) a minimum-count
+threshold (no cell under 5 characters) and class/level bands instead of names; (3) per-guild opt-in, default on for guilds that
+take the cross-guild merge (they are already sharing), off for self-hosted installs; (4) PvP and `/who` sightings stay out
+(`docs/DESIGN-external-tenancy.md` §2). Published surface: kill counts and first kills per boss per week, class DPS bands per
+boss, wipe rates, loot drop rates observed vs the catalog, raid sizes. Names never; guild names only where the guild opted in.
+
+### 7g. Identity: Discord for everyone, one RaidMimic Discord, guilds as associations
+
+Everything assumes one Discord guild: the sign-in gate fetches membership of `DISCORD_GUILD_ID` and upserts
+`wolfpack_members` keyed on `discord_id` (one person, one guild); 17 reads of the id in `index.js` plus the provisioner; the
+Supabase redirect list allows wolfpack.quest only; `mimicLink` carries no guild. The hosted shape:
+- **Sign in with Discord (identify only)** on raidmimic.com, no guild membership required: a `players` row per Discord id.
+- **A RaidMimic Discord** as the common room: the bot runs there too; a player who joins gets a role per guild they belong to,
+  granted by that guild's officers through the bot (`/guild add @player`), which writes `guild_members (guild_id, player_id,
+  role)`. Multi-guild is a second row. That table replaces `wolfpack_members` as the membership source; `wolfpack_roles` becomes
+  `guild_roles`.
+- **A guild's own Discord stays optional**: a guild that has one links it (the bot joins and mirrors roles, today's model); a
+  guild that does not uses the RaidMimic Discord roles alone.
+- The Mimic link code is minted by the guild the player picks (§475), and the agent's bearer carries `guild_id`, which is what
+  makes per-request scoping (§3 step 6) possible.
+
+### 7h. OpenDKP: a partnership, not a scraper
+
+Today: one officer login, `noauth` reads with a static client id, 47 wired functions, the mirror in `opendkp_*`, and an unsent
+three-tier ask (`docs/DESIGN-opendkp-audit-cursor.md`: `?count=`, `?since=<AuditId>`, entity ids on audits). For many guilds the
+same traffic multiplies by N, which is exactly what the OpenDKP owner objected to in August. The partnership ask, in order:
+(1) send the audit-cursor ask, framed as "N guilds, one well-behaved client"; (2) a per-guild API key issued by OpenDKP to the
+guild, stored per `guild_id` (never one shared officer password); (3) a webhook from OpenDKP on auction close and tick, which
+retires polling altogether; (4) in return, Raid Mimic pushes attendance ticks and loot winners to OpenDKP for guilds that want it.
+Guilds on other DKP systems (EQDKP-Plus, Google Sheets) get the same `dkp_provider` seam: a per-guild adapter with `balances()`,
+`ticks()`, `loot()`; OpenDKP is the first.
+
+### 7i. Raid management "a piece of cake": what it would take
+
+The pieces exist and are each guild-shaped: signups (Raid-Helper mirror), the plan and preflag table, soft reserves, the
+tracker, the Command Center, spectator, guild triggers, the buff queue, lockout tracking. Making it easy is not a new feature;
+it is one flow: **create raid → invite (Discord post + Mimic banner) → raiders sign up and soft-reserve → the night runs with the
+Command Center, triggers and the buff queue → the session page closes it with attendance, loot, rolls and the replay → DKP
+ticks post to the guild's DKP.** The missing joints are the first and the last: a "New raid" form that does not need
+Raid-Helper, and the DKP push. Both are small once the guild seam exists; neither is worth building before it.
+
+### 7j. Order of work, and what each unblocks
+
+1. Fix the threat-snapshot sweep and move the feed to object storage (7a). Unblocks: any growth at all.
+2. Per-request guild resolution (§3 step 6) + registry + RLS by membership (§3 steps 1, 5). Unblocks: a second guild in the database.
+3. Sign-in without Wolf Pack: `players`, `guild_members`, raidmimic.com on the redirect list, the RaidMimic Discord (7g). Unblocks: anyone joining.
+4. Server key + `fight_id` + spawn id on the payload (7c). Unblocks: the merge, and honest instance separation.
+5. Validation signals 1–5 and the flags table (7e). Unblocks: trusting merged numbers.
+6. Billing rail (§385's $25 flat per guild). Unblocks: the easy mode.
+7. Parser as a library, log upload, PQ Companion reader (7d). Unblocks: raiders without Mimic.
+8. OpenDKP per-guild keys and the audit cursor (7h). Unblocks: other guilds' DKP.
+9. Anonymized server stats (7f) and the raid flow's two missing joints (7i).
+
+## 8. Self-hosted instances, PQ Companion, the /who directory, and the per-user bound (2026-10-31)
+
+The guild lead, after picking §7's A/A: *"help people with their installs, see what a merger with pqcompanion would look like
+client wise … how could hosted instances work with our instance? … could we take a who inventory and gate who observations by
+guild that has observed? unique rows per name … what would be a good one time fee or monthly per user fee? … we need to bound
+how much data we store per user."* DECISIONS §485–§486.
+
+### 8a. Federation: a self-hosted guild and the hub
+
+A guild that runs its own bot and database (the self-host wizard) joins the shared record with **two routes and one key**:
+- **Instance key.** The hub mints one per registered instance (`Bearer wpi_…`, stored hashed, revocable). Nothing else the
+  instance holds (its service key, its Discord ids) ever reaches the hub.
+- **Outbound, after every recorded fight:** `POST hub/api/federation/fight` with the §7c key material (`server, zone_id,
+  npc_id, spawn_id, started_at, ended_at, confirmed_kill`), the totals, a per-player rollup under class aliases
+  (`<Class>-<4hex>`), the per-player submitter vector §7e needs, and a **roster hash** per raider (`hmac(instance_salt,
+  lower(name))`) that exists only so the shared-raider merge test can run without names. Idempotent on `(instance, fight_key)`,
+  queued through the same durable queue shape the agent uses. The hub resolves it to a `fight_id` with its own
+  `find_or_create_fight`; instances never allocate ids.
+- **Inbound, on demand:** `GET hub/api/federation/fight/<key>` returns the merged summary for a fight **this instance
+  published**, with other guilds' contributions labelled by guild alias where they opted in. Loot and rolls are never merged
+  server-side; the instance shows its own beside the hub's.
+- **Never leaves the instance:** DKP, wishlists, bids, signups, reserves, triggers, roster, chat, tells, `/who`, PvP, raw
+  threat snapshots, inventories, names (unless the guild opts into named publishing). This is the 2026-09-18 tenancy rule
+  with §7c's one exception.
+- What already looks like this: the agent's encounter upload (structured fight in, bearer out), guest sessions (a parse and
+  nothing else), `/share/raid/<token>` (token-scoped read of one window), the one-way eqemu mirror. `utils/openHub.js` is the
+  dormant gate; the directory and the `latest-version` redirect in `DESIGN-open-hub.md` §0/§8 are unbuilt.
+
+### 8b. PQ Companion: what a merger would look like, and why B first
+
+PQ Companion (jasonsoprovich/pq-companion) is a Go backend + Electron/React client with three bundled SQLite files, a GINA /
+EQNag / EQLogParser trigger engine (RE2 regex, so ~95 of 583 GINA patterns import disabled), spell timers, a combat parser with
+DPS/HPS/threat overlays, live maps from client files with Zeal position, a local item/spell/NPC explorer, tradeskills, and since
+our August review: PoP flags, a charm-pet finder, an upgrade finder, bandolier/macros and config backup. v0.31.1 on 2026-10-28,
+about a minor version a week; **no licence file** (all rights reserved; "free and always will be"); **no plugin API** beyond
+trigger-pack import/export and the Zeal pipe; no guild layer of any kind. Everything we have that it lacks is the platform
+side: the shared raid record and merged parses, the session/replay, guild triggers, the tracker and attendance, PoP flags and
+lockouts as a guild view, loot/DKP/wishlists, the website; plus the client pieces that depend on a platform feed (buff queue,
+cross-client Target Info, Command Center) and the ones that do not (Canvas, charm/pet/CH chain, UI Studio).
+
+| Shape | What it is | Build / maintain / runtime / change | Verdict |
+|---|---|---|---|
+| **A — PQC stays the client, gains "upload to Raid Mimic"** | our parser as a library inside their app, or an upload hook they add | high and author-dependent / high (their weekly cadence) / two apps unless they embed us / very high (their roadmap) | only with the author; no licence or plugin seam exists |
+| **B — Mimic stays the client, absorbs what we may** | trigger packs (done), maps re-implemented from the `.txt` packs (~280 lines), tradeskills from server formulas; never their code | moderate (maps) / ours / unchanged / low | **do now** |
+| **C — one merged client, one name** | joint project with shared governance and a licence | highest (Go/RE2 vs our JS agent) / shared / lighter if one app / hardest | only after A's conversation |
+
+"Our platform plus their client plus features only we had" is shape A: a PQC user keeps their overlays and gains the shared
+parses, the website, guild triggers and loot/DKP, and does not get Mimic's overlays (the client half is theirs). It is a
+conversation before it is a build: a short note to the author asking about a licence or an upload hook costs nothing and is
+what makes A or C possible. Until then, B.
+
+**Helping people with their installs.** Exists: the setup walkthrough, "Set up for me" (the EQ-config writer), Zeal detection
+with the three documented failure signatures (ENOENT / EPERM compat mode / instant close), the 🩺 Diagnostics tab with crash
+review, and the officer-side network diagnostic zip (carries LAN IPs; never public). The hosted path adds three things: a
+**Send diagnostics** button that uploads a redacted bundle under a ticket id (replacing the zip), an **officer install-health
+view** per member (agent version, Zeal state, EQ folder, last upload, last error; member consent per the tenancy rule), and a
+**Fix it for me** button that runs the existing `_applyEqSetup()` and re-checks, refusing while EQ is running. `doctor` in §4 is
+the self-host twin of the same checks.
+
+### 8c. The /who directory: one row per name, read only by guilds that saw the name
+
+Measured 2026-10-31: `who_observations` holds **260,984 sightings of 13,986 names** from 197 observers since 2023-11, 180 MB.
+2,971 names have more than one level on record, 188 more than one guild; 71 rows carry a Zek inference. The per-name view
+(`who_directory`) already exists but recomputes five DISTINCT-ON passes over the whole table (the 1.3 s lookup RPC was added
+to dodge it). The shape:
+- **`who_directory` becomes a table**, primary key `(server, name_key)`: `name, level, max_level, race, class, guild_name,
+  guild_rank, zone, zone_seen, anonymous, gm, first_seen, last_seen, obs_count, ever_zek_guild, ever_inferred_zek`. Upsert,
+  newest non-null wins per field. ~14k rows today, **about 5 MB**; it replaces the view and the RPC.
+- **`who_seen_by (server, name_key, guild_id, last_seen)`**: a guild reads a name only if it has observed it itself
+  (`exists (select 1 from who_seen_by where guild_id = mine and name_key = …)` as the RLS predicate). Nothing about *who else*
+  saw the name leaks. This softens the 2026-09-18 "no ingestion of other tenants' /who" rule into "contribute to read"; the
+  sensitive fields (`guild_rank`, `anonymous`) and alt links stay out of it.
+- **A thin `who_sightings` history** for the readers that need time: PvP proximity (±3 min zone co-occurrence), kill context,
+  `pop_who_sightings`, attendance reconstruction (±15 min), level-over-time. Written only on a change of zone, guild or level,
+  or at most once per name per zone per 10 minutes; 60-day retention (today's window). Estimated 20–40 MB in place of 180.
+
+### 8d. The per-user bound, and what to charge
+
+What a person's data is, measured: inventory ~75 KB a character (18 MB over 243 characters), spellbook ~25 KB, gear ~13 KB,
+AAs small, live state one row. Those are snapshot-replace and bounded by slot and spell counts. The unbounded ones:
+`ui_snapshots` (up to 8 MB each, ~0.6 MB typical, **no cap**), `tells` (opt-in, no sweep), `faction_hits` (no sweep),
+`character_worn_sets` (new, no cap), `character_lockouts` (never swept past expiry), `xp_events` (30-day sweep). Fight data is
+the guild's record, not the person's: ~0.2 MB a raid night per uploader durable, ~1.1 MB a night in the threat feed.
+
+The quota table (per character unless said):
+
+| Item | Free / self-hosted commons | Personal | Guild ($25/mo) |
+|---|---|---|---|
+| Inventory, gear, spellbook, AAs | latest, on the PC | latest, 3 characters | latest, every character |
+| Worn sets | 5 | 10 | 25 |
+| UI backups | 3, 2 MB each | 5 | 10 |
+| Personal trigger pushes | 5 | 10 | 20 |
+| Tells | off (PC only) | 30 days / 5k | 90 days / 20k |
+| XP events | 7 days | 30 days | 30 days |
+| Faction hits | 30 days | 90 days | 1 year |
+| Lockouts | to expiry + 7 days | same | same |
+| Raw fight data (threat feed) | none | 7 days | 30 days (+$5 for a year, §385) |
+
+With those caps a person's cloud footprint is **under 15 MB plus ~3 MB a month of fight rows**, which costs under a cent a month
+to store; the real per-user cost is egress from their reads (§385's `/poll` compression). So the price is not a storage price.
+**A one-time fee only fits a bounded thing**: the app is free (AGPL), and cloud storage recurs, so a one-time "personal" fee
+would be a lifetime liability unless the quota is small and fixed. Options, costed:
+- **A — Guild flat $25/mo (§385, decided), plus a Personal tier at $2/mo or $15/yr** for raiders with no hosted guild: the
+  Personal column above. Revenue scales with guilds, which is where the cost is; the personal tier covers the guest and the
+  solo player. *(Recommended.)*
+- **B — Per-user $1/mo billed to the guild**: $40–60 a guild at raid size, more than §385's number, and every roster change is a
+  billing event. Simple to explain, awkward to run.
+- **C — One-time $20 Personal (lifetime, fixed quota) + Guild flat $25/mo**: works only because the Personal quota is bounded;
+  no recurring personal revenue, so the guild fee carries everything.
+
+## 9. Bots at scale: one per guild or one for all, subdomains, where guest data lives, and other games (2026-10-31)
+
+The guild lead: *"we're also going to need to account for the additional load on railway bots. each Guild will probably want
+their own subdomain on raidmimic.com … how much will this run if we encapsulate each guild's bot into a spot or could we
+directly manage this spinning up load balanced bots that are generic? feels like an easy way for data to be exfiltrated
+programmatically. but at the same time where would guest data be stored, per guild bot? what does that look like when 10 to
+30 guilds buy in? 100+? if we get into wow or live eq/eq2."*
+
+### 9a. What one guild's bot costs
+Measured over 30 days (`docs/COSTS.md`): **0.080 GB RAM and 0.0196 vCPU on average**, which at Railway's $10/GB-month and
+$20/vCPU-month is **$1.20 a month of usage**; the plan ($5 Hobby, $20 Pro) is the bill, not the usage. A raid night peaks at
+0.70 GB and 8.7% of a vCPU. So a dedicated bot per guild is about **$1.50–3 a month at raid size**, and a shared bot carrying
+30 guilds would run far below 30× that, because the load is bursty and the nights overlap only partly.
+
+### 9b. Three shapes
+
+| | **A — one bot per guild** | **B — one generic bot, load-balanced** | **C — hybrid: shared hub bot + a dedicated bot per paying guild** |
+|---|---|---|---|
+| What it is | each guild gets its own Railway service, its own Discord application, its own `SUPABASE_GUILD_ID` (today's code, N times) | one Discord application in every guild's server; `guild_id` resolved per request from the session token; horizontal copies behind Railway's load balancer | the free commons and guests run on the shared bot; a guild that pays gets A |
+| Isolation | strong: a bug in one guild's process cannot read another's rows if its credential is guild-scoped | weak by default: one process, one service key, every guild's rows one `guild_id` away | strong where money is; weak only where the data is already shared |
+| Build | small: it is the self-host kit run by us (§4 wizard) + a provisioner | large: per-request scoping (§3 step 6), the 229 unscoped calls, RLS by membership, sharding of in-memory state (`state.json`, caches, timers) | A's provisioner + B's scoping, but B only has to be right for the commons |
+| Maintenance | N deploys per release (a fleet script), N Discord apps to keep alive | one deploy; one incident takes everyone down | two deploy paths |
+| Runtime, 30 guilds | ~$60/mo usage + plan | ~$10–20/mo | ~$40–60/mo |
+| Runtime, 100 guilds | ~$200/mo + plan | ~$30–50/mo (two or three replicas) | ~$120–180/mo |
+| Change | easy per guild (a guild can be moved to its own project, the exit) | every change is tenant-aware | both |
+
+**The exfiltration question is the deciding one, and the answer is not "which shape" but "who holds the key".** Today the
+bot uses `service_role`, which bypasses RLS: in shape B that key reads every guild. The fix that makes B safe is also what A
+needs to be honest: **the bot never uses `service_role` for guild data.** Each request runs as a Postgres role with RLS on
+and `app.guild_id` set from the session token (`set_config` in a transaction, or a guild-scoped JWT minted per request), so a
+missed `.eq('guild_id', …)` returns nothing instead of everything, and the database enforces the boundary rather than 229
+call sites. With that in place the two shapes differ in blast radius of a *process* compromise (A: one guild; B: all), not in
+what a *bug* can read. Recommendation: **C.** Paying guilds get their own process, their own Discord app and their own
+credential (the exit path is then trivial), the commons shares one bot, and the per-request role is built once for both.
+
+### 9c. Subdomains
+`wp.raidmimic.com` / `wolfpack.raidmimic.com`: one Next.js deployment serves every tenant. Vercel takes a wildcard domain
+(`*.raidmimic.com`) when the domain's nameservers are Vercel's, and the middleware reads the host to pick the guild
+(`web/middleware.ts` already runs on every request for the session cookie). Supabase's redirect allowlist takes
+`https://*.raidmimic.com/**` as one entry. Costs: Vercel Pro ($20/mo) is required anyway once this is commercial (Hobby is
+non-commercial); storage and bandwidth are per deployment, not per domain, so 100 subdomains cost nothing extra. A guild's own
+domain (`raids.theirguild.com`) is a CNAME onto the same thing, like `b.wolfpack.quest` today. Each subdomain carries the
+guild's theme (`DESIGN-theming.md` §4) and its `pageMeta` unfurls.
+
+### 9d. Where guest data lives
+A guest's parse is written under the `guild_id` of the guild whose officer approved the key (§474): in shape A that is the
+guild's bot and the guild's rows; in B/C the same rows in the shared database. The guest's own account holds nothing but the
+key and a `players` row. When that guest's own guild later joins, the fight already carries a `fight_id` (§7c) and their
+contribution is theirs to see through the merge, labelled by guild. Nothing is copied between guilds; the merge is a join.
+
+### 9e. 10, 30, 100, 1,000 guilds
+
+| | 10 guilds | 30 | 100 | 1,000 |
+|---|---|---|---|---|
+| Raiders (×40) | 400 | 1,200 | 4,000 | 40,000 |
+| Railway, shape C | $25 | $55 | $170 | $1,500 (a fleet; consider a VPS pool) |
+| Vercel | Pro $20 | $20 | $20 + bandwidth | Enterprise or self-run |
+| Supabase (§7a, threat feed in object storage) | Pro $25 | $35 | $45 + ~$20 storage | ~$300 compute + $200 storage |
+| Discord | one app in N servers (sharding at 2,500 servers) | same | same | shards |
+| Revenue at $25/guild | $250 | $750 | $2,500 | $25,000 |
+| Per-guild cost | ~$7 | ~$4 | ~$2.50 | ~$2 |
+
+The margin is fine at every size; what changes at 100+ is operations (a fleet script for A/C deploys, a status page, on-call)
+and the database size, which is why §7a's object-storage move comes first.
+
+### 9f. Other games
+The record is already game-shaped rather than EverQuest-shaped: fights, raiders, loot, rolls, attendance, triggers. What is
+EverQuest-specific is the input (the log format, Zeal's pipe, the `eqemu_*` catalog) and the overlays' content. Adding a game
+means: a `game` key beside `server` on fights and characters; a parser module per game behind the §7d library seam (WoW's
+combat log is documented and has `advanced combat logging`; EQ2 has ACT's plugin ecosystem); a catalog mirror per game
+(WoW: Wowhead/Blizzard API; EQ2: the community databases); the overlays reading their game's state source. Live EQ's log
+format is close to Quarm's, so it is the cheapest second target; WoW already has Warcraft Logs for parses, so the pitch there
+is the guild layer (raid record, loot, DKP, triggers, the Canvas), not the parse. The leadership's WoW Forever talk (Decision
+Desk, the faction and ruleset picks) is the first real test.
