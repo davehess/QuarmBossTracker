@@ -21547,10 +21547,14 @@ async function _handleAgentPoll(req, res) {
   // A guest link (2026-10-30) is served NO stream: not the tuning bundle (it carries the guild's channel specs and
   // notices), not raid callouts, triggers, prefs or backfill. The control plane below rides every poll regardless,
   // so the kill switch and the version floor still reach a guest's agent.
+  // The guild theme (DESIGN-theming section 4) is the one exception for a hub session: it is keyed by the session's own
+  // guild and is only colours, so a member of another guild still gets their guild's palette. A guest gets none.
+  const themeWanted = want.has('theme') && identity.scope !== 'guest';
   if (identity.scope === 'guest') want.clear();
   // A session linked to another guild (2026-10-31, §499) is served no stream either: the tuning bundle, triggers, prefs
   // and backfill below are this process's guild's, and nothing in them is keyed by the session's guild yet.
   if (identity.hub_guild) want.clear();
+  if (themeWanted) want.add('theme');
 
   // One tuning read powers the control plane, the shed checks, and the tuning
   // stream. 60s-cached — cheap on every fast poll. Fail-open to defaults.
@@ -21611,6 +21615,14 @@ async function _handleAgentPoll(req, res) {
     const bundle = await _popStatus().streamFor({ discordId: String(identity.discord_id || ''), wanted: chars });
     const dec = _pollStreamDecision('pop', want, tune, url.searchParams.get('pop_ver'), bundle.version);
     out.streams.pop = dec === 'unchanged' ? { version: bundle.version, unchanged: true } : bundle;
+  }
+  // theme — the session's guild's colours for the overlays (utils/theme.js, a 60 s copy; the agent asks every 10 min).
+  // Version-gated on the agent's `theme_ver`; a guild with no row answers { theme: null } so Mimic keeps its defaults.
+  if (_pollStreamDecision('theme', want, tune, null, null) === 'send') {
+    const theme = await require('./utils/theme').guildThemeFor(identity.guild_id || require('./utils/supabase').guildId()).catch(() => null);
+    const version = _pollTuningVersion(theme);
+    const dec = _pollStreamDecision('theme', want, tune, url.searchParams.get('theme_ver'), version);
+    out.streams.theme = dec === 'unchanged' ? { version, unchanged: true } : { version, theme };
   }
   // pet_owners (FB-35) — the owners pooled from every raider's uploads, so one
   // "My leader is <Owner>" seen by anyone names that pet on every client's live meter.
@@ -25808,6 +25820,8 @@ const httpServer = http.createServer(async (req, res) => {
     // their own: almost certainly truncated. Non-zero here means a read needs paging.
     let rowCap = null;
     try { rowCap = require('./utils/supabase').capStats(); } catch { /* */ }
+    let guildRls = null;
+    try { guildRls = guildScoped.status(); } catch { /* */ }
     const budgets = {};
     for (const [kind, book] of _budgetBuckets) {
       const perMin = _BUDGET_DEFAULTS[kind]?.perMin;
@@ -25822,7 +25836,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
       ok: ready, ready, shutting_down: _shuttingDown,
-      supabase_breaker: breaker, supabase_row_cap: rowCap, budgets, mem,
+      supabase_breaker: breaker, supabase_row_cap: rowCap, guild_rls: guildRls, budgets, mem,
     }));
   }
 

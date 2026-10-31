@@ -379,12 +379,70 @@ function _wpApplyTheme(theme) {
   try {
     if (!_wpOverlayDoc()) return;
     const cl = document.body.classList;
-    for (const c of [...cl]) if (c.indexOf('wp-theme-') === 0) cl.remove(c);
+    // wp-theme-guild is the GUILD's layer (below), not one of the raider's filters: a pick here must not strip it.
+    for (const c of [...cl]) if (c.indexOf('wp-theme-') === 0 && c !== 'wp-theme-guild') cl.remove(c);
     if (_WP_CVD_MATRICES[theme]) _wpCvdDefs();
     if (theme && theme !== 'default') cl.add('wp-theme-' + theme);
   } catch (e) {}
 }
 ipcRenderer.on('wp-theme', function (_e, theme) { _wpApplyTheme(theme); });
+
+// ── The guild theme (docs/DESIGN-theming.md sections 3 and 4) ────────────────────────────────────────────────────────
+// Layers, bottom to top: theme.css defaults -> THIS (the guild's slots as :root variables) -> the raider's own look (the
+// body filters above, which act on the finished picture and so still apply on top). Main sends the cached theme on
+// 'wp-guild-theme' and answers 'wp-guild-theme-get' at load. Only the themable slots are ever written, and only as
+// six-digit hex: green, red, gold and orange carry meanings and are not in the list, whatever main sends. A null theme
+// removes the style. Only pages that load theme.css take it (the dashboard and the website have their own layers).
+const _WP_GT_SLOTS = ['bg', 'panel', 'border', 'text', 'dim', 'accent', 'blue', 'purple'];
+function _wpGuildThemeCss(theme) {
+  if (!theme || typeof theme !== 'object' || !theme.slots || typeof theme.slots !== 'object') return '';
+  let out = '';
+  for (const s of _WP_GT_SLOTS) {
+    const v = theme.slots[s];
+    if (typeof v !== 'string' || !/^#[0-9a-f]{6}$/i.test(v)) continue;
+    out += '--wp-' + s + ':' + v.toLowerCase() + ';';
+    if (s === 'bg' || s === 'panel') {   // the rgba(var(--wp-bg-rgb), a) triplets follow their hex
+      const n = parseInt(v.slice(1), 16);
+      out += '--wp-' + s + '-rgb:' + ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ';';
+    }
+  }
+  return out ? ':root{' + out + '}' : '';
+}
+function _wpUsesTokens(doc) {
+  try { return !!doc.querySelector('link[rel="stylesheet"][href$="theme.css"]'); } catch (e) { return false; }
+}
+function _wpApplyGuildThemeTo(doc, theme) {
+  const css = _wpGuildThemeCss(theme);
+  let st = doc.getElementById('wp-guild-theme');
+  if (!css) {
+    if (st) st.remove();
+    if (doc.body) doc.body.classList.remove('wp-theme-guild');
+    return;
+  }
+  if (!st) {
+    st = doc.createElement('style');
+    st.id = 'wp-guild-theme';
+    (doc.head || doc.documentElement).appendChild(st);
+  }
+  st.textContent = css;
+  if (doc.body) doc.body.classList.add('wp-theme-guild');
+}
+function _wpApplyGuildTheme(theme) {
+  try {
+    if (_wpUsesTokens(document)) _wpApplyGuildThemeTo(document, theme);
+    // The Timers canvas' panels are same-origin iframes whose own preloads only pull at load; a live change reaches them here.
+    for (const f of document.querySelectorAll('iframe')) {
+      try { const d = f.contentDocument; if (d && _wpUsesTokens(d)) _wpApplyGuildThemeTo(d, theme); } catch (e) { void e; }
+    }
+  } catch (e) { void e; }
+}
+ipcRenderer.on('wp-guild-theme', function (_e, theme) { _wpApplyGuildTheme(theme); });
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    if (!_wpUsesTokens(document)) return;
+    ipcRenderer.invoke('wp-guild-theme-get').then(function (t) { _wpApplyGuildTheme(t); }).catch(function () {});
+  } catch (e) { void e; }
+});
 
 // ── ▭ Mini mode — the shared half ──────────────────────────────────────────
 // Each overlay owns its OWN `body.wp-mini` rules (the rendition the guild voted

@@ -24,9 +24,13 @@ function _asGuild(client, fn) { return client && client.token ? runScoped(client
 // A scoped request the gateway answered 401 (a token the database will not verify: wrong secret, or a clock gone off)
 // is retried once with the service key rather than dropped, because the durable streams (parses) must not be lost to a
 // mis-set secret. Loud, and counted for the log line and /health.
-const _scopedStats = { rejected: 0 };
+const _scopedStats = { rejected: 0, ok: 0, lastRejectedAt: 0, lastOkAt: 0 };
 function scopedStats() { return { ..._scopedStats }; }
-function _resetScopedStats() { _scopedStats.rejected = 0; }
+function _resetScopedStats() { _scopedStats.rejected = 0; _scopedStats.ok = 0; _scopedStats.lastRejectedAt = 0; _scopedStats.lastOkAt = 0; }
+// utils/guildScoped.js registers one listener (it persists the status); it runs OUTSIDE any scope, never throws into a request.
+let _scopedListener = null;
+function onScopedEvent(fn) { _scopedListener = fn; }
+function _scopedEvent() { try { if (_scopedListener) _scopeStore.exit(_scopedListener); } catch { /* */ } }
 
 function isEnabled() {
   return !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -160,9 +164,11 @@ async function _request(path, opts = {}) {
 
     if (!res.ok && scope && res.status === 401) {
       _scopedStats.rejected++;
+      _scopedStats.lastRejectedAt = Date.now();
       if (_scopedStats.rejected === 1 || _scopedStats.rejected % 100 === 0) {
-        console.warn(`[guild-rls] the database rejected the guild token (401) on ${opts.method || 'GET'} ${path} — retrying with the service key. Check SUPABASE_JWT_SECRET (rejected so far: ${_scopedStats.rejected})`);
+        console.warn(`[guild-rls] the database rejected the guild token (401) on ${opts.method || 'GET'} ${path} — retrying with the service key. Check SUPABASE_JWT_SIGNING_JWK and the signing key in Supabase (rejected so far: ${_scopedStats.rejected})`);
       }
+      _scopedEvent();
       return _request(path, { ...opts, unscoped: true });
     }
     if (!res.ok) {
@@ -187,6 +193,7 @@ async function _request(path, opts = {}) {
       return null;
     }
     _breakerOnSuccess();
+    if (scope) { _scopedStats.ok++; _scopedStats.lastOkAt = Date.now(); _scopedEvent(); }
     // count(): the answer is the total in Content-Range ("0-0/26972", or "*/0" for no rows), not the body.
     if (opts.countExact) {
       const m = /\/(\d+)\s*$/.exec(res.headers.get('content-range') || '');
@@ -447,7 +454,7 @@ async function getNpcIdForInternalId(internalId) {
 // Returns the encounter id (uuid) or null on failure.
 // zoneShort is optional — when present it's stored on insert. When absent the
 // RPC falls back to bosses_local.zone_short for the npc.
-async function findOrCreateEncounter({ npcId, startedAtMs, durationSec, windowMin = 30, zoneShort = null, guildId = null }) {
+async function findOrCreateEncounter({ npcId, startedAtMs, durationSec, windowMin = 30, zoneShort = null, guildId = null, scoped = null }) {
   if (!isEnabled() || !npcId) return null;
   const params = {
     p_guild_id:   guildId || _guildId(),
@@ -457,7 +464,8 @@ async function findOrCreateEncounter({ npcId, startedAtMs, durationSec, windowMi
     p_window_min: windowMin,
   };
   if (zoneShort) params.p_zone_short = zoneShort;
-  const result = await rpc('find_or_create_encounter', params);
+  // Scoped: the function sees the guild claim and refuses a p_guild_id that is not it (migration 20261031200000).
+  const result = await _asGuild(scoped, () => rpc('find_or_create_encounter', params));
   // RPC returns the scalar uuid
   return typeof result === 'string' ? result : null;
 }
@@ -586,7 +594,7 @@ async function claimThreatSnapshots({ encounterId, uploader, startedAtMs, durati
 // eqemu_zone FK (PostgREST reports 23503 as 409), which the retry below
 // absorbs; the cache keeps that to once per night per process.
 const _raidNightIdByKey = new Map();
-async function linkEncounterToRaidNight({ encounterId, startedAtMs, zoneShort = null }) {
+async function linkEncounterToRaidNight({ encounterId, startedAtMs, zoneShort = null, scoped = null }) {
   if (!isEnabled() || !encounterId) return null;
   const startMs = Number(startedAtMs);
   if (!Number.isFinite(startMs)) return null;
@@ -597,30 +605,31 @@ async function linkEncounterToRaidNight({ encounterId, startedAtMs, zoneShort = 
   const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(raidNight.nightKey(startMs));
   if (!m) return null;
   const dateIso = `${m[3]}-${m[1]}-${m[2]}`;
-  const guildId = _guildId();
+  // Scoped (utils/guildScoped.js): the night belongs to the session's guild, and the three calls below run under RLS.
+  const guildId = scoped ? scoped.guildId : _guildId();
   const cacheKey = `${guildId}|${dateIso}`;
 
   try {
     let nightId = _raidNightIdByKey.get(cacheKey) || null;
     if (!nightId) {
       const base = { guild_id: guildId, date: dateIso };
-      let created = await insertIgnoreDuplicates('raid_nights',
-        [zoneShort ? { ...base, zone_main: zoneShort } : base]);
+      let created = await _asGuild(scoped, () => insertIgnoreDuplicates('raid_nights',
+        [zoneShort ? { ...base, zone_main: zoneShort } : base]));
       // An unknown zone_short trips the eqemu_zone FK and returns null; the night
       // matters more than the zone label, so try again without it.
       if (created === null && zoneShort) {
-        created = await insertIgnoreDuplicates('raid_nights', [base]);
+        created = await _asGuild(scoped, () => insertIgnoreDuplicates('raid_nights', [base]));
       }
-      const rows = await select('raid_nights',
-        `guild_id=eq.${encodeURIComponent(guildId)}&date=eq.${encodeURIComponent(dateIso)}&select=id&limit=1`);
+      const rows = await _asGuild(scoped, () => select('raid_nights',
+        `guild_id=eq.${encodeURIComponent(guildId)}&date=eq.${encodeURIComponent(dateIso)}&select=id&limit=1`));
       nightId = Array.isArray(rows) && rows[0]?.id;
       if (!nightId) return null;
       if (_raidNightIdByKey.size >= 64) _raidNightIdByKey.clear();   // a few nights at most; bound it anyway
       _raidNightIdByKey.set(cacheKey, nightId);
     }
     // Only stamp when unset — never re-point an encounter a previous run linked.
-    await update('encounters', `id=eq.${encounterId}&raid_night_id=is.null`,
-      { raid_night_id: nightId });
+    await _asGuild(scoped, () => update('encounters', `id=eq.${encounterId}&raid_night_id=is.null`,
+      { raid_night_id: nightId }));
     return nightId;
   } catch (err) {
     console.warn('[supabase] raid-night link failed:', err?.message);
@@ -675,7 +684,8 @@ async function recordContribution({
 
   // Recompute the merged encounter_players view
   if (contributionId) {
-    await rpc('merge_encounter_players', { p_encounter_id: encounterId });
+    // Scoped: the function reads the claim and refuses an encounter of another guild (migration 20261031200000).
+    await _asGuild(scoped, () => rpc('merge_encounter_players', { p_encounter_id: encounterId }));
   }
   return contributionId;
 }
@@ -711,8 +721,9 @@ async function recordParse({
   // (enrage/DT/rampage/AoE), trigger fires, tank switches. [{at,kind,subtype,
   // actor,label,meta}]. Stored in encounter_events, deduped at read like deaths.
   timelineEvents = null,
-  // A client from utils/guildScoped.js, or null for today's service-key path. It carries the encounters and
-  // contributions writes only; every other table this function touches stays on the service key (see that file).
+  // A client from utils/guildScoped.js, or null for today's service-key path. It carries the encounters, contributions,
+  // raid_nights, combat-rollup and encounter_events writes and both RPCs; every other table this function touches
+  // (bosses_local, the threat snapshots) stays on the service key (see that file).
   scoped = null,
 }) {
   if (!isEnabled()) return null;
@@ -751,6 +762,7 @@ async function recordParse({
     durationSec: parsed.duration,
     zoneShort:   zoneShort || row.zone_short || null,
     guildId:     scoped ? scoped.guildId : null,
+    scoped,
   });
   if (!encounterId) return null;
 
@@ -779,6 +791,7 @@ async function recordParse({
     encounterId,
     startedAtMs: timestampMs,
     zoneShort:   zoneShort || row.zone_short || null,
+    scoped,
   }).catch(err => console.warn('[supabase] raid-night link failed:', err?.message));
 
   const hasAbilityDetail = !!(rollupByChar && Object.keys(rollupByChar).length);
@@ -814,7 +827,7 @@ async function recordParse({
   // (encounter_id, character_name) — a resubmit overwrites in place. Failures
   // are non-fatal: the contribution + merged player view still landed.
   if (hasAbilityDetail) {
-    try { await upsertCombatRollup(encounterId, agentVersion, rollupByChar); }
+    try { await upsertCombatRollup(encounterId, agentVersion, rollupByChar, scoped); }
     catch (err) { console.warn('[supabase] combat rollup upsert failed:', err?.message); }
   }
 
@@ -841,7 +854,7 @@ async function recordParse({
   // Per-fight timeline events (#98) — raid-wide events, trigger fires, tank
   // switches for the callout replay. Non-fatal; the parse itself already landed.
   if (Array.isArray(timelineEvents) && timelineEvents.length) {
-    try { await recordEncounterEvents(encounterId, timelineEvents, uploadedByDiscordId); }
+    try { await recordEncounterEvents(encounterId, timelineEvents, uploadedByDiscordId, scoped); }
     catch (err) { console.warn('[supabase] encounter_events insert failed:', err?.message); }
   }
 
@@ -852,7 +865,7 @@ async function recordParse({
 // per uploader via the encounter_events_dedup unique index (backfill re-runs
 // don't duplicate); cross-uploader duplicates collapse at read. Capped so a
 // runaway agent can't flood the table.
-async function recordEncounterEvents(encounterId, events, uploadedByDiscordId) {
+async function recordEncounterEvents(encounterId, events, uploadedByDiscordId, scoped = null) {
   if (!isEnabled() || !encounterId || !Array.isArray(events) || events.length === 0) return;
   const rows = [];
   for (const e of events) {
@@ -860,7 +873,7 @@ async function recordEncounterEvents(encounterId, events, uploadedByDiscordId) {
     const at = new Date(e.at);
     if (isNaN(at.getTime())) continue;
     rows.push({
-      guild_id:               _guildId(),
+      guild_id:               scoped ? scoped.guildId : _guildId(),
       encounter_id:           encounterId,
       uploaded_by_discord_id: uploadedByDiscordId || null,
       at:                     at.toISOString(),
@@ -872,15 +885,15 @@ async function recordEncounterEvents(encounterId, events, uploadedByDiscordId) {
     });
   }
   if (rows.length === 0) return;
-  await insertIgnoreDuplicates('encounter_events', rows.slice(0, 500));
+  await _asGuild(scoped, () => insertIgnoreDuplicates('encounter_events', rows.slice(0, 500)));
 }
 
 // Upsert per-character ability rollups for one encounter.
 // rollupByChar: { [characterName]: { by_skill, total_hits, total_damage, self_attack_count } }
-async function upsertCombatRollup(encounterId, agentVersion, rollupByChar) {
+async function upsertCombatRollup(encounterId, agentVersion, rollupByChar, scoped = null) {
   if (!isEnabled() || !encounterId || !rollupByChar) return;
   const rows = Object.entries(rollupByChar).map(([characterName, b]) => ({
-    guild_id:          _guildId(),
+    guild_id:          scoped ? scoped.guildId : _guildId(),
     encounter_id:      encounterId,
     character_name:    characterName,
     agent_version:     agentVersion || null,
@@ -893,7 +906,7 @@ async function upsertCombatRollup(encounterId, agentVersion, rollupByChar) {
   // One lock order for every writer: two uploads of the same fight take their row locks in the order the
   // rows are sent, and opposite orders were the 40P01 deadlocks in the postgres log (4 in 24 h, 2026-10-20).
   rows.sort((a, b) => (a.character_name < b.character_name ? -1 : a.character_name > b.character_name ? 1 : 0));
-  await upsert('encounter_combat_rollup', rows, 'encounter_id,character_name');
+  await _asGuild(scoped, () => upsert('encounter_combat_rollup', rows, 'encounter_id,character_name'));
 }
 
 // Fetch the completeness summary for an encounter.
@@ -1030,7 +1043,7 @@ async function upsertWhoOverride({ character, klass, isZek, setBy, setByName, no
 module.exports = {
   isEnabled,
   guildId: _guildId,
-  runScoped, scopedStats, _resetScopedStats,   // utils/guildScoped.js
+  runScoped, scopedStats, _resetScopedStats, onScopedEvent,   // utils/guildScoped.js
   breakerState,
   _resetBreaker,   // test-only
   capStats,

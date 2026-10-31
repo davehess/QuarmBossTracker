@@ -29,7 +29,9 @@ describe('merge_encounter_players concurrency migration', () => {
   it('is the newest migration that defines the function', () => {
     const defs = fs.readdirSync(DIR).filter((f) => f.endsWith('.sql')
       && /create (or replace )?function merge_encounter_players/i.test(stripSql(fs.readFileSync(path.join(DIR, f), 'utf8')))).sort();
-    expect(defs[defs.length - 1]).toBe(NEW);
+    // 20261031200000 (guild RLS slice 2) redefines it with the guild guard; test/guild-rls-slice2.test.js pins that body to this one.
+    expect(defs[defs.length - 1]).toBe('20261031200000_guild_rls_slice2.sql');
+    expect(defs).toContain(NEW);
   });
 
   it('keeps the signature, return type, language and SECURITY DEFINER', () => {

@@ -6153,6 +6153,25 @@ function renderOverlays(s) {
     +   '<span class="dim">Opacity, Background and Size set every overlay at once &mdash; fine-tune one with the sliders in its setup bar. Size runs 50%&ndash;200% for high-DPI screens.</span>'
     + '</div></details>'
     + '</div>';
+  // The guild's palette, read-only, under the raider's own choices (docs/DESIGN-theming.md section 5). Layers: the guild's
+  // colours are the base; the theme/colour-blind pick, opacity and size above sit ON TOP of them and are yours. The
+  // swatches come from the agent's `theme` (the bot's answer, six-digit hex only); the guild's name is filled in by
+  // wpRefreshOverlayToggles so this HTML stays byte-stable between polls.
+  var GP_SLOTS = [['accent','Brand'],['blue','Blue'],['purple','Purple'],['text','Text'],['dim','Dim'],['border','Border'],['panel','Panel'],['bg','Background']];
+  var gpTheme = s && s.theme && s.theme.slots ? s.theme.slots : null, gpSw = '';
+  if (gpTheme) {
+    for (var gi = 0; gi < GP_SLOTS.length; gi++) {
+      var gpHex = gpTheme[GP_SLOTS[gi][0]];
+      if (typeof gpHex === 'string' && /^#[0-9a-f]{6}$/i.test(gpHex)) {
+        gpSw += '<span class="wp-gpsw" title="' + GP_SLOTS[gi][1] + ' ' + gpHex + '" style="display:inline-block;width:18px;height:18px;border-radius:4px;border:1px solid var(--border);vertical-align:middle;margin-right:4px;background:' + gpHex + '"></span>';
+      }
+    }
+  }
+  h += '<div class="wp-strip wp-guildpal"><span class="wp-lbl">Guild palette</span>'
+    + '<span class="wp-kcell"><b id="wpGuildPalName">Your guild</b>'
+    +   (gpSw ? ' ' + gpSw : ' <span class="dim">has not set a palette, so the default colours apply</span>') + '</span>'
+    + '<span class="dim">Your own look sits on top: the theme, colour-blind mode, opacity and size above are yours and apply over the guild&rsquo;s colours.</span>'
+    + '</div>';
   h += '</div>';
 
   // #113 Extended Target options — a per-user filter that changes what we ASK
@@ -7064,6 +7083,9 @@ function wpRefreshOverlayToggles() {
       if (cpEn2 && Date.now() - _wpCpEnAt > 1500) cpEn2.checked = !!st.charProfilesEnabled;
       // Theme picker highlight — driven from Mimic status (st.overlayTheme),
       // not the render's state blob (which never carries it).
+      var gpn = document.getElementById('wpGuildPalName');
+      var gpName = (st.hub && st.hub.display_name) ? String(st.hub.display_name) : 'Your guild';
+      if (gpn && gpn.textContent !== gpName) gpn.textContent = gpName;
       var tcur = st.overlayTheme || 'default';
       var tb = document.querySelectorAll('.wp-theme-pick');
       for (var j = 0; j < tb.length; j++) {

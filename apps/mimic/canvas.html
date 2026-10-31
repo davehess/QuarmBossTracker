@@ -1968,6 +1968,19 @@
     }, TEST_MS + 100);
   }
   var _menuFor = null, _menuAnchor = null;
+  // The guild's palette, read live from the shared colour variables (with the guild's own over them) so it follows what
+  // the guild chose and shows the defaults when it chose nothing. A pick is written as the HEX, like the colours below it:
+  // a saved piece keeps its colour if the guild repaints, and meaning colours (green, red, gold) stay in the row below.
+  var GUILD_SWATCHES = [['accent', 'Brand'], ['blue', 'Blue'], ['purple', 'Purple'], ['text', 'Text'], ['dim', 'Dim'], ['border', 'Border'], ['panel', 'Panel'], ['bg', 'Background']];
+  function guildPaletteHtml(p) {
+    var cs = getComputedStyle(document.documentElement), h = '';
+    GUILD_SWATCHES.forEach(function (s) {
+      var c = String(cs.getPropertyValue('--wp-' + s[0]) || '').trim().toLowerCase();
+      if (!/^#[0-9a-f]{6}$/.test(c)) return;
+      h += '<button class="btn sw' + (p.color === c ? ' on' : '') + '" data-color="' + c + '" title="' + s[1] + ' ' + c + '" style="background:' + c + '"></button>';
+    });
+    return h ? '<div class="sec">Guild palette</div><div class="row" style="flex-wrap:wrap">' + h + '</div>' : '';
+  }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
   function closeMenu() { _menuFor = null; menuEl.classList.remove('show'); }
 
@@ -2040,7 +2053,7 @@
         WpParts.ROT.forEach(function (r) { h += '<button class="btn' + ((p.rot || '') === r[0] ? ' on' : '') + '" data-rot="' + r[0] + '">' + esc(r[1]) + '</button>'; });
         h += '</div>';
       }
-      h += '<div class="sec">Colour</div><div class="row" style="flex-wrap:wrap">'
+      h += guildPaletteHtml(p) + '<div class="sec">Colour</div><div class="row" style="flex-wrap:wrap">'
         + '<button class="btn' + (!p.color ? ' on' : '') + '" data-color="" title="The data\'s own colour (health goes green → red)">Auto</button>';
       WpParts.PALETTE.forEach(function (c) {
         h += '<button class="btn sw' + (p.color === c ? ' on' : '') + '" data-color="' + c + '" title="' + c + '" style="background:' + c + '"></button>';

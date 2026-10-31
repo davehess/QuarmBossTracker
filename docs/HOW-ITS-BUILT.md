@@ -330,8 +330,10 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
   The service role still bypasses RLS, so the existing path is untouched.
 - **Where:** `utils/guildScoped.js` (`mintToken`, `flagOn`, `scopedClient`, `forIdentity`, `run`); `utils/supabase.js` `runScoped(token, fn)`
   (an async-local store: every request inside the callback carries the token; a 401 retries with the service key and logs loudly); the call
-  in `index.js` `recordParse`. **Off until `GUILD_RLS=1` or the tuning flag `flag_guild_rls=1`, and inert without `SUPABASE_JWT_SECRET`**
-  (logs once, runs today's path). `SUPABASE_ANON_KEY` is optional (the gateway's apikey header).
+  in `index.js` `recordParse`. **Off until `GUILD_RLS=1` or the tuning flag `flag_guild_rls=1`, and inert without `SUPABASE_JWT_SIGNING_JWK`**
+  (an ES256 private JWK we generated and imported into Supabase, 2026-10-31; logs once, runs today's path). The status (flag on, key ok,
+  rejections) is written to `bot_kv` `guild_rls_status`, served on `/health` as `guild_rls`, and shown as a red/green line on
+  https://wolfpack.quest/admin/overlays (`web/lib/guildRlsStatus.ts`). `SUPABASE_ANON_KEY` is optional (the gateway's apikey header).
 - **Not covered:** the two RPCs, `raid_nights`, rollups, events, threat snapshots, `/who`, every other handler, RLS by membership for the web.
   `scripts/guild-scope-audit.js` still ratchets the unscoped calls. Verified on a local Postgres 16 (12 policies; another guild's rows
   invisible, unwritable, unmovable).
@@ -4188,6 +4190,14 @@ crash card labels it "🐺 Wolf Pack Zeal" (`wpZealBuildTag`). Runbook: `docs/up
   `actions.ts`): colour pickers + hex, font, logo, embed colour, a live preview (header, fight card, overlay row, Discord card);
   Save and Reset validate server-side and write an `audit_log` row `guild_theme_updated` (slot names only). Bot side:
   `utils/theme.js` `embedColor()` (60 s cache, blurple default); **call sites are not rewired yet**. Test: `test/guild-theme.test.js`.
+- **Guild theme in Mimic (bot 4.0.43 on `main`, agent 4.0.51 + Mimic on beta, 2026-10-31; `docs/DESIGN-theming.md` §4).**
+  Bot: `utils/theme.js` `guildThemeFor(guildId)` (60 s per-guild copy, themable slots only as lowercase hex, last-good on a failed
+  read) feeds the `linked` reply in `utils/mimicLink.js` and the poll's `theme` stream in `_handleAgentPoll` (`theme_ver`-gated; a
+  hub-guild session keeps this one stream, a guest gets none). Agent: polls `theme` every 10 min, sanitises it, serves `theme` +
+  `themeKnown` on `/api/state`. Mimic: `apps/mimic/guildTheme.js` validates and caches `userData/brand/theme.json`; `main.js` sends
+  `wp-guild-theme` / answers `wp-guild-theme-get`; `preload.js` injects `<style id="wp-guild-theme">` and `body.wp-theme-guild`
+  on pages that link `theme.css`, reaching same-origin iframes. Strips: Canvas colour picker "Guild palette" row; dashboard
+  Overlays tab "Guild palette". Test: `test/guild-theme-mimic.test.js`.
 - **The token layers: one colour set under the site, the overlays and the dashboard (beta, 2026-10-31; DECISIONS §488, pick C; `docs/DESIGN-theming.md` §7 steps 1 to 3).**
   Three variable layers, each visually identical to what it replaced, each with a shrink-only ratchet on raw hex:
   (1) **site** `web/app/tokens.css` (the 12 colour slots as RGB triplets, radius, fonts, three site-only shades) with

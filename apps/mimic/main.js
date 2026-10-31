@@ -2689,6 +2689,7 @@ async function startMimicLink() {
           storeUploadToken(c, p.body.session_token, hubs.identityFromPoll(p.body));
           c.session.linked_at = Date.now();
           saveConfig(c);
+          try { _guildThemeSet(p.body.theme); } catch (e) { void e; }   // the guild's colours ride the sign-in reply
           _linkInFlight = null;
           pushMimicSession();
           pushStatus();
@@ -2733,6 +2734,7 @@ async function signOutMimic() {
   delete cfg.session;
   delete cfg.token;     // also clear any legacy top-level token
   saveConfig(cfg);
+  try { _guildThemeSet(null); } catch (e) { void e; }   // the guild's colours go with its session
   pushMimicSession();
   pushStatus();
   // Drop the agent back to local-only by relaunching without a token.
@@ -2792,6 +2794,7 @@ async function setHub(choice) {
   const after = loadConfig();
   hubs.applyHub(after, next);
   saveConfig(after);
+  try { _guildThemeSet(null); } catch (e) { void e; }   // another guild: its own colours arrive with its sign-in
   pushMimicSession();
   pushStatus();
   appendAgentLog('[mimic] guild changed to ' + next.display_name + ' — restarting agent without a token\n');
@@ -3073,6 +3076,9 @@ function _pollBlindState() {
       // Per-character overlay profiles — swap the visibility set when the
       // active toon changes (cheap; only acts on an actual change).
       try { _onActiveCharacter(s && s.activeCharacter); } catch {}
+      // The guild's colour theme, as the agent holds it from the bot's poll (the cache covers the rest of the time).
+      // A null theme counts only once the agent has heard from the bot (themeKnown): a fresh agent holds none yet.
+      try { if (s && s.themeKnown) _guildThemeSet(s.theme); } catch {}
       // …and their last layout (screen, Canvas and all), unless another client is still live (see _lastLayoutObserve).
       try { _lastLayoutObserve(s && s.activeCharacter, s && s.zealClients); } catch {}
       // Fresh-install class seeding (one-shot; no-ops instantly once done).
@@ -12865,6 +12871,40 @@ ipcMain.handle('wp-bg-alpha-all', (_e, v) => _setOpacityAll('overlayBgAlpha', v)
 // Direct theme set (dashboard Overlays-tab picker) — same broadcast path.
 // All-overlay backdrop flip — same as the Ctrl+Shift+B hotkey.
 ipcMain.handle('wp-backdrop-toggle-all', () => { try { toggleAllBackdrops(); return true; } catch { return false; } });
+// ── The guild theme (docs/DESIGN-theming.md section 4) ───────────────────────────────────────────────────────────────
+// The guild's colour slots reach Mimic twice: in the sign-in reply (the bot's `linked` answer) and then every ~10 min on
+// the agent's /api/state as `theme`. The last good copy sits in userData/brand/theme.json so a cold start paints before
+// the first poll. It goes to every window as 'wp-guild-theme'; preload.js injects it as :root variables and only on a page
+// that loads theme.css. It sits BELOW the raider's own look (cfg.overlayTheme is a body filter and still applies on top)
+// and a null theme removes it. Sign-out and a guild switch clear it: a theme belongs to one guild's session.
+const guildTheme = require('./guildTheme');
+const GUILD_THEME_FILE = () => path.join(app.getPath('userData'), 'brand', 'theme.json');
+let _guildThemeNow;   // undefined = not read yet, null = none
+function _guildThemeGet() {
+  if (_guildThemeNow === undefined) {
+    try { _guildThemeNow = guildTheme.clean(JSON.parse(fs.readFileSync(GUILD_THEME_FILE(), 'utf8'))); }
+    catch { _guildThemeNow = null; }
+  }
+  return _guildThemeNow;
+}
+function _guildThemeSet(raw) {
+  const next = guildTheme.clean(raw);
+  if (JSON.stringify(next) === JSON.stringify(_guildThemeGet())) return false;
+  _guildThemeNow = next;
+  try {
+    if (next) {
+      fs.mkdirSync(path.dirname(GUILD_THEME_FILE()), { recursive: true });
+      fs.writeFileSync(GUILD_THEME_FILE(), JSON.stringify(next));
+    } else {
+      fs.rmSync(GUILD_THEME_FILE(), { force: true });
+    }
+  } catch (e) { void e; /* a read-only profile still paints for this run */ }
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { win.webContents.send('wp-guild-theme', next); } catch { /* mid-close */ }
+  }
+  return true;
+}
+ipcMain.handle('wp-guild-theme-get', () => _guildThemeGet());
 ipcMain.handle('wp-theme-set', (_e, theme) => {
   if (!_WP_THEMES.includes(theme)) return false;
   const cfg = loadConfig();
