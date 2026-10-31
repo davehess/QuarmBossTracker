@@ -2631,8 +2631,9 @@ async function startMimicLink() {
   const hub = hubs.hubOf(cfg);
   let resp;
   try {
-    // `hub` names the guild the raider picked: the commons bot answers for many guilds and ignores it until it learns to read it.
-    resp = await _httpsJsonPost(base, '/api/mimic-link/start', { agent_version: 'mimic ' + app.getVersion(), hub: hub.slug });
+    // `hub` names the guild the raider picked, for a guild other than Wolf Pack only (hubs.linkStartBody): the commons bot
+    // answers for many guilds and puts the slug on the link code; Wolf Pack's request is the one every Mimic has sent.
+    resp = await _httpsJsonPost(base, '/api/mimic-link/start', hubs.linkStartBody(hub, 'mimic ' + app.getVersion()));
   } catch (e) {
     return { ok: false, error: 'Could not reach the ' + hub.display_name + ' server: ' + (e && e.message || e) };
   }
@@ -2640,7 +2641,7 @@ async function startMimicLink() {
     return { ok: false, error: 'Server rejected the link request' + (resp.body?.error ? ': ' + resp.body.error : '') };
   }
   // The address to open comes from the guild's server, and Mimic opens it in a browser: https only, and moved onto the
-  // guild's own site when it is a listed guild (hubs.linkUrls).
+  // guild's own site when it is a listed guild (hubs.linkUrls), unless the reply names the hub (the bot chose the site).
   const links = hubs.linkUrls(hub, resp.body);
   if (!links) return { ok: false, error: 'The ' + hub.display_name + ' server gave a sign-in address Mimic will not open.' };
   const { user_code, device_code, expires_in, poll_interval } = resp.body;
@@ -2684,13 +2685,8 @@ async function startMimicLink() {
           const c = loadConfig();
           // The session token IS the per-user upload token now — store it
           // encrypted at rest and retire any legacy plaintext.
-          storeUploadToken(c, p.body.session_token, {
-            user_id:      p.body.user_id,
-            discord_id:   p.body.discord_id,
-            display_name: p.body.display_name,
-            is_officer:   !!p.body.is_officer,
-            role_names:   Array.isArray(p.body.role_names) ? p.body.role_names : [],
-          });
+          // A member of a hub guild also keeps that guild's slug and role (hubs.identityFromPoll), which Settings names.
+          storeUploadToken(c, p.body.session_token, hubs.identityFromPoll(p.body));
           c.session.linked_at = Date.now();
           saveConfig(c);
           _linkInFlight = null;
@@ -10763,6 +10759,8 @@ function currentStatus() {
       discord_id:   cfg.session.identity?.discord_id   || null,
       display_name: cfg.session.identity?.display_name || null,
       is_officer:   !!cfg.session.identity?.is_officer,
+      // The guild a hub session belongs to ({ slug, display_name, role }); null for a Wolf Pack session.
+      guild:        hubs.sessionGuild(cfg.session.identity, hubs.hubOf(cfg)),
       linked_at:    cfg.session.linked_at || null,
     } : null,
     mimicLinking: _linkInFlight ? {

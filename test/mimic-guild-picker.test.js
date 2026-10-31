@@ -152,7 +152,8 @@ describe('main.js wires the guild into the link flow, the agent and the session'
   it('link start uses the hub: its bot, its slug, and the vetted addresses (never the raw ones)', () => {
     const start = block('async function startMimicLink', 'const expiresAt');
     expect(start).toMatch(/hubs\.hubOf\(cfg\)/);
-    expect(start).toMatch(/hub: hub\.slug/);
+    expect(start).toMatch(/hubs\.linkStartBody\(hub, /);
+    expect(start).not.toMatch(/hub: hub\.slug/);   // not sent unconditionally: Wolf Pack's body stays byte-identical
     expect(start).toMatch(/hubs\.linkUrls\(hub, resp\.body\)/);
     expect(start).not.toMatch(/verification_url(_complete)?, expires_in/);   // not destructured raw off the reply
     expect(start).not.toMatch(/Could not reach the Wolf Pack server/);
@@ -254,5 +255,105 @@ describe('Settings has the Guild choice too', () => {
   });
   it('uses the chosen guild\'s site in the code line', () => {
     expect(src).toMatch(/\(_hub\.site \|\| 'https:\/\/wolfpack\.quest'\) \+ '\/auth\/mimic-link'/);
+  });
+});
+
+// ── 5. The link flow carries the chosen guild (DECISIONS §500) ───────────────────────────────────────────────────
+describe('linkStartBody: the start request names the guild only when it is not Wolf Pack', () => {
+  const alpha = { slug: 'alpha', display_name: 'Alpha', url: 'https://hosted.example', site: 'https://alpha.example' };
+  it('is byte-identical to the old request for Wolf Pack and for a pasted self-host', () => {
+    expect(JSON.stringify(hubs.linkStartBody(WOLF, 'mimic 1.0.0'))).toBe('{"agent_version":"mimic 1.0.0"}');
+    expect(hubs.linkStartBody({ slug: 'custom', display_name: 'x', url: 'https://their.example', site: '' }, 'v')).toEqual({ agent_version: 'v' });
+    expect(hubs.linkStartBody({}, 'v')).toEqual({ agent_version: 'v' });
+  });
+  it('carries the slug for a listed guild', () => {
+    expect(hubs.linkStartBody(alpha, 'mimic 1.0.0')).toEqual({ agent_version: 'mimic 1.0.0', hub: 'alpha' });
+  });
+});
+
+describe('startMimicLink sends that body and opens the address the bot chose', () => {
+  const main = read('apps/mimic/main.js');
+  const alpha = { slug: 'alpha', display_name: 'Alpha', url: 'https://hosted.example', site: 'https://alpha.example' };
+  // The real function up to the point it has its addresses, run against stubs.
+  const fnText = sliceBlock(main, 'async function startMimicLink() {', 'const { verification_url, verification_url_complete } = links;') + '\n  return { verification_url, verification_url_complete };\n}';
+  const run = async (hub, reply) => {
+    const sent = [];
+    // hubOf reads the stub config; hand it the hub under test, every other rule is the real module's
+    const real = { ...hubs, hubOf: () => hub };
+    const make = new Function('hubs', 'loadConfig', '_botBaseUrl', '_httpsJsonPost', 'app', 'let _linkInFlight = null;\n' + fnText + '\nreturn startMimicLink;');
+    const out = await make(real, () => ({}), () => 'https://bot.example', async (base, p, body) => { sent.push({ base, p, body }); return reply; }, { getVersion: () => '9.9.9' })();
+    return { sent, out };
+  };
+  const ok = (extra) => ({ status: 200, body: { device_code: 'd', user_code: 'ABC123', expires_in: 600, poll_interval: 2, verification_url: 'https://wolfpack.quest/auth/mimic-link', verification_url_complete: 'https://wolfpack.quest/auth/mimic-link?code=ABC123', ...extra } });
+
+  it('Wolf Pack: the body has no hub key and the bot\'s address is used as sent', async () => {
+    const { sent, out } = await run(WOLF, ok());
+    expect(sent[0].p).toBe('/api/mimic-link/start');
+    expect(JSON.stringify(sent[0].body)).toBe('{"agent_version":"mimic 9.9.9"}');
+    expect(out.verification_url_complete).toBe('https://wolfpack.quest/auth/mimic-link?code=ABC123');
+  });
+  it('a listed guild: the body carries its slug', async () => {
+    const { sent } = await run(alpha, ok());
+    expect(sent[0].body).toEqual({ agent_version: 'mimic 9.9.9', hub: 'alpha' });
+  });
+  it('prefers the bot\'s own address when the reply carries a hub key (no re-homing onto the directory\'s site)', async () => {
+    const reply = ok({ hub: 'alpha', verification_url: 'https://raidmimic.com/auth/mimic-link', verification_url_complete: 'https://raidmimic.com/auth/mimic-link?code=ABC123' });
+    const { out } = await run(alpha, reply);
+    expect(out.verification_url).toBe('https://raidmimic.com/auth/mimic-link');
+    expect(out.verification_url_complete).toBe('https://raidmimic.com/auth/mimic-link?code=ABC123');
+  });
+  it('still re-homes onto the guild\'s site when the bot has not learned the slug (no hub key in the reply)', async () => {
+    const { out } = await run(alpha, ok());
+    expect(out.verification_url_complete).toBe('https://alpha.example/auth/mimic-link?code=ABC123');
+  });
+  it('stays https-only even when the reply carries a hub key', async () => {
+    for (const bad of ['http://raidmimic.com/auth/mimic-link', 'file:///C:/x', 'javascript:1']) {
+      const { out } = await run(alpha, ok({ hub: 'alpha', verification_url: bad, verification_url_complete: bad }));
+      expect(out, bad).toEqual({ ok: false, error: 'The Alpha server gave a sign-in address Mimic will not open.' });
+    }
+  });
+});
+
+describe('a hub session is stored with its guild and named in Settings and the welcome page', () => {
+  const hubReply = { status: 'linked', session_token: 'wpms_x', user_id: 'u', discord_id: '111', display_name: 'Aldenmar', is_officer: false, role_names: [], scope: 'member', guild_id: 'alpha', hub_role: 'member' };
+  const alpha = { slug: 'alpha', display_name: 'Alpha Guild', url: 'https://hosted.example', site: 'https://alpha.example' };
+
+  it('keeps the guild slug and role from a member poll, and Wolf Pack\'s identity exactly as before', () => {
+    expect(hubs.identityFromPoll(hubReply)).toEqual({ user_id: 'u', discord_id: '111', display_name: 'Aldenmar', is_officer: false, role_names: [], guild_id: 'alpha', hub_role: 'member' });
+    const wp = { status: 'linked', session_token: 't', user_id: 'u', discord_id: '1', display_name: 'N', is_officer: true, role_names: ['Officer'] };
+    expect(hubs.identityFromPoll(wp)).toEqual({ user_id: 'u', discord_id: '1', display_name: 'N', is_officer: true, role_names: ['Officer'] });
+    expect(Object.keys(hubs.identityFromPoll(wp))).not.toContain('guild_id');
+  });
+  it('does not keep a guild from a guest poll or from text that is not a slug or role', () => {
+    expect(hubs.identityFromPoll({ ...hubReply, scope: 'guest' }).guild_id).toBeUndefined();
+    expect(hubs.identityFromPoll({ ...hubReply, guild_id: '<b>x</b>' }).guild_id).toBeUndefined();
+    expect(hubs.identityFromPoll({ ...hubReply, guild_id: 'wolfpack' }).guild_id).toBeUndefined();
+    expect(hubs.identityFromPoll({ ...hubReply, hub_role: '<script>' }).hub_role).toBeUndefined();
+  });
+  it('sessionGuild: null for Wolf Pack, the guild\'s name and member/officer for a hub session', () => {
+    expect(hubs.sessionGuild({ discord_id: '1', is_officer: true }, WOLF)).toBe(null);
+    expect(hubs.sessionGuild(null, WOLF)).toBe(null);
+    expect(hubs.sessionGuild(hubs.identityFromPoll(hubReply), alpha)).toEqual({ slug: 'alpha', display_name: 'Alpha Guild', role: 'member' });
+    expect(hubs.sessionGuild(hubs.identityFromPoll({ ...hubReply, hub_role: 'officer', is_officer: true }), alpha).role).toBe('officer');
+    expect(hubs.sessionGuild(hubs.identityFromPoll({ ...hubReply, hub_role: 'owner' }), alpha).role).toBe('officer');
+    expect(hubs.sessionGuild(hubs.identityFromPoll(hubReply), WOLF).display_name).toBe('alpha');   // hub not in the config: the slug
+  });
+
+  it('main.js stores the poll through identityFromPoll and puts the guild in the status', () => {
+    const src = stripJs(read('apps/mimic/main.js'));
+    expect(src).toMatch(/storeUploadToken\(c, p\.body\.session_token, hubs\.identityFromPoll\(p\.body\)\)/);
+    expect(src).toMatch(/guild:\s+hubs\.sessionGuild\(cfg\.session\.identity, hubs\.hubOf\(cfg\)\)/);
+  });
+  it('Settings reads the line from the session\'s guild and falls back to nothing (the old wording) without one', () => {
+    const html = read('apps/mimic/settings.html');
+    const { _guildLine } = evalBlock(sliceBlock(html, 'function _guildLine(g){', '\n  }'), ['_guildLine']);
+    expect(_guildLine({ slug: 'alpha', display_name: 'Alpha Guild', role: 'member' })).toBe('Linked to Alpha Guild (member)');
+    expect(_guildLine({ slug: 'alpha', display_name: 'Alpha Guild', role: 'officer' })).toBe('Linked to Alpha Guild (officer)');
+    expect(_guildLine(null)).toBe('');
+    expect(stripJs(html)).toMatch(/_guildLine\(session\.guild\)/);
+  });
+  it('the welcome page names the guild after "Signed in as" only when the session has one', () => {
+    const src = stripJs(read('apps/mimic/welcome.html'));
+    expect(src).toMatch(/session && session\.guild \? ' — linked to <b>' \+ esc\(session\.guild\.display_name\)/);
   });
 });
