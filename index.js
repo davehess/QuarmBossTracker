@@ -10054,6 +10054,16 @@ async function _handleAgentHailMark(req, res) {
   res.end(JSON.stringify({ ok: true, ...r.window }));
 }
 
+// Stamp the upload-arrival columns on a character row (migration 20261031120000): <x>_checked_at on EVERY accepted
+// upload, including the unchanged early-return, and <x>_synced_at beside it when the content really changed. The
+// stamp is an extra — a failure here is logged and never fails the upload.
+async function _stampCharacterUpload(supabase, guildId, charName, patch, tag) {
+  if (!charName) return;
+  await supabase
+    .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charName)}`, patch)
+    .catch(err => console.warn(`[${tag}] upload timestamp update failed:`, err?.message));
+}
+
 // POST /api/agent/quarmy
 //
 // Quarmy export ingest (docs/DESIGN-quarmy-gear.md, table 20260610210000).
@@ -10121,6 +10131,7 @@ async function _handleAgentQuarmy(req, res) {
   }
   const checksum = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
   if (checksum && charRow && charRow.quarmy_checksum === checksum) {
+    await _stampCharacterUpload(supabase, guildId, charRow.name, { quarmy_checked_at: new Date().toISOString() }, 'quarmy');
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
   }
 
@@ -10191,7 +10202,8 @@ async function _handleAgentQuarmy(req, res) {
   // by the roster/link flows; gear ingest shouldn't invent membership).
   // deity_id finally pins the faction page's deity-shifted base estimates.
   if (charRow) {
-    const patch = { quarmy_synced_at: new Date().toISOString() };
+    const stampedAt = new Date().toISOString();
+    const patch = { quarmy_synced_at: stampedAt, quarmy_checked_at: stampedAt };
     if (checksum) patch.quarmy_checksum = checksum;
     const deity = parseInt(payload.deity_id, 10);
     if (Number.isFinite(deity) && deity > 0) patch.deity_id = deity;
@@ -10248,6 +10260,7 @@ async function _handleAgentInventory(req, res) {
   const canonical = charRow?.name || character;
   const checksum  = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
   if (checksum && charRow && charRow.inventory_checksum === checksum) {
+    await _stampCharacterUpload(supabase, guildId, charRow.name, { inventory_checked_at: new Date().toISOString() }, 'inventory');
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
   }
 
@@ -10289,11 +10302,11 @@ async function _handleAgentInventory(req, res) {
     });
     if (Array.isArray(ok)) written += ok.length;
   }
-  if (checksum && charRow?.name) {
-    await supabase
-      .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charRow.name)}`,
-        { inventory_checksum: checksum })
-      .catch(err => console.warn('[inventory] checksum update failed:', err?.message));
+  if (charRow?.name) {
+    const stampedAt = new Date().toISOString();
+    const patch = { inventory_synced_at: stampedAt, inventory_checked_at: stampedAt };
+    if (checksum) patch.inventory_checksum = checksum;
+    await _stampCharacterUpload(supabase, guildId, charRow.name, patch, 'inventory');
   }
   _trackUpload({ endpoint: 'inventory', character: canonical, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
@@ -10339,6 +10352,7 @@ async function _handleAgentSpellbook(req, res) {
   const canonical = charRow?.name || character;
   const checksum  = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
   if (checksum && charRow && charRow.spellbook_checksum === checksum) {
+    await _stampCharacterUpload(supabase, guildId, charRow.name, { spellbook_checked_at: new Date().toISOString() }, 'spellbook');
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
   }
 
@@ -10373,11 +10387,11 @@ async function _handleAgentSpellbook(req, res) {
     });
     if (Array.isArray(ok)) written += ok.length;
   }
-  if (checksum && charRow?.name) {
-    await supabase
-      .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charRow.name)}`,
-        { spellbook_checksum: checksum })
-      .catch(err => console.warn('[spellbook] checksum update failed:', err?.message));
+  if (charRow?.name) {
+    const stampedAt = new Date().toISOString();
+    const patch = { spellbook_synced_at: stampedAt, spellbook_checked_at: stampedAt };
+    if (checksum) patch.spellbook_checksum = checksum;
+    await _stampCharacterUpload(supabase, guildId, charRow.name, patch, 'spellbook');
   }
   _trackUpload({ endpoint: 'spellbook', character: canonical, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);

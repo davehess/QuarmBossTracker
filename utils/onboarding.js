@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.38': [
+    '**A character\'s gear, inventory and spells pages now say when each upload last arrived**, even when nothing in the file had changed.',
+  ],
   '4.0.37': [
     '**Fixed: fights against bosses with a comma in their name (Falto, Jeplak, Gurebk, Ston`Ruak and others) were not being saved.** They now show on parses and the raid session.',
   ],
