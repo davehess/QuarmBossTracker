@@ -104,10 +104,12 @@ next touch one rather than assuming a missing row means a missing doc.
 ## The work ledger
 
 - **⚠ Needs the guild lead — switch the guild RLS foundation on (2026-10-31, §496).** It is on `main` and off. Steps, outside a raid window
-  (Sun/Wed/Thu 19:30 to 00:30 ET): (1) copy the JWT secret (Supabase → Project Settings → API) into Railway as `SUPABASE_JWT_SECRET`;
-  (2) set the tuning flag `flag_guild_rls=1` in the `/admin/overlays` tuning editor (or `GUILD_RLS=1` on Railway); (3) watch the bot log
-  for a scoped-call 401 fallback (it logs loudly and retries with the service key, so a wrong secret loses nothing and also enforces
-  nothing). Until then nothing changes.
+  (Sun/Wed/Thu 19:30 to 00:30 ET). **Corrected 2026-10-31: the legacy JWT secret was disabled on 2026-10-29, so there is no secret to copy.**
+  (1) generate our own ES256 (P-256) key, import it into Supabase as a standby JWT signing key and rotate to it; (2) put the PRIVATE key as
+  JSON (`{kty:'EC', crv:'P-256', kid, d, x, y}`) into Railway as `SUPABASE_JWT_SIGNING_JWK`; (3) set the tuning flag `flag_guild_rls=1` in
+  the `/admin/overlays` tuning editor (or `GUILD_RLS=1` on Railway); (4) watch the red/green line at the top of https://wolfpack.quest/admin/overlays
+  (and `guild_rls` on the bot's `/health`): a bad key or a database rejection (the bot retries with the service key, so nothing is lost and
+  nothing is enforced) shows a red "Guild separation is OFF in practice" box. Until then nothing changes.
 - **✅ Guild RLS foundation: the bot writes a parse as the session's guild under row security, behind a flag (bot 4.0.40, `main`, 2026-10-31; migration `20261031180000_guild_rls_foundation.sql` applied; DECISIONS §496, §490).**
   `utils/guildScoped.js` mints a 2-minute HS256 JWT (`role: guild_scoped`, `guild_id` from `mimic_sessions.guild_id`) and `utils/supabase.js`
   `runScoped(token, fn)` sends it as the bearer for the encounter and contribution writes in `recordParse`; the database compares the row's
@@ -195,6 +197,12 @@ next touch one rather than assuming a missing row means a missing doc.
   a 3:1 text-contrast floor is enforced. A guild on the defaults emits nothing. **Inert on `main` until the site token layer (beta) graduates**;
   `utils/theme.js` `embedColor()` exists but no Discord call site uses it yet. Next in `docs/DESIGN-theming.md` §7: the designer surfaces
   (Canvas builder, UI Studio, Overlays tab, the colour scheme) read the same row. Test `test/guild-theme.test.js`.
+- **🧪 Guild theme reaches Mimic: overlays wear the guild's colours; Canvas and Overlays-tab "Guild palette" strips (bot 4.0.43 `main`; agent 4.0.51 beta `14bf3a8e`; 2026-10-31; DECISIONS §488; `docs/DESIGN-theming.md` §4, §7 step 4).**
+  The sign-in reply and a version-gated poll `theme` stream carry the guild's themable slots (bot `guildThemeFor()`); the agent
+  caches and serves them on `/api/state`; Mimic stores them in `userData/brand/theme.json` and the preload paints `--wp-*` on every
+  page that links `theme.css` (the agent dashboard is untouched), Canvas iframes included. A hub-guild session gets this one stream;
+  a guest none. Font and logo are carried, not applied. No themed-vs-default screenshots yet. Graduates with the next stable cut,
+  which must also carry the token layer above. Test `test/guild-theme-mimic.test.js` (beta).
 - **✅ raidmimic.com signs anyone in; `/guilds` (web 2.1.79, `main`, `[beta]` page, 2026-10-31; DECISIONS §485, §492; migration `20261031150000_hub_registry_discord_guild.sql` and the `hub_*` registry `20261023160000` both applied).**
   Identify-only Discord sign-in on the raidmimic hosts (no guild or role gate, lockout check, `hub_players` upsert, redirect to `/guilds`),
   with wolfpack.quest's gated path unchanged byte for byte; the middleware exempts `/auth/*` and `/guilds` from the landing rewrite. The

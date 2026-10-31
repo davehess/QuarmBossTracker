@@ -23,6 +23,7 @@ import { actorName, shownActor } from '@/lib/actorName';
 import MoreInfo, { FoldText } from '@/components/MoreInfo';
 import { VERSION_FLOOR_KEY } from '@/lib/adminTyped';
 import { DangerFlag, DangerFloor } from './DangerControls';
+import { guildRlsView, type GuildRlsStatus } from '@/lib/guildRlsStatus';
 
 export const metadata = {
   title: 'Overlay tuning · Admin',
@@ -309,6 +310,13 @@ export default async function OverlayTuningPage({
     .maybeSingle();
 
   const tuning: Record<string, number> = (data?.tuning as Record<string, number>) ?? {};
+  const { data: rlsRow } = await sb
+    .from('bot_kv')
+    .select('value')
+    .eq('guild_id', GUILD_TAG)
+    .eq('key', 'guild_rls_status')
+    .maybeSingle();
+  const rlsView = guildRlsView(rlsRow?.value as GuildRlsStatus | undefined);
   const overrideCount = ALL_KNOBS.filter(k => typeof tuning[k.key] === 'number').length;
   const rawClassSets = (data?.class_sets as Record<string, string[]>) ?? {};
   const classSets: Record<string, Set<string>> = {};
@@ -319,6 +327,14 @@ export default async function OverlayTuningPage({
 
   return (
     <div className="space-y-6 max-w-3xl">
+      {rlsView.kind === 'warn' && (
+        <section role="alert" className="bg-panel border border-red/60 rounded-lg p-4 text-sm text-red leading-6">
+          <b>⚠ {rlsView.message}</b>
+        </section>
+      )}
+      {rlsView.kind === 'ok' && (
+        <p className="text-xs text-green">{rlsView.message}</p>
+      )}
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-2">🎛 Overlay tuning</h2>
         <p className="text-sm text-dim leading-6">

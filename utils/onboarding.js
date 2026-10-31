@@ -29,6 +29,12 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.43': [
+    'Mimic can now pick up your guild\'s colours: once officers set a guild theme on the website, the bot hands it to Mimic at sign-in and keeps it current.',
+  ],
+  '4.0.42': [
+    'More groundwork for hosting other guilds: raid nights, ability totals and fight timelines can run under the per-guild permission too, now signed with our own key. Officers get a warning on the overlay tuning page if the bot ever falls back to its master key. Still off by default.',
+  ],
   '4.0.41': [
     'A Mimic link can now belong to another guild on Raid Mimic: the code remembers which guild, the claim checks that guild\'s roster, and that Mimic can only upload parses until its guild\'s own data permission is switched on. Wolf Pack links are unchanged.',
   ],
