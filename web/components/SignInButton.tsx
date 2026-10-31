@@ -2,7 +2,9 @@
 import { useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 
-export default function SignInButton({ next }: { next: string }) {
+// `label` and `className` are optional: a page with its own look (the raidmimic landing's `?v=b`) passes both; every other
+// caller keeps the blurple "Continue with Discord" button and its icon.
+export default function SignInButton({ next, label = 'Continue with Discord', className }: { next: string; label?: string; className?: string }) {
   const [loading, setLoading] = useState(false);
 
   async function go() {
@@ -26,10 +28,10 @@ export default function SignInButton({ next }: { next: string }) {
     <button
       onClick={go}
       disabled={loading}
-      className="inline-flex items-center gap-2 px-4 py-2 rounded bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium disabled:opacity-50 transition-colors"
+      className={className ?? 'inline-flex items-center gap-2 px-4 py-2 rounded bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium disabled:opacity-50 transition-colors'}
     >
-      <span aria-hidden>🎮</span>
-      {loading ? 'Redirecting…' : 'Continue with Discord'}
+      {!className && <span aria-hidden>🎮</span>}
+      {loading ? 'Redirecting…' : label}
     </button>
   );
 }

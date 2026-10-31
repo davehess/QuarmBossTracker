@@ -34,7 +34,7 @@ export function generateMetadata(): Metadata {
   };
 }
 
-export default function RaidmimicPage() {
+export default async function RaidmimicPage({ searchParams }: { searchParams: Promise<{ v?: string }> }) {
   // On a raidmimic host the form lives on eqmimic.quest and the page is `/`. On the Wolf Pack hosts the form is
   // reached by its real path, so the site header stays above it.
   const onHost = isRaidmimicHost(headers().get('host'));
@@ -43,5 +43,9 @@ export default function RaidmimicPage() {
     : { onHost, interest: interestUrl(EQMIMIC_FEEDBACK_PATH), setup: RAIDMIMIC_SETUP_PATH };
   // The story video is the hero on both hosts (the guild lead, 2026-10-25: "post it to raidmimic.com for now"); it was a
   // beta-only `?v=motion` preview from 2026-10-23 until then.
+  // `?v=b` is the "sign in first" variant (the guild lead's pick of sample A, 2026-10-31), for LOOK on b.wolfpack.quest/raidmimic.
+  // The only query this page reads, and only the Wolf Pack hosts ever pass it: a raidmimic host drops every query in the
+  // middleware, so the default page is all a stranger on raidmimic.com can reach. The default render is the line below.
+  if ((await searchParams).v === 'b') return <PathsLayout ctx={ctx} motion signIn />;
   return <PathsLayout ctx={ctx} motion />;
 }

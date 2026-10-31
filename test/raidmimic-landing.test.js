@@ -31,6 +31,7 @@ import path from 'node:path';
 import { ROOT, stripJs, stripCss } from './_source-slice.js';
 import {
   RAIDMIMIC_HOSTS, RAIDMIMIC_LANDING_PATH, RAIDMIMIC_ORIGIN, isRaidmimicAsset, isRaidmimicHost, raidmimicLandingTarget, raidmimicSeo,
+  RAIDMIMIC_SETUP_PATH,
 } from '../web/lib/raidmimicHost.ts';
 import { isEqmimicHost } from '../web/lib/eqmimicHost.ts';
 import * as C from '../web/lib/raidmimicLanding.ts';
@@ -227,9 +228,10 @@ describe('the page', () => {
   });
   it('renders ONE layout, “Pick your path”, with the story video as its hero and no query flags; no Ladder, no Scene-first layout, no variant bar', () => {
     expect(page).toMatch(/return <PathsLayout ctx=\{ctx\} motion \/>;/);
-    expect(page.match(/<[A-Z]\w+Layout /g)).toHaveLength(1);
-    expect(page).not.toMatch(/searchParams/);                                  // no query changes the page any more
-    expect(page).not.toMatch(/\bv === /);
+    expect(page.match(/<[A-Z]\w+Layout /g)).toHaveLength(2);                    // the default, and the `?v=b` sign-in-first variant (below)
+    expect(page).toMatch(/\(await searchParams\)\.v === 'b'/);                  // the one query the page reads is `v`, and only `b` selects anything
+    expect(page).not.toMatch(/searchParams\)\.(?!v\b)|searchParams\[|\.\.\.searchParams/);
+    expect(page).not.toMatch(/\bv === (?!'b')/);
     expect(page).not.toMatch(/variantOf|LadderLayout|SceneLayout|PreviewBar/);
     expect(page).not.toMatch(/hero=|raidmimicVariant|PitchLayout|TourLayout|OutputLayout|WatchLayout|StoryLayout|ScreenLayout/);
     for (const gone of ['LadderLayout', 'SceneLayout', 'VariantParts', 'TourLayout', 'OutputLayout', 'WatchLayout', 'StoryLayout', 'ScreenLayout', 'PitchLayout', 'Figures']) {
@@ -319,11 +321,11 @@ describe('the layout', () => {
     expect(scene.indexOf('<Footer')).toBeGreaterThan(scene.lastIndexOf('</section>'));
   });
   it('server components except the five that play: only SceneClip, ClipTabs, MascotVideo, MotionStage and the drawing’s frame are client files', () => {
-    for (const f of ['Parts.tsx', 'MascotHero.tsx', 'PathsLayout.tsx']) expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
+    for (const f of ['Parts.tsx', 'MascotHero.tsx', 'PathsLayout.tsx', 'SignInTop.tsx']) expect(read(L + f), f).not.toMatch(/['"]use client['"]/);
     expect(read('web/app/raidmimic/page.tsx')).not.toMatch(/['"]use client['"]/);
     for (const f of ['SceneClip.tsx', 'ClipTabs.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'HowItWorks.tsx']) expect(read(L + f), f).toMatch(/^'use client';/);
     expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual([
-      'ClipTabs.tsx', 'FeatureIcons.tsx', 'HowItWorks.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'SceneClip.tsx',
+      'ClipTabs.tsx', 'FeatureIcons.tsx', 'HowItWorks.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'SceneClip.tsx', 'SignInTop.tsx',
     ]);
   });
   it('fetches and embeds nothing external; every outbound link is one we name', () => {
@@ -1184,5 +1186,122 @@ describe('the motion preview (?v=motion)', () => {
     expect(stageCode).toMatch(/className="block h-full w-full object-contain"/);   // the image never exceeds its cell
     expect(stageCode).toMatch(/aspect-\[4\/3\] w-full/);
     expect(stageCode).toMatch(/loading="lazy"/);
+  });
+});
+
+// ─── `?v=b`: "sign in first" (the guild lead picked sample A, 2026-10-31) ─────────────────────────────────────────────
+// A variant of the EXISTING page, so the default is untouched and the variant is read on b.wolfpack.quest/raidmimic?v=b. Sign-in does
+// not work on a raidmimic host until the middleware and callback work lands, so this pins the LOOK and its wiring, not a login.
+describe('the sign-in-first variant (?v=b)', () => {
+  const top = code(L + 'SignInTop.tsx');
+  const layout = code(L + 'PathsLayout.tsx');
+  const page = code('web/app/raidmimic/page.tsx');
+  const S = PL.SIGNIN_FIRST;
+
+  it('the default render has no sign-in card: only the `v === b` branch reaches SignInTop, and the default return is the one it always was', () => {
+    expect(page).toMatch(/\n  return <PathsLayout ctx=\{ctx\} motion \/>;/);
+    expect(page).toMatch(/if \(\(await searchParams\)\.v === 'b'\) return <PathsLayout ctx=\{ctx\} motion signIn \/>;/);
+    expect(layout).toMatch(/signIn = false/);
+    expect(layout).toMatch(/\{signIn \? <SignInTop ctx=\{ctx\} \/> : <>\s*<Frame>/);   // the default branch still opens with its headline and stage
+    expect(layout).toMatch(/DOORS\.map\(d => <DoorCard key=\{d\.id\} door=\{d\} ctx=\{ctx\} \/>\)/);
+    // the sign-in button and the card's words appear nowhere a default render passes through
+    for (const f of ['PathsLayout.tsx', 'Parts.tsx', 'MotionStage.tsx', 'FeatureIcons.tsx']) expect(code(L + f), f).not.toMatch(/SignInButton|SIGNIN_FIRST/);
+    expect(page).not.toMatch(/SignInButton/);
+    expect(JSON.stringify([PL.HERO, PL.PATHS, PL.DOORS])).not.toMatch(/Sign in to Raid Mimic|guest code/);
+  });
+
+  it('the variant is the sign-in card with the three doors and the guest-code link; everything from the feature grid down is the shared page', () => {
+    expect(S.card.title).toBe('Sign in to Raid Mimic');
+    expect(S.card.lead).toBe('Discord tells us who you are. Nothing else.');
+    expect(S.card.button).toBe('Sign in with Discord');
+    expect(S.card.then).toBe('Then: your guilds, or join one with a code, or start one.');
+    expect(S.card.guest).toBe('Raiding as a one-night guest?');
+    expect(S.card.guestLink).toBe('Enter a guest code');
+    expect(S.doors.map(d => d.name)).toEqual(['I raid with a guild on Raid Mimic', 'I’m an officer starting a guild', 'I play alone']);
+    expect(S.headline).toBe('Your raids, one record.');
+    for (const k of ['card.title', 'card.lead', 'card.then', 'card.guest', 'card.guestLink', 'headline', 'pitch', 'brand', 'tagline', 'already', 'download']) {
+      expect(top, k).toMatch(new RegExp(`\\{S\\.${k.replace('.', '\\.')}\\}`));
+    }
+    expect(top).toMatch(/S\.doors\.map\(d => \(/);
+    expect(top).toMatch(/<MotionStage \/>/);                                              // the story video, as today
+    expect(top.indexOf('signin-title')).toBeGreaterThan(-1);
+    expect(layout.indexOf('<SignInTop')).toBeLessThan(layout.indexOf('<FeatureGrid'));
+    expect(layout.indexOf('<FeatureGrid')).toBeLessThan(layout.indexOf('id="see"'));     // the shared sections follow the variant unchanged
+    expect(layout).toMatch(/\{!motion && <MascotHero \/>\}/);
+  });
+
+  it('the header: the brand, "for EverQuest raids", and Download Mimic for people already set up', () => {
+    expect(S.brand).toBe('Raid Mimic');
+    expect(S.tagline).toBe('for EverQuest raids');
+    expect(S.already).toBe('Already set up?');
+    expect(S.download).toBe('Download Mimic');
+    expect(top).toMatch(/<a href=\{DOWNLOAD_URL\} className=\{`\$\{LINK\} underline`\}>\{S\.download\}<\/a>/);
+  });
+
+  it('the Discord button is the shared SignInButton with next=/guilds; a guest code goes to the existing link page', () => {
+    expect(S.after).toBe('/guilds');
+    expect(top).toMatch(/<SignInButton next=\{S\.after\} label=\{S\.card\.button\} className=\{SIGNIN_BTN\} \/>/);
+    expect(top).toMatch(/^import SignInButton from '@\/components\/SignInButton';/m);
+    expect(S.guestPath).toBe('/auth/mimic-link');
+    expect(fs.existsSync(path.join(ROOT, 'web/app/auth/mimic-link/page.tsx'))).toBe(true);
+    expect(top).toMatch(/<a href=\{S\.guestPath\} className="underline">\{S\.card\.guestLink\}<\/a>/);
+  });
+
+  it('SignInButton keeps its look for everyone else: the label and class are optional, the default is Discord blurple "Continue with Discord"', () => {
+    const btn = code('web/components/SignInButton.tsx');
+    expect(btn).toMatch(/label = 'Continue with Discord'/);
+    expect(btn).toMatch(/className\?: string/);
+    expect(btn).toMatch(/className=\{className \?\? 'inline-flex items-center gap-2 px-4 py-2 rounded bg-\[#5865F2\]/);
+    expect(btn).toMatch(/\{!className && <span aria-hidden>🎮<\/span>\}/);
+    expect(btn).toMatch(/scopes: 'identify guilds\.members\.read'/);   // the sign-in itself is not touched
+    expect(btn).toMatch(/redirectTo: `\$\{origin\}\/auth\/callback\?next=\$\{encodeURIComponent\(next\)\}`/);
+  });
+
+  it('the "I play alone" door has the download and the set-up guide (/raidmimic/setup on the Wolf Pack hosts); the other two have no button', () => {
+    expect(top).toMatch(/d\.id === 'alone' && \(/);
+    expect(top).toMatch(/<a href=\{DOWNLOAD_URL\} className=\{PRIMARY_BTN\}>\{S\.download\}<\/a>/);
+    expect(top).toMatch(/<a href=\{ctx\.setup\} className=\{LINK\}>\{HERO\.setup\} →<\/a>/);
+    expect(RAIDMIMIC_SETUP_PATH).toBe('/raidmimic/setup');
+    expect(S.doors.map(d => d.id)).toEqual(['raider', 'officer', 'alone']);
+  });
+
+  it('uses no colour the landing does not already have: every hex is the page’s own cream, and the doors use the page’s three tones', () => {
+    const hex = (s) => [...s.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map(m => m[0].toLowerCase());
+    expect([...new Set(hex(top))]).toEqual(['#f2ede1']);
+    expect(top).not.toMatch(/bg-\[|border-\[#|text-\[#(?!f2ede1)|style=|rgb\(|hsl\(/);
+    const landing = new Set([...hex(code(L + 'PathsLayout.tsx')), ...hex(code(L + 'Parts.tsx')), ...hex(code(L + 'MotionStage.tsx'))]);
+    for (const h of hex(top)) expect(landing.has(h), h).toBe(true);
+    expect(top).toMatch(/free: 'border-t-green'/);
+    expect(top).toMatch(/hub: 'border-t-blue'/);
+    expect(top).toMatch(/choice: 'border-t-gold'/);
+    expect(top).toMatch(/const SIGNIN_BTN = `\$\{PRIMARY_BTN\} w-full/);                   // the page's one gold button, not Discord's blurple
+    expect(S.doors.map(d => d.tone)).toEqual(['hub', 'choice', 'free']);
+  });
+
+  it('is phone-first: no fixed pixel widths, one column until lg with the card under the pitch and above the video, 44px targets', () => {
+    expect(top).not.toMatch(/\bw-\[\d+px\]|\bmin-w-\[\d+px|\bh-\[\d+px\]|width: \d+px|overflow-x-scroll/);
+    expect(top).toMatch(/grid gap-6 lg:grid-cols-\[minmax\(0,1\.15fr\)_minmax\(0,0\.85fr\)\]/);
+    expect(top).toMatch(/lg:col-start-2 lg:row-span-2 lg:row-start-1/);
+    expect(top).toMatch(/lg:sticky/);
+    expect(top.indexOf('signin-title')).toBeLessThan(top.indexOf('<MotionStage'));       // DOM order: pitch, card, video
+    expect(top.indexOf('<h1')).toBeLessThan(top.indexOf('signin-title'));
+    expect(top).toMatch(/min-h-11/);
+    expect(top).toMatch(/lg:grid-cols-3/);
+  });
+
+  it('MotionStage is untouched and the two overrides still point at its real structure (section > grid > video wrapper; the strip is a ul)', () => {
+    const stage = code(L + 'MotionStage.tsx');
+    expect(top).toMatch(/lg:\[&_\[data-motion-stage\]>div>div\]:max-w-full/);
+    expect(top).toMatch(/lg:\[&_\[data-motion-stage\]_ul\]:grid-cols-2/);
+    expect(stage).toMatch(/<section [^>]*data-motion-stage [^>]*>\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)?<div className="lg:grid lg:grid-cols-\[minmax\(0,1fr\)_auto\] lg:items-center lg:gap-10">\s*\{children\}\s*<div className="mx-auto w-full /);
+    expect(stage).toMatch(/<ul className="[^"]*lg:grid-cols-4/);
+    expect(stage).not.toMatch(/narrow/);
+  });
+
+  it('says only what the page may say: the sample’s hosting clause and “five minutes” are left out until they are built and measured; no “sign up”', () => {
+    const t = JSON.stringify(S);
+    expect(t).not.toMatch(/hosted|five minutes|\bDKP\b|sign up|\$|\bfree trial\b/i);
+    expect(t).toMatch(/Free to run yourself/);
+    expect(JSON.stringify(PL.ALL_TEXT)).toContain(S.card.title);   // the page-wide sweeps (prices, counts, names, “coming”) read these words too
   });
 });
