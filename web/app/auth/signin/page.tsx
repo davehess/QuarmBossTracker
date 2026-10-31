@@ -1,8 +1,10 @@
 // Sign-in page. Shows a "Continue with Discord" button. The actual OAuth
 // flow is initiated client-side via supabase.auth.signInWithOAuth so the
 // browser owns the redirect chain. Returns here on error with ?error=...
+import { headers } from 'next/headers';
 import SignInButton from '@/components/SignInButton';
 import PasswordSignIn from '@/components/PasswordSignIn';
+import { isRaidmimicHost } from '@/lib/raidmimicHost';
 
 export const metadata = {
   title: 'Sign in',
@@ -19,6 +21,25 @@ export default function SignInPage({
   const next = searchParams.next || '/';
   const error = searchParams.error;
   const justClaimed = searchParams.ok === 'claimed';
+  // raidmimic.com (DECISIONS §492): anyone with a Discord account, no guild needed, no officer-issued passwords.
+  if (isRaidmimicHost(headers().get('host'))) {
+    return (
+      <div className="max-w-md mx-auto mt-12 space-y-6">
+        <section className="bg-panel border border-border rounded-lg p-6 text-center">
+          <h2 className="text-xl text-gold mb-2">Sign in to Raid Mimic</h2>
+          <p className="text-sm text-dim mb-6">
+            Sign in with Discord to see your guilds, join one with an invite code, or start your own.
+          </p>
+          <SignInButton next={next} />
+          {error && <p className="text-red text-xs mt-4">{error}</p>}
+        </section>
+        <p className="text-xs text-dim text-center">
+          We read only your Discord ID, name and avatar. Your server list is never asked for unless you press
+          &ldquo;Find my guilds&rdquo; yourself.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="max-w-md mx-auto mt-12 space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6 text-center">

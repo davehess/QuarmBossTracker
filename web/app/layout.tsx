@@ -14,6 +14,8 @@ import { getSessionUser } from '@/lib/session';
 import { isOfficer } from '@/lib/officer';
 import { isEqmimicHost } from '@/lib/eqmimicHost';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
+import { GUILD_TAG } from '@/lib/guild';
+import { loadGuildTheme, themeToCssVarMap } from '@/lib/guildTheme';
 import { headers } from 'next/headers';
 
 // b.wolfpack.quest. Set at BUILD time from the branch (see next.config.js), so
@@ -93,13 +95,25 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // Signed-in users see "Me" — anonymous visitors don't. Both lookups are
   // React cache()'d, so pages sharing this request dedupe instead of
   // re-hitting Supabase (lib/session.ts + lib/officer.ts).
+  const themeRead = loadGuildTheme(GUILD_TAG);   // started now so it overlaps the session lookup
   const user = await getSessionUser();
   const showAdmin = user ? await isOfficer(user.id) : false;
   const showMe    = !!user;
+  const theme     = await themeRead;
+
+  // The guild theme (docs/DESIGN-theming.md section 4): today's values emit nothing, so a guild on the
+  // defaults is byte-identical. Inline on <html> so it beats the :root defaults; inert until the token layer
+  // (app/tokens.css) maps Tailwind colours to these variables.
+  const themeVars = themeToCssVarMap(theme, { changedOnly: true });
+  const themed = Object.keys(themeVars).length > 0;
 
   return (
-    // data-theme is the hook for the guild theme (docs/DESIGN-theming.md §4). Nothing reads it yet.
-    <html lang="en" data-theme="guild" className={`${display.variable} ${proseFace.variable}`}>
+    <html
+      lang="en"
+      className={`${display.variable} ${proseFace.variable}`}
+      data-theme={themed ? 'guild' : undefined}
+      style={themed ? (themeVars as React.CSSProperties) : undefined}
+    >
       <body className="font-mono">
         {/* Direction contract — audited at the finish review. Kept in the
             emitted markup so it survives the production build and can be

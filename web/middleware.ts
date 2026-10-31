@@ -19,7 +19,7 @@
 import { NextResponse, type NextRequest, type NextFetchEvent } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { isEqmimicHost, eqmimicLandingTarget } from './lib/eqmimicHost';
-import { isRaidmimicAsset, isRaidmimicHost, raidmimicLandingTarget } from './lib/raidmimicHost';
+import { isRaidmimicAsset, isRaidmimicHost, isRaidmimicOpenPath, raidmimicLandingTarget } from './lib/raidmimicHost';
 import { isLockedOut } from './lib/lockout';
 
 // Routes we never log: API/RSC payloads, auth callbacks, admin pages
@@ -105,7 +105,9 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
   // game-agnostic guild-leader page. /setup rewrites to the set-up guide (2026-10-21), /robots.txt and /sitemap.xml to
   // their own files (2026-10-23, the site is indexed on these hosts), every other path to the landing page, the whole
   // query dropped either way. Also before any session work, for the same reasons.
-  if (isRaidmimicHost(request.headers.get('host'))) {
+  // The sign-in paths and /guilds (2026-10-31, DECISIONS §492) are the exception: they skip this branch and take the
+  // normal flow below (session refresh, lockout), because they read the session.
+  if (isRaidmimicHost(request.headers.get('host')) && !isRaidmimicOpenPath(request.nextUrl.pathname)) {
     // /_next/ assets and the page's own files (captures, clips, mascot, the How-it-works scene) are served as they are.
     if (request.nextUrl.pathname.startsWith('/_next/') || isRaidmimicAsset(request.nextUrl.pathname)) return NextResponse.next();
     const url = request.nextUrl.clone();
