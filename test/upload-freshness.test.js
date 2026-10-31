@@ -14,6 +14,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import path from 'node:path';
 import { readSource, ROOT, stripJs, stripSql } from './_source-slice.js';
 import { latestIso, uploadTimes, describeUpload } from '../web/lib/uploadFreshness.ts';
+import { createRequire } from 'node:module';
+
+const wornSets = createRequire(import.meta.url)('../utils/wornSets.js');
 
 const INDEX = readSource(path.join(ROOT, 'index.js'));
 const START = INDEX.indexOf('async function _stampCharacterUpload');
@@ -24,7 +27,7 @@ const REGION = INDEX.slice(START, END);
 // Build the three real handlers around fake collaborators.
 function buildHandlers(fake) {
   const factory = new Function(
-    'mimicLink', 'require', '_trackUpload', '_dedupeRows',
+    'mimicLink', 'require', '_trackUpload', '_dedupeRows', 'wornSets',
     `${REGION}\nreturn { _handleAgentQuarmy, _handleAgentInventory, _handleAgentSpellbook };`,
   );
   return factory(
@@ -32,6 +35,7 @@ function buildHandlers(fake) {
     () => fake,
     () => {},
     (rows) => rows,
+    wornSets,
   );
 }
 

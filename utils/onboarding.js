@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.39': [
+    'Mimic uploads now remember which gear each character is seen wearing, so the gear page can offer your most-worn sets later. Only you will see them.',
+  ],
   '4.0.38': [
     '**A character\'s gear, inventory and spells pages now say when each upload last arrived**, even when nothing in the file had changed.',
   ],

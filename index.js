@@ -298,6 +298,7 @@ const {
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList, isGuildMember, MEMBERS_ONLY } = require('./utils/roles');
 const mimicLink = require('./utils/mimicLink');
+const wornSets = require('./utils/wornSets');
 const { clientIp } = require('./utils/clientIp');
 const { createIpLimiter } = require('./utils/ipLimiter');
 const { charmSpellName, charmRanFull } = require('./utils/charmSession');
@@ -10064,6 +10065,22 @@ async function _stampCharacterUpload(supabase, guildId, charName, patch, tag) {
     .catch(err => console.warn(`[${tag}] upload timestamp update failed:`, err?.message));
 }
 
+// Worn-set history (migration 20261031130000, utils/wornSets.js): the equipped slots of every accepted Quarmy or
+// inventory upload, so the gear page can offer a character's most-worn sets. `slots` is the normalised worn set for a
+// real write; null means the unchanged (checksum-skip) path, which counts the set the character is still wearing,
+// seeded through `loadSlots` when no history exists yet. A character who opted out of inventory or stats is recorded
+// nowhere. An extra, like the stamp: a failure is logged and never fails the upload.
+async function _recordWornSet(supabase, guildId, charRow, character, source, slots, loadSlots) {
+  if (charRow && (charRow.exclude_inventory || charRow.exclude_from_stats)) return;
+  try {
+    const name = charRow?.name || character;
+    if (slots) await wornSets.recordWornSet(supabase, { guildId, character: name, source, slots });
+    else await wornSets.countUnchangedWornSet(supabase, { guildId, character: name, source, loadSlots });
+  } catch (err) {
+    console.warn(`[${source}] worn set record failed:`, err?.message);
+  }
+}
+
 // POST /api/agent/quarmy
 //
 // Quarmy export ingest (docs/DESIGN-quarmy-gear.md, table 20260610210000).
@@ -10123,7 +10140,7 @@ async function _handleAgentQuarmy(req, res) {
   // Owner opt-out is enforced server-side too — a stale agent that missed the
   // prefs poll cannot write an excluded character's gear.
   const charRows = await supabase
-    .select('characters', `select=name,class,exclude_inventory,quarmy_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
+    .select('characters', `select=name,class,exclude_inventory,exclude_from_stats,quarmy_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
     .catch(() => null);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   if (charRow && charRow.exclude_inventory) {
@@ -10132,6 +10149,8 @@ async function _handleAgentQuarmy(req, res) {
   const checksum = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
   if (checksum && charRow && charRow.quarmy_checksum === checksum) {
     await _stampCharacterUpload(supabase, guildId, charRow.name, { quarmy_checked_at: new Date().toISOString() }, 'quarmy');
+    await _recordWornSet(supabase, guildId, charRow, character, 'quarmy', null, async () => wornSets.wornSlotsFromQuarmy(
+      await supabase.select('character_gear', `select=slot,item_id&guild_id=eq.${encodeURIComponent(guildId)}&character=eq.${encodeURIComponent(charRow.name)}&loc=eq.equipped&limit=100`)));
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
   }
 
@@ -10185,10 +10204,11 @@ async function _handleAgentQuarmy(req, res) {
   await supabase.del('character_gear', charQ).catch(() => {});
   await supabase.del('character_aas', charQ).catch(() => {});
   let written = 0;
+  let gearWritten = false;
   if (gearRows.length) {
     const r = await supabase.insert('character_gear', gearRows)
       .catch(err => { console.warn('[quarmy] gear insert failed:', err?.message); return null; });
-    if (Array.isArray(r)) written += r.length;
+    if (Array.isArray(r)) { written += r.length; gearWritten = true; }
   }
   if (aaRows.length) {
     // Upsert, not insert: the delete above does not exclude a second upload of the same character landing
@@ -10210,6 +10230,11 @@ async function _handleAgentQuarmy(req, res) {
     await supabase
       .update('characters', `guild_id=eq.${encodeURIComponent(guildId)}&name=eq.${encodeURIComponent(charRow.name)}`, patch)
       .catch(err => console.warn('[quarmy] characters update failed:', err?.message));
+  }
+
+  if (gearWritten) {
+    await _recordWornSet(supabase, guildId, charRow, character, 'quarmy',
+      wornSets.wornSlotsFromQuarmy(gearRows.filter(g => g.loc === 'equipped')));
   }
 
   _trackUpload({ endpoint: 'quarmy', character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
@@ -10251,7 +10276,7 @@ async function _handleAgentInventory(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
 
   const charRows = await supabase
-    .select('characters', `select=name,exclude_inventory,inventory_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
+    .select('characters', `select=name,exclude_inventory,exclude_from_stats,inventory_checksum&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(character)}&limit=1`)
     .catch(() => null);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   if (charRow && charRow.exclude_inventory) {
@@ -10261,6 +10286,8 @@ async function _handleAgentInventory(req, res) {
   const checksum  = payload.checksum != null ? String(payload.checksum).slice(0, 32) : null;
   if (checksum && charRow && charRow.inventory_checksum === checksum) {
     await _stampCharacterUpload(supabase, guildId, charRow.name, { inventory_checked_at: new Date().toISOString() }, 'inventory');
+    await _recordWornSet(supabase, guildId, charRow, character, 'inventory', null, async () => wornSets.wornSlotsFromInventory(
+      await supabase.select('character_inventory', `select=slot_label,item_id&guild_id=eq.${encodeURIComponent(guildId)}&character_name=ilike.${encodeURIComponent(canonical)}&slot_label=in.(${wornSets.INVENTORY_WORN_LABELS.map(encodeURIComponent).join(',')})&limit=100`)));
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, skipped: 'unchanged' }));
   }
 
@@ -10308,6 +10335,7 @@ async function _handleAgentInventory(req, res) {
     if (checksum) patch.inventory_checksum = checksum;
     await _stampCharacterUpload(supabase, guildId, charRow.name, patch, 'inventory');
   }
+  if (written > 0) await _recordWornSet(supabase, guildId, charRow, character, 'inventory', wornSets.wornSlotsFromInventory(rows));
   _trackUpload({ endpoint: 'inventory', character: canonical, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, written }));
