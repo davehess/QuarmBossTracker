@@ -97,6 +97,20 @@ writes.
 
 ## Identity & auth
 
+- **raidmimic.com signs anyone in; `/guilds` is where they land (web 2.1.79 on `main`, `[beta]`, 2026-10-31; DECISIONS §485, §492).**
+  On the raidmimic hosts sign-in is identify-only with no guild or role gate. `web/middleware.ts` exempts `/auth/*`,
+  `/api/auth/*` and `/guilds` from the landing rewrite (`web/lib/raidmimicHost.ts`; eqmimic.quest untouched). `web/app/auth/callback/route.ts`
+  dispatches once at the top: on a raidmimic host the open path (`web/lib/openSignIn.ts`: exchange, lockout check, `hub_players`
+  upsert, redirect to `/guilds`); on wolfpack.quest the gated path, byte for byte (proven by test). `SignInButton` picks scopes per
+  host. `/guilds` (`web/app/guilds/`): the Wolf Pack card for members, one card per `hub_*` membership, join by invite code
+  (rate-limited; uses, expiry and suspension honoured; `JoinForm.tsx`, `actions.ts`), "Find my guilds" (a second consent,
+  `identify guilds`: matches the Discord server list against `hub_guilds.discord_guild_id`, joins `open_join` guilds, lists closed
+  ones as "ask an officer for a code", writes only matched ids, keeps no token), "Start a guild" (a stub). Registry:
+  `web/lib/hubRegistry.ts` reads the `hub_*` tables (migrations `20261023160000_open_hub_registry.sql` and
+  `20261031150000_hub_registry_discord_guild.sql`, both applied to production 2026-10-31; the second adds
+  `hub_guilds.discord_guild_id` and `hub_players.avatar_url`). Supabase Auth redirect entries for `raidmimic.com`,
+  `www.raidmimic.com` and `*.raidmimic.com` were added by the guild lead the same day. Test: `test/raidmimic-signin.test.js`
+  (115 tests). The sign-in-first LANDING is the beta variant below (Web features, "raidmimic.com landing `?v=b`").
 - **Agent → bot**: per-user bearer tokens minted at Mimic sign-in
   (`mimicLink.requireAgentAuth` on every `/api/agent/*` route). `/token` in
   Discord lists/revokes sessions. Every upload is traceable to a Discord id.
@@ -161,6 +175,19 @@ writes.
   roster-listed character comes back in `conflicts`). Tests: `test/recruit-stage.test.js`, `test/recruit-card-agent.test.js`.
 
 ## Release & deploy pipeline
+
+### Only the newest 3 Mimic betas keep a release (2026-10-30; DECISIONS §479)
+- **What:** 28 betas in three days pushed the stable (still marked Latest) to page 3 of the GitHub releases list. Pick A + B:
+  (A) the Download button and step 1 on the raidmimic setup page, the `wolfpack.quest/mimic` fallback and the README open
+  `/releases/latest` (beta and Linux fallbacks, and the bot's "all releases" link, still open the full list on purpose);
+  (B) a prune.
+- **Where:** `.github/workflows/prune-beta-releases.yml` keeps the newest `KEEP` (default 3) published `vX.Y.Z-beta.N` releases by
+  version and deletes the rest; it runs as the `prune-betas` job at the end of every beta build in `release-mimic.yml`, and by
+  hand. **Tags are never deleted**, so every beta build's commit stays reachable. Stables, `mimic-alpha`, `-linux.N` builds and
+  drafts are excluded by the filter and by a per-release guard. Links: `web/lib/raidmimicSetup.ts`, `web/app/mimic/route.ts`
+  (web 2.1.77), `test/raidmimic-setup.test.js`.
+- **Cost:** a beta tester several builds behind gets a full download instead of a differential one; download counts of deleted
+  betas are lost. Same family as `prune-linux-releases.yml` (the 10-entry release feed lesson in CLAUDE.md).
 
 ### Local mode — Mimic without the guild server (agent 3.7.58 · bot 3.1.180, 2026-10-01)
 For players who want only the overlays (DECISIONS §118). **Agent:** `_localOnly()` = started with no
@@ -294,6 +321,45 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
 (`DECISIONS-2026-09-10.md`).
 
 ## Bot features
+
+### "Last upload" stamps: when each gear, inventory and spellbook upload arrived (bot 4.0.38 · web 2.1.78, 2026-10-31; DECISIONS §480)
+- **What:** the three uploads checksum-dedup and returned early on an unchanged file, so the only timestamps meant "last
+  changed". `characters` gains `quarmy_checked_at`, `inventory_checked_at`, `spellbook_checked_at` (every accepted upload,
+  the unchanged skip included) and `inventory_synced_at`, `spellbook_synced_at` (content changed; `quarmy_synced_at` already
+  existed). Migration `20261031120000_character_upload_checked_at.sql` (applied; the two `synced_at` backfilled from
+  `max(observed_at)`).
+- **Where (bot):** `_stampCharacterUpload` in `index.js`, called by the gear, inventory and spellbook handlers on every
+  accepted upload; a failed stamp warns and never fails the upload. A first inventory or spellbook upload with no checksum is
+  stamped too. Test: `test/upload-freshness.test.js` (runs the three handlers with stubs; mutation-checked).
+- **Where (web):** the line "Last upload: Gear 2h ago · Inventory 3d ago · Spells never" with hover for the exact time and the
+  last change: `web/lib/uploadFreshness.ts` (pure wording), `web/lib/uploadFreshnessServer.ts` (reads the stamps, falling back
+  to the newest snapshot row), `web/components/UploadFreshness.tsx`; on the gear, inventory and spells character pages. The gear
+  page shows the inventory and spells times only to the owner, an officer, or when the inventory page is public. The two manual
+  `/me` uploads (`web/app/me/inventory-actions.ts`, `spellbook-actions.ts`) write the same stamps. The `/me?v=b` hub shows the
+  same line under "Your main".
+
+### Worn-set history: which gear a character is captured wearing (bot 4.0.39, 2026-10-31; DECISIONS §480 option B)
+- **What:** `character_gear` and `character_inventory` are replaced per upload, so nothing kept which combinations a character
+  wears. Table `character_worn_sets` (migration `20261031130000_character_worn_sets.sql`, applied): one row per
+  (character, source, `set_hash`) with the slots, first/last seen and `times_seen`; RLS on, no anon/authenticated policy,
+  service role only. It is the data the gear page's saved sets (option B, "from most often captured") will read; nothing in
+  the web reads it yet.
+- **Where:** `utils/wornSets.js` (worn slots from the Quarmy and inventory payloads in the gear page's slot names, Ammo/bags/bank
+  ignored; sha1 hash; record + count; a set counts at most once an hour per character and source via `counted_at`);
+  `_recordWornSet` in `index.js` runs after a real gear/inventory write and on the unchanged skip (counting the newest set,
+  seeding from stored rows when there is no history). `exclude_inventory` / `exclude_from_stats` record nothing; a failure only
+  warns. Test: `test/worn-sets.test.js` (40 tests over the real handlers; mutation-checked).
+
+### Fights against comma-named bosses are saved (bot 4.0.37, 2026-10-30; DECISIONS §477 item 4)
+- **What:** `_resolveBossForPersist` built its `eqemu_npc_types` lookup as `or=(name.eq.<form>,…)` unquoted, so the comma in
+  "Falto, Lord of Thunder" ended the value and PostgREST refused the query (PGRST100); every first fight against a comma-named
+  boss with no `bosses_local` row was dropped unsaved (Falto, the real Jeplak, Ston`Ruak and friends never reached parses or
+  the raid session). Names holding `, . : ( ) "` are now double-quoted inside `or=()`. When one name matches two npc ids (the
+  fake and the real Jeplak), the id `data/named-bosses.json` lists wins; otherwise still refused as ambiguous.
+- **Named bosses:** Falto, Jeplak, Ston`Ruak and Drornok are on the Plane of Storms named list, so they register as curated
+  rather than trash (see "Named PoP bosses" under the bot features below). Sibling fix on the Target Info path: bot 4.0.33
+  (`_buildMobInfo`, `utils/backfillScan.js`). Fights dropped before the fix reappear only if an uploader re-sends that window.
+  Tests: `test/boss-persist-keys.test.js`, `test/mobinfo-comma-names.test.js`.
 
 ### PvP deaths and fights (bot 3.1.152, 2026-09-26)
 - `pvp_deaths`: every death the PvP broadcast reports, whoever is on either side, written by
@@ -1138,7 +1204,8 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   tracking and the rampage callouts treat them as bosses.
 - **Where:** `data/named-bosses.json` (per zone, catalog ids), `utils/namedBosses.js` (`raidTarget(row)` = the catalog's
   flag OR the list), served by `_buildMobInfo` in `index.js` and `utils/zoneSpawns.js`. Add a boss by adding its id to
-  the JSON. Test: `test/named-bosses.test.js`.
+  the JSON. Test: `test/named-bosses.test.js`. Bot 4.0.37 (2026-10-30, §477) added Falto, Jeplak, Ston`Ruak and Drornok to the
+  Plane of Storms list so a comma-named boss registers as curated.
 
 ### Relv event mephit counter (agent 4.0.45 beta, 2026-10-30; DECISIONS §471)
 - **What:** a Command Center row during Relv the Mysterious's event in Plane of Storms: "Relv: mephits N/30 · M left"
@@ -1146,7 +1213,8 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   across the clearing prints no line here. Falto's same-named mephit adds are not counted.
 - **Where:** agent `_relvNoteLine` / `_relvSnapshot` (beside `_deadMobNameFromLine`) → Command Center state `relv` →
   `apps/mimic/command.html` `relvHtml`. Source: SecretsOTheP/quests `postorms/encounters/Relv.lua` @ 572bc06. Test:
-  `test/relv-mephit-counter.test.js`.
+  `test/relv-mephit-counter.test.js`. Agent 4.0.47 (§471): the row reads "Falto:", and a counter started after Falto was
+  seen (a mid-fight start) counts nothing. A cross-client count through the bot is not built (open if the floor proves too low).
 
 ### Several rampages at once (agent 3.8.4 beta, 2026-10-19; DECISIONS §373)
 - **What:** one Command Center row per rampaging boss, and named bosses' rampages spoken by name.
@@ -4057,6 +4125,61 @@ crash card labels it "🐺 Wolf Pack Zeal" (`wpZealBuildTag`). Runbook: `docs/up
 
 ## Web features
 
+- **Guild theme: the `guild_theme` row, the variables on `<html>`, `/admin/theme` (web 2.1.80 on `main`, `[beta]`, 2026-10-31; DECISIONS §488; `docs/DESIGN-theming.md` §7 step 5).**
+  Table `guild_theme` (`guild_id` pk, `slots` jsonb, `logo_url`, `font`, `embed_color`, `updated_by`; migration
+  `20261031170000_guild_theme.sql`, applied, seeded with today's values; RLS on, no policies; listed in `scripts/guild-tables.json`).
+  Pure rules in `web/lib/guildThemeCore.ts` (validation, hex to triplet, themable slots only; green/red/gold/orange are never
+  emitted; a 3:1 text-contrast floor), cached read in `web/lib/guildTheme.ts` (React cache + 60 s, last-good on failure).
+  `web/app/layout.tsx` emits only the slots that differ from today's, inline on `<html data-theme="guild">`, so a guild on the
+  defaults is byte-identical. **Inert on `main` until `tokens.css` (beta) graduates.** `/admin/theme` (officers; `ThemeEditor.tsx`,
+  `actions.ts`): colour pickers + hex, font, logo, embed colour, a live preview (header, fight card, overlay row, Discord card);
+  Save and Reset validate server-side and write an `audit_log` row `guild_theme_updated` (slot names only). Bot side:
+  `utils/theme.js` `embedColor()` (60 s cache, blurple default); **call sites are not rewired yet**. Test: `test/guild-theme.test.js`.
+- **The token layers: one colour set under the site, the overlays and the dashboard (beta, 2026-10-31; DECISIONS §488, pick C; `docs/DESIGN-theming.md` §7 steps 1 to 3).**
+  Three variable layers, each visually identical to what it replaced, each with a shrink-only ratchet on raw hex:
+  (1) **site** `web/app/tokens.css` (the 12 colour slots as RGB triplets, radius, fonts, three site-only shades) with
+  `web/tailwind.config.ts` mapping every colour name to `rgb(var(--wp-<name>) / <alpha-value>)` so `bg-accent/20` still composes;
+  `globals.css` has no raw hex; test `test/theme-tokens.test.js` (ratchet baseline 1,025 across `web/app` + `web/components`).
+  (2) **Mimic** `apps/mimic/theme.css` (the same 12 slots, two alpha triplets, radius, fonts), linked first by 25 window pages;
+  `parts.js` reads the slots once at load; `command.html` is deliberately NOT linked (the agent serves a byte-exact embed of it
+  with no `theme.css` beside it); raw hex across the overlays 3,138 to 2,164; test `test/mimic-theme-tokens.test.js`.
+  (3) **agent dashboard** `packages/wolfpack-logsync/dashboard.html` `:root` defines `--wp-*` with the old short names aliased
+  (agent 4.0.50 beta); raw hex 549 to 422; test `test/dashboard-theme-tokens.test.js`. Proof of "identical": the built CSS
+  diffed before/after (site), 13 stand-in screenshots 0 px apart (overlays), 15 dashboard tabs byte-identical PNGs. Edit
+  `dashboard.html` and `npm run sync:dashboard`, as ever. Not yet on `main`; the guild theme above rides on it.
+- **`/me?v=b` — the guided hub: the main first, then the account, then every page that is theirs (beta preview, 2026-10-31; DECISIONS §481, §483).**
+  `web/app/me/MeHub.tsx` paints the shell at once and each data block streams behind its own Suspense with a same-height
+  skeleton. Sections: **Your main** (identity, "Last upload", best fights by damage and DPS from `my_parse_series_v2`, latest loot
+  and DKP spent for the main and its family (no balance: the web has no OpenDKP standings mirror), recent raid nights each with
+  "Replay with you highlighted" (`/raid/session?…&follow=<main>`) and the night review, and the classic inventory / keys /
+  spellbook upload controls with a character picker, none for a character with inventory sync off); **Your account** (Discord,
+  Mimic, characters, privacy switches); **All your stuff** (every page that is theirs, titles from `pageMeta`). Blocks in
+  `MeHubBlocks.tsx` and `MeHubUploads.tsx`, rules in `web/lib/meHub.ts`, reads in `web/lib/meHubLoad.ts`; `HubTourButton.tsx`.
+  `web/lib/landing.ts`: on the beta build a sign-in from the home page lands on `/me?v=b` (production unchanged; `safeNext` still
+  runs first, `web/app/auth/callback/route.ts`). `/me` without `?v=` is unchanged. Tests: `test/me-hub.test.js`,
+  `test/landing-after-sign-in.test.js`. Preview: https://b.wolfpack.quest/me?v=b.
+- **Gear page: automatic sets and try-on, owner only (beta preview, 2026-10-31; DECISIONS §480, picks C then A).**
+  Option C: three cards built from what the character owns (bags and bank): Most mitigation, Most damage (melee) or Most
+  mana/focus (casters), Best resists, each with the change versus worn, the swaps (with where the item is) and cap notes;
+  scored with the existing `effectiveValue` and caps, greedy per slot (the ceiling is noted). Option A: try-on, one select per
+  slot, live stat change, warnings, picks kept in `?try=`. Files: `web/lib/gearSets.ts` (pure), `web/lib/gearSetsLoad.ts`,
+  `web/app/character/[name]/gear/GearSets.tsx` and `TryOn.tsx`, wired in that folder's `page.tsx`. Same owner and opt-out gate as
+  `UpgradeCheck`; the bank is never shown to anyone else. Test: `test/gear-sets.test.js` (29 tests, 21 mutations killed). **Option
+  B (saved sets from the combinations most often captured) is the next step** and reads `character_worn_sets` (bot 4.0.39, Bot
+  features above). Preview: https://b.wolfpack.quest/character/<name>/gear.
+- **raidmimic.com landing `?v=b`: sign in first (beta variant, 2026-10-31; DECISIONS §492 pick A).** The pitch and the story video
+  on the left, a sign-in card on the right (Discord, identify only, `next=/guilds`, a guest-code link), three doors under it (a
+  raider in a hosted guild, an officer starting one, a solo player), today's page below the fold. `SignInTop.tsx` + a `signIn`
+  prop on `PathsLayout`, words in `SIGNIN_FIRST` (`web/lib/raidmimicPlayer.ts`), optional `label`/`className` on `SignInButton`.
+  The default render is untouched. The raidmimic hosts drop the query, so it is read on the web host:
+  https://b.wolfpack.quest/raidmimic?v=b. Sign-in itself is the open path in Identity & auth above. Test: `test/raidmimic-landing.test.js`.
+- **A raid session leaves out fights none of its raids took part in (web 2.1.76, 2026-10-30; DECISIONS §477).** `outsideRaids` in
+  `web/lib/sessionGroups.ts`: in the whole-window view a fight is left out when the window has at least one raid, the recorder
+  wrote that minute (or one either side), and none of the fight's damage dealers were in any raid then. No parse rows, or an
+  unrecorded minute, keeps the fight. `web/lib/raidSessionLoad.ts` applies it to the whole-window review only; `&group=` keeps
+  `groupOfFight`; the share page takes no groups and is unchanged. A two-person raid never becomes a group (`MIN_GROUP` = 6),
+  the same line bot 4.0.34 draws for raid chat. Open: the Storms raid carried four raid stamps at once (`utils/raidTrack.js`).
+  Test: `test/session-groups.test.js`.
 - **My wishlist (`/me/wishlist`, web 2.1.51 `[beta]`; DRAFT).** The signed-in member's characters (`ownedCharacters`, main first) each with their
   list: item name, priority, the owner's own pre-bid (bot `list` op), Change pre-bid and Remove through the shared control
   (`web/components/WishlistControls.tsx`, `characters=[name]`). Above them `WishlistSearch.tsx`: the `searchItems` server action

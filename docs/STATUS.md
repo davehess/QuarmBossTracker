@@ -103,6 +103,91 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⚠ Needs the guild lead — send the PQ Companion note (2026-10-31, §487).** PQ Companion has no licence and no plugin API, so "their
+  client plus our platform" needs the author first (`docs/DESIGN-raidmimic-hosted.md` §8b). The note asks the author (a third party)
+  about a licence for their client code or an upload hook. The draft is in the session scratchpad and is sent by the guild lead; it is
+  not committed (the repo names no one). Mimic absorbs maps and tradeskills on its own meanwhile (option B).
+- **⚠ Needs the guild lead — the Stripe account (2026-10-31, §495).** Billing is monthly only ($25 a guild, first month free, one-click
+  cancel, `pause_collection` after 30 days with no raid upload, individuals free). Nothing is built: it needs a Stripe account, Payment
+  Links / Billing for the one monthly price, and then a session builds the webhook that sets `hub_guilds.plan` and the pause state.
+  Stripe Tax only if a state makes it a question. Step 6 of the hosted order of work (`docs/DESIGN-raidmimic-hosted.md` §7j).
+- **⚠ Needs the guild lead — hand the OpenDKP ask to the OpenDKP owner (2026-10-31, §485).** The audit-cursor ask
+  (`docs/DESIGN-opendkp-audit-cursor.md`, status line refreshed 2026-10-31) is reframed for many guilds behind one client. It is a page
+  the guild lead hands over; the repo carries no contact detail. Its traffic figures must be re-measured on the day it is sent (the doc's
+  own warning). Unblocks other guilds' DKP (order of work step 8).
+- **⚠ Needs a local session (or the guild lead) — Tower: the nightly merge writes the archive watermark, and `claude_ro` gets a policy (2026-10-31, §494).**
+  The threat-snapshot sweep is gated, not broken: it deletes only rows Tower holds, and `bot_kv.archive_watermark_threat_snapshots` was
+  set by hand on 2026-09-23 and never refreshed, so 441,790 rows past retention were held back. A cloud session reached Tower through the
+  tailnet, found the nightly merge had run every night since 2026-09-23 with no gap and its row count equal to Supabase's
+  (1,494,269), and moved the watermark to 2026-10-24. Two jobs remain, neither a repo change: (1) the nightly merge on Tower writes
+  the watermark itself (`max(snapshot_at)` minus 1 day) in `scripts/lib/archive-merge.sql`'s run, so it never goes stale; (2) a
+  Tower-side policy so `claude_ro` can count `encounter_threat_snapshots` (RLS with no policy today), making the next check direct.
+  `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
+  nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
+
+- **🧪 raidmimic.com landing `?v=b`: sign in first (web beta `c10bf0eb`, no version bump, 2026-10-31; DECISIONS §492 pick A).** The front
+  door as picked: pitch and story video on the left, a sign-in card on the right (Discord, identify only, goes to `/guilds`, a guest-code
+  link), three doors under it (raider in a hosted guild, officer starting one, solo player), today's page below the fold. The default
+  render is untouched. Preview: https://b.wolfpack.quest/raidmimic?v=b (the raidmimic hosts drop the query). Sign-in completes on the
+  raidmimic hosts since web 2.1.79 (below). Awaiting the guild lead's yes to promote. Test: `test/raidmimic-landing.test.js`.
+- **🧪 Token layers: one colour set under the site, the overlays and the dashboard (web beta `99f5092c`, Mimic beta `aeaceec5`, agent 4.0.50 beta; 2026-10-31; DECISIONS §488 pick C; `docs/DESIGN-theming.md` §7 steps 1 to 3).**
+  Nothing changes on screen, by proof: the site's built CSS diffs equal; 13 overlay stand-in screenshots are 0 px apart; 15 dashboard tabs
+  render byte-identical PNGs. `web/app/tokens.css` + the Tailwind mapping, `apps/mimic/theme.css` (25 windows; `command.html` deliberately
+  not linked), dashboard `:root` `--wp-*` tokens. Three shrink-only ratchets (`test/theme-tokens.test.js` 1,025 raw hex; `test/mimic-theme-tokens.test.js`
+  3,138 to 2,164; `test/dashboard-theme-tokens.test.js` 549 to 422). Agent 4.0.50 shipped the dashboard layer; Mimic stays parked; web carries
+  no version bump on beta (§482). Graduates to `main` with the guild lead's word; the guild theme below is inert until it does.
+- **🧪 `/me?v=b`, the guided hub: the main first, then the account, then every page that is theirs (web beta `25339fa6` + `56d4e16f`, no version bump, 2026-10-31; DECISIONS §481, §483).**
+  The guild lead: "main page should be everything about the main, then account and links to all of their stuff", and on the preview "highest
+  damage, best fights, latest loot and dkp total, raids I was in and a link to that raid replay with me highlighted … spot to upload your
+  files". The shell paints at once; each block streams in. "Your main" has Last upload, best fights, loot + DKP spent (no balance: the web has no
+  OpenDKP standings mirror), raids with "Replay with you highlighted", and the upload controls. On the beta build a sign-in from the home page
+  lands here. Preview: https://b.wolfpack.quest/me?v=b. Tests `test/me-hub.test.js`, `test/landing-after-sign-in.test.js`. Awaiting the pick
+  (Decision Desk card, hub promote).
+- **🧪 Gear page: automatic sets and try-on (web beta `e16913ab`, no version bump, owner only, 2026-10-31; DECISIONS §480, C then A).** Three
+  cards from what the character owns (most mitigation, most damage or mana/focus, best resists) compared with what is worn, and a try-on
+  that swaps any slot and shows the change. Preview: https://b.wolfpack.quest/character/<name>/gear (signed in, your own character).
+  `test/gear-sets.test.js`. Option B (saved sets from the most often captured combinations) waits on the worn-set history below having
+  data; nothing reads that table yet. Awaiting the pick (Decision Desk card, gear sets promote).
+- **✅ Guild theme: the `guild_theme` row, the variables on `<html>`, `/admin/theme` (web 2.1.80, `main`, `[beta]` page, 2026-10-31; DECISIONS §488; migration `20261031170000_guild_theme.sql` applied).**
+  The guild lead: "theming is very important to guilds and it should be a part of our designer". Officers set the slots, font, logo and
+  Discord embed colour at https://wolfpack.quest/admin/theme with a live preview; the meanings red/green/gold/orange are never themable and
+  a 3:1 text-contrast floor is enforced. A guild on the defaults emits nothing. **Inert on `main` until the site token layer (beta) graduates**;
+  `utils/theme.js` `embedColor()` exists but no Discord call site uses it yet. Next in `docs/DESIGN-theming.md` §7: the designer surfaces
+  (Canvas builder, UI Studio, Overlays tab, the colour scheme) read the same row. Test `test/guild-theme.test.js`.
+- **✅ raidmimic.com signs anyone in; `/guilds` (web 2.1.79, `main`, `[beta]` page, 2026-10-31; DECISIONS §485, §492; migration `20261031150000_hub_registry_discord_guild.sql` and the `hub_*` registry `20261023160000` both applied).**
+  Identify-only Discord sign-in on the raidmimic hosts (no guild or role gate, lockout check, `hub_players` upsert, redirect to `/guilds`),
+  with wolfpack.quest's gated path unchanged byte for byte; the middleware exempts `/auth/*` and `/guilds` from the landing rewrite. The
+  new page https://wolfpack.quest/guilds shows one card per guild the player is in, join by invite code, "Find my guilds" (a second
+  consent; only matched ids stored, no token kept) and a "Start a guild" stub. Supabase redirect entries for `raidmimic.com`,
+  `www.raidmimic.com` and `*.raidmimic.com` were added by the guild lead 2026-10-31. Test `test/raidmimic-signin.test.js` (115). Not built yet:
+  Mimic choosing a guild (§475), the guild-start flow, invite-code minting for officers. Drops `[beta]` when the guild lead says so.
+- **✅ Worn-set history: which gear each character is captured wearing (bot 4.0.39, `main`, 2026-10-31; migration `20261031130000_character_worn_sets.sql` applied; DECISIONS §480 option B).**
+  Table `character_worn_sets` (one row per character, source and set hash, with `times_seen`; service role only), written by
+  `utils/wornSets.js` after every real gear/inventory write and on an unchanged skip (at most one count an hour). Excluded characters
+  record nothing. Starts empty: the saved-sets view on the gear page needs a few weeks of uploads. Test `test/worn-sets.test.js`.
+- **✅ "Last upload" on the gear, inventory and spells pages (bot 4.0.38 + web 2.1.78, `main`, 2026-10-31; migration `20261031120000_character_upload_checked_at.sql` applied; DECISIONS §480).**
+  The guild lead: "add last upload timestamp for spells, inventory, gear". Every accepted upload, the unchanged-checksum skip
+  included, now stamps `characters.*_checked_at`; a real change stamps `*_synced_at`. The pages show "Last upload: Gear · Inventory · Spells"
+  with the exact times on hover; the gear page shows the inventory and spells times only to a viewer those pages would admit. Tests
+  `test/upload-freshness.test.js`. The `/me?v=b` hub shows the same line.
+- **✅ Only the newest 3 Mimic betas keep a GitHub release; the download links open `/releases/latest` (CI on `main`, web 2.1.77; 2026-10-30; DECISIONS §479).**
+  The guild lead: "our releases don't show the latest stable at all on the GitHub releases page, it's just all of the betas". Pick A + B.
+  `.github/workflows/prune-beta-releases.yml` (and a `prune-betas` job after every beta build) keeps the newest 3 `-beta.N` releases and
+  never deletes a tag, a stable, `mimic-alpha`, a Linux build or a draft. Cost: a tester several builds behind downloads in full.
+  Also on `beta`, which carries the workflow by the sync.
+- **✅ A raid session leaves out fights none of its raids took part in (web 2.1.76, `main`, 2026-10-30; DECISIONS §477).** The guild lead, on the
+  12:34Z to 17:43Z session: the other group's Plane of Growth minis and Lord of Ire "shouldn't be" in it. `outsideRaids` in
+  `web/lib/sessionGroups.ts`; applies to the whole-window review only. A two-person raid still gets no session of its own (below the six-raider
+  minimum; the knob if the guild lead wants small raids listed, Decision Desk card). Open: the Storms raid carried four raid stamps at once
+  (four leader keys over the same crew), so the raid bar shows several "raids" for one; read `utils/raidTrack.js` against a raid-roster
+  capture before changing the merge rule. Test `test/session-groups.test.js`.
+- **✅ Fights against comma-named bosses are saved again (bot 4.0.37, `main`, 2026-10-30; DECISIONS §477 item 4).** Falto, Lord of Thunder was
+  missing from the raid for a different reason than the above: the comma broke the bot's catalog lookup (PostgREST `or=()` unquoted), so
+  every first fight against a comma-named boss was dropped unsaved (Falto, the real Jeplak, Ston`Ruak). Quoted now; the real Jeplak wins over
+  the fake one that shares its name; Falto, Jeplak, Ston`Ruak and Drornok join the Plane of Storms named list. The Falto and Jeplak fights
+  from that raid were dropped before the fix and appear only if an uploader re-sends that window from their log. Tests
+  `test/boss-persist-keys.test.js`. (Target Info's own comma fix is bot 4.0.33, below.)
+
 - **🧪 Guests in the Command Center: +1h / +3h for officers, and a page to review their fights (bot 4.0.36 + web, agent 4.0.48 beta; `draft/guest-cc-main`
   + `draft/guest-cc-beta`; 2026-10-30; first draft, not pushed; no migration).** The guild lead: "add guests to the command center for officers/admins with
   an extend button for +1/+3. we should be able to review their data and contributions after the fact". Bot: officer-only `GET /api/agent/guest-links`
