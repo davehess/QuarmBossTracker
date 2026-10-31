@@ -296,3 +296,113 @@ Raid-Helper, and the DKP push. Both are small once the guild seam exists; neithe
 7. Parser as a library, log upload, PQ Companion reader (7d). Unblocks: raiders without Mimic.
 8. OpenDKP per-guild keys and the audit cursor (7h). Unblocks: other guilds' DKP.
 9. Anonymized server stats (7f) and the raid flow's two missing joints (7i).
+
+## 8. Self-hosted instances, PQ Companion, the /who directory, and the per-user bound (2026-10-31)
+
+The guild lead, after picking §7's A/A: *"help people with their installs, see what a merger with pqcompanion would look like
+client wise … how could hosted instances work with our instance? … could we take a who inventory and gate who observations by
+guild that has observed? unique rows per name … what would be a good one time fee or monthly per user fee? … we need to bound
+how much data we store per user."* DECISIONS §485–§486.
+
+### 8a. Federation: a self-hosted guild and the hub
+
+A guild that runs its own bot and database (the self-host wizard) joins the shared record with **two routes and one key**:
+- **Instance key.** The hub mints one per registered instance (`Bearer wpi_…`, stored hashed, revocable). Nothing else the
+  instance holds (its service key, its Discord ids) ever reaches the hub.
+- **Outbound, after every recorded fight:** `POST hub/api/federation/fight` with the §7c key material (`server, zone_id,
+  npc_id, spawn_id, started_at, ended_at, confirmed_kill`), the totals, a per-player rollup under class aliases
+  (`<Class>-<4hex>`), the per-player submitter vector §7e needs, and a **roster hash** per raider (`hmac(instance_salt,
+  lower(name))`) that exists only so the shared-raider merge test can run without names. Idempotent on `(instance, fight_key)`,
+  queued through the same durable queue shape the agent uses. The hub resolves it to a `fight_id` with its own
+  `find_or_create_fight`; instances never allocate ids.
+- **Inbound, on demand:** `GET hub/api/federation/fight/<key>` returns the merged summary for a fight **this instance
+  published**, with other guilds' contributions labelled by guild alias where they opted in. Loot and rolls are never merged
+  server-side; the instance shows its own beside the hub's.
+- **Never leaves the instance:** DKP, wishlists, bids, signups, reserves, triggers, roster, chat, tells, `/who`, PvP, raw
+  threat snapshots, inventories, names (unless the guild opts into named publishing). This is the 2026-09-18 tenancy rule
+  with §7c's one exception.
+- What already looks like this: the agent's encounter upload (structured fight in, bearer out), guest sessions (a parse and
+  nothing else), `/share/raid/<token>` (token-scoped read of one window), the one-way eqemu mirror. `utils/openHub.js` is the
+  dormant gate; the directory and the `latest-version` redirect in `DESIGN-open-hub.md` §0/§8 are unbuilt.
+
+### 8b. PQ Companion: what a merger would look like, and why B first
+
+PQ Companion (jasonsoprovich/pq-companion) is a Go backend + Electron/React client with three bundled SQLite files, a GINA /
+EQNag / EQLogParser trigger engine (RE2 regex, so ~95 of 583 GINA patterns import disabled), spell timers, a combat parser with
+DPS/HPS/threat overlays, live maps from client files with Zeal position, a local item/spell/NPC explorer, tradeskills, and since
+our August review: PoP flags, a charm-pet finder, an upgrade finder, bandolier/macros and config backup. v0.31.1 on 2026-10-28,
+about a minor version a week; **no licence file** (all rights reserved; "free and always will be"); **no plugin API** beyond
+trigger-pack import/export and the Zeal pipe; no guild layer of any kind. Everything we have that it lacks is the platform
+side: the shared raid record and merged parses, the session/replay, guild triggers, the tracker and attendance, PoP flags and
+lockouts as a guild view, loot/DKP/wishlists, the website; plus the client pieces that depend on a platform feed (buff queue,
+cross-client Target Info, Command Center) and the ones that do not (Canvas, charm/pet/CH chain, UI Studio).
+
+| Shape | What it is | Build / maintain / runtime / change | Verdict |
+|---|---|---|---|
+| **A — PQC stays the client, gains "upload to Raid Mimic"** | our parser as a library inside their app, or an upload hook they add | high and author-dependent / high (their weekly cadence) / two apps unless they embed us / very high (their roadmap) | only with the author; no licence or plugin seam exists |
+| **B — Mimic stays the client, absorbs what we may** | trigger packs (done), maps re-implemented from the `.txt` packs (~280 lines), tradeskills from server formulas; never their code | moderate (maps) / ours / unchanged / low | **do now** |
+| **C — one merged client, one name** | joint project with shared governance and a licence | highest (Go/RE2 vs our JS agent) / shared / lighter if one app / hardest | only after A's conversation |
+
+"Our platform plus their client plus features only we had" is shape A: a PQC user keeps their overlays and gains the shared
+parses, the website, guild triggers and loot/DKP, and does not get Mimic's overlays (the client half is theirs). It is a
+conversation before it is a build: a short note to the author asking about a licence or an upload hook costs nothing and is
+what makes A or C possible. Until then, B.
+
+**Helping people with their installs.** Exists: the setup walkthrough, "Set up for me" (the EQ-config writer), Zeal detection
+with the three documented failure signatures (ENOENT / EPERM compat mode / instant close), the 🩺 Diagnostics tab with crash
+review, and the officer-side network diagnostic zip (carries LAN IPs; never public). The hosted path adds three things: a
+**Send diagnostics** button that uploads a redacted bundle under a ticket id (replacing the zip), an **officer install-health
+view** per member (agent version, Zeal state, EQ folder, last upload, last error; member consent per the tenancy rule), and a
+**Fix it for me** button that runs the existing `_applyEqSetup()` and re-checks, refusing while EQ is running. `doctor` in §4 is
+the self-host twin of the same checks.
+
+### 8c. The /who directory: one row per name, read only by guilds that saw the name
+
+Measured 2026-10-31: `who_observations` holds **260,984 sightings of 13,986 names** from 197 observers since 2023-11, 180 MB.
+2,971 names have more than one level on record, 188 more than one guild; 71 rows carry a Zek inference. The per-name view
+(`who_directory`) already exists but recomputes five DISTINCT-ON passes over the whole table (the 1.3 s lookup RPC was added
+to dodge it). The shape:
+- **`who_directory` becomes a table**, primary key `(server, name_key)`: `name, level, max_level, race, class, guild_name,
+  guild_rank, zone, zone_seen, anonymous, gm, first_seen, last_seen, obs_count, ever_zek_guild, ever_inferred_zek`. Upsert,
+  newest non-null wins per field. ~14k rows today, **about 5 MB**; it replaces the view and the RPC.
+- **`who_seen_by (server, name_key, guild_id, last_seen)`**: a guild reads a name only if it has observed it itself
+  (`exists (select 1 from who_seen_by where guild_id = mine and name_key = …)` as the RLS predicate). Nothing about *who else*
+  saw the name leaks. This softens the 2026-09-18 "no ingestion of other tenants' /who" rule into "contribute to read"; the
+  sensitive fields (`guild_rank`, `anonymous`) and alt links stay out of it.
+- **A thin `who_sightings` history** for the readers that need time: PvP proximity (±3 min zone co-occurrence), kill context,
+  `pop_who_sightings`, attendance reconstruction (±15 min), level-over-time. Written only on a change of zone, guild or level,
+  or at most once per name per zone per 10 minutes; 60-day retention (today's window). Estimated 20–40 MB in place of 180.
+
+### 8d. The per-user bound, and what to charge
+
+What a person's data is, measured: inventory ~75 KB a character (18 MB over 243 characters), spellbook ~25 KB, gear ~13 KB,
+AAs small, live state one row. Those are snapshot-replace and bounded by slot and spell counts. The unbounded ones:
+`ui_snapshots` (up to 8 MB each, ~0.6 MB typical, **no cap**), `tells` (opt-in, no sweep), `faction_hits` (no sweep),
+`character_worn_sets` (new, no cap), `character_lockouts` (never swept past expiry), `xp_events` (30-day sweep). Fight data is
+the guild's record, not the person's: ~0.2 MB a raid night per uploader durable, ~1.1 MB a night in the threat feed.
+
+The quota table (per character unless said):
+
+| Item | Free / self-hosted commons | Personal | Guild ($25/mo) |
+|---|---|---|---|
+| Inventory, gear, spellbook, AAs | latest, on the PC | latest, 3 characters | latest, every character |
+| Worn sets | 5 | 10 | 25 |
+| UI backups | 3, 2 MB each | 5 | 10 |
+| Personal trigger pushes | 5 | 10 | 20 |
+| Tells | off (PC only) | 30 days / 5k | 90 days / 20k |
+| XP events | 7 days | 30 days | 30 days |
+| Faction hits | 30 days | 90 days | 1 year |
+| Lockouts | to expiry + 7 days | same | same |
+| Raw fight data (threat feed) | none | 7 days | 30 days (+$5 for a year, §385) |
+
+With those caps a person's cloud footprint is **under 15 MB plus ~3 MB a month of fight rows**, which costs under a cent a month
+to store; the real per-user cost is egress from their reads (§385's `/poll` compression). So the price is not a storage price.
+**A one-time fee only fits a bounded thing**: the app is free (AGPL), and cloud storage recurs, so a one-time "personal" fee
+would be a lifetime liability unless the quota is small and fixed. Options, costed:
+- **A — Guild flat $25/mo (§385, decided), plus a Personal tier at $2/mo or $15/yr** for raiders with no hosted guild: the
+  Personal column above. Revenue scales with guilds, which is where the cost is; the personal tier covers the guest and the
+  solo player. *(Recommended.)*
+- **B — Per-user $1/mo billed to the guild**: $40–60 a guild at raid size, more than §385's number, and every roster change is a
+  billing event. Simple to explain, awkward to run.
+- **C — One-time $20 Personal (lifetime, fixed quota) + Guild flat $25/mo**: works only because the Personal quota is bounded;
+  no recurring personal revenue, so the guild fee carries everything.
