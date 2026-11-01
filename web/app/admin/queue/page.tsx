@@ -3,9 +3,10 @@
 // + a "fix it" link to the page where the officer action lives.
 
 import Link from 'next/link';
-import MoreInfo, { FoldText } from '@/components/MoreInfo';
+import MoreInfo from '@/components/MoreInfo';
 
-import { loadAdminQueue, type QueueCategory } from '@/lib/admin-queue';
+import { loadAdminQueue, type QueueCategory, type QueueItem } from '@/lib/admin-queue';
+import { splitTop } from '@/lib/adminQueueData';
 import { requireOfficer } from '@/lib/officer';
 
 export const metadata = {
@@ -24,7 +25,41 @@ function fmtAgo(iso: string | null): string {
   return `${Math.round(m / 1440)}d ago`;
 }
 
+function Rows({ items, from }: { items: QueueItem[]; from: number }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <tbody>
+          {items.map((it, i) => (
+            <tr key={it.key} className="border-b border-border/30 hover:bg-[#1a212c] align-top">
+              <td className="py-1 pr-2 text-dim w-8">{from + i + 1}</td>
+              <td className="py-1 pr-2 text-text">{it.label}</td>
+              <td className="py-1 pr-2 text-dim text-xs">
+                {it.detail ?? '—'}
+                {it.lines && it.lines.length > 0 && (
+                  <ul className="mt-1 space-y-0.5 text-[11px] text-dim/80">
+                    {it.lines.map((ln, j) => <li key={j}>· {ln}</li>)}
+                  </ul>
+                )}
+              </td>
+              <td className="py-1 pr-2 text-right text-dim text-xs whitespace-nowrap">{fmtAgo(it.last ?? null)}</td>
+              <td className="py-1 pr-2 text-right">
+                {it.href ? (
+                  <Link href={it.href} className="text-blue hover:underline text-xs">fix →</Link>
+                ) : (
+                  <span className="text-dim text-xs">—</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Section({ cat }: { cat: QueueCategory }) {
+  const { shown, rest } = splitTop(cat.items);
   return (
     <section className="bg-panel border border-border rounded-lg p-4">
       <div className="flex items-baseline gap-3">
@@ -39,47 +74,20 @@ function Section({ cat }: { cat: QueueCategory }) {
           </Link>
         )}
       </div>
-      <div className="mt-1"><FoldText text={cat.summary} className="text-sm text-dim" /></div>
+      <p className="mt-1 text-sm text-dim">{cat.blurb}</p>
+      <MoreInfo summary="What is this?"><p className="text-sm text-dim mt-1">{cat.summary}</p></MoreInfo>
 
       {cat.count === 0 ? (
         <div className="mt-3 text-sm text-dim italic">Nothing to review in this category.</div>
       ) : (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-dim text-left">
-              <tr className="border-b border-border">
-                <th className="py-1 pr-2 w-8">#</th>
-                <th className="py-1 pr-2">Name</th>
-                <th className="py-1 pr-2">Detail</th>
-                <th className="py-1 pr-2 text-right">Last seen</th>
-                <th className="py-1 pr-2 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cat.items.map((it, i) => (
-                <tr key={it.key} className="border-b border-border/30 hover:bg-[#1a212c] align-top">
-                  <td className="py-1 pr-2 text-dim">{i + 1}</td>
-                  <td className="py-1 pr-2 text-text">{it.label}</td>
-                  <td className="py-1 pr-2 text-dim text-xs">
-                    {it.detail ?? '—'}
-                    {it.lines && it.lines.length > 0 && (
-                      <ul className="mt-1 space-y-0.5 text-[11px] text-dim/80">
-                        {it.lines.map((ln, j) => <li key={j}>· {ln}</li>)}
-                      </ul>
-                    )}
-                  </td>
-                  <td className="py-1 pr-2 text-right text-dim text-xs whitespace-nowrap">{fmtAgo(it.last ?? null)}</td>
-                  <td className="py-1 pr-2 text-right">
-                    {it.href ? (
-                      <Link href={it.href} className="text-blue hover:underline text-xs">fix →</Link>
-                    ) : (
-                      <span className="text-dim text-xs">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mt-3">
+          <Rows items={shown} from={0} />
+          {rest.length > 0 && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-xs text-blue hover:underline">Show all {cat.count}</summary>
+              <Rows items={rest} from={shown.length} />
+            </details>
+          )}
         </div>
       )}
     </section>
@@ -100,11 +108,12 @@ export default async function AdminQueuePage() {
           </span>
           <Link href="/admin" className="ml-auto text-blue text-sm hover:underline">← back to admin</Link>
         </div>
-        <p className="text-sm text-dim mt-2">
-          Cross-checks the roster, /who, and chat history for gaps that affect downstream
-          features (attendance, in-game chat display, leaderboards).
-        </p>
-        <MoreInfo>
+        <MoreInfo summary="More info">
+          <p className="text-sm text-dim mt-1">
+            Cross-checks the roster, /who, and chat history for gaps that affect downstream
+            features (attendance, in-game chat display, leaderboards). Guild members only
+            (Pack Member+ on Discord, or Raid Pack+ in OpenDKP); each section shows its top 10.
+          </p>
           <p className="text-sm text-dim mt-1">
             Categories live in{' '}
             <code className="bg-bg px-1 rounded">web/lib/admin-queue.ts</code> — add a loader function
