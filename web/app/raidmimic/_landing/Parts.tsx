@@ -2,7 +2,8 @@
 // Every sentence comes from web/lib/raidmimicLanding.ts; this file only decides how a block LOOKS. Server components, no client JS.
 // (The rest of the old "Pick your path" page's pieces, the small-print accordions, the captures gallery and the status chips,
 // went with that page when the story stage became the default.)
-import { CTA, FAN_PROJECT_LINE, PRIVACY_URL, REPO_URL, RIGHTS_NOTICE, EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
+import LegalLinks from '@/components/LegalLinks';
+import { CTA, FAN_PROJECT_LINE, REPO_URL, RIGHTS_NOTICE, EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
 
 /** Links that differ between the raidmimic host and the Wolf Pack hosts (where /feedback is a different page). */
 export interface Ctx {
@@ -34,7 +35,7 @@ export function CtaBand({ ctx }: { ctx: Ctx }) {
 }
 
 // ─── Footer ─────────────────────────────────────────────────────────────────────────────────────────
-export function Footer() {
+export function Footer({ onHost = false }: { onHost?: boolean }) {
   return (
     <footer className="mt-12 border-t border-border pt-4">
       <aside role="note" aria-label="Rights notice" className="mb-4 rounded-md border border-gold/70 bg-panel p-4">
@@ -47,7 +48,7 @@ export function Footer() {
       </aside>
       <p className="text-xs leading-6 text-dim">
         <a href={REPO_URL} {...EXT}>Source code</a> <span aria-hidden>&middot;</span>{' '}
-        <a href={PRIVACY_URL} {...EXT}>Privacy</a> <span aria-hidden>&middot;</span>{' '}
+        <LegalLinks onHost={onHost} /> <span aria-hidden>&middot;</span>{' '}
         <a href={EQMIMIC_ORIGIN} {...EXT}>The free player tool</a> <span aria-hidden>&middot;</span>{' '}
         Licensed AGPL-3.0-or-later.
       </p>

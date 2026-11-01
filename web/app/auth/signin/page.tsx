@@ -4,6 +4,7 @@
 import { headers } from 'next/headers';
 import SignInButton from '@/components/SignInButton';
 import PasswordSignIn from '@/components/PasswordSignIn';
+import AgreeLine from '@/components/AgreeLine';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 
 export const metadata = {
@@ -31,6 +32,7 @@ export default function SignInPage({
             Sign in with Discord to see your guilds, join one with an invite code, or start your own.
           </p>
           <SignInButton next={next} />
+          <AgreeLine onHost />
           {error && <p className="text-red text-xs mt-4">{error}</p>}
         </section>
         <p className="text-xs text-dim text-center">
@@ -49,6 +51,7 @@ export default function SignInPage({
           Discord account you use in our server.
         </p>
         <SignInButton next={next} />
+        <AgreeLine onHost={false} privacy="/privacy" />
         {error && (
           <p className="text-red text-xs mt-4">
             {error}

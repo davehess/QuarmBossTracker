@@ -182,6 +182,8 @@ const StoryVideo = forwardRef<StoryVideoHandle, Props>(function StoryVideo(
           <button type="button" onClick={() => setCc(!cc)} aria-pressed={cc} className={QUIET_BTN}>CC</button>
         </span>
         {children}
+        {/* "Animated with AI tools": a quiet label, not a button (the guild lead's checklist: label AI-generated content). */}
+        <span data-story-ai className="px-2 text-xs text-[#f2ede1]/60">{W.aiLabel}</span>
       </div>
     </>
   );

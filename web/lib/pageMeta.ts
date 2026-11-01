@@ -21,6 +21,7 @@
 
 import { guildByCode } from './zealIcons';
 import { statusWords, parseRefParam } from './feedbackReport';
+import { LEGAL_META } from './legal';
 
 export const SITE_NAME = 'WolfPack.quest';
 export const DEFAULT_DESCRIPTION =
@@ -70,6 +71,11 @@ const STATIC_META: Record<string, PageMeta> = {
   '/raidmimic':    { title: 'Raid Mimic · free EverQuest raid overlays', description: 'Free, open-source overlays for your EverQuest raids, built from the log the game already writes: run it on your own, or add a guild hub for shared raid reviews, merged parses and a command center.' },
   '/raidmimic/register': { title: '[beta] Register your guild', description: 'Tell us about your raid guild: its game, size, raid nights and DKP tool. No sign-in and no account, just a way to count your guild in for Raid Mimic.' },
   '/raidmimic/setup': { title: '[beta] Set up Raid Mimic', description: 'A step-by-step guide to setting up Mimic on your own PC for EverQuest on Project Quarm, with no guild needed: what you need, what works on your own, and how to join a raid.' },
+  // The pre-launch legal pages (2026-11-01). Their words live in lib/legal.ts so the tab and the card cannot disagree.
+  '/raidmimic/privacy': { ...LEGAL_META.privacy },
+  '/raidmimic/terms':   { ...LEGAL_META.terms },
+  '/raidmimic/refunds': { ...LEGAL_META.refunds },
+  '/terms':        { ...LEGAL_META.terms },
   '/guilds':       { title: '[beta] Your guilds', description: 'The guilds you are in on Raid Mimic, with a way to join one by invite code, find the ones you already belong to, or start your own.' },
   '/guilds/new':   { title: '[beta] Start a guild', description: 'Start a guild on Raid Mimic: name it, pick its address and optionally link its Discord server, then invite your raiders with codes.' },
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },
