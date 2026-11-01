@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.46': [
+    'Mimic\'s Map learns which mobs split when they die, and when slow mode is on, so Planes of Power respawns can show 18 hours.',
+  ],
   '4.0.45': [
     'Mimic beta can back up your UI each time you camp; the site keeps the newest five of those per character and computer.',
   ],

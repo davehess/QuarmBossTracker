@@ -169,6 +169,13 @@ next touch one rather than assuming a missing row means a missing doc.
   `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
   nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
 
+- **🧪 Map: slow mode 18 h in Planes of Power, and mobs that split (bot 4.0.46 `main`, agent 4.0.52 beta `cc2fbeb6` + Mimic map, 2026-11-01,
+  §511, FB-114).** Inside the bot's slow-mode window a kill on a Planes of Power spawn point gets an 18-hour Map timer (🐢), judged by
+  the kill's time; GET `/api/agent/slow-mode` serves the window, zone-spawns flags `slow_zone`. Mobs that split on death are read
+  from the server's death scripts (`utils/splitSpawns.js`, 97 of 144 sampled death scripts split) and carried as `splits` on the
+  NPC row with a `splits` badge; the Map shows them. Open: which mobs the guild lead saw split (none of Tactics, Tranquility or
+  Valor's scripts split on death); whether slow mode should spare raid targets (the server change it likely rides says so).
+  Tests: `test/split-spawns.test.js`, `test/slow-mode-map-route.test.js`, `test/spawn-map.test.js` (slow mode).
 - **🧪 UI Studio: compare before restoring, Keep in sync, This PC (Mimic beta `d494250d` + bot 4.0.45, 2026-11-01, §510).**
   Settings → UI Studio → 🔄 Backups → ↩ Restore now opens a comparison instead of writing everything: seven parts (window layout,
   hotkeys, socials, spell sets, keybinds, Zeal options, other character settings), what differs in each, Keep mine / Backup, and a

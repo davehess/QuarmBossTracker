@@ -3058,6 +3058,15 @@ the website has not cached the zone). Six-hour per-zone cache, weak ETag over th
 budget kind `zone_spawns` (30/min, GET, not sheddable). Instance sentinel respawn (1,700,000 s)
 reads `respawn_s: null`. Consumer: the Mimic overlay (`docs/DESIGN-mimic-2.9-spawn-map.md`).
 
+### Mobs that split, and slow mode, on the Map (zone-spawns) — 2026-11-01 (§511)
+Bot `utils/splitSpawns.js` (called from `zoneSpawns.build` beside the traps, never throws): reads the zone's death scripts from
+`eqemu_quest_scripts` (`event_death` / `event_death_complete`), counts `eq.spawn2` / `eq.unique_spawn` calls placed at the dead
+mob's own GetX/GetY (fixed coordinates are not splits; loops and `math.random` give min..max; unreadable = max null), names
+what spawns from `eqemu_npc_types`, plus `data/split-overrides.json` (Vallon Zek's 50% HP split). The NPC row gets
+`splits: { into: [{ name, min, max, unique? }], at?, note? }` and a `splits` badge (not for `unique` placeholder → named). The
+zone body carries `slow_zone: true` for Planes of Power (`eqemu_zone.expansion` 4); GET `/api/agent/slow-mode` serves the bot's
+window; the agent's `_mapMakeTimer` gives such a kill inside the window 18 h (`_mapSlowOnAt`, `_mapSlowRefresh`), marked 🐢.
+
 ### Traps on the Map (`traps` in the zone-spawns body) — 2026-10-23 (draft)
 Bot `utils/trapSpawns.js` (called from `zoneSpawns.build`, never throws): `point.trap` = the helper NPC id of a **trap spot**, and
 `traps.defs[<id>]` = `{ k, grp, ch, r, title, text }`. A spot is a body-type 65/66/67 helper that is a key of the zone's

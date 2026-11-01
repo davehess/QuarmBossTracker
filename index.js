@@ -25682,6 +25682,15 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  // The slow-mode window, for Mimic's Map timers (FB-114: a Planes of Power kill inside it respawns in 18 hours).
+  // Our guild's flag: a session of another guild on Raid Mimic never reaches here (mimicLink's hub route allowlist).
+  if (req.method === 'GET' && req.url === '/api/agent/slow-mode') {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+    const f = require('./utils/slowMode').getSlowMode();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify(f ? { on: !!f.on, set_at: f.set_at || null, auto_off_at: f.auto_off_at || null, off_at: f.off_at || null } : { on: false }));
+  }
   // Bastion of Thunder slow mode starting/ending, as heard by an agent (utils/slowMode.js)
   if (req.method === 'POST' && req.url === '/api/agent/slow-mode') {
     if (await _overBudget('slow_mode', req, res)) return;
