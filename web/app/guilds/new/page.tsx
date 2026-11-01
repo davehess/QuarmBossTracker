@@ -7,7 +7,7 @@ import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
-import { EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
+import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
 import NewPageTag from '@/components/NewPageTag';
 import NewGuildForm from './NewGuildForm';
 
@@ -26,7 +26,7 @@ export default async function NewGuildPage() {
 
   return (
     <div className="mx-auto max-w-xl px-1 py-2 pb-12">
-      <NewPageTag note="New page: start a guild and invite your raiders." href={onHost ? interestUrl(`${EQMIMIC_ORIGIN}/feedback`) : '/feedback'} />
+      <NewPageTag note="New page: start a guild and invite your raiders." href={onHost ? `${EQMIMIC_ORIGIN}/feedback` : '/feedback'} />
       <h1 className="text-2xl text-gold">Start a guild</h1>
       <p className="mt-1 text-sm text-dim">
         You become its owner. Once it exists you can make invite codes and hand them to your raiders. One guild a day per person.

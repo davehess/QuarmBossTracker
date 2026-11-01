@@ -136,6 +136,11 @@ function AdminTools() {
           href="/admin/feedback"
         />
         <Card
+          title="🐺 Guild interest"
+          body="Guilds that registered on raidmimic.com, newest first. Strangers’ text, shown as plain text."
+          href="/admin/interest"
+        />
+        <Card
           title="📋 Sign-up accuracy"
           body="Raid-Helper events vs reality (parses + /who). Find no-shows, exceeded-tentatives, and people who showed up without signing up."
           href="/admin/signups"

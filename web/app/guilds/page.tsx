@@ -20,7 +20,7 @@ import { discordIdOf } from '@/lib/lockout';
 import { GUILD_NAME, GUILD_TAG, PROD_SITE_URL } from '@/lib/guild';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { closedMatchesFor } from '@/lib/hubRegistry';
-import { EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
+import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
 import NewPageTag from '@/components/NewPageTag';
 import SignInButton from '@/components/SignInButton';
 import JoinForm from './JoinForm';
@@ -115,7 +115,7 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
 
   return (
     <div className="mx-auto max-w-3xl px-1 py-2 pb-12">
-      <NewPageTag note="New page: the guilds you are in, and how to join or start one." href={onHost ? interestUrl(`${EQMIMIC_ORIGIN}/feedback`) : '/feedback'} />
+      <NewPageTag note="New page: the guilds you are in, and how to join or start one." href={onHost ? `${EQMIMIC_ORIGIN}/feedback` : '/feedback'} />
       <h1 className="text-2xl text-gold">Your guilds</h1>
       <p className="mt-1 text-sm text-dim">Signed in with Discord. Only you can see this page.</p>
 

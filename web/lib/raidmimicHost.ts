@@ -5,11 +5,26 @@
 // the query, and the root layout drops the Wolf Pack chrome for them. One list, so the middleware, the layout
 // and the page cannot disagree about what counts as that host.
 
-export const RAIDMIMIC_HOSTS = [
+// The six hosts that are INDEXED (see "Search engines" below): the apex and www of each domain.
+export const RAIDMIMIC_INDEXED_HOSTS = [
   'raidmimic.com', 'www.raidmimic.com',
   'raidmimic.net', 'www.raidmimic.net',
   'raidmimic.quest', 'www.raidmimic.quest',
 ];
+
+// b.raidmimic.com (the guild lead, 2026-11-01: "b.raidmimic.com should also exist", like b.wolfpack.quest) is the
+// beta branch's mirror of the raidmimic hosts. A Vercel domain pinned to the `beta` git branch serves it, so it shows
+// the landing page as it stands on beta. It is a raidmimic host in every other respect (bare shell, landing rewrite,
+// sign-in paths) but is NEVER indexed.
+export const RAIDMIMIC_BETA_HOSTS = ['b.raidmimic.com'];
+
+export const RAIDMIMIC_HOSTS = [...RAIDMIMIC_INDEXED_HOSTS, ...RAIDMIMIC_BETA_HOSTS];
+
+/** `host` is the raw Host header: any case, optional :port. True for b.raidmimic.com only. */
+export function isRaidmimicBetaHost(host: string | null | undefined): boolean {
+  if (!host) return false;
+  return RAIDMIMIC_BETA_HOSTS.includes(host.toLowerCase().replace(/:\d+$/, ''));
+}
 
 // The landing page. Also reachable on wolfpack.quest/raidmimic and b.wolfpack.quest/raidmimic (the same page, not
 // indexed there; the query is dropped on the raidmimic hosts, exactly like eqmimic's).
@@ -44,10 +59,14 @@ export function isRaidmimicOpenPath(pathname: string): boolean {
 // The set-up guide for someone who is not in a guild (the guild lead, 2026-10-21): raidmimic.com/setup.
 export const RAIDMIMIC_SETUP_PATH = '/raidmimic/setup';
 
+// The interest form for a guild leader (the guild lead, 2026-11-01, option B: "a proper interest form, no sign-in"):
+// raidmimic.com/register. Served by the same rewrite as the set-up guide; the Register-interest links all point here.
+export const RAIDMIMIC_REGISTER_PATH = '/raidmimic/register';
+
 // ─── Search engines (the guild lead, 2026-10-23: "search engines on, together with the new story") ───────────────
 // raidmimic.com is the one address that is INDEXED: it, and its two sister hosts, serve the page with
 // `index, follow` and name https://raidmimic.com as the canonical address, so the sisters fold into it. The same page
-// on wolfpack.quest/raidmimic and b.wolfpack.quest/raidmimic stays `noindex, nofollow` (a duplicate of the host's page
+// on wolfpack.quest/raidmimic, b.wolfpack.quest/raidmimic and b.raidmimic.com stays `noindex, nofollow` (a duplicate of the host's page
 // must never compete with it). The Vercel preview of the beta branch is noindex too, whatever host it is reached by.
 export const RAIDMIMIC_ORIGIN = 'https://raidmimic.com';
 export const RAIDMIMIC_ROBOTS_PATH = '/raidmimic/robots.txt';     // served at /robots.txt on a raidmimic host
@@ -59,8 +78,8 @@ export interface RaidmimicSeo {
 }
 
 /** The `robots` and canonical metadata for one of the two pages. `path` is the page's address on raidmimic.com. */
-export function raidmimicSeo(host: string | null | undefined, path: '/' | '/setup'): RaidmimicSeo {
-  if (!isRaidmimicHost(host) || process.env.NEXT_PUBLIC_IS_BETA === '1') return { robots: { index: false, follow: false } };
+export function raidmimicSeo(host: string | null | undefined, path: '/' | '/setup' | '/register'): RaidmimicSeo {
+  if (!isRaidmimicHost(host) || isRaidmimicBetaHost(host) || process.env.NEXT_PUBLIC_IS_BETA === '1') return { robots: { index: false, follow: false } };
   return { robots: { index: true, follow: true }, alternates: { canonical: `${RAIDMIMIC_ORIGIN}${path}` } };
 }
 
@@ -77,15 +96,16 @@ export function isRaidmimicAsset(pathname: string): boolean {
  * Where a request on a raidmimic host is rewritten to, with every query parameter dropped so nothing a caller
  * tacked on rides further:
  *   /setup               -> the set-up guide (a trailing slash and any capitals are fine)
+ *   /register            -> the interest form
  *   /robots.txt          -> robots for these hosts (allow all, and the sitemap)
  *   /sitemap.xml         -> the two pages
  *   / , anything else    -> the landing page
- * Unlike eqmimic there is no form of its own: the "Register interest" link points at the anonymous form on
- * eqmimic.quest. `pathname` is optional so the old no-argument call still means "the landing page".
+ * `pathname` is optional so the old no-argument call still means "the landing page".
  */
 export function raidmimicLandingTarget(pathname = '/'): { pathname: string; search: string } {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, '').toLowerCase() : pathname;
   if (path === '/setup') return { pathname: RAIDMIMIC_SETUP_PATH, search: '' };
+  if (path === '/register') return { pathname: RAIDMIMIC_REGISTER_PATH, search: '' };
   if (path === '/robots.txt') return { pathname: RAIDMIMIC_ROBOTS_PATH, search: '' };
   if (path === '/sitemap.xml') return { pathname: RAIDMIMIC_SITEMAP_PATH, search: '' };
   return { pathname: RAIDMIMIC_LANDING_PATH, search: '' };
