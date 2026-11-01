@@ -108,7 +108,7 @@ describe('search engines: indexed on the raidmimic hosts, noindex everywhere els
     expect(raidmimicSeo('raidmimic.com', '/')).toEqual(noindex);
   });
   it('robots.txt allows everything and names the sitemap on the canonical host; the sitemap lists the two pages', async () => {
-    const robots = await (await (await import('../web/app/raidmimic/robots.txt/route.ts')).GET()).text();
+    const robots = await (await (await import('../web/app/raidmimic/robots.txt/route.ts')).GET(new Request('https://raidmimic.com/robots.txt', { headers: { host: 'raidmimic.com' } }))).text();
     expect(robots).toBe('User-agent: *\nAllow: /\n\nSitemap: https://raidmimic.com/sitemap.xml\n');
     expect(robots).not.toMatch(/Disallow/);
     const res = await (await import('../web/app/raidmimic/sitemap.xml/route.ts')).GET();
