@@ -563,7 +563,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, runPct, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE, inkStyle, INK_DEFAULT, aeRampageRing, trapHex, trapDefOf };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, splitText, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, runPct, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE, inkStyle, INK_DEFAULT, aeRampageRing, trapHex, trapDefOf };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -602,6 +602,16 @@ describe('the overlay (apps/mimic/map.html)', () => {
     expect(H.badgeGlyph('triple_attack')).toBe('');
     expect(H.badgeWords(['summon', 'triple_attack', 'dual_wield'])).toBe('triple attack, dual wield');
     expect(H.pointBadges(POINTS[2])).toBe('👁');
+  });
+  // The bot's `splits` (utils/splitSpawns.js; the guild lead, 2026-11-01: "some of these mobs split, we should denote it").
+  it('a mob that splits gets ⑂ on its dot and says into what in the card', () => {
+    expect(H.badgeGlyph('splits')).toBe('⑂');
+    expect(H.badgeWords(['splits'])).toBe('');
+    expect(H.splitText({ into: [{ name: 'A Phoenix Gustlet', min: 3, max: 3 }] })).toBe('⑂ splits into 3× A Phoenix Gustlet');
+    expect(H.splitText({ into: [{ name: 'an incarnate', min: 0, max: 2 }, { name: 'a ward', min: 1, max: 1 }] })).toBe('⑂ splits into up to 2× an incarnate, a ward');
+    expect(H.splitText({ at: '50% HP', into: [{ name: 'Vallon Zek', min: 1, max: 1 }, { name: 'a projection', min: 2, max: null }] })).toBe('⑂ at 50% HP splits into Vallon Zek, 2+× a projection');
+    expect(H.splitText({ into: [{ name: 'a named bat', min: 0, max: 1, unique: true }] })).toBe('on death may bring up a named bat');
+    expect(H.splitText(null)).toBe('');
   });
   it('named and raid targets are told apart; the best name is the boss, not the commonest mob', () => {
     expect(H.pointKind(POINTS[0])).toEqual({ named: false, raid: false });
