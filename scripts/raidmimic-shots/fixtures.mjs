@@ -239,27 +239,27 @@ export function targetDebuffs() {
 }
 
 // ─── The HUD, Box view (apps/mimic/me.html, /api/me) ─────────────────────────────────────────────────────────────────
-// A bard on the Bertoxxulous pull: songs rather than a gem bar of nukes, so "casts left" counts what the mana in hand pays for.
+// A cleric on the Bertoxxulous pull: heals that cost real mana, so "casts left" counts what the mana in hand pays for
+// (a bard's songs cost next to nothing, which made the old example meaningless). Spell costs are approximate.
 export function me() {
   return {
-    character: 'Vessa', class: 'Bard', level: 65,
-    hp: { cur: 9412, max: 11230 }, mana: { cur: 3610, max: 5260 }, end: { pct: 81 },
+    character: 'Odelle', class: 'Cleric', level: 65,
+    hp: { cur: 8120, max: 9460 }, mana: { cur: 2840, max: 4210 }, end: { pct: 100 },
     xp: { pct: 47.3, per_hr: 3.4 }, aa: { pct: 62.1, per_hr: 1.2, banked: 14 },
-    weight: { cur: 112, max: 140 },
-    casting: { spell: 'Niv\'s Melody of Preservation', remaining_ms: 2100, pct: 30 },
-    target: { name: 'Bertoxxulous', id: 5871, hp_pct: 62, my_procs: 4, my_stuns: 1 },
-    combat: { ds: { per_hit: 38, measured: true, kind: 'thorns' } },
-    dps: { fight: { dps: 412, secs: 96 }, night: { avg_dps: 388, dmg: 2310000, fights: 6 } },
+    weight: { cur: 96, max: 140 },
+    casting: { spell: 'Complete Heal', remaining_ms: 4200, pct: 58 },
+    target: { name: 'Brackwyn', id: 1042, hp_pct: 74, my_procs: 0, my_stuns: 0 },
+    combat: { ds: { per_hit: 0, measured: false, kind: '' } },
+    dps: { fight: { dps: 38, secs: 96 }, night: { avg_dps: 41, dmg: 246000, fights: 6 } },
     group: [
-      { name: 'Brackwyn', hp_pct: 88 }, { name: 'Corvale', hp_pct: 100 }, { name: 'Rethlan', hp_pct: 74 },
+      { name: 'Brackwyn', hp_pct: 74 }, { name: 'Corvale', hp_pct: 100 }, { name: 'Rethlan', hp_pct: 92 },
       { name: 'Nyssara', hp_pct: 100 }, { name: 'Zarrin', hp_pct: 31 },
     ],
     gems: [
-      { name: 'Cassindra\'s Chorus of Clarity', mana: 110, casts_left: 32, recast_pct: 0 },
-      { name: 'Niv\'s Melody of Preservation', mana: 140, casts_left: 25, recast_pct: 40 },
-      { name: 'Selo\'s Accelerating Chorus', mana: 90, casts_left: 40, recast_pct: 0 },
-      { name: 'Chant of Battle', mana: 150, casts_left: 24, recast_pct: 0 },
-      { name: 'Warsong of the Vah Shir', mana: 120, casts_left: 30, recast_pct: 72 },
+      { name: 'Complete Heal', mana: 400, casts_left: 7, recast_pct: 0 },
+      { name: 'Divine Light', mana: 450, casts_left: 6, recast_pct: 0 },
+      { name: 'Celestial Elixir', mana: 600, casts_left: 4, recast_pct: 35 },
+      { name: 'Word of Redemption', mana: 550, casts_left: 5, recast_pct: 82 },
     ],
   };
 }

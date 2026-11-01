@@ -35,6 +35,7 @@ import {
 } from '../web/lib/raidmimicHost.ts';
 import { isEqmimicHost } from '../web/lib/eqmimicHost.ts';
 import * as C from '../web/lib/raidmimicLanding.ts';
+import { FEATURES as STORY_FEATURES } from '../web/lib/raidmimicStory.ts';
 import * as EQ from '../web/lib/eqmimicLanding.ts';
 import * as PL from '../web/lib/raidmimicPlayer.ts';
 import { metaForPath, DEFAULT_DESCRIPTION } from '../web/lib/pageMeta.ts';
@@ -325,7 +326,8 @@ describe('the layout', () => {
     expect(read('web/app/raidmimic/page.tsx')).not.toMatch(/['"]use client['"]/);
     for (const f of ['SceneClip.tsx', 'ClipTabs.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'HowItWorks.tsx']) expect(read(L + f), f).toMatch(/^'use client';/);
     expect(fs.readdirSync(path.join(ROOT, L)).sort()).toEqual([
-      'ClipTabs.tsx', 'FeatureIcons.tsx', 'HowItWorks.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'SceneClip.tsx', 'SignInTop.tsx',
+      'ChaptersStage.tsx', 'ClipTabs.tsx', 'FeatureIcons.tsx', 'HowItWorks.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'SceneClip.tsx', 'SignInTop.tsx',
+      'StoryBits.tsx', 'StoryParts.tsx', 'StoryStage.tsx', 'StoryVideo.tsx',   // the `?v=c` / `?v=d` previews (test/raidmimic-landing-variants.test.js)
     ]);
   });
   it('fetches and embeds nothing external; every outbound link is one we name', () => {
@@ -652,7 +654,9 @@ describe('the mascot hero', () => {
       expect(webpSize(f), s.file).toEqual({ w: s.w, h: s.h });
       expect(fs.readFileSync(f).includes(Buffer.from('Exif')), `${s.file} carries no metadata`).toBe(false);
     }
-    expect(fs.readdirSync(SHOTS_DIR).sort()).toEqual(C.SHOTS.map(s => s.file).sort());
+    // The folder holds exactly the module's captures plus the ?v=c / ?v=d feature pictures (web/lib/raidmimicStory.ts): nothing unused.
+    const storyShots = STORY_FEATURES.map(f => path.basename(f.img));
+    expect(fs.readdirSync(SHOTS_DIR).sort()).toEqual([...new Set([...C.SHOTS.map(s => s.file), ...storyShots])].sort());
   });
 
   it('the Map capture credits its walls to EQEmu (never Brewall), and the credit is on the page', () => {
@@ -971,7 +975,7 @@ describe('the motion preview (?v=motion)', () => {
   };
 
   itFiles('the motion directory holds exactly the story, the loop (each in three sizes), two posters and the captions; no 16:9 files are left', () => {
-    expect(fs.readdirSync(path.join(ROOT, M)).sort()).toEqual(['loop-1080.mp4', 'loop-720.mp4', 'loop-sq-1080.mp4', 'story-1080.mp4', 'story-720.mp4', 'story-poster.jpg', 'story-sq-1080.mp4', 'story-sq-poster.jpg', 'story.vtt']);
+    expect(fs.readdirSync(path.join(ROOT, M)).sort()).toEqual(['loop-1080.mp4', 'loop-720.mp4', 'loop-sq-1080.mp4', 'story-1080.mp4', 'story-720.mp4', 'story-first-poster.jpg', 'story-first-sq-poster.jpg', 'story-poster.jpg', 'story-sq-1080.mp4', 'story-sq-poster.jpg', 'story.vtt']);   // + the two frame-0 posters of the `?v=c`/`?v=d` previews
     expect(files.map(f => f.name)).toEqual(['story-sq-1080.mp4', 'story-1080.mp4', 'story-720.mp4']);
     expect(loops.sort()).toEqual(['loop-1080.mp4', 'loop-720.mp4', 'loop-sq-1080.mp4']);
     expect(stageCode).not.toMatch(/-1920|-1280|mimic-16x9/);

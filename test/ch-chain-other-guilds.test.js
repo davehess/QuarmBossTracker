@@ -26,7 +26,8 @@ const z2 = n => String(n).padStart(2, '0');
 let NOW = 0;
 function stamp(secondsAgo) {
   const d = new Date(NOW - secondsAgo * 1000);
-  return `[${DAY[d.getDay()]} ${MON[d.getMonth()]} ${String(d.getDate()).padStart(2, ' ')} `
+  // EverQuest zero-pads the day ("Aug 02"); a space-padded "Nov  1" failed this file on the 1st to 9th of every month.
+  return `[${DAY[d.getDay()]} ${MON[d.getMonth()]} ${z2(d.getDate())} `
     + `${z2(d.getHours())}:${z2(d.getMinutes())}:${z2(d.getSeconds())} ${d.getFullYear()}]`;
 }
 const raid = (secondsAgo, who, text) => agent.trackChChainLine(`${stamp(secondsAgo)} ${who} tells the raid,  '${text}'`);

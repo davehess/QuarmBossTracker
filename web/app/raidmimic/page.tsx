@@ -17,8 +17,12 @@ import { headers } from 'next/headers';
 import type { Metadata } from 'next';
 import { isRaidmimicHost, raidmimicSeo, RAIDMIMIC_SETUP_PATH } from '@/lib/raidmimicHost';
 import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
-import type { Ctx } from './_landing/Parts';
+import { DOWNLOAD_URL } from '@/lib/raidmimicPlayer';
+import { BetaTag, Footer, type Ctx } from './_landing/Parts';
 import PathsLayout from './_landing/PathsLayout';
+import ChaptersStage from './_landing/ChaptersStage';
+import StoryStage from './_landing/StoryStage';
+import { FeatureBlocks, Pricing } from './_landing/StoryParts';
 
 const TITLE = 'Raid Mimic · free EverQuest raid overlays';
 const DESCRIPTION =
@@ -47,5 +51,32 @@ export default async function RaidmimicPage({ searchParams }: { searchParams: Pr
   // The only query this page reads, and only the Wolf Pack hosts ever pass it: a raidmimic host drops every query in the
   // middleware, so the default page is all a stranger on raidmimic.com can reach. The default render is the line below.
   if ((await searchParams).v === 'b') return <PathsLayout ctx={ctx} motion signIn />;
+  // `?v=c` "Story stage" and `?v=d` "Chapters" (the guild lead's feedback of 2026-11-01), two previews to pick between; the
+  // default above and `?v=b` are untouched. Both draw on web/lib/raidmimicStory.ts. See StoryStage.tsx and ChaptersStage.tsx.
+  const pick = (await searchParams).v;
+  if (pick === 'c') {
+    return (
+      <div id="story-c" className="mx-auto max-w-5xl pb-12">
+        <BetaTag ctx={ctx} />
+        <StoryStage downloadUrl={DOWNLOAD_URL} />
+        <FeatureBlocks />
+        <Pricing />
+        <Footer />
+      </div>
+    );
+  }
+  if (pick === 'd') {
+    return (
+      <div id="story-d">
+        <BetaTag ctx={ctx} />
+        <ChaptersStage downloadUrl={DOWNLOAD_URL} onHost={onHost}>
+          <div className="mx-auto max-w-5xl pb-12">
+            <Pricing />
+            <Footer />
+          </div>
+        </ChaptersStage>
+      </div>
+    );
+  }
   return <PathsLayout ctx={ctx} motion />;
 }
