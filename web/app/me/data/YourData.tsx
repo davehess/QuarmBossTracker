@@ -1,9 +1,10 @@
 // "Your data": the signed-in member's own download and delete (the guild lead, 2026-11-01: self-serve before payments
 // go live). One component for both homes: /me on wolfpack.quest, and /guilds on raidmimic.com (the only signed-in page
-// that host serves). `exportHref` is the only thing that differs: the download route lives under each page's own path
-// so the raidmimic middleware lets it through. A server component with no data of its own: both buttons act on whoever
-// is signed in, decided on the server (lib/selfData.ts).
+// that host serves). `exportHref` is the only thing that differs: the export routes (manifest + part) live under each
+// page's own path so the raidmimic middleware lets them through. A server component with no data of its own: both
+// buttons act on whoever is signed in, decided on the server (lib/selfData.ts).
 import DeleteAccount from './DeleteAccount';
+import PrepareData from './PrepareData';
 
 export default function YourData({ exportHref }: { exportHref: string }) {
   return (
@@ -13,16 +14,11 @@ export default function YourData({ exportHref }: { exportHref: string }) {
 
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <div className="rounded border border-border bg-bg p-3">
-          <h3 className="text-sm text-text">Download my data</h3>
-          <p className="mt-1 text-xs leading-5 text-dim">
-            One file: your characters, tells, uploads, settings and the guild records that are yours. It starts
-            downloading after a few seconds and is large for heavy raiders. You can download once every 10 minutes.
+          <h3 className="text-sm text-text">Download my data</h3>          <p className="mt-1 text-xs leading-5 text-dim">
+            One file: your characters, tells, uploads, settings and the guild records that are yours. It is put
+            together here first, so you see how big it is before you save it. You can prepare it once every 10 minutes.
           </p>
-          <p className="mt-3">
-            <a href={exportHref} download className="inline-flex min-h-11 items-center rounded border border-blue/50 px-4 text-sm text-blue hover:bg-blue/10">
-              Download my data
-            </a>
-          </p>
+          <div className="mt-3"><PrepareData exportHref={exportHref} /></div>
         </div>
 
         <div className="rounded border border-border bg-bg p-3">
