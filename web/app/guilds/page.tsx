@@ -24,6 +24,7 @@ import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
 import NewPageTag from '@/components/NewPageTag';
 import SignInButton from '@/components/SignInButton';
 import JoinForm from './JoinForm';
+import YourData from '@/app/me/data/YourData';
 
 export const metadata: Metadata = {
   title: '[beta] Your guilds',
@@ -117,7 +118,10 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
     <div className="mx-auto max-w-3xl px-1 py-2 pb-12">
       <NewPageTag note="New page: the guilds you are in, and how to join or start one." href={onHost ? `${EQMIMIC_ORIGIN}/feedback` : '/feedback'} />
       <h1 className="text-2xl text-gold">Your guilds</h1>
-      <p className="mt-1 text-sm text-dim">Signed in with Discord. Only you can see this page.</p>
+      <p className="mt-1 text-sm text-dim">
+        Signed in with Discord. Only you can see this page.{' '}
+        <a href={onHost ? '#your-data' : '/me#your-data'} className="whitespace-nowrap text-blue hover:underline">Your data →</a>
+      </p>
 
       <section aria-label="Your guilds" className="mt-4 space-y-3">
         {wolf && (
@@ -192,6 +196,9 @@ export default async function GuildsPage({ searchParams }: { searchParams: { fin
           <p className="mt-2"><a href="/guilds/new" className={LINK}>Start a guild →</a></p>
         </div>
       </section>
+
+      {/* /me is not served on raidmimic hosts, so the section lives here, with its own download route under /guilds. */}
+      {onHost && <div className="mt-6"><YourData exportHref="/guilds/data/export" /></div>}
     </div>
   );
 }
