@@ -1,8 +1,7 @@
 // test/raidmimic-feature-icons.test.js — the eight feature icons and their grid on raidmimic.com (the guild lead, 2026-10-23:
 // the feature icon set, "the second set looks best"). Pins: eight hand-drawn inline SVGs on one 48 x 48 box, gold by
-// `currentColor`, no raster or request, decorative (aria-hidden) with the label as the text; the grid is four across from lg and
-// two on a phone; the section is placed once, right after the three doors; the copy is plain, public-safe and honest about
-// what needs a guild hub.
+// `currentColor`, no raster or request, decorative (aria-hidden) with the label as the text; the story stage draws four of them as its marks (the card grid was
+// retired with the "Pick your path" page, 2026-11-01); the copy module is plain, public-safe and honest about what needs a hub.
 //
 // Source-text assertions run over comment-stripped source (CLAUDE.md "comments satisfy text assertions").
 // Run: npx vitest run test/raidmimic-feature-icons.test.js
@@ -13,12 +12,13 @@ import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
 import * as F from '../web/lib/raidmimicFeatures.ts';
 import * as PL from '../web/lib/raidmimicPlayer.ts';
+import * as S from '../web/lib/raidmimicStory.ts';
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const code = (rel) => stripJs(read(rel));
 const L = 'web/app/raidmimic/_landing/';
 const icons = code(L + 'FeatureIcons.tsx');
-const layout = code(L + 'PathsLayout.tsx');
+const stage = code(L + 'StoryStage.tsx');
 
 // The text of each icon function, by exported name.
 const iconBodies = () => [...icons.matchAll(/export function (\w+Icon)\(\) \{([\s\S]*?)\n\}/g)].map(m => [m[1], m[2]]);
@@ -43,15 +43,16 @@ describe('the eight icons', () => {
     for (const [name, body] of iconBodies()) expect(body, name).toMatch(/^\s*return \(\s*<Ico>/);
   });
   it('are decorative: aria-hidden on the drawing and on its box, the label is the text', () => {
-    expect(icons.match(/aria-hidden="true"/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(icons.match(/aria-hidden="true"/g)).toHaveLength(1);        // the one drawing wrapper
     expect(icons).toMatch(/focusable="false"/);
-    expect(icons).toMatch(/<h3[^>]*>\{f\.label\}<\/h3>/);
-    expect(icons).not.toMatch(/<title>|aria-label=\{f\./);              // no second name for a screen reader to read
+    expect(stage).toMatch(/<span aria-hidden="true" className="block h-7 w-7 text-\[#e0a92c\] sm:h-8 sm:w-8"><Icon \/><\/span>/);   // its box
+    expect(stage).toMatch(/<span className="text-\[11px\][^"]*">\{m\.label\}<\/span>/);   // the label is the text
+    expect(icons).not.toMatch(/<title>|aria-label=/);              // no second name for a screen reader to read
   });
   it('are inline paths only: no raster, no image, no external address, no data URI, no script', () => {
     expect(icons).not.toMatch(/<image\b|<img\b|<foreignObject|<use\b|<script|href=|xlink|url\(|data:|https?:|\.png|\.jpg|\.webp|\.svg/i);
     const from = [...icons.matchAll(/from '([^']+)'/g)].map(m => m[1]);
-    expect(from).toEqual(['react', '@/lib/raidmimicFeatures', '@/lib/raidmimicPlayer']);   // React's types and our own modules only
+    expect(from).toEqual(['react', '@/lib/raidmimicFeatures']);   // React's types and our own modules only
   });
   it('draw something: every icon has at least two shapes, and the accents are the platform’s green and red only', () => {
     for (const [name, body] of iconBodies()) {
@@ -65,35 +66,21 @@ describe('the eight icons', () => {
     expect([...new Set(accents)].sort()).toEqual(['green', 'panel', 'red']);   // panel only cuts a line behind a shape
     expect(icons).not.toMatch(/stroke="#|fill="#/i);
   });
-  it('gold is the page’s own gold (#e0a92c, the hover gold) set once on the box, not inside the drawings', () => {
-    expect(icons.match(/text-\[#e0a92c\]/g)).toHaveLength(1);
+  it('gold is the page’s own gold (#e0a92c, the hover gold) set once on the mark’s box (the stage), not inside the drawings', () => {
+    expect(stage.match(/text-\[#e0a92c\]/g)).toHaveLength(1);
+    expect(icons).not.toMatch(/#e0a92c/);
     for (const [name, body] of iconBodies()) expect(body, name).not.toMatch(/#[0-9a-f]{3,8}\b/i);
   });
 });
 
-describe('the grid', () => {
-  it('is one section with a heading, four across from lg and two across on a phone, 16px gutters, no fixed width', () => {
-    expect(icons).toMatch(/grid-cols-2 gap-4 p-0 lg:grid-cols-4/);
-    expect(icons).toMatch(/FEATURES\.map\(f => \{/);
-    expect(icons).toMatch(/<section id=\{FEATURES_HEAD\.id\} aria-label=\{FEATURES_HEAD\.title\}/);
-    expect(icons).toMatch(/min-w-0/);                                    // a long word cannot widen a column
-    expect(icons).not.toMatch(/\bw-\[\d+px\]|width: \d+px|overflow-x-scroll|min-w-\[\d+px/);
-    expect(F.FEATURES_HEAD.id).toBe('features');
+describe('the story stage’s marks (the card grid is retired)', () => {
+  it('the icons file draws icons only: no grid, no section, no card, no default export', () => {
+    expect(icons).not.toMatch(/FeatureGrid|<section\b|grid-cols|bg-panel p-|export default/);
   });
-  it('the cards are CSS in the platform’s tokens: panel fill, border hairline, rounded; the drawing carries none of it', () => {
-    expect(icons).toMatch(/rounded-lg border border-border bg-panel/);
-    expect(icons).toMatch(/<li key=\{f\.id\} data-feature=\{f\.id\}/);
-  });
-  it('is placed once, right after the three doors and before “See it run”', () => {
-    expect(layout.match(/<FeatureGrid \/>/g)).toHaveLength(1);
-    expect(layout.match(/import FeatureGrid from '\.\/FeatureIcons';/g)).toHaveLength(1);
-    const at = (s) => { const i = layout.indexOf(s); expect(i, s).toBeGreaterThan(-1); return i; };
-    const idx = ['DOORS.map', '<FeatureGrid />', 'id="see"'].map(at);
-    expect([...idx].sort((a, b) => a - b)).toEqual(idx);
-    // nothing but the doors’ section sits between the doors and the grid
-    const between = layout.slice(layout.indexOf('DOORS.map'), layout.indexOf('<FeatureGrid />'));
-    expect(between.match(/<section\b/g) || []).toHaveLength(0);
-    expect(between.match(/<\/section>/g)).toHaveLength(1);
+  it('the stage draws each mark with the icon its module row names, from the one ICONS map', () => {
+    expect(stage).toMatch(/import \{ ICONS \} from '\.\/FeatureIcons';/);
+    expect(stage).toMatch(/const Icon = ICONS\[m\.icon\];/);
+    for (const m of S.MARKS) expect(F.FEATURES.map(f => f.id), m.id).toContain(m.icon);
   });
 });
 
@@ -116,7 +103,6 @@ describe('the words', () => {
   });
   it('says what needs a guild hub: the hail board and the CH chain carry the page’s own chip, DKP bids say so in their line', () => {
     expect(F.FEATURES.filter(f => f.hub).map(f => f.id)).toEqual(['hail', 'ch']);
-    expect(icons).toMatch(/\{TAG\.hub\}/);
     expect(PL.TAG.hub).toBe('Needs your guild’s server');
     expect(F.FEATURES.find(f => f.id === 'loot').line).toMatch(/DKP bids need a guild hub/);
     expect(F.FEATURES.find(f => f.id === 'code').line).toMatch(/No guild account needed/);
@@ -134,10 +120,5 @@ describe('the words', () => {
     expect(all).not.toMatch(/sign up|contact sales|as a service|orchestration|enterprise/i);
     expect(all).not.toMatch(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|zhtoekwakucbckvatfky|service_role|SUPABASE_|Bearer |mailto:|\b[a-z0-9]{32,}\b/i);
     expect(code('web/lib/raidmimicFeatures.ts')).not.toMatch(/Aldenmar|Brackwyn|Corvale|Rethlan|Nyssara|Theodric|Velmira|Zarrin/);
-  });
-  it('the layout holds no sentence of its own: the grid’s words all come from the module', () => {
-    expect(icons).toMatch(/\{FEATURES_HEAD\.title\}/);
-    expect(icons).toMatch(/\{FEATURES_HEAD\.lead\}/);
-    expect(icons).toMatch(/\{f\.line\}/);
   });
 });

@@ -1,6 +1,6 @@
 'use client';
-// The story video for the raidmimic landing's `?v=c` and `?v=d` variants (MotionStage.tsx, the default page's player, is not
-// touched). It plays the same files once, muted, and tells its parent two things: the time (one `timeupdate` listener) and the end.
+// The story video of the raidmimic landing's story stage. It plays the story files once, muted, and tells its parent two things:
+// the time (one `timeupdate` listener) and the end.
 //
 // CAPTIONS, and why the old ones were cut off (the guild lead, 2026-11-01: "some of the closed captions are cut off"):
 // MotionStage lets the browser draw story.vtt's cues. Every cue says `line:78% size:86%`, which pins the cue's FIRST line at 78%
@@ -10,11 +10,11 @@
 // reproduced in a browser from this session.) Here the track runs 'hidden' (the cues still load and fire `cuechange`, the
 // browser draws nothing) and the active cue text is drawn by this component in a box anchored by its BOTTOM edge, above the
 // buttons, with a backing, wrapping balanced onto as many lines as it needs and growing UPWARD: it cannot leave the picture.
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from 'react';
 import { STORY_WORDS as W } from '@/lib/raidmimicStory';
 
 const DIR = '/raidmimic/motion';
-// Same three files, same media queries as MotionStage (the square one on a wide landscape screen).
+// Three files by screen (the square one on a wide landscape screen: the SAME query as `.rm-frame` in globals.css).
 const SQUARE_QUERY = '(min-width: 1024px) and (orientation: landscape)';
 const FILES = [
   { src: `${DIR}/story-sq-1080.mp4`, media: SQUARE_QUERY },
@@ -52,12 +52,17 @@ interface Props {
   fit: string;
   /** Distance of the caption box from the bottom edge, as a Tailwind class (it must clear the buttons). */
   captionBottom?: string;
+  /** Extra buttons for the bottom row (Skip, Hide). */
+  children?: ReactNode;
 }
+
+/** The quiet text buttons of the bottom row (still a 44px tap target). */
+export const QUIET_BTN = 'min-h-11 rounded-md bg-transparent px-3 text-xs text-[#f2ede1]/70 hover:bg-white/10 hover:text-[#f2ede1] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold';
 
 const BTN = 'min-h-11 rounded-md border border-border bg-black/70 px-3 text-xs text-[#f2ede1] hover:bg-black/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold sm:text-sm';
 
 const StoryVideo = forwardRef<StoryVideoHandle, Props>(function StoryVideo(
-  { onTime, onEnd, halted, reduced, fit, captionBottom = 'bottom-[4.5rem] sm:bottom-20' }, ref,
+  { onTime, onEnd, halted, reduced, fit, captionBottom = 'bottom-14 sm:bottom-16', children }, ref,
 ) {
   const vid = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -138,17 +143,21 @@ const StoryVideo = forwardRef<StoryVideoHandle, Props>(function StoryVideo(
   return (
     <>
       {/* The poster layer: frame 0 (the chest) until the video is playing; under reduced motion the story's last frame, for good. */}
-      {(!playing || reduced) && (   // `playing` means "has started" and never goes back
-        <picture>
-          <source media={SQUARE_QUERY} srcSet={first.square} />
-          <img src={first.portrait} alt="" aria-hidden="true" decoding="async" className={`absolute inset-0 h-full w-full ${fit}`} />
-        </picture>
-      )}
-      <video ref={vid} autoPlay muted playsInline preload="auto" aria-hidden="true" tabIndex={-1}
-        className={`absolute inset-0 h-full w-full ${fit} motion-reduce:hidden`}>
-        {FILES.map(f => <source key={f.src} src={f.src} type="video/mp4" {...(f.media ? { media: f.media } : {})} />)}
-        <track kind="captions" srcLang="en" label="English" src={CAPTIONS} />
-      </video>
+      {/* Picture and poster live in the faded frame (.rm-frame in globals.css); the captions and buttons below do not, so the
+          mask never touches them. */}
+      <div data-story-frame className="rm-frame">
+        {(!playing || reduced) && (   // `playing` means "has started" and never goes back
+          <picture>
+            <source media={SQUARE_QUERY} srcSet={first.square} />
+            <img src={first.portrait} alt="" aria-hidden="true" decoding="async" className={`absolute inset-0 h-full w-full ${fit}`} />
+          </picture>
+        )}
+        <video ref={vid} autoPlay muted playsInline preload="auto" aria-hidden="true" tabIndex={-1}
+          className={`absolute inset-0 h-full w-full ${fit} motion-reduce:hidden`}>
+          {FILES.map(f => <source key={f.src} src={f.src} type="video/mp4" {...(f.media ? { media: f.media } : {})} />)}
+          <track kind="captions" srcLang="en" label="English" src={CAPTIONS} />
+        </video>
+      </div>
 
       {cc && caption && !reduced && (
         <div data-story-caption className={`pointer-events-none absolute inset-x-0 z-10 flex justify-center px-3 ${captionBottom}`}>
@@ -165,9 +174,14 @@ const StoryVideo = forwardRef<StoryVideoHandle, Props>(function StoryVideo(
         </button>
       )}
 
-      <div className="absolute bottom-2 left-2 z-20 flex gap-2 sm:bottom-3 sm:left-3 motion-reduce:hidden">
-        <button type="button" onClick={toggleSound} aria-pressed={sound} className={BTN}>{sound ? W.soundOff : W.soundOn}</button>
-        <button type="button" onClick={() => setCc(!cc)} aria-pressed={cc} className={BTN}>CC</button>
+      {/* The bottom row: small and quiet (the guild lead, 2026-11-01: "Skip/hide at the bottom"). Sound and CC here; the stage's
+          own Skip and Hide arrive as `children`. */}
+      <div data-story-controls className="absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-center justify-center gap-x-1 p-1 sm:p-2">
+        <span className="contents motion-reduce:hidden">
+          <button type="button" onClick={toggleSound} aria-pressed={sound} className={QUIET_BTN}>{sound ? W.soundOff : W.soundOn}</button>
+          <button type="button" onClick={() => setCc(!cc)} aria-pressed={cc} className={QUIET_BTN}>CC</button>
+        </span>
+        {children}
       </div>
     </>
   );

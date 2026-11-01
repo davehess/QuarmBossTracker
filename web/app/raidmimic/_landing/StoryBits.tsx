@@ -1,5 +1,4 @@
-// Two small pieces both story variants draw, kept apart from StoryParts so the client stage (ChaptersStage) can import them
-// without pulling in the pricing, the download address and the page's other words.
+// Two small pieces of the page under the story stage, kept apart from StoryParts.
 import type { Feature } from '@/lib/raidmimicStory';
 
 /** A feature's picture. A plain <img>: a file that is not on disk yet is a 404 on a preview, never a failed build. */

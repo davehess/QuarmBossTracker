@@ -1,6 +1,6 @@
-// Pieces shared by the raidmimic landing's `?v=c` (StoryStage) and `?v=d` (ChaptersStage) variants: the Discord sign-up button,
-// the four features, the three pricing tiles. No client code of its own (SignInButton is the only client piece, and it is the
-// same Discord sign-in the `?v=b` card uses: no new auth path). Words and numbers are in web/lib/raidmimicStory.ts.
+// The page under the story stage: the Discord sign-up button, the features (a picture and a sentence each), raid management and
+// the pricing tiles. No client code of its own (SignInButton is the only client piece: the one Discord sign-in, no new auth path).
+// Words and numbers are in web/lib/raidmimicStory.ts.
 import SignInButton from '@/components/SignInButton';
 import { DOWNLOAD_URL } from '@/lib/raidmimicPlayer';
 import { FEATURES, RAID_MGMT, RAID_MGMT_HEAD, STORY_WORDS as W, TIERS, type Tier } from '@/lib/raidmimicStory';
@@ -12,7 +12,7 @@ export function SignUp({ label = W.signUp, className = PRIMARY_BTN }: { label?: 
   return <SignInButton next={W.after} label={label} className={`${className} disabled:opacity-60`} />;
 }
 
-/** `?v=c`: four short blocks, one picture and one sentence each. */
+/** Short blocks, one picture and one sentence each. */
 export function FeatureBlocks() {
   return (
     <section id="features" aria-label={W.featuresTitle} className="scroll-mt-4 pt-12">
@@ -40,7 +40,7 @@ export function FeatureBlocks() {
 const EDGE: Record<Tier['tone'], string> = { green: 'border-t-green', blue: 'border-t-blue', gold: 'border-t-gold' };
 
 /** Free, Pro · Guild, Pro · Individual. The individual price comes from INDIVIDUAL_PRICE (null: "price at launch"). */
-/** Both variants: the guild side as six one-line items, no pictures (the pictures above are the player side). */
+/** The guild side as six one-line items, no pictures (the pictures above are the player side). */
 export function RaidManagement() {
   return (
     <section id={RAID_MGMT_HEAD.id} aria-label={RAID_MGMT_HEAD.title} className="scroll-mt-4 pt-12">
@@ -61,7 +61,7 @@ export function RaidManagement() {
   );
 }
 
-export function Pricing() {
+export function Pricing({ setup }: { setup: string }) {
   const tiers = TIERS();
   return (
     <section id="pricing" aria-label={W.pricingTitle} className="scroll-mt-4 pt-12">
@@ -79,7 +79,12 @@ export function Pricing() {
               </ul>
               {t.coming && <p className="mb-0 mt-3"><ComingChip>{t.coming}</ComingChip></p>}
               <div className="mt-auto pt-4">
-                {t.id === 'free' && <a href={DOWNLOAD_URL} className={`${PRIMARY_BTN} w-full`}>Download Mimic</a>}
+                {t.id === 'free' && (
+                  <>
+                    <a href={DOWNLOAD_URL} className={`${PRIMARY_BTN} w-full`}>Download Mimic</a>
+                    <a href={setup} className="mt-2 inline-flex min-h-11 w-full items-center justify-center text-sm">{W.setup} →</a>
+                  </>
+                )}
                 {t.id === 'guild' && <SignUp className={`${PRIMARY_BTN} w-full`} />}
               </div>
             </article>
