@@ -2,6 +2,8 @@
 import Link from 'next/link';
 import { FoldText } from '@/components/MoreInfo';
 import AdminCards from './AdminCards';
+import DepartedMemberNotice from '@/components/DepartedMemberNotice';
+import { supabaseServer } from '@/lib/supabase-server';
 import { shellOn } from './shellOn';
 
 export const metadata = {
@@ -9,7 +11,18 @@ export const metadata = {
   description: 'The officer tools: attendance, sign-ups, triggers, feedback, members and more.',
 };
 
-export default function AdminPage() {
+// The pop-up for members who left the Discord and still have access (2026-11-01); the layout has already gated officers.
+export default async function AdminPage() {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  return (
+    <>
+      <DepartedMemberNotice userId={user?.id} />
+      <AdminTools />
+    </>
+  );
+}
+
+function AdminTools() {
   // The sidebar preview (?v=b, DECISIONS §493): the same pages as grouped cards. No cookie → the grid below, as it was.
   if (shellOn()) return <AdminCards />;
   return (

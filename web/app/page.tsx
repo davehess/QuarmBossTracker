@@ -11,6 +11,7 @@ import Link from 'next/link';
 import WolfPack from '@/components/WolfPack';
 import { IconParse, IconTimer, IconBlades, IconRank, IconMap, IconSpark } from '@/components/PlateIcons';
 import { PlatformMap, PlatformStats } from '@/components/PlatformMap';
+import DepartedMemberNotice from '@/components/DepartedMemberNotice';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { curatedNpcIds } from '@/lib/bossFilter';
@@ -67,6 +68,7 @@ export default async function HomePage() {
 
   return (
     <div className="[--wolf-line:#e8e2d4]">
+      <DepartedMemberNotice userId={user?.id} />
 
       {/* ── The plate ──────────────────────────────────────────────────── */}
       {/* The plate is symmetric and frontal, so the type is centred on its axis.

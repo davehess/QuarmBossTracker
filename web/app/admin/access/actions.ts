@@ -65,8 +65,9 @@ export async function lockMember(formData: FormData) {
     .from('wolfpack_members')
     .select('discord_id, user_id, nickname, global_name, role_names')
     .eq('discord_id', discordId)
-    .eq('is_member', true)
     .maybeSingle();
+  // A FORMER member can be locked too (2026-11-01: a banned member could not be): the bot clears their roles but
+  // keeps the row, and their website login and Mimic sessions outlive the ban until someone ends them.
   if (!target) redirect(`${PAGE}?err=not_member`);
   // Officers cannot be locked out (the guild lead, 2026-10-13: "officers can't lock out other officers").
   if (roleNamesAreOfficer(target!.role_names)) redirect(`${PAGE}?err=officer`);
@@ -95,15 +96,23 @@ export async function lockMember(formData: FormData) {
     .select('id');
   const sessionsRevoked = revokeErr ? null : (revoked?.length ?? 0);
 
+  // End their website sign-ins too (public.end_member_web_sessions deletes the auth sessions; migration
+  // 20261101060000). Best-effort: the lock itself already stops them at the middleware.
+  let webEnded: number | null = null;
+  if (target!.user_id) {
+    const { data: ended, error: endErr } = await admin.rpc('end_member_web_sessions', { p_user_id: target!.user_id });
+    webEnded = endErr || typeof ended !== 'number' ? null : ended;
+  }
+
   await admin.from('audit_log').insert({
     action:           'member_lockout',
     actor_discord_id: actor!.discordId,
     actor_name:       actor!.name,
-    payload:          { discord_id: discordId, reason, until, sessions_revoked: sessionsRevoked },
+    payload:          { discord_id: discordId, reason, until, sessions_revoked: sessionsRevoked, web_sessions_ended: webEnded },
   });
 
   revalidatePath(PAGE);
-  redirect(`${PAGE}?ok=locked&who=${encodeURIComponent(nameOf(target))}${revokeErr ? '&warn=revoke_failed' : `&n=${sessionsRevoked}`}`);
+  redirect(`${PAGE}?ok=locked&who=${encodeURIComponent(nameOf(target))}${revokeErr ? '&warn=revoke_failed' : `&n=${sessionsRevoked}`}${webEnded == null ? '' : `&web=${webEnded}`}`);
 }
 
 export async function unlockMember(formData: FormData) {
