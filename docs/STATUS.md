@@ -169,6 +169,14 @@ next touch one rather than assuming a missing row means a missing doc.
   `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
   nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
 
+- **🧪 raidmimic.com landing `?v=c` "Story stage" and `?v=d` "Chapters" (web beta `2b01c1be`, no version bump, 2026-11-01).** The guild
+  lead found the page "underwhelming": video first, menus appearing as it plays, the mimic icon when the chest turns, sign-up with Discord at
+  the end, "start for free, unlock pro with guild or individual plan", far fewer words, captions not cut off, no bard for casts-left, and the
+  Canvas, UI Studio, sync and replay/spectator shown. `?v=c` reveals icon, menu and end card on the video's timeline; `?v=d` is a chapter rail
+  that seeks the video and swaps a feature card, sign-up pinned. Pricing: Free / Pro Guild $25 a month / Pro Individual "price at launch"
+  (unset). Cue times measured on the 81.5 s video (`web/lib/raidmimicStory.ts`). New shots via `scripts/raidmimic-shots/shoot-canvas.mjs`,
+  `shoot-studio.mjs`, `shoot-replay.mjs`. Previews: https://b.wolfpack.quest/raidmimic?v=c and https://b.wolfpack.quest/raidmimic?v=d.
+  Awaiting the guild lead's pick, and the individual price. Test: `test/raidmimic-landing-variants.test.js`.
 - **🧪 raidmimic.com landing `?v=b`: sign in first (web beta `c10bf0eb`, no version bump, 2026-10-31; DECISIONS §492 pick A).** The front
   door as picked: pitch and story video on the left, a sign-in card on the right (Discord, identify only, goes to `/guilds`, a guest-code
   link), three doors under it (raider in a hosted guild, officer starting one, solo player), today's page below the fold. The default
