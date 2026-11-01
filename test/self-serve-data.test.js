@@ -20,8 +20,11 @@ import { ROOT, stripJs, stripSql } from './_source-slice.js';
 import {
   SELF_TABLES, PERSONAL_TABLES, GUILD_RECORD_TABLES, UNLINK_TARGETS, UNLINK_BATCH,
   EXPORT_ROW_CAP, EXPORT_CHARACTER_CAP, EXPORT_COOLDOWN_MIN, DELETE_WORD,
-  isDeleteConfirmed, resolveSelf, exportChunks, claimExport, runSelfDelete, filterParts, exportKey,
+  isDeleteConfirmed, resolveSelf, claimExport, runSelfDelete, filterParts, exportKey,
+  EXPORT_SECTIONS, findSection, exportHeader, exportSection, sectionBody,
+  prepareIsOpen, PREPARE_WINDOW_MIN,
 } from '../web/lib/selfData.ts';
+import { assembleExport, prepareExport, formatBytes, exportFilename, PART_CONCURRENCY } from '../web/lib/selfDataPrepare.ts';
 import { isRaidmimicOpenPath } from '../web/lib/raidmimicHost.ts';
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -59,7 +62,13 @@ function fakeDb({ tables = {}, fail = new Set() } = {}) {
   return { from, log };
 }
 
-const drain = async (gen) => { let s = ''; for await (const c of gen) s += c; return s; };
+// What the browser ends up with: every section from the part route's reader, stitched by the same assembler the page uses.
+async function buildExport(db, now = new Date('2026-11-01T12:00:00Z')) {
+  const parts = {};
+  for (const spec of SELF_TABLES) parts[spec.table] = await exportSection(db, spec, ME);
+  const manifest = { ...exportHeader(now), sections: SELF_TABLES.map(t => ({ name: t.table, group: t.group })) };
+  return assembleExport(manifest, parts).join('');
+}
 
 const CHARS = [
   { guild_id: 'wolfpack', name: 'Aldenmar' },
@@ -105,7 +114,7 @@ describe('the download: scoped to the session, secrets never read', () => {
         ...extra,
       },
     });
-    const text = await drain(exportChunks(db, ME, new Date('2026-11-01T12:00:00Z')));
+    const text = await buildExport(db);
     return { db, text, out: JSON.parse(text) };
   }
 
@@ -167,7 +176,7 @@ describe('the download: scoped to the session, secrets never read', () => {
 
   it('strips punctuation out of a stored name (a filter value can never carry a comma or a parenthesis)', async () => {
     const db = fakeDb({ tables: { characters: [{ guild_id: 'wolfpack', name: 'Zar,rin).or(x' }] } });
-    await drain(exportChunks(db, ME));
+    await buildExport(db);
     const inv = db.log.find(q => q.table === 'character_inventory');
     expect(inv.or).toBe('character_name.ilike.Zarrinorx');
   });
@@ -217,14 +226,14 @@ describe('the download: scoped to the session, secrets never read', () => {
 
   it('reports a table it could not read inside the file instead of leaving a silent gap', async () => {
     const db = fakeDb({ tables: { characters: CHARS }, fail: new Set(['tells']) });
-    const out = JSON.parse(await drain(exportChunks(db, ME)));
+    const out = JSON.parse(await buildExport(db));
     expect(out.tables.tells.error).toMatch(/could not be read/);
     expect(out.tables.page_views.row_count).toBe(0);     // the rest of the file is intact
   });
 
   it('a person with no characters still gets their own data, and the name-keyed tables are simply empty', async () => {
     const db = fakeDb({ tables: { characters: [] } });
-    const out = JSON.parse(await drain(exportChunks(db, ME)));
+    const out = JSON.parse(await buildExport(db));
     expect(out.tables.character_inventory.row_count).toBe(0);
     expect(db.log.some(q => q.table === 'character_inventory')).toBe(false);
     expect(db.log.some(q => q.table === 'tells')).toBe(true);
@@ -278,6 +287,19 @@ describe('the download is limited to one per 10 minutes per person', () => {
     expect(blocked.retryAfterSec).toBe(EXPORT_COOLDOWN_MIN * 60 - 60);
     expect(await claimExport(kv, ME.userId, T0 + EXPORT_COOLDOWN_MIN * 60_000 + 1000)).toEqual({ ok: true });
   });
+  it('sections are served only within the window after the person\'s own Prepare (no Prepare, too late, or someone else\'s = closed)', async () => {
+    const kv = fakeKv();
+    expect(await prepareIsOpen(kv, ME.userId, T0)).toBe(false);
+    await claimExport(kv, OTHER_USER, T0);
+    expect(await prepareIsOpen(kv, ME.userId, T0 + 1000)).toBe(false);
+    await claimExport(kv, ME.userId, T0);
+    expect(await prepareIsOpen(kv, ME.userId, T0 + 60_000)).toBe(true);
+    expect(await prepareIsOpen(kv, ME.userId, T0 + PREPARE_WINDOW_MIN * 60_000 + 1000)).toBe(false);
+    const route = stripJs(fs.readFileSync(path.join(ROOT, 'web/lib/selfDataRoute.ts'), 'utf8'));
+    const part = route.slice(route.indexOf('export async function handlePart'));
+    expect(part.indexOf('prepareIsOpen(')).toBeGreaterThan(-1);
+    expect(part.indexOf('prepareIsOpen(')).toBeLessThan(part.indexOf('exportSection('));
+  });
   it('is per person: someone else\'s download does not use up yours', async () => {
     const kv = fakeKv();
     await claimExport(kv, OTHER_USER, T0);
@@ -287,44 +309,296 @@ describe('the download is limited to one per 10 minutes per person', () => {
     expect(exportKey(ME.userId)).toBe(`data_export:${ME.userId}`);
     expect(sql()).toContain("'data_export:' || p_user_id::text");
   });
-  it('the route claims the slot BEFORE it reads anything, and answers 429 with Retry-After', () => {
+  it('the MANIFEST claims the slot (before it lists anything) and answers 429 with Retry-After; the PARTS never claim', () => {
     const src = js('web/lib/selfDataRoute.ts');
-    expect(src.indexOf('claimExport(')).toBeGreaterThan(0);
-    expect(src.indexOf('claimExport(')).toBeLessThan(src.indexOf('exportChunks('));
-    expect(src).toMatch(/429/);
-    expect(src).toContain("'Retry-After'");
+    const manifest = src.slice(src.indexOf('export async function handleManifest'), src.indexOf('export async function handlePart'));
+    const part = src.slice(src.indexOf('export async function handlePart'));
+    expect(manifest).toContain('claimExport(');
+    expect(manifest.indexOf('claimExport(')).toBeLessThan(manifest.indexOf('exportHeader('));
+    expect(manifest).toMatch(/429/);
+    expect(manifest).toContain("'Retry-After'");
+    expect(part.length).toBeGreaterThan(50);
+    expect(part).not.toMatch(/claimExport|429|Retry-After/);
+    expect(src.match(/claimExport\(/g)).toHaveLength(1);
   });
 });
 
-describe('the download route reads nothing from the request', () => {
-  it('both doors call handleExport() and take the request only as a required, unused argument', () => {
-    for (const rel of ['web/app/me/data/export/route.ts', 'web/app/guilds/data/export/route.ts']) {
-      const src = js(rel);
-      expect(src, rel).toMatch(/export async function GET\(_request: Request\)/);
-      expect(src, rel).toContain('return handleExport();');
-      expect(src, rel).not.toMatch(/searchParams|\.url\b|headers\(|nextUrl|formData|\.json\(\)/);
-      expect(src, rel).toContain("export const dynamic = 'force-dynamic'");
+describe('the part route: an allow-listed section name picks a table and nothing else', () => {
+  it('the allow-list is exactly the export\'s table list, in file order', () => {
+    expect(EXPORT_SECTIONS).toEqual(SELF_TABLES.map(t => t.table));
+    for (const t of SELF_TABLES) expect(findSection(t.table)).toBe(t);
+  });
+
+  it('an unknown, injected or non-string name finds nothing', () => {
+    const bad = [
+      'nope', '', ' tells', 'tells ', 'TELLS', 'tells,characters', 'tells;drop table tells', 'tells.or(x)', 'tells)', '*',
+      '__proto__', 'constructor', 'toString', 'length', '../tells', `tells\u0000`,
+      null, undefined, 7, ['tells'], { table: 'tells' },
+    ];
+    for (const b of bad) expect(findSection(b), JSON.stringify(b)).toBeNull();
+  });
+
+  it('the handler answers 400 when findSection finds nothing, before it reads a row', () => {
+    const src = js('web/lib/selfDataRoute.ts');
+    const part = src.slice(src.indexOf('export async function handlePart'));
+    expect(part).toContain("findSection(new URL(request.url).searchParams.get('s'))");
+    expect(part).toMatch(/if \(!spec\) return json\(400/);
+    expect(part.indexOf('if (!spec)')).toBeLessThan(part.indexOf('exportSection('));
+    // `s` is used for the lookup and for nothing else: the one searchParams read, and no other request input
+    expect(part.match(/searchParams/g)).toHaveLength(1);
+    expect(part).not.toMatch(/headers\(|nextUrl|formData|\.json\(\)|request\.headers/);
+  });
+
+  it('a section\'s read is keyed on the session\'s ids only; the section name never reaches a filter', async () => {
+    const db = fakeDb({ tables: { characters: CHARS } });
+    const spec = findSection('character_inventory');
+    await exportSection(db, spec, ME);
+    const inv = db.log.filter(q => q.table === 'character_inventory');
+    expect(inv.length).toBe(2);                                          // once per guild, as before
+    for (const q of inv) for (const part of q.or.split(',')) expect(part).toMatch(/^character_name\.ilike\.(Aldenmar|Brackwyn|Corvale)$/);
+  });
+
+  it('reads only the lookups a section needs: a personal table asks for no characters, a hub table asks for the player id', async () => {
+    const db = fakeDb({ tables: { characters: CHARS, hub_players: [{ player_id: '33333333-3333-4333-8333-333333333333' }] } });
+    await exportSection(db, findSection('tells'), ME);
+    expect(db.log.map(q => q.table)).toEqual(['tells']);
+    const db2 = fakeDb({ tables: { hub_players: [{ player_id: '33333333-3333-4333-8333-333333333333' }] } });
+    await exportSection(db2, findSection('hub_memberships'), ME);
+    expect(db2.log.map(q => q.table)).toEqual(['hub_players', 'hub_memberships']);
+    expect(db2.log[1].or).toBe('player_id.in.(33333333-3333-4333-8333-333333333333)');
+  });
+
+  it('a section whose character lookup fails says so, instead of coming back as an empty table', async () => {
+    const db = fakeDb({ tables: {}, fail: new Set(['characters']) });
+    const out = await exportSection(db, findSection('character_inventory'), ME);
+    expect(out.error).toMatch(/could not be read/);
+  });
+
+  it('a section over the size a single response can carry is cut to its newest rows and says so', () => {
+    const rows = Array.from({ length: 4000 }, (_, i) => ({ id: i, text: 'x'.repeat(200) }));
+    const out = { group: 'personal', row_count: rows.length, capped: false, cap: EXPORT_ROW_CAP, rows };
+    const body = sectionBody(out, 100_000);
+    const parsed = JSON.parse(body);
+    expect(new TextEncoder().encode(body).length).toBeLessThanOrEqual(100_000);
+    expect(parsed.capped).toBe(true);
+    expect(parsed.note).toMatch(/too large/);
+    expect(parsed.rows[0].id).toBe(0);                                   // newest first, so the front is kept
+    expect(parsed.row_count).toBe(parsed.rows.length);
+    // a section that fits is untouched
+    expect(JSON.parse(sectionBody({ ...out, rows: rows.slice(0, 3), row_count: 3 }, 100_000)).capped).toBe(false);
+  });
+});
+
+describe('the manifest and part routes read nothing about the person from the request', () => {
+  const DOORS = ['me', 'guilds'];
+  it('both doors, both routes: a REQUIRED Request argument, dynamic, handler delegated', () => {
+    for (const door of DOORS) {
+      const m = js(`web/app/${door}/data/export/manifest/route.ts`);
+      expect(m, door).toMatch(/export async function GET\(_request: Request\)/);
+      expect(m, door).toContain('return handleManifest();');
+      expect(m, door).not.toMatch(/searchParams|\.url\b|headers\(|nextUrl|formData|\.json\(\)/);
+      expect(m, door).toContain("export const dynamic = 'force-dynamic'");
+      const p = js(`web/app/${door}/data/export/part/route.ts`);
+      expect(p, door).toMatch(/export async function GET\(request: Request\)/);
+      expect(p, door).toContain('return handlePart(request);');
+      expect(p, door).toContain("export const dynamic = 'force-dynamic'");
     }
   });
-  it('the handler takes no argument and identifies the person from the session cookie only', () => {
-    const src = js('web/lib/selfDataRoute.ts');
-    expect(src).toMatch(/export async function handleExport\(\): Promise<Response>/);
-    expect(src).not.toMatch(/searchParams|request\.|\.url\b|headers\(|nextUrl|formData/);
-    expect(src).toContain('supabaseServer().auth.getUser()');
-    expect(src).toContain('resolveSelf(db, user)');
-    expect(src).toContain('exportChunks(db, me.ids');
+  it('the old single-stream route is gone, and nothing still calls the stream', () => {
+    for (const door of DOORS) expect(fs.existsSync(path.join(ROOT, `web/app/${door}/data/export/route.ts`)), door).toBe(false);
+    const all = ['web/lib/selfDataRoute.ts', 'web/lib/selfData.ts', 'web/app/me/data/PrepareData.tsx'].map(js).join('\n');
+    expect(all).not.toMatch(/exportChunks|handleExport|ReadableStream/);
   });
-  it('is a downloaded file named for the day, uncached, and 401 when signed out', () => {
+  it('the manifest takes no argument; identity is the session cookie, resolved the same way for both routes', () => {
     const src = js('web/lib/selfDataRoute.ts');
-    expect(src).toContain('Content-Disposition');
-    expect(src).toMatch(/attachment; filename="raidmimic-data-\$\{[^}]*slice\(0, 10\)\}\.json"/);
-    expect(src).toContain("'Cache-Control': 'no-store'");
+    expect(src).toMatch(/export async function handleManifest\(\): Promise<Response>/);
+    expect(src).toMatch(/export async function handlePart\(request: Request\): Promise<Response>/);
+    expect(src.match(/supabaseServer\(\)\.auth\.getUser\(\)/g)).toHaveLength(1);
+    expect(src).toContain('resolveSelf(db, user)');
+    expect(src.match(/await whoIsAsking\(\)/g)).toHaveLength(2);         // one door for identity, used by both routes
+    // the only request input anywhere in the handler file is the part route's `s`
+    expect(src.match(/request\./g) ?? []).toHaveLength(1);
+    expect(src).not.toMatch(/headers\(|nextUrl|formData|request\.headers|request\.json/);
     expect(src).toMatch(/if \(!user\) return json\(401/);
   });
-  it('raidmimic.com can reach the /guilds door and not the /me door', () => {
-    expect(isRaidmimicOpenPath('/guilds/data/export')).toBe(true);
-    expect(isRaidmimicOpenPath('/me/data/export')).toBe(false);
+  it('every response goes through the one builder that sets Content-Length from the encoded bytes', () => {
+    const src = js('web/lib/selfDataRoute.ts');
+    expect(src.match(/new Response\(/g)).toHaveLength(1);
+    expect(src).toMatch(/const body = new TextEncoder\(\)\.encode\(text\)/);
+    expect(src).toMatch(/'Content-Length': String\(body\.length\)/);
+    expect(src).toContain("'Cache-Control': 'no-store'");
+    // json() and the part's 200 both build through it
+    expect(src).toMatch(/return bytes\(200, sectionBody\(/);
+    expect(src).toMatch(/function json\([^)]*\): Response \{\s*return bytes\(/);
+  });
+  it('the manifest reads no table: it only claims the slot and lists names', () => {
+    const src = js('web/lib/selfDataRoute.ts');
+    const manifest = src.slice(src.indexOf('export async function handleManifest'), src.indexOf('export async function handlePart'));
+    expect(manifest).not.toMatch(/exportSection|readTable|selectAll/);
+  });
+  it('raidmimic.com can reach the /guilds doors and not the /me doors', () => {
+    for (const leaf of ['manifest', 'part']) {
+      expect(isRaidmimicOpenPath(`/guilds/data/export/${leaf}`)).toBe(true);
+      expect(isRaidmimicOpenPath(`/me/data/export/${leaf}`)).toBe(false);
+    }
     expect(isRaidmimicOpenPath('/me')).toBe(false);
+  });
+});
+
+describe('the manifest is the file\'s header and its section list', () => {
+  it('lists every section in order, with the caps and what the file leaves out', () => {
+    const h = exportHeader(new Date('2026-11-01T12:00:00Z'));
+    expect(h.exported_at).toBe('2026-11-01T12:00:00.000Z');
+    expect(h.row_cap).toBe(EXPORT_ROW_CAP);
+    expect(h.character_row_cap).toBe(EXPORT_CHARACTER_CAP);
+    expect(h.not_included.length).toBeGreaterThan(0);
+    const src = js('web/lib/selfDataRoute.ts');
+    expect(src).toContain('sections: SELF_TABLES.map(t => ({ name: t.table, group: t.group }))');
+  });
+});
+
+describe('the browser assembles the same file the streamed download made', () => {
+  const NOW = new Date('2026-11-01T12:00:00Z');
+  const MANIFEST = () => ({ ...exportHeader(NOW), sections: SELF_TABLES.map(t => ({ name: t.table, group: t.group })) });
+
+  it('top-level keys, order and per-table shape are the old shape', async () => {
+    const db = fakeDb({ tables: { characters: CHARS, tells: [{ id: 1 }] } });
+    const out = JSON.parse(await buildExport(db, NOW));
+    expect(Object.keys(out)).toEqual(['exported_at', 'about', 'row_cap', 'character_row_cap', 'tables', 'not_included']);
+    expect(Object.keys(out.tables)).toEqual(EXPORT_SECTIONS);
+    expect(out.tables.tells).toEqual({ group: 'personal', row_count: 1, capped: false, cap: EXPORT_ROW_CAP, rows: [{ id: 1 }] });
+    expect(out.tables.character_inventory.group).toBe('character');
+    expect(out.tables.pvp_kills.group).toBe('guild');
+  });
+
+  it('is valid JSON in any order the parts arrive, and a missing part becomes a named error, not a hole', () => {
+    const parts = { tells: { group: 'personal', row_count: 0, capped: false, cap: 1, rows: [] } };
+    const out = JSON.parse(assembleExport(MANIFEST(), parts).join(''));
+    expect(Object.keys(out.tables)).toEqual(EXPORT_SECTIONS);
+    expect(out.tables.characters.error).toBeTruthy();
+    expect(out.tables.characters.group).toBe('personal');
+    expect(out.tables.tells.rows).toEqual([]);
+  });
+
+  it('prepareExport fetches the manifest, then every part, and builds the same file as a direct build', async () => {
+    const db = fakeDb({ tables: { characters: CHARS, tells: [{ id: 1 }, { id: 2 }] } });
+    const asked = [];
+    const server = async (url) => {
+      asked.push(url);
+      if (url === 'M') return { ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(MANIFEST())) };
+      const name = new URL(url, 'https://x.test').searchParams.get('s');
+      const out = await exportSection(db, findSection(name), ME);
+      return { ok: true, status: 200, json: async () => JSON.parse(sectionBody(out)) };
+    };
+    const progress = [];
+    const done = await prepareExport(server, 'M', (s) => `/part?s=${encodeURIComponent(s)}`, (d, t) => progress.push([d, t]));
+    expect(asked[0]).toBe('M');
+    expect(asked).toHaveLength(1 + SELF_TABLES.length);
+    expect(progress[0]).toEqual([0, SELF_TABLES.length]);
+    expect(progress.at(-1)).toEqual([SELF_TABLES.length, SELF_TABLES.length]);
+    expect(done.sections).toBe(SELF_TABLES.length);
+    expect(done.failed).toEqual([]);
+    expect(done.filename).toBe('raidmimic-data-2026-11-01.json');
+    expect(done.pieces.join('')).toBe(await buildExport(db, NOW));
+    expect(new Blob(done.pieces).size).toBe(new TextEncoder().encode(done.pieces.join('')).length);   // the size shown is the size saved
+  });
+
+  it('never has more than a few parts in flight at once', async () => {
+    let live = 0, peak = 0;
+    const server = async (url) => {
+      if (url === 'M') return { ok: true, status: 200, json: async () => MANIFEST() };
+      live++; peak = Math.max(peak, live);
+      await new Promise(r => setTimeout(r, 1));
+      live--;
+      return { ok: true, status: 200, json: async () => ({ group: 'personal', row_count: 0, capped: false, cap: 1, rows: [] }) };
+    };
+    await prepareExport(server, 'M', (s) => `P${s}`);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(PART_CONCURRENCY);
+  });
+
+  it('retries a failed part once, then names it in the file and in `failed` while the rest stays intact', async () => {
+    const calls = {};
+    const server = async (url) => {
+      if (url === 'M') return { ok: true, status: 200, json: async () => MANIFEST() };
+      calls[url] = (calls[url] ?? 0) + 1;
+      if (url === 'Ptells' && calls[url] === 1) return { ok: false, status: 502, json: async () => ({}) };           // heals on the retry
+      if (url === 'Pcrash_reports') return { ok: true, status: 200, json: async () => { throw new Error('cut short'); } };   // never heals
+      if (url === 'Pxp_events') return { ok: true, status: 200, json: async () => ({ group: 'guild', error: 'This table could not be read just now.' }) };
+      return { ok: true, status: 200, json: async () => ({ group: 'personal', row_count: 0, capped: false, cap: 1, rows: [] }) };
+    };
+    const done = await prepareExport(server, 'M', (s) => `P${s}`);
+    expect(calls.Ptells).toBe(2);
+    expect(calls.Pcrash_reports).toBe(2);                                  // exactly one retry, not a loop
+    expect(calls.Pxp_events).toBe(1);                                      // a section that answered (with its own error) is not re-asked
+    expect(done.failed).toEqual(['crash_reports', 'xp_events']);           // in file order
+    const out = JSON.parse(done.pieces.join(''));
+    expect(out.tables.tells.rows).toEqual([]);
+    expect(out.tables.crash_reports.error).toMatch(/could not be fetched/);
+    expect(out.tables.crash_reports.group).toBe('personal');
+  });
+
+  it('a refused manifest throws the server\'s sentence (the 10-minute wait, signed out) and fetches no part', async () => {
+    const asked = [];
+    const server = async (url) => { asked.push(url); return { ok: false, status: 429, json: async () => ({ error: 'You can prepare your data once every 10 minutes.' }) }; };
+    await expect(prepareExport(server, 'M', (s) => `P${s}`)).rejects.toThrow('once every 10 minutes');
+    expect(asked).toEqual(['M']);
+    const dead = async () => ({ ok: false, status: 500, json: async () => { throw new Error('html'); } });
+    await expect(prepareExport(dead, 'M', (s) => `P${s}`)).rejects.toThrow(/Try again/);
+  });
+
+  it('formats the size the way a phone shows it, and names the file for the day', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(999)).toBe('999 B');
+    expect(formatBytes(850_400)).toBe('850 KB');
+    expect(formatBytes(21_400_000)).toBe('21.4 MB');
+    expect(exportFilename('2026-11-01T12:00:00.000Z')).toBe('raidmimic-data-2026-11-01.json');
+  });
+});
+
+describe('the page: size on screen before Save, nothing saved until it is whole', () => {
+  const ui = () => js('web/app/me/data/PrepareData.tsx');
+  it('Prepare is the button; there is no direct download link left', () => {
+    const src = ui();
+    expect(src).toContain('Prepare my data');
+    const yd = js('web/app/me/data/YourData.tsx');
+    expect(yd).toContain('<PrepareData exportHref={exportHref} />');
+    expect(yd).not.toMatch(/<a [^>]*download/);
+    expect(yd).not.toContain('href={exportHref}');
+  });
+  it('shows progress as "N of M sections" while it works', () => {
+    const src = ui();
+    expect(src).toContain('Preparing… ${progress.done} of ${progress.total} sections');
+    expect(src).toContain('role="progressbar"');
+  });
+  it('shows "Ready · size · sections" from the finished Blob, and Save file only inside that ready state', () => {
+    const src = ui();
+    const readyAt = src.indexOf('{ready && (');
+    expect(readyAt).toBeGreaterThan(0);
+    expect(src).toContain('Ready · {formatBytes(ready.bytes)} · {ready.sections} sections');
+    expect(src).toContain('bytes: blob.size');
+    expect(src.indexOf('Ready · {formatBytes(ready.bytes)}')).toBeLessThan(src.indexOf('Save file'));
+    expect(src.indexOf('Save file')).toBeGreaterThan(readyAt);
+    expect(src.match(/Save file/g)).toHaveLength(1);
+    expect(src).toMatch(/<a href=\{ready\.url\} download=\{ready\.filename\}/);
+    // the object URL is made after prepareExport resolved, never before
+    expect(src.indexOf('await prepareExport(')).toBeLessThan(src.indexOf('URL.createObjectURL('));
+    expect(src.match(/URL\.createObjectURL\(/g)).toHaveLength(1);
+  });
+  it('names a section that errored, and says the page must stay open', () => {
+    const src = ui();
+    expect(src).toContain('ready.failed.join(\', \')');
+    expect(src).toContain('Keep this page open');
+  });
+  it('fetches the manifest and parts under the page\'s own export path, with the section in the query only', () => {
+    const src = ui();
+    expect(src).toContain('`${exportHref}/manifest`');
+    expect(src).toContain('`${exportHref}/part?s=${encodeURIComponent(s)}`');
+  });
+  it('frees the object URL when it is replaced or the page closes', () => {
+    const src = ui();
+    expect(src).toContain('URL.revokeObjectURL');
+    expect(src).toMatch(/useEffect\(\(\) => dropUrl, \[\]\)/);
   });
 });
 
