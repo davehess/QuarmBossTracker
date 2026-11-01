@@ -19,6 +19,7 @@ import { Suspense } from 'react';
 import Link from 'next/link';
 import { HUB_GROUPS, CHARACTER_PAGES, hubEntry } from '@/lib/meHub';
 import HubTourButton from './HubTourButton';
+import YourData from './data/YourData';
 import {
   Skeleton, SLOT, MainIdentity, MainFreshness, MainRecord, MainBest, MainLoot, MainRaids, MainUploads, AccountMimic, AccountDiscord, AccountCharacters, DirectoryCharacters,
 } from './MeHubBlocks';
@@ -109,6 +110,8 @@ export default function MeHub({ userId }: { userId: string }) {
           ))}
         </div>
       </section>
+
+      <YourData exportHref="/me/data/export" />
 
       <p className="text-xs text-dim">
         This is a preview layout. <Link href="/me" className="text-blue hover:underline">The classic view →</Link> still has

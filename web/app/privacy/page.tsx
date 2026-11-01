@@ -172,7 +172,7 @@ export default function PrivacyPage() {
             <B>Most data has no deletion date.</B> A few things expire (see <em>How long we keep it</em>);
             everything else is kept until someone asks us to remove it.
           </li>
-          <li><B>There is no self-serve download or delete.</B> You ask an officer, and it is done by hand.</li>
+          <li><B>You can download or delete your data yourself</B> on your page, under Your data (<code>/me#your-data</code>). Delete removes your own data and your sign-in; the guild&apos;s raid records (parses, attendance, loot and DKP, raid sign-ups) stay with the guild, unlinked from your Discord account. Ask an officer to remove those.</li>
           <li>
             <B>Opt-outs stop future uploads, not past ones.</B> Switching something off does not delete
             what was already collected.

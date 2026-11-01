@@ -53,6 +53,7 @@ import { type NightChip } from '@/components/RaidHeatmap';
 import { type StripNight } from '@/components/RaidNightsStrips';
 import AttendanceSection from './AttendanceSection';
 import MeHub from './MeHub';
+import YourData from './data/YourData';
 import { cookies } from 'next/headers';
 import { pickRaidLayout, RAID_LAYOUT_COOKIE } from '@/lib/raidLayout';
 import { GUILD_TAG } from '@/lib/guild';
@@ -1313,6 +1314,8 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
       )}
 
       <MeCharacterCards items={cardItems} storageKey={discordId ?? ''} />
+
+      <YourData exportHref="/me/data/export" />
     </div>
   );
 }
