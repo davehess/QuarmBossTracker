@@ -28,8 +28,9 @@ export const sameReveal = (a: Reveal, b: Reveal) => a.icon === b.icon && a.menu 
 // ─── Features (four, one picture and one sentence each) ──────────────────────────────────────────────
 // The pictures are plain strings, not imports: a file that is not on disk yet is a 404 in a preview, never a failed build.
 // `chip` marks a promise: anything not built yet says "coming" (CLAUDE.md, honesty rule; web/lib/raidmimicLanding.ts COMING).
-export type FeatureId = 'canvas' | 'studio' | 'sync' | 'replay';
-export interface Feature { id: FeatureId; name: string; line: string; img: string; alt: string; chip?: string }
+export type FeatureId = 'canvas' | 'studio' | 'sync' | 'replay' | 'zeal';
+// `top`: crop a tall picture from its top edge instead of its middle (the Zeal settings capture is nearly square).
+export interface Feature { id: FeatureId; name: string; line: string; img: string; alt: string; chip?: string; top?: boolean }
 const SHOTS = '/raidmimic/shots';
 export const FEATURES: readonly Feature[] = [
   { id: 'canvas', name: 'Canvas & builder', line: 'Standard overlays on one canvas, or build your own.',
@@ -44,6 +45,10 @@ export const FEATURES: readonly Feature[] = [
   { id: 'replay', name: 'Replay & spectator', line: 'Watch the raid back, or live, with you highlighted.',
     img: `${SHOTS}/replay.webp`,
     alt: 'The replay board: a raid night as a timeline of fights, with the raiders moving on the map.' },
+  // The guild lead, 2026-11-01: "add this into the preso" (Mimic Settings, the Zeal and custom UI pack updater).
+  { id: 'zeal', name: 'Zeal & UI packs', line: 'Zeal and your UI pack, installed and kept current in one click.',
+    img: `${SHOTS}/zeal.webp`, top: true,
+    alt: 'Mimic Settings: pick official Zeal, the guild\'s tested build or a test build, check for the latest, and keep custom UI packs current.' },
 ];
 export const featureById = (id: FeatureId): Feature => {
   const f = FEATURES.find(x => x.id === id);
@@ -54,6 +59,7 @@ export const featureById = (id: FeatureId): Feature => {
 // ─── Chapters (the `?v=d` rail): a moment in the video, and the feature card it swaps in ─────────────
 export interface Chapter { id: string; label: string; at: number; feature: FeatureId }
 export const CHAPTERS: readonly Chapter[] = [
+  { id: 'setup',    label: 'Setup',    at: 0,                   feature: 'zeal' },   // the chest, before the mimic wakes
   { id: 'overlays', label: 'Overlays', at: STORY_CUES.overlays, feature: 'canvas' },
   { id: 'calls',    label: 'Calls',    at: STORY_CUES.calls,    feature: 'studio' },
   { id: 'loot',     label: 'Loot',     at: STORY_CUES.loot,     feature: 'sync' },
