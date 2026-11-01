@@ -1,13 +1,24 @@
 // Admin landing — officer-only. Auth + officer gating handled by parent layout.
 import Link from 'next/link';
 import { FoldText } from '@/components/MoreInfo';
+import DepartedMemberNotice from '@/components/DepartedMemberNotice';
 
 export const metadata = {
   title: 'Officer tools · Admin',
   description: 'The officer tools: attendance, sign-ups, triggers, feedback, members and more.',
 };
 
+// The pop-up for members who left the Discord and still have access (2026-11-01); the layout has already gated officers.
 export default function AdminPage() {
+  return (
+    <>
+      <DepartedMemberNotice />
+      <AdminTools />
+    </>
+  );
+}
+
+function AdminTools() {
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
