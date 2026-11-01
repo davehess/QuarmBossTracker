@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { FoldText } from '@/components/MoreInfo';
 import AdminCards from './AdminCards';
 import DepartedMemberNotice from '@/components/DepartedMemberNotice';
-import { supabaseServer } from '@/lib/supabase-server';
 import { shellOn } from './shellOn';
 
 export const metadata = {
@@ -12,11 +11,10 @@ export const metadata = {
 };
 
 // The pop-up for members who left the Discord and still have access (2026-11-01); the layout has already gated officers.
-export default async function AdminPage() {
-  const { data: { user } } = await supabaseServer().auth.getUser();
+export default function AdminPage() {
   return (
     <>
-      <DepartedMemberNotice userId={user?.id} />
+      <DepartedMemberNotice />
       <AdminTools />
     </>
   );
