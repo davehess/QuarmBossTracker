@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.45': [
+    'Mimic beta can back up your UI each time you camp; the site keeps the newest five of those per character and computer.',
+  ],
   '4.0.44': [
     'Bids and uploads now only work for your own characters. Mimic stops working for people who leave the Discord.',
   ],

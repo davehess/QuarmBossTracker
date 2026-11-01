@@ -9143,8 +9143,26 @@ async function _handleAgentUiLayoutUpload(req, res) {
   // plaintext (the stored payload is encrypted — the web can't read it).
   _indexSnapshotSocials({ character, ownerDiscord, snapshotId: written[0].id, files })
     .catch(err => console.warn('[ui_layout] socials index failed:', err?.message));
+  // Mimic's "Keep in sync" backs up after every camp (label 'Auto: after camp', apps/mimic/uiSync.js). Keep the
+  // newest few of those per character and computer, so they never push the hand-made backups out of the 50 the
+  // list shows. Hand-made backups are never pruned here.
+  if (label === _UI_AUTO_LABEL) {
+    _pruneAutoUiSnapshots(ownerDiscord, character, machineName)
+      .catch(err => console.warn('[ui_layout] auto-backup prune failed:', err?.message));
+  }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true, id: written[0].id, pending_link: pendingLink }));
+}
+
+const _UI_AUTO_LABEL = 'Auto: after camp';
+const _UI_AUTO_KEEP = 5;
+async function _pruneAutoUiSnapshots(ownerDiscord, character, machineName) {
+  const supabase = require('./utils/supabase');
+  const base = `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&character_name=ilike.${encodeURIComponent(character)}` +
+    `&label=eq.${encodeURIComponent(_UI_AUTO_LABEL)}&machine_name=${machineName ? 'eq.' + encodeURIComponent(machineName) : 'is.null'}`;
+  const rows = await supabase.select('ui_snapshots', `${base}&select=id&order=created_at.desc&limit=50`);
+  const old = (Array.isArray(rows) ? rows : []).slice(_UI_AUTO_KEEP).map(r => r.id).filter(id => /^[0-9a-f-]{36}$/i.test(id));
+  if (old.length) await supabase.del('ui_snapshots', `${base}&id=in.(${old.join(',')})`);
 }
 
 async function _handleAgentUiLayoutList(req, res) {

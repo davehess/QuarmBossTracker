@@ -169,6 +169,17 @@ next touch one rather than assuming a missing row means a missing doc.
   `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
   nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
 
+- **🧪 UI Studio: compare before restoring, Keep in sync, This PC (Mimic beta `d494250d` + bot 4.0.45, 2026-11-01, §510).**
+  Settings → UI Studio → 🔄 Backups → ↩ Restore now opens a comparison instead of writing everything: seven parts (window layout,
+  hotkeys, socials, spell sets, keybinds, Zeal options, other character settings), what differs in each, Keep mine / Backup, and a
+  before/after picture of the layout fitted to this screen. Only the chosen parts are written, merged section by section
+  (`apps/mimic/uiRestorePlan.js`); a write waits for the character to camp (keybinds: for every EverQuest to close) and survives a
+  restart (`kind:'restore'` in the after-logout queue). Keep in sync (`apps/mimic/uiSync.js`, off by default): back up on camp
+  (passwords left out, skipped when unchanged; the bot keeps the newest 5 automatic backups per character and computer), and a newer
+  backup from another PC is offered (notification → Settings), applied while signed out, or ignored. This PC: EQ's resolution, the
+  screens, an optional screen size, and a suggested overlay size with Apply; backups now record EQ's own resolution. Open: confirm
+  the keybind section name (`[KeyMaps]`) against a real Quarm `eqclient.ini`; the guild lead to try it on beta before it goes stable.
+  Tests: `test/ui-restore-plan.test.js`, `test/ui-sync.test.js`, `test/ui-auto-backup-prune.test.js`.
 - **✅ raidmimic.com home page: the story stage is the page (C; web 2.1.87, `main`, 2026-11-01; "ship it" from the guild lead; was 🧪 `?v=c` "Story stage" /
   `?v=d` "Chapters", web beta `2b01c1be`..`184f518e`).** The guild lead found the old page "underwhelming" and picked C: *"start truly as the only thing on
   the page, fit is the video, fade it into the background color. Slowly add the logos as we go into the video. Skip/hide at the bottom."* First load is only

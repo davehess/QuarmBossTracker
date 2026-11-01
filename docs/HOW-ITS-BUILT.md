@@ -3498,6 +3498,15 @@ Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
 resolution, drag/snap editor, writes back with `.bak` or defers until logout
 (`defer-save` + background watcher).
+**Compare-first restore, Keep in sync, This PC** (Mimic beta `d494250d`, 2026-11-01, DECISIONS §510): Settings' ↩ Restore
+calls `ui-restore-plan` (backup vs disk per part, from `apps/mimic/uiRestorePlan.js`: `classify` / `compare` / `fitLayout` /
+`buildRestore` / `windowRects`) and `ui-restore-parts` (write now, or queue `{kind:'restore'}` for after the camp). Parts: layout
+(`UI_<char>*` whole, fitted), hotkeys (`[HotButtons*]`), socials (`[Socials]` + `Sock_`/`Socials_` files), spell sets, keybinds
+(`eqclient.ini [KeyMaps]` only), Zeal (`zeal.ini` keys, this character's and shared sections, never other characters' or
+ChannelAutoJoin/password keys), other. Keep in sync and This PC: `apps/mimic/uiSync.js` (redaction, hash, newer-elsewhere, overlay
+scale suggestion), `cfg.uiSync` / `cfg.uiSyncState` / `cfg.screenInches`, IPCs `ui-sync-get/set/dismiss`, `ui-this-pc`,
+`ui-this-pc-inches`; the camp hook is `_uiScheduleAutoBackup` in `_retireZealChar`; the check runs 90 s after boot and every 20 min.
+The bot prunes `label = 'Auto: after camp'` backups to 5 per character and computer (`_pruneAutoUiSnapshots`, bot 4.0.45).
 **Picking a character = their current UI, unconverted** (Mimic beta `5ce28ec4`, 2026-10-15, DECISIONS §339): the
 dropdown change runs a fresh disk read at the file's own resolution (Source = Target) — eqclient.ini `[VideoMode]`
 Width/Height when the UI file has that block, else the block with the most windows. Load + Rescale stays the
