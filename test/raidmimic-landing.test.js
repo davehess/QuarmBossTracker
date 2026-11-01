@@ -107,14 +107,17 @@ describe('search engines: indexed on the raidmimic hosts, noindex everywhere els
     process.env.NEXT_PUBLIC_IS_BETA = '1';
     expect(raidmimicSeo('raidmimic.com', '/')).toEqual(noindex);
   });
-  it('robots.txt allows everything and names the sitemap on the canonical host; the sitemap lists the two pages', async () => {
+  it('robots.txt allows everything and names the sitemap on the canonical host; the sitemap lists the pages (the legal pages joined 2026-11-01)', async () => {
     const robots = await (await (await import('../web/app/raidmimic/robots.txt/route.ts')).GET(new Request('https://raidmimic.com/robots.txt', { headers: { host: 'raidmimic.com' } }))).text();
     expect(robots).toBe('User-agent: *\nAllow: /\n\nSitemap: https://raidmimic.com/sitemap.xml\n');
     expect(robots).not.toMatch(/Disallow/);
     const res = await (await import('../web/app/raidmimic/sitemap.xml/route.ts')).GET();
     expect(res.headers.get('content-type')).toMatch(/^application\/xml/);
     const xml = await res.text();
-    expect([...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1])).toEqual(['https://raidmimic.com/', 'https://raidmimic.com/setup', 'https://raidmimic.com/register']);
+    expect([...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1])).toEqual([
+      'https://raidmimic.com/', 'https://raidmimic.com/setup', 'https://raidmimic.com/register',
+      'https://raidmimic.com/privacy', 'https://raidmimic.com/terms', 'https://raidmimic.com/refunds',
+    ]);
   });
   it('wolfpack.quest keeps its own robots.txt (the share links and the API stay out of search), untouched', () => {
     expect(code('web/app/robots.ts')).toMatch(/disallow: \['\/share\/', '\/api\/'\]/);

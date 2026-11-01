@@ -156,7 +156,7 @@ describe('the page', () => {
   it('the landing page links to it, on both kinds of host', () => {
     const parts = code('web/app/raidmimic/_landing/StoryParts.tsx');
     expect(parts).toMatch(/<a href=\{setup\}/);
-    expect(code('web/app/raidmimic/page.tsx')).toMatch(/<Pricing setup=\{ctx\.setup\} \/>/);
+    expect(code('web/app/raidmimic/page.tsx')).toMatch(/<Pricing setup=\{ctx\.setup\} onHost=\{onHost\} \/>/);
     expect(read('web/lib/raidmimicStory.ts')).toMatch(/setup: 'Set it up'/);
     const landing = code('web/app/raidmimic/page.tsx');
     expect(landing).toMatch(/setup: '\/setup'/);
