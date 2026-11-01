@@ -53547,12 +53547,51 @@ function _mapAttribute(points, name, loc, grids, taken) {
 // The respawn WINDOW from a death time: respawn +/- variance, as a range and never a single time.
 // null for a point with no usable respawn (the 1,700,000 s instance sentinel).
 function _mapMakeTimer(point, diedAt, source, name) {
-  const r = Number(point && point.respawn_s), v = Math.max(0, Number(point && point.variance_s) || 0);
+  let r = Number(point && point.respawn_s), v = Math.max(0, Number(point && point.variance_s) || 0);
   if (!(r > 0) || r >= MAP_INSTANCE_SENTINEL_S || !Number.isFinite(diedAt)) return null;
+  // Slow mode (FB-114; the guild lead, 2026-11-01: "these spawns should be more like 18 hours not 20 minutes"): a
+  // Planes of Power kill made while our guild's thread is slowed respawns 18 hours after death, judged by the kill's
+  // own time (the bot's rule, utils/slowMode.js). _mapPrune rebuilds through here, so the 18 hours stick.
+  const slow = !!(point && point.slow_zone) && _mapSlowOnAt(diedAt);
+  if (slow) { r = Math.max(r, MAP_SLOW_RESPAWN_S); v = 0; }
   return {
     point_id: point.id, name: name || _mapBestName(point), died_at: diedAt,
     earliest: diedAt + Math.max(0, r - v) * 1000, latest: diedAt + (r + v) * 1000, source,
+    ...(slow ? { slow: true } : {}),
   };
+}
+// ── Slow mode, for the Map's timers: the bot's window (GET /api/agent/slow-mode), asked every 2 minutes while the Map
+// is in use. ponytail: any Planes of Power zone counts as our guild's copy while the window is open; the window is one
+// raid night (the bot turns it off after 8 hours), so a public PoP zone visited that night is the known ceiling.
+const MAP_SLOW_RESPAWN_S = 18 * 3600;
+let _mapSlowFlag = null, _mapSlowAskedAt = 0, _mapSlowBusy = false;
+function _mapSlowOnAt(atMs, flag = _mapSlowFlag) {
+  if (!flag) return false;
+  const start = Date.parse(flag.set_at);
+  const ends = [Date.parse(flag.auto_off_at), flag.on ? NaN : Date.parse(flag.off_at)].filter(Number.isFinite);
+  if (!Number.isFinite(start) || !ends.length) return false;
+  return atMs >= start && atMs < Math.min(...ends);
+}
+function _mapSlowRefresh(now) {
+  if (_mapSlowBusy || now - _mapSlowAskedAt < 120000 || !_mapFetchAllowed()) return;
+  _mapSlowBusy = true; _mapSlowAskedAt = now;
+  const opts = _uploadOpts;
+  let u;
+  try { u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/slow-mode')); } catch { _mapSlowBusy = false; return; }
+  const mod = u.protocol === 'https:' ? https : http;
+  const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname,
+    headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` }, timeout: 15000 }, (res) => {
+    const chunks = [];
+    res.on('data', c => chunks.push(c));
+    res.on('end', () => {
+      _mapSlowBusy = false;
+      if (res.statusCode !== 200) return;   // an older bot (404) or a refusal: keep what we had
+      try { const j = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (j && typeof j === 'object') _mapSlowFlag = j; } catch { /* keep */ }
+    });
+  });
+  req.on('error', () => { _mapSlowBusy = false; });
+  req.on('timeout', () => { req.destroy(); });
+  req.end();
 }
 // wait = not yet (red) | flash = it just became possible | window = inside the window (yellow) | up = past it (green)
 function _mapTimerState(t, now) {
@@ -53610,8 +53649,14 @@ function _mapPrune(zdoc, points, now) {
   let changed = false;
   const byId = new Map((points || []).map(p => [String(p.id), p]));
   for (const [k, t] of Object.entries(zdoc.timers)) {
-    const fresh = t && byId.size ? _mapMakeTimer(byId.get(String(t.point_id)), t.died_at, t.source, t.name) : null;
-    if (fresh && (fresh.earliest !== t.earliest || fresh.latest !== t.latest)) { t.earliest = fresh.earliest; t.latest = fresh.latest; changed = true; }
+    let fresh = t && byId.size ? _mapMakeTimer(byId.get(String(t.point_id)), t.died_at, t.source, t.name) : null;
+    // A slow-mode timer stays as it is until the bot's window is known again (just after a restart it is not), so a
+    // boot never cuts an 18-hour timer back to its usual length and drops it.
+    if (fresh && t.slow && !fresh.slow && !_mapSlowFlag) fresh = null;
+    if (fresh && (fresh.earliest !== t.earliest || fresh.latest !== t.latest || !!fresh.slow !== !!t.slow)) {
+      t.earliest = fresh.earliest; t.latest = fresh.latest; changed = true;
+      if (fresh.slow) t.slow = true; else delete t.slow;
+    }
     if (!t || !(now <= t.latest + MAP_TIMER_KEEP_MS)) { delete zdoc.timers[k]; changed = true; }
   }
   const keepU = zdoc.unassigned.filter(u => {
@@ -53822,6 +53867,8 @@ function _mapBrewallEnsure(short, now) {
 // ── Zone data: disk first, the bot second ───────────────────────────────────────────────────────
 const _mapZones = new Map();   // short -> { short, body, byId, etag, fetchedAt, retryAt, none, inflight }
 function _mapIndexBody(rec) {
+  // A Planes of Power zone (the bot's `slow_zone`): its points take slow mode's 18 hours (_mapMakeTimer).
+  if (rec.body && rec.body.slow_zone && Array.isArray(rec.body.points)) for (const p of rec.body.points) if (p) p.slow_zone = true;
   rec.byId = new Map(((rec.body && rec.body.points) || []).map(p => [String(p.id), p]));
   rec.version = rec.body ? (rec.body.zone || rec.short) + '@' + (rec.body.generated_at || '') : null;
 }
@@ -55848,6 +55895,7 @@ function _mapStatePayload(have, now, haveLocal, haveRoute) {
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
     map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], engaged: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, corpses: [], route_ver: null, now };
   if (!st) return out;
+  _mapSlowRefresh(now);
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
   const zone = _mapZoneShort(st.zone);

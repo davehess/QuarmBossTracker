@@ -573,11 +573,12 @@
     return h + 'h' + String(m % 60).padStart(2, '0') + 'm';
   }
   // The right-hand list's words: "up in 3m-5m" while red, "up now-2m" inside the window, "UP" once it must be.
+  // 🐢 = a slow-mode kill: 18 hours from death (FB-114; the agent's _mapMakeTimer sets t.slow).
   function timerText(t, now) {
-    var st = timerState(t, now);
-    if (st === 'up') return 'UP';
-    if (st === 'wait') return 'up in ' + fmtDur(t.earliest - now) + '–' + fmtDur(t.latest - now);
-    return 'up now–' + fmtDur(t.latest - now);
+    var st = timerState(t, now), turtle = t.slow ? '🐢 ' : '';
+    if (st === 'up') return turtle + 'UP';
+    if (st === 'wait') return turtle + 'up in ' + fmtDur(t.earliest - now) + (t.latest > t.earliest ? '–' + fmtDur(t.latest - now) : '');
+    return turtle + 'up now–' + fmtDur(t.latest - now);
   }
   // "Up · seen": a pinned mob was seen alive on a point. Hover words: "seen alive 2m ago · spawn #812 · by Corvale".
   function seenText(s, now) {
