@@ -13,7 +13,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { discordIdOf } from '@/lib/lockout';
 import { isRaidmimicHost } from '@/lib/raidmimicHost';
 import { GUILD_SLUG_RX } from '@/lib/hubRegistry';
-import { EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
+import { EQMIMIC_ORIGIN } from '@/lib/raidmimicLanding';
 import { pageMetadata } from '@/lib/pageMetaData';
 import { guildAccess, activeInvites, canManageInvites, ROLE_LABEL, type InviteListRow } from '@/lib/hubGuilds';
 import NewPageTag from '@/components/NewPageTag';
@@ -62,7 +62,7 @@ export default async function GuildPage({ params }: { params: { slug: string } }
   const access = guildAccess(guild, membership);
   if (access.kind === 'hidden' || !guild) notFound();
 
-  const feedbackHref = onHost ? interestUrl(`${EQMIMIC_ORIGIN}/feedback`) : '/feedback';
+  const feedbackHref = onHost ? `${EQMIMIC_ORIGIN}/feedback` : '/feedback';
 
   if (access.kind === 'visitor') {
     return (

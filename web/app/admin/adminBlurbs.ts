@@ -13,6 +13,7 @@ export const ADMIN_BLURBS: Record<string, string> = {
   '/admin/links': 'Set or correct which Discord account owns each character.',
   '/admin/feedback': 'Bug reports and ideas with status tracking, acknowledged and closed from here.',
   '/admin/feedback/anonymous': 'Notes from strangers on the public site. Read by people, never closed from a commit.',
+  '/admin/interest': 'Guilds that registered on raidmimic.com, newest first. Strangers’ text, shown as plain text.',
   '/admin/encounters': 'Repair missing damage, duplicates and wrong bosses. Delete and merge are in its Danger zone.',
   '/admin/signups': 'Raid-Helper sign-ups against who actually showed up.',
   '/admin/comp': 'Author the target raid compositions the sign-up matcher scores against.',

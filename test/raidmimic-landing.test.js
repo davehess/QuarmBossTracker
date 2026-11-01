@@ -30,7 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, stripJs, stripCss } from './_source-slice.js';
 import {
-  RAIDMIMIC_HOSTS, RAIDMIMIC_LANDING_PATH, RAIDMIMIC_ORIGIN, isRaidmimicAsset, isRaidmimicHost, raidmimicLandingTarget, raidmimicSeo,
+  RAIDMIMIC_HOSTS, RAIDMIMIC_INDEXED_HOSTS, RAIDMIMIC_LANDING_PATH, RAIDMIMIC_ORIGIN, isRaidmimicAsset, isRaidmimicHost, raidmimicLandingTarget, raidmimicSeo,
   RAIDMIMIC_SETUP_PATH,
 } from '../web/lib/raidmimicHost.ts';
 import { isEqmimicHost } from '../web/lib/eqmimicHost.ts';
@@ -51,16 +51,17 @@ const allText = () => JSON.stringify([
 ]);
 
 describe('the host list', () => {
-  it('is the six hosts the guild lead bought, with and without www', () => {
-    expect(RAIDMIMIC_HOSTS).toEqual([
+  it('is the six hosts the guild lead bought, with and without www, plus the beta mirror b.raidmimic.com', () => {
+    expect(RAIDMIMIC_INDEXED_HOSTS).toEqual([
       'raidmimic.com', 'www.raidmimic.com', 'raidmimic.net', 'www.raidmimic.net', 'raidmimic.quest', 'www.raidmimic.quest',
     ]);
+    expect(RAIDMIMIC_HOSTS).toEqual([...RAIDMIMIC_INDEXED_HOSTS, 'b.raidmimic.com']);
   });
   it('matches any case and an optional port, exactly', () => {
     for (const h of [...RAIDMIMIC_HOSTS, 'RaidMimic.COM', 'raidmimic.com:443', 'www.raidmimic.net:3000']) expect(isRaidmimicHost(h), h).toBe(true);
   });
   it('refuses lookalikes, the other front doors and empties', () => {
-    for (const h of ['raidmimic.com.evil.com', 'evil-raidmimic.com', 'sub.raidmimic.com', 'raidmimic.org', 'eqmimic.quest',
+    for (const h of ['raidmimic.com.evil.com', 'evil-raidmimic.com', 'sub.raidmimic.com', 'c.raidmimic.com', 'b.raidmimic.com.evil.com', 'b.raidmimic.net', 'raidmimic.org', 'eqmimic.quest',
       'wolfpack.quest', 'b.wolfpack.quest', 'localhost:3000', '', null, undefined]) expect(isRaidmimicHost(h), String(h)).toBe(false);
   });
   it('is disjoint from the eqmimic hosts', () => {
@@ -95,7 +96,7 @@ describe('search engines: indexed on the raidmimic hosts, noindex everywhere els
 
   it('every raidmimic host is indexed and names https://raidmimic.com as the canonical address, so the sister hosts fold into it', () => {
     expect(RAIDMIMIC_ORIGIN).toBe('https://raidmimic.com');
-    for (const h of [...RAIDMIMIC_HOSTS, 'RaidMimic.COM:443']) {
+    for (const h of [...RAIDMIMIC_INDEXED_HOSTS, 'RaidMimic.COM:443']) {
       expect(raidmimicSeo(h, '/'), h).toEqual({ robots: { index: true, follow: true }, alternates: { canonical: 'https://raidmimic.com/' } });
       expect(raidmimicSeo(h, '/setup'), h).toEqual({ robots: { index: true, follow: true }, alternates: { canonical: 'https://raidmimic.com/setup' } });
     }
@@ -117,7 +118,7 @@ describe('search engines: indexed on the raidmimic hosts, noindex everywhere els
     const res = await (await import('../web/app/raidmimic/sitemap.xml/route.ts')).GET();
     expect(res.headers.get('content-type')).toMatch(/^application\/xml/);
     const xml = await res.text();
-    expect([...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1])).toEqual(['https://raidmimic.com/', 'https://raidmimic.com/setup']);
+    expect([...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1])).toEqual(['https://raidmimic.com/', 'https://raidmimic.com/setup', 'https://raidmimic.com/register']);
   });
   it('wolfpack.quest keeps its own robots.txt (the share links and the API stay out of search), untouched', () => {
     expect(code('web/app/robots.ts')).toMatch(/disallow: \['\/share\/', '\/api\/'\]/);
@@ -251,18 +252,14 @@ describe('the page', () => {
     expect(page).toMatch(/interest: interestUrl\(EQMIMIC_FEEDBACK_PATH\)/);
     expect(C.EQMIMIC_ORIGIN + '/feedback').toBe('https://eqmimic.quest/feedback');
     expect(C.EQMIMIC_FEEDBACK_PATH).toBe('/eqmimic/feedback');
-    // the form really is at that path, and really reads a fragment
+    // 2026-11-01: those arguments still say "which host", but the address they yield is the interest form (below)
     expect(fs.existsSync(path.join(ROOT, 'web/app/eqmimic/feedback/page.tsx'))).toBe(true);
-    expect(code('web/app/eqmimic/feedback/AnonFeedbackForm.tsx')).toMatch(/window\.location\.hash/);
   });
-  it('interestUrl puts an Idea and the template in the FRAGMENT, never the query string, and it round-trips', () => {
-    const u = C.interestUrl('https://eqmimic.quest/feedback');
-    expect(u.startsWith('https://eqmimic.quest/feedback#')).toBe(true);
-    expect(u).not.toMatch(/\?/);
-    const p = new URLSearchParams(u.split('#')[1]);
-    expect(p.get('cat')).toBe('idea');
-    expect(p.get('text')).toBe(C.INTEREST_TEXT);
-    expect(C.INTEREST_TEXT.length).toBeLessThan(400);   // the form keeps 4000; this is a template, not an essay
+  it('interestUrl yields the interest form: /register on a raidmimic host (an absolute base), /raidmimic/register on Wolf Pack hosts, nothing in the query or fragment', () => {
+    expect(C.interestUrl('https://eqmimic.quest/feedback')).toBe('/register');
+    expect(C.interestUrl(C.EQMIMIC_FEEDBACK_PATH)).toBe('/raidmimic/register');
+    expect(C.INTEREST_TEXT.length).toBeLessThan(400);
+    for (const u of [C.interestUrl('https://eqmimic.quest/feedback'), C.interestUrl(C.EQMIMIC_FEEDBACK_PATH)]) expect(u).not.toMatch(/[?#]/);
   });
   it('no mailto, no new form, no new endpoint', () => {
     for (const f of ['page.tsx', 'Parts.tsx', 'PathsLayout.tsx', 'HowItWorks.tsx', 'ClipTabs.tsx', 'SceneClip.tsx', 'MascotHero.tsx', 'MascotVideo.tsx', 'MotionStage.tsx']) {

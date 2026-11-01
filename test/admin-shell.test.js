@@ -61,8 +61,8 @@ describe('the groups, in order', () => {
       ['/admin/attendance'], ['/admin/soft-reserve'], ['/admin/queue'], ['/admin/guests'], ['/admin/quarmy'],
       ['/admin/pronunciations', '/admin/voice-reports'],
     ]);
-    // the anonymous inbox hangs under Feedback
-    expect(byId.between.lines[1].sub.map(s => s.href)).toEqual(['/admin/feedback/anonymous']);
+    // the anonymous inbox and the guild-interest list hang under Feedback
+    expect(byId.between.lines[1].sub.map(s => s.href)).toEqual(['/admin/feedback/anonymous', '/admin/interest']);
   });
 
   it('Data & site, with the member-facing pages the old grid had listed small at its foot', () => {
