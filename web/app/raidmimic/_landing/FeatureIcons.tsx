@@ -1,13 +1,13 @@
-// The raidmimic.com feature icons and the grid that carries them (the guild lead's pick, 2026-10-23: "the second set looks best").
+// The raidmimic.com feature icons (the guild lead's pick, 2026-10-23: "the second set looks best").
 // Eight hand-drawn line icons on a 48 x 48 box, one stroke weight, round caps and joins. Gold is `currentColor` (set once on the
 // svg, so it follows the text colour); the two accents are fixed and MEAN something: green is "good / here" (the map pin, the
 // check), red is "heal" (the cross on the drop). Shapes that cross another line are filled with the card colour (`fill-panel`)
 // so the line behind them is cut instead of showing through. No raster, no <image>, no font, no request: inline paths only.
-// The cards are CSS, not part of the drawing; the icon is decorative (aria-hidden) and the label is the text.
-// The words are in web/lib/raidmimicFeatures.ts. Server component.
+// The story stage draws four of them as the feature marks that fade in around the video (STORY marks, web/lib/raidmimicStory.ts);
+// the icon is decorative (aria-hidden) and the label is the text. The words are in web/lib/raidmimicFeatures.ts. The old card grid
+// was deleted with the "Pick your path" page.
 import type { ReactNode } from 'react';
-import { FEATURES, FEATURES_HEAD, type FeatureId } from '@/lib/raidmimicFeatures';
-import { TAG } from '@/lib/raidmimicPlayer';
+import type { FeatureId } from '@/lib/raidmimicFeatures';
 
 function Ico({ children }: { children: ReactNode }) {
   return (
@@ -133,30 +133,3 @@ export const ICONS: Record<FeatureId, () => ReactNode> = {
   timers: TimersIcon, map: MapIcon, target: TargetIcon, damage: DamageIcon,
   loot: LootIcon, hail: HailIcon, ch: ChIcon, code: CodeIcon,
 };
-
-/** The section: eight cards, four across from lg, two across on a phone. */
-export default function FeatureGrid() {
-  return (
-    <section id={FEATURES_HEAD.id} aria-label={FEATURES_HEAD.title} className="mt-10 scroll-mt-4">
-      <h2 className="text-xl text-[#f2ede1] sm:text-2xl">{FEATURES_HEAD.title}</h2>
-      <p className="mb-4 mt-1 max-w-[62ch] text-sm leading-6 text-text">{FEATURES_HEAD.lead}</p>
-      <ul className="m-0 grid list-none grid-cols-2 gap-4 p-0 lg:grid-cols-4">
-        {FEATURES.map(f => {
-          const Icon = ICONS[f.id];
-          return (
-            <li key={f.id} data-feature={f.id} className="flex min-w-0 flex-col rounded-lg border border-border bg-panel p-3 sm:p-4">
-              <span aria-hidden="true" className="block h-12 w-12 text-[#e0a92c] sm:h-14 sm:w-14"><Icon /></span>
-              <h3 className="mt-3 text-sm font-semibold leading-5 text-[#f2ede1] sm:text-base">{f.label}</h3>
-              <p className="mt-1 text-xs leading-5 text-text sm:text-sm sm:leading-6">{f.line}</p>
-              {f.hub && (
-                <p className="mt-auto pt-3">
-                  <span data-tone="hub" className="inline-flex items-center rounded border border-blue/60 px-1.5 py-0.5 text-[11px] leading-4 tracking-wide text-blue">{TAG.hub}</span>
-                </p>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}

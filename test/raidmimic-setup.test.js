@@ -154,10 +154,10 @@ describe('the page', () => {
     expect(fixes['compat-mode']).toMatch(/compatibility mode/);
   });
   it('the landing page links to it, on both kinds of host', () => {
-    const layout = code('web/app/raidmimic/_landing/PathsLayout.tsx');
-    expect(layout).toMatch(/href=\{ctx\.setup\}/);
-    expect(layout).toMatch(/\{door\.more\} →/);
-    expect(read('web/lib/raidmimicPlayer.ts')).toMatch(/setup: 'Set it up yourself'/);
+    const parts = code('web/app/raidmimic/_landing/StoryParts.tsx');
+    expect(parts).toMatch(/<a href=\{setup\}/);
+    expect(code('web/app/raidmimic/page.tsx')).toMatch(/<Pricing setup=\{ctx\.setup\} \/>/);
+    expect(read('web/lib/raidmimicStory.ts')).toMatch(/setup: 'Set it up'/);
     const landing = code('web/app/raidmimic/page.tsx');
     expect(landing).toMatch(/setup: '\/setup'/);
     expect(landing).toMatch(/setup: RAIDMIMIC_SETUP_PATH/);

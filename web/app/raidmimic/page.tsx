@@ -3,10 +3,12 @@
 // guild"). Served at the root of raidmimic.com / .net / .quest (middleware.ts rewrites there) and also at
 // wolfpack.quest/raidmimic and b.wolfpack.quest/raidmimic. Public, no sign-in.
 //
-// One layout: "Pick your path" (PathsLayout.tsx, the guild lead's pick of 2026-10-23 from two previews): three doors,
-// Player, Guild and Self-host, then "See it run" (the real captures and clips) and "How it works" (the four-step drawing).
-// The Ladder preview, the earlier Scene-first layout and the `?v=` switch were deleted. All words live in
-// web/lib/raidmimicPlayer.ts and web/lib/raidmimicLanding.ts; "coming" means coming, and the page never says otherwise.
+// One page: the "Story stage" (StoryStage.tsx; the guild lead picked C on 2026-11-01 from three previews, then refined it: "start
+// truly as the only thing on the page, fit is the video, fade it into the background color. Slowly add the logos as we go into
+// the video. Skip/hide at the bottom"). The video fills the first screen alone; under it come what you get, raid management,
+// pricing, the Register-interest band and the footer. The earlier "Pick your path" page, the sign-in-first and Chapters previews
+// and the `?v=` switch were deleted. Words are in web/lib/raidmimicStory.ts and web/lib/raidmimicLanding.ts; "coming" means
+// coming, and the page never says otherwise.
 //
 // Search engines (2026-10-23): INDEXED on the raidmimic hosts only, with https://raidmimic.com/ as the canonical address;
 // the same page on wolfpack.quest and b.wolfpack.quest is noindex. web/lib/raidmimicHost.ts raidmimicSeo() decides, per
@@ -17,8 +19,10 @@ import { headers } from 'next/headers';
 import type { Metadata } from 'next';
 import { isRaidmimicHost, raidmimicSeo, RAIDMIMIC_SETUP_PATH } from '@/lib/raidmimicHost';
 import { EQMIMIC_FEEDBACK_PATH, EQMIMIC_ORIGIN, interestUrl } from '@/lib/raidmimicLanding';
-import type { Ctx } from './_landing/Parts';
-import PathsLayout from './_landing/PathsLayout';
+import { DOWNLOAD_URL } from '@/lib/raidmimicPlayer';
+import { CtaBand, Footer, type Ctx } from './_landing/Parts';
+import StoryStage from './_landing/StoryStage';
+import { FeatureBlocks, Pricing, RaidManagement } from './_landing/StoryParts';
 
 const TITLE = 'Raid Mimic · free EverQuest raid overlays';
 const DESCRIPTION =
@@ -36,12 +40,23 @@ export function generateMetadata(): Metadata {
 
 export default function RaidmimicPage() {
   // On a raidmimic host the form lives on eqmimic.quest and the page is `/`. On the Wolf Pack hosts the form is
-  // reached by its real path, so the site header stays above it.
+  // reached by its real path, so the site header stays above the page.
   const onHost = isRaidmimicHost(headers().get('host'));
   const ctx: Ctx = onHost
     ? { onHost, interest: interestUrl(`${EQMIMIC_ORIGIN}/feedback`), setup: '/setup' }
     : { onHost, interest: interestUrl(EQMIMIC_FEEDBACK_PATH), setup: RAIDMIMIC_SETUP_PATH };
-  // The story video is the hero on both hosts (the guild lead, 2026-10-25: "post it to raidmimic.com for now"); it was a
-  // beta-only `?v=motion` preview from 2026-10-23 until then.
-  return <PathsLayout ctx={ctx} motion />;
+  // The stage is outside the width cap so it can span the viewport; the page under it is a reading column. No query is read:
+  // a raidmimic host drops every one in the middleware, and the Wolf Pack hosts show the same page.
+  return (
+    <div id="raidmimic-home">
+      <StoryStage downloadUrl={DOWNLOAD_URL} onHost={onHost} />
+      <div className="mx-auto max-w-5xl pb-12">
+        <FeatureBlocks />
+        <RaidManagement />
+        <Pricing setup={ctx.setup} />
+        <div className="mt-12"><CtaBand ctx={ctx} /></div>
+        <Footer />
+      </div>
+    </div>
+  );
 }
