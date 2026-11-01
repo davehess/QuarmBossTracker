@@ -9,6 +9,7 @@ import { requireOfficer, roleNamesAreOfficer } from '@/lib/officer';
 import { isActiveRow } from '@/lib/lockout';
 import { selectAll } from '@/lib/selectAll';
 import NewPageTag from '@/components/NewPageTag';
+import { loadDeparted } from '@/lib/departedMembersLoad';
 import { lockMember, unlockMember } from './actions';
 
 export const metadata = {
@@ -49,10 +50,10 @@ const ERRORS: Record<string, string> = {
 export default async function AccessPage({
   searchParams,
 }: {
-  searchParams: { ok?: string; who?: string; n?: string; warn?: string; err?: string };
+  searchParams: { ok?: string; who?: string; n?: string; web?: string; warn?: string; err?: string };
 }) {
   await requireOfficer();
-  const { ok, who, n, warn, err } = searchParams;
+  const { ok, who, n, web, warn, err } = searchParams;
   const admin = supabaseAdmin();
 
   const [{ data: lockRows }, members] = await Promise.all([
@@ -76,6 +77,8 @@ export default async function AccessPage({
     for (const m of (extra || []) as Member[]) byId.set(m.discord_id, m);
   }
 
+  const departed = await loadDeparted();   // former members with a way in, same list as the pop-up
+
   const pickable = members
     .filter(m => !lockedIds.has(m.discord_id) && !roleNamesAreOfficer(m.role_names))   // officers cannot be locked out
     .sort((a, b) => label(a, a.discord_id).toLowerCase().localeCompare(label(b, b.discord_id).toLowerCase()));
@@ -97,7 +100,7 @@ export default async function AccessPage({
         {ok && (
           <p className="mt-3 text-sm text-green">
             ✓ {ok === 'locked'
-              ? <><b>{who}</b> is locked out{warn ? '. Their Mimic sessions could not be revoked (database error); the lock still stops them.' : `. ${n ?? 0} Mimic session${n === '1' ? '' : 's'} revoked.`}</>
+              ? <><b>{who}</b> is locked out{warn ? '. Their Mimic sessions could not be revoked (database error); the lock still stops them.' : `. ${n ?? 0} Mimic session${n === '1' ? '' : 's'} revoked${web == null ? '' : `, ${web} website sign-in${web === '1' ? '' : 's'} ended`}.`}</>
               : <><b>{who}</b> is unlocked.</>}
           </p>
         )}
@@ -111,6 +114,11 @@ export default async function AccessPage({
             <span className="block text-dim text-xs mb-1">Member</span>
             <select name="discord_id" required defaultValue="" className="bg-bg border border-border rounded px-3 py-2 min-w-[14rem]">
               <option value="" disabled>Pick a member…</option>
+              {departed.length > 0 && (
+                <optgroup label="Left the Discord recently">
+                  {departed.map(d => <option key={d.discordId} value={d.discordId}>{d.name}</option>)}
+                </optgroup>
+              )}
               {pickable.map(m => (
                 <option key={m.discord_id} value={m.discord_id}>{label(m, m.discord_id)}</option>
               ))}
