@@ -35,6 +35,7 @@ const uiPacks = require('./uiPacks');
 const { applyIniKeyEdits } = require('./iniKeyEdits');
 const { visibleUiRects, zealAreas, applyPicks, cleanPicks } = require('./uiClearRects');
 const uiLayouts = require('./uiLayouts');
+const { restorableName, filterRestorable } = require('./uiRestoreGuard');
 const soundLib = require('./sounds');
 const neuralVoice = require('./neuralVoice');
 const hubs = require('./hubs');
@@ -6773,7 +6774,7 @@ ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle, opts) => {
       if (typeof contents !== 'string' || contents.length === 0) continue;
       // Sanity: only allow plain ini filenames in the EQ dir — no path
       // traversal, no overwriting files outside the directory.
-      if (!/^[\w.-]+\.ini$/i.test(name)) continue;
+      if (!restorableName(name)) continue;
       const target = path.join(d, name);
       _backupAndWriteFile(target, contents, backupTag);
       written.push(name);
@@ -7057,6 +7058,7 @@ ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
     const byFile = new Map();
     for (const e of edits) {
       if (!e || !e.file || !e.section || !e.key) continue;
+      if (!restorableName(String(e.file))) continue;   // settings (.ini) files only
       const fp = path.join(d, String(e.file));
       // Path-traversal guard: must resolve inside eqDir.
       const resolved = path.resolve(fp);
@@ -13927,9 +13929,13 @@ ipcMain.handle('ui-studio-get-snapshot', async (_e, params) => {
       { headers: { 'Authorization': `Bearer ${_uiToken}` } },
     );
     if (!snap || !snap.files) return { ok: false, error: 'snapshot empty' };
+    // Only UI settings files (.ini) go on to the editor, the layout import and any later save.
+    const kept = filterRestorable(snap.files);
     return {
       ok: true,
-      files: snap.files,
+      files: kept.files,
+      skipped: kept.skipped.slice(0, 20).map(n => String(n).slice(0, 80)),
+      skipped_count: kept.skipped.length,
       source_width:  snap.source_width  || null,
       source_height: snap.source_height || null,
       label: snap.label || null,
@@ -13971,23 +13977,29 @@ ipcMain.handle('ui-studio-restore', async (_e, params) => {
   try { const d = screen.getPrimaryDisplay(); targetW = d.workAreaSize.width; targetH = d.workAreaSize.height; } catch {}
   const written = [];
   const errors  = [];
+  const skipped = [];
   for (const [name, contents] of Object.entries(snap.files)) {
+    // Restore writes only the settings files UI Studio backs up (uiRestoreGuard.js): a bare .ini name.
+    // Anything else is skipped, never written, and reported.
+    if (!restorableName(name) || typeof contents !== 'string') { skipped.push(String(name).slice(0, 80)); continue; }
     try {
-      const safeName = path.basename(name); // never let a path escape eqDir
-      const targetPath = path.join(eqDir, safeName);
+      const targetPath = path.join(eqDir, name);
       const body = clamp ? _clampUiIni(contents, targetW, targetH) : contents;
       const backupPath = _backupAndWriteFile(targetPath, body);
-      written.push({ name: safeName, backup: path.basename(backupPath) });
+      written.push({ name, backup: path.basename(backupPath) });
     } catch (err) {
       errors.push({ name, error: err && err.message ? err.message : String(err) });
     }
   }
+  if (skipped.length) appendAgentLog(`[ui-studio] restore skipped ${skipped.length} file(s) that are not UI settings\n`);
+  const skipNote = skipped.length ? ` Skipped ${skipped.length} file(s) that are not UI settings.` : '';
   return {
     ok: errors.length === 0,
     written, errors,
-    note: clamp
+    skipped: skipped.slice(0, 20), skipped_count: skipped.length,
+    note: (clamp
       ? `Wrote ${written.length} file(s). Positions clamped to ${targetW}×${targetH}.`
-      : `Wrote ${written.length} file(s). Resolution unchanged.`,
+      : `Wrote ${written.length} file(s). Resolution unchanged.`) + skipNote,
   };
 });
 
