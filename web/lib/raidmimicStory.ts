@@ -1,11 +1,11 @@
-// The raidmimic landing's `?v=c` ("Story stage") and `?v=d` ("Chapters") variants: the one place their timeline, words and
+// The raidmimic landing's story stage (the default page since the guild lead picked C, 2026-11-01): the one place its timeline, words and
 // money live (the guild lead, 2026-11-01: "underwhelming ... the video ... started as the primary view ... menus appear as the
 // video progresses ... way less wordy, less of the same pictures ... start for free, unlock pro with guild or individual plan").
 // Pure data and pure functions, so test/raidmimic-landing-variants.test.js runs the real thing.
 
 // ─── The story's timeline ───────────────────────────────────────────────────────────────────────────
 // Measured on story-720.mp4 (81.5 s) frame by frame at 0.2 s steps, 2026-11-01. Re-measure if the video is re-cut. Change
-// them HERE and nowhere else: both variants read this one object.
+// them HERE and nowhere else: the stage reads this one object.
 export const STORY_CUES = {
   mimicIcon: 10.8,  // the chest has become the mimic (grin done, "Hi! I'm Raid Mimic!"): the icon appears top-left
   overlays: 23.0,   // the first overlay comes out of its mouth: the top menu appears
@@ -16,16 +16,34 @@ export const STORY_CUES = {
 } as const;
 export type StoryCues = { [K in keyof typeof STORY_CUES]: number };
 
-/** What the page chrome shows at time `t` seconds into the story. `all` (skip, reduced motion) shows everything at once. */
-export interface Reveal { icon: boolean; menu: boolean; end: boolean }
-export function revealAt(t: number, all = false, cues: StoryCues = STORY_CUES): Reveal {
-  if (all) return { icon: true, menu: true, end: true };
+/** The feature marks that fade in around the picture as the story reaches their moment (the guild lead, 2026-11-01: "slowly
+ *  add the logos as we go into the video"). `cue` names the STORY_CUES key each one waits for; `icon` names a drawing in
+ *  web/app/raidmimic/_landing/FeatureIcons.tsx. Listed in story order: the test holds that. */
+export type MarkId = 'overlays' | 'calls' | 'loot' | 'hail';
+export interface Mark { id: MarkId; label: string; cue: keyof StoryCues; icon: 'damage' | 'timers' | 'loot' | 'hail' }
+export const MARKS: readonly Mark[] = [
+  { id: 'overlays', label: 'Overlays', cue: 'overlays', icon: 'damage' },
+  { id: 'calls', label: 'Calls', cue: 'calls', icon: 'timers' },
+  { id: 'loot', label: 'Loot', cue: 'loot', icon: 'loot' },
+  { id: 'hail', label: 'Hail', cue: 'hail', icon: 'hail' },
+];
+/** Which marks are on screen at `t` seconds: those whose moment has passed. `all` shows every one. */
+export function marksAt(t: number, all = false, cues: StoryCues = STORY_CUES, marks: readonly Mark[] = MARKS): MarkId[] {
   const x = Number.isFinite(t) ? t : 0;
-  return { icon: x >= cues.mimicIcon, menu: x >= cues.overlays, end: x >= cues.end };
+  return marks.filter(m => all || x >= cues[m.cue]).map(m => m.id);
 }
-export const sameReveal = (a: Reveal, b: Reveal) => a.icon === b.icon && a.menu === b.menu && a.end === b.end;
 
-// ─── Features (four, one picture and one sentence each) ──────────────────────────────────────────────
+/** What the page chrome shows at time `t` seconds into the story. `all` (skip, reduced motion) shows everything at once. */
+export interface Reveal { icon: boolean; menu: boolean; end: boolean; marks: MarkId[] }
+export function revealAt(t: number, all = false, cues: StoryCues = STORY_CUES): Reveal {
+  if (all) return { icon: true, menu: true, end: true, marks: marksAt(0, true, cues) };
+  const x = Number.isFinite(t) ? t : 0;
+  return { icon: x >= cues.mimicIcon, menu: x >= cues.overlays, end: x >= cues.end, marks: marksAt(x, false, cues) };
+}
+export const sameReveal = (a: Reveal, b: Reveal) =>
+  a.icon === b.icon && a.menu === b.menu && a.end === b.end && a.marks.join() === b.marks.join();
+
+// ─── Features (one picture and one sentence each) ──────────────────────────────────────────────
 // The pictures are plain strings, not imports: a file that is not on disk yet is a 404 in a preview, never a failed build.
 // `chip` marks a promise: anything not built yet says "coming" (CLAUDE.md, honesty rule; web/lib/raidmimicLanding.ts COMING).
 export type FeatureId = 'canvas' | 'studio' | 'sync' | 'replay' | 'zeal';
@@ -55,23 +73,6 @@ export const featureById = (id: FeatureId): Feature => {
   if (!f) throw new Error(`raidmimic story: no feature "${id}"`);
   return f;
 };
-
-// ─── Chapters (the `?v=d` rail): a moment in the video, and the feature card it swaps in ─────────────
-export interface Chapter { id: string; label: string; at: number; feature: FeatureId }
-export const CHAPTERS: readonly Chapter[] = [
-  { id: 'setup',    label: 'Setup',    at: 0,                   feature: 'zeal' },   // the chest, before the mimic wakes
-  { id: 'overlays', label: 'Overlays', at: STORY_CUES.overlays, feature: 'canvas' },
-  { id: 'calls',    label: 'Calls',    at: STORY_CUES.calls,    feature: 'studio' },
-  { id: 'loot',     label: 'Loot',     at: STORY_CUES.loot,     feature: 'sync' },
-  { id: 'hail',     label: 'Hail',     at: STORY_CUES.hail,     feature: 'replay' },
-];
-/** The chapter the video is in at `t`: the last one that has started; the first one before any has (the card is never empty). */
-export function chapterAt(t: number, chapters: readonly Chapter[] = CHAPTERS): Chapter {
-  const x = Number.isFinite(t) ? t : 0;
-  let cur = chapters[0];
-  for (const c of chapters) if (x >= c.at) cur = c;
-  return cur;
-}
 
 // ─── Money ──────────────────────────────────────────────────────────────────────────────────────────
 // Guild: $25 a month, monthly only, first month free (DECISIONS §495). Individual: NOT decided (DESIGN-raidmimic-hosted.md §8d
@@ -121,6 +122,9 @@ export const STORY_WORDS = {
   signIn: 'Sign in',
   startFree: 'Start free · Pro for your guild or for you',
   skip: 'Skip',
+  hide: 'Hide',
+  setup: 'Set it up',
+  show: 'Show the story',
   again: 'Watch again',
   soundOn: 'Sound on',
   soundOff: 'Sound off',
@@ -138,5 +142,5 @@ export const STORY_WORDS = {
   after: '/guilds',
 } as const;
 
-/** Every sentence these variants add, for the sweeps in test/raidmimic-landing-variants.test.js. */
-export const STORY_TEXT = [STORY_WORDS, FEATURES, TIERS(), CHAPTERS, RAID_MGMT, RAID_MGMT_HEAD];
+/** Every sentence the story stage adds, for the sweeps in test/raidmimic-landing-variants.test.js. */
+export const STORY_TEXT = [STORY_WORDS, FEATURES, TIERS(), MARKS, RAID_MGMT, RAID_MGMT_HEAD];

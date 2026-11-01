@@ -225,35 +225,24 @@
 /* The head has to close as a mass before any line reads as anatomy. */
 .wolf-mass { fill: rgb(var(--wp-mass)); stroke: none; }
 
-/* The raidmimic hero (web/app/raidmimic/_landing/MascotHero.tsx).
-   .rm-fade melts the clip's square edge into the page: both axes fade over the outer 8%.
-   .rm-card (lg and up) tilts a capture and flies it in from beside the mascot: transform + opacity only,
-   and none of it under prefers-reduced-motion. */
+/* The raidmimic story stage (web/app/raidmimic/_landing/StoryStage.tsx).
+   .rm-stage is the first screen: --sh tall (a full viewport; on the Wolf Pack hosts, under the site header, 1.5rem less).
+   .rm-frame is the picture's box: 9:16 (1:1 on a wide landscape screen, the SAME query as SQUARE_QUERY in StoryVideo.tsx,
+   which picks the square files), as large as fits the stage, centred, so object-fit: contain shows the whole video and
+   never crops it. Its edges FADE into the page colour (the guild lead, 2026-11-01: "fit is the video, fade it into the
+   background color"): both axes fade over the outer 12%, so no rectangle is left. */
 @layer utilities {
-  .rm-fade {
-    -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent), linear-gradient(to bottom, transparent, black 8%, black 92%, transparent);
+  .rm-stage { --sh: max(100svh, 26rem); height: var(--sh); }
+  .rm-stage-in-site { --sh: max(calc(100svh - 1.5rem), 26rem); }
+  .rm-frame {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: min(100%, calc(var(--sh) * 0.5625)); aspect-ratio: 9 / 16;
+    -webkit-mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent), linear-gradient(to bottom, transparent, black 12%, black 88%, transparent);
     -webkit-mask-composite: source-in;
-    mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent), linear-gradient(to bottom, transparent, black 8%, black 92%, transparent);
+    mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent), linear-gradient(to bottom, transparent, black 12%, black 88%, transparent);
     mask-composite: intersect;
   }
-  @keyframes rm-fan {
-    from { opacity: 0; transform: translate3d(var(--fx, 0px), 24px, 0) rotate(0deg) scale(0.9); }
-    to   { opacity: 1; transform: translate3d(0, 0, 0) rotate(var(--r, 0deg)) scale(1); }
+  @media (min-width: 1024px) and (orientation: landscape) {
+    .rm-frame { width: min(100%, var(--sh)); aspect-ratio: 1 / 1; }
   }
-  @media (min-width: 1024px) {
-    .rm-card { transform: rotate(var(--r, 0deg)); animation: rm-fan 640ms cubic-bezier(0.22, 0.61, 0.36, 1) var(--d, 0ms) both; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .rm-card { animation: none; }
-  }
-
-  /* The `?v=motion` stage (web/app/raidmimic/_landing/MotionStage.tsx). Every file is 9:16 (the guild lead, 2026-10-24: "vertical
-     is great for both mobile and desktop"), so the box is always 9:16 and object-fit: cover has nothing to crop. The column
-     around it sets how wide it may be. */
-  .rm-stage-box { aspect-ratio: 9 / 16; width: 100%; }
-  /* On a wide landscape screen the box is square (the guild lead, 2026-10-24); this is the SAME query as SQUARE_QUERY in
-     MotionStage.tsx, which picks the square files, so the box and the file can never disagree. */
-  @media (min-width: 1024px) and (orientation: landscape) { .rm-stage-box { aspect-ratio: 1 / 1; } }
-  /* Captions while the story plays muted (story.vtt). */
-  .rm-stage video::cue { background: rgb(0 0 0 / 0.72); color: rgb(var(--wp-bone)); font-size: 0.95em; }
 }
