@@ -98,6 +98,22 @@ export const TIERS = (individual: number | null = INDIVIDUAL_PRICE): Tier[] => [
 export const GOLD_BTN =
   'inline-flex min-h-11 items-center justify-center rounded-md border border-gold bg-gold px-4 py-2 text-sm font-semibold text-[#1a1206] no-underline transition-colors hover:bg-[#e0a92c] hover:no-underline disabled:opacity-60 motion-reduce:transition-none';
 
+// ─── Raid management: the guild side, one line each, no pictures ────────────────────────────────────
+// The guild lead, 2026-11-01: "we gotta mention the good stuff. Raid threads, integration into opendkp, zeal, quest help.
+// announcements in guild, so raid management". Each line is a feature that runs for Wolf Pack today (docs/HOW-ITS-BUILT.md:
+// expansion-thread boards, OpenDKP sync + bidding, quest scripts + /pop flags, raid info posts, the Command Center, the
+// route planner); for another guild it arrives with Pro Guild hosting, which the chip says is coming. Zeal has its own block.
+export interface MgmtItem { id: string; icon: string; name: string; line: string }
+export const RAID_MGMT: readonly MgmtItem[] = [
+  { id: 'threads', icon: '🧵', name: 'Raid threads', line: 'Boss timers, kill cards and spawn alerts in your Discord.' },
+  { id: 'dkp', icon: '💰', name: 'OpenDKP', line: 'Ticks, loot bids and results kept in step with OpenDKP.' },
+  { id: 'quests', icon: '📜', name: 'Quest help', line: 'Flags, event loot, and which quests want the item you hold.' },
+  { id: 'announce', icon: '📣', name: 'Announcements', line: 'Raid info and pre-raid checklists posted for you.' },
+  { id: 'command', icon: '🎯', name: 'Command Center', line: 'Signups, comp and attendance on one officer board.' },
+  { id: 'routes', icon: '🗺️', name: 'Route planner', line: 'Plan the path through a zone, floor by floor.' },
+];
+export const RAID_MGMT_HEAD = { id: 'raid-management', title: 'Raid management', chip: 'Runs for one guild today. Hosting yours is coming.' } as const;
+
 // ─── Words ──────────────────────────────────────────────────────────────────────────────────────────
 export const STORY_WORDS = {
   brand: 'Raid Mimic',
@@ -113,6 +129,7 @@ export const STORY_WORDS = {
   scroll: 'See what you get',
   menu: [
     { label: 'What you get', href: '#features' },
+    { label: 'For guilds', href: '#raid-management' },
     { label: 'Pricing', href: '#pricing' },
   ],
   featuresTitle: 'What you get',
@@ -122,4 +139,4 @@ export const STORY_WORDS = {
 } as const;
 
 /** Every sentence these variants add, for the sweeps in test/raidmimic-landing-variants.test.js. */
-export const STORY_TEXT = [STORY_WORDS, FEATURES, TIERS(), CHAPTERS];
+export const STORY_TEXT = [STORY_WORDS, FEATURES, TIERS(), CHAPTERS, RAID_MGMT, RAID_MGMT_HEAD];

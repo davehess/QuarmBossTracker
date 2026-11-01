@@ -22,7 +22,7 @@ import { BetaTag, Footer, type Ctx } from './_landing/Parts';
 import PathsLayout from './_landing/PathsLayout';
 import ChaptersStage from './_landing/ChaptersStage';
 import StoryStage from './_landing/StoryStage';
-import { FeatureBlocks, Pricing } from './_landing/StoryParts';
+import { FeatureBlocks, Pricing, RaidManagement } from './_landing/StoryParts';
 
 const TITLE = 'Raid Mimic · free EverQuest raid overlays';
 const DESCRIPTION =
@@ -60,6 +60,7 @@ export default async function RaidmimicPage({ searchParams }: { searchParams: Pr
         <BetaTag ctx={ctx} />
         <StoryStage downloadUrl={DOWNLOAD_URL} />
         <FeatureBlocks />
+        <RaidManagement />
         <Pricing />
         <Footer />
       </div>
@@ -71,6 +72,7 @@ export default async function RaidmimicPage({ searchParams }: { searchParams: Pr
         <BetaTag ctx={ctx} />
         <ChaptersStage downloadUrl={DOWNLOAD_URL} onHost={onHost}>
           <div className="mx-auto max-w-5xl pb-12">
+            <RaidManagement />
             <Pricing />
             <Footer />
           </div>

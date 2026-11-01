@@ -3,7 +3,7 @@
 // same Discord sign-in the `?v=b` card uses: no new auth path). Words and numbers are in web/lib/raidmimicStory.ts.
 import SignInButton from '@/components/SignInButton';
 import { DOWNLOAD_URL } from '@/lib/raidmimicPlayer';
-import { FEATURES, STORY_WORDS as W, TIERS, type Tier } from '@/lib/raidmimicStory';
+import { FEATURES, RAID_MGMT, RAID_MGMT_HEAD, STORY_WORDS as W, TIERS, type Tier } from '@/lib/raidmimicStory';
 import { PRIMARY_BTN } from './Parts';
 import { ComingChip, FeaturePicture } from './StoryBits';
 
@@ -40,6 +40,27 @@ export function FeatureBlocks() {
 const EDGE: Record<Tier['tone'], string> = { green: 'border-t-green', blue: 'border-t-blue', gold: 'border-t-gold' };
 
 /** Free, Pro · Guild, Pro · Individual. The individual price comes from INDIVIDUAL_PRICE (null: "price at launch"). */
+/** Both variants: the guild side as six one-line items, no pictures (the pictures above are the player side). */
+export function RaidManagement() {
+  return (
+    <section id={RAID_MGMT_HEAD.id} aria-label={RAID_MGMT_HEAD.title} className="scroll-mt-4 pt-12">
+      <h2 className="text-2xl text-[#f2ede1]">{RAID_MGMT_HEAD.title}</h2>
+      <p className="mb-0 mt-2"><ComingChip>{RAID_MGMT_HEAD.chip}</ComingChip></p>
+      <ul className="m-0 mt-5 grid list-none gap-3 p-0 sm:grid-cols-2 lg:grid-cols-3">
+        {RAID_MGMT.map(m => (
+          <li key={m.id} className="flex min-w-0 gap-3 rounded-md border border-border bg-panel p-4">
+            <span aria-hidden className="text-xl leading-6">{m.icon}</span>
+            <div className="min-w-0">
+              <h3 className="m-0 text-base text-[#f2ede1]">{m.name}</h3>
+              <p className="mb-0 mt-1 text-sm leading-6 text-text">{m.line}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function Pricing() {
   const tiers = TIERS();
   return (
