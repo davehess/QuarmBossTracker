@@ -64,7 +64,7 @@ const impls = {
   admin_queue_chat_speakers: ({ p_since }, t) => {
     const m = new Map();
     for (const r of t.chat_messages) {
-      if (!['guild', 'raid'].includes(r.channel) || !(r.ts > p_since)) continue;
+      if (r.channel !== 'guild' || !(r.ts > p_since)) continue;     // /gu only: /rs carries other guilds
       const c = m.get(r.speaker) ?? { n: 0, last: r.ts };
       c.n++; if (r.ts > c.last) c.last = r.ts;
       m.set(r.speaker, c);
@@ -115,6 +115,7 @@ const KEYS = {
   agent_upload_stats: ['guild_id', 'character', 'endpoint'],
   opendkp_attendance_recent: ['character_name'],
   guild_triggers: ['id'],
+  wolfpack_members: ['discord_id'],
 };
 
 // ═══ The review queue, end to end, against data past the cap ═════════════════════════════════════
@@ -123,7 +124,7 @@ function buildWorld(NOW) {
   let whoId = 0;
   const addWho = (character, level, cls, anonymous, at, guild = 'wolfpack') =>
     who.push({ id: ++whoId, guild_id: guild, character, level, class: cls, anonymous, observed_at: iso(at) });
-  const char = (name, extra = {}) => chars.push({ guild_id: 'wolfpack', name, class: null, rank: null, main_name: null, discord_id: null, opendkp_id: null, registered_via_web_at: null, registered_via_web_by_discord_id: null, ...extra });
+  const char = (name, extra = {}) => chars.push({ guild_id: 'wolfpack', name, class: null, rank: 'Raid Pack', main_name: null, discord_id: null, opendkp_id: null, registered_via_web_at: null, registered_via_web_by_discord_id: null, ...extra });
 
   // 1,000 speakers who ARE in OpenDKP: half through characters.opendkp_id, half only through the attendance view.
   for (let i = 0; i < 1000; i++) char(spk(i), { class: 'Cleric', opendkp_id: i < 500 ? i + 1 : null });
@@ -132,10 +133,19 @@ function buildWorld(NOW) {
   for (let i = 500; i < 1000; i++) attendance.push({ character_name: spk(i) });
   // 300 speakers who are NOT: 100 on the roster with a class, 80 with a /who class, 20 /anon-only, 100 unknown.
   for (let i = 1000; i < 1100; i++) char(spk(i), { class: 'Monk' });
+  for (let i = 1100; i < 1300; i++) char(spk(i));      // the other 200 are members too: on the roster, no class
   for (let i = 1100; i < 1180; i++) { addWho(spk(i), 50, 'Wizard', false, NOW - 5 * DAY); addWho(spk(i), 51, 'Wizard', false, NOW - 4 * DAY); }
   for (let i = 1180; i < 1200; i++) addWho(spk(i), null, null, true, NOW - 2 * DAY);
   // Three characters an officer registered through the web and nobody has claimed yet.
   for (let i = 0; i < 3; i++) char('Reg' + alpha(i), { registered_via_web_at: iso(NOW - (i + 1) * DAY), registered_via_web_by_discord_id: '9', opendkp_id: 7000 + i });
+
+  // Not guild members, so none of them may appear anywhere: a /gu speaker with no character row, a
+  // departed account that still holds a Raid Pack rank in OpenDKP, and a member who only ever spoke in /rs.
+  char('Exmember', { discord_id: '222' });
+  chat.push({ ts: iso(NOW - DAY), channel: 'guild', speaker: 'Stranger' });
+  chat.push({ ts: iso(NOW - DAY), channel: 'guild', speaker: 'Exmember' });
+  chat.push({ ts: iso(NOW - DAY), channel: 'raid', speaker: spk(0) + 'rsonly' });
+  char(spk(0) + 'rsonly');
 
   // 3,900 chat lines in the last 14 days (3 a speaker), the first 1,000 of them by people already settled.
   for (let i = 0; i < 1300; i++) for (let k = 0; k < 3; k++) chat.push({ ts: iso(NOW - DAY - (i * 3 + k) * 30_000), channel: k % 2 ? 'raid' : 'guild', speaker: spk(i) });
@@ -186,7 +196,11 @@ function buildWorld(NOW) {
   chat.push({ ts: iso(RAID - 20 * DAY), channel: 'raid', speaker: 'Nyssara' });
 
   return {
-    chars, attendance, chat, who, uploads, ticks, encounters, players,
+    chars, attendance, chat, who, uploads, ticks,
+    members: [
+      { discord_id: '111', is_member: true, role_names: ['Pack Member'] },
+      { discord_id: '222', is_member: false, role_names: ['Pack Member'] },
+    ], encounters, players,
     raids: [{ raid_id: 1, ts: raidTs, name: 'Raid One' }],
     expected: { raidTs },
   };
@@ -195,7 +209,7 @@ function buildWorld(NOW) {
 function worldFake(w, { impl = impls } = {}) {
   return makeFake({
     tables: {
-      characters: w.chars, opendkp_attendance_recent: w.attendance, chat_messages: w.chat,
+      characters: w.chars, wolfpack_members: w.members, opendkp_attendance_recent: w.attendance, chat_messages: w.chat,
       who_observations: w.who, agent_upload_stats: w.uploads, opendkp_raids: w.raids,
       opendkp_ticks: w.ticks, encounters: w.encounters, encounter_players: w.players,
     },
@@ -223,11 +237,16 @@ describe('the review queue reads complete data', () => {
   it('chat speakers missing from OpenDKP: all 300, not the ones in the first 1,000 chat lines', async () => {
     const c = await cat('unrostered_chat');
     expect(c.count).toBe(300);
+    // non-members never appear: no character row, a departed account, a speaker heard only in /rs
+    const k = new Set(c.items.map(i => i.key));
+    expect(k.has('stranger')).toBe(false);
+    expect(k.has('exmember')).toBe(false);
+    expect(k.has(lower(spk(0) + 'rsonly'))).toBe(false);
     // each spoke 3 times, and `last` is the newest line, not the first one met
     const one = c.items.find(i => i.key === lower(spk(1250)));
-    expect(one.count).toBe(3);
-    expect(one.detail).toBe('3 messages');
-    const newest = Math.max(...world.chat.filter(m => m.speaker === spk(1250)).map(m => Date.parse(m.ts)));
+    expect(one.count).toBe(2);           // the /rs line is not counted
+    expect(one.detail).toBe('2 messages');
+    const newest = Math.max(...world.chat.filter(m => m.speaker === spk(1250) && m.channel === 'guild').map(m => Date.parse(m.ts)));
     expect(Date.parse(one.last)).toBe(newest);
   });
 

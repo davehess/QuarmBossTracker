@@ -11,11 +11,68 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { rpcJson } from './rpcJson';
 import { GUILD_TAG } from './guild';
+import { RANKS, ROLES } from './guild';
+import { selectAll } from './selectAll';
 
 export const QUEUE_GUILD = GUILD_TAG;
 
 const MIN = 60_000;
 const HOUR = 3_600_000;
+
+// ── who counts as a guild member ────────────────────────────────────────────────────────────────
+// The queue lists things an officer can act on, so every list is limited to guild members (the guild
+// lead, 2026-11-01: "many of the users here are observed not being in our guild"). The predicate is the
+// one CLAUDE.md names: a Discord role of Pack Member or better on the character's linked account
+// (characters.discord_id -> wolfpack_members), OR an OpenDKP rank of Raid Pack or better. A departed
+// account (wolfpack_members.is_member = false) never passes, whatever rank is left behind in OpenDKP.
+// An alt with no account of its own passes through its main (characters.main_name).
+
+/** OpenDKP ranks that count as members on their own: Raid Pack and better, best first in RANKS.priority. */
+export const MEMBER_RANKS: readonly string[] = RANKS.priority.slice(0, RANKS.priority.indexOf('Raid Pack') + 1);
+
+export type MemberCharacter = { name: string | null; rank: string | null; discord_id: string | null; main_name: string | null };
+export type MemberAccount = { discord_id: string; is_member: boolean | null; role_names: string[] | null };
+export type GuildMembers = {
+  /** lower-cased character names that pass the predicate */
+  names: Set<string>;
+  /** discord ids of current members (an account with a Pack Member+ role and is_member not false) */
+  discords: Set<string>;
+};
+
+export function computeGuildMembers(chars: MemberCharacter[], accounts: MemberAccount[]): GuildMembers {
+  const discords = new Set<string>();
+  const departed = new Set<string>();
+  for (const a of accounts) {
+    if (a.is_member === false) { departed.add(a.discord_id); continue; }
+    if ((a.role_names ?? []).some(r => (ROLES.active as readonly string[]).includes(r))) discords.add(a.discord_id);
+  }
+  const names = new Set<string>();
+  const gone = (c: MemberCharacter) => !!c.discord_id && departed.has(c.discord_id);
+  for (const c of chars) {
+    if (!c.name || gone(c)) continue;
+    const viaRole = !!c.discord_id && discords.has(c.discord_id);
+    const viaRank = !!c.rank && MEMBER_RANKS.includes(c.rank);
+    if (viaRole || viaRank) names.add(c.name.toLowerCase());
+  }
+  for (const c of chars) {      // an alt rides on its main
+    if (!c.name || gone(c) || !c.main_name) continue;
+    if (names.has(c.main_name.toLowerCase())) names.add(c.name.toLowerCase());
+  }
+  return { names, discords };
+}
+
+/** Reads the characters and Discord accounts (both paged) and applies the predicate. */
+export async function readGuildMembers(sb: SupabaseClient): Promise<GuildMembers> {
+  const [chars, accounts] = await Promise.all([
+    selectAll<MemberCharacter>((from, to) => sb
+      .from('characters').select('name, rank, discord_id, main_name').eq('guild_id', GUILD_TAG)
+      .order('name').range(from, to)),
+    selectAll<MemberAccount>((from, to) => sb
+      .from('wolfpack_members').select('discord_id, is_member, role_names')
+      .order('discord_id').range(from, to)),
+  ]);
+  return computeGuildMembers(chars, accounts);
+}
 
 // ── chat speakers ────────────────────────────────────────────────────────────────────────────────
 
@@ -148,3 +205,17 @@ export function foldTimesByFamily(
     into.set(fid, arr);
   }
 }
+
+// ── how the queue is shown ───────────────────────────────────────────────────────────────────────
+// (the guild lead, 2026-11-01: "admin review queue looks terrible with this being verbose")
+
+/** Rows a section shows before "Show all N". */
+export const QUEUE_TOP = 10;
+
+/** The first QUEUE_TOP rows, and the rest that sit behind "Show all". */
+export function splitTop<T>(items: T[], top: number = QUEUE_TOP): { shown: T[]; rest: T[] } {
+  return { shown: items.slice(0, top), rest: items.slice(top) };
+}
+
+/** The banner's single line: "🛠 Review queue · 535 to check". */
+export const queueBannerLabel = (total: number): string => `🛠 Review queue · ${total} to check`;

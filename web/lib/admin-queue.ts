@@ -16,8 +16,8 @@ import { selectAll } from './selectAll';
 import { GUILD_TAG } from './guild';
 import {
   chatEvidenceWindows, combatWindows, foldTimesByFamily, newestUploadPerName,
-  readChatSpeakers, readChatTimes, readCombatTimes, readWhoClassKnown, readWhoLatest,
-  type ChatSpeaker,
+  readChatSpeakers, readChatTimes, readCombatTimes, readGuildMembers, readWhoClassKnown, readWhoLatest,
+  type ChatSpeaker, type GuildMembers,
 } from './adminQueueData';
 
 // ⚠ THE 1,000-ROW CAP (the guild lead, 2026-10-04: "review all of the other tables for silent 500 or
@@ -46,7 +46,8 @@ export type QueueCategory = {
   id:           'unrostered_chat' | 'unenrichable_chat' | 'unregistered_opendkp' | 'awaiting_opendkp_claim' | 'missing_ticks' | 'chat_misattribution';
   icon:         string;
   title:        string;
-  summary:      string;
+  blurb:        string;        // one line, shown under the title
+  summary:      string;        // the long explanation, folded behind "what is this?"
   count:        number;
   items:        QueueItem[];
   fixHelpHref?: string;
@@ -57,7 +58,7 @@ export type QueueCategory = {
 // every raid tick and won't show up on attendance pages. The single most
 // impactful officer-action queue — every name here is a member whose
 // participation we're under-counting.
-async function loadUnrosteredChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeaker[]>): Promise<QueueCategory> {
+async function loadUnrosteredChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeaker[]>, membersP: Promise<GuildMembers>): Promise<QueueCategory> {
   // Pull the OpenDKP roster (a few hundred names, paged so it cannot be cut at the 1,000-row cap) and the
   // last 14 days of chat aggregated by speaker in Postgres. Diff in memory — Supabase
   // doesn't expose a NOT IN against a sub-select via PostgREST.
@@ -70,7 +71,7 @@ async function loadUnrosteredChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeaker
   // in opendkp_attendance_recent — every character who's been ticked
   // shows up there — backstopped by characters.opendkp_id (set by the
   // OpenDKP sync when a character gets parented in the roster).
-  const [attendees, rosterChars, speakers] = await Promise.all([
+  const [attendees, rosterChars, speakers, members] = await Promise.all([
     // opendkp_attendance_recent is GROUP BY character, so character_name is unique: a stable order.
     selectAll<{ character_name: string | null }>((from, to) => sb
       .from('opendkp_attendance_recent').select('character_name')
@@ -80,6 +81,7 @@ async function loadUnrosteredChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeaker
       .from('characters').select('name, opendkp_id').not('opendkp_id', 'is', null)
       .order('guild_id').order('name').range(from, to)),
     speakersP,
+    membersP,
   ]);
   const rostered = new Set<string>();
   for (const r of attendees) {
@@ -89,7 +91,7 @@ async function loadUnrosteredChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeaker
     if (r.name && r.opendkp_id != null) rostered.add(r.name.toLowerCase());
   }
   const items: QueueItem[] = speakers
-    .filter(s => s.speaker && !rostered.has(s.speaker.toLowerCase()))
+    .filter(s => s.speaker && members.names.has(s.speaker.toLowerCase()) && !rostered.has(s.speaker.toLowerCase()))
     .map(s => ({
       key:    s.speaker.toLowerCase(),
       label:  s.speaker,
@@ -103,7 +105,8 @@ async function loadUnrosteredChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeaker
     id:      'unrostered_chat',
     icon:    '🪪',
     title:   'Chat speakers missing from OpenDKP',
-    summary: 'Characters chatting in /gu or /rs over the last 14 days who aren’t in the OpenDKP roster. They’re missing DKP credit and attendance.',
+    blurb:   'Guild members chatting in /gu (14 days) with no OpenDKP character.',
+    summary: 'Guild members (Pack Member+ on Discord, or Raid Pack+ in OpenDKP) who chatted in /gu over the last 14 days but aren’t in the OpenDKP roster. They’re missing DKP credit and attendance. /rs is not counted: it carries other guilds’ raiders.',
     count:   items.length,
     items,
     fixHelpHref: '/admin/members',
@@ -115,16 +118,18 @@ async function loadUnrosteredChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeaker
 // observation within the last 30 days. These render in chat as plain
 // "Name: text" instead of "Name [60 Class]: text". Officers can fill class
 // manually via /admin/who which writes who_overrides.
-async function loadUnenrichableChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeaker[]>): Promise<QueueCategory> {
+async function loadUnenrichableChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeaker[]>, membersP: Promise<GuildMembers>): Promise<QueueCategory> {
   const sinceWho  = new Date(Date.now() - 30 * 86400000).toISOString();
-  const [speakers, chars] = await Promise.all([
+  const [allSpeakers, members, chars] = await Promise.all([
     speakersP,
+    membersP,
     selectAll<{ name: string; class: string | null }>((from, to) => sb
       .from('characters').select('name, class').eq('guild_id', GUILD_TAG)
       .order('name').range(from, to)),
   ]);
 
   // Two enrichment sources — both produce a "we know their class" signal.
+  const speakers = allSpeakers.filter(s => s.speaker && members.names.has(s.speaker.toLowerCase()));
   const classFromCharacters = new Set<string>();
   for (const c of chars) {
     if (c.name && c.class) classFromCharacters.add(c.name.toLowerCase());
@@ -151,7 +156,8 @@ async function loadUnenrichableChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeak
     id:      'unenrichable_chat',
     icon:    '👻',   // 👻
     title:   'Anonymous-only chat speakers (no class signal)',
-    summary: 'Chat from these names renders as plain "Name:" because we have no class signal — they were /anon when we /who’d them, or we haven’t /who’d them at all. Use /admin/who or /who to set class via who_overrides.',
+    blurb:   'Guild members whose /gu chat shows as plain "Name:" — no class on file.',
+    summary: 'Chat from these guild members renders as plain "Name:" because we have no class signal — they were /anon when we /who’d them, or we haven’t /who’d them at all. Use /admin/who or /who to set class via who_overrides.',
     count:   items.length,
     items,
     fixHelpHref: '/admin/who',
@@ -164,8 +170,8 @@ async function loadUnenrichableChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeak
 // so officers see the backlog at a glance instead of having to navigate
 // to /admin/links and scroll. The fix-it action lives in /admin/links
 // (the Register form), which is what `href` jumps to.
-async function loadUnregisteredOpenDKP(sb: Sb): Promise<QueueCategory> {
-  const [uploads, chars] = await Promise.all([
+async function loadUnregisteredOpenDKP(sb: Sb, membersP: Promise<GuildMembers>): Promise<QueueCategory> {
+  const [allUploads, chars, members] = await Promise.all([
     // One row per (guild_id, character, endpoint): the primary key, so a stable order to page on.
     selectAll<{ character: string | null; uploaded_by_discord_id: string | null; last_uploaded_at: string | null }>((from, to) => sb
       .from('agent_upload_stats')
@@ -179,7 +185,11 @@ async function loadUnregisteredOpenDKP(sb: Sb): Promise<QueueCategory> {
       .select('name')
       .eq('guild_id', GUILD_TAG)
       .order('name').range(from, to)),
+    membersP,
   ]);
+  // These characters have no roster row to judge, so the member is the uploader: only streams from a
+  // current member's Mimic (Pack Member+ and still in the guild) are listed.
+  const uploads = allUploads.filter(u => !!u.uploaded_by_discord_id && members.discords.has(u.uploaded_by_discord_id));
 
   const rostered = new Set<string>();
   for (const c of chars) {
@@ -216,7 +226,8 @@ async function loadUnregisteredOpenDKP(sb: Sb): Promise<QueueCategory> {
     id:      'unregistered_opendkp',
     icon:    '🆕',
     title:   'Characters not in OpenDKP',
-    summary: 'Characters streaming from a member’s Mimic with no entry in the OpenDKP-mirrored roster. They show on /admin/links → Not in OpenDKP and can be registered inline (officer Register button calls the bot).',
+    blurb:   'Characters on a current member’s Mimic with no OpenDKP entry.',
+    summary: 'Characters streaming from a current member’s Mimic with no entry in the OpenDKP-mirrored roster. They show on /admin/links → Not in OpenDKP and can be registered inline (officer Register button calls the bot).',
     count:   items.length,
     items,
     fixHelpHref: '/admin/links',
@@ -231,7 +242,8 @@ async function loadUnregisteredOpenDKP(sb: Sb): Promise<QueueCategory> {
 // follow-up cadence. Action link drops the officer onto /admin/links so
 // they can pick a Discord member from the dropdown if the player hasn't
 // claimed within OpenDKP's own UI yet.
-async function loadAwaitingOpenDKPClaim(sb: Sb): Promise<QueueCategory> {
+async function loadAwaitingOpenDKPClaim(sb: Sb, membersP: Promise<GuildMembers>): Promise<QueueCategory> {
+  const members = await membersP;
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
   const { data: rows } = await sb
     .from('characters')
@@ -249,7 +261,8 @@ async function loadAwaitingOpenDKPClaim(sb: Sb): Promise<QueueCategory> {
     rank: string | null;
     opendkp_id: number | null;
   };
-  const items: QueueItem[] = ((rows ?? []) as Row[]).map(r => ({
+  // No Discord id yet by definition, so the member test here is the rank (Raid Pack+) or a main that is one.
+  const items: QueueItem[] = ((rows ?? []) as Row[]).filter(r => members.names.has(r.name.toLowerCase())).map(r => ({
     key:    r.name.toLowerCase(),
     label:  r.name,
     last:   r.registered_via_web_at,
@@ -264,7 +277,8 @@ async function loadAwaitingOpenDKPClaim(sb: Sb): Promise<QueueCategory> {
     id:      'awaiting_opendkp_claim',
     icon:    '⏳',
     title:   'Registered, awaiting OpenDKP claim',
-    summary: 'Characters we registered into OpenDKP via the web Register button in the last 30 days that still have no Discord ID linked. Player needs to claim the character in OpenDKP (sets Discord on their account); an officer can also assign the Discord member from /admin/links if the player isn’t going to claim themselves.',
+    blurb:   'Characters we registered in the last 30 days that no Discord account has claimed.',
+    summary: 'Guild characters we registered into OpenDKP via the web Register button in the last 30 days that still have no Discord ID linked. Player needs to claim the character in OpenDKP (sets Discord on their account); an officer can also assign the Discord member from /admin/links if the player isn’t going to claim themselves.',
     count:   items.length,
     items,
     fixHelpHref: '/admin/links',
@@ -361,14 +375,16 @@ function parseTickTime(raidTs: string, description: string | null): string | nul
 // partial attendance and never flagged. Grouped by family → "Main (Alt)" when
 // an alt held the surrounding ticks; each row lists which tick of which raid
 // and the evidence (⚔ combat / 💬 chat). Officer hand-credits in OpenDKP.
-async function loadPotentialMissingTicks(sb: Sb): Promise<QueueCategory> {
+async function loadPotentialMissingTicks(sb: Sb, membersP: Promise<GuildMembers>): Promise<QueueCategory> {
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
   const summary = 'Raiders who were present (ticked before/after, or shown by combat + chat) but missing from a tick snapshot — a swap/LD/zone mid-raid, or still fighting at raid end when the last loot tick was taken. Late joins / early leaves with no corroboration aren\'t flagged. Grouped by family; expand for which tick of which raid + evidence. Officer hand-credits in OpenDKP.';
-  const emptyCat: QueueCategory = { id: 'missing_ticks', icon: '🎟️', title: 'Potentially missing raid ticks', summary, count: 0, items: [], fixHelpHref: 'https://wolfpack.opendkp.com/#/raids' };
+  const blurb = 'Members present for a raid but missing from one tick snapshot.';
+  const emptyCat: QueueCategory = { id: 'missing_ticks', icon: '🎟️', title: 'Potentially missing raid ticks', blurb, summary, count: 0, items: [], fixHelpHref: 'https://wolfpack.opendkp.com/#/raids' };
 
-  const [{ data: raids }, fam] = await Promise.all([
+  const [{ data: raids }, fam, members] = await Promise.all([
     sb.from('opendkp_raids').select('raid_id, ts, name').gte('ts', since).order('ts', { ascending: false }),
     loadFamilyIndex(sb),
+    membersP,
   ]);
   const raidRows = (raids ?? []) as { raid_id: number; ts: string; name: string | null }[];
   if (raidRows.length === 0) return emptyCat;
@@ -411,6 +427,8 @@ async function loadPotentialMissingTicks(sb: Sb): Promise<QueueCategory> {
     });
 
     for (const [fid, arr] of famPresence) {
+      // Only families with a guild member in them: a pug's ticks in a foreign raid are not ours to hand-credit.
+      if (![...(fam.members.get(fid) ?? [])].some(ln => members.names.has(ln))) continue;
       const present = arr.map(s => s.size > 0);
       const first = present.indexOf(true);
       const last = present.lastIndexOf(true);
@@ -521,7 +539,7 @@ async function loadPotentialMissingTicks(sb: Sb): Promise<QueueCategory> {
     };
   }).sort((a, b) => (b.count || 0) - (a.count || 0) || (b.last || '').localeCompare(a.last || ''));
 
-  return { id: 'missing_ticks', icon: '🎟️', title: 'Potentially missing raid ticks', summary, count: items.length, items, fixHelpHref: 'https://wolfpack.opendkp.com/#/raids' };
+  return { id: 'missing_ticks', icon: '🎟️', title: 'Potentially missing raid ticks', blurb, summary, count: items.length, items, fixHelpHref: 'https://wolfpack.opendkp.com/#/raids' };
 }
 
 // (6) Chat speaker misattribution. A misconfigured agent tails a stray
@@ -532,12 +550,16 @@ async function loadPotentialMissingTicks(sb: Sb): Promise<QueueCategory> {
 // lines where the same in-game broadcast was stored under both a ghost name
 // (non-roster, one uploader) and a real roster name (seen by bystanders). The
 // fix is on the member's machine: remove the stray log from Mimic's watch dir.
-async function loadChatMisattribution(sb: Sb): Promise<QueueCategory> {
+async function loadChatMisattribution(sb: Sb, membersP: Promise<GuildMembers>): Promise<QueueCategory> {
+  const blurb = 'A member’s agent is posting their chat under a stray character name.';
   const summary = 'Members whose agent is tailing a stray/old log file, so their guild chat posts under the wrong name (the bot now auto-relabels what it can, but the source should be fixed). Ask the member to remove the named log from the folder Mimic watches.';
   const { data, error } = await sb.rpc('chat_attribution_conflicts', { p_days: 7 });
-  const rows = (data ?? []) as { ghost_speaker: string; uploader_discord_id: string; likely_real: string; lines: number; last_line: string }[];
+  const guild = await membersP;
+  // The uploader is the person to talk to, so only current members' agents are listed.
+  const rows = ((data ?? []) as { ghost_speaker: string; uploader_discord_id: string; likely_real: string; lines: number; last_line: string }[])
+    .filter(r => guild.discords.has(r.uploader_discord_id));
   if (error || rows.length === 0) {
-    return { id: 'chat_misattribution', icon: '🪪', title: 'Chat speaker misattribution', summary, count: 0, items: [], fixHelpHref: '/admin/agents' };
+    return { id: 'chat_misattribution', icon: '🪪', title: 'Chat speaker misattribution', blurb, summary, count: 0, items: [], fixHelpHref: '/admin/agents' };
   }
   // Resolve uploader discord_id → member nickname for readable rows.
   const ids = [...new Set(rows.map(r => r.uploader_discord_id))];
@@ -555,7 +577,7 @@ async function loadChatMisattribution(sb: Sb): Promise<QueueCategory> {
     last:   r.last_line,
     href:   '/admin/agents',
   }));
-  return { id: 'chat_misattribution', icon: '🪪', title: 'Chat speaker misattribution', summary, count: items.length, items, fixHelpHref: '/admin/agents' };
+  return { id: 'chat_misattribution', icon: '🪪', title: 'Chat speaker misattribution', blurb, summary, count: items.length, items, fixHelpHref: '/admin/agents' };
 }
 
 // Load every category in parallel. Caller uses the total count for the
@@ -567,13 +589,15 @@ export async function loadAdminQueueWith(sb: Sb): Promise<{
 }> {
   // Both chat categories judge the same 14 days of speakers: one aggregate, shared.
   const speakersP = readChatSpeakers(sb, new Date(Date.now() - 14 * 86400000).toISOString());
+  // Every category is limited to guild members: one membership read, shared.
+  const membersP = readGuildMembers(sb);
   const categories = await Promise.all([
-    loadUnrosteredChatSpeakers(sb, speakersP),
-    loadUnenrichableChatSpeakers(sb, speakersP),
-    loadUnregisteredOpenDKP(sb),
-    loadAwaitingOpenDKPClaim(sb),
-    loadPotentialMissingTicks(sb),
-    loadChatMisattribution(sb),
+    loadUnrosteredChatSpeakers(sb, speakersP, membersP),
+    loadUnenrichableChatSpeakers(sb, speakersP, membersP),
+    loadUnregisteredOpenDKP(sb, membersP),
+    loadAwaitingOpenDKPClaim(sb, membersP),
+    loadPotentialMissingTicks(sb, membersP),
+    loadChatMisattribution(sb, membersP),
   ]);
   const total = categories.reduce((acc, c) => acc + c.count, 0);
   return { total, categories };
