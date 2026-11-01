@@ -111,6 +111,22 @@ describe('the money', () => {
   });
 });
 
+describe('raid management (the guild side)', () => {
+  it('names the six guild features the guild lead listed, one short line each, and the menu reaches the section', () => {
+    expect(S.RAID_MGMT.map(m => m.id)).toEqual(['threads', 'dkp', 'quests', 'announce', 'command', 'routes']);
+    for (const m of S.RAID_MGMT) {
+      expect(m.line.split(/[.!?]\s/).length).toBe(1);
+      expect(m.line.length).toBeLessThan(70);
+    }
+    expect(S.STORY_WORDS.menu.map(x => x.href)).toContain(`#${S.RAID_MGMT_HEAD.id}`);
+  });
+  it('says hosting another guild is coming, and both variants render the section', () => {
+    expect(S.RAID_MGMT_HEAD.chip).toMatch(/coming/);
+    const page = stripJs(read('web/app/raidmimic/page.tsx'));
+    expect(page.match(/<RaidManagement \/>/g)).toHaveLength(2);
+  });
+});
+
 describe('the words stay short', () => {
   it('each feature is one picture and one sentence, with a picture path in the shared folder', () => {
     expect(S.FEATURES.map(f => f.id)).toEqual(['canvas', 'studio', 'sync', 'replay', 'zeal']);
