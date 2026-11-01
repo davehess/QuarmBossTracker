@@ -38,6 +38,7 @@ const slotOf = (n) => { const s = agent.chChainSnapshot(); return s && s.slots[n
 let written;
 let spy;
 beforeEach(() => {
+  NOW = Math.floor(Date.now() / 1000) * 1000 + 500;
   agent._resetChChainForTest();
   agent._setAgentPrefsForTest({});
   written = [];
