@@ -62,7 +62,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { links: [{ href: '/admin/members', label: 'Members' }, { href: '/admin/links', label: 'Links' }] },
       {
         links: [{ href: '/admin/feedback', exact: true }], count: 'feedback',
-        sub: [{ href: '/admin/feedback/anonymous' }],
+        // Both inboxes are text from outside the guild: the anonymous box and the "Register your guild" form.
+        sub: [{ href: '/admin/feedback/anonymous' }, { href: '/admin/interest' }],
       },
       { links: [{ href: '/admin/encounters' }] },
       { links: [{ href: '/admin/signups', label: 'Sign-ups' }, { href: '/admin/comp', label: 'Comp' }, { href: '/admin/readiness', label: 'Readiness' }] },

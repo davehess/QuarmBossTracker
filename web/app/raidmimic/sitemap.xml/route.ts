@@ -2,7 +2,7 @@
 // rewrites raidmimic.com/sitemap.xml here. Nothing else on these hosts is a page.
 import { RAIDMIMIC_ORIGIN } from '../../../lib/raidmimicHost';
 
-const PAGES = ['/', '/setup'];
+const PAGES = ['/', '/setup', '/register'];
 
 export function GET() {
   const urls = PAGES.map(p => `  <url><loc>${RAIDMIMIC_ORIGIN}${p}</loc></url>`).join('\n');

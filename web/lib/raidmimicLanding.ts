@@ -16,6 +16,7 @@
 // recordings on the page are made from invented raiders (scripts/raidmimic-shots), never a member.
 
 import { REPO_URL } from './eqmimicLanding';
+import { RAIDMIMIC_REGISTER_PATH } from './raidmimicHost';
 
 export { REPO_URL };
 
@@ -112,9 +113,15 @@ export const CTA = {
   note: 'Opens a short form on eqmimic.quest.',
 };
 
-/** The Register-interest address. `base` is the form’s own address on the host the page is being read on. */
+/**
+ * The Register-interest address (the guild lead, 2026-11-01: a proper interest form instead of the pre-typed feedback
+ * box). The signature is unchanged so no caller moves: `base` is still "the form's address on the host the page is read
+ * on", and an ABSOLUTE base means a raidmimic host (the pages pass https://eqmimic.quest/feedback there), where the form
+ * is raidmimic.com/register; a path means a Wolf Pack host, where it is /raidmimic/register. INTEREST_TEXT stays
+ * exported for Mimic-side callers but is no longer put in any address.
+ */
 export function interestUrl(base: string): string {
-  return `${base}#${new URLSearchParams({ cat: 'idea', text: INTEREST_TEXT }).toString()}`;
+  return /^https?:\/\//i.test(base) ? '/register' : RAIDMIMIC_REGISTER_PATH;
 }
 
 // ─── The hero's captures (the layered mascot hero, the guild lead, 2026-10-21: "i like B for the hero") ──────────────
