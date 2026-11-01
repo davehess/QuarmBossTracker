@@ -54,7 +54,7 @@ describe('b.raidmimic.com is never indexed', () => {
       const body = await GET(new Request(`https://${h}/robots.txt`, { headers: { host: h } })).text();
       expect(body, h).toBe('User-agent: *\nAllow: /\n\nSitemap: https://raidmimic.com/sitemap.xml\n');
     }
-    expect(await GET().text()).toMatch(/^User-agent: \*\nAllow: \/\n/);
+    expect(await GET(new Request('https://raidmimic.com/robots.txt', { headers: { host: 'raidmimic.com' } })).text()).toMatch(/^User-agent: \*\nAllow: \/\n/);
   });
 });
 

@@ -5,8 +5,9 @@
 import { RAIDMIMIC_ORIGIN, isRaidmimicBetaHost } from '../../../lib/raidmimicHost';
 
 // `request` is optional so a bare GET() (the unit test) still means the canonical hosts.
-export function GET(request?: Request) {
-  const beta = isRaidmimicBetaHost(request?.headers.get('host'));
+// The request is required: `next build` rejects an optional first argument on a route handler (beta build, 2026-11-01).
+export function GET(request: Request) {
+  const beta = isRaidmimicBetaHost(request.headers.get('host'));
   const body = beta
     ? ['User-agent: *', 'Disallow: /', ''].join('\n')
     : ['User-agent: *', 'Allow: /', '', `Sitemap: ${RAIDMIMIC_ORIGIN}/sitemap.xml`, ''].join('\n');
