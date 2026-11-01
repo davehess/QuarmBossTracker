@@ -105,10 +105,18 @@ function classify(files, character, { knownChars = [] } = {}) {
     const lf = lc(file);
     if (lf === 'eqclient.ini') {
       res.keybinds.push({ file, mode: 'keys', test: (n) => /^KeyMaps$/i.test(n) });
+      // Zeal also keeps settings in eqclient.ini: a shared [Zeal] section and a [<Char>] section per character
+      // (TellWindows), seen in a real file 2026-11-01. Only those two; every other section stays as it is.
+      if (c) res.zeal.push({ file, mode: 'keys', test: (n) => /^Zeal$/i.test(n) || lc(n) === c, keyTest: (k) => !/ChannelAutoJoin|password/i.test(k) });
     } else if (lf === 'zeal.ini') {
+      // A bare section holding only TellWindows keys is a character's own ([<Char>]), even for a character this
+      // PC has no files for; it is restored only for this character.
+      const tellOnly = new Set(parseSections(files[file])
+        .filter((s) => s.name && s.keys.length && s.keys.every((k) => /^TellWindows/i.test(k.key))).map((s) => lc(s.name)));
       res.zeal.push({
         file, mode: 'keys',
-        test: (n) => !/ChannelAutoJoin/i.test(n) && (forChar(n, c) || !others.some((o) => forChar(n, o))),
+        test: (n) => !/ChannelAutoJoin/i.test(n) &&
+          (forChar(n, c) || (!tellOnly.has(lc(n)) && !others.some((o) => forChar(n, o)))),
         keyTest: (k) => !/ChannelAutoJoin|password/i.test(k),
       });
     } else if (!c || !belongs(lf, c)) {
@@ -227,7 +235,7 @@ function summarize(partKey, r, diffKeys) {
         + ' (' + plural(buttons.size, ['button', 'buttons']) + ')';
     }
   }
-  if (!r.added && !r.removed) return plural(r.changed, NOUN[partKey] || ['item', 'items']) + ' differ';
+  if (!r.added && !r.removed) return plural(r.changed, NOUN[partKey] || ['item', 'items']) + (r.changed === 1 ? ' differs' : ' differ');
   const bits = [];
   if (r.added) bits.push(r.added + ' new');
   if (r.changed) bits.push(r.changed + ' changed');

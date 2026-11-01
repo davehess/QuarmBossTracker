@@ -56,7 +56,8 @@ describe('classify', () => {
     expect(filesOf(cls, 'socials')).toEqual([CHAR, 'Sock_Aldenmar_pq.proj.ini', 'Socials_Aldenmar_pq.proj.ini'].sort());
     expect(cls.socials.find((e) => e.file === 'Sock_Aldenmar_pq.proj.ini').mode).toBe('whole');
     expect(cls.keybinds).toMatchObject([{ file: 'eqclient.ini', mode: 'keys' }]);
-    expect(cls.zeal).toMatchObject([{ file: 'zeal.ini', mode: 'keys' }]);
+    expect(filesOf(cls, 'zeal')).toEqual(['eqclient.ini', 'zeal.ini']);
+    expect(cls.zeal.every((e) => e.mode === 'keys')).toBe(true);
   });
 
   it('selects sections by name', () => {
@@ -89,8 +90,22 @@ describe('classify', () => {
     expect(filesOf(cls, 'other')).not.toContain('eqclient.ini');
   });
 
+  // The real layout (a member's files, 2026-11-01): eqclient.ini carries a shared [Zeal] and a [<Char>] TellWindows
+  // section per character; zeal.ini has bare [<Char>] sections holding only TellWindows keys, for characters this PC
+  // may have no files for.
+  it('zeal also covers eqclient.ini [Zeal] and this character\'s own section there, nothing else in that file', () => {
+    const t = cls.zeal.find((e) => e.file === 'eqclient.ini').test;
+    expect([t('Zeal'), t('Aldenmar'), t('Brackwyn'), t('KeyMaps'), t('VideoMode'), t('Defaults')]).toEqual([true, true, false, false, false, false]);
+  });
+
+  it('zeal: a bare TellWindows-only section is a character, restored only for this one', () => {
+    const z = '[Zeal]\r\nCamera=1\r\n[Holdfast]\r\nTellWindows=1\r\nTellWindowsHist=0\r\n[Aldenmar]\r\nTellWindows=1\r\n[AutoFollow]\r\nEnable=1\r\n';
+    const t = classify({ 'zeal.ini': z }, C).zeal[0].test;
+    expect([t('Holdfast'), t('Aldenmar'), t('AutoFollow'), t('Zeal')]).toEqual([false, true, true, true]);
+  });
+
   it('zeal: own and global sections in, other known characters and ChannelAutoJoin out', () => {
-    const t = cls.zeal[0].test;
+    const t = cls.zeal.find((e) => e.file === 'zeal.ini').test;
     expect(t('TellWindows_Aldenmar')).toBe(true);
     expect(t('Aldenmar')).toBe(true);
     expect(t('RaidBars')).toBe(true);
@@ -98,7 +113,7 @@ describe('classify', () => {
     expect(t('Corvale')).toBe(false);
     expect(t('ChannelAutoJoin_Aldenmar')).toBe(false);
     expect(t('ChannelAutoJoin')).toBe(false);
-    const k = cls.zeal[0].keyTest;
+    const k = cls.zeal.find((e) => e.file === 'zeal.ini').keyTest;
     expect([k('Foo'), k('ChannelAutoJoin1'), k('ServerPassword'), k('PASSWORD')]).toEqual([true, false, false, false]);
   });
 
