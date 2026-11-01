@@ -18,14 +18,20 @@ export function FeatureBlocks() {
     <section id="features" aria-label={W.featuresTitle} className="scroll-mt-4 pt-12">
       <h2 className="text-2xl text-[#f2ede1]">{W.featuresTitle}</h2>
       <ul className="m-0 mt-5 grid list-none gap-6 p-0 sm:grid-cols-2">
-        {FEATURES.map(f => (
-          <li key={f.id} className="min-w-0">
-            <FeaturePicture f={f} />
-            <h3 className="mt-3 text-lg text-[#f2ede1]">{f.name}</h3>
-            <p className="mb-0 mt-1 text-sm leading-6 text-text">{f.line}</p>
-            {f.chip && <p className="mb-0 mt-2"><ComingChip>{f.chip}</ComingChip></p>}
-          </li>
-        ))}
+        {FEATURES.map((f, i) => {
+          // An odd last block spans both columns, picture beside its words, so no block sits alone in a row.
+          const wide = FEATURES.length % 2 === 1 && i === FEATURES.length - 1;
+          return (
+            <li key={f.id} className={`min-w-0 ${wide ? 'sm:col-span-2 sm:grid sm:grid-cols-2 sm:items-center sm:gap-6' : ''}`}>
+              <FeaturePicture f={f} />
+              <div className="min-w-0">
+                <h3 className="mt-3 text-lg text-[#f2ede1]">{f.name}</h3>
+                <p className="mb-0 mt-1 text-sm leading-6 text-text">{f.line}</p>
+                {f.chip && <p className="mb-0 mt-2"><ComingChip>{f.chip}</ComingChip></p>}
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

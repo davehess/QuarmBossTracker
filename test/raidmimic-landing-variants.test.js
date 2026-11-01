@@ -61,20 +61,21 @@ describe('the cue list', () => {
 
 describe('chapters', () => {
   it('start at the cue list’s own times and each swaps in a different, existing feature', () => {
-    expect(S.CHAPTERS.map(c => c.at)).toEqual([S.STORY_CUES.overlays, S.STORY_CUES.calls, S.STORY_CUES.loot, S.STORY_CUES.hail]);
+    expect(S.CHAPTERS.map(c => c.at)).toEqual([0, S.STORY_CUES.overlays, S.STORY_CUES.calls, S.STORY_CUES.loot, S.STORY_CUES.hail]);
     const f = S.CHAPTERS.map(c => c.feature);
     expect(new Set(f).size).toBe(f.length);
     for (const id of f) expect(S.featureById(id).id).toBe(id);
   });
   it('chapterAt names the chapter the video is in (the first one before any has started)', () => {
     const c = S.STORY_CUES;
-    expect(S.chapterAt(0).id).toBe('overlays');
+    expect(S.chapterAt(0).id).toBe('setup');
+    expect(S.chapterAt(c.overlays - 0.01).id).toBe('setup');
     expect(S.chapterAt(c.overlays).id).toBe('overlays');
     expect(S.chapterAt(c.calls - 0.01).id).toBe('overlays');
     expect(S.chapterAt(c.calls).id).toBe('calls');
     expect(S.chapterAt(c.loot + 1).id).toBe('loot');
     expect(S.chapterAt(c.hail + 100).id).toBe('hail');
-    expect(S.chapterAt(NaN).id).toBe('overlays');
+    expect(S.chapterAt(NaN).id).toBe('setup');
   });
 });
 
@@ -112,13 +113,13 @@ describe('the money', () => {
 
 describe('the words stay short', () => {
   it('each feature is one picture and one sentence, with a picture path in the shared folder', () => {
-    expect(S.FEATURES.map(f => f.id)).toEqual(['canvas', 'studio', 'sync', 'replay']);
+    expect(S.FEATURES.map(f => f.id)).toEqual(['canvas', 'studio', 'sync', 'replay', 'zeal']);
     for (const f of S.FEATURES) {
       expect(f.line.split(/[.!?]\s/).length).toBe(1);
       expect(f.line.length).toBeLessThan(70);
       expect(f.img).toMatch(/^\/raidmimic\/shots\/[a-z-]+\.webp$/);
     }
-    expect(new Set(S.FEATURES.map(f => f.img)).size).toBe(4);   // no repeated picture
+    expect(new Set(S.FEATURES.map(f => f.img)).size).toBe(S.FEATURES.length);   // no repeated picture
   });
   it('names the sign-up exactly as the guild lead asked, and no real-looking people', () => {
     expect(S.STORY_WORDS.signUp).toBe('Sign up with Discord');

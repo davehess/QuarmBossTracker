@@ -6,7 +6,7 @@ import type { Feature } from '@/lib/raidmimicStory';
 export function FeaturePicture({ f, className = '' }: { f: Feature; className?: string }) {
   return (
     <img src={f.img} alt={f.alt} loading="lazy" decoding="async"
-      className={`block aspect-[16/10] w-full rounded-md border border-border bg-panel object-cover ${className}`} />
+      className={`block aspect-[16/10] w-full rounded-md border border-border bg-panel object-cover ${f.top ? 'object-top' : ''} ${className}`} />
   );
 }
 
