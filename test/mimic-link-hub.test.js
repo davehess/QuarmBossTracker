@@ -623,12 +623,14 @@ describe('/auth/mimic-link on a raidmimic host', () => {
     const action = page.slice(a0, page.indexOf('\n}\n', a0) + 3);
     const guard = "if (isRaidmimicHost(headers().get('host'))) redirect('/auth/mimic-link?error=wrong_site');";
     expect(action).toContain(guard);
-    expect(sha(action.replace(guard, ''))).toBe('99bfc86fad1a1e0b');
+    // Re-pinned on purpose (web 2.1.89): the form is never filled from the address, the page shows when the request started,
+    // and the action refuses a typed code that differs from the one the page was opened for (test/caller-owns-character.test.js).
+    expect(sha(action.replace(guard, ''))).toBe('f9391444bcc27084');
 
     const main = page.slice(page.indexOf('export default async function MimicLinkPage'));
     const p0 = main.indexOf('if (!user) {');
     const rest = main.slice(p0, main.indexOf('\n}\n', p0) + 3);
-    expect(sha(rest)).toBe('eb20f3443a1ce7fc');
+    expect(sha(rest)).toBe('fe4df2c3c87ba9bf');   // re-pinned with the action above (web 2.1.89)
   });
 
   it('the one guard keeps a raidmimic-only account from posting to Wolf Pack\'s action', () => {

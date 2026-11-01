@@ -27,7 +27,7 @@ const REGION = INDEX.slice(START, END);
 // Build the three real handlers around fake collaborators.
 function buildHandlers(fake) {
   const factory = new Function(
-    'mimicLink', 'require', '_trackUpload', '_dedupeRows', 'wornSets',
+    'mimicLink', 'require', '_trackUpload', '_dedupeRows', 'wornSets', '_callerMayActAs',
     `${REGION}\nreturn { _handleAgentQuarmy, _handleAgentInventory, _handleAgentSpellbook };`,
   );
   return factory(
@@ -36,6 +36,7 @@ function buildHandlers(fake) {
     () => {},
     (rows) => rows,
     wornSets,
+    async () => true,   // the caller owns the character (the ownership rule itself: test/caller-owns-character.test.js)
   );
 }
 

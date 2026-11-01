@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '4.0.44': [
+    'Bids and uploads now only work for your own characters. Mimic stops working for people who leave the Discord.',
+  ],
   '4.0.43': [
     'Mimic can now pick up your guild\'s colours: once officers set a guild theme on the website, the bot hands it to Mimic at sign-in and keeps it current.',
   ],

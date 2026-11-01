@@ -18,6 +18,7 @@ const supabase                              = require('../utils/supabase');
 const { encryptBid, decryptBid, isEncryptionEnabled } = require('../utils/bidCrypto');
 const { getCharacter, getAllNames }         = require('../utils/roster');
 const { hasAllowedRole }                   = require('../utils/roles');
+const { discordOwnership }                 = require('../utils/characterOwner');
 const rules                                = require('../utils/wishlistRules'); // shared with the web's add (utils/webWishlist.js)
 
 // ── Item resolution ─────────────────────────────────────────────────────────
@@ -236,8 +237,12 @@ async function _show(interaction) {
   // Member viewing ANOTHER member's character → item list only (no bids).
   const selfDisplayName = (interaction.member?.displayName || interaction.user.username).toLowerCase();
   const selfChar  = getCharacter(selfDisplayName);
-  const isSelf    = selfChar?.name?.toLowerCase() === rosterChar.name.toLowerCase()
-                 || selfDisplayName === rosterChar.name.toLowerCase();
+  // Sealed bid values are the character's owner's: a linked character is judged by who owns it (the caller's
+  // household); the display-name match is only the stand-in for a character nobody is linked to yet.
+  const own       = await discordOwnership(interaction.user.id, rosterChar.name);
+  const isSelf    = own === 'owner'
+                 || (own === 'unlinked' && (selfChar?.name?.toLowerCase() === rosterChar.name.toLowerCase()
+                 || selfDisplayName === rosterChar.name.toLowerCase()));
   const isOfficer = hasAllowedRole(interaction.member);
   const showBids  = isSelf || isOfficer;
 

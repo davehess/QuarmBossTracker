@@ -568,7 +568,7 @@ async function _lookupSessionToken(token, ip) {
     : `discord_id=eq.${encodeURIComponent(row.discord_id)}`;
   const memberRows = await supabase.select(
     'wolfpack_members',
-    `${memberFilter}&select=nickname,global_name,role_names&limit=1`,
+    `${memberFilter}&select=nickname,global_name,role_names,is_member&limit=1`,
   ).catch(() => null);
   // The member read FAILED (store timing out), as opposed to finding no row: keep the last good identity and
   // retry in 15 s, rather than caching "no roles" for 5 minutes. Raid night 2026-10-14: one stall cached two
@@ -582,6 +582,13 @@ async function _lookupSessionToken(token, ip) {
     return value;
   }
   const member = Array.isArray(memberRows) ? memberRows[0] : null;
+  // A member who is no longer in the guild (is_member explicitly false) has no session: the same answer as a revoked
+  // token. A missing row or a missing flag is not "left", so a session minted before the member sync ran still works.
+  if (member && member.is_member === false) {
+    _sessionCache.delete(token);
+    _setBounded(_sessionMissCache, SESSION_MISS_MAX, token, Date.now());
+    return null;
+  }
   const roleNames = Array.isArray(member?.role_names) ? member.role_names : [];
   const value = {
     user_id:       row.user_id || null,

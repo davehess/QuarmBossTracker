@@ -27,6 +27,7 @@ const supabase              = require('../utils/supabase');
 const { decryptBid, isEncryptionEnabled } = require('../utils/bidCrypto');
 const { getCharacter, getAllNames }        = require('../utils/roster');
 const { hasAllowedRole }                  = require('../utils/roles');
+const { discordOwnership }                = require('../utils/characterOwner');
 
 // ── DKP helper (mirrors dkp.js / wishlist.js — kept independent) ────────────
 async function _currentDkp(name) {
@@ -94,8 +95,12 @@ async function execute(interaction) {
   // character and isn't an officer, bid amounts are hidden.
   const selfDisplayName = (interaction.member?.displayName || interaction.user.username).toLowerCase();
   const selfRosterChar  = getCharacter(selfDisplayName);
-  const isSelf          = selfRosterChar?.name?.toLowerCase() === rosterChar.name.toLowerCase()
-                       || selfDisplayName === rosterChar.name.toLowerCase();
+  // A linked character is judged by who owns it (the caller's household); the display-name match is only the
+  // stand-in for a character nobody is linked to yet.
+  const own             = await discordOwnership(interaction.user.id, rosterChar.name);
+  const isSelf          = own === 'owner'
+                       || (own === 'unlinked' && (selfRosterChar?.name?.toLowerCase() === rosterChar.name.toLowerCase()
+                       || selfDisplayName === rosterChar.name.toLowerCase()));
   const isOfficer       = hasAllowedRole(interaction.member);
   const showBids        = isSelf || isOfficer; // officers see bids when running the auction
 

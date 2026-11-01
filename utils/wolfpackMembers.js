@@ -78,6 +78,20 @@ async function syncWolfpackRoles(guild) {
   return result ? roleRows.length : 0;
 }
 
+// A departed member's Mimic sign-ins end with their membership: this guild's unrevoked sessions for those ids get
+// revoked_at. Fail-open: a failed revoke is logged and never breaks the member sync (the session lookup also refuses
+// a row whose member has is_member=false, so this is the durable half of the same rule).
+async function _revokeMimicSessions(ids) {
+  try {
+    if (!ids.length) return;
+    await supabase.update('mimic_sessions',
+      `discord_id=in.(${ids.join(',')})&revoked_at=is.null&guild_id=eq.${encodeURIComponent(supabase.guildId())}`,
+      { revoked_at: new Date().toISOString() });
+  } catch (err) {
+    console.warn('[members-sync] session revoke failed:', err?.message);
+  }
+}
+
 // Flip rows for people no longer in the guild. `presentIds` = discord ids from
 // a completed full fetch (bots excluded). Returns { flipped, skipped? }.
 async function reconcileDepartedMembers(presentIds) {
@@ -98,6 +112,7 @@ async function reconcileDepartedMembers(presentIds) {
     const ids = gone.slice(i, i + LEFT_BATCH);
     const res = await supabase.update('wolfpack_members', `discord_id=in.(${ids.join(',')})&is_member=eq.true`, _leftPatch());
     if (Array.isArray(res)) flipped += res.length;
+    await _revokeMimicSessions(ids);
   }
   if (gone.length) console.log(`[members-sync] ${flipped}/${gone.length} departed members marked is_member=false`);
   return { flipped };
@@ -109,6 +124,7 @@ async function markMemberLeft(discordId) {
   try {
     if (!supabase.isEnabled() || !/^\d+$/.test(String(discordId))) return false;
     const res = await supabase.update('wolfpack_members', `discord_id=eq.${String(discordId)}`, _leftPatch());
+    await _revokeMimicSessions([String(discordId)]);
     return Array.isArray(res);
   } catch (err) {
     console.warn('[members-sync] markMemberLeft failed:', err?.message);
