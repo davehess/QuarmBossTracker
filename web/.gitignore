@@ -6,5 +6,5 @@ out/
 .env.*.local
 *.tsbuildinfo
 next-env.d.ts
-package-lock.json
+# package-lock.json IS committed (2026-11-01): without it every Vercel build resolved Next's own dependencies afresh.
 .vercel
