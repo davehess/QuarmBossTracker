@@ -308,11 +308,12 @@ describe('after logout', () => {
 describe('each named layout is backed up with its name', () => {
   function captureHarness(posted) {
     const handlers = {};
+    // The handler and the upload it hands off to (_uiUploadBundle, shared with the camp-time auto backup).
     new Function('ipcMain', 'loadConfig', 'resolveUploadToken', '_uiLayoutStore', 'uiLayouts', '_readUiBundle',
-      'screen', '_httpsJson', '_botBaseUrl', 'app', 'require',
-      sliceBlock(main, "ipcMain.handle('ui-studio-capture', async (_e, params) => {", '\n});\n'))(
+      '_eqResOf', '_primarySize', '_thisMachine', '_httpsJson', '_botBaseUrl', 'app', 'require',
+      sliceBlock(main, "ipcMain.handle('ui-studio-capture', async (_e, params) => {", '\n}\n\n// List snapshots'))(
       { handle: (n, fn) => { handlers[n] = fn; } }, () => ({}), () => 'tok', () => store, layouts, _readUiBundle,
-      { getPrimaryDisplay: () => ({ workAreaSize: { width: 1920, height: 1080 } }) },
+      () => null, () => ({ w: 1920, h: 1080 }), () => 'test-pc',
       async (url, opts) => { posted.push({ url, body: opts.body }); return { id: 'snap1' }; },
       () => 'https://bot.example', { getVersion: () => '0.0.0' }, require);
     return handlers['ui-studio-capture'];
