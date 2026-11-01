@@ -37,6 +37,32 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-3-0-6-2026-11-01',
+    title: 'Mimic 3.0.6',
+    version: 'Mimic 3.0.6 · Web 2.1.90',
+    date: '2026-11-01',
+    headline: 'Your overlays follow each character, UI Studio restores only what you pick, and the Map knows slow mode and splitting mobs.',
+    features: [
+      { name: 'Overlays per character', blurb: 'Mimic remembers each character\'s overlays as you go: positions, sizes, which are on, the Canvas. Switch characters and theirs come back. No Save button.' },
+      { name: 'UI Studio: compare before you restore', blurb: 'Restoring a backup shows what each part would change (window layout, hotkeys, socials, spell sets, keybinds, Zeal options) and lets you keep yours or take the backup\'s, one by one. A layout from another screen size is fitted to yours.' },
+      { name: 'Keep in sync and This PC', blurb: 'Optional: back up each character when it camps, and get offered the newer UI from your other PC. This PC shows what EQ runs at and suggests an overlay size for your screen.' },
+      { name: 'The Map: slow mode and splitting mobs', blurb: 'In slow mode, Planes of Power respawn timers run 18 hours and show a turtle. Mobs that split when they die are marked, and the hover card says into what and how many.' },
+      { name: 'Alerts window: lock its size', blurb: 'Lock the alerts window so it stops growing as countdowns arrive, or split callouts and timers into their own boxes in one click.' },
+      { name: 'Relv / Falto mephit counter', blurb: 'During Relv\'s event in the Plane of Storms the Command Center counts the mephits (20/30 · 10 left) and says when Falto is up.' },
+      { name: 'Guild colours', blurb: 'Overlays wear your guild\'s colours when officers set a guild theme, with a Guild palette row in the colour picker.' },
+      { name: 'Smaller things', blurb: 'Officers get a Guests card with +1h / +3h; My parses can show every fight; a minimized overlay leaves a clear "click to restore" tab; Target Info re-fits when you resize it; the timer name picker suggests your spells.' },
+    ],
+    fixes: [
+      'Canvas alerts and timers panels no longer show a title plate you could not turn off.',
+      'The HUD no longer tags two-hand hits as off hand.',
+      'Map distance to your target now counts height.',
+      'Target Info shows what lands on your target when you play solo.',
+      'The "your spells" timer switch now says it covers spells you land on groupmates too (heal-over-time spells included); it always did.',
+      'PvP kills and assists are read again after the server reworded its Glory lines.',
+      'A UI Studio restore only ever writes your UI settings files.',
+    ],
+  },
+  {
     key: 'raidmimic-home-2026-11-01',
     title: 'Web 2.1.87',
     version: 'Web 2.1.87',

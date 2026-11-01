@@ -169,14 +169,19 @@ next touch one rather than assuming a missing row means a missing doc.
   `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
   nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
 
-- **🧪 Map: slow mode 18 h in Planes of Power, and mobs that split (bot 4.0.46 `main`, agent 4.0.52 beta `cc2fbeb6` + Mimic map, 2026-11-01,
+- **✅ Mimic 3.0.6 stable (agent 4.0.52), 2026-11-01, on the guild lead's "let's push beta to main".** Graduated by file from beta:
+  `apps/mimic/**`, `packages/wolfpack-logsync/**`, their tests, `scripts/sync-piper-voices.js`, a PoP-flags fixture and two `.gitignore`
+  lines. Carries the per-character overlays, UI Studio compare-first restore / Keep in sync / This PC, slow-mode and split marks on the
+  Map, alerts-window lock, the Relv/Falto counter, guild colours, and FB-105/107/108/110/111/112/114. Beta-only website previews
+  (the /about `?v=b` / `?v=c` guild-first pages) stay on beta awaiting a pick. Beta re-parked at 3.0.7. Roadmap: web 2.1.90.
+- **✅ Map: slow mode 18 h in Planes of Power, and mobs that split (bot 4.0.46 `main`, Mimic 3.0.6 stable, 2026-11-01,
   §511, FB-114).** Inside the bot's slow-mode window a kill on a Planes of Power spawn point gets an 18-hour Map timer (🐢), judged by
   the kill's time; GET `/api/agent/slow-mode` serves the window, zone-spawns flags `slow_zone`. Mobs that split on death are read
   from the server's death scripts (`utils/splitSpawns.js`, 97 of 144 sampled death scripts split) and carried as `splits` on the
   NPC row with a `splits` badge; the Map shows them. Open: which mobs the guild lead saw split (none of Tactics, Tranquility or
   Valor's scripts split on death); whether slow mode should spare raid targets (the server change it likely rides says so).
   Tests: `test/split-spawns.test.js`, `test/slow-mode-map-route.test.js`, `test/spawn-map.test.js` (slow mode).
-- **🧪 UI Studio: compare before restoring, Keep in sync, This PC (Mimic beta `d494250d` + bot 4.0.45, 2026-11-01, §510).**
+- **✅ UI Studio: compare before restoring, Keep in sync, This PC (Mimic beta `d494250d` + bot 4.0.45, stable in Mimic 3.0.6, 2026-11-01, §510).**
   Settings → UI Studio → 🔄 Backups → ↩ Restore now opens a comparison instead of writing everything: seven parts (window layout,
   hotkeys, socials, spell sets, keybinds, Zeal options, other character settings), what differs in each, Keep mine / Backup, and a
   before/after picture of the layout fitted to this screen. Only the chosen parts are written, merged section by section
