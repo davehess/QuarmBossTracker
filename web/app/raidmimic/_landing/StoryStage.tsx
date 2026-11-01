@@ -13,6 +13,7 @@
 // the <noscript> rule below. The page under it (FeatureBlocks, Pricing) is server-rendered by the page.
 import { useRef, useState } from 'react';
 import SignInButton from '@/components/SignInButton';
+import AgreeLine from '@/components/AgreeLine';
 import { GOLD_BTN, MARKS, revealAt, sameReveal, STORY_WORDS as W, type Reveal } from '@/lib/raidmimicStory';
 import { ICONS } from './FeatureIcons';
 import StoryVideo, { QUIET_BTN, useReducedMotion, type StoryVideoHandle } from './StoryVideo';
@@ -112,7 +113,7 @@ export default function StoryStage({ downloadUrl, onHost = false }: { downloadUr
           <img src="/mimic-logo.png" alt="" width={56} height={56} className="mx-auto block h-14 w-14 rounded-xl" />
           <h2 className="mt-3 text-2xl text-[#f2ede1]">{W.brand}</h2>
           <div className="mt-4"><SignInButton next={W.after} label={W.signUp} className={`${GOLD_BTN} w-full`} /></div>
-          <p className="mb-0 mt-3 text-sm leading-6 text-text">{W.startFree}</p>
+          <AgreeLine onHost={onHost} />          <p className="mb-0 mt-3 text-sm leading-6 text-text">{W.startFree}</p>
           <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4">
             <a href="#features" tabIndex={show.end ? 0 : -1} className="inline-flex min-h-11 items-center text-sm">{W.scroll} ↓</a>
             {!reduced && <button type="button" onClick={again} tabIndex={show.end ? 0 : -1}

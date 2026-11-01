@@ -9,6 +9,7 @@
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { CONTACT_EMAIL, CONTACT_HREF, MIN_AGE } from '@/lib/legal';
 
 export const dynamic = 'force-static';
 
@@ -103,7 +104,8 @@ export default function PrivacyPage() {
         <h1 className="text-2xl text-gold">🐺 Wolf Pack — Privacy, in plain words</h1>
         <p className="text-xs text-dim mt-1">
           Last updated: 2026-10-21 · Questions? <code>#feedback</code> or{' '}
-          <Link href="/me" className="text-blue hover:underline">/me</Link>{' '}for what we have on you.
+          <Link href="/me" className="text-blue hover:underline">/me</Link>{' '}for what we have on you. Or email{' '}
+          <a href={CONTACT_HREF} className="text-blue hover:underline">{CONTACT_EMAIL}</a>.
         </p>
       </header>
 
@@ -141,6 +143,9 @@ export default function PrivacyPage() {
             <B>No selling, no ads, no third-party trackers.</B> wolfpack.quest loads no analytics,
             advertising or tracking scripts, and serves its own fonts (one diagram page is the
             exception — see <em>The website</em>).
+          </li>
+          <li>
+            <B>Never used to train AI models.</B> Nothing you upload is used to train AI models.
           </li>
           <li>
             <B>Encrypted in transit and at rest.</B> Everything travels over HTTPS. The hosted database
@@ -480,6 +485,7 @@ export default function PrivacyPage() {
             from Discord and stores it; we don&apos;t use it and never email you.
           </li>
           <li><B>Sign-in records:</B> each signed-in session keeps your IP address and browser type.</li>
+          <li><B>Age:</B> not for children under {MIN_AGE}. Discord&apos;s own minimum applies too.</li>
           <li>
             <B>Page views:</B> while signed in, each page you open is logged (the page, the page you came
             from, your browser). Officers can see how often each member visits and when they were last

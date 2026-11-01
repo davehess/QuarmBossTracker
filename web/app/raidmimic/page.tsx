@@ -53,9 +53,9 @@ export default function RaidmimicPage() {
       <div className="mx-auto max-w-5xl pb-12">
         <FeatureBlocks />
         <RaidManagement />
-        <Pricing setup={ctx.setup} />
+        <Pricing setup={ctx.setup} onHost={onHost} />
         <div className="mt-12"><CtaBand ctx={ctx} /></div>
-        <Footer />
+        <Footer onHost={onHost} />
       </div>
     </div>
   );

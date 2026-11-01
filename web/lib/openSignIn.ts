@@ -20,6 +20,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fetchUserGuilds } from '@/lib/discord';
 import { isLockedOut } from '@/lib/lockout';
+import { recordTermsAcceptance } from './termsAcceptance';   // relative on purpose: the tests that run this route mock every "@/" import by name
 import { FLOW_GUILDS, openNext, profileOf, splitMatchesByOpenJoin, type RegisteredGuild } from '@/lib/hubRegistry';
 
 const fail = (origin: string, message: string) =>
@@ -64,6 +65,9 @@ export async function openSignInCallback(req: NextRequest, origin: string, next:
     await supabase.auth.signOut();
     return fail(origin, 'player_upsert: ' + (playerError?.message ?? 'no row'));
   }
+
+  // Which terms version this person signed in under (2026-11-01). Fail-open: the helper swallows its own errors.
+  await recordTermsAcceptance(admin, user.id, discordId, origin);
 
   if (url.searchParams.get('flow') === FLOW_GUILDS) {
     return NextResponse.redirect(`${origin}/guilds?${await findMyGuilds(admin, player.player_id, data.session.provider_token)}`);

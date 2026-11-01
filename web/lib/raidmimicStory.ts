@@ -121,6 +121,11 @@ export const STORY_WORDS = {
   signUp: 'Sign up with Discord',
   signIn: 'Sign in',
   startFree: 'Start free · Pro for your guild or for you',
+  // Under the Pro Guild price, with "refunds" linking the refunds page (the guild lead's pre-launch checklist, 2026-11-01).
+  renews: 'Renews monthly until you cancel · cancel any time ·',
+  refunds: 'refunds',
+  // The story video was made with AI animation tools; the page says so in a quiet caption (checklist: label AI-generated content).
+  aiLabel: 'Animated with AI tools',
   skip: 'Skip',
   hide: 'Hide',
   setup: 'Set it up',

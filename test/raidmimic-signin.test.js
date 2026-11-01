@@ -451,7 +451,8 @@ describe('the sign-in callback, run (web/app/auth/callback/route.ts)', () => {
       expect(where(res)).toBe('https://wolfpack.quest/me');
       expect(st.calls.fetchGuildMember).toBe(1);
       expect(st.db.touched.has('wolfpack_roles')).toBe(true);
-      expect(st.db.writes.map(w => w.table)).toEqual(['wolfpack_members']);
+      // terms_acceptances: the terms version this sign-in was made under (2026-11-01, test/legal-pages.test.js)
+      expect(st.db.writes.map(w => w.table)).toEqual(['wolfpack_members', 'terms_acceptances']);
       for (const t of st.db.touched) expect(t).not.toMatch(/^hub_/);
     });
     it('/ stays / on wolfpack.quest (the /guilds redirect is the open path’s alone)', async () => {

@@ -63,6 +63,12 @@ export const RAIDMIMIC_SETUP_PATH = '/raidmimic/setup';
 // raidmimic.com/register. Served by the same rewrite as the set-up guide; the Register-interest links all point here.
 export const RAIDMIMIC_REGISTER_PATH = '/raidmimic/register';
 
+// The pre-launch legal pages (the guild lead's checklist, 2026-11-01): raidmimic.com/privacy, /terms and /refunds. /terms is
+// also a real route on wolfpack.quest (web/app/terms), where it serves the same page.
+export const RAIDMIMIC_PRIVACY_PATH = '/raidmimic/privacy';
+export const RAIDMIMIC_TERMS_PATH = '/raidmimic/terms';
+export const RAIDMIMIC_REFUNDS_PATH = '/raidmimic/refunds';
+
 // ─── Search engines (the guild lead, 2026-10-23: "search engines on, together with the new story") ───────────────
 // raidmimic.com is the one address that is INDEXED: it, and its two sister hosts, serve the page with
 // `index, follow` and name https://raidmimic.com as the canonical address, so the sisters fold into it. The same page
@@ -78,7 +84,7 @@ export interface RaidmimicSeo {
 }
 
 /** The `robots` and canonical metadata for one of the two pages. `path` is the page's address on raidmimic.com. */
-export function raidmimicSeo(host: string | null | undefined, path: '/' | '/setup' | '/register'): RaidmimicSeo {
+export function raidmimicSeo(host: string | null | undefined, path: '/' | '/setup' | '/register' | '/privacy' | '/terms' | '/refunds'): RaidmimicSeo {
   if (!isRaidmimicHost(host) || isRaidmimicBetaHost(host) || process.env.NEXT_PUBLIC_IS_BETA === '1') return { robots: { index: false, follow: false } };
   return { robots: { index: true, follow: true }, alternates: { canonical: `${RAIDMIMIC_ORIGIN}${path}` } };
 }
@@ -97,8 +103,9 @@ export function isRaidmimicAsset(pathname: string): boolean {
  * tacked on rides further:
  *   /setup               -> the set-up guide (a trailing slash and any capitals are fine)
  *   /register            -> the interest form
+ *   /privacy, /terms, /refunds -> the legal pages
  *   /robots.txt          -> robots for these hosts (allow all, and the sitemap)
- *   /sitemap.xml         -> the two pages
+ *   /sitemap.xml         -> the pages
  *   / , anything else    -> the landing page
  * `pathname` is optional so the old no-argument call still means "the landing page".
  */
@@ -106,6 +113,9 @@ export function raidmimicLandingTarget(pathname = '/'): { pathname: string; sear
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, '').toLowerCase() : pathname;
   if (path === '/setup') return { pathname: RAIDMIMIC_SETUP_PATH, search: '' };
   if (path === '/register') return { pathname: RAIDMIMIC_REGISTER_PATH, search: '' };
+  if (path === '/privacy') return { pathname: RAIDMIMIC_PRIVACY_PATH, search: '' };
+  if (path === '/terms') return { pathname: RAIDMIMIC_TERMS_PATH, search: '' };
+  if (path === '/refunds') return { pathname: RAIDMIMIC_REFUNDS_PATH, search: '' };
   if (path === '/robots.txt') return { pathname: RAIDMIMIC_ROBOTS_PATH, search: '' };
   if (path === '/sitemap.xml') return { pathname: RAIDMIMIC_SITEMAP_PATH, search: '' };
   return { pathname: RAIDMIMIC_LANDING_PATH, search: '' };

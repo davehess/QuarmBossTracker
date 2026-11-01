@@ -16,6 +16,7 @@ import { isLockedOut } from '@/lib/lockout';
 import { landingAfterSignIn } from '@/lib/landing';
 import { isRaidmimicOrigin } from '@/lib/raidmimicHost';
 import { openSignInCallback } from '@/lib/openSignIn';
+import { recordTermsAcceptance } from '../../../lib/termsAcceptance';   // relative on purpose: the tests that run this route mock every "@/" import by name
 
 // Sanitize the post-login redirect target. Must be a same-origin relative
 // path: starts with a single "/" (not "//", which is protocol-relative and an
@@ -156,6 +157,9 @@ export async function GET(req: NextRequest) {
       `${origin}/auth/signin?error=${encodeURIComponent('member_upsert: ' + upsertError.message)}`,
     );
   }
+
+  // Which terms version this person signed in under (2026-11-01). Fail-open: the helper swallows its own errors.
+  await recordTermsAcceptance(admin, data.session.user.id, member.user.id, origin);
 
   // From the main page (or no page) the beta build lands on the /me hub; see lib/landing.ts.
   return NextResponse.redirect(`${origin}${landingAfterSignIn(next, process.env.NEXT_PUBLIC_IS_BETA === '1')}`);

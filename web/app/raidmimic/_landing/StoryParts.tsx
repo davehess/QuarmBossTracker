@@ -2,6 +2,8 @@
 // the pricing tiles. No client code of its own (SignInButton is the only client piece: the one Discord sign-in, no new auth path).
 // Words and numbers are in web/lib/raidmimicStory.ts.
 import SignInButton from '@/components/SignInButton';
+import AgreeLine from '@/components/AgreeLine';
+import { legalPaths } from '@/lib/legal';
 import { DOWNLOAD_URL } from '@/lib/raidmimicPlayer';
 import { FEATURES, RAID_MGMT, RAID_MGMT_HEAD, STORY_WORDS as W, TIERS, type Tier } from '@/lib/raidmimicStory';
 import { PRIMARY_BTN } from './Parts';
@@ -61,8 +63,9 @@ export function RaidManagement() {
   );
 }
 
-export function Pricing({ setup }: { setup: string }) {
+export function Pricing({ setup, onHost = false }: { setup: string; onHost?: boolean }) {
   const tiers = TIERS();
+  const legal = legalPaths(onHost);
   return (
     <section id="pricing" aria-label={W.pricingTitle} className="scroll-mt-4 pt-12">
       <h2 className="text-2xl text-[#f2ede1]">{W.pricingTitle}</h2>
@@ -74,6 +77,9 @@ export function Pricing({ setup }: { setup: string }) {
               <h3 className="text-lg text-[#f2ede1]">{t.name}</h3>
               <p className="mb-0 mt-1 text-xl font-bold text-[#f2ede1]">{t.price}</p>
               <p className="mb-0 mt-1 text-xs text-dim">{t.note}</p>
+              {t.id === 'guild' && (
+                <p data-renewal className="mb-0 mt-1 text-xs text-dim">{W.renews} <a href={legal.refunds}>{W.refunds}</a></p>
+              )}
               <ul className="m-0 mt-3 list-disc space-y-1 pl-5 text-sm leading-6 text-text marker:text-dim">
                 {t.points.map(p => <li key={p}>{p}</li>)}
               </ul>
@@ -85,7 +91,12 @@ export function Pricing({ setup }: { setup: string }) {
                     <a href={setup} className="mt-2 inline-flex min-h-11 w-full items-center justify-center text-sm">{W.setup} →</a>
                   </>
                 )}
-                {t.id === 'guild' && <SignUp className={`${PRIMARY_BTN} w-full`} />}
+                {t.id === 'guild' && (
+                  <>
+                    <SignUp className={`${PRIMARY_BTN} w-full`} />
+                    <AgreeLine onHost={onHost} />
+                  </>
+                )}
               </div>
             </article>
           </li>
