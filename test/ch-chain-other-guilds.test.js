@@ -22,9 +22,12 @@ const agent = createRequire(import.meta.url)('../packages/wolfpack-logsync/index
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const z2 = n => String(n).padStart(2, '0');
+let NOW = 0;
 function stamp(secondsAgo) {
-  const d = new Date(Date.now() - secondsAgo * 1000);
-  return `[${DAY[d.getDay()]} ${MON[d.getMonth()]} ${String(d.getDate()).padStart(2, ' ')} `
+  // One mid-second clock per test (NOW, set in beforeEach): a second boundary turned a 4 s gap into 5 s. And EverQuest
+  // zero-pads the day ("Aug 02"): a space-padded "Nov  1" failed this file on the 1st to 9th of every month.
+  const d = new Date(NOW - secondsAgo * 1000);
+  return `[${DAY[d.getDay()]} ${MON[d.getMonth()]} ${z2(d.getDate())} `
     + `${z2(d.getHours())}:${z2(d.getMinutes())}:${z2(d.getSeconds())} ${d.getFullYear()}]`;
 }
 const raid = (secondsAgo, who, text) => agent.trackChChainLine(`${stamp(secondsAgo)} ${who} tells the raid,  '${text}'`);

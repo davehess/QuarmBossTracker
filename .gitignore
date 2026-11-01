@@ -30,6 +30,8 @@ npm-debug.log*
 package-lock.json
 # …except Bristlebane's: its Dockerfile runs `npm ci`, which needs the lockfile in the repo.
 !apps/bristlebane/package-lock.json
+# …and the website's: pins every transitive package of each Vercel build (supply chain, 2026-11-01).
+!web/package-lock.json
 dist/
 packages/wolfpack-logsync/logsync.stats.json
 # A user's own imported/authored triggers — local state that happens to live
