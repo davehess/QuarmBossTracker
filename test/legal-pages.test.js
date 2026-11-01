@@ -48,7 +48,7 @@ describe('web/lib/legal.ts', () => {
     expect(L.TERMS_VERSION).toBe('2026-11-01');
     expect(L.LEGAL_UPDATED).toBe('November 1, 2026');
     expect(L.MIN_AGE).toBe(13);
-    expect(L.YOUR_DATA_PATH).toBe('/me#your-data');
+    expect(L.YOUR_DATA_PATH).toBe('/guilds#your-data');
   });
   it('the header says the address still has to be created (so nobody ships it believing it exists)', () => {
     expect(read('web/lib/legal.ts')).toMatch(/still has to CREATE/);
@@ -112,9 +112,10 @@ describe('what the pages must say', () => {
     expect(src).toMatch(/How long we keep it/);
     expect(src).toMatch(/Never used to train AI models/);
   });
-  it('privacy: download and delete at /me#your-data are called COMING (the feature is being built, not shipped), with email for the rest', () => {
+  it('privacy: download and delete yourself under Your data (shipped 2026-11-01), with email for the rest', () => {
     const src = code(PAGES.privacy);
-    expect(src).toMatch(/<B>coming<\/B>, and being built now, at/);
+    expect(src).toMatch(/Download and delete it yourself:<\/B> sign in and open/);
+    expect(src).not.toMatch(/being built now/);
     expect(src).toMatch(/href=\{YOUR_DATA_PATH\}/);
     expect(src).toMatch(/Anything else/);
   });
@@ -245,9 +246,10 @@ describe('the migration', () => {
     expect(sql.match(/create table/gi)).toHaveLength(1);
     expect(sql).toMatch(/if not exists/i);
   });
-  it('the file name sorts after the newest earlier migration', () => {
+  it('the file name sorts after the migrations it was written against', () => {
     const names = fs.readdirSync(path.join(ROOT, 'supabase/migrations')).filter(f => f.endsWith('.sql')).sort();
-    expect(names[names.length - 1]).toBe('20261101130000_terms_acceptances.sql');
+    const at = names.indexOf('20261101130000_terms_acceptances.sql');
+    expect(at).toBeGreaterThan(names.indexOf('20261101070000_guild_interest.sql'));
   });
 });
 

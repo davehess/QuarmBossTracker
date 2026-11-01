@@ -121,8 +121,8 @@ export default function RaidmimicTermsPage() {
       <Section title="Ending an account">
         <Bullets>
           <li>
-            <B>You can leave any time.</B> Self-serve deletion is <B>coming</B> at{' '}
-            <a href={YOUR_DATA_PATH} className={LEGAL_LINK}>{YOUR_DATA_PATH}</a>; until then, write to{' '}
+            <B>You can leave any time.</B> Delete your account yourself under{' '}
+            <a href={YOUR_DATA_PATH} className={LEGAL_LINK}>Your data</a>, or write to{' '}
             <a href={CONTACT_HREF} className={LEGAL_LINK}>{CONTACT_EMAIL}</a>.
           </li>
           <li>

@@ -17,8 +17,9 @@ export const LEGAL_UPDATED = 'November 1, 2026';
 /** The youngest person these services are for (the same floor Discord, which every sign-in goes through, sets). */
 export const MIN_AGE = 13;
 
-/** Where a signed-in person downloads or deletes their own data (being built; the pages say "coming" until it ships). */
-export const YOUR_DATA_PATH = '/me#your-data';
+/** Where a signed-in person downloads or deletes their own data. /guilds works on raidmimic hosts (where /me is not
+ *  served) and on wolfpack.quest, where its "Your data" link leads on to /me#your-data. */
+export const YOUR_DATA_PATH = '/guilds#your-data';
 
 export const PRODUCT = 'Raid Mimic';
 
