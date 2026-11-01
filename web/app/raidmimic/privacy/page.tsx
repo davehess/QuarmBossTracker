@@ -178,8 +178,9 @@ export default function RaidmimicPrivacyPage() {
       <Section title="See it, take it, remove it">
         <Bullets>
           <li>
-            <B>Download and delete it yourself:</B> <B>coming</B>, and being built now, at{' '}
-            <a href={YOUR_DATA_PATH} className={LEGAL_LINK}>{YOUR_DATA_PATH}</a> once you are signed in. Until it opens, write to us.
+            <B>Download and delete it yourself:</B> sign in and open{' '}
+            <a href={YOUR_DATA_PATH} className={LEGAL_LINK}>Your data</a>. Delete removes your own data and your sign-in; a
+            guild&apos;s raid records stay with the guild, unlinked from your Discord account.
           </li>
           <li>
             <B>Anything else</B> (see what we hold, fix it, remove it, ask a question):{' '}
