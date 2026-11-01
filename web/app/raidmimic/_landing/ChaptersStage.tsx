@@ -65,7 +65,8 @@ export default function ChaptersStage({ downloadUrl, onHost, children }: { downl
               )}
             </div>
           </div>
-          <ol aria-label="Chapters" className="m-0 mt-2 grid list-none grid-cols-4 gap-2 p-0">
+          {/* One row whatever the count: a fixed column count wrapped the fifth chapter onto a row of its own. */}
+          <ol aria-label="Chapters" className="m-0 mt-2 grid list-none grid-flow-col auto-cols-fr gap-1.5 p-0 sm:gap-2">
             {CHAPTERS.map(c => (
               <li key={c.id} className="min-w-0">
                 <button type="button" onClick={() => go(c.id, c.at)} aria-current={lit === c.id ? 'true' : undefined}
