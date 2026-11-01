@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raidmimic-home-2026-11-01',
+    title: 'Web 2.1.87',
+    version: 'Web 2.1.87',
+    date: '2026-11-01',
+    headline: 'A new Raid Mimic home page, a form to register your guild, and your data in your own hands.',
+    features: [
+      { name: 'The new Raid Mimic home page', blurb: 'raidmimic.com opens on the story of Raid Mimic as a video that fills the screen, with the logo and the overlays appearing as it plays. Below it: five feature pictures (now with Zeal and UI packs), what guild leaders get for raid management, and pricing.' },
+      { name: 'Register your guild [beta]', blurb: 'A short form on raidmimic.com: your guild, game and server, how many raiders, your raid nights and how you track DKP. No sign-in. Officers read the answers on a new Guild interest page.' },
+      { name: 'Privacy, terms and refunds', blurb: 'Raid Mimic now has its own privacy, terms and refunds pages. Signing in records the version of the terms you agreed to, AI-written parts are labelled, and there is a contact line.' },
+      { name: 'Download or delete your data', blurb: 'A new Your data section on your /me page (and on raidmimic.com/guilds): download everything the site holds about you as one file, or delete your account yourself. No more asking an officer.' },
+      { name: 'Officers see who left the Discord', blurb: 'A pop-up warns officers when someone has left the Discord but can still sign in, with a one-click lock-out for each person.' },
+      { name: 'A slimmer review queue', blurb: 'The officer review queue now counts guild members only, shows a one-line banner instead of a big box, and lists the top 10 in each section.' },
+    ],
+    fixes: [
+      'Locking out a member now also ends their open website sign-ins; before, a locked member who was already signed in stayed signed in.',
+    ],
+  },
+  {
     key: 'start-a-guild-2026-10-31',
     title: 'Web 2.1.82',
     version: 'Web 2.1.82',

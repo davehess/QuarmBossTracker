@@ -21,7 +21,7 @@ import { ROOT, stripJs, stripSql } from './_source-slice.js';
 import * as G from '../web/lib/guildInterest.ts';
 import { raidmimicLandingTarget, RAIDMIMIC_REGISTER_PATH, raidmimicSeo } from '../web/lib/raidmimicHost.ts';
 import { interestUrl, EQMIMIC_FEEDBACK_PATH } from '../web/lib/raidmimicLanding.ts';
-import { metaForPath, ADMIN_TITLES } from '../web/lib/pageMeta.ts';
+import { metaForPath } from '../web/lib/pageMeta.ts';
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const code = (rel) => stripJs(read(rel));
@@ -266,7 +266,6 @@ describe('officers’ view', () => {
   });
   it('is a card on the admin landing, and unfurls with its own name', () => {
     expect(code('web/app/admin/page.tsx')).toMatch(/title="🐺 Guild interest"[\s\S]{0,300}href="\/admin\/interest"/);
-    expect(ADMIN_TITLES['/admin/interest']).toBe('[beta] Guild interest');
     expect(metaForPath('/admin/interest').title).toBe('[beta] Guild interest · Admin');
   });
 });

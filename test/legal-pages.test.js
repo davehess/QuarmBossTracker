@@ -291,7 +291,7 @@ describe('both sign-in callbacks record it, after the session is good, and never
     expect(call).toBeGreaterThan(-1);
     expect(call).toBeGreaterThan(wolf.indexOf("from('wolfpack_members').upsert"));
     expect(call).toBeGreaterThan(wolf.indexOf('if (upsertError)'));
-    expect(call).toBeLessThan(wolf.indexOf('landingAfterSignIn('));
+    expect(call).toBeLessThan(wolf.indexOf('return NextResponse.redirect(`${origin}${next}`);'));
     expect(wolf).toMatch(/import \{ recordTermsAcceptance \} from '\.\.\/\.\.\/\.\.\/lib\/termsAcceptance'/);
   });
   it('raidmimic callback: after the locked-out check and the player upsert, before either redirect, result ignored', () => {

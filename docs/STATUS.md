@@ -169,19 +169,38 @@ next touch one rather than assuming a missing row means a missing doc.
   `encounter_threat_graph` is not archived on Tower and stays in Supabase; its watermark was not read (the RPC timed out), so the first
   nights may clear less than the backlog. Copy method for Tower's file: `docs/HANDOFF-tower-archive-catchup.md`.
 
-- **🧪 raidmimic.com landing `?v=c` "Story stage" and `?v=d` "Chapters" (web beta `2b01c1be`, no version bump, 2026-11-01).** The guild
-  lead found the page "underwhelming": video first, menus appearing as it plays, the mimic icon when the chest turns, sign-up with Discord at
-  the end, "start for free, unlock pro with guild or individual plan", far fewer words, captions not cut off, no bard for casts-left, and the
-  Canvas, UI Studio, sync and replay/spectator shown. `?v=c` reveals icon, menu and end card on the video's timeline; `?v=d` is a chapter rail
-  that seeks the video and swaps a feature card, sign-up pinned. Pricing: Free / Pro Guild $25 a month / Pro Individual "price at launch"
-  (unset). Cue times measured on the 81.5 s video (`web/lib/raidmimicStory.ts`). New shots via `scripts/raidmimic-shots/shoot-canvas.mjs`,
-  `shoot-studio.mjs`, `shoot-replay.mjs`. Previews: https://b.wolfpack.quest/raidmimic?v=c and https://b.wolfpack.quest/raidmimic?v=d.
-  Awaiting the guild lead's pick, and the individual price. Test: `test/raidmimic-landing-variants.test.js`.
-- **🧪 raidmimic.com landing `?v=b`: sign in first (web beta `c10bf0eb`, no version bump, 2026-10-31; DECISIONS §492 pick A).** The front
-  door as picked: pitch and story video on the left, a sign-in card on the right (Discord, identify only, goes to `/guilds`, a guest-code
-  link), three doors under it (raider in a hosted guild, officer starting one, solo player), today's page below the fold. The default
-  render is untouched. Preview: https://b.wolfpack.quest/raidmimic?v=b (the raidmimic hosts drop the query). Sign-in completes on the
-  raidmimic hosts since web 2.1.79 (below). Awaiting the guild lead's yes to promote. Test: `test/raidmimic-landing.test.js`.
+- **✅ raidmimic.com home page: the story stage is the page (C; web 2.1.87, `main`, 2026-11-01; "ship it" from the guild lead; was 🧪 `?v=c` "Story stage" /
+  `?v=d` "Chapters", web beta `2b01c1be`..`184f518e`).** The guild lead found the old page "underwhelming" and picked C: *"start truly as the only thing on
+  the page, fit is the video, fade it into the background color. Slowly add the logos as we go into the video. Skip/hide at the bottom."* First load is only
+  the 81.5 s story video, full viewport, its edges fading into the page colour; the icon and name arrive at 10.8 s, the menu and the Overlays mark at 23.0 s,
+  Calls / Loot / Hail marks at 29.3 / 49.4 / 61.0 s, the Discord sign-up card at 81.5 s (cue times in `web/lib/raidmimicStory.ts`). Below it: five feature
+  pictures (Canvas, UI Studio, sync, replay and Zeal and UI packs), a Raid management section for guild leaders, pricing (Free / Pro Guild $25 a month / Pro
+  Individual "price at launch", unset), the register band, footer. The `?v=b` "sign in first", `?v=c` and `?v=d` previews and the old "Pick your path"
+  page and parts (`PathsLayout`, `MotionStage`, `ClipTabs`, `MascotHero`...) are deleted. Promoted by file, not by merge: the beta colour-token layers and the
+  replay-capture harness (`scripts/raidmimic-shots/replay/`, it builds against beta-only `tokens.css`) were NOT brought; `globals.css` took only the
+  `.rm-stage` / `.rm-frame` classes. Test: `test/raidmimic-landing.test.js`, `test/raidmimic-landing-variants.test.js`.
+- **✅ Register your guild: `https://raidmimic.com/register` (web 2.1.87, `main`, `[beta]` page; migration `20261101070000_guild_interest.sql` applied).**
+  One card, no sign-in: guild, game / server chips, raider slider, raid-night toggles, DKP tool, how you heard, optional Discord name; "Count us in", then a
+  thank-you with Download Mimic and the setup guide. Table `guild_interest` (RLS on, no policies, service role only); the action reuses the anonymous-feedback
+  cleaners and the one-day salted ip hash, 3 an hour. Officers read `https://wolfpack.quest/admin/interest` (plain text; it is untrusted, AFB rule), a card on the
+  admin landing. Every "Register interest" link points at the form. `b.raidmimic.com` is a raidmimic host (noindex, robots Disallow all, canonical stays
+  `https://raidmimic.com`). Test: `test/guild-interest.test.js`, `test/raidmimic-beta-host.test.js`.
+- **✅ Departed-member pop-up and the lock-out-a-former-member fix (web 2.1.87, `main`; migration `20261101060000_end_member_web_sessions.sql` applied).** The guild
+  lead, after a member was banned from the Discord: *"i can't kick him from the guild or invalidate his session"*. `/admin/access` can lock a member who has left
+  (the dropdown gains "Left the Discord recently"), locking ends their website sign-ins (`end_member_web_sessions`, service role only), and officers get a
+  pop-up on the home page and `/admin` listing who is out of the Discord but still has a web login or live Mimic session, each with Lock out. Test:
+  `test/departed-members.test.js`.
+- **✅ Officer review queue: guild members only, one-line banner, top 10 (web 2.1.87, `main`; migration `20261101120000_admin_queue_guild_chat_only.sql` applied).**
+  Every list is scoped to the membership predicate (alts follow their main); chat speakers come from /gu only (`/rs` carries other guilds): 194 instead of 465 over
+  14 days. The banner is one line behind a fold; the page shows each section's top 10 with "Show all N". Test: `test/admin-queue-scope.test.js`.
+- **✅ Raid Mimic privacy, terms and refunds; terms acceptance; AI label; contact (web 2.1.87, `main`, `[beta]` pages; migration `20261101130000_terms_acceptances.sql`
+  applied).** `https://raidmimic.com/privacy`, `/terms`, `/refunds` (also under `wolfpack.quest/raidmimic/...`, and `https://wolfpack.quest/terms`). Both sign-in callbacks
+  record the accepted terms version, fail-open. "Animated with AI tools" on the story video. Words in `web/lib/legal.ts`. ⏳ `CONTACT_EMAIL` hello@raidmimic.com must still
+  be created. Test: `test/legal-pages.test.js`.
+- **✅ Self-serve "Download my data" and "Delete my account" (web 2.1.87, `main`; migration `20261101140000_member_self_delete.sql` applied).** A "Your data" section on
+  `https://wolfpack.quest/me#your-data` and on raidmimic.com/guilds: a streamed JSON file of the person's own rows (session identity only, explicit columns, guild-scoped,
+  one download per 10 minutes) and a typed-DELETE removal (`member_self_delete` + `member_self_unlink_batch`; the guild's raid rows stay, unlinked; a sole guild owner is
+  refused). The `/me` hub layout (`?v=b`) is beta-only and was not brought. Test: `test/self-serve-data.test.js`.
 - **🧪 Token layers: one colour set under the site, the overlays and the dashboard (web beta `99f5092c`, Mimic beta `aeaceec5`, agent 4.0.50 beta; 2026-10-31; DECISIONS §488 pick C; `docs/DESIGN-theming.md` §7 steps 1 to 3).**
   Nothing changes on screen, by proof: the site's built CSS diffs equal; 13 overlay stand-in screenshots are 0 px apart; 15 dashboard tabs
   render byte-identical PNGs. `web/app/tokens.css` + the Tailwind mapping, `apps/mimic/theme.css` (25 windows; `command.html` deliberately
